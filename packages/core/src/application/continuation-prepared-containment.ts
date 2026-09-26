@@ -98,7 +98,9 @@ export type PreparedContainmentFailureCode =
   | 'CHANNEL_PROVENANCE_NOT_INDEPENDENT'
   | 'CAPABILITY_NOT_PRODUCTION_ELIGIBLE'
   | 'PREPARED_PROVENANCE_NOT_PRODUCTION_TRUSTED'
-  | 'PREPARED_PROVENANCE_INVALID';
+  | 'PREPARED_PROVENANCE_INVALID'
+  | 'SELF_DECLARED_PRODUCTION_TRUST_REJECTED'
+  | 'PRODUCTION_TRUST_ANCHOR_UNAVAILABLE';
 
 /** Bounded, fail-closed preparation error. Carries a code only — never host/runtime detail. */
 export class PreparedContainmentError extends Error {
@@ -549,11 +551,16 @@ export function prepareVerifiedContainmentBinding(input: {
   if (factsA.verifierProvenanceId === factsB.verifierProvenanceId) {
     throw new PreparedContainmentError('CHANNEL_PROVENANCE_NOT_INDEPENDENT');
   }
-  // R3-B3 (Item 4): the binding's durable trust domain is PRODUCTION only if BOTH channels are
-  // PRODUCTION-trusted; otherwise it is TEST. No production issuer exists in R3-B3, so this is TEST for
-  // every legitimately-produced binding. A later production trust requirement fails closed on TEST.
-  const trustDomain: ContainmentTrustDomain =
-    factsA.trustDomain === 'PRODUCTION' && factsB.trustDomain === 'PRODUCTION' ? 'PRODUCTION' : 'TEST';
+  // R3-B3 remediation (B-1): production trust is NEVER derived from channel-returned strings. There is no
+  // production verifier issuer or trust anchor in R3-B3, so a channel that self-declares
+  // `trustDomain === 'PRODUCTION'` is REJECTED (fail closed) rather than silently trusted or downgraded.
+  // Every legitimately issuable binding is stamped TEST; a distinct provenance-id string is NOT itself a
+  // trust anchor. A future, separately-authorized production issuer is the only thing that may ever mint
+  // PRODUCTION provenance.
+  if (factsA.trustDomain !== 'TEST' || factsB.trustDomain !== 'TEST') {
+    throw new PreparedContainmentError('SELF_DECLARED_PRODUCTION_TRUST_REJECTED');
+  }
+  const trustDomain: ContainmentTrustDomain = 'TEST';
   const provenanceShape = {
     provenanceSchema: CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA,
     trustDomain,
@@ -591,14 +598,17 @@ export function prepareVerifiedContainmentBinding(input: {
 }
 
 /**
- * R3-B3 (Item 4): production-trust requirement for prepared evidence. Integrity (a correct
- * `containmentBindingDigest`) is necessary but NOT sufficient — a binding is production-trusted ONLY if
- * it was module-issued AND its durable provenance declares `trustDomain==='PRODUCTION'` with independent
- * channel provenance identities. No production issuer exists in R3-B3, so this ALWAYS fails closed on a
- * legitimately-produced (TEST) binding. Legacy R3-A audit rows have no such provenance and can never
- * satisfy this, so they cannot masquerade as prepared production evidence (§5/§9-H).
+ * R3-B3 remediation (B-1/§3): production-trust requirement for prepared evidence. There is NO production
+ * trust anchor or issuer in R3-B3, so this ALWAYS FAILS CLOSED for every currently-issuable binding.
+ * A correct `containmentBindingDigest`, a recomputable `provenanceDigest`, a serialized
+ * `trustDomain: 'PRODUCTION'`, or a spread/JSON-round-trip copy are NONE of them a production trust
+ * anchor: knowledge of the canonical fields cannot manufacture production authenticity. Malformed input
+ * still fails closed. Serializable provenance metadata is explicitly NOT authenticated production
+ * provenance; a future, separately-authorized production issuer must supply the real anchor.
  */
 export function requireProductionPreparedProvenance(binding: VerifiedContainmentBinding): void {
+  // Reject anything that is not a genuinely module-issued, digest-consistent binding first (a bounded,
+  // honest classification) — a spread/reconstructed/JSON-round-tripped copy is not WeakSet-registered.
   requireIssuedVerifiedBinding(binding);
   const p = binding.provenance;
   if (!p || p.provenanceSchema !== CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA
@@ -607,41 +617,27 @@ export function requireProductionPreparedProvenance(binding: VerifiedContainment
     || p.channelAProvenanceId === p.channelBProvenanceId || !isHex64(p.provenanceDigest)) {
     throw new PreparedContainmentError('PREPARED_PROVENANCE_INVALID');
   }
-  const recomputed = sha256Canonical(CONTAINMENT_PROVENANCE_DIGEST_DOMAIN, {
-    provenanceSchema: p.provenanceSchema,
-    trustDomain: p.trustDomain,
-    channelAProvenanceId: p.channelAProvenanceId,
-    channelBProvenanceId: p.channelBProvenanceId,
-  });
-  if (recomputed !== p.provenanceDigest) throw new PreparedContainmentError('PREPARED_PROVENANCE_INVALID');
-  if (p.trustDomain !== 'PRODUCTION') {
-    throw new PreparedContainmentError('PREPARED_PROVENANCE_NOT_PRODUCTION_TRUSTED');
-  }
+  // No production trust anchor exists in R3-B3. Even a well-formed, issued, TEST-provenance binding is
+  // NOT production-trusted, and a `PRODUCTION` string can never be issued (see prepareVerifiedContainment
+  // Binding). Fail closed unconditionally — production authenticity is deliberately deferred to a later
+  // separately-authorized issuer.
+  throw new PreparedContainmentError('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
 }
 
 /**
- * R3-B3 (Item 1): production-trusted DUAL-channel verification requirement. Both channel results must be
- * `PRODUCTION` trust domain with well-formed, INDEPENDENT provenance identities. No production issuer
- * exists in R3-B3, so a legitimately-produced pair is `TEST` and this fails closed. It never treats a
- * self-declared `PRODUCTION` from arbitrary caller code as trusted on its own — pair it with
- * `prepareVerifiedContainmentBinding`, which still requires an issued candidate and exact-subject match.
+ * R3-B3 remediation (B-1/§2): production-trusted DUAL-channel verification requirement. There is NO
+ * production verifier issuer or trust anchor in R3-B3, so this ALWAYS FAILS CLOSED for every currently
+ * caller-constructible input. Self-declared `trustDomain: 'PRODUCTION'`, distinct provenance-id strings,
+ * a caller-computed matching `resultDigest`, or any combination thereof are NEVER a trust anchor:
+ * serialized/returned values alone can never make this succeed. It never inspects caller strings to
+ * decide trust — it unconditionally rejects, because a production issuer that could satisfy it does not
+ * exist and is deliberately deferred to a later, separately-authorized slice.
  */
 export function requireProductionTrustedVerification(
-  resultA: ContainmentChannelResult,
-  resultB: ContainmentChannelResult,
+  _resultA: ContainmentChannelResult,
+  _resultB: ContainmentChannelResult,
 ): void {
-  for (const r of [resultA, resultB]) {
-    if (!r || r.status !== 'VERIFIED' || !CONTAINMENT_TRUST_DOMAINS.includes(r.trustDomain)
-      || !isId(r.verifierProvenanceId)) {
-      throw new PreparedContainmentError('CHANNEL_NOT_PRODUCTION_TRUSTED');
-    }
-  }
-  if (resultA.verifierProvenanceId === resultB.verifierProvenanceId) {
-    throw new PreparedContainmentError('CHANNEL_PROVENANCE_NOT_INDEPENDENT');
-  }
-  if (resultA.trustDomain !== 'PRODUCTION' || resultB.trustDomain !== 'PRODUCTION') {
-    throw new PreparedContainmentError('CHANNEL_NOT_PRODUCTION_TRUSTED');
-  }
+  throw new PreparedContainmentError('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────────
