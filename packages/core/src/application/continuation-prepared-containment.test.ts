@@ -13,6 +13,10 @@ import {
   createContainmentSecurityProfile,
   createFakeContainedExecutionCapability,
   prepareVerifiedContainmentBinding,
+  requireProductionTrustedVerification,
+  requireProductionContainedCapability,
+  requireProductionPreparedProvenance,
+  CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA,
 } from './continuation-prepared-containment';
 import type {
   ContainmentCandidateBinding,
@@ -72,13 +76,22 @@ function honestChannel(channel: 'A' | 'B', verifierVersion: string): Containment
           imageDigest: subject.candidate.imageDigest,
         },
       })).digest('hex');
-      return { status: 'VERIFIED', verifierVersion, resultDigest };
+      return {
+        status: 'VERIFIED',
+        verifierVersion,
+        trustDomain: 'TEST',
+        verifierProvenanceId: `test-provenance-${channel}`,
+        resultDigest,
+      };
     },
   };
 }
 
 function statusChannel(channel: 'A' | 'B', verifierVersion: string, status: ContainmentChannelResult['status']): ContainmentVerificationChannel {
-  return { channel, verify: () => ({ status, verifierVersion }) };
+  return {
+    channel,
+    verify: () => ({ status, verifierVersion, trustDomain: 'TEST', verifierProvenanceId: `test-provenance-${channel}` }),
+  };
 }
 
 const channelA = () => honestChannel('A', 'verifier-a-1');
@@ -287,7 +300,7 @@ describe('R3-B1 dual-channel verification is mandatory and fail-closed', () => {
   });
 
   it('rejects a channel whose result digest does not match the subject (disagreement)', () => {
-    const lyingA: ContainmentVerificationChannel = { channel: 'A', verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', resultDigest: HEX('9') }) };
+    const lyingA: ContainmentVerificationChannel = { channel: 'A', verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', trustDomain: 'TEST', verifierProvenanceId: 'test-provenance-A', resultDigest: HEX('9') }) };
     expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: lyingA, channelB: channelB() }))
       .toThrow(PreparedContainmentError);
   });
@@ -439,7 +452,7 @@ describe('R3-B2 exact-run prepared evidence projection', () => {
     expect(first.binding.providerBindingDigest).toBe(second.binding.providerBindingDigest);
     expect(() => prepareVerifiedContainmentBinding({ candidate: candidate({ executionContext: {
       ...executionContext, executionId: 'run-2', taskRunId: 'run-2' } }),
-      channelA: { channel: 'A', verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', resultDigest: first.binding.channelAResultDigest }) },
+      channelA: { channel: 'A', verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', trustDomain: 'TEST', verifierProvenanceId: 'test-provenance-A', resultDigest: first.binding.channelAResultDigest }) },
       channelB: channelB() })).toThrow('CHANNEL_DISAGREEMENT');
   });
 
@@ -471,5 +484,125 @@ describe('R3-B2 exact-run prepared evidence projection', () => {
     expect(() => candidate({ securityProfile: { ...securityProfile() } })).toThrow('CONTAINMENT_CANDIDATE_INVALID');
     expect(() => candidate({ instance: { ...createContainmentInstanceIdentity('opaque-instance-token-1') } }))
       .toThrow('CONTAINMENT_CANDIDATE_INVALID');
+  });
+});
+
+// ─────────────────────────────────── R3-B3 production trust closure ───────────────────────────────────
+
+function fakeResult(channel: 'A' | 'B', overrides: Partial<ContainmentChannelResult> = {}): ContainmentChannelResult {
+  return {
+    status: 'VERIFIED',
+    verifierVersion: `verifier-${channel}-1`,
+    trustDomain: 'TEST',
+    verifierProvenanceId: `test-provenance-${channel}`,
+    resultDigest: HEX('7'),
+    ...overrides,
+  };
+}
+
+describe('R3-B3 Item 1 — Channel A/B production provenance trust model', () => {
+  it('a well-formed VERIFIED TEST result is NOT production-trusted (fails closed; no production issuer)', () => {
+    expect(() => requireProductionTrustedVerification(fakeResult('A'), fakeResult('B')))
+      .toThrow('CHANNEL_NOT_PRODUCTION_TRUSTED');
+  });
+
+  it('a self-declared PRODUCTION trustDomain from arbitrary caller code is still gated by independence + issuance', () => {
+    // Even a caller that stamps PRODUCTION cannot mint a binding: prepareVerifiedContainmentBinding still
+    // requires an ISSUED candidate + exact-subject match. requireProductionTrustedVerification only checks
+    // the durable trust facts; on their own they do not fabricate a verified binding.
+    const a = fakeResult('A', { trustDomain: 'PRODUCTION' });
+    const b = fakeResult('B', { trustDomain: 'PRODUCTION' });
+    // Both PRODUCTION + independent provenance → this bounded check passes, but note NO real issuer
+    // produces PRODUCTION results in R3-B3; a fake channel that returns PRODUCTION cannot also produce a
+    // subject-matching resultDigest for prepareVerifiedContainmentBinding without being module-issued.
+    expect(() => requireProductionTrustedVerification(a, b)).not.toThrow();
+    // Non-independent provenance is rejected regardless of trustDomain.
+    expect(() => requireProductionTrustedVerification(a, { ...b, verifierProvenanceId: a.verifierProvenanceId }))
+      .toThrow('CHANNEL_PROVENANCE_NOT_INDEPENDENT');
+  });
+
+  it('rejects a non-VERIFIED or malformed-provenance result as not production-trusted', () => {
+    expect(() => requireProductionTrustedVerification(fakeResult('A', { status: 'FAILED' }), fakeResult('B')))
+      .toThrow('CHANNEL_NOT_PRODUCTION_TRUSTED');
+    expect(() => requireProductionTrustedVerification(fakeResult('A', { verifierProvenanceId: 'bad id' }), fakeResult('B')))
+      .toThrow('CHANNEL_NOT_PRODUCTION_TRUSTED');
+  });
+
+  it('a legitimately-produced binding carries a durable TEST provenance record (not PRODUCTION)', () => {
+    const binding = verifiedBinding();
+    expect(binding.provenance.provenanceSchema).toBe(CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA);
+    expect(binding.provenance.trustDomain).toBe('TEST');
+    expect(binding.provenance.channelAProvenanceId).not.toBe(binding.provenance.channelBProvenanceId);
+    expect(binding.provenance.provenanceDigest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('channel provenance independence: shared verifierProvenanceId across A/B fails closed at preparation', () => {
+    const shared = (channel: 'A' | 'B'): ContainmentVerificationChannel => ({
+      channel,
+      verify: (subject: ContainmentVerificationSubject) => {
+        const resultDigest = createHash('sha256').update(JSON.stringify({
+          domain: `quoky.r3.containment.channel.${channel}.v1`,
+          shape: { verifierVersion: `verifier-${channel}-1`, executionContext: subject.candidate.executionContext,
+            providerId: subject.candidate.providerId, providerBindingDigest: subject.providerBindingDigest,
+            securityProfileDigest: subject.securityProfileDigest, instanceIdentityDigest: subject.instanceIdentityDigest,
+            expectedModelDigest: subject.expectedModelDigest, imageDigest: subject.candidate.imageDigest },
+        })).digest('hex');
+        return { status: 'VERIFIED', verifierVersion: `verifier-${channel}-1`, trustDomain: 'TEST',
+          verifierProvenanceId: 'shared-provenance', resultDigest };
+      },
+    });
+    expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: shared('A'), channelB: shared('B') }))
+      .toThrow('CHANNEL_PROVENANCE_NOT_INDEPENDENT');
+  });
+});
+
+describe('R3-B3 Item 2 — fake vs production contained capability separation', () => {
+  it('the fake capability is kind FAKE and is NOT production-eligible', () => {
+    const fake = createFakeContainedExecutionCapability(createContainmentInstanceIdentity('opaque-instance-token-1'));
+    expect(fake.capabilityKind).toBe('FAKE');
+    expect(() => requireProductionContainedCapability(fake)).toThrow('CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
+  });
+
+  it('an arbitrary object claiming PRODUCTION is rejected as not issued', () => {
+    const forged = { schemaVersion: 'contained-execution-capability-v1', capabilityKind: 'PRODUCTION', instanceIdentityDigest: HEX('c') } as never;
+    expect(() => requireProductionContainedCapability(forged)).toThrow('EXECUTION_CAPABILITY_NOT_ISSUED');
+  });
+
+  it('no production capability issuer exists yet (the fake remains usable for tests/preparation)', () => {
+    const instance = createContainmentInstanceIdentity('opaque-instance-token-1');
+    const fake = createFakeContainedExecutionCapability(instance);
+    // Usable for the fake prepared-execution seam...
+    const prepared = PreparedContainmentExecution.fromVerifiedBinding(verifiedBinding(), fake);
+    expect(prepared.schemaVersion).toBe(PREPARED_CONTAINMENT_EXECUTION_SCHEMA);
+    // ...but ineligible for a production requirement.
+    expect(() => requireProductionContainedCapability(fake)).toThrow('CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
+  });
+});
+
+describe('R3-B3 Item 4 — prepared evidence production provenance boundary', () => {
+  it('canonical fields + correct hash is NOT production-trusted (fails closed on TEST provenance)', () => {
+    const binding = verifiedBinding();
+    // Integrity holds (issued + digest recomputes), yet production trust fails closed.
+    expect(() => requireProductionPreparedProvenance(binding)).toThrow('PREPARED_PROVENANCE_NOT_PRODUCTION_TRUSTED');
+  });
+
+  it('a forged/unissued binding cannot satisfy the production provenance requirement', () => {
+    const binding = verifiedBinding();
+    const forged = { ...binding }; // spread copy is not WeakSet-registered
+    expect(() => requireProductionPreparedProvenance(forged)).toThrow('VERIFIED_BINDING_NOT_ISSUED');
+  });
+
+  it('a binding whose provenance digest was tampered fails closed as invalid', () => {
+    const binding = verifiedBinding();
+    // Tamper the durable provenance digest on a copy; it is both unissued AND digest-inconsistent.
+    const tampered = { ...binding, provenance: { ...binding.provenance, provenanceDigest: HEX('9') } };
+    expect(() => requireProductionPreparedProvenance(tampered)).toThrow(PreparedContainmentError);
+  });
+
+  it('legacy R3-A structural audit cannot masquerade as prepared production provenance', () => {
+    // A legacy R3-A ContinuationContainmentAudit has no VerifiedContainmentBinding provenance at all, so
+    // it can never be passed to requireProductionPreparedProvenance as an issued prepared binding.
+    const legacyLike = { schemaVersion: 'continuation-containment-audit-v1' } as never;
+    expect(() => requireProductionPreparedProvenance(legacyLike)).toThrow('VERIFIED_BINDING_NOT_ISSUED');
   });
 });

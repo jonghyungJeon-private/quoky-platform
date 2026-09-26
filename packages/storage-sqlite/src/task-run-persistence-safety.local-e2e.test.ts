@@ -89,7 +89,14 @@ describe('ADR-0089 M3E-6G — continuation-bound TaskRun delete prohibition (rea
     'refuses deletion of bound terminal history: %s', async status => {
       const f = await fixture();
       const run = await f.entry.start(f.input);
-      const terminal = await f.storage.taskRuns.save({ ...run, status, finishedAt: ts });
+      // R3-B3 (Item 3): a bound run's SUCCEEDED/FAILED terminalization must go through the secure path;
+      // CANCELED remains a generic-save cancellation lifecycle. Both produce protected terminal history.
+      const terminal = status === TaskRunStatus.CANCELED
+        ? await f.storage.taskRuns.save({ ...run, status, finishedAt: ts })
+        : await f.storage.taskRuns.terminalizePreservingSecurityEvidence(run.id, {
+            terminalStatus: status === TaskRunStatus.SUCCEEDED ? 'SUCCEEDED' : 'FAILED', finishedAt: ts,
+            ...(status === TaskRunStatus.FAILED ? { error: 'test failure' } : {}),
+          });
       await expect(f.storage.taskRuns.delete(terminal.id)).rejects.toMatchObject({
         code: 'CONTINUATION_RUN_DELETE_FORBIDDEN',
       });
@@ -127,7 +134,7 @@ describe('ADR-0089 M3E-6G — continuation-bound TaskRun delete prohibition (rea
     const f = await fixture();
     const first = await f.entry.start(f.input);
     expect(first.attempt).toBe(1);
-    await f.storage.taskRuns.save({ ...first, status: TaskRunStatus.FAILED, finishedAt: ts });
+    await f.storage.taskRuns.terminalizePreservingSecurityEvidence(first.id, { terminalStatus: 'FAILED', finishedAt: ts, error: 'test failure' });
     await expect(f.storage.taskRuns.delete(first.id)).rejects.toMatchObject({
       code: 'CONTINUATION_RUN_DELETE_FORBIDDEN',
     });

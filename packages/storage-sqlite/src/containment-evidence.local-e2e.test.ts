@@ -319,3 +319,88 @@ describe('R3-A remediation — terminal merge preserves unrelated metadata + exa
     });
   });
 });
+
+describe('R3-B3 Item 3 — continuation-bound STARTED generic terminalization guard (evidence-independent)', () => {
+  it('bound STARTED with NO containment evidence: generic completeRun / failRun rejected', async () => {
+    await withStorage(async storage => {
+      const { tasks, run } = await boundStartedRun(storage);
+      // No containment evidence attached; the run is a plain bound STARTED row.
+      expect((await storage.taskRuns.get(run.id))!.metadata?.containmentAudit).toBeUndefined();
+      await expect(tasks.completeRun(run, { artifactIds: ['a'] }))
+        .rejects.toMatchObject({ code: 'CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH' });
+      await expect(tasks.failRun(run, 'boom'))
+        .rejects.toMatchObject({ code: 'CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH' });
+      // Still STARTED — never generically terminalized.
+      expect((await storage.taskRuns.get(run.id))!.status).toBe(TaskRunStatus.STARTED);
+    });
+  });
+
+  it('bound STARTED WITH containment evidence: generic completeRun / failRun rejected', async () => {
+    await withStorage(async storage => {
+      const { tasks, run } = await boundStartedRun(storage);
+      await storage.taskRuns.recordContainmentBindingIfAbsent(run.id, containmentAudit(run.id));
+      // With evidence present the R3-B2 evidence guard fires first (CONTINUATION_GUARD_REQUIRED); the
+      // key invariant is that generic terminalization is rejected either way.
+      await expect(tasks.completeRun(run, { artifactIds: ['a'] }))
+        .rejects.toMatchObject({ code: 'CONTINUATION_GUARD_REQUIRED' });
+      await expect(tasks.failRun(run, 'boom'))
+        .rejects.toMatchObject({ code: 'CONTINUATION_GUARD_REQUIRED' });
+      expect((await storage.taskRuns.get(run.id))!.status).toBe(TaskRunStatus.STARTED);
+    });
+  });
+
+  it('bound STARTED: a DIRECT public generic terminal save is rejected (no-evidence and evidence cases)', async () => {
+    await withStorage(async storage => {
+      const { run } = await boundStartedRun(storage);
+      // No evidence yet → the R3-B3 evidence-independent guard rejects.
+      const terminal: TaskRun = { ...run, status: TaskRunStatus.SUCCEEDED, finishedAt: ts, artifactIds: ['a'] };
+      await expect(storage.taskRuns.save(terminal))
+        .rejects.toMatchObject({ code: 'CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH' });
+      // With evidence present → the R3-B2 evidence guard rejects. Either way, rejected.
+      await storage.taskRuns.recordContainmentBindingIfAbsent(run.id, containmentAudit(run.id));
+      await expect(storage.taskRuns.save({ ...terminal, status: TaskRunStatus.FAILED, error: 'x' }))
+        .rejects.toMatchObject({ code: 'CONTINUATION_GUARD_REQUIRED' });
+    });
+  });
+
+  it('ordinary/unbound STARTED: generic completeRun / failRun semantics preserved', async () => {
+    await withStorage(async storage => {
+      const { tasks, run } = await ordinaryStartedRun(storage);
+      const completed = await tasks.completeRun(run, { artifactIds: ['artifact-1'] });
+      expect(completed.status).toBe(TaskRunStatus.SUCCEEDED);
+      expect(completed.artifactIds).toEqual(['artifact-1']);
+    });
+  });
+
+  it('ordinary/unbound STARTED: failRun still works', async () => {
+    await withStorage(async storage => {
+      const { tasks, run } = await ordinaryStartedRun(storage);
+      const failed = await tasks.failRun(run, 'boom');
+      expect(failed.status).toBe(TaskRunStatus.FAILED);
+      expect(failed.error).toBe('boom');
+    });
+  });
+
+  it('secure continuation terminalization still succeeds for a bound STARTED run', async () => {
+    await withStorage(async storage => {
+      const { run } = await boundStartedRun(storage);
+      await storage.taskRuns.recordContainmentBindingIfAbsent(run.id, containmentAudit(run.id));
+      const succeeded = await storage.taskRuns.terminalizePreservingSecurityEvidence(run.id, {
+        terminalStatus: 'SUCCEEDED', finishedAt: ts, artifactIds: ['artifact-1'],
+      });
+      expect(succeeded.status).toBe(TaskRunStatus.SUCCEEDED);
+      expect((succeeded.metadata as Record<string, unknown>).containmentAudit).toBeTruthy();
+    });
+  });
+
+  it('secure terminalization on a bound STARTED run with NO evidence also succeeds (evidence optional)', async () => {
+    await withStorage(async storage => {
+      const { run } = await boundStartedRun(storage);
+      const failed = await storage.taskRuns.terminalizePreservingSecurityEvidence(run.id, {
+        terminalStatus: 'FAILED', finishedAt: ts, error: 'CONTINUATION_RECEIVER_FAILED',
+      });
+      expect(failed.status).toBe(TaskRunStatus.FAILED);
+      expect(failed.error).toBe('CONTINUATION_RECEIVER_FAILED');
+    });
+  });
+});

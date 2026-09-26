@@ -202,10 +202,22 @@ describe('ADR-0088 guarded atomic start — real SQLite', () => {
       .rejects.toMatchObject({ code: 'CONTINUATION_GUARD_REQUIRED' });
     expect(await f.storage.taskRuns.list()).toEqual([]);
   });
-  it.each(['complete', 'fail'])('preserves TaskManager.%sRun terminal updates and rejects revival', async mode => {
+  it.each(['complete', 'fail'] as const)('R3-B3: bound run rejects generic TaskManager.%sRun; secure path terminalizes', async mode => {
     const f = await fixture(); const run = await f.entry.start(f.input);
-    const terminal = mode === 'complete' ? await f.tasks.completeRun(run, { artifactIds: [] }) : await f.tasks.failRun(run, 'test failure');
+    // R3-B3 (Item 3): a continuation-bound STARTED run may NOT terminalize through generic
+    // completeRun/failRun (with or without containment evidence). Only the secure path may.
+    await expect(mode === 'complete' ? f.tasks.completeRun(run, { artifactIds: [] }) : f.tasks.failRun(run, 'test failure'))
+      .rejects.toMatchObject({ code: 'CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH' });
+    expect((await f.storage.taskRuns.get(run.id))!.status).toBe(TaskRunStatus.STARTED);
+    // A direct generic terminal save is likewise rejected.
+    await expect(f.storage.taskRuns.save({ ...run, status: TaskRunStatus.SUCCEEDED, finishedAt: run.startedAt }))
+      .rejects.toMatchObject({ code: 'CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH' });
+    // The secure continuation terminalization path succeeds and is the sole terminal path.
+    const terminal = await f.tasks.terminalizePreservingSecurityEvidence(run.id, mode === 'complete'
+      ? { terminalStatus: TaskRunStatus.SUCCEEDED, artifactIds: [] }
+      : { terminalStatus: TaskRunStatus.FAILED, error: 'test failure' });
     expect(await f.storage.taskRuns.get(run.id)).toEqual(terminal);
+    // A STARTED-revival generic save on the now-terminal row is still rejected.
     await expect(f.storage.taskRuns.save(run)).rejects.toMatchObject({ code: 'CONTINUATION_GUARD_REQUIRED' });
     expect(await f.storage.taskRuns.get(run.id)).toEqual(terminal);
   });

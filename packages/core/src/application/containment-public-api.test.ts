@@ -41,6 +41,17 @@ describe('@quoky/core public API surface — R3-B1 fake must not leak (G3A-1)', 
     ]) {
       expect(surface[name], `missing production export: ${name}`).toBeDefined();
     }
+    // R3-B3 production trust helpers must be reachable through the public barrel.
+    for (const name of [
+      'requireProductionTrustedVerification',
+      'requireProductionContainedCapability',
+      'requireProductionPreparedProvenance',
+      'CONTAINMENT_TRUST_DOMAINS',
+      'CONTAINED_EXECUTION_CAPABILITY_KINDS',
+      'CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA',
+    ]) {
+      expect(surface[name], `missing R3-B3 production export: ${name}`).toBeDefined();
+    }
     // Sanity: the preserved production contracts are functionally usable through the public barrel.
     expect(typeof surface.createContainmentSecurityProfile).toBe('function');
     expect(typeof surface.prepareVerifiedContainmentBinding).toBe('function');
