@@ -38,10 +38,30 @@ export const SOLE_PROVIDER_SELECTION_SCHEMA = 'sole-provider-selection-v1' as co
 export const CONTAINMENT_CANDIDATE_BINDING_SCHEMA = 'containment-candidate-binding-v1' as const;
 export const CONTAINED_EXECUTION_CAPABILITY_SCHEMA = 'contained-execution-capability-v1' as const;
 export const PREPARED_CONTAINMENT_EXECUTION_SCHEMA = 'prepared-containment-execution-v1' as const;
+export const CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA = 'containment-verification-provenance-v1' as const;
+export const PREPARED_CONTAINMENT_PROVENANCE_SCHEMA = 'prepared-containment-provenance-v1' as const;
+
+/**
+ * R3-B3 (Items 1/2/4) — durable, SERIALIZABLE production trust boundary.
+ *
+ * `TEST` is the only trust domain any code in this slice can legitimately produce: no real production
+ * verification runtime, capability issuer, or attestation exists yet. `PRODUCTION` is reserved for a
+ * future R3-C runtime issuer. Every production-trust requirement here FAILS CLOSED on the absence of
+ * `PRODUCTION` provenance rather than fabricating authenticity. Trust is carried as durable serializable
+ * fields (survives persistence/restart), NOT only via a process-local WeakSet — the WeakSets remain the
+ * in-process non-forgeability mechanism (B-1/B-2), but the production-vs-test distinction is durable.
+ */
+export const CONTAINMENT_TRUST_DOMAINS = ['TEST', 'PRODUCTION'] as const;
+export type ContainmentTrustDomain = typeof CONTAINMENT_TRUST_DOMAINS[number];
+
+/** The kind of a contained execution capability. FAKE is test-only and is never production-eligible. */
+export const CONTAINED_EXECUTION_CAPABILITY_KINDS = ['FAKE', 'PRODUCTION'] as const;
+export type ContainedExecutionCapabilityKind = typeof CONTAINED_EXECUTION_CAPABILITY_KINDS[number];
 
 /** Domain-separation tags so a containment digest can never equal a Stage2B provider binding digest. */
 const CONTAINMENT_SECURITY_PROFILE_DIGEST_DOMAIN = 'quoky.r3.containment.security-profile.v1' as const;
 const CONTAINMENT_INSTANCE_DIGEST_DOMAIN = 'quoky.r3.containment.instance.v1' as const;
+const CONTAINMENT_PROVENANCE_DIGEST_DOMAIN = 'quoky.r3.containment.provenance.v1' as const;
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HEX64 = /^[a-f0-9]{64}$/;
@@ -73,7 +93,14 @@ export type PreparedContainmentFailureCode =
   | 'CONTAINMENT_BINDING_DIGEST_MISMATCH'
   | 'EXECUTION_CAPABILITY_NOT_ISSUED'
   | 'EXECUTION_CAPABILITY_INSTANCE_MISMATCH'
-  | 'EXACT_RUN_BINDING_MISMATCH';
+  | 'EXACT_RUN_BINDING_MISMATCH'
+  | 'CHANNEL_NOT_PRODUCTION_TRUSTED'
+  | 'CHANNEL_PROVENANCE_NOT_INDEPENDENT'
+  | 'CAPABILITY_NOT_PRODUCTION_ELIGIBLE'
+  | 'PREPARED_PROVENANCE_NOT_PRODUCTION_TRUSTED'
+  | 'PREPARED_PROVENANCE_INVALID'
+  | 'SELF_DECLARED_PRODUCTION_TRUST_REJECTED'
+  | 'PRODUCTION_TRUST_ANCHOR_UNAVAILABLE';
 
 /** Bounded, fail-closed preparation error. Carries a code only — never host/runtime detail. */
 export class PreparedContainmentError extends Error {
@@ -346,6 +373,16 @@ export type ContainmentChannelStatus = 'VERIFIED' | 'FAILED' | 'UNAVAILABLE' | '
 export interface ContainmentChannelResult {
   readonly status: ContainmentChannelStatus;
   readonly verifierVersion: string;
+  /**
+   * R3-B3 (Item 1): durable, serializable production-trust facts. `trustDomain` distinguishes a test/fake
+   * verification (`TEST`) from a future production-trusted one (`PRODUCTION`). `verifierProvenanceId` is a
+   * durable verifier/attestation provenance identity; Channel A and Channel B must present DISTINCT
+   * provenance identities (independence). No production issuer exists yet, so a legitimately-produced
+   * result is always `TEST`; a `PRODUCTION` claim from arbitrary caller code cannot be honoured (there is
+   * no production issuer to satisfy `requireProductionTrustedVerification`, which fails closed).
+   */
+  readonly trustDomain: ContainmentTrustDomain;
+  readonly verifierProvenanceId: string;
   /** SHA-256 over the exact subject the channel verified; present only when VERIFIED. */
   readonly resultDigest?: string;
 }
@@ -361,11 +398,28 @@ export interface ContainmentVerificationChannel {
 }
 
 /**
+ * R3-B3 (Item 4): durable, SERIALIZABLE prepared-evidence provenance. Its presence with
+ * `trustDomain==='PRODUCTION'` is the ONLY thing that lets a future production path treat prepared
+ * evidence as production-trusted — "canonical fields + correct hash" alone yields `TEST` provenance and
+ * fails closed against a production-trust requirement. It carries the durable trust domain, the two
+ * independent verifier provenance identities, and a domain-separated provenance digest over those facts.
+ * It contains NO secret key, certificate, network attestation, or runtime-specific evidence.
+ */
+export interface VerifiedContainmentProvenance {
+  readonly provenanceSchema: typeof CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA;
+  readonly trustDomain: ContainmentTrustDomain;
+  readonly channelAProvenanceId: string;
+  readonly channelBProvenanceId: string;
+  readonly provenanceDigest: string;
+}
+
+/**
  * The verified binding. It is issued ONLY by `prepareVerifiedContainmentBinding` after BOTH channels
  * independently VERIFIED the identical subject, AND is registered in a module-private WeakSet so it
  * cannot be forged. `containmentBindingDigest` is domain-separated and binds the security profile,
  * containment instance, Provider binding, model identity, both channel verifier identities + result
- * digests, and schema/version facts — DISTINCT from `providerBindingDigest`.
+ * digests, and schema/version facts — DISTINCT from `providerBindingDigest`. R3-B3 additionally carries a
+ * durable `provenance` record (Item 4) so integrity (correct hash) is separated from production trust.
  */
 export interface VerifiedContainmentBinding {
   readonly executionContext: ContainmentExecutionContext;
@@ -382,6 +436,8 @@ export interface VerifiedContainmentBinding {
   readonly channelBVerifierVersion: string;
   readonly channelAResultDigest: string;
   readonly channelBResultDigest: string;
+  /** R3-B3 (Item 4): durable serializable production-trust provenance. */
+  readonly provenance: VerifiedContainmentProvenance;
   /** R3 containment binding digest. NEVER equal to providerBindingDigest. */
   readonly containmentBindingDigest: string;
 }
@@ -418,11 +474,18 @@ function channelResultDigest(subject: ContainmentVerificationSubject, channel: '
   });
 }
 
+interface VerifiedChannelFacts {
+  readonly resultDigest: string;
+  readonly trustDomain: ContainmentTrustDomain;
+  readonly verifierProvenanceId: string;
+  readonly verifierVersion: string;
+}
+
 function requireChannelVerified(
   result: ContainmentChannelResult,
   subject: ContainmentVerificationSubject,
   channel: 'A' | 'B',
-): string {
+): VerifiedChannelFacts {
   const unverified = channel === 'A' ? 'CHANNEL_A_UNVERIFIED' : 'CHANNEL_B_UNVERIFIED';
   if (result === null || typeof result !== 'object') throw new PreparedContainmentError(unverified);
   if (result.status === 'UNCERTAIN') throw new PreparedContainmentError('VERIFICATION_UNCERTAIN');
@@ -430,11 +493,21 @@ function requireChannelVerified(
   if (!isVersion(result.verifierVersion) || !isHex64(result.resultDigest ?? '')) {
     throw new PreparedContainmentError(unverified);
   }
+  // R3-B3 (Item 1): durable trust facts must be well-formed. A malformed/absent trust domain or
+  // provenance identity is not a verified result.
+  if (!CONTAINMENT_TRUST_DOMAINS.includes(result.trustDomain) || !isId(result.verifierProvenanceId)) {
+    throw new PreparedContainmentError(unverified);
+  }
   // The channel must have verified the EXACT subject.
   if (result.resultDigest !== channelResultDigest(subject, channel, result.verifierVersion)) {
     throw new PreparedContainmentError('CHANNEL_DISAGREEMENT');
   }
-  return result.resultDigest;
+  return {
+    resultDigest: result.resultDigest,
+    trustDomain: result.trustDomain,
+    verifierProvenanceId: result.verifierProvenanceId,
+    verifierVersion: result.verifierVersion,
+  };
 }
 
 /**
@@ -466,12 +539,38 @@ export function prepareVerifiedContainmentBinding(input: {
   // Independently invoke each channel. Both must VERIFY the exact same subject.
   const resultA = channelA.verify(subject);
   const resultB = channelB.verify(subject);
-  const channelAResultDigest = requireChannelVerified(resultA, subject, 'A');
-  const channelBResultDigest = requireChannelVerified(resultB, subject, 'B');
-  // Independence: the two verifier identities must differ (a single verifier cannot satisfy both).
-  if (resultA.verifierVersion === resultB.verifierVersion) {
+  const factsA = requireChannelVerified(resultA, subject, 'A');
+  const factsB = requireChannelVerified(resultB, subject, 'B');
+  const channelAResultDigest = factsA.resultDigest;
+  const channelBResultDigest = factsB.resultDigest;
+  // Independence: the two verifier identities AND their durable provenance identities must differ (a
+  // single verifier/provenance cannot satisfy both channels — Item 1/§9-B).
+  if (factsA.verifierVersion === factsB.verifierVersion) {
     throw new PreparedContainmentError('CHANNEL_DISAGREEMENT');
   }
+  if (factsA.verifierProvenanceId === factsB.verifierProvenanceId) {
+    throw new PreparedContainmentError('CHANNEL_PROVENANCE_NOT_INDEPENDENT');
+  }
+  // R3-B3 remediation (B-1): production trust is NEVER derived from channel-returned strings. There is no
+  // production verifier issuer or trust anchor in R3-B3, so a channel that self-declares
+  // `trustDomain === 'PRODUCTION'` is REJECTED (fail closed) rather than silently trusted or downgraded.
+  // Every legitimately issuable binding is stamped TEST; a distinct provenance-id string is NOT itself a
+  // trust anchor. A future, separately-authorized production issuer is the only thing that may ever mint
+  // PRODUCTION provenance.
+  if (factsA.trustDomain !== 'TEST' || factsB.trustDomain !== 'TEST') {
+    throw new PreparedContainmentError('SELF_DECLARED_PRODUCTION_TRUST_REJECTED');
+  }
+  const trustDomain: ContainmentTrustDomain = 'TEST';
+  const provenanceShape = {
+    provenanceSchema: CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA,
+    trustDomain,
+    channelAProvenanceId: factsA.verifierProvenanceId,
+    channelBProvenanceId: factsB.verifierProvenanceId,
+  };
+  const provenance: VerifiedContainmentProvenance = Object.freeze({
+    ...provenanceShape,
+    provenanceDigest: sha256Canonical(CONTAINMENT_PROVENANCE_DIGEST_DOMAIN, provenanceShape),
+  });
 
   const bindingShape = {
     schemaVersion: VERIFIED_CONTAINMENT_BINDING_SCHEMA,
@@ -484,17 +583,61 @@ export function prepareVerifiedContainmentBinding(input: {
     expectedModelId: candidate.expectedModelId,
     expectedModelDigest: candidate.expectedModelDigest,
     imageDigest: candidate.imageDigest,
-    channelAVerifierVersion: resultA.verifierVersion,
-    channelBVerifierVersion: resultB.verifierVersion,
+    channelAVerifierVersion: factsA.verifierVersion,
+    channelBVerifierVersion: factsB.verifierVersion,
     channelAResultDigest,
     channelBResultDigest,
   };
   const binding: VerifiedContainmentBinding = Object.freeze({
     ...bindingShape,
+    provenance,
     containmentBindingDigest: containmentBindingDigest(bindingShape),
   });
   issuedVerifiedBindings.add(binding);
   return binding;
+}
+
+/**
+ * R3-B3 remediation (B-1/§3): production-trust requirement for prepared evidence. There is NO production
+ * trust anchor or issuer in R3-B3, so this ALWAYS FAILS CLOSED for every currently-issuable binding.
+ * A correct `containmentBindingDigest`, a recomputable `provenanceDigest`, a serialized
+ * `trustDomain: 'PRODUCTION'`, or a spread/JSON-round-trip copy are NONE of them a production trust
+ * anchor: knowledge of the canonical fields cannot manufacture production authenticity. Malformed input
+ * still fails closed. Serializable provenance metadata is explicitly NOT authenticated production
+ * provenance; a future, separately-authorized production issuer must supply the real anchor.
+ */
+export function requireProductionPreparedProvenance(binding: VerifiedContainmentBinding): void {
+  // Reject anything that is not a genuinely module-issued, digest-consistent binding first (a bounded,
+  // honest classification) — a spread/reconstructed/JSON-round-tripped copy is not WeakSet-registered.
+  requireIssuedVerifiedBinding(binding);
+  const p = binding.provenance;
+  if (!p || p.provenanceSchema !== CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA
+    || !CONTAINMENT_TRUST_DOMAINS.includes(p.trustDomain)
+    || !isId(p.channelAProvenanceId) || !isId(p.channelBProvenanceId)
+    || p.channelAProvenanceId === p.channelBProvenanceId || !isHex64(p.provenanceDigest)) {
+    throw new PreparedContainmentError('PREPARED_PROVENANCE_INVALID');
+  }
+  // No production trust anchor exists in R3-B3. Even a well-formed, issued, TEST-provenance binding is
+  // NOT production-trusted, and a `PRODUCTION` string can never be issued (see prepareVerifiedContainment
+  // Binding). Fail closed unconditionally — production authenticity is deliberately deferred to a later
+  // separately-authorized issuer.
+  throw new PreparedContainmentError('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
+}
+
+/**
+ * R3-B3 remediation (B-1/§2): production-trusted DUAL-channel verification requirement. There is NO
+ * production verifier issuer or trust anchor in R3-B3, so this ALWAYS FAILS CLOSED for every currently
+ * caller-constructible input. Self-declared `trustDomain: 'PRODUCTION'`, distinct provenance-id strings,
+ * a caller-computed matching `resultDigest`, or any combination thereof are NEVER a trust anchor:
+ * serialized/returned values alone can never make this succeed. It never inspects caller strings to
+ * decide trust — it unconditionally rejects, because a production issuer that could satisfy it does not
+ * exist and is deliberately deferred to a later, separately-authorized slice.
+ */
+export function requireProductionTrustedVerification(
+  _resultA: ContainmentChannelResult,
+  _resultB: ContainmentChannelResult,
+): void {
+  throw new PreparedContainmentError('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -521,15 +664,21 @@ export interface ContainedExecutionResult {
  * Opaque contained execution capability. Non-forgeable: the concrete class is module-private and only a
  * module factory can mint + register one. It is bound to an exact containment instance identity digest,
  * and its `run` cannot be supplied by a caller.
+ *
+ * R3-B3 (Item 2): `capabilityKind` structurally separates a FAKE (test) capability from a future
+ * PRODUCTION capability. A FAKE capability is NEVER production-eligible; `requireProductionContainedCapability`
+ * rejects it. No production capability issuer exists in R3-B3, so nothing can currently be PRODUCTION.
  */
 export interface ContainedExecutionCapability {
   readonly schemaVersion: typeof CONTAINED_EXECUTION_CAPABILITY_SCHEMA;
+  readonly capabilityKind: ContainedExecutionCapabilityKind;
   readonly instanceIdentityDigest: string;
 }
 
 class IssuedContainedExecutionCapability implements ContainedExecutionCapability {
   readonly schemaVersion = CONTAINED_EXECUTION_CAPABILITY_SCHEMA;
   constructor(
+    readonly capabilityKind: ContainedExecutionCapabilityKind,
     readonly instanceIdentityDigest: string,
     /** Module-internal deterministic run. Never caller-supplied; never a host handle. */
     readonly run: (binding: VerifiedContainmentBinding, input: ContainedExecutionInput) => Promise<ContainedExecutionResult>,
@@ -554,6 +703,7 @@ export function createFakeContainedExecutionCapability(
     throw new PreparedContainmentError('CONTAINMENT_CONFIGURATION_INVALID');
   }
   const capability = new IssuedContainedExecutionCapability(
+    'FAKE',
     instance.instanceIdentityDigest,
     // Deterministic, side-effect-free fake. No network, provider, command, or host access.
     async (binding, input) =>
@@ -570,6 +720,19 @@ function requireIssuedCapability(capability: ContainedExecutionCapability): Issu
     throw new PreparedContainmentError('EXECUTION_CAPABILITY_NOT_ISSUED');
   }
   return capability;
+}
+
+/**
+ * R3-B3 (Item 2): production-eligibility requirement for a contained execution capability. It must be a
+ * genuinely issued capability (non-forgeable) AND declare `capabilityKind==='PRODUCTION'`. A FAKE/test
+ * capability is rejected. No production capability issuer exists in R3-B3, so this ALWAYS fails closed
+ * today; it is the seam a future R3-C runtime issuer will satisfy WITHOUT changing R3-B1/B2 guarantees.
+ */
+export function requireProductionContainedCapability(capability: ContainedExecutionCapability): void {
+  const issued = requireIssuedCapability(capability);
+  if (issued.capabilityKind !== 'PRODUCTION') {
+    throw new PreparedContainmentError('CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
+  }
 }
 
 const issuedPrepared = new WeakSet<PreparedContainmentExecution>();

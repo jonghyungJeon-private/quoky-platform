@@ -57,7 +57,7 @@ function prepared(runId: string) {
       providerId: subject.candidate.providerId, providerBindingDigest: subject.providerBindingDigest,
       securityProfileDigest: subject.securityProfileDigest, instanceIdentityDigest: subject.instanceIdentityDigest,
       expectedModelDigest: subject.expectedModelDigest, imageDigest: subject.candidate.imageDigest };
-    return { status: 'VERIFIED', verifierVersion,
+    return { status: 'VERIFIED', verifierVersion, trustDomain: 'TEST', verifierProvenanceId: `fake-provenance-${channel}`,
       resultDigest: createHash('sha256').update(JSON.stringify({ domain: `quoky.r3.containment.channel.${channel}.v1`, shape })).digest('hex') };
   } });
   return PreparedContainmentExecution.fromVerifiedBinding(prepareVerifiedContainmentBinding({ candidate,
@@ -227,10 +227,18 @@ describe('R3-B2 B-2 secure terminalization cannot be bypassed by generic persist
     });
   });
 
-  it.each(['SUCCEEDED', 'FAILED'] as const)('preserves generic %s on continuation runs without containment', async status => {
+  it.each(['SUCCEEDED', 'FAILED'] as const)('R3-B3: rejects generic %s on continuation runs even without containment evidence', async status => {
     await withBoundRun(async (storage, tasks, run) => {
-      const terminal = status === 'SUCCEEDED' ? await tasks.completeRun(run, { artifactIds: [] })
-        : await tasks.failRun(run, 'CONTINUATION_RECEIVER_FAILED');
+      // R3-B3 (Item 3): a continuation-bound STARTED run cannot be generically terminalized to
+      // SUCCEEDED/FAILED even when no containment evidence has been attached. Secure path only.
+      await expect(status === 'SUCCEEDED' ? tasks.completeRun(run, { artifactIds: [] })
+        : tasks.failRun(run, 'CONTINUATION_RECEIVER_FAILED'))
+        .rejects.toMatchObject({ code: 'CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH' });
+      expect((await storage.taskRuns.get(run.id))!.status).toBe(TaskRunStatus.STARTED);
+      // The secure path still terminalizes it (evidence optional).
+      const terminal = await tasks.terminalizePreservingSecurityEvidence(run.id, {
+        terminalStatus: status === 'SUCCEEDED' ? TaskRunStatus.SUCCEEDED : TaskRunStatus.FAILED,
+      });
       expect(terminal.status).toBe(status);
       expect(await storage.taskRuns.get(run.id)).toEqual(terminal);
     });

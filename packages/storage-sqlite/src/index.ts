@@ -345,12 +345,25 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
     return this.noContention(() => this.db.transaction(() => {
       const existing = this.db.prepare('SELECT data FROM task_runs WHERE id = ?').get(run.id) as Row | undefined;
       const persisted = existing ? JSON.parse(existing.data) as TaskRun : null;
-      // R3-B2 B-2: containment-bound STARTED rows may terminalize ONLY through the secure API.
-      // Inspect the current row, not the caller's evidence/taskId; even a stale snapshot must not bypass
-      // this guard. Presence is conservative: malformed evidence never grants generic terminal authority.
+      // R3-B2: a containment-evidence-bearing STARTED row may terminalize ONLY through the secure API.
+      // Inspect the CURRENT row, not the caller's evidence/taskId; even a stale snapshot must not bypass
+      // this. Presence is conservative: any non-STARTED generic transition is rejected when evidence is
+      // attached (malformed evidence never grants generic terminal authority).
       if (persisted?.status === TaskRunStatus.STARTED && run.status !== TaskRunStatus.STARTED
         && Object.prototype.hasOwnProperty.call(persisted.metadata ?? {}, CONTAINMENT_AUDIT_METADATA_KEY)) {
         throw new GuardedTaskRunStartError('CONTINUATION_GUARD_REQUIRED');
+      }
+      // R3-B3 (Item 3): a CONTINUATION-BOUND STARTED row may terminalize to SUCCEEDED/FAILED ONLY through
+      // the secure continuation terminalization path — regardless of whether containment evidence is
+      // present yet. This closes the R3-B2 carry-forward gap where a bound STARTED run with no attached
+      // evidence could still be generically terminalized. The decision is derived from the CURRENT
+      // persisted row + the canonical continuation binding, never the caller snapshot. CANCELED is a
+      // distinct cancellation lifecycle (not a success/failure terminalization) and keeps its existing
+      // revival-guarded semantics; ordinary non-continuation runs are unaffected.
+      if (persisted?.status === TaskRunStatus.STARTED
+        && (run.status === TaskRunStatus.SUCCEEDED || run.status === TaskRunStatus.FAILED)
+        && this.isBound(persisted.taskId)) {
+        throw new GuardedTaskRunStartError('CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH');
       }
       if (this.isBound(run.taskId)) {
         // Block ALL novel rows (including terminal-shaped insertion), and terminal → STARTED revival.

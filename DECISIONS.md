@@ -8449,3 +8449,137 @@ SECURITY_TERMINALIZE_REQUIRES_CONTINUATION_BOUND = YES
 ROUTING_AUDIT_V1_CHANGED = NO
 R3_B_AUTHORIZED = NO ; R3_C_PLUS_AUTHORIZED = NO ; LIVE_PROVIDER = NOT AUTHORIZED
 ```
+
+
+#### ADR-0089 amendment — R3-B3 Production Containment Trust Closure (2026-09-27)
+
+**Status: Implemented locally / awaiting independent exact-HEAD review.** R3-B3 closes the remaining
+runtime-independent production trust boundaries before any R3-C runtime/feasibility work. It implements NO
+real container/VM runtime, NO real Ollama/Provider execution, NO network verification, and NO Live UAT.
+It is runtime-family-independent and introduces no new aggregate/repository/TaskRunStatus/approval model
+and no DB schema/migration.
+
+**Item 1 — Channel A/B production provenance trust model.** `ContainmentChannelResult` carries
+SERIALIZABLE trust facts: `trustDomain ∈ {TEST, PRODUCTION}` and a `verifierProvenanceId`. **See the R3-B3
+remediation (B-1) correction below — the original derivation of production trust from channel-returned
+strings was a defect and has been removed. Issued bindings are ALWAYS `TEST`; a self-declared
+`PRODUCTION` channel is rejected; `requireProductionTrustedVerification` fails closed unconditionally.**
+Channel A and Channel B must present DISTINCT `verifierProvenanceId`s (independence).
+
+**Item 2 — fake vs production contained capability separation.** `ContainedExecutionCapability` gains a
+`capabilityKind ∈ {FAKE, PRODUCTION}`. The module-issued deterministic fake is stamped `FAKE`. The new
+`requireProductionContainedCapability` requires a genuinely issued capability AND `capabilityKind ===
+'PRODUCTION'`; a FAKE (or a forged/unissued object) is rejected. No production capability issuer exists
+in R3-B3, so the requirement always fails closed now; it is the exact seam a future R3-C runtime issuer
+will satisfy without changing R3-B1/B2 non-forgeability guarantees. The fake remains usable by tests.
+
+**Item 3 — continuation-bound generic terminalization guard (evidence-independent).** The storage
+`SqliteTaskRunRepository.save` now rejects ANY generic terminal transition (STARTED → SUCCEEDED/FAILED)
+on a CONTINUATION-BOUND persisted STARTED row, regardless of whether containment evidence is attached —
+closing the R3-B2 carry-forward gap where a bound STARTED run with no evidence could still be generically
+terminalized. The decision is derived from the CURRENT persisted row + the canonical continuation binding
+inside the IMMEDIATE transaction (never caller state), with a dedicated bounded reason
+`CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH`. Only `terminalizePreservingSecurityEvidence` may
+terminalize a bound run. Ordinary/non-continuation `completeRun`/`failRun`/`save` are unchanged.
+
+**Item 4 — durable prepared-evidence provenance boundary.** `VerifiedContainmentBinding` now carries a
+durable, SERIALIZABLE `provenance` record (`provenanceSchema`, `trustDomain`, independent channel
+provenance ids, domain-separated `provenanceDigest`). Integrity ("canonical fields + correct
+`containmentBindingDigest`") is now explicitly SEPARATED from production trust: the new
+`requireProductionPreparedProvenance` **see the remediation (B-1/§3) correction below — this now fails
+closed UNCONDITIONALLY for every currently-issuable binding; no `PRODUCTION` binding can be issued and no
+production trust anchor exists.** A legacy R3-A structural audit (which has no such provenance) can never
+masquerade as prepared production evidence. Serializable provenance metadata is a CONTRACT SHAPE, not
+authenticated production provenance and NOT restart-valid production authenticity; the WeakSets remain the
+in-process non-forgeability mechanism for B-1/B-2 and do NOT survive serialization/restart.
+
+**Legacy R3-A audit boundary (§5).** Legacy R3-A audit provenance is NOT broadly redesigned. The stronger
+trust boundary is limited to the prepared/R3-B production form; legacy evidence cannot satisfy
+`requireProductionPreparedProvenance` (no prepared provenance), and the future R3-C production path will
+require the stronger prepared form. Documented + tested.
+
+```text
+CHANNEL_TRUST_DOMAIN = TEST | PRODUCTION (serializable contract shape only)
+PRODUCTION_TRUSTED_VERIFICATION = FAIL CLOSED (unconditional; no production issuer/anchor)
+CHANNEL_A_B_PROVENANCE_INDEPENDENT = REQUIRED (distinct id ≠ trust anchor)
+CONTAINED_CAPABILITY_KIND = FAKE | PRODUCTION ; FAKE_PRODUCTION_ELIGIBLE = NO ; PRODUCTION_ISSUER_EXISTS = NO
+BOUND_STARTED_GENERIC_TERMINALIZATION = REJECTED (with or without evidence)
+SECURE_TERMINALIZATION = SOLE TERMINAL PATH FOR BOUND RUNS
+PREPARED_EVIDENCE_PRODUCTION_TRUST = CONTRACT_DEFINED_BUT_PRODUCTION_TRUST_ANCHOR_DEFERRED (fail closed)
+SELF_DECLARED_PRODUCTION_TRUST = REJECTED (never derived from channel-returned strings)
+RESTART_VALID_PRODUCTION_AUTHENTICITY = DEFERRED (serializable metadata ≠ authenticated provenance)
+LEGACY_R3A_MASQUERADE_AS_PREPARED = IMPOSSIBLE
+PROVIDER_BINDING_DIGEST_VS_CONTAINMENT_BINDING_DIGEST = DISTINCT (unchanged)
+EXACT_RUN_CONTEXT_DIGEST_BINDING = INTACT (R3-B2 unchanged)
+R3B1_NON_FORGEABILITY_AND_FAKE_PACKAGE_ISOLATION = INTACT
+REAL_RUNTIME/PROVIDER/NETWORK_REACHABLE = NO
+NEW_AGGREGATE/REPOSITORY/STATUS/APPROVAL/DB_SCHEMA = NO
+```
+
+Mandatory carry-forward (unchanged): no production contained-continuation execution path may become
+reachable until secure terminalization is integrated through `terminalizePreservingSecurityEvidence`
+(already the sole terminal path for bound runs). Intentionally deferred: selection-token single-use
+semantics; broad channel exception taxonomy; NOT_REVERIFIED/UNAVAILABLE policy; real Docker/OrbStack/VM
+runtime; real Channel A/B verification; real contained execution capability issuer; Ollama/Provider
+execution; network; R3 containment feasibility UAT; final runtime-family selection; R3-C/R3-D/R3-E; Live
+UAT. Ollaya / provider-routing direction remains future-only context and is NOT in this scope.
+
+
+#### ADR-0089 amendment — R3-B3 remediation (production trust is not self-declarable) (2026-09-27)
+
+**Status: Remediation implemented locally / awaiting independent exact-HEAD review.** This corrects two
+accepted blocking findings against the R3-B3 record above. It preserves the reviewed R3-B3 commit
+(`7d35d5b`) unamended and adds exactly one remediation commit. No Push/PR/Merge, no
+runtime/container/VM/Ollama/Provider/model/network, no live/existing DB mutation, no R3-C+.
+
+**B-1 — production trust must not be self-declarable (corrected).** The original R3-B3 derived a binding's
+`trustDomain` from the channel-returned strings, so an arbitrary caller could implement two
+`ContainmentVerificationChannel`s returning `status=VERIFIED`, `trustDomain='PRODUCTION'`, distinct
+`verifierProvenanceId`s and a caller-computed matching `resultDigest`, and thereby obtain a
+production-trusted binding. That was a defect: PRODUCTION trust was caller-controlled data. The
+remediation makes production trust **UNAVAILABLE / FAIL CLOSED** on every caller-accessible path, because
+R3-B3 has **no production verifier issuer, capability issuer, or trust anchor**:
+- `prepareVerifiedContainmentBinding` NEVER derives trust from channel strings. If either channel returns
+  `trustDomain !== 'TEST'` it is REJECTED (`SELF_DECLARED_PRODUCTION_TRUST_REJECTED`). Every issuable
+  binding is stamped `trustDomain = 'TEST'`. A distinct provenance-id string is not itself a trust anchor.
+- `requireProductionTrustedVerification(...)` fails closed UNCONDITIONALLY
+  (`PRODUCTION_TRUST_ANCHOR_UNAVAILABLE`) for all caller inputs; no serialized value can make it succeed.
+- `requireProductionPreparedProvenance(binding)` validates issuance/shape (bounded, honest) then fails
+  closed UNCONDITIONALLY (`PRODUCTION_TRUST_ANCHOR_UNAVAILABLE`). A correct `containmentBindingDigest`,
+  recomputed `provenanceDigest`, serialized `trustDomain:'PRODUCTION'`, spread/reconstructed copy, or JSON
+  round-trip is NONE of them a production trust anchor.
+
+**B-2 — durability/authenticity claims corrected (this record supersedes the overclaims above).**
+```text
+R3-B3 PRODUCTION PROVENANCE CONTRACT = CONTRACT_DEFINED
+PRODUCTION TRUST ANCHOR             = NOT IMPLEMENTED
+PRODUCTION VERIFIER ISSUER          = NOT IMPLEMENTED
+PRODUCTION CAPABILITY ISSUER        = NOT IMPLEMENTED
+PRODUCTION TRUST CHECK              = FAIL CLOSED (unconditional)
+RESTART-VALID PRODUCTION AUTHENTICITY = DEFERRED
+ARCHITECTURE CLASSIFICATION         = CONTRACT_DEFINED_BUT_PRODUCTION_TRUST_ANCHOR_DEFERRED
+```
+Serializable provenance metadata is a contract shape only — it is NOT cryptographic/authenticated
+provenance and does NOT survive persistence/restart as production authenticity. Binding authenticity in
+R3-B3 relies on process-local WeakSet issuance and is not projected into R3-A TaskRun evidence (N-1
+carry-forward). R3-C or a later explicitly-approved slice must provide the real production trust anchor;
+until then all production trust checks fail closed. No real runtime/provider/network path is reachable.
+
+**Preserved gates (unchanged by remediation).** Gate 2: the fake capability remains non-forgeable and
+`capabilityKind='FAKE'` is never production-eligible; no PRODUCTION capability issuer exists. Gate 3:
+continuation-bound STARTED runs cannot generically transition to SUCCEEDED/FAILED (with or without
+containment evidence); secure `terminalizePreservingSecurityEvidence` is the sole terminal path; ordinary
+unbound runs retain normal semantics. R3-B1 (binding/selection/candidate/capability non-forgeability, no
+arbitrary runner, fake absent from the public package, `providerBindingDigest != containmentBindingDigest`)
+and R3-B2 (exact-run digest binding, cross-run replay rejection, stale-snapshot protection, UNRESOLVED
+semantics, secure evidence preservation) remain intact.
+
+Post-remediation invariants: (A) arbitrary caller-created channels cannot obtain production trust;
+(B) self-declared `trustDomain='PRODUCTION'` is never a trust anchor (rejected); (C)
+`requireProductionTrustedVerification` fails closed because no production issuer exists; (D)
+`requireProductionPreparedProvenance` fails closed because no production trust anchor exists; (E) TEST
+verification/prepared flows continue to work for R3-B tests; (F) fake execution capability remains
+production-ineligible; (G) continuation-bound STARTED generic terminalization remains blocked; (H)
+serializable provenance metadata is explicitly distinguished from authenticated production provenance;
+(I) no production runtime/verifier/capability issuer is introduced; (J) no R3-C/runtime/network/provider
+path becomes reachable. Non-blocking N-1..N-3 and existing carry-forwards remain deferred.
