@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2A — Bound Local Continuity Authority — 2026-09-28
+
+- Add process/issuer-local `BoundLocalContinuitySelectionIssuer` with internal R3-C1 admission,
+  exact TaskRun/execution/workload/configuration binding, and first-run singleton STARTED history checks.
+- Share the existing continuation context owner and domain-separated canonical hash; implement the exact
+  ten-field RoutingContextDigest contract without changing existing containment digest identities.
+- Enforce C2A authority/PRIMARY_ONLY plan checks in continuation orchestration before availability probes.
+  Validated C2A requests still fail closed before dispatch because C2C preparation is not implemented.
+- Add adversarial authority/replay/configuration/context tests and real SQLite first-continuation,
+  concurrent STARTED exclusion, and terminal-run rerun denial tests (NB-R1/R2/R3).
+- No runtime/provider/network activation, containment preparation, production trust, schema/migration,
+  Kind B issuer, or R3-C-Rz. C2B/C2C remain not started; independent implementation review pending.
+
 ## R3-C2 architecture BR-1 final remediation (docs only) — 2026-09-28
 
 - Add the "ADR-0090 amendment (remediation 2 — BR-1 final)" to `DECISIONS.md`, accepting BR-1 and closing

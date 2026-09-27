@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { sha256Canonical } from './canonical-digest';
 import type { ContainmentBindingEvidence } from '../ports/continuation-containment-audit';
 
 export const VERIFIED_CONTAINMENT_BINDING_SCHEMA = 'verified-containment-binding-v1' as const;
@@ -42,5 +42,5 @@ export function containmentBindingDigest(binding: BindingFacts): string {
     channelAResultDigest: binding.channelAResultDigest,
     channelBResultDigest: binding.channelBResultDigest,
   };
-  return createHash('sha256').update(JSON.stringify({ domain: CONTAINMENT_BINDING_DIGEST_DOMAIN, shape })).digest('hex');
+  return sha256Canonical(CONTAINMENT_BINDING_DIGEST_DOMAIN, shape);
 }

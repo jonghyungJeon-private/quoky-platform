@@ -1,6 +1,6 @@
 import { containmentBindingDigest, VERIFIED_CONTAINMENT_BINDING_SCHEMA } from './containment-binding-digest';
 export { VERIFIED_CONTAINMENT_BINDING_SCHEMA } from './containment-binding-digest';
-import { createHash } from 'node:crypto';
+import { sha256Canonical } from './canonical-digest';
 import { CONTAINMENT_RUNTIME_FAMILIES, CONTINUATION_CONTAINMENT_AUDIT_SCHEMA,
   type ContainmentBindingEvidence, type ContinuationContainmentAudit } from '../ports/continuation-containment-audit';
 import { snapshotContainmentAudit } from './continuation-containment-validation';
@@ -72,10 +72,6 @@ function isId(v: unknown): v is string { return typeof v === 'string' && ID.test
 function isHex64(v: unknown): v is string { return typeof v === 'string' && HEX64.test(v); }
 function isVersion(v: unknown): v is string { return typeof v === 'string' && VERSION.test(v); }
 function isOpaque(v: unknown): v is string { return typeof v === 'string' && OPAQUE.test(v); }
-
-function sha256Canonical(domain: string, shape: unknown): string {
-  return createHash('sha256').update(JSON.stringify({ domain, shape })).digest('hex');
-}
 
 export type PreparedContainmentFailureCode =
   | 'CONTAINMENT_CONFIGURATION_INVALID'
