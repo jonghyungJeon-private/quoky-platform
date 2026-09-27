@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C1 exact-HEAD review remediation (canonical cloud path + composite config) — 2026-09-27
+
+- Remediate the R3-C1 admission contract against the `CHANGES_REQUIRED` verdict (one commit on top of
+  reviewed `ab0db3a0`, not amended). B-1: remove caller-controlled `normalCloudProviderId` /
+  `requiredCloudProviderIds` (probes P1/P2/P3 closed). B-2: Kind A now means "no statically eligible
+  NETWORK/cloud provider for the matched policy", derived via a new Stage2B-owned read-only
+  `RoutingPolicyEngine.staticEligibility(...)` projection that never consults availability/`isAvailable()`/
+  `availabilityClass`/snapshot and never fabricates an AVAILABLE snapshot, does not rank/select/plan/invoke/
+  mutate. B-3: bind admission to the composite (registry + policy) `configurationDigest` identical to
+  `select` (probe P7 closed; registry-only/stale-policy refs rejected). Remove duplicated local-provider
+  floor logic (reuse the same static projection). Rename Kind B/C entry points to
+  `assert*Unsupported` (always throw). Make `deriveKindAStaticFacts` internal. Correct the earlier
+  overclaim about `SoleProviderSelection` non-forgeability (it is a pre-existing R3-B1 public assertion).
+- Add `StaticEligibilityProjection` to routing contracts and independent `staticEligibility` tests
+  (availability-independent, no ranking/selection/plan). No new `RoutingFailureCode`, DB schema, aggregate,
+  approval/security owner, Kind B issuer, production trust/capability issuer, runtime family, or network
+  path. R3-C2 and R3-C-Rz remain NOT AUTHORIZED. Focused + Stage2B + R3-B1/B2/B3 regressions and typecheck
+  pass; the only full-suite failure is the unrelated env-sensitive `github-app-git-provider.test.ts`
+  (`GIT_ASKPASS` set in shell), left unmodified. Local commit only; Push/PR/Merge require review PASS.
+
 ## R3-C1 Local Continuity Eligibility & Static Trusted Admission — 2026-09-27
 
 - Add Core Application `local-continuity-admission.ts`: a pure, runtime-independent admission contract for

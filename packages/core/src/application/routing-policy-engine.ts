@@ -29,6 +29,7 @@ import {
   RoutingRequestType,
   SemanticRisk,
   SortDirection,
+  StaticEligibilityProjection,
   SupportLevel,
   TerminalDecision,
   isRoutingIdentifier,
@@ -408,10 +409,7 @@ export class RoutingPolicyEngine {
 
   select(context: RoutingContext, registry: ProviderRegistrySnapshot): ProviderSelectionDecision {
     validateContext(context);
-    const configurationDigest = sha256Canonical({
-      registryDigest: registry.configurationDigest,
-      policyDigest: this.policyDigest,
-    });
+    const configurationDigest = this.compositeConfigurationDigest(registry);
     const policy = this.policies.find((candidate) => matchesPredicate(candidate.when, context));
     if (!policy) {
       return this.decision(null, [], null, RoutingReasonCode.POLICY_NOT_MATCHED, registry, configurationDigest);
@@ -448,6 +446,63 @@ export class RoutingPolicyEngine {
       registry,
       configurationDigest,
     );
+  }
+
+  /**
+   * Read-only STATIC eligibility projection for a routing context. It evaluates the SAME policy predicate
+   * and the SAME `eligible(...)` static rules as `select`, but over ALL configured descriptors regardless
+   * of dynamic availability — the availability field is NEVER read here. It does not rank/select, build an
+   * ExecutionPlan, invoke a Provider, or mutate anything. The `configurationDigest` is the identical
+   * composite (registry + policy) identity `select` returns, so an admission bound to this digest is bound
+   * to the exact selection configuration.
+   */
+  staticEligibility(context: RoutingContext, registry: ProviderRegistrySnapshot): StaticEligibilityProjection {
+    validateContext(context);
+    const configurationDigest = this.compositeConfigurationDigest(registry);
+    const base = {
+      policyVersion: this.policyVersion,
+      registryVersion: registry.version,
+      registryConfigurationDigest: registry.configurationDigest,
+      policyConfigurationDigest: this.policyDigest,
+      configurationDigest,
+    } as const;
+    const policy = this.policies.find((candidate) => matchesPredicate(candidate.when, context));
+    if (!policy) {
+      return Object.freeze({
+        policyMatched: false,
+        matchedPolicyId: null,
+        eligibleProviderIds: Object.freeze([]),
+        eligibleNetworkProviderIds: Object.freeze([]),
+        eligibleLocalProviderIds: Object.freeze([]),
+        ...base,
+      });
+    }
+    // Evaluate static eligibility over ALL descriptors — availability is intentionally never consulted.
+    const eligibleDescriptors = registry.providers
+      .map((entry) => entry.descriptor)
+      .filter((descriptor) => eligible(descriptor, context, policy.eligibility))
+      .sort((a, b) => a.providerId.localeCompare(b.providerId));
+    const idsFor = (locality: ExecutionLocality): readonly ProviderId[] =>
+      Object.freeze(
+        eligibleDescriptors
+          .filter((descriptor) => descriptor.capabilities.executionLocality === locality)
+          .map((descriptor) => descriptor.providerId),
+      );
+    return Object.freeze({
+      policyMatched: true,
+      matchedPolicyId: policy.policyId,
+      eligibleProviderIds: Object.freeze(eligibleDescriptors.map((descriptor) => descriptor.providerId)),
+      eligibleNetworkProviderIds: idsFor(ExecutionLocality.NETWORK),
+      eligibleLocalProviderIds: idsFor(ExecutionLocality.LOCAL),
+      ...base,
+    });
+  }
+
+  private compositeConfigurationDigest(registry: ProviderRegistrySnapshot): string {
+    return sha256Canonical({
+      registryDigest: registry.configurationDigest,
+      policyDigest: this.policyDigest,
+    });
   }
 
   private decision(

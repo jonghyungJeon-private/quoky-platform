@@ -1,15 +1,9 @@
 import { Capability } from '../domain';
 import {
-  ProviderAvailability,
-  ProviderRegistrySnapshot,
-  ReliabilityTier,
-  ContextCapacity,
-  SupportLevel,
   ExecutionLocality,
+  ProviderRegistrySnapshot,
   RoutingContext,
-  RoutingReasonCode,
   RoutingConfigurationError,
-  type ProviderDescriptor,
   type ProviderId,
 } from './provider-routing-contracts';
 import { RoutingPolicyEngine } from './routing-policy-engine';
@@ -28,36 +22,45 @@ import {
  * capability, starts a runtime, loads a model, runs Ollama, executes a Provider, or performs any network
  * action. Admission is not runtime preparation, not production trust, and not execution authorization.
  *
- * Ownership boundaries (ADR-0090 R3-C1 amendment):
+ * Ownership boundaries (ADR-0090 R3-C1 amendment + exact-HEAD review remediation):
  *  - Workload local-fallback policy is a deterministic, immutable, versioned policy owner (this module),
  *    not hard-coded in adapter code. Coding/architecture/document-comparison workloads are
  *    local-fallback-ineligible by default.
- *  - Kind A (DERIVED STATIC OPERATIONAL UNAVAILABILITY) is derived INTERNALLY from the canonical provider
- *    registry/configuration. It is NEVER a caller-supplied evidence object, and it NEVER uses the
- *    availability snapshot, `isAvailable()`, `availabilityClass`, or a quality-floor exclusion.
+ *  - Kind A (DERIVED STATIC OPERATIONAL UNAVAILABILITY) means: for the authoritative routing context and
+ *    matched Stage2B policy, there is NO normal NETWORK/cloud Provider that remains STATICALLY eligible.
+ *    It is answered by the Stage2B-owned read-only `RoutingPolicyEngine.staticEligibility(...)` projection
+ *    (canonical registry + policy + `enabled` only). It NEVER reads dynamic availability, `isAvailable()`,
+ *    an availability snapshot, `availabilityClass`, an availability-derived exclusion, or any
+ *    caller-supplied evidence/provider id. The caller cannot name a "missing"/"disabled"/"required"
+ *    provider to manufacture Kind A — those inputs do not exist on the public admission input.
  *  - Kind B (TRUSTED_CURRENT_UNAVAILABILITY) has no trusted issuer in R3-C1 → ALWAYS DENY (fail closed).
  *  - Kind C (PRIOR_ATTEMPT_FAILURE) is UNSUPPORTED in R3-C1 → ALWAYS DENY (belongs to R3-C-Rz).
  *  - Static provider eligibility, capability floors, quality floors, ranking, and exact selection remain
- *    Stage2B responsibility (RoutingPolicyEngine + ProviderRegistry). This module adds an admission
- *    decision BEFORE local selection and hands off through the R3-B1 `assertExactSoleProviderSelection`
- *    boundary; it does not duplicate the registry, the ranking engine, or any retry orchestrator.
- *  - The admission is bound to the SAME immutable configuration identity used for selection
- *    (`ProviderRegistry.configurationDigest`); a config change between derivation and selection denies.
+ *    Stage2B responsibility. This module reuses the SAME `staticEligibility(...)` projection for both the
+ *    cloud-path emptiness check and the local-provider eligibility check; it maintains no parallel
+ *    eligibility rules and builds no second registry, ranking engine, retry orchestrator, or ExecutionPlan.
+ *  - The admission is bound to the composite Stage2B configuration identity (registry + policy) —
+ *    `RoutingPolicyEngine`'s `configurationDigest`, identical to `select(...)`. A registry OR policy change
+ *    changes the identity and invalidates a prior admission.
+ *
+ * Normal routing stays normal routing: a cloud path excluded only by quality floor, only by required
+ * capability, by locality policy choosing LOCAL, by ordinary single-eligible-provider outcomes, or by
+ * ranking preference is NOT Kind A. Only an EMPTY statically-eligible NETWORK set (no configured cloud, or
+ * every relevant cloud administratively disabled) yields Kind A.
  *
  * Attempt accounting: an admitted local invocation is exactly attempt 1 with zero additional provider
  * hops. There is no cloud attempt before it and no provider switch after it. The global constants
  * MAX_PROVIDER_ATTEMPTS=2 / MAX_ADDITIONAL_PROVIDER_HOPS=1 are unchanged and remain a separate Stage2B
- * concern; this module introduces no nested retry accounting.
+ * concern; downstream enforcement is an R3-C2/R3-C-Rz integration responsibility, not claimed here.
  *
  * DENY semantics: DENY means LOCAL CONTINUITY NOT ADMITTED. It does NOT mean the whole request is
- * stopped. Whether the surrounding orchestration STOPs/DEFERs is decided elsewhere by existing ADR-0090
- * policy only when no normal eligible execution path exists.
+ * stopped. When a normal cloud path exists, admission DENYs and normal Stage2B routing remains available.
  */
 
 export const LOCAL_CONTINUITY_ADMISSION_SCHEMA = 'local-continuity-admission-v1' as const;
 export const LOCAL_CONTINUITY_WORKLOAD_POLICY_VERSION = 'r3c1-workload-local-fallback-v1' as const;
 
-/** R3-C1 fixed attempt accounting for an admitted local-continuity invocation. */
+/** R3-C1 fixed attempt accounting for an admitted local-continuity invocation (declarative contract). */
 export const R3C1_ATTEMPT_NUMBER = 1 as const;
 export const R3C1_ADDITIONAL_PROVIDER_HOPS = 0 as const;
 
@@ -68,22 +71,18 @@ export const R3C1_ADDITIONAL_PROVIDER_HOPS = 0 as const;
  */
 export type LocalContinuityDenialReason =
   | 'WORKLOAD_LOCAL_FALLBACK_DISALLOWED'
-  | 'NO_DERIVED_STATIC_UNAVAILABILITY'
-  | 'CALLER_SUPPLIED_EVIDENCE_REJECTED'
-  | 'DYNAMIC_EVIDENCE_UNSUPPORTED'
-  | 'PRIOR_ATTEMPT_FAILURE_UNSUPPORTED'
-  | 'LOCAL_PROVIDER_NOT_CONFIGURED'
-  | 'LOCAL_PROVIDER_MISSING_CAPABILITY'
-  | 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR'
+  | 'NORMAL_CLOUD_PATH_STATICALLY_EXISTS'
+  | 'NO_POLICY_MATCHED'
+  | 'LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE'
   | 'LOCAL_SELECTION_NOT_SOLE'
-  | 'PROVIDER_IDENTITY_MISMATCH'
   | 'ROUTING_CONTEXT_MISMATCH'
   | 'CONFIGURATION_IDENTITY_MISMATCH'
   | 'MALFORMED_INPUT';
 
 /**
  * The kinds enumerated by the ADR-0090 evidence contract SHAPE. Only Kind A is derivable and admissible
- * in R3-C1. Kinds B and C exist for future compatibility but have NO caller-accessible admitting path.
+ * in R3-C1, and it is derived INTERNALLY (there is no caller evidence input). Kinds B and C exist for
+ * future compatibility but have NO caller-accessible admitting path.
  */
 export const LOCAL_CONTINUITY_EVIDENCE_KINDS = [
   'STATIC_INELIGIBILITY',
@@ -93,29 +92,17 @@ export const LOCAL_CONTINUITY_EVIDENCE_KINDS = [
 export type LocalContinuityEvidenceKind = typeof LOCAL_CONTINUITY_EVIDENCE_KINDS[number];
 
 /**
- * The CLOSED set of canonical static operational-unavailability facts R3-C1 may derive. This set is
- * fixed by architecture; new members require Architecture Review, not convenience. Each fact is about the
- * NORMAL (cloud) provider that would otherwise serve the request, established from canonical config only.
- *  - A1 PROVIDER_NOT_CONFIGURED — the required cloud provider id is absent from the canonical registry.
- *  - A2 PROVIDER_ADMINISTRATIVELY_DISABLED — the descriptor exists but `enabled === false` in config.
- *  - A3 REQUIRED_PROVIDER_CONFIGURATION_ABSENT — a required cloud provider id declared by policy input is
- *    not present in the canonical registry (a required-configuration gap; distinct from A1 which is about
- *    the specific normal provider). A1/A3 may coincide; the derivation records each satisfied member.
- */
-export const KIND_A_STATIC_FACTS = [
-  'PROVIDER_NOT_CONFIGURED',
-  'PROVIDER_ADMINISTRATIVELY_DISABLED',
-  'REQUIRED_PROVIDER_CONFIGURATION_ABSENT',
-] as const;
-export type KindAStaticFact = typeof KIND_A_STATIC_FACTS[number];
-
-/**
  * The DEFAULT workload local-fallback policy, keyed on the existing domain `Capability`. This is the
  * deterministic, immutable, versioned policy owner. `true` = a workload that MAY be considered for local
  * continuity (subject to every other gate); `false` = local-fallback-ineligible by default. Coding,
  * architecture, and document-analysis (document comparison) workloads are ineligible per ADR-0090 §4.
- * A workspace/workload override may only STRENGTHEN this (never enable local coding); such overrides are
- * out of R3-C1 scope and not implemented here.
+ *
+ * R3-C1 accepts only the existing canonical `Capability` projection. It does NOT expand the taxonomy to
+ * represent DEBUGGING / CODE_REFACTOR / SECURITY_REVIEW (that needs Architecture Review). Before
+ * production wiring, the caller must be an authoritative deterministic workload-policy owner supplying a
+ * canonical routing context — not arbitrary external input (see carry-forward). Caller-provided capability
+ * is NOT a security authority here; it only selects a conservative default and must additionally pass the
+ * Stage2B static-eligibility checks below.
  */
 const DEFAULT_LOCAL_FALLBACK_BY_CAPABILITY: Readonly<Record<Capability, boolean>> = Object.freeze({
   [Capability.GENERAL_CHAT]: true,
@@ -146,56 +133,26 @@ export class WorkloadLocalFallbackPolicy {
 }
 
 /**
- * Immutable required capability floor the LOCAL provider must INDEPENDENTLY satisfy. This mirrors the
- * Stage2B eligibility inputs the normal path would enforce; it is expressed as an `EligibilityRule`-shaped
- * minimum, reused through `RoutingPolicyEngine`. R3-C1 never lowers a floor to obtain fallback.
- */
-export interface LocalContinuityQualityFloor {
-  readonly minimumSemanticReliability?: ReliabilityTier;
-  readonly minimumAuthorityReliability?: ReliabilityTier;
-  readonly minimumContinuityReliability?: ReliabilityTier;
-  readonly minimumContextCapacity?: ContextCapacity;
-  readonly requiresToolUse?: boolean;
-  readonly requiresStructuredOutput?: boolean;
-}
-
-/**
  * R3-C1 admission input. All fields are bounded application facts. Crucially there is NO caller-supplied
- * "evidence object": static unavailability is DERIVED internally (see `deriveKindAStaticFacts`).
+ * cloud provider id and NO caller-supplied "evidence object": the normal cloud path and its static
+ * unavailability are derived INTERNALLY from the canonical routing context + registry + policy.
  */
 export interface LocalContinuityAdmissionInput {
   /** The workload capability, from existing deterministic derivation. */
   readonly capability: Capability;
-  /** The canonical routing context used for the normal path (drives Stage2B selection + validation). */
-  readonly routingContext: RoutingContext;
-  /** Required capabilities the LOCAL provider must independently support (must include `capability`). */
-  readonly requiredCapabilities: readonly Capability[];
-  /** Quality floor the LOCAL provider must independently satisfy. */
-  readonly qualityFloor: LocalContinuityQualityFloor;
   /**
-   * The NORMAL (cloud) provider id that would otherwise serve this request. Kind A is derived about this
-   * provider from canonical config. Optional: when the normal provider id is not even declared, A1/A3 are
-   * evaluated from `requiredCloudProviderIds`.
+   * The canonical routing context used for the normal path. It drives the matched Stage2B policy and the
+   * static cloud/local eligibility projection. `routingContext.capability` must equal `capability`.
    */
-  readonly normalCloudProviderId?: ProviderId;
-  /** Cloud provider ids that policy input requires to be configured for the normal path (for A3). */
-  readonly requiredCloudProviderIds?: readonly ProviderId[];
-  /** The candidate LOCAL provider id (execution locality LOCAL) to consider for continuity. */
+  readonly routingContext: RoutingContext;
+  /** The candidate LOCAL provider id to consider for continuity (must be statically eligible + LOCAL). */
   readonly localProviderId: ProviderId;
   /**
-   * The immutable configuration identity under which Kind A was intended to be derived and under which
-   * selection must occur. MUST equal the registry's `configurationDigest`; a mismatch denies.
+   * The composite Stage2B configuration identity (registry + policy) under which the caller intends
+   * selection to occur. MUST equal `RoutingPolicyEngine`'s `configurationDigest`; a mismatch denies. The
+   * admission also re-derives and re-binds this internally, so a stale/registry-only digest cannot pass.
    */
   readonly selectionConfigurationRef: string;
-}
-
-/** The derived static facts and the config identity they were derived under. */
-export interface DerivedStaticOperationalFacts {
-  readonly kind: 'STATIC_INELIGIBILITY';
-  /** Non-empty when at least one closed Kind A fact holds about the normal cloud path. */
-  readonly satisfiedFacts: readonly KindAStaticFact[];
-  /** The registry configuration digest these facts were derived under. */
-  readonly configurationRef: string;
 }
 
 /** Immutable, bounded admission decision. Admission != preparation != trust != execution authorization. */
@@ -205,14 +162,41 @@ export interface LocalContinuityAdmissionDecision {
   readonly denialReason?: LocalContinuityDenialReason;
   /** The sole selected local provider id, present only when admitted. */
   readonly providerCandidate?: ProviderId;
-  /** The immutable configuration identity binding derivation and selection. */
+  /** The composite (registry + policy) configuration identity binding derivation and selection. */
   readonly configurationRef: string;
-  /** Fixed R3-C1 attempt accounting. */
+  /** Fixed R3-C1 attempt accounting (declarative). */
   readonly attemptNumber: typeof R3C1_ATTEMPT_NUMBER;
   readonly additionalProviderHops: typeof R3C1_ADDITIONAL_PROVIDER_HOPS;
 }
 
-function isPlainConfigRef(value: unknown): value is string {
+/** Bounded R3-C1 error carrying only a reason code — never host/runtime/provider detail. */
+export class LocalContinuityAdmissionError extends Error {
+  constructor(readonly reason: LocalContinuityDenialReason | 'DYNAMIC_EVIDENCE_UNSUPPORTED' | 'PRIOR_ATTEMPT_FAILURE_UNSUPPORTED') {
+    super(reason);
+    this.name = 'LocalContinuityAdmissionError';
+  }
+}
+
+/**
+ * Kind B is contract-defined but has NO trusted issuer in R3-C1. This assertion makes the fail-closed
+ * behavior explicit and testable: there is NO argument and NO caller path that can make it admit — no
+ * `freshness=CURRENT` label, no `trusted` string, no availability snapshot, no `isAvailable()` result, no
+ * persisted/rehydrated value. It always throws. It is intentionally named as an "unsupported" assertion
+ * so it can never be mistaken for an admitting API.
+ */
+export function assertTrustedCurrentUnavailabilityUnsupported(): never {
+  throw new LocalContinuityAdmissionError('DYNAMIC_EVIDENCE_UNSUPPORTED');
+}
+
+/**
+ * Kind C is unsupported in R3-C1. A prior cloud attempt implies post-dispatch history and belongs
+ * exclusively to R3-C-Rz. This assertion fails closed unconditionally; there is no admitting path.
+ */
+export function assertPriorAttemptFailureUnsupported(): never {
+  throw new LocalContinuityAdmissionError('PRIOR_ATTEMPT_FAILURE_UNSUPPORTED');
+}
+
+function isCompositeConfigRef(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
@@ -228,88 +212,11 @@ function deny(configurationRef: string, denialReason: LocalContinuityDenialReaso
 }
 
 /**
- * Kind B is contract-defined but has NO trusted issuer in R3-C1. This function exists so the fail-closed
- * behavior is explicit and testable: EVERY caller input maps to DENY. There is no argument — no
- * `freshness=CURRENT` label, no `trusted` string, no availability snapshot, no `isAvailable()` result, no
- * persisted/rehydrated value — that can make it admit.
- */
-export function admitTrustedCurrentUnavailability(): never {
-  throw new LocalContinuityAdmissionError('DYNAMIC_EVIDENCE_UNSUPPORTED');
-}
-
-/**
- * Kind C is unsupported in R3-C1. A prior cloud attempt implies post-dispatch history and belongs
- * exclusively to R3-C-Rz. This function fails closed unconditionally; there is no admitting path.
- */
-export function admitPriorAttemptFailure(): never {
-  throw new LocalContinuityAdmissionError('PRIOR_ATTEMPT_FAILURE_UNSUPPORTED');
-}
-
-/** Bounded R3-C1 error carrying only a denial reason code — never host/runtime/provider detail. */
-export class LocalContinuityAdmissionError extends Error {
-  constructor(readonly reason: LocalContinuityDenialReason) {
-    super(reason);
-    this.name = 'LocalContinuityAdmissionError';
-  }
-}
-
-/**
- * Derive the CLOSED set of Kind A static operational-unavailability facts INTERNALLY from the canonical
- * provider registry. This is the ONLY way Kind A can be produced in R3-C1: there is no caller-supplied
- * evidence object parameter. It never consults the availability snapshot, `availabilityClass`, or any
- * quality-floor exclusion — only canonical configuration presence and the administrative `enabled` flag.
- *
- * Returns `null` when NO closed static fact holds (i.e., the normal cloud path is not statically
- * unavailable by configuration), which denies local continuity.
- */
-export function deriveKindAStaticFacts(
-  registry: ProviderRegistry,
-  input: {
-    readonly normalCloudProviderId?: ProviderId;
-    readonly requiredCloudProviderIds?: readonly ProviderId[];
-    readonly selectionConfigurationRef: string;
-  },
-): DerivedStaticOperationalFacts | null {
-  // Config identity binding: derive only under the exact configuration used for selection.
-  if (!isPlainConfigRef(input.selectionConfigurationRef)) return null;
-  if (registry.configurationDigest !== input.selectionConfigurationRef) return null;
-
-  const facts: KindAStaticFact[] = [];
-
-  // A1 / A2 — about the specific normal cloud provider, if one is named.
-  if (input.normalCloudProviderId !== undefined) {
-    const descriptor = registry.get(input.normalCloudProviderId);
-    if (descriptor === undefined) {
-      facts.push('PROVIDER_NOT_CONFIGURED');
-    } else if (descriptor.enabled === false) {
-      facts.push('PROVIDER_ADMINISTRATIVELY_DISABLED');
-    }
-  }
-
-  // A3 — a required cloud provider declared by policy input is absent from canonical config.
-  const required = input.requiredCloudProviderIds ?? [];
-  const anyRequiredAbsent = required.some((id) => registry.get(id) === undefined);
-  if (anyRequiredAbsent) {
-    facts.push('REQUIRED_PROVIDER_CONFIGURATION_ABSENT');
-  }
-
-  if (facts.length === 0) return null;
-  return Object.freeze({
-    kind: 'STATIC_INELIGIBILITY',
-    satisfiedFacts: Object.freeze([...new Set(facts)]),
-    configurationRef: registry.configurationDigest,
-  });
-}
-
-/**
  * The R3-C1 admission decision. Pure and runtime-independent. Composes: workload local-fallback policy →
- * derived Kind A static facts (internal, config-bound) → Stage2B static eligibility for the LOCAL
- * provider under the SAME quality floor → exact PRIMARY_ONLY sole selection handoff (R3-B1). It performs
- * ZERO containment/runtime preparation and creates ZERO production trust; on any failure it denies.
- *
- * The `soleSelection` output is produced ONLY on admission by minting a `SoleProviderSelection` through
- * the existing R3-B1 `assertExactSoleProviderSelection` boundary with a single eligible provider (the
- * local provider) — i.e., exactly one provider, one selection, one plan, one binding downstream.
+ * canonical static cloud-path emptiness (Kind A, via Stage2B `staticEligibility`) → local provider
+ * static eligibility under the SAME policy/configuration → exact PRIMARY_ONLY sole-selection handoff
+ * (R3-B1). It performs ZERO containment/runtime preparation and creates ZERO production trust; on any
+ * failure it denies.
  */
 export class LocalContinuityAdmission {
   constructor(
@@ -319,8 +226,8 @@ export class LocalContinuityAdmission {
   ) {}
 
   /**
-   * Decide admission. Returns the decision plus (only when admitted) the non-forgeable
-   * `SoleProviderSelection` handoff for the downstream R3-B1/containment slice.
+   * Decide admission. Returns the decision plus (only when admitted) the `SoleProviderSelection` handoff
+   * for the downstream R3-B1/containment slice.
    */
   admit(input: LocalContinuityAdmissionInput): {
     decision: LocalContinuityAdmissionDecision;
@@ -329,73 +236,79 @@ export class LocalContinuityAdmission {
     const configRef = typeof input.selectionConfigurationRef === 'string' ? input.selectionConfigurationRef : '';
 
     // 0. Structural input validation → MALFORMED_INPUT (fail closed).
-    if (!isPlainConfigRef(configRef)) {
+    if (!isCompositeConfigRef(configRef)) {
       return { decision: deny('', 'MALFORMED_INPUT') };
     }
     if (
       typeof input.localProviderId !== 'string' ||
       input.localProviderId.length === 0 ||
-      !Array.isArray(input.requiredCapabilities) ||
-      input.requiredCapabilities.length === 0 ||
       input.routingContext === null ||
-      typeof input.routingContext !== 'object'
+      typeof input.routingContext !== 'object' ||
+      input.routingContext.capability !== input.capability
     ) {
-      return { decision: deny(configRef, 'MALFORMED_INPUT') };
+      return {
+        decision: deny(
+          configRef,
+          input.routingContext && input.routingContext.capability !== input.capability
+            ? 'ROUTING_CONTEXT_MISMATCH'
+            : 'MALFORMED_INPUT',
+        ),
+      };
     }
 
-    // 1. Config identity binding: admission is bound to the SAME immutable configuration as selection.
-    if (this.registry.configurationDigest !== configRef) {
+    // The static-eligibility projection is availability-independent, so a default snapshot is fine; no
+    // availability value can affect the result. This is NOT a fabricated AVAILABLE snapshot.
+    let projection;
+    try {
+      const snapshot: ProviderRegistrySnapshot = this.registry.snapshot();
+      projection = this.routingEngine.staticEligibility(input.routingContext, snapshot);
+    } catch (error) {
+      if (error instanceof RoutingConfigurationError) {
+        return { decision: deny(configRef, 'ROUTING_CONTEXT_MISMATCH') };
+      }
+      throw error;
+    }
+
+    // 1. Composite configuration-identity binding (registry + policy). The caller's ref must equal the
+    //    exact Stage2B composite identity used for selection; a registry-only or stale digest fails here.
+    if (projection.configurationDigest !== configRef) {
       return { decision: deny(configRef, 'CONFIGURATION_IDENTITY_MISMATCH') };
     }
 
-    // 2. routingContext.capability must match the workload capability under decision.
-    if (input.routingContext.capability !== input.capability) {
-      return { decision: deny(configRef, 'ROUTING_CONTEXT_MISMATCH') };
-    }
-    // The required capability set must include the workload capability.
-    if (!input.requiredCapabilities.includes(input.capability)) {
-      return { decision: deny(configRef, 'LOCAL_PROVIDER_MISSING_CAPABILITY') };
-    }
-
-    // 3. Workload local-fallback policy: coding/architecture/document workloads deny immediately, with
-    //    ZERO local provider selection and ZERO containment/runtime preparation.
+    // 2. Workload local-fallback policy: coding/architecture/document workloads deny immediately, with
+    //    ZERO local selection and ZERO containment/runtime preparation.
     if (!this.workloadPolicy.localFallbackAllowed(input.capability)) {
       return { decision: deny(configRef, 'WORKLOAD_LOCAL_FALLBACK_DISALLOWED') };
     }
 
-    // 4. Kind A derivation (internal, config-bound). No caller-supplied evidence object exists here; Kind
-    //    B and Kind C have no admitting path (see admit* functions). If no closed static fact holds, deny.
-    const staticFacts = deriveKindAStaticFacts(this.registry, {
-      normalCloudProviderId: input.normalCloudProviderId,
-      requiredCloudProviderIds: input.requiredCloudProviderIds,
-      selectionConfigurationRef: configRef,
-    });
-    if (staticFacts === null) {
-      return { decision: deny(configRef, 'NO_DERIVED_STATIC_UNAVAILABILITY') };
+    // 3. A policy must match the context; otherwise there is no canonical normal path to reason about.
+    if (!projection.policyMatched) {
+      return { decision: deny(configRef, 'NO_POLICY_MATCHED') };
     }
 
-    // 5. The LOCAL provider must be configured and be a LOCAL-locality provider.
+    // 4. Kind A — the canonical normal cloud path must be STATICALLY EMPTY. If ANY NETWORK provider is
+    //    statically eligible for the matched policy, a normal cloud path exists → DENY (no Kind A). This
+    //    is derived purely from canonical config; availability/quality-floor cloud exclusion is NOT
+    //    represented here (the projection uses static eligibility only and never reads availability).
+    if (projection.eligibleNetworkProviderIds.length > 0) {
+      return { decision: deny(configRef, 'NORMAL_CLOUD_PATH_STATICALLY_EXISTS') };
+    }
+
+    // 5. The LOCAL provider must be STATICALLY ELIGIBLE under the SAME policy/configuration (same capability
+    //    + quality floor + LOCAL locality). We reuse the SAME projection rather than a parallel rule set.
     const localDescriptor = this.registry.get(input.localProviderId);
-    if (localDescriptor === undefined) {
-      return { decision: deny(configRef, 'LOCAL_PROVIDER_NOT_CONFIGURED') };
-    }
-    if (localDescriptor.capabilities.executionLocality !== ExecutionLocality.LOCAL) {
-      return { decision: deny(configRef, 'LOCAL_PROVIDER_NOT_CONFIGURED') };
-    }
-
-    // 6. The LOCAL provider must INDEPENDENTLY satisfy the required capability + quality floor, reusing
-    //    Stage2B eligibility semantics (no second ranking engine). We run the engine over a snapshot in
-    //    which ONLY the local provider is marked AVAILABLE, and enforce a LOCAL-locality eligibility rule
-    //    carrying the required quality floor. If the engine does not select exactly the local provider as
-    //    the sole eligible candidate, deny.
-    const capabilityOk = this.localProviderSatisfies(localDescriptor, input);
-    if (!capabilityOk.ok) {
-      return { decision: deny(configRef, capabilityOk.reason) };
+    if (
+      localDescriptor === undefined ||
+      localDescriptor.capabilities.executionLocality !== ExecutionLocality.LOCAL ||
+      !projection.eligibleLocalProviderIds.includes(input.localProviderId)
+    ) {
+      return { decision: deny(configRef, 'LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE') };
     }
 
-    // 7. Exact PRIMARY_ONLY sole selection handoff through the R3-B1 boundary. Exactly one eligible
-    //    provider (the local one) and it is the selection. This mints a non-forgeable SoleProviderSelection
-    //    but performs NO containment preparation, model load, or execution.
+    // 6. Exact PRIMARY_ONLY sole-selection handoff through the R3-B1 boundary. Exactly one eligible
+    //    provider (the local one) and it is the selection. This mints a SoleProviderSelection via the
+    //    existing R3-B1 exact-selection assertion (pre-existing public API; see docs) but performs NO
+    //    containment preparation, model load, or execution.
     const staticEligibility: StaticEligibilityDecision = {
       eligibleProviderIds: [input.localProviderId],
       selectedProviderId: input.localProviderId,
@@ -418,89 +331,4 @@ export class LocalContinuityAdmission {
     });
     return { decision, soleSelection };
   }
-
-  /**
-   * Reuse Stage2B eligibility (`RoutingPolicyEngine`) to confirm the LOCAL provider independently meets
-   * the required capability + quality floor under the same configuration. We do this by building a
-   * snapshot in which only the local provider is AVAILABLE and a routing context/policy that enforces the
-   * caller's quality floor and LOCAL locality. This does NOT create a second registry or ranking engine —
-   * it uses the injected engine and registry.
-   */
-  private localProviderSatisfies(
-    localDescriptor: ProviderDescriptor,
-    input: LocalContinuityAdmissionInput,
-  ): { ok: true } | { ok: false; reason: LocalContinuityDenialReason } {
-    // The local descriptor must support every required capability (independent capability check).
-    for (const required of input.requiredCapabilities) {
-      if (!localDescriptor.capabilities.supportedCapabilities.includes(required)) {
-        return { ok: false, reason: 'LOCAL_PROVIDER_MISSING_CAPABILITY' };
-      }
-    }
-    // Independent quality-floor check (same minima the normal path would enforce; never lowered).
-    const floor = input.qualityFloor;
-    const caps = localDescriptor.capabilities;
-    if (!atLeastReliability(caps.semanticReliability, floor.minimumSemanticReliability)) {
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-    if (!atLeastReliability(caps.authorityReliability, floor.minimumAuthorityReliability)) {
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-    if (!atLeastReliability(caps.continuityReliability, floor.minimumContinuityReliability)) {
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-    if (!atLeastContext(caps.contextCapacity, floor.minimumContextCapacity)) {
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-    if (floor.requiresToolUse === true && caps.toolUse !== SupportLevel.SUPPORTED) {
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-    if (floor.requiresStructuredOutput === true && caps.structuredOutput !== SupportLevel.SUPPORTED) {
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-
-    // Confirm through the injected Stage2B engine that, with ONLY the local provider AVAILABLE, the local
-    // provider is the sole selected candidate for this routing context. This reuses Stage2B ranking and
-    // eligibility rather than reimplementing selection; it fabricates no cloud AVAILABLE snapshot.
-    let selection;
-    try {
-      const snapshot: ProviderRegistrySnapshot = this.registry.snapshot({
-        [input.localProviderId]: ProviderAvailability.AVAILABLE,
-      });
-      selection = this.routingEngine.select(input.routingContext, snapshot);
-    } catch (error) {
-      if (error instanceof RoutingConfigurationError) {
-        return { ok: false, reason: 'ROUTING_CONTEXT_MISMATCH' };
-      }
-      throw error;
-    }
-    if (
-      selection.reasonCode !== RoutingReasonCode.SELECTED ||
-      selection.selectedProviderId !== input.localProviderId ||
-      selection.eligibleProviderIds.length !== 1 ||
-      selection.eligibleProviderIds[0] !== input.localProviderId
-    ) {
-      // Local provider is not the sole eligible candidate under Stage2B for this context/floor.
-      return { ok: false, reason: 'LOCAL_PROVIDER_BELOW_QUALITY_FLOOR' };
-    }
-    return { ok: true };
-  }
-}
-
-const RELIABILITY_ORDER: Readonly<Record<ReliabilityTier, number>> = {
-  [ReliabilityTier.UNPROVEN]: 0,
-  [ReliabilityTier.LOW]: 1,
-  [ReliabilityTier.STANDARD]: 2,
-  [ReliabilityTier.HIGH]: 3,
-};
-const CONTEXT_ORDER: Readonly<Record<ContextCapacity, number>> = {
-  [ContextCapacity.SMALL]: 0,
-  [ContextCapacity.MEDIUM]: 1,
-  [ContextCapacity.LARGE]: 2,
-};
-
-function atLeastReliability(actual: ReliabilityTier, minimum: ReliabilityTier | undefined): boolean {
-  return minimum === undefined || RELIABILITY_ORDER[actual] >= RELIABILITY_ORDER[minimum];
-}
-function atLeastContext(actual: ContextCapacity, minimum: ContextCapacity | undefined): boolean {
-  return minimum === undefined || CONTEXT_ORDER[actual] >= CONTEXT_ORDER[minimum];
 }

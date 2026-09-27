@@ -281,6 +281,32 @@ export interface ProviderSelectionDecision {
   configurationDigest: string;
 }
 
+/**
+ * Read-only STATIC eligibility projection: which configured Providers are eligible for a routing context
+ * under the matched policy, evaluated from CANONICAL STATIC FACTS ONLY (registry configuration + policy
+ * eligibility rules + the `enabled` flag). It DELIBERATELY ignores dynamic availability: no
+ * `ProviderAvailability`, no availability snapshot, no `isAvailable()`, no `availabilityClass` outage
+ * interpretation. It does not rank, select, build an ExecutionPlan, invoke a Provider, or mutate the
+ * registry. `configurationDigest` is the SAME composite (registry + policy) identity used by `select`.
+ */
+export interface StaticEligibilityProjection {
+  /** Whether a policy matched the context at all. */
+  readonly policyMatched: boolean;
+  readonly matchedPolicyId: PolicyId | null;
+  /** All statically eligible providers (any locality), unranked, sorted by id. */
+  readonly eligibleProviderIds: readonly ProviderId[];
+  /** Statically eligible NETWORK-locality (cloud) providers, unranked, sorted by id. */
+  readonly eligibleNetworkProviderIds: readonly ProviderId[];
+  /** Statically eligible LOCAL-locality providers, unranked, sorted by id. */
+  readonly eligibleLocalProviderIds: readonly ProviderId[];
+  readonly policyVersion: string;
+  readonly registryVersion: string;
+  readonly registryConfigurationDigest: string;
+  readonly policyConfigurationDigest: string;
+  /** Composite (registry + policy) configuration identity — identical to `select`'s digest. */
+  readonly configurationDigest: string;
+}
+
 export class RoutingConfigurationError extends Error {
   constructor(message: string) {
     super(message);
