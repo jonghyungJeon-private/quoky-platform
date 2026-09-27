@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2B architecture / task definition (Trusted Current-Unavailability
+  Observation Authority)" to `DECISIONS.md`, defining the smallest safe architecture for proving — at one
+  exact execution/routing/configuration context — that the canonical cloud path is CURRENTLY unavailable via
+  an observation source the caller/model cannot self-declare. Source-verified decisions: adapter-owned
+  `AiProvider.isAvailable()` / the `ProviderRegistrySnapshot` availability field are observation DATA, not
+  Kind B authority; a NEW canonical process-local issuer mints an immutable, issuer-instance-local
+  `TrustedCurrentUnavailabilityObservation` (WeakMap pattern, distinct from C2A selection authority) binding
+  `providerId`, `executionId===taskRunId`, `routingContextDigest`, composite `configurationDigest`,
+  `capability`, bounded `observationSource`, and a monotonic-clock validity window (`MonotonicClock`
+  authoritative; wall-clock audit-only); a bounded pre-dispatch `TrustedUnavailabilityReason` (no new
+  `RoutingFailureCode`); canonical cloud set from `RoutingPolicyEngine.staticEligibility(...)` (never
+  caller-selected IDs); multi-cloud requires trusted current-unavailability for EVERY relevant candidate (one
+  available cloud → DENY); Stage2B remains the sole router; Kind B requires C2A first-run/no-prior-history and
+  stays pre-dispatch; Kind A precedence preserved. Closes C2A carry-forwards NB-1..NB-4. Process restart
+  invalidates authority; R3-B3 stays FAIL CLOSED. Decomposition C2B-1 (network-free authority/issuer/validator
+  + fake producer) → C2B-2 (actual network/secret producer, separate STRICT approval). Includes a fail-closed
+  matrix, entry/exit criteria, verification strategy, and deferred decisions. Documentation only: no code,
+  runtime, provider, network, secret, DB/schema, aggregate/repository, approval/security owner, or new
+  `RoutingFailureCode`. One local architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed; Kind B
+  remains DENY; C2B implementation, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2A — Bound Local Continuity Authority — 2026-09-28
 
 - Add process/issuer-local `BoundLocalContinuitySelectionIssuer` with internal R3-C1 admission,

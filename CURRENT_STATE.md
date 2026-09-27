@@ -5,6 +5,37 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2B — Trusted Current-Unavailability Observation Authority (architecture / task definition) (2026-09-28)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`codex/r3c2b-trusted-unavailability-observation-architecture` from canonical main
+`be9ba95853a1cfc47d33009a70d06b002ba80828` (after R3-C2A delivery PR #89 merged). `DECISIONS.md` carries the
+ADR-0090 amendment "R3-C2B architecture / task definition" defining a **Trusted Current-Unavailability
+Observation Authority**: how the system may prove, at one exact execution/routing/configuration context, that
+the canonical cloud path is CURRENTLY unavailable via an observation source the caller/model cannot
+self-declare. Key decisions (source-verified): the only existing observation data is adapter-owned
+`AiProvider.isAvailable()` / the `ProviderRegistrySnapshot` availability field — **audit/selection data, NOT
+Kind B authority**; C2B adds a NEW canonical process-local issuer minting an immutable, issuer-instance-local
+`TrustedCurrentUnavailabilityObservation` (WeakMap pattern, distinct from C2A's selection authority) binding
+`providerId`, `executionId===taskRunId`, `routingContextDigest`, composite `configurationDigest`,
+`capability`, bounded `observationSource`, a monotonic-clock validity window (`validFrom`/`expiresAt`;
+`MonotonicClock` authoritative, wall-clock audit-only), and a bounded pre-dispatch `TrustedUnavailabilityReason`
+(no new `RoutingFailureCode`, not reusing the post-dispatch `PROVIDER_UNAVAILABLE`/`PROVIDER_AUTH_REQUIRED`).
+The canonical cloud set is derived from `RoutingPolicyEngine.staticEligibility(...)`
+(policy-compatible/enabled NETWORK set) — never caller-selected IDs; multi-cloud requires trusted
+current-unavailability for **every** relevant candidate (one available cloud → DENY). Stage2B stays the sole
+router (C2B provides trusted facts, not ranking); Kind B requires C2A's first-run/no-prior-history binding and
+remains pre-dispatch (no prior provider attempt); Kind A precedence preserved. Closes C2A carry-forwards NB-1
+(shared canonical issuer instance), NB-2 (authority valid only on minting instance), NB-3 (bind canonical
+`staticEligibility` projection, not caller plans), and NB-4 (positive validated-vs-failed outcome type).
+Process restart invalidates authority; no persisted/rehydrated Kind B; R3-B3 production trust stays FAIL
+CLOSED and separate. Decomposition: **C2B-1** (authority + issuer + validator + currentness/window +
+canonical provider-set binding + reason enum + validation outcome + fake/test producer contract; zero network
+by default) then **C2B-2** (actual network/secret observation producer; separate STRICT approval). Docs-only:
+no runtime, provider, network, secret, DB/schema, aggregate/repository, approval/security owner, or new
+`RoutingFailureCode`. ADR-0090 remains Proposed; **Kind B remains DENY**; C2B implementation, C2C, and
+R3-C-Rz remain NOT AUTHORIZED.
+
 ### R3-C2A — Bound Local Continuity Authority (2026-09-28)
 
 **IMPLEMENTED LOCALLY — independent exact-HEAD Claude review pending.** Authorized by the R3-C2A
