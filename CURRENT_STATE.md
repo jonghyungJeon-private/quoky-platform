@@ -5,11 +5,31 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C — bounded task definition (docs only) (2026-09-27)
+
+**TASK DEFINITION / ARCHITECTURE ONLY — NOT STARTED (implementation).** Audit base
+`eefd2709980866f88e1d5076914e3223b668794d`. R3-A / R3-B1 / R3-B2 / R3-B3 are CLOSED + DELIVERED.
+`DECISIONS.md` carries the ADR-0090 amendment (with a 2026-09-27 blocking remediation) defining R3-C's
+smallest safe slice: **R3-C1 — Local Continuity Eligibility & Static Trusted Admission Contract**. After
+remediation R3-C1 admits local continuity only from **derived static operational unavailability (Kind A)**
+computed internally from canonical registry/configuration facts; **Kind B (TRUSTED_CURRENT_UNAVAILABILITY)
+has no trusted issuer and is DENY**, and **Kind C (PRIOR_ATTEMPT_FAILURE) is unsupported/DENY** (belongs to
+R3-C-Rz). An admitted local invocation is exactly attempt 1 with zero additional hops and no cloud attempt
+before or after; PRIMARY_ONLY exact sole selection via R3-B1; fail-closed on absent/stale/unknown/malformed/
+mismatched/untrusted/caller-supplied/unsupported-kind evidence; zero containment/runtime preparation for
+disallowed workloads or non-admissible evidence. **R3-C2** (runtime-family feasibility / real containment
+issuer + future Kind B observation issuer) and **R3-C-Rz** (post-dispatch re-resolution) are deferred. No
+runtime family is chosen (Option A vs C carried forward). R3-B3 production-trust fail-closed boundary is
+preserved: eligibility ≠ production-trusted execution. ADR-0090 remains **Proposed**; implementation is
+gated on independent Architecture Review + Product Owner ratification. No product code, runtime, provider,
+network, DB/schema, approval/security owner, or new `RoutingFailureCode` in this task.
+
 ### R3-B2 — secure terminalization and containment evidence (2026-09-26)
 
-**IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD REVIEW.** Authorized base:
-`a52705abb9b8b22b5caa7fe841b70032f4405719`; R3-A and R3-B1 are CLOSED + DELIVERED per the R3-B2 task.
-This entry supersedes the historical R3-not-started statements below.
+**CLOSED + DELIVERED.** R3-A, R3-B1, R3-B2 and R3-B3 are all CLOSED + DELIVERED as of current main
+`eefd2709980866f88e1d5076914e3223b668794d`. R3-B3 was delivered on top of R3-B2 (production containment
+trust closure + non-self-declarable remediation). This current-state projection supersedes the earlier
+"implemented locally / awaiting review" wording; the historical audit detail below is retained unchanged.
 
 R3-B2 blocking remediation of reviewed `3bb5c165efeac4b3661ea30ef3dc1d4d2dc5a693` is implemented
 locally, awaiting a NEW independent exact-HEAD review. Prepared evidence validation now recomputes the

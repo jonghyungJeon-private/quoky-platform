@@ -5,6 +5,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C bounded task definition blocking remediation (docs only) — 2026-09-27
+
+- Correct the ADR-0090 R3-C amendment in `DECISIONS.md` (docs-only, on a remediation branch; the reviewed
+  commit `9e2ff6be5cef6cf44186001cf700500997ad180c` is not amended). B-1: Kind B
+  `TRUSTED_CURRENT_UNAVAILABILITY` has no trusted issuer → contract-defined, issuer NOT IMPLEMENTED, ALWAYS
+  DENY in R3-C1, with an explicit future issuer boundary and no persisted/rehydrated Kind B. B-2: Kind A
+  `STATIC_INELIGIBILITY` is derived internally from canonical registry/config facts, never caller-supplied,
+  never availability-derived; quality-floor exclusion is not outage evidence. B-3: exact attempt accounting
+  (attempt 1, zero additional hops, no cloud attempt before or after). B-4: Kind C `PRIOR_ATTEMPT_FAILURE`
+  unconditionally unsupported/DENY (belongs to R3-C-Rz). N-1..N-6 cleanup: explicit `REENTER_L0…`
+  definition, draft `localFallbackAllowed=false` default, quota/rate/overload interim clarified as
+  conceptual-only, full R3-C1 admission order, fail-closed case list with STOP/DEFER mapping. R3-C1 renamed
+  "Local Continuity Eligibility & Static Trusted Admission Contract".
+- Bring `CURRENT_STATE.md` to current canonical truth: R3-B2/R3-B3 projected as CLOSED + DELIVERED
+  (historical audit detail retained), and the R3-C entry updated to the remediated static-only contract.
+- ADR-0090 remains Proposed; independent Architecture Review pending before Push/PR/Merge. No product code,
+  runtime, provider, network, DB/schema, approval/security owner, or new `RoutingFailureCode`.
+
+## R3-C bounded task definition (docs only) — 2026-09-27
+
+- Add the ADR-0090 amendment "R3-C bounded task definition (Local Continuity Eligibility & Trusted
+  Admission)" to `DECISIONS.md`, closing carry-forwards N-1..N-6 enough that R3-C1 implementation scope is
+  unambiguous. Documentation only: no runtime, provider, network, DB/schema, approval/security owner, new
+  `RoutingFailureCode`, or runtime-family selection. Defines pre-dispatch `CloudUnavailabilityEvidence`,
+  PRIMARY_ONLY separation, N-3 control re-entry invariant, N-4 draft-vs-execute mapping, N-5 failure-term
+  mapping to the existing `routing-failure-matrix-v4`, N-6 Ollaya non-requirement, and an R3-C1/R3-C2/
+  R3-C-Rz split. ADR-0090 remains Proposed; independent Architecture Review pending before Push/PR/Merge.
+
 ## R3-B2 blocking remediation — 2026-09-26
 
 - Share one canonical v1 containment binding digest constructor between issuance and prepared-evidence
