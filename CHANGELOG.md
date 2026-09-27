@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C1 Local Continuity Eligibility & Static Trusted Admission — 2026-09-27
+
+- Add Core Application `local-continuity-admission.ts`: a pure, runtime-independent admission contract for
+  future contained local continuity. `WorkloadLocalFallbackPolicy` (deterministic, versioned,
+  `Capability`-keyed; coding/architecture/document-comparison ineligible by default); internal Kind A
+  static-fact derivation from the canonical `ProviderRegistry` (closed set: not-configured /
+  administratively-disabled / required-config-absent), never from availability/`isAvailable()`/
+  `availabilityClass`/quality-floor/caller-supplied evidence, bound to `configurationDigest`; Kind B DENY
+  (no issuer) and Kind C DENY (unsupported, R3-C-Rz); independent capability + quality-floor check reusing
+  `RoutingPolicyEngine`; exact PRIMARY_ONLY sole-selection handoff via the R3-B1
+  `assertExactSoleProviderSelection` boundary; fixed attempt accounting (attempt 1, zero hops). DENY means
+  local-continuity-not-admitted, not a whole-request STOP. Zero containment/runtime preparation; zero
+  production trust; R3-B3 fail-closed boundary preserved. Exported through the `@quoky/core` application
+  barrel (no test-only leakage). Closes ratified NB-1 (closed Kind A source) and NB-2 (DENY semantics).
+- No new `RoutingFailureCode`, DB schema/migration, aggregate/repository, approval/security owner, runtime
+  family, or runtime/provider/network path. Focused suite (32 tests) + Stage2B and R3-B1/B2/B3 regressions
+  pass; full `packages/core` + `packages/storage-sqlite` suites pass (2138 tests); `pnpm typecheck` passes.
+  R3-C2 and R3-C-Rz remain NOT AUTHORIZED. Local commit only; Push/PR/Merge require independent exact-HEAD
+  review PASS.
+
 ## R3-C bounded task definition blocking remediation (docs only) — 2026-09-27
 
 - Correct the ADR-0090 R3-C amendment in `DECISIONS.md` (docs-only, on a remediation branch; the reviewed

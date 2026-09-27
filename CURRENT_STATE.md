@@ -5,24 +5,34 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### R3-C — bounded task definition (docs only) (2026-09-27)
+### R3-C — task definition (superseded by the R3-C1 implementation entry below) (2026-09-27)
 
-**TASK DEFINITION / ARCHITECTURE ONLY — NOT STARTED (implementation).** Audit base
-`eefd2709980866f88e1d5076914e3223b668794d`. R3-A / R3-B1 / R3-B2 / R3-B3 are CLOSED + DELIVERED.
-`DECISIONS.md` carries the ADR-0090 amendment (with a 2026-09-27 blocking remediation) defining R3-C's
-smallest safe slice: **R3-C1 — Local Continuity Eligibility & Static Trusted Admission Contract**. After
-remediation R3-C1 admits local continuity only from **derived static operational unavailability (Kind A)**
-computed internally from canonical registry/configuration facts; **Kind B (TRUSTED_CURRENT_UNAVAILABILITY)
-has no trusted issuer and is DENY**, and **Kind C (PRIOR_ATTEMPT_FAILURE) is unsupported/DENY** (belongs to
-R3-C-Rz). An admitted local invocation is exactly attempt 1 with zero additional hops and no cloud attempt
-before or after; PRIMARY_ONLY exact sole selection via R3-B1; fail-closed on absent/stale/unknown/malformed/
-mismatched/untrusted/caller-supplied/unsupported-kind evidence; zero containment/runtime preparation for
-disallowed workloads or non-admissible evidence. **R3-C2** (runtime-family feasibility / real containment
-issuer + future Kind B observation issuer) and **R3-C-Rz** (post-dispatch re-resolution) are deferred. No
-runtime family is chosen (Option A vs C carried forward). R3-B3 production-trust fail-closed boundary is
-preserved: eligibility ≠ production-trusted execution. ADR-0090 remains **Proposed**; implementation is
-gated on independent Architecture Review + Product Owner ratification. No product code, runtime, provider,
-network, DB/schema, approval/security owner, or new `RoutingFailureCode` in this task.
+The R3-C bounded task definition and its blocking remediation are recorded in `DECISIONS.md`. Current
+implementation status for the authorized R3-C1 slice is the **R3-C1 — Local Continuity Eligibility &
+Static Trusted Admission** entry below. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+### R3-C1 — Local Continuity Eligibility & Static Trusted Admission (2026-09-27)
+
+**IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD IMPLEMENTATION REVIEW.** Feature branch
+`codex/r3c1-local-continuity-admission`, parent `9bd94b45f554e6e03e1fdcff1b43e391b8527334`. R3-A / R3-B1 /
+R3-B2 / R3-B3 are CLOSED + DELIVERED. R3-C1 is now a PURE, runtime-independent admission contract in Core
+Application (`local-continuity-admission.ts`): a deterministic versioned `WorkloadLocalFallbackPolicy`
+keyed on `Capability` (coding/architecture/document-comparison local-fallback-ineligible by default);
+internal Kind A derivation from the canonical `ProviderRegistry` over a closed fact set
+(`PROVIDER_NOT_CONFIGURED` / `PROVIDER_ADMINISTRATIVELY_DISABLED` / `REQUIRED_PROVIDER_CONFIGURATION_ABSENT`),
+never from availability/`isAvailable()`/`availabilityClass`/quality-floor/caller-supplied evidence, bound to
+`configurationDigest`; **Kind B DENY (no issuer)** and **Kind C DENY (unsupported → R3-C-Rz)**; local
+provider must independently satisfy the same capability + quality floor via the existing
+`RoutingPolicyEngine`; exact PRIMARY_ONLY sole-selection handoff through the R3-B1
+`assertExactSoleProviderSelection` boundary; `attemptNumber = 1`, `additionalProviderHops = 0`. DENY means
+local-continuity-not-admitted, never a whole-request STOP. It performs ZERO containment/runtime preparation
+and creates ZERO production trust; R3-B3's fail-closed production-trust boundary is unchanged
+(eligibility ≠ production-trusted execution). **R3-C2** (runtime-family feasibility / real containment
+issuer + future Kind B observation issuer) and **R3-C-Rz** (post-dispatch re-resolution) remain NOT
+AUTHORIZED and no runtime family is chosen. No new `RoutingFailureCode`, schema, aggregate, approval/security
+owner, or runtime/provider/network/DB path was added. Validation: focused suite (32 tests) + Stage2B and
+R3-B1/B2/B3 regressions; full `packages/core` + `packages/storage-sqlite` suites pass (2138 tests);
+`pnpm typecheck` passes. Local commit only; Push/PR/Merge require independent exact-HEAD review PASS.
 
 ### R3-B2 — secure terminalization and containment evidence (2026-09-26)
 

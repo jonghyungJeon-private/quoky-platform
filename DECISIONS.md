@@ -9376,3 +9376,60 @@ Push/PR/Merge, runtime start/stop, container/VM start, Ollama/Ollaya install/run
 execution, DB/SQLite/shared/live mutation, Workspace Apply, Live UAT, production/release gates. A local
 commit is created for the task definition; independent Architecture Review must pass before Push/PR/Merge.
 No R3-C implementation begins from this document.
+
+### R3-C1 implementation record — Local Continuity Eligibility & Static Trusted Admission (2026-09-27)
+
+**Status: Implemented locally on branch `codex/r3c1-local-continuity-admission` (parent
+`9bd94b45f554e6e03e1fdcff1b43e391b8527334`) / awaiting independent exact-HEAD implementation review.**
+This closes the ratified R3-C1 non-blocking implementation conditions. It implements a PURE,
+runtime-independent admission contract only: no runtime, container/VM, Ollama/Ollaya, model load,
+inference, network, DB/schema, new aggregate/repository, new approval/security owner, and no new
+`RoutingFailureCode`. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+New Core Application module `local-continuity-admission.ts` (exported through the `@quoky/core`
+application barrel):
+
+- `WorkloadLocalFallbackPolicy` — deterministic, immutable, versioned policy owner
+  (`r3c1-workload-local-fallback-v1`) keyed on the existing domain `Capability`. `GENERAL_CHAT`,
+  `SUMMARIZATION`, `READONLY_LOOKUP`, `PROJECT_ANALYSIS` may be considered; `CODE_IMPLEMENTATION`,
+  `CODE_REVIEW`, `ARCHITECTURE_PLANNING`, `DOCUMENT_ANALYSIS` (and `TEST_EXECUTION`/`EMBEDDING`) are
+  local-fallback-ineligible by default per ADR-0090 §4. Policy is not hard-coded in adapter code.
+- `deriveKindAStaticFacts(registry, …)` — **NB-1 closed.** Kind A is derived INTERNALLY from the canonical
+  `ProviderRegistry` from an explicit CLOSED set: `PROVIDER_NOT_CONFIGURED` (A1),
+  `PROVIDER_ADMINISTRATIVELY_DISABLED` (A2, from the canonical `enabled` flag), and
+  `REQUIRED_PROVIDER_CONFIGURATION_ABSENT` (A3). It consults only canonical configuration presence and the
+  `enabled` flag — never the availability snapshot, `ProviderAvailability`, host `isAvailable()`,
+  `ProviderDescriptor.operationalProfile.availabilityClass` (incl. `NETWORK_DEPENDENT`), an
+  availability-derived `RoutingPolicyEngine` exclusion, a quality-floor exclusion, or any caller-supplied
+  evidence object. Derivation is bound to the exact `ProviderRegistry.configurationDigest`.
+- `LocalContinuityAdmission.admit(input)` — the admission decision. Order: structural validation →
+  configuration-identity binding (`selectionConfigurationRef` must equal `registry.configurationDigest`,
+  else `CONFIGURATION_IDENTITY_MISMATCH`) → routing-context/capability consistency → workload
+  local-fallback policy → internal Kind A derivation → local provider configured + LOCAL locality → local
+  provider INDEPENDENTLY satisfies the required capability + the same quality floor (reusing
+  `RoutingPolicyEngine` over a snapshot in which only the local provider is AVAILABLE; no second ranking
+  engine, no fabricated cloud AVAILABLE snapshot) → exact PRIMARY_ONLY sole selection handoff through the
+  existing R3-B1 `assertExactSoleProviderSelection` boundary. On admission it mints a non-forgeable
+  `SoleProviderSelection` (one provider / one selection / one plan / one binding downstream) and performs
+  ZERO containment/runtime preparation and creates ZERO production trust.
+- Kind B (`admitTrustedCurrentUnavailability`) and Kind C (`admitPriorAttemptFailure`) fail closed
+  unconditionally (`DYNAMIC_EVIDENCE_UNSUPPORTED`, `PRIOR_ATTEMPT_FAILURE_UNSUPPORTED`); there is no
+  caller-accessible admitting path and no persisted/rehydrated evidence. No Kind B observation issuer,
+  health monitor, probe, trusted clock, persistence authentication, or signing/PKI is introduced.
+- Attempt accounting is explicit and testable: `attemptNumber = 1`, `additionalProviderHops = 0`. The
+  global `MAX_PROVIDER_ATTEMPTS = 2` / `MAX_ADDITIONAL_PROVIDER_HOPS = 1` constants are unchanged; the
+  decision encodes no cloud predecessor/successor and no nested retry budget.
+
+**NB-2 closed — DENY semantics.** `LocalContinuityDenialReason` values (e.g.
+`WORKLOAD_LOCAL_FALLBACK_DISALLOWED`, `NO_DERIVED_STATIC_UNAVAILABILITY`, `LOCAL_PROVIDER_BELOW_QUALITY_FLOOR`)
+each mean LOCAL CONTINUITY NOT ADMITTED. The decision carries no `requestDisposition`/STOP/DEFER/
+`HUMAN_REQUIRED` field: whether the surrounding orchestration STOPs/DEFERs is decided elsewhere by existing
+ADR-0090 policy only when no normal eligible execution path exists.
+
+Validation: focused suite `local-continuity-admission.test.ts` (32 tests) covering conditions A–J plus
+malformed/mismatch inputs; Stage2B routing regressions (`routing-policy-engine`, `provider-registry`,
+`provider-execution-plan`, `runtime-response-validation-contracts`) and R3-B1/B2/B3 regressions
+(`continuation-prepared-containment`, `containment-public-api`, storage-sqlite `*-e2e`) all pass;
+`@quoky/core` barrel still does not leak the R3-B1 test-only fake. Full `packages/core` +
+`packages/storage-sqlite` suites: 2138 tests passing. `pnpm typecheck` (`tsc -b`) passes. No new
+`RoutingFailureCode`, schema, aggregate, approval/security owner, or runtime path was added.

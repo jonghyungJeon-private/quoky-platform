@@ -109,6 +109,7 @@ export type {
 } from './continuation-prepared-containment';
 export * from './continuation-containment-validation';
 export * from './containment-failure-classifier';
+export * from './local-continuity-admission';
 export * from './tool-manager';
 export * from './agent-profile-registry';
 export * from './work-handoff-manager';
