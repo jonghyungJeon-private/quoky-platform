@@ -25,22 +25,45 @@ The canonical cloud set is derived from `RoutingPolicyEngine.staticEligibility(.
 (policy-compatible/enabled NETWORK set) — never caller-selected IDs; multi-cloud requires trusted
 current-unavailability for **every** relevant candidate (one available cloud → DENY). Stage2B stays the sole
 router (C2B provides trusted facts, not ranking); Kind B requires C2A's first-run/no-prior-history binding and
-remains pre-dispatch (no prior provider attempt); Kind A precedence preserved. Closes C2A carry-forwards NB-1
-(shared canonical issuer instance), NB-2 (authority valid only on minting instance), NB-3 (bind canonical
-`staticEligibility` projection, not caller plans), and NB-4 (positive validated-vs-failed outcome type).
+remains pre-dispatch (no prior provider attempt); Kind A precedence preserved. C2A carry-forwards: **NB-1
+closed** (shared canonical issuer instance), **NB-2 closed** (authority valid only on minting instance),
+**NB-3 partial** (canonical static provider-set binding defined here; actual canonical planner/effect-plan
+binding still belongs to C2C — NOT closed), **NB-4 closed for C2B validation semantics** (explicit
+VALIDATED/INVALID(reason) result; C2C still decides effect-boundary consumption).
 Process restart invalidates authority; no persisted/rehydrated Kind B; R3-B3 production trust stays FAIL
 CLOSED and separate. Decomposition: **C2B-1** (authority + issuer + validator + currentness/window +
 canonical provider-set binding + reason enum + validation outcome + fake/test producer contract; zero network
 by default) then **C2B-2** (actual network/secret observation producer; separate STRICT approval). Docs-only:
 no runtime, provider, network, secret, DB/schema, aggregate/repository, approval/security owner, or new
-`RoutingFailureCode`. ADR-0090 remains Proposed; **Kind B remains DENY**; C2B implementation, C2C, and
+`RoutingFailureCode`. ADR-0090 remains Proposed; **Kind B remains DENY**; C2B implementation, C2B-2, C2C, and
 R3-C-Rz remain NOT AUTHORIZED.
+
+**REMEDIATION (2026-09-28, Claude CHANGES_REQUIRED B-1..B-4).** One additional docs-only remediation commit
+(parent `941194d39f…`; reviewed commit not amended) appends "ADR-0090 amendment (remediation) — R3-C2B
+corrected …" to `DECISIONS.md`. **B-1:** the only controlling Kind B set is
+`staticEligibility(...).eligibleNetworkProviderIds` (enabled + policy-compatible + NETWORK); disabled/
+incompatible providers never enter it; exact provider-ID set equality (no missing/extra/duplicate) at
+validation; Kind A/B case matrix A–E documented. **B-2:** monotonic-ms currentness (`observedAtMonoMs`/
+`validFromMonoMs`/`expiresAtMonoMs`, rule `validFrom <= now < expiresAt`), fixed
+`MAX_TRUSTED_UNAVAILABILITY_WINDOW_MS=5000` and `MAX_OBSERVATION_TO_ISSUANCE_DELAY_MS=1000`, fail-closed on
+non-finite/negative/backward clock; wall-clock audit-only. **B-3:** issuer-owned injected
+`CurrentUnavailabilityObservationProducer`; callers pass no observation/flag/timestamp; C2B-1 uses only a
+deterministic `TEST_FAKE` producer (no real `isAvailable()`, no process spawn/network/secret);
+`CANONICAL_PROVIDER_REACHABILITY_PROBE` reserved for C2B-2; bounded `TrustedUnavailabilityReason`
+(ENDPOINT_UNREACHABLE / AUTHENTICATION_UNAVAILABLE / PROVIDER_HEALTH_UNAVAILABLE). **B-4:** C2B-1 is
+VALIDATOR-ONLY — it does NOT modify `LocalContinuityAdmission.admit(...)` or the C2A issuer, so Kind B
+local-continuity admission STILL = DENY; a fully VALIDATED C2B authority set is only sufficient evidence for a
+future separately reviewed Kind B integration slice. Adds `TrustedCurrentUnavailabilityValidationResult`
+(VALIDATED/INVALID(reason)), five-step precedence ending at VALIDATED_KIND_B_EVIDENCE, and the
+`isAvailable()`-is-not-production-evidence note. Binding uses the Stage2B composite `configurationDigest` (not
+`ContinuationProviderRoutingConfiguration.configurationDigest`) plus `taskId`. Still docs-only; Kind B DENY;
+C2B/C2B-2/C2C/R3-C-Rz NOT AUTHORIZED.
 
 ### R3-C2A — Bound Local Continuity Authority (2026-09-28)
 
-**IMPLEMENTED LOCALLY — independent exact-HEAD Claude review pending.** Authorized by the R3-C2A
-implementation sprint on canonical main `9addb5875fd5c9e05e6a726ef52e8885896e76f3` (architecture delivery
-PR #88). This entry supersedes historical C2A "not authorized/proposed" delivery wording below; the
+**CLOSED + DELIVERED — PR #89 merged** (main merge `be9ba95853a1cfc47d33009a70d06b002ba80828`). Authorized by
+the R3-C2A implementation sprint on canonical main `9addb5875fd5c9e05e6a726ef52e8885896e76f3` (architecture
+delivery PR #88). This entry supersedes historical C2A "not authorized/proposed" delivery wording below; the
 ratified contract is ADR-0090 remediation 2 (§R23–R43), not a new architecture decision.
 
 - `BoundLocalContinuitySelectionIssuer.issue(taskRunId, localProviderId)` loads canonical STARTED

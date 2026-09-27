@@ -10720,3 +10720,210 @@ start, container/VM start, Ollama/Ollaya, provider/network execution, secret rea
 production gates. One local architecture commit is created; independent Architecture Review must pass before
 Push/PR/Merge. No C2B/C2C implementation begins from this document; C2B implementation, C2C, and R3-C-Rz
 remain NOT AUTHORIZED (C2B is ARCHITECTURE AUTHORIZED, implementation gated).
+
+## ADR-0090 amendment (remediation) — R3-C2B corrected after Claude CHANGES_REQUIRED (B-1..B-4)
+
+- **Status:** Proposed — architecture / task-definition only. Supersedes the corrected claims of the
+  preceding "R3-C2B architecture / task definition" section (retained above as history); where the two
+  conflict, THIS remediation governs. Independent Architecture Re-review pending. Grants no implementation,
+  activation, runtime, provider, network, secret, DB, or execution authority. Kind B remains DENY.
+- **Date:** 2026-09-28
+- **Branch / parent:** `codex/r3c2b-trusted-unavailability-observation-architecture`; one additional
+  docs-only remediation commit whose parent is the reviewed `941194d39f2ee3449acfca93fbe1a78db9e0eded`
+  (reviewed commit NOT amended/rebased/rewritten). Canonical main `be9ba95853a1cfc47d33009a70d06b002ba80828`.
+- **Why:** Claude accepted blockers B-1..B-4. This applies the exact Chief Architect decisions.
+
+### RB-1. Canonical Kind B provider set (corrects §11/§12)
+
+The ONLY controlling Kind B provider set is
+`RoutingPolicyEngine.staticEligibility(context, snapshot).eligibleNetworkProviderIds` for the exact canonical
+`RoutingContext` + registry state + routing policy configuration — i.e. **enabled + policy-compatible +
+NETWORK** providers. `policyCompatibleNetworkProviderIdsIgnoringEnabled` MUST NOT be used as the Kind B
+observation set (it is for static/Kind A analysis only). Disabled providers must never enlarge the Kind B
+dynamic observation set.
+
+**Kind A / B case matrix (explicit):**
+
+| Case | Configuration | Result |
+|---|---|---|
+| A | all policy-compatible NETWORK providers disabled | Kind A (A2); Kind B NOT required |
+| B | cloud-a enabled+compatible, cloud-b disabled+compatible | Kind B canonical set = {cloud-a}; cloud-b ignored |
+| C | cloud-a enabled but policy-incompatible, cloud-b enabled+compatible | Kind B canonical set = {cloud-b} |
+| D | enabled clouds exist but all policy-incompatible | ordinary routing incompatibility — NOT Kind A, NOT Kind B |
+| E | no configured NETWORK/cloud provider | Kind A (A1) per current R3-C1 semantics; Kind B not applicable |
+
+**Multi-cloud exact-set rule (aggregation, at validation/consumption):** re-derive `eligibleNetworkProviderIds`
+from the exact canonical context/configuration and require the observation-authority set to contain exactly
+ONE valid authority for EVERY provider in that re-derived set — no missing, no extra, no duplicate provider.
+Provider-ID set equality must hold exactly. Examples: canonical `{cloud-a, cloud-b}` with authority for only
+`cloud-a` → INVALID; authority for `cloud-a`+`cloud-b` → may produce VALIDATED Kind B evidence; authority for
+`cloud-a`+`cloud-b`+`ghost` → INVALID. If the canonical set changes after issuance, old aggregate validation
+fails.
+
+### RB-2. Currentness contract (corrects §9) — monotonic milliseconds only
+
+Qualitative currentness is removed. Security-relevant fields (all monotonic ms via existing
+`MonotonicClock.nowMs()`): `observedAtMonoMs`, `validFromMonoMs`, `expiresAtMonoMs`.
+
+- **Security validity rule:** `validFromMonoMs <= nowMonoMs < expiresAtMonoMs`. Exact equality:
+  `now == validFrom` → valid; `now == expiresAt` → expired/invalid.
+- **Fixed constants (R3-C2B architectural, not caller-configurable in C2B-1):**
+  `MAX_TRUSTED_UNAVAILABILITY_WINDOW_MS = 5_000` and `MAX_OBSERVATION_TO_ISSUANCE_DELAY_MS = 1_000`.
+- Require `expiresAtMonoMs - validFromMonoMs <= 5_000`; `validFromMonoMs >= observedAtMonoMs`;
+  `validFromMonoMs - observedAtMonoMs <= 1_000`.
+- **Fail closed for:** NaN; Infinity; negative time; `expires <= validFrom`; `validFrom < observedAt`;
+  observation→issuance delay > 1s; observed monotonic value later than the issuer clock; current clock lower
+  than a previously recorded issuance/validation monotonic value when such a comparison is available.
+- Validate currentness at issuance AND again at validation/consumption. Never extend or refresh expiry
+  during validation.
+
+**Wall clock:** any wall-clock timestamp (e.g. `observedAtWallClock`) is OPTIONAL and AUDIT-ONLY with ZERO
+effect on authority validity. No new trusted wall-clock abstraction is required for C2B-1.
+
+### RB-3. Observation producer contract (corrects §5/§19) — issuer-owned, injected
+
+Define a narrow injected producer port, conceptually `CurrentUnavailabilityObservationProducer`. The
+canonical C2B issuer OWNS the call. Flow: canonical issuer → derives canonical provider/execution/context/
+config/workload facts → invokes the injected producer → receives a bounded observation result → validates
+time/source/result → mints trusted authority. Callers MUST NOT pass an availability boolean, observation
+object, timestamp, CURRENT flag, trusted flag, reason, or observation source into the issuer as authoritative
+evidence; the issuer itself calls the producer.
+
+- **C2B-1 producer:** network-free; includes only a deterministic fake/test producer implementation or seam.
+  C2B-1 MUST NOT call real `AiProvider.isAvailable()` (current implementations may spawn a local process,
+  e.g. `bin --version`, and do not prove cloud reachability/authentication). No process spawn, network,
+  secret read, or provider API in C2B-1.
+- **C2B-2 producer:** actual production producer semantics reserved for C2B-2; NOT AUTHORIZED and requires
+  separate STRICT approval. Its observation must represent actual current Provider/service reachability or
+  availability semantics; today's `isAvailable()` is NOT that production evidence.
+
+**Observation source enum** `TrustedUnavailabilityObservationSource`: exactly `TEST_FAKE` (C2B-1) plus
+architecture-reserved `CANONICAL_PROVIDER_REACHABILITY_PROBE` (future C2B-2). C2B-1 may issue ONLY from
+`TEST_FAKE`. The source value is derived from the injected producer implementation/class/registration, NOT
+from the caller or the observation payload. `CANONICAL_PROVIDER_REACHABILITY_PROBE` is reserved only and MUST
+NOT be accepted as active production authority until C2B-2 is implemented, reviewed, and delivered.
+
+**Reason enum** `TrustedUnavailabilityReason` (narrow, pre-dispatch, observation semantics only):
+`ENDPOINT_UNREACHABLE`, `AUTHENTICATION_UNAVAILABLE`, `PROVIDER_HEALTH_UNAVAILABLE`. These are NOT provider
+execution failure, semantic failure, invalid model response, post-dispatch timeout, or retry/fallback reason.
+The C2B-1 fake producer may deterministically emit these for tests; real production derivation belongs to
+C2B-2. Do NOT reuse gateway/post-dispatch `RoutingFailureCode` as authority.
+
+### RB-auth. Authority shape (corrects §7)
+
+The conceptual trusted authority binds at least: `providerId`, `taskId`, `executionId`, `taskRunId`,
+canonical `capability`, `RoutingContextDigest`, Stage2B composite `configurationDigest`, `observedAtMonoMs`,
+`validFromMonoMs`, `expiresAtMonoMs`, `TrustedUnavailabilityObservationSource`, `TrustedUnavailabilityReason`,
+and issuer-instance identity/lifetime. Require `executionId == taskRunId == TaskRun.id`. Process/
+issuer-instance local only; restart invalidates authority; no persistence/rehydration.
+
+### RB-4. C2B-1 is VALIDATOR-ONLY (Claude option (a)) — corrects §2/§16/§17
+
+C2B-1 MUST NOT modify `LocalContinuityAdmission.admit(...)` and MUST NOT modify the C2A issuer to admit
+Kind B. C2B-1 implements ONLY: the Trusted Current-Unavailability authority + issuer + validator + aggregate
+validation result. Therefore after C2B-1 delivery, Kind B local-continuity admission STILL = DENY in the
+actual C2A/R3-C1 execution path. Do NOT claim "Kind B may admit local continuity" as an implemented C2B-1
+behavior. Instead: **"A fully VALIDATED C2B authority set is sufficient evidence for a future separately
+reviewed Kind B integration slice."**
+
+**Future Kind B integration:** a separate future slice decides the exact consumption point (into R3-C1
+admission or C2A orchestration) only after its own Architecture Review. C2B-1 does not decide/implement it.
+This removes the conflict between "Kind B remains DENY" and "validated Kind B evidence exists."
+
+**Five-step precedence (explicit):**
+1. Validate canonical workload / `RoutingContext` / policy applicability.
+2. Evaluate static Kind A.
+3. If Kind A is valid, dynamic Kind B is unnecessary.
+4. If no Kind A and canonical `eligibleNetworkProviderIds` is non-empty, C2B may validate current-
+   unavailability evidence for the ENTIRE exact provider set.
+5. Ordinary policy incompatibility / no eligible path due to capability-quality-policy mismatch → neither
+   Kind A nor Kind B.
+For C2B-1, step 4 ends at `VALIDATED_KIND_B_EVIDENCE`, NOT at local-continuity admission.
+
+**Positive validation result** `TrustedCurrentUnavailabilityValidationResult` = `VALIDATED` or
+`INVALID(reason)`, with bounded invalid reasons: `NOT_ISSUED`, `WRONG_ISSUER`, `NOT_YET_VALID`, `EXPIRED`,
+`TIME_INVALID`, `PROVIDER_SET_MISMATCH`, `MISSING_PROVIDER_AUTHORITY`, `EXTRA_PROVIDER_AUTHORITY`,
+`DUPLICATE_PROVIDER_AUTHORITY`, `EXECUTION_MISMATCH`, `TASK_MISMATCH`, `ROUTING_CONTEXT_MISMATCH`,
+`CONFIGURATION_MISMATCH`, `WORKLOAD_MISMATCH`, `NOT_FIRST_RUN`, `SOURCE_NOT_ALLOWED`. `VALIDATED` means ONLY
+that the C2B evidence contract passed — NOT local continuity admitted, provider selected, runtime permitted,
+containment permitted, or production trust established.
+
+### RB-bind. Configuration / task / execution binding
+
+The security binding is the **Stage2B composite `configurationDigest`** from the canonical registry + policy
+projection/decision — NOT `ContinuationProviderRoutingConfiguration.configurationDigest`. At validation/
+consumption, re-derive the composite digest; a registry or policy change during the observation window →
+`CONFIGURATION_MISMATCH` → INVALID. Bind `taskId` in addition to `executionId`/`taskRunId`. Reuse the C2A
+first-run contract: `TaskRun` STARTED; `TaskRun.attempt == 1`; no prior `TaskRun`; stored
+`Task.intent.capability == TaskRun.capability`; exact `RoutingContextDigest`; exact composite
+`configurationDigest`. A prior run/provider attempt → C2B invalid → future R3-C-Rz boundary.
+
+### RB-nb. C2A carry-forward status (corrects §16)
+
+- **NB-1:** CLOSED for C2B architecture (one shared canonical issuer instance).
+- **NB-2:** CLOSED for C2B architecture (authority valid only on the minting issuer instance).
+- **NB-3:** **PARTIAL** — canonical static provider-set binding is defined here, but the actual canonical
+  planner/effect-plan binding still belongs to C2C. NB-3 is NOT closed.
+- **NB-4:** CLOSED for C2B validation semantics via the explicit `VALIDATED / INVALID(reason)` result; C2C
+  still must decide how a positive validation is consumed at its effect boundary.
+
+### RB-isavail. `isAvailable()` semantic note (NB-5)
+
+Current `AiProvider.isAvailable()` implementations are NOT trusted C2B production evidence. Current ai-cli
+implementations can represent local binary/process availability (e.g. a version invocation), not proof that
+the cloud provider/service is presently reachable or authenticated. Therefore C2B-1 MUST NOT call them; C2B-2
+must define a semantically valid observation source.
+
+### RB-matrix. Fail-closed matrix (C2B-1 = observation validation only, corrects §20)
+
+| Situation | C2B-1 output |
+|---|---|
+| valid Kind A | Kind B not needed |
+| no Kind A + no valid Kind B evidence | C2B validation NOT sufficient |
+| Kind B missing / forged / expired | INVALID |
+| provider / context / config / task / workload mismatch | INVALID |
+| one relevant cloud missing valid authority | INVALID |
+| exact valid authority for EVERY provider in canonical `eligibleNetworkProviderIds` | `VALIDATED_KIND_B_EVIDENCE` |
+| prior provider execution | INVALID / R3-C-Rz boundary |
+
+C2B-1 never writes "local continuity may admit."
+
+### RB-scope. C2B-1 final implementation slice (after ratification)
+
+Exactly: trusted authority type; issuer-instance-local authenticity; injected observation producer port;
+deterministic `TEST_FAKE` producer/test seam; `MonotonicClock` currentness; 5-second max validity window;
+1-second max observation→issuance delay; canonical `eligibleNetworkProviderIds` derivation; exact-set
+aggregate validator; TaskRun first-run binding; routing/config/workload binding; bounded source/reason enums;
+`VALIDATED / INVALID` result; focused tests. ZERO: real `isAvailable()`; process spawn; network; secret;
+Provider execution; R3-C1/C2A Kind B admission integration; containment; runtime; production trust.
+
+### RB-tests. Required future C2B-1 tests
+
+Caller cannot submit raw observation data; forged authority rejected; cross-issuer authority rejected;
+`TEST_FAKE` accepted only under the canonical fake producer; reserved production source rejected in C2B-1;
+wrong provider / taskId / executionId / `RoutingContextDigest` / composite config digest / capability;
+first-run violation; prior-`TaskRun` violation; `now < validFrom` → invalid; `now == validFrom` → valid;
+`now < expiresAt` → valid; `now == expiresAt` → expired; window > 5000ms → invalid; observation→issuance >
+1000ms → invalid; non-finite time → invalid; ghost-provider authority → invalid; disabled provider not in
+Kind B set; incompatible provider not in Kind B set; one of two eligible clouds missing authority → invalid;
+exact authority for both eligible clouds → VALIDATED; extra authority → invalid; duplicate authority →
+invalid; registry/config change → invalid; raw `isAvailable() === false` alone → insufficient;
+`ProviderRegistrySnapshot` alone → insufficient; no real process/network execution.
+
+### RB-c2c. C2C boundary (preserved)
+
+C2C later owns: actual planner/effect-plan binding; containment/effect boundary; Option A/C runtime decision;
+future use of validated Kind B evidence. C2B-1 does not cross that boundary.
+
+### RB-b3. R3-B3 status (preserved verbatim)
+
+`PRODUCTION PROVENANCE CONTRACT = DEFINED`; `PRODUCTION TRUST ANCHOR = NOT IMPLEMENTED`;
+`PRODUCTION VERIFIER ISSUER = NOT IMPLEMENTED`; `PRODUCTION CAPABILITY ISSUER = NOT IMPLEMENTED`;
+`PRODUCTION TRUST CHECK = FAIL CLOSED`. C2B observation authority is NOT production trust.
+
+### Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated. One local docs-only
+remediation commit on parent `941194d39f2ee3449acfca93fbe1a78db9e0eded`; independent Architecture Re-review
+must pass before Push/PR/Merge. C2B implementation, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; Kind B
+remains DENY.
