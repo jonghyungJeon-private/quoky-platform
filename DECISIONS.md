@@ -9010,7 +9010,7 @@ proposed here. No `[RESERVE]` code seam is added by this documentation-only task
 bounded implementation; runtime feasibility/activation retain their separate gates. Stop after the
 local architecture commit for independent Architecture Review; no Push/PR/Merge before that review passes.
 
-## ADR-0090 amendment — R3-C bounded task definition (Local Continuity Eligibility & Trusted Admission)
+## ADR-0090 amendment — R3-C bounded task definition (Local Continuity Eligibility & Static Trusted Admission)
 
 - **Status:** Proposed — task definition / architecture only. Independent Architecture Review and Product
   Owner ratification pending. Grants no implementation, activation, runtime, provider, network, DB, or
@@ -9508,3 +9508,65 @@ has exactly one unrelated failure: `apps/quoky/src/github-app-git-provider.test.
 environment; this is environment-sensitive and unrelated to R3-C1. Per the review instruction it was NOT
 modified and the environment was NOT mutated to force it green; R3-C1 scoped and regression suites pass
 independently.
+
+### R3-C1 exact-HEAD review remediation — B-A: Kind A = administrative-only, not routing outcome (2026-09-27)
+
+**Status: Remediation implemented locally on branch `codex/r3c1-local-continuity-admission` (one commit on
+top of `1a613542322e901add16df5563685d1d799ae18c`; prior commits not amended) / awaiting a new independent
+exact-HEAD review.** This corrects accepted blocker **B-A**: the previous rule
+`Kind A = eligibleNetworkProviderIds.length === 0` was too broad — an empty eligible NETWORK set can result
+from ordinary Stage2B policy incompatibility (quality floor, required capability, tool support, routing
+class, LOCAL-locality policy), which is NORMAL ROUTING, not local-continuity evidence. It supersedes the
+Kind A semantics stated in the two records above. Still inside approved R3-C1 scope: no new
+aggregate/repository, DB schema, approval/security owner, `RoutingFailureCode`, Kind B issuer, production
+trust/capability issuer, runtime family, Docker/VM/Ollama, network probe, or R3-C-Rz path. R3-C2 / R3-C-Rz
+remain NOT AUTHORIZED.
+
+**Final Kind A semantics (closed administrative/configuration conditions only).** Kind A means EITHER:
+- **A1 `NO_CLOUD_PROVIDER_CONFIGURED`** — no NETWORK/cloud Provider is configured at all, AND the matched
+  policy does not intentionally require LOCAL locality; or
+- **A2 `ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED`** — one or more NETWORK providers are POLICY-COMPATIBLE
+  (ignoring `enabled`) but every one is administratively disabled (`enabled === false`).
+
+Kind A is NEVER: cloud below quality floor, cloud lacking capability, tool/routing-class mismatch,
+LOCAL-locality policy, ranking result, or any availability/`availabilityClass`/`isAvailable()`/snapshot
+fact. The previously discussed "required provider configuration absent" subcase remains UNSUPPORTED (no
+caller input for it).
+
+**Stage2B static projection (policy-compatibility separated from enabled).** `RoutingPolicyEngine`'s
+`eligible(...)` is refactored to `descriptor.enabled && policyCompatible(descriptor, context, rule)`, where
+`policyCompatible(...)` owns every canonical static rule EXCEPT `enabled` and availability. The read-only
+`staticEligibility(...)` projection now also exposes `configuredNetworkProviderIds`,
+`policyCompatibleNetworkProviderIdsIgnoringEnabled`, and `policyRequiresLocalLocality`, alongside the
+existing eligible sets and the composite `configurationDigest`. It still never reads availability, ranks,
+selects, builds an ExecutionPlan, invokes a Provider, or mutates the registry, and is invariant under
+AVAILABLE/UNAVAILABLE/UNKNOWN (independently tested).
+
+**R3-C1 Kind A algorithm (decision order after workload policy + composite-config binding):**
+Case 0 — matched policy intentionally requires LOCAL → `POLICY_REQUIRES_LOCAL_NORMAL_ROUTING` (DENY), even
+if no cloud is configured (closes NB-b / N3). Case 4 — any enabled policy-compatible cloud exists →
+`NORMAL_CLOUD_PATH_STATICALLY_EXISTS` (DENY). Case 1 — no NETWORK provider configured → A1. Case 2 —
+NETWORK providers exist but NONE is policy-compatible → `CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY` (DENY;
+closes N1/N2). Case 3 — policy-compatible clouds exist but all disabled → A2. In A1/A2 the LOCAL provider
+must still be independently statically eligible under the SAME policy/config (reusing the same projection;
+no duplicated floor/order logic), else `LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE`.
+
+The admitted decision now carries the closed `kindACondition` (`NO_CLOUD_PROVIDER_CONFIGURED` |
+`ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED`). Configuration binding (composite registry+policy digest, B-3),
+local eligibility reuse, Kind B/C fail-closed (`assert*Unsupported`), attempt accounting
+(`attemptNumber = 1`, `additionalProviderHops = 0`, declarative), DENY semantics (no
+STOP/DEFER/HUMAN_REQUIRED; healthy cloud path → DENY with normal Stage2B routing intact), zero
+containment/runtime preparation, and zero production trust are all preserved.
+
+Validation: `local-continuity-admission.test.ts` (37 tests, incl. N1/N2/N3 and Kind A Cases 0–4 +
+additional required cases) and `routing-policy-engine.test.ts` (33 tests, incl. new
+configured/policy-compatible-ignoring-enabled/LOCAL-flag projection tests) pass; Stage2B / R3-B1 / R3-B2 /
+R3-B3 regressions pass (the `eligible()` refactor is behavior-preserving: 328 focused regression tests
+pass). `pnpm typecheck` (`tsc -b`) passes. The full repository suite retains exactly one unrelated
+environment-sensitive failure, `apps/quoky/src/github-app-git-provider.test.ts` (`GIT_ASKPASS` present in
+the executing shell), which was NOT modified and whose environment was NOT mutated.
+
+**Carry-forward (unchanged, non-blocking, before R3-C2):** bind admission to the exact request/routing
+identity; harden R3-B1 `SoleProviderSelection` public issuance; enforce attempt accounting at the
+R3-C2/R3-C-Rz integration boundary; authoritative deterministic workload-policy/classifier binding before
+production wiring (R3-C1 does not expand the `Capability` taxonomy without Architecture Review).

@@ -13,31 +13,32 @@ Static Trusted Admission** entry below. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
 
 ### R3-C1 — Local Continuity Eligibility & Static Trusted Admission (2026-09-27)
 
-**IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD REVIEW (post CHANGES_REQUIRED remediation).**
-Feature branch `codex/r3c1-local-continuity-admission`; remediation commit on top of reviewed
-`ab0db3a02ddd73b15e484a345daf08b61a2d1e4f` (not amended); canonical base
-`9bd94b45f554e6e03e1fdcff1b43e391b8527334`. R3-A / R3-B1 / R3-B2 / R3-B3 are CLOSED + DELIVERED. R3-C1 is a
-PURE, runtime-independent admission contract in Core Application (`local-continuity-admission.ts`): a
-deterministic versioned `WorkloadLocalFallbackPolicy` keyed on `Capability`
-(coding/architecture/document-comparison ineligible by default). After exact-HEAD review remediation:
-**Kind A** = "no NETWORK/cloud Provider is statically eligible for the matched Stage2B policy", derived via
-the new Stage2B-owned read-only `RoutingPolicyEngine.staticEligibility(...)` projection (canonical registry
-+ policy + `enabled` only; availability/`isAvailable()`/`availabilityClass`/snapshot never consulted; no
-caller-supplied cloud id — `normalCloudProviderId`/`requiredCloudProviderIds` removed); admission binds to
-the **composite** (registry + policy) `configurationDigest` identical to `select` (registry-only or
-stale-policy refs rejected); the local provider must independently be statically eligible under the same
-policy/config (no duplicated floor logic); **Kind B DENY (no issuer)** and **Kind C DENY (unsupported →
-R3-C-Rz)** via `assert*Unsupported` functions; exact PRIMARY_ONLY sole-selection handoff through the
-pre-existing R3-B1 `assertExactSoleProviderSelection` assertion; `attemptNumber = 1`,
-`additionalProviderHops = 0` (declarative; downstream enforcement is an R3-C2/R3-C-Rz responsibility). DENY
-means local-continuity-not-admitted, never a whole-request STOP. Zero containment/runtime preparation; zero
-production trust; R3-B3 fail-closed boundary unchanged (eligibility ≠ production-trusted execution).
-**R3-C2** and **R3-C-Rz** remain NOT AUTHORIZED; no runtime family chosen. No new `RoutingFailureCode`,
-schema, aggregate, approval/security owner, or runtime/provider/network/DB path. Validation: focused
-`local-continuity-admission.test.ts` (33, incl. P1/P2/P3/P7) + `routing-policy-engine.test.ts` (28, incl. 7
-new `staticEligibility` tests) + Stage2B/R3-B regressions pass; `pnpm typecheck` passes. Full-suite: one
-unrelated env-sensitive failure (`github-app-git-provider.test.ts`, `GIT_ASKPASS` set in shell) not
-modified. Local commit only; Push/PR/Merge require independent exact-HEAD review PASS.
+**IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD REVIEW (post CHANGES_REQUIRED + B-A remediation).**
+Feature branch `codex/r3c1-local-continuity-admission`; remediation commits on top of reviewed
+`ab0db3a0…` → `1a613542…` (none amended); canonical base `9bd94b45…`. R3-A / R3-B1 / R3-B2 / R3-B3 are
+CLOSED + DELIVERED. R3-C1 is a PURE, runtime-independent admission contract in Core Application
+(`local-continuity-admission.ts`): a deterministic versioned `WorkloadLocalFallbackPolicy` keyed on
+`Capability` (coding/architecture/document-comparison ineligible by default). **Kind A is limited to closed
+administrative conditions only**: A1 no NETWORK/cloud Provider configured (and policy not LOCAL-only), or
+A2 every POLICY-COMPATIBLE cloud is administratively disabled. Kind A is NEVER a quality-floor, capability,
+tool, routing-class, ranking, LOCAL-locality, or availability outcome — those DENY as normal routing
+(`CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY`, `NORMAL_CLOUD_PATH_STATICALLY_EXISTS`,
+`POLICY_REQUIRES_LOCAL_NORMAL_ROUTING`). It is derived via the Stage2B-owned read-only
+`RoutingPolicyEngine.staticEligibility(...)` projection, which now separates POLICY-COMPATIBILITY (ignoring
+`enabled`) from ENABLED eligibility and never reads availability/`isAvailable()`/`availabilityClass`/
+snapshot. Admission binds to the composite (registry + policy) `configurationDigest` identical to `select`;
+the local provider must independently be statically eligible under the same policy/config (no duplicated
+floor logic). **Kind B DENY (no issuer)** and **Kind C DENY (unsupported → R3-C-Rz)** via `assert*Unsupported`.
+Exact PRIMARY_ONLY sole-selection handoff through the pre-existing R3-B1 `assertExactSoleProviderSelection`
+assertion; `attemptNumber = 1`, `additionalProviderHops = 0` (declarative). DENY means
+local-continuity-not-admitted, never a whole-request STOP. Zero containment/runtime preparation; zero
+production trust; R3-B3 fail-closed boundary unchanged. **R3-C2** and **R3-C-Rz** remain NOT AUTHORIZED; no
+runtime family chosen. No new `RoutingFailureCode`, schema, aggregate, approval/security owner, or
+runtime/provider/network/DB path. Validation: `local-continuity-admission.test.ts` (37, incl. N1/N2/N3 +
+Kind A Cases 0–4) + `routing-policy-engine.test.ts` (33, incl. new projection-field tests) + Stage2B/R3-B
+regressions (328) pass; `pnpm typecheck` passes; the only full-suite failure is the unrelated
+env-sensitive `github-app-git-provider.test.ts` (`GIT_ASKPASS` set), not modified. Local commit only;
+Push/PR/Merge require independent exact-HEAD review PASS.
 
 ### R3-B2 — secure terminalization and containment evidence (2026-09-26)
 

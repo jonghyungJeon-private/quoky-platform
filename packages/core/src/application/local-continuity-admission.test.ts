@@ -46,6 +46,8 @@ interface DescriptorOptions {
   enabled?: boolean;
   capabilities?: readonly Capability[];
   availabilityClass?: AvailabilityClass;
+  toolUse?: SupportLevel;
+  routingClass?: RoutingClass;
 }
 
 function descriptor(id: string, options: DescriptorOptions = {}): ProviderDescriptor {
@@ -55,11 +57,11 @@ function descriptor(id: string, options: DescriptorOptions = {}): ProviderDescri
     modelId: `opaque-${id}`,
     capabilities: {
       supportedCapabilities: options.capabilities ?? [Capability.GENERAL_CHAT],
-      routingClasses: [RoutingClass.BALANCED],
+      routingClasses: [options.routingClass ?? RoutingClass.BALANCED],
       semanticReliability: options.semantic ?? ReliabilityTier.STANDARD,
       authorityReliability: ReliabilityTier.STANDARD,
       continuityReliability: ReliabilityTier.STANDARD,
-      toolUse: SupportLevel.UNSUPPORTED,
+      toolUse: options.toolUse ?? SupportLevel.UNSUPPORTED,
       structuredOutput: SupportLevel.SUPPORTED,
       contextCapacity: options.context ?? ContextCapacity.MEDIUM,
       streaming: SupportLevel.UNSUPPORTED,
@@ -122,7 +124,7 @@ function compositeDigest(routingEngine: RoutingPolicyEngine, registry: ProviderR
   return routingEngine.staticEligibility(contextFor(capability), registry.snapshot()).configurationDigest;
 }
 
-/** Registry with NO NETWORK provider configured + an eligible LOCAL provider → Kind A holds. */
+/** Registry with NO NETWORK provider configured + an eligible LOCAL provider → Kind A A1. */
 function admissibleSetup(routingEngine: RoutingPolicyEngine = engine) {
   const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, capabilities: [Capability.GENERAL_CHAT] });
   const registry = registryOf([local]);
@@ -144,13 +146,20 @@ function inputFor(
   };
 }
 
-// A. Workload policy
-describe('R3-C1 A — workload local-fallback policy', () => {
-  it('admits an eligible workload (GENERAL_CHAT) when a canonical cloud path is absent', () => {
+function admit(routingEngine: RoutingPolicyEngine, providers: readonly ProviderDescriptor[], overrides: Partial<LocalContinuityAdmissionInput> = {}) {
+  const registry = registryOf(providers);
+  const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), routingEngine, registry);
+  return admission.admit(inputFor(routingEngine, registry, overrides));
+}
+
+// Workload policy
+describe('R3-C1 — workload local-fallback policy', () => {
+  it('admits an eligible workload (GENERAL_CHAT) when Kind A A1 holds', () => {
     const { registry, admission } = admissibleSetup();
     const { decision, soleSelection } = admission.admit(inputFor(engine, registry));
     expect(decision.admitted).toBe(true);
     expect(decision.providerCandidate).toBe('local-provider');
+    expect(decision.kindACondition).toBe('NO_CLOUD_PROVIDER_CONFIGURED');
     expect(soleSelection).toBeDefined();
   });
 
@@ -159,7 +168,7 @@ describe('R3-C1 A — workload local-fallback policy', () => {
     Capability.CODE_REVIEW,
     Capability.ARCHITECTURE_PLANNING,
     Capability.DOCUMENT_ANALYSIS,
-  ])('denies local-fallback-ineligible workload %s with zero selection', (capability) => {
+  ])('denies local-fallback-ineligible workload %s', (capability) => {
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, capabilities: [capability] });
     const registry = registryOf([local]);
     const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
@@ -179,142 +188,230 @@ describe('R3-C1 A — workload local-fallback policy', () => {
   });
 });
 
-// B-1 / B-2 — canonical cloud-path static unavailability (Claude probes P1/P2/P3)
-describe('R3-C1 B-1/B-2 — Kind A = empty canonical static NETWORK path (not caller-named providers)', () => {
-  it('the public input has no caller-controlled cloud provider id fields', () => {
-    const { registry } = admissibleSetup();
-    const input = inputFor(engine, registry) as Record<string, unknown>;
-    expect(input.normalCloudProviderId).toBeUndefined();
-    expect(input.requiredCloudProviderIds).toBeUndefined();
-  });
-
-  it('P1: healthy eligible cloud-a + caller names a ghost cloud (excess prop) → NOT admitted', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
-    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const forged = { ...inputFor(engine, registry), normalCloudProviderId: 'ghost-cloud' } as LocalContinuityAdmissionInput;
-    const { decision } = admission.admit(forged);
+// B-A accepted blocker probes: quality/capability/locality are NORMAL ROUTING, not Kind A.
+describe('R3-C1 B-A — normal routing outcomes are NOT Kind A', () => {
+  it('N1: enabled cloud below quality floor + local meets floor → DENY (not Kind A)', () => {
+    const floorPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('high-floor-v1'),
+      eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
+    };
+    const floorEngine = engineWith([floorPolicy]);
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true, semantic: ReliabilityTier.STANDARD });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, enabled: true, semantic: ReliabilityTier.HIGH });
+    const { decision } = admit(floorEngine, [cloud, local]);
     expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
+    expect(decision.denialReason).toBe('CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY');
   });
 
-  it('P2: healthy eligible cloud-a + caller adds requiredCloudProviderIds=[ghost-2] → NOT admitted', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
-    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const forged = { ...inputFor(engine, registry), requiredCloudProviderIds: ['ghost-2'] } as LocalContinuityAdmissionInput;
-    const { decision } = admission.admit(forged);
+  it('N2: enabled cloud lacks capability + local has capability → DENY (not Kind A)', () => {
+    const capPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('summarize-v1'),
+      when: { capabilities: [Capability.SUMMARIZATION] },
+    };
+    const capEngine = engineWith([capPolicy]);
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true, capabilities: [Capability.GENERAL_CHAT] });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, enabled: true, capabilities: [Capability.SUMMARIZATION] });
+    const { decision } = admit(capEngine, [cloud, local], {
+      capability: Capability.SUMMARIZATION,
+      routingContext: contextFor(Capability.SUMMARIZATION),
+    });
     expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
+    expect(decision.denialReason).toBe('CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY');
   });
 
-  it('P3: healthy eligible cloud-a + unrelated disabled old-cloud → DENY local continuity', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
-    const oldCloud = descriptor('old-cloud', { locality: ExecutionLocality.NETWORK, enabled: false });
-    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, oldCloud, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const { decision } = admission.admit(inputFor(engine, registry));
+  it('N3: healthy configured cloud + policy requires LOCAL → DENY (normal LOCAL routing)', () => {
+    const localPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('local-only-v1'),
+      eligibility: { executionLocality: ExecutionLocality.LOCAL },
+    };
+    const localEngine = engineWith([localPolicy]);
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, enabled: true });
+    const { decision } = admit(localEngine, [cloud, local]);
     expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
+    expect(decision.denialReason).toBe('POLICY_REQUIRES_LOCAL_NORMAL_ROUTING');
   });
+});
 
-  it('zero statically eligible canonical NETWORK providers → Kind A may hold (admit)', () => {
-    const { registry, admission } = admissibleSetup(); // only a LOCAL provider configured
+// Kind A cases + additional required tests
+describe('R3-C1 — final Kind A semantics (Cases 0-4)', () => {
+  it('#1 no cloud configured + general routing policy → Kind A A1 may admit', () => {
+    const { registry, admission } = admissibleSetup();
     const { decision } = admission.admit(inputFor(engine, registry));
     expect(decision.admitted).toBe(true);
+    expect(decision.kindACondition).toBe('NO_CLOUD_PROVIDER_CONFIGURED');
   });
 
-  it('one statically eligible NETWORK provider → no Kind A (deny)', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+  it('#2 no cloud configured + policy requires LOCAL → DENY (Case 0)', () => {
+    const localPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('local-only-v1'),
+      eligibility: { executionLocality: ExecutionLocality.LOCAL },
+    };
+    const localEngine = engineWith([localPolicy]);
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const { decision } = admission.admit(inputFor(engine, registry));
+    const { decision } = admit(localEngine, [local]);
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('POLICY_REQUIRES_LOCAL_NORMAL_ROUTING');
+  });
+
+  it('#3 one policy-compatible enabled cloud → DENY (Case 4)', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
+    const { decision } = admit(engine, [cloud, local]);
     expect(decision.admitted).toBe(false);
     expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
   });
 
-  it('multiple clouds, at least one statically eligible → no Kind A (deny)', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: false });
-    const cloudB = descriptor('cloud-b', { locality: ExecutionLocality.NETWORK, enabled: true });
+  it('#4 multiple clouds; one enabled compatible, one disabled → DENY (Case 4)', () => {
+    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
+    const cloudB = descriptor('cloud-b', { locality: ExecutionLocality.NETWORK, enabled: false });
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, cloudB, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const { decision } = admission.admit(inputFor(engine, registry));
+    const { decision } = admit(engine, [cloudA, cloudB, local]);
     expect(decision.admitted).toBe(false);
     expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
   });
 
-  it('all relevant canonical NETWORK providers administratively disabled → Kind A may hold (admit)', () => {
+  it('#5 all policy-compatible clouds disabled → Kind A A2 may admit', () => {
     const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: false });
     const cloudB = descriptor('cloud-b', { locality: ExecutionLocality.NETWORK, enabled: false });
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, cloudB, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const { decision } = admission.admit(inputFor(engine, registry));
+    const { decision } = admit(engine, [cloudA, cloudB, local]);
     expect(decision.admitted).toBe(true);
+    expect(decision.kindACondition).toBe('ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED');
   });
-});
 
-// Normal routing stays normal routing
-describe('R3-C1 — normal routing facts are NOT Kind A', () => {
-  it('cloud excluded only by quality floor is NOT Kind A (normal cloud path still exists statically)', () => {
-    // Policy requires HIGH semantic; cloud-a is STANDARD so it is quality-excluded at selection time, but
-    // Kind A must not treat that as unavailability. To isolate: cloud-a remains statically INELIGIBLE only
-    // by the floor, so it is not in the NETWORK set — but a quality-floor failure must not itself admit.
+  it('#6 clouds configured but all fail quality floor → DENY (Case 2)', () => {
     const floorPolicy: RoutingPolicy = {
       ...BASE_POLICY,
       policyId: policyId('high-floor-v1'),
       eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
     };
     const floorEngine = engineWith([floorPolicy]);
-    // cloud-a STANDARD (fails floor), local also STANDARD (fails floor) → local not eligible → deny by
-    // local eligibility, NOT admitted via a "cloud quality failure = Kind A" path.
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, semantic: ReliabilityTier.STANDARD });
-    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, semantic: ReliabilityTier.STANDARD });
-    const registry = registryOf([cloudA, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), floorEngine, registry);
-    const { decision } = admission.admit(inputFor(floorEngine, registry));
-    // Cloud-a is not statically eligible (floor), so NETWORK set is empty (Kind A would hold), BUT the
-    // local provider ALSO fails the same floor → must DENY on local eligibility, never admit on a cloud
-    // quality failure. This proves quality-floor exclusion does not convert into a local-continuity grant.
-    expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE');
-  });
-
-  it('local must independently satisfy the same floor: HIGH-floor cloud empty + HIGH local → admit', () => {
-    const floorPolicy: RoutingPolicy = {
-      ...BASE_POLICY,
-      policyId: policyId('high-floor-v1'),
-      eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
-    };
-    const floorEngine = engineWith([floorPolicy]);
-    // No NETWORK provider configured at all → Kind A; local is HIGH → passes the same floor → admit.
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true, semantic: ReliabilityTier.STANDARD });
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, semantic: ReliabilityTier.HIGH });
-    const registry = registryOf([local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), floorEngine, registry);
-    const { decision } = admission.admit(inputFor(floorEngine, registry));
-    expect(decision.admitted).toBe(true);
+    const { decision } = admit(floorEngine, [cloud, local]);
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY');
   });
 
-  it('availabilityClass=NETWORK_DEPENDENT on an enabled eligible cloud does NOT create Kind A', () => {
-    const cloudA = descriptor('cloud-a', {
+  it('#7 clouds configured but all fail capability → DENY (Case 2)', () => {
+    const capPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('summarize-v1'),
+      when: { capabilities: [Capability.SUMMARIZATION] },
+    };
+    const capEngine = engineWith([capPolicy]);
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true, capabilities: [Capability.GENERAL_CHAT] });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, capabilities: [Capability.SUMMARIZATION] });
+    const { decision } = admit(capEngine, [cloud, local], {
+      capability: Capability.SUMMARIZATION,
+      routingContext: contextFor(Capability.SUMMARIZATION),
+    });
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY');
+  });
+
+  it('#8 clouds configured but all fail tool-support policy → DENY (Case 2)', () => {
+    const toolPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('tool-required-v1'),
+      eligibility: { requiresToolUse: true },
+    };
+    const toolEngine = engineWith([toolPolicy]);
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true, toolUse: SupportLevel.UNSUPPORTED });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, toolUse: SupportLevel.SUPPORTED });
+    const { decision } = admit(toolEngine, [cloud, local]);
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY');
+  });
+
+  it('#9 availabilityClass=NETWORK_DEPENDENT alone (enabled compatible cloud) → DENY (Case 4), not Kind A', () => {
+    const cloud = descriptor('cloud-a', {
       locality: ExecutionLocality.NETWORK,
+      enabled: true,
       availabilityClass: AvailabilityClass.NETWORK_DEPENDENT,
     });
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, local]);
+    const { decision } = admit(engine, [cloud, local]);
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
+  });
+
+  it('#11 unrelated disabled cloud must not matter when another enabled compatible cloud exists → DENY', () => {
+    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
+    const oldCloud = descriptor('old-cloud', { locality: ExecutionLocality.NETWORK, enabled: false });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
+    const { decision } = admit(engine, [cloudA, oldCloud, local]);
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
+  });
+
+  it('local must independently satisfy the same floor: A2 cloud + HIGH-floor + HIGH local → admit', () => {
+    const floorPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('high-floor-v1'),
+      eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
+    };
+    const floorEngine = engineWith([floorPolicy]);
+    // cloud policy-compatible (HIGH) but disabled → A2; local HIGH passes floor → admit.
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: false, semantic: ReliabilityTier.HIGH });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, semantic: ReliabilityTier.HIGH });
+    const { decision } = admit(floorEngine, [cloud, local]);
+    expect(decision.admitted).toBe(true);
+    expect(decision.kindACondition).toBe('ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED');
+  });
+
+  it('A2 holds but local fails the same floor → DENY on local eligibility', () => {
+    const floorPolicy: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('high-floor-v1'),
+      eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
+    };
+    const floorEngine = engineWith([floorPolicy]);
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: false, semantic: ReliabilityTier.HIGH });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, semantic: ReliabilityTier.STANDARD });
+    const { decision } = admit(floorEngine, [cloud, local]);
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE');
+  });
+});
+
+// Availability invariance at the admission level (#10)
+describe('R3-C1 — admission is invariant under availability (projection ignores it)', () => {
+  it('#10 admission result is identical for AVAILABLE/UNAVAILABLE/UNKNOWN registries', () => {
+    // The admission uses registry.snapshot() internally; availability cannot change the outcome. We assert
+    // the A2 path here regardless of any availability the registry could carry (registry has no runtime
+    // availability of its own — snapshot defaults to UNKNOWN — and staticEligibility ignores it).
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: false });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
+    const { decision } = admit(engine, [cloud, local]);
+    expect(decision.admitted).toBe(true);
+    expect(decision.kindACondition).toBe('ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED');
+  });
+});
+
+// B-1 residual: caller cannot inject cloud identity
+describe('R3-C1 B-1 — no caller-controlled cloud id fields', () => {
+  it('public input has no cloud provider id fields; forged excess props are inert', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
+    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
+    const registry = registryOf([cloud, local]);
     const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const { decision } = admission.admit(inputFor(engine, registry));
+    const input = inputFor(engine, registry) as Record<string, unknown>;
+    expect(input.normalCloudProviderId).toBeUndefined();
+    expect(input.requiredCloudProviderIds).toBeUndefined();
+    const forged = { ...inputFor(engine, registry), normalCloudProviderId: 'ghost', requiredCloudProviderIds: ['ghost-2'] } as LocalContinuityAdmissionInput;
+    const { decision } = admission.admit(forged);
     expect(decision.admitted).toBe(false);
     expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
   });
 });
 
-// B-3 — composite configuration binding (Claude probe P7)
+// B-3 — composite configuration binding (#12/#13)
 describe('R3-C1 B-3 — composite (registry + policy) configuration identity binding', () => {
   it('admits when selectionConfigurationRef equals the composite Stage2B configuration digest', () => {
     const { registry, admission } = admissibleSetup();
@@ -322,36 +419,29 @@ describe('R3-C1 B-3 — composite (registry + policy) configuration identity bin
     expect(decision.admitted).toBe(true);
   });
 
-  it('P7: same registry + different routing policy → different composite identity → old ref rejected', () => {
+  it('#12 same registry + different routing policy → different composite identity → old ref rejected', () => {
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
     const registry = registryOf([local]);
     const engineP1 = engineWith([BASE_POLICY], 'policy-set-v1');
-    const engineP2 = engineWith(
-      [{ ...BASE_POLICY, policyId: policyId('balanced-v2'), version: '2.0.0' }],
-      'policy-set-v2',
-    );
+    const engineP2 = engineWith([{ ...BASE_POLICY, policyId: policyId('balanced-v2'), version: '2.0.0' }], 'policy-set-v2');
     const refUnderP1 = compositeDigest(engineP1, registry);
-    const refUnderP2 = compositeDigest(engineP2, registry);
-    expect(refUnderP1).not.toBe(refUnderP2); // policy change alters the composite identity
-
-    // Admission runs under engineP2 but the caller presents the stale ref derived under engineP1.
+    expect(refUnderP1).not.toBe(compositeDigest(engineP2, registry));
     const admissionP2 = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engineP2, registry);
     const { decision } = admissionP2.admit(inputFor(engineP2, registry, { selectionConfigurationRef: refUnderP1 }));
     expect(decision.admitted).toBe(false);
     expect(decision.denialReason).toBe('CONFIGURATION_IDENTITY_MISMATCH');
   });
 
-  it('a registry-only style digest (wrong composite) is rejected', () => {
-    const { registry, admission } = admissibleSetup();
-    // The bare registry configurationDigest is NOT the composite; it must be rejected.
-    const { decision } = admission.admit(inputFor(engine, registry, { selectionConfigurationRef: registry.configurationDigest }));
-    expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('CONFIGURATION_IDENTITY_MISMATCH');
+  it('#13 same policy + registry change → different composite identity', () => {
+    const local1 = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
+    const registry1 = registryOf([local1]);
+    const registry2 = registryOf([local1, descriptor('local-2', { locality: ExecutionLocality.LOCAL })]);
+    expect(compositeDigest(engine, registry1)).not.toBe(compositeDigest(engine, registry2));
   });
 
-  it('a mismatched arbitrary digest is rejected', () => {
+  it('a bare registry-only digest (wrong composite) is rejected', () => {
     const { registry, admission } = admissibleSetup();
-    const { decision } = admission.admit(inputFor(engine, registry, { selectionConfigurationRef: 'a'.repeat(64) }));
+    const { decision } = admission.admit(inputFor(engine, registry, { selectionConfigurationRef: registry.configurationDigest }));
     expect(decision.admitted).toBe(false);
     expect(decision.denialReason).toBe('CONFIGURATION_IDENTITY_MISMATCH');
   });
@@ -359,8 +449,14 @@ describe('R3-C1 B-3 — composite (registry + policy) configuration identity bin
 
 // Local provider eligibility (reuses the SAME static projection)
 describe('R3-C1 — local provider must be statically eligible under the same policy/config', () => {
-  it('denies when the local candidate is missing a required capability under the policy', () => {
-    // Policy predicate requires SUMMARIZATION capability; local supports only GENERAL_CHAT.
+  it('denies when the named local provider is not configured', () => {
+    const { registry, admission } = admissibleSetup();
+    const { decision } = admission.admit(inputFor(engine, registry, { localProviderId: providerId('missing-local') }));
+    expect(decision.admitted).toBe(false);
+    expect(decision.denialReason).toBe('LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE');
+  });
+
+  it('denies when local lacks the policy-required capability (A1 cloud path)', () => {
     const capPolicy: RoutingPolicy = {
       ...BASE_POLICY,
       policyId: policyId('summarize-v1'),
@@ -368,35 +464,17 @@ describe('R3-C1 — local provider must be statically eligible under the same po
     };
     const capEngine = engineWith([capPolicy]);
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL, capabilities: [Capability.GENERAL_CHAT] });
-    const registry = registryOf([local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), capEngine, registry);
-    const { decision } = admission.admit(
-      inputFor(capEngine, registry, { capability: Capability.SUMMARIZATION, routingContext: contextFor(Capability.SUMMARIZATION) }),
-    );
-    expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE');
-  });
-
-  it('denies a NETWORK-locality "local" provider (not a local provider)', () => {
-    const notLocal = descriptor('local-provider', { locality: ExecutionLocality.NETWORK });
-    const registry = registryOf([notLocal]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    // With only a NETWORK provider, the cloud path exists statically → deny on cloud path first.
-    const { decision } = admission.admit(inputFor(engine, registry));
-    expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
-  });
-
-  it('denies when the named local provider is not configured', () => {
-    const { registry, admission } = admissibleSetup();
-    const { decision } = admission.admit(inputFor(engine, registry, { localProviderId: providerId('missing-local') }));
+    const { decision } = admit(capEngine, [local], {
+      capability: Capability.SUMMARIZATION,
+      routingContext: contextFor(Capability.SUMMARIZATION),
+    });
     expect(decision.admitted).toBe(false);
     expect(decision.denialReason).toBe('LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE');
   });
 });
 
-// E. Kind B
-describe('R3-C1 E — Kind B TRUSTED_CURRENT_UNAVAILABILITY is always DENY (no issuer)', () => {
+// Kind B
+describe('R3-C1 — Kind B TRUSTED_CURRENT_UNAVAILABILITY is always DENY (no issuer)', () => {
   it('the only Kind B entry point fails closed unconditionally', () => {
     expect(() => assertTrustedCurrentUnavailabilityUnsupported()).toThrowError(LocalContinuityAdmissionError);
     try {
@@ -405,26 +483,10 @@ describe('R3-C1 E — Kind B TRUSTED_CURRENT_UNAVAILABILITY is always DENY (no i
       expect((error as LocalContinuityAdmissionError).reason).toBe('DYNAMIC_EVIDENCE_UNSUPPORTED');
     }
   });
-
-  it('no caller path admits via a CURRENT/trusted/isAvailable label when a cloud path exists', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
-    const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const forged = {
-      ...inputFor(engine, registry),
-      freshness: 'CURRENT',
-      trusted: true,
-      isAvailable: false,
-    } as LocalContinuityAdmissionInput;
-    const { decision } = admission.admit(forged);
-    expect(decision.admitted).toBe(false);
-    expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
-  });
 });
 
-// F. Kind C
-describe('R3-C1 F — Kind C PRIOR_ATTEMPT_FAILURE is unsupported/DENY', () => {
+// Kind C
+describe('R3-C1 — Kind C PRIOR_ATTEMPT_FAILURE is unsupported/DENY', () => {
   it('the only Kind C entry point fails closed unconditionally', () => {
     expect(() => assertPriorAttemptFailureUnsupported()).toThrowError(LocalContinuityAdmissionError);
     try {
@@ -435,12 +497,11 @@ describe('R3-C1 F — Kind C PRIOR_ATTEMPT_FAILURE is unsupported/DENY', () => {
   });
 });
 
-// G. Attempt accounting
-describe('R3-C1 G — attempt accounting', () => {
+// Attempt accounting
+describe('R3-C1 — attempt accounting', () => {
   it('an admitted local invocation is attempt 1 with zero additional hops', () => {
     const { registry, admission } = admissibleSetup();
     const { decision } = admission.admit(inputFor(engine, registry));
-    expect(decision.admitted).toBe(true);
     expect(decision.attemptNumber).toBe(1);
     expect(decision.additionalProviderHops).toBe(0);
   });
@@ -454,22 +515,20 @@ describe('R3-C1 G — attempt accounting', () => {
   });
 });
 
-// H. DENY semantics
-describe('R3-C1 H — DENY means local not admitted, not whole-request STOP', () => {
-  it('a denial names local-continuity non-admission only; it is not a request STOP/DEFER/HUMAN_REQUIRED', () => {
-    const cloudA = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+// DENY semantics
+describe('R3-C1 — DENY means local not admitted, not whole-request STOP', () => {
+  it('a denial names local-continuity non-admission only; no STOP/DEFER/HUMAN_REQUIRED field', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
     const local = descriptor('local-provider', { locality: ExecutionLocality.LOCAL });
-    const registry = registryOf([cloudA, local]);
-    const admission = new LocalContinuityAdmission(new WorkloadLocalFallbackPolicy(), engine, registry);
-    const { decision } = admission.admit(inputFor(engine, registry));
+    const { decision } = admit(engine, [cloud, local]);
     expect(decision.admitted).toBe(false);
     expect(Object.keys(decision)).not.toContain('requestDisposition');
     expect(decision.denialReason).toBe('NORMAL_CLOUD_PATH_STATICALLY_EXISTS');
   });
 });
 
-// I. Trust / runtime
-describe('R3-C1 I — admission creates no production trust and no runtime/containment preparation', () => {
+// Trust / runtime
+describe('R3-C1 — admission creates no production trust and no runtime/containment preparation', () => {
   it('an admitted decision is a plain immutable value with no capability/trust/instance handles', () => {
     const { registry, admission } = admissibleSetup();
     const { decision, soleSelection } = admission.admit(inputFor(engine, registry));

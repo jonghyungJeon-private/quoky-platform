@@ -293,7 +293,21 @@ export interface StaticEligibilityProjection {
   /** Whether a policy matched the context at all. */
   readonly policyMatched: boolean;
   readonly matchedPolicyId: PolicyId | null;
-  /** All statically eligible providers (any locality), unranked, sorted by id. */
+  /**
+   * Whether the matched policy INTENTIONALLY constrains eligibility to LOCAL locality
+   * (`eligibility.executionLocality === LOCAL`). When true, a LOCAL selection is ordinary routing, not
+   * local continuity.
+   */
+  readonly policyRequiresLocalLocality: boolean;
+  /** All configured NETWORK-locality providers regardless of policy compatibility or enabled, sorted. */
+  readonly configuredNetworkProviderIds: readonly ProviderId[];
+  /**
+   * NETWORK providers that are POLICY-COMPATIBLE ignoring the `enabled` flag (and ignoring availability),
+   * sorted. The difference between this set and `eligibleNetworkProviderIds` is exactly the set excluded
+   * ONLY by administrative `enabled === false`.
+   */
+  readonly policyCompatibleNetworkProviderIdsIgnoringEnabled: readonly ProviderId[];
+  /** All statically eligible providers (enabled + policy-compatible, any locality), unranked, sorted. */
   readonly eligibleProviderIds: readonly ProviderId[];
   /** Statically eligible NETWORK-locality (cloud) providers, unranked, sorted by id. */
   readonly eligibleNetworkProviderIds: readonly ProviderId[];

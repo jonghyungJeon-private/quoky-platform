@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C1 exact-HEAD review remediation — B-A: Kind A administrative-only — 2026-09-27
+
+- Correct accepted blocker B-A: Kind A no longer equals "empty eligible NETWORK set" (which conflated
+  ordinary policy incompatibility with continuity evidence). Refactor Stage2B `eligible()` into
+  `enabled && policyCompatible(...)` and extend the read-only `RoutingPolicyEngine.staticEligibility(...)`
+  projection with `configuredNetworkProviderIds`, `policyCompatibleNetworkProviderIdsIgnoringEnabled`, and
+  `policyRequiresLocalLocality`. R3-C1 Kind A is now limited to A1 (no NETWORK provider configured, policy
+  not LOCAL-only) or A2 (all policy-compatible clouds administratively disabled). Quality-floor / capability
+  / tool / routing-class exclusions → `CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY`; LOCAL-only policy →
+  `POLICY_REQUIRES_LOCAL_NORMAL_ROUTING`; any enabled compatible cloud → `NORMAL_CLOUD_PATH_STATICALLY_EXISTS`
+  (all DENY, normal routing). The admitted decision carries the closed `kindACondition`. Availability
+  invariance, composite-config binding, local-eligibility reuse, Kind B/C fail-closed, attempt accounting,
+  DENY semantics, zero runtime, and zero production trust are preserved.
+- The `eligible()` refactor is behavior-preserving (Stage2B/R3-B regressions pass). Added N1/N2/N3 and Kind
+  A Case 0–4 tests plus new projection-field tests. No new `RoutingFailureCode`, DB schema, aggregate,
+  approval/security owner, Kind B issuer, production trust/capability issuer, runtime family, or network
+  path. R3-C2 and R3-C-Rz remain NOT AUTHORIZED. `pnpm typecheck` passes; the only full-suite failure is the
+  unrelated env-sensitive `github-app-git-provider.test.ts` (`GIT_ASKPASS` set), left unmodified. Local
+  commit only; Push/PR/Merge require review PASS.
+
 ## R3-C1 exact-HEAD review remediation (canonical cloud path + composite config) — 2026-09-27
 
 - Remediate the R3-C1 admission contract against the `CHANGES_REQUIRED` verdict (one commit on top of

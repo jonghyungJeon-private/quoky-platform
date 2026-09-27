@@ -26,13 +26,17 @@ import {
  *  - Workload local-fallback policy is a deterministic, immutable, versioned policy owner (this module),
  *    not hard-coded in adapter code. Coding/architecture/document-comparison workloads are
  *    local-fallback-ineligible by default.
- *  - Kind A (DERIVED STATIC OPERATIONAL UNAVAILABILITY) means: for the authoritative routing context and
- *    matched Stage2B policy, there is NO normal NETWORK/cloud Provider that remains STATICALLY eligible.
- *    It is answered by the Stage2B-owned read-only `RoutingPolicyEngine.staticEligibility(...)` projection
- *    (canonical registry + policy + `enabled` only). It NEVER reads dynamic availability, `isAvailable()`,
- *    an availability snapshot, `availabilityClass`, an availability-derived exclusion, or any
- *    caller-supplied evidence/provider id. The caller cannot name a "missing"/"disabled"/"required"
- *    provider to manufacture Kind A — those inputs do not exist on the public admission input.
+ *  - Kind A (DERIVED STATIC ADMINISTRATIVE UNAVAILABILITY) is limited to a CLOSED set of
+ *    administrative/configuration conditions for the authoritative routing context and matched Stage2B
+ *    policy: A1 no NETWORK/cloud Provider configured (where cloud routing is otherwise applicable), or A2
+ *    every POLICY-COMPATIBLE cloud Provider is administratively disabled. It is derived via the
+ *    Stage2B-owned read-only `RoutingPolicyEngine.staticEligibility(...)` projection, which separates
+ *    POLICY-COMPATIBILITY (ignoring `enabled`) from ENABLED eligibility. It NEVER reads dynamic
+ *    availability, `isAvailable()`, an availability snapshot, `availabilityClass`, an availability-derived
+ *    exclusion, or any caller-supplied evidence/provider id. Kind A is NEVER a quality-floor, required
+ *    capability, tool, routing-class, ranking, or LOCAL-locality routing outcome — those are NORMAL
+ *    ROUTING and cause DENY (not admission). If the matched policy intentionally requires LOCAL locality,
+ *    a LOCAL selection is ordinary routing and admission DENYs even when no cloud is configured.
  *  - Kind B (TRUSTED_CURRENT_UNAVAILABILITY) has no trusted issuer in R3-C1 → ALWAYS DENY (fail closed).
  *  - Kind C (PRIOR_ATTEMPT_FAILURE) is UNSUPPORTED in R3-C1 → ALWAYS DENY (belongs to R3-C-Rz).
  *  - Static provider eligibility, capability floors, quality floors, ranking, and exact selection remain
@@ -72,12 +76,28 @@ export const R3C1_ADDITIONAL_PROVIDER_HOPS = 0 as const;
 export type LocalContinuityDenialReason =
   | 'WORKLOAD_LOCAL_FALLBACK_DISALLOWED'
   | 'NORMAL_CLOUD_PATH_STATICALLY_EXISTS'
+  | 'CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY'
+  | 'POLICY_REQUIRES_LOCAL_NORMAL_ROUTING'
   | 'NO_POLICY_MATCHED'
   | 'LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE'
   | 'LOCAL_SELECTION_NOT_SOLE'
   | 'ROUTING_CONTEXT_MISMATCH'
   | 'CONFIGURATION_IDENTITY_MISMATCH'
   | 'MALFORMED_INPUT';
+
+/**
+ * The CLOSED set of Kind A administrative/configuration conditions R3-C1 may recognize. Kind A is NEVER a
+ * quality-floor / capability / tool / routing-class / locality routing outcome. Only these two hold:
+ *  - A1 `NO_CLOUD_PROVIDER_CONFIGURED` — no NETWORK provider is configured at all (and the matched policy
+ *    does not intentionally require LOCAL).
+ *  - A2 `ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED` — one or more NETWORK providers are POLICY-COMPATIBLE
+ *    (ignoring `enabled`), but every one of them is administratively disabled (`enabled === false`).
+ */
+export const KIND_A_ADMINISTRATIVE_CONDITIONS = [
+  'NO_CLOUD_PROVIDER_CONFIGURED',
+  'ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED',
+] as const;
+export type KindAAdministrativeCondition = typeof KIND_A_ADMINISTRATIVE_CONDITIONS[number];
 
 /**
  * The kinds enumerated by the ADR-0090 evidence contract SHAPE. Only Kind A is derivable and admissible
@@ -162,6 +182,8 @@ export interface LocalContinuityAdmissionDecision {
   readonly denialReason?: LocalContinuityDenialReason;
   /** The sole selected local provider id, present only when admitted. */
   readonly providerCandidate?: ProviderId;
+  /** The closed Kind A administrative/configuration condition that justified admission (only when admitted). */
+  readonly kindACondition?: KindAAdministrativeCondition;
   /** The composite (registry + policy) configuration identity binding derivation and selection. */
   readonly configurationRef: string;
   /** Fixed R3-C1 attempt accounting (declarative). */
@@ -286,12 +308,31 @@ export class LocalContinuityAdmission {
       return { decision: deny(configRef, 'NO_POLICY_MATCHED') };
     }
 
-    // 4. Kind A — the canonical normal cloud path must be STATICALLY EMPTY. If ANY NETWORK provider is
-    //    statically eligible for the matched policy, a normal cloud path exists → DENY (no Kind A). This
-    //    is derived purely from canonical config; availability/quality-floor cloud exclusion is NOT
-    //    represented here (the projection uses static eligibility only and never reads availability).
+    // 4. Kind A — the CLOSED administrative/configuration condition (B-A). Kind A is NEVER a quality/
+    //    capability/tool/routing-class/locality routing outcome. We distinguish policy-compatibility from
+    //    administrative disablement using the Stage2B projection.
+    //
+    //    Case 0 — the matched policy intentionally requires LOCAL locality: a LOCAL selection is ordinary
+    //    routing, not continuity → DENY (even if no cloud is configured).
+    if (projection.policyRequiresLocalLocality) {
+      return { decision: deny(configRef, 'POLICY_REQUIRES_LOCAL_NORMAL_ROUTING') };
+    }
+    //    Case 4 — at least one enabled policy-compatible cloud exists → normal cloud path exists → DENY.
     if (projection.eligibleNetworkProviderIds.length > 0) {
       return { decision: deny(configRef, 'NORMAL_CLOUD_PATH_STATICALLY_EXISTS') };
+    }
+    let kindACondition: KindAAdministrativeCondition;
+    if (projection.configuredNetworkProviderIds.length === 0) {
+      //  Case 1 — no NETWORK provider configured at all → A1.
+      kindACondition = 'NO_CLOUD_PROVIDER_CONFIGURED';
+    } else if (projection.policyCompatibleNetworkProviderIdsIgnoringEnabled.length === 0) {
+      //  Case 2 — clouds exist but NONE is policy-compatible (quality/capability/tool/routing-class/
+      //  locality): ordinary policy incompatibility, NOT Kind A → DENY.
+      return { decision: deny(configRef, 'CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY') };
+    } else {
+      //  Case 3 — policy-compatible clouds exist but ALL are administratively disabled (the only exclusion
+      //  from eligibility is `enabled === false`, since eligibleNetworkProviderIds is empty here) → A2.
+      kindACondition = 'ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED';
     }
 
     // 5. The LOCAL provider must be STATICALLY ELIGIBLE under the SAME policy/configuration (same capability
@@ -325,6 +366,7 @@ export class LocalContinuityAdmission {
       schemaVersion: LOCAL_CONTINUITY_ADMISSION_SCHEMA,
       admitted: true,
       providerCandidate: input.localProviderId,
+      kindACondition,
       configurationRef: configRef,
       attemptNumber: R3C1_ATTEMPT_NUMBER,
       additionalProviderHops: R3C1_ADDITIONAL_PROVIDER_HOPS,
