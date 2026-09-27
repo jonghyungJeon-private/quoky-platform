@@ -11,6 +11,27 @@ The R3-C bounded task definition and its blocking remediation are recorded in `D
 implementation status for the authorized R3-C1 slice is the **R3-C1 — Local Continuity Eligibility &
 Static Trusted Admission** entry below. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
 
+### R3-C2 — architecture / entry definition (docs only) (2026-09-27)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / NOT AUTHORIZED (implementation).** Branch
+`codex/r3c2-architecture-definition` from main `347c03202014003e114fc2cdb3e1f2ff3866f4f0`. `DECISIONS.md`
+carries the ADR-0090 amendment "R3-C2 architecture / entry definition" defining the security/trust bridge
+between the R3-C1 admission decision and any future containment/runtime preparation, and closing the R3-C1
+carry-forwards as ratifiable contracts: **CF-1** sole-selection issuance hardening (bind issuance to the
+admitted path via the existing R3-B1 WeakSet issuer; process-local, explicitly NOT restart-valid); **CF-2**
+exact identity binding reusing `TaskRun` / `executionId === taskRunId` + composite (registry+policy)
+`configurationDigest` + routing context (no new identity system, no schema change); **CF-3** attempt-1 /
+zero-hop enforcement owned by the existing Stage2B/continuation orchestration boundary (not R3-C2, no
+duplicate retry); **CF-4** authoritative workload owner = deterministic `IntentClassifier`/policy (not
+model/caller). Kind B trusted current-unavailability issuer placed in its own sub-slice **C2B** (rejects
+`isAvailable()`/caller-declared/model/probe/stale; no durable authenticity yet → remains DENY). Runtime
+family (Option A vs C) NOT selected — a feasibility comparison contract is defined and deferred to **C2C**.
+R3-B3 production-trust elements remain fail-closed and are a separate future production-trust slice.
+Proposed split: **C2A** (admission→execution identity & issuance hardening, smallest first), **C2B**, **C2C**.
+R3-C-Rz (post-dispatch re-resolution) remains excluded with no hidden bridge. Docs-only: no runtime,
+provider, network, DB/schema, approval/security owner, or new `RoutingFailureCode`. ADR-0090 remains
+Proposed; implementation gated on independent Architecture Review + ratification.
+
 ### R3-C1 — Local Continuity Eligibility & Static Trusted Admission (2026-09-27)
 
 **IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD REVIEW (post CHANGES_REQUIRED + B-A remediation).**

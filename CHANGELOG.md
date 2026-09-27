@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2 architecture / entry definition (docs only) — 2026-09-27
+
+- Add the ADR-0090 amendment "R3-C2 architecture / entry definition" to `DECISIONS.md`: the security/trust
+  bridge between R3-C1 admission and future containment/runtime preparation. Closes the R3-C1
+  carry-forwards as ratifiable contracts — CF-1 sole-selection issuance hardening (bind issuance to the
+  admitted path via the existing R3-B1 WeakSet issuer; process-local, not restart-valid), CF-2 exact
+  identity binding (reuse `TaskRun`/`executionId===taskRunId` + composite config digest + routing context;
+  no new identity system/schema), CF-3 attempt-1/zero-hop enforcement owned by the existing
+  Stage2B/continuation orchestration boundary (no duplicate retry), CF-4 authoritative workload owner =
+  deterministic classifier/policy. Places the Kind B trusted-observation issuer in sub-slice C2B (still
+  DENY, no durable authenticity), defines a runtime-family feasibility comparison contract WITHOUT
+  selecting a family (C2C), preserves R3-B3 fail-closed production trust as a separate future slice,
+  proposes the C2A/C2B/C2C split (C2A smallest first), and excludes R3-C-Rz. Documentation only: no
+  runtime, provider, network, DB/schema, approval/security owner, or new `RoutingFailureCode`. ADR-0090
+  remains Proposed; independent Architecture Review pending before Push/PR/Merge. R3-C2 and R3-C-Rz remain
+  NOT AUTHORIZED.
+
 ## R3-C1 exact-HEAD review remediation — B-A: Kind A administrative-only — 2026-09-27
 
 - Correct accepted blocker B-A: Kind A no longer equals "empty eligible NETWORK set" (which conflated

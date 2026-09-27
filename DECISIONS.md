@@ -9570,3 +9570,228 @@ the executing shell), which was NOT modified and whose environment was NOT mutat
 identity; harden R3-B1 `SoleProviderSelection` public issuance; enforce attempt accounting at the
 R3-C2/R3-C-Rz integration boundary; authoritative deterministic workload-policy/classifier binding before
 production wiring (R3-C1 does not expand the `Capability` taxonomy without Architecture Review).
+
+## ADR-0090 amendment — R3-C2 architecture / entry definition (Admission→Execution bridge; runtime deferred)
+
+- **Status:** Proposed — architecture / task-definition only. Independent Architecture Review pending.
+  Grants no implementation, activation, runtime, provider, network, DB, or execution authority. It defines
+  *what* R3-C2 may later do and the entry conditions, not any code delivered now.
+- **Date:** 2026-09-27
+- **Audit base (expected current main):** `347c03202014003e114fc2cdb3e1f2ff3866f4f0`.
+- **Scope:** Close the R3-C1 carry-forwards and define the security/trust bridge between the R3-C1
+  admission decision and any FUTURE containment/runtime preparation. No runtime family is selected. No
+  Stage2B router/retry is duplicated. No new approval/security owner, `RoutingFailureCode`, persistence
+  schema, or Core runtime type is introduced by this document.
+
+### 1. Current state
+
+- Delivered: R3-A, R3-B1, R3-B2, R3-B3, R3-C1 (all CLOSED + DELIVERED). R3-C2 and R3-C-Rz are NOT STARTED /
+  NOT AUTHORIZED.
+- R3-C1 (`local-continuity-admission.ts`) produces a pure, runtime-independent admission decision with a
+  closed Kind A (A1 no NETWORK provider configured / A2 all policy-compatible clouds administratively
+  disabled), composite (registry + policy) configuration binding, Kind B/C fail-closed, and a PRIMARY_ONLY
+  handoff via the pre-existing R3-B1 `assertExactSoleProviderSelection`. `attemptNumber = 1` /
+  `additionalProviderHops = 0` are declarative facts, not enforced invariants.
+- R3-B3 production-trust boundary (unchanged input constraint): `PRODUCTION PROVENANCE CONTRACT = DEFINED`,
+  `PRODUCTION TRUST ANCHOR = NOT IMPLEMENTED`, `PRODUCTION VERIFIER ISSUER = NOT IMPLEMENTED`,
+  `PRODUCTION CAPABILITY ISSUER = NOT IMPLEMENTED`, `PRODUCTION TRUST CHECK = FAIL CLOSED`.
+- Canonical facts to reuse (no new identity/state machine): `TaskRun` (`id`, `taskId`, `attempt`,
+  `capability`, `status`) in `packages/core/src/domain/task.ts`; the R3-A/B canonical continuation attempt
+  identity `executionId === taskRunId`; the R3-B1 WeakSet-based non-forgeable issuance pattern
+  (process-local, NOT restart-valid); the composite `RoutingPolicyEngine.configurationDigest`
+  (registry + policy); the deterministic `IntentClassifier`/`IntentResolver` workload owner.
+
+### 2. R3-C2 objective
+
+Define and ratify the smallest safe architecture boundary that must exist BEFORE any real
+containment/runtime implementation: the bridge R3-C1 admission → exact execution identity → hardened
+sole-provider issuance → enforced one-attempt/zero-hop semantics → (future) containment preparation →
+(future) trusted current-unavailability observation. R3-C2 is NOT "implement Docker/VM/Ollama"; runtime
+family remains a separate feasibility decision.
+
+### 3. Exact scope
+
+Close R3-C1 carry-forwards 1–4 as ratified contracts (§§6–9), define the Kind B trust-source architecture
+and decide its slice placement (§10), define the runtime-family feasibility comparison contract without
+selecting a family (§11), state which R3-B3 trust elements R3-C2 intends to close (§12), and propose the
+smallest sub-slice decomposition (§13). Architecture/decision record only.
+
+### 4. Explicit out-of-scope (DEFERRED)
+
+Real Docker/VM runtime; Ollama/Ollaya daemon; model load/inference; network probing; runtime-family
+selection; production trust anchor/verifier/capability issuer implementation; live containment preparation;
+post-dispatch cloud→local re-resolution (R3-C-Rz); new `RoutingFailureCode`, approval/security owner, or
+persistence schema; Live UAT. None are performed or authorized here.
+
+### 5. R3-C1 carry-forward closure plan
+
+| Carry-forward | Closure owner (R3-C2 sub-slice) | Mechanism |
+|---|---|---|
+| CF-1 Sole-selection issuance hardening | C2A | Bind issuance to the admitted path (§6) |
+| CF-2 Exact request/routing/execution identity | C2A | Reuse `TaskRun` / `executionId === taskRunId` + composite config digest (§7) |
+| CF-3 Attempt-1 / zero-hop enforcement | C2A defines the owner; enforcement lives at the existing Stage2B/continuation orchestration boundary (§8) |
+| CF-4 Authoritative workload input | C2A | `IntentClassifier`/deterministic policy is authoritative; caller label is not (§9) |
+
+All four are prerequisites; containment preparation (C2C) stays unreachable until C2A is ratified and
+implemented.
+
+### 6. Sole-selection issuance hardening (CF-1)
+
+Distinguish **plain selection data** from **issued/bound selection authority**. Today
+`assertExactSoleProviderSelection` is a pre-existing public R3-B1 surface that any Application code can call
+to mint a `SoleProviderSelection` independently of an admitted path. Target invariant: R3-C2 containment
+preparation may consume ONLY a sole-provider selection whose issuance is bound (by the existing R3-B1
+WeakSet issuer semantics) to (a) the exact R3-C1 admission decision, (b) the exact provider, (c) the exact
+composite selection configuration digest, and (d) the exact routing/execution identity (§7). Reuse the
+existing R3-B1 issuance/WeakSet pattern (as R3-B1/B2 already do for prepared containment); do NOT create a
+second provider-selection state machine. **Limitation (explicit):** the available mechanism is
+process-local WeakSet issuance, which is NOT restart-valid; an admission/selection is only bound within the
+issuing process and must be re-derived after restart. R3-C2 must not claim restart-valid authenticity for
+this binding. The narrowest concrete option is to make admission emit an issuer-bound selection token that
+`assertExactSoleProviderSelection` (or a bounded wrapper owned by R3-B1) validates against the admission
+identity, rather than accepting free-standing selection data at the containment boundary.
+
+### 7. Request / routing / execution identity binding (CF-2)
+
+Reuse the existing canonical execution identity; do NOT invent a parallel system. The exact binding is the
+R3-A/B continuation attempt identity **`executionId === taskRunId`** (`TaskRun.id`), composed with the
+already-bound **composite configuration digest** (registry + policy) that R3-C1 uses, and the **routing
+context**. Minimum composite binding = `{ taskRunId, capability, routingContextRef, configurationDigest }`
+using existing canonical fields only. This prevents: admission for request A reused for request B (distinct
+`taskRunId`); admission from one routing context replayed into another (distinct `routingContextRef`);
+admission from one TaskRun reused in another (distinct `taskRunId`); admission replayed after a config
+change (distinct `configurationDigest`, already enforced by R3-C1). No DB schema change: these are existing
+fields/refs threaded through the admission→issuance boundary. If a bounded routing-context digest does not
+already exist, C2A defines the smallest one from existing `RoutingContext` fields (reviewed), not a new
+aggregate.
+
+### 8. Attempt-budget enforcement owner (CF-3)
+
+`attemptNumber = 1` / `additionalProviderHops = 0` become ENFORCED (not merely declared) at the **existing
+Stage2B/continuation provider-routing orchestration boundary** (the owner of `MAX_PROVIDER_ATTEMPTS` /
+`MAX_ADDITIONAL_PROVIDER_HOPS` and the R3 PRIMARY_ONLY invocation), NOT inside R3-C2 and NOT by duplicating
+Stage2B retry. R3-C2 requires: a local-continuity execution admitted through R3-C1 is the request's FIRST
+and ONLY provider attempt on this path — no Cloud→Local, Local→Cloud, Local→another provider, hidden retry,
+or nested budget. Because enforcement belongs to that preceding orchestration contract, R3-C2 keeps
+containment preparation UNREACHABLE until that contract exists and is verified. This dependency is an entry
+criterion (§16), not an R3-C2 implementation item.
+
+### 9. Authoritative workload input owner (CF-4)
+
+The authoritative owner of the workload/`Capability` input is the existing deterministic
+`IntentClassifier` → `IntentResolver` → validated workload policy path, NOT the model/Ollaya/caller. Target
+flow: semantic interpretation → deterministic validated workload policy → R3-C1 admission. A caller (or a
+model) MUST NOT relabel `CODE_IMPLEMENTATION` as `GENERAL_CHAT` to gain local eligibility; R3-C2 requires
+the admission caller to be the authoritative deterministic classifier/policy owner supplying a canonical
+(validated) routing context, not an arbitrary external label. Ollaya is NOT required for R3-C2. No new
+workload taxonomy is introduced; expanding `Capability` (DEBUGGING/CODE_REFACTOR/SECURITY_REVIEW) needs a
+separate Architecture Review.
+
+### 10. Kind B trusted current-unavailability trust source (architecture; slice placement decided)
+
+Define the trust source first; **place the issuer in its own sub-slice C2B**, decoupled from runtime
+feasibility (C2C) — the issuer must NOT be assumed to ship with runtime work. A legitimate Kind B
+observation issuer must bind at minimum: provider identity; exact routing/request/execution identity (§7);
+observation source; observation window; currentness (from a trusted time/currentness source); and the
+composite configuration identity. It MUST reject: `isAvailable()` alone; caller-declared `CURRENT`;
+caller-declared `trusted`; model/Ollaya output; arbitrary external probe; stale provider-health facts.
+**Persistence semantics (explicit):** with only process-local mechanisms available, observation
+authenticity does NOT survive restart; no persisted/rehydrated Kind B observation is admissible until a
+real trust source with durable authenticity exists. No signing/PKI is invented here. Until C2B ships a real
+issuer, R3-C1 Kind B remains DENY (unchanged).
+
+### 11. Runtime-family feasibility comparison contract (no selection)
+
+R3-C2 defines a feasibility comparison contract (owned by C2C) evaluating **Option A** (no-network
+container + private contained Ollama daemon + one-shot/bounded client) vs **Option C** (dedicated no-NIC
+VM) across, at minimum: network isolation strength; filesystem/workspace isolation; process ownership;
+model-file ownership; daemon lifecycle; containment observability; independent verification; host-escape
+surface; restart semantics; failure recovery; resource residency; cold-start cost; concurrency; cleanup
+semantics; operational complexity. Runtime-family selection remains SEPARATE from R3-C1 admission
+eligibility and is not made here.
+
+### 12. R3-B3 trust implications
+
+R3-C2 preserves the R3-B3 fail-closed production-trust boundary verbatim (§1). R3-C2 explicitly closes NONE
+of the production trust elements by default: the production trust anchor, verifier issuer, and capability
+issuer remain a SEPARATE sub-slice (a future C2C-adjacent or post-C2C production-trust slice), so that
+"runtime works" never silently becomes "production trust established." C2A's sole-selection/identity
+binding is process-contractual only and is explicitly NOT production trust.
+
+### 13. Proposed sub-slice split
+
+- **R3-C2A — Admission-to-Execution Identity & Issuance Hardening** (smallest first slice): CF-1 issuance
+  binding, CF-2 identity binding, CF-4 authoritative workload owner, and the definition of the CF-3
+  enforcement owner (enforcement itself at the existing orchestration boundary). Pure Application/contract
+  work; no runtime.
+- **R3-C2B — Trusted Current-Unavailability Observation Contract**: the Kind B issuer trust source (§10).
+  Independent of runtime feasibility.
+- **R3-C2C — Runtime-Family Feasibility & Containment Issuer**: the feasibility comparison (§11) and, only
+  after a family is selected and a production-trust slice exists, real containment preparation.
+
+Recommended order and smallest decomposition: **C2A first** (unblocks the admission→preparation bridge with
+lowest risk and no runtime), then **C2B** and **C2C** independently. Do not force all three into one slice.
+
+### 14. R3-C-Rz exclusion
+
+Post-dispatch cloud-failure → local re-resolution (Kind C / PRIOR_ATTEMPT_FAILURE / Cloud→Local fallback
+after provider execution) remains NOT AUTHORIZED and entirely separate. R3-C2 adds no such path and no
+hidden bridge into R3-C-Rz.
+
+### 15. Architecture invariants (preserved)
+
+PRIMARY_ONLY; exactly one Provider per execution; R3-C1 admission precedes preparation; admission ≠
+execution authority; workload eligibility precedes runtime preparation; exact configuration-identity
+binding; exact request/run identity binding before preparation; Kind B cannot self-declare trust;
+production trust remains fail-closed until a real issuer exists; no post-dispatch retry in R3-C2; no
+duplicate Stage2B router; no model-owned authorization; no connector-credential authority from provider
+selection. Inward dependencies, narrow ports, provider-neutral Core, and Resource-input/Artifact-output
+separation are unchanged.
+
+### 16. Entry criteria (before the first R3-C2 implementation slice)
+
+Exact R3-C2 sub-slice chosen (recommended C2A); `SoleProviderSelection` issuance boundary defined (§6);
+admission-to-request identity binding defined (§7); attempt-enforcement owner defined and its enforcement
+contract present at the existing orchestration boundary (§8); authoritative workload input owner defined
+(§9); Kind B scope explicitly included (C2B) or deferred; production-trust elements explicitly included or
+deferred (§12); runtime family still unselected unless the slice IS feasibility selection (C2C); no
+R3-C-Rz dependency; independent Architecture Review + Product Owner ratification of this record.
+
+### 17. Exit criteria (this architecture task done)
+
+This ADR amendment defines objective, scope, out-of-scope, CF-1..CF-4 closure plan, Kind B trust source
++ slice placement, runtime feasibility contract (no selection), R3-B3 implications, C2A/C2B/C2C split,
+R3-C-Rz exclusion, invariants, and entry criteria; DECISIONS/CURRENT_STATE/CHANGELOG updated; docs-only
+with clean `git diff --check` and preserved terminology. Ratification gates implementation.
+
+### 18. Failure policy
+
+Fail closed everywhere trust is absent: unbound/free-standing selection data at the containment boundary is
+rejected; missing/mismatched identity binding denies preparation; Kind B without a real issuer denies;
+production trust checks remain fail-closed. No enforcement claim is made for a contract that does not yet
+exist (attempt budget, Kind B issuer), and containment preparation stays unreachable until its prerequisite
+contracts are ratified and implemented.
+
+### 19. Verification strategy (for the future C2A slice)
+
+Deterministic unit tests: free-standing `SoleProviderSelection` (not issued through the admitted path) is
+rejected at the containment-consumption boundary; an admission bound to `taskRunId` A cannot be consumed
+for `taskRunId` B / a different routing context / a changed configuration digest; a caller-relabeled
+workload cannot obtain local eligibility (authoritative classifier owns the input); attempt-budget
+enforcement is exercised at the existing orchestration boundary; no runtime/provider/network/DB execution;
+Stage2B and R3-B1/B2/B3/R3-C1 regressions preserved.
+
+### 20. Deferred decisions
+
+Runtime family (Option A vs C) and real containment issuer (C2C); production trust anchor/verifier/
+capability issuer (separate production-trust slice); durable (restart-valid) issuance/observation
+authenticity (needs a real trust source, not process-local WeakSet); Kind B issuer implementation (C2B);
+any post-dispatch re-resolution (R3-C-Rz); resource/cold-start/concurrency measurements. This document
+selects none of them.
+
+### Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated: Push/PR/Merge, runtime
+start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutation, Live UAT, production
+gates. A local architecture commit is created; independent Architecture Review must pass before
+Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
