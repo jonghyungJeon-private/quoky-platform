@@ -9020,6 +9020,16 @@ local architecture commit for independent Architecture Review; no Push/PR/Merge 
 - **Scope:** Close ADR-0090 carry-forwards N-1..N-6 enough that R3-C implementation scope is unambiguous,
   under the smallest safe slice. No runtime family is chosen. No Stage2B router/retry loop is duplicated.
   No new `RoutingFailureCode`, approval owner, security owner, persistence schema, or Core runtime type.
+- **Blocking remediation (2026-09-27, reviewed parent `9e2ff6be5cef6cf44186001cf700500997ad180c`):** This
+  record was corrected in place on a remediation branch (the reviewed commit is not amended). Corrections:
+  (B-1) Kind B `TRUSTED_CURRENT_UNAVAILABILITY` has no trusted issuer today, so it is **contract-defined,
+  issuer NOT IMPLEMENTED, and ALWAYS DENY** in R3-C1; (B-2) Kind A `STATIC_INELIGIBILITY` is **derived
+  internally** from canonical registry/configuration facts, never caller-supplied and never
+  availability-derived; (B-3) exact attempt accounting — an admitted local invocation is **attempt 1, zero
+  additional hops**, with no cloud attempt before or after; (B-4) Kind C `PRIOR_ATTEMPT_FAILURE` is
+  **unconditionally UNSUPPORTED / DENY** in R3-C1 (belongs to R3-C-Rz). R3-C1 is renamed **Local Continuity
+  Eligibility & Static Trusted Admission Contract** to reflect that only derived static admission is in
+  scope. The subsections below reflect these corrections directly.
 
 ### 1. Current state
 
@@ -9044,20 +9054,24 @@ Define the smallest bounded slice that lets an *eligible* contained local-contin
 family, model loading, inference, network probing, or a production trust anchor. R3-C is an
 eligibility/admission contract, not "implement Ollama runtime".
 
-### 3. Exact scope (R3-C1 — Local Continuity Eligibility & Trusted Admission Contract)
+### 3. Exact scope (R3-C1 — Local Continuity Eligibility & Static Trusted Admission Contract)
 
 1. Bounded workload eligibility input derived from **existing deterministic** IntentClassifier /
    deterministic workload derivation (no new classifier engine, no Ollaya).
 2. Deterministic `localFallbackAllowed` derivation from reviewed WorkloadPolicy (ADR-0090 §3/§4).
-3. A `CloudUnavailabilityEvidence` conceptual contract (N-2) with explicit freshness/trust semantics.
+3. A `CloudUnavailabilityEvidence` conceptual contract (N-2). In R3-C1 only **derived static operational
+   unavailability** (Kind A) can admit local continuity; Kind B is DENY (no trusted issuer) and Kind C is
+   DENY (unsupported). Kind A facts are derived internally from canonical registry/configuration, never
+   caller-supplied.
 4. An exact admission decision producing either `DENY { boundedReason }` or an
    `ELIGIBLE { … }` value that is a bounded immutable value/reference set (ADR-0090 §7 `ExecutionEligibility`),
    never a bearer token or persisted aggregate.
 5. A PRIMARY_ONLY local-continuity *selection handoff* through the existing R3-B1 issuance boundary and
    exact sole selection — no second ranking algorithm.
-6. **No runtime preparation** occurs unless all admission invariants hold; disallowed workloads cause
-   zero runtime preparation.
-7. Explicit fail-closed states when evidence is absent, stale, unknown, mismatched, or untrusted.
+6. **No containment/runtime preparation** occurs unless all admission invariants hold; disallowed
+   workloads and non-admissible evidence cause zero containment and zero local runtime preparation.
+7. Explicit fail-closed states when evidence/facts are absent, stale, unknown, malformed, mismatched,
+   untrusted, caller-supplied, or of an unsupported kind (Kind B / Kind C).
 
 ### 4. Explicit out-of-scope (DEFERRED)
 
@@ -9067,28 +9081,39 @@ already-started cloud attempt; post-dispatch re-resolution requiring Stage2B ret
 change (see N-2 decision); new `RoutingFailureCode` values; new approval/security owner; new persistence
 schema; runtime family selection (Option A vs C); resource/cold-start measurement; Live UAT.
 
-### 5. N-1 resolution — separate PRIMARY_ONLY local invocation
+### 5. N-1 resolution — separate PRIMARY_ONLY local invocation + exact attempt accounting (B-3)
 
 Contained local continuity MUST NOT be pre-bound as a fallback inside a cloud Stage2B ExecutionPlan.
 Forbidden shape: `Cloud primary + Ollama fallback` inside one ExecutionPlan. Required shape: a cloud
-invocation is **one PRIMARY_ONLY execution**. If local continuity later becomes eligible it requires a
-*new* bounded routing resolution → *new* exact sole-provider selection → *new* PRIMARY_ONLY invocation →
-*new* containment binding/preparation. At every attempt: exactly one Provider, exactly one execution plan,
-exactly one binding. Preserve `MAX_PROVIDER_ATTEMPTS = 2` and `MAX_ADDITIONAL_PROVIDER_HOPS = 1`
-(ADR-0090 §5 "primary + one additional attempt"). No nested/renewed retry budgets. `Cloud A → Cloud B`
-exhausts the budget and MUST NOT then invoke local continuity.
+invocation is **one PRIMARY_ONLY execution**, and an R3-C1-admitted local-continuity invocation is a
+**separate** PRIMARY_ONLY execution with its own single routing resolution, single exact sole-provider
+selection, single invocation, and single containment binding. At every attempt: exactly one Provider,
+exactly one execution plan, exactly one binding.
 
-### 6. N-2 — trusted pre-dispatch cloud-unavailability evidence contract
+**Exact R3-C1 attempt accounting (pre-dispatch only).** When R3-C1 admits a local-continuity invocation:
+it is **attempt 1** of the request's global provider-attempt budget; it is the **only** provider attempt
+for that request in R3-C1; **additional provider hops = 0**; there was **no cloud provider attempt before
+it** and there may be **no cloud provider attempt after it**. If the local attempt fails, the request
+terminates/defers/fails per existing semantics and does **not** switch back to cloud. R3-C1 therefore does
+not produce `Cloud → local` and does not produce `local → Cloud`.
 
-**Scope decision (smallest safe slice): R3-C1 supports PRE-DISPATCH local continuity eligibility ONLY.**
-Re-resolution after an already-recorded cloud failure would change Stage2B retry/orchestration ownership;
-per the task instruction it is STOPPED here and recorded as deferred follow-up **R3-C-Rz (post-dispatch
-re-resolution)**, requiring a separate ADR-0064/0089 integration decision. Prior-attempt-failure evidence
-(kind C below) is therefore *contract-defined but not admitted* in R3-C1 unless a reviewed mechanism can
-supply it pre-dispatch without ownership change.
+Preserve the global architecture constants `MAX_PROVIDER_ATTEMPTS = 2` and
+`MAX_ADDITIONAL_PROVIDER_HOPS = 1` (ADR-0090 §5). For an R3-C1 local-continuity request specifically:
+**attempts used = 1, additional hops = 0**. The larger two-attempt Stage2B fallback behavior remains a
+separate concern. No nested/renewed retry budgets. `Cloud A → Cloud B` exhausts that budget and MUST NOT
+then invoke local continuity. Any post-dispatch / already-recorded-cloud-failure scenario is **not** an
+R3-C1 path and is moved explicitly to **R3-C-Rz** (see §6 and §11).
 
-Conceptual contract (bounded facts only; NOT a DB schema, NOT process-local object identity if it must
-survive a workflow boundary, NO cryptographic-trust claim without a real anchor):
+### 6. N-2 — cloud-unavailability evidence contract (static-derived only in R3-C1)
+
+**R3-C1 supports PRE-DISPATCH local continuity eligibility ONLY, and only from derived static operational
+unavailability (Kind A).** R3-C1 intentionally excludes the dynamic and post-dispatch paths; admitting
+them requires separate Architecture Review (R3-C-Rz). This is a deliberate narrow architecture, not a
+process pause.
+
+Conceptual contract (bounded facts only; NOT a DB schema; NOT process-local object identity if it must
+survive a workflow boundary; NO cryptographic-trust claim without a real anchor). The contract *shape* may
+enumerate all three kinds, but R3-C1 admits **only Kind A**:
 
 ```text
 CloudUnavailabilityEvidence = {
@@ -9102,41 +9127,78 @@ CloudUnavailabilityEvidence = {
 }
 ```
 
-Admitted evidence kinds and the required distinction:
+**Kind A — DERIVED STATIC OPERATIONAL UNAVAILABILITY (the only R3-C1-admissible kind) (B-2).** Kind A is
+**derived internally by the admission policy** from canonical existing routing/configuration facts; it is
+**never caller-supplied**. A caller-provided `{ evidenceKind: STATIC_INELIGIBILITY }` object grants no
+admission and is rejected. Reuse existing Stage2B ownership; do not create a second router. Source =
+existing provider registry + existing deterministic routing/configuration facts. Only static
+operational/configuration facts may qualify, e.g. (when already canonical): provider not configured;
+provider administratively disabled by canonical config; execution-locality configuration makes the cloud
+provider statically unavailable; required provider configuration absent.
 
-- **A. STATIC_INELIGIBILITY** — provider known not usable before dispatch by deterministic
-  configuration/capability policy (ADR-0090 §3 quality floor, §4 locality). Admissible pre-dispatch.
-- **B. TRUSTED_CURRENT_UNAVAILABILITY** — a bounded current control-plane/provider-health fact from an
-  approved read-only mechanism. Admissible pre-dispatch **only** when `freshness = CURRENT` from a trusted
-  source. NOT satisfied by plain host `isAvailable()`, an arbitrary string, or an untrusted external probe.
-- **C. PRIOR_ATTEMPT_FAILURE** — a previous exact cloud PRIMARY_ONLY invocation produced a classified,
-  explicitly local-fallback-eligible failure. **Deferred to R3-C-Rz** (see scope decision above); not
-  admitted in R3-C1.
+Explicitly EXCLUDED from Kind A: current availability snapshot; `isAvailable()`; any
+availability-derived `RoutingPolicyEngine` exclusion; exception → `PROVIDER_UNAVAILABLE` mapping; model
+opinion; free-form status; any caller-provided evidence object. **Quality-floor exclusion is NOT
+cloud-unavailability evidence:** cloud excluded solely because it fails the workload quality floor is an
+eligibility constraint, not an operational outage, and does not authorize local continuity. Keep separate:
+*normal static provider eligibility* vs *operational local-continuity admission*. Do not launder
+availability-derived exclusions through the generic `RoutingPolicyEngine` exclusion set; if the engine
+cannot distinguish the provenance of an exclusion, R3-C1 must consult the underlying canonical static
+facts rather than reuse the aggregate exclusion result blindly.
 
-Never sufficient as evidence: unknown availability; model guess; Ollaya classification; plain host
-`isAvailable()`; arbitrary string status; historical/stale failure; untrusted external probe. Missing,
-stale (`STALE`), unknown (`UNKNOWN`), mismatched, or untrusted evidence → **DENY (fail closed)**.
+**Kind B — TRUSTED_CURRENT_UNAVAILABILITY (contract defined, issuer NOT IMPLEMENTED, ALWAYS DENY in
+R3-C1) (B-1).** The only existing current-availability source is host `isAvailable()`, which is explicitly
+insufficient, so R3-C1 has **no legitimate producer** for Kind B. Therefore
+`TRUSTED_CURRENT_UNAVAILABILITY → ALWAYS DENY` until a separately reviewed trusted observation issuer
+exists. Explicitly: arbitrary caller-created Kind B evidence is rejected; `freshness = CURRENT` is not
+caller authority; a `trusted` label is not caller authority; a Stage2B availability snapshot is NOT Kind B
+evidence; host `isAvailable()` is NOT Kind B evidence; an exception mapped to `PROVIDER_UNAVAILABLE` is NOT
+Kind B evidence; Ollaya/model output cannot create Kind B; an external/untrusted probe cannot create
+Kind B. *Future producer boundary (conceptual only, not implemented now, no signing/PKI/secrets):* only a
+separately reviewed control-plane observation issuer may create admissible Kind B evidence, binding at
+least provider identity, routing/request context, observation window, observation source, and currentness
+derived from trusted time/currentness logic. *Lifecycle:* R3-C1 has **no restart-valid/durable Kind B
+authenticity mechanism**, so **no persisted/rehydrated Kind B evidence is admissible in R3-C1**.
+
+**Kind C — PRIOR_ATTEMPT_FAILURE (unconditionally UNSUPPORTED / DENY in R3-C1) (B-4).** A prior cloud
+attempt means post-attempt/post-dispatch history already exists. Admitting that fact for local
+re-resolution belongs **exclusively to R3-C-Rz** and requires a NEW Architecture Review. There is **no**
+exception: a prior failure may not be reinterpreted as "pre-dispatch evidence for the next invocation".
+`PRIOR_ATTEMPT_FAILURE → DENY` unconditionally in R3-C1.
+
+Never sufficient as evidence anywhere in R3-C1: unknown availability; model guess; Ollaya classification;
+plain host `isAvailable()`; arbitrary string status; historical/stale failure; untrusted external probe;
+caller-supplied Kind A; caller-supplied Kind B. Missing, `STALE`, `UNKNOWN`, malformed, mismatched,
+untrusted, or unsupported-kind evidence → **DENY (fail closed)**.
 
 ### 7. N-3 — control re-entry invariant (architecture invariant, not prompt convention)
 
 If L1 `IntentDecisionEngine` returns `CONTROL` but L0 did **not** admit the input as a control command,
-L1 MAY NOT invoke any control handler. Allowed deterministic outcomes: `CLARIFY` or
-`REENTER_L0_WITH_BOUNDED_INTERPRETATION` (or equivalent deterministic handling). No semantic classifier
-may manufacture control authority. This reinforces ADR-0090 §1 L0 precedence and is binding at the
-architecture layer.
+L1 MAY NOT invoke any control handler. The only allowed deterministic outcomes are:
+
+- `CLARIFY`, or
+- `REENTER_L0_WITH_BOUNDED_INTERPRETATION` = run deterministic L0 again against the **original trusted
+  input/context**, with the classifier's interpretation supplied as **non-authoritative data only**.
+
+The interpretation cannot create approval, create control authority, alter lifecycle authority, or alter
+security state. No semantic classifier may manufacture control authority. This reinforces ADR-0090 §1 L0
+precedence and is binding at the architecture layer.
 
 ### 8. N-4 — mutation drafting workload mapping
 
 Map ADR-0090 §4 `EXTERNAL_MUTATION` intent to a bounded distinction (no new approval model):
 
-- `EXTERNAL_MUTATION_DRAFT` — may prepare text/payload/plan; possesses **no** mutation authority; does
-  **not** call any connector mutation; may use Cloud reasoning; its local-fallback eligibility is decided
-  explicitly by WorkloadPolicy (default: treat as a distinct low-authority workload, not implicit local).
+- `EXTERNAL_MUTATION_DRAFT` — may prepare text/payload/plan; **defaults to `localFallbackAllowed = false`**
+  until a separately ratified workload profile allows otherwise. Its output **is untrusted data**, grants
+  no mutation authority, carries no approval, carries no effect-time capability, must re-enter normal
+  planning/approval before execution, receives no connector credential, and receives no action capability.
+  It may use Cloud reasoning.
 - `EXTERNAL_MUTATION_EXECUTE` — requires the **existing** Action / Approval / effect-time authorization
   (ADR-0090 §6). Provider choice grants no permission. Changing providers cannot change destination,
   payload, requester, plan, or approval binding.
 
-Drafting and execution are separate concerns; a draft step never authorizes a later write.
+Drafting and execution are separate concerns; a draft step never authorizes a later write. Documentation
+only; no new approval model.
 
 ### 9. N-5 — failure terminology mapping (no new codes introduced)
 
@@ -9162,6 +9224,13 @@ boundary; do not add it in implementation scope. R3-C1 as scoped requires **no**
 existing classification and never authorizes fallback on `SECURITY_FAILURE`/`POLICY_REJECTION`, never
 lowers a quality floor to obtain fallback, and never infers quota/retry from arbitrary error strings.
 
+The "interim" mapping for `QUOTA_EXHAUSTED` / `RATE_LIMIT` / `OVERLOADED` describes **conceptual/existing
+classifier interpretation only** and remains DEFERRED. R3-C1 MUST NOT add new `RoutingFailureCode` values,
+MUST NOT reinterpret `PROVIDER_UNAVAILABLE` ad hoc for local continuity, and MUST NOT use
+quota/rate/overload as Kind A or Kind B admission evidence. `SECURITY_FAILURE` remains a conceptual mapping
+to the existing `PROMPT_LEAK` / `SECRET_EXPOSURE_RISK` / `MULTI_ENTRY_ECHO` / `VALIDATOR_INTERNAL_FAILURE`
+codes and remains **non-failover**.
+
 ### 10. N-6 — Ollaya dependency statement
 
 R3-C implementation does **not** require an Ollaya adapter. During R3-C, the existing deterministic
@@ -9172,14 +9241,56 @@ No Ollaya execution in this slice.
 
 ### 11. Proposed R3-C1 / R3-C2 split
 
-- **R3-C1 — Local Continuity Eligibility & Trusted Admission Contract** (this task): eligibility input,
-  `localFallbackAllowed`, `CloudUnavailabilityEvidence`, exact admission decision, PRIMARY_ONLY selection
-  handoff, fail-closed states. No runtime preparation.
+- **R3-C1 — Local Continuity Eligibility & Static Trusted Admission Contract** (this task): eligibility
+  input, `localFallbackAllowed`, derived-static `CloudUnavailabilityEvidence` (Kind A only), exact
+  admission decision, PRIMARY_ONLY selection handoff, fail-closed states (Kind B DENY, Kind C DENY). No
+  containment/runtime preparation.
 - **R3-C2 — Runtime-family feasibility / real containment issuer** (separate later task): evidence for
-  Option A vs Option C, real containment preparation/issuer, production trust anchor design. Owns runtime
-  choice; keeps ownership cleaner and out of R3-C1.
+  Option A vs Option C, real containment preparation/issuer, production trust anchor design, and the
+  future trusted control-plane observation issuer that could make Kind B admissible. Owns runtime choice;
+  keeps ownership cleaner and out of R3-C1.
 - **R3-C-Rz — Post-dispatch re-resolution** (deferred follow-up): re-resolution after a recorded cloud
-  failure; needs separate ADR-0064/0089 integration decision (ownership change).
+  failure (Kind C). R3-C1 intentionally excludes this path; admission requires R3-C-Rz architecture review
+  and a separate ADR-0064/0089 integration decision (Stage2B retry/orchestration ownership change).
+
+### 11a. R3-C1 admissible evidence after remediation
+
+R3-C1 may admit local continuity only from **Kind A — DERIVED STATIC OPERATIONAL UNAVAILABILITY** (derived
+internally from canonical configuration/registry facts), and only when: the workload allows local
+fallback; the local provider satisfies the required capability; the local provider satisfies the same
+quality floor the cloud path would; no security/approval policy blocks it; and an exact PRIMARY_ONLY local
+selection can be produced. R3-C1 does **not** admit **Kind B — TRUSTED_CURRENT_UNAVAILABILITY** (contract
+defined, issuer absent → DENY) or **Kind C — PRIOR_ATTEMPT_FAILURE** (unsupported in R3-C1 → DENY). This
+is intentionally narrow; do not broaden it merely to make the feature look more complete. Dynamic
+availability is NOT "supported" merely because its schema exists.
+
+### 11b. Full R3-C1 admission order (N-4)
+
+1. L0 deterministic control/security gate.
+2. Workload derivation (deterministic classifier allowed; Ollaya not required).
+3. Workload local-fallback eligibility (`localFallbackAllowed`).
+4. Derive admissible **Kind A** static operational-unavailability facts from canonical configuration.
+5. Reject/deny unsupported or unavailable evidence kinds: **Kind B → DENY**, **Kind C → DENY**.
+6. Existing Stage2B static provider eligibility (registry/config; no second router).
+7. PRIMARY_ONLY.
+8. Exact sole local-provider selection.
+9. Exact local-continuity admission result (`ELIGIBLE {…}` or `DENY {boundedReason}`).
+10. Outside R3-C1: containment preparation / runtime work.
+
+Invariant: a disallowed workload or non-admissible evidence → **zero containment preparation and zero
+local runtime preparation**.
+
+### 11c. R3-C1 fail-closed cases and disposition mapping (N-5)
+
+R3-C1 local admission DENYs on: missing evidence/facts; stale evidence; `UNKNOWN`; malformed evidence;
+unsupported evidence kind; caller-supplied Kind A; caller-supplied Kind B; provider mismatch;
+routing/request-context mismatch; untrusted source; `isAvailable()`-derived current state;
+availability-snapshot-derived state; `PRIOR_ATTEMPT_FAILURE`; workload local fallback disallowed; local
+provider below quality floor; local provider missing required capability.
+
+Each DENY maps to an existing ADR-0090 external outcome — **STOP** (invalid/forbidden request) or
+**DEFER** (temporary eligible-provider unavailability) — by deterministic policy. `HUMAN_REQUIRED` is not
+used merely to bypass missing trust evidence unless existing policy independently requires human approval.
 
 ### 12. Architecture invariants (preserved)
 
@@ -9201,28 +9312,51 @@ arbitrary error strings. Budget/security outrank operational and semantic classi
 
 ### 14. Validation strategy (for the future R3-C1 implementation)
 
-Deterministic unit tests over the admission decision: (a) disallowed workloads (e.g. `CODE_IMPLEMENTATION`
-with `localFallbackAllowed=false`) DENY with zero runtime preparation; (b) missing/`STALE`/`UNKNOWN`/
-untrusted evidence DENY (fail closed); (c) only STATIC_INELIGIBILITY and CURRENT trusted-unavailability
-admit pre-dispatch; PRIOR_ATTEMPT_FAILURE not admitted in R3-C1; (d) admission yields exactly one
-PRIMARY_ONLY selection through R3-B1 with one Provider/plan/binding; (e) N-3 control re-entry cannot
-invoke a control handler; (f) N-4 draft never triggers connector mutation; (g) N-5 concepts map with no
-new `RoutingFailureCode`. No runtime/provider/network/DB/Live UAT in validation.
+Deterministic unit tests over the admission decision, runnable **without runtime execution** (no
+Docker/VM/Ollama):
+(a) disallowed workload (e.g. `CODE_IMPLEMENTATION` with `localFallbackAllowed=false`) → DENY, zero
+containment/runtime preparation;
+(b) local provider below quality floor or missing required capability → DENY;
+(c) only **derived** Kind A admits; Kind B → DENY (issuer absent); Kind C `PRIOR_ATTEMPT_FAILURE` →
+unsupported/DENY;
+(d) caller-fabricated `STATIC_INELIGIBILITY` (Kind A) → rejected; caller-fabricated
+`TRUSTED_CURRENT_UNAVAILABILITY` (Kind B) → rejected;
+(e) `isAvailable()` result → cannot become local admission evidence; Stage2B availability snapshot →
+cannot become Kind B evidence; exception → `PROVIDER_UNAVAILABLE` mapping → not admission evidence;
+(f) provider mismatch → rejected; request/routing-context mismatch → rejected; missing/`STALE`/`UNKNOWN`/
+malformed/untrusted/unsupported-kind → DENY (fail closed);
+(g) admission yields exactly one PRIMARY_ONLY selection through R3-B1 with one Provider/plan/binding; the
+local invocation is **attempt 1, zero additional hops**, with no cloud attempt before or after;
+(h) no production trust/issuer is created; zero containment/runtime preparation occurs in R3-C1;
+(i) N-3 control re-entry cannot invoke a control handler; (j) N-4 draft never triggers connector mutation
+and defaults `localFallbackAllowed=false`; (k) N-5 concepts map with no new `RoutingFailureCode`.
+No runtime/provider/network/DB/Live UAT in validation.
 
 ### 15. Entry criteria (before R3-C1 implementation may start)
 
-Exact workload/local eligibility contract defined; trusted pre-dispatch cloud-unavailability evidence
-defined; stale/unknown/untrusted fail-closed semantics defined; separate PRIMARY_ONLY local invocation
-preserved; retry/attempt ownership unambiguous; N-3 control re-entry invariant defined; N-4 draft-vs-execute
-distinction defined; N-5 failure terminology mapped to existing taxonomy; Ollaya explicitly non-required;
-R3-B3 production-trust limitations preserved; no hidden runtime-family commitment; ADR-0090 ratified by
-independent Architecture Review and Product Owner (ADR-0090 §"R3-C entry criteria" 1–9).
+All of: workload/local-fallback contract defined; **Kind A producer = internal canonical derivation**;
+**Kind A excludes availability-derived facts** (no `isAvailable()`, no availability-derived
+`RoutingPolicyEngine` exclusion, no exception→`PROVIDER_UNAVAILABLE`, no quality-floor exclusion as
+outage); **Kind B trust-source boundary defined**; **Kind B issuer status = NOT IMPLEMENTED**; **Kind B =
+DENY in R3-C1**; **Kind C = DENY in R3-C1**; **exact attempt accounting defined** (attempt 1 / zero hops /
+no cloud before or after); separate PRIMARY_ONLY local invocation preserved; **Stage2B ownership
+preserved** (no second router); N-3 control re-entry rule explicit; N-4 mutation draft/execute contract
+explicit; N-5 failure terminology mapped to existing taxonomy; Ollaya explicitly non-required; R3-B3
+production-trust limitations preserved; runtime-family neutrality preserved (no hidden commitment);
+ADR-0090 ratified by independent Architecture Review and Product Owner (ADR-0090 §"R3-C entry criteria"
+1–9).
 
 ### 16. Exit criteria (R3-C1 done)
 
-Admission contract implemented and unit-tested per §14; disallowed workloads provably cause zero runtime
-preparation; fail-closed on absent/stale/untrusted evidence; PRIMARY_ONLY exact sole selection handoff via
-R3-B1; no new `RoutingFailureCode`/approval/security owner/schema; no runtime/provider/network/DB/Live UAT;
+R3-C1 implementation must be **testable without runtime execution** (no Docker/VM/Ollama). Expected tests:
+workload disallowed → no local admission; local provider below quality floor → no local admission;
+caller-fabricated `STATIC_INELIGIBILITY` → rejected; caller-fabricated `TRUSTED_CURRENT_UNAVAILABILITY` →
+rejected; Kind B legitimate issuer absent → DENY; `PRIOR_ATTEMPT_FAILURE` → unsupported/DENY;
+`isAvailable()` result → cannot become local admission evidence; availability snapshot → cannot become
+Kind B evidence; provider mismatch → rejected; request/routing-context mismatch → rejected; exact
+PRIMARY_ONLY local selection only; local invocation is attempt 1 / zero hops; no cloud attempt before or
+after; no production trust created; zero containment/runtime preparation in R3-C1. Also: no new
+`RoutingFailureCode`/approval/security owner/schema; no runtime/provider/network/DB/Live UAT;
 `pnpm typecheck` and scoped tests pass; DECISIONS/CURRENT_STATE/CHANGELOG updated. Runtime family remains
 unchosen (deferred to R3-C2).
 
