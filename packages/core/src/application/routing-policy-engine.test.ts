@@ -444,3 +444,125 @@ describe('Slice 1 boundaries', () => {
     expect(source).not.toMatch(/conversation-runtime|code-generation-manager/i);
   });
 });
+
+describe('RoutingPolicyEngine.staticEligibility — read-only static projection (availability-independent)', () => {
+  it('returns eligible providers partitioned by locality without consulting availability', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    // Mark EVERYTHING UNAVAILABLE: static eligibility must ignore this entirely.
+    const snapshot = registry([cloud, local], ProviderAvailability.UNAVAILABLE);
+    const projection = engine().staticEligibility(BASE_CONTEXT, snapshot);
+    expect(projection.policyMatched).toBe(true);
+    expect([...projection.eligibleProviderIds].sort()).toEqual(['cloud-a', 'local-a']);
+    expect(projection.eligibleNetworkProviderIds).toEqual(['cloud-a']);
+    expect(projection.eligibleLocalProviderIds).toEqual(['local-a']);
+  });
+
+  it('produces the SAME result regardless of the availability snapshot value', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    const available = engine().staticEligibility(BASE_CONTEXT, registry([cloud, local], ProviderAvailability.AVAILABLE));
+    const unavailable = engine().staticEligibility(BASE_CONTEXT, registry([cloud, local], ProviderAvailability.UNAVAILABLE));
+    const unknown = engine().staticEligibility(BASE_CONTEXT, registry([cloud, local], ProviderAvailability.UNKNOWN));
+    expect(available.eligibleNetworkProviderIds).toEqual(unavailable.eligibleNetworkProviderIds);
+    expect(available.eligibleNetworkProviderIds).toEqual(unknown.eligibleNetworkProviderIds);
+    expect(available.eligibleLocalProviderIds).toEqual(unavailable.eligibleLocalProviderIds);
+  });
+
+  it('administratively disabled providers are excluded from the static set', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: false });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    const projection = engine().staticEligibility(BASE_CONTEXT, registry([cloud, local]));
+    expect(projection.eligibleNetworkProviderIds).toEqual([]);
+    expect(projection.eligibleLocalProviderIds).toEqual(['local-a']);
+  });
+
+  it('respects the policy quality floor (capability/quality/locality distinctions remain canonical)', () => {
+    const highFloor: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('high-floor-v1'),
+      eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
+    };
+    const strongCloud = descriptor('cloud-strong', { locality: ExecutionLocality.NETWORK, semantic: ReliabilityTier.HIGH });
+    const weakCloud = descriptor('cloud-weak', { locality: ExecutionLocality.NETWORK, semantic: ReliabilityTier.STANDARD });
+    const projection = engine([highFloor]).staticEligibility(BASE_CONTEXT, registry([strongCloud, weakCloud]));
+    expect(projection.eligibleNetworkProviderIds).toEqual(['cloud-strong']);
+  });
+
+  it('returns the SAME composite configurationDigest that select() returns', () => {
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+    const snapshot = registry([cloud]);
+    const eng = engine();
+    const projection = eng.staticEligibility(BASE_CONTEXT, snapshot);
+    const decision = eng.select(BASE_CONTEXT, snapshot);
+    expect(projection.configurationDigest).toBe(decision.configurationDigest);
+  });
+
+  it('reports no policy match without throwing when no policy applies', () => {
+    const noMatch: RoutingPolicy = { ...BASE_POLICY, when: { capabilities: [Capability.EMBEDDING] } };
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+    const projection = engine([noMatch]).staticEligibility(BASE_CONTEXT, registry([cloud]));
+    expect(projection.policyMatched).toBe(false);
+    expect(projection.eligibleNetworkProviderIds).toEqual([]);
+  });
+
+  it('exposes configuredNetworkProviderIds independent of enabled and policy compatibility', () => {
+    const cloudEnabled = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK, enabled: true });
+    const cloudDisabled = descriptor('cloud-b', { locality: ExecutionLocality.NETWORK, enabled: false });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    const projection = engine().staticEligibility(BASE_CONTEXT, registry([cloudEnabled, cloudDisabled, local]));
+    expect(projection.configuredNetworkProviderIds).toEqual(['cloud-a', 'cloud-b']);
+  });
+
+  it('policyCompatibleNetworkProviderIdsIgnoringEnabled includes disabled-but-compatible clouds', () => {
+    const cloudDisabled = descriptor('cloud-b', { locality: ExecutionLocality.NETWORK, enabled: false });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    const projection = engine().staticEligibility(BASE_CONTEXT, registry([cloudDisabled, local]));
+    // Disabled → not in eligible set, but IS policy-compatible ignoring enabled.
+    expect(projection.eligibleNetworkProviderIds).toEqual([]);
+    expect(projection.policyCompatibleNetworkProviderIdsIgnoringEnabled).toEqual(['cloud-b']);
+  });
+
+  it('enabled is the ONLY distinction between policy-compatible-ignoring-enabled and eligible (A2 signal)', () => {
+    const cloudDisabled = descriptor('cloud-b', { locality: ExecutionLocality.NETWORK, enabled: false });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    const p = engine().staticEligibility(BASE_CONTEXT, registry([cloudDisabled, local]));
+    expect(p.policyCompatibleNetworkProviderIdsIgnoringEnabled.length).toBeGreaterThan(0);
+    expect(p.eligibleNetworkProviderIds.length).toBe(0);
+  });
+
+  it('a policy-incompatible cloud is absent from BOTH policy-compatible and eligible NETWORK sets', () => {
+    const highFloor: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('high-floor-v1'),
+      eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH },
+    };
+    const weakCloud = descriptor('cloud-weak', { locality: ExecutionLocality.NETWORK, enabled: true, semantic: ReliabilityTier.STANDARD });
+    const p = engine([highFloor]).staticEligibility(BASE_CONTEXT, registry([weakCloud]));
+    expect(p.configuredNetworkProviderIds).toEqual(['cloud-weak']);
+    expect(p.policyCompatibleNetworkProviderIdsIgnoringEnabled).toEqual([]);
+    expect(p.eligibleNetworkProviderIds).toEqual([]);
+  });
+
+  it('reports policyRequiresLocalLocality when the matched policy fixes executionLocality=LOCAL', () => {
+    const localOnly: RoutingPolicy = {
+      ...BASE_POLICY,
+      policyId: policyId('local-only-v1'),
+      eligibility: { executionLocality: ExecutionLocality.LOCAL },
+    };
+    const cloud = descriptor('cloud-a', { locality: ExecutionLocality.NETWORK });
+    const local = descriptor('local-a', { locality: ExecutionLocality.LOCAL });
+    const p = engine([localOnly]).staticEligibility(BASE_CONTEXT, registry([cloud, local]));
+    expect(p.policyRequiresLocalLocality).toBe(true);
+    expect(engine().staticEligibility(BASE_CONTEXT, registry([cloud, local])).policyRequiresLocalLocality).toBe(false);
+  });
+
+  it('does not rank, select, build an ExecutionPlan, or invoke a Provider', () => {
+    const source = readFileSync(join(__dirname, 'routing-policy-engine.ts'), 'utf8');
+    // The staticEligibility method body must not sort by ranking rules or call compareByRule.
+    const method = source.slice(source.indexOf('staticEligibility('), source.indexOf('private compositeConfigurationDigest'));
+    expect(method).not.toContain('compareByRule');
+    expect(method).not.toContain('.execute(');
+    expect(method).not.toContain('ExecutionPlan');
+  });
+});

@@ -9010,7 +9010,7 @@ proposed here. No `[RESERVE]` code seam is added by this documentation-only task
 bounded implementation; runtime feasibility/activation retain their separate gates. Stop after the
 local architecture commit for independent Architecture Review; no Push/PR/Merge before that review passes.
 
-## ADR-0090 amendment — R3-C bounded task definition (Local Continuity Eligibility & Trusted Admission)
+## ADR-0090 amendment — R3-C bounded task definition (Local Continuity Eligibility & Static Trusted Admission)
 
 - **Status:** Proposed — task definition / architecture only. Independent Architecture Review and Product
   Owner ratification pending. Grants no implementation, activation, runtime, provider, network, DB, or
@@ -9376,3 +9376,197 @@ Push/PR/Merge, runtime start/stop, container/VM start, Ollama/Ollaya install/run
 execution, DB/SQLite/shared/live mutation, Workspace Apply, Live UAT, production/release gates. A local
 commit is created for the task definition; independent Architecture Review must pass before Push/PR/Merge.
 No R3-C implementation begins from this document.
+
+### R3-C1 implementation record — Local Continuity Eligibility & Static Trusted Admission (2026-09-27)
+
+**Status: Implemented locally on branch `codex/r3c1-local-continuity-admission` (parent
+`9bd94b45f554e6e03e1fdcff1b43e391b8527334`) / awaiting independent exact-HEAD implementation review.**
+This closes the ratified R3-C1 non-blocking implementation conditions. It implements a PURE,
+runtime-independent admission contract only: no runtime, container/VM, Ollama/Ollaya, model load,
+inference, network, DB/schema, new aggregate/repository, new approval/security owner, and no new
+`RoutingFailureCode`. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+New Core Application module `local-continuity-admission.ts` (exported through the `@quoky/core`
+application barrel):
+
+- `WorkloadLocalFallbackPolicy` — deterministic, immutable, versioned policy owner
+  (`r3c1-workload-local-fallback-v1`) keyed on the existing domain `Capability`. `GENERAL_CHAT`,
+  `SUMMARIZATION`, `READONLY_LOOKUP`, `PROJECT_ANALYSIS` may be considered; `CODE_IMPLEMENTATION`,
+  `CODE_REVIEW`, `ARCHITECTURE_PLANNING`, `DOCUMENT_ANALYSIS` (and `TEST_EXECUTION`/`EMBEDDING`) are
+  local-fallback-ineligible by default per ADR-0090 §4. Policy is not hard-coded in adapter code.
+- `deriveKindAStaticFacts(registry, …)` — **NB-1 closed.** Kind A is derived INTERNALLY from the canonical
+  `ProviderRegistry` from an explicit CLOSED set: `PROVIDER_NOT_CONFIGURED` (A1),
+  `PROVIDER_ADMINISTRATIVELY_DISABLED` (A2, from the canonical `enabled` flag), and
+  `REQUIRED_PROVIDER_CONFIGURATION_ABSENT` (A3). It consults only canonical configuration presence and the
+  `enabled` flag — never the availability snapshot, `ProviderAvailability`, host `isAvailable()`,
+  `ProviderDescriptor.operationalProfile.availabilityClass` (incl. `NETWORK_DEPENDENT`), an
+  availability-derived `RoutingPolicyEngine` exclusion, a quality-floor exclusion, or any caller-supplied
+  evidence object. Derivation is bound to the exact `ProviderRegistry.configurationDigest`.
+- `LocalContinuityAdmission.admit(input)` — the admission decision. Order: structural validation →
+  configuration-identity binding (`selectionConfigurationRef` must equal `registry.configurationDigest`,
+  else `CONFIGURATION_IDENTITY_MISMATCH`) → routing-context/capability consistency → workload
+  local-fallback policy → internal Kind A derivation → local provider configured + LOCAL locality → local
+  provider INDEPENDENTLY satisfies the required capability + the same quality floor (reusing
+  `RoutingPolicyEngine` over a snapshot in which only the local provider is AVAILABLE; no second ranking
+  engine, no fabricated cloud AVAILABLE snapshot) → exact PRIMARY_ONLY sole selection handoff through the
+  existing R3-B1 `assertExactSoleProviderSelection` boundary. On admission it mints a non-forgeable
+  `SoleProviderSelection` (one provider / one selection / one plan / one binding downstream) and performs
+  ZERO containment/runtime preparation and creates ZERO production trust.
+- Kind B (`admitTrustedCurrentUnavailability`) and Kind C (`admitPriorAttemptFailure`) fail closed
+  unconditionally (`DYNAMIC_EVIDENCE_UNSUPPORTED`, `PRIOR_ATTEMPT_FAILURE_UNSUPPORTED`); there is no
+  caller-accessible admitting path and no persisted/rehydrated evidence. No Kind B observation issuer,
+  health monitor, probe, trusted clock, persistence authentication, or signing/PKI is introduced.
+- Attempt accounting is explicit and testable: `attemptNumber = 1`, `additionalProviderHops = 0`. The
+  global `MAX_PROVIDER_ATTEMPTS = 2` / `MAX_ADDITIONAL_PROVIDER_HOPS = 1` constants are unchanged; the
+  decision encodes no cloud predecessor/successor and no nested retry budget.
+
+**NB-2 closed — DENY semantics.** `LocalContinuityDenialReason` values (e.g.
+`WORKLOAD_LOCAL_FALLBACK_DISALLOWED`, `NO_DERIVED_STATIC_UNAVAILABILITY`, `LOCAL_PROVIDER_BELOW_QUALITY_FLOOR`)
+each mean LOCAL CONTINUITY NOT ADMITTED. The decision carries no `requestDisposition`/STOP/DEFER/
+`HUMAN_REQUIRED` field: whether the surrounding orchestration STOPs/DEFERs is decided elsewhere by existing
+ADR-0090 policy only when no normal eligible execution path exists.
+
+Validation: focused suite `local-continuity-admission.test.ts` (32 tests) covering conditions A–J plus
+malformed/mismatch inputs; Stage2B routing regressions (`routing-policy-engine`, `provider-registry`,
+`provider-execution-plan`, `runtime-response-validation-contracts`) and R3-B1/B2/B3 regressions
+(`continuation-prepared-containment`, `containment-public-api`, storage-sqlite `*-e2e`) all pass;
+`@quoky/core` barrel still does not leak the R3-B1 test-only fake. Full `packages/core` +
+`packages/storage-sqlite` suites: 2138 tests passing. `pnpm typecheck` (`tsc -b`) passes. No new
+`RoutingFailureCode`, schema, aggregate, approval/security owner, or runtime path was added.
+
+### R3-C1 exact-HEAD review remediation — canonical cloud path + composite config (2026-09-27)
+
+**Status: Remediation implemented locally on branch `codex/r3c1-local-continuity-admission` (one commit on
+top of the reviewed `ab0db3a02ddd73b15e484a345daf08b61a2d1e4f`; the reviewed commit is not amended) /
+awaiting a new independent exact-HEAD review.** This corrects three accepted blockers from the
+`CHANGES_REQUIRED` verdict and supersedes the corresponding overclaims in the implementation record above.
+It remains inside the already-approved R3-C1 scope: no new aggregate/repository, DB schema,
+approval/security owner, `RoutingFailureCode`, Kind B issuer, production trust/capability issuer,
+runtime family, Docker/VM/Ollama, network probe, or R3-C-Rz path. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+- **B-1 — caller-controlled cloud identities removed.** `normalCloudProviderId` and
+  `requiredCloudProviderIds` are deleted from `LocalContinuityAdmissionInput`. A caller can no longer
+  manufacture Kind A by naming a nonexistent, unrelated-disabled, stale, or arbitrary provider. Probes P1
+  (ghost cloud named), P2 (`requiredCloudProviderIds=['ghost-2']`), and P3 (unrelated disabled `old-cloud`)
+  are permanently closed: each still resolves to `NORMAL_CLOUD_PATH_STATICALLY_EXISTS` because a healthy
+  `cloud-a` remains statically eligible, and the forged fields are inert excess properties.
+- **B-2 — Kind A = canonical cloud-path static unavailability.** Kind A now means: for the authoritative
+  routing context and matched Stage2B policy, **no NETWORK/cloud Provider remains statically eligible**. It
+  is answered by a new Stage2B-owned READ-ONLY projection `RoutingPolicyEngine.staticEligibility(context,
+  registry)` that evaluates the SAME policy predicate and SAME `eligible(...)` static rules as `select`,
+  over ALL descriptors, and NEVER reads dynamic availability (`ProviderAvailability`, snapshot,
+  `isAvailable()`, `availabilityClass`, availability-derived exclusion, exception→UNAVAILABLE). It does not
+  rank, select, build an ExecutionPlan, invoke a Provider, or mutate the registry, and it is unit-tested
+  independently (availability value cannot affect its result). No fake AVAILABLE snapshot is fabricated —
+  the admission passes a default snapshot solely because the projection ignores availability. `required
+  provider configuration` was NOT turned into caller input; the A3 caller-supplied subcase is dropped
+  (narrower is preferred). Normal routing stays normal routing: cloud excluded only by quality floor or
+  required capability, locality policy choosing LOCAL, single-eligible-provider outcomes, and ranking
+  preference are NOT Kind A. A cloud quality-floor failure never authorizes local continuity; the local
+  Provider must independently be statically eligible under the same policy/floor.
+- **B-3 — composite configuration identity.** Admission now binds to the composite
+  `RoutingPolicyEngine` `configurationDigest` (registry + policy), the exact identity `select` returns
+  (`staticEligibility` returns the identical digest). A registry-only digest or a stale digest derived
+  under a different policy is rejected with `CONFIGURATION_IDENTITY_MISMATCH`. Probe P7 is closed: same
+  registry + different routing policy ⇒ different composite identity ⇒ prior admission/ref cannot be reused
+  (tested). The digest is re-derived internally and compared to the caller's `selectionConfigurationRef`.
+- **Local provider eligibility (NB-2).** The duplicated reliability/context ordering inside the previous
+  `localProviderSatisfies` is removed. The local candidate is required to appear in the SAME projection's
+  `eligibleLocalProviderIds` (same policy, same configuration, LOCAL locality) — one canonical static rule
+  set, no parallel eligibility implementation.
+- **Kind B / Kind C naming (NB-4).** `admitTrustedCurrentUnavailability` / `admitPriorAttemptFailure` are
+  renamed to `assertTrustedCurrentUnavailabilityUnsupported` / `assertPriorAttemptFailureUnsupported`; both
+  throw unconditionally and cannot admit. No Kind B/C issuer logic is added.
+- **Public helper surface (NB-5).** `deriveKindAStaticFacts` is removed from the public surface; Kind A is
+  now internal to `admit(...)` and tested through public admission behavior. No generic evidence factory.
+- **SoleProviderSelection forgeability (NB-1) — corrected claim.** The earlier record overstated
+  non-forgeability. Accurately: `assertExactSoleProviderSelection` is a PRE-EXISTING public R3-B1 API that
+  can mint a `SoleProviderSelection` independently of R3-C1. R3-C1 merely reuses that exact-selection
+  assertion as its handoff and does not redesign R3-B1 issuance. Hardening R3-B1 public issuance is carried
+  forward as a blocker BEFORE R3-C2 connects admission to containment preparation.
+
+**Attempt accounting** remains the declarative contract facts `attemptNumber = 1`,
+`additionalProviderHops = 0`; downstream enforcement (no Cloud→local / local→Cloud) is explicitly an
+R3-C2/R3-C-Rz integration responsibility and is not claimed as enforced here. **DENY semantics** are
+unchanged: DENY = local continuity not admitted; no STOP/DEFER/HUMAN_REQUIRED/request-failure field; a
+healthy cloud path yields DENY while normal Stage2B routing remains available.
+
+**Carry-forward (before R3-C2 may consume an admission):** (1) bind the admission to the exact
+request/routing-context or existing equivalent execution identity (no new identity system; reuse a bounded
+routing-context digest if one exists); (2) harden R3-B1 `SoleProviderSelection` public issuance;
+(3) enforce attempt accounting at the R3-C2/R3-C-Rz integration boundary; (4) NB-3 workload input
+authority — the caller must be an authoritative deterministic workload-policy owner supplying a canonical
+routing context, not arbitrary external input; R3-C1 does not expand the `Capability` taxonomy
+(DEBUGGING/CODE_REFACTOR/SECURITY_REVIEW) without Architecture Review.
+
+Validation: `local-continuity-admission.test.ts` (33 tests incl. P1/P2/P3/P7 and normal-routing negatives)
+and `routing-policy-engine.test.ts` (28 tests incl. 7 new independent `staticEligibility` tests) pass;
+Stage2B / R3-B1 / R3-B2 / R3-B3 regressions and full `packages/core` + `packages/storage-sqlite` suites
+pass (328 in the focused regression run). `pnpm typecheck` (`tsc -b`) passes. The full repository suite
+has exactly one unrelated failure: `apps/quoky/src/github-app-git-provider.test.ts` asserts
+`process.env.GIT_ASKPASS` is undefined, but `GIT_ASKPASS` is present (empty) in the executing shell
+environment; this is environment-sensitive and unrelated to R3-C1. Per the review instruction it was NOT
+modified and the environment was NOT mutated to force it green; R3-C1 scoped and regression suites pass
+independently.
+
+### R3-C1 exact-HEAD review remediation — B-A: Kind A = administrative-only, not routing outcome (2026-09-27)
+
+**Status: Remediation implemented locally on branch `codex/r3c1-local-continuity-admission` (one commit on
+top of `1a613542322e901add16df5563685d1d799ae18c`; prior commits not amended) / awaiting a new independent
+exact-HEAD review.** This corrects accepted blocker **B-A**: the previous rule
+`Kind A = eligibleNetworkProviderIds.length === 0` was too broad — an empty eligible NETWORK set can result
+from ordinary Stage2B policy incompatibility (quality floor, required capability, tool support, routing
+class, LOCAL-locality policy), which is NORMAL ROUTING, not local-continuity evidence. It supersedes the
+Kind A semantics stated in the two records above. Still inside approved R3-C1 scope: no new
+aggregate/repository, DB schema, approval/security owner, `RoutingFailureCode`, Kind B issuer, production
+trust/capability issuer, runtime family, Docker/VM/Ollama, network probe, or R3-C-Rz path. R3-C2 / R3-C-Rz
+remain NOT AUTHORIZED.
+
+**Final Kind A semantics (closed administrative/configuration conditions only).** Kind A means EITHER:
+- **A1 `NO_CLOUD_PROVIDER_CONFIGURED`** — no NETWORK/cloud Provider is configured at all, AND the matched
+  policy does not intentionally require LOCAL locality; or
+- **A2 `ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED`** — one or more NETWORK providers are POLICY-COMPATIBLE
+  (ignoring `enabled`) but every one is administratively disabled (`enabled === false`).
+
+Kind A is NEVER: cloud below quality floor, cloud lacking capability, tool/routing-class mismatch,
+LOCAL-locality policy, ranking result, or any availability/`availabilityClass`/`isAvailable()`/snapshot
+fact. The previously discussed "required provider configuration absent" subcase remains UNSUPPORTED (no
+caller input for it).
+
+**Stage2B static projection (policy-compatibility separated from enabled).** `RoutingPolicyEngine`'s
+`eligible(...)` is refactored to `descriptor.enabled && policyCompatible(descriptor, context, rule)`, where
+`policyCompatible(...)` owns every canonical static rule EXCEPT `enabled` and availability. The read-only
+`staticEligibility(...)` projection now also exposes `configuredNetworkProviderIds`,
+`policyCompatibleNetworkProviderIdsIgnoringEnabled`, and `policyRequiresLocalLocality`, alongside the
+existing eligible sets and the composite `configurationDigest`. It still never reads availability, ranks,
+selects, builds an ExecutionPlan, invokes a Provider, or mutates the registry, and is invariant under
+AVAILABLE/UNAVAILABLE/UNKNOWN (independently tested).
+
+**R3-C1 Kind A algorithm (decision order after workload policy + composite-config binding):**
+Case 0 — matched policy intentionally requires LOCAL → `POLICY_REQUIRES_LOCAL_NORMAL_ROUTING` (DENY), even
+if no cloud is configured (closes NB-b / N3). Case 4 — any enabled policy-compatible cloud exists →
+`NORMAL_CLOUD_PATH_STATICALLY_EXISTS` (DENY). Case 1 — no NETWORK provider configured → A1. Case 2 —
+NETWORK providers exist but NONE is policy-compatible → `CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY` (DENY;
+closes N1/N2). Case 3 — policy-compatible clouds exist but all disabled → A2. In A1/A2 the LOCAL provider
+must still be independently statically eligible under the SAME policy/config (reusing the same projection;
+no duplicated floor/order logic), else `LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE`.
+
+The admitted decision now carries the closed `kindACondition` (`NO_CLOUD_PROVIDER_CONFIGURED` |
+`ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED`). Configuration binding (composite registry+policy digest, B-3),
+local eligibility reuse, Kind B/C fail-closed (`assert*Unsupported`), attempt accounting
+(`attemptNumber = 1`, `additionalProviderHops = 0`, declarative), DENY semantics (no
+STOP/DEFER/HUMAN_REQUIRED; healthy cloud path → DENY with normal Stage2B routing intact), zero
+containment/runtime preparation, and zero production trust are all preserved.
+
+Validation: `local-continuity-admission.test.ts` (37 tests, incl. N1/N2/N3 and Kind A Cases 0–4 +
+additional required cases) and `routing-policy-engine.test.ts` (33 tests, incl. new
+configured/policy-compatible-ignoring-enabled/LOCAL-flag projection tests) pass; Stage2B / R3-B1 / R3-B2 /
+R3-B3 regressions pass (the `eligible()` refactor is behavior-preserving: 328 focused regression tests
+pass). `pnpm typecheck` (`tsc -b`) passes. The full repository suite retains exactly one unrelated
+environment-sensitive failure, `apps/quoky/src/github-app-git-provider.test.ts` (`GIT_ASKPASS` present in
+the executing shell), which was NOT modified and whose environment was NOT mutated.
+
+**Carry-forward (unchanged, non-blocking, before R3-C2):** bind admission to the exact request/routing
+identity; harden R3-B1 `SoleProviderSelection` public issuance; enforce attempt accounting at the
+R3-C2/R3-C-Rz integration boundary; authoritative deterministic workload-policy/classifier binding before
+production wiring (R3-C1 does not expand the `Capability` taxonomy without Architecture Review).

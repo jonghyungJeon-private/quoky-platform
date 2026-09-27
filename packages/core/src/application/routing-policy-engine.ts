@@ -29,6 +29,7 @@ import {
   RoutingRequestType,
   SemanticRisk,
   SortDirection,
+  StaticEligibilityProjection,
   SupportLevel,
   TerminalDecision,
   isRoutingIdentifier,
@@ -283,9 +284,15 @@ function atLeast(actual: ReliabilityTier, minimum: ReliabilityTier | undefined):
   return minimum === undefined || RELIABILITY_ORDER[actual] >= RELIABILITY_ORDER[minimum];
 }
 
-function eligible(descriptor: ProviderDescriptor, context: RoutingContext, rule: EligibilityRule): boolean {
+/**
+ * Static POLICY COMPATIBILITY of a provider for a context+rule, evaluating every canonical static rule
+ * EXCEPT `descriptor.enabled` and runtime availability. This is the shared canonical predicate; `eligible`
+ * is exactly `descriptor.enabled && policyCompatible(...)`. Keeping the distinction in one owner lets
+ * callers separate "administratively disabled" from "policy-incompatible" without duplicating the rules.
+ */
+function policyCompatible(descriptor: ProviderDescriptor, context: RoutingContext, rule: EligibilityRule): boolean {
   const capabilities = descriptor.capabilities;
-  if (!descriptor.enabled || !capabilities.supportedCapabilities.includes(context.capability)) return false;
+  if (!capabilities.supportedCapabilities.includes(context.capability)) return false;
   if (context.toolUseRequirement === Requirement.REQUIRED && capabilities.toolUse !== SupportLevel.SUPPORTED) {
     return false;
   }
@@ -311,6 +318,10 @@ function eligible(descriptor: ProviderDescriptor, context: RoutingContext, rule:
   }
   if (rule.excludedRoutingClasses?.some((value) => classes.includes(value))) return false;
   return true;
+}
+
+function eligible(descriptor: ProviderDescriptor, context: RoutingContext, rule: EligibilityRule): boolean {
+  return descriptor.enabled && policyCompatible(descriptor, context, rule);
 }
 
 function compareNumber(a: number, b: number, direction: SortDirection): number {
@@ -408,10 +419,7 @@ export class RoutingPolicyEngine {
 
   select(context: RoutingContext, registry: ProviderRegistrySnapshot): ProviderSelectionDecision {
     validateContext(context);
-    const configurationDigest = sha256Canonical({
-      registryDigest: registry.configurationDigest,
-      policyDigest: this.policyDigest,
-    });
+    const configurationDigest = this.compositeConfigurationDigest(registry);
     const policy = this.policies.find((candidate) => matchesPredicate(candidate.when, context));
     if (!policy) {
       return this.decision(null, [], null, RoutingReasonCode.POLICY_NOT_MATCHED, registry, configurationDigest);
@@ -448,6 +456,74 @@ export class RoutingPolicyEngine {
       registry,
       configurationDigest,
     );
+  }
+
+  /**
+   * Read-only STATIC eligibility projection for a routing context. It evaluates the SAME policy predicate
+   * and the SAME `eligible(...)` static rules as `select`, but over ALL configured descriptors regardless
+   * of dynamic availability — the availability field is NEVER read here. It does not rank/select, build an
+   * ExecutionPlan, invoke a Provider, or mutate anything. The `configurationDigest` is the identical
+   * composite (registry + policy) identity `select` returns, so an admission bound to this digest is bound
+   * to the exact selection configuration.
+   */
+  staticEligibility(context: RoutingContext, registry: ProviderRegistrySnapshot): StaticEligibilityProjection {
+    validateContext(context);
+    const configurationDigest = this.compositeConfigurationDigest(registry);
+    const base = {
+      policyVersion: this.policyVersion,
+      registryVersion: registry.version,
+      registryConfigurationDigest: registry.configurationDigest,
+      policyConfigurationDigest: this.policyDigest,
+      configurationDigest,
+    } as const;
+    const policy = this.policies.find((candidate) => matchesPredicate(candidate.when, context));
+    if (!policy) {
+      return Object.freeze({
+        policyMatched: false,
+        matchedPolicyId: null,
+        policyRequiresLocalLocality: false,
+        configuredNetworkProviderIds: Object.freeze([]),
+        policyCompatibleNetworkProviderIdsIgnoringEnabled: Object.freeze([]),
+        eligibleProviderIds: Object.freeze([]),
+        eligibleNetworkProviderIds: Object.freeze([]),
+        eligibleLocalProviderIds: Object.freeze([]),
+        ...base,
+      });
+    }
+    // Evaluate static eligibility over ALL descriptors — availability is intentionally never consulted.
+    const allDescriptors = registry.providers.map((entry) => entry.descriptor);
+    const sortById = (a: ProviderDescriptor, b: ProviderDescriptor): number =>
+      a.providerId.localeCompare(b.providerId);
+    const isNetwork = (d: ProviderDescriptor): boolean =>
+      d.capabilities.executionLocality === ExecutionLocality.NETWORK;
+    const isLocal = (d: ProviderDescriptor): boolean =>
+      d.capabilities.executionLocality === ExecutionLocality.LOCAL;
+    const idsOf = (list: readonly ProviderDescriptor[]): readonly ProviderId[] =>
+      Object.freeze([...list].sort(sortById).map((d) => d.providerId));
+
+    const configuredNetwork = allDescriptors.filter(isNetwork);
+    const policyCompatibleNetworkIgnoringEnabled = configuredNetwork.filter((d) =>
+      policyCompatible(d, context, policy.eligibility),
+    );
+    const eligibleDescriptors = allDescriptors.filter((d) => eligible(d, context, policy.eligibility));
+    return Object.freeze({
+      policyMatched: true,
+      matchedPolicyId: policy.policyId,
+      policyRequiresLocalLocality: policy.eligibility.executionLocality === ExecutionLocality.LOCAL,
+      configuredNetworkProviderIds: idsOf(configuredNetwork),
+      policyCompatibleNetworkProviderIdsIgnoringEnabled: idsOf(policyCompatibleNetworkIgnoringEnabled),
+      eligibleProviderIds: idsOf(eligibleDescriptors),
+      eligibleNetworkProviderIds: idsOf(eligibleDescriptors.filter(isNetwork)),
+      eligibleLocalProviderIds: idsOf(eligibleDescriptors.filter(isLocal)),
+      ...base,
+    });
+  }
+
+  private compositeConfigurationDigest(registry: ProviderRegistrySnapshot): string {
+    return sha256Canonical({
+      registryDigest: registry.configurationDigest,
+      policyDigest: this.policyDigest,
+    });
   }
 
   private decision(

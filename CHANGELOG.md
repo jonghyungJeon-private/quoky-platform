@@ -5,6 +5,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C1 exact-HEAD review remediation — B-A: Kind A administrative-only — 2026-09-27
+
+- Correct accepted blocker B-A: Kind A no longer equals "empty eligible NETWORK set" (which conflated
+  ordinary policy incompatibility with continuity evidence). Refactor Stage2B `eligible()` into
+  `enabled && policyCompatible(...)` and extend the read-only `RoutingPolicyEngine.staticEligibility(...)`
+  projection with `configuredNetworkProviderIds`, `policyCompatibleNetworkProviderIdsIgnoringEnabled`, and
+  `policyRequiresLocalLocality`. R3-C1 Kind A is now limited to A1 (no NETWORK provider configured, policy
+  not LOCAL-only) or A2 (all policy-compatible clouds administratively disabled). Quality-floor / capability
+  / tool / routing-class exclusions → `CLOUD_POLICY_INCOMPATIBLE_NOT_CONTINUITY`; LOCAL-only policy →
+  `POLICY_REQUIRES_LOCAL_NORMAL_ROUTING`; any enabled compatible cloud → `NORMAL_CLOUD_PATH_STATICALLY_EXISTS`
+  (all DENY, normal routing). The admitted decision carries the closed `kindACondition`. Availability
+  invariance, composite-config binding, local-eligibility reuse, Kind B/C fail-closed, attempt accounting,
+  DENY semantics, zero runtime, and zero production trust are preserved.
+- The `eligible()` refactor is behavior-preserving (Stage2B/R3-B regressions pass). Added N1/N2/N3 and Kind
+  A Case 0–4 tests plus new projection-field tests. No new `RoutingFailureCode`, DB schema, aggregate,
+  approval/security owner, Kind B issuer, production trust/capability issuer, runtime family, or network
+  path. R3-C2 and R3-C-Rz remain NOT AUTHORIZED. `pnpm typecheck` passes; the only full-suite failure is the
+  unrelated env-sensitive `github-app-git-provider.test.ts` (`GIT_ASKPASS` set), left unmodified. Local
+  commit only; Push/PR/Merge require review PASS.
+
+## R3-C1 exact-HEAD review remediation (canonical cloud path + composite config) — 2026-09-27
+
+- Remediate the R3-C1 admission contract against the `CHANGES_REQUIRED` verdict (one commit on top of
+  reviewed `ab0db3a0`, not amended). B-1: remove caller-controlled `normalCloudProviderId` /
+  `requiredCloudProviderIds` (probes P1/P2/P3 closed). B-2: Kind A now means "no statically eligible
+  NETWORK/cloud provider for the matched policy", derived via a new Stage2B-owned read-only
+  `RoutingPolicyEngine.staticEligibility(...)` projection that never consults availability/`isAvailable()`/
+  `availabilityClass`/snapshot and never fabricates an AVAILABLE snapshot, does not rank/select/plan/invoke/
+  mutate. B-3: bind admission to the composite (registry + policy) `configurationDigest` identical to
+  `select` (probe P7 closed; registry-only/stale-policy refs rejected). Remove duplicated local-provider
+  floor logic (reuse the same static projection). Rename Kind B/C entry points to
+  `assert*Unsupported` (always throw). Make `deriveKindAStaticFacts` internal. Correct the earlier
+  overclaim about `SoleProviderSelection` non-forgeability (it is a pre-existing R3-B1 public assertion).
+- Add `StaticEligibilityProjection` to routing contracts and independent `staticEligibility` tests
+  (availability-independent, no ranking/selection/plan). No new `RoutingFailureCode`, DB schema, aggregate,
+  approval/security owner, Kind B issuer, production trust/capability issuer, runtime family, or network
+  path. R3-C2 and R3-C-Rz remain NOT AUTHORIZED. Focused + Stage2B + R3-B1/B2/B3 regressions and typecheck
+  pass; the only full-suite failure is the unrelated env-sensitive `github-app-git-provider.test.ts`
+  (`GIT_ASKPASS` set in shell), left unmodified. Local commit only; Push/PR/Merge require review PASS.
+
+## R3-C1 Local Continuity Eligibility & Static Trusted Admission — 2026-09-27
+
+- Add Core Application `local-continuity-admission.ts`: a pure, runtime-independent admission contract for
+  future contained local continuity. `WorkloadLocalFallbackPolicy` (deterministic, versioned,
+  `Capability`-keyed; coding/architecture/document-comparison ineligible by default); internal Kind A
+  static-fact derivation from the canonical `ProviderRegistry` (closed set: not-configured /
+  administratively-disabled / required-config-absent), never from availability/`isAvailable()`/
+  `availabilityClass`/quality-floor/caller-supplied evidence, bound to `configurationDigest`; Kind B DENY
+  (no issuer) and Kind C DENY (unsupported, R3-C-Rz); independent capability + quality-floor check reusing
+  `RoutingPolicyEngine`; exact PRIMARY_ONLY sole-selection handoff via the R3-B1
+  `assertExactSoleProviderSelection` boundary; fixed attempt accounting (attempt 1, zero hops). DENY means
+  local-continuity-not-admitted, not a whole-request STOP. Zero containment/runtime preparation; zero
+  production trust; R3-B3 fail-closed boundary preserved. Exported through the `@quoky/core` application
+  barrel (no test-only leakage). Closes ratified NB-1 (closed Kind A source) and NB-2 (DENY semantics).
+- No new `RoutingFailureCode`, DB schema/migration, aggregate/repository, approval/security owner, runtime
+  family, or runtime/provider/network path. Focused suite (32 tests) + Stage2B and R3-B1/B2/B3 regressions
+  pass; full `packages/core` + `packages/storage-sqlite` suites pass (2138 tests); `pnpm typecheck` passes.
+  R3-C2 and R3-C-Rz remain NOT AUTHORIZED. Local commit only; Push/PR/Merge require independent exact-HEAD
+  review PASS.
+
 ## R3-C bounded task definition blocking remediation (docs only) — 2026-09-27
 
 - Correct the ADR-0090 R3-C amendment in `DECISIONS.md` (docs-only, on a remediation branch; the reviewed
