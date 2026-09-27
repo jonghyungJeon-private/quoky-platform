@@ -9570,3 +9570,819 @@ the executing shell), which was NOT modified and whose environment was NOT mutat
 identity; harden R3-B1 `SoleProviderSelection` public issuance; enforce attempt accounting at the
 R3-C2/R3-C-Rz integration boundary; authoritative deterministic workload-policy/classifier binding before
 production wiring (R3-C1 does not expand the `Capability` taxonomy without Architecture Review).
+
+## ADR-0090 amendment — R3-C2 architecture / entry definition (Admission→Execution bridge; runtime deferred)
+
+- **Status:** Proposed — architecture / task-definition only. Independent Architecture Review pending.
+  Grants no implementation, activation, runtime, provider, network, DB, or execution authority. It defines
+  *what* R3-C2 may later do and the entry conditions, not any code delivered now.
+- **Date:** 2026-09-27
+- **Audit base (expected current main):** `347c03202014003e114fc2cdb3e1f2ff3866f4f0`.
+- **Scope:** Close the R3-C1 carry-forwards and define the security/trust bridge between the R3-C1
+  admission decision and any FUTURE containment/runtime preparation. No runtime family is selected. No
+  Stage2B router/retry is duplicated. No new approval/security owner, `RoutingFailureCode`, persistence
+  schema, or Core runtime type is introduced by this document.
+
+### 1. Current state
+
+- Delivered: R3-A, R3-B1, R3-B2, R3-B3, R3-C1 (all CLOSED + DELIVERED). R3-C2 and R3-C-Rz are NOT STARTED /
+  NOT AUTHORIZED.
+- R3-C1 (`local-continuity-admission.ts`) produces a pure, runtime-independent admission decision with a
+  closed Kind A (A1 no NETWORK provider configured / A2 all policy-compatible clouds administratively
+  disabled), composite (registry + policy) configuration binding, Kind B/C fail-closed, and a PRIMARY_ONLY
+  handoff via the pre-existing R3-B1 `assertExactSoleProviderSelection`. `attemptNumber = 1` /
+  `additionalProviderHops = 0` are declarative facts, not enforced invariants.
+- R3-B3 production-trust boundary (unchanged input constraint): `PRODUCTION PROVENANCE CONTRACT = DEFINED`,
+  `PRODUCTION TRUST ANCHOR = NOT IMPLEMENTED`, `PRODUCTION VERIFIER ISSUER = NOT IMPLEMENTED`,
+  `PRODUCTION CAPABILITY ISSUER = NOT IMPLEMENTED`, `PRODUCTION TRUST CHECK = FAIL CLOSED`.
+- Canonical facts to reuse (no new identity/state machine): `TaskRun` (`id`, `taskId`, `attempt`,
+  `capability`, `status`) in `packages/core/src/domain/task.ts`; the R3-A/B canonical continuation attempt
+  identity `executionId === taskRunId`; the R3-B1 WeakSet-based non-forgeable issuance pattern
+  (process-local, NOT restart-valid); the composite `RoutingPolicyEngine.configurationDigest`
+  (registry + policy); the deterministic `IntentClassifier`/`IntentResolver` workload owner.
+
+### 2. R3-C2 objective
+
+Define and ratify the smallest safe architecture boundary that must exist BEFORE any real
+containment/runtime implementation: the bridge R3-C1 admission → exact execution identity → hardened
+sole-provider issuance → enforced one-attempt/zero-hop semantics → (future) containment preparation →
+(future) trusted current-unavailability observation. R3-C2 is NOT "implement Docker/VM/Ollama"; runtime
+family remains a separate feasibility decision.
+
+### 3. Exact scope
+
+Close R3-C1 carry-forwards 1–4 as ratified contracts (§§6–9), define the Kind B trust-source architecture
+and decide its slice placement (§10), define the runtime-family feasibility comparison contract without
+selecting a family (§11), state which R3-B3 trust elements R3-C2 intends to close (§12), and propose the
+smallest sub-slice decomposition (§13). Architecture/decision record only.
+
+### 4. Explicit out-of-scope (DEFERRED)
+
+Real Docker/VM runtime; Ollama/Ollaya daemon; model load/inference; network probing; runtime-family
+selection; production trust anchor/verifier/capability issuer implementation; live containment preparation;
+post-dispatch cloud→local re-resolution (R3-C-Rz); new `RoutingFailureCode`, approval/security owner, or
+persistence schema; Live UAT. None are performed or authorized here.
+
+### 5. R3-C1 carry-forward closure plan
+
+| Carry-forward | Closure owner (R3-C2 sub-slice) | Mechanism |
+|---|---|---|
+| CF-1 Sole-selection issuance hardening | C2A | Bind issuance to the admitted path (§6) |
+| CF-2 Exact request/routing/execution identity | C2A | Reuse `TaskRun` / `executionId === taskRunId` + composite config digest (§7) |
+| CF-3 Attempt-1 / zero-hop enforcement | C2A defines the owner; enforcement lives at the existing Stage2B/continuation orchestration boundary (§8) |
+| CF-4 Authoritative workload input | C2A | `IntentClassifier`/deterministic policy is authoritative; caller label is not (§9) |
+
+All four are prerequisites; containment preparation (C2C) stays unreachable until C2A is ratified and
+implemented.
+
+### 6. Sole-selection issuance hardening (CF-1)
+
+Distinguish **plain selection data** from **issued/bound selection authority**. Today
+`assertExactSoleProviderSelection` is a pre-existing public R3-B1 surface that any Application code can call
+to mint a `SoleProviderSelection` independently of an admitted path. Target invariant: R3-C2 containment
+preparation may consume ONLY a sole-provider selection whose issuance is bound (by the existing R3-B1
+WeakSet issuer semantics) to (a) the exact R3-C1 admission decision, (b) the exact provider, (c) the exact
+composite selection configuration digest, and (d) the exact routing/execution identity (§7). Reuse the
+existing R3-B1 issuance/WeakSet pattern (as R3-B1/B2 already do for prepared containment); do NOT create a
+second provider-selection state machine. **Limitation (explicit):** the available mechanism is
+process-local WeakSet issuance, which is NOT restart-valid; an admission/selection is only bound within the
+issuing process and must be re-derived after restart. R3-C2 must not claim restart-valid authenticity for
+this binding. The narrowest concrete option is to make admission emit an issuer-bound selection token that
+`assertExactSoleProviderSelection` (or a bounded wrapper owned by R3-B1) validates against the admission
+identity, rather than accepting free-standing selection data at the containment boundary.
+
+### 7. Request / routing / execution identity binding (CF-2)
+
+Reuse the existing canonical execution identity; do NOT invent a parallel system. The exact binding is the
+R3-A/B continuation attempt identity **`executionId === taskRunId`** (`TaskRun.id`), composed with the
+already-bound **composite configuration digest** (registry + policy) that R3-C1 uses, and the **routing
+context**. Minimum composite binding = `{ taskRunId, capability, routingContextRef, configurationDigest }`
+using existing canonical fields only. This prevents: admission for request A reused for request B (distinct
+`taskRunId`); admission from one routing context replayed into another (distinct `routingContextRef`);
+admission from one TaskRun reused in another (distinct `taskRunId`); admission replayed after a config
+change (distinct `configurationDigest`, already enforced by R3-C1). No DB schema change: these are existing
+fields/refs threaded through the admission→issuance boundary. If a bounded routing-context digest does not
+already exist, C2A defines the smallest one from existing `RoutingContext` fields (reviewed), not a new
+aggregate.
+
+### 8. Attempt-budget enforcement owner (CF-3)
+
+`attemptNumber = 1` / `additionalProviderHops = 0` become ENFORCED (not merely declared) at the **existing
+Stage2B/continuation provider-routing orchestration boundary** (the owner of `MAX_PROVIDER_ATTEMPTS` /
+`MAX_ADDITIONAL_PROVIDER_HOPS` and the R3 PRIMARY_ONLY invocation), NOT inside R3-C2 and NOT by duplicating
+Stage2B retry. R3-C2 requires: a local-continuity execution admitted through R3-C1 is the request's FIRST
+and ONLY provider attempt on this path — no Cloud→Local, Local→Cloud, Local→another provider, hidden retry,
+or nested budget. Because enforcement belongs to that preceding orchestration contract, R3-C2 keeps
+containment preparation UNREACHABLE until that contract exists and is verified. This dependency is an entry
+criterion (§16), not an R3-C2 implementation item.
+
+### 9. Authoritative workload input owner (CF-4)
+
+The authoritative owner of the workload/`Capability` input is the existing deterministic
+`IntentClassifier` → `IntentResolver` → validated workload policy path, NOT the model/Ollaya/caller. Target
+flow: semantic interpretation → deterministic validated workload policy → R3-C1 admission. A caller (or a
+model) MUST NOT relabel `CODE_IMPLEMENTATION` as `GENERAL_CHAT` to gain local eligibility; R3-C2 requires
+the admission caller to be the authoritative deterministic classifier/policy owner supplying a canonical
+(validated) routing context, not an arbitrary external label. Ollaya is NOT required for R3-C2. No new
+workload taxonomy is introduced; expanding `Capability` (DEBUGGING/CODE_REFACTOR/SECURITY_REVIEW) needs a
+separate Architecture Review.
+
+### 10. Kind B trusted current-unavailability trust source (architecture; slice placement decided)
+
+Define the trust source first; **place the issuer in its own sub-slice C2B**, decoupled from runtime
+feasibility (C2C) — the issuer must NOT be assumed to ship with runtime work. A legitimate Kind B
+observation issuer must bind at minimum: provider identity; exact routing/request/execution identity (§7);
+observation source; observation window; currentness (from a trusted time/currentness source); and the
+composite configuration identity. It MUST reject: `isAvailable()` alone; caller-declared `CURRENT`;
+caller-declared `trusted`; model/Ollaya output; arbitrary external probe; stale provider-health facts.
+**Persistence semantics (explicit):** with only process-local mechanisms available, observation
+authenticity does NOT survive restart; no persisted/rehydrated Kind B observation is admissible until a
+real trust source with durable authenticity exists. No signing/PKI is invented here. Until C2B ships a real
+issuer, R3-C1 Kind B remains DENY (unchanged).
+
+### 11. Runtime-family feasibility comparison contract (no selection)
+
+R3-C2 defines a feasibility comparison contract (owned by C2C) evaluating **Option A** (no-network
+container + private contained Ollama daemon + one-shot/bounded client) vs **Option C** (dedicated no-NIC
+VM) across, at minimum: network isolation strength; filesystem/workspace isolation; process ownership;
+model-file ownership; daemon lifecycle; containment observability; independent verification; host-escape
+surface; restart semantics; failure recovery; resource residency; cold-start cost; concurrency; cleanup
+semantics; operational complexity. Runtime-family selection remains SEPARATE from R3-C1 admission
+eligibility and is not made here.
+
+### 12. R3-B3 trust implications
+
+R3-C2 preserves the R3-B3 fail-closed production-trust boundary verbatim (§1). R3-C2 explicitly closes NONE
+of the production trust elements by default: the production trust anchor, verifier issuer, and capability
+issuer remain a SEPARATE sub-slice (a future C2C-adjacent or post-C2C production-trust slice), so that
+"runtime works" never silently becomes "production trust established." C2A's sole-selection/identity
+binding is process-contractual only and is explicitly NOT production trust.
+
+### 13. Proposed sub-slice split
+
+- **R3-C2A — Admission-to-Execution Identity & Issuance Hardening** (smallest first slice): CF-1 issuance
+  binding, CF-2 identity binding, CF-4 authoritative workload owner, and the definition of the CF-3
+  enforcement owner (enforcement itself at the existing orchestration boundary). Pure Application/contract
+  work; no runtime.
+- **R3-C2B — Trusted Current-Unavailability Observation Contract**: the Kind B issuer trust source (§10).
+  Independent of runtime feasibility.
+- **R3-C2C — Runtime-Family Feasibility & Containment Issuer**: the feasibility comparison (§11) and, only
+  after a family is selected and a production-trust slice exists, real containment preparation.
+
+Recommended order and smallest decomposition: **C2A first** (unblocks the admission→preparation bridge with
+lowest risk and no runtime), then **C2B** and **C2C** independently. Do not force all three into one slice.
+
+### 14. R3-C-Rz exclusion
+
+Post-dispatch cloud-failure → local re-resolution (Kind C / PRIOR_ATTEMPT_FAILURE / Cloud→Local fallback
+after provider execution) remains NOT AUTHORIZED and entirely separate. R3-C2 adds no such path and no
+hidden bridge into R3-C-Rz.
+
+### 15. Architecture invariants (preserved)
+
+PRIMARY_ONLY; exactly one Provider per execution; R3-C1 admission precedes preparation; admission ≠
+execution authority; workload eligibility precedes runtime preparation; exact configuration-identity
+binding; exact request/run identity binding before preparation; Kind B cannot self-declare trust;
+production trust remains fail-closed until a real issuer exists; no post-dispatch retry in R3-C2; no
+duplicate Stage2B router; no model-owned authorization; no connector-credential authority from provider
+selection. Inward dependencies, narrow ports, provider-neutral Core, and Resource-input/Artifact-output
+separation are unchanged.
+
+### 16. Entry criteria (before the first R3-C2 implementation slice)
+
+Exact R3-C2 sub-slice chosen (recommended C2A); `SoleProviderSelection` issuance boundary defined (§6);
+admission-to-request identity binding defined (§7); attempt-enforcement owner defined and its enforcement
+contract present at the existing orchestration boundary (§8); authoritative workload input owner defined
+(§9); Kind B scope explicitly included (C2B) or deferred; production-trust elements explicitly included or
+deferred (§12); runtime family still unselected unless the slice IS feasibility selection (C2C); no
+R3-C-Rz dependency; independent Architecture Review + Product Owner ratification of this record.
+
+### 17. Exit criteria (this architecture task done)
+
+This ADR amendment defines objective, scope, out-of-scope, CF-1..CF-4 closure plan, Kind B trust source
++ slice placement, runtime feasibility contract (no selection), R3-B3 implications, C2A/C2B/C2C split,
+R3-C-Rz exclusion, invariants, and entry criteria; DECISIONS/CURRENT_STATE/CHANGELOG updated; docs-only
+with clean `git diff --check` and preserved terminology. Ratification gates implementation.
+
+### 18. Failure policy
+
+Fail closed everywhere trust is absent: unbound/free-standing selection data at the containment boundary is
+rejected; missing/mismatched identity binding denies preparation; Kind B without a real issuer denies;
+production trust checks remain fail-closed. No enforcement claim is made for a contract that does not yet
+exist (attempt budget, Kind B issuer), and containment preparation stays unreachable until its prerequisite
+contracts are ratified and implemented.
+
+### 19. Verification strategy (for the future C2A slice)
+
+Deterministic unit tests: free-standing `SoleProviderSelection` (not issued through the admitted path) is
+rejected at the containment-consumption boundary; an admission bound to `taskRunId` A cannot be consumed
+for `taskRunId` B / a different routing context / a changed configuration digest; a caller-relabeled
+workload cannot obtain local eligibility (authoritative classifier owns the input); attempt-budget
+enforcement is exercised at the existing orchestration boundary; no runtime/provider/network/DB execution;
+Stage2B and R3-B1/B2/B3/R3-C1 regressions preserved.
+
+### 20. Deferred decisions
+
+Runtime family (Option A vs C) and real containment issuer (C2C); production trust anchor/verifier/
+capability issuer (separate production-trust slice); durable (restart-valid) issuance/observation
+authenticity (needs a real trust source, not process-local WeakSet); Kind B issuer implementation (C2B);
+any post-dispatch re-resolution (R3-C-Rz); resource/cold-start/concurrency measurements. This document
+selects none of them.
+
+### Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated: Push/PR/Merge, runtime
+start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutation, Live UAT, production
+gates. A local architecture commit is created; independent Architecture Review must pass before
+Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+## ADR-0090 amendment (remediation) — R3-C2 corrected to actual code ownership (CHANGES_REQUIRED B-1..B-5, N-1..N-7)
+
+- **Status:** Proposed — architecture / task-definition only. Supersedes the corrected claims of the
+  preceding "ADR-0090 amendment — R3-C2 architecture / entry definition" section. That prior amendment is
+  retained above as history; where the two conflict, THIS remediation amendment governs. Independent
+  Architecture Review pending. Grants no implementation, activation, runtime, provider, network, DB, or
+  execution authority.
+- **Date:** 2026-09-28
+- **Branch / parent:** `codex/r3c2-architecture-definition`; this is one additional remediation commit whose
+  parent is the reviewed `c55ff623b829890dcda73c32cb58139fa46a34cf` (the reviewed commit is NOT amended,
+  rebased, squashed, or rewritten).
+- **Canonical main/base:** `347c03202014003e114fc2cdb3e1f2ff3866f4f0`.
+- **Why this amendment exists:** An independent review of the reviewed commit accepted five blockers (B-1..B-5)
+  and seven cleanups (N-1..N-7). The prior amendment described intended contracts against SYMBOLS AND
+  OWNERSHIP THAT DO NOT MATCH THE ACTUAL CODE. This remediation restates the R3-C2 architecture against the
+  concrete symbols confirmed by reading the source, so the future C2A implementation slice is bounded to
+  real owners. Docs-only: no code, runtime, provider, network, DB/schema, aggregate, repository,
+  approval/security owner, or new `RoutingFailureCode` is introduced.
+
+### R1. Correction summary (what the prior amendment got wrong)
+
+| # | Prior (incorrect) claim | Actual code fact | Correction |
+|---|---|---|---|
+| B-1 | The existing R3-B1 WeakSet `SoleProviderSelection` issuance already binds the admitted path and is sufficient to harden CF-1. | `assertExactSoleProviderSelection(...)` (`continuation-prepared-containment.ts`) is a PUBLIC minter that binds only a `providerId` from a `StaticEligibilityDecision`. It proves NO R3-C1 admission provenance, NO `TaskRun`, NO routing-context identity, NO configuration digest. | C2A must define a NEW bounded process-local issued authority type (§R6). A bare `SoleProviderSelection` — or a bare `LocalContinuityAdmissionDecision { admitted: true }` — is NOT sufficient for C2 preparation. |
+| B-2 | Identity binding may use a `routingContextRef` field. | No `routingContextRef` exists on `RoutingContext` or anywhere in the routing contracts. | Define a concrete domain-separated `RoutingContextDigest` over ALL `RoutingContext` fields (§R7). Callers never supply it as authority; the issuer re-derives it. |
+| B-3 | Identity binding "reuses `TaskRun`/`executionId===taskRunId`" with ordering left implicit. | `TaskRun` exists ONLY after `ContinuationExecutionAdmissionService.evaluate(...)` → `TaskManager.guardedStartRun(...)`; `TaskRun.id` IS the continuation `executionId`. R3-C1 admission today has NO `taskRunId` input. | Define exact ordering: TaskRun STARTED first, then bind facts, then admit, then issue (§R8). No "admit first, attach a TaskRun later." |
+| B-4 | Attempt/hop enforcement "owned by the existing Stage2B/continuation orchestration boundary"; C2A merely "defines the owner"; enforcement "must already exist before C2A" (circular). | Concrete owners exist and are named in §R9: `ContinuationProviderRoutingService.execute`, `ProviderRoutingGateway.execute`, and `ContinuationExecutionAdmissionService` / `TaskManager.guardedStartRun`. | Remove the circular pre-existence rule. C2A IMPLEMENTS the bounded attempt-1/zero-hop checks AT these existing owners (§R9). |
+| B-5 | Authoritative workload owner = `IntentClassifier` → `IntentResolver` → workload policy. | There is no `IntentResolver` capability step; `IntentClassifier.classify(...)` sets `Intent.capability` directly, which is persisted as `Task.intent.capability` and carried on `TaskRun.capability`. | Authoritative workload carrier = stored `Task.intent.capability` → boundTaskFacts → `TaskRun.capability` (§R11). Caller/model labels are ignored. |
+
+### R2. Confirmed canonical symbols (read from source)
+
+- `packages/core/src/application/local-continuity-admission.ts` — `LocalContinuityAdmission.admit(input)`
+  returns `{ decision: LocalContinuityAdmissionDecision, soleSelection?: SoleProviderSelection }`.
+  `LocalContinuityAdmissionInput` = `{ capability, routingContext, localProviderId, selectionConfigurationRef }`.
+  It re-derives the composite digest via `RoutingPolicyEngine.staticEligibility(...)` and mints the
+  sole-selection through `assertExactSoleProviderSelection(...)`.
+- `packages/core/src/application/continuation-prepared-containment.ts` — `SoleProviderSelection`,
+  `assertExactSoleProviderSelection(decision: StaticEligibilityDecision): SoleProviderSelection`
+  (issuance-protected object; binds only `providerId`; public callable).
+- `packages/core/src/application/provider-routing-contracts.ts` — `interface RoutingContext`
+  fields: `capability, requestType, intentType, semanticRisk, latencyClass, toolUseRequirement,
+  authorityRequirement, continuityRequirement, expectedOutputSize, validationProfile`. NO `routingContextRef`.
+  `ProviderSelectionDecision.configurationDigest` = composite (registry + policy) identity;
+  `StaticEligibilityProjection.configurationDigest` is the same composite identity.
+- `packages/core/src/application/continuation-provider-routing-service.ts` —
+  `continuationRoutingContext(facts: ContinuationRoutingFacts): RoutingContext | null` (fixed
+  GENERAL_CHAT/CHAT continuation context; no caller override); `ContinuationProviderRoutingRequest.executionId`
+  (the continuation execution identity, MUST equal the `TaskRun.id`); `ContinuationProviderRoutingService.execute`
+  rejects any planned `operationalFallback`/`semanticEscalation` PRE-DISPATCH (Gateway never invoked);
+  its own audit/config field is `ContinuationProviderRoutingConfiguration.configurationDigest` — a SEPARATE
+  audit value, NOT the Stage2B composite selection digest.
+- `packages/core/src/application/provider-execution-plan.ts` — `MAX_PROVIDER_ATTEMPTS = 2`,
+  `MAX_ADDITIONAL_PROVIDER_HOPS = 1`.
+- `packages/core/src/application/provider-routing-gateway.ts` — `ProviderRoutingGateway.execute(plan, request, facts)`
+  owns the global attempt loop `while (attempts.length < MAX_PROVIDER_ATTEMPTS)` with PRIMARY→FALLBACK→
+  ESCALATION transitions.
+- `packages/core/src/application/continuation-execution-admission-service.ts` —
+  `ContinuationExecutionAdmissionService.evaluate(...)` yields `ELIGIBLE_TO_START_ATTEMPT` and rejects an
+  `UNRESOLVED_STARTED_RUN`; `packages/core/src/application/task-manager.ts` —
+  `TaskManager.guardedStartRun(expected, capability): Promise<TaskRun>` is the guarded one-run start owner.
+- `packages/core/src/domain/task.ts` — `interface TaskRun { id; taskId; attempt; status; capability; providerId?; ... }`.
+  No second execution id exists; `executionId === taskRunId === TaskRun.id`.
+- `packages/core/src/application/intent-classifier.ts` — `IntentClassifier.classify(message)` sets
+  `Intent.capability` directly; the unmatched fallthrough default is `{ type: CHAT, capability: GENERAL_CHAT }`.
+
+### R3. Objective (unchanged intent, corrected mechanics)
+
+Define and ratify the smallest safe architecture boundary that must exist BEFORE any real
+containment/runtime implementation: the bridge from a STARTED `TaskRun` + canonical R3-C1 admission to a
+NEW process-local issued authority that the future C2 preparation boundary may consume, with attempt-1/
+zero-hop enforcement at the named existing owners. R3-C2 is NOT "implement Docker/VM/Ollama."
+
+### R4. Explicit out-of-scope (DEFERRED)
+
+Real Docker/VM runtime; Ollama/Ollaya daemon; model load/inference; network probing; runtime-family
+selection; production trust anchor/verifier/capability issuer implementation; live containment preparation;
+post-dispatch cloud→local re-resolution (R3-C-Rz); new `RoutingFailureCode`, approval/security owner, new
+aggregate/repository, or persistence schema; Live UAT. None are performed or authorized here.
+
+### R5. Carry-forward closure map (corrected owners)
+
+| Carry-forward | Sub-slice | Mechanism (corrected) |
+|---|---|---|
+| CF-1 Bound issuance | C2A | NEW `BoundLocalContinuitySelection` issued only after canonical admission (§R6) |
+| CF-2 Exact identity | C2A | `executionId === taskRunId` + `RoutingContextDigest` (§R7) + Stage2B composite `configurationDigest` |
+| CF-3 Attempt-1 / zero-hop | C2A implements checks at named owners (§R9) |
+| CF-4 Authoritative workload | C2A | stored `Task.intent.capability` → boundTaskFacts → `TaskRun.capability` (§R11) |
+
+### R6. B-1 — NEW bound process-local issued authority
+
+The existing `SoleProviderSelection` is issuance-protected as an OBJECT but binds only `providerId`, is
+mintable by the public `assertExactSoleProviderSelection(...)`, and proves NONE of: canonical R3-C1
+admission provenance, `TaskRun`, routing context, or configuration digest. Therefore C2A defines a NEW
+bounded in-module issuance contract — conceptual name **`BoundLocalContinuitySelection`** (name is not
+normative) — issued ONLY after canonical R3-C1 admission, binding:
+
+- exact admitted local `providerId`
+- exact R3-C1 admission result/provenance (the actual admitted `LocalContinuityAdmissionDecision`)
+- exact Stage2B composite `configurationDigest`
+- exact `taskRunId` / `executionId`
+- exact `RoutingContextDigest` (§R7)
+- exact workload/`capability` derived from canonical `Task`/`TaskRun` facts (§R11)
+
+It is NOT a new provider-selection owner, ranking engine, `TaskRun` lifecycle, aggregate, or production
+trust. A bare `SoleProviderSelection` is NOT sufficient for C2 preparation, and a caller passing
+`{ admitted: true }` cannot obtain authority.
+
+**Issuer ownership (one exact boundary):** canonical R3-C1 admission + authoritative `TaskRun`/routing facts
++ the existing exact `SoleProviderSelection` → process-local issued `BoundLocalContinuitySelection`. Only
+this issued value may cross into the future C2 preparation boundary. The issuer MUST re-derive/validate
+authoritative facts; it MUST NOT trust caller-constructed admission objects, a caller-constructed
+`SoleProviderSelection` alone, or caller-supplied routing/config identity as authority.
+
+**Admission authenticity (chosen pattern, stated explicitly):** the C2A issuer receives authoritative facts,
+INVOKES the canonical `LocalContinuityAdmission.admit(...)` itself, and on an admitted result IMMEDIATELY
+mints `BoundLocalContinuitySelection`. This avoids a separate standalone "issued admission" type. A
+structurally forged `LocalContinuityAdmissionDecision` is never trusted because the issuer produces the
+decision by running canonical admission, not by accepting a caller decision.
+
+**Issuance lifetime:** authority lifetime is PROCESS-LOCAL ONLY. Module-private/WeakSet issuance may be used
+for C2A. Across restart/process boundary the authority is INVALID; after restart the flow re-derives facts,
+re-runs admission, and re-issues. No JSON-persistence authenticity, hash-only restart authenticity, or
+durable capability validity is claimed. Durable/restart-valid authority remains deferred.
+
+### R7. B-2 — RoutingContextDigest (real definition)
+
+The vague `routingContextRef` is DELETED; no such canonical field exists. Define
+**`RoutingContextDigest` = a domain-separated `sha256Canonical` over ALL policy-relevant `RoutingContext`
+fields**, enumerated exhaustively (no selective omission): `capability`, `requestType`, `intentType`,
+`semanticRisk`, `latencyClass`, `toolUseRequirement`, `authorityRequirement`, `continuityRequirement`,
+`expectedOutputSize`, `validationProfile`. Use canonical serialization semantics consistent with existing
+project digest conventions (the same 64-hex composite-digest discipline R3-C1 already uses).
+
+- Callers do NOT supply the digest as authority; the issuer re-derives it from the authoritative
+  `RoutingContext`.
+- The SAME authoritative `RoutingContext` used for provider routing must produce the bound digest. For the
+  continuation path, the authoritative routing context is derived from the exact existing
+  `continuationRoutingContext(facts)` (which takes `ContinuationRoutingFacts` derived from bound Task/TaskRun
+  facts) — NOT a second routing-context owner.
+
+**Replay protection:** the bound authority is rejected on consumption if the re-derived digest differs —
+i.e., a different routing context, altered capability, altered tool requirement, altered locality/routing-
+class constraint, or ANY other changed `RoutingContext` field. Consumption RE-DERIVES and compares the
+canonical digest; it does not merely compare a caller echo.
+
+### R8. B-3 — TaskRun / execution order (exact)
+
+Canonical fact: `TaskRun.id === executionId` and a `TaskRun` exists ONLY after
+`ContinuationExecutionAdmissionService.evaluate(...)` → `TaskManager.guardedStartRun(...)`. Therefore C2A
+ordering is:
+
+1. Task is already canonical/stored.
+2. `guardedStartRun(...)` creates/starts the exact `TaskRun`.
+3. Authoritative stored `Task` + `TaskRun` facts are loaded/bound (boundTaskFacts).
+4. Continuation `RoutingContext` is derived from those bound facts via `continuationRoutingContext(...)`.
+5. R3-C1 admission is performed FOR THIS `TaskRun`/execution context.
+6. The exact `SoleProviderSelection` is produced under the same composite configuration.
+7. The new `BoundLocalContinuitySelection` is issued.
+8. Only then may future C2 preparation consume it.
+
+It is FORBIDDEN to run R3-C1 admission before the `TaskRun` exists and then "attach" an arbitrary `TaskRun`.
+
+**Execution identity:** use `taskRunId === executionId` as the single canonical execution identity; do NOT
+invent a second id. The issuer derives from the stored run: `taskRunId`, `taskId`, `attempt`, `capability`
+(validation inputs; no new aggregate). At minimum bind `executionId/taskRunId` and verify on consumption
+against `ContinuationProviderRoutingRequest.executionId`. A different `TaskRun` → reject; the same `Task`
+with a different attempt/run → reject.
+
+### R9. B-4 — attempt / hop enforcement owners (named, non-circular)
+
+The circular rule "attempt enforcement must already exist before C2A implementation" is REMOVED. C2A
+IMPLEMENTS the bounded local-continuity enforcement at these EXISTING owners:
+
+1. **`ContinuationProviderRoutingService.execute`** — continuation-specific: already rejects plans carrying
+   `operationalFallback`/`semanticEscalation` PRE-DISPATCH (Gateway never invoked), preventing the
+   continuation flow from entering multi-provider fallback.
+2. **`ProviderRoutingGateway.execute`** — the global provider attempt-loop owner
+   (`while (attempts.length < MAX_PROVIDER_ATTEMPTS)` with PRIMARY→FALLBACK→ESCALATION transitions).
+3. **`ContinuationExecutionAdmissionService`** and/or **`TaskManager.guardedStartRun`** — the guarded
+   one-run / `TaskRun` start owner (rejects `UNRESOLVED_STARTED_RUN`).
+
+**C2A attempt enforcement scope (minimal checks at these owners):** bound local `providerId` == execution
+plan `primary.providerId`; exact `TaskRun`/`executionId` match; `attemptNumber == 1`;
+`additionalProviderHops == 0`; no fallback; no escalation; no prior provider attempt in this local-
+continuity path; no second provider invocation after it. No new retry owner is introduced.
+
+**Global retry semantics (preserved):** the global constants `MAX_PROVIDER_ATTEMPTS = 2` /
+`MAX_ADDITIONAL_PROVIDER_HOPS = 1` are UNCHANGED, but the local-continuity C2A path enforces the narrower
+contract `attempt = 1`, `hop = 0`, PRIMARY_ONLY. The global budget does NOT authorize an extra
+local-continuity attempt: no Cloud→Local, Local→Cloud, or Local→Local retry. R3-C-Rz remains the only
+future owner of post-dispatch re-resolution.
+
+### R11. B-5 — authoritative workload owner (corrected)
+
+The incorrect chain `IntentClassifier → IntentResolver → workload policy` is REMOVED (no `IntentResolver`
+capability step exists). The actual canonical carrier is:
+
+    stored Task.intent.capability → boundTaskFacts → TaskRun.capability
+
+C2A rule: the bound issuer derives workload/`capability` from the stored `Task`/`TaskRun` facts. It MUST NOT
+trust `LocalContinuityAdmissionInput.capability` supplied by a caller, model output, Ollaya output, or an
+arbitrary API label. For C2A wiring, the canonical `Task`/`TaskRun` capability constructs the authoritative
+R3-C1 admission input; if a caller value disagrees, the caller value is rejected/ignored in favour of the
+canonical stored fact. No new workload taxonomy is introduced.
+
+**IntentClassifier role:** `IntentClassifier` may remain an upstream deterministic classification helper
+DURING Task creation, but once a `Task` exists, C2A authority derives from the stored `Task` intent +
+`TaskRun.capability`, not from re-classifying free text. `IntentClassifier` is not an authority for
+GENERAL_CHAT continuation/local-continuity after the Task exists.
+
+### R12. N-7 — classifier default risk (recorded)
+
+`IntentClassifier.classify(...)` currently DEFAULTS unmatched input to `GENERAL_CHAT`, and `GENERAL_CHAT` is
+local-fallback-eligible in the R3-C1 workload policy. This is a KNOWN risk BEFORE production wiring. This
+remediation does NOT solve it by adding a new taxonomy. The conservative C2A boundary is chosen instead:
+**C2A may only consume `capability` from an already-persisted canonical `Task`/`TaskRun`; it does not itself
+classify arbitrary text.** Future hardening of unmatched-classification behavior is a SEPARATE architecture
+concern. **Pre-production gate:** hardening the unmatched-classification default IS a pre-production gate
+before any production exposure of local-continuity execution; it is not required to enter/implement C2A
+(which never classifies text).
+
+### R13. N-2 — configuration identity clarification (closed)
+
+The bound configuration identity is the **Stage2B provider-selection composite `configurationDigest`** — the
+same identity returned by `ProviderSelectionDecision.configurationDigest` and
+`StaticEligibilityProjection.configurationDigest` (registry + policy composite). It is explicitly NOT
+`ContinuationProviderRoutingConfiguration.configurationDigest`, which is a separate audit/config field on the
+continuation service. The bound authority uses the Stage2B composite registry + policy digest.
+
+### R14. N-3 — Kind B / C2B ordering (closed)
+
+C2B comes AFTER C2A because it needs the exact execution/routing identity contract established by C2A.
+Correct order: **C2A → C2B → C2C**, or **C2A → C2C** with C2B independently after C2A. C2B and C2C are NOT
+fully independent of C2A. Add to the C2B rejection list: a Stage2B availability snapshot alone ≠ trusted
+Kind B authority; and observation DATA ≠ issued trusted observation AUTHORITY.
+
+**Kind B trust contract (preserved):** a legitimate Kind B issuer binds `providerId`,
+`executionId/taskRunId`, `RoutingContextDigest`, Stage2B composite `configurationDigest`, observation
+source, observation window, and currentness. It rejects: host `isAvailable()`; a Stage2B availability
+snapshot alone; caller-declared `CURRENT`; caller-declared `trusted`; model/Ollaya output; an arbitrary
+external probe; stale facts. Restart invalidates any issued Kind B authority; no persisted/rehydrated
+authority until separately designed. Until C2B ships a real issuer, R3-C1 Kind B remains DENY (unchanged).
+
+### R15. N-4 — runtime feasibility clarification (closed)
+
+The C2C runtime-family feasibility comparison contract (Option A no-network container + private contained
+Ollama daemon + one-shot/bounded client vs Option C dedicated no-NIC VM) adds, beyond the existing criteria,
+explicit **no-network enforcement mechanism** and **containment evidence shape / observability** criteria.
+Neither Option A nor C is selected in this remediation.
+
+### R16. N-5 — production trust boundary (four layers, closed)
+
+Four DISTINCT layers, NOT equivalent:
+
+1. runtime feasibility;
+2. containment capability issuance;
+3. production trust anchor / verifier authority;
+4. restart-valid production authenticity.
+
+R3-C2C MAY address (1) and perhaps (2) if separately ratified. It does NOT automatically own/close (3) or
+(4). Layers (3)–(4) are a SEPARATE future production-trust slice, defined explicitly here as distinct from
+C2C. R3-B3 remains fail-closed until that production-trust slice is completed. C2A's issuance/identity
+binding is process-contractual only and is explicitly NOT production trust.
+
+### R17. Revised C2A contract
+
+**R3-C2A = Admission-to-Execution Bound Authority & Orchestration Enforcement.**
+
+Input authority: stored `Task` + STARTED `TaskRun` + authoritative continuation `RoutingContext` + Stage2B
+composite configuration.
+
+Flow:
+
+    TaskRun STARTED (guardedStartRun)
+    → derive boundTaskFacts (taskId, taskRunId, attempt, Task.intent.capability → TaskRun.capability)
+    → derive continuation RoutingContext (continuationRoutingContext(facts))
+    → derive RoutingContextDigest
+    → invoke canonical LocalContinuityAdmission.admit(...) using canonical capability
+    → produce exact SoleProviderSelection
+    → issue process-local BoundLocalContinuitySelection
+    → existing continuation orchestration validates:
+        executionId/taskRunId, provider, config digest, context digest, attempt 1, zero hops, PRIMARY_ONLY
+    → only then may future containment preparation become reachable
+
+C2A itself performs ZERO runtime execution, ZERO provider execution, ZERO network execution, and ZERO
+production trust issuance.
+
+### R18. C2A entry criteria (concrete ratified facts)
+
+Before C2A implementation: NEW bound authority type/issuer contract defined (§R6); canonical issuer owner
+defined (§R6); TaskRun START ordering defined (§R8); `executionId == taskRunId` binding defined (§R8);
+canonical `RoutingContextDigest` derivation defined (§R7); Stage2B composite config identity defined (§R13);
+exact orchestration enforcement symbols named (§R9); canonical workload source = stored `Task`/`TaskRun`
+capability (§R11); Kind B excluded from C2A (§R14); production trust excluded (§R16); no runtime-family
+dependency; no R3-C-Rz dependency. These criteria are satisfied by this architecture if review passes; C2A
+implementation is NOT required to already exist to enter.
+
+### R19. C2A exit tests (future implementation must cover)
+
+Deterministic tests, all runnable without Docker/VM/Ollama, at minimum: plain forged admission object
+rejected; bare `SoleProviderSelection` rejected for C2 preparation; provider mismatch rejected; wrong
+`TaskRun` rejected; wrong `executionId` rejected; wrong `RoutingContextDigest` rejected; wrong Stage2B
+composite `configurationDigest` rejected; replay across `TaskRun`s rejected; process restart invalidates
+issued bound authority; `attempt != 1` rejected; additional hops `!= 0` rejected; plan primary provider !=
+bound provider rejected; fallback present rejected; escalation present rejected; canonical `TaskRun`
+capability mismatch rejected; caller workload relabel ignored/rejected; no runtime side effect; no
+containment preparation side effect in C2A tests; no production trust created.
+
+### R10. Proposed sub-slice split (unchanged, corrected owners)
+
+- **R3-C2A** — Admission-to-Execution Bound Authority & Orchestration Enforcement (§R17). Pure
+  Application/contract work; no runtime.
+- **R3-C2B** — Trusted Current-Unavailability Observation Contract (§R14); after C2A.
+- **R3-C2C** — Runtime-Family Feasibility & Containment Issuer (§R15); a separate production-trust slice
+  owns layers (3)–(4) of §R16.
+
+Recommended order: C2A first, then C2B and C2C.
+
+### R20. N-1 — R3-C1 status consistency
+
+`CURRENT_STATE.md` is corrected so R3-C1 projects as **CLOSED + DELIVERED (PR #87 merged)**; the stale
+"IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD REVIEW" current-state wording is removed. Historical
+review/audit narrative may remain as history. R3-C2 remains ARCHITECTURE PROPOSED / IMPLEMENTATION NOT
+AUTHORIZED; R3-C-Rz remains NOT AUTHORIZED.
+
+### R21. Invariants preserved
+
+PRIMARY_ONLY; exactly one Provider per execution; R3-C1 admission precedes preparation; admission ≠
+execution authority; workload eligibility precedes runtime preparation; exact configuration-identity
+binding; exact request/run identity binding before preparation; Kind B cannot self-declare trust;
+production trust fail-closed until a real issuer exists; no post-dispatch retry in R3-C2; no duplicate
+Stage2B router; Stage2B ownership preserved; R3-B1/B2/B3/C1 invariants preserved; no model-owned
+authorization; R3-C-Rz excluded with no hidden bridge. Inward dependencies, narrow ports, provider-neutral
+Core, and Resource-input/Artifact-output separation are unchanged.
+
+### R22. Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated: Push/PR/Merge, runtime
+start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutation, Live UAT, production
+gates. Exactly one local architecture remediation commit is created on parent
+`c55ff623b829890dcda73c32cb58139fa46a34cf`; independent Architecture Review (Claude) must PASS before
+Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+## ADR-0090 amendment (remediation 2 — BR-1 final) — R3-C2 TaskRun history gate & wording corrections
+
+- **Status:** Proposed — architecture / task-definition only. Supersedes the corrected claims of BOTH prior
+  R3-C2 amendments (the original "R3-C2 architecture / entry definition" and "ADR-0090 amendment
+  (remediation)") wherever they conflict; both are retained above as history. Where any two sections
+  disagree, the LATEST section (this one) governs. Independent Architecture Review pending. Grants no
+  implementation, activation, runtime, provider, network, DB, or execution authority.
+- **Date:** 2026-09-28
+- **Branch / parent:** `codex/r3c2-architecture-definition`; one additional remediation commit whose parent
+  is the reviewed `04c98671b0172d2dc0d2ec9b37a34c8aa5ec8550`. Neither reviewed architecture commit
+  (`04c98671…`, `c55ff623…`) is amended, rebased, squashed, or rewritten.
+- **Canonical main/base:** `347c03202014003e114fc2cdb3e1f2ff3866f4f0`.
+- **Why this amendment exists:** An independent review accepted BR-1: the codebase does NOT enforce one
+  `TaskRun` per `Task`. This amendment corrects the ownership wording, adds the conservative C2A TaskRun
+  history gate, and closes non-blocking cleanups NB-1..NB-7. Docs-only: no code, runtime, provider,
+  network, DB/schema, aggregate/repository, approval/security owner, or new `RoutingFailureCode`.
+
+### R23. BR-1 — accepted fact (one-run-per-Task is NOT enforced)
+
+Confirmed from source (`packages/storage-sqlite/src/index.ts`):
+
+- `guardedStart(expected, capability)` (≈L288) opens one IMMEDIATE transaction and rejects ONLY a
+  concurrent unresolved STARTED run: `if (… .get(task.id, TaskRunStatus.STARTED)) throw
+  GuardedTaskRunStartError('UNRESOLVED_STARTED_RUN')`. The inline comment states: "Status is the sole
+  unresolved predicate. MAX(attempt) below is ordinal allocation only."
+- `insertStarted(taskId, capability)` (≈L331) allocates `attempt = (MAX(attempt) ?? 0) + 1`. Therefore
+  AFTER a terminal run (`SUCCEEDED` / `FAILED` / other terminal status), a NEW `TaskRun` may be created
+  with `attempt = MAX(previous attempts) + 1`.
+
+Consequently `ContinuationExecutionAdmissionService`, `TaskManager.guardedStartRun`, and the storage
+`guardedStart` must NOT be described as a "one-run-per-Task" owner. Prior amendment §R9(3) wording
+("guarded one-run start owner") is corrected by §R24 below.
+
+### R24. Owner-3 correction (supersedes §R9(3))
+
+`ContinuationExecutionAdmissionService` + `TaskManager.guardedStartRun` + the storage guarded start OWN:
+
+- concurrent unresolved STARTED-run exclusion (`UNRESOLVED_STARTED_RUN`);
+- canonical `TaskRun` creation/start;
+- a monotonically allocated `TaskRun.attempt` ordinal (`MAX(attempt)+1`).
+
+They DO NOT enforce one `TaskRun` for the lifetime of a `Task`. C2A adds the narrower local-continuity
+issuer check using existing `TaskRun` history; NO new `TaskRun` lifecycle owner is created.
+
+### R25. Final C2A decision — first-TaskRun-only local-continuity authority
+
+C2A local-continuity authority (`BoundLocalContinuitySelection`) may be issued ONLY for the FIRST `TaskRun`
+of the `Task`. Required jointly:
+
+- `TaskRun.attempt === 1`, AND
+- `taskRuns.listByTask(taskId)` proves the current `TaskRun` is the Task's ONLY run — i.e. there is NO
+  prior `TaskRun` (of any status: `FAILED`, `SUCCEEDED`, cancelled/other terminal if represented, or any
+  earlier attempt) for the same `Task`.
+
+If either fails → C2A local-continuity authority = DENY / NOT ISSUED. A later `TaskRun` is NEVER
+interpreted as a fresh local-continuity request.
+
+### R26. New request vs retry (semantics)
+
+A genuinely new user/request execution that should be reconsidered for local continuity must enter through
+a NEW canonical `Task` / new Task identity. Reusing the SAME `Task` after a terminal run is a
+retry/re-run semantic, which is OUTSIDE R3-C2A. This closes both a `Local → Local` retry and a disguised
+`Cloud → Local` re-run of the same Task after a previous provider attempt. Any future semantics for
+re-resolution after prior provider execution belong to R3-C-Rz (or another separately reviewed re-run/retry
+policy boundary); R3-C2A does NOT define them.
+
+### R27. Prior-run check owner & derivation
+
+Use the existing `taskRuns.listByTask(taskId): Promise<TaskRun[]>` (confirmed at
+`packages/storage-sqlite/src/index.ts` ≈L555, ordered by `attempt`). The C2A issuer must DERIVE, not accept
+from the caller: the current `TaskRun.id`, current `TaskRun.attempt`, `taskId`, and prior `TaskRun` history.
+Before issuing `BoundLocalContinuitySelection`:
+
+1. load the current canonical `TaskRun`;
+2. require `currentRun.attempt === 1`;
+3. load `taskRuns.listByTask(taskId)`;
+4. require that NO `TaskRun` other than `currentRun` exists.
+
+If either check fails → do not issue C2A authority. No DB/schema change, no new repository, and no
+caller-supplied `hasPriorAttempt` boolean.
+
+### R28. attemptNumber terminology (two distinct facts)
+
+- **A. R3-C1 decision contract:** `attemptNumber = 1` (declarative constant on the admission decision).
+- **B. Canonical `TaskRun` ordinal:** `TaskRun.attempt`.
+
+C2A must require BOTH to be `1`: the R3-C1 declarative `attemptNumber` must equal `1` AND the authoritative
+stored `TaskRun.attempt` must equal `1`. The R3-C1 constant by itself is NOT proof that no previous
+`TaskRun` exists; `TaskRun` history (§R27) provides that proof. Both ordinal and history must agree.
+
+### R29. "No prior provider attempt" mechanism
+
+For C2A, "no prior provider attempt" MEANS the canonical `Task` has no prior `TaskRun` before the currently
+STARTED `TaskRun`. Because local-continuity C2A is admitted ONLY on `TaskRun` attempt 1 with no prior run,
+there cannot have been a previous provider execution for the same `Task` through this path. This is NOT
+inferred from R3-C1 decision constants, the `ProviderRoutingGateway` attempt array, caller claims, or the
+current `TaskRun` status alone.
+
+### R30. Existing orchestration owners (accurate split, supersedes §R9)
+
+1. **`ContinuationExecutionAdmissionService` / `TaskManager.guardedStartRun`** — own the concurrent
+   unresolved-run guard, canonical `TaskRun` start, and `TaskRun.attempt` ordinal. C2A ADDITIONALLY queries
+   `TaskRun` history before bound-authority issuance (§R27). (They are NOT a one-run-per-Task owner — §R24.)
+2. **`ContinuationProviderRoutingService.execute`** — owns continuation-specific pre-dispatch rejection of
+   fallback/escalation and PRIMARY_ONLY continuation dispatch constraints.
+3. **`ProviderRoutingGateway.execute`** — owns the global Stage2B provider attempt loop
+   (`while (attempts.length < MAX_PROVIDER_ATTEMPTS)`).
+
+C2A does NOT create a fourth retry/attempt owner.
+
+### R31. C2A narrow attempt contract (issuance/consumption)
+
+For `BoundLocalContinuitySelection` issuance and consumption, require all of:
+
+- current `TaskRun.attempt === 1`;
+- no prior `TaskRun` for the same `Task` (§R27);
+- R3-C1 `attemptNumber === 1`;
+- `additionalProviderHops === 0`;
+- bound provider `== plan.primary.providerId`;
+- fallback absent;
+- escalation absent;
+- `executionId == taskRunId`;
+- exact `RoutingContextDigest` match (§R33);
+- exact Stage2B composite `configurationDigest` match;
+- canonical workload `capability` match (stored `Task`/`TaskRun`).
+
+This is NARROWER than the global Stage2B budget. The global constants `MAX_PROVIDER_ATTEMPTS = 2` and
+`MAX_ADDITIONAL_PROVIDER_HOPS = 1` remain unchanged and do NOT authorize additional attempts on C2A
+local-continuity execution.
+
+### R32. R3-C-Rz exclusion (explicit)
+
+`TaskRun.attempt > 1` OR any prior `TaskRun` exists for this `Task` → C2A local continuity is NOT
+admissible → the C2A issuer does NOT issue `BoundLocalContinuitySelection` → no containment preparation
+through C2A. Any later decision to re-resolve after a previous execution belongs to R3-C-Rz, which remains
+NOT AUTHORIZED. This closes both `Local → Local` retry and a same-Task re-run that would effectively become
+`Cloud → Local`.
+
+### R33. NB-1 — RoutingContextDigest exact contract (supersedes §R7 digest wording)
+
+`RoutingContextDigest` uses the project's domain-separated canonical hashing convention (NOT the
+routing-policy engine's plain JSON-only digest helper). Domain tag (stable):
+
+    quoky:r3-c2:routing-context:v1
+
+Canonical serialized field order (exhaustive, no omission):
+
+1. `capability`
+2. `requestType`
+3. `intentType`
+4. `semanticRisk`
+5. `latencyClass`
+6. `toolUseRequirement`
+7. `authorityRequirement`
+8. `continuityRequirement`
+9. `expectedOutputSize`
+10. `validationProfile`
+
+The architecture requires a deterministic canonical representation combined with the existing
+domain-separated hashing convention under the exact tag above. The helper is NOT implemented in this
+architecture commit; C2A implements it later.
+
+### R34. NB-2 — replay wording limited to real RoutingContext fields (supersedes §R7 replay wording)
+
+Replay protection compares the re-derived `RoutingContextDigest` over the ten actual `RoutingContext`
+fields (§R33). Wording implying "locality / routing-class constraint" are `RoutingContext` fields is
+removed. Locality and routing-class constraints are bound through the matched Stage2B policy/configuration
+and are therefore covered by the Stage2B composite `configurationDigest`, NOT by `RoutingContextDigest`.
+
+### R35. NB-3 — IntentResolver wording (supersedes §R11 "no IntentResolver step" wording)
+
+Corrected: `IntentResolver` EXISTS (`packages/core/src/application/intent-resolver.ts`), but its
+`resolve(...)` returns non-null only for execution capabilities (`EXECUTION_CAPABILITIES`); `GENERAL_CHAT`
+is not one, so `IntentResolver` is NOT on the `GENERAL_CHAT` continuation / local-continuity authority path.
+The earlier global phrasing "no IntentResolver capability step exists" is withdrawn. The authoritative C2A
+workload source remains stored `Task.intent.capability` → `TaskRun.capability`.
+
+### R36. NB-4 — existing R3-B1 candidate binding
+
+The exported `createContainmentCandidateBinding(...)`
+(`packages/core/src/application/continuation-prepared-containment.ts`) still accepts a bare issued
+`SoleProviderSelection` (it derives `providerId` from that selection). That existing R3-B1 path remains
+NON-PRODUCTION under the R3-B3 fail-closed trust state. FUTURE R3-C2 containment-preparation ENTRY must NOT
+use a bare `SoleProviderSelection` path; it accepts ONLY `BoundLocalContinuitySelection` (or the exact
+future C2A bound-authority type). This remediation does NOT rewrite the historical R3-B1 API.
+
+### R37. NB-7 — current continuation scope (GENERAL_CHAT only)
+
+`continuationRoutingContext(...)` currently FIXES the continuation path to `Capability.GENERAL_CHAT` /
+`IntentType.CHAT`. Therefore the first C2A implementation on this path wires ONLY `GENERAL_CHAT`
+continuation/local-continuity. Other R3-C1-eligible workloads (e.g. `SUMMARIZATION`) are NOT automatically
+wired by C2A; supporting them later requires an explicit authoritative routing-context path, not caller
+relabeling. C2A scope is NOT expanded now.
+
+### R38. Final C2A implementation scope (bounded)
+
+The future Codex C2A slice remains bounded to: the `RoutingContextDigest` helper/contract (§R33);
+process-local `BoundLocalContinuitySelection`; the canonical issuer; STARTED `TaskRun` binding; the
+`TaskRun` attempt/history gate (§R27); stored `Task`/`TaskRun` capability binding; Stage2B composite
+configuration binding; exact provider binding; existing continuation orchestration checks; attempt-1 /
+zero-hop enforcement; focused tests. Still NO runtime, Docker/VM, Ollama/Ollaya, Kind B issuer, production
+trust, DB/schema change, or R3-C-Rz.
+
+### R39. C2A entry criteria (final)
+
+Implementation-ready only if the architecture now defines: new bound authority contract (§R6); canonical
+issuer (§R6); process-local lifetime (§R6); TaskRun START-first ordering (§R8); `executionId == TaskRun.id`
+(§R8); `TaskRun.attempt === 1` (§R28); no-prior-`TaskRun` requirement (§R25/§R27); `TaskRun` history owner
+(§R27); `RoutingContextDigest` exact contract (§R33); Stage2B composite config identity (§R13);
+canonical workload source (§R35); exact continuation/gateway enforcement owners (§R30); Kind B excluded
+(§R14); production trust excluded (§R16); R3-C-Rz excluded (§R32). All are now defined.
+
+### R40. C2A exit tests (final additions, supersede §R19 additions)
+
+In addition to §R19, C2A tests MUST cover:
+
+- prior terminal run present: `TaskRun #1` = `FAILED` or `SUCCEEDED`, then `TaskRun #2` for the same
+  `taskId` = STARTED, `attempt = 2` → C2A bound-authority issuance REJECTED;
+- the current `TaskRun` is the only run AND `attempt = 1` → this specific gate may PASS;
+- current `TaskRun.attempt = 2` even if malformed history omits the prior row → REJECT;
+- a prior terminal run exists even if the current `attempt` is incorrectly `1` → REJECT;
+
+i.e. both the ordinal (`TaskRun.attempt`) and the history (`listByTask`) must agree. All tests remain
+runnable without Docker/VM/Ollama, with no runtime/provider/network/DB side effect and no production trust
+created.
+
+### R41. NB-5 / NB-6 — current-state supersession & document order
+
+The earlier R3-C2 current-state paragraph is corrected so it no longer presents a contradictory "via the
+existing R3-B1 WeakSet issuer" claim as current; `CURRENT_STATE.md` marks superseded wording explicitly and
+carries the BR-1 TaskRun history gate. Section ordering within this appended history uses an explicit
+"supersedes" structure rather than rewriting historical commits (NB-6); where R-numbers were appended
+out of strict order in the prior amendment, the governing rule is that the LATEST section wins.
+
+### R42. Invariants preserved
+
+All §R21 invariants hold, plus: local-continuity authority is first-`TaskRun`-only; one-run-per-Task is NOT
+claimed as an existing guarantee; no new `TaskRun` lifecycle/retry owner; R3-C-Rz excluded with no hidden
+bridge; Stage2B budget unchanged; R3-B1/B2/B3/C1 ownership preserved; historical R3-B1 API unchanged.
+
+### R43. Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated: Push/PR/Merge, runtime
+start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutation, Live UAT, production
+gates. Exactly one local architecture remediation commit is created on parent
+`04c98671b0172d2dc0d2ec9b37a34c8aa5ec8550`; independent Architecture Review (Claude) must PASS before
+Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.

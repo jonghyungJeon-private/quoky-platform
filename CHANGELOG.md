@@ -5,6 +5,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2 architecture BR-1 final remediation (docs only) — 2026-09-28
+
+- Add the "ADR-0090 amendment (remediation 2 — BR-1 final)" to `DECISIONS.md`, accepting BR-1 and closing
+  non-blocking cleanups NB-1..NB-7 (facts confirmed by reading source). **BR-1:** the codebase does NOT
+  enforce one `TaskRun` per `Task` — storage `guardedStart`, `TaskManager.guardedStartRun`, and
+  `ContinuationExecutionAdmissionService` reject only a concurrent unresolved STARTED run and allocate
+  `attempt = MAX(attempt)+1`, so after a terminal run a new `TaskRun` (attempt ≥ 2) may start; those
+  components are therefore NOT a "one-run-per-Task" owner. **Owner-3 correction:** they own
+  concurrent-STARTED exclusion + canonical `TaskRun` start + attempt ordinal only. **Final C2A decision:**
+  local-continuity authority (`BoundLocalContinuitySelection`) is issued ONLY for the FIRST `TaskRun` —
+  require `TaskRun.attempt === 1` AND `taskRuns.listByTask(taskId)` proving no prior `TaskRun` exists; both
+  the R3-C1 declarative `attemptNumber===1` and the stored `TaskRun.attempt===1` are required and must
+  agree. A same-`Task` re-run after a terminal run is retry/re-run semantics outside R3-C2A (belongs to
+  R3-C-Rz, NOT AUTHORIZED); a genuinely new local-continuity request enters via a NEW canonical `Task`.
+  Cleanups: NB-1 `RoutingContextDigest` exact contract (domain tag `quoky:r3-c2:routing-context:v1` over the
+  ten `RoutingContext` fields, domain-separated hash, not the plain JSON digest helper); NB-2 locality/
+  routing-class covered by the Stage2B composite `configurationDigest`, not `RoutingContextDigest`; NB-3
+  `IntentResolver` exists but is not on the GENERAL_CHAT continuation path (authoritative source stays
+  `Task.intent.capability` → `TaskRun.capability`); NB-4 `createContainmentCandidateBinding` still accepts a
+  bare `SoleProviderSelection` (non-production under R3-B3; future C2 preparation accepts only
+  `BoundLocalContinuitySelection`); NB-5 mark the superseded R3-C2 current-state wording; NB-6 explicit
+  supersedes structure; NB-7 continuation path is GENERAL_CHAT/CHAT only (SUMMARIZATION etc. not auto-wired).
+  Documentation only: no code, runtime, provider, network, DB/schema, aggregate/repository, approval/security
+  owner, or new `RoutingFailureCode`. One additional remediation commit on parent `04c98671` (neither
+  reviewed architecture commit amended). ADR-0090 remains Proposed; independent Architecture Review pending
+  before Push/PR/Merge. R3-C1 remains CLOSED + DELIVERED; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+## R3-C2 architecture / entry remediation (docs only) — 2026-09-28
+
+- Add the "ADR-0090 amendment (remediation)" to `DECISIONS.md`, correcting the R3-C2 architecture to ACTUAL
+  code ownership per accepted CHANGES_REQUIRED blockers B-1..B-5 and cleanups N-1..N-7 (facts confirmed by
+  reading source). **B-1** the existing R3-B1 `SoleProviderSelection` (public
+  `assertExactSoleProviderSelection`; binds only `providerId`) is NOT sufficient authority — define a NEW
+  process-local issued `BoundLocalContinuitySelection` binding admitted `providerId` + R3-C1 admission
+  provenance + Stage2B composite `configurationDigest` + `taskRunId/executionId` + `RoutingContextDigest` +
+  canonical `capability`, minted only after the issuer invokes canonical `LocalContinuityAdmission.admit(...)`
+  (process-local, not restart-valid). **B-2** no `routingContextRef` exists — define `RoutingContextDigest`
+  as a domain-separated `sha256Canonical` over all ten `RoutingContext` fields, issuer-re-derived from
+  `continuationRoutingContext(...)`. **B-3** `TaskRun` exists only after `ContinuationExecutionAdmissionService`
+  / `TaskManager.guardedStartRun`; `executionId === taskRunId === TaskRun.id`; exact START-first ordering.
+  **B-4** name real enforcement owners — `ContinuationProviderRoutingService.execute`,
+  `ProviderRoutingGateway.execute` (`MAX_PROVIDER_ATTEMPTS=2`/`MAX_ADDITIONAL_PROVIDER_HOPS=1`), and
+  `ContinuationExecutionAdmissionService`/`guardedStartRun`; C2A implements attempt-1/zero-hop/PRIMARY_ONLY
+  at those owners (circular pre-existence rule removed). **B-5** authoritative workload =
+  stored `Task.intent.capability` → boundTaskFacts → `TaskRun.capability` (no `IntentResolver` step);
+  caller/model labels ignored. Cleanups: N-1 correct `CURRENT_STATE.md` R3-C1 to CLOSED + DELIVERED (PR #87
+  merged), N-2 bound config identity = Stage2B composite `configurationDigest` (not
+  `ContinuationProviderRoutingConfiguration.configurationDigest`), N-3 C2B after C2A, N-4 runtime feasibility
+  criteria, N-5 four-layer production-trust separation, N-6 C2A exit tests, N-7 `IntentClassifier`
+  `GENERAL_CHAT` default recorded as a pre-production gate. The prior "R3-C2 architecture / entry definition"
+  amendment is retained as history and superseded where it conflicts. Documentation only: no code, runtime,
+  provider, network, DB/schema, aggregate/repository, approval/security owner, or new `RoutingFailureCode`.
+  One additional remediation commit on parent `c55ff623` (reviewed commit not amended). ADR-0090 remains
+  Proposed; independent Architecture Review pending before Push/PR/Merge. R3-C2 and R3-C-Rz remain NOT
+  AUTHORIZED.
+
+## R3-C2 architecture / entry definition (docs only) — 2026-09-27
+
+- Add the ADR-0090 amendment "R3-C2 architecture / entry definition" to `DECISIONS.md`: the security/trust
+  bridge between R3-C1 admission and future containment/runtime preparation. Closes the R3-C1
+  carry-forwards as ratifiable contracts — CF-1 sole-selection issuance hardening (bind issuance to the
+  admitted path via the existing R3-B1 WeakSet issuer; process-local, not restart-valid), CF-2 exact
+  identity binding (reuse `TaskRun`/`executionId===taskRunId` + composite config digest + routing context;
+  no new identity system/schema), CF-3 attempt-1/zero-hop enforcement owned by the existing
+  Stage2B/continuation orchestration boundary (no duplicate retry), CF-4 authoritative workload owner =
+  deterministic classifier/policy. Places the Kind B trusted-observation issuer in sub-slice C2B (still
+  DENY, no durable authenticity), defines a runtime-family feasibility comparison contract WITHOUT
+  selecting a family (C2C), preserves R3-B3 fail-closed production trust as a separate future slice,
+  proposes the C2A/C2B/C2C split (C2A smallest first), and excludes R3-C-Rz. Documentation only: no
+  runtime, provider, network, DB/schema, approval/security owner, or new `RoutingFailureCode`. ADR-0090
+  remains Proposed; independent Architecture Review pending before Push/PR/Merge. R3-C2 and R3-C-Rz remain
+  NOT AUTHORIZED.
+
 ## R3-C1 exact-HEAD review remediation — B-A: Kind A administrative-only — 2026-09-27
 
 - Correct accepted blocker B-A: Kind A no longer equals "empty eligible NETWORK set" (which conflated
