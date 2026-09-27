@@ -5,6 +5,20 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C — bounded task definition (docs only) (2026-09-27)
+
+**TASK DEFINITION / ARCHITECTURE ONLY — NOT STARTED (implementation).** Audit base
+`eefd2709980866f88e1d5076914e3223b668794d`. R3-A / R3-B1 / R3-B2 / R3-B3 are CLOSED + DELIVERED.
+`DECISIONS.md` now carries the ADR-0090 amendment defining R3-C's smallest safe slice: **R3-C1 — Local
+Continuity Eligibility & Trusted Admission Contract** (eligibility input, deterministic
+`localFallbackAllowed`, pre-dispatch `CloudUnavailabilityEvidence`, exact PRIMARY_ONLY admission handoff via
+R3-B1, fail-closed on absent/stale/untrusted evidence, zero runtime preparation for disallowed workloads),
+with **R3-C2** (runtime-family feasibility / real containment issuer) and **R3-C-Rz** (post-dispatch
+re-resolution) deferred. No runtime family is chosen (Option A vs C carried forward). R3-B3 production-trust
+fail-closed boundary is preserved: eligibility ≠ production-trusted execution. ADR-0090 remains **Proposed**;
+implementation is gated on independent Architecture Review + Product Owner ratification. No product code,
+runtime, provider, network, DB/schema, approval/security owner, or new `RoutingFailureCode` in this task.
+
 ### R3-B2 — secure terminalization and containment evidence (2026-09-26)
 
 **IMPLEMENTED LOCALLY / AWAITING INDEPENDENT EXACT-HEAD REVIEW.** Authorized base:

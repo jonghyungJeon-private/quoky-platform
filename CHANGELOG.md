@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C bounded task definition (docs only) — 2026-09-27
+
+- Add the ADR-0090 amendment "R3-C bounded task definition (Local Continuity Eligibility & Trusted
+  Admission)" to `DECISIONS.md`, closing carry-forwards N-1..N-6 enough that R3-C1 implementation scope is
+  unambiguous. Documentation only: no runtime, provider, network, DB/schema, approval/security owner, new
+  `RoutingFailureCode`, or runtime-family selection. Defines pre-dispatch `CloudUnavailabilityEvidence`,
+  PRIMARY_ONLY separation, N-3 control re-entry invariant, N-4 draft-vs-execute mapping, N-5 failure-term
+  mapping to the existing `routing-failure-matrix-v4`, N-6 Ollaya non-requirement, and an R3-C1/R3-C2/
+  R3-C-Rz split. ADR-0090 remains Proposed; independent Architecture Review pending before Push/PR/Merge.
+
 ## R3-B2 blocking remediation — 2026-09-26
 
 - Share one canonical v1 containment binding digest constructor between issuance and prepared-evidence
