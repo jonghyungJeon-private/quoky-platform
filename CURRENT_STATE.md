@@ -14,7 +14,15 @@ Static Trusted Admission** entry below. R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
 ### R3-C2 — architecture / entry definition (docs only) (2026-09-27)
 
 **ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / NOT AUTHORIZED (implementation).** Branch
-`codex/r3c2-architecture-definition` from main `347c03202014003e114fc2cdb3e1f2ff3866f4f0`. `DECISIONS.md`
+`codex/r3c2-architecture-definition` from main `347c03202014003e114fc2cdb3e1f2ff3866f4f0`. The descriptive
+paragraph immediately below (original entry wording) is **SUPERSEDED BY THE R3-C2 ARCHITECTURE REMEDIATION**
+and is retained only as history; for the current architecture see the **REMEDIATION** paragraph further
+below and the DECISIONS.md "ADR-0090 amendment (remediation)" and "…(remediation 2 — BR-1 final)" sections.
+In particular the "bind issuance to the admitted path via the existing R3-B1 WeakSet issuer" wording is
+superseded: the corrected contract mints a NEW process-local `BoundLocalContinuitySelection` only after the
+issuer invokes canonical `LocalContinuityAdmission.admit(...)`, and adds a first-`TaskRun`-only history gate.
+
+_Superseded original entry (history):_ `DECISIONS.md`
 carries the ADR-0090 amendment "R3-C2 architecture / entry definition" defining the security/trust bridge
 between the R3-C1 admission decision and any future containment/runtime preparation, and closing the R3-C1
 carry-forwards as ratifiable contracts: **CF-1** sole-selection issuance hardening (bind issuance to the
@@ -54,6 +62,26 @@ Stage2B composite `ProviderSelectionDecision.configurationDigest`, NOT
 `ContinuationProviderRoutingConfiguration.configurationDigest`. **N-7** `IntentClassifier` default
 `GENERAL_CHAT` recorded as a pre-production gate; C2A only consumes capability from a persisted `Task`/`TaskRun`.
 Still docs-only; ADR-0090 remains Proposed; implementation gated on independent Claude Architecture Review.
+
+**REMEDIATION 2 (2026-09-28, BR-1 final).** A second remediation commit (parent `04c98671…`; neither
+reviewed commit amended) appends "ADR-0090 amendment (remediation 2 — BR-1 final)" to `DECISIONS.md`.
+Accepts **BR-1**: the codebase does NOT enforce one `TaskRun` per `Task` — storage `guardedStart` /
+`TaskManager.guardedStartRun` / `ContinuationExecutionAdmissionService` reject only a concurrent unresolved
+STARTED run and allocate `attempt = MAX(attempt)+1`, so after a terminal run a new `TaskRun` (attempt ≥ 2)
+may start. Owner-3 wording is corrected: those components own concurrent-STARTED exclusion + canonical
+`TaskRun` start + attempt ordinal, NOT one-run-per-Task. C2A adds a conservative first-`TaskRun`-only gate:
+issue `BoundLocalContinuitySelection` only when `TaskRun.attempt === 1` AND `taskRuns.listByTask(taskId)`
+proves NO prior `TaskRun` exists (both R3-C1 declarative `attemptNumber===1` and stored `TaskRun.attempt===1`
+required; both ordinal and history must agree). A same-`Task` re-run after a terminal run is retry/re-run
+semantics outside R3-C2A (belongs to R3-C-Rz, NOT AUTHORIZED); a genuinely new local-continuity request
+enters via a NEW canonical `Task`. Also closes NB-1 (`RoutingContextDigest` domain tag
+`quoky:r3-c2:routing-context:v1` over the ten `RoutingContext` fields; domain-separated hash, not the plain
+JSON digest helper), NB-2 (locality/routing-class covered by the Stage2B composite `configurationDigest`,
+not `RoutingContextDigest`), NB-3 (`IntentResolver` exists but is not on the GENERAL_CHAT path), NB-4
+(`createContainmentCandidateBinding` still accepts a bare `SoleProviderSelection`, non-production under R3-B3;
+future C2 preparation accepts only `BoundLocalContinuitySelection`), NB-7 (continuation path is
+GENERAL_CHAT/CHAT only; SUMMARIZATION etc. not auto-wired). Still docs-only; ADR-0090 remains Proposed;
+R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
 
 ### R3-C1 — Local Continuity Eligibility & Static Trusted Admission (2026-09-27)
 

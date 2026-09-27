@@ -10138,3 +10138,251 @@ start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutatio
 gates. Exactly one local architecture remediation commit is created on parent
 `c55ff623b829890dcda73c32cb58139fa46a34cf`; independent Architecture Review (Claude) must PASS before
 Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+## ADR-0090 amendment (remediation 2 — BR-1 final) — R3-C2 TaskRun history gate & wording corrections
+
+- **Status:** Proposed — architecture / task-definition only. Supersedes the corrected claims of BOTH prior
+  R3-C2 amendments (the original "R3-C2 architecture / entry definition" and "ADR-0090 amendment
+  (remediation)") wherever they conflict; both are retained above as history. Where any two sections
+  disagree, the LATEST section (this one) governs. Independent Architecture Review pending. Grants no
+  implementation, activation, runtime, provider, network, DB, or execution authority.
+- **Date:** 2026-09-28
+- **Branch / parent:** `codex/r3c2-architecture-definition`; one additional remediation commit whose parent
+  is the reviewed `04c98671b0172d2dc0d2ec9b37a34c8aa5ec8550`. Neither reviewed architecture commit
+  (`04c98671…`, `c55ff623…`) is amended, rebased, squashed, or rewritten.
+- **Canonical main/base:** `347c03202014003e114fc2cdb3e1f2ff3866f4f0`.
+- **Why this amendment exists:** An independent review accepted BR-1: the codebase does NOT enforce one
+  `TaskRun` per `Task`. This amendment corrects the ownership wording, adds the conservative C2A TaskRun
+  history gate, and closes non-blocking cleanups NB-1..NB-7. Docs-only: no code, runtime, provider,
+  network, DB/schema, aggregate/repository, approval/security owner, or new `RoutingFailureCode`.
+
+### R23. BR-1 — accepted fact (one-run-per-Task is NOT enforced)
+
+Confirmed from source (`packages/storage-sqlite/src/index.ts`):
+
+- `guardedStart(expected, capability)` (≈L288) opens one IMMEDIATE transaction and rejects ONLY a
+  concurrent unresolved STARTED run: `if (… .get(task.id, TaskRunStatus.STARTED)) throw
+  GuardedTaskRunStartError('UNRESOLVED_STARTED_RUN')`. The inline comment states: "Status is the sole
+  unresolved predicate. MAX(attempt) below is ordinal allocation only."
+- `insertStarted(taskId, capability)` (≈L331) allocates `attempt = (MAX(attempt) ?? 0) + 1`. Therefore
+  AFTER a terminal run (`SUCCEEDED` / `FAILED` / other terminal status), a NEW `TaskRun` may be created
+  with `attempt = MAX(previous attempts) + 1`.
+
+Consequently `ContinuationExecutionAdmissionService`, `TaskManager.guardedStartRun`, and the storage
+`guardedStart` must NOT be described as a "one-run-per-Task" owner. Prior amendment §R9(3) wording
+("guarded one-run start owner") is corrected by §R24 below.
+
+### R24. Owner-3 correction (supersedes §R9(3))
+
+`ContinuationExecutionAdmissionService` + `TaskManager.guardedStartRun` + the storage guarded start OWN:
+
+- concurrent unresolved STARTED-run exclusion (`UNRESOLVED_STARTED_RUN`);
+- canonical `TaskRun` creation/start;
+- a monotonically allocated `TaskRun.attempt` ordinal (`MAX(attempt)+1`).
+
+They DO NOT enforce one `TaskRun` for the lifetime of a `Task`. C2A adds the narrower local-continuity
+issuer check using existing `TaskRun` history; NO new `TaskRun` lifecycle owner is created.
+
+### R25. Final C2A decision — first-TaskRun-only local-continuity authority
+
+C2A local-continuity authority (`BoundLocalContinuitySelection`) may be issued ONLY for the FIRST `TaskRun`
+of the `Task`. Required jointly:
+
+- `TaskRun.attempt === 1`, AND
+- `taskRuns.listByTask(taskId)` proves the current `TaskRun` is the Task's ONLY run — i.e. there is NO
+  prior `TaskRun` (of any status: `FAILED`, `SUCCEEDED`, cancelled/other terminal if represented, or any
+  earlier attempt) for the same `Task`.
+
+If either fails → C2A local-continuity authority = DENY / NOT ISSUED. A later `TaskRun` is NEVER
+interpreted as a fresh local-continuity request.
+
+### R26. New request vs retry (semantics)
+
+A genuinely new user/request execution that should be reconsidered for local continuity must enter through
+a NEW canonical `Task` / new Task identity. Reusing the SAME `Task` after a terminal run is a
+retry/re-run semantic, which is OUTSIDE R3-C2A. This closes both a `Local → Local` retry and a disguised
+`Cloud → Local` re-run of the same Task after a previous provider attempt. Any future semantics for
+re-resolution after prior provider execution belong to R3-C-Rz (or another separately reviewed re-run/retry
+policy boundary); R3-C2A does NOT define them.
+
+### R27. Prior-run check owner & derivation
+
+Use the existing `taskRuns.listByTask(taskId): Promise<TaskRun[]>` (confirmed at
+`packages/storage-sqlite/src/index.ts` ≈L555, ordered by `attempt`). The C2A issuer must DERIVE, not accept
+from the caller: the current `TaskRun.id`, current `TaskRun.attempt`, `taskId`, and prior `TaskRun` history.
+Before issuing `BoundLocalContinuitySelection`:
+
+1. load the current canonical `TaskRun`;
+2. require `currentRun.attempt === 1`;
+3. load `taskRuns.listByTask(taskId)`;
+4. require that NO `TaskRun` other than `currentRun` exists.
+
+If either check fails → do not issue C2A authority. No DB/schema change, no new repository, and no
+caller-supplied `hasPriorAttempt` boolean.
+
+### R28. attemptNumber terminology (two distinct facts)
+
+- **A. R3-C1 decision contract:** `attemptNumber = 1` (declarative constant on the admission decision).
+- **B. Canonical `TaskRun` ordinal:** `TaskRun.attempt`.
+
+C2A must require BOTH to be `1`: the R3-C1 declarative `attemptNumber` must equal `1` AND the authoritative
+stored `TaskRun.attempt` must equal `1`. The R3-C1 constant by itself is NOT proof that no previous
+`TaskRun` exists; `TaskRun` history (§R27) provides that proof. Both ordinal and history must agree.
+
+### R29. "No prior provider attempt" mechanism
+
+For C2A, "no prior provider attempt" MEANS the canonical `Task` has no prior `TaskRun` before the currently
+STARTED `TaskRun`. Because local-continuity C2A is admitted ONLY on `TaskRun` attempt 1 with no prior run,
+there cannot have been a previous provider execution for the same `Task` through this path. This is NOT
+inferred from R3-C1 decision constants, the `ProviderRoutingGateway` attempt array, caller claims, or the
+current `TaskRun` status alone.
+
+### R30. Existing orchestration owners (accurate split, supersedes §R9)
+
+1. **`ContinuationExecutionAdmissionService` / `TaskManager.guardedStartRun`** — own the concurrent
+   unresolved-run guard, canonical `TaskRun` start, and `TaskRun.attempt` ordinal. C2A ADDITIONALLY queries
+   `TaskRun` history before bound-authority issuance (§R27). (They are NOT a one-run-per-Task owner — §R24.)
+2. **`ContinuationProviderRoutingService.execute`** — owns continuation-specific pre-dispatch rejection of
+   fallback/escalation and PRIMARY_ONLY continuation dispatch constraints.
+3. **`ProviderRoutingGateway.execute`** — owns the global Stage2B provider attempt loop
+   (`while (attempts.length < MAX_PROVIDER_ATTEMPTS)`).
+
+C2A does NOT create a fourth retry/attempt owner.
+
+### R31. C2A narrow attempt contract (issuance/consumption)
+
+For `BoundLocalContinuitySelection` issuance and consumption, require all of:
+
+- current `TaskRun.attempt === 1`;
+- no prior `TaskRun` for the same `Task` (§R27);
+- R3-C1 `attemptNumber === 1`;
+- `additionalProviderHops === 0`;
+- bound provider `== plan.primary.providerId`;
+- fallback absent;
+- escalation absent;
+- `executionId == taskRunId`;
+- exact `RoutingContextDigest` match (§R33);
+- exact Stage2B composite `configurationDigest` match;
+- canonical workload `capability` match (stored `Task`/`TaskRun`).
+
+This is NARROWER than the global Stage2B budget. The global constants `MAX_PROVIDER_ATTEMPTS = 2` and
+`MAX_ADDITIONAL_PROVIDER_HOPS = 1` remain unchanged and do NOT authorize additional attempts on C2A
+local-continuity execution.
+
+### R32. R3-C-Rz exclusion (explicit)
+
+`TaskRun.attempt > 1` OR any prior `TaskRun` exists for this `Task` → C2A local continuity is NOT
+admissible → the C2A issuer does NOT issue `BoundLocalContinuitySelection` → no containment preparation
+through C2A. Any later decision to re-resolve after a previous execution belongs to R3-C-Rz, which remains
+NOT AUTHORIZED. This closes both `Local → Local` retry and a same-Task re-run that would effectively become
+`Cloud → Local`.
+
+### R33. NB-1 — RoutingContextDigest exact contract (supersedes §R7 digest wording)
+
+`RoutingContextDigest` uses the project's domain-separated canonical hashing convention (NOT the
+routing-policy engine's plain JSON-only digest helper). Domain tag (stable):
+
+    quoky:r3-c2:routing-context:v1
+
+Canonical serialized field order (exhaustive, no omission):
+
+1. `capability`
+2. `requestType`
+3. `intentType`
+4. `semanticRisk`
+5. `latencyClass`
+6. `toolUseRequirement`
+7. `authorityRequirement`
+8. `continuityRequirement`
+9. `expectedOutputSize`
+10. `validationProfile`
+
+The architecture requires a deterministic canonical representation combined with the existing
+domain-separated hashing convention under the exact tag above. The helper is NOT implemented in this
+architecture commit; C2A implements it later.
+
+### R34. NB-2 — replay wording limited to real RoutingContext fields (supersedes §R7 replay wording)
+
+Replay protection compares the re-derived `RoutingContextDigest` over the ten actual `RoutingContext`
+fields (§R33). Wording implying "locality / routing-class constraint" are `RoutingContext` fields is
+removed. Locality and routing-class constraints are bound through the matched Stage2B policy/configuration
+and are therefore covered by the Stage2B composite `configurationDigest`, NOT by `RoutingContextDigest`.
+
+### R35. NB-3 — IntentResolver wording (supersedes §R11 "no IntentResolver step" wording)
+
+Corrected: `IntentResolver` EXISTS (`packages/core/src/application/intent-resolver.ts`), but its
+`resolve(...)` returns non-null only for execution capabilities (`EXECUTION_CAPABILITIES`); `GENERAL_CHAT`
+is not one, so `IntentResolver` is NOT on the `GENERAL_CHAT` continuation / local-continuity authority path.
+The earlier global phrasing "no IntentResolver capability step exists" is withdrawn. The authoritative C2A
+workload source remains stored `Task.intent.capability` → `TaskRun.capability`.
+
+### R36. NB-4 — existing R3-B1 candidate binding
+
+The exported `createContainmentCandidateBinding(...)`
+(`packages/core/src/application/continuation-prepared-containment.ts`) still accepts a bare issued
+`SoleProviderSelection` (it derives `providerId` from that selection). That existing R3-B1 path remains
+NON-PRODUCTION under the R3-B3 fail-closed trust state. FUTURE R3-C2 containment-preparation ENTRY must NOT
+use a bare `SoleProviderSelection` path; it accepts ONLY `BoundLocalContinuitySelection` (or the exact
+future C2A bound-authority type). This remediation does NOT rewrite the historical R3-B1 API.
+
+### R37. NB-7 — current continuation scope (GENERAL_CHAT only)
+
+`continuationRoutingContext(...)` currently FIXES the continuation path to `Capability.GENERAL_CHAT` /
+`IntentType.CHAT`. Therefore the first C2A implementation on this path wires ONLY `GENERAL_CHAT`
+continuation/local-continuity. Other R3-C1-eligible workloads (e.g. `SUMMARIZATION`) are NOT automatically
+wired by C2A; supporting them later requires an explicit authoritative routing-context path, not caller
+relabeling. C2A scope is NOT expanded now.
+
+### R38. Final C2A implementation scope (bounded)
+
+The future Codex C2A slice remains bounded to: the `RoutingContextDigest` helper/contract (§R33);
+process-local `BoundLocalContinuitySelection`; the canonical issuer; STARTED `TaskRun` binding; the
+`TaskRun` attempt/history gate (§R27); stored `Task`/`TaskRun` capability binding; Stage2B composite
+configuration binding; exact provider binding; existing continuation orchestration checks; attempt-1 /
+zero-hop enforcement; focused tests. Still NO runtime, Docker/VM, Ollama/Ollaya, Kind B issuer, production
+trust, DB/schema change, or R3-C-Rz.
+
+### R39. C2A entry criteria (final)
+
+Implementation-ready only if the architecture now defines: new bound authority contract (§R6); canonical
+issuer (§R6); process-local lifetime (§R6); TaskRun START-first ordering (§R8); `executionId == TaskRun.id`
+(§R8); `TaskRun.attempt === 1` (§R28); no-prior-`TaskRun` requirement (§R25/§R27); `TaskRun` history owner
+(§R27); `RoutingContextDigest` exact contract (§R33); Stage2B composite config identity (§R13);
+canonical workload source (§R35); exact continuation/gateway enforcement owners (§R30); Kind B excluded
+(§R14); production trust excluded (§R16); R3-C-Rz excluded (§R32). All are now defined.
+
+### R40. C2A exit tests (final additions, supersede §R19 additions)
+
+In addition to §R19, C2A tests MUST cover:
+
+- prior terminal run present: `TaskRun #1` = `FAILED` or `SUCCEEDED`, then `TaskRun #2` for the same
+  `taskId` = STARTED, `attempt = 2` → C2A bound-authority issuance REJECTED;
+- the current `TaskRun` is the only run AND `attempt = 1` → this specific gate may PASS;
+- current `TaskRun.attempt = 2` even if malformed history omits the prior row → REJECT;
+- a prior terminal run exists even if the current `attempt` is incorrectly `1` → REJECT;
+
+i.e. both the ordinal (`TaskRun.attempt`) and the history (`listByTask`) must agree. All tests remain
+runnable without Docker/VM/Ollama, with no runtime/provider/network/DB side effect and no production trust
+created.
+
+### R41. NB-5 / NB-6 — current-state supersession & document order
+
+The earlier R3-C2 current-state paragraph is corrected so it no longer presents a contradictory "via the
+existing R3-B1 WeakSet issuer" claim as current; `CURRENT_STATE.md` marks superseded wording explicitly and
+carries the BR-1 TaskRun history gate. Section ordering within this appended history uses an explicit
+"supersedes" structure rather than rewriting historical commits (NB-6); where R-numbers were appended
+out of strict order in the prior amendment, the governing rule is that the LATEST section wins.
+
+### R42. Invariants preserved
+
+All §R21 invariants hold, plus: local-continuity authority is first-`TaskRun`-only; one-run-per-Task is NOT
+claimed as an existing guarantee; no new `TaskRun` lifecycle/retry owner; R3-C-Rz excluded with no hidden
+bridge; Stage2B budget unchanged; R3-B1/B2/B3/C1 ownership preserved; historical R3-B1 API unchanged.
+
+### R43. Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated: Push/PR/Merge, runtime
+start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutation, Live UAT, production
+gates. Exactly one local architecture remediation commit is created on parent
+`04c98671b0172d2dc0d2ec9b37a34c8aa5ec8550`; independent Architecture Review (Claude) must PASS before
+Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.

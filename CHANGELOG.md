@@ -5,6 +5,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2 architecture BR-1 final remediation (docs only) — 2026-09-28
+
+- Add the "ADR-0090 amendment (remediation 2 — BR-1 final)" to `DECISIONS.md`, accepting BR-1 and closing
+  non-blocking cleanups NB-1..NB-7 (facts confirmed by reading source). **BR-1:** the codebase does NOT
+  enforce one `TaskRun` per `Task` — storage `guardedStart`, `TaskManager.guardedStartRun`, and
+  `ContinuationExecutionAdmissionService` reject only a concurrent unresolved STARTED run and allocate
+  `attempt = MAX(attempt)+1`, so after a terminal run a new `TaskRun` (attempt ≥ 2) may start; those
+  components are therefore NOT a "one-run-per-Task" owner. **Owner-3 correction:** they own
+  concurrent-STARTED exclusion + canonical `TaskRun` start + attempt ordinal only. **Final C2A decision:**
+  local-continuity authority (`BoundLocalContinuitySelection`) is issued ONLY for the FIRST `TaskRun` —
+  require `TaskRun.attempt === 1` AND `taskRuns.listByTask(taskId)` proving no prior `TaskRun` exists; both
+  the R3-C1 declarative `attemptNumber===1` and the stored `TaskRun.attempt===1` are required and must
+  agree. A same-`Task` re-run after a terminal run is retry/re-run semantics outside R3-C2A (belongs to
+  R3-C-Rz, NOT AUTHORIZED); a genuinely new local-continuity request enters via a NEW canonical `Task`.
+  Cleanups: NB-1 `RoutingContextDigest` exact contract (domain tag `quoky:r3-c2:routing-context:v1` over the
+  ten `RoutingContext` fields, domain-separated hash, not the plain JSON digest helper); NB-2 locality/
+  routing-class covered by the Stage2B composite `configurationDigest`, not `RoutingContextDigest`; NB-3
+  `IntentResolver` exists but is not on the GENERAL_CHAT continuation path (authoritative source stays
+  `Task.intent.capability` → `TaskRun.capability`); NB-4 `createContainmentCandidateBinding` still accepts a
+  bare `SoleProviderSelection` (non-production under R3-B3; future C2 preparation accepts only
+  `BoundLocalContinuitySelection`); NB-5 mark the superseded R3-C2 current-state wording; NB-6 explicit
+  supersedes structure; NB-7 continuation path is GENERAL_CHAT/CHAT only (SUMMARIZATION etc. not auto-wired).
+  Documentation only: no code, runtime, provider, network, DB/schema, aggregate/repository, approval/security
+  owner, or new `RoutingFailureCode`. One additional remediation commit on parent `04c98671` (neither
+  reviewed architecture commit amended). ADR-0090 remains Proposed; independent Architecture Review pending
+  before Push/PR/Merge. R3-C1 remains CLOSED + DELIVERED; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2 architecture / entry remediation (docs only) — 2026-09-28
 
 - Add the "ADR-0090 amendment (remediation)" to `DECISIONS.md`, correcting the R3-C2 architecture to ACTUAL
