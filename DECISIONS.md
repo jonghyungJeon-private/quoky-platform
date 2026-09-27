@@ -10386,3 +10386,45 @@ start, container/VM start, Ollama/Ollaya, provider/network execution, DB mutatio
 gates. Exactly one local architecture remediation commit is created on parent
 `04c98671b0172d2dc0d2ec9b37a34c8aa5ec8550`; independent Architecture Review (Claude) must PASS before
 Push/PR/Merge. No R3-C2 implementation begins from this document; R3-C2 and R3-C-Rz remain NOT AUTHORIZED.
+
+
+## ADR-0090 implementation record — R3-C2A (2026-09-28)
+
+The authorized R3-C2A sprint implements the delivered architecture on main
+`9addb5875fd5c9e05e6a726ef52e8885896e76f3` (PR #88). Earlier proposed/not-authorized statements above are
+historical; this record updates C2A implementation status only. Independent exact-HEAD implementation
+review remains pending. No new architectural contract or production-trust ratification is implied.
+
+`BoundLocalContinuitySelectionIssuer` is the sole new bridge: canonical STARTED TaskRun + RUNNING Task →
+shared `continuationRoutingContext` → `routingContextDigest` → internal R3-C1 admission → its actual
+admission/sole-selection pair → frozen process/issuer-local authority. Only a run id and local candidate
+id enter issuance; no caller admission, capability label, history boolean, or digest grants authority.
+The candidate still requires canonical R3-C1 eligibility; C2A owns neither ranking nor a retry engine.
+Public read-only facts are not authenticity: a private WeakMap rejects literals, copied/serialized values,
+bare selections, and cross-issuer values. There is no public unchecked issuance factory.
+
+Issuance and consumption enforce §R25–R33: attempt 1 AND exact singleton STARTED history, exact
+TaskRun/execution identity, canonical Task/TaskRun capability consistency, current GENERAL_CHAT/CHAT
+context, exact Stage2B registry+policy digest, PRIMARY_ONLY plan/provider, R3-C1 attempt 1 / zero hops.
+The history read occurs while STARTED and a subsequent run read rejects observed terminalization.
+Existing guarded-start exclusion remains the concurrency owner; no lock, schema, lifecycle, or storage
+port is added. This validation is not an atomic future runtime-preparation transaction.
+
+The optional `ContinuationProviderRoutingRequest.localContinuity` comparison entry is enforced in
+`ContinuationProviderRoutingService.execute` before provider availability probes. It consumes only the
+new authority with its issuing service and checks the supplied plan against current configuration. It
+always stops at PRE_DISPATCH_FAILED/NOT_DISPATCHED because C2C is absent, including after successful
+validation; it does not treat the supplied plan as execution authority. The normal existing R2 path and
+ProviderRoutingGateway's global budget are unchanged. Future preparation must use this bound authority
+and revalidate at its effect boundary; it cannot accept a bare R3-B1 sole selection or infer production
+trust from successful C2A validation. No activation/composition-root wiring is added in C2A.
+
+NB-R1: internal extraction of the existing `sha256Canonical(domain, shape)` construction; the exact
+§R33 ten-field projection is tested against canonical serialization and each field's replay mismatch.
+NB-R2: real SQLite continuation entry reaches first-run authority; terminal-run reruns are denied C2A.
+NB-R3: real guarded start rejects a concurrent attempt during the STARTED history check. The known
+upstream IntentClassifier default to GENERAL_CHAT remains a pre-production risk, not a C2A taxonomy fix.
+
+R3-B3 production trust remains FAIL CLOSED with anchor/verifier/capability issuer NOT IMPLEMENTED.
+C2B/C2C NOT STARTED; Kind B DENY; Kind C/R3-C-Rz NOT AUTHORIZED. No runtime family, containment preparation,
+provider/network execution, schema/migration, production trust, or new security/approval owner.

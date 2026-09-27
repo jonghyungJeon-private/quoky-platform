@@ -1,4 +1,8 @@
-import { Capability, IntentType } from '../domain';
+import type { BoundLocalContinuitySelection, BoundLocalContinuitySelectionIssuer } from './bound-local-continuity-selection';
+import type { ProviderExecutionPlan } from './provider-execution-plan';
+import { continuationRoutingContext, type ContinuationRoutingFacts } from './continuation-routing-context';
+export type { ContinuationRoutingFacts } from './continuation-routing-context';
+import { Capability } from '../domain';
 import type { AiRequest } from '../ports';
 import type {
   ContinuationDispatchEvidence,
@@ -29,17 +33,10 @@ import {
   type ProviderRoutingValidationFacts,
 } from './provider-routing-gateway';
 import {
-  AuthorityRequirement,
-  LatencyClass,
-  OutputSizeClass,
   ProviderAvailability,
   type ProviderId,
   type ProviderSelectionDecision,
-  Requirement,
-  type RoutingContext,
   RoutingReasonCode,
-  RoutingRequestType,
-  SemanticRisk,
 } from './provider-routing-contracts';
 import { RoutingPolicyEngine } from './routing-policy-engine';
 import {
@@ -61,13 +58,9 @@ import { AUTHORITY_SENSITIVE, type ValidationProfileRegistry } from './validatio
  * It never assumes handoff objective == currentUserTurn and inherits no ConversationRuntime semantics.
  */
 
-/** Fixed R2 continuation routing facts. capability/intentType are asserted against bound Task facts. */
-export interface ContinuationRoutingFacts {
-  readonly capability: Capability;
-  readonly intentType: IntentType;
-}
-
 export interface ContinuationProviderRoutingRequest {
+  /** C2A validation-only entry. C2C preparation/dispatch remains unavailable. */
+  readonly localContinuity?: Readonly<{ selection: BoundLocalContinuitySelection; plan: ProviderExecutionPlan }>;
   readonly facts: ContinuationRoutingFacts;
   readonly request: AiRequest;
   readonly validationFacts?: ProviderRoutingValidationFacts;
@@ -92,6 +85,7 @@ export interface ContinuationProviderRouting {
 }
 
 export interface ContinuationProviderRoutingConfiguration {
+  readonly localContinuityIssuer?: BoundLocalContinuitySelectionIssuer;
   readonly providerRegistry: ProviderRegistry;
   readonly policyEngine: RoutingPolicyEngine;
   readonly bindings: readonly ExecutableProviderBinding[];
@@ -103,26 +97,7 @@ export interface ContinuationProviderRoutingConfiguration {
   readonly clock?: MonotonicClock;
 }
 
-const REQUIRED_CAPABILITY = Capability.GENERAL_CHAT;
-const REQUIRED_INTENT = IntentType.CHAT;
 const HEX64 = /^[a-f0-9]{64}$/;
-
-/** Fixed continuation routing context (§8). No caller-supplied overrides. */
-function continuationRoutingContext(facts: ContinuationRoutingFacts): RoutingContext | null {
-  if (facts.capability !== REQUIRED_CAPABILITY || facts.intentType !== REQUIRED_INTENT) return null;
-  return Object.freeze({
-    capability: Capability.GENERAL_CHAT,
-    requestType: RoutingRequestType.WORK,
-    intentType: IntentType.CHAT,
-    semanticRisk: SemanticRisk.STANDARD,
-    latencyClass: LatencyClass.BALANCED,
-    toolUseRequirement: Requirement.NOT_REQUIRED,
-    authorityRequirement: AuthorityRequirement.NOT_REQUIRED,
-    continuityRequirement: Requirement.NOT_REQUIRED,
-    expectedOutputSize: OutputSizeClass.MEDIUM,
-    validationProfile: AUTHORITY_SENSITIVE,
-  });
-}
 
 const GATEWAY_TO_CONTINUATION_STATUS: Readonly<Record<ProviderGatewayTerminalStatus, ContinuationRoutingStatus>> =
   Object.freeze({
@@ -181,6 +156,7 @@ type Transition = Readonly<{ sequence: number; evidence: ContinuationDispatchEvi
  * persistence, response wording, adapter construction, nor startup activation.
  */
 export class ContinuationProviderRoutingService implements ContinuationProviderRouting {
+  private readonly localContinuityIssuer?: BoundLocalContinuitySelectionIssuer;
   private readonly providerRegistry: ProviderRegistry;
   private readonly policyEngine: RoutingPolicyEngine;
   private readonly bindings: readonly ExecutableProviderBinding[];
@@ -192,6 +168,7 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
   private readonly clock: MonotonicClock;
 
   constructor(configuration: ContinuationProviderRoutingConfiguration) {
+    this.localContinuityIssuer = configuration.localContinuityIssuer;
     this.providerRegistry = configuration.providerRegistry;
     this.policyEngine = configuration.policyEngine;
     this.bindings = Object.freeze(configuration.bindings.map((binding) => Object.freeze({ ...binding })));
@@ -217,6 +194,14 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
     let decision: ProviderSelectionDecision | null = null;
     let gatewayInvoked = false;
     try {
+      if (input.localContinuity !== undefined) {
+        if (!this.localContinuityIssuer) return this.preDispatchFailed(input.executionId, null, 'PRE_DISPATCH_FAILED');
+        await this.localContinuityIssuer.validate(input.localContinuity.selection, input.executionId,
+          routingContext, input.localContinuity.plan, this.providerRegistry, this.policyEngine);
+        // C2A stops here: C2C preparation is NOT implemented. Even valid authority never probes
+        // availability or enters the Gateway. The legacy R2 path below retains its existing owner.
+        return this.preDispatchFailed(input.executionId, null, 'PRE_DISPATCH_FAILED');
+      }
       const availabilityEntries = await Promise.all(
         this.bindings.map(async (binding): Promise<readonly [ProviderId, ProviderAvailability]> => {
           let available = false;

@@ -5,6 +5,43 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2A — Bound Local Continuity Authority (2026-09-28)
+
+**IMPLEMENTED LOCALLY — independent exact-HEAD Claude review pending.** Authorized by the R3-C2A
+implementation sprint on canonical main `9addb5875fd5c9e05e6a726ef52e8885896e76f3` (architecture delivery
+PR #88). This entry supersedes historical C2A "not authorized/proposed" delivery wording below; the
+ratified contract is ADR-0090 remediation 2 (§R23–R43), not a new architecture decision.
+
+- `BoundLocalContinuitySelectionIssuer.issue(taskRunId, localProviderId)` loads canonical STARTED
+  TaskRun/RUNNING Task facts, derives the existing GENERAL_CHAT/CHAT continuation context, invokes R3-C1
+  admission itself, and binds its actual decision and exact `SoleProviderSelection`. A module-private
+  WeakMap scopes frozen authority to the issuing instance/process. Copies, admission literals, bare
+  selections, and another issuer's authority are rejected; there is no persistence/rehydration authority.
+- Both `attempt === 1` and `listByTask` containing only the exact current STARTED run are required at
+  issuance and consumption. The existing guarded start remains the lifecycle/concurrency owner.
+  Execution identity, provider, canonical capability, routing-context digest, and current Stage2B
+  composite configuration must agree. Fallback/escalation and extra attempts/hops are rejected.
+- `routingContextDigest` uses `quoky:r3-c2:routing-context:v1` and the exact ten-field order in §R33.
+  **NB-R1:** the existing domain-separated hash construction is extracted to internal `canonical-digest`;
+  containment digests reuse it without changing their bytes. No second algorithm or context owner.
+- **NB-R2:** real SQLite Task creation → continuation preparation → admission → guarded start reaches
+  attempt 1 with no prior history and issues authority. A same-Task rerun after FAILED/SUCCEEDED starts
+  attempt 2 through the existing generic lifecycle but is rejected by C2A.
+- **NB-R3:** history is read while STARTED and status is checked again afterward. A focused real-SQLite
+  test attempts guarded start during the history read and observes `UNRESOLVED_STARTED_RUN`.
+  This is a point-in-time validation under existing lifecycle guarantees, not a new transaction/lock.
+- `ContinuationProviderRoutingService.execute` accepts an optional C2A `localContinuity` selection/plan
+  for validation with a configured canonical issuer. It validates before availability probes, then
+  returns `PRE_DISPATCH_FAILED` / `NOT_DISPATCHED` even for valid authority because C2C preparation is
+  unavailable. The supplied plan is comparison material only, never dispatched by this entry. No app
+  activation/wiring, provider execution, network action, containment preparation, or production trust.
+
+R3-B3 production trust anchor/verifier/capability issuer remain NOT IMPLEMENTED; production trust stays
+FAIL CLOSED. Historical R3-B1 APIs and global Stage2B attempt/hop constants are unchanged. C2B/C2C are
+NOT STARTED; Kind B remains unsupported/DENY; Kind C and R3-C-Rz remain NOT AUTHORIZED. Carry forward the
+upstream IntentClassifier unmatched-text GENERAL_CHAT default as a pre-production risk; C2A neither
+reclassifies text nor changes taxonomy. No production readiness or runtime feasibility is claimed.
+
 ### R3-C — task definition (superseded by the R3-C1 implementation entry below) (2026-09-27)
 
 The R3-C bounded task definition and its blocking remediation are recorded in `DECISIONS.md`. Current
