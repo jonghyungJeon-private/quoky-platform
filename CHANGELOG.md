@@ -5,6 +5,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2 architecture / entry remediation (docs only) — 2026-09-28
+
+- Add the "ADR-0090 amendment (remediation)" to `DECISIONS.md`, correcting the R3-C2 architecture to ACTUAL
+  code ownership per accepted CHANGES_REQUIRED blockers B-1..B-5 and cleanups N-1..N-7 (facts confirmed by
+  reading source). **B-1** the existing R3-B1 `SoleProviderSelection` (public
+  `assertExactSoleProviderSelection`; binds only `providerId`) is NOT sufficient authority — define a NEW
+  process-local issued `BoundLocalContinuitySelection` binding admitted `providerId` + R3-C1 admission
+  provenance + Stage2B composite `configurationDigest` + `taskRunId/executionId` + `RoutingContextDigest` +
+  canonical `capability`, minted only after the issuer invokes canonical `LocalContinuityAdmission.admit(...)`
+  (process-local, not restart-valid). **B-2** no `routingContextRef` exists — define `RoutingContextDigest`
+  as a domain-separated `sha256Canonical` over all ten `RoutingContext` fields, issuer-re-derived from
+  `continuationRoutingContext(...)`. **B-3** `TaskRun` exists only after `ContinuationExecutionAdmissionService`
+  / `TaskManager.guardedStartRun`; `executionId === taskRunId === TaskRun.id`; exact START-first ordering.
+  **B-4** name real enforcement owners — `ContinuationProviderRoutingService.execute`,
+  `ProviderRoutingGateway.execute` (`MAX_PROVIDER_ATTEMPTS=2`/`MAX_ADDITIONAL_PROVIDER_HOPS=1`), and
+  `ContinuationExecutionAdmissionService`/`guardedStartRun`; C2A implements attempt-1/zero-hop/PRIMARY_ONLY
+  at those owners (circular pre-existence rule removed). **B-5** authoritative workload =
+  stored `Task.intent.capability` → boundTaskFacts → `TaskRun.capability` (no `IntentResolver` step);
+  caller/model labels ignored. Cleanups: N-1 correct `CURRENT_STATE.md` R3-C1 to CLOSED + DELIVERED (PR #87
+  merged), N-2 bound config identity = Stage2B composite `configurationDigest` (not
+  `ContinuationProviderRoutingConfiguration.configurationDigest`), N-3 C2B after C2A, N-4 runtime feasibility
+  criteria, N-5 four-layer production-trust separation, N-6 C2A exit tests, N-7 `IntentClassifier`
+  `GENERAL_CHAT` default recorded as a pre-production gate. The prior "R3-C2 architecture / entry definition"
+  amendment is retained as history and superseded where it conflicts. Documentation only: no code, runtime,
+  provider, network, DB/schema, aggregate/repository, approval/security owner, or new `RoutingFailureCode`.
+  One additional remediation commit on parent `c55ff623` (reviewed commit not amended). ADR-0090 remains
+  Proposed; independent Architecture Review pending before Push/PR/Merge. R3-C2 and R3-C-Rz remain NOT
+  AUTHORIZED.
+
 ## R3-C2 architecture / entry definition (docs only) — 2026-09-27
 
 - Add the ADR-0090 amendment "R3-C2 architecture / entry definition" to `DECISIONS.md`: the security/trust
