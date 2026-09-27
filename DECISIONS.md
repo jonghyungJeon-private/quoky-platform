@@ -8583,3 +8583,429 @@ production-ineligible; (G) continuation-bound STARTED generic terminalization re
 serializable provenance metadata is explicitly distinguished from authenticated production provenance;
 (I) no production runtime/verifier/capability issuer is introduced; (J) no R3-C/runtime/network/provider
 path becomes reachable. Non-blocking N-1..N-3 and existing carry-forwards remain deferred.
+
+## ADR-0090 — Quoky Platform Intent and Provider Fallback Contract
+
+- **Status:** Proposed — architecture draft only; independent Architecture Review and Product Owner
+  ratification pending. This record grants no implementation, activation, or execution authority.
+- **Date:** 2026-09-27
+- **Audit base:** `fc85bbf3a5048b974fdd523c6714d7771374dea0` (R3-B3 delivered).
+- **Scope:** One proposed contract extending the direction of ADR-0064/0072/0089; no implementation,
+  new persistence schema, approval owner, or change to the active Architecture Constitution.
+
+### Context
+
+Quoky Platform needs workload-sensitive inference selection before R3-C. Cloud inference is the proposed
+normal primary service; contained local inference is an on-demand continuity option for eligible work.
+Local-first ownership of memory, work, and policy does not require local inference for every request.
+Neither provider availability nor successful containment proves suitability or grants action authority.
+
+The code at the audit base provides constraints, not a completed implementation of this proposal:
+
+- [Architecture Constitution](ARCHITECTURE.md), §§3/5/7/8/10/12, fixes inward dependencies, data-driven
+  selection, provider-neutral Core, plan-scoped approval, and no agent runtime.
+- [IntentClassifier](packages/core/src/application/intent-classifier.ts) is deterministic today;
+  [IntentResolver](packages/core/src/application/intent-resolver.ts) maps classified execution intents.
+- ADR-0064 owns `RoutingPolicyEngine → ProviderSelectionDecision → ProviderExecutionPlanner →
+  ProviderRoutingGateway`. Its [contracts](packages/core/src/application/provider-routing-contracts.ts)
+  already express reliability floors, locality, context, tools, immutable policy and registry identity.
+  The [planner](packages/core/src/application/provider-execution-plan.ts) permits at most two attempts,
+  with one mutually exclusive operational fallback or semantic escalation; no hidden retries or reranking.
+- ADR-0072 and [ConnectorProvider](packages/core/src/ports/connector-provider.port.ts) own read-only
+  retrieval. [ApprovalRequest](packages/core/src/domain/approval.ts) belongs to Approval and references
+  the action ExecutionPlan; it is not the provider execution plan.
+- ADR-0089/R3 requires static eligibility, `PRIMARY_ONLY`, exact sole selection, and prepared containment.
+  R3-B3 rejects self-declared production trust. Its contract is
+  `CONTRACT_DEFINED_BUT_PRODUCTION_TRUST_ANCHOR_DEFERRED`, not restart-valid production authenticity.
+
+These boundaries remain effective while this ADR is Proposed. Existing historical implementation-status
+paragraphs are not rewritten by this draft. No workload expansion or new caller is enabled by its text.
+
+### Pattern Watch findings
+
+The following are the Product Owner-supplied completed Pattern Watch inputs, used as design patterns.
+They are not newly verified claims about third-party implementations or instructions to install them;
+no external research, network execution, or inference is part of this architecture task.
+
+| Disposition | Input | Application to this proposal |
+|---|---|---|
+| ADOPT | Ollaya | Small typed System-1 intent decision, separate from generation |
+| ADOPT | OpenClaw | Failure-specific fallback; strict exact selection; no fallback for every error |
+| ADOPT | Muse | Security/control domain separate from isolated execution cell |
+| ADOPT | Dify | Deterministic branches stay deterministic |
+| ADOPT | n8n | External mutation and human approval are separate concerns |
+| ADOPT | LangGraph | Explicit conditional transitions; no new graph runtime |
+| ADAPT | Buzz | Principal and canonical audit correlation, without a new event platform |
+| ADAPT | Grok Bot | Future handoff/background status UX; no shared credential-rich worker |
+| ADAPT | Open WebUI | Lightweight decision engine separate from primary inference |
+| ADAPT | LibreChat | Declarative capability/model policy using existing typed configuration |
+| ADAPT | AnythingLLM | Reviewed workspace/workload overrides that cannot weaken mandatory controls |
+| REJECT | Cross-pattern shortcuts | Universal Cloud-to-local fallback, automatic local coding, model-granted authority, model-owned connector credentials, always-warm large models |
+
+### Decision
+
+Adopt the following as the proposed target contract, subject to review and ratification. Separate
+classification, deterministic policy, provider selection, action authorization, and runtime preparation.
+Extend existing owners in a future bounded slice; do not create a second router, approval system, or
+generic agent framework. Sketch names below are conceptual values, not implemented exports or new enums.
+
+#### 1. Layered architecture and control precedence
+
+```text
+Trusted input + current canonical state
+  → L0 Deterministic Control Guard
+      explicit protocol/command, approval state, security, lifecycle/status, system state
+      → existing control handler OR deny/pending result OR semantic admission
+  → L1 IntentDecisionEngine (bounded System-1 classification only)
+  → L2 Deterministic capability / quality / action-scope policy
+      → bounded connector retrieval when required and permitted
+      → provider-neutral context and eligibility requirements
+  → L3 existing RoutingPolicyEngine → SelectionDecision → ExecutionPlanner → Gateway
+
+Any external action → existing action plan → RiskPolicy / ApprovalPolicy / ApprovalManager
+                    → effect-time authorized action capability
+Any contained local execution → eligibility → PRIMARY_ONLY / exact sole selection
+                             → containment preparation / production trust checks
+                             → Gateway dispatch → secure terminalization
+```
+
+L0 can complete a control/status request without a model. An approval-looking message is interpreted
+against the existing exact plan/approval state; it cannot become an approval merely because L1 labels it
+so. Pending/denied/stale approval, cancellation, invalid lifecycle, and security constraints cannot be
+overridden by semantic classification. Effect-time checks remain mandatory after these early guards.
+Retrieved text, model output, and quoted commands are data, never trusted control messages.
+
+Propose a narrow `IntentDecisionEngine` port and DI token under Core ports only in a later approved
+implementation. An Ollaya adapter would implement that port, not `AiProvider`; generation still uses
+`AiProvider`. Composition root alone binds concrete engines. Core never branches on Ollaya/model ids.
+L1 receives bounded input and non-secret state cues, and returns only a schema-validated decision:
+
+```text
+IntentDecision = {
+  intentFamily, workloadKind,
+  confidence: finite number in [0, 1],
+  ambiguity: CLEAR | NEEDS_CLARIFICATION,
+  requiredCapabilities: bounded advisory set
+}
+```
+
+L2 derives the authoritative capability set from trusted command/state and the reviewed taxonomy; it
+never grants a capability because the model requested it. Invalid family/workload combinations,
+unknown values, conflicting control facts, low confidence, or ambiguity yield clarification/defer before
+selection; they never silently become general conversation or low-risk work. Confidence thresholds and
+engine evaluation criteria are versioned policy to ratify before implementation, not invented scores.
+Unavailable/failed L1 can use an existing definitive deterministic route or request clarification; no
+automatic expensive reasoning-model substitute and no classifier retry loop is introduced.
+
+#### 2. Intent and workload taxonomy
+
+Use a bounded discriminated family/workload pair, not a single expanding routing enum. Names here do not
+add `Capability` values. A future explicit mapping to existing Intent/Capability must reject unsupported
+work instead of treating all code or external work as `GENERAL_CHAT`.
+
+| intentFamily | Allowed workloadKind | Meaning |
+|---|---|---|
+| CONTROL | COMMAND, APPROVAL, STATUS, LIFECYCLE | L0-owned control; bypass semantic routing |
+| CONVERSATION | GENERAL_CONVERSATION | Conversational generation |
+| KNOWLEDGE | KNOWLEDGE_RETRIEVAL, KNOWLEDGE_SUMMARIZATION, DOCUMENT_COMPARISON | Bounded sources and synthesis |
+| CODE | CODE_RETRIEVAL, CODE_IMPLEMENTATION, CODE_REFACTOR, CODE_REVIEW, DEBUGGING | Code work with distinct quality/risk |
+| DESIGN | ARCHITECTURE, SECURITY_REVIEW | High-assurance reasoning |
+| EXTERNAL | EXTERNAL_READ, EXTERNAL_MUTATION | Connector operation intent; never implicit model authority |
+
+DEBUGGING has a conservative policy default equivalent to complex debugging: suitable cloud required.
+Simple log/code retrieval may be a separately bounded CODE_RETRIEVAL step, but cannot reclassify an entire
+debugging or implementation request to obtain local eligibility. Compound requests use existing bounded
+planning where supported; otherwise clarify. Each action keeps its own approval boundary and the most
+restrictive applicable requirement; a summary step cannot authorize a later write. No workflow engine.
+
+#### 3. Capability and quality policy
+
+L2 is a pure deterministic derivation from validated intent, authoritative request/state, reviewed
+workspace policy, and action risk. Minimum conceptual output:
+
+```text
+WorkloadPolicy = {
+  policyRef,                         // immutable id/version/digest
+  requiredCapabilities,             // authoritative, not L1's advisory list
+  qualityFloor,                      // existing eligibility minima + validationProfile
+  localFallbackAllowed,
+  externalReadAllowed,
+  externalMutationAllowed
+}
+```
+
+`qualityFloor` reuses ADR-0064 minimum semantic/authority/continuity reliability, minimum context
+capacity, required tool/structured-output support, and an approved validation profile. It is an
+eligibility gate before ranking, not a cost/latency preference. Every primary, fallback, and escalation
+must satisfy it. Runtime validation still checks accepted output; static quality is not a correctness
+guarantee. No new parallel reasoningTier/codingTier scoring system or raw benchmark lookup is proposed.
+Unproven/unknown evidence cannot satisfy a required floor. Exact numeric thresholds/profile assignments
+need reviewed configuration; absent mappings fail closed rather than assuming a model is capable.
+
+The two external booleans are policy ceilings, not grants. Effective scope is the intersection of those
+ceilings, actor/project data access, configured connector capability, confidentiality restrictions, and
+the existing action approval at effect time. Provider choice changes none of those authorities.
+Confidentiality is a trusted input restricting permitted data destinations; cloud primary cannot override
+a local-only restriction. If local-only data requires cloud-only quality, return no eligible provider.
+
+Mandatory security and workload-local prohibitions dominate all settings. A reviewed workspace/workload
+override may strengthen floors or narrow locality/action scope; it cannot lower mandatory floors,
+enable local coding, or bypass approval. Defaults resolve deterministically before selection and are
+bound into reviewed configuration identity. No model-editable policy or live registry mutation.
+
+No eligible provider produces the existing no-selection outcome. At the application boundary, propose
+bounded dispositions: STOP for invalid/forbidden requests, DEFER for temporary eligible-provider
+unavailability, HUMAN_REQUIRED for ambiguity or an owner decision. These are user-facing dispositions,
+not new TaskRun statuses, approval states, retries, or scheduled resumptions. Human involvement can
+clarify/change the request or ratify policy; it cannot override containment or confer nonexistent quality.
+
+#### 4. Cloud primary and workload-specific local continuity
+
+This table is a proposed declarative policy baseline, not provider-id conditionals in Core. Cloud/local
+classification follows reviewed descriptor/locality data, not CLI process location or model name.
+Existing descriptor/policy gaps require a later bounded contract amendment, not inference from ids.
+
+| Workload | Normal path | Local continuity ceiling |
+|---|---|---|
+| GENERAL_CONVERSATION | Eligible cloud inference | Allowed only with floor, qualifying outage and containment |
+| KNOWLEDGE_RETRIEVAL / KNOWLEDGE_SUMMARIZATION | Deterministic retrieval, cloud synthesis if needed | Bounded retrieved-context synthesis may qualify |
+| DOCUMENT_COMPARISON | Bounded retrieval, cloud comparison | Disallowed by default; separately ratified low-risk profile needed |
+| CODE_RETRIEVAL | Deterministic local/connector retrieval | Bounded descriptive summary may qualify; no implementation/review |
+| CODE_IMPLEMENTATION / CODE_REFACTOR / CODE_REVIEW / DEBUGGING | Suitable cloud required | Disallowed |
+| ARCHITECTURE / SECURITY_REVIEW | Suitable cloud required | Disallowed |
+| EXTERNAL_READ | Authorized deterministic connector read | No model substitutes for retrieval; downstream synthesis inherits its own workload policy |
+| EXTERNAL_MUTATION | Existing approval-gated action capability | No local mutation fallback; drafting has a separate bounded workload |
+| CONTROL | Existing deterministic handler | No inference fallback |
+
+Allowed means eligible for consideration, not implemented or executable. Ollama is on-demand,
+last-resort local continuity after eligible cloud supply is unavailable for qualifying operational
+reasons. Unknown availability, cost preference, output dissatisfaction, or lack of a sufficiently capable
+cloud model alone does not authorize local execution. Read-only retrieval may complete without inference;
+connector failure must not be disguised as a model answer from nonexistent retrieved evidence.
+
+**Explicit selection semantics:** normal product routing remains capability-first and provider identity
+audit-only. A trusted, already-supported exact executable selection/configuration constraint means that
+exact binding or no execution; never silent substitution. This does not introduce a user-facing model
+picker or pin providers to Actor/Session/Task. Any future user selection surface needs a separate
+Constitution/product decision. Explicit selection cannot bypass quality, action policy, or containment.
+
+#### 5. Failure-reason-aware fallback and attempt ownership
+
+Reuse [RoutingFailureCode / ROUTING_FAILURE_MATRIX](packages/core/src/application/runtime-response-validation-contracts.ts)
+and [routing-failure-classifier](packages/core/src/application/routing-failure-classifier.ts). Adapters
+normalize typed operational facts; models do not classify their own authority to retry. The Gateway
+remains the sole execution branching owner. The following are proposed refinements, not declarations
+that missing codes already exist:
+
+| Failure/input | Proposed handling within the existing ownership |
+|---|---|
+| PROVIDER_UNAVAILABLE | Existing operational fallback candidate, subject to all policy/budget constraints |
+| QUOTA_EXHAUSTED, RATE_LIMIT, PROVIDER_OVERLOADED, BILLING_LIMIT | Future typed operational refinements; independently usable alternate billing/provider context required; no account hopping around a global limit |
+| PROVIDER_AUTH_REQUIRED | Current matrix permits operational fallback; only already-authorized alternate binding, no credential acquisition or security/policy bypass |
+| PROVIDER_TIMEOUT | Current attempt-level fallback permission remains subject to remaining deadline and known dispatch/effect semantics |
+| TERMINAL_TIMEOUT | Use existing DEADLINE_EXHAUSTED for total deadline expiry; terminal, no fallback or renewed deadline |
+| SECURITY_FAILURE / POLICY_REJECTION | Known safety failures retain existing codes; explicit policy refusal terminates, never retry on a less restrictive model |
+| CONTAINMENT_FAILURE / MODEL_DOWNLOAD_DETECTED | Existing safety behavior; no alternate execution; preserve phase-sensitive uncertainty |
+| INVALID_STATE / APPROVAL_REQUIRED | Existing lifecycle/approval owner stops before action; never a provider availability failure |
+| QUALITY_FLOOR_NOT_MET | Pre-selection exclusion/no eligible provider; never lower the floor to obtain fallback |
+| COST_BREAKER | Request/global budget terminal gate; no fallback that resets or circumvents the breaker |
+| INVALID_REQUEST: malformed application schema, invalid binding/config, unsupported request | Configuration/request failure; stop, no generic operational fallback |
+| INVALID_REQUEST: verified provider-specific unsupported feature/limit | Prefer static capability/context exclusion; runtime recovery requires an explicitly reviewed typed refinement and a preplanned compatible alternate, otherwise stop |
+| Unknown/coarse error | Do not infer quota, invalid request, or safe retry from arbitrary error strings; no newly authorized fallback |
+
+The current broad `PROVIDER_EXECUTION_FAILED`, `EMPTY_OUTPUT`, auth, and timeout permissions must not
+silently stand in for new failure reasons. Existing ordinary paths are unchanged by this draft. Before
+extending them, a reviewed refinement must prevent security/policy/application errors from being flattened
+into generic retryable errors, update the existing matrix/classifier and bounded audit projection together,
+and preserve known dispatch uncertainty. New detailed reasons are not currently supported by
+`AiFailureKind` or `continuation-routing-audit-v1`; do not stuff them into an existing strict DTO.
+
+Operational fallback and semantic escalation remain distinct. Existing semantic validation may select
+the plan's stronger escalation target, never treat poor output as an outage or authorize local downgrade.
+Safety outranks operational and semantic classification. A dispatched continuation timeout, uncertain
+spawn, containment failure, or model-integrity mismatch retains ADR-0089 UNRESOLVED handling; no replay
+or fresh request is generated to escape it. External action side effects are outside inference fallback.
+
+Preserve the immutable plan and maximum **primary + one additional attempt**. No adapter retry,
+same-provider retry, runtime reranking, repeated connector mutation, or third attempt. For example,
+Cloud A → Cloud B exhausts that budget; it must not then invoke Ollama. A local option cannot be appended
+after seeing a new error if it was not admissible in the reviewed execution contract.
+
+#### 6. Connector retrieval and action ownership
+
+For “find in Slack”, deterministic application capability resolves the authorized source/query and calls
+the existing read-only `ConnectorProvider`. A connector adapter owns service-specific credential use;
+configuration and secret provisioning stay in the control domain/composition boundary. The application
+bounds result count/bytes, scope, source references, and sensitive data before `ContextBuilder` budgeting
+and provider-specific context-file materialization. Retrieved data is untrusted content. Neither cloud
+nor local model owns credentials or gains broad tools from a retrieval request.
+
+For “announce in Slack”, classification leads to the existing action planning/risk/approval flow, then
+a separately approved narrow write capability at effect time. `ConnectorProvider` gains no write methods.
+Jira/Slack/Confluence are current read adapter families; Drive is a future adapter, not implemented here.
+Read access still requires configured scope; “read-only” is not permission to query every project.
+Local Ollama receives already bounded context; it does not autonomously fetch data, invoke a browser,
+or mutate external services. Changing providers cannot change destination, payload, requester, plan,
+or approval binding. Changes requiring different action scope return to existing planning/approval.
+
+#### 7. Runtime eligibility before preparation
+
+Propose a pure Application admission result, separate from production trust and action authorization:
+
+```text
+ExecutionEligibility = DENY { boundedReason }
+  | ELIGIBLE {
+      workloadPolicyRef, requiredCapabilities, qualityFloor,
+      localFallbackAllowed, failureEvidenceRef, containmentPolicyRef,
+      requestContextRef, selectionConfigurationRef
+    }
+```
+
+These are bounded immutable values/references, not a bearer token or persisted aggregate. Trusted
+application facts supply failure evidence, request identity and policy/configuration binding; a caller's
+`localFallbackAllowed: true` or model-produced eligibility object never authorizes preparation. Missing,
+stale, unknown, or mismatched facts deny admission. Runtime-specific types do not enter Core signatures.
+Resource capacity/cold-start deadline admission also precedes costly preparation (§9).
+
+Required sequence for the future R3 path:
+
+1. L0/L2 establish workload policy and local continuity eligibility without starting/probing a runtime.
+2. Reuse Stage2B policy/ranking semantics for static eligibility. Do not fabricate AVAILABLE evidence,
+   reuse host provider availability as contained evidence, or build a second ranking algorithm.
+3. Enforce `PRIMARY_ONLY` and exact sole eligible selection through the R3-B1 issuance boundary.
+4. Only then may an authorized future runtime owner prepare an isolated instance and check independent
+   channels, exact model/instance/request digests, and genuine production verification/capability issuance.
+5. Dispatch only through prepared contained execution and the existing Gateway; no raw-host bypass.
+   Preserve exact-run binding and evidence through secure success/failure terminalization.
+
+`CODE_IMPLEMENTATION` with `localFallbackAllowed = false` fails at step 1, even if a local model is loaded,
+fast, or perfectly contained. All production paths remain blocked today: R3-B3 has no production trust
+anchor, verifier issuer, or production capability issuer. JSON metadata, hashes, distinct provenance ids,
+and process-local WeakSet issuance do not establish restart-valid production authenticity.
+
+**Integration limit:** R3 is still PRIMARY_ONLY. This ADR does not connect a cloud Gateway fallback to
+the R3 receiver or relax that invariant. A future local-only continuity invocation may be considered when
+trusted pre-dispatch cloud-unavailability evidence exists, but requires separately ratified caller/admission
+integration and exact request authorization. After cloud dispatch, automatic cloud-to-R3 handoff is
+deferred. A new Task/TaskRun, background worker, or user-message synthesis must never reset the original
+hop budget. Multi-attempt cross-runtime fallback needs a separate ADR-0064/0089 integration decision.
+Thus the target continuity policy is defined here without claiming the production path already exists.
+
+#### 8. Agent identity and canonical audit
+
+Separate the authority principal, decision producer, execution provider, and reviewer. HUMAN/SYSTEM are
+principal categories; CODEX/CLAUDE/KIRO/LOCAL_MODEL/OTHER_PROVIDER are possible descriptive execution or
+agent labels, not roles that grant authority. Trusted configuration resolves identities; model text
+cannot declare who approved or reviewed its output. Concrete provider ids remain opaque and audit-only.
+
+| Question | Existing canonical anchor / proposed bounded correlation |
+|---|---|
+| Who requested/authorized? | Actor identity; ApprovalRequest.requestedBy/decidedBy and exact executionPlanRef |
+| Who decided? | Existing routing audit policy/configuration identities; future classifier engine/version and decision provenance as bounded reviewed projection |
+| Who executed? | TaskRun providerId for accepted output plus routing attempt evidence for failed/dispatched attempts; producer sourceId on command ExecutionReceipt |
+| Who handed off? | WorkHandoff from/to AgentProfile ids and ContinuationBinding; provenance only |
+| Who reviewed? | Existing independent review artifact/reference when available; UNKNOWN/unrecorded otherwise, never inferred from provider/profile |
+| Under what authorization? | Existing ApprovalRequest / ApprovalRef; ExecutionReceipt authorization references for COMMAND only |
+
+`Actor` is thin today; `AgentProfile` is configuration, not an authenticated principal or permission set.
+Do not claim authenticated multi-agent identity or persisted reviewer attribution already exists.
+TaskManager retains lifecycle/audit persistence ownership; Approval owns approval records. Routing and
+containment evidence remain separate strict contracts. This ADR adds no fields to those DTOs, no receipt
+kind, event bus, database schema, or persistence aggregate. A later bounded projection/version review must
+define missing correlations; arbitrary metadata is not a substitute. Missing audit evidence stays unknown.
+
+#### 9. Isolation and resource lifecycle
+
+Keep credentials, policy, approvals, audit authority, and runtime control outside an isolated execution
+cell. A future cell may contain a project workspace, bounded tools, optional separately authorized browser,
+local inference runtime, and ephemeral state. These are potential cell contents, not new R3 permissions:
+R3 inference containment remains no-network and cannot inherit connector credentials or broad host access.
+Browser/network-tool execution needs its own reviewed capability and isolation contract.
+
+Muse strengthens the case for this control/cell split but does not choose a runtime family. Preserve
+Option A (ephemeral no-network container, private Ollama daemon, read-only digest-pinned model volume,
+documented shared-kernel escape residual) versus Option C (dedicated no-NIC VM with explicitly reviewed
+host communication/mount channels). No claim that either prevents every privileged-host attack.
+Production host, actual isolation/egress verification, and family selection remain feasibility decisions.
+
+Default resource direction: cloud normal → local model cold/unloaded → eligible, authorized demand →
+prepare/load under resource policy → dispatch → completion/failure → explicit unload/teardown policy.
+The future adapter/runtime owner manages instance and memory residency; Core sees bounded admission,
+deadline, completion, and uncertainty facts. Policy must bound memory/concurrency per project and globally,
+startup budget within the total request deadline, cancellation handling, and maximum residency/teardown
+time. If capacity or cold-start budget is insufficient, defer/deny before loading; do not start a worker
+queue or keep a large model warm implicitly. Initial direction is no cross-project live-instance reuse;
+any sharing requires separately reviewed isolation and resource accounting. Disk model retention does
+not imply memory residency. Measurements, capacity numbers, and unload success evidence are deferred.
+
+Loading must not be mislabeled as readiness: ADR-0089 allows only non-inference readiness before Gateway
+dispatch. Any load operation that generates tokens counts as inference and needs the proper dispatch
+boundary; pre-warm inference is separately gated. Expiry, crash, or teardown failure never erases
+dispatch/evidence uncertainty or authorizes a second execution.
+
+### Architecture invariants and R3-C entry criteria
+
+The target preserves inward dependencies, narrow ports/composition-root wiring, CLI-only v1 generation,
+provider-independent policy, Quoky Platform memory/context ownership, and Resource-input/Artifact-output
+separation. No provider pinning, new approval owner, implicit event workflow, or agent runtime.
+Classification grants no authority; quality precedes ranking; eligibility precedes runtime preparation;
+secure terminalization and R3-B1/B2/B3 non-forgeability/replay/evidence boundaries remain mandatory.
+Bound/no-evidence CANCELED policy and the other R3-B3 non-blocking findings remain carry-forward.
+
+R3-C means an eligible contained execution path, not “implement Ollama”. Entry requires all of:
+
+1. Independent Architecture Review and Product Owner ratification of the System-1/L0 boundary and
+   unambiguous intent-to-capability mapping direction.
+2. Ratified capability/quality policy, reviewed profile minima and uncertainty/clarification behavior;
+   no implementation may invent missing policy assignments.
+3. Ratified workload-local policy explicitly excluding coding/refactor/review/debugging/architecture/
+   security workloads by default and preserving mandatory exclusions under workspace overrides.
+4. Ratified failure refinements in the existing Stage2B ownership, preserving terminal/safety behavior,
+   immutable plans, one-hop budget, exact selection, and no policy-refusal bypass.
+5. Ratified connector read/action separation and existing exact-plan approval/effect-time ownership.
+6. Reviewed local admission integration before static eligibility, PRIMARY_ONLY/exact selection and
+   preparation; prove disallowed workloads cause zero runtime preparation. Post-dispatch cloud-to-R3
+   bridging is not an entry shortcut and remains deferred.
+7. Explicit respect for R3-B3's absent production trust anchor/issuers. Architecture ratification alone
+   cannot activate execution; genuine production trust and verification must be separately designed,
+   reviewed and established before any production path is reachable.
+8. Separate R3_CONTAINMENT_FEASIBILITY_UAT authorization/result and runtime-family/production-host
+   decision under ADR-0089; preserve existing feasibility gating for R3-C+. This document performs none.
+9. A bounded authorized R3-C task with resource/cold-start/isolation and audit validation criteria.
+   Runtime/provider/network/Live UAT approval remains exact-scope; no automatic implementation start.
+
+### Rejected alternatives
+
+- Universal Cloud A → Cloud B → Ollama chain, including hidden additional Tasks/runs to reset budgets.
+- Automatically using Ollama for coding, architecture, security review, or unresolved complex debugging.
+- Modeling Ollaya as a generation AiProvider, expensive always-on reasoning for classification, or
+  allowing model confidence/selection to decide security, approval, or mutation rights.
+- Duplicating Stage2B selection/failure orchestration, weakening quality to achieve availability,
+  provider-id switches in Core, or treating explicit selection as a soft preference.
+- Model-held connector credentials, broad local-model tools, shared credential-rich project workers,
+  or making an inference execution cell the approval/control domain.
+- Always-warm large local models, implicit pre-warm inference, runtime selection before eligibility,
+  or claiming serialization/hash integrity is authenticated production provenance.
+- New approval/security state machine, event platform, generic agent framework, or DB schema for this ADR.
+
+### Consequences and deferred decisions
+
+- **+** Intent, suitability, authority and containment have distinct owners and reviewable denial points.
+  Existing Stage2B and R3 mechanisms remain the execution foundation; eligible local continuity can be
+  designed without granting local coding or connector authority.
+- **−** Conservative ambiguity/quality rules can yield clarification or no service; cold starts can
+  exceed interactive budgets. Static profiles require maintained evidence. End-to-end cloud-to-contained
+  fallback is intentionally not delivered by this contract and cannot be enabled as a wiring shortcut.
+- **Deferred:** Ollaya evaluation/adapter and thresholds; exact profile assignments; missing typed
+  failure refinements and policy/audit shape extensions; authenticated agent/reviewer correlation;
+  connector write/Drive capabilities; cross-runtime fallback integration; production trust anchor and
+  issuers; Option A/C and production host; resource limits/performance measurements; model installation,
+  pre-warm, runtime/provider execution, R3-C/D/E, background workers and Live UAT.
+
+### V1 / V2
+
+`[NOW]` describes only the audited existing contracts and delivered R3-B3 guards. `[LATER]` covers the
+System-1 port/adapter, policy projections, admission integration and runtime/resource implementations
+proposed here. No `[RESERVE]` code seam is added by this documentation-only task. Ratification precedes
+bounded implementation; runtime feasibility/activation retain their separate gates. Stop after the
+local architecture commit for independent Architecture Review; no Push/PR/Merge before that review passes.
