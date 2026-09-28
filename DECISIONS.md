@@ -12076,3 +12076,526 @@ Architecture/decision record only. One local docs-only remediation commit on par
 `2c2c2fead90214709e8e8f33ae15bae746f1082b`; independent Architecture Re-review must pass before Push/PR/Merge.
 R3-C2B-I2 implementation, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; Kind B production admission remains
 DENY/unreachable until the marker invariant is implemented, reviewed, and delivered.
+
+## ADR-0090 amendment — R3-C2C architecture / task definition (Local Continuity Consumption / Exact Effect Binding)
+
+- **Status:** Proposed — architecture / task-definition only. Independent exact-HEAD Architecture Review
+  pending. Grants no implementation, activation, runtime, provider, network, secret, DB, or execution
+  authority. Production local-Provider effect remains fail-closed under R3-B3. Delivers no code.
+- **Date:** 2026-09-28
+- **Branch / base:** `kiro/r3c2c-local-continuity-consumption-architecture` from canonical main
+  `4e040913405585596b0a1f0c399a20a8b592a85a`. One local architecture commit; no Push/PR/Merge.
+- **Purpose:** define the canonical consumption boundary that turns an already-issued
+  `BoundLocalContinuitySelection` into EXACTLY ONE authorized local-continuity Provider effect, with the
+  security order **validate C2A authority → commit `DISPATCH_COMMITTED` → exact bound Provider effect**
+  (closing I2-1 NB-1).
+
+### 1. Source facts (post-I2-1, main `4e040913…`)
+
+- `ContinuationReceiverExecutionService.executeExplicitContinuation` current order:
+  `constrainedContinuation` (starts STARTED run) → `this.dispatchCommit.commit(startedRun.id, startedRun.id)`
+  (EARLY commit → `DISPATCH_COMMITTED`) → `receiver.receive(...)`. C2A `validate` runs LATER inside the
+  receiver → `ContinuationProviderRoutingService`, by which time `dispatchState === DISPATCH_COMMITTED`, so
+  the bound-selection re-read fails `INVALID_RUN`. Fail-closed today (no local-continuity effect succeeds),
+  but this ordering is exactly what C2C must invert.
+- `LocalContinuityAdmissionCoordinator.admit({ taskRunId, localProviderId })` is the canonical ADMISSION
+  owner: requires `PRE_DISPATCH` + attempt 1 + first-run history, runs Kind A / Kind B policy + C2B
+  validation, and returns `{ admitted, decision, soleSelection, continuityEvidenceExpiresAtMonoMs? }` (Kind B
+  only carries the expiry). It performs NO dispatch commit and NO Provider effect.
+- `ProviderDispatchCommitCoordinator.commit(taskRunId, executionId)` is the SOLE durable dispatch-commit owner
+  (guarded SQLite IMMEDIATE CAS `PRE_DISPATCH → DISPATCH_COMMITTED`; `taskRunId === executionId` required).
+- `BoundLocalContinuitySelectionIssuer.issue/validate` (C2A) is issuer-instance-local (WeakMap); `validate`
+  re-reads canonical facts + `dispatchState` and requires `PRE_DISPATCH`.
+- Containment artifacts: `createContainmentCandidateBinding({ selection, … })` derives `providerId` from the
+  issued `SoleProviderSelection` (never raw); `ContainmentCandidateBinding` / `VerifiedContainmentBinding` /
+  `PreparedContainmentExecution` are R3-B1/B3 artifacts; production trust remains FAIL CLOSED (R3-B3).
+- The generic gateway (`ProviderRoutingGateway.execute`) owns the multi-attempt loop with fallback/escalation
+  and is usable with non-TaskRun IDs.
+
+### 2. Current continuation order (the defect C2C closes)
+
+`start run → commit DISPATCH_COMMITTED → receiver.receive → (later) C2A validate` ⇒ C2A validate observes
+`DISPATCH_COMMITTED` ⇒ `INVALID_RUN`. C2C REQUIRES the inverse: `C2A validate → commit → effect`.
+
+### 3. C2C primary invariant
+
+For a `PRE_DISPATCH` continuation-bound TaskRun: authentic+valid C2A authority, still bound to the exact
+TaskRun / exact local Provider / RoutingContext+config+capability, (Kind B) still current, must be verified
+BEFORE a single durable `PRE_DISPATCH → DISPATCH_COMMITTED` guarded commit, and only AFTER the commit succeeds
+may the exact bound Provider effect begin. No retry/fallback/substitution inside normal C2C; after commit no
+old authority replays.
+
+### 4. Architecture options
+
+- **Option A — `ContinuationProviderRoutingService` owns validate→bind→commit→effect.** It already performs
+  C2A validation and owns continuation Provider routing, but it also maps generic Stage2B gateway outcomes
+  (fallback/escalation) and is a broad routing/audit surface; folding durable dispatch commit + exact-effect
+  binding into it widens a busy service and risks inheriting Stage2B fallback into the local-continuity
+  effect. REJECTED as the primary owner.
+- **Option B — NEW narrow `LocalContinuityConsumptionCoordinator` owns the ordered sequence; the continuation
+  path delegates to it.** SELECTED. It consumes the canonical `LocalContinuityAdmissionCoordinator` admitted
+  outcome + bound authority, performs the Kind B consumption-time expiry re-check, calls
+  `ProviderDispatchCommitCoordinator.commit`, and only then hands off exactly one bound Provider effect. Small
+  single-purpose security owner; reuses C2A validator and the dispatch coordinator; keeps Stage2B routing
+  untouched.
+- **Option C — receiver-level restructuring.** REJECTED as primary: the receiver family is broad (also serves
+  non-C2 continuation); embedding the C2C order there would entangle unrelated receiver semantics. The
+  receiver path instead DELEGATES to the Option B coordinator for the local-continuity effect.
+
+### 5. Selected owner & ownership/dependency direction
+
+**`LocalContinuityConsumptionCoordinator`** (new, narrow, application-layer) is the single C2C consumption
+owner. Dependency direction: it depends on the C2A issuer/validator instance, the
+`LocalContinuityAdmissionCoordinator` (or its admitted outcome), `ProviderDispatchCommitCoordinator`, the
+Provider registry/binding lookup, the shared `MonotonicClock`, and (when required) the containment
+prepared-execution capability. It does NOT own admission policy (LocalContinuityAdmission), durable state
+(TaskRunRepository), the dispatch-commit CAS (ProviderDispatchCommitCoordinator), or generic Provider
+execution (ProviderRoutingGateway). No owner absorbs another subsystem's authority.
+
+### 6. Remove early continuation commit (Decision 2)
+
+The current `ContinuationReceiverExecutionService` early `dispatchCommit.commit(...)` before `receiver.receive`
+MUST move to the C2C effect boundary AFTER C2A validation, for the local-continuity path. Receiver families
+must be classified so this does not remove dispatch protection from any other effect-capable path: the
+local-continuity effect is consumed via `LocalContinuityConsumptionCoordinator` (commit at its effect
+boundary); any ordinary non-C2 continuation Provider effect that currently relies on the early commit must
+retain an equivalent write-before-effect commit at ITS own effect boundary (implementation must preserve the
+I2-1 invariant for every INCLUDED path — see the I2 final inventory). No INCLUDED path may lose its
+write-before-effect guarantee.
+
+### 7. Exact authority input (Decision 3)
+
+C2C consumes the canonical admitted outcome: the issued `BoundLocalContinuitySelection` (bound TaskRun
+identity, exact `localProviderId`, `capability`, `RoutingContextDigest`, Stage2B composite
+`configurationDigest`, `evidenceKind` = `STATIC_INELIGIBILITY` | `TRUSTED_CURRENT_UNAVAILABILITY`, and — Kind
+B only — `continuityEvidenceExpiresAtMonoMs`). A bare `providerId` or bare `SoleProviderSelection` is NOT
+sufficient. C2C reuses the C2A binding; it invents no parallel authority.
+
+### 8. Validation→commit TOCTOU model (Decision 4)
+
+Selected model: the `LocalContinuityConsumptionCoordinator` performs the C2A `validate` and the dispatch
+commit ADJACENTLY, with the commit's guarded CAS on `dispatchState == PRE_DISPATCH` as the linearization
+point. Because the CAS re-verifies `PRE_DISPATCH` atomically and C2A `validate` re-reads canonical facts +
+`dispatchState`, a state change between validate and commit fails the CAS (no effect). No caller may assert
+"validation already happened": only the coordinator's own `validate → commit` sequence authorizes the effect.
+No standalone token is introduced (the CAS + bound authority already provide the trusted link); a validated
+outcome is consumed immediately and is never persisted or replayable.
+
+### 9. Kind A consumption
+
+`STATIC_INELIGIBILITY` has no dynamic expiry but still requires authentic C2A authority, exact TaskRun +
+Provider binding, `PRE_DISPATCH`, and a successful guarded consumption. No shortcut around C2C.
+
+### 10. Kind B expiry / consumption-time rule (Decision 5)
+
+Canonical consumption instant: Kind B `continuityEvidenceExpiresAtMonoMs` must be valid IMMEDIATELY BEFORE the
+guarded dispatch commit — the coordinator re-reads the SAME shared `MonotonicClock` right before calling
+`commit`; if `now >= expiresAtMonoMs`, no commit and no effect. An expired Kind B authority MUST NOT be
+durably consumed. After a successful commit, later expiry does NOT roll back the marker. Evidence is not
+required to remain valid for the entire Provider execution.
+
+### 11. Exact provider binding (Decision 6)
+
+The coordinator binds `BoundLocalContinuitySelection.providerId` (derived from the issued
+`SoleProviderSelection`) to the exact executable Provider binding via the existing registry/binding lookup,
+and that exact binding is the effect target. No post-validation substitution, no caller-selected provider id
+after validation, no "pick any local provider."
+
+### 12. Containment / PreparedContainmentExecution binding (Decision 8)
+
+The actual local Provider effect requires a canonical prepared capability
+(`PreparedContainmentExecution` / `VerifiedContainmentBinding`) bound to the SAME provider, TaskRun/execution
+identity, capability, and configuration/routing identity as the C2A authority (the existing
+`createContainmentCandidateBinding` already derives `providerId` from the issued `SoleProviderSelection`). C2C
+does NOT manufacture containment trust and local-provider selection never implies containment authorization.
+**Because R3-B3 leaves `PRODUCTION TRUST ANCHOR/VERIFIER ISSUER/CAPABILITY ISSUER = NOT IMPLEMENTED` and
+`PRODUCTION TRUST CHECK = FAIL CLOSED`, no real PRODUCTION contained local-Provider effect can execute; C2C is
+defined without enabling production effect.**
+
+### 13. ProviderRoutingGateway reuse / non-reuse (Decision 7)
+
+C2C local continuity is EXACTLY ONE provider, ONE normal effect attempt, no fallback/escalation. The generic
+`ProviderRoutingGateway.execute` owns a multi-attempt loop with fallback/escalation and is designed for
+ordinary routed execution. C2C therefore does NOT route the local-continuity effect through the generic
+gateway's fallback machinery; it invokes the exact single bound Provider effect through the narrow contained/
+local execution capability (§12). If a future implementation reuses gateway primitives, it MUST supply a
+one-binding / zero-fallback / zero-escalation plan and prove no second Provider can be attempted; otherwise it
+uses the narrower contained execution path. This avoids inheriting Stage2B bounded fallback into
+local-continuity.
+
+### 14. Dispatch commit point & first external effect boundary (Decision 9)
+
+Canonical order: (1) derive canonical TaskRun/routing facts; (2) validate C2A authority; (3) verify the exact
+executable Provider binding; (4) verify containment/prepared-execution requirements; (5) for Kind B, re-check
+`expiresAtMonoMs` on the shared monotonic clock; (6) call `ProviderDispatchCommitCoordinator.commit` (guarded
+CAS `PRE_DISPATCH → DISPATCH_COMMITTED`, DB COMMIT completes); (7) invoke the exact Provider effect. The FIRST
+external Provider effect is step 7; no Provider effect before it; no C2A validation is a prerequisite AFTER
+step 6 for the same effect.
+
+### 15. Commit failure / crash-before-effect / provider failure
+
+- **Commit failure/conflict:** no Provider effect, no fallback, no retry, no second provider, no normal
+  restart. Classify as a definite PRE-DISPATCH failure (not `ATTEMPT_UNRESOLVED`); exact classification
+  decided at implementation (I2-1 NB-2 carry-forward), not here.
+- **Crash after commit, before effect:** `dispatchState` stays `DISPATCH_COMMITTED`; no rollback/reset/auto
+  retry; recovery = R3-C-Rz only.
+- **Provider effect fails after commit:** `dispatchState` stays `DISPATCH_COMMITTED`; no rollback/retry;
+  recovery = R3-C-Rz only.
+
+### 16. Concurrent consumption
+
+Two concurrent C2C consumers of the same TaskRun → the guarded CAS yields exactly one winner → at most one
+Provider effect; the loser fails the CAS with no effect. (I2-1 NB-3: prefer a true child-process concurrency
+test in future.)
+
+### 17. Audit / failure classification (Decision 10 / Failure classes)
+
+Minimum bounded audit: TaskRun, bound `providerId`, locality, C2A `evidenceKind`, routing/config digest,
+dispatch-committed marker, Provider outcome/failure classification. Conceptual failure classes: authority
+invalid; authority expired; binding mismatch; containment not ready; PRE_DISPATCH-state invalid; dispatch
+commit conflict; storage unavailable; Provider effect failed. Audit is not authority; no parallel security
+owner; do not leak raw provider/storage errors as policy; reuse existing error types where sufficient.
+
+### 18. Public API (Decision 11)
+
+The C2C API consumes a bound canonical authority/execution object (the admitted outcome + bound selection),
+NOT independent caller-supplied values (no `executeLocal(providerId, taskRunId)` shape). No caller may swap
+provider, bypass C2A validation, claim `PRE_DISPATCH`, skip the dispatch commit, request fallback, or reset
+dispatch state. The coordinator is the internal security owner; only a narrow bound-authority-consuming entry
+is application-visible.
+
+### 19. Composition authenticity (Decision 12)
+
+Security-relevant instance identities: the same C2A issuer/validator instance, the same Provider registry,
+the same containment issuer, the same `MonotonicClock`, and the same `ProviderDispatchCommitCoordinator` must
+be shared in the canonical composition. C2A authority is issuer-instance-local (WeakMap), so an
+alternate/forged component injected into a public API cannot produce authority the canonical validator
+accepts (mismatched instance → `NOT_ISSUED`/`WRONG_ISSUER`). Use the lightest mechanism already consistent
+with C2A/C2B/B1 (issuer-instance WeakMap + shared composition); no new authenticity subsystem.
+
+### 20. Normal conversation paths non-impact (Decision 14)
+
+C2C is scoped to local-continuity consumption only. The already-delivered non-C2 paths are unchanged:
+conversation-runtime routed work turn, conversation-runtime TaskRun-bound direct fallback, no-Task fast path,
+code-generation-manager, and generic tools/harness. C2C does not turn all Provider execution into C2C.
+
+### 21. Generic save() NB-4 decision
+
+Assessment: `TaskRunRepository.save()` can insert a brand-new row with a caller-provided `PRE_DISPATCH` when
+no row exists; current callers (`completeRun`/`failRun`) operate on existing rows, and C2C consumes only a
+canonical STARTED/`PRE_DISPATCH` run derived from storage (never a caller-synthesized run). **Decision:** for
+C2C reachability there is no identified path where a C2C-reachable caller synthesizes a new `PRE_DISPATCH`
+TaskRun through generic `save()`, because C2C derives the run from canonical storage and the admission
+coordinator re-reads it. Therefore NB-4 is NOT a hard C2C prerequisite, but it IS carried forward as a
+recommended bounded repository-hardening slice (narrow `save()` insert semantics) BEFORE production Kind B
+reachability, to keep the boundary defensive. Not silently ignored; not expanded into I2-1.
+
+### 22. I1 no-await supersession (Decision 13)
+
+I1's "no await after coordinator result before mint" invariant is superseded (as recorded for I2-1): C2A
+issue re-reads canonical TaskRun state before mint and Kind B currentness is re-checked; C2C likewise
+performs a consumption-time re-read + Kind B expiry re-check before the guarded commit. No contradictory
+invariant remains.
+
+### 23. C2B-2 boundary
+
+C2B-2 (real trusted observation producer) remains NOT AUTHORIZED. C2C may consume
+`TRUSTED_CURRENT_UNAVAILABILITY` from the existing `TEST_FAKE` producer for architecture/test semantics only;
+it defines only the contract it expects from already-validated C2A authority. Production Kind B remains DENY
+until C2B-2 delivers the trusted observation producer. **Prerequisite before C2B-2 can be consumed in
+production:** the C2C consumption order (validate→commit→effect) must be implemented and reviewed, R3-B3
+production trust must be resolved, and (recommended) the NB-4 `save()` hardening completed.
+
+### 24. R3-C-Rz boundary
+
+R3-C-Rz remains NOT AUTHORIZED. C2C covers ONLY the first normal local-continuity effect for a `PRE_DISPATCH`
+TaskRun. `DISPATCH_COMMITTED` / `LEGACY_UNKNOWN` / prior-effect-uncertain / retry / resume / reconcile /
+failover → C2C DENY → future R3-C-Rz only. No retry policy is designed here.
+
+### 25. R3-B3 status (preserved verbatim)
+
+`PRODUCTION PROVENANCE CONTRACT = DEFINED`; `PRODUCTION TRUST ANCHOR`, `PRODUCTION VERIFIER ISSUER`,
+`PRODUCTION CAPABILITY ISSUER = NOT IMPLEMENTED`; `PRODUCTION TRUST CHECK = FAIL CLOSED`. C2C does not
+reinterpret dispatch commitment as production trust; a real production local-Provider effect still cannot
+execute under R3-B3.
+
+### 26. C2C state machine
+
+| # | Entry | Result |
+|---|---|---|
+| A | valid authority + PRE_DISPATCH + exact binding + commit success | exactly one Provider effect |
+| B | invalid C2A authority | no commit, no effect |
+| C | Kind B expired before consumption | no commit, no effect |
+| D | binding mismatch | no commit, no effect |
+| E | containment/prepared capability invalid | no commit, no effect |
+| F | concurrent consumer loses CAS | no effect |
+| G | commit success then crash before effect | DISPATCH_COMMITTED; no normal retry |
+| H | commit success then Provider failure | DISPATCH_COMMITTED; no normal retry |
+| I | DISPATCH_COMMITTED at entry | no validation/effect path capable of normal redispatch |
+| J | LEGACY_UNKNOWN at entry | no normal C2C |
+
+### 27. Future test contract
+
+Valid Kind A → commit once + exact bound provider effect once; invalid/stale/replayed authority → no commit/
+effect; Kind B valid at consumption → allowed in TEST_FAKE composition only; Kind B expired before commit →
+no commit/effect; provider/config/routing/containment binding mismatch → no commit/effect; dispatch CAS loser
+→ no effect; truly concurrent consumers → ≤1 effect; commit + crash-before-effect / commit + Provider throw →
+committed, no normal retry; exact local provider only; no fallback; no cloud before/after; old authority
+invalid after commit; same authority cannot execute twice; `DISPATCH_COMMITTED` / `LEGACY_UNKNOWN` entry
+denied; ordinary conversation Stage2B fallback / no-Task fast path / code-generation / tools-harness unchanged;
+production Kind B DENY without C2B-2; production trust fail-closed under R3-B3; no real Provider/network in
+architecture-validation tests.
+
+### 28. Future implementation decomposition
+
+Recommended single slice **R3-C2C-1** (canonical local-continuity consumption boundary): introduce
+`LocalContinuityConsumptionCoordinator`; move the early continuation commit to the C2C effect boundary after
+C2A validation (preserving write-before-effect on every INCLUDED path); Kind B consumption-time expiry
+re-check; exact provider/containment binding; durable dispatch commit at the actual effect boundary; exact
+sole-provider single-attempt execution; focused tests. No C2B-2 real producer; no production effect (R3-B3
+fail-closed). Implementation NOT AUTHORIZED.
+
+### 29. Entry / exit criteria
+
+Entry (before R3-C2C-1): selected owner + ownership boundaries (§5); early-commit removal plan preserving all
+INCLUDED write-before-effect paths (§6); exact authority input (§7); validate→commit TOCTOU model (§8); Kind A
+(§9) & Kind B consumption-time rule (§10); exact provider binding (§11); containment binding + R3-B3
+fail-closed (§12); gateway reuse/non-reuse decision (§13); dispatch commit point / first-effect boundary
+(§14); failure/crash/concurrency semantics (§15–17); public API (§18); composition authenticity (§19);
+non-impact on non-C2 paths (§20); NB-4 decision (§21); C2B-2 + R3-C-Rz boundaries (§23–24); state machine
+(§26); independent Architecture Review + ratification. Exit: this amendment records all of the above;
+DECISIONS/CURRENT_STATE/CHANGELOG updated; docs-only with clean `git diff --check`.
+
+### Approval boundary
+
+Architecture/decision record only. One local architecture commit; independent exact-HEAD Architecture Review
+must pass before Push/PR/Merge. No R3-C2C/C2B-2/R3-C-Rz implementation begins from this document; C2B-2, C2C
+implementation, and R3-C-Rz remain NOT AUTHORIZED; production Kind B and production local-Provider effect
+remain DENY/fail-closed.
+
+## ADR-0090 amendment (remediation) — R3-C2C corrected after Claude CHANGES_REQUIRED (B-1..B-3)
+
+- **Status:** Proposed — architecture / task-definition only. Supersedes the corrected claims of the
+  preceding "R3-C2C architecture / task definition" section (retained as history); where they conflict, THIS
+  remediation governs. Independent exact-HEAD Architecture Re-review pending. No implementation; no
+  schema/source/test change. Production local-Provider effect remains fail-closed under R3-B3.
+- **Date:** 2026-09-28
+- **Branch / parent:** `kiro/r3c2c-local-continuity-consumption-architecture`; one additional docs-only
+  remediation commit whose parent is the reviewed `b46e405f22e79f27bd2e781231116c332a5a97cf` (reviewed commit
+  NOT amended). Canonical main `4e040913405585596b0a1f0c399a20a8b592a85a`.
+- **Accepted blockers:** B-1 (early dispatch-commit relocation / coordinator entry unresolved), B-2 (exact
+  effect callable / binding model / containment binding unresolved), B-3 (validate→commit TOCTOU
+  underspecified).
+
+### RC2C-1. B-1 — finalized continuation entry flow (source-verified)
+
+Source facts (post-I2-1, main `4e040913…`): `ContinuationReceiverExecutionService.executeExplicitContinuation`
+does `constrainedContinuation` (start run) → `dispatchCommit.commit(startedRun.id, startedRun.id)` →
+`receiver.receive(...)`. Inside, `ContinuationProviderRoutingService.execute` has an `input.localContinuity`
+branch (≈L197-202) that, when an issuer is present, `await this.localContinuityIssuer.validate(...)` and then
+UNCONDITIONALLY returns `PRE_DISPATCH_FAILED` ("C2A stops here: C2C preparation is NOT implemented"); the
+ordinary branch continues to `isAvailable()` probe → `ProviderBindingRegistry` → `policyEngine.select` →
+gateway.
+
+**Final flow (mandatory):**
+
+- **Remove** the early `dispatchCommit.commit(...)` from
+  `ContinuationReceiverExecutionService.executeExplicitContinuation`. `receiver.receive(...)` remains the
+  branch entry.
+- Inside `ContinuationProviderRoutingService.execute`:
+  - **(A) ordinary / non-local-continuity branch** → resolve canonical ordinary provider/binding →
+    `ProviderDispatchCommitCoordinator.commit(...)` → DB COMMIT completes → `ProviderRoutingGateway.execute` /
+    Provider effect. No effect before the durable commit (preserves the I2-1 write-before-effect invariant on
+    this INCLUDED path).
+  - **(B) `input.localContinuity` branch** → delegate to `LocalContinuityConsumptionCoordinator.consume(...)`,
+    which performs: C2A validate → prepared/executable binding validation → Kind B final currentness check
+    (when applicable) → `ProviderDispatchCommitCoordinator.commit(...)` → durable `DISPATCH_COMMITTED` →
+    `PreparedContainmentExecution.execute(...)` → bounded outcome. No generic gateway fallback, no second
+    Provider, no retry.
+
+This is FINAL, not an implementation choice.
+
+**Who creates/passes `localContinuity` input (source-verified gap):** `apps/quoky/src/continuation/`
+`continuation-receiver-activation.ts` constructs `ContinuationProviderRoutingService` but NO application code
+passes `input.localContinuity` today (only tests do). Therefore the composition point that constructs and
+passes `input.localContinuity` (its `BoundLocalContinuitySelection` from the C2A
+`BoundLocalContinuitySelectionIssuer`, and its `PreparedContainmentExecution` from the containment
+prepare/issue path) is a **future application composition seam, not yet implemented** — named here as the
+**R3-C2C-1 continuation-composition seam** inside the `apps/quoky` continuation activation composition
+(the same owner that builds the `ContinuationProviderRoutingService`), which will supply the
+`localContinuity` input and wire the `LocalContinuityConsumptionCoordinator`. No "some caller will pass it";
+this seam is the exact named owner.
+
+### RC2C-2. B-2 — canonical effect callable, binding model, containment reality
+
+- **Canonical C2C effect callable:** `PreparedContainmentExecution.execute(input)` (input =
+  `ContainedExecutionInput { prompt }`, result `ContainedExecutionResult { text }`). `ProviderRoutingGateway`
+  is **NOT USED** for the C2C local-continuity effect (it owns a multi-attempt fallback/escalation loop). No
+  gateway-reuse alternative remains. Ordinary non-C2 Provider paths keep using `ProviderRoutingGateway` as
+  delivered.
+- **FAKE-only C2C-1:** the only issuer of a contained capability is `createFakeContainedExecutionCapability`
+  (`capabilityKind = 'FAKE'`); `requireProductionContainedCapability` ALWAYS fails closed
+  (`CAPABILITY_NOT_PRODUCTION_ELIGIBLE`) because no PRODUCTION issuer exists. Therefore **R3-C2C-1 =
+  NETWORK-FREE / TEST-ONLY** canonical consumption plumbing that executes ONLY with the FAKE contained
+  capability and MUST NOT enable real production/local Provider execution. Production reachability stays
+  closed until R3-B3 is resolved.
+- **Exact provider / binding model (pre-commit checks):** the canonical executable binding lookup uses the
+  existing **`ProviderBindingRegistry` / `ExecutableProviderBinding`** (constructed in
+  `ContinuationProviderRoutingService` from the registry snapshot + bindings). Before the dispatch commit the
+  C2C coordinator MUST require: `authority.providerId === prepared.bindingIdentity().providerId`;
+  `authority.taskRunId === prepared.executionContext.taskRunId`; `authority.taskRunId ===
+  prepared.executionContext.executionId` (C2A requires `executionId === taskRunId`); and
+  `prepared.providerBindingDigest ===` the canonical `ProviderBindingRegistry` binding digest for
+  `authority.providerId`.
+- **Provider binding authenticity:** the `ProviderBindingRegistry` instance is security-relevant canonical
+  composition. `PreparedContainmentExecution.bindingIdentity()` exposes
+  `{ providerId, providerBindingDigest, containmentBindingDigest, securityProfileDigest }`; because
+  `providerBindingDigest` is the Stage2B executable-binding digest carried through
+  `createContainmentCandidateBinding`, the pre-commit check `prepared.providerBindingDigest === registry
+  binding digest for authority.providerId` prevents "validate provider A → execute a different adapter/model/
+  binding version of the same providerId." This is the smallest binding check required in C2C.
+- **Capability / routing / config binding (corrected — no false containment claim):** containment artifacts
+  (`ContainmentCandidateBinding` / `VerifiedContainmentBinding` / `PreparedContainmentExecution`) do NOT carry
+  `capability`, `RoutingContextDigest`, or the Stage2B composite `configurationDigest`. The prior section's
+  wording that containment is "bound to capability, routing digest and Stage2B config" is WITHDRAWN. Final
+  combined binding rule: **C2A authority** binds `capability`, `RoutingContextDigest`, Stage2B composite
+  `configurationDigest`, evidence kind / expiry; **PreparedContainmentExecution** binds `providerId`,
+  `providerBindingDigest`, `taskRunId`/`executionId`, containment identity/provenance. The C2C coordinator
+  validates BOTH objects and requires their OVERLAPPING facts (`providerId`, `taskRunId`/`executionId`) to
+  match. No capability/routing/config fields are added to containment artifacts in this slice.
+
+### RC2C-3. B-3 — fact-by-fact TOCTOU model
+
+**Category A — immutable for the authority lifetime (process-local / frozen canonical instances):**
+`BoundLocalContinuitySelection` (frozen, issuer-instance-local WeakMap); the C2A issuer/validator identity;
+`ProviderRegistry` descriptors and `RoutingPolicyEngine` (frozen configuration); the canonical
+`ProviderBindingRegistry` instance / its immutable bindings; `VerifiedContainmentBinding` and
+`PreparedContainmentExecution` identity (WeakSet-registered, frozen); the containment issuer identity; the
+shared `MonotonicClock` instance. (Only facts actually frozen/process-local are listed; nothing overclaimed.)
+
+**Category B — checked by the guarded CAS (`commitProviderDispatchIfPreDispatch`):** TaskRun row exists;
+execution identity matches; `TaskRun.status === STARTED`; `dispatchState === PRE_DISPATCH`. The CAS does NOT
+verify: Task status RUNNING, capability, provider binding digest, routing digest, configuration digest,
+containment identity, issuer identity, or Kind B expiry — these are handled in Category C.
+
+**Category C — re-read / revalidate IMMEDIATELY BEFORE the atomic commit:** the C2C coordinator re-derives
+canonical facts and re-runs C2A `validate` (which re-reads Task status RUNNING, TaskRun identity, capability,
+`RoutingContextDigest`, composite `configurationDigest`, `PRE_DISPATCH`), re-resolves the canonical
+`ProviderBindingRegistry` binding for `authority.providerId` and requires
+`binding digest === prepared.providerBindingDigest`, re-verifies prepared containment identity + `providerId`
++ `taskRun`/`execution` identity + issuer authenticity, and for `TRUSTED_CURRENT_UNAVAILABILITY` reads the
+shared `MonotonicClock.nowMs()` and requires `now < authority.continuityEvidenceExpiresAtMonoMs`.
+
+**No await between final revalidation and commit:** after the last synchronous/canonical security checks
+(C2A validation, provider-binding-digest check, containment identity check, Kind B final clock read) there is
+NO intervening await; the next async operation is the atomic `ProviderDispatchCommitCoordinator.commit(...)`.
+"Immediately before commit" = last synchronous security checks → no intervening await → one atomic guarded
+commit call. The guarded CAS on `PRE_DISPATCH` is the linearization point.
+
+**Post-commit:** after `commit` returns success, C2C does NOT re-run C2A `PRE_DISPATCH` validation (the marker
+is now `DISPATCH_COMMITTED` by design — the committed transition IS the consumption); then
+`PreparedContainmentExecution.execute(...)` runs the exact bound FAKE contained effect.
+
+### RC2C-4. Kind A / Kind B consumption instant
+
+Kind A (`STATIC_INELIGIBILITY`): no expiry, but still requires authentic authority + exact bindings +
+`PRE_DISPATCH` + successful guarded consumption. Kind B canonical instant: the final shared-clock read
+immediately before the atomic dispatch commit; require `now < expiresAtMonoMs`; no unrelated await between
+the clock read and the commit. After commit, expiry may pass — the already-committed effect continues, no
+rollback/cancellation solely because evidence expires mid-effect.
+
+### RC2C-5. Commit failure / uncertain state (corrected)
+
+Two SEPARATE facts: (a) **Provider effect occurrence** — if the `commit` call throws before returning
+success, C2C does NOT start the effect, so "effect-not-started" is CERTAIN. (b) **Marker state** — for a
+generic storage exception, the marker state may be UNKNOWN and is decided by a canonical DB re-read. Do NOT
+label every storage exception "definitely PRE_DISPATCH." No auto-retry inside C2C.
+
+### RC2C-6. State machine additions (K/L/M)
+
+- **K — dispatch commit throws a generic storage exception:** effect NOT started (certain); marker state
+  UNKNOWN until a canonical DB re-read; no normal retry. Resolution: re-read DB — if `DISPATCH_COMMITTED` →
+  R3-C-Rz only; if still `PRE_DISPATCH` and the repository can prove the commit did not occur → classify a
+  bounded pre-dispatch failure, but no auto-retry inside C2C.
+- **L — Kind B valid at the final pre-commit clock read, commit succeeds, evidence expires during effect:**
+  effect continues; marker remains committed; no rollback/cancellation.
+- **M — provider/containment binding mismatch at final revalidation:** no commit; no effect.
+
+(Retains A–J from the prior section.)
+
+### RC2C-7. Public API
+
+Conceptual: `LocalContinuityConsumptionCoordinator.consume({ authority: BoundLocalContinuitySelection,
+preparedExecution: PreparedContainmentExecution, input: ContainedExecutionInput })` (exact naming to repo
+convention). The caller does NOT separately supply `providerId` / `taskRunId` / `capability` / routing digest
+/ config digest / expiry — all derived from `authority` + `preparedExecution`. The coordinator is internal/
+application-level; no generic public `executeLocal(providerId, taskRunId)`.
+
+### RC2C-8. Composition authenticity
+
+Security-relevant canonical shared instances: C2A issuer/validator (issuer-instance-local WeakMap);
+`ProviderRegistry` (frozen); `RoutingPolicyEngine` (frozen); `ProviderBindingRegistry` (canonical instance);
+containment issuer / `PreparedContainmentExecution` issuer (WeakSet-registered); `MonotonicClock` (shared
+instance); `ProviderDispatchCommitCoordinator` (sole CAS owner). C2A/containment/capability authenticity is
+issuer-instance-local (WeakMap/WeakSet); `ProviderRegistry`/`RoutingPolicyEngine`/bindings are frozen
+configuration. Rely on the existing canonical composition trust boundary; no heavyweight global attestation.
+
+### RC2C-9. Generic save() NB-4 (source proof), I1/I2 supersession, normal-path non-impact
+
+- **NB-4:** NOT a C2C-1 blocker. Source proof: `taskRuns.save` current callers are only
+  `TaskManager.completeRun` / `TaskManager.failRun` on existing runs; C2C re-derives TaskRun facts from
+  canonical storage and does not expose `save()` through its API. Carry forward `save()` insert-narrowing
+  hardening before broader production reachability.
+- **I1/I2 supersession:** I1's "no-await-before-mint" is superseded. Authoritative chain: C2A issue =
+  canonical state re-read + Kind B currentness; C2C consumption = final C2A validation + final currentness/
+  binding checks → no unrelated await → atomic dispatch commit → effect. No contradictory invariant remains.
+- **Normal-path non-impact:** conversation-runtime routed work turn, conversation direct work-turn fallback,
+  no-Task fast path, code-generation, tools/harness, and ordinary Stage2B fallback are unchanged. Only
+  continuation routing commit PLACEMENT is adjusted (ordinary continuation commit moves to its exact ordinary
+  effect boundary; `localContinuity` delegates to the C2C coordinator). No other Provider path becomes C2C.
+
+### RC2C-10. C2B-2 / R3-B3 / R3-C-Rz boundaries
+
+C2B-2 NOT AUTHORIZED — C2C-1 may test `TRUSTED_CURRENT_UNAVAILABILITY` with TEST_FAKE C2B evidence only;
+production Kind B DENY; no observation producer. R3-B3 preserved verbatim (`PRODUCTION PROVENANCE CONTRACT =
+DEFINED`; anchor/verifier/capability issuer NOT IMPLEMENTED; trust check FAIL CLOSED); R3-C2C-1 cannot enable
+a real production local-Provider effect (NETWORK-FREE / TEST-ONLY / FAKE contained capability). R3-C-Rz NOT
+AUTHORIZED — no retry/recovery/resume/failover; any committed or uncertain case → normal C2C DENY.
+
+### RC2C-11. R3-C2C-1 implementation decomposition (network-free / test-only)
+
+Scope: remove the receiver-level early continuation commit; ordinary continuation branch commits at its exact
+ordinary Provider effect boundary; `localContinuity` branch delegates to `LocalContinuityConsumptionCoordinator`;
+define the named `apps/quoky` continuation-composition seam that creates/passes `localContinuity`; C2A validate
+inside the coordinator; final provider-binding-digest check against `ProviderBindingRegistry`; final prepared
+containment identity check; Kind B final expiry check; no unrelated await; dispatch CAS;
+`PreparedContainmentExecution.execute` with the FAKE capability only; exact one provider / one attempt; no
+fallback; focused tests. Excludes: production containment capability, C2B-2 real observation producer, real
+Provider/network effect, R3-C-Rz, retry framework. Implementation NOT AUTHORIZED.
+
+### RC2C-12. Updated future test contract (additions)
+
+Ordinary continuation commit relocated immediately before the ordinary Provider effect; `localContinuity`
+branch does NOT use the ordinary early commit and delegates to `LocalContinuityConsumptionCoordinator`; the
+named composition seam creates/passes `localContinuity`; `authority.providerId` mismatch with prepared
+providerId → no commit/effect; authority TaskRun mismatch → no commit/effect; prepared `providerBindingDigest`
+mismatch with the canonical `ProviderBindingRegistry` binding → no commit/effect; capability/routing/config
+mismatch → C2A validation failure; containment authenticity failure → no commit/effect; Kind B expires before
+commit → no commit/effect; no await between final security checks and commit; CAS loser → no effect; commit
+generic storage exception → no effect + DB re-read determines marker state; Kind B expires after commit during
+effect → effect continues + marker committed; `PreparedContainmentExecution.execute` is the only C2C effect
+callable; `ProviderRoutingGateway` not invoked for C2C; exactly one FAKE contained effect; no fallback; no
+alternate local Provider; no cloud Provider; production contained capability request stays fail-closed; R3-B3
+unchanged; normal conversation paths + ordinary Stage2B fallback unchanged; no real network/provider in tests.
+
+### RC2C-13. Documentation status correction
+
+`CURRENT_STATE.md` R3-C2B-I2-1 corrected to CLOSED + DELIVERED (PR #95 merged, main
+`4e040913405585596b0a1f0c399a20a8b592a85a`) — not "IMPLEMENTED LOCALLY / REVIEW PENDING".
+
+### Approval boundary
+
+Architecture/decision record only. One local docs-only remediation commit on parent
+`b46e405f22e79f27bd2e781231116c332a5a97cf`; independent exact-HEAD Architecture Re-review must pass before
+Push/PR/Merge. R3-C2C implementation, C2B-2, and R3-C-Rz remain NOT AUTHORIZED; production Kind B and
+production local-Provider effect remain DENY/fail-closed.
