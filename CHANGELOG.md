@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-1 exact-set authority remediation (local) — 2026-09-28
+
+- Remove caller-supplied registry and policy engine from observation aggregate validation. Re-derive
+  provider membership, exact-set cardinality, and current composite configuration digest only from the
+  issuer-owned canonical dependencies.
+- Add regressions for fake caller engine/registry attempts to shrink `{a,b}` to `{a}` and for canonical
+  registry/policy changes after issuance. Kind B admission remains DENY.
+
 ## R3-C2B-1 trusted current-unavailability evidence (local implementation) — 2026-09-28
 
 - Add a network-free Core observation producer port, issuer-local immutable authority, bounded source/reason

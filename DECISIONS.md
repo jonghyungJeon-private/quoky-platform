@@ -10943,3 +10943,16 @@ NETWORK set and Stage2B composite configuration digest from canonical Task/first
 This implementation does not consume evidence in R3-C1/C2A: Kind B admission remains DENY. C2B-2,
 C2C, and R3-C-Rz are not authorized. R3-B3 production provenance is defined, while its production trust
 anchor, verifier issuer, and capability issuer remain unimplemented and the trust check remains fail closed.
+
+## ADR-0090 R3-C2B-1 implementation remediation — B-1 (2026-09-28)
+
+The exact-set aggregate validator no longer takes a caller-supplied registry or policy engine. At
+validation, it derives the controlling `eligibleNetworkProviderIds` and current Stage2B composite
+`configurationDigest` solely from the issuer's canonical registry, engine, and stored Task/TaskRun context.
+Caller-supplied objects cannot narrow the provider set or preserve a misleading digest. A change to the
+issuer-owned registry or policy since issuance returns `CONFIGURATION_MISMATCH` for issued authority.
+The valid `{a,b}` authority set still validates, while `{a}` alone is missing provider authority.
+This is a bounded implementation correction, not a new admission or production-observation decision.
+The test producer's self-declared source remains a C2B-2 carry-forward; backward-clock behavior remains
+intentionally fail closed. Kind B admission, C2B-2/C2C/R3-C-Rz, and R3-B3 production trust boundaries are
+unchanged.

@@ -128,8 +128,6 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     executionId: string,
     taskId: string,
     context: RoutingContext,
-    currentRegistry: ProviderRegistry = this.registry,
-    currentEngine: RoutingPolicyEngine = this.engine,
   ): Promise<TrustedCurrentUnavailabilityValidationResult> {
     try {
       // A clock read is mandatory on every validation, even when the authority set is empty.
@@ -141,9 +139,6 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
         return invalid('ROUTING_CONTEXT_MISMATCH');
       }
       const canonical = this.engine.staticEligibility(facts.context, this.registry.snapshot());
-      const current = currentEngine.staticEligibility(context, currentRegistry.snapshot());
-      if (canonical.configurationDigest !== current.configurationDigest) return invalid('CONFIGURATION_MISMATCH');
-      if (!this.kindBApplicable(canonical) || !this.kindBApplicable(current)) return invalid('PROVIDER_SET_MISMATCH');
       const now = this.readClock();
       const seen = new Set<ProviderId>();
       for (const authority of authorities) {
@@ -158,17 +153,18 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
         if (authority.routingContextDigest !== routingContextDigest(facts.context)) {
           return invalid('ROUTING_CONTEXT_MISMATCH');
         }
-        if (authority.configurationDigest !== current.configurationDigest) return invalid('CONFIGURATION_MISMATCH');
+        if (authority.configurationDigest !== canonical.configurationDigest) return invalid('CONFIGURATION_MISMATCH');
         const time = timingReason(authority, now);
         if (time) return invalid(time);
         if (seen.has(authority.providerId)) return invalid('DUPLICATE_PROVIDER_AUTHORITY');
         seen.add(authority.providerId);
-        if (!current.eligibleNetworkProviderIds.includes(authority.providerId)) {
+        if (!canonical.eligibleNetworkProviderIds.includes(authority.providerId)) {
           return invalid('EXTRA_PROVIDER_AUTHORITY');
         }
       }
-      if (seen.size < current.eligibleNetworkProviderIds.length) return invalid('MISSING_PROVIDER_AUTHORITY');
-      if (seen.size !== current.eligibleNetworkProviderIds.length) return invalid('PROVIDER_SET_MISMATCH');
+      if (!this.kindBApplicable(canonical)) return invalid('PROVIDER_SET_MISMATCH');
+      if (seen.size < canonical.eligibleNetworkProviderIds.length) return invalid('MISSING_PROVIDER_AUTHORITY');
+      if (seen.size !== canonical.eligibleNetworkProviderIds.length) return invalid('PROVIDER_SET_MISMATCH');
       return valid;
     } catch (error) {
       if (error instanceof TrustedCurrentUnavailabilityError) return invalid(error.reason);

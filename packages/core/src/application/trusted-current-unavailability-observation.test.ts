@@ -67,9 +67,8 @@ function fixture(descriptors: ProviderDescriptor[] = [descriptor('a')], policy =
   const policyEngine = engine(policy);
   const issuer = new Issuer(storage, providerRegistry, policyEngine, producer, clock);
   const issue = (id = 'a') => issuer.issue('run', providerId(id));
-  const validate = (authorities: readonly TrustedCurrentUnavailabilityObservation[],
-    currentRegistry = providerRegistry, currentEngine = policyEngine) =>
-    issuer.validate(authorities, 'run', 'task', context, currentRegistry, currentEngine);
+  const validate = (authorities: readonly TrustedCurrentUnavailabilityObservation[]) =>
+    issuer.validate(authorities, 'run', 'task', context);
   return { task, run, runs, storage, clock, producer, providerRegistry, policyEngine, issuer,
     issue, validate, setNow: (value: number) => { now = value; },
     setObserved: (value: number) => { observedAt = value; } };
@@ -162,23 +161,51 @@ describe('R3-C2B-1 trusted observation authority', () => {
     expect(await f.validate([a, b])).toEqual({ status: 'VALIDATED' });
     expect(await f.validate([a, a, b])).toEqual({ status: 'INVALID', reason: 'DUPLICATE_PROVIDER_AUTHORITY' });
     await expect(f.issue('disabled')).rejects.toMatchObject({ reason: 'PROVIDER_SET_MISMATCH' });
-    const expanded = registry(descriptor('a'), descriptor('b'), descriptor('ghost'));
-    expect(await f.validate([a, b], expanded)).toEqual({ status: 'INVALID', reason: 'CONFIGURATION_MISMATCH' });
     const g = fixture([descriptor('a'), descriptor('b'), descriptor('ghost')]);
     const ghost = await g.issue('ghost');
     expect(await g.validate([ghost])).toEqual({ status: 'INVALID', reason: 'MISSING_PROVIDER_AUTHORITY' });
     expect(await f.validate([a, b, ghost])).toEqual({ status: 'INVALID', reason: 'WRONG_ISSUER' });
   });
 
-  it('excludes incompatible clouds and rejects policy/config changes', async () => {
+  it('excludes incompatible clouds and rejects issuer-owned registry/policy changes', async () => {
     const strict = { ...basePolicy, eligibility: { minimumSemanticReliability: ReliabilityTier.HIGH } } as RoutingPolicy;
     const f = fixture([descriptor('a', true, ExecutionLocality.NETWORK, ReliabilityTier.HIGH),
       descriptor('b', true, ExecutionLocality.NETWORK, ReliabilityTier.STANDARD)], strict);
     const a = await f.issue();
     expect(await f.validate([a])).toEqual({ status: 'VALIDATED' });
     await expect(f.issue('b')).rejects.toMatchObject({ reason: 'PROVIDER_SET_MISMATCH' });
-    expect(await f.validate([a], f.providerRegistry, engine({ ...strict, version: 'v2' }))).toEqual({
+    Object.assign(f.issuer, { engine: engine({ ...strict, version: 'v2' }) });
+    expect(await f.validate([a])).toEqual({
       status: 'INVALID', reason: 'CONFIGURATION_MISMATCH' });
+    const g = fixture([descriptor('a'), descriptor('b')]);
+    const b = await g.issue('a');
+    Object.assign(g.issuer, { registry: registry(descriptor('a'), descriptor('b'), descriptor('ghost')) });
+    expect(await g.validate([b])).toEqual({ status: 'INVALID', reason: 'CONFIGURATION_MISMATCH' });
+  });
+
+  it('ignores a fake caller engine that shrinks canonical {a,b} to {a}', async () => {
+    const f = fixture([descriptor('a'), descriptor('b')]);
+    const a = await f.issue('a');
+    const canonical = f.policyEngine.staticEligibility(context, f.providerRegistry.snapshot());
+    const fakeEngine = { staticEligibility: vi.fn(() => ({ ...canonical, eligibleNetworkProviderIds: [providerId('a')] })) };
+    expect(f.issuer.validate.length).toBe(4);
+    const result = await Reflect.apply(f.issuer.validate, f.issuer,
+      [[a], 'run', 'task', context, f.providerRegistry, fakeEngine]);
+    expect(result).toEqual({ status: 'INVALID', reason: 'MISSING_PROVIDER_AUTHORITY' });
+    expect(fakeEngine.staticEligibility).not.toHaveBeenCalled();
+  });
+
+  it('ignores a fake caller registry that shrinks canonical {a,b} to {a}', async () => {
+    const f = fixture([descriptor('a'), descriptor('b')]);
+    const a = await f.issue('a');
+    const canonicalSnapshot = f.providerRegistry.snapshot();
+    const fakeRegistry = { snapshot: vi.fn(() => ({ ...canonicalSnapshot,
+      providers: canonicalSnapshot.providers.filter(entry => entry.providerId === providerId('a')) })) };
+    expect(f.issuer.validate.length).toBe(4);
+    const result = await Reflect.apply(f.issuer.validate, f.issuer,
+      [[a], 'run', 'task', context, fakeRegistry, f.policyEngine]);
+    expect(result).toEqual({ status: 'INVALID', reason: 'MISSING_PROVIDER_AUTHORITY' });
+    expect(fakeRegistry.snapshot).not.toHaveBeenCalled();
   });
 
   it('rejects empty sets for no policy, local-only, A1, A2 and incompatibility', async () => {

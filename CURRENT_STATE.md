@@ -21,6 +21,13 @@ refers to that variant. There is no production `TEST_FAKE` wiring. Actual Kind B
 admission remains **DENY**. C2B-2, C2C, and R3-C-Rz remain **NOT AUTHORIZED**; R3-B3 production trust
 remains **FAIL CLOSED**. The following architecture record is retained as historical context.
 
+**B-1 implementation remediation (local, re-review pending):** `validate(...)` no longer accepts
+caller-supplied registry or policy engine. Its controlling provider set and current Stage2B composite
+configuration digest come only from the issuer-owned registry and engine. A caller cannot shrink the
+canonical `{a,b}` set to `{a}` by passing a fake engine or registry. Issuer-owned configuration changes
+invalidate previously issued authority. The producer's self-declared source remains an NB-1 carry-forward
+for C2B-2; backward-clock failure remains intentionally fail closed.
+
 **Historical architecture/task-definition snapshot (superseded by the implementation status above).** Branch
 `codex/r3c2b-trusted-unavailability-observation-architecture` from canonical main
 `be9ba95853a1cfc47d33009a70d06b002ba80828` (after R3-C2A delivery PR #89 merged). `DECISIONS.md` carries the
