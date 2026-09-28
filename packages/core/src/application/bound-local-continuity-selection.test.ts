@@ -12,7 +12,7 @@ import { ProviderRoutingGateway } from './provider-routing-gateway';
 import { createDefaultValidationProfileRegistry } from './validation-profile-registry';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Capability, IntentType, RiskLevel, TaskStatus, TaskRunStatus, type Task, type TaskRun } from '../domain';
+import { Capability, IntentType, RiskLevel, TaskStatus, TaskRunStatus, ProviderDispatchState, type Task, type TaskRun } from '../domain';
 import {
   ProviderAvailability,
   AuthorityRequirement,
@@ -117,7 +117,7 @@ function fixture() {
   const task: Task = { id: 'task', status: TaskStatus.RUNNING, title: 'continue',
     intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'continue' },
     riskLevel: RiskLevel.LOW, context: { platform: 'test', channelId: 'channel', userId: 'user' }, createdAt: ts, updatedAt: ts };
-  const run: TaskRun = { id: 'run', taskId: task.id, status: TaskRunStatus.STARTED, attempt: 1,
+  const run: TaskRun = { id: 'run', taskId: task.id, status: TaskRunStatus.STARTED, dispatchState: ProviderDispatchState.PRE_DISPATCH, attempt: 1,
     capability: Capability.GENERAL_CHAT, artifactIds: [], startedAt: ts };
   const runs = [run];
   const storage = { tasks: { get: vi.fn(async () => task) }, taskRuns: {

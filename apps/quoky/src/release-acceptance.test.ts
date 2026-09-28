@@ -99,6 +99,7 @@ function acceptanceHarness() {
   let orchestratorRuns = 0;
   const approvalAnchors: unknown[] = [];
   const deps = {
+    dispatchCommit: { async commit() { return {} as TaskRun; } },
     actors: { async resolveFromContext() { return { id: 'actor-1', displayName: 'User', identities: [], createdAt: timestamp }; } },
     sessions: { async openForContext() { return session; }, async touch() { return session; } },
     memory,

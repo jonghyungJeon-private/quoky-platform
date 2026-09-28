@@ -1,4 +1,4 @@
-import { TaskRunStatus, TaskStatus } from '../domain';
+import { ProviderDispatchState, TaskRunStatus, TaskStatus } from '../domain';
 import type { StorageProvider } from '../ports';
 import { continuationRoutingContext } from './continuation-routing-context';
 import type { SoleProviderSelection } from './continuation-prepared-containment';
@@ -42,7 +42,8 @@ export class LocalContinuityAdmissionCoordinator {
     let facts;
     try {
       const run = await this.storage.taskRuns.get(input.taskRunId);
-      if (!run || run.id !== input.taskRunId || run.status !== TaskRunStatus.STARTED) return deny('POLICY');
+      if (!run || run.id !== input.taskRunId || run.status !== TaskRunStatus.STARTED
+        || run.dispatchState !== ProviderDispatchState.PRE_DISPATCH) return deny('POLICY');
       if (run.attempt !== 1) return deny('POLICY');
       const task = await this.storage.tasks.get(run.taskId);
       if (!task || task.id !== run.taskId || task.status !== TaskStatus.RUNNING
@@ -51,10 +52,11 @@ export class LocalContinuityAdmissionCoordinator {
       if (!context) return deny('POLICY');
       const history = await this.storage.taskRuns.listByTask(task.id);
       if (history.length !== 1 || history[0]?.id !== run.id || history[0]?.status !== TaskRunStatus.STARTED
-        || history[0]?.attempt !== 1) return deny('POLICY');
+        || history[0]?.attempt !== 1 || history[0]?.dispatchState !== ProviderDispatchState.PRE_DISPATCH) return deny('POLICY');
       const current = await this.storage.taskRuns.get(run.id);
       if (!current || current.status !== TaskRunStatus.STARTED || current.id !== run.id
-        || current.taskId !== task.id || current.attempt !== 1 || current.capability !== run.capability) return deny('POLICY');
+        || current.taskId !== task.id || current.attempt !== 1 || current.capability !== run.capability
+        || current.dispatchState !== ProviderDispatchState.PRE_DISPATCH) return deny('POLICY');
       const configurationDigest = this.engine.staticEligibility(context, this.registry.snapshot()).configurationDigest;
       facts = { taskId: task.id, context, configurationDigest, capability: task.intent.capability,
         priorProviderAttempt: Boolean(run.providerId || current.providerId) };

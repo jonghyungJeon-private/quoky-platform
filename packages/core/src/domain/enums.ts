@@ -31,6 +31,13 @@ export enum TaskRunStatus {
   CANCELED = 'CANCELED',
 }
 
+/** Durable boundary for the first normal Provider effect of a TaskRun. */
+export enum ProviderDispatchState {
+  PRE_DISPATCH = 'PRE_DISPATCH',
+  DISPATCH_COMMITTED = 'DISPATCH_COMMITTED',
+  LEGACY_UNKNOWN = 'LEGACY_UNKNOWN',
+}
+
 /**
  * Risk drives the approval gate.
  * LOW/MEDIUM may run automatically; HIGH/CRITICAL require explicit approval.

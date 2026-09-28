@@ -9,7 +9,7 @@ import { AgentProfileRegistry, agentProfileId, AI_PROVIDERS, AiProviderManager, 
   ApprovalPolicy, ApprovalStatus, Capability, CapabilityRouter, CONTINUATION_BINDING_REPOSITORY,
   CONTINUATION_RECEIVER, ContinuationExecutionEntryService, ContinuationExecutionService,
   ContinuationReceiverExecutionService, createWorkHandoff, executionPlanRef, ExecutionStatus, IntentType, RiskLevel,
-  RiskPolicy, STORAGE_PROVIDER, TaskManager, TaskRunStatus, TaskStatus, WorkHandoffConsumptionError,
+  RiskPolicy, STORAGE_PROVIDER, TaskManager, TaskRunStatus, ProviderDispatchState, TaskStatus, WorkHandoffConsumptionError,
   WorkHandoffConsumptionFailureCode, WorkHandoffContinuationService, WorkItemStatus } from '@quoky/core';
 import type { ContinuationExecutionRequestContext, ContinuationReceiverInput, ContinuationReceiverOutcome,
   ExecutionPlan } from '@quoky/core';
@@ -134,13 +134,15 @@ describe('M3E-6L isolated offline continuation activation acceptance', () => {
       expect(result.disposition).toBe('ATTEMPT_UNRESOLVED');
       if (result.disposition !== 'ATTEMPT_UNRESOLVED') throw new Error('expected unresolved');
       expect(result.taskRun).toBe(started);
-      expect(await f.storage.taskRuns.get(started.id)).toEqual(started);
+      expect(await f.storage.taskRuns.get(started.id)).toEqual({ ...started,
+        dispatchState: ProviderDispatchState.DISPATCH_COMMITTED });
       expect(f.complete).not.toHaveBeenCalled(); expect(f.fail).not.toHaveBeenCalled();
       expect(f.terminal).not.toHaveBeenCalled();
       expect(JSON.stringify(result)).not.toContain('RAW_RECEIVER_SENTINEL');
       await expect(f.execution.executeExplicitContinuation(f.request)).rejects.toMatchObject({ reason: 'UNRESOLVED_STARTED_RUN' });
       expect(f.receiver.receive).toHaveBeenCalledTimes(1);
-      expect(await f.storage.taskRuns.listByTask(f.task.id)).toEqual([started]);
+      expect(await f.storage.taskRuns.listByTask(f.task.id)).toEqual([{ ...started,
+        dispatchState: ProviderDispatchState.DISPATCH_COMMITTED }]);
       return;
     }
     expect(f.complete).not.toHaveBeenCalled();

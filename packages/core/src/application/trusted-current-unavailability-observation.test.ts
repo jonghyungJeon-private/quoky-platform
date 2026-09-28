@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { Capability, IntentType, RiskLevel, TaskRunStatus, TaskStatus, type Task, type TaskRun } from '../domain';
+import { Capability, IntentType, RiskLevel, TaskRunStatus, ProviderDispatchState, TaskStatus, type Task, type TaskRun } from '../domain';
 import { TrustedUnavailabilityObservationSource as Source, TrustedUnavailabilityReason as Reason } from '../ports';
 import type { CurrentUnavailabilityObservationProducer } from '../ports';
 import { continuationRoutingContext } from './continuation-routing-context';
@@ -49,7 +49,7 @@ function fixture(descriptors: ProviderDescriptor[] = [descriptor('a')], policy =
     intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1,
       requiresWork: true, summary: 'test' }, riskLevel: RiskLevel.LOW,
     context: { platform: 'test', channelId: 'channel', userId: 'user' }, createdAt: stamp, updatedAt: stamp };
-  const run: TaskRun = { id: 'run', taskId: 'task', status: TaskRunStatus.STARTED,
+  const run: TaskRun = { id: 'run', taskId: 'task', status: TaskRunStatus.STARTED, dispatchState: ProviderDispatchState.PRE_DISPATCH,
     capability: Capability.GENERAL_CHAT, attempt: 1, artifactIds: [], startedAt: stamp };
   const runs = [run];
   const storage = { tasks: { get: vi.fn(async () => task) }, taskRuns: {

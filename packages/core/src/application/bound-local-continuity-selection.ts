@@ -1,4 +1,4 @@
-import { TaskRunStatus, TaskStatus, type Capability } from '../domain';
+import { ProviderDispatchState, TaskRunStatus, TaskStatus, type Capability } from '../domain';
 import type { StorageProvider } from '../ports';
 import { continuationRoutingContext } from './continuation-routing-context';
 import { type LocalContinuityAdmissionDecision, type LocalContinuityEvidenceKind } from './local-continuity-admission';
@@ -78,7 +78,18 @@ export class BoundLocalContinuitySelectionIssuer {
       if (outcome.classification === 'INFRASTRUCTURE') reject('INFRASTRUCTURE_FAILURE');
       reject('ADMISSION_DENIED');
     }
-    // No await between the coordinator's admitted outcome and this authority mint.
+    // Re-read after admission: a concurrent dispatch commit invalidates issuance.
+    const beforeAdmission = facts;
+    try { facts = await this.canonicalFacts(taskRunId); }
+    catch (error) {
+      if (error instanceof BoundLocalContinuityError) throw error;
+      reject('INFRASTRUCTURE_FAILURE');
+    }
+    if (facts.taskId !== beforeAdmission.taskId
+      || routingContextDigest(facts.context) !== routingContextDigest(beforeAdmission.context)
+      || this.engine.staticEligibility(facts.context, this.registry.snapshot()).configurationDigest !== configurationDigest) {
+      reject('CONFIGURATION_MISMATCH');
+    }
     const { decision, soleSelection } = outcome;
     if (!decision.admitted || !soleSelection || decision.providerCandidate !== localProviderId
       || decision.configurationRef !== configurationDigest
@@ -153,7 +164,8 @@ export class BoundLocalContinuitySelectionIssuer {
   private async canonicalFacts(taskRunId: string): Promise<{ taskId: string; context: RoutingContext }> {
     if (typeof taskRunId !== 'string' || !taskRunId.trim()) reject('INVALID_RUN');
     const run = await this.storage.taskRuns.get(taskRunId);
-    if (!run || run.id !== taskRunId || run.status !== TaskRunStatus.STARTED) reject('INVALID_RUN');
+    if (!run || run.id !== taskRunId || run.status !== TaskRunStatus.STARTED
+      || run.dispatchState !== ProviderDispatchState.PRE_DISPATCH) reject('INVALID_RUN');
     // Snapshot identity before subsequent asynchronous reads; repository DTOs need not be immutable.
     const { taskId, capability, attempt } = run;
     if (attempt !== 1) reject('NOT_FIRST_RUN');
@@ -166,12 +178,14 @@ export class BoundLocalContinuitySelectionIssuer {
     const only = history[0];
     if (history.length !== 1 || !only || only.id !== taskRunId || only.taskId !== taskId
       || only.attempt !== 1) reject('NOT_FIRST_RUN');
-    if (only.status !== TaskRunStatus.STARTED || only.capability !== capability) reject('INVALID_RUN');
+    if (only.status !== TaskRunStatus.STARTED || only.capability !== capability
+      || only.dispatchState !== ProviderDispatchState.PRE_DISPATCH) reject('INVALID_RUN');
     // The guarded-start exclusion stabilizes history while this run remains STARTED. Recheck after
     // history so observed terminalization also fails closed; this is not a new lock/lifecycle owner.
     const current = await this.storage.taskRuns.get(taskRunId);
     if (!current || current.id !== taskRunId || current.taskId !== taskId || current.attempt !== 1
-      || current.status !== TaskRunStatus.STARTED || current.capability !== capability) reject('INVALID_RUN');
+      || current.status !== TaskRunStatus.STARTED || current.capability !== capability
+      || current.dispatchState !== ProviderDispatchState.PRE_DISPATCH) reject('INVALID_RUN');
     return { taskId, context };
   }
 }

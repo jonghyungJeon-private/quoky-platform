@@ -52,7 +52,7 @@ import type {
   WorkHandoff,
   WorkHandoffRepository,
 } from '@quoky/core';
-import { ApprovalStatus, GuardedTaskRunStartError, WorkItemStatus, Capability, TaskStatus, TaskRunStatus, newId, now, ResourceRef as DomainResourceRef, createWorkHandoff } from '@quoky/core';
+import { ApprovalStatus, GuardedTaskRunStartError, WorkItemStatus, Capability, TaskStatus, TaskRunStatus, ProviderDispatchState, newId, now, ResourceRef as DomainResourceRef, createWorkHandoff } from '@quoky/core';
 import {
   ContainmentEvidenceConflictError,
   CONTAINMENT_AUDIT_METADATA_KEY,
@@ -257,6 +257,42 @@ class SqliteTaskRepository extends JsonRepository<Task> implements TaskRepositor
 }
 
 class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRunRepository {
+  private decode(data: string): TaskRun {
+    const run = JSON.parse(data) as TaskRun;
+    if (!Object.values(ProviderDispatchState).includes(run.dispatchState)) {
+      run.dispatchState = typeof run.providerId === 'string' && run.providerId.length > 0
+        ? ProviderDispatchState.DISPATCH_COMMITTED : ProviderDispatchState.LEGACY_UNKNOWN;
+    }
+    return run;
+  }
+
+  override async get(id: Id): Promise<TaskRun | null> {
+    const row = this.db.prepare('SELECT data FROM task_runs WHERE id = ?').get(id) as Row | undefined;
+    return row ? this.decode(row.data) : null;
+  }
+
+  override async list(): Promise<TaskRun[]> {
+    const rows = this.db.prepare('SELECT data FROM task_runs').all() as Row[];
+    return rows.map(row => this.decode(row.data));
+  }
+
+  async commitProviderDispatchIfPreDispatch(taskRunId: Id, executionId: Id): Promise<TaskRun> {
+    return this.noContention(() => this.db.transaction(() => {
+      if (!taskRunId || taskRunId !== executionId) throw new Error('PROVIDER_DISPATCH_IDENTITY_MISMATCH');
+      const row = this.db.prepare('SELECT task_id, data FROM task_runs WHERE id = ?').get(taskRunId) as
+        (Row & { task_id: string }) | undefined;
+      if (!row) throw new Error('PROVIDER_DISPATCH_RUN_NOT_FOUND');
+      const run = this.decode(row.data);
+      if (run.id !== taskRunId || run.taskId !== row.task_id || run.status !== TaskRunStatus.STARTED
+        || run.dispatchState !== ProviderDispatchState.PRE_DISPATCH) {
+        throw new Error('PROVIDER_DISPATCH_NOT_PRE_DISPATCH');
+      }
+      const committed = { ...run, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED };
+      this.db.prepare('UPDATE task_runs SET data = ? WHERE id = ?').run(JSON.stringify(committed), taskRunId);
+      return committed;
+    }).immediate());
+  }
+
   private isBound(taskId: Id): boolean {
     return !!this.db.prepare('SELECT 1 FROM continuation_bindings WHERE task_id = ?').get(taskId);
   }
@@ -335,6 +371,7 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
     const attempt = (previous.attempt ?? 0) + 1;
     if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error('TASK_RUN_ATTEMPT_EXHAUSTED');
     const run: TaskRun = { id: newId(), taskId, attempt, status: TaskRunStatus.STARTED,
+      dispatchState: ProviderDispatchState.PRE_DISPATCH,
       capability, artifactIds: [], startedAt: now() };
     this.db.prepare('INSERT INTO task_runs (id, task_id, data) VALUES (?, ?, ?)')
       .run(run.id, run.taskId, JSON.stringify(run));
@@ -344,7 +381,15 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
   override async save(run: TaskRun): Promise<TaskRun> {
     return this.noContention(() => this.db.transaction(() => {
       const existing = this.db.prepare('SELECT data FROM task_runs WHERE id = ?').get(run.id) as Row | undefined;
-      const persisted = existing ? JSON.parse(existing.data) as TaskRun : null;
+      const persisted = existing ? this.decode(existing.data) : null;
+      if (persisted && run.dispatchState === ProviderDispatchState.DISPATCH_COMMITTED
+        && persisted.dispatchState !== ProviderDispatchState.DISPATCH_COMMITTED) {
+        throw new Error('PROVIDER_DISPATCH_GENERIC_SAVE_FORBIDDEN');
+      }
+      // Lifecycle callers may hold a pre-commit snapshot. Preserve the canonical current marker.
+      const saved: TaskRun = { ...run, dispatchState: persisted?.dispatchState
+        ?? (run.dispatchState === ProviderDispatchState.PRE_DISPATCH
+          ? ProviderDispatchState.PRE_DISPATCH : ProviderDispatchState.LEGACY_UNKNOWN) };
       // R3-B2: a containment-evidence-bearing STARTED row may terminalize ONLY through the secure API.
       // Inspect the CURRENT row, not the caller's evidence/taskId; even a stale snapshot must not bypass
       // this. Presence is conservative: any non-STARTED generic transition is rejected when evidence is
@@ -390,8 +435,8 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
       this.db.prepare(
         `INSERT INTO task_runs (id, task_id, data) VALUES (?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET task_id = excluded.task_id, data = excluded.data`,
-      ).run(run.id, run.taskId, JSON.stringify(run));
-      return run;
+      ).run(saved.id, saved.taskId, JSON.stringify(saved));
+      return saved;
     }).immediate());
   }
 
@@ -516,7 +561,7 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
   private loadStartedRunOrThrow(id: Id): TaskRun {
     const row = this.db.prepare('SELECT data FROM task_runs WHERE id = ?').get(id) as Row | undefined;
     if (!row) throw new ContainmentEvidenceConflictError('RUN_NOT_FOUND');
-    const run = JSON.parse(row.data) as TaskRun;
+    const run = this.decode(row.data);
     if (!this.isBound(run.taskId)) throw new ContainmentEvidenceConflictError('RUN_NOT_CONTINUATION_BOUND');
     if (run.status !== TaskRunStatus.STARTED) throw new ContainmentEvidenceConflictError('RUN_NOT_STARTED');
     return run;
@@ -556,7 +601,7 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
     const rows = this.db
       .prepare(`SELECT data FROM task_runs WHERE task_id = ? ORDER BY json_extract(data, '$.attempt')`)
       .all(taskId) as Row[];
-    return rows.map((r) => JSON.parse(r.data) as TaskRun);
+    return rows.map((r) => this.decode(r.data));
   }
 }
 

@@ -12,6 +12,7 @@ import {
   RiskLevel,
   SessionStatus,
   TaskRunStatus,
+  ProviderDispatchState,
   TaskStatus,
   WorkspaceChangeStatus,
 } from '../domain';
@@ -799,6 +800,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
   };
 
   const deps: ConversationRuntimeDeps = {
+    dispatchCommit: { async commit() { return {} as TaskRun; } },
     actors: { async resolveFromContext() { return ACTOR; } },
     sessions: {
       async openForContext() { return opts.session ?? sessionOf(); },
@@ -1101,9 +1103,9 @@ describe('ConversationRuntime', () => {
     expect(result.reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
   });
 
-  it('keeps the accepted ConversationRuntimeDeps count at the starting baseline of 31', () => {
+  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 32', () => {
     const { deps } = makeDeps();
-    expect(Object.keys(deps)).toHaveLength(31);
+    expect(Object.keys(deps)).toHaveLength(32);
     expect(Object.keys(deps)).not.toContain('risk');
     expect(Object.keys(deps)).toContain('workSurface');
   });
@@ -7046,6 +7048,7 @@ function makeTaskStorage(): { storage: StorageProvider; taskSaves: Task[]; runSa
           taskId: task.id,
           attempt,
           status: TaskRunStatus.STARTED,
+          dispatchState: ProviderDispatchState.PRE_DISPATCH,
           capability,
           artifactIds: [],
           startedAt: now(),
@@ -7074,6 +7077,55 @@ const workTurnHappyPathDeps = () => ({
   contextBuilder: { async build() { return {} as unknown as ContextBundle; } },
   promptComposer: { compose() { return {} as unknown as PromptSpec; } },
   promptRenderer: { render() { return {} as unknown as AiRequest; } },
+});
+
+describe('R3-C2B-I2-1 work-turn dispatch commitment', () => {
+  it.each([false, true])('routed branch commits before effect; commit failure=%s', async fails => {
+    const { storage } = makeTaskStorage();
+    const { deps: base } = makeDeps({ intent: intentOf(Capability.GENERAL_CHAT, IntentType.CHAT, true) });
+    let committed = false;
+    const execute = vi.fn(async () => {
+      expect(committed).toBe(true);
+      return routedResultOf(ProviderGatewayTerminalStatus.ACCEPTED);
+    });
+    const select = vi.fn(async () => { throw new Error('direct branch forbidden'); });
+    const commit = vi.fn(async (runId: string, executionId: string) => {
+      expect(runId).toBe(executionId);
+      if (fails) throw new Error('commit failed');
+      committed = true;
+      return {} as TaskRun;
+    });
+    const deps: ConversationRuntimeDeps = { ...base, ...workTurnHappyPathDeps(),
+      tasks: new TaskManager(storage), dispatchCommit: { commit },
+      runtimeProviderRouting: { execute }, router: { select } };
+    const result = await new ConversationRuntime(deps).handle(messageOf('라우팅 요청'));
+    expect(result.status).toBe(fails ? 'FAILED' : 'RESPONDED');
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(fails ? 0 : 1);
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('direct work branch commits before effect; commit failure=%s', async fails => {
+    const { storage } = makeTaskStorage();
+    const { deps: base } = makeDeps({ intent: intentOf(Capability.PROJECT_ANALYSIS, IntentType.PROJECT_ANALYSIS, true) });
+    let committed = false;
+    const effect = vi.fn(async () => {
+      expect(committed).toBe(true);
+      return { text: 'done', artifacts: [] };
+    });
+    const commit = vi.fn(async () => {
+      if (fails) throw new Error('commit failed');
+      committed = true;
+      return {} as TaskRun;
+    });
+    const deps: ConversationRuntimeDeps = { ...base, ...workTurnHappyPathDeps(),
+      tasks: new TaskManager(storage), dispatchCommit: { commit },
+      router: { async select() { return { id: 'fake', capabilities: [], isAvailable: async () => true, execute: effect }; } } };
+    const result = await new ConversationRuntime(deps).handle(messageOf('프로젝트 구조 분석해줘'));
+    expect(result.status).toBe(fails ? 'FAILED' : 'RESPONDED');
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(effect).toHaveBeenCalledTimes(fails ? 0 : 1);
+  });
 });
 
 function routedResultOf(status: ProviderGatewayTerminalStatus): RuntimeProviderRoutingResult {

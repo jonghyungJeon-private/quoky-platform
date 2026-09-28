@@ -5,6 +5,25 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2B-I2-1 — Canonical Prior-Dispatch Attempt Boundary (2026-09-28)
+
+**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** New `TaskRun` rows from both
+`taskRuns.start` and `guardedStart` persist `ProviderDispatchState.PRE_DISPATCH`. The SQLite JSON decoder
+maps missing historical state to `LEGACY_UNKNOWN`, or `DISPATCH_COMMITTED` when a historical provider ID
+proves association; it never infers `PRE_DISPATCH` from absence. The guarded repository operation uses an
+IMMEDIATE transaction and exact TaskRun/execution identity to commit `PRE_DISPATCH → DISPATCH_COMMITTED`
+once. `ProviderDispatchCommitCoordinator` is the sole application write point. Conversation work turns
+commit before either routed or direct Provider execution; continuation commits before receiver invocation.
+The routed and direct work-turn branches remain exclusive, and Stage2B's bounded fallback inside one gateway
+execution needs no second marker. A failed or duplicate commit prevents a new Provider effect. Crash or
+Provider failure after commit leaves the marker committed; normal retry/re-entry remains denied.
+
+Kind A, Kind B, C2A issue, and C2A validation require current `PRE_DISPATCH`; C2A authority minted before
+the commit cannot be replayed afterward. The TaskRun-free conversation fast path, CodeGeneration aggregate,
+and non-TaskRun tools/harness paths remain outside this boundary. Production Kind B is still **DENY** pending
+C2B-2. C2B-2, C2C, and R3-C-Rz remain **NOT AUTHORIZED**. R3-B3 production trust remains **FAIL CLOSED**.
+The earlier R3-C2B-I2 architecture and remediation paragraphs below are historical snapshots.
+
 ### R3-C2B-I2 — Canonical Prior-Dispatch Attempt Boundary (architecture / task definition) (2026-09-28)
 
 **ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
