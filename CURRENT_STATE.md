@@ -5,6 +5,36 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2B-I2 — Canonical Prior-Dispatch Attempt Boundary (architecture / task definition) (2026-09-28)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3c2b-i2-prior-dispatch-boundary-architecture` from canonical main
+`790a1e769a0fa637e44cce11921e6c2762bc0e7c`. `DECISIONS.md` carries the ADR-0090 amendment "R3-C2B-I2
+architecture / task definition (Canonical Prior-Dispatch Attempt Boundary)" closing the I1 NB-1 (and
+unifying NB-5) carry-forward: ONE canonical, durable, fail-closed answer to "has any Provider dispatch
+already been committed for this TaskRun?" Source-verified: the real dispatch path
+(`ContinuationReceiverExecutionService` → `receiver.receive(...)`) writes `TaskRun.providerId`/status only
+AFTER the Provider effect (via `terminalizePreservingSecurityEvidence`), so **providerId is post-effect and
+insufficient**; `ProviderExecutionAudit` is in-memory and `ContinuationRoutingAudit` is best-effort
+post-dispatch metadata; `ExecutionReceipt` is COMMAND-only/terminal. **Selected Option C:** an explicit
+durable `TaskRun` dispatch-commitment field (owned by `TaskRunRepository`), transitioned exactly once
+(`absent → DISPATCH_COMMITTED`) in a guarded transaction **before** the Provider effect, monotonic,
+restart-durable, storage-derived (never caller-asserted). Rejected A (post-effect providerId), B (in-memory/
+best-effort audit), D (new aggregate duplicates TaskRun ownership), E (containment post-evidence is
+post-dispatch / local-only). **Common Kind A + Kind B pre-dispatch invariant:** normal R3-C2 local continuity
+is available ONLY while the marker is ABSENT; PRESENT → Kind A (`STATIC_INELIGIBILITY`) DENY and Kind B
+(`TRUSTED_CURRENT_UNAVAILABILITY`) DENY (valid C2B evidence does not override). Write-before-effect: validate
+→ persist marker → only then Provider effect; marker write failure → no dispatch. C2A issue/validate (and
+future C2C consumption) re-check the marker ABSENT, making `BoundLocalContinuitySelection` effectively
+one-shot and preventing the mint→dispatch→reuse replay (no separate consumed flag). Crash after marker write →
+still dispatch-committed (recovery = R3-C-Rz). Marker MUST survive restart (not WeakMap/in-process). Requires
+a future `TaskRun` schema/migration (Option C) — documented as architecture-reviewed implementation scope,
+NOT implemented now. Decomposition: **I2A** (durable marker + guarded write) then **I2B** (admission/C2A
+read-side enforcement); both mandatory before Kind B reachability. C2B-2/C2C must not make Kind B
+production-reachable until the marker invariant is implemented, reviewed, and delivered. Docs-only: no source/
+schema/test/runtime/provider/network/secret/DB changes. ADR-0090 remains Proposed; Kind B remains DENY;
+R3-C2B-I2, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; R3-B3 production trust stays FAIL CLOSED.
+
 ### R3-C2B-I1 — Kind B Admission Integration (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** Architecture was ratified and delivered

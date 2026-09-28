@@ -11447,3 +11447,249 @@ carrying a provider audit ID is conservatively outside the pre-dispatch Kind B p
 
 There is no production observation producer: production Kind B admission remains DENY before C2B-2.
 This slice adds no C2C execution/containment, R3-C-Rz retry behavior, or R3-B3 production trust.
+
+## ADR-0090 amendment — R3-C2B-I2 architecture / task definition (Canonical Prior-Dispatch Attempt Boundary)
+
+- **Status:** Proposed — architecture / task-definition only. Independent Architecture Review pending. Grants
+  no implementation, activation, runtime, provider, network, secret, DB, schema, or execution authority. No
+  marker is implemented; no persistence/schema is changed here.
+- **Date:** 2026-09-28
+- **Branch / base:** `kiro/r3c2b-i2-prior-dispatch-boundary-architecture` from canonical main
+  `790a1e769a0fa637e44cce11921e6c2762bc0e7c`. One local architecture commit; no Push/PR/Merge.
+- **Why:** the R3-C2B-I1 review carry-forward NB-1 requires ONE canonical, durable, fail-closed answer to
+  "has any Provider dispatch already been committed/attempted for this TaskRun?" before Kind B becomes
+  production-reachable. It also unifies NB-5 (Kind A vs Kind B prior-attempt consistency).
+
+### 1. Current provider dispatch flow (source-verified)
+
+- Admission (Kind A/B) via `LocalContinuityAdmissionCoordinator` → C2A `BoundLocalContinuitySelection` mint →
+  `ContinuationReceiverExecutionService.executeExplicitContinuation` starts the run
+  (`constrainedContinuation` → `TaskManager` → `TaskRunRepository.guardedStart`) → calls
+  `receiver.receive(...)` (which drives the real Provider effect) → ONLY AFTER it returns does
+  `TaskManager.terminalizePreservingSecurityEvidence(...)` write `providerId` / terminal status.
+- `ProviderRoutingGateway.execute` runs the attempt loop and builds an IN-MEMORY `ProviderExecutionAudit`;
+  it is not persisted by the gateway. `ContinuationRoutingAudit` is a DTO persisted (if at all) only as
+  best-effort TaskRun `metadata` at terminalization.
+- The service comment is explicit: "A process crash may leave STARTED unresolved; no exactly-once external
+  effects, auto-recovery, replacement attempt or redispatch is claimed." There is NO durable pre-dispatch
+  marker today.
+
+### 2. Current persisted attempt signals
+
+`TaskRun.attempt` and `taskRuns.listByTask` history (guarded via `guardedStart`); `TaskRun.status`
+(STARTED→terminal); `TaskRun.providerId` (written POST-effect at terminalization); best-effort
+`ContinuationRoutingAudit` in `TaskRun.metadata` (post-dispatch); `ExecutionReceipt` (CAP-013,
+`executionKind = COMMAND` only, terminal `recordedAt`). None is a canonical write-before-effect Provider
+dispatch marker.
+
+### 3. Why providerId is INSUFFICIENT
+
+`TaskRun.providerId` is written by `terminalizePreservingSecurityEvidence` only AFTER `receiver.receive(...)`
+returns. Therefore: (a) it is not written before the Provider effect; (b) a STARTED attempt-1 run can carry
+routing/dispatch state while `providerId` is still absent (the exact Claude I1 reproduction); (c) a crash
+between dispatch and terminalization loses it. `providerId != canonical prior-dispatch authority`.
+
+### 4. Semantic definition of PROVIDER_DISPATCH_ATTEMPTED
+
+The marker means the system has IRREVERSIBLY COMMITTED to attempting a concrete Provider effect. It does NOT
+mean: routing context created, Provider selected, execution plan constructed, local candidate selected,
+`SoleProviderSelection` minted, C2A authority minted, or validation performed — those are PRE-DISPATCH
+preparation. State ladder: `SELECTED → PLANNED → PREPARED → DISPATCH_COMMITTED/ATTEMPTED → COMPLETED/FAILED`;
+only `DISPATCH_COMMITTED/ATTEMPTED` closes normal Kind A/Kind B admission. Once committed, the attempt counts
+even if the process crashes before `execute` returns, the Provider throws immediately, the network call never
+completes, or the outcome is unknown (intentionally fail-closed).
+
+### 5. Option analysis (against actual code)
+
+- **Option A — `TaskRun.providerId`.** REJECTED: written post-effect at terminalization (§3); not
+  write-before-effect; can be absent on a dispatched run; crash-lossy.
+- **Option B — existing routing/execution audit record.** REJECTED: `ProviderExecutionAudit` is in-memory;
+  `ContinuationRoutingAudit` is best-effort post-dispatch `metadata`; neither is persisted before the effect,
+  guaranteed on every path, or unambiguous between selection and dispatch. Diagnostic, not canonical security
+  state.
+- **Option C — explicit durable `TaskRun` dispatch-commitment field.** SELECTED. A canonical `TaskRun`-owned
+  field (e.g. `providerDispatchCommittedAt` / `dispatchState`), written in a guarded transaction BEFORE the
+  Provider effect, monotonic (absent→present, never reset), restart-durable. `TaskRun` is already the
+  canonical durable execution-attempt owner (guarded start, attempt ordinal, terminal status), so this reuses
+  the existing persistence owner with the lightest footprint. Requires a schema/migration — documented as
+  future architecture-reviewed implementation scope (§14); NOT implemented now.
+- **Option D — dedicated immutable `ProviderDispatchAttempt` record.** REJECTED (as default): a new
+  aggregate/repository duplicates `TaskRun`'s existing per-run attempt ownership; heavier schema/owner cost
+  than Option C for the same invariant. Reconsider only if a future concurrency requirement proves Option C's
+  single-row guard insufficient.
+- **Option E — containment / post-evidence marker.** REJECTED: R3-B containment/post-evidence appears AFTER
+  dispatch and applies to local contained execution only; the marker must cover ANY Provider dispatch
+  (NETWORK and LOCAL), so it cannot depend on future local containment.
+
+### 6. Selected marker design
+
+A canonical, durable, monotonic `TaskRun` dispatch-commitment field (name TBD at implementation, e.g.
+`dispatchState: PRE_DISPATCH | DISPATCH_COMMITTED` or `providerDispatchCommittedAt`), owned by `TaskRun`
+persistence, transitioned exactly once (`absent/PRE_DISPATCH → DISPATCH_COMMITTED`) in a guarded transaction
+immediately BEFORE the first Provider effect. It is derived from storage (never caller-asserted), survives
+restart, and is queryable read-only during admission/C2A without runtime/network side effects.
+
+**Canonical owner:** the `TaskRun` persistence owner (`TaskRunRepository`) is the single source of truth for
+"Provider dispatch committed for TaskRun X", written through one canonical application dispatch point. There
+must not be multiple independent markers (no providerId-OR-audit-OR-metadata heuristic); other fields remain
+projections/audit only. Whether the write is triggered by `ProviderRoutingGateway.execute` (the real
+execution owner) or a thin application dispatch coordinator is an implementation-time decision, but it MUST
+funnel through the one canonical `TaskRun` marker write.
+
+**Minimum content:** `taskRunId` (identity; `executionId === taskRunId`), and a commit indicator (state enum
+or committed-at monotonic ordinal for sequencing). Optionally bind `providerId` / provider locality /
+routing+config digest as AUDIT projections. Do NOT make it an evidence packet. Time is audit-only (§11);
+persistence PRESENCE is the primary prior-attempt fact.
+
+### 7. Write-before-effect contract
+
+Exact sequence: validate all pre-dispatch authority → persist the canonical dispatch-commit marker → only
+after marker persistence SUCCEEDS → invoke the Provider effect. NEVER `execute()` then write the marker (a
+crash in between would lose the attempt). If marker persistence fails → Provider dispatch MUST NOT occur
+(fail closed).
+
+### 8. Read owners — Kind A & Kind B common pre-dispatch invariant (unifies NB-1 + NB-5)
+
+Per Chief Architect preference (no documented invariant found requiring otherwise), the marker is a common
+precondition for BOTH Kind A and Kind B: normal R3-C2 local continuity is available ONLY while the marker is
+ABSENT.
+
+- **Kind A pre-dispatch invariant:** marker PRESENT → Kind A (`STATIC_INELIGIBILITY`) DENY.
+- **Kind B pre-dispatch invariant:** marker PRESENT → Kind B (`TRUSTED_CURRENT_UNAVAILABILITY`) DENY,
+  regardless of `attempt == 1`, `providerId` absent, valid C2B evidence, or unexpired evidence. A valid C2B
+  observation does NOT override a prior dispatch. The `LocalContinuityAdmissionCoordinator` checks the marker
+  first; the I1 provider/attempt heuristic is superseded by this canonical marker.
+
+**Final invariant:** `ProviderDispatchAttemptMarker(taskRunId) = ABSENT` → normal admission possible;
+`PRESENT` → Kind A DENY and Kind B DENY; next legal recovery/retry family = R3-C-Rz only.
+
+### 9. C2A issue/validate contract & authority replay prevention
+
+- **C2A issue:** re-check marker ABSENT before minting `BoundLocalContinuitySelection`.
+- **C2A validate (and any future C2C consumption):** re-check marker ABSENT before the authority is accepted.
+- **Replay race (T1 marker absent → T2 authority minted → T3 dispatch committed → T4 old authority reused):**
+  T4 MUST fail normal-flow validation because the marker is now PRESENT. Therefore the marker state is checked
+  at C2A validate / future consumption, not only at coordinator admission. The canonical marker makes
+  `BoundLocalContinuitySelection` effectively one-shot for normal continuity — no separate "consumed" flag is
+  added (lightest sufficient mechanism).
+- **Validate → mark → execute (future C2C):** there must be no independent second Provider dispatch between
+  validation and marker commit. The existing single-`TaskRun` guarded-write ownership (`guardedStart` model,
+  one canonical marker write) is the intended sufficiency argument; if implementation finds it insufficient,
+  an atomic transaction around (marker-write + dispatch handoff) is required — to be proven against the
+  storage/concurrency model at implementation, not assumed here.
+
+### 10. Crash, duplicate/idempotency, uniqueness, restart, provider scope
+
+- **Crash:** marker persisted then crash before `execute` → TaskRun is still dispatch-committed; normal Kind
+  A/Kind B admission stays DENY; recovery/reconcile/retry belongs to R3-C-Rz. The marker is never erased
+  because "the Provider probably wasn't called."
+- **Duplicate/idempotency:** first successful marker wins; a later mark attempt → prior-attempt already exists
+  → do NOT invoke the Provider again → fail closed / R3-C-Rz. Idempotent read-back is diagnostics only and
+  never authorizes re-execution.
+- **Uniqueness:** at most one canonical normal dispatch commitment per TaskRun for current R3 normal-flow
+  semantics (a future DB uniqueness invariant if Option C is implemented). R3-C-Rz later defines
+  retry/recovery attempt semantics separately.
+- **Persistence/restart:** the marker MUST survive process restart (SQLite-durable `TaskRun` state). It MUST
+  NOT rely on WeakMap / in-process Set / issuer identity / transient audit memory — unlike C2A/C2B authority
+  authenticity, which is intentionally process-local.
+- **Provider scope:** the marker answers prior dispatch for ANY real Provider execution — NETWORK, LOCAL, and
+  future contained-local. One committed dispatch of any kind closes normal Kind A/Kind B continuity.
+
+### 11. Time, security-state-vs-audit, failure semantics
+
+- **Time:** no wall-clock time as security authority; any timestamp is audit-only unless a monotonic ordering
+  invariant is truly needed. Do NOT mix C2B's 5s currentness clock with durable prior-dispatch semantics.
+  Persistence presence is the primary fact.
+- **Security state vs audit:** the selected `TaskRun` field is canonical security state (write-before-effect,
+  durable, unique). A loosely structured/best-effort log can never be the marker.
+- **Failure semantics:** marker READ failure → fail closed for local continuity; marker WRITE failure → do
+  NOT dispatch; marker ALREADY EXISTS → do NOT dispatch under the normal path; unexpected duplicate/conflict →
+  fail closed / diagnostic / R3-C-Rz. No automatic retry; no automatic marker delete/reset.
+
+### 12. Public API (if a narrow port is needed)
+
+Conceptual, names TBD at implementation: `hasProviderDispatchAttempt(taskRunId)` (read) and
+`recordProviderDispatchAttempt(canonicalInput)` (guarded write). No public API may clear the marker, set an
+arbitrary attempt count, mark another TaskRun without canonical ownership, mutate an existing marker, or claim
+"not attempted" — absence is derived from storage, never caller-asserted.
+
+### 13. C2B-2 reachability gate & C2C integration
+
+- **C2B-2 reachability gate:** C2B-2 and/or C2C MUST NOT make Kind B production-reachable until: (1) the
+  canonical marker is implemented; (2) the write-before-effect invariant is implemented where real dispatch
+  occurs; (3) admission/C2A read-side enforcement exists; (4) independent exact-HEAD review passes; (5)
+  delivery completes. C2B-2 must not weaken/bypass the invariant; real current-unavailability evidence cannot
+  resurrect a TaskRun that already crossed dispatch commitment.
+- **C2C integration:** before C2C executes any Provider it must participate in the canonical marker protocol.
+  Since `ProviderRoutingGateway.execute` already owns real Provider execution, the marker write should belong
+  to that common dispatch owner (or a thin application dispatch layer reused by C2C) — C2C must NOT invent a
+  separate attempt marker. Future consumption shape: validated C2A `BoundLocalContinuitySelection` → commit
+  canonical marker → consume authority (prevent reuse) → Provider effect. C2C is not implemented here.
+
+### 14. Schema / migration impact
+
+Option C requires a future `TaskRun` schema addition (a dispatch-commit field) and SQLite migration. This is
+NOT implemented now and is explicitly future architecture-reviewed implementation scope. No schema change is
+made in this docs-only slice.
+
+### 15. R3-B3 status (preserved) & R3-C-Rz boundary
+
+R3-B3 preserved verbatim: `PRODUCTION PROVENANCE CONTRACT = DEFINED`; `PRODUCTION TRUST ANCHOR`,
+`PRODUCTION VERIFIER ISSUER`, `PRODUCTION CAPABILITY ISSUER = NOT IMPLEMENTED`;
+`PRODUCTION TRUST CHECK = FAIL CLOSED`. The dispatch-attempt marker is NOT production trust capability.
+R3-C-Rz boundary: marker ABSENT → normal R3-C2 admission possible; marker PRESENT → normal admission
+impossible; any later retry/resume/reconcile/failover/second attempt belongs to R3-C-Rz (NOT AUTHORIZED). I2
+does not design R3-C-Rz behavior beyond this boundary.
+
+### 16. Implementation decomposition
+
+- **R3-C2B-I2A** — canonical durable marker + guarded write-before-effect contract at the canonical dispatch
+  owner (includes the `TaskRun` schema/migration; architecture-reviewed before implementation).
+- **R3-C2B-I2B** — admission/C2A read-side enforcement (coordinator + C2A issue/validate marker checks).
+
+Both I2A and I2B are MANDATORY before Kind B production reachability. May be combined into one small I2-1
+slice if code/schema impact is small. Implementation NOT AUTHORIZED yet.
+
+### 17. Entry criteria (before implementation)
+
+Marker semantic (`PROVIDER_DISPATCH_ATTEMPTED`) defined (§4); selected design + canonical owner (§6);
+write-before-effect contract (§7); Kind A/Kind B common read invariant (§8); C2A issue/validate + replay
+prevention (§9); crash/duplicate/uniqueness/restart/provider-scope semantics (§10); time/security-vs-audit/
+failure semantics (§11); public-API constraints (§12); C2B-2 reachability gate + C2C integration point (§13);
+schema/migration identified (§14); R3-B3 + R3-C-Rz boundary (§15); decomposition (§16); independent
+Architecture Review + ratification.
+
+### 18. Exit criteria (this architecture task)
+
+This amendment inspects the actual dispatch flow, selects Option C with rationale for rejecting A/B/D/E,
+names the canonical owner, defines write-before-effect, Kind A/B common invariant, C2A replay prevention,
+crash/duplicate/restart/provider-scope/failure semantics, C2B-2 reachability gate, C2C integration, schema
+impact, decomposition, entry criteria, future test matrix, and deferred items; DECISIONS/CURRENT_STATE/
+CHANGELOG updated; docs-only with clean `git diff --check`. Ratification gates implementation.
+
+### 19. Future test matrix
+
+Fresh TaskRun no marker → normal pre-dispatch admission may proceed; marker present → Kind A DENY; marker
+present → Kind B DENY; marker present + providerId absent → DENY; marker present + attempt == 1 → DENY; marker
+present + valid C2B evidence → DENY; marker persisted + restart → DENY; selection/plan exists but marker
+absent → not treated as attempted; marker write succeeds → dispatch may proceed; marker write fails → dispatch
+not invoked; Provider throws after marker write → marker remains present; crash after marker write / before
+effect → marker remains prior-attempt; duplicate marker attempt → no second dispatch; C2A minted before marker
+then marker appears → C2A validate rejects old authority; another Provider path marks dispatch → existing
+local-continuity authority not reusable; no caller can clear/reset/forge-absent the marker; providerId alone
+not canonical unless proven equivalent; audit-only metadata not security authority unless ratified; R3-C-Rz
+required for any subsequent attempt; no `Provider.execute()` / network / secret / containment/runtime in I2
+marker/read-side tests.
+
+### 20. Deferred
+
+R3-C-Rz retry/recovery/reconcile semantics; C2B-2 real producer; C2C planner/effect/containment/runtime;
+production trust; marker retention/archive/cleanup policy; any concurrency-transaction requirement beyond the
+existing single-TaskRun guarded ownership (to be proven at implementation). This document selects none of them.
+
+### Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated. One local architecture
+commit; independent Architecture Review must pass before Push/PR/Merge. R3-C2B-I2 implementation, C2B-2, C2C,
+and R3-C-Rz remain NOT AUTHORIZED; Kind B production admission remains DENY/unreachable until the marker
+invariant is implemented, reviewed, and delivered.

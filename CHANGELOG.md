@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2B-I2 architecture / task definition (Canonical Prior-Dispatch Attempt
+  Boundary)" to `DECISIONS.md`, closing the R3-C2B-I1 NB-1 carry-forward and unifying NB-5: ONE canonical,
+  durable, fail-closed answer to "has any Provider dispatch already been committed for this TaskRun?"
+  Source-verified: the real dispatch path (`ContinuationReceiverExecutionService` → `receiver.receive(...)`)
+  writes `TaskRun.providerId`/status only AFTER the Provider effect, so providerId is post-effect and
+  insufficient; `ProviderExecutionAudit` is in-memory, `ContinuationRoutingAudit` is best-effort post-dispatch
+  metadata, `ExecutionReceipt` is COMMAND-only/terminal. **Selected Option C:** an explicit durable `TaskRun`
+  dispatch-commitment field (owned by `TaskRunRepository`), transitioned exactly once before the Provider
+  effect, monotonic, restart-durable, storage-derived. Rejected A (post-effect providerId), B (in-memory/
+  best-effort audit), D (new aggregate duplicates TaskRun ownership), E (containment post-evidence is
+  post-dispatch/local-only). Defines the write-before-effect contract, a common Kind A + Kind B pre-dispatch
+  invariant (marker PRESENT → both DENY; valid C2B evidence does not override), C2A issue/validate marker
+  re-checks (one-shot authority, replay prevention), crash/duplicate/uniqueness/restart/provider-scope/failure
+  semantics, time = audit-only, a C2B-2 reachability gate (Kind B not production-reachable until the marker is
+  implemented + enforced + reviewed + delivered), the C2C integration point (marker write belongs to the
+  canonical dispatch owner, e.g. `ProviderRoutingGateway`), a future `TaskRun` schema/migration identified as
+  architecture-reviewed implementation scope (not implemented), I2A/I2B decomposition, entry/exit criteria,
+  and a future test matrix. Documentation only: no source, schema, test, runtime, provider, network, secret,
+  DB, aggregate/repository, or approval owner changes. One local architecture commit; no Push/PR/Merge.
+  ADR-0090 remains Proposed; Kind B remains DENY; R3-C2B-I2, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2B-I1 Kind B admission integration (local implementation) — 2026-09-28
 
 - Add the canonical admission coordinator, pure Kind B policy candidate, issuer-owned exact-set batch,
