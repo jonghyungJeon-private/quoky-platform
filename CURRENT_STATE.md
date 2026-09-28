@@ -39,9 +39,34 @@ Docs-only: no source/test/schema/runtime/provider/network/secret/DB changes. ADR
 production Kind B remains DENY (C2B-2 NOT AUTHORIZED); C2C implementation, C2B-2, and R3-C-Rz remain NOT
 AUTHORIZED; R3-B3 production trust stays FAIL CLOSED.
 
+**REMEDIATION (2026-09-28, Claude CHANGES_REQUIRED B-1..B-3).** One additional docs-only remediation commit
+(parent `b46e405f…`; reviewed commit not amended) appends "ADR-0090 amendment (remediation) — R3-C2C
+corrected …" to `DECISIONS.md`. **B-1:** finalized continuation flow — REMOVE the receiver-level early
+`dispatchCommit.commit`; ordinary continuation branch commits at its exact ordinary Provider effect boundary
+(preserving I2-1 write-before-effect); the `input.localContinuity` branch delegates to a new
+`LocalContinuityConsumptionCoordinator` (validate C2A → prepared/binding validation → Kind B final
+currentness → dispatch CAS → `PreparedContainmentExecution.execute`); the future `apps/quoky` continuation-
+composition seam (same owner that builds `ContinuationProviderRoutingService`) is the named creator of the
+`localContinuity` input (source-verified: apps pass it today only in tests). **B-2:** canonical effect
+callable = `PreparedContainmentExecution.execute` (FAKE capability only — `requireProductionContainedCapability`
+fails closed; C2C-1 is NETWORK-FREE/TEST-ONLY); `ProviderRoutingGateway` NOT used for C2C; exact binding via
+`ProviderBindingRegistry`/`ExecutableProviderBinding` with pre-commit checks
+`authority.providerId === prepared.bindingIdentity().providerId`, taskRun/execution identity match, and
+`prepared.providerBindingDigest ===` registry binding digest; corrected the false claim that containment binds
+capability/routing/config — C2A binds capability/`RoutingContextDigest`/composite `configurationDigest`/
+evidence, containment binds providerId/providerBindingDigest/taskRun-execution/provenance, coordinator matches
+overlapping facts. **B-3:** fact-by-fact TOCTOU table (A immutable/frozen instances; B CAS checks
+row+identity+STARTED+PRE_DISPATCH only; C re-read/revalidate immediately before commit incl. binding digest +
+Kind B clock read) with a strict no-await-before-commit rule and the guarded CAS as linearization point;
+post-commit does not re-run PRE_DISPATCH validation; commit generic exception → effect-not-started certain,
+marker state decided by DB re-read (added state-machine K/L/M). Doc fix: R3-C2B-I2-1 → CLOSED + DELIVERED
+(PR #95, main `4e040913…`). Still docs-only; production Kind B DENY; C2C implementation, C2B-2, R3-C-Rz remain
+NOT AUTHORIZED; R3-B3 fail closed.
+
 ### R3-C2B-I2-1 — Canonical Prior-Dispatch Attempt Boundary (2026-09-28)
 
-**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** New `TaskRun` rows from both
+**CLOSED + DELIVERED — PR #95 merged** (main merge `4e040913405585596b0a1f0c399a20a8b592a85a`). New `TaskRun`
+rows from both
 `taskRuns.start` and `guardedStart` persist `ProviderDispatchState.PRE_DISPATCH`. The SQLite JSON decoder
 maps missing historical state to `LEGACY_UNKNOWN`, or `DISPATCH_COMMITTED` when a historical provider ID
 proves association; it never infers `PRE_DISPATCH` from absence. The guarded repository operation uses an

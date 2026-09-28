@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2C Local Continuity Consumption architecture remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation) — R3-C2C corrected after Claude CHANGES_REQUIRED (B-1..B-3)" to
+  `DECISIONS.md`. **B-1:** finalized continuation flow — remove the receiver-level early
+  `dispatchCommit.commit`; ordinary continuation branch commits at its exact ordinary Provider effect
+  boundary (preserving I2-1 write-before-effect); `input.localContinuity` branch delegates to a new
+  `LocalContinuityConsumptionCoordinator`; the future `apps/quoky` continuation-composition seam is the named
+  creator/passer of the `localContinuity` input (apps pass it only in tests today). **B-2:** canonical effect
+  callable = `PreparedContainmentExecution.execute` (FAKE capability only; `requireProductionContainedCapability`
+  fails closed; C2C-1 NETWORK-FREE/TEST-ONLY); `ProviderRoutingGateway` NOT used for C2C; exact binding via
+  `ProviderBindingRegistry`/`ExecutableProviderBinding` with pre-commit checks (providerId match, taskRun/
+  execution identity match, `prepared.providerBindingDigest ===` registry binding digest); corrected the false
+  containment claim — C2A binds capability/`RoutingContextDigest`/composite `configurationDigest`/evidence,
+  containment binds providerId/providerBindingDigest/taskRun-execution/provenance, coordinator matches
+  overlapping facts. **B-3:** fact-by-fact TOCTOU table (A immutable/frozen instances; B guarded CAS checks
+  row+identity+STARTED+PRE_DISPATCH only; C re-read/revalidate immediately before commit incl. binding digest
+  and Kind B clock read) with a strict no-await-before-commit rule, guarded CAS as linearization point,
+  post-commit no PRE_DISPATCH re-validation, and commit-generic-exception → effect-not-started-certain +
+  marker-state-by-DB-re-read (state machine K/L/M). Doc fix: R3-C2B-I2-1 → CLOSED + DELIVERED (PR #95, main
+  `4e040913405585596b0a1f0c399a20a8b592a85a`). NB-4 `save()` decision retained with source proof; I1/I2
+  supersession recorded; normal paths unchanged. Documentation only: no source, test, schema, runtime,
+  provider, network, secret, or DB changes. One remediation commit on parent `b46e405f…` (reviewed commit not
+  amended); no Push/PR/Merge. ADR-0090 remains Proposed; production Kind B DENY; C2C, C2B-2, R3-C-Rz remain
+  NOT AUTHORIZED; R3-B3 fail closed.
+
 ## R3-C2C Local Continuity Consumption / Exact Effect Binding architecture / task definition (docs only) — 2026-09-28
 
 - Add the ADR-0090 amendment "R3-C2C architecture / task definition (Local Continuity Consumption / Exact
