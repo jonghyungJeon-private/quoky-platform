@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2C-1 Network-free local continuity consumption (local, review pending) — 2026-09-28
+
+- Move the receiver's early dispatch commit to the ordinary continuation gateway boundary after PRIMARY_ONLY
+  planning. Keep write-before-effect and bounded pre-dispatch failure when commit does not succeed.
+- Add the C2C coordinator and test-only app composition seam. C2A validation, canonical provider binding,
+  containment identity, and Kind B final expiry precede the guarded dispatch CAS; only an issued FAKE
+  `PreparedContainmentExecution` executes afterward. The local path has no generic gateway or fallback.
+- Cover replay, binding and TaskRun mismatch, expiry edges, CAS loser, storage failure, and post-commit
+  contained effect failure. Production trust stays fail closed; C2B-2 and R3-C-Rz remain outside scope.
+
 ## R3-C2C Local Continuity Consumption architecture remediation (docs only) — 2026-09-28
 
 - Add "ADR-0090 amendment (remediation) — R3-C2C corrected after Claude CHANGES_REQUIRED (B-1..B-3)" to

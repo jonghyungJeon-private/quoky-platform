@@ -2,7 +2,7 @@ import { constrainedContinuation, constrainedEntry } from '../../core/src/applic
 import { describe, expect, it, vi } from 'vitest';
 import { AgentProfileRegistry, agentProfileId, ApprovalManager, ApprovalPolicy, Capability,
   ContinuationExecutionEntryService, ContinuationExecutionService, ContinuationReceiverExecutionService, ProviderDispatchCommitCoordinator,
-  createWorkHandoff, ExecutionStatus, IntentType, RiskLevel, RiskPolicy, TaskManager, TaskRunStatus, ProviderDispatchState,
+  createWorkHandoff, ExecutionStatus, IntentType, RiskLevel, RiskPolicy, TaskManager, TaskRunStatus,
   TaskStatus, WorkHandoffContinuationService, WorkItemStatus } from '@quoky/core';
 import type { ContinuationExecutionRequestContext, ContinuationReceiverInput, ContinuationReceiverOutcome, ExecutionPlan } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
@@ -40,8 +40,7 @@ describe('M3E-6K offline exact-run persistence with real 6J and fake receiver', 
         return mode === 'SUCCEEDED' ? { disposition: 'SUCCEEDED', artifactIds: ['artifact-1'] }
           : { disposition: 'FAILED', error: 'CONTINUATION_RECEIVER_FAILED' };
       }) };
-      const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver,
-    new ProviderDispatchCommitCoordinator(storage.taskRuns));
+      const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver);
       const start = vi.spyOn(continuation, constrainedContinuation);
       const guarded = vi.spyOn(storage.taskRuns, 'guardedStart');
       const terminal = vi.spyOn(tasks, 'terminalizePreservingSecurityEvidence');
@@ -61,12 +60,12 @@ describe('M3E-6K offline exact-run persistence with real 6J and fake receiver', 
         expect(result.disposition).toBe('ATTEMPT_UNRESOLVED');
         if (result.disposition !== 'ATTEMPT_UNRESOLVED') throw new Error('expected unresolved');
         expect(result.taskRun).toBe(started);
-        expect(await storage.taskRuns.get(started.id)).toEqual({ ...started, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED });
+        expect(await storage.taskRuns.get(started.id)).toEqual(started);
         expect(complete).not.toHaveBeenCalled(); expect(fail).not.toHaveBeenCalled();
         expect(terminal).not.toHaveBeenCalled();
         await expect(execution.executeExplicitContinuation(request)).rejects.toMatchObject({ reason: 'UNRESOLVED_STARTED_RUN' });
         expect(receiver.receive).toHaveBeenCalledTimes(1);
-        expect(await storage.taskRuns.listByTask(task.id)).toEqual([{ ...started, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED }]);
+        expect(await storage.taskRuns.listByTask(task.id)).toEqual([started]);
         return;
       }
       expect(terminal).toHaveBeenCalledTimes(1);
@@ -126,8 +125,7 @@ describe('M3E-6K offline exact-run persistence with real 6J and fake receiver', 
             transitions: [{ sequence: 1, evidence: 'RETURNED', code: null }],
           },
         }) as unknown as ContinuationReceiverOutcome) };
-      const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver,
-    new ProviderDispatchCommitCoordinator(storage.taskRuns));
+      const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver);
       const guarded = vi.spyOn(storage.taskRuns, 'guardedStart');
       const terminal = vi.spyOn(tasks, 'terminalizePreservingSecurityEvidence');
       const complete = vi.spyOn(tasks, 'completeRun');
@@ -144,12 +142,12 @@ describe('M3E-6K offline exact-run persistence with real 6J and fake receiver', 
       expect(fail).not.toHaveBeenCalled();
       expect(result.routingAudit).toBeUndefined();
       const persisted = await storage.taskRuns.get(started.id);
-      expect(persisted).toEqual({ ...started, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED });
+      expect(persisted).toEqual(started);
       expect(persisted!.status).toBe(TaskRunStatus.STARTED);
       // The contradictory ACCEPTED audit and its provider identity must not appear in durable state.
       expect(JSON.stringify(persisted)).not.toContain('provider-1');
       expect(JSON.stringify(persisted)).not.toContain('ACCEPTED');
-      expect(await storage.taskRuns.listByTask(task.id)).toEqual([{ ...started, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED }]); // no attempt 2
+      expect(await storage.taskRuns.listByTask(task.id)).toEqual([started]); // no attempt 2
       // No second attempt is created; re-entry hits the unresolved started run guard.
       await expect(execution.executeExplicitContinuation(request)).rejects.toMatchObject({ reason: 'UNRESOLVED_STARTED_RUN' });
       expect(receiver.receive).toHaveBeenCalledTimes(1);
@@ -188,8 +186,7 @@ describe('M3E-6K offline exact-run persistence with real 6J and fake receiver', 
         receive: vi.fn(async (_input: ContinuationReceiverInput): Promise<ContinuationReceiverOutcome> => ({
           disposition: 'SUCCEEDED', artifactIds: ['artifact-1'], acceptedProviderId: 'provider-unaudited',
         }) as unknown as ContinuationReceiverOutcome) };
-      const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver,
-    new ProviderDispatchCommitCoordinator(storage.taskRuns));
+      const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver);
       const guarded = vi.spyOn(storage.taskRuns, 'guardedStart');
       const terminal = vi.spyOn(tasks, 'terminalizePreservingSecurityEvidence');
       const complete = vi.spyOn(tasks, 'completeRun');
@@ -205,11 +202,11 @@ describe('M3E-6K offline exact-run persistence with real 6J and fake receiver', 
       expect(fail).not.toHaveBeenCalled();
       expect(terminal).not.toHaveBeenCalled();
       const persisted = await storage.taskRuns.get(started.id);
-      expect(persisted).toEqual({ ...started, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED });
+      expect(persisted).toEqual(started);
       expect(persisted!.status).toBe(TaskRunStatus.STARTED);
       // The unaudited Provider identity must never appear in durable state.
       expect(JSON.stringify(persisted)).not.toContain('provider-unaudited');
-      expect(await storage.taskRuns.listByTask(task.id)).toEqual([{ ...started, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED }]); // no attempt 2
+      expect(await storage.taskRuns.listByTask(task.id)).toEqual([started]); // no attempt 2
       await expect(execution.executeExplicitContinuation(request)).rejects.toMatchObject({ reason: 'UNRESOLVED_STARTED_RUN' });
       expect(receiver.receive).toHaveBeenCalledTimes(1);
     } finally { await storage.close(); }

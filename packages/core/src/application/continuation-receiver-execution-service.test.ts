@@ -49,26 +49,17 @@ function fixture() {
   };
   const receiver = { supportedCapabilities: Object.freeze([Capability.GENERAL_CHAT]), receive: vi.fn(async (_input: ContinuationReceiverInput): Promise<ContinuationReceiverOutcome> =>
     ({ disposition: 'SUCCEEDED', artifactIds: ['artifact-1'] })) };
-  const dispatchCommit = { commit: vi.fn(async () => ({ ...run, dispatchState: ProviderDispatchState.DISPATCH_COMMITTED })) };
-  const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver, dispatchCommit);
-  return { work, handoff, task, plan, request, storage, run, profiles, continuation, tasks, receiver, dispatchCommit, execution };
+  const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver);
+  return { work, handoff, task, plan, request, storage, run, profiles, continuation, tasks, receiver, execution };
 
 }
 
 describe('M3E-6K receiver seam and exact-run terminalization', () => {
-  it('commits before receiver effect and blocks the effect on commit failure', async () => {
+  it('enters the receiver without an early dispatch commit', async () => {
     const f = fixture();
-    f.receiver.receive.mockImplementation(async () => {
-      expect(f.dispatchCommit.commit).toHaveBeenCalledWith(f.run.id, f.run.id);
-      return { disposition: 'SUCCEEDED', artifactIds: [] };
-    });
-    await f.execution.executeExplicitContinuation(f.request);
-    expect(f.dispatchCommit.commit).toHaveBeenCalledTimes(1);
+    const result = await f.execution.executeExplicitContinuation(f.request);
     expect(f.receiver.receive).toHaveBeenCalledTimes(1);
-    const failed = fixture();
-    failed.dispatchCommit.commit.mockRejectedValue(new Error('write failed'));
-    expect(await failed.execution.executeExplicitContinuation(failed.request)).toMatchObject({ disposition: 'ATTEMPT_UNRESOLVED' });
-    expect(failed.receiver.receive).not.toHaveBeenCalled();
+    expect(result.disposition).toBe('ATTEMPT_SUCCEEDED');
   });
   it.each(['SUCCEEDED', 'FAILED', 'THROW'] as const)('terminalizes the exact run once for %s', async mode => {
     const f = fixture();
@@ -142,7 +133,7 @@ describe('M3E-6K receiver seam and exact-run terminalization', () => {
   });
   it('unavailable receiver and NO_ACTION never start attempts', async () => {
     const f = fixture();
-    const disabled = new ContinuationReceiverExecutionService(f.storage, f.profiles, f.continuation, f.tasks, undefined, f.dispatchCommit);
+    const disabled = new ContinuationReceiverExecutionService(f.storage, f.profiles, f.continuation, f.tasks, undefined);
     expect(await disabled.executeExplicitContinuation(f.request)).toMatchObject({ disposition: 'DENY', reason: 'RECEIVER_UNAVAILABLE' });
     f.storage.workItems.get.mockResolvedValue({ ...f.work, status: WorkItemStatus.COMPLETED });
     expect(await f.execution.executeExplicitContinuation(f.request)).toMatchObject({ disposition: 'DENY', reason: 'WORK_ITEM_NOT_CONTINUABLE' });
@@ -223,7 +214,7 @@ describe('M3E-6K receiver seam and exact-run terminalization', () => {
   ])('§29 fails closed before start when the receiver support declaration is %s', async (_label, supported) => {
     const f = fixture();
     const receiver = { ...f.receiver, supportedCapabilities: supported };
-    const execution = new ContinuationReceiverExecutionService(f.storage, f.profiles, f.continuation, f.tasks, receiver, f.dispatchCommit);
+    const execution = new ContinuationReceiverExecutionService(f.storage, f.profiles, f.continuation, f.tasks, receiver);
     expect(await execution.executeExplicitContinuation(f.request))
       .toMatchObject({ disposition: 'DENY', stage: 'RECEIVER_PREFLIGHT', reason: 'RECEIVER_UNAVAILABLE' });
     expect(f.continuation[constrainedContinuation]).not.toHaveBeenCalled();

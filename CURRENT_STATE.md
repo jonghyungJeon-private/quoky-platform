@@ -5,6 +5,18 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2C-1 — Network-free local continuity consumption (2026-09-28)
+
+**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** The continuation receiver no longer
+commits dispatch before C2A validation. Ordinary continuation plans PRIMARY_ONLY, commits dispatch, then
+enters its generic gateway effect. The test-only local-continuity seam issues C2A authority and passes an
+issued FAKE prepared execution to `LocalContinuityConsumptionCoordinator`. That coordinator validates C2A,
+checks the canonical frozen provider binding and containment identity, rechecks Kind B monotonic expiry
+synchronously, commits the guarded dispatch CAS, and executes exactly one contained FAKE effect. The local
+path has no gateway or fallback. A CAS loser or commit failure starts no effect; a failed effect leaves the
+marker committed and cannot use normal retry. Production containment remains fail closed; C2B-2 and R3-C-Rz
+are outside this implementation. The R3-C2C architecture and remediation paragraphs below are historical.
+
 ### R3-C2C — Local Continuity Consumption / Exact Effect Binding (architecture / task definition) (2026-09-28)
 
 **ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
@@ -157,12 +169,14 @@ DENY; R3-C2B-I2, C2B-2, C2C, R3-C-Rz remain NOT AUTHORIZED.
 
 ### R3-C2B-I1 — Kind B Admission Integration (2026-09-28)
 
-**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** Architecture was ratified and delivered
+**CLOSED + DELIVERED.** Architecture was ratified and delivered
 through PR #92. `LocalContinuityAdmissionCoordinator` is the canonical application admission entry;
 `LocalContinuityAdmission` owns the pure Kind B policy candidate and existing Kind A policy. The C2B issuer
 batch derives and issues the exact canonical NETWORK provider set and validates on the same instance.
 `VALIDATED` carries taskRunId, RoutingContextDigest, Stage2B composite configurationDigest, and the minimum
-expiry. C2A consumes the coordinator outcome without another await before minting. Kind A bound authority
+expiry. C2A consumes the coordinator outcome without another await before minting (the I1 issuance
+constraint; C2C supersedes it at consumption with final synchronous checks immediately before dispatch CAS).
+Kind A bound authority
 explicitly carries `STATIC_INELIGIBILITY` with no dynamic expiry; Kind B carries
 `TRUSTED_CURRENT_UNAVAILABILITY` and the C2B minimum monotonic expiry, checked at mint and validation.
 Composition rejects different C2A/C2B monotonic clock instances.
