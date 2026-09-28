@@ -1,8 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Capability, IntentType, RiskLevel, TaskRunStatus, ProviderDispatchState, TaskStatus, type Task, type TaskRun } from '../domain';
-import { TrustedUnavailabilityObservationSource as Source, TrustedUnavailabilityReason as Reason } from '../ports';
+import { CanonicalReachabilityDiagnostic as Diagnostic,
+  TrustedUnavailabilityObservationSource as Source, TrustedUnavailabilityReason as Reason } from '../ports';
 import type { CurrentUnavailabilityObservationProducer } from '../ports';
 import { continuationRoutingContext } from './continuation-routing-context';
 import { assertTrustedCurrentUnavailabilityUnsupported } from './local-continuity-admission';
@@ -21,6 +22,14 @@ import {
 import { ProviderRegistry } from './provider-registry';
 import { RoutingPolicyEngine } from './routing-policy-engine';
 import { routingContextDigest } from './routing-context-digest';
+import { ProviderBindingRegistry } from './provider-binding-registry';
+import {
+  CanonicalProviderReachabilityObservationProducer,
+  DeterministicFakeReachabilityProbeTransport,
+  UnavailableProductionReachabilityProbeTransport,
+  createUnavailableProductionReachabilityProbeTransport,
+  requireIssuedProductionObservationProducer,
+} from './canonical-provider-reachability-observation';
 
 function descriptor(id: string, enabled = true, locality = ExecutionLocality.NETWORK,
   semantic = ReliabilityTier.STANDARD): ProviderDescriptor {
@@ -73,6 +82,180 @@ function fixture(descriptors: ProviderDescriptor[] = [descriptor('a')], policy =
     issue, validate, setNow: (value: number) => { now = value; },
     setObserved: (value: number) => { observedAt = value; } };
 }
+
+function productionFixture(descriptors: ProviderDescriptor[] = [descriptor('a')]) {
+  const f = fixture(descriptors);
+  const bindings = new ProviderBindingRegistry(f.providerRegistry.snapshot(), descriptors.map(d => ({
+    providerId: d.providerId, adapterId: d.adapterId, modelId: d.modelId, bindingVersion: 'v1',
+    provider: { id: d.providerId } as never,
+  })));
+  const transport = createUnavailableProductionReachabilityProbeTransport();
+  const producer = CanonicalProviderReachabilityObservationProducer.fromIssuedProductionTransport(
+    transport, bindings, f.clock,
+  );
+  const issuer = new Issuer(f.storage, f.providerRegistry, f.policyEngine, producer, f.clock, bindings);
+  return { ...f, bindings, transport, producer, issuer };
+}
+
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+describe('R3-C2B-2-1 canonical typed observation', () => {
+  const eligible = [Diagnostic.PROVIDER_SERVICE_UNAVAILABLE, Diagnostic.PROVIDER_AUTH_SERVICE_UNAVAILABLE];
+  const denied = Object.values(Diagnostic).filter(result => !eligible.includes(result));
+
+  it.each(eligible)('maps only %s into a bounded Kind B reason after diagnostic classification', async result => {
+    let now = 100;
+    const clock = { nowMs: vi.fn(() => now) };
+    const f = productionFixture();
+    const fake = new DeterministicFakeReachabilityProbeTransport([Promise.resolve(result).then(value => {
+      now = 125;
+      return value;
+    })]);
+    const producer = CanonicalProviderReachabilityObservationProducer.forTest(fake, f.bindings, clock);
+    const observed = await producer.observe({ providerId: 'a', taskId: 'task', executionId: 'run',
+      capability: Capability.GENERAL_CHAT, routingContextDigest: 'a'.repeat(64), configurationDigest: 'b'.repeat(64) });
+    expect(observed).toEqual({ observedAtMonoMs: 125,
+      reason: result === Diagnostic.PROVIDER_SERVICE_UNAVAILABLE
+        ? Reason.PROVIDER_HEALTH_UNAVAILABLE : Reason.AUTHENTICATION_UNAVAILABLE });
+    expect(fake.calls).toEqual([{ providerId: 'a', bindingVersion: 'v1',
+      bindingDigest: f.bindings.get(providerId('a'))!.identity.bindingDigest }]);
+    expect(clock.nowMs).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(denied)('denies %s without an observation result', async result => {
+    const f = productionFixture();
+    const producer = CanonicalProviderReachabilityObservationProducer.forTest(
+      new DeterministicFakeReachabilityProbeTransport([result]), f.bindings, f.clock);
+    await expect(producer.observe({ providerId: 'a', taskId: 'task', executionId: 'run',
+      capability: Capability.GENERAL_CHAT, routingContextDigest: 'a'.repeat(64),
+      configurationDigest: 'b'.repeat(64) })).rejects.toMatchObject({ diagnostic: result });
+    const issuerProducer = CanonicalProviderReachabilityObservationProducer.forTest(
+      new DeterministicFakeReachabilityProbeTransport([result]), f.bindings, f.clock);
+    const issuer = new Issuer(f.storage, f.providerRegistry, f.policyEngine, issuerProducer, f.clock);
+    await expect(issuer.issue('run', providerId('a'))).rejects.toMatchObject({
+      name: 'TrustedCurrentUnavailabilityProducerError', message: 'OBSERVATION_PRODUCER_FAILED' });
+  });
+
+  it('production placeholder has no live diagnostic and cannot issue evidence', async () => {
+    const f = productionFixture();
+    await expect(f.issuer.issue('run', providerId('a'))).rejects.toMatchObject({
+      name: 'TrustedCurrentUnavailabilityProducerError' });
+  });
+
+  it('rejects fake transport as production authority and rejects copied or self-declared producers', async () => {
+    const f = productionFixture();
+    const fake = new DeterministicFakeReachabilityProbeTransport([Diagnostic.PROVIDER_SERVICE_UNAVAILABLE]);
+    expect(() => CanonicalProviderReachabilityObservationProducer.fromIssuedProductionTransport(
+      fake, f.bindings, f.clock)).toThrow('PRODUCTION_TRANSPORT_NOT_ISSUED');
+    const testProducer = CanonicalProviderReachabilityObservationProducer.forTest(fake, f.bindings, f.clock);
+    expect(testProducer.source).toBe(Source.TEST_FAKE);
+    const forged = { source: Source.CANONICAL_PROVIDER_REACHABILITY_PROBE,
+      observe: vi.fn(async () => ({ observedAtMonoMs: 100, reason: Reason.PROVIDER_HEALTH_UNAVAILABLE })) };
+    const forgedIssuer = new Issuer(f.storage, f.providerRegistry, f.policyEngine, forged, f.clock, f.bindings);
+    await expect(forgedIssuer.issue('run', providerId('a'))).rejects.toMatchObject({ reason: 'SOURCE_NOT_ALLOWED' });
+    expect(forged.observe).not.toHaveBeenCalled();
+    expect(() => requireIssuedProductionObservationProducer({ ...f.producer }, f.clock, f.bindings))
+      .toThrow('PRODUCTION_PRODUCER_NOT_ISSUED');
+    expect(() => requireIssuedProductionObservationProducer(f.producer, { nowMs: () => 100 }, f.bindings))
+      .toThrow('PRODUCTION_PRODUCER_NOT_ISSUED');
+  });
+
+  it('never accepts legacy ENDPOINT_UNREACHABLE from a production-source producer', async () => {
+    const f = productionFixture();
+    vi.spyOn(CanonicalProviderReachabilityObservationProducer.prototype, 'observe')
+      .mockResolvedValue({ observedAtMonoMs: 100, reason: Reason.ENDPOINT_UNREACHABLE });
+    await expect(f.issuer.issue('run', providerId('a'))).rejects.toMatchObject({ reason: 'SOURCE_NOT_ALLOWED' });
+  });
+
+  it.each(eligible)('accepts issued production evidence for %s with issuance-based expiry', async result => {
+    const probe = vi.spyOn(UnavailableProductionReachabilityProbeTransport.prototype, 'probe').mockResolvedValue(result);
+    const f = productionFixture();
+    const authority = await f.issuer.issue('run', providerId('a'));
+    expect(authority).toMatchObject({ source: Source.CANONICAL_PROVIDER_REACHABILITY_PROBE,
+      reason: result === Diagnostic.PROVIDER_SERVICE_UNAVAILABLE
+        ? Reason.PROVIDER_HEALTH_UNAVAILABLE : Reason.AUTHENTICATION_UNAVAILABLE,
+      observedAtMonoMs: 100, validFromMonoMs: 100, expiresAtMonoMs: 5100 });
+    expect(await f.issuer.validate([authority], 'run', 'task', context)).toMatchObject({ status: 'VALIDATED' });
+    const restartedIssuer = new Issuer(f.storage, f.providerRegistry, f.policyEngine,
+      f.producer, f.clock, f.bindings);
+    expect(await restartedIssuer.validate([authority], 'run', 'task', context))
+      .toEqual({ status: 'INVALID', reason: 'WRONG_ISSUER' });
+    expect(probe).toHaveBeenCalledTimes(1);
+    f.setNow(5100);
+    expect(await f.issuer.validate([authority], 'run', 'task', context)).toEqual({ status: 'INVALID', reason: 'EXPIRED' });
+  });
+
+  it('rejects production authority replay across run, provider set, context and configuration', async () => {
+    vi.spyOn(UnavailableProductionReachabilityProbeTransport.prototype, 'probe').mockResolvedValue(
+      Diagnostic.PROVIDER_SERVICE_UNAVAILABLE);
+    const f = productionFixture([descriptor('a'), descriptor('b')]);
+    const authorities = await f.issuer.issueCanonicalEligibleNetworkSet('run');
+    expect(await f.issuer.validate(authorities, 'other', 'task', context)).toEqual({ status: 'INVALID', reason: 'EXECUTION_MISMATCH' });
+    expect(await f.issuer.validate([authorities[0]!], 'run', 'task', context))
+      .toEqual({ status: 'INVALID', reason: 'MISSING_PROVIDER_AUTHORITY' });
+    expect(await f.issuer.validate(authorities, 'run', 'task', { ...context, latencyClass: 'FAST' } as typeof context))
+      .toEqual({ status: 'INVALID', reason: 'ROUTING_CONTEXT_MISMATCH' });
+    Object.assign(f.issuer, { registry: registry(descriptor('a'), descriptor('b'), descriptor('c')) });
+    expect((await f.issuer.validate(authorities, 'run', 'task', context)).status).toBe('INVALID');
+  });
+
+  it('turns timeout and raw transport failure into bounded denial with one probe', async () => {
+    const probe = vi.spyOn(UnavailableProductionReachabilityProbeTransport.prototype, 'probe')
+      .mockImplementation(() => new Promise(() => undefined));
+    const f = productionFixture();
+    vi.useFakeTimers();
+    const issuing = expect(f.issuer.issue('run', providerId('a')))
+      .rejects.toMatchObject({ name: 'TrustedCurrentUnavailabilityProducerError' });
+    await vi.advanceTimersByTimeAsync(2_001);
+    await issuing;
+    expect(probe).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    probe.mockRejectedValueOnce(new Error('secret value must not leak'));
+    await expect(f.issuer.issue('run', providerId('a'))).rejects.toMatchObject({
+      name: 'TrustedCurrentUnavailabilityProducerError', message: 'OBSERVATION_PRODUCER_FAILED' });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves issuance delay and rejects production binding mismatch', async () => {
+    vi.spyOn(UnavailableProductionReachabilityProbeTransport.prototype, 'probe').mockResolvedValue(
+      Diagnostic.PROVIDER_SERVICE_UNAVAILABLE);
+    const f = productionFixture();
+    f.setNow(100);
+    const authority = await f.issuer.issue('run', providerId('a'));
+    expect(authority.validFromMonoMs).toBe(100);
+    const other = productionFixture([descriptor('a'), descriptor('b')]);
+    expect(() => requireIssuedProductionObservationProducer(f.producer, f.clock, other.bindings))
+      .toThrow('PRODUCTION_PRODUCER_NOT_ISSUED');
+    const wrongIssuer = new Issuer(f.storage, f.providerRegistry, f.policyEngine, f.producer, f.clock, other.bindings);
+    await expect(wrongIssuer.issue('run', providerId('a'))).rejects.toMatchObject({ reason: 'SOURCE_NOT_ALLOWED' });
+    f.setNow(1_101);
+    expect(await f.issuer.validate([authority], 'run', 'task', context)).toMatchObject({ status: 'VALIDATED' });
+  });
+
+  it('denies an observation when issuance takes more than 1000ms after classification', async () => {
+    vi.spyOn(UnavailableProductionReachabilityProbeTransport.prototype, 'probe').mockResolvedValue(
+      Diagnostic.PROVIDER_SERVICE_UNAVAILABLE);
+    const f = productionFixture();
+    let reads = 0;
+    f.storage.taskRuns.get.mockImplementation(async () => {
+      if (++reads === 3) f.setNow(1_101);
+      return f.run;
+    });
+    await expect(f.issuer.issue('run', providerId('a'))).rejects.toMatchObject({ reason: 'TIME_INVALID' });
+  });
+
+  it('keeps sequential multi-cloud probing fail closed when earlier evidence expires', async () => {
+    let now = 100;
+    const probe = vi.spyOn(UnavailableProductionReachabilityProbeTransport.prototype, 'probe')
+      .mockImplementation(async () => { now += 2_000; return Diagnostic.PROVIDER_SERVICE_UNAVAILABLE; });
+    const f = productionFixture([descriptor('a'), descriptor('b'), descriptor('c'), descriptor('d')]);
+    f.clock.nowMs.mockImplementation(() => now);
+    const authorities = await f.issuer.issueCanonicalEligibleNetworkSet('run');
+    expect(authorities).toHaveLength(4);
+    expect(probe).toHaveBeenCalledTimes(4);
+    expect(await f.issuer.validate(authorities, 'run', 'task', context)).toEqual({ status: 'INVALID', reason: 'EXPIRED' });
+  });
+});
 
 describe('R3-C2B-1 trusted observation authority', () => {
   it('mints immutable issuer-local evidence from canonical facts and producer only', async () => {

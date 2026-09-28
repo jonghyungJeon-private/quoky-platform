@@ -39,6 +39,7 @@ export enum ContinuationReceiverActivationErrorCode {
   CONTAINMENT_UNVERIFIED = 'CONTINUATION_RECEIVER_CONTAINMENT_UNVERIFIED',
   PROFILE_PROMPT_INFEASIBLE = 'CONTINUATION_RECEIVER_PROFILE_PROMPT_INFEASIBLE',
   DEPENDENCY_MISSING = 'CONTINUATION_RECEIVER_DEPENDENCY_MISSING',
+  TEST_LOCAL_CONTINUITY_FORBIDDEN = 'CONTINUATION_RECEIVER_TEST_LOCAL_CONTINUITY_FORBIDDEN',
 }
 
 export class ContinuationReceiverActivationError extends Error {
@@ -80,7 +81,13 @@ export interface ProductionContinuationReceiverActivationInput {
   readonly destinationAgentProfiles?: readonly AgentProfile[];
   /** Required for every effect-capable continuation receiver. */
   readonly dispatchCommit?: Pick<ProviderDispatchCommitCoordinator, 'commit'>;
-  /** TEST-only C2C composition; no production prepared capability issuer exists. */
+  readonly createConfiguration?: (
+    input: ProductionProviderRoutingFactoryInput,
+  ) => ProductionProviderRoutingConfiguration;
+}
+
+/** Explicit test composition only; production activation rejects this seam at runtime. */
+export interface TestContinuationReceiverActivationInput extends ProductionContinuationReceiverActivationInput {
   readonly localContinuity?: Readonly<{
     issuer: BoundLocalContinuitySelectionIssuer;
     providerId: ProviderId;
@@ -89,9 +96,6 @@ export interface ProductionContinuationReceiverActivationInput {
       preparedExecution: PreparedContainmentExecution;
     }>;
   }>;
-  readonly createConfiguration?: (
-    input: ProductionProviderRoutingFactoryInput,
-  ) => ProductionProviderRoutingConfiguration;
 }
 
 function continuationRoutingServiceFrom(
@@ -121,6 +125,24 @@ function continuationRoutingServiceFrom(
 export function createProductionContinuationReceiverActivation(
   input: ProductionContinuationReceiverActivationInput,
 ): ContinuationReceiver | undefined {
+  return createContinuationReceiverActivation(input as TestContinuationReceiverActivationInput, false);
+}
+
+export function createTestContinuationReceiverActivation(
+  input: TestContinuationReceiverActivationInput,
+): ContinuationReceiver | undefined {
+  return createContinuationReceiverActivation(input, true);
+}
+
+function createContinuationReceiverActivation(
+  input: TestContinuationReceiverActivationInput,
+  allowTestLocalContinuity: boolean,
+): ContinuationReceiver | undefined {
+  if (!allowTestLocalContinuity && input.localContinuity !== undefined) {
+    throw new ContinuationReceiverActivationError(
+      ContinuationReceiverActivationErrorCode.TEST_LOCAL_CONTINUITY_FORBIDDEN,
+    );
+  }
   if (input.mode === 'disabled') return undefined;
 
   if (input.containment === undefined) {

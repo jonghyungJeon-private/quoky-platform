@@ -11,6 +11,8 @@ import type { ProviderRegistry } from './provider-registry';
 import type { ProviderId, RoutingContext, StaticEligibilityProjection } from './provider-routing-contracts';
 import type { RoutingPolicyEngine } from './routing-policy-engine';
 import { routingContextDigest } from './routing-context-digest';
+import { requireIssuedProductionObservationProducer } from './canonical-provider-reachability-observation';
+import type { ProviderBindingRegistry } from './provider-binding-registry';
 
 export const MAX_TRUSTED_UNAVAILABILITY_WINDOW_MS = 5_000;
 export const MAX_OBSERVATION_TO_ISSUANCE_DELAY_MS = 1_000;
@@ -84,7 +86,7 @@ type Reads = { tasks: Pick<StorageProvider['tasks'], 'get'>;
   taskRuns: Pick<StorageProvider['taskRuns'], 'get' | 'listByTask'> };
 type Facts = { taskId: string; context: RoutingContext; capability: Capability };
 
-/** Network-free C2B evidence issuer/validator. I1 consumes its result only for admission; no execution consumer exists. */
+/** Network-free C2B evidence issuer/validator. Issuance validity begins at issuedAt, not observedAt. */
 export class TrustedCurrentUnavailabilityObservationIssuer {
   private lastObservedMonoMs: number | null = null;
 
@@ -94,6 +96,7 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     private readonly engine: RoutingPolicyEngine,
     private readonly producer: CurrentUnavailabilityObservationProducer,
     private readonly clock: MonotonicClock = SYSTEM_MONOTONIC_CLOCK,
+    private readonly productionBindings?: ProviderBindingRegistry,
   ) {}
 
   /** Composition check only; the clock itself remains issuer-owned. */
@@ -116,7 +119,7 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     if (!this.kindBApplicable(projection) || !projection.eligibleNetworkProviderIds.includes(providerId)) {
       fail('PROVIDER_SET_MISMATCH');
     }
-    if (!this.producer || this.producer.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) fail('SOURCE_NOT_ALLOWED');
+    this.requireSource();
     const before = this.readClock();
     let observation;
     try {
@@ -128,10 +131,12 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
       throw new TrustedCurrentUnavailabilityProducerError();
     }
     const after = this.readClock();
-    if (!this.producer || this.producer.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) fail('SOURCE_NOT_ALLOWED');
+    this.requireSource();
     if (!observation || !safeTime(observation.observedAtMonoMs)
       || observation.observedAtMonoMs < before || observation.observedAtMonoMs > after) fail('TIME_INVALID');
     if (!Object.values(TrustedUnavailabilityReason).includes(observation.reason)) fail('SOURCE_NOT_ALLOWED');
+    if (this.producer.source === TrustedUnavailabilityObservationSource.CANONICAL_PROVIDER_REACHABILITY_PROBE
+      && observation.reason === TrustedUnavailabilityReason.ENDPOINT_UNREACHABLE) fail('SOURCE_NOT_ALLOWED');
     // Observation is asynchronous. A run that terminalized during it cannot receive new authority.
     const currentFacts = await this.canonicalFacts(taskRunId);
     if (currentFacts.taskId !== facts.taskId || routingContextDigest(currentFacts.context) !== routingContextDigest(facts.context)) {
@@ -143,7 +148,7 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
       routingContextDigest: routingContextDigest(facts.context), configurationDigest: projection.configurationDigest,
       observedAtMonoMs: observation.observedAtMonoMs, validFromMonoMs: issuedAt,
       expiresAtMonoMs: issuedAt + MAX_TRUSTED_UNAVAILABILITY_WINDOW_MS,
-      source: TrustedUnavailabilityObservationSource.TEST_FAKE, reason: observation.reason,
+      source: this.producer.source, reason: observation.reason,
     });
     if (timingReason(authority, issuedAt)) fail('TIME_INVALID');
     issued.set(authority, this);
@@ -171,7 +176,10 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
       for (const authority of authorities) {
         if (!authority || typeof authority !== 'object' || !issued.has(authority)) return invalid('NOT_ISSUED');
         if (issued.get(authority) !== this) return invalid('WRONG_ISSUER');
-        if (authority.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) return invalid('SOURCE_NOT_ALLOWED');
+        this.requireSource();
+        if (authority.source !== this.producer.source) return invalid('SOURCE_NOT_ALLOWED');
+        if (authority.source === TrustedUnavailabilityObservationSource.CANONICAL_PROVIDER_REACHABILITY_PROBE
+          && authority.reason === TrustedUnavailabilityReason.ENDPOINT_UNREACHABLE) return invalid('SOURCE_NOT_ALLOWED');
         if (authority.executionId !== executionId || authority.taskRunId !== executionId) {
           return invalid('EXECUTION_MISMATCH');
         }
@@ -209,6 +217,20 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
   private kindBApplicable(projection: StaticEligibilityProjection): boolean {
     return projection.policyMatched && !projection.policyRequiresLocalLocality
       && projection.eligibleNetworkProviderIds.length > 0;
+  }
+
+  private requireSource(): void {
+    if (!this.producer) fail('SOURCE_NOT_ALLOWED');
+    if (this.producer.source === TrustedUnavailabilityObservationSource.TEST_FAKE) return;
+    if (this.producer.source !== TrustedUnavailabilityObservationSource.CANONICAL_PROVIDER_REACHABILITY_PROBE
+      || !this.productionBindings || !this.productionBindings.matchesSnapshot(this.registry.snapshot())) {
+      fail('SOURCE_NOT_ALLOWED');
+    }
+    try {
+      requireIssuedProductionObservationProducer(this.producer, this.clock, this.productionBindings);
+    } catch {
+      fail('SOURCE_NOT_ALLOWED');
+    }
   }
 
   private readClock(): number {

@@ -23,6 +23,7 @@ import {
   ContinuationReceiverActivationError,
   ContinuationReceiverActivationErrorCode,
   createProductionContinuationReceiverActivation,
+  createTestContinuationReceiverActivation,
   parseContinuationReceiverMode,
   minimalContinuationPromptBytes,
 } from './continuation-receiver-activation';
@@ -115,7 +116,7 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
     const issuer = { issue: vi.fn(async () => selection), validate: vi.fn(async () => undefined) };
     const prepare = vi.fn(() => ({ plan: {} as never, preparedExecution: {} as never }));
     const dispatchCommit = { commit: vi.fn(async () => ({} as never)) };
-    const receiver = createProductionContinuationReceiverActivation({
+    const receiver = createTestContinuationReceiverActivation({
       mode: 'general-chat-v1', ollama,
       containment: verifiedContainment, dispatchCommit,
       artifactManager: { create: async (i) => ({ id: 'a1', kind: i.kind, title: i.title, createdAt: ts }) },
@@ -129,6 +130,15 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
     expect(prepare).toHaveBeenCalledWith(selection);
     expect(issuer.validate).toHaveBeenCalledTimes(1);
     expect(dispatchCommit.commit).not.toHaveBeenCalled();
+  });
+
+  it('rejects the test-only local effect seam in production composition', () => {
+    const prepare = vi.fn(() => ({} as never));
+    expect(() => createProductionContinuationReceiverActivation({
+      mode: 'general-chat-v1', ollama,
+      localContinuity: { issuer: {} as never, providerId: BALANCED_PROVIDER_ID, prepare },
+    } as never)).toThrow(ContinuationReceiverActivationErrorCode.TEST_LOCAL_CONTINUITY_FORBIDDEN);
+    expect(prepare).not.toHaveBeenCalled();
   });
 });
 
