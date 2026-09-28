@@ -1,4 +1,8 @@
 import type { BoundLocalContinuitySelection, BoundLocalContinuitySelectionIssuer } from './bound-local-continuity-selection';
+import type { PreparedContainmentExecution } from './continuation-prepared-containment';
+import type { ProviderDispatchCommitCoordinator } from './provider-dispatch-commit-coordinator';
+import { LocalContinuityConsumptionCoordinator } from './local-continuity-consumption-coordinator';
+import { createHash } from 'node:crypto';
 import type { ProviderExecutionPlan } from './provider-execution-plan';
 import { continuationRoutingContext, type ContinuationRoutingFacts } from './continuation-routing-context';
 export type { ContinuationRoutingFacts } from './continuation-routing-context';
@@ -59,8 +63,9 @@ import { AUTHORITY_SENSITIVE, type ValidationProfileRegistry } from './validatio
  */
 
 export interface ContinuationProviderRoutingRequest {
-  /** C2A validation-only entry. C2C preparation/dispatch remains unavailable. */
-  readonly localContinuity?: Readonly<{ selection: BoundLocalContinuitySelection; plan: ProviderExecutionPlan }>;
+  /** C2C-1 test-only contained consumption; no generic gateway effect. */
+  readonly localContinuity?: Readonly<{ selection: BoundLocalContinuitySelection; plan: ProviderExecutionPlan;
+    preparedExecution: PreparedContainmentExecution }>;
   readonly facts: ContinuationRoutingFacts;
   readonly request: AiRequest;
   readonly validationFacts?: ProviderRoutingValidationFacts;
@@ -86,6 +91,7 @@ export interface ContinuationProviderRouting {
 
 export interface ContinuationProviderRoutingConfiguration {
   readonly localContinuityIssuer?: BoundLocalContinuitySelectionIssuer;
+  readonly dispatchCommit?: Pick<ProviderDispatchCommitCoordinator, 'commit'>;
   readonly providerRegistry: ProviderRegistry;
   readonly policyEngine: RoutingPolicyEngine;
   readonly bindings: readonly ExecutableProviderBinding[];
@@ -156,7 +162,8 @@ type Transition = Readonly<{ sequence: number; evidence: ContinuationDispatchEvi
  * persistence, response wording, adapter construction, nor startup activation.
  */
 export class ContinuationProviderRoutingService implements ContinuationProviderRouting {
-  private readonly localContinuityIssuer?: BoundLocalContinuitySelectionIssuer;
+  private readonly localConsumption?: LocalContinuityConsumptionCoordinator;
+  private readonly dispatchCommit?: Pick<ProviderDispatchCommitCoordinator, 'commit'>;
   private readonly providerRegistry: ProviderRegistry;
   private readonly policyEngine: RoutingPolicyEngine;
   private readonly bindings: readonly ExecutableProviderBinding[];
@@ -168,7 +175,7 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
   private readonly clock: MonotonicClock;
 
   constructor(configuration: ContinuationProviderRoutingConfiguration) {
-    this.localContinuityIssuer = configuration.localContinuityIssuer;
+    this.dispatchCommit = configuration.dispatchCommit;
     this.providerRegistry = configuration.providerRegistry;
     this.policyEngine = configuration.policyEngine;
     this.bindings = Object.freeze(configuration.bindings.map((binding) => Object.freeze({ ...binding })));
@@ -181,6 +188,13 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
 
     // Construction validation only (descriptor/binding/profile). No availability probe, no execution.
     new ProviderBindingRegistry(configuration.providerRegistry.snapshot(), this.bindings);
+    if (configuration.localContinuityIssuer && configuration.dispatchCommit) {
+      this.localConsumption = new LocalContinuityConsumptionCoordinator(
+        configuration.localContinuityIssuer, configuration.providerRegistry, configuration.policyEngine,
+        new ProviderBindingRegistry(configuration.providerRegistry.snapshot(), this.bindings),
+        this.clock, configuration.dispatchCommit,
+      );
+    }
     // AUTHORITY_SENSITIVE must be resolvable at construction; missing profile fails closed (§10).
     configuration.validationProfiles.resolve(AUTHORITY_SENSITIVE);
   }
@@ -195,12 +209,20 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
     let gatewayInvoked = false;
     try {
       if (input.localContinuity !== undefined) {
-        if (!this.localContinuityIssuer) return this.preDispatchFailed(input.executionId, null, 'PRE_DISPATCH_FAILED');
-        await this.localContinuityIssuer.validate(input.localContinuity.selection, input.executionId,
-          routingContext, input.localContinuity.plan, this.providerRegistry, this.policyEngine);
-        // C2A stops here: C2C preparation is NOT implemented. Even valid authority never probes
-        // availability or enters the Gateway. The legacy R2 path below retains its existing owner.
-        return this.preDispatchFailed(input.executionId, null, 'PRE_DISPATCH_FAILED');
+        if (!this.localConsumption) {
+          return this.preDispatchFailed(input.executionId, null, 'PRE_DISPATCH_FAILED');
+        }
+        const consumed = await this.localConsumption.consume({
+          authority: input.localContinuity.selection,
+          preparedExecution: input.localContinuity.preparedExecution,
+          plan: input.localContinuity.plan,
+          context: routingContext,
+          routingExecutionId: input.executionId,
+          effectInput: { prompt: input.request.prompt },
+        });
+        // consume returns only after a successful dispatch commit. Preserve uncertainty if audit mapping fails.
+        gatewayInvoked = true;
+        return this.mapLocalResult(input.executionId, input.localContinuity.selection.providerId, consumed);
       }
       const availabilityEntries = await Promise.all(
         this.bindings.map(async (binding): Promise<readonly [ProviderId, ProviderAvailability]> => {
@@ -241,12 +263,15 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
         return this.preDispatchFailed(input.executionId, decision, 'PRE_DISPATCH_FAILED');
       }
 
+      if (!this.dispatchCommit) return this.preDispatchFailed(input.executionId, decision, 'PRE_DISPATCH_FAILED');
+
       const gateway = new ProviderRoutingGateway(
         bindingRegistry,
         this.validationProfiles,
         this.deadlinePolicy,
         this.clock,
       );
+      await this.dispatchCommit.commit(input.executionId, input.executionId);
       gatewayInvoked = true;
       const result = await gateway.execute(plan, input.request, input.validationFacts ?? {});
       return this.mapGatewayResult(input.executionId, decision, result);
@@ -268,6 +293,40 @@ export class ContinuationProviderRoutingService implements ContinuationProviderR
         : 'PRE_DISPATCH_FAILED';
       return this.preDispatchFailed(input.executionId, decision, code);
     }
+  }
+
+  private mapLocalResult(
+    executionId: string,
+    providerId: string,
+    result: Awaited<ReturnType<LocalContinuityConsumptionCoordinator['consume']>>,
+  ): ContinuationProviderRoutingResult {
+    if (result.disposition === 'EFFECT_UNRESOLVED') {
+      return Object.freeze({ disposition: 'UNRESOLVED', audit: this.buildAudit({
+        executionId, decision: null, terminalStatus: 'UNKNOWN', terminalCode: null,
+        attemptCount: 1, attemptCountKnown: true,
+        attempts: [Object.freeze({ index: 1, path: 'PRIMARY', providerId, outcome: 'UNKNOWN',
+          failureCode: null, validationDisposition: null, validationReasonCodes: [],
+          responseSha256: null, byteCount: null, durationMs: 0, dispatchEvidence: 'UNKNOWN' })],
+        finalAcceptedProviderId: null, dispatchEvidence: 'UNKNOWN',
+        transitions: [Object.freeze({ sequence: 1, evidence: 'DISPATCHED', code: null }),
+          Object.freeze({ sequence: 2, evidence: 'UNKNOWN', code: null })],
+      }) });
+    }
+    const text = result.output.text;
+    const responseSha256 = createHash('sha256').update(text).digest('hex');
+    const byteCount = Buffer.byteLength(text);
+    const audit = this.buildAudit({
+      executionId, decision: null, terminalStatus: 'ACCEPTED', terminalCode: null,
+      attemptCount: 1, attemptCountKnown: true,
+      attempts: [Object.freeze({ index: 1, path: 'PRIMARY', providerId, outcome: 'VALIDATION_ACCEPTED',
+        failureCode: null, validationDisposition: 'ACCEPT', validationReasonCodes: [],
+        responseSha256, byteCount, durationMs: 0, dispatchEvidence: 'RETURNED' })],
+      finalAcceptedProviderId: providerId, dispatchEvidence: 'RETURNED',
+      transitions: [Object.freeze({ sequence: 1, evidence: 'DISPATCHED', code: null }),
+        Object.freeze({ sequence: 2, evidence: 'RETURNED', code: null })],
+    });
+    return Object.freeze({ disposition: 'ACCEPTED', output: Object.freeze({ text, artifacts: [],
+      responseSha256, byteCount }), acceptedProviderId: providerId, audit });
   }
 
   /** DEFINITE pre-dispatch failure → FAILED. NOT_DISPATCHED, attemptCount 0, no attempts (§23). */

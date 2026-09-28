@@ -18,6 +18,9 @@ import type {
   ExecutionPlan,
   Id,
   Metadata,
+  BoundLocalContinuitySelection,
+  PreparedContainmentExecution,
+  ProviderExecutionPlan,
 } from '@quoky/core';
 
 /**
@@ -46,6 +49,11 @@ export interface ProviderBackedContinuationReceiverDependencies {
   readonly promptRenderer: PromptRenderer;
   readonly routing: ContinuationProviderRouting;
   readonly artifactManager: ContinuationArtifactSink;
+  readonly localContinuityFor?: (executionId: Id) => Promise<Readonly<{
+    selection: BoundLocalContinuitySelection;
+    plan: ProviderExecutionPlan;
+    preparedExecution: PreparedContainmentExecution;
+  }>>;
 }
 
 const SUPPORTED_CAPABILITIES: readonly CapabilityT[] = Object.freeze([Capability.GENERAL_CHAT]);
@@ -72,12 +80,14 @@ export class ProviderBackedContinuationReceiver implements ContinuationReceiver 
   private readonly promptRenderer: PromptRenderer;
   private readonly routing: ContinuationProviderRouting;
   private readonly artifactManager: ContinuationArtifactSink;
+  private readonly localContinuityFor?: ProviderBackedContinuationReceiverDependencies['localContinuityFor'];
 
   constructor(dependencies: ProviderBackedContinuationReceiverDependencies) {
     this.promptComposer = dependencies.promptComposer;
     this.promptRenderer = dependencies.promptRenderer;
     this.routing = dependencies.routing;
     this.artifactManager = dependencies.artifactManager;
+    this.localContinuityFor = dependencies.localContinuityFor;
   }
 
   async receive(input: ContinuationReceiverInput): Promise<ContinuationReceiverOutcome> {
@@ -118,11 +128,19 @@ export class ProviderBackedContinuationReceiver implements ContinuationReceiver 
 
     // Preserve post-invocation uncertainty. Do NOT wrap this in a
     // catch that turns arbitrary post-dispatch exceptions into FAILED (§24).
+    let localContinuity: Awaited<ReturnType<NonNullable<typeof this.localContinuityFor>>> | undefined;
+    try {
+      localContinuity = await this.localContinuityFor?.(executionId);
+    } catch {
+      // This seam only prepares authority and containment; no dispatch or effect has started.
+      return failed();
+    }
     const result = await this.routing.execute({
       facts: { capability: Capability.GENERAL_CHAT, intentType: IntentType.CHAT },
       request,
       validationFacts: { contextCorpus: composition.validationCorpus.entries.map((entry) => entry.content) },
       executionId,
+      ...(localContinuity ? { localContinuity } : {}),
     });
 
     if (result.disposition === 'UNRESOLVED') return unresolved(result.audit);

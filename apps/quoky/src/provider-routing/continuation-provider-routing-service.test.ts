@@ -82,7 +82,8 @@ function config(behaviour: {
   return { built: buildProductionProviderRoutingConfiguration(reverse ? [...definitions].reverse() : definitions), balanced, semantic };
 }
 
-function service(built: ReturnType<typeof config>['built'], planner?: ProviderExecutionPlanner, clock?: { nowMs(): number }) {
+function service(built: ReturnType<typeof config>['built'], planner?: ProviderExecutionPlanner, clock?: { nowMs(): number },
+  dispatchCommit: { commit(taskRunId: string, executionId: string): Promise<never> } = { async commit() { return {} as never; } }) {
   return new ContinuationProviderRoutingService({
     providerRegistry: built.providerRegistry,
     policyEngine: built.policyEngine,
@@ -90,6 +91,7 @@ function service(built: ReturnType<typeof config>['built'], planner?: ProviderEx
     validationProfiles: built.validationProfiles,
     configurationVersion: built.version,
     configurationDigest: built.configurationDigest,
+    dispatchCommit,
     ...(planner ? { planner } : {}),
     ...(clock ? { clock } : {}),
   });
@@ -100,6 +102,33 @@ const request = (): AiRequest => ({ capability: Capability.GENERAL_CHAT, prompt:
 const executionId = 'task-run-1';
 
 describe('ContinuationProviderRoutingService (R2)', () => {
+  it('commits after PRIMARY_ONLY planning and before the ordinary Provider effect', async () => {
+    const { built, balanced } = config();
+    let committed = false;
+    const commit = vi.fn(async (runId: string, exactId: string) => {
+      expect(runId).toBe(exactId);
+      committed = true;
+      return {} as never;
+    });
+    const original = balanced.execute.bind(balanced);
+    vi.spyOn(balanced, 'execute').mockImplementation(async request => {
+      expect(committed).toBe(true);
+      return original(request);
+    });
+    const result = await service(built, undefined, undefined, { commit }).execute({ facts, request: request(), executionId });
+    expect(result.disposition).toBe('ACCEPTED');
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(balanced.executionCalls).toBe(1);
+  });
+
+  it('does not invoke the ordinary Provider after a failed dispatch commit', async () => {
+    const { built, balanced, semantic } = config();
+    const commit = vi.fn(async () => { throw new Error('storage unavailable'); });
+    const result = await service(built, undefined, undefined, { commit }).execute({ facts, request: request(), executionId });
+    expect(result.disposition).toBe('FAILED');
+    expect(result.audit.dispatchEvidence).toBe('NOT_DISPATCHED');
+    expect(balanced.executionCalls + semantic.executionCalls).toBe(0);
+  });
   it('resolves AUTHORITY_SENSITIVE at construction; missing profile fails closed (§10)', () => {
     const { built } = config();
     expect(() => service(built)).not.toThrow();

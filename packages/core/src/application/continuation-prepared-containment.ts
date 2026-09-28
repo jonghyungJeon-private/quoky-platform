@@ -820,6 +820,17 @@ export class PreparedContainmentExecution {
     });
   }
 
+  /** C2C-1 is network-free. Check authenticity before calling methods on the prepared object. */
+  static assertFakeOnly(prepared: PreparedContainmentExecution): void {
+    if (!(prepared instanceof PreparedContainmentExecution) || !issuedPrepared.has(prepared)) {
+      throw new PreparedContainmentError('VERIFIED_BINDING_NOT_ISSUED');
+    }
+    requireIssuedVerifiedBinding(prepared.binding);
+    if (requireIssuedCapability(prepared.capability).capabilityKind !== 'FAKE') {
+      throw new PreparedContainmentError('CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
+    }
+  }
+
   /**
    * Future contained execution entry (R3-B1: module-issued fake capability only). It passes ONLY the
    * verified binding and the bounded prompt to the issued capability's fixed `run`; there is no

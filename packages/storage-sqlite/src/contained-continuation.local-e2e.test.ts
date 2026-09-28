@@ -3,7 +3,6 @@ import {
   ContinuationReceiverExecutionService, classifyProviderSpawnFailed, AgentProfileRegistry, ApprovalManager, ApprovalPolicy, Capability, ContinuationExecutionEntryService,
   ContinuationExecutionService, createWorkHandoff, ExecutionStatus,
   IntentType, RiskPolicy, RiskLevel, TaskManager, TaskRunStatus, WorkHandoffContinuationService, WorkItemStatus, agentProfileId,
-  ProviderDispatchCommitCoordinator,
 } from '@quoky/core';
 import type { ContinuationContainmentAudit, ExecutionPlan, TaskRun } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
@@ -111,8 +110,7 @@ describe('R3-B2 fake-only prepared containment → persisted evidence → receiv
       const terminal = vi.spyOn(f.tasks, 'terminalizePreservingSecurityEvidence');
       const complete = vi.spyOn(f.tasks, 'completeRun');
       const fail = vi.spyOn(f.tasks, 'failRun');
-      const service = new ContinuationReceiverExecutionService(storage, f.profiles, f.continuation, f.tasks, receiver,
-        new ProviderDispatchCommitCoordinator(storage.taskRuns));
+      const service = new ContinuationReceiverExecutionService(storage, f.profiles, f.continuation, f.tasks, receiver);
       const result = await service.executeExplicitContinuation(f.request);
       expect(result.disposition).toBe(scenario.expected);
       expect(stale.metadata?.containmentAudit).toBeUndefined(); // newer persisted evidence did not exist on caller snapshot

@@ -65,10 +65,10 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
 
   it('general-chat-v1 without containment → startup fail-closed (§33)', () => {
     expect(() =>
-      createProductionContinuationReceiverActivation({ mode: 'general-chat-v1', ollama }),
+      createProductionContinuationReceiverActivation({ mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } }, ollama }),
     ).toThrow(ContinuationReceiverActivationError);
     try {
-      createProductionContinuationReceiverActivation({ mode: 'general-chat-v1', ollama });
+      createProductionContinuationReceiverActivation({ mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } }, ollama });
     } catch (error) {
       expect((error as ContinuationReceiverActivationError).code).toBe(
         ContinuationReceiverActivationErrorCode.CONTAINMENT_UNAVAILABLE,
@@ -79,7 +79,7 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
   it('general-chat-v1 with unverified containment → fail-closed', () => {
     expect(() =>
       createProductionContinuationReceiverActivation({
-        mode: 'general-chat-v1',
+        mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } },
         ollama,
         containment: { verify: () => ({ status: 'unverified' }) },
         artifactManager: { create: async () => ({} as Artifact) },
@@ -90,7 +90,7 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
   it('general-chat-v1 with verified containment but missing artifact dependency → fail-closed', () => {
     expect(() =>
       createProductionContinuationReceiverActivation({
-        mode: 'general-chat-v1',
+        mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } },
         ollama,
         containment: verifiedContainment,
       }),
@@ -99,7 +99,7 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
 
   it('general-chat-v1 with a verified fake containment + fakes → composes a receiver (§34)', () => {
     const receiver = createProductionContinuationReceiverActivation({
-      mode: 'general-chat-v1',
+      mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } },
       ollama,
       containment: verifiedContainment,
       artifactManager: { create: async (i) => ({ id: 'a1', kind: i.kind, title: i.title, createdAt: ts }) },
@@ -108,6 +108,27 @@ describe('createProductionContinuationReceiverActivation (§32/§33/§34)', () =
     });
     expect(receiver).toBeDefined();
     expect(receiver?.supportedCapabilities).toEqual([Capability.GENERAL_CHAT]);
+  });
+
+  it('issues and passes the C2C local bundle from the named activation seam', async () => {
+    const selection = { taskRunId: executionId, executionId, providerId: BALANCED_PROVIDER_ID } as never;
+    const issuer = { issue: vi.fn(async () => selection), validate: vi.fn(async () => undefined) };
+    const prepare = vi.fn(() => ({ plan: {} as never, preparedExecution: {} as never }));
+    const dispatchCommit = { commit: vi.fn(async () => ({} as never)) };
+    const receiver = createProductionContinuationReceiverActivation({
+      mode: 'general-chat-v1', ollama,
+      containment: verifiedContainment, dispatchCommit,
+      artifactManager: { create: async (i) => ({ id: 'a1', kind: i.kind, title: i.title, createdAt: ts }) },
+      destinationAgentProfiles: [receiverInput().destinationAgentProfile],
+      createConfiguration: () => buildFakeConfiguration(),
+      localContinuity: { issuer: issuer as never, providerId: BALANCED_PROVIDER_ID, prepare },
+    });
+    expect(receiver).toBeDefined();
+    expect((await receiver!.receive(receiverInput())).disposition).toBe('FAILED');
+    expect(issuer.issue).toHaveBeenCalledWith(executionId, BALANCED_PROVIDER_ID);
+    expect(prepare).toHaveBeenCalledWith(selection);
+    expect(issuer.validate).toHaveBeenCalledTimes(1);
+    expect(dispatchCommit.commit).not.toHaveBeenCalled();
   });
 });
 
@@ -229,7 +250,7 @@ describe('offline activation factory composition (offline, fake runner) — no c
       ...(i.content !== undefined ? { content: i.content } : {}),
     }));
     const receiver = createProductionContinuationReceiverActivation({
-      mode: 'general-chat-v1',
+      mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } },
       ollama: { ollamaBin: '/approved/ollama' },
       containment: { verify: () => ({ status: 'verified' }) },
       promptComposer: new PromptComposer(),
@@ -263,7 +284,7 @@ describe('activation profile feasibility', () => {
     const profiles = new AgentProfileRegistry([profile]).list();
     const createConfiguration = vi.fn(() => buildFakeConfiguration());
     const run = () => createProductionContinuationReceiverActivation({
-      mode: 'general-chat-v1', ollama: { ollamaBin: '/unused' },
+      mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } }, ollama: { ollamaBin: '/unused' },
       containment: { verify: () => ({ status: 'verified' }) },
       artifactManager: { create: async () => ({} as Artifact) },
       destinationAgentProfiles: profiles, createConfiguration,
@@ -272,7 +293,7 @@ describe('activation profile feasibility', () => {
   }
   it('requires a destination profile snapshot even with other offline dependencies present', () => {
     expect(() => createProductionContinuationReceiverActivation({
-      mode: 'general-chat-v1', ollama: { ollamaBin: '/unused' },
+      mode: 'general-chat-v1', dispatchCommit: { async commit() { return {} as never; } }, ollama: { ollamaBin: '/unused' },
       containment: { verify: () => ({ status: 'verified' }) },
       artifactManager: { create: async () => ({} as Artifact) },
     })).toThrow('CONTINUATION_RECEIVER_DEPENDENCY_MISSING');

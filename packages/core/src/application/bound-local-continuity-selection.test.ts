@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import { createContainmentCandidateBinding, createContainmentInstanceIdentity,
+  createContainmentSecurityProfile, createFakeContainedExecutionCapability,
+  prepareVerifiedContainmentBinding, PreparedContainmentExecution } from './continuation-prepared-containment';
+import type { ContainmentVerificationChannel, ContainmentVerificationSubject } from './continuation-prepared-containment';
 import type { AiProvider } from '../ports';
 import { BoundLocalContinuitySelectionIssuer, type BoundLocalContinuitySelection } from './bound-local-continuity-selection';
 import { continuationRoutingContext } from './continuation-routing-context';
@@ -6,6 +10,7 @@ import { routingContextDigest } from './routing-context-digest';
 import { assertExactSoleProviderSelection } from './continuation-prepared-containment';
 import * as containment from './continuation-prepared-containment';
 import { ContinuationProviderRoutingService } from './continuation-provider-routing-service';
+import { LocalContinuityConsumptionCoordinator } from './local-continuity-consumption-coordinator';
 import { ProviderBindingRegistry } from './provider-binding-registry';
 import { DeadlineClass, ProviderExecutionPlanner, type ProviderExecutionPlan } from './provider-execution-plan';
 import { ProviderRoutingGateway } from './provider-routing-gateway';
@@ -140,9 +145,49 @@ function fixture() {
     { capability: facts.capability, validationProfile: context.validationProfile, deadlineClass: DeadlineClass.STANDARD, executionId: run.id });
   const validate = (selection: BoundLocalContinuitySelection, overrides: Partial<ProviderExecutionPlan> = {}) =>
     issuer.validate(selection, run.id, context, { ...plan, ...overrides }, registry, engine);
+  const dispatchCommit = { commit: vi.fn(async () => {
+    if (run.dispatchState !== ProviderDispatchState.PRE_DISPATCH) throw new Error('already committed');
+    run.dispatchState = ProviderDispatchState.DISPATCH_COMMITTED;
+    return run;
+  }) };
   const service = new ContinuationProviderRoutingService({ providerRegistry: registry, policyEngine: engine,
-    bindings, validationProfiles, configurationVersion: 'audit-v1', configurationDigest: 'a'.repeat(64), localContinuityIssuer: issuer });
-  return { task, run, runs, storage, registry, engine, issuer, provider, plan, validate, service };
+    bindings, validationProfiles, configurationVersion: 'audit-v1', configurationDigest: 'a'.repeat(64),
+    localContinuityIssuer: issuer, dispatchCommit });
+  return { task, run, runs, storage, registry, engine, issuer, provider, bindings, plan, validate, service, dispatchCommit };
+}
+
+function preparedFor(
+  selection: BoundLocalContinuitySelection,
+  overrides: { providerId?: string; providerBindingDigest?: string; taskRunId?: string } = {},
+): PreparedContainmentExecution {
+  const instance = createContainmentInstanceIdentity('c2c-test-instance');
+  const providerId = overrides.providerId ?? selection.providerId;
+  const candidate = createContainmentCandidateBinding({
+    executionContext: { executionId: overrides.taskRunId ?? selection.taskRunId,
+      taskRunId: overrides.taskRunId ?? selection.taskRunId, containmentPolicyId: 'c2c-test',
+      containmentPolicyVersion: 'v1', containmentPolicyDigest: 'e'.repeat(64),
+      runtimeFamily: 'NONE', runtimeVersion: 'fake-v1', modelMountIdentityDigest: 'f'.repeat(64) },
+    selection: providerId === selection.providerId ? selection.soleSelection
+      : assertExactSoleProviderSelection({ eligibleProviderIds: [providerId], selectedProviderId: providerId, primaryOnly: true }),
+    providerBindingDigest: overrides.providerBindingDigest ?? 'a'.repeat(64),
+    securityProfile: createContainmentSecurityProfile({ securityProfileId: 'c2c-test', securityProfileVersion: 'v1' }),
+    expectedModelId: 'opaque-local', expectedModelDigest: 'b'.repeat(64), imageDigest: 'c'.repeat(64), instance,
+  });
+  const channel = (role: 'A' | 'B'): ContainmentVerificationChannel => ({ channel: role,
+    verify(subject: ContainmentVerificationSubject) {
+      const verifierVersion = `c2c-${role}-v1`;
+      const resultDigest = createHash('sha256').update(JSON.stringify({
+        domain: `quoky.r3.containment.channel.${role}.v1`,
+        shape: { verifierVersion, executionContext: subject.candidate.executionContext,
+          providerId: subject.candidate.providerId, providerBindingDigest: subject.providerBindingDigest,
+          securityProfileDigest: subject.securityProfileDigest, instanceIdentityDigest: subject.instanceIdentityDigest,
+          expectedModelDigest: subject.expectedModelDigest, imageDigest: subject.candidate.imageDigest },
+      })).digest('hex');
+      return { status: 'VERIFIED', verifierVersion, trustDomain: 'TEST',
+        verifierProvenanceId: `c2c-${role}`, resultDigest };
+    } });
+  const binding = prepareVerifiedContainmentBinding({ candidate, channelA: channel('A'), channelB: channel('B') });
+  return PreparedContainmentExecution.fromVerifiedBinding(binding, createFakeContainedExecutionCapability(instance));
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -317,6 +362,120 @@ describe('R3-C2A bound authority', () => {
     expect(f.provider.isAvailable).not.toHaveBeenCalled();
     expect(f.provider.execute).not.toHaveBeenCalled();
     expect(gateway).not.toHaveBeenCalled();
+  });
+});
+
+describe('R3-C2C-1 contained consumption through continuation routing', () => {
+  it('consumes Kind A once through the fake prepared effect and never enters the gateway', async () => {
+    const f = fixture();
+    const selection = await f.issuer.issue('run', providerId('local'));
+    const preparedExecution = preparedFor(selection, { providerBindingDigest: f.plan.primary.bindingIdentity.bindingDigest });
+    const effect = vi.spyOn(PreparedContainmentExecution.prototype, 'execute');
+    const gateway = vi.spyOn(ProviderRoutingGateway.prototype, 'execute');
+    const request = { executionId: 'run', facts, request: { capability: Capability.GENERAL_CHAT, prompt: 'offline' },
+      localContinuity: { selection, plan: f.plan, preparedExecution } };
+    const result = await f.service.execute(request);
+    expect(result.disposition).toBe('ACCEPTED');
+    expect(result.output?.text).toContain('contained-fake:');
+    expect(f.dispatchCommit.commit).toHaveBeenCalledTimes(1);
+    expect(f.run.dispatchState).toBe(ProviderDispatchState.DISPATCH_COMMITTED);
+    expect(effect).toHaveBeenCalledTimes(1);
+    expect(gateway).not.toHaveBeenCalled();
+    expect(f.provider.execute).not.toHaveBeenCalled();
+    const replay = await f.service.execute(request);
+    expect(replay.disposition).toBe('FAILED');
+    expect(f.dispatchCommit.commit).toHaveBeenCalledTimes(1);
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['forged-authority', 'provider-id', 'binding-digest', 'task-run'] as const)
+  ('rejects %s before commit or effect', async mismatch => {
+    const f = fixture();
+    const issued = await f.issuer.issue('run', providerId('local'));
+    const selection = mismatch === 'forged-authority' ? { ...issued } : issued;
+    const preparedExecution = preparedFor(issued, {
+      providerBindingDigest: mismatch === 'binding-digest' ? 'd'.repeat(64) : f.plan.primary.bindingIdentity.bindingDigest,
+      ...(mismatch === 'provider-id' ? { providerId: 'other' } : {}),
+      ...(mismatch === 'task-run' ? { taskRunId: 'other-run' } : {}),
+    });
+    const effect = vi.spyOn(PreparedContainmentExecution.prototype, 'execute');
+    const result = await f.service.execute({ executionId: 'run', facts,
+      request: { capability: Capability.GENERAL_CHAT, prompt: 'offline' },
+      localContinuity: { selection, plan: f.plan, preparedExecution } });
+    expect(result.disposition).toBe('FAILED');
+    expect(f.dispatchCommit.commit).not.toHaveBeenCalled();
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('checks Kind B expiry immediately before commit and continues after post-commit expiry', async () => {
+    const f = fixture();
+    const issued = await f.issuer.issue('run', providerId('local'));
+    // The validator seam stands for an already-authentic TEST_FAKE Kind B authority; this case isolates
+    // the consumption-time clock edge. Real issuer authenticity is covered above and in C2B-I1 tests.
+    const authority = { ...issued, continuityEvidenceKind: 'TRUSTED_CURRENT_UNAVAILABILITY' as const,
+      continuityEvidenceExpiresAtMonoMs: 100 };
+    const preparedExecution = preparedFor(issued, { providerBindingDigest: f.plan.primary.bindingIdentity.bindingDigest });
+    let now = 100;
+    const commit = vi.fn(async () => { now = 101; return f.run; });
+    const consumption = new LocalContinuityConsumptionCoordinator(
+      { validate: vi.fn(async () => undefined) } as never,
+      f.registry, f.engine, new ProviderBindingRegistry(f.registry.snapshot(), f.bindings),
+      { nowMs: () => now }, { commit },
+    );
+    const input = { authority, preparedExecution, plan: f.plan, context,
+      routingExecutionId: f.run.id, effectInput: { prompt: 'offline' } };
+    const effect = vi.spyOn(PreparedContainmentExecution.prototype, 'execute');
+    await expect(consumption.consume(input)).rejects.toMatchObject({ reason: 'EVIDENCE_EXPIRED' });
+    expect(commit).not.toHaveBeenCalled();
+    expect(effect).not.toHaveBeenCalled();
+    now = 99;
+    expect((await consumption.consume(input)).disposition).toBe('ACCEPTED');
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(effect).toHaveBeenCalledTimes(1);
+    expect(now).toBe(101);
+  });
+
+  it.each(['cas-loser', 'storage-failure'] as const)('%s starts no contained effect', async failure => {
+    const f = fixture();
+    const authority = await f.issuer.issue('run', providerId('local'));
+    const preparedExecution = preparedFor(authority, { providerBindingDigest: f.plan.primary.bindingIdentity.bindingDigest });
+    const commit = vi.fn(async () => { throw new Error(failure); });
+    const consumption = new LocalContinuityConsumptionCoordinator(f.issuer, f.registry, f.engine,
+      new ProviderBindingRegistry(f.registry.snapshot(), f.bindings), { nowMs: () => 0 }, { commit });
+    const effect = vi.spyOn(PreparedContainmentExecution.prototype, 'execute');
+    await expect(consumption.consume({ authority, preparedExecution, plan: f.plan, context,
+      routingExecutionId: f.run.id, effectInput: { prompt: 'offline' } })).rejects.toThrow(failure);
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('rejects a forged prepared object before invoking its methods or committing', async () => {
+    const f = fixture();
+    const selection = await f.issuer.issue('run', providerId('local'));
+    const bindingIdentity = vi.fn();
+    const execute = vi.fn();
+    const result = await f.service.execute({ executionId: 'run', facts,
+      request: { capability: Capability.GENERAL_CHAT, prompt: 'offline' },
+      localContinuity: { selection, plan: f.plan,
+        preparedExecution: { bindingIdentity, execute } as unknown as PreparedContainmentExecution } });
+    expect(result.disposition).toBe('FAILED');
+    expect(bindingIdentity).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(f.dispatchCommit.commit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the marker committed when the contained effect fails', async () => {
+    const f = fixture();
+    const selection = await f.issuer.issue('run', providerId('local'));
+    const preparedExecution = preparedFor(selection, { providerBindingDigest: f.plan.primary.bindingIdentity.bindingDigest });
+    const effect = vi.spyOn(PreparedContainmentExecution.prototype, 'execute')
+      .mockRejectedValueOnce(new Error('fake effect failed'));
+    const request = { executionId: 'run', facts, request: { capability: Capability.GENERAL_CHAT, prompt: 'offline' },
+      localContinuity: { selection, plan: f.plan, preparedExecution } };
+    expect((await f.service.execute(request)).disposition).toBe('UNRESOLVED');
+    expect(f.run.dispatchState).toBe(ProviderDispatchState.DISPATCH_COMMITTED);
+    expect((await f.service.execute(request)).disposition).toBe('FAILED');
+    expect(f.dispatchCommit.commit).toHaveBeenCalledTimes(1);
+    expect(effect).toHaveBeenCalledTimes(1);
   });
 });
 

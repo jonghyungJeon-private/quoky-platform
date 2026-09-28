@@ -10,8 +10,11 @@ import {
   assertRenderedPromptBytes,
   PromptComposer,
   PromptRenderer,
+  ProviderDispatchCommitCoordinator,
 } from '@quoky/core';
-import type { AgentProfile, ArtifactManager, ContinuationReceiver } from '@quoky/core';
+import type { AgentProfile, ArtifactManager, BoundLocalContinuitySelection,
+  BoundLocalContinuitySelectionIssuer, ContinuationReceiver, PreparedContainmentExecution,
+  ProviderExecutionPlan, ProviderId } from '@quoky/core';
 import {
   buildProductionProviderRoutingConfiguration,
   createProductionProviderRoutingConfiguration,
@@ -75,6 +78,17 @@ export interface ProductionContinuationReceiverActivationInput {
   readonly artifactManager?: ArtifactManager;
   /** Destination profile snapshot; required before enabled offline composition. */
   readonly destinationAgentProfiles?: readonly AgentProfile[];
+  /** Required for every effect-capable continuation receiver. */
+  readonly dispatchCommit?: Pick<ProviderDispatchCommitCoordinator, 'commit'>;
+  /** TEST-only C2C composition; no production prepared capability issuer exists. */
+  readonly localContinuity?: Readonly<{
+    issuer: BoundLocalContinuitySelectionIssuer;
+    providerId: ProviderId;
+    prepare: (selection: BoundLocalContinuitySelection) => Readonly<{
+      plan: ProviderExecutionPlan;
+      preparedExecution: PreparedContainmentExecution;
+    }>;
+  }>;
   readonly createConfiguration?: (
     input: ProductionProviderRoutingFactoryInput,
   ) => ProductionProviderRoutingConfiguration;
@@ -82,6 +96,8 @@ export interface ProductionContinuationReceiverActivationInput {
 
 function continuationRoutingServiceFrom(
   configuration: ProductionProviderRoutingConfiguration,
+  dispatchCommit: Pick<ProviderDispatchCommitCoordinator, 'commit'>,
+  localContinuityIssuer?: BoundLocalContinuitySelectionIssuer,
 ): ContinuationProviderRoutingService {
   return new ContinuationProviderRoutingService({
     providerRegistry: configuration.providerRegistry,
@@ -91,6 +107,8 @@ function continuationRoutingServiceFrom(
     configurationVersion: configuration.version,
     configurationDigest: configuration.configurationDigest,
     deadlinePolicy: configuration.deadlinePolicy,
+    dispatchCommit,
+    ...(localContinuityIssuer ? { localContinuityIssuer } : {}),
   });
 }
 
@@ -125,7 +143,8 @@ export function createProductionContinuationReceiverActivation(
   const promptComposer = input.promptComposer ?? new PromptComposer();
   const promptRenderer = input.promptRenderer ?? new PromptRenderer();
   const artifactManager = input.artifactManager;
-  if (artifactManager === undefined || input.destinationAgentProfiles === undefined) {
+  if (artifactManager === undefined || input.destinationAgentProfiles === undefined
+    || input.dispatchCommit === undefined) {
     throw new ContinuationReceiverActivationError(
       ContinuationReceiverActivationErrorCode.DEPENDENCY_MISSING,
     );
@@ -144,12 +163,16 @@ export function createProductionContinuationReceiverActivation(
   const configuration = (input.createConfiguration ?? createProductionProviderRoutingConfiguration)(
     input.ollama,
   );
-  const routing = continuationRoutingServiceFrom(configuration);
+  const routing = continuationRoutingServiceFrom(configuration, input.dispatchCommit, input.localContinuity?.issuer);
   return new ProviderBackedContinuationReceiver({
     promptComposer,
     promptRenderer,
     routing,
     artifactManager,
+    ...(input.localContinuity ? { localContinuityFor: async (executionId: string) => {
+      const selection = await input.localContinuity!.issuer.issue(executionId, input.localContinuity!.providerId);
+      return Object.freeze({ selection, ...input.localContinuity!.prepare(selection) });
+    } } : {}),
   });
 }
 
