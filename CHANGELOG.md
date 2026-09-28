@@ -5,6 +5,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary final B-1 remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation 2 — R3-C2B-I2 final B-1 closure)" to `DECISIONS.md`, closing B-1
+  (B-2/B-3 remain CLOSED and unchanged). Finalizes every current Provider-effect path with no "classify
+  later": **INCLUDED** = `ContinuationReceiverExecutionService`, `RuntimeProviderRoutingService` →
+  `ProviderRoutingGateway` (`executionId = run.id`), and conversation-runtime work-turn Provider execution
+  (routed path + TaskRun-bound direct fallback ≈L5207); **EXCLUDED (structural)** = code-generation-manager
+  (`CodeGeneration` aggregate, no TaskRun), tools/validation-harness/diagnostics (non-TaskRun executionId),
+  and the conversation-runtime "(E) Fast path" `provider.execute` (≈L2035, `!intent.requiresWork`, no Task/no
+  TaskRun). Source-verified control flow: within one work turn (after `startRun`), routed and direct paths are
+  MUTUALLY EXCLUSIVE (routed returns on ACCEPTED/FAILED; direct fallback runs only when routing is absent/
+  non-GENERAL_CHAT), so exactly one Provider-effect path is reached and commits the marker once.
+  `ProviderDispatchCommitCoordinator` remains the single write owner; `ProviderRoutingGateway` is generic and
+  not the persistence owner. TaskRun initialization finalized: both `guardedStart` and `taskRuns.start`
+  persist explicit `PRE_DISPATCH`. Reachability gate now enumerates all INCLUDED paths. Documentation only: no
+  source, schema, test, runtime, provider, network, secret, or DB changes. One remediation commit on parent
+  `2c2c2fe…` (prior commits not amended); no Push/PR/Merge. ADR-0090 remains Proposed; Kind B remains DENY;
+  R3-C2B-I2, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
+## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary architecture remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation) — R3-C2B-I2 corrected after Claude CHANGES_REQUIRED (B-1..B-3)" to
+  `DECISIONS.md`, retaining Option C. **B-1:** single canonical write owner = a narrow application-layer
+  `ProviderDispatchCommitCoordinator` (persistence source of truth stays `TaskRunRepository`/`task_runs`;
+  `ProviderRoutingGateway` is not the owner); commit occurs immediately before the first
+  `binding.provider.execute(...)` of the TaskRun-bound execution, DB transaction ends before the Provider
+  call; one commit per TaskRun (bounded in-plan Stage2B fallback takes no second write). A source-inspected
+  dispatch-path inventory classifies continuation-receiver (required), gateway (required only on the
+  TaskRun-bound path via the coordinator), conversation-runtime/code-generation-manager (classify at
+  implementation), and tools/harness non-TaskRun (excluded). **B-2:** one state model `ProviderDispatchState`
+  = `PRE_DISPATCH | DISPATCH_COMMITTED | LEGACY_UNKNOWN`; new `guardedStart` runs persist explicit
+  `PRE_DISPATCH`; missing legacy field → `LEGACY_UNKNOWN` (never `PRE_DISPATCH`) → Kind A/Kind B/C2A DENY;
+  historical providerId/terminal-executed rows normalize to `DISPATCH_COMMITTED`, ambiguous STARTED →
+  `LEGACY_UNKNOWN`; corrected migration note (task_runs is JSON, so no new SQL column is necessarily
+  required). **B-3:** guarded `commitProviderDispatchIfPreDispatch(...)` SQLite IMMEDIATE CAS (same
+  `.immediate()` style as `guardedStart`) with exactly-one-winner concurrency (loser does not execute),
+  `ALREADY_DISPATCH_COMMITTED` on duplicate, `LEGACY_UNKNOWN` never normal-commits, transaction never held
+  across the Provider call. Common Kind A + Kind B precondition (`PRE_DISPATCH` required); coordinator + C2A
+  issue + C2A validate re-read `dispatchState` (replay prevention; marker presence = authority consumption,
+  no second flag). Preferred single combined slice R3-C2B-I2-1 (else I2A+I2B with reachability CLOSED
+  between). Documentation only: no source, schema, test, runtime, provider, network, secret, DB,
+  aggregate/repository, or approval owner changes. One remediation commit on parent `5a904ddd…` (reviewed
+  commit not amended); no Push/PR/Merge. ADR-0090 remains Proposed; Kind B remains DENY; R3-C2B-I2, C2B-2,
+  C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
+## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2B-I2 architecture / task definition (Canonical Prior-Dispatch Attempt
+  Boundary)" to `DECISIONS.md`, closing the R3-C2B-I1 NB-1 carry-forward and unifying NB-5: ONE canonical,
+  durable, fail-closed answer to "has any Provider dispatch already been committed for this TaskRun?"
+  Source-verified: the real dispatch path (`ContinuationReceiverExecutionService` → `receiver.receive(...)`)
+  writes `TaskRun.providerId`/status only AFTER the Provider effect, so providerId is post-effect and
+  insufficient; `ProviderExecutionAudit` is in-memory, `ContinuationRoutingAudit` is best-effort post-dispatch
+  metadata, `ExecutionReceipt` is COMMAND-only/terminal. **Selected Option C:** an explicit durable `TaskRun`
+  dispatch-commitment field (owned by `TaskRunRepository`), transitioned exactly once before the Provider
+  effect, monotonic, restart-durable, storage-derived. Rejected A (post-effect providerId), B (in-memory/
+  best-effort audit), D (new aggregate duplicates TaskRun ownership), E (containment post-evidence is
+  post-dispatch/local-only). Defines the write-before-effect contract, a common Kind A + Kind B pre-dispatch
+  invariant (marker PRESENT → both DENY; valid C2B evidence does not override), C2A issue/validate marker
+  re-checks (one-shot authority, replay prevention), crash/duplicate/uniqueness/restart/provider-scope/failure
+  semantics, time = audit-only, a C2B-2 reachability gate (Kind B not production-reachable until the marker is
+  implemented + enforced + reviewed + delivered), the C2C integration point (marker write belongs to the
+  canonical dispatch owner, e.g. `ProviderRoutingGateway`), a future `TaskRun` schema/migration identified as
+  architecture-reviewed implementation scope (not implemented), I2A/I2B decomposition, entry/exit criteria,
+  and a future test matrix. Documentation only: no source, schema, test, runtime, provider, network, secret,
+  DB, aggregate/repository, or approval owner changes. One local architecture commit; no Push/PR/Merge.
+  ADR-0090 remains Proposed; Kind B remains DENY; R3-C2B-I2, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2B-I1 Kind B admission integration (local implementation) — 2026-09-28
 
 - Add the canonical admission coordinator, pure Kind B policy candidate, issuer-owned exact-set batch,
