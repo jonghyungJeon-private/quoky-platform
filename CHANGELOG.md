@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary architecture remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation) — R3-C2B-I2 corrected after Claude CHANGES_REQUIRED (B-1..B-3)" to
+  `DECISIONS.md`, retaining Option C. **B-1:** single canonical write owner = a narrow application-layer
+  `ProviderDispatchCommitCoordinator` (persistence source of truth stays `TaskRunRepository`/`task_runs`;
+  `ProviderRoutingGateway` is not the owner); commit occurs immediately before the first
+  `binding.provider.execute(...)` of the TaskRun-bound execution, DB transaction ends before the Provider
+  call; one commit per TaskRun (bounded in-plan Stage2B fallback takes no second write). A source-inspected
+  dispatch-path inventory classifies continuation-receiver (required), gateway (required only on the
+  TaskRun-bound path via the coordinator), conversation-runtime/code-generation-manager (classify at
+  implementation), and tools/harness non-TaskRun (excluded). **B-2:** one state model `ProviderDispatchState`
+  = `PRE_DISPATCH | DISPATCH_COMMITTED | LEGACY_UNKNOWN`; new `guardedStart` runs persist explicit
+  `PRE_DISPATCH`; missing legacy field → `LEGACY_UNKNOWN` (never `PRE_DISPATCH`) → Kind A/Kind B/C2A DENY;
+  historical providerId/terminal-executed rows normalize to `DISPATCH_COMMITTED`, ambiguous STARTED →
+  `LEGACY_UNKNOWN`; corrected migration note (task_runs is JSON, so no new SQL column is necessarily
+  required). **B-3:** guarded `commitProviderDispatchIfPreDispatch(...)` SQLite IMMEDIATE CAS (same
+  `.immediate()` style as `guardedStart`) with exactly-one-winner concurrency (loser does not execute),
+  `ALREADY_DISPATCH_COMMITTED` on duplicate, `LEGACY_UNKNOWN` never normal-commits, transaction never held
+  across the Provider call. Common Kind A + Kind B precondition (`PRE_DISPATCH` required); coordinator + C2A
+  issue + C2A validate re-read `dispatchState` (replay prevention; marker presence = authority consumption,
+  no second flag). Preferred single combined slice R3-C2B-I2-1 (else I2A+I2B with reachability CLOSED
+  between). Documentation only: no source, schema, test, runtime, provider, network, secret, DB,
+  aggregate/repository, or approval owner changes. One remediation commit on parent `5a904ddd…` (reviewed
+  commit not amended); no Push/PR/Merge. ADR-0090 remains Proposed; Kind B remains DENY; R3-C2B-I2, C2B-2,
+  C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary architecture / task definition (docs only) — 2026-09-28
 
 - Add the ADR-0090 amendment "R3-C2B-I2 architecture / task definition (Canonical Prior-Dispatch Attempt

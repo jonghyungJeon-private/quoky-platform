@@ -35,6 +35,30 @@ production-reachable until the marker invariant is implemented, reviewed, and de
 schema/test/runtime/provider/network/secret/DB changes. ADR-0090 remains Proposed; Kind B remains DENY;
 R3-C2B-I2, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; R3-B3 production trust stays FAIL CLOSED.
 
+**REMEDIATION (2026-09-28, Claude CHANGES_REQUIRED B-1..B-3).** One additional docs-only remediation commit
+(parent `5a904ddd…`; reviewed commit not amended) appends "ADR-0090 amendment (remediation) — R3-C2B-I2
+corrected …" to `DECISIONS.md`, retaining Option C. **B-1:** the single canonical write owner is a narrow
+application-layer `ProviderDispatchCommitCoordinator` (persistence source of truth stays `TaskRunRepository`/
+`task_runs`; `ProviderRoutingGateway` is NOT the owner and keeps no storage dependency); commit occurs
+immediately before the FIRST `binding.provider.execute(...)` of the TaskRun-bound execution, with the DB
+transaction ending before the Provider call; ONE commit per TaskRun (bounded in-plan Stage2B fallback within
+the same gateway execution takes no second write; any re-entry/new invocation/restart sees committed → DENY →
+R3-C-Rz). A source-inspected dispatch-path inventory classifies each direct effect path (continuation-receiver
+= required; gateway = required only on the TaskRun-bound path via the coordinator; conversation-runtime and
+code-generation-manager = classify at implementation; tools/harness non-TaskRun = excluded). **B-2:** one
+state model `ProviderDispatchState` = `PRE_DISPATCH | DISPATCH_COMMITTED | LEGACY_UNKNOWN`; new `guardedStart`
+runs persist explicit `PRE_DISPATCH`; MISSING legacy field → `LEGACY_UNKNOWN` (never `PRE_DISPATCH`) → Kind A/
+Kind B/C2A all DENY; historical providerId/terminal-executed rows normalize/backfill to `DISPATCH_COMMITTED`,
+ambiguous STARTED → `LEGACY_UNKNOWN`; corrected migration note — `task_runs` stores JSON so no new SQL column
+is necessarily required (domain-shape + decoder + backfill + version step per repo convention). **B-3:** a
+guarded `commitProviderDispatchIfPreDispatch(...)` SQLite IMMEDIATE CAS (same `.immediate()` style as
+`guardedStart`) transitions `PRE_DISPATCH → DISPATCH_COMMITTED` with exactly-one-winner concurrency (loser
+does not execute); duplicate commit → `ALREADY_DISPATCH_COMMITTED` fail-closed; `LEGACY_UNKNOWN` never
+normal-commits. Common Kind A + Kind B precondition (`PRE_DISPATCH` required); coordinator + C2A issue + C2A
+validate all re-read `dispatchState` (replay prevention; marker presence = authority consumption, no second
+flag). Preferred single combined slice R3-C2B-I2-1 (else I2A+I2B with reachability CLOSED between). Still
+docs-only; Kind B remains DENY; R3-C2B-I2, C2B-2, C2C, R3-C-Rz remain NOT AUTHORIZED.
+
 ### R3-C2B-I1 — Kind B Admission Integration (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** Architecture was ratified and delivered
