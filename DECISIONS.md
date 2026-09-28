@@ -10927,3 +10927,19 @@ Architecture/decision record only. STRICT GOVERNANCE items remain separately gat
 remediation commit on parent `941194d39f2ee3449acfca93fbe1a78db9e0eded`; independent Architecture Re-review
 must pass before Push/PR/Merge. C2B implementation, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; Kind B
 remains DENY.
+
+## ADR-0090 implementation record — R3-C2B-1 (2026-09-28)
+
+The authorized C2B-1 local implementation adds a network-free, issuer-instance-local
+`TrustedCurrentUnavailabilityObservation` and injected `CurrentUnavailabilityObservationProducer` port.
+Only test-local `TEST_FAKE` can issue; the reserved canonical reachability probe remains rejected and has
+no implementation or production composition wiring. The issuer reads its monotonic clock before and after
+the producer, bounds the producer timestamp to those reads, enforces fixed 5,000 ms / 1,000 ms windows,
+and fails closed if its clock runs backward. Validation re-derives the exact enabled, policy-compatible
+NETWORK set and Stage2B composite configuration digest from canonical Task/first STARTED TaskRun facts.
+`VALIDATED_KIND_B_EVIDENCE` in the architecture is precisely the `VALIDATED` variant of
+`TrustedCurrentUnavailabilityValidationResult`; no second result symbol exists.
+
+This implementation does not consume evidence in R3-C1/C2A: Kind B admission remains DENY. C2B-2,
+C2C, and R3-C-Rz are not authorized. R3-B3 production provenance is defined, while its production trust
+anchor, verifier issuer, and capability issuer remain unimplemented and the trust check remains fail closed.

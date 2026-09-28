@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-1 trusted current-unavailability evidence (local implementation) — 2026-09-28
+
+- Add a network-free Core observation producer port, issuer-local immutable authority, bounded source/reason
+  values, and exact enabled, compatible NETWORK provider-set aggregate validation.
+- Enforce canonical first-run Task/TaskRun, routing context, Stage2B composite configuration, issuer-owned
+  before/after monotonic timestamps, 5-second validity, 1-second observation delay, and backward-clock
+  rejection. `VALIDATED` names evidence validation only.
+- Keep `TEST_FAKE` test-local and absent from production composition. Kind B admission remains DENY;
+  C2B-2, C2C, and R3-C-Rz remain unauthorized; R3-B3 production trust remains fail closed.
+
 ## R3-C2B architecture remediation (docs only) — 2026-09-28
 
 - Add "ADR-0090 amendment (remediation) — R3-C2B corrected after Claude CHANGES_REQUIRED (B-1..B-4)" to

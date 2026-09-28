@@ -5,9 +5,23 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### R3-C2B — Trusted Current-Unavailability Observation Authority (architecture / task definition) (2026-09-28)
+### R3-C2B-1 — Trusted Current-Unavailability Observation Authority (2026-09-28)
 
-**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** R3-C2B architecture was ratified and
+delivered via PR #90. C2B-1 adds a process-local,
+issuer-instance-local immutable observation authority, an injected producer port, and a test-local
+deterministic `TEST_FAKE` producer seam. The issuer brackets producer observation with monotonic-ms clock
+reads, rejects timestamps outside that interval, limits the validity window to 5,000 ms and
+observation-to-issuance delay to 1,000 ms, and rejects a backward clock against its last observed value.
+Aggregate validation re-reads canonical Task/STARTED first TaskRun, context digest, and Stage2B composite
+configuration digest, then requires exactly one authority per
+`staticEligibility(...).eligibleNetworkProviderIds`. The positive result is the `VALIDATED` variant of
+`TrustedCurrentUnavailabilityValidationResult`; the architecture phrase `VALIDATED_KIND_B_EVIDENCE`
+refers to that variant. There is no production `TEST_FAKE` wiring. Actual Kind B local-continuity
+admission remains **DENY**. C2B-2, C2C, and R3-C-Rz remain **NOT AUTHORIZED**; R3-B3 production trust
+remains **FAIL CLOSED**. The following architecture record is retained as historical context.
+
+**Historical architecture/task-definition snapshot (superseded by the implementation status above).** Branch
 `codex/r3c2b-trusted-unavailability-observation-architecture` from canonical main
 `be9ba95853a1cfc47d33009a70d06b002ba80828` (after R3-C2A delivery PR #89 merged). `DECISIONS.md` carries the
 ADR-0090 amendment "R3-C2B architecture / task definition" defining a **Trusted Current-Unavailability
