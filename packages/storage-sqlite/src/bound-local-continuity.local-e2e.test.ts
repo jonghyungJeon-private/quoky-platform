@@ -153,7 +153,8 @@ describe('R3-C2A realistic first continuation (NB-R2 / NB-R3)', () => {
       const selection = await issuer.issue(run.id, providerId('local'));
       expect(selection).toMatchObject({ taskRunId: run.id, executionId: run.id, capability: Capability.GENERAL_CHAT,
         attemptNumber: 1, additionalProviderHops: 0 });
-      expect(history).toHaveBeenCalledTimes(1);
+      // C2A and the canonical admission coordinator independently verify first-run history.
+      expect(history).toHaveBeenCalledTimes(2);
       history.mockRestore();
       expect(await list(f.task.id)).toEqual([run]);
       // Issuance itself does not mutate the database beyond the normal fixture/start lifecycle.

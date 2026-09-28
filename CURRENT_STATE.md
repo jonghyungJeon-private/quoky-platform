@@ -5,9 +5,24 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### R3-C2B-I — Kind B Admission Integration (architecture / task definition) (2026-09-28)
+### R3-C2B-I1 — Kind B Admission Integration (2026-09-28)
 
-**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** Architecture was ratified and delivered
+through PR #92. `LocalContinuityAdmissionCoordinator` is the canonical application admission entry;
+`LocalContinuityAdmission` owns the pure Kind B policy candidate and existing Kind A policy. The C2B issuer
+batch derives and issues the exact canonical NETWORK provider set and validates on the same instance.
+`VALIDATED` carries taskRunId, RoutingContextDigest, Stage2B composite configurationDigest, and the minimum
+expiry. C2A consumes the coordinator outcome without another await before minting. Kind A bound authority
+explicitly carries `STATIC_INELIGIBILITY` with no dynamic expiry; Kind B carries
+`TRUSTED_CURRENT_UNAVAILABILITY` and the C2B minimum monotonic expiry, checked at mint and validation.
+Composition rejects different C2A/C2B monotonic clock instances.
+Missing or failed C2B evidence denies Kind B with bounded policy/C2B/infrastructure classifications; Kind A
+remains independent. A STARTED run already carrying a provider audit ID is conservatively rejected from
+Kind B. Production has no C2B producer, so production Kind B remains **DENY**. C2B-2, C2C,
+and R3-C-Rz remain **NOT AUTHORIZED**; R3-B3 production trust remains **FAIL CLOSED**. The architecture
+snapshot below is retained as historical context.
+
+**Historical architecture/task-definition snapshot (superseded by the implementation status above).** Branch
 `kiro/r3c2b-kindb-admission-integration-architecture` from canonical main
 `0c7b4a8762b0a9ad892d3e5407e33e5300e01a1e`. `DECISIONS.md` carries the ADR-0090 amendment "R3-C2B-I
 architecture / task definition (Kind B Admission Integration)" defining the canonical path by which C2B-1

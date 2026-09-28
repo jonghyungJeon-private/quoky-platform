@@ -87,8 +87,8 @@ describe('R3-C2B-1 trusted observation authority', () => {
     expect(f.producer.observe).toHaveBeenCalledWith(Object.freeze({ providerId: 'a', taskId: 'task',
       executionId: 'run', capability: Capability.GENERAL_CHAT,
       routingContextDigest: routingContextDigest(context), configurationDigest: a.configurationDigest }));
-    expect(await f.validate([a])).toEqual({ status: 'VALIDATED' });
-    expect(f.clock.nowMs).toHaveBeenCalledTimes(5);
+    expect(await f.validate([a])).toMatchObject({ status: 'VALIDATED' });
+    expect(f.clock.nowMs).toHaveBeenCalledTimes(6);
     expect(Issuer.prototype.issue.length).toBe(2);
   });
 
@@ -125,8 +125,8 @@ describe('R3-C2B-1 trusted observation authority', () => {
     // A fresh issuer tests not-yet-valid without a backward clock.
     const g = fixture();
     const b = await g.issue();
-    g.setNow(100); expect(await g.validate([b])).toEqual({ status: 'VALIDATED' });
-    g.setNow(5099); expect(await g.validate([b])).toEqual({ status: 'VALIDATED' });
+    g.setNow(100); expect(await g.validate([b])).toMatchObject({ status: 'VALIDATED' });
+    g.setNow(5099); expect(await g.validate([b])).toMatchObject({ status: 'VALIDATED' });
     g.setNow(5100); expect(await g.validate([b])).toEqual({ status: 'INVALID', reason: 'EXPIRED' });
     g.setNow(5200); expect(await g.validate([b])).toEqual({ status: 'INVALID', reason: 'EXPIRED' });
     expect(b.expiresAtMonoMs).toBe(5100);
@@ -158,7 +158,7 @@ describe('R3-C2B-1 trusted observation authority', () => {
       descriptor('local', true, ExecutionLocality.LOCAL)]);
     const a = await f.issue('a'); const b = await f.issue('b');
     expect(await f.validate([a])).toEqual({ status: 'INVALID', reason: 'MISSING_PROVIDER_AUTHORITY' });
-    expect(await f.validate([a, b])).toEqual({ status: 'VALIDATED' });
+    expect(await f.validate([a, b])).toMatchObject({ status: 'VALIDATED' });
     expect(await f.validate([a, a, b])).toEqual({ status: 'INVALID', reason: 'DUPLICATE_PROVIDER_AUTHORITY' });
     await expect(f.issue('disabled')).rejects.toMatchObject({ reason: 'PROVIDER_SET_MISMATCH' });
     const g = fixture([descriptor('a'), descriptor('b'), descriptor('ghost')]);
@@ -172,7 +172,7 @@ describe('R3-C2B-1 trusted observation authority', () => {
     const f = fixture([descriptor('a', true, ExecutionLocality.NETWORK, ReliabilityTier.HIGH),
       descriptor('b', true, ExecutionLocality.NETWORK, ReliabilityTier.STANDARD)], strict);
     const a = await f.issue();
-    expect(await f.validate([a])).toEqual({ status: 'VALIDATED' });
+    expect(await f.validate([a])).toMatchObject({ status: 'VALIDATED' });
     await expect(f.issue('b')).rejects.toMatchObject({ reason: 'PROVIDER_SET_MISMATCH' });
     Object.assign(f.issuer, { engine: engine({ ...strict, version: 'v2' }) });
     expect(await f.validate([a])).toEqual({
@@ -244,7 +244,7 @@ describe('R3-C2B-1 trusted observation authority', () => {
 
   it('has no provider, process, network, secret, containment or production fake wiring', async () => {
     const f = fixture(); const a = await f.issue();
-    expect(await f.validate([a])).toEqual({ status: 'VALIDATED' });
+    expect(await f.validate([a])).toMatchObject({ status: 'VALIDATED' });
     expect(() => assertTrustedCurrentUnavailabilityUnsupported()).toThrow();
     const implementation = readFileSync(join(__dirname, 'trusted-current-unavailability-observation.ts'), 'utf8');
     expect(implementation).not.toMatch(/\.isAvailable\s*\(|\.execute\s*\(|\bspawn\s*\(|\bfetch\s*\(|process\.env|prepareVerifiedContainmentBinding/);

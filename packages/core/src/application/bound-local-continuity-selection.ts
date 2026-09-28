@@ -1,7 +1,9 @@
 import { TaskRunStatus, TaskStatus, type Capability } from '../domain';
 import type { StorageProvider } from '../ports';
 import { continuationRoutingContext } from './continuation-routing-context';
-import { LocalContinuityAdmission, WorkloadLocalFallbackPolicy, type LocalContinuityAdmissionDecision } from './local-continuity-admission';
+import { type LocalContinuityAdmissionDecision, type LocalContinuityEvidenceKind } from './local-continuity-admission';
+import { LocalContinuityAdmissionCoordinator } from './local-continuity-admission-coordinator';
+import { SYSTEM_MONOTONIC_CLOCK, type MonotonicClock } from './deadline-policy';
 import type { SoleProviderSelection } from './continuation-prepared-containment';
 import type { ProviderExecutionPlan } from './provider-execution-plan';
 import type { ProviderRegistry } from './provider-registry';
@@ -23,6 +25,8 @@ export interface BoundLocalContinuitySelection {
   readonly taskId: string;
   readonly routingContextDigest: string;
   readonly capability: Capability;
+  readonly continuityEvidenceKind: LocalContinuityEvidenceKind;
+  readonly continuityEvidenceExpiresAtMonoMs?: number;
   readonly attemptNumber: 1;
   readonly additionalProviderHops: 0;
 }
@@ -33,7 +37,7 @@ const issued = new WeakMap<object, object>();
 export class BoundLocalContinuityError extends Error {
   constructor(readonly reason: 'NOT_ISSUED' | 'INVALID_RUN' | 'NOT_FIRST_RUN' | 'WORKLOAD_MISMATCH'
     | 'ADMISSION_DENIED' | 'EXECUTION_MISMATCH' | 'CONTEXT_MISMATCH' | 'CONFIGURATION_MISMATCH'
-    | 'PRIMARY_ONLY_VIOLATION') {
+    | 'PRIMARY_ONLY_VIOLATION' | 'INFRASTRUCTURE_FAILURE' | 'EVIDENCE_EXPIRED' | 'EVIDENCE_SHAPE_INVALID') {
     super(reason);
     this.name = 'BoundLocalContinuityError';
   }
@@ -54,22 +58,44 @@ export class BoundLocalContinuitySelectionIssuer {
     private readonly storage: Reads,
     private readonly registry: ProviderRegistry,
     private readonly engine: RoutingPolicyEngine,
-  ) {}
+    private readonly coordinator: LocalContinuityAdmissionCoordinator = new LocalContinuityAdmissionCoordinator(storage, registry, engine),
+    private readonly clock: MonotonicClock = SYSTEM_MONOTONIC_CLOCK,
+  ) {
+    if (!coordinator.usesClock(clock)) reject('EVIDENCE_SHAPE_INVALID');
+  }
 
   async issue(taskRunId: string, localProviderId: ProviderId): Promise<BoundLocalContinuitySelection> {
-    const facts = await this.canonicalFacts(taskRunId);
+    let facts;
+    try {
+      facts = await this.canonicalFacts(taskRunId);
+    } catch (error) {
+      if (error instanceof BoundLocalContinuityError) throw error;
+      reject('INFRASTRUCTURE_FAILURE');
+    }
     const configurationDigest = this.engine.staticEligibility(facts.context, this.registry.snapshot()).configurationDigest;
-    const { decision, soleSelection } = new LocalContinuityAdmission(
-      new WorkloadLocalFallbackPolicy(), this.engine, this.registry,
-    ).admit({ capability: facts.context.capability, routingContext: facts.context,
-      localProviderId, selectionConfigurationRef: configurationDigest });
+    const outcome = await this.coordinator.admit({ taskRunId, localProviderId });
+    if (!outcome.admitted) {
+      if (outcome.classification === 'INFRASTRUCTURE') reject('INFRASTRUCTURE_FAILURE');
+      reject('ADMISSION_DENIED');
+    }
+    // No await between the coordinator's admitted outcome and this authority mint.
+    const { decision, soleSelection } = outcome;
     if (!decision.admitted || !soleSelection || decision.providerCandidate !== localProviderId
       || decision.configurationRef !== configurationDigest
       || decision.attemptNumber !== 1 || decision.additionalProviderHops !== 0) reject('ADMISSION_DENIED');
+    const evidenceKind = decision.evidenceKind;
+    const expiry = outcome.continuityEvidenceExpiresAtMonoMs;
+    if (evidenceKind === 'TRUSTED_CURRENT_UNAVAILABILITY') {
+      if (!Number.isFinite(expiry) || expiry === undefined || expiry < 0) reject('EVIDENCE_SHAPE_INVALID');
+      const now = this.clock.nowMs();
+      if (!Number.isFinite(now) || now < 0 || now >= expiry) reject('EVIDENCE_EXPIRED');
+    } else if (evidenceKind !== 'STATIC_INELIGIBILITY' || expiry !== undefined) reject('EVIDENCE_SHAPE_INVALID');
     const selection: BoundLocalContinuitySelection = Object.freeze({
       providerId: localProviderId, admission: decision, soleSelection, configurationDigest,
       taskRunId, executionId: taskRunId, taskId: facts.taskId,
       routingContextDigest: routingContextDigest(facts.context), capability: facts.context.capability,
+      continuityEvidenceKind: evidenceKind,
+      ...(expiry === undefined ? {} : { continuityEvidenceExpiresAtMonoMs: expiry }),
       attemptNumber: 1, additionalProviderHops: 0,
     });
     issued.set(selection, this);
@@ -113,6 +139,15 @@ export class BoundLocalContinuitySelectionIssuer {
     if (currentConfiguration !== selection.configurationDigest
       || canonicalConfiguration !== selection.configurationDigest
       || expected.configurationDigest !== selection.configurationDigest) reject('CONFIGURATION_MISMATCH');
+    const expiry = selection.continuityEvidenceExpiresAtMonoMs;
+    if (selection.continuityEvidenceKind !== selection.admission.evidenceKind) reject('EVIDENCE_SHAPE_INVALID');
+    if (selection.continuityEvidenceKind === 'STATIC_INELIGIBILITY') {
+      if (expiry !== undefined) reject('EVIDENCE_SHAPE_INVALID');
+    } else if (selection.continuityEvidenceKind === 'TRUSTED_CURRENT_UNAVAILABILITY') {
+      if (expiry === undefined || !Number.isFinite(expiry) || expiry < 0) reject('EVIDENCE_SHAPE_INVALID');
+      const now = this.clock.nowMs();
+      if (!Number.isFinite(now) || now < 0 || now >= expiry) reject('EVIDENCE_EXPIRED');
+    } else reject('EVIDENCE_SHAPE_INVALID');
   }
 
   private async canonicalFacts(taskRunId: string): Promise<{ taskId: string; context: RoutingContext }> {

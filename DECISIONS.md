@@ -11430,3 +11430,20 @@ Architecture/decision record only. STRICT GOVERNANCE items remain separately gat
 remediation commit on parent `22f4e6f0f88fe603b801d6928756e70ea4e4d393`; independent Architecture Re-review
 must pass before Push/PR/Merge. Integration (R3-C2B-I1), C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; Kind B
 production admission remains DENY/unreachable.
+
+## ADR-0090 implementation record — R3-C2B-I1 (2026-09-28)
+
+The authorized local implementation connects C2A issuance to a canonical
+`LocalContinuityAdmissionCoordinator`. The coordinator owns Kind A precedence and, only for Kind B,
+invokes one C2B issuer's canonical NETWORK-set batch issuance and aggregate validation. The pure
+`LocalContinuityAdmission` Kind B evaluator accepts deterministic policy facts only. `VALIDATED` includes
+taskRunId, RoutingContextDigest, Stage2B composite configurationDigest, and minimum evidence expiry;
+the coordinator checks these bindings before producing its internal admission outcome. C2A mints without
+an intervening await, binds the existing evidence taxonomy to its immutable authority, and enforces
+Kind B's monotonic expiry; composition checks that C2A/C2B share one clock instance. Kind A has no dynamic
+expiry. Bounded denial classification distinguishes
+policy, C2B evidence, and infrastructure failures without raw exception text. A STARTED TaskRun already
+carrying a provider audit ID is conservatively outside the pre-dispatch Kind B path.
+
+There is no production observation producer: production Kind B admission remains DENY before C2B-2.
+This slice adds no C2C execution/containment, R3-C-Rz retry behavior, or R3-B3 production trust.

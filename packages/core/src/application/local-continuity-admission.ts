@@ -4,6 +4,7 @@ import {
   ProviderRegistrySnapshot,
   RoutingContext,
   RoutingConfigurationError,
+  type StaticEligibilityProjection,
   type ProviderId,
 } from './provider-routing-contracts';
 import { RoutingPolicyEngine } from './routing-policy-engine';
@@ -11,7 +12,6 @@ import type { ProviderRegistry } from './provider-registry';
 import {
   assertExactSoleProviderSelection,
   type SoleProviderSelection,
-  type StaticEligibilityDecision,
 } from './continuation-prepared-containment';
 
 /**
@@ -37,7 +37,9 @@ import {
  *    capability, tool, routing-class, ranking, or LOCAL-locality routing outcome — those are NORMAL
  *    ROUTING and cause DENY (not admission). If the matched policy intentionally requires LOCAL locality,
  *    a LOCAL selection is ordinary routing and admission DENYs even when no cloud is configured.
- *  - Kind B (TRUSTED_CURRENT_UNAVAILABILITY) has no trusted issuer in R3-C1 → ALWAYS DENY (fail closed).
+ *  - Kind B (TRUSTED_CURRENT_UNAVAILABILITY) is evaluated here only as pure deterministic policy;
+ *    the application coordinator alone combines it with issuer-validated evidence. Production without
+ *    a trusted observation producer still DENYs.
  *  - Kind C (PRIOR_ATTEMPT_FAILURE) is UNSUPPORTED in R3-C1 → ALWAYS DENY (belongs to R3-C-Rz).
  *  - Static provider eligibility, capability floors, quality floors, ranking, and exact selection remain
  *    Stage2B responsibility. This module reuses the SAME `staticEligibility(...)` projection for both the
@@ -100,9 +102,8 @@ export const KIND_A_ADMINISTRATIVE_CONDITIONS = [
 export type KindAAdministrativeCondition = typeof KIND_A_ADMINISTRATIVE_CONDITIONS[number];
 
 /**
- * The kinds enumerated by the ADR-0090 evidence contract SHAPE. Only Kind A is derivable and admissible
- * in R3-C1, and it is derived INTERNALLY (there is no caller evidence input). Kinds B and C exist for
- * future compatibility but have NO caller-accessible admitting path.
+ * The kinds enumerated by the ADR-0090 evidence contract. Kind A is derived internally; Kind B requires
+ * canonical coordinator evidence; Kind C remains unsupported. No kind is caller-supplied trust.
  */
 export const LOCAL_CONTINUITY_EVIDENCE_KINDS = [
   'STATIC_INELIGIBILITY',
@@ -184,6 +185,8 @@ export interface LocalContinuityAdmissionDecision {
   readonly providerCandidate?: ProviderId;
   /** The closed Kind A administrative/configuration condition that justified admission (only when admitted). */
   readonly kindACondition?: KindAAdministrativeCondition;
+  /** Present only on canonical admitted decisions. */
+  readonly evidenceKind?: LocalContinuityEvidenceKind;
   /** The composite (registry + policy) configuration identity binding derivation and selection. */
   readonly configurationRef: string;
   /** Fixed R3-C1 attempt accounting (declarative). */
@@ -200,8 +203,8 @@ export class LocalContinuityAdmissionError extends Error {
 }
 
 /**
- * Kind B is contract-defined but has NO trusted issuer in R3-C1. This assertion makes the fail-closed
- * behavior explicit and testable: there is NO argument and NO caller path that can make it admit — no
+ * This legacy direct assertion remains fail closed. The I1 coordinator is the only Kind B integration;
+ * this function has NO argument and NO caller path that can make it admit — no
  * `freshness=CURRENT` label, no `trusted` string, no availability snapshot, no `isAvailable()` result, no
  * persisted/rehydrated value. It always throws. It is intentionally named as an "unsupported" assertion
  * so it can never be mistaken for an admitting API.
@@ -246,6 +249,56 @@ export class LocalContinuityAdmission {
     private readonly routingEngine: RoutingPolicyEngine,
     private readonly registry: ProviderRegistry,
   ) {}
+
+  /** Pure deterministic Kind B prerequisite check. Its result is never evidence or admission authority. */
+  evaluateTrustedCurrentUnavailabilityPolicy(input: LocalContinuityAdmissionInput): {
+    readonly allowed: boolean;
+    readonly configurationRef: string;
+    readonly providerCandidate?: ProviderId;
+    readonly soleSelection?: SoleProviderSelection;
+    readonly denialReason?: LocalContinuityDenialReason;
+  } {
+    const configRef = input.selectionConfigurationRef;
+    if (!isCompositeConfigRef(configRef) || !input.routingContext || input.routingContext.capability !== input.capability
+      || typeof input.localProviderId !== 'string' || !input.localProviderId) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'MALFORMED_INPUT' };
+    }
+    const projection = this.routingEngine.staticEligibility(input.routingContext, this.registry.snapshot());
+    if (projection.configurationDigest !== configRef) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'CONFIGURATION_IDENTITY_MISMATCH' };
+    }
+    if (!this.workloadPolicy.localFallbackAllowed(input.capability)) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'WORKLOAD_LOCAL_FALLBACK_DISALLOWED' };
+    }
+    if (!projection.policyMatched) return { allowed: false, configurationRef: configRef, denialReason: 'NO_POLICY_MATCHED' };
+    if (projection.policyRequiresLocalLocality) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'POLICY_REQUIRES_LOCAL_NORMAL_ROUTING' };
+    }
+    if (projection.eligibleNetworkProviderIds.length === 0) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'NORMAL_CLOUD_PATH_STATICALLY_EXISTS' };
+    }
+    if (projection.eligibleLocalProviderIds.length !== 1) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'LOCAL_SELECTION_NOT_SOLE' };
+    }
+    const soleSelection = this.selectLocal(input.localProviderId, projection);
+    if (!soleSelection) {
+      return { allowed: false, configurationRef: configRef, denialReason: 'LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE' };
+    }
+    return Object.freeze({ allowed: true, configurationRef: configRef,
+      providerCandidate: input.localProviderId, soleSelection });
+  }
+
+  private selectLocal(localProviderId: ProviderId, projection: StaticEligibilityProjection): SoleProviderSelection | null {
+    const descriptor = this.registry.get(localProviderId);
+    if (!descriptor || descriptor.capabilities.executionLocality !== ExecutionLocality.LOCAL
+      || !projection.eligibleLocalProviderIds.includes(localProviderId)) return null;
+    try {
+      return assertExactSoleProviderSelection({ eligibleProviderIds: [localProviderId],
+        selectedProviderId: localProviderId, primaryOnly: true });
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Decide admission. Returns the decision plus (only when admitted) the `SoleProviderSelection` handoff
@@ -337,12 +390,8 @@ export class LocalContinuityAdmission {
 
     // 5. The LOCAL provider must be STATICALLY ELIGIBLE under the SAME policy/configuration (same capability
     //    + quality floor + LOCAL locality). We reuse the SAME projection rather than a parallel rule set.
-    const localDescriptor = this.registry.get(input.localProviderId);
-    if (
-      localDescriptor === undefined ||
-      localDescriptor.capabilities.executionLocality !== ExecutionLocality.LOCAL ||
-      !projection.eligibleLocalProviderIds.includes(input.localProviderId)
-    ) {
+    if (!this.registry.get(input.localProviderId)
+      || !projection.eligibleLocalProviderIds.includes(input.localProviderId)) {
       return { decision: deny(configRef, 'LOCAL_PROVIDER_NOT_STATICALLY_ELIGIBLE') };
     }
 
@@ -350,15 +399,8 @@ export class LocalContinuityAdmission {
     //    provider (the local one) and it is the selection. This mints a SoleProviderSelection via the
     //    existing R3-B1 exact-selection assertion (pre-existing public API; see docs) but performs NO
     //    containment preparation, model load, or execution.
-    const staticEligibility: StaticEligibilityDecision = {
-      eligibleProviderIds: [input.localProviderId],
-      selectedProviderId: input.localProviderId,
-      primaryOnly: true,
-    };
-    let soleSelection: SoleProviderSelection;
-    try {
-      soleSelection = assertExactSoleProviderSelection(staticEligibility);
-    } catch {
+    const soleSelection = this.selectLocal(input.localProviderId, projection);
+    if (!soleSelection) {
       return { decision: deny(configRef, 'LOCAL_SELECTION_NOT_SOLE') };
     }
 
@@ -367,6 +409,7 @@ export class LocalContinuityAdmission {
       admitted: true,
       providerCandidate: input.localProviderId,
       kindACondition,
+      evidenceKind: 'STATIC_INELIGIBILITY',
       configurationRef: configRef,
       attemptNumber: R3C1_ATTEMPT_NUMBER,
       additionalProviderHops: R3C1_ADDITIONAL_PROVIDER_HOPS,
