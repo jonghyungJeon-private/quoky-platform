@@ -5,6 +5,43 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2B-2 — Production Trusted-Unavailability Observation Producer (architecture / task definition) (2026-09-28)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3c2b-2-trusted-observation-architecture` from canonical main
+`6fef480b4a3e0a4673df6877447d84be8fe23da2`. `DECISIONS.md` carries the ADR-0090 amendment "R3-C2B-2
+architecture / task definition (Production Trusted-Unavailability Observation Producer)" designing the
+production observation source that could make Kind B `TRUSTED_CURRENT_UNAVAILABILITY` reachable without
+weakening the PRE_DISPATCH-only flow, exact bindings, freshness, the C2A/C2B chain, C2C validate→commit→effect
+ordering, or R3-B3 fail-closed. Source-verified: the seam is the existing
+`CurrentUnavailabilityObservationProducer` port (`source` + `observe → {observedAtMonoMs, reason}`); the C2B
+issuer owns the call, brackets it with monotonic clock reads, and today accepts only `TEST_FAKE`
+(`CANONICAL_PROVIDER_REACHABILITY_PROBE` reserved); `AiProvider.isAvailable()` reflects LOCAL binary/process
+availability, not cloud reachability, so it is unsuitable. **Canonical owner:** a NEW adapter-layer
+`CanonicalProviderReachabilityObservationProducer` (`source = CANONICAL_PROVIDER_REACHABILITY_PROBE`)
+implementing the existing port; its sole authority is a narrow read-only reachability/auth probe of the exact
+cloud endpoint — it never mints Kind B authority (the C2B issuer remains the sole minter) and is never C2A /
+C2B validator / admission coordinator / gateway / C2C. **Semantics:** "currently unavailable" = definitive
+endpoint-unreachable / auth-unavailable / provider-native-down for THIS run/context; UNKNOWN / timeout /
+ambiguous network / auth-secret failure → Kind B DENY; quality/capability/policy/LOCAL-only/prior-failure/
+ranking are never Kind B. **Trust:** a production observation provenance root must authenticate the canonical
+producer instance before the issuer accepts `CANONICAL_PROVIDER_REACHABILITY_PROBE`; until then the issuer
+keeps rejecting it (`SOURCE_NOT_ALLOWED`) and production Kind B stays DENY. **Bindings/freshness preserved:**
+providerId/taskId/executionId/capability/RoutingContextDigest/composite configurationDigest/source/endpoint/
+observedAtMonoMs/expiry/issuer; window ≤ 5000ms, issuance delay ≤ 1000ms, monotonic-only, C2C final expiry
+authoritative. Network = adapter-owned, read-only, bounded-timeout, canonical health endpoint only, no
+arbitrary host, no mutation/inference/disguised-effect, no secret leakage; secret ownership boundary
+identified only (no secret read here). Replay/cross-run isolation preserved via issuer bindings + WeakMap
+authenticity; restart invalidates. **R3-B3 impact:** distinguishes observation authenticity (may be
+delivered) from production contained-execution trust (still FAIL CLOSED) — production Kind B evidence never
+auto-enables a real contained effect; C2C effect stays fail-closed until the separate R3-B3
+production-containment slice. Decomposition: **R3-C2B-2-1** (producer plumbing + provenance root + issuer
+source acceptance; STRICT network/secret governance) plus a mandatory production-reachability gate requiring
+BOTH R3-C2B-2-1 AND the R3-B3 production-containment slice before any real end-to-end production effect. C2A/
+C2C unchanged; R3-C-Rz excluded (prior-attempt failures never become Kind B). Docs-only: no source/test/
+schema/runtime/provider/network/secret/DB changes. ADR-0090 remains Proposed; R3-C2B-2 and R3-C-Rz remain NOT
+AUTHORIZED; production Kind B end-to-end remains DENY; R3-B3 stays FAIL CLOSED.
+
 ### R3-C2C-1 — Network-free local continuity consumption (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** The continuation receiver no longer

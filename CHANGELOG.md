@@ -5,6 +5,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-2 Production Trusted-Unavailability Observation Producer architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2B-2 architecture / task definition (Production Trusted-Unavailability
+  Observation Producer)" to `DECISIONS.md`, designing the production observation source that could make Kind B
+  `TRUSTED_CURRENT_UNAVAILABILITY` reachable without weakening PRE_DISPATCH-only flow, exact bindings,
+  freshness, the C2A/C2B chain, C2C validate→commit→effect ordering, or R3-B3 fail-closed. Source-verified:
+  the seam is the existing `CurrentUnavailabilityObservationProducer` port; the C2B issuer owns the call and
+  today accepts only `TEST_FAKE` (`CANONICAL_PROVIDER_REACHABILITY_PROBE` reserved); `AiProvider.isAvailable()`
+  reflects LOCAL binary/process availability, not cloud reachability, so it is unsuitable. Canonical owner: a
+  NEW adapter-layer `CanonicalProviderReachabilityObservationProducer` (`source =
+  CANONICAL_PROVIDER_REACHABILITY_PROBE`) implementing the existing port — a narrow read-only reachability/
+  auth probe of the exact cloud endpoint that never mints Kind B authority (C2B issuer remains sole minter).
+  Semantics: definitive endpoint-unreachable / auth-unavailable / provider-native-down = Kind B eligible;
+  UNKNOWN/timeout/ambiguous network/auth-secret failure → DENY; quality/capability/policy/LOCAL-only/
+  prior-failure/ranking never Kind B. Trust: a production observation provenance root must authenticate the
+  canonical producer instance before the issuer accepts the non-TEST_FAKE source; until then it is rejected
+  (`SOURCE_NOT_ALLOWED`) and production Kind B stays DENY. Bindings/freshness preserved (providerId/taskId/
+  executionId/capability/RoutingContextDigest/composite configurationDigest/endpoint/timestamps/issuer; window
+  ≤ 5000ms, issuance delay ≤ 1000ms, monotonic-only, C2C final expiry authoritative). Network = adapter-owned,
+  read-only, bounded-timeout, canonical health endpoint only, no arbitrary host/mutation/inference/
+  disguised-effect/secret-leak; secret ownership boundary identified only (no secret read here). Replay/
+  cross-run isolation preserved; restart invalidates. R3-B3 impact: observation authenticity is distinguished
+  from production contained-execution trust (still FAIL CLOSED) — production Kind B evidence never auto-enables
+  a real contained effect. Decomposition: R3-C2B-2-1 (producer plumbing + provenance root + issuer source
+  acceptance; STRICT network/secret governance) plus a mandatory production-reachability gate requiring BOTH
+  R3-C2B-2-1 AND the separate R3-B3 production-containment slice before any real end-to-end production effect.
+  C2A/C2C unchanged; R3-C-Rz excluded. Documentation only: no source, test, schema, runtime, provider,
+  network, secret, or DB changes. One local architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed;
+  R3-C2B-2 and R3-C-Rz remain NOT AUTHORIZED; production Kind B end-to-end remains DENY; R3-B3 stays FAIL
+  CLOSED.
+
 ## R3-C2C-1 Network-free local continuity consumption (local, review pending) — 2026-09-28
 
 - Move the receiver's early dispatch commit to the ordinary continuation gateway boundary after PRIMARY_ONLY
