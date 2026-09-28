@@ -42,6 +42,33 @@ C2C unchanged; R3-C-Rz excluded (prior-attempt failures never become Kind B). Do
 schema/runtime/provider/network/secret/DB changes. ADR-0090 remains Proposed; R3-C2B-2 and R3-C-Rz remain NOT
 AUTHORIZED; production Kind B end-to-end remains DENY; R3-B3 stays FAIL CLOSED.
 
+**REMEDIATION (2026-09-28, Claude CHANGES_REQUIRED B-1..B-5).** One additional docs-only remediation commit
+(parent `ff7b4ed2…`; reviewed commit not amended) appends "ADR-0090 amendment (remediation) — R3-C2B-2
+corrected …" to `DECISIONS.md`. **B-1:** the endpoint/URL/host probe model is REMOVED (no canonical endpoint
+identity exists in descriptors/bindings/digests); the canonical mechanism is a PROVIDER-NATIVE TYPED
+DIAGNOSTIC through a NEW injected port `CanonicalProviderReachabilityProbeTransport` (bounded identity input
+only; CLOSED typed result; no URL/host/command exposed); semantics fixed per adapter/binding version (no
+separate probe profile). **B-2:** one mechanism only (provider-native read-only non-inference diagnostic; no
+generic HTTP/TCP, no `isAvailable()`, no inference/fallback); closed result family where ONLY
+`PROVIDER_SERVICE_UNAVAILABLE` / `PROVIDER_AUTH_SERVICE_UNAVAILABLE` are Kind B-eligible; explicit raw-failure
+mapping (DNS/TCP/TLS/HTTP-5xx/local errors → DENY); `catch(...) => UNAVAILABLE` structurally forbidden.
+**B-3:** auth eligibility means ONLY provider auth-SERVICE unavailable; missing/invalid/revoked/expired
+creds, local secret-read failure, not-logged-in, account-disabled, 401/403 → DENY; existing
+`AUTHENTICATION_UNAVAILABLE` re-documented to mean `PROVIDER_AUTH_SERVICE_UNAVAILABLE` (serialized name may be
+retained). **B-4:** producer authenticity via a module-private composition-sealed factory + WeakSet/WeakMap of
+issued production-producer handles (`requireIssuedProductionObservationProducer`); the source flag alone never
+grants authority; in-process/process-local, no persistence/rehydration/cross-process, restart invalidates.
+**B-5:** `observedAtMonoMs` = monotonic time when the typed result is fully received AND classified (bracketed
+`beforeMono <= observedAtMonoMs <= afterMono`); ratified `MAX_PRODUCTION_OBSERVATION_PROBE_MS = 2000` (probe
+settles ≤ 2000ms else TIMEOUT→DENY; issuance ≤ 1000ms; evidence window ≤ 5000ms; no retry/fallback). Adds the
+network-free test seam (`DeterministicFakeReachabilityProbeTransport`), the STRICT live-probe boundary
+separation, and the production FAKE-effect structural guard (closes prior NB-1: production composition rejects
+a FAKE `PreparedContainmentExecution`). Evidence bindings unchanged (no endpoint field); C2A/C2C unchanged;
+R3-B3 impact preserved (observation authenticity ≠ production execution trust); R3-C-Rz excluded.
+Decomposition R3-C2B-2-1 (network-free); production end-to-end still gated on R3-C2B-2-1 + the separate R3-B3
+production-containment slice. Still docs-only; R3-C2B-2 and R3-C-Rz remain NOT AUTHORIZED; production Kind B
+end-to-end DENY; R3-B3 FAIL CLOSED.
+
 ### R3-C2C-1 — Network-free local continuity consumption (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** The continuation receiver no longer

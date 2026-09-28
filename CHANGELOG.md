@@ -5,6 +5,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-2 Production Trusted-Unavailability Observation architecture remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation) — R3-C2B-2 corrected after Claude CHANGES_REQUIRED (B-1..B-5)" to
+  `DECISIONS.md`. **B-1:** remove the endpoint/URL/host probe model (no canonical endpoint identity exists in
+  descriptors/bindings/digests); canonical mechanism = PROVIDER-NATIVE TYPED DIAGNOSTIC through a NEW injected
+  `CanonicalProviderReachabilityProbeTransport` port (bounded identity input; CLOSED typed result; no URL/host/
+  command exposed); semantics fixed per adapter/binding version (no separate probe profile). **B-2:** one
+  mechanism (provider-native read-only non-inference diagnostic; no generic HTTP/TCP, no `isAvailable()`, no
+  inference/fallback); closed result family where only `PROVIDER_SERVICE_UNAVAILABLE` /
+  `PROVIDER_AUTH_SERVICE_UNAVAILABLE` are Kind B-eligible; explicit raw-failure mapping (DNS/TCP/TLS/HTTP-5xx/
+  local → DENY); `catch(...) => UNAVAILABLE` forbidden. **B-3:** auth eligibility = ONLY provider
+  auth-SERVICE unavailable; missing/invalid/revoked/expired creds, local secret-read failure, not-logged-in,
+  account-disabled, 401/403 → DENY; existing `AUTHENTICATION_UNAVAILABLE` re-documented as
+  `PROVIDER_AUTH_SERVICE_UNAVAILABLE`. **B-4:** producer authenticity via module-private composition-sealed
+  factory + WeakSet/WeakMap of issued production-producer handles
+  (`requireIssuedProductionObservationProducer`); source flag alone never grants authority; process-local, no
+  persistence/rehydration/cross-process, restart invalidates. **B-5:** `observedAtMonoMs` = monotonic time
+  when the typed result is fully received AND classified (bracketed `beforeMono <= observedAtMonoMs <=
+  afterMono`); ratified `MAX_PRODUCTION_OBSERVATION_PROBE_MS = 2000` (probe ≤ 2000ms else TIMEOUT→DENY;
+  issuance ≤ 1000ms; evidence window ≤ 5000ms; no retry/fallback). Adds the network-free test seam
+  (`DeterministicFakeReachabilityProbeTransport`), the STRICT live-probe boundary, and the production
+  FAKE-effect structural guard (closes NB-1: production composition rejects a FAKE
+  `PreparedContainmentExecution`). Evidence bindings unchanged (no endpoint field); C2A/C2C unchanged; R3-B3
+  observation-authenticity ≠ production-execution-trust preserved; R3-C-Rz excluded. Decomposition R3-C2B-2-1
+  (network-free); production end-to-end still gated on R3-C2B-2-1 + the separate R3-B3 production-containment
+  slice. Documentation only: no source, test, schema, runtime, provider, network, secret, or DB changes. One
+  remediation commit on parent `ff7b4ed2…` (reviewed commit not amended); no Push/PR/Merge. ADR-0090 remains
+  Proposed; R3-C2B-2 and R3-C-Rz remain NOT AUTHORIZED; production Kind B end-to-end DENY; R3-B3 FAIL CLOSED.
+
 ## R3-C2B-2 Production Trusted-Unavailability Observation Producer architecture / task definition (docs only) — 2026-09-28
 
 - Add the ADR-0090 amendment "R3-C2B-2 architecture / task definition (Production Trusted-Unavailability

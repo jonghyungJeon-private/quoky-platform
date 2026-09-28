@@ -12788,3 +12788,176 @@ observation, secret access, runtime). One local architecture commit; independent
 pass before Push/PR/Merge. No R3-C2B-2 implementation begins from this document; R3-C2B-2 and R3-C-Rz remain
 NOT AUTHORIZED; production Kind B end-to-end effect remains DENY/fail-closed until both R3-C2B-2-1 and the
 R3-B3 production-containment slice are delivered.
+
+## ADR-0090 amendment (remediation) — R3-C2B-2 corrected after Claude CHANGES_REQUIRED (B-1..B-5)
+
+- **Status:** Proposed — architecture / task-definition only. Supersedes the corrected claims of the
+  preceding "R3-C2B-2 architecture / task definition" section (retained as history); where they conflict,
+  THIS remediation governs. Independent exact-HEAD Architecture Re-review pending. No implementation; no
+  schema/source/test change; no Provider/network/runtime execution; no secret read. Production Kind B remains
+  DENY/unreachable; R3-B3 stays FAIL CLOSED.
+- **Date:** 2026-09-28
+- **Branch / parent:** `kiro/r3c2b-2-trusted-observation-architecture`; one additional docs-only remediation
+  commit whose parent is the reviewed `ff7b4ed21667776e21fa3b336a11640facd83f7c` (reviewed commit NOT
+  amended). Canonical main `6fef480b4a3e0a4673df6877447d84be8fe23da2`.
+- **Accepted blockers:** B-1 (undefined endpoint model), B-2 (mechanism ambiguity), B-3 (auth
+  classification contradiction), B-4 (producer authenticity self-declared), B-5 (`observedAt` semantics).
+
+### RB2-1. B-1 — remove the endpoint model; provider-native typed diagnostic
+
+Source-verified: there is NO canonical cloud endpoint identity in `ProviderDescriptor`,
+`ExecutableProviderBinding`, `bindingDigest`, or the composite `configurationDigest`; Claude/Codex/Ollama
+cloud targets live inside their CLIs. **FINAL decision:** R3-C2B-2 does NOT use any Quoky-owned URL/host/
+endpoint probe. All prior architecture claims requiring a canonical endpoint URL, endpoint digest,
+caller-visible network identity, or arbitrary HTTP/TCP probe target are WITHDRAWN.
+
+Canonical production mechanism = a **PROVIDER-NATIVE TYPED DIAGNOSTIC** through a NEW narrow injected port
+**`CanonicalProviderReachabilityProbeTransport`**. The transport is adapter-specific and exposes NO URL/host/
+command string to callers; its input is bounded identity only (`providerId`, `adapterId`, `modelId`/binding
+identity as needed); its result is a CLOSED typed result. No arbitrary target, no user-supplied URL, no
+second endpoint/config authority.
+
+**Probe configuration identity:** semantics are FIXED per adapter/binding version — no separate
+`TrustedObservationProbeProfile` is created (only introduce a CLOSED immutable profile later IF a probe
+variant can affect observation semantics, in which case its identity must already be covered by the canonical
+binding/configuration digest; no new parallel config digest). This slice chooses the no-extra-profile model.
+
+### RB2-2. B-2 — one canonical mechanism + closed typed diagnostic
+
+The prior "active endpoint probe OR provider-native signal" ambiguity is removed. FINAL mechanism = a
+provider-native, read-only, non-inference diagnostic executed through
+`CanonicalProviderReachabilityProbeTransport`; it may internally use a provider CLI/native diagnostic, but
+Core/C2B sees ONLY the CLOSED typed result. No generic HTTP/TCP probe, no `AiProvider.isAvailable()`, no model
+inference, no ordinary Provider execution, no fallback. If an adapter cannot supply a trusted typed
+diagnostic → result `UNSUPPORTED`/`UNKNOWN` → Kind B DENY (never guess).
+
+**Closed probe-result family:** `AVAILABLE`, `PROVIDER_SERVICE_UNAVAILABLE`,
+`PROVIDER_AUTH_SERVICE_UNAVAILABLE`, `CREDENTIAL_INVALID`, `CREDENTIAL_MISSING`, `ACCOUNT_DISABLED`,
+`LOCAL_SECRET_FAILURE`, `LOCAL_PROCESS_FAILURE`, `LOCAL_NETWORK_FAILURE`, `TIMEOUT`, `UNSUPPORTED`, `UNKNOWN`.
+Only `PROVIDER_SERVICE_UNAVAILABLE` and `PROVIDER_AUTH_SERVICE_UNAVAILABLE` may become trusted Kind B
+unavailability; everything else → DENY. Raw exception interpretation is never exposed to the C2B issuer.
+
+**Raw failure mapping (explicit):** raw DNS/TCP/TLS/HTTP/process errors are NOT directly Kind B evidence —
+DNS NXDOMAIN → `LOCAL_NETWORK_FAILURE`/`UNKNOWN` → DENY; DNS timeout → `TIMEOUT`/`UNKNOWN` → DENY; TCP refused
+→ `LOCAL_NETWORK_FAILURE`/`UNKNOWN` → DENY; TLS failure → `LOCAL_NETWORK_FAILURE`/`UNKNOWN` → DENY; generic
+HTTP 5xx through an untrusted/generic path → `UNKNOWN` → DENY; 401/403 → credential/account classification →
+DENY; local socket/resource/process failure → `LOCAL_PROCESS_FAILURE` → DENY. Only an authenticated
+provider-native typed diagnostic explicitly reporting provider service unavailable or provider authentication
+service unavailable maps to `OBSERVED_UNAVAILABLE`. Structurally forbid `catch(...) => UNAVAILABLE`.
+
+### RB2-3. B-3 — authentication classification
+
+Kind B-eligible: `PROVIDER_AUTH_SERVICE_UNAVAILABLE` = the provider-native trusted diagnostic explicitly
+reports that the PROVIDER'S authentication SERVICE is currently unavailable. NOT eligible (all → DENY):
+missing / invalid / revoked / expired local credentials; failed local secret read; CLI not logged in; account
+disabled/suspended; permission denied; 401; 403. The existing `TrustedUnavailabilityReason.AUTHENTICATION_UNAVAILABLE`
+enum value is re-documented to mean UNAMBIGUOUSLY `PROVIDER_AUTH_SERVICE_UNAVAILABLE` and never a local
+authentication/configuration failure. The existing serialized name MAY be retained with this narrowed
+semantic (no serialized-value change required); a future implementation MAY rename to
+`PROVIDER_AUTH_SERVICE_UNAVAILABLE` for clarity but is not required to.
+
+### RB2-4. B-4 — concrete producer authenticity + process/restart model
+
+Self-declared `producer.source === CANONICAL_PROVIDER_REACHABILITY_PROBE` is NOT sufficient. FINAL: production
+observation producers are issued through a module-private, composition-sealed factory (conceptually
+`createProductionObservationProducerCapability(...)` returning an opaque issued handle), and the C2B trust
+module maintains issuer authenticity with a private WeakSet/WeakMap of issued production-producer handles —
+the SAME lightest pattern already used by C2A/C2B/B1 issuance. The C2B issuer calls
+`requireIssuedProductionObservationProducer(...)` before accepting `CANONICAL_PROVIDER_REACHABILITY_PROBE`, so
+an arbitrary `CurrentUnavailabilityObservationProducer` implementation cannot become canonical merely by
+returning that source value. No cryptography required; process-local authenticity suffices for this slice.
+
+**Process/restart model:** the production observation producer runs IN PROCESS; authenticity is process-local
+(WeakSet/WeakMap); no persistence, no rehydration, no cross-process producer capability; restart invalidates
+the issued producer capability and any issued evidence. An out-of-process/shared observation service is future
+architecture, not this slice.
+
+### RB2-5. B-5 — observedAt semantics + probe timeout
+
+`observedAtMonoMs` = the monotonic timestamp taken when the trusted typed diagnostic result has been fully
+RECEIVED AND CLASSIFIED — NOT probe start, request-send time, or an arbitrary adapter timestamp. Producer
+execution: issuer reads `beforeMono` → `await` typed diagnostic → result received & classified →
+`observedAtMonoMs = canonical monotonic now` → return → issuer reads `afterMono`; require
+`beforeMono <= observedAtMonoMs <= afterMono`.
+
+**Probe timeout:** ratify `MAX_PRODUCTION_OBSERVATION_PROBE_MS = 2000` (separate from
+`MAX_TRUSTED_UNAVAILABILITY_WINDOW_MS = 5000` and `MAX_OBSERVATION_TO_ISSUANCE_DELAY_MS = 1000`). The probe
+must settle within ≤ 2000 ms; timeout → `TIMEOUT` → DENY; after a definitive result, issuance must still occur
+within ≤ 1000 ms; evidence expiry remains bounded by the existing 5000 ms window from the canonical
+observation time. No retry within the observation; no fallback probe.
+
+### RB2-6. Network-free implementation seam & STRICT live boundary
+
+Future R3-C2B-2-1 implementation/tests MUST be network-free: the injected
+`CanonicalProviderReachabilityProbeTransport` port has a future/live provider-native diagnostic production
+adapter AND a `DeterministicFakeReachabilityProbeTransport` for tests; the Core producer depends only on the
+port; normal implementation validation uses the deterministic fake transport (no real network / CLI login /
+Provider request / secret read). **STRICT live boundary:** R3-C2B-2-1 IMPLEMENTATION (code + fake-transport
+tests, network-free) is SEPARATE from LIVE PROBE VERIFICATION (network/provider interaction, possibly
+secret-dependent, Live UAT / dedicated validation) which is a separate STRICT approval; implementation
+delivery must not imply live reachability verification.
+
+### RB2-7. Production FAKE-effect structural guard (closes NB-1)
+
+Once production Kind B evidence becomes issuable, a FAKE contained execution must NEVER masquerade as a
+production response. Future structural composition rule: the PRODUCTION composition REJECTS a FAKE
+`PreparedContainmentExecution` and does not wire the TEST-only `localContinuity` seam to user-visible
+production response paths; the TEST composition may use the FAKE capability. This is a structural guard, not a
+comment. R3-B3 remains required before any real production contained execution.
+
+### RB2-8. Evidence bindings, C2B source acceptance, failure table
+
+**Evidence bindings (unchanged, no endpoint field):** `providerId`, `taskId`, `taskRunId`/`executionId`,
+`capability`, `RoutingContextDigest`, composite `configurationDigest`, `source`, `observedAtMonoMs`,
+`validFrom`/`expiresAt`, bounded `reason`, issuer authenticity. No endpoint field (endpoint identity is no
+longer in the design); no new parallel config digest; no provider-down cache.
+
+**C2B source acceptance:** `TEST_FAKE` → accepted only through the existing test issuer path.
+`CANONICAL_PROVIDER_REACHABILITY_PROBE` → accepted ONLY when the producer capability is issuer-authenticated
+AND the producer is the canonical in-process production observation producer AND the typed result is an
+eligible provider-side unavailability result AND all existing bindings/freshness checks pass. The source
+string alone never grants authority.
+
+**Closed failure table:** `AVAILABLE` → DENY; `PROVIDER_SERVICE_UNAVAILABLE` → eligible;
+`PROVIDER_AUTH_SERVICE_UNAVAILABLE` → eligible; `CREDENTIAL_INVALID` / `CREDENTIAL_MISSING` /
+`ACCOUNT_DISABLED` / `LOCAL_SECRET_FAILURE` / `LOCAL_PROCESS_FAILURE` / `LOCAL_NETWORK_FAILURE` / `TIMEOUT` /
+`UNSUPPORTED` / `UNKNOWN` / `PROVENANCE_INVALID` / `STALE` / `BINDING_MISMATCH` → DENY. No other result may
+issue Kind B.
+
+### RB2-9. AiProvider.isAvailable exclusion (source facts)
+
+Keep excluded. Source-verified: `ClaudeCliProvider.isAvailable()` runs a local `bin --version` check (true
+when `--version` exits 0); `OllamaCliProvider` similarly; `CodexCliProvider` inherits the base
+`NotImplementedError`. Continuation routing may interpret these for ROUTING only; they are NEVER C2B trusted
+production observation (LOCAL binary/process availability ≠ cloud service reachability/authentication).
+
+### RB2-10. C2A / C2C non-impact, R3-B3, R3-C-Rz
+
+Chain unchanged: typed diagnostic transport → `CanonicalProviderReachabilityObservationProducer` →
+authenticated C2B issuer → `LocalContinuityAdmissionCoordinator` → C2A → C2C → dispatch CAS → contained
+execution. The producer cannot choose a Provider, commit dispatch, issue C2A authority, execute a contained
+effect, or retry/fallback. R3-B3: C2B-2 production observation AUTHENTICITY ≠ production contained-execution
+TRUST; even after R3-C2B-2-1, a real production contained execution stays DENY until the R3-B3 production
+trust anchor/verifier/capability issuer is separately delivered, and the FAKE-effect structural guard (RB2-7)
+prevents fake results entering production responses. R3-C-Rz remains NOT AUTHORIZED — prior Provider execution
+failure never becomes Kind B; no Cloud-failure → local-retry through this slice.
+
+### RB2-11. Implementation decomposition
+
+**R3-C2B-2-1 = network-free trusted-observation producer plumbing.** Includes: closed probe-result types; the
+injected `CanonicalProviderReachabilityProbeTransport` port; a `DeterministicFakeReachabilityProbeTransport`
+for tests; the canonical producer; process-local production-producer capability issuance/authenticity; C2B
+source acceptance based on the issued capability (not the source flag); exact failure classification;
+`observedAt` semantics; the 2000 ms timeout contract; existing freshness integration; the production
+FAKE-composition guard; focused tests. Excludes: live network execution, real CLI probe/UAT, secret reads,
+production contained capability, real local model execution, R3-C-Rz. Live probe verification is a separate
+STRICT step. Implementation NOT AUTHORIZED; production Kind B end-to-end effect remains DENY until BOTH
+R3-C2B-2-1 AND the separate R3-B3 production-containment slice are delivered.
+
+### Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated (network/provider
+observation, secret access, runtime, Live UAT). One local docs-only remediation commit on parent
+`ff7b4ed21667776e21fa3b336a11640facd83f7c`; independent exact-HEAD Architecture Re-review must pass before
+Push/PR/Merge. R3-C2B-2 implementation and R3-C-Rz remain NOT AUTHORIZED; production Kind B end-to-end effect
+remains DENY; R3-B3 stays FAIL CLOSED.
