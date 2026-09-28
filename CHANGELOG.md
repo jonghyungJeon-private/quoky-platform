@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I1 Kind B admission integration (local implementation) — 2026-09-28
+
+- Add the canonical admission coordinator, pure Kind B policy candidate, issuer-owned exact-set batch,
+  bounded VALIDATED binding metadata, and final monotonic currentness check.
+- Bind C2A authorities to explicit Kind A/Kind B evidence kinds; Kind B retains the validated minimum
+  expiry and fails at or after it. Classify C2B failure separately from infrastructure failure.
+- Keep TEST_FAKE in tests only. Production Kind B stays DENY before C2B-2; C2C, R3-C-Rz, and production
+  trust remain unimplemented.
+
 ## R3-C2B-I Kind B Admission Integration architecture remediation (docs only) — 2026-09-28
 
 - Add "ADR-0090 amendment (remediation) — R3-C2B-I corrected after Claude CHANGES_REQUIRED (B-1..B-3)" to

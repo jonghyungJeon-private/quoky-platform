@@ -23,7 +23,8 @@ export type TrustedCurrentUnavailabilityInvalidReason =
   | 'NOT_FIRST_RUN' | 'SOURCE_NOT_ALLOWED';
 
 export type TrustedCurrentUnavailabilityValidationResult =
-  | Readonly<{ status: 'VALIDATED' }>
+  | Readonly<{ status: 'VALIDATED'; taskRunId: string; routingContextDigest: string;
+    configurationDigest: string; expiresAtMonoMs: number }>
   | Readonly<{ status: 'INVALID'; reason: TrustedCurrentUnavailabilityInvalidReason }>;
 
 export interface TrustedCurrentUnavailabilityObservation {
@@ -42,7 +43,6 @@ export interface TrustedCurrentUnavailabilityObservation {
 }
 
 const issued = new WeakMap<object, TrustedCurrentUnavailabilityObservationIssuer>();
-const valid = Object.freeze({ status: 'VALIDATED' } as const);
 const invalid = (reason: TrustedCurrentUnavailabilityInvalidReason): TrustedCurrentUnavailabilityValidationResult =>
   Object.freeze({ status: 'INVALID', reason });
 
@@ -50,6 +50,14 @@ export class TrustedCurrentUnavailabilityError extends Error {
   constructor(readonly reason: TrustedCurrentUnavailabilityInvalidReason) {
     super(reason);
     this.name = 'TrustedCurrentUnavailabilityError';
+  }
+}
+
+/** A producer failure has no caller-visible raw error text. Storage failures remain distinguishable. */
+export class TrustedCurrentUnavailabilityProducerError extends Error {
+  constructor() {
+    super('OBSERVATION_PRODUCER_FAILED');
+    this.name = 'TrustedCurrentUnavailabilityProducerError';
   }
 }
 
@@ -76,7 +84,7 @@ type Reads = { tasks: Pick<StorageProvider['tasks'], 'get'>;
   taskRuns: Pick<StorageProvider['taskRuns'], 'get' | 'listByTask'> };
 type Facts = { taskId: string; context: RoutingContext; capability: Capability };
 
-/** Network-free C2B-1 evidence issuer/validator. It has no admission or execution consumer. */
+/** Network-free C2B evidence issuer/validator. I1 consumes its result only for admission; no execution consumer exists. */
 export class TrustedCurrentUnavailabilityObservationIssuer {
   private lastObservedMonoMs: number | null = null;
 
@@ -88,20 +96,39 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     private readonly clock: MonotonicClock = SYSTEM_MONOTONIC_CLOCK,
   ) {}
 
+  /** Composition check only; the clock itself remains issuer-owned. */
+  usesClock(clock: MonotonicClock): boolean { return this.clock === clock; }
+
+  async issueCanonicalEligibleNetworkSet(taskRunId: string): Promise<readonly TrustedCurrentUnavailabilityObservation[]> {
+    const facts = await this.canonicalFacts(taskRunId);
+    const projection = this.engine.staticEligibility(facts.context, this.registry.snapshot());
+    if (!this.kindBApplicable(projection)) fail('PROVIDER_SET_MISMATCH');
+    const authorities: TrustedCurrentUnavailabilityObservation[] = [];
+    for (const providerId of projection.eligibleNetworkProviderIds) {
+      authorities.push(await this.issue(taskRunId, providerId));
+    }
+    return Object.freeze(authorities);
+  }
+
   async issue(taskRunId: string, providerId: ProviderId): Promise<TrustedCurrentUnavailabilityObservation> {
     const facts = await this.canonicalFacts(taskRunId);
     const projection = this.engine.staticEligibility(facts.context, this.registry.snapshot());
     if (!this.kindBApplicable(projection) || !projection.eligibleNetworkProviderIds.includes(providerId)) {
       fail('PROVIDER_SET_MISMATCH');
     }
-    if (this.producer.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) fail('SOURCE_NOT_ALLOWED');
+    if (!this.producer || this.producer.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) fail('SOURCE_NOT_ALLOWED');
     const before = this.readClock();
-    const observation = await this.producer.observe(Object.freeze({
-      providerId, taskId: facts.taskId, executionId: taskRunId, capability: facts.capability,
-      routingContextDigest: routingContextDigest(facts.context), configurationDigest: projection.configurationDigest,
-    }));
+    let observation;
+    try {
+      observation = await this.producer.observe(Object.freeze({
+        providerId, taskId: facts.taskId, executionId: taskRunId, capability: facts.capability,
+        routingContextDigest: routingContextDigest(facts.context), configurationDigest: projection.configurationDigest,
+      }));
+    } catch {
+      throw new TrustedCurrentUnavailabilityProducerError();
+    }
     const after = this.readClock();
-    if (this.producer.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) fail('SOURCE_NOT_ALLOWED');
+    if (!this.producer || this.producer.source !== TrustedUnavailabilityObservationSource.TEST_FAKE) fail('SOURCE_NOT_ALLOWED');
     if (!observation || !safeTime(observation.observedAtMonoMs)
       || observation.observedAtMonoMs < before || observation.observedAtMonoMs > after) fail('TIME_INVALID');
     if (!Object.values(TrustedUnavailabilityReason).includes(observation.reason)) fail('SOURCE_NOT_ALLOWED');
@@ -165,7 +192,14 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
       if (!this.kindBApplicable(canonical)) return invalid('PROVIDER_SET_MISMATCH');
       if (seen.size < canonical.eligibleNetworkProviderIds.length) return invalid('MISSING_PROVIDER_AUTHORITY');
       if (seen.size !== canonical.eligibleNetworkProviderIds.length) return invalid('PROVIDER_SET_MISMATCH');
-      return valid;
+      // Final security read occurs after all asynchronous canonical facts. Nothing awaits after it.
+      const finalNow = this.readClock();
+      const expiresAtMonoMs = Math.min(...authorities.map(authority => authority.expiresAtMonoMs));
+      if (finalNow >= expiresAtMonoMs) return invalid('EXPIRED');
+      return Object.freeze({ status: 'VALIDATED', taskRunId: executionId,
+        routingContextDigest: routingContextDigest(facts.context),
+        configurationDigest: canonical.configurationDigest,
+        expiresAtMonoMs });
     } catch (error) {
       if (error instanceof TrustedCurrentUnavailabilityError) return invalid(error.reason);
       throw error;
@@ -190,6 +224,7 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     if (!run || run.id !== taskRunId || run.status !== TaskRunStatus.STARTED) fail('EXECUTION_MISMATCH');
     const { taskId, capability, attempt } = run;
     if (attempt !== 1) fail('NOT_FIRST_RUN');
+    if (run.providerId) fail('NOT_FIRST_RUN');
     const task = await this.storage.tasks.get(taskId);
     if (!task || task.id !== taskId || task.status !== TaskStatus.RUNNING || !task.intent
       || task.intent.capability !== capability) fail('WORKLOAD_MISMATCH');
@@ -203,6 +238,7 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     const current = await this.storage.taskRuns.get(taskRunId);
     if (!current || current.id !== taskRunId || current.taskId !== taskId || current.attempt !== 1
       || current.status !== TaskRunStatus.STARTED || current.capability !== capability) fail('EXECUTION_MISMATCH');
+    if (current.providerId) fail('NOT_FIRST_RUN');
     return { taskId, context, capability };
   }
 }

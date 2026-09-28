@@ -125,5 +125,6 @@ export * from './continuation-execution-service';
 export * from './continuation-receiver-execution-service';
 
 export * from './bound-local-continuity-selection';
+export * from './local-continuity-admission-coordinator';
 export * from './trusted-current-unavailability-observation';
 export { routingContextDigest } from './routing-context-digest';
