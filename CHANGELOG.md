@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I Kind B Admission Integration architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2B-I architecture / task definition (Kind B Admission Integration)" to
+  `DECISIONS.md`, defining the canonical path by which C2B-1 trusted current-unavailability evidence may
+  eventually affect local-continuity admission without caller forgeability (source-verified against the merged
+  C2B-1 issuer/validator, the C2A bound-authority issuer, and the pure `LocalContinuityAdmission`). **Selected
+  Option B** (application coordinator): `LocalContinuityAdmission` remains the single semantic policy owner; a
+  new narrow application-layer `LocalContinuityAdmissionCoordinator` (orchestration only) is the one admission
+  entry, invoking `LocalContinuityAdmission.admit(...)` and — only when Kind-B-eligible — the SAME
+  `TrustedCurrentUnavailabilityObservationIssuer` instance's `validate(...)`. Rejected A (storage/issuer
+  inversion into the pure lower layer), C (duplicate WeakMap authority, no added safety), D (C2A as second
+  policy owner + forgeability). Non-forgeability: the coordinator itself invokes validation; a plain
+  `{status:'VALIDATED'}`/boolean/evidenceKind/observation array/provider IDs/snapshot is inert. Kind A A1/A2
+  still admit without C2B. C2A retains all its bindings and mints only after the canonical combined outcome;
+  Kind B changes only WHY admission is allowed. Synchronous, expiry-safe validation→admission→issuance (5s
+  window revalidated; expired/config/provider-set/WRONG_ISSUER → DENY); non-durable decision; restart
+  invalidates authority; raw observations never leave the coordinator. Production stays Kind B DENY before
+  C2B-2 (no `TEST_FAKE` in production composition; `CANONICAL_PROVIDER_REACHABILITY_PROBE` unimplemented).
+  Implementation slice R3-C2B-I1 is network-free. Includes non-forgeability contract, Kind A/B precedence,
+  admission lifetime, expiry/race contract, test/production composition, C2B-2 seam, C2C boundary, R3-B3
+  status, R3-C-Rz exclusion, entry/exit criteria, and a future test matrix. Documentation only: no source,
+  test, schema, runtime, provider, network, secret, DB, aggregate/repository, or approval/security owner
+  changes. One local architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed; Kind B remains DENY;
+  integration, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2B-1 exact-set authority remediation (local) — 2026-09-28
 
 - Remove caller-supplied registry and policy engine from observation aggregate validation. Re-derive

@@ -10956,3 +10956,242 @@ This is a bounded implementation correction, not a new admission or production-o
 The test producer's self-declared source remains a C2B-2 carry-forward; backward-clock behavior remains
 intentionally fail closed. Kind B admission, C2B-2/C2C/R3-C-Rz, and R3-B3 production trust boundaries are
 unchanged.
+
+## ADR-0090 amendment — R3-C2B-I architecture / task definition (Kind B Admission Integration)
+
+- **Status:** Proposed — architecture / task-definition only. Independent Architecture Review pending.
+  Grants no implementation, activation, runtime, provider, network, secret, DB, or execution authority.
+  Kind B production admission remains DENY / unreachable. Delivers no code.
+- **Date:** 2026-09-28
+- **Branch / base:** `kiro/r3c2b-kindb-admission-integration-architecture` from canonical main
+  `0c7b4a8762b0a9ad892d3e5407e33e5300e01a1e`. One local architecture commit; no Push/PR/Merge.
+- **Slice name:** **R3-C2B-I** = Kind B Admission Integration Architecture. This is NOT C2B-2 (which remains
+  reserved for the real observation producer / network integration).
+- **Objective:** define the exact canonical path by which C2B-1 trusted current-unavailability evidence can
+  eventually affect local-continuity admission WITHOUT letting callers forge `VALIDATED`/`trusted`/`CURRENT`/
+  Kind B evidence.
+
+### 1. Current admission flow (source-verified)
+
+- `LocalContinuityAdmission` (`local-continuity-admission.ts`) is PURE and lower-layer: it depends ONLY on
+  `WorkloadLocalFallbackPolicy` + `RoutingPolicyEngine` + `ProviderRegistry` (no storage, no application
+  services). `admit(input)` returns `{ decision: LocalContinuityAdmissionDecision, soleSelection? }`. It owns
+  the semantic policy: workload local-fallback → Kind A (A1/A2) → local static eligibility → PRIMARY_ONLY
+  sole selection. Kind B has no issuer here (`assertTrustedCurrentUnavailabilityUnsupported()` → DENY).
+- `BoundLocalContinuitySelectionIssuer` (C2A, `bound-local-continuity-selection.ts`) is APPLICATION-layer:
+  depends on `StorageProvider` reads + registry + engine; it derives canonical STARTED-first-run facts,
+  invokes `LocalContinuityAdmission.admit(...)` ITSELF, and mints `BoundLocalContinuitySelection` (WeakMap,
+  issuer-instance-local) ONLY when `decision.admitted`.
+- `TrustedCurrentUnavailabilityObservationIssuer` (C2B-1, `trusted-current-unavailability-observation.ts`) is
+  APPLICATION-layer: storage + registry + engine + injected `CurrentUnavailabilityObservationProducer` +
+  `MonotonicClock`. `validate(authorities, executionId, taskId, context)` →
+  `TrustedCurrentUnavailabilityValidationResult` = `{status:'VALIDATED'}` | `{status:'INVALID',reason}`. It is
+  issuer-instance-local (`issued.get(authority) === this`), re-derives canonical facts + `staticEligibility`,
+  enforces exact `eligibleNetworkProviderIds` set equality, timing (5s window / 1s observation→issuance /
+  monotonic non-regression), and `kindBApplicable`.
+- **Composition fact:** both issuers are currently constructed ONLY in tests — there is NO production
+  composition-root wiring. `{status:'VALIDATED'}` is a plain frozen object → structurally forgeable, so it
+  MUST NOT be accepted as authority.
+
+### 2. Non-forgeability requirement
+
+A caller must NEVER gain Kind B admission by supplying `{status:'VALIDATED'}`, a boolean, an
+`evidenceKind = TRUSTED_CURRENT_UNAVAILABILITY`, an observation-authority array, provider IDs, an availability
+snapshot, or any fake validator result to a public admission API. The canonical integration path must ITSELF
+invoke/own the C2B validation step (issuer-instance-local) — a plain validation status is insufficient
+authority.
+
+### 3. Option analysis
+
+**Option A — Admission owns C2B validation directly.** `LocalContinuityAdmission` receives the canonical C2B
+validator dependency and validates internally. **REJECTED:** it would drag `StorageProvider` and
+application/issuer-instance concerns into the currently PURE, storage-free lower-layer policy, inverting
+dependency direction (Core domain-adjacent policy would depend on storage reads and a stateful issuer). It
+also breaks `admit(...)` determinism and complicates issuer-instance sharing.
+
+**Option B — Application integration coordinator.** A single canonical application-layer admission coordinator
+orchestrates: canonical facts → static R3-C1 Kind A admission (via `LocalContinuityAdmission.admit`) → if
+appropriate, canonical C2B validation (via the SAME `TrustedCurrentUnavailabilityObservationIssuer` instance)
+→ one canonical combined admission decision; C2A consumes only this coordinator. The underlying
+`LocalContinuityAdmission` STILL owns semantic policy; the coordinator owns ORCHESTRATION of trusted evidence,
+not a second policy. **SELECTED** (see §4).
+
+**Option C — Non-forgeable `ValidatedKindBEvidence` capability.** C2B validator issues an extra opaque
+process-local capability after aggregate validation; R3-C1 admission consumes only it. **REJECTED:** it
+duplicates C2B authority and adds a second WeakMap authority type without added safety — Option B already
+guarantees non-forgeability by having the coordinator invoke the issuer-instance `validate(...)` directly, so
+no crossing capability is needed. Prefer fewer authority types.
+
+**Option D — C2A branch consumes `VALIDATED` result.** C2A issuer sees `{status:'VALIDATED'}` and overrides
+R3-C1 static DENY. **REJECTED:** makes C2A a second admission-policy owner and creates direct forgeability
+risk (plain status object); violates single-owner requirement.
+
+### 4. Selected integration option — Option B
+
+**Canonical admission owner:** `LocalContinuityAdmission` remains the SINGLE owner of the semantic question
+"Kind A vs Kind B vs DENY". A new narrow application-layer **`LocalContinuityAdmissionCoordinator`**
+(orchestration only, NOT a second policy owner, NOT a new aggregate/repository/registry/ranking/retry/
+lifecycle/approval owner) is the ONE application entry for local-continuity admission. It:
+
+1. derives canonical STARTED first-run facts (reusing the existing `canonicalFacts` semantics);
+2. invokes `LocalContinuityAdmission.admit(...)` for the static path (Kind A / normal DENY);
+3. when and only when the semantic policy indicates a Kind-B-eligible situation (§6), invokes the SAME
+   `TrustedCurrentUnavailabilityObservationIssuer` instance's `validate(...)` with the issuer-owned
+   authorities;
+4. returns ONE canonical combined admission outcome consumed by the C2A issuer.
+
+**C2B validation consumption point:** inside the coordinator, via the issuer-instance-local `validate(...)`.
+Raw `TrustedCurrentUnavailabilityObservation[]` MUST NOT leave the coordinator boundary; C2A receives only the
+canonical admission outcome (minimizes coupling; C2A never interprets individual observations).
+
+### 5. Non-forgeability contract
+
+The coordinator itself calls `LocalContinuityAdmission.admit(...)` and (for Kind B) the issuer-instance
+`validate(...)`; it never accepts a caller-supplied validation status, boolean, evidenceKind, observation
+array, provider IDs, or availability snapshot as authority. A public `{status:'VALIDATED'}` is inert. Kind B
+admission is reachable only when the coordinator's own invocation of the canonical issuer returns VALIDATED.
+
+### 6. Kind A / Kind B precedence (ratified five-step, preserved)
+
+1. Validate canonical workload / `RoutingContext` / policy applicability.
+2. Evaluate static Kind A.
+3. Valid Kind A (A1 `NO_CLOUD_PROVIDER_CONFIGURED` / A2 `ALL_POLICY_COMPATIBLE_CLOUDS_DISABLED`) → admission
+   proceeds under Kind A; **Kind B unnecessary** and NOT required (no producer/authority/validation).
+4. No Kind A AND canonical `eligibleNetworkProviderIds` non-empty AND workload local-fallback-eligible →
+   Kind B evidence may be validated for the EXACT canonical provider set.
+5. Ordinary policy/capability/quality incompatibility → neither Kind A nor Kind B → DENY.
+
+**Exact Kind B precondition:** no Kind A applies; canonical `eligibleNetworkProviderIds` non-empty; workload
+local-fallback-eligible; current `TaskRun` is first run; no prior `TaskRun`; no Provider attempt; trusted
+evidence validates for the exact canonical provider set; context/config/task/execution/workload all match.
+No post-attempt evidence; no R3-C-Rz.
+
+### 7. C2A integration (smallest change)
+
+C2A's `BoundLocalContinuitySelectionIssuer` currently invokes `LocalContinuityAdmission.admit(...)` directly.
+Under Option B, C2A instead depends on the canonical `LocalContinuityAdmissionCoordinator` (constructor
+injection) and mints `BoundLocalContinuitySelection` ONLY AFTER the coordinator returns an admitted outcome.
+**C2A authority remains fully required** even for Kind B: `TaskRun.attempt == 1`, no prior `TaskRun`, exact
+`taskRunId/executionId`, exact `RoutingContextDigest`, exact Stage2B composite `configurationDigest`,
+canonical workload, exact `SoleProviderSelection`, PRIMARY_ONLY, zero hops. Kind B evidence only changes WHY
+admission is allowed; it never replaces C2A execution authority and never bypasses C2A.
+
+**Sole provider selection:** Kind B admission permits the existing R3-C1/C2A exact local candidate; C2B does
+NOT select the local provider and introduces NO second ranking algorithm. The `SoleProviderSelection` is still
+minted by the existing `LocalContinuityAdmission` PRIMARY_ONLY path.
+
+**Admission decision shape:** the existing `LocalContinuityAdmissionDecision` may carry bounded provenance
+(e.g. `evidenceKind` = `STATIC_ADMIN_UNAVAILABILITY` | `TRUSTED_CURRENT_UNAVAILABILITY`) as AUDIT/semantic
+output only. Provenance is NEVER sufficient authority — canonical coordinator invocation is the authority.
+
+### 8. Admission decision lifetime, expiry / race, restart
+
+- **Synchronous, expiry-safe:** C2B validation and the combined admission decision occur SYNCHRONOUSLY in one
+  canonical coordinator operation, immediately followed by C2A issuance; no durable/replayable admission token
+  is stored between validation and issuance. C2B evidence has a 5s expiry — the coordinator revalidates
+  currentness at the moment of the admission decision; if evidence expires before consumption → Kind B DENY.
+  No longer-lived admission authority is minted from short-lived evidence.
+- **Decision lifetime:** a Kind B-based `LocalContinuityAdmissionDecision` must NOT be durable/restart-valid;
+  the bare decision object is insufficient authority and is consumed immediately inside the C2A issuance flow.
+- **Process restart** invalidates C2B observation authority, issuer-instance trust, and C2A bound authority;
+  after restart Kind B must be freshly observed/revalidated. No persisted validated/admitted evidence.
+- **Configuration / provider-set change** between C2B issuance and coordinator validation → the canonical set
+  is re-derived and mismatch fails closed (`CONFIGURATION_MISMATCH` / `PROVIDER_SET_MISMATCH`); old validated
+  results are never carried across a config change. Per C2B-1 NB-4, a new issuer instance may instead surface
+  `WRONG_ISSUER` — the coordinator treats BOTH as Kind B evidence invalid → DENY (no semantic difference for
+  admission). The coordinator branches only on VALIDATED vs INVALID, not on incidental invalid labels
+  (C2B-1 NB-2).
+- **Backward clock** (C2B-1 NB-3): the issuer remains fail-closed after rollback until monotonic time catches
+  up; the coordinator preserves this and never bypasses validation.
+
+### 9. Production-before-C2B-2 behavior (fail-closed)
+
+R3-C2B-I can be implemented and TESTED before C2B-2, but the production Kind B path remains DENY/unreachable
+because: `TEST_FAKE` must not exist in production composition; `CANONICAL_PROVIDER_REACHABILITY_PROBE` has no
+implementation; and no valid production observation authority can be produced. This is the DESIRED fail-closed
+state. C2B-1 NB-1 (producer source self-declared) is why validated `TEST_FAKE` evidence must NEVER be treated
+as production admission authority.
+
+### 10. Test / production composition
+
+- **Test composition** may install: `TEST_FAKE` producer + canonical `TrustedCurrentUnavailabilityObservationIssuer`
+  + the coordinator + C2A issuer (sharing the SAME issuer instance).
+- **Production composition (before C2B-2)** MUST NOT install `TEST_FAKE`; therefore it has NO active Kind B
+  producer (or an explicit disabled/unavailable binding that cannot validate evidence). No test dependency may
+  leak into a production barrel/composition.
+
+### 11. C2B-2 future seam
+
+C2B-2 later supplies the canonical real observation producer + source-provenance hardening. It MUST NOT own
+Kind B policy, provider ranking, local-continuity admission, or the C2C effect boundary; it plugs into the
+already-ratified `CurrentUnavailabilityObservationProducer` seam behind the same issuer/coordinator rather
+than redefining policy.
+
+### 12. C2C boundary (preserved)
+
+C2C still owns actual planner/effect-plan binding, containment preparation, runtime family Option A/C, the
+local Provider effect boundary, and production containment capability. R3-C2B-I stops at canonical
+local-continuity admission → existing C2A bound-authority issuance. No execution.
+
+### 13. R3-B3 status (preserved verbatim)
+
+`PRODUCTION PROVENANCE CONTRACT = DEFINED`; `PRODUCTION TRUST ANCHOR = NOT IMPLEMENTED`;
+`PRODUCTION VERIFIER ISSUER = NOT IMPLEMENTED`; `PRODUCTION CAPABILITY ISSUER = NOT IMPLEMENTED`;
+`PRODUCTION TRUST CHECK = FAIL CLOSED`. Kind B admission integration does NOT solve production trust.
+
+### 14. R3-C-Rz exclusion
+
+Remains NOT AUTHORIZED. Explicitly excluded: cloud attempted → failed → Kind B evidence → local. Any previous
+`TaskRun` / provider attempt → Kind B integration DENY → R3-C-Rz boundary.
+
+### 15. Implementation slice definition (after ratification)
+
+**R3-C2B-I1** — network-free integration implementation: the `LocalContinuityAdmissionCoordinator`
+(orchestration only), its wiring of `LocalContinuityAdmission` + the shared C2B issuer, the C2A issuer's
+dependency on the coordinator, bounded `evidenceKind` audit provenance, synchronous expiry-safe validation,
+and focused tests using `TEST_FAKE` only. ZERO: real observation probe, `AiProvider.isAvailable()`, process
+spawn, network, secret, Provider execution, containment/runtime, C2C, production trust, schema/migration/
+repository, second registry/ranking/retry/lifecycle/approval owner. Not authorized yet.
+
+### 16. Entry criteria (before R3-C2B-I1)
+
+Single canonical admission owner named (`LocalContinuityAdmission` policy + `LocalContinuityAdmissionCoordinator`
+orchestration); non-forgeability contract defined (§5); Kind A/B precedence preserved (§6); C2A integration +
+retained C2A authority defined (§7); admission decision lifetime + synchronous expiry-safe race contract
+defined (§8); production-before-C2B-2 fail-closed defined (§9); test/production composition rules defined
+(§10); C2B-2 seam (§11); C2C boundary (§12); R3-B3 (§13); R3-C-Rz exclusion (§14); no new aggregate/schema/
+repository/registry/ranking/retry/lifecycle/approval owner; independent Architecture Review + ratification.
+
+### 17. Exit criteria (this architecture task)
+
+This amendment selects Option B, names the canonical owner, defines the C2B validation consumption point,
+non-forgeability contract, Kind A/B precedence, C2A integration, admission lifetime, expiry/race contract,
+production-before-C2B-2 behavior, test/production composition, C2B-2 seam, C2C boundary, R3-B3, R3-C-Rz
+exclusion, implementation slice, entry criteria, future test matrix, and deferred decisions; DECISIONS/
+CURRENT_STATE/CHANGELOG updated; docs-only with clean `git diff --check`. Ratification gates implementation.
+
+### 18. Future test matrix (R3-C2B-I1)
+
+Plain `{status:'VALIDATED'}` cannot admit; forged validation result cannot admit; caller-injected raw
+observation-authority array cannot admit; static Kind A A1 still admits without C2B; static Kind A A2 still
+admits without C2B; no Kind A + valid C2B evidence → canonical Kind B admission in TEST composition; no Kind A
++ invalid/expired evidence → DENY; missing one of multiple cloud authorities → DENY; config/provider-set
+change → DENY; wrong task/execution/context/workload → DENY; evidence expires before consumption → DENY;
+another issuer's evidence → DENY; production composition without C2B-2 → Kind B DENY; `TEST_FAKE` absent from
+production composition; Kind B admission still flows through C2A before any future effect; C2A
+`BoundLocalContinuitySelection` cannot be minted from forged admission; prior `TaskRun` → DENY / R3-C-Rz
+boundary; no `Provider.execute()`; no network; no containment/runtime.
+
+### 19. Deferred decisions
+
+Real observation producer + source-provenance hardening (C2B-2); planner/effect-plan binding, containment,
+runtime family, production containment capability (C2C); production trust anchor/verifier/capability issuer;
+durable/restart-valid admission authenticity; any post-dispatch re-resolution (R3-C-Rz). This document selects
+none of them.
+
+### Approval boundary
+
+Architecture/decision record only. STRICT GOVERNANCE items remain separately gated. One local architecture
+commit; independent Architecture Review must pass before Push/PR/Merge. No integration/C2B-2/C2C/R3-C-Rz
+implementation begins from this document; all remain NOT AUTHORIZED; Kind B production admission remains
+DENY/unreachable.

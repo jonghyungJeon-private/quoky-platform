@@ -5,6 +5,34 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2B-I — Kind B Admission Integration (architecture / task definition) (2026-09-28)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3c2b-kindb-admission-integration-architecture` from canonical main
+`0c7b4a8762b0a9ad892d3e5407e33e5300e01a1e`. `DECISIONS.md` carries the ADR-0090 amendment "R3-C2B-I
+architecture / task definition (Kind B Admission Integration)" defining the canonical path by which C2B-1
+trusted current-unavailability evidence may eventually affect local-continuity admission WITHOUT caller
+forgeability. **Selected Option B (application coordinator):** `LocalContinuityAdmission` remains the SINGLE
+semantic policy owner (Kind A vs Kind B vs DENY); a new narrow application-layer
+`LocalContinuityAdmissionCoordinator` (orchestration only — no new aggregate/schema/repository/registry/
+ranking/retry/lifecycle/approval owner) is the ONE application admission entry that invokes
+`LocalContinuityAdmission.admit(...)` and, only when Kind-B-eligible, the SAME
+`TrustedCurrentUnavailabilityObservationIssuer` instance's `validate(...)`. Rejected: A (drags storage/issuer
+into the pure lower-layer policy), C (duplicate WeakMap authority with no added safety), D (makes C2A a second
+policy owner + forgeability). Non-forgeability: the coordinator itself invokes validation; a plain
+`{status:'VALIDATED'}`/boolean/evidenceKind/observation array/provider IDs/snapshot is inert as authority.
+Kind A A1/A2 still admit WITHOUT C2B. C2A still consumes only the canonical combined outcome and retains ALL
+its bindings (attempt==1, no prior TaskRun, exact taskRunId/executionId, RoutingContextDigest, Stage2B
+composite configurationDigest, canonical workload, exact SoleProviderSelection, PRIMARY_ONLY, zero hops) —
+Kind B changes only WHY admission is allowed. Validation→admission→issuance is synchronous and expiry-safe (5s
+window revalidated at decision; expired/config-change/provider-set/WRONG_ISSUER → DENY); decision is
+non-durable and consumed immediately; restart invalidates all authority. Raw observation authorities never
+leave the coordinator. Production stays Kind B DENY/unreachable before C2B-2 (no `TEST_FAKE` in production
+composition; `CANONICAL_PROVIDER_REACHABILITY_PROBE` unimplemented). Implementation slice **R3-C2B-I1** is
+network-free (TEST_FAKE in tests only). Docs-only: no source/test/schema/runtime/provider/network/secret/DB
+changes. ADR-0090 remains Proposed; **Kind B remains DENY**; integration, C2B-2, C2C, and R3-C-Rz remain NOT
+AUTHORIZED; R3-B3 production trust stays FAIL CLOSED.
+
 ### R3-C2B-1 — Trusted Current-Unavailability Observation Authority (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** R3-C2B architecture was ratified and
