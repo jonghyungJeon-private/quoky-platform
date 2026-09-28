@@ -5,6 +5,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3 Production Trust architecture / task definition (docs only) — 2026-09-29
+
+- Add the ADR-0090 amendment "R3-B3 architecture / task definition (Production Trust: Anchor, Verifier Issuer,
+  Capability Issuer)" to `DECISIONS.md`, designing the smallest production-trust architecture to eventually
+  make a REAL contained production execution capability issuable without weakening containment identity/
+  provenance, the C2A/C2B/C2C chain, PRE_DISPATCH consumption, observation authenticity, or fail-closed
+  behavior. Source-verified: the seam already exists in `continuation-prepared-containment.ts` — durable
+  `ContainmentTrustDomain` (`TEST`|`PRODUCTION`), dual independent verification channels,
+  `prepareVerifiedContainmentBinding` stamps `TEST` and rejects self-declared `PRODUCTION`,
+  `requireProductionTrustedVerification` + prepared-provenance requirement always throw
+  `PRODUCTION_TRUST_ANCHOR_UNAVAILABLE`, and `VerifiedContainmentBinding` already carries all the needed
+  digests + durable `provenance`. Trust anchor = process-local ISSUED root (module-private WeakSet factory,
+  production-composition-only, no persistence, restart invalidates); verifier issuer = anchor-authenticated
+  (WeakSet), only an anchor-issued independent verifier may present `PRODUCTION`; verified facts = existing
+  binding digests + `provenance.trustDomain === 'PRODUCTION'` (no new fields); capability issuer mints a
+  `PRODUCTION`-kind `ContainedExecutionCapability` ONLY on an anchor-verified chain + exact verified facts
+  (never from raw IDs/bare prepared/source enum/caller assertion) — the sole crossing of
+  `PRODUCTION TRUST CHECK = FAIL CLOSED`. C2C integration: production trust verification inside the C2C
+  coordinator's synchronous pre-commit checks before the dispatch CAS; real effect only after verification +
+  durable commit; production composition replaces `assertFakeOnly` with a production-capability requirement
+  (TEST keeps FAKE). FAKE rejected in production; C2B-2 observation authenticity separate/unaffected. Failure
+  model (any anchor/verifier/provenance/runtime-identity/digest/binding/profile gap → DENY); process-local, no
+  persistence/replay across taskRun/execution; secret ownership boundary identified only (no secret read);
+  network/runtime-free with a deterministic fake verifier seam; live runtime verification is a separate STRICT
+  slice. Decomposition R3-B3-1 (network-free trust plumbing; if a real attestation source is required,
+  plumbing only + later STRICT live-verifier slice keeps production execution DENY). R3-C-Rz excluded.
+  Documentation only: no source, test, schema, runtime, provider, network, secret, or DB changes. One local
+  architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed; R3-B3 implementation and R3-C-Rz remain
+  NOT AUTHORIZED; production contained execution and `PRODUCTION TRUST CHECK` remain FAIL CLOSED.
+
 ## R3-C2B-2-1 Network-free typed observation producer (local, review pending) — 2026-09-29
 
 - Add a closed provider-native diagnostic port, deterministic fake transport, fail-closed production

@@ -5,6 +5,42 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3 — Production Trust: Anchor, Verifier Issuer, Capability Issuer (architecture / task definition) (2026-09-29)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3b3-production-trust-architecture` from canonical main `6162e0c8221ab7f70bef58479c6d38a5289c9f3c`.
+`DECISIONS.md` carries the ADR-0090 amendment "R3-B3 architecture / task definition (Production Trust)"
+designing the smallest production-trust architecture to eventually make a REAL contained production execution
+capability issuable, preserving containment identity/provenance, the C2A/C2B/C2C chain, PRE_DISPATCH
+consumption, observation authenticity, and fail-closed behavior. **Source-verified: the seam already exists**
+in `continuation-prepared-containment.ts` — durable `ContainmentTrustDomain` (`TEST`|`PRODUCTION`), dual
+independent verification channels with distinct `verifierProvenanceId`, `prepareVerifiedContainmentBinding`
+stamps `TEST` and rejects self-declared `PRODUCTION` (`SELF_DECLARED_PRODUCTION_TRUST_REJECTED`),
+`requireProductionTrustedVerification` + the prepared-provenance requirement ALWAYS throw
+`PRODUCTION_TRUST_ANCHOR_UNAVAILABLE`, and `VerifiedContainmentBinding` already carries providerId/
+providerBindingDigest/containmentBindingDigest/securityProfileDigest/instanceIdentityDigest/expectedModelDigest/
+imageDigest/runtimeFamily/runtimeVersion/modelMountIdentityDigest + durable `provenance`. So no new subsystem
+is needed. **Trust anchor:** a process-local ISSUED root capability (module-private WeakSet factory, installed
+only by the production composition; no persistence; restart invalidates). **Verifier issuer:** only the
+anchor may mint an independent production verifier (WeakSet-authenticated); a channel may present
+`PRODUCTION` only when anchor-issued + independent, else rejected. **Verified facts:** the existing binding
+digests + `provenance.trustDomain === 'PRODUCTION'` (no new fields). **Capability issuer:** a
+`PRODUCTION`-kind `ContainedExecutionCapability` issued ONLY on an anchor-verified chain
+(`requireProductionTrustedVerification` passing) + exact verified facts — never from raw IDs / bare prepared /
+source enum / caller assertion; it is the ONLY crossing of `PRODUCTION TRUST CHECK = FAIL CLOSED`. **C2C
+integration:** production trust verification runs inside the C2C `LocalContinuityConsumptionCoordinator`
+synchronous pre-commit checks, before the dispatch CAS; the real effect runs only after both verification and
+durable commit; production composition replaces `assertFakeOnly` with a production-capability requirement
+(TEST keeps `assertFakeOnly`). FAKE rejected in production (`CAPABILITY_NOT_PRODUCTION_ELIGIBLE`). C2B-2
+observation authenticity is separate and unaffected. Failure model: any missing anchor/verifier/provenance/
+runtime-identity/digest/binding/profile mismatch → DENY. Process-local, no persistence/replay across
+taskRun/execution; secret ownership boundary identified only (no secret read); network/runtime-free with a
+deterministic fake verifier seam; live runtime verification is a separate STRICT slice. Decomposition
+**R3-B3-1** (network-free trust plumbing; if a real attestation source is required, plumbing only + a later
+STRICT live-verifier slice keeps production execution DENY). R3-C-Rz excluded. Docs-only: no source/test/
+schema/runtime/provider/network/secret/DB changes. ADR-0090 remains Proposed; R3-B3 implementation and
+R3-C-Rz remain NOT AUTHORIZED; production contained execution and `PRODUCTION TRUST CHECK` remain FAIL CLOSED.
+
 ### R3-C2B-2-1 — Network-free typed observation plumbing (2026-09-29)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** The new closed provider-native diagnostic
