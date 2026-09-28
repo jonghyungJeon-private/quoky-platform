@@ -5,6 +5,44 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3-1 — Remediation: network/runtime-free trust plumbing; production trust FAIL CLOSED (2026-09-29)
+
+**ARCHITECTURE / TASK-DEFINITION REMEDIATION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3b3-production-trust-architecture`. `DECISIONS.md` carries the ADR-0090 amendment "R3-B3-1 remediation
+(OPTION 1: network/runtime-free trust plumbing; production trust FAIL CLOSED)", which closes the accepted
+CHANGES_REQUIRED blockers B-1..B-4 against the reviewed R3-B3 architecture entry below. The reviewed commit
+`c846ebf555fa865582bdf734f4ca9b02956c8fa1` is PRESERVED UNAMENDED; exactly one remediation commit is added
+atop it (lineage `6162e0c8…` → `c846ebf5…` → remediation). **Primary decision: R3-B3-1 = OPTION 1 ONLY,
+network/runtime-free production-trust PLUMBING.** It must not make real production trust reachable, must not
+issue a real production contained-execution capability, and must not turn a deterministic fake verifier into
+production trust. `TRUST_ANCHOR_ROOT = NONE`; `PRODUCTION TRUST CHECK = FAIL CLOSED`. **B-1:** process-local
+WeakSet authenticity proves only "this process issued this object," NOT "this runtime is production-trusted";
+`requireProductionTrustedVerification` / `requireProductionPreparedProvenance` stay fail-closed (or
+satisfiable only by a future attestation capability R3-B3-1 cannot issue); no ordinary path reaches real
+PRODUCTION trust. **B-2:** the deterministic simulated verifier issues into a TEST/SIMULATED domain that
+production checks reject; `DeterministicFakeProductionVerifier → PRODUCTION` is forbidden; the only issuable
+production-verifier seam is UNAVAILABLE/FAIL-CLOSED; the verifier issuer must not accept a caller-supplied
+verify body. **B-3:** fixed dual-channel roles — Channel A `EXTERNAL_RUNTIME_INSTANCE_INSPECTION`, Channel B
+`IN_INSTANCE_SELF_CHECK`; a verifier is bound to exactly one role; distinct version/provenanceId are
+necessary but not sufficient; real failure-domain independence is unprovable now, so production stays
+fail-closed. **B-4:** R3-B3-1 must not construct a runnable `PRODUCTION` capability; only the fail-closed
+production-capability issuer SEAM (`issueProductionContainedExecutionCapability(...)` → always denied); the
+future capability is issued, never injected, and must be exact-binding + single-use. Expected facts (already
+carried by bindings/contracts) are distinguished from observed facts (independently measured by future
+attestation); no independent runtime verification is claimed. `VerifiedContainmentProvenance` is
+deterministic/process-local plumbing, not persisted durable trust / cryptographic authenticity / independent
+attestation. C2C uses ONE capability-kind seam (`requireCapabilityKind`); production continuation activation
+still rejects the local FAKE seam (`TEST_LOCAL_CONTINUITY_FORBIDDEN`). Attestation freshness is a future
+live-slice requirement (not invented now). A future STRICT slice **R3-B3-2 (Real Production Attestation)**
+supplies the real trust root, real A/B evidence sources, observed runtime facts, freshness, the module-owned
+effect body, real capability issuance, and runtime/provider approval; until then real production contained
+execution is UNREACHABLE. R3-C2B-2 (Kind B / reachability / freshness / provider selection) unaffected;
+R3-C-Rz still NOT AUTHORIZED. Doc cleanup with this remediation: RB2-5 evidence expiry corrected to
+`validFrom = issuedAt`, `expiresAt = issuedAt + 5000` (issuance-based, not "5000 ms from observation"); two
+live-verifier references corrected from §16 to the §15 live-execution boundary; "durable provenance" wording
+corrected. Docs-only: no source/test/schema/runtime/provider/network/secret/DB changes. ADR-0090 remains
+Proposed; independent Architecture exact-HEAD re-review must pass before Push/PR/Merge.
+
 ### R3-B3 — Production Trust: Anchor, Verifier Issuer, Capability Issuer (architecture / task definition) (2026-09-29)
 
 **ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch

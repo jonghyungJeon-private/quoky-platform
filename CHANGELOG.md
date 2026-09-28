@@ -5,6 +5,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3-1 remediation — network/runtime-free trust plumbing; production trust FAIL CLOSED (docs only) — 2026-09-29
+
+- Add the ADR-0090 amendment "R3-B3-1 remediation (OPTION 1: network/runtime-free trust plumbing; production
+  trust FAIL CLOSED)" to `DECISIONS.md`, closing the accepted CHANGES_REQUIRED blockers B-1..B-4 against the
+  reviewed R3-B3 architecture amendment. The reviewed commit `c846ebf555fa865582bdf734f4ca9b02956c8fa1` is
+  preserved unamended; exactly one remediation commit is added atop it (lineage `6162e0c8…` → `c846ebf5…` →
+  remediation). Primary decision: R3-B3-1 = OPTION 1 ONLY — network/runtime-free production-trust PLUMBING; it
+  must not make real production trust reachable, must not issue a real production contained-execution
+  capability, and must not turn a deterministic fake verifier into production trust. `TRUST_ANCHOR_ROOT =
+  NONE`; `PRODUCTION TRUST CHECK = FAIL CLOSED`.
+- B-1: remove the claim that process-local (WeakSet) authenticity is sufficient for production trust — it
+  proves only "this process issued this object," not "this runtime is production-trusted";
+  `requireProductionTrustedVerification` / `requireProductionPreparedProvenance` stay fail-closed (or
+  satisfiable only by a future attestation capability R3-B3-1 cannot issue); no ordinary path obtains real
+  PRODUCTION trust. B-2: the deterministic simulated verifier issues into a TEST/SIMULATED domain that
+  production checks reject (`DeterministicFakeProductionVerifier → PRODUCTION` forbidden); the only issuable
+  production-verifier seam is UNAVAILABLE/FAIL-CLOSED and the issuer must not accept a caller-supplied verify
+  body. B-3: fixed dual-channel roles — Channel A `EXTERNAL_RUNTIME_INSTANCE_INSPECTION`, Channel B
+  `IN_INSTANCE_SELF_CHECK`; a verifier is bound to exactly one role; distinct version/provenanceId necessary
+  but not sufficient; production stays fail-closed since real failure-domain independence is unprovable now.
+  B-4: no runnable `PRODUCTION` capability in R3-B3-1 — only the fail-closed production-capability issuer
+  SEAM; the future capability is issued, never injected, and must be exact-binding + single-use.
+- Distinguish expected facts (already carried by bindings/contracts) from observed facts (independently
+  measured by future attestation); claim no independent runtime verification. Correct the provenance model:
+  `VerifiedContainmentProvenance` is deterministic/process-local plumbing, not persisted durable trust /
+  cryptographic authenticity / independent attestation; a serialized/deserialized object cannot recreate
+  issued trust. C2C uses one capability-kind seam (`requireCapabilityKind`); production continuation
+  activation still rejects the local FAKE seam (`TEST_LOCAL_CONTINUITY_FORBIDDEN`). Record attestation
+  freshness as a future live-slice requirement (not invented now) and map conceptual failures to current
+  codes. Define a future STRICT slice R3-B3-2 (Real Production Attestation) as the sole path to a usable
+  production trust root and real contained execution.
+- Doc cleanup performed with this remediation: correct R3-C2B-2 RB2-5 evidence-expiry to `validFrom =
+  issuedAt`, `expiresAt = issuedAt + 5000` (issuance-based, not "5000 ms from observation"); correct two
+  reviewed-amendment references to the live-verifier/attestation slice from §16 to the §15 live-execution
+  boundary (§16 is the R3-C-Rz boundary); correct "durable provenance" wording so it does not imply persisted
+  production trust.
+- R3-C2B-2 (Kind B / reachability / C2B freshness / provider selection) unaffected; R3-C-Rz still NOT
+  AUTHORIZED. Documentation only: no source, test, schema, runtime, provider, network, secret, or DB changes.
+  One local remediation commit; no Push/PR/Merge. ADR-0090 remains Proposed; R3-B3 implementation and R3-C-Rz
+  remain NOT AUTHORIZED; production contained execution and `PRODUCTION TRUST CHECK` remain FAIL CLOSED with
+  `TRUST_ANCHOR_ROOT = NONE` until the separate R3-B3-2 real-attestation slice. Independent Architecture
+  exact-HEAD re-review must pass before Push/PR/Merge.
+
 ## R3-B3 Production Trust architecture / task definition (docs only) — 2026-09-29
 
 - Add the ADR-0090 amendment "R3-B3 architecture / task definition (Production Trust: Anchor, Verifier Issuer,
