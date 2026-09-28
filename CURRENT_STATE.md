@@ -5,6 +5,24 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2B-2-1 — Network-free typed observation plumbing (2026-09-29)
+
+**IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** The new closed provider-native diagnostic
+port accepts only bounded canonical binding identity. Its deterministic fake transport supports offline tests;
+the only issued production transport in this slice returns `UNSUPPORTED`, with no live CLI/network/secret
+implementation. An issued, process-local production producer is authenticated by the C2B issuer together
+with the exact monotonic clock and frozen `ProviderBindingRegistry`; a source string or fake transport cannot
+grant production authority. Only provider service and provider authentication-service unavailability map to
+Kind B evidence. Credential/account/local failures, unknown results and the 2000 ms timeout deny without
+fallback or retry. `observedAtMonoMs` is read after classification; the existing 1000 ms issuance-delay
+bound and **issuance-based** 5000 ms validity remain unchanged. Sequential multi-cloud probes can make an
+earlier observation expire; validation denies that set, and this slice does not parallelize probes.
+Production continuation activation rejects the test-only local FAKE effect seam. Binding digest is checked
+at the producer's frozen composition boundary, using the same registry instance required by C2B; the public
+evidence shape still binds the composite configuration digest and is not expanded. Real production
+containment remains unavailable under R3-B3, and R3-C-Rz remains outside scope. The architecture paragraphs
+below are historical snapshots.
+
 ### R3-C2B-2 — Production Trusted-Unavailability Observation Producer (architecture / task definition) (2026-09-28)
 
 **ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch

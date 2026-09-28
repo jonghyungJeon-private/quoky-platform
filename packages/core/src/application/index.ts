@@ -129,4 +129,5 @@ export * from './continuation-receiver-execution-service';
 export * from './bound-local-continuity-selection';
 export * from './local-continuity-admission-coordinator';
 export * from './trusted-current-unavailability-observation';
+export * from './canonical-provider-reachability-observation';
 export { routingContextDigest } from './routing-context-digest';

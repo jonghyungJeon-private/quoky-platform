@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-2-1 Network-free typed observation producer (local, review pending) — 2026-09-29
+
+- Add a closed provider-native diagnostic port, deterministic fake transport, fail-closed production
+  placeholder, and process-local issued canonical producer. Only provider service and provider auth-service
+  unavailability can issue C2B Kind B evidence; raw failures and all other results deny.
+- Bind production producer acceptance to its issued identity, the C2B clock, and the frozen canonical
+  binding registry. Read observation time after classification, enforce a 2000 ms probe bound, and retain
+  issuance-based 5000 ms evidence validity and the 1000 ms issuance delay bound.
+- Reject the test-only local FAKE effect seam in production continuation activation. Keep live diagnostics,
+  production containment, and R3-C-Rz out of this slice.
+
 ## R3-C2B-2 Production Trusted-Unavailability Observation architecture remediation (docs only) — 2026-09-28
 
 - Add "ADR-0090 amendment (remediation) — R3-C2B-2 corrected after Claude CHANGES_REQUIRED (B-1..B-5)" to
