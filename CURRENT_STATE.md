@@ -5,6 +5,40 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-C2C — Local Continuity Consumption / Exact Effect Binding (architecture / task definition) (2026-09-28)
+
+**ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3c2c-local-continuity-consumption-architecture` from canonical main
+`4e040913405585596b0a1f0c399a20a8b592a85a`. `DECISIONS.md` carries the ADR-0090 amendment "R3-C2C
+architecture / task definition (Local Continuity Consumption / Exact Effect Binding)" defining the canonical
+consumption boundary that turns an issued `BoundLocalContinuitySelection` into EXACTLY ONE authorized
+local-continuity Provider effect, with the security order **validate C2A → commit `DISPATCH_COMMITTED` →
+exact bound Provider effect** (closes I2-1 NB-1). Source-verified: today
+`ContinuationReceiverExecutionService` commits dispatch BEFORE `receiver.receive`, so the later C2A validate
+sees `DISPATCH_COMMITTED` → `INVALID_RUN` (fail-closed but wrong order for C2C). **Selected Option B:** a NEW
+narrow `LocalContinuityConsumptionCoordinator` owns validate→(Kind B expiry re-check)→commit→effect,
+consuming the canonical `LocalContinuityAdmissionCoordinator` admitted outcome + bound authority; rejected A
+(overload `ContinuationProviderRoutingService`, risks inheriting Stage2B fallback) and C (receiver
+restructuring entangles non-C2 families). Ownership stays distinct: C2A = issuer/validator;
+`ProviderDispatchCommitCoordinator` = sole durable dispatch CAS owner; `TaskRunRepository` = durable state;
+`ProviderRoutingGateway` = generic execution (NOT used for the local-continuity single-attempt effect unless a
+one-binding/zero-fallback plan is proven). TOCTOU closed by the guarded CAS on `PRE_DISPATCH` as the
+linearization point adjacent to C2A validate (no standalone token). Kind B `continuityEvidenceExpiresAtMonoMs`
+re-checked on the shared `MonotonicClock` immediately before commit (expired → no commit/effect; no rollback
+after commit). Exact provider binding from the issued `SoleProviderSelection`; containment via
+`PreparedContainmentExecution`/`VerifiedContainmentBinding` bound to the same provider/execution/capability/
+config — and because **R3-B3 stays FAIL CLOSED (anchor/verifier/capability issuer NOT IMPLEMENTED), no real
+production local-Provider effect can execute.** Exactly one provider / one attempt / no fallback / no
+cloud-before-or-after; commit failure → definite pre-dispatch failure, no effect; crash-after-commit or
+provider failure → `DISPATCH_COMMITTED`, no normal retry (R3-C-Rz only); concurrent consumers → one CAS winner
+→ ≤1 effect. Early continuation commit MUST move to the C2C effect boundary while preserving write-before-
+effect on every INCLUDED path. NB-4 generic `save()` insert: not a hard C2C prerequisite (C2C derives the run
+from canonical storage) but carried forward as recommended repository hardening before production Kind B
+reachability. Non-C2 conversation/code-generation/tools paths unchanged. Recommended future slice R3-C2C-1.
+Docs-only: no source/test/schema/runtime/provider/network/secret/DB changes. ADR-0090 remains Proposed;
+production Kind B remains DENY (C2B-2 NOT AUTHORIZED); C2C implementation, C2B-2, and R3-C-Rz remain NOT
+AUTHORIZED; R3-B3 production trust stays FAIL CLOSED.
+
 ### R3-C2B-I2-1 — Canonical Prior-Dispatch Attempt Boundary (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** New `TaskRun` rows from both

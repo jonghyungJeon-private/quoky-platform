@@ -5,6 +5,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2C Local Continuity Consumption / Exact Effect Binding architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2C architecture / task definition (Local Continuity Consumption / Exact
+  Effect Binding)" to `DECISIONS.md`, defining the canonical consumption boundary that turns an issued
+  `BoundLocalContinuitySelection` into EXACTLY ONE authorized local-continuity Provider effect with the order
+  **validate C2A → commit `DISPATCH_COMMITTED` → exact bound Provider effect** (closes I2-1 NB-1).
+  Source-verified: `ContinuationReceiverExecutionService` currently commits dispatch before `receiver.receive`,
+  so the later C2A validate sees `DISPATCH_COMMITTED` → `INVALID_RUN`. **Selected Option B:** a NEW narrow
+  `LocalContinuityConsumptionCoordinator` owns validate→(Kind B expiry re-check)→commit→effect, consuming the
+  canonical `LocalContinuityAdmissionCoordinator` admitted outcome; rejected A (overload
+  `ContinuationProviderRoutingService`) and C (receiver restructuring). Ownership distinct: C2A validator,
+  `ProviderDispatchCommitCoordinator` (sole CAS owner), `TaskRunRepository` (state), `ProviderRoutingGateway`
+  (generic, not used for the single-attempt local effect unless a one-binding/zero-fallback plan is proven).
+  TOCTOU closed by the guarded CAS on `PRE_DISPATCH` adjacent to validate (no token); Kind B
+  `continuityEvidenceExpiresAtMonoMs` re-checked on the shared `MonotonicClock` immediately before commit;
+  exact provider binding from the issued `SoleProviderSelection`; containment via `PreparedContainmentExecution`
+  bound to the same provider/execution/capability/config; R3-B3 stays FAIL CLOSED so no real production
+  local-Provider effect executes. Exactly one provider / one attempt / no fallback; commit failure → definite
+  pre-dispatch failure; crash-after-commit or provider failure → `DISPATCH_COMMITTED`, no normal retry
+  (R3-C-Rz only); concurrent consumers → one CAS winner. Early continuation commit moves to the C2C effect
+  boundary preserving write-before-effect on every INCLUDED path. NB-4 generic `save()` insert carried forward
+  as recommended hardening (not a hard prerequisite). Non-C2 conversation/code-generation/tools paths
+  unchanged. Includes a state machine, future test contract, and the recommended R3-C2C-1 slice.
+  Documentation only: no source, test, schema, runtime, provider, network, secret, or DB changes. One local
+  architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed; production Kind B remains DENY; C2C
+  implementation, C2B-2, and R3-C-Rz remain NOT AUTHORIZED; R3-B3 fail closed.
+
 ## R3-C2B-I2-1 Canonical Prior-Dispatch Attempt Boundary (local, review pending) — 2026-09-28
 
 - Add durable `ProviderDispatchState` to TaskRun JSON. Both start paths initialize `PRE_DISPATCH`; missing
