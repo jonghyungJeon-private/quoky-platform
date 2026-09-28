@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AgentProfileRegistry, agentProfileId, ApprovalManager, ApprovalPolicy, Capability,
-  ContinuationExecutionEntryService, ContinuationExecutionService, ContinuationReceiverExecutionService,
+  ContinuationExecutionEntryService, ContinuationExecutionService, ContinuationReceiverExecutionService, ProviderDispatchCommitCoordinator,
   createWorkHandoff, ExecutionStatus, IntentType, RiskLevel, RiskPolicy, TaskManager, TaskRunStatus,
   WorkHandoffContinuationService, WorkItemStatus } from '@quoky/core';
 import type { ContinuationExecutionRequestContext, ContinuationReceiverInput, ContinuationReceiverOutcome,
@@ -51,7 +51,8 @@ async function harness(options: {
   const receiver = { supportedCapabilities: Object.freeze([...supportedCapabilities]),
     receive: vi.fn(async (_input: ContinuationReceiverInput): Promise<ContinuationReceiverOutcome> =>
       ({ disposition: 'SUCCEEDED', artifactIds: ['artifact-1'] })) };
-  const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver);
+  const execution = new ContinuationReceiverExecutionService(storage, profiles, continuation, tasks, receiver,
+    new ProviderDispatchCommitCoordinator(storage.taskRuns));
   const request: ContinuationExecutionRequestContext = { trigger: 'EXPLICIT_CONTINUATION_EXECUTION_REQUEST',
     handoffId: 'handoff', taskId: task.id, actorId: 'actor', projectId: 'project', plan };
   const guarded = vi.spyOn(storage.taskRuns, 'guardedStart');

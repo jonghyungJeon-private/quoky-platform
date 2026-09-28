@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { Capability, IntentType, RiskLevel, TaskRunStatus, TaskStatus, type Task, type TaskRun } from '../domain';
+import { Capability, IntentType, RiskLevel, TaskRunStatus, ProviderDispatchState, TaskStatus, type Task, type TaskRun } from '../domain';
 import { TrustedUnavailabilityObservationSource as Source, TrustedUnavailabilityReason as Reason } from '../ports';
 import { BoundLocalContinuitySelectionIssuer } from './bound-local-continuity-selection';
 import { continuationRoutingContext } from './continuation-routing-context';
@@ -42,7 +42,7 @@ function fixture(clouds: readonly [string, boolean][] = [['a', true]], withIssue
     intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1,
       requiresWork: true, summary: 'test' }, riskLevel: RiskLevel.LOW,
     context: { platform: 'test', channelId: 'channel', userId: 'user' }, createdAt: stamp, updatedAt: stamp };
-  const run: TaskRun = { id: 'run', taskId: 'task', status: TaskRunStatus.STARTED,
+  const run: TaskRun = { id: 'run', taskId: 'task', status: TaskRunStatus.STARTED, dispatchState: ProviderDispatchState.PRE_DISPATCH,
     capability: Capability.GENERAL_CHAT, attempt: 1, artifactIds: [], startedAt: stamp };
   const runs = [run];
   const storage = { tasks: { get: vi.fn(async () => task) }, taskRuns: {
@@ -72,6 +72,26 @@ function fixture(clouds: readonly [string, boolean][] = [['a', true]], withIssue
 }
 
 describe('R3-C2B-I1 canonical admission integration', () => {
+  it('denies both kinds once dispatch is committed or historical state is unknown', async () => {
+    for (const state of [ProviderDispatchState.DISPATCH_COMMITTED, ProviderDispatchState.LEGACY_UNKNOWN]) {
+      for (const clouds of [[], [['a', true]] as [string, boolean][]]) {
+        const f = fixture(clouds);
+        f.run.dispatchState = state;
+        expect((await f.admit()).admitted).toBe(false);
+        await expect(f.issue()).rejects.toMatchObject({ reason: 'INVALID_RUN' });
+      }
+    }
+  });
+
+  it('rejects a minted Kind A or Kind B authority after dispatch commit', async () => {
+    for (const clouds of [[], [['a', true]] as [string, boolean][]]) {
+      const f = fixture(clouds);
+      const selection = await f.issue();
+      f.run.dispatchState = ProviderDispatchState.DISPATCH_COMMITTED;
+      await expect(f.c2a.validate(selection, 'run', context, f.plan, f.registry, f.engine))
+        .rejects.toMatchObject({ reason: 'INVALID_RUN' });
+    }
+  });
   it('keeps Kind A A1/A2 independent of a missing C2B issuer and without expiry', async () => {
     for (const clouds of [[], [['a', false]] as [string, boolean][]]) {
       const f = fixture(clouds, false);
@@ -208,11 +228,11 @@ describe('R3-C2B-I1 canonical admission integration', () => {
     expect(f.observe).not.toHaveBeenCalled();
   });
 
-  it('keeps coordinator input narrow and mint immediate after the admission await', () => {
+  it('keeps coordinator input narrow and rechecks after admission before mint', () => {
     expect(LocalContinuityAdmissionCoordinator.prototype.admit.length).toBe(1);
     expect(BoundLocalContinuitySelectionIssuer.prototype.issue.length).toBe(2);
     const source = readFileSync(join(__dirname, 'bound-local-continuity-selection.ts'), 'utf8');
-    expect(source).toMatch(/const outcome = await this\.coordinator\.admit\([\s\S]*?\/\/ No await between[\s\S]*?const selection:/);
+    expect(source).toMatch(/const outcome = await this\.coordinator\.admit\([\s\S]*?await this\.canonicalFacts\(taskRunId\)[\s\S]*?const selection:/);
   });
 
   it('rejects composition with different C2A and C2B monotonic clock instances', () => {

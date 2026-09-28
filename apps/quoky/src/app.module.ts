@@ -31,6 +31,7 @@ import {
   PromptComposer,
   PromptRenderer,
   TaskManager,
+  ProviderDispatchCommitCoordinator,
   MemoryManager,
   ArtifactManager,
   WorkspaceManager,
@@ -532,6 +533,7 @@ const application: Provider[] = [
       // StatelessApprovalFlow's plan-scoped lookup.
       const applyPreviewFlow = new StatelessApplyPreviewFlow(storage);
       return createProductionConversationRuntime(memory, {
+        dispatchCommit: new ProviderDispatchCommitCoordinator(storage.taskRuns),
         actors,
         sessions,
         memory,

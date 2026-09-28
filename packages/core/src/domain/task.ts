@@ -1,5 +1,5 @@
 import type { Id, IsoTimestamp, Metadata } from './common';
-import type { Capability, RiskLevel, TaskRunStatus, TaskStatus } from './enums';
+import type { Capability, ProviderDispatchState, RiskLevel, TaskRunStatus, TaskStatus } from './enums';
 import type { Intent } from './planning';
 import type { ConversationContext } from './messaging';
 
@@ -45,6 +45,7 @@ export interface TaskRun {
   taskId: Id;
   attempt: number;
   status: TaskRunStatus;
+  dispatchState: ProviderDispatchState;
   capability: Capability;
   /** Internal audit only — e.g. "claude-cli". Never shown to the user. */
   providerId?: string;

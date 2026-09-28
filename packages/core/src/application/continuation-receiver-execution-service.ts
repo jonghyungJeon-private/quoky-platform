@@ -10,6 +10,7 @@ import { createContinuationExecutionRequestContext, hasOnlyContinuationRequestFi
 import type { ContinuationExecutionRequestContext } from './continuation-execution-product-policy';
 import type { ContinuationExecutionResult, ContinuationExecutionService } from './continuation-execution-service';
 import type { TaskManager } from './task-manager';
+import type { ProviderDispatchCommitCoordinator } from './provider-dispatch-commit-coordinator';
 import { WorkHandoffConsumptionService } from './work-handoff-consumption-service';
 import { WorkHandoffConsumptionError, WorkHandoffConsumptionFailureCode } from './work-handoff-consumption-service';
 
@@ -45,6 +46,7 @@ export class ContinuationReceiverExecutionService {
     private readonly continuation: Pick<ContinuationExecutionService, typeof constrainedContinuation>,
     private readonly tasks: Pick<TaskManager, 'terminalizePreservingSecurityEvidence'>,
     private readonly receiver: ContinuationReceiver | undefined,
+    private readonly dispatchCommit: Pick<ProviderDispatchCommitCoordinator, 'commit'>,
   ) {}
 
   async executeExplicitContinuation(input: ContinuationExecutionRequestContext): Promise<ContinuationReceiverExecutionResult> {
@@ -94,6 +96,7 @@ export class ContinuationReceiverExecutionService {
     try {
       const input = Object.freeze({ handoff, destinationAgentProfile, plan: request.plan,
         taskRun: freezeValue(startedRun), boundTaskFacts: Object.freeze({ ...facts }) });
+      await this.dispatchCommit.commit(startedRun.id, startedRun.id);
       outcome = snapshotReceiverOutcome(await receiver.receive(input), startedRun.id);
     } catch {
       // R1 amendment: 6K cannot know dispatch phase. Every receiver escape is uncertainty.

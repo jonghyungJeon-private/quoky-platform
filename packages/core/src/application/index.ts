@@ -13,6 +13,7 @@ export * from './prompt-composer';
 export * from './continuation-prompt';
 export * from './prompt-renderer';
 export * from './task-manager';
+export * from './provider-dispatch-commit-coordinator';
 export * from './memory-manager';
 export * from './memory-retriever';
 export * from './memory-writer';

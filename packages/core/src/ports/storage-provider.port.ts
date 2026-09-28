@@ -57,6 +57,8 @@ export interface GuardedTaskRunStartFacts {
 }
 
 export interface TaskRunRepository extends Repository<TaskRun> {
+  /** Atomic STARTED + PRE_DISPATCH transition for the exact TaskRun/execution identity. */
+  commitProviderDispatchIfPreDispatch(taskRunId: Id, executionId: Id): Promise<TaskRun>;
   /** For non-continuation Tasks only: revalidate RUNNING, allocate an ordinal and insert STARTED.
    * Must reject a canonical persisted continuation binding, independently of caller flags. */
   start(task: Task, capability: Capability): Promise<TaskRun>;

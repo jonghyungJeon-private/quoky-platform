@@ -523,6 +523,7 @@ export interface ApplyPreviewFlow {
 }
 
 export interface ConversationRuntimeDeps {
+  readonly dispatchCommit: Pick<import('./provider-dispatch-commit-coordinator').ProviderDispatchCommitCoordinator, 'commit'>;
   readonly actors: { resolveFromContext(context: ConversationContext): Promise<Actor> };
   readonly sessions: {
     openForContext(context: ConversationContext, actorId: Id): Promise<Session>;
@@ -5141,6 +5142,7 @@ export class ConversationRuntime {
           .reverse()
           .find((entry) => (entry.role ?? (entry.provenance === 'USER' ? 'user' : 'unknown')) === 'user')
           ?.content;
+        await this.deps.dispatchCommit.commit(run.id, run.id);
         const routed = await this.deps.runtimeProviderRouting.execute({
           facts: {
             capability,
@@ -5206,6 +5208,7 @@ export class ConversationRuntime {
 
       const provider = await this.deps.router.select(capability);
       providerId = provider.id;
+      await this.deps.dispatchCommit.commit(run.id, run.id);
       const result = await provider.execute(aiRequest);
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);

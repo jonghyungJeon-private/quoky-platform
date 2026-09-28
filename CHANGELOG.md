@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I2-1 Canonical Prior-Dispatch Attempt Boundary (local, review pending) — 2026-09-28
+
+- Add durable `ProviderDispatchState` to TaskRun JSON. Both start paths initialize `PRE_DISPATCH`; missing
+  historical state fails closed as `LEGACY_UNKNOWN`, with provider-associated history read as committed.
+- Add SQLite IMMEDIATE guarded, exactly-one-winner dispatch commit and the application
+  `ProviderDispatchCommitCoordinator`. Commit before continuation receiver and conversation work-turn routed
+  or direct Provider effects; preserve one commit across in-plan Stage2B fallback and deny re-entry.
+- Require current `PRE_DISPATCH` for Kind A/B admission and C2A mint/validate, closing post-commit replay.
+  Add fake-effect and SQLite regressions. Production Kind B still denies; C2B-2, C2C, R3-C-Rz remain
+  unauthorized and R3-B3 production trust remains fail closed.
+
 ## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary final B-1 remediation (docs only) — 2026-09-28
 
 - Add "ADR-0090 amendment (remediation 2 — R3-C2B-I2 final B-1 closure)" to `DECISIONS.md`, closing B-1

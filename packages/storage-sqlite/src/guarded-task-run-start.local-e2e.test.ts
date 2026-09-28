@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentProfileRegistry, agentProfileId, ApprovalManager, ApprovalPolicy, ApprovalStatus, Capability,
   ContinuationExecutionEntryService, createWorkHandoff, ExecutionStatus, IntentType, RiskLevel, RiskPolicy,
-  TaskManager, TaskRunStatus, TaskStatus, WorkHandoffContinuationService, WorkItemStatus } from '@quoky/core';
+  TaskManager, TaskRunStatus, ProviderDispatchState, TaskStatus, WorkHandoffContinuationService, WorkItemStatus } from '@quoky/core';
 import type { ExecutionPlan, GuardedTaskRunStartFacts, Task, TaskRun, WorkItem } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
 
@@ -82,7 +82,8 @@ describe('ADR-0088 guarded atomic start — real SQLite', () => {
     const decide = vi.spyOn(f.approvals, 'decide');
     const run = await f.entry.start(f.input);
     expect(run).toBe(await guarded.mock.results[0]!.value);
-    expect(run).toMatchObject({ taskId: f.task.id, attempt: 1, status: TaskRunStatus.STARTED });
+    expect(run).toMatchObject({ taskId: f.task.id, attempt: 1, status: TaskRunStatus.STARTED,
+      dispatchState: ProviderDispatchState.PRE_DISPATCH });
     expect(await f.storage.taskRuns.get(run.id)).toEqual(run);
     expect(await f.storage.taskRuns.listByTask(f.task.id)).toEqual([run]);
     expect(ordinary).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
@@ -178,7 +179,8 @@ describe('ADR-0088 guarded atomic start — real SQLite', () => {
     const unresolved = { ...historical(f.task, 'ambiguous', 4, '2000-01-01T00:00:00.000Z', TaskRunStatus.STARTED), finishedAt: ts };
     seedHistory(f, unresolved);
     await expect(f.storage.taskRuns.guardedStart(f.expected, Capability.GENERAL_CHAT)).rejects.toMatchObject({ code: 'UNRESOLVED_STARTED_RUN' });
-    expect(await f.storage.taskRuns.listByTask(f.task.id)).toEqual([unresolved]);
+    expect(await f.storage.taskRuns.listByTask(f.task.id)).toEqual([{ ...unresolved,
+      dispatchState: ProviderDispatchState.LEGACY_UNKNOWN }]);
   });
   it('allocates from history but returns the inserted identity without latest-run rediscovery', async () => {
     const f = await fixture();

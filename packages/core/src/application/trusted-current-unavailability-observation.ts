@@ -1,4 +1,4 @@
-import { TaskRunStatus, TaskStatus, type Capability } from '../domain';
+import { ProviderDispatchState, TaskRunStatus, TaskStatus, type Capability } from '../domain';
 import {
   TrustedUnavailabilityObservationSource,
   TrustedUnavailabilityReason,
@@ -221,7 +221,8 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
   private async canonicalFacts(taskRunId: string): Promise<Facts> {
     if (typeof taskRunId !== 'string' || !taskRunId.trim()) fail('EXECUTION_MISMATCH');
     const run = await this.storage.taskRuns.get(taskRunId);
-    if (!run || run.id !== taskRunId || run.status !== TaskRunStatus.STARTED) fail('EXECUTION_MISMATCH');
+    if (!run || run.id !== taskRunId || run.status !== TaskRunStatus.STARTED
+      || run.dispatchState !== ProviderDispatchState.PRE_DISPATCH) fail('EXECUTION_MISMATCH');
     const { taskId, capability, attempt } = run;
     if (attempt !== 1) fail('NOT_FIRST_RUN');
     if (run.providerId) fail('NOT_FIRST_RUN');
@@ -234,10 +235,12 @@ export class TrustedCurrentUnavailabilityObservationIssuer {
     const only = history[0];
     if (history.length !== 1 || !only || only.id !== taskRunId || only.taskId !== taskId
       || only.attempt !== 1) fail('NOT_FIRST_RUN');
-    if (only.status !== TaskRunStatus.STARTED || only.capability !== capability) fail('EXECUTION_MISMATCH');
+    if (only.status !== TaskRunStatus.STARTED || only.capability !== capability
+      || only.dispatchState !== ProviderDispatchState.PRE_DISPATCH) fail('EXECUTION_MISMATCH');
     const current = await this.storage.taskRuns.get(taskRunId);
     if (!current || current.id !== taskRunId || current.taskId !== taskId || current.attempt !== 1
-      || current.status !== TaskRunStatus.STARTED || current.capability !== capability) fail('EXECUTION_MISMATCH');
+      || current.status !== TaskRunStatus.STARTED || current.capability !== capability
+      || current.dispatchState !== ProviderDispatchState.PRE_DISPATCH) fail('EXECUTION_MISMATCH');
     if (current.providerId) fail('NOT_FIRST_RUN');
     return { taskId, context, capability };
   }
