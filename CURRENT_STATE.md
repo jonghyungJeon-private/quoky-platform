@@ -59,6 +59,24 @@ validate all re-read `dispatchState` (replay prevention; marker presence = autho
 flag). Preferred single combined slice R3-C2B-I2-1 (else I2A+I2B with reachability CLOSED between). Still
 docs-only; Kind B remains DENY; R3-C2B-I2, C2B-2, C2C, R3-C-Rz remain NOT AUTHORIZED.
 
+**REMEDIATION 2 (2026-09-28, final B-1 closure; B-2/B-3 remain CLOSED).** A further docs-only commit (parent
+`2c2c2fe…`; prior commits not amended) appends "ADR-0090 amendment (remediation 2 — R3-C2B-I2 final B-1
+closure)" to `DECISIONS.md`, finalizing every current Provider-effect path (no "classify later"): **INCLUDED**
+= `ContinuationReceiverExecutionService`, `RuntimeProviderRoutingService`→`ProviderRoutingGateway`
+(`executionId = run.id`), and conversation-runtime work-turn Provider execution (both the routed path and the
+TaskRun-bound direct fallback at ≈L5207); **EXCLUDED (structural)** = code-generation-manager (`CodeGeneration`
+aggregate, no TaskRun), tools/validation-harness/diagnostics (non-TaskRun executionId), and the
+conversation-runtime "(E) Fast path" direct `provider.execute` (≈L2035, `!intent.requiresWork`, no Task/no
+TaskRun). Source-verified control flow: within one work turn (after `startRun`), the routed and direct paths
+are MUTUALLY EXCLUSIVE (routed returns on ACCEPTED/FAILED; direct fallback runs only when routing is
+absent/non-GENERAL_CHAT), so exactly one Provider-effect path is reached and commits the marker once.
+`ProviderDispatchCommitCoordinator` remains the single write owner; `ProviderRoutingGateway` is generic and
+NOT the persistence owner. TaskRun initialization rule finalized: both `guardedStart` AND `taskRuns.start`
+persist explicit `PRE_DISPATCH`. The reachability gate now enumerates all INCLUDED paths (continuation +
+conversation-runtime routed + conversation-runtime work-turn direct). B-2 (`ProviderDispatchState` model) and
+B-3 (SQLite IMMEDIATE exactly-one-winner CAS) remain CLOSED and unchanged. Still docs-only; Kind B remains
+DENY; R3-C2B-I2, C2B-2, C2C, R3-C-Rz remain NOT AUTHORIZED.
+
 ### R3-C2B-I1 — Kind B Admission Integration (2026-09-28)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** Architecture was ratified and delivered

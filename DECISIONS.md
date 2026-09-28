@@ -11903,3 +11903,176 @@ remediation commit on parent `5a904ddd9dc6b22484eccd9a4aa9f69437aa3ddd`; indepen
 must pass before Push/PR/Merge. R3-C2B-I2 implementation, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; Kind
 B production admission remains DENY/unreachable until the marker invariant is implemented, reviewed, and
 delivered.
+
+## ADR-0090 amendment (remediation 2 — R3-C2B-I2 final B-1 closure)
+
+- **Status:** Proposed — architecture / task-definition only. Addresses B-1 ONLY (B-2 and B-3 remain CLOSED
+  and unchanged). Supersedes the corrected B-1 claims of the two prior R3-C2B-I2 sections where they
+  conflict; those are retained as history. Independent Architecture Re-review pending. No implementation; no
+  schema/source/test change.
+- **Date:** 2026-09-28
+- **Branch / parent:** `kiro/r3c2b-i2-prior-dispatch-boundary-architecture`; one additional docs-only
+  remediation commit whose parent is the reviewed `2c2c2fead90214709e8e8f33ae15bae746f1082b` (prior commits
+  NOT amended). Chain: `790a1e76… → 5a904ddd… → 2c2c2fe… → this`.
+- **Why:** the previous re-review left B-1 NOT CLOSED because the dispatch-path inventory still deferred
+  conversation-runtime / code-generation-manager with "classify at implementation." This amendment finalizes
+  every current Provider-effect path as INCLUDED or EXCLUDED, source-verified — no "classify later" entry
+  remains.
+
+### RI2F-1. B-1 final classification (source-verified)
+
+- `ContinuationReceiverExecutionService` → `receiver.receive(...)` — **INCLUDED** (TaskRun-bound; consumes the
+  normal continuation / C2 admission path).
+- `RuntimeProviderRoutingService` → `ProviderRoutingGateway` when `executionId = run.id` — **INCLUDED**
+  (TaskRun-bound; reached from conversation-runtime and continuation TaskRun routing).
+- conversation-runtime work-turn Provider execution — **INCLUDED** (both its routed and its TaskRun-bound
+  direct fallback; §RI2F-3).
+- `code-generation-manager` `provider.execute` — **EXCLUDED structurally** (§RI2F-5).
+- tools / validation harness / diagnostic executions without TaskRun identity — **EXCLUDED structurally**
+  (§RI2F-6).
+
+These are FINAL. No path remains unclassified.
+
+### RI2F-2. conversation-runtime = INCLUDED
+
+Source facts (`packages/core/src/application/conversation-runtime.ts`): the work turn transitions the Task to
+RUNNING, creates a STARTED TaskRun via `this.deps.tasks.startRun(task, capability)` (≈L5124), and can reach a
+Provider effect either routed (`runtimeProviderRouting.execute({ …, executionId: run.id })` ≈L5144) or via a
+TaskRun-bound direct fallback (`provider.execute(aiRequest)` ≈L5207–5209). C2A/C2B `canonicalFacts` do not
+structurally exclude this ordinary STARTED GENERAL_CHAT TaskRun family. Therefore conversation-runtime
+Provider effects MUST participate in the same canonical TaskRun dispatch-commitment protocol; B-1 is NOT
+solved by pretending this path cannot consume C2A, and no continuation-binding restriction is added merely to
+avoid integration.
+
+### RI2F-3. conversation-runtime routed vs direct control flow (exact result)
+
+Within ONE work-turn execution, after `startRun` creates the STARTED TaskRun, the routed and direct paths are
+**MUTUALLY EXCLUSIVE**:
+
+- IF `capability === GENERAL_CHAT && this.deps.runtimeProviderRouting` → **routed path**
+  (`RuntimeProviderRoutingService` → `ProviderRoutingGateway`, `executionId = run.id`). This branch RETURNS on
+  both ACCEPTED and FAILED terminal outcomes and never falls through to the direct fallback.
+- ELSE (routing dependency absent, or capability is not GENERAL_CHAT) → **TaskRun-bound direct fallback**
+  (`this.deps.router.select(capability)` then `provider.execute(aiRequest)` ≈L5207–5209).
+
+So exactly ONE Provider-effect path is reached per work-turn execution; whichever reaches the first Provider
+effect commits the marker once. Any bounded in-plan Stage2B fallback inside the SAME active
+`ProviderRoutingGateway.execute(...)` proceeds after that single commit (no second commit). A later
+independent invocation / re-entry / restart / resume that observes `DISPATCH_COMMITTED` MUST NOT execute
+normally → R3-C-Rz.
+
+Both work-turn paths get the same treatment: before the FIRST Provider effect for that TaskRun, the canonical
+`ProviderDispatchCommitCoordinator` MUST transition `PRE_DISPATCH → DISPATCH_COMMITTED` (guarded CAS,
+DB COMMIT before the Provider effect). `ProviderRoutingGateway` remains NOT the persistence owner.
+
+**Separately: conversation-runtime "(E) Fast path" `provider.execute` (≈L2035)** is the `!intent.requiresWork`
+conversational path with NO Task and NO TaskRun (source comment "no Task needed"; it returns before any
+`startRun`). It is therefore **NOT TaskRun-bound and structurally EXCLUDED** — it cannot create or consume a
+TaskRun-bound C2A authority. (This corrects any reading that treated "the conversation-runtime direct
+provider.execute" as uniformly TaskRun-bound: the TaskRun-bound direct path is the work-turn fallback at
+≈L5207, not the no-Task fast path at ≈L2035.)
+
+### RI2F-4. ProviderRoutingGateway final classification
+
+`ProviderRoutingGateway` is a GENERIC executor and NOT the persistence owner (it has no storage dependency and
+is usable with non-TaskRun execution IDs). It is TaskRun-bound when composed into a TaskRun-bound execution
+(continuation, and conversation-runtime via `RuntimeProviderRoutingService`, `executionId = run.id`). When so
+composed, the enclosing application execution path must have established the canonical dispatch commitment
+before the first Provider effect. For generic non-TaskRun executions, no TaskRun marker applies.
+
+### RI2F-5. code-generation-manager = EXCLUDED (structural)
+
+Source fact: `code-generation-manager` operates on the `CodeGeneration` aggregate / `storage.codeGenerations`
+and does NOT create or use a TaskRun for its Provider effect. The canonical marker is TaskRun-scoped, so this
+path is structurally EXCLUDED — it cannot consume a TaskRun-bound C2A authority. No TaskRun persistence is
+added to code-generation-manager for I2.
+
+### RI2F-6. tools / harness = EXCLUDED (structural)
+
+Provider recall diagnostics, provider semantic validation, the provider-routing-validation harness, and other
+executions using non-TaskRun execution IDs remain structurally EXCLUDED — no TaskRun-bound R3-C2 authority
+consumption. `ProviderRoutingGateway` stays generic for these callers.
+
+### RI2F-7. Final dispatch-path inventory
+
+| Path | TaskRun-bound | R3-C2 security marker | Reason |
+|---|---|---|---|
+| `ContinuationReceiverExecutionService` → `receiver.receive(...)` | YES | INCLUDED | Consumes the normal continuation / C2 admission path |
+| `RuntimeProviderRoutingService` → `ProviderRoutingGateway` (`executionId = run.id`) | YES | INCLUDED | conversation-runtime & continuation TaskRun routing can reach a Provider effect |
+| conversation-runtime work-turn direct fallback `provider.execute` (≈L5207) | YES | INCLUDED | Ordinary STARTED GENERAL_CHAT TaskRun can satisfy current C2A canonical facts; reached only when routing is absent/non-GENERAL_CHAT |
+| conversation-runtime "(E) Fast path" `provider.execute` (≈L2035) | NO | EXCLUDED | `!intent.requiresWork`; no Task / no TaskRun created |
+| `code-generation-manager` `provider.execute` | NO | EXCLUDED | `CodeGeneration` aggregate only; no TaskRun / no C2A authority |
+| tools / validation harness / diagnostics | NO | EXCLUDED | Non-TaskRun execution identity |
+
+No "classify later" entry remains.
+
+### RI2F-8. Common TaskRun dispatch invariant (final)
+
+For ANY TaskRun-bound Provider execution path in current production/application code — continuation path,
+conversation-runtime routed path, and conversation-runtime work-turn direct fallback — before the FIRST actual
+Provider effect for that TaskRun, `dispatchState` MUST transition `PRE_DISPATCH → DISPATCH_COMMITTED` through
+`ProviderDispatchCommitCoordinator` → `TaskRunRepository` guarded CAS. No TaskRun-bound Provider effect may
+bypass this invariant.
+
+### RI2F-9. TaskRun initialization rule (final)
+
+Every newly created TaskRun that can perform Provider effects MUST be initialized with explicit
+`dispatchState = PRE_DISPATCH`. This includes BOTH `guardedStart` (continuation) AND `taskRuns.start`
+(conversation-runtime work turn). No new TaskRun creation path may rely on a missing field. Historical
+missing field remains `LEGACY_UNKNOWN` (B-2 unchanged).
+
+### RI2F-10. Canonical write owner (unchanged)
+
+`ProviderDispatchCommitCoordinator` is the single application mutation authority; `TaskRunRepository`/
+`task_runs` is the durable state owner; `ProviderRoutingGateway` is NOT the persistence owner; no second
+marker/writer.
+
+### RI2F-11. One-commit-per-TaskRun / Stage2B in-plan fallback (unchanged)
+
+The marker commits once per TaskRun at the first Provider dispatch (not once per provider attempt). Within the
+same active bounded execution, existing Stage2B in-plan fallback proceeds after the first commit with no
+second write. A new invocation / restart / resume / re-entry after `DISPATCH_COMMITTED` → no normal Provider
+effect → R3-C-Rz only.
+
+### RI2F-12. B-2 status — CLOSED (unchanged)
+
+`ProviderDispatchState` = `PRE_DISPATCH | DISPATCH_COMMITTED | LEGACY_UNKNOWN`; new TaskRuns explicit
+`PRE_DISPATCH`; historical missing field → `LEGACY_UNKNOWN`; ambiguous historical STARTED → `LEGACY_UNKNOWN`;
+provably-dispatched historical row → `DISPATCH_COMMITTED`; never infer `PRE_DISPATCH` from absence.
+
+### RI2F-13. B-3 status — CLOSED (unchanged)
+
+SQLite IMMEDIATE guarded mutation; preconditions row exists + `status == STARTED` + `dispatchState ==
+PRE_DISPATCH` + identity match; exactly one writer wins; loser → conflict → no Provider effect; transaction
+commits before the Provider call; transaction never held across the Provider effect.
+
+### RI2F-14. Read-side invariant (unchanged)
+
+`LocalContinuityAdmissionCoordinator`, Kind A, Kind B, C2A issue, and C2A validate all require
+`dispatchState == PRE_DISPATCH`; `DISPATCH_COMMITTED` / `LEGACY_UNKNOWN` → fail closed.
+
+### RI2F-15. C2B-2 / C2C reachability gate (final)
+
+Production Kind B MUST NOT become reachable until I2 implementation covers EVERY INCLUDED TaskRun Provider path
+— continuation, conversation-runtime routed, and conversation-runtime work-turn direct fallback — plus state
+persistence (both `guardedStart` and `taskRuns.start` initialize `PRE_DISPATCH`), exactly-one-winner commit,
+admission read-side, C2A issue/validate replay protection, independent exact-HEAD review, and delivery. No
+partial reachability. C2C reuses the same protocol; R3-C-Rz remains NOT AUTHORIZED.
+
+### RI2F-16. Updated future test contract (additions)
+
+`taskRuns.start` initializes `PRE_DISPATCH`; `guardedStart` initializes `PRE_DISPATCH`; conversation-runtime
+routed Provider path commits the marker before the first effect; conversation-runtime work-turn direct
+fallback commits the marker before the effect; no TaskRun-bound conversation-runtime Provider effect executes
+if the marker commit fails; the routed/direct relation matches the documented mutually-exclusive control flow;
+the "(E) Fast path" (no Task) has no marker and is excluded; the generic non-TaskRun harness remains usable
+without TaskRun persistence; `code-generation-manager` remains excluded with no TaskRun dependency; one marker
+commit per TaskRun; in-plan fallback does not second-commit; a new invocation after commit cannot execute the
+Provider normally. Retain the previously defined B-2 / B-3 and replay test matrices.
+
+### Approval boundary
+
+Architecture/decision record only. One local docs-only remediation commit on parent
+`2c2c2fead90214709e8e8f33ae15bae746f1082b`; independent Architecture Re-review must pass before Push/PR/Merge.
+R3-C2B-I2 implementation, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED; Kind B production admission remains
+DENY/unreachable until the marker invariant is implemented, reviewed, and delivered.

@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary final B-1 remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation 2 — R3-C2B-I2 final B-1 closure)" to `DECISIONS.md`, closing B-1
+  (B-2/B-3 remain CLOSED and unchanged). Finalizes every current Provider-effect path with no "classify
+  later": **INCLUDED** = `ContinuationReceiverExecutionService`, `RuntimeProviderRoutingService` →
+  `ProviderRoutingGateway` (`executionId = run.id`), and conversation-runtime work-turn Provider execution
+  (routed path + TaskRun-bound direct fallback ≈L5207); **EXCLUDED (structural)** = code-generation-manager
+  (`CodeGeneration` aggregate, no TaskRun), tools/validation-harness/diagnostics (non-TaskRun executionId),
+  and the conversation-runtime "(E) Fast path" `provider.execute` (≈L2035, `!intent.requiresWork`, no Task/no
+  TaskRun). Source-verified control flow: within one work turn (after `startRun`), routed and direct paths are
+  MUTUALLY EXCLUSIVE (routed returns on ACCEPTED/FAILED; direct fallback runs only when routing is absent/
+  non-GENERAL_CHAT), so exactly one Provider-effect path is reached and commits the marker once.
+  `ProviderDispatchCommitCoordinator` remains the single write owner; `ProviderRoutingGateway` is generic and
+  not the persistence owner. TaskRun initialization finalized: both `guardedStart` and `taskRuns.start`
+  persist explicit `PRE_DISPATCH`. Reachability gate now enumerates all INCLUDED paths. Documentation only: no
+  source, schema, test, runtime, provider, network, secret, or DB changes. One remediation commit on parent
+  `2c2c2fe…` (prior commits not amended); no Push/PR/Merge. ADR-0090 remains Proposed; Kind B remains DENY;
+  R3-C2B-I2, C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2B-I2 Canonical Prior-Dispatch Attempt Boundary architecture remediation (docs only) — 2026-09-28
 
 - Add "ADR-0090 amendment (remediation) — R3-C2B-I2 corrected after Claude CHANGES_REQUIRED (B-1..B-3)" to
