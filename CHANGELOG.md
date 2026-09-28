@@ -5,6 +5,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-C2B architecture remediation (docs only) — 2026-09-28
+
+- Add "ADR-0090 amendment (remediation) — R3-C2B corrected after Claude CHANGES_REQUIRED (B-1..B-4)" to
+  `DECISIONS.md`, applying the exact Chief Architect decisions. **B-1:** the only controlling Kind B provider
+  set is `RoutingPolicyEngine.staticEligibility(...).eligibleNetworkProviderIds` (enabled + policy-compatible
+  + NETWORK); disabled/incompatible providers never enlarge it; exact provider-ID set equality (no missing/
+  extra/duplicate) at validation; Kind A/B case matrix A–E. **B-2:** monotonic-ms currentness
+  (`observedAtMonoMs`/`validFromMonoMs`/`expiresAtMonoMs`; `validFrom <= now < expiresAt`; now==validFrom
+  valid, now==expiresAt expired), fixed `MAX_TRUSTED_UNAVAILABILITY_WINDOW_MS=5000` and
+  `MAX_OBSERVATION_TO_ISSUANCE_DELAY_MS=1000`, fail-closed on non-finite/negative/backward-clock; wall-clock
+  audit-only. **B-3:** issuer-owned injected `CurrentUnavailabilityObservationProducer` (callers pass no
+  observation/flag/timestamp); C2B-1 network-free with a deterministic `TEST_FAKE` producer only (no real
+  `isAvailable()`, no process spawn/network/secret); `CANONICAL_PROVIDER_REACHABILITY_PROBE` reserved for
+  C2B-2; bounded `TrustedUnavailabilityReason` (ENDPOINT_UNREACHABLE / AUTHENTICATION_UNAVAILABLE /
+  PROVIDER_HEALTH_UNAVAILABLE). **B-4:** C2B-1 is VALIDATOR-ONLY — does not modify
+  `LocalContinuityAdmission.admit(...)` or the C2A issuer, so Kind B admission STILL = DENY; a VALIDATED C2B
+  authority set is only sufficient evidence for a future separately reviewed Kind B integration slice. Adds
+  `TrustedCurrentUnavailabilityValidationResult` (VALIDATED/INVALID(reason)), five-step precedence, authority
+  shape, config/task/execution binding (Stage2B composite `configurationDigest` + `taskId`), and the
+  `isAvailable()`-is-not-production-evidence note. Documentation cleanup: `CURRENT_STATE.md` R3-C2A corrected
+  to CLOSED + DELIVERED (PR #89 merged, main `be9ba958…`); C2B carry-forward wording corrected to NB-1 closed,
+  NB-2 closed, NB-3 partial (C2C owns planner/effect binding), NB-4 closed for C2B validation. Docs-only: no
+  source/test/schema/runtime/provider/network/secret/DB changes. One remediation commit on parent
+  `941194d39f…` (reviewed commit not amended); no Push/PR/Merge. Kind B remains DENY; C2B implementation,
+  C2B-2, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
+## R3-C2B architecture / task definition (docs only) — 2026-09-28
+
+- Add the ADR-0090 amendment "R3-C2B architecture / task definition (Trusted Current-Unavailability
+  Observation Authority)" to `DECISIONS.md`, defining the smallest safe architecture for proving — at one
+  exact execution/routing/configuration context — that the canonical cloud path is CURRENTLY unavailable via
+  an observation source the caller/model cannot self-declare. Source-verified decisions: adapter-owned
+  `AiProvider.isAvailable()` / the `ProviderRegistrySnapshot` availability field are observation DATA, not
+  Kind B authority; a NEW canonical process-local issuer mints an immutable, issuer-instance-local
+  `TrustedCurrentUnavailabilityObservation` (WeakMap pattern, distinct from C2A selection authority) binding
+  `providerId`, `executionId===taskRunId`, `routingContextDigest`, composite `configurationDigest`,
+  `capability`, bounded `observationSource`, and a monotonic-clock validity window (`MonotonicClock`
+  authoritative; wall-clock audit-only); a bounded pre-dispatch `TrustedUnavailabilityReason` (no new
+  `RoutingFailureCode`); canonical cloud set from `RoutingPolicyEngine.staticEligibility(...)` (never
+  caller-selected IDs); multi-cloud requires trusted current-unavailability for EVERY relevant candidate (one
+  available cloud → DENY); Stage2B remains the sole router; Kind B requires C2A first-run/no-prior-history and
+  stays pre-dispatch; Kind A precedence preserved. Closes C2A carry-forwards NB-1..NB-4. Process restart
+  invalidates authority; R3-B3 stays FAIL CLOSED. Decomposition C2B-1 (network-free authority/issuer/validator
+  + fake producer) → C2B-2 (actual network/secret producer, separate STRICT approval). Includes a fail-closed
+  matrix, entry/exit criteria, verification strategy, and deferred decisions. Documentation only: no code,
+  runtime, provider, network, secret, DB/schema, aggregate/repository, approval/security owner, or new
+  `RoutingFailureCode`. One local architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed; Kind B
+  remains DENY; C2B implementation, C2C, and R3-C-Rz remain NOT AUTHORIZED.
+
 ## R3-C2A — Bound Local Continuity Authority — 2026-09-28
 
 - Add process/issuer-local `BoundLocalContinuitySelectionIssuer` with internal R3-C1 admission,
