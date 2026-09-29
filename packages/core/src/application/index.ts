@@ -114,6 +114,23 @@ export type {
   ContainedExecutionResult,
   ContainedExecutionCapability,
 } from './continuation-prepared-containment';
+export {
+  PRODUCTION_ATTESTATION_CHALLENGE_SCHEMA,
+  PRODUCTION_ATTESTATION_EVIDENCE_SCHEMA,
+  MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS,
+  MAX_PRODUCTION_ATTESTATION_VALIDITY_MS,
+  TEST_ATTESTATION_SOURCE_KINDS,
+  AttestationContractError,
+  issueProductionAttestationChallenge,
+  attestationSetIdFor,
+} from './production-attestation-contracts';
+export type {
+  ProductionAttestationChallenge,
+  AttestationObservedFacts,
+  TestAttestationSourceKind,
+  TestAttestationEvidence,
+  AttestationContractFailureCode,
+} from './production-attestation-contracts';
 export * from './continuation-containment-validation';
 export * from './containment-failure-classifier';
 export * from './local-continuity-admission';

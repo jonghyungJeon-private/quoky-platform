@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3-2A attestation contracts (local; delivery pending) — 2026-09-29
+
+- Add process-local issued, one-time challenges and deterministic attestation-set identity bound to the exact
+  run, provider binding, and containment binding. Structural or serialized reconstruction does not restore
+  issuance authority. Fixed Channel A/B roles and closed role-specific TEST source kinds reject swaps and
+  mismatched challenge/set/binding facts.
+- Add TEST-only simulated evidence with expected-versus-simulated-observed fields, signer/verifier labels,
+  deterministic integrity identity, and audit-only source timestamp. Quoky's monotonic clock controls the
+  challenge round trip and separate post-receipt validity; both production numeric bounds require calibration.
+  The unavailable production verifier reports `UNAVAILABLE` rather than `TEST`.
+- Production trust and capability issuance remain fail-closed. No real trust root, runtime inspection,
+  Provider execution, production activation, or R3-B3-2B/C/D implementation. Delivery remains pending.
+
 ## R3-B3-2 remediation — challenge-bound attestation, mandatory independence, safe decomposition (docs only) — 2026-09-29
 
 - Add the ADR-0090 amendment "R3-B3-2 remediation (challenge-bound attestation, mandatory independence, safe

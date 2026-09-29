@@ -5,6 +5,31 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3-2A — Attestation contracts (2026-09-29)
+
+**IMPLEMENTED LOCALLY — DELIVERY PENDING.** Network/runtime-free challenge and evidence contracts use an
+issued, process-local, one-time `ProductionAttestationChallenge` bound to the exact run, provider binding,
+containment binding, and Quoky-local monotonic issuance time. A/B evidence must share one deterministic
+`attestationSetId`, fixed roles, and closed TEST-only source kinds. Test evidence echoes expected binding
+facts for deterministic validation; it does not independently observe a production runtime. Challenge and
+TEST-set reconstruction cannot restore process-local issuance authority. Local request round-trip and
+post-receipt validity are separate contracts; production numeric bounds remain calibration-required.
+The unavailable production verifier now reports `trustDomain = UNAVAILABLE`.
+
+```text
+REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET
+PRODUCTION TRUST = FAIL CLOSED
+REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE
+R3-B3-2B = NOT AUTHORIZED
+R3-B3-2C = NOT ELIGIBLE
+R3-B3-2D = NOT ELIGIBLE
+Live Gate = NOT AUTHORIZED
+R3-C-Rz = NOT AUTHORIZED
+```
+
+The R3-B3-2 architecture entries below record earlier documentation checkpoints. Production activation
+still rejects local TEST continuity; R3-C2B-2 observation semantics are unchanged.
+
 ### R3-B3-2 — Remediation: challenge-bound attestation, mandatory independence, safe decomposition (2026-09-29)
 
 **ARCHITECTURE REMEDIATION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch

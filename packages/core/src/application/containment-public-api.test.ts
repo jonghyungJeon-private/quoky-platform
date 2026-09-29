@@ -52,6 +52,13 @@ describe('@quoky/core public API surface — R3-B1 fake must not leak (G3A-1)', 
       'CONTAINMENT_VERIFIER_ROLES',
       'createUnavailableProductionContainmentVerifier',
       'issueProductionContainedExecutionCapability',
+      'PRODUCTION_ATTESTATION_CHALLENGE_SCHEMA',
+      'PRODUCTION_ATTESTATION_EVIDENCE_SCHEMA',
+      'MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS',
+      'MAX_PRODUCTION_ATTESTATION_VALIDITY_MS',
+      'TEST_ATTESTATION_SOURCE_KINDS',
+      'issueProductionAttestationChallenge',
+      'attestationSetIdFor',
     ]) {
       expect(surface[name], `missing R3-B3 production export: ${name}`).toBeDefined();
     }
@@ -66,6 +73,11 @@ describe('@quoky/core public API surface — R3-B1 fake must not leak (G3A-1)', 
     // There is no public factory to mint a ContainedExecutionCapability through @quoky/core, so
     // PreparedContainmentExecution.fromVerifiedBinding cannot be satisfied with a public-surface object.
     expect(surface.createFakeContainedExecutionCapability).toBeUndefined();
+    expect(surface.createSimulatedAttestationEvidence).toBeUndefined();
+    expect(surface.formTestAttestationSet).toBeUndefined();
+    expect(surface.requireCurrentTestAttestationSet).toBeUndefined();
+    expect(surface.requireIssuedVerifiedBinding).toBeUndefined();
+    expect(surface.TEST_ATTESTATION_SOURCE_POLICY).toBeUndefined();
     expect(surface.IssuedContainedExecutionCapability).toBeUndefined(); // module-private class never exported
   });
 });

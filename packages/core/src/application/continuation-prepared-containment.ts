@@ -383,7 +383,7 @@ export interface ContainmentChannelResult {
    * result is always `TEST`; a `PRODUCTION` claim from arbitrary caller code cannot be honoured (there is
    * no production issuer to satisfy `requireProductionTrustedVerification`, which fails closed).
    */
-  readonly trustDomain: ContainmentTrustDomain;
+  readonly trustDomain: ContainmentTrustDomain | 'UNAVAILABLE';
   readonly verifierProvenanceId: string;
   /** SHA-256 over the exact subject the channel verified; present only when VERIFIED. */
   readonly resultDigest?: string;
@@ -421,7 +421,7 @@ export function createUnavailableProductionContainmentVerifier(channel: 'A' | 'B
   return Object.freeze({ channel, verifierRole: CONTAINMENT_VERIFIER_ROLES[channel],
     verify(): ContainmentChannelResult {
       return Object.freeze({ status: 'UNAVAILABLE', verifierVersion: 'unavailable-v1',
-        verifierProvenanceId: `unavailable-${channel}`, trustDomain: 'TEST' });
+        verifierProvenanceId: `unavailable-${channel}`, trustDomain: 'UNAVAILABLE' });
     },
   });
 }
@@ -475,7 +475,7 @@ const issuedVerifiedBindings = new WeakSet<VerifiedContainmentBinding>();
  *  1. it was issued by this module (WeakSet membership) — literals/spread copies/reconstructions fail; AND
  *  2. its `containmentBindingDigest` still equals the recomputed digest over its canonical identity.
  */
-function requireIssuedVerifiedBinding(binding: VerifiedContainmentBinding): void {
+export function requireIssuedVerifiedBinding(binding: VerifiedContainmentBinding): void {
   if (binding?.schemaVersion !== VERIFIED_CONTAINMENT_BINDING_SCHEMA
     || !isHex64(binding.containmentBindingDigest)
     || !issuedVerifiedBindings.has(binding)) {
@@ -521,7 +521,8 @@ function requireChannelVerified(
   }
   // R3-B3 (Item 1): provenance fields must be well-formed. A malformed/absent trust domain or
   // provenance identity is not a verified result.
-  if (!CONTAINMENT_TRUST_DOMAINS.includes(result.trustDomain) || !isId(result.verifierProvenanceId)) {
+  if ((result.trustDomain !== 'TEST' && result.trustDomain !== 'PRODUCTION')
+    || !isId(result.verifierProvenanceId)) {
     throw new PreparedContainmentError(unverified);
   }
   // The channel must have verified the EXACT subject.

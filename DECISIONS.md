@@ -13395,6 +13395,12 @@ at `e91bdec9e43c9b149b130db89d8b54f9750b69fd` and received
 
 ## ADR-0090 amendment — R3-B3-2 Real Production Attestation architecture (STRICT / live boundary)
 
+**Historical architecture checkpoint.** The later R3-B3-2 remediation below is canonical wherever this
+original amendment conflicts, especially §§4/6/7/15/16/19: independent signing roots are mandatory,
+challenge-bound Quoky-local timing replaces evidence-provided monotonic windows, and 2A cannot issue
+production provenance, trust, or a capability. The phrase “ideally a different signer” in §4 is superseded;
+no single key/root/component/credential/signing authority may create valid A and B production evidence.
+
 - **Status:** Proposed — architecture / task-definition only. Independent Architecture Review (Claude)
   pending; grants no implementation, activation, runtime, container, provider, model, network, secret, DB,
   or execution authority. Delivers no code. **PRODUCTION TRUST CHECK = FAIL CLOSED; REAL PRODUCTION
@@ -13501,8 +13507,8 @@ adapter ports, deterministic fakes, structural single-use) may still be implemen
 ### 4. Channel B — `IN_INSTANCE_SELF_CHECK`
 
 - **Where:** INSIDE the contained execution environment, in the contained process's own trust domain.
-- **Independence from A:** different observation vantage (inside vs outside), different evidence source, and
-  ideally a different signer, so a single compromised component cannot forge both.
+- **Independence from A:** different observation vantage (inside vs outside) and evidence source. The later
+  remediation requires independently rooted signing authority; one compromise must not forge both roles.
 - **Observes:** what the instance can prove about itself from inside — its own instance/runtime identity,
   its egress/network-isolation state, its mounted model identity, its own security posture — proving it is
   running inside the EXACT target instance (e.g. by binding to the same instance identity Channel A
@@ -13811,11 +13817,16 @@ AUTHORIZED.
 - **Branch / base:** `kiro/r3b3-2-real-production-attestation-architecture`. Corrects the accepted
   CHANGES_REQUIRED blockers B-1..B-4 against the reviewed R3-B3-2 amendment above. PRESERVES the reviewed
   commit `0c47756ca99f093ba4dc01c8a4d9b489761e245d` UNAMENDED and adds exactly ONE remediation commit atop
-  it. Expected lineage `2a57161…` → `0c47756…` → `<REMEDIATION_SHA>`. No Push/PR/Merge; no
+  it. Architecture lineage `2a57161…` → `0c47756…` → `e11da39cd4be99937e676378ef56f3cd134e0eb8`. No Push/PR/Merge; no
   runtime/container/provider/model/network; no secret read; no R3-C-Rz. No R3-B3-2 implementation sub-slice
   is authorized until this remediation passes review. This remediation SUPERSEDES the reviewed §8 (freshness
   clock), §9 (TOCTOU), §12 (single-use as a "second CAS"), §20 (restart reuse), §24 (decomposition), and the
   §5 "where achievable" independence wording.
+
+**Supersession scope:** The B-1 challenge/clock model and B-4 mandatory independence rule also supersede
+conflicting original §§4/6/7/15/16/19, including any `observedAtMonoMs`/`expiresAtMonoMs` field interpreted
+as an external canonical monotonic timestamp. Such source timestamps are audit or signer-policy metadata
+only. The 2A implementation below remains TEST-only.
 
 ### B-1 — cross-process freshness / clock model (CLOSED)
 
@@ -14036,3 +14047,36 @@ remediation commit atop `0c47756…` (reviewed commit not amended); independent 
 re-review must pass before Push/PR/Merge. No R3-B3-2 implementation (including 2A/2B) begins from this
 document. `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION TRUST CHECK = FAIL CLOSED; REAL
 PRODUCTION CONTAINED EXECUTION = UNREACHABLE; R3-C-Rz = NOT AUTHORIZED.
+
+### R3-B3-2A local implementation record (2026-09-29)
+
+R3-B3-2A implements challenge/evidence contracts only. An exact issued `VerifiedContainmentBinding` and
+Quoky's local monotonic clock produce a frozen, process-local issued challenge. Its private record stores the
+binding, clock, issuance time, and one-time claim state; serialized or reconstructed objects cannot recover
+that authority. A/B TEST evidence forms one set only when challenge, set ID, run, provider, containment,
+roles, closed source kinds, and simulated observed facts match. TEST set currentness uses Quoky's receipt time
+and a separate post-receipt validity period. Test bounds are fixture inputs; both named production bounds
+remain `CALIBRATION_REQUIRED` with no numeric production policy. Source timestamps remain audit metadata.
+
+| 2A source kind | Allowed role | Trust domain | Validation | Test-only |
+|---|---|---|---|---|
+| `TEST_SIMULATED_EXTERNAL_INSPECTION` | `EXTERNAL_RUNTIME_INSTANCE_INSPECTION` | `TEST` | deterministic expected-fact echo + binding/integrity checks | yes |
+| `TEST_SIMULATED_IN_INSTANCE_SELF_CHECK` | `IN_INSTANCE_SELF_CHECK` | `TEST` | deterministic expected-fact echo + binding/integrity checks | yes |
+
+No contained workload may possess Channel A production signing/issuance authority: A requires an external,
+independently rooted inspection source. The TEST simulator can mimic A's shape only and cannot issue
+PRODUCTION trust. Quoky holds no production signing authority. No real Channel A or B source exists in 2A.
+
+**Provider mismatch code decision:** introduce the typed attestation-contract code
+`PROVIDER_BINDING_MISMATCH`. Existing `EXACT_RUN_BINDING_MISMATCH` names a run mismatch, while the separate
+`ProviderBindingFailureCode.PROVIDER_BINDING_MISMATCH` belongs to registry validation. The 2A code identifies
+the attestation evidence's provider ID or binding digest disagreeing with the exact challenge. Other new 2A
+typed codes include `CHALLENGE_NOT_ISSUED`, `CHALLENGE_ALREADY_USED`, `CHALLENGE_MISMATCH`,
+`ATTESTATION_SET_MISMATCH`, `CHANNEL_ROLE_MISMATCH`, `EVIDENCE_SOURCE_KIND_MISMATCH`,
+`TASKRUN_EXECUTION_MISMATCH`, `CONTAINMENT_BINDING_MISMATCH`, and `ATTESTATION_STALE`. These codes do not
+enable production trust.
+
+The unavailable verifier's result now uses `trustDomain = UNAVAILABLE`, without issuing VERIFIED evidence.
+`REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; production trust remains FAIL CLOSED and real production
+contained execution remains UNREACHABLE. R3-B3-2B is not authorized; 2C/2D are not eligible; Live Gate and
+R3-C-Rz are not authorized. The architecture/status text above records its earlier docs-only checkpoint.
