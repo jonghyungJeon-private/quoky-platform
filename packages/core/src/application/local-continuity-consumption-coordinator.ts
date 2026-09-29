@@ -68,9 +68,9 @@ export class LocalContinuityConsumptionCoordinator {
       throw new LocalContinuityConsumptionError('EVIDENCE_EXPIRED');
     }
     // No intervening await. The guarded CAS is the sole consumption linearization point.
-    await this.dispatchCommit.commit(authority.taskRunId, authority.executionId);
+    const gate = await preparedExecution.commitTestDispatch(authority.taskRunId, this.dispatchCommit);
     try {
-      return Object.freeze({ disposition: 'ACCEPTED', output: await preparedExecution.execute(effectInput) });
+      return Object.freeze({ disposition: 'ACCEPTED', output: await preparedExecution.execute(effectInput, gate) });
     } catch {
       // The marker remains committed; no normal retry or fallback follows an uncertain effect.
       return Object.freeze({ disposition: 'EFFECT_UNRESOLVED' });

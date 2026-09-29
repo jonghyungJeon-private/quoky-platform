@@ -9,6 +9,7 @@ import { AttestationContractError, MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS,
   attestationSetIdFor, createSimulatedAttestationEvidence, formTestAttestationSet,
   issueProductionAttestationChallenge, requireCurrentTestAttestationSet } from './production-attestation-contracts';
 import type { ProductionAttestationChallenge } from './production-attestation-contracts';
+import { issueTestTrustIssuanceRecord, requireIssuedTrustIssuanceRecord } from './production-trust-binding';
 
 const HEX = (digit: string) => digit.repeat(64);
 
@@ -45,6 +46,29 @@ function fixture() {
 }
 
 describe('R3-B3-2A process-local challenge and TEST attestation contracts', () => {
+  it('binds a TEST trust record to the exact issued set and containment binding', () => {
+    const first = fixture();
+    const set = first.form();
+    const record = issueTestTrustIssuanceRecord(set, first.binding);
+    expect(record.trustDomain).toBe('TEST');
+    expect(Object.isFrozen(record)).toBe(true);
+    expect(() => requireIssuedTrustIssuanceRecord(record, set, first.binding)).not.toThrow();
+    expect(() => requireProductionPreparedProvenance(first.binding)).toThrow('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
+    expect(() => requireProductionTrustedVerification({} as never, {} as never))
+      .toThrow('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
+    expect(() => requireIssuedTrustIssuanceRecord({ ...record }, set, first.binding))
+      .toThrow('TRUST_ISSUANCE_NOT_ISSUED');
+    expect(() => requireIssuedTrustIssuanceRecord(JSON.parse(JSON.stringify(record)), set, first.binding))
+      .toThrow('TRUST_ISSUANCE_NOT_ISSUED');
+    const second = fixture();
+    const otherSet = second.form();
+    expect(() => requireIssuedTrustIssuanceRecord(record, otherSet, first.binding))
+      .toThrow('TRUST_ISSUANCE_SET_MISMATCH');
+    expect(() => requireIssuedTrustIssuanceRecord(record, set, second.binding))
+      .toThrow('TRUST_ISSUANCE_BINDING_MISMATCH');
+    expect(() => issueTestTrustIssuanceRecord(set, { ...first.binding }))
+      .toThrow('VERIFIED_BINDING_NOT_ISSUED');
+  });
   it('issues a challenge against an issued binding using Quoky-local time and shared IDs', () => {
     const f = fixture();
     expect(f.challenge.challengeId).toMatch(/^[a-f0-9-]{36}$/);
@@ -83,6 +107,17 @@ describe('R3-B3-2A process-local challenge and TEST attestation contracts', () =
     expect(() => requireCurrentTestAttestationSet(JSON.parse(JSON.stringify(set)))).toThrow('ATTESTATION_SET_NOT_ISSUED');
   });
 
+  it('snapshots retained TEST evidence instead of retaining caller-owned mutable objects', () => {
+    const f = fixture();
+    const observed = { ...f.a.observed };
+    const a = { ...f.a, observed };
+    const set = f.form(a);
+    observed.imageDigest = HEX('d');
+    expect(set.channelA.observed.imageDigest).toBe(f.binding.imageDigest);
+    expect(Object.isFrozen(set.channelA)).toBe(true);
+    expect(Object.isFrozen(set.channelA.observed)).toBe(true);
+  });
+
   it('rejects cross-challenge pairing, including a separately issued same-run challenge', () => {
     const f = fixture();
     const other = issueProductionAttestationChallenge({ binding: f.binding,
@@ -97,8 +132,8 @@ describe('R3-B3-2A process-local challenge and TEST attestation contracts', () =
     ['attestationSetId', 'ATTESTATION_SET_MISMATCH', HEX('a')],
     ['taskRunId', 'TASKRUN_EXECUTION_MISMATCH', 'run-other'],
     ['executionId', 'TASKRUN_EXECUTION_MISMATCH', 'run-other'],
-    ['providerBindingDigest', 'PROVIDER_BINDING_MISMATCH', HEX('b')],
-    ['providerId', 'PROVIDER_BINDING_MISMATCH', 'other-provider'],
+    ['providerBindingDigest', 'ATTESTATION_PROVIDER_BINDING_MISMATCH', HEX('b')],
+    ['providerId', 'ATTESTATION_PROVIDER_BINDING_MISMATCH', 'other-provider'],
     ['containmentBindingDigest', 'CONTAINMENT_BINDING_MISMATCH', HEX('c')],
   ] as const)('rejects %s mismatch with %s', (field, code, value) => {
     const f = fixture();
@@ -110,7 +145,7 @@ describe('R3-B3-2A process-local challenge and TEST attestation contracts', () =
     expect(() => f.form(f.b, f.a)).toThrow('CHANNEL_ROLE_MISMATCH');
     expect(() => f.form({ ...f.a, evidenceSourceKind: TEST_ATTESTATION_SOURCE_KINDS.B })).toThrow('EVIDENCE_SOURCE_KIND_MISMATCH');
     expect(() => f.form({ ...f.a, evidenceSourceKind: 'CALLER_DEFINED' } as never)).toThrow('EVIDENCE_SOURCE_KIND_MISMATCH');
-    expect(() => f.form({ ...f.a, trustDomain: 'PRODUCTION' } as never)).toThrow('VERIFICATION_UNCERTAIN');
+    expect(() => f.form({ ...f.a, trustDomain: 'PRODUCTION' } as never)).toThrow('SELF_DECLARED_ATTESTATION_TRUST_REJECTED');
     expect(f.a.trustDomain).toBe('TEST');
     expect(f.b.trustDomain).toBe('TEST');
     expect(f.a.evidenceSourceKind).toBe('TEST_SIMULATED_EXTERNAL_INSPECTION');
@@ -129,7 +164,7 @@ describe('R3-B3-2A process-local challenge and TEST attestation contracts', () =
 
   it('invalid evidence does not claim a challenge; distinct signer labels remain necessary', () => {
     const f = fixture();
-    expect(() => f.form({ ...f.a, providerBindingDigest: HEX('e') })).toThrow('PROVIDER_BINDING_MISMATCH');
+    expect(() => f.form({ ...f.a, providerBindingDigest: HEX('e') })).toThrow('ATTESTATION_PROVIDER_BINDING_MISMATCH');
     const sameSignerB = createSimulatedAttestationEvidence({ challenge: f.challenge, channel: 'B',
       signerProvenanceId: f.a.signerProvenanceId, verifierProvenanceId: 'verifier-b' });
     expect(() => f.form(f.a, sameSignerB)).toThrow('SIGNER_PROVENANCE_NOT_DISTINCT');

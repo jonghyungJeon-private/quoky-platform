@@ -92,6 +92,11 @@ export type PreparedContainmentFailureCode =
   | 'CHANNEL_NOT_PRODUCTION_TRUSTED'
   | 'CHANNEL_PROVENANCE_NOT_INDEPENDENT'
   | 'CAPABILITY_NOT_PRODUCTION_ELIGIBLE'
+  | 'CAPABILITY_NOT_FAKE_ELIGIBLE'
+  | 'CAPABILITY_ALREADY_CONSUMED'
+  | 'COMMITTED_EFFECT_GATE_MISSING'
+  | 'COMMITTED_EFFECT_GATE_MISMATCH'
+  | 'COMMITTED_EFFECT_GATE_ALREADY_USED'
   | 'PREPARED_PROVENANCE_NOT_PRODUCTION_TRUSTED'
   | 'PREPARED_PROVENANCE_INVALID'
   | 'SELF_DECLARED_PRODUCTION_TRUST_REJECTED'
@@ -280,6 +285,7 @@ export interface ContainmentCandidateBinding {
 }
 
 const issuedCandidates = new WeakSet<ContainmentCandidateBinding>();
+const candidateInstances = new WeakMap<ContainmentCandidateBinding, ContainmentInstanceIdentity>();
 
 export function createContainmentCandidateBinding(input: {
   executionContext: ContainmentExecutionContext;
@@ -347,6 +353,7 @@ export function createContainmentCandidateBinding(input: {
     instanceIdentityDigest: instance.instanceIdentityDigest,
   });
   issuedCandidates.add(candidate);
+  candidateInstances.set(candidate, instance);
   return candidate;
 }
 
@@ -469,6 +476,7 @@ export interface VerifiedContainmentBinding {
 }
 
 const issuedVerifiedBindings = new WeakSet<VerifiedContainmentBinding>();
+const bindingInstances = new WeakMap<VerifiedContainmentBinding, ContainmentInstanceIdentity>();
 
 /**
  * Accept a binding as verified ONLY if (defense in depth):
@@ -478,12 +486,23 @@ const issuedVerifiedBindings = new WeakSet<VerifiedContainmentBinding>();
 export function requireIssuedVerifiedBinding(binding: VerifiedContainmentBinding): void {
   if (binding?.schemaVersion !== VERIFIED_CONTAINMENT_BINDING_SCHEMA
     || !isHex64(binding.containmentBindingDigest)
-    || !issuedVerifiedBindings.has(binding)) {
+    || !issuedVerifiedBindings.has(binding) || !bindingInstances.has(binding)) {
     throw new PreparedContainmentError('VERIFIED_BINDING_NOT_ISSUED');
   }
   const recomputed = containmentBindingDigest(binding);
   if (recomputed !== binding.containmentBindingDigest) {
     throw new PreparedContainmentError('CONTAINMENT_BINDING_DIGEST_MISMATCH');
+  }
+}
+
+/** Internal exact issued-instance membership check; matching digest alone is not enough. */
+export function requireIssuedContainmentInstanceForBinding(binding: VerifiedContainmentBinding, observedDigest: string): void {
+  requireIssuedVerifiedBinding(binding);
+  const instance = bindingInstances.get(binding);
+  if (!instance || !issuedInstances.has(instance)
+    || instance.instanceIdentityDigest !== binding.instanceIdentityDigest
+    || observedDigest !== instance.instanceIdentityDigest) {
+    throw new PreparedContainmentError('EXECUTION_CAPABILITY_INSTANCE_MISMATCH');
   }
 }
 
@@ -630,7 +649,12 @@ export function prepareVerifiedContainmentBinding(input: {
     provenance,
     containmentBindingDigest: containmentBindingDigest(bindingShape),
   });
+  const instance = candidateInstances.get(candidate);
+  if (!instance || !issuedInstances.has(instance)) {
+    throw new PreparedContainmentError('CONTAINMENT_CANDIDATE_NOT_ISSUED');
+  }
   issuedVerifiedBindings.add(binding);
+  bindingInstances.set(binding, instance);
   return binding;
 }
 
@@ -679,13 +703,25 @@ export function requireProductionTrustedVerification(
 
 /** Future production issuance binds this exact tuple and consumes it once. The trust issuance record must
  * be an issued object, not reconstructed metadata. No issuer can mint this contract here. */
+export interface TrustIssuanceRecord {
+  readonly schemaVersion: 'trust-issuance-record-v1';
+  readonly issuanceId: string;
+  readonly trustDomain: ContainmentTrustDomain;
+  readonly attestationSetId: string;
+  readonly taskRunId: string;
+  readonly executionId: string;
+  readonly providerId: string;
+  readonly providerBindingDigest: string;
+  readonly containmentBindingDigest: string;
+}
+
 export interface ProductionContainedCapabilityContract {
   readonly binding: VerifiedContainmentBinding;
   readonly taskRunId: string;
   readonly executionId: string;
   readonly providerId: string;
   readonly providerBindingDigest: string;
-  readonly trustIssuanceRecord: object;
+  readonly trustIssuanceRecord: TrustIssuanceRecord;
   readonly singleUse: true;
 }
 
@@ -745,6 +781,7 @@ class IssuedContainedExecutionCapability implements ContainedExecutionCapability
 }
 
 const issuedCapabilities = new WeakSet<IssuedContainedExecutionCapability>();
+const consumedCapabilities = new WeakSet<IssuedContainedExecutionCapability>();
 
 /**
  * R3-B1 test-only deterministic fake contained execution capability. It accepts ONLY a bounded instance
@@ -756,7 +793,8 @@ const issuedCapabilities = new WeakSet<IssuedContainedExecutionCapability>();
 export function createFakeContainedExecutionCapability(
   instance: ContainmentInstanceIdentity,
 ): ContainedExecutionCapability {
-  if (instance?.schemaVersion !== CONTAINMENT_INSTANCE_IDENTITY_SCHEMA || !isHex64(instance.instanceIdentityDigest)) {
+  if (instance?.schemaVersion !== CONTAINMENT_INSTANCE_IDENTITY_SCHEMA || !isHex64(instance.instanceIdentityDigest)
+    || !issuedInstances.has(instance)) {
     throw new PreparedContainmentError('CONTAINMENT_CONFIGURATION_INVALID');
   }
   const capability = new IssuedContainedExecutionCapability(
@@ -793,6 +831,9 @@ export function requireProductionContainedCapability(capability: ContainedExecut
 }
 
 const issuedPrepared = new WeakSet<PreparedContainmentExecution>();
+type CommittedEffect = { readonly prepared: PreparedContainmentExecution;
+  readonly capability: IssuedContainedExecutionCapability; readonly taskRunId: string; used: boolean };
+const committedEffects = new WeakMap<object, CommittedEffect>();
 
 /**
  * The ONLY future execution-facing contained capability holder. It encapsulates a genuinely issued
@@ -888,7 +929,8 @@ export class PreparedContainmentExecution {
     }
     requireIssuedVerifiedBinding(prepared.binding);
     if (requireIssuedCapability(prepared.capability).capabilityKind !== requiredKind) {
-      throw new PreparedContainmentError('CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
+      throw new PreparedContainmentError(requiredKind === 'FAKE'
+        ? 'CAPABILITY_NOT_FAKE_ELIGIBLE' : 'CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
     }
     if (requiredKind === 'PRODUCTION') requireProductionPreparedProvenance(prepared.binding);
   }
@@ -898,13 +940,39 @@ export class PreparedContainmentExecution {
     PreparedContainmentExecution.requireCapabilityKind(prepared, 'FAKE');
   }
 
-  /**
-   * Future contained execution entry (R3-B1: module-issued fake capability only). It passes ONLY the
-   * verified binding and the bounded prompt to the issued capability's fixed `run`; there is no
-   * caller-injected function, so it can never invoke a host Provider.
-   */
-  async execute(input: ContainedExecutionInput): Promise<ContainedExecutionResult> {
-    if (!issuedPrepared.has(this)) throw new PreparedContainmentError('VERIFIED_BINDING_NOT_ISSUED');
+  /** TEST-only seam. The guard is claimed synchronously immediately before the dispatch CAS call.
+   * A failed commit leaves the capability consumed and issues no effect gate. */
+  async commitTestDispatch(taskRunId: string, dispatchCommit: Readonly<{
+    commit(taskRunId: string, executionId: string): Promise<unknown>;
+  }>): Promise<object> {
+    PreparedContainmentExecution.requireCapabilityKind(this, 'FAKE');
+    if (this.binding.executionContext.taskRunId !== taskRunId
+      || this.binding.executionContext.executionId !== taskRunId) {
+      throw new PreparedContainmentError('EXACT_RUN_BINDING_MISMATCH');
+    }
+    if (consumedCapabilities.has(this.capability)) {
+      throw new PreparedContainmentError('CAPABILITY_ALREADY_CONSUMED');
+    }
+    consumedCapabilities.add(this.capability);
+    await dispatchCommit.commit(taskRunId, taskRunId);
+    const gate = Object.freeze({});
+    committedEffects.set(gate, { prepared: this, capability: this.capability, taskRunId, used: false });
+    return gate;
+  }
+
+  /** One effect requires the exact one-shot gate returned after successful dispatch commitment. */
+  async execute(input: ContainedExecutionInput, gate: object): Promise<ContainedExecutionResult> {
+    PreparedContainmentExecution.requireCapabilityKind(this, 'FAKE');
+    if (!gate || typeof gate !== 'object' || !committedEffects.has(gate)) {
+      throw new PreparedContainmentError('COMMITTED_EFFECT_GATE_MISSING');
+    }
+    const committed = committedEffects.get(gate)!;
+    if (committed.prepared !== this || committed.capability !== this.capability
+      || committed.taskRunId !== this.binding.executionContext.taskRunId) {
+      throw new PreparedContainmentError('COMMITTED_EFFECT_GATE_MISMATCH');
+    }
+    if (committed.used) throw new PreparedContainmentError('COMMITTED_EFFECT_GATE_ALREADY_USED');
+    committed.used = true;
     return this.capability.run(this.binding, input);
   }
 }

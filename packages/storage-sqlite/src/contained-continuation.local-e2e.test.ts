@@ -98,7 +98,8 @@ describe('R3-B2 fake-only prepared containment → persisted evidence → receiv
             const disposition = classifyProviderSpawnFailed(scenario.phase, scenario.positive);
             return disposition === 'FAILED' ? { disposition, error: 'CONTINUATION_RECEIVER_FAILED' } : { disposition };
           }
-          expect((await execution.execute({ prompt: 'offline' })).text).toContain('contained-fake:');
+          const gate = await execution.commitTestDispatch(taskRun.id, { commit: async () => undefined });
+          expect((await execution.execute({ prompt: 'offline' }, gate)).text).toContain('contained-fake:');
           const postAttempt: ContainmentPostAttemptEvidence = { attemptBoundaryCrossed: true,
             postAttemptModelIntegrity: 'integrity' in scenario ? scenario.integrity : 'MATCHED',
             failureCode: 'failure' in scenario ? scenario.failure : null };

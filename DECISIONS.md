@@ -14080,3 +14080,38 @@ The unavailable verifier's result now uses `trustDomain = UNAVAILABLE`, without 
 `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; production trust remains FAIL CLOSED and real production
 contained execution remains UNREACHABLE. R3-B3-2B is not authorized; 2C/2D are not eligible; Live Gate and
 R3-C-Rz are not authorized. The architecture/status text above records its earlier docs-only checkpoint.
+
+### R3-B3-2B local implementation record (2026-09-29)
+
+2B adds a TEST-only, frozen `TrustIssuanceRecord` whose authority is a module-private process-local issuance
+map, bound to the exact 2A issued set/challenge and exact issued `VerifiedContainmentBinding`. The record
+includes set, run/execution, provider/binding, and containment identities. Structural/serialized copies
+cannot restore trust authority. Issued instance membership is checked for the binding and simulated A/B
+observed identity; the FAKE capability issuer also requires an issued instance object. This remains TEST
+plumbing: a TEST record cannot produce PRODUCTION provenance or a usable PRODUCTION capability.
+
+The FAKE execution holder claims a module-private capability-issuance guard synchronously after final
+checks and immediately invokes `dispatchCommit.commit(taskRunId, executionId)`. Only success issues a
+process-local exact-holder/run/capability effect gate, consumed once before effect. Commit failure leaves
+the capability consumed, with no gate, effect, automatic reissue, or retry. The dispatch CAS is the sole
+durable linearization point. Guard, gate, and trust-record authority vanish on restart; durable TaskRun
+state governs restart and no same-run recovery is introduced (R3-C-Rz remains unauthorized). The 2B
+commit method accepts a TEST dispatch seam and can only run an issued FAKE capability; production
+composition must supply its canonical dispatch coordinator and module-owned effect in later 2D work.
+
+**2A code supersession:** attestation provider mismatch is now
+`ATTESTATION_PROVIDER_BINDING_MISMATCH`, distinct from routing's `PROVIDER_BINDING_MISMATCH`. No implicit
+cross-taxonomy mapping exists. Caller-declared non-TEST evidence trust is rejected as
+`SELF_DECLARED_ATTESTATION_TRUST_REJECTED`, distinct from uncertain verification. Capability kind failures
+are directional: expected FAKE and expected PRODUCTION have separate codes.
+
+**Challenge failure policy:** current TEST formation validates before claiming its challenge, so a failed
+TEST formation does not burn it. Any future production-bound challenge that participates in a failed
+formation or verification attempt must be burned and replaced by a fresh challenge; this does not grant
+same-run retry authority. Before 2C/2D production composition, the monotonic clock must be
+composition-owned and expected egress identity must come from canonical binding/policy, never arbitrary
+caller values. Those production prerequisites are not implemented by 2B.
+
+`R3-B3-2B = IMPLEMENTED LOCALLY — DELIVERY PENDING`; `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`;
+PRODUCTION TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY = UNAVAILABLE; 2C/2D = NOT ELIGIBLE; Live Gate
+and R3-C-Rz = NOT AUTHORIZED.

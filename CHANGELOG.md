@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3-2B fail-closed trust/binding plumbing (local; delivery pending) — 2026-09-29
+
+- Bind TEST trust issuance to exact process-local attestation set, challenge, verified containment binding,
+  issued instance, run, and provider identities; freeze retained evidence and records. Structural and
+  serialized copies cannot recover authority. Production trust and capability issuance still fail closed.
+- Require FAKE execution to consume its issued capability once, pass dispatch commit, and consume an exact
+  one-shot effect gate. Failed commits issue no gate and permit no retry. Keep dispatch commit as the only
+  durable execution linearization point.
+- Distinguish attestation provider mismatch from routing errors and reject self-declared production trust
+  with a precise code. Update focused tests and preserve 2C/2D, Live Gate, and R3-C-Rz boundaries.
+
 ## R3-B3-2A attestation contracts (local; delivery pending) — 2026-09-29
 
 - Add process-local issued, one-time challenges and deterministic attestation-set identity bound to the exact
