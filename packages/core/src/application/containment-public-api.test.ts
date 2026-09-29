@@ -49,6 +49,9 @@ describe('@quoky/core public API surface — R3-B1 fake must not leak (G3A-1)', 
       'CONTAINMENT_TRUST_DOMAINS',
       'CONTAINED_EXECUTION_CAPABILITY_KINDS',
       'CONTAINMENT_VERIFICATION_PROVENANCE_SCHEMA',
+      'CONTAINMENT_VERIFIER_ROLES',
+      'createUnavailableProductionContainmentVerifier',
+      'issueProductionContainedExecutionCapability',
     ]) {
       expect(surface[name], `missing R3-B3 production export: ${name}`).toBeDefined();
     }
