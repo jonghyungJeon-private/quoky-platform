@@ -560,6 +560,8 @@ describe('R3-B3 Item 1 — production trust is never self-declarable (remediatio
     const b = createUnavailableProductionContainmentVerifier('B');
     expect(a.verify({} as never).status).toBe('UNAVAILABLE');
     expect(b.verify({} as never).status).toBe('UNAVAILABLE');
+    expect(a.verify({} as never).trustDomain).toBe('UNAVAILABLE');
+    expect(b.verify({} as never).trustDomain).toBe('UNAVAILABLE');
     expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: a, channelB: b }))
       .toThrow('CHANNEL_A_UNVERIFIED');
   });
