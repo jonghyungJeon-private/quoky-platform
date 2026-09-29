@@ -5,6 +5,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3-2C trust-root feasibility & deployment-binding architecture (docs only, read-only discovery) — 2026-09-29
+
+- Add the ADR-0090 amendment "R3-B3-2C trust-root feasibility & deployment-binding architecture (read-only
+  discovery)" to `DECISIONS.md`. Read-only repository/config/docs inspection (no containers run, no live
+  runtime inspected, no cloud/provider API contacted) found: no deployment artifacts of any kind (no
+  Dockerfile/compose, K8s/Helm/Terraform, `.github` CI, deploy/infra/ops dirs, ECS/Fargate/systemd) and no
+  cloud workload identity / SPIFFE-SVID / IMDS / projected serviceaccount token / TPM/TEE/vTPM / external
+  attestation integration in Core or adapters; containment runtime families are abstract tokens
+  (`NONE`/`CONTAINER_NO_NETWORK`/`VM_NO_NIC`); the only substrate evidence is a local macOS host with
+  OrbStack installed but network isolation unverified (prior 5C-EG probe).
+- Decisions: `DEPLOYMENT_SUBSTRATE = UNRESOLVED`; `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET` (no
+  candidate is both available and independently trustworthy; OrbStack via Docker/orb CLI requires
+  runtime-mutation authority and is not an independent root); `CHANNEL_A_REAL_SOURCE = UNAVAILABLE`;
+  `CHANNEL_B_REAL_SOURCE = UNAVAILABLE` (no TEE/hardware-bound or independently-injected in-instance identity
+  inaccessible to workload code, so R3-B3-2C implementation is NOT READY); A/B independence unsatisfiable
+  today. No trust root was invented to force eligibility.
+- Restate the control-plane separation invariant (Quoky must not hold mutation/admin authority over the
+  control plane it treats as attested); record the observable fact matrix (every required production fact has
+  an expected value but no credible observation source; app-owned imageDigest and app-readable model files
+  insufficient; configured policy != observed enforcement; egress-allowlist-runner harness must not become a
+  root of trust); record challenge-binding compatibility (native attestations that cannot carry a nonce must
+  be wrapped so 2A anti-replay binding is not dropped); keep freshness `CALIBRATION_REQUIRED` with a
+  measurement plan; disposition 2B carry-forwards across 2C and 2D.
+- **2C IMPLEMENTATION ELIGIBILITY = NOT ELIGIBLE** (real root / Channel A / Channel B / deployment substrate
+  unresolved; no partial read-only adapter sub-slice justified without a target substrate). Record deployment
+  prerequisites P1..P7 (choose canonical substrate; provision independent Channel B identity; expose signed
+  instance/image/runtime metadata; create verification-only root/CA bundle; define immutable model artifact
+  identity; define externally observable egress posture; confirm A/B independence + control-plane
+  separation), all infrastructure-owned except model/egress shapes. R3-B3-2D NOT ELIGIBLE; Live Gate NOT
+  AUTHORIZED; R3-C2B-2 kept independent; R3-C-Rz NOT AUTHORIZED.
+- Documentation only: no source, test, schema, runtime, container, provider, network, secret, or DB changes.
+  One local architecture commit; no Push/PR/Merge. ADR-0090 remains Proposed; independent Claude Architecture
+  Review required before any next step. PRODUCTION TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY =
+  UNAVAILABLE.
+
 ## R3-B3-2B fail-closed trust/binding plumbing (local; delivery pending) — 2026-09-29
 
 - Bind TEST trust issuance to exact process-local attestation set, challenge, verified containment binding,

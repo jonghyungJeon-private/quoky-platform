@@ -5,6 +5,45 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3-2C — Trust-root feasibility & deployment binding (read-only discovery) (2026-09-29)
+
+**ARCHITECTURE + READ-ONLY FEASIBILITY ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED / NOT ELIGIBLE.**
+Branch `kiro/r3b3-2c-trust-root-feasibility` from canonical main `19e1b3aef586b857b4e32b1d760ae1cd71507d85`.
+`DECISIONS.md` carries the ADR-0090 amendment "R3-B3-2C trust-root feasibility & deployment-binding
+architecture (read-only discovery)". **Read-only discovery finding:** no deployment artifacts of any kind
+exist in the repo (no Dockerfile/compose/K8s/Helm/Terraform/CI/deploy/infra dirs, no ECS/Fargate/systemd),
+and no cloud workload identity / SPIFFE-SVID / IMDS / projected serviceaccount token / TPM/TEE/vTPM /
+external attestation integration exists in Core or adapters; containment runtime families are abstract
+tokens (`NONE`/`CONTAINER_NO_NETWORK`/`VM_NO_NIC`). The only substrate evidence is a local macOS developer
+host with OrbStack installed but its network isolation **unverified** (prior 5C-EG feasibility probe).
+**Decisions:** `DEPLOYMENT_SUBSTRATE = UNRESOLVED` (no production runtime defined; local macOS+OrbStack dev
+host only; Team/Hosted editions are roadmap direction with no chosen substrate); `REAL_TRUST_ROOT =
+NO_FEASIBLE_REAL_TRUST_ROOT_YET` (no candidate is both available here and independently trustworthy — the
+only present mechanism, OrbStack via the Docker/orb CLI, requires runtime-mutation authority so it cannot be
+an independent root, and its isolation is unverified); `CHANNEL_A_REAL_SOURCE = UNAVAILABLE`;
+`CHANNEL_B_REAL_SOURCE = UNAVAILABLE` (no TEE/hardware-bound or independently-injected in-instance identity
+inaccessible to workload code); A/B independence unsatisfiable (a single local admin authority would back
+both). Control-plane separation invariant restated: Quoky must not hold mutation/admin authority over the
+control plane it treats as attested (Docker socket / orb CLI = root-equivalent mutation → not a root).
+Observable fact matrix records that every required production fact (instance/image/runtime/model-mount/
+security/containment/egress) currently has an expected value but NO credible observation source; app-owned
+`imageDigest` and app-readable model files are explicitly insufficient; configured policy ≠ observed
+enforcement; the egress-allowlist-runner harness must not be promoted to a root of trust. Challenge-binding
+note: native platform attestations that cannot carry an arbitrary nonce must be wrapped so 2A's
+challenge/attestationSet anti-replay binding is not dropped. Freshness stays `CALIBRATION_REQUIRED`
+(measurement plan recorded; STRICT/live). 2B carry-forwards dispositioned across 2C (trustDomain narrowing,
+challenge burn, composition-owned clock, canonical expected-egress, signed/immutable evidence with real A/B)
+and 2D (canonical dispatch-owned commit gate, taskRun+execution+capability-issuance gate binding, exact
+production capability binding). **2C IMPLEMENTATION ELIGIBILITY = NOT ELIGIBLE** (real root / Channel A /
+Channel B / substrate unresolved; not even a partial read-only adapter sub-slice is justified without a
+target substrate). Deployment prerequisites recorded (P1 choose canonical substrate; P2 independent Channel
+B identity; P3 signed instance/image/runtime metadata; P4 verification-only root/CA bundle; P5 immutable
+model artifact identity; P6 externally observable egress posture; P7 A/B-independence + control-plane
+separation review — all infrastructure-owned except model/egress shapes). R3-B3-2D NOT ELIGIBLE; Live Gate
+NOT AUTHORIZED; R3-C2B-2 kept independent; R3-C-Rz NOT AUTHORIZED. Docs-only: no source/test/schema/runtime/
+container/provider/network/secret/DB changes. ADR-0090 remains Proposed; independent Claude Architecture
+Review required. PRODUCTION TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY = UNAVAILABLE.
+
 ### R3-B3-2B — Fail-closed trust/binding plumbing (2026-09-29)
 
 **IMPLEMENTED LOCALLY — DELIVERY PENDING.** TEST attestation sets now bind a frozen, process-local issued
