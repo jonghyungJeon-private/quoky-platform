@@ -8482,8 +8482,8 @@ inside the IMMEDIATE transaction (never caller state), with a dedicated bounded 
 `CONTINUATION_TERMINALIZATION_REQUIRES_SECURE_PATH`. Only `terminalizePreservingSecurityEvidence` may
 terminalize a bound run. Ordinary/non-continuation `completeRun`/`failRun`/`save` are unchanged.
 
-**Item 4 — durable prepared-evidence provenance boundary.** `VerifiedContainmentBinding` now carries a
-durable, SERIALIZABLE `provenance` record (`provenanceSchema`, `trustDomain`, independent channel
+**Item 4 — serializable prepared-evidence provenance boundary.** `VerifiedContainmentBinding` now carries a
+SERIALIZABLE `provenance` metadata record (`provenanceSchema`, `trustDomain`, independent channel
 provenance ids, domain-separated `provenanceDigest`). Integrity ("canonical fields + correct
 `containmentBindingDigest`") is now explicitly SEPARATED from production trust: the new
 `requireProductionPreparedProvenance` **see the remediation (B-1/§3) correction below — this now fails
@@ -12994,7 +12994,7 @@ The R3-B3 seam ALREADY EXISTS; a new trust subsystem is NOT required:
 - `VerifiedContainmentBinding` carries: `executionContext` (executionId/taskRunId/containmentPolicyId/Version/
   Digest/runtimeFamily/runtimeVersion/modelMountIdentityDigest), `providerId`, `providerBindingDigest`,
   `securityProfileId/Digest`, `instanceIdentityDigest`, `expectedModelId/Digest`, `imageDigest`, both channel
-  verifier versions + result digests, a durable `provenance: VerifiedContainmentProvenance { trustDomain,
+  verifier versions + result digests, serializable metadata `provenance: VerifiedContainmentProvenance { trustDomain,
   channelAProvenanceId, channelBProvenanceId, provenanceDigest }`, and `containmentBindingDigest`.
 - `requireProductionTrustedVerification(resultA, resultB)` and the prepared-provenance production requirement
   ALWAYS throw `PRODUCTION_TRUST_ANCHOR_UNAVAILABLE` (unconditional fail-closed; caller strings never inspected
@@ -13030,9 +13030,10 @@ verifier is registered in a module-private WeakSet so arbitrary code cannot self
 `prepareVerifiedContainmentBinding` must be extended (future implementation) so a channel may present
 `trustDomain === 'PRODUCTION'` ONLY when its verifier is anchor-issued and independent (A/B distinct
 `verifierProvenanceId`); a self-declared `PRODUCTION` from a non-issued verifier stays rejected
-(`SELF_DECLARED_PRODUCTION_TRUST_REJECTED` / `CHANNEL_NOT_PRODUCTION_TRUSTED`). Process-local WeakSet issuance
-is sufficient for in-process production execution; if production verification later crosses a process
-boundary, a stronger signed-provenance mechanism is defined in that separate slice.
+(`SELF_DECLARED_PRODUCTION_TRUST_REJECTED` / `CHANNEL_NOT_PRODUCTION_TRUSTED`). **Superseded by the R3-B3-1
+remediation below:** process-local WeakSet issuance can prove object authenticity, but cannot establish
+production trust, even for in-process execution. R3-B3-1 has no usable trust anchor or production verifier;
+real attestation belongs to R3-B3-2.
 
 ### 4. Verified facts (bind only what the artifact carries)
 
@@ -13040,7 +13041,7 @@ Before capability issuance the following existing `VerifiedContainmentBinding` f
 (no new fields required): `taskRunId`, `executionId` (== taskRunId), `providerId`, `providerBindingDigest`,
 `containmentBindingDigest`, `securityProfileId/Digest`, `instanceIdentityDigest`, `expectedModelId/Digest`,
 `imageDigest`, `executionContext.runtimeFamily`/`runtimeVersion`/`containmentPolicyId/Version/Digest`/
-`modelMountIdentityDigest`, and the durable `provenance` (`trustDomain === 'PRODUCTION'` +
+`modelMountIdentityDigest`, and the serializable provenance metadata (`trustDomain === 'PRODUCTION'` +
 `channelAProvenanceId != channelBProvenanceId` + valid `provenanceDigest`). These are already present; R3-B3
 adds no binding field, only the production trust gate over them. Capability/routing/config remain C2A-owned
 (not duplicated here).
@@ -13114,6 +13115,10 @@ CONTAINED EXECUTION trust; C2B-2 authorizes the OBSERVATION trust; both must ind
 
 ### 12. Failure model
 
+The uppercase names below include conceptual failure labels, not all current source error codes.
+`RUNTIME_IDENTITY_MISMATCH` and `SECURITY_PROFILE_MISMATCH` are conceptual here; a future live-attestation
+slice may require new codes. This docs-only record does not add source enum members.
+
 `TRUST_ANCHOR_MISSING` / `PRODUCTION_TRUST_ANCHOR_UNAVAILABLE` → DENY; `VERIFIER_NOT_ISSUED` /
 `CHANNEL_NOT_PRODUCTION_TRUSTED` → DENY; `PROVENANCE_INVALID` / `PREPARED_PROVENANCE_NOT_PRODUCTION_TRUSTED`
 → DENY; `RUNTIME_IDENTITY_MISMATCH` → DENY; image/model digest mismatch → DENY; `PROVIDER_BINDING_MISMATCH`
@@ -13125,8 +13130,8 @@ gap fails closed.
 ### 13. Replay / restart
 
 Production verifier, anchor, and issued capability are PROCESS-LOCAL (module-private WeakSet); the capability
-does NOT survive restart; the verified binding is not persisted as production-trusted (durable serializable
-provenance encodes the trust DOMAIN but is only honored while the in-process anchor/verifier exist); replay
+does NOT survive restart; the verified binding is not persisted as production-trusted (serializable
+provenance metadata records a domain label but cannot restore issuance authority); replay
 across taskRun/execution is impossible because the binding is bound to `executionContext`
 (taskRunId/executionId). Default: no persistence / no rehydration. If production later requires durable
 cross-process trust, that is the separate live-verifier slice (§15 live-execution boundary), where
@@ -13154,6 +13159,11 @@ first-run contained effect the C2C consumption path already permits (PRE_DISPATC
 single effect); after `DISPATCH_COMMITTED`, recovery remains R3-C-Rz only.
 
 ### 17. Implementation decomposition & entry/exit
+
+**Historical proposal, superseded for R3-B3-1 by the remediation below.** Its anchor issuer, fake verifier
+yielding PRODUCTION, acceptance of anchor-issued PRODUCTION provenance, and runnable production capability
+issuer are NOT part of R3-B3-1. R3-B3-1 is OPTION 1 plumbing only and remains fail-closed. R3-B3-2 is the
+separate, unauthorized real-attestation slice. The C2C ordering and R3-C-Rz exclusion remain in force.
 
 **R3-B3-1 = network-free production trust plumbing.** Scope: the production trust anchor capability + issuer;
 the anchor-authenticated verifier issuer; a deterministic fake production verifier seam; production
@@ -13185,14 +13195,17 @@ remain FAIL CLOSED until R3-B3-1 (and, if required, the separate live-verifier s
 - **Branch / base:** `kiro/r3b3-production-trust-architecture`. This corrects the accepted CHANGES_REQUIRED
   blockers B-1..B-4 against the reviewed R3-B3 architecture amendment above. It PRESERVES the reviewed commit
   `c846ebf555fa865582bdf734f4ca9b02956c8fa1` UNAMENDED and adds exactly ONE remediation commit atop it.
-  Expected lineage: `6162e0c8…` → `c846ebf5…` → `<REMEDIATION_SHA>`. No Push/PR/Merge; no
+  Architecture lineage: `6162e0c8…` → `c846ebf5…` → `e899b144392b9e02c6984b31666e1fe7e24dd0fb`. No Push/PR/Merge; no
   runtime/container/VM/provider/model/network; no secret read; no live/existing DB mutation; no R3-C-Rz.
 - **Primary decision.** R3-B3-1 is **OPTION 1 ONLY: NETWORK/RUNTIME-FREE PRODUCTION-TRUST PLUMBING.** It MUST
   NOT make real PRODUCTION trust reachable, MUST NOT issue a real PRODUCTION contained-execution capability,
   and MUST NOT turn a deterministic fake verifier into production trust. Until a future real-attestation
   slice exists, `PRODUCTION TRUST CHECK = FAIL CLOSED` and `TRUST_ANCHOR_ROOT = NONE YET`. This remediation
-  supersedes any wording in the reviewed amendment (§§2/3/6/7/13/15) that implied a process-local WeakSet
-  anchor could make PRODUCTION trust reachable within R3-B3-1.
+  supersedes implementation-enabling wording in the reviewed amendment §§2–17, including §3's process-local
+  WeakSet sufficiency claim and §17's anchor/verifier/capability decomposition, wherever it implies a usable
+  production trust anchor, a fake verifier yielding PRODUCTION, acceptance of anchor-issued PRODUCTION
+  provenance, or a runnable production capability within R3-B3-1. Unchanged C2C ordering and R3-C-Rz
+  exclusions remain binding.
 
 ### B-1 — self-issued trust anchor is NOT production trust (CLOSED)
 
@@ -13370,3 +13383,12 @@ attestation, container/VM, provider execution, secret access, Live UAT). One loc
 Push/PR/Merge. No R3-B3 implementation begins from this document; R3-B3 implementation and R3-C-Rz remain NOT
 AUTHORIZED; production contained execution and `PRODUCTION TRUST CHECK` remain FAIL CLOSED with
 `TRUST_ANCHOR_ROOT = NONE` until the separate R3-B3-2 real-attestation slice is delivered.
+
+### Post-review implementation status (2026-09-29)
+
+The approval/status paragraphs above record the architecture-only checkpoint. R3-B3 architecture was
+ratified locally at `e899b144392b9e02c6984b31666e1fe7e24dd0fb`; R3-B3-1 plumbing was implemented locally
+at `e91bdec9e43c9b149b130db89d8b54f9750b69fd` and received
+`R3_B3_1_COMBINED_EXACT_HEAD_REVIEW = PASS`. Delivery remains pending. The implemented slice does not change
+`TRUST_ANCHOR_ROOT = NONE`, `PRODUCTION TRUST CHECK = FAIL CLOSED`, or
+`REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE`. R3-B3-2 and R3-C-Rz are not authorized.

@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3-1 implementation and combined exact-HEAD review (local; delivery pending) — 2026-09-29
+
+- Implemented network/runtime-free production-trust plumbing at
+  `e91bdec9e43c9b149b130db89d8b54f9750b69fd`: fixed Channel A/B roles, a TEST-only simulated verifier,
+  and an UNAVAILABLE production verifier seam. Production trust requirements still fail closed; there is no
+  trust anchor or runnable PRODUCTION capability.
+- Added one capability-kind requirement seam while preserving the production activation guard that rejects
+  test local continuity. Provenance remains process-local plumbing; serialized metadata cannot restore trust.
+- `R3_B3_1_COMBINED_EXACT_HEAD_REVIEW = PASS`. Independent review: focused 230 PASS. Implementation validation:
+  full suite 178 files / 3787 PASS; typecheck PASS; build PASS; `git diff --check` PASS.
+  Push/PR/Merge and R3-B3-2 remain pending or unauthorized, respectively. The two R3-B3 docs-only entries
+  below record earlier architecture checkpoints.
+
 ## R3-B3-1 remediation — network/runtime-free trust plumbing; production trust FAIL CLOSED (docs only) — 2026-09-29
 
 - Add the ADR-0090 amendment "R3-B3-1 remediation (OPTION 1: network/runtime-free trust plumbing; production
