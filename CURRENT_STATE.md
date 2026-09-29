@@ -5,6 +5,20 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3-2B — Fail-closed trust/binding plumbing (2026-09-29)
+
+**IMPLEMENTED LOCALLY — DELIVERY PENDING.** TEST attestation sets now bind a frozen, process-local issued
+`TrustIssuanceRecord` to the exact issued challenge, set, verified containment binding, run, provider, and
+containment identity. Reconstructed records, sets, bindings, and instance identities do not regain authority.
+FAKE execution now claims a module-private capability guard once, calls the dispatch commit CAS, then receives
+an exact-run one-shot effect gate only on success. Commit failure leaves the guard consumed with no gate or
+retry. The durable TaskRun dispatch state remains the sole execution linearization point. Attestation-specific
+provider mismatch and self-declared trust have distinct typed failures. TEST evidence is snapshotted/frozen.
+
+`REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION TRUST = FAIL CLOSED; USABLE PRODUCTION
+CAPABILITY = UNAVAILABLE. R3-B3-2C/D = NOT ELIGIBLE; Live Gate and R3-C-Rz = NOT AUTHORIZED. The 2A status below
+is its earlier implementation checkpoint.
+
 ### R3-B3-2A — Attestation contracts (2026-09-29)
 
 **IMPLEMENTED LOCALLY — DELIVERY PENDING.** Network/runtime-free challenge and evidence contracts use an
@@ -20,7 +34,7 @@ The unavailable production verifier now reports `trustDomain = UNAVAILABLE`.
 REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET
 PRODUCTION TRUST = FAIL CLOSED
 REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE
-R3-B3-2B = NOT AUTHORIZED
+R3-B3-2B = IMPLEMENTED LOCALLY — DELIVERY PENDING
 R3-B3-2C = NOT ELIGIBLE
 R3-B3-2D = NOT ELIGIBLE
 Live Gate = NOT AUTHORIZED

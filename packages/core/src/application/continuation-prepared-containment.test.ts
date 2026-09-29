@@ -334,7 +334,8 @@ describe('R3-B1 B-3 — prepared execution rejects arbitrary execution capabilit
     const binding = verifiedBinding();
     const capability = createFakeContainedExecutionCapability(createContainmentInstanceIdentity(instanceToken));
     const prepared = PreparedContainmentExecution.fromVerifiedBinding(binding, capability);
-    const result = await prepared.execute({ prompt: 'hello' });
+    const gate = await prepared.commitTestDispatch('run-1', { commit: async () => undefined });
+    const result = await prepared.execute({ prompt: 'hello' }, gate);
     expect(result.text).toContain('contained-fake:');
     expect(result.text).toContain(':hello');
   });
@@ -377,7 +378,7 @@ describe('R3-B1 B-3 — prepared execution rejects arbitrary execution capabilit
     const prepared = PreparedContainmentExecution.fromVerifiedBinding(binding, capability);
     const proto = Object.getPrototypeOf(prepared);
     const publicMethods = Object.getOwnPropertyNames(proto).filter((n) => n !== 'constructor');
-    expect(publicMethods.sort()).toEqual(['bindingIdentity', 'containmentAudit', 'containmentBindingDigest', 'execute'].sort());
+    expect(publicMethods.sort()).toEqual(['bindingIdentity', 'containmentAudit', 'containmentBindingDigest', 'commitTestDispatch', 'execute'].sort());
     const identity = prepared.bindingIdentity();
     expect(JSON.stringify(identity)).not.toMatch(/127\.0\.0\.1|:11434|\/bin\/|\/usr\/|\.sock|https?:\/\//i);
     expect((prepared as unknown as { provider?: unknown; runner?: unknown }).provider).toBeUndefined();
@@ -397,7 +398,8 @@ describe('R3-B1 B-3 — prepared execution rejects arbitrary execution capabilit
       run: async () => { hostInvoked = true; return { text: 'host' }; },
     });
     expect(() => PreparedContainmentExecution.fromVerifiedBinding(binding, tampered as never)).toThrow(PreparedContainmentError);
-    const result = await prepared.execute({ prompt: 'x' });
+    const gate = await prepared.commitTestDispatch('run-1', { commit: async () => undefined });
+    const result = await prepared.execute({ prompt: 'x' }, gate);
     expect(result.text).toContain('contained-fake:');
     expect(hostInvoked).toBe(false);
   });
@@ -405,6 +407,58 @@ describe('R3-B1 B-3 — prepared execution rejects arbitrary execution capabilit
   it('the fake capability factory accepts only a bounded instance identity (fail closed otherwise)', () => {
     expect(() => createFakeContainedExecutionCapability({ schemaVersion: 'wrong', instanceIdentityDigest: HEX('f') } as never))
       .toThrow(PreparedContainmentError);
+    const issued = createContainmentInstanceIdentity(instanceToken);
+    expect(() => createFakeContainedExecutionCapability({ ...issued })).toThrow('CONTAINMENT_CONFIGURATION_INVALID');
+  });
+
+  it('requires successful commit and consumes both capability and gate once', async () => {
+    const binding = verifiedBinding();
+    const capability = createFakeContainedExecutionCapability(createContainmentInstanceIdentity(instanceToken));
+    const prepared = PreparedContainmentExecution.fromVerifiedBinding(binding, capability);
+    const secondHolder = PreparedContainmentExecution.fromVerifiedBinding(binding, capability);
+    await expect(prepared.execute({ prompt: 'x' }, {})).rejects.toThrow('COMMITTED_EFFECT_GATE_MISSING');
+    await expect(prepared.commitTestDispatch('other-run', { commit: async () => undefined }))
+      .rejects.toThrow('EXACT_RUN_BINDING_MISMATCH');
+    let commits = 0;
+    const gate = await prepared.commitTestDispatch('run-1', { commit: async () => { commits++; } });
+    expect(commits).toBe(1);
+    await expect(secondHolder.commitTestDispatch('run-1', { commit: async () => { commits++; } }))
+      .rejects.toThrow('CAPABILITY_ALREADY_CONSUMED');
+    expect(commits).toBe(1);
+    await expect(secondHolder.execute({ prompt: 'x' }, gate)).rejects.toThrow('COMMITTED_EFFECT_GATE_MISMATCH');
+    await expect(prepared.execute({ prompt: 'x' }, { ...gate })).rejects.toThrow('COMMITTED_EFFECT_GATE_MISSING');
+    expect((await prepared.execute({ prompt: 'x' }, gate)).text).toContain('contained-fake:');
+    await expect(prepared.execute({ prompt: 'x' }, gate)).rejects.toThrow('COMMITTED_EFFECT_GATE_ALREADY_USED');
+  });
+
+  it('burns the process-local capability when dispatch commit fails, with no effect gate', async () => {
+    const binding = verifiedBinding();
+    const capability = createFakeContainedExecutionCapability(createContainmentInstanceIdentity(instanceToken));
+    const prepared = PreparedContainmentExecution.fromVerifiedBinding(binding, capability);
+    let commits = 0;
+    await expect(prepared.commitTestDispatch('run-1', { commit: async () => {
+      commits++;
+      throw new Error('CAS denied');
+    } })).rejects.toThrow('CAS denied');
+    await expect(prepared.commitTestDispatch('run-1', { commit: async () => { commits++; } }))
+      .rejects.toThrow('CAPABILITY_ALREADY_CONSUMED');
+    await expect(prepared.execute({ prompt: 'x' }, {})).rejects.toThrow('COMMITTED_EFFECT_GATE_MISSING');
+    expect(commits).toBe(1);
+  });
+
+  it('cannot execute while dispatch commitment remains pending', async () => {
+    const binding = verifiedBinding();
+    const prepared = PreparedContainmentExecution.fromVerifiedBinding(binding,
+      createFakeContainedExecutionCapability(createContainmentInstanceIdentity(instanceToken)));
+    let finishCommit!: () => void;
+    const commitPending = new Promise<void>(resolve => { finishCommit = resolve; });
+    const gatePending = prepared.commitTestDispatch('run-1', { commit: () => commitPending });
+    await expect(prepared.execute({ prompt: 'x' }, {})).rejects.toThrow('COMMITTED_EFFECT_GATE_MISSING');
+    await expect(prepared.commitTestDispatch('run-1', { commit: async () => undefined }))
+      .rejects.toThrow('CAPABILITY_ALREADY_CONSUMED');
+    finishCommit();
+    const gate = await gatePending;
+    expect((await prepared.execute({ prompt: 'x' }, gate)).text).toContain('contained-fake:');
   });
 });
 

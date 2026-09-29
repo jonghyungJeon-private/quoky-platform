@@ -76,6 +76,10 @@ describe('@quoky/core public API surface — R3-B1 fake must not leak (G3A-1)', 
     expect(surface.createSimulatedAttestationEvidence).toBeUndefined();
     expect(surface.formTestAttestationSet).toBeUndefined();
     expect(surface.requireCurrentTestAttestationSet).toBeUndefined();
+    expect(surface.issueTestTrustIssuanceRecord).toBeUndefined();
+    expect(surface.requireIssuedTrustIssuanceRecord).toBeUndefined();
+    expect(surface.requireIssuedTestAttestationSetBinding).toBeUndefined();
+    expect(surface.requireIssuedContainmentInstanceForBinding).toBeUndefined();
     expect(surface.requireIssuedVerifiedBinding).toBeUndefined();
     expect(surface.TEST_ATTESTATION_SOURCE_POLICY).toBeUndefined();
     expect(surface.IssuedContainedExecutionCapability).toBeUndefined(); // module-private class never exported

@@ -33,10 +33,11 @@ export const TEST_ATTESTATION_SOURCE_POLICY = Object.freeze({
 export type AttestationContractFailureCode =
   | 'CHALLENGE_NOT_ISSUED' | 'CHALLENGE_ALREADY_USED' | 'CHALLENGE_MISMATCH'
   | 'ATTESTATION_SET_MISMATCH' | 'CHANNEL_ROLE_MISMATCH' | 'EVIDENCE_SOURCE_KIND_MISMATCH'
-  | 'TASKRUN_EXECUTION_MISMATCH' | 'PROVIDER_BINDING_MISMATCH' | 'CONTAINMENT_BINDING_MISMATCH'
+  | 'TASKRUN_EXECUTION_MISMATCH' | 'ATTESTATION_PROVIDER_BINDING_MISMATCH' | 'CONTAINMENT_BINDING_MISMATCH'
   | 'ATTESTATION_STALE' | 'VERIFICATION_UNCERTAIN' | 'EVIDENCE_FACT_MISMATCH'
   | 'EVIDENCE_INTEGRITY_INVALID' | 'SIGNER_PROVENANCE_NOT_DISTINCT'
-  | 'ATTESTATION_CONFIGURATION_INVALID' | 'ATTESTATION_SET_NOT_ISSUED';
+  | 'ATTESTATION_CONFIGURATION_INVALID' | 'ATTESTATION_SET_NOT_ISSUED'
+  | 'SELF_DECLARED_ATTESTATION_TRUST_REJECTED';
 
 export class AttestationContractError extends Error {
   constructor(readonly code: AttestationContractFailureCode) {
@@ -112,7 +113,11 @@ type ChallengeRecord = {
   claimed: boolean;
 };
 const issuedChallenges = new WeakMap<ProductionAttestationChallenge, ChallengeRecord>();
-const issuedSets = new WeakMap<TestAttestationSet, MonotonicClock>();
+const issuedSets = new WeakMap<TestAttestationSet, Readonly<{
+  clock: MonotonicClock;
+  challenge: ProductionAttestationChallenge;
+  binding: VerifiedContainmentBinding;
+}>>();
 const HEX64 = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const finiteNonnegative = (value: number): boolean => Number.isFinite(value) && value >= 0;
@@ -239,8 +244,12 @@ function validateEvidence(
   if (!hasBoundedDataKeys(evidence, EVIDENCE_KEYS, ['sourceTimestampMs'])) {
     throw new AttestationContractError('EVIDENCE_INTEGRITY_INVALID');
   }
-  if (evidence.schemaVersion !== PRODUCTION_ATTESTATION_EVIDENCE_SCHEMA
-    || evidence.trustDomain !== 'TEST') throw new AttestationContractError('VERIFICATION_UNCERTAIN');
+  if (evidence.trustDomain !== 'TEST') {
+    throw new AttestationContractError('SELF_DECLARED_ATTESTATION_TRUST_REJECTED');
+  }
+  if (evidence.schemaVersion !== PRODUCTION_ATTESTATION_EVIDENCE_SCHEMA) {
+    throw new AttestationContractError('VERIFICATION_UNCERTAIN');
+  }
   if (!hasBoundedDataKeys(evidence.observed, OBSERVED_KEYS)) {
     throw new AttestationContractError('EVIDENCE_INTEGRITY_INVALID');
   }
@@ -263,7 +272,7 @@ function validateEvidence(
   }
   if (evidence.providerId !== challenge.providerId
     || evidence.providerBindingDigest !== challenge.providerBindingDigest) {
-    throw new AttestationContractError('PROVIDER_BINDING_MISMATCH');
+    throw new AttestationContractError('ATTESTATION_PROVIDER_BINDING_MISMATCH');
   }
   if (evidence.containmentBindingDigest !== challenge.containmentBindingDigest) {
     throw new AttestationContractError('CONTAINMENT_BINDING_MISMATCH');
@@ -281,6 +290,10 @@ function validateEvidence(
   }
 }
 
+function snapshotEvidence(e: TestAttestationEvidence): TestAttestationEvidence {
+  return Object.freeze({ ...e, observed: Object.freeze({ ...e.observed }) });
+}
+
 /** TEST-only formation. Bounds are fixture inputs, never production policy or a production trust decision. */
 export function formTestAttestationSet(input: Readonly<{
   challenge: ProductionAttestationChallenge;
@@ -296,10 +309,18 @@ export function formTestAttestationSet(input: Readonly<{
     throw new AttestationContractError('ATTESTATION_CONFIGURATION_INVALID');
   }
   const setId = attestationSetIdFor(input.challenge);
-  validateEvidence(input.channelA, 'A', input.challenge, record, setId);
-  validateEvidence(input.channelB, 'B', input.challenge, record, setId);
-  if (input.channelA.signerProvenanceId === input.channelB.signerProvenanceId
-    || input.channelA.verifierProvenanceId === input.channelB.verifierProvenanceId) {
+  if (!hasBoundedDataKeys(input.channelA, EVIDENCE_KEYS, ['sourceTimestampMs'])
+    || !hasBoundedDataKeys(input.channelB, EVIDENCE_KEYS, ['sourceTimestampMs'])
+    || !hasBoundedDataKeys(input.channelA.observed, OBSERVED_KEYS)
+    || !hasBoundedDataKeys(input.channelB.observed, OBSERVED_KEYS)) {
+    throw new AttestationContractError('EVIDENCE_INTEGRITY_INVALID');
+  }
+  const channelA = snapshotEvidence(input.channelA);
+  const channelB = snapshotEvidence(input.channelB);
+  validateEvidence(channelA, 'A', input.challenge, record, setId);
+  validateEvidence(channelB, 'B', input.challenge, record, setId);
+  if (channelA.signerProvenanceId === channelB.signerProvenanceId
+    || channelA.verifierProvenanceId === channelB.verifierProvenanceId) {
     throw new AttestationContractError('SIGNER_PROVENANCE_NOT_DISTINCT');
   }
   const afterMono = record.clock.nowMs();
@@ -312,9 +333,9 @@ export function formTestAttestationSet(input: Readonly<{
   record.claimed = true;
   const set = Object.freeze({ schemaVersion: TEST_ATTESTATION_SET_SCHEMA, trustDomain: 'TEST' as const,
     challenge: input.challenge, attestationSetId: setId,
-    channelA: input.channelA, channelB: input.channelB,
+    channelA, channelB,
     verifiedReceiptLocalMonoMs: afterMono, expiresAtLocalMonoMs: expiresAt });
-  issuedSets.set(set, record.clock);
+  issuedSets.set(set, Object.freeze({ clock: record.clock, challenge: input.challenge, binding: record.binding }));
   return set;
 }
 
@@ -323,8 +344,35 @@ export function requireCurrentTestAttestationSet(set: TestAttestationSet): void 
   if (!set || typeof set !== 'object' || !issuedSets.has(set)) {
     throw new AttestationContractError('ATTESTATION_SET_NOT_ISSUED');
   }
-  const now = issuedSets.get(set)!.nowMs();
+  const now = issuedSets.get(set)!.clock.nowMs();
   if (!finiteNonnegative(now) || now < set.verifiedReceiptLocalMonoMs || now >= set.expiresAtLocalMonoMs) {
     throw new AttestationContractError('ATTESTATION_STALE');
   }
+}
+
+/** Internal 2B seam: process-local set issuance plus exact challenge/binding object identity. */
+export function requireIssuedTestAttestationSetBinding(
+  set: TestAttestationSet, binding: VerifiedContainmentBinding,
+): void {
+  requireIssuedVerifiedBinding(binding);
+  if (!set || typeof set !== 'object' || !issuedSets.has(set)) {
+    throw new AttestationContractError('ATTESTATION_SET_NOT_ISSUED');
+  }
+  const record = issuedSets.get(set)!;
+  if (record.binding !== binding) throw new AttestationContractError('CONTAINMENT_BINDING_MISMATCH');
+  if (record.challenge !== set.challenge || set.attestationSetId !== attestationSetIdFor(record.challenge)) {
+    throw new AttestationContractError('ATTESTATION_SET_MISMATCH');
+  }
+  if (set.challenge.taskRunId !== binding.executionContext.taskRunId
+    || set.challenge.executionId !== binding.executionContext.executionId) {
+    throw new AttestationContractError('TASKRUN_EXECUTION_MISMATCH');
+  }
+  if (set.challenge.providerId !== binding.providerId
+    || set.challenge.providerBindingDigest !== binding.providerBindingDigest) {
+    throw new AttestationContractError('ATTESTATION_PROVIDER_BINDING_MISMATCH');
+  }
+  if (set.challenge.containmentBindingDigest !== binding.containmentBindingDigest) {
+    throw new AttestationContractError('CONTAINMENT_BINDING_MISMATCH');
+  }
+  requireCurrentTestAttestationSet(set);
 }

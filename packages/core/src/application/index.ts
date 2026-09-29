@@ -97,6 +97,7 @@ export type {
   ContainmentTrustDomain,
   ContainmentVerifierRole,
   ProductionContainedCapabilityContract,
+  TrustIssuanceRecord,
   ContainedExecutionCapabilityKind,
   ContainmentSecurityProfile,
   ContainmentInstanceIdentity,
