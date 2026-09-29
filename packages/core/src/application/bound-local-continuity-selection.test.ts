@@ -173,7 +173,7 @@ function preparedFor(
     securityProfile: createContainmentSecurityProfile({ securityProfileId: 'c2c-test', securityProfileVersion: 'v1' }),
     expectedModelId: 'opaque-local', expectedModelDigest: 'b'.repeat(64), imageDigest: 'c'.repeat(64), instance,
   });
-  const channel = (role: 'A' | 'B'): ContainmentVerificationChannel => ({ channel: role,
+  const channel = (role: 'A' | 'B'): ContainmentVerificationChannel => ({ channel: role, verifierRole: role === 'A' ? 'EXTERNAL_RUNTIME_INSTANCE_INSPECTION' : 'IN_INSTANCE_SELF_CHECK',
     verify(subject: ContainmentVerificationSubject) {
       const verifierVersion = `c2c-${role}-v1`;
       const resultDigest = createHash('sha256').update(JSON.stringify({

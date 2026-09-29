@@ -51,7 +51,7 @@ function prepared(runId: string) {
     executionContext: { executionId: runId, taskRunId: runId, containmentPolicyId: 'policy', containmentPolicyVersion: 'v1',
       containmentPolicyDigest: HEX('d'), runtimeFamily: 'NONE', runtimeVersion: 'fake-v1', modelMountIdentityDigest: HEX('e') },
   });
-  const channel = (channel: 'A' | 'B'): ContainmentVerificationChannel => ({ channel, verify: subject => {
+  const channel = (channel: 'A' | 'B'): ContainmentVerificationChannel => ({ channel, verifierRole: channel === 'A' ? 'EXTERNAL_RUNTIME_INSTANCE_INSPECTION' : 'IN_INSTANCE_SELF_CHECK', verify: subject => {
     const verifierVersion = `fake-${channel}-v1`;
     const shape = { verifierVersion, executionContext: subject.candidate.executionContext,
       providerId: subject.candidate.providerId, providerBindingDigest: subject.providerBindingDigest,

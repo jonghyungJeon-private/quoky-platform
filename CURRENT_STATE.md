@@ -5,6 +5,37 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3-1 — Network/runtime-free production-trust plumbing (2026-09-29)
+
+**IMPLEMENTED LOCALLY — COMBINED FINAL REVIEW PASS — DELIVERY PENDING.** Exact reviewed implementation HEAD:
+`e91bdec9e43c9b149b130db89d8b54f9750b69fd` on `codex/r3b3-1-production-trust-plumbing`.
+`R3_B3_1_COMBINED_EXACT_HEAD_REVIEW = PASS`. The implementation adds fixed Channel A/B verifier roles,
+a TEST-only simulated verifier, an UNAVAILABLE production verifier seam, fail-closed production capability
+issuance, and one capability-kind requirement seam. The TEST FAKE path remains usable; production activation
+continues to reject test local continuity. Provenance is deterministic, process-local plumbing; serialized
+metadata does not restore issued trust. No real runtime fact was independently observed.
+
+```text
+TRUST_ANCHOR_ROOT = NONE
+PRODUCTION TRUST CHECK = FAIL CLOSED
+REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE
+R3-B3-2 = NOT AUTHORIZED
+R3-C-Rz = NOT AUTHORIZED
+```
+
+R3-B3-1 does not issue a runnable PRODUCTION capability. R3-B3-2 remains the separate, unauthorized STRICT
+real-attestation slice. R3-C2B-2 semantics and C2C validation → exact binding → containment/trust → dispatch
+CAS → effect ordering are unchanged. Delivery (Push/PR/Merge) is pending.
+
+### R3-B3 — Production Trust architecture (2026-09-29)
+
+**RATIFIED LOCALLY — DELIVERY PENDING.** Architecture HEAD:
+`e899b144392b9e02c6984b31666e1fe7e24dd0fb`, preserving the reviewed `c846ebf5…` architecture
+commit. The later R3-B3-1 remediation in `DECISIONS.md` supersedes the earlier implementation decomposition,
+including §17: process-local object issuance proves only local authenticity, not production trust. R3-B3-1 is
+OPTION 1 plumbing only. A usable trust root, independent observed Channel A/B attestation, and real production
+capability issuance belong to R3-B3-2, which is not authorized. Until then production trust fails closed.
+
 ### R3-C2B-2-1 — Network-free typed observation plumbing (2026-09-29)
 
 **IMPLEMENTED LOCALLY; INDEPENDENT EXACT-HEAD REVIEW PENDING.** The new closed provider-native diagnostic

@@ -40,7 +40,7 @@ export class LocalContinuityConsumptionCoordinator {
     await this.issuer.validate(authority, input.routingExecutionId, context, plan, this.registry, this.engine);
 
     // Synchronous final checks use the same frozen binding source as continuation routing.
-    PreparedContainmentExecution.assertFakeOnly(preparedExecution);
+    PreparedContainmentExecution.requireCapabilityKind(preparedExecution, 'FAKE');
     const canonical = this.bindings.get(authority.providerId);
     const identity = preparedExecution.bindingIdentity();
     if (!canonical || identity.providerId !== authority.providerId

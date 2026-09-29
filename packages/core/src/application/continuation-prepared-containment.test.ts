@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
   CONTAINMENT_SECURITY_PROFILE_SCHEMA,
+  CONTAINMENT_VERIFIER_ROLES,
   PREPARED_CONTAINMENT_EXECUTION_SCHEMA,
   PreparedContainmentError,
   PreparedContainmentExecution,
@@ -12,6 +13,9 @@ import {
   createContainmentInstanceIdentity,
   createContainmentSecurityProfile,
   createFakeContainedExecutionCapability,
+  createSimulatedContainmentVerifier,
+  createUnavailableProductionContainmentVerifier,
+  issueProductionContainedExecutionCapability,
   prepareVerifiedContainmentBinding,
   requireProductionTrustedVerification,
   requireProductionContainedCapability,
@@ -61,7 +65,7 @@ function candidate(overrides: Partial<Parameters<typeof createContainmentCandida
 /** Faithful fake channel: recomputes the EXACT result digest the verifier would produce for the subject. */
 function honestChannel(channel: 'A' | 'B', verifierVersion: string): ContainmentVerificationChannel {
   return {
-    channel,
+    channel, verifierRole: CONTAINMENT_VERIFIER_ROLES[channel],
     verify(subject: ContainmentVerificationSubject): ContainmentChannelResult {
       const resultDigest = createHash('sha256').update(JSON.stringify({
         domain: `quoky.r3.containment.channel.${channel}.v1`,
@@ -89,7 +93,7 @@ function honestChannel(channel: 'A' | 'B', verifierVersion: string): Containment
 
 function statusChannel(channel: 'A' | 'B', verifierVersion: string, status: ContainmentChannelResult['status']): ContainmentVerificationChannel {
   return {
-    channel,
+    channel, verifierRole: CONTAINMENT_VERIFIER_ROLES[channel],
     verify: () => ({ status, verifierVersion, trustDomain: 'TEST', verifierProvenanceId: `test-provenance-${channel}` }),
   };
 }
@@ -300,7 +304,7 @@ describe('R3-B1 dual-channel verification is mandatory and fail-closed', () => {
   });
 
   it('rejects a channel whose result digest does not match the subject (disagreement)', () => {
-    const lyingA: ContainmentVerificationChannel = { channel: 'A', verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', trustDomain: 'TEST', verifierProvenanceId: 'test-provenance-A', resultDigest: HEX('9') }) };
+    const lyingA: ContainmentVerificationChannel = { channel: 'A', verifierRole: CONTAINMENT_VERIFIER_ROLES.A, verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', trustDomain: 'TEST', verifierProvenanceId: 'test-provenance-A', resultDigest: HEX('9') }) };
     expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: lyingA, channelB: channelB() }))
       .toThrow(PreparedContainmentError);
   });
@@ -452,7 +456,7 @@ describe('R3-B2 exact-run prepared evidence projection', () => {
     expect(first.binding.providerBindingDigest).toBe(second.binding.providerBindingDigest);
     expect(() => prepareVerifiedContainmentBinding({ candidate: candidate({ executionContext: {
       ...executionContext, executionId: 'run-2', taskRunId: 'run-2' } }),
-      channelA: { channel: 'A', verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', trustDomain: 'TEST', verifierProvenanceId: 'test-provenance-A', resultDigest: first.binding.channelAResultDigest }) },
+      channelA: { channel: 'A', verifierRole: CONTAINMENT_VERIFIER_ROLES.A, verify: () => ({ status: 'VERIFIED', verifierVersion: 'verifier-a-1', trustDomain: 'TEST', verifierProvenanceId: 'test-provenance-A', resultDigest: first.binding.channelAResultDigest }) },
       channelB: channelB() })).toThrow('CHANNEL_DISAGREEMENT');
   });
 
@@ -503,7 +507,7 @@ function fakeResult(channel: 'A' | 'B', overrides: Partial<ContainmentChannelRes
 /** A channel that self-declares PRODUCTION but still computes a subject-matching resultDigest. */
 function selfDeclaredProductionChannel(channel: 'A' | 'B', provenanceId = `evil-provenance-${channel}`): ContainmentVerificationChannel {
   return {
-    channel,
+    channel, verifierRole: CONTAINMENT_VERIFIER_ROLES[channel],
     verify: (subject: ContainmentVerificationSubject) => {
       const resultDigest = createHash('sha256').update(JSON.stringify({
         domain: `quoky.r3.containment.channel.${channel}.v1`,
@@ -519,6 +523,47 @@ function selfDeclaredProductionChannel(channel: 'A' | 'B', provenanceId = `evil-
 }
 
 describe('R3-B3 Item 1 — production trust is never self-declarable (remediation B-1)', () => {
+  it('fixes each verifier to exactly one channel role, independently of distinct IDs', () => {
+    const a = createSimulatedContainmentVerifier('A', 'distinct-a', 'distinct-a');
+    const b = createSimulatedContainmentVerifier('B', 'distinct-b', 'distinct-b');
+    expect(a.verifierRole).toBe(CONTAINMENT_VERIFIER_ROLES.A);
+    expect(b.verifierRole).toBe(CONTAINMENT_VERIFIER_ROLES.B);
+    expect(Object.isFrozen(a) && Object.isFrozen(b)).toBe(true);
+    expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: b as never, channelB: a as never }))
+      .toThrow('CHANNEL_DISAGREEMENT');
+    expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: a, channelB: a as never }))
+      .toThrow('CHANNEL_DISAGREEMENT');
+    expect(() => requireProductionTrustedVerification(fakeResult('A', { verifierProvenanceId: 'distinct-a' }),
+      fakeResult('B', { verifierProvenanceId: 'distinct-b' }))).toThrow('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
+  });
+
+  it('does not let one verifier object change roles across preparations', () => {
+    const mutable = { ...createSimulatedContainmentVerifier('A', 'sim-a', 'sim-a') };
+    prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: mutable,
+      channelB: createSimulatedContainmentVerifier('B', 'sim-b', 'sim-b') });
+    Object.assign(mutable, { channel: 'B', verifierRole: CONTAINMENT_VERIFIER_ROLES.B });
+    expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(),
+      channelA: createSimulatedContainmentVerifier('A', 'other-a', 'other-a'), channelB: mutable as never }))
+      .toThrow('CHANNEL_DISAGREEMENT');
+  });
+
+  it('simulated A and B issue TEST provenance only and cannot establish production trust', () => {
+    const binding = prepareVerifiedContainmentBinding({ candidate: candidate(),
+      channelA: createSimulatedContainmentVerifier('A', 'sim-a', 'sim-a'),
+      channelB: createSimulatedContainmentVerifier('B', 'sim-b', 'sim-b') });
+    expect(binding.provenance.trustDomain).toBe('TEST');
+    expect(() => requireProductionPreparedProvenance(binding)).toThrow('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
+  });
+
+  it('production verifier seam is unavailable and cannot issue a VERIFIED binding', () => {
+    const a = createUnavailableProductionContainmentVerifier('A');
+    const b = createUnavailableProductionContainmentVerifier('B');
+    expect(a.verify({} as never).status).toBe('UNAVAILABLE');
+    expect(b.verify({} as never).status).toBe('UNAVAILABLE');
+    expect(() => prepareVerifiedContainmentBinding({ candidate: candidate(), channelA: a, channelB: b }))
+      .toThrow('CHANNEL_A_UNVERIFIED');
+  });
+
   it('requireProductionTrustedVerification fails closed for a well-formed TEST pair (no production issuer)', () => {
     expect(() => requireProductionTrustedVerification(fakeResult('A'), fakeResult('B')))
       .toThrow('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
@@ -571,7 +616,7 @@ describe('R3-B3 Item 1 — production trust is never self-declarable (remediatio
 
   it('duplicate A/B provenance identities remain rejected at preparation', () => {
     const shared = (channel: 'A' | 'B'): ContainmentVerificationChannel => ({
-      channel,
+      channel, verifierRole: CONTAINMENT_VERIFIER_ROLES[channel],
       verify: (subject: ContainmentVerificationSubject) => {
         const resultDigest = createHash('sha256').update(JSON.stringify({
           domain: `quoky.r3.containment.channel.${channel}.v1`,
@@ -590,6 +635,27 @@ describe('R3-B3 Item 1 — production trust is never self-declarable (remediatio
 });
 
 describe('R3-B3 Item 2 — fake vs production contained capability separation', () => {
+  it('production capability issuer remains unavailable even for an exact issued binding', () => {
+    const binding = verifiedBinding();
+    expect(binding.executionContext.taskRunId).toBe('run-1');
+    expect(binding.executionContext.executionId).toBe('run-1');
+    expect(binding.providerId).toBe(PROVIDER_ID);
+    expect(binding.providerBindingDigest).toBe(PROVIDER_BINDING_DIGEST);
+    expect(() => issueProductionContainedExecutionCapability(binding)).toThrow('PRODUCTION_TRUST_ANCHOR_UNAVAILABLE');
+    expect(() => issueProductionContainedExecutionCapability(JSON.parse(JSON.stringify(binding)) as never))
+      .toThrow('VERIFIED_BINDING_NOT_ISSUED');
+  });
+
+  it('the one capability-kind seam accepts issued FAKE and rejects PRODUCTION', () => {
+    const prepared = PreparedContainmentExecution.fromVerifiedBinding(verifiedBinding(),
+      createFakeContainedExecutionCapability(createContainmentInstanceIdentity('opaque-instance-token-1')));
+    expect(() => PreparedContainmentExecution.requireCapabilityKind(prepared, 'FAKE')).not.toThrow();
+    expect(() => PreparedContainmentExecution.requireCapabilityKind(prepared, 'PRODUCTION'))
+      .toThrow('CAPABILITY_NOT_PRODUCTION_ELIGIBLE');
+    expect(() => PreparedContainmentExecution.requireCapabilityKind({ ...prepared } as never, 'FAKE'))
+      .toThrow('VERIFIED_BINDING_NOT_ISSUED');
+  });
+
   it('the fake capability is kind FAKE and is NOT production-eligible', () => {
     const fake = createFakeContainedExecutionCapability(createContainmentInstanceIdentity('opaque-instance-token-1'));
     expect(fake.capabilityKind).toBe('FAKE');
