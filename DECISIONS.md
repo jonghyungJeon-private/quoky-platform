@@ -14115,3 +14115,277 @@ caller values. Those production prerequisites are not implemented by 2B.
 `R3-B3-2B = IMPLEMENTED LOCALLY — DELIVERY PENDING`; `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`;
 PRODUCTION TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY = UNAVAILABLE; 2C/2D = NOT ELIGIBLE; Live Gate
 and R3-C-Rz = NOT AUTHORIZED.
+
+## ADR-0090 amendment — R3-B3-2C trust-root feasibility & deployment-binding architecture (read-only discovery)
+
+- **Status:** Proposed — architecture + read-only feasibility discovery only. Independent Architecture
+  Review (Claude) pending. Grants no implementation/activation/runtime/container/provider/model/network/
+  secret/DB/execution authority. Delivers no code. **`REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`;
+  PRODUCTION TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY = UNAVAILABLE.**
+- **Date:** 2026-09-29
+- **Branch / base:** `kiro/r3b3-2c-trust-root-feasibility` from canonical main
+  `19e1b3aef586b857b4e32b1d760ae1cd71507d85`. One local architecture commit; no Push/PR/Merge; no
+  runtime/container/network/provider/secret action.
+- **Primary question:** given Quoky's actual deployment/runtime environment, is there now a real
+  independently trustworthy production root that can support R3-B3-2C? **Answer: NO.** No trust root was
+  invented to make 2C implementation-ready; the exact missing deployment prerequisites are recorded below.
+
+### 1. Source / deployment facts (read-only, exact main `19e1b3ae…`)
+
+Read-only repository/config/docs/scripts inspection (no containers run, no live runtime inspected, no
+cloud/provider API contacted):
+
+- **No deployment artifacts of any kind:** no `Dockerfile`, `docker-compose*`, Kubernetes/Helm/Terraform
+  manifests, `.github/` CI, `deploy/`/`infra/`/`ops/` directories, `fly.toml`, ECS/Fargate task defs, or
+  systemd units exist anywhere in the repo.
+- **No cloud/workload-identity or attestation primitives:** no SPIFFE/SVID, IMDS (`169.254.169.254`),
+  projected serviceaccount token, cloud instance-identity document, TPM/TEE/enclave/vTPM, or external
+  attestation-service integration exists in Core or adapters.
+- **Containment runtime families are abstract tokens** (`ports/continuation-containment-audit.ts`):
+  `['NONE', 'CONTAINER_NO_NETWORK', 'VM_NO_NIC']` — platform-neutral; no concrete Docker/K8s/cloud binding.
+- **Only substrate evidence is a local developer host.** A prior read-only feasibility probe
+  (`docs/plans/stage-2b-slice-5c-eg-external-egress-enforcement-architecture-plan.md`) found macOS with
+  OrbStack installed (`/usr/local/bin/docker` → `/Applications/OrbStack.app/...`, `orb`, `orbctl`,
+  `~/.orbstack/`); Podman/Colima/Lima/vz/vfkit/qemu/Docker Desktop/UTM absent. It explicitly states
+  **"OrbStack is present, but its actual network isolation behavior for this threat model is unverified;
+  installation alone does not establish feasibility."**
+- Repo-wide 2A/2B facts remain as delivered: all containment identity digests are EXPECTED/CONFIGURED
+  inputs (never observed); production trust/verifier/capability seams fail closed; `TrustIssuanceRecord`
+  is TEST-only; `dispatchCommit.commit` is the sole authoritative linearization point; production
+  activation rejects `localContinuity` (`TEST_LOCAL_CONTINUITY_FORBIDDEN`).
+
+### 2. Deployment substrate
+
+```text
+DEPLOYMENT_SUBSTRATE = UNRESOLVED
+```
+
+CURRENTLY IMPLEMENTED: none (no production runtime/deployment substrate is defined or wired). PLANNED /
+DOCUMENTED: only a local macOS + OrbStack developer host as an unverified egress-isolation *candidate*
+(Personal Edition); README names Team/Hosted editions as roadmap direction only, with no substrate,
+orchestrator, or cloud identity chosen. UNKNOWN: the production/local-continuity runtime platform. An
+UNRESOLVED substrate is a hard blocker for real 2C implementation, because Channel A/B real sources and
+the trust root are all substrate-specific.
+
+### 3. Real trust-root candidates
+
+Evaluated against the actual environment (local macOS + OrbStack; no cloud):
+
+| Candidate | Owner / signer | Verification root | Quoky can forge? | Workload can forge? | Instance id? | Image/runtime id? | Public-material verify? | Needs secret/admin? | Available today? |
+|---|---|---|---|---|---|---|---|---|---|
+| Cloud instance-identity doc / signed metadata | cloud provider | provider CA | no | no | yes | partial | yes | no | **NO (no cloud)** |
+| TPM/TEE attestation quote | hardware/firmware | vendor root | no | no | yes | yes | yes | no | **NO (not provisioned)** |
+| K8s workload/projected identity | cluster control plane | cluster CA | no | no | yes | partial | yes | no | **NO (no K8s)** |
+| SPIFFE/SVID workload identity | SPIRE/control plane | trust-domain CA | no | no | yes | no | yes | no | **NO (not present)** |
+| Trusted control-plane image digest | orchestrator control plane | registry/signing | depends | no | partial | yes | yes | depends | **NO (no trusted control plane)** |
+| External supervisor/attestation service | independent service | service root | no | no | yes | yes | yes | maybe | **NO (does not exist)** |
+| Signed deployment manifest/root | deploy pipeline | signing key/CA | no | no | partial | yes | yes | no | **NO (no pipeline)** |
+| OrbStack local inspection (via `docker`/`orb`) | local user | none independent | **YES** | — | weak | weak | no | **admin/socket** | present but not a root |
+
+Rejected outright (per task): env vars, app config, WeakSet issuance, Quoky-generated digests, self-signed
+application claims, Docker-socket/admin control.
+
+### 4. Selected real trust root — NO-FEASIBLE decision
+
+```text
+REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET
+```
+
+No candidate is both available in the actual environment and independently trustworthy. The only present
+mechanism (OrbStack via the local `docker`/`orb` CLI) fails the independence test: observing it requires
+Docker-socket/admin-equivalent authority that would let Quoky **mutate the very runtime it is attesting**
+(see §5), and its isolation is unverified. A trust root was not invented to force eligibility.
+
+### 5. Quoky control-plane separation
+
+Mandatory invariant: **Quoky MUST NOT hold mutation/admin authority over the same control plane whose
+state it treats as independently attested.** On the current host, the only way to observe OrbStack/Docker
+runtime state is the Docker socket / `orb`/`orbctl` CLI, which grant root-equivalent runtime mutation
+(create/kill/exec containers, change networking). Therefore that observation source is **NOT** an
+independent production trust root. Required posture for any future root: verification-only PUBLIC material
+(certificate/public key/CA bundle/signed document), with no signer private key, cloud admin token, or
+runtime mutation credential held by Quoky.
+
+### 6. Channel A real source (`EXTERNAL_RUNTIME_INSTANCE_INSPECTION`)
+
+```text
+CHANNEL_A_REAL_SOURCE = UNAVAILABLE
+```
+
+There is no external, independently rooted inspector today. The candidate external source (a control plane
+/ host inspector) does not exist in the current substrate; the only local option (Docker/orb CLI) violates
+§5 (mutation authority) and is not signed/independently rooted. A credible Channel A requires a substrate
+that exposes signed, verification-only instance/image/runtime metadata to a component outside the contained
+workload with no workload signing authority — absent today.
+
+### 7. Channel B real source (`IN_INSTANCE_SELF_CHECK`)
+
+```text
+CHANNEL_B_REAL_SOURCE = UNAVAILABLE
+```
+
+This remains the hardest unresolved root. A trustworthy in-instance self-check requires a signing/identity
+mechanism inaccessible to ordinary workload code and independently rooted from Channel A (e.g. hardware/
+TEE-bound identity, an independently-injected short-lived workload identity, or an external verifier
+challenging an in-instance agent whose key is protected from application code). **No such mechanism exists
+in the current macOS/OrbStack environment** (no TEE binding, no independent identity injection). An
+in-instance check that merely runs application code signing with an application-accessible key is
+explicitly insufficient and is NOT accepted. Therefore **R3-B3-2C IMPLEMENTATION = NOT READY** and this
+requirement is not weakened.
+
+### 8. A/B independence
+
+Not satisfiable today. With no real A and no real B source, independence cannot be established. Even the
+only present mechanism (local Docker/orb) would back BOTH a would-be external check and any in-instance
+check through the SAME local admin authority — a single credential could forge both — which fails the
+mandatory invariant (no single key/root/credential/component/admin authority/workload-accessible secret may
+forge both valid A and valid B). "Different process" or "different string role" is explicitly not counted
+as independence.
+
+### 9. Observable fact matrix
+
+| Fact | Expected source (today) | Real observed source | Channel | Verify mechanism | Mutable | Fresh-sensitive | Available today? | Required before production trust? |
+|---|---|---|---|---|---|---|---|---|
+| instance identity | config token → `instanceIdentityDigest` | signed instance id / TEE quote | A + B | root-verified signature | immutable | yes | **NO** | YES |
+| image digest | config `imageDigest` | trusted runtime/registry image id | A | signed metadata | immutable | at launch | **NO** | YES |
+| runtime family/version | config `runtimeFamily`/`Version` | runtime metadata | A | signed metadata | immutable | at launch | **NO** | YES |
+| model / mount identity | config `expectedModelDigest`/`modelMountIdentityDigest` | verified read-only mount / signed manifest | A (+B) | content digest + signed manifest | immutable | at launch | **NO** | YES |
+| security profile | config `securityProfileDigest` | observed enforcement | A + B | runtime posture attest | enforced | yes | **NO** | YES |
+| containment policy | config `containmentPolicyDigest` | observed enforcement | A + B | runtime posture attest | enforced | yes | **NO** | YES |
+| egress / network-isolation posture | allowlist config | observed no-route enforcement | A + B | independent probe/attest | enforced | yes | **NO** | YES (if policy depends on it) |
+
+Separate (NOT runtime-observed facts): `taskRunId`/`executionId` = challenge-bound identity (2A);
+`providerId`/`providerBindingDigest` = C2A/routing authority. Every required observed fact currently has an
+expected value but NO credible observation source → production trust remains FAIL CLOSED.
+
+### 10. Image identity
+
+An application's own configured `imageDigest` is NOT sufficient (it is app-owned expected data). Independent
+observation requires the target runtime to expose an immutable image digest / signed deployment metadata /
+container-runtime image ID / externally verifiable artifact identity through a trusted, verification-only
+path. The current substrate exposes none of these independently (only via the mutation-capable Docker/orb
+CLI, rejected by §5). Trust chain absent today.
+
+### 11. Model identity
+
+The delivered architecture requires model/mount identity. Application-readable filesystem model content is
+NOT sufficient: workload code can read/alter it, so it cannot independently prove the exact artifact. A
+credible source requires one of: an external signed artifact manifest, a read-only verified mount attested
+by an independent component, or a content digest verified by a component outside the workload. None exist
+today → model identity remains expected-only.
+
+### 12. Security / containment posture
+
+Must distinguish CONFIGURED policy from OBSERVED enforcement. A config file stating "network disabled" is
+NOT observed enforcement. Independent observation of filesystem isolation, process/namespace, privilege
+level, mount mode, egress policy, and network-namespace/firewall posture would require a trusted external
+inspector or an independently rooted in-instance agent — neither exists today (OrbStack isolation is
+unverified per §1).
+
+### 13. Egress / network-isolation observation
+
+The existing `tools/provider-routing/egress-allowlist-runner` host harness is bounded **validation
+tooling**, not an independent production root; it must NOT be auto-promoted into a root of trust. For
+production, an independent component must prove ACTUAL egress/isolation state (e.g. an out-of-workload
+network-namespace/firewall attestation), not the expected allowlist configuration. No such independent
+production observation source exists today.
+
+### 14. Root verification material
+
+No feasible root exists, so no verification-material set can be finalized. Required posture when a root
+becomes available: prefer PUBLIC (public certificate / public key / CA-root bundle / vendor public
+verification metadata / signed-document validation). Classification discipline for future material:
+`PUBLIC` (preferred) / `CONFIGURATION` / `SECRET` (separate approval boundary, must be justified) /
+`ADMIN/MUTATION` (rejected as a root basis). No actual secret is read now.
+
+### 15. Challenge-protocol binding compatibility
+
+The delivered 2A `ProductionAttestationChallenge` (challengeId/nonce, taskRunId, executionId,
+containmentBindingDigest, providerBindingDigest → `attestationSetId`) requires A and B evidence to
+bind/sign the exact challenge. Feasibility note for the future substrate: many native platform attestations
+(e.g. cloud instance docs, some TEE quotes) cannot carry an arbitrary nonce directly, so a secure binding
+protocol MUST wrap them (e.g. bind the challenge/nonce inside a signed inner statement or a
+freshness-bounded verifier exchange). Anti-replay challenge binding must NOT be silently dropped. This is a
+design requirement for 2C once a substrate/root exists; it cannot be validated now.
+
+### 16. Freshness calibration plan (CALIBRATION_REQUIRED)
+
+No numeric production bound may be chosen now. Before 2C/live enablement, MEASURE (STRICT, live): Channel A
+RTT p50/p95/p99; Channel B RTT p50/p95/p99; combined A+B p99; verification duration; C2A/C2B validation
+duration p99; final pre-commit validation duration; dispatch commit duration p99; post-receipt validity
+needs. Then derive `MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS` (Quoky-local round trip, per B-1 remediation)
+and `MAX_PRODUCTION_ATTESTATION_VALIDITY_MS` (post-receipt validity). Until measured on the real substrate:
+`CALIBRATION_REQUIRED`.
+
+### 17. 2B carry-forward disposition (into 2C / 2D / Live Gate)
+
+| Item | Owner slice |
+|---|---|
+| A. Commit gate created by canonical/issued dispatch coordinator (not arbitrary caller commit fn) | **2D** |
+| B. Production gate binds taskRunId + executionId + capability issuance identity | **2D** |
+| C. `TrustIssuanceRecord.trustDomain` must not be caller/self-described as PRODUCTION | **2C** (structural narrowing) → enforced through **2D** |
+| D. Production capability exact-binds trust record + VerifiedContainmentBinding + attestation set + run/execution/provider + real-root result | **2D** |
+| E. Production challenge failure burns challenge fail-closed | **2C** (protocol) / **2D** (issuance) |
+| F. Production clock composition-owned | **2C** (adapter wiring) / **2D** |
+| G. Expected egress identity from canonical binding/policy | **2C** |
+| H. Production evidence signed/root-verified and immutable/snapshotted | **2C** (real A/B) — depends on real root; **Live Gate** validates |
+| Real Channel B root; real independently-rooted A/B; calibrated freshness | **2C prerequisite** / **Live Gate** |
+
+### 18. 2C implementation eligibility
+
+```text
+2C = NOT ELIGIBLE
+```
+
+Chosen per §16 of the task (option C): the real root, real Channel A source, real Channel B source, A/B
+independence, and the deployment substrate are all unresolved. Not even a "partially eligible" bounded
+read-only adapter sub-slice is justified now, because there is no target substrate to write an adapter
+against (`DEPLOYMENT_SUBSTRATE = UNRESOLVED`) — a substrate-neutral adapter would be speculative and would
+risk baking in a wrong interface. Eligibility is not forced.
+
+### 19. Deployment prerequisites (shortest actionable path to reconsider 2C)
+
+| # | Prerequisite | Expected artifact / interface | Owner |
+|---|---|---|---|
+| P1 | Choose the canonical production/local-continuity runtime substrate | ratified substrate decision (e.g. specific container/VM/cloud platform) | Product Owner + Chief Architect (infrastructure) |
+| P2 | Provision an independent Channel B identity mechanism | TEE/hardware- or control-plane-injected workload identity inaccessible to workload code | infrastructure |
+| P3 | Expose signed, verification-only instance/image/runtime metadata (Channel A) | signed instance/image document + public verification material | infrastructure |
+| P4 | Create a verification-only root/CA bundle for Quoky | public cert/key/CA bundle (no private keys) | infrastructure |
+| P5 | Define an immutable model artifact identity | signed model manifest / verified read-only mount | infrastructure + product |
+| P6 | Define an externally observable egress/isolation posture | out-of-workload network-namespace/firewall attestation | infrastructure |
+| P7 | Confirm A/B independence and Quoky control-plane separation | evidence that no single root/credential forges both A and B, and Quoky holds no runtime mutation authority | Chief Architect review |
+
+Each is INFRASTRUCTURE-owned (not product code) except the model-identity and egress-policy shapes, which
+are shared. 2C is reconsidered only after P1 + P2 + P3 (minimum) are provisioned and P7 passes.
+
+### 20. Live / STRICT boundary
+
+Read-only feasibility (this document) is separate from real validation. Any future action — calling cloud
+metadata, reading a TPM/TEE quote, contacting an attestation service, inspecting a live Docker/container
+runtime, reading a runtime identity document, measuring live RTT, executing a real model/provider, or
+verifying live egress — remains STRICT and requires separate approval. None performed now.
+
+### 21. 2D boundary
+
+R3-B3-2D is NOT designed as implementation-ready (2C did not succeed). 2D still owns: the usable PRODUCTION
+capability; exact trust-record→capability binding; the canonical dispatch-owned commit gate; the
+module-owned real effect adapter; and the production effect path. This feasibility work activates none of
+them.
+
+### 22. R3-C2B-2
+
+Provider-unavailability observation (Kind B) stays independent from containment attestation. Containment
+attestation is not Kind B authority; Kind B is not containment trust. No C2B change.
+
+### 23. R3-C-Rz
+
+NOT AUTHORIZED: no retry, resume, failover, reconciliation, restart continuation, second attempt, or
+post-`DISPATCH_COMMITTED` replay.
+
+### Approval boundary
+
+Architecture + read-only feasibility record only. STRICT GOVERNANCE items remain separately gated. One
+local architecture commit; independent Architecture Review must pass before any next step. No R3-B3-2C
+implementation begins from this document; `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION
+TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY = UNAVAILABLE; 2D NOT ELIGIBLE; Live Gate NOT AUTHORIZED;
+R3-C-Rz NOT AUTHORIZED.
