@@ -5,6 +5,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## R3-B3-2 Real Production Attestation architecture (docs only) — 2026-09-29
+
+- Add the ADR-0090 amendment "R3-B3-2 Real Production Attestation architecture (STRICT / live boundary)" to
+  `DECISIONS.md`, designing the real production attestation that can eventually supply the independent trust
+  facts R3-B3-1 deliberately lacks, without weakening containment identity/provenance, the C2A/C2B/C2C chain,
+  PRE_DISPATCH → single dispatch CAS → single effect, or fail-closed behavior. Source-verified at exact main
+  `2a57161859f73f3d4f978e825706a64f58db2c93`: all containment identity digests are expected/configured
+  inputs (never observed); fixed verifier roles A=EXTERNAL_RUNTIME_INSTANCE_INSPECTION,
+  B=IN_INSTANCE_SELF_CHECK exist; production trust/provenance/capability seams all fail closed;
+  `trustIssuanceRecord` is loose and `singleUse` is type-only; C2C `dispatchCommit.commit` is the sole
+  consumption linearization point; production activation rejects `localContinuity`
+  (`TEST_LOCAL_CONTINUITY_FORBIDDEN`); and no real Docker/container/cgroup/proc/TPM/IMDS/attestation source
+  exists in Core or adapters.
+- REAL TRUST ROOT decision: `NO_FEASIBLE_REAL_TRUST_ROOT_YET` — no viable production trust root exists inside
+  the current product. Chosen category (prerequisite, external): a future trusted-runtime-supplied,
+  application-inaccessible container/instance identity plus a verification-only external attestation, owned by
+  the contained-runtime deployment boundary (not Core) and verified by Quoky without holding signing secrets.
+  Caller `trusted=true`, bare env strings, WeakSet issuance alone, application-derived config digests, and
+  self-signed claims are explicitly rejected as roots.
+- Define Channel A (external runtime/instance inspection) and Channel B (in-instance self-check) with a
+  failure-domain independence invariant (distinct processes/evidence sources/signers, one component may not
+  issue both roles, binding proves source kind — not merely distinct version/provenanceId); an
+  expected-vs-observed fact table with per-fact comparison and mismatch codes; a new bounded
+  `ProductionAttestationEvidence` family binding role + evidence-source-kind + exact run/instance identity +
+  freshness to prevent cross-run/instance/provider replay and A/B swapping; mandatory freshness (monotonic
+  `observedAt`, `expiresAt = observedAt + MAX_PRODUCTION_ATTESTATION_WINDOW_MS`, A/B overlap, recheck
+  immediately before dispatch CAS) with the bound left for calibration (not invented now); the async/TOCTOU
+  ordering (attestation prep → C2A/C2B validation → synchronous final revalidation → dispatch CAS → effect,
+  no stale attestation crossing the CAS); production provenance derived only from a root-issued verifier +
+  issued trust-issuance record (`provenanceDigest` stays determinism/integrity, not authenticity); exact
+  binding to the VerifiedContainmentBinding object identity; structural single-use via a module-private
+  consumed-capability WeakSet CAS separate from the dispatch CAS (`CAPABILITY_ALREADY_CONSUMED`); a real
+  production capability issuer requiring all of the above; and a MODULE-OWNED contained-runtime effect
+  adapter behind a Core port (issued, never injected; absent today → `PRODUCTION_EFFECT_UNAVAILABLE`).
+- Keep one `PreparedContainmentExecution` abstraction (`requireCapabilityKind('PRODUCTION')`); keep the
+  production activation gate closed (`TEST_LOCAL_CONTINUITY_FORBIDDEN`) until every prerequisite passes;
+  define the fail-closed failure model mapping to existing codes where correct and marking NEW codes
+  explicitly; process-local issuance does not survive restart; no post-`DISPATCH_COMMITTED` continuation.
+  Disposition carry-forwards: loose `trustIssuanceRecord` and type-only `singleUse` become BLOCKING for
+  production; unavailable-verifier TEST-stamp and the `issuedInstances` gap remain NON-BLOCKING. Recommend
+  decomposition R3-B3-2A (evidence contracts + Channel A/B ports + fakes, network/runtime-free), R3-B3-2B
+  (production provenance + issuer + structural single-use, network/runtime-free), R3-B3-2C (module-owned
+  effect adapter), and an R3-B3-2 Live Gate (STRICT live attestation + UAT).
+- R3-C2B-2 (production Provider-unavailability observation) is kept separate and unmodified; R3-C-Rz remains
+  NOT AUTHORIZED. Architecture is not approved by docs alone — independent Claude Architecture Review is
+  required before any implementation. Documentation only: no source, test, schema, runtime, container,
+  provider, network, secret, or DB changes. One local architecture commit; no Push/PR/Merge. ADR-0090 remains
+  Proposed; `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION TRUST CHECK = FAIL CLOSED; REAL
+  PRODUCTION CONTAINED EXECUTION = UNREACHABLE.
+
 ## R3-B3-1 implementation and combined exact-HEAD review (local; delivery pending) — 2026-09-29
 
 - Implemented network/runtime-free production-trust plumbing at
