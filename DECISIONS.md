@@ -13432,10 +13432,11 @@ Inspected `packages/core/src/application/continuation-prepared-containment.ts`,
 - `VerifiedContainmentBinding` carries `executionContext` (executionId/taskRunId/containmentPolicyId/
   Version/Digest/runtimeFamily/runtimeVersion/modelMountIdentityDigest), `providerId`,
   `providerBindingDigest`, `securityProfileId/Digest`, `instanceIdentityDigest`, `expectedModelId/Digest`,
-  `imageDigest`, both channel verifier versions + result digests, a durable `provenance`
+  `imageDigest`, both channel verifier versions + result digests, a serializable `provenance`
   (`VerifiedContainmentProvenance { trustDomain, channelAProvenanceId, channelBProvenanceId,
-  provenanceDigest }`), and `containmentBindingDigest`. **All identity digests are EXPECTED/CONFIGURED
-  inputs** — `instanceIdentityDigest` is `sha256` over an opaque adapter-supplied token
+  provenanceDigest }` — serializable metadata, NOT durable/persistent trust authority; see the R3-B3-2
+  remediation §Production provenance below), and `containmentBindingDigest`. **All identity digests are
+  EXPECTED/CONFIGURED inputs** — `instanceIdentityDigest` is `sha256` over an opaque adapter-supplied token
   (`createContainmentInstanceIdentity`), not an observed runtime fact.
 - `ProductionContainedCapabilityContract` has `trustIssuanceRecord: object` (loose) and `singleUse: true`
   (type-level only; no runtime enforcement).
@@ -13799,3 +13800,239 @@ activation). One local architecture commit; independent Architecture Review must
 No R3-B3-2 implementation begins from this document. `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`;
 PRODUCTION TRUST CHECK = FAIL CLOSED; REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE; R3-C-Rz = NOT
 AUTHORIZED.
+
+## ADR-0090 amendment — R3-B3-2 remediation (challenge-bound attestation, mandatory independence, safe decomposition)
+
+- **Status:** Proposed — architecture remediation only. Independent Architecture exact-HEAD re-review
+  (Claude) pending; grants no implementation/activation/runtime/container/provider/model/network/secret/DB/
+  execution authority. Delivers no code. **`REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION
+  TRUST = FAIL CLOSED; REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE.**
+- **Date:** 2026-09-29
+- **Branch / base:** `kiro/r3b3-2-real-production-attestation-architecture`. Corrects the accepted
+  CHANGES_REQUIRED blockers B-1..B-4 against the reviewed R3-B3-2 amendment above. PRESERVES the reviewed
+  commit `0c47756ca99f093ba4dc01c8a4d9b489761e245d` UNAMENDED and adds exactly ONE remediation commit atop
+  it. Expected lineage `2a57161…` → `0c47756…` → `<REMEDIATION_SHA>`. No Push/PR/Merge; no
+  runtime/container/provider/model/network; no secret read; no R3-C-Rz. No R3-B3-2 implementation sub-slice
+  is authorized until this remediation passes review. This remediation SUPERSEDES the reviewed §8 (freshness
+  clock), §9 (TOCTOU), §12 (single-use as a "second CAS"), §20 (restart reuse), §24 (decomposition), and the
+  §5 "where achievable" independence wording.
+
+### B-1 — cross-process freshness / clock model (CLOSED)
+
+REMOVED: any comparison of an external verifier's monotonic timestamp with Quoky's monotonic clock —
+external monotonic origins are incomparable. FINAL model is challenge-bound:
+
+```text
+ProductionAttestationChallenge {
+  challengeId / nonce
+  taskRunId
+  executionId
+  containmentBindingDigest
+  providerBindingDigest
+  issuedAtLocalMonoMs        // Quoky's own monotonic clock
+}
+```
+
+Quoky issues a UNIQUE per-attestation challenge; BOTH Channel A and Channel B evidence MUST include and
+sign/bind the exact same challenge. Quoky records `beforeMono → issue challenge / send requests → receive
+A/B evidence → verify signatures / source roles / challenge → afterMono`. Freshness is defined ONLY on
+Quoky's own clock: `afterMono - beforeMono <= MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS`. The numeric bound
+is NOT chosen now (see Freshness calibration). Evidence-source timestamps may exist ONLY for audit and
+signer-policy checks — they are NOT the canonical freshness clock. Canonical `observedAt`/currentness for
+Quoky is derived from verified receipt inside the challenge round-trip window.
+
+**Attestation set identity.** A and B must form ONE exact attestation set. Add `attestationSetId` = a
+digest/challenge identity over `{ challenge nonce, exact taskRunId/executionId, containmentBindingDigest,
+providerBindingDigest }`. Both A and B evidence must bind the SAME set. FORBIDDEN: A from challenge X + B
+from challenge Y; A refreshed alone paired with old B; role swapping; evidence reuse across runs/providers.
+A/B overlap means **both evidence records are responses to the same challenge and both verify inside the
+same bounded Quoky round-trip window** — no separate vague "overlapping windows."
+
+**Restart semantics.** REMOVED: "pre-restart external attestation evidence may be reused if still fresh."
+After a Quoky restart: old process-local attestation-set issuance is INVALID; old challenge is INVALID; a
+NEW challenge is mandatory; A and B evidence must be freshly obtained again. A restarted process may only
+attest a NEW first-run execution that is still PRE_DISPATCH; it MUST NOT resume or re-mint authority for a
+pre-restart run as a recovery mechanism. If the run is DISPATCH_COMMITTED → R3-C-Rz only.
+
+### B-2 — single-use / linearization (CLOSED)
+
+FINAL invariant: `dispatchCommit.commit(taskRunId, executionId)` remains the **SOLE AUTHORITATIVE EXECUTION
+LINEARIZATION POINT.** The capability-consumed guard is NOT a second CAS or second authoritative
+linearization point — it is only an in-process fail-closed guard. Conceptual final no-await sequence:
+
+```text
+final C2A/C2B currentness checks
+ -> exact provider/binding checks
+ -> attestation-set currentness checks
+ -> production capability authenticity check
+ -> synchronous capability-consumed guard check-and-set   (in-process guard, NOT authoritative CAS)
+ -> await dispatchCommit.commit(...)                        (SOLE authoritative linearization)
+ -> mark module-private committedFor(run/capability)
+ -> exact effect
+```
+
+No unrelated await between the final synchronous checks and the dispatch commit call.
+
+**Capability guard failure semantics.** If the in-process consumed guard is marked and dispatch commit
+FAILS/throws: the capability remains consumed in this process; the effect does NOT execute; NO automatic
+reissue; NO automatic retry; same-run retry/recovery is R3-C-Rz only. On process crash: the in-process
+guard disappears; the durable TaskRun dispatch state remains the source of truth; PRE_DISPATCH does NOT
+automatically mean "retry allowed"; any restart/retry semantics remain R3-C-Rz. No reconciliation is
+invented.
+
+**Commit-gated `execute()`.** Today `PreparedContainmentExecution.execute()` is callable independently of
+the coordinator. For PRODUCTION execution, require a structural module-private gate `committedFor(runId,
+capabilityIssuanceId)` created ONLY after a successful `dispatchCommit.commit(...)`. Production `execute`
+must require: a valid production capability + matching exact binding + a matching `committedFor` gate. A
+caller possessing only the capability MUST NOT be able to execute before commit. This is NOT enabled in
+R3-B3-2A/B; it is a required production integration invariant for later (2D) implementation.
+
+### B-3 — safe implementation decomposition (CLOSED)
+
+REPLACES the reviewed §24. FINAL:
+
+```text
+R3-B3-2A = ATTESTATION CONTRACTS ONLY (network/runtime-free)
+  MAY: ProductionAttestationChallenge type; attestationSetId; closed evidenceSourceKind types;
+       Channel A/B evidence contracts; signer/provenance identity fields; challenge-binding validation;
+       deterministic fake TEST evidence; fail-closed parser/validator tests.
+  MUST NOT: produce PRODUCTION provenance; issue production trust; issue production capability.
+
+R3-B3-2B = FAIL-CLOSED TRUST / BINDING PLUMBING (network/runtime-free)
+  MAY: non-forgeable trustIssuanceRecord type; exact-binding checks; attestation-set binding;
+       structural capability-consumed guard; commit-gated execution contract/seam; production trust
+       requirement seam that remains UNAVAILABLE; production capability issuer seam that remains
+       UNAVAILABLE; failure-code cleanup/hardening.
+  MUST NOT: make fake A/B evidence production-eligible; mint usable PRODUCTION capability; install real
+       trust root.
+
+R3-B3-2C = REAL TRUST ROOT + REAL A/B ADAPTER INTEGRATION (runtime/read-only; likely STRICT)
+  REQUIRES: actual deployment/runtime attestation source; actual root/public verification material;
+       real Channel A adapter; real Channel B adapter; calibrated freshness bound; independently observed
+       facts. Still NO automatic production activation.
+
+R3-B3-2D = PRODUCTION CAPABILITY + MODULE-OWNED EFFECT INTEGRATION
+  REQUIRES: real trust root and A/B already delivered; exact production provenance; module-owned issued
+       effect adapter; commit-gated execution; structural single-use.
+
+R3-B3-2 LIVE GATE = STRICT Live UAT / production validation (separate approval).
+```
+
+Until 2C/2D: usable PRODUCTION capability = UNAVAILABLE.
+
+### B-4 — dual-channel independence (CLOSED)
+
+REMOVED all "where achievable" weakening from mandatory production independence. FINAL minimum production
+invariant: **NO SINGLE key / root / component / credential / signing authority / workload-accessible secret
+may be sufficient to create valid A AND valid B evidence.** Channel A =
+`EXTERNAL_RUNTIME_INSTANCE_INSPECTION`; Channel B = `IN_INSTANCE_SELF_CHECK`. Both evidence sources must be
+independently rooted. Quoky application code MUST NOT possess signing authority for either channel;
+contained workload code MUST NOT possess signing authority for both channels. If one platform root/signing
+credential can forge BOTH A and B → production trust = FAIL CLOSED. Vendor/hardware separation beyond this
+is optional strengthening (not a weakening escape).
+
+**Channel B root.** State explicitly: **NO credible Channel B production root exists today.** An
+in-instance self-check is trustworthy only if its signing/identity mechanism is inaccessible to ordinary
+workload code and independently rooted from Channel A. Until such a mechanism exists, Channel B production
+evidence = UNAVAILABLE and production trust remains FAIL CLOSED.
+
+**Control-plane credential rule (mandatory).** Quoky MUST NOT hold runtime control-plane write/admin
+credentials that would let it forge the attested state — e.g. Docker socket / root-equivalent control,
+container-runtime admin API, deployment mutation credential, attestation signer private key. Prefer
+verification-only public material. If Quoky can mutate the runtime it is attesting, that evidence CANNOT
+serve as an independent production trust root.
+
+### Attestation evidence fields
+
+Bounded conceptual evidence model must include at least: `challengeId`/nonce; `attestationSetId`;
+`verifierRole`; `evidenceSourceKind` (CLOSED values per role — no adapter-defined arbitrary source
+strings); `taskRunId`; `executionId`; `containmentBindingDigest`; `providerBindingDigest`; instance
+identity; observed image identity; observed runtime identity; observed model/mount identity; observed
+security/containment posture; signer/verifier provenance identity; evidence integrity/signature material
+reference; optional source timestamp (audit only). No secrets.
+
+### Expected vs observed cleanup
+
+Corrected: `taskRunId`/`executionId` = challenge-bound identity, NOT an independently observed runtime
+fact. `providerId`/`providerBindingDigest` = C2A/routing/binding authority fact, NOT an
+attestation-observed Provider fact. ADD: egress/network-isolation posture = a REQUIRED observed containment
+fact if the production containment policy depends on it. **No required attestation fact may remain
+expected-only at production enablement.**
+
+### Freshness calibration
+
+Do NOT set the numeric bound yet. Mandatory measurements BEFORE 2C/live enablement: Channel A attestation
+RTT p95/p99; Channel B attestation RTT p95/p99; combined A/B round-trip p99; C2A/C2B validation duration
+p99; final pre-commit verification duration; dispatch commit duration p99; clock/skew properties ONLY if
+external wall-clock timestamps are used for signer policy. Then ratify
+`MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS` before usable production trust is enabled.
+
+### TOCTOU final revalidation
+
+After the final awaited operation, revalidate SYNCHRONOUSLY: challenge / attestationSet identity; exact A
+role/source; exact B role/source; A/B freshness/currentness; exact `VerifiedContainmentBinding` identity;
+`containmentBindingDigest`; `providerBindingDigest`; taskRun/execution; TaskRun still PRE_DISPATCH;
+production capability authenticity; consumed guard unused. Then: no unrelated await → dispatch CAS → commit
+gate → effect.
+
+### Production provenance
+
+Production provenance authenticity must derive from: the verified exact challenge; verified A evidence;
+verified B evidence; the real root-verification result; and a process-local issued `trustIssuanceRecord`.
+`provenanceDigest` remains deterministic/integrity metadata ONLY — it is NOT authenticity. Add
+`attestationSetId` to the exact production provenance/binding. (Serializable provenance metadata ≠ trust
+authority; the reviewed source-facts "durable provenance" wording is corrected accordingly above.)
+
+### Module-owned effect adapter — 2C/2D requirement
+
+Before a usable production effect, the contained-runtime effect adapter ITSELF must be issued/authenticated.
+FORBIDDEN: `issueProductionCapability(binding, adapter)` with an arbitrary caller adapter. Requirement: the
+production runtime adapter is created by a MODULE-OWNED factory, registered/issued through private
+authenticity state, bound to the exact attested instance, and bound to the expected model digest/provider
+binding; the public capability issuer accepts NO arbitrary adapter argument. Until such an adapter exists →
+`PRODUCTION_EFFECT_UNAVAILABLE`.
+
+### PreparedContainmentExecution
+
+Keep ONE abstraction. Future PRODUCTION execution requires: `requireCapabilityKind(PRODUCTION)` + exact
+production issuance record + exact attestation set + currentness + consumed-guard state + a successful
+`committedFor` gate. Kind alone is NOT sufficient.
+
+### Failure model cleanup
+
+Keep these DISTINCT (do not collapse invalid/unavailable/role-mismatch unless current source semantics
+genuinely require it): `ATTESTATION_CHANNEL_A_UNAVAILABLE`, `ATTESTATION_CHANNEL_A_INVALID`,
+`ATTESTATION_CHANNEL_B_UNAVAILABLE`, `ATTESTATION_CHANNEL_B_INVALID`, `CHANNEL_ROLE_MISMATCH`,
+`ATTESTATION_STALE`, `ATTESTATION_SET_MISMATCH` (NEW), `CHALLENGE_MISMATCH` (NEW),
+`CAPABILITY_ALREADY_CONSUMED` (NEW), `PRODUCTION_EFFECT_UNAVAILABLE` (NEW). Decide before 2A implementation
+whether `PROVIDER_BINDING_MISMATCH` reuses an existing semantically-correct code or is NEW (do not assume it
+exists). NEW codes are marked NEW and must be added in implementation.
+
+### Carry-forward promotion
+
+REQUIRED BEFORE USABLE PRODUCTION CAPABILITY: `trustIssuanceRecord` must become concrete/non-forgeable;
+`singleUse` must be structurally enforced; verifier role/source must be issuer-bound (not an arbitrary
+structural channel); freshness must be calibrated; capability error-code direction must be corrected; the
+production issuer must validate exact issued-instance membership / observed instance identity. The
+unavailable-verifier TEST stamp MAY be fixed in 2A.
+
+### Activation gate
+
+Production activation remains CLOSED. `TEST_LOCAL_CONTINUITY_FORBIDDEN` remains until ALL of: R3-B3-2C real
+root delivered; real Channel A delivered; real Channel B delivered; calibrated freshness bound ratified;
+R3-B3-2D production capability/effect delivered; commit-gated `execute` invariant verified; C2B production
+observation available; Live Gate PASS; explicit production activation approval.
+
+### Replay / R3-C-Rz
+
+No restart reuse of old challenge/evidence. No same-run automatic re-mint after process restart. No
+automatic capability reissue after commit failure. No retry, resume, reconcile, failover, second execution,
+or post-`DISPATCH_COMMITTED` replay. All such behavior remains R3-C-Rz.
+
+### Approval boundary
+
+Architecture remediation record only. STRICT GOVERNANCE items remain separately gated. One local
+remediation commit atop `0c47756…` (reviewed commit not amended); independent Architecture exact-HEAD
+re-review must pass before Push/PR/Merge. No R3-B3-2 implementation (including 2A/2B) begins from this
+document. `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION TRUST CHECK = FAIL CLOSED; REAL
+PRODUCTION CONTAINED EXECUTION = UNREACHABLE; R3-C-Rz = NOT AUTHORIZED.

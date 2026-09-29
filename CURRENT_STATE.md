@@ -5,6 +5,64 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### R3-B3-2 — Remediation: challenge-bound attestation, mandatory independence, safe decomposition (2026-09-29)
+
+**ARCHITECTURE REMEDIATION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
+`kiro/r3b3-2-real-production-attestation-architecture`. `DECISIONS.md` carries the ADR-0090 amendment
+"R3-B3-2 remediation (challenge-bound attestation, mandatory independence, safe decomposition)", closing the
+accepted CHANGES_REQUIRED blockers B-1..B-4 against the reviewed R3-B3-2 entry below. The reviewed commit
+`0c47756ca99f093ba4dc01c8a4d9b489761e245d` is PRESERVED UNAMENDED; exactly one remediation commit is added
+atop it (lineage `2a57161…` → `0c47756…` → remediation). `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`;
+PRODUCTION TRUST = FAIL CLOSED; REAL PRODUCTION CONTAINED EXECUTION = UNREACHABLE. **B-1 (freshness/clock):**
+removed comparing an external monotonic timestamp with Quoky's clock (incomparable origins); freshness is
+challenge-bound — Quoky issues a unique `ProductionAttestationChallenge` (nonce/taskRun/execution/
+containmentBindingDigest/providerBindingDigest/issuedAtLocalMonoMs) that BOTH A and B must bind/sign, and
+`afterMono - beforeMono <= MAX_PRODUCTION_ATTESTATION_ROUND_TRIP_MS` on Quoky's own clock defines
+currentness; external timestamps are audit-only. A+B form ONE `attestationSetId`; no cross-challenge pairing,
+no lone refresh, no role swap, no cross-run/provider reuse; "overlap" = same challenge + same round-trip
+window. Restart: old challenge/attestation-set issuance INVALID; a new challenge and fresh A/B are mandatory;
+a restarted process may only attest a NEW PRE_DISPATCH first run, never resume/re-mint a pre-restart run
+(DISPATCH_COMMITTED → R3-C-Rz). **B-2 (single-use/linearization):** `dispatchCommit.commit(taskRunId,
+executionId)` remains the SOLE authoritative execution linearization point; the capability-consumed guard is
+only an in-process fail-closed guard (not a second CAS). Commit failure → capability stays consumed, no
+reissue/retry (R3-C-Rz); crash → in-process guard gone, durable TaskRun state is source of truth, no invented
+reconciliation. Commit-gated `execute()`: production `execute` requires a module-private `committedFor(runId,
+capabilityIssuanceId)` created only after successful commit, plus valid capability + exact binding; a caller
+holding only the capability cannot execute before commit (required 2D invariant, not enabled in 2A/2B).
+**B-3 (decomposition):** replaced with R3-B3-2A (attestation contracts only, network/runtime-free — no
+production provenance/trust/capability), R3-B3-2B (fail-closed trust/binding plumbing incl. non-forgeable
+`trustIssuanceRecord`, structural consumed guard, commit-gated seam, unavailable production seams,
+network/runtime-free), R3-B3-2C (real trust root + real A/B adapters, runtime/read-only/STRICT), R3-B3-2D
+(production capability + module-owned effect), and a STRICT Live Gate; usable PRODUCTION capability
+UNAVAILABLE until 2C/2D. **B-4 (independence):** removed all "where achievable" — mandatory invariant that no
+single key/root/component/credential/signing-authority/workload-accessible secret can create valid A AND B;
+both independently rooted; Quoky app code holds no signing authority for either channel; workload code holds
+none for both; if one root can forge both → FAIL CLOSED. Channel B root: none credible today → Channel B
+production evidence UNAVAILABLE → production FAIL CLOSED. Control-plane credential rule: Quoky must not hold
+runtime control-plane write/admin credentials (Docker socket, container-runtime admin, deployment mutation,
+signer private key); verification-only public material preferred; if Quoky can mutate the attested runtime,
+that evidence cannot be an independent root. Evidence fields expanded (challenge/set/role/closed
+evidenceSourceKind/run/binding/provider/instance/observed image-runtime-model-posture/signer provenance/
+integrity ref; no secrets). Expected-vs-observed corrected (taskRun/execution = challenge-bound identity, not
+observed; provider facts = C2A authority, not attestation-observed; egress/network-isolation posture is a
+required observed fact if policy depends on it; no required fact stays expected-only at enablement).
+Freshness bound left for calibration (A/B RTT p95/p99, combined p99, C2A/C2B/pre-commit/dispatch durations)
+before 2C/live. TOCTOU final synchronous revalidation enumerated before dispatch CAS → commit gate → effect.
+Production provenance derives from verified challenge + A + B + real-root result + process-local issued
+`trustIssuanceRecord`; `provenanceDigest` is integrity, not authenticity; `attestationSetId` added.
+Module-owned effect adapter must itself be module-issued/authenticated (no arbitrary caller adapter) →
+`PRODUCTION_EFFECT_UNAVAILABLE` until delivered. Failure model keeps A/B unavailable-vs-invalid, role
+mismatch, stale, `ATTESTATION_SET_MISMATCH`/`CHALLENGE_MISMATCH`/`CAPABILITY_ALREADY_CONSUMED`/
+`PRODUCTION_EFFECT_UNAVAILABLE` distinct (NEW marked). Carry-forward promotion: concrete `trustIssuanceRecord`,
+structural `singleUse`, issuer-bound verifier role/source, calibrated freshness, corrected capability
+error-code direction, and issued-instance/observed-identity membership become REQUIRED before usable
+production capability; the unavailable-verifier TEST stamp may be fixed in 2A. Activation gate keeps
+`TEST_LOCAL_CONTINUITY_FORBIDDEN` until all prerequisites + Live Gate PASS + explicit approval. Doc cleanup:
+reviewed source-facts "durable provenance" wording corrected to serializable metadata (not trust authority).
+R3-C-Rz remains NOT AUTHORIZED. Docs-only: no source/test/schema/runtime/container/provider/network/secret/DB
+changes. ADR-0090 remains Proposed; independent Claude exact-HEAD re-review required before any
+implementation (including 2A/2B).
+
 ### R3-B3-2 — Real Production Attestation architecture (STRICT / live boundary) (2026-09-29)
 
 **ARCHITECTURE / TASK-DEFINITION ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED.** Branch
