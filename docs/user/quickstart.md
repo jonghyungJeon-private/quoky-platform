@@ -1,12 +1,14 @@
-# Quoky Personal v1 빠른 시작
+# Quoky Personal 빠른 시작 (v1 + v2)
 
 이 문서는 **한 명의 소유자(owner)** 가 자기 컴퓨터에서 Quoky를 Discord 봇으로 돌려 일상 대화, 기억,
-로컬 코드 수정 흐름을 쓰는 방법을 설명합니다. 이 문서의 모든 환경 변수, 문구, 안내 메시지는 소스에 실제로
+알림, 할 일과 업무 조회, 피드백, 코드 수정과 (선택) push/PR 흐름을 쓰는 방법을 설명합니다. 이 문서의 모든 환경 변수, 문구, 안내 메시지는 소스에 실제로
 존재하는 값입니다 (`.env.example`, `apps/quoky/src/config.ts`, `apps/quoky/src/bootstrap-preflight.ts`,
 `packages/core/src/application/`).
 
-> Quoky Personal v1은 단일 소유자용입니다. 팀/호스팅 사용, GitHub push/PR/merge 자동화는
-> 이번 릴리스 범위가 아닙니다 (Personal v2 웨이브 1-4에서 여러 파일/새 파일 변경 세트가 추가됨; 아래 로컬 코드 수정 흐름 참고) (`ROADMAP.md`의 "Deferred from Personal v1" 참조).
+> Quoky Personal은 단일 소유자용입니다. 팀/호스팅 사용은 범위가 아닙니다. Personal v2에서 알림, 피드백, 할 일/업무
+> 조회, 여러 파일/새 파일 변경, 브랜치 명령, 선택형 push → PR 흐름이 추가됐습니다 (8절). **머지와 배포는 기본으로
+> 꺼져 있고 배포/릴리즈는 하지 않습니다.** 운영자용 설정(GitHub App 권한, 커넥터 자격 증명 등)은
+> [`docs/uat/operator-guide.md`](../uat/operator-guide.md)를 보세요.
 
 ## 1. 준비물
 
@@ -131,18 +133,18 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_OLLAMA_ENABLED` | 선택. `true`(기본) / `false` 정확히 이 두 값만 |
 | `OLLAMA_MODEL` | 선택. 기본 `llama3.1` |
 | `QUOKY_CLAUDE_MODEL` | 선택. 기본 `sonnet` |
-| `QUOKY_GIT_REMOTE_ENABLED` | 선택. 기본 `false`. 7절의 "원격 git" 참고 |
+| `QUOKY_GIT_REMOTE_ENABLED` | 선택. 기본 `false`. `true`면 push → PR 흐름 사용 가능 (8절 "push와 PR" 참고). 운영자 설정은 운영자 가이드 참고 |
 | `QUOKY_CONTEXT_MAX_TOKENS` | 선택. 대화 한 턴에 넣는 기억/문맥의 추정 토큰 예산. 기본 6000, 최대 200000 |
-| `QUOKY_GIT_MERGE_ENABLED` | 선택. 기본 `false`. `true`는 `QUOKY_GIT_REMOTE_ENABLED=true`가 필요 (아니면 `GIT_MERGE_REQUIRES_REMOTE`로 시작 실패). 값을 읽기만 하며 머지는 별도 승인 단계 |
-| `QUOKY_WORK_SUMMARY_ENABLED` | 선택. 기본 `true`. 업무 조회 요약 기능이 들어오면 사용. Ollama가 준비되지 않으면 요약이 Claude로 갈 수 있어 사내 커넥터 텍스트가 구독을 통해 이 컴퓨터 밖으로 나갈 수 있음. 정책상 불가하면 `false` |
-| `QUOKY_REMINDERS_ENABLED` | 선택. 기본 `false`. 알림 기능 켜기 (현재 소스에서는 값만 읽고, 대화 연결은 이후 웨이브) |
+| `QUOKY_GIT_MERGE_ENABLED` | 선택. 기본 `false`. `true`는 `QUOKY_GIT_REMOTE_ENABLED=true`가 필요 (아니면 `GIT_MERGE_REQUIRES_REMOTE`로 시작 실패). 머지는 별도 승인 단계이며 기본은 꺼짐. `PR 머지해줘`는 꺼져 있으면 "병합은 이 설정에서 꺼져 있어요"로 거절 |
+| `QUOKY_WORK_SUMMARY_ENABLED` | 선택. 기본 `true`. 업무 조회 결과를 모델이 요약(항목이 있을 때). Ollama가 준비되지 않으면 요약이 Claude로 갈 수 있어 사내 커넥터 텍스트가 구독을 통해 이 컴퓨터 밖으로 나갈 수 있음. 정책상 불가하면 `false` |
+| `QUOKY_REMINDERS_ENABLED` | 선택. 기본 `false`. 알림 기능 켜기. 꺼져 있으면 알림 문구에 "알림 기능이 꺼져 있어요. 켠 뒤에 다시 요청해 주세요."라는 고정 답만 나가고 알림은 전달되지 않음 |
 | `QUOKY_REMINDERS_CHANNEL_DELIVERY` | 선택. 기본 `false` = 알림은 소유자 DM으로만 전달. **`true`면 알림을 만든 채널에 보내므로 그 채널의 모든 멤버가 알림 내용을 읽을 수 있음.** 알림이 꺼져 있으면 효과 없음. 일일 브리핑은 항상 DM |
 | `QUOKY_TIMEZONE` | 선택. 기본 `Asia/Seoul`. IANA 시간대, 잘못된 값은 시작 실패 |
 | `QUOKY_EMBEDDING_ENABLED` | 선택. 기본 `false`. `true`면 기억 회상을 **로컬** Ollama 임베딩으로 재정렬 (실패하면 기존 방식). 모델은 자동으로 받지 않음: 먼저 `ollama pull nomic-embed-text` |
 | `QUOKY_EMBEDDING_MODEL` | 선택. 기본 `nomic-embed-text`. 이름 또는 태그에 `cloud`가 들어가면 거부 |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000 |
 
-`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들은 빈 값(예:
+`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`)은 빈 값(예:
 `QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
 주석 처리하세요.
 
@@ -261,15 +263,52 @@ pnpm dev
 > 신뢰하지 않는 프로젝트나 테스트 스크립트가 위험한 저장소는 등록하지 마세요. 부정문("테스트 실행하지 마")은 실행으로
 > 해석되지 않습니다.
 
-### 원격 git은 기본 비활성
+### Personal v2 기능 (문구 모음)
 
-- push, 원격 읽기, `main` 동기화, 머지 후 브랜치 정리는 `QUOKY_GIT_REMOTE_ENABLED=false`(기본)에서 git 프로세스나
-  자격 증명을 쓰기 전에 거절됩니다. 적용 후 `푸시해줘`를 보내면 "원격 git 작업(push 등)은 Personal v1에서 꺼져
-  있어요…" 안내와 함께 로컬 커밋 문구(`커밋해줘`)를 알려 줍니다.
-- `main`/`master`(또는 detached HEAD)에서의 커밋은 설정과 상관없이 항상 거절됩니다. 먼저 기능 브랜치로
-  체크아웃하세요.
-- `QUOKY_GIT_REMOTE_ENABLED=true`로 바꿔도 승인 절차는 우회되지 않습니다. Personal v1의 acceptance 범위에는
-  push/PR/merge가 포함되지 않습니다.
+아래 문구는 모두 소스의 문법/핸들러에서 확인한 것입니다. 일부는 켜야 동작합니다(표의 "필요").
+
+| 기능 | 보낼 말 (예) | 필요 | 결과 |
+|---|---|---|---|
+| 알림 만들기 | `1분 뒤에 스트레칭 알려줘`, `내일 오전 9시에 회의 준비 알려줘`, `매일 오전 8시에 오늘 할 일 알려줘` | `QUOKY_REMINDERS_ENABLED=true` | "오후 10:08에 '스트레칭' 알려드릴게요 (#1 · 취소: '알림 1 취소')". 기본으로 소유자 DM으로 전달. 최소 1분 뒤부터, 본문 200자, 활성 알림 50개까지 |
+| 알림 목록/취소 | `알림 목록`, `알림 1 취소` | 위와 같음 | 예정된 알림 보기, 하나씩 취소 |
+| 정보 질문은 알림 아님 | `내일 9시에 뭐 있어? 알려줘` | - | 알림이 만들어지지 않고 대화로 감 (일정은 볼 수 없다고 답함) |
+| 할 일 추가 | `할 일 추가: 보고서 초안 쓰기` | - | 로컬 할 일 목록에 추가. 내용에 시간 표현이 있어도 할 일이며(`할 일 추가: 내일 9시에 회의 알려줘`), 알림은 설정하지 않았다고 알려 줌 |
+| 할 일 보기 | `내 할 일 보여줘`, `할 일 목록` | - | 번호가 붙은 목록. Jira/GitHub 식별자가 설정돼 있으면 그 항목도 함께 (아니면 계정 정보(identity)가 설정되어 있지 않다는 안내) |
+| 할 일 완료/취소 | `완료 처리: 2`, `할 일 취소: 1` | - | 번호로 처리. 없는 번호는 아무것도 바꾸지 않음. 자연 문장(`보고서 쓰기 완료`)은 바꾸지 않고 `완료 처리: N` 사용을 안내 |
+| 할 일 연결 | `할 일 연결: 1 Jira ABC-1` | - | 링크만 기록하고 외부 시스템은 조회/변경하지 않음 |
+| 업무 조회 (읽기 전용) | `내 Jira 이슈 보여줘`, `GitHub 리뷰 요청 보여줘`, `Slack에서 배포 검색` | 커넥터 자격 증명 (운영자 가이드) | 읽기 전용 조회. 항목이 있으면 모델 요약이 붙을 수 있음 (`QUOKY_WORK_SUMMARY_ENABLED=false`면 목록만). 쓰기(이슈 생성 등)는 하지 않음 |
+| 피드백 | 봇 답장에 👍/👎 반응 (소유자만), 반응 제거 = 철회 | - | 로컬에 기록 (메시지 내용은 저장하지 않음) |
+| 피드백 요약 | `피드백 요약` (정확히 이 문구) | - | 최근 30일 집계 (일반 대화, 위험 민감 대화 등 한국어 라벨). 읽기 전용 |
+| 그래도 보내줘 | `그래도 보내줘` | 비밀 값처럼 보이는 파일이 대상일 때 | 위 "그래도 보내줘" 설명 참고. 한 번만 유효 |
+| 브랜치 | `브랜치 만들어줘 feature/x`, `feature/x 브랜치로 전환해줘` | 등록된 프로젝트 | 로컬 브랜치만 만들거나 전환 (`main`/`master`는 대상 아님, 삭제/푸시/강제 등은 처리 안 함) |
+
+정책에 민감한 질문(캘린더/메일 발송 같은 외부 작업, 내 일정/수신함 같은 본인 데이터, 한국어/영어 외 언어)은
+Claude가 처리하며, Quoky는 그런 외부 작업을 할 수 없고 내 일정은 볼 수 없다고 정직하게 답합니다.
+
+### push와 PR (선택, `QUOKY_GIT_REMOTE_ENABLED=true` 필요)
+
+기본값(`false`)에서는 push 요청이 "원격 git 작업(push 등)은 …꺼져 있어요(QUOKY_GIT_REMOTE_ENABLED=false)"로 거절되고
+git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 가이드의 GitHub App 설정이 먼저 필요합니다. 흐름은 한 단계씩
+말한 문구 그대로 보냅니다 (위 로컬 코드 수정 흐름의 9단계 `커밋 실행`까지 끝난 뒤, 기능 브랜치에서).
+
+| 단계 | 보낼 말 | 결과 |
+|---|---|---|
+| 1. push 요청 | `푸시해줘` | CRITICAL 승인 요청. 처음 올리는 브랜치면 새 원격 브랜치로 올린다는 안내 |
+| 2. 승인 | `승인` | 권한만 기록. 아직 push하지 않음 |
+| 3. push 실행 | `푸시 실행` | 새 브랜치로만 push (force 없음, upstream 설정 없음) |
+| 4. PR 요청 | `PR 만들어줘` | CRITICAL 승인 요청 (대상은 `main`) |
+| 5. 승인 | `승인` | 권한만 기록 |
+| 6. PR 생성 | `PR 생성 실행` | PR 생성. "아직 머지/배포/릴리즈는 하지 않았어요" |
+| (선택) 상태 | `PR 상태 알려줘` | PR/리뷰/체크 상태. GitHub App에 Checks 권한이 없으면 "현재 PR 상태를 확인하지 못했어요"라고 솔직히 답함 |
+
+- 이미 push했거나 PR을 만든 뒤 `푸시 실행`/`PR 생성 실행`을 다시 보내면 새로 만들지 않고 "이미 …했어요"라고 답합니다.
+  `강제 푸시해줘`는 지원하지 않고, `배포해줘`는 "머지/배포/릴리즈는 이후 단계예요"로 거절됩니다.
+- `main`/`master`로의 push(기능 브랜치가 `origin/main`을 추적하는 경우 포함)와 `main`/`master`에서의 커밋은 항상 거절됩니다.
+- 머지: `QUOKY_GIT_MERGE_ENABLED=false`(기본)이면 `PR 머지해줘`가 "병합은 이 설정에서 꺼져 있어요…"로 거절되고 승인도 만들지 않습니다.
+  PR은 GitHub에서 직접 검토하고 병합하세요.
+- PR 제목은 현재 요청 문장에서 만든 것이라 어색할 수 있습니다 (생성형 제목/본문은 이후 버전).
+- 승인 절차는 우회되지 않습니다. 각 단계의 외부 영향은 해당 실행 문구를 보낼 때만 일어납니다.
+- 승인 후 실제 실행 단계(`커밋 실행`, `패치 적용해줘`, `푸시 실행`, `PR 생성 실행`, 머지, `main 동기화해줘`, `브랜치 정리해줘`, 원격 브랜치 삭제 실행)는 **안내된 문구 그대로**(띄어쓰기·마침표·존댓말 차이 정도만 허용) 보낼 때만 실행됩니다. 질문("푸시 실행해도 돼?"), 부정("…할 필요 없어"), 다른 표현에는 아무것도 바꾸지 않고 보낼 문구를 다시 안내합니다.
 
 ## 9. 문제 해결
 
@@ -300,6 +339,11 @@ pnpm dev
 | `claude`가 API 과금을 일으킬까 걱정됨 | `env | grep ANTHROPIC | cut -d= -f1`로 확인하고 `unset ANTHROPIC_API_KEY` |
 | 코드 수정 미리보기가 "이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요"로 거절됨 | 비밀번호·토큰·API 키 같은 이름의 키에 실제 값이 적힌 파일(예: `password: "..."`, `API_KEY=...`)은 안전을 위해 보수적으로 거절함 (값이 무해해 보여도 거절될 수 있음). 값을 환경 변수(`process.env.API_KEY`, `${API_KEY}`)나 비밀 저장소로 옮긴 뒤 다시 요청 |
 | "확인을 받아도 보낼 수 없어요" | 비밀 파일 이름이거나 토큰/키 모양 내용이라 `그래도 보내줘`로도 보낼 수 없음. 값을 환경 변수로 옮기거나 다른 파일을 대상으로 지정 |
+| 알림 문구를 보냈는데 "알림 기능이 꺼져 있어요" | `QUOKY_REMINDERS_ENABLED`가 `false`(기본). `.env.local`에서 `true`로 켜고 재시작 |
+| 알림이 DM이 아니라 안 보임 | 알림은 기본으로 소유자 DM으로만 전달. 봇과 DM 창을 한 번 열어 두세요. 채널 전달은 운영자가 `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`로 별도 설정 |
+| `내 할 일 보여줘`에 계정 정보(identity)가 설정되어 있지 않다는 안내 | Jira/GitHub 식별자 매핑(`QUOKY_ACTOR_IDENTITY_MAPPINGS`)과 커넥터 자격 증명이 없음. 로컬 할 일은 그대로 동작. 운영자 가이드 참고 |
+| `PR 상태 알려줘`가 "현재 PR 상태를 확인하지 못했어요" | GitHub App에 Checks: Read 권한이 없을 수 있음 (운영자 가이드). PR 생성/push에는 영향 없음 |
+| push가 "Repository not found"로 실패 | 이전 버전의 알려진 문제(시스템 git credential helper가 앱 토큰을 가림)는 고쳐졌습니다. 그래도 나면 원격이 HTTPS `github.com`인지, GitHub App이 해당 저장소에 설치됐는지 확인 (운영자 가이드) |
 | 큰 미리보기가 안 보임 | 봇에 **Attach Files** 권한이 없을 수 있음 (2절 4번) |
 | `pnpm install`에서 `better-sqlite3` 빌드 실패 | 네이티브 빌드 도구 설치 (1절) |
 
@@ -308,5 +352,6 @@ pnpm dev
 - 현재 구현 상태: [`CURRENT_STATE.md`](../../CURRENT_STATE.md)
 - 결정 기록: [`DECISIONS.md`](../../DECISIONS.md) — ADR-0091 (Discord 소유자 게이트), ADR-0092 (provider/모델),
   ADR-0093 (도움말/새 대화/승인 만료), ADR-0094 (git 안전)
-- Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). 알림, 업무 대화, 피드백 수집은 이후 웨이브에서 대화에 연결되며 이 문서에 추가됩니다.
+- Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). 커넥터 실제 테넌트 조회, 알림 채널 전달, 알림 기본값 전환, 머지 활성화는 아직 실제 검증 전입니다.
+- 운영자 설정 (환경 변수, GitHub App 권한, 커넥터, Ollama/Claude 격리): [`docs/uat/operator-guide.md`](../uat/operator-guide.md)
 - 첫 릴리스 attended Live UAT 절차: [`docs/uat/first-release-uat-packet.md`](../uat/first-release-uat-packet.md)

@@ -6,6 +6,7 @@ import intentCorpus from './intent-routing.v1.json';
 import registrationCorpus from './project-registration.v1.json';
 import precedenceCorpus from './reminder-todo-precedence.v1.json';
 import strayCorpus from './stray-decision.v1.json';
+import routingCorpus from './turn-handler-routing.v1.json';
 import {
   evaluateGoldenSuite,
   evaluateGoldenSuiteAsync,
@@ -30,10 +31,17 @@ interface IntentExpected {
 interface IntentCase extends GoldenCase<IntentExpected> {
   ctx?: { hasActiveProject?: boolean };
 }
-interface PendingCase extends GoldenCase<{ handler: string }> {
-  pending: boolean;
-  blockedBy: string;
+type PrecedenceCase = GoldenCase<{ handler: string }>;
+interface RoutingCase extends GoldenCase<{ route: string; kind?: string; reply?: string; providerCalls?: number }> {
+  ctx?: { openTodos?: string[]; applyAnchor?: string };
 }
+
+/**
+ * Suites that need the composed turn-handler registry (real handlers, real SQLite, the production runtime) are
+ * scored end-to-end by INT-1's app acceptance (`apps/quoky/src/personal-v2-acceptance.test.ts`) against the same
+ * `baseline.v1.json`; this file checks their structure and that their baseline entries exist.
+ */
+const SCORED_BY_APP_ACCEPTANCE = ['turn-handler-routing', 'reminder-todo-precedence'] as const;
 
 const baseline = baselineFile as unknown as GoldenBaselineFile;
 const asSuite = <C extends GoldenCase>(file: unknown): GoldenSuiteFile<C> => file as GoldenSuiteFile<C>;
@@ -43,7 +51,8 @@ const approvals = asSuite<GoldenCase<string>>(approvalCorpus);
 const strays = asSuite<GoldenCase<string | null>>(strayCorpus);
 const controls = asSuite<GoldenCase<string | null>>(controlCorpus);
 const registrations = asSuite<GoldenCase<{ path: string; absolute: boolean } | null>>(registrationCorpus);
-const precedence = asSuite<PendingCase>(precedenceCorpus);
+const precedence = asSuite<PrecedenceCase>(precedenceCorpus);
+const routing = asSuite<RoutingCase>(routingCorpus);
 
 const classifier = new IntentClassifier({} as unknown as CapabilityRouter);
 
@@ -83,6 +92,7 @@ describe('golden corpora are well formed', () => {
     ['conversation-control', controls],
     ['project-registration', registrations],
     ['reminder-todo-precedence', precedence],
+    ['turn-handler-routing', routing],
   ] as const)('%s', (name, file) => {
     expect(file.suite).toBe(name);
     expect(file.version).toBe(1);
@@ -125,18 +135,41 @@ describe('golden evaluation against the real deterministic Core', () => {
     }
   });
 
-  it('has a baseline entry for exactly the scored suites', async () => {
+  it('has a baseline entry for exactly the scored suites (here plus the app-acceptance suites)', async () => {
     const results = await runAll();
-    expect(Object.keys(baseline.suites).sort()).toEqual(results.map((r) => r.suite).sort());
+    expect(Object.keys(baseline.suites).sort()).toEqual(
+      [...results.map((r) => r.suite), ...SCORED_BY_APP_ACCEPTANCE].sort(),
+    );
     expect(baseline.version).toBe(1);
   });
 
-  it('keeps the pending reminder/to-do precedence placeholders out of scoring', () => {
-    expect(precedence.cases.every((c) => c.pending && !c.mustPass && c.blockedBy.length > 0)).toBe(true);
-    expect(Object.keys(baseline.suites)).not.toContain('reminder-todo-precedence');
-    // One pinned case per ADR-0100 D1 anchored head (17 heads), plus the unanchored placeholders.
+  it('the app-scored suites are full mustPass corpora with a size floor (INT-1 activated the precedence cases)', () => {
+    for (const [file, name] of [[precedence, 'reminder-todo-precedence'], [routing, 'turn-handler-routing']] as const) {
+      expect(file.cases.every((c) => c.mustPass), name).toBe(true);
+      expect(file.cases.some((c) => 'pending' in c || 'blockedBy' in c), name).toBe(false);
+      expect(file.cases.length, name).toBeGreaterThanOrEqual(baseline.suites[name]?.minTotal ?? Infinity);
+      expect(baseline.suites[name]?.minAccuracy, name).toBe(1);
+    }
+    // One pinned case per ADR-0100 D1 anchored head (17 heads), each with the same time-bearing body.
     const anchored = precedence.cases.filter((c) => c.expected.handler === 'work-chat.mutation');
     expect(anchored).toHaveLength(17);
+    expect(new Set(anchored.map((c) => c.text.split(':')[0])).size).toBe(17);
+    expect(anchored.every((c) => c.text.endsWith(': 내일 9시에 회의 알려줘'))).toBe(true);
+  });
+
+  it('the routing corpus seeds the wave-7 live-QA fixes (owner-curated, never auto-added)', () => {
+    const find = (text: string, applyAnchor?: string) =>
+      routing.cases.find((c) => c.text === text && c.ctx?.applyAnchor === applyAnchor)?.expected;
+    expect(find('푸시 실행', 'PR_CREATED')).toEqual({ route: 'runtime', reply: 'push-already-pushed', providerCalls: 0 });
+    expect(find('강제 푸시해줘', 'PR_CREATED')).toEqual({ route: 'runtime', reply: 'push-unsupported', providerCalls: 0 });
+    const kinds = new Set(routing.cases.map((c) => c.expected.kind));
+    expect(kinds.has('todo.hint') && kinds.has('todo.status')).toBe(true);
+    expect(find('완료 처리 어떻게 해?')).toEqual({ route: 'classifier' });
+    // Every registered handler id appears as a route at least once.
+    const routes = new Set(routing.cases.map((c) => c.expected.route));
+    for (const id of ['feedback.summary', 'git-branch', 'work-chat.todo', 'reminders', 'work-chat.lookup']) {
+      expect(routes.has(id), id).toBe(true);
+    }
   });
 });
 

@@ -5,42 +5,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Quoky Personal v2 — waves 1-4 (in progress) — 2026-10-02
+## Quoky Personal v2 — waves 1-8 — 2026-10-03
 
-Merged through PRs #105-#108. Waves 5-8 are not merged; reminders, work chat and feedback capture are not yet reachable
-from Discord. Live QA record: `docs/uat/personal-v2-qa-record.md`.
+Waves 1-7 are merged through PRs #105-#111 (2026-10-02/03). Wave 8 is INT-1 (offline integration acceptance) plus DOC-B (this
+documentation closeout) and lands in the wave-8 PR. Spec: ADR-0096..0101 and the ADR-0098 amendment;
+plan `docs/plans/personal-v2-execution-plan.md`; live QA record `docs/uat/personal-v2-qa-record.md`. Operator setup:
+`docs/uat/operator-guide.md`. Phrases: `docs/user/quickstart.md`.
+
+**By wave**
+
+| Wave | PR | Content |
+|---|---|---|
+| 1 | #105 | ADR-0096..0101 ratified; turn-handler registry and inert v2 config (SEAM); strict credential guard superset (OVR-1); 5-file change-set apply (CODE-1) |
+| 2 | #106 | Hash-bound override grants (OVR-2); chat response policy and sanitizer (QUAL-1); feedback store, schema v12 (QUAL-3); branch git ops and branch-name policy (CODE-2); read-only connector named queries (WORK-T1); single-file write containment (SEC-1) |
+| 3 | #107 | Override flow on an anchor Task (OVR-3); WorkItem title and correlate (WORK-T2); reminder domain and KO/EN grammar (PRO-1); golden evaluation corpora (QUAL-2); multi-file change sets in the runtime (CODE-3) |
+| 4 | #108 | `그래도 보내줘` override wired into the preview (OVR-4); `POLICY_SENSITIVE_CHAT` routing and action-claim guard (QUAL-6, ADR-0098 amendment); Claude CLI isolation; work-chat services (WORK-T3); reminders store, schema v13 (PRO-2); reminder services (PRO-3); owner-only Discord notification sink (PRO-4) |
+| 5 | #109 | Reminder turn handler and tick driver (PRO-5); 👍/👎 reaction feedback and `피드백 요약` (QUAL-4); branch create/switch handler (CODE-4); docs closeout for waves 1-4 (DOC-A) |
+| 6 | #110 | Work-chat to-do and lookup handlers with self-contained summaries (WORK-T4); opt-in local embedding recall (QUAL-5); personal-data question routing (QUAL-7, extension of the ADR-0098 amendment); late-reminder label and Korean feedback labels (UX-1) |
+| 7 | #111 | Work chat composed in the app (WORK-T5); opt-in push to PR chain with merge off (CODE-5); override failure copy by actual transmission state; live-QA fixes (see below) |
+| 8 | wave-8 PR | INT-1 offline integration acceptance and golden routing ratchet; DOC-B documentation |
 
 **User-visible changes**
 
 - Credential-guard override: when a code-change preview is refused because a target file looks like it assigns a
-  credential, Quoky now warns (file and line, one-time external send, 30-minute limit) and the owner can reply
+  credential, Quoky warns (file and line, one-time external send, 30-minute limit) and the owner can reply
   `그래도 보내줘` (also `그래도 보내`, `그래도 전송해줘`, `send anyway`) to send that file once. `승인` is not a grant.
-  Never overridable: secret-looking filenames and token-shaped content. Each refused file in a set needs its own override;
-  a reset, denial, expiry, changed file or newer request cancels it; no replay. Resolves QA-023.
-- The credential file-content guard only got stricter (multiline and concatenated values, continuation lines, env defaults,
-  literal wrappers, string prefixes, arrow bodies, Go/C#/PHP forms). The owner-accepted multiline residual is closed.
-- Chat answer policy: Quoky no longer claims to perform external actions (calendar, email, booking, payment, SMS,
-  posting), refuses prompt-injection requests, and answers in the user's language. Requests like these (and non-Korean/
-  English messages) are routed to Claude because the local model did not follow the policy; a reply that still claims an
-  unsupported action is replaced by a notice that nothing was done. This uses the Claude subscription for those turns.
-- Code flow: a request can name up to 5 files (update existing, create new with explicit create wording); apply rolls back
-  on failure; new files can be committed.
+  Never overridable: secret-looking filenames and token-shaped content. Each refused file in a set needs its own
+  override; a reset, denial, expiry, changed file or newer request cancels it; no replay. Resolves QA-023. After a failed
+  generation the reply says whether the file content was not sent, sent, or may have been sent.
+- The credential file-content guard only got stricter (multiline and concatenated values, continuation lines, env
+  defaults, literal wrappers, string prefixes, arrow bodies, Go/C#/PHP forms). The multiline residual is closed.
+- Chat answer policy: Quoky no longer claims to perform external actions, refuses prompt-injection requests and
+  answers in the user's language. Those requests, non-Korean/English messages and questions about the owner's own
+  schedule, calendar, availability, inbox or balance are routed to Claude (the local model did not follow the policy
+  or fabricated facts); a reply that still claims an unsupported action is replaced by a notice that nothing was done.
+  This uses the Claude subscription for those turns.
+- Reminders (`QUOKY_REMINDERS_ENABLED=true`): `N분 뒤에 …`, `내일 오전 9시에 … 알려줘`, daily recurrence, `알림 목록`,
+  `알림 N 취소`. DM delivery by default, bounded 15-second tick, late delivery labelled, at-most-once delivery
+  (`DELIVERY_UNCERTAIN` is never retried).
+- Feedback: 👍/👎 reactions on bot replies (owner only) are recorded with no message text; `피드백 요약` shows 30-day
+  counts with Korean labels.
+- Work chat: `할 일 추가:`, `완료 처리:`, `할 일 취소:`, `할 일 연결:`, `내 할 일 보여줘`, and read-only Jira/GitHub/Slack/
+  Confluence lookups with optional summaries. A to-do whose text has a time phrase stays a to-do (and says no reminder was
+  set). A natural completion phrase only gets a hint of the exact command; a status question is answered from the
+  to-do store.
+- Code flow: up to 5 files per request (update existing; create new with explicit create wording); apply rolls back on
+  failure; new files can be committed; `브랜치 만들어줘 feature/x` creates and `feature/x 브랜치로 전환해줘` switches a
+  local branch. With `QUOKY_GIT_REMOTE_ENABLED=true`: `푸시해줘` (CRITICAL approval) then `푸시 실행`, `PR 만들어줘`
+  (CRITICAL approval) then `PR 생성 실행`. The first push of a new branch goes to `HEAD:refs/heads/<branch>`; an upstream
+  that targets `main`/`master` is refused. Merge stays off unless `QUOKY_GIT_MERGE_ENABLED=true`.
 - Claude CLI runs are isolated from the owner's claude.ai connectors, settings and session history
   (`--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`).
-- Schema migrations v12 (feedback tables) and v13 (reminders table), additive and applied automatically on start.
+- Schema migrations v12 (feedback tables, no text columns) and v13 (reminders), additive, applied automatically on
+  start. A database newer than the code now fails startup (`SCHEMA_VERSION_AHEAD`).
 
-**New environment variables** (exact `true`/`false`; an empty value is a startup error; see `.env.example`)
+**Live QA fixes (found by owner-attended QA on the dev bot; details in the QA record)**
+
+- QA-V2-W7-01 (BLOCKER, security-relevant): the system git `credential.helper` (macOS `osxkeychain`) answered before
+  `GIT_ASKPASS`. The App-token git child now resets credential helpers and drops inherited `GIT_CONFIG_*`; remote URLs
+  are preflighted under the same sanitized environment (HTTPS github.com only, fetch/push URL checked per operation).
+- QA-V2-002 Claude connector leakage (isolation flags), QA-V2-005 fabricated schedule answer (personal-data routing),
+  QA-V2-006/007 (late label, Korean labels), QA-V2-W7-02..05 (push phrases after PR, to-do completion hint and status,
+  reminder-less to-do hint).
+
+**Environment variables** (exact `true`/`false`; an empty value is a startup error; see `.env.example`)
 
 | Variable | Default | Status |
 |---|---|---|
-| `QUOKY_GIT_MERGE_ENABLED` | `false` | parsed only; requires `QUOKY_GIT_REMOTE_ENABLED=true` (else `GIT_MERGE_REQUIRES_REMOTE`) |
-| `QUOKY_WORK_SUMMARY_ENABLED` | `true` | parsed only; consumed when work chat lands |
-| `QUOKY_REMINDERS_ENABLED` | `false` | parsed only until PRO-5 |
+| `QUOKY_GIT_MERGE_ENABLED` | `false` | requires `QUOKY_GIT_REMOTE_ENABLED=true` (else `GIT_MERGE_REQUIRES_REMOTE`); merge still needs its own approval steps |
+| `QUOKY_WORK_SUMMARY_ENABLED` | `true` | consumed by work-chat summaries |
+| `QUOKY_REMINDERS_ENABLED` | `false` | consumed (handler, tick driver); the release default stays `false` until the reminders UAT |
 | `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | DM only by default; `true` lets channel members read reminder text |
 | `QUOKY_TIMEZONE` | `Asia/Seoul` | IANA zone; invalid is a startup error |
-| `QUOKY_EMBEDDING_ENABLED` | `false` | parsed only until QUAL-5 |
+| `QUOKY_EMBEDDING_ENABLED` | `false` | consumed by recall; local Ollama embedding only |
 | `QUOKY_EMBEDDING_MODEL` | `nomic-embed-text` | local model only; a name or tag containing `cloud` is refused |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | `3000` | 100-30000 |
+
+**Not live-verified:** connector lookups on real tenants, reminders channel delivery, the reminders release default,
+merge-flag enablement and embedding recall on a live model. See `CURRENT_STATE.md` and the QA record.
 
 ## Quoky Personal v1 — Live UAT hotfixes — 2026-10-02
 

@@ -5,51 +5,74 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### Personal v2 — waves 1-4 delivered, in progress (2026-10-02)
+### Personal v2 — implemented (waves 1-8), live verification partial (2026-10-03)
 
-**STATUS: IN PROGRESS. Waves 1-4 are merged to `main` (PRs #105-#108, `main` at 49ed0cc); waves 5-8 are not yet
-merged.** Spec: ADR-0096..0101 plus the ADR-0098 amendment (all Ratified 2026-10-02) and
-`docs/plans/personal-v2-execution-plan.md`. The Live QA record is `docs/uat/personal-v2-qa-record.md`.
+**STATUS: IMPLEMENTED. Waves 1-7 are merged to `main` (PRs #105-#111, `main` at ba28314). Wave 8 is INT-1 (the offline
+integration acceptance ratchet, branch `claude/v2-w8-int-1`) plus DOC-B (this documentation closeout); both land in the
+wave-8 PR and are not part of the base this entry was written on.** Spec: ADR-0096..0101 plus the ADR-0098 amendment (all
+Ratified 2026-10-02) and `docs/plans/personal-v2-execution-plan.md`. Latest merged offline validation (PR #111):
+`pnpm typecheck` and `pnpm test` passed, 243 files and 7700 tests. SQLite schema is v13. Deps baseline is 34.
 
-**Delivered offline (waves 1-4), by track**
+**What the owner can do now (Discord, owner-only, single actor; phrases in `docs/user/quickstart.md`)**
 
-- **Seams (ADR-0096):** deterministic turn-handler registry (`control` / `post-anchor` / `pre-classify`), contributed help
-  lines, feature-provider composition files, pre-registered tokens and stubs, inert SEAM-2 configuration. Deps baseline
-  is 33 (ADR-0096) then 34 (ADR-0097).
-- **Override (ADR-0097):** strict-only credential guard with `classifyCredentialFileContent`; one-time, hash-bound
-  CRITICAL owner override for `credential-assignment` refusals in the conversational code-change preview
-  (`그래도 보내줘`). QA-023 RESOLVED by this override (the guard stays strict; no file-type relaxation); the
-  multiline residual is CLOSED by OVR-1.
-- **Quality (ADR-0098):** chat response policy and sanitizer (the D2 sanitizer now takes structured `replyPolicy`
-  request metadata instead of parsing the prompt), feedback store schema v12 (no capture UI yet), offline golden
-  evaluation, and the amendment: deterministic `POLICY_SENSITIVE_CHAT` routing to Claude plus a provider-neutral
-  action-claim guard.
-- **Code (ADR-0099):** bounded change sets (up to 5 files, update/add, rollback-capable apply) in the code flow,
-  branch git operations in Core/adapters (no chat command yet; CODE-4).
-- **Work (ADR-0100):** connector named queries, WorkItem title and ResourceRef correlation, work-chat grammar and
-  services. No chat entry point is registered yet (WORK-T4/T5).
-- **Reminders (ADR-0101):** reminder domain and KO/EN grammar, schema v13 `reminders` table, conversation, dispatch and
-  daily-brief services, owner-only Discord `NotificationSink`. **Not reachable by the owner yet:** the turn handler,
-  tick driver and `main.ts` wiring land in PRO-5 (wave 5).
-- **Claude CLI isolation:** Claude runs with `--strict-mcp-config`, `--setting-sources ""` and
-  `--no-session-persistence` (recorded as an ADR-0095 item-3 extension in `DECISIONS.md`).
+- **Hybrid chat:** general chat goes to local Ollama when it is ready, otherwise to Claude. Policy-sensitive turns go to
+  Claude (`sonnet` by default) even when Ollama is ready: requests for external actions Quoky cannot perform (calendar,
+  email, booking, payment, SMS, posting), injection-shaped input, languages other than Korean and English, and
+  questions about the owner's own data Quoky cannot see (schedule, calendar, availability, inbox, balance). A reply that
+  still claims an unsupported action is replaced by a notice that nothing was done. Claude runs are isolated from the
+  owner's claude.ai connectors and settings.
+- **Memory:** durable `기억해:` recall follows the owner across channels, DMs and resets. Opt-in local embedding recall
+  (`QUOKY_EMBEDDING_ENABLED`) re-ranks recall with a local Ollama embedding model and falls back to the lexical path.
+- **Reminders (opt-in):** `1분 뒤에 스트레칭 알려줘`, `알림 목록`, `알림 N 취소`. Delivered to the owner DM by default
+  (channel delivery is a separate flag). A reminder missed while the runtime was down is delivered once on the next
+  start, labelled as late. At-most-once: an uncertain send becomes `DELIVERY_UNCERTAIN` and is never retried.
+- **Feedback:** 👍/👎 reactions on bot replies are recorded locally (no message text stored; removing the reaction
+  retracts it) and `피드백 요약` shows 30-day counts with Korean labels.
+- **Work chat:** a local to-do list (`할 일 추가:`, `완료 처리:`, `할 일 취소:`, `할 일 연결:`, `내 할 일 보여줘`) and read-only
+  connector lookups (Jira, GitHub, Slack, Confluence) with optional model summaries (`QUOKY_WORK_SUMMARY_ENABLED`).
+  Connector writes are refused.
+- **Code work:** previews and apply for up to 5 files (update, or create with explicit create wording), rollback on a
+  failed apply, new-file commits, one-time credential override (`그래도 보내줘`), local branch create/switch
+  (`브랜치 만들어줘 feature/x`), and the opt-in push to PR chain (`푸시해줘` then `푸시 실행`, `PR 만들어줘` then
+  `PR 생성 실행`) behind `QUOKY_GIT_REMOTE_ENABLED`. Merge is off by default (`QUOKY_GIT_MERGE_ENABLED=false`). Pushes to
+  `main`/`master` and force pushes are refused; deploy/release is never performed.
 
-**Live-verified (attended, dev bot, `docs/uat/personal-v2-qa-record.md`)**
+**Feature flags (exact `true`/`false`; an empty value is a startup error; see `.env.example`)**
 
-- Wave 2: schema 6 to 12 migration on a DB copy; chat policy on Claude (injection refusal, no fabricated calendar
-  action, Japanese answered in Japanese). Finding QA-V2-001 (local model ignores the policy) led to the ADR-0098
-  amendment.
-- Wave 4: schema 12 to 13 migration; `POLICY_SENSITIVE_CHAT` routing and guard (QA-V2-002 fixed by the CLI isolation
-  flags); the override flow end to end (warning, one-time send, no replay, deny/cancel, secret filenames and
-  `secret-token` content never overridable, 0 synthetic secrets in logs).
+| Variable | Default | Effect |
+|---|---|---|
+| `QUOKY_OLLAMA_ENABLED` | `true` | Register local Ollama for chat, summaries and read-only work |
+| `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote git reads |
+| `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag (else `GIT_MERGE_REQUIRES_REMOTE`); merge still needs its own approval steps |
+| `QUOKY_REMINDERS_ENABLED` | `false` | With `false`, a reminder phrase gets a fixed "off" reply; no tick runs |
+| `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the channel they were made in (visible to its members) |
+| `QUOKY_WORK_SUMMARY_ENABLED` | `true` | Connector summaries may fall back to Claude when Ollama is not ready |
+| `QUOKY_EMBEDDING_ENABLED` | `false` | Local embedding recall (model `nomic-embed-text`, must be pulled by the owner) |
+| `QUOKY_TIMEZONE` | `Asia/Seoul` | Reminder time zone (IANA) |
 
-**Not live-verified:** reminders delivery and tick (not wired), work chat, feedback capture, multi-file/new-file
-preview through Discord, embedding recall, branch commands. Live UAT runs as separate exact-scope Strict sessions
-after wave 8; this entry claims no live result beyond the QA record above.
+**Delivered by track:** seams and turn-handler registry (ADR-0096); strict credential guard and one-time override
+(ADR-0097, QA-023 RESOLVED); chat policy, `POLICY_SENSITIVE_CHAT` routing and action-claim guard, feedback store v12,
+reaction capture and `피드백 요약`, golden evaluation, embedding recall, personal-data routing (ADR-0098 and its
+amendment and extension); change sets, branch commands and the push to PR chain (ADR-0099); work-chat to-dos and
+connector lookups (ADR-0100); reminders store v13, grammar, tick driver and owner-only sink (ADR-0101).
 
-**Open follow-ups:** CODE-5 copy items (single-missing-path plus create wording, post-send failure wording, sent-then-
-cancelled copy, QA-V2-004) and QA-V2-003 (local-model quality). New environment variables are listed in
-`CHANGELOG.md` and `docs/user/quickstart.md`.
+**Live status (attended, dev bot, `docs/uat/personal-v2-qa-record.md`)**
+
+- Owner-attended live QA was run for waves 1-7 on the dev bot: migrations 6 to 12 to 13 on DB copies, chat policy and
+  routing on Ollama and Claude, the override flow, reminders (create, list, DM delivery, restart catch-up, late label),
+  feedback reactions and summary, to-dos, and the code chain on the private sandbox repo
+  (`quoky-uat-sandbox`): branch, new-file commit, push, PR #1 (closed unmerged afterwards), merge refused while disabled.
+  Findings and fixes (including the BLOCKER QA-V2-W7-01, an ambient git credential helper) are in the record.
+- **STILL PENDING (not claimed as done):** connector live QA on real Jira, Slack, Confluence and GitHub tenants (the owner
+  is adding credentials); reminders channel-delivery UAT; flipping the release default of `QUOKY_REMINDERS_ENABLED`
+  (reminders were enabled in the QA environment only); any merge-flag enablement; embedding recall on a live model.
+  The GitHub App must have the Checks permission for the PR status preview to work (it truthfully says it cannot check
+  otherwise); see `docs/uat/operator-guide.md`.
+- Open quality items (v3 candidates): local-model quality (QA-V2-003, QA-V2-008, QA-V2-W7-06), raw-text PR titles.
+
+**Progress estimate (an estimate, not a measured metric):** the Personal edition is roughly 65% complete after v2, up
+from roughly 45% after v1. Remaining work is mostly live verification of connectors and reminder delivery plus the v3
+themes in `ROADMAP.md`.
 
 ### Quoky Personal v1 — first-release scope and ADRs (2026-10-02)
 

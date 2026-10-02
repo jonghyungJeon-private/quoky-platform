@@ -29,6 +29,7 @@ import {
   credentialOverrideSentNotice,
 } from './credential-override/credential-override-copy';
 import type { CredentialOverrideInvalidationReason } from './credential-override/credential-override';
+import { documentedExecutionPhrase } from './execution-command-guard';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
 import type { WorkSurface } from './work-surface-query';
@@ -1338,7 +1339,9 @@ export class ResponseComposer {
   composePatchAlreadyGenerated(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '이미 패치 미리보기를 만들어 뒀어요.\n아직 실제 파일 적용은 하지 않았어요.\n파일은 수정되지 않았어요.',
+      text:
+        '이미 패치 미리보기를 만들어 뒀어요.\n아직 실제 파일 적용은 하지 않았어요.\n파일은 수정되지 않았어요.\n' +
+        `실제로 적용하려면 "${documentedExecutionPhrase('patchApply')}"라고 보내 주세요.`,
     };
   }
 
@@ -1972,7 +1975,9 @@ export class ResponseComposer {
   composePushAlreadyApproved(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '이미 push 승인을 받아 뒀어요.\n아직 실제 git push는 하지 않았어요. (실제 push는 이후 단계에서 다시 확인 후 진행돼요)',
+      text:
+        '이미 push 승인을 받아 뒀어요.\n아직 실제 git push는 하지 않았어요. (실제 push는 이후 단계에서 다시 확인 후 진행돼요)\n' +
+        `실제로 push하려면 "${documentedExecutionPhrase('push')}"이라고 보내 주세요.`,
     };
   }
 
@@ -1981,6 +1986,17 @@ export class ResponseComposer {
     return {
       context,
       text: 'push 승인만 준비할 수 있어요. force push/PR/배포/태그/브랜치/reset 같은 다른 작업은 지원하지 않아요. git push는 하지 않았어요.',
+    };
+  }
+
+  /**
+   * A push / push-execution request with no commit chain in progress (no code-change anchor, or one that has not
+   * reached a committed state). Fixed copy — never a provider call; no git/hosting call was made.
+   */
+  composeNoPushTarget(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text: '지금 push할 커밋이 없어요. 코드 변경을 적용하고 커밋한 뒤 "푸시해줘"라고 알려 주세요. git push는 하지 않았어요.',
     };
   }
 
@@ -2150,7 +2166,9 @@ export class ResponseComposer {
   composePrAlreadyApproved(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: 'PR 생성 승인은 이미 기록돼 있어요. 아직 PR은 만들지 않았어요. 다시 승인하지 않았어요.',
+      text:
+        'PR 생성 승인은 이미 기록돼 있어요. 아직 PR은 만들지 않았어요. 다시 승인하지 않았어요.\n' +
+        `실제로 PR을 만들려면 "${documentedExecutionPhrase('prCreate')}"이라고 보내 주세요.`,
     };
   }
 
@@ -2641,12 +2659,29 @@ export class ResponseComposer {
     return { context, text: '지금은 원격 브랜치 정리 승인을 준비할 수 없어요. (아무것도 삭제하지 않았어요)' };
   }
 
+  /**
+   * A step mention that is not an exact accepted execution phrase where the state has no "already approved" reply
+   * (allow-list decision, Codex wave-8 review): main sync at PR_MERGED, local branch cleanup at MAIN_SYNCED, a
+   * test/typecheck run at WORKSPACE_APPLIED. Names the exact phrase to send; nothing was changed or run.
+   */
+  composeExecutionPhraseHint(context: ConversationContext, step: 'main-sync' | 'local-cleanup' | 'validation'): OutboundMessage {
+    const text =
+      step === 'main-sync'
+        ? `main을 동기화하려면 "${documentedExecutionPhrase('mainSync')}"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.`
+        : step === 'local-cleanup'
+          ? `로컬 브랜치를 정리하려면 "${documentedExecutionPhrase('localCleanup')}"라고 보내 주세요. 아직 아무것도 삭제하지 않았어요.`
+          : `검증하려면 "${documentedExecutionPhrase('validationTest')}" 또는 "${documentedExecutionPhrase('validationTypecheck')}"라고 보내 주세요. 아직 아무것도 실행하지 않았어요.`;
+    return { context, text };
+  }
+
   /** A remote cleanup phrase while already REMOTE_BRANCH_CLEANUP_APPROVED (Sprint 3j-A) — approval is recorded; the
    *  actual deletion is a future step. No mutation. */
   composeRemoteBranchCleanupAlreadyApproved(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '원격 브랜치 정리 승인은 이미 기록되어 있어요.\n실제 원격 브랜치 삭제는 이후 실행 단계에서 진행돼요. (아직 아무것도 삭제하지 않았어요)',
+      text:
+        '원격 브랜치 정리 승인은 이미 기록되어 있어요.\n실제 원격 브랜치 삭제는 이후 실행 단계에서 진행돼요. (아직 아무것도 삭제하지 않았어요)\n' +
+        `실제로 삭제하려면 "${documentedExecutionPhrase('remoteCleanup')}"라고 보내 주세요.`,
     };
   }
 

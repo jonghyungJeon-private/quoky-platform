@@ -2,6 +2,7 @@ import { describeAiFailure } from './ai-failure';
 import { generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
+import { isAcceptedExecutionPhrase } from './execution-command-guard';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
@@ -1036,7 +1037,36 @@ const PUSH_WORDS =
 /** Force + bundling + other git ops that must NOT ride along with a push (Sprint 2z, CA #2/#5) — only ever
  *  consulted when a PUSH word is already present, so a bare "배포"/"branch"/"tag"/"reset" is NOT push handling. */
 const PUSH_FORBIDDEN_COMPANION =
-  /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
+  /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|(^|\s)\+[\w./-]|--delete\b|(^|\s)-d(\s|$)|(^|\s):[\w./-]|--mirror\b|--all\b|--tags\b|--prune\b|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
+
+/** A push word as the request's own object ("푸시", "git push", "push"). */
+const PUSH_TOKEN_SRC = '(?:푸시|git\\s*push|\\bpush\\b)';
+/** A Korean request tail attached DIRECTLY to the push word ("푸시해줘", "push 실행해줘", "git push 해 줘"). */
+const KO_PUSH_REQUEST_TAIL_SRC =
+  '(?:\\s*(?:을|를))?(?:\\s*좀)?\\s*(?:해\\s*줘요?|해\\s*주세요|해\\s*주라|해\\s*줄래요?|해라|해\\s*봐|하자|해|' +
+  '실행(?:\\s*해\\s*줘요?|\\s*해\\s*주세요|\\s*해|\\s*하자)?|진행(?:\\s*해\\s*줘요?|\\s*해)?)';
+const KO_IMPERATIVE_END_SRC = '(?:해\\s*줘요?|해\\s*주세요|해\\s*주라|해라|하자|해)';
+/**
+ * Push-request shapes (QA-V2-W8; Codex wave-8 review): the request verb must attach to the push word ITSELF —
+ * never a trailing "해줘" elsewhere in the sentence ("git push 명령을 한국어로 번역해줘" / "푸시 로직을 검토해줘" are
+ * chat) — or the text is a typed push command, with or without options/remote/refspec ("git push --force origin x").
+ */
+const PUSH_REQUEST_SHAPES: readonly RegExp[] = [
+  // Korean: "푸시해줘", "푸시 해 줘", "git push 해줘", "push 실행", "push 실행해줘", "강제 푸시해줘", "이 커밋 푸시해줘"
+  new RegExp(`${PUSH_TOKEN_SRC}${KO_PUSH_REQUEST_TAIL_SRC}\\s*[.!~]*$`, 'i'),
+  // Korean bundle: "푸시하고 머지해줘", "푸시한 다음 배포해줘" — a push chained to another imperative (→ companion)
+  new RegExp(`${PUSH_TOKEN_SRC}\\s*(?:하고|한\\s*(?:다음|뒤|후)에?|해서)\\s+.+${KO_IMPERATIVE_END_SRC}\\s*[.!~]*$`, 'i'),
+  // Korean: "원격에 올려줘", "리모트로 보내줘"
+  /(원격|리모트)(에|으로|로)\s*(올려|보내)\s*(줘요?|주세요|줄래요?|라)?\s*[.!~]*$/i,
+  // English imperative: "push", "push now", "push this commit", "force push", "push -f", "push to origin"
+  /^\s*(please\s+)?(force[\s-]+)?push(\s+(-{1,2}[\w-]+|origin\S*|upstream|now|please|it|this(\s+commit)?|the\s+(approved\s+)?commit|approved\s+commit|to\s+(origin|remote|github)\S*))*\s*[.!]*$/i,
+  /^\s*(please\s+)?(execute|run)\s+(the\s+)?(approved\s+)?push(\s+now)?\s*[.!]*$/i,
+  // A typed git push command with any options / remote / refspec: "git push", "git push -f origin main"
+  /^\s*git\s+push(\s+[\w./:@+=~^-]+)*\s*[.!]*$/i,
+];
+/** Questions / how-to / notification topics that merely mention push are ordinary chat. */
+const PUSH_CHAT_TOPIC =
+  /[?？]|뭐|무엇|뭔|어떻게|어떤|왜|방법|알려|설명|차이|알림|notification|설정|구현|\bhow\b|\bwhat\b|\bwhy\b|\bexplain\b|\bdifference\b|\bwhen\b/i;
 
 /** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
 const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
@@ -1096,17 +1126,30 @@ const MERGE_REQUEST_VERB = /(승인|approve|approval|요청|받아|해줘|해\s*
 // a direct merge imperative (해줘/실행/실제/지금/승인된/now/execute/merge this/approved) IS an execution command. A
 // bare "머지"/"merge" noun (no verb) is NOT execution (→ composeMergeAlreadyApproved).
 const MERGE_EXECUTION_VERB = /(해줘|해\s*줘|실제|실행|지금|승인된|\bnow\b|\bexecute\b|merge\s+this|\bapproved\b)/i;
+// (Codex wave-8 review) the execution verb must attach to the merge word itself ("머지해줘", "머지 실행해줘", "merge
+// this PR", "merge now", "execute merge") — a trailing "해줘" on another verb ("머지 로그 요약해줘") is never a merge.
+const MERGE_EXECUTION_ATTACHED =
+  /((머지|병합)\s*(을|를)?\s*(좀\s*)?(해|실행|진행|하자|시켜)|\bmerge\s+(this|it|the|now|pr|approved)\b|\b(execute|run|do)\s+(the\s+)?(approved\s+)?merge\b|\bapproved\s+merge\b)/i;
+// Chain verbs foreign to the merge step (Codex wave-8 review): a merge bundled with push/deploy/sync/branch-delete/
+// force/reset/rebase is never a merge-EXECUTION command.
+const MERGE_EXECUTION_FOREIGN =
+  /(푸시|\bpush|배포|deploy|릴리즈|release|동기화|최신화|\bsync\b|\bpull\b(?!\s*request)|삭제|지워|제거|정리|\bdelete\b|\bremove\b|clean\s*up|\bcleanup\b|리베이스|rebase|리셋|\breset\b|강제|\bforce\b)/i;
 // Post-merge LOCAL main sync (Sprint 3h, ADR-0058) — only consulted at PR_MERGED/MAIN_SYNCED. A sync command needs
 // a sync VERB (동기화/최신화/받아와/sync/pull/update ... main) AND a MAIN target — a bare "sync"/"pull" or a bare "main"
 // alone never triggers.
-const SYNC_WORD = /(동기화|최신화|받아와|받아\s*줘|\bsync\b|\bpull\b|update\s+(local\s+)?main|당겨)/i;
+const SYNC_WORD = /(동기화|최신화|받아와|받아\s*줘|\bsync\b|\bpull\b(?!\s*request)|update\s+(local\s+)?main|당겨)/i;
+// Chain verbs foreign to the main sync step (Codex wave-8 review): push / pull-request / branch delete / deploy / force.
+const SYNC_FOREIGN =
+  /(푸시|\bpush|pull\s*request|풀\s*리퀘|삭제|지워|제거|\bdelete\b|\bremove\b|배포|deploy|릴리즈|release|리베이스|rebase|리셋|\breset\b|강제|\bforce\b)/i;
 const MAIN_WORD = /(\bmain\b|메인|origin\/main)/i;
+/** Any mention of the main-sync step (allow-list hint at PR_MERGED) — never an execution trigger on its own. */
+const MAIN_SYNC_MENTION = /(동기화|최신화|받아와|\bsync\b|update\s+(local\s+)?main|\bpull\s+main\b)/i;
 /** The origin to sync local main from (github.com origin; fixed like PR_BASE_BRANCH_POLICY). */
 const MAIN_SYNC_REMOTE = 'origin';
 // Post-merge LOCAL branch cleanup (Sprint 3i, ADR-0059) — only consulted at MAIN_SYNCED/BRANCH_CLEANED. A cleanup
 // command needs a cleanup VERB + a BRANCH word. A REMOTE qualifier routes to the "unsupported" reply (remote
 // deletion deferred); bulk/wildcard and a "main"-delete target never trigger.
-const CLEANUP_VERB = /(정리|삭제|지워|없애|\bcleanup\b|clean\s*up|\bdelete\b|\bremove\b|\bprune\b)/i;
+const CLEANUP_VERB = /(정리|삭제|제거|지워|지우|없애|\bcleanup\b|clean\s*up|\bdelete\b|\bremove\b|\bprune\b)/i;
 const CLEANUP_BRANCH_WORD = /(브랜치|\bbranch\b)/i;
 const CLEANUP_REMOTE_WORD = /(원격|\bremote\b|\borigin\b|github)/i;
 const CLEANUP_BULK = /(다\s*(삭제|지워|정리)|전부|모두|\ball\b|every|\*|패턴|pattern|wildcard)/i;
@@ -1115,6 +1158,19 @@ const CLEANUP_MAIN_TARGET = /(^|\s)(main|메인|master|default(\s*branch)?|기�
 // route an execute imperative to the "execution is a future step (3j-B)" reply. A re-request (원격 브랜치 삭제해줘) is
 // caught first by interpretRemoteBranchCleanupIntent, so this needs only the pure execute verbs.
 const REMOTE_CLEANUP_EXECUTE_VERB = /(실행|진행|지금|승인된|\bexecute\b|\bproceed\b|\bnow\b|go\s*ahead)/i;
+// A bare execute command with no other content ("실행해줘", "진행해", "proceed", "go ahead") — the only cleanup-execution
+// form without a cleanup verb (Codex wave-8 review: "지금 몇 시야?" / "진행 상황 알려줘" must never delete a branch).
+const REMOTE_CLEANUP_BARE_EXECUTE =
+  /^((이제|지금|바로)\s*)*(실행|진행)\s*(해\s*줘요?|해\s*주세요|해|하자|해라|할게|시켜\s*줘)?\s*[.!~]*$|^(please\s+)?(proceed|execute|go\s*ahead|do\s+it)(\s+(it|now))?(\s+please)?\s*[.!]*$/i;
+// Chain verbs foreign to a branch-cleanup step (Codex wave-8 review): a push / merge / PR / sync / commit / deploy /
+// force phrase is never a branch cleanup — "execute approved push" must not reach the remote DELETE. "머지된 브랜치" /
+// "merged branch" are qualifiers, not merge verbs.
+const CLEANUP_FOREIGN_CHAIN_WORD =
+  /(푸시|\bpush|원격에\s*올려|리모트에\s*올려|머지(?!\s*된)|병합(?!\s*된)|\bmerge\b|\bpr\b|pull\s*request|풀\s*리퀘|동기화|최신화|\bsync\b|\bpull\b|커밋|\bcommit\b|배포|deploy|릴리즈|release|리베이스|rebase|리셋|\breset\b|강제|\bforce\b|\btag\b|태그)/i;
+// A statement / question / report about a cleanup is never a cleanup request (Codex wave-8 review): "브랜치 삭제했어",
+// "브랜치 정리 완료", "브랜치 삭제 로그를 요약해줘", "원격 브랜치 상태 알려줘".
+const CLEANUP_NOT_A_REQUEST =
+  /[?？]|(삭제|정리|제거)\s*(했|됐|되었|됨|완료|끝)|지웠|없앴|뭐|무엇|어떻게|왜|방법|설명|요약|보여|알려|로그|기록|이력|상태|확인|체크|\bhow\b|\bwhat\b|\bwhy\b|\bsummar|\bshow\b|\blogs?\b|\bexplain\b|\bstatus\b|\bcheck\b|\bdeleted\b|\bremoved\b/i;
 
 /** A PR-ish noun (Sprint 3b, ADR-0049) — only ever consulted at GIT_PUSHED/PR_APPROVAL_PENDING/PR_APPROVED.
  *  A bare 좋아/오케이/확인/진행해/다음 단계 never matches. A noun ALONE is not a PR-creation request (CA #1). */
@@ -1679,6 +1735,19 @@ export class ConversationRuntime {
   }
 
   /**
+   * A push request that reaches the no-relevant-anchor fall-through (QA-V2-W8): the strict imperative/execution
+   * shape of {@link interpretPushIntent}. A question or a topic mention ("git push가 뭐야?", "푸시 알림 설정하는 법",
+   * "push notification 구현 방법") is `null` and stays ordinary chat.
+   */
+  static interpretNoAnchorPushRequest(text: string): 'push' | 'push-unsupported' | null {
+    const kind = ConversationRuntime.interpretPushIntent(text);
+    if (kind === null) return null;
+    const t = text.trim();
+    if (PUSH_CHAT_TOPIC.test(t) || !PUSH_REQUEST_SHAPES.some((re) => re.test(t))) return null;
+    return kind;
+  }
+
+  /**
    * Explicit git-push-EXECUTION intent (Sprint 3a, ADR-0048) — only consulted inside the PUSH_APPROVED /
    * GIT_PUSHED routing guards. A forbidden-companion is classified ONLY when a push/exec word is present
    * (2z CA #2 lesson), so a bare "배포"/"branch"/"reset" is NOT push handling. Returns:
@@ -1745,7 +1814,8 @@ export class ConversationRuntime {
     const t = text.trim().toLowerCase();
     if (!MERGE_WORD.test(t)) return null;
     if (MERGE_QUESTION.test(t)) return null; // status/check/possibility → not execution (read-only path)
-    if (MERGE_EXECUTION_VERB.test(t)) return 'execute';
+    if (MERGE_EXECUTION_FOREIGN.test(t)) return null; // merge + push/deploy/sync/delete/force → never execution (Codex W8)
+    if (MERGE_EXECUTION_VERB.test(t) && MERGE_EXECUTION_ATTACHED.test(t)) return 'execute';
     return null; // bare "머지"/"merge" noun → already-approved reply, no execution
   }
 
@@ -1768,6 +1838,7 @@ export class ConversationRuntime {
   static interpretMainSyncIntent(text: string): 'sync' | null {
     const t = text.trim().toLowerCase();
     if (!SYNC_WORD.test(t)) return null;
+    if (SYNC_FOREIGN.test(t)) return null; // sync + push/PR/delete/deploy/force → never a sync command (Codex W8)
     if (MAIN_WORD.test(t) || /update\s+(local\s+)?main/.test(t)) return 'sync';
     return null;
   }
@@ -1783,6 +1854,7 @@ export class ConversationRuntime {
   static interpretRemoteBranchCleanupIntent(text: string): 'remote' | null {
     const t = text.trim().toLowerCase();
     if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/"main·default 삭제" → never
+    if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null; // other chain verb / statement (Codex W8)
     if (CLEANUP_VERB.test(t) && CLEANUP_BRANCH_WORD.test(t) && CLEANUP_REMOTE_WORD.test(t)) return 'remote';
     return null;
   }
@@ -1798,7 +1870,20 @@ export class ConversationRuntime {
   static interpretRemoteBranchCleanupExecutionIntent(text: string): 'execute' | null {
     const t = text.trim().toLowerCase();
     if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/main·default → never execute (CA change 1)
-    if (REMOTE_CLEANUP_EXECUTE_VERB.test(t)) return 'execute';
+    // (Codex wave-8 review, P1) only the step's OWN execution phrases: never a push/merge/PR/sync/… phrase ("execute
+    // approved push", "푸시 실행해도 돼?"), never a statement/question, never an execute word with unrelated content.
+    if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null;
+    if (REMOTE_CLEANUP_BARE_EXECUTE.test(t)) return 'execute'; // "실행해줘" / "proceed" — the approved step's own command
+    // Otherwise the step's OWN target is required (Codex wave-8 re-review): a cleanup verb + a branch word + a remote
+    // qualifier + an execute verb — "delete the file now" names no remote branch and never executes.
+    if (
+      CLEANUP_VERB.test(t) &&
+      CLEANUP_BRANCH_WORD.test(t) &&
+      CLEANUP_REMOTE_WORD.test(t) &&
+      unnegatedMatch(t, [REMOTE_CLEANUP_EXECUTE_VERB])
+    ) {
+      return 'execute';
+    }
     return null;
   }
 
@@ -1812,6 +1897,7 @@ export class ConversationRuntime {
     const t = text.trim().toLowerCase();
     if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/"main 삭제" → never
     if (CLEANUP_REMOTE_WORD.test(t)) return null; // remote → not local (routed by interpretRemoteBranchCleanupIntent)
+    if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null; // other chain verb / statement (Codex W8)
     if (CLEANUP_VERB.test(t) && CLEANUP_BRANCH_WORD.test(t)) return 'local';
     return null;
   }
@@ -2029,9 +2115,13 @@ export class ConversationRuntime {
     // already-approved. push-only is NOT intercepted outside commit states (WORKSPACE_APPLIED "push" stays
     // the 2w mutating reject).
     if (applyAnchor?.status === 'COMMIT_APPROVED') {
+      // (Codex wave-8 review, allow-list decision) ONLY an exact accepted execution phrase executes (EXECUTION_PHRASES
+      // in execution-command-guard); any other commit-execution mention → the already-approved reply, which quotes
+      // the documented phrase. The same rule applies to every approved execution gate below.
+      if (isAcceptedExecutionPhrase('commit', message.text)) return this.handleCommitExecutionTurn(message, session, applyAnchor);
       const execKind = ConversationRuntime.interpretCommitExecutionIntent(message.text);
       if (execKind === 'push-unsupported') return this.handleCommitPushUnsupportedTurn(message, session);
-      if (execKind === 'execute') return this.handleCommitExecutionTurn(message, session, applyAnchor);
+      if (execKind === 'execute') return this.handleCommitAlreadyApprovedTurn(message, session);
     }
     if (applyAnchor?.status === 'GIT_COMMITTED') {
       // (Sprint 2z, ADR-0047) push is checked FIRST so "푸시해줘" plans a push approval rather than hitting
@@ -2049,9 +2139,10 @@ export class ConversationRuntime {
     // "승인된 push 실행해줘" executes rather than re-printing already-approved. A bare push phrase (no exec
     // word) falls to the 2z already-approved reply. A push+forbidden phrase → unsupported companion.
     if (applyAnchor?.status === 'PUSH_APPROVED') {
+      if (isAcceptedExecutionPhrase('push', message.text)) return this.handlePushExecutionTurn(message, session, actor, applyAnchor);
       const exKind = ConversationRuntime.interpretPushExecutionIntent(message.text);
       if (exKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
-      if (exKind === 'execute') return this.handlePushExecutionTurn(message, session, actor, applyAnchor);
+      if (exKind === 'execute') return this.handlePushAlreadyApprovedTurn(message, session); // not an exact phrase (allow-list)
       // (Sprint 2z) a bare push phrase at PUSH_APPROVED → already approved (not pushed).
       const pushKind = ConversationRuntime.interpretPushIntent(message.text);
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
@@ -2074,25 +2165,38 @@ export class ConversationRuntime {
     // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
     // to chat (a free-text model reply could fabricate or advise e.g. `git push -f`). A push+forbidden companion
     // (force/merge/deploy/PR/…) → the unsupported companion reply; any other push phrase → already pushed. Read-only
-    // PR/merge status phrases keep priority; no git/hosting call is ever made here.
+    // PR/merge status phrases keep priority; no git/hosting call is ever made here. An explicit push-EXECUTION phrase
+    // ("푸시 실행해도 돼?", "execute approved push") is ALWAYS intercepted, whatever its question shape (Codex wave-8
+    // review, P1: it must never reach a later destructive execution route such as the remote-branch DELETE at
+    // REMOTE_BRANCH_CLEANUP_APPROVED). A bare push-word mention uses the strict request shape (QA-V2-W8), so a
+    // question/topic mention such as "git push가 뭐야?" stays ordinary chat.
     if (
       applyAnchor &&
       POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status) &&
       !ConversationRuntime.interpretPrStatusIntent(message.text) &&
       !ConversationRuntime.interpretMergeStatusIntent(message.text)
     ) {
-      const pushKind = ConversationRuntime.interpretPushIntent(message.text);
+      const execKind = unnegatedMatch(message.text, [PUSH_EXECUTION_WORDS])
+        ? ConversationRuntime.interpretPushExecutionIntent(message.text)
+        : null;
+      const pushKind = execKind === 'execute' ? 'push' : (execKind ?? ConversationRuntime.interpretNoAnchorPushRequest(message.text));
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (pushKind === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }
     // (Sprint 3b, ADR-0049) already PR-approved — a PR+forbidden → unsupported companion (before create, CA #9);
     // a PR-creation phrase → already approved (not created, Q11); a deploy-only phrase → state-specific reply.
     if (applyAnchor?.status === 'PR_APPROVED') {
+      if (isAcceptedExecutionPhrase('prCreate', message.text)) {
+        return this.handlePrCreationExecutionTurn(message, session, actor, applyAnchor);
+      }
       const prKind = ConversationRuntime.interpretPrIntent(message.text);
       if (prKind === 'pr-unsupported') return this.handlePrUnsupportedCompanionTurn(message, session);
       // (Sprint 3d-D, ADR-0054) an explicit PR create/open phrase at PR_APPROVED now EXECUTES creation
       // (state-driven trigger — the same grammar requested approval at GIT_PUSHED). Bare noun/승인/진행해 → null.
-      if (prKind === 'create') return this.handlePrCreationExecutionTurn(message, session, actor, applyAnchor);
+      if (prKind === 'create') {
+        // not an exact accepted phrase (allow-list) → already approved; the reply quotes "PR 생성 실행".
+        return this.respondComposed(message, session, this.deps.composer.composePrAlreadyApproved(message.context));
+      }
       if (DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePrApprovedDeployUnsupportedTurn(message, session);
     }
     // (Sprint 3d-D) After a PR was created/connected: a PR create phrase → already created (+ URL, no new call);
@@ -2123,6 +2227,7 @@ export class ConversationRuntime {
     // live preflight → merge (Sprint 3g); a bare merge mention (no exec verb) → already-approved (ask to merge
     // explicitly, no mutation); deploy/release/reviewer/label/assignee → unsupported future step.
     if (applyAnchor?.status === 'MERGE_APPROVED') {
+      if (isAcceptedExecutionPhrase('merge', message.text)) return this.handleMergeExecutionTurn(message, session, actor, applyAnchor);
       if (
         ConversationRuntime.interpretPrStatusIntent(message.text) ||
         ConversationRuntime.interpretMergeStatusIntent(message.text)
@@ -2130,8 +2235,9 @@ export class ConversationRuntime {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
       // (Sprint 3g, ADR-0057, CA change 1) "머지해줘"/"이 PR 머지해줘"/"merge this PR"/"실제 머지해줘"/… → EXECUTE.
+      // A merge-execution-shaped phrase that is not an exact accepted phrase (allow-list) → already approved.
       if (ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute') {
-        return this.handleMergeExecutionTurn(message, session, actor, applyAnchor);
+        return this.handleMergeAlreadyApprovedTurn(message, session);
       }
       // A bare "머지"/"merge" mention (merge word, no execution verb, not a status phrase) → already approved,
       // ask to merge explicitly (CA change 4). NO mutation. Checked before the deploy/companion words so a merge
@@ -2148,14 +2254,16 @@ export class ConversationRuntime {
     // read-only preview (keeps PR_MERGED); any merge phrase → already merged (NO new mutation); deploy/release/
     // companion → unsupported future step.
     if (applyAnchor?.status === 'PR_MERGED') {
-      if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
-        return this.handleMainSyncTurn(message, session, actor, applyAnchor);
-      }
+      // (allow-list) only an exact accepted sync phrase syncs; any other sync mention → a fixed hint naming the phrase.
+      if (isAcceptedExecutionPhrase('mainSync', message.text)) return this.handleMainSyncTurn(message, session, actor, applyAnchor);
       if (
         ConversationRuntime.interpretPrStatusIntent(message.text) ||
         ConversationRuntime.interpretMergeStatusIntent(message.text)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
+      }
+      if (MAIN_SYNC_MENTION.test(message.text)) {
+        return this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'main-sync'));
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
@@ -2175,7 +2283,8 @@ export class ConversationRuntime {
       if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
         return this.handleRemoteBranchCleanupUnsupportedTurn(message, session);
       }
-      if (ConversationRuntime.interpretBranchCleanupIntent(message.text) === 'local') {
+      // (allow-list) only an exact accepted cleanup phrase deletes; any other local-cleanup mention → a fixed hint.
+      if (isAcceptedExecutionPhrase('localCleanup', message.text)) {
         return this.handleBranchCleanupTurn(message, session, actor, applyAnchor);
       }
       if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
@@ -2186,6 +2295,9 @@ export class ConversationRuntime {
         ConversationRuntime.interpretMergeStatusIntent(message.text)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
+      }
+      if (CLEANUP_BRANCH_WORD.test(message.text) && CLEANUP_VERB.test(message.text)) {
+        return this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'local-cleanup'));
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
@@ -2232,8 +2344,12 @@ export class ConversationRuntime {
     // REMOTE_BRANCH_CLEANED; a re-request (no execute verb) → already approved (no re-approval); a status/check phrase
     // → read-only preview (keeps the state); a merge phrase → already merged; deploy/release/companion → unsupported.
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANUP_APPROVED') {
-      if (ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(message.text) === 'execute') {
+      if (isAcceptedExecutionPhrase('remoteCleanup', message.text)) {
         return this.handleRemoteBranchCleanupExecutionTurn(message, session, actor, applyAnchor);
+      }
+      // An execution-shaped phrase that is not an exact accepted phrase (allow-list) → already approved (quotes the phrase).
+      if (ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(message.text) === 'execute') {
+        return this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session);
       }
       if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
         return this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session);
@@ -2302,7 +2418,18 @@ export class ConversationRuntime {
     // 2v deny-fragment path, not treated as a commit. A plain commit phrase ("커밋해줘") carries no validation
     // token, so it falls through to the commit check unaffected.
     if (applyAnchor?.status === 'WORKSPACE_APPLIED') {
+      // (allow-list) a run ('test'/'typecheck') executes a command, so only an exact accepted phrase runs it; any other
+      // run-shaped phrase gets a fixed hint naming the phrase. Clarify/unsupported replies execute nothing (unchanged).
+      if (isAcceptedExecutionPhrase('validationTest', message.text)) {
+        return this.handlePostApplyValidationTurn(message, session, applyAnchor, 'test');
+      }
+      if (isAcceptedExecutionPhrase('validationTypecheck', message.text)) {
+        return this.handlePostApplyValidationTurn(message, session, applyAnchor, 'typecheck');
+      }
       const validationKind = ConversationRuntime.interpretPostApplyValidationIntent(message.text);
+      if (validationKind === 'test' || validationKind === 'typecheck') {
+        return this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'validation'));
+      }
       if (validationKind) {
         return this.handlePostApplyValidationTurn(message, session, applyAnchor, validationKind);
       }
@@ -2334,6 +2461,9 @@ export class ConversationRuntime {
     // APPLY_WORDS so "패치 적용해줘" is a file-apply, not a Sprint 2s apply-intent). Only fires on PATCH_READY.
     if (ConversationRuntime.interpretFinalApplyIntent(message.text)) {
       if (applyAnchor?.status === 'PATCH_READY') {
+        // (allow-list) only an exact accepted apply phrase writes files; otherwise the patch-ready (not applied) reply,
+        // which quotes "패치 적용해줘".
+        if (!isAcceptedExecutionPhrase('patchApply', message.text)) return this.handlePatchAlreadyGeneratedTurn(message, session);
         return this.handleWorkspaceApplyTurn(message, session, applyAnchor);
       }
       if (applyAnchor?.status === 'WORKSPACE_APPLIED') {
@@ -2374,6 +2504,22 @@ export class ConversationRuntime {
       // No anchor at all (or a stale one, already auto-cleared by findAnchor). An explicit apply phrase
       // must NEVER be reinterpreted as a new, unscoped code-change request (CA review).
       return this.handleApplyPreviewUnavailableTurn(message, session);
+    }
+    // (QA-V2-W8) A push / push-execution request with no push-relevant anchor (none, or not yet committed): the
+    // chain states above own every anchored push phrase, so this is only the no-chain fall-through. Deterministic
+    // reply — a free-text model reply could fabricate a push or advise `git push -f`. No git/hosting call.
+    if (
+      !(
+        applyAnchor &&
+        (applyAnchor.status === 'GIT_COMMITTED' ||
+          applyAnchor.status === 'PUSH_APPROVED' ||
+          applyAnchor.status === 'GIT_PUSHED' ||
+          POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status))
+      )
+    ) {
+      const noAnchorPush = ConversationRuntime.interpretNoAnchorPushRequest(message.text);
+      if (noAnchorPush === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
+      if (noAnchorPush === 'push') return this.handleNoPushTargetTurn(message, session);
     }
     // Anything else: fall through untouched — an ELIGIBLE/APPROVED/PATCH_READY/WORKSPACE_APPLIED anchor is
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
@@ -4728,6 +4874,13 @@ export class ConversationRuntime {
   /** A push phrase while already PUSH_APPROVED (Sprint 2z) — already approved; not pushed, no new approval. */
   private async handlePushAlreadyApprovedTurn(message: InboundMessage, session: Session): Promise<TurnResult> {
     const reply = this.deps.composer.composePushAlreadyApproved(message.context);
+    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+    return this.responded(session, reply);
+  }
+
+  /** A push request with no commit chain in progress (QA-V2-W8) — fixed reply; no approval, no git. */
+  private async handleNoPushTargetTurn(message: InboundMessage, session: Session): Promise<TurnResult> {
+    const reply = this.deps.composer.composeNoPushTarget(message.context);
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return this.responded(session, reply);
   }

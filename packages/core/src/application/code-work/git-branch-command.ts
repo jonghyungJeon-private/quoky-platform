@@ -162,6 +162,56 @@ export function detectGitBranchCommand(text: string): GitBranchCommand | null {
   return null;
 }
 
+/** Delete / cleanup cue for an explicit branch-removal request (never a create/switch command). */
+const DELETE_CUES: readonly RegExp[] = [/삭제|지워|지우|제거|없애|정리|\bdelete\b|\bremove\b|\bprune\b|clean\s*up|\bcleanup\b/i];
+/** `git branch -d/-D/--delete <name>` typed as a command. */
+const GIT_BRANCH_DELETE_COMMAND = /^git\s+branch\s+(?:-{1,2}d(?:elete)?|-{1,2}force\s+-{1,2}d(?:elete)?)\s+\S+$/i;
+/** A question / how-to / hypothetical about deleting is never a delete request. */
+const DELETE_QUESTION_WORDS =
+  /뭐|무엇|어떻게|어떤|왜|방법|알려|설명|차이|되나|될까|돼\??$|하면|하려면|하는\s*법|\bhow\b|\bwhat\b|\bwhy\b|\bcan\b|\bshould\b|\bif\b|\bwhen\b/i;
+const MAX_DELETE_REQUEST_CHARS = 120;
+/** One branch-name-shaped token (ASCII ref characters only, so a Korean noun such as "로그" never fills the slot). */
+const REF_TOKEN = '[\\w./@-]+';
+/** A Korean delete verb in imperative form ("삭제해줘", "삭제해 줘", "지워줘", "제거해줘", "정리해줘", "없애줘"). */
+const KO_DELETE_IMPERATIVE =
+  '(?:(?:삭제|제거|정리)\\s*(?:해\\s*줘요?|해\\s*주세요|해\\s*주라|해\\s*줄래요?|해라|하자|해)|(?:지워|없애)\\s*(?:줘요?|주세요|줄래요?|라)?)';
+/**
+ * Imperative delete shapes (Codex wave-8 review): the imperative must attach to the delete verb, which attaches to the
+ * branch word (optionally with one branch-name token between them or after the verb). Statements ("브랜치 삭제했어",
+ * "브랜치 정리 완료") and requests whose main verb is something else ("브랜치 삭제 로그를 요약해줘") never match.
+ */
+const DELETE_REQUEST_SHAPES: readonly RegExp[] = [
+  // "브랜치 삭제해줘", "로컬 브랜치 지워줘", "feature/x 브랜치 지워줘", "브랜치 feature/x 삭제해줘", "브랜치 삭제해줘 feature/x"
+  new RegExp(
+    `브랜치\\s*(?:를|을)?\\s*(?:${REF_TOKEN}\\s*(?:를|을)?\\s*)?(?:좀\\s*)?${KO_DELETE_IMPERATIVE}(?:\\s+${REF_TOKEN})?$`,
+    'i',
+  ),
+  // "delete branch feature/x", "remove the branch feature/x", "delete the local branch", "clean up branch"
+  new RegExp(
+    `^(?:please\\s+)?(?:delete|remove|prune|clean\\s*up|cleanup)\\s+(?:the\\s+)?(?:local\\s+|merged\\s+|old\\s+)*branch(?:es)?(?:\\s+${REF_TOKEN})?$`,
+    'i',
+  ),
+  // "delete feature/x branch", "remove the feature/x branch"
+  new RegExp(`^(?:please\\s+)?(?:delete|remove)\\s+(?:the\\s+)?${REF_TOKEN}\\s+branch$`, 'i'),
+];
+
+/**
+ * Detect an explicit owner branch DELETE / cleanup request ("브랜치 삭제해줘 feature/x", "feature/x 브랜치 지워줘",
+ * "delete branch feature/x", `git branch -D feature/x`). Consulted by the handler ONLY after {@link detectGitBranchCommand}
+ * returned null and only when the anchor is not in the post-merge cleanup chain (which owns "브랜치 정리해줘" via the
+ * runtime's own cleanup flow). Only an imperative delete shape counts (Codex wave-8 review): questions, negations,
+ * statements/past tense, summaries of a delete, and long free text are never a request.
+ */
+export function detectGitBranchDeleteRequest(text: string): boolean {
+  if (typeof text !== 'string') return false;
+  const n = normalize(text);
+  if (n.length === 0 || n.length > MAX_DELETE_REQUEST_CHARS) return false;
+  if (/[?？]/.test(text) || DELETE_QUESTION_WORDS.test(n)) return false;
+  if (GIT_BRANCH_DELETE_COMMAND.test(n)) return true;
+  if (!BRANCH_WORD.test(n) || !unnegatedMatch(n, DELETE_CUES)) return false;
+  return DELETE_REQUEST_SHAPES.some((re) => re.test(n));
+}
+
 // ── fixed replies ───────────────────────────────────────────────────────────────────────────────────────
 
 export type GitBranchRefusalReason =
@@ -214,6 +264,9 @@ export const gitBranchReplies = {
   unsupported: (): string =>
     '브랜치는 만들기("브랜치 만들어줘 feature/x")와 전환("feature/x 브랜치로 전환해줘")만 지원해요. 삭제·이름 변경·강제 변경·리셋·리베이스·병합·푸시·태그·업스트림 설정은 하지 않았어요.\n' +
     NOTHING_CHANGED,
+  deleteUnsupported: (): string =>
+    '채팅으로는 브랜치를 삭제하지 않아요. 로컬 브랜치 정리는 PR을 머지하고 main을 동기화한 뒤 이어지는 단계("브랜치 정리해줘")에서만 할 수 있어요.\n' +
+    '브랜치를 삭제하거나 바꾸지 않았고 git도 실행하지 않았어요.',
   usage: (action: GitBranchAction): string =>
     (action === 'create'
       ? '만들 브랜치 이름을 하나만 알려 주세요. 예: "브랜치 만들어줘 feature/x"'
@@ -244,6 +297,14 @@ export interface GitBranchTurnHandlerDeps {
 const CREATE_ANCHOR_STATUSES: ReadonlySet<string> = new Set(['ELIGIBLE', 'APPROVED', 'PATCH_READY', 'WORKSPACE_APPLIED']);
 const SWITCH_ANCHOR_STATUSES: ReadonlySet<string> = new Set(['ELIGIBLE', 'APPROVED']);
 const PENDING_CHANGE_ANCHOR_STATUSES: ReadonlySet<string> = new Set(['PATCH_READY', 'WORKSPACE_APPLIED']);
+/** Post-merge chain states whose runtime flow owns "브랜치 정리/삭제해줘" (local/remote cleanup) — never claimed here. */
+const CLEANUP_CHAIN_ANCHOR_STATUSES: ReadonlySet<string> = new Set([
+  'MAIN_SYNCED',
+  'BRANCH_CLEANED',
+  'REMOTE_BRANCH_CLEANUP_PENDING',
+  'REMOTE_BRANCH_CLEANUP_APPROVED',
+  'REMOTE_BRANCH_CLEANED',
+]);
 
 export class GitBranchTurnHandler implements ConversationTurnHandler {
   readonly id = GIT_BRANCH_TURN_HANDLER_ID;
@@ -255,11 +316,18 @@ export class GitBranchTurnHandler implements ConversationTurnHandler {
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     const command = detectGitBranchCommand(ctx.message.text);
-    if (!command) return null;
     const reply = (text: string, status?: 'FAILED'): TurnHandlerReply => ({
       reply: { context: ctx.message.context, text },
       ...(status ? { status } : {}),
     });
+    if (!command) {
+      // An explicit branch delete request is answered with a fixed refusal (no git call) instead of reaching chat.
+      const status = ctx.applyAnchor?.status;
+      if (detectGitBranchDeleteRequest(ctx.message.text) && !(status !== undefined && CLEANUP_CHAIN_ANCHOR_STATUSES.has(status))) {
+        return reply(gitBranchReplies.deleteUnsupported());
+      }
+      return null;
+    }
 
     if (command.kind === 'unsupported') return reply(gitBranchReplies.unsupported());
     if (command.kind === 'usage') return reply(gitBranchReplies.usage(command.action));

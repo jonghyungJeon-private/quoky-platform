@@ -77,6 +77,7 @@ import type { CapabilityRouter } from './capability-router';
 import { buildCanonicalDiff, splitCanonicalDiff } from './preview-delivery';
 import { IntentResolver } from './intent-resolver';
 import { ExecutionOutcomeStatus, ExecutionStage } from './execution-orchestrator';
+import { EXECUTION_PHRASES } from './execution-command-guard';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
 import { ConversationRuntime, filterInScopeChanges, toCodeChangePreview, toCodeDiffPreview } from './conversation-runtime';
 import type {
@@ -1134,6 +1135,52 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
 }
 
 // ── Sprint 2k — Conversation Runtime core ───────────────────────────────────────────────────────
+
+// ── Allow-list execution gates (orchestrator decision after the Codex wave-8 reviews). ──
+// `positives` are the gate's EXACT accepted phrases (EXECUTION_PHRASES — the documented phrase first) plus
+// normalization variants of each; every one must execute exactly once with a valid anchor + approval.
+// `executionGateNegatives` derives questions / negations / past-tense / reported-speech / hypothetical forms from the
+// step's own stem and adds foreign-target phrases and the Codex repros — zero mutations.
+interface ExecutionGateCase {
+  /** Korean stem the negative templates attach to ("커밋 실행" → "커밋 실행해도 돼?", "커밋 실행하지 마", …). */
+  readonly stem: string;
+  /** English command the negative templates wrap ("do not …", "should I …?", "… was already done"). */
+  readonly en: string;
+  readonly positives: readonly string[];
+  /** Phrases with an execute verb but a target that is NOT this step's, plus the Codex review repros. */
+  readonly foreign: readonly string[];
+}
+/** Normalization variants the allow-list accepts for an entry (punctuation, spacing, case, polite form, now/지금/please). */
+function phraseVariants(p: string): string[] {
+  const out = [p, `${p}.`, `${p}!`, `  ${p}  `, `지금 ${p}`, `이제 ${p}`, `${p} please`, p.toUpperCase()];
+  if (p.endsWith('해줘')) out.push(p.replace(/해줘$/, '해 주세요'), p.replace(/해줘$/, '해줘요'), p.replace(/해줘$/, ' 해 줘'));
+  return out;
+}
+const withVariants = (phrases: readonly string[]) => [...new Set(phrases.flatMap(phraseVariants))];
+const EXECUTION_GATES = {
+  commit: { stem: '커밋 실행', en: 'execute commit', positives: withVariants(EXECUTION_PHRASES.commit), foreign: ['파일 실행해줘', 'execute the deploy now', '승인된 커밋 실행해줘 메시지는 "x"'] },
+  push: { stem: '푸시 실행', en: 'execute approved push', positives: withVariants(EXECUTION_PHRASES.push), foreign: ['파일 실행해줘', 'execute the deploy now', '푸시 실행할 필요 없어'] },
+  pr: { stem: 'PR 생성', en: 'create pull request', positives: withVariants(EXECUTION_PHRASES.prCreate), foreign: ['이슈 생성해줘', 'open the file', 'PR 설명 만들어줘'] },
+  merge: { stem: '머지', en: 'execute approved merge', positives: withVariants(EXECUTION_PHRASES.merge), foreign: ['파일 실행해줘', 'execute the deploy now', 'merge the config files now', '머지 로그 정리해줘'] },
+  sync: { stem: 'main 동기화', en: 'sync main', positives: withVariants(EXECUTION_PHRASES.mainSync), foreign: ['파일 동기화해줘', 'sync the docs', 'main 동기화해도 좋을까'] },
+  localCleanup: { stem: '브랜치 정리', en: 'delete local branch', positives: withVariants(EXECUTION_PHRASES.localCleanup), foreign: ['delete the file now', '파일 삭제해줘', '브랜치 정리할 필요 없어'] },
+  remoteCleanup: { stem: '원격 브랜치 삭제 실행', en: 'execute remote branch cleanup', positives: withVariants(EXECUTION_PHRASES.remoteCleanup), foreign: ['delete the file now', '파일 삭제 실행해줘', '로컬 파일 지금 삭제해줘', '원격 브랜치 백업 파일 삭제 실행해줘', '지금 삭제해줘'] },
+  apply: { stem: '패치 적용', en: 'apply patch', positives: withVariants(EXECUTION_PHRASES.patchApply), foreign: ['설정 적용해줘', 'apply the theme', '패치 적용 결과 정리해줘'] },
+  validation: { stem: '테스트 실행', en: 'run the tests', positives: withVariants([...EXECUTION_PHRASES.validationTest, ...EXECUTION_PHRASES.validationTypecheck]), foreign: ['린트 실행해줘', '테스트 실행할 필요 없어'] },
+} satisfies Record<string, ExecutionGateCase>;
+function executionGateNegatives(g: ExecutionGateCase): string[] {
+  const s = g.stem;
+  return [
+    `${s}해도 돼?`, `${s}해도 돼`, `${s}할까`, `${s}해도 될까`, `${s}해도 좋을까`, // questions / permission asks
+    `${s}하지 마`, `${s}하지 말아줘`, `${s} 안 해`, `${s}할 필요 없어`, `do not ${g.en}`, `don't ${g.en}`, `never ${g.en}`, // negations
+    `${s}했어`, `${s} 완료됐어`, `이미 ${s}했어`, `${g.en} was already done`, // past / statement / completion
+    `"${s}"라고 하면 어떻게 돼`, `${s}하면 어떻게 돼`, `should I ${g.en}?`, `can we ${g.en}`, // reported / hypothetical
+    ...g.foreign,
+  ];
+}
+/** Every git / hosting / workspace / command mutation the runtime can perform. */
+const mutationCalls = (c: { gitCommit: number; gitPush: number; hostingCreatePR: number; hostingMergePR: number; gitSyncMain: number; gitDeleteBranch: number; hostingDeleteRemoteBranch: number; workspaceApply: number; commandRun: number }) =>
+  c.gitCommit + c.gitPush + c.hostingCreatePR + c.hostingMergePR + c.gitSyncMain + c.gitDeleteBranch + c.hostingDeleteRemoteBranch + c.workspaceApply + c.commandRun;
 
 describe('ConversationRuntime', () => {
   it('dispatches the personal-work intent to WorkSurfaceQuery and presents partial availability', async () => {
@@ -3323,6 +3370,21 @@ describe('PatchRef → WorkspaceWrite Apply — runtime (Sprint 2u, ADR-0042)', 
     }
   });
 
+  it('Allow-list gate table — final workspace apply @ PATCH_READY: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.apply;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: patchReadyAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.workspaceApply, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: patchReadyAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
   it('success re-anchors WORKSPACE_APPLIED (CA 2), preserving the workspaceChangeRef (CA 3) and every prior ref (CA 4)', async () => {
     const anchor = patchReadyAnchor();
     const { deps, calls } = makeDeps({ applyAnchor: anchor });
@@ -3548,6 +3610,21 @@ describe('Post-Apply Validation Command — runtime (Sprint 2v, ADR-0043)', () =
       expect(calls.commandRun, text).toBe(1);
       expect(calls.lastCommandRunInput?.command, text).toBe('pnpm');
       expect(calls.lastCommandRunInput?.args, text).toEqual(['test']);
+    }
+  });
+
+  it('Allow-list gate table — post-apply validation @ WORKSPACE_APPLIED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.validation;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: validatedAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.commandRun, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: validatedAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
     }
   });
 
@@ -4411,6 +4488,21 @@ describe('Approved Git Commit Execution — runtime (Sprint 2y, ADR-0046)', () =
     }
   });
 
+  it('Allow-list gate table — commit execution @ COMMIT_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.commit;
+    for (const text of gate.positives) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitCommit, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
   it('ambiguous words at COMMIT_APPROVED do not execute (CA 5)', async () => {
     for (const text of ['좋아', '오케이', '확인', '진행해', '다음 단계']) {
       const { deps, calls } = execDeps();
@@ -4567,8 +4659,13 @@ describe('Approved Git Commit Execution — runtime (Sprint 2y, ADR-0046)', () =
   });
 
   it('execution never accepts a new message; commitFiles message === approved message (CA 31–32)', async () => {
+    // (allow-list, Codex wave-8 review) a phrase carrying an extra message override is not an exact accepted phrase,
+    // so it does not execute at all; the plain phrase commits with the APPROVED message only.
+    const sneaky = execDeps();
+    await new ConversationRuntime(sneaky.deps).handle(messageOf('승인된 커밋 실행해줘 메시지는 "feat: sneaky override"'));
+    expect(sneaky.calls.gitCommit).toBe(0);
     const { deps, calls } = execDeps();
-    await new ConversationRuntime(deps).handle(messageOf('승인된 커밋 실행해줘 메시지는 "feat: sneaky override"'));
+    await new ConversationRuntime(deps).handle(messageOf('승인된 커밋 실행해줘'));
     expect(calls.gitCommit).toBe(1);
     expect(calls.lastGitCommitInput?.message).toBe(COMMIT_MSG);
     expect(calls.lastGitCommitInput?.message).not.toContain('sneaky');
@@ -4733,6 +4830,81 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     expect(calls.requestForRisk).toBe(0);
     expect(calls.gitInfo).toBe(0);
     expect(calls.gitStatus).toBe(0);
+  });
+
+  it.each(['푸시 실행', '푸시해줘', 'push 실행해줘', 'git push 해줘', 'git push', 'push now'])(
+    'no anchor + "%s" → deterministic no-push-target reply, no classifier/orchestrator, no git (QA-V2-W8)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).toBe(composer.composeNoPushTarget(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(calls.run).toBe(0);
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.gitInfo).toBe(0);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each(['강제 푸시해줘', 'force push', 'git push --force', 'push -f'])(
+    'no anchor + force phrase "%s" → unsupported companion reply, no push (QA-V2-W8)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each(['git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'push notification 구현 방법', 'git push와 pull의 차이'])(
+    'no anchor + conceptual mention "%s" → still ordinary chat (QA-V2-W8)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).not.toBe(composer.composeNoPushTarget(CTX).text);
+      expect(result.reply.text).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      expect(calls.classify).toBe(1);
+    },
+  );
+
+  it.each(['git push 명령을 한국어로 번역해줘', '푸시 로직을 검토해줘', '푸시 코드 리뷰해줘', 'push 관련 문서 정리해줘', '푸시 알림 문구 다듬어줘', 'git push 결과를 요약해줘'])(
+    'no anchor + ordinary request merely mentioning push "%s" → ordinary chat (Codex W8 P2)',
+    async (text) => {
+      expect(ConversationRuntime.interpretNoAnchorPushRequest(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).not.toBe(composer.composeNoPushTarget(CTX).text);
+      expect(result.reply.text).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      expect(calls.classify).toBe(1);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each(['git push origin feature/x', 'git push -u origin feature/x', '푸시 좀 해줘', '원격에 올려줘', 'push it', 'please push to origin'])(
+    'no anchor + push request / plain git push command "%s" → no-push-target reply (Codex W8 P2)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).toBe(composer.composeNoPushTarget(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each([
+    'git push --force origin feature/x',
+    'git push -f origin main',
+    'git push --force-with-lease origin feature/x',
+    'git push origin --delete feature/x',
+    'git push origin :feature/x',
+    'git push origin +main',
+  ])('no anchor + force / delete git push command "%s" → unsupported companion reply (Codex W8 P2)', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(result.reply.text).toBe(composer.composePushUnsupportedCompanion(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.gitPush).toBe(0);
   });
 
   it('WORKSPACE_APPLIED + push phrase → existing 2w mutating reject, no push approval (CA 7)', async () => {
@@ -5135,6 +5307,21 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
   const EXEC_PHRASES = ['승인된 push 실행해줘', 'push 실행해줘', '이제 실제 push 해줘', 'execute approved push', 'push approved commit'];
 
   // ── execute + gating (CA 1–12) ──────────────────────────────────────────────────────────────
+  it('Allow-list gate table — push execution @ PUSH_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.push;
+    for (const text of gate.positives) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitPush, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
   it('PUSH_APPROVED + each execution phrase → git.pushApprovedCommit once, GIT_PUSHED (CA 1–5)', async () => {
     for (const text of EXEC_PHRASES) {
       const { deps, calls } = execDeps();
@@ -6588,7 +6775,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
 
   it('post-push chain states + push/push-execution phrase → already pushed, no provider/git/hosting call, anchor unchanged', async () => {
     for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
-      for (const text of ['푸시 실행', '푸시해줘', 'push', '승인된 push 실행해줘']) {
+      for (const text of ['푸시 실행', '푸시해줘', 'push', '승인된 push 실행해줘', 'git push origin feature/x', 'execute approved push', '푸시 실행해도 돼?']) {
         const anchor = anchorOf();
         const { deps, calls } = makeDeps({ applyAnchor: anchor });
         const r = await new ConversationRuntime(deps).handle(messageOf(text));
@@ -6604,12 +6791,28 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
 
   it('post-push chain states + push with force/merge/deploy companion → unsupported companion reply, nothing executed', async () => {
     for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
-      for (const text of ['강제 푸시해줘', 'force push', 'git push --force', '푸시하고 머지해줘', '푸시하고 배포해줘']) {
+      for (const text of ['강제 푸시해줘', 'force push', 'git push --force', '푸시하고 머지해줘', '푸시하고 배포해줘', 'git push --force origin feature/x', 'git push -f origin main']) {
         const { deps, calls } = makeDeps({ applyAnchor: anchorOf() });
         const r = await new ConversationRuntime(deps).handle(messageOf(text));
         const key = `${label}: ${text}`;
         expect(noExternalCalls(calls), key).toBe(0);
         expect(r.reply.text, key).toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      }
+    }
+  });
+
+  it('post-push chain states + a push question/topic mention → not the already-pushed reply (stays chat)', async () => {
+    for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
+      for (const text of ['git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'git push와 pull의 차이', 'git push 명령을 한국어로 번역해줘', '푸시 로직을 검토해줘']) {
+        const anchor = anchorOf();
+        const { deps, calls } = makeDeps({ applyAnchor: anchor });
+        const r = await new ConversationRuntime(deps).handle(messageOf(text));
+        const key = `${label}: ${text}`;
+        expect(r.reply.text, key).not.toBe(
+          composer.composePushAlreadyPushed(CTX, { commitHash: anchor.pushedCommitHash, remote: anchor.pushedRemote, branch: anchor.pushedBranch }).text,
+        );
+        expect(r.reply.text, key).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+        expect(calls.gitPush + calls.hostingCreatePR + calls.hostingMergePR, key).toBe(0);
       }
     }
   });
@@ -7288,6 +7491,190 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
       const { deps, calls } = makeDeps({ applyAnchor: anchor, approvalsGetResult: approvedApprovalOf() });
       await new ConversationRuntime(deps).handle(messageOf('원격 브랜치 삭제 실행해줘'));
       expect(calls.hostingDeleteRemoteBranch, String(anchor?.status)).toBe(0);
+    }
+  });
+
+  // ── Codex wave-8 review (P1): push phrases at a destructive approved state never reach another step's execution. ──
+  const DESTRUCTIVE_CALLS = (c: { hostingDeleteRemoteBranch: number; hostingMergePR: number; gitSyncMain: number; gitDeleteBranch: number; gitPush: number; hostingCreatePR: number }) =>
+    c.hostingDeleteRemoteBranch + c.hostingMergePR + c.gitSyncMain + c.gitDeleteBranch + c.gitPush + c.hostingCreatePR;
+  const PUSH_PHRASES_AT_APPROVED_STEP = [
+    'execute approved push',
+    '푸시 실행해도 돼?',
+    'push 실행해줘',
+    '승인된 push 실행해줘',
+    '푸시해줘',
+    'push approved commit',
+    'git push origin feature/x',
+    'git push --force origin feature/x',
+    '강제 푸시 실행해줘',
+  ];
+
+  it('Allow-list gate table — PR creation execution @ PR_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.pr;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingCreatePR, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Allow-list gate table — merge execution @ MERGE_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.merge;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingMergePR, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Allow-list gate table — local main sync @ PR_MERGED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.sync;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitSyncMain, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Allow-list gate table — local branch cleanup @ MAIN_SYNCED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.localCleanup;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitDeleteBranch, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Allow-list gate table — remote branch cleanup execution @ REMOTE_BRANCH_CLEANUP_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.remoteCleanup;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingDeleteRemoteBranch, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 P1: REMOTE_BRANCH_CLEANUP_APPROVED (valid approval) + push phrase → already pushed / unsupported, ZERO deleteRemoteBranch', async () => {
+    for (const text of PUSH_PHRASES_AT_APPROVED_STEP) {
+      const anchor = REMOTE_CLEANUP_APPROVED_ANCHOR();
+      const { deps, calls } = makeDeps({ applyAnchor: anchor, approvalsGetResult: approvedApprovalOf() });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+      expect(calls.applyAnchorSet, text).toBe(0);
+      expect([
+        composer.composePushAlreadyPushed(CTX, { commitHash: anchor.pushedCommitHash, remote: anchor.pushedRemote, branch: anchor.pushedBranch }).text,
+        composer.composePushUnsupportedCompanion(CTX).text,
+      ], text).toContain(r.reply.text);
+    }
+  });
+
+  it('Codex W8 P1: MERGE_APPROVED / PR_MERGED / MAIN_SYNCED (valid approval) + push phrase → no merge / sync / branch delete', async () => {
+    for (const anchorOf of [() => MERGE_APPROVED_ANCHOR(), () => PR_MERGED_ANCHOR(), () => MAIN_SYNCED_ANCHOR(), () => BRANCH_CLEANED_ANCHOR()]) {
+      for (const text of PUSH_PHRASES_AT_APPROVED_STEP) {
+        const anchor = anchorOf();
+        const { deps, calls } = makeDeps({ applyAnchor: anchor, approvalsGetResult: approvedPrRequest() });
+        await new ConversationRuntime(deps).handle(messageOf(text));
+        expect(DESTRUCTIVE_CALLS(calls) + calls.requestForRisk, `${anchor.status}: ${text}`).toBe(0);
+      }
+    }
+  });
+
+  it('Codex W8 P1 (defense in depth): the remote-cleanup execution grammar matches only its own explicit phrases', () => {
+    for (const text of [
+      'execute approved push', '푸시 실행해도 돼?', 'push 실행', '머지 실행해줘', 'PR 생성 실행', 'main 동기화 실행해줘', '커밋 실행',
+      '배포 진행해줘', '지금 몇 시야?', '진행 상황 알려줘', '원격 브랜치 삭제했어', '원격 브랜치 삭제 실행해도 돼?', '원격 브랜치 상태 지금 알려줘',
+      '원격 브랜치 삭제 실행하지 마', 'execute the release now',
+    ]) {
+      expect(ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(text), text).toBeNull();
+    }
+    for (const text of ['원격 브랜치 삭제 실행해줘', '지금 원격 브랜치 삭제해줘', 'execute remote branch cleanup', 'proceed', '실행해줘', '진행해', 'go ahead', '원격 브랜치 삭제 진행해줘', '머지된 원격 브랜치 삭제 실행해줘']) {
+      expect(ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(text), text).toBe('execute');
+    }
+  });
+
+  it('Codex W8 P1: REMOTE_BRANCH_CLEANUP_APPROVED + non-cleanup / statement / question phrase → no delete', async () => {
+    for (const text of ['머지 실행해줘', 'main 동기화 실행해줘', '지금 몇 시야?', '진행 상황 알려줘', '원격 브랜치 삭제했어', '원격 브랜치 삭제 실행해도 돼?', '원격 브랜치 삭제 실행하지 마']) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 P1: the legitimate remote-cleanup execution phrases still execute exactly ONE delete', async () => {
+    for (const text of ['실행해줘', '진행해', 'go ahead', '원격 브랜치 삭제 진행해줘', '원격 브랜치 제거 실행해줘']) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingDeleteRemoteBranch, text).toBe(1);
+      expect(calls.lastApplyAnchor?.status, text).toBe('REMOTE_BRANCH_CLEANED');
+    }
+  });
+
+  it('Codex W8 audit: merge execution needs the verb attached to the merge word and no foreign chain verb', async () => {
+    for (const text of ['브랜치 삭제하고 머지해줘', '머지하고 배포해줘', '머지 로그 요약해줘', '머지 관련 문서 정리해줘', '머지 후 main 동기화해줘', '강제 머지해줘']) {
+      expect(ConversationRuntime.interpretMergeExecutionIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+    for (const text of ['머지해줘', '이 PR 머지해줘', 'merge this PR', '실제 머지해줘', '이제 머지 실행해줘', '승인된 PR 머지해줘', 'merge now', 'execute merge', '머지 해 줘']) {
+      expect(ConversationRuntime.interpretMergeExecutionIntent(text), text).toBe('execute');
+    }
+  });
+
+  it('Codex W8 audit: main sync never fires on a pull request / push / branch-delete phrase', async () => {
+    for (const text of ['main으로 pull request 만들어줘', 'main에 푸시하고 동기화해줘', 'main 동기화하고 브랜치 삭제해줘', 'main 강제 sync 해줘']) {
+      expect(ConversationRuntime.interpretMainSyncIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+    for (const text of ['main 동기화해줘', '로컬 main 최신화해줘', '머지된 main 받아와줘', 'sync main', 'update local main', 'pull main']) {
+      expect(ConversationRuntime.interpretMainSyncIntent(text), text).toBe('sync');
+    }
+  });
+
+  it('Codex W8 audit: local branch cleanup never fires on a statement / summary / other chain verb', async () => {
+    for (const text of ['브랜치 정리 완료', '브랜치 삭제했어', '브랜치 삭제 로그를 요약해줘', '브랜치 정리 상태 확인해줘', '브랜치 정리하고 푸시해줘', '브랜치 머지하고 삭제해줘', '브랜치 정리했어?']) {
+      expect(ConversationRuntime.interpretBranchCleanupIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+    for (const text of ['로컬 브랜치 정리해줘', 'merged branch 정리해줘', 'feature branch 삭제해줘', 'cleanup local branch', 'delete local merged branch', '머지된 브랜치 정리해줘']) {
+      expect(ConversationRuntime.interpretBranchCleanupIntent(text), text).toBe('local');
+    }
+    for (const text of ['원격 브랜치 삭제했어', '원격 브랜치 삭제 로그 보여줘', '원격 브랜치 정리하고 푸시해줘']) {
+      expect(ConversationRuntime.interpretRemoteBranchCleanupIntent(text), text).toBeNull();
     }
   });
 
