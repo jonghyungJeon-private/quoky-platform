@@ -1,7 +1,7 @@
 {
   "version": 1,
   "suites": {
-    "intent-routing": { "minAccuracy": 1, "minTotal": 169 },
+    "intent-routing": { "minAccuracy": 1, "minTotal": 180 },
     "approval-decision": { "minAccuracy": 1, "minTotal": 163 },
     "stray-decision": { "minAccuracy": 1, "minTotal": 38 },
     "conversation-control": { "minAccuracy": 1, "minTotal": 26 },

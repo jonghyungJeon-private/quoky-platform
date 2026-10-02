@@ -170,6 +170,17 @@
     {"id": "intent-166", "text": "여행 일정 짜줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 negative: itinerary drafting is general chat", "mustPass": true},
     {"id": "intent-167", "text": "예약 취소 수수료는 보통 얼마야?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 negative: general booking-policy question", "mustPass": true},
     {"id": "intent-168", "text": "결제 내역 조회 API 만들어줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 negative: code work about payment history", "mustPass": true},
-    {"id": "intent-169", "text": "What is a good calendar app?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 negative: product recommendation", "mustPass": true}
+    {"id": "intent-169", "text": "What is a good calendar app?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 negative: product recommendation", "mustPass": true},
+    {"id": "intent-170", "text": "오늘 일정은?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: topic-form schedule question", "mustPass": true},
+    {"id": "intent-171", "text": "다음 회의 언제야?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: next meeting", "mustPass": true},
+    {"id": "intent-172", "text": "메일 왔어?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: bare mail arrival", "mustPass": true},
+    {"id": "intent-173", "text": "메일 확인해줘", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: bare mail read", "mustPass": true},
+    {"id": "intent-174", "text": "Any meetings today?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: English any-meetings", "mustPass": true},
+    {"id": "intent-175", "text": "When is my next meeting?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: English next meeting", "mustPass": true},
+    {"id": "intent-176", "text": "Did I get any emails?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: English email question", "mustPass": true},
+    {"id": "intent-177", "text": "Check my bank account", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QA-V2-005 review: personal-data: English bank account", "mustPass": true},
+    {"id": "intent-178", "text": "내일 10시에 회의 있어", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 review: negative: a statement about a meeting is ordinary chat", "mustPass": true},
+    {"id": "intent-179", "text": "이 메일 확인해줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 review: negative: a mail the User points at is not their mailbox", "mustPass": true},
+    {"id": "intent-180", "text": "Check my email regex", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QA-V2-005 review: negative: dev phrasing about an email regex", "mustPass": true}
   ]
 }

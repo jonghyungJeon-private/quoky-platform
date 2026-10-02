@@ -576,6 +576,32 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     ["What's my bank balance?", 'personal-data'],
     ['How much money do I have?', 'personal-data'],
     ['Show me my unread messages', 'personal-data'],
+    // QA-V2-005 review round 1: common phrasings of the same categories.
+    ['오늘 일정은?', 'personal-data'],
+    ['내일 일정은?', 'personal-data'],
+    ['내일 스케줄은?', 'personal-data'],
+    ['다음 회의 언제야?', 'personal-data'],
+    ['다음 미팅 언제야?', 'personal-data'],
+    ['다음 일정 알려줘', 'personal-data'],
+    ['메일 왔어?', 'personal-data'],
+    ['이메일 왔어?', 'personal-data'],
+    ['메일 온 거 있어?', 'personal-data'],
+    ['메일 확인해줘', 'personal-data'],
+    ['중요한 메일 있어?', 'personal-data'],
+    ['오늘 온 메일 요약해줘', 'personal-data'],
+    ['문자 확인해줘', 'personal-data'],
+    ['카톡 확인해줘', 'personal-data'],
+    ['내일 10시에 회의 있어?', 'personal-data'],
+    ['Any meetings today?', 'personal-data'],
+    ['What meetings do I have today?', 'personal-data'],
+    ['When is my next meeting?', 'personal-data'],
+    ['Do I have anything today?', 'personal-data'],
+    ['Do I have anything on tomorrow?', 'personal-data'],
+    ['Did I get any emails?', 'personal-data'],
+    ['Any emails from my boss?', 'personal-data'],
+    ['Do I have new mail?', 'personal-data'],
+    ['Check my bank account', 'personal-data'],
+    ['Any texts?', 'personal-data'],
     // an external action still wins over a personal-data read
     ['내일 일정 캘린더에 추가해줘', 'external-action'],
   ] as const)('routes "%s" to POLICY_SENSITIVE_CHAT (%s)', async (text, reason) => {
@@ -698,6 +724,22 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     'Write a calendar app in React',
     'Do I have to use semicolons in JavaScript?',
     'What is a bank balance sheet?',
+    // QA-V2-005 review round 1: statements, dev phrasings and a mail the User points at stay ordinary chat.
+    '내일 10시에 회의 있어',
+    '내일 회의가 있는데 긴장돼',
+    '내일 회의 있어서 일찍 자야겠다',
+    '내일 뭐가 있으면 좋을까',
+    '이 메일 확인해줘',
+    '이 이메일 요약해줘',
+    '아래 메일 요약해줘',
+    '그 문자 확인해줘',
+    'Check my email regex',
+    'What is in my messages array?',
+    'Check my messages handler',
+    'what is my balance of power',
+    'If there are any messages in the queue, drop them',
+    'Do I have anything to worry about?',
+    'Do I have an email address field in the form?',
   ])('keeps "%s" in GENERAL_CHAT', async (text) => {
     expect(detectPolicySensitiveChat(text)).toBeUndefined();
     expect(detectExternalActionRequest(text)).toBeUndefined();
@@ -706,6 +748,22 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     expect(intent.capability).toBe(Capability.GENERAL_CHAT);
     expect(intent.raw).toBeUndefined();
     expect(externalActionRequestOf(intent)).toBeUndefined();
+  });
+
+  // QA-V2-005 review round 1: the personal-data patterns must stay linear on long lists of time slots.
+  it.each([
+    '월요일 오전 9시 화요일 오후 2시 수요일 오후 3시 목요일 오전 10시 금요일 오후 4시 일요일 오후 1시 중에 언제가 좋을까',
+    '오후 3시 '.repeat(10) + 'ㅋ',
+    '오후 3시 '.repeat(400) + 'ㅋ',
+    '내일  '.repeat(20) + 'ㅋ',
+    '내일 '.repeat(1000),
+    '월요일 오전 9시 '.repeat(130) + '중에 언제가 좋을까',
+    ' '.repeat(900) + '내일' + ' '.repeat(900) + 'ㅋ',
+    'my '.repeat(600) + 'balance',
+  ])('classifies a long slot list in milliseconds (%#)', (text) => {
+    const started = performance.now();
+    expect(detectPolicySensitiveChat(text)).toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(250);
   });
 
   it.each([
