@@ -1584,6 +1584,7 @@ export class ResponseComposer {
       context,
       text:
         'main/master 브랜치에는 커밋하지 않아요. 작업용 브랜치(예: feature/…)로 전환한 뒤 다시 요청해 주세요.\n' +
+        '"브랜치 만들어줘 feature/<이름>"으로 새 브랜치를 만들 수 있어요.\n' +
         '커밋 승인 요청은 만들지 않았어요. git add/commit/push는 하지 않았어요.',
     };
   }
