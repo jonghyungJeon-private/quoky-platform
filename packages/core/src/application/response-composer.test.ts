@@ -1330,8 +1330,8 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       'pending reminder',
       () => composer.composePendingApprovalReminder(CTX, approval, 20 * 60_000).text,
       [
-        '승인을 기다리는 작업이 있어요 (HIGH):',
-        'Change packages/core/src/foo.ts',
+        '승인을 기다리는 작업이 있어요.',
+        '위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요',
         APPROVE_DENY,
         '남은 시간: 약 20분 (지나면 자동으로 거절돼요)',
         '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
@@ -1341,8 +1341,8 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       'approval expired',
       () => composer.composeApprovalExpired(CTX, approval, 1_800_000).text,
       [
-        '승인 요청이 30분 안에 결정되지 않아 자동으로 거절했어요:',
-        'Change packages/core/src/foo.ts',
+        '승인 요청이 30분 안에 결정되지 않아 자동으로 거절했어요.',
+        '위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요',
         '이 요청은 이제 승인할 수 없어요. 필요하면 처음부터 다시 요청해 주세요.',
       ],
     ],
@@ -1409,6 +1409,39 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
     const reminder = composer.composePendingApprovalReminder(CTX, { ...approval, reason: 'r'.repeat(5000) }, 1);
     expect(reminder.text).toContain('남은 시간: 약 1분');
     expect(reminder.text.length).toBeLessThanOrEqual(1900);
+  });
+
+  it('QA-017: approval replies never show the internal English reason or the raw risk enum', () => {
+    const internal = { ...approval, reason: 'HIGH risk requires human approval' };
+    for (const text of [
+      composer.composeApprovalNotice(CTX, internal).text,
+      composer.composePendingApprovalReminder(CTX, internal, 20 * 60_000).text,
+      composer.composeApprovalExpired(CTX, internal, 1_800_000).text,
+    ]) {
+      expect(text).not.toContain('requires human approval');
+      expect(text).not.toMatch(/\bHIGH\b/);
+      expect(text).toContain('위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요');
+    }
+  });
+
+  it.each<[RiskLevel, string]>([
+    [RiskLevel.CRITICAL, '위험도: 매우 높음'],
+    [RiskLevel.HIGH, '위험도: 높음'],
+    [RiskLevel.MEDIUM, '위험도: 보통'],
+    [RiskLevel.LOW, '위험도: 낮음'],
+  ])('QA-017: %s renders the Korean risk label', (riskLevel, label) => {
+    const text = composer.composePendingApprovalReminder(CTX, { ...approval, riskLevel, reason: 'operation: git push approval planning' }, 60_000).text;
+    expect(text).toContain(label);
+    expect(text).not.toContain('operation:');
+    expect(text).not.toContain(riskLevel);
+  });
+
+  it('QA-018: a stray decision with nothing pending says so without claiming any approval', () => {
+    const text = composer.composeNoPendingDecision(CTX).text;
+    expect(text).toBe(
+      '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. 새로 요청하려면 원하는 작업을 말해 주세요.',
+    );
+    expect(text).not.toMatch(/접수|승인했|승인됐/);
   });
 
   it('a reset without a pending approval does not claim one was denied', () => {

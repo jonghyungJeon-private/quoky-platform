@@ -570,7 +570,8 @@ describe('ConversationRuntime — pending-approval reminder (ADR-0093)', () => {
     h.setClock(at(10 * MINUTE));
     const result = await h.send('음 글쎄, 오늘 날씨 어때?');
     expect(result.status).toBe('AWAITING_APPROVAL');
-    expect(result.reply.text).toContain('Change packages/core/src/foo.ts'); // names what is pending
+    expect(result.reply.text).toContain('위험도: 높음'); // names the pending risk in Korean (QA-017)
+    expect(result.reply.text).not.toContain('Change packages/core/src/foo.ts'); // internal reason is never shown
     expect(result.reply.text).toContain('"승인"');
     expect(result.reply.text).toContain('"거절"');
     expect(result.reply.text).toContain('남은 시간: 약 20분');
@@ -586,7 +587,8 @@ describe('ConversationRuntime — pending-approval reminder (ADR-0093)', () => {
     h.setClock(at(29 * MINUTE + 30_000));
     const result = await h.send('이거 뭐였지?');
     expect(result.status).toBe('AWAITING_APPROVAL');
-    expect(result.reply.text).toContain('Commit packages/core/src/foo.ts');
+    expect(result.reply.text).toContain('위험도: 높음');
+    expect(result.reply.text).not.toContain('Commit packages/core/src/foo.ts');
     expect(result.reply.text).toContain('남은 시간: 약 1분');
     expect(result.reply.text).toContain('"새 대화"');
     expect(h.approvals.get('apply-appr-1')!.status).toBe(ApprovalStatus.PENDING);
@@ -678,5 +680,50 @@ describe('Help text names only phrases the runtime actually accepts (ADR-0093)',
       { hasActiveProject: false },
     );
     expect(intent.type).toBe(IntentType.REGISTER_PROJECT);
+  });
+});
+
+describe('ConversationRuntime — stray decision with nothing pending (QA-018)', () => {
+  const NO_PENDING =
+    '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. 새로 요청하려면 원하는 작업을 말해 주세요.';
+
+  it.each(['승인', '승인해줘', '거절', '거절합니다', '취소', '취소해 주세요', 'approve', 'ok', 'OK thanks', '진행해'])(
+    '"%s" with no pending approval gets the deterministic reply — no classifier, provider or Task',
+    async (text) => {
+      const h = harness();
+      const result = await h.send(text);
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toBe(NO_PENDING);
+      expect(h.calls.classify).toHaveLength(0);
+      expect(h.calls.routerSelect).toHaveLength(0);
+      expect(h.calls.providerExecute).toBe(0);
+      expect(h.calls.createTask).toBe(0);
+    },
+  );
+
+  it.each(['승인 절차가 뭐야?', '승인 절차 설명해줘', '회의 취소해줘', '좋아', '아니', '네'])(
+    '"%s" is not a stray decision and still goes to chat',
+    async (text) => {
+      const h = harness();
+      const result = await h.send(text);
+      expect(result.reply.text).not.toBe(NO_PENDING);
+      expect(h.calls.routerSelect).toEqual([Capability.GENERAL_CHAT]);
+    },
+  );
+
+  it('with an anchor that holds no pending approval (COMMIT_APPROVED) "승인" decides nothing and says so', async () => {
+    const anchor: ApplyPreviewAnchor = { ...commitPendingAnchor(), status: 'COMMIT_APPROVED' };
+    const h = harness({ applyAnchor: anchor });
+    const result = await h.send('승인');
+    expect(result.reply.text).toBe(NO_PENDING);
+    expect(h.calls.providerExecute).toBe(0);
+    expect(h.calls.applyAnchorWrites).toHaveLength(0);
+  });
+
+  it('a real pending approval still takes "거절" as its decision (not the stray reply)', async () => {
+    const h = harness({ pendingApproval: true });
+    const result = await h.send('거절');
+    expect(result.reply.text).not.toBe(NO_PENDING);
+    expect(h.approvals.get('appr-1')!.status).toBe(ApprovalStatus.REJECTED);
   });
 });

@@ -1,3 +1,4 @@
+import { RiskLevel } from '../domain';
 import type {
   ApprovalRequest,
   Artifact,
@@ -161,12 +162,24 @@ const PATCH_PREVIEW_FOOTER = [
   '이 패치를 실제 파일에 적용하려면 "패치 적용해줘"라고 요청해 주세요.',
 ].join('\n');
 
-/** Display bound on an approval `reason` inside the reminder/expiry replies, so the decision and "새 대화"
- *  lines always survive the message clamp (ADR-0093). */
-const MAX_APPROVAL_REASON_DISPLAY = 400;
-
-function boundedReason(reason: string): string {
-  return reason.length > MAX_APPROVAL_REASON_DISPLAY ? `${reason.slice(0, MAX_APPROVAL_REASON_DISPLAY)}…` : reason;
+/**
+ * User-facing Korean risk line for an approval (QA-017). `ApprovalRequest.reason` is an internal English audit
+ * string ("HIGH risk requires human approval", "operation: git push approval planning …") and is never shown to
+ * the user; the reminder/notice/expiry replies render only this label for the request's risk level.
+ */
+function approvalRiskLine(riskLevel: RiskLevel): string {
+  switch (riskLevel) {
+    case RiskLevel.CRITICAL:
+      return '위험도: 매우 높음 — 원격 저장소처럼 되돌리기 어려운 곳의 변경으로 이어질 수 있어요';
+    case RiskLevel.HIGH:
+      return '위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요';
+    case RiskLevel.MEDIUM:
+      return '위험도: 보통';
+    case RiskLevel.LOW:
+      return '위험도: 낮음';
+    default:
+      return '위험도: 확인 필요';
+  }
 }
 
 /** How to decide a pending approval (ADR-0093) — the decision words `interpretApprovalDecision` accepts. */
@@ -517,7 +530,7 @@ export class ResponseComposer {
   composeApprovalNotice(context: ConversationContext, request: ApprovalRequest): OutboundMessage {
     return {
       context,
-      text: `이 작업은 승인이 필요해요 (${request.riskLevel}):\n${request.reason}\n${APPROVAL_DECISION_LINE}`,
+      text: `이 작업은 승인이 필요해요.\n${approvalRiskLine(request.riskLevel)}\n${APPROVAL_DECISION_LINE}`,
     };
   }
 
@@ -533,8 +546,8 @@ export class ResponseComposer {
   ): OutboundMessage {
     const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
     const text = [
-      `승인을 기다리는 작업이 있어요 (${request.riskLevel}):`,
-      boundedReason(request.reason),
+      '승인을 기다리는 작업이 있어요.',
+      approvalRiskLine(request.riskLevel),
       APPROVAL_DECISION_LINE,
       `남은 시간: 약 ${minutes}분 (지나면 자동으로 거절돼요)`,
       '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
@@ -542,12 +555,26 @@ export class ResponseComposer {
     return { context, text: clampToMessageBudget(text) };
   }
 
+  /**
+   * A bare decision word ("승인", "거절", "취소", "ok") arrived while nothing is pending (QA-018). Deterministic —
+   * never routed to a provider, so no model can claim an approval was accepted. States only what is true: there is
+   * nothing to decide now, and an earlier request may already have been decided or expired.
+   */
+  composeNoPendingDecision(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. ' +
+        '새로 요청하려면 원하는 작업을 말해 주세요.',
+    };
+  }
+
   /** A pending approval passed its lifetime and was recorded as denied (ADR-0093). It can no longer be approved. */
   composeApprovalExpired(context: ConversationContext, request: ApprovalRequest, ttlMs: number): OutboundMessage {
     const minutes = Math.round(ttlMs / 60_000);
     const text = [
-      `승인 요청이 ${minutes}분 안에 결정되지 않아 자동으로 거절했어요:`,
-      boundedReason(request.reason),
+      `승인 요청이 ${minutes}분 안에 결정되지 않아 자동으로 거절했어요.`,
+      approvalRiskLine(request.riskLevel),
       '이 요청은 이제 승인할 수 없어요. 필요하면 처음부터 다시 요청해 주세요.',
     ].join('\n');
     return { context, text: clampToMessageBudget(text) };

@@ -1,7 +1,7 @@
 import { describeAiFailure } from './ai-failure';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { interpretApprovalDecision } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
 import {
@@ -2031,6 +2031,13 @@ export class ConversationRuntime {
     }
     // Anything else: fall through untouched — an ELIGIBLE/APPROVED/PATCH_READY/WORKSPACE_APPLIED anchor is
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
+
+    // QA-018: every pending approval/anchor decision route has already run above, so a bare decision word here
+    // ("승인", "거절", "취소", "ok") decides nothing. Answer deterministically — no provider call, no Task — so a
+    // chat model can never claim an approval was accepted.
+    if (interpretStrayDecisionUtterance(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
+    }
 
     const durableMemoryContent = ConversationRuntime.explicitDurableMemoryContent(message.text);
     if (durableMemoryContent === '') {

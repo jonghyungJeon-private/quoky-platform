@@ -201,3 +201,40 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   }
   return 'ambiguous';
 }
+
+/** The explicit decision vocabulary a stand-alone utterance must contain to count as a STRAY decision (QA-018).
+ *  Deliberately narrower than the decision phrases above: conversational replies ("좋아", "네", "아니", "no",
+ *  "그만", "stop") stay ordinary chat when nothing is pending. */
+const STRAY_DECISION_KEYWORDS = matchersFor([
+  '승인', '진행', '거절', '거부', '취소', '철회',
+  'approve', 'approved', 'proceed', 'go ahead', 'ok', 'okay',
+  'deny', 'denied', 'reject', 'rejected', 'refuse', 'refused', 'cancel', 'abort',
+]);
+
+/** A stray decision is a short message: a whole-message "승인" / "거절해 주세요" / "ok thanks", never a sentence. */
+const MAX_STRAY_DECISION_LENGTH = 30;
+
+/**
+ * QA-018: a message that is ESSENTIALLY just an approval decision word ("승인", "거절", "취소해줘", "approve",
+ * "ok") — used only when NO approval or anchor is pending, so the runtime can answer deterministically that
+ * there is nothing to decide instead of letting a chat model invent "승인이 접수되었습니다.". Pure.
+ *
+ * Narrow on purpose: the message must (1) be short, (2) be read by {@link interpretApprovalDecision} as a
+ * decision, (3) contain an explicit decision keyword, and (4) contain nothing but decision words, fillers and
+ * punctuation. So "승인 절차가 뭐야?", "승인 절차 설명해줘" and "회의 취소해줘" are NOT stray decisions.
+ */
+export function interpretStrayDecisionUtterance(text: string): Exclude<ApprovalDecisionResult, 'ambiguous'> | null {
+  const t = text.trim().toLowerCase();
+  if (t.length === 0 || t.length > MAX_STRAY_DECISION_LENGTH) return null;
+  const decision = interpretApprovalDecision(t);
+  if (decision === 'ambiguous') return null;
+  if (t.search(STRAY_DECISION_KEYWORDS.exact) < 0) return null;
+  const remainder = t
+    .replace(APPROVE.exact, ' ')
+    .replace(DENY.exact, ' ')
+    .replace(CANCEL.exact, ' ')
+    .replace(/[^가-힣a-z0-9]+/g, ' ')
+    .replace(APPROVE_FILLER_TOKEN, ' ')
+    .replace(APPROVE_FILLER_TOKEN, ' ');
+  return remainder.trim().length === 0 ? decision : null;
+}

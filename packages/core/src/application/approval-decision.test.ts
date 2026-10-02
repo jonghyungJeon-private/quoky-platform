@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { interpretApprovalDecision, type ApprovalDecisionResult } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance, type ApprovalDecisionResult } from './approval-decision';
 import type { ApprovalDecisionKind } from './conversation-runtime';
 
 describe('interpretApprovalDecision', () => {
@@ -195,5 +195,47 @@ describe('interpretApprovalDecision', () => {
   it('a long free-text message containing an approve word is not an approval', () => {
     const long = `${'이 기능의 전체 흐름을 다시 설계해서 새 문서로 정리해 줘. '.repeat(3)}진행`;
     expect(interpretApprovalDecision(long)).toBe('ambiguous');
+  });
+});
+
+describe('interpretStrayDecisionUtterance (QA-018)', () => {
+  it.each<[string, 'approve' | 'deny' | 'cancel']>([
+    ['승인', 'approve'],
+    ['승인해줘', 'approve'],
+    ['승인합니다.', 'approve'],
+    ['네, 승인', 'approve'],
+    ['진행해', 'approve'],
+    ['approve', 'approve'],
+    ['ok', 'approve'],
+    ['OK thanks', 'approve'],
+    ['거절', 'deny'],
+    ['거절해 주세요', 'deny'],
+    ['reject', 'deny'],
+    ['취소', 'cancel'],
+    ['취소해줘', 'cancel'],
+    ['cancel', 'cancel'],
+  ])('"%s" is a whole-message decision → %s', (text, expected) => {
+    expect(interpretStrayDecisionUtterance(text)).toBe(expected);
+  });
+
+  it.each([
+    '승인 절차가 뭐야?',
+    '승인 절차 설명해줘',
+    '승인?',
+    '회의 취소해줘',
+    '예약 취소해 주세요',
+    '거절당했어',
+    '좋아',
+    '네',
+    '아니',
+    'no',
+    'yes',
+    '그만',
+    'stop',
+    '진행하지 마',
+    '',
+    '승인 승인 승인 승인 승인 승인 승인 승인 승인 승인 승인 승인', // over the 30-char whole-message bound
+  ])('"%s" is not a stray decision', (text) => {
+    expect(interpretStrayDecisionUtterance(text)).toBeNull();
   });
 });
