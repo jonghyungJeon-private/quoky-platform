@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { ResourceRef, type ConversationContext, type GitDiff, type GitStatus } from '../domain';
+import {
+  ApprovalStatus,
+  ResourceRef,
+  RiskLevel,
+  type ApprovalRequest,
+  type ConversationContext,
+  type GitDiff,
+  type GitStatus,
+} from '../domain';
 import { ResponseComposer } from './response-composer';
 import type { CodeChangePreview, CodeDiffPreview, PatchSetPreview, TestResultDetail } from './response-composer';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
@@ -220,7 +228,7 @@ describe('ResponseComposer.composeCodeChangeApprovalRequired', () => {
     expect(reply.text).toContain('코드 변경');
     expect(reply.text).toContain('수정하지 않');
     expect(reply.text).toContain('"승인"');
-    expect(reply.text).toContain('"취소"');
+    expect(reply.text).toContain('"거절"');
   });
 
   it('is distinct from the generic composeApprovalRequired wording', () => {
@@ -559,7 +567,7 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
     expect(reply.text.length).toBeLessThanOrEqual(1900);
     expect(reply.text).toContain('파일은 수정되지 않았어요');
     expect(reply.text).toContain('아직 실제로 적용되지 않았어요');
-    expect(reply.text).toContain('이 제안을 실제로 적용하는 기능은 아직 지원하지 않아요');
+    expect(reply.text).toContain('바로 적용할 수는 없어요'); // multi-file → apply-incapable footer
     expect(reply.text).toContain('생략했어요'); // not every file's diff fit — the omission is noted, not silent
   });
 
@@ -582,19 +590,21 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
     for (const word of FORBIDDEN_MUTATION_WORDS) expect(reply.text).not.toContain(word); // never implies applied
   });
 
-  it('apply-INcapable (new-file add) → keeps the "미지원" footer, offers no apply-request phrase, files unchanged', () => {
+  it('apply-INcapable (new-file add) → "cannot apply this shape" footer naming the real next step, offers no apply-request phrase, files unchanged', () => {
     const reply = composer.composeCodeDiffPreview(
       CTX,
       diffPreviewOf({
         changes: [{ path: 'packages/core/src/new.ts', kind: 'add', unified: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+new\n', binary: false }],
       }),
     );
-    expect(reply.text).toContain('이 제안을 실제로 적용하는 기능은 아직 지원하지 않아요');
+    expect(reply.text).toContain('바로 적용할 수는 없어요');
+    expect(reply.text).toContain('기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요'); // real next step
+    expect(reply.text).not.toContain('적용하는 기능은 아직 지원하지 않아요'); // stale blanket wording gone
     expect(reply.text).not.toContain('적용해줘');
     expect(reply.text).toContain('파일은 수정되지 않았어요'); // not-modified fact stays explicit (header)
   });
 
-  it('apply-INcapable (multi-file update — fails the single-op integrity shape) → no apply-request phrase, keeps the "미지원" footer', () => {
+  it('apply-INcapable (multi-file update — fails the single-op integrity shape) → no apply-request phrase, "cannot apply this shape" footer', () => {
     const reply = composer.composeCodeDiffPreview(
       CTX,
       diffPreviewOf({
@@ -605,7 +615,7 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
       }),
     );
     expect(reply.text).not.toContain('적용해줘');
-    expect(reply.text).toContain('이 제안을 실제로 적용하는 기능은 아직 지원하지 않아요');
+    expect(reply.text).toContain('바로 적용할 수는 없어요');
   });
 
   it('the structured PreviewArtifact footer is identical to the rendered text footer (both capable and incapable)', () => {
@@ -619,7 +629,10 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
         changes: [{ path: 'packages/core/src/new.ts', kind: 'add', unified: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+n\n', binary: false }],
       }),
     );
-    expect(incapable.preview!.footer).toBe('이 제안을 실제로 적용하는 기능은 아직 지원하지 않아요.');
+    expect(incapable.preview!.footer).toBe(
+      '이 제안은 파일 추가·삭제, 여러 파일 또는 바이너리 변경이라 바로 적용할 수는 없어요.\n' +
+        '파일에 적용까지 하려면 기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요.',
+    );
     expect(incapable.text).toContain(incapable.preview!.footer);
   });
 });
@@ -681,6 +694,11 @@ describe('ResponseComposer.composeApplyApprovalRecorded', () => {
     expect(reply.text).toContain('파일은 수정되지 않았어요');
   });
 
+  it('names the exact next phrase "패치 만들어줘"', () => {
+    const reply = composer.composeApplyApprovalRecorded(CTX);
+    expect(reply.text).toContain('"패치 만들어줘"');
+  });
+
   it('never uses wording that implies a completed mutation', () => {
     const reply = composer.composeApplyApprovalRecorded(CTX);
     for (const word of FORBIDDEN_MUTATION_WORDS) {
@@ -706,6 +724,14 @@ describe('ResponseComposer.composePatchSetPreview', () => {
     expect(reply.text).toContain('패치 미리보기');
     const notApplied = (reply.text.match(/적용하지 않았어요|적용은 아직 지원하지 않아요|수정되지 않았어요/g) ?? []).length;
     expect(notApplied).toBeGreaterThanOrEqual(2);
+  });
+
+  it('footer says files are unchanged and names the exact apply phrase; no false "unsupported" wording', () => {
+    const reply = composer.composePatchSetPreview(CTX, previewOf());
+    expect(reply.text).toContain('파일은 아직 그대로예요.');
+    expect(reply.text).toContain('"패치 적용해줘"');
+    expect(reply.text).not.toContain('적용은 아직 지원하지 않아요');
+    expect(reply.text).not.toContain('지원하지 않아요');
   });
 
   it('lists the operation path and its diff', () => {
@@ -1275,5 +1301,124 @@ describe('ResponseComposer.composePush* replies (Sprint 2z, ADR-0047)', () => {
       composer.composePushUnsupportedCompanion(CTX).text,
     ]);
     expect(set.size).toBe(13);
+  });
+});
+
+
+// ── Quoky Personal v1 — next-phrase copy & conversation control (ADR-0093) ────────────────────────────
+
+describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
+  const approval: ApprovalRequest = {
+    id: 'appr-1',
+    executionPlanRef: { id: 'plan-1' } as ApprovalRequest['executionPlanRef'],
+    status: ApprovalStatus.PENDING,
+    riskLevel: RiskLevel.HIGH,
+    reason: 'Change packages/core/src/foo.ts',
+    requestedBy: 'actor-1',
+    createdAt: '2026-10-02T09:00:00.000Z',
+    updatedAt: '2026-10-02T09:00:00.000Z',
+  };
+  const APPROVE_DENY = '진행하려면 "승인", 거절하려면 "거절"이라고 답해 주세요.';
+  const WORKSPACE_NEXT = '다음으로 "테스트 실행해줘"로 검증할 수 있고, 여기서 마치려면 "새 대화"라고 보내 주세요.';
+
+  it.each<[string, () => string, string[]]>([
+    ['AWAITING_APPROVAL notice', () => composer.composeApprovalNotice(CTX, approval).text, [APPROVE_DENY]],
+    ['AWAITING_APPROVAL generic', () => composer.composeApprovalRequired(CTX).text, [APPROVE_DENY]],
+    ['AWAITING_APPROVAL code change', () => composer.composeCodeChangeApprovalRequired(CTX).text, [APPROVE_DENY]],
+    ['WORKSPACE_APPLIED', () => composer.composeWorkspaceApplied(CTX, ['foo.ts']).text, [WORKSPACE_NEXT]],
+    [
+      'pending reminder',
+      () => composer.composePendingApprovalReminder(CTX, approval, 20 * 60_000).text,
+      [
+        '승인을 기다리는 작업이 있어요 (HIGH):',
+        'Change packages/core/src/foo.ts',
+        APPROVE_DENY,
+        '남은 시간: 약 20분 (지나면 자동으로 거절돼요)',
+        '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
+      ],
+    ],
+    [
+      'approval expired',
+      () => composer.composeApprovalExpired(CTX, approval, 1_800_000).text,
+      [
+        '승인 요청이 30분 안에 결정되지 않아 자동으로 거절했어요:',
+        'Change packages/core/src/foo.ts',
+        '이 요청은 이제 승인할 수 없어요. 필요하면 처음부터 다시 요청해 주세요.',
+      ],
+    ],
+    [
+      'help',
+      () => composer.composeHelp(CTX).text,
+      [
+        '"도움말" 또는 "/help"',
+        '"새 대화" 또는 "/reset"',
+        '승인 요청에는 "승인" 또는 "거절"로 답해 주세요.',
+        '"적용해줘"',
+        '"패치 만들어줘"',
+        '"패치 적용해줘"',
+        '"테스트 실행해줘"',
+        '"기억해: <내용>"',
+      ],
+    ],
+    [
+      'reset (with a pending approval)',
+      () => composer.composeConversationReset(CTX, { deniedPendingApproval: true }).text,
+      [
+        '새 대화를 시작할게요. 다음 메시지부터 새 대화로 이어져요.',
+        '기다리던 승인 요청은 거절로 처리했어요.',
+        '이미 적용한 파일 변경이나 커밋은 되돌리지 않았고, "기억해:"로 저장한 내용은 그대로 있어요.',
+        '대화에 연결돼 있던 프로젝트는 풀렸어요. 코드 작업은 프로젝트를 다시 등록한 뒤 요청해 주세요.',
+      ],
+    ],
+  ])('%s names the literal next phrases', (_name, render, expected) => {
+    const text = render();
+    for (const line of expected) expect(text).toContain(line);
+  });
+
+  it('the old "그만두려면 \"취소\"" approval prompt is gone from the AWAITING_APPROVAL replies', () => {
+    for (const text of [
+      composer.composeApprovalNotice(CTX, approval).text,
+      composer.composeApprovalRequired(CTX).text,
+      composer.composeCodeChangeApprovalRequired(CTX).text,
+    ]) {
+      expect(text).not.toContain('그만두려면 "취소"');
+    }
+  });
+
+  it('no preview footer claims applying is unsupported any more', () => {
+    const preview = composer.composeCodeGenerationPreview(CTX, {
+      changes: [{ path: 'foo.ts', kind: 'update', excerpt: 'x' }],
+      outOfScopeWarnings: [],
+    });
+    expect(preview.text).toContain('"적용해줘"');
+    const multi = composer.composeCodeGenerationPreview(CTX, {
+      changes: [
+        { path: 'a.ts', kind: 'update', excerpt: 'x' },
+        { path: 'b.ts', kind: 'update', excerpt: 'y' },
+      ],
+      outOfScopeWarnings: [],
+    });
+    expect(multi.text).not.toContain('"적용해줘"');
+    expect(multi.text).toContain('기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요');
+    for (const text of [preview.text, multi.text]) {
+      expect(text).not.toContain('적용하는 기능은 아직 지원하지 않아요');
+    }
+  });
+
+  it('the reminder never shows 0 minutes and stays within the message budget for a long reason', () => {
+    const reminder = composer.composePendingApprovalReminder(CTX, { ...approval, reason: 'r'.repeat(5000) }, 1);
+    expect(reminder.text).toContain('남은 시간: 약 1분');
+    expect(reminder.text.length).toBeLessThanOrEqual(1900);
+  });
+
+  it('a reset without a pending approval does not claim one was denied', () => {
+    expect(composer.composeConversationReset(CTX, { deniedPendingApproval: false }).text).not.toContain('거절');
+  });
+
+  it('composeWithNotice prepends the notice and keeps the reply fields', () => {
+    const merged = composer.composeWithNotice({ context: CTX, text: 'NOTICE' }, composer.composeHelp(CTX));
+    expect(merged.text.startsWith('NOTICE\n\n')).toBe(true);
+    expect(merged.text).toContain(composer.composeHelp(CTX).text);
+    expect(merged.context).toBe(CTX);
   });
 });

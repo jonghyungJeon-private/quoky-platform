@@ -459,6 +459,35 @@ describe('contained CLI runner: bounded Ollama download observation', () => {
   });
 });
 
+describe('contained CLI runner: production stderr-only download observation', () => {
+  it.each(['pulling manifest', 'pulling abcdef123456', 'verifying sha256 digest', 'writing manifest'])(
+    'does not abort a production run whose stdout answer contains "%s"',
+    async (marker) => {
+      const run = startRun({ downloadMarkerPolicy: 'OLLAMA_PULL_STDERR' });
+      run.child?.stdout.emit('data', Buffer.from(`the log said ${marker.slice(0, 5)}`));
+      run.child?.stdout.emit('data', Buffer.from(`${marker.slice(5)} and then it finished`));
+      const result = await closeWith(run, 0);
+      expect(result.downloadObserved).toBe(false);
+      expect(result.stdout).toContain(marker);
+      expect(run.child?.signals).toEqual([]);
+    },
+  );
+
+  it.each(['pulling manifest', 'pulling abcdef123456', 'verifying sha256 digest', 'writing manifest'])(
+    'aborts a production run whose stderr reports "%s"',
+    async (marker) => {
+      const run = startRun({ downloadMarkerPolicy: 'OLLAMA_PULL_STDERR' });
+      run.child?.stderr.emit('data', Buffer.from(marker.slice(0, 5)));
+      run.child?.stderr.emit('data', Buffer.from(marker.slice(5)));
+      const result = await closeWith(run, null);
+      expect(result.downloadObserved).toBe(true);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('');
+      expect(run.child?.signals).toEqual(['SIGTERM']);
+    },
+  );
+});
+
 describe('contained CLI runner: runner-owned temporary directory', () => {
   it('gives each child an independent temp dir under OS temp, outside the repository', async () => {
     const first = startRun({ productionTempDir: true });

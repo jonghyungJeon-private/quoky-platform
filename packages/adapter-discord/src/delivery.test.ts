@@ -44,6 +44,91 @@ describe('chunkText', () => {
   });
 });
 
+describe('chunkText — code-fence awareness', () => {
+  const fenceCount = (chunk: string): number => chunk.split('```').length - 1;
+  const code = (lines: number): string =>
+    Array.from({ length: lines }, (_, i) => `const value${i} = compute(${i}); // padding`).join('\n');
+
+  it('closes a fence a chunk ends inside and reopens it with the same language tag', () => {
+    const text = `intro\n\`\`\`ts\n${code(40)}\n\`\`\`\noutro`;
+    const chunks = chunkText(text, 200);
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(200);
+      expect(fenceCount(c) % 2).toBe(0);
+    }
+    expect(chunks[0]!.endsWith('```')).toBe(true);
+    for (const c of chunks.slice(1, -1)) expect(c.startsWith('```ts\n')).toBe(true);
+    expect(chunks.at(-1)!.startsWith('```ts\n')).toBe(true);
+    expect(chunks.at(-1)!.endsWith('outro')).toBe(true);
+  });
+
+  it('loses no code content: stripping synthetic fences and whitespace recovers the original', () => {
+    const text = `\`\`\`python\n${code(60)}\n\`\`\`\n`;
+    const chunks = chunkText(text, 180);
+    const strip = (v: string): string => v.replace(/```[A-Za-z0-9_+.#-]*/g, '').replace(/\s/g, '');
+    expect(strip(chunks.join(''))).toBe(strip(text));
+  });
+
+  it('reopens a fence without a language tag as a bare fence', () => {
+    const chunks = chunkText(`\`\`\`\n${code(40)}\n\`\`\``, 200);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(fenceCount(c) % 2).toBe(0);
+    expect(chunks[1]!.startsWith('```\n')).toBe(true);
+  });
+
+  it('balances several fences and never exceeds the limit at the Discord-safe default', () => {
+    const block = (lang: string): string => `\`\`\`${lang}\n${code(30)}\n\`\`\``;
+    const text = [block('ts'), 'prose between blocks '.repeat(20), block('json'), block('sh')].join('\n');
+    const chunks = chunkText(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(DISCORD_SAFE_LIMIT);
+      expect(fenceCount(c) % 2).toBe(0);
+    }
+  });
+
+  it('does not reopen an empty block when the next marker only closes the fence', () => {
+    // Body fills the first chunk exactly up to the closing marker.
+    const inner = 'x'.repeat(60);
+    const text = `\`\`\`ts\n${inner}\n\`\`\`\n${'tail '.repeat(30)}`;
+    const chunks = chunkText(text, 100);
+    for (const c of chunks) expect(fenceCount(c) % 2).toBe(0);
+    expect(chunks.some((c) => c.startsWith('```ts\n```'))).toBe(false);
+  });
+
+  it('keeps fence-free text splitting unchanged and does not touch short fenced text', () => {
+    const fenced = '```ts\nconst a = 1;\n```';
+    expect(chunkText(fenced, 100)).toEqual([fenced]);
+    const text = `${'a'.repeat(70)}\n${'b'.repeat(70)}`;
+    expect(chunkText(text, 100)).toEqual([`${'a'.repeat(70)}\n`, 'b'.repeat(70)]);
+  });
+
+  it('never splits a fence marker across two chunks', () => {
+    // A hard cut would land between two backticks of the marker.
+    const text = `${'z'.repeat(150)}\`\`\`ts\n${'q'.repeat(50)}\n\`\`\``;
+    for (const limit of [150, 151, 152, 153, 154]) {
+      const chunks = chunkText(text, limit);
+      for (const c of chunks) {
+        expect(c.length).toBeLessThanOrEqual(limit);
+        expect(fenceCount(c) % 2).toBe(0);
+      }
+    }
+  });
+
+  it('delivers balanced numbered messages through deliverChunks within the Discord hard limit', async () => {
+    const sent: string[] = [];
+    const text = `\`\`\`ts\n${code(120)}\n\`\`\``;
+    const report = await deliverChunks(text, async (c) => { sent.push(c); });
+    expect(report.ok).toBe(true);
+    expect(sent.length).toBeGreaterThan(1);
+    for (const m of sent) {
+      expect(m.length).toBeLessThanOrEqual(2000);
+      expect(fenceCount(m) % 2).toBe(0);
+    }
+  });
+});
+
 describe('deliverChunks', () => {
   it('numbers multi-chunk replies (i/N) and sends in order', async () => {
     const sent: string[] = [];

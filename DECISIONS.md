@@ -14389,3 +14389,337 @@ local architecture commit; independent Architecture Review must pass before any 
 implementation begins from this document; `REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET`; PRODUCTION
 TRUST = FAIL CLOSED; USABLE PRODUCTION CAPABILITY = UNAVAILABLE; 2D NOT ELIGIBLE; Live Gate NOT AUTHORIZED;
 R3-C-Rz NOT AUTHORIZED.
+
+## ADR-0091 — Personal-edition Discord entry boundary (owner-only, channel allowlist + owner DMs)
+
+- **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** (decision D3).
+  Decision record only; implementation follows as a separate bounded task. Independent Architecture Review of
+  the implementation is required before merge.
+- **Date:** 2026-10-02
+
+### Context
+
+The Discord adapter currently drops bot-authored messages and, when `guildId` is configured, messages from
+other guilds; any other user in any channel the bot can read reaches Core. The first product release
+("Quoky Personal v1", `ROADMAP.md`) is single-owner (`ARCHITECTURE.md` §13: one local Actor ↔ Discord
+user; ADR-0009) and can execute approval-gated local workspace changes, so who may talk to Quoky, and where,
+must be an explicit fail-closed boundary rather than a property of the Discord server's membership.
+
+### Decision
+
+- **Owner-only entry.** An inbound message is admitted only when its Discord author id is in
+  `QUOKY_DISCORD_OWNER_IDS` (comma-separated Discord user ids).
+- **Where.** Admitted locations are (a) guild channels whose id is in `QUOKY_DISCORD_CHANNEL_IDS`, a thread
+  being admitted when its own id or its parent channel id is allowlisted, and (b) direct messages from an
+  owner. An empty channel allowlist admits owner DMs only. The existing `guildId` filter still applies to
+  guild messages.
+- **No mention gating.** Inside an admitted location every owner message is a turn; no `@Quoky` mention is
+  required.
+- **Fail closed at startup.** An absent, empty, or malformed `QUOKY_DISCORD_OWNER_IDS`, or a malformed
+  `QUOKY_DISCORD_CHANNEL_IDS` entry, is a typed startup configuration error; the runtime does not start.
+  Values are parsed only in `apps/quoky/src/config.ts` (existing convention) and never echoed in errors.
+- **Ownership.** The gate is Discord-specific: it lives in the Discord adapter, configured by the composition
+  root. Non-admitted messages are dropped before `InboundMessage` construction — no reply, no Session, no
+  Task, no memory write, and no provider call. Core receives no Discord ids and gains no new port or contract.
+  Actor resolution (`QUOKY_ACTOR_IDENTITY_MAPPINGS`, ADR-0009) is unchanged; the gate decides admission, not
+  identity.
+
+### Consequences
+
+- **+** One explicit, auditable admission rule; a shared server or leaked invite cannot drive Quoky.
+- **+** DMs and allowlisted channels feed the same owner Actor, which ADR-0073 amendment (actor-scoped recall)
+  relies on.
+- **−** Two new required/optional env variables; DMs need the adapter's Discord DM intent/partials enabled.
+- **−** Silent drop gives a non-owner no feedback (intentional: no information disclosure).
+- Multi-user admission and per-actor authorization remain the `PolicyProvider` seam (ADR-0009), not this gate.
+
+### V1 / V2
+
+`[NOW]` owner-id + channel-allowlist + owner-DM gate, startup fail-closed. `[LATER]` Team Edition
+multi-actor admission and role-based authorization via the reserved Actor/Policy seam.
+
+## ADR-0092 — GENERAL_CHAT local-first provider preference and Claude CLI invocation policy
+
+- **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** (decisions
+  D1, D2). Decision record only; implementation follows as separate bounded tasks. Independent Architecture
+  Review of the implementation is required before merge.
+- **Date:** 2026-10-02
+
+### Context
+
+The legacy provider path (`QUOKY_PROVIDER_ROUTING_MODE=legacy`, the default) selects through
+`CapabilityRouter`: available providers (`isAvailable()`) ranked by adapter-advertised priority.
+`OllamaCliProvider` already advertises `GENERAL_CHAT` at 100 (Claude 50), but its `isAvailable()` only runs
+`ollama --version`, so an installed CLI without a running daemon or the configured model is "available" and
+then fails at execution. `ClaudeCliProvider` runs `claude -p` with no model or effort selection (ADR-0014).
+The Product Owner wants conversation served locally when possible, code work on Claude, and Claude cost and
+latency bounded per kind of work.
+
+### Decision
+
+- **Chat preference is expressed only through composition-root registration.** `OllamaCliProvider` is
+  registered when `QUOKY_OLLAMA_ENABLED` is on (**default on**, i.e. opt-out registration; exact
+  `true`/`false`, anything else is a startup error); off means Claude-only. No priority override, no new policy, and no provider-id branching
+  in Core (`ARCHITECTURE.md` §5.1, §5.2, §12). Existing advertised priorities are unchanged: `GENERAL_CHAT`
+  prefers Ollama; `CODE_IMPLEMENTATION` (Claude 50 > Ollama 40), `CODE_REVIEW`, `PROJECT_ANALYSIS` and
+  `ARCHITECTURE_PLANNING` stay on Claude.
+- **Ollama readiness becomes real (adapter-owned).** `OllamaCliProvider.isAvailable()` reports available only
+  when the local daemon answers and the configured model (`OLLAMA_MODEL`) is present in the local inventory.
+  The check never pulls a model, uses the existing loopback-only, argv-only CLI discipline, and may cache its
+  result for a short bounded period.
+- **Selection-time fallback is sufficient for v1.** Because readiness is real, an unready Ollama is never
+  selected and `CapabilityRouter` returns Claude. An Ollama failure after selection is reported through the
+  existing provider-failure reply; there is no automatic re-execution on Claude.
+- **Claude invocation policy (adapter-owned).** `ClaudeCliProvider` passes `--model <QUOKY_CLAUDE_MODEL>`
+  (**default `sonnet`**, validated at config parse as a bounded alias/model token) and an effort level
+  derived from `AiRequest.capability` by an adapter-owned table:
+
+  | Capability | Effort |
+  |---|---|
+  | `GENERAL_CHAT`, `READONLY_LOOKUP`, `SUMMARIZATION` | `low` |
+  | `DOCUMENT_ANALYSIS`, `PROJECT_ANALYSIS`, `CODE_REVIEW` | `medium` |
+  | `ARCHITECTURE_PLANNING`, `CODE_IMPLEMENTATION` | `high` |
+  | any other capability | no effort flag (CLI default) |
+
+  Both are fixed argv elements, never user text; the prompt stays on stdin in a neutral cwd without `--bare`
+  (ADR-0014 unchanged). Model and effort may be recorded as sanitized provider-owned `audit` facts and are
+  never shown to the user by default (§5.3).
+- **No Core contract change.** `AiRequest` already carries `capability`; `AiProvider`, `CapabilityRouter`,
+  `ProviderSelector` and Session/Task/Actor are unchanged; no provider is pinned (§12).
+
+### Consequences
+
+- **+** Conversation runs locally whenever Ollama is truly ready, with a deterministic fall back to Claude.
+- **+** Claude cost/latency is bounded per capability without touching Core.
+- **−** By the same unchanged priorities, `SUMMARIZATION` (100 > 50), `DOCUMENT_ANALYSIS` (80 > 60) and
+  `READONLY_LOOKUP` (70 > 50) also prefer a ready Ollama. This is accepted as the consequence of "no priority
+  override"; moving them to Claude would be a separate decision on adapter-advertised priorities.
+- **−** A readiness probe adds a local process call per selection (bounded by caching).
+- **Conflict recorded:** ADR-0090 (still **Proposed**) proposes cloud inference as the normal primary
+  service. This ADR governs the legacy path for Personal v1; ADR-0090 text is not changed and must
+  reconcile with this ADR before ratification. The Stage 2B seam (`stage2b-general-chat-v1`, ADR-0064) and
+  `ARCHITECTURE.md` §5.8–§5.12 are untouched and out of v1 scope.
+
+### V1 / V2
+
+`[NOW]` registration flag, real Ollama readiness, configurable Claude model, capability→effort table.
+`[LATER]` execution-time fallback (Ollama failure → Claude), per-question difficulty-based effort, and any
+reconciliation with ADR-0064/ADR-0090 routing.
+
+## ADR-0073 amendment — Actor-scoped durable recall retrieval (Quoky Personal v1)
+
+- **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** (decision D4).
+  Amends ADR-0073 on the read side only; ADR-0073 text is not edited. Independent Architecture Review of the
+  implementation is required before merge.
+- **Date:** 2026-10-02
+
+### Context
+
+`DefaultMemoryRetriever` admits a durable record only when its `sessionId`, `projectId` and actor
+(`scope.userId`) all equal the request scope exactly, matching the ADR-0073 decision-basis scope model ("a
+Session-scoped entry is not automatically visible in another Session"; project entries only for the exact
+project). Because a Discord channel, a DM, and every reset open a new Session, knowledge the owner saved is
+effectively lost on the next conversation, defeating durable memory for a single-owner product.
+
+### Decision
+
+- **Retrieval is actor-scoped.** Durable recall admits `LONG_TERM` records whose actor (`scope.userId`)
+  equals the request actor and ignores `sessionId` and `projectId` for eligibility. Records carrying
+  `channelId`, `threadId` or `taskId`, records with no actor, and records of another actor are never
+  recalled. A request with no actor returns no durable recall (fail closed).
+- **Candidate retrieval is widened too, not only eligibility.** `ContextBuilder`/`DefaultMemoryRetriever`
+  query `MemoryRepository.findDurableCandidates` with the actor only (`{ userId: actorId }`, no `sessionId`
+  or `projectId` filter) and return early with no actor. The SQLite repository already filters only the keys
+  it is given, so no port, schema or migration change is required.
+- **Everything else is unchanged.** Expiry, supersession, authority fitness, normalized-content
+  deduplication, ranking and the hard limits stay as implemented; `ContextBuilder` remains the single
+  final budget owner.
+- **The writer is unchanged.** `MemoryWriter` still writes, deduplicates, supersedes and forgets by exact
+  write scope (session + project + actor). Existing records remain valid; no schema change, migration or
+  backfill.
+- **Not affected:** the `SHORT_TERM` transcript and `immediatelyPreviousUserTurn` stay exact
+  current-session; the exact active-project `PROJECT` background lookup stays separate and first.
+
+### Consequences
+
+- **+** Saved owner knowledge follows the owner across channels, DMs and resets (ADR-0091, ADR-0093).
+- **−** Superseded rule: for durable recall only, this replaces the decision-basis plan's session/project
+  eligibility rule ("an entry carrying multiple scope keys must satisfy all populated keys").
+- **−** Project-local knowledge can be recalled in another project's context, as background only; it never
+  overrides canonical approval, security or project state (ADR-0073, ADR-0063).
+- **−** Read/write asymmetry: a later write in another Session does not supersede an earlier-Session record
+  (supersession is exact-scope), so both may be recalled unless their normalized content is identical;
+  forget requests still target the exact write scope. Recorded as a follow-up, not a v1 blocker.
+
+### V1 / V2
+
+`[NOW]` actor-scoped recall eligibility. `[LATER]` actor-wide supersession/forget, project-aware ranking,
+and Team Edition sharing rules.
+
+## ADR-0093 — Conversation control: help, reset, and pending-approval lifetime
+
+- **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** as part of
+  the first-release scope. Decision record only; implementation follows as a separate bounded task.
+  Independent Architecture Review of the implementation is required before merge.
+- **Date:** 2026-10-02
+
+### Context
+
+The owner has no deterministic way to ask what Quoky can do or to leave a stuck conversation. A pending
+approval holds the conversation until decided and never expires: ADR-0025 reserved `expiresAt` but chose
+"no expiry enforcement". ADR-0090 (Proposed) independently describes a deterministic control layer ahead of
+semantic routing; these controls are its minimal v1 form inside the existing runtime.
+
+### Decision
+
+- **Control phrases.** A whole message, trimmed, exactly equal to `도움말` or `/help` (ASCII
+  case-insensitive) is *help*; `새 대화` or `/reset` is *reset*. Substrings never match ("새 대화 기능
+  만들어줘" is ordinary work). These are plain-text messages, **not** Discord application (slash) commands;
+  the "no slash-command UX" non-goal and natural-language-first interaction are preserved.
+- **Deterministic handling.** Control turns are handled before intent classification, in every conversation
+  state including a pending approval. They make no provider call, create no Task/TaskRun, and are not written
+  to conversational or durable memory.
+- **Help** replies with fixed text: what Quoky can do in Personal v1, the control phrases, and how to
+  approve or deny.
+- **Reset** closes the current Session (`SessionStatus.CLOSED`); the next message opens a new Session. If an
+  approval is pending, it is first recorded as denied through the existing `ApprovalManager.decide`
+  (`approved: false`, comment `reset`, `decidedBy` = the resolved owner actor id, because the owner asked for
+  it). Reset does not cancel a running TaskRun, roll back an applied
+  workspace change or commit, or delete any memory; durable recall continues (ADR-0073 amendment).
+- **Pending-approval TTL = 30 minutes** (1,800,000 ms) from `ApprovalRequest.createdAt`, measured with the
+  shared clock. Expiry is evaluated lazily on the next inbound turn (no scheduler): an expired PENDING
+  approval is recorded as denied via `decide` (`approved: false`, comment `expired`, `decidedBy: 'system'` —
+  the existing system-attribution convention used for auto-approval — and `decidedAt` from the shared clock).
+  Precedence: control phrases are evaluated first; if the turn is help/reset, the expiry is still recorded and
+  the control action runs with the expiry notice prepended. Any other turn gets only the expiry notice. An expired approval can never be approved. No new persisted field (`expiresAt` stays
+  reserved).
+- **Pending approval keeps capturing turns.** While an unexpired approval is pending, an ordinary message is
+  not routed to chat or a provider; it gets a reminder of what is pending, how to approve or deny, the
+  remaining time, and `새 대화` to cancel.
+
+### Consequences
+
+- **+** Predictable escape hatches; a forgotten approval can no longer be granted hours later.
+- **+** Reuses Session lifecycle and `ApprovalManager.decide`; no new aggregate, port or schema.
+- **−** Chat is unavailable while an approval is pending (reminder only) until it is decided, expires or the
+  conversation is reset.
+- **−** Expiry happens on the next turn, not at the 30-minute mark; a never-revisited approval stays
+  PENDING in storage but cannot be approved later.
+- Amends ADR-0025's "no expiry enforcement" for conversational approvals only; plan-scoped approval
+  semantics are otherwise unchanged.
+
+### V1 / V2
+
+`[NOW]` help/reset phrases, 30-minute TTL, reminder capture. `[LATER]` chat pass-through during a pending
+approval, configurable TTL, a persisted `expiresAt`, and a fuller ADR-0090 control layer.
+
+## ADR-0094 — Personal-edition git safety (remote off by default, no commits on main/master)
+
+- **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** (decision D5).
+  Decision record only; implementation follows as a separate bounded task. Independent Architecture Review of
+  the implementation is required before merge.
+- **Date:** 2026-10-02
+
+### Context
+
+Personal v1 includes the local code flow — preview → apply (ADR-0040–0042) → validation (ADR-0043) → an
+approval-gated local commit (ADR-0045/0046) — but defers the GitHub push → PR → merge → cleanup chain
+(ADR-0047–0061). The `GitProvider` port already carries remote operations, and `commitFiles` commits on
+whatever branch is checked out, including `main`.
+
+### Decision
+
+- **`QUOKY_GIT_REMOTE_ENABLED`**, default `false` (exact `true`/`false`; anything else is a startup error).
+  When false, the remote operations `pushApprovedCommit`, `getRemoteRefCommit` and `syncMainFastForward` are
+  refused with a typed, sanitized error before any git process or credential mint.
+- **Commits on `main`/`master` are refused.** Before delegating `commitFiles`, the current branch is read
+  through `info()`; `main`, `master` (case-insensitive), a detached HEAD, or an undeterminable branch is
+  refused before git runs. The existing commit-failure path reports "not committed".
+- **Implemented as a composition-root `GitProvider` decorator** in `apps/quoky`, outermost (so a refusal
+  happens before the ADR-0061 GitHub App decorator could mint a token). The `GitProvider` port,
+  `LocalGitProvider`, `GitManager`, Core and the existing HIGH/CRITICAL approval gates are unchanged; this is
+  defense in depth, not a replacement for approval.
+- With remote off, the PR/merge/cleanup steps are unreachable because they require a `GIT_PUSHED` state.
+
+### Consequences
+
+- **+** A Personal v1 user cannot push, sync, or commit onto `main`/`master` through Quoky, whatever the
+  conversation or approval state.
+- **+** Zero port or Core change; the remote chain can be re-enabled later by configuration.
+- **−** The owner must check out a non-main branch before a commit; Quoky has no branch-creation operation.
+- **−** Branch read and commit are separate git calls (small race window; acceptable for a single owner).
+- Enabling the flag is outside Personal v1 acceptance; any live push/PR/merge still needs separate Strict
+  approval.
+
+### V1 / V2
+
+`[NOW]` remote-off default, main/master commit refusal, composition-root decorator. `[LATER]` the GitHub
+push/PR/merge chain as a release feature, a configurable protected-branch list, and branch creation.
+
+## ADR-0091..0094 implementation record — Quoky Personal v1 (2026-10-02)
+
+- **Status:** Implementation record only (integration branch `claude/v1-integration`, local; not pushed, no PR,
+  no release). Offline acceptance: `apps/quoky/src/first-release-acceptance.test.ts`. Live UAT is NOT executed.
+- **ADR-0091:** owner gate and channel allowlist are adapter-owned (`packages/adapter-discord`); startup fails
+  closed without owner ids. Implemented as ratified.
+- **ADR-0092:** Ollama registration via `QUOKY_OLLAMA_ENABLED`; adapter readiness (daemon + model); Claude
+  `--model` and the capability-to-effort table. A capability outside the table passes no `--effort` flag, as
+  ratified. Selection-time fallback only: after an execution fails UNAVAILABLE the selected provider's cached
+  probe is dropped so the next turn re-probes.
+- **ADR-0093:** `도움말`/`새 대화`, reset closing the Session, and the 30-minute lazy approval TTL. `CLOSED` is
+  terminal in the SQLite session repository, so a turn still running at reset time cannot reopen the Session.
+- **ADR-0094:** composition-root `PersonalGitGuard`. With remote off it also refuses `deleteMergedLocalBranch`
+  (a local operation tied to the post-merge chain), and the composition root withholds the repository-hosting
+  manager so the REST PR/merge/remote-cleanup routes reply "not configured" before any token is minted.
+- **Implementation details NOT covered by the ratified text and awaiting Product Owner ratification (recorded
+  here so the settled ADR text and the code are not silently different):**
+  1. ADR-0032 §6 approval words: `interpretApprovalDecision` uses whole-token matching, drops bare `y`/`n`,
+     adds `okay/approve/proceed/go ahead`, `거부/deny/reject/refuse` and `철회/중지/멈춰/cancel/stop/abort`;
+     a negated approve is a deny; approve is the narrow case (an approve word plus any further content word,
+     question, hedge, refusal qualifier or condition is `ambiguous` and the approval stays pending).
+  2. Intent routing: an `IMPLEMENT_CODE`, `RUN_TESTS` or `PROJECT_ANALYSIS` intent becomes `GENERAL_CHAT` when
+     the Session has no active project and the text has no project noun or file path. Reset closes the
+     Session, so the project binding is dropped (the reset reply says so).
+  3. `ClaudeCliProvider` adds `--tools ""` (all built-in tools off) for requests without a workspace.
+  4. The 30-second provider availability cache lives in Core `AiProviderManager` (all providers), not in the
+     Ollama adapter alone.
+
+## ADR-0095 — Quoky Personal v1 implementation decisions (ratification of the ADR-0091..0094 record)
+
+- **Status:** Ratified by the Product Owner on 2026-10-02.
+- **Amends:** ADR-0032 §6 (conversational approval words), ADR-0092 (location of the availability cache),
+  ADR-0014 (Claude CLI argv), ADR-0093 (approval decision timing).
+
+### Context
+
+The ADR-0091..0094 implementation record listed four implementation details that the ratified text did not
+cover. Independent Claude and Codex final reviews then hardened the approval path further. This ADR ratifies
+those details so the settled decisions and the code agree.
+
+### Decision
+
+1. **Approval words (amends ADR-0032 §6).** `interpretApprovalDecision` is the single interpreter for every
+   conversational decision site. Matching is whole-token only; bare `y`/`n` are not decisions. Approve is the
+   narrow case: an approve word with any further content word, a question mark anywhere, a question ending,
+   a hedge, a refusal qualifier, a condition or an unrecognized symbol/emoji is `ambiguous`, and the approval
+   stays pending with a re-prompt. Only a directly negated approve word ("진행하지 마", "don't approve") is a
+   terminal deny.
+2. **No-project intent routing.** `IMPLEMENT_CODE`, `RUN_TESTS` and `PROJECT_ANALYSIS` intents become
+   `GENERAL_CHAT` when the Session has no active project and the text has no project noun or file path.
+   Reset closes the Session, so the project binding is dropped and the reset reply says so.
+3. **Claude CLI tools (amends ADR-0014 argv).** `ClaudeCliProvider` passes `--tools ""` (built-in tools off)
+   for requests without a workspace. The prompt stays on stdin.
+4. **Availability cache in Core (amends ADR-0092).** The ~30-second availability cache lives in Core
+   `AiProviderManager` for all providers. It never branches on provider id. An execution failure classified
+   `UNAVAILABLE` (including an Ollama daemon connection failure) drops that provider's cached probe so the
+   next turn re-probes.
+5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
+   every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
+   mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is
+   terminal in the SQLite session repository through an atomic conditional upsert.
+
+### Consequences
+
+- **+** Misread status questions, refusals, conditions and symbols can no longer grant an approval.
+- **−** Some natural phrasings ("승인 👍", "진행해도 돼") re-prompt once instead of approving.
+- **+** No new Core port and no provider-id branching. ARCHITECTURE.md §5 invariants are unchanged.

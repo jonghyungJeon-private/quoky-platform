@@ -198,12 +198,23 @@ class SqliteActorRepository extends JsonRepository<Actor> implements ActorReposi
 }
 
 class SqliteSessionRepository extends JsonRepository<Session> implements SessionRepository {
+  /**
+   * CLOSED is terminal (ADR-0093 reset). A turn that was still running when the owner said "새 대화" saves the
+   * Session object it loaded at its start (status ACTIVE) when it finishes; without this guard that late write
+   * would reopen the closed Session and the reset would silently not take effect. A save that would move a
+   * CLOSED session back to another status is ignored and the stored CLOSED session is returned.
+   *
+   * The guard is ONE conditional UPSERT (the `WHERE` on `DO UPDATE`), not a read-then-write: there is no
+   * await between checking the stored status and writing, so a stale ACTIVE save can never interleave with
+   * the reset's CLOSED write and overwrite it.
+   */
   override async save(session: Session): Promise<Session> {
-    this.db
+    const result = this.db
       .prepare(
         `INSERT INTO sessions (id, channel_id, thread_id, status, data) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id,
-           thread_id = excluded.thread_id, status = excluded.status, data = excluded.data`,
+           thread_id = excluded.thread_id, status = excluded.status, data = excluded.data
+         WHERE sessions.status <> 'CLOSED' OR excluded.status = 'CLOSED'`,
       )
       .run(
         session.id,
@@ -212,6 +223,11 @@ class SqliteSessionRepository extends JsonRepository<Session> implements Session
         session.status,
         JSON.stringify(session),
       );
+    if (result.changes === 0) {
+      // The stored row is CLOSED and this save would have reopened it: keep (and return) the CLOSED session.
+      const stored = this.db.prepare(`SELECT data FROM sessions WHERE id = ?`).get(session.id) as Row | undefined;
+      if (stored) return JSON.parse(stored.data) as Session;
+    }
     return session;
   }
 

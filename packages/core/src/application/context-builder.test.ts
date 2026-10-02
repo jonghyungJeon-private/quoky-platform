@@ -51,7 +51,7 @@ const taskWith = (
   },
   ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
   ...(opts.projectId ? { projectId: opts.projectId } : {}),
-  ...(opts.actorId ? { actorId: opts.actorId } : {}),
+  ...((opts.actorId ?? 'A1') ? { actorId: opts.actorId ?? 'A1' } : {}),
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 });
@@ -122,7 +122,7 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     expect(request).toMatchObject({
       query: 'hello',
       capability: Capability.SUMMARIZATION,
-      scope: { sessionId: 'S1', projectId: 'P1' },
+      scope: { actorId: 'A1' },
       maxResults: 10,
     });
     expect(bundle.conversationTranscript.map((entry) => entry.content)).toEqual([
@@ -147,7 +147,7 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     ]);
   });
 
-  it('keeps durable retrieval scoped to the active session and project', async () => {
+  it('requests durable retrieval by actor only', async () => {
     let request: MemoryRetrievalRequest | undefined;
     const memory = {
       recentShortTerm: async () => [],
@@ -164,9 +164,7 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
       taskWith({ sessionId: 'S1', projectId: 'P1', actorId: 'A1' }),
     );
 
-    // Pins the reverted-to retrieval scope only. The writer persists userId=actorId, so omitting actorId
-    // here creates a known open writer/retriever asymmetry gap that a separately approved task must reconcile.
-    expect(request?.scope).toEqual({ sessionId: 'S1', projectId: 'P1' });
+    expect(request?.scope).toEqual({ actorId: 'A1' });
   });
 
   it('suppresses exact-content durable recall without displacing exact transcript continuity', async () => {
@@ -367,7 +365,7 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     ]);
   });
 
-  it('preserves legacy behavior for absent, empty, failed, and unscoped retrieval', async () => {
+  it('preserves legacy behavior for absent, empty, failed, and actor-less retrieval', async () => {
     const memory = {
       recentShortTerm: async () => [rec('1', 'user', 'legacy transcript')],
     } as unknown as MemoryManager;
@@ -389,7 +387,7 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     const baseline = await new ContextBuilder(memory).build(scopedTask);
     const empty = await new ContextBuilder(memory, {}, emptyRetriever).build(scopedTask);
     const failed = await new ContextBuilder(memory, {}, failedRetriever).build(scopedTask);
-    const unscoped = await new ContextBuilder(memory, {}, unscopedRetriever).build(taskWith());
+    const unscoped = await new ContextBuilder(memory, {}, unscopedRetriever).build(taskWith({ actorId: '' }));
 
     expect(empty).toEqual(baseline);
     expect(failed).toEqual(baseline);
@@ -441,8 +439,8 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
 
     expect(queries).toEqual([
       expect.objectContaining({
-        scope: { sessionId: 'S1', projectId: 'P1' },
-        limit: 10,
+        scope: { userId: 'A1' },
+        limit: 50,
       }),
     ]);
     expect(bundle.conversationTranscript.map((entry) => entry.content)).toEqual([
@@ -1391,7 +1389,7 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
       },
     } as unknown as MemoryManager;
 
-    await new ContextBuilder(memory).build(taskWith());
+    await new ContextBuilder(memory).build(taskWith({ actorId: '' }));
 
     expect(captured).toEqual({ channelId: 'c' });
   });

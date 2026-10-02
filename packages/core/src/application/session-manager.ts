@@ -37,6 +37,15 @@ export class SessionManager {
     return this.storage.sessions.save({ ...session, lastActivityAt: now() });
   }
 
+  /**
+   * Close a session (ADR-0093 reset). Saved through the existing repository as `CLOSED`, so the next
+   * `openForContext` for the same channel/thread opens a fresh session. Nothing else is touched: tasks,
+   * approvals, artifacts and memory stay as they are.
+   */
+  async close(session: Session): Promise<Session> {
+    return this.storage.sessions.save({ ...session, status: SessionStatus.CLOSED, lastActivityAt: now() });
+  }
+
   /** Bind a registered project to the session as its active project (ADR-0018). */
   async setActiveProject(session: Session, projectId: Id): Promise<Session> {
     return this.storage.sessions.save({

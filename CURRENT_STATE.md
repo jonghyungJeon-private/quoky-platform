@@ -5,6 +5,42 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Quoky Personal v1 — first-release scope and ADRs (2026-10-02)
+
+**STATUS: IMPLEMENTED LOCALLY on the integration branch (waves 1-3); offline acceptance PASS
+(`apps/quoky/src/first-release-acceptance.test.ts`; `pnpm typecheck` and full `pnpm test` green: 188 files / 4178
+tests); Live UAT (AC12 in the packet; ROADMAP criterion 9) NOT EXECUTED — requires separate Strict Product Owner approval
+(`docs/uat/first-release-uat-packet.md`). Not pushed, no PR, no release.** User setup:
+`docs/user/quickstart.md`. Original decision record below: docs-only ADR task on branch
+`claude/v1-t4-release-adrs` from main `ddcedb12cdf654b91eaee4a828e719d3665e9aed`. The Product Owner
+ratified the first product release scope ("Quoky Personal v1") on 2026-10-02. `DECISIONS.md` appends:
+
+- **ADR-0091** — Discord entry: owner-only (`QUOKY_DISCORD_OWNER_IDS`) in allowlisted channels
+  (`QUOKY_DISCORD_CHANNEL_IDS`) plus owner DMs; no mention gating; startup fails closed without owner ids;
+  gate is adapter-owned, Core unchanged.
+- **ADR-0092** — `GENERAL_CHAT` prefers a ready local Ollama purely through composition-root registration
+  (`QUOKY_OLLAMA_ENABLED`, default on) and real adapter readiness (daemon + configured model); selection-time
+  fallback to Claude; Claude CLI gets `--model` (`QUOKY_CLAUDE_MODEL`, default `sonnet`) and an adapter-owned
+  capability→effort table. No priority override, no provider-id branching, no `AiRequest` change. Records
+  that summarization/document analysis/lookup also prefer a ready Ollama by unchanged priorities, and a
+  tension with ADR-0090 (still Proposed, cloud-primary).
+- **ADR-0073 amendment** — durable recall is actor-scoped (ignores `sessionId`/`projectId`); writer and
+  existing records unchanged; supersedes the plan's session/project recall eligibility rule for recall only.
+- **ADR-0093** — `도움말`/`/help` and `새 대화`/`/reset` (exact whole-message plain text, not Discord slash
+  commands); reset closes the Session and records a pending approval as denied via `decide`; pending
+  approval TTL 30 minutes, evaluated lazily; pending approval captures turns with a reminder. Amends
+  ADR-0025's "no expiry enforcement" for conversational approvals.
+- **ADR-0094** — `QUOKY_GIT_REMOTE_ENABLED` default false; commits on `main`/`master` (or detached HEAD)
+  refused; composition-root `GitProvider` decorator, port unchanged.
+
+`ROADMAP.md` gains the Personal v1 row, acceptance criteria and deferred list (R3/Stage 2B/continuation,
+execution-time fallback, chat pass-through during pending approval, `TEST_EXECUTION` approval, GitHub
+push/PR/merge chain, new-file/multi-file apply, M3 connector expansion, vector retrieval/Codex, MLX as a
+2nd-release candidate). The ADRs and ROADMAP rows were docs-only decision records; the implementation landed
+afterwards on the integration branch (see the status line above and the "ADR-0091..0094 implementation record"
+in `DECISIONS.md`, which also lists four implementation details awaiting Product Owner ratification).
+Active-milestone and ADR-0090/R3 statuses below are unchanged.
+
 ### R3-B3-2C — Trust-root feasibility & deployment binding (read-only discovery) (2026-09-29)
 
 **ARCHITECTURE + READ-ONLY FEASIBILITY ONLY — NOT STARTED / IMPLEMENTATION NOT AUTHORIZED / NOT ELIGIBLE.**

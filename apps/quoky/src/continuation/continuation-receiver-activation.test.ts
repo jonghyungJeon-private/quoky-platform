@@ -230,8 +230,17 @@ function receiverInput(): ContinuationReceiverInput {
 describe('offline activation factory composition (offline, fake runner) — no conversation reframe (§16/§36)', () => {
   it('drives the real Ollama adapter with a fake CliRunner and is NOT reframed', async () => {
     const captured: { input: string }[] = [];
-    const runner: CliRunner = async (_bin, _args, options): Promise<CliRunResult> => {
+    const runner: CliRunner = async (_bin, args, options): Promise<CliRunResult> => {
       captured.push({ input: options.input });
+      // Availability now requires the configured model to be listed by `ollama list`.
+      if (args[0] === 'list') {
+        return {
+          code: 0,
+          stdout: 'NAME  ID  SIZE  MODIFIED\nllama3.1:8b  a1  4.7 GB  now\ngranite3.3:8b  b2  4.9 GB  now',
+          stderr: '',
+          timedOut: false,
+        };
+      }
       return { code: 0, stdout: 'A concise continuation answer.', stderr: '', timedOut: false };
     };
     // Build a production config whose BALANCED provider is a real OllamaCliProvider with a FAKE runner.
@@ -275,7 +284,7 @@ describe('offline activation factory composition (offline, fake runner) — no c
     expect(outcome.disposition).toBe('SUCCEEDED');
     // R1 accepts the produced outcome and audit.
     expect(snapshotReceiverOutcome(outcome, executionId)).not.toBeNull();
-    // Exactly one prompt was dispatched to execute() (the rest are `ollama --version` availability
+    // Exactly one prompt was dispatched to execute() (the rest are `ollama list` availability
     // probes with empty stdin). That single prompt was NOT reframed as a conversation turn.
     const dispatched = captured.filter((entry) => entry.input.length > 0);
     expect(dispatched).toHaveLength(1);

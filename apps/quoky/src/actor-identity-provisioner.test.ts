@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Actor, ActorRepository, ConnectorProvider, Id, StorageProvider } from '@quoky/core';
+import type { Actor, ActorRepository, ConnectorProvider, Id, LogFields, Logger, StorageProvider } from '@quoky/core';
 import { WorkSurfaceQuery } from '@quoky/core';
 import type { ActorIdentityMapping } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
@@ -32,8 +32,19 @@ class FakeActorRepository implements ActorRepository {
   }
 }
 
-function provisioner(repository: FakeActorRepository, mappings: readonly ActorIdentityMapping[]): ActorIdentityProvisioner {
-  return new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, mappings);
+class RecordingLogger implements Logger {
+  readonly warnings: Array<{ message: string; fields?: LogFields }> = [];
+  info(): void { /* not asserted */ }
+  warn(message: string, fields?: LogFields): void { this.warnings.push({ message, ...(fields ? { fields } : {}) }); }
+  error(): void { /* not asserted */ }
+}
+
+function provisioner(
+  repository: FakeActorRepository,
+  mappings: readonly ActorIdentityMapping[],
+  log: Logger = new RecordingLogger(),
+): ActorIdentityProvisioner {
+  return new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, mappings, log);
 }
 
 function mapping(discordId: string, identities: ActorIdentityMapping['identities']): ActorIdentityMapping {
@@ -102,12 +113,29 @@ describe('ActorIdentityProvisioner', () => {
     expect(repository.saveCount).toBe(0);
   });
 
-  it('fails closed and never creates an Actor when the configured Discord Actor is absent', async () => {
+  it('skips a mapping whose Discord Actor is absent with a warning, never creating an Actor or crashing startup', async () => {
     const repository = new FakeActorRepository([]);
-    await expect(provisioner(repository, [mapping('missing', { jira: 'jira-user' })]).provision())
-      .rejects.toThrow('ACTOR_IDENTITY_PROVISIONING_ACTOR_NOT_FOUND:discord:missing');
+    const log = new RecordingLogger();
+    await expect(provisioner(repository, [mapping('missing-discord-id', { jira: 'jira-user' })], log).provision())
+      .resolves.toBeUndefined();
     expect(await repository.list()).toEqual([]);
     expect(repository.saveCount).toBe(0);
+    expect(log.warnings).toHaveLength(1);
+    expect(log.warnings[0]?.fields).toEqual({ platform: 'discord', mappingIndex: 0 });
+    // The warning names the mapping position only; identifiers and values never reach the log.
+    expect(JSON.stringify(log.warnings)).not.toContain('missing-discord-id');
+    expect(JSON.stringify(log.warnings)).not.toContain('jira-user');
+  });
+
+  it('still provisions known Actors when another mapping is skipped', async () => {
+    const repository = new FakeActorRepository([actor('actor-1', 'discord-1')]);
+    const log = new RecordingLogger();
+    await provisioner(repository, [
+      mapping('unknown', { github: 'ghost' }),
+      mapping('discord-1', { github: 'octocat' }),
+    ], log).provision();
+    expect((await repository.get('actor-1'))?.identities).toContainEqual({ platform: 'github', externalId: 'octocat' });
+    expect(log.warnings.map((w) => w.fields?.mappingIndex)).toEqual([0]);
   });
 
   it('keeps connector availability failures separate from identity provisioning failures', async () => {

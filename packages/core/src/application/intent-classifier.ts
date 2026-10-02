@@ -4,6 +4,11 @@ import type { CapabilityRouter } from './capability-router';
 import { hasCoLocatedUnnegated } from './intent-negation';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 
+export interface IntentClassifyContext {
+  /** False when the conversation has no active project; omitted keeps the context-free behavior. */
+  readonly hasActiveProject?: boolean;
+}
+
 /**
  * Classifies a natural-language message into an Intent. v1 is MINIMAL and
  * deterministic:
@@ -15,7 +20,52 @@ import { detectExplicitValidationKinds, isDeniedValidationRequest } from './vali
 export class IntentClassifier {
   constructor(private readonly router: CapabilityRouter) {}
 
-  async classify(message: InboundMessage): Promise<Intent> {
+  async classify(message: InboundMessage, ctx?: IntentClassifyContext): Promise<Intent> {
+    const intent = this.classifyText(message);
+    if (ctx?.hasActiveProject === false && IntentClassifier.isBareProjectKeywordMatch(message.text.trim(), intent)) {
+      return IntentClassifier.chatIntent(message.text.trim());
+    }
+    return intent;
+  }
+
+  /**
+   * With no active project, a code/test/analysis keyword alone ("이 문장 분석해줘", "7/3 회의 등록해줘") is
+   * everyday chat. A project noun, a file path, or an explicit /preview keeps the project routing.
+   */
+  private static isBareProjectKeywordMatch(text: string, intent: Intent): boolean {
+    if (
+      intent.type !== IntentType.IMPLEMENT_CODE &&
+      intent.type !== IntentType.RUN_TESTS &&
+      intent.type !== IntentType.PROJECT_ANALYSIS
+    ) {
+      return false;
+    }
+    if (/^\/preview\b/i.test(text)) return false;
+    if (/(프로젝트|저장소|레포|\bprojects?\b|\brepos?\b|\brepositor(?:y|ies)\b|\bcodebases?\b)/i.test(text)) return false;
+    return !IntentClassifier.hasFilePathSignal(text);
+  }
+
+  /**
+   * True when the prose (outside code fences / inline code) names a real file path: a token with a known file
+   * extension that is not a call (`response.json()`), or a multi-segment path. Bare `A/B`, `UI/UX`, `total/count`
+   * and a lone relative import (`'./utils'`) are not paths.
+   */
+  private static hasFilePathSignal(text: string): boolean {
+    const prose = text.replace(/```[\s\S]*?(?:```|$)/g, ' ').replace(/`[^`]*`/g, ' ');
+    const ext = /[\w@-]\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|py|go|rs|java|yml|yaml|toml|sh|css|html)$/i;
+    for (const match of prose.matchAll(/[\w@.~/-]+/g)) {
+      const token = match[0].replace(/\.+$/, '');
+      const next = prose.charAt((match.index ?? 0) + match[0].length);
+      if (next === '(') continue;
+      if (ext.test(token)) return true;
+      const segments = token.split('/').filter((seg) => seg && seg !== '.' && seg !== '..');
+      const prefixed = /^(?:\.{1,2}\/|~\/|\/)/.test(token);
+      if (segments.length >= 2 && (prefixed || segments.length >= 3)) return true;
+    }
+    return false;
+  }
+
+  private classifyText(message: InboundMessage): Intent {
     void this.router;
     const text = message.text.trim();
 
@@ -95,6 +145,10 @@ export class IntentClassifier {
       };
     }
 
+    return IntentClassifier.chatIntent(text);
+  }
+
+  private static chatIntent(text: string): Intent {
     return {
       type: IntentType.CHAT,
       capability: Capability.GENERAL_CHAT,
@@ -163,9 +217,9 @@ export class IntentClassifier {
     return undefined;
   }
 
-  /** First absolute POSIX path in the text, if any. */
+  /** First absolute POSIX path (>= 2 segments, at a token start) in the text, if any — so "7/3" is not a path. */
   private static extractLocalPath(text: string): string | undefined {
-    const match = text.match(/(\/[^\s]+)/);
+    const match = text.match(/(?:^|[\s"'`(:=])(\/[^\s/]+(?:\/[^\s/]+)+)/);
     return match ? match[1] : undefined;
   }
 

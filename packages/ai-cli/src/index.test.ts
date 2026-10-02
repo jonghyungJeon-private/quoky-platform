@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AiFailureKind,
   AiProviderError,
+  AiProviderManager,
+  CapabilityRouter,
   ArtifactKind,
   Capability,
   ContextBuilder,
@@ -18,8 +20,9 @@ import {
   RiskLevel,
   TaskStatus,
 } from '@quoky/core';
-import type { MemoryManager, MemoryRecord, Task } from '@quoky/core';
+import type { AiRequest, MemoryManager, MemoryRecord, Task } from '@quoky/core';
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider, maskSecrets } from './index';
+import type { ClaudeCliProviderOptions } from './index';
 import { INHERITED_ENV_ALLOWLIST, createContainedCliRunner } from './cli-runner';
 import type { CliRunOptions, CliRunner, CliRunResult } from './cli-runner';
 
@@ -44,7 +47,7 @@ describe('ClaudeCliProvider', () => {
       prompt: PROMPT,
     });
     expect(calls[0]?.bin).toBe('claude');
-    expect(calls[0]?.args).toEqual(['-p']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--effort', 'low', '--tools', '']);
     expect(calls[0]?.opts.input).toContain('do the thing');
     expect(calls[0]?.opts.cwd).toBeTruthy();
     expect(calls[0]?.opts.env).toBeUndefined();
@@ -119,6 +122,72 @@ describe('ClaudeCliProvider', () => {
     await expect(exec({ code: 1, stdout: '', stderr: 'x', timedOut: false })).rejects.toBeInstanceOf(
       AiProviderError,
     );
+  });
+
+  const argsFor = async (
+    request: Omit<AiRequest, 'prompt'>,
+    options: ClaudeCliProviderOptions = {},
+  ): Promise<string[]> => {
+    let captured: string[] = [];
+    const runner: CliRunner = async (_bin, args) => {
+      captured = args;
+      return { code: 0, stdout: 'ok', stderr: '', timedOut: false };
+    };
+    await new ClaudeCliProvider('claude', { runner, ...options }).execute({ ...request, prompt: PROMPT });
+    return captured;
+  };
+
+  it.each([
+    [Capability.GENERAL_CHAT, 'low'],
+    [Capability.READONLY_LOOKUP, 'low'],
+    [Capability.SUMMARIZATION, 'low'],
+    [Capability.DOCUMENT_ANALYSIS, 'medium'],
+    [Capability.PROJECT_ANALYSIS, 'medium'],
+    [Capability.CODE_REVIEW, 'medium'],
+    [Capability.ARCHITECTURE_PLANNING, 'high'],
+    [Capability.CODE_IMPLEMENTATION, 'high'],
+  ] as const)('passes --model sonnet and the default effort for %s (%s)', async (capability, effort) => {
+    const args = await argsFor({ capability });
+    expect(args.slice(0, 5)).toEqual(['-p', '--model', 'sonnet', '--effort', effort]);
+    expect(args).not.toContain(PROMPT); // prompt stays on stdin
+  });
+
+  it('passes no --effort flag for a capability outside the effort table (ADR-0092: CLI default)', async () => {
+    const args = await argsFor({ capability: Capability.TEST_EXECUTION });
+    expect(args.slice(0, 3)).toEqual(['-p', '--model', 'sonnet']);
+    expect(args).not.toContain('--effort');
+  });
+
+  it('honours a configured model and partial effort overrides over the defaults', async () => {
+    const options = { model: 'opus', effortByCapability: { [Capability.GENERAL_CHAT]: 'medium' as const } };
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 5))
+      .toEqual(['-p', '--model', 'opus', '--effort', 'medium']);
+    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(3, 5))
+      .toEqual(['--effort', 'high']);
+  });
+
+  it('treats an explicit undefined effort override as the default instead of throwing', async () => {
+    const options = { effortByCapability: { [Capability.GENERAL_CHAT]: undefined } };
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(3, 5))
+      .toEqual(['--effort', 'low']);
+  });
+
+  it('disables tools only for requests without a workspace', async () => {
+    const noWorkspace = await argsFor({ capability: Capability.CODE_IMPLEMENTATION });
+    expect(noWorkspace.slice(-2)).toEqual(['--tools', '']);
+    const withWorkspace = await argsFor({
+      capability: Capability.CODE_IMPLEMENTATION,
+      workspace: { id: 'w1', rootPath: '/repo', kind: 'local-clone' },
+    });
+    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--effort', 'high']);
+  });
+
+  it('rejects a model or effort that could be read as another flag', () => {
+    expect(() => new ClaudeCliProvider('claude', { model: '--dangerously-skip-permissions' })).toThrow(TypeError);
+    expect(() => new ClaudeCliProvider('claude', { model: '' })).toThrow(TypeError);
+    expect(() => new ClaudeCliProvider('claude', {
+      effortByCapability: { [Capability.GENERAL_CHAT]: 'turbo' as never },
+    })).toThrow(TypeError);
   });
 
   it('isAvailable is true when `--version` exits 0', async () => {
@@ -759,6 +828,48 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
     ).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
   });
 
+  it('a refused dial to a remote registry during a model download stays EXECUTION_FAILED (daemon is reachable)', async () => {
+    const stderr =
+      'Error: pull model manifest: Get "https://registry.ollama.ai/v2/library/x/manifests/latest": dial tcp 104.21.0.1:443: connect: connection refused';
+    await expect(ollamaExec({ code: 1, stdout: '', stderr, timedOut: false })).rejects.toMatchObject({
+      kind: AiFailureKind.EXECUTION_FAILED,
+    });
+  });
+
+  it.each([
+    'Error: could not connect to ollama app, is it running?',
+    "Error: could not connect to ollama server, run 'ollama serve' to start it",
+    'Error: ollama server not responding - could not connect to ollama server',
+    'Error: Post "http://127.0.0.1:11434/api/generate": dial tcp 127.0.0.1:11434: connect: connection refused',
+  ])('daemon stopped after a successful probe (non-zero exit, %j) → UNAVAILABLE so the router re-probes', async (stderr) => {
+    await expect(ollamaExec({ code: 1, stdout: '', stderr, timedOut: false })).rejects.toMatchObject({
+      kind: AiFailureKind.UNAVAILABLE,
+    });
+  });
+
+  it('a daemon that stops after a positive probe is re-probed on the next turn (fake runner, real router)', async () => {
+    let daemonUp = true;
+    const calls: string[][] = [];
+    const runner: CliRunner = async (_bin, args) => {
+      calls.push(args);
+      if (!daemonUp) {
+        return { code: 1, stdout: '', stderr: 'Error: could not connect to ollama app, is it running?', timedOut: false };
+      }
+      if (args[0] === 'list') return { code: 0, stdout: 'NAME ID SIZE MODIFIED\nllama3.1:latest abc 4.7 GB now\n', stderr: '', timedOut: false };
+      return { code: 0, stdout: 'hi', stderr: '', timedOut: false };
+    };
+    const router = new CapabilityRouter(new AiProviderManager([new OllamaCliProvider({ runner })]));
+    const selected = await router.select(Capability.GENERAL_CHAT); // probe: `ollama list` succeeds, cached
+    expect(calls.filter((a) => a[0] === 'list')).toHaveLength(1);
+    daemonUp = false;
+    await expect(selected.execute({ capability: Capability.GENERAL_CHAT, prompt: PROMPT })).rejects.toMatchObject({
+      kind: AiFailureKind.UNAVAILABLE,
+    });
+    // The cached "ready" was dropped: the next turn re-probes (a second `ollama list`) and finds no provider.
+    await expect(router.select(Capability.GENERAL_CHAT)).rejects.toThrow();
+    expect(calls.filter((a) => a[0] === 'list')).toHaveLength(2);
+  });
+
   it('empty stdout on success → EMPTY_OUTPUT', async () => {
     await expect(ollamaExec({ code: 0, stdout: '   ', stderr: '', timedOut: false })).rejects.toMatchObject({
       kind: AiFailureKind.EMPTY_OUTPUT,
@@ -771,25 +882,83 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
     );
   });
 
-  it('isAvailable is true when `--version` exits 0, false otherwise', async () => {
-    const calls: CliRunOptions[] = [];
-    const up: CliRunner = async (_bin, args, opts) => {
-      calls.push(opts);
-      return {
-        code: args[0] === '--version' ? 0 : 1,
-        stdout: '',
-        stderr: '',
-        timedOut: false,
-      };
-    };
-    const down: CliRunner = async () => ({ code: 1, stdout: '', stderr: 'no', timedOut: false });
-    expect(await new OllamaCliProvider({ runner: up }).isAvailable()).toBe(true);
-    expect(await new OllamaCliProvider({ runner: down }).isAvailable()).toBe(false);
-    expect(calls[0]?.env).toEqual({
-      NO_COLOR: '1',
-      CLICOLOR: '0',
-      CLICOLOR_FORCE: '0',
+  describe('isAvailable (daemon + configured model readiness)', () => {
+    const LIST_HEADER = 'NAME             ID              SIZE      MODIFIED';
+    const listOf = (...rows: string[]): CliRunResult => ({
+      code: 0, stdout: [LIST_HEADER, ...rows].join('\n'), stderr: '', timedOut: false,
     });
+    const probeWith = (result: CliRunResult | Error) => {
+      const calls: Array<{ args: string[]; opts: CliRunOptions }> = [];
+      const runner: CliRunner = async (_bin, args, opts) => {
+        calls.push({ args, opts });
+        if (result instanceof Error) throw result;
+        return result;
+      };
+      return { calls, runner };
+    };
+
+    it('is true when `ollama list` shows the configured model (untagged name matches :latest)', async () => {
+      const probe = probeWith(listOf(
+        'llama3.1:latest  42182419e950   4.7 GB    2 weeks ago',
+        'qwen2.5:7b       845dbda0ea48   4.7 GB    3 weeks ago',
+      ));
+      expect(await new OllamaCliProvider({ runner: probe.runner }).isAvailable()).toBe(true);
+      expect(probe.calls).toHaveLength(1);
+      expect(probe.calls[0]?.args).toEqual(['list']);
+      expect(probe.calls[0]?.opts.timeoutMs).toBeLessThanOrEqual(5_000);
+      expect(probe.calls[0]?.opts.input).toBe('');
+      expect(probe.calls[0]?.opts.env).toEqual({ NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0' });
+    });
+
+    it('matches an explicitly tagged configured model exactly', async () => {
+      const list = listOf('qwen2.5:7b       845dbda0ea48   4.7 GB    3 weeks ago');
+      expect(await new OllamaCliProvider({ model: 'qwen2.5:7b', runner: probeWith(list).runner }).isAvailable())
+        .toBe(true);
+      expect(await new OllamaCliProvider({ model: 'qwen2.5:14b', runner: probeWith(list).runner }).isAvailable())
+        .toBe(false);
+    });
+
+    it('is false when the list lacks the configured model (would trigger an implicit pull)', async () => {
+      const probe = probeWith(listOf(
+        'llama3.1:8b      42182419e950   4.7 GB    2 weeks ago',
+        'mistral:latest   f974a74358d6   4.1 GB    1 month ago',
+      ));
+      expect(await new OllamaCliProvider({ runner: probe.runner }).isAvailable()).toBe(false);
+    });
+
+    it('is false for an empty inventory and never matches the header row', async () => {
+      expect(await new OllamaCliProvider({ runner: probeWith(listOf()).runner }).isAvailable()).toBe(false);
+      const headerNamed = probeWith(listOf('other:latest   abc   1 GB   now'));
+      expect(await new OllamaCliProvider({ model: 'NAME', runner: headerNamed.runner }).isAvailable()).toBe(false);
+    });
+
+    it('is false when the daemon is down, the probe times out, or the runner throws', async () => {
+      const down = probeWith({ code: 1, stdout: '', stderr: 'could not connect to ollama server', timedOut: false });
+      expect(await new OllamaCliProvider({ runner: down.runner }).isAvailable()).toBe(false);
+      const cannotRun = probeWith({ code: null, stdout: '', stderr: 'ENOENT', timedOut: false });
+      expect(await new OllamaCliProvider({ runner: cannotRun.runner }).isAvailable()).toBe(false);
+      const timedOut = probeWith({
+        code: 0, stdout: `${LIST_HEADER}\nllama3.1:latest  x  1 GB  now`, stderr: '', timedOut: true,
+      });
+      expect(await new OllamaCliProvider({ runner: timedOut.runner }).isAvailable()).toBe(false);
+      const throws = probeWith(new Error('spawn failed'));
+      expect(await new OllamaCliProvider({ runner: throws.runner }).isAvailable()).toBe(false);
+    });
+  });
+
+  it('execute() always opts into the pull-abort policy, and an observed download is UNAVAILABLE', async () => {
+    const calls: CliRunOptions[] = [];
+    const runner: CliRunner = async (_bin, _args, opts) => {
+      calls.push(opts);
+      return { code: null, stdout: '', stderr: '', timedOut: false, downloadObserved: true };
+    };
+    await expect(new OllamaCliProvider({ runner }).execute({
+      capability: Capability.GENERAL_CHAT,
+      prompt: PROMPT,
+    })).rejects.toMatchObject({ kind: AiFailureKind.UNAVAILABLE, message: expect.stringMatching(/not installed/) });
+    // Production scans stderr only, so a chat answer quoting a pull log is never aborted.
+    expect(calls[0]?.downloadMarkerPolicy).toBe('OLLAMA_PULL_STDERR');
+    expect(calls[0]?.environmentProfile).toBeUndefined();
   });
 
   it('advertises CODE_IMPLEMENTATION at priority 40 (below Claude 50 — a fallback for code)', () => {
@@ -894,7 +1063,7 @@ describe('Provider regression through the contained runner', () => {
     });
     expect(probe.spawns).toHaveLength(1);
     expect(probe.spawns[0]?.bin).toBe('claude');
-    expect(probe.spawns[0]?.args).toEqual(['-p']);
+    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--effort', 'low', '--tools', '']);
     expect(probe.spawns[0]?.options.cwd).toBe(tmpdir()); // Claude's neutral-cwd contract
     expect(probe.spawns[0]?.options.shell).toBe(false);
     expect(probe.stdinWrites).toEqual([PROMPT]); // prompt on stdin, never argv

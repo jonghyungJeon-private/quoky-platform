@@ -5,6 +5,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Quoky Personal v1 — first release (waves 1-3) — 2026-10-02
+
+First product release for daily single-owner use (ADR-0091..0094 + ADR-0073 amendment). Setup:
+[docs/user/quickstart.md](docs/user/quickstart.md). Attended Live UAT (AC12; ROADMAP criterion 9): `docs/uat/first-release-uat-packet.md`
+(NOT EXECUTED; requires separate Strict Product Owner approval).
+
+**User-visible changes**
+
+- Discord entry is owner-only: only `QUOKY_DISCORD_OWNER_IDS` users are served, in `QUOKY_DISCORD_CHANNEL_IDS` channels
+  (and their threads) or owner DMs; no @mention needed; anyone else is silently ignored. Startup fails closed without
+  owner ids. Adapter now requests the DM intent and Channel partial.
+- Everyday chat prefers a ready local Ollama (daemon answering and `OLLAMA_MODEL` present; opt out with
+  `QUOKY_OLLAMA_ENABLED=false`) and falls back to Claude; Claude CLI receives `--model` (`QUOKY_CLAUDE_MODEL`, default
+  `sonnet`) and an adapter-owned capability-based `--effort`. Provider availability is cached ~30s; a distinct
+  Korean "AI가 아직 설정되지 않았어요…" reply (`NO_PROVIDER_USER_MESSAGE`) when no provider is ready.
+- Startup preflight: blank-token fail-fast, secret-free remediation hints for configuration errors, provider readiness
+  lines, resolved database path, and the `started (Quoky Personal v1)` banner. Relative DB/vector paths resolve against the
+  repository root.
+- Durable memory (`기억해: ...`) is recalled for the same owner across channels, DMs and `새 대화` (ADR-0073 amendment).
+- `도움말` / `/help` and `새 대화` / `/reset` work in every state; a pending approval expires after 30 minutes and
+  otherwise captures turns with a reminder (ADR-0093). `새 대화` also drops the active project binding.
+- Approval decisions are whole-token and negation-aware: `진행하지 마` never approves; questions and hedges re-prompt. Approve is the narrow case: an approve word plus any further content (`진행 상황 알려줘`, `ok but only src/a.ts`, `진행 싫어`) re-prompts and the approval stays pending; `진행 멈춰` cancels.
+- With `QUOKY_GIT_REMOTE_ENABLED=false` the REST PR/merge/remote-branch-cleanup routes are also unreachable (no hosting manager is composed). A reset can no longer be undone by a turn that was still running (a closed Session stays closed). After a provider execution fails UNAVAILABLE its cached readiness is dropped so the next turn re-routes.
+- Intent routing precision: a bare code/test keyword without a project or file path stays everyday chat; negated or
+  descriptive test requests do not run tests. Apply-flow copy names the real next step (`패치 만들어줘`, `패치 적용해줘`,
+  `테스트 실행해줘`).
+- Remote git is off by default (`QUOKY_GIT_REMOTE_ENABLED=false`): push/remote read/main sync/branch cleanup are
+  refused before any git process or credential; commits on `main`/`master` or a detached HEAD are always refused
+  (ADR-0094).
+- Long replies split without breaking Markdown code fences.
+- `QUOKY_ACTOR_IDENTITY_MAPPINGS` entries whose Actor does not exist yet are skipped with a warning instead of
+  failing startup.
+
+**New environment variables**: `QUOKY_DISCORD_OWNER_IDS` (required), `QUOKY_DISCORD_CHANNEL_IDS`,
+`QUOKY_OLLAMA_ENABLED` (default `true`), `QUOKY_CLAUDE_MODEL` (default `sonnet`), `QUOKY_GIT_REMOTE_ENABLED`
+(default `false`), `QUOKY_CONTEXT_MAX_TOKENS` (default `6000`, max `200000`).
+
+**Wave 3 (this entry)**: offline composed acceptance `apps/quoky/src/first-release-acceptance.test.ts`; README
+"Getting started", `docs/user/quickstart.md`, `docs/uat/first-release-uat-packet.md`; corrected stale
+missing-Actor wording in `docs/capabilities/work-surface.md`. No source behavior change.
+
 ## R3-B3-2C trust-root feasibility & deployment-binding architecture (docs only, read-only discovery) — 2026-09-29
 
 - Add the ADR-0090 amendment "R3-B3-2C trust-root feasibility & deployment-binding architecture (read-only

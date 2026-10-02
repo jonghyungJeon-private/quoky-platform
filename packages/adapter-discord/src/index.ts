@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
 import type { Message } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
@@ -27,6 +27,16 @@ export interface DiscordConfig {
   token: string;
   /** If set, ignore messages from other guilds (useful for local dev). */
   guildId?: string;
+  /**
+   * Personal-edition admission gate (ADR-0091). Only messages authored by one of these Discord user ids are
+   * admitted. Fail closed: an empty list admits nobody. Provided by the composition root; Core never sees it.
+   */
+  ownerIds: readonly string[];
+  /**
+   * Guild channel ids where owner messages are admitted; a thread is admitted when its own id or its parent
+   * channel id is listed. Empty/absent admits owner direct messages only.
+   */
+  channelIds?: readonly string[];
 }
 
 /** Discord typing indicator lasts ~10s; refresh under that while we work. */
@@ -72,7 +82,10 @@ export class DiscordPlatformAdapter implements PlatformAdapter {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        // ADR-0091: owner direct messages. DM channels arrive uncached, so the Channel partial is required.
+        GatewayIntentBits.DirectMessages,
       ],
+      partials: [Partials.Channel],
     });
     this.client = client;
 
@@ -229,6 +242,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter {
       if (this.config.guildId && message.guildId && message.guildId !== this.config.guildId) {
         return;
       }
+      // ADR-0091: silent drop BEFORE the handler/InboundMessage — no reply, no log of the author or content.
+      if (!this.isAdmitted(message)) return;
       const handler = this.messageHandler;
       if (!handler) return;
       this.logger.info('message received', {
@@ -242,6 +257,19 @@ export class DiscordPlatformAdapter implements PlatformAdapter {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Owner-only entry gate (ADR-0091). Admits an owner's direct message (no guild) or an owner's message in an
+   * allowlisted guild channel, or in a thread whose own id or parent channel id is allowlisted.
+   */
+  private isAdmitted(message: Message): boolean {
+    if (!this.config.ownerIds.includes(message.author.id)) return false;
+    if (message.guildId === null) return true; // direct message
+    const channelIds = this.config.channelIds ?? [];
+    if (channelIds.includes(message.channelId)) return true;
+    const channel = message.channel;
+    return channel.isThread() && channel.parentId !== null && channelIds.includes(channel.parentId);
   }
 
   /** Translate a Discord Message into a normalized InboundMessage. */

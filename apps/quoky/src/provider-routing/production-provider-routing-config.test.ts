@@ -292,10 +292,12 @@ describe('Stage 2B Slice 5B-1 production Provider routing configuration', () => 
     expect(appModule).toContain('runtimeProviderRouting,');
     expect(appModule).not.toMatch(/\.execute\s*\(/);
     expect(appModule).not.toContain('ProviderRoutingGateway');
-    expect(appModule).toContain('new ClaudeCliProvider(config.ai.claudeBin)');
+    expect(appModule).toContain('new ClaudeCliProvider(config.ai.claudeBin, { model: config.ai.claudeModel })');
     expect(appModule).toContain(
       'new OllamaCliProvider({ bin: config.ai.ollamaBin, model: config.ai.ollamaModel })',
     );
+    // ADR-0092: registration (not priority) expresses the chat preference; opt-out via QUOKY_OLLAMA_ENABLED.
+    expect(appModule).toContain('config.ai.ollamaEnabled');
     expect(productionSource).not.toContain('@quoky/provider-routing-validation');
   });
 });

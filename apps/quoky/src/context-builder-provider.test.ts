@@ -32,6 +32,7 @@ const task: Task = {
   context: { platform: 'discord', channelId: 'channel-1', userId: 'user-1' },
   sessionId: 'session-1',
   projectId: 'project-1',
+  actorId: 'actor-1',
   createdAt,
   updatedAt: createdAt,
 };
@@ -58,7 +59,7 @@ const project: MemoryRecord = {
 const durable: MemoryRecord = {
   id: 'durable-1',
   type: MemoryType.LONG_TERM,
-  scope: { sessionId: 'session-1', projectId: 'project-1' },
+  scope: { sessionId: 'session-1', projectId: 'project-1', userId: 'actor-1' },
   content: 'This project prefers the Prettier formatter.',
   metadata: {
     kind: 'SEMANTIC',
@@ -99,7 +100,7 @@ describe('production ContextBuilder composition', () => {
 
     expect(findDurableCandidates).toHaveBeenCalledWith(
       expect.objectContaining({
-        scope: { sessionId: 'session-1', projectId: 'project-1' },
+        scope: { userId: 'actor-1' },
         excludeExpired: true,
         excludeSuperseded: true,
       }),

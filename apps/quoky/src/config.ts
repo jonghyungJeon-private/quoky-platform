@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { DEFAULT_CLAUDE_MODEL } from '@quoky/ai-cli';
 import { AgentProfileRegistry, agentProfileId, isAgentProfileId } from '@quoky/core';
 import type { AgentProfile, ContextBuilderConfig, RepositoryIdentityConfig } from '@quoky/core';
 import { parseProviderRoutingMode } from './provider-routing/provider-routing-activation';
@@ -12,11 +14,29 @@ import type { ContinuationReceiverMode } from './continuation/continuation-recei
  * env vars are read; everything downstream receives typed config objects.
  */
 export interface QuokyConfig {
-  discord: { token: string; guildId?: string };
+  /**
+   * `ownerIds` / `channelIds` are the Personal-edition admission gate (ADR-0091), consumed ONLY by the Discord
+   * adapter via the composition root; Core never receives them. `ownerIds` is non-empty (startup error
+   * otherwise). An empty `channelIds` admits owner direct messages only.
+   */
+  discord: { token: string; guildId?: string; ownerIds: string[]; channelIds: string[] };
   storage: { dbPath: string };
   vector: { storePath: string };
   workspace: { workspaceRoot: string };
-  ai: { claudeBin: string; codexBin: string; ollamaBin: string; ollamaModel: string };
+  /**
+   * `claudeModel` is validated at parse (ADR-0092). `ollamaEnabled` controls composition-root registration only
+   * (default on, opt-out) and is never inferred from `OLLAMA_MODEL`.
+   */
+  ai: {
+    claudeBin: string;
+    claudeModel: string;
+    codexBin: string;
+    ollamaBin: string;
+    ollamaModel: string;
+    ollamaEnabled: boolean;
+  };
+  /** Personal-edition git safety (ADR-0094). `remoteEnabled` defaults to false (push/sync refused). */
+  git: { remoteEnabled: boolean };
   connectors: {
     jira?: { host: string; email: string; apiToken: string };
     slack?: { token: string };
@@ -81,6 +101,33 @@ export interface ActorIdentityMapping {
   identities: { jira?: string; github?: string };
 }
 
+/** Stable, value-free startup error codes for the Personal-edition settings (never echo a configured value). */
+export const QuokyConfigErrorCode = {
+  DISCORD_OWNER_IDS_MISSING: 'DISCORD_OWNER_IDS_MISSING',
+  DISCORD_OWNER_IDS_INVALID: 'DISCORD_OWNER_IDS_INVALID',
+  DISCORD_CHANNEL_IDS_INVALID: 'DISCORD_CHANNEL_IDS_INVALID',
+  OLLAMA_ENABLED_INVALID: 'OLLAMA_ENABLED_INVALID',
+  CLAUDE_MODEL_INVALID: 'CLAUDE_MODEL_INVALID',
+  GIT_REMOTE_ENABLED_INVALID: 'GIT_REMOTE_ENABLED_INVALID',
+  CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
+} as const;
+export type QuokyConfigErrorCode = (typeof QuokyConfigErrorCode)[keyof typeof QuokyConfigErrorCode];
+
+/** A fail-closed startup configuration error. The message is the code only (no configured value). */
+export class QuokyConfigError extends Error {
+  constructor(readonly code: QuokyConfigErrorCode) {
+    super(code);
+    this.name = 'QuokyConfigError';
+  }
+}
+
+/** Repository root (apps/quoky/{src,dist} -> repo), so relative data paths never depend on process.cwd(). */
+const REPOSITORY_ROOT = path.resolve(__dirname, '../../..');
+
+/** Default GENERAL_CHAT context budget in ESTIMATED tokens (ContextBuilder `maxTokens`). */
+const DEFAULT_CONTEXT_MAX_TOKENS = 6000;
+const MAX_CONTEXT_MAX_TOKENS = 200_000;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const continuationReceiverMode = parseContinuationReceiverMode(env.QUOKY_CONTINUATION_RECEIVER_MODE);
   // R2 production has no live containment. The offline activation factory is not AppModule wiring.
@@ -92,20 +139,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   // Owner/repo prefer the new QUOKY_* env, falling back to legacy CHUNSIK_* (Sprint 4b, ADR-0061 N3/N4).
   const owner = env.QUOKY_GITHUB_OWNER ?? env.CHUNSIK_GITHUB_OWNER;
   const repo = env.QUOKY_GITHUB_REPO ?? env.CHUNSIK_GITHUB_REPO;
+  // ADR-0091: fail closed before anything else is composed when no owner is configured.
+  const ownerIds = parseDiscordIdList(env.QUOKY_DISCORD_OWNER_IDS, QuokyConfigErrorCode.DISCORD_OWNER_IDS_INVALID);
+  if (ownerIds.length === 0) throw new QuokyConfigError(QuokyConfigErrorCode.DISCORD_OWNER_IDS_MISSING);
 
   return {
     discord: {
       token: env.DISCORD_BOT_TOKEN ?? '',
       guildId: env.DISCORD_GUILD_ID,
+      ownerIds,
+      channelIds: parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID),
     },
-    storage: { dbPath: env.QUOKY_DB_PATH ?? env.CHUNSIK_DB_PATH ?? './data/chunsik.db' },
-    vector: { storePath: env.QUOKY_VECTOR_PATH ?? env.CHUNSIK_VECTOR_PATH ?? './data/vectors' },
+    storage: { dbPath: resolveDataPath(env.QUOKY_DB_PATH ?? env.CHUNSIK_DB_PATH ?? './data/chunsik.db') },
+    vector: { storePath: resolveDataPath(env.QUOKY_VECTOR_PATH ?? env.CHUNSIK_VECTOR_PATH ?? './data/vectors') },
     workspace: { workspaceRoot: env.QUOKY_WORKSPACE_ROOT ?? env.CHUNSIK_WORKSPACE_ROOT ?? process.cwd() },
     ai: {
       claudeBin: env.CLAUDE_CLI_BIN ?? 'claude',
+      claudeModel: parseClaudeModel(env.QUOKY_CLAUDE_MODEL),
       codexBin: env.CODEX_CLI_BIN ?? 'codex',
       ollamaBin: env.OLLAMA_CLI_BIN ?? 'ollama',
       ollamaModel: env.OLLAMA_MODEL ?? 'llama3.1',
+      // Registration flag only (ADR-0092): opt-out, exact true/false, never inferred from OLLAMA_MODEL.
+      ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
+    },
+    git: {
+      remoteEnabled: parseExactBoolean(env.QUOKY_GIT_REMOTE_ENABLED, false, QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID),
     },
     connectors: {
       jira: resolveJiraConnector(env),
@@ -126,7 +184,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     contextBuilder: {
       rankingEnabled: true,
       compressionEnabled: true,
-      maxTokens: 1024,
+      maxTokens: parseContextMaxTokens(env.QUOKY_CONTEXT_MAX_TOKENS),
       recencyWeight: 0.4,
       relevanceWeight: 0.6,
       compressionConfig: { minimumCharactersPerEntry: 80 },
@@ -134,6 +192,57 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     actorIdentityMappings: parseActorIdentityMappings(env.QUOKY_ACTOR_IDENTITY_MAPPINGS),
     agentProfiles: parseAgentProfiles(env.QUOKY_AGENT_PROFILES),
   };
+}
+
+/** Discord snowflakes are decimal strings of 17-20 digits. */
+const DISCORD_SNOWFLAKE = /^[0-9]{17,20}$/;
+const MAX_DISCORD_ID_ENTRIES = 64;
+
+/**
+ * Comma-separated Discord snowflakes. Absent or whitespace-only yields an empty list (the caller decides whether
+ * that is an error); any blank entry, non-snowflake entry, or oversized list is a typed error that never echoes
+ * the configured value. Duplicates collapse (order preserved).
+ */
+function parseDiscordIdList(raw: string | undefined, error: QuokyConfigErrorCode): string[] {
+  if (raw === undefined || raw.trim().length === 0) return [];
+  const entries = raw.split(',').map((entry) => entry.trim());
+  if (entries.length > MAX_DISCORD_ID_ENTRIES) throw new QuokyConfigError(error);
+  if (entries.some((entry) => !DISCORD_SNOWFLAKE.test(entry))) throw new QuokyConfigError(error);
+  return [...new Set(entries)];
+}
+
+/** Exact `true`/`false` only; unset yields the default. Anything else (including empty) is a startup error. */
+function parseExactBoolean(raw: string | undefined, defaultValue: boolean, error: QuokyConfigErrorCode): boolean {
+  if (raw === undefined) return defaultValue;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new QuokyConfigError(error);
+}
+
+/** Bounded alias/model token (same shape the Claude adapter enforces); it becomes a fixed argv element. */
+function parseClaudeModel(raw: string | undefined): string {
+  if (raw === undefined) return DEFAULT_CLAUDE_MODEL;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(raw)) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.CLAUDE_MODEL_INVALID);
+  }
+  return raw;
+}
+
+/** Positive integer count of ESTIMATED tokens, bounded; unset yields the default budget. */
+function parseContextMaxTokens(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_CONTEXT_MAX_TOKENS;
+  if (!/^[0-9]{1,7}$/.test(raw)) throw new QuokyConfigError(QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_CONTEXT_MAX_TOKENS) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID);
+  }
+  return value;
+}
+
+/** Relative data paths resolve against the repository root; empty, absolute and `:memory:` stay unchanged. */
+function resolveDataPath(value: string): string {
+  if (value === '' || value === ':memory:' || path.isAbsolute(value)) return value;
+  return path.resolve(REPOSITORY_ROOT, value);
 }
 
 /** Bounded so a malformed or pasted payload cannot become an unbounded startup cost. */

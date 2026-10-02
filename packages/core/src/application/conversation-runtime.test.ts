@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AiFailureKind,
   ApprovalStatus,
@@ -98,6 +98,15 @@ import type {
 } from './runtime-provider-routing-service';
 
 const TS = '2026-07-01T00:00:00.000Z';
+// ADR-0093: pending approvals expire 30 minutes after createdAt on the shared clock. The fixtures create every
+// approval at TS, so freeze Date there (timers stay real) to keep them unexpired for these pre-TTL scenarios.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(TS));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 const CTX: ConversationContext = { platform: 'test', channelId: 'c1', userId: 'u1' };
 const ACTOR: Actor = { id: 'actor-1' } as Actor;
 const WORKSPACE: WorkspaceRef = { id: 'ws-1', rootPath: '/repo', kind: 'local-clone' };
@@ -1152,7 +1161,8 @@ describe('ConversationRuntime', () => {
 
     const result = await new ConversationRuntime(deps).handle(messageOf('기억해: 승인 흐름이 먼저야'));
 
-    expect(result.status).toBe('RESPONDED');
+    // The approval gate captures the turn: not an approval (extra content), so it re-prompts and stays pending.
+    expect(result.status).toBe('AWAITING_APPROVAL');
     expect(calls.memoryCreateCandidate).toBe(0);
     expect(calls.memoryPromote).toBe(0);
     expect(calls.classify).toBe(0);

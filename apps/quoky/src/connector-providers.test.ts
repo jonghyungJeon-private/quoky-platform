@@ -5,7 +5,8 @@ import { loadConfig } from './config';
 import { createConnectorProviders } from './connector-providers';
 
 function env(overrides: Record<string, string>): NodeJS.ProcessEnv {
-  return overrides as NodeJS.ProcessEnv;
+  // Personal edition requires an owner id (ADR-0091); unrelated to the connector settings under test.
+  return { QUOKY_DISCORD_OWNER_IDS: '111111111111111111', ...overrides } as NodeJS.ProcessEnv;
 }
 
 function logger(warn = vi.fn()): { logger: Logger; warn: ReturnType<typeof vi.fn> } {
