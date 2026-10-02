@@ -10,6 +10,7 @@ import { AgentProfileRegistry, agentProfileId, ApprovalManager, ApprovalPolicy, 
   TaskManager, TaskRunStatus, ProviderDispatchState, TaskStatus, WorkHandoffContinuationService, WorkItemStatus } from '@quoky/core';
 import type { ExecutionPlan, GuardedTaskRunStartFacts, Task, TaskRun, WorkItem } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
+import { LATEST_SCHEMA_VERSION } from './migrations';
 
 const ts = '2026-09-22T00:00:00.000Z';
 const stores: SqliteStorageProvider[] = [];
@@ -260,7 +261,7 @@ describe('ADR-0088 guarded atomic start — real SQLite', () => {
       expect(results.filter(result => result.code === 'UNRESOLVED_STARTED_RUN')).toHaveLength(5);
       expect(await f.storage.taskRuns.list()).toEqual([winners[0]!.run]);
       raw(f, db => {
-        expect(db.pragma('user_version', { simple: true })).toBe(11);
+        expect(db.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION);
         expect((db.pragma('index_list(task_runs)') as { partial: number }[]).every(index => index.partial === 0)).toBe(true);
       });
     } finally {
