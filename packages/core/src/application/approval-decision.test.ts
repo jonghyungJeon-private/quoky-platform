@@ -45,6 +45,21 @@ describe('interpretApprovalDecision', () => {
     ["don't go ahead", 'deny'],
     ['never approve this', 'deny'],
     ['승인 안 할래', 'ambiguous'],
+    ['승인 안해', 'ambiguous'],
+    ['진행 안해', 'ambiguous'],
+    ['승인 안할래', 'ambiguous'],
+    ['진행 못해', 'ambiguous'],
+    ["can't approve", 'ambiguous'],
+    ['cannot approve', 'ambiguous'],
+    ["won't approve", 'ambiguous'],
+    ["I won't go ahead", 'ambiguous'],
+    // positives that must keep approving
+    ['승인해 주세요', 'approve'],
+    ['안녕, 승인', 'approve'],
+    ["please don't stop, go ahead", 'approve'],
+    // not false denies
+    ['거절 안 해', 'ambiguous'],
+    ['no problem', 'ambiguous'],
     // negated deny / cancel → not a deny / cancel
     ['거절하지 마', 'ambiguous'],
     ['취소하지 마', 'ambiguous'],
@@ -80,7 +95,7 @@ describe('interpretApprovalDecision', () => {
   });
 
   it('never approves a negated approve phrase (explicit safety table)', () => {
-    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing']) {
+    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve"]) {
       expect(interpretApprovalDecision(text), text).not.toBe('approve');
     }
   });

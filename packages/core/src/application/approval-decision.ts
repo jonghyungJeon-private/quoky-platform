@@ -33,13 +33,19 @@ const HANGUL = /[가-힣]/;
 const MAX_APPROVE_LENGTH = 80;
 
 /** A message that ends as a question ("진행할까?", "why?", "승인해도 될까요") asks, it does not decide. */
-const QUESTION_ENDING = /[?？]\s*$|(?:까|까요|나요|인가요|ㄴ가요)[\s.!]*$/;
+const QUESTION_ENDING = /[?？]\s*$|(?:까|까요|나요|인가요|건가요|는가요)[\s.!]*$/;
 
 /** Wait / look-first hedges — "먼저 보고 승인할게" / "approve later" must not decide anything. */
 const HEDGE = /아직|먼저\s*(?:보|확인|검토|살펴|읽)|잠깐|잠시|나중|보고\s*(?:나서|서)|\b(?:yet|first|wait|later)\b|hold\s+on/;
 
 /** Negations `isNegated` does not cover but that still flip an approve ("승인 안 할래", "not approve"). */
-const SOFT_NEGATION = /(?:^|\s)(?:안|못)(?=\s|$)|\b(?:not|no)\b/;
+const KOREAN_SOFT_NEGATION = /(?:^|\s)(?:안|못)(?=\s|$|[하해할함했돼되됩])/;
+const SOFT_NEGATION = new RegExp(
+  `${KOREAN_SOFT_NEGATION.source}|\\b(?:not|no|cannot|can['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t)\\b`,
+);
+
+/** "no problem" / "no worries" read as a polite OK, not a refusal: ambiguous rather than a false deny. */
+const NO_PROBLEM = /\bno\s+(?:problem|worries)\b/;
 
 interface PhraseMatchers {
   /** Whole-token / whole-phrase (Korean: stem + allowed ending) matches. */
@@ -97,7 +103,8 @@ function scan(text: string, matchers: PhraseMatchers): KindHits {
  *  3. hedge ("먼저", "yet", "wait"…) → ambiguous
  *  4. negated approve phrase ("진행하지 마", "don't approve") → deny (never approve); contradictory → ambiguous
  *  5. approve XOR deny (un-negated, whole token) → that decision; both or neither → ambiguous
- * A negated deny/cancel ("거절하지 마") yields nothing positive, so it falls through to ambiguous.
+ * A negated deny/cancel ("거절하지 마", "거절 안 해") yields nothing positive, so it falls through to ambiguous;
+ * "no problem" is likewise ambiguous rather than a false deny.
  */
 export function interpretApprovalDecision(text: string): ApprovalDecisionResult {
   const t = text.trim().toLowerCase();
@@ -117,6 +124,9 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
     if (t.length > MAX_APPROVE_LENGTH || SOFT_NEGATION.test(t)) return 'ambiguous';
     return 'approve';
   }
-  if (deny.positive && !approve.positive) return 'deny';
+  if (deny.positive && !approve.positive) {
+    // "거절 안 해" (I won't reject) / "no problem" are not refusals.
+    return KOREAN_SOFT_NEGATION.test(t) || NO_PROBLEM.test(t) ? 'ambiguous' : 'deny';
+  }
   return 'ambiguous';
 }
