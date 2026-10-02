@@ -139,18 +139,74 @@ function inTypeContext(src: string, keyStart: number): boolean {
   return false;
 }
 
-function quotedContent(value: string): string {
-  const q = value[0];
+/** Reads the string literal opening at `s[i]` (single, double, backtick, or triple-quoted). */
+function readLiteral(s: string, i: number): { content: string; end: number } {
+  const q = s[i] as string;
+  const triple = q !== '`' && s.startsWith(q.repeat(3), i);
+  let j = i + (triple ? 3 : 1);
   let out = '';
-  for (let i = 1; i < value.length; i++) {
-    const c = value[i];
+  for (; j < s.length; j++) {
+    const c = s[j] as string;
     if (c === '\\') {
-      out += value[++i] ?? '';
-    } else if (c === q || (c === '\n' && q !== '`')) {
-      break;
+      out += s[++j] ?? '';
+    } else if (triple) {
+      if (s.startsWith(q.repeat(3), j)) return { content: out, end: j + 3 };
+      out += c;
+    } else if (c === q) {
+      return { content: out, end: j + 1 };
+    } else if (c === '\n' && q !== '`') {
+      return { content: out, end: j };
     } else out += c;
   }
-  return out;
+  return { content: out, end: j };
+}
+
+const hasLiteralText = (content: string): boolean => content.replace(TEMPLATE_PLACEHOLDER, '').trim() !== '';
+
+/**
+ * True when ANY quoted literal with non-blank content appears in the rest of the assigned expression
+ * (`"" + "x"`, `"" "x"`, a parenthesised multi-line concatenation) up to the end of the statement.
+ */
+function tailHasLiteral(s: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] as string;
+    if (c === '"' || c === "'" || c === '`') {
+      const lit = readLiteral(s, i);
+      if (hasLiteralText(lit.content)) return true;
+      i = lit.end - 1;
+    } else if (c === '#' || s.startsWith('//', i)) {
+      const nl = s.indexOf('\n', i);
+      if (nl < 0) return false;
+      i = nl - 1;
+    } else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth === 0) return false;
+      depth--;
+    } else if (depth === 0 && (c === ';' || c === ',')) return false;
+    else if (depth === 0 && c === '\n') {
+      const continued = /[+\\][ \t\r]*$/u.test(s.slice(0, i)) || /^\s*\+/u.test(s.slice(i + 1));
+      if (!continued) return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Skips whitespace and opening brackets before a value. A line break after the operator continues onto
+ * the next line only when that line is indented (YAML block value, wrapped TS/Python) or starts with a
+ * quote; otherwise the value is empty.
+ */
+function skipValueLead(value: string): string {
+  let v = value.replace(/^[ \t]*/u, '');
+  if (/^\r?\n/u.test(v)) {
+    const rest = v.replace(/^\s+/u, '');
+    const indented = /[ \t]$/u.test(v.slice(0, v.length - rest.length));
+    // A nested YAML mapping (`password:\n  rotation: 30d`) holds no value itself; its keys are scanned on their own.
+    const nestedKey = /^["']?[\w.$-]+["']?[ \t]*:(?:\s|$)/u.test(rest);
+    v = !nestedKey && (indented || /^["'`]/u.test(rest)) ? rest : '';
+  }
+  return /^[[(]/u.test(v) ? skipValueLead(v.slice(1)) : v;
 }
 
 function closingParen(value: string, open: number): number {
@@ -171,11 +227,12 @@ interface ValueContext {
 /** True when the value starting at `value` is a literal (i.e. not an explicit reference form). */
 function isLiteralValue(value: string, ctx: ValueContext, depth = 0): boolean {
   if (depth > 3) return true;
-  let v = value.replace(/^[ \t]*(?:[[(][ \t]*)*/u, '');
+  let v = skipValueLead(value);
   if (VALUE_END.test(v)) return false;
   const quoted = /^(?:[rbuf]{1,2}(?=["'`]))?(["'`])/iu.exec(v);
   if (quoted) {
-    return quotedContent(v.slice(quoted[0].length - 1)).replace(TEMPLATE_PLACEHOLDER, '').trim() !== '';
+    const literal = readLiteral(v, quoted[0].length - 1);
+    return hasLiteralText(literal.content) || tailHasLiteral(v.slice(literal.end));
   }
   const placeholders = /^(?:\$\{[^}\n]*\}|\{\{[^}\n]*\}\}|%\([^)\n]*\)s)+/u.exec(v);
   if (placeholders) return !VALUE_END.test(v.slice(placeholders[0].length));
@@ -211,7 +268,10 @@ function isLiteralValue(value: string, ctx: ValueContext, depth = 0): boolean {
  * prefix/suffix; Korean 비밀번호/암호/토큰/키) assigned any literal with `:`, `=`, `=>`, or `:=`.
  * Reference forms pass: env lookups, call expressions, `${…}`/`{{…}}`/`%(…)s` placeholders, type
  * annotations, comparisons, empty values, and booleans/null. Korean prose and card-number shapes
- * are not scanned here.
+ * are not scanned here. A value may start on the next (indented) line, be triple-quoted, or be built
+ * by concatenation (`"" + "x"`, `"" "x"`): any non-blank quoted literal in the expression refuses. A
+ * credential-named key whose block value is a nested YAML mapping (`password:\n  rotation: 30d`) has
+ * no value of its own (nested keys are scanned separately; a nested `value: x` is a residual). Detection is regex-based and BEST-EFFORT, not a complete DLP.
  */
 export function containsCredentialFileContent(content: string): boolean {
   if (SECRET_TOKEN_SHAPED.test(content)) return true;

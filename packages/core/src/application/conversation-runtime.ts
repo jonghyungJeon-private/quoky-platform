@@ -5375,7 +5375,9 @@ export class ConversationRuntime {
       // ADR-0035: a code-change halt gets a more specific prompt than the generic approval text —
       // it names this as a code-change request and states that no file is modified yet.
       if (intent.capability === Capability.CODE_IMPLEMENTATION) {
-        const reply = this.deps.composer.composeCodeChangeApprovalRequired(message.context);
+        // New-file targets have no current content to send; only existing target files are disclosed.
+        const sentFiles = (request.targetFiles ?? []).filter((f) => !(request.newFileTargets ?? []).includes(f));
+        const reply = this.deps.composer.composeCodeChangeApprovalRequired(message.context, sentFiles);
         await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
         return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id, executionOutcome: outcome };
       }

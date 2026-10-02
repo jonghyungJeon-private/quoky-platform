@@ -626,12 +626,20 @@ export class ResponseComposer {
    * specific than {@link composeApprovalRequired}: names this as a code-change request and states
    * explicitly that no file is modified yet — a `planningOnly` halt never mutates.
    */
-  composeCodeChangeApprovalRequired(context: ConversationContext): OutboundMessage {
+  composeCodeChangeApprovalRequired(context: ConversationContext, sentFilePaths: string[] = []): OutboundMessage {
+    const shown = sentFilePaths.slice(0, 3).join(', ');
+    const more = sentFilePaths.length > 3 ? ` 외 ${sentFilePaths.length - 3}개` : '';
+    // Disclosure: existing target files' content goes to the AI provider for the preview (best-effort credential guard).
+    const disclosure = sentFilePaths.length
+      ? `승인하면 지정한 파일(${shown}${more})의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요. ` +
+        '비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 모든 경우를 걸러내지는 못해요.\n'
+      : '';
     return {
       context,
       text:
         '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' +
         '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n' +
+        disclosure +
         APPROVAL_DECISION_LINE,
     };
   }

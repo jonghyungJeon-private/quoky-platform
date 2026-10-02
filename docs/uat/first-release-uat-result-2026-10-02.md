@@ -27,7 +27,7 @@
 | 1.8 recall after reset | PASS | "...UAT 확인 단어는 '파랑 고래야'야." |
 | 1.9 recall from DM | PASS | "네, 네 UAT 확인 단어는 파랑 고래야." |
 | 1.10 recall after restart | PASS | Runtime restarted (collision check repeated); recalled |
-| 1.11 non-owner ignored | PENDING | Needs a second (non-owner) Discord account |
+| 1.11 non-owner ignored | SUBSTITUTED — owner decision 2026-10-02: covered by offline adapter gate tests (packages/adapter-discord/src/index.test.ts: non-owner in allowlisted channel and non-owner DM ignored, handler never called) plus live E11 (non-allowlisted channel silently ignored) | Second Discord account not required |
 | 1.12 연결 상태 | PASS (quality note) | No false connection claim; Ollama appended an English "(Translated from Korean)" block — QA-004 |
 
 ## Part 2 — Sandbox local code flow (run 2/3)
@@ -120,13 +120,13 @@
 
 | ID | Severity | Summary | Status |
 |---|---|---|---|
-| QA-023 | NOTE (usability) | Conservative content guard also refuses common source (`this.token = token`, `token = settings.API_TOKEN`). Proposed: file-type-aware rule (code: unquoted identifiers are references; config: unquoted values are literals). | Owner sign-off needed (loosens the rule) |
-| QA-024 | HIGH (residual) | Regex-based content guard is best-effort; remaining bypass shapes from Codex delta #3. | Owner decision pending |
+| QA-023 | NOTE (usability) | Conservative content guard also refuses common source (`this.token = token`, `token = settings.API_TOKEN`). Proposed: file-type-aware rule (code: unquoted identifiers are references; config: unquoted values are literals). | DEFERRED to follow-up PR (owner decision 2026-10-02) |
+| QA-024 | HIGH (residual) | Regex-based content guard is best-effort; remaining bypass shapes from Codex delta #3. | FIXED (best-effort) — three Codex shapes closed + disclosure added; residual: regex detection is best-effort by design (owner-accepted 2026-10-02) |
 
 ## Summary
 
-- Scripted packet: Part 1 1.1–1.10, 1.12 PASS; 1.11 PENDING (needs a non-owner account). Part 2 2.1–2.12 PASS (after fixes).
+- Scripted packet: Part 1 1.1–1.10, 1.12 PASS; 1.11 SUBSTITUTED by owner decision (see step 1.11). Part 2 2.1–2.12 PASS (after fixes).
 - Edge cases: 31 executed (PASS or PASS-after-fix), E12 not executed (thread UI), E32 partial (readiness fallback verified).
 - Defects: 3 BLOCKER (QA-001/005/012), 2 MAJOR (QA-009/018), 10 MINOR — all FIXED and re-tested live. 7 NOTE items recorded as v2 candidates.
 - Secrets: none in runtime logs, replies, or this record.
-- Overall AC12: PASS WITH EXCEPTION — 1.11 pending a second Discord account.
+- Overall AC12: PASS (1.11 substituted by owner decision).

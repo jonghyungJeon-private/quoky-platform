@@ -231,6 +231,15 @@ describe('ResponseComposer.composeCodeChangeApprovalRequired', () => {
     expect(reply.text).toContain('"거절"');
   });
 
+  it('discloses that target file content goes to the AI provider (max 3 paths, then 외 N개)', () => {
+    const one = composer.composeCodeChangeApprovalRequired(CTX, ['a.ts']).text;
+    expect(one).toContain('지정한 파일(a.ts)의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요');
+    expect(one).toContain('모든 경우를 걸러내지는 못해요');
+    const many = composer.composeCodeChangeApprovalRequired(CTX, ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts']).text;
+    expect(many).toContain('(a.ts, b.ts, c.ts 외 2개)');
+    expect(composer.composeCodeChangeApprovalRequired(CTX).text).not.toContain('AI에게 전달');
+  });
+
   it('is distinct from the generic composeApprovalRequired wording', () => {
     const generic = composer.composeApprovalRequired(CTX);
     const codeChange = composer.composeCodeChangeApprovalRequired(CTX);

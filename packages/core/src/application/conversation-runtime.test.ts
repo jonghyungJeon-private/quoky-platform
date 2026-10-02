@@ -1550,7 +1550,7 @@ describe('Live Code Change Planning — runtime', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf(`${TARGET_FILE}에서 이 버그 고쳐줘`));
     expect(result.status).toBe('AWAITING_APPROVAL');
     expect(calls.anchor).toBe(1);
-    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX, [TARGET_FILE]).text);
     expect(result.reply.text).not.toBe(new ResponseComposer().composeApprovalRequired(CTX).text);
   });
 
@@ -1830,7 +1830,7 @@ describe('Multi-turn Code Scope Clarification — runtime', () => {
     expect(calls.lastRunRequest?.targetFiles).toEqual([TARGET_FILE]);
     expect(calls.lastRunRequest?.planningOnly).toBe(true);
     expect(result.status).toBe('AWAITING_APPROVAL');
-    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX, [TARGET_FILE]).text);
   });
 
   it('Case 3: an invalid path reply clears the anchor without recovering, and does not re-anchor', async () => {
