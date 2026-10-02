@@ -61,7 +61,13 @@ describe('interpretApprovalDecision', () => {
     // not false denies
     ['거절 안 해', 'ambiguous'],
     ['no problem', 'ambiguous'],
-    // negated deny / cancel → not a deny / cancel
+    // conditional approval: the negation targets something else → re-prompt, never a terminal deny
+  ['테스트 없이 진행해', 'ambiguous'],
+  ['커밋하지 말고 진행해', 'ambiguous'],
+  ['proceed without tests', 'ambiguous'],
+  ['승인하되 커밋은 하지 마', 'ambiguous'],
+  ['승인해줘 테스트 없이', 'ambiguous'],
+  // negated deny / cancel → not a deny / cancel
     ['거절하지 마', 'ambiguous'],
     ['취소하지 마', 'ambiguous'],
     ["don't cancel", 'ambiguous'],

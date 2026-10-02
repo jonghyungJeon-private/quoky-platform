@@ -54,6 +54,12 @@ const REFUSAL_QUALIFIER = new RegExp(
  *  ("yes but don't touch tests"): ambiguous so the user restates it. */
 const CONDITION_NEGATION = /\b(?:don['’]?t|do\s+not|never)\b|하지\s*(?:마|말)/;
 
+/** A negation that governs the approve word itself ("진행하지 마", "승인하지 말고", "don't approve"). Only this
+ *  is a terminal deny; a negation elsewhere ("테스트 없이 진행해", "커밋하지 말고 진행해", "proceed without
+ *  tests") is a conditional approval we cannot honor, so it re-prompts instead. */
+const DIRECT_NEGATED_APPROVE =
+  /(?:승인|진행)(?:하|시키)?지\s*(?:마|말)|\b(?:don['’]?t|do\s+not|never)\s+(?:approve|proceed|go\s+ahead)\b/;
+
 /** "no problem" / "no worries" read as a polite OK, not a refusal: ambiguous rather than a false deny. */
 const NO_PROBLEM = /\bno\s+(?:problem|worries)\b/;
 
@@ -137,7 +143,8 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
     // did not say "don't approve" — re-prompt instead of a terminal deny.
     if (approve.positive || deny.positive) return 'ambiguous';
     const negatedRefusalFirst = [deny, cancel].some((k) => k.negated && k.negatedAt < approve.negatedAt);
-    return negatedRefusalFirst ? 'ambiguous' : 'deny';
+    if (negatedRefusalFirst) return 'ambiguous';
+    return DIRECT_NEGATED_APPROVE.test(t) ? 'deny' : 'ambiguous';
   }
   if (approve.positive && !deny.positive) {
     if (t.length > MAX_APPROVE_LENGTH || SOFT_NEGATION.test(t) || REFUSAL_QUALIFIER.test(t)) return 'ambiguous';
