@@ -6650,6 +6650,22 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     }
   });
 
+  it('post-push chain states + a push question/topic mention → not the already-pushed reply (stays chat)', async () => {
+    for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
+      for (const text of ['git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'git push와 pull의 차이']) {
+        const anchor = anchorOf();
+        const { deps, calls } = makeDeps({ applyAnchor: anchor });
+        const r = await new ConversationRuntime(deps).handle(messageOf(text));
+        const key = `${label}: ${text}`;
+        expect(r.reply.text, key).not.toBe(
+          composer.composePushAlreadyPushed(CTX, { commitHash: anchor.pushedCommitHash, remote: anchor.pushedRemote, branch: anchor.pushedBranch }).text,
+        );
+        expect(r.reply.text, key).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+        expect(calls.gitPush + calls.hostingCreatePR + calls.hostingMergePR, key).toBe(0);
+      }
+    }
+  });
+
   it('post-push routing regression: PR create / merge / PR status phrases keep their handlers', async () => {
     const created = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
     await new ConversationRuntime(created.deps).handle(messageOf('PR 생성 실행'));

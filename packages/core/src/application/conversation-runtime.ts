@@ -2094,14 +2094,15 @@ export class ConversationRuntime {
     // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
     // to chat (a free-text model reply could fabricate or advise e.g. `git push -f`). A push+forbidden companion
     // (force/merge/deploy/PR/…) → the unsupported companion reply; any other push phrase → already pushed. Read-only
-    // PR/merge status phrases keep priority; no git/hosting call is ever made here.
+    // PR/merge status phrases keep priority; no git/hosting call is ever made here. Only the strict request shape
+    // counts (QA-V2-W8): a question/topic mention such as "git push가 뭐야?" stays ordinary chat.
     if (
       applyAnchor &&
       POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status) &&
       !ConversationRuntime.interpretPrStatusIntent(message.text) &&
       !ConversationRuntime.interpretMergeStatusIntent(message.text)
     ) {
-      const pushKind = ConversationRuntime.interpretPushIntent(message.text);
+      const pushKind = ConversationRuntime.interpretNoAnchorPushRequest(message.text);
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (pushKind === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }

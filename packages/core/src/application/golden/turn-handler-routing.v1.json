@@ -56,6 +56,8 @@
     {"id": "route-051", "text": "브랜치 삭제해줘 feature/x", "expected": {"route": "git-branch", "providerCalls": 0}, "source": "QA-V2-W8 branch delete → deterministic git-branch refusal, no git call", "mustPass": true},
     {"id": "route-052", "text": "git push가 뭐야?", "expected": {"route": "classifier"}, "source": "QA-V2-W8 conceptual push question still reaches chat", "mustPass": true},
     {"id": "route-053", "text": "푸시 알림 설정하는 법 알려줘", "expected": {"route": "classifier"}, "source": "QA-V2-W8 push-notification how-to still reaches chat", "mustPass": true},
-    {"id": "route-054", "text": "브랜치 목록 보여줘", "expected": {"route": "classifier"}, "source": "QA-V2-W8 branch listing question keeps its routing", "mustPass": true}
+    {"id": "route-054", "text": "브랜치 목록 보여줘", "expected": {"route": "classifier"}, "source": "QA-V2-W8 branch listing question keeps its routing", "mustPass": true},
+    {"id": "route-055", "text": "git push가 뭐야?", "ctx": {"applyAnchor": "PR_CREATED"}, "expected": {"route": "classifier"}, "source": "QA-V2-W8 live: a conceptual push question at a post-push state is chat, not the already-pushed reply", "mustPass": true},
+    {"id": "route-056", "text": "푸시 알림 설정하는 법 알려줘", "ctx": {"applyAnchor": "MAIN_SYNCED"}, "expected": {"route": "classifier"}, "source": "QA-V2-W8 post-push push-notification how-to stays chat", "mustPass": true}
   ]
 }
