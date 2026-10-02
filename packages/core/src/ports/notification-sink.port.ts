@@ -1,7 +1,37 @@
+import type {
+  ConversationContext,
+  Id,
+  NotificationDeliveryOutcome,
+  ReminderBodyKind,
+} from '../domain';
+
 /**
- * PORT: owner notification delivery (ADR-0101; DI token `NOTIFICATION_SINK`).
+ * PORT: owner notification delivery (ADR-0101 D4/D8; DI token `NOTIFICATION_SINK`).
  *
- * Pre-registered stub (SEAM-1, ADR-0096 D8): intentionally empty and inert until its track ADR is ratified;
- * nothing imports from it yet. Filled by PRO-1 (ADR-0101). A dropped track's stub is removed in INT-1 or DOC-B.
+ * Domain types only; `PlatformAdapter` and its fakes are unchanged. The adapter owns the owner-only outbound
+ * gate (rechecked at delivery time), the delivery target (owner DM by default; the originating allowlisted
+ * channel only under the `QUOKY_REMINDERS_CHANNEL_DELIVERY` opt-in; `BRIEF` always DM-only), mention policy and
+ * outcome classification. `deliver` never throws for a delivery failure: it classifies it.
  */
-export {};
+
+export interface OwnerNotification {
+  /** Correlates the delivery with the reminder occurrence in logs; never shown to the user. */
+  correlationId: Id;
+  /** The originating conversation; its `userId` is the owner the notification is addressed to. */
+  target: ConversationContext;
+  kind: ReminderBodyKind;
+  /** Plain, already-composed text (≤ `REMINDER_LIMITS.maxDeliveredTextChars`). */
+  text: string;
+}
+
+/**
+ * Re-exported name of the delivery-outcome contract (defined in the domain because reminder transitions consume
+ * it): `SENT{via}` = the platform confirmed the message was created; `NOT_SENT{reason, retryable}` = confirmed
+ * not transmitted; `UNCERTAIN{reason}` = it may have been transmitted. When in doubt an adapter returns
+ * `UNCERTAIN`. Only `NOT_SENT{retryable: true}` is ever retried.
+ */
+export type NotificationSinkOutcome = NotificationDeliveryOutcome;
+
+export interface NotificationSink {
+  deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome>;
+}
