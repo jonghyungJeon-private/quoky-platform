@@ -23,13 +23,7 @@ export class IntentClassifier {
   async classify(message: InboundMessage, ctx?: IntentClassifyContext): Promise<Intent> {
     const intent = this.classifyText(message);
     if (ctx?.hasActiveProject === false && IntentClassifier.isBareProjectKeywordMatch(message.text.trim(), intent)) {
-      return {
-        type: IntentType.CHAT,
-        capability: Capability.GENERAL_CHAT,
-        confidence: 1,
-        requiresWork: true,
-        summary: message.text.trim().slice(0, 200) || '(empty message)',
-      };
+      return IntentClassifier.chatIntent(message.text.trim());
     }
     return intent;
   }
@@ -47,10 +41,28 @@ export class IntentClassifier {
       return false;
     }
     if (/^\/preview\b/i.test(text)) return false;
-    if (/(프로젝트|저장소|레포|\bproject\b|\brepo(?:sitory)?\b|\bcodebase\b)/i.test(text)) return false;
-    if (/[A-Za-z_.~-][\w@.~-]*\/[\w@./-]+|(?:^|\s)\/[\w@.-]+/.test(text)) return false;
-    if (/\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|py|go|rs|java|yml|yaml|toml|sh|css|html)\b/i.test(text)) return false;
-    return true;
+    if (/(프로젝트|저장소|레포|\bprojects?\b|\brepos?\b|\brepositor(?:y|ies)\b|\bcodebases?\b)/i.test(text)) return false;
+    return !IntentClassifier.hasFilePathSignal(text);
+  }
+
+  /**
+   * True when the prose (outside code fences / inline code) names a real file path: a token with a known file
+   * extension that is not a call (`response.json()`), or a multi-segment path. Bare `A/B`, `UI/UX`, `total/count`
+   * and a lone relative import (`'./utils'`) are not paths.
+   */
+  private static hasFilePathSignal(text: string): boolean {
+    const prose = text.replace(/```[\s\S]*?(?:```|$)/g, ' ').replace(/`[^`]*`/g, ' ');
+    const ext = /[\w@-]\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|py|go|rs|java|yml|yaml|toml|sh|css|html)$/i;
+    for (const match of prose.matchAll(/[\w@.~/-]+/g)) {
+      const token = match[0].replace(/\.+$/, '');
+      const next = prose.charAt((match.index ?? 0) + match[0].length);
+      if (next === '(') continue;
+      if (ext.test(token)) return true;
+      const segments = token.split('/').filter((seg) => seg && seg !== '.' && seg !== '..');
+      const prefixed = /^(?:\.{1,2}\/|~\/|\/)/.test(token);
+      if (segments.length >= 2 && (prefixed || segments.length >= 3)) return true;
+    }
+    return false;
   }
 
   private classifyText(message: InboundMessage): Intent {
@@ -133,6 +145,10 @@ export class IntentClassifier {
       };
     }
 
+    return IntentClassifier.chatIntent(text);
+  }
+
+  private static chatIntent(text: string): Intent {
     return {
       type: IntentType.CHAT,
       capability: Capability.GENERAL_CHAT,
