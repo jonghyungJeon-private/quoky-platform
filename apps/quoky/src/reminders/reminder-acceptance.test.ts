@@ -528,8 +528,8 @@ describe('reminders offline acceptance — restart and recovery', () => {
 
     const texts = platform.deliveries.map((d) => d.text).sort();
     expect(texts).toHaveLength(2);
-    expect(texts[0]).toMatch(/^알림 #1: 서류 제출 \(예정 .*12:30.*늦게 전달\)$/u);
-    expect(texts[1]).toMatch(/^알림 #3: 스트레칭 \(예정 .*늦게 전달\)$/u);
+    expect(texts[0]).toMatch(/^알림 #1: 서류 제출 \(원래 .*12:30.*늦게 전달됐어요\)$/u);
+    expect(texts[1]).toMatch(/^알림 #3: 스트레칭 \(원래 .*늦게 전달됐어요\)$/u);
     expect((await second.storage.reminders.getByDisplayNo(ACTOR_ID, 1))?.status).toBe(ReminderStatus.COMPLETED);
     const skipped = await second.storage.reminders.getByDisplayNo(ACTOR_ID, 2);
     expect(skipped?.status).toBe(ReminderStatus.SCHEDULED);

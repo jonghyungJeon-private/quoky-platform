@@ -265,6 +265,7 @@ export class ReminderDispatchService {
         occurrenceAt,
         late,
         timeZone: reminder.timeZone,
+        deliveredAt: now,
       });
     }
     // BRIEF: local reads only. A failed read degrades the brief instead of blocking the owner's reminder.

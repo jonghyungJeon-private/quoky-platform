@@ -7,7 +7,7 @@ import {
   type ReminderSchedule,
   type WorkItem,
 } from '../../domain';
-import { composeDailyBrief, formatKoreanClock, formatShortDateTime } from './daily-brief';
+import { composeDailyBrief, formatKoreanClock } from './daily-brief';
 import type { ReminderClarifyReason } from './reminder-grammar';
 import { toZonedDateTime } from './zoned-time';
 
@@ -101,6 +101,17 @@ function lastOutcomeLabel(outcome: ReminderLastOutcome): string {
   }
 }
 
+/** `(원래 오후 10:11 예정 — 늦게 전달됐어요)`, with `10월 2일 ` before the clock when the day differs from delivery. */
+function lateNote(input: ReminderDeliveryTextInput): string {
+  const at = toZonedDateTime(input.occurrenceAt, input.timeZone);
+  let day = '';
+  if (input.deliveredAt !== undefined) {
+    const now = toZonedDateTime(input.deliveredAt, input.timeZone);
+    if (now.year !== at.year || now.month !== at.month || now.day !== at.day) day = `${at.month}월 ${at.day}일 `;
+  }
+  return `(원래 ${day}${formatKoreanClock(at.hour, at.minute)} 예정 — 늦게 전달됐어요)`;
+}
+
 export interface ReminderDeliveryTextInput {
   readonly displayNo: number;
   readonly body: string;
@@ -108,6 +119,8 @@ export interface ReminderDeliveryTextInput {
   readonly occurrenceAt: IsoTimestamp;
   readonly late: boolean;
   readonly timeZone: string;
+  /** Delivery instant; when given and the scheduled local day differs, the late note includes the date. */
+  readonly deliveredAt?: IsoTimestamp;
 }
 
 export interface ReminderBriefTextInput {
@@ -212,7 +225,7 @@ export class ReminderReplyComposer {
 
   /** The delivered notification: "알림 #4: 회의 준비", with the late variant when it was not on time. */
   delivery(input: ReminderDeliveryTextInput): string {
-    const late = input.late ? ` (예정 ${formatShortDateTime(input.occurrenceAt, input.timeZone)}, 늦게 전달)` : '';
+    const late = input.late ? ` ${lateNote(input)}` : '';
     const prefix = `알림 #${input.displayNo}: `;
     const suffixChars = Array.from(late).length;
     const bodyBudget = REMINDER_LIMITS.maxDeliveredTextChars - Array.from(prefix).length - suffixChars;

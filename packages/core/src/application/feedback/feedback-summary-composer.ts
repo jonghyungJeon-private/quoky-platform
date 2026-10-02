@@ -1,4 +1,4 @@
-import { FeedbackSignalKind } from '../../domain';
+import { Capability, FeedbackSignalKind, IntentType } from '../../domain';
 import type { FeedbackBreakdownRow, FeedbackSummary, Id } from '../../domain';
 import { containsCredentialMaterial } from '../credential-guard';
 
@@ -45,12 +45,54 @@ export function feedbackRequestExcerpt(text: string | undefined): string {
   return `"${cut.replace(/@/gu, '@​').replace(/`/gu, "'")}"`;
 }
 
-function breakdownLines(title: string, rows: readonly FeedbackBreakdownRow[]): string[] {
+const CAPABILITY_LABEL_KO: Readonly<Record<string, string>> = {
+  [Capability.GENERAL_CHAT]: '일반 대화',
+  [Capability.POLICY_SENSITIVE_CHAT]: '위험 민감 대화',
+  [Capability.SUMMARIZATION]: '요약',
+  [Capability.DOCUMENT_ANALYSIS]: '문서 분석',
+  [Capability.CODE_IMPLEMENTATION]: '코드 작업',
+  [Capability.CODE_REVIEW]: '코드 리뷰',
+  [Capability.ARCHITECTURE_PLANNING]: '설계 계획',
+  [Capability.TEST_EXECUTION]: '테스트 실행',
+  [Capability.READONLY_LOOKUP]: '조회',
+  [Capability.PROJECT_ANALYSIS]: '프로젝트 분석',
+  [Capability.EMBEDDING]: '임베딩',
+};
+
+const INTENT_LABEL_KO: Readonly<Record<string, string>> = {
+  [IntentType.CHAT]: '일반 대화',
+  [IntentType.SUMMARIZE]: '요약',
+  [IntentType.ANALYZE_DOCUMENT]: '문서 분석',
+  [IntentType.IMPLEMENT_CODE]: '코드 작업',
+  [IntentType.REVIEW_CODE]: '코드 리뷰',
+  [IntentType.PLAN_ARCHITECTURE]: '설계 계획',
+  [IntentType.RUN_TESTS]: '테스트 실행',
+  [IntentType.LOOKUP]: '조회',
+  [IntentType.REGISTER_PROJECT]: '프로젝트 등록',
+  [IntentType.PROJECT_ANALYSIS]: '프로젝트 분석',
+  [IntentType.UNKNOWN]: '기타',
+};
+
+/** Korean label for a capability key; unknown or missing keys fall back to `기타` (never the raw enum or an id). */
+export function feedbackCapabilityLabel(key: string | null | undefined): string {
+  return (key != null && Object.hasOwn(CAPABILITY_LABEL_KO, key) ? CAPABILITY_LABEL_KO[key] : undefined) ?? '기타';
+}
+
+/** Korean label for an intent key; unknown or missing keys fall back to `기타`. */
+export function feedbackIntentLabel(key: string | null | undefined): string {
+  return (key != null && Object.hasOwn(INTENT_LABEL_KO, key) ? INTENT_LABEL_KO[key] : undefined) ?? '기타';
+}
+
+function breakdownLines(
+  title: string,
+  rows: readonly FeedbackBreakdownRow[],
+  label: (key: string | null) => string,
+): string[] {
   if (rows.length === 0) return [];
   const shown = rows.slice(0, FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS);
   const lines = [title];
   for (const row of shown) {
-    lines.push(`- ${row.key ?? '기타'}: 대화 ${row.turns}건 · 👍 ${row.positive} · 👎 ${row.negative} · 참고 신호 ${row.implicit}`);
+    lines.push(`- ${label(row.key)}: 대화 ${row.turns}건 · 👍 ${row.positive} · 👎 ${row.negative} · 참고 신호 ${row.implicit}`);
   }
   if (rows.length > shown.length) lines.push(`- 외 ${rows.length - shown.length}개`);
   return lines;
@@ -58,7 +100,7 @@ function breakdownLines(title: string, rows: readonly FeedbackBreakdownRow[]): s
 
 /**
  * Compose the `피드백 요약` reply. `summary` null means the store could not be read. Provider ids are never part of
- * the input and never rendered; only fixed copy, counts, capability/intent enum keys, UTC dates and guarded excerpts.
+ * the input and never rendered; only fixed copy, counts, Korean capability/intent labels, UTC dates and guarded excerpts.
  */
 export function composeFeedbackSummaryText(
   summary: FeedbackSummary | null,
@@ -76,16 +118,16 @@ export function composeFeedbackSummaryText(
     '최근 30일 피드백 요약이에요.',
     `- 기록된 대화 ${summary.turnCount}건 · 👍 ${positive} · 👎 ${negative} · 참고 신호 ${implicit}`,
   ];
-  const byCapability = breakdownLines('기능별:', summary.byCapability);
+  const byCapability = breakdownLines('기능별:', summary.byCapability, feedbackCapabilityLabel);
   if (byCapability.length > 0) lines.push('', ...byCapability);
-  const byIntent = breakdownLines('요청 유형별:', summary.byIntent);
+  const byIntent = breakdownLines('요청 유형별:', summary.byIntent, feedbackIntentLabel);
   if (byIntent.length > 0) lines.push('', ...byIntent);
   if (summary.recentNegative.length > 0) {
     lines.push('', '최근 👎 답변:');
     for (const turn of summary.recentNegative) {
       const date = turn.createdAt.slice(0, 10);
       const excerpt = feedbackRequestExcerpt(turn.taskId === undefined ? undefined : excerpts.get(turn.taskId));
-      lines.push(`- ${date} · ${turn.intentType ?? '기타'} · ${excerpt}`);
+      lines.push(`- ${date} · ${feedbackIntentLabel(turn.intentType)} · ${excerpt}`);
     }
   }
   lines.push('', FOOTER);
