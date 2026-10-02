@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AiFailureKind,
   AiProviderError,
+  AiProviderManager,
+  CapabilityRouter,
   ArtifactKind,
   Capability,
   ContextBuilder,
@@ -824,6 +826,40 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
     await expect(
       ollamaExec({ code: 1, stdout: '', stderr: "Error: model 'x' not found", timedOut: false }),
     ).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
+  it.each([
+    'Error: could not connect to ollama app, is it running?',
+    "Error: could not connect to ollama server, run 'ollama serve' to start it",
+    'Error: ollama server not responding - could not connect to ollama server',
+    'Error: Post "http://127.0.0.1:11434/api/generate": dial tcp 127.0.0.1:11434: connect: connection refused',
+  ])('daemon stopped after a successful probe (non-zero exit, %j) → UNAVAILABLE so the router re-probes', async (stderr) => {
+    await expect(ollamaExec({ code: 1, stdout: '', stderr, timedOut: false })).rejects.toMatchObject({
+      kind: AiFailureKind.UNAVAILABLE,
+    });
+  });
+
+  it('a daemon that stops after a positive probe is re-probed on the next turn (fake runner, real router)', async () => {
+    let daemonUp = true;
+    const calls: string[][] = [];
+    const runner: CliRunner = async (_bin, args) => {
+      calls.push(args);
+      if (!daemonUp) {
+        return { code: 1, stdout: '', stderr: 'Error: could not connect to ollama app, is it running?', timedOut: false };
+      }
+      if (args[0] === 'list') return { code: 0, stdout: 'NAME ID SIZE MODIFIED\nllama3.1:latest abc 4.7 GB now\n', stderr: '', timedOut: false };
+      return { code: 0, stdout: 'hi', stderr: '', timedOut: false };
+    };
+    const router = new CapabilityRouter(new AiProviderManager([new OllamaCliProvider({ runner })]));
+    const selected = await router.select(Capability.GENERAL_CHAT); // probe: `ollama list` succeeds, cached
+    expect(calls.filter((a) => a[0] === 'list')).toHaveLength(1);
+    daemonUp = false;
+    await expect(selected.execute({ capability: Capability.GENERAL_CHAT, prompt: PROMPT })).rejects.toMatchObject({
+      kind: AiFailureKind.UNAVAILABLE,
+    });
+    // The cached "ready" was dropped: the next turn re-probes (a second `ollama list`) and finds no provider.
+    await expect(router.select(Capability.GENERAL_CHAT)).rejects.toThrow();
+    expect(calls.filter((a) => a[0] === 'list')).toHaveLength(2);
   });
 
   it('empty stdout on success → EMPTY_OUTPUT', async () => {
