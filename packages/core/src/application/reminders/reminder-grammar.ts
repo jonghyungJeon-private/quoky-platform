@@ -26,8 +26,9 @@ import {
  * - CREATE needs a reminder verb (`알려줘`, `리마인드 해줘`, `알림 줘`, `remind me`, …) that is not negated, plus a time
  *   expression bound to it: Korean by `에` / `뒤에` / `후에`, English by `at` / `in` / `on` / `tomorrow` / `every`.
  *   The generic `알려줘` is also an information request: with a direct question as the body (`9시에 뭐 있어? 알려줘`,
- *   `내일 3시에 회의 있나 알려줘`) or the time bound to an adnominal clause (`9시에 오픈하는 식당 알려줘`,
- *   `11시에 문 닫는 카페 알려줘`) it is `NOT_REMINDER`; the explicit verbs (`리마인드 해줘`, `알림 줘`) stay reminders.
+ *   `내일 3시에 회의 있나 알려줘`), an embedded yes/no question (`내일 3시에 예약 가능한지 알려줘`, `회의인지`,
+ *   `참석 여부`) or the time bound to an adnominal clause (`9시에 오픈하는 식당 알려줘`, `11시에 문 닫는 카페
+ *   알려줘`) it is `NOT_REMINDER`; the explicit verbs (`리마인드 해줘`, `알림 줘`) stay reminders.
  *   A Korean verb is a closed imperative form ending the word: inflected, past, permissive or noun uses
  *   (`알려줘서`, `알려줘도 돼`, `알려주라고 했는데`, `리마인드 메일`, `리마인드됐어`) are not requests, nor are
  *   `안 알려줘`, `필요 없어`, `no need to remind me`, `you forgot to remind me`.
@@ -858,6 +859,27 @@ function hasKoAdnominalClause(region: string): boolean {
 /** A nominalizer after the adnominal (`약 먹는 거`, `준비할 것`) names the thing to be reminded of, not a question. */
 const KO_NOMINALIZER = /^(?:거|것|걸|게|거를|것을|거요|것요)$/;
 
+/** Compound nouns that end like a copula question (`업무일지` is a journal, not `업무일지` "whether it is work"). */
+const KO_JI_COMPOUND_NOUN =
+  /(?:업무|작업|근무|육아|운동|관찰|영업|학습|여행|공사|운행|감사|메타)(?:일지|인지)$/;
+
+/**
+ * An embedded yes/no question as the body of a generic `알려줘` (`내일 3시에 예약 가능한지 알려줘`, `내일 3시에
+ * 회의인지 알려줘`, `참석 여부 알려줘`): the time sits inside the question, so it is an information request, not a
+ * reminder. Matched on the body's last word: `여부`, or a predicate / copula stem before `지` — `는지`/`을지`, an
+ * attached `은지`/`인지`/`일지`, `할지`, or a Hangul adnominal (`가능한지`, `될지`, `열릴지`). Nouns stay bodies: a
+ * standalone `편지` / `일지` / `인지` (one syllable before `지`) and the compounds above.
+ */
+function isKoPredicateQuestion(body: string): boolean {
+  const last = body.split(/\s+/).pop() ?? '';
+  if (last.endsWith('여부')) return true;
+  if (!/^[가-힣]{2,}$/.test(last) || !last.endsWith('지')) return false;
+  const stem = last.slice(0, -1);
+  if (/(?:는|을)$/.test(stem)) return true;
+  if (stem.length >= 2 && /(?:은|인|일)$/.test(stem)) return !KO_JI_COMPOUND_NOUN.test(last);
+  return stem === '할' || isKoAdnominal(stem);
+}
+
 /**
  * The sentence holding every used span, as a same-length copy of `text` with the other sentences blanked (`… 알려줘.
  * 고마워` → the thanks is not body). Null when the spans cross a sentence end.
@@ -968,10 +990,17 @@ function parseKorean(text: string, ctx: ResolveContext): ReminderCommand {
   const sentence = koSentenceWindow(text, spans) ?? text;
   const body = cleanBody(stripKoTrailingParticles(cleanBody(stripKoSelfAddressee(removeSpans(sentence, spans)))));
   if (!strongVerb) {
-    // A generic `알려줘` is also an information request: a question (`9시에 뭐 있어 알려줘`) or a time bound to an inner
-    // clause (`9시에 오픈하는 식당 알려줘`) falls through to chat. Explicit reminder verbs stay reminders.
+    // A generic `알려줘` is also an information request: a question (`9시에 뭐 있어 알려줘`, `3시에 예약 가능한지
+    // 알려줘`) or a time bound to an inner clause (`9시에 오픈하는 식당 알려줘`) falls through to chat. Explicit
+    // reminder verbs stay reminders.
     const afterTime = verbSpan.start >= core.end ? text.slice(core.end, verbSpan.start) : text.slice(core.end);
-    if (isKoDirectQuestion(body, text.slice(0, verbSpan.start)) || hasKoAdnominalClause(afterTime)) return NOT_REMINDER;
+    if (
+      isKoDirectQuestion(body, text.slice(0, verbSpan.start)) ||
+      isKoPredicateQuestion(body) ||
+      hasKoAdnominalClause(afterTime)
+    ) {
+      return NOT_REMINDER;
+    }
   }
 
   const resolved = resolveSpec(spec, ctx);

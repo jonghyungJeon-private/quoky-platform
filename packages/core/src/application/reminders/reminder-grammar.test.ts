@@ -853,6 +853,23 @@ describe('reminder grammar — a generic 알려줘 information request is not a 
     '3시에 시작하는 회의 정보 알려줘',
     '내일 10시에 출발할 버스 알려줘',
     '3시에 끝난 회의 내용 알려줘',
+    // An embedded yes/no question (no wh-word): a predicate or copula `…지` / `여부` ending on the body.
+    '내일 3시에 예약 가능한지 알려줘',
+    '내일 3시에 회의인지 알려줘',
+    '내일 3시에 회의일지 알려줘',
+    '내일 3시에 회의 있는지 알려줘',
+    '내일 3시에 회의 없는지 알려줘',
+    '내일 3시에 예약 됐는지 알려줘',
+    '내일 3시에 회의 할지 알려줘',
+    '내일 3시에 회의 시작할지 알려줘',
+    '내일 3시에 회의 시작한지 알려줘',
+    '내일 3시에 비 올지 알려줘',
+    '내일 3시에 회의 끝날지 알려줘',
+    '내일 3시에 날씨 좋은지 알려줘',
+    '내일 3시에 회의실 비었을지 알려줘',
+    '내일 3시에 회의 참석 여부 알려줘',
+    '내일 3시에 회의인지를 좀 알려줘',
+    '오늘 1시에 회의인지 알려줘', // a question, even when the time has passed
     // English has no generic `tell me` reminder verb.
     "tell me what's at 9 tomorrow",
     'tell me at 9 tomorrow what the weather is',
@@ -874,6 +891,17 @@ describe('reminder grammar — a generic 알려줘 information request is not a 
     ['9시에 할 일 알려줘', '할 일', '2026-10-02T21:00'],
     ['9시에 마을 회의 알려줘', '마을 회의', '2026-10-02T21:00'],
     ['내일 9시에 회의 알려줄래?', '회의', '2026-10-03T09:00'], // a `?` after the verb is a polite request
+    // Nominalized bodies and `…지` nouns are not embedded questions.
+    ['내일 9시에 약 먹는 거 알려줘', '약 먹는 거', '2026-10-03T09:00'],
+    ['내일 9시에 회의 준비할 것 알려줘', '회의 준비할 것', '2026-10-03T09:00'],
+        ['내일 9시에 업무 일지 알려줘', '업무 일지', '2026-10-03T09:00'],
+    ['내일 6시에 업무일지 알려줘', '업무일지', '2026-10-03T18:00'],
+    ['내일 9시에 결혼반지 알려줘', '결혼반지', '2026-10-03T09:00'],
+    ['내일 9시에 출발지 알려줘', '출발지', '2026-10-03T09:00'],
+    // An explicit reminder verb keeps an embedded question as the body.
+    ['내일 3시에 회의인지 리마인드 해줘', '회의인지', '2026-10-03T15:00'],
+    ['내일 3시에 예약 가능한지 알림 줘', '예약 가능한지', '2026-10-03T15:00'],
+    ['내일 3시에 참석 여부 알림 맞춰줘', '참석 여부', '2026-10-03T15:00'],
     ['remind me at 9 tomorrow to X', 'X', '2026-10-03T09:00'],
   ])('%j stays CREATE %j at %s', (message, body, local) => {
     expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
