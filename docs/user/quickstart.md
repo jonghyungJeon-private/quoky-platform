@@ -5,8 +5,8 @@
 존재하는 값입니다 (`.env.example`, `apps/quoky/src/config.ts`, `apps/quoky/src/bootstrap-preflight.ts`,
 `packages/core/src/application/`).
 
-> Quoky Personal v1은 단일 소유자용입니다. 팀/호스팅 사용, GitHub push/PR/merge 자동화, 새 파일/여러 파일 적용은
-> 이번 릴리스 범위가 아닙니다 (`ROADMAP.md`의 "Deferred from Personal v1" 참조).
+> Quoky Personal v1은 단일 소유자용입니다. 팀/호스팅 사용, GitHub push/PR/merge 자동화는
+> 이번 릴리스 범위가 아닙니다 (Personal v2 웨이브 1-4에서 여러 파일/새 파일 변경 세트가 추가됨; 아래 로컬 코드 수정 흐름 참고) (`ROADMAP.md`의 "Deferred from Personal v1" 참조).
 
 ## 1. 준비물
 
@@ -69,6 +69,8 @@ claude --version
   코드 수정은 Claude가 우선이며, Claude가 준비되지 않았을 때만 로컬 Ollama로 대체될 수 있습니다. 한도가
   빠듯하면 Ollama를 켜 두세요. 일상 대화, 요약, 문서 분석, 읽기 전용 조회는 Ollama가 준비되어 있으면 Ollama가
   먼저 처리합니다.
+- **격리:** Quoky는 `claude`를 `--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`로 실행합니다. 그래서 내 claude.ai 커넥터(예: Google Calendar), 사용자/프로젝트 설정, 이전 세션 기록은 Quoky가 부른 Claude에 로드되지 않습니다. 이 옵션을 지원하는 CLI 버전이 필요합니다.
+- 일상 대화 중 **정책에 민감한 요청**(캘린더/메일 발송/예약/결제/문자 같은 외부 작업 요청, "이전 지시를 무시해" 같은 지시 변경, 한국어/영어가 아닌 언어)은 Ollama가 준비되어 있어도 **Claude로** 처리됩니다. 로컬 모델이 응답 정책을 잘 따르지 못했기 때문이며, 이런 턴은 Claude 구독 한도를 씁니다. Quoky는 외부 작업을 직접 할 수 없고, 했다고 말하는 답은 "하지 않았다"는 안내로 바뀝니다.
 - 모델: `QUOKY_CLAUDE_MODEL` (기본 `sonnet`). 별칭 또는 전체 이름이며 CLI에 `--model`로 전달됩니다.
 - effort: 설정하지 않습니다. 작업 종류(capability)에 따라 Quoky가 정한 값이 자동으로 전달됩니다.
 
@@ -131,8 +133,16 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_CLAUDE_MODEL` | 선택. 기본 `sonnet` |
 | `QUOKY_GIT_REMOTE_ENABLED` | 선택. 기본 `false`. 7절의 "원격 git" 참고 |
 | `QUOKY_CONTEXT_MAX_TOKENS` | 선택. 대화 한 턴에 넣는 기억/문맥의 추정 토큰 예산. 기본 6000, 최대 200000 |
+| `QUOKY_GIT_MERGE_ENABLED` | 선택. 기본 `false`. `true`는 `QUOKY_GIT_REMOTE_ENABLED=true`가 필요 (아니면 `GIT_MERGE_REQUIRES_REMOTE`로 시작 실패). 값을 읽기만 하며 머지는 별도 승인 단계 |
+| `QUOKY_WORK_SUMMARY_ENABLED` | 선택. 기본 `true`. 업무 조회 요약 기능이 들어오면 사용. Ollama가 준비되지 않으면 요약이 Claude로 갈 수 있어 사내 커넥터 텍스트가 구독을 통해 이 컴퓨터 밖으로 나갈 수 있음. 정책상 불가하면 `false` |
+| `QUOKY_REMINDERS_ENABLED` | 선택. 기본 `false`. 알림 기능 켜기 (현재 소스에서는 값만 읽고, 대화 연결은 이후 웨이브) |
+| `QUOKY_REMINDERS_CHANNEL_DELIVERY` | 선택. 기본 `false` = 알림은 소유자 DM으로만 전달. **`true`면 알림을 만든 채널에 보내므로 그 채널의 모든 멤버가 알림 내용을 읽을 수 있음.** 알림이 꺼져 있으면 효과 없음. 일일 브리핑은 항상 DM |
+| `QUOKY_TIMEZONE` | 선택. 기본 `Asia/Seoul`. IANA 시간대, 잘못된 값은 시작 실패 |
+| `QUOKY_EMBEDDING_ENABLED` | 선택. 기본 `false`. `true`면 기억 회상을 **로컬** Ollama 임베딩으로 재정렬 (실패하면 기존 방식). 모델은 자동으로 받지 않음: 먼저 `ollama pull nomic-embed-text` |
+| `QUOKY_EMBEDDING_MODEL` | 선택. 기본 `nomic-embed-text`. 이름 또는 태그에 `cloud`가 들어가면 거부 |
+| `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000 |
 
-`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`는 빈 값(예:
+`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들은 빈 값(예:
 `QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
 주석 처리하세요.
 
@@ -236,6 +246,15 @@ pnpm dev
 > **파일 경로 규칙:** 대상 파일 경로는 프로젝트 기준 상대 경로이며 디렉터리를 최소 하나 포함해야 합니다(예: `src/app.ts`). 저장소 루트의 파일(`README.md`, `index.js`)은 Personal v1에서 대상으로 인식되지 않으며, 이 경우 "수정할 파일 경로와 함께 다시 요청해 주세요."라는 안내가 한 번 돌아옵니다. 경로를 포함해 다시 요청하면 됩니다.
 > 경로를 적었지만 프로젝트에 없는 파일이거나 프로젝트 밖 경로(`/etc/hosts`, `../../x`, `~/.ssh/config` 등)이면 "요청한 파일을 프로젝트 안에서 찾을 수 없거나 프로젝트 밖 경로예요: …"라는 안내가 돌아옵니다 (프로젝트 밖 파일의 존재 여부는 확인하지도, 알려 주지도 않습니다).
 
+> **여러 파일:** 한 요청에 파일을 최대 5개까지 적을 수 있습니다. 없는 파일은 "만들어줘"처럼 새로 만든다는 말이 있을 때만 새 파일로 다룹니다. 적용은 실패하면 되돌립니다.
+
+> **그래도 보내줘 (비밀번호처럼 보이는 파일 한 번 보내기):** 대상 파일에 `token = ...` 같은 비밀 값 할당이 있어 보이면 미리보기가 거절되는 대신, Quoky가 파일과 줄 번호를 알려 주며 **한 번만** 외부(AI)로 보낼지 묻습니다. 보내려면 정확히 `그래도 보내줘`(또는 `그래도 보내`, `그래도 전송해줘`, `send anyway`)라고 답하세요. `승인`/`좋아`는 허용이 아니며 다시 안내합니다. 취소는 `취소`나 `보내지 마`. 한계:
+> - 한 번만 유효하고, 보낸 뒤 같은 허용으로 다시 보내지 않습니다 (실패해도 새 요청과 새 확인이 필요).
+> - 30분 안에 답하지 않거나, `새 대화`, 거절, 파일 내용 변경, 더 새로운 요청이 있으면 무효가 됩니다. 여러 파일이면 파일마다 따로 확인합니다.
+> - **허용되지 않는 경우:** 비밀 파일 이름(`.env`, 키 파일 등)과 토큰/키 모양의 내용(`ghp_...` 등)은 이 방법으로도 보낼 수 없습니다. "확인을 받아도 보낼 수 없어요"라고 답합니다.
+> - 아무것도 대기 중이 아닐 때 `그래도 보내줘`만 보내면 아무 파일도 보내지 않았다고 답합니다.
+> - 이 확인도 패턴 기반 best-effort입니다. 비밀 값이 든 파일은 가능하면 대상으로 지정하지 마세요.
+
 > **AI에게 전달되는 내용 (best-effort 안내):** 코드 변경을 승인하면 지정한 파일의 현재 내용이 미리보기 생성을 위해 AI에게 전달됩니다. 승인 요청 메시지에도 같은 안내가 표시됩니다. 비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 이 확인은 패턴 기반의 **best-effort**라서 모든 경우를 걸러내지는 못합니다. 비밀 값이 든 파일은 대상으로 지정하지 마세요.
 
 > **경고 — 8단계의 `테스트 실행해줘`는 별도 승인 없이 등록한 저장소 체크아웃에서 `pnpm test`를 실행합니다.**
@@ -280,6 +299,7 @@ pnpm dev
 | `ollama list`에 모델이 있는데 로그에 `provider not ready` (ollama) | `OLLAMA_MODEL`의 태그가 설치된 모델과 다름 (예: `llama3.1`로 지정했는데 `llama3.1:8b`만 설치됨). `ollama list`에 보이는 이름 그대로(`OLLAMA_MODEL=llama3.1:8b`) 설정 |
 | `claude`가 API 과금을 일으킬까 걱정됨 | `env | grep ANTHROPIC | cut -d= -f1`로 확인하고 `unset ANTHROPIC_API_KEY` |
 | 코드 수정 미리보기가 "이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요"로 거절됨 | 비밀번호·토큰·API 키 같은 이름의 키에 실제 값이 적힌 파일(예: `password: "..."`, `API_KEY=...`)은 안전을 위해 보수적으로 거절함 (값이 무해해 보여도 거절될 수 있음). 값을 환경 변수(`process.env.API_KEY`, `${API_KEY}`)나 비밀 저장소로 옮긴 뒤 다시 요청 |
+| "확인을 받아도 보낼 수 없어요" | 비밀 파일 이름이거나 토큰/키 모양 내용이라 `그래도 보내줘`로도 보낼 수 없음. 값을 환경 변수로 옮기거나 다른 파일을 대상으로 지정 |
 | 큰 미리보기가 안 보임 | 봇에 **Attach Files** 권한이 없을 수 있음 (2절 4번) |
 | `pnpm install`에서 `better-sqlite3` 빌드 실패 | 네이티브 빌드 도구 설치 (1절) |
 
@@ -288,4 +308,5 @@ pnpm dev
 - 현재 구현 상태: [`CURRENT_STATE.md`](../../CURRENT_STATE.md)
 - 결정 기록: [`DECISIONS.md`](../../DECISIONS.md) — ADR-0091 (Discord 소유자 게이트), ADR-0092 (provider/모델),
   ADR-0093 (도움말/새 대화/승인 만료), ADR-0094 (git 안전)
+- Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). 알림, 업무 대화, 피드백 수집은 이후 웨이브에서 대화에 연결되며 이 문서에 추가됩니다.
 - 첫 릴리스 attended Live UAT 절차: [`docs/uat/first-release-uat-packet.md`](../uat/first-release-uat-packet.md)
