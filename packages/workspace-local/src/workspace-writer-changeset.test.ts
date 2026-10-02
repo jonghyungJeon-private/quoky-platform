@@ -394,6 +394,154 @@ describe('LocalWorkspaceWriter.applyChangeSet (ADR-0099) — all-or-nothing', ()
   });
 });
 
+describe('LocalWorkspaceWriter.applyChangeSet (ADR-0099) — write-time no-follow containment', () => {
+  /** Replace the in-root directory `rel` by a symlink to `target`, keeping the original as `<rel>-moved`. */
+  function swapDirForSymlink(ref: WorkspaceRef, rel: string, target: string): void {
+    actualFs.renameSync(join(ref.rootPath, rel), join(ref.rootPath, `${rel}-moved`));
+    symlinkSync(target, join(ref.rootPath, rel));
+  }
+
+  it('a checked parent swapped for an external symlink between plan and apply is refused; nothing escapes', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    put(ref, 'a.ts', 'A1\n');
+    mkdirSync(join(ref.rootPath, 'dir'));
+    const swapping = new LocalWorkspaceWriter({ afterPlan: () => swapDirForSymlink(ref, 'dir', outside) });
+    const r = await swapping.applyChangeSet(ref, [update('a.ts', 'A1\n', 'A2\n'), add('dir/new.ts', 'N\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results.map((x) => x.status)).toEqual(['skipped', 'failed']);
+    expect(r.results[1]?.message).toMatch(/symlinked directory/);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(read(ref, 'a.ts')).toBe('A1\n');
+    expect(allEntries(join(ref.rootPath, 'dir-moved'))).toEqual([]);
+    expectNoTempFiles(ref);
+  });
+
+  it('a missing parent replaced by an external symlink between plan and apply is refused (mkdir never follows)', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    const swapping = new LocalWorkspaceWriter({ afterPlan: () => symlinkSync(outside, join(ref.rootPath, 'fresh')) });
+    const r = await swapping.applyChangeSet(ref, [add('fresh/sub/new.ts', 'N\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results[0]?.status).toBe('failed');
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it('a parent swapped while the temp file is written: the escaped temp is detected and removed', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    mkdirSync(join(ref.rootPath, 'dir'));
+    const tmpPrefix = `${join(ref.rootPath, 'dir', 'new.ts')}.quoky-tmp-`;
+    vi.mocked(writeFileSync).mockImplementation((file, data, options) => {
+      if (typeof file === 'string' && file.startsWith(tmpPrefix)) swapDirForSymlink(ref, 'dir', outside);
+      actualFs.writeFileSync(file, data, options);
+    });
+    const r = await writer.applyChangeSet(ref, [add('dir/new.ts', 'N\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results[0]?.message).toMatch(/symlinked directory/);
+    expect(readdirSync(outside)).toEqual([]); // the temp that landed outside was ours, and it is gone
+  });
+
+  it('a parent swapped after staging (before promote) is refused and the earlier promote is restored', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    put(ref, 'a.ts', 'A1\n');
+    mkdirSync(join(ref.rootPath, 'dir'));
+    const swapping = new LocalWorkspaceWriter({ afterStage: () => swapDirForSymlink(ref, 'dir', outside) });
+    const r = await swapping.applyChangeSet(ref, [update('a.ts', 'A1\n', 'A2\n'), add('dir/new.ts', 'N\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results.map((x) => x.status)).toEqual(['rolled_back', 'failed']);
+    expect(r.results[1]?.message).toMatch(/symlinked directory/);
+    expect(read(ref, 'a.ts')).toBe('A1\n');
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it('a parent swapped during the add promote: the escaped file is detected and removed by identity', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    put(ref, 'a.ts', 'A1\n');
+    mkdirSync(join(ref.rootPath, 'dir'));
+    const target = join(ref.rootPath, 'dir', 'new.ts');
+    vi.mocked(linkSync).mockImplementation((from, to) => {
+      if (to !== target) return actualFs.linkSync(from, to);
+      // The race: the source resolves before the swap, the destination after it — the link lands outside.
+      swapDirForSymlink(ref, 'dir', outside);
+      actualFs.linkSync(String(from).replace(`${join(ref.rootPath, 'dir')}/`, `${join(ref.rootPath, 'dir-moved')}/`), to);
+    });
+    const r = await writer.applyChangeSet(ref, [update('a.ts', 'A1\n', 'A2\n'), add('dir/new.ts', 'N\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results.map((x) => x.status)).toEqual(['rolled_back', 'failed']);
+    expect(r.results[1]?.message).toMatch(/symlinked directory/);
+    expect(read(ref, 'a.ts')).toBe('A1\n');
+    expect(readdirSync(outside)).toEqual([]); // the hard link that escaped was ours (same inode), and it is gone
+  });
+
+  it('rollback never removes or overwrites a file it did not create, even behind a swapped parent', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    actualFs.writeFileSync(join(outside, 'new.ts'), 'EXTERNAL\n');
+    put(ref, 'b.ts', 'B1\n');
+    mkdirSync(join(ref.rootPath, 'dir'));
+    vi.mocked(renameSync).mockImplementation((from, to) => {
+      if (to === join(ref.rootPath, 'b.ts')) {
+        // After dir/new.ts was promoted: swap its parent for a symlink to a directory holding a same-named file.
+        swapDirForSymlink(ref, 'dir', outside);
+        throw new Error('EIO: injected rename failure');
+      }
+      actualFs.renameSync(from, to);
+    });
+    const r = await writer.applyChangeSet(ref, [add('dir/new.ts', 'N\n'), update('b.ts', 'B1\n', 'B2\n')]);
+    expect(r.outcome).toBe('rollback_failed');
+    expect(r.results[0]?.status).toBe('applied');
+    expect(r.results[0]?.message).toMatch(/rollback failed, the change may have applied/);
+    expect(readFileSync(join(outside, 'new.ts'), 'utf8')).toBe('EXTERNAL\n');
+    expect(read(ref, 'b.ts')).toBe('B1\n');
+  });
+
+  it('an update target swapped for a symlink between plan and apply is refused; the external file is untouched', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    actualFs.writeFileSync(join(outside, 'target.ts'), 'A1\n');
+    put(ref, 'a.ts', 'A1\n');
+    const swapping = new LocalWorkspaceWriter({
+      afterPlan: () => {
+        actualFs.unlinkSync(join(ref.rootPath, 'a.ts'));
+        symlinkSync(join(outside, 'target.ts'), join(ref.rootPath, 'a.ts'));
+      },
+    });
+    const r = await swapping.applyChangeSet(ref, [update('a.ts', 'A1\n', 'A2\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results[0]?.message).toMatch(/not a regular file/);
+    expect(readFileSync(join(outside, 'target.ts'), 'utf8')).toBe('A1\n');
+    expectNoTempFiles(ref);
+  });
+
+  it('an add target that appears as a (dangling) symlink after planning is refused; nothing is created outside', async () => {
+    const ref = ws();
+    const outside = tempDir('quoky-changeset-outside-');
+    const swapping = new LocalWorkspaceWriter({
+      afterPlan: () => symlinkSync(join(outside, 'created.ts'), join(ref.rootPath, 'new.ts')),
+    });
+    const r = await swapping.applyChangeSet(ref, [add('new.ts', 'N\n')]);
+    expect(r.outcome).toBe('rolled_back');
+    expect(r.results[0]?.message).toMatch(/already exists/);
+    expect(readdirSync(outside)).toEqual([]);
+    expectNoTempFiles(ref);
+  });
+
+  it('refuses a symlinked directory component even when it points inside the root', async () => {
+    const ref = ws();
+    mkdirSync(join(ref.rootPath, 'real'));
+    symlinkSync(join(ref.rootPath, 'real'), join(ref.rootPath, 'alias'));
+    for (const path of ['alias/new.ts', 'alias/sub/new.ts']) {
+      const r = await writer.applyChangeSet(ref, [add(path, 'x\n')]);
+      expect(r.outcome).toBe('rolled_back');
+      expect(r.results[0]?.message).toMatch(/symlinked directory/);
+    }
+    expect(readdirSync(join(ref.rootPath, 'real'))).toEqual([]);
+  });
+});
+
 /** In-memory WorkspaceChange storage for the manager integration. */
 function memoryStorage(): StorageProvider {
   const rows = new Map<string, WorkspaceChange>();

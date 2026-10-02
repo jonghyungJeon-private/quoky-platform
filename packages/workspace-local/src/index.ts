@@ -461,21 +461,80 @@ function changeSetTempPath(abs: string): string {
   return `${abs}${CHANGE_SET_TMP_INFIX}${randomBytes(6).toString('hex')}`;
 }
 
+/** A filesystem object's identity, recorded when this apply created it (ADR-0099 write-time checks). */
+interface FileIdentity {
+  readonly dev: number;
+  readonly ino: number;
+}
+
+function identityOf(st: Stats): FileIdentity {
+  return { dev: st.dev, ino: st.ino };
+}
+
+function sameIdentity(st: Stats | null, id: FileIdentity | undefined): boolean {
+  return st !== null && id !== undefined && st.dev === id.dev && st.ino === id.ino;
+}
+
 /**
- * Write `data` to a fresh exclusive temp file beside `abs` (flag `wx`) and track it
- * in `owned` for cleanup. A file that existed before (EEXIST) is never ours, so it is
- * never tracked — cleanup can only ever remove temp files this apply created.
+ * Write `data` to a fresh exclusive temp file beside `abs` (flag `wx`: `O_CREAT|O_EXCL`, which never follows a
+ * symlink at the temp path) and record it in `owned` with its identity for cleanup. A file that existed before
+ * (EEXIST) is never ours, so it is never tracked — cleanup can only ever remove temp files this apply created.
  */
-function writeExclusiveTemp(abs: string, data: string | Buffer, owned: Set<string>): string {
+function writeExclusiveTemp(abs: string, data: string | Buffer, owned: Map<string, FileIdentity | undefined>): string {
   const tmp = changeSetTempPath(abs);
   try {
     writeFileSync(tmp, data, { flag: 'wx' });
   } catch (err) {
-    if (errorCode(err) !== 'EEXIST') owned.add(tmp); // a partial write may have left the file
+    if (errorCode(err) !== 'EEXIST') owned.set(tmp, identityOrUndefined(tmp)); // a partial write may have left it
     throw err;
   }
-  owned.add(tmp);
+  const st = lstatSync(tmp);
+  if (!st.isFile()) throw new Error(`temp file is not a regular file: ${tmp}`);
+  owned.set(tmp, identityOf(st));
   return tmp;
+}
+
+function identityOrUndefined(abs: string): FileIdentity | undefined {
+  try {
+    const st = lstatOrNull(abs);
+    return st?.isFile() ? identityOf(st) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Unlink `abs` only if it is still the very file this apply created (same dev/ino); `false` when it is not. */
+function unlinkOwned(abs: string, id: FileIdentity | undefined): boolean {
+  const st = lstatOrNull(abs);
+  if (st === null) return true;
+  if (!st.isFile() || !sameIdentity(st, id)) return false;
+  unlinkSync(abs);
+  return true;
+}
+
+/**
+ * Write-time containment for a change set (ADR-0099), re-run immediately before (and after) every stage,
+ * promote and rollback write so a directory swapped after phase 1 cannot redirect a write: the workspace root
+ * must still resolve to the realpath checked at the start, every path component strictly between the root and
+ * `abs` must be a real directory — `lstat`, never followed, a symlink is refused even when it points inside the
+ * root — and the parent's realpath must stay inside the root.
+ */
+function assertWriteContained(rootAbs: string, realRoot: string, abs: string, relPath: string): void {
+  if (realpathSync(rootAbs) !== realRoot) throw new Error(`workspace root changed since it was checked: ${relPath}`);
+  if (!abs.startsWith(rootAbs + sep)) throw new Error(`path escapes the workspace root: ${relPath}`);
+  const components = abs.slice(rootAbs.length + 1).split(sep).slice(0, -1);
+  let dir = rootAbs;
+  for (const component of components) {
+    dir = join(dir, component);
+    const st = lstatOrNull(dir);
+    if (st === null) throw new Error(`parent directory is missing: ${relPath}`);
+    if (st.isSymbolicLink()) throw new Error(`refusing to write through a symlinked directory: ${relPath}`);
+    if (!st.isDirectory()) throw new Error(`parent is not a directory: ${relPath}`);
+  }
+  const realParent = realpathSync(dirname(abs));
+  if (realParent !== realRoot && !realParent.startsWith(realRoot + sep)) {
+    throw new Error(`path escapes the workspace root via symlink: ${relPath}`);
+  }
 }
 
 /** `applyPatch` that reports a malformed diff as a non-clean patch instead of throwing. */
@@ -492,7 +551,8 @@ function applyPatchOrFalse(source: string, diff: string): string | false {
  * (absolute and `..` escapes are refused, and the root itself is never a target),
  * but it also realpath-checks the NEAREST EXISTING ANCESTOR of the target, so a
  * symlinked parent of a not-yet-existing file cannot point the write outside the
- * root. Returns the target and the missing parent directories, shallowest first.
+ * root, and refuses any existing symlinked path component (`assertWriteContained`). Returns the target and
+ * the missing parent directories, shallowest first.
  */
 function resolveWithinForWrite(root: string, relPath: string): { abs: string; missingDirs: string[] } {
   if (isAbsolute(relPath)) throw new Error(`absolute paths are not allowed: ${relPath}`);
@@ -511,6 +571,8 @@ function resolveWithinForWrite(root: string, relPath: string): { abs: string; mi
     throw new Error(`path escapes the workspace root via symlink: ${relPath}`);
   }
   if (!statSync(ancestor).isDirectory()) throw new Error(`parent is not a directory: ${relPath}`);
+  // The same no-follow rule phase 2 re-checks at write time: no existing component may be a symlink.
+  assertWriteContained(rootAbs, realRoot, missingDirs[0] ?? abs, relPath);
   return { abs, missingDirs };
 }
 
@@ -526,6 +588,8 @@ interface PlannedChange {
   missingDirs: string[];
   /** Phase 2: this operation's staged temp file. */
   tmp?: string;
+  /** Phase 2: identity of the staged temp file, which becomes the target on promote (rename / link). */
+  staged?: FileIdentity;
 }
 
 /** Phase 1 for one operation (ADR-0099): every check and the result text; no writes. */
@@ -564,6 +628,25 @@ function planChange(ref: WorkspaceRef, op: PatchOperation): PlannedChange {
   return { op, abs, next, pre, missingDirs: op.operation === 'add' ? missingDirs : [] };
 }
 
+/** Write-time target check (ADR-0099): an update's target is still a regular file (never a symlink, `lstat`),
+ *  an add's target is still absent. */
+function assertTargetState(p: PlannedChange): void {
+  const st = lstatOrNull(p.abs);
+  if (p.pre) {
+    if (st === null || !st.isFile()) throw new Error(`not a regular file: ${p.op.path}`);
+  } else if (st !== null) {
+    throw new Error(`path already exists (add never overwrites): ${p.op.path}`);
+  }
+}
+
+/** Test seams for `LocalWorkspaceWriter.applyChangeSet` — never set in production. */
+export interface LocalWorkspaceWriterHooks {
+  /** Runs once after phase 1 (every check passed), before the first phase-2 write. */
+  readonly afterPlan?: () => void;
+  /** Runs once after every result is staged, before the first promote. */
+  readonly afterStage?: () => void;
+}
+
 /**
  * Applies one patch operation to the local filesystem (CAP-006, ADR-0027).
  * **Atomic unit = file** (temp-write + rename, or unlink); `node:fs` only — no git,
@@ -573,6 +656,8 @@ function planChange(ref: WorkspaceRef, op: PatchOperation): PlannedChange {
  */
 export class LocalWorkspaceWriter implements WorkspaceWriter {
   readonly kind = 'local';
+
+  constructor(private readonly hooks: LocalWorkspaceWriterHooks = {}) {}
 
   async applyOperation(ref: WorkspaceRef, op: PatchOperation): Promise<FileChangeResult> {
     const start = Date.now();
@@ -617,6 +702,13 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
    * (deepest first) and deletes leftover temp files: `rolled_back`, or
    * `rollback_failed` when any restore step fails. Never throws. `durationMs` on
    * each result is the whole set's duration.
+   *
+   * Containment is re-validated at write time, not only in phase 1: before (and after)
+   * every mkdir, temp write, promote and restore, `assertWriteContained` re-checks
+   * every path component with `lstat` (no symlink is followed) and the parent's
+   * realpath against the root's; rollback removes only files and directories whose
+   * dev/ino are the ones this apply created, so a swapped parent can never redirect a
+   * write outside the root or make rollback delete or overwrite someone else's file.
    */
   async applyChangeSet(ref: WorkspaceRef, ops: PatchOperation[]): Promise<ChangeSetApplyResult> {
     const start = Date.now();
@@ -667,27 +759,46 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
     }
 
     // --- Phase 2: stage, promote; on the first failure, roll back. ---
-    const tmpFiles = new Set<string>();
-    const createdDirs: string[] = [];
+    // Every write below is preceded (and, where a swap could redirect it, followed) by a no-follow containment
+    // check against the root realpath captured here; a violation aborts the set and rolls it back.
+    const rootAbs = resolve(ref.rootPath);
+    const tmpFiles = new Map<string, FileIdentity | undefined>();
+    const createdDirs: Array<{ dir: string; id: FileIdentity; rel: string }> = [];
     const promoted = new Set<number>();
     let failedIndex = -1;
     let failure = '';
     let current = 0;
+    let realRoot = '';
     try {
+      realRoot = realpathSync(rootAbs);
+      this.hooks.afterPlan?.();
+      const contained = (abs: string, rel: string): void => assertWriteContained(rootAbs, realRoot, abs, rel);
       for (const [index, p] of planned.entries()) {
         current = index;
         for (const dir of p.missingDirs) {
-          if (createdDirs.includes(dir)) continue;
-          mkdirSync(dir);
-          createdDirs.push(dir);
+          if (createdDirs.some((d) => d.dir === dir)) continue;
+          contained(dir, p.op.path);
+          mkdirSync(dir); // never recursive: EEXIST if anything (a symlink included) appeared meanwhile
+          const st = lstatSync(dir);
+          if (!st.isDirectory()) throw new Error(`created path is not a directory: ${p.op.path}`);
+          createdDirs.push({ dir, id: identityOf(st), rel: p.op.path });
+          contained(dir, p.op.path);
         }
+        contained(p.abs, p.op.path);
+        assertTargetState(p);
         const tmp = writeExclusiveTemp(p.abs, p.next, tmpFiles);
-        if (p.pre) chmodSync(tmp, p.pre.mode);
         p.tmp = tmp;
+        p.staged = tmpFiles.get(tmp);
+        contained(p.abs, p.op.path); // the temp landed in the validated parent, not behind a swapped one
+        if (p.pre) chmodSync(tmp, p.pre.mode);
       }
+      this.hooks.afterStage?.();
       for (const [index, p] of planned.entries()) {
         current = index;
         const tmp = p.tmp as string;
+        contained(p.abs, p.op.path);
+        assertTargetState(p);
+        if (!sameIdentity(lstatOrNull(tmp), p.staged)) throw new Error(`staged file changed: ${p.op.path}`);
         if (p.pre) {
           if (sha256(readFileSync(p.abs)) !== p.pre.sha256) {
             throw new Error(`file changed since it was checked: ${p.op.path}`);
@@ -703,9 +814,12 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
             throw new Error(`path already exists (add never overwrites): ${p.op.path}`);
           }
           promoted.add(index);
-          unlinkSync(tmp);
+          unlinkOwned(tmp, p.staged);
           tmpFiles.delete(tmp);
         }
+        // Re-check after the promote: a parent swapped during it is caught and the set rolled back.
+        contained(p.abs, p.op.path);
+        if (!sameIdentity(lstatOrNull(p.abs), p.staged)) throw new Error(`promoted file changed: ${p.op.path}`);
       }
     } catch (err) {
       failedIndex = current;
@@ -719,7 +833,9 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
       };
     }
 
-    // Rollback, in reverse promotion order.
+    // Rollback, in reverse promotion order. A restore WRITE re-validates containment first and only ever
+    // replaces the very file this apply promoted; a REMOVAL only ever unlinks a file / directory whose identity
+    // (dev+ino) is the one this apply created, wherever a swapped parent has moved it.
     const restoreFailed = new Map<number, string>();
     const cleanupErrors: string[] = [];
     for (let index = planned.length - 1; index >= 0; index--) {
@@ -727,26 +843,37 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
       const p = planned[index] as PlannedChange;
       try {
         if (p.pre) {
+          assertWriteContained(rootAbs, realRoot, p.abs, p.op.path);
+          if (!sameIdentity(lstatOrNull(p.abs), p.staged)) {
+            throw new Error(`file changed after it was written, not restored: ${p.op.path}`);
+          }
           const tmp = writeExclusiveTemp(p.abs, p.pre.buf, tmpFiles);
           chmodSync(tmp, p.pre.mode);
+          assertWriteContained(rootAbs, realRoot, p.abs, p.op.path);
           renameSync(tmp, p.abs);
           tmpFiles.delete(tmp);
-        } else {
-          unlinkSync(p.abs);
+        } else if (!unlinkOwned(p.abs, p.staged)) {
+          throw new Error(`file changed after it was created, not removed: ${p.op.path}`);
         }
       } catch (err) {
         restoreFailed.set(index, errorMessage(err));
       }
     }
-    for (const tmp of tmpFiles) {
+    for (const [tmp, id] of tmpFiles) {
       try {
-        unlinkSync(tmp);
+        if (!unlinkOwned(tmp, id)) cleanupErrors.push(`temp file changed, not removed: ${basename(tmp)}`);
       } catch (err) {
         if (errorCode(err) !== 'ENOENT') cleanupErrors.push(errorMessage(err));
       }
     }
-    for (const dir of [...createdDirs].reverse()) {
+    for (const { dir, id } of [...createdDirs].reverse()) {
       try {
+        const st = lstatOrNull(dir);
+        if (st === null) continue;
+        if (!st.isDirectory() || !sameIdentity(st, id)) {
+          cleanupErrors.push(`directory changed, not removed: ${basename(dir)}`);
+          continue;
+        }
         rmdirSync(dir);
       } catch (err) {
         cleanupErrors.push(errorMessage(err));
