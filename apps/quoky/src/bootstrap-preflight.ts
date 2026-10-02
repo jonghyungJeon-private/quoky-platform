@@ -54,6 +54,22 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.CLAUDE_MODEL_INVALID]:
     'QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID]: 'QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID]: 'QUOKY_GIT_MERGE_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE]:
+    'QUOKY_GIT_MERGE_ENABLED=true requires QUOKY_GIT_REMOTE_ENABLED=true; enable the remote first or leave QUOKY_GIT_MERGE_ENABLED unset.',
+  [QuokyConfigErrorCode.WORK_SUMMARY_ENABLED_INVALID]: 'QUOKY_WORK_SUMMARY_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID]: 'QUOKY_EMBEDDING_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.EMBEDDING_MODEL_INVALID]:
+    'QUOKY_EMBEDDING_MODEL must be unset or a local Ollama model name such as "nomic-embed-text" (lowercase letters, digits, . _ -, optional :tag; up to 64 characters each).',
+  [QuokyConfigErrorCode.EMBEDDING_MODEL_CLOUD_REFUSED]:
+    'QUOKY_EMBEDDING_MODEL must name a local model; a name or tag containing "cloud" is refused.',
+  [QuokyConfigErrorCode.EMBEDDING_TIMEOUT_INVALID]:
+    'QUOKY_EMBEDDING_TIMEOUT_MS must be unset or an integer from 100 to 30000.',
+  [QuokyConfigErrorCode.REMINDERS_ENABLED_INVALID]: 'QUOKY_REMINDERS_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID]:
+    'QUOKY_REMINDERS_CHANNEL_DELIVERY must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.TIMEZONE_INVALID]:
+    'QUOKY_TIMEZONE must be unset or an IANA time zone such as "Asia/Seoul".',
   [QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID]:
     'QUOKY_CONTEXT_MAX_TOKENS must be unset or a positive integer (at most 200000).',
 };

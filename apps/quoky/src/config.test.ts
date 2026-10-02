@@ -583,3 +583,95 @@ describe('loadConfig — data paths resolve against the repository root, not the
     expect(loadConfig(env({ QUOKY_DB_PATH: ':memory:' })).storage.dbPath).toBe(':memory:');
   });
 });
+
+describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
+  it('has safe inert defaults with nothing set', () => {
+    const cfg = loadConfig(env({}));
+    expect(cfg.git).toEqual({ remoteEnabled: false, mergeEnabled: false });
+    expect(cfg.work).toEqual({ summaryEnabled: true });
+    expect(cfg.reminders).toEqual({ enabled: false, channelDelivery: false, timeZone: 'Asia/Seoul' });
+    expect(cfg.embedding).toEqual({ enabled: false, model: 'nomic-embed-text', timeoutMs: 3000, maxNewPerTurn: 4 });
+  });
+
+  it('accepts exact true/false for every new flag', () => {
+    const cfg = loadConfig(
+      env({
+        QUOKY_WORK_SUMMARY_ENABLED: 'false',
+        QUOKY_REMINDERS_ENABLED: 'true',
+        QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true',
+        QUOKY_EMBEDDING_ENABLED: 'true',
+        QUOKY_GIT_REMOTE_ENABLED: 'true',
+        QUOKY_GIT_MERGE_ENABLED: 'true',
+      }),
+    );
+    expect(cfg.work.summaryEnabled).toBe(false);
+    expect(cfg.reminders.enabled).toBe(true);
+    expect(cfg.reminders.channelDelivery).toBe(true);
+    expect(cfg.embedding.enabled).toBe(true);
+    expect(cfg.git.mergeEnabled).toBe(true);
+  });
+
+  it.each([
+    ['QUOKY_WORK_SUMMARY_ENABLED', 'WORK_SUMMARY_ENABLED_INVALID'],
+    ['QUOKY_REMINDERS_ENABLED', 'REMINDERS_ENABLED_INVALID'],
+    ['QUOKY_REMINDERS_CHANNEL_DELIVERY', 'REMINDERS_CHANNEL_DELIVERY_INVALID'],
+    ['QUOKY_EMBEDDING_ENABLED', 'EMBEDDING_ENABLED_INVALID'],
+    ['QUOKY_GIT_MERGE_ENABLED', 'GIT_MERGE_ENABLED_INVALID'],
+  ])('%s rejects non-exact booleans with %s and never echoes the value', (variable, code) => {
+    for (const value of ['', 'TRUE', '1', 'yes', ' false', 'SECRETVALUE']) {
+      let caught: unknown;
+      try { loadConfig(env({ [variable]: value })); } catch (err) { caught = err; }
+      expect(caught, `${variable}=${JSON.stringify(value)}`).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe(code);
+      expect((caught as { code?: string }).code).toBe(code);
+    }
+  });
+
+  it('refuses QUOKY_GIT_MERGE_ENABLED=true while the remote is off or unset', () => {
+    expect(() => loadConfig(env({ QUOKY_GIT_MERGE_ENABLED: 'true' }))).toThrow('GIT_MERGE_REQUIRES_REMOTE');
+    expect(() => loadConfig(env({ QUOKY_GIT_MERGE_ENABLED: 'true', QUOKY_GIT_REMOTE_ENABLED: 'false' }))).toThrow(
+      'GIT_MERGE_REQUIRES_REMOTE',
+    );
+    expect(loadConfig(env({ QUOKY_GIT_MERGE_ENABLED: 'false', QUOKY_GIT_REMOTE_ENABLED: 'false' })).git.mergeEnabled).toBe(false);
+  });
+
+  it('accepts an IANA zone and rejects invalid, offset, blank and oversized zones value-free', () => {
+    expect(loadConfig(env({ QUOKY_TIMEZONE: 'America/New_York' })).reminders.timeZone).toBe('America/New_York');
+    expect(loadConfig(env({ QUOKY_TIMEZONE: 'UTC' })).reminders.timeZone).toBe('UTC');
+    for (const value of ['', 'Mars/Olympus-SECRETVALUE', '+09:00', 'Asia Seoul', 'A'.repeat(65)]) {
+      let caught: unknown;
+      try { loadConfig(env({ QUOKY_TIMEZONE: value })); } catch (err) { caught = err; }
+      expect((caught as Error | undefined)?.message, JSON.stringify(value)).toBe('TIMEZONE_INVALID');
+    }
+  });
+
+  it('accepts a bounded local embedding model, with an optional tag', () => {
+    expect(loadConfig(env({ QUOKY_EMBEDDING_MODEL: 'mxbai-embed-large' })).embedding.model).toBe('mxbai-embed-large');
+    expect(loadConfig(env({ QUOKY_EMBEDDING_MODEL: 'nomic-embed-text:v1.5' })).embedding.model).toBe('nomic-embed-text:v1.5');
+  });
+
+  it.each(['', ' nomic', '-bad', 'bad name', 'UPPER', 'a:b:c', 'name:', ':tag', 'a/b', 'x'.repeat(65), 'a;rm -rf'])(
+    'rejects malformed embedding model %j',
+    (value) => {
+      expect(() => loadConfig(env({ QUOKY_EMBEDDING_MODEL: value }))).toThrow('EMBEDDING_MODEL_INVALID');
+    },
+  );
+
+  it.each(['gpt-oss:120b-cloud', 'qwen3-embedding:cloud', 'cloud-embed', 'my-Cloud-model', 'nomic-embed-text:CLOUD'])(
+    'refuses cloud embedding model %j with a dedicated error',
+    (value) => {
+      let caught: unknown;
+      try { loadConfig(env({ QUOKY_EMBEDDING_MODEL: value })); } catch (err) { caught = err; }
+      expect((caught as Error).message).toBe('EMBEDDING_MODEL_CLOUD_REFUSED');
+      expect((caught as Error).message).not.toContain(value);
+    },
+  );
+
+  it('bounds the embedding timeout', () => {
+    expect(loadConfig(env({ QUOKY_EMBEDDING_TIMEOUT_MS: '100' })).embedding.timeoutMs).toBe(100);
+    expect(loadConfig(env({ QUOKY_EMBEDDING_TIMEOUT_MS: '30000' })).embedding.timeoutMs).toBe(30000);
+    for (const value of ['', '99', '30001', '-1', '1.5', 'abc', '1e3', '9999999']) {
+      expect(() => loadConfig(env({ QUOKY_EMBEDDING_TIMEOUT_MS: value })), value).toThrow('EMBEDDING_TIMEOUT_INVALID');
+    }
+  });
+});
