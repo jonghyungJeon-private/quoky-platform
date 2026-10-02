@@ -123,6 +123,12 @@
 | QA-023 | NOTE (usability) | Conservative content guard also refuses common source (`this.token = token`, `token = settings.API_TOKEN`). Proposed: file-type-aware rule (code: unquoted identifiers are references; config: unquoted values are literals). | DEFERRED to follow-up PR (owner decision 2026-10-02) |
 | QA-024 | HIGH (residual) | Regex-based content guard is best-effort; remaining bypass shapes from Codex delta #3. | FIXED (best-effort) — three Codex shapes closed + disclosure added; residual: regex detection is best-effort by design (owner-accepted 2026-10-02) |
 
+### Final review (Codex delta, `2917933..14771c7`)
+
+- Newline-before-value, Python triple-quoted values, disclosure scope: FIXED; no regression in approval gating or the durable-memory guard.
+- Live retest (run 8): disclosure shown on code-change approvals; `src/settings.js` (value on next line) and `src/settings.py` (`"""…"""`) refused before any provider call; ordinary file previewed; 0 synthetic secrets in logs.
+- Accepted residual (owner-accepted best-effort, 2026-10-02): multiline Python adjacent literals after an empty literal inside parentheses (`password = (""\n    "x"\n)`) are not detected. Tracked with QA-023 for the follow-up guard PR.
+
 ## Summary
 
 - Scripted packet: Part 1 1.1–1.10, 1.12 PASS; 1.11 SUBSTITUTED by owner decision (see step 1.11). Part 2 2.1–2.12 PASS (after fixes).
