@@ -524,7 +524,8 @@ describe('feedback capture offline acceptance (ADR-0098, QUAL-4)', () => {
     const summaryText = f.sends[1]!.text;
     expect(summaryText).toContain('최근 30일 피드백 요약이에요.');
     expect(summaryText).toContain('- 기록된 대화 1건 · 👍 1 · 👎 0');
-    expect(summaryText).toContain('GENERAL_CHAT');
+    expect(summaryText).toContain('일반 대화');
+    expect(summaryText).not.toContain('GENERAL_CHAT');
     expect(summaryText).not.toContain('acceptance-fake-provider');
     expect(f.h.providerCalls()).toBe(providerCallsAfterWork);
     expect(f.h.longTermRecords()).toHaveLength(0);

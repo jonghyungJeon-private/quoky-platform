@@ -5,8 +5,21 @@ import {
   MemoryType,
   type MemoryRecord,
 } from '../domain';
-import type { DurableMemoryQuery, MemoryRepository } from '../ports';
+import { NoProviderAvailableError } from '../errors';
+import type {
+  AiProvider,
+  AiRequest,
+  DurableMemoryQuery,
+  MemoryRepository,
+  ProviderSelector,
+  VectorProvider,
+  VectorQueryResult,
+  VectorRecord,
+} from '../ports';
 import { DefaultMemoryRetriever } from './memory-retriever';
+import { cosineSimilarity, formatEmbeddingEnvelope } from './recall/embedding-envelope';
+import { SemanticRecallScorer } from './recall/semantic-recall-scorer';
+import type { SemanticRecallCandidate, SemanticRecallScoring } from './recall/semantic-recall-scorer';
 
 const CURRENT_TIME = '2026-08-24T00:00:00.000Z';
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -235,5 +248,189 @@ describe('DefaultMemoryRetriever', () => {
 
     await expect(retriever(records).retrieve(request(15))).resolves.toHaveLength(10);
     await expect(retriever(records, { limit: 3 }).retrieve(request(10))).resolves.toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Opt-in semantic re-ranking (ADR-0098 D8)
+// ---------------------------------------------------------------------------
+
+/** Deterministic concept embedding: [pet, food, work, other]. Unrelated text is orthogonal to every concept. */
+function conceptVector(text: string): number[] {
+  const pet = /반려동물|고양이|강아지/u.test(text) ? 1 : 0;
+  const food = /커피|음식|라면/u.test(text) ? 1 : 0;
+  const work = /회의|프로젝트|보고서/u.test(text) ? 1 : 0;
+  return [pet, food, work, pet + food + work === 0 ? 1 : 0];
+}
+
+class ConceptEmbedder implements AiProvider {
+  readonly id = 'fake-embedder';
+  readonly capabilities = [{ capability: Capability.EMBEDDING, priority: 100 }];
+  readonly prompts: string[] = [];
+  constructor(private readonly respond?: (request: AiRequest) => Promise<string>) {}
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+  async execute(request: AiRequest) {
+    this.prompts.push(request.prompt);
+    if (this.respond) return { text: await this.respond(request) };
+    return { text: formatEmbeddingEnvelope(conceptVector(request.prompt), 'fake-space') };
+  }
+}
+
+class InMemoryVectors implements VectorProvider {
+  readonly records = new Map<string, VectorRecord>();
+  async init(): Promise<void> {}
+  async upsert(_collection: string, records: VectorRecord[]): Promise<void> {
+    for (const entry of records) this.records.set(entry.id, entry);
+  }
+  async query(_collection: string, vector: number[], topK: number): Promise<VectorQueryResult[]> {
+    return [...this.records.values()]
+      .map((entry) => ({
+        id: entry.id,
+        score: cosineSimilarity(vector, entry.vector),
+        ...(entry.metadata ? { metadata: entry.metadata } : {}),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+  }
+  async delete(): Promise<void> {}
+}
+
+function selecting(provider: AiProvider | Error): ProviderSelector {
+  return {
+    async select() {
+      if (provider instanceof Error) throw provider;
+      return provider;
+    },
+  };
+}
+
+const PET_QUERY = '반려동물 이름이 뭐였지';
+const PET_MEMORY = '우리 집 고양이 이름은 나비야';
+
+function petRequest() {
+  return createMemoryRetrievalRequest({
+    query: PET_QUERY,
+    capability: Capability.GENERAL_CHAT,
+    scope: { actorId: 'actor-1' },
+    authorityFitness: ['USER_CLAIM_OR_INTENT'],
+    maxResults: 10,
+  });
+}
+
+/** 34 lexically closer distractors plus the lexically disjoint target, which is the oldest record. */
+function seededRecords(): MemoryRecord[] {
+  const distractors = Array.from({ length: 34 }, (_unused, index) =>
+    record(`distractor-${String(index).padStart(2, '0')}`, `이름이 뭐였지 메모 ${index}`, {
+      updatedAt: `2026-08-${String(10 + (index % 18)).padStart(2, '0')}T00:00:00.000Z`,
+    }),
+  );
+  return [...distractors, record('pet', PET_MEMORY, { updatedAt: '2026-08-02T00:00:00.000Z' })];
+}
+
+describe('DefaultMemoryRetriever semantic re-ranking (ADR-0098 D8)', () => {
+  it('lexical recall alone misses the lexically disjoint memory', async () => {
+    const results = await retriever(seededRecords()).retrieve(petRequest());
+    expect(results.map(({ memory }) => memory.id)).not.toContain('pet');
+  });
+
+  it('ranks a semantically related but lexically disjoint memory into the top 10 once it is indexed', async () => {
+    const embedder = new ConceptEmbedder();
+    const vectors = new InMemoryVectors();
+    const records = seededRecords();
+    const semantic = retriever(records, {
+      semanticScorer: new SemanticRecallScorer({ selector: selecting(embedder), vectors }),
+    });
+
+    // At most four new document embeddings per turn: the newest records are indexed first, the target last.
+    let results = await semantic.retrieve(petRequest());
+    for (let turn = 0; turn < 10 && !results.some(({ memory }) => memory.id === 'pet'); turn++) {
+      results = await semantic.retrieve(petRequest());
+    }
+
+    expect(results.map(({ memory }) => memory.id)[0]).toBe('pet');
+    expect(results).toHaveLength(10);
+    expect(results[0]!.retrievalReason).toMatch(/^lexical=0\.0000; recency=\d\.\d{4}; semantic=1\.0000$/);
+    expect(vectors.records.size).toBe(records.length);
+    // Never more than the query plus four documents per turn.
+    expect(embedder.prompts.length).toBeLessThanOrEqual(5 * 10);
+  });
+
+  it.each([
+    ['no EMBEDDING provider', () => new NoProviderAvailableError(Capability.EMBEDDING)],
+    ['a malformed provider', () => new ConceptEmbedder(async () => 'not an envelope')],
+    ['a slow provider', () => new ConceptEmbedder(() => new Promise<string>(() => undefined))],
+  ] as const)('gives byte-identical lexical results with %s', async (_label, makeProvider) => {
+    const records = seededRecords();
+    const lexical = await retriever(records).retrieve(petRequest());
+    const degraded = await retriever(records, {
+      semanticScorer: new SemanticRecallScorer(
+        { selector: selecting(makeProvider()), vectors: new InMemoryVectors() },
+        { turnBudgetMs: 20 },
+      ),
+    }).retrieve(petRequest());
+
+    expect(JSON.stringify(degraded)).toBe(JSON.stringify(lexical));
+  });
+
+  it('falls back to lexical when the scorer itself throws', async () => {
+    const records = seededRecords();
+    const throwing: SemanticRecallScoring = {
+      async score() {
+        throw new Error('scorer failure');
+      },
+    };
+    const lexical = await retriever(records).retrieve(petRequest());
+    const degraded = await retriever(records, { semanticScorer: throwing }).retrieve(petRequest());
+    expect(JSON.stringify(degraded)).toBe(JSON.stringify(lexical));
+  });
+
+  it('never returns an expired, superseded or other-actor record even when its vector scores highly', async () => {
+    const meta = { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' };
+    const records = [
+      record('expired', '고양이 메모 하나', { metadata: { ...meta, expiresAt: '2026-08-01T00:00:00.000Z' } }),
+      record('superseded', '고양이 메모 둘', { metadata: { ...meta, supersededBy: 'other' } }),
+      record('other-actor', '고양이 메모 셋', { scope: { userId: 'actor-2' } }),
+      record('eligible', '아침에는 커피를 마셔'),
+    ];
+    const vectors = new InMemoryVectors();
+    for (const id of ['expired', 'superseded', 'other-actor']) {
+      vectors.records.set(id, { id, vector: conceptVector('고양이'), metadata: { space: 'fake-space', dimensions: 4 } });
+    }
+    const offered: SemanticRecallCandidate[][] = [];
+    const inner = new SemanticRecallScorer({ selector: selecting(new ConceptEmbedder()), vectors });
+    const spying: SemanticRecallScoring = {
+      score(query, candidates) {
+        offered.push([...candidates]);
+        return inner.score(query, candidates);
+      },
+    };
+
+    const results = await retriever(records, { semanticScorer: spying }).retrieve(petRequest());
+
+    expect(results.map(({ memory }) => memory.id)).toEqual(['eligible']);
+    expect(offered).toEqual([[{ id: 'eligible', content: '아침에는 커피를 마셔' }]]);
+  });
+
+  it('ignores a score for an id the retriever did not offer and clamps out-of-range scores', async () => {
+    const records = [record('a', 'blue sky preference'), record('b', 'blue ocean')];
+    const scorer: SemanticRecallScoring = {
+      async score() {
+        return new Map([
+          ['a', 5],
+          ['b', -3],
+          ['not-offered', 1],
+        ]);
+      },
+    };
+    const results = await retriever(records, { semanticScorer: scorer }).retrieve(request());
+    expect(results.map(({ memory }) => memory.id)).toEqual(['a', 'b']);
+    expect(results[0]!.retrievalReason).toContain('semantic=1.0000');
+    expect(results[1]!.retrievalReason).toContain('semantic=0.0000');
+  });
+
+  it('rejects an out-of-range semantic weight', () => {
+    expect(() => retriever([], { semanticWeight: 1.5 })).toThrow(RangeError);
   });
 });

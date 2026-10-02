@@ -105,7 +105,8 @@ import {
   type ConversationTurnHandler,
   type TurnHandlerAnchorSnapshot,
   type TurnHandlerContext,
-  type TurnHandlerReply,
+  type TurnHandlerOutcome,
+  type TurnHandlerSummarizeReply,
   type TurnHandlerStage,
 } from '../ports';
 import { now } from '../util/clock';
@@ -126,6 +127,9 @@ import type {
 import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
+import type { ExternalWorkReadout } from './work-chat/external-work-readout';
+import { isExternalWorkReadout, isWorkSummaryRequestTextWithheld } from './prompt-composer';
+import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
   type CodeGenerationContextResult,
@@ -656,7 +660,10 @@ export interface ConversationRuntimeDeps {
    *  user text); it never spawns a shell, calls git, or mutates a file. */
   readonly command: { run(input: RunCommandInput): Promise<CommandExecution> };
   readonly contextBuilder: { build(task: Task, excludeMemoryIds: Id[]): Promise<ContextBundle> };
-  readonly promptComposer: { compose(task: Task, bundle: ContextBundle, readout?: ProjectReadout): PromptSpec };
+  /** ADR-0100 D8: the readout is widened by type only to carry a work summary's external-work readout. */
+  readonly promptComposer: {
+    compose(task: Task, bundle: ContextBundle, readout?: ProjectReadout | ExternalWorkReadout): PromptSpec;
+  };
   readonly promptRenderer: {
     render(
       spec: PromptSpec,
@@ -1869,8 +1876,11 @@ export class ConversationRuntime {
         expiryNotice && lookup.applyAnchor ? ConversationRuntime.anchorAfterRejection(lookup.applyAnchor) : lookup.applyAnchor,
       ),
     );
-    const controlHandled = controlDispatch ? await controlDispatch : null;
-    if (controlHandled) {
+    const controlOutcome = controlDispatch ? await controlDispatch : null;
+    if (controlOutcome) {
+      // Control handlers are provider-free (ADR-0096 D3): a `summarize` outcome here is never honoured — its
+      // deterministic list is the reply and no Task or provider runs.
+      const controlHandled = this.controlStageReply(message, controlOutcome);
       const reply = expiryNotice
         ? this.deps.composer.composeWithNotice(expiryNotice, controlHandled.reply)
         : controlHandled.reply;
@@ -1957,7 +1967,7 @@ export class ConversationRuntime {
       this.turnHandlerContext(message, session, actor, applyAnchor),
     );
     const postAnchorHandled = postAnchorDispatch ? await postAnchorDispatch : null;
-    if (postAnchorHandled) return this.respondTurnHandler(message, session, postAnchorHandled);
+    if (postAnchorHandled) return this.respondTurnHandler(message, session, actor, userMemory.id, postAnchorHandled);
     // ADR-0043 safety gate: deny-fragment refusal is anchor-independent and precedes every route that can
     // execute a derived validation command. Without this guard, a missing/stale WORKSPACE_APPLIED anchor can
     // fall through to IntentClassifier -> RUN_TESTS -> ExecutionOrchestrator. Keep pending approval decisions
@@ -2365,7 +2375,7 @@ export class ConversationRuntime {
       this.turnHandlerContext(message, session, actor, applyAnchor),
     );
     const preClassifyHandled = preClassifyDispatch ? await preClassifyDispatch : null;
-    if (preClassifyHandled) return this.respondTurnHandler(message, session, preClassifyHandled);
+    if (preClassifyHandled) return this.respondTurnHandler(message, session, actor, userMemory.id, preClassifyHandled);
 
     let intent: Intent;
     try {
@@ -2691,7 +2701,7 @@ export class ConversationRuntime {
   private runTurnHandlers(
     stage: TurnHandlerStage,
     buildContext: () => TurnHandlerContext,
-  ): Promise<TurnHandlerReply | null> | null {
+  ): Promise<TurnHandlerOutcome | null> | null {
     const handlers = this.turnHandlersByStage[stage];
     if (handlers.length === 0) return null;
     return this.dispatchTurnHandlers(stage, handlers, buildContext());
@@ -2701,7 +2711,7 @@ export class ConversationRuntime {
     stage: TurnHandlerStage,
     handlers: readonly ConversationTurnHandler[],
     ctx: TurnHandlerContext,
-  ): Promise<TurnHandlerReply | null> {
+  ): Promise<TurnHandlerOutcome | null> {
     for (const handler of handlers) {
       const handled = await handler.handle(ctx);
       if (handled) {
@@ -2709,7 +2719,7 @@ export class ConversationRuntime {
           handlerId: handler.id,
           stage,
           sessionId: ctx.session.id,
-          status: handled.status ?? 'RESPONDED',
+          status: handled.kind === 'summarize' ? 'SUMMARIZE' : handled.status ?? 'RESPONDED',
         });
         return handled;
       }
@@ -2766,11 +2776,85 @@ export class ConversationRuntime {
     }
   }
 
-  /** A `post-anchor` / `pre-classify` handler reply, recorded like every composed reply (ADR-0096 D3). */
-  private respondTurnHandler(message: InboundMessage, session: Session, handled: TurnHandlerReply): Promise<TurnResult> {
+  /**
+   * A `post-anchor` / `pre-classify` handler outcome (ADR-0096 D3): a deterministic reply is recorded like every
+   * composed reply; a `summarize` outcome runs the existing SUMMARIZATION work path (ADR-0096 D4, ADR-0100 D8).
+   */
+  private respondTurnHandler(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    userMemoryId: Id,
+    handled: TurnHandlerOutcome,
+  ): Promise<TurnResult> {
+    if (handled.kind === 'summarize') return this.handleTurnHandlerSummary(message, session, actor, userMemoryId, handled);
     return handled.status === 'FAILED'
       ? this.failComposed(message, session, handled.reply)
       : this.respondComposed(message, session, handled.reply);
+  }
+
+  /** A `control` handler outcome as a deterministic reply; a `summarize` outcome degrades to its fallback list. */
+  private controlStageReply(
+    message: InboundMessage,
+    outcome: TurnHandlerOutcome,
+  ): { reply: OutboundMessage; status?: 'RESPONDED' | 'FAILED' } {
+    if (outcome.kind !== 'summarize') return outcome;
+    this.deps.logger.warn('control turn handler summarize outcome ignored', { messageId: message.id });
+    return { reply: { context: message.context, text: outcome.fallbackText } };
+  }
+
+  /**
+   * ADR-0100 D8 work summary. The handler's readout is re-validated (shape, bounds, no credential material, fits the
+   * prompt) and handed to the existing `handleWorkTurn` with `Capability.SUMMARIZATION`, so provider selection
+   * (capability / priority / `isAvailable`, ADR-0092), Task/TaskRun creation and audit stay exactly where they are.
+   * On success the deterministic footer (real links + "N items used") is appended within the message budget. On any
+   * other result — a readout that fails re-validation (no provider call), no available provider, a provider failure,
+   * or an infrastructure error — the reply is the deterministic list (`fallbackText`).
+   */
+  private async handleTurnHandlerSummary(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    userMemoryId: Id,
+    summary: TurnHandlerSummarizeReply,
+  ): Promise<TurnResult> {
+    const fallback = (): Promise<TurnResult> =>
+      this.respondComposed(message, session, { context: message.context, text: summary.fallbackText });
+    if (!isSummarizableExternalWorkReadout(summary.readout)) {
+      this.deps.logger.warn('work summary readout rejected', { messageId: message.id, sessionId: session.id });
+      return fallback();
+    }
+    const readout = summary.readout;
+    // The summary prompt is self-contained (no transcript / durable recall); the current request text is its only
+    // User-authored part, and PromptComposer drops it (readout kept) when the credential detector matches.
+    if (isWorkSummaryRequestTextWithheld(message.text)) {
+      this.deps.logger.warn('work summary request text withheld from prompt', {
+        messageId: message.id,
+        sessionId: session.id,
+        reasonCode: 'WORK_SUMMARY_REQUEST_CREDENTIAL_MATERIAL',
+      });
+    }
+    const intent: Intent = {
+      type: IntentType.SUMMARIZE,
+      capability: Capability.SUMMARIZATION,
+      confidence: 1,
+      requiresWork: true,
+      summary: `work summary: ${readout.request.source} ${readout.request.query}`,
+      raw: { kind: 'work-chat-summary', source: readout.request.source, query: readout.request.query },
+    };
+    let result: TurnResult;
+    try {
+      result = await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout);
+    } catch (err) {
+      this.deps.logger.warn('work summary path threw', {
+        messageId: message.id,
+        sessionId: session.id,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return fallback();
+    }
+    if (result.status !== 'RESPONDED') return fallback();
+    return { ...result, reply: { ...result.reply, text: appendWorkSummaryFooter(result.reply.text, summary.footer) } };
   }
 
   /**
@@ -6405,7 +6489,7 @@ export class ConversationRuntime {
     actor: Actor,
     intent: Intent,
     excludeMemoryId: Id,
-    readout: ProjectReadout | undefined,
+    readout: ProjectReadout | ExternalWorkReadout | undefined,
   ): Promise<TurnResult> {
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
@@ -6437,7 +6521,11 @@ export class ConversationRuntime {
       const workspace = ConversationRuntime.needsWorkspace(capability)
         ? await this.deps.workspace.prepare(task)
         : undefined;
-      const bundle = await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
+      // ADR-0100 D8 / ADR-0096 D4: a connector work summary is self-contained — no short-term history or durable
+      // recall is read for it (PromptComposer also ignores the bundle for an external-work readout).
+      const bundle: ContextBundle = isExternalWorkReadout(readout)
+        ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
+        : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
       const promptSpec = this.deps.promptComposer.compose(task, bundle, readout);
       const aiRequest = this.deps.promptRenderer.render(promptSpec, {
         capability,

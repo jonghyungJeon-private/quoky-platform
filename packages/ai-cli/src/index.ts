@@ -22,16 +22,24 @@ import {
   sanitizeTerminalOutput,
   stripInternalMetadataEnvelope,
 } from './output-sanitizer';
+import {
+  OLLAMA_COLOR_ENV,
+  OLLAMA_PROBE_TIMEOUT_MS,
+  classifyOllamaExitStderr,
+  ollamaListIncludesModel,
+  sanitizedOllamaModelName,
+} from './ollama-embedding-provider';
 
 export { BaseCliAiProvider };
 export { defaultCliRunner, maskSecrets } from './cli-runner';
 export type { CliRunner, CliRunOptions, CliRunResult } from './cli-runner';
-
-const OLLAMA_COLOR_ENV = {
-  NO_COLOR: '1',
-  CLICOLOR: '0',
-  CLICOLOR_FORCE: '0',
-} as const;
+export {
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+  DEFAULT_OLLAMA_EMBEDDING_TIMEOUT_MS,
+  MAX_EMBEDDING_INPUT_CHARS,
+  OllamaCliEmbeddingProvider,
+} from './ollama-embedding-provider';
+export type { EmbeddingRolePrefixes, OllamaCliEmbeddingProviderOptions } from './ollama-embedding-provider';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
 
@@ -226,10 +234,6 @@ function approvedLoopbackHost(value: string): string {
   return endpoint.origin;
 }
 
-function sanitizedModelName(model: string): string {
-  return /^[A-Za-z0-9._:/-]{1,200}$/.test(model) ? model : '[redacted]';
-}
-
 /**
  * Chat capabilities whose output goes through the provider-neutral chat hygiene (ADR-0098 D2 and amendment D2).
  * POLICY_SENSITIVE_CHAT is a GENERAL_CHAT turn Core marked policy-sensitive. Every step is driven by Core's
@@ -282,22 +286,6 @@ function validatedClaudeModel(model: string): string {
     throw new TypeError('Invalid Claude model name');
   }
   return model;
-}
-
-/** Bounded probe for the Ollama daemon + model inventory; a hung daemon must not stall routing. */
-const OLLAMA_PROBE_TIMEOUT_MS = 5_000;
-
-/**
- * True when an `ollama list` table lists `model` (an untagged name means `:latest`).
- * The match is exact and case-sensitive: the configured OLLAMA_MODEL must equal the NAME
- * column of `ollama list`, otherwise the provider is reported unavailable (fail closed).
- */
-function ollamaListIncludesModel(listOutput: string, model: string): boolean {
-  const wanted = model.includes(':') ? model : `${model}:latest`;
-  return listOutput
-    .split('\n')
-    .slice(1) // header row: NAME ID SIZE MODIFIED
-    .some((line) => line.trim().split(/\s+/u)[0] === wanted);
 }
 
 /**
@@ -496,10 +484,10 @@ export class OllamaCliProvider extends BaseCliAiProvider {
 
   // ADR-0098 amendment: no POLICY_SENSITIVE_CHAT — the local model did not meet the chat-policy bar in Live QA
   // (fabricated an external action, followed an injection, answered Japanese in Korean).
+  // ADR-0098 D8: no EMBEDDING — a chat model cannot embed; OllamaCliEmbeddingProvider serves it when enabled.
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
     { capability: Capability.GENERAL_CHAT, priority: 100 },
     { capability: Capability.SUMMARIZATION, priority: 100 },
-    { capability: Capability.EMBEDDING, priority: 100 },
     { capability: Capability.DOCUMENT_ANALYSIS, priority: 80 },
     { capability: Capability.READONLY_LOOKUP, priority: 70 },
     // CAP-009 (ADR-0030): code generation on a LOCAL model, suggest-only. Priority 40 is
@@ -614,7 +602,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     }
     if (result.code !== 0) {
       throw new AiProviderError(
-        OllamaCliProvider.classifyExitStderr(result.stderr),
+        classifyOllamaExitStderr(result.stderr),
         `ollama CLI exited ${result.code}: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
@@ -634,7 +622,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       throw new AiProviderError(AiFailureKind.EMPTY_OUTPUT, 'ollama CLI returned empty output');
     }
 
-    const model = sanitizedModelName(this.model);
+    const model = sanitizedOllamaModelName(this.model);
     const artifact: Artifact = {
       id: newId(),
       kind: ArtifactKind.MARKDOWN_REPORT,
@@ -655,21 +643,5 @@ export class OllamaCliProvider extends BaseCliAiProvider {
         outputSanitized: true,
       },
     };
-  }
-
-  /**
-   * A non-zero exit because the DAEMON is unreachable (it stopped after a successful readiness probe) is
-   * UNAVAILABLE, so the router drops its cached probe and the next turn re-probes instead of re-selecting a
-   * dead provider. Matching is conservative — only the CLI's own connection errors ("could not connect to
-   * ollama app/server", "ollama server not responding", a refused dial to the local daemon address); a refused
-   * dial to a remote registry during a model download stays EXECUTION_FAILED; anything else (model not found,
-   * a runtime error) stays EXECUTION_FAILED.
-   */
-  private static classifyExitStderr(stderr: string): AiFailureKind {
-    const s = stderr.toLowerCase();
-    if (/could not connect to ollama|ollama server not responding|(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0):\d+[^\n]*connect: connection refused/.test(s)) {
-      return AiFailureKind.UNAVAILABLE;
-    }
-    return AiFailureKind.EXECUTION_FAILED;
   }
 }
