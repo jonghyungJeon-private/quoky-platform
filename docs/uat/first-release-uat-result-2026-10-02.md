@@ -120,14 +120,14 @@
 
 | ID | Severity | Summary | Status |
 |---|---|---|---|
-| QA-023 | NOTE (usability) | Conservative content guard also refuses common source (`this.token = token`, `token = settings.API_TOKEN`). Proposed: file-type-aware rule (code: unquoted identifiers are references; config: unquoted values are literals). | DEFERRED to follow-up PR (owner decision 2026-10-02) |
+| QA-023 | NOTE (usability) | Conservative content guard also refuses common source (`this.token = token`, `token = settings.API_TOKEN`). Proposed: file-type-aware rule (code: unquoted identifiers are references; config: unquoted values are literals). | RESOLVED by the ADR-0097 one-time owner override (`그래도 보내줘`); the guard stays strict and the file-type-aware rule is rejected. Live-verified in Personal v2 QA (O1-O4, `docs/uat/personal-v2-qa-record.md`) |
 | QA-024 | HIGH (residual) | Regex-based content guard is best-effort; remaining bypass shapes from Codex delta #3. | FIXED (best-effort) — three Codex shapes closed + disclosure added; residual: regex detection is best-effort by design (owner-accepted 2026-10-02) |
 
 ### Final review (Codex delta, `2917933..14771c7`)
 
 - Newline-before-value, Python triple-quoted values, disclosure scope: FIXED; no regression in approval gating or the durable-memory guard.
 - Live retest (run 8): disclosure shown on code-change approvals; `src/settings.js` (value on next line) and `src/settings.py` (`"""…"""`) refused before any provider call; ordinary file previewed; 0 synthetic secrets in logs.
-- Accepted residual (owner-accepted best-effort, 2026-10-02): multiline Python adjacent literals after an empty literal inside parentheses (`password = (""\n    "x"\n)`) are not detected. Tracked with QA-023 for the follow-up guard PR.
+- Accepted residual (owner-accepted best-effort, 2026-10-02): multiline Python adjacent literals after an empty literal inside parentheses (`password = (""\n    "x"\n)`) are not detected. Tracked with QA-023 for the follow-up guard PR. **CLOSED by OVR-1 (ADR-0097 D1(a), bracket-depth multi-line/concatenated values; Personal v2 wave 1).**
 
 ## Summary
 

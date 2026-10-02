@@ -96,6 +96,7 @@ fixed; the implementations are not.
 | Domain `Event`s | `TaskCreated`, `TaskStatusChanged`, `RunCompleted`, `Approval*` | `[RESERVE]` |
 | `WorkspaceRef` | Resolved working directory | `[NOW]` |
 | `Approval*` | Governance records | `[NOW]` |
+| `Reminder` | Owner-created, actor-owned durable record whose only effect is bounded plain text to that owner at a computed time (ADR-0101); not a Task, TaskRun, WorkItem or trigger; no general scheduler | `[NOW]` (delivery wiring lands with PRO-5) |
 
 **Hard rule:** `Resource` is an **input** the system reads; `Artifact` is an
 **output** the system produces. They never merge.
@@ -283,6 +284,9 @@ fixed; the implementations are not.
 | HIGH | git commit/push/PR, connector writes (Jira/Slack/Confluence) | **approval** |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
+Reminder create/list/cancel is LOW (ADR-0101): an owner-instructed local write whose only effect is text addressed to
+that owner (owner DM by default). The one-time credential-guard override (ADR-0097) is a CRITICAL approval.
+
 The approval gate wraps the **external write / destructive action**, not the
 planning. Approval requests and decisions are persisted as governance records.
 
@@ -335,6 +339,7 @@ planning. Approval requests and decisions are persisted as governance records.
 | Extensibility | manual registration | plugin bundles + manifest | bundle of existing ports `[LATER]` |
 | Orchestration | single task | workflows | `workflowId` reserve → engine `[LATER]` |
 | Execution | single-shot | agentic loops | `AgentProfile` seam → runtime `[LATER]` |
+| Scheduling / notification | in-process, composition-root tick for owner reminders; owner-only `NotificationSink` (ADR-0101) | distributed scheduler / queue, multi-recipient notifications | `ReminderRepository` + `NotificationSink` ports; swap the tick driver and sink adapter, never the Core contracts |
 
 **Rule of evolution:** an evolution step is valid only if it changes adapters,
 wiring, or `[RESERVE]`/`[LATER]` seams — **never the Core contracts above.** If a

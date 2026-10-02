@@ -5,6 +5,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Quoky Personal v2 — waves 1-4 (in progress) — 2026-10-02
+
+Merged through PRs #105-#108. Waves 5-8 are not merged; reminders, work chat and feedback capture are not yet reachable
+from Discord. Live QA record: `docs/uat/personal-v2-qa-record.md`.
+
+**User-visible changes**
+
+- Credential-guard override: when a code-change preview is refused because a target file looks like it assigns a
+  credential, Quoky now warns (file and line, one-time external send, 30-minute limit) and the owner can reply
+  `그래도 보내줘` (also `그래도 보내`, `그래도 전송해줘`, `send anyway`) to send that file once. `승인` is not a grant.
+  Never overridable: secret-looking filenames and token-shaped content. Each refused file in a set needs its own override;
+  a reset, denial, expiry, changed file or newer request cancels it; no replay. Resolves QA-023.
+- The credential file-content guard only got stricter (multiline and concatenated values, continuation lines, env defaults,
+  literal wrappers, string prefixes, arrow bodies, Go/C#/PHP forms). The owner-accepted multiline residual is closed.
+- Chat answer policy: Quoky no longer claims to perform external actions (calendar, email, booking, payment, SMS,
+  posting), refuses prompt-injection requests, and answers in the user's language. Requests like these (and non-Korean/
+  English messages) are routed to Claude because the local model did not follow the policy; a reply that still claims an
+  unsupported action is replaced by a notice that nothing was done. This uses the Claude subscription for those turns.
+- Code flow: a request can name up to 5 files (update existing, create new with explicit create wording); apply rolls back
+  on failure; new files can be committed.
+- Claude CLI runs are isolated from the owner's claude.ai connectors, settings and session history
+  (`--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`).
+- Schema migrations v12 (feedback tables) and v13 (reminders table), additive and applied automatically on start.
+
+**New environment variables** (exact `true`/`false`; an empty value is a startup error; see `.env.example`)
+
+| Variable | Default | Status |
+|---|---|---|
+| `QUOKY_GIT_MERGE_ENABLED` | `false` | parsed only; requires `QUOKY_GIT_REMOTE_ENABLED=true` (else `GIT_MERGE_REQUIRES_REMOTE`) |
+| `QUOKY_WORK_SUMMARY_ENABLED` | `true` | parsed only; consumed when work chat lands |
+| `QUOKY_REMINDERS_ENABLED` | `false` | parsed only until PRO-5 |
+| `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | DM only by default; `true` lets channel members read reminder text |
+| `QUOKY_TIMEZONE` | `Asia/Seoul` | IANA zone; invalid is a startup error |
+| `QUOKY_EMBEDDING_ENABLED` | `false` | parsed only until QUAL-5 |
+| `QUOKY_EMBEDDING_MODEL` | `nomic-embed-text` | local model only; a name or tag containing `cloud` is refused |
+| `QUOKY_EMBEDDING_TIMEOUT_MS` | `3000` | 100-30000 |
+
 ## Quoky Personal v1 — Live UAT hotfixes — 2026-10-02
 
 Found by the attended Live UAT (`docs/uat/first-release-uat-result-2026-10-02.md`).
