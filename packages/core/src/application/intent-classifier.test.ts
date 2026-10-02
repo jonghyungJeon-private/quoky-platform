@@ -528,6 +528,12 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     ['Send the email to my manager now', 'external-action'],
     ['Pay the rent for me', 'external-action'],
     ['Call back my mom', 'external-action'],
+    // Codex P1: a draft that is TRANSMITTED to a recipient is an email action.
+    ['Can you send this draft email to Alice?', 'external-action'],
+    ['Can you email Alice?', 'external-action'],
+    ['이 초안 김부장님께 메일로 보내줘', 'external-action'],
+    ['팀에 회의록 보내줘', 'external-action'],
+    ['Please email bob@example.com the report', 'external-action'],
   ] as const)('routes "%s" to POLICY_SENSITIVE_CHAT (%s)', async (text, reason) => {
     expect(detectPolicySensitiveChat(text)).toBe(reason);
     const intent = await classifier.classify(msg(text));
@@ -541,6 +547,21 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
 
   it.each([
     '메일 쓰는 법 알려줘',
+    '메일 초안 써줘',
+    '초안 보여줘',
+    'how do I email my professor politely?',
+    '교수님께 메일 보냈는데 답이 없어',
+    'Write a draft email to Alice',
+    'Draft an email to my manager',
+    'Can you send the email draft here?',
+    'Send me an email draft',
+    // Codex P2: quoted examples and informational framing are not requests.
+    '"메일 보내줘"라는 문장을 영어로 번역해줘',
+    "'Send an email to Bob' 뜻이 뭐야?",
+    'What does “메일 보내줘” mean in English?',
+    '「팀에 회의록 보내줘」 예문 만들어줘',
+    'Translate `send an email to Alice` into Korean',
+    'Please translate "email Alice" for me',
     '메일 보내는 방법 알려줘',
     '이메일 초안 써줘',
     '거래처에 보낼 메일 문구 다듬어줘',
@@ -715,4 +736,22 @@ describe('IntentClassifier — path-scoped code-change requests (ADR-0098 amendm
     const intent = await classifier.classify(msg(text));
     expect(intent.type, text).not.toBe(IntentType.IMPLEMENT_CODE);
   });
+});
+
+describe('detectExternalActionRequest — transmit vs draft, quoted examples (Codex P1/P2)', () => {
+  it.each([
+    'Can you send this draft email to Alice?',
+    'Can you email Alice?',
+    '이 초안 김부장님께 메일로 보내줘',
+    '팀에 회의록 보내줘',
+  ])('classifies "%s" as an email action', (text) => {
+    expect(detectExternalActionRequest(text)).toEqual({ kind: 'email' });
+  });
+
+  it.each(['메일 초안 써줘', '"메일 보내줘"라는 문장을 영어로 번역해줘', '교수님께 메일 보냈는데 답이 없어'])(
+    'does not classify "%s" as an action',
+    (text) => {
+      expect(detectExternalActionRequest(text)).toBeUndefined();
+    },
+  );
 });
