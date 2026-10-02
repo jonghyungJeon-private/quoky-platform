@@ -7,7 +7,11 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### Quoky Personal v1 — first-release scope and ADRs (2026-10-02)
 
-**DECISIONS RECORDED — DOCS ONLY; IMPLEMENTATION IN SEPARATE BOUNDED TASKS.** Branch
+**STATUS: IMPLEMENTED LOCALLY on the integration branch (waves 1-3); offline acceptance PASS
+(`apps/quoky/src/first-release-acceptance.test.ts`; `pnpm typecheck` and full `pnpm test` green: 188 files / 4178
+tests); Live UAT (AC12) NOT EXECUTED — requires separate Strict Product Owner approval
+(`docs/uat/first-release-uat-packet.md`). Not pushed, no PR, no release.** User setup:
+`docs/user/quickstart.md`. Original decision record below: docs-only ADR task on branch
 `claude/v1-t4-release-adrs` from main `ddcedb12cdf654b91eaee4a828e719d3665e9aed`. The Product Owner
 ratified the first product release scope ("Quoky Personal v1") on 2026-10-02. `DECISIONS.md` appends:
 

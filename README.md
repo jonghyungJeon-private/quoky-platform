@@ -8,6 +8,16 @@ Quoky is a personal AI and work platform with conversation, memory, bounded exec
 and explicit approval. Its first interface is Discord. AI models and providers are
 replaceable implementations; users request outcomes rather than selecting engines.
 
+## Getting started (Quoky Personal v1)
+
+Quoky Personal v1 is the first product release for daily **single-owner** use: a Discord bot (owner-only, in
+allowlisted channels and owner DMs) with conversation, durable memory, local Ollama for everyday chat when ready
+(Claude otherwise), approval-gated local code changes, and remote git disabled by default. Setup (Discord bot,
+Claude CLI, optional Ollama, `.env.local`, first messages, troubleshooting) is in the
+[Quickstart](docs/user/quickstart.md). The attended Live UAT procedure is
+[docs/uat/first-release-uat-packet.md](docs/uat/first-release-uat-packet.md); it is not executed and requires
+separate Strict Product Owner approval.
+
 ## Product Vision
 
 Keep personal context and work locally, connect useful external systems through narrow
@@ -37,6 +47,11 @@ writes and general resource resolution are not implied. Git repository-hosting o
 are a separate capability with their own approval and authentication boundaries.
 
 ## Development Status
+
+**Quoky Personal v1** (first release: owner-only Discord entry, provider readiness with Ollama/Claude, actor-scoped
+memory recall, `도움말`/`새 대화`, 30-minute approval expiry, remote-git-off-by-default; ADR-0091..0094) is
+implemented locally with offline acceptance passing; the attended Live UAT (AC12) has not been executed. See
+[CURRENT_STATE.md](CURRENT_STATE.md).
 
 M3 Personal Work OS foundations are active. M3E-5 Atomic TaskRun Start was delivered through
 PR #60 at `bef459aaf3a77549dd44760a21ea839073b0cb46`, with Ratified ADR-0085 and schema v11.
@@ -108,7 +123,6 @@ quoky-platform/
 │  ├─ queue-local/            # reserved implementation seam
 │  ├─ vector-local/           # reserved implementation seam
 │  └─ provider-routing-validation/ # private offline validation harness
-├─ prompts/                   # runtime prompt assets
 ├─ tools/                     # bounded development/validation tooling
 └─ docs/
 ```

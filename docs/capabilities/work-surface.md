@@ -30,9 +30,11 @@ creates an Actor. Jira is a non-blank assignee identifier and is not assumed to 
 login. The mapping is non-secret and must not contain credentials, tokens, App installation ids, repository owner,
 or tenant data. Unknown fields fail validation.
 
-Provisioning is additive and idempotent. An omitted Jira/GitHub key removes nothing. A missing Actor, blank value,
-different identity for an already-linked platform, identity owned by another Actor, or conflicting effective config
-fails closed. There is no replacement, unlink, merge, discovery, or heuristic resolution. Connector configuration
+Provisioning is additive and idempotent. An omitted Jira/GitHub key removes nothing. A mapping entry whose Discord
+Actor does not exist yet is skipped with a warning (the bot never crashes startup and never creates the Actor; message
+the bot once, then restart to apply it). A blank value, different identity for an already-linked platform, identity
+owned by another Actor, or conflicting effective config fails closed. There is no replacement, unlink, merge,
+discovery, or heuristic resolution. Connector configuration
 and availability remain separate prerequisites, and an actual live read remains a separately authorized network
 operation.
 
