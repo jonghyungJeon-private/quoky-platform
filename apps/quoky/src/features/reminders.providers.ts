@@ -1,13 +1,184 @@
 import type { Provider } from '@nestjs/common';
-import type { ConversationTurnHandler } from '@quoky/core';
+import {
+  NOTIFICATION_SINK,
+  PLATFORM_ADAPTER,
+  REMINDER_REPOSITORY,
+  STORAGE_PROVIDER,
+  ReminderConversationService,
+  ReminderDispatchService,
+  ReminderReplyComposer,
+  ReminderTurnHandler,
+  type ConversationTurnHandler,
+  type IsoTimestamp,
+  type Logger,
+  type NotificationSink,
+  type PlatformAdapter,
+  type ReminderRepository,
+  type StorageProvider,
+  type WorkItem,
+} from '@quoky/core';
+import { loadConfig } from '../config';
+import { ConsoleLogger } from '../console-logger';
+import type { ReminderConfig } from '../reminders/reminder-config';
+import { ReminderTickDriver, type ReminderTickTimers } from '../reminders/reminder-tick-driver';
 import { REMINDER_TURN_HANDLERS } from './feature-tokens';
 
 /**
- * Proactive owner reminders (ADR-0101) — feature composition (ADR-0096 D7).
+ * Proactive owner reminders (ADR-0101) — feature composition (ADR-0096 D7, PRO-5). Every reminder binding lives
+ * here and only here (no `app.module.ts`, `config.ts` or runtime edit):
  *
- * Starts empty: no turn handler is registered, so conversation behaviour is unchanged. PRO-5 registers this
- * feature's handlers, services, lazy repository views and sink factories here, and only here.
+ * - `REMINDER_REPOSITORY` — a CALL-TIME delegate over `storage.reminders` (QA-001: the SQLite repositories exist
+ *   only after `storage.init()`, which runs after DI construction, so nothing is captured here);
+ * - `NOTIFICATION_SINK` — the platform adapter itself (the Discord adapter implements the owner-only sink, PRO-4);
+ * - the reply composer, the conversation and dispatch services (Core), the tick driver (composition root);
+ * - `REMINDER_TURN_HANDLERS` — the always-registered order-200 `pre-classify` handler. With
+ *   `QUOKY_REMINDERS_ENABLED=false` it still answers a reminder phrase with the fixed disabled reply and the tick
+ *   driver never starts.
+ *
+ * The dispatch service's whole surface is repository + sink + composer + a read-only WorkItem lister + logger:
+ * no provider, connector or tool reaches reminders.
  */
-export const remindersProviders: Provider[] = [
-  { provide: REMINDER_TURN_HANDLERS, useValue: [] satisfies readonly ConversationTurnHandler[] },
-];
+
+/** App-local token for this feature's parsed config (SEAM-2 `config.reminders`). */
+export const REMINDER_FEATURE_CONFIG = Symbol('ReminderFeatureConfig');
+
+/** The storage members reminders read, resolved at call time (absent before `init()` or on other storage). */
+interface ReminderStorageSeam {
+  readonly reminders?: ReminderRepository;
+  readonly workItems?: { listByActor(actorId: string): Promise<WorkItem[]> };
+}
+
+export class ReminderStorageUnavailableError extends Error {
+  constructor() {
+    super('reminder storage is not initialized');
+    this.name = 'ReminderStorageUnavailableError';
+  }
+}
+
+function liveReminders(storage: ReminderStorageSeam): ReminderRepository {
+  const repository = storage.reminders;
+  if (repository === undefined) throw new ReminderStorageUnavailableError();
+  return repository;
+}
+
+/** Delegates every call to the storage's CURRENT `reminders` repository (never a pre-init snapshot). */
+export function lazyReminderRepository(storage: ReminderStorageSeam): ReminderRepository {
+  return {
+    createWithinLimit: (draft, maxActive) => liveReminders(storage).createWithinLimit(draft, maxActive),
+    listActiveByActor: (actorId) => liveReminders(storage).listActiveByActor(actorId),
+    getByDisplayNo: (actorId, displayNo) => liveReminders(storage).getByDisplayNo(actorId, displayNo),
+    cancel: (actorId, displayNo, at) => liveReminders(storage).cancel(actorId, displayNo, at),
+    claimDue: (now, limit, attemptId) => liveReminders(storage).claimDue(now, limit, attemptId),
+    completeFiring: (id, attemptId, completion) => liveReminders(storage).completeFiring(id, attemptId, completion),
+    listFiring: () => liveReminders(storage).listFiring(),
+  };
+}
+
+function isNotificationSink(value: unknown): value is NotificationSink {
+  return typeof (value as { deliver?: unknown } | null)?.deliver === 'function';
+}
+
+/**
+ * The platform adapter as the owner sink. A platform without one gets a fail-closed sink: every delivery is a
+ * confirmed, non-retryable `NOT_SENT` (nothing transmitted), so no reminder can reach an unvetted target.
+ */
+export function platformNotificationSink(platform: PlatformAdapter, logger: Logger): NotificationSink {
+  if (isNotificationSink(platform)) return platform;
+  logger.warn('reminder.sink.unavailable');
+  return { deliver: async () => ({ status: 'NOT_SENT', reason: 'MISSING_ACCESS', retryable: false }) };
+}
+
+/**
+ * Composition seams for offline acceptance only; production passes none (shared clock, Node timers, console
+ * logger). The conversation side reads the runtime's per-turn clock, so only the tick driver takes `clock`.
+ */
+export interface RemindersCompositionOptions {
+  readonly clock?: () => IsoTimestamp;
+  readonly timers?: ReminderTickTimers;
+  readonly logger?: Logger;
+}
+
+export function createRemindersProviders(
+  resolveConfig: () => ReminderConfig,
+  options: RemindersCompositionOptions = {},
+): Provider[] {
+  const logger = options.logger ?? new ConsoleLogger('reminders');
+  return [
+    { provide: REMINDER_FEATURE_CONFIG, useFactory: resolveConfig },
+    {
+      provide: REMINDER_REPOSITORY,
+      useFactory: (storage: StorageProvider): ReminderRepository =>
+        lazyReminderRepository(storage as StorageProvider & ReminderStorageSeam),
+      inject: [STORAGE_PROVIDER],
+    },
+    {
+      provide: NOTIFICATION_SINK,
+      useFactory: (platform: PlatformAdapter): NotificationSink => platformNotificationSink(platform, logger),
+      inject: [PLATFORM_ADAPTER],
+    },
+    { provide: ReminderReplyComposer, useFactory: () => new ReminderReplyComposer() },
+    {
+      provide: ReminderConversationService,
+      useFactory: (config: ReminderConfig, repository: ReminderRepository, composer: ReminderReplyComposer) =>
+        new ReminderConversationService({
+          repository,
+          composer,
+          timeZone: config.timeZone,
+          enabled: config.enabled,
+          logger,
+        }),
+      inject: [REMINDER_FEATURE_CONFIG, REMINDER_REPOSITORY, ReminderReplyComposer],
+    },
+    {
+      provide: ReminderDispatchService,
+      useFactory: (
+        storage: StorageProvider,
+        repository: ReminderRepository,
+        sink: NotificationSink,
+        composer: ReminderReplyComposer,
+      ) => {
+        const seam = storage as StorageProvider & ReminderStorageSeam;
+        return new ReminderDispatchService({
+          repository,
+          sink,
+          composer,
+          // Read-only, call-time WorkItem identities for the local daily brief (QA-001).
+          workItems: {
+            listByActor: (actorId) => {
+              const workItems = seam.workItems;
+              if (workItems === undefined) return Promise.reject(new ReminderStorageUnavailableError());
+              return workItems.listByActor(actorId);
+            },
+          },
+          logger,
+        });
+      },
+      inject: [STORAGE_PROVIDER, REMINDER_REPOSITORY, NOTIFICATION_SINK, ReminderReplyComposer],
+    },
+    {
+      provide: ReminderTickDriver,
+      useFactory: (config: ReminderConfig, dispatch: ReminderDispatchService) =>
+        new ReminderTickDriver({
+          enabled: config.enabled,
+          dispatch,
+          logger,
+          ...(options.clock ? { clock: options.clock } : {}),
+          ...(options.timers ? { timers: options.timers } : {}),
+        }),
+      inject: [REMINDER_FEATURE_CONFIG, ReminderDispatchService],
+    },
+    {
+      provide: REMINDER_TURN_HANDLERS,
+      useFactory: (
+        config: ReminderConfig,
+        conversation: ReminderConversationService,
+        composer: ReminderReplyComposer,
+      ): readonly ConversationTurnHandler[] => [
+        new ReminderTurnHandler({ conversation, composer, enabled: config.enabled, logger }),
+      ],
+      inject: [REMINDER_FEATURE_CONFIG, ReminderConversationService, ReminderReplyComposer],
+    },
+  ];
+}
+
+export const remindersProviders: Provider[] = createRemindersProviders(() => loadConfig().reminders);
