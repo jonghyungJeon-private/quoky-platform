@@ -128,6 +128,7 @@ import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import type { ExternalWorkReadout } from './work-chat/external-work-readout';
+import { isExternalWorkReadout, isWorkSummaryRequestTextWithheld } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
@@ -2824,6 +2825,15 @@ export class ConversationRuntime {
       return fallback();
     }
     const readout = summary.readout;
+    // The summary prompt is self-contained (no transcript / durable recall); the current request text is its only
+    // User-authored part, and PromptComposer drops it (readout kept) when the credential detector matches.
+    if (isWorkSummaryRequestTextWithheld(message.text)) {
+      this.deps.logger.warn('work summary request text withheld from prompt', {
+        messageId: message.id,
+        sessionId: session.id,
+        reasonCode: 'WORK_SUMMARY_REQUEST_CREDENTIAL_MATERIAL',
+      });
+    }
     const intent: Intent = {
       type: IntentType.SUMMARIZE,
       capability: Capability.SUMMARIZATION,
@@ -6511,7 +6521,11 @@ export class ConversationRuntime {
       const workspace = ConversationRuntime.needsWorkspace(capability)
         ? await this.deps.workspace.prepare(task)
         : undefined;
-      const bundle = await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
+      // ADR-0100 D8 / ADR-0096 D4: a connector work summary is self-contained — no short-term history or durable
+      // recall is read for it (PromptComposer also ignores the bundle for an external-work readout).
+      const bundle: ContextBundle = isExternalWorkReadout(readout)
+        ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
+        : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
       const promptSpec = this.deps.promptComposer.compose(task, bundle, readout);
       const aiRequest = this.deps.promptRenderer.render(promptSpec, {
         capability,
