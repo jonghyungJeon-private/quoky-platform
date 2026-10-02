@@ -602,6 +602,26 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     ['Do I have new mail?', 'personal-data'],
     ['Check my bank account', 'personal-data'],
     ['Any texts?', 'personal-data'],
+    // QUAL-7 review: availability + next-meeting forms
+    ['나 내일 바빠?', 'personal-data'],
+    ['내일 오후 3시 비어 있어?', 'personal-data'],
+    ['내일 시간 돼?', 'personal-data'],
+    ['저 오늘 한가해?', 'personal-data'],
+    ['내일 오후 3시에 나 가능해?', 'personal-data'],
+    ["What's my next meeting?", 'personal-data'],
+    ['When is my upcoming appointment?', 'personal-data'],
+    ['Am I free tomorrow?', 'personal-data'],
+    ['Am I busy?', 'personal-data'],
+    ['Am I free at 3pm?', 'personal-data'],
+    ['Do I have time tomorrow?', 'personal-data'],
+    ['다음 약속 언제야?', 'personal-data'],
+    ['다음 회의 언제야?', 'personal-data'],
+    ['부재중 전화 몇 개야?', 'personal-data'],
+    ['누구한테 부재중 전화 왔어?', 'personal-data'],
+    ['부재중 전화 확인해줘', 'personal-data'],
+    ['메일함 확인해줘', 'personal-data'],
+    ['잔액 얼마야?', 'personal-data'],
+    ['잔액 알려줘', 'personal-data'],
     // an external action still wins over a personal-data read
     ['내일 일정 캘린더에 추가해줘', 'external-action'],
   ] as const)('routes "%s" to POLICY_SENSITIVE_CHAT (%s)', async (text, reason) => {
@@ -616,6 +636,17 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
   });
 
   it.each([
+    // QUAL-7 review: statements and concept questions about the same nouns
+    '부재중 전화가 남아서 걱정돼',
+    '부재중 전화는 무엇을 뜻해?',
+    '부재중 전화가 뭐야?',
+    '메일함이 뭐야?',
+    '잔액이 뭐야?',
+    '통장은 무슨 뜻이야?',
+    '내일 너무 바빠서 못 갈 것 같아',
+    'Am I free to use this license commercially?',
+    'Do I have time to learn Rust?',
+    '내일 회의실 예약 방법 알려줘',
     '메일 쓰는 법 알려줘',
     '메일 초안 써줘',
     '초안 보여줘',

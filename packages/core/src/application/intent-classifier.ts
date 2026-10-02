@@ -383,6 +383,18 @@ const KO_HAVE_PLAIN = String.raw`(?:있|없)어(?:요)?(?=\s*${QUESTION_MARK})`;
 const KO_ASK = String.raw`(?:뭐|뭔|무엇|무슨|어때|어떻|어떤|잡혀|알려|보여|확인|말해|읽어|체크|조회|브리핑|요약|몇|${KO_HAVE_Q}|${KO_HAVE_PLAIN})`;
 /** Reading verbs a bare mail / messenger noun can take ("메일 확인해줘", "문자 요약해줘"). */
 const KO_READ = String.raw`(?:확인|요약|읽어|체크|조회|보여|브리핑)`;
+/**
+ * An ask about the owner's OWN records for a bare noun that is also an ordinary concept word ("부재중 전화", "잔액", "메일함"):
+ * a reading / listing / counting / existence request. Unlike KO_ASK it has no "뭐/무엇/무슨/어떤" ("부재중 전화는 무엇을 뜻해?" is
+ * a definition question) and "누구" only after an arrival verb; "뭐 왔어/있어" is added back as an explicit form.
+ */
+const KO_OWNER_ASK = String.raw`(?:어때|어떻|잡혀|알려|보여|확인|말해|읽어|체크|조회|브리핑|요약|몇|${KO_HAVE_Q}|${KO_HAVE_PLAIN}|(?:뭐|뭔가|무슨\s*[가-힣]{1,4})\s*(?:가\s*)?(?:왔|와\s*있|있(?:어(?!서)|나|니|냐|는지)))`;
+/** The owner is the subject: "나", "내가", "제가", "저는", "우리". */
+const KO_SELF = String.raw`(?<![가-힣])(?:나|내가|제가|저|우리)(?:는|도)?\s*`;
+/** "바빠?", "한가해?", "비어 있어?", "시간 돼?", "가능해?" — plain endings count only when the clause ended in "?". */
+const KO_AVAIL_PLAIN = String.raw`(?:바빠|한가해|비어\s*있어|비었어|시간\s*(?:돼|되|괜찮아)|가능해)(?:요)?(?=\s*${QUESTION_MARK})`;
+const KO_AVAIL_Q = String.raw`(?:바쁜가|바쁠까|바쁘니|바쁜지|한가한가|한가할까|한가하니|한가한지|비어\s*있(?:나|니|을까|는지)|비었(?:나|니|을까)|시간\s*(?:되나|될까|되니|되는지|괜찮(?:나|을까))|가능(?:한가|할까|하니|한지))`;
+const KO_AVAIL_MOD = String.raw`(?:(?:혹시|많이|계속|좀)\s*)?`;
 const KO_AGENDA_NOUN = String.raw`(?:일정|스케줄(?!러)|약속|캘린더|달력|미팅|회의(?!록|실)|예약(?:\s*(?:내역|현황|목록))?)`;
 const KO_MAIL_NOUN = String.raw`(?:이?메일(?!함)|e-?mail)`;
 const KO_CHAT_NOUN = String.raw`(?:카톡|카카오톡|문자(?!열)|(?<!(?:에러|오류|커밋|로그|경고|예외|알림|error|commit|log)\s*)(?:메시지|메세지)|디엠|dm)`;
@@ -398,6 +410,8 @@ const KO_TOPIC_END = String.raw`(?:은|는)\s*${QUESTION_MARK}?\s*$`;
 const EN_DAY = String.raw`(?:today|tomorrow|tonight|tmrw|this\s+(?:morning|afternoon|evening|week|weekend)|next\s+(?:week|month|(?:mon|tues|wednes|thurs|fri|satur|sun)day)|(?:mon|tues|wednes|thurs|fri|satur|sun)day)`;
 const EN_ASK = String.raw`\b(?:what|show|tell|check|list|read|summari[sz]e|any|do\s+i|did\s+i|have\s+i|how\s+much|is\s+there|are\s+there|look\s+up|pull\s+up|open|see|got)\b`;
 const EN_OWNED_NOUN = String.raw`\b(?:my|our)\s+(?:(?:(?:google|outlook|work|personal|bank|account|new|unread)\s+)*(?:calendar|schedule|agenda|appointments?|meetings?(?!\s+notes?)|inbox|e-?mails?|text(?:\s+messages?)?s?|dms?|messages|balance|transactions?|statements?|reservations?|bookings?|payments?)|(?:bank|checking|savings)\s+accounts?)\b`;
+/** A day or a clock time an availability question can be about ("tomorrow", "at 3pm", "after 5"). */
+const EN_WHEN = String.raw`(?:${EN_DAY}|(?:at|after|before|around)\s+\d)`;
 const EN_MESSAGE_NOUN = String.raw`(?:e-?mails?|mail|messages?|texts?|dms?)`;
 
 const ANY_CLAUSE = /(?:)/u;
@@ -427,7 +441,7 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   // (a demonstrative before the noun — "이 메일 확인해줘" — is a pasted mail, see PERSONAL_DATA_BLOCKER)
   {
     noun: new RegExp(
-      String.raw`(?:메일함|받은\s*편지함|inbox|지메일|gmail)${KO_PARTICLE_GAP}${KO_ASK}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ASK}|왔|와\s*있|온)|${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ARRIVAL}|${KO_READ}|${KO_HAVE_Q}|${KO_HAVE_PLAIN})`,
+      String.raw`(?:메일함|받은\s*편지함|inbox|지메일|gmail)${KO_PARTICLE_GAP}${KO_OWNER_ASK}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ASK}|왔|와\s*있|온)|${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ARRIVAL}|${KO_READ}|${KO_HAVE_Q}|${KO_HAVE_PLAIN})`,
       'iu',
     ),
     verb: ANY_CLAUSE,
@@ -435,7 +449,7 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   // bank / card: 잔액, 결제·거래·지출 내역, "통장에 얼마 있어"
   {
     noun: new RegExp(
-      String.raw`(?:잔액|잔고|결제\s*내역|거래\s*내역|입출금\s*내역|지출\s*내역|카드\s*(?:내역|명세서|사용\s*내역|청구)|계좌\s*내역|통장)${KO_PARTICLE_GAP}(?:${KO_ASK}|얼마|남았|남아)`,
+      String.raw`(?:잔액|잔고|결제\s*내역|거래\s*내역|입출금\s*내역|지출\s*내역|카드\s*(?:내역|명세서|사용\s*내역|청구)|계좌\s*내역|통장)${KO_PARTICLE_GAP}(?:${KO_OWNER_ASK}|얼마)`,
       'u',
     ),
     verb: ANY_CLAUSE,
@@ -443,15 +457,25 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   // messages: "카톡 왔어?", "문자 온 거 있어?", "내 메시지 확인해줘", "문자 확인해줘", "부재중 전화 있어?"
   {
     noun: new RegExp(
-      String.raw`${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ARRIVAL}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ASK}|${KO_PERSONAL_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_READ}|부재중\s*전화`,
+      String.raw`${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ARRIVAL}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ASK}|${KO_PERSONAL_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_READ}|부재중\s*(?:전화|통화|콜)${KO_PARTICLE_GAP}(?:${KO_OWNER_ASK}|${KO_ARRIVAL}|누구)`,
       'iu',
     ),
     verb: ANY_CLAUSE,
   },
-  // English: "what's on my calendar", "what's on tomorrow", "what do I have planned today", "am I free tomorrow"
+  // availability of the owner: "나 내일 바빠?", "내일 오후 3시 비어 있어?", "내일 시간 돼?" (needs a time and a "?" or question ending)
   {
     noun: new RegExp(
-      String.raw`\bwhat(?:'s|’s|\s+is)\s+(?:on|in)\s+my\s+(?:calendar|schedule|agenda|plate|diary|inbox)\b|\bwhat(?:'s|’s|\s+is)\s+on\s+(?:for\s+)?${EN_DAY}\b|\bwhat\s+do\s+i\s+have\s+(?:on|planned|scheduled|going\s+on|coming\s+up|for\s+${EN_DAY}|${EN_DAY})\b|\bwhat\s+am\s+i\s+(?:doing|up\s+to)\s+${EN_DAY}\b|\bwhat\s+are\s+my\s+(?:plans|meetings|appointments|events)\b|\bam\s+i\s+(?:free|busy|available)\s+${EN_DAY}\b`,
+      String.raw`(?:${KO_SELF}${KO_TIME}${KO_TIME_GAP}|${KO_TIME}${KO_TIME_GAP}${KO_SELF})${KO_AVAIL_MOD}(?:${KO_AVAIL_PLAIN}|${KO_AVAIL_Q})|${KO_TIME}${KO_TIME_GAP}${KO_AVAIL_MOD}(?:비어\s*있어(?:요)?(?=\s*${QUESTION_MARK})|비어\s*있(?:나|니|을까|는지)|시간\s*(?:돼|되|괜찮아)(?:요)?(?=\s*${QUESTION_MARK})|시간\s*(?:되나|될까|되니|되는지))`,
+      'u',
+    ),
+    verb: ANY_CLAUSE,
+  },
+  // "my next meeting", "what's my upcoming appointment", "when is my next event"
+  { noun: /\bmy\s+(?:next|upcoming)\s+(?:meeting|appointment|event|call|class|flight)s?\b(?!\s+notes?)/iu, verb: /\b(?:what|when|show|tell|check|list|see|any)\b/iu },
+  // English: "what's on my calendar\", "what's on tomorrow", "what do I have planned today", "am I free tomorrow"
+  {
+    noun: new RegExp(
+      String.raw`\bwhat(?:'s|’s|\s+is)\s+(?:on|in)\s+my\s+(?:calendar|schedule|agenda|plate|diary|inbox)\b|\bwhat(?:'s|’s|\s+is)\s+on\s+(?:for\s+)?${EN_DAY}\b|\bwhat\s+do\s+i\s+have\s+(?:on|planned|scheduled|going\s+on|coming\s+up|for\s+${EN_DAY}|${EN_DAY})\b|\bwhat\s+am\s+i\s+(?:doing|up\s+to)\s+${EN_DAY}\b|\bwhat\s+are\s+my\s+(?:plans|meetings|appointments|events)\b|\bam\s+i\s+(?:free|busy|available)\s+${EN_WHEN}|\bam\s+i\s+(?:free|busy|available)\s*(?=${QUESTION_MARK}|$|[?.!,])|\bdo\s+i\s+have\s+(?:any\s+)?(?:free\s+)?time\s+${EN_WHEN}`,
       'iu',
     ),
     verb: ANY_CLAUSE,
