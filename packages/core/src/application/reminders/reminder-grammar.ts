@@ -23,8 +23,16 @@ import {
  * Deterministic KO/EN reminder grammar (ADR-0101 D2). Pure: `now` and the zone are inputs; no clock, id, IO or
  * model call. Returns `NOT_REMINDER | CREATE | LIST | CANCEL | CLARIFY(reason)`.
  *
- * - CREATE needs a reminder verb (`알려줘`, `리마인드`, `알림 줘`, `remind me`, …) that is not negated, plus a time
+ * - CREATE needs a reminder verb (`알려줘`, `리마인드 해줘`, `알림 줘`, `remind me`, …) that is not negated, plus a time
  *   expression bound to it: Korean by `에` / `뒤에` / `후에`, English by `at` / `in` / `on` / `tomorrow` / `every`.
+ *   A Korean verb is a closed imperative form ending the word: inflected, past, permissive or noun uses
+ *   (`알려줘서`, `알려줘도 돼`, `알려주라고 했는데`, `리마인드 메일`, `리마인드됐어`) are not requests, nor are
+ *   `안 알려줘`, `필요 없어`, `no need to remind me`, `you forgot to remind me`.
+ * - Not the owner's reminder: a message naming another addressee (`김대리한테`, `팀원들에게`), an embedded question
+ *   (`9시에 뭐 있는지 알려줘`, `remind me what time …`), or a deadline (`remind me by 5pm` → CLARIFY).
+ * - A part of the day, day or recurrence bound on its own (`오전에 9시에`, `평일에 9시에`) joins the time directly
+ *   after it; anywhere else, or left in the body next to a bare 12-hour clock (`9시에 저녁 약속`,
+ *   `at 7 to plan the evening`), it is `CLARIFY(AMBIGUOUS_TIME)` — the marker is never dropped or guessed.
  * - Meridiem: an explicit marker (`오전`/`오후`/`아침`/`저녁`/`밤`/`am`/`pm`, …) or a 24-hour time wins; with a date
  *   (day word, weekday, date or recurrence) 1–6 → PM, 7–11 → AM, 12 → noon; a bare time → nearest future.
  * - Clarify, never guess: past, nonexistent, more than 366 days or less than 1 minute ahead, sub-daily or other
@@ -445,14 +453,68 @@ function koNumber(token: string): number {
   return KO_NATIVE_NUMBERS[token] ?? Number.parseInt(token, 10);
 }
 
-/** Generic `알려줘` forms and the explicit reminder verbs (`리마인드`, `알림 줘`/`알림 설정`). */
-const KO_VERB =
-  /(알려\s?(?:줘요|줘라|줘|주세요|줄래요|줄래|주라|주십시오|주시겠어요|주실래요))|(리마인드(?:\s?(?:해\s?줘요|해\s?줘|해\s?주세요|해\s?줄래|부탁해|부탁))?|알림\s?(?:줘요|줘|주세요|보내\s?줘요|보내\s?줘|보내\s?주세요|설정\s?해\s?줘|설정\s?해\s?주세요|맞춰\s?줘))/g;
+/**
+ * Markdown emphasis/code/quote characters that wrap words in chat (`**내일**`, `'…'`, `“…”`, `> …`); they are word
+ * boundaries for the Korean scanner and the stray-word guards, and are trimmed from a body's ends.
+ */
+const WRAP = "*_`'\"“”‘’>";
+
+/** A Korean verb form must end the word: `알려줘서`, `알려줘도`, `알려주라고`, `알림 줘야` are not requests. */
+const KO_VERB_END = '(?![가-힣])';
+
+/**
+ * Generic `알려줘` forms (group 1) and the explicit reminder verbs (group 2): an imperative `리마인드 해줘` /
+ * `리마인드 부탁해`, a bare `리마인드` only when it opens the message, and `알림 줘` / `알림 설정해줘`.
+ */
+const KO_VERB = new RegExp(
+  `(알려\\s?(?:줘요|줘라|줘|주세요|줄래요|줄래|주라|주십시오|주시겠어요|주실래요))${KO_VERB_END}` +
+    `|((?:리마인드\\s?(?:해\\s?줘요|해\\s?줘|해\\s?주세요|해\\s?줄래요|해\\s?줄래|부탁해요|부탁해|부탁합니다|부탁드려요|부탁드립니다|부탁)` +
+    `|알림\\s?(?:줘요|줘|주세요|보내\\s?줘요|보내\\s?줘|보내\\s?주세요|설정\\s?해\\s?줘요|설정\\s?해\\s?줘|설정\\s?해\\s?주세요|맞춰\\s?줘요|맞춰\\s?줘))${KO_VERB_END}` +
+    `|^리마인드(?=$|[\\s:：,.!?]))`,
+  'g',
+);
 
 const KO_VERB_PRESENT = new RegExp(KO_VERB.source);
 
-/** What may follow a bound particle: the end, whitespace, punctuation or the verb itself. */
-const KO_AFTER_PARTICLE = '(?=$|[\\s.,!?~]|알려|리마인드|알림)';
+/**
+ * Reminder-local negation and non-request framing in the verb's clause, on top of the shared `isNegated`
+ * (which this slice does not widen): `안 알려줘`, `알려줄 필요 없어`, `no need to remind me`, `you forgot to remind
+ * me`, `you were supposed to remind me`, `you didn't remind me`.
+ */
+/** `안` as its own word right before the verb (`30분 뒤에 안 알려줘`); `방안 알려줘` is not negated. */
+const KO_NEGATION_BEFORE_VERB = /(?:^|\s)안\s?$/;
+/** `… 알려줘 필요 없어` / `알림 줘 필요는 없어` after the verb. */
+const KO_NEGATION_AFTER_VERB = /^\s?(?:은|는|도)?\s?필요\s?(?:는\s?|가\s?|도\s?)?없/;
+const EN_LOCAL_NEGATION =
+  /\b(?:no\s+need|need\s+not|needn['’]?t|not\s+necessary|unnecessary|no\s+longer|forgot|supposed\s+to|didn['’]?t|did\s+not|wasn['’]?t|weren['’]?t)\b/i;
+const LOCAL_CLAUSE_SEPARATOR = /[.,;!?\n]/g;
+
+function localClause(text: string, start: number, end: number): { before: string; after: string } {
+  let clauseStart = 0;
+  let clauseEnd = text.length;
+  for (const m of text.matchAll(LOCAL_CLAUSE_SEPARATOR)) {
+    const at = m.index ?? 0;
+    if (at < start) clauseStart = at + 1;
+    else if (at >= end) {
+      clauseEnd = at;
+      break;
+    }
+  }
+  return { before: text.slice(clauseStart, start), after: text.slice(end, Math.max(end, clauseEnd)) };
+}
+
+function isKoVerbNegated(text: string, start: number, length: number): boolean {
+  if (isNegated(text, start, length)) return true;
+  const clause = localClause(text, start, start + length);
+  return KO_NEGATION_BEFORE_VERB.test(clause.before) || KO_NEGATION_AFTER_VERB.test(clause.after);
+}
+
+function isEnVerbNegated(text: string, start: number, length: number): boolean {
+  return isNegated(text, start, length) || EN_LOCAL_NEGATION.test(localClause(text, start, start + length).before);
+}
+
+/** What may follow a bound particle: the end, whitespace, punctuation, a wrapping character or the verb itself. */
+const KO_AFTER_PARTICLE = `(?=$|[\\s.,!?~${WRAP}]|알려|리마인드|알림)`;
 
 /** Day names join directly (`월수금`) or through an explicit separator (`월, 수`, `월요일과 수요일`). */
 const KO_WD_SEPARATOR = '(?:\\s?(?:,|、|과|와|및|하고|이랑|랑)\\s?)?';
@@ -570,6 +632,12 @@ interface BoundExpression {
   past: boolean;
 }
 
+/** Whitespace or wrapping characters between two components (`**내일** 9시에`). */
+const KO_GAP = new RegExp(`[\\s${WRAP}]*`, 'y');
+const KO_WORD_START_BEFORE = new RegExp(`[\\s.,!?~(${WRAP}]`);
+const KO_WRAP_CHAR = new RegExp(`[\\s${WRAP}]`);
+const KO_GAP_ONLY = new RegExp(`^[\\s${WRAP}]*$`);
+
 /** Greedy component scan from `start`; returns the expression when it ends in a binding particle. */
 function scanKoExpression(text: string, start: number): BoundExpression | null {
   const spec: TimeSpec = {};
@@ -578,7 +646,7 @@ function scanKoExpression(text: string, start: number): BoundExpression | null {
   let past = false;
   let relative = false;
   for (;;) {
-    const ws = /\s*/y;
+    const ws = KO_GAP;
     ws.lastIndex = pos;
     const wsMatch = ws.exec(text);
     const afterWs = pos + (wsMatch?.[0].length ?? 0);
@@ -611,8 +679,8 @@ function findKoExpressions(text: string): BoundExpression[] {
   const found: BoundExpression[] = [];
   let i = 0;
   while (i < text.length) {
-    const atWordStart = i === 0 || /[\s.,!?~(]/.test(text[i - 1] ?? '');
-    if (atWordStart && !/\s/.test(text[i] ?? '')) {
+    const atWordStart = i === 0 || KO_WORD_START_BEFORE.test(text[i - 1] ?? '');
+    if (atWordStart && !KO_WRAP_CHAR.test(text[i] ?? '')) {
       const expression = scanKoExpression(text, i);
       if (expression !== null) {
         found.push(expression);
@@ -643,22 +711,36 @@ function stripKoTrailingParticles(body: string): string {
   return out;
 }
 
-const KO_STRAY_DAY_WORD = /(?:^|\s)(?:오늘|내일|낼|모레|글피|[월화수목금토일]요일|\d{1,2}\s?월\s?\d{1,2}\s?일)(?=$|\s|[은는에의도])/;
+/** Before / after a standalone Korean word: whitespace, a wrapping character, punctuation or a particle. */
+const KO_WORD_BEFORE = `(?:^|[\\s(${WRAP}])`;
+const KO_WORD_AFTER = `(?=$|[\\s${WRAP},.!?~)은는에의도])`;
+
+const KO_STRAY_DAY_WORD = new RegExp(
+  `${KO_WORD_BEFORE}(?:오늘|내일|낼|모레|글피|[월화수목금토일]요일|\\d{1,2}\\s?월\\s?\\d{1,2}\\s?일)${KO_WORD_AFTER}`,
+);
 
 /**
  * Day references the grammar does not resolve: a bare day of month (`15일`, not the durations `3일 동안`/`3일치`/
  * `3일 뒤`), a week or month without a weekday or date (`다음 주`, `이번 달`), the weekend, `월말`, `내년`, ….
  */
 const KO_UNSUPPORTED_DAY = new RegExp(
-  '(?:^|\\s)(?:' +
+  `${KO_WORD_BEFORE}(?:` +
     '\\d{1,2}\\s?일(?!\\s?(?:뒤|후|전|동안|이내|마다|씩))' +
     '|(?:다다음|다음|담|이번|돌아오는|지난)\\s?(?:주말|주|달)' +
     '|주말|월말|월초|연말|연초|내년|다음\\s?해' +
-    ')(?=$|\\s|[은는에의도까,.!?])',
+    `)(?=$|[\\s${WRAP}은는에의도까,.!?~)])`,
 );
 
 /** A part-of-day word standing on its own (`오전`, `아침`, `저녁`, …). */
-const KO_PART_OF_DAY_WORD = /(?:^|\s)(?:오전|오후|아침|점심|저녁|밤|새벽|낮)(?=$|\s|[은는에의도])/;
+const KO_PART_OF_DAY_WORD = new RegExp(`${KO_WORD_BEFORE}(?:오전|오후|아침|점심|저녁|밤|새벽|낮)${KO_WORD_AFTER}`);
+
+/**
+ * Time words that must never stay in a body (they would silently change the schedule): a part of the day bound by
+ * `에` (`오전에`) and a recurrence (`매일`, `평일`, `주말마다`, `매주`, `월요일마다`).
+ */
+const KO_BODY_TIME_WORD = new RegExp(
+  `${KO_WORD_BEFORE}(?:(?:오전|오후|아침|점심|저녁|밤|새벽|낮)\\s?에(?![가-힣])|(?:매일|평일|매주|주말마다|[월화수목금토일]요일마다)(?=$|[^가-힣]|에|은|는|도|마다))`,
+);
 
 /** Whether `text` names a day (resolved or not) outside a bound time expression. */
 function hasKoDayWord(text: string): boolean {
@@ -666,13 +748,73 @@ function hasKoDayWord(text: string): boolean {
   return KO_STRAY_DAY_WORD.test(padded) || KO_UNSUPPORTED_DAY.test(padded);
 }
 
+const BODY_EDGE = new RegExp(`^[\\s.,!?~:：\\-${WRAP}]+|[\\s.,!?~${WRAP}]+$`, 'g');
+
 function cleanBody(raw: string): string {
   return raw
     .replace(/\s+/g, ' ')
-    .replace(/^[\s.,!?~:：\-]+|[\s.,!?~]+$/g, '')
+    .replace(BODY_EDGE, '')
     .replace(/^(?:좀|꼭)\s/, '')
-    .replace(/\s(?:좀|꼭)$/, '')
+    .replace(/\s?(?:좀|꼭)$/, '')
+    .replace(BODY_EDGE, '')
     .trim();
+}
+
+/** A self addressee (`나한테`, `저에게`) is not part of the body. */
+function stripKoSelfAddressee(body: string): string {
+  return body.replace(/(?:^|\s)(?:나|저|우리|저희)(?:한테|에게)(?=\s|$)/g, ' ');
+}
+
+/**
+ * Another addressee (`김대리한테`, `팀원들에게`, `팀장님께`): the owner asks Quoky to tell someone else, which is not
+ * an owner reminder. `나`/`저`/`우리`/`저희` are the owner; `함께` / `그저께` / `엊그제께` are not addressees.
+ */
+const KO_ADDRESSEE = new RegExp(`${KO_WORD_BEFORE}([가-힣A-Za-z0-9]+?)(?:한테|에게|께)(?=$|[\\s,${WRAP}])`, 'g');
+const KO_SELF_OR_NOT_ADDRESSEE = new Set(['나', '저', '우리', '저희', '함', '그저', '엊그제', '그제']);
+
+function hasKoOtherAddressee(text: string): boolean {
+  return [...text.matchAll(KO_ADDRESSEE)].some((m) => !KO_SELF_OR_NOT_ADDRESSEE.has(m[1] ?? ''));
+}
+
+/** A Hangul syllable's final consonant index (0 = none, 4 = ㄴ, 8 = ㄹ). */
+function finalConsonant(ch: string): number {
+  const code = ch.charCodeAt(0);
+  return code >= 0xac00 && code <= 0xd7a3 ? (code - 0xac00) % 28 : -1;
+}
+
+const KO_WH_WORD = /뭐|무엇|무슨|언제|어디|누가|누구|왜|어떻게|몇|어느|얼마|어떤/;
+
+/**
+ * An embedded question as the body (`9시에 뭐 있는지 알려줘`, `점심에 뭐 먹을지`): the time modifies the question,
+ * not the reminder verb. `는지`/`을지` always; `ㄴ지`/`ㄹ지`/`은지` only with a wh-word (`편지`, `업무 일지` are nouns).
+ */
+function isKoEmbeddedQuestion(body: string): boolean {
+  if (/(?:는지|을지)$/.test(body)) return true;
+  if (!body.endsWith('지') || body.length < 2) return false;
+  const before = body.slice(-2, -1);
+  const final = finalConsonant(before);
+  return (before === '은' || final === 4 || final === 8) && KO_WH_WORD.test(body);
+}
+
+/**
+ * The sentence holding every used span, as a same-length copy of `text` with the other sentences blanked (`… 알려줘.
+ * 고마워` → the thanks is not body). Null when the spans cross a sentence end.
+ */
+function koSentenceWindow(text: string, spans: ReadonlyArray<{ start: number; end: number }>): string | null {
+  const first = Math.min(...spans.map((sp) => sp.start));
+  const last = Math.max(...spans.map((sp) => sp.end));
+  let start = 0;
+  let end = text.length;
+  for (const m of text.matchAll(/[.!?。]+(?=\s|$)/g)) {
+    const at = m.index ?? 0;
+    if (spans.some((sp) => at >= sp.start && at < sp.end)) continue;
+    if (at + m[0].length <= first) start = at + m[0].length;
+    else if (at >= last) {
+      end = at;
+      break;
+    } else return null;
+  }
+  return ' '.repeat(start) + text.slice(start, end) + ' '.repeat(text.length - end);
 }
 
 function removeSpans(text: string, spans: ReadonlyArray<{ start: number; end: number }>): string {
@@ -687,9 +829,27 @@ function removeSpans(text: string, spans: ReadonlyArray<{ start: number; end: nu
   return out + text.slice(cursor);
 }
 
+/** Fold an auxiliary expression's day, recurrence and meridiem into `target` (a repeat is a conflict). */
+function mergeSpec(target: TimeSpec, source: TimeSpec): void {
+  if (source.dayOffset !== undefined) setDay(target, 'dayOffset', source.dayOffset);
+  if (source.weekday !== undefined) setDay(target, 'weekday', source.weekday);
+  if (source.date !== undefined) setDay(target, 'date', source.date);
+  if (source.recurrence !== undefined) set(target, 'recurrence', source.recurrence);
+  if (source.meridiem !== undefined) set(target, 'meridiem', source.meridiem);
+  if (source.conflict === true) target.conflict = true;
+  if (source.invalidTime === true) target.invalidTime = true;
+}
+
+/** A clock read without any marker as a 12-hour time (`9시`, `at 7`): a part-of-day word nearby could change it. */
+function hasBareTwelveHourClock(spec: TimeSpec): boolean {
+  const clock = spec.clock;
+  return spec.meridiem === undefined && clock !== undefined && !clock.zeroPadded && clock.hour >= 1 && clock.hour <= 12;
+}
+
 function parseKorean(text: string, ctx: ResolveContext): ReminderCommand {
-  const verb = [...text.matchAll(KO_VERB)].find((m) => !isNegated(text, m.index ?? 0, m[0].length));
+  const verb = [...text.matchAll(KO_VERB)].find((m) => !isKoVerbNegated(text, m.index ?? 0, m[0].length));
   if (verb === undefined) return NOT_REMINDER;
+  if (hasKoOtherAddressee(text)) return NOT_REMINDER;
   const strongVerb = verb[2] !== undefined;
   const verbStart = verb.index ?? 0;
   const verbSpan = { start: verbStart, end: verbStart + verb[0].length };
@@ -704,39 +864,61 @@ function parseKorean(text: string, ctx: ResolveContext): ReminderCommand {
     if (expressions.length > 0 || /^\s*$/.test(between)) return clarify('UNSUPPORTED_RECURRENCE');
   }
 
-  // A meridiem alone (`점심에 뭐 먹을지 알려줘`) is not a time; a day alone is one only for an explicit reminder verb.
-  const meaningful = expressions.filter((e) => {
-    const s = e.spec;
-    if (s.relativeMs !== undefined || hasTimeOfDay(s)) return true;
-    return strongVerb && (hasDayInfo(s) || s.recurrence !== undefined);
-  });
-  if (meaningful.length === 0) {
+  // Only a clock or a duration makes a time; a day, recurrence or part of the day bound on its own is auxiliary.
+  const timed = expressions.filter((e) => e.spec.relativeMs !== undefined || hasTimeOfDay(e.spec));
+  if (timed.length === 0) {
     // A reminder request with a day but no clock must not fall through to chat (which could promise a reminder that
     // is never created): a day or recurrence plus a part of the day bound by 에 (`내일 오전에 회의 알려줘`), or an
-    // explicit reminder verb with any day or part-of-day word (`내일 회의 리마인드 해줘`). `내일 날씨 알려줘` stays chat.
+    // explicit reminder verb with any day or part-of-day word (`내일 회의 리마인드 해줘`). `내일 날씨 알려줘` stays chat;
+    // a meridiem alone (`점심에 뭐 먹을지 알려줘`) or a day alone with `알려줘` (`월요일에 뭐 있는지`) is not a time.
     const dayWithPartOfDay = expressions.some(
       (e) => e.spec.meridiem !== undefined && (hasDayInfo(e.spec) || e.spec.recurrence !== undefined),
     );
+    const boundDay = expressions.some((e) => hasDayInfo(e.spec) || e.spec.recurrence !== undefined);
     const outsideVerb = removeSpans(text, [verbSpan]);
-    if (dayWithPartOfDay || (strongVerb && (hasKoDayWord(outsideVerb) || KO_PART_OF_DAY_WORD.test(` ${outsideVerb}`)))) {
+    if (
+      dayWithPartOfDay ||
+      (strongVerb && (boundDay || hasKoDayWord(outsideVerb) || KO_PART_OF_DAY_WORD.test(` ${outsideVerb}`)))
+    ) {
       return clarify('MISSING_TIME');
     }
     return NOT_REMINDER;
   }
-  if (meaningful.length > 1) return clarify('AMBIGUOUS_TIME');
-  const expression = meaningful[0];
-  if (expression === undefined) return NOT_REMINDER;
+  if (timed.length > 1) return clarify('AMBIGUOUS_TIME');
+  const core = timed[0];
+  if (core === undefined) return NOT_REMINDER;
 
-  const resolved = resolveSpec(expression.spec, ctx);
+  // An auxiliary expression directly before the time joins it (`오전에 9시에`, `평일에 9시에`, `주말마다 아침에 9시에`);
+  // one anywhere else would be dropped into the body while the clock is read without it — clarify instead.
+  const spec: TimeSpec = { ...core.spec };
+  const used: BoundExpression[] = [core];
+  let joinedStart = core.start;
+  for (let k = expressions.indexOf(core) - 1; k >= 0; k--) {
+    const previous = expressions[k];
+    if (previous === undefined || !KO_GAP_ONLY.test(text.slice(previous.end, joinedStart))) break;
+    mergeSpec(spec, previous.spec);
+    used.push(previous);
+    joinedStart = previous.start;
+  }
+  if (expressions.some((e) => !used.includes(e))) return clarify('AMBIGUOUS_TIME');
+
+  const resolved = resolveSpec(spec, ctx);
   if (!resolved.ok) return clarify(resolved.reason);
 
-  const body = stripKoTrailingParticles(cleanBody(removeSpans(text, [expression, verbSpan])));
+  const spans = [...used, verbSpan];
+  const sentence = koSentenceWindow(text, spans) ?? text;
+  const body = cleanBody(stripKoTrailingParticles(cleanBody(stripKoSelfAddressee(removeSpans(sentence, spans)))));
+  if (isKoEmbeddedQuestion(body)) return NOT_REMINDER;
   const bodyKind = bodyKindOf(body);
-  const s = expression.spec;
-  if (bodyKind === 'TEXT' && !hasDayInfo(s) && s.recurrence === undefined && s.relativeMs === undefined && hasKoDayWord(body)) {
-    // `내일 회의 9시에 알려줘`, `15일 오후 3시에 회의 알려줘`, `다음 주 오후 3시에 보고 알려줘`: a day sits outside the
-    // bound time (or is one the grammar does not resolve) — never read the time as today's and guess the day.
-    return clarify('AMBIGUOUS_TIME');
+  if (bodyKind === 'TEXT') {
+    const padded = ` ${body}`;
+    if (KO_BODY_TIME_WORD.test(padded)) return clarify('AMBIGUOUS_TIME'); // `9시에 매일 약`, `9시에 회의 저녁에`
+    if (hasBareTwelveHourClock(spec) && KO_PART_OF_DAY_WORD.test(padded)) return clarify('AMBIGUOUS_TIME'); // `9시에 저녁 약속`
+    if (!hasDayInfo(spec) && spec.recurrence === undefined && spec.relativeMs === undefined && hasKoDayWord(body)) {
+      // `내일 회의 9시에 알려줘`, `15일 오후 3시에 회의 알려줘`, `다음 주 오후 3시에 보고 알려줘`: a day sits outside the
+      // bound time (or is one the grammar does not resolve) — never read the time as today's and guess the day.
+      return clarify('AMBIGUOUS_TIME');
+    }
   }
   return finishCreate(body, bodyKind, resolved, ctx);
 }
@@ -795,7 +977,30 @@ const EN_UNSUPPORTED_DAY =
 /** A weekday name not bound by `on`/`next`/`this`/`every` (`at 3pm friday`); a possessive (`friday's`) is a noun. */
 const EN_STRAY_WEEKDAY = /\b(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)s?\b(?!['’]s)/i;
 /** Politeness / request lead-ins that may precede `remind me` and never belong to the body. */
-const EN_LEAD_IN = /^(?:(?:hey|hi|hello|ok|okay|so|also|um|quoky|can|could|would|will|you|please|pls|plz|kindly)\b[\s,!]*)*$/i;
+const EN_LEAD_IN =
+  /^(?:(?:hey|hi|hello|ok|okay|so|also|um|quoky|can|could|would|will|you|please|pls|plz|kindly|i|i['’]d|need|want|like|to)\b[\s,!]*)*$/i;
+/** `remind me what time the meeting at 3pm is`: an embedded question, not a reminder. */
+const EN_WH_AFTER_VERB = /^\s+(?:what|when|where|who|whom|whose|which|why|how|whether|if)\b/i;
+/** `remind me by 5pm` / `before tomorrow at 9`: a deadline, not a fire time — clarify, never guess. */
+const EN_DEADLINE_BEFORE = /\b(?:by|before|until|till|til|no\s+later\s+than)\s+$/i;
+/** A part-of-day word left in the body next to a bare 12-hour clock (`at 7 to plan the evening`). */
+const EN_PART_OF_DAY_WORD = /\b(?:morning|afternoon|evening|night|tonight|noon|midnight)s?\b/i;
+
+function enPartOfDay(word: string | undefined): Meridiem | undefined {
+  switch ((word ?? '').toLowerCase()) {
+    case 'morning':
+      return 'AM';
+    case 'afternoon':
+      return 'PM';
+    case 'evening':
+      return 'EVENING';
+    case 'night':
+      return 'NIGHT';
+    default:
+      return undefined;
+  }
+}
+const EN_PART_OF_DAY = '(morning|afternoon|evening|night)';
 const EN_LEAD_IN_MAX_CHARS = 48;
 const EN_UNSUPPORTED = /\b(?:every\s+(?:\d+\s+|other\s+)?(?:seconds?|minutes?|mins?|hours?|hrs?|months?|years?)|hourly|monthly|yearly|annually|every\s+other\s+\w+)\b/i;
 
@@ -856,31 +1061,48 @@ const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegE
     apply: (spec, m) => setDay(spec, 'date', { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) }),
   },
   {
-    re: /\b(today|tonight|tomorrow|tmrw)\b(?!['’]s)/gi,
+    // `tomorrow evening`, `today morning`: the part of the day sets the meridiem.
+    re: new RegExp(`\\b(today|tonight|tomorrow|tmrw)(?:\\s+${EN_PART_OF_DAY})?\\b(?!['’]s)`, 'gi'),
     apply: (spec, m) => {
       const word = (m[1] ?? '').toLowerCase();
       setDay(spec, 'dayOffset', word === 'today' || word === 'tonight' ? 0 : 1);
       if (word === 'tonight') set(spec, 'meridiem', 'NIGHT');
+      const part = enPartOfDay(m[2]);
+      if (part !== undefined) set(spec, 'meridiem', part);
     },
   },
   {
-    re: new RegExp(`\\b(?:(next|this)\\s+|on\\s+)(${EN_WD})${EN_END}`, 'gi'),
+    re: new RegExp(`\\bthis\\s+${EN_PART_OF_DAY}\\b`, 'gi'),
+    apply: (spec, m) => {
+      setDay(spec, 'dayOffset', 0);
+      const part = enPartOfDay(m[1]);
+      if (part !== undefined) set(spec, 'meridiem', part);
+    },
+  },
+  {
+    re: new RegExp(`\\b(?:(next|this)\\s+|on\\s+)(${EN_WD})(?:\\s+${EN_PART_OF_DAY})?${EN_END}`, 'gi'),
     apply: (spec, m) => {
       const day = enWeekday(m[2] ?? '');
       if (day === undefined) return;
       const which = (m[1] ?? '').toLowerCase();
       setDay(spec, 'weekday', { day, week: which === 'next' ? 'NEXT' : which === 'this' ? 'THIS' : 'NEAREST' });
+      const part = enPartOfDay(m[3]);
+      if (part !== undefined) set(spec, 'meridiem', part);
     },
   },
   {
-    re: /\bin\s+the\s+(morning|afternoon|evening)\b/gi,
+    re: /\b(?:in\s+the\s+(morning|afternoon|evening)|at\s+(night))\b/gi,
     apply: (spec, m) => {
-      const word = (m[1] ?? '').toLowerCase();
-      set(spec, 'meridiem', word === 'morning' ? 'AM' : word === 'afternoon' ? 'PM' : 'EVENING');
+      const part = enPartOfDay(m[1] ?? m[2]);
+      if (part !== undefined) set(spec, 'meridiem', part);
     },
   },
   {
-    re: new RegExp(`\\b(?:at\\s+(noon|midnight)|(?:at\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)|at\\s+(\\d{1,2})(?::(\\d{2}))?)${EN_END}`, 'gi'),
+    // `at` may be written `@` (`remind me @ 5pm`).
+    re: new RegExp(
+      `(?:(?:\\bat\\s+|@\\s*)(noon|midnight)|(?:\\bat\\s+|@\\s*|\\b)(\\d{1,2})(?::(\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)|(?:\\bat\\s+|@\\s*)(\\d{1,2})(?::(\\d{2}))?)${EN_END}`,
+      'gi',
+    ),
     apply: (spec, m) => {
       if (m[1] !== undefined) return set(spec, 'special', m[1].toLowerCase() === 'noon' ? 'NOON' : 'MIDNIGHT');
       if (m[2] !== undefined) {
@@ -902,9 +1124,10 @@ const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegE
 ];
 
 function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
-  const verb = [...text.matchAll(EN_VERB)].find((m) => !isNegated(text, m.index ?? 0, m[0].length));
+  const verb = [...text.matchAll(EN_VERB)].find((m) => !isEnVerbNegated(text, m.index ?? 0, m[0].length));
   if (verb === undefined) return NOT_REMINDER;
   if (EN_PAST.test(text)) return NOT_REMINDER;
+  if (EN_WH_AFTER_VERB.test(text.slice((verb.index ?? 0) + verb[0].length))) return NOT_REMINDER;
 
   const spec: TimeSpec = {};
   const spans: Array<{ start: number; end: number }> = [];
@@ -921,6 +1144,7 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
   if (leadIn.length > 0 && leadIn.length <= EN_LEAD_IN_MAX_CHARS && EN_LEAD_IN.test(leadIn)) blank(0, verbStart);
 
   const hasUnsupported = EN_UNSUPPORTED.test(text);
+  let deadline = false;
   for (const component of EN_COMPONENTS) {
     component.re.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -929,11 +1153,13 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
         component.re.lastIndex++;
         continue;
       }
+      if (EN_DEADLINE_BEFORE.test(working.slice(0, m.index))) deadline = true;
       component.apply(spec, m);
       blank(m.index, m.index + m[0].length);
     }
   }
   if (hasUnsupported) return clarify('UNSUPPORTED_RECURRENCE');
+  if (deadline) return clarify('AMBIGUOUS_TIME');
 
   const hasTime = spec.relativeMs !== undefined || hasTimeOfDay(spec);
   if (!hasTime) {
@@ -952,6 +1178,8 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
     // `remind me on the 15th at 3pm …`, `remind me next week at 9am …`: never read the time as today's.
     return clarify('AMBIGUOUS_TIME');
   }
+  // `remind me at 7 tomorrow evening` is read above; a part-of-day word left over next to a bare clock is not guessed.
+  if (hasBareTwelveHourClock(spec) && EN_PART_OF_DAY_WORD.test(working)) return clarify('AMBIGUOUS_TIME');
   const resolved = resolveSpec(spec, ctx);
   if (!resolved.ok) return clarify(resolved.reason);
 

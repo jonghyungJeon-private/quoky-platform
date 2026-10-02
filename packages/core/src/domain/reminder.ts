@@ -352,6 +352,13 @@ export interface FiringCompletionContext {
    * occurrence; ignored for ONCE). Computed by `nextOccurrenceAfter` in the application layer.
    */
   nextOccurrenceAt?: IsoTimestamp;
+  /**
+   * The occurrence this attempt actually delivered, when the missed-reminder policy (`decideMissedOccurrence`)
+   * caught up to a later occurrence than the claimed `occurrenceAt` (recurring only; never earlier than it). It is
+   * recorded in `lastOutcome`, kept by a retry, and the next occurrence must be strictly after it. Defaults to the
+   * claimed occurrence.
+   */
+  deliveredOccurrenceAt?: IsoTimestamp;
 }
 
 function addMinutes(iso: IsoTimestamp, minutes: number): IsoTimestamp {
@@ -400,8 +407,20 @@ export function planFiringCompletion(
   if (reminder.status !== ReminderStatus.FIRING) {
     throw new InvalidReminderTransitionError(reminder.status, 'completion', 'reminder is not FIRING');
   }
-  const occurrenceAt = reminder.occurrenceAt ?? reminder.nextFireAt ?? reminder.firingStartedAt ?? context.at;
+  const claimedOccurrenceAt = reminder.occurrenceAt ?? reminder.nextFireAt ?? reminder.firingStartedAt ?? context.at;
   const recurring = isRecurringSchedule(reminder.schedule);
+  const delivered = context.deliveredOccurrenceAt;
+  if (
+    delivered !== undefined &&
+    (!recurring || !isIsoInstant(delivered) || Date.parse(delivered) < Date.parse(claimedOccurrenceAt))
+  ) {
+    throw new InvalidReminderTransitionError(
+      reminder.status,
+      'completion',
+      'a delivered occurrence is a recurring occurrence at or after the claimed one',
+    );
+  }
+  const occurrenceAt = delivered === undefined ? claimedOccurrenceAt : new Date(Date.parse(delivered)).toISOString();
 
   if (result.status === 'NOT_SENT' && result.retryable && reminder.attempt < REMINDER_LIMITS.maxRetries) {
     const backoff = REMINDER_LIMITS.retryBackoffMinutes[reminder.attempt] ?? REMINDER_LIMITS.retryBackoffMinutes[2];

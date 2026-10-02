@@ -650,3 +650,184 @@ describe('reminder grammar — every clarify reason is reachable', () => {
     expect([...seen].sort()).toEqual([...reasons].sort());
   });
 });
+
+describe('reminder grammar — a verb must be a request, not an inflected, past or noun use', () => {
+  it.each([
+    '내일 9시에 회의 알려줘서 고마워',
+    '30분 뒤에 안 알려줘도 돼',
+    '30분 뒤에 알려줘도 돼',
+    '30분 뒤에 안 알려줘',
+    '내일 9시에 알려주라고 했는데 안 왔어',
+    '내일 9시에 회의 알려줘야 해',
+    '내일 9시에 회의 알려줘야지',
+    '내일 9시에 회의 알려줘라고 했잖아',
+    '내일 9시에 회의 알려주세요는 어떻게 동작해?',
+    '내일 9시에 리마인드 메일 보내야 해',
+    '내일 9시에 회의 리마인드됐어',
+    '내일 9시에 회의 알림 줘서 고마워',
+    '30분 뒤에 알려줘 필요 없어',
+    'no need to remind me at 9am',
+    "you don't need to remind me at 9am",
+    'you forgot to remind me at 9am to call',
+    'you were supposed to remind me at 9am',
+    "you didn't remind me at 9am",
+  ])('%j → NOT_REMINDER', (message) => {
+    expect(parse(message)).toEqual({ kind: 'NOT_REMINDER' });
+  });
+
+  it.each([
+    ['30분 뒤에 방안 알려줘', '방안', '2026-10-02T14:30'], // `안` inside a word is not a negation
+    ['리마인드 내일 9시에 회의', '회의', '2026-10-03T09:00'], // a bare 리마인드 opening the message
+    ['리마인드: 내일 9시에 회의', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의 리마인드 부탁해요', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의 알려줘요', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의 알려줘!', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의 알려줄래?', '회의', '2026-10-03T09:00'],
+    ['remind me at 9am to get the umbrella I forgot', 'get the umbrella I forgot', '2026-10-03T09:00'],
+  ])('%j → %j at %s', (message, body, local) => {
+    expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
+  });
+});
+
+describe('reminder grammar — a part of the day, day or recurrence bound on its own', () => {
+  const AT_8 = at('2026-10-02T08:00');
+
+  it.each([
+    // joined with the time directly after it
+    ['오전에 9시에 약 알려줘', NOW, '2026-10-03T09:00', 'ONCE'],
+    ['아침에 9시에 약 알려줘', NOW, '2026-10-03T09:00', 'ONCE'],
+    ['저녁에 9시에 약 알려줘', AT_8, '2026-10-02T21:00', 'ONCE'],
+    ['밤에 10시에 약 알려줘', AT_8, '2026-10-02T22:00', 'ONCE'],
+    ['내일에 9시에 약 알려줘', NOW, '2026-10-03T09:00', 'ONCE'],
+    ['내일 저녁에 7시에 약 알려줘', NOW, '2026-10-03T19:00', 'ONCE'],
+    ['평일에 9시에 약 알려줘', NOW, '2026-10-05T09:00', 'WEEKLY'],
+    ['매일에 9시에 약 알려줘', NOW, '2026-10-03T09:00', 'DAILY'],
+    ['주말마다 아침에 9시에 약 알려줘', NOW, '2026-10-03T09:00', 'WEEKLY'],
+    ['remind me tomorrow evening at 7 to 약', NOW, '2026-10-03T19:00', 'ONCE'],
+    ['remind me at 7 tomorrow night to 약', NOW, '2026-10-03T19:00', 'ONCE'],
+    ['remind me tomorrow morning at 7 to 약', NOW, '2026-10-03T07:00', 'ONCE'],
+    ['remind me this evening at 7 to 약', NOW, '2026-10-02T19:00', 'ONCE'],
+    ['remind me on monday afternoon at 3 to 약', NOW, '2026-10-05T15:00', 'ONCE'],
+    ['remind me at 10 at night to 약', NOW, '2026-10-02T22:00', 'ONCE'],
+  ] as const)('%j at %s → %s (%s)', (message, now, local, type) => {
+    const r = parse(message, now);
+    expect(r).toMatchObject({ kind: 'CREATE', body: '약', firstFireAt: kst(local), schedule: { type } });
+  });
+
+  it('the joined recurrence keeps its weekdays', () => {
+    expect(parse('평일에 9시에 스탠드업 알려줘')).toMatchObject({
+      schedule: { type: 'WEEKLY', time: { hour: 9, minute: 0 }, weekdays: [1, 2, 3, 4, 5] },
+      body: '스탠드업',
+    });
+    expect(parse('주말마다 아침에 9시에 산책 알려줘')).toMatchObject({
+      schedule: { type: 'WEEKLY', time: { hour: 9, minute: 0 }, weekdays: [0, 6] },
+      body: '산책',
+    });
+  });
+
+  it.each([
+    '오전에 회의 9시에 알려줘', // not adjacent to the time
+    '내일 9시에 저녁에 약 알려줘', // after the time
+    '9시에 알려줘 점심에 뭐 먹을지',
+    '오전에 오후에 9시에 약 알려줘', // two meridiems joined
+    '내일에 모레 9시에 약 알려줘', // two days joined
+    '9시에 매일 약 알려줘', // a recurrence left in the body
+    '9시에 평일 약 알려줘',
+    '9시에 저녁 약속 알려줘', // a part-of-day word next to a bare 12-hour clock
+    '내일 9시에 저녁 약속 알려줘',
+    'remind me at 7 to plan the evening',
+    'remind me tomorrow at 7 to check the morning mail',
+  ])('%j → CLARIFY AMBIGUOUS_TIME', (message) => {
+    expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'AMBIGUOUS_TIME' });
+  });
+
+  it.each([
+    // An explicit marker or a 24-hour clock is not changed by a part-of-day word in the body.
+    ['오후 7시에 저녁 약속 알려줘', '저녁 약속', '2026-10-02T19:00'],
+    ['19시에 저녁 약속 알려줘', '저녁 약속', '2026-10-02T19:00'],
+    ['remind me at 7pm to plan the evening', 'plan the evening', '2026-10-02T19:00'],
+  ])('%j → %j at %s', (message, body, local) => {
+    expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
+  });
+});
+
+describe('reminder grammar — wrapping markdown and quote characters are word boundaries', () => {
+  it.each([
+    '**내일** 9시에 회의 알려줘',
+    "'내일 9시에 회의 알려줘'",
+    '"내일 9시에 회의 알려줘"',
+    '“내일 9시에 회의 알려줘”',
+    '‘내일 9시에 회의 알려줘’',
+    '`내일 9시에 회의 알려줘`',
+    '_내일_ 9시에 회의 알려줘',
+    '> 내일 9시에 회의 알려줘',
+    '내일 9시에 **회의** 알려줘',
+    '회의 **내일** 9시에 알려줘', // the wrapped day word joins the bound time
+  ])('%j → tomorrow 09:00, body 회의', (message) => {
+    expect(once(message)).toEqual({ body: '회의', at: kst('2026-10-03T09:00'), kind: 'TEXT' });
+  });
+
+  it.each(['**내일** 회의 9시에 알려줘', '회의 "15일" 9시에 알려줘', '**다음 주** 9시에 보고 알려줘', '내일, 9시에 회의 알려줘'])(
+    'a wrapped day word outside the bound time: %j → CLARIFY AMBIGUOUS_TIME',
+    (message) => {
+      expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'AMBIGUOUS_TIME' });
+    },
+  );
+});
+
+describe('reminder grammar — embedded questions and other addressees are not owner reminders', () => {
+  it.each([
+    '9시에 뭐 있는지 알려줘',
+    '내일 9시에 회의 있는지 알려줘',
+    '9시에 뭐 할지 알려줘',
+    '내일 9시에 누가 오는 건지 알려줘',
+    'remind me what time the meeting at 3pm is',
+    'remind me when the meeting at 3pm starts',
+    'remind me how to deploy tomorrow at 9am',
+    '김대리한테 9시에 회의 있다고 알려줘',
+    '팀원들에게 내일 9시에 회의 알려줘',
+    '팀장님께 내일 9시에 보고 알려줘',
+  ])('%j → NOT_REMINDER', (message) => {
+    expect(parse(message)).toEqual({ kind: 'NOT_REMINDER' });
+  });
+
+  it.each([
+    ['나한테 내일 9시에 회의 알려줘', '회의'],
+    ['저에게 내일 9시에 회의 알려주세요', '회의'],
+    ['내일 9시에 편지 알려줘', '편지'], // a noun ending in ㄴ지 without a wh-word
+    ['내일 9시에 업무 일지 알려줘', '업무 일지'],
+    ['내일 9시에 함께 회의 알려줘', '함께 회의'], // 함께 is not an addressee
+  ])('%j → body %j', (message, body) => {
+    expect(once(message)).toEqual({ body, at: kst('2026-10-03T09:00'), kind: 'TEXT' });
+  });
+});
+
+describe('reminder grammar — body hygiene', () => {
+  it.each([
+    ['내일 아침 9시에 회의 알려줘. 고마워', '회의', '2026-10-03T09:00'],
+    ['고마워! 내일 9시에 회의 알려줘', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의 알려줘! 부탁해', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의좀 알려줘', '회의', '2026-10-03T09:00'],
+    ['내일 9시에 회의꼭 알려줘', '회의', '2026-10-03T09:00'],
+    ['I need you to remind me at 5pm to x', 'x', '2026-10-02T17:00'],
+    ['I want you to remind me at 5pm to x', 'x', '2026-10-02T17:00'],
+    ["I'd like you to remind me at 5pm to x", 'x', '2026-10-02T17:00'],
+    ['remind me @ 5pm to x', 'x', '2026-10-02T17:00'],
+    ['remind me @5pm to x', 'x', '2026-10-02T17:00'],
+    ['remind me @ 9 to x', 'x', '2026-10-02T21:00'],
+    ['remind me @ noon to x', 'x', '2026-10-03T12:00'],
+  ])('%j → %j at %s', (message, body, local) => {
+    expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
+  });
+
+  it.each(['remind me by 5pm to x', 'remind me before 5pm to x', 'remind me until 9pm to x', 'remind me before tomorrow at 9am to x'])(
+    'a deadline is not a fire time: %j → CLARIFY AMBIGUOUS_TIME',
+    (message) => {
+      expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'AMBIGUOUS_TIME' });
+    },
+  );
+
+  it.each(['9시 전에 회의 알려줘', '9시까지 회의 알려줘'])('Korean deadline %j → NOT_REMINDER', (message) => {
+    expect(parse(message)).toEqual({ kind: 'NOT_REMINDER' });
+  });
+});

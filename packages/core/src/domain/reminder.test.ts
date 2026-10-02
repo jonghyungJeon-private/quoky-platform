@@ -310,6 +310,47 @@ describe('planFiringCompletion — recurring (never ends by delivery)', () => {
     ).toMatchObject({ status: ReminderStatus.SCHEDULED, nextFireAt: NEXT, lastOutcome: { outcome: 'SKIPPED_MISSED', occurrenceAt: FIRE } });
   });
 
+  it('a catch-up delivery of a later occurrence records it, retries it and advances past it', () => {
+    const LATER = '2026-10-05T00:00:00.000Z';
+    const AFTER = '2026-10-06T00:00:00.000Z';
+    const at = '2026-10-05T00:10:00.000Z';
+    expect(
+      planFiringCompletion(recurring(), { status: 'SENT', via: 'dm' }, { at, deliveredOccurrenceAt: LATER, nextOccurrenceAt: AFTER }),
+    ).toEqual({
+      status: ReminderStatus.SCHEDULED,
+      occurrenceAt: AFTER,
+      nextFireAt: AFTER,
+      attempt: 0,
+      lastOutcome: { outcome: 'SENT', occurrenceAt: LATER, recordedAt: at, via: 'dm' },
+      updatedAt: at,
+    });
+    expect(
+      planFiringCompletion(
+        recurring(),
+        { status: 'NOT_SENT', reason: 'RATE_LIMITED', retryable: true },
+        { at, deliveredOccurrenceAt: LATER, nextOccurrenceAt: AFTER },
+      ),
+    ).toMatchObject({ status: ReminderStatus.SCHEDULED, occurrenceAt: LATER, attempt: 1 });
+    // The next occurrence must be strictly after the delivered one, not only after the claimed one.
+    expect(() =>
+      planFiringCompletion(recurring(), { status: 'SENT', via: 'dm' }, { at, deliveredOccurrenceAt: LATER, nextOccurrenceAt: NEXT }),
+    ).toThrow(InvalidReminderTransitionError);
+  });
+
+  it('rejects a delivered occurrence before the claimed one, malformed, or on a ONCE reminder', () => {
+    const sent = { status: 'SENT', via: 'dm' } as const;
+    expect(() =>
+      planFiringCompletion(recurring(), sent, { at: AT, deliveredOccurrenceAt: '2026-10-02T00:00:00.000Z', nextOccurrenceAt: NEXT }),
+    ).toThrow(InvalidReminderTransitionError);
+    expect(() => planFiringCompletion(recurring(), sent, { at: AT, deliveredOccurrenceAt: 'later', nextOccurrenceAt: NEXT })).toThrow(
+      InvalidReminderTransitionError,
+    );
+    expect(() => planFiringCompletion(firing(), sent, { at: AT, deliveredOccurrenceAt: NEXT })).toThrow(InvalidReminderTransitionError);
+    expect(planFiringCompletion(recurring(), sent, { at: AT, deliveredOccurrenceAt: FIRE, nextOccurrenceAt: NEXT }).lastOutcome).toMatchObject({
+      occurrenceAt: FIRE,
+    });
+  });
+
   it('requires a next occurrence later than the current one', () => {
     expect(() => planFiringCompletion(recurring(), { status: 'SENT', via: 'dm' }, { at: AT })).toThrow(InvalidReminderTransitionError);
     expect(() =>

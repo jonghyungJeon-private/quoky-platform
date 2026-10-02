@@ -66,6 +66,8 @@ export function latestOccurrenceAtOrBefore(
  * - ONCE: always deliver once, `late` when `now` is past the occurrence by more than the late-label threshold;
  * - recurring: deliver the latest due occurrence only within the 60-minute catch-up grace (one catch-up, never a
  *   replay of older ones); otherwise skip it (`SKIPPED_MISSED`, never sent) and move to the next future one.
+ * A DELIVER of a later occurrence than the claimed one is passed to `planFiringCompletion` as
+ * `deliveredOccurrenceAt`, so the recorded outcome and the next occurrence follow the occurrence actually sent.
  */
 export type MissedOccurrenceDecision =
   | { readonly action: 'DELIVER'; readonly occurrenceAt: IsoTimestamp; readonly late: boolean }
