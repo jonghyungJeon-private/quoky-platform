@@ -136,7 +136,11 @@ export const QuokyConfigErrorCode = {
 } as const;
 export type QuokyConfigErrorCode = (typeof QuokyConfigErrorCode)[keyof typeof QuokyConfigErrorCode];
 
-/** A fail-closed startup configuration error. The message is the code only (no configured value). */
+/**
+ * A fail-closed startup configuration error. The message is the code only (no configured value).
+ * Note: loadConfig can also throw ReminderConfigError (reminders/reminder-config.ts, kept separate to avoid an
+ * import cycle). Match on `code`/message (as describeStartupFailure does), not `instanceof QuokyConfigError`.
+ */
 export class QuokyConfigError extends Error {
   constructor(readonly code: QuokyConfigErrorCode) {
     super(code);
