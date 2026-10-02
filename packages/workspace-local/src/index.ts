@@ -1,19 +1,26 @@
 import {
+  chmodSync,
   existsSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import type { Stats } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { applyPatch, createTwoFilesPatch } from 'diff';
 import { NotImplementedError } from '@quoky/core';
 import type {
+  ChangeSetApplyResult,
   ContextFile,
   DiffChangeKind,
   FileChangeResult,
@@ -415,6 +422,148 @@ export class LocalCloneWorkspaceProvider implements WorkspaceProvider {
   }
 }
 
+// --- ADR-0099 change-set apply (adapter-side). The bounds below are a backstop: the
+//     primary change-set limits are enforced in core before a preview is offered. ---
+
+/** Most operations one change set may carry (ADR-0099). */
+const MAX_CHANGE_SET_OPS = 5;
+/** Per-file byte bound for a change set, on both the pre-image and the result (ADR-0099). */
+const MAX_CHANGE_SET_FILE_BYTES = 64 * 1024;
+/** Total result bytes for one change set (ADR-0099). */
+const MAX_CHANGE_SET_TOTAL_BYTES = 256 * 1024;
+/** Infix of a change set's exclusive temp files: `<abs>.quoky-tmp-<rand>`. */
+const CHANGE_SET_TMP_INFIX = '.quoky-tmp-';
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function errorCode(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/** `lstat` that reports a missing entry as `null` (never follows a final symlink). */
+function lstatOrNull(abs: string): Stats | null {
+  try {
+    return lstatSync(abs);
+  } catch (err) {
+    if (errorCode(err) === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function sha256(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+function changeSetTempPath(abs: string): string {
+  return `${abs}${CHANGE_SET_TMP_INFIX}${randomBytes(6).toString('hex')}`;
+}
+
+/**
+ * Write `data` to a fresh exclusive temp file beside `abs` (flag `wx`) and track it
+ * in `owned` for cleanup. A file that existed before (EEXIST) is never ours, so it is
+ * never tracked — cleanup can only ever remove temp files this apply created.
+ */
+function writeExclusiveTemp(abs: string, data: string | Buffer, owned: Set<string>): string {
+  const tmp = changeSetTempPath(abs);
+  try {
+    writeFileSync(tmp, data, { flag: 'wx' });
+  } catch (err) {
+    if (errorCode(err) !== 'EEXIST') owned.add(tmp); // a partial write may have left the file
+    throw err;
+  }
+  owned.add(tmp);
+  return tmp;
+}
+
+/** `applyPatch` that reports a malformed diff as a non-clean patch instead of throwing. */
+function applyPatchOrFalse(source: string, diff: string): string | false {
+  try {
+    return applyPatch(source, diff);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write-side sandbox resolution for a change set (ADR-0099). Like `resolveWithin`
+ * (absolute and `..` escapes are refused, and the root itself is never a target),
+ * but it also realpath-checks the NEAREST EXISTING ANCESTOR of the target, so a
+ * symlinked parent of a not-yet-existing file cannot point the write outside the
+ * root. Returns the target and the missing parent directories, shallowest first.
+ */
+function resolveWithinForWrite(root: string, relPath: string): { abs: string; missingDirs: string[] } {
+  if (isAbsolute(relPath)) throw new Error(`absolute paths are not allowed: ${relPath}`);
+  const rootAbs = resolve(root);
+  const abs = resolve(rootAbs, relPath);
+  if (!abs.startsWith(rootAbs + sep)) throw new Error(`path escapes the workspace root: ${relPath}`);
+  const realRoot = realpathSync(rootAbs);
+  const missingDirs: string[] = [];
+  let ancestor = dirname(abs);
+  while (ancestor !== rootAbs && lstatOrNull(ancestor) === null) {
+    missingDirs.unshift(ancestor);
+    ancestor = dirname(ancestor);
+  }
+  const realAncestor = realpathSync(ancestor);
+  if (realAncestor !== realRoot && !realAncestor.startsWith(realRoot + sep)) {
+    throw new Error(`path escapes the workspace root via symlink: ${relPath}`);
+  }
+  if (!statSync(ancestor).isDirectory()) throw new Error(`parent is not a directory: ${relPath}`);
+  return { abs, missingDirs };
+}
+
+/** One operation after phase 1: checked, resolved and computed — nothing written yet. */
+interface PlannedChange {
+  op: PatchOperation;
+  abs: string;
+  /** The full text the file will hold after the apply. */
+  next: string;
+  /** Update only: the exact pre-image bytes, their sha256 and the file mode. */
+  pre?: { buf: Buffer; sha256: string; mode: number };
+  /** Add only: missing parent directories, shallowest first. */
+  missingDirs: string[];
+  /** Phase 2: this operation's staged temp file. */
+  tmp?: string;
+}
+
+/** Phase 1 for one operation (ADR-0099): every check and the result text; no writes. */
+function planChange(ref: WorkspaceRef, op: PatchOperation): PlannedChange {
+  if (op.operation === 'delete') throw new Error('delete is not allowed in a change set');
+  if (op.operation !== 'update' && op.operation !== 'add') {
+    throw new Error(`unsupported operation in a change set: ${String(op.operation)}`);
+  }
+  if (op.metadata?.['binary'] === true) throw new Error('binary changes are not allowed in a change set');
+  if (isSecretName(basename(op.path))) throw new Error(`refusing to write a secret-looking file: ${op.path}`);
+  const { abs, missingDirs } = resolveWithinForWrite(ref.rootPath, op.path);
+
+  let next: string | false;
+  let pre: PlannedChange['pre'];
+  const st = lstatOrNull(abs);
+  if (op.operation === 'update') {
+    if (st === null) throw new Error(`file does not exist (update): ${op.path}`);
+    if (!st.isFile()) throw new Error(`not a regular file: ${op.path}`);
+    if (st.size > MAX_CHANGE_SET_FILE_BYTES) {
+      throw new Error(`file too large (${st.size} > ${MAX_CHANGE_SET_FILE_BYTES} bytes): ${op.path}`);
+    }
+    const buf = readFileSync(abs);
+    if (looksBinary(buf)) throw new Error(`binary file cannot be updated as text: ${op.path}`);
+    pre = { buf, sha256: sha256(buf), mode: st.mode & 0o7777 };
+    next = applyPatchOrFalse(buf.toString('utf8'), op.diff);
+  } else {
+    if (st !== null) throw new Error(`path already exists (add never overwrites): ${op.path}`);
+    next = applyPatchOrFalse('', op.diff);
+  }
+  if (next === false) throw new Error(`unified diff did not apply cleanly: ${op.path}`);
+  const nextBuf = Buffer.from(next, 'utf8');
+  if (nextBuf.length > MAX_CHANGE_SET_FILE_BYTES) {
+    throw new Error(`result too large (${nextBuf.length} > ${MAX_CHANGE_SET_FILE_BYTES} bytes): ${op.path}`);
+  }
+  if (looksBinary(nextBuf)) throw new Error(`result is binary, not text: ${op.path}`);
+  return { op, abs, next, pre, missingDirs: op.operation === 'add' ? missingDirs : [] };
+}
+
 /**
  * Applies one patch operation to the local filesystem (CAP-006, ADR-0027).
  * **Atomic unit = file** (temp-write + rename, or unlink); `node:fs` only — no git,
@@ -456,5 +605,168 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
     } catch (err) {
       return done('failed', err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * All-or-nothing change set (ADR-0099). **Phase 1** writes nothing: bounds, op
+   * kinds, secret names, write-side sandboxing, update pre-images (+ sha256) and the
+   * `applyPatch` result of every file. **Phase 2** stages each result in an exclusive
+   * temp file, then promotes updates by compare-and-swap against the pre-image hash
+   * (`rename`) and creates adds no-clobber (`link` → EEXIST fails). On the first
+   * failure it restores promoted updates, removes created files and directories
+   * (deepest first) and deletes leftover temp files: `rolled_back`, or
+   * `rollback_failed` when any restore step fails. Never throws. `durationMs` on
+   * each result is the whole set's duration.
+   */
+  async applyChangeSet(ref: WorkspaceRef, ops: PatchOperation[]): Promise<ChangeSetApplyResult> {
+    const start = Date.now();
+    const result = (
+      op: PatchOperation,
+      status: FileChangeResult['status'],
+      message: string,
+    ): FileChangeResult => ({
+      path: op.path,
+      operation: op.operation,
+      status,
+      message,
+      durationMs: Date.now() - start,
+    });
+    const refuse = (message: string): ChangeSetApplyResult => ({
+      outcome: 'rolled_back',
+      results: ops.map((op) => result(op, 'failed', `change set refused: ${message}`)),
+    });
+
+    // --- Phase 1: no writes. ---
+    if (ops.length === 0) return refuse('empty change set');
+    if (ops.length > MAX_CHANGE_SET_OPS) {
+      return refuse(`too many files (${ops.length} > ${MAX_CHANGE_SET_OPS})`);
+    }
+    const planned: PlannedChange[] = [];
+    let totalBytes = 0;
+    for (const [index, op] of ops.entries()) {
+      try {
+        const change = planChange(ref, op);
+        if (planned.some((p) => p.abs === change.abs)) throw new Error(`duplicate path in a change set: ${op.path}`);
+        const nested = planned.find((p) => p.missingDirs.includes(change.abs) || change.missingDirs.includes(p.abs));
+        if (nested) throw new Error(`conflicting paths in a change set: ${nested.op.path} and ${op.path}`);
+        totalBytes += Buffer.byteLength(change.next, 'utf8');
+        if (totalBytes > MAX_CHANGE_SET_TOTAL_BYTES) {
+          throw new Error(`change set too large (> ${MAX_CHANGE_SET_TOTAL_BYTES} bytes in total)`);
+        }
+        planned.push(change);
+      } catch (err) {
+        return {
+          outcome: 'rolled_back',
+          results: ops.map((o, i) =>
+            i === index
+              ? result(o, 'failed', errorMessage(err))
+              : result(o, 'skipped', `not applied: change set refused (${op.path} failed)`),
+          ),
+        };
+      }
+    }
+
+    // --- Phase 2: stage, promote; on the first failure, roll back. ---
+    const tmpFiles = new Set<string>();
+    const createdDirs: string[] = [];
+    const promoted = new Set<number>();
+    let failedIndex = -1;
+    let failure = '';
+    let current = 0;
+    try {
+      for (const [index, p] of planned.entries()) {
+        current = index;
+        for (const dir of p.missingDirs) {
+          if (createdDirs.includes(dir)) continue;
+          mkdirSync(dir);
+          createdDirs.push(dir);
+        }
+        const tmp = writeExclusiveTemp(p.abs, p.next, tmpFiles);
+        if (p.pre) chmodSync(tmp, p.pre.mode);
+        p.tmp = tmp;
+      }
+      for (const [index, p] of planned.entries()) {
+        current = index;
+        const tmp = p.tmp as string;
+        if (p.pre) {
+          if (sha256(readFileSync(p.abs)) !== p.pre.sha256) {
+            throw new Error(`file changed since it was checked: ${p.op.path}`);
+          }
+          renameSync(tmp, p.abs);
+          tmpFiles.delete(tmp);
+          promoted.add(index);
+        } else {
+          try {
+            linkSync(tmp, p.abs);
+          } catch (err) {
+            if (errorCode(err) !== 'EEXIST') throw err;
+            throw new Error(`path already exists (add never overwrites): ${p.op.path}`);
+          }
+          promoted.add(index);
+          unlinkSync(tmp);
+          tmpFiles.delete(tmp);
+        }
+      }
+    } catch (err) {
+      failedIndex = current;
+      failure = errorMessage(err);
+    }
+
+    if (failedIndex < 0) {
+      return {
+        outcome: 'applied',
+        results: planned.map((p) => result(p.op, 'applied', p.op.operation === 'add' ? 'created' : 'updated')),
+      };
+    }
+
+    // Rollback, in reverse promotion order.
+    const restoreFailed = new Map<number, string>();
+    const cleanupErrors: string[] = [];
+    for (let index = planned.length - 1; index >= 0; index--) {
+      if (!promoted.has(index)) continue;
+      const p = planned[index] as PlannedChange;
+      try {
+        if (p.pre) {
+          const tmp = writeExclusiveTemp(p.abs, p.pre.buf, tmpFiles);
+          chmodSync(tmp, p.pre.mode);
+          renameSync(tmp, p.abs);
+          tmpFiles.delete(tmp);
+        } else {
+          unlinkSync(p.abs);
+        }
+      } catch (err) {
+        restoreFailed.set(index, errorMessage(err));
+      }
+    }
+    for (const tmp of tmpFiles) {
+      try {
+        unlinkSync(tmp);
+      } catch (err) {
+        if (errorCode(err) !== 'ENOENT') cleanupErrors.push(errorMessage(err));
+      }
+    }
+    for (const dir of [...createdDirs].reverse()) {
+      try {
+        rmdirSync(dir);
+      } catch (err) {
+        cleanupErrors.push(errorMessage(err));
+      }
+    }
+
+    const rollbackFailed = restoreFailed.size > 0 || cleanupErrors.length > 0;
+    const cleanupNote = cleanupErrors.length ? `; rollback cleanup failed: ${cleanupErrors.join('; ')}` : '';
+    const results = planned.map((p, index) => {
+      const restoreError = restoreFailed.get(index);
+      if (restoreError !== undefined) {
+        return result(p.op, 'applied', `rollback failed, the change may have applied: ${restoreError}`);
+      }
+      if (index === failedIndex) return result(p.op, 'failed', `${failure}${cleanupNote}`);
+      if (promoted.has(index)) {
+        const undone = p.op.operation === 'add' ? 'created, then removed' : 'updated, then restored';
+        return result(p.op, 'rolled_back', `${undone} (rolled back)`);
+      }
+      return result(p.op, 'skipped', `not applied: change set rolled back (${planned[failedIndex]?.op.path} failed)`);
+    });
+    return { outcome: rollbackFailed ? 'rollback_failed' : 'rolled_back', results };
   }
 }

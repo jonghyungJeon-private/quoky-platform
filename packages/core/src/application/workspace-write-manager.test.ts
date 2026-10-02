@@ -4,6 +4,7 @@ import { ApprovalStatus, PatchStatus, WorkspaceChangeStatus } from '../domain';
 import type {
   ApplyInput,
   ApprovalRef,
+  ChangeSetApplyResult,
   FileChangeResult,
   PatchOperation,
   PatchSet,
@@ -33,8 +34,20 @@ function patchSet(...operations: PatchOperation[]): PatchSet {
   };
 }
 
-/** In-memory storage + a writer whose per-path result is configurable. */
-function harness(writerFor: (op: PatchOperation) => FileChangeResult['status'] = () => 'applied') {
+/** In-memory storage + a writer whose per-path result (and change-set outcome) is configurable. */
+function harness(
+  writerFor: (op: PatchOperation) => FileChangeResult['status'] = () => 'applied',
+  changeSetFor: (ops: PatchOperation[]) => ChangeSetApplyResult = (ops) => ({
+    outcome: 'applied',
+    results: ops.map((op) => ({
+      path: op.path,
+      operation: op.operation,
+      status: 'applied',
+      message: 'ok',
+      durationMs: 1,
+    })),
+  }),
+) {
   const rows = new Map<string, WorkspaceChange>();
   const storage = {
     workspaceChanges: {
@@ -63,8 +76,9 @@ function harness(writerFor: (op: PatchOperation) => FileChangeResult['status'] =
     message: writerFor(op),
     durationMs: 1,
   }));
-  const writer: WorkspaceWriter = { kind: 'fake', applyOperation };
-  return { storage, writer, applyOperation, rows };
+  const applyChangeSet = vi.fn(async (_ref: WorkspaceRef, ops: PatchOperation[]) => changeSetFor(ops));
+  const writer: WorkspaceWriter = { kind: 'fake', applyOperation, applyChangeSet };
+  return { storage, writer, applyOperation, applyChangeSet, rows };
 }
 
 function input(over: Partial<ApplyInput> = {}): ApplyInput {
@@ -94,7 +108,9 @@ describe('WorkspaceWriteManager (CAP-006, ADR-0027)', () => {
     const { storage, writer } = harness();
     await expect(
       new WorkspaceWriteManager(storage, writer).apply(
-        input({ approvalRef: { id: 'a', status: ApprovalStatus.APPROVED, executionPlanRef: { id: 'OTHER', goal: 'z' } } }),
+        input({
+          approvalRef: { id: 'a', status: ApprovalStatus.APPROVED, executionPlanRef: { id: 'OTHER', goal: 'z' } },
+        }),
       ),
     ).rejects.toThrow(/different ExecutionPlan/);
   });
@@ -211,6 +227,130 @@ describe('WorkspaceWriteManager (CAP-006, ADR-0027)', () => {
     const ps = Object.freeze(patchSet());
     const snapshot = JSON.stringify(ps);
     await new WorkspaceWriteManager(storage, writer).apply(input({ patchSet: ps }));
+    expect(JSON.stringify(ps)).toBe(snapshot);
+  });
+});
+
+describe('WorkspaceWriteManager.applyChangeSet (ADR-0099)', () => {
+  const rolledBack = (ops: PatchOperation[]): ChangeSetApplyResult => ({
+    outcome: 'rolled_back',
+    results: ops.map((op, i) => ({
+      path: op.path,
+      operation: op.operation,
+      status: i === 0 ? 'failed' : 'skipped',
+      message: 'stale',
+      durationMs: 1,
+    })),
+  });
+
+  it('delegates the whole set to writer.applyChangeSet once → APPLIED, persisting every result', async () => {
+    const { storage, writer, applyOperation, applyChangeSet, rows } = harness();
+    const change = await new WorkspaceWriteManager(storage, writer).applyChangeSet(input());
+    expect(change.status).toBe(WorkspaceChangeStatus.APPLIED);
+    expect(change.results.map((r) => r.path)).toEqual(['a.ts', 'b.ts']);
+    expect(applyChangeSet).toHaveBeenCalledTimes(1);
+    expect(applyChangeSet).toHaveBeenCalledWith(workspaceRef, patchSet().operations);
+    expect(applyOperation).not.toHaveBeenCalled();
+    expect(rows.get(change.id)?.status).toBe(WorkspaceChangeStatus.APPLIED);
+  });
+
+  it('maps rolled_back → ROLLED_BACK and rollback_failed → PARTIALLY_APPLIED', async () => {
+    const rb = harness(undefined, rolledBack);
+    expect((await new WorkspaceWriteManager(rb.storage, rb.writer).applyChangeSet(input())).status).toBe(
+      WorkspaceChangeStatus.ROLLED_BACK,
+    );
+    const rf = harness(undefined, (ops) => ({ ...rolledBack(ops), outcome: 'rollback_failed' }));
+    expect((await new WorkspaceWriteManager(rf.storage, rf.writer).applyChangeSet(input())).status).toBe(
+      WorkspaceChangeStatus.PARTIALLY_APPLIED,
+    );
+  });
+
+  const resultOf = (op: PatchOperation, status: FileChangeResult['status'] = 'applied'): FileChangeResult => ({
+    path: op.path,
+    operation: op.operation,
+    status,
+    message: '',
+    durationMs: 1,
+  });
+  it.each([
+    ['a missing result', (ops: PatchOperation[]) => ops.slice(1).map((op) => resultOf(op))],
+    ['a non-applied result', (ops: PatchOperation[]) => ops.map((op, i) => resultOf(op, i ? 'skipped' : 'applied'))],
+    ['a reordered result', (ops: PatchOperation[]) => [...ops].reverse().map((op) => resultOf(op))],
+  ])('a claimed `applied` with %s is PARTIALLY_APPLIED, never APPLIED', async (_case, results) => {
+    const { storage, writer } = harness(undefined, (ops) => ({ outcome: 'applied', results: results(ops) }));
+    const change = await new WorkspaceWriteManager(storage, writer).applyChangeSet(input());
+    expect(change.status).toBe(WorkspaceChangeStatus.PARTIALLY_APPLIED);
+  });
+
+  it('keeps the approval Ref gate and plan-identity check (writer never called)', async () => {
+    const { storage, writer, applyChangeSet } = harness();
+    const mgr = new WorkspaceWriteManager(storage, writer);
+    await expect(
+      mgr.applyChangeSet(
+        input({ approvalRef: { id: 'a', status: ApprovalStatus.PENDING, executionPlanRef: planRef } }),
+      ),
+    ).rejects.toThrow(/APPROVED/);
+    await expect(
+      mgr.applyChangeSet(
+        input({
+          approvalRef: { id: 'a', status: ApprovalStatus.APPROVED, executionPlanRef: { id: 'OTHER', goal: 'z' } },
+        }),
+      ),
+    ).rejects.toThrow(/different ExecutionPlan/);
+    expect(applyChangeSet).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent on APPLIED and refuses a different revision of the same PatchSet', async () => {
+    const { storage, writer, applyChangeSet } = harness();
+    const mgr = new WorkspaceWriteManager(storage, writer);
+    const first = await mgr.applyChangeSet(input());
+    applyChangeSet.mockClear();
+    const second = await mgr.applyChangeSet(input());
+    expect(second.id).toBe(first.id);
+    expect(applyChangeSet).not.toHaveBeenCalled();
+    await expect(
+      mgr.applyChangeSet(input({ patchSet: patchSet({ path: 'c.ts', operation: 'add', diff: '@@\n+c' }) })),
+    ).rejects.toThrow(/different revision|refusing to reuse/);
+  });
+
+  it('re-attempts a ROLLED_BACK change for the same patchHash on the same aggregate', async () => {
+    let outcome: 'rolled_back' | 'applied' = 'rolled_back';
+    const { storage, writer, applyChangeSet } = harness(undefined, (ops) =>
+      outcome === 'rolled_back'
+        ? rolledBack(ops)
+        : { outcome: 'applied', results: ops.map((op) => resultOf(op)) },
+    );
+    const mgr = new WorkspaceWriteManager(storage, writer);
+    const first = await mgr.applyChangeSet(input());
+    expect(first.status).toBe(WorkspaceChangeStatus.ROLLED_BACK);
+    outcome = 'applied';
+    const second = await mgr.applyChangeSet(input());
+    expect(second.id).toBe(first.id);
+    expect(second.status).toBe(WorkspaceChangeStatus.APPLIED);
+    expect(applyChangeSet).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-attempts a FAILED change, but returns a PARTIALLY_APPLIED one unchanged (may have applied)', async () => {
+    const failed = harness(() => 'failed');
+    const mgrF = new WorkspaceWriteManager(failed.storage, failed.writer);
+    expect((await mgrF.apply(input())).status).toBe(WorkspaceChangeStatus.FAILED);
+    expect((await mgrF.applyChangeSet(input())).status).toBe(WorkspaceChangeStatus.APPLIED);
+    expect(failed.applyChangeSet).toHaveBeenCalledTimes(1);
+
+    const partial = harness(undefined, (ops) => ({ ...rolledBack(ops), outcome: 'rollback_failed' }));
+    const mgrP = new WorkspaceWriteManager(partial.storage, partial.writer);
+    const first = await mgrP.applyChangeSet(input());
+    expect(first.status).toBe(WorkspaceChangeStatus.PARTIALLY_APPLIED);
+    const second = await mgrP.applyChangeSet(input());
+    expect(second).toEqual(first);
+    expect(partial.applyChangeSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('never mutates the PatchSet', async () => {
+    const { storage, writer } = harness();
+    const ps = Object.freeze(patchSet());
+    const snapshot = JSON.stringify(ps);
+    await new WorkspaceWriteManager(storage, writer).applyChangeSet(input({ patchSet: ps }));
     expect(JSON.stringify(ps)).toBe(snapshot);
   });
 });

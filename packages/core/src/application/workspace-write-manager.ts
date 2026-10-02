@@ -4,9 +4,11 @@ import { contentHash } from '../util/hash';
 import { ApprovalStatus, WorkspaceChangeStatus, patchRef } from '../domain';
 import type {
   ApplyInput,
+  ChangeSetApplyResult,
   ExecutionPlanRef,
   FileChangeResult,
   Id,
+  PatchOperation,
   WorkspaceChange,
 } from '../domain';
 import type { StorageProvider, WorkspaceWriter } from '../ports';
@@ -30,13 +32,39 @@ function deriveStatus(results: FileChangeResult[]): WorkspaceChangeStatus {
   return WorkspaceChangeStatus.PARTIALLY_APPLIED;
 }
 
+/** Change-set re-attempt rule (ADR-0099): only when the workspace is known unchanged. */
+function isChangeSetRetryable(status: WorkspaceChangeStatus): boolean {
+  return status === WorkspaceChangeStatus.FAILED || status === WorkspaceChangeStatus.ROLLED_BACK;
+}
+
+/**
+ * Map an all-or-nothing change-set outcome (ADR-0099) to the aggregate status.
+ * APPLIED additionally requires one `applied` result per operation, in order; a
+ * writer that claims `applied` without that match is treated as "may have applied".
+ */
+function deriveChangeSetStatus(
+  ops: PatchOperation[],
+  result: ChangeSetApplyResult,
+): WorkspaceChangeStatus {
+  if (result.outcome === 'rolled_back') return WorkspaceChangeStatus.ROLLED_BACK;
+  if (result.outcome === 'rollback_failed') return WorkspaceChangeStatus.PARTIALLY_APPLIED;
+  const oneToOne =
+    result.results.length === ops.length &&
+    ops.every((op, i) => {
+      const r = result.results[i];
+      return r !== undefined && r.status === 'applied' && r.path === op.path && r.operation === op.operation;
+    });
+  return oneToOne ? WorkspaceChangeStatus.APPLIED : WorkspaceChangeStatus.PARTIALLY_APPLIED;
+}
+
 /**
  * CAP-006 Workspace Write (ADR-0027). Owns the `WorkspaceChange` aggregate — the
  * Execution History of applying a `PatchSet` — and is the ONLY capability that
  * mutates it. It READS the immutable `PatchSet` and references the plan/approval
  * via Refs; it never mutates PatchSet/ExecutionPlan/ApprovalRequest, never calls
  * git, never generates patches. File application is delegated to the
- * `WorkspaceWriter` adapter (atomic unit = file, best-effort across files).
+ * `WorkspaceWriter` adapter (atomic unit = file, best-effort across files), or —
+ * via `applyChangeSet` (ADR-0099) — to its all-or-nothing change-set mode.
  */
 export class WorkspaceWriteManager {
   constructor(
@@ -47,10 +75,56 @@ export class WorkspaceWriteManager {
   /**
    * Apply an approved PatchSet to its workspace. Best-effort: every operation is
    * attempted and recorded. Idempotency is `WorkspaceChange.status`-based: an
-   * already-APPLIED PatchSet is a no-op; FAILED/PARTIALLY_APPLIED/APPLYING are
-   * re-attempted on the same aggregate.
+   * already-APPLIED PatchSet is a no-op; FAILED/PARTIALLY_APPLIED/APPLYING (and a
+   * change-set ROLLED_BACK) are re-attempted on the same aggregate.
    */
   async apply(input: ApplyInput): Promise<WorkspaceChange> {
+    const { patchSet, workspaceRef } = input;
+    const begun = await this.begin(input, () => true);
+    if (begun.done) return begun.change;
+
+    // (4) Best-effort: attempt every operation; the writer encodes failures.
+    const results: FileChangeResult[] = [];
+    for (const op of patchSet.operations) {
+      results.push(await this.writer.applyOperation(workspaceRef, op));
+    }
+
+    // (5) Derive final status and persist the Execution History.
+    return this.finish(begun.change, input, deriveStatus(results), results);
+  }
+
+  /**
+   * Apply an approved PatchSet as ONE all-or-nothing change set (ADR-0099). Same
+   * approval Ref gate, plan-identity check and patchHash idempotency as `apply`;
+   * the writer's `applyChangeSet` does the two-phase write and rollback. Outcome →
+   * status: `applied` → APPLIED, `rolled_back` → ROLLED_BACK, `rollback_failed` →
+   * PARTIALLY_APPLIED ("may have applied").
+   *
+   * Re-attempts: only a FAILED or ROLLED_BACK change (workspace known unchanged) is
+   * re-attempted on the same aggregate. APPLIED is an idempotent no-op, and a
+   * PARTIALLY_APPLIED or APPLYING change is returned unchanged — its workspace state
+   * is unknown, and a re-run must never overwrite that record with a clean status.
+   */
+  async applyChangeSet(input: ApplyInput): Promise<WorkspaceChange> {
+    const { patchSet, workspaceRef } = input;
+    const begun = await this.begin(input, isChangeSetRetryable);
+    if (begun.done) return begun.change;
+
+    const ops = patchSet.operations;
+    const result = await this.writer.applyChangeSet(workspaceRef, ops);
+    return this.finish(begun.change, input, deriveChangeSetStatus(ops, result), result.results);
+  }
+
+  /**
+   * Steps (1)–(3) shared by both apply modes: the approval Ref gate, the revision
+   * contract with status-based idempotency, then create-or-reuse the aggregate and
+   * mark it APPLYING. Returns `done` with the existing change when it must not be
+   * re-attempted (APPLIED, or a status `retryable` rejects).
+   */
+  private async begin(
+    input: ApplyInput,
+    retryable: (status: WorkspaceChangeStatus) => boolean,
+  ): Promise<{ done: boolean; change: WorkspaceChange }> {
     const { patchSet, approvalRef, workspaceRef } = input;
 
     // (1) Approval gate — Ref only (no ApprovalManager query). Plan-scoped (CAP-005).
@@ -76,7 +150,10 @@ export class WorkspaceWriteManager {
             `refusing to reuse it for a different revision (${patchHash})`,
         );
       }
-      if (existing.status === WorkspaceChangeStatus.APPLIED) return existing; // idempotent no-op
+      // APPLIED is an idempotent no-op; a status the mode does not re-attempt is returned as is.
+      if (existing.status === WorkspaceChangeStatus.APPLIED || !retryable(existing.status)) {
+        return { done: true, change: existing };
+      }
     }
 
     // (3) Create or reuse the aggregate, mark APPLYING.
@@ -98,19 +175,21 @@ export class WorkspaceWriteManager {
       status: WorkspaceChangeStatus.APPLYING,
       updatedAt: ts,
     });
+    return { done: false, change: base };
+  }
 
-    // (4) Best-effort: attempt every operation; the writer encodes failures.
-    const results: FileChangeResult[] = [];
-    for (const op of patchSet.operations) {
-      results.push(await this.writer.applyOperation(workspaceRef, op));
-    }
-
-    // (5) Derive final status and persist the Execution History.
+  /** Persist the final status + per-file results (the Execution History). */
+  private async finish(
+    base: WorkspaceChange,
+    input: ApplyInput,
+    status: WorkspaceChangeStatus,
+    results: FileChangeResult[],
+  ): Promise<WorkspaceChange> {
     const change: WorkspaceChange = {
       ...base,
-      approvalRef,
-      workspaceRef,
-      status: deriveStatus(results),
+      approvalRef: input.approvalRef,
+      workspaceRef: input.workspaceRef,
+      status,
       results,
       updatedAt: now(),
     };
