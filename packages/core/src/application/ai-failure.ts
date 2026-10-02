@@ -24,6 +24,13 @@ const USER_MESSAGES: Record<AiFailureKind, string> = {
 };
 
 /**
+ * No provider is configured/ready at all (a setup problem, not a transient one), so it
+ * gets its own copy instead of the generic "try again later" UNAVAILABLE message.
+ */
+const NO_PROVIDER_USER_MESSAGE =
+  'AI가 아직 설정되지 않았어요. 관리자가 Claude CLI 설치·로그인 또는 로컬 AI(Ollama) 설정을 확인해야 합니다. 🔧';
+
+/**
  * Map any execution error to a classified, user-safe description (ADR-0015).
  * Never leaks raw provider/CLI internals into the user message. Unknown errors
  * are treated as EXECUTION_FAILED.
@@ -31,6 +38,7 @@ const USER_MESSAGES: Record<AiFailureKind, string> = {
 export function describeAiFailure(err: unknown): FailureDescription {
   let kind: AiFailureKind;
   let technical: string;
+  let userMessage: string | undefined;
 
   if (err instanceof AiProviderError) {
     kind = err.kind;
@@ -38,6 +46,7 @@ export function describeAiFailure(err: unknown): FailureDescription {
   } else if (err instanceof NoProviderAvailableError) {
     kind = AiFailureKind.UNAVAILABLE;
     technical = err.message;
+    userMessage = NO_PROVIDER_USER_MESSAGE;
   } else {
     kind = AiFailureKind.EXECUTION_FAILED;
     technical = err instanceof Error ? err.message : String(err);
@@ -45,7 +54,7 @@ export function describeAiFailure(err: unknown): FailureDescription {
 
   return {
     kind,
-    userMessage: USER_MESSAGES[kind],
+    userMessage: userMessage ?? USER_MESSAGES[kind],
     errorSummary: `${kind}: ${technical}`.slice(0, 500),
   };
 }
