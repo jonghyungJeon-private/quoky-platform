@@ -4771,6 +4771,45 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     },
   );
 
+  it.each(['git push 명령을 한국어로 번역해줘', '푸시 로직을 검토해줘', '푸시 코드 리뷰해줘', 'push 관련 문서 정리해줘', '푸시 알림 문구 다듬어줘', 'git push 결과를 요약해줘'])(
+    'no anchor + ordinary request merely mentioning push "%s" → ordinary chat (Codex W8 P2)',
+    async (text) => {
+      expect(ConversationRuntime.interpretNoAnchorPushRequest(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).not.toBe(composer.composeNoPushTarget(CTX).text);
+      expect(result.reply.text).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      expect(calls.classify).toBe(1);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each(['git push origin feature/x', 'git push -u origin feature/x', '푸시 좀 해줘', '원격에 올려줘', 'push it', 'please push to origin'])(
+    'no anchor + push request / plain git push command "%s" → no-push-target reply (Codex W8 P2)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).toBe(composer.composeNoPushTarget(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each([
+    'git push --force origin feature/x',
+    'git push -f origin main',
+    'git push --force-with-lease origin feature/x',
+    'git push origin --delete feature/x',
+    'git push origin :feature/x',
+    'git push origin +main',
+  ])('no anchor + force / delete git push command "%s" → unsupported companion reply (Codex W8 P2)', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(result.reply.text).toBe(composer.composePushUnsupportedCompanion(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.gitPush).toBe(0);
+  });
+
   it('WORKSPACE_APPLIED + push phrase → existing 2w mutating reject, no push approval (CA 7)', async () => {
     const { deps, calls } = makeDeps({ applyAnchor: approvedAnchorOf({ status: 'WORKSPACE_APPLIED', workspaceChangeRef: { id: 'wc-1', status: WorkspaceChangeStatus.APPLIED } }) });
     const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
@@ -6624,7 +6663,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
 
   it('post-push chain states + push/push-execution phrase → already pushed, no provider/git/hosting call, anchor unchanged', async () => {
     for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
-      for (const text of ['푸시 실행', '푸시해줘', 'push', '승인된 push 실행해줘']) {
+      for (const text of ['푸시 실행', '푸시해줘', 'push', '승인된 push 실행해줘', 'git push origin feature/x', 'execute approved push', '푸시 실행해도 돼?']) {
         const anchor = anchorOf();
         const { deps, calls } = makeDeps({ applyAnchor: anchor });
         const r = await new ConversationRuntime(deps).handle(messageOf(text));
@@ -6640,7 +6679,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
 
   it('post-push chain states + push with force/merge/deploy companion → unsupported companion reply, nothing executed', async () => {
     for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
-      for (const text of ['강제 푸시해줘', 'force push', 'git push --force', '푸시하고 머지해줘', '푸시하고 배포해줘']) {
+      for (const text of ['강제 푸시해줘', 'force push', 'git push --force', '푸시하고 머지해줘', '푸시하고 배포해줘', 'git push --force origin feature/x', 'git push -f origin main']) {
         const { deps, calls } = makeDeps({ applyAnchor: anchorOf() });
         const r = await new ConversationRuntime(deps).handle(messageOf(text));
         const key = `${label}: ${text}`;
@@ -6652,7 +6691,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
 
   it('post-push chain states + a push question/topic mention → not the already-pushed reply (stays chat)', async () => {
     for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
-      for (const text of ['git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'git push와 pull의 차이']) {
+      for (const text of ['git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'git push와 pull의 차이', 'git push 명령을 한국어로 번역해줘', '푸시 로직을 검토해줘']) {
         const anchor = anchorOf();
         const { deps, calls } = makeDeps({ applyAnchor: anchor });
         const r = await new ConversationRuntime(deps).handle(messageOf(text));
@@ -7340,6 +7379,115 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
       const { deps, calls } = makeDeps({ applyAnchor: anchor, approvalsGetResult: approvedApprovalOf() });
       await new ConversationRuntime(deps).handle(messageOf('원격 브랜치 삭제 실행해줘'));
       expect(calls.hostingDeleteRemoteBranch, String(anchor?.status)).toBe(0);
+    }
+  });
+
+  // ── Codex wave-8 review (P1): push phrases at a destructive approved state never reach another step's execution. ──
+  const DESTRUCTIVE_CALLS = (c: { hostingDeleteRemoteBranch: number; hostingMergePR: number; gitSyncMain: number; gitDeleteBranch: number; gitPush: number; hostingCreatePR: number }) =>
+    c.hostingDeleteRemoteBranch + c.hostingMergePR + c.gitSyncMain + c.gitDeleteBranch + c.gitPush + c.hostingCreatePR;
+  const PUSH_PHRASES_AT_APPROVED_STEP = [
+    'execute approved push',
+    '푸시 실행해도 돼?',
+    'push 실행해줘',
+    '승인된 push 실행해줘',
+    '푸시해줘',
+    'push approved commit',
+    'git push origin feature/x',
+    'git push --force origin feature/x',
+    '강제 푸시 실행해줘',
+  ];
+
+  it('Codex W8 P1: REMOTE_BRANCH_CLEANUP_APPROVED (valid approval) + push phrase → already pushed / unsupported, ZERO deleteRemoteBranch', async () => {
+    for (const text of PUSH_PHRASES_AT_APPROVED_STEP) {
+      const anchor = REMOTE_CLEANUP_APPROVED_ANCHOR();
+      const { deps, calls } = makeDeps({ applyAnchor: anchor, approvalsGetResult: approvedApprovalOf() });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+      expect(calls.applyAnchorSet, text).toBe(0);
+      expect([
+        composer.composePushAlreadyPushed(CTX, { commitHash: anchor.pushedCommitHash, remote: anchor.pushedRemote, branch: anchor.pushedBranch }).text,
+        composer.composePushUnsupportedCompanion(CTX).text,
+      ], text).toContain(r.reply.text);
+    }
+  });
+
+  it('Codex W8 P1: MERGE_APPROVED / PR_MERGED / MAIN_SYNCED (valid approval) + push phrase → no merge / sync / branch delete', async () => {
+    for (const anchorOf of [() => MERGE_APPROVED_ANCHOR(), () => PR_MERGED_ANCHOR(), () => MAIN_SYNCED_ANCHOR(), () => BRANCH_CLEANED_ANCHOR()]) {
+      for (const text of PUSH_PHRASES_AT_APPROVED_STEP) {
+        const anchor = anchorOf();
+        const { deps, calls } = makeDeps({ applyAnchor: anchor, approvalsGetResult: approvedPrRequest() });
+        await new ConversationRuntime(deps).handle(messageOf(text));
+        expect(DESTRUCTIVE_CALLS(calls) + calls.requestForRisk, `${anchor.status}: ${text}`).toBe(0);
+      }
+    }
+  });
+
+  it('Codex W8 P1 (defense in depth): the remote-cleanup execution grammar matches only its own explicit phrases', () => {
+    for (const text of [
+      'execute approved push', '푸시 실행해도 돼?', 'push 실행', '머지 실행해줘', 'PR 생성 실행', 'main 동기화 실행해줘', '커밋 실행',
+      '배포 진행해줘', '지금 몇 시야?', '진행 상황 알려줘', '원격 브랜치 삭제했어', '원격 브랜치 삭제 실행해도 돼?', '원격 브랜치 상태 지금 알려줘',
+      '원격 브랜치 삭제 실행하지 마', 'execute the release now',
+    ]) {
+      expect(ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(text), text).toBeNull();
+    }
+    for (const text of ['원격 브랜치 삭제 실행해줘', '지금 원격 브랜치 삭제해줘', 'execute remote branch cleanup', 'proceed', '실행해줘', '진행해', 'go ahead', '원격 브랜치 삭제 진행해줘', '머지된 원격 브랜치 삭제 실행해줘']) {
+      expect(ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(text), text).toBe('execute');
+    }
+  });
+
+  it('Codex W8 P1: REMOTE_BRANCH_CLEANUP_APPROVED + non-cleanup / statement / question phrase → no delete', async () => {
+    for (const text of ['머지 실행해줘', 'main 동기화 실행해줘', '지금 몇 시야?', '진행 상황 알려줘', '원격 브랜치 삭제했어', '원격 브랜치 삭제 실행해도 돼?', '원격 브랜치 삭제 실행하지 마']) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 P1: the legitimate remote-cleanup execution phrases still execute exactly ONE delete', async () => {
+    for (const text of ['실행해줘', '진행해', 'go ahead', '원격 브랜치 삭제 진행해줘', '머지된 원격 브랜치 삭제 실행해줘']) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingDeleteRemoteBranch, text).toBe(1);
+      expect(calls.lastApplyAnchor?.status, text).toBe('REMOTE_BRANCH_CLEANED');
+    }
+  });
+
+  it('Codex W8 audit: merge execution needs the verb attached to the merge word and no foreign chain verb', async () => {
+    for (const text of ['브랜치 삭제하고 머지해줘', '머지하고 배포해줘', '머지 로그 요약해줘', '머지 관련 문서 정리해줘', '머지 후 main 동기화해줘', '강제 머지해줘']) {
+      expect(ConversationRuntime.interpretMergeExecutionIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+    for (const text of ['머지해줘', '이 PR 머지해줘', 'merge this PR', '실제 머지해줘', '이제 머지 실행해줘', '승인된 PR 머지해줘', 'merge now', 'execute merge', '머지 해 줘']) {
+      expect(ConversationRuntime.interpretMergeExecutionIntent(text), text).toBe('execute');
+    }
+  });
+
+  it('Codex W8 audit: main sync never fires on a pull request / push / branch-delete phrase', async () => {
+    for (const text of ['main으로 pull request 만들어줘', 'main에 푸시하고 동기화해줘', 'main 동기화하고 브랜치 삭제해줘', 'main 강제 sync 해줘']) {
+      expect(ConversationRuntime.interpretMainSyncIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+    for (const text of ['main 동기화해줘', '로컬 main 최신화해줘', '머지된 main 받아와줘', 'sync main', 'update local main', 'pull main']) {
+      expect(ConversationRuntime.interpretMainSyncIntent(text), text).toBe('sync');
+    }
+  });
+
+  it('Codex W8 audit: local branch cleanup never fires on a statement / summary / other chain verb', async () => {
+    for (const text of ['브랜치 정리 완료', '브랜치 삭제했어', '브랜치 삭제 로그를 요약해줘', '브랜치 정리 상태 확인해줘', '브랜치 정리하고 푸시해줘', '브랜치 머지하고 삭제해줘', '브랜치 정리했어?']) {
+      expect(ConversationRuntime.interpretBranchCleanupIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(DESTRUCTIVE_CALLS(calls), text).toBe(0);
+    }
+    for (const text of ['로컬 브랜치 정리해줘', 'merged branch 정리해줘', 'feature branch 삭제해줘', 'cleanup local branch', 'delete local merged branch', '머지된 브랜치 정리해줘']) {
+      expect(ConversationRuntime.interpretBranchCleanupIntent(text), text).toBe('local');
+    }
+    for (const text of ['원격 브랜치 삭제했어', '원격 브랜치 삭제 로그 보여줘', '원격 브랜치 정리하고 푸시해줘']) {
+      expect(ConversationRuntime.interpretRemoteBranchCleanupIntent(text), text).toBeNull();
     }
   });
 

@@ -151,6 +151,13 @@ describe('detectGitBranchDeleteRequest (QA-V2-W8)', () => {
     '브랜치 정리해줘',
     'git branch -D feature/x',
     'git branch --delete feature/x',
+    '브랜치 삭제해 줘',
+    '브랜치 feature/x 삭제해줘',
+    'feature/x 브랜치 제거해줘',
+    '브랜치를 지워줘',
+    'delete the local branch',
+    'delete feature/x branch',
+    'clean up branch',
   ])('%s → delete request', (text) => {
     expect(detectGitBranchDeleteRequest(text)).toBe(true);
   });
@@ -165,6 +172,16 @@ describe('detectGitBranchDeleteRequest (QA-V2-W8)', () => {
     '브랜치 만들어줘 feature/x',
     '커밋해줘',
     '',
+    // Codex wave-8 review: statements, past tense and requests whose main verb is not the delete
+    '브랜치 삭제했어',
+    '브랜치 정리 완료',
+    '브랜치 삭제 로그를 요약해줘',
+    '브랜치 삭제 기록 보여줘',
+    '브랜치 정리했음',
+    '브랜치 지웠어',
+    '브랜치 삭제 완료됐어',
+    '브랜치 정리 관련 문서 작성해줘',
+    'branch deleted',
   ])('%s → not a delete request', (text) => {
     expect(detectGitBranchDeleteRequest(text)).toBe(false);
   });
