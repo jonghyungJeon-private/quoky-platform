@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Quoky Personal v1 — Live UAT hotfixes — 2026-10-02
+
+Found by the attended Live UAT (`docs/uat/first-release-uat-result-2026-10-02.md`).
+
+**Fixed**
+- Every live AI turn failed: the composition root captured `storage.taskRuns` before `storage.init()` (regression since R3).
+- Claude CLI ran "Not logged in": `USER` is now forwarded to the child (macOS Keychain login); stdout auth errors map to the login hint.
+- Code-change preview now sends the target file's current content (`contextFiles`) and treats an empty proposal as a failure.
+- Memory: `기억해:` refuses passwords/keys/tokens (write gate + read-time exclusion); empty `기억해:` shows a usage hint.
+- Code preview refuses files whose content or name looks like credentials; never sends them to the AI.
+- With nothing pending, "승인/거절/취소" gets a deterministic reply (no fabricated approval).
+- Korean risk label instead of internal English reasons; path-specific replies for relative registration and rejected targets;
+  accurate push/commit copy; "커밋 실행" named after commit approval; `main`/`master` commit refused up front.
+- Help/quickstart: prefer `도움말`/`새 대화` (Discord's slash picker intercepts `/help`); Ollama context/model-tag troubleshooting.
+
 ## Quoky Personal v1 — first release (waves 1-3) — 2026-10-02
 
 First product release for daily single-owner use (ADR-0091..0094 + ADR-0073 amendment). Setup:
