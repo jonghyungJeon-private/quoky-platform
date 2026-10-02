@@ -136,6 +136,15 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | W8-4 | 도움말 | PASS — v2 help lines present (memory, override, multi/new files, feedback, branch, reminders, to-dos, lookups) |
 | W8-1 | git push가 뭐야? (PR_CREATED) | FAIL QA-V2-W8-01 (MINOR) — the W7-02 post-push block answered "이미 push했어요" to a conceptual question → FIXED d804fd8 (strict request shape; golden route-055/056); retest PASS — ordinary chat answer |
 
+### Wave 8 — after the Codex-driven routing hardening (ab5c541, 0a0cfd1)
+
+| ID | Input (anchor PR_CREATED) | Result |
+|---|---|---|
+| W8-6 | 푸시 로직을 검토해줘 | PASS routing — ordinary chat (no push reply). NOTE: local answer "푸시 로직은 이미 진행된 일입니다…" is vague |
+| W8-7 | 브랜치 삭제했어 | PASS routing — not the delete refusal. NOTE QA-V2-W8-02 (MINOR, model quality): the local model affirmed "삭제된 상태가 맞습니다" without seeing git state → v3 DET/LLM (no unverifiable state confirmations) |
+| W8-8 | git push --force origin feature/quoky-uat-1 | PASS — unsupported-companion reply, no push |
+| W8-9 | 머지해줘 | PASS — merge disabled reply, no approval |
+
 ## Findings index
 
 | ID | Severity | Summary | State |
@@ -157,6 +166,7 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | G11 (config) | operator | PR status says it could not check: the GitHub App lacks the Checks permission | Operator configuration, see `docs/uat/operator-guide.md`; partial status without Checks is a v3 candidate |
 | G5 (note) | MINOR | The proposed PR title is the raw instruction text | OPEN, v3 (generated PR title/body) |
 | QA-V2-W8-01 | MINOR | Conceptual push question at a post-push state got the already-pushed reply | FIXED d804fd8, retest PASS |
+| QA-V2-W8-02 | MINOR (model quality) | Local model affirmed an unverifiable git state ("브랜치 삭제했어" → "삭제된 상태가 맞습니다") | OPEN, v3 (DET/LLM) |
 | INT-1 (offline) | MEDIUM | No-anchor push/force-push and branch-delete phrases fell through to chat (provider call) | FIXED a23776c (deterministic replies, golden route-047..054); W8-2 live PASS |
 
 ## Not live-verified (still pending)
