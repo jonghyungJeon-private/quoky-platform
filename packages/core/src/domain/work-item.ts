@@ -82,9 +82,25 @@ export class WorkItemTitleError extends Error {
   }
 }
 
-/** Trim, collapse whitespace runs to one space, and require 1..200 characters. */
+/**
+ * Invisible or control characters that would let a title look blank or spoof
+ * the renderer: C0/C1 controls, zero-width characters, and bidi overrides or
+ * isolates. Whitespace controls (tab, newline) are collapsed before this runs.
+ */
+const INVISIBLE_TITLE_CHARS = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+/**
+ * Collapse whitespace runs to one space, strip invisible/control characters,
+ * trim, and require 1..200 characters. Mention/markdown escaping is a renderer
+ * duty. Whether a title is required (ADR-0100 D4: conversation-origin items) is
+ * enforced by the creating command (WORK-T3 todo.add), not by this aggregate.
+ */
 export function normalizeWorkItemTitle(raw: string): string {
-  const title = raw.replace(/\s+/g, ' ').trim();
+  const title = raw
+    .replace(/\s+/g, ' ')
+    .replace(INVISIBLE_TITLE_CHARS, '')
+    .replace(/ {2,}/g, ' ')
+    .trim();
   if (title.length === 0) throw new WorkItemTitleError('EMPTY');
   if (Array.from(title).length > WORK_ITEM_MAX_TITLE_LENGTH) {
     throw new WorkItemTitleError('TOO_LONG');
@@ -105,6 +121,13 @@ export class WorkItemCorrelationError extends Error {
   }
 }
 
+/** Refuse a de-duplicated ResourceRef set larger than the WorkItem maximum. */
+export function assertResourceRefCapacity(refs: readonly ResourceRef[]): void {
+  if (refs.length > WORK_ITEM_MAX_RESOURCE_REFS) {
+    throw new WorkItemCorrelationError('TOO_MANY_REFS');
+  }
+}
+
 /**
  * Merge ResourceRefs into an ACTIVE WorkItem, de-duplicated by identity. Returns
  * a new value; when nothing new is added the item is returned unchanged.
@@ -116,9 +139,7 @@ export function correlateWorkItem(
 ): WorkItem {
   if (item.status !== WorkItemStatus.ACTIVE) throw new WorkItemCorrelationError('NOT_ACTIVE');
   const merged = uniqueResourceRefs([...item.resourceRefs, ...refs]);
-  if (merged.length > WORK_ITEM_MAX_RESOURCE_REFS) {
-    throw new WorkItemCorrelationError('TOO_MANY_REFS');
-  }
   if (merged.length === item.resourceRefs.length) return item;
+  assertResourceRefCapacity(merged);
   return { ...item, resourceRefs: merged, updatedAt };
 }

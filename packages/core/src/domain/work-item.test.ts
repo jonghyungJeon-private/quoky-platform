@@ -107,6 +107,8 @@ describe('normalizeWorkItemTitle (ADR-0100 D4)', () => {
   it.each([
     ['', 'EMPTY'],
     [' \n\t ', 'EMPTY'],
+    ['\u200B', 'EMPTY'],
+    ['\u200B \u0000\u202E\uFEFF', 'EMPTY'],
     ['x'.repeat(201), 'TOO_LONG'],
     [`  ${'x'.repeat(201)}  `, 'TOO_LONG'],
   ])('rejects %j with %s', (raw, code) => {
@@ -117,6 +119,12 @@ describe('normalizeWorkItemTitle (ADR-0100 D4)', () => {
       expect(error).toBeInstanceOf(WorkItemTitleError);
       expect((error as WorkItemTitleError).code).toBe(code);
     }
+  });
+
+  it('strips control, zero-width and bidi-override characters', () => {
+    expect(normalizeWorkItemTitle('a\u0000b\u0007c')).toBe('abc');
+    expect(normalizeWorkItemTitle('abc\u202Eevil\u200B')).toBe('abcevil');
+    expect(normalizeWorkItemTitle('a \u200B b')).toBe('a b');
   });
 
   it('normalizes before measuring length', () => {
@@ -149,6 +157,16 @@ describe('correlateWorkItem (ADR-0100 D4)', () => {
     expect(
       correlateWorkItem(item, [new ResourceRef({ source: 'jira', externalId: 'CAP-11' })], later),
     ).toBe(item);
+  });
+
+  it('returns an over-cap legacy item unchanged when nothing new is added', () => {
+    const refs = Array.from(
+      { length: WORK_ITEM_MAX_RESOURCE_REFS + 2 },
+      (_, i) => new ResourceRef({ source: 'github', externalId: `r${i}` }),
+    );
+    const item = { ...activeWorkItem(), resourceRefs: refs };
+    expect(correlateWorkItem(item, [], later)).toBe(item);
+    expect(correlateWorkItem(item, [refs[0]!], later)).toBe(item);
   });
 
   it.each([WorkItemStatus.COMPLETED, WorkItemStatus.CANCELED])('refuses a %s item', (status) => {

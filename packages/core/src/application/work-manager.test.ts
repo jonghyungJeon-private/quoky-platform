@@ -125,6 +125,47 @@ describe('WorkManager (CAP-011, ADR-0100 D4)', () => {
     expect(workItems.items.get(created.id)?.resourceRefs).toHaveLength(WORK_ITEM_MAX_RESOURCE_REFS);
   });
 
+  it('refuses create with more than the maximum refs and saves nothing', async () => {
+    const { manager, workItems } = harness();
+    const refs = Array.from({ length: WORK_ITEM_MAX_RESOURCE_REFS + 1 }, (_, i) => ref(`A-${i}`));
+    const error = await manager
+      .create({ actorId: 'actor-1', origin: 'conversation', resourceRefs: refs })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(WorkItemCorrelationError);
+    expect((error as WorkItemCorrelationError).code).toBe('TOO_MANY_REFS');
+    expect(workItems.items.size).toBe(0);
+  });
+
+  it('accepts create with refs that de-duplicate to the maximum', async () => {
+    const { manager } = harness();
+    const unique = Array.from({ length: WORK_ITEM_MAX_RESOURCE_REFS }, (_, i) => ref(`A-${i}`));
+    const created = await manager.create({
+      actorId: 'actor-1',
+      origin: 'conversation',
+      resourceRefs: [...unique, ref('A-0'), ref('A-1')],
+    });
+    expect(created.resourceRefs).toHaveLength(WORK_ITEM_MAX_RESOURCE_REFS);
+  });
+
+  it('does not reopen a terminal item when transition and correlate race', async () => {
+    const { manager, workItems } = harness();
+    const created = await manager.create({ actorId: 'actor-1', origin: 'conversation' });
+    const baseGet = workItems.get.bind(workItems);
+    workItems.get = async (id: Id) => {
+      const item = await baseGet(id);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return item;
+    };
+    const results = await Promise.allSettled([
+      manager.transition(created.id, WorkItemStatus.COMPLETED),
+      manager.correlate(created.id, [ref('A-1')]),
+    ]);
+    expect(results[0].status).toBe('fulfilled');
+    expect(results[1].status).toBe('rejected');
+    expect(workItems.items.get(created.id)?.status).toBe(WorkItemStatus.COMPLETED);
+    expect(workItems.items.get(created.id)?.resourceRefs).toEqual([]);
+  });
+
   it.each([WorkItemStatus.COMPLETED, WorkItemStatus.CANCELED])(
     'refuses to correlate a %s item and keeps it terminal',
     async (status) => {
