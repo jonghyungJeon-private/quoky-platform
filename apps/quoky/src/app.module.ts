@@ -52,6 +52,7 @@ import {
   StatelessApprovalFlow,
   StatelessScopeClarificationFlow,
   StatelessApplyPreviewFlow,
+  StatelessCredentialOverrideFlow,
   ConnectorManager,
   WorkSurfaceQuery,
   WorkManager,
@@ -554,6 +555,9 @@ const application: Provider[] = [
       // ADR-0040: production ApplyPreviewFlow — a plan-less inert conversation anchor, never discoverable by
       // StatelessApprovalFlow's plan-scoped lookup.
       const applyPreviewFlow = new StatelessApplyPreviewFlow(storage);
+      // ADR-0097: the one-time, hash-bound CRITICAL credential-guard override — grants live only on its inert
+      // plan-less anchor Task (same live storage seam, ADR-0062); the shared clock bounds its 30-minute TTL.
+      const credentialOverrideFlow = new StatelessCredentialOverrideFlow(storage);
       return createProductionConversationRuntime(memory, {
         dispatchCommit: createProviderDispatchCommit(storage),
         actors,
@@ -605,6 +609,8 @@ const application: Provider[] = [
         runtimeProviderRouting,
         // ADR-0096: the statically composed turn-handler registry (features/*.providers.ts → aggregator).
         turnHandlers,
+        // ADR-0097 (deps baseline 33 → 34): the credential-guard override flow.
+        credentialOverrideFlow,
         logger: coreLogger,
       }, { gitRemoteEnabled: config.git.remoteEnabled });
     },

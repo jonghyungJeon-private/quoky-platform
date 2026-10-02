@@ -1114,6 +1114,10 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     },
     // ADR-0096: the empty turn-handler registry — every existing scenario runs with no handler registered.
     turnHandlers: [],
+    // ADR-0097: the credential-override dep slot (baseline 34) is present but unwired here, so every existing
+    // scenario keeps the terminal credential refusal; the override is driven end-to-end, with the real flow, in
+    // conversation-runtime-credential-override.test.ts.
+    credentialOverrideFlow: undefined,
     logger: {
       ...silentLogger,
       warn: (message: string, fields?: LogFields) => {
@@ -1164,10 +1168,11 @@ describe('ConversationRuntime', () => {
     expect(result.reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
   });
 
-  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 33 (ADR-0096)', () => {
+  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 34 (ADR-0096, ADR-0097)', () => {
     const { deps } = makeDeps();
-    expect(Object.keys(deps)).toHaveLength(33);
+    expect(Object.keys(deps)).toHaveLength(34);
     expect(Object.keys(deps)).toContain('turnHandlers');
+    expect(Object.keys(deps)).toContain('credentialOverrideFlow');
     expect(Object.keys(deps)).not.toContain('risk');
     expect(Object.keys(deps)).toContain('workSurface');
   });

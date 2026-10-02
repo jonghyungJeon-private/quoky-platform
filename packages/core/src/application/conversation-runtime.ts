@@ -121,10 +121,23 @@ import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
+  type CredentialOverrideGrant,
   MAX_CODEGEN_CONTEXT_FILE_BYTES,
   MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
   readCodeGenerationContextFiles,
 } from './code-generation-context';
+import {
+  CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
+  CREDENTIAL_OVERRIDE_DENY_COMMENT,
+  type CredentialOverrideAnchor,
+  type CredentialOverrideFlow,
+  type CredentialOverrideInvalidationReason,
+  type CredentialOverrideLookup,
+  type CredentialOverrideRefusal,
+  assessCredentialOverrideCoverage,
+  interpretCredentialOverrideDecision,
+  isStrayCredentialOverridePhrase,
+} from './credential-override';
 import { MAX_COMMIT_MESSAGE_CHARS, isValidCommitMessage } from './commit-message';
 import { isSafePushBranch, isSafePushRemote } from './push-target';
 import {
@@ -786,6 +799,12 @@ export interface ConversationRuntimeDeps {
    * rejected at construction; dispatch order is `(stage, order, id)`.
    */
   readonly turnHandlers?: readonly ConversationTurnHandler[];
+  /**
+   * One-time, hash-bound CRITICAL owner override for a credential-guard refusal in the code-change preview
+   * (ADR-0097; amends ADR-0032: baseline 33 → 34). OPTIONAL: when absent every credential refusal stays terminal
+   * (fail closed) and no override phrase is recognized.
+   */
+  readonly credentialOverrideFlow?: CredentialOverrideFlow;
   readonly logger: Logger;
 }
 
@@ -816,6 +835,11 @@ interface PendingApprovalLookup {
   pendingScope: PendingScopeClarification | null;
   /** Looked up only when neither a plan-scoped approval nor a scope clarification is pending. */
   applyAnchor: ApplyPreviewAnchor | null;
+  /**
+   * The session's credential-override set (ADR-0097), looked up after the scope clarification and before the
+   * apply-preview anchor (the same session pointer, so at most one of them is ever set).
+   */
+  override: CredentialOverrideLookup | null;
   pending: ApprovalRequest | null;
 }
 
@@ -1744,7 +1768,7 @@ export class ConversationRuntime {
 
   private async handleInner(message: InboundMessage): Promise<TurnResult> {
     const actor = await this.deps.actors.resolveFromContext(message.context);
-    const session = await this.deps.sessions.openForContext(message.context, actor.id);
+    let session = await this.deps.sessions.openForContext(message.context, actor.id);
     await this.deps.sessions.touch(session);
 
     // (0) Conversation control + pending-approval lifetime (ADR-0093) — BEFORE memory capture, approval/anchor
@@ -1761,6 +1785,17 @@ export class ConversationRuntime {
         lookup.pending,
         PENDING_APPROVAL_TTL_MS,
       );
+    }
+    // ADR-0097 D5: a credential-override set that is no longer live released its anchor pointer on the canonical
+    // session (invalidated now, or consumed earlier). Mirror the release on this turn's copy so no later save in
+    // this turn re-points the session at the terminal anchor; an invalidation is answered like an expiry.
+    if (lookup.override && (expiryNotice || lookup.override.state === 'invalidated' || lookup.override.state === 'consumed')) {
+      if (lookup.override.state === 'invalidated') {
+        expiryNotice = await this.closeInvalidatedCredentialOverride(message, session, lookup.override);
+      } else if (lookup.override.state === 'consumed') {
+        await this.deps.credentialOverrideFlow?.clear(session); // a pointer left on a consumed set: release it
+      }
+      session = { ...session, activeTaskId: undefined };
     }
     if (control) {
       return this.handleControlTurn(message, session, actor, control, expiryNotice ? null : lookup.pending, expiryNotice);
@@ -1809,6 +1844,19 @@ export class ConversationRuntime {
         return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
       }
       await this.deps.scopeClarificationFlow.clear(session);
+    }
+
+    // (A2b) Credential-override routing (ADR-0097 D4) — after the scope clarification and before every
+    // `post-anchor` / `pre-classify` handler stage (only `control` ran above). A live set (one CRITICAL override
+    // awaiting its decision, or a fully granted set awaiting its single dispatch) intercepts EVERY turn; only the
+    // dedicated send phrase sends, so "승인"/"좋아"/"ok" re-prompt. A send phrase for an already-consumed set gets the
+    // "already used" reply (never a replay).
+    const override = lookup.override;
+    if (override?.state === 'awaiting-decision' || override?.state === 'ready') {
+      return this.handleCredentialOverrideTurn(message, session, actor, override);
+    }
+    if (override?.state === 'consumed' && isStrayCredentialOverridePhrase(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeCredentialOverrideAlreadyUsed(message.context));
     }
 
     // (A3) Apply-preview routing (Sprint 2s, ADR-0040) — checked after approvalFlow/scopeClarificationFlow
@@ -2201,6 +2249,10 @@ export class ConversationRuntime {
     // QA-018: every pending approval/anchor decision route has already run above, so a bare decision word here
     // ("승인", "거절", "취소", "ok") decides nothing. Answer deterministically — no provider call, no Task — so a
     // chat model can never claim an approval was accepted.
+    // ADR-0097 D4: likewise a credential-override send phrase with nothing pending sends nothing and says so.
+    if (this.deps.credentialOverrideFlow && isStrayCredentialOverridePhrase(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoPendingCredentialOverride(message.context));
+    }
     if (interpretStrayDecisionUtterance(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
     }
@@ -2304,7 +2356,10 @@ export class ConversationRuntime {
         return this.respondComposed(message, session, this.deps.composer.composeProjectPathNotAbsolute(message.context));
       }
       const path = typeof intent.raw?.path === 'string' ? intent.raw.path : '';
-      const result = await this.deps.projects.register(path, session);
+      // ADR-0097 D5 (OVR-3 contract): a project switch goes through the override flow FIRST so it is serialized
+      // with an in-flight consume; a released anchor pointer is not written back by the registration.
+      const released = await this.deps.credentialOverrideFlow?.invalidate(session, 'project-changed', 'system');
+      const result = await this.deps.projects.register(path, released ? { ...session, activeTaskId: undefined } : session);
       await this.deps.memory.recordAssistant(result.message, message.context, session.id);
       return this.responded(session, { context: message.context, text: result.message });
     }
@@ -2353,22 +2408,32 @@ export class ConversationRuntime {
   /**
    * Derive the approval holding this conversation, if any (ADR-0093), with the same lookups and order the
    * routing below uses: `approvalFlow.findPending` (plan-scoped, ADR-0032), then the scope clarification
-   * (ADR-0037, which holds no approval), then the apply-preview anchor, whose `*_PENDING` status names the
+   * (ADR-0037, which holds no approval), then the credential-override set (ADR-0097, whose reconstruction re-reads
+   * every ApprovalRequest of the set), then the apply-preview anchor, whose `*_PENDING` status names the
    * PENDING request id (re-read through `approvals.get`, never trusted blindly).
    */
   private async findPendingApproval(session: Session): Promise<PendingApprovalLookup> {
     const planPending = await this.deps.approvalFlow.findPending(session);
-    if (planPending) return { planPending, pendingScope: null, applyAnchor: null, pending: planPending };
+    if (planPending) return { planPending, pendingScope: null, applyAnchor: null, override: null, pending: planPending };
     const pendingScope = await this.deps.scopeClarificationFlow.findPending(session);
-    if (pendingScope) return { planPending: null, pendingScope, applyAnchor: null, pending: null };
+    if (pendingScope) return { planPending: null, pendingScope, applyAnchor: null, override: null, pending: null };
+    const override = (await this.deps.credentialOverrideFlow?.findPending(session)) ?? null;
+    if (override) {
+      const pending =
+        override.state === 'awaiting-decision' && override.approval.status === ApprovalStatus.PENDING
+          ? override.approval
+          : null;
+      return { planPending: null, pendingScope: null, applyAnchor: null, override, pending };
+    }
     const applyAnchor = await this.deps.applyPreviewFlow.findAnchor(session);
     const approvalId = applyAnchor ? ConversationRuntime.pendingApprovalIdOf(applyAnchor) : undefined;
-    if (!approvalId) return { planPending: null, pendingScope: null, applyAnchor, pending: null };
+    if (!approvalId) return { planPending: null, pendingScope: null, applyAnchor, override: null, pending: null };
     const request = await this.deps.approvals.get(approvalId);
     return {
       planPending: null,
       pendingScope: null,
       applyAnchor,
+      override: null,
       pending: request?.status === ApprovalStatus.PENDING ? request : null,
     };
   }
@@ -2468,7 +2533,10 @@ export class ConversationRuntime {
       decidedAt: this.clock(),
       comment: 'expired',
     });
-    if (!lookup.planPending && lookup.applyAnchor) {
+    if (lookup.override) {
+      // ADR-0097 D5: an expired override invalidates its whole set (`system`/`expired`); nothing is sent.
+      await this.deps.credentialOverrideFlow?.invalidate(session, 'expired', 'system');
+    } else if (!lookup.planPending && lookup.applyAnchor) {
       const released = ConversationRuntime.anchorAfterRejection(lookup.applyAnchor);
       if (released) await this.deps.applyPreviewFlow.anchor(session, released);
       else await this.deps.applyPreviewFlow.clear(session);
@@ -2495,16 +2563,19 @@ export class ConversationRuntime {
     return this.recordExpiryBeforeApprove(message, session, approval, applyAnchor);
   }
 
+  /** `override` (ADR-0097): the credential-override set `approval` belongs to, released exactly like turn-start expiry. */
   private async recordExpiryBeforeApprove(
     message: InboundMessage,
     session: Session,
     approval: ApprovalRequest,
     applyAnchor: ApplyPreviewAnchor | null,
+    override: CredentialOverrideLookup | null = null,
   ): Promise<TurnResult> {
     await this.expirePendingApproval(session, {
-      planPending: applyAnchor ? null : approval,
+      planPending: applyAnchor || override ? null : approval,
       pendingScope: null,
       applyAnchor,
+      override,
       pending: approval,
     });
     const reply = this.deps.composer.composeApprovalExpired(message.context, approval, PENDING_APPROVAL_TTL_MS);
@@ -2530,6 +2601,9 @@ export class ConversationRuntime {
     if (command === 'help') {
       reply = this.deps.composer.composeHelp(message.context, this.contributedHelpLines);
     } else {
+      // ADR-0097 D5 (OVR-3 contract): invalidate a credential-override set (`reset`, by the owner) through the flow
+      // BEFORE the session closes, so the reset is serialized with an in-flight consume; nothing is sent.
+      await this.deps.credentialOverrideFlow?.invalidate(session, 'reset', actor.id);
       if (pending) {
         await this.deps.approvals.decide(pending.id, {
           approvalId: pending.id,
@@ -2730,12 +2804,17 @@ export class ConversationRuntime {
    * target-file guessing. An empty diff result or a changeKind of 'add' for a validated target (its
    * current content could not be found/read at diff time) is a failed preview, never a partial or
    * degraded success (ADR-0039, CA Round 1).
+   *
+   * `grants` (ADR-0097 D5) are the credential-override grants the override flow has just revalidated and
+   * consumed for THIS dispatch (empty on every other path): they admit exactly those refused files whose
+   * content still hashes to the grant, and a successful preview then carries the one-time-send notice.
    */
   private async runCodeGenerationPreview(
     message: InboundMessage,
     session: Session,
     request: ExecutionRequest,
     outcome: ExecutionOutcome,
+    grants: readonly CredentialOverrideGrant[] = [],
   ): Promise<TurnResult> {
     const planRef = outcome.refs.executionPlanRef;
     const targetFiles = request.targetFiles;
@@ -2757,6 +2836,7 @@ export class ConversationRuntime {
       request.workspaceRef,
       targetFiles,
       request.newFileTargets ?? [],
+      { credentialOverrides: grants },
     );
     if (!context.ok) {
       this.logPreviewFailure(`context-${context.reason}`, message, session, request, {
@@ -2764,11 +2844,41 @@ export class ConversationRuntime {
         maxFileBytes: MAX_CODEGEN_CONTEXT_FILE_BYTES,
         maxTotalBytes: MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
       });
+      const overrideFlow = this.deps.credentialOverrideFlow;
+      // ADR-0097 D3: an overridable `credential-assignment` refusal (no hard failure on any target) raises ONE
+      // CRITICAL owner override instead of the terminal refusal — only on the first, grant-free read (a refusal
+      // inside a granted dispatch means the content changed after the coverage check: nothing is sent).
+      if (
+        context.reason === 'target-contains-credential' && context.overridable && overrideFlow && grants.length === 0
+      ) {
+        const refusal: CredentialOverrideRefusal = {
+          targetIndex: context.targetIndex,
+          targetPath: context.targetPath,
+          contentSha256: context.contentSha256,
+          line: context.line,
+        };
+        return this.requestCredentialOverride(message, session, request, outcome, refusal);
+      }
+      if (context.reason === 'target-changed-since-override') {
+        this.deps.logger.warn('credential guard override content changed', {
+          sessionId: session.id,
+          targetIndex: context.targetIndex,
+        });
+        return this.failComposed(
+          message,
+          session,
+          this.deps.composer.composeCredentialOverrideContentChanged(message.context, context.targetPath),
+          outcome,
+        );
+      }
       // A target whose content carries credential material is never sent to the provider; the path
-      // (user-supplied) goes to the reply only — the log above carries just the target index.
-      const reply = context.reason === 'target-contains-credential'
-        ? this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, context.targetPath)
-        : this.deps.composer.composeCodeGenerationPreviewFailed(message.context);
+      // (user-supplied) goes to the reply only — the log above carries just the target index. With the
+      // override flow wired, a token/private-key refusal also says it can never be sent (ADR-0097 D6).
+      const reply = context.reason !== 'target-contains-credential'
+        ? this.deps.composer.composeCodeGenerationPreviewFailed(message.context)
+        : overrideFlow && !context.overridable
+        ? this.deps.composer.composeCredentialOverrideHardRefused(message.context, context.targetPath)
+        : this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, context.targetPath);
       return this.failComposed(message, session, reply, outcome);
     }
 
@@ -2901,7 +3011,13 @@ export class ConversationRuntime {
     }
 
     const diffPreview = toCodeDiffPreview(diff, outOfScopeWarnings);
-    const reply = this.deps.composer.composeCodeDiffPreview(message.context, diffPreview);
+    // ADR-0097 D7: a preview built from granted content leads with the one-time-send notice (in the preview
+    // header, so lossless preview delivery keeps it); every other preview is rendered exactly as before.
+    const reply = grants.length
+      ? this.deps.composer.composeCodeDiffPreview(message.context, diffPreview, {
+          credentialOverrideSentPaths: grants.map((g) => g.path),
+        })
+      : this.deps.composer.composeCodeDiffPreview(message.context, diffPreview);
     // Sprint 2s (ADR-0040): remember what was just previewed, in case the user explicitly asks to apply
     // it on a later turn. A plan-less Task anchor — never discoverable by approvalFlow.
     await this.deps.applyPreviewFlow.anchor(session, {
@@ -2946,6 +3062,262 @@ export class ConversationRuntime {
       ...(request.newFileTargets ? { newFileTargetCount: request.newFileTargets.length } : {}),
       ...extra,
     }); // deliberately NO proposal content / file contents / diff text / tokens / secrets
+  }
+
+  // ---------------------------------------------------------------------------------------------------------
+  // Credential-guard override (ADR-0097). The flow owns every grant record (on the inert plan-less anchor Task);
+  // the runtime only routes, records ApprovalManager decisions, and runs the single dispatch through the flow.
+  // Logs carry ids, target index, hash and line only — never a path or any file content.
+  // ---------------------------------------------------------------------------------------------------------
+
+  /**
+   * Raise one CRITICAL override for an overridable refusal of the request in flight (ADR-0097 D3): the flow creates
+   * the request via `requestForRisk` and anchors (or extends) the request's grant set; the reply names file and
+   * line. When the set cannot be raised, the refusal stays terminal and a just-created request is closed.
+   */
+  private async requestCredentialOverride(
+    message: InboundMessage,
+    session: Session,
+    request: ExecutionRequest,
+    outcome: ExecutionOutcome,
+    refusal: CredentialOverrideRefusal,
+  ): Promise<TurnResult> {
+    const flow = this.deps.credentialOverrideFlow;
+    // The owner is the session's actor; fail closed when the session carries none (never a placeholder owner).
+    const ownerActorId = session.actorId;
+    const raised = flow && ownerActorId
+      ? await flow.requestOverride(session, { request, outcome, ownerActorId, refusal }, this.deps.approvals)
+      : null;
+    if (!raised?.ok) {
+      if (raised?.pendingApproval) {
+        await this.closeCredentialOverrideApproval(raised.pendingApproval, 'system', `credential-override-${raised.reason}`);
+      }
+      // A set already holding grants of this request can no longer complete: never leave it GRANTED.
+      await flow?.invalidate(session, 'inconsistent', 'system');
+      this.deps.logger.warn('credential guard override not raised', {
+        sessionId: session.id,
+        reason: raised ? raised.reason : 'unbound',
+        targetIndex: refusal.targetIndex,
+      });
+      return this.failComposed(
+        message,
+        session,
+        this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, refusal.targetPath),
+        outcome,
+      );
+    }
+    this.deps.logger.warn('credential guard override requested', {
+      sessionId: session.id,
+      approvalId: raised.approval.id,
+      targetIndex: refusal.targetIndex,
+      contentSha256: refusal.contentSha256,
+      line: refusal.line,
+      grantCount: raised.anchor.grants.length,
+    });
+    const reply = this.deps.composer.composeCredentialOverridePrompt(message.context, refusal.targetPath, refusal.line);
+    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id, executionOutcome: outcome };
+  }
+
+  /**
+   * A turn while a credential-override set is live (ADR-0097 D3/D5): only the dedicated send phrase sends;
+   * deny/cancel ends the whole set; anything else (including "승인") re-prompts with the remaining time. A send
+   * re-checks the set's expiry synchronously right before `decide` (ADR-0095 §5), records the grant, then either
+   * raises the next refused target's override or runs the single revalidated dispatch.
+   */
+  private async handleCredentialOverrideTurn(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    override: Extract<CredentialOverrideLookup, { state: 'awaiting-decision' | 'ready' }>,
+  ): Promise<TurnResult> {
+    const flow = this.deps.credentialOverrideFlow!; // a lookup exists only when the flow is wired
+    const grant = override.state === 'awaiting-decision' ? override.grant : override.anchor.grants.at(-1);
+    const path = grant?.path ?? '';
+    const decision = interpretCredentialOverrideDecision(message.text);
+    this.deps.logger.info('credential override decision interpreted', {
+      sessionId: session.id,
+      decision,
+      state: override.state,
+      ...(override.state === 'awaiting-decision' ? { approvalId: override.approval.id } : {}),
+    });
+
+    if (decision === 'reprompt') {
+      const reply = this.deps.composer.composeCredentialOverrideReprompt(message.context, path, override.remainingMs);
+      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    }
+
+    if (decision === 'deny') {
+      if (override.state === 'awaiting-decision') {
+        await this.deps.approvals.decide(override.approval.id, {
+          approvalId: override.approval.id,
+          approved: false,
+          decidedBy: actor.id,
+          decidedAt: this.clock(),
+          comment: CREDENTIAL_OVERRIDE_DENY_COMMENT,
+        });
+      }
+      const result = await flow.invalidate(session, 'denied', actor.id);
+      this.deps.logger.info('credential guard override denied', { sessionId: session.id });
+      const reply = result?.state === 'consumed'
+        ? this.deps.composer.composeCredentialOverrideAlreadyUsed(message.context)
+        : this.deps.composer.composeCredentialOverrideDenied(message.context, path);
+      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+      return { status: 'DENIED', reply, sessionId: session.id };
+    }
+
+    // send
+    if (override.state === 'ready') return this.continueCredentialOverride(message, session, actor, override.anchor);
+    const approval = override.approval;
+    // The whole set expires with its OLDEST override (ADR-0097 D5): read the earlier grants' requests first, then
+    // check synchronously — no await between the deadline check and `decide`.
+    const earlier: ApprovalRequest[] = [];
+    for (const g of override.anchor.grants) {
+      if (g.approvalRequestId === approval.id) continue;
+      const r = await this.deps.approvals.get(g.approvalRequestId);
+      if (r) earlier.push(r);
+    }
+    if (Math.min(this.remainingMs(approval), ...earlier.map((r) => this.remainingMs(r))) <= 0) {
+      return this.recordExpiryBeforeApprove(message, session, approval, null, override);
+    }
+    await this.deps.approvals.decide(approval.id, {
+      approvalId: approval.id,
+      approved: true,
+      decidedBy: actor.id,
+      decidedAt: this.clock(),
+      comment: CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
+    });
+    const granted = await flow.recordGrant(session, approval.id);
+    if (!granted.ok) {
+      if (granted.pendingApproval) {
+        await this.closeCredentialOverrideApproval(granted.pendingApproval, 'system', `credential-override-${granted.reason}`);
+      }
+      this.deps.logger.warn('credential guard override grant not recorded', {
+        sessionId: session.id,
+        approvalId: approval.id,
+        reason: granted.reason,
+      });
+      const reason: CredentialOverrideInvalidationReason =
+        granted.reason === 'not-found' || granted.reason === 'not-pending' ? 'inconsistent' : granted.reason;
+      return this.failComposed(message, session, this.deps.composer.composeCredentialOverrideInvalidated(message.context, reason));
+    }
+    this.deps.logger.warn('credential guard override granted', {
+      sessionId: session.id,
+      approvalId: approval.id,
+      targetIndex: override.grant.targetIndex,
+      contentSha256: override.grant.contentSha256,
+      line: override.grant.line,
+    });
+    return this.continueCredentialOverride(message, session, actor, granted.anchor);
+  }
+
+  /**
+   * After a grant (or for a fully granted set found at turn start): if another target of the same request still
+   * needs its own override, raise it on the same anchor; on a hard failure invalidate the set; otherwise consume
+   * the whole set and run the preview ONCE with the consumed grants and the anchor's `newFileTargets`.
+   */
+  private async continueCredentialOverride(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    anchor: CredentialOverrideAnchor,
+  ): Promise<TurnResult> {
+    const flow = this.deps.credentialOverrideFlow!;
+    // ADR-0099: the anchor holds the request's explicit new-file targets; the re-run must keep them.
+    const request: ExecutionRequest = anchor.newFileTargets.length
+      ? { ...anchor.request, newFileTargets: [...anchor.newFileTargets] }
+      : anchor.request;
+    const coverage = await assessCredentialOverrideCoverage(
+      this.deps.workspace,
+      anchor.workspaceRef,
+      request.targetFiles ?? [],
+      anchor.newFileTargets,
+      anchor.grants,
+    );
+    if (coverage.kind === 'needs-override') {
+      return this.requestCredentialOverride(message, session, request, anchor.outcome, coverage.refusal);
+    }
+    if (coverage.kind === 'blocked') {
+      // Something changed since the override was raised (at refusal time no target had a hard failure).
+      await flow.invalidate(session, 'changed', 'system');
+      this.deps.logger.warn('credential guard override blocked', {
+        sessionId: session.id,
+        reason: coverage.reason,
+        targetIndex: coverage.targetIndex,
+      });
+      const targetPath = coverage.targetPath ?? '';
+      const reply =
+        coverage.reason === 'target-changed-since-override'
+          ? this.deps.composer.composeCredentialOverrideContentChanged(message.context, targetPath)
+          : coverage.reason === 'target-contains-credential'
+          ? this.deps.composer.composeCredentialOverrideHardRefused(message.context, targetPath)
+          : this.deps.composer.composeCredentialOverrideInvalidated(message.context, 'changed');
+      return this.failComposed(message, session, reply, anchor.outcome);
+    }
+
+    // The binding is to the request's workspace: it must still be the active project's workspace.
+    const project = session.activeProjectId ? await this.deps.projects.get(session.activeProjectId) : null;
+    if (!project || project.id !== anchor.projectId || project.rootPath !== anchor.workspaceRef.rootPath) {
+      await flow.invalidate(session, 'project-changed', 'system');
+      return this.failComposed(
+        message, session, this.deps.composer.composeCredentialOverrideInvalidated(message.context, 'project-changed'),
+      );
+    }
+    const dispatched = await flow.consumeAndDispatch(
+      session,
+      {
+        actorId: actor.id,
+        workspaceRef: anchor.workspaceRef,
+        projectId: session.activeProjectId,
+        executionPlanId: anchor.executionPlanId,
+        reader: this.deps.workspace,
+      },
+      (grants) => this.runCodeGenerationPreview(message, session, request, anchor.outcome, grants),
+    );
+    if (dispatched.ok) return dispatched.value;
+    this.deps.logger.warn('credential guard override not dispatched', { sessionId: session.id, reason: dispatched.reason });
+    if (dispatched.reason === 'already-used') {
+      return this.failComposed(message, session, this.deps.composer.composeCredentialOverrideAlreadyUsed(message.context));
+    }
+    let reason: CredentialOverrideInvalidationReason;
+    if (dispatched.reason === 'not-found' || dispatched.reason === 'not-granted' || dispatched.reason === 'consume-failed') {
+      reason = 'inconsistent';
+      await flow.invalidate(session, reason, 'system'); // never leave an undispatchable set GRANTED
+    } else {
+      reason = dispatched.reason;
+    }
+    return this.failComposed(message, session, this.deps.composer.composeCredentialOverrideInvalidated(message.context, reason));
+  }
+
+  /**
+   * A set the flow invalidated while reconstructing it at turn start (expired, project changed, superseded,
+   * inconsistent, …): close its still-PENDING request and return the notice answered like an ADR-0093 expiry.
+   */
+  private async closeInvalidatedCredentialOverride(
+    message: InboundMessage,
+    session: Session,
+    override: Extract<CredentialOverrideLookup, { state: 'invalidated' }>,
+  ): Promise<OutboundMessage> {
+    if (override.pendingApproval) {
+      const comment = override.reason === 'expired' ? 'expired' : `credential-override-${override.reason}`;
+      await this.closeCredentialOverrideApproval(override.pendingApproval, 'system', comment);
+    }
+    this.deps.logger.info('credential guard override invalidated', { sessionId: session.id, reason: override.reason });
+    return this.deps.composer.composeCredentialOverrideInvalidated(message.context, override.reason);
+  }
+
+  /** Close a still-PENDING override request as rejected (it is never left PENDING); an already-decided one is kept. */
+  private async closeCredentialOverrideApproval(approval: ApprovalRequest, decidedBy: string, comment: string): Promise<void> {
+    const current = await this.deps.approvals.get(approval.id);
+    if (current?.status !== ApprovalStatus.PENDING) return;
+    await this.deps.approvals.decide(approval.id, {
+      approvalId: approval.id,
+      approved: false,
+      decidedBy,
+      decidedAt: this.clock(),
+      comment,
+    });
   }
 
   /** No eligible apply-preview anchor exists at all (Sprint 2s, ADR-0040) — an explicit apply phrase is
@@ -5442,6 +5814,7 @@ export class ConversationRuntime {
         // ADR-0037: anchor so the user's very next reply (even a bare path) can recover this
         // request. Reached only for a fresh CODE_IMPLEMENTATION request with an active project and
         // an opened workspace (both already required to reach this line) and no validated target.
+        await this.deps.credentialOverrideFlow?.clear(session); // ADR-0097 D5: never orphan a live set
         await this.deps.scopeClarificationFlow.anchor(session, {
           kind: 'code-scope-clarification',
           summary: intent.summary,
@@ -5632,6 +6005,8 @@ export class ConversationRuntime {
 
     const outcome = await this.deps.orchestrator.run(request);
     if (outcome.status === ('AWAITING_APPROVAL' as ExecutionOutcomeStatus)) {
+      // ADR-0097 D5 (OVR-3 contract): a newer request never orphans a live override set (`superseded`).
+      await this.deps.credentialOverrideFlow?.clear(session);
       await this.deps.approvalFlow.anchor(session, request, outcome); // enable next-turn resume
       // ADR-0035: a code-change halt gets a more specific prompt than the generic approval text —
       // it names this as a code-change request and states that no file is modified yet.
