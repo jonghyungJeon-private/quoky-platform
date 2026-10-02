@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { GENERAL_CHAT_POLICY_RULES, renderGeneralChatPolicyRules } from './chat-policy/chat-response-policy';
 import { PromptComposer } from './prompt-composer';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { ContextBundle, Task } from '../domain';
@@ -1201,5 +1202,112 @@ describe('PromptComposer (ADR-0063 precedence contract)', () => {
     ).developer;
 
     expect(chat).not.toBe(summarize);
+  });
+});
+
+describe('PromptComposer chat response policy (ADR-0098 D1, QUAL-1)', () => {
+  const composer = new PromptComposer();
+  const koreanFact =
+    'Reply language for this turn: Korean (ko), determined by Core from the current User message.';
+  const englishFact =
+    'Reply language for this turn: English (en), determined by Core from the current User message.';
+  const genericFact =
+    'Reply language for this turn: the language of the current User message, unless that message explicitly requests another language.';
+
+  const languageFacts = (context: string): string[] =>
+    context
+      .split('\n')
+      .filter((line) => line.includes('Reply language for this turn'))
+      .map((line) => (JSON.parse(line.slice(line.indexOf('{'))) as PromptEntry).content);
+
+  it.each([
+    ['안녕하세요, 오늘 뭐 해?', koreanFact],
+    ['pnpm test 실행해줘', koreanFact],
+    ['How does approval work?', englishFact],
+    ['이 문장을 영어로 번역해줘', genericFact],
+    ['👍', genericFact],
+  ])('adds one language fact for %j in both section 1 and section 4', (requestText, fact) => {
+    const spec = composer.compose(
+      mkTask(Capability.GENERAL_CHAT, { requestText }),
+      emptyBundle(),
+    );
+    const primary = sectionBody(spec.context, '1. Current-turn facts supplied by Core');
+    const boundary = subsectionBody(
+      sectionBody(spec.context, '4. Current-turn authority decision boundary'),
+      'Authoritative current facts',
+    );
+
+    expect(languageFacts(primary)).toEqual([fact]);
+    expect(languageFacts(boundary)).toEqual([fact]);
+    expect(boundary).toBe(primary);
+    const entry = entriesFromSection(spec.context, '1. Current-turn facts supplied by Core').find(
+      (candidate) => candidate.content === fact,
+    );
+    expect(entry).toEqual({
+      provenance: 'CORE_RUNTIME',
+      epistemicStatus: 'AUTHORITATIVE_CURRENT_FACT',
+      content: fact,
+    });
+  });
+
+  it('appends the policy rules after the mandatory language rule in the chat developer text', () => {
+    const { developer } = composer.compose(mkTask(Capability.GENERAL_CHAT), emptyBundle());
+    const languageRule = developer.indexOf('MANDATORY LANGUAGE RULE');
+    const koreanSentence = developer.indexOf('respond naturally in Korean.');
+    const rules = renderGeneralChatPolicyRules();
+    const policy = developer.indexOf(rules);
+
+    expect(languageRule).toBe(0);
+    expect(policy).toBeGreaterThan(koreanSentence);
+    expect(developer).toContain('Respond conversationally and briefly.');
+    expect(policy).toBeLessThan(developer.indexOf('Respond conversationally and briefly.'));
+    for (const rule of GENERAL_CHAT_POLICY_RULES) expect(developer).toContain(rule);
+    expect(developer).toContain('never announce compliance');
+    expect(developer).toContain('performs no action');
+  });
+
+  it('keeps the section headings and the current-message marker byte-identical', () => {
+    const spec = composer.compose(
+      mkTask(Capability.GENERAL_CHAT, { requestText: '안녕?' }),
+      emptyBundle(),
+    );
+    for (const heading of [
+      '## 1. Current-turn facts supplied by Core\n',
+      '## 2. Background resources\n',
+      '## 3. Conversation transcript (continuity allowed; not authoritative external-state evidence)\n',
+      '## 4. Current-turn authority decision boundary\n',
+    ]) {
+      expect(spec.context).toContain(heading);
+    }
+    expect(spec.task).toBe(currentTaskEnvelope('안녕?'));
+  });
+
+  it('does not change non-chat capabilities or continuation prompts', () => {
+    for (const capability of [
+      Capability.SUMMARIZATION,
+      Capability.PROJECT_ANALYSIS,
+      Capability.CODE_IMPLEMENTATION,
+    ]) {
+      const spec = composer.compose(mkTask(capability, { requestText: '안녕하세요' }), emptyBundle());
+      expect(spec.context).not.toContain('Reply language for this turn');
+      for (const rule of GENERAL_CHAT_POLICY_RULES) expect(spec.developer).not.toContain(rule);
+    }
+    expect(
+      composer.compose(mkTask(Capability.SUMMARIZATION), emptyBundle()).developer,
+    ).toBe('Summarize the provided content faithfully and concisely.');
+    expect(
+      composer.compose(mkTask(Capability.CODE_IMPLEMENTATION), emptyBundle()).developer,
+    ).toBe('Help the user accomplish their request.');
+  });
+
+  it('adds only a small amount of prompt text (Ollama 4096-token context)', () => {
+    const spec = composer.compose(
+      mkTask(Capability.GENERAL_CHAT, { requestText: '안녕?' }),
+      emptyBundle(),
+    );
+    // Rules once in the developer text plus the language fact in sections 1 and 4.
+    const added = renderGeneralChatPolicyRules().length + koreanFact.length * 2;
+    expect(added).toBeLessThan(1_300);
+    expect(spec.developer).toContain(renderGeneralChatPolicyRules());
   });
 });

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeTerminalOutput, stripInternalMetadataEnvelope } from './output-sanitizer';
+import {
+  extractCurrentUserMessage,
+  normalizeLiteralEscapes,
+  sanitizeGeneralChatText,
+  sanitizeTerminalOutput,
+  stripInternalMetadataEnvelope,
+  stripUnsolicitedTranslationBlock,
+} from './output-sanitizer';
 
 describe('sanitizeTerminalOutput', () => {
   it('removes the observed ESC[K sequence and other CSI sequences', () => {
@@ -130,5 +137,140 @@ describe('stripInternalMetadataEnvelope', () => {
   it('preserves similar natural-language or incomplete metadata text', () => {
     const text = 'Provenance: ASSISTANT라고 쓰인 문장은 metadata envelope가 아닙니다.';
     expect(stripInternalMetadataEnvelope(text)).toBe(text);
+  });
+});
+
+describe('extractCurrentUserMessage', () => {
+  const marker = '--- Current user message ---';
+
+  it('unwraps the label envelope after the last marker', () => {
+    const envelope = JSON.stringify({
+      provenance: 'USER',
+      epistemicStatus: 'USER_CLAIM_OR_INTENT',
+      content: '영어로 번역해줘',
+    });
+    expect(extractCurrentUserMessage(`# Task\n${marker}\n${envelope}`)).toBe('영어로 번역해줘');
+  });
+
+  it('uses the last marker when earlier content quotes one', () => {
+    const quoted = JSON.stringify({ provenance: 'USER', epistemicStatus: 'x', content: 'old' });
+    const current = JSON.stringify({ provenance: 'USER', epistemicStatus: 'x', content: 'new' });
+    expect(extractCurrentUserMessage(`${marker}\n${quoted}\n${marker}\n${current}`)).toBe('new');
+  });
+
+  it('falls back to the raw text when there is no envelope, and is undefined without a marker', () => {
+    expect(extractCurrentUserMessage(`${marker}\nplain text`)).toBe('plain text');
+    expect(extractCurrentUserMessage('no marker here')).toBeUndefined();
+    expect(extractCurrentUserMessage(`${marker}\n`)).toBeUndefined();
+  });
+});
+
+describe('stripUnsolicitedTranslationBlock', () => {
+  const korean = '오늘은 날씨가 맑고 따뜻해요.';
+  const english = 'It is sunny and warm today.';
+
+  it('removes a trailing "(Translated from Korean)" block after a Korean body', () => {
+    const text = `${korean}\n\n(Translated from Korean)\n${english}`;
+    expect(stripUnsolicitedTranslationBlock(text, '오늘 날씨 어때?')).toBe(korean);
+  });
+
+  it.each(['Translation:', 'English translation:', '[Translation]', '번역:', 'In English:'])(
+    'removes a block headed by %s',
+    (heading) => {
+      const text = `${korean}\n\n${heading}\n${english}`;
+      expect(stripUnsolicitedTranslationBlock(text, '오늘 날씨 어때?')).toBe(korean);
+    },
+  );
+
+  it('removes an unsolicited Korean block after an English body for an English question', () => {
+    const text = `${english}\n\n(Translated from English)\n${korean}`;
+    expect(stripUnsolicitedTranslationBlock(text, 'How is the weather?')).toBe(english);
+  });
+
+  it('keeps the block when the User asked for a translation or language', () => {
+    const text = `${korean}\n\n(Translated from Korean)\n${english}`;
+    expect(stripUnsolicitedTranslationBlock(text, '영어로 번역해줘')).toBe(text);
+    expect(stripUnsolicitedTranslationBlock(text, 'Please translate this')).toBe(text);
+    expect(stripUnsolicitedTranslationBlock(text, '날씨를 in English 로')).toBe(text);
+  });
+
+  it('keeps everything when the current message is missing or has an unknown language', () => {
+    const text = `${korean}\n\n(Translated from Korean)\n${english}`;
+    expect(stripUnsolicitedTranslationBlock(text, undefined)).toBe(text);
+    expect(stripUnsolicitedTranslationBlock(text, '👍')).toBe(text);
+    expect(stripUnsolicitedTranslationBlock(text, '```ts\nconst a = 1;\n```')).toBe(text);
+  });
+
+  it('keeps text when the body is not in the User language or the block is in the same script', () => {
+    const englishBody = `${english}\n\n(Translated from English)\n${korean}`;
+    expect(stripUnsolicitedTranslationBlock(englishBody, '오늘 날씨 어때?')).toBe(englishBody);
+    const sameScript = `${korean}\n\n번역:\n${korean} 더 자세히 말하면 맑아요.`;
+    expect(stripUnsolicitedTranslationBlock(sameScript, '오늘 날씨 어때?')).toBe(sameScript);
+  });
+
+  it('keeps text with no explicit marker line, a marker with no body, or an inline mention', () => {
+    expect(stripUnsolicitedTranslationBlock(`${korean}\n${english}`, '안녕')).toBe(
+      `${korean}\n${english}`,
+    );
+    const noBody = `(Translated from Korean)\n${english}`;
+    expect(stripUnsolicitedTranslationBlock(noBody, '안녕')).toBe(noBody);
+    const inline = `${korean}\nTranslation memory is a CAT tool feature.`;
+    expect(stripUnsolicitedTranslationBlock(inline, '안녕')).toBe(inline);
+    const sentence = `${korean}\nIn English, that means sunny.`;
+    expect(stripUnsolicitedTranslationBlock(sentence, '안녕')).toBe(sentence);
+  });
+
+  it('handles CRLF line endings', () => {
+    const text = `${korean}\r\n\r\n(Translated from Korean)\r\n${english}`;
+    expect(stripUnsolicitedTranslationBlock(text, '안녕')).toBe(korean);
+  });
+});
+
+describe('normalizeLiteralEscapes', () => {
+  it('converts literal \\n outside code when there is no real newline and at least two occurrences', () => {
+    expect(normalizeLiteralEscapes('첫 줄\\n\\n둘째 줄')).toBe('첫 줄\n\n둘째 줄');
+    expect(normalizeLiteralEscapes('a\\nb\\nc')).toBe('a\nb\nc');
+  });
+
+  it('leaves a single literal \\n untouched', () => {
+    expect(normalizeLiteralEscapes('use \\n to break a line')).toBe('use \\n to break a line');
+  });
+
+  it('leaves text that already has a real newline untouched', () => {
+    expect(normalizeLiteralEscapes('a\\nb\\nc\nd')).toBe('a\\nb\\nc\nd');
+  });
+
+  it('never rewrites code fences or inline code', () => {
+    const fenced = '```\nconsole.log("a\\nb\\nc");\n```';
+    expect(normalizeLiteralEscapes(fenced)).toBe(fenced);
+    const singleLineFence = '```console.log("a\\nb\\nc")```';
+    expect(normalizeLiteralEscapes(singleLineFence)).toBe(singleLineFence);
+    expect(normalizeLiteralEscapes('use `\\n` and `\\n` in code')).toBe('use `\\n` and `\\n` in code');
+  });
+
+  it('converts only the prose around inline code and counts only prose occurrences', () => {
+    expect(normalizeLiteralEscapes('x\\ny\\n`keep\\n`')).toBe('x\ny\n`keep\\n`');
+    expect(normalizeLiteralEscapes('x\\n `a\\n` `b\\n`')).toBe('x\\n `a\\n` `b\\n`');
+  });
+
+  it('does not touch an escaped backslash followed by n', () => {
+    expect(normalizeLiteralEscapes('a\\\\nb\\\\nc')).toBe('a\\\\nb\\\\nc');
+  });
+});
+
+describe('sanitizeGeneralChatText', () => {
+  it('normalizes literal newlines first so a marker on an escaped line is still recognized', () => {
+    const output = '오늘은 맑아요.\\n\\n(Translated from Korean)\\nIt is sunny today.';
+    expect(sanitizeGeneralChatText(output, '오늘 날씨 어때?')).toBe('오늘은 맑아요.');
+  });
+
+  it('only normalizes escapes when the current message is not supplied', () => {
+    expect(sanitizeGeneralChatText('가\\n\\n나')).toBe('가\n\n나');
+    const text = '오늘은 맑아요.\n\n(Translated from Korean)\nIt is sunny today.';
+    expect(sanitizeGeneralChatText(text)).toBe(text);
+  });
+
+  it('leaves ordinary answers unchanged', () => {
+    expect(sanitizeGeneralChatText('안녕하세요!', '안녕')).toBe('안녕하세요!');
   });
 });

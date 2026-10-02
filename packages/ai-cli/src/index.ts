@@ -10,7 +10,12 @@ import type {
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { defaultCliRunner, maskSecrets } from './cli-runner';
 import type { CliRunner } from './cli-runner';
-import { sanitizeTerminalOutput, stripInternalMetadataEnvelope } from './output-sanitizer';
+import {
+  extractCurrentUserMessage,
+  sanitizeGeneralChatText,
+  sanitizeTerminalOutput,
+  stripInternalMetadataEnvelope,
+} from './output-sanitizer';
 
 export { BaseCliAiProvider };
 export { defaultCliRunner, maskSecrets } from './cli-runner';
@@ -378,7 +383,10 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
 
     const sanitizedOutput = sanitizeTerminalOutput(result.stdout);
     const text = (request.capability === Capability.GENERAL_CHAT
-      ? stripInternalMetadataEnvelope(sanitizedOutput)
+      ? sanitizeGeneralChatText(
+          stripInternalMetadataEnvelope(sanitizedOutput),
+          extractCurrentUserMessage(request.prompt),
+        )
       : sanitizedOutput
     ).trim();
     if (!text) {
@@ -585,9 +593,12 @@ export class OllamaCliProvider extends BaseCliAiProvider {
 
     const sanitizedOutput = sanitizeTerminalOutput(result.stdout);
     const text = (request.capability === Capability.GENERAL_CHAT
-      ? stripRepeatedAssistantHistoryPrefix(
-          stripInternalMetadataEnvelope(sanitizedOutput),
-          request.prompt,
+      ? sanitizeGeneralChatText(
+          stripRepeatedAssistantHistoryPrefix(
+            stripInternalMetadataEnvelope(sanitizedOutput),
+            request.prompt,
+          ),
+          extractCurrentUserMessage(request.prompt),
         )
       : sanitizedOutput
     ).trim();

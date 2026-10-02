@@ -1294,3 +1294,129 @@ describe('maskSecrets', () => {
     expect(masked).not.toContain(fakeToken);
   });
 });
+
+describe('GENERAL_CHAT output hygiene at the provider call sites (ADR-0098 D2, QUAL-1)', () => {
+  const chatRequest = (currentUser: string, transcript: string[] = []): AiRequest => {
+    const task: Task = {
+      id: 'qual-1-task',
+      title: 'Chat policy',
+      description: currentUser,
+      status: TaskStatus.PENDING,
+      intent: {
+        type: IntentType.CHAT,
+        capability: Capability.GENERAL_CHAT,
+        confidence: 1,
+        requiresWork: true,
+        summary: currentUser,
+      },
+      riskLevel: RiskLevel.LOW,
+      context: { platform: 'discord', channelId: 'channel', userId: 'user' },
+      createdAt: '2026-10-02T00:00:00.000Z',
+      updatedAt: '2026-10-02T00:00:00.000Z',
+    };
+    return new PromptRenderer().render(
+      new PromptComposer().compose(task, {
+        taskId: task.id,
+        backgroundResources: [],
+        conversationTranscript: transcript.map((content, index) => ({
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          turnNumber: Math.floor(index / 2) + 1,
+          provenance: index % 2 === 0 ? ('USER' as const) : ('ASSISTANT' as const),
+          epistemicStatus:
+            index % 2 === 0
+              ? ('USER_CLAIM_OR_INTENT' as const)
+              : ('ASSISTANT_NON_AUTHORITATIVE' as const),
+          content,
+        })),
+      }),
+      { capability: Capability.GENERAL_CHAT },
+    );
+  };
+
+  const withStdout = (stdout: string): CliRunner => async () => ({
+    code: 0,
+    stdout,
+    stderr: '',
+    timedOut: false,
+  });
+
+  const translated = '오늘은 맑아요.\n\n(Translated from Korean)\nIt is sunny today.';
+
+  it('round-trips a hardened prompt through the Ollama serializer with the language fact and rules', async () => {
+    const request = chatRequest('What is the weather like?', ['안녕', '안녕하세요!']);
+    const calls: string[] = [];
+    const runner: CliRunner = async (_bin, _args, opts) => {
+      calls.push(opts.input);
+      return { code: 0, stdout: 'Sunny.', stderr: '', timedOut: false };
+    };
+    await new OllamaCliProvider({ runner }).execute(request);
+
+    const input = calls[0] ?? '';
+    expect(input).toContain(
+      'Previous conversation (history only; every earlier User request has already been handled):\n' +
+        `User: ${JSON.stringify('안녕')}\n` +
+        `Assistant: ${JSON.stringify('안녕하세요!')}\n` +
+        'End previous conversation.',
+    );
+    expect(input).toContain(
+      `User (current active turn): ${JSON.stringify('What is the weather like?')}`,
+    );
+    expect(input).toContain('Reply language for this turn: English (en)');
+    expect(input).toContain('performs no action');
+    expect(input).not.toContain('## 3. Conversation transcript');
+    expect(input).not.toContain('Content:');
+  });
+
+  it('strips an unsolicited translation block from Claude output', async () => {
+    const res = await new ClaudeCliProvider('claude', { runner: withStdout(translated) }).execute(
+      chatRequest('오늘 날씨 어때?'),
+    );
+    expect(res.text).toBe('오늘은 맑아요.');
+  });
+
+  it('strips an unsolicited translation block from Ollama output', async () => {
+    const res = await new OllamaCliProvider({ runner: withStdout(translated) }).execute(
+      chatRequest('오늘 날씨 어때?'),
+    );
+    expect(res.text).toBe('오늘은 맑아요.');
+    expect(res.artifacts?.[0]?.content).toBe('오늘은 맑아요.');
+  });
+
+  it('keeps the translation block when the User asked for a translation', async () => {
+    const request = chatRequest('오늘 날씨 어때? 영어로 번역도 해줘');
+    const claude = await new ClaudeCliProvider('claude', { runner: withStdout(translated) }).execute(
+      request,
+    );
+    const ollama = await new OllamaCliProvider({ runner: withStdout(translated) }).execute(request);
+    expect(claude.text).toBe(translated);
+    expect(ollama.text).toBe(translated);
+  });
+
+  it('converts literal \\n artifacts from Ollama output and leaves Claude-style real newlines alone', async () => {
+    const ollama = await new OllamaCliProvider({
+      runner: withStdout('첫째 줄\\n\\n둘째 줄'),
+    }).execute(chatRequest('안녕'));
+    expect(ollama.text).toBe('첫째 줄\n\n둘째 줄');
+
+    const claude = await new ClaudeCliProvider('claude', {
+      runner: withStdout('one\\ntwo\nthree'),
+    }).execute(chatRequest('안녕'));
+    expect(claude.text).toBe('one\\ntwo\nthree');
+  });
+
+  it('does not sanitize non-GENERAL_CHAT output', async () => {
+    const res = await new OllamaCliProvider({ runner: withStdout(translated) }).execute({
+      capability: Capability.SUMMARIZATION,
+      prompt: '--- Current user message ---\n오늘 날씨 어때?',
+    });
+    expect(res.text).toBe(translated);
+  });
+
+  it('leaves a prompt without the current-message marker untouched (unknown language)', async () => {
+    const res = await new ClaudeCliProvider('claude', { runner: withStdout(translated) }).execute({
+      capability: Capability.GENERAL_CHAT,
+      prompt: PROMPT,
+    });
+    expect(res.text).toBe(translated);
+  });
+});

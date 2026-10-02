@@ -664,6 +664,17 @@ describe('Finding 2: static code binding', () => {
     expect(ids).toContain('ai-cli-runner');
     expect(ids).toContain('core-prompt-composer');
     expect(ids).toContain('core-prompt-renderer');
+    expect(ids).toContain('core-chat-response-policy');
+    expect(ids).toContain('ai-cli-output-sanitizer');
+  });
+
+  it('binds the chat response policy source, compiled output and build info (ADR-0098 D2)', () => {
+    const module = moduleById('core-chat-response-policy');
+    expect(module.source).toBe('packages/core/src/application/chat-policy/chat-response-policy.ts');
+    expect(module.compiled).toBe(
+      'packages/core/dist/application/chat-policy/chat-response-policy.js',
+    );
+    expect(module.buildInfo).toBe(moduleById('core-prompt-composer').buildInfo);
   });
 
   it('is stable for an unchanged synthetic tree', () => {
@@ -679,6 +690,8 @@ describe('Finding 2: static code binding', () => {
     ['harness source', 'harness-main', 'source'],
     ['PromptComposer compiled output', 'core-prompt-composer', 'compiled'],
     ['PromptRenderer compiled output', 'core-prompt-renderer', 'compiled'],
+    ['chat response policy source', 'core-chat-response-policy', 'source'],
+    ['chat response policy compiled output', 'core-chat-response-policy', 'compiled'],
     ['adapter transitive compiled module', 'ai-cli-runner', 'compiled'],
   ] as const)('a %s change invalidates the binding', (_label, moduleId, slot) => {
     const root = createSyntheticRepo();
