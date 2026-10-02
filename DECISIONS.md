@@ -15597,3 +15597,24 @@ non-reminder notifications, distributed scheduler, reminders for other actors.
   branching. − Policy-sensitive turns use the Claude subscription (more cloud egress/usage for those turns only).
 - **Implementation:** task QUAL-6 (wave 4): `domain/enums.ts` (Capability), `intent-classifier.ts` (+test),
   `packages/ai-cli/src/index.ts` (capability advertisement, +test), `packages/ai-cli/src/output-sanitizer.ts` (+test).
+
+## Personal v2 waves 1-4 implementation record (2026-10-02)
+
+Docs-only record written by DOC-A. No ratified ADR text above is edited. Waves 1-4 merged through PRs #105-#108.
+
+- **ADR-0098 D2 sanitizer signature note.** The GENERAL_CHAT sanitizer no longer derives reply facts by parsing the
+  prompt. It now takes structured `replyPolicy` request metadata passed with the AI request (commit 6f59fc8). The ADR-0098
+  D2 behaviour (language, injection and capability-honesty rules) is unchanged; only the input channel changed.
+- **ADR-0095 item 3 extension (Claude CLI isolation).** Item 3 recorded `--tools ""` for workspace-less requests. Live QA
+  finding QA-V2-002 showed that a policy-sensitive reply described the owner's own claude.ai Google Calendar connector.
+  `ClaudeCliProvider` therefore also passes `--strict-mcp-config`, `--setting-sources ""` and
+  `--no-session-persistence` (commit a8d6f85), so a run does not load the owner's MCP connectors, user/project settings
+  or session history. No Core change; the prompt stays on stdin. Re-test run 2 PASS.
+- **ADR-0097 / UAT.** QA-023 is RESOLVED by the ADR-0097 override (the guard stays strict) and the multiline residual is
+  CLOSED by OVR-1; recorded in `docs/uat/first-release-uat-result-2026-10-02.md`.
+- **Live QA.** `docs/uat/personal-v2-qa-record.md` holds the wave 2 and wave 4 results, QA-V2-001..004 and the Codex
+  review outcome. Open follow-ups for CODE-5: single-missing-path plus create wording, post-send failure wording,
+  dedicated sent-then-cancelled copy, QA-V2-004.
+- **Not yet delivered (waves 5-8):** feedback capture UI, reminder turn handler and tick driver (PRO-5), work-chat entry
+  handlers, embedding recall, branch commands, push chain. ARCHITECTURE.md rows for ADR-0101 were added by DOC-A before
+  PRO-5 merges.

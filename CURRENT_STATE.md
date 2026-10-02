@@ -5,6 +5,52 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Personal v2 — waves 1-4 delivered, in progress (2026-10-02)
+
+**STATUS: IN PROGRESS. Waves 1-4 are merged to `main` (PRs #105-#108, `main` at 49ed0cc); waves 5-8 are not yet
+merged.** Spec: ADR-0096..0101 plus the ADR-0098 amendment (all Ratified 2026-10-02) and
+`docs/plans/personal-v2-execution-plan.md`. The Live QA record is `docs/uat/personal-v2-qa-record.md`.
+
+**Delivered offline (waves 1-4), by track**
+
+- **Seams (ADR-0096):** deterministic turn-handler registry (`control` / `post-anchor` / `pre-classify`), contributed help
+  lines, feature-provider composition files, pre-registered tokens and stubs, inert SEAM-2 configuration. Deps baseline
+  is 33 (ADR-0096) then 34 (ADR-0097).
+- **Override (ADR-0097):** strict-only credential guard with `classifyCredentialFileContent`; one-time, hash-bound
+  CRITICAL owner override for `credential-assignment` refusals in the conversational code-change preview
+  (`그래도 보내줘`). QA-023 RESOLVED by this override (the guard stays strict; no file-type relaxation); the
+  multiline residual is CLOSED by OVR-1.
+- **Quality (ADR-0098):** chat response policy and sanitizer (the D2 sanitizer now takes structured `replyPolicy`
+  request metadata instead of parsing the prompt), feedback store schema v12 (no capture UI yet), offline golden
+  evaluation, and the amendment: deterministic `POLICY_SENSITIVE_CHAT` routing to Claude plus a provider-neutral
+  action-claim guard.
+- **Code (ADR-0099):** bounded change sets (up to 5 files, update/add, rollback-capable apply) in the code flow,
+  branch git operations in Core/adapters (no chat command yet; CODE-4).
+- **Work (ADR-0100):** connector named queries, WorkItem title and ResourceRef correlation, work-chat grammar and
+  services. No chat entry point is registered yet (WORK-T4/T5).
+- **Reminders (ADR-0101):** reminder domain and KO/EN grammar, schema v13 `reminders` table, conversation, dispatch and
+  daily-brief services, owner-only Discord `NotificationSink`. **Not reachable by the owner yet:** the turn handler,
+  tick driver and `main.ts` wiring land in PRO-5 (wave 5).
+- **Claude CLI isolation:** Claude runs with `--strict-mcp-config`, `--setting-sources ""` and
+  `--no-session-persistence` (recorded as an ADR-0095 item-3 extension in `DECISIONS.md`).
+
+**Live-verified (attended, dev bot, `docs/uat/personal-v2-qa-record.md`)**
+
+- Wave 2: schema 6 to 12 migration on a DB copy; chat policy on Claude (injection refusal, no fabricated calendar
+  action, Japanese answered in Japanese). Finding QA-V2-001 (local model ignores the policy) led to the ADR-0098
+  amendment.
+- Wave 4: schema 12 to 13 migration; `POLICY_SENSITIVE_CHAT` routing and guard (QA-V2-002 fixed by the CLI isolation
+  flags); the override flow end to end (warning, one-time send, no replay, deny/cancel, secret filenames and
+  `secret-token` content never overridable, 0 synthetic secrets in logs).
+
+**Not live-verified:** reminders delivery and tick (not wired), work chat, feedback capture, multi-file/new-file
+preview through Discord, embedding recall, branch commands. Live UAT runs as separate exact-scope Strict sessions
+after wave 8; this entry claims no live result beyond the QA record above.
+
+**Open follow-ups:** CODE-5 copy items (single-missing-path plus create wording, post-send failure wording, sent-then-
+cancelled copy, QA-V2-004) and QA-V2-003 (local-model quality). New environment variables are listed in
+`CHANGELOG.md` and `docs/user/quickstart.md`.
+
 ### Quoky Personal v1 — first-release scope and ADRs (2026-10-02)
 
 **STATUS: DELIVERED via PR #103 (origin/main 3ec3ae4); attended Live UAT EXECUTED 2026-10-02 on branch

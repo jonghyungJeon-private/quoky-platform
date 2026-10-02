@@ -28,6 +28,7 @@ import {
   reportProviderReadiness,
 } from './bootstrap-preflight';
 import { loadConfig } from './config';
+import { ReminderTickDriver } from './reminders/reminder-tick-driver';
 
 const log = new ConsoleLogger('quoky');
 
@@ -58,6 +59,9 @@ async function bootstrap(): Promise<void> {
   const core = app.get(QuokyCore);
   const actorIdentityProvisioner = app.get(ActorIdentityProvisioner);
   const aiProviders = app.get(AiProviderManager);
+  // ADR-0101 D6: composition-root reminder tick (bound in features/reminders.providers.ts). It starts only after
+  // storage and the platform are up, never when QUOKY_REMINDERS_ENABLED=false, and stops first on shutdown.
+  const reminderDriver = app.get(ReminderTickDriver);
 
   logResolvedDatabasePath(loadConfig().storage.dbPath, log);
   await reportProviderReadiness(aiProviders, log);
@@ -97,8 +101,16 @@ async function bootstrap(): Promise<void> {
   await vector.init();
   await queue.start();
   await platform.start();
+  // Startup recovery (FIRING → DELIVERY_UNCERTAIN, never resent) runs inside start(); the first tick then delivers
+  // a missed one-time reminder late once and catches a recurring one up only within 60 minutes.
+  await reminderDriver.start();
 
   const shutdown = async (): Promise<void> => {
+    // First: no reminder claim/complete may run while the platform and storage are closing. stop() waits for the
+    // in-flight delivery + outcome write up to its hard bound; if that elapses, the reminder stays FIRING and the
+    // next startup turns it into DELIVERY_UNCERTAIN (never resent).
+    const cleanStop = await reminderDriver.stop().catch(() => false);
+    if (!cleanStop) log.warn('reminder tick stop was forced; an in-flight reminder may be left FIRING');
     await platform.stop().catch(() => undefined);
     await queue.stop().catch(() => undefined);
     await storage.close().catch(() => undefined);

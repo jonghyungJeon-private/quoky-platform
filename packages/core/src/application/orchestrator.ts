@@ -1,14 +1,36 @@
 import { NotImplementedError } from '../errors';
-import type { ApprovalDecision, InboundMessage } from '../domain';
-import type { Logger, PlatformAdapter } from '../ports';
+import type { ApprovalDecision, InboundMessage, IsoTimestamp } from '../domain';
+import type { Logger, OutboundDeliveryReceipt, PlatformAdapter, PlatformFeedbackSignal } from '../ports';
+import { now } from '../util/clock';
 import type { ConversationRuntime, TurnResult } from './conversation-runtime';
+import type { FeedbackReactionInput, RecordTurnInput } from './feedback/feedback-recorder';
 import { formatSafeErrorText, safeRequestId, toSafeError } from './safe-error';
+
+/**
+ * The feedback capture the facade drives (ADR-0098 D5) — structurally `FeedbackRecorder`. Both methods are
+ * best-effort; the facade additionally guards them so a capture failure never changes delivery.
+ */
+export interface QuokyCoreFeedback {
+  recordTurn(input: RecordTurnInput): Promise<void>;
+  recordReaction(signal: FeedbackReactionInput): Promise<void>;
+}
 
 /** Everything the facade needs, injected by the composition root. */
 export interface QuokyCoreDeps {
   runtime: ConversationRuntime;
   platform: PlatformAdapter;
   logger: Logger;
+  /** Optional local feedback capture (ADR-0098 D5); absent means nothing is recorded. */
+  feedback?: QuokyCoreFeedback;
+  /** Shared clock; defaults to `util/clock.now`. */
+  clock?: () => IsoTimestamp;
+}
+
+/** Narrow an adapter's `sendMessage` result to a receipt (`void` from adapters that report no ids). */
+function receiptOf(delivered: void | OutboundDeliveryReceipt): OutboundDeliveryReceipt | undefined {
+  return typeof delivered === 'object' && delivered !== null && Array.isArray(delivered.platformMessageIds)
+    ? delivered
+    : undefined;
 }
 
 /**
@@ -22,11 +44,19 @@ export interface QuokyCoreDeps {
  * paths. Boundary note: this file imports NOTHING concrete — only ports + the runtime service.
  */
 export class QuokyCore {
-  constructor(private readonly deps: QuokyCoreDeps) {}
+  private readonly clock: () => IsoTimestamp;
 
-  /** Drive one inbound message: typing → runtime turn → deliver the runtime's OutboundMessage. */
+  constructor(private readonly deps: QuokyCoreDeps) {
+    this.clock = deps.clock ?? now;
+  }
+
+  /**
+   * Drive one inbound message: typing → runtime turn → deliver the runtime's OutboundMessage → (ADR-0098 D5)
+   * best-effort feedback capture after delivery, which never changes or delays the reply itself.
+   */
   async handleInboundMessage(message: InboundMessage): Promise<void> {
     await this.deps.platform.sendTyping(message.context).catch(() => undefined);
+    const startedAt = this.clock();
     let result: TurnResult;
     try {
       result = await this.deps.runtime.handle(message);
@@ -56,9 +86,66 @@ export class QuokyCore {
             errorName: deliveryErr instanceof Error ? deliveryErr.name : typeof deliveryErr,
           }),
         );
+      // The backstop reply is never rateable: recorded as FAILED with no receipt and no session.
+      await this.recordTurn({ message, result: { status: 'FAILED' }, startedAt, deliveredAt: this.clock() });
       return;
     }
-    await this.deps.platform.sendMessage(result.reply);
+    const delivered = await this.deps.platform.sendMessage(result.reply);
+    const receipt = receiptOf(delivered);
+    await this.recordTurn({
+      message,
+      result: {
+        status: result.status,
+        sessionId: result.sessionId,
+        reply: { text: result.reply.text },
+        ...(result.workFacts ? { workFacts: result.workFacts } : {}),
+      },
+      ...(receipt ? { receipt: { platformMessageIds: [...receipt.platformMessageIds] } } : {}),
+      startedAt,
+      deliveredAt: this.clock(),
+    });
+  }
+
+  /**
+   * ADR-0098 D3/D5: an admitted platform feedback reaction. Delegates to the recorder (which links it to the
+   * recorded turn by the rated platform message id) and NEVER sends a message in response.
+   */
+  async handleFeedbackSignal(signal: PlatformFeedbackSignal): Promise<void> {
+    const feedback = this.deps.feedback;
+    if (!feedback) return;
+    try {
+      await feedback.recordReaction({
+        platform: signal.platform,
+        platformUserId: signal.context.userId,
+        targetPlatformMessageId: signal.targetPlatformMessageId,
+        rating: signal.rating,
+        action: signal.action,
+      });
+    } catch (err) {
+      this.logCaptureFailure('reaction', err);
+    }
+  }
+
+  private async recordTurn(input: RecordTurnInput): Promise<void> {
+    const feedback = this.deps.feedback;
+    if (!feedback) return;
+    try {
+      await feedback.recordTurn(input);
+    } catch (err) {
+      this.logCaptureFailure('turn', err);
+    }
+  }
+
+  /** Content-free: never the message text, reply text or any platform id. */
+  private logCaptureFailure(stage: string, err: unknown): void {
+    try {
+      this.deps.logger.warn('feedback capture failed', {
+        stage,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+    } catch {
+      // Logging is best-effort; capture must never affect the turn.
+    }
   }
 
   /**

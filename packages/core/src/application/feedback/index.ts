@@ -6,3 +6,5 @@
  */
 export * from './implicit-feedback';
 export * from './feedback-recorder';
+export * from './feedback-summary-composer';
+export * from './feedback-summary-turn-handler';

@@ -42,6 +42,11 @@ export interface ReminderDispatchDeps {
   readonly idGenerator?: () => Id;
 }
 
+export interface ReminderDispatchOptions {
+  /** Checked before each reminder of the batch; `false` stops starting new deliveries (the active one finishes). */
+  readonly shouldContinue?: () => boolean;
+}
+
 /** Counts only; never a body, a title or an id. */
 export interface ReminderDispatchSummary {
   /** Reminders claimed by this call (≤ `maxDeliveriesPerTick`). */
@@ -146,7 +151,7 @@ export class ReminderDispatchService {
   }
 
   /** One bounded tick: claim ≤10 due reminders, deliver each at most once, record each outcome. */
-  async dispatchDue(now: IsoTimestamp): Promise<ReminderDispatchSummary> {
+  async dispatchDue(now: IsoTimestamp, options: ReminderDispatchOptions = {}): Promise<ReminderDispatchSummary> {
     const summary = emptySummary();
     const attemptId = this.newAttemptId();
     let claimed: Reminder[];
@@ -160,7 +165,13 @@ export class ReminderDispatchService {
     // The repository is asked for at most 10; the slice keeps the bound even if an implementation over-returns.
     const batch = claimed.slice(0, REMINDER_LIMITS.maxDeliveriesPerTick);
     summary.claimed = batch.length;
-    for (const reminder of batch) {
+    for (const [index, reminder] of batch.entries()) {
+      // Cooperative cancellation (shutdown): never START another delivery once asked to stop. The unstarted rest of
+      // the batch stays FIRING, which the next startup turns into DELIVERY_UNCERTAIN (at-most-once, never resent).
+      if (options.shouldContinue !== undefined && !options.shouldContinue()) {
+        this.deps.logger.warn('reminder.dispatch.cancelled', { unstarted: batch.length - index });
+        break;
+      }
       try {
         await this.dispatchOne(reminder, attemptId, now, summary);
       } catch (error) {

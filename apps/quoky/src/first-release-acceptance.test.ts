@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   ApprovalStatus,
   Capability,
   ContextBuilder,
+  FeedbackRecorder,
+  FeedbackSignalKind,
+  FeedbackSummaryTurnHandler,
+  QuokyCore,
   ExecutionOutcomeStatus,
   ExecutionStage,
   GitMainSyncBlockedError,
@@ -22,10 +29,15 @@ import {
   type AiRequest,
   type ApprovalRequest,
   type ConversationContext,
+  type ConversationRuntime,
+  type ConversationTurnHandler,
   type GitProvider,
   type InboundMessage,
   type MemoryRecord,
   type MemoryRepository,
+  type OutboundMessage,
+  type PlatformAdapter,
+  type PlatformFeedbackSignal,
   type Session,
   type StorageProvider,
   type Task,
@@ -33,6 +45,7 @@ import {
   type VectorProvider,
 } from '@quoky/core';
 import { DiscordPlatformAdapter } from '@quoky/adapter-discord';
+import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { loadConfig } from './config';
 import { createProductionContextBuilder } from './context-builder-provider';
 import {
@@ -122,7 +135,11 @@ function pendingApproval(): ApprovalRequest {
   } as ApprovalRequest;
 }
 
-function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnType<typeof memoryRepository> } = {}) {
+function harness(options: {
+  withPendingApproval?: boolean;
+  memoryStore?: ReturnType<typeof memoryRepository>;
+  turnHandlers?: readonly ConversationTurnHandler[];
+} = {}) {
   const memoryStore = options.memoryStore ?? memoryRepository();
   const sessionStore = sessionRepository();
   const storage = { memories: memoryStore.repository, sessions: sessionStore.repository } as unknown as StorageProvider;
@@ -149,6 +166,7 @@ function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnT
   let workspaceMutations = 0;
   let taskSequence = 0;
   let runSequence = 0;
+  const createdTasks = new Map<string, Task>();
 
   const deps = {
     dispatchCommit: { async commit() { return {} as TaskRun; } },
@@ -168,11 +186,13 @@ function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnT
     tasks: {
       async createTask(intent: Task['intent'], taskContext: Task['context'], anchor: { requestText: string; actorId: string; sessionId: string }) {
         taskSequence += 1;
-        return {
+        const task = {
           id: `task-${taskSequence}`, title: intent.summary, description: anchor.requestText,
           status: TaskStatus.PENDING, intent, riskLevel: RiskLevel.LOW, context: taskContext,
           actorId: anchor.actorId, sessionId: anchor.sessionId, createdAt: timestamp, updatedAt: timestamp,
         } satisfies Task;
+        createdTasks.set(task.id, task);
+        return task;
       },
       async transition(task: Task, status: TaskStatus) { return { ...task, status, updatedAt: timestamp }; },
       async startRun(task: Task, capability: Capability) {
@@ -233,6 +253,7 @@ function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnT
       async switchBranch() { throw new Error('git must not run'); },
       async getLocalRefCommit() { throw new Error('git must not run'); },
     },
+    ...(options.turnHandlers ? { turnHandlers: options.turnHandlers } : {}),
     logger: { debug() {}, info() {}, warn() {}, error() {} },
   } as unknown as ProductionConversationRuntimeDeps;
 
@@ -243,6 +264,7 @@ function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnT
     decisions,
     memoryStore,
     sessionStore,
+    createdTasks,
     providerCalls: () => providerCalls,
     resumes: () => resumes,
     workspaceMutations: () => workspaceMutations,
@@ -416,5 +438,166 @@ describe('first-release offline acceptance — composed Personal v1 properties',
     await handle(fake(OWNER_ID, GUILD_ID, ALLOWED_CHANNEL));
     await handle(fake(OWNER_ID, GUILD_ID, '555555555555555555'));
     expect(received.map((m) => m.context.channelId)).toEqual([DM_CHANNEL, ALLOWED_CHANNEL]);
+  });
+});
+
+// ── ADR-0098 D3–D6 (QUAL-4): feedback capture end to end — real SQLite (temporary database, migrated to the
+// latest schema), the real FeedbackRecorder and 피드백 요약 handler, the real QuokyCore, and a fake platform.
+const feedbackDirs: string[] = [];
+const openStores: SqliteStorageProvider[] = [];
+afterAll(async () => {
+  for (const store of openStores) await store.close().catch(() => undefined);
+  for (const dir of feedbackDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+async function feedbackHarness() {
+  const dir = mkdtempSync(join(tmpdir(), 'quoky-qual4-acceptance-'));
+  feedbackDirs.push(dir);
+  const store = new SqliteStorageProvider({ dbPath: join(dir, 'quoky.db') });
+  await store.init();
+  openStores.push(store);
+
+  let nowMs = Date.parse('2026-10-02T09:00:00.000Z');
+  const clock = () => new Date(nowMs).toISOString();
+  const advance = (ms: number) => { nowMs += ms; };
+
+  // The runtime harness keeps its own in-memory sessions; the recorder resolves the actor from them.
+  let sessionLookup: { get(id: string): Promise<Session | null> } = { async get() { return null; } };
+  const recorder = new FeedbackRecorder(store.feedback, { get: (id) => sessionLookup.get(id) }, { clock });
+  let tasksLookup = new Map<string, Task>();
+  const summaryHandler = new FeedbackSummaryTurnHandler({
+    feedback: recorder,
+    tasks: { async get(id) { return tasksLookup.get(id) ?? null; } },
+  });
+  const h = harness({ turnHandlers: [summaryHandler] });
+  sessionLookup = h.sessionStore.repository;
+  tasksLookup = h.createdTasks;
+
+  const sends: OutboundMessage[] = [];
+  let outSequence = 0;
+  const platform: PlatformAdapter = {
+    platform: 'discord',
+    async start() {}, async stop() {}, onMessage() {}, onApprovalDecision() {},
+    async sendMessage(message) {
+      sends.push(message);
+      outSequence += 1;
+      return { platformMessageIds: [`out-${outSequence}a`, `out-${outSequence}b`] };
+    },
+    async sendTyping() {},
+    async requestApproval() {},
+  };
+  const runtime: ConversationRuntime = h.runtime();
+  const core = new QuokyCore({ runtime, platform, logger: { info() {}, warn() {}, error() {} }, feedback: recorder, clock });
+  const react = (targetPlatformMessageId: string, rating: 'POSITIVE' | 'NEGATIVE', action: 'ADDED' | 'REMOVED' = 'ADDED') => {
+    const signal: PlatformFeedbackSignal = {
+      platform: 'discord', context: dmContext, targetPlatformMessageId, rating, action, occurredAt: clock(),
+    };
+    return core.handleFeedbackSignal(signal);
+  };
+  return { store, core, sends, react, advance, h };
+}
+
+describe('feedback capture offline acceptance (ADR-0098, QUAL-4)', () => {
+  it('work turn → 👍 on its second chunk → "피드백 요약" shows 1 positive and no provider id', async () => {
+    const f = await feedbackHarness();
+
+    await f.core.handleInboundMessage(inbound('배포 창을 알려줘'));
+    expect(f.sends).toHaveLength(1);
+    const providerCallsAfterWork = f.h.providerCalls();
+    expect(providerCallsAfterWork).toBe(1);
+
+    const stored = await f.store.feedback.findTurnByPlatformMessage('discord', 'out-1b');
+    expect(stored).toMatchObject({
+      status: 'RESPONDED', capability: Capability.GENERAL_CHAT, taskId: 'task-1',
+      providerId: 'acceptance-fake-provider', platformMessageIds: ['out-1a', 'out-1b'],
+    });
+    expect(JSON.stringify(stored)).not.toContain('배포 창을 알려줘');
+    expect(JSON.stringify(stored)).not.toContain('답변 1');
+
+    f.advance(5_000);
+    await f.react('out-1b', 'POSITIVE');
+    expect(f.sends).toHaveLength(1); // a reaction never produces a reply
+
+    f.advance(5_000);
+    await f.core.handleInboundMessage(inbound('피드백 요약'));
+    expect(f.sends).toHaveLength(2);
+    const summaryText = f.sends[1]!.text;
+    expect(summaryText).toContain('최근 30일 피드백 요약이에요.');
+    expect(summaryText).toContain('- 기록된 대화 1건 · 👍 1 · 👎 0');
+    expect(summaryText).toContain('GENERAL_CHAT');
+    expect(summaryText).not.toContain('acceptance-fake-provider');
+    expect(f.h.providerCalls()).toBe(providerCallsAfterWork);
+    expect(f.h.longTermRecords()).toHaveLength(0);
+  });
+
+  it('👎 then removal retracts; a recent 👎 lists the request excerpt only', async () => {
+    const f = await feedbackHarness();
+    await f.core.handleInboundMessage(inbound('배포 창을 알려줘'));
+    await f.react('out-1a', 'NEGATIVE');
+    await f.core.handleInboundMessage(inbound('피드백 요약'));
+    expect(f.sends.at(-1)!.text).toContain('👎 1');
+    expect(f.sends.at(-1)!.text).toContain('"배포 창을 알려줘"');
+
+    await f.react('out-1a', 'NEGATIVE', 'REMOVED');
+    await f.core.handleInboundMessage(inbound('피드백 요약'));
+    expect(f.sends.at(-1)!.text).toContain('👍 0 · 👎 0');
+    expect(f.sends.at(-1)!.text).not.toContain('최근 👎 답변');
+  });
+
+  it('a reaction on an unknown message or on the summary reply itself records nothing', async () => {
+    const f = await feedbackHarness();
+    await f.core.handleInboundMessage(inbound('피드백 요약'));
+    await f.react('out-1a', 'POSITIVE'); // the control reply
+    await f.react('not-a-bot-reply', 'POSITIVE');
+    const summary = await f.store.feedback.summarize({ actorId: `actor-${OWNER_ID}`, since: '2026-01-01T00:00:00.000Z', recentNegativeLimit: 5 });
+    expect(summary.signals).toEqual([]);
+  });
+
+  it('"새 대화" 30 s after a reply records IMPLICIT_RESET_AFTER_REPLY on that reply\'s turn', async () => {
+    const f = await feedbackHarness();
+    await f.core.handleInboundMessage(inbound('배포 창을 알려줘'));
+    f.advance(30_000);
+    await f.core.handleInboundMessage(inbound('새 대화'));
+
+    const summary = await f.store.feedback.summarize({ actorId: `actor-${OWNER_ID}`, since: '2026-01-01T00:00:00.000Z', recentNegativeLimit: 5 });
+    expect(summary.turnCount).toBe(1); // the reset is a control turn: recorded, never counted or rated
+    expect(summary.signals).toEqual([
+      { kind: FeedbackSignalKind.IMPLICIT_RESET_AFTER_REPLY, value: 'OBSERVED', count: 1 },
+    ]);
+  });
+
+  it('a reset long after a reply is not evidence', async () => {
+    const f = await feedbackHarness();
+    await f.core.handleInboundMessage(inbound('배포 창을 알려줘'));
+    f.advance(10 * 60_000);
+    await f.core.handleInboundMessage(inbound('새 대화'));
+    const summary = await f.store.feedback.summarize({ actorId: `actor-${OWNER_ID}`, since: '2026-01-01T00:00:00.000Z', recentNegativeLimit: 5 });
+    expect(summary.signals).toEqual([]);
+  });
+
+  it('the Discord reaction gate drops a non-owner reaction before it can reach QuokyCore', async () => {
+    const signals: PlatformFeedbackSignal[] = [];
+    const logger = { debug() {}, info() {}, warn() {}, error() {} };
+    const adapter = new DiscordPlatformAdapter({ token: 'fake-token', ownerIds: [OWNER_ID], channelIds: [ALLOWED_CHANNEL] }, logger);
+    adapter.onFeedback(async (signal) => { signals.push(signal); });
+    (adapter as unknown as { client: unknown }).client = { user: { id: '888888888888888888' } };
+    const react = (userId: string) =>
+      (adapter as unknown as { handleReaction(r: unknown, u: unknown, a: string): Promise<void> }).handleReaction(
+        {
+          emoji: { id: null, name: '👍' },
+          message: {
+            id: 'out-1a', partial: false, author: { id: '888888888888888888' }, guildId: null, channelId: DM_CHANNEL,
+            channel: { isThread: () => false, parentId: null },
+          },
+        },
+        { id: userId },
+        'ADDED',
+      );
+
+    await react(STRANGER_ID);
+    expect(signals).toHaveLength(0);
+    await react(OWNER_ID);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ targetPlatformMessageId: 'out-1a', rating: 'POSITIVE', context: { userId: OWNER_ID } });
   });
 });

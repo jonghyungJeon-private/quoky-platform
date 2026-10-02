@@ -20,6 +20,7 @@ import {
   CONVERSATION_TURN_HANDLERS,
   // Application services (pure core)
   QuokyCore,
+  FeedbackRecorder,
   IntentClassifier,
   Planner,
   CapabilityRouter,
@@ -643,11 +644,22 @@ const application: Provider[] = [
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
+  // ADR-0098 D3/D5: it also records each delivered turn (best-effort, content-free) and is the platform's feedback
+  // subscriber — the `onFeedback` subscription lives here, not in main.ts. Reactions never produce a reply.
   {
     provide: QuokyCore,
-    useFactory: (runtime: ConversationRuntime, platform: PlatformAdapter) =>
-      new QuokyCore({ runtime, platform, logger: coreLogger }),
-    inject: [ConversationRuntime, PLATFORM_ADAPTER],
+    useFactory: (runtime: ConversationRuntime, platform: PlatformAdapter, feedback: FeedbackRecorder) => {
+      const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback });
+      platform.onFeedback?.((signal) =>
+        core.handleFeedbackSignal(signal).catch((err: unknown) =>
+          coreLogger.warn('feedback signal handling failed', {
+            errorName: err instanceof Error ? err.name : typeof err,
+          }),
+        ),
+      );
+      return core;
+    },
+    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder],
   },
 ];
 

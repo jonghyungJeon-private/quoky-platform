@@ -88,6 +88,7 @@ import type {
   ScopeClarificationFlow,
 } from './conversation-runtime';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
+import { FeedbackSummaryTurnHandler } from './feedback/feedback-summary-turn-handler';
 import { RepositoryHostingBlockedError, RepositoryHostingUnverifiedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
 import { BranchCleanupBlockedError, BranchCleanupUnverifiedError, GitMainSyncBlockedError, GitMainSyncUnverifiedError, GitPushBlockedError } from './git-manager';
@@ -9488,5 +9489,122 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(calls.gitCommit).toBe(1);
     expect((calls.lastGitCommitInput as { newFiles?: string[] } | undefined)?.newFiles).toEqual([NEW]);
     expect(committed.reply.text).toContain(`${NEW} (새 파일)`);
+  });
+});
+
+describe('ADR-0098 D5 TurnResult.workFacts (QUAL-4)', () => {
+  it('routed ACCEPTED work turn carries intent, capability, Task/TaskRun ids and the audit-only provider id', async () => {
+    const { storage, taskSaves } = makeTaskStorage();
+    const { deps: base } = makeDeps({ intent: intentOf(Capability.GENERAL_CHAT, IntentType.CHAT, true) });
+    const deps: ConversationRuntimeDeps = { ...base, ...workTurnHappyPathDeps(), tasks: new TaskManager(storage),
+      runtimeProviderRouting: { execute: async () => routedResultOf(ProviderGatewayTerminalStatus.ACCEPTED) } };
+
+    const result = await new ConversationRuntime(deps).handle(messageOf('라우팅 요청'));
+
+    expect(result.status).toBe('RESPONDED');
+    expect(result.workFacts).toEqual({
+      intentType: IntentType.CHAT,
+      capability: Capability.GENERAL_CHAT,
+      taskId: taskSaves[0]!.id,
+      runId: expect.any(String),
+      providerId: 'stage-2b-fake-provider',
+    });
+    // The provider id is audit-only: never in the user-facing reply.
+    expect(result.reply.text).not.toContain('stage-2b-fake-provider');
+  });
+
+  it('routed terminal (non-accepted) work turn is FAILED with work facts and no provider id', async () => {
+    const { storage } = makeTaskStorage();
+    const { deps: base } = makeDeps({ intent: intentOf(Capability.GENERAL_CHAT, IntentType.CHAT, true) });
+    const deps: ConversationRuntimeDeps = { ...base, ...workTurnHappyPathDeps(), tasks: new TaskManager(storage),
+      runtimeProviderRouting: { execute: async () => routedResultOf(ProviderGatewayTerminalStatus.REJECTED) } };
+
+    const result = await new ConversationRuntime(deps).handle(messageOf('라우팅 요청'));
+
+    expect(result.status).toBe('FAILED');
+    expect(result.workFacts).toMatchObject({ intentType: IntentType.CHAT, capability: Capability.GENERAL_CHAT });
+    expect(result.workFacts?.taskId).toEqual(expect.any(String));
+    expect(result.workFacts?.providerId).toBeUndefined();
+  });
+
+  it('direct (legacy selector) work turn success and failure both carry work facts', async () => {
+    for (const fails of [false, true]) {
+      const { storage } = makeTaskStorage();
+      const { deps: base } = makeDeps({ intent: intentOf(Capability.PROJECT_ANALYSIS, IntentType.PROJECT_ANALYSIS, true) });
+      const deps: ConversationRuntimeDeps = { ...base, ...workTurnHappyPathDeps(), tasks: new TaskManager(storage),
+        router: { async select() {
+          return { id: 'direct-fake', capabilities: [], isAvailable: async () => true,
+            execute: async () => { if (fails) throw new Error('cli failed'); return { text: 'done', artifacts: [] }; } };
+        } } };
+
+      const result = await new ConversationRuntime(deps).handle(messageOf('프로젝트 구조 분석해줘'));
+
+      expect(result.status).toBe(fails ? 'FAILED' : 'RESPONDED');
+      expect(result.workFacts).toMatchObject({
+        intentType: IntentType.PROJECT_ANALYSIS,
+        capability: Capability.PROJECT_ANALYSIS,
+        providerId: 'direct-fake',
+      });
+      expect(result.workFacts?.runId).toEqual(expect.any(String));
+    }
+  });
+
+  it('non-work turns (help, explicit memory) carry no work facts', async () => {
+    const { deps } = makeDeps();
+    const runtime = new ConversationRuntime(deps);
+    expect((await runtime.handle(messageOf('도움말'))).workFacts).toBeUndefined();
+    expect((await runtime.handle(messageOf('기억해: 화요일 배포'))).workFacts).toBeUndefined();
+  });
+});
+
+describe('ADR-0098 D6 "피드백 요약" control-stage handler through the runtime (QUAL-4)', () => {
+  function feedbackDeps(pending: ApprovalRequest | null) {
+    const { deps: base, calls } = makeDeps({ pending });
+    let shortTerm = 0;
+    const summarize = vi.fn(async () => ({
+      since: TS, turnCount: 1, signals: [], byCapability: [], byIntent: [], recentNegative: [],
+    }));
+    const handler = new FeedbackSummaryTurnHandler({ feedback: { summarize }, tasks: { get: async () => null } });
+    const select = vi.fn(async () => { throw new Error('provider must not be selected'); });
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      turnHandlers: [handler],
+      router: { select },
+      memory: { ...base.memory, async recordShortTerm() { shortTerm++; return { id: 'mem-1' }; } },
+    };
+    return { deps, calls, summarize, select, shortTerm: () => shortTerm };
+  }
+
+  it.each([['no pending approval', null], ['a pending approval', pendingApprovalOf()]] as const)(
+    'answers with %s: no provider, no Task, no memory write, approval untouched',
+    async (_label, pending) => {
+      const f = feedbackDeps(pending);
+      const result = await new ConversationRuntime(f.deps).handle(messageOf('피드백 요약'));
+
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toContain('최근 30일 피드백 요약이에요.');
+      expect(result.workFacts).toBeUndefined();
+      expect(f.summarize).toHaveBeenCalledWith(ACTOR.id);
+      expect(f.select).not.toHaveBeenCalled();
+      expect(f.calls.classify).toBe(0);
+      expect(f.calls.decide).toBe(0);
+      expect(f.calls.run).toBe(0);
+      expect(f.calls.recordAssistant).toBe(0);
+      expect(f.shortTerm()).toBe(0);
+    },
+  );
+
+  it.each(['피드백 요약해줘', '피드백 요약 기능 만들어줘'])('%j is not the control phrase and is not answered by the handler', async (text) => {
+    const f = feedbackDeps(null);
+    const result = await new ConversationRuntime(f.deps).handle(messageOf(text));
+    expect(f.summarize).not.toHaveBeenCalled();
+    expect(result.reply.text).not.toContain('최근 30일 피드백 요약이에요.');
+  });
+
+  it('help includes the handler-contributed 👍/👎 and 피드백 요약 lines', async () => {
+    const f = feedbackDeps(null);
+    const result = await new ConversationRuntime(f.deps).handle(messageOf('도움말'));
+    expect(result.reply.text).toContain('👍/👎');
+    expect(result.reply.text).toContain('"피드백 요약"');
   });
 });
