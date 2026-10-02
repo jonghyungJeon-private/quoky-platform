@@ -369,7 +369,7 @@ export function detectExternalActionRequest(text: string): ExternalActionRequest
 }
 
 /** Sentence punctuation (followed by space or the end), newlines and "and then" / "그리고" connectives. */
-const CLAUSE_BOUNDARY = /[.!?。！？](?=\s|$)|\n|\s+and\s+then\s+|\s+그리고(?:\s*나서)?\s+/iu;
+const CLAUSE_BOUNDARY = /[.!?。！？;；](?=\s|$)|[;；]|\n|\s+and\s+then\s+|\s+그리고(?:\s*나서)?\s+/iu;
 
 function externalActionKindOf(requests: string): ExternalActionKind | undefined {
   const ko = KO_EXTERNAL_ACTIONS.find(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker));
