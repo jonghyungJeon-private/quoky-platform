@@ -645,14 +645,23 @@ export interface LocalWorkspaceWriterHooks {
   readonly afterPlan?: () => void;
   /** Runs once after every result is staged, before the first promote. */
   readonly afterStage?: () => void;
+  /** `applyOperation` only: runs once after every check passed, before the first write. */
+  readonly afterOperationCheck?: () => void;
 }
 
 /**
  * Applies one patch operation to the local filesystem (CAP-006, ADR-0027).
- * **Atomic unit = file** (temp-write + rename, or unlink); `node:fs` only — no git,
+ * **Atomic unit = file** (exclusive temp-write + rename, or unlink); `node:fs` only — no git,
  * no child_process. Apply failures are ENCODED in the FileChangeResult (never thrown)
- * so the manager can record best-effort results for every file. Sandboxed to the
- * workspace root via `resolveWithin`.
+ * so the manager can record best-effort results for every file.
+ *
+ * Containment matches the change-set path (ADR-0022, ADR-0099): `resolveWithinForWrite` refuses
+ * absolute / `..` paths and any existing symlinked path component, and realpath-checks the nearest
+ * existing ancestor; a symlinked target (dangling or not, pointing inside the root or not) is refused;
+ * missing parents are created one at a time (never recursive) and `assertWriteContained` re-checks every
+ * component with `lstat` before and after each mkdir, the exclusive (`wx`, random-named) temp write in
+ * the validated parent, the rename and the unlink. A failure removes only the temp files and
+ * directories this call created (dev/ino-checked).
  */
 export class LocalWorkspaceWriter implements WorkspaceWriter {
   readonly kind = 'local';
@@ -668,27 +677,91 @@ export class LocalWorkspaceWriter implements WorkspaceWriter {
       message,
       durationMs: Date.now() - start,
     });
+    const tmpFiles = new Map<string, FileIdentity | undefined>();
+    const createdDirs: Array<{ dir: string; id: FileIdentity }> = [];
+    let renamed = false;
     try {
       if (op.metadata?.['binary'] === true) return done('skipped', 'binary file not applied');
-      const abs = resolveWithin(ref.rootPath, op.path);
+      const rootAbs = resolve(ref.rootPath);
+      const { abs, missingDirs } = resolveWithinForWrite(ref.rootPath, op.path);
+      const realRoot = realpathSync(rootAbs);
+      const contained = (target: string): void => assertWriteContained(rootAbs, realRoot, target, op.path);
+      /** The target, never followed: a symlink is refused; otherwise absent (`null`) or a regular file. */
+      const targetState = (): Stats | null => {
+        const st = lstatOrNull(abs);
+        if (st?.isSymbolicLink()) throw new Error(`refusing to write through a symlinked target: ${op.path}`);
+        if (st !== null && !st.isFile()) throw new Error(`not a regular file: ${op.path}`);
+        return st;
+      };
 
+      const before = targetState();
       if (op.operation === 'delete') {
-        if (existsSync(abs)) unlinkSync(abs);
+        if (before === null) return done('applied', 'deleted');
+        this.hooks.afterOperationCheck?.();
+        contained(abs);
+        if (!sameIdentity(targetState(), identityOf(before))) {
+          throw new Error(`file changed since it was checked: ${op.path}`);
+        }
+        unlinkSync(abs);
         return done('applied', 'deleted');
       }
 
-      const current = existsSync(abs) && statSync(abs).isFile() ? readFileSync(abs, 'utf8') : '';
+      const current = before === null ? '' : readFileSync(abs, 'utf8');
       const next = applyPatch(current, op.diff);
       if (next === false) return done('failed', 'unified diff did not apply cleanly');
 
-      // Atomic per-file write: temp + rename.
-      mkdirSync(dirname(abs), { recursive: true });
-      const tmp = `${abs}.chunsik-tmp`;
-      writeFileSync(tmp, next, 'utf8');
+      this.hooks.afterOperationCheck?.();
+      for (const dir of before === null ? missingDirs : []) {
+        contained(dir);
+        mkdirSync(dir); // never recursive: EEXIST if anything (a symlink included) appeared meanwhile
+        const st = lstatSync(dir);
+        if (!st.isDirectory()) throw new Error(`created path is not a directory: ${op.path}`);
+        createdDirs.push({ dir, id: identityOf(st) });
+        contained(dir);
+      }
+      contained(abs);
+      const pre = targetState();
+      const unchanged = before === null ? pre === null : sameIdentity(pre, identityOf(before));
+      if (!unchanged) throw new Error(`file changed since it was checked: ${op.path}`);
+      const tmp = writeExclusiveTemp(abs, next, tmpFiles);
+      const staged = tmpFiles.get(tmp);
+      contained(abs); // the temp landed in the validated parent, not behind a swapped one
+      if (pre !== null) chmodSync(tmp, pre.mode & 0o7777);
+      contained(abs);
+      targetState();
+      if (!sameIdentity(lstatOrNull(tmp), staged)) throw new Error(`staged file changed: ${op.path}`);
       renameSync(tmp, abs);
+      renamed = true;
+      tmpFiles.delete(tmp);
+      // Re-check after the rename: a parent swapped during it is reported, never silently accepted.
+      contained(abs);
+      if (!sameIdentity(lstatOrNull(abs), staged)) throw new Error(`written file changed: ${op.path}`);
       return done('applied', op.operation === 'add' ? 'created' : 'updated');
     } catch (err) {
-      return done('failed', err instanceof Error ? err.message : String(err));
+      const cleanupErrors: string[] = [];
+      for (const [tmp, id] of tmpFiles) {
+        try {
+          if (!unlinkOwned(tmp, id)) cleanupErrors.push(`temp file changed, not removed: ${basename(tmp)}`);
+        } catch (cleanupErr) {
+          if (errorCode(cleanupErr) !== 'ENOENT') cleanupErrors.push(errorMessage(cleanupErr));
+        }
+      }
+      for (const { dir, id } of [...createdDirs].reverse()) {
+        try {
+          const st = lstatOrNull(dir);
+          if (st === null) continue;
+          if (!st.isDirectory() || !sameIdentity(st, id)) {
+            cleanupErrors.push(`directory changed, not removed: ${basename(dir)}`);
+            continue;
+          }
+          rmdirSync(dir);
+        } catch (cleanupErr) {
+          cleanupErrors.push(errorMessage(cleanupErr));
+        }
+      }
+      const cleanupNote = cleanupErrors.length ? `; cleanup failed: ${cleanupErrors.join('; ')}` : '';
+      const appliedNote = renamed ? '; the change may have applied' : '';
+      return done('failed', `${errorMessage(err)}${appliedNote}${cleanupNote}`);
     }
   }
 
