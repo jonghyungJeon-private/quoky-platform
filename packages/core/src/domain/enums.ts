@@ -65,6 +65,13 @@ export enum Capability {
   READONLY_LOOKUP = 'READONLY_LOOKUP',
   PROJECT_ANALYSIS = 'PROJECT_ANALYSIS',
   EMBEDDING = 'EMBEDDING',
+  /**
+   * A GENERAL_CHAT turn that Core deterministically marks as policy-sensitive (ADR-0098 amendment): a request for an
+   * external action Quoky cannot perform, an injection-shaped message, or a message in a language other than Korean
+   * or English. Only providers that meet the chat-policy bar advertise it; with none ready the turn gets a
+   * deterministic reply instead of a downgraded answer.
+   */
+  POLICY_SENSITIVE_CHAT = 'POLICY_SENSITIVE_CHAT',
 }
 
 /** What the user is (probably) trying to do, before it becomes a Capability. */

@@ -230,6 +230,16 @@ function sanitizedModelName(model: string): string {
   return /^[A-Za-z0-9._:/-]{1,200}$/.test(model) ? model : '[redacted]';
 }
 
+/**
+ * Chat capabilities whose output goes through the provider-neutral chat hygiene (ADR-0098 D2 and amendment D2).
+ * POLICY_SENSITIVE_CHAT is a GENERAL_CHAT turn Core marked policy-sensitive. Every step is driven by Core's
+ * `generalChatReplyPolicy` request metadata: the action-claim guard runs only when it carries
+ * `externalActionRequested`, and without the metadata no output is rewritten.
+ */
+function isChatCapability(capability: Capability): boolean {
+  return capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT;
+}
+
 export interface CliProviderOptions {
   runner?: CliRunner;
   timeoutMs?: number;
@@ -249,6 +259,7 @@ export const DEFAULT_CLAUDE_MODEL = 'sonnet';
  */
 export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>> = {
   [Capability.GENERAL_CHAT]: 'low',
+  [Capability.POLICY_SENSITIVE_CHAT]: 'low',
   [Capability.READONLY_LOOKUP]: 'low',
   [Capability.SUMMARIZATION]: 'low',
   [Capability.DOCUMENT_ANALYSIS]: 'medium',
@@ -310,6 +321,9 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     { capability: Capability.DOCUMENT_ANALYSIS, priority: 60 },
     { capability: Capability.CODE_IMPLEMENTATION, priority: 50 },
     { capability: Capability.GENERAL_CHAT, priority: 50 },
+    // ADR-0098 amendment: Claude meets the chat-policy bar (no fabricated actions, declines injection, answers in
+    // the User's language), so it serves the turns Core marks policy-sensitive.
+    { capability: Capability.POLICY_SENSITIVE_CHAT, priority: 50 },
     { capability: Capability.SUMMARIZATION, priority: 50 },
     { capability: Capability.READONLY_LOOKUP, priority: 50 },
     { capability: Capability.TEST_EXECUTION, priority: 50 },
@@ -388,7 +402,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     }
 
     const sanitizedOutput = sanitizeTerminalOutput(result.stdout);
-    const text = (request.capability === Capability.GENERAL_CHAT
+    const text = (isChatCapability(request.capability)
       ? sanitizeGeneralChatText(
           stripInternalMetadataEnvelope(sanitizedOutput),
           readGeneralChatReplyPolicy(request.metadata),
@@ -474,6 +488,8 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   private readonly defaultTimeoutMs: number;
   private readonly validationHost: string | null;
 
+  // ADR-0098 amendment: no POLICY_SENSITIVE_CHAT — the local model did not meet the chat-policy bar in Live QA
+  // (fabricated an external action, followed an injection, answered Japanese in Korean).
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
     { capability: Capability.GENERAL_CHAT, priority: 100 },
     { capability: Capability.SUMMARIZATION, priority: 100 },
@@ -538,7 +554,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
-    const serializedConversation = request.capability === Capability.GENERAL_CHAT
+    const serializedConversation = isChatCapability(request.capability)
       ? serializeGeneralChat(request.prompt)
       : null;
     const input = serializedConversation ?? request.prompt;
@@ -598,7 +614,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     }
 
     const sanitizedOutput = sanitizeTerminalOutput(result.stdout);
-    const text = (request.capability === Capability.GENERAL_CHAT
+    const text = (isChatCapability(request.capability)
       ? sanitizeGeneralChatText(
           stripRepeatedAssistantHistoryPrefix(
             stripInternalMetadataEnvelope(sanitizedOutput),

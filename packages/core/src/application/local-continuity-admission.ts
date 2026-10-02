@@ -137,6 +137,8 @@ const DEFAULT_LOCAL_FALLBACK_BY_CAPABILITY: Readonly<Record<Capability, boolean>
   [Capability.DOCUMENT_ANALYSIS]: false,
   [Capability.TEST_EXECUTION]: false,
   [Capability.EMBEDDING]: false,
+  // ADR-0098 amendment: policy-sensitive chat is served only by providers that advertise it, never a local fallback.
+  [Capability.POLICY_SENSITIVE_CHAT]: false,
 });
 
 /**

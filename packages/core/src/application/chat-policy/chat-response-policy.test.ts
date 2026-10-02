@@ -107,6 +107,23 @@ describe('generalChatReplyPolicy (structured AiRequest.metadata, ADR-0098 D2)', 
     expect(readGeneralChatReplyPolicy({ [key]: { replyLanguage: 'fr', explicitLanguageRequest: false } })).toBeUndefined();
     expect(readGeneralChatReplyPolicy({ [key]: { replyLanguage: 'ko', explicitLanguageRequest: 'no' } })).toBeUndefined();
   });
+
+  it('carries Core\'s external-action classification only when given, and round-trips it', () => {
+    expect(generalChatReplyPolicy('메일 보내줘')).not.toHaveProperty('externalActionRequested');
+    const policy = generalChatReplyPolicy('메일 보내줘', { kind: 'email' });
+    expect(policy).toEqual({ replyLanguage: 'ko', explicitLanguageRequest: false, externalActionRequested: { kind: 'email' } });
+    const metadata = generalChatReplyPolicyMetadata('Book a table for two', { kind: 'booking' });
+    expect(readGeneralChatReplyPolicy(metadata)).toEqual({
+      replyLanguage: 'en',
+      explicitLanguageRequest: false,
+      externalActionRequested: { kind: 'booking' },
+    });
+    const key = GENERAL_CHAT_REPLY_POLICY_METADATA_KEY;
+    const base = { replyLanguage: 'ko', explicitLanguageRequest: false };
+    expect(readGeneralChatReplyPolicy({ [key]: { ...base, externalActionRequested: { kind: 'fax' } } })).toBeUndefined();
+    expect(readGeneralChatReplyPolicy({ [key]: { ...base, externalActionRequested: 'email' } })).toBeUndefined();
+    expect(readGeneralChatReplyPolicy({ [key]: { ...base, externalActionRequested: null } })).toBeUndefined();
+  });
 });
 
 describe('replyLanguageFact', () => {
