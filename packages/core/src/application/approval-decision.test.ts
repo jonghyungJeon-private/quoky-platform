@@ -157,6 +157,25 @@ describe('interpretApprovalDecision', () => {
     ['승인 거절', 'ambiguous'],
     // unrelated chat
     ['오늘 날씨 어때', 'ambiguous'],
+    // a question mark ANYWHERE is a question, not only at the end
+    ['승인? 감사합니다.', 'ambiguous'],
+    ['진행? 네', 'ambiguous'],
+    ['ok?!', 'ambiguous'],
+    ['승인？ 네', 'ambiguous'],
+    ['취소? 아니 진행', 'ambiguous'],
+    // significant symbols / emoji are never discarded: they make an approve ambiguous
+    ['승인 ❌', 'ambiguous'],
+    ['승인 ✖', 'ambiguous'],
+    ['승인 👎', 'ambiguous'],
+    ['승인 👍', 'ambiguous'],
+    ['ok 🙅', 'ambiguous'],
+    ['진행 ->', 'ambiguous'],
+    ['승인 ㅠㅠ', 'ambiguous'],
+    // benign punctuation (. , ! ~) still approves
+    ['승인!!', 'approve'],
+    ['승인.', 'approve'],
+    ['승인~', 'approve'],
+    ['네 승인할게요', 'approve'],
   ];
 
   it.each(table)('%j → %s', (text, expected) => {
@@ -164,7 +183,7 @@ describe('interpretApprovalDecision', () => {
   });
 
   it('never approves a negated approve phrase (explicit safety table)', () => {
-    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve", '승인 거부', '승인 불가', '진행 불가', '승인 보류', '진행 보류', '승인 철회', '승인 반대', '진행 중지', '진행 대기', '진행 마', '승인 마', '진행 ㄴㄴ', '승인 X', 'I refuse to approve', 'approve nothing', '취소 말고 진행해', "yes but don't touch tests", '진행 상황 알려줘', '진행 멈춰', '진행 싫어', '승인 불허', '승인 반려', '승인 절대 안됨', 'ok 내일 할게', 'ok let me think', 'ok but only change src/a.ts', 'yes and also push it']) {
+    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve", '승인 거부', '승인 불가', '진행 불가', '승인 보류', '진행 보류', '승인 철회', '승인 반대', '진행 중지', '진행 대기', '진행 마', '승인 마', '진행 ㄴㄴ', '승인 X', 'I refuse to approve', 'approve nothing', '취소 말고 진행해', "yes but don't touch tests", '진행 상황 알려줘', '진행 멈춰', '진행 싫어', '승인 불허', '승인 반려', '승인 절대 안됨', 'ok 내일 할게', 'ok let me think', 'ok but only change src/a.ts', 'yes and also push it', '승인 ❌', '승인? 감사합니다.', '승인 ✖', '승인 👎', 'ok?!', '진행? 네']) {
       expect(interpretApprovalDecision(text), text).not.toBe('approve');
     }
   });

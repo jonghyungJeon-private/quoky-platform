@@ -32,8 +32,15 @@ const HANGUL = /[가-힣]/;
  *  contains "진행"). Deny/cancel are non-mutating and are not length-capped. */
 const MAX_APPROVE_LENGTH = 80;
 
-/** A message that ends as a question ("진행할까?", "why?", "승인해도 될까요") asks, it does not decide. */
-const QUESTION_ENDING = /[?？]\s*$|(?:까|까요|나요|인가요|건가요|는가요)[\s.!]*$/;
+/** A message that ends as a question ("진행할까?", "why?", "승인해도 될까요") asks, it does not decide. A question
+ *  mark ANYWHERE ("승인? 감사합니다.", "진행? 네", "ok?!") is a question too — never only at the end. */
+const QUESTION = /[?？]|(?:까|까요|나요|인가요|건가요|는가요)[\s.!]*$/;
+
+/** The only characters an approval may contain: letters, Hangul syllables, digits, whitespace, apostrophes (for
+ *  "don't stop") and the benign punctuation `. , ! ~`. Anything else — an emoji ("승인 👎"), a mark ("승인 ❌",
+ *  "승인 ✖"), a symbol, a jamo — is significant content we cannot read, so the message is NOT a plain approval.
+ *  Nothing is stripped before this check; it applies only to approve (deny/cancel are non-mutating). */
+const NON_APPROVE_CHARACTER = /[^a-z0-9가-힣\s.,!~'’]/;
 
 /** Wait / look-first hedges — "먼저 보고 승인할게" / "approve later" must not decide anything. */
 const HEDGE =
@@ -147,20 +154,21 @@ function scan(text: string, matchers: PhraseMatchers): KindHits {
 /**
  * Interpret a user message as an approval decision (only meaningful while a pending approval exists).
  * Pure and deterministic. Order of precedence:
- *  1. question / empty → ambiguous
+ *  1. question (a `?`/`？` anywhere, or a question ending) / empty → ambiguous
  *  2. un-negated cancel → cancel (cancel is non-mutating; "승인 취소" cancels)
  *  3. hedge ("먼저", "yet", "wait"…) → ambiguous
  *  4. negated approve phrase ("진행하지 마", "don't approve") → deny (never approve); contradictory or
  *     contrastive ("취소하지 말고 진행해") → ambiguous
  *  5. approve XOR deny (un-negated, whole token) → that decision; both or neither → ambiguous. An approve with a
  *     refusal qualifier ("승인 불가"), an attached don't-condition ("yes but don't touch tests") or ANY further
- *     content word ("진행 상황 알려줘", "ok but only src/a.ts") is ambiguous: approve is the narrow case.
+ *     content word ("진행 상황 알려줘", "ok but only src/a.ts") or any character outside letters/Hangul/digits/
+ *     whitespace and `. , ! ~ '` ("승인 ❌", "승인 👎") is ambiguous: approve is the narrow case.
  * A negated deny/cancel ("거절하지 마", "거절 안 해") yields nothing positive, so it falls through to ambiguous;
  * "no problem" is likewise ambiguous rather than a false deny.
  */
 export function interpretApprovalDecision(text: string): ApprovalDecisionResult {
   const t = text.trim().toLowerCase();
-  if (t.length === 0 || QUESTION_ENDING.test(t)) return 'ambiguous';
+  if (t.length === 0 || QUESTION.test(t)) return 'ambiguous';
 
   const cancel = scan(t, CANCEL);
   if (cancel.positive) return 'cancel';
@@ -179,6 +187,7 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   }
   if (approve.positive && !deny.positive) {
     if (t.length > MAX_APPROVE_LENGTH || SOFT_NEGATION.test(t) || REFUSAL_QUALIFIER.test(t)) return 'ambiguous';
+    if (NON_APPROVE_CHARACTER.test(t)) return 'ambiguous';
     // Approve is the narrow case: an approve word plus any further content word ("진행 상황 알려줘", "ok but only
     // src/a.ts", "yes and also push it") is a question, a condition or an added instruction, not a decision.
     if (hasContentBeyondApproval(t)) return 'ambiguous';
