@@ -9,6 +9,7 @@ export {
   CHAT_INJECTION_RULE,
   CHAT_NO_UNREQUESTED_TRANSLATION_RULE,
   ENGLISH_LETTER_SHARE_THRESHOLD,
+  EXTERNAL_ACTION_KINDS,
   GENERAL_CHAT_POLICY_RULES,
   GENERAL_CHAT_REPLY_POLICY_METADATA_KEY,
   KOREAN_LETTER_SHARE_THRESHOLD,
@@ -16,8 +17,14 @@ export {
   generalChatReplyPolicy,
   generalChatReplyPolicyMetadata,
   hasExplicitLanguageRequest,
+  isExternalActionKind,
   readGeneralChatReplyPolicy,
   renderGeneralChatPolicyRules,
   replyLanguageFact,
 } from './chat-response-policy';
-export type { GeneralChatReplyPolicy, ReplyLanguage } from './chat-response-policy';
+export type {
+  ExternalActionKind,
+  ExternalActionRequest,
+  GeneralChatReplyPolicy,
+  ReplyLanguage,
+} from './chat-response-policy';

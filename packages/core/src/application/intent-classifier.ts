@@ -1,7 +1,8 @@
 import { Capability, IntentType } from '../domain';
 import type { InboundMessage, Intent } from '../domain';
 import type { CapabilityRouter } from './capability-router';
-import { detectReplyLanguage } from './chat-policy';
+import { detectReplyLanguage, isExternalActionKind } from './chat-policy';
+import type { ExternalActionKind, ExternalActionRequest } from './chat-policy';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 
@@ -85,74 +86,87 @@ const EN_SENTENCE_REST = String.raw`\b[^.!?\n]*\b`;
 /**
  * Unsupported external actions (ADR-0098 amendment D1 a). Each entry is a noun/verb pair that must co-occur in one
  * un-negated clause; the verb carries the Korean request ending. "회의" alone is not a calendar noun ("7/3 회의
- * 등록해줘" stays ordinary chat; the output guard still catches a fabricated "등록했어요").
+ * 등록해줘" stays ordinary chat, which the output action-claim guard does not inspect). `kind` is carried to the
+ * adapter as `GeneralChatReplyPolicy.externalActionRequested`.
  */
-const KO_EXTERNAL_ACTIONS: readonly { readonly noun: RegExp; readonly verb: RegExp; readonly blocker?: RegExp }[] = [
+const KO_EXTERNAL_ACTIONS: readonly {
+  readonly kind: ExternalActionKind;
+  readonly noun: RegExp;
+  readonly verb: RegExp;
+  readonly blocker?: RegExp;
+}[] = [
   // calendar / schedule; a job schedule in code ("cron 스케줄 추가해줘", "스케줄러에 작업 등록해줘", "이 코드에 스케줄
   // 추가해줘") is not a calendar entry unless a calendar is named
   {
+    kind: 'calendar',
     noun: /(캘린더|달력|calendar|일정|스케줄(?!러)|schedule)/iu,
     verb: koRequest(String.raw`(?:등록|추가|생성|입력|예약)${KO_PARTICLE}해|넣어|잡아`),
     blocker: /^(?![\s\S]*(?:캘린더|달력|calendar))[\s\S]*(?:cron|크론|스케줄러|scheduler|코드|code|함수|\bjobs?\b|배치|작업|태스크|\btasks?\b|워크플로|workflow|크롤)/iu,
   },
   // email
   {
+    kind: 'email',
     noun: /(메일|이메일|e-?mail|gmail|지메일|아웃룩|outlook)/iu,
     verb: koRequest(String.raw`(?:발송|전송|답장|회신|포워드|포워딩|전달)${KO_PARTICLE}해|보내|부쳐`),
   },
   // booking
   {
+    kind: 'booking',
     noun: /(예약|예매)/u,
     verb: koRequest(String.raw`(?:예약|예매)${KO_PARTICLE}(?:해|잡아|진행해|취소해|변경해|걸어)`),
   },
   // payment
   {
+    kind: 'payment',
     noun: /(결제|송금|이체|입금|구매|구입|주문|계좌)/u,
     verb: koRequest(String.raw`(?:결제|송금|이체|입금|구매|구입|주문)${KO_PARTICLE}(?:해|진행해|넣어)|보내|부쳐`),
   },
   // phone / SMS
   // A code-side message ("에러 메시지", "커밋 메시지") is not a phone/SMS target.
   {
+    kind: 'phone-sms',
     noun: /(전화|문자(?!열)|sms|(?<!(?:에러|오류|커밋|로그|경고|예외|알림|error|commit|log)\s*)(?:메시지|메세지)|카톡|카카오톡|통화)/iu,
     verb: koRequest(String.raw`(?:전화|문자|통화|카톡)${KO_PARTICLE}해|걸어|보내|돌려`),
   },
   // "남겨줘" is a phone/SMS action only for a voice/text message, never "에러 메시지 남겨줘" (log it).
   {
+    kind: 'phone-sms',
     noun: /(문자(?!열)|sms|카톡|음성\s*(?:메시지|메세지|사서함)|보이스\s*메일|voicemail|부재중)/iu,
     verb: koRequest('남겨'),
   },
   // posting to an external service
   {
+    kind: 'posting',
     noun: /(트위터|트윗|페이스북|인스타(?:그램)?|링크드인|블로그|슬랙|slack|sns|게시판|커뮤니티|카페|스레드|레딧|reddit|유튜브|youtube|twitter|facebook|instagram|linkedin)/iu,
     verb: koRequest(String.raw`올려|(?:게시|포스팅|업로드|공유|등록|트윗)${KO_PARTICLE}해`),
   },
 ];
 
-const EN_EXTERNAL_ACTIONS: readonly RegExp[] = [
-  enRequest(String.raw`(?:add|put|schedule|create|set\s+up|book)${EN_SENTENCE_REST}(?:calendars?|meetings?|appointments?)\b`),
+const EN_EXTERNAL_ACTIONS: readonly { readonly kind: ExternalActionKind; readonly pattern: RegExp }[] = [
+  { kind: 'calendar', pattern: enRequest(String.raw`(?:add|put|schedule|create|set\s+up|book)${EN_SENTENCE_REST}(?:calendars?|meetings?|appointments?)\b`) },
   // "Send me an email template", "Can you send the email draft here?" ask for text in the chat, not a send.
-  enRequest(
+  { kind: 'email', pattern: enRequest(
     String.raw`(?:send|forward|reply\s+to|write\s+and\s+send)(?![^.!?\n]*\b(?:templates?|drafts?|examples?|samples?|outlines?|formats?|wording|subject\s+lines?|here)\b)${EN_SENTENCE_REST}(?:e-?mails?|mails?|inbox)\b`,
-  ),
-  enRequest(String.raw`(?:e-?mail)\s+(?!address)(?:my|him|her|them|the|this|[a-z]+\s+(?:about|that|the|a))\b`),
-  enRequest(String.raw`(?:book|reserve)${EN_SENTENCE_REST}(?:tables?|flights?|hotels?|rooms?|tickets?|seats?|restaurants?|appointments?|reservations?|trains?|taxis?|cabs?)\b`),
-  enRequest(String.raw`make\s+(?:a|the|my)\s+(?:reservation|booking)\b`),
+  ) },
+  { kind: 'email', pattern: enRequest(String.raw`(?:e-?mail)\s+(?!address)(?:my|him|her|them|the|this|[a-z]+\s+(?:about|that|the|a))\b`) },
+  { kind: 'booking', pattern: enRequest(String.raw`(?:book|reserve)${EN_SENTENCE_REST}(?:tables?|flights?|hotels?|rooms?|tickets?|seats?|restaurants?|appointments?|reservations?|trains?|taxis?|cabs?)\b`) },
+  { kind: 'booking', pattern: enRequest(String.raw`make\s+(?:a|the|my)\s+(?:reservation|booking)\b`) },
   // "pay attention to the rent calculation bug" is not a payment.
-  enRequest(String.raw`(?:pay(?!\s+(?:close\s+|more\s+|special\s+|careful\s+|extra\s+)?attention\b)|transfer|wire)${EN_SENTENCE_REST}(?:bills?|invoices?|money|payments?|rent|dollars?|won)\b`),
+  { kind: 'payment', pattern: enRequest(String.raw`(?:pay(?!\s+(?:close\s+|more\s+|special\s+|careful\s+|extra\s+)?attention\b)|transfer|wire)${EN_SENTENCE_REST}(?:bills?|invoices?|money|payments?|rent|dollars?|won)\b`) },
   // "buy some time" / "buy into" are idioms and "buy or rent" is a comparison, not purchases.
-  enRequest(
+  { kind: 'payment', pattern: enRequest(
     String.raw`(?:buy|purchase)\b(?!\s+(?:or|vs\.?|versus)\b)(?!\s+(?:(?:me|us|you|myself|yourself)\s+)?(?:some\s+|more\s+|a\s+(?:little|bit)\s+(?:of\s+)?(?:more\s+)?)?time\b)(?!\s+into\b)|place\s+(?:an?|the|my)\s+order\b`,
-  ),
+  ) },
   // "call back function" is a callback, not a phone call.
-  enRequest(
+  { kind: 'phone-sms', pattern: enRequest(
     String.raw`(?:call|phone|ring|text)\s+(?:my\s+\w+|mom|mum|dad|him|her|them|back(?![\s-]*(?:functions?|handlers?|urls?|hell|patterns?)\b))\b`,
-  ),
-  enRequest(String.raw`(?:send|leave)\s+(?:an?\s+|the\s+)?(?:text|sms|text\s+message|voicemail)\b|(?:make|place)\s+an?\s+(?:phone\s+)?call\b`),
+  ) },
+  { kind: 'phone-sms', pattern: enRequest(String.raw`(?:send|leave)\s+(?:an?\s+|the\s+)?(?:text|sms|text\s+message|voicemail)\b|(?:make|place)\s+an?\s+(?:phone\s+)?call\b`) },
   // "Share your thoughts on LinkedIn posts" asks for an opinion about the service, not a post to it.
-  enRequest(
+  { kind: 'posting', pattern: enRequest(
     String.raw`(?:post|tweet|publish|share(?!\s+(?:your|my|some)\s+(?:thoughts|opinions?|views|tips|advice|ideas|experience)\b)|upload)${EN_SENTENCE_REST}(?:twitter|x\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|social\s+media)\b(?!\s+(?:posts?|marketing|strateg(?:y|ies)|tips|content|best\s+practices|api|integration)\b)`,
-  ),
-  enRequest(String.raw`tweet\s+(?:this|that|it|about)\b`),
+  ) },
+  { kind: 'posting', pattern: enRequest(String.raw`tweet\s+(?:this|that|it|about)\b`) },
 ];
 
 /**
@@ -300,14 +314,35 @@ const RETRACTED_QUESTION = /[^.!?\n]*[?？]\s*(?:no|nope|nah|never\s*mind|아니
  */
 export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReason | undefined {
   if (isOverrideInjection(text) || INJECTION_PATTERNS.some((pattern) => pattern.test(text))) return 'injection';
-  // A request the User takes back in the same message ("Post the code to slack? no, just explain") is not one.
-  const requests = text.replace(RETRACTED_QUESTION, ' ');
-  if (KO_EXTERNAL_ACTIONS.some(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker))) {
-    return 'external-action';
-  }
-  if (unnegatedMatch(requests, EN_EXTERNAL_ACTIONS)) return 'external-action';
+  if (detectExternalActionRequest(text) !== undefined) return 'external-action';
   if (isOtherLanguage(text)) return 'unsupported-language';
   return undefined;
+}
+
+/**
+ * The unsupported external action the message asks Quoky itself to perform (ADR-0098 amendment D1 a), or
+ * `undefined`. Deterministic, no LLM. A question about an action ("메일 쓰는 법 알려줘", "how do I send an email?"), a
+ * negated request and a request taken back in the same message are not requests.
+ */
+export function detectExternalActionRequest(text: string): ExternalActionRequest | undefined {
+  // A request the User takes back in the same message ("Post the code to slack? no, just explain") is not one.
+  const requests = text.replace(RETRACTED_QUESTION, ' ');
+  const ko = KO_EXTERNAL_ACTIONS.find(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker));
+  if (ko !== undefined) return { kind: ko.kind };
+  const en = EN_EXTERNAL_ACTIONS.find(({ pattern }) => unnegatedMatch(requests, [pattern]));
+  return en === undefined ? undefined : { kind: en.kind };
+}
+
+/**
+ * The external-action decision Core recorded on a chat intent at classification time (`Intent.raw`), or `undefined`.
+ * ConversationRuntime carries it to the adapter as `GeneralChatReplyPolicy.externalActionRequested`, so the
+ * action-claim guard runs only for turns whose User message asked for an unsupported external action.
+ */
+export function externalActionRequestOf(intent: Intent): ExternalActionRequest | undefined {
+  const raw = intent.raw;
+  if (raw?.kind !== POLICY_SENSITIVE_CHAT_KIND) return undefined;
+  const kind: unknown = raw.externalAction;
+  return isExternalActionKind(kind) ? { kind } : undefined;
 }
 
 /** "분리해서 설명해줘" explains by splitting; the change is a means of the explanation, not the request. */
@@ -490,13 +525,24 @@ export class IntentClassifier {
    */
   private static chatIntent(text: string): Intent {
     const policySensitive = detectPolicySensitiveChat(text);
+    // Recorded for every policy-sensitive reason, so an injection-shaped message that also asks for an external action
+    // still gets the action-claim guard.
+    const externalAction = policySensitive ? detectExternalActionRequest(text) : undefined;
     return {
       type: IntentType.CHAT,
       capability: policySensitive ? Capability.POLICY_SENSITIVE_CHAT : Capability.GENERAL_CHAT,
       confidence: 1,
       requiresWork: true,
       summary: text.slice(0, 200) || '(empty message)',
-      ...(policySensitive ? { raw: { kind: POLICY_SENSITIVE_CHAT_KIND, reason: policySensitive } } : {}),
+      ...(policySensitive
+        ? {
+            raw: {
+              kind: POLICY_SENSITIVE_CHAT_KIND,
+              reason: policySensitive,
+              ...(externalAction ? { externalAction: externalAction.kind } : {}),
+            },
+          }
+        : {}),
     };
   }
 

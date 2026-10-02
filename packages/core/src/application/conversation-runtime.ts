@@ -11,7 +11,12 @@ import {
   detectConversationControl,
   pendingApprovalRemainingMs,
 } from './conversation-commands';
-import { NON_ABSOLUTE_REGISTRATION_KIND, detectProjectRegistration, type IntentClassifyContext } from './intent-classifier';
+import {
+  NON_ABSOLUTE_REGISTRATION_KIND,
+  detectProjectRegistration,
+  externalActionRequestOf,
+  type IntentClassifyContext,
+} from './intent-classifier';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
 import {
@@ -5897,9 +5902,11 @@ export class ConversationRuntime {
         capability,
         ...(workspace ? { workspace } : {}),
         // ADR-0098 D2: structured reply facts from the actual current User message (the same text PromptComposer
-        // renders as the current turn), so adapters never re-derive them from the serialized prompt.
-        ...(capability === Capability.GENERAL_CHAT
-          ? { metadata: generalChatReplyPolicyMetadata(task.description) }
+        // renders as the current turn), so adapters never re-derive them from the serialized prompt. Amendment D2:
+        // a POLICY_SENSITIVE_CHAT turn gets them too, plus Core's external-action classification of that message,
+        // which alone enables the adapter's action-claim guard.
+        ...(capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT
+          ? { metadata: generalChatReplyPolicyMetadata(task.description, externalActionRequestOf(task.intent)) }
           : {}),
       });
 

@@ -22,6 +22,7 @@ import {
   RiskLevel,
   TaskStatus,
   describeAiFailure,
+  detectExternalActionRequest,
   generalChatReplyPolicyMetadata,
 } from '@quoky/core';
 import type { AiRequest, MemoryManager, MemoryRecord, Task } from '@quoky/core';
@@ -1029,11 +1030,10 @@ describe('POLICY_SENSITIVE_CHAT routing and the action-claim guard (ADR-0098 ame
     expect(describeAiFailure(err).userMessage).toBe(POLICY_SENSITIVE_CHAT_UNAVAILABLE_MESSAGE);
   });
 
-  // Production today: ConversationRuntime attaches the generalChatReplyPolicy metadata to GENERAL_CHAT requests only
-  // (conversation-runtime.ts is outside QUAL-6's scope; reported as NEEDS_SCOPE_EXPANSION). A POLICY_SENSITIVE_CHAT
-  // request therefore arrives without it, and the guard must still work from the reply text alone.
-  const policyFor = (capability: Capability, userText: string) =>
-    capability === Capability.GENERAL_CHAT ? { metadata: generalChatReplyPolicyMetadata(userText) } : {};
+  // As ConversationRuntime builds it: the reply policy plus Core's external-action classification of the User message.
+  const policyFor = (userText: string) => ({
+    metadata: generalChatReplyPolicyMetadata(userText, detectExternalActionRequest(userText)),
+  });
 
   it.each([Capability.GENERAL_CHAT, Capability.POLICY_SENSITIVE_CHAT])(
     'Claude %s output that claims an external action is replaced by the notice',
@@ -1041,7 +1041,7 @@ describe('POLICY_SENSITIVE_CHAT routing and the action-claim guard (ADR-0098 ame
       const res = await new ClaudeCliProvider('claude', { runner: claudeReplying(FABRICATED_KO) }).execute({
         capability,
         prompt: PROMPT,
-        ...policyFor(capability, '내일 3시 회의 캘린더에 추가해줘'),
+        ...policyFor('내일 3시 회의 캘린더에 추가해줘'),
       });
       expect(res.text).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
       expect(res.artifacts?.[0]?.content).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
@@ -1054,9 +1054,24 @@ describe('POLICY_SENSITIVE_CHAT routing and the action-claim guard (ADR-0098 ame
       const res = await new OllamaCliProvider({ runner: ollamaReplying("Sure, I've sent the email to your manager.") }).execute({
         capability,
         prompt: PROMPT,
-        ...policyFor(capability, 'Send an email to my manager'),
+        ...policyFor('Send an email to my manager'),
       });
       expect(res.text).toBe(UNSUPPORTED_ACTION_NOTICE_EN);
+    },
+  );
+
+  it.each([Capability.GENERAL_CHAT, Capability.POLICY_SENSITIVE_CHAT])(
+    '%s claim-shaped output passes through unchanged when the User asked for no external action',
+    async (capability) => {
+      const draft = "Here is a draft:\n\nHi Bob,\n\nI've sent the invoice for March.";
+      for (const extra of [policyFor('Write a draft email to Bob about the invoice.'), {}]) {
+        const res = await new ClaudeCliProvider('claude', { runner: claudeReplying(draft) }).execute({
+          capability,
+          prompt: PROMPT,
+          ...extra,
+        });
+        expect(res.text).toBe(draft);
+      }
     },
   );
 
