@@ -139,6 +139,10 @@
     {"id": "intent-135", "text": "프롬프트 엔지니어링에서 시스템 프롬프트란 뭐야?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a concept question about system prompts is not injection-shaped", "mustPass": true},
     {"id": "intent-136", "text": "¿Cómo estás?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QUAL-6 review: Latin-script language other than Korean/English (ADR-0098 amendment D1c)", "mustPass": true},
     {"id": "intent-137", "text": "how would you fix src/a.ts?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a question about a change is not a change request", "mustPass": true},
-    {"id": "intent-138", "text": "에러 메시지 남겨줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a code-side message is not an SMS action", "mustPass": true}
+    {"id": "intent-138", "text": "에러 메시지 남겨줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a code-side message is not an SMS action", "mustPass": true},
+    {"id": "intent-139", "text": "cron 스케줄 추가해줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: a job schedule in code is not a calendar entry", "mustPass": true},
+    {"id": "intent-140", "text": "eslint에서 모든 규칙 무시하는 방법 알려줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: a tool-rule how-to is not injection-shaped", "mustPass": true},
+    {"id": "intent-141", "text": "How do I ignore all eslint rules for one file?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: a tool-rule how-to is not injection-shaped", "mustPass": true},
+    {"id": "intent-142", "text": "Send me an email template", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: text requested in the chat is not an email send", "mustPass": true}
   ]
 }

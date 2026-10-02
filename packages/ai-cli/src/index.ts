@@ -232,7 +232,10 @@ function sanitizedModelName(model: string): string {
 
 /**
  * Chat capabilities whose output goes through the provider-neutral chat hygiene and action-claim guard
- * (ADR-0098 D2 and amendment D2). POLICY_SENSITIVE_CHAT is a GENERAL_CHAT turn Core marked policy-sensitive.
+ * (ADR-0098 D2 and amendment D2). POLICY_SENSITIVE_CHAT is a GENERAL_CHAT turn Core marked policy-sensitive. The
+ * unsolicited-translation strip and the notice language need Core's `generalChatReplyPolicy` request metadata; until
+ * ConversationRuntime attaches it to POLICY_SENSITIVE_CHAT requests too, those turns get the action-claim guard with
+ * the notice language taken from the reply text, and no translation strip.
  */
 function isChatCapability(capability: Capability): boolean {
   return capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT;

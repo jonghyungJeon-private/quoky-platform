@@ -346,21 +346,43 @@ export const UNSUPPORTED_ACTION_NOTICE_EN =
   "Quoky can't perform external actions such as adding calendar entries, sending email or messages, bookings, " +
   'payments or posting to other services. Nothing was done for this request. Type "/help" to see what Quoky can do.';
 
-// Korean claim endings. SERVICE: the assistant did / will do it for the User ("추가해 드릴게요", "예약해 드렸어요",
-// "등록해 놨어요", "완료됐어요"). ANY: SERVICE plus plain past/future ("추가했어요", "보낼게요").
-const KO_SERVICE_END = String.raw`(?:해\s*(?:드릴게|드릴께|드리겠|드렸|놓을게|놓았|놨|뒀|두었|둘게|줄게|줬)|완료\s*(?:했|하였|됐|되었|해\s*드렸)|됐|되었)`;
-const KO_ANY_END = String.raw`(?:${KO_SERVICE_END}|했|하였|하겠|할게|할께)`;
+// Korean claim forms (ADR-0098 amendment D2, review round 2). A SERVICE form names the assistant as the one acting for
+// the User ("추가해 드릴게요", "예약해 드렸어요", "등록해 놨어요", "보내 드릴게요") and always counts. A PLAIN form
+// ("추가했어요", "보낼게요", "발송됐어요", "결제가 완료되었습니다") does not say who acted, so it counts only when the
+// sentence names no other actor ("서버가", "producer가", "사용자가", "김부장님이") and the reply does not describe code,
+// logs or a running system — unless the sentence says "제가"/"저는". The English patterns require the subject "I" for
+// the same reason.
+const KO_SERVICE_AUX = String.raw`\s*(?:드릴게|드릴께|드리겠|드렸|놓을게|놓았|놨|뒀|두었|둘게|줄게|줄께)`;
+/** "해 줬어요" is as often a third party's act ("친구가 보내 줬어요") as the assistant's, so it is a plain form. */
+const KO_PLAIN_AUX = String.raw`\s*줬`;
+const KO_PASSIVE_END = String.raw`(?:완료\s*)?(?:됐|되었)`;
+
+interface KoForms {
+  readonly service: string;
+  readonly plain: string;
+}
+
+const KO_END: KoForms = {
+  service: String.raw`(?:완료\s*)?해${KO_SERVICE_AUX}`,
+  plain: String.raw`(?:(?:완료\s*)?(?:했|하였|하겠|할게|할께)|해${KO_PLAIN_AUX}|${KO_PASSIVE_END})`,
+};
 const KO_PARTICLE = String.raw`(?:\s*(?:을|를|이|가|은|는))?\s*`;
-const KO_GIVE = String.raw`\s*(?:드릴게|드릴께|드리겠|드렸|놓을게|놓았|놨|뒀|두었|둘게|줄게|줬)`;
-/** "보내 드렸어요", "보냈어요", "보낼게요", "보내겠습니다" — the same shape for 올리다/걸다/넣다/잡다. */
-function koNativeVerb(stem: string, past: string, promise: string, intent: string): string {
-  return String.raw`(?:${stem}${KO_GIVE}|${past}|${promise}(?:게|께)|${intent}겠)`;
+/** "보내 드렸어요" (service), "보냈어요" / "보낼게요" / "보내겠습니다" (plain) — the same shape for 올리다/걸다/넣다/잡다. */
+function koNativeVerb(stem: string, past: string, promise: string, intent: string): KoForms {
+  return {
+    service: `${stem}${KO_SERVICE_AUX}`,
+    plain: String.raw`(?:${stem}${KO_PLAIN_AUX}|${past}|${promise}(?:게|께)|${intent}겠)`,
+  };
 }
 const KO_SEND = koNativeVerb('보내', '보냈', '보낼', '보내');
 const KO_POST = koNativeVerb('올려', '올렸', '올릴', '올리');
 const KO_CALL = koNativeVerb('걸어', '걸었', '걸', '걸');
-const KO_PUT = String.raw`(?:${koNativeVerb('넣어', '넣었', '넣을', '넣')}|${koNativeVerb('잡아', '잡았', '잡을', '잡')})`;
-const KO_PUT_SERVICE = String.raw`(?:넣어|잡아)${KO_GIVE}`;
+const KO_PUT_IN = koNativeVerb('넣어', '넣었', '넣을', '넣');
+const KO_HOLD = koNativeVerb('잡아', '잡았', '잡을', '잡');
+const KO_PUT: KoForms = {
+  service: `(?:${KO_PUT_IN.service}|${KO_HOLD.service})`,
+  plain: `(?:${KO_PUT_IN.plain}|${KO_HOLD.plain})`,
+};
 /** A conditional, question or negated continuation means the sentence does not claim the action. */
 const KO_NOT_A_CLAIM = String.raw`(?!\s*(?:는지|냐|나요|다면|다고|다는|더라도|던|을\s*(?:때|경우|수)|으면|면|지\s*(?:않|못|마)|기\s*(?:전|위해)|어야|야\s*(?:해|합)))`;
 /**
@@ -372,29 +394,87 @@ const KO_UI_COPY = String.raw`(?![가-힣]{0,5}['"’”」』]?\s*(?:(?:이)?�
 const KO_PLANNING_LIST = String.raw`(?![가-힣]{0,5}\s*[:：]\s*(?:$|\d+\s*[.)]|[-*•·]|[①-⑳]))`;
 const GAP = String.raw`[^.!?\n]{0,40}?`;
 
-function koClaim(source: string, extraGuard = ''): RegExp {
-  return new RegExp(`(?:${source})${KO_NOT_A_CLAIM}${KO_UI_COPY}${extraGuard}`, 'iu');
+interface KoClaimPattern {
+  readonly service: RegExp;
+  readonly plain: RegExp | null;
 }
 
-const KO_ACTION_CLAIMS: readonly RegExp[] = [
-  // calendar: a calendar service noun with any claim; a bare 일정/회의 noun only with a service claim
-  koClaim(String.raw`(?:캘린더|달력|calendar|outlook|아웃룩)${GAP}(?:(?:추가|등록|입력|생성|저장|예약)${KO_PARTICLE}${KO_ANY_END}|${KO_PUT})`),
+function koClaim(build: (form: keyof KoForms) => string | null, extraGuard = ''): KoClaimPattern {
+  const compile = (source: string | null): RegExp | null =>
+    source === null ? null : new RegExp(`(?:${source})${KO_NOT_A_CLAIM}${KO_UI_COPY}${extraGuard}`, 'iu');
+  const service = compile(build('service'));
+  if (service === null) throw new Error('A Korean claim pattern needs a service form');
+  return { service, plain: compile(build('plain')) };
+}
+
+const KO_ACTION_CLAIMS: readonly KoClaimPattern[] = [
+  // calendar: a calendar service noun with any claim; a bare 일정/회의 noun only with a service claim or a passive
+  // completion ("회의 일정이 추가되었어요"), never "여행 일정에 박물관 방문을 추가했어요"
   koClaim(
-    String.raw`(?:일정|스케줄|미팅|회의(?!록))${GAP}(?:(?:추가|등록|입력|생성|예약)${KO_PARTICLE}${KO_SERVICE_END}|${KO_PUT_SERVICE})`,
+    (f) =>
+      String.raw`(?:캘린더|달력|calendar|outlook|아웃룩)${GAP}(?:(?:추가|등록|입력|생성|저장|예약)${KO_PARTICLE}${KO_END[f]}|${KO_PUT[f]})`,
+  ),
+  koClaim(
+    (f) =>
+      f === 'service'
+        ? String.raw`(?:일정|스케줄|미팅|회의(?!록))${GAP}(?:(?:추가|등록|입력|생성|예약)${KO_PARTICLE}${KO_END.service}|${KO_PUT.service})`
+        : String.raw`(?:일정|스케줄|미팅|회의(?!록))${GAP}(?:추가|등록|입력|생성|예약)${KO_PARTICLE}${KO_PASSIVE_END}`,
     KO_PLANNING_LIST,
   ),
   // email
-  koClaim(String.raw`(?:메일|이메일|e-?mail|gmail|지메일)${GAP}(?:(?:발송|전송|회신|답장|전달|포워딩)${KO_PARTICLE}${KO_ANY_END}|${KO_SEND})`),
-  // SMS / messenger / phone
-  koClaim(String.raw`(?:문자|sms|카톡|카카오톡|메시지|메세지|알림톡)${GAP}(?:(?:발송|전송)${KO_PARTICLE}${KO_ANY_END}|${KO_SEND})`),
-  koClaim(String.raw`(?:전화|통화)${GAP}${KO_CALL}|(?:전화|통화)${KO_PARTICLE}${KO_ANY_END}`),
+  koClaim(
+    (f) =>
+      String.raw`(?:메일|이메일|e-?mail|gmail|지메일)${GAP}(?:(?:발송|전송|회신|답장|전달|포워딩)${KO_PARTICLE}${KO_END[f]}|${KO_SEND[f]})`,
+  ),
+  // SMS / messenger / phone ("문자열" is a string, not a text message)
+  koClaim(
+    (f) =>
+      String.raw`(?:문자(?!열)|sms|카톡|카카오톡|메시지|메세지|알림톡)${GAP}(?:(?:발송|전송)${KO_PARTICLE}${KO_END[f]}|${KO_SEND[f]})`,
+  ),
+  koClaim((f) => String.raw`(?:전화|통화)${GAP}${KO_CALL[f]}|(?:전화|통화)${KO_PARTICLE}${KO_END[f]}`),
   // booking / payment: the action noun itself carries the claim
-  koClaim(String.raw`(?:예약|예매)${KO_PARTICLE}(?:${KO_ANY_END}|${KO_PUT})`),
-  koClaim(String.raw`(?:결제|송금|이체|입금|구매|구입|주문)${KO_PARTICLE}${KO_ANY_END}`),
-  koClaim(String.raw`계좌${GAP}${KO_SEND}`),
+  koClaim((f) => String.raw`(?:예약|예매)${KO_PARTICLE}(?:${KO_END[f]}|${KO_PUT[f]})`),
+  koClaim((f) => String.raw`(?:결제|송금|이체|입금|구매|구입|주문)${KO_PARTICLE}${KO_END[f]}`),
+  koClaim((f) => String.raw`계좌${GAP}${KO_SEND[f]}`),
   // posting to an external service
-  koClaim(String.raw`(?:트위터|트윗|페이스북|인스타(?:그램)?|링크드인|블로그|슬랙|slack|게시판|sns|커뮤니티|레딧|reddit|유튜브|twitter|facebook|instagram|linkedin)${GAP}(?:(?:게시|포스팅|업로드|공유|등록|트윗)${KO_PARTICLE}${KO_ANY_END}|${KO_POST})`),
+  koClaim(
+    (f) =>
+      String.raw`(?:트위터|트윗|페이스북|인스타(?:그램)?|링크드인|블로그|슬랙|slack|게시판|sns|커뮤니티|레딧|reddit|유튜브|twitter|facebook|instagram|linkedin)${GAP}(?:(?:게시|포스팅|업로드|공유|등록|트윗)${KO_PARTICLE}${KO_END[f]}|${KO_POST[f]})`,
+  ),
 ];
+
+/** Another actor named as the subject of a Korean sentence: a person, a system part or a Latin-script code name. */
+const KO_OTHER_ACTOR = new RegExp(
+  String.raw`(?:^|[^가-힣])(?:사용자|유저|고객|회원|상대방?|친구|동료|팀원|서버|시스템|앱|프로그램|클라이언트|함수|코드|스크립트|작업|잡|프로세스|워커|큐|봇|웹훅|로그|테스트|요청|응답|모듈|서비스|플랫폼|이벤트|트리거|스케줄러|브라우저|백엔드|프론트엔드|크론|은행|카드사|회사|가게|식당|매장|그분|그쪽|누군가|누가|[가-힣]+님|[가-힣]+씨)(?:이|가|은|는|께서|에서|측에서)(?![가-힣])`,
+  'u',
+);
+const KO_LATIN_SUBJECT = /([A-Za-z][\w.-]*)(?:\(\))?\s?(?:이|가|은|는)(?![가-힣])/gu;
+/** Latin-script nouns that are the action or its object ("SMS가 전송됐어요"), or Quoky itself, never another actor. */
+const KO_LATIN_ACTION_NOUN = /^(?:sms|e-?mail|mail|gmail|kakao|slack|calendar|outlook|ktx|srt|quoky)$/iu;
+
+function namesOtherActor(sentence: string): boolean {
+  if (KO_OTHER_ACTOR.test(sentence)) return true;
+  for (const match of sentence.matchAll(KO_LATIN_SUBJECT)) {
+    if (!KO_LATIN_ACTION_NOUN.test(match[1] ?? '')) return true;
+  }
+  return false;
+}
+
+/** A reply that describes code, logs or a running system: its plain Korean past/passive forms narrate, never claim. */
+const KO_SYSTEM_CONTEXT =
+  /`|로그|서버|\bapi\b|webhook|웹훅|producer|consumer|프로듀서|컨슈머|큐(?=[에를가는의\s])|함수|메서드|메소드|테스트|\bmock|모킹|코드|스크립트|\bcron\b|크론|스케줄러|scheduler|데이터베이스|\bdb\b|트랜잭션|핸들러|엔드포인트|endpoint|요청에서|재시도|루프|파이프라인|워커|\bworker\b|\bjob\b|배치|디버그|debug|버그|이\s*경우|단계에서|순서로/iu;
+/** The assistant named as the subject ("제가 메일을 보냈어요"). */
+const KO_FIRST_PERSON = /(?:^|[^가-힣])(?:제가|저는|저도|저희가|내가|나는)(?![가-힣])/u;
+
+/** True when one Korean sentence claims an unsupported external action (see the claim forms above). */
+function koSentenceClaims(sentence: string, systemContext: boolean): boolean {
+  // A question ("이미 메일을 보냈어요?", "어떤 모델을 구매하겠어요?") never claims.
+  if (/[?？]\s*$/u.test(sentence)) return false;
+  if (KO_ACTION_CLAIMS.some((pattern) => pattern.service.test(sentence))) return true;
+  if (!KO_ACTION_CLAIMS.some((pattern) => pattern.plain?.test(sentence) ?? false)) return false;
+  if (namesOtherActor(sentence)) return false;
+  return !systemContext || KO_FIRST_PERSON.test(sentence);
+}
 
 // English: the assistant as subject ("I have added", "I'll send", "Let me book", "I'm posting"), never after a
 // conditional ("if I sent ..."); a negation ("I haven't sent", "I can't add", "I will not send") never matches.
@@ -422,6 +502,9 @@ const EN_CALENDAR = String.raw`(?:(?:(?:your|my|his|her|their|our)\s+)?(?:google
 const EN_MESSAGE = String.raw`(?:e-?mails?|mails?|inbox|texts?|sms|invites?|messages?(?![^.!?\n]*\b(?:queues?|broker|bus|body|payload|handler|object|type|event|topic|worker|socket|websocket|server|endpoint|api|webhook|thread|process|client|consumer|producer)\b))`;
 /** An external service as the place something is posted ("on LinkedIn", "to your Slack channel"). */
 const EN_EXTERNAL_SERVICE = String.raw`(?:on|to|in|onto|via)\s+(?:(?:your|the|my|our|a)\s+)?(?:twitter|x\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|discord|social\s+media|(?:slack|discord|youtube|teams|telegram)\s+channel)(?!\s+(?:marketing|strategy|strategies|tips|posts?|content|best\s+practices|api|integration)\b)`;
+
+/** An acknowledgement that opens a reply ("Sure", "OK", "On it"). */
+const EN_ACK = String.raw`(?:sure|ok(?:ay)?|alright|all\s+right|got\s+it|on\s+it|no\s+problem|absolutely|of\s+course|will\s+do|done)`;
 
 const EN_ACTION_CLAIMS: readonly RegExp[] = [
   // calendar / booking
@@ -482,6 +565,12 @@ const EN_ACTION_CLAIMS: readonly RegExp[] = [
     'posting|publishing|sharing|uploading',
     EN_EXTERNAL_SERVICE,
   ),
+  // a subjectless progressive at the start of a sentence, as an immediate act ("Sure, sending the email now.",
+  // "Adding it to your calendar right away."); "Sending an email requires SMTP." has no immediacy and never matches
+  new RegExp(
+    String.raw`^\s*(?:${EN_ACK}[,!.]?\s+)?(?:(?:sending|forwarding)\s+(?:(?:the|an?|your|that|this|it)\s+)?(?:[^\s.!?]+\s+){0,2}?${EN_MESSAGE}|(?:adding|putting)\s+(?:it|this|that|the\s+[^\s.!?]+)\s+(?:(?:to|on|in|into)\s+)?${EN_CALENDAR}|(?:booking|reserving)\s+(?:(?:the|an?|your)\s+)?(?:[^\s.!?]+\s+){0,2}?(?:tables?|flights?|hotels?|rooms?|tickets?|seats?))\b[^.!?\n]*\b(?:now|right\s+away|immediately|for\s+you)\b`,
+    'iu',
+  ),
   // passive completion ("Your meeting has been added to your calendar", "The email has been sent")
   new RegExp(
     String.raw`\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|put)\b[^.!?\n]*\b${EN_CALENDAR}`,
@@ -515,12 +604,18 @@ function claimProse(text: string): string[] {
  * capability for (calendar entries, email/SMS/messenger sends, phone calls, bookings, payments, posting to external
  * services). Deterministic and provider-neutral (ADR-0098 amendment D2). Questions, conditionals, negations
  * ("보낼 수 없어요", "I can't send"), code, double-quoted text and block quotes never count. Matching is per sentence
- * (sentence punctuation or a line break), so a noun and a verb on different lines are not combined.
+ * (sentence punctuation or a line break), so a noun and a verb on different lines are not combined. Only the
+ * assistant's own act counts: English needs the subject "I" (or an opening "Sure, sending … now"); a Korean plain
+ * past/passive form counts only without another actor in the sentence and outside a code/log/system description.
+ * Known gaps: a noun-less service reply ("네, 등록해 드렸습니다.") and replies in a language other than Korean or
+ * English ("カレンダーに追加しました") are not detected; those turns are POLICY_SENSITIVE_CHAT and only reach a provider
+ * that meets the chat-policy bar.
  */
 export function claimsUnsupportedExternalAction(text: string): boolean {
+  const systemContext = KO_SYSTEM_CONTEXT.test(text);
   return claimProse(text).some(
     (sentence) =>
-      KO_ACTION_CLAIMS.some((pattern) => pattern.test(sentence)) ||
+      koSentenceClaims(sentence, systemContext) ||
       (!EN_UI_OR_CODE_MENTION.test(sentence) && EN_ACTION_CLAIMS.some((pattern) => pattern.test(sentence))),
   );
 }

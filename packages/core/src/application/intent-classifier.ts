@@ -87,11 +87,13 @@ const EN_SENTENCE_REST = String.raw`\b[^.!?\n]*\b`;
  * un-negated clause; the verb carries the Korean request ending. "회의" alone is not a calendar noun ("7/3 회의
  * 등록해줘" stays ordinary chat; the output guard still catches a fabricated "등록했어요").
  */
-const KO_EXTERNAL_ACTIONS: readonly { readonly noun: RegExp; readonly verb: RegExp }[] = [
-  // calendar / schedule
+const KO_EXTERNAL_ACTIONS: readonly { readonly noun: RegExp; readonly verb: RegExp; readonly blocker?: RegExp }[] = [
+  // calendar / schedule; a job schedule in code ("cron 스케줄 추가해줘", "스케줄러에 작업 등록해줘", "이 코드에 스케줄
+  // 추가해줘") is not a calendar entry unless a calendar is named
   {
-    noun: /(캘린더|달력|calendar|일정|스케줄|schedule)/iu,
+    noun: /(캘린더|달력|calendar|일정|스케줄(?!러)|schedule)/iu,
     verb: koRequest(String.raw`(?:등록|추가|생성|입력|예약)${KO_PARTICLE}해|넣어|잡아`),
+    blocker: /^(?![\s\S]*(?:캘린더|달력|calendar))[\s\S]*(?:cron|크론|스케줄러|scheduler|코드|code|함수|\bjobs?\b|배치|작업|태스크|\btasks?\b|워크플로|workflow|크롤)/iu,
   },
   // email
   {
@@ -111,12 +113,12 @@ const KO_EXTERNAL_ACTIONS: readonly { readonly noun: RegExp; readonly verb: RegE
   // phone / SMS
   // A code-side message ("에러 메시지", "커밋 메시지") is not a phone/SMS target.
   {
-    noun: /(전화|문자|sms|(?<!(?:에러|오류|커밋|로그|경고|예외|알림|error|commit|log)\s*)(?:메시지|메세지)|카톡|카카오톡|통화)/iu,
+    noun: /(전화|문자(?!열)|sms|(?<!(?:에러|오류|커밋|로그|경고|예외|알림|error|commit|log)\s*)(?:메시지|메세지)|카톡|카카오톡|통화)/iu,
     verb: koRequest(String.raw`(?:전화|문자|통화|카톡)${KO_PARTICLE}해|걸어|보내|돌려`),
   },
   // "남겨줘" is a phone/SMS action only for a voice/text message, never "에러 메시지 남겨줘" (log it).
   {
-    noun: /(문자|sms|카톡|음성\s*(?:메시지|메세지|사서함)|보이스\s*메일|voicemail|부재중)/iu,
+    noun: /(문자(?!열)|sms|카톡|음성\s*(?:메시지|메세지|사서함)|보이스\s*메일|voicemail|부재중)/iu,
     verb: koRequest('남겨'),
   },
   // posting to an external service
@@ -128,24 +130,81 @@ const KO_EXTERNAL_ACTIONS: readonly { readonly noun: RegExp; readonly verb: RegE
 
 const EN_EXTERNAL_ACTIONS: readonly RegExp[] = [
   enRequest(String.raw`(?:add|put|schedule|create|set\s+up|book)${EN_SENTENCE_REST}(?:calendars?|meetings?|appointments?)\b`),
-  enRequest(String.raw`(?:send|forward|reply\s+to|write\s+and\s+send)${EN_SENTENCE_REST}(?:e-?mails?|mails?|inbox)\b`),
+  // "Send me an email template", "Can you send the email draft here?" ask for text in the chat, not a send.
+  enRequest(
+    String.raw`(?:send|forward|reply\s+to|write\s+and\s+send)(?![^.!?\n]*\b(?:templates?|drafts?|examples?|samples?|outlines?|formats?|wording|subject\s+lines?|here)\b)${EN_SENTENCE_REST}(?:e-?mails?|mails?|inbox)\b`,
+  ),
   enRequest(String.raw`(?:e-?mail)\s+(?!address)(?:my|him|her|them|the|this|[a-z]+\s+(?:about|that|the|a))\b`),
   enRequest(String.raw`(?:book|reserve)${EN_SENTENCE_REST}(?:tables?|flights?|hotels?|rooms?|tickets?|seats?|restaurants?|appointments?|reservations?|trains?|taxis?|cabs?)\b`),
   enRequest(String.raw`make\s+(?:a|the|my)\s+(?:reservation|booking)\b`),
-  enRequest(String.raw`(?:pay|transfer|wire)${EN_SENTENCE_REST}(?:bills?|invoices?|money|payments?|rent|dollars?|won)\b`),
-  // "buy some time" / "buy into" are idioms, not purchases.
+  // "pay attention to the rent calculation bug" is not a payment.
+  enRequest(String.raw`(?:pay(?!\s+(?:close\s+|more\s+|special\s+|careful\s+|extra\s+)?attention\b)|transfer|wire)${EN_SENTENCE_REST}(?:bills?|invoices?|money|payments?|rent|dollars?|won)\b`),
+  // "buy some time" / "buy into" are idioms and "buy or rent" is a comparison, not purchases.
   enRequest(
-    String.raw`(?:buy|purchase)\b(?!\s+(?:(?:me|us|you|myself|yourself)\s+)?(?:some\s+|more\s+|a\s+(?:little|bit)\s+(?:of\s+)?(?:more\s+)?)?time\b)(?!\s+into\b)|place\s+(?:an?|the|my)\s+order\b`,
+    String.raw`(?:buy|purchase)\b(?!\s+(?:or|vs\.?|versus)\b)(?!\s+(?:(?:me|us|you|myself|yourself)\s+)?(?:some\s+|more\s+|a\s+(?:little|bit)\s+(?:of\s+)?(?:more\s+)?)?time\b)(?!\s+into\b)|place\s+(?:an?|the|my)\s+order\b`,
   ),
-  enRequest(String.raw`(?:call|phone|ring|text)\s+(?:my\s+\w+|mom|mum|dad|him|her|them|back)\b`),
+  // "call back function" is a callback, not a phone call.
+  enRequest(
+    String.raw`(?:call|phone|ring|text)\s+(?:my\s+\w+|mom|mum|dad|him|her|them|back(?![\s-]*(?:functions?|handlers?|urls?|hell|patterns?)\b))\b`,
+  ),
   enRequest(String.raw`(?:send|leave)\s+(?:an?\s+|the\s+)?(?:text|sms|text\s+message|voicemail)\b|(?:make|place)\s+an?\s+(?:phone\s+)?call\b`),
-  enRequest(String.raw`(?:post|tweet|publish|share|upload)${EN_SENTENCE_REST}(?:twitter|x\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|social\s+media)\b`),
+  // "Share your thoughts on LinkedIn posts" asks for an opinion about the service, not a post to it.
+  enRequest(
+    String.raw`(?:post|tweet|publish|share(?!\s+(?:your|my|some)\s+(?:thoughts|opinions?|views|tips|advice|ideas|experience)\b)|upload)${EN_SENTENCE_REST}(?:twitter|x\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|social\s+media)\b(?!\s+(?:posts?|marketing|strateg(?:y|ies)|tips|content|best\s+practices|api|integration)\b)`,
+  ),
   enRequest(String.raw`tweet\s+(?:this|that|it|about)\b`),
 ];
 
-/** Injection-shaped input (ADR-0098 amendment D1 b): override prior instructions or reveal hidden instructions. */
+/**
+ * Override-shaped input (ADR-0098 amendment D1 b): "ignore all previous instructions", "이전 지시는 무시하고". The
+ * `noun` group tells instruction nouns (instructions, prompts, 지시, 지침, 프롬프트) from tool-rule nouns (rules, 규칙,
+ * 명령), see `isOverrideInjection`.
+ */
+const OVERRIDE_PATTERNS: readonly RegExp[] = [
+  /\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+|any\s+)?(?:(?:of\s+)?(?:the|your|my|these|those)\s+)?(?:previous|prior|above|earlier|preceding|original|system|initial|all|your)\b[^.!?\n]{0,20}?\b(?<noun>instructions?|prompts?|rules?|directions?|guidelines?|guardrails?)\b/giu,
+  /(?:이전|앞의|앞선|위의|위\s*에|기존|모든|지금까지의?|시스템|원래)\s*(?:의\s*)?(?<noun>지시|지침|명령|규칙|프롬프트|instructions?)\S*\s*(?:은|는|을|를|들을|들은)?\s*(?:모두\s*|다\s*|전부\s*|싹\s*)?(?:무시|잊어|잊고|따르지\s*마|어기|무효)/giu,
+];
+/** Nouns that are as often a tool's rules or commands ("eslint rules", "git 명령") as the assistant's instructions. */
+const OVERRIDE_TOOL_RULE_NOUN = /^(?:rules?|규칙|명령)$/iu;
+/** A qualifier that points the tool-rule noun at the assistant's own conversation ("your rules", "지금까지의 규칙"). */
+const OVERRIDE_ASSISTANT_REF =
+  /\b(?:your|previous|prior|above|earlier|preceding|system|initial)\b|quoky|쿼키|너의|당신의|이전|앞의|앞선|위의|위\s*에|지금까지|시스템|원래/iu;
+/** A developer tool named in or just before the match ("eslint에서 모든 규칙", "git에서 이전 명령", "ignore all eslint rules"). */
+const OVERRIDE_TOOL =
+  /\b(?:eslint|tslint|prettier|stylelint|biome|tsconfig|tsc|git|gitignore|lint|linter|webpack|babel|jest|vitest|css|nginx|firewall|iptables)\b|린트|린터|컴파일러/iu;
+/** A how-to question about the override ("How do I ignore …", "무시하는 방법", "무시하려면?"). */
+const OVERRIDE_HOW_TO = /\bhow\s+(?:do|can|could|would|should)\s+(?:i|we|you)\b|\bhow\s+to\b|방법|하는\s*법|하려면|어떻게/iu;
+/** Instructions scoped to a document the User shares ("disregard previous instructions in this ticket"). */
+const OVERRIDE_DOCUMENT_SCOPE =
+  /^\s+(?:in|from|of|within|on)\s+(?:this|the|that)\s+(?:ticket|issue|file|doc(?:ument)?|pr|pull\s+request|thread|e-?mail|message|spec|readme|page|section|comment|task)s?\b/iu;
+
+/**
+ * True when the text asks the assistant to drop its own instructions. Not injection: instructions scoped to a shared
+ * document, an override next to a developer tool, and a tool-rule noun (rules/규칙/명령) that does not point at the
+ * assistant or is asked as a how-to ("How do I ignore all eslint rules for one file?", "tsconfig에서 기존 규칙
+ * 무시하고 새로 설정하려면?").
+ */
+function isOverrideInjection(text: string): boolean {
+  for (const pattern of OVERRIDE_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (OVERRIDE_DOCUMENT_SCOPE.test(text.slice(end))) continue;
+      if (OVERRIDE_TOOL.test(text.slice(Math.max(0, start - 20), end))) continue;
+      if (
+        OVERRIDE_TOOL_RULE_NOUN.test(match.groups?.noun ?? '') &&
+        (!OVERRIDE_ASSISTANT_REF.test(match[0]) || OVERRIDE_HOW_TO.test(text))
+      ) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Injection-shaped input (ADR-0098 amendment D1 b): reveal hidden instructions or jailbreak. */
 const INJECTION_PATTERNS: readonly RegExp[] = [
-  /\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+|any\s+)?(?:(?:of\s+)?(?:the|your|my|these|those)\s+)?(?:previous|prior|above|earlier|preceding|original|system|initial|all|your)\b[^.!?\n]{0,20}\b(?:instructions?|prompts?|rules?|directions?|guidelines?|guardrails?)\b/iu,
   // A strong reveal verb with any hidden-instruction noun ("leak hidden instructions").
   /\b(?:reveal|dump|leak|expose)\b[^.!?\n]{0,40}\b(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\b/iu,
   // A display verb aimed at the assistant's own instructions ("print your system prompt", "show me the system
@@ -155,7 +214,6 @@ const INJECTION_PATTERNS: readonly RegExp[] = [
   // the concept ("What is a system prompt in LLMs?").
   /\bwhat(?:'s|\s+is|\s+are|\s+were)\b[^.!?\n]{0,30}?\b(?:your|quoky's)\s+(?:(?:full|entire|exact|current|original|secret)\s+)?(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\b|\bwhat(?:'s|\s+is|\s+are|\s+were)\b[^.!?\n]{0,30}?\b(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\s+(?:that\s+)?you\s+(?:were|are|have\s+been|got|use|follow)\b/iu,
   /\b(?:jailbreak|jailbroken|developer\s+mode|do\s+anything\s+now)\b/iu,
-  /(?:이전|앞의|앞선|위의|위\s*에|기존|모든|지금까지의?|시스템|원래)\s*(?:의\s*)?(?:지시|지침|명령|규칙|프롬프트|instructions?)\S*\s*(?:은|는|을|를|들을|들은)?\s*(?:모두\s*|다\s*|전부\s*|싹\s*)?(?:무시|잊어|잊고|따르지\s*마|어기|무효)/iu,
   // The assistant's own instructions ("너의 시스템 프롬프트 보여줘", "Quoky의 지침이 뭐야?").
   /(?:너의|너\s+의|당신의|당신|quoky\s*의|쿼키\s*의|(?:^|\s)(?:네|니)\s)\s*(?:(?:시스템|내부|숨겨진|숨은|초기|개발자|원본)\s*(?:의\s*)?)?(?:프롬프트|지시(?:문|사항)?|지침|명령문)\S*\s*[^.!?\n]{0,15}(?:출력|보여|알려|공개|말해|읽어|복사|노출|뭐야|뭔지|뭐니|뭐예요|뭔가요|그대로)/iu,
   // A reveal request for hidden instructions; a concept question ("시스템 프롬프트란 뭐야?", "시스템 프롬프트가 뭔지
@@ -234,17 +292,28 @@ function isOtherLanguage(text: string): boolean {
   return (letters - hangul - latin) / letters >= 0.2;
 }
 
+const RETRACTED_QUESTION = /[^.!?\n]*[?？]\s*(?:no|nope|nah|never\s*mind|아니(?:요|야)?|아냐)(?![\p{L}])/giu;
+
 /**
  * Deterministic policy-sensitivity check for an otherwise GENERAL_CHAT message (ADR-0098 amendment D1). No LLM. A
  * question about an action ("메일 쓰는 법 알려줘", "how do I send an email?") is not a request for it.
  */
 export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReason | undefined {
-  if (INJECTION_PATTERNS.some((pattern) => pattern.test(text))) return 'injection';
-  if (KO_EXTERNAL_ACTIONS.some(({ noun, verb }) => hasCoLocatedUnnegated(text, noun, verb))) return 'external-action';
-  if (unnegatedMatch(text, EN_EXTERNAL_ACTIONS)) return 'external-action';
+  if (isOverrideInjection(text) || INJECTION_PATTERNS.some((pattern) => pattern.test(text))) return 'injection';
+  // A request the User takes back in the same message ("Post the code to slack? no, just explain") is not one.
+  const requests = text.replace(RETRACTED_QUESTION, ' ');
+  if (KO_EXTERNAL_ACTIONS.some(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker))) {
+    return 'external-action';
+  }
+  if (unnegatedMatch(requests, EN_EXTERNAL_ACTIONS)) return 'external-action';
   if (isOtherLanguage(text)) return 'unsupported-language';
   return undefined;
 }
+
+/** "분리해서 설명해줘" explains by splitting; the change is a means of the explanation, not the request. */
+const KO_NOT_EXPLAIN = String.raw`(?!\s*(?:설명|알려|보여|말해|요약|이해))`;
+/** "고치고 싶은 부분" is a wish, not a request. */
+const KO_NOT_WISH = String.raw`(?!\s*싶)`;
 
 /**
  * A path-scoped code-change verb (ADR-0098 amendment D3): with a real file path in the message, "src/a.ts를 고치고
@@ -253,9 +322,9 @@ export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReas
  * "추가된"/"분리된" or a necessity question "고쳐야 해?" does not count; English verbs must sit in request position, so
  * "how would you fix src/a.ts?" or "what does split do in src/a.ts?" stays chat.
  */
-const KO_CHANGE_TAIL = String.raw`(?:\s*(?:줘|주세요|주십시오|주실래요?|주시겠어요|주시겠습니까|줄래요?|줄\s*수\s*있|봐\s*줘|봐\s*주세요|놔\s*줘|둬\s*줘)|서|라(?![가-힣]))`;
+const KO_CHANGE_TAIL = String.raw`(?:\s*(?:줘|주세요|주십시오|주실래요?|주시겠어요|주시겠습니까|줄래요?|줄\s*수\s*있|봐\s*줘|봐\s*주세요|놔\s*줘|둬\s*줘)|서${KO_NOT_EXPLAIN}|라(?![가-힣]))`;
 const PATH_CHANGE_VERB_KO = new RegExp(
-  String.raw`(?:고쳐|바꿔|옮겨|쪼개|빼|(?:수정|분리|추가|변경|삭제|이동|교체|fix|update|change|modify|add|remove|delete|move|rename|refactor|extract|split)\s*해)${KO_CHANGE_TAIL}|고치(?:고|자)|바꾸고|빼고|(?:수정|분리|추가|변경|삭제|이동|교체)\s*(?:하고|하자|하여)`,
+  String.raw`(?:고쳐|바꿔|옮겨|쪼개|빼|(?:수정|분리|추가|변경|삭제|이동|교체|fix|update|change|modify|add|remove|delete|move|rename|refactor|extract|split)\s*해)${KO_CHANGE_TAIL}|고치(?:고${KO_NOT_WISH}|자)|바꾸고${KO_NOT_WISH}|(?:를|을)\s*빼고(?!\s*(?:나머지|말고|전부|다른))|(?:수정|분리|추가|변경|삭제|이동|교체)\s*(?:하고${KO_NOT_WISH}|하자|하여)`,
   'iu',
 );
 const PATH_CHANGE_VERB_EN = enRequest(
@@ -476,9 +545,10 @@ export class IntentClassifier {
     ) {
       return 'change';
     }
-    // A necessity question ("src/a.ts 수정해야 할 부분이 있을까?", "왜 고쳐야 해?") asks about a change, not for one.
+    // A necessity question ("src/a.ts 수정해야 할 부분이 있을까?", "왜 고쳐야 해?") asks about a change, not for one,
+    // and a wish ("고치고 싶은 부분 있으면 알려줘") is not a request.
     const changeVerb =
-      /(?:고쳐|고치|수정해|수정\s*해|바꿔|바꾸어|변경해|구현해)(?!야[^.!\n]*(?:\?|까\s*$|나요?\s*$|니\s*$))|fix|change|modify|implement/i;
+      /(?:고쳐|고치(?!고\s*싶)|수정해|수정\s*해|바꿔|바꾸어|변경해|구현해)(?!야[^.!\n]*(?:\?|까\s*$|나요?\s*$|니\s*$))|fix|change|modify|implement/i;
     const codeish = /(코드|code|파일|file|부분|함수|function|버그|bug)/i;
     if (changeVerb.test(text) && codeish.test(text)) return 'change';
     // F6 (Sprint 4c-Follow-up-6): an explicit create-file request is a CODE_IMPLEMENTATION intent. Require a

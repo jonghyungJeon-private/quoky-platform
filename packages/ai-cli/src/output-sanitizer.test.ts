@@ -466,3 +466,53 @@ describe('action-claim guard (ADR-0098 amendment D2)', () => {
     expect(sanitizeGeneralChatText('안녕하세요!', ko)).toBe('안녕하세요!');
   });
 });
+
+describe('action-claim guard: who acted (ADR-0098 amendment D2, review round 2)', () => {
+  const DEBUGGING_ANSWER = [
+    '원인은 재시도 로직이에요.',
+    '첫 요청에서 주문이 생성되고, 이후 결제가 완료됐어요.',
+    '그런데 응답이 늦어서 클라이언트가 같은 요청을 다시 보냈어요.',
+    '결과적으로 영수증 메일이 두 번 발송됐어요 — `sendReceipt()`가 재시도 루프 안에 있기 때문이에요.',
+    '`sendReceipt()`를 루프 밖으로 옮기고 idempotency key를 확인하면 해결돼요.',
+  ].join('\n');
+
+  it.each([
+    '네, 로그상으로는 메일이 정상적으로 발송됐어요.',
+    '이 경우 producer가 큐에 메시지를 전송했어요.',
+    'webhook이 슬랙에 메시지를 보냈어요 그래서 알림이 떴어요.',
+    '첫 번째 요청에서 주문이 생성되고 결제가 완료됐어요.',
+    'cron 작업은 매일 9시로 예약됐어요.',
+    '테스트 환경에서 SMS가 전송됐어요.',
+    '어떤 모델을 구매하겠어요?',
+    '말씀하신 대로라면 이미 메일을 보냈어요? …',
+    '사용자가 결제했어요 → 서버가 영수증 메일을 보냈어요 순서로 동작해요.',
+    '문자열을 보낼게요.',
+    DEBUGGING_ANSWER,
+    '김부장님이 어제 메일을 보냈어요.',
+    '친구가 문자를 보내 줬어요.',
+  ])('keeps a sentence about someone else, code or logs: %s', (reply) => {
+    expect(claimsUnsupportedExternalAction(reply)).toBe(false);
+    expect(guardUnsupportedActionClaims(reply)).toBe(reply);
+  });
+
+  it.each([
+    // service forms name the assistant and count even in a technical reply
+    '로그를 확인하는 동안 메일을 보내 드릴게요.',
+    // explicit first person counts in a technical reply
+    '서버 설정과 별개로 제가 메일을 보냈어요.',
+    // plain forms without another actor still count
+    '네, 문자가 전송되었습니다.',
+    '회의 일정이 추가되었습니다.',
+    'Sure, sending the email now.',
+    'On it! Adding it to your calendar right away.',
+  ])('still flags the assistant claiming the act: %s', (reply) => {
+    expect(claimsUnsupportedExternalAction(reply)).toBe(true);
+  });
+
+  it.each(['Sending an email requires an SMTP server.', 'Adding a calendar view takes a few lines.'])(
+    'keeps an English progressive without immediacy: %s',
+    (reply) => {
+      expect(claimsUnsupportedExternalAction(reply)).toBe(false);
+    },
+  );
+});
