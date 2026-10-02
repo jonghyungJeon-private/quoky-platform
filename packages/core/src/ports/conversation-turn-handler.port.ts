@@ -7,6 +7,9 @@ import type {
   Session,
   WorkspaceRef,
 } from '../domain';
+// Type-only: the summarize payload is the bounded, untrusted readout WORK-T3 defines next to the work grammar
+// (ADR-0100 D8). Erased at compile time, so the port module has no runtime dependency on the application layer.
+import type { ExternalWorkReadout } from '../application/work-chat/external-work-readout';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -46,11 +49,33 @@ export interface TurnHandlerContext {
   resolveActiveWorkspace(): Promise<WorkspaceRef | null>;
 }
 
+/** A deterministic reply: the handler's text is the turn's reply (the default variant, `kind` may be omitted). */
 export interface TurnHandlerReply {
+  readonly kind?: 'reply';
   readonly reply: OutboundMessage;
   /** Defaults to `RESPONDED`. */
   readonly status?: 'RESPONDED' | 'FAILED';
 }
+
+/**
+ * The only provider-reaching handler outcome (ADR-0096 D4, ADR-0100 D8). The handler itself never calls a provider:
+ * the runtime runs its existing work-turn path with `Capability.SUMMARIZATION` over the bounded, sanitized
+ * `readout` (provider selection, Task/TaskRun creation and audit stay where they are) and appends `footer` to a
+ * successful summary. On any other result — no provider, a provider failure, a readout that fails re-validation,
+ * or a dispatch stage that must stay provider-free (`control`) — the reply is `fallbackText`.
+ */
+export interface TurnHandlerSummarizeReply {
+  readonly kind: 'summarize';
+  /** Untrusted external data; rendered for the prompt as NON_AUTHORITATIVE_BACKGROUND only. */
+  readonly readout: ExternalWorkReadout;
+  /** The deterministic list, used whenever summarization does not produce a reply. */
+  readonly fallbackText: string;
+  /** Deterministic source links and the disclosure line, appended to a successful summary. */
+  readonly footer: string;
+}
+
+/** What one handler returns for a turn it claims (ADR-0096 D1 `TurnHandlerReply`, plus the ADR-0100 variant). */
+export type TurnHandlerOutcome = TurnHandlerReply | TurnHandlerSummarizeReply;
 
 /**
  * PORT: one deterministic conversational turn handler (ADR-0096). Registered statically in the composition root
@@ -59,7 +84,8 @@ export interface TurnHandlerReply {
  *
  * Contract:
  *  - return `null` to fall through unchanged;
- *  - never call an `AiProvider` and never create a Task, TaskRun or ApprovalRequest;
+ *  - never call an `AiProvider` and never create a Task, TaskRun or ApprovalRequest (a `summarize` outcome asks the
+ *    runtime to run its own SUMMARIZATION work path; it is honoured at `post-anchor` / `pre-classify` only);
  *  - catch its own errors (a leaked exception reaches the runtime's generic `handle` backstop).
  *
  * The registry rejects duplicate `id`s and sorts by `(stage, order, id)`.
@@ -70,5 +96,5 @@ export interface ConversationTurnHandler {
   readonly order: number;
   /** Lines contributed to the help reply (ADR-0096 D6), in registry order; bounded by the composer. */
   readonly helpLines?: readonly string[];
-  handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null>;
+  handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null>;
 }
