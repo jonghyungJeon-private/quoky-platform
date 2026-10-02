@@ -207,14 +207,82 @@ export function extractCurrentUserMessage(prompt: string): string | undefined {
   return body;
 }
 
+// Marker matching is per line and only on prose lines (never inside fenced or indented code). Up to three leading
+// spaces, as in a Markdown paragraph; a deeper indent is an indented code block, not a heading.
 const TRANSLATION_MARKER_LINE =
-  /^[ \t]*[(\[]?[ \t]*(?:translated from [\p{L}]+|(?:english |korean )?translation|in english|in korean|(?:영어 |한국어 )?번역)[ \t]*(?:[:：)\]]|\r?$)/gimu;
+  /^ {0,3}[(\[]?[ \t]*(?:translated from [\p{L}]+|(?:english |korean )?translation|in english|in korean|(?:영어 |한국어 )?번역)[ \t]*(?:[:：)\]]|$)/iu;
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/u;
+const INDENTED_CODE_LINE = /^(?: {4}|[ ]{0,3}\t)/u;
+
+interface SourceLine {
+  /** Line text without its terminator. */
+  readonly text: string;
+  /** Offset of the first character of the line in the source text. */
+  readonly start: number;
+  /** True for a fence delimiter or a line inside a fenced code block. */
+  readonly code: boolean;
+}
+
+/**
+ * Split text into lines and classify each as prose or fenced code (CommonMark fences: ``` or ~~~, length >= 3, closed
+ * by the same character with at least the opener's length and nothing but whitespace after it). A longer fence can
+ * contain shorter ones, so nested examples stay inside the outer block. Returns `null` when a fence is left open, in
+ * which case the code/prose split is not trustworthy.
+ */
+function classifyLines(text: string): SourceLine[] | null {
+  const lines: SourceLine[] = [];
+  const terminator = /\r?\n/gu;
+  let start = 0;
+  const raw: { text: string; start: number }[] = [];
+  for (const match of text.matchAll(terminator)) {
+    raw.push({ text: text.slice(start, match.index), start });
+    start = match.index + match[0].length;
+  }
+  raw.push({ text: text.slice(start), start });
+
+  let fence: { char: string; length: number } | null = null;
+  for (const line of raw) {
+    if (fence !== null) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u.exec(line.text);
+      const run = close?.[1];
+      if (run !== undefined && run[0] === fence.char && run.length >= fence.length) fence = null;
+      lines.push({ ...line, code: true });
+      continue;
+    }
+    const open = FENCE_OPEN.exec(line.text);
+    const run = open?.[1];
+    // A backtick fence's info string cannot contain a backtick (that is inline code, not a fence).
+    if (run !== undefined && !(run[0] === '`' && (open?.[2] ?? '').includes('`'))) {
+      fence = { char: run[0] ?? '`', length: run.length };
+      lines.push({ ...line, code: true });
+      continue;
+    }
+    lines.push({ ...line, code: false });
+  }
+  return fence === null ? lines : null;
+}
+
+/**
+ * True when the end of `prose` is inside an inline code span opened earlier in the same paragraph. Conservative: an
+ * unmatched backtick run counts as an open span, so a marker after it is never treated as prose.
+ */
+function endsInsideInlineCode(prose: string): boolean {
+  let open: number | null = null;
+  for (const match of prose.matchAll(/`+/gu)) {
+    const length = match[0].length;
+    if (open === null) open = length;
+    else if (length === open) open = null;
+  }
+  return open !== null;
+}
 
 /**
  * Remove a final, explicitly marked translation block that the User did not ask for (e.g. a trailing
  * "(Translated from Korean)" section). Only when: the User message has a detectable language and carries no
- * language or translation request; the text before the marker is in that language; and the marked block is in the
- * other script. Otherwise the text is returned unchanged.
+ * language or translation request; the marker is a prose line outside any fenced, indented or inline code; the
+ * marked block runs to the end of the text and is prose only (no code block); the text before the marker is in the
+ * User language; and the marked block is in the other script. Code is never inspected for markers or stripped, and an
+ * unbalanced fence disables stripping entirely. Otherwise the text is returned unchanged.
  */
 export function stripUnsolicitedTranslationBlock(
   text: string,
@@ -224,12 +292,39 @@ export function stripUnsolicitedTranslationBlock(
   const userLanguage = detectReplyLanguage(currentUserMessage);
   if (userLanguage === 'unknown' || hasExplicitLanguageRequest(currentUserMessage)) return text;
 
-  let marker: RegExpExecArray | null = null;
-  for (const match of text.matchAll(TRANSLATION_MARKER_LINE)) marker = match;
-  if (marker === null) return text;
+  const lines = classifyLines(text);
+  if (lines === null) return text;
 
-  const body = text.slice(0, marker.index);
-  const block = text.slice(marker.index + marker[0].length);
+  let markerIndex = -1;
+  let marker: RegExpExecArray | null = null;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (line === undefined || line.code) continue;
+    const match = TRANSLATION_MARKER_LINE.exec(line.text);
+    if (match === null) continue;
+    markerIndex = index;
+    marker = match;
+    break;
+  }
+  if (marker === null) return text;
+  const markerLine = lines[markerIndex];
+  if (markerLine === undefined) return text;
+
+  // The marker must not continue an inline code span opened earlier in its paragraph.
+  const paragraph: string[] = [];
+  for (let index = markerIndex - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (line === undefined || line.code || line.text.trim() === '') break;
+    paragraph.unshift(line.text);
+  }
+  if (endsInsideInlineCode(paragraph.join('\n'))) return text;
+
+  // The translation section is the rest of the marker line plus every following line, and must be prose only.
+  const trailing = lines.slice(markerIndex + 1);
+  if (trailing.some((line) => line.code || INDENTED_CODE_LINE.test(line.text))) return text;
+
+  const body = text.slice(0, markerLine.start);
+  const block = text.slice(markerLine.start + marker[0].length);
   if (body.trim() === '') return text;
   if (detectReplyLanguage(body) !== userLanguage) return text;
   const blockLanguage = detectReplyLanguage(block);
@@ -237,7 +332,7 @@ export function stripUnsolicitedTranslationBlock(
   return body.trimEnd();
 }
 
-const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/u;
+const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/u;
 const LITERAL_NEWLINE = /(?<!\\)\\n/gu;
 
 /**

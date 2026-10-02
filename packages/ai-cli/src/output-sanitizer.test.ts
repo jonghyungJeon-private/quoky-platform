@@ -224,6 +224,76 @@ describe('stripUnsolicitedTranslationBlock', () => {
     const text = `${korean}\r\n\r\n(Translated from Korean)\r\n${english}`;
     expect(stripUnsolicitedTranslationBlock(text, '안녕')).toBe(korean);
   });
+
+  describe('code is never inspected or stripped', () => {
+    it('keeps a fenced example that contains a translation marker (review repro)', () => {
+      const text = [
+        '백업 정책은 이렇게 적으면 됩니다.',
+        '',
+        '```text',
+        'In English:',
+        'Never delete the backup.',
+        '```',
+      ].join('\n');
+      expect(stripUnsolicitedTranslationBlock(text, '백업 정책 예시 보여줘')).toBe(text);
+    });
+
+    it('keeps a tilde-fenced example that contains a translation marker', () => {
+      const text = ['설명입니다.', '', '~~~', 'Translation:', 'Never delete the backup.', '~~~'].join('\n');
+      expect(stripUnsolicitedTranslationBlock(text, '안녕')).toBe(text);
+    });
+
+    it('treats a shorter fence inside a longer one as content (nested fences)', () => {
+      const text = [
+        '마크다운 예시입니다.',
+        '',
+        '````markdown',
+        '```text',
+        '```',
+        'In English:',
+        'Never delete the backup.',
+        '````',
+      ].join('\n');
+      expect(stripUnsolicitedTranslationBlock(text, '안녕')).toBe(text);
+      const tildeInBacktick = ['예시입니다.', '```', '~~~', '번역:', 'Never delete it.', '```'].join('\n');
+      expect(stripUnsolicitedTranslationBlock(tildeInBacktick, '안녕')).toBe(tildeInBacktick);
+    });
+
+    it('does not strip anything when a fence is left open', () => {
+      const text = [korean, '', '```', 'code', '', '(Translated from Korean)', english].join('\n');
+      expect(stripUnsolicitedTranslationBlock(text, '안녕')).toBe(text);
+      const openAfterMarker = [korean, '', 'Translation:', english, '```', 'code'].join('\n');
+      expect(stripUnsolicitedTranslationBlock(openAfterMarker, '안녕')).toBe(openAfterMarker);
+    });
+
+    it('does not strip a marked section that contains or is followed by code', () => {
+      const fenced = [korean, '', 'In English:', english, '```', 'rm -rf build', '```'].join('\n');
+      expect(stripUnsolicitedTranslationBlock(fenced, '안녕')).toBe(fenced);
+      const indented = [korean, '', 'In English:', english, '', '    rm -rf build'].join('\n');
+      expect(stripUnsolicitedTranslationBlock(indented, '안녕')).toBe(indented);
+    });
+
+    it('ignores a marker inside an inline code span or an indented code line', () => {
+      const inlineSpan = [`${korean} \`x`, 'Translation: y`', english].join('\n');
+      expect(stripUnsolicitedTranslationBlock(inlineSpan, '안녕')).toBe(inlineSpan);
+      const indentedMarker = [korean, '', '    In English:', `    ${english}`].join('\n');
+      expect(stripUnsolicitedTranslationBlock(indentedMarker, '안녕')).toBe(indentedMarker);
+    });
+
+    it('still strips a trailing prose translation after a balanced code block', () => {
+      const body = [korean, '', '```ts', 'const a = "In English:";', '```'].join('\n');
+      const text = `${body}\n\n(Translated from Korean)\n${english}`;
+      expect(stripUnsolicitedTranslationBlock(text, '오늘 날씨 어때?')).toBe(body);
+    });
+
+    it('keeps literal \\n inside code intact while stripping the trailing translation', () => {
+      const body = [korean, '', '```js', 'console.log("a\\nb\\nc");', '```', '', '`\\n`은 줄바꿈이에요.'].join('\n');
+      const text = `${body}\n\nIn English:\n${english}`;
+      expect(stripUnsolicitedTranslationBlock(text, '줄바꿈 알려줘')).toBe(body);
+      expect(sanitizeGeneralChatText(text, '줄바꿈 알려줘')).toBe(body);
+      expect(sanitizeGeneralChatText(body, '줄바꿈 알려줘')).toBe(body);
+    });
+  });
 });
 
 describe('normalizeLiteralEscapes', () => {
@@ -246,6 +316,8 @@ describe('normalizeLiteralEscapes', () => {
     const singleLineFence = '```console.log("a\\nb\\nc")```';
     expect(normalizeLiteralEscapes(singleLineFence)).toBe(singleLineFence);
     expect(normalizeLiteralEscapes('use `\\n` and `\\n` in code')).toBe('use `\\n` and `\\n` in code');
+    const tildeFence = '~~~console.log("a\\nb\\nc")~~~';
+    expect(normalizeLiteralEscapes(tildeFence)).toBe(tildeFence);
   });
 
   it('converts only the prose around inline code and counts only prose occurrences', () => {
