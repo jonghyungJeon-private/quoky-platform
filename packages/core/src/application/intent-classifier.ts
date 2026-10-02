@@ -140,15 +140,28 @@ const KO_EXTERNAL_ACTIONS: readonly {
     noun: /(트위터|트윗|페이스북|인스타(?:그램)?|링크드인|블로그|슬랙|slack|sns|게시판|커뮤니티|카페|스레드|레딧|reddit|유튜브|youtube|twitter|facebook|instagram|linkedin)/iu,
     verb: koRequest(String.raw`올려|(?:게시|포스팅|업로드|공유|등록|트윗)${KO_PARTICLE}해`),
   },
+  // Transmit to a work recipient without naming a mail noun ("팀에 회의록 보내줘", "팀장님께 전달해줘"): an email send.
+  // Listed last so a phone/payment/posting noun in the same message wins.
+  {
+    kind: 'email',
+    noun: /(?:팀원들?|우리\s*팀|팀|[가-힣]{0,4}(?:부장|팀장|과장|차장|대리|이사|사장|대표|교수|선생|실장|본부장|담당자|매니저|고객|거래처)(?:님|들)?)\s*(?:께서?|에게|한테|에게는|에)(?![가-힣])/u,
+    verb: koRequest(String.raw`(?:전송|전달|포워드|포워딩|공유)${KO_PARTICLE}해|보내`),
+  },
 ];
 
 const EN_EXTERNAL_ACTIONS: readonly { readonly kind: ExternalActionKind; readonly pattern: RegExp }[] = [
   { kind: 'calendar', pattern: enRequest(String.raw`(?:add|put|schedule|create|set\s+up|book)${EN_SENTENCE_REST}(?:calendars?|meetings?|appointments?)\b`) },
-  // "Send me an email template", "Can you send the email draft here?" ask for text in the chat, not a send.
+  // "Send me an email template", "Can you send the email here?" ask for text in the chat, not a send. A draft is
+  // text Quoky writes or shows ("write a draft email"), unless it is TRANSMITTED to a recipient ("send this draft
+  // email to Alice").
   { kind: 'email', pattern: enRequest(
-    String.raw`(?:send|forward|reply\s+to|write\s+and\s+send)(?![^.!?\n]*\b(?:templates?|drafts?|examples?|samples?|outlines?|formats?|wording|subject\s+lines?|here)\b)${EN_SENTENCE_REST}(?:e-?mails?|mails?|inbox)\b`,
+    String.raw`(?:send|forward|reply\s+to|write\s+and\s+send)(?![^.!?\n]*\b(?:templates?|examples?|samples?|outlines?|formats?|wording|subject\s+lines?|here)\b)(?![^.!?\n]*\bdrafts?\b(?![^.!?\n]*\b(?:to|for)\s+(?!me\b|us\b|here\b)[\p{L}\p{N}]))${EN_SENTENCE_REST}(?:e-?mails?|mails?|inbox)\b`,
   ) },
   { kind: 'email', pattern: enRequest(String.raw`(?:e-?mail)\s+(?!address)(?:my|him|her|them|the|this|[a-z]+\s+(?:about|that|the|a))\b`) },
+  // Bare verb with a named recipient or an address ("Can you email Alice?", "email bob@example.com").
+  { kind: 'email', pattern: enRequest(
+    String.raw`(?:e-?mail|mail)\s+(?:[\w.+-]+@[\w-]+\.[\w.-]+|(?!(?:address(?:es)?|templates?|drafts?|subject|body|format|etiquette|marketing|newsletters?|signatures?|clients?|apps?|providers?|tips?|examples?|samples?|here|it|is|was|and|or|me|us|you|from|in|on|at|of|for|with|without)\b)\p{L}+(?:\s+\p{L}+)?\s*(?:[?.!,]|$|\s+(?:about|that|regarding|and|tomorrow|today|now|asap|please|the|a|an|my)\b))`,
+  ) },
   { kind: 'booking', pattern: enRequest(String.raw`(?:book|reserve)${EN_SENTENCE_REST}(?:tables?|flights?|hotels?|rooms?|tickets?|seats?|restaurants?|appointments?|reservations?|trains?|taxis?|cabs?)\b`) },
   { kind: 'booking', pattern: enRequest(String.raw`make\s+(?:a|the|my)\s+(?:reservation|booking)\b`) },
   // "pay attention to the rent calculation bug" is not a payment.
@@ -306,6 +319,25 @@ function isOtherLanguage(text: string): boolean {
   return (letters - hangul - latin) / letters >= 0.2;
 }
 
+/** Text inside "…", “…”, 「…」, 『…』, `…` and word-bounded '…' is a quoted example, not a request to Quoky. */
+const QUOTED_SPAN =
+  /"[^"\n]*"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|`[^`\n]*`|(?<![\p{L}\p{N}])'[^'\n]+'(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])‘[^’\n]+’(?![\p{L}\p{N}])/gu;
+
+function stripQuotedExamples(text: string): string {
+  return text.replace(QUOTED_SPAN, ' ');
+}
+
+/**
+ * Informational framing: a translation, meaning or phrasing question about a sentence, not an action request.
+ * "번역해서 보내줘" / "translate it and send" still act.
+ */
+const META_FRAMING =
+  /번역(?!\s*(?:해서|하고|한\s*(?:뒤|후|다음|걸)))|\btranslat(?:e|ion)\b(?![^.!?\n]*\b(?:and|then)\s+(?:send|email|forward|mail)\b)|뜻이\s*(?:뭐|무엇|뭔)|의미가\s*(?:뭐|무엇|뭔)|\bwhat\s+(?:does|do|did)\b[^.!?\n]*\bmeans?\b|\bhow\s+(?:do|can|would|should)\s+(?:i|you|we)\s+say\b|어떻게\s*(?:말|표현)|예문/iu;
+
+function isMetaFraming(text: string): boolean {
+  return META_FRAMING.test(text);
+}
+
 const RETRACTED_QUESTION = /[^.!?\n]*[?？]\s*(?:no|nope|nah|never\s*mind|아니(?:요|야)?|아냐)(?![\p{L}])/giu;
 
 /**
@@ -326,7 +358,8 @@ export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReas
  */
 export function detectExternalActionRequest(text: string): ExternalActionRequest | undefined {
   // A request the User takes back in the same message ("Post the code to slack? no, just explain") is not one.
-  const requests = text.replace(RETRACTED_QUESTION, ' ');
+  const requests = stripQuotedExamples(text.replace(RETRACTED_QUESTION, ' '));
+  if (isMetaFraming(requests)) return undefined;
   const ko = KO_EXTERNAL_ACTIONS.find(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker));
   if (ko !== undefined) return { kind: ko.kind };
   const en = EN_EXTERNAL_ACTIONS.find(({ pattern }) => unnegatedMatch(requests, [pattern]));

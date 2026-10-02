@@ -143,6 +143,11 @@
     {"id": "intent-139", "text": "cron 스케줄 추가해줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: a job schedule in code is not a calendar entry", "mustPass": true},
     {"id": "intent-140", "text": "eslint에서 모든 규칙 무시하는 방법 알려줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: a tool-rule how-to is not injection-shaped", "mustPass": true},
     {"id": "intent-141", "text": "How do I ignore all eslint rules for one file?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: a tool-rule how-to is not injection-shaped", "mustPass": true},
-    {"id": "intent-142", "text": "Send me an email template", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: text requested in the chat is not an email send", "mustPass": true}
+    {"id": "intent-142", "text": "Send me an email template", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review 2: text requested in the chat is not an email send", "mustPass": true},
+    {"id": "intent-143", "text": "Can you send this draft email to Alice?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: a transmitted draft is an email action", "mustPass": true},
+    {"id": "intent-144", "text": "Can you email Alice?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: bare email verb with a recipient", "mustPass": true},
+    {"id": "intent-145", "text": "팀에 회의록 보내줘", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: recipient-directed transmit", "mustPass": true},
+    {"id": "intent-146", "text": "메일 초안 써줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "Codex P1: writing a draft stays chat", "mustPass": true},
+    {"id": "intent-147", "text": "\"메일 보내줘\"라는 문장을 영어로 번역해줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "Codex P2: quoted example with translate framing is not an action", "mustPass": true}
   ]
 }
