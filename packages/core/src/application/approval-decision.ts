@@ -16,14 +16,14 @@ import { isNegated } from './intent-negation';
 /** Same union as `ApprovalDecisionKind` in conversation-runtime (kept local to avoid a circular import). */
 export type ApprovalDecisionResult = 'approve' | 'deny' | 'cancel' | 'ambiguous';
 
-const APPROVE_PHRASES = ['승인', '진행', '좋아', 'yes', 'ok', 'okay', 'approve', 'approved', 'go ahead'];
-const DENY_PHRASES = ['거절', '아니', 'no', 'deny', 'denied', 'reject', 'rejected'];
-const CANCEL_PHRASES = ['취소', '중단', '그만', 'cancel', 'stop', 'abort'];
+const APPROVE_PHRASES = ['승인', '진행', '좋아', 'yes', 'ok', 'okay', 'approve', 'approved', 'proceed', 'go ahead'];
+const DENY_PHRASES = ['거절', '거부', '아니', 'no', 'deny', 'denied', 'reject', 'rejected', 'refuse', 'refused'];
+const CANCEL_PHRASES = ['취소', '철회', '중단', '중지', '그만', 'cancel', 'stop', 'abort'];
 
 /** Polite endings / particles that may follow a Korean stem and still be the same whole word
  *  ("승인해줘", "진행할게요", "아니요"). Anything outside this list ("승인하지", "진행상황") is NOT a match. */
 const KOREAN_SUFFIX =
-  '(?:하세요|해주세요|해줘요|해줘|해요|해라|하자|할게요|할게|합니다|할래요|할래|해|요|이요|이야|야|네요|네|입니다|예요|에요|다|라|뇨)?';
+  '(?:시켜줘|시켜요|시켜|하세요|해주세요|해줘요|해줘|해요|해라|하자|할게요|할게|합니다|할래요|할래|해|요|이요|이야|야|네요|네|입니다|예요|에요|다|라|뇨)?';
 const TOKEN_BEFORE = '(?<![가-힣a-z0-9])';
 const TOKEN_AFTER = '(?![가-힣a-z0-9])';
 const HANGUL = /[가-힣]/;
@@ -43,6 +43,16 @@ const KOREAN_SOFT_NEGATION = /(?:^|\s)(?:안|못)(?=\s|$|[하해할함했돼되�
 const SOFT_NEGATION = new RegExp(
   `${KOREAN_SOFT_NEGATION.source}|\\b(?:not|no|cannot|can['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t)\\b`,
 );
+
+/** A refusal / hold word sitting next to an approve word ("승인 불가", "진행 마", "승인 X", "approve nothing")
+ *  turns an otherwise-approve message into a non-decision. Whole tokens only, so "마음에 들어" is untouched. */
+const REFUSAL_QUALIFIER = new RegExp(
+  `${TOKEN_BEFORE}(?:불가능?|보류|반대|대기|마(?:세요|라)?|말아(?:요|줘)?|ㄴㄴ|x|nope|nothing|hold)${TOKEN_AFTER}`,
+);
+
+/** A don't / never / "하지 마" anywhere in an approve message attaches a condition we cannot honor
+ *  ("yes but don't touch tests"): ambiguous so the user restates it. */
+const CONDITION_NEGATION = /\b(?:don['’]?t|do\s+not|never)\b|하지\s*(?:마|말)/;
 
 /** "no problem" / "no worries" read as a polite OK, not a refusal: ambiguous rather than a false deny. */
 const NO_PROBLEM = /\bno\s+(?:problem|worries)\b/;
@@ -81,18 +91,21 @@ interface KindHits {
   positive: boolean;
   /** At least one (loose) match that IS under a negation ("승인하지 마", "don't approve"). */
   negated: boolean;
+  /** Index of the first negated (loose) match, or -1. Lets the caller tell "취소하지 말고 진행해" (a negated
+   *  deny/cancel word BEFORE the approve word) from "승인하지 말고 거절" (the approve word is the negated one). */
+  negatedAt: number;
 }
 
 function scan(text: string, matchers: PhraseMatchers): KindHits {
   let positive = false;
-  let negated = false;
+  let negatedAt = -1;
   for (const m of text.matchAll(matchers.exact)) {
     if (!isNegated(text, m.index, m[0].length)) positive = true;
   }
   for (const m of text.matchAll(matchers.loose)) {
-    if (isNegated(text, m.index, m[0].length)) negated = true;
+    if (negatedAt < 0 && isNegated(text, m.index, m[0].length)) negatedAt = m.index;
   }
-  return { positive, negated };
+  return { positive, negated: negatedAt >= 0, negatedAt };
 }
 
 /**
@@ -101,8 +114,10 @@ function scan(text: string, matchers: PhraseMatchers): KindHits {
  *  1. question / empty → ambiguous
  *  2. un-negated cancel → cancel (cancel is non-mutating; "승인 취소" cancels)
  *  3. hedge ("먼저", "yet", "wait"…) → ambiguous
- *  4. negated approve phrase ("진행하지 마", "don't approve") → deny (never approve); contradictory → ambiguous
- *  5. approve XOR deny (un-negated, whole token) → that decision; both or neither → ambiguous
+ *  4. negated approve phrase ("진행하지 마", "don't approve") → deny (never approve); contradictory or
+ *     contrastive ("취소하지 말고 진행해") → ambiguous
+ *  5. approve XOR deny (un-negated, whole token) → that decision; both or neither → ambiguous. An approve with a
+ *     refusal qualifier ("승인 불가") or an attached don't-condition ("yes but don't touch tests") is ambiguous.
  * A negated deny/cancel ("거절하지 마", "거절 안 해") yields nothing positive, so it falls through to ambiguous;
  * "no problem" is likewise ambiguous rather than a false deny.
  */
@@ -118,10 +133,16 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   const deny = scan(t, DENY);
 
   if (approve.negated) {
-    return approve.positive || deny.positive ? 'ambiguous' : 'deny';
+    // "취소하지 말고 진행해" / "거절하지 말고 승인해": the negation targets the deny/cancel word, so the user
+    // did not say "don't approve" — re-prompt instead of a terminal deny.
+    if (approve.positive || deny.positive) return 'ambiguous';
+    const negatedRefusalFirst = [deny, cancel].some((k) => k.negated && k.negatedAt < approve.negatedAt);
+    return negatedRefusalFirst ? 'ambiguous' : 'deny';
   }
   if (approve.positive && !deny.positive) {
-    if (t.length > MAX_APPROVE_LENGTH || SOFT_NEGATION.test(t)) return 'ambiguous';
+    if (t.length > MAX_APPROVE_LENGTH || SOFT_NEGATION.test(t) || REFUSAL_QUALIFIER.test(t)) return 'ambiguous';
+    // ("please don't stop, go ahead": the negation is on a cancel word, so it is still a plain approve.)
+    if (CONDITION_NEGATION.test(t) && !cancel.negated && !deny.negated) return 'ambiguous';
     return 'approve';
   }
   if (deny.positive && !approve.positive) {

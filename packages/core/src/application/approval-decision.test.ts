@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { interpretApprovalDecision } from './approval-decision';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import { interpretApprovalDecision, type ApprovalDecisionResult } from './approval-decision';
+import type { ApprovalDecisionKind } from './conversation-runtime';
 
 describe('interpretApprovalDecision', () => {
   const table: Array<[string, 'approve' | 'deny' | 'cancel' | 'ambiguous']> = [
@@ -83,6 +84,34 @@ describe('interpretApprovalDecision', () => {
     ['look at it first', 'ambiguous'],
     ['먼저 보고 승인할게', 'ambiguous'],
     ['approve later', 'ambiguous'],
+    // refusal phrasings that carry an approve stem must never approve
+    ['승인 거부', 'ambiguous'],
+    ['승인 불가', 'ambiguous'],
+    ['진행 불가', 'ambiguous'],
+    ['승인 보류', 'ambiguous'],
+    ['진행 보류', 'ambiguous'],
+    ['승인 철회', 'cancel'],
+    ['승인 반대', 'ambiguous'],
+    ['진행 중지', 'cancel'],
+    ['진행 대기', 'ambiguous'],
+    ['진행 마', 'ambiguous'],
+    ['승인 마', 'ambiguous'],
+    ['진행 ㄴㄴ', 'ambiguous'],
+    ['승인 X', 'ambiguous'],
+    ['I refuse to approve', 'ambiguous'],
+    ['approve nothing', 'ambiguous'],
+    ['거부', 'deny'],
+    ['refuse', 'deny'],
+    // contrastive "A 말고 B": the negation targets the deny/cancel word, so re-prompt rather than deny
+    ['취소 말고 진행해', 'ambiguous'],
+    ['취소하지 말고 진행해', 'ambiguous'],
+    ['거절하지 말고 승인해', 'ambiguous'],
+    // an approve with a condition attached in another clause is not a plain approve
+    ["yes but don't touch tests", 'ambiguous'],
+    ['승인, 근데 테스트는 건드리지 마', 'ambiguous'],
+    // newly accepted spellings
+    ['진행시켜', 'approve'],
+    ['proceed', 'approve'],
     // contradictions
     ['yes no', 'ambiguous'],
     ['승인 거절', 'ambiguous'],
@@ -95,9 +124,13 @@ describe('interpretApprovalDecision', () => {
   });
 
   it('never approves a negated approve phrase (explicit safety table)', () => {
-    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve"]) {
+    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve", '승인 거부', '승인 불가', '진행 불가', '승인 보류', '진행 보류', '승인 철회', '승인 반대', '진행 중지', '진행 대기', '진행 마', '승인 마', '진행 ㄴㄴ', '승인 X', 'I refuse to approve', 'approve nothing', '취소 말고 진행해', "yes but don't touch tests"]) {
       expect(interpretApprovalDecision(text), text).not.toBe('approve');
     }
+  });
+
+  it('keeps ApprovalDecisionResult in sync with the runtime ApprovalDecisionKind', () => {
+    expectTypeOf<ApprovalDecisionResult>().toEqualTypeOf<ApprovalDecisionKind>();
   });
 
   it('a long free-text message containing an approve word is not an approval', () => {
