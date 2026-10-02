@@ -30,6 +30,11 @@ export interface TurnHandlerAnchorSnapshot {
   readonly projectId?: Id;
 }
 
+/**
+ * Everything here is a deeply-frozen plain-data COPY taken at dispatch time (ADR-0096 D1) — never the runtime's
+ * own message/session/actor objects. Mutating it throws in strict mode and has no effect on the turn otherwise;
+ * `resolveActiveWorkspace` is bound to the session's active project as it was at dispatch.
+ */
 export interface TurnHandlerContext {
   readonly message: InboundMessage;
   readonly session: Session;

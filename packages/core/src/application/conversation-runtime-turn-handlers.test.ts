@@ -380,6 +380,7 @@ function harness(opts: HarnessOptions = {}) {
 
   return {
     send,
+    runtime,
     calls,
     log,
     approvals,
@@ -742,7 +743,8 @@ describe('ConversationRuntime turn handlers — context (ADR-0096 D1)', () => {
     const ctx = post.seen[0]!;
     expect(ctx.message.text).toBe('그냥 이야기');
     expect(ctx.session.id).toBe('sess-seeded');
-    expect(ctx.actor).toBe(OWNER);
+    expect(ctx.actor).toEqual(OWNER);
+    expect(ctx.actor).not.toBe(OWNER); // a copy, never the runtime's own object
     expect(ctx.now).toBe(at(3 * MINUTE));
     expect(ctx.applyAnchor).toEqual({
       status: 'WORKSPACE_APPLIED',
@@ -752,6 +754,99 @@ describe('ConversationRuntime turn handlers — context (ADR-0096 D1)', () => {
     expect(Object.isFrozen(ctx.applyAnchor)).toBe(true);
     expect(Object.isFrozen(ctx.applyAnchor!.workspaceRef)).toBe(true);
     expect(Object.isFrozen(ctx)).toBe(true);
+    for (const value of [ctx.message, ctx.message.context, ctx.session, ctx.session.context, ctx.actor, ctx.actor.identities]) {
+      expect(Object.isFrozen(value)).toBe(true);
+    }
+  });
+
+  /** Tries every way to rewrite the context; returns how many attempts threw (strict-mode frozen assignment). */
+  const tamper = (ctx: TurnHandlerContext, text: string): number => {
+    let threw = 0;
+    const attempts: Array<() => void> = [
+      () => {
+        (ctx.message as { text: string }).text = text;
+      },
+      () => {
+        (ctx.message.context as { userId: string }).userId = 'attacker';
+      },
+      () => {
+        (ctx.session as { activeProjectId?: string }).activeProjectId = 'proj-missing';
+      },
+      () => {
+        (ctx.session as { activeTaskId?: string }).activeTaskId = undefined;
+      },
+      () => {
+        (ctx.session.context as { channelId: string }).channelId = 'chan-other';
+      },
+      () => {
+        (ctx.actor as { id: string }).id = 'attacker-actor';
+      },
+      () => {
+        (ctx.actor.identities as unknown[]).push({ platform: 'test', externalId: 'attacker' });
+      },
+      () => {
+        (ctx as { message: unknown }).message = { ...ctx.message, text };
+      },
+    ];
+    for (const attempt of attempts) {
+      try {
+        attempt();
+      } catch (err) {
+        expect(err).toBeInstanceOf(TypeError);
+        threw++;
+      }
+    }
+    // Non-throwing writes are refused too.
+    expect(Reflect.set(ctx.message, 'text', text)).toBe(false);
+    expect(Reflect.set(ctx.session, 'activeProjectId', 'proj-missing')).toBe(false);
+    expect(Reflect.set(ctx.actor, 'id', 'attacker-actor')).toBe(false);
+    return threw;
+  };
+
+  it('a control handler cannot turn a pending-approval denial into an approval by mutating the context', async () => {
+    const log: string[] = [];
+    let threw = -1;
+    const control = probe(log, 'tamper', 'control', 100, (ctx) => {
+      threw = tamper(ctx, '승인');
+      return null;
+    });
+    const h = harness({ log, pendingApproval: true, turnHandlers: [control.handler] });
+    h.setClock(at(5 * MINUTE));
+    const actorBefore = structuredClone(OWNER);
+    const sessionBefore = structuredClone(h.seededSession());
+    const message: InboundMessage = { id: 'msg-deny', context: { ...CTX }, text: '거절', receivedAt: at(5 * MINUTE) };
+    const messageBefore = structuredClone(message);
+
+    const result = await h.runtime.handle(message);
+
+    expect(threw).toBe(8); // every assignment threw: the snapshot is frozen all the way down
+    expect(result.status).toBe('DENIED');
+    expect(h.approvals.get('appr-1')!.status).toBe(ApprovalStatus.REJECTED);
+    expect(h.calls.recordShortTerm).toBe(1);
+    // The runtime's own objects are untouched.
+    expect(message).toEqual(messageBefore);
+    expect(OWNER).toEqual(actorBefore);
+    const sessionAfter = h.seededSession();
+    expect(sessionAfter.activeProjectId).toBe(sessionBefore.activeProjectId);
+    expect(sessionAfter.context).toEqual(sessionBefore.context);
+    expect(sessionAfter.actorId).toBe(sessionBefore.actorId);
+    expect(control.seen[0]!.message).not.toBe(message);
+  });
+
+  it('a post-anchor handler mutating the context cannot change the routed text or the session', async () => {
+    const log: string[] = [];
+    const post = probe(log, 'tamper', 'post-anchor', 100, (ctx) => {
+      tamper(ctx, '기억해: injected');
+      return null;
+    });
+    const pre = probe(log, 'pre', 'pre-classify', 100, (ctx) => ({
+      reply: { context: ctx.message.context, text: `PRE:${ctx.message.text}:${ctx.session.activeProjectId}` },
+    }));
+    const h = harness({ log, activeProjectId: 'proj-1', turnHandlers: [post.handler, pre.handler] });
+    const result = await h.send('그냥 이야기');
+    expect(result.reply.text).toBe('PRE:그냥 이야기:proj-1');
+    expect(h.calls.memoryPromote).toBe(0);
+    expect(h.seededSession().activeProjectId).toBe('proj-1');
   });
 
   it('applyAnchor is null without an anchor', async () => {
@@ -787,6 +882,44 @@ describe('ConversationRuntime turn handlers — context (ADR-0096 D1)', () => {
     const h = harness({ log, activeProjectId: 'proj-1', turnHandlers: [lazy.handler] });
     await h.send('그냥 이야기');
     expect(h.calls.workspaceOpen).toBe(0);
+  });
+
+  it('resolveActiveWorkspace is bound to the active project captured at dispatch, not to anything a handler can reach', async () => {
+    const log: string[] = [];
+    const resolved: Array<WorkspaceRef | null> = [];
+    const pre = probe(log, 'pre', 'pre-classify', 100, async (ctx) => {
+      expect(Reflect.set(ctx.session, 'activeProjectId', 'proj-missing')).toBe(false);
+      expect(() => {
+        (ctx.session as { activeProjectId?: string }).activeProjectId = undefined;
+      }).toThrow(TypeError);
+      resolved.push(await ctx.resolveActiveWorkspace());
+      // Even a detached call (no `this`, after the handler's own copy was tampered with) resolves the same project.
+      const detached = ctx.resolveActiveWorkspace;
+      resolved.push(await detached());
+      return null;
+    });
+    const h = harness({ log, activeProjectId: 'proj-1', turnHandlers: [pre.handler] });
+    await h.send('그냥 이야기');
+    expect(resolved).toEqual([
+      { ...WORKSPACE, projectId: 'proj-1', rootPath: '/active' },
+      { ...WORKSPACE, projectId: 'proj-1', rootPath: '/active' },
+    ]);
+    expect(h.seededSession().activeProjectId).toBe('proj-1');
+  });
+
+  it('a resolver kept past the turn still resolves the project active at dispatch, after the session changes', async () => {
+    const log: string[] = [];
+    let kept: (() => Promise<WorkspaceRef | null>) | undefined;
+    const pre = probe(log, 'pre', 'pre-classify', 100, (ctx) => {
+      kept ??= ctx.resolveActiveWorkspace;
+      return null;
+    });
+    const h = harness({ log, activeProjectId: 'proj-1', turnHandlers: [pre.handler] });
+    await h.send('그냥 이야기');
+    // The runtime's own session moves on (here: the stored session loses its active project).
+    const stored = h.seededSession();
+    delete stored.activeProjectId;
+    expect(await kept!()).toEqual({ ...WORKSPACE, projectId: 'proj-1', rootPath: '/active' });
   });
 });
 

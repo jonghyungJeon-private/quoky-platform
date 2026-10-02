@@ -788,6 +788,37 @@ interface PendingApprovalLookup {
   pending: ApprovalRequest | null;
 }
 
+/**
+ * A deeply-frozen, plain-data copy of a turn-handler context value (ADR-0096 D1). Arrays and plain objects are
+ * copied recursively and frozen; primitives pass through; any other value (function, class instance, Map, Date,
+ * a cyclic back-reference) is omitted — the domain values handed to handlers are plain data by construction, so
+ * nothing is lost, and nothing a handler does to its copy can reach the runtime's own objects.
+ */
+function frozenPlainSnapshot<T>(value: T): T {
+  const seen = new WeakSet<object>();
+  const copy = (v: unknown): unknown => {
+    if (v === null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
+    if (seen.has(v)) return undefined;
+    if (Array.isArray(v)) {
+      seen.add(v);
+      const out = Object.freeze(v.map((item) => copy(item)));
+      seen.delete(v);
+      return out;
+    }
+    const proto = Object.getPrototypeOf(v) as unknown;
+    if (proto !== Object.prototype && proto !== null) return undefined;
+    seen.add(v);
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(v)) {
+      const item = copy((v as Record<string, unknown>)[key]);
+      if (item !== undefined) out[key] = item;
+    }
+    seen.delete(v);
+    return Object.freeze(out);
+  };
+  return copy(value) as T;
+}
+
 // Approve/deny/cancel decision phrases for pending approvals live in ./approval-decision (whole-token,
 // negation-aware); "APPROVE_WORDS" in the comments below refers to that approve phrase set.
 const CANCEL_WORDS = ['취소', '중단', '그만'];
@@ -2529,32 +2560,41 @@ export class ConversationRuntime {
     anchor: ApplyPreviewAnchor | null,
   ): TurnHandlerContext {
     const applyAnchor: TurnHandlerAnchorSnapshot | null = anchor
-      ? Object.freeze({
+      ? frozenPlainSnapshot({
           status: anchor.status,
-          workspaceRef: Object.freeze({ ...anchor.workspaceRef }),
+          workspaceRef: anchor.workspaceRef,
           ...(anchor.projectId ? { projectId: anchor.projectId } : {}),
         })
       : null;
+    // Deep, frozen copies — never the runtime's own objects — so nothing a handler does (even an assignment in
+    // sloppy mode, or a mutation it keeps after returning) can change the text the pending-decision routes read,
+    // the session the runtime persists, or the actor. The workspace resolver is bound to the session id and active
+    // project captured HERE, at dispatch time, not to any object a handler can reach.
+    const sessionId = session.id;
+    const activeProjectId = session.activeProjectId;
     return Object.freeze({
-      message,
-      session,
-      actor,
+      message: frozenPlainSnapshot(message),
+      session: frozenPlainSnapshot(session),
+      actor: frozenPlainSnapshot(actor),
       now: this.clock(),
       applyAnchor,
-      resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(session),
+      resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
     });
   }
 
   /** The active project's workspace for a turn handler — `null` when none is active or it cannot be opened. */
-  private async resolveActiveWorkspaceForHandler(session: Session): Promise<WorkspaceRef | null> {
-    if (!session.activeProjectId) return null;
+  private async resolveActiveWorkspaceForHandler(
+    sessionId: Id,
+    activeProjectId: Id | undefined,
+  ): Promise<WorkspaceRef | null> {
+    if (!activeProjectId) return null;
     try {
-      const project = await this.deps.projects.get(session.activeProjectId);
+      const project = await this.deps.projects.get(activeProjectId);
       if (!project) return null;
       return await this.deps.workspace.open({ id: project.id, rootPath: project.rootPath });
     } catch (err) {
       this.deps.logger.warn('turn handler workspace resolution failed', {
-        sessionId: session.id,
+        sessionId,
         errorName: err instanceof Error ? err.name : typeof err,
       });
       return null;
