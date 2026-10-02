@@ -54,10 +54,39 @@ function normalizedSet(paths: readonly string[] | undefined): Set<string> {
 
 /** URLs are links, not project paths: `https://host/a/b.md` must never become a target candidate. */
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]*/gi;
+/** Fenced code is pasted content, not a mention — the same rule as `extractMentionedPathTokens`. */
+const FENCED_CODE_PATTERN = /```[\s\S]*?(?:```|$)/g;
 
-/** The request text with URLs blanked out, for target-path extraction only (never the AI instruction). */
-export function stripUrlsForTargetExtraction(text: string): string {
-  return text.replace(URL_PATTERN, ' ');
+/**
+ * The request text with fenced code blocks and URLs blanked out, for target-path extraction only (never the
+ * AI instruction). An `import './lib/x.js'` inside a pasted snippet is content, not a named target.
+ */
+export function targetExtractionText(text: string): string {
+  return text.replace(FENCED_CODE_PATTERN, ' ').replace(URL_PATTERN, ' ');
+}
+
+/**
+ * The first path the owner typed that is NOT a safe project-relative path (ADR-0099 D1): absolute (`/…`, a
+ * drive letter), home-relative (`~/…`), containing a `..` segment, or with a dot-leading first segment other
+ * than a plain `./` (`.github/…`, `./.env/…`) — counted only for a file-like token (2+ segments or a `.ext`
+ * leaf), so a slash command such as `/preview` is not a path. `mentioned` are the raw typed tokens
+ * (`extractMentionedPathTokens`). The caller REFUSES the whole request on a hit — the candidate extractor
+ * would otherwise start matching after the unsafe prefix and silently rewrite `/etc/x` into `etc/x`.
+ */
+export function firstUnsafeMentionedPath(mentioned: readonly string[]): string | null {
+  return mentioned.find(isUnsafeMentionedPath) ?? null;
+}
+
+function isUnsafeMentionedPath(token: string): boolean {
+  // Only a FILE-like token counts: 2+ real segments or a `.ext` leaf. A slash command (`/preview`) or a bare
+  // `../utils` / `~/notes` in prose is not a named path.
+  const real = token.split(/[\\/]/).filter((seg) => seg.length > 0 && seg !== '.' && seg !== '..' && seg !== '~');
+  const fileLike = real.length >= 2 || /\.[A-Za-z][A-Za-z0-9]*$/.test(real[real.length - 1] ?? '');
+  if (!fileLike) return false;
+  if (/^(?:[\\/]|~|[a-zA-Z]:)/.test(token)) return true;
+  if (token.split(/[\\/]/).includes('..')) return true;
+  const rest = token.startsWith('./') ? token.slice(2).replace(/^\/+/, '') : token;
+  return rest.startsWith('.');
 }
 
 export type CodeChangeTargetCollection =
@@ -72,7 +101,7 @@ export type CodeChangeTargetCollection =
 
 /**
  * Collect the change-set targets of a code-change request (ADR-0099 D1). `candidates` are the already-safe
- * extracted paths (absolute, traversal and dot-leading refused upstream), in order of appearance. Every one is
+ * extracted paths (an unsafe typed path refuses the request upstream — {@link firstUnsafeMentionedPath}), in order of appearance. Every one is
  * a target, never only the first: an existing path (verified by `resolveExisting`, which returns the
  * workspace's own spelling of the hit) is an update target; a missing path is a new-file target only when
  * `allowNewFiles` (the negation-aware ADR-0062 create wording); otherwise it is reported as missing so the

@@ -130,10 +130,11 @@ import { isSafePushBranch, isSafePushRemote } from './push-target';
 import {
   classifyUnverifiedChangeSet,
   collectCodeChangeTargets,
+  firstUnsafeMentionedPath,
   isSingleUpdateChangeSet,
   newFileCommitCandidates,
   partitionCommitCandidates,
-  stripUrlsForTargetExtraction,
+  targetExtractionText,
   validateChangeSetForApply,
   validatePatchableDiff,
   verifyAppliedChangeSet,
@@ -1353,6 +1354,9 @@ export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: strin
     kind: f.changeKind === 'delete' ? 'delete' : f.changeKind === 'add' ? 'add' : 'update',
     unified: f.unified, // '' when binary or size-skipped by the provider
     binary: f.binary,
+    // ADR-0099 D1 byte bounds for the apply-capable footer; only when the provider reported them.
+    ...(f.oldSize !== undefined ? { oldSize: f.oldSize } : {}),
+    ...(f.newSize !== undefined ? { newSize: f.newSize } : {}),
   }));
   return { changes, outOfScopeWarnings };
 }
@@ -5412,15 +5416,20 @@ export class ConversationRuntime {
       // ADR-0062 create wording (A2, now for each missing path — F3-A marks it as an explicit new-file origin
       // so runCodeGenerationPreview may accept its `add` diff, still re-checked absent at diff time); otherwise
       // the reply names the missing paths and asks again. This changes ROUTING only: preview stays
-      // non-mutating and the apply/commit/push/PR approval gates are untouched.
-      const candidates = extractTargetPathCandidates(stripUrlsForTargetExtraction(message.text));
-      const collected = await this.collectCodeChangeTargets(
-        workspaceRef!, candidates, ConversationRuntime.isExplicitNewFileRequest(message.text),
-      );
-      if (collected.kind === 'targets') {
+      // non-mutating and the apply/commit/push/PR approval gates are untouched. A typed absolute / home /
+      // traversal / dot-leading path refuses the whole request (never rewritten into an in-project path), and
+      // fenced code is pasted content, never a target.
+      const unsafeTyped = firstUnsafeMentionedPath(extractMentionedPathTokens(message.text));
+      const candidates = unsafeTyped === null ? extractTargetPathCandidates(targetExtractionText(message.text)) : [];
+      const collected = unsafeTyped === null
+        ? await this.collectCodeChangeTargets(
+          workspaceRef!, candidates, ConversationRuntime.isExplicitNewFileRequest(message.text),
+        )
+        : undefined;
+      if (collected?.kind === 'targets') {
         targetFiles = collected.targets;
         if (collected.newFileTargets.length) newFileTargets = collected.newFileTargets;
-      } else if (collected.kind === 'too-many') {
+      } else if (collected?.kind === 'too-many') {
         return this.respondComposed(
           message, session, this.deps.composer.composeTooManyTargets(message.context, collected.count, collected.max),
         );
@@ -5439,7 +5448,10 @@ export class ConversationRuntime {
           ...(session.activeProjectId ? { projectId: session.activeProjectId } : {}),
           createdAt: now(),
         });
-        return this.respondComposed(message, session, this.composeTargetScopeReply(message, candidates, collected));
+        const reply = unsafeTyped !== null
+          ? this.deps.composer.composeTargetPathRejected(message.context, unsafeTyped)
+          : this.composeTargetScopeReply(message, candidates, collected);
+        return this.respondComposed(message, session, reply);
       }
     }
 
@@ -5626,7 +5638,9 @@ export class ConversationRuntime {
       if (intent.capability === Capability.CODE_IMPLEMENTATION) {
         // New-file targets have no current content to send; only existing target files are disclosed.
         const sentFiles = (request.targetFiles ?? []).filter((f) => !(request.newFileTargets ?? []).includes(f));
-        const reply = this.deps.composer.composeCodeChangeApprovalRequired(message.context, sentFiles);
+        const reply = this.deps.composer.composeCodeChangeApprovalRequired(
+          message.context, sentFiles, request.newFileTargets ?? [],
+        );
         await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
         return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id, executionOutcome: outcome };
       }
@@ -5671,8 +5685,15 @@ export class ConversationRuntime {
     };
 
     // ADR-0099 D1: the same collector as a fresh request. Recovery only ever routes EXISTING files (never a
-    // new-file origin), so a missing path here is named and asked again.
-    const candidates = extractTargetPathCandidates(stripUrlsForTargetExtraction(message.text));
+    // new-file origin), so a missing path here is named and asked again; an unsafe typed path is refused.
+    const unsafeTyped = firstUnsafeMentionedPath(extractMentionedPathTokens(message.text));
+    if (unsafeTyped !== null) {
+      // no re-anchor (next-turn-only)
+      return this.respondComposed(
+        message, session, this.deps.composer.composeTargetPathRejected(message.context, unsafeTyped),
+      );
+    }
+    const candidates = extractTargetPathCandidates(targetExtractionText(message.text));
     const collected = await this.collectCodeChangeTargets(ws.workspaceRef!, candidates, false);
     if (collected.kind === 'targets') {
       // F4-B/RC4: recover with the ORIGINAL full instruction from the anchor — never `message.text`

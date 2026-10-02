@@ -240,6 +240,17 @@ describe('ResponseComposer.composeCodeChangeApprovalRequired', () => {
     expect(composer.composeCodeChangeApprovalRequired(CTX).text).not.toContain('AI에게 전달');
   });
 
+  it('names the files a multi-file set will create (ADR-0099 D1), but not for a lone new file', () => {
+    const mixed = composer.composeCodeChangeApprovalRequired(CTX, ['src/a.ts'], ['src/b.ts']).text;
+    expect(mixed).toContain('새로 만들 파일: src/b.ts');
+    expect(mixed).toContain('"거절"');
+    const twoNew = composer.composeCodeChangeApprovalRequired(CTX, [], ['src/b.ts', 'src/c.ts']).text;
+    expect(twoNew).toContain('새로 만들 파일: src/b.ts, src/c.ts');
+    expect(composer.composeCodeChangeApprovalRequired(CTX, [], ['src/b.ts']).text).toBe(
+      composer.composeCodeChangeApprovalRequired(CTX).text,
+    );
+  });
+
   it('is distinct from the generic composeApprovalRequired wording', () => {
     const generic = composer.composeApprovalRequired(CTX);
     const codeChange = composer.composeCodeChangeApprovalRequired(CTX);
@@ -597,6 +608,39 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
     expect(reply.text.split('(diff가 길어서 일부만 보여드렸어요.)')).toHaveLength(6);
   });
 
+  it('5 files with long paths and 50-line diffs still show every path — the real per-block overhead is budgeted', () => {
+    const unified = Array.from({ length: 50 }, (_, i) => `+line ${i}`).join('\n');
+    const longPath = (i: number) => `packages/core/src/application/${'deeply-nested-directory/'.repeat(3)}feature-${i}/implementation-file-${i}.ts`;
+    expect(longPath(0).length).toBeGreaterThan(110);
+    const reply = composer.composeCodeDiffPreview(
+      CTX,
+      diffPreviewOf({
+        changes: Array.from({ length: 5 }, (_, i) => ({ path: longPath(i), kind: 'update' as const, unified, binary: false })),
+      }),
+    );
+    expect(reply.text.length).toBeLessThanOrEqual(1900);
+    for (let i = 0; i < 5; i++) expect(reply.text).toContain(longPath(i));
+    expect(reply.text).not.toContain('생략했어요');
+  });
+
+  it('a set over the ADR-0099 byte bounds is not apply-capable at preview time (patch time would refuse it)', () => {
+    const change = (path: string, o: { oldSize?: number; newSize?: number }) => ({
+      path,
+      kind: 'update' as const,
+      unified: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-x\n+y\n`,
+      binary: false,
+      ...o,
+    });
+    const capable = (changes: CodeDiffPreview['changes']) =>
+      composer.composeCodeDiffPreview(CTX, diffPreviewOf({ changes })).text.includes('"적용해줘"');
+    expect(capable([change('a.ts', { oldSize: 10, newSize: 64 * 1024 })])).toBe(true);
+    expect(capable([change('a.ts', { oldSize: 10, newSize: 64 * 1024 + 1 })])).toBe(false);
+    expect(capable([change('a.ts', { oldSize: 64 * 1024 + 1, newSize: 10 })])).toBe(false);
+    const fiveNear = Array.from({ length: 5 }, (_, i) => change(`f${i}.ts`, { newSize: 60 * 1024 }));
+    expect(capable(fiveNear)).toBe(false); // 300 KiB > 256 KiB total
+    expect(capable([change('a.ts', {})])).toBe(true); // unknown size: the patch-time check stays authoritative
+  });
+
   it('more files than fit even at the per-file floor are dropped with a bounded omission notice, never truncated mid-block (ADR-0039)', () => {
     const bigUnified = Array.from({ length: 60 }, (_, i) => `-line ${'x'.repeat(40)} ${i}`).join('\n');
     const reply = composer.composeCodeDiffPreview(
@@ -870,6 +914,21 @@ describe('ResponseComposer.composePatchSetPreview', () => {
     expect(reply.text).toContain('파일은 수정되지 않았어요');
     // ADR-0099 D1: every operation of a ≤5-file set keeps its own (shorter) block — none is dropped.
     for (let i = 0; i < 5; i++) expect(reply.text).toContain(`file-${i}.ts`);
+    expect(reply.text).not.toContain('생략했어요');
+  });
+
+  it('5 long-path operations each keep a block — the last view before "패치 적용해줘" hides no file', () => {
+    const unified = Array.from({ length: 50 }, (_, i) => `+line ${i}`).join('\n');
+    const longPath = (i: number) => `packages/core/src/application/${'deeply-nested-directory/'.repeat(3)}feature-${i}/implementation-file-${i}.ts`;
+    const reply = composer.composePatchSetPreview(
+      CTX,
+      previewOf({
+        operations: Array.from({ length: 5 }, (_, i) => ({ path: longPath(i), kind: i === 4 ? ('add' as const) : ('update' as const), unified })),
+      }),
+    );
+    expect(reply.text.length).toBeLessThanOrEqual(1900);
+    for (let i = 0; i < 5; i++) expect(reply.text).toContain(longPath(i));
+    expect(reply.text).toContain(`${longPath(4)} (새 파일)`);
     expect(reply.text).not.toContain('생략했어요');
   });
 

@@ -8920,7 +8920,9 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf(`${A}를 고치고 새 파일 ${NEW}도 만들어줘`));
     expect(calls.lastRunRequest?.targetFiles).toEqual([A, NEW]);
     expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
-    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+    // The created path is named before "승인" so a typo of an existing file is visible (ADR-0099 D1).
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A], [NEW]).text);
+    expect(result.reply.text).toContain(`새로 만들 파일: ${NEW}`);
   });
 
   it('a named missing path without create wording asks again naming it — no plan, no provider call, nothing dropped', async () => {
@@ -8947,6 +8949,61 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(calls.workspaceList).toBe(0);
     expect(calls.run).toBe(0);
     expect(result.reply.text).toBe(composer.composeTooManyTargets(CTX, 6).text);
+  });
+
+  // ── unsafe typed paths are refused, never rewritten (ADR-0099 D1) ──────────────────────────
+  describe.each([
+    ['absolute', '/etc/hosts.txt'],
+    ['traversal', '../outside/x.ts'],
+    ['dot-leading', '.github/workflows/ci.yml'],
+    ['home-relative', '~/outside/x.ts'],
+  ])('an %s typed path', (_shape, unsafe) => {
+    it.each([
+      ['without create wording', `${A} 고치고 ${unsafe}도 고쳐줘`],
+      ['with create wording', `${A} 수정하고 ${unsafe} 새 파일 만들어줘`],
+    ])('%s, mixed with an existing path → refused as typed, no targets, no lookup', async (_wording, text) => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml']) });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.run).toBe(0);
+      expect(calls.workspaceList).toBe(0);
+      expect(calls.lastRunRequest).toBeUndefined();
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, unsafe).text);
+    });
+
+    it('in a scope-clarification follow-up → refused as typed, nothing recovered, no re-anchor', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml']) });
+      await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
+      const result = await new ConversationRuntime(deps).handle(messageOf(`${A} ${unsafe}`));
+      expect(calls.run).toBe(0);
+      expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, unsafe).text);
+      expect(calls.scopeAnchor).toBe(1);
+    });
+  });
+
+  it('a plain ./ prefix is not unsafe: ./src/a.ts is the update target src/a.ts', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf(`./${A} 고쳐줘`));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+  });
+
+  // ── fenced code is pasted content, never a target ───────────────────────────────────────────
+  it('a single existing path + a fenced snippet with a relative import → one target and the approval prompt', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const text = `${A} 에 아래 코드를 추가해줘:\n\`\`\`ts\nimport { helper } from './lib/helpers.js';\nimport { x } from '../outside/x.js';\n\`\`\``;
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(calls.lastRunRequest?.instruction).toBe(text); // the snippet still reaches the AI instruction
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+  });
+
+  it('create wording + a fenced snippet → only the named new file is an add; the import path is not', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([]) });
+    const text = `${NEW} 새 파일 만들어줘. 내용:\n\`\`\`ts\nimport { a } from './lib/a.js';\n\`\`\``;
+    await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
   });
 
   it('a URL in the request is never a target path', async () => {

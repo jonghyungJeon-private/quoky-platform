@@ -12,7 +12,11 @@ import type {
 import type { AiExecutionResult } from '../ports';
 import { newId } from '../util/id';
 import { buildCanonicalDiff } from './preview-delivery';
-import { MAX_CHANGE_SET_FILES } from './code-work/code-change-set';
+import {
+  MAX_CHANGE_SET_FILES,
+  MAX_CHANGE_SET_FILE_BYTES,
+  MAX_CHANGE_SET_TOTAL_BYTES,
+} from './code-work/code-change-set';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
 import type { WorkSurface } from './work-surface-query';
@@ -86,7 +90,15 @@ export interface CodeChangePreview {
  * (`ConversationRuntime.runCodeGenerationPreview`), so it never reaches rendering.
  */
 export interface CodeDiffPreview {
-  changes: Array<{ path: string; kind: 'add' | 'update' | 'delete'; unified: string; binary: boolean }>;
+  changes: Array<{
+    path: string;
+    kind: 'add' | 'update' | 'delete';
+    unified: string;
+    binary: boolean;
+    /** Byte sizes from the workspace diff, when known — the ADR-0099 D1 bounds checked for the apply footer. */
+    oldSize?: number;
+    newSize?: number;
+  }>;
   outOfScopeWarnings: string[];
 }
 
@@ -365,20 +377,40 @@ function clampDiffText(unified: string, maxChars: number = MAX_DIFF_CHARS_PER_FI
 
 /** Floor on a file's share of the text-fallback diff budget, so a share is never uselessly small. */
 const MIN_DIFF_CHARS_PER_FILE_SHARE = 120;
-/** Per-block wrapper allowance (label, fences, truncation note) when splitting the budget across files. */
-const DIFF_BLOCK_OVERHEAD_CHARS = 120;
+/** Most shrink rounds {@link fitDiffBlocks} takes before leaving any remaining overflow to the drop rule. */
+const MAX_DIFF_FIT_ROUNDS = 8;
 
 /**
- * Per-file diff char cap for a preview of `fileCount` files (ADR-0099 D1 — one block per file within the
- * message budget). A single file keeps MAX_DIFF_CHARS_PER_FILE; a change set splits the body budget left
- * after the header/footer so every file gets its own (shorter) block instead of later files being dropped.
+ * Render one block per file within the message budget (ADR-0099 D1). A single file keeps
+ * MAX_DIFF_CHARS_PER_FILE; for a change set every block is rendered, then each file's diff share is shrunk by
+ * the measured overflow — so the REAL per-block overhead (path label, fences, truncation note) is accounted
+ * for, and a long path never pushes a later file out. Only when even the floor share cannot fit does
+ * {@link assembleBoundedBody}'s drop-with-notice rule apply.
  */
-function perFileDiffChars(header: string, footerLines: string[], fileCount: number): number {
-  if (fileCount <= 1) return MAX_DIFF_CHARS_PER_FILE;
+function fitDiffBlocks(header: string, footerLines: string[], count: number, render: (i: number, maxChars: number) => string): string[] {
+  const renderAll = (maxChars: number): string[] => Array.from({ length: count }, (_, i) => render(i, maxChars));
+  let maxChars = MAX_DIFF_CHARS_PER_FILE;
+  let blocks = renderAll(maxChars);
+  if (count <= 1) return blocks;
+  const bodyBudget = diffBodyBudget(header, footerLines);
+  for (let round = 0; round < MAX_DIFF_FIT_ROUNDS && maxChars > MIN_DIFF_CHARS_PER_FILE_SHARE; round++) {
+    // +1 per block for the joining newline.
+    const used = blocks.reduce((n, b) => n + b.length + 1, 0);
+    if (used <= bodyBudget) break;
+    // Shrink from the longest block actually rendered (a line-capped diff may be far below maxChars).
+    const longest = Math.max(...blocks.map((b) => b.length));
+    const next = Math.min(maxChars, longest) - Math.ceil((used - bodyBudget) / count);
+    maxChars = Math.max(MIN_DIFF_CHARS_PER_FILE_SHARE, next);
+    blocks = renderAll(maxChars);
+  }
+  return blocks;
+}
+
+/** The body budget left for file blocks once the header, footer and omitted-notice are reserved. */
+function diffBodyBudget(header: string, footerLines: string[]): number {
   const footer = footerLines.join('\n');
   const reserved = header.length + footer.length + MAX_OMITTED_NOTICE_CHARS + DIFF_BUDGET_MARGIN_CHARS;
-  const share = Math.floor(Math.max(0, MAX_MESSAGE_CHARS - reserved) / fileCount) - DIFF_BLOCK_OVERHEAD_CHARS;
-  return Math.min(MAX_DIFF_CHARS_PER_FILE, Math.max(MIN_DIFF_CHARS_PER_FILE_SHARE, share));
+  return Math.max(0, MAX_MESSAGE_CHARS - reserved);
 }
 
 /**
@@ -420,9 +452,7 @@ function renderPatchOperation(op: PatchSetPreview['operations'][number], maxChar
  * is a defensive backstop, not the primary guarantee.
  */
 function assembleBoundedBody(header: string, footerLines: string[], blocks: string[]): string {
-  const footer = footerLines.join('\n');
-  const reserved = header.length + footer.length + MAX_OMITTED_NOTICE_CHARS + DIFF_BUDGET_MARGIN_CHARS;
-  const bodyBudget = Math.max(0, MAX_MESSAGE_CHARS - reserved);
+  const bodyBudget = diffBodyBudget(header, footerLines);
 
   const kept: string[] = [];
   let used = 0;
@@ -443,6 +473,20 @@ function assembleBoundedBody(header: string, footerLines: string[], blocks: stri
 }
 
 /**
+ * The ADR-0099 D1 byte bounds (per file on current and proposed content, and the proposed total) over the sizes
+ * the diff reported — the same bounds the patch-time check enforces, so a preview never offers "적용해줘" for a
+ * set that "패치 만들어줘" would refuse. An unknown size is not counted (the patch-time check stays authoritative).
+ */
+function withinChangeSetByteBounds(changes: CodeDiffPreview['changes']): boolean {
+  let total = 0;
+  for (const c of changes) {
+    if ((c.oldSize ?? 0) > MAX_CHANGE_SET_FILE_BYTES || (c.newSize ?? 0) > MAX_CHANGE_SET_FILE_BYTES) return false;
+    total += c.newSize ?? 0;
+  }
+  return total <= MAX_CHANGE_SET_TOTAL_BYTES;
+}
+
+/**
  * Pre-apply SHAPE signal for footer wording ONLY (Footer Minimal Fix, widened by ADR-0099 D1). A previewed
  * change is apply-capable iff it is 1..MAX_CHANGE_SET_FILES non-binary, displayable `update`/`add` files — the
  * shapes the authoritative WorkspaceWrite integrity gate (ConversationRuntime.handleWorkspaceApplyTurn) accepts
@@ -459,6 +503,7 @@ function isApplyCapablePreview(preview: CodeDiffPreview): boolean {
   return (
     n >= 1 &&
     n <= MAX_CHANGE_SET_FILES &&
+    withinChangeSetByteBounds(preview.changes) &&
     preview.changes.every((c) => {
       if (c.binary) return false;
       const displayable = c.unified.trim().length > 0;
@@ -706,7 +751,11 @@ export class ResponseComposer {
    * specific than {@link composeApprovalRequired}: names this as a code-change request and states
    * explicitly that no file is modified yet — a `planningOnly` halt never mutates.
    */
-  composeCodeChangeApprovalRequired(context: ConversationContext, sentFilePaths: string[] = []): OutboundMessage {
+  composeCodeChangeApprovalRequired(
+    context: ConversationContext,
+    sentFilePaths: string[] = [],
+    newFilePaths: readonly string[] = [],
+  ): OutboundMessage {
     const shown = sentFilePaths.slice(0, 3).join(', ');
     const more = sentFilePaths.length > 3 ? ` 외 ${sentFilePaths.length - 3}개` : '';
     // Disclosure: existing target files' content goes to the AI provider for the preview (best-effort credential guard).
@@ -714,11 +763,19 @@ export class ResponseComposer {
       ? `승인하면 지정한 파일(${shown}${more})의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요. ` +
         '비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 모든 경우를 걸러내지는 못해요.\n'
       : '';
+    // ADR-0099 D1: in a multi-file set, name the paths that will be CREATED, so a typo of an existing file the
+    // owner meant to update is visible before "승인" (create wording applies to every missing path named).
+    const creates =
+      newFilePaths.length && sentFilePaths.length + newFilePaths.length > 1
+        ? `새로 만들 파일: ${renderFileList(newFilePaths, [], MAX_CHANGE_SET_FILES)} ` +
+          '(기존 파일을 고치려던 거라면 "거절"하고 경로를 확인해 다시 요청해 주세요.)\n'
+        : '';
     return {
       context,
       text:
         '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' +
         '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n' +
+        creates +
         disclosure +
         APPROVAL_DECISION_LINE,
     };
@@ -1023,8 +1080,9 @@ export class ResponseComposer {
     // every other shape gets the "this shape cannot be applied" footer (accurate — the update-only gate rejects it).
     const footer = isApplyCapablePreview(preview) ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER;
     const footerLines = [...(warning ? [warning] : []), footer];
-    const maxChars = perFileDiffChars(DIFF_PREVIEW_HEADER, footerLines, preview.changes.length);
-    const blocks = preview.changes.map((c) => renderDiffChange(c, maxChars));
+    const blocks = fitDiffBlocks(DIFF_PREVIEW_HEADER, footerLines, preview.changes.length, (i, maxChars) =>
+      renderDiffChange(preview.changes[i]!, maxChars),
+    );
     const text = assembleBoundedBody(DIFF_PREVIEW_HEADER, footerLines, blocks);
     // F5-A (Sprint 4c-Follow-up-5): also attach a COMPLETE structured preview (full canonical diff, never
     // clamped). A preview-aware adapter delivers this losslessly (multipart or `.diff` attachment) so the
@@ -1101,8 +1159,9 @@ export class ResponseComposer {
    * once, that files were not modified; never "적용했어요"/"반영했어요"/"수정했어요"/"변경 완료"/"적용 완료".
    */
   composePatchSetPreview(context: ConversationContext, preview: PatchSetPreview): OutboundMessage {
-    const maxChars = perFileDiffChars(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], preview.operations.length);
-    const blocks = preview.operations.map((op) => renderPatchOperation(op, maxChars));
+    const blocks = fitDiffBlocks(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], preview.operations.length, (i, maxChars) =>
+      renderPatchOperation(preview.operations[i]!, maxChars),
+    );
     return { context, text: assembleBoundedBody(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], blocks) };
   }
 

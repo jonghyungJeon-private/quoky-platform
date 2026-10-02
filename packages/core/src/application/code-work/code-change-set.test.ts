@@ -8,10 +8,11 @@ import {
   MAX_CHANGE_SET_TOTAL_BYTES,
   classifyUnverifiedChangeSet,
   collectCodeChangeTargets,
+  firstUnsafeMentionedPath,
   isSingleUpdateChangeSet,
   newFileCommitCandidates,
   partitionCommitCandidates,
-  stripUrlsForTargetExtraction,
+  targetExtractionText,
   validateChangeSetForApply,
   validatePatchableDiff,
   verifyAppliedChangeSet,
@@ -32,12 +33,46 @@ describe('change-set bounds (ADR-0099 D1)', () => {
   });
 });
 
-describe('stripUrlsForTargetExtraction', () => {
+describe('targetExtractionText', () => {
   it('blanks URLs so a link is never a target path, keeping the rest of the text', () => {
     const text = 'see https://github.com/acme/repo/blob/main/src/a.ts and fix src/b.ts';
-    const stripped = stripUrlsForTargetExtraction(text);
+    const stripped = targetExtractionText(text);
     expect(stripped).not.toContain('github.com');
     expect(stripped).toContain('fix src/b.ts');
+  });
+
+  it('blanks fenced code blocks (closed and unterminated) — a pasted import is content, not a target', () => {
+    const text = "src/app.ts 에 아래 코드를 추가해줘:\n```ts\nimport { helper } from './lib/helpers.js';\n```\n끝";
+    const out = targetExtractionText(text);
+    expect(out).toContain('src/app.ts');
+    expect(out).not.toContain('lib/helpers.js');
+    expect(out).toContain('끝');
+    expect(targetExtractionText('src/a.ts 고쳐줘\n```\nsrc/b.ts')).not.toContain('src/b.ts');
+  });
+});
+
+describe('firstUnsafeMentionedPath', () => {
+  it.each([
+    ['/etc/hosts.txt'],
+    ['../outside/x.ts'],
+    ['src/../../x.ts'],
+    ['.github/workflows/ci.yml'],
+    ['./.github/workflows/ci.yml'],
+    ['~/notes/x.md'],
+    ['C:/repo/x.ts'],
+  ])('refuses %s', (token) => {
+    expect(firstUnsafeMentionedPath(['src/app.ts', token])).toBe(token);
+  });
+
+  it('admits plain project-relative paths, including a plain ./ prefix', () => {
+    expect(firstUnsafeMentionedPath(['src/app.ts', './src/b.ts', 'docs/a.b/c.md'])).toBeNull();
+    expect(firstUnsafeMentionedPath([])).toBeNull();
+  });
+
+  it('ignores tokens that are not file-like: a slash command, a bare ../dir or ~/dir in prose', () => {
+    expect(firstUnsafeMentionedPath(['/preview', 'src/target.ts'])).toBeNull();
+    expect(firstUnsafeMentionedPath(['../utils', '~/notes'])).toBeNull();
+    expect(firstUnsafeMentionedPath(['/etc/hosts'])).toBe('/etc/hosts');
   });
 });
 
@@ -130,6 +165,10 @@ describe('validatePatchableDiff', () => {
     ['duplicate path', [fileDiff({ path: 'src/a.ts' }), fileDiff({ path: './src/a.ts' })]],
     ['file over 64 KiB', [fileDiff({ path: 'src/a.ts', newSize: MAX_CHANGE_SET_FILE_BYTES + 1 })]],
     ['current file over 64 KiB', [fileDiff({ path: 'src/a.ts', oldSize: MAX_CHANGE_SET_FILE_BYTES + 1 })]],
+    [
+      'new file over 64 KiB',
+      [fileDiff({ path: 'src/b.ts', changeKind: 'add', oldSize: undefined, newSize: MAX_CHANGE_SET_FILE_BYTES + 1 })],
+    ],
   ] as const)('rejects: %s', (_name, files) => {
     expect(validatePatchableDiff(diffOf([...files]), scope).ok).toBe(false);
   });
