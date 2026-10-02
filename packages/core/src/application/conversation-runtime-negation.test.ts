@@ -65,4 +65,22 @@ describe('ConversationRuntime negation-aware mutation gates', () => {
       expect(ConversationRuntime.interpretPostApplyValidationIntent('테스트 실행해줘')).toBe('test');
     });
   });
+
+  describe('interpretDecision (delegates to interpretApprovalDecision)', () => {
+    it('a negated approve phrase never approves', () => {
+      for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not approve']) {
+        expect(ConversationRuntime.interpretDecision(text), text).not.toBe('approve');
+      }
+    });
+    it('genuine decisions are unchanged', () => {
+      expect(ConversationRuntime.interpretDecision('승인')).toBe('approve');
+      expect(ConversationRuntime.interpretDecision('진행해')).toBe('approve');
+      expect(ConversationRuntime.interpretDecision('거절')).toBe('deny');
+      expect(ConversationRuntime.interpretDecision('취소')).toBe('cancel');
+    });
+    it('bare "y" and a question are ambiguous', () => {
+      expect(ConversationRuntime.interpretDecision('y')).toBe('ambiguous');
+      expect(ConversationRuntime.interpretDecision('진행할까?')).toBe('ambiguous');
+    });
+  });
 });

@@ -148,7 +148,10 @@ const DIFF_PREVIEW_APPLY_FOOTER = [
  *  never a bare "패치를 만들었어요" a non-developer could read as "applied." */
 const PATCH_PREVIEW_HEADER =
   '패치 미리보기를 만들었어요. 아직 실제 파일에는 적용하지 않았어요. 파일은 수정되지 않았어요.';
-const PATCH_PREVIEW_FOOTER = '실제 파일 적용은 아직 지원하지 않아요.';
+const PATCH_PREVIEW_FOOTER = [
+  '파일은 아직 그대로예요.',
+  '이 패치를 실제 파일에 적용하려면 "패치 적용해줘"라고 요청해 주세요.',
+].join('\n');
 
 /** Which stream a rendered excerpt came from, and which non-empty stream was left out. */
 interface OutputSummary {
@@ -783,7 +786,7 @@ export class ResponseComposer {
   composeApplyApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '적용 승인만 기록했어요.\n아직 실제 파일 적용은 수행하지 않았어요.\n파일은 수정되지 않았어요.',
+      text: '적용 승인만 기록했어요.\n아직 실제 파일 적용은 수행하지 않았어요.\n파일은 수정되지 않았어요.\n다음 단계로 "패치 만들어줘"라고 요청하면 적용 전에 확인할 수 있는 패치 미리보기를 만들어 드려요.',
     };
   }
 
