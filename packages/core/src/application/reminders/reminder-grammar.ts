@@ -34,6 +34,9 @@ import {
  *   `안 알려줘`, `필요 없어`, `no need to remind me`, `you forgot to remind me`.
  * - Not the owner's reminder: a message naming another addressee (`김대리한테`, `팀원들에게`), an embedded question
  *   (`9시에 뭐 있는지 알려줘`, `remind me what time …`), or a deadline (`remind me by 5pm` → CLARIFY).
+ * - English: a time inside a relative or content clause of the body (`remind me to book the restaurant that opens at
+ *   9am`, `… when I get home at 6`, `remind me that the store opens at 9am`) describes the body, never the reminder; it
+ *   stays in the body and, with no other time bound to `remind me`, is `CLARIFY(MISSING_TIME)`.
  * - A part of the day, day or recurrence bound on its own (`오전에 9시에`, `평일에 9시에`) joins the time directly
  *   after it; anywhere else, or left in the body next to a bare 12-hour clock (`9시에 저녁 약속`,
  *   `at 7 to plan the evening`), it is `CLARIFY(AMBIGUOUS_TIME)` — the marker is never dropped or guessed.
@@ -1221,6 +1224,64 @@ const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegE
   },
 ];
 
+type EnComponent = (typeof EN_COMPONENTS)[number];
+
+interface EnComponentMatch {
+  component: EnComponent;
+  m: RegExpExecArray;
+  start: number;
+  end: number;
+  /** A deadline word (`by`, `before`, …) directly precedes the match. */
+  deadline: boolean;
+}
+
+/** Words that open a relative / content clause after the verb; `that` only when it is not a demonstrative. */
+const EN_CLAUSE_WORD = /\b(?:that|which|who|whom|whose|where|when)\b/gi;
+/** After `that`: a subject, auxiliary or adverb makes it a relative or content clause (`that we booked`, `that is`). */
+const EN_CLAUSE_SUBJECT_OR_AUX = new Set([
+  'i', 'you', 'we', 'they', 'he', 'she', 'it', 'the', 'a', 'an', 'my', 'your', 'our', 'their', 'his', 'her', 'its',
+  'this', 'these', 'those', 'there', 'someone', 'somebody', 'everyone', 'everybody', 'nobody', 'people',
+  'is', 'are', 'was', 'were', 'be', 'been', 'will', 'would', 'can', 'could', 'should', 'shall', 'may', 'might', 'must',
+  'has', 'have', 'had', 'do', 'does', 'did', 'always', 'never', 'usually', 'only', 'just', 'also', 'still',
+]);
+/** A third-person or past verb after `that` (`that opens`, `that closed`); `that bus` / `that class` are nouns. */
+const EN_CLAUSE_VERB = /^(?:[a-z]{2,}s(?<!ss|us|is|as|os)|[a-z]{2,}ed(?<!eed)|[a-z]+n['’]t)$/i;
+/** A clause runs to the next clause punctuation (`the guy who called, at 9am` → the time is the reminder's). */
+const EN_CLAUSE_END = /[,;.!?]/g;
+
+/**
+ * Relative and content clauses after the reminder verb (`the restaurant that opens at 9am`, `when I get home at 6`,
+ * `remind me that the store opens at 9am`): a time inside one describes the body, never the reminder. `that` opens a
+ * clause as the first body word (a complementizer) or before a subject, auxiliary or verb; a demonstrative (`send
+ * that report at 9am`, `do that at 9pm`) does not. `scan` is `text` with the verb, lead-in and every component match
+ * blanked (same length), so a time's own dots (`p.m.`) never end a clause.
+ */
+function enEmbeddedClauses(
+  text: string,
+  scan: string,
+  bodyFrom: number,
+  matches: readonly EnComponentMatch[],
+): Array<{ start: number; end: number }> {
+  const clauses: Array<{ start: number; end: number }> = [];
+  for (const w of text.matchAll(EN_CLAUSE_WORD)) {
+    const at = w.index ?? 0;
+    if (at < bodyFrom || matches.some((mm) => at >= mm.start && at < mm.end)) continue;
+    const wordEnd = at + w[0].length;
+    if (w[0].toLowerCase() === 'that') {
+      const next = /^\s+([a-z]+(?:['’][a-z]+)?)/i.exec(text.slice(wordEnd));
+      const nextStart = next === null ? -1 : wordEnd + next[0].length - (next[1] ?? '').length;
+      if (matches.some((mm) => mm.start === nextStart)) continue; // `do that at 9pm`: an object, not a clause
+      const firstBodyWord = /^[\s,]*$/.test(scan.slice(bodyFrom, at));
+      const nextWord = (next?.[1] ?? '').toLowerCase();
+      if (!firstBodyWord && !EN_CLAUSE_SUBJECT_OR_AUX.has(nextWord) && !EN_CLAUSE_VERB.test(nextWord)) continue;
+    }
+    EN_CLAUSE_END.lastIndex = wordEnd;
+    const end = EN_CLAUSE_END.exec(scan)?.index ?? text.length;
+    clauses.push({ start: at, end });
+  }
+  return clauses;
+}
+
 function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
   const verb = [...text.matchAll(EN_VERB)].find((m) => !isEnVerbNegated(text, m.index ?? 0, m[0].length));
   if (verb === undefined) return NOT_REMINDER;
@@ -1242,28 +1303,51 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
   if (leadIn.length > 0 && leadIn.length <= EN_LEAD_IN_MAX_CHARS && EN_LEAD_IN.test(leadIn)) blank(0, verbStart);
 
   const hasUnsupported = EN_UNSUPPORTED.test(text);
-  let deadline = false;
+  // Collect every component match first (each blanked in `scan` so later components cannot re-match it), then apply
+  // only those bound to the reminder clause: a time inside a relative / content clause stays in the body.
+  const matches: EnComponentMatch[] = [];
+  let scan = working;
   for (const component of EN_COMPONENTS) {
     component.re.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = component.re.exec(working)) !== null) {
+    while ((m = component.re.exec(scan)) !== null) {
       if (m[0].length === 0) {
         component.re.lastIndex++;
         continue;
       }
-      if (EN_DEADLINE_BEFORE.test(working.slice(0, m.index))) deadline = true;
-      component.apply(spec, m);
-      blank(m.index, m.index + m[0].length);
+      const start = m.index;
+      const end = start + m[0].length;
+      matches.push({ component, m, start, end, deadline: EN_DEADLINE_BEFORE.test(scan.slice(0, start)) });
+      scan = scan.slice(0, start) + ' '.repeat(end - start) + scan.slice(end);
     }
+  }
+  const clauses = enEmbeddedClauses(text, scan, verbStart + verb[0].length, matches);
+  const inClause = (match: EnComponentMatch) => clauses.some((c) => match.start >= c.start && match.start < c.end);
+  let deadline = false;
+  let bodyTime = false;
+  for (const match of matches) {
+    if (inClause(match)) {
+      bodyTime = true;
+      continue;
+    }
+    if (match.deadline) deadline = true;
+    match.component.apply(spec, match.m);
+    blank(match.start, match.end);
   }
   if (hasUnsupported) return clarify('UNSUPPORTED_RECURRENCE');
   if (deadline) return clarify('AMBIGUOUS_TIME');
+  // Day and part-of-day words inside a body clause describe the body (`the store that opens on monday`), not the time.
+  let outsideClauses = working;
+  for (const c of clauses) {
+    outsideClauses = outsideClauses.slice(0, c.start) + ' '.repeat(c.end - c.start) + outsideClauses.slice(c.end);
+  }
 
   const hasTime = spec.relativeMs !== undefined || hasTimeOfDay(spec);
   if (!hasTime) {
     // `remind me what we discussed` is a question; `remind me tomorrow to …` / `remind me next week to …` is a
-    // reminder without a time.
-    return hasDayInfo(spec) || spec.recurrence !== undefined || EN_UNSUPPORTED_DAY.test(working)
+    // reminder without a time, and so is `remind me to book the restaurant that opens at 9am` (the time is the
+    // restaurant's, not the reminder's).
+    return bodyTime || hasDayInfo(spec) || spec.recurrence !== undefined || EN_UNSUPPORTED_DAY.test(working)
       ? clarify('MISSING_TIME')
       : NOT_REMINDER;
   }
@@ -1271,13 +1355,13 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
     !hasDayInfo(spec) &&
     spec.recurrence === undefined &&
     spec.relativeMs === undefined &&
-    (EN_UNSUPPORTED_DAY.test(working) || EN_STRAY_WEEKDAY.test(working))
+    (EN_UNSUPPORTED_DAY.test(outsideClauses) || EN_STRAY_WEEKDAY.test(outsideClauses))
   ) {
     // `remind me on the 15th at 3pm …`, `remind me next week at 9am …`: never read the time as today's.
     return clarify('AMBIGUOUS_TIME');
   }
   // `remind me at 7 tomorrow evening` is read above; a part-of-day word left over next to a bare clock is not guessed.
-  if (hasBareTwelveHourClock(spec) && EN_PART_OF_DAY_WORD.test(working)) return clarify('AMBIGUOUS_TIME');
+  if (hasBareTwelveHourClock(spec) && EN_PART_OF_DAY_WORD.test(outsideClauses)) return clarify('AMBIGUOUS_TIME');
   const resolved = resolveSpec(spec, ctx);
   if (!resolved.ok) return clarify(resolved.reason);
 

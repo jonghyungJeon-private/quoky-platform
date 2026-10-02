@@ -580,6 +580,44 @@ describe('reminder grammar — English', () => {
   });
 });
 
+describe('reminder grammar — English: only a time bound to the reminder clause schedules it (ADR-0101 D2)', () => {
+  it.each([
+    // A time inside a relative / content clause belongs to the body; with no other time → ask for one.
+    'remind me to book the restaurant that opens at 9am',
+    'remind me to book the restaurant which opens at 9am',
+    'remind me to call the doctor who starts at 9am',
+    'remind me to go to the cafe where we met at 3pm',
+    'remind me to call mom when I get home at 6pm',
+    'remind me that the store opens at 9am',
+    'remind me to fix the bug that crashes at 9pm',
+    'remind me to catch the train that we take at 5:30 p.m. tomorrow',
+    'remind me to submit the form that is due by 5pm', // a deadline inside the clause is the form's, not a fire time
+    'remind me tomorrow to book the restaurant that opens at 9am',
+    'remind me to book the restaurant that opens at 9am tomorrow at 8am', // no punctuation closes the clause
+  ])('%j → CLARIFY MISSING_TIME', (message) => {
+    expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'MISSING_TIME' });
+  });
+
+  it.each([
+    // Directly after `remind me`: the body keeps its own clause time verbatim.
+    ['remind me at 8am to book the restaurant that opens at 9am', 'book the restaurant that opens at 9am', '2026-10-03T08:00'],
+    ['remind me tomorrow at 8am to book the restaurant that opens at 9am', 'book the restaurant that opens at 9am', '2026-10-03T08:00'],
+    ['remind me at 8am to call the store that opens on monday', 'call the store that opens on monday', '2026-10-03T08:00'],
+    ['remind me in 30 minutes to check the oven that I started', 'check the oven that I started', '2026-10-02T14:30'],
+    // Trailing the whole clause, outside any relative clause.
+    ['remind me to call mom at 9pm', 'call mom', '2026-10-02T21:00'],
+    ['remind me to call mom tomorrow at 9am', 'call mom', '2026-10-03T09:00'],
+    ['remind me to book the restaurant that opens at 9am, tomorrow at 8am', 'book the restaurant that opens at 9am', '2026-10-03T08:00'],
+    ['remind me to email the guy who called, at 9am', 'email the guy who called', '2026-10-03T09:00'],
+    // A demonstrative `that` does not open a clause.
+    ['remind me to do that at 9pm', 'do that', '2026-10-02T21:00'],
+    ['remind me to send that report at 9am', 'send that report', '2026-10-03T09:00'],
+    ['remind me to catch that bus at 5pm', 'catch that bus', '2026-10-02T17:00'],
+  ])('%j → %j at %s', (message, body, local) => {
+    expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
+  });
+});
+
 describe('reminder grammar — time zones other than Asia/Seoul', () => {
   const NY = 'America/New_York';
 
