@@ -14683,3 +14683,43 @@ push/PR/merge chain as a release feature, a configurable protected-branch list, 
   3. `ClaudeCliProvider` adds `--tools ""` (all built-in tools off) for requests without a workspace.
   4. The 30-second provider availability cache lives in Core `AiProviderManager` (all providers), not in the
      Ollama adapter alone.
+
+## ADR-0095 — Quoky Personal v1 implementation decisions (ratification of the ADR-0091..0094 record)
+
+- **Status:** Ratified by the Product Owner on 2026-10-02.
+- **Amends:** ADR-0032 §6 (conversational approval words), ADR-0092 (location of the availability cache),
+  ADR-0014 (Claude CLI argv), ADR-0093 (approval decision timing).
+
+### Context
+
+The ADR-0091..0094 implementation record listed four implementation details that the ratified text did not
+cover. Independent Claude and Codex final reviews then hardened the approval path further. This ADR ratifies
+those details so the settled decisions and the code agree.
+
+### Decision
+
+1. **Approval words (amends ADR-0032 §6).** `interpretApprovalDecision` is the single interpreter for every
+   conversational decision site. Matching is whole-token only; bare `y`/`n` are not decisions. Approve is the
+   narrow case: an approve word with any further content word, a question mark anywhere, a question ending,
+   a hedge, a refusal qualifier, a condition or an unrecognized symbol/emoji is `ambiguous`, and the approval
+   stays pending with a re-prompt. Only a directly negated approve word ("진행하지 마", "don't approve") is a
+   terminal deny.
+2. **No-project intent routing.** `IMPLEMENT_CODE`, `RUN_TESTS` and `PROJECT_ANALYSIS` intents become
+   `GENERAL_CHAT` when the Session has no active project and the text has no project noun or file path.
+   Reset closes the Session, so the project binding is dropped and the reset reply says so.
+3. **Claude CLI tools (amends ADR-0014 argv).** `ClaudeCliProvider` passes `--tools ""` (built-in tools off)
+   for requests without a workspace. The prompt stays on stdin.
+4. **Availability cache in Core (amends ADR-0092).** The ~30-second availability cache lives in Core
+   `AiProviderManager` for all providers. It never branches on provider id. An execution failure classified
+   `UNAVAILABLE` (including an Ollama daemon connection failure) drops that provider's cached probe so the
+   next turn re-probes.
+5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
+   every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
+   mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is
+   terminal in the SQLite session repository through an atomic conditional upsert.
+
+### Consequences
+
+- **+** Misread status questions, refusals, conditions and symbols can no longer grant an approval.
+- **−** Some natural phrasings ("승인 👍", "진행해도 돼") re-prompt once instead of approving.
+- **+** No new Core port and no provider-id branching. ARCHITECTURE.md §5 invariants are unchanged.

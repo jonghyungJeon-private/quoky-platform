@@ -93,6 +93,16 @@ execution remain separately approved Strict gates.
 - Vector retrieval; Codex provider.
 - MLX provider — 2nd-release candidate.
 
+**Personal v2 candidates (not ratified; for planning only)**
+
+Answer quality improvement, in this order:
+
+- **A. Feedback capture:** Discord 👍/👎 reactions plus implicit signals (immediate rephrase, "아니 그게 아니라", reset right after a reply, approval re-prompts). Stored locally with the intent, provider and latency. Needs its own ADR and an additive migration; data never leaves the host.
+- **B. Evaluation golden set:** real misrouted or misdecided utterances become regression corpora with tracked accuracy for intent routing and approval decisions.
+- **C. Local embedding retrieval:** a `VectorProvider` adapter on Ollama embeddings for memory and history recall. This replaces today's no-op `vector-local`.
+- **D. Feedback-driven examples:** 👍-rated Q/A pairs are injected as examples by `PromptComposer` for similar questions.
+- **E. Local fine-tuning (e.g. an MLX LoRA):** deferred until enough personal data exists.
+
 ## Deferred capabilities (YAGNI)
 
 Reserve a seam **only when expensive to retrofit.** Most of these already map onto
