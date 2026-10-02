@@ -13,3 +13,5 @@ export * from './daily-brief';
 export * from './reminder-reply-composer';
 export * from './reminder-conversation-service';
 export * from './reminder-dispatch-service';
+// PRO-5: the always-registered `pre-classify` turn handler (order 200) over the conversation service.
+export * from './reminder-turn-handler';
