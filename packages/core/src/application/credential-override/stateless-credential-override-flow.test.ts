@@ -23,6 +23,7 @@ import {
   CREDENTIAL_OVERRIDE_DENY_COMMENT,
   MAX_CREDENTIAL_OVERRIDE_GRANTS,
   type CredentialOverrideAnchor,
+  type CredentialOverrideDispatchAuthorization,
   type CredentialOverrideDispatchInput,
   type CredentialOverrideInvalidationReason,
   type CredentialOverrideRefusal,
@@ -959,5 +960,54 @@ describe('StatelessCredentialOverrideFlow — storage init order (ADR-0062)', ()
       store.session, { request, outcome, ownerActorId: OWNER, refusal: refusalOf('src/a.ts', ASSIGN_A, 3) }, approvals,
     );
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('StatelessCredentialOverrideFlow — dispatch authorization (OVR-3 contract)', () => {
+  it('recheck() is synchronous and reports expiry by the injected clock at the moment it is called', async () => {
+    await grantedSingle();
+    vi.setSystemTime(new Date(Date.parse(T0) + 29 * 60_000));
+    const seen: Array<CredentialOverrideInvalidationReason | null> = [];
+    const result = await flow.consumeAndDispatch(store.session, dispatchInput(), async (_grants, authorization) => {
+      seen.push(authorization.recheck());
+      vi.setSystemTime(new Date(Date.parse(T0) + 31 * 60_000)); // the deadline passes inside the dispatch
+      seen.push(authorization.recheck());
+      return 'done';
+    });
+    expect(result).toEqual({ ok: true, value: 'done' });
+    expect(seen).toEqual([null, 'expired']);
+  });
+
+  it('recheck() fails once the claim is released (a settled dispatch can never be re-authorized)', async () => {
+    const { taskId } = await grantedSingle();
+    let held: CredentialOverrideDispatchAuthorization | null = null;
+    await flow.consumeAndDispatch(store.session, dispatchInput(), async (_grants, authorization) => {
+      held = authorization;
+      expect(authorization.anchorTaskId).toBe(taskId);
+      return 'done';
+    });
+    expect(held!.recheck()).toBe('inconsistent');
+  });
+
+  it('reloadSession() returns the FRESH canonical session while it still admits the set', async () => {
+    await grantedSingle();
+    const result = await flow.consumeAndDispatch(store.session, dispatchInput(), async (_grants, authorization) => {
+      store.session = { ...store.session, metadata: { concurrent: 'kept' } };
+      return authorization.reloadSession();
+    });
+    expect(result).toMatchObject({ ok: true, value: { ok: true, session: { metadata: { concurrent: 'kept' } } } });
+  });
+
+  it.each([
+    ['reset', (s: Session): Session => ({ ...s, status: SessionStatus.CLOSED })],
+    ['project-changed', (s: Session): Session => ({ ...s, activeProjectId: 'proj-2' })],
+    ['superseded', (s: Session): Session => ({ ...s, activeTaskId: 'newer-task' })],
+  ] as const)('reloadSession() → %s when the canonical session changed during the dispatch', async (reason, update) => {
+    await grantedSingle();
+    const result = await flow.consumeAndDispatch(store.session, dispatchInput(), async (_grants, authorization) => {
+      store.session = update(store.session);
+      return authorization.reloadSession();
+    });
+    expect(result).toEqual({ ok: true, value: { ok: false, reason } });
   });
 });

@@ -28,6 +28,7 @@ export type {
   CredentialOverrideBinding,
   CredentialOverrideCoverage,
   CredentialOverrideDecision,
+  CredentialOverrideDispatchAuthorization,
   CredentialOverrideDispatchInput,
   CredentialOverrideDispatchResult,
   CredentialOverrideFlow,
@@ -38,6 +39,7 @@ export type {
   CredentialOverrideInvalidationResult,
   CredentialOverrideLookup,
   CredentialOverrideRefusal,
+  CredentialOverrideSessionReload,
   CredentialOverrideRequestInput,
   CredentialOverrideRequestResult,
 } from './credential-override';

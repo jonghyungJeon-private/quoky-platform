@@ -19,6 +19,7 @@ import {
   type CredentialOverrideAnchor,
   type CredentialOverrideAnchorStatus,
   type CredentialOverrideApprovalRequester,
+  type CredentialOverrideDispatchAuthorization,
   type CredentialOverrideDispatchInput,
   type CredentialOverrideDispatchResult,
   type CredentialOverrideFlow,
@@ -92,8 +93,8 @@ const sameWorkspace = (a: WorkspaceRef | undefined, b: WorkspaceRef | undefined)
  */
 export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
   private readonly clock: () => IsoTimestamp;
-  /** Anchor Task ids whose consume/dispatch is in flight in this process. */
-  private readonly claims = new Set<Id>();
+  /** Anchor Task ids whose consume/dispatch is in flight in this process, each with its dispatch's claim token. */
+  private readonly claims = new Map<Id, object>();
   /** Per-anchor (keyed by the session pointer) tail of the serialized read-and-write queue. */
   private readonly queues = new Map<Id, Promise<void>>();
 
@@ -459,29 +460,68 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
   async consumeAndDispatch<T>(
     session: Session,
     input: CredentialOverrideDispatchInput,
-    dispatch: (grants: readonly CredentialOverrideGrant[]) => Promise<T>,
+    dispatch: (
+      grants: readonly CredentialOverrideGrant[],
+      authorization: CredentialOverrideDispatchAuthorization,
+    ) => Promise<T>,
   ): Promise<CredentialOverrideDispatchResult<T>> {
     const claimId = session.activeTaskId;
     if (!claimId) return { ok: false, reason: 'not-found' };
     // Claimed synchronously, before any await: a concurrent turn on the same anchor is refused, never queued.
     if (this.claims.has(claimId)) return { ok: false, reason: 'already-used' };
-    this.claims.add(claimId);
+    const token = {};
+    this.claims.set(claimId, token);
     try {
       // Revalidate and consume under the anchor's serialization (first read through the post-consume session
       // re-load), so no reset/denial/supersession routed through this flow can land between them; the provider call
       // itself runs outside it.
       const consumed = await this.serialized(claimId, () => this.consume(session, claimId, input));
       if (!consumed.ok) return consumed;
-      // ADR-0095 §5: the LAST expiry check runs synchronously with the injected clock, after every persistence
-      // await (consume save, pointer release, session re-load) and immediately before the provider call. Past the
-      // TTL nothing is sent; the set stays CONSUMED (one-time, never replayable) and the caller replies "expired".
-      if (assessCredentialOverrideAnchor(consumed.granted, consumed.approvals, this.clock()).kind !== 'ready') {
-        return { ok: false, reason: 'expired' };
-      }
-      return { ok: true, value: await dispatch(consumed.grants) };
+      const authorization = this.dispatchAuthorization(session.id, claimId, token, consumed);
+      // ADR-0095 §5: the LAST flow-side check runs synchronously with the injected clock, after every persistence
+      // await (consume save, pointer release, session re-load) and immediately before `dispatch`. Past the TTL (or
+      // with the last canonical load no longer admitting the set) nothing is sent; the set stays CONSUMED (one-time,
+      // never replayable) and the caller replies nothing-sent. `dispatch` repeats `recheck()` right before the
+      // provider call itself.
+      const denied = authorization.recheck();
+      if (denied) return { ok: false, reason: denied };
+      return { ok: true, value: await dispatch(consumed.grants, authorization) };
     } finally {
       this.claims.delete(claimId);
     }
+  }
+
+  /** The {@link CredentialOverrideDispatchAuthorization} of one consumed dispatch (see the interface for semantics). */
+  private dispatchAuthorization(
+    sessionId: Id,
+    claimId: Id,
+    token: object,
+    consumed: {
+      readonly consumed: CredentialOverrideAnchor;
+      readonly granted: CredentialOverrideAnchor;
+      readonly approvals: ReadonlyMap<Id, ApprovalRequest | null>;
+      readonly session: Session;
+    },
+  ): CredentialOverrideDispatchAuthorization {
+    return {
+      anchorTaskId: claimId,
+      recheck: () => {
+        // Still THIS dispatch's claim on a set THIS dispatch consumed.
+        if (this.claims.get(claimId) !== token || consumed.consumed.status !== 'CONSUMED') return 'inconsistent';
+        const expiry = assessCredentialOverrideAnchor(consumed.granted, consumed.approvals, this.clock());
+        if (expiry.kind !== 'ready') return expiry.kind === 'invalid' ? expiry.reason : 'inconsistent';
+        // Per the last canonical load (pointer already released by the consume, so not checked).
+        return this.liveSessionFailure(consumed.session, consumed.granted, null);
+      },
+      reloadSession: async () => {
+        const live = await this.store.sessions.get(sessionId).catch(() => null);
+        const failure = this.liveSessionFailure(live, consumed.granted, null);
+        if (failure || !live) return { ok: false, reason: failure ?? 'inconsistent' };
+        // The consume released the pointer (best effort): anything else on it now is a newer request.
+        if (live.activeTaskId !== undefined && live.activeTaskId !== claimId) return { ok: false, reason: 'superseded' };
+        return { ok: true, session: live };
+      },
+    };
   }
 
   /** Revalidate every grant and consume the whole set in ONE save; callers hold the anchor's serialization. */
@@ -496,6 +536,10 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
         /** The GRANTED set as revalidated (pre-consume) and its requests, for the final pre-dispatch expiry check. */
         readonly granted: CredentialOverrideAnchor;
         readonly approvals: ReadonlyMap<Id, ApprovalRequest | null>;
+        /** The set exactly as this dispatch saved it `CONSUMED`. */
+        readonly consumed: CredentialOverrideAnchor;
+        /** The last canonical session load (after the pointer release), for the synchronous pre-dispatch re-check. */
+        readonly session: Session;
       }
     | Extract<CredentialOverrideDispatchResult<never>, { ok: false }>
   > {
@@ -580,7 +624,7 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     // ... and the release was an await too: one last re-load (pointer already released by us, so not checked).
     const final = await this.store.sessions.get(session.id).catch(() => null);
     const finalFailure = this.liveSessionFailure(final, anchor, null);
-    if (finalFailure) return { ok: false, reason: finalFailure };
+    if (finalFailure || !final) return { ok: false, reason: finalFailure ?? 'inconsistent' };
     return {
       ok: true,
       grants: consumed.grants.map((g) => ({
@@ -588,6 +632,8 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
       })),
       granted: anchor,
       approvals,
+      consumed,
+      session: final,
     };
   }
 

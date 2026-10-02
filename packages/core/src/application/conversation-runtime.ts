@@ -56,6 +56,7 @@ import type {
   CommandExecution,
   CommandExecutionRef,
   ContextBundle,
+  ContextFile,
   ConversationContext,
   ExecutionPlanRef,
   GenerateCodeInput,
@@ -126,6 +127,7 @@ import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
+  type CodeGenerationContextResult,
   type CredentialOverrideGrant,
   MAX_CODEGEN_CONTEXT_FILE_BYTES,
   MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
@@ -135,6 +137,7 @@ import {
   CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
   CREDENTIAL_OVERRIDE_DENY_COMMENT,
   type CredentialOverrideAnchor,
+  type CredentialOverrideDispatchAuthorization,
   type CredentialOverrideFlow,
   type CredentialOverrideInvalidationReason,
   type CredentialOverrideLookup,
@@ -846,6 +849,50 @@ interface PendingApprovalLookup {
    */
   override: CredentialOverrideLookup | null;
   pending: ApprovalRequest | null;
+}
+
+/** A code-change preview's refs, targets and prepared (read, classified, grant-checked) context content. */
+interface PreparedCodeGeneration {
+  readonly planRef: ExecutionPlanRef;
+  readonly workspaceRef: WorkspaceRef;
+  readonly targetFiles: string[];
+  readonly contextFiles: ContextFile[];
+}
+
+type CodeGenerationPreparation =
+  | { readonly ok: true; readonly value: PreparedCodeGeneration }
+  | { readonly ok: false; readonly failure: 'missing-refs' }
+  | {
+      readonly ok: false;
+      readonly failure: 'context';
+      readonly context: Extract<CodeGenerationContextResult, { ok: false }>;
+    };
+
+/** The dispatch-time grant view of an anchor's grant records (the shape the flow hands `dispatch`). */
+function toDispatchGrants(anchor: CredentialOverrideAnchor): CredentialOverrideGrant[] {
+  return anchor.grants.map((g) => ({
+    path: g.path, contentSha256: g.contentSha256, detector: g.detector, line: g.line, state: 'CONSUMED' as const,
+  }));
+}
+
+/** True iff the grants the flow consumed are exactly the grants the dispatched content was prepared under. */
+function sameDispatchGrants(
+  consumed: readonly CredentialOverrideGrant[],
+  prepared: readonly CredentialOverrideGrant[],
+): boolean {
+  return (
+    consumed.length === prepared.length &&
+    consumed.every((g, i) => {
+      const p = prepared[i]!;
+      return (
+        normalizeRelativePath(g.path) === normalizeRelativePath(p.path) &&
+        g.contentSha256 === p.contentSha256 &&
+        g.detector === p.detector &&
+        g.line === p.line &&
+        g.state === p.state
+      );
+    })
+  );
 }
 
 /**
@@ -2810,81 +2857,150 @@ export class ConversationRuntime {
    * current content could not be found/read at diff time) is a failed preview, never a partial or
    * degraded success (ADR-0039, CA Round 1).
    *
-   * `grants` (ADR-0097 D5) are the credential-override grants the override flow has just revalidated and
-   * consumed for THIS dispatch (empty on every other path): they admit exactly those refused files whose
-   * content still hashes to the grant, and a successful preview then carries the one-time-send notice.
+   * The credential-override dispatch (ADR-0097 D5) does not come through here: it prepares the same content
+   * before its consume ({@link prepareCodeGeneration}) and enters {@link generateCodeChangePreview} directly.
    */
   private async runCodeGenerationPreview(
     message: InboundMessage,
     session: Session,
     request: ExecutionRequest,
     outcome: ExecutionOutcome,
-    grants: readonly CredentialOverrideGrant[] = [],
   ): Promise<TurnResult> {
+    const prepared = await this.prepareCodeGeneration(request, outcome, []);
+    if (!prepared.ok) return this.failCodeGenerationPreparation(message, session, request, outcome, prepared, []);
+    return this.generateCodeChangePreview(message, session, request, outcome, prepared.value);
+  }
+
+  /**
+   * Everything a code-change preview needs BEFORE the provider call: the refs, the targets and each validated
+   * target's current content (QA-012). The AI request carries no workspace cwd (CAP-008 MB-2), so each validated
+   * target's CURRENT content must arrive as read-only contextFiles — otherwise the provider only sees a bare path
+   * and cannot propose a faithful full-file `newContent`. Read via the existing read-only WorkspaceManager.read
+   * (CAP-001). An unreadable target or an oversized context is a failed preview (never truncated, never treated as
+   * an 'add'); explicit new-file targets are skipped (they must not exist yet). generate() is never called on any
+   * of these failures.
+   *
+   * `grants` admit exactly those refused files whose content still hashes to the grant (ADR-0097 D5). The override
+   * path passes the grants it is about to consume, and only sends the prepared content once the flow has consumed
+   * exactly those grants (`sameDispatchGrants`), so no read sits between the flow's final validation and generate().
+   */
+  private async prepareCodeGeneration(
+    request: ExecutionRequest,
+    outcome: ExecutionOutcome,
+    grants: readonly CredentialOverrideGrant[],
+  ): Promise<CodeGenerationPreparation> {
     const planRef = outcome.refs.executionPlanRef;
+    const workspaceRef = request.workspaceRef;
     const targetFiles = request.targetFiles;
-    if (!planRef || !request.workspaceRef || !targetFiles?.length) {
+    if (!planRef || !workspaceRef || !targetFiles?.length) return { ok: false, failure: 'missing-refs' };
+    const context = await readCodeGenerationContextFiles(
+      this.deps.workspace,
+      workspaceRef,
+      targetFiles,
+      request.newFileTargets ?? [],
+      { credentialOverrides: grants },
+    );
+    if (!context.ok) return { ok: false, failure: 'context', context };
+    return { ok: true, value: { planRef, workspaceRef, targetFiles, contextFiles: context.contextFiles } };
+  }
+
+  /** The reply for a failed {@link prepareCodeGeneration} (nothing was sent to the provider). */
+  private async failCodeGenerationPreparation(
+    message: InboundMessage,
+    session: Session,
+    request: ExecutionRequest,
+    outcome: ExecutionOutcome,
+    failed: Extract<CodeGenerationPreparation, { ok: false }>,
+    grants: readonly CredentialOverrideGrant[],
+  ): Promise<TurnResult> {
+    if (failed.failure === 'missing-refs') {
       this.logPreviewFailure('missing-refs-or-targets', message, session, request);
       return this.failComposed(
         message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
       );
     }
-
-    // QA-012: the AI request carries no workspace cwd (CAP-008 MB-2), so each validated target's CURRENT
-    // content must arrive as read-only contextFiles — otherwise the provider only sees a bare path and
-    // cannot propose a faithful full-file `newContent`. Read via the existing read-only
-    // WorkspaceManager.read (CAP-001). An unreadable target or an oversized context is a failed preview
-    // (never truncated, never treated as an 'add'); explicit new-file targets are skipped (they must not
-    // exist yet). generate() is never called on any of these failures.
-    const context = await readCodeGenerationContextFiles(
-      this.deps.workspace,
-      request.workspaceRef,
-      targetFiles,
-      request.newFileTargets ?? [],
-      { credentialOverrides: grants },
-    );
-    if (!context.ok) {
-      this.logPreviewFailure(`context-${context.reason}`, message, session, request, {
+    const context = failed.context;
+    this.logPreviewFailure(`context-${context.reason}`, message, session, request, {
+      targetIndex: context.targetIndex,
+      maxFileBytes: MAX_CODEGEN_CONTEXT_FILE_BYTES,
+      maxTotalBytes: MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
+    });
+    const overrideFlow = this.deps.credentialOverrideFlow;
+    // ADR-0097 D3: an overridable `credential-assignment` refusal (no hard failure on any target) raises ONE
+    // CRITICAL owner override instead of the terminal refusal — only on the first, grant-free read (a refusal
+    // inside a granted dispatch means the content changed after the coverage check: nothing is sent).
+    if (
+      context.reason === 'target-contains-credential' && context.overridable && overrideFlow && grants.length === 0
+    ) {
+      const refusal: CredentialOverrideRefusal = {
         targetIndex: context.targetIndex,
-        maxFileBytes: MAX_CODEGEN_CONTEXT_FILE_BYTES,
-        maxTotalBytes: MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
+        targetPath: context.targetPath,
+        contentSha256: context.contentSha256,
+        line: context.line,
+      };
+      return this.requestCredentialOverride(message, session, request, outcome, refusal);
+    }
+    if (context.reason === 'target-changed-since-override') {
+      this.deps.logger.warn('credential guard override content changed', {
+        sessionId: session.id,
+        targetIndex: context.targetIndex,
       });
-      const overrideFlow = this.deps.credentialOverrideFlow;
-      // ADR-0097 D3: an overridable `credential-assignment` refusal (no hard failure on any target) raises ONE
-      // CRITICAL owner override instead of the terminal refusal — only on the first, grant-free read (a refusal
-      // inside a granted dispatch means the content changed after the coverage check: nothing is sent).
-      if (
-        context.reason === 'target-contains-credential' && context.overridable && overrideFlow && grants.length === 0
-      ) {
-        const refusal: CredentialOverrideRefusal = {
-          targetIndex: context.targetIndex,
-          targetPath: context.targetPath,
-          contentSha256: context.contentSha256,
-          line: context.line,
-        };
-        return this.requestCredentialOverride(message, session, request, outcome, refusal);
-      }
-      if (context.reason === 'target-changed-since-override') {
-        this.deps.logger.warn('credential guard override content changed', {
-          sessionId: session.id,
-          targetIndex: context.targetIndex,
-        });
+      return this.failComposed(
+        message,
+        session,
+        this.deps.composer.composeCredentialOverrideContentChanged(message.context, context.targetPath),
+        outcome,
+      );
+    }
+    // A target whose content carries credential material is never sent to the provider; the path
+    // (user-supplied) goes to the reply only — the log above carries just the target index. With the
+    // override flow wired, a token/private-key refusal also says it can never be sent (ADR-0097 D6).
+    const reply = context.reason !== 'target-contains-credential'
+      ? this.deps.composer.composeCodeGenerationPreviewFailed(message.context)
+      : overrideFlow && !context.overridable
+      ? this.deps.composer.composeCredentialOverrideHardRefused(message.context, context.targetPath)
+      : this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, context.targetPath);
+    return this.failComposed(message, session, reply, outcome);
+  }
+
+  /**
+   * The provider call and the preview built from it, on content already prepared by {@link prepareCodeGeneration}.
+   *
+   * `override` (ADR-0097 D5, OVR-3 contract) is set only inside the credential-override flow's dispatch: the grants it
+   * has just consumed, the grants the content was prepared under, and the dispatch's authorization. Then
+   * - this method performs NO awaited I/O before generate(): the consumed grants must equal the prepared ones and
+   *   `authorization.recheck()` (expiry by the injected clock, claim on the CONSUMED set, session ACTIVE and bound per
+   *   the last canonical load) runs synchronously right before the call — otherwise nothing is sent;
+   * - after the provider call it re-loads the canonical session and, unless it is still ACTIVE, bound to the same
+   *   project and not re-pointed at a newer request, discards the preview (no anchor, no session save) and says the
+   *   request was cancelled; otherwise the apply-preview anchor is written onto that FRESH session (never the turn's
+   *   copy), so a reset close, a project switch or a newer pointer that landed meanwhile is never overwritten.
+   */
+  private async generateCodeChangePreview(
+    message: InboundMessage,
+    session: Session,
+    request: ExecutionRequest,
+    outcome: ExecutionOutcome,
+    prepared: PreparedCodeGeneration,
+    override?: {
+      readonly grants: readonly CredentialOverrideGrant[];
+      readonly preparedGrants: readonly CredentialOverrideGrant[];
+      readonly authorization: CredentialOverrideDispatchAuthorization;
+    },
+  ): Promise<TurnResult> {
+    const { planRef, workspaceRef, targetFiles, contextFiles } = prepared;
+    const grants = override?.grants ?? [];
+    if (override) {
+      // Synchronous — nothing below may await before generate() is invoked.
+      const denied = sameDispatchGrants(override.grants, override.preparedGrants)
+        ? override.authorization.recheck()
+        : 'inconsistent';
+      if (denied) {
+        this.deps.logger.warn('credential guard override not dispatched', { sessionId: session.id, reason: denied });
         return this.failComposed(
-          message,
-          session,
-          this.deps.composer.composeCredentialOverrideContentChanged(message.context, context.targetPath),
-          outcome,
+          message, session, this.deps.composer.composeCredentialOverrideInvalidated(message.context, denied), outcome,
         );
       }
-      // A target whose content carries credential material is never sent to the provider; the path
-      // (user-supplied) goes to the reply only — the log above carries just the target index. With the
-      // override flow wired, a token/private-key refusal also says it can never be sent (ADR-0097 D6).
-      const reply = context.reason !== 'target-contains-credential'
-        ? this.deps.composer.composeCodeGenerationPreviewFailed(message.context)
-        : overrideFlow && !context.overridable
-        ? this.deps.composer.composeCredentialOverrideHardRefused(message.context, context.targetPath)
-        : this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, context.targetPath);
-      return this.failComposed(message, session, reply, outcome);
     }
 
     let generation: CodeGeneration;
@@ -2893,9 +3009,9 @@ export class ConversationRuntime {
         executionPlanRef: planRef,
         capability: Capability.CODE_IMPLEMENTATION,
         instruction: request.instruction,
-        workspaceRef: request.workspaceRef,
+        workspaceRef,
         targetFiles,
-        ...(context.contextFiles.length ? { contextFiles: context.contextFiles } : {}),
+        ...(contextFiles.length ? { contextFiles } : {}),
       });
     } catch {
       this.logPreviewFailure('code-generation-exception', message, session, request);
@@ -2940,7 +3056,7 @@ export class ConversationRuntime {
 
     let diff: WorkspaceDiff;
     try {
-      diff = await this.deps.workspace.diff(request.workspaceRef, inScope);
+      diff = await this.deps.workspace.diff(workspaceRef, inScope);
     } catch {
       // Read-only failure (e.g. current file unreadable) — same guaranteed non-mutation as every
       // other preview failure (ADR-0039, CA Round 1 Required Change #8).
@@ -2993,7 +3109,7 @@ export class ConversationRuntime {
       // the "existing file, content unreadable at diff time" case the old gate caught.
       let exists: boolean;
       try {
-        const hits = await this.deps.workspace.list(request.workspaceRef, file.path);
+        const hits = await this.deps.workspace.list(workspaceRef, file.path);
         exists = hits.some((hit) => normalizeRelativePath(hit) === norm);
       } catch {
         this.logPreviewFailure('add-existence-check-failed', message, session, request, {
@@ -3023,20 +3139,40 @@ export class ConversationRuntime {
           credentialOverrideSentPaths: grants.map((g) => g.path),
         })
       : this.deps.composer.composeCodeDiffPreview(message.context, diffPreview);
+    // ADR-0097 D5 (OVR-3 contract): a granted dispatch writes onto the canonical session re-loaded AFTER the provider
+    // call, and only while it still admits this request; otherwise the preview is discarded (no anchor, no save).
+    let anchorSession = session;
+    if (override) {
+      const reloaded = await override.authorization.reloadSession();
+      if (!reloaded.ok) {
+        this.deps.logger.warn('credential guard override preview discarded', {
+          sessionId: session.id,
+          reason: reloaded.reason,
+          codeGenerationId: generation.id,
+        });
+        // Truthful: the granted content WAS sent once; the request itself is cancelled and nothing was kept.
+        const cancelled = this.deps.composer.composeWithNotice(
+          this.deps.composer.composeCredentialOverrideSentNotice(message.context, grants.map((g) => g.path)),
+          this.deps.composer.composeScopeClarificationCancelled(message.context),
+        );
+        return this.failComposed(message, session, cancelled, outcome);
+      }
+      anchorSession = reloaded.session;
+    }
     // Sprint 2s (ADR-0040): remember what was just previewed, in case the user explicitly asks to apply
     // it on a later turn. A plan-less Task anchor — never discoverable by approvalFlow.
-    await this.deps.applyPreviewFlow.anchor(session, {
+    await this.deps.applyPreviewFlow.anchor(anchorSession, {
       kind: 'code-preview-apply',
       status: 'ELIGIBLE',
       executionPlanRef: planRef,
-      workspaceRef: request.workspaceRef,
+      workspaceRef,
       targetFiles,
       // ADR-0099 D1: persist the explicit new-file targets — the only paths a later add may target.
       ...(newFileTargets.size ? { newFileTargets: [...newFileTargets] } : {}),
       codeGenerationRef: codeGenerationRef(generation),
       codeProposalRef: codeProposalRef(proposal),
       instruction: request.instruction,
-      ...(session.activeProjectId ? { projectId: session.activeProjectId } : {}),
+      ...(anchorSession.activeProjectId ? { projectId: anchorSession.activeProjectId } : {}),
       createdAt: now(),
     });
     return this.respondComposed(message, session, reply, outcome);
@@ -3269,6 +3405,17 @@ export class ConversationRuntime {
         message, session, this.deps.composer.composeCredentialOverrideInvalidated(message.context, 'project-changed'),
       );
     }
+    // OVR-3 contract: read, classify and grant-check every target's content BEFORE the consume, so the dispatch
+    // below performs no awaited I/O between the flow's final validation and generate(). The content is prepared
+    // under the grants about to be consumed and sent only if the flow consumes exactly those grants; a granted
+    // target's content must still hash to its grant here, and the flow's own revalidation read (under its
+    // serialization) must match it too. A failure here leaves the set GRANTED, so it is invalidated: nothing sent.
+    const preparedGrants = toDispatchGrants(anchor);
+    const prepared = await this.prepareCodeGeneration(request, anchor.outcome, preparedGrants);
+    if (!prepared.ok) {
+      await flow.invalidate(session, prepared.failure === 'missing-refs' ? 'inconsistent' : 'changed', 'system');
+      return this.failCodeGenerationPreparation(message, session, request, anchor.outcome, prepared, preparedGrants);
+    }
     const dispatched = await flow.consumeAndDispatch(
       session,
       {
@@ -3278,7 +3425,12 @@ export class ConversationRuntime {
         executionPlanId: anchor.executionPlanId,
         reader: this.deps.workspace,
       },
-      (grants) => this.runCodeGenerationPreview(message, session, request, anchor.outcome, grants),
+      (grants, authorization) =>
+        this.generateCodeChangePreview(message, session, request, anchor.outcome, prepared.value, {
+          grants,
+          preparedGrants,
+          authorization,
+        }),
     );
     if (dispatched.ok) return dispatched.value;
     this.deps.logger.warn('credential guard override not dispatched', { sessionId: session.id, reason: dispatched.reason });
