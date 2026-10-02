@@ -89,7 +89,19 @@ import type {
   WorkspaceDiff,
   WorkspaceRef,
 } from '../domain';
-import type { AiProvider, AiRequest, Logger, LogFields, ProjectReadout } from '../ports';
+import {
+  TURN_HANDLER_STAGES,
+  type AiProvider,
+  type AiRequest,
+  type Logger,
+  type LogFields,
+  type ProjectReadout,
+  type ConversationTurnHandler,
+  type TurnHandlerAnchorSnapshot,
+  type TurnHandlerContext,
+  type TurnHandlerReply,
+  type TurnHandlerStage,
+} from '../ports';
 import { now } from '../util/clock';
 import type {
   ResponseComposer,
@@ -736,6 +748,13 @@ export interface ConversationRuntimeDeps {
       }): Promise<RemoteBranchCleanupResult>;
     };
   };
+  /**
+   * Deterministic turn-handler registry (ADR-0096; amends ADR-0032: baseline 32 → 33). OPTIONAL: absent/empty
+   * keeps every turn exactly as before. The runtime only dispatches, at three fixed points in `handleInner`;
+   * each handler's state and mutation authority stay with its owning capability service. Duplicate ids are
+   * rejected at construction; dispatch order is `(stage, order, id)`.
+   */
+  readonly turnHandlers?: readonly ConversationTurnHandler[];
   readonly logger: Logger;
 }
 
@@ -767,6 +786,37 @@ interface PendingApprovalLookup {
   /** Looked up only when neither a plan-scoped approval nor a scope clarification is pending. */
   applyAnchor: ApplyPreviewAnchor | null;
   pending: ApprovalRequest | null;
+}
+
+/**
+ * A deeply-frozen, plain-data copy of a turn-handler context value (ADR-0096 D1). Arrays and plain objects are
+ * copied recursively and frozen; primitives pass through; any other value (function, class instance, Map, Date,
+ * a cyclic back-reference) is omitted — the domain values handed to handlers are plain data by construction, so
+ * nothing is lost, and nothing a handler does to its copy can reach the runtime's own objects.
+ */
+function frozenPlainSnapshot<T>(value: T): T {
+  const seen = new WeakSet<object>();
+  const copy = (v: unknown): unknown => {
+    if (v === null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
+    if (seen.has(v)) return undefined;
+    if (Array.isArray(v)) {
+      seen.add(v);
+      const out = Object.freeze(v.map((item) => copy(item)));
+      seen.delete(v);
+      return out;
+    }
+    const proto = Object.getPrototypeOf(v) as unknown;
+    if (proto !== Object.prototype && proto !== null) return undefined;
+    seen.add(v);
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(v)) {
+      const item = copy((v as Record<string, unknown>)[key]);
+      if (item !== undefined) out[key] = item;
+    }
+    seen.delete(v);
+    return Object.freeze(out);
+  };
+  return copy(value) as T;
 }
 
 // Approve/deny/cancel decision phrases for pending approvals live in ./approval-decision (whole-token,
@@ -1280,6 +1330,10 @@ export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: strin
 export class ConversationRuntime {
   private readonly clock: () => IsoTimestamp;
   private readonly gitRemoteEnabled: boolean;
+  /** The registered turn handlers per stage, each in `(order, id)` order (ADR-0096 D2). */
+  private readonly turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
+  /** The handlers' contributed help lines in registry order (ADR-0096 D6); bounded by the composer. */
+  private readonly contributedHelpLines: readonly string[];
 
   constructor(
     private readonly deps: ConversationRuntimeDeps,
@@ -1287,6 +1341,42 @@ export class ConversationRuntime {
   ) {
     this.clock = options.clock ?? now;
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
+    const registry = ConversationRuntime.orderTurnHandlers(deps.turnHandlers ?? []);
+    this.turnHandlersByStage = {
+      control: registry.filter((h) => h.stage === 'control'),
+      'post-anchor': registry.filter((h) => h.stage === 'post-anchor'),
+      'pre-classify': registry.filter((h) => h.stage === 'pre-classify'),
+    };
+    this.contributedHelpLines = registry.flatMap((h) => h.helpLines ?? []);
+  }
+
+  /**
+   * Validate and order the turn-handler registry (ADR-0096 D2): a known stage, a finite order and a non-empty id
+   * unique across the registry, else construction fails; sorted by `(stage, order, id)` with stages in
+   * `TURN_HANDLER_STAGES` order and ids compared by code unit (locale-independent).
+   */
+  private static orderTurnHandlers(handlers: readonly ConversationTurnHandler[]): ConversationTurnHandler[] {
+    const seen = new Set<string>();
+    for (const handler of handlers) {
+      if (typeof handler.id !== 'string' || handler.id.length === 0) {
+        throw new Error('conversation turn handler id must be a non-empty string');
+      }
+      if (seen.has(handler.id)) throw new Error(`duplicate conversation turn handler id: ${handler.id}`);
+      seen.add(handler.id);
+      if (!TURN_HANDLER_STAGES.includes(handler.stage)) {
+        throw new Error(`conversation turn handler ${handler.id} has an unknown stage`);
+      }
+      if (!Number.isFinite(handler.order)) {
+        throw new Error(`conversation turn handler ${handler.id} has a non-finite order`);
+      }
+    }
+    const stageIndex = (stage: TurnHandlerStage): number => TURN_HANDLER_STAGES.indexOf(stage);
+    return [...handlers].sort(
+      (a, b) =>
+        stageIndex(a.stage) - stageIndex(b.stage) ||
+        a.order - b.order ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
   }
 
   /** Capabilities that operate on files need a resolved workspace; chat does not. */
@@ -1642,6 +1732,25 @@ export class ConversationRuntime {
     if (control) {
       return this.handleControlTurn(message, session, actor, control, expiryNotice ? null : lookup.pending, expiryNotice);
     }
+    // (0b) ADR-0096 `control` turn handlers — in every state, including a pending approval; nothing is recorded
+    // to memory (like help/reset) and an expiry notice is prepended exactly as `handleControlTurn` does. After an
+    // expiry the snapshot shows the anchor as the expiry left it (released like a denial, or cleared).
+    const controlDispatch = this.runTurnHandlers('control', () =>
+      this.turnHandlerContext(
+        message,
+        session,
+        actor,
+        expiryNotice && lookup.applyAnchor ? ConversationRuntime.anchorAfterRejection(lookup.applyAnchor) : lookup.applyAnchor,
+      ),
+    );
+    const controlHandled = controlDispatch ? await controlDispatch : null;
+    if (controlHandled) {
+      const reply = expiryNotice
+        ? this.deps.composer.composeWithNotice(expiryNotice, controlHandled.reply)
+        : controlHandled.reply;
+      const result = this.responded(session, reply);
+      return controlHandled.status === 'FAILED' ? { ...result, status: 'FAILED' } : result;
+    }
 
     const userMemory = await this.deps.memory.recordShortTerm(message, session.id);
     if (expiryNotice) {
@@ -1702,6 +1811,14 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANUP_PENDING') {
       return this.handleRemoteBranchCleanupDecisionTurn(message, session, actor, applyAnchor);
     }
+    // (A4) ADR-0096 `post-anchor` turn handlers — every pending approval / scope clarification / `*_PENDING`
+    // intercept above has already captured its turn, so a handler can never pre-empt a decision. Runs BEFORE the
+    // ADR-0043 deny-fragment check and the WORKSPACE_APPLIED git-mutating-word reject below.
+    const postAnchorDispatch = this.runTurnHandlers('post-anchor', () =>
+      this.turnHandlerContext(message, session, actor, applyAnchor),
+    );
+    const postAnchorHandled = postAnchorDispatch ? await postAnchorDispatch : null;
+    if (postAnchorHandled) return this.respondTurnHandler(message, session, postAnchorHandled);
     // ADR-0043 safety gate: deny-fragment refusal is anchor-independent and precedes every route that can
     // execute a derived validation command. Without this guard, a missing/stale WORKSPACE_APPLIED anchor can
     // fall through to IntentClassifier -> RUN_TESTS -> ExecutionOrchestrator. Keep pending approval decisions
@@ -2099,6 +2216,14 @@ export class ConversationRuntime {
       }
     }
 
+    // (B0) ADR-0096 `pre-classify` turn handlers — after the QA-018 stray-decision reply and the `기억해:` block,
+    // immediately before the intent classifier.
+    const preClassifyDispatch = this.runTurnHandlers('pre-classify', () =>
+      this.turnHandlerContext(message, session, actor, applyAnchor),
+    );
+    const preClassifyHandled = preClassifyDispatch ? await preClassifyDispatch : null;
+    if (preClassifyHandled) return this.respondTurnHandler(message, session, preClassifyHandled);
+
     let intent: Intent;
     try {
       intent = await this.deps.classifier.classify(message, { hasActiveProject: Boolean(session.activeProjectId) });
@@ -2370,7 +2495,7 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     let reply: OutboundMessage;
     if (command === 'help') {
-      reply = this.deps.composer.composeHelp(message.context);
+      reply = this.deps.composer.composeHelp(message.context, this.contributedHelpLines);
     } else {
       if (pending) {
         await this.deps.approvals.decide(pending.id, {
@@ -2390,6 +2515,97 @@ export class ConversationRuntime {
       ...(pending && command === 'reset' ? { deniedApprovalId: pending.id } : {}),
     });
     return this.responded(session, expiryNotice ? this.deps.composer.composeWithNotice(expiryNotice, reply) : reply);
+  }
+
+  /**
+   * Dispatch one ADR-0096 stage. Returns `null` WITHOUT building a context or yielding when the stage has no
+   * handlers, so an empty registry leaves the turn exactly as before; otherwise the stage's handlers run one at a
+   * time in registry order and the first non-null reply wins. A thrown error is not caught here: handlers catch
+   * their own, and a leaked one reaches the `handle` backstop.
+   */
+  private runTurnHandlers(
+    stage: TurnHandlerStage,
+    buildContext: () => TurnHandlerContext,
+  ): Promise<TurnHandlerReply | null> | null {
+    const handlers = this.turnHandlersByStage[stage];
+    if (handlers.length === 0) return null;
+    return this.dispatchTurnHandlers(stage, handlers, buildContext());
+  }
+
+  private async dispatchTurnHandlers(
+    stage: TurnHandlerStage,
+    handlers: readonly ConversationTurnHandler[],
+    ctx: TurnHandlerContext,
+  ): Promise<TurnHandlerReply | null> {
+    for (const handler of handlers) {
+      const handled = await handler.handle(ctx);
+      if (handled) {
+        this.deps.logger.info('turn handler responded', {
+          handlerId: handler.id,
+          stage,
+          sessionId: ctx.session.id,
+          status: handled.status ?? 'RESPONDED',
+        });
+        return handled;
+      }
+    }
+    return null;
+  }
+
+  /** The ADR-0096 handler context: domain values plus a read-only snapshot of the apply-preview anchor. */
+  private turnHandlerContext(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    anchor: ApplyPreviewAnchor | null,
+  ): TurnHandlerContext {
+    const applyAnchor: TurnHandlerAnchorSnapshot | null = anchor
+      ? frozenPlainSnapshot({
+          status: anchor.status,
+          workspaceRef: anchor.workspaceRef,
+          ...(anchor.projectId ? { projectId: anchor.projectId } : {}),
+        })
+      : null;
+    // Deep, frozen copies — never the runtime's own objects — so nothing a handler does (even an assignment in
+    // sloppy mode, or a mutation it keeps after returning) can change the text the pending-decision routes read,
+    // the session the runtime persists, or the actor. The workspace resolver is bound to the session id and active
+    // project captured HERE, at dispatch time, not to any object a handler can reach.
+    const sessionId = session.id;
+    const activeProjectId = session.activeProjectId;
+    return Object.freeze({
+      message: frozenPlainSnapshot(message),
+      session: frozenPlainSnapshot(session),
+      actor: frozenPlainSnapshot(actor),
+      now: this.clock(),
+      applyAnchor,
+      resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
+    });
+  }
+
+  /** The active project's workspace for a turn handler — `null` when none is active or it cannot be opened. */
+  private async resolveActiveWorkspaceForHandler(
+    sessionId: Id,
+    activeProjectId: Id | undefined,
+  ): Promise<WorkspaceRef | null> {
+    if (!activeProjectId) return null;
+    try {
+      const project = await this.deps.projects.get(activeProjectId);
+      if (!project) return null;
+      return await this.deps.workspace.open({ id: project.id, rootPath: project.rootPath });
+    } catch (err) {
+      this.deps.logger.warn('turn handler workspace resolution failed', {
+        sessionId,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return null;
+    }
+  }
+
+  /** A `post-anchor` / `pre-classify` handler reply, recorded like every composed reply (ADR-0096 D3). */
+  private respondTurnHandler(message: InboundMessage, session: Session, handled: TurnHandlerReply): Promise<TurnResult> {
+    return handled.status === 'FAILED'
+      ? this.failComposed(message, session, handled.reply)
+      : this.respondComposed(message, session, handled.reply);
   }
 
   /**

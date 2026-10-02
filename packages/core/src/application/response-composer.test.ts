@@ -8,7 +8,7 @@ import {
   type GitDiff,
   type GitStatus,
 } from '../domain';
-import { ResponseComposer } from './response-composer';
+import { MAX_CONTRIBUTED_HELP_LINE_CHARS, MAX_CONTRIBUTED_HELP_LINES, ResponseComposer } from './response-composer';
 import type { CodeChangePreview, CodeDiffPreview, PatchSetPreview, TestResultDetail } from './response-composer';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
 import { RoutingFailureCode } from './runtime-response-validation-contracts';
@@ -1526,5 +1526,62 @@ describe('ResponseComposer — QA-015/QA-016 path replies', () => {
     expect(composer.composeProjectPathNotAbsolute(CTX).text).toBe(
       '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo',
     );
+  });
+});
+
+describe('ResponseComposer — contributed help lines (ADR-0096 D6)', () => {
+  const base = composer.composeHelp(CTX).text;
+  const baseLines = base.split('\n');
+  // The contributed lines extend the capability list, which ends right before the first blank line.
+  const capabilityEnd = baseLines.indexOf('');
+
+  it('with no contributed lines the help reply is exactly the fixed base text', () => {
+    expect(composer.composeHelp(CTX, []).text).toBe(base);
+    expect(composer.composeHelp(CTX, ['', '   ', '\n']).text).toBe(base);
+    expect(composer.composeHelp(CTX, []).context).toBe(CTX);
+  });
+
+  it('appends contributed lines in the given order after the capability list and keeps the base text whole', () => {
+    const text = composer.composeHelp(CTX, ['- 할 일: "할 일 추가: <제목>"', '- 피드백: "피드백 요약"']).text;
+    expect(text.split('\n')).toEqual([
+      ...baseLines.slice(0, capabilityEnd),
+      '- 할 일: "할 일 추가: <제목>"',
+      '- 피드백: "피드백 요약"',
+      ...baseLines.slice(capabilityEnd),
+    ]);
+  });
+
+  it(`bounds contributed lines to ${MAX_CONTRIBUTED_HELP_LINES} lines of at most ${MAX_CONTRIBUTED_HELP_LINE_CHARS} characters`, () => {
+    expect(MAX_CONTRIBUTED_HELP_LINES).toBe(12);
+    expect(MAX_CONTRIBUTED_HELP_LINE_CHARS).toBe(120);
+    const many = Array.from({ length: 20 }, (_, i) => `- line ${i + 1}`);
+    const lines = composer.composeHelp(CTX, many).text.split('\n');
+    const contributed = lines.slice(capabilityEnd, lines.length - (baseLines.length - capabilityEnd));
+    expect(contributed).toEqual(many.slice(0, MAX_CONTRIBUTED_HELP_LINES));
+
+    const long = `- ${'가'.repeat(200)}`;
+    const [clipped] = composer
+      .composeHelp(CTX, [long])
+      .text.split('\n')
+      .slice(capabilityEnd, capabilityEnd + 1);
+    expect(Array.from(clipped ?? '')).toHaveLength(MAX_CONTRIBUTED_HELP_LINE_CHARS);
+    expect(clipped?.endsWith('…')).toBe(true);
+  });
+
+  it('collapses an embedded newline so a contributed line stays one line', () => {
+    const text = composer.composeHelp(CTX, ['- 첫 줄\n둘째 줄']).text;
+    expect(text.split('\n')).toContain('- 첫 줄 둘째 줄');
+    expect(text.split('\n')).toHaveLength(baseLines.length + 1);
+  });
+
+  it('never cuts the base text: trailing contributed lines are dropped to fit the message budget', () => {
+    const full = Array.from({ length: MAX_CONTRIBUTED_HELP_LINES }, (_, i) => `- ${String(i).padEnd(130, 'x')}`);
+    const text = composer.composeHelp(CTX, full).text;
+    expect(text.length).toBeLessThanOrEqual(1900);
+    expect(text.endsWith(baseLines[baseLines.length - 1] ?? '')).toBe(true);
+    for (const line of baseLines) expect(text.split('\n')).toContain(line);
+    const kept = text.split('\n').length - baseLines.length;
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThan(MAX_CONTRIBUTED_HELP_LINES);
   });
 });

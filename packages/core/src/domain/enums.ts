@@ -158,6 +158,11 @@ export enum WorkspaceChangeStatus {
   APPLIED = 'APPLIED',
   PARTIALLY_APPLIED = 'PARTIALLY_APPLIED',
   FAILED = 'FAILED',
+  /**
+   * A change set (ADR-0099) failed and every file it touched was restored, so the
+   * workspace is as it was before the apply. Re-attemptable like FAILED.
+   */
+  ROLLED_BACK = 'ROLLED_BACK',
 }
 
 /**

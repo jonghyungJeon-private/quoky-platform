@@ -196,8 +196,10 @@ const COMMIT_EXECUTE_NEXT_LINE = '실제로 커밋하려면 "커밋 실행"이�
 const WORKSPACE_APPLIED_NEXT_LINE =
   '다음으로 "테스트 실행해줘"로 검증할 수 있고, 여기서 마치려면 "새 대화"라고 보내 주세요.';
 
-/** Fixed help text (ADR-0093). Lists only what Personal v1 actually does, with phrases the runtime accepts. */
-const HELP_TEXT = [
+/** Fixed help text (ADR-0093). Lists only what Personal v1 actually does, with phrases the runtime accepts.
+ *  Split at the end of the capability list so contributed handler lines (ADR-0096 D6) extend that list; the base
+ *  text itself is edited only by CODE-3 and OVR-4. */
+const HELP_CAPABILITY_LINES: readonly string[] = [
   'Quoky로 할 수 있는 일이에요.',
   '- 일상 대화와 질문 답변',
   '- 기억: "기억해: <내용>"이라고 보내면 오래 기억해 둬요.',
@@ -206,6 +208,8 @@ const HELP_TEXT = [
   '- 코드 수정: 파일 경로와 함께 요청 → "승인" → 미리보기 확인 → "적용해줘" → "승인" → "패치 만들어줘" → "패치 적용해줘"',
   '- 적용 후 검증: "테스트 실행해줘" 또는 "타입체크 실행해줘"',
   '- 로컬 커밋: 적용 후 "커밋해줘" → "승인" → "커밋 실행" (main/master 브랜치에는 커밋하지 않아요)',
+];
+const HELP_CONTROL_LINES: readonly string[] = [
   '',
   '승인 요청에는 "승인" 또는 "거절"로 답해 주세요. 30분 안에 답하지 않으면 자동으로 거절돼요.',
   '',
@@ -213,7 +217,28 @@ const HELP_TEXT = [
   '- "도움말": 이 안내를 다시 보여줘요.',
   '- "새 대화": 지금 대화를 끝내고 새로 시작해요. 기다리던 승인 요청은 거절로 처리돼요.',
   '- "/help", "/reset"도 같아요. 다만 Discord에서는 "/"로 시작하면 명령 선택 창이 열리니, Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
-].join('\n');
+];
+const HELP_TEXT = [...HELP_CAPABILITY_LINES, ...HELP_CONTROL_LINES].join('\n');
+
+/** ADR-0096 D6: at most this many contributed help lines are shown (the rest are dropped, in registry order). */
+export const MAX_CONTRIBUTED_HELP_LINES = 12;
+/** ADR-0096 D6: a contributed help line longer than this is cut, ending in `…`. */
+export const MAX_CONTRIBUTED_HELP_LINE_CHARS = 120;
+
+/** Bound contributed help lines (ADR-0096 D6): one line each (whitespace collapsed), blank lines dropped, at most
+ *  `MAX_CONTRIBUTED_HELP_LINES` lines of at most `MAX_CONTRIBUTED_HELP_LINE_CHARS` characters, order kept. */
+function boundContributedHelpLines(extraLines: readonly string[]): string[] {
+  return extraLines
+    .map((line) => line.replace(/\s+/gu, ' ').trim())
+    .filter((line) => line.length > 0)
+    .slice(0, MAX_CONTRIBUTED_HELP_LINES)
+    .map((line) => {
+      const chars = Array.from(line);
+      return chars.length <= MAX_CONTRIBUTED_HELP_LINE_CHARS
+        ? line
+        : `${chars.slice(0, MAX_CONTRIBUTED_HELP_LINE_CHARS - 1).join('')}…`;
+    });
+}
 
 /** Which stream a rendered excerpt came from, and which non-empty stream was left out. */
 interface OutputSummary {
@@ -587,9 +612,18 @@ export class ResponseComposer {
     return { context, text: clampToMessageBudget(text) };
   }
 
-  /** Fixed help reply (ADR-0093): Personal v1 capabilities, the control phrases, and how to approve or deny. */
-  composeHelp(context: ConversationContext): OutboundMessage {
-    return { context, text: HELP_TEXT };
+  /**
+   * Help reply (ADR-0093): Personal v1 capabilities, the control phrases, and how to approve or deny. ADR-0096 D6:
+   * the registered turn handlers' `extraLines` (registry order) are appended to the capability list, bounded by
+   * `boundContributedHelpLines`. The base text always survives whole: trailing contributed lines are dropped
+   * until the reply fits the message budget. With no contributed lines the reply is exactly the fixed base text.
+   */
+  composeHelp(context: ConversationContext, extraLines: readonly string[] = []): OutboundMessage {
+    const contributed = boundContributedHelpLines(extraLines);
+    const render = (): string => [...HELP_CAPABILITY_LINES, ...contributed, ...HELP_CONTROL_LINES].join('\n');
+    while (contributed.length > 0 && render().length > MAX_MESSAGE_CHARS) contributed.pop();
+    if (contributed.length === 0) return { context, text: HELP_TEXT };
+    return { context, text: clampToMessageBudget(render()) };
   }
 
   /**

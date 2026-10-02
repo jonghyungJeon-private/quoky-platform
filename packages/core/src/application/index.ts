@@ -155,3 +155,11 @@ export * from './local-continuity-admission-coordinator';
 export * from './trusted-current-unavailability-observation';
 export * from './canonical-provider-reachability-observation';
 export { routingContextDigest } from './routing-context-digest';
+// Personal v2 track sub-barrels (ADR-0096 D8). Each track exports its modules from its own sub-barrel only.
+export * from './credential-override';
+export * from './chat-policy';
+export * from './feedback';
+export * from './recall';
+export * from './code-work';
+export * from './work-chat';
+export * from './reminders';

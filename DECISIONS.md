@@ -14723,3 +14723,853 @@ those details so the settled decisions and the code agree.
 - **+** Misread status questions, refusals, conditions and symbols can no longer grant an approval.
 - **−** Some natural phrasings ("승인 👍", "진행해도 돼") re-prompt once instead of approving.
 - **+** No new Core port and no provider-id branching. ARCHITECTURE.md §5 invariants are unchanged.
+
+## ADR-0096 — Personal v2 integration seams: deterministic turn-handler registry (control / post-anchor / pre-classify), contributed help lines, feature-provider composition. Amends ADR-0032: ConversationRuntimeDeps baseline 32→33. Amends ADR-0093: help text accepts contributed lines.
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
+- **Date:** 2026-10-02
+- **Amends:** ADR-0032 M3 amendment (accepted `ConversationRuntimeDeps` baseline 32 → 33), ADR-0093 (help text =
+  fixed base text + contributed lines). ADR-0032 and ADR-0093 text is not edited.
+- **Relates:** ADR-0090 (Proposed; a deterministic control layer ahead of semantic routing — not edited, not
+  ratified by this ADR), ADR-0043, ADR-0062, ADR-0095, and the track ADRs ADR-0097..ADR-0101 that build on it.
+  Execution plan: `docs/plans/personal-v2-execution-plan.md`.
+
+### Context
+
+Five Personal v2 tracks were designed in parallel: OVR (ADR-0097), QUAL (ADR-0098), CODE (ADR-0099), WORK
+(ADR-0100) and PRO (ADR-0101). Their drafts independently added runtime dependencies (`reminders`,
+`feedbackSummary`, `credentialOverrideFlow`, a widened `workSurface`), a hook at the top of
+`IntentClassifier.classifyText`, edits to the fixed ADR-0093 `HELP_TEXT`, and two claims on SQLite migration v12.
+`conversation-runtime.ts` (about 5,700 lines), `app.module.ts`, `config.ts` and the Core barrels would each have had
+4–11 concurrent editors. The ADR-0032 M3 amendment forbids growing `ConversationRuntimeDeps` without moving
+responsibility out, and forbids hiding dependencies behind a god-interface. The tracks' deterministic grammars also
+collide: `알려줘` and `할 일` (WORK vs PRO), `브랜치 만들어` (swallowed by the `WORKSPACE_APPLIED` git-mutating-word
+reject), and `기억해:`. One integration decision is needed before any wave-1 code merges.
+
+### Decision
+
+1. **Core port `ConversationTurnHandler`** (`packages/core/src/ports/conversation-turn-handler.port.ts`, token
+   `CONVERSATION_TURN_HANDLERS`); domain types only, `applyAnchor` is a read-only snapshot:
+
+   ```ts
+   interface ConversationTurnHandler {
+     id: string; stage: 'control' | 'post-anchor' | 'pre-classify'; order: number;
+     helpLines?: readonly string[];
+     handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null>;
+   }
+   // TurnHandlerContext = { message, session, actor, now,
+   //   applyAnchor: { status, workspaceRef?, projectId? } | null,
+   //   resolveActiveWorkspace(): Promise<WorkspaceRef | null> }
+   // TurnHandlerReply = { reply: OutboundMessage; status?: 'RESPONDED' | 'FAILED' }
+   ```
+2. **One deps key (amends ADR-0032).** `ConversationRuntimeDeps` gains one optional key,
+   `turnHandlers?: readonly ConversationTurnHandler[]`; the accepted baseline becomes 33. Responsibility moves
+   out, as the M3 amendment requires: each handler's state and mutation authority stay with its owning capability
+   service; the runtime only dispatches. The runtime rejects duplicate ids at construction and sorts by
+   `(stage, order, id)`. Every later task asserts the baseline in force when it merges (33, then 34 per ADR-0097).
+3. **Exactly three dispatch points in `handleInner`.**
+   - `control`: right after the help/reset branch, before `recordShortTerm`. It runs in every state, including a
+     pending approval, and prepends the expiry notice as `handleControlTurn` does. Replies go through `responded`
+     with no short-term record. Control handlers must be read-only and provider-free.
+   - `post-anchor`: after the last `*_PENDING` intercept (`REMOTE_BRANCH_CLEANUP_PENDING`) and before the ADR-0043
+     deny-fragment check and the `WORKSPACE_APPLIED` git-mutating-word reject. Replies via `respondComposed`.
+   - `pre-classify`: after the `기억해:` block and before `classifier.classify`. Replies via `respondComposed`.
+
+   `null` falls through unchanged. Handlers catch their own errors; a leaked exception reaches the existing
+   `handle` backstop. With an empty handler list, behaviour is byte-identical to today.
+4. **Handlers never reach an AI provider.** A handler never calls an `AiProvider` and never creates a Task,
+   TaskRun or ApprovalRequest. The only provider-reaching outcome is the `summarize` variant that ADR-0100 adds to
+   `TurnHandlerReply`: the runtime then runs the existing `handleWorkTurn` path with `Capability.SUMMARIZATION`,
+   so provider selection, Task/TaskRun creation and audit stay where they are today. `intent-classifier.ts` is not
+   edited by any Personal v2 track. The ADR-0097 credential-override anchor is an anchor flow, not a handler.
+5. **Fixed registration and routing precedence.** The complete v2 handler set is: `control` feedback-summary (100,
+   ADR-0098); `post-anchor` code-work branch (100, ADR-0099); `pre-classify` work-chat anchored to-do mutations
+   (100, ADR-0100), reminders (200, ADR-0101), work-chat lookups/list (300, ADR-0100). The full deterministic
+   precedence is: control (help / reset / `피드백 요약`) > pending approvals and anchors (including the ADR-0097
+   override anchor) > branch command > QA-018 stray decision (and the ADR-0097 stray override phrase) > `기억해:` >
+   anchored to-do forms > reminders > work lookups/list > classifier. **Grammar ownership:** the anchored to-do
+   command prefixes are owned by the WORK grammar (closed list in ADR-0100 D1) and are recognized by the order-100
+   WORK handler before any reminder rule runs; a body after an add prefix is a WorkItem title even when it contains
+   a time phrase or `알려줘`. The ADR-0101 reminder grammar returns `NOT_REMINDER` for every message that starts
+   with one of those prefixes (defence in depth; the handler order alone already decides). So
+   `할 일 추가: 내일 9시에 회의 알려줘` is a to-do titled `내일 9시에 회의 알려줘`, `매일 아침 8시에 오늘 할 일 알려줘` is
+   a reminder brief, and `오늘 할 일 알려줘` is the to-do list. INT-1 pins all three, plus one case per listed prefix
+   with a time phrase, in the golden routing corpus. Adding a handler, a prefix or changing an order needs an ADR
+   amendment and a corpus update.
+6. **Contributed help lines (amends ADR-0093).** `composeHelp(context, extraLines = [])` appends the registered
+   handlers' `helpLines` in registry order, bounded to 12 lines of at most 120 characters. Tracks never edit
+   `HELP_TEXT` for their own commands; only CODE-3 (multi-file line, wave 3) and OVR-4 (override line, wave 4) edit
+   the base text. ADR-0093 control-phrase matching is unchanged.
+7. **Feature-provider composition (`apps/quoky` only).** `apps/quoky/src/features/feature-tokens.ts` defines
+   app-local tokens `CODE_WORK_TURN_HANDLERS`, `WORK_CHAT_TURN_HANDLERS`, `REMINDER_TURN_HANDLERS` and
+   `FEEDBACK_TURN_HANDLERS` and is never edited after wave 1. `turn-handlers.providers.ts` provides
+   `CONVERSATION_TURN_HANDLERS` as their concatenation. Each `features/<feature>.providers.ts` starts as
+   `useValue: []`; a track registers its handlers, services, lazy repository views and sink factories only in its
+   own feature file. Registration is static code in the composition root: no manifest, discovery or runtime loading.
+8. **Pre-registered tokens and stubs.** SEAM-1 adds the tokens `CONVERSATION_TURN_HANDLERS`, `FEEDBACK_REPOSITORY`,
+   `REMINDER_REPOSITORY`, `NOTIFICATION_SINK`; `export {};` stubs for the connector-query, feedback-repository,
+   reminder-repository and notification-sink ports and the reminder/feedback domain modules; and the application
+   sub-barrels `credential-override/`, `chat-policy/`, `feedback/`, `recall/`, `code-work/`, `work-chat/`,
+   `reminders/`. After wave 1 no task edits a root barrel or `tokens.ts`. Stubs stay inert until their track ADR
+   is ratified; a dropped track's stub is removed in INT-1 or DOC-B.
+9. **All new configuration parsed once, inert (SEAM-2, wave 1).** Exact `true`/`false`, typed value-free errors,
+   no consumer yet: `QUOKY_WORK_SUMMARY_ENABLED` (default `true`), `QUOKY_REMINDERS_ENABLED` (`false`),
+   `QUOKY_REMINDERS_CHANNEL_DELIVERY` (`false`; exact `true`/`false`; inert while reminders are off; semantics in
+   ADR-0101 D8), `QUOKY_TIMEZONE` (`Asia/Seoul`, validated through `Intl`; all three reminder variables are parsed
+   in `apps/quoky/src/reminders/reminder-config.ts`), `QUOKY_EMBEDDING_ENABLED` (`false`), `QUOKY_EMBEDDING_MODEL`
+   (`nomic-embed-text`; bounded token `[a-z0-9][a-z0-9._-]{0,63}` with an optional `:<tag>` of the same alphabet; a
+   name or tag containing `cloud` is the typed error `EMBEDDING_MODEL_CLOUD_REFUSED`, per ADR-0098 D8; plus timeout
+   and `maxNewPerTurn = 4`), `QUOKY_GIT_MERGE_ENABLED` (`false`; `true` with remote off is
+   `GIT_MERGE_REQUIRES_REMOTE`). The `.env.example` entry for `QUOKY_REMINDERS_CHANNEL_DELIVERY` states that members
+   of the allowlisted channel can read reminder text.
+   Parsing a variable authorizes no behaviour; semantics belong to the track ADR. After wave 1, `config.ts`,
+   `config.test.ts` and `.env.example` are not edited.
+10. **Migration lane — fixed numbers, no fallback.** v12 is "feedback capture tables" (QUAL-3, wave 2, ADR-0098);
+    v13 is "reminders table (owner reminders)" (PRO-2, wave 4, ADR-0101). The numbers are fixed by this ADR and are
+    never swapped or renumbered. PRO-2 is **blocked** until QUAL-3 has merged to `main`; if QUAL-3 slips, PRO-2 and
+    the PRO tasks that depend on it wait. If ADR-0098 is rejected outright, the lane is re-planned only by an
+    ADR-0096 amendment recorded before any v12 code merges. QUAL-3 also hardens the runner (it owns `migrations.ts`
+    in wave 2): `MIGRATIONS` must be exactly the contiguous sequence 1..N, otherwise startup fails with
+    `SCHEMA_MIGRATION_SEQUENCE_INVALID`; a database whose `user_version` is above `LATEST_SCHEMA_VERSION` fails startup
+    with `SCHEMA_VERSION_AHEAD` (no migration is applied, nothing is downgraded). Once a version has merged to
+    `main`, its number and `up()` are immutable, so a dev DB already migrated to v12 or v13 never meets a renumbered
+    migration. OVR, CODE and WORK add no migration. QUAL-3 permanently switches the
+    `guarded-task-run-start.local-e2e.test.ts` literal to `LATEST_SCHEMA_VERSION`; no other test pins it.
+    `StorageProvider` is unchanged.
+11. **Hot files: one editor task per wave.** The lanes are fixed in `docs/plans/personal-v2-execution-plan.md` §3;
+    e.g. `conversation-runtime.ts`: SEAM-1 (w1) → CODE-3 (w3) → OVR-4 (w4) → QUAL-4 (w5) → WORK-T4 (w6) → CODE-5
+    (w7); `config.ts`/`.env.example`: SEAM-2 only; `main.ts`: PRO-5 only; `DECISIONS.md`: GOV-1 → DOC-A (w5) →
+    DOC-B (w8). Each task rebases on the merged wave head and re-runs the full `pnpm test`.
+
+### Consequences
+
+- **+** One reviewed insertion point per stage instead of five per-track hooks; the intent classifier and the
+  QUAL-2 golden corpus stay stable; four tracks' conversational entry points cost one deps key.
+- **+** Disjoint file ownership per wave makes parallel implementation and review tractable.
+- **−** Handler ordering becomes a global contract; it is changed only by ADR amendment plus the golden corpus.
+- **−** SEAM-1 rewires `handleInner` at three points in a hot file. A misplaced dispatch could pre-empt
+  pending-approval capture or bypass the ADR-0043 gate. Mitigation: byte-identical empty-list behaviour, explicit
+  ordering tests, independent architecture review before merge.
+- **−** Dropped tracks leave dead stubs; `export *` collisions and help truncation are checked in INT-1.
+- **Not dynamic plugin loading, not a workflow engine.** The ROADMAP non-goals stand unchanged: the handler list is
+  fixed code in the composition root (ARCHITECTURE.md §13 "manual registration"), handlers run synchronously at
+  fixed points in a fixed order (no implicit event choreography, §12), and no handler loops or schedules work.
+- New Core ports in this ADR and ADR-0097..0101 are additive; no existing Core contract is removed or changed
+  incompatibly. They are recorded here before the code that depends on them merges (ARCHITECTURE.md §11.7).
+
+### Strict gates
+
+None live. Product Owner ratification gates the SEAM-1 and SEAM-2 merges. Independent Chief Architect review
+(reviewer ≠ implementer) before SEAM-1 merges. Push, PR and merge of every wave branch need human approval.
+
+### Owner decisions requested
+
+1. Ratify ADR-0096. **Recommended:** approve now; it gates every wave-1 code merge.
+2. The routing precedence and grammar ownership in D5 (anchored to-do prefixes win over reminder phrasing).
+   **Recommended:** approve.
+3. Ratification order: each track ADR before that track's first code merge. **Recommended:** ADR-0096, ADR-0097
+   and ADR-0099 now (wave 1); ADR-0098 and ADR-0100 before wave 2; ADR-0101 before wave 3.
+4. Fixed migration numbers (v12 feedback, v13 reminders), PRO-2 blocked on QUAL-3, no renumbering fallback,
+   contiguity and "DB ahead of code" startup errors (D10). **Recommended:** approve.
+
+### V1 / V2
+
+`[NOW]` registry, help lines, feature composition, inert config, migration lane. `[LATER]` a fuller ADR-0090 layer.
+
+## ADR-0097 — Owner one-time, hash-bound CRITICAL override for credential-guard refusals in the code-change preview, plus the strict-only credential guard. QA-023 resolved; deps baseline 33→34.
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
+- **Date:** 2026-10-02
+- **Amends:** ADR-0032 M3 amendment (deps baseline 33 → 34 on top of ADR-0096). Resolves UAT QA-023.
+- **Relates:** ADR-0019/0022 (secret filenames skipped in the adapter), ADR-0025/0035/0038 (approvals), ADR-0040
+  (plan-less anchor technique), ADR-0093/0095 (30-minute lazy TTL, reset, expiry re-check), ADR-0096 (handler
+  stages), ADR-0099 (multi-file change sets), ADR-0098 (implicit re-prompt signal).
+
+### Context
+
+QA-012 made the code-change preview send each validated target file's content to the AI provider as
+`contextFiles`. The file-content guard (`containsCredentialFileContent`, QA-024 and Codex reviews #1–#3) refuses a
+file when a credential-named key is assigned anything but an explicit reference form, or when vendor-token or PEM
+material appears. It is deliberately conservative and refuses ordinary source (`this.token = token`), and the
+refusal is terminal because the plan approval was already consumed. QA-023 tried a file-type-aware relaxation
+(branch `claude/qa-023-filetype-credential-guard`): a 1,100-line per-language lexer, three review rounds that each
+found new bypasses, a path-dependent attack surface, and a relaxation of the base rule. ARCHITECTURE.md §10
+classifies secret access as CRITICAL and approval-gated.
+
+### Decision
+
+1. **The guard stays strict and only gets stricter.** No file-type awareness and no path input. The QA-023
+   CODE/CONFIG rule, lexer, `credentialFileKind` and compound-filename classification are **rejected**. Only
+   refusal-adding fixes are re-implemented (not cherry-picked): (a) bracket-depth multi-line/concatenated values
+   (closes the owner-accepted residual); (b) operator continuation lines; (c) full tail scan after call or env
+   heads; (d) env lookups with literal defaults; (e) literal-wrapper and decoder calls; (f) raw and interpolated
+   string prefixes; (g) expression-bodied arrow values; (h) Go `const|var`, C# `{ get; set; } =`, PHP `define`
+   typed declarations. The DECLARATION_PREFIX relaxation is not ported. Detection is best-effort, not DLP.
+   `containsCredentialMaterial` (the durable-memory guard reused by ADR-0100 and ADR-0101) stays byte-unchanged.
+2. **The guard reports what fired, never the text.** `classifyCredentialFileContent(content)` returns
+   `none | secret-token | credential-assignment{line}`; `containsCredentialFileContent` remains a boolean wrapper.
+3. **One-time owner override, conversational preview only.** On a `credential-assignment` refusal,
+   `runCodeGenerationPreview` computes the target's SHA-256, creates a **CRITICAL** `ApprovalRequest` through
+   `ApprovalManager.requestForRisk` (reason carries target index, hash, detector and line, never content or path),
+   anchors a plan-less Task (`kind: 'code-preview-credential-override'`, the ADR-0040 technique) and replies with a
+   warning naming file and line. Approve is only the dedicated whole-message set {`그래도 보내줘`, `그래도 보내`,
+   `그래도 보내 줘`, `그래도 전송해줘`, `send anyway`}, which shares no word with `APPROVE_WORDS`; `승인`/`좋아`/`ok`
+   re-prompt. Deny/cancel uses `interpretApprovalDecision` plus `보내지 마`; anything else re-prompts with the
+   remaining time.
+4. **Runtime placement (ADR-0096).** The override anchor intercept sits after the pending-scope intercept and before
+   the `post-anchor` and `pre-classify` handler stages; only `control` handlers (help, reset, `피드백 요약`) run
+   first. The stray override phrase check (nothing pending → deterministic reply, QA-018 pattern) sits before the
+   QA-018 stray-decision site. A new optional dep `credentialOverrideFlow?` (wired to
+   `StatelessCredentialOverrideFlow(storage)` in `app.module.ts`) moves the accepted baseline 33 → 34; when it is
+   absent the refusal stays terminal (fail closed).
+5. **Hash-bound, one-time grants owned by the anchor.**
+   - **Owner and storage.** Grant metadata is stored only on the inert plan-less anchor Task of the original
+     request (ADR-0040 technique), in its existing `data` JSON (no migration, no new repository method). It is never
+     stored on Session, in short-term or durable memory, or in an authoritative in-memory cache. One anchor per
+     original request holds `newFileTargets` (ADR-0099) and `grants[]` (≤ 5, one per refused target). Each grant is
+     content-free (hash, path, line; never file content or the matched text).
+   - **Binding.** Every grant records: owner actor id, session id, `workspaceRef` and project id, the original
+     request id (the CODE_IMPLEMENTATION Task id and its plan id), the CRITICAL `approvalRequestId`, the target's
+     workspace-relative path, its SHA-256 at refusal time, detector `credential-assignment` and line, and a state
+     `PENDING | GRANTED | CONSUMED | INVALIDATED{reason}`.
+   - **Collecting grants.** On approve the runtime re-checks expiry with the injected clock (ADR-0095 §5), records
+     the decision (`decidedBy` = owner, comment `credential-override`), sets that grant `GRANTED` on the anchor and
+     re-runs the preview in the same turn with the anchor's grants and `newFileTargets`. With up to 5 targets, each
+     refused file needs its own sequential CRITICAL override; the next refused file adds a `PENDING` grant to the
+     same anchor. No content is sent until every refused target is `GRANTED`.
+   - **Reconstruction after restart.** Nothing in memory is authoritative. After a restart, the runtime rebuilds
+     grant state from the session's anchor Task and its ApprovalRequests (the same lookup the ADR-0093 pending
+     capture uses). Per grant status: a `GRANTED` grant is kept only if its ApprovalRequest is `APPROVED` with
+     `decidedBy` = owner and is still within the ADR-0093 TTL; otherwise the anchor is invalidated. A `PENDING`
+     grant is kept only if its ApprovalRequest is still `PENDING` and unexpired, and it resumes the normal
+     pending-override capture; a `PENDING` grant whose request is `REJECTED`, expired or missing invalidates the
+     anchor. A `CONSUMED` anchor stays terminal.
+   - **Invalidation.** All unconsumed grants and the anchor become `INVALIDATED`, and nothing is sent, on:
+     **reset** (`새 대화` / Session close, reason `reset`); **denial** or cancel of any override in the set (`denied`,
+     whole set, no partial dispatch); **expiry** (`expired`): a grant is valid only until its ApprovalRequest's
+     `createdAt` + 30 minutes (the ADR-0093 TTL, no new TTL), so the oldest grant bounds the whole set; **project or
+     workspace change** (`project-changed`: the active project or `resolveActiveWorkspace()` no longer equals the
+     binding); **target content change** (`changed`: re-read SHA-256 differs, or the classification is no longer
+     `credential-assignment`; a now-`secret-token` file is never overridable); **request supersession**
+     (`superseded`: the session's current code-change anchor is no longer this request, e.g. a newer preview or
+     request was created). Every invalidation reply asks for a fresh request; no new prompt is raised in place.
+   - **Revalidate, then consume atomically, then dispatch once.** Immediately before the single provider
+     `generate()`, synchronously in the same turn, the flow re-reads the anchor and revalidates **every** grant:
+     ApprovalRequest `APPROVED` by the owner; not expired per the injected clock (ADR-0095 §5; an expiry found here
+     is recorded as `system`/`expired`); actor, session, workspace/project and request id equal to the current
+     turn; re-read SHA-256 and `credential-assignment` classification equal to the grant. Any failure dispatches
+     nothing and invalidates the set. On success one save of the anchor flips every grant and the anchor to
+     `CONSUMED` (all grants in one row, so they change together); `generate()` is called only after that save
+     resolves, and a failed save sends nothing. The save runs under an in-process per-anchor single-flight claim held
+     by `StatelessCredentialOverrideFlow` until `generate()` settles; a second turn that finds the claim held or the
+     anchor `CONSUMED` gets the "already used" reply (Personal is a single process, ADR-0091; a conditional
+     repository update is `[LATER]` for Team Edition). `readCodeGenerationContextFiles` gains an optional 5th
+     `options` parameter (backward compatible) that admits a refused file only for a `CONSUMED`-in-this-turn grant
+     whose path, hash and classification match.
+   - **No replay.** A `CONSUMED` grant, or an anchor with any grant consumed (a partially-consumed anchor is treated
+     as fully consumed), is never used again. Any failure after consumption (provider error or timeout, proposal
+     parse or patch rejection, crash) ends the request; sending the file again needs a fresh request and a fresh
+     CRITICAL override per file. A crash before the consume save leaves nothing sent, and the grants are revalidated
+     from scratch on the next attempt.
+6. **Never overridable.** Workspace secret filenames (adapter-level ADR-0019 skip; Core never has the content),
+   `secret-token` matches, and the non-conversational `ExecutionOrchestrator` CODE_GENERATION path. In a multi-file
+   set, a secret-token or secret filename on any target fails the whole set with no prompt.
+7. **TTL and audit.** Uniform ADR-0093 30-minute lazy TTL; expiry records `system`/`expired`. Audit is
+   `ApprovalRequest` fields, the inert anchor Task row (per-grant binding fields from D5 and final status
+   CONSUMED or INVALIDATED{reset|denied|expired|project-changed|changed|superseded}) and logs carrying ids, index,
+   hash and line only. A successful preview is
+   prefixed (`composeWithNotice`) with a one-time-send notice. The `그래도 보내줘` line goes into the base
+   `HELP_TEXT` (OVR-4, the only base-help editor in wave 4).
+8. **No other architecture change.** No new port, token, aggregate, table or migration of its own (the schema
+   version is owned by ADR-0098/ADR-0101). New modules live in `application/credential-override/`. Copy goes
+   through `ResponseComposer`. ADR-0098 counts consecutive override re-prompts as `IMPLICIT_APPROVAL_REPROMPT`
+   through turn status only, with no coupling to this flow.
+
+### Consequences
+
+- **+** False positives no longer dead-end the owner; every relaxation is an explicit, hash-bound, audited,
+  one-time owner act. Eleven bypass shapes on main are closed; the guard stays about 300 lines.
+- **+** Reuses `requestForRisk`, the plan-less anchor, the ADR-0093 TTL/reset/reminder capture and `composeWithNotice`.
+- **−** The stricter guard refuses more ordinary files once (`getToken("github")`); if OVR-1 merges in wave 1, the
+  override UX only arrives in wave 4.
+- **−** Granted content reaches the external AI provider; the proposal (which may echo the value) is stored locally
+  and the diff preview may show the line. The warning copy states all three.
+- **−** Several refused files need one confirmation each, all within 30 minutes of the first; a provider failure
+  after consumption costs the owner a fresh set of overrides. The broad adapter filename rule (`*key*` hides
+  `keyboard.ts`) is unchanged and not overridable.
+
+### Strict gates
+
+Attended Live UAT on a disposable sandbox project with synthetic credential-like fixtures (real file content to the
+Claude provider), its runtime start/stop under the AGENTS.md temporary-environment rules, and a read-only dev-DB
+check of the CRITICAL approval and anchor rows (AUTONOMOUS_DEV_DB conditions only). Independent Chief Architect
+review before OVR-4 merges. Deleting the superseded QA-023 branch and worktree is a separate human action.
+
+### Owner decisions requested
+
+1. Strict guard for all files, QA-023 file-type rule rejected, one-time SHA-256-bound CRITICAL override with
+   `그래도 보내줘`; never for secret filenames or token/private-key shapes. **Recommended:** approve.
+2. Egress: a granted file's content goes to the AI provider. **Recommended:** approve with the warning copy.
+3. Merge OVR-1 (stricter guard) in wave 1 before the override UX (wave 4)? **Recommended:** yes (closes 11 live
+   bypasses). Alternative: hold OVR-1 until OVR-4.
+4. Grant lifetime (D5): grants live only on the anchor Task, bound to actor/session/project/request/approval/path/
+   hash; the set expires 30 minutes after its oldest override was raised; reset, denial, project change, file
+   change or supersession invalidates it; grants are consumed before the single dispatch and any later failure needs
+   fresh overrides. **Recommended:** approve.
+
+### V1 / V2
+
+`[NOW]` strict guard with ported fixes, classification API, one-time CRITICAL override, uniform TTL, audit.
+`[LATER]` owner allowlist (rejected for now), per-kind TTL, kill switch, line-scoped redaction, orchestrator path.
+
+## ADR-0098 — Personal v2 answer quality: chat response policy, local feedback capture (schema v12, PlatformAdapter receipt/onFeedback, '피드백 요약' as a control-stage handler), golden evaluation, opt-in local embedding recall. Amends ADR-0073 and ADR-0093.
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
+- **Date:** 2026-10-02
+- **Amends:** ADR-0073 ("no selected vector product" → `LocalVectorProvider` + Ollama-CLI embeddings), ADR-0093 (a
+  third control phrase, `피드백 요약`, delivered through the ADR-0096 `control` stage). Supersedes the ROADMAP
+  "Deferred capabilities" row "Feedback learning: none (no Core seam)" **for capture only**; learning stays deferred.
+- **Relates:** ADR-0063 (non-authoritative labelling), ADR-0064/Stage 2A bindings, ADR-0091 (owner gate),
+  ADR-0092 (capability routing), ADR-0096 (handler registry, migration lane), ADR-0097, ADR-0100.
+
+### Context
+
+The Personal v1 Live UAT passed but recorded answer-quality defects deferred to v2: shallow Korean follow-ups
+(QA-002), an unsolicited "(Translated from Korean)" block (QA-004), an English question answered in Korean (QA-007),
+verbal compliance with a prompt injection and promised capabilities Quoky lacks (QA-008), literal `\n` and imitation
+of system copy (QA-013). ROADMAP lists candidates A feedback capture, B golden set, C local embedding retrieval (D
+and E deferred). No owner judgement is captured; `PlatformAdapter.sendMessage` returns `void`, so a platform message
+cannot be linked to a turn. `packages/vector-local` is a no-op; `OllamaCliProvider` advertises `EMBEDDING` but cannot
+embed. Binding constraints: ARCHITECTURE.md §5.1/§12 (no provider-id branching), §5.3, §5.4, §5.5 (CLI only), §6.4,
+§6.5 (embedding is an `AiProvider` capability; `VectorProvider` only stores and queries).
+
+### Decision
+
+1. **Chat response policy (QUAL-1, `application/chat-policy/`).** `detectReplyLanguage(text)` (script counting
+   after stripping code, URLs and paths: `ko` at ≥30% Hangul, `en` at ≥80% Latin with no Hangul, else `unknown`),
+   an explicit-language-request detector, and fixed GENERAL_CHAT rules. For GENERAL_CHAT only, `PromptComposer`
+   adds one `CORE_RUNTIME` / `AUTHORITATIVE_CURRENT_FACT` entry naming the reply language (generic same-language
+   rule for `unknown` or an explicit request) and developer rules: no unrequested translation; capability honesty
+   (a chat reply performs no action, never claims or promises one, points to `도움말`); injection (decline in one
+   sentence, never announce compliance or quote instructions); plain Markdown, no literal escapes, no imitation of
+   Quoky system notices. These rules are the reference that ADR-0100's untrusted-readout text must not contradict.
+2. **Adapter output hygiene.** `packages/ai-cli` `sanitizeGeneralChatText(output, currentUserMessage?)`, applied
+   wherever `stripInternalMetadataEnvelope` is applied (both CLI providers, no id branching): drop a trailing
+   block only when it has an explicit translation marker, is in the other script, and no translation was asked
+   for; convert literal `\n` outside code only when the output has no real newline. `chat-response-policy.ts` joins
+   the Stage 2A `PROVIDER_EXECUTION_PATH_MODULES` binding; editing `prompt-composer.ts` invalidates Stage 2A
+   bindings until the next approved run.
+3. **Platform port, additive (QUAL-4).** `sendMessage` returns `Promise<void | OutboundDeliveryReceipt>`
+   (`platformMessageIds`); new optional `onFeedback?(handler)` delivers a `PlatformFeedbackSignal` (`platform`,
+   `context`, `targetPlatformMessageId`, `rating` POSITIVE/NEGATIVE, `action` ADDED/REMOVED, `occurredAt`).
+   The Discord adapter (logic in new `reactions.ts`) requests the non-privileged reaction intents and partials,
+   maps only 👍/👎 (any skin tone), and admits a reaction only from a configured owner, on a bot-authored message, in an ADR-0091
+   admitted location — before any fetch or logging. The `onFeedback` subscription is made in the `QuokyCore`
+   provider factory in `app.module.ts`, not in `main.ts`.
+4. **Feedback store (QUAL-3, migration v12 per ADR-0096).** `FeedbackRepository` port + `FEEDBACK_REPOSITORY`
+   (pre-registered stub), not added to `StorageProvider`. Additive idempotent v12 "feedback capture tables":
+   `conversation_turns` (UNIQUE(platform, inbound_message_id), lookup indexes on (platform, channel_id, thread_id,
+   created_at) and (actor_id, created_at)), `turn_platform_messages` (PK(platform, platform_message_id)),
+   `feedback_signals` (UNIQUE(turn_id, source, source_key)). **No message or reply text column.** `data` holds
+   intent, capability, task/run ids, provider id (audit only), latency, reply length and a ≤32-hash keyword
+   fingerprint. 365-day lazy, bounded pruning.
+5. **Recording.** `QuokyCore` gets an optional `FeedbackRecorder`; recording is best-effort after delivery and never
+   changes the reply. The runtime hunk is only the transient `TurnResult.workFacts` populated by `handleWorkTurn`
+   (never persisted on Session). Implicit signals from a pure detector: reset within 120 s of a RESPONDED reply,
+   correction lexicon within 300 s, rephrase (Jaccard ≥ 0.5) within 120 s, and approval re-prompt
+   (AWAITING_APPROVAL → AWAITING_APPROVAL, including ADR-0097 override re-prompts, by status only). Implicit signals
+   are evidence only, never ratings, never drive behaviour.
+6. **`피드백 요약` (amends ADR-0093).** A `control`-stage `ConversationTurnHandler` (order 100, ADR-0096), exact
+   whole-message match, no slash alias (QA-011), read-only and provider-free, available in every state. It replies
+   with 30-day counts by capability and intent plus the five latest 👎 turns (date, intent, Task request text
+   truncated to 60 chars through the credential guard). Provider ids are never shown. Help lines for 👍/👎 and
+   `피드백 요약` are contributed by the handler. `conversation-commands.ts`, `handleControlTurn` and `HELP_TEXT` are
+   not edited, and no `feedbackSummary` dep is added.
+7. **Golden evaluation (QUAL-2).** Versioned JSON corpora under `application/golden/` (intent routing, approval
+   decisions, stray decisions, control phrases, project registration), each case with `id`, `text`, `expected`,
+   `source`, `mustPass`; a pure scorer and a committed `baseline.v1.json` ratchet in the normal test suite. Cases are
+   owner-curated, never added automatically. INT-1 adds the turn-handler routing corpus. The provider answer-quality
+   harness (`apps/quoky` tool, synthetic fixtures, regex checkers, no LLM judge) has offline `validate-fixtures`,
+   `check-outputs` and `plan`; `run` requires `--approved-plan-digest` and is Strict per run and per target.
+8. **Opt-in local embedding recall (QUAL-5, `application/recall/`).** `OllamaCliEmbeddingProvider`
+   (`packages/ai-cli`) advertises only `EMBEDDING`, runs `ollama run <QUOKY_EMBEDDING_MODEL>` on stdin through the
+   existing contained `CliRunner`, and returns a canonical JSON envelope in `AiExecutionResult.text` (no
+   `AiProvider` contract change). `EMBEDDING` is removed from `OllamaCliProvider`.
+   **Embedding environment contract (bounded, same containment as chat).** Embedding runs use the runner's
+   **default** profile, exactly like production Ollama chat: only `INHERITED_ENV_ALLOWLIST` (`PATH`, `HOME`, `USER`,
+   `LANG`, `LC_ALL`, `LC_CTYPE`) is inherited, `TMPDIR` is the runner-owned directory, and the provider passes only
+   the chat colour variables (`CALLER_ENV_ALLOWLIST`: `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`).
+   `CALLER_ENV_ALLOWLIST`, `INHERITED_ENV_ALLOWLIST` and the `ISOLATED_OLLAMA_VALIDATION` profile are **not
+   changed**; embeddings never use that validation profile (it replaces `HOME` and is reserved for the app-private
+   generation validator). `OLLAMA_NO_CLOUD` and `OLLAMA_HOST` are therefore **not** passed (the runner would refuse
+   them fail-closed, without spawning). Loopback-only is a documented deployment assumption, enforced by
+   construction: `OLLAMA_HOST` is neither inherited nor caller-settable, so the child always uses the CLI default
+   local daemon (`127.0.0.1:11434`) that the owner runs. Cloud egress is closed at configuration instead of by
+   environment: SEAM-2 refuses a model name or tag containing `cloud` (`EMBEDDING_MODEL_CLOUD_REFUSED`, ADR-0096 D9).
+   "Never pulls" uses the existing `downloadMarkerPolicy: 'OLLAMA_PULL_STDERR'`: an observed download makes the run
+   fail and recall falls back to lexical; the owner pulls the model manually. Adding any variable to
+   `CALLER_ENV_ALLOWLIST` later needs an ADR amendment with a containment justification. QUAL-5 owns
+   `packages/ai-cli/src/cli-runner.ts` and `cli-runner.test.ts` in wave 6 so that no concurrent task changes the
+   runner contract; it is not expected to edit `cli-runner.ts` and adds regression tests that an embedding run builds
+   the same environment as chat and that a caller `OLLAMA_NO_CLOUD`/`OLLAMA_HOST` is refused outside the validation
+   profile. Registered only when
+   `QUOKY_EMBEDDING_ENABLED=true` (parsed by SEAM-2, default `false`). `LocalVectorProvider` implements the unchanged
+   `VectorProvider` (JSON file per collection, atomic writes, cosine top-K, ≤20,000 records, rebuildable cache).
+   `SemanticRecallScorer` re-ranks only already-eligible durable candidates (never widens eligibility, never
+   embeds credential-matching content; ≤4 new embeddings and 3 s per turn); any failure falls back to lexical.
+
+### Consequences
+
+- **+** QA-004/007/008/013 shapes fixed deterministically; a measurable Strict eval for model choice (QA-002).
+- **+** First owner-judgement signal, local and content-free; an offline routing/decision regression ratchet;
+  semantic recall with no `AiProvider`, `VectorProvider`, `StorageProvider` or Session contract change.
+- **−** Additive `PlatformAdapter` change, a new port, schema v12, a third control phrase, a second inbound
+  Discord surface (reactions) with higher event volume.
+- **−** About 150 more GENERAL_CHAT prompt tokens against the Ollama `-c` limit (QA-019); embedding adds bounded,
+  fail-open latency and needs a manual `ollama pull`. Implicit signals are noisy.
+- No learning loop: feedback never changes prompts, routing, memory or approvals automatically (candidates D/E
+  deferred); the ROADMAP no-autonomous-loop non-goal is unchanged.
+
+### Strict gates
+
+Attended Discord Live UAT for QUAL-1 and QUAL-4 (runtime start/stop per AGENTS.md); each harness `run` approved per
+run and per target, bound to the offline plan digest (Ollama local; Claude cloud separately); live embedding probe
+and QUAL-5 UAT with `QUOKY_EMBEDDING_ENABLED=true`; the owner's `ollama pull` (network); `.env.local` edits; v12 apply
+only to the delegated dev DB. Independent Chief Architect review before QUAL-4 merges.
+
+### Owner decisions requested
+
+1. Feedback: only 👍/👎, removal retracts, 365-day retention, no text stored, provider id never shown, `피드백 요약`
+   with a 30-day window. **Recommended:** approve.
+2. Reply-language policy (current message language; explicit request overrides; unknown → generic rule).
+   **Recommended:** approve.
+3. Eval targets: Claude runs on synthetic fixtures only, allowed per approved run. **Recommended:** allow per run.
+4. Embedding opt-in defaults (`false`, `nomic-embed-text`, weight 0.7, 4 per turn, 3 s). **Recommended:** approve.
+5. Golden policy: UAT utterances committed verbatim; future cases owner-curated only. **Recommended:** approve.
+6. Embedding environment (D8): same contained default profile and allowlists as Ollama chat, no
+   `OLLAMA_NO_CLOUD`/`OLLAMA_HOST`, local daemon assumed, cloud-tagged model names refused at startup.
+   **Recommended:** approve. Alternative: add `OLLAMA_NO_CLOUD` to `CALLER_ENV_ALLOWLIST` (an ADR amendment that
+   also widens what the chat path may set).
+
+### V1 / V2
+
+`[NOW]` chat policy and hygiene, reaction + implicit capture, `피드백 요약`, golden ratchet, Strict harness, opt-in
+embedding recall. `[LATER]` candidates D/E, transcript embedding recall, networked vector store, feedback export.
+
+## ADR-0099 — Code-work expansion: bounded change sets of up to 5 files with update/add and atomic-ish apply, new-file commit, owner branch create/switch (post-anchor handler), opt-in push→PR chain with a separate QUOKY_GIT_MERGE_ENABLED. Amends ADR-0027, 0042, 0046, 0047/0048, 0094.
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
+- **Date:** 2026-10-02
+- **Amends:** ADR-0027 (best-effort per-file write; adds an atomic-ish change-set mode), ADR-0042 (single `update`
+  op), ADR-0046 (no `git add`), ADR-0047/0048 (push requires an upstream), ADR-0094 (no branch creation; remote
+  flag scope). No other settled ADR text changes.
+- **Relates:** ADR-0038–0043, ADR-0045, ADR-0058/0059 (local ref ops behind explicit command + preflight), ADR-0062
+  (explicit create wording), ADR-0093/0095, ADR-0096 (post-anchor stage), ADR-0097 (per-file override in a set).
+
+### Context
+
+Personal v1 ships the local code flow (preview → apply approval → PatchSet → apply → validation → approved commit),
+with remote git off and commits on `main`/`master` refused (ADR-0094). The UAT showed three limits: one existing
+file per change (ADR-0042 accepted one `update` because ADR-0027 has no cross-file rollback; a new-file preview
+cannot be applied or committed because `commitFiles` never runs `git add`; target collection keeps only the first
+named path); no branch operation, so the owner must leave Quoky after the QA-022 main refusal; and the remote chain
+never reached a push (no upstream on a fresh branch; enabling the remote flag would expose push, PR, merge, sync and
+cleanup at once). WorkspaceWrite stays the only file mutator and GitProvider the only git executor.
+
+### Decision
+
+1. **Bounded change sets (amends ADR-0042/0027).** In a CODE_IMPLEMENTATION request every safe named path
+   (absolute, traversal and dot-leading refused) is an allowed target, up to `MAX_CHANGE_SET_FILES = 5`
+   (`code-work/` constants, separate from ADR-0097 context caps). An existing path is an update target; a missing
+   path is a new-file target only with the ADR-0062 negation-aware create wording; otherwise the reply names the
+   missing paths and asks again (never a silent drop, never an AI guess). More than 5 is refused ("split the
+   request"). Targets are a scope: only files the AI proposes inside it become diffs. Allowed ops: `update` of an
+   existing text file and `add` of a path in the anchor's persisted `newFileTargets`; delete, rename, binary, mode
+   change and out-of-scope paths stay rejected at patch and apply. Bounds: 64 KiB per file, 256 KiB per set. Each
+   `add` path is re-checked absent at patch and apply. Previews render one block per file (ADR-0039 delivery).
+2. **Atomic-ish apply.** `WorkspaceWriter.applyChangeSet(ref, ops)` and `WorkspaceWriteManager.applyChangeSet`
+   (same Ref gate). Phase 1 writes nothing: resolve paths in the root (realpath on the nearest existing ancestor),
+   refuse secret-looking names, compute each update with `applyPatch`, require each `add` absent. Phase 2 writes
+   temp files, promotes updates by compare-and-swap against the pre-image hash, creates adds no-clobber, and on the
+   first failure restores every promoted file and removes created files and directories (`ROLLED_BACK`). A failed
+   rollback is `PARTIALLY_APPLIED` with the existing "may have applied" wording. All-or-nothing against Quoky's own
+   failures, not a filesystem transaction against external writers. `WorkspaceChangeStatus.ROLLED_BACK` and
+   `FileChangeStatus.rolled_back` are added; `WORKSPACE_APPLIED` requires a one-to-one APPLIED result match.
+3. **New-file commit (amends ADR-0046).** `GitProvider.commitFiles(rootPath, files, message, { newFiles? })` with
+   `newFiles ⊆ files`: `git add -- <newFiles>` (exact pathspecs), the unchanged `git commit --only`, and
+   `git rm --cached --quiet -- <newFiles>` if the commit fails. Only untracked paths in `newFileTargets` are admitted;
+   status is read with `--untracked-files=all`. Approval reason and reply mark new files.
+4. **Owner branch create/switch (amends ADR-0094) — a `post-anchor` turn handler.** `GitBranchTurnHandler`
+   (`code-work/`, order 100, ADR-0096) reads `ctx.applyAnchor` and `ctx.resolveActiveWorkspace()`, so it runs after
+   every pending intercept and before the ADR-0043 deny-fragment check and the `WORKSPACE_APPLIED` git-mutating-word
+   reject that would swallow `브랜치 만들어`. Negation-aware commands: create-and-switch (`브랜치 만들어줘 <name>`,
+   `<name> 브랜치 만들어줘`, `브랜치 생성 <name>`, `create branch <name>`) and switch (`<name> 브랜치로 전환해줘`,
+   `브랜치 전환 <name>`, `switch to branch <name>`); mixed delete/rename/force/reset/rebase/merge/push/tag wording
+   gets a fixed refusal. Name: ASCII `[A-Za-z0-9._/-]`, ≤100 chars, `isSafePushBranch`, not `main`/`master`/`HEAD`,
+   no `refs/` prefix. Create = `git switch -c` CAS-checked against HEAD, allowed with no anchor or anchor up to
+   `WORKSPACE_APPLIED`; switch = `git switch --no-guess`, existing local branch, clean tree, anchor at most
+   `APPROVED`; both refused from `COMMIT_APPROVED` on and on detached HEAD or an in-progress merge/rebase.
+   New `GitProvider.createBranch` / `switchBranch` + GitManager wrappers; decorators forward them locally (no token
+   mint). The handler is registered in `features/code-work.providers.ts` (CODE-5); CODE-4 edits neither the runtime
+   nor `HELP_TEXT` (help lines are contributed). **No ApprovalRequest:** local, non-destructive, reversible.
+5. **Opt-in push → PR (amends ADR-0047/0048, ADR-0094).** `QUOKY_GIT_REMOTE_ENABLED=true` enables push, PR
+   creation and PR status only. `QUOKY_GIT_MERGE_ENABLED` (parsed by SEAM-2; default `false`; `true` with remote off
+   is a startup error) gates merge, main sync, post-merge local cleanup and remote branch cleanup: `PersonalGitGuard`
+   and a new composition-root `PersonalHostingGuard` refuse them, and the runtime (display-only
+   `ConversationRuntimeOptions.gitMergeEnabled`, not a deps key) replies "병합은 이 설정에서 꺼져 있어요" before any
+   merge approval. A pure push-target resolver (approval and execution) keeps upstream mode and adds
+   new-remote-branch mode (fixed `origin`, current branch; anchor records `pushMode`). Preconditions: HEAD = committed
+   hash, clean tree, branch not `main`/`master`. Argv: one non-force push to `HEAD:refs/heads/<branch>`; no `-u`, no
+   fetch. Per-step CRITICAL approvals, ADR-0093/0095 expiry and PR base `main` are unchanged.
+6. **No storage or token change.** No migration of its own (schema version owned by ADR-0098/0101), no new aggregate,
+   DI token or provider; additive methods on existing CAP-006/CAP-002 ports. Base `HELP_TEXT` gains the multi-file
+   line (CODE-3, wave 3). In a set, each `credential-assignment` refusal needs its own ADR-0097 override; a secret
+   token or filename on any target fails the whole set.
+
+### Consequences
+
+- **+** Edit + new helper file, or two related files, in one preview/approval cycle with stronger-than-ADR-0027
+  semantics; in-conversation recovery from the main refusal; the remote chain is provable step by step with merge off.
+- **−** Port surfaces grow (`applyChangeSet`, `createBranch`, `switchBranch`, `commitFiles` options); every
+  decorator must forward them. `git add` is a new, bounded, compensated index side effect.
+- **−** Branch commands have no ApprovalRequest; the explicit command is the consent. ARCHITECTURE.md §10 is **not**
+  amended: commit/push/PR stay approval-gated; local ref create/switch is treated like MEDIUM local work.
+- **−** Atomic-ish only: a crash mid-rollback or an external writer can leave a partial state, always reported as
+  "may have applied". ROADMAP non-goals are unaffected (no auto-fix loop, no CI loop, no workflow engine).
+
+### Strict gates
+
+Attended sandbox Live UAT U1–U10 on `jonghyungJeon-private/quoky-uat-sandbox` via GitHub App `quoky-dev` with
+`QUOKY_GIT_REMOTE_ENABLED=true` and merge off: App key secret access, Discord, Claude provider, workspace apply and
+commit, the first live push (U6) and PR (U7), each also behind Quoky's CRITICAL approvals. Sandbox cleanup is a
+separate human gate. Any `QUOKY_GIT_MERGE_ENABLED=true` is out of scope. Independent Chief Architect review before
+CODE-3 and CODE-5 merge.
+
+### Owner decisions requested
+
+1. Change-set bounds: ≤5 files, 64 KiB/file, 256 KiB total, update/add only, atomic-ish apply with rollback; a
+   named missing path re-asks. **Recommended:** approve.
+2. Branch create/switch as an explicit command plus preflight, no ApprovalRequest; naming policy without a
+   mandatory prefix. **Recommended:** approve.
+3. Remote flag split and first push to `origin` with PR base `main`; Live UAT only up to PR status.
+   **Recommended:** approve.
+
+### V1 / V2
+
+`[NOW]` ≤5-file update/add sets, atomic-ish apply, new-file commit, branch create/switch, new-remote-branch push,
+merge flag. `[LATER]` delete/rename, >5 files, undo after apply, live merge/sync/cleanup, remote/base config.
+
+## ADR-0100 — Chat entry point for personal work: read-only connector lookups (named queries, ConnectorQueryError, optional item facts) and WorkItem to-dos (title and correlate) through pre-classify handlers. Amends ADR-0075; extends ADR-0072/0074; no classifier hook and no deps change.
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
+- **Date:** 2026-10-02
+- **Amends:** ADR-0075 (WorkItem `title`, `WorkManager.correlate`). **Extends:** ADR-0072/ADR-0074 (named queries,
+  neutral errors, optional item facts). ADR-0032 M3 amendment is preserved: no deps key is added.
+- **Relates:** ADR-0063 (non-authoritative background), ADR-0091 (single owner Actor), ADR-0092 (capability
+  routing), ADR-0093, ADR-0096 (pre-classify stage, `TurnHandlerReply`), ADR-0098 (chat policy rules), ADR-0101.
+
+### Context
+
+Personal v1 ships read-only Jira, GitHub, Slack and Confluence connectors (ADR-0072), `ResourceRef` and a read-only
+Work Surface (ADR-0074), and the CAP-011 `WorkItem` aggregate (ADR-0075). From chat the owner can reach only the
+Jira/GitHub "my work" list: `WorkManager` has no caller, Slack and Confluence have no search query, and a to-do
+cannot be stored because `WorkItem` has no human-readable label. `ConnectorQuery.query` is a free string (Jira treats
+any other value as raw JQL), `ConnectorItem` has no status or due date, and failures are adapter-specific. When a
+connector-write request falls through to chat, the model may claim an action it did not perform (QA-008/QA-018).
+
+### Decision
+
+1. **Deterministic work grammar in `application/work-chat/`.** A pure `detectWorkChatCommand(text)` returns a typed
+   `WorkChatCommand`: `todo.add` (title + explicit refs), `todo.list`, `todo.complete` / `todo.cancel` (list number or
+   unique title fragment), `todo.link`, `lookup` (jira|github|slack|confluence × my-items|due-this-week|
+   review-requests|search with bounded text), `external-write-unsupported`, `usage`. Forms are anchored
+   (`할 일 추가: …`, `완료 처리: N`, `Slack에서 X 검색`) and negation-aware. The detector is a superset of
+   `IntentClassifier.isPersonalWorkSurface` phrases.
+   **Anchored to-do prefixes (closed list, owned by this grammar, ADR-0096 D5).** A message is an anchored to-do
+   command when, after trimming, it starts with one of these heads followed by optional whitespace and `:` or `：`
+   (ASCII heads case-insensitive; the Hangul spacing variants are listed explicitly, no other spacing matches):
+   - add: `할 일 추가`, `할일 추가`, `할 일 등록`, `할일 등록`, `todo add`, `add todo`, `to-do add`;
+   - complete: `완료 처리`, `할 일 완료`, `할일 완료`, `todo done`;
+   - cancel: `할 일 취소`, `할일 취소`, `todo cancel`;
+   - link: `할 일 연결`, `할일 연결`, `todo link`.
+
+   Anchored commands are recognized by the order-100 mutation handler **before** any reminder exclusion. The text
+   after an add prefix is the WorkItem title verbatim (subject to D4/D5 bounds), even when it contains a time
+   phrase or `알려줘`: `할 일 추가: 내일 9시에 회의 알려줘` adds the to-do `내일 9시에 회의 알려줘` and creates no
+   reminder. Only **unanchored** text is subject to the reminder exclusion: the detector never claims an unanchored
+   message with an explicit time expression bound by `에`/`뒤에`/`후에` plus `알려줘`, which belongs to ADR-0101.
+   The ADR-0101 grammar mirrors this list and returns `NOT_REMINDER` for it; WORK-T3 unit-tests every listed head,
+   and INT-1 pins one case per head with a time phrase in the routing corpus.
+2. **Entry through two `pre-classify` turn handlers (ADR-0096), no classifier hook.** `WorkChatTurnHandler` over
+   `WorkChatService` with `mode: 'mutation'` (order 100: anchored to-do add/complete/cancel/link) and
+   `mode: 'lookup'` (order 300: lookups and the list). They run after pending-approval capture, the stray-decision
+   reply and `기억해:`, with reminders (order 200) between them. `intent-classifier.ts` is not edited; the legacy
+   `personal-work-surface` branch stays unchanged as a fallback; `workSurface` is not widened; help lines are
+   contributed by the handlers.
+3. **Combined "my work" view.** One view: the owner's ACTIVE local to-dos first, numbered by `createdAt` ascending
+   at read time (the same ordering resolves `완료 처리: N`; no session state), then Jira/GitHub personal work.
+   Unconfigured sources are named; a partial result is never presented as "no work".
+4. **WorkItem amendment (ADR-0075).** Optional `title` (trimmed, whitespace-collapsed, 1..200 chars), required for
+   conversation-origin items; legacy rows stay valid. `WorkManager.correlate(id, refs)` for ACTIVE items only,
+   de-duplicated by `ResourceRef.identity`, ≤10 refs. No due date, notes, Task, approval or workflow state.
+   COMPLETED/CANCELED stay terminal (no reopen, no hard delete). Persistence stays in the existing `work_items.data`
+   JSON: **no migration** (tests assert the title round-trips and legacy rows hydrate; they do not pin
+   `LATEST_SCHEMA_VERSION`, which is 12 then 13 under ADR-0096).
+5. **To-do commands are LOW-risk local actions** run immediately through `WorkManager` with no approval prompt
+   (precedent `기억해:`). An ambiguous target changes nothing and lists candidates. A title with credential material
+   (`containsCredentialMaterial`, unchanged per ADR-0097) is refused. Every mutation reply names the item changed.
+6. **Explicit linking only:** a Jira browse URL or `Jira KEY-123`/`지라 KEY-123` → `jira:KEY-123`; a GitHub issue/PR
+   URL or `owner/repo#123` → `github:owner/repo#123`. Bare `ABC-123` is never auto-linked. No connector call at link
+   time.
+7. **Provider-neutral connector query vocabulary (`ports/connector-query.ts`, pre-registered stub).** Named queries
+   `personal-work` (`actorExternalId`, `filter?: all|due-this-week|review-requested`, `limit?`) and `search` (`text`
+   ≤100 chars, `limit?`), default and max limit 20; `ConnectorQueryError.reason` ∈ UNAUTHORIZED | FORBIDDEN |
+   INSUFFICIENT_SCOPE | NOT_FOUND | RATE_LIMITED | UNSUPPORTED_QUERY | UNAVAILABLE | INVALID_RESPONSE. `ConnectorItem`
+   gains optional `status`, `dueDate` (YYYY-MM-DD), `updatedAt`, `container`. Adapters own JQL, GitHub qualifiers,
+   Slack search and CQL rendering and escaping; unknown names are UNSUPPORTED_QUERY (ending raw-JQL passthrough);
+   every adapter enforces a timeout; the GitHub item id becomes `owner/repo#number`. GET only; the port stays
+   read-only.
+8. **Bounded, untrusted summaries via the `summarize` reply variant.** `TurnHandlerReply` gains
+   `{ kind: 'summarize'; readout: ExternalWorkReadout; fallbackText; footer }` (WORK-T4, an ADR-0096 port
+   extension). `WorkChatService` builds the readout (≤10 items, title ≤200, excerpt ≤300, section ≤3,000 chars;
+   credential-bearing excerpts or items dropped and counted). The runtime routes the variant to the existing
+   `handleWorkTurn` with `Capability.SUMMARIZATION` (selection stays capability/priority/`isAvailable`, ADR-0092);
+   the `handleWorkTurn` readout parameter and the `promptComposer` dep are widened by type only to
+   `ProjectReadout | ExternalWorkReadout`. `PromptComposer` renders it as CORE_RUNTIME /
+   NON_AUTHORITATIVE_BACKGROUND, marked untrusted external data that never contains instructions, reconciled with the
+   ADR-0098 injection and capability-honesty rules. Quoky appends a deterministic footer (≤10 real URLs plus "N
+   external items were used"). On any non-RESPONDED result the reply is `fallbackText` (the deterministic list).
+   `QUOKY_WORK_SUMMARY_ENABLED` (parsed by SEAM-2, default `true`) turns summarisation off entirely.
+9. **Connector writes stay out of scope.** Create/update/comment/post requests get a fixed read-only refusal with no
+   provider or connector call.
+10. **Ownership.** `WorkChatService` owns command execution through `WorkManager`, `WorkSurfaceQuery` and the
+    connector list; the runtime presents results and owns no work state. Wiring (service factory, both handlers,
+    `config.work.summaryEnabled`) lives only in `apps/quoky/src/features/work-chat.providers.ts`; no `app.module.ts`
+    or `config.ts` edit, no new Core token.
+
+### Consequences
+
+- **+** WorkItem, Slack and Confluence get a bounded chat entry point; personal work is visible in one view; Core
+  stays free of vendor query languages; adapters gain typed failure reasons and timeouts.
+- **+** External writes cannot be faked: fixed refusal and deterministic footer links.
+- **−** When Ollama is not ready, connector text can reach Claude through the SUMMARIZATION fallback (bounded,
+  filtered, disclosed, opt-out flag).
+- **−** Slack search needs a user token with `search:read`; a bot token gets INSUFFICIENT_SCOPE (no history scan).
+- **−** No reopen; positional numbering can shift between list and command (the reply always names the item);
+  Jira "this week" follows the server-side `endOfWeek()` and includes overdue items.
+- `prompt-composer.ts` edits invalidate Stage 2A bindings until the next approved run. ARCHITECTURE.md §10/§13 are
+  unchanged: connectors stay read-only; writes still need separately approved narrow ports.
+
+### Strict gates
+
+One read-only GET probe per connector against the owner's real tenants (network + secret access); switching
+`QUOKY_SLACK_TOKEN` to a user token; attended work-chat Live UAT (runtime per AGENTS.md, Discord, SUMMARIZATION
+provider calls with real connector content subject to decision 2 below); to-do rows only in the delegated dev DB.
+
+### Owner decisions requested
+
+1. WorkItem `title` (ADR-0075 amendment); COMPLETED/CANCELED terminal, no reopen. **Recommended:** approve.
+2. Egress: summaries may fall back to Claude when Ollama is down. **Recommended:** `QUOKY_WORK_SUMMARY_ENABLED=true`;
+   set `false` if workplace policy forbids sending Jira/Slack/Confluence text to a cloud model.
+3. To-do add/complete/cancel/link run immediately with no ApprovalRequest. **Recommended:** approve.
+4. Slack user token with `search:read`; Confluence keeps Bearer auth until a live probe says otherwise; personal
+   Jira/GitHub queries still need identity mappings (no `@me` fallback). **Recommended:** approve.
+5. Ratify before WORK-T1 merges (wave 2), not only before T2–T4. **Recommended:** approve.
+6. The closed anchored to-do prefix list (D1), which wins over reminder phrasing: the body of `할 일 추가:` is
+   always a title, never a reminder. **Recommended:** approve.
+
+### V1 / V2
+
+`[NOW]` work grammar, combined view, WorkItem `title`/`correlate`, named queries, bounded summaries with
+fallback/footer, summary flag. `[LATER]` connector writes (HIGH, separate ADR), local due dates, reopen, Jira
+free-text search, `ResourceResolver`, Team Edition sharing.
+
+## ADR-0101 — Owner reminders: deterministic KO/EN time grammar (pre-classify handler), durable reminder store (schema v13), bounded composition-root tick dispatcher, owner-only NotificationSink, local-only daily brief. Ratifies the ADR-0081 D15 scheduling slice; updates ROADMAP deferred Scheduler/Notification and ARCHITECTURE §4/§10/§13. No runtime dep (uses ADR-0096).
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
+- **Date:** 2026-10-02
+- **Amends:** ROADMAP "Deferred capabilities" row "Feedback learning, Feature registry, **Scheduler, Notification**:
+  none (no Core seam)" — Scheduler/Notification gain a bounded Core seam for owner reminders only.
+  **Amends ARCHITECTURE.md** §4 (a `Reminder` concept row), §10 (reminder create/list/cancel = LOW) and §13 (an
+  in-process tick → distributed scheduler axis); the rows are written by DOC-A in wave 5 before PRO-5 merges.
+  Ratifies the "separately ratified bounded slice" for scheduling anticipated by ADR-0081 D15, **without**
+  `TriggerSource`, WorkHandoff or continuation machinery. The ROADMAP non-goals are **not** amended.
+- **Relates:** ADR-0016 (delivery), ADR-0032 M3 amendment (runtime owns no scheduler state; no deps key added),
+  ADR-0073 amendment (owner-wide scoping), ADR-0091 (owner gate), ADR-0093 (pending capture), ADR-0096, ADR-0100.
+
+### Context
+
+Personal v1 is purely reactive: every outbound message replies to an inbound owner turn. The owner wants time-based
+reminders ("내일 9시에 회의 준비 알려줘", "30분 뒤에 알려줘", "매일 아침 8시에 오늘 할 일 알려줘") plus list and cancel.
+ROADMAP defers Scheduler and Notification with no Core seam and forbids autonomous agent loops and a workflow engine;
+ADR-0081 D14/D15 require a ratified, bounded slice for scheduling. `QueueProvider` is unimplemented and non-durable.
+`PlatformAdapter.sendMessage` returns `void` and swallows failures, so an unattended sender has no typed outcome.
+ADR-0091 restricts inbound traffic only, and the allowlist can change between scheduling and firing. LLM time
+parsing is non-deterministic and a miss would hallucinate a promise (QA-008/QA-018). Repositories captured before
+`storage.init()` broke at runtime (QA-001).
+
+### Decision
+
+1. **Reminders only, not a general scheduler.** A Reminder is an owner-created, actor-owned durable record whose
+   only effect is bounded plain text to that owner at a computed time. No reminder creates a Task, TaskRun,
+   WorkItem, WorkHandoff, ExecutionPlan or ApprovalRequest, calls an AiProvider, ToolProvider, ConnectorProvider,
+   workspace, git or command runner, or re-enters `ConversationRuntime`.
+2. **Deterministic grammar, no LLM** (`application/reminders/reminder-grammar.ts`, pure; now and zone are inputs):
+   `NOT_REMINDER | CREATE | LIST | CANCEL | CLARIFY(reason)`. CREATE needs a reminder verb (`알려줘`, `리마인드`,
+   `remind me`, …) and a time expression tied to it (`에`/`뒤에`/`후에`, or `at/in/on/tomorrow/every`), negation-aware
+   (`알려주지 마` is not a reminder). LIST: `알림 목록`, `리마인더 목록`, `내 알림`, `list reminders`. CANCEL by the
+   stable per-owner number (`알림 N 취소`, `cancel reminder N`; no bulk cancel). Time forms: relative, day words,
+   weekdays, dates, times of day, `매일`/`평일`/`매주 X요일`/`every …`. Meridiem: an explicit marker or 24-hour time
+   wins; with a date, 1–6 → PM, 7–11 → AM, 12 → noon; a bare time → nearest future. Confirmations echo absolute
+   date, weekday, time and `#N`. Clarify, never guess: past, nonexistent, >366 days, <1 minute, sub-daily,
+   empty/over-200-char body, unparseable. The grammar returns NOT_REMINDER for every message that starts with an
+   anchored to-do prefix from the closed ADR-0100 D1 list (add, complete, cancel and link heads, `:`/`：`), whatever
+   time phrase or `알려줘` follows; those prefixes are owned by the WORK grammar and its order-100 handler runs first
+   (ADR-0096 D5). PRO-1 mirrors the list as a literal and tests each head; INT-1 pins
+   `할 일 추가: 내일 9시에 회의 알려줘` → to-do. A body of exactly
+   `오늘 할 일`/`할 일 목록`/`브리핑`/`daily brief`/… is kind `BRIEF`.
+3. **Time zone.** One owner zone, `QUOKY_TIMEZONE` (IANA, default `Asia/Seoul`, parsed and validated by SEAM-2 in
+   `reminders/reminder-config.ts`), stored on each reminder; recurrence via built-in `Intl` (`zoned-time.ts`),
+   DST-safe, no new dependency.
+4. **Domain, ports, tokens (Core; filling ADR-0096 stubs).** `domain/reminder.ts`: `Reminder` (schedule
+   ONCE/DAILY/WEEKLY, kind TEXT/BRIEF, `origin: ConversationContext` (where it was created), attempt/firing fields,
+   `lastOutcome`) with a closed status set and a closed pure transition table:
+
+   | From | To | When |
+   |---|---|---|
+   | SCHEDULED | FIRING | `claimDue` (atomic) |
+   | SCHEDULED | CANCELED | owner cancel (conditional; a FIRING reminder cannot be canceled, the reply says it is being sent) |
+   | SCHEDULED | SCHEDULED | recurring occurrence missed beyond the 60-minute catch-up (`SKIPPED_MISSED`, next occurrence; never sent) |
+   | FIRING | COMPLETED | ONCE, outcome `SENT` |
+   | FIRING | SCHEDULED | `NOT_SENT{retryable: true}` with attempt < 3 (same occurrence, `next_fire_at` +1/+5/+15 min); or recurring, any final occurrence outcome (next occurrence) |
+   | FIRING | FAILED | ONCE, `NOT_SENT{retryable: false}` or retries exhausted |
+   | FIRING | DELIVERY_UNCERTAIN | ONCE, outcome `UNCERTAIN`, or a FIRING row found by `recoverInterrupted` at startup |
+
+   COMPLETED, CANCELED, FAILED and DELIVERY_UNCERTAIN are terminal. A recurring reminder never ends by delivery: its
+   occurrence outcome (`SENT | FAILED | DELIVERY_UNCERTAIN | SKIPPED_MISSED`) is recorded in `lastOutcome`, shown by
+   `알림 목록`, and the reminder returns to SCHEDULED for the next occurrence; only cancel ends it. An occurrence that
+   ended `DELIVERY_UNCERTAIN` is never retried or resent. `ReminderRepository` + `REMINDER_REPOSITORY`: named
+   methods only (`createWithinLimit`, `listActiveByActor`, `getByDisplayNo`, conditional `cancel`, atomic `claimDue`,
+   CAS `completeFiring`, `listFiring`); `StorageProvider` unchanged.
+   **`NotificationSink` + `NOTIFICATION_SINK` delivery-outcome contract** (domain types only; `PlatformAdapter` and
+   its fakes are unchanged): `deliver(OwnerNotification) →`
+   - `SENT{via: 'dm' | 'channel'}` — the platform confirmed the message was created;
+   - `NOT_SENT{reason, retryable}` — confirmed **not** transmitted: pre-send validation (length, not the owner,
+     target not admitted with no DM fallback possible) and platform refusals that create no message (missing
+     access/permission, unknown channel or user: `retryable: false`); rate-limit rejection or a client that is not
+     connected when the send is attempted (`retryable: true`);
+   - `UNCERTAIN{reason}` — the request may have been transmitted: timeout, network error or abort after the request
+     was issued, a platform 5xx, or any unclassified exception after the send call started.
+
+   The adapter classifies; when in doubt it returns `UNCERTAIN`. Only `NOT_SENT{retryable: true}` is ever retried.
+5. **Conversation entry — a `pre-classify` turn handler (ADR-0096), no runtime dep.** `ReminderTurnHandler`
+   (order 200) wraps `ReminderConversationService`; it runs after pending-approval capture (reminder phrases stay
+   captured by the ADR-0093 reminder while an approval is pending), the stray-decision reply, `기억해:` and anchored
+   to-do mutations, and before work lookups. Replies go through `respondComposed` (short-term memory like other
+   deterministic replies; no Task, no provider, no durable memory). Help lines are contributed by the handler.
+   `ReminderReplyComposer` owns reminder copy; delivered text is emoji-free (`알림 #4: …`, no `⏰`). Bodies with
+   credential material are refused (`containsCredentialMaterial`, unchanged). The handler is always registered:
+   with `QUOKY_REMINDERS_ENABLED=false` a recognized phrase gets "알림 기능이 꺼져 있어요" and never reaches chat.
+6. **Bounded local dispatch.** `ReminderDispatchService` (`recoverInterrupted`, `dispatchDue`) claims ≤10 due
+   reminders per call, composes text, calls `deliver` once each, then `completeFiring`. The tick driver is
+   composition-root lifecycle (`apps/quoky/src/reminders/reminder-tick-driver.ts`): a non-overlapping, unref'd 15 s
+   `setTimeout` chain, started in `main.ts` after `platform.start()` only when enabled, stopped first on shutdown
+   (PRO-5 is the sole `main.ts` editor). **At most once per occurrence**, by the D4 outcome contract: `SENT`
+   completes (ONCE) or advances (recurring); `NOT_SENT{retryable: true}` retries ≤3 times (+1/+5/+15 min), then
+   FAILED (ONCE) or advance (recurring); `NOT_SENT{retryable: false}` is FAILED (ONCE) or advance (recurring);
+   `UNCERTAIN` is terminal `DELIVERY_UNCERTAIN` for that occurrence — never retried, never re-sent through a DM
+   fallback or any other target. A FIRING row found at startup is treated as `UNCERTAIN` (not resent). Downtime: a
+   missed ONCE is delivered once, labelled late; a recurring one gets one catch-up only within 60 minutes, else
+   `SKIPPED_MISSED`.
+7. **Local-only daily brief.** Today's remaining reminders plus ACTIVE local WorkItems (count and up to 10 entries,
+   showing ADR-0100 titles where present), read through local repositories only. Never a provider, connector, tool,
+   network, Task/TaskRun or WorkItem mutation; an LLM- or connector-backed brief needs a new ADR.
+8. **Owner-only outbound gate and delivery target (adapter-owned, mirrors ADR-0091) — owner decision, recommended
+   default DM-only.** The Discord adapter implements `NotificationSink` in a new `notification.ts` (PRO-4; intents
+   untouched). Every delivery is addressed to the configured owner only; a non-owner recipient is
+   `NOT_SENT{retryable: false}`. At delivery time the adapter rechecks platform and owner id.
+   - **Default target: the owner DM only.** With `QUOKY_REMINDERS_CHANNEL_DELIVERY=false` (the default, parsed by
+     SEAM-2, ADR-0096 D9) every reminder, whatever channel it was created in, is delivered to the owner DM, so its
+     text is visible to the owner alone.
+   - **Guild-channel delivery is opt-in.** Only when the owner sets `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` (exact
+     `true`/`false`) **and** has acknowledged, through the documented quickstart/operator-guide note and the
+     `.env.example` comment, that members of that channel can read the reminder text, is a TEXT reminder delivered
+     to its originating allowlisted channel/thread. The adapter rechecks the channel/thread allowlist before
+     sending; a target that is no longer admitted, or a confirmed non-transmitting permission refusal from the
+     channel, falls back once to the owner DM within the same attempt (safe: nothing was transmitted). An
+     `UNCERTAIN` channel send never falls back.
+   - **The daily brief (kind BRIEF) is always DM-only**, whatever the flag, because it contains WorkItem titles.
+
+   `allowedMentions` = owner only in guilds, none in DMs; text ≤1,800 chars. The owner-only guarantee is therefore:
+   owner-created, owner-addressed, mentioning only the owner, and — by default — readable only by the owner; with
+   channel delivery enabled, TEXT reminders are additionally readable by members of the owner's allowlisted
+   channel, by the owner's explicit choice.
+9. **Persistence: migration v13 (ADR-0096 D10 lane, PRO-2, wave 4).** v13 is fixed; PRO-2 is blocked until QUAL-3's
+   v12 has merged to `main` and never takes another number. Additive, idempotent
+   `reminders(id PK, actor_id, display_no, status, next_fire_at NULL, data JSON, UNIQUE(actor_id, display_no))` with
+   indexes `reminders_due(status, next_fire_at)` and `reminders_actor(actor_id, status)`; claim/complete/cancel are
+   single IMMEDIATE transactions with CAS. The repository is exposed lazily over `storage.reminders` (QA-001).
+   Wiring lives only in `features/reminders.providers.ts` (no `app.module.ts`, `config.ts` or runtime edit).
+10. **Risk and bounds.** Create/list/cancel are LOW (owner-instructed local writes whose only effect is text
+    addressed to that owner, in the owner DM by default and in the owner's allowlisted channel only under the D8
+    opt-in). ≤50 active reminders, ≤1 fire per reminder per day, ≤10 deliveries per tick.
+
+Rejected: LLM parsing; `QueueProvider` jobs; a `PlatformAdapter` method; a front door before `ConversationRuntime`;
+a new IntentType; at-least-once delivery; retrying or re-routing an `UNCERTAIN` send; guild-channel delivery by
+default; replaying missed occurrences; `TriggerSource`/continuation.
+
+### Consequences
+
+- **+** First proactive capability with no agent loop, workflow engine, provider call or external read; offline-
+  testable with a fixed clock, `Intl` and in-memory SQLite. Team Edition swaps only the repository and the driver.
+- **−** A second outbound producer whose owner gate must track ADR-0091 config (rechecked at delivery).
+- **−** A transient network failure after the request was issued loses that occurrence (`DELIVERY_UNCERTAIN`, shown
+  in `알림 목록`) rather than risking a duplicate; DM-only by default means reminders created in a channel answer
+  in the DM.
+- **−** Finite grammar (clarify on a miss); ≈15 s precision; nothing is delivered while the process is down.
+- **Non-goals hold.** The tick driver dispatches owner-authored text on a fixed bounded schedule; it never decides,
+  plans or acts, so it is not an autonomous loop and not a workflow engine.
+
+### Strict gates
+
+Attended reminders Live UAT per `docs/uat/reminders-uat-packet.md`: real Discord sends to the owner DM with the
+default `QUOKY_REMINDERS_CHANNEL_DELIVERY=false`, then a separately approved step with it `true` (channel send and an
+allowlist-removal DM fallback; the brief stays in the DM), the restart catch-up and FIRING→`DELIVERY_UNCERTAIN`
+recovery scenarios, `QUOKY_REMINDERS_ENABLED=true` in `.env.local`, runtime per AGENTS.md. v13 apply only to the
+delegated dev DB. Flipping the default to `true` is a PO decision after UAT. Independent Chief Architect review
+before PRO-5 merges. Any reminder action that calls a provider, connector or tool
+needs a new ADR.
+
+### Owner decisions requested
+
+1. Deterministic grammar only; meridiem policy; clarify on past/ambiguous. **Recommended:** approve.
+2. At-most-once: retry only confirmed `NOT_SENT{retryable}` (≤3), `UNCERTAIN` is terminal `DELIVERY_UNCERTAIN`
+   (never retried, never DM-fallback), owner-only mention, missed policy (late once / 60-minute catch-up).
+   **Recommended:** approve.
+3. Limits (50 active, 200-char body, 1,800-char delivery, 10 per tick); local-only brief. **Recommended:** approve.
+4. `QUOKY_REMINDERS_ENABLED=false` and `QUOKY_TIMEZONE=Asia/Seoul` until reminder Live UAT passes.
+   **Recommended:** approve.
+5. Delivery target (D8): owner DM only by default; guild-channel delivery of TEXT reminders only with
+   `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` plus the owner's documented acknowledgement that channel members can read
+   them; the daily brief is always DM-only. **Recommended:** DM-only (`false`).
+
+### V1 / V2
+
+`[NOW]` reminder aggregate, KO/EN grammar, v13 store, conversation and dispatch services, tick driver, owner-only
+sink, local brief, default-off flag. `[LATER]` snooze/edit, sub-daily recurrence, richer brief (new ADR),
+non-reminder notifications, distributed scheduler, reminders for other actors.
+
+
+## ADR-0096..0101 ratification record — Quoky Personal v2 (2026-10-02)
+
+- **Ratified by:** the Product Owner, in chat on 2026-10-02, after the Codex architecture review and delta reviews
+  (all 7 findings resolved; restart reconstruction clarified in ADR-0097 D5).
+- **Owner decisions:** every "Owner decisions requested" item in ADR-0096..0101 takes its recommended default, with
+  these explicit choices:
+  1. Work-lookup summaries may fall back to Claude when Ollama is not ready: `QUOKY_WORK_SUMMARY_ENABLED=true`
+     (default on). Corporate connector text can leave the host through the owner's Claude subscription.
+  2. The stricter credential file-content guard (ADR-0097, OVR-1) merges in wave 1, before the override UX (wave 4).
+  3. Reminder delivery: owner DM only by default; channel delivery requires `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`.
+  4. Delivery governance for the Personal v2 execution plan: per wave, Push → PR → Merge proceeds automatically when the
+     wave's independent review, integrated offline validation and Codex review all pass. Every Live UAT, runtime,
+     Discord, provider/network and secret-access step still needs its own exact-scope Strict approval.
