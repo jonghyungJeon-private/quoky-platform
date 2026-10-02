@@ -64,6 +64,10 @@ interface HarnessOptions {
   providerExecute?: (request: AiRequest) => Promise<{ text: string }>;
   routerSelectThrows?: boolean;
   createTaskThrows?: boolean;
+  /** Anchor a resumable `{request, prior}` on the seeded task so an approve reaches the decision point. */
+  resumable?: boolean;
+  /** Runs inside `memory.recordShortTerm` — i.e. AFTER the turn-start expiry check, BEFORE any decision. */
+  onRecordShortTerm?: () => void;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -159,6 +163,9 @@ function harness(opts: HarnessOptions = {}) {
       planId: 'plan-1',
       createdAt: T0,
       updatedAt: T0,
+      ...(opts.resumable
+        ? { metadata: { conversationExecutionAnchor: { request: { instruction: 'fix foo' }, prior: { status: 'WAITING_APPROVAL' } } } }
+        : {}),
     });
     approvals.set(pendingRequest.id, pendingRequest);
     seeded.activeTaskId = 'task-1';
@@ -202,7 +209,7 @@ function harness(opts: HarnessOptions = {}) {
     actors: { async resolveFromContext() { return OWNER; } },
     sessions: sessionManager,
     memory: {
-      async recordShortTerm() { calls.recordShortTerm++; return { id: 'mem-user' }; },
+      async recordShortTerm() { calls.recordShortTerm++; opts.onRecordShortTerm?.(); return { id: 'mem-user' }; },
       async recordAssistant() { calls.recordAssistant++; return undefined; },
       async recordToolMemory() { return undefined; },
     },
@@ -479,6 +486,72 @@ describe('ConversationRuntime — pending-approval TTL (ADR-0093)', () => {
     expect(anchor.commitApprovalId).toBeUndefined();
     expect(anchor.proposedCommitMessage).toBeUndefined();
     expect(anchor.workspaceChangeRef?.id).toBe('wc-1');
+  });
+
+  describe('an approval that expires MID-TURN (after the turn-start check) is never approved', () => {
+    const justBefore = at(PENDING_APPROVAL_TTL_MS - 1);
+    const pastDeadline = at(PENDING_APPROVAL_TTL_MS + 1);
+
+    it('plan-scoped: resume context reconstructed, but the clock passed the deadline → expiry denial, no resume', async () => {
+      const h: ReturnType<typeof harness> = harness({
+        pendingApproval: true,
+        resumable: true,
+        onRecordShortTerm: () => h.setClock(pastDeadline),
+      });
+      h.setClock(justBefore);
+      const result = await h.send('승인');
+      expect(result.status).toBe('DENIED');
+      expect(result.reply.text).toBe(
+        composer.composeApprovalExpired(CTX, h.approvals.get('appr-1')!, PENDING_APPROVAL_TTL_MS).text,
+      );
+      const decided = h.approvals.get('appr-1')!;
+      expect(decided.status).toBe(ApprovalStatus.REJECTED);
+      expect(decided.decidedBy).toBe('system');
+      expect(decided.comment).toBe('expired');
+      expect(decided.decidedAt).toBe(pastDeadline);
+      expect(h.calls.orchestratorResume).toBe(0);
+    });
+
+    it('anchor-scoped (commit): denied by "system" and the anchor reverts; never COMMIT_APPROVED', async () => {
+      const h: ReturnType<typeof harness> = harness({
+        applyAnchor: commitPendingAnchor(),
+        onRecordShortTerm: () => h.setClock(pastDeadline),
+      });
+      h.setClock(justBefore);
+      const result = await h.send('승인');
+      expect(result.status).toBe('DENIED');
+      const decided = h.approvals.get('apply-appr-1')!;
+      expect(decided.status).toBe(ApprovalStatus.REJECTED);
+      expect(decided.decidedBy).toBe('system');
+      expect(decided.comment).toBe('expired');
+      expect(h.currentAnchor()!.status).toBe('WORKSPACE_APPLIED');
+      expect(h.calls.applyAnchorWrites.map((a) => a.status)).not.toContain('COMMIT_APPROVED');
+    });
+
+    it('apply (AWAITING_APPROVAL): denied by "system" and the anchor is cleared; never APPROVED', async () => {
+      const h: ReturnType<typeof harness> = harness({
+        applyAnchor: { ...commitPendingAnchor(), status: 'AWAITING_APPROVAL', approvalId: 'apply-appr-1' },
+        onRecordShortTerm: () => h.setClock(pastDeadline),
+      });
+      h.setClock(justBefore);
+      const result = await h.send('승인');
+      expect(result.status).toBe('DENIED');
+      expect(h.approvals.get('apply-appr-1')!.decidedBy).toBe('system');
+      expect(h.approvals.get('apply-appr-1')!.comment).toBe('expired');
+      expect(h.currentAnchor()).toBeNull();
+      expect(h.calls.applyAnchorWrites.map((a) => a.status)).not.toContain('APPROVED');
+    });
+
+    it('a deny that lands after the deadline is still the user\'s deny (only positive decisions are re-checked)', async () => {
+      const h: ReturnType<typeof harness> = harness({
+        pendingApproval: true,
+        onRecordShortTerm: () => h.setClock(pastDeadline),
+      });
+      h.setClock(justBefore);
+      const result = await h.send('거절');
+      expect(result.status).toBe('DENIED');
+      expect(h.approvals.get('appr-1')!.decidedBy).toBe(OWNER.id);
+    });
   });
 
   it('an expired apply (AWAITING_APPROVAL) approval clears the anchor, exactly like a denial', async () => {
