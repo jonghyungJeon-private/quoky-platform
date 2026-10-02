@@ -349,9 +349,15 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
    * Non-interactive print mode with an explicit model. Prompt is supplied via stdin,
    * never as an argv. A request adds the capability's `--effort`, and a request with
    * no workspace is text-only, so every tool is disabled (`--tools ""`) to cut overhead.
+   * Every run is isolated from the owner's personal Claude Code environment (QA-V2-002): no MCP servers or
+   * claude.ai connectors (`--strict-mcp-config`), no user/project/local settings or hooks (`--setting-sources ""`),
+   * and nothing written to the owner's session history (`--no-session-persistence`). Without this a reply could
+   * describe the owner's own connectors ("Google Calendar 커넥터를 승인해 주세요") as if Quoky could use them.
    */
   buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace'>): string[] {
-    const args = ['-p', '--model', this.model];
+    const args = [
+      '-p', '--model', this.model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
+    ];
     if (request === undefined) return args;
     const effort = this.effortByCapability[request.capability];
     if (effort !== undefined) args.push('--effort', effort);

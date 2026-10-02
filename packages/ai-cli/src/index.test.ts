@@ -53,7 +53,7 @@ describe('ClaudeCliProvider', () => {
       prompt: PROMPT,
     });
     expect(calls[0]?.bin).toBe('claude');
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--effort', 'low', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
     expect(calls[0]?.opts.input).toContain('do the thing');
     expect(calls[0]?.opts.cwd).toBeTruthy();
     expect(calls[0]?.opts.env).toBeUndefined();
@@ -167,28 +167,41 @@ describe('ClaudeCliProvider', () => {
     [Capability.CODE_IMPLEMENTATION, 'high'],
   ] as const)('passes --model sonnet and the default effort for %s (%s)', async (capability, effort) => {
     const args = await argsFor({ capability });
-    expect(args.slice(0, 5)).toEqual(['-p', '--model', 'sonnet', '--effort', effort]);
+    expect(args.slice(0, 9)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', effort]);
     expect(args).not.toContain(PROMPT); // prompt stays on stdin
   });
 
   it('passes no --effort flag for a capability outside the effort table (ADR-0092: CLI default)', async () => {
     const args = await argsFor({ capability: Capability.TEST_EXECUTION });
-    expect(args.slice(0, 3)).toEqual(['-p', '--model', 'sonnet']);
+    expect(args.slice(0, 7)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '']);
     expect(args).not.toContain('--effort');
   });
 
   it('honours a configured model and partial effort overrides over the defaults', async () => {
     const options = { model: 'opus', effortByCapability: { [Capability.GENERAL_CHAT]: 'medium' as const } };
-    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 5))
-      .toEqual(['-p', '--model', 'opus', '--effort', 'medium']);
-    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(3, 5))
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 9))
+      .toEqual(['-p', '--model', 'opus', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium']);
+    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(7, 9))
       .toEqual(['--effort', 'high']);
   });
 
   it('treats an explicit undefined effort override as the default instead of throwing', async () => {
     const options = { effortByCapability: { [Capability.GENERAL_CHAT]: undefined } };
-    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(3, 5))
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(7, 9))
       .toEqual(['--effort', 'low']);
+  });
+
+  it('isolates every run from the owner\'s Claude Code environment (QA-V2-002: no MCP/connectors, settings, session history)', async () => {
+    for (const request of [
+      { capability: Capability.GENERAL_CHAT },
+      { capability: Capability.CODE_IMPLEMENTATION, workspace: { id: 'w1', rootPath: '/repo', kind: 'local-clone' as const } },
+    ]) {
+      const args = await argsFor(request);
+      expect(args).toContain('--strict-mcp-config');
+      expect(args).toContain('--no-session-persistence');
+      expect(args[args.indexOf('--setting-sources') + 1]).toBe('');
+      expect(args).not.toContain('--mcp-config');
+    }
   });
 
   it('disables tools only for requests without a workspace', async () => {
@@ -198,7 +211,7 @@ describe('ClaudeCliProvider', () => {
       capability: Capability.CODE_IMPLEMENTATION,
       workspace: { id: 'w1', rootPath: '/repo', kind: 'local-clone' },
     });
-    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--effort', 'high']);
+    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high']);
   });
 
   it('rejects a model or effort that could be read as another flag', () => {
@@ -1209,7 +1222,7 @@ describe('Provider regression through the contained runner', () => {
     });
     expect(probe.spawns).toHaveLength(1);
     expect(probe.spawns[0]?.bin).toBe('claude');
-    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--effort', 'low', '--tools', '']);
+    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
     expect(probe.spawns[0]?.options.cwd).toBe(tmpdir()); // Claude's neutral-cwd contract
     expect(probe.spawns[0]?.options.shell).toBe(false);
     expect(probe.stdinWrites).toEqual([PROMPT]); // prompt on stdin, never argv
