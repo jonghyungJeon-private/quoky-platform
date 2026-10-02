@@ -70,6 +70,8 @@ export type WorkChatCommand =
    * Hint-only (QA-V2-W7-03): an unanchored "<title> 완료" style statement. It never mutates; the desk resolves it
    * against the owner's OPEN to-dos and, only when exactly one matches, replies with the exact anchored command.
    */
+  /** Read-only status question (QA-V2-W7-05): "<title> 완료했나?" about one exact to-do; never mutates. */
+  | { readonly kind: 'todo.status'; readonly target: WorkChatTarget }
   | { readonly kind: 'todo.hint'; readonly action: 'complete' | 'cancel'; readonly target: WorkChatTarget }
   | {
       readonly kind: 'lookup';
@@ -99,6 +101,7 @@ export function workChatCommandMode(command: WorkChatCommand): WorkChatMode {
     case 'todo.cancel':
     case 'todo.link':
     case 'todo.hint':
+    case 'todo.status':
       return 'mutation';
     case 'usage':
       return command.topic.startsWith('todo-') ? 'mutation' : 'lookup';
@@ -618,6 +621,28 @@ const HINT_NUMBER = (tail: string, bareNumber: boolean): RegExp =>
 const HINT_NUMBER_COMPLETE = HINT_NUMBER(HINT_COMPLETE_TAIL, true);
 const HINT_NUMBER_CANCEL = HINT_NUMBER(HINT_CANCEL_TAIL, false);
 
+// -- read-only status questions (QA-V2-W7-05) ---------------------------------------------------------------------------
+
+/** Tails that are questions by themselves (`...나`, `...나요`, `...니`, `...냐`) and tails that need an explicit `?`. */
+const STATUS_SELF_QUESTION = '(?:(?:완료\\s*(?:했|됐|되었)|끝났|다\\s*했|했)(?:나요|나|니|냐))';
+const STATUS_NEEDS_MARK = '(?:(?:완료\\s*(?:했|됐|되었)|끝났|다\\s*했)(?:어요|어))';
+const STATUS_END = '(?:\\s*[?？]+|(?<=나|나요|니|냐)\\s*[?？.!~]*)$';
+const STATUS_TAIL = `(?:${STATUS_SELF_QUESTION}|${STATUS_NEEDS_MARK})`;
+const STATUS_TITLE = new RegExp(`^(.{1,200}?)\\s*[,:]?\\s*${STATUS_TAIL}${STATUS_END}`);
+const STATUS_NUMBER = new RegExp(
+  `^(?:(?:할\\s*일\\s*)#?(\\d{1,6})\\s*(?:번(?:째)?)?|#?(\\d{1,6})\\s*번(?:째)?\\s*(?:할\\s*일)?)\\s*(?:은|는)?\\s*${STATUS_TAIL}${STATUS_END}`,
+);
+
+function detectStatusQuestion(text: string): WorkChatCommand | null {
+  const byNumber = STATUS_NUMBER.exec(text);
+  if (byNumber) return { kind: 'todo.status', target: { index: firstNumber(byNumber) } };
+  const head = STATUS_TITLE.exec(text)?.[1]?.trim();
+  if (head && !/^(?:완료|끝|다)$|(?:^|\s)(?:안|못)$/.test(head) && /[\p{L}\p{N}]/u.test(head) && !/^[\d\s#번째]+$/.test(head)) {
+    return { kind: 'todo.status', target: { text: head } };
+  }
+  return null;
+}
+
 /**
  * `<title> 완료`, `<n>번 완료했어`, `할 일 <n> 완료` and the cancel forms. Detection is purely lexical and runs last, so
  * every other detector wins; the desk only answers when the title/number names exactly one OPEN to-do of the actor
@@ -625,6 +650,8 @@ const HINT_NUMBER_CANCEL = HINT_NUMBER(HINT_CANCEL_TAIL, false);
  */
 function detectCompletionHint(text: string): WorkChatCommand | null {
   if (isNegatedMessage(text)) return null;
+  const status = detectStatusQuestion(text);
+  if (status) return status;
   for (const [action, numberRe, titleRe] of [
     ['complete', HINT_NUMBER_COMPLETE, HINT_TITLE_COMPLETE],
     ['cancel', HINT_NUMBER_CANCEL, HINT_TITLE_CANCEL],
