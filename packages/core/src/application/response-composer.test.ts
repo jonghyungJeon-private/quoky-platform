@@ -1374,8 +1374,11 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       'help',
       () => composer.composeHelp(CTX).text,
       [
-        '"도움말" 또는 "/help"',
-        '"새 대화" 또는 "/reset"',
+        '- "도움말": 이 안내를 다시 보여줘요.',
+        '- "새 대화": 지금 대화를 끝내고 새로 시작해요.',
+        // QA-011: "/help"/"/reset" still work, but Discord opens the slash-command picker — close it with Esc
+        '"/help", "/reset"',
+        'Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
         '승인 요청에는 "승인" 또는 "거절"로 답해 주세요.',
         '"적용해줘"',
         '"패치 만들어줘"',
