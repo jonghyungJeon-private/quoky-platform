@@ -257,8 +257,38 @@ describe('connector lookups', () => {
     ['create a Jira ticket for the outage', 'jira'],
     ['post a message to Slack', 'slack'],
     ['comment on the GitHub issue', 'github'],
+    ['GitHub PR 올려줘', 'github'],
+    ['Slack에 메시지 보내줘', 'slack'],
+    ['Jira에 새 항목 만들어줘', 'jira'],
+    ['깃허브에서 풀 리퀘스트 닫아줘', 'github'],
+    ['https://github.com/acme/app/issues/12 에 댓글 달아줘', 'github'],
+    ['Confluence 문서 작성해줘', 'confluence'],
   ])('refuses external writes: %s', (text, source) => {
     expect(detectWorkChatCommand(text)).toEqual({ kind: 'external-write-unsupported', source });
+  });
+
+  // Code and file work on this repository mentions jira/github/slack/confluence in file and package names; it must keep
+  // reaching the code path instead of the connector write refusal.
+  it.each([
+    'slack.ts 파일 수정해줘',
+    'github-app-git-provider.ts 파일 수정해줘',
+    'Slack 알림 코드 수정해줘',
+    'slack 어댑터 파일 만들어줘',
+    'confluence 커넥터 파일 생성해줘',
+    'jira.ts 파일 만들어줘',
+    '깃허브 액션 워크플로 파일 만들어줘',
+    'packages/connector-jira/src/index.ts 수정해줘',
+    '.github/workflows/ci.yml 수정해줘',
+    'jira 커넥터 코드에 타임아웃 추가해줘',
+    'connector-slack 테스트 추가해줘',
+    'README에 Jira 설정 방법 추가해줘',
+    'Jira 연동 문서 작성해줘',
+    'connector-jira 수정해줘',
+    'jira-client 만들어줘',
+    'update the slack.ts file',
+    'add a test for the connector-github package',
+  ])('leaves code and file work to the code path: %s', (text) => {
+    expect(detectWorkChatCommand(text), text).toBeNull();
   });
 });
 
@@ -322,6 +352,15 @@ describe('modes and intents', () => {
       [{ kind: 'external-write-unsupported', source: 'jira' }, 'lookup'],
     ];
     for (const [command, mode] of cases) expect(workChatCommandMode(command)).toBe(mode);
+  });
+
+  it('puts the unanchored numbered to-do forms at order 100 (documented decision)', () => {
+    for (const text of ['2번 완료 처리해줘', '할 일 2번 취소해줘', '할 일 2번에 Jira PROJ-1 연결']) {
+      const command = detectWorkChatCommand(text);
+      expect(command, text).not.toBeNull();
+      expect(workChatCommandMode(command as WorkChatCommand), text).toBe('mutation');
+      expect(startsWithWorkChatAnchoredPrefix(text), text).toBe(false);
+    }
   });
 
   const intent = (raw: Intent['raw'], type: IntentType = IntentType.LOOKUP): Intent => ({

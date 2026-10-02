@@ -8,7 +8,9 @@ import {
   EXTERNAL_WORK_PROMPT_MAX_CHARS,
   EXTERNAL_WORK_TITLE_MAX_CHARS,
   buildExternalWorkReadout,
+  countExternalWorkPromptItems,
   escapeDiscordText,
+  fitExternalWorkReadoutToPrompt,
   renderExternalWorkFooter,
   renderExternalWorkReadoutForPrompt,
 } from './external-work-readout';
@@ -121,13 +123,38 @@ describe('renderExternalWorkReadoutForPrompt', () => {
     expect(text).not.toContain('https://');
   });
 
-  it('never exceeds 3,000 characters and says how many items were left out', () => {
-    const readout = build(
-      items(10, (index) => ({ title: `T${index} ${'x'.repeat(190)}`, summary: 'y'.repeat(290), container: 'c'.repeat(90) })),
-    );
+  const bulky = () =>
+    items(10, (index) => ({ title: `T${index} ${'x'.repeat(190)}`, summary: 'y'.repeat(290), container: 'c'.repeat(90) }));
+
+  it('keeps only the items the prompt can carry, so the footer matches the prompt', () => {
+    const full = build(bulky());
+    expect(full.items).toHaveLength(10);
+    const readout = fitExternalWorkReadoutToPrompt(full);
+    expect(readout.items.length).toBeLessThan(10);
+    expect(readout.truncated).toBe(true);
+    const text = renderExternalWorkReadoutForPrompt(readout);
+    expect(text.length).toBeLessThanOrEqual(EXTERNAL_WORK_PROMPT_MAX_CHARS);
+    expect(text).not.toMatch(/omitted for length/);
+    expect(countExternalWorkPromptItems(readout)).toBe(readout.items.length);
+    for (const item of readout.items) expect(text).toContain(`[${item.ref}]`);
+    const footer = renderExternalWorkFooter(readout);
+    expect(footer).toContain(`외부 항목 ${readout.items.length}건을 요약에 사용했어요.`);
+    expect(footer.match(/<https:\/\/acme\.atlassian\.net\/browse\/PROJ-\d+>/g)).toHaveLength(readout.items.length);
+  });
+
+  it('never exceeds 3,000 characters and says how many items were left out of a hand-built readout', () => {
+    const built = build(bulky());
+    const full = build(items(10)).items.map((item, index) => ({ ...item, title: `T${index} ${'x'.repeat(190)}`, excerpt: 'y'.repeat(290) }));
+    const readout = { ...built, items: full };
     const text = renderExternalWorkReadoutForPrompt(readout);
     expect(text.length).toBeLessThanOrEqual(EXTERNAL_WORK_PROMPT_MAX_CHARS);
     expect(text).toMatch(/\d+ more item\(s\) omitted for length/);
+    // The footer never claims or links an item the prompt dropped.
+    const footer = renderExternalWorkFooter(readout);
+    const carried = countExternalWorkPromptItems(readout);
+    expect(carried).toBeLessThan(10);
+    expect(footer).toContain(`외부 항목 ${carried}건을 요약에 사용했어요.`);
+    expect(footer.match(/<https:/g)).toHaveLength(carried);
   });
 
   it('keeps injected delimiters and newlines inside one data line', () => {

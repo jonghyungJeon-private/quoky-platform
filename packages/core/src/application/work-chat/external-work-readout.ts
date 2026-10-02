@@ -154,6 +154,20 @@ export function buildExternalWorkReadout(input: BuildExternalWorkReadoutInput): 
   };
 }
 
+/**
+ * The readout the summary model actually sees: only the items the prompt can carry within its character budget
+ * (`truncated` is set when some were cut). The deterministic footer is rendered from this readout, so it never
+ * discloses or links an item the model did not see (ADR-0100 D8). The full readout still feeds the plain list.
+ */
+export function fitExternalWorkReadoutToPrompt(readout: ExternalWorkReadout): ExternalWorkReadout {
+  let fitted = readout;
+  for (;;) {
+    const fitting = countExternalWorkPromptItems(fitted);
+    if (fitting >= fitted.items.length) return fitted;
+    fitted = { ...fitted, items: fitted.items.slice(0, fitting), truncated: true };
+  }
+}
+
 const QUERY_LABEL: Readonly<Record<WorkChatLookupQuery, string>> = {
   'my-items': 'my items',
   'due-this-week': 'items due this week',
@@ -173,12 +187,15 @@ function itemLine(item: ExternalWorkReadoutItem, index: number): string {
   return item.excerpt ? `${head}\n   excerpt: ${item.excerpt}` : head;
 }
 
-/**
- * Render the readout for the prompt: an untrusted-data header, the summary rules, then the items, at most 3,000
- * characters in total. Items that do not fit are replaced by an omitted-count line. URLs are intentionally not
- * included (Quoky appends the sources deterministically).
- */
-export function renderExternalWorkReadoutForPrompt(readout: ExternalWorkReadout): string {
+interface PromptLayout {
+  readonly head: readonly string[];
+  readonly tail: readonly string[];
+  readonly notes: readonly string[];
+  readonly lines: readonly string[];
+  readonly omitted: number;
+}
+
+function layoutPrompt(readout: ExternalWorkReadout): PromptLayout {
   const request = [`source: ${readout.request.source}`, `query: ${QUERY_LABEL[readout.request.query]}`];
   if (readout.request.text) request.push(`text: ${readout.request.text}`);
   const head = [
@@ -210,6 +227,23 @@ export function renderExternalWorkReadoutForPrompt(readout: ExternalWorkReadout)
       omitted += 1;
     }
   });
+  return { head, tail, notes, lines, omitted };
+}
+
+/** How many of the readout's items the prompt section can carry within its character budget. */
+export function countExternalWorkPromptItems(readout: ExternalWorkReadout): number {
+  return layoutPrompt(readout).lines.length;
+}
+
+/**
+ * Render the readout for the prompt: an untrusted-data header, the summary rules, then the items, at most 3,000
+ * characters in total. `fitExternalWorkReadoutToPrompt` keeps only the items that fit (so the footer matches the
+ * prompt); a readout whose items do not fit gets an omitted-count line. URLs are intentionally not
+ * included (Quoky appends the sources deterministically).
+ */
+export function renderExternalWorkReadoutForPrompt(readout: ExternalWorkReadout): string {
+  const { head, tail, notes, lines: fitted, omitted } = layoutPrompt(readout);
+  const lines = [...fitted];
   if (readout.items.length === 0) lines.push('(no items)');
   if (omitted > 0) lines.push(`(${omitted} more item(s) omitted for length)`);
   const text = [...head, ...lines, ...tail, ...notes].join('\n');
@@ -230,7 +264,9 @@ export function escapeDiscordText(text: string): string {
  * disclosure line saying how many external items were used. Bounded to 1,000 characters.
  */
 export function renderExternalWorkFooter(readout: ExternalWorkReadout): string {
-  const used = readout.items.length;
+  // Only items the prompt carried count as used and get a link (a fitted readout always fits entirely).
+  const usedItems = readout.items.slice(0, countExternalWorkPromptItems(readout));
+  const used = usedItems.length;
   const disclosure = [`외부 항목 ${used}건을 요약에 사용했어요.`];
   if (readout.omittedSensitive > 0) {
     disclosure.push(`민감정보가 있는 ${readout.omittedSensitive}건은 제외했어요.`);
@@ -240,7 +276,7 @@ export function renderExternalWorkFooter(readout: ExternalWorkReadout): string {
 
   const linkLines: string[] = [];
   let length = disclosureText.length + 8;
-  for (const item of readout.items) {
+  for (const item of usedItems) {
     if (!item.url || linkLines.length >= EXTERNAL_WORK_FOOTER_MAX_LINKS) continue;
     const line = `- ${escapeDiscordText(Array.from(item.title).slice(0, 50).join(''))} <${item.url}>`;
     if (length + line.length + 1 > EXTERNAL_WORK_FOOTER_MAX_CHARS) break;

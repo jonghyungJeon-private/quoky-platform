@@ -18,6 +18,7 @@ import type { WorkManager } from '../work-manager';
 import type { WorkSurface } from '../work-surface-query';
 import {
   buildExternalWorkReadout,
+  fitExternalWorkReadoutToPrompt,
   renderExternalWorkFooter,
 } from './external-work-readout';
 import type { ExternalWorkReadout } from './external-work-readout';
@@ -335,7 +336,8 @@ export class WorkChatService implements WorkDesk {
     });
     const fallbackText = renderExternalWorkList(readout);
     if (this.summaryEnabled && readout.items.length > 0) {
-      return { kind: 'summarize', readout, fallbackText, footer: renderExternalWorkFooter(readout) };
+      const summaryReadout = fitExternalWorkReadoutToPrompt(readout);
+      return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: renderExternalWorkFooter(summaryReadout) };
     }
     return reply(fallbackText);
   }

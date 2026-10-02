@@ -77,8 +77,13 @@ export type WorkChatCommand =
   | { readonly kind: 'usage'; readonly topic: WorkChatUsageTopic };
 
 /**
- * Which ADR-0100 D2 handler owns a command: `mutation` (order 100: anchored to-do add/complete/cancel/link and their
- * usage hints) or `lookup` (order 300: the list, connector lookups, the write refusal and the search usage hints).
+ * Which ADR-0100 D2 handler owns a command: `mutation` (order 100: to-do add/complete/cancel/link and their usage
+ * hints) or `lookup` (order 300: the list, connector lookups, the write refusal and the search usage hints).
+ *
+ * Decision (WORK-T3 review): the unanchored numbered forms (`2번 완료 처리해줘`, `할 일 2번 취소해줘`,
+ * `할 일 2번에 Jira PROJ-1 연결`) are also `mutation` and so run at order 100, ahead of reminders. They match the whole
+ * message (a leading number or `할 일 N번`), are negation-aware, and no reminder grammar claims them. The closed
+ * ADR-0100 D1 prefix list (`startsWithWorkChatAnchoredPrefix`) is the only set that bypasses reminder exclusions.
  */
 export type WorkChatMode = 'mutation' | 'lookup';
 
@@ -416,10 +421,66 @@ const EXTERNAL_WRITE_EN =
   /^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:create|open|file|raise|update|edit|delete|close|reopen|comment|reply|post|send|assign|transition|merge|resolve)\b(?!\s+me\b)/i;
 const TODO_WORD = /할\s*일|할일|투두|to-?do/i;
 
+/**
+ * A source counts for the write refusal only when it stands alone as a word: `slack.ts`, `connector-jira`,
+ * `github-app-git-provider.ts` and `.github/` name files and packages of this repository, not the external system.
+ */
+const STANDALONE_SOURCE_PATTERNS: ReadonlyArray<readonly [WorkChatSource, RegExp]> = [
+  ['jira', /(?<![\w./-])(?:jira|지라)(?![\w/-]|\.\w)/i],
+  ['github', /(?<![\w./-])(?:git\s?hub|깃\s?허브|깃헙)(?![\w/-]|\.\w)/i],
+  ['slack', /(?<![\w./-])(?:slack|슬랙)(?![\w/-]|\.\w)/i],
+  ['confluence', /(?<![\w./-])(?:confluence|컨플루언스|컨플루엔스)(?![\w/-]|\.\w)/i],
+];
+
+/** The source followed by a locative particle: `Jira에`, `깃허브에서`, or `to|in|on Slack`. */
+const SOURCE_LOCATIVE_KO =
+  /(?<![\w./-])(?:jira|지라|git\s?hub|깃\s?허브|깃헙|slack|슬랙|confluence|컨플루언스|컨플루엔스)\s*(?:에게|에서|에|으로|로)(?![가-힣])/i;
+const SOURCE_LOCATIVE_EN = /\b(?:to|in|on|into)\s+(?:the\s+)?(?:jira|git\s?hub|slack|confluence)(?![\w/.-])/i;
+
+/** Items that live in the external system (a write to one of them is a connector write). */
+const EXTERNAL_OBJECT =
+  /이슈|티켓|풀\s*리퀘(?:스트)?|\bPRs?\b|댓글|코멘트|메시지|메세지|채널|스레드|에픽|스프린트|\bissues?\b|\btickets?\b|\bcomments?\b|\bmessages?\b|\bpull\s*requests?\b|\bthreads?\b|\bchannels?\b|\bepics?\b|\bsprints?\b/i;
+/** Pages and documents are external objects only for Confluence. */
+const CONFLUENCE_OBJECT = /페이지|문서|\bpages?\b|\bdocs?\b|\bdocuments?\b/i;
+
+/**
+ * Code or file work on this repository (the classifier's IMPLEMENT_CODE and file-path heuristics are the reference):
+ * a code noun, a file name or extension, or a multi-segment path.
+ */
+const CODE_WORK_NOUN =
+  /코드|파일|함수|테스트|커넥터|어댑터|연동|설정|리드미|README|클래스|모듈|패키지|워크플로|스크립트|라이브러리|기능|구현|리팩터|리팩토|개발|\bcode\b|\bfiles?\b|\bfunctions?\b|\btests?\b|\bconnectors?\b|\badapters?\b|\bconfig(?:uration)?\b|\bworkflows?\b|\bscripts?\b|\bpackages?\b|\bmodules?\b|\bsdk\b|\bimplement\w*|\brefactor\w*/i;
+const FILE_NAME =
+  /(?:^|[\s"'`(])[\w.-]*\.(?:[cm]?[jt]sx?|json|ya?ml|md|mdx|py|java|kt|go|rs|sh|css|html|sql|toml|lock|env|txt)(?!\w)/i;
+const URL_OR_ITEM_REF = /https?:\/\/\S+|[\w.-]+\/[\w.-]+#\d+/gi;
+const MULTI_SEGMENT_PATH = /(?:^|[\s"'`(])\.{0,2}\/?[\w@.-]+\/[\w@./-]+/;
+const DOT_GITHUB = /(?:^|[\s"'`(])\.github\b/i;
+
+function hasCodeWorkSignal(text: string): boolean {
+  if (CODE_WORK_NOUN.test(text)) return true;
+  const withoutLinks = text.replace(URL_OR_ITEM_REF, ' ');
+  return FILE_NAME.test(withoutLinks) || MULTI_SEGMENT_PATH.test(withoutLinks) || DOT_GITHUB.test(withoutLinks);
+}
+
+/** A link to a source names the source (`github.com/o/r/issues/1`), even though its host is not a standalone word. */
+const SOURCE_URL_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/https?:\/\/(?:www\.)?github\.com\/\S*/gi, ' GitHub '],
+  [/https?:\/\/\S*atlassian\.net\/browse\/\S*/gi, ' Jira '],
+  [/https?:\/\/\S*atlassian\.net\/wiki\/\S*/gi, ' Confluence '],
+  [/https?:\/\/\S*slack\.com\/\S*/gi, ' Slack '],
+];
+
 function detectExternalWrite(text: string): WorkChatCommand | null {
-  const sources = detectSources(text);
-  const source = sources[0];
-  if (source === undefined || TODO_WORD.test(text)) return null;
+  if (TODO_WORD.test(text) || hasCodeWorkSignal(text)) return null;
+  const named = SOURCE_URL_WORDS.reduce((acc, [pattern, word]) => acc.replace(pattern, word), text);
+  const standalone = STANDALONE_SOURCE_PATTERNS.filter(([, pattern]) => pattern.test(named)).map(([source]) => source);
+  const source = standalone[0];
+  if (source === undefined) return null;
+  const hasObject =
+    EXTERNAL_OBJECT.test(named) ||
+    (standalone.includes('confluence') && CONFLUENCE_OBJECT.test(named)) ||
+    SOURCE_LOCATIVE_KO.test(named) ||
+    SOURCE_LOCATIVE_EN.test(named);
+  if (!hasObject) return null;
   if (unnegatedExec(text, EXTERNAL_WRITE_KO) || unnegatedExec(text, EXTERNAL_WRITE_EN)) {
     return { kind: 'external-write-unsupported', source };
   }

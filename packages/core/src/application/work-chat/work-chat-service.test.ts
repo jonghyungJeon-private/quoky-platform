@@ -567,9 +567,17 @@ describe('connector lookups', () => {
     const { say } = harness([new FakeConnector('jira', { items: many })]);
     const outcome = await say('내 Jira 이슈 보여줘');
     if (outcome.kind !== 'summarize') throw new Error('expected summarize');
-    expect(outcome.readout.items).toHaveLength(10);
+    // The summary readout holds only the items the 3,000-character prompt carries; the footer matches it exactly.
+    const prompt = renderExternalWorkReadoutForPrompt(outcome.readout);
+    expect(outcome.readout.items.length).toBeGreaterThan(0);
+    expect(outcome.readout.items.length).toBeLessThanOrEqual(10);
     expect(outcome.readout.truncated).toBe(true);
-    expect(renderExternalWorkReadoutForPrompt(outcome.readout).length).toBeLessThanOrEqual(EXTERNAL_WORK_PROMPT_MAX_CHARS);
+    expect(prompt.length).toBeLessThanOrEqual(EXTERNAL_WORK_PROMPT_MAX_CHARS);
+    expect(prompt).not.toMatch(/omitted for length/);
+    expect(outcome.footer).toContain(`외부 항목 ${outcome.readout.items.length}건을 요약에 사용했어요.`);
+    expect(outcome.footer.match(/<https:/g)).toHaveLength(outcome.readout.items.length);
+    // The deterministic fallback list still shows all 10 items.
+    expect(outcome.fallbackText).toContain('(10건, 일부만 표시)');
     expect(outcome.fallbackText.length).toBeLessThanOrEqual(WORK_CHAT_REPLY_MAX_CHARS);
   });
 
