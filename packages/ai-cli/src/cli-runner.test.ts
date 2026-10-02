@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { Capability, embeddingRequestMetadata } from '@quoky/core';
+import { OllamaCliProvider } from './index';
+import { OllamaCliEmbeddingProvider } from './ollama-embedding-provider';
 import {
   CALLER_ENV_ALLOWLIST,
   INHERITED_ENV_ALLOWLIST,
@@ -15,6 +18,7 @@ import {
 import type {
   CliRunOptions,
   CliRunResult,
+  CliRunner,
   ContainmentSnapshot,
   RunnerTimers,
   TimerHandle,
@@ -440,6 +444,90 @@ describe('contained CLI runner: parent environment isolation', () => {
     expect(run.spawns).toHaveLength(0);
     expect(JSON.stringify(result)).not.toContain('GITHUB_TOKEN');
     expect(JSON.stringify(result)).not.toContain('raw-secret');
+  });
+});
+
+describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', () => {
+  /** The options a provider hands the runner, captured without spawning anything. */
+  async function capturedOptions(
+    run: (runner: CliRunner) => Promise<unknown>,
+  ): Promise<{ args: string[]; options: CliRunOptions }> {
+    let captured: { args: string[]; options: CliRunOptions } | undefined;
+    await run(async (_bin, args, options) => {
+      captured = { args, options };
+      return { code: 0, stdout: '[0.1, 0.2]', stderr: '', timedOut: false };
+    });
+    if (captured === undefined) throw new Error('provider did not run');
+    return captured;
+  }
+
+  const embeddingOptions = () =>
+    capturedOptions((runner) =>
+      new OllamaCliEmbeddingProvider({ runner }).execute({
+        capability: Capability.EMBEDDING,
+        prompt: 'embed me',
+        metadata: { ...embeddingRequestMetadata('query') },
+      }),
+    );
+  const chatOptions = () =>
+    capturedOptions((runner) =>
+      new OllamaCliProvider({ runner }).execute({ capability: Capability.GENERAL_CHAT, prompt: 'hello' }),
+    );
+
+  it('an embedding run builds exactly the same child environment as a production Ollama chat run', async () => {
+    const embedding = await embeddingOptions();
+    const chat = await chatOptions();
+    expect(embedding.options.env).toEqual(chat.options.env);
+    expect(embedding.options.environmentProfile).toBeUndefined();
+    expect(chat.options.environmentProfile).toBeUndefined();
+    expect(embedding.options.downloadMarkerPolicy).toBe(chat.options.downloadMarkerPolicy);
+
+    const embeddingRun = startRun({
+      env: embedding.options.env ?? {},
+      downloadMarkerPolicy: embedding.options.downloadMarkerPolicy ?? 'OLLAMA_PULL_STDERR',
+    });
+    const chatRun = startRun({
+      env: chat.options.env ?? {},
+      downloadMarkerPolicy: chat.options.downloadMarkerPolicy ?? 'OLLAMA_PULL_STDERR',
+    });
+    await closeWith(embeddingRun);
+    await closeWith(chatRun);
+    const embeddingEnv = childEnvOf(embeddingRun);
+    const chatEnv = childEnvOf(chatRun);
+
+    expect(Object.keys(embeddingEnv).sort()).toEqual(
+      [...INHERITED_ENV_ALLOWLIST, 'TMPDIR', ...CALLER_ENV_ALLOWLIST].sort(),
+    );
+    const { TMPDIR: embeddingTmp, ...embeddingRest } = embeddingEnv;
+    const { TMPDIR: chatTmp, ...chatRest } = chatEnv;
+    expect(embeddingRest).toEqual(chatRest);
+    // Default profile: the owner's HOME (model inventory) is kept, TMPDIR is the runner-owned directory.
+    expect(embeddingEnv.HOME).toBe(PARENT_WITH_SECRETS.HOME);
+    expect(embeddingTmp).toBe(embeddingRun.created[0]);
+    expect(chatTmp).toBe(chatRun.created[0]);
+    // The parent OLLAMA_HOST is never inherited, so the child uses the CLI's default local daemon.
+    expect(embeddingEnv.OLLAMA_HOST).toBeUndefined();
+    expect(embeddingEnv.OLLAMA_NO_CLOUD).toBeUndefined();
+  });
+
+  it.each<Record<string, string>>([
+    { OLLAMA_NO_CLOUD: '1' },
+    { OLLAMA_HOST: 'http://127.0.0.1:11434' },
+    { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', OLLAMA_NO_CLOUD: '1' },
+    { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', OLLAMA_HOST: 'http://127.0.0.1:11434', OLLAMA_NO_CLOUD: '1' },
+  ])('refuses a caller %j outside the validation profile without spawning', async (env) => {
+    const run = startRun({ env, downloadMarkerPolicy: 'OLLAMA_PULL_STDERR' });
+    const result = await run.result;
+    expect(run.spawns).toHaveLength(0);
+    expect(result.code).toBeNull();
+    expect(result.stderr).toContain('not allow-listed');
+    expect(result.stderr).not.toContain('OLLAMA');
+    expect(buildChildEnvironment(PARENT_WITH_SECRETS, '/tmp/owned', env).ok).toBe(false);
+  });
+
+  it('keeps the caller allowlist at the chat colour variables only', () => {
+    expect([...CALLER_ENV_ALLOWLIST]).toEqual(['NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE']);
+    expect([...INHERITED_ENV_ALLOWLIST]).toEqual(['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'LC_CTYPE']);
   });
 });
 

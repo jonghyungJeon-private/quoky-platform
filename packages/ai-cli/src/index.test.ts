@@ -26,7 +26,13 @@ import {
   generalChatReplyPolicyMetadata,
 } from '@quoky/core';
 import type { AiRequest, MemoryManager, MemoryRecord, Task } from '@quoky/core';
-import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider, maskSecrets } from './index';
+import {
+  ClaudeCliProvider,
+  CodexCliProvider,
+  OllamaCliEmbeddingProvider,
+  OllamaCliProvider,
+  maskSecrets,
+} from './index';
 import type { ClaudeCliProviderOptions } from './index';
 import { INHERITED_ENV_ALLOWLIST, createContainedCliRunner } from './cli-runner';
 import { UNSUPPORTED_ACTION_NOTICE_EN, UNSUPPORTED_ACTION_NOTICE_KO } from './output-sanitizer';
@@ -1002,6 +1008,39 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       (c) => c.capability === Capability.CODE_IMPLEMENTATION,
     );
     expect(code?.priority).toBeLessThan(claudeCode?.priority ?? 0);
+  });
+});
+
+describe('EMBEDDING routing (ADR-0098 D8)', () => {
+  const LIST = 'NAME ID SIZE MODIFIED\nllama3.1:latest abc 4.7 GB now\nnomic-embed-text:latest def 274 MB now\n';
+  const listing: CliRunner = async () => ({ code: 0, stdout: LIST, stderr: '', timedOut: false });
+
+  it('OllamaCliProvider no longer advertises EMBEDDING; the embedding provider advertises only EMBEDDING', () => {
+    expect(new OllamaCliProvider().capabilities.some((c) => c.capability === Capability.EMBEDDING)).toBe(false);
+    expect(new ClaudeCliProvider('claude').capabilities.some((c) => c.capability === Capability.EMBEDDING)).toBe(false);
+    expect(new OllamaCliEmbeddingProvider().capabilities.map((c) => c.capability)).toEqual([Capability.EMBEDDING]);
+  });
+
+  it('with only chat providers, EMBEDDING has no provider (recall stays lexical)', async () => {
+    const router = new CapabilityRouter(
+      new AiProviderManager([
+        new ClaudeCliProvider('claude', { runner: async () => ({ code: 0, stdout: 'ok', stderr: '', timedOut: false }) }),
+        new OllamaCliProvider({ runner: listing }),
+      ]),
+    );
+    await expect(router.select(Capability.EMBEDDING)).rejects.toBeInstanceOf(NoProviderAvailableError);
+  });
+
+  it('routes EMBEDDING to the embedding provider by capability while chat stays on Ollama chat', async () => {
+    const router = new CapabilityRouter(
+      new AiProviderManager([
+        new OllamaCliProvider({ runner: listing }),
+        new OllamaCliEmbeddingProvider({ runner: listing }),
+      ]),
+    );
+    expect((await router.select(Capability.EMBEDDING)).id).toBe('ollama-embed-cli');
+    expect((await router.select(Capability.GENERAL_CHAT)).id).toBe('ollama-cli');
+    expect((await router.select(Capability.SUMMARIZATION)).id).toBe('ollama-cli');
   });
 });
 

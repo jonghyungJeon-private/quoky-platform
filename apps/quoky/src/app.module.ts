@@ -92,7 +92,7 @@ import { GitHubRepositoryHostingProvider } from '@quoky/repository-hosting-githu
 import { GitHubConnectorProvider } from '@quoky/connector-github';
 import { GitHubAppAuth } from '@quoky/github-app-auth';
 import { LocalCommandRunner } from '@quoky/command-local';
-import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider } from '@quoky/ai-cli';
+import { ClaudeCliProvider, CodexCliProvider, OllamaCliEmbeddingProvider, OllamaCliProvider } from '@quoky/ai-cli';
 
 import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
@@ -266,6 +266,17 @@ const infrastructure: Provider[] = [
       new ClaudeCliProvider(config.ai.claudeBin, { model: config.ai.claudeModel }),
       ...(config.ai.ollamaEnabled
         ? [new OllamaCliProvider({ bin: config.ai.ollamaBin, model: config.ai.ollamaModel })]
+        : []),
+      // ADR-0098 D8: opt-in local embeddings (QUOKY_EMBEDDING_ENABLED, default false). Advertises only EMBEDDING
+      // and runs in the runner's default profile like Ollama chat; it never pulls a model.
+      ...(config.embedding.enabled
+        ? [
+            new OllamaCliEmbeddingProvider({
+              bin: config.ai.ollamaBin,
+              model: config.embedding.model,
+              timeoutMs: config.embedding.timeoutMs,
+            }),
+          ]
         : []),
     ],
   },
@@ -451,9 +462,28 @@ const application: Provider[] = [
   },
   {
     provide: ContextBuilder,
-    useFactory: (memory: MemoryManager, storage: StorageProvider) =>
-      createProductionContextBuilder(memory, storage, config.contextBuilder),
-    inject: [MemoryManager, STORAGE_PROVIDER],
+    // ADR-0098 D8: semantic recall is composed only when embeddings are enabled; otherwise recall stays lexical.
+    useFactory: (
+      memory: MemoryManager,
+      storage: StorageProvider,
+      selector: ProviderSelector,
+      vectors: VectorProvider,
+    ) =>
+      createProductionContextBuilder(
+        memory,
+        storage,
+        config.contextBuilder,
+        config.embedding.enabled
+          ? {
+              selector,
+              vectors,
+              timeoutMs: config.embedding.timeoutMs,
+              maxNewPerTurn: config.embedding.maxNewPerTurn,
+              logger: new ConsoleLogger('recall'),
+            }
+          : undefined,
+      ),
+    inject: [MemoryManager, STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER],
   },
   { provide: PromptComposer, useFactory: () => new PromptComposer() },
   {
