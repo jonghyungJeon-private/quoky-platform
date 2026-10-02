@@ -1079,6 +1079,8 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
               },
             }),
     },
+    // ADR-0096: the empty turn-handler registry — every existing scenario runs with no handler registered.
+    turnHandlers: [],
     logger: {
       ...silentLogger,
       warn: (message: string, fields?: LogFields) => {
@@ -1129,9 +1131,10 @@ describe('ConversationRuntime', () => {
     expect(result.reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
   });
 
-  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 32', () => {
+  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 33 (ADR-0096)', () => {
     const { deps } = makeDeps();
-    expect(Object.keys(deps)).toHaveLength(32);
+    expect(Object.keys(deps)).toHaveLength(33);
+    expect(Object.keys(deps)).toContain('turnHandlers');
     expect(Object.keys(deps)).not.toContain('risk');
     expect(Object.keys(deps)).toContain('workSurface');
   });

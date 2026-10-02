@@ -29,3 +29,6 @@ export * from './trigger-source';
 export * from './proactive-work-decision';
 export * from './proactive-delegation-decision';
 export * from './continuation-binding';
+// Personal v2 inert stubs (ADR-0096 D8), filled by QUAL-3 (feedback) and PRO-1 (reminder).
+export * from './feedback';
+export * from './reminder';

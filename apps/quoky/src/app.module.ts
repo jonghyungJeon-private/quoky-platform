@@ -17,6 +17,7 @@ import {
   AI_PROVIDERS,
   CONNECTOR_PROVIDERS,
   TOOL_PROVIDERS,
+  CONVERSATION_TURN_HANDLERS,
   // Application services (pure core)
   QuokyCore,
   IntentClassifier,
@@ -63,6 +64,7 @@ import {
 } from '@quoky/core';
 import type {
   ContinuationBindingRepository,
+  ConversationTurnHandler,
   AiProvider,
   CommandRunner,
   ConnectorProvider,
@@ -104,6 +106,11 @@ import { continuationLifecycleProvider } from './continuation-lifecycle-provider
 import { continuationExecutionEntryProvider, continuationExecutionProvider } from './continuation-execution-provider';
 import { createAgentProfileRegistryProvider } from './agent-profile-registry-provider';
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
+import { codeWorkProviders } from './features/code-work.providers';
+import { feedbackProviders } from './features/feedback.providers';
+import { remindersProviders } from './features/reminders.providers';
+import { turnHandlersProvider } from './features/turn-handlers.providers';
+import { workChatProviders } from './features/work-chat.providers';
 
 const config = loadConfig();
 const coreLogger = new ConsoleLogger('quoky');
@@ -527,6 +534,7 @@ const application: Provider[] = [
       patch: PatchManager,
       workspaceWrite: WorkspaceWriteManager,
       git: GitManager,
+      turnHandlers: readonly ConversationTurnHandler[],
     ) => {
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
@@ -595,6 +603,8 @@ const application: Provider[] = [
         // The runtime calls the manager only, never GitHubRepositoryHostingProvider directly.
         repositoryHosting,
         runtimeProviderRouting,
+        // ADR-0096: the statically composed turn-handler registry (features/*.providers.ts → aggregator).
+        turnHandlers,
         logger: coreLogger,
       }, { gitRemoteEnabled: config.git.remoteEnabled });
     },
@@ -623,6 +633,7 @@ const application: Provider[] = [
       PatchManager,
       WorkspaceWriteManager,
       GitManager,
+      CONVERSATION_TURN_HANDLERS,
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -634,7 +645,19 @@ const application: Provider[] = [
   },
 ];
 
+/**
+ * Personal v2 feature composition (ADR-0096 D7). Each track registers its handlers and services only in its own
+ * `features/<feature>.providers.ts`; the aggregator binds `CONVERSATION_TURN_HANDLERS` to their concatenation.
+ */
+const features: Provider[] = [
+  ...codeWorkProviders,
+  ...workChatProviders,
+  ...remindersProviders,
+  ...feedbackProviders,
+  turnHandlersProvider,
+];
+
 @Module({
-  providers: [...infrastructure, ...application],
+  providers: [...infrastructure, ...features, ...application],
 })
 export class AppModule {}
