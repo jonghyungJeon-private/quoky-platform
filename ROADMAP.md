@@ -115,7 +115,7 @@ The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that wer
 **Remaining before calling Personal v2 closed:** the separately approved live sessions above (connector lookups on real
 Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the release-default decision for reminders).
 
-**Personal v3 candidates (themes only; planned: `docs/plans/personal-v3-plan.md`, not yet written)**
+**Personal v3 candidates (themes only; plan: `docs/plans/personal-v3-plan.md`, Proposed — tracks, waves and owner decisions)**
 
 - Multi-agent and continuation, which needs a deployment substrate (the deferred R3 / Stage 2B track).
 - Multimodal input and output.
