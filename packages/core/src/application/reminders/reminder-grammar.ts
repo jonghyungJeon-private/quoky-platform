@@ -850,8 +850,13 @@ function hasKoAdnominalClause(region: string): boolean {
   const words = region
     .split(new RegExp(`[\\s.,!?~${WRAP}]+`))
     .filter((w) => w.length > 0);
-  return words.slice(0, Math.min(2, words.length - 1)).some(isKoAdnominal);
+  return words.slice(0, Math.min(2, words.length - 1)).some(
+    (word, index) => isKoAdnominal(word) && !KO_NOMINALIZER.test(words[index + 1] ?? ''),
+  );
 }
+
+/** A nominalizer after the adnominal (`약 먹는 거`, `준비할 것`) names the thing to be reminded of, not a question. */
+const KO_NOMINALIZER = /^(?:거|것|걸|게|거를|것을|거요|것요)$/;
 
 /**
  * The sentence holding every used span, as a same-length copy of `text` with the other sentences blanked (`… 알려줘.

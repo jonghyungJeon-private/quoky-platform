@@ -37,6 +37,9 @@ describe('reminder grammar — one-time Korean reminders (now = Fri 2026-10-02 1
     // [message, body, local fire time]
     ['내일 9시에 회의 준비 알려줘', '회의 준비', '2026-10-03T09:00'],
     ['내일 3시에 회의 알려줘', '회의', '2026-10-03T15:00'],
+    // nominalizer 거/것 after an adnominal names the thing to remind (not an inner-clause question)
+    ['내일 9시에 약 먹는 거 알려줘', '약 먹는 거', '2026-10-03T09:00'],
+    ['내일 9시에 회의 준비할 것 알려줘', '회의 준비할 것', '2026-10-03T09:00'],
     ['30분 뒤에 스트레칭 알려줘', '스트레칭', '2026-10-02T14:30'],
     ['30분 후에 스트레칭 알려줘', '스트레칭', '2026-10-02T14:30'],
     ['1시간 30분 후에 스트레칭 알려줘', '스트레칭', '2026-10-02T15:30'],
