@@ -147,6 +147,11 @@ interface Harness {
   handlerCalls: string[];
   /** Hook run inside memory.recordShortTerm (after the turn-start checks, before routing). */
   onShortTerm: (() => void) | null;
+  /** Count of workspace.read calls; `onRead` runs inside each one (awaited) before the content is returned. */
+  reads: number;
+  onRead: ((n: number, path: string) => void | Promise<void>) | null;
+  /** Awaited inside generate() after the input is recorded: a controllable provider call. */
+  onGenerate: (() => Promise<void>) | null;
   runtime: ConversationRuntime;
   send(text: string): ReturnType<ConversationRuntime['handle']>;
   /** Anchor a fresh planningOnly CODE_IMPLEMENTATION request awaiting its plan approval. */
@@ -180,6 +185,9 @@ function makeHarness(opts: { withFlow?: boolean; turnHandlers?: ConversationTurn
     classifierCalls: 0,
     handlerCalls: [] as string[],
     onShortTerm: null as (() => void) | null,
+    reads: 0,
+    onRead: null,
+    onGenerate: null,
   } as Harness;
 
   const logger: Logger = {
@@ -248,6 +256,8 @@ function makeHarness(opts: { withFlow?: boolean; turnHandlers?: ConversationTurn
       read: async (_ref: WorkspaceRef, relPath: string): Promise<string> => {
         // The adapter refuses secret FILENAMES (ADR-0019): Core never gets their content.
         if (relPath.endsWith('.env')) throw new Error('refusing to read a secret file');
+        h.reads++;
+        await h.onRead?.(h.reads, relPath);
         const content = h.files[relPath];
         if (content === undefined) throw new Error('ENOENT');
         return content;
@@ -277,6 +287,7 @@ function makeHarness(opts: { withFlow?: boolean; turnHandlers?: ConversationTurn
     codeGeneration: {
       generate: async (input: GenerateCodeInput): Promise<CodeGeneration> => {
         h.generated.push(clone(input));
+        await h.onGenerate?.();
         return {
           id: newId(),
           executionPlanRef: input.executionPlanRef,
@@ -783,5 +794,166 @@ describe('ConversationRuntime credential override — no replay, stray phrase, r
     for (const leak of ['src/user.ts', 'src/config.ts', 'this.token', 'demo-only']) {
       expect(serialized).not.toContain(leak);
     }
+  });
+});
+
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
+/** The truthful reply when the request was cancelled while (or after) the granted content was sent. */
+const CANCELLED_AFTER_SEND = (): string =>
+  composer.composeWithNotice(
+    composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']),
+    composer.composeScopeClarificationCancelled(CTX),
+  ).text;
+
+describe('ConversationRuntime credential override — dispatch races (ADR-0097 D5, OVR-3 contract)', () => {
+  // A single-target send turn reads the workspace three times: the coverage check, the context preparation and the
+  // flow's revalidation read. None of them may sit between the flow's final validation and generate().
+  it.each([1, 2, 3])(
+    'expiry landing during workspace read #%i of the send turn → nothing sent (expired), no generate()',
+    async (at) => {
+      const h = makeHarness();
+      h.files['src/user.ts'] = USER_TS;
+      await promptFor(h);
+      setMinutes(29);
+      h.reads = 0;
+      h.onRead = (n) => {
+        if (n === at) setMinutes(31);
+      };
+
+      const result = await h.send('그래도 보내줘');
+
+      expect(h.reads).toBeGreaterThanOrEqual(at);
+      expect(h.generated).toHaveLength(0);
+      expect(result.status).toBe('FAILED');
+      expect(result.reply.text).toBe(composer.composeCredentialOverrideInvalidated(CTX, 'expired').text);
+    },
+  );
+
+  it.each([1, 2, 3])(
+    'a reset close landing during workspace read #%i of the send turn → nothing sent (reset), no generate()',
+    async (at) => {
+      const h = makeHarness();
+      h.files['src/user.ts'] = USER_TS;
+      await promptFor(h);
+      h.reads = 0;
+      h.onRead = (n) => {
+        // A session writer outside the override flow (SessionManager.close).
+        if (n === at) h.store.sessionRows.set('sess-1', { ...h.store.session, status: SessionStatus.CLOSED });
+      };
+
+      const result = await h.send('그래도 보내줘');
+
+      expect(h.reads).toBeGreaterThanOrEqual(at);
+      expect(h.generated).toHaveLength(0);
+      expect(result.status).toBe('FAILED');
+      expect(result.reply.text).toBe(composer.composeCredentialOverrideInvalidated(CTX, 'reset').text);
+      expect(h.store.sessionRows.get('sess-1')!.status).toBe(SessionStatus.CLOSED);
+    },
+  );
+
+  it('no workspace read runs after the set is consumed: the granted content is prepared before the dispatch', async () => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = USER_TS;
+    await promptFor(h);
+    const overrideTaskId = h.store.session.activeTaskId!;
+    const statusAtRead: string[] = [];
+    h.onRead = () => {
+      const anchor = h.store.taskRows.get(overrideTaskId)!.metadata![ANCHOR_KEY] as CredentialOverrideAnchor;
+      statusAtRead.push(anchor.status);
+    };
+
+    const result = await h.send('그래도 보내줘');
+
+    expect(result.status).toBe('RESPONDED');
+    expect(h.generated).toHaveLength(1);
+    expect(h.generated[0]!.contextFiles).toEqual([{ path: 'src/user.ts', content: USER_TS }]);
+    expect(statusAtRead.length).toBeGreaterThan(0);
+    expect(statusAtRead).not.toContain('CONSUMED');
+  });
+
+  it('a reset turn completing during generation → the preview is discarded: session stays CLOSED, no apply anchor', async () => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = USER_TS;
+    await promptFor(h);
+    const tasksBefore = h.store.taskRows.size;
+    const entered = deferred();
+    const gate = deferred();
+    h.onGenerate = async () => {
+      entered.resolve();
+      await gate.promise;
+    };
+
+    const sending = h.send('그래도 보내줘');
+    await entered.promise;
+    const reset = await h.send('새 대화');
+    expect(reset.reply.text).toBe(composer.composeConversationReset(CTX, { deniedPendingApproval: false }).text);
+    expect(h.store.sessionRows.get('sess-1')!.status).toBe(SessionStatus.CLOSED);
+    gate.resolve();
+    const result = await sending;
+
+    expect(h.generated).toHaveLength(1);
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(CANCELLED_AFTER_SEND());
+    expect(result.reply.preview).toBeUndefined();
+    const session = h.store.sessionRows.get('sess-1')!;
+    expect(session.status).toBe(SessionStatus.CLOSED); // never re-opened by a stale save
+    expect(session.activeTaskId).toBeUndefined();
+    expect(h.store.taskRows.size).toBe(tasksBefore); // no apply-preview anchor Task
+    expect(h.store.overrideAnchor().status).toBe('CONSUMED');
+  });
+
+  it.each([
+    ['a project switch', (s: Session): Session => ({ ...s, activeProjectId: 'proj-2' })],
+    ['a newer request taking the session pointer', (s: Session): Session => ({ ...s, activeTaskId: 'newer-task' })],
+  ])('%s during generation → the preview is discarded and the concurrent update is kept', async (_name, update) => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = USER_TS;
+    await promptFor(h);
+    const tasksBefore = h.store.taskRows.size;
+    const gate = deferred();
+    let expected: Session | null = null;
+    h.onGenerate = async () => {
+      expected = update(h.store.session);
+      h.store.sessionRows.set('sess-1', clone(expected));
+      await gate.promise;
+    };
+
+    const sending = h.send('그래도 보내줘');
+    await vi.waitFor(() => expect(h.generated).toHaveLength(1));
+    gate.resolve();
+    const result = await sending;
+
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(CANCELLED_AFTER_SEND());
+    expect(h.store.sessionRows.get('sess-1')).toEqual(expected);
+    expect(h.store.taskRows.size).toBe(tasksBefore);
+  });
+
+  it('happy path: the apply anchor is saved onto the freshly loaded session (a concurrent unrelated update is kept)', async () => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = USER_TS;
+    await promptFor(h);
+    h.onGenerate = async () => {
+      h.store.sessionRows.set('sess-1', { ...h.store.session, metadata: { concurrent: 'kept' } });
+    };
+
+    const result = await h.send('그래도 보내줘');
+
+    expect(result.status).toBe('RESPONDED');
+    expect(h.generated).toHaveLength(1);
+    const session = h.store.sessionRows.get('sess-1')!;
+    expect(session.status).toBe(SessionStatus.ACTIVE);
+    expect(session.activeProjectId).toBe('proj-1');
+    expect(session.metadata).toEqual({ concurrent: 'kept' });
+    const apply = h.store.activeTask()!.metadata?.conversationApplyPreviewAnchor as ApplyPreviewAnchor | undefined;
+    expect(apply?.status).toBe('ELIGIBLE');
+    expect(apply?.projectId).toBe('proj-1');
   });
 });
