@@ -585,7 +585,7 @@ describe('reminder grammar — English', () => {
 
 describe('reminder grammar — English: only a time bound to the reminder clause schedules it (ADR-0101 D2)', () => {
   it.each([
-    // A time inside a relative / content clause belongs to the body; with no other time → ask for one.
+    // A trailing time after a relative / demonstrative marker may be the body's or the reminder's → ask, never guess.
     'remind me to book the restaurant that opens at 9am',
     'remind me to book the restaurant which opens at 9am',
     'remind me to call the doctor who starts at 9am',
@@ -597,8 +597,16 @@ describe('reminder grammar — English: only a time bound to the reminder clause
     'remind me to submit the form that is due by 5pm', // a deadline inside the clause is the form's, not a fire time
     'remind me tomorrow to book the restaurant that opens at 9am',
     'remind me to book the restaurant that opens at 9am tomorrow at 8am', // no punctuation closes the clause
-  ])('%j → CLARIFY MISSING_TIME', (message) => {
-    expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'MISSING_TIME' });
+    'remind me to check the stores that open at 9am',
+    'remind me to check the alarm that rang at 9am',
+    'remind me to paint that shed at 9am', // accepted: ambiguous, so it asks
+    'remind me to do that at 9pm',
+    'remind me to send that report at 9am',
+    'remind me to catch that bus at 5pm',
+    'remind me to book the restaurant that opens at 9am, tomorrow at 8am',
+    'remind me to email the guy who called, at 9am',
+  ])('%j → CLARIFY AMBIGUOUS_TIME', (message) => {
+    expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'AMBIGUOUS_TIME' });
   });
 
   it.each([
@@ -607,15 +615,9 @@ describe('reminder grammar — English: only a time bound to the reminder clause
     ['remind me tomorrow at 8am to book the restaurant that opens at 9am', 'book the restaurant that opens at 9am', '2026-10-03T08:00'],
     ['remind me at 8am to call the store that opens on monday', 'call the store that opens on monday', '2026-10-03T08:00'],
     ['remind me in 30 minutes to check the oven that I started', 'check the oven that I started', '2026-10-02T14:30'],
-    // Trailing the whole clause, outside any relative clause.
+    // Trailing the body with no relative / demonstrative marker before it.
     ['remind me to call mom at 9pm', 'call mom', '2026-10-02T21:00'],
     ['remind me to call mom tomorrow at 9am', 'call mom', '2026-10-03T09:00'],
-    ['remind me to book the restaurant that opens at 9am, tomorrow at 8am', 'book the restaurant that opens at 9am', '2026-10-03T08:00'],
-    ['remind me to email the guy who called, at 9am', 'email the guy who called', '2026-10-03T09:00'],
-    // A demonstrative `that` does not open a clause.
-    ['remind me to do that at 9pm', 'do that', '2026-10-02T21:00'],
-    ['remind me to send that report at 9am', 'send that report', '2026-10-03T09:00'],
-    ['remind me to catch that bus at 5pm', 'catch that bus', '2026-10-02T17:00'],
   ])('%j → %j at %s', (message, body, local) => {
     expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
   });

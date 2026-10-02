@@ -1235,51 +1235,25 @@ interface EnComponentMatch {
   deadline: boolean;
 }
 
-/** Words that open a relative / content clause after the verb; `that` only when it is not a demonstrative. */
-const EN_CLAUSE_WORD = /\b(?:that|which|who|whom|whose|where|when)\b/gi;
-/** After `that`: a subject, auxiliary or adverb makes it a relative or content clause (`that we booked`, `that is`). */
-const EN_CLAUSE_SUBJECT_OR_AUX = new Set([
-  'i', 'you', 'we', 'they', 'he', 'she', 'it', 'the', 'a', 'an', 'my', 'your', 'our', 'their', 'his', 'her', 'its',
-  'this', 'these', 'those', 'there', 'someone', 'somebody', 'everyone', 'everybody', 'nobody', 'people',
-  'is', 'are', 'was', 'were', 'be', 'been', 'will', 'would', 'can', 'could', 'should', 'shall', 'may', 'might', 'must',
-  'has', 'have', 'had', 'do', 'does', 'did', 'always', 'never', 'usually', 'only', 'just', 'also', 'still',
-]);
-/** A third-person or past verb after `that` (`that opens`, `that closed`); `that bus` / `that class` are nouns. */
-const EN_CLAUSE_VERB = /^(?:[a-z]{2,}s(?<!ss|us|is|as|os)|[a-z]{2,}ed(?<!eed)|[a-z]+n['’]t)$/i;
-/** A clause runs to the next clause punctuation (`the guy who called, at 9am` → the time is the reminder's). */
-const EN_CLAUSE_END = /[,;.!?]/g;
+/** Relative / demonstrative markers: a time after one of them may belong to the body, so its binding is ambiguous. */
+const EN_CLAUSE_WORD = /\b(?:that|which|who|whom|whose|where|when)\b/i;
 
 /**
- * Relative and content clauses after the reminder verb (`the restaurant that opens at 9am`, `when I get home at 6`,
- * `remind me that the store opens at 9am`): a time inside one describes the body, never the reminder. `that` opens a
- * clause as the first body word (a complementizer) or before a subject, auxiliary or verb; a demonstrative (`send
- * that report at 9am`, `do that at 9pm`) does not. `scan` is `text` with the verb, lead-in and every component match
- * blanked (same length), so a time's own dots (`p.m.`) never end a clause.
+ * Start of the body: the first non-blank character of `scan` after the verb. `scan` is `text` with the verb, lead-in
+ * and every component match blanked (same length), so times attached to `remind me` sit before this index.
  */
-function enEmbeddedClauses(
-  text: string,
-  scan: string,
-  bodyFrom: number,
-  matches: readonly EnComponentMatch[],
-): Array<{ start: number; end: number }> {
-  const clauses: Array<{ start: number; end: number }> = [];
-  for (const w of text.matchAll(EN_CLAUSE_WORD)) {
-    const at = w.index ?? 0;
-    if (at < bodyFrom || matches.some((mm) => at >= mm.start && at < mm.end)) continue;
-    const wordEnd = at + w[0].length;
-    if (w[0].toLowerCase() === 'that') {
-      const next = /^\s+([a-z]+(?:['’][a-z]+)?)/i.exec(text.slice(wordEnd));
-      const nextStart = next === null ? -1 : wordEnd + next[0].length - (next[1] ?? '').length;
-      if (matches.some((mm) => mm.start === nextStart)) continue; // `do that at 9pm`: an object, not a clause
-      const firstBodyWord = /^[\s,]*$/.test(scan.slice(bodyFrom, at));
-      const nextWord = (next?.[1] ?? '').toLowerCase();
-      if (!firstBodyWord && !EN_CLAUSE_SUBJECT_OR_AUX.has(nextWord) && !EN_CLAUSE_VERB.test(nextWord)) continue;
-    }
-    EN_CLAUSE_END.lastIndex = wordEnd;
-    const end = EN_CLAUSE_END.exec(scan)?.index ?? text.length;
-    clauses.push({ start: at, end });
-  }
-  return clauses;
+function enBodyStart(scan: string, from: number): number {
+  const rest = /[^\s,]/.exec(scan.slice(from));
+  return rest === null ? scan.length : from + rest.index;
+}
+
+/**
+ * Index of the first relative / demonstrative marker in the body (`that`, `which`, `who`, `whom`, `whose`, `where`,
+ * `when`), or -1. A time after it is not provably the reminder's (ADR-0101 D2): no verb guessing, ask instead.
+ */
+function enFirstClauseMarker(text: string, bodyStart: number): number {
+  const m = EN_CLAUSE_WORD.exec(text.slice(bodyStart));
+  return m === null ? -1 : bodyStart + m.index;
 }
 
 function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
@@ -1321,13 +1295,16 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
       scan = scan.slice(0, start) + ' '.repeat(end - start) + scan.slice(end);
     }
   }
-  const clauses = enEmbeddedClauses(text, scan, verbStart + verb[0].length, matches);
-  const inClause = (match: EnComponentMatch) => clauses.some((c) => match.start >= c.start && match.start < c.end);
+  // A time is the reminder's when it is attached to `remind me` (before the body) or trails a body with no relative /
+  // demonstrative marker before it. After a marker the binding is ambiguous: never scheduled, never dropped silently.
+  const bodyStart = enBodyStart(scan, verbStart + verb[0].length);
+  const marker = enFirstClauseMarker(text, bodyStart);
+  const afterMarker = (match: EnComponentMatch) => marker !== -1 && match.start > marker;
   let deadline = false;
-  let bodyTime = false;
+  let markedTime = false;
   for (const match of matches) {
-    if (inClause(match)) {
-      bodyTime = true;
+    if (afterMarker(match)) {
+      markedTime = true;
       continue;
     }
     if (match.deadline) deadline = true;
@@ -1336,18 +1313,17 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
   }
   if (hasUnsupported) return clarify('UNSUPPORTED_RECURRENCE');
   if (deadline) return clarify('AMBIGUOUS_TIME');
-  // Day and part-of-day words inside a body clause describe the body (`the store that opens on monday`), not the time.
+  // Day and part-of-day words after a marker describe the body (`the store that opens on monday`), not the time.
   let outsideClauses = working;
-  for (const c of clauses) {
-    outsideClauses = outsideClauses.slice(0, c.start) + ' '.repeat(c.end - c.start) + outsideClauses.slice(c.end);
-  }
+  if (marker !== -1) outsideClauses = outsideClauses.slice(0, marker) + ' '.repeat(outsideClauses.length - marker);
 
   const hasTime = spec.relativeMs !== undefined || hasTimeOfDay(spec);
   if (!hasTime) {
     // `remind me what we discussed` is a question; `remind me tomorrow to …` / `remind me next week to …` is a
-    // reminder without a time, and so is `remind me to book the restaurant that opens at 9am` (the time is the
-    // restaurant's, not the reminder's).
-    return bodyTime || hasDayInfo(spec) || spec.recurrence !== undefined || EN_UNSUPPORTED_DAY.test(working)
+    // reminder without a time. `remind me to book the restaurant that opens at 9am` is ambiguous: the time may be
+    // the restaurant's or the reminder's, so it is asked, never guessed.
+    if (markedTime) return clarify('AMBIGUOUS_TIME');
+    return hasDayInfo(spec) || spec.recurrence !== undefined || EN_UNSUPPORTED_DAY.test(working)
       ? clarify('MISSING_TIME')
       : NOT_REMINDER;
   }
