@@ -170,12 +170,37 @@ const GIT_BRANCH_DELETE_COMMAND = /^git\s+branch\s+(?:-{1,2}d(?:elete)?|-{1,2}fo
 const DELETE_QUESTION_WORDS =
   /뭐|무엇|어떻게|어떤|왜|방법|알려|설명|차이|되나|될까|돼\??$|하면|하려면|하는\s*법|\bhow\b|\bwhat\b|\bwhy\b|\bcan\b|\bshould\b|\bif\b|\bwhen\b/i;
 const MAX_DELETE_REQUEST_CHARS = 120;
+/** One branch-name-shaped token (ASCII ref characters only, so a Korean noun such as "로그" never fills the slot). */
+const REF_TOKEN = '[\\w./@-]+';
+/** A Korean delete verb in imperative form ("삭제해줘", "삭제해 줘", "지워줘", "제거해줘", "정리해줘", "없애줘"). */
+const KO_DELETE_IMPERATIVE =
+  '(?:(?:삭제|제거|정리)\\s*(?:해\\s*줘요?|해\\s*주세요|해\\s*주라|해\\s*줄래요?|해라|하자|해)|(?:지워|없애)\\s*(?:줘요?|주세요|줄래요?|라)?)';
+/**
+ * Imperative delete shapes (Codex wave-8 review): the imperative must attach to the delete verb, which attaches to the
+ * branch word (optionally with one branch-name token between them or after the verb). Statements ("브랜치 삭제했어",
+ * "브랜치 정리 완료") and requests whose main verb is something else ("브랜치 삭제 로그를 요약해줘") never match.
+ */
+const DELETE_REQUEST_SHAPES: readonly RegExp[] = [
+  // "브랜치 삭제해줘", "로컬 브랜치 지워줘", "feature/x 브랜치 지워줘", "브랜치 feature/x 삭제해줘", "브랜치 삭제해줘 feature/x"
+  new RegExp(
+    `브랜치\\s*(?:를|을)?\\s*(?:${REF_TOKEN}\\s*(?:를|을)?\\s*)?(?:좀\\s*)?${KO_DELETE_IMPERATIVE}(?:\\s+${REF_TOKEN})?$`,
+    'i',
+  ),
+  // "delete branch feature/x", "remove the branch feature/x", "delete the local branch", "clean up branch"
+  new RegExp(
+    `^(?:please\\s+)?(?:delete|remove|prune|clean\\s*up|cleanup)\\s+(?:the\\s+)?(?:local\\s+|merged\\s+|old\\s+)*branch(?:es)?(?:\\s+${REF_TOKEN})?$`,
+    'i',
+  ),
+  // "delete feature/x branch", "remove the feature/x branch"
+  new RegExp(`^(?:please\\s+)?(?:delete|remove)\\s+(?:the\\s+)?${REF_TOKEN}\\s+branch$`, 'i'),
+];
 
 /**
  * Detect an explicit owner branch DELETE / cleanup request ("브랜치 삭제해줘 feature/x", "feature/x 브랜치 지워줘",
  * "delete branch feature/x", `git branch -D feature/x`). Consulted by the handler ONLY after {@link detectGitBranchCommand}
  * returned null and only when the anchor is not in the post-merge cleanup chain (which owns "브랜치 정리해줘" via the
- * runtime's own cleanup flow). Questions, negations and long free text are never a request.
+ * runtime's own cleanup flow). Only an imperative delete shape counts (Codex wave-8 review): questions, negations,
+ * statements/past tense, summaries of a delete, and long free text are never a request.
  */
 export function detectGitBranchDeleteRequest(text: string): boolean {
   if (typeof text !== 'string') return false;
@@ -183,8 +208,8 @@ export function detectGitBranchDeleteRequest(text: string): boolean {
   if (n.length === 0 || n.length > MAX_DELETE_REQUEST_CHARS) return false;
   if (/[?？]/.test(text) || DELETE_QUESTION_WORDS.test(n)) return false;
   if (GIT_BRANCH_DELETE_COMMAND.test(n)) return true;
-  if (!BRANCH_WORD.test(n)) return false;
-  return unnegatedMatch(n, DELETE_CUES);
+  if (!BRANCH_WORD.test(n) || !unnegatedMatch(n, DELETE_CUES)) return false;
+  return DELETE_REQUEST_SHAPES.some((re) => re.test(n));
 }
 
 // ── fixed replies ───────────────────────────────────────────────────────────────────────────────────────
