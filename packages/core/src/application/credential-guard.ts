@@ -5,7 +5,8 @@
  * token-shaped material, so harmless facts about passwords/tokens in general still pass.
  *
  * {@link containsCredentialFileContent} is the stricter-on-format, file-oriented variant used before a
- * workspace file's content is sent to an AI provider (code-generation context).
+ * workspace file's content is sent to an AI provider (code-generation context);
+ * {@link classifyCredentialFileContent} reports which of its detectors fired and where.
  */
 
 export const CREDENTIAL_REJECTION_REASON = 'candidate contains credential or authentication material';
@@ -58,11 +59,13 @@ export function containsCredentialMaterial(text: string): boolean {
 }
 
 /**
- * FILE-content guard ("refuse rather than leak"). Deliberately conservative: a credential-named key
+ * FILE-content guard ("refuse rather than leak"). STRICT-ONLY and deliberately conservative (ADR-0097):
+ * one rule for every file, with no file-type awareness and no path input. A credential-named key
  * followed by an assignment operator and ANY literal value refuses the file. Only the explicit
  * reference forms below pass; everything else that looks like a value (bare identifiers, dotted
- * names, numbers, quoted text of any shape) counts as a literal. Known, accepted false positives:
- * `{ token: 'identifier' }`, `this.token = token`, `token = settings.API_TOKEN`.
+ * names, numbers, quoted text of any shape) counts as a literal. Known, accepted false positives
+ * (absorbed by the owner's one-time override, never by loosening this rule):
+ * `{ token: 'identifier' }`, `this.token = token`, `token = settings.API_TOKEN`, `let password: Secret;`.
  */
 
 /** Any key token, quoted (may hold spaces/Korean) or bare (identifier chars, dots, dashes), plus operator. */
@@ -84,12 +87,16 @@ const TOKEN_COUNT_WORDS = new Set([
   'completion', 'ttl', 'expiry', 'expires', 'length', 'len', 'size',
 ]);
 
+/** How far past the assignment operator a value expression is followed. */
+const VALUE_WINDOW = 4096;
 const VALUE_END = /^[ \t]*(?:$|\r?\n|[,;)\]}])/u;
 /** The value token ends here: end of line, a separator/closer, or a trailing comment. */
 const TOKEN_END = '(?=[ \\t]*(?:$|\\r?\\n|[,;)\\]}#]|//))';
 const TEMPLATE_PLACEHOLDER = /\$\{[^}\n]*\}|\{\{[^}\n]*\}\}|%\([^)\n]*\)s/gu;
 const ENV_REFERENCE = /^(?:process\.env|import\.meta\.env|os\.environ|ENV)(?![\w$])(?:\??\.[\w$]+|\[[^\]\n]*\])*/u;
 const CALL_EXPRESSION = /^(?:(?:await|new)\s+)?[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*[ \t]*\(/u;
+/** `async (…)` / `static (…)` start a function value (or nothing), never a call expression. */
+const NON_CALL_HEAD = /^(?:async|static)[ \t]*\(/u;
 const KEYWORD_LITERAL = new RegExp(`^(?:true|false|null|undefined|none|nil)${TOKEN_END}`, 'iu');
 const NUMERIC_LITERAL = new RegExp(`^-?\\d[\\d_]*(?:\\.\\d+)?${TOKEN_END}`, 'u');
 const FALLBACK_OPERATOR = /^[ \t]*(?:\?\?|\|\||or\b)[ \t]*/u;
@@ -101,6 +108,53 @@ const TYPE_ANNOTATION = new RegExp(
   'u',
 );
 const TYPE_DECLARATION_HEAD = /\b(?:interface|class)\s+[\w$]+[^{};=]*$|\btype\s+[\w$]+(?:<[^>]*>)?\s*=\s*$/u;
+
+/** A line ending with an operator continues the expression on the next line (`a ??`, `a +`, `cond ?`). */
+const CONTINUES_AFTER = /(?:[+\-*/%\\?:=&|^~,]|\?\?)$/u;
+/**
+ * A next line starting with an operator continues the expression (Prettier's wrapped ternary / `??` /
+ * `||` / chained-call layout: `a\n  ? b\n  : "x"`, `a\n  ?? "x"`). `//` and `/*` comment lines do not.
+ */
+const CONTINUES_BEFORE = /\s*(?:\?\?|\|\||&&|\?\.?|:(?!:)|\.(?!\.\.)|[+\-*%]|\/(?![/*]))/uy;
+/** The pre-ADR-0097 continuation test on the raw line (a trailing `+` or backslash, comments included). */
+const RAW_LINE_CONTINUES = /[+\\][ \t\r]*$/u;
+/** A raw string opener after `#` (Rust `r#"…"#`, Swift `#"…"#`): not a comment. */
+const RAW_STRING_HASHES = /#*"/uy;
+
+/**
+ * Calls that only wrap or decode a literal into a (secret) string value (`String::from("x")`, `str("x")`,
+ * `Some("x")`, `new String("x")`, `SecretStr("x")`, `Secret.of("x")`, `atob("…")`,
+ * `base64.b64decode("…")`): any non-blank quoted literal in their arguments is the value itself.
+ */
+const LITERAL_WRAPPER_CALL =
+  /^(?:new\s+)?(?:pydantic\.)?(?:String|SecretString|SecretStr|SecretBytes|Secret|SecretBox|Zeroizing|str|bytes|Some|Ok|atob|base64\.(?:b64|urlsafe_b64|b32|b16)decode|Base64\.(?:strict_|urlsafe_)?decode64)(?:::<[^>\n]*>)?(?:(?:::|\.)(?:from|new|of))?[ \t]*(?=\()/u;
+/** `Buffer.from("…", "base64")`: a literal FIRST argument is the value (`Buffer.from(raw, "base64")` is not). */
+const FIRST_ARG_WRAPPER_CALL = /^Buffer\.from[ \t]*\([ \t]*(?=["'`])/u;
+/**
+ * Env lookups with a default (`os.getenv("K", "x")`, `os.environ.get("K", "x")`, `ENV.fetch("K", "x")`,
+ * Laravel `env("K", "x")`): a non-blank literal after the first argument is a hard-coded fallback value.
+ */
+const ENV_DEFAULT_CALL = /^(?:os\.getenv|os\.environ\.get|environ\.get|getenv|ENV\.fetch|env)[ \t]*(?=\()/u;
+/** Optional `async`/`static` and Rust `fn` / TS generic parameters before an arrow's parameter list. */
+const ARROW_HEAD = /^(?:(?:async|static)\s+)*(?:fn\s*)?(?:<[^\n=()]*>\s*)?/u;
+/** Arrow heads the strict rule already passed: an empty parameter list, or an `async`/`static` head. */
+const PASSING_ARROW_HEAD = /^(?:\([ \t]*\)|(?:async|static)[ \t]*\()/u;
+
+const KEY_IDENTIFIER = '[\\p{L}_][\\p{L}\\p{N}_]*';
+/**
+ * Declarations where a type or accessor sits between the key and `=` (or the key is a string argument),
+ * so {@link FILE_KEY_ASSIGNMENT} does not see them. Applied to EVERY file (there is no path input):
+ * Go `const Password string = "x"` (line-anchored `const`/`var`), C# `Password { get; set; } = "x"`,
+ * PHP `define("DB_PASSWORD", "x")`. Group 1 is the key.
+ */
+const TYPED_DECLARATIONS: readonly RegExp[] = [
+  new RegExp(
+    `(?:^|\\n)[ \\t]*(?:const|var)[ \\t]+(${KEY_IDENTIFIER})[ \\t]+(?:\\*|\\[\\d*\\])*[\\p{L}_][\\p{L}\\p{N}_.]*[ \\t]*=(?!=)`,
+    'gu',
+  ),
+  new RegExp(`(?<![\\p{L}\\p{N}_$.])(${KEY_IDENTIFIER})[ \\t]*\\{[^{}\\n]*\\}[ \\t]*=(?!=)`, 'gu'),
+  /(?<![\p{L}\p{N}_$])define[ \t]*\([ \t]*["']([^"'\n]{1,64})["'][ \t]*,/giu,
+];
 
 function keyWordSegments(key: string): string[] {
   return key
@@ -164,58 +218,156 @@ function readLiteral(s: string, i: number): { content: string; end: number } {
 const hasLiteralText = (content: string): boolean => content.replace(TEMPLATE_PLACEHOLDER, '').trim() !== '';
 
 /**
- * True when ANY quoted literal with non-blank content appears in the rest of the assigned expression
- * (`"" + "x"`, `"" "x"`, a parenthesised multi-line concatenation) up to the end of the statement.
+ * A line comment starts at `s[i]`: `//`, or a `#` at the start or after whitespace that does not open a
+ * raw string (`#"…"#`). A `#` glued to code (`this.#x`, `r#"…"#`) is not a comment.
  */
-function tailHasLiteral(s: string): boolean {
-  let depth = 0;
+function isCommentStart(s: string, i: number): boolean {
+  if (s.startsWith('//', i)) return true;
+  if (s[i] !== '#' || (i > 0 && !/\s/u.test(s[i - 1] as string))) return false;
+  RAW_STRING_HASHES.lastIndex = i + 1;
+  return !RAW_STRING_HASHES.test(s);
+}
+
+/**
+ * True when ANY quoted literal with non-blank content appears in the rest of the assigned expression
+ * (`"" + "x"`, `"" "x"`, `getPw() + "x"`, `a ? "x" : b`) up to the end of the statement. `depth` is the
+ * number of brackets already open around the value (`password = (""\n  "x"\n)`, `['', 'x']`): line
+ * breaks and separators inside them do not end the expression; closing past them does. At depth 0 a
+ * line break ends it unless the line ends with an operator or the next line starts with one.
+ */
+function tailHasLiteral(s: string, depth = 0): boolean {
+  let open = depth;
+  let lineStart = 0;
+  /** Index just past the last code character on the current line (-1: none yet). */
+  let lastCode = -1;
   for (let i = 0; i < s.length; i++) {
     const c = s[i] as string;
     if (c === '"' || c === "'" || c === '`') {
       const lit = readLiteral(s, i);
       if (hasLiteralText(lit.content)) return true;
       i = lit.end - 1;
-    } else if (c === '#' || s.startsWith('//', i)) {
+      lastCode = lit.end;
+    } else if (isCommentStart(s, i)) {
       const nl = s.indexOf('\n', i);
       if (nl < 0) return false;
       i = nl - 1;
-    } else if (c === '(' || c === '[' || c === '{') depth++;
-    else if (c === ')' || c === ']' || c === '}') {
-      if (depth === 0) return false;
-      depth--;
-    } else if (depth === 0 && (c === ';' || c === ',')) return false;
-    else if (depth === 0 && c === '\n') {
-      const continued = /[+\\][ \t\r]*$/u.test(s.slice(0, i)) || /^\s*\+/u.test(s.slice(i + 1));
-      if (!continued) return false;
-    }
+    } else if (c === '\n') {
+      if (open === 0) {
+        const lineEnd = lastCode < 0 ? '' : s.slice(Math.max(0, lastCode - 2), lastCode);
+        CONTINUES_BEFORE.lastIndex = i + 1;
+        const continued =
+          CONTINUES_AFTER.test(lineEnd) ||
+          RAW_LINE_CONTINUES.test(s.slice(lineStart, i)) ||
+          CONTINUES_BEFORE.test(s);
+        if (!continued) return false;
+      }
+      lineStart = i + 1;
+      lastCode = -1;
+    } else if (c === '(' || c === '[' || c === '{') {
+      open++;
+      lastCode = i + 1;
+    } else if (c === ')' || c === ']' || c === '}') {
+      if (open === 0) return false;
+      open--;
+      lastCode = i + 1;
+    } else if (open === 0 && (c === ';' || c === ',')) return false;
+    else if (!/\s/u.test(c)) lastCode = i + 1;
   }
   return false;
 }
 
 /**
- * Skips whitespace and opening brackets before a value. A line break after the operator continues onto
- * the next line only when that line is indented (YAML block value, wrapped TS/Python) or starts with a
- * quote; otherwise the value is empty.
+ * Skips whitespace before a value. A line break after the operator continues onto the next line only
+ * when that line is indented (YAML block value, wrapped TS/Python) or starts with a quote; otherwise the
+ * value is empty.
  */
-function skipValueLead(value: string): string {
-  let v = value.replace(/^[ \t]*/u, '');
-  if (/^\r?\n/u.test(v)) {
-    const rest = v.replace(/^\s+/u, '');
-    const indented = /[ \t]$/u.test(v.slice(0, v.length - rest.length));
-    // A nested YAML mapping (`password:\n  rotation: 30d`) holds no value itself; its keys are scanned on their own.
-    const nestedKey = /^["']?[\w.$-]+["']?[ \t]*:(?:\s|$)/u.test(rest);
-    v = !nestedKey && (indented || /^["'`]/u.test(rest)) ? rest : '';
-  }
-  return /^[[(]/u.test(v) ? skipValueLead(v.slice(1)) : v;
+function skipValueSpace(value: string): string {
+  const v = value.replace(/^[ \t]*/u, '');
+  if (!/^\r?\n/u.test(v)) return v;
+  const rest = v.replace(/^\s+/u, '');
+  const indented = /[ \t]$/u.test(v.slice(0, v.length - rest.length));
+  // A nested YAML mapping (`password:\n  rotation: 30d`) holds no value itself; its keys are scanned on their own.
+  const nestedKey = /^["']?[\w.$-]+["']?[ \t]*:(?:\s|$)/u.test(rest);
+  return !nestedKey && (indented || /^["'`]/u.test(rest)) ? rest : '';
 }
 
-function closingParen(value: string, open: number): number {
+/**
+ * Skips whitespace and opening brackets before a value and counts the brackets. Inside an open bracket
+ * every line break continues the value (`password = (\n""\n"x"\n)`).
+ */
+function skipValueLead(value: string, brackets = 0): { readonly v: string; readonly brackets: number } {
+  const v = brackets > 0 ? value.replace(/^\s+/u, '') : skipValueSpace(value);
+  return /^[[(]/u.test(v) ? skipValueLead(v.slice(1), brackets + 1) : { v, brackets };
+}
+
+/** Index just past the bracket closing the one opened at `s[open]` (quoted literals are skipped). */
+function closingBracket(s: string, open: number): number {
   let depth = 0;
-  for (let i = open; i < value.length; i++) {
-    if (value[i] === '(') depth++;
-    else if (value[i] === ')' && --depth === 0) return i + 1;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i] as string;
+    if (c === '"' || c === "'" || c === '`') i = readLiteral(s, i).end - 1;
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if ((c === ')' || c === ']' || c === '}') && --depth === 0) return i + 1;
   }
-  return value.length;
+  return s.length;
+}
+
+/** True when the call whose `(` is at `v[open]` has a non-blank quoted literal after its first argument. */
+function hasLiteralDefaultArgument(v: string, open: number): boolean {
+  const close = closingBracket(v, open);
+  const args = v.slice(open + 1, close - 1);
+  let depth = 0;
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i] as string;
+    if (c === '"' || c === "'" || c === '`') i = readLiteral(args, i).end - 1;
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    else if (c === ',' && depth === 0) return tailHasLiteral(args.slice(i + 1), 1);
+  }
+  return false;
+}
+
+const skipSpaceAt = (v: string, i: number): number => i + (/^\s*/u.exec(v.slice(i)) as RegExpExecArray)[0].length;
+
+/**
+ * Index just past the `=>` that follows a parameter list ending at `i` (optionally after a TS return
+ * type `: Promise<string>`), or -1 when no arrow follows.
+ */
+function arrowEnd(v: string, i: number): number {
+  let j = skipSpaceAt(v, i);
+  if (v.startsWith('=>', j)) return j + 2;
+  if (v[j] !== ':') return -1;
+  let depth = 0;
+  for (j++; j < Math.min(v.length, i + 300); j++) {
+    if (v.startsWith('=>', j)) {
+      if (depth === 0) return j + 2;
+      j++;
+      continue;
+    }
+    const c = v[j] as string;
+    if ('([{<'.includes(c)) depth++;
+    else if (')]}>'.includes(c)) {
+      if (depth === 0) return -1;
+      depth--;
+    } else if (depth === 0 && (c === ';' || c === ',' || c === '=' || c === '\n')) return -1;
+  }
+  return -1;
+}
+
+/** A function value: a block body (not a value; its statements are scanned key by key), or an expression body at `v[body]`. */
+type FunctionValue = { readonly block: true } | { readonly block: false; readonly body: number };
+
+/**
+ * A parenthesised arrow function assigned to a credential-named key (`() => "x"`, `async () => "x"`,
+ * `fetchToken = async (): Promise<string> => {…}`), or undefined when `v` is not one.
+ */
+function arrowFunctionValue(v: string): FunctionValue | undefined {
+  let i = (ARROW_HEAD.exec(v) as RegExpExecArray)[0].length;
+  if (v[i] !== '(') return undefined;
+  i = arrowEnd(v, closingBracket(v, i));
+  if (i < 0) return undefined;
+  const body = skipSpaceAt(v, i);
+  return v[body] === '{' ? { block: true } : { block: false, body };
 }
 
 interface ValueContext {
@@ -224,28 +376,66 @@ interface ValueContext {
   readonly countKey: boolean;
 }
 
+/** A typed declaration (Go/C#/PHP): the key is never in a type position. */
+const NO_TYPE_POSITION: Omit<ValueContext, 'countKey'> = { typePosition: false, typeContext: () => false };
+
 /** True when the value starting at `value` is a literal (i.e. not an explicit reference form). */
 function isLiteralValue(value: string, ctx: ValueContext, depth = 0): boolean {
   if (depth > 3) return true;
-  let v = skipValueLead(value);
-  if (VALUE_END.test(v)) return false;
+  // An expression-bodied arrow refuses when its body is a literal (a body that is a type is a TS function
+  // type: `tokenSource: () => Promise<string>`). `() => …` and `async`/`static (…) => …` otherwise pass as
+  // before; any other parameter list (`(x) => …`) is judged by the rule below, which refuses it.
+  const head = skipValueSpace(value);
+  const fn = arrowFunctionValue(head);
+  if (fn) {
+    const body = fn.block ? '' : head.slice(fn.body);
+    if (!fn.block && !TYPE_ANNOTATION.test(body) && isLiteralValue(body, ctx, depth + 1)) return true;
+    if (PASSING_ARROW_HEAD.test(head)) return false;
+  }
+  const lead = skipValueLead(value);
+  const { brackets } = lead;
+  let v = lead.v;
+  if (VALUE_END.test(v)) return brackets > 0 && tailHasLiteral(v, brackets);
   const quoted = /^(?:[rbuf]{1,2}(?=["'`]))?(["'`])/iu.exec(v);
   if (quoted) {
     const literal = readLiteral(v, quoted[0].length - 1);
-    return hasLiteralText(literal.content) || tailHasLiteral(v.slice(literal.end));
+    return hasLiteralText(literal.content) || tailHasLiteral(v.slice(literal.end), brackets);
   }
   const placeholders = /^(?:\$\{[^}\n]*\}|\{\{[^}\n]*\}\}|%\([^)\n]*\)s)+/u.exec(v);
-  if (placeholders) return !VALUE_END.test(v.slice(placeholders[0].length));
-  // A nested object/block: its own keys are scanned separately.
-  if (v.startsWith('{')) return false;
-  if (KEYWORD_LITERAL.test(v)) return false;
-  if (ctx.countKey && NUMERIC_LITERAL.test(v)) return false;
-  const call = CALL_EXPRESSION.exec(v);
+  if (placeholders) {
+    const rest = v.slice(placeholders[0].length);
+    return !VALUE_END.test(rest) || (brackets > 0 && tailHasLiteral(rest, brackets));
+  }
+  // A nested object/block: its own keys are scanned separately; inside brackets the rest is still judged.
+  if (v.startsWith('{')) return brackets > 0 && tailHasLiteral(v.slice(closingBracket(v, 0)), brackets);
+  const keyword = KEYWORD_LITERAL.exec(v) ?? (ctx.countKey ? NUMERIC_LITERAL.exec(v) : null);
+  if (keyword) return tailHasLiteral(v.slice(keyword[0].length), brackets);
+  const wrapper = LITERAL_WRAPPER_CALL.exec(v);
+  if (wrapper) {
+    // A wrapped reference (`SecretStr(os.environ["PW"])`) is judged as that reference; otherwise any
+    // non-blank literal in the arguments or the rest of the statement is the value. Without a literal the
+    // rule below still applies (`String::from(value)` is not a call expression and refuses).
+    const args = v.slice(wrapper[0].length);
+    const inner = skipValueLead(args).v;
+    const literal =
+      CALL_EXPRESSION.test(inner) || ENV_REFERENCE.test(inner)
+        ? isLiteralValue(args, ctx, depth + 1) || tailHasLiteral(args.slice(closingBracket(args, 0)), brackets)
+        : tailHasLiteral(args, brackets);
+    if (literal) return true;
+  }
+  const firstArg = FIRST_ARG_WRAPPER_CALL.exec(v);
+  if (firstArg && hasLiteralText(readLiteral(v, firstArg[0].length).content)) return true;
+  const envDefault = ENV_DEFAULT_CALL.exec(v);
+  if (envDefault && hasLiteralDefaultArgument(v, envDefault[0].length)) return true;
+  const call = NON_CALL_HEAD.test(v) ? null : CALL_EXPRESSION.exec(v);
   const env = call ? null : ENV_REFERENCE.exec(v);
   if (call || env) {
-    const rest = v.slice(call ? closingParen(v, call[0].length - 1) : (env?.[0].length ?? 0));
+    // After a reference head a fallback (`?? "x"`, `or x`) is a value of its own; any literal in the rest
+    // of the statement (`getPw() + "x"`, `process.env.X ? "a" : "b"`) refuses.
+    const rest = v.slice(call ? closingBracket(v, call[0].length - 1) : (env?.[0].length ?? 0));
     const fallback = FALLBACK_OPERATOR.exec(rest);
-    return fallback ? isLiteralValue(rest.slice(fallback[0].length), ctx, depth + 1) : false;
+    if (fallback && isLiteralValue(rest.slice(fallback[0].length), ctx, depth + 1)) return true;
+    return tailHasLiteral(rest, brackets);
   }
   if (ctx.typePosition) {
     const type = TYPE_ANNOTATION.exec(v);
@@ -262,19 +452,9 @@ function isLiteralValue(value: string, ctx: ValueContext, depth = 0): boolean {
   return true;
 }
 
-/**
- * True when workspace FILE content carries credential material: a private-key block, a vendor
- * key/token, or a credential-named key (password/secret/token/api key/auth/credentials …, any
- * prefix/suffix; Korean 비밀번호/암호/토큰/키) assigned any literal with `:`, `=`, `=>`, or `:=`.
- * Reference forms pass: env lookups, call expressions, `${…}`/`{{…}}`/`%(…)s` placeholders, type
- * annotations, comparisons, empty values, and booleans/null. Korean prose and card-number shapes
- * are not scanned here. A value may start on the next (indented) line, be triple-quoted, or be built
- * by concatenation (`"" + "x"`, `"" "x"`): any non-blank quoted literal in the expression refuses. A
- * credential-named key whose block value is a nested YAML mapping (`password:\n  rotation: 30d`) has
- * no value of its own (nested keys are scanned separately; a nested `value: x` is a residual). Detection is regex-based and BEST-EFFORT, not a complete DLP.
- */
-export function containsCredentialFileContent(content: string): boolean {
-  if (SECRET_TOKEN_SHAPED.test(content)) return true;
+/** Offset of the first key (in either scan) assigned a literal, or -1 when there is none. */
+function firstCredentialAssignment(content: string): number {
+  let first = -1;
   for (const m of content.matchAll(FILE_KEY_ASSIGNMENT)) {
     const key = m[2] ?? m[3] ?? '';
     const kind = classifyKey(key);
@@ -286,7 +466,71 @@ export function containsCredentialFileContent(content: string): boolean {
       countKey: kind === 'count',
     };
     const valueStart = keyStart + m[0].length;
-    if (isLiteralValue(content.slice(valueStart, valueStart + 512), ctx)) return true;
+    if (isLiteralValue(content.slice(valueStart, valueStart + VALUE_WINDOW), ctx)) {
+      first = keyStart;
+      break;
+    }
   }
-  return false;
+  for (const pattern of TYPED_DECLARATIONS) {
+    for (const m of content.matchAll(pattern)) {
+      const key = m[1] as string;
+      const keyStart = (m.index ?? 0) + m[0].indexOf(key);
+      if (first >= 0 && keyStart >= first) break;
+      const kind = classifyKey(key);
+      if (!kind) continue;
+      const valueStart = (m.index ?? 0) + m[0].length;
+      const ctx: ValueContext = { ...NO_TYPE_POSITION, countKey: kind === 'count' };
+      if (isLiteralValue(content.slice(valueStart, valueStart + VALUE_WINDOW), ctx)) {
+        first = keyStart;
+        break;
+      }
+    }
+  }
+  return first;
+}
+
+/**
+ * Which file-content detector fired, never the matched text. `secret-token`: a private-key block or a
+ * vendor key/token shape (takes precedence). `credential-assignment`: a credential-named key assigned a
+ * literal; `line` is the 1-based line of the first such key.
+ */
+export type CredentialFileFinding =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'secret-token' }
+  | { readonly kind: 'credential-assignment'; readonly line: number };
+
+/**
+ * Classifies workspace FILE content (see {@link containsCredentialFileContent} for the rule). The
+ * result names the detector and, for a credential assignment, its line, so a caller can tell the owner
+ * where the file was refused without echoing any value.
+ */
+export function classifyCredentialFileContent(content: string): CredentialFileFinding {
+  if (SECRET_TOKEN_SHAPED.test(content)) return { kind: 'secret-token' };
+  const at = firstCredentialAssignment(content);
+  if (at < 0) return { kind: 'none' };
+  let line = 1;
+  for (let i = content.indexOf('\n'); i >= 0 && i < at; i = content.indexOf('\n', i + 1)) line++;
+  return { kind: 'credential-assignment', line };
+}
+
+/**
+ * True when workspace FILE content carries credential material: a private-key block, a vendor
+ * key/token, or a credential-named key (password/secret/token/api key/auth/credentials …, any
+ * prefix/suffix; Korean 비밀번호/암호/토큰/키) assigned any literal with `:`, `=`, `=>`, or `:=`, or in a
+ * typed declaration (Go `const Password string = …`, C# `Password { get; set; } = …`, PHP
+ * `define("DB_PASSWORD", …)`). Reference forms pass: env lookups (without a literal default), call
+ * expressions, `${…}`/`{{…}}`/`%(…)s` placeholders, type annotations, comparisons, empty values,
+ * booleans/null, and block-bodied functions. A value may start on the next (indented) line, be
+ * triple-quoted, sit in brackets across lines, be built by concatenation (`"" + "x"`, `"" "x"`,
+ * `(""\n  "x"\n)`, `['', 'x']`), follow a reference (`getPw() + "x"`, `process.env.X ? "a" : "b"`,
+ * `process.env.X\n  ?? "x"`), be wrapped or decoded (`SecretStr("x")`, `atob("…")`,
+ * `Buffer.from("…", "base64")`), be an env default (`os.getenv("K", "x")`) or an expression-bodied arrow
+ * (`() => "x"`): any non-blank quoted literal in the expression refuses. A credential-named key whose
+ * block value is a nested YAML mapping (`password:\n  rotation: 30d`) has no value of its own (nested
+ * keys are scanned separately; a nested `value: x` is a residual). Korean prose and card-number shapes
+ * are not scanned here. Strict-only: no file-type awareness and no path input. Detection is regex-based
+ * and BEST-EFFORT, not a complete DLP.
+ */
+export function containsCredentialFileContent(content: string): boolean {
+  return classifyCredentialFileContent(content).kind !== 'none';
 }

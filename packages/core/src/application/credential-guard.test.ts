@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
+import {
+  classifyCredentialFileContent,
+  containsCredentialFileContent,
+  containsCredentialMaterial,
+} from './credential-guard';
 
 describe('containsCredentialMaterial (durable-memory write gate + read-time exclusion)', () => {
   it.each([
@@ -174,5 +178,172 @@ describe('containsCredentialFileContent (code-generation context)', () => {
     ['plain source', 'export function add(a: number, b: number) {\n  return a + b;\n}\n'],
   ])('passes %s', (_label, content) => {
     expect(containsCredentialFileContent(content)).toBe(false);
+  });
+});
+
+/**
+ * ADR-0097 strict-only guard: the refusal-adding QA-023 fixes re-implemented on the strict rule. Every
+ * "refuses" row below PASSED the pre-ADR-0097 guard (a bypass); no row may be relaxed.
+ */
+describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () => {
+  it.each([
+    // (a) bracket-depth tracking: multi-line / bracketed concatenation (owner-accepted residual closed)
+    ['multi-line parenthesised residual', 'password = (""\n    "probe-secret"\n)'],
+    ['parenthesised residual with blank lines', 'password = (\n  ""\n\n  "x"\n)'],
+    ['array with an empty first element', "password = ['', 'x']"],
+    ['unindented element inside an open bracket', 'password = [\nfoo, "x"]'],
+    ['object element before a literal', 'tokens = [{ id: 1 }, "x"]'],
+    ['keyword element before a literal', 'password = (null, "x")'],
+    ['placeholder element before a literal', 'password = [${A}, "x"]'],
+    ['raw string inside brackets', 'password = ["", r#"x"#]'],
+    ['Swift raw string inside brackets', 'password = ["", #"x"#]'],
+    // (b) operator continuation lines
+    ['fallback on the next line', 'const password = process.env.X\n  ?? "hunter2"'],
+    ['fallback operator at the line end', 'const token = getToken() ??\n  "hunter2"'],
+    ['logical or on the next line', 'const password = getPw()\n  || "hunter2"'],
+    ['wrapped ternary', 'const password = process.env.A\n  ? process.env.B\n  : "hunter2"'],
+    ['Python backslash continuation', 'password = get_pw() \\\n  + "hunter2"'],
+    ['keyword then a fallback on the next line', 'password = null\n  ?? "hunter2"'],
+    ['concatenation after a trailing comment-free operator', 'password = getPw() + // note\n  "x"'],
+    // (c) the whole rest of the statement after a call / env reference head
+    ['call plus literal', 'const password = getPw() + "x"'],
+    ['env ternary', 'const password = process.env.X ? "a" : "b"'],
+    ['chained call with a literal argument', 'const token = getToken().concat("x")'],
+    ['parenthesis inside a call argument string', 'const password = getPw(")") + "x"'],
+    ['private field is not a comment', 'const password = getPw() + this.#suffix + "x"'],
+    ['Ruby fetch block default', 'token = ENV.fetch("TOKEN") { "hunter2" }'],
+    ['documented false positive: chained builder argument', 'const auth = createAuth()\n  .withProvider("github")\n  .build();'],
+    // (d) env lookups with a literal default
+    ['os.getenv default', 'password = os.getenv("DB_PW", "hunter2")'],
+    ['os.environ.get default', 'password = os.environ.get("DB_PW", "hunter2")'],
+    ['ENV.fetch default', 'password = ENV.fetch("DB_PW", "hunter2")'],
+    ['Laravel env default', "'password' => env('DB_PASSWORD', 'secret'),"],
+    ['env default nested in a call', 'password = env("K", fallback("x"))'],
+    // (e) literal-wrapper and decoder calls
+    ['SecretStr', 'password = SecretStr("hunter2")'],
+    ['Secret.of', 'const token = Secret.of("hunter2")'],
+    ['Rust String::from', 'let password = String::from("hunter2");'],
+    ['new String', 'const password = new String("hunter2")'],
+    ['Python str()', 'password = str("hunter2")'],
+    ['atob', 'const token = atob("aHVudGVy")'],
+    ['base64.b64decode', 'token = base64.b64decode("aHVudGVy")'],
+    ['Buffer.from with a literal', 'const password = Buffer.from("aHVudGVy", "base64").toString()'],
+    ['wrapper plus a literal after it', 'password = SecretStr(get()) + "x"'],
+    ['wrapped env lookup with a literal default', 'password = SecretStr(os.getenv("PW", "hunter2"))'],
+    ['wrapped call plus a literal', 'password = str(get_pw()) + "x"'],
+    ['wrapped env reference inside brackets before a literal', 'tokens = [SecretStr(os.environ["A"]), "x"]'],
+    // (f) raw and interpolated string prefixes stay literal (strict rule)
+    ['Rust raw string', 'let password = r#"hunter2"#;'],
+    ['empty Rust raw string (strictness kept)', 'let password = r#""#;'],
+    ['C# interpolated string', 'var password = $"{pw}x";'],
+    ['C# verbatim interpolated string', 'var password = @$"{pw}x";'],
+    ['empty interpolated string (strictness kept)', 'var password = $"";'],
+    // (g) expression-bodied arrow values
+    ['arrow returning a literal', 'const password = () => "hunter2"'],
+    ['async arrow returning a literal', 'const password = async () => "hunter2"'],
+    ['arrow with a return type returning a literal', 'const password = async (): Promise<string> => "hunter2"'],
+    ['arrow on the next line', 'const password = () =>\n  "hunter2"'],
+    ['arrow returning a bare identifier', 'const token = (x) => x.token'],
+    // (h) typed declarations, applied to every file
+    ['Go typed const', 'const Password string = "hunter2"'],
+    ['Go typed var', 'var Token string = "hunter2"'],
+    ['Go typed pointer var', '\tvar apiKey *string = &literal'],
+    ['C# auto-property initializer', 'public string Password { get; set; } = "hunter2";'],
+    ['C# getter-only initializer', 'public string ApiKey { get; } = "hunter2";'],
+    ['documented false positive: C# dotted default', 'public string Password { get; set; } = string.Empty;'],
+    ['PHP define', 'define("DB_PASSWORD", "hunter2");'],
+    ['PHP define, single quotes', "define('API_TOKEN', 'hunter2');"],
+    ['PHP define, upper case', 'DEFINE("DB_PASSWORD","hunter2");'],
+    // strictness kept (the QA-023 branch relaxed these; ADR-0097 does not)
+    ['named type outside a type context', 'let password: Secret;'],
+    ['exported named type outside a type context', 'export let token: AuthToken;'],
+    ['identifier assignment', 'this.token = token;'],
+    ['Rust wrapper around a variable (not a call expression)', 'let password = String::from(value);'],
+    ['arrow with a parameter list', 'const onToken = (t) => {\n  save(t);\n};'],
+    ['fallback to a bare identifier', 'const password = process.env.PW ?? defaultPassword;'],
+  ])('refuses %s', (_label, content) => {
+    expect(containsCredentialFileContent(content)).toBe(true);
+    expect(classifyCredentialFileContent(content)).toMatchObject({ kind: 'credential-assignment' });
+  });
+
+  it.each([
+    ['bracket env reference', 'token = os.environ["API_TOKEN"]'],
+    ['getenv without a default', 'password = os.getenv("DB_PW")'],
+    ['getenv with an empty default', 'password = os.getenv("DB_PW", "")'],
+    ['getenv with a None default', 'password = os.getenv("DB_PW", None)'],
+    ['os.environ.get without a default', 'password = os.environ.get("DB_PW")'],
+    ['ENV.fetch without a default', 'password = ENV.fetch("DB_PW")'],
+    ['env() helper without a default', "secret: env('APP_SECRET'),"],
+    ['placeholder', 'password: ${DB_PASSWORD}'],
+    ['token count', 'maxTokens: 4096'],
+    ['nested YAML mapping', 'password:\n  rotation: 30d'],
+    ['block-bodied arrow', 'const useAuth = () => {\n return 1;\n};'],
+    ['function type', 'tokenSource: () => Promise<string>;'],
+    ['async block arrow with a return type', 'const fetchToken = async (): Promise<string> => {\n  return fetch(url);\n};'],
+    ['async arrow returning a call', 'const getToken = async () => fetchToken();'],
+    ['type alias of a function type', 'type TokenFactory = () => Token;'],
+    ['wrapper around an env reference', 'password = SecretStr(os.environ["PW"])'],
+    ['wrapper around a call', 'password = str(get_pw())'],
+    ['Buffer.from with a variable', 'const password = Buffer.from(raw, "base64").toString()'],
+    ['statement ends at the line break', 'const token = getToken()\nconst name = "bob";'],
+    ['statement ends at a semicolon', 'const token = getToken(); const name = "bob";'],
+    ['line comment after a call', 'const token = getToken() // "comment"'],
+    ['hash comment after a call', 'token = get_token()  # see "docs"'],
+    ['trailing comment ending in an operator does not continue', 'const token = getToken() // TODO:\nconst name = "bob";'],
+    ['comment line after a statement', 'const token = getToken()\n// "note"\nconst name = "bob";'],
+    ['empty fallback', 'const password = process.env.PW ?? ""'],
+    ['env fallback to env', 'const password = process.env.A ?? process.env.B;'],
+    ['chained call on the next line', 'const token = getToken()\n  .trim();'],
+    ['parenthesised env lookup across lines', 'password = (\n  os.getenv("PW")\n)'],
+    ['array of calls across lines', 'tokens = [\n  getA(),\n  getB(),\n]'],
+    ['object element without a literal after it', 'tokens = [{ id: 1 }]'],
+    ['parenthesised await', 'password = (await getPw())'],
+    ['empty array', 'password = [\n]'],
+    ['keyword then the next key', 'auth: true\npassword: null\n'],
+    ['Go untyped const is the generic rule', 'const MaxTokens int = 4096'],
+    ['Go typed var from an env lookup', 'var password string = os.Getenv("PW")'],
+    ['Go typed var without a value', 'var token string'],
+    ['C# auto-property without an initializer', 'public string Password { get; set; }'],
+    ['PHP define from getenv', 'define("DB_PASSWORD", getenv("DB_PASSWORD"));'],
+    ['PHP define of a non-credential', 'define("APP_NAME", "quoky");'],
+  ])('passes %s', (_label, content) => {
+    expect(containsCredentialFileContent(content)).toBe(false);
+    expect(classifyCredentialFileContent(content)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('classifyCredentialFileContent', () => {
+  it('returns none for plain source', () => {
+    expect(classifyCredentialFileContent('export const add = (a: number, b: number) => a + b;\n')).toEqual({
+      kind: 'none',
+    });
+    expect(classifyCredentialFileContent('')).toEqual({ kind: 'none' });
+  });
+
+  it('reports secret-token for a PEM block or vendor token, taking precedence over an assignment', () => {
+    expect(classifyCredentialFileContent('-----BEGIN RSA PRIVATE KEY-----\nabc\n')).toEqual({ kind: 'secret-token' });
+    expect(
+      classifyCredentialFileContent('password = "hunter2"\nconst gh = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";\n'),
+    ).toEqual({ kind: 'secret-token' });
+  });
+
+  it.each([
+    ['first line', 'password = "x"\n', 1],
+    ['third line', 'const a = 1;\nconst b = 2;\nconst password = "x";\n', 3],
+    ['first refusing key, not the first credential key', 'const token = getToken();\nconst password = "x";\n', 2],
+    ['quoted JSON key', '{\n  "user": "a",\n  "password": "x"\n}\n', 3],
+    ['key line of a multi-line value', '// header\n\npassword = (\n  ""\n  "x"\n)\n', 3],
+    ['CRLF line endings', 'a = 1\r\nb = 2\r\npassword = "x"\r\n', 3],
+    ['typed declaration before a generic match', 'package main\nconst Password string = "x"\npassword = "y"\n', 2],
+    ['generic match before a typed declaration', 'password = "y"\nconst Password string = "x"\n', 1],
+    ['PHP define line', '<?php\n\ndefine("DB_PASSWORD", "x");\n', 3],
+  ])('reports credential-assignment with the 1-based line: %s', (_label, content, line) => {
+    expect(classifyCredentialFileContent(content)).toEqual({ kind: 'credential-assignment', line });
+    expect(containsCredentialFileContent(content)).toBe(true);
+  });
+
+  it('never carries the matched text', () => {
+    const finding = classifyCredentialFileContent('password = "do-not-echo"\n');
+    expect(JSON.stringify(finding)).not.toContain('do-not-echo');
   });
 });
