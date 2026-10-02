@@ -9,6 +9,8 @@
  * {@link classifyCredentialFileContent} reports which of its detectors fired and where.
  */
 
+import { baselineFileContentRefusal } from './credential-guard-baseline';
+
 export const CREDENTIAL_REJECTION_REASON = 'candidate contains credential or authentication material';
 
 const KO_KEYWORD =
@@ -593,7 +595,12 @@ export type CredentialFileFinding =
  */
 export function classifyCredentialFileContent(content: string): CredentialFileFinding {
   if (SECRET_TOKEN_SHAPED.test(content)) return { kind: 'secret-token' };
-  const at = firstCredentialAssignment(content);
+  // ADR-0097 is refusal-ADDING only: whatever the strict rule below concludes, the file is refused whenever
+  // the frozen pre-hardening guard (d99d19c) refuses it — new refusals are a superset of the baseline's.
+  const baseline = baselineFileContentRefusal(content);
+  if (baseline?.kind === 'secret-token') return { kind: 'secret-token' };
+  const strict = firstCredentialAssignment(content);
+  const at = baseline && (strict < 0 || baseline.offset < strict) ? baseline.offset : strict;
   if (at < 0) return { kind: 'none' };
   let line = 1;
   for (let i = content.indexOf('\n'); i >= 0 && i < at; i = content.indexOf('\n', i + 1)) line++;
@@ -615,8 +622,9 @@ export function classifyCredentialFileContent(content: string): CredentialFileFi
  * (`() => "x"`): any non-blank quoted literal in the expression refuses. A credential-named key whose
  * block value is a nested YAML mapping (`password:\n  rotation: 30d`) has no value of its own (nested
  * keys are scanned separately; a nested `value: x` is a residual). Korean prose and card-number shapes
- * are not scanned here. Strict-only: no file-type awareness and no path input. Detection is regex-based
- * and BEST-EFFORT, not a complete DLP.
+ * are not scanned here. Strict-only: no file-type awareness and no path input. Monotone: it also refuses
+ * everything the frozen `d99d19c` guard refused (`credential-guard-baseline.ts`), so a parsing improvement
+ * here can never drop a baseline refusal. Detection is regex-based and BEST-EFFORT, not a complete DLP.
  */
 export function containsCredentialFileContent(content: string): boolean {
   return classifyCredentialFileContent(content).kind !== 'none';
