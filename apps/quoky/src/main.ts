@@ -106,8 +106,11 @@ async function bootstrap(): Promise<void> {
   await reminderDriver.start();
 
   const shutdown = async (): Promise<void> => {
-    // First: no reminder claim/complete may run while the platform and storage are closing.
-    await reminderDriver.stop().catch(() => undefined);
+    // First: no reminder claim/complete may run while the platform and storage are closing. stop() waits for the
+    // in-flight delivery + outcome write up to its hard bound; if that elapses, the reminder stays FIRING and the
+    // next startup turns it into DELIVERY_UNCERTAIN (never resent).
+    const cleanStop = await reminderDriver.stop().catch(() => false);
+    if (!cleanStop) log.warn('reminder tick stop was forced; an in-flight reminder may be left FIRING');
     await platform.stop().catch(() => undefined);
     await queue.stop().catch(() => undefined);
     await storage.close().catch(() => undefined);

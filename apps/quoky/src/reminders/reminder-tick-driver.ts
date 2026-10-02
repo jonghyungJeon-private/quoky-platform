@@ -1,5 +1,5 @@
 import { now as sharedClock } from '@quoky/core';
-import type { IsoTimestamp, Logger, ReminderDispatchService } from '@quoky/core';
+import type { IsoTimestamp, Logger, ReminderDispatchOptions, ReminderDispatchService } from '@quoky/core';
 
 /**
  * Composition-root reminder tick (ADR-0101 D6, PRO-5).
@@ -15,14 +15,17 @@ import type { IsoTimestamp, Logger, ReminderDispatchService } from '@quoky/core'
  *   (15 s) measured from the END of the previous tick, so two ticks never overlap. A missed ONCE reminder is
  *   delivered late once and a recurring one is caught up within 60 minutes by the first tick (service policy).
  * - `main.ts` calls `start()` after `platform.start()` and `stop()` first on shutdown.
- * - `stop()` disarms the timer and awaits the in-flight tick (bounded by `stopTimeoutMs`), so shutdown never
- *   closes storage under a running claim/complete.
+ * - `stop()` disarms the timer, tells the dispatcher not to START any further reminder of the current batch, and
+ *   awaits the single in-flight delivery + its outcome write (bounded by `stopTimeoutMs` = send timeout + margin).
+ *   It resolves `true` on a clean stop; `false` (state `STOP_FORCED`, no success log) when the bound elapsed, in
+ *   which case an unrecorded in-flight reminder stays FIRING and the next startup marks it DELIVERY_UNCERTAIN.
  * - A tick error is logged (class only) and the chain continues; the process never crashes from a tick.
  */
 
 export const REMINDER_TICK_INITIAL_DELAY_MS = 5_000;
 export const REMINDER_TICK_PERIOD_MS = 15_000;
-export const REMINDER_TICK_STOP_TIMEOUT_MS = 10_000;
+/** Per-send bound (Discord sends allow 20 s) plus a margin for the outcome write. */
+export const REMINDER_TICK_STOP_TIMEOUT_MS = 25_000;
 
 /** Injectable timer seam (tests use a manual fake). Handles are opaque. */
 export interface ReminderTickTimers {
@@ -49,12 +52,14 @@ export interface ReminderTickDriverDeps {
   readonly stopTimeoutMs?: number;
 }
 
-export type ReminderTickDriverState = 'IDLE' | 'DISABLED' | 'STARTING' | 'RUNNING' | 'STOPPED';
+export type ReminderTickDriverState = 'IDLE' | 'DISABLED' | 'STARTING' | 'RUNNING' | 'STOPPED' | 'STOP_FORCED';
 
 export class ReminderTickDriver {
   private stateValue: ReminderTickDriverState = 'IDLE';
   private timer: unknown = undefined;
   private inFlight: Promise<void> | null = null;
+  private stopping = false;
+  private forced = false;
   private readonly clock: () => IsoTimestamp;
   private readonly timers: ReminderTickTimers;
   private readonly initialDelayMs: number;
@@ -94,10 +99,15 @@ export class ReminderTickDriver {
     return true;
   }
 
-  /** Disarm the chain and wait (bounded) for an in-flight recovery or tick. Idempotent; never throws. */
-  async stop(): Promise<void> {
+  /**
+   * Disarm the chain, stop new deliveries and wait (bounded) for the in-flight one. Resolves `true` when nothing is
+   * left running, `false` when the bound elapsed (forced). Idempotent; never throws.
+   */
+  async stop(): Promise<boolean> {
+    if (this.forced) return false;
     const wasActive = this.stateValue === 'STARTING' || this.stateValue === 'RUNNING';
-    this.stateValue = 'STOPPED';
+    if (!this.forced) this.stateValue = 'STOPPED';
+    this.stopping = true;
     if (this.timer !== undefined) {
       this.timers.clearTimeout(this.timer);
       this.timer = undefined;
@@ -105,9 +115,15 @@ export class ReminderTickDriver {
     const pending = this.inFlight;
     if (pending !== null) {
       const settled = await this.boundedWait(pending);
-      if (!settled) this.deps.logger.warn('reminder.tick.stop_timeout', { stopTimeoutMs: this.stopTimeoutMs });
+      if (!settled) {
+        this.stateValue = 'STOP_FORCED';
+        this.forced = true;
+        this.deps.logger.warn('reminder.tick.stop_timeout', { stopTimeoutMs: this.stopTimeoutMs });
+        return false;
+      }
     }
     if (wasActive) this.deps.logger.info('reminder.tick.stopped');
+    return true;
   }
 
   /** Resolves once no recovery or tick is in flight (test and shutdown observability only). */
@@ -143,7 +159,7 @@ export class ReminderTickDriver {
 
   private async tick(): Promise<void> {
     try {
-      await this.deps.dispatch.dispatchDue(this.clock());
+      await this.deps.dispatch.dispatchDue(this.clock(), { shouldContinue: () => !this.stopping });
     } catch (error) {
       this.logFailure('reminder.tick.failed', error);
     }
