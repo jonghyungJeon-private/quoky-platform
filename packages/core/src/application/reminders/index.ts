@@ -8,3 +8,8 @@
 export * from './zoned-time';
 export * from './reminder-schedule';
 export * from './reminder-grammar';
+// PRO-3: reminder copy, conversation (create/list/cancel), bounded dispatch and the local daily brief.
+export * from './daily-brief';
+export * from './reminder-reply-composer';
+export * from './reminder-conversation-service';
+export * from './reminder-dispatch-service';
