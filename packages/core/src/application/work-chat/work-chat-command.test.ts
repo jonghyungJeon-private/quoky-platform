@@ -473,3 +473,29 @@ describe('natural completion hint detection (QA-V2-W7-03)', () => {
     expect(detectWorkChatCommand('내 할 일 보여줘')).toEqual({ kind: 'todo.list' });
   });
 });
+
+describe('status question detection (QA-V2-W7-05)', () => {
+  it.each([
+    ['주간 보고서 쓰기 완료했나?', { text: '주간 보고서 쓰기' }],
+    ['주간 보고서 쓰기 완료했어?', { text: '주간 보고서 쓰기' }],
+    ['주간 보고서 쓰기 완료됐어?', { text: '주간 보고서 쓰기' }],
+    ['주간 보고서 쓰기 끝났어?', { text: '주간 보고서 쓰기' }],
+    ['주간 보고서 쓰기 다 했나?', { text: '주간 보고서 쓰기' }],
+    ['주간 보고서 쓰기 했나요?', { text: '주간 보고서 쓰기' }],
+    ['주간 보고서 쓰기 완료했나요', { text: '주간 보고서 쓰기' }],
+    ['2번 할 일 완료됐어?', { index: 2 }],
+  ])('detects %s', (text, target) => {
+    expect(detectWorkChatCommand(text)).toEqual({ kind: 'todo.status', target });
+  });
+
+  it.each(['완료 처리 어떻게 해?', '완료했나?', '주간 보고서 쓰기 완료했어', '주간 보고서 쓰기 완료 안 했나?', '3 완료됐어?'])(
+    'does not detect %s as a status question',
+    (text) => {
+      expect(detectWorkChatCommand(text)?.kind).not.toBe('todo.status');
+    },
+  );
+
+  it('keeps the hint forms as hints', () => {
+    expect(detectWorkChatCommand('주간 보고서 쓰기 완료했어')?.kind).toBe('todo.hint');
+  });
+});

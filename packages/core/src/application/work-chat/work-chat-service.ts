@@ -51,6 +51,7 @@ import {
   renderTodoLinked,
   renderTodoNotActive,
   renderTodoNotFound,
+  renderTodoStatusAnswer,
   renderTodoTitleTooLong,
   renderTodoTooManyRefs,
   renderWorkChatUsage,
@@ -85,7 +86,7 @@ export interface WorkChatServiceDeps {
   readonly workSurface: { forActor(actor: Actor): Promise<WorkSurface> };
   readonly connectors: { list(): readonly ConnectorProvider[] };
   /** The only to-do state owner; to-do commands never touch storage directly. */
-  readonly work: Pick<WorkManager, 'create' | 'listActiveByActor' | 'transition' | 'correlate'>;
+  readonly work: Pick<WorkManager, 'create' | 'listByActor' | 'listActiveByActor' | 'transition' | 'correlate'>;
 }
 
 export interface WorkChatServiceOptions {
@@ -212,6 +213,7 @@ export class WorkChatService implements WorkDesk {
 
   async handle(command: WorkChatCommand, actor: Actor): Promise<WorkChatOutcome> {
     if (command.kind === 'todo.hint') return this.completionHint(command, actor);
+    if (command.kind === 'todo.status') return this.statusAnswer(command, actor);
     try {
       switch (command.kind) {
         case 'todo.add':
@@ -234,6 +236,31 @@ export class WorkChatService implements WorkDesk {
     } catch (error) {
       if (command.kind === 'todo.list') return reply(renderTodoListFailure());
       return reply(isTodoCommand(command) ? this.todoFailureText(error) : renderLookupFailure(lookupSource(command), 'UNAVAILABLE'));
+    }
+  }
+
+  /**
+   * Read-only status question (QA-V2-W7-05): exactly one of the actor's to-dos (open or closed) by exact normalised
+   * title, or an open to-do by list number. Anything else is `none` and the turn falls through unchanged.
+   */
+  private async statusAnswer(command: Extract<WorkChatCommand, { kind: 'todo.status' }>, actor: Actor): Promise<WorkChatOutcome> {
+    try {
+      const all = [...(await this.deps.work.listByActor(actor.id))].sort(compareTodos);
+      const active = all.filter((item) => item.status === WorkItemStatus.ACTIVE);
+      const target = command.target;
+      let item: WorkItem | undefined;
+      if ('index' in target) {
+        item = active[target.index - 1];
+      } else {
+        const wanted = hintKey(target.text);
+        const matches = wanted.length === 0 ? [] : all.filter((candidate) => candidate.title !== undefined && hintKey(candidate.title) === wanted);
+        if (matches.length === 1) item = matches[0];
+      }
+      if (!item) return { kind: 'none' };
+      const no = active.indexOf(item) + 1;
+      return reply(renderTodoStatusAnswer(item, no));
+    } catch {
+      return { kind: 'none' };
     }
   }
 
