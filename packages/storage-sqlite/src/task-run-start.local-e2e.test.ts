@@ -12,7 +12,7 @@ import {
 } from '@quoky/core';
 import type { Task } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
-import { MIGRATIONS, runMigrations } from './migrations';
+import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from './migrations';
 
 const dirs: string[] = [];
 afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -236,7 +236,9 @@ describe('M3E-5 migration v11 — attempt identity enforcement', () => {
         'task-1',
         JSON.stringify({ id: 'run-2', taskId: 'task-1', attempt: 2 }),
       );
-      expect(runMigrations(db)).toEqual({ from: 10, to: 11, applied: [11] });
+      expect(runMigrations(db)).toEqual({
+        from: 10, to: LATEST_SCHEMA_VERSION, applied: MIGRATIONS.filter((m) => m.version > 10).map((m) => m.version),
+      });
       expect(runMigrations(db).applied).toEqual([]);
       const indexes = (db.pragma('index_list(task_runs)') as { name: string }[]).map((x) => x.name);
       expect(indexes).toContain('task_runs_task_attempt');

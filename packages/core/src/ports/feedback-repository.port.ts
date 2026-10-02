@@ -1,7 +1,47 @@
+import type { ConversationTurnRecord, FeedbackSignal, FeedbackSummary, Id, IsoTimestamp } from '../domain';
+
 /**
- * PORT: feedback capture persistence (ADR-0098; DI token `FEEDBACK_REPOSITORY`).
+ * PORT: feedback capture persistence (ADR-0098 D4; DI token `FEEDBACK_REPOSITORY`).
  *
- * Pre-registered stub (SEAM-1, ADR-0096 D8): intentionally empty and inert until its track ADR is ratified;
- * nothing imports from it yet. Filled by QUAL-3 (ADR-0098). A dropped track's stub is removed in INT-1 or DOC-B.
+ * Deliberately NOT part of `StorageProvider`. Implementations store no message or reply text: only the
+ * fields of {@link ConversationTurnRecord} and {@link FeedbackSignal}.
  */
-export {};
+
+/** Where a conversation lives; `threadId` absent means the channel itself. */
+export interface FeedbackTurnLocation {
+  platform: string;
+  channelId: string;
+  threadId?: string;
+}
+
+export interface FeedbackSummaryQuery {
+  actorId: Id;
+  /** Inclusive lower bound on turn `createdAt`. */
+  since: IsoTimestamp;
+  recentNegativeLimit: number;
+}
+
+export interface SaveTurnResult {
+  /** The stored turn (the pre-existing one when `created` is false). */
+  turn: ConversationTurnRecord;
+  /** False when a turn with the same `(platform, inboundMessageId)` already existed (nothing written). */
+  created: boolean;
+}
+
+export interface FeedbackRepository {
+  /** Idempotent on `(platform, inboundMessageId)`; also maps each reply platform message id to the turn. */
+  saveTurn(turn: ConversationTurnRecord): Promise<SaveTurnResult>;
+  /** The turn whose delivered reply had this platform message id, or null. */
+  findTurnByPlatformMessage(platform: string, platformMessageId: string): Promise<ConversationTurnRecord | null>;
+  /**
+   * The latest turn at `location` created strictly before `before` and no earlier than `before - withinMs`
+   * (`threadId` matched exactly, absent matching only absent), or null.
+   */
+  findPreviousTurn(location: FeedbackTurnLocation, before: IsoTimestamp, withinMs: number): Promise<ConversationTurnRecord | null>;
+  /** Insert, or update `kind`/`value`/`updatedAt` of the row with the same `(turnId, source, sourceKey)`. */
+  upsertSignal(signal: FeedbackSignal): Promise<FeedbackSignal>;
+  /** Counts over the actor's non-control turns since `query.since`; never returns text or provider ids. */
+  summarize(query: FeedbackSummaryQuery): Promise<FeedbackSummary>;
+  /** Delete at most `maxRows` turns created before `cutoff` (oldest first) with their messages and signals. */
+  pruneOlderThan(cutoff: IsoTimestamp, maxRows: number): Promise<number>;
+}

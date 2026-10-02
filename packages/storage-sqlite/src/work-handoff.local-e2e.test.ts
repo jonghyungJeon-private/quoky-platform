@@ -20,6 +20,7 @@ import {
 } from '@quoky/core';
 import type { AgentProfile, ExecutionReceipt } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
+import { LATEST_SCHEMA_VERSION } from './migrations';
 import Database from 'better-sqlite3';
 
 const directories: string[] = [];
@@ -109,6 +110,6 @@ describe('CAP-014 Local E2E — real Core/Application/SQLite v10, no external bo
     await expect(reopened.workHandoffs.listByWorkItem(workItem.id)).resolves.toEqual([handoff]);
     await reopened.close();
     const db = new Database(path, { readonly: true });
-    try { expect(db.pragma('user_version', { simple: true })).toBe(11); } finally { db.close(); }
+    try { expect(db.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION); } finally { db.close(); }
   });
 });

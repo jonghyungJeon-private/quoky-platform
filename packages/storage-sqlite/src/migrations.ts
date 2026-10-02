@@ -237,10 +237,63 @@ export const MIGRATIONS: readonly Migration[] = [
         END;`);
     },
   },
+  {
+    version: 12,
+    name: 'feedback capture tables (ADR-0098)',
+    up(db) {
+      // Purely additive, no backfill. No message or reply text column (ADR-0098 D4): `data` holds only ids,
+      // routing facts, sizes and a bounded keyword-hash fingerprint.
+      db.exec(`CREATE TABLE IF NOT EXISTS conversation_turns (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        actor_id TEXT,
+        platform TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_id TEXT,
+        inbound_message_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        data TEXT NOT NULL);`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS conversation_turns_inbound
+        ON conversation_turns(platform, inbound_message_id);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS conversation_turns_location
+        ON conversation_turns(platform, channel_id, thread_id, created_at);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS conversation_turns_actor
+        ON conversation_turns(actor_id, created_at);`);
+      db.exec(`CREATE TABLE IF NOT EXISTS turn_platform_messages (
+        platform TEXT NOT NULL,
+        platform_message_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        PRIMARY KEY (platform, platform_message_id));`);
+      db.exec(`CREATE INDEX IF NOT EXISTS turn_platform_messages_turn_id
+        ON turn_platform_messages(turn_id);`);
+      db.exec(`CREATE TABLE IF NOT EXISTS feedback_signals (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL);`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS feedback_signals_turn_source
+        ON feedback_signals(turn_id, source, source_key);`);
+    },
+  },
 ];
 
 /** The schema version this build targets (the highest migration version). */
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+
+/**
+ * ADR-0096 D10: the migration list must be exactly the contiguous sequence 1..N, in order. A gap, duplicate,
+ * reordering or non-integer version is a startup error, never silently skipped.
+ */
+export function assertContiguousMigrations(migrations: readonly Migration[]): void {
+  migrations.forEach((m, index) => {
+    if (m.version !== index + 1) throw new Error('SCHEMA_MIGRATION_SEQUENCE_INVALID');
+  });
+}
 
 /**
  * Apply every migration whose version exceeds the database's current
@@ -248,12 +301,23 @@ export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max,
  * it goes. Idempotent and backward compatible: an untracked legacy DB
  * (`user_version = 0`) re-runs the idempotent baseline and is stamped forward.
  *
+ * Fails closed before touching the database (ADR-0096 D10): a non-contiguous
+ * list is `SCHEMA_MIGRATION_SEQUENCE_INVALID`; a database whose `user_version`
+ * is above the latest known version (written by a newer build) is
+ * `SCHEMA_VERSION_AHEAD` — nothing is applied and nothing is downgraded.
+ *
  * Returns the version transition for logging/auditing.
  */
-export function runMigrations(db: Db): { from: number; to: number; applied: number[] } {
+export function runMigrations(
+  db: Db,
+  migrations: readonly Migration[] = MIGRATIONS,
+): { from: number; to: number; applied: number[] } {
+  assertContiguousMigrations(migrations);
+  const latest = migrations.length;
   const from = Number(db.pragma('user_version', { simple: true })) || 0;
+  if (from > latest) throw new Error('SCHEMA_VERSION_AHEAD');
   const applied: number[] = [];
-  for (const m of [...MIGRATIONS].sort((a, b) => a.version - b.version)) {
+  for (const m of migrations) {
     if (m.version <= from) continue;
     const run = db.transaction(() => {
       m.up(db);
