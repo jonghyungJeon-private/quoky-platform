@@ -590,8 +590,47 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
     expect(reply.text.length).toBeLessThanOrEqual(1900);
     expect(reply.text).toContain('파일은 수정되지 않았어요');
     expect(reply.text).toContain('아직 실제로 적용되지 않았어요');
-    expect(reply.text).toContain('바로 적용할 수는 없어요'); // multi-file → apply-incapable footer
+    expect(reply.text).toContain('적용해줘'); // ADR-0099 D1: a ≤5-file update set is apply-capable
+    // ADR-0099 D1: one (shorter) block per file within the budget — no file is dropped, each is marked cut.
+    for (let i = 0; i < 5; i++) expect(reply.text).toContain(`packages/core/file-${i}.ts`);
+    expect(reply.text).not.toContain('생략했어요');
+    expect(reply.text.split('(diff가 길어서 일부만 보여드렸어요.)')).toHaveLength(6);
+  });
+
+  it('more files than fit even at the per-file floor are dropped with a bounded omission notice, never truncated mid-block (ADR-0039)', () => {
+    const bigUnified = Array.from({ length: 60 }, (_, i) => `-line ${'x'.repeat(40)} ${i}`).join('\n');
+    const reply = composer.composeCodeDiffPreview(
+      CTX,
+      diffPreviewOf({
+        changes: Array.from({ length: 12 }, (_, i) => ({
+          path: `packages/core/file-${i}.ts`,
+          kind: 'update' as const,
+          unified: bigUnified,
+          binary: false,
+        })),
+      }),
+    );
+    expect(reply.text.length).toBeLessThanOrEqual(1900);
     expect(reply.text).toContain('생략했어요'); // not every file's diff fit — the omission is noted, not silent
+    expect(reply.text).toContain('바로 적용할 수는 없어요'); // > MAX_CHANGE_SET_FILES → apply-incapable footer
+    expect(reply.text).toContain('파일은 수정되지 않았어요');
+  });
+
+  it('a 2-file update+add change set renders one block per file, marks the new file and is apply-capable (ADR-0099 D1)', () => {
+    const reply = composer.composeCodeDiffPreview(
+      CTX,
+      diffPreviewOf({
+        changes: [
+          { path: 'src/a.ts', kind: 'update', unified: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n', binary: false },
+          { path: 'src/b.ts', kind: 'add', unified: '--- /dev/null\n+++ b/src/b.ts\n@@ -0,0 +1 @@\n+new\n', binary: false },
+        ],
+      }),
+    );
+    expect(reply.text).toContain('- src/a.ts\n');
+    expect(reply.text).toContain('- src/b.ts (새 파일)');
+    expect(reply.text).toContain('"적용해줘"');
+    expect(reply.preview?.files.map((f) => f.path)).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(reply.preview?.footer).toContain('적용해줘');
   });
 
   it('stays within the existing message-length bound even with a near-limit single diff', () => {
@@ -613,21 +652,52 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
     for (const word of FORBIDDEN_MUTATION_WORDS) expect(reply.text).not.toContain(word); // never implies applied
   });
 
-  it('apply-INcapable (new-file add) → "cannot apply this shape" footer naming the real next step, offers no apply-request phrase, files unchanged', () => {
+  it('apply-CAPABLE (explicit new-file add, ADR-0099 D1) → advertises "적용해줘", files unchanged', () => {
     const reply = composer.composeCodeDiffPreview(
       CTX,
       diffPreviewOf({
         changes: [{ path: 'packages/core/src/new.ts', kind: 'add', unified: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+new\n', binary: false }],
       }),
     );
-    expect(reply.text).toContain('바로 적용할 수는 없어요');
-    expect(reply.text).toContain('기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요'); // real next step
-    expect(reply.text).not.toContain('적용하는 기능은 아직 지원하지 않아요'); // stale blanket wording gone
-    expect(reply.text).not.toContain('적용해줘');
+    expect(reply.text).toContain('적용해줘');
+    expect(reply.text).not.toContain('바로 적용할 수는 없어요');
     expect(reply.text).toContain('파일은 수정되지 않았어요'); // not-modified fact stays explicit (header)
   });
 
-  it('apply-INcapable (multi-file update — fails the single-op integrity shape) → no apply-request phrase, "cannot apply this shape" footer', () => {
+  it('apply-INcapable (a delete in the set) → "cannot apply this shape" footer naming the real next step, no apply-request phrase', () => {
+    const reply = composer.composeCodeDiffPreview(
+      CTX,
+      diffPreviewOf({
+        changes: [
+          { path: 'a.ts', kind: 'update', unified: '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-x\n+y\n', binary: false },
+          { path: 'b.ts', kind: 'delete', unified: '--- a/b.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n', binary: false },
+        ],
+      }),
+    );
+    expect(reply.text).not.toContain('적용해줘');
+    expect(reply.text).toContain('바로 적용할 수는 없어요');
+    expect(reply.text).toContain('5개까지 경로와 함께 다시 요청해 주세요'); // real next step
+    expect(reply.text).not.toContain('적용하는 기능은 아직 지원하지 않아요'); // stale blanket wording gone
+  });
+
+  it('apply-INcapable (a binary or undisplayable file inside a multi-file set) → no apply-request phrase', () => {
+    for (const second of [
+      { path: 'b.bin', kind: 'update' as const, unified: '', binary: true },
+      { path: 'b.ts', kind: 'update' as const, unified: '', binary: false },
+      { path: 'c.ts', kind: 'add' as const, unified: '', binary: false },
+    ]) {
+      const reply = composer.composeCodeDiffPreview(
+        CTX,
+        diffPreviewOf({
+          changes: [{ path: 'a.ts', kind: 'update', unified: '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-x\n+y\n', binary: false }, second],
+        }),
+      );
+      expect(reply.text, second.path).not.toContain('적용해줘');
+      expect(reply.text, second.path).toContain('바로 적용할 수는 없어요');
+    }
+  });
+
+  it('apply-CAPABLE (multi-file update ≤ 5, ADR-0099 D1) → advertises "적용해줘"', () => {
     const reply = composer.composeCodeDiffPreview(
       CTX,
       diffPreviewOf({
@@ -637,8 +707,8 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
         ],
       }),
     );
-    expect(reply.text).not.toContain('적용해줘');
-    expect(reply.text).toContain('바로 적용할 수는 없어요');
+    expect(reply.text).toContain('적용해줘');
+    expect(reply.text).not.toContain('바로 적용할 수는 없어요');
   });
 
   it('the structured PreviewArtifact footer is identical to the rendered text footer (both capable and incapable)', () => {
@@ -649,12 +719,12 @@ describe('ResponseComposer.composeCodeDiffPreview', () => {
     const incapable = composer.composeCodeDiffPreview(
       CTX,
       diffPreviewOf({
-        changes: [{ path: 'packages/core/src/new.ts', kind: 'add', unified: '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+n\n', binary: false }],
+        changes: [{ path: 'packages/core/src/old.ts', kind: 'delete', unified: '--- a/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-n\n', binary: false }],
       }),
     );
     expect(incapable.preview!.footer).toBe(
-      '이 제안은 파일 추가·삭제, 여러 파일 또는 바이너리 변경이라 바로 적용할 수는 없어요.\n' +
-        '파일에 적용까지 하려면 기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요.',
+      '이 제안은 파일 삭제, 바이너리·표시할 수 없는 변경 또는 5개보다 많은 파일이 포함돼 바로 적용할 수는 없어요.\n' +
+        '파일에 적용까지 하려면 고칠 기존 파일이나 새로 만들 파일을 5개까지 경로와 함께 다시 요청해 주세요.',
     );
     expect(incapable.text).toContain(incapable.preview!.footer);
   });
@@ -798,7 +868,24 @@ describe('ResponseComposer.composePatchSetPreview', () => {
     expect(reply.text.length).toBeLessThanOrEqual(1900);
     expect(reply.text).toContain('패치 미리보기');
     expect(reply.text).toContain('파일은 수정되지 않았어요');
-    expect(reply.text).toContain('생략했어요');
+    // ADR-0099 D1: every operation of a ≤5-file set keeps its own (shorter) block — none is dropped.
+    for (let i = 0; i < 5; i++) expect(reply.text).toContain(`file-${i}.ts`);
+    expect(reply.text).not.toContain('생략했어요');
+  });
+
+  it('an `add` operation is labeled as a new file (ADR-0099 D1)', () => {
+    const reply = composer.composePatchSetPreview(
+      CTX,
+      previewOf({
+        operations: [
+          { path: 'src/a.ts', kind: 'update', unified: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n' },
+          { path: 'src/b.ts', kind: 'add', unified: '--- /dev/null\n+++ b/src/b.ts\n@@ -0,0 +1 @@\n+n\n' },
+        ],
+      }),
+    );
+    expect(reply.text).toContain('- src/a.ts\n');
+    expect(reply.text).toContain('- src/b.ts (새 파일)');
+    expect(reply.text).toContain('파일은 수정되지 않았어요');
   });
 });
 
@@ -1246,7 +1333,7 @@ describe('ResponseComposer.composeCommitExecution* replies (Sprint 2y, ADR-0046)
     const unavailable = composer.composeCommitExecutionUnavailable(CTX);
     expect(untracked.text).not.toBe(unavailable.text);
     expect(untracked.text).toContain('untracked');
-    expect(untracked.text).toContain('별도');
+    expect(untracked.text).toContain('새로 만들기로 요청하지 않은'); // ADR-0099 D3: only requested new files are added
     expect(untracked.text).toContain('git push는 하지 않았어요');
     for (const f of OVERCLAIM) expect(untracked.text, f).not.toContain(f);
   });
@@ -1448,9 +1535,17 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       ],
       outOfScopeWarnings: [],
     });
-    expect(multi.text).not.toContain('"적용해줘"');
-    expect(multi.text).toContain('기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요');
-    for (const text of [preview.text, multi.text]) {
+    expect(multi.text).toContain('"적용해줘"'); // ADR-0099 D1: a ≤5-file update set is apply-capable
+    const withDelete = composer.composeCodeGenerationPreview(CTX, {
+      changes: [
+        { path: 'a.ts', kind: 'update', excerpt: 'x' },
+        { path: 'b.ts', kind: 'delete' },
+      ],
+      outOfScopeWarnings: [],
+    });
+    expect(withDelete.text).not.toContain('"적용해줘"');
+    expect(withDelete.text).toContain('5개까지 경로와 함께 다시 요청해 주세요');
+    for (const text of [preview.text, multi.text, withDelete.text]) {
       expect(text).not.toContain('적용하는 기능은 아직 지원하지 않아요');
     }
   });
@@ -1583,5 +1678,74 @@ describe('ResponseComposer — contributed help lines (ADR-0096 D6)', () => {
     const kept = text.split('\n').length - baseLines.length;
     expect(kept).toBeGreaterThan(0);
     expect(kept).toBeLessThan(MAX_CONTRIBUTED_HELP_LINES);
+  });
+});
+
+// ── ADR-0099 (CODE-3) — change-set replies: targets, apply outcomes, new-file marking, help ─────────
+
+describe('ResponseComposer change-set replies (ADR-0099)', () => {
+  it('composeTargetsMissing names every missing path (sanitized, inline code), asks again, modifies nothing', () => {
+    const text = composer.composeTargetsMissing(CTX, ['src/a.ts', 'docs/`b`\u0007.md']).text;
+    expect(text).toContain('`src/a.ts`');
+    expect(text).toContain('`docs/b.md`');
+    expect(text).toContain('다시 보내 주세요');
+    expect(text).toContain('"새 파일 만들어줘"');
+    expect(text).toContain('파일은 수정되지 않았어요');
+    for (const word of FORBIDDEN_MUTATION_WORDS) expect(text).not.toContain(word);
+  });
+
+  it('composeTooManyTargets states the 5-file limit and the count, and asks to split', () => {
+    const text = composer.composeTooManyTargets(CTX, 7).text;
+    expect(text).toContain('5개까지');
+    expect(text).toContain('7개');
+    expect(text).toContain('나눠서');
+    expect(text).toContain('파일은 수정되지 않았어요');
+  });
+
+  it('rolled back says nothing changed; partially applied says it MAY have applied and lists the files; both distinct from failed', () => {
+    const files = ['src/a.ts', 'src/b.ts'];
+    const rolled = composer.composeWorkspaceApplyRolledBack(CTX, files).text;
+    const partial = composer.composeWorkspaceApplyPartiallyApplied(CTX, files).text;
+    expect(rolled).toContain('되돌렸어요');
+    expect(rolled).toContain('바뀐 파일은 없어요');
+    expect(rolled).toContain('src/a.ts, src/b.ts');
+    expect(partial).toContain('적용됐을 수 있어요');
+    expect(partial).toContain('확인할 파일: src/a.ts, src/b.ts');
+    expect(partial).not.toContain('바뀐 파일은 없어요');
+    for (const t of [rolled, partial]) {
+      expect(t).toContain('git 명령이나 테스트는 실행하지 않았어요');
+      expect(t).not.toContain('수정했어요');
+    }
+    expect(new Set([rolled, partial, composer.composeWorkspaceApplyFailed(CTX).text]).size).toBe(3);
+  });
+
+  it('composeWorkspaceApplied marks new files and is unchanged without them', () => {
+    expect(composer.composeWorkspaceApplied(CTX, ['src/a.ts'])).toEqual(composer.composeWorkspaceApplied(CTX, ['src/a.ts'], []));
+    const text = composer.composeWorkspaceApplied(CTX, ['src/a.ts', 'src/b.ts'], ['src/b.ts']).text;
+    expect(text).toContain('파일을 수정했어요: src/a.ts, src/b.ts (새 파일)');
+  });
+
+  it('commit approval and executed replies mark new files; without newFiles the text is unchanged', () => {
+    const base = { candidateFiles: ['src/a.ts', 'src/b.ts'], commitMessage: 'chore: x', validation: 'none' as const };
+    expect(composer.composeCommitApprovalRequested(CTX, base).text).toContain('대상 파일: src/a.ts, src/b.ts\n');
+    expect(composer.composeCommitApprovalRequested(CTX, { ...base, newFiles: ['src/b.ts'] }).text).toContain(
+      '대상 파일: src/a.ts, src/b.ts (새 파일)\n',
+    );
+    const hash = 'abcdef1234567890';
+    expect(composer.composeCommitExecuted(CTX, { commitHash: hash, files: ['src/a.ts'] }).text).toBe(
+      '커밋했어요: abcdef1\n대상 파일: src/a.ts\ngit push는 하지 않았어요.',
+    );
+    expect(
+      composer.composeCommitExecuted(CTX, { commitHash: hash, files: ['src/a.ts', 'src/b.ts'], newFiles: ['src/b.ts'] }).text,
+    ).toContain('대상 파일: src/a.ts, src/b.ts (새 파일)');
+  });
+
+  it('the base help text carries one multi-file / new-file line', () => {
+    const text = composer.composeHelp(CTX).text;
+    const lines = text.split('\n').filter((l) => l.startsWith('- 여러 파일·새 파일'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('5개까지');
+    expect(lines[0]).toContain('"새 파일 만들어줘"');
+    expect(text.length).toBeLessThanOrEqual(1900);
   });
 });
