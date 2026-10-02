@@ -5,7 +5,10 @@ import Database from 'better-sqlite3';
 import { runMigrations } from './migrations';
 import { SqliteContinuationBindingRepository } from './continuation-binding-repository';
 import { SqliteFeedbackRepository } from './feedback-repository';
-import type { ContinuationBindingRepository, FeedbackRepository } from '@quoky/core';
+import { SqliteReminderRepository } from './reminder-repository';
+import type { ContinuationBindingRepository, FeedbackRepository, ReminderRepository } from '@quoky/core';
+
+export { SqliteReminderRepository } from './reminder-repository';
 import type {
   Actor,
   ActorRepository,
@@ -1106,6 +1109,8 @@ export class SqliteStorageProvider implements StorageProvider {
   codeProposals!: CodeProposalRepository;
   /** Feedback capture store (ADR-0098 D4, schema v12). Deliberately not part of `StorageProvider`. */
   feedback!: FeedbackRepository;
+  /** Owner reminder store (ADR-0101 D9, schema v13). Deliberately not part of `StorageProvider`. */
+  reminders!: ReminderRepository;
 
   constructor(private readonly config: SqliteConfig) {}
 
@@ -1148,6 +1153,7 @@ export class SqliteStorageProvider implements StorageProvider {
     this.codeGenerations = new SqliteCodeGenerationRepository(db, 'code_generations');
     this.codeProposals = new SqliteCodeProposalRepository(db, 'code_proposals');
     this.feedback = new SqliteFeedbackRepository(db);
+    this.reminders = new SqliteReminderRepository(db);
   }
 
   async close(): Promise<void> {
