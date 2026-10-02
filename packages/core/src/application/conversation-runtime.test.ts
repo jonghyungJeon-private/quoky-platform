@@ -8951,7 +8951,8 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(result.reply.text).toBe(composer.composeTooManyTargets(CTX, 6).text);
   });
 
-  // ── unsafe typed paths are refused, never rewritten (ADR-0099 D1) ──────────────────────────
+  // ── unsafe typed paths are never targets, never rewritten (ADR-0099 D1) ─────────────────────
+  const UNSAFE_REWRITES = [A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml', 'etc/x.ts', 'lib/util.js'];
   describe.each([
     ['absolute', '/etc/hosts.txt'],
     ['traversal', '../outside/x.ts'],
@@ -8961,9 +8962,18 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     it.each([
       ['without create wording', `${A} 고치고 ${unsafe}도 고쳐줘`],
       ['with create wording', `${A} 수정하고 ${unsafe} 새 파일 만들어줘`],
-    ])('%s, mixed with an existing path → refused as typed, no targets, no lookup', async (_wording, text) => {
-      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml']) });
+    ])('%s, next to an existing path → only the safe path is a target, the unsafe one is never rewritten', async (_wording, text) => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
       const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+      expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+      expect(calls.workspaceList).toBe(1); // only the safe path was looked up
+      expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+    });
+
+    it('alone → refused as typed even though its rewritten spelling exists; no lookup, no plan', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+      const result = await new ConversationRuntime(deps).handle(messageOf(`${unsafe} 고쳐줘`));
       expect(calls.run).toBe(0);
       expect(calls.workspaceList).toBe(0);
       expect(calls.lastRunRequest).toBeUndefined();
@@ -8971,14 +8981,57 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
       expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, unsafe).text);
     });
 
-    it('in a scope-clarification follow-up → refused as typed, nothing recovered, no re-anchor', async () => {
-      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml']) });
+    it('in a scope-clarification follow-up → only the safe path is recovered', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
       await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
-      const result = await new ConversationRuntime(deps).handle(messageOf(`${A} ${unsafe}`));
+      await new ConversationRuntime(deps).handle(messageOf(`${A} ${unsafe}`));
+      expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    });
+
+    it('alone in a scope-clarification follow-up → refused as typed, nothing recovered, no re-anchor', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+      await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
+      const result = await new ConversationRuntime(deps).handle(messageOf(unsafe));
       expect(calls.run).toBe(0);
       expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, unsafe).text);
       expect(calls.scopeAnchor).toBe(1);
     });
+  });
+
+  it('/etc/x.ts alone is refused and never rewritten into the existing etc/x.ts', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('/etc/x.ts 고쳐줘'));
+    expect(calls.lastRunRequest).toBeUndefined();
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, '/etc/x.ts').text);
+  });
+
+  // An absolute route, log path, home config or `../` import in the instruction prose is content, not a target:
+  // the single named file stays the target exactly as before ADR-0099 (reviewer probe set).
+  it.each([
+    ['src/routes.ts 에 /api/v1/users 라우트 추가해줘', 'src/routes.ts'],
+    ['src/server.ts 에서 /api/health 엔드포인트 응답을 바꿔줘', 'src/server.ts'],
+    ['src/app.ts 에서 로그 경로를 /var/log/app.log 로 바꿔줘', 'src/app.ts'],
+    ['src/config.ts 에서 ~/.config/app.json 읽도록 바꿔줘', 'src/config.ts'],
+    ['src/app.ts 의 import 를 ../lib/util.js 에서 가져오도록 바꿔줘', 'src/app.ts'],
+  ])('%s → reaches the approval prompt with the one named target', async (text, target) => {
+    const { deps, calls } = makeDeps({
+      intent: codeIntent,
+      runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL),
+      workspaceList: listOf([target, 'var/log/app.log', 'config/app.json', 'lib/util.js', 'api/v1/users']),
+    });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([target]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(calls.lastRunRequest?.instruction).toBe(text); // the prose path still reaches the AI instruction
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [target]).text);
+  });
+
+  it('a valid target plus ../lib/util.js in prose never makes lib/util.js a target, even with create wording', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf(`${A} 에서 ../lib/util.js 를 쓰는 새 파일 만들어줘`));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
   });
 
   it('a plain ./ prefix is not unsafe: ./src/a.ts is the update target src/a.ts', async () => {

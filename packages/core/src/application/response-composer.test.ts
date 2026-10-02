@@ -1594,7 +1594,8 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       ],
       outOfScopeWarnings: [],
     });
-    expect(multi.text).toContain('"적용해줘"'); // ADR-0099 D1: a ≤5-file update set is apply-capable
+    // The legacy excerpt-only composer keeps its single-update rule (ADR-0099 D1 lives in composeCodeDiffPreview).
+    expect(multi.text).not.toContain('"적용해줘"');
     const withDelete = composer.composeCodeGenerationPreview(CTX, {
       changes: [
         { path: 'a.ts', kind: 'update', excerpt: 'x' },

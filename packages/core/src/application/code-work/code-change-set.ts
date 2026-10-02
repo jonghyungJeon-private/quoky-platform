@@ -10,7 +10,7 @@ import type {
   WorkspaceDiff,
   WorkspaceRef,
 } from '../../domain';
-import { normalizeRelativePath } from '../target-scope';
+import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from '../target-scope';
 
 /**
  * Bounded code change sets (ADR-0099 D1–D3). Pure helpers the conversational code-change flow uses so its
@@ -70,11 +70,36 @@ export function targetExtractionText(text: string): string {
  * drive letter), home-relative (`~/…`), containing a `..` segment, or with a dot-leading first segment other
  * than a plain `./` (`.github/…`, `./.env/…`) — counted only for a file-like token (2+ segments or a `.ext`
  * leaf), so a slash command such as `/preview` is not a path. `mentioned` are the raw typed tokens
- * (`extractMentionedPathTokens`). The caller REFUSES the whole request on a hit — the candidate extractor
- * would otherwise start matching after the unsafe prefix and silently rewrite `/etc/x` into `etc/x`.
+ * (`extractMentionedPathTokens`). An unsafe path is refused as a TARGET, never rewritten into one — see
+ * {@link extractSafeTargetCandidates}, which drops it before candidate extraction.
  */
 export function firstUnsafeMentionedPath(mentioned: readonly string[]): string | null {
   return mentioned.find(isUnsafeMentionedPath) ?? null;
+}
+
+/** One maximal path-shaped run — the same token alphabet as `extractMentionedPathTokens`. */
+const PATH_RUN_PATTERN = /[\w@.~/-]+/g;
+
+/**
+ * The safe target candidates of a code-change request plus the unsafe paths the owner typed (ADR-0099 D1).
+ * Fenced code and URLs are blanked ({@link targetExtractionText}); every typed unsafe path
+ * ({@link firstUnsafeMentionedPath}'s rule) is then blanked too, so the candidate extractor can never start
+ * matching after its unsafe prefix and rewrite it into an in-project target (`/etc/x.ts` → `etc/x.ts`,
+ * `../a/x.ts` → `a/x.ts`, `.github/x.yml` → `github/x.yml`, `~/.config/x.json` → `config/x.json`).
+ *
+ * An unsafe path is refused as a target, NOT the whole request: an API route, log path or import specifier in
+ * the instruction prose (`src/routes.ts 에 /api/v1/users 라우트 추가해줘`) leaves the safe named target intact.
+ * The caller refuses with the typed unsafe path only when no safe candidate is left. Pure; no I/O.
+ */
+export function extractSafeTargetCandidates(text: string): { candidates: string[]; unsafe: string[] } {
+  const unsafe = extractMentionedPathTokens(text).filter(isUnsafeMentionedPath);
+  const extractionText = targetExtractionText(text);
+  if (unsafe.length === 0) return { candidates: extractTargetPathCandidates(extractionText), unsafe };
+  const blocked = new Set(unsafe);
+  const masked = extractionText.replace(PATH_RUN_PATTERN, (run) =>
+    blocked.has(run.replace(/\.+$/, '')) ? ' '.repeat(run.length) : run,
+  );
+  return { candidates: extractTargetPathCandidates(masked), unsafe };
 }
 
 function isUnsafeMentionedPath(token: string): boolean {
@@ -101,7 +126,7 @@ export type CodeChangeTargetCollection =
 
 /**
  * Collect the change-set targets of a code-change request (ADR-0099 D1). `candidates` are the already-safe
- * extracted paths (an unsafe typed path refuses the request upstream — {@link firstUnsafeMentionedPath}), in order of appearance. Every one is
+ * extracted paths (unsafe typed paths are already dropped — {@link extractSafeTargetCandidates}), in order of appearance. Every one is
  * a target, never only the first: an existing path (verified by `resolveExisting`, which returns the
  * workspace's own spelling of the hit) is an update target; a missing path is a new-file target only when
  * `allowNewFiles` (the negation-aware ADR-0062 create wording); otherwise it is reported as missing so the

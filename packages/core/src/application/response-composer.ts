@@ -385,7 +385,9 @@ const MAX_DIFF_FIT_ROUNDS = 8;
  * MAX_DIFF_CHARS_PER_FILE; for a change set every block is rendered, then each file's diff share is shrunk by
  * the measured overflow — so the REAL per-block overhead (path label, fences, truncation note) is accounted
  * for, and a long path never pushes a later file out. Only when even the floor share cannot fit does
- * {@link assembleBoundedBody}'s drop-with-notice rule apply.
+ * {@link assembleBoundedBody}'s drop-with-notice rule apply — the accepted bound: five blocks fit with paths up to
+ * ~120 chars; past that a block may be dropped with the explicit "N개 생략" notice (path labels are never
+ * shortened, and the lossless structured preview still carries every full diff).
  */
 function fitDiffBlocks(header: string, footerLines: string[], count: number, render: (i: number, maxChars: number) => string): string[] {
   const renderAll = (maxChars: number): string[] => Array.from({ length: count }, (_, i) => render(i, maxChars));
@@ -1017,10 +1019,11 @@ export class ResponseComposer {
     ];
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
     if (warning) lines.push(warning);
-    // Same apply-capable rule as composeCodeDiffPreview (ADR-0099 D1): 1..MAX_CHANGE_SET_FILES updates, no delete.
-    const n = preview.changes.length;
-    const capable = n >= 1 && n <= MAX_CHANGE_SET_FILES && preview.changes.every((c) => c.kind === 'update');
-    lines.push(capable ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER);
+    // Legacy excerpt-only preview (no runtime caller): it carries no binary/displayability/size facts, so it keeps
+    // its original rule — only a single existing-file `update` has an apply step. The ADR-0099 D1 change-set rule
+    // lives in isApplyCapablePreview (unified diff previews) and is not approximated here.
+    const only = preview.changes.length === 1 ? preview.changes[0] : undefined;
+    lines.push(only?.kind === 'update' ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER);
     return { context, text: clampToMessageBudget(lines.join('\n')) };
   }
 

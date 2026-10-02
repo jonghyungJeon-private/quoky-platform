@@ -8,6 +8,7 @@ import {
   MAX_CHANGE_SET_TOTAL_BYTES,
   classifyUnverifiedChangeSet,
   collectCodeChangeTargets,
+  extractSafeTargetCandidates,
   firstUnsafeMentionedPath,
   isSingleUpdateChangeSet,
   newFileCommitCandidates,
@@ -73,6 +74,37 @@ describe('firstUnsafeMentionedPath', () => {
     expect(firstUnsafeMentionedPath(['/preview', 'src/target.ts'])).toBeNull();
     expect(firstUnsafeMentionedPath(['../utils', '~/notes'])).toBeNull();
     expect(firstUnsafeMentionedPath(['/etc/hosts'])).toBe('/etc/hosts');
+  });
+});
+
+describe('extractSafeTargetCandidates', () => {
+  it.each([
+    ['/etc/x.ts 고쳐줘', '/etc/x.ts'],
+    ['../a/x.ts 고쳐줘', '../a/x.ts'],
+    ['.github/workflows/ci.yml 고쳐줘', '.github/workflows/ci.yml'],
+    ['~/.config/app.json 고쳐줘', '~/.config/app.json'],
+    ['src/../../x.ts 고쳐줘', 'src/../../x.ts'],
+  ])('%s → no candidate (never rewritten), unsafe reported', (text, unsafe) => {
+    expect(extractSafeTargetCandidates(text)).toEqual({ candidates: [], unsafe: [unsafe] });
+  });
+
+  it.each([
+    ['src/routes.ts 에 /api/v1/users 라우트 추가해줘', ['src/routes.ts'], ['/api/v1/users']],
+    ['src/app.ts 에서 로그 경로를 /var/log/app.log. 로 바꿔줘', ['src/app.ts'], ['/var/log/app.log']],
+    ['src/config.ts 에서 ~/.config/app.json 읽도록', ['src/config.ts'], ['~/.config/app.json']],
+    ['src/app.ts 의 import 를 ../lib/util.js 로', ['src/app.ts'], ['../lib/util.js']],
+  ])('%s → the safe target survives, the unsafe prose path is dropped', (text, candidates, unsafe) => {
+    expect(extractSafeTargetCandidates(text)).toEqual({ candidates, unsafe });
+  });
+
+  it('keeps a plain ./ path, a slash command and fenced/URL rules unchanged', () => {
+    expect(extractSafeTargetCandidates('./src/a.ts 고쳐줘 /preview').candidates).toEqual(['src/a.ts']);
+    expect(extractSafeTargetCandidates('src/a.ts 참고 https://x.dev/b/c.md\n```\nimport "./lib/y.js"\n```').candidates)
+      .toEqual(['src/a.ts']);
+  });
+
+  it('drops only the unsafe occurrence: the same path typed safely elsewhere is still a candidate', () => {
+    expect(extractSafeTargetCandidates('/etc/x.ts 말고 etc/x.ts 고쳐줘')).toEqual({ candidates: ['etc/x.ts'], unsafe: ['/etc/x.ts'] });
   });
 });
 
