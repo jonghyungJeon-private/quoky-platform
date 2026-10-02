@@ -15618,3 +15618,67 @@ Docs-only record written by DOC-A. No ratified ADR text above is edited. Waves 1
 - **Not yet delivered (waves 5-8):** feedback capture UI, reminder turn handler and tick driver (PRO-5), work-chat entry
   handlers, embedding recall, branch commands, push chain. ARCHITECTURE.md rows for ADR-0101 were added by DOC-A before
   PRO-5 merges.
+
+
+## Personal v2 waves 5-8 implementation record (2026-10-03)
+
+Docs-only record written by DOC-B. It adds implementation records only; no ratified ADR text above is edited and no
+decision is changed. Waves 5-7 merged through PRs #109-#111. Wave 8 is INT-1 (offline integration acceptance) plus this
+record. Live results are in `docs/uat/personal-v2-qa-record.md`.
+
+- **ADR-0096 (seams).** Five handlers are registered across the three stages: `피드백 요약` (control), owner branch
+  create/switch (post-anchor, order 100), to-do management (pre-classify, order 100), reminders (pre-classify, order 200)
+  and connector lookups (pre-classify, order 300). The only handler path that may call a provider is the work-chat
+  `summarize` outcome (D4), through the existing SUMMARIZATION capability. Deps baseline is 34. Schema lane: v12 (QUAL-3)
+  then v13 (PRO-2), contiguous; `SCHEMA_MIGRATION_SEQUENCE_INVALID` and `SCHEMA_VERSION_AHEAD` are startup errors. Live:
+  migrations 6 to 12 and 12 to 13 ran on copies of the dev database with all memories kept (QA record M1, M2).
+- **ADR-0097 (override).** One-time, hash-bound CRITICAL override wired into the conversational code-change preview
+  (OVR-4, PR #108). Live QA passed the warning, `승인` is not a grant, one-time send, no replay, deny and cancel, secret
+  filenames and token-shaped content never overridable, 0 synthetic secrets in logs. PR #111 (e8e2c91) made the failure copy
+  after a consumed override report the actual transmission state (`not-sent`, `sent` or `uncertain`; a failure with no
+  dispatch record is `uncertain`); the override stays consumed in every case. Accepted limit: consumption is single-flight
+  within one process only (storage has no compare-and-set).
+- **ADR-0098 (quality), D6/D8 and the amendment.** Reaction feedback capture (QUAL-4): owner-only, bot-authored messages,
+  allowlisted locations, admission checked before any fetch or log, removal retracts, no text stored. Embedding recall
+  (QUAL-5): `QUOKY_EMBEDDING_ENABLED=false` by default, local Ollama embeddings under the unchanged runner containment, cloud
+  model names refused, lexical fallback, actor-scoped and credential-excluded recall. Amendment (QUAL-6): the
+  `POLICY_SENSITIVE_CHAT` capability is advertised by Claude and not by Ollama, so no provider-id branching; the
+  action-claim guard runs only when Core flagged an external-action request. Extension (QUAL-7, wave 6, live finding
+  QA-V2-005): questions about the owner's own data Quoky cannot see (schedule, calendar, availability, next meeting, inbox,
+  balance and message records) use the same capability and guard, with record nouns requiring a request shape so statements
+  and concept questions stay in local chat. The extension adds a routing category only; the capability, the guard and the
+  provider-neutral seam are unchanged. Claude CLI isolation flags (`--strict-mcp-config`, `--setting-sources ""`,
+  `--no-session-persistence`) are recorded in the waves 1-4 record above. Known quality limits (model, not policy):
+  QA-V2-003, QA-V2-008, QA-V2-W7-06.
+- **ADR-0099 (code work).** Change sets of up to 5 files, branch handler (CODE-4), and the opt-in push to PR chain (CODE-5)
+  behind `QUOKY_GIT_REMOTE_ENABLED`; merge behind `QUOKY_GIT_MERGE_ENABLED` (off by default, requires the remote flag). The
+  first push of a new branch targets `HEAD:refs/heads/<branch>`; an upstream push that targets `main` or `master` (including
+  a feature branch tracking `origin/main`) is refused. Live QA on the private sandbox repo: branch, new-file commit, CRITICAL
+  push approval, push, PR approval, PR #1 created, merge refused while disabled, repeat PR request returned the existing PR,
+  `배포해줘` refused; the test PR was closed unmerged and the remote branch deleted. Live finding QA-V2-W7-01 (BLOCKER,
+  security-relevant): the system git `credential.helper` (macOS `osxkeychain`) answered before `GIT_ASKPASS` with another
+  identity's credential and would have stored the App token. Implementation: the App-token git child resets
+  `credential.helper` through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` and drops inherited `GIT_CONFIG_*`
+  and `GIT_CONFIG_PARAMETERS`; the HTTPS preflight reads remote URLs under the same sanitized environment, requires every
+  fetch and push URL to be HTTPS github.com for the operation's direction, and so a `pushurl` or `insteadOf` rewrite cannot
+  bypass it (4abff60, a9df362, 0b35b2f). After a PR exists or is merged, push phrases (`푸시 실행`, `강제 푸시해줘`) get a fixed
+  reply (b9043a6, QA-V2-W7-02). The PR status preview truthfully reports that it could not check when the GitHub App lacks the
+  Checks permission (live G11); this is operator configuration (see `docs/uat/operator-guide.md`). Not implemented and not
+  claimed: generated PR title/body (the proposed title is the sanitized instruction text), partial PR status without checks.
+- **ADR-0100 (work chat).** To-do handler (order 100) and lookup handler (order 300) composed in the app (WORK-T5). To-dos
+  are WorkItems with a title and optional correlation links; an anchored to-do prefix wins over the reminder grammar even
+  when the title has a time phrase (D1; the reply says no reminder was set). A natural completion phrase is hint-only
+  (2698651) and a completion status question is answered read-only from the to-do store (62c1661). Connector summaries are
+  self-contained: no short-term history, no durable memory, credential-shaped request text withheld (WORK-T4 Codex fix).
+  Connector lookups are implemented and unit/acceptance tested; they have NOT been run live on real tenants (credentials
+  are pending), so Jira `/search/jql`, Confluence auth and Slack token-type behaviour remain unverified live.
+- **ADR-0101 (reminders).** Handler always registered; with `QUOKY_REMINDERS_ENABLED=false` a reminder phrase gets a fixed
+  "off" reply and no tick runs. Tick every 15 s, at most 10 per tick, never overlapping, no provider, connector or tool call.
+  Startup recovery: FIRING becomes `DELIVERY_UNCERTAIN`; a missed one-time reminder is delivered late once (labelled with the
+  original time); a missed recurring one only within 60 minutes. Shutdown uses a cooperative, bounded stop whose bound is
+  derived from the delivery timeouts (2x(resolve+send)+margin = 65 s); a forced stop past the bound may close the platform
+  under an in-flight send, and at-most-once still holds (unrecorded in-flight delivery is marked `DELIVERY_UNCERTAIN` at the
+  next start). Live: create, list, DM delivery and restart catch-up passed (QA record R1, R6, R7, L1). NOT done: channel
+  delivery UAT and the release-default flip of the flag.
+- **Not claimed by this record.** Live UAT of connectors, reminders channel delivery, merge-flag enablement and embedding
+  recall is pending exact-scope Product Owner approval; deployment-substrate work (multi-agent/continuation) is untouched.

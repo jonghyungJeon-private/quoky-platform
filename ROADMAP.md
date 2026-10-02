@@ -59,7 +59,7 @@ does not claim Production Runtime readiness.
 | **PCR-R1** | Production Continuation Receiver — Core contract / lifecycle semantics | IMPLEMENTED LOCALLY / AWAITING REVIEW on base `c0e1f9d`; immutable receiver `supportedCapabilities` narrowing (fail-closed empty/dup/malformed); package-internal non-authoritative constraint driving early + effect-time capability rechecks; Family-A recheck constrained-only (allowlist unchanged, `isFamilyACapability` defined once); guarded-start-bound `boundTaskFacts { capability, intentType }`; three-state `ContinuationReceiverOutcome` (SUCCEEDED/FAILED/UNRESOLVED, no new TaskRunStatus); bounded provider-agnostic `ContinuationRoutingAudit` DTO in the port layer; escaped receiver exception → UNRESOLVED (STARTED retained, no retry/redispatch/replacement, no persisted UNRESOLVED audit); `DELIVERED_TEST_CONTRACT_CHANGE = YES`; ADR-0089 amended; activation DISABLED; R2/R3 NOT STARTED; live authorization separate |
 | **PCR-R2** | Production Continuation Receiver — offline provider-backed receiver | IMPLEMENTED LOCALLY / AWAITING REVIEW on base `ccb1864` (R1 = CLOSED + DELIVERED via PR #79). Core `ContinuationProviderRoutingService` (sibling of `RuntimeProviderRoutingService`, reuses Stage2B primitives; not a wrapper/CapabilityRouter/AiProvider caller); Core `PromptComposer.composeContinuation` + separate bounded validation corpus (identifiers only; no conversation reframe; fail-closed bounds); app `ProviderBackedContinuationReceiver` (`supportedCapabilities = [GENERAL_CHAT]`, narrow deps, bounded FAILED preflight, platform-owned `MARKDOWN_REPORT`, provider artifact ids ignored, never terminalizes); routing policy `stage2b-continuation-general-chat-v1` (WORK/CHAT/AUTHORITY_SENSITIVE, `requiredRoutingClasses=[BALANCED]`) + chat policy hardened to CONVERSATIONAL; PRODUCTION config/digest change binding both validation profiles; PRIMARY_ONLY enforced in code; disposition mapping (pre-dispatch→FAILED, dispatched-uncertain→UNRESOLVED, returned→SUCCEEDED/FAILED); `QUOKY_CONTINUATION_RECEIVER_MODE = disabled|general-chat-v1` (default disabled, separate from routing mode, general-chat-v1 startup fail-closed until R3 containment); ADR-0089 cross-referenced; activation DISABLED / NOT LIVE-READY; R3 NOT STARTED; no live provider/network/containment/external trigger |
 | **Personal v1** | First product release ("Quoky Personal v1") | Scope ratified by the Product Owner 2026-10-02; ADR-0091/0092/0093/0094 + ADR-0073 amendment; see "First product release" below; IMPLEMENTED LOCALLY on the integration branch with offline acceptance PASS; Live UAT (criterion 9) NOT EXECUTED |
-| **Personal v2** | Personal v2 (owner reminders, work chat, answer quality, code-work expansion, credential override) | ADR-0096..0101 + ADR-0098 amendment Ratified; plan `docs/plans/personal-v2-execution-plan.md`; waves 1-4 MERGED (PRs #105-#108: seams, override, quality, change sets, work services, reminder services/store/sink); waves 5-8 NOT MERGED; Live QA for waves 2 and 4 recorded in `docs/uat/personal-v2-qa-record.md`; final Live UAT NOT EXECUTED |
+| **Personal v2** | Personal v2 (owner reminders, work chat, answer quality, code-work expansion, credential override) | IMPLEMENTED (waves 1-8). ADR-0096..0101 + ADR-0098 amendment Ratified; plan `docs/plans/personal-v2-execution-plan.md`; waves 1-7 MERGED (PRs #105-#111); wave 8 = INT-1 offline acceptance + DOC-B docs (wave-8 PR); owner-attended live QA for waves 1-7 recorded in `docs/uat/personal-v2-qa-record.md`; Live UAT of connectors (real tenants), reminders channel delivery, the reminders release default and merge enablement NOT EXECUTED |
 | **Future** | Memory improvements · Codex · additional connectors | per ADR sequence |
 
 ## First product release — Quoky Personal v1
@@ -88,21 +88,46 @@ execution remain separately approved Strict gates.
 - Execution-time provider fallback (Ollama failure → Claude re-execution); difficulty-based Claude effort.
 - Chat pass-through while an approval is pending.
 - `TEST_EXECUTION` approval.
-- GitHub push → PR → merge → cleanup chain.
-- New-file and multi-file apply.
+- GitHub push → PR → merge → cleanup chain. (Personal v2: push → PR delivered opt-in with merge off; merge enablement is not live-verified.)
+- New-file and multi-file apply. (Delivered in Personal v2.)
 - M3 connector expansion.
-- Vector retrieval; Codex provider.
+- Vector retrieval; Codex provider. (Personal v2: opt-in local embedding recall delivered; Codex still deferred.)
 - MLX provider — 2nd-release candidate.
 
-**Personal v2 candidates (not ratified; for planning only)**
+**Personal v2 — status (2026-10-03)**
 
-Answer quality improvement, in this order:
+The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that were ratified on 2026-10-02:
 
-- **A. Feedback capture:** Discord 👍/👎 reactions plus implicit signals (immediate rephrase, "아니 그게 아니라", reset right after a reply, approval re-prompts). Stored locally with the intent, provider and latency. Needs its own ADR and an additive migration; data never leaves the host.
-- **B. Evaluation golden set:** real misrouted or misdecided utterances become regression corpora with tracked accuracy for intent routing and approval decisions.
-- **C. Local embedding retrieval:** a `VectorProvider` adapter on Ollama embeddings for memory and history recall. This replaces today's no-op `vector-local`.
-- **D. Feedback-driven examples:** 👍-rated Q/A pairs are injected as examples by `PromptComposer` for similar questions.
-- **E. Local fine-tuning (e.g. an MLX LoRA):** deferred until enough personal data exists.
+| Item | Status |
+|---|---|
+| A. Feedback capture (👍/👎 reactions, implicit signals, local store, `피드백 요약`) | DONE (ADR-0098; schema v12) |
+| B. Golden evaluation set and accuracy ratchet | DONE offline (QUAL-2); INT-1 routing ratchet pending in the wave-8 PR |
+| C. Local embedding retrieval | DONE, opt-in (`QUOKY_EMBEDDING_ENABLED=false` by default); live probe pending |
+| D. Feedback-driven examples injected by `PromptComposer` | NOT DONE (v3: feedback learning) |
+| E. Local fine-tuning (MLX LoRA) | NOT DONE (deferred until enough personal data exists) |
+| Credential override (QA-023) | DONE and live-verified (ADR-0097) |
+| Chat policy and policy-sensitive routing | DONE and live-verified; local-model quality items remain (QA-V2-003/008, W7-06) |
+| Reminders (create, list, cancel, DM delivery, tick driver) | DONE and live-verified on DM delivery; channel-delivery UAT and the release-default flip PENDING |
+| Work chat: to-dos and read-only connector lookups | DONE; live-verified for to-dos; connector lookups on real tenants PENDING (owner adding credentials) |
+| Code work: multi-file and new-file previews, branch create/switch | DONE (new-file chain live-verified on the sandbox repo) |
+| Code work: opt-in push to PR chain, merge off by default | DONE through PR creation, live-verified on the sandbox repo; merge-flag enablement PENDING and out of scope |
+
+**Remaining before calling Personal v2 closed:** the separately approved live sessions above (connector lookups on real
+Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the release-default decision for reminders).
+
+**Personal v3 candidates (themes only; planned: `docs/plans/personal-v3-plan.md`, not yet written)**
+
+- Multi-agent and continuation, which needs a deployment substrate (the deferred R3 / Stage 2B track).
+- Multimodal input and output.
+- Connector writes (Jira, Slack, Confluence, GitHub) with their own approval model.
+- Calendar integration.
+- Memory management UI (inspect, edit, forget).
+- Feedback learning (the unfinished item D above).
+- Ollama model quality: QA-V2-003 (stray non-Korean text), QA-V2-008 (over-cautious answers) and QA-V2-W7-06 (vague
+  answers, help-intent routing). QA-V2-002 was a Claude isolation bug and is fixed.
+- PR title and body generation (today the PR title is the sanitized instruction text).
+- Partial PR status when the GitHub App has no Checks permission (PR and reviews without checks).
+- MLX and Docker isolation options for local models.
 
 ## Deferred capabilities (YAGNI)
 
