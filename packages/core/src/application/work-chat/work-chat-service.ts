@@ -46,6 +46,7 @@ import {
   renderTodoCredentialRefused,
   renderTodoEmptyTitle,
   renderTodoFailure,
+  renderTodoListFailure,
   renderTodoLinked,
   renderTodoNotActive,
   renderTodoNotFound,
@@ -193,6 +194,7 @@ export class WorkChatService implements WorkDesk {
           return reply(renderWorkChatUsage(command.topic));
       }
     } catch (error) {
+      if (command.kind === 'todo.list') return reply(renderTodoListFailure());
       return reply(isTodoCommand(command) ? this.todoFailureText(error) : renderLookupFailure(lookupSource(command), 'UNAVAILABLE'));
     }
   }

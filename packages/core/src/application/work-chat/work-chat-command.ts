@@ -309,10 +309,13 @@ const LIST_WITH_VERB = new RegExp(
 const LEGACY_PERSONAL_WORK_SURFACE =
   /(?:내가|제가|나는)?\s*(?:해야\s*할|할)\s*(?:일|작업).*(?:보여|알려)|(?:show|list|what(?:'s| is))\b.*\b(?:my|i need to)\b.*\bwork\b/i;
 const LIST_MY_WORK_KO = new RegExp(
-  `(?:내|나의)\\s*(?:업무|작업)\\s*(?:목록|리스트)?\\s*(?:을|를)?\\s*${LIST_VERBS}`,
+  `^(?:오늘|지금|현재)?\\s*(?:내|나의)\\s*(?:업무|작업)\\s*(?:목록|리스트)?\\s*(?:을|를)?\\s*${LIST_VERBS}${END}`,
 );
-const LIST_EN =
-  /\b(?:show|list|display|what(?:'s|\s+is|\s+are))\b.*\b(?:my|i need to)\b.*\b(?:work|to-?dos?|tasks?)\b|^(?:my\s+)?(?:to-?do|todo)s?(?:\s+list)?\s*[.!?]*$/i;
+/** Close adjacency only: the owner marker and the noun sit directly after the verb (or `what is`). */
+const LIST_EN = new RegExp(
+  `^(?:(?:please|pls)\\s+)?(?:(?:can|could)\\s+you\\s+)?(?:(?:show|list|display)\\s+(?:me\\s+)?(?:all\\s+)?my|what(?:'s|\\s+is|\\s+are)\\s+my)\\s+(?:to-?dos?|tasks?|work)${END}|^(?:my\\s+)?(?:to-?do|todo)s?(?:\\s+list)?${END}`,
+  'i',
+);
 
 /** A negation marker anywhere in the message: negation only removes a trigger, it never creates one. */
 function isNegatedMessage(text: string): boolean {
@@ -321,9 +324,11 @@ function isNegatedMessage(text: string): boolean {
 
 function isTodoList(text: string): boolean {
   if (isNegatedMessage(text)) return false;
-  return [LIST_WITH_NOUN, LIST_WITH_VERB, LEGACY_PERSONAL_WORK_SURFACE, LIST_MY_WORK_KO, LIST_EN].some((pattern) =>
-    pattern.test(text),
-  );
+  // The legacy regex stays verbatim and unguarded so the detector remains a superset of the classifier branch; every
+  // newer pattern is skipped for code, file, URL and explain-style messages (`isDevOrExplainMessage`).
+  if (LEGACY_PERSONAL_WORK_SURFACE.test(text)) return true;
+  if (isDevOrExplainMessage(text)) return false;
+  return [LIST_WITH_NOUN, LIST_WITH_VERB, LIST_MY_WORK_KO, LIST_EN].some((pattern) => pattern.test(text));
 }
 
 // -- N번 complete / cancel / link --------------------------------------------------------------------------------------
@@ -456,18 +461,44 @@ const MULTI_SEGMENT_PATH = /(?:^|[\s"'`(])\.{0,2}\/?[\w@.-]+\/[\w@./-]+/;
 const DOT_GITHUB = /(?:^|[\s"'`(])\.github\b/i;
 
 function hasCodeWorkSignal(text: string): boolean {
-  if (CODE_WORK_NOUN.test(text)) return true;
   const withoutLinks = text.replace(URL_OR_ITEM_REF, ' ');
+  if (CODE_WORK_NOUN.test(withoutLinks)) return true;
   return FILE_NAME.test(withoutLinks) || MULTI_SEGMENT_PATH.test(withoutLinks) || DOT_GITHUB.test(withoutLinks);
 }
 
-/** A link to a source names the source (`github.com/o/r/issues/1`), even though its host is not a standalone word. */
+/** Questions about how code or a feature works: never a work lookup, even when they mention Jira or GitHub. */
+const EXPLAIN_WORD =
+  /로직|설명|어떻게|왜\s|이유|원인|방법|브랜치|커밋|버그|오류|에러|\bbranch(?:es)?\b|\bcommits?\b|\bhow\b|\bwhy\b|\bexplain\w*|\bapproach\b|\boptions?\b|\bbest\b|\bdoes(?:n't|\s+not)\b|\bdon't\b|\bbug\b|\berrors?\b/i;
+
+/**
+ * Code or file work, a link, or an explain-style question (ADR-0100 review): the unanchored list and lookup phrases do
+ * not claim it, so it reaches the classifier instead of being answered by a connector or to-do read.
+ */
+function isDevOrExplainMessage(text: string): boolean {
+  return hasCodeWorkSignal(text) || /https?:\/\//i.test(text) || EXPLAIN_WORD.test(text);
+}
+
+/**
+ * A link to a source names the source and, for an item link, the external object (`github.com/o/r/issues/1` is an
+ * issue), even though its host is not a standalone word.
+ */
 const SOURCE_URL_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/https?:\/\/(?:www\.)?github\.com\/[^\s/]+\/[^\s/]+\/issues\/\S*/gi, ' GitHub 이슈 '],
+  [/https?:\/\/(?:www\.)?github\.com\/[^\s/]+\/[^\s/]+\/pull\/\S*/gi, ' GitHub PR '],
   [/https?:\/\/(?:www\.)?github\.com\/\S*/gi, ' GitHub '],
-  [/https?:\/\/\S*atlassian\.net\/browse\/\S*/gi, ' Jira '],
-  [/https?:\/\/\S*atlassian\.net\/wiki\/\S*/gi, ' Confluence '],
-  [/https?:\/\/\S*slack\.com\/\S*/gi, ' Slack '],
+  [/https?:\/\/\S*atlassian\.net\/browse\/\S*/gi, ' Jira 이슈 '],
+  [/https?:\/\/\S*atlassian\.net\/wiki\/\S*/gi, ' Confluence 페이지 '],
+  [/https?:\/\/\S*slack\.com\/\S*/gi, ' Slack 메시지 '],
 ];
+
+/**
+ * GitHub push and pull-request creation belong to the approved code-work chain (ADR-0099), not to the connector write
+ * refusal ("Quoky's external connections are read-only" would be misleading). An issue, comment or review object keeps
+ * the refusal.
+ */
+const GITHUB_PUSH_OR_PR_PHRASE =
+  /올려|올리|푸시|\bpush\w*|(?:PR|풀\s*리퀘(?:스트)?|pull\s*requests?)\s*(?:을|를)?\s*(?:만들|열어|열|생성)|\b(?:create|open|make|raise)\s+(?:a\s+|the\s+)?(?:git\s?hub\s+)?(?:PR|pull\s*request)\b/i;
+const GITHUB_ISSUE_COMMENT_OBJECT = /이슈|댓글|코멘트|리뷰|\bissues?\b|\bcomments?\b|\breviews?\b/i;
 
 function detectExternalWrite(text: string): WorkChatCommand | null {
   if (TODO_WORD.test(text) || hasCodeWorkSignal(text)) return null;
@@ -481,6 +512,14 @@ function detectExternalWrite(text: string): WorkChatCommand | null {
     SOURCE_LOCATIVE_KO.test(named) ||
     SOURCE_LOCATIVE_EN.test(named);
   if (!hasObject) return null;
+  if (
+    standalone.length === 1 &&
+    source === 'github' &&
+    GITHUB_PUSH_OR_PR_PHRASE.test(named) &&
+    !GITHUB_ISSUE_COMMENT_OBJECT.test(named)
+  ) {
+    return null;
+  }
   if (unnegatedExec(text, EXTERNAL_WRITE_KO) || unnegatedExec(text, EXTERNAL_WRITE_EN)) {
     return { kind: 'external-write-unsupported', source };
   }
@@ -490,8 +529,9 @@ function detectExternalWrite(text: string): WorkChatCommand | null {
 // -- connector lookups -----------------------------------------------------------------------------------------------
 
 const OWN_MARKER = /(?:^|\s)(?:내|나의|제|저의)(?=\s|[A-Za-z])|내가\s*(?:맡은|담당|할당)|(?:나|저)에게\s*할당|\bmy\b|\bassigned\s+to\s+me\b/i;
+/** `work` counts only as the noun right after the owner marker (`my work`); a bare `일` is never an item noun. */
 const ITEM_NOUN =
-  /이슈|티켓|작업|업무|일|\bPRs?\b|풀\s*리퀘(?:스트)?|\bpull\s*requests?\b|\bissues?\b|\btickets?\b|\btasks?\b|\bwork\b|\bitems?\b/i;
+  /이슈|티켓|작업|업무|할\s*일|일감|\bPRs?\b|풀\s*리퀘(?:스트)?|\bpull\s*requests?\b|\bissues?\b|\btickets?\b|\btasks?\b|\bmy\s+work\b|\bitems?\b/i;
 const DUE_THIS_WEEK =
   /(?:이번\s*주|금주|this\s+week)\D{0,12}마감|마감\D{0,8}(?:이번\s*주|금주)|\bdue\b.*\bthis\s+week\b|\bthis\s+week\b.*\bdue\b/i;
 const DUE_WHOLE_MESSAGE =
@@ -499,17 +539,39 @@ const DUE_WHOLE_MESSAGE =
 const REVIEW_REQUEST =
   /리뷰\s*(?:를\s*)?요청(?:된|받은|이\s*들어온|온)?|리뷰\s*대기|review[\s-]*requests?|requested\s+(?:my\s+)?review|review\s+requested/i;
 
+/** Maximum gap (characters) between a request verb and the due or review-request phrase it asks about. */
+const PHRASE_VERB_MAX_GAP = 24;
+
+/** Whether some match of `phrase` and some match of `verb` sit within `PHRASE_VERB_MAX_GAP` characters of each other. */
+function isNear(text: string, phrase: RegExp, verb: RegExp): boolean {
+  const global = (re: RegExp): RegExp => new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+  const phrases = [...text.matchAll(global(phrase))];
+  const verbs = [...text.matchAll(global(verb))];
+  return phrases.some((p) =>
+    verbs.some((v) => {
+      const pStart = p.index ?? 0;
+      const vStart = v.index ?? 0;
+      const gap = vStart >= pStart ? vStart - (pStart + p[0].length) : pStart - (vStart + v[0].length);
+      return gap <= PHRASE_VERB_MAX_GAP;
+    }),
+  );
+}
+
 function detectLookup(text: string): WorkChatCommand | null {
+  if (isDevOrExplainMessage(text)) return null;
   const sources = detectSources(text);
   const hasRequestVerb = unnegatedMatch(text, [REQUEST_VERB]);
 
   const wholeDue = DUE_WHOLE_MESSAGE.test(text);
-  if (unnegatedMatch(text, [DUE_THIS_WEEK, DUE_WHOLE_MESSAGE]) && (hasRequestVerb || wholeDue)) {
+  if (
+    unnegatedMatch(text, [DUE_THIS_WEEK, DUE_WHOLE_MESSAGE]) &&
+    (wholeDue || (hasRequestVerb && isNear(text, DUE_THIS_WEEK, REQUEST_VERB)))
+  ) {
     const source = sources.length === 1 ? (sources[0] as WorkChatSource) : sources.length === 0 ? 'jira' : undefined;
     if (source) return { kind: 'lookup', source, query: 'due-this-week' };
   }
 
-  if (REVIEW_REQUEST.test(text) && unnegatedMatch(text, [REVIEW_REQUEST]) && hasRequestVerb) {
+  if (unnegatedMatch(text, [REVIEW_REQUEST]) && hasRequestVerb && isNear(text, REVIEW_REQUEST, REQUEST_VERB)) {
     const source = sources.length === 1 ? (sources[0] as WorkChatSource) : sources.length === 0 ? 'github' : undefined;
     if (source) return { kind: 'lookup', source, query: 'review-requests' };
   }

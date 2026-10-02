@@ -23,6 +23,7 @@ import {
   renderTodoCredentialRefused,
   renderTodoEmptyTitle,
   renderTodoFailure,
+  renderTodoListFailure,
   renderTodoLinked,
   renderTodoNotActive,
   renderTodoNotFound,
@@ -85,6 +86,7 @@ describe('to-do replies', () => {
     expect(renderTodoTooManyRefs(10)).toContain('10개');
     expect(renderTodoNotActive()).toContain('아무것도 바꾸지 않았어요');
     expect(renderTodoFailure()).toContain('내 할 일');
+    expect(renderTodoListFailure()).toContain('불러오지 못했어요');
     expect(renderSearchCredentialRefused()).toContain('보내지 않았어요');
   });
 

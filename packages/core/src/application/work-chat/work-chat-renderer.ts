@@ -175,6 +175,11 @@ export function renderTodoFailure(): string {
   return '할 일을 처리하는 중에 문제가 생겼어요. 아무것도 바뀌지 않았을 수 있으니 "내 할 일"로 확인해 주세요.';
 }
 
+/** A read-only list that failed changed nothing, so it never tells the user to re-check with the same command. */
+export function renderTodoListFailure(): string {
+  return '할 일 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
+}
+
 export function renderSearchCredentialRefused(): string {
   return '검색어에 비밀번호나 토큰 같은 민감한 값이 들어 있는 것 같아서 외부 시스템에 보내지 않았어요.';
 }

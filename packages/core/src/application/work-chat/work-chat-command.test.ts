@@ -257,7 +257,11 @@ describe('connector lookups', () => {
     ['create a Jira ticket for the outage', 'jira'],
     ['post a message to Slack', 'slack'],
     ['comment on the GitHub issue', 'github'],
-    ['GitHub PR 올려줘', 'github'],
+    ['GitHub PR 닫아줘', 'github'],
+    ['https://github.com/o/r/issues/1 닫아줘', 'github'],
+    ['https://github.com/o/r/pull/2 머지해줘', 'github'],
+    ['https://acme.atlassian.net/browse/OPS-7 삭제해줘', 'jira'],
+    ['close https://github.com/o/r/issues/1', 'github'],
     ['Slack에 메시지 보내줘', 'slack'],
     ['Jira에 새 항목 만들어줘', 'jira'],
     ['깃허브에서 풀 리퀘스트 닫아줘', 'github'],
@@ -265,6 +269,19 @@ describe('connector lookups', () => {
     ['Confluence 문서 작성해줘', 'confluence'],
   ])('refuses external writes: %s', (text, source) => {
     expect(detectWorkChatCommand(text)).toEqual({ kind: 'external-write-unsupported', source });
+  });
+
+  // GitHub push and PR creation belong to the approved code-work chain; the read-only refusal copy would be misleading.
+  it.each([
+    '깃허브에 올려줘',
+    '깃허브 PR 만들어줘',
+    'GitHub PR 올려줘',
+    'GitHub에 푸시해줘',
+    'push to GitHub',
+    'open a PR on GitHub',
+    'create a GitHub pull request',
+  ])('leaves GitHub push and PR creation to the code-work flow: %s', (text) => {
+    expect(detectWorkChatCommand(text), text).toBeNull();
   });
 
   // Code and file work on this repository mentions jira/github/slack/confluence in file and package names; it must keep
@@ -312,6 +329,35 @@ describe('negatives and exclusions', () => {
     'send me my Jira issues',
   ])('is not claimed: %j', (text) => {
     expect(detectWorkChatCommand(text)).toBeNull();
+  });
+
+  // Ordinary coding and explain-style questions that merely mention a connector or the words task/work/일/review.
+  it.each([
+    "Can you check why my GitHub workflow doesn't work?",
+    'my jira integration does not work, check the config',
+    '내 깃허브 프로필 일반 설정 보여줘',
+    '깃허브 리뷰 요청 기능 어떻게 구현했는지 알려줘',
+    'review requested 상태 PR 확인 로직 설명해줘',
+    'What are my options for the tasks API?',
+    'what is my best approach to implement the tasks module',
+    'src/app.ts 파일에서 내 작업 확인해줘',
+    'feature 브랜치에 내 작업 있어?',
+    '내 일정 알려줘',
+    '내 GitHub 일반 이슈 보여줘 어떻게 해?',
+    'show my GitHub issues at https://github.com/o/r/issues',
+    'how do I list my tasks in the app',
+    'Jira 이번 주 마감 로직 설명해줘',
+    'show me the review request status check in the code',
+  ])('does not claim a dev or explain question: %j', (text) => {
+    expect(detectWorkChatCommand(text), text).toBeNull();
+  });
+
+  it('keeps the plain phrases working next to those negatives', () => {
+    expect(detectWorkChatCommand('내 작업 있어?')).toEqual({ kind: 'todo.list' });
+    expect(detectWorkChatCommand('show my tasks')).toEqual({ kind: 'todo.list' });
+    expect(detectWorkChatCommand('what are my to-dos')).toEqual({ kind: 'todo.list' });
+    expect(detectWorkChatCommand('내 GitHub 작업 보여줘')).toEqual({ kind: 'lookup', source: 'github', query: 'my-items' });
+    expect(detectWorkChatCommand('show my work on Jira')).toEqual({ kind: 'lookup', source: 'jira', query: 'my-items' });
   });
 
   it('never claims an unanchored time-bound 알려줘 (ADR-0101)', () => {

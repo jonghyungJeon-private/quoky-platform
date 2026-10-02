@@ -618,5 +618,10 @@ describe('isolation guarantees', () => {
       const outcome = await service.handle(command, owner);
       expect(outcome.kind).toBe('reply');
     }
+    // A failed read-only list never claims something may have changed or points back to the failed command.
+    const list = textOf(await service.handle({ kind: 'todo.list' }, owner));
+    expect(list).toContain('불러오지 못했어요');
+    expect(list).not.toContain('바뀌');
+    expect(list).not.toContain('내 할 일');
   });
 });
