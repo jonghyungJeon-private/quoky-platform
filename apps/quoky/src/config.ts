@@ -7,6 +7,8 @@ import { parseProviderRoutingMode } from './provider-routing/provider-routing-ac
 import type { ProviderRoutingMode } from './provider-routing/provider-routing-activation';
 import { ContinuationReceiverActivationError, ContinuationReceiverActivationErrorCode, parseContinuationReceiverMode } from './continuation/continuation-receiver-activation';
 import type { ContinuationReceiverMode } from './continuation/continuation-receiver-activation';
+import { parseReminderConfig, ReminderConfigErrorCode } from './reminders/reminder-config';
+import type { ReminderConfig } from './reminders/reminder-config';
 
 /**
  * Reads runtime configuration from the environment. QUOKY_* takes precedence over
@@ -36,7 +38,20 @@ export interface QuokyConfig {
     ollamaEnabled: boolean;
   };
   /** Personal-edition git safety (ADR-0094). `remoteEnabled` defaults to false (push/sync refused). */
-  git: { remoteEnabled: boolean };
+  git: { remoteEnabled: boolean; mergeEnabled: boolean };
+  /**
+   * Personal v2 inert configuration (ADR-0096 D9, parsed once in wave 1; no consumer yet). Parsing a variable
+   * authorizes no behaviour; semantics belong to the track ADRs.
+   * `work.summaryEnabled` (`QUOKY_WORK_SUMMARY_ENABLED`, default true; ADR-0100).
+   */
+  work: { summaryEnabled: boolean };
+  /** `QUOKY_REMINDERS_ENABLED`, `QUOKY_REMINDERS_CHANNEL_DELIVERY`, `QUOKY_TIMEZONE` (ADR-0101; default off). */
+  reminders: ReminderConfig;
+  /**
+   * Opt-in local embedding recall (ADR-0098 D8). `model` is a bounded token and never a cloud-served model.
+   * `timeoutMs` bounds one embedding call; `maxNewPerTurn` is fixed at 4.
+   */
+  embedding: { enabled: boolean; model: string; timeoutMs: number; maxNewPerTurn: number };
   connectors: {
     jira?: { host: string; email: string; apiToken: string };
     slack?: { token: string };
@@ -109,11 +124,23 @@ export const QuokyConfigErrorCode = {
   OLLAMA_ENABLED_INVALID: 'OLLAMA_ENABLED_INVALID',
   CLAUDE_MODEL_INVALID: 'CLAUDE_MODEL_INVALID',
   GIT_REMOTE_ENABLED_INVALID: 'GIT_REMOTE_ENABLED_INVALID',
+  GIT_MERGE_ENABLED_INVALID: 'GIT_MERGE_ENABLED_INVALID',
+  GIT_MERGE_REQUIRES_REMOTE: 'GIT_MERGE_REQUIRES_REMOTE',
+  WORK_SUMMARY_ENABLED_INVALID: 'WORK_SUMMARY_ENABLED_INVALID',
+  EMBEDDING_ENABLED_INVALID: 'EMBEDDING_ENABLED_INVALID',
+  EMBEDDING_MODEL_INVALID: 'EMBEDDING_MODEL_INVALID',
+  EMBEDDING_MODEL_CLOUD_REFUSED: 'EMBEDDING_MODEL_CLOUD_REFUSED',
+  EMBEDDING_TIMEOUT_INVALID: 'EMBEDDING_TIMEOUT_INVALID',
+  ...ReminderConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
 } as const;
 export type QuokyConfigErrorCode = (typeof QuokyConfigErrorCode)[keyof typeof QuokyConfigErrorCode];
 
-/** A fail-closed startup configuration error. The message is the code only (no configured value). */
+/**
+ * A fail-closed startup configuration error. The message is the code only (no configured value).
+ * Note: loadConfig can also throw ReminderConfigError (reminders/reminder-config.ts, kept separate to avoid an
+ * import cycle). Match on `code`/message (as describeStartupFailure does), not `instanceof QuokyConfigError`.
+ */
 export class QuokyConfigError extends Error {
   constructor(readonly code: QuokyConfigErrorCode) {
     super(code);
@@ -128,6 +155,13 @@ const REPOSITORY_ROOT = path.resolve(__dirname, '../../..');
 const DEFAULT_CONTEXT_MAX_TOKENS = 6000;
 const MAX_CONTEXT_MAX_TOKENS = 200_000;
 
+/** Local embedding defaults (ADR-0098 D8): the model is pulled manually by the owner; never pulled or cloud-served. */
+const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text';
+const DEFAULT_EMBEDDING_TIMEOUT_MS = 3000;
+const MIN_EMBEDDING_TIMEOUT_MS = 100;
+const MAX_EMBEDDING_TIMEOUT_MS = 30_000;
+const EMBEDDING_MAX_NEW_PER_TURN = 4;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const continuationReceiverMode = parseContinuationReceiverMode(env.QUOKY_CONTINUATION_RECEIVER_MODE);
   // R2 production has no live containment. The offline activation factory is not AppModule wiring.
@@ -136,6 +170,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ContinuationReceiverActivationErrorCode.CONTAINMENT_UNAVAILABLE,
     );
   }
+  const gitRemoteEnabled = parseExactBoolean(
+    env.QUOKY_GIT_REMOTE_ENABLED,
+    false,
+    QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID,
+  );
+  const gitMergeEnabled = parseExactBoolean(
+    env.QUOKY_GIT_MERGE_ENABLED,
+    false,
+    QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID,
+  );
+  // Merge needs the remote: enabling it while remote access is off is a startup error, never a silent no-op.
+  if (gitMergeEnabled && !gitRemoteEnabled) throw new QuokyConfigError(QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE);
   // Owner/repo prefer the new QUOKY_* env, falling back to legacy CHUNSIK_* (Sprint 4b, ADR-0061 N3/N4).
   const owner = env.QUOKY_GITHUB_OWNER ?? env.CHUNSIK_GITHUB_OWNER;
   const repo = env.QUOKY_GITHUB_REPO ?? env.CHUNSIK_GITHUB_REPO;
@@ -162,8 +208,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       // Registration flag only (ADR-0092): opt-out, exact true/false, never inferred from OLLAMA_MODEL.
       ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
     },
-    git: {
-      remoteEnabled: parseExactBoolean(env.QUOKY_GIT_REMOTE_ENABLED, false, QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID),
+    git: { remoteEnabled: gitRemoteEnabled, mergeEnabled: gitMergeEnabled },
+    work: {
+      summaryEnabled: parseExactBoolean(
+        env.QUOKY_WORK_SUMMARY_ENABLED,
+        true,
+        QuokyConfigErrorCode.WORK_SUMMARY_ENABLED_INVALID,
+      ),
+    },
+    reminders: parseReminderConfig(env),
+    embedding: {
+      enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),
+      model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),
+      timeoutMs: parseEmbeddingTimeoutMs(env.QUOKY_EMBEDDING_TIMEOUT_MS),
+      maxNewPerTurn: EMBEDDING_MAX_NEW_PER_TURN,
     },
     connectors: {
       jira: resolveJiraConnector(env),
@@ -226,6 +284,34 @@ function parseClaudeModel(raw: string | undefined): string {
     throw new QuokyConfigError(QuokyConfigErrorCode.CLAUDE_MODEL_INVALID);
   }
   return raw;
+}
+
+/** One lowercase Ollama name/tag segment; bounded so it is a safe fixed argv element. */
+const EMBEDDING_MODEL_SEGMENT = '[a-z0-9][a-z0-9._-]{0,63}';
+const EMBEDDING_MODEL_SHAPE = new RegExp(`^${EMBEDDING_MODEL_SEGMENT}(?::${EMBEDDING_MODEL_SEGMENT})?$`);
+
+/**
+ * Bounded `name[:tag]` token (ADR-0096 D9). A name or tag containing `cloud` (any case) is refused with its own
+ * typed error so a cloud-served model can never be selected for embeddings (ADR-0098 D8). Unset yields the default.
+ */
+function parseEmbeddingModel(raw: string | undefined): string {
+  if (raw === undefined) return DEFAULT_EMBEDDING_MODEL;
+  if (raw.toLowerCase().includes('cloud')) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.EMBEDDING_MODEL_CLOUD_REFUSED);
+  }
+  if (!EMBEDDING_MODEL_SHAPE.test(raw)) throw new QuokyConfigError(QuokyConfigErrorCode.EMBEDDING_MODEL_INVALID);
+  return raw;
+}
+
+/** Bounded positive integer milliseconds for one embedding call; unset yields the default. */
+function parseEmbeddingTimeoutMs(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_EMBEDDING_TIMEOUT_MS;
+  if (!/^[0-9]{1,6}$/.test(raw)) throw new QuokyConfigError(QuokyConfigErrorCode.EMBEDDING_TIMEOUT_INVALID);
+  const value = Number(raw);
+  if (value < MIN_EMBEDDING_TIMEOUT_MS || value > MAX_EMBEDDING_TIMEOUT_MS) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.EMBEDDING_TIMEOUT_INVALID);
+  }
+  return value;
 }
 
 /** Positive integer count of ESTIMATED tokens, bounded; unset yields the default budget. */
