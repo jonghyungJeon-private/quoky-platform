@@ -119,6 +119,20 @@ export interface GitBranchCleanupResult {
 }
 
 /**
+ * Result of an owner local branch create or switch (CAP-002, ADR-0099 D4). Returned by
+ * `GitProvider.createBranch`/`switchBranch` and the `GitManager` wrappers. Purely local: no remote ref is created
+ * or touched. NOT persisted as an aggregate; it reports what the LOCAL operation did this run.
+ */
+export interface GitBranchResult {
+  /** The branch now checked out (verified by the adapter after the operation). */
+  branch: string;
+  /** HEAD commit sha after the operation (full sha as read back by the adapter). */
+  headSha: string;
+  /** True when this run created the branch (`createBranch`); false for a switch to an existing branch. */
+  created: boolean;
+}
+
+/**
  * Minimal, read-only repository metadata (CAP-002). Intentionally **excludes
  * remote URLs** — HTTPS remotes can embed credentials; exposing them needs a
  * future masking policy + ADR (ADR-0023).

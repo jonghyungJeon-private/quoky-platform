@@ -229,6 +229,9 @@ function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnT
       async commitFiles() { throw new Error('git must not run'); }, async info() { throw new Error('git must not run'); },
       async pushApprovedCommit() { throw new Error('git must not run'); }, async syncMain() { throw new Error('git must not run'); },
       async deleteMergedLocalBranch() { throw new Error('git must not run'); },
+      async createBranch() { throw new Error('git must not run'); },
+      async switchBranch() { throw new Error('git must not run'); },
+      async getLocalRefCommit() { throw new Error('git must not run'); },
     },
     logger: { debug() {}, info() {}, warn() {}, error() {} },
   } as unknown as ProductionConversationRuntimeDeps;
@@ -352,6 +355,8 @@ describe('first-release offline acceptance — composed Personal v1 properties',
       async syncMainFastForward() { invoked.push('syncMain'); return {}; },
       async deleteMergedLocalBranch() { invoked.push('deleteBranch'); return {}; },
       async commitFiles() { invoked.push('commit'); return {}; },
+      async createBranch() { invoked.push('createBranch'); return {}; },
+      async switchBranch() { invoked.push('switchBranch'); return {}; },
     } as unknown as GitProvider;
     const guard = new PersonalGitGuard(inner, { remoteEnabled: config.git.remoteEnabled });
 
@@ -362,6 +367,26 @@ describe('first-release offline acceptance — composed Personal v1 properties',
     await expect(guard.commitFiles('/r', ['a.ts'], 'msg')).rejects.toBeInstanceOf(PersonalGitPolicyError);
     expect(invoked).not.toContain('commit');
     expect(invoked).not.toContain('push');
+  });
+
+  it('PersonalGitGuard keeps main/master protected for branch creation and push even with remote on (ADR-0099)', async () => {
+    const invoked: string[] = [];
+    const inner = {
+      kind: 'fake-git',
+      async info(rootPath: string) { invoked.push('info'); return { isRepository: true, rootPath, branch: 'feature/x', detached: false }; },
+      async pushApprovedCommit() { invoked.push('push'); return {}; },
+      async createBranch() { invoked.push('createBranch'); return {}; },
+      async switchBranch() { invoked.push('switchBranch'); return {}; },
+    } as unknown as GitProvider;
+    const guard = new PersonalGitGuard(inner, { remoteEnabled: true });
+
+    await expect(guard.pushApprovedCommit('/r', 'origin', 'main', 'a'.repeat(40))).rejects.toBeInstanceOf(GitPushBlockedError);
+    await expect(guard.createBranch('/r', 'Main', 'a'.repeat(40))).rejects.toBeInstanceOf(PersonalGitPolicyError);
+    expect(invoked).toEqual([]);
+
+    await guard.createBranch('/r', 'feature/x', 'a'.repeat(40));
+    await guard.switchBranch('/r', 'feature/y');
+    expect(invoked).toEqual(['createBranch', 'switchBranch']);
   });
 
   it('the Discord adapter gate silently ignores a non-owner and admits the owner (fake Message)', async () => {

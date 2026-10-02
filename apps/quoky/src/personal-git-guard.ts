@@ -1,6 +1,7 @@
-import { BranchCleanupBlockedError, GitMainSyncBlockedError, GitPushBlockedError } from '@quoky/core';
+import { BranchCleanupBlockedError, GitMainSyncBlockedError, GitPushBlockedError, isProtectedBranch } from '@quoky/core';
 import type {
   GitBranchCleanupResult,
+  GitBranchResult,
   GitCommitResult,
   GitDiff,
   GitMainSyncResult,
@@ -10,10 +11,10 @@ import type {
   RepositoryInfo,
 } from '@quoky/core';
 
-export type PersonalGitPolicyErrorCode = 'PERSONAL_GIT_PROTECTED_BRANCH_COMMIT';
+export type PersonalGitPolicyErrorCode = 'PERSONAL_GIT_PROTECTED_BRANCH_COMMIT' | 'PERSONAL_GIT_PROTECTED_BRANCH_CREATE';
 
 /**
- * Personal-edition commit refusal (ADR-0094). Narrow, value-free app-level error: the message is the code only
+ * Personal-edition git policy refusal (ADR-0094 commit, ADR-0099 branch create). Narrow, value-free app-level error: the message is the code only
  * (no branch name, path or remote). The runtime's commit-failure path already turns any throw from
  * `GitManager.commitFiles` into exactly one sanitized "not committed" reply.
  */
@@ -29,8 +30,6 @@ export interface PersonalGitGuardOptions {
   remoteEnabled: boolean;
 }
 
-const PROTECTED_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
-
 /**
  * Composition-root `GitProvider` decorator for Quoky Personal v1 (ADR-0094). Defense in depth beside, not instead
  * of, the approval gates; wrapped OUTERMOST so a refusal happens before any git process or the GitHub App
@@ -40,7 +39,13 @@ const PROTECTED_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
  *   `deleteMergedLocalBranch` cleanup) throw the existing typed pre-mutation "Blocked" errors, so the runtime
  *   replies with its sanitized "not performed" message and never claims a git change happened.
  * - `commitFiles` is refused when the current branch is `main`/`master` (case-insensitive), detached, or cannot be
- *   determined. The branch is read through `info()` immediately before delegating.
+ *   determined. The branch is read through `info()` immediately before delegating. The ADR-0099 `newFiles` option
+ *   is forwarded unchanged to the inner provider (never inspected here).
+ * - `createBranch` (ADR-0099) refuses a protected name (`main`/`master`, case-insensitive) before any git process;
+ *   `switchBranch` delegates (the adapter owns the name policy and the clean-tree rule). Both are local-only and
+ *   work with remote off.
+ * - `pushApprovedCommit` additionally refuses a protected TARGET branch (`main`/`master`) even when remote is on
+ *   (`GitPushBlockedError`, ADR-0099 D5): the personal flow pushes feature branches only.
  * - Everything else delegates unchanged.
  */
 export class PersonalGitGuard implements GitProvider {
@@ -77,7 +82,12 @@ export class PersonalGitGuard implements GitProvider {
     return this.inner.isAncestor(rootPath, ancestor, descendant);
   }
 
-  async commitFiles(rootPath: string, files: string[], message: string): Promise<GitCommitResult> {
+  async commitFiles(
+    rootPath: string,
+    files: string[],
+    message: string,
+    options?: { newFiles?: string[] },
+  ): Promise<GitCommitResult> {
     let branch: string;
     try {
       const info = await this.inner.info(rootPath);
@@ -85,10 +95,21 @@ export class PersonalGitGuard implements GitProvider {
     } catch {
       throw new PersonalGitPolicyError('PERSONAL_GIT_PROTECTED_BRANCH_COMMIT');
     }
-    if (branch.length === 0 || PROTECTED_BRANCHES.has(branch.toLowerCase())) {
+    if (branch.length === 0 || isProtectedBranch(branch)) {
       throw new PersonalGitPolicyError('PERSONAL_GIT_PROTECTED_BRANCH_COMMIT');
     }
-    return this.inner.commitFiles(rootPath, files, message);
+    return options === undefined
+      ? this.inner.commitFiles(rootPath, files, message)
+      : this.inner.commitFiles(rootPath, files, message, options);
+  }
+
+  async createBranch(rootPath: string, branch: string, expectedHeadSha: string): Promise<GitBranchResult> {
+    if (isProtectedBranch(branch)) throw new PersonalGitPolicyError('PERSONAL_GIT_PROTECTED_BRANCH_CREATE');
+    return this.inner.createBranch(rootPath, branch, expectedHeadSha);
+  }
+
+  switchBranch(rootPath: string, branch: string): Promise<GitBranchResult> {
+    return this.inner.switchBranch(rootPath, branch);
   }
 
   async pushApprovedCommit(
@@ -98,6 +119,7 @@ export class PersonalGitGuard implements GitProvider {
     commitHash: string,
   ): Promise<GitPushResult> {
     if (!this.options.remoteEnabled) throw new GitPushBlockedError('git remote operations are disabled');
+    if (isProtectedBranch(branch)) throw new GitPushBlockedError('git push to a protected branch is not allowed');
     return this.inner.pushApprovedCommit(rootPath, remote, branch, commitHash);
   }
 

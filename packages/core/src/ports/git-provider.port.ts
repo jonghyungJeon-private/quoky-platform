@@ -1,4 +1,4 @@
-import type { GitBranchCleanupResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryInfo } from '../domain';
+import type { GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryInfo } from '../domain';
 
 /**
  * PORT: read-only git **repository** inspection (CAP-002, ADR-0023).
@@ -35,20 +35,42 @@ export interface GitProvider {
   diff(rootPath: string): Promise<GitDiff>;
 
   /**
-   * The FIRST mutating method on this port (CAP-002, ADR-0046) — commits EXACTLY `files` with `message` and
-   * returns the new commit's hash. READ-ONLY-elsewhere discipline is preserved everywhere else. Runs a
-   * single `git commit --only -- <files>` of the exact **tracked** pathspecs (NO separate `git add`; untracked
-   * files are blocked upstream), argument-array only (never a shell string), timeout, masked stderr. The
-   * message is a single argv element. Commits no other path; **never pushes** (no push/reset/checkout/stash/
-   * branch/tag/merge/rebase). Validates its path args defensively (absolute/traversal/empty rejected before
-   * any git call). Approval gating is done by `GitManager.commitFiles`; this port takes no ApprovalRef.
+   * The FIRST mutating method on this port (CAP-002, ADR-0046; new-file support ADR-0099 D3) — commits EXACTLY
+   * `files` with `message` and returns the new commit's hash. READ-ONLY-elsewhere discipline is preserved
+   * everywhere else. Runs a single `git commit --only -- <files>` of the exact pathspecs, argument-array only
+   * (never a shell string), timeout, masked stderr. The message is a single argv element.
+   *
+   * `options.newFiles` (ADR-0099) lists the UNTRACKED paths among `files` that the owner approved as new files
+   * (`newFiles ⊆ files`). The adapter first runs `git add -- <newFiles>` (exact pathspecs, never `-A`/`.`), then
+   * the unchanged commit, and on commit failure compensates with `git rm --cached --quiet -- <newFiles>` so the
+   * new files are untracked again. Without `newFiles` the call behaves exactly as before (no `git add`;
+   * untracked files are blocked upstream). Commits no other path; **never pushes** (no push/reset/checkout/
+   * stash/branch/tag/merge/rebase). Validates its path args defensively (absolute/traversal/empty rejected
+   * before any git call). Approval gating is done by `GitManager.commitFiles`; this port takes no ApprovalRef.
    */
-  commitFiles(rootPath: string, files: string[], message: string): Promise<GitCommitResult>;
+  commitFiles(rootPath: string, files: string[], message: string, options?: { newFiles?: string[] }): Promise<GitCommitResult>;
+
+  /**
+   * Owner LOCAL branch creation (CAP-002, ADR-0099 D4): `git switch -c <branch>` from the current HEAD, carrying
+   * the working tree (a dirty tree is allowed). Compare-and-swap guarded: HEAD must equal `expectedHeadSha`, HEAD
+   * must be attached, no merge/rebase/cherry-pick may be in progress, and the branch must not already exist. The
+   * result is verified (`info().branch === branch`). NEVER force, NEVER a remote ref, NEVER a push. The name and
+   * SHA are validated defensively before any git call. Takes no ApprovalRef (explicit owner command, reversible).
+   */
+  createBranch(rootPath: string, branch: string, expectedHeadSha: string): Promise<GitBranchResult>;
+
+  /**
+   * Owner LOCAL branch switch (CAP-002, ADR-0099 D4): `git switch --no-guess <branch>` to an EXISTING local
+   * branch only (never creates a remote-tracking branch), allowed only with a completely clean tree (no staged,
+   * unstaged or untracked path). The result is verified (`info().branch === branch`). NEVER force/discard.
+   * Takes no ApprovalRef.
+   */
+  switchBranch(rootPath: string, branch: string): Promise<GitBranchResult>;
 
   /**
    * The SECOND mutating method (CAP-002, ADR-0048) — the first REMOTE mutation. Pushes EXACTLY the current
    * HEAD to `<remote> HEAD:<branch>` and returns the provider-reported target (NOT an independent remote
-   * verification). A single `git --no-pager push <remote> HEAD:<branch>`, argument-array only (never a shell
+   * verification). A single `git --no-pager push <remote> HEAD:refs/heads/<branch>` (ADR-0099: a fully qualified destination so a new remote branch is created without ambiguity), argument-array only (never a shell
    * string), timeout, masked stderr. NEVER `--force`/`-f`/`--tags`/`--all`/`-u`/`--set-upstream`/bare `git
    * push`, no arbitrary refspec, no user-provided remote/branch. Validates remote/branch with conservative
    * git ref rules BEFORE any git call (unsafe target never reaches argv). Approval gating is done by

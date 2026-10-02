@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   LocalGitProvider,
+  assertSafeNewFiles,
   parsePorcelain,
   sanitizeGitStderr,
   type GitRunner,
@@ -331,14 +332,14 @@ describe('LocalGitProvider.pushApprovedCommit — the first REMOTE mutation (CAP
     return { runner, calls };
   };
 
-  it('runs exactly `push <remote> HEAD:<branch>` (one refspec argv element), argument-array only; NEVER --force/-f/--tags/--all/-u/--set-upstream/bare-push or any other mutating subcommand; returns the provider-reported approved target (CA 59–64, 79–82, 114–125)', async () => {
+  it('runs exactly `push <remote> HEAD:refs/heads/<branch>` (one refspec argv element), argument-array only; NEVER --force/-f/--tags/--all/-u/--set-upstream/bare-push or any other mutating subcommand; returns the provider-reported approved target (CA 59–64, 79–82, 114–125)', async () => {
     const { runner, calls } = pushRunner();
     const sha = 'a'.repeat(40);
     const res = await new LocalGitProvider(runner).pushApprovedCommit('/repo', 'origin', 'main', sha);
     expect(calls).toHaveLength(1); // exactly one git command
     expect(Array.isArray(calls[0])).toBe(true); // argument-array, never a shell string
-    expect(calls[0]).toEqual(['--no-pager', 'push', 'origin', 'HEAD:main']); // the current HEAD → approved branch
-    expect(calls[0]?.filter((a) => a.startsWith('HEAD:'))).toEqual(['HEAD:main']); // exactly one refspec element
+    expect(calls[0]).toEqual(['--no-pager', 'push', 'origin', 'HEAD:refs/heads/main']); // the current HEAD → approved branch (fully qualified, ADR-0099)
+    expect(calls[0]?.filter((a) => a.startsWith('HEAD:'))).toEqual(['HEAD:refs/heads/main']); // exactly one refspec element
     for (const forbidden of [
       '--force', '-f', '--force-with-lease', '--tags', '--all', '-u', '--set-upstream', '--mirror', '--delete',
       'add', 'commit', 'reset', 'checkout', 'stash', 'branch', 'merge', 'rebase', 'tag', 'pull', 'fetch',
@@ -358,14 +359,14 @@ describe('LocalGitProvider.pushApprovedCommit — the first REMOTE mutation (CAP
       const { runner, calls } = pushRunner();
       await expect(new LocalGitProvider(runner).pushApprovedCommit('/repo', remote, branch, hash)).rejects.toThrow();
       expect(calls.length, `${remote}|${branch}|${hash}`).toBe(0); // NO git command ran
-      expect(calls.flat(), branch).not.toContain(`HEAD:${branch}`); // the unsafe branch never reached argv
+      expect(calls.flat(), branch).not.toContain(`HEAD:refs/heads/${branch}`); // the unsafe branch never reached argv
     }
   });
 
-  it('allows a slashed branch → argv `push origin HEAD:feature/x`, upstream origin/feature/x (CA 68)', async () => {
+  it('allows a slashed branch → argv `push origin HEAD:refs/heads/feature/x`, upstream origin/feature/x (CA 68)', async () => {
     const { runner, calls } = pushRunner();
     const res = await new LocalGitProvider(runner).pushApprovedCommit('/repo', 'origin', 'feature/x', 'b'.repeat(40));
-    expect(calls[0]).toEqual(['--no-pager', 'push', 'origin', 'HEAD:feature/x']);
+    expect(calls[0]).toEqual(['--no-pager', 'push', 'origin', 'HEAD:refs/heads/feature/x']);
     expect(res.branch).toBe('feature/x');
     expect(res.upstreamRef).toBe('origin/feature/x');
   });
@@ -456,14 +457,14 @@ describe('parsePorcelain', () => {
 });
 
 describe('LocalGitProvider.status argv stays read-only (Sprint 2z, ADR-0047, CA 82)', () => {
-  it('status uses exactly `status --porcelain=v1 -b`; no mutating subcommand', async () => {
+  it('status uses exactly `status --porcelain=v1 -b --untracked-files=all`; no mutating subcommand', async () => {
     const calls: string[][] = [];
     const runner: GitRunner = (args) => {
       calls.push(args);
       return { code: 0, stdout: '## main...origin/main [ahead 1]\n', stderr: '', timedOut: false, failed: false };
     };
     const status = await new LocalGitProvider(runner).status('/repo');
-    expect(calls).toContainEqual(['status', '--porcelain=v1', '-b']);
+    expect(calls).toContainEqual(['status', '--porcelain=v1', '-b', '--untracked-files=all']);
     expect(status.upstream).toBe('origin/main');
     for (const c of calls) {
       for (const forbidden of ['push', 'commit', 'add', 'reset', 'checkout', 'stash', 'branch', 'merge', 'rebase', 'tag']) {
@@ -679,5 +680,466 @@ describe('LocalGitProvider — post-merge local branch cleanup (CAP-002, ADR-005
       expect(flat.some((c) => c.includes(bad)), bad).toBe(false);
     }
     expect(flat.some((c) => c.includes('update-ref -d'))).toBe(true);
+  });
+});
+
+// ── ADR-0099 (CODE-2): new-file commit, owner branch create/switch, exact-ref push — real temp git repos ─────────
+
+/** Same as `makeRepo`, plus `a.txt` committed so tests have a tracked file to modify. */
+function makeRepoWithTracked(): string {
+  const dir = makeRepo();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  git(dir, 'add', 'a.txt');
+  git(dir, 'commit', '-q', '-m', 'add a');
+  return dir;
+}
+
+function head(dir: string): string {
+  return git(dir, 'rev-parse', 'HEAD').trim();
+}
+
+function ok(stdout = ''): GitRunResult {
+  return { code: 0, stdout, stderr: '', timedOut: false, failed: false };
+}
+
+describe('LocalGitProvider.status — untracked files are listed individually (ADR-0099 D3)', { timeout: 30_000 }, () => {
+  it('lists a new file in a brand-new directory by its own path, not the directory', async () => {
+    const dir = makeRepo();
+    mkdirSync(join(dir, 'src/new/deep'), { recursive: true });
+    writeFileSync(join(dir, 'src/new/deep/helper.ts'), 'export {};\n');
+    writeFileSync(join(dir, 'src/new/other.ts'), 'export {};\n');
+    const status = await provider.status(dir);
+    expect([...status.untracked].sort()).toEqual(['src/new/deep/helper.ts', 'src/new/other.ts']);
+    expect(status.untracked).not.toContain('src/');
+    expect(status.untracked).not.toContain('src/new/');
+  });
+});
+
+describe('LocalGitProvider.commitFiles — new-file support (ADR-0099 D3)', { timeout: 30_000 }, () => {
+  it('commits exactly the approved new file plus a modified tracked file; other untracked and staged files remain', async () => {
+    const dir = makeRepoWithTracked();
+    writeFileSync(join(dir, 'a.txt'), 'a changed\n'); // tracked modification (approved)
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    writeFileSync(join(dir, 'lib/new.ts'), 'export const n = 1;\n'); // approved new file in a new dir
+    writeFileSync(join(dir, 'stray.txt'), 'stray\n'); // other untracked — must stay untracked
+    writeFileSync(join(dir, 'staged.txt'), 'staged\n');
+    git(dir, 'add', 'staged.txt'); // other staged — must stay staged, uncommitted
+
+    const res = await provider.commitFiles(dir, ['a.txt', 'lib/new.ts'], 'feat: add new', { newFiles: ['lib/new.ts'] });
+    expect(res.commitHash).toBe(head(dir));
+    expect(res.committedFiles).toEqual(['a.txt', 'lib/new.ts']);
+
+    const changed = git(dir, 'show', '--name-only', '--pretty=format:', 'HEAD').trim().split('\n').filter(Boolean).sort();
+    expect(changed).toEqual(['a.txt', 'lib/new.ts']);
+    const status = await provider.status(dir);
+    expect(status.untracked).toEqual(['stray.txt']);
+    expect(status.staged).toEqual(['staged.txt']);
+    expect(status.unstaged).toEqual([]);
+  });
+
+  it('commits a new file alone (no tracked modification)', async () => {
+    const dir = makeRepoWithTracked();
+    writeFileSync(join(dir, 'solo.ts'), 'x\n');
+    await provider.commitFiles(dir, ['solo.ts'], 'feat: solo', { newFiles: ['solo.ts'] });
+    expect(git(dir, 'show', '--name-only', '--pretty=format:', 'HEAD').trim()).toBe('solo.ts');
+    expect((await provider.status(dir)).clean).toBe(true);
+  });
+
+  it('a forced commit failure (pre-commit hook exits 1) leaves the new file untracked again and the tracked change intact', async () => {
+    const dir = makeRepoWithTracked();
+    const hook = join(dir, '.git/hooks/pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+    chmodSync(hook, 0o755);
+    const before = head(dir);
+    writeFileSync(join(dir, 'a.txt'), 'a changed\n');
+    writeFileSync(join(dir, 'fresh.ts'), 'fresh\n');
+
+    await expect(provider.commitFiles(dir, ['a.txt', 'fresh.ts'], 'feat: x', { newFiles: ['fresh.ts'] })).rejects.toThrow(/git commit failed/);
+
+    expect(head(dir)).toBe(before);
+    const status = await provider.status(dir);
+    expect(status.untracked).toEqual(['fresh.ts']); // un-added by the compensation
+    expect(status.staged).toEqual([]);
+    expect(status.unstaged).toEqual(['a.txt']); // tracked modification untouched, not committed
+    expect(git(dir, 'show', 'HEAD:a.txt')).toBe('a\n');
+  });
+
+  it('never adds anything when newFiles is absent: an untracked path in `files` makes the plain commit fail and stays untracked', async () => {
+    const dir = makeRepoWithTracked();
+    writeFileSync(join(dir, 'fresh.ts'), 'fresh\n');
+    await expect(provider.commitFiles(dir, ['fresh.ts'], 'feat: x')).rejects.toThrow(/git commit failed/);
+    expect((await provider.status(dir)).untracked).toEqual(['fresh.ts']);
+  });
+
+  it('rejects a "new" file that is already tracked before any add, so the compensation can never un-track real files', async () => {
+    const dir = makeRepoWithTracked();
+    writeFileSync(join(dir, 'a.txt'), 'changed\n');
+    await expect(provider.commitFiles(dir, ['a.txt'], 'msg', { newFiles: ['a.txt'] })).rejects.toThrow(/already tracked/);
+    expect(git(dir, 'ls-files', 'a.txt').trim()).toBe('a.txt');
+  });
+
+  it('runs argv `ls-files`, `add -- <newFiles>`, the unchanged `commit --only`, then `rev-parse HEAD`', async () => {
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => {
+      calls.push(args);
+      return ok(args.includes('rev-parse') ? 'a'.repeat(40) + '\n' : '');
+    };
+    await new LocalGitProvider(runner).commitFiles('/repo', ['a.ts', 'n/new.ts'], 'feat: x', { newFiles: ['n/new.ts'] });
+    expect(calls).toEqual([
+      ['--no-pager', 'ls-files', '--', 'n/new.ts'],
+      ['--no-pager', 'add', '--', 'n/new.ts'],
+      ['--no-pager', 'commit', '--only', '-m', 'feat: x', '--', 'a.ts', 'n/new.ts'],
+      ['--no-pager', 'rev-parse', 'HEAD'],
+    ]);
+  });
+
+  it('compensates with `git rm --cached --quiet -- <newFiles>` exactly once when the commit fails, then rethrows the commit error', async () => {
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => {
+      calls.push(args);
+      if (args.includes('commit')) return { code: 1, stdout: '', stderr: 'hook failed', timedOut: false, failed: false };
+      return ok();
+    };
+    await expect(
+      new LocalGitProvider(runner).commitFiles('/repo', ['a.ts', 'n.ts'], 'msg', { newFiles: ['n.ts'] }),
+    ).rejects.toThrow(/git commit failed \(exit 1\)/);
+    expect(calls.at(-1)).toEqual(['--no-pager', 'rm', '--cached', '--quiet', '--', 'n.ts']);
+    expect(calls.filter((c) => c.includes('rm'))).toHaveLength(1);
+  });
+
+  it('a failing compensation never masks the commit error', async () => {
+    const runner: GitRunner = (args) => {
+      if (args.includes('commit')) return { code: 1, stdout: '', stderr: 'hook failed', timedOut: false, failed: false };
+      if (args.includes('rm')) throw new Error('rm exploded');
+      return ok();
+    };
+    await expect(new LocalGitProvider(runner).commitFiles('/repo', ['n.ts'], 'msg', { newFiles: ['n.ts'] })).rejects.toThrow(/git commit failed/);
+  });
+
+  it('does not compensate when `git add` itself fails (nothing was staged by this call) and surfaces the add failure', async () => {
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => {
+      calls.push(args);
+      if (args.includes('add')) return { code: 128, stdout: '', stderr: 'pathspec did not match', timedOut: false, failed: false };
+      return ok();
+    };
+    await expect(new LocalGitProvider(runner).commitFiles('/repo', ['n.ts'], 'msg', { newFiles: ['n.ts'] })).rejects.toThrow(/git add failed/);
+    expect(calls.some((c) => c.includes('commit'))).toBe(false);
+  });
+
+  it('rejects unsafe or non-subset new files BEFORE any git command runs (including pathspec magic)', async () => {
+    const cases: Array<{ files: string[]; newFiles: string[] }> = [
+      { files: ['a.ts'], newFiles: ['b.ts'] }, // not a subset
+      { files: ['../x.ts'], newFiles: ['../x.ts'] },
+      { files: ['/abs.ts'], newFiles: ['/abs.ts'] },
+      { files: ['n.ts'], newFiles: [''] },
+      { files: ['*.ts'], newFiles: ['*.ts'] }, // glob would stage other untracked files
+      { files: ['a?.ts'], newFiles: ['a?.ts'] },
+      { files: ['[id].ts'], newFiles: ['[id].ts'] },
+      { files: [':(top)n.ts'], newFiles: [':(top)n.ts'] }, // pathspec magic
+      { files: ['a\\b.ts'], newFiles: ['a\\b.ts'] },
+    ];
+    for (const c of cases) {
+      const calls: string[][] = [];
+      const runner: GitRunner = (args) => { calls.push(args); return ok(); };
+      await expect(new LocalGitProvider(runner).commitFiles('/repo', c.files, 'msg', { newFiles: c.newFiles }), JSON.stringify(c)).rejects.toThrow();
+      expect(calls.length, JSON.stringify(c)).toBe(0);
+    }
+  });
+
+  it('treats an empty newFiles array like no option (no add, no ls-files)', async () => {
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => { calls.push(args); return ok(args.includes('rev-parse') ? 'a'.repeat(40) : ''); };
+    await new LocalGitProvider(runner).commitFiles('/repo', ['a.ts'], 'msg', { newFiles: [] });
+    expect(calls.map((c) => c[1])).toEqual(['commit', 'rev-parse']);
+  });
+
+  it('assertSafeNewFiles de-duplicates and returns the validated subset', () => {
+    expect(assertSafeNewFiles(['n.ts', 'n.ts'], ['a.ts', 'n.ts'])).toEqual(['n.ts']);
+  });
+});
+
+describe('LocalGitProvider.createBranch (ADR-0099 D4)', { timeout: 30_000 }, () => {
+  it('creates and switches to a new branch from HEAD, carrying a dirty tree (staged, unstaged, untracked)', async () => {
+    const dir = makeRepoWithTracked();
+    const sha = head(dir);
+    writeFileSync(join(dir, 'a.txt'), 'dirty\n');
+    writeFileSync(join(dir, 'staged.txt'), 's\n');
+    git(dir, 'add', 'staged.txt');
+    writeFileSync(join(dir, 'untracked.txt'), 'u\n');
+
+    const res = await provider.createBranch(dir, 'feature/x', sha);
+    expect(res).toEqual({ branch: 'feature/x', headSha: sha, created: true });
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD').trim()).toBe('feature/x');
+    expect(head(dir)).toBe(sha);
+    const status = await provider.status(dir);
+    expect(status.unstaged).toEqual(['a.txt']);
+    expect(status.staged).toEqual(['staged.txt']);
+    expect(status.untracked).toEqual(['untracked.txt']);
+  });
+
+  it('accepts a short sha prefix as the compare-and-swap value', async () => {
+    const dir = makeRepoWithTracked();
+    const res = await provider.createBranch(dir, 'feature/short', head(dir).slice(0, 9));
+    expect(res.created).toBe(true);
+  });
+
+  it('refuses an existing branch name and leaves HEAD where it was', async () => {
+    const dir = makeRepoWithTracked();
+    git(dir, 'branch', 'feature/exists');
+    await expect(provider.createBranch(dir, 'feature/exists', head(dir))).rejects.toThrow(/already exists/);
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD').trim()).toBe('main');
+  });
+
+  it('refuses a detached HEAD', async () => {
+    const dir = makeRepoWithTracked();
+    const sha = head(dir);
+    git(dir, 'checkout', '-q', '--detach');
+    await expect(provider.createBranch(dir, 'feature/x', sha)).rejects.toThrow(/detached/);
+    expect(git(dir, 'branch', '--list', 'feature/x').trim()).toBe('');
+  });
+
+  it('refuses an unborn repository (no HEAD commit)', async () => {
+    const dir = makeRepo(false);
+    await expect(provider.createBranch(dir, 'feature/x', 'a'.repeat(40))).rejects.toThrow(/HEAD does not match/);
+  });
+
+  it('refuses when HEAD does not match the expected sha (compare-and-swap)', async () => {
+    const dir = makeRepoWithTracked();
+    const stale = head(dir);
+    writeFileSync(join(dir, 'b.txt'), 'b\n');
+    git(dir, 'add', 'b.txt');
+    git(dir, 'commit', '-q', '-m', 'advance');
+    await expect(provider.createBranch(dir, 'feature/x', stale)).rejects.toThrow(/HEAD does not match/);
+    expect(git(dir, 'branch', '--list', 'feature/x').trim()).toBe('');
+  });
+
+  it('refuses during an in-progress merge', async () => {
+    const dir = makeRepoWithTracked();
+    git(dir, 'checkout', '-q', '-b', 'other');
+    writeFileSync(join(dir, 'a.txt'), 'other side\n');
+    git(dir, 'commit', '-q', '-am', 'other change');
+    git(dir, 'checkout', '-q', 'main');
+    writeFileSync(join(dir, 'a.txt'), 'main side\n');
+    git(dir, 'commit', '-q', '-am', 'main change');
+    expect(spawnSync('git', ['merge', 'other'], { cwd: dir }).status).not.toBe(0); // conflict → MERGE_HEAD present
+    await expect(provider.createBranch(dir, 'feature/x', head(dir))).rejects.toThrow(/in progress/);
+    expect(git(dir, 'branch', '--list', 'feature/x').trim()).toBe('');
+  });
+
+  it('refuses during an in-progress cherry-pick', async () => {
+    const dir = makeRepoWithTracked();
+    git(dir, 'checkout', '-q', '-b', 'other');
+    writeFileSync(join(dir, 'a.txt'), 'other side\n');
+    git(dir, 'commit', '-q', '-am', 'other change');
+    const pick = head(dir);
+    git(dir, 'checkout', '-q', 'main');
+    writeFileSync(join(dir, 'a.txt'), 'main side\n');
+    git(dir, 'commit', '-q', '-am', 'main change');
+    expect(spawnSync('git', ['cherry-pick', pick], { cwd: dir }).status).not.toBe(0);
+    await expect(provider.createBranch(dir, 'feature/x', head(dir))).rejects.toThrow(/in progress/);
+  });
+
+  it('refuses main/master/Main/HEAD/refs names with NO git command run', async () => {
+    for (const name of ['main', 'master', 'Main', 'MASTER', 'HEAD', 'refs/heads/x', 'a b', '-x', 'a..b', '기능']) {
+      const calls: string[][] = [];
+      const runner: GitRunner = (args) => { calls.push(args); return ok(); };
+      await expect(new LocalGitProvider(runner).createBranch('/repo', name, 'a'.repeat(40)), name).rejects.toThrow(/branch name/);
+      expect(calls.length, name).toBe(0);
+    }
+  });
+
+  it('refuses a malformed expected sha with NO git command run', async () => {
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => { calls.push(args); return ok(); };
+    await expect(new LocalGitProvider(runner).createBranch('/repo', 'feature/x', 'nope')).rejects.toThrow(/expected HEAD/);
+    expect(calls.length).toBe(0);
+  });
+
+  it('runs exactly one mutating command, `switch -c <branch>`, after the read-only preflight', async () => {
+    const sha = 'c'.repeat(40);
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => {
+      calls.push(args);
+      const sub = args.filter((a) => a !== '--no-pager');
+      if (sub[0] === 'rev-parse' && sub[1] === '--git-path') return ok(`/nonexistent-quoky-gitdir/${sub[2]}\n`);
+      if (sub[0] === 'symbolic-ref') return ok(calls.some((c) => c.includes('switch')) ? 'feature/x\n' : 'main\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { code: 1, stdout: '', stderr: '', timedOut: false, failed: false };
+      if (sub[0] === 'rev-parse' && sub[1] === '--is-inside-work-tree') return ok('true\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--show-toplevel') return ok('/repo\n');
+      if (sub[0] === 'rev-parse') return ok(`${sha}\n`);
+      return ok();
+    };
+    const root = tempDir(); // info() requires an existing directory
+    const res = await new LocalGitProvider(runner).createBranch(root, 'feature/x', sha);
+    expect(res).toEqual({ branch: 'feature/x', headSha: sha, created: true });
+    const mutating = calls.filter((c) => c.includes('switch'));
+    expect(mutating).toEqual([['--no-pager', 'switch', '-c', 'feature/x']]);
+    for (const c of calls) {
+      for (const forbidden of ['push', 'commit', 'add', 'reset', 'checkout', 'stash', 'merge', 'rebase', 'tag', 'fetch', '--force', '-f', '-C', '--discard-changes']) {
+        expect(c, forbidden).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it('surfaces a failing `switch -c` as an error', async () => {
+    const sha = 'c'.repeat(40);
+    const runner: GitRunner = (args) => {
+      const sub = args.filter((a) => a !== '--no-pager');
+      if (sub[0] === 'switch') return { code: 128, stdout: '', stderr: 'fatal: boom', timedOut: false, failed: false };
+      if (sub[0] === 'rev-parse' && sub[1] === '--git-path') return ok('/nonexistent-quoky-gitdir/x\n');
+      if (sub[0] === 'symbolic-ref') return ok('main\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { code: 1, stdout: '', stderr: '', timedOut: false, failed: false };
+      return ok(`${sha}\n`);
+    };
+    await expect(new LocalGitProvider(runner).createBranch('/repo', 'feature/x', sha)).rejects.toThrow(/git switch failed/);
+  });
+});
+
+describe('LocalGitProvider.switchBranch (ADR-0099 D4)', { timeout: 30_000 }, () => {
+  it('switches to an existing local branch on a clean tree', async () => {
+    const dir = makeRepoWithTracked();
+    git(dir, 'branch', 'feature/y');
+    const res = await provider.switchBranch(dir, 'feature/y');
+    expect(res).toEqual({ branch: 'feature/y', headSha: head(dir), created: false });
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD').trim()).toBe('feature/y');
+  });
+
+  it('refuses a dirty tree: unstaged, staged, or untracked each block the switch', async () => {
+    const dir = makeRepoWithTracked();
+    git(dir, 'branch', 'feature/y');
+
+    writeFileSync(join(dir, 'a.txt'), 'dirty\n');
+    await expect(provider.switchBranch(dir, 'feature/y')).rejects.toThrow(/not clean/);
+    git(dir, 'checkout', '-q', '--', 'a.txt');
+
+    writeFileSync(join(dir, 'staged.txt'), 's\n');
+    git(dir, 'add', 'staged.txt');
+    await expect(provider.switchBranch(dir, 'feature/y')).rejects.toThrow(/not clean/);
+    git(dir, 'rm', '-q', '--cached', 'staged.txt');
+    rmSync(join(dir, 'staged.txt'));
+
+    mkdirSync(join(dir, 'new'), { recursive: true });
+    writeFileSync(join(dir, 'new/untracked.txt'), 'u\n');
+    await expect(provider.switchBranch(dir, 'feature/y')).rejects.toThrow(/not clean/);
+
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD').trim()).toBe('main'); // never moved
+  });
+
+  it('refuses a branch that does not exist locally', async () => {
+    const dir = makeRepoWithTracked();
+    await expect(provider.switchBranch(dir, 'feature/missing')).rejects.toThrow(/no such local branch/);
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD').trim()).toBe('main');
+  });
+
+  it('never creates a local branch from a remote-tracking branch (--no-guess)', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'quoky-bare-'));
+    created.push(bare);
+    git(bare, 'init', '-q', '--bare');
+    const dir = makeRepoWithTracked();
+    git(dir, 'remote', 'add', 'origin', bare);
+    git(dir, 'push', '-q', 'origin', 'main:refs/heads/main', 'main:refs/heads/feature/remote-only');
+    git(dir, 'fetch', '-q', 'origin');
+    expect(git(dir, 'branch', '-r', '--list', 'origin/feature/remote-only').trim()).not.toBe(''); // tracking ref exists
+
+    await expect(provider.switchBranch(dir, 'feature/remote-only')).rejects.toThrow(/no such local branch/);
+    expect(git(dir, 'branch', '--list', 'feature/remote-only').trim()).toBe(''); // no local branch was guessed into existence
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD').trim()).toBe('main');
+  });
+
+  it('refuses during an in-progress merge and on a detached HEAD', async () => {
+    const dir = makeRepoWithTracked();
+    git(dir, 'branch', 'feature/y');
+    git(dir, 'checkout', '-q', '--detach');
+    await expect(provider.switchBranch(dir, 'feature/y')).rejects.toThrow(/detached/);
+
+    const dir2 = makeRepoWithTracked();
+    git(dir2, 'branch', 'feature/y');
+    git(dir2, 'checkout', '-q', '-b', 'other');
+    writeFileSync(join(dir2, 'a.txt'), 'other side\n');
+    git(dir2, 'commit', '-q', '-am', 'other change');
+    git(dir2, 'checkout', '-q', 'main');
+    writeFileSync(join(dir2, 'a.txt'), 'main side\n');
+    git(dir2, 'commit', '-q', '-am', 'main change');
+    expect(spawnSync('git', ['merge', 'other'], { cwd: dir2 }).status).not.toBe(0);
+    await expect(provider.switchBranch(dir2, 'feature/y')).rejects.toThrow(/in progress/);
+  });
+
+  it('refuses main/master/HEAD/refs names with NO git command run', async () => {
+    for (const name of ['main', 'master', 'Main', 'HEAD', 'refs/heads/x', '']) {
+      const calls: string[][] = [];
+      const runner: GitRunner = (args) => { calls.push(args); return ok(); };
+      await expect(new LocalGitProvider(runner).switchBranch('/repo', name), name).rejects.toThrow(/branch name/);
+      expect(calls.length, name).toBe(0);
+    }
+  });
+
+  it('runs exactly one mutating command, `switch --no-guess <branch>`', async () => {
+    const sha = 'd'.repeat(40);
+    const calls: string[][] = [];
+    const runner: GitRunner = (args) => {
+      calls.push(args);
+      const sub = args.filter((a) => a !== '--no-pager');
+      const switched = calls.some((c) => c.includes('switch'));
+      if (sub[0] === 'rev-parse' && sub[1] === '--git-path') return ok('/nonexistent-quoky-gitdir/x\n');
+      if (sub[0] === 'symbolic-ref') return ok(switched ? 'feature/y\n' : 'main\n');
+      if (sub[0] === 'status') return ok('## main\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--is-inside-work-tree') return ok('true\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--show-toplevel') return ok('/repo\n');
+      return ok(`${sha}\n`);
+    };
+    const root = tempDir(); // info() requires an existing directory
+    const res = await new LocalGitProvider(runner).switchBranch(root, 'feature/y');
+    expect(res).toEqual({ branch: 'feature/y', headSha: sha, created: false });
+    expect(calls.filter((c) => c.includes('switch'))).toEqual([['--no-pager', 'switch', '--no-guess', 'feature/y']]);
+    expect(calls).toContainEqual(['status', '--porcelain=v1', '-b', '--untracked-files=all']);
+  });
+
+  it('fails verification when the checkout is not the requested branch afterwards', async () => {
+    const sha = 'd'.repeat(40);
+    const runner: GitRunner = (args) => {
+      const sub = args.filter((a) => a !== '--no-pager');
+      if (sub[0] === 'rev-parse' && sub[1] === '--git-path') return ok('/nonexistent-quoky-gitdir/x\n');
+      if (sub[0] === 'symbolic-ref') return ok('main\n'); // still on main after the "switch"
+      if (sub[0] === 'status') return ok('## main\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--is-inside-work-tree') return ok('true\n');
+      if (sub[0] === 'rev-parse' && sub[1] === '--show-toplevel') return ok('/repo\n');
+      return ok(`${sha}\n`);
+    };
+    await expect(new LocalGitProvider(runner).switchBranch(tempDir(), 'feature/y')).rejects.toThrow(/could not be verified/);
+  });
+});
+
+describe('LocalGitProvider.pushApprovedCommit — real push to a LOCAL bare repo as origin (ADR-0099 D5)', { timeout: 30_000 }, () => {
+  it('creates refs/heads/feature/x on the remote with the exact sha, without -u and without touching main', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'quoky-bare-'));
+    created.push(bare);
+    git(bare, 'init', '-q', '--bare');
+    const dir = makeRepoWithTracked();
+    git(dir, 'remote', 'add', 'origin', bare);
+
+    const mainSha = head(dir);
+    await provider.createBranch(dir, 'feature/x', mainSha);
+    writeFileSync(join(dir, 'a.txt'), 'feature change\n');
+    const commit = await provider.commitFiles(dir, ['a.txt'], 'feat: change a');
+
+    const res = await provider.pushApprovedCommit(dir, 'origin', 'feature/x', commit.commitHash);
+    expect(res).toEqual({ remote: 'origin', branch: 'feature/x', upstreamRef: 'origin/feature/x', commitHash: commit.commitHash });
+    expect(git(bare, 'rev-parse', 'refs/heads/feature/x').trim()).toBe(commit.commitHash);
+    expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: bare }).status).not.toBe(0); // main never pushed
+    // no upstream configured (no -u)
+    expect(spawnSync('git', ['config', '--get', 'branch.feature/x.remote'], { cwd: dir }).status).not.toBe(0);
+  });
+
+  it('creates a remote branch whose name differs from the checked-out local branch (fully qualified refspec)', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'quoky-bare-'));
+    created.push(bare);
+    git(bare, 'init', '-q', '--bare');
+    const dir = makeRepoWithTracked();
+    git(dir, 'remote', 'add', 'origin', bare);
+    const sha = head(dir);
+    const res = await provider.pushApprovedCommit(dir, 'origin', 'feature/from-main', sha);
+    expect(res.upstreamRef).toBe('origin/feature/from-main');
+    expect(git(bare, 'rev-parse', 'refs/heads/feature/from-main').trim()).toBe(sha);
   });
 });

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { GitMainSyncBlockedError, GitPushBlockedError } from '@quoky/core';
 import type {
   GitBranchCleanupResult,
+  GitBranchResult,
   GitCommitResult,
   GitDiff,
   GitMainSyncResult,
@@ -105,8 +106,24 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.localGit.diff(rootPath);
   }
 
-  commitFiles(rootPath: string, files: string[], message: string): Promise<GitCommitResult> {
-    return this.localGit.commitFiles(rootPath, files, message);
+  commitFiles(
+    rootPath: string,
+    files: string[],
+    message: string,
+    options?: { newFiles?: string[] },
+  ): Promise<GitCommitResult> {
+    return options === undefined
+      ? this.localGit.commitFiles(rootPath, files, message)
+      : this.localGit.commitFiles(rootPath, files, message, options);
+  }
+
+  // ADR-0099: owner local branch create/switch — purely local ref operations, so no remote preflight, no token mint.
+  createBranch(rootPath: string, branch: string, expectedHeadSha: string): Promise<GitBranchResult> {
+    return this.localGit.createBranch(rootPath, branch, expectedHeadSha);
+  }
+
+  switchBranch(rootPath: string, branch: string): Promise<GitBranchResult> {
+    return this.localGit.switchBranch(rootPath, branch);
   }
 
   getLocalRefCommit(rootPath: string, branch: string): Promise<{ commitHash: string } | null> {
