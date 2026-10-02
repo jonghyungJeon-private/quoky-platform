@@ -24,4 +24,3 @@ export const turnHandlersProvider: Provider = {
   ): TurnHandlerList => [...codeWork, ...workChat, ...reminders, ...feedback],
   inject: [CODE_WORK_TURN_HANDLERS, WORK_CHAT_TURN_HANDLERS, REMINDER_TURN_HANDLERS, FEEDBACK_TURN_HANDLERS],
 };
-
