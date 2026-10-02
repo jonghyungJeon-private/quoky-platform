@@ -10,6 +10,132 @@
 
 ---
 
+## 0. Personal v2 operator setup (read first)
+
+Added by DOC-B (wave 8). Sections 1-11 below are the older v1 RC lifecycle UAT script (sandbox repo, one scenario per
+lifecycle gate); this part is the operator reference for running Personal v2 features against the dev bot. Every
+variable below was checked against `apps/quoky/src/config.ts` and `.env.example`. Running any live step is a separate
+exact-scope Product Owner approval. Never print or paste secret values; list variable **names** only.
+
+### 0.1 Launch and the shell-variable collision
+
+A shell variable with the same name beats `.env.local`. Check names only, then launch without the colliding ones:
+
+```sh
+env | grep DISCORD | cut -d= -f1                 # names only, never values
+env -u DISCORD_BOT_TOKEN -u DISCORD_GUILD_ID pnpm dev
+```
+
+`pnpm dev` builds and starts the bot (log banner `started (Quoky Personal v1)`; the banner text was not changed in v2).
+Settings changes need a restart. A runtime started for QA must follow the AGENTS.md temporary-environment rules and use a
+copy of the dev database, never the production database.
+
+### 0.2 Environment flags
+
+All boolean flags accept exactly `true` or `false`; an empty value (`NAME=`) is a startup error, so delete or comment the
+line to use the default.
+
+| Variable | Default | Operator notes |
+|---|---|---|
+| `QUOKY_DISCORD_OWNER_IDS` | none (required) | Missing or malformed fails startup. Only these users are served |
+| `QUOKY_DISCORD_CHANNEL_IDS` | empty = owner DMs only | Owner messages in these channels (and their threads) are turns |
+| `QUOKY_OLLAMA_ENABLED` | `true` | Registers local Ollama (chat, summaries, read-only work). `false` forces Claude for everything |
+| `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b` |
+| `QUOKY_CLAUDE_MODEL` | `sonnet` | Passed to the Claude CLI as `--model` |
+| `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote reads. Needs the GitHub App (0.3) |
+| `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag, else startup error `GIT_MERGE_REQUIRES_REMOTE`. Keep `false`; merge enablement is a separate Strict decision and was never live-tested |
+| `QUOKY_REMINDERS_ENABLED` | `false` | Release default stays `false` until the reminders UAT; enable in the QA environment only |
+| `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the originating channel, so every channel member can read the text. Needs its own approved UAT. The daily brief is DM-only regardless |
+| `QUOKY_TIMEZONE` | `Asia/Seoul` | IANA zone; invalid is a startup error |
+| `QUOKY_WORK_SUMMARY_ENABLED` | `true` | With Ollama not ready, connector summaries fall back to Claude, so corporate connector text can leave the host through the owner's Claude subscription (owner decision, ADR-0100 #2). Set `false` where policy forbids it; lookups then return the deterministic list |
+| `QUOKY_EMBEDDING_ENABLED` | `false` | Local embedding recall. Run `ollama pull nomic-embed-text` first; falls back to lexical recall on any failure |
+| `QUOKY_EMBEDDING_MODEL` | `nomic-embed-text` | A name or tag containing `cloud` is refused |
+| `QUOKY_EMBEDDING_TIMEOUT_MS` | `3000` | 100-30000 |
+| `QUOKY_CONTEXT_MAX_TOKENS` | `6000` | Keep below the Ollama server context window (see 0.5) |
+| `QUOKY_ACTOR_IDENTITY_MAPPINGS` | unset | Non-secret JSON linking the Discord actor to Jira assignee / GitHub login. Without it the work view says "identity 미설정" |
+
+Connector credentials (all optional; a connector is registered only when its full set is present; legacy `CHUNSIK_*`
+aliases are accepted, `QUOKY_*` wins):
+
+| Connector | Variables | Notes |
+|---|---|---|
+| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Live behaviour of the Jira search endpoint is unverified |
+| Slack | `QUOKY_SLACK_TOKEN` | Message search may need a user token rather than a bot token. Unverified live |
+| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN` | Auth style unverified live |
+| GitHub (work lookups) | the GitHub App below | Read token requests Issues: Read and Pull requests: Read |
+
+Connector lookups on real Jira, Slack, Confluence and GitHub tenants have **not** been run live (credentials are being
+added by the owner). Treat the first run as a read-only probe, one request per connector, under its own approval.
+
+### 0.3 GitHub App (push to PR chain and GitHub lookups)
+
+Variables: `QUOKY_GITHUB_OWNER` and `QUOKY_GITHUB_REPO` (the single target repository), `QUOKY_GITHUB_APP_ID`, and the
+private key via `QUOKY_GITHUB_APP_PRIVATE_KEY_PATH` (preferred, a PEM outside Git) or `QUOKY_GITHUB_APP_PRIVATE_KEY`;
+optional `QUOKY_GITHUB_APP_INSTALLATION_ID`. Install the App on the one target repository only (a throwaway sandbox for
+UAT). Never commit the key.
+
+Required App permissions:
+
+| Permission | Level | Why |
+|---|---|---|
+| Contents | Read and write | push of the work branch (the installation token is minted down-scoped to the single repository with `contents: write`) |
+| Pull requests | Read and write | PR creation and status (`pull_requests: write`) |
+| Metadata | Read | granted to every App; required by the API |
+| Checks | Read | PR status preview reads the head commit's check runs. **Without it the PR status reply truthfully says it could not check (live QA G11)**; push and PR creation are unaffected |
+| Issues | Read | GitHub work lookups (the read token requests `issues: read` and `pull_requests: read`) |
+
+Caveat to verify in the first PR-status live run: at this base, `apps/quoky/src/app.module.ts` mints the repository
+installation token with `contents: write` and `pull_requests: write` only. Granting the App the Checks permission is
+necessary, but this documentation does not claim it is sufficient; if the status reply still cannot check, the mint scope
+needs a code follow-up (tracked with "partial PR status without Checks" in `ROADMAP.md`).
+
+App-auth git path (live finding QA-V2-W7-01, fixed):
+
+- Only **HTTPS `github.com`** remotes are supported for App-token operations. SSH (scp-like or `ssh://`), other hosts and
+  URLs with embedded credentials are refused before any token is minted. Every fetch and push URL is checked for the
+  operation's direction, so a `pushurl` or `insteadOf` rewrite cannot route around the check.
+- Ambient credential helpers are reset for App-token operations. The git child gets `GIT_CONFIG_COUNT=1` with
+  `credential.helper` set to empty, drops inherited `GIT_CONFIG_*` / `GIT_CONFIG_PARAMETERS`, and authenticates through a
+  one-shot `GIT_ASKPASS`. Before the fix, macOS `osxkeychain` (system gitconfig) answered first with another identity's
+  credential ("Repository not found"), and on success would have stored the App token in the keychain. If a push fails
+  with "Repository not found", check that the remote is HTTPS `github.com/<owner>/<repo>` and that the App is installed
+  on that repository.
+- Safety rules unchanged: no force push; the first push of a new branch is `HEAD:refs/heads/<branch>` with no upstream
+  set; an upstream push that targets `main` or `master` is refused; merge, deploy and release are not performed.
+
+### 0.4 Claude CLI
+
+Quoky calls the locally installed, logged-in `claude` CLI (subscription; no API key is passed to the child). Isolation
+flags on every run: `--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`, plus `--tools ""` for
+workspace-less requests. This keeps the owner's claude.ai connectors (for example Google Calendar), user/project settings
+and session history out of Quoky runs (QA-V2-002). Needs a CLI version that supports these flags (the quickstart records
+2.1.287). Policy-sensitive chat turns always use Claude, so they count against the subscription.
+
+### 0.5 Ollama
+
+Run Ollama **natively** on the host (`ollama serve`); Quoky shells out to the `ollama` CLI. On macOS, Docker would add
+isolation only, and Quoky does not use it. Use a model tag that exists locally. The Ollama server defaults to a 4096 token
+window, below Quoky's 6000 token context budget: start the server with `OLLAMA_CONTEXT_LENGTH=8192` or lower
+`QUOKY_CONTEXT_MAX_TOKENS`. Known local-model quality limits (not policy bugs): stray non-Korean characters, over-cautious
+or vague answers, appended "(Translated from …)" lines (QA-V2-003, QA-V2-008, QA-V2-W7-06). For embeddings, pull the
+embedding model yourself; Quoky never pulls models.
+
+### 0.6 Live status and what still needs a session
+
+Done (owner-attended, dev bot, see `docs/uat/personal-v2-qa-record.md`): migrations to v13 on DB copies, chat policy and
+routing, the override flow, reminders on DM delivery including restart catch-up, feedback reactions and summary, to-dos,
+and the push to PR chain on the private sandbox repo with merge off.
+
+Still pending, each its own exact-scope Strict session:
+
+1. Connector live QA on real Jira, Slack, Confluence and GitHub tenants (one read-only probe per connector first).
+2. Reminders channel-delivery UAT (`QUOKY_REMINDERS_CHANNEL_DELIVERY=true`, plus the allowlist-removal DM fallback).
+3. The release-default decision for `QUOKY_REMINDERS_ENABLED`.
+4. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`).
+5. PR status with the Checks permission granted (see the caveat in 0.3), and an embedding recall probe.
+
+---
+
 ## 1. UAT purpose and scope
 
 **Purpose:** confirm that a trusted internal operator can drive Quoky Platform through the real conversation lifecycle
