@@ -8,3 +8,4 @@
 export * from './branch-name-policy';
 export * from './code-change-set';
 export * from './git-branch-command';
+export * from './push-target-resolution';
