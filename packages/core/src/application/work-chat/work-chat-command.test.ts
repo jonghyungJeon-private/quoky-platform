@@ -436,3 +436,40 @@ describe('modes and intents', () => {
     expect(workChatCommandFromIntent(intent({ kind: 'personal-work-surface' }, IntentType.CHAT))).toBeNull();
   });
 });
+
+describe('natural completion hint detection (QA-V2-W7-03)', () => {
+  it.each([
+    ['보고서 초안 쓰기 완료', 'complete', { text: '보고서 초안 쓰기' }],
+    ['보고서 초안 쓰기 완료했어', 'complete', { text: '보고서 초안 쓰기' }],
+    ['보고서 초안 쓰기 끝났어요.', 'complete', { text: '보고서 초안 쓰기' }],
+    ['보고서 초안 쓰기 다 했어', 'complete', { text: '보고서 초안 쓰기' }],
+    ['보고서 초안 쓰기 취소', 'cancel', { text: '보고서 초안 쓰기' }],
+    ['2번 완료했어', 'complete', { index: 2 }],
+    ['할 일 2 완료', 'complete', { index: 2 }],
+    ['할 일 3 취소', 'cancel', { index: 3 }],
+  ])('detects %s as a hint', (text, action, target) => {
+    expect(detectWorkChatCommand(text)).toEqual({ kind: 'todo.hint', action, target });
+    expect(workChatCommandMode({ kind: 'todo.hint', action: 'complete', target: { index: 1 } })).toBe('mutation');
+  });
+
+  it.each([
+    '보고서 초안 쓰기 완료했나?',
+    '보고서 초안 쓰기 완료했어?',
+    '완료 처리 어떻게 해?',
+    '보고서 초안 쓰기 아직 완료 안 했어',
+    '보고서 초안 쓰기',
+    '완료',
+    '3 완료',
+    '번 완료',
+    '내일 9시에 회의 알려줘 완료',
+  ])('does not detect %s', (text) => {
+    expect(detectWorkChatCommand(text)?.kind).not.toBe('todo.hint');
+  });
+
+  it('never steals a phrase another detector already owns', () => {
+    expect(detectWorkChatCommand('2번 완료')).toEqual({ kind: 'todo.complete', target: { index: 2 } });
+    expect(detectWorkChatCommand('완료 처리: 2')).toEqual({ kind: 'todo.complete', target: { index: 2 } });
+    expect(detectWorkChatCommand('Slack에서 배포 검색')?.kind).toBe('lookup');
+    expect(detectWorkChatCommand('내 할 일 보여줘')).toEqual({ kind: 'todo.list' });
+  });
+});

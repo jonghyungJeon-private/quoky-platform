@@ -102,9 +102,23 @@ function fit(lines: ReadonlyArray<{ text: string; droppable?: boolean }>, maxCha
 // To-do mutations
 // ---------------------------------------------------------------------------------------------------------------------
 
-export function renderTodoAdded(item: WorkItem): string {
+export function renderTodoAdded(item: WorkItem, reminderShaped = false): string {
   const refs = item.resourceRefs.length > 0 ? ` (연결: ${refList(item.resourceRefs)})` : '';
-  return fit([{ text: `할 일을 추가했어요: "${titleOf(item, 200)}"${refs}` }]);
+  return fit([
+    { text: `할 일을 추가했어요: "${titleOf(item, 200)}"${refs}` },
+    ...(reminderShaped
+      ? [{ text: '알림은 설정하지 않았어요. 알림이 필요하면 "내일 9시에 회의 알려줘"처럼 따로 보내 주세요.' }]
+      : []),
+  ]);
+}
+
+/** Hint for an unanchored "<title> 완료" statement (QA-V2-W7-03): nothing was changed; the exact command is named. */
+export function renderTodoCompletionHint(action: 'complete' | 'cancel', no: number, item: WorkItem): string {
+  const verb = action === 'complete' ? '완료 처리' : '취소';
+  const command = action === 'complete' ? `완료 처리: ${no}` : `할 일 취소: ${no}`;
+  return fit([
+    { text: `"${titleOf(item, 120)}" 할 일을 ${verb}하려면 "${command}"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.` },
+  ]);
 }
 
 export function renderTodoCompleted(item: WorkItem): string {
