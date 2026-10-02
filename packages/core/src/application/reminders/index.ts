@@ -1,8 +1,10 @@
 /**
  * Proactive owner reminders (ADR-0101) — application sub-barrel.
  *
- * Pre-registered stub (SEAM-1, ADR-0096 D8): intentionally empty and inert. The track's tasks (first: PRO-1)
- * add their modules to this folder and export them from this sub-barrel only; the root application barrel is
- * not edited after wave 1. A dropped track's stub is removed in INT-1 or DOC-B.
+ * The track's tasks (first: PRO-1) add their modules to this folder and export them from this sub-barrel only;
+ * the root application barrel is not edited after wave 1. PRO-1: pure zoned time, schedule arithmetic with the
+ * missed-reminder policy, and the deterministic KO/EN reminder grammar.
  */
-export {};
+export * from './zoned-time';
+export * from './reminder-schedule';
+export * from './reminder-grammar';

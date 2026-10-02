@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "suites": {
+    "intent-routing": { "minAccuracy": 1, "minTotal": 121 },
+    "approval-decision": { "minAccuracy": 1, "minTotal": 163 },
+    "stray-decision": { "minAccuracy": 1, "minTotal": 38 },
+    "conversation-control": { "minAccuracy": 1, "minTotal": 26 },
+    "project-registration": { "minAccuracy": 1, "minTotal": 20 }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "suite": "project-registration",
+  "version": 1,
+  "cases": [
+    {"id": "registration-001", "text": "이 프로젝트 등록해줘: /tmp/repo", "expected": {"path": "/tmp/repo", "absolute": true}, "source": "intent-classifier.test.ts", "mustPass": true},
+    {"id": "registration-002", "text": "/Users/me/repo 프로젝트 등록해줘", "expected": {"path": "/Users/me/repo", "absolute": true}, "source": "intent-classifier.test.ts", "mustPass": true},
+    {"id": "registration-003", "text": "경로:/Users/me/repo 등록해줘", "expected": {"path": "/Users/me/repo", "absolute": true}, "source": "intent-classifier.test.ts", "mustPass": true},
+    {"id": "registration-004", "text": "register project /Users/me/code/app", "expected": {"path": "/Users/me/code/app", "absolute": true}, "source": "ADR-0018 English register", "mustPass": true},
+    {"id": "registration-005", "text": "이 저장소 등록해줘 /Users/me/work/quoky", "expected": {"path": "/Users/me/work/quoky", "absolute": true}, "source": "ADR-0018", "mustPass": true},
+    {"id": "registration-006", "text": "이 프로젝트 등록해줘: ../../etc", "expected": {"path": "../../etc", "absolute": false}, "source": "QA-015 / UAT E23", "mustPass": true},
+    {"id": "registration-007", "text": "프로젝트 등록해줘 ./sandbox", "expected": {"path": "./sandbox", "absolute": false}, "source": "QA-015 (dot-relative)", "mustPass": true},
+    {"id": "registration-008", "text": "이 레포 등록해줘: ~/code/repo", "expected": {"path": "~/code/repo", "absolute": false}, "source": "QA-015 (home-relative)", "mustPass": true},
+    {"id": "registration-009", "text": "프로젝트 등록해줘: my/repo", "expected": {"path": "my/repo", "absolute": false}, "source": "QA-015 (ASCII relative slash path)", "mustPass": true},
+    {"id": "registration-010", "text": "register this repo ../other", "expected": {"path": "../other", "absolute": false}, "source": "QA-015 (English)", "mustPass": true},
+    {"id": "registration-011", "text": "7/3 회의 등록해줘", "expected": null, "source": "intent-classifier.test.ts (date, not a path)", "mustPass": true},
+    {"id": "registration-012", "text": "/tmp 등록해줘", "expected": null, "source": "intent-classifier.test.ts (single segment)", "mustPass": true},
+    {"id": "registration-013", "text": "~/code/repo 등록해줘", "expected": null, "source": "QA-015 (no project noun)", "mustPass": true},
+    {"id": "registration-014", "text": "등록/삭제 기능 설명해줘", "expected": null, "source": "prose slash is not a path", "mustPass": true},
+    {"id": "registration-015", "text": "이 프로젝트 구조 설명해줘", "expected": null, "source": "no register verb", "mustPass": true},
+    {"id": "registration-016", "text": "안녕", "expected": null, "source": "UAT 1.1", "mustPass": true},
+    {"id": "registration-017", "text": "프로젝트 등록해줘", "expected": null, "source": "no path at all", "mustPass": true},
+    {"id": "registration-018", "text": "회의 등록해줘 ../../etc", "expected": null, "source": "no project noun", "mustPass": true},
+    {"id": "registration-019", "text": "이 파일 /etc/hosts 수정해줘", "expected": null, "source": "no register verb", "mustPass": true},
+    {"id": "registration-020", "text": "Register for the conference at 7/3", "expected": null, "source": "English date, no project noun", "mustPass": true}
+  ]
+}
