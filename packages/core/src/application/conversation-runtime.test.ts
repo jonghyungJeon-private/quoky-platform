@@ -1145,6 +1145,70 @@ describe('ConversationRuntime', () => {
     });
   });
 
+  it.each([
+    '기억해: 내 비밀번호는 hunter2야',
+    '기억해: 패스워드: abc123',
+    '기억해줘: 암호는 파랑고래',
+    '기억해: 내 비번 = 1234',
+    '기억해: 인증번호는 482913',
+    '기억해: OTP는 551122',
+    '기억해: 핀번호는 0987',
+    '기억해: 카드번호는 1234-5678-9012-3456',
+    '기억해: 계좌 비밀번호는 9911',
+    '기억해: API 키는 abcd1234',
+    '기억해: 토큰: xyz789',
+    '기억해: 시크릿은 s3cr3t',
+    '기억해: 개인키는 MIIEvQ',
+    'remember: my password is hunter2',
+    'remember: passwd=hunter2',
+    'remember: api key: abcd1234',
+    'remember: token is xyz',
+    'remember: private key is abc',
+    'remember: pin is 4321',
+    '기억해: 키는 sk-abcdefghijklmnopqrstuvwxyz',
+  ])('credential declaration %s is refused, nothing stored, no provider call', async (text) => {
+    const { deps, calls } = makeDeps();
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toContain('민감한 정보는 기억하지 않아요');
+    expect(calls.memoryCreateCandidate).toBe(0);
+    expect(calls.memoryPromote).toBe(0);
+    expect(calls.classify).toBe(0);
+  });
+
+  it.each([
+    '기억해: 내 UAT 확인 단어는 파랑 고래야',
+    '기억해: 내 배포 창은 화요일이야',
+    '기억해: 비밀번호 정책 문서는 Confluence에 있어',
+    '기억해: 암호화 방식은 AES야',
+    'remember: use pnpm for this project',
+  ])('harmless fact %s is still stored', async (text) => {
+    const { deps, calls } = makeDeps();
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+
+    expect(result.reply.text).toBe('요청한 내용을 기억해 둘게요.');
+    expect(calls.memoryPromote).toBe(1);
+  });
+
+  it.each(['기억해:', '기억해줘:   ', 'remember:', '기억해: \n '])(
+    'empty explicit command %j replies with a usage hint, stores nothing, no provider call',
+    async (text) => {
+      const { deps, calls } = makeDeps();
+
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toContain('기억할 내용을 함께 보내 주세요');
+      expect(result.reply.text).toContain('기억해: 내 배포 창은 화요일이야');
+      expect(calls.memoryCreateCandidate).toBe(0);
+      expect(calls.memoryPromote).toBe(0);
+      expect(calls.classify).toBe(0);
+    },
+  );
+
   it('a message without an activation prefix follows normal classifier routing unchanged', async () => {
     const { deps, calls } = makeDeps();
 

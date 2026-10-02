@@ -117,6 +117,19 @@ describe('DefaultMemoryWriter lifecycle', () => {
     expect(store.saveDurable).not.toHaveBeenCalled();
   });
 
+  it.each(['내 비밀번호는 hunter2야', 'my pin is 1234'])(
+    'rejects Korean/English credential declaration %s before persistence',
+    async (content) => {
+      const store = persistence();
+      const writer = new DefaultMemoryWriter(store);
+
+      await expect(
+        writer.promote(writer.createCandidate(candidateInput({ content, sourceContent: content }))),
+      ).resolves.toMatchObject({ outcome: 'REJECTED' });
+      expect(store.saveDurable).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['expiresAt', 'supersededBy'] as const)(
     'rejects candidate-owned %s lifecycle metadata before persistence',
     async (reservedField) => {

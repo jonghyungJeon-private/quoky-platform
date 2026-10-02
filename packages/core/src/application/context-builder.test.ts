@@ -191,6 +191,24 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     expect(prompt.context).toContain('보라색 선호를 기억해 줘');
   });
 
+  it('excludes credential-like durable records from recall at read time', async () => {
+    const memory = {
+      recentShortTerm: async () => [],
+    } as unknown as MemoryManager;
+    const retriever: MemoryRetriever = {
+      retrieve: async () => [
+        durable('secret', '내 비밀번호는 hunter2야'),
+        durable('ok', '내 배포 창은 화요일이야'),
+      ],
+    };
+
+    const bundle = await new ContextBuilder(memory, {}, retriever).build(
+      taskWith({ sessionId: 'S1' }),
+    );
+
+    expect(bundle.durableRecall?.map((entry) => entry.content)).toEqual(['내 배포 창은 화요일이야']);
+  });
+
   it('keeps non-identical durable content because transcript deduplication is identity-based', async () => {
     const memory = {
       recentShortTerm: async () => [rec('1', 'user', '보라색 선호를 기억해 줘')],

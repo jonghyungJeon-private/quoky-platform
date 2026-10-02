@@ -1,4 +1,5 @@
 import { describeAiFailure } from './ai-failure';
+import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { interpretApprovalDecision } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
@@ -2022,7 +2023,15 @@ export class ConversationRuntime {
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
 
     const durableMemoryContent = ConversationRuntime.explicitDurableMemoryContent(message.text);
+    if (durableMemoryContent === '') {
+      // QA-010: the explicit command with no content is a usage error, never ordinary chat.
+      return this.respondComposed(message, session, this.deps.composer.composeMemoryUsageHint(message.context));
+    }
     if (durableMemoryContent !== null) {
+      // QA-009: refuse credential declarations at the write gate; nothing is stored.
+      if (containsCredentialMaterial(durableMemoryContent)) {
+        return this.respondComposed(message, session, this.deps.composer.composeMemorySensitiveRefused(message.context));
+      }
       try {
         const candidate = this.deps.memoryWriter.createCandidate({
           content: durableMemoryContent,
@@ -2036,7 +2045,9 @@ export class ConversationRuntime {
         });
         const decision = await this.deps.memoryWriter.promote(candidate);
         const reply =
-          decision.outcome === 'REJECTED'
+          decision.outcome === 'REJECTED' && decision.policyReason === CREDENTIAL_REJECTION_REASON
+            ? this.deps.composer.composeMemorySensitiveRefused(message.context)
+            : decision.outcome === 'REJECTED'
             ? this.deps.composer.composeMemoryStoreFailed(message.context)
             : this.deps.composer.composeMemoryStored(message.context);
         return this.respondComposed(message, session, reply);
@@ -2130,9 +2141,8 @@ export class ConversationRuntime {
 
   /** Exact, provider-free activation grammar. Pending governance flows have already run before this is called. */
   private static explicitDurableMemoryContent(text: string): string | null {
-    const match = text.trim().match(/^(?:기억해줘|기억해|remember)\s*:\s*(.+)$/isu);
-    const content = match?.[1]?.trim();
-    return content ? content : null;
+    const match = text.trim().match(/^(?:기억해줘|기억해|remember)\s*:\s*(.*)$/isu);
+    return match ? (match[1] ?? '').trim() : null;
   }
 
   /** Milliseconds before a pending approval expires (ADR-0093); `<= 0` means expired. */

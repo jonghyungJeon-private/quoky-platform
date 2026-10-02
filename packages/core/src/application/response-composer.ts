@@ -486,6 +486,17 @@ export class ResponseComposer {
     return { context, text: '요청한 내용을 기억해 둘게요.' };
   }
 
+  composeMemorySensitiveRefused(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text: '비밀번호·키·토큰 같은 민감한 정보는 기억하지 않아요. 안전한 비밀번호 관리자에 보관해 주세요.',
+    };
+  }
+
+  composeMemoryUsageHint(context: ConversationContext): OutboundMessage {
+    return { context, text: '기억할 내용을 함께 보내 주세요. 예: "기억해: 내 배포 창은 화요일이야"' };
+  }
+
   composeMemoryStoreFailed(context: ConversationContext): OutboundMessage {
     return { context, text: '지금은 요청한 내용을 장기 기억에 저장하지 못했어요. 대화는 계속할 수 있어요.' };
   }
