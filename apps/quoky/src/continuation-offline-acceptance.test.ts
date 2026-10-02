@@ -43,7 +43,7 @@ async function fixture(options: { mode?: 'SUCCEEDED' | 'FAILED' | 'THROW'; proje
     executionReceiptIds: [], createdAt: ts });
   await storage.workHandoffs.insert(handoff);
   // Only explicit non-secret test config is read, never process.env or dotenv.
-  const configured = loadConfig({ QUOKY_AGENT_PROFILES: JSON.stringify(
+  const configured = loadConfig({ QUOKY_DISCORD_OWNER_IDS: '111111111111111111', QUOKY_AGENT_PROFILES: JSON.stringify(
     (options.missingProfile ? ['source'] : ['source', 'receiver']).map(id =>
       ({ id, displayName: id, role: id, purpose: id, instructions: 'Persona only; no authority' }))),
   } as NodeJS.ProcessEnv).agentProfiles;

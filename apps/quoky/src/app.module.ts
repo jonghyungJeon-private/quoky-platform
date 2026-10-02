@@ -98,6 +98,7 @@ import { ConsoleLogger } from './console-logger';
 import { createProductionContextBuilder } from './context-builder-provider';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
+import { PersonalGitGuard } from './personal-git-guard';
 import { createProductionRuntimeProviderRoutingActivation } from './provider-routing/provider-routing-activation';
 import { toolManagerProvider } from './tool-manager-provider';
 import { continuationLifecycleProvider } from './continuation-lifecycle-provider';
@@ -200,6 +201,9 @@ if (hostingAuthMode === 'github-app' && repositoryIdentity && config.githubApp) 
   // Dev PAT is a REST-only convenience (ADR-0061 §11.3): local git push uses the developer's own git credential,
   // so GIT_PROVIDER stays the plain LocalGitProvider.
 }
+// ADR-0094: Personal-edition git safety, OUTERMOST so a refusal (remote off, commit on main/master) happens
+// before any git process or the GitHub App decorator could mint a token. Wraps both composed branches above.
+gitProvider = new PersonalGitGuard(gitProvider, { remoteEnabled: config.git.remoteEnabled });
 const repositoryHosting = { identity: repositoryIdentity, manager: repositoryHostingManager };
 
 /**
@@ -223,9 +227,9 @@ const infrastructure: Provider[] = [
     provide: WORKSPACE_PROVIDER,
     useFactory: () => new LocalCloneWorkspaceProvider({ workspaceRoot: config.workspace.workspaceRoot }),
   },
-  // CAP-002 Git. Separate port from Workspace — Workspace ≠ Git. In github-app auth mode this is the
+  // CAP-002 Git. Separate port from Workspace — Workspace ≠ Git. In github-app auth mode the inner provider is the
   // GitHubAppGitProvider decorator (App-token push/clone via one-shot GIT_ASKPASS; ADR-0061); otherwise the plain
-  // LocalGitProvider. LocalGitProvider itself is unchanged.
+  // LocalGitProvider (itself unchanged). Either way it is wrapped by PersonalGitGuard (ADR-0094).
   { provide: GIT_PROVIDER, useFactory: () => gitProvider },
   // CAP-006 Workspace Write — applies PatchSet operations to the filesystem (node:fs only).
   { provide: WORKSPACE_WRITER, useFactory: () => new LocalWorkspaceWriter() },
@@ -233,17 +237,21 @@ const infrastructure: Provider[] = [
   { provide: COMMAND_RUNNER, useFactory: () => new LocalCommandRunner() },
   {
     provide: PLATFORM_ADAPTER,
+    // ADR-0091: the owner/channel admission gate is Discord-adapter config; Core never receives these ids.
     useFactory: () => new DiscordPlatformAdapter(config.discord, new ConsoleLogger('discord')),
   },
   {
     provide: AI_PROVIDERS,
     // Real CLI execution: Claude (Sprint 1b-2) + Ollama (CAP-009, ADR-0030, suggest-only).
     // Codex stays stubbed (no deterministic suggest-only mode → unavailable, never selected).
-    // Selection is by capability via the router; Ollama is isAvailable()-gated, so an
-    // environment without `ollama` has no runtime change.
+    // Selection is by capability via the router. Chat preference is expressed ONLY by registration
+    // (ADR-0092): Ollama is registered unless QUOKY_OLLAMA_ENABLED=false, and its real readiness probe keeps an
+    // unready Ollama from being selected, so the router falls back to Claude.
     useFactory: (): AiProvider[] => [
-      new ClaudeCliProvider(config.ai.claudeBin),
-      new OllamaCliProvider({ bin: config.ai.ollamaBin, model: config.ai.ollamaModel }),
+      new ClaudeCliProvider(config.ai.claudeBin, { model: config.ai.claudeModel }),
+      ...(config.ai.ollamaEnabled
+        ? [new OllamaCliProvider({ bin: config.ai.ollamaBin, model: config.ai.ollamaModel })]
+        : []),
     ],
   },
   { provide: CONNECTOR_PROVIDERS, useValue: connectorProviders },

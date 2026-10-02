@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { Capability } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
+import { QuokyConfigErrorCode } from './config';
 import { redactSecrets } from './error-diagnostics';
 import {
   PROVIDER_ROUTING_MODE_ENV_NAME,
@@ -38,6 +39,30 @@ export function assertDiscordTokenConfigured(env: NodeJS.ProcessEnv): void {
   }
 }
 
+/**
+ * Remediation hints for the Personal-edition configuration errors (ADR-0091/0092/0094/0073). Each hint names the
+ * variable and the expected shape only — never a configured value.
+ */
+const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
+  [QuokyConfigErrorCode.DISCORD_OWNER_IDS_MISSING]:
+    'Set QUOKY_DISCORD_OWNER_IDS to your Discord user id (comma-separated for several; Discord -> Settings -> Advanced -> Developer Mode, then right-click your name -> Copy User ID), then restart.',
+  [QuokyConfigErrorCode.DISCORD_OWNER_IDS_INVALID]:
+    'QUOKY_DISCORD_OWNER_IDS must be comma-separated Discord user ids (17-20 digits each, no empty entries).',
+  [QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID]:
+    'QUOKY_DISCORD_CHANNEL_IDS must be unset/empty (direct messages only) or comma-separated Discord channel ids (17-20 digits each, no empty entries).',
+  [QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID]: 'QUOKY_OLLAMA_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.CLAUDE_MODEL_INVALID]:
+    'QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
+  [QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID]: 'QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID]:
+    'QUOKY_CONTEXT_MAX_TOKENS must be unset or a positive integer (at most 200000).',
+};
+
+function configErrorCode(err: unknown, message: string): QuokyConfigErrorCode | undefined {
+  const code = errorCode(err);
+  return Object.values(QuokyConfigErrorCode).find((known) => known === code || known === message);
+}
+
 export interface StartupFailureReport {
   message: string;
   hint?: string;
@@ -55,6 +80,9 @@ export function describeStartupFailure(err: unknown): StartupFailureReport {
   }
   const message = err instanceof Error ? err.message : String(err);
   const code = errorCode(err);
+
+  const configCode = configErrorCode(err, message);
+  if (configCode !== undefined) return { message: configCode, hint: CONFIG_ERROR_HINTS[configCode] };
 
   // discord.js surfaces rejected privileged intents as `DisallowedIntents` on login.
   if (code === 'DisallowedIntents' || /disallowed intents|privileged intent/i.test(message)) {
