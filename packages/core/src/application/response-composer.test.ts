@@ -1272,6 +1272,8 @@ describe('ResponseComposer.composeCommit* replies (ADR-0045)', () => {
     const protectedBranch = composer.composeCommitProtectedBranch(CTX).text;
     expect(protectedBranch).toContain('main/master 브랜치에는 커밋하지 않아요.');
     expect(protectedBranch).toContain('커밋 승인 요청은 만들지 않았어요');
+    // ADR-0099 D4: points the owner at the in-chat branch command instead of leaving Quoky
+    expect(protectedBranch).toContain('"브랜치 만들어줘 feature/<이름>"으로 새 브랜치를 만들 수 있어요');
     for (const f of FORBIDDEN) expect(protectedBranch, f).not.toContain(f);
     expect(reply.text).toContain('아직 실제 git add/commit/push는 수행하지 않았어요');
     for (const f of FORBIDDEN) expect(reply.text, f).not.toContain(f);
