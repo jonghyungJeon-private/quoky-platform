@@ -19,7 +19,7 @@ function record(
   return {
     id,
     type: MemoryType.LONG_TERM,
-    scope: { sessionId: 'session-1' },
+    scope: { sessionId: 'session-1', userId: 'actor-1' },
     content,
     metadata: {
       kind: 'SEMANTIC',
@@ -55,7 +55,7 @@ function repository(records: MemoryRecord[]): MemoryRepository {
   };
 }
 
-function request(maxResults = 10, scope = { sessionId: 'session-1' }) {
+function request(maxResults = 10, scope: { actorId?: string; sessionId?: string; projectId?: string } = { actorId: 'actor-1' }) {
   return createMemoryRetrievalRequest({
     query: 'blue sky preference',
     capability: Capability.GENERAL_CHAT,
@@ -108,7 +108,7 @@ describe('DefaultMemoryRetriever', () => {
     const constrainedRequest = createMemoryRetrievalRequest({
       query: 'blue sky preference',
       capability: Capability.GENERAL_CHAT,
-      scope: { sessionId: 'session-1', projectId: 'project-1' },
+      scope: { actorId: 'actor-1', projectId: 'project-1' },
       authorityFitness: ['ASSISTANT_NON_AUTHORITATIVE'],
       maxResults: 10,
     });
@@ -116,8 +116,8 @@ describe('DefaultMemoryRetriever', () => {
     await expect(memoryRetriever.retrieve(constrainedRequest)).resolves.toEqual([]);
     expect(queries).toEqual([
       expect.objectContaining({
-        scope: { sessionId: 'session-1', projectId: 'project-1' },
-        limit: 10,
+        scope: { projectId: 'project-1', userId: 'actor-1' },
+        limit: 50,
       }),
     ]);
   });
@@ -186,16 +186,46 @@ describe('DefaultMemoryRetriever', () => {
     await expect(retriever([]).retrieve(request())).resolves.toEqual([]);
   });
 
-  it('enforces exact request scope against returned candidates', async () => {
+  it('recalls by actor across sessions and projects and rejects other actors and non-durable scopes', async () => {
     const results = await retriever([
-      record('wrong-session', 'blue sky preference', { scope: { sessionId: 'session-2' } }),
-      record('extra-project', 'blue sky preference extra', {
-        scope: { sessionId: 'session-1', projectId: 'project-elsewhere' },
+      record('other-session', 'blue sky preference', { scope: { sessionId: 'session-2', userId: 'actor-1' } }),
+      record('with-project', 'blue sky preference extra', {
+        scope: { sessionId: 'session-1', projectId: 'project-elsewhere', userId: 'actor-1' },
       }),
-      record('right-session', 'blue sky preference'),
+      record('other-actor', 'blue sky preference', { scope: { sessionId: 'session-1', userId: 'actor-2' } }),
+      record('no-actor', 'blue sky preference', { scope: { sessionId: 'session-1' } }),
+      record('with-channel', 'blue sky preference', { scope: { userId: 'actor-1', channelId: 'c1' } }),
+      record('with-thread', 'blue sky preference', { scope: { userId: 'actor-1', threadId: 't1' } }),
+      record('with-task', 'blue sky preference', { scope: { userId: 'actor-1', taskId: 'task-1' } }),
     ]).retrieve(request());
 
-    expect(results.map(({ memory }) => memory.id)).toEqual(['right-session']);
+    expect(results.map(({ memory }) => memory.id).sort()).toEqual(['other-session', 'with-project']);
+  });
+
+  it('applies session or project only when the request provides them', async () => {
+    const records = [
+      record('a', 'blue sky preference', { scope: { sessionId: 'session-1', userId: 'actor-1' } }),
+      record('b', 'blue sky preference two', { scope: { sessionId: 'session-2', userId: 'actor-1' } }),
+    ];
+    const results = await retriever(records).retrieve(request(10, { actorId: 'actor-1', sessionId: 'session-1' }));
+    expect(results.map(({ memory }) => memory.id)).toEqual(['a']);
+  });
+
+  it('fails closed without an actor and never queries the repository', async () => {
+    const queries: DurableMemoryQuery[] = [];
+    const repo = repository([record('a', 'blue sky preference')]);
+    repo.findDurableCandidates = async (query) => { queries.push(query); return []; };
+    const results = await new DefaultMemoryRetriever(repo, { clock: () => CURRENT_TIME }).retrieve(request(10, { sessionId: 'session-1' }));
+    expect(results).toEqual([]);
+    expect(queries).toEqual([]);
+  });
+
+  it('widens the pre-scoring candidate fetch beyond the result limit', async () => {
+    const queries: DurableMemoryQuery[] = [];
+    const repo = repository([]);
+    repo.findDurableCandidates = async (query) => { queries.push(query); return []; };
+    await new DefaultMemoryRetriever(repo, { clock: () => CURRENT_TIME }).retrieve(request(10));
+    expect(queries[0]?.limit).toBe(50);
   });
 
   it('caps retrieval at the lower configured limit', async () => {

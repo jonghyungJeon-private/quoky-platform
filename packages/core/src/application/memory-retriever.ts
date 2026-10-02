@@ -13,6 +13,8 @@ import { now } from '../util/clock';
 import { scoreSemanticRelevance } from './semantic-relevance';
 
 export const DEFAULT_DURABLE_RECALL_LIMIT = 10;
+const CANDIDATE_FETCH_MULTIPLIER = 5;
+const MIN_CANDIDATE_FETCH = 50;
 const DEFAULT_RECENCY_WEIGHT = 0.25;
 const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1_000;
 
@@ -46,9 +48,10 @@ function normalizedContentHash(content: string): string {
 
 function scopeMatches(record: MemoryRecord, scope: DurableMemoryScope): boolean {
   return (
-    record.scope.sessionId === scope.sessionId &&
-    record.scope.projectId === scope.projectId &&
+    scope.actorId !== undefined &&
     record.scope.userId === scope.actorId &&
+    (scope.sessionId === undefined || record.scope.sessionId === scope.sessionId) &&
+    (scope.projectId === undefined || record.scope.projectId === scope.projectId) &&
     record.scope.channelId === undefined &&
     record.scope.threadId === undefined &&
     record.scope.taskId === undefined
@@ -119,13 +122,15 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     if (Number.isNaN(retrievalTimeMs)) throw new Error('clock must return an ISO-8601 timestamp');
 
     const limit = Math.min(request.maxResults, this.limit);
+    // ADR-0073 amendment: fail closed without an actor; query by actor only.
+    if (!request.scope.actorId) return [];
     const records = await this.repository.findDurableCandidates({
       scope: {
         ...(request.scope.sessionId ? { sessionId: request.scope.sessionId } : {}),
         ...(request.scope.projectId ? { projectId: request.scope.projectId } : {}),
-        ...(request.scope.actorId ? { userId: request.scope.actorId } : {}),
+        userId: request.scope.actorId,
       },
-      limit,
+      limit: Math.max(limit * CANDIDATE_FETCH_MULTIPLIER, MIN_CANDIDATE_FETCH),
       excludeIds: [...request.excludeIds],
       excludeExpired: true,
       excludeSuperseded: true,
