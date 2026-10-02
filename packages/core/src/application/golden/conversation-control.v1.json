@@ -1,0 +1,32 @@
+{
+  "suite": "conversation-control",
+  "version": 1,
+  "cases": [
+    {"id": "control-001", "text": "도움말", "expected": "help", "source": "ADR-0093", "mustPass": true},
+    {"id": "control-002", "text": "/help", "expected": "help", "source": "ADR-0093 alias", "mustPass": true},
+    {"id": "control-003", "text": "/HELP", "expected": "help", "source": "UAT E13 (ASCII case-insensitive)", "mustPass": true},
+    {"id": "control-004", "text": "도움말 ", "expected": "help", "source": "UAT E13 (trailing space)", "mustPass": true},
+    {"id": "control-005", "text": "  도움말  ", "expected": "help", "source": "ADR-0093 (trimmed)", "mustPass": true},
+    {"id": "control-006", "text": "/Help", "expected": "help", "source": "ADR-0093 (mixed case)", "mustPass": true},
+    {"id": "control-007", "text": "새 대화", "expected": "reset", "source": "ADR-0093", "mustPass": true},
+    {"id": "control-008", "text": "/reset", "expected": "reset", "source": "ADR-0093 alias", "mustPass": true},
+    {"id": "control-009", "text": "/RESET", "expected": "reset", "source": "ADR-0093 (case)", "mustPass": true},
+    {"id": "control-010", "text": " 새 대화 ", "expected": "reset", "source": "ADR-0093 (trimmed)", "mustPass": true},
+    {"id": "control-011", "text": "도움말 좀 알려줘", "expected": null, "source": "UAT E13 (sentence containing a control phrase is chat)", "mustPass": true},
+    {"id": "control-012", "text": "새 대화 기능 만들어줘", "expected": null, "source": "UAT E14 (sentence containing a control phrase is chat)", "mustPass": true},
+    {"id": "control-013", "text": "/HELP도움말 좀 알려줘", "expected": null, "source": "UAT E13 (concatenated)", "mustPass": true},
+    {"id": "control-014", "text": "help", "expected": null, "source": "ADR-0093 (no bare English alias)", "mustPass": true},
+    {"id": "control-015", "text": "reset", "expected": null, "source": "ADR-0093 (no bare English alias)", "mustPass": true},
+    {"id": "control-016", "text": "도움말!", "expected": null, "source": "whole-message exact match only", "mustPass": true},
+    {"id": "control-017", "text": "새대화", "expected": null, "source": "whole-message exact match only (no spacing variant)", "mustPass": true},
+    {"id": "control-018", "text": "새  대화", "expected": null, "source": "whole-message exact match only (double space)", "mustPass": true},
+    {"id": "control-019", "text": "피드백 요약", "expected": null, "source": "ADR-0098 D6 control-stage handler phrase, not a Core control phrase", "mustPass": true},
+    {"id": "control-020", "text": "도움말 도움말", "expected": null, "source": "sentence", "mustPass": true},
+    {"id": "control-021", "text": "/help me", "expected": null, "source": "sentence", "mustPass": true},
+    {"id": "control-022", "text": "", "expected": null, "source": "empty message", "mustPass": true},
+    {"id": "control-023", "text": "안녕", "expected": null, "source": "UAT 1.1", "mustPass": true},
+    {"id": "control-024", "text": "기억해: 도움말", "expected": null, "source": "memory write, not a control phrase", "mustPass": true},
+    {"id": "control-025", "text": "/helpers", "expected": null, "source": "prefix is not the phrase", "mustPass": true},
+    {"id": "control-026", "text": "reset my password", "expected": null, "source": "sentence containing reset", "mustPass": true}
+  ]
+}
