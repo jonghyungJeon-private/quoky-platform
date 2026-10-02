@@ -7,7 +7,7 @@ import {
   GENERAL_CHAT_POLICY_RULES,
   renderGeneralChatPolicyRules,
 } from './chat-policy/chat-response-policy';
-import { PromptComposer } from './prompt-composer';
+import { PromptComposer, WORK_SUMMARY_REQUEST_WITHHELD_NOTICE } from './prompt-composer';
 import {
   EXTERNAL_WORK_PROMPT_MAX_CHARS,
   buildExternalWorkReadout,
@@ -1390,6 +1390,73 @@ describe('PromptComposer — external-work summary readout (ADR-0100 D8, WORK-T4
     expect(sectionBody(english.context, '1. Current-turn facts supplied by Core')).toContain(
       'Reply language for this turn: English (en)',
     );
+  });
+
+  const historyBundle = (): ContextBundle => ({
+    taskId: 't1',
+    conversationTranscript: [
+      { provenance: 'USER', epistemicStatus: 'USER_CLAIM_OR_INTENT', role: 'user', content: '할 일 추가: password: synthetic-secret' },
+      { provenance: 'ASSISTANT', epistemicStatus: 'ASSISTANT_NON_AUTHORITATIVE', role: 'assistant', content: '저장하지 않았어요.' },
+    ],
+    backgroundResources: [
+      { provenance: 'PROJECT_MEMORY', epistemicStatus: 'NON_AUTHORITATIVE_BACKGROUND', content: 'project memory note' },
+    ],
+    durableRecall: [
+      {
+        content: '내 집 주소는 서울시 비밀구 123번지야',
+        provenance: 'USER_PROVIDED',
+        epistemicStatus: 'NON_AUTHORITATIVE_BACKGROUND',
+        relevanceScore: 0.9,
+        retrievalReason: 'test',
+        source: {
+          memoryId: 'd1',
+          kind: 'SEMANTIC',
+          authorityLevel: 'USER_CLAIM_OR_INTENT',
+          scope: { actorId: 'A1' },
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          metadata: {},
+        },
+      },
+    ],
+  });
+
+  it('is self-contained: no transcript, durable recall or bundle background ever reaches a work summary', () => {
+    const spec = composer.compose(summaryTask('이번 주 마감 이슈 보여줘'), historyBundle(), readout);
+    // Byte-identical to the empty-bundle composition: the ContextBundle is ignored for an external-work readout.
+    expect(spec).toEqual(composer.compose(summaryTask('이번 주 마감 이슈 보여줘'), emptyBundle(), readout));
+    const all = JSON.stringify(spec);
+    expect(all).not.toContain('synthetic-secret');
+    expect(all).not.toContain('저장하지 않았어요');
+    expect(all).not.toContain('project memory note');
+    expect(all).not.toContain('비밀구 123번지');
+    expect(spec.context).not.toContain('Conversation transcript');
+    expect(spec.context).not.toContain('Durable recall');
+    // Exactly: the reply-language fact, then the bounded readout.
+    expect(spec.context).toBe(
+      [
+        `## 1. Current-turn facts supplied by Core\n${envelope('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', 'Reply language for this turn: Korean (ko), determined by Core from the current User message.')}`,
+        `## 2. Background resources\n${envelope('CORE_RUNTIME', 'NON_AUTHORITATIVE_BACKGROUND', renderExternalWorkReadoutForPrompt(readout))}`,
+      ].join('\n\n'),
+    );
+  });
+
+  it('drops credential-bearing request text from the task layer and keeps the readout', () => {
+    const spec = composer.compose(summaryTask(`이슈 요약해줘 token=${SECRET}`), emptyBundle(), readout);
+    expect(spec.task).toBe(envelope('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', WORK_SUMMARY_REQUEST_WITHHELD_NOTICE));
+    expect(JSON.stringify(spec)).not.toContain(SECRET);
+    expect(JSON.stringify(spec)).not.toContain('이슈 요약해줘');
+    expect(sectionBody(spec.context, '2. Background resources')).toContain('[jira:OPS-1] Rotate certificates');
+    const assigned = composer.compose(summaryTask('비밀번호는 hunter2 이고 이슈 보여줘'), emptyBundle(), readout);
+    expect(JSON.stringify(assigned)).not.toContain('hunter2');
+  });
+
+  it('keeps transcript and durable recall in a plain SUMMARIZATION prompt (no external-work readout)', () => {
+    const plain = composer.compose(mkTask(Capability.SUMMARIZATION), historyBundle());
+    expect(plain.context).toContain('## 3. Conversation transcript');
+    expect(plain.context).toContain('synthetic-secret');
+    expect(plain.context).toContain('2A. Durable recall');
+    expect(plain.task).toBe(envelope('USER', 'USER_CLAIM_OR_INTENT', 'hello there'));
   });
 
   it('keeps the ProjectReadout rendering and the plain SUMMARIZATION prompt unchanged', () => {

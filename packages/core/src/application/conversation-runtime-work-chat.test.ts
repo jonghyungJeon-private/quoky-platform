@@ -3,9 +3,12 @@ import {
   ApprovalStatus,
   Capability,
   IntentType,
+  MemoryType,
   RiskLevel,
   SessionStatus,
   TaskStatus,
+  createDurableMemory,
+  createRetrievedMemory,
 } from '../domain';
 import type {
   Actor,
@@ -14,6 +17,7 @@ import type {
   InboundMessage,
   Intent,
   IsoTimestamp,
+  MemoryRecord,
   Session,
   Task,
   TaskRun,
@@ -33,7 +37,10 @@ import type {
 } from '../ports';
 import { ApprovalManager } from './approval-manager';
 import type { ApprovalPolicy } from './approval-policy';
+import { ContextBuilder } from './context-builder';
 import { ConversationRuntime, type ConversationRuntimeDeps } from './conversation-runtime';
+import type { MemoryManager } from './memory-manager';
+import type { MemoryRetriever } from './memory-retriever';
 import { IntentResolver } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import { PromptComposer } from './prompt-composer';
@@ -90,6 +97,11 @@ interface HarnessOptions {
   provider?: 'ok' | 'throws' | 'none' | 'long';
   /** Extra handlers registered next to the work-chat pair (e.g. a reminder probe at order 200). */
   extraHandlers?: readonly ConversationTurnHandler[];
+  /**
+   * Use the REAL ContextBuilder over an in-memory short-term store (every recorded user/assistant turn) and a
+   * durable retriever returning `durable` (actor-scoped durable recall), instead of the empty-bundle fake.
+   */
+  realContext?: { durable?: string };
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -228,7 +240,14 @@ function harness(opts: HarnessOptions = {}) {
     { workSurface: { forActor: async () => surface }, connectors: { list: () => [jira] }, work },
     { summaryEnabled: opts.summaryEnabled ?? true },
   );
-  const logger: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+  const warnings: Array<{ msg: string; meta: unknown }> = [];
+  const logger: Logger = {
+    info: () => undefined,
+    warn: (msg: string, meta?: unknown) => {
+      warnings.push({ msg, meta });
+    },
+    error: () => undefined,
+  };
   const workHandlers = createWorkChatTurnHandlers({ desk, summaryEnabled: opts.summaryEnabled ?? true, logger });
 
   const provider: AiProvider = {
@@ -252,17 +271,72 @@ function harness(opts: HarnessOptions = {}) {
     forget: bad('memoryWriter.forget'),
   } as unknown as MemoryWriter;
 
+  // Short-term store for the real-ContextBuilder variant: every user turn and every assistant reply, in order.
+  const shortTerm: MemoryRecord[] = [];
+  const remember = (role: 'user' | 'assistant', content: string, sessionId?: string) => {
+    const n = shortTerm.length + 1;
+    const at = `2026-10-02T09:00:${String(n).padStart(2, '0')}.000Z`;
+    shortTerm.push({
+      id: `mem-${n}`,
+      type: MemoryType.SHORT_TERM,
+      scope: sessionId ? { sessionId } : {},
+      content,
+      metadata: { role },
+      createdAt: at,
+      updatedAt: at,
+    });
+    return { id: `mem-${n}` };
+  };
+  const realContextBuilder = opts.realContext
+    ? new ContextBuilder(
+        {
+          async recentShortTerm(scope: { sessionId?: string }, limit: number) {
+            return shortTerm.filter((r) => r.scope.sessionId === scope.sessionId).slice(-limit);
+          },
+          async projectMemory() {
+            return undefined;
+          },
+        } as unknown as MemoryManager,
+        {},
+        {
+          async retrieve() {
+            const content = opts.realContext?.durable;
+            if (content === undefined) return [];
+            return [
+              createRetrievedMemory({
+                memory: createDurableMemory({
+                  id: 'durable-1',
+                  content,
+                  kind: 'SEMANTIC',
+                  provenance: 'USER_PROVIDED',
+                  authorityLevel: 'USER_CLAIM_OR_INTENT',
+                  scope: { actorId: OWNER.id },
+                  createdAt: T0,
+                  updatedAt: T0,
+                  metadata: { sourceRecordId: 'source-durable-1' },
+                }),
+                relevanceScore: 0.9,
+                retrievalReason: 'test',
+              }),
+            ];
+          },
+        } as unknown as MemoryRetriever,
+      )
+    : undefined;
+  const contextBuilds: string[] = [];
+
   let taskSeq = 0;
   const deps: ConversationRuntimeDeps = {
     dispatchCommit: { async commit() { return {} as TaskRun; } } as unknown as ConversationRuntimeDeps['dispatchCommit'],
     actors: { async resolveFromContext() { return OWNER; } },
     sessions: sessionManager,
     memory: {
-      async recordShortTerm() {
-        return { id: 'mem-user' };
+      async recordShortTerm(message: InboundMessage, sessionId?: string) {
+        return opts.realContext ? remember('user', message.text, sessionId) : { id: 'mem-user' };
       },
-      async recordAssistant(text: string) {
+      async recordAssistant(text: string, _context: ConversationContext, sessionId?: string) {
         calls.recordAssistant.push(text);
+        if (opts.realContext) remember('assistant', text, sessionId);
         return undefined;
       },
       async recordToolMemory() { return undefined; },
@@ -317,7 +391,14 @@ function harness(opts: HarnessOptions = {}) {
     },
     commandExecutions: { get: bad('commandExecutions.get') },
     command: { run: bad('command.run') },
-    contextBuilder: { async build(task) { return { taskId: task.id, conversationTranscript: [], backgroundResources: [] }; } },
+    contextBuilder: {
+      async build(task, excludeMemoryIds) {
+        contextBuilds.push(task.id);
+        return realContextBuilder
+          ? realContextBuilder.build(task, excludeMemoryIds)
+          : { taskId: task.id, conversationTranscript: [], backgroundResources: [] };
+      },
+    },
     promptComposer: new PromptComposer(),
     promptRenderer: new PromptRenderer(),
     router: {
@@ -362,7 +443,22 @@ function harness(opts: HarnessOptions = {}) {
   const send = (text: string) =>
     runtime.handle({ id: `msg-${++seq}`, context: CTX, text, receivedAt: T0 } satisfies InboundMessage);
   const todos = () => [...workItems.values()];
-  return { send, calls, log, prompts, connectorQueries, todos };
+  /** The real ContextBuilder's bundle for a GENERAL_CHAT task in the seeded session (the control: history IS there). */
+  const chatBundle = () =>
+    realContextBuilder!.build({
+      id: 'task-probe',
+      title: 'probe',
+      description: 'probe',
+      status: TaskStatus.RUNNING,
+      intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'probe' },
+      riskLevel: RiskLevel.LOW,
+      context: CTX,
+      actorId: OWNER.id,
+      sessionId: seeded.id,
+      createdAt: T0,
+      updatedAt: T0,
+    } as Task);
+  return { send, calls, log, prompts, connectorQueries, todos, warnings, contextBuilds, chatBundle };
 }
 
 /** A handler outside the work pair that logs when it runs and claims nothing (or replies with `outcome`). */
@@ -568,5 +664,75 @@ describe('ConversationRuntime — summarize outcome guards (ADR-0096 D4)', () =>
     };
     expect(Object.keys(keys)).toHaveLength(35);
     expect(Object.keys(keys).some((key) => /work(?:Chat|Desk|Summary)/i.test(key))).toBe(false);
+  });
+});
+
+describe('ConversationRuntime — connector summaries are self-contained (ADR-0100 D8, ADR-0096 D4)', () => {
+  const REJECTED = '할 일 추가: password: synthetic-secret';
+
+  it('a credential-bearing to-do rejected earlier stays in history but never reaches a later summary prompt', async () => {
+    const h = harness({ realContext: {} });
+    const rejected = await h.send(REJECTED);
+    expect(h.todos()).toEqual([]); // the to-do handler refused it…
+    expect(rejected.reply.text).not.toContain('synthetic-secret');
+    await h.send('할 일 추가: 주간 보고서 쓰기');
+    // …but the raw message IS in this session's short-term history, which a chat turn would see (the control).
+    const control = await h.chatBundle();
+    expect(control.conversationTranscript.map((entry) => entry.content)).toContain(REJECTED);
+
+    const result = await h.send('내 Jira 이슈 보여줘');
+    expect(result.status).toBe('RESPONDED');
+    expect(h.prompts).toHaveLength(1);
+    const prompt = h.prompts[0] as string;
+    expect(prompt).not.toContain('synthetic-secret');
+    expect(prompt).not.toContain('주간 보고서 쓰기');
+    expect(prompt).not.toContain('할 일을 추가했어요');
+    expect(prompt).not.toContain('Conversation transcript');
+    // Still a working summary: readout + the current request + reply language.
+    expect(prompt).toContain('EXTERNAL WORK DATA (UNTRUSTED)');
+    expect(prompt).toContain('[jira:OPS-1] Rotate certificates');
+    expect(prompt).toContain('내 Jira 이슈 보여줘');
+    expect(prompt).toContain('Reply language for this turn: Korean (ko)');
+    // No short-term / durable read happens for the summary turn at all.
+    expect(h.contextBuilds).toEqual([]);
+  });
+
+  it('never sends durable memories in a connector summary prompt', async () => {
+    const DURABLE = '내 집 주소는 서울시 비밀구 123번지야';
+    const h = harness({ realContext: { durable: DURABLE } });
+    const control = await h.chatBundle();
+    expect(control.durableRecall?.map((entry) => entry.content)).toEqual([DURABLE]);
+
+    await h.send('내 Jira 이슈 보여줘');
+    const prompt = h.prompts[0] as string;
+    expect(prompt).not.toContain(DURABLE);
+    expect(prompt).not.toContain('Durable recall');
+    expect(prompt).toContain('[jira:OPS-1] Rotate certificates');
+  });
+
+  it('drops credential-bearing request text from the summary prompt, keeps the readout and logs a reason code', async () => {
+    const readout = buildExternalWorkReadout({ source: 'jira', query: 'my-items', items: [{ id: 'A-1', title: 'Pay invoice' }] });
+    const outcome = { kind: 'summarize', readout, fallbackText: 'FALLBACK LIST', footer: 'FOOTER' } as TurnHandlerOutcome;
+    const h = harness({ extraHandlers: [probe([], 'summarizer', 'pre-classify', 50, outcome)] });
+    const result = await h.send(`이슈 요약해줘 token=${SECRET}`);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(`${SUMMARY}\n\nFOOTER`);
+    const prompt = h.prompts[0] as string;
+    expect(prompt).not.toContain(SECRET);
+    expect(prompt).not.toContain('이슈 요약해줘');
+    expect(prompt).toContain('[jira:A-1] Pay invoice');
+    expect(prompt).toContain('request text was withheld by Core');
+    expect(h.warnings).toContainEqual({
+      msg: 'work summary request text withheld from prompt',
+      meta: expect.objectContaining({ reasonCode: 'WORK_SUMMARY_REQUEST_CREDENTIAL_MATERIAL' }),
+    });
+    expect(JSON.stringify(h.warnings)).not.toContain(SECRET);
+  });
+
+  it('keeps a clean request text and logs no withheld reason code', async () => {
+    const h = harness();
+    await h.send('내 Jira 이슈 보여줘');
+    expect(h.prompts[0]).toContain('내 Jira 이슈 보여줘');
+    expect(h.warnings.map((w) => w.msg)).not.toContain('work summary request text withheld from prompt');
   });
 });
