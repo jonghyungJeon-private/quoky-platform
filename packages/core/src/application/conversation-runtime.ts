@@ -89,6 +89,7 @@ import type {
   Session,
   Task,
   TaskRun,
+  TurnWorkFacts,
   WorkspaceChange,
   WorkspaceChangeRef,
   WorkspaceDiff,
@@ -187,6 +188,11 @@ export interface TurnResult {
   reply: OutboundMessage;
   sessionId: Id;
   executionOutcome?: ExecutionOutcome;
+  /**
+   * ADR-0098 D5: routing facts of a work turn (intent, capability, Task/TaskRun ids, audit-only provider id), set
+   * only by the work path. Transient — never persisted on Session; `QuokyCore` hands it to feedback capture.
+   */
+  workFacts?: TurnWorkFacts;
 }
 
 /** How the runtime interprets a user message while a pending approval exists (ADR-0032 §6). */
@@ -6419,6 +6425,14 @@ export class ConversationRuntime {
 
     let providerId: string | undefined;
     let routingAudit: RuntimeProviderRoutingAudit | undefined;
+    // ADR-0098 D5: transient routing facts for feedback capture; `providerId` is audit-only, never shown.
+    const workFacts = (accepted: string | undefined): TurnWorkFacts => ({
+      intentType: intent.type,
+      capability,
+      taskId: task.id,
+      runId: run.id,
+      ...(accepted ? { providerId: accepted } : {}),
+    });
     try {
       const workspace = ConversationRuntime.needsWorkspace(capability)
         ? await this.deps.workspace.prepare(task)
@@ -6479,7 +6493,7 @@ export class ConversationRuntime {
             { text: routed.output.text, artifacts },
             artifacts,
           );
-          return this.responded(session, reply);
+          return this.responded(session, reply, workFacts(providerId));
         }
 
         await this.deps.tasks.failRun(run, `Provider routing ended with ${routed.status}`, {
@@ -6503,7 +6517,7 @@ export class ConversationRuntime {
             ? routed.failureCode
             : null,
         );
-        return { status: 'FAILED', reply, sessionId: session.id };
+        return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(undefined) };
       }
 
       const provider = await this.deps.router.select(capability);
@@ -6526,7 +6540,7 @@ export class ConversationRuntime {
       }
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
       const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
-      return this.responded(session, reply);
+      return this.responded(session, reply, workFacts(providerId));
     } catch (err) {
       const failure = describeAiFailure(err);
       await this.deps.tasks.failRun(run, failure.errorSummary, {
@@ -6536,7 +6550,7 @@ export class ConversationRuntime {
       await this.deps.tasks.transition(task, TaskStatus.FAILED);
       this.deps.logger.error('work turn failed', { taskId: task.id, runId: run.id, kind: failure.kind });
       const reply = this.deps.composer.composeError(message.context, failure.userMessage);
-      return { status: 'FAILED', reply, sessionId: session.id };
+      return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(providerId) };
     }
   }
 
@@ -6544,7 +6558,7 @@ export class ConversationRuntime {
     return { approvalId, approved, decidedBy, decidedAt: now() };
   }
 
-  private responded(session: Session, reply: OutboundMessage): TurnResult {
-    return { status: 'RESPONDED', reply, sessionId: session.id };
+  private responded(session: Session, reply: OutboundMessage, workFacts?: TurnWorkFacts): TurnResult {
+    return { status: 'RESPONDED', reply, sessionId: session.id, ...(workFacts ? { workFacts } : {}) };
   }
 }
