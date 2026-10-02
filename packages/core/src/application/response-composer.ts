@@ -17,6 +17,18 @@ import {
   MAX_CHANGE_SET_FILE_BYTES,
   MAX_CHANGE_SET_TOTAL_BYTES,
 } from './code-work/code-change-set';
+import {
+  credentialOverrideAlreadyUsed,
+  credentialOverrideContentChanged,
+  credentialOverrideDenied,
+  credentialOverrideHardRefusalLine,
+  credentialOverrideInvalidated,
+  credentialOverrideNoPending,
+  credentialOverridePrompt,
+  credentialOverrideReprompt,
+  credentialOverrideSentNotice,
+} from './credential-override/credential-override-copy';
+import type { CredentialOverrideInvalidationReason } from './credential-override/credential-override';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
 import type { WorkSurface } from './work-surface-query';
@@ -219,6 +231,7 @@ const HELP_CAPABILITY_LINES: readonly string[] = [
   '- 프로젝트 등록: "이 프로젝트 등록해줘: /path/to/project"',
   '- 등록한 프로젝트 분석·설명과 코드 리뷰',
   '- 코드 수정: 파일 경로와 함께 요청 → "승인" → 미리보기 확인 → "적용해줘" → "승인" → "패치 만들어줘" → "패치 적용해줘"',
+  '- 비밀 값처럼 보여 AI에게 보내지 않은 파일은 "그래도 보내줘"라고 하면 그 파일만 이번 한 번 보내요. 토큰·개인 키 형태나 .env 같은 비밀 파일은 보낼 수 없어요.',
   `- 여러 파일·새 파일: 한 요청에 파일 경로를 ${MAX_CHANGE_SET_FILES}개까지 적을 수 있어요. 없는 파일은 "새 파일 만들어줘"처럼 요청해야 새로 만들어요.`,
   '- 적용 후 검증: "테스트 실행해줘" 또는 "타입체크 실행해줘"',
   '- 로컬 커밋: 적용 후 "커밋해줘" → "승인" → "커밋 실행" (main/master 브랜치에는 커밋하지 않아요)',
@@ -1050,6 +1063,61 @@ export class ResponseComposer {
     };
   }
 
+  // ADR-0097 credential-guard override copy: thin, budget-clamped delegates over `credential-override-copy`
+  // (paths and line numbers only — never file content or the matched text).
+
+  /** The warning raised with the CRITICAL override request: names file and line and every consequence. */
+  composeCredentialOverridePrompt(context: ConversationContext, targetPath: string, line: number): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverridePrompt(targetPath, line)) };
+  }
+
+  /** A token/private-key refusal that can never be overridden: the credential refusal plus the hard line. */
+  composeCredentialOverrideHardRefused(context: ConversationContext, targetPath: string): OutboundMessage {
+    const refused = this.composeCodeGenerationPreviewCredentialRefused(context, targetPath).text;
+    return { context, text: clampToMessageBudget(`${refused}\n${credentialOverrideHardRefusalLine()}`) };
+  }
+
+  /** Any non-decision message (including "승인") while an override is pending; nothing is sent. */
+  composeCredentialOverrideReprompt(context: ConversationContext, targetPath: string, remainingMs: number): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideReprompt(targetPath, remainingMs)) };
+  }
+
+  /** The owner refused or cancelled the override: nothing was sent and the request ended. */
+  composeCredentialOverrideDenied(context: ConversationContext, targetPath: string): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideDenied(targetPath)) };
+  }
+
+  /** A target's content changed since the override was raised: nothing was sent. */
+  composeCredentialOverrideContentChanged(context: ConversationContext, targetPath: string): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideContentChanged(targetPath)) };
+  }
+
+  /**
+   * The one-time-send notice on its own. A granted preview carries it inside its header instead
+   * (`composeCodeDiffPreview` `credentialOverrideSentPaths`), so preview-aware delivery keeps it.
+   */
+  composeCredentialOverrideSentNotice(context: ConversationContext, targetPaths: readonly string[]): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideSentNotice(targetPaths)) };
+  }
+
+  /** A send phrase with nothing pending (QA-018 pattern): nothing was sent. */
+  composeNoPendingCredentialOverride(context: ConversationContext): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideNoPending()) };
+  }
+
+  /** The override set was already consumed (or is being sent by another turn): never replayed. */
+  composeCredentialOverrideAlreadyUsed(context: ConversationContext): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideAlreadyUsed()) };
+  }
+
+  /** The override set was invalidated without sending anything; asks for a fresh request. */
+  composeCredentialOverrideInvalidated(
+    context: ConversationContext,
+    reason: CredentialOverrideInvalidationReason,
+  ): OutboundMessage {
+    return { context, text: clampToMessageBudget(credentialOverrideInvalidated(reason)) };
+  }
+
   /**
    * Every proposed path was outside the validated targetFiles (AI Code Generation Preview, ADR-0038).
    * Distinct from {@link composeCodeGenerationPreviewFailed}: generation itself succeeded, but
@@ -1077,16 +1145,24 @@ export class ResponseComposer {
    * MAX_MESSAGE_CHARS — the trailing clampToMessageBudget call below is now a defensive backstop, not
    * the primary guarantee.
    */
-  composeCodeDiffPreview(context: ConversationContext, preview: CodeDiffPreview): OutboundMessage {
+  composeCodeDiffPreview(
+    context: ConversationContext,
+    preview: CodeDiffPreview,
+    options: { readonly credentialOverrideSentPaths?: readonly string[] } = {},
+  ): OutboundMessage {
+    // ADR-0097 D7: a preview built from override-granted content leads with the one-time-send notice. It is part
+    // of the header, so it is budgeted with the safety wording and reaches preview-aware (lossless) delivery too.
+    const sent = options.credentialOverrideSentPaths ?? [];
+    const header = sent.length ? `${credentialOverrideSentNotice(sent)}\n\n${DIFF_PREVIEW_HEADER}` : DIFF_PREVIEW_HEADER;
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
     // Footer Minimal Fix: an apply-capable single existing-file `update` truthfully advertises apply;
     // every other shape gets the "this shape cannot be applied" footer (accurate — the update-only gate rejects it).
     const footer = isApplyCapablePreview(preview) ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER;
     const footerLines = [...(warning ? [warning] : []), footer];
-    const blocks = fitDiffBlocks(DIFF_PREVIEW_HEADER, footerLines, preview.changes.length, (i, maxChars) =>
+    const blocks = fitDiffBlocks(header, footerLines, preview.changes.length, (i, maxChars) =>
       renderDiffChange(preview.changes[i]!, maxChars),
     );
-    const text = assembleBoundedBody(DIFF_PREVIEW_HEADER, footerLines, blocks);
+    const text = assembleBoundedBody(header, footerLines, blocks);
     // F5-A (Sprint 4c-Follow-up-5): also attach a COMPLETE structured preview (full canonical diff, never
     // clamped). A preview-aware adapter delivers this losslessly (multipart or `.diff` attachment) so the
     // final result is never content-dropped; `text` above is a bounded fallback for preview-unaware
@@ -1103,7 +1179,7 @@ export class ResponseComposer {
       text,
       preview: {
         previewId,
-        header: DIFF_PREVIEW_HEADER,
+        header,
         // F5 (Sprint 4c-Follow-up-5): carry the out-of-scope safety warning INTO the artifact so a
         // preview-aware adapter (which delivers `preview`, not `text`) still surfaces it. Absent → clean.
         ...(warning ? { warning } : {}),

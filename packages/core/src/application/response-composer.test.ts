@@ -1809,3 +1809,63 @@ describe('ResponseComposer change-set replies (ADR-0099)', () => {
     expect(text.length).toBeLessThanOrEqual(1900);
   });
 });
+
+describe('ResponseComposer — credential-guard override copy (ADR-0097)', () => {
+  const composer = new ResponseComposer();
+  const PATH = 'src/user.ts';
+
+  it('each delegate renders the credential-override copy for the path/line only and keeps the context', () => {
+    const prompt = composer.composeCredentialOverridePrompt(CTX, PATH, 3);
+    expect(prompt.context).toBe(CTX);
+    expect(prompt.text).toContain(`3번째 줄`);
+    expect(prompt.text).toContain(PATH);
+    expect(prompt.text).toContain('"그래도 보내줘"');
+    expect(prompt.text).toContain('외부 AI');
+    expect(prompt.text).toContain('되돌릴 수 없어요');
+    expect(prompt.text).toContain('30분');
+    expect(prompt.text).toContain('파일은 수정되지 않았어요');
+
+    const reprompt = composer.composeCredentialOverrideReprompt(CTX, PATH, 90_000).text;
+    expect(reprompt).toContain('"승인", "좋아", "ok"로는 보내지 않아요.');
+    expect(reprompt).toContain('약 2분');
+
+    expect(composer.composeCredentialOverrideDenied(CTX, PATH).text).toContain('보내지 않았');
+    expect(composer.composeCredentialOverrideContentChanged(CTX, PATH).text).toContain('파일 내용이 바뀌어서');
+    expect(composer.composeNoPendingCredentialOverride(CTX).text).toContain('아무 파일도 보내지 않았어요');
+    expect(composer.composeCredentialOverrideAlreadyUsed(CTX).text).toContain('이미 한 번 사용됐어요');
+    expect(composer.composeCredentialOverrideInvalidated(CTX, 'expired').text).toContain('아무 파일도 AI에게 보내지 않았어요');
+    expect(composer.composeCredentialOverrideSentNotice(CTX, ['a.ts', 'b.ts']).text).toContain('a.ts, b.ts');
+  });
+
+  it('the hard refusal is the credential refusal plus the never-overridable line, and never offers the phrase', () => {
+    const text = composer.composeCredentialOverrideHardRefused(CTX, PATH).text;
+    expect(text.startsWith(composer.composeCodeGenerationPreviewCredentialRefused(CTX, PATH).text)).toBe(true);
+    expect(text).toContain('확인을 받아도 보낼 수 없어요');
+    expect(text).not.toContain('그래도 보내줘');
+  });
+
+  it('a granted diff preview leads with the one-time-send notice in both the text and the preview header', () => {
+    const preview: CodeDiffPreview = {
+      changes: [{ path: PATH, kind: 'update', unified: '--- a/src/user.ts\n+++ b/src/user.ts\n@@ -1 +1 @@\n-a\n+b\n', binary: false }],
+      outOfScopeWarnings: [],
+    };
+    const plain = composer.composeCodeDiffPreview(CTX, preview);
+    const granted = composer.composeCodeDiffPreview(CTX, preview, { credentialOverrideSentPaths: [PATH] });
+    const notice = composer.composeCredentialOverrideSentNotice(CTX, [PATH]).text;
+    expect(plain.text).not.toContain(notice);
+    expect(granted.text.startsWith(`${notice}\n\n`)).toBe(true);
+    expect(granted.text.endsWith(plain.text.split('\n').slice(-1)[0]!)).toBe(true);
+    expect(granted.preview?.header).toBe(`${notice}\n\n${plain.preview?.header}`);
+    expect(granted.preview?.canonicalDiff).toBe(plain.preview?.canonicalDiff);
+    expect(composer.composeCodeDiffPreview(CTX, preview, {}).text).toBe(plain.text);
+  });
+
+  it('the base help text carries one "그래도 보내줘" line naming the never-sendable classes', () => {
+    const text = composer.composeHelp(CTX).text;
+    const lines = text.split('\n').filter((l) => l.includes('"그래도 보내줘"'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('이번 한 번');
+    expect(lines[0]).toContain('.env');
+    expect(text.length).toBeLessThanOrEqual(1900);
+  });
+});
