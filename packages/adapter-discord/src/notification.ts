@@ -24,6 +24,8 @@ export const DISCORD_NOTIFICATION_PLATFORM = 'discord';
 const DISCORD_MESSAGE_LIMIT = 2_000;
 /** A hung send must not block the dispatcher tick forever; it is then UNCERTAIN (it may still land). */
 export const DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
+/** Target resolution (channel / DM fetch) is bounded too: a stalled or rate-limited fetch must not block the dispatcher. */
+export const DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS = 10_000;
 
 export interface NotificationAllowedMentions {
   /** Always empty: no role/everyone/user mention is ever parsed out of the text. */
@@ -56,6 +58,8 @@ export interface OwnerNotificationDeps {
   fetchOwnerDm(userId: string): Promise<NotificationChannel>;
   readonly logger: Logger;
   readonly sendTimeoutMs?: number;
+  /** Deadline for resolving the target before any send; on expiry nothing was sent -> NOT_SENT{retryable:true}. */
+  readonly resolveTimeoutMs?: number;
 }
 
 type Refused = 'MISSING_ACCESS' | 'UNKNOWN_TARGET' | 'RATE_LIMITED';
@@ -135,6 +139,26 @@ async function sendWithTimeout(channel: NotificationChannel, options: Notificati
   }
 }
 
+class ResolveTimeoutError extends Error {
+  override readonly name = 'ResolveTimeoutError';
+}
+
+/** Bound a pre-send resolution step. Rejects with ResolveTimeoutError (nothing has been transmitted yet). */
+async function withResolveDeadline<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ResolveTimeoutError('notification target resolution timed out')), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function logFields(n: OwnerNotification, outcome: NotificationSinkOutcome): Record<string, string | number | boolean> {
   return {
     correlationId: n.correlationId,
@@ -176,6 +200,10 @@ async function deliver(n: OwnerNotification, deps: OwnerNotificationDeps): Promi
   return sendDm(n, ownerId, deps, timeoutMs);
 }
 
+function resolveMs(deps: OwnerNotificationDeps): number {
+  return deps.resolveTimeoutMs ?? DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS;
+}
+
 function isAdmittedGuildTarget(n: OwnerNotification, deps: OwnerNotificationDeps): boolean {
   const { target } = n;
   if (deps.guildId !== undefined && target.spaceId !== deps.guildId) return false;
@@ -196,8 +224,10 @@ async function tryChannel(
   const targetId = n.target.threadId ?? n.target.channelId;
   let channel: NotificationChannel | null;
   try {
-    channel = await deps.fetchChannel(targetId);
-  } catch {
+    channel = await withResolveDeadline(Promise.resolve().then(() => deps.fetchChannel(targetId)), resolveMs(deps));
+  } catch (err) {
+    // A stalled/rate-limited fetch: nothing sent; retry later rather than blocking or guessing a fallback.
+    if (err instanceof ResolveTimeoutError) return notSent('NOT_CONNECTED', true);
     channel = null; // resolution failed before any send: nothing transmitted, use the DM
   }
   if (!channel) return null;
@@ -224,8 +254,9 @@ async function sendDm(
   if (n.text.length > DISCORD_MESSAGE_LIMIT) return notSent('TEXT_TOO_LONG', false);
   let dm: NotificationChannel;
   try {
-    dm = await deps.fetchOwnerDm(ownerId);
+    dm = await withResolveDeadline(Promise.resolve().then(() => deps.fetchOwnerDm(ownerId)), resolveMs(deps));
   } catch (err) {
+    if (err instanceof ResolveTimeoutError) return notSent('NOT_CONNECTED', true);
     // Resolution happens before any send call: nothing was transmitted.
     const c = classifyDiscordError(err);
     if (c.kind === 'REFUSED') return notSent(c.reason, c.reason === 'RATE_LIMITED');
