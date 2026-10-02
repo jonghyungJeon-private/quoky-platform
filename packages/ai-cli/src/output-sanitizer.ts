@@ -363,16 +363,26 @@ const KO_PUT = String.raw`(?:${koNativeVerb('넣어', '넣었', '넣을', '넣')
 const KO_PUT_SERVICE = String.raw`(?:넣어|잡아)${KO_GIVE}`;
 /** A conditional, question or negated continuation means the sentence does not claim the action. */
 const KO_NOT_A_CLAIM = String.raw`(?!\s*(?:는지|냐|나요|다면|다고|다는|더라도|던|을\s*(?:때|경우|수)|으면|면|지\s*(?:않|못|마)|기\s*(?:전|위해)|어야|야\s*(?:해|합)))`;
+/**
+ * A claim quoted as UI copy is a mention, not a claim: "예약이 완료됐어요 메시지를 보여줍니다", "결제가 완료되었어요 화면을
+ * 띄우세요", "…완료됐어요라는 문구".
+ */
+const KO_UI_COPY = String.raw`(?![가-힣]{0,5}['"’”」』]?\s*(?:(?:이)?라는|(?:이)?란|메시지|메세지|화면|문구|알림|토스트|팝업|텍스트|안내\s*문|라벨|레이블|버튼|페이지|모달|다이얼로그))`;
+/** A planning list introduced by the claim ("아래와 같이 일정을 추가해 드릴게요: 1) 기상 2) 운동") drafts, never acts. */
+const KO_PLANNING_LIST = String.raw`(?![가-힣]{0,5}\s*[:：]\s*(?:$|\d+\s*[.)]|[-*•·]|[①-⑳]))`;
 const GAP = String.raw`[^.!?\n]{0,40}?`;
 
-function koClaim(source: string): RegExp {
-  return new RegExp(`(?:${source})${KO_NOT_A_CLAIM}`, 'iu');
+function koClaim(source: string, extraGuard = ''): RegExp {
+  return new RegExp(`(?:${source})${KO_NOT_A_CLAIM}${KO_UI_COPY}${extraGuard}`, 'iu');
 }
 
 const KO_ACTION_CLAIMS: readonly RegExp[] = [
   // calendar: a calendar service noun with any claim; a bare 일정/회의 noun only with a service claim
   koClaim(String.raw`(?:캘린더|달력|calendar|outlook|아웃룩)${GAP}(?:(?:추가|등록|입력|생성|저장|예약)${KO_PARTICLE}${KO_ANY_END}|${KO_PUT})`),
-  koClaim(String.raw`(?:일정|스케줄|미팅|회의(?!록))${GAP}(?:(?:추가|등록|입력|생성|예약)${KO_PARTICLE}${KO_SERVICE_END}|${KO_PUT_SERVICE})`),
+  koClaim(
+    String.raw`(?:일정|스케줄|미팅|회의(?!록))${GAP}(?:(?:추가|등록|입력|생성|예약)${KO_PARTICLE}${KO_SERVICE_END}|${KO_PUT_SERVICE})`,
+    KO_PLANNING_LIST,
+  ),
   // email
   koClaim(String.raw`(?:메일|이메일|e-?mail|gmail|지메일)${GAP}(?:(?:발송|전송|회신|답장|전달|포워딩)${KO_PARTICLE}${KO_ANY_END}|${KO_SEND})`),
   // SMS / messenger / phone
@@ -392,45 +402,101 @@ const EN_SUBJECT_PAST = String.raw`(?<!\b(?:if|once|when|after|before|until|unle
 const EN_SUBJECT_FUTURE = String.raw`(?:(?<!\b(?:if|once|when|after|before|until|unless|whether)\s)\bI(?:'ll|\s+will|'m\s+going\s+to|\s+am\s+going\s+to)\s+(?:now\s+|also\s+|go\s+ahead\s+and\s+)?|\blet\s+me\s+(?:go\s+ahead\s+and\s+)?)`;
 const EN_SUBJECT_PROGRESSIVE = String.raw`\bI(?:'m|\s+am)\s+(?:now\s+)?`;
 
-function enClaim(past: string, base: string, progressive: string, noun?: string): RegExp {
+/**
+ * `noun` follows the verb in the same sentence: anywhere when `maxWords` is omitted, else after at most `maxWords`
+ * intervening words ("I booked a table", never "I've scheduled the cron job ... jobs table").
+ */
+function enClaim(past: string, base: string, progressive: string, noun?: string, maxWords?: number): RegExp {
   const verb = String.raw`(?:${EN_SUBJECT_PAST}(?:${past})|${EN_SUBJECT_FUTURE}(?:${base})|${EN_SUBJECT_PROGRESSIVE}(?:${progressive}))\b`;
-  return new RegExp(noun === undefined ? verb : String.raw`${verb}[^.!?\n]*\b(?:${noun})\b`, 'iu');
+  if (noun === undefined) return new RegExp(verb, 'iu');
+  const gap = maxWords === undefined ? String.raw`[^.!?\n]*\b` : String.raw`(?:\s+[^\s.!?]+){0,${maxWords}}?\s+`;
+  return new RegExp(String.raw`${verb}${gap}(?:${noun})\b`, 'iu');
 }
+
+/**
+ * A User's calendar, never a calendar in code or UI: "your calendar", "your Google Calendar", "to the calendar", but
+ * not "a calendar component" or "your calendar view".
+ */
+const EN_CALENDAR = String.raw`(?:(?:(?:your|my|his|her|their|our)\s+)?(?:google|outlook|icloud|apple|work|shared|team)\s+calendars?|(?:your|my|his|her|their|our)\s+calendars?|(?:to|on|in|into)\s+the\s+calendar)(?![\s-]+(?:component|view|widget|app|apps|application|style|styles|ui|library|api|module|class|page|layout|grid|picker|template|example|integration|feature|code|data|logic|state|event\s+handler)\b)`;
+/** A messaging target, never a message to a queue, socket or other code object ("send a message to the queue"). */
+const EN_MESSAGE = String.raw`(?:e-?mails?|mails?|inbox|texts?|sms|invites?|messages?(?![^.!?\n]*\b(?:queues?|broker|bus|body|payload|handler|object|type|event|topic|worker|socket|websocket|server|endpoint|api|webhook|thread|process|client|consumer|producer)\b))`;
+/** An external service as the place something is posted ("on LinkedIn", "to your Slack channel"). */
+const EN_EXTERNAL_SERVICE = String.raw`(?:on|to|in|onto|via)\s+(?:(?:your|the|my|our|a)\s+)?(?:twitter|x\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|discord|social\s+media|(?:slack|discord|youtube|teams|telegram)\s+channel)(?!\s+(?:marketing|strategy|strategies|tips|posts?|content|best\s+practices|api|integration)\b)`;
 
 const EN_ACTION_CLAIMS: readonly RegExp[] = [
   // calendar / booking
-  enClaim('added|put', 'add|put', 'adding|putting', 'calendars?|outlook'),
+  enClaim('added|put', 'add|put', 'adding|putting', EN_CALENDAR),
+  enClaim('scheduled|set\\s+up|booked', 'schedule|set\\s+up|book', 'scheduling|setting\\s+up|booking', EN_CALENDAR),
   enClaim(
-    'scheduled|set\\s+up|booked',
-    'schedule|set\\s+up|book',
-    'scheduling|setting\\s+up|booking',
-    'calendars?|meetings?|appointments?|invites?|calls?|tables?|flights?|hotels?|rooms?|tickets?|seats?|reservations?',
+    'scheduled|booked',
+    'schedule|book',
+    'scheduling|booking',
+    'meetings?|appointments?|invites?|calls?|tables?|flights?|hotels?|rooms?|tickets?|seats?|reservations?',
+    3,
   ),
-  enClaim('booked|reserved', 'reserve', 'reserving'),
+  enClaim('set\\s+up', 'set\\s+up', 'setting\\s+up', 'meetings?|appointments?|calls?', 3),
+  enClaim(
+    'reserved',
+    'reserve',
+    'reserving',
+    'tables?|rooms?|seats?|tickets?|flights?|hotels?|spots?|appointments?|reservations?',
+    3,
+  ),
   // email / SMS / messenger / phone
-  enClaim('sent|forwarded', 'send|forward', 'sending|forwarding', 'e-?mails?|mails?|inbox|texts?|sms|messages?|invites?'),
+  enClaim('sent|forwarded', 'send|forward', 'sending|forwarding', EN_MESSAGE, 4),
   enClaim('emailed|texted|messaged|tweeted', 'email|text|tweet', 'emailing|texting|tweeting'),
-  enClaim('called|phoned', 'call|phone', 'calling|phoning', 'phones?|numbers?|mom|dad|him|her|them|back'),
+  enClaim(
+    'called|phoned',
+    'call|phone',
+    'calling|phoning',
+    'you\\s+back|mom|mum|dad|him|her|phones?|(?:phone\\s+)?numbers?|(?:your|his|her|their)\\s+(?:mom|mum|dad|mother|father|wife|husband|boss|manager|doctor|office|friend|sister|brother|parents?)',
+    1,
+  ),
   // payment / purchase
   enClaim(
     'paid|transferred|wired',
     'pay|transfer|wire',
     'paying|transferring|wiring',
-    'bills?|invoices?|rent|payments?|money|funds|fees?|dollars?|won|accounts?',
+    'bills?|invoices?|rent|payments?|money|funds|fees?|\\d[\\d,.]*\\s*(?:won|dollars?|usd|krw)',
+    3,
   ),
-  enClaim('purchased|bought', 'purchase|buy', 'purchasing|buying'),
-  enClaim('ordered|placed', 'order|place', 'ordering|placing', 'orders?|food|pizza|delivery|takeout'),
+  enClaim(
+    'purchased|bought',
+    'purchase|buy',
+    'purchasing|buying',
+    'tickets?|items?|products?|subscriptions?|gifts?|shares?|stocks?|groceries|licen[cs]es?|it\\s+for\\s+you',
+    3,
+  ),
+  enClaim(
+    'ordered',
+    'order',
+    'ordering',
+    'food|pizza|delivery|takeout|lunch|dinner|groceries|it\\s+for\\s+you|(?:a|an|the|your)\\s+(?:\\w+\\s+)?(?:pizza|meal)',
+    2,
+  ),
+  enClaim('placed', 'place', 'placing', '(?:your|an?)\\s+(?:\\w+\\s+)?order|the\\s+order\\s+for\\s+you', 1),
   // posting to an external service
   enClaim(
     'posted|published|shared|uploaded',
     'post|publish|share|upload',
     'posting|publishing|sharing|uploading',
-    'twitter|x\\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|social\\s+media|channel',
+    EN_EXTERNAL_SERVICE,
   ),
   // passive completion ("Your meeting has been added to your calendar", "The email has been sent")
-  /\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|sent|forwarded|emailed|paid|transferred|ordered|posted|published)\b[^.!?\n]*\b(?:calendars?|meetings?|appointments?|e-?mails?|inbox|texts?|messages?|reservations?|bookings?|payments?|orders?|twitter|facebook|instagram|linkedin|blog|slack)\b/iu,
-  /\b(?:calendars?|meetings?|appointments?|e-?mails?|messages?|reservations?|bookings?|payments?|orders?|tables?|flights?|tickets?|posts?|tweets?)\b[^.!?\n]*\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|sent|forwarded|emailed|paid|transferred|placed|posted|published|confirmed)\b/iu,
+  new RegExp(
+    String.raw`\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|put)\b[^.!?\n]*\b${EN_CALENDAR}`,
+    'iu',
+  ),
+  /\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:sent|forwarded|emailed)\s+to\s+(?:your|his|her|their|the)\s+(?:inbox|manager|boss|team|client|customer|landlord|mom|dad|friend)\b/iu,
+  /\b(?:your|the)\s+(?:calendar\s+)?(?:meetings?|appointments?|e-?mails?|reservations?|bookings?|payments?|orders?|tables?|flights?|tickets?|tweets?)\b[^.!?\n]*\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|sent|forwarded|emailed|paid|transferred|placed|posted|published|confirmed)\b/iu,
 ];
+
+/**
+ * An English sentence that describes code or UI copy rather than an action Quoky took ("Your order has been placed -
+ * this is the success message the API returns").
+ */
+const EN_UI_OR_CODE_MENTION =
+  /\b(?:(?:success|confirmation|error|status|toast|placeholder)\s+(?:message|screen|text|toast|banner|page|state|copy|string|dialog|modal)|(?:api|server|endpoint|function|method|handler|component|app|ui|backend|frontend|webhook|response)\s+(?:returns|shows|displays|renders|sends\s+back)|(?:message|text|toast|banner|alert|label|string)\s+(?:that\s+|which\s+)?(?:says|reads))\b/iu;
 
 /** The prose of a reply: fenced and inline code, double-quoted text and block quotes are mentions, never claims. */
 function claimProse(text: string): string[] {
@@ -455,7 +521,7 @@ export function claimsUnsupportedExternalAction(text: string): boolean {
   return claimProse(text).some(
     (sentence) =>
       KO_ACTION_CLAIMS.some((pattern) => pattern.test(sentence)) ||
-      EN_ACTION_CLAIMS.some((pattern) => pattern.test(sentence)),
+      (!EN_UI_OR_CODE_MENTION.test(sentence) && EN_ACTION_CLAIMS.some((pattern) => pattern.test(sentence))),
   );
 }
 

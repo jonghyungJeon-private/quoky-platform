@@ -44,9 +44,14 @@ export const POLICY_SENSITIVE_CHAT_UNAVAILABLE_MESSAGE =
   'done. Quoky cannot perform external actions such as calendar entries, sending email or messages, bookings, ' +
   'payments or posting to other services. Type "/help" to see what Quoky can do.';
 
-/** The capability a `NoProviderAvailableError` was raised for (its message is `...for capability: <CAPABILITY>`). */
-function unavailableCapability(err: NoProviderAvailableError): string | undefined {
-  return /: ([A-Z_]+)$/u.exec(err.message)?.[1];
+/**
+ * True when a `NoProviderAvailableError` was raised for `capability`. The error carries no structured capability field,
+ * so this compares against the message the error class itself builds for that capability; it follows any wording change
+ * in `errors.ts` without parsing the text. (Follow-up: a public `capability` field on the error, when `errors.ts` is in
+ * scope.)
+ */
+function isUnavailableFor(err: NoProviderAvailableError, capability: Capability): boolean {
+  return err.message === new NoProviderAvailableError(capability).message;
 }
 
 /**
@@ -65,7 +70,7 @@ export function describeAiFailure(err: unknown): FailureDescription {
   } else if (err instanceof NoProviderAvailableError) {
     kind = AiFailureKind.UNAVAILABLE;
     technical = err.message;
-    userMessage = unavailableCapability(err) === Capability.POLICY_SENSITIVE_CHAT
+    userMessage = isUnavailableFor(err, Capability.POLICY_SENSITIVE_CHAT)
       ? POLICY_SENSITIVE_CHAT_UNAVAILABLE_MESSAGE
       : NO_PROVIDER_USER_MESSAGE;
   } else {

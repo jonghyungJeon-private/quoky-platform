@@ -134,6 +134,11 @@
     {"id": "intent-130", "text": "메일 쓰는 법 알려줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "ADR-0098 amendment: a question about an action stays GENERAL_CHAT", "mustPass": true},
     {"id": "intent-131", "text": "How do I send an email with an attachment?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "ADR-0098 amendment: a question about an action stays GENERAL_CHAT", "mustPass": true},
     {"id": "intent-132", "text": "src/a.ts를 고치고 src/new-helper.ts로 헬퍼를 분리해줘", "expected": {"type": "IMPLEMENT_CODE", "capability": "CODE_IMPLEMENTATION", "rawKind": "change"}, "source": "QA-V2 note: path + change verbs is a code change (ADR-0098 amendment D3)", "mustPass": true},
-    {"id": "intent-133", "text": "src/a.ts를 고치고 src/new-helper.ts로 헬퍼를 분리해줘", "ctx": {"hasActiveProject": false}, "expected": {"type": "IMPLEMENT_CODE", "capability": "CODE_IMPLEMENTATION", "rawKind": "change"}, "source": "QA-V2 note: path + change verbs is a code change, no active project (ADR-0098 amendment D3)", "mustPass": true}
+    {"id": "intent-133", "text": "src/a.ts를 고치고 src/new-helper.ts로 헬퍼를 분리해줘", "ctx": {"hasActiveProject": false}, "expected": {"type": "IMPLEMENT_CODE", "capability": "CODE_IMPLEMENTATION", "rawKind": "change"}, "source": "QA-V2 note: path + change verbs is a code change, no active project (ADR-0098 amendment D3)", "mustPass": true},
+    {"id": "intent-134", "text": "What is a system prompt in LLMs?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a concept question about system prompts is not injection-shaped", "mustPass": true},
+    {"id": "intent-135", "text": "프롬프트 엔지니어링에서 시스템 프롬프트란 뭐야?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a concept question about system prompts is not injection-shaped", "mustPass": true},
+    {"id": "intent-136", "text": "¿Cómo estás?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "QUAL-6 review: Latin-script language other than Korean/English (ADR-0098 amendment D1c)", "mustPass": true},
+    {"id": "intent-137", "text": "how would you fix src/a.ts?", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a question about a change is not a change request", "mustPass": true},
+    {"id": "intent-138", "text": "에러 메시지 남겨줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "QUAL-6 review: a code-side message is not an SMS action", "mustPass": true}
   ]
 }
