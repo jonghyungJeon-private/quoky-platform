@@ -58,7 +58,39 @@ does not claim Production Runtime readiness.
 | **M3E-6L** | Offline activation/composition acceptance | IMPLEMENTED LOCALLY / AWAITING REVIEW; isolated Nest + real Core/SQLite + fake receiver acceptance PASS LOCALLY; 19 matrix rows (15 PASS / 4 bound to executed existing regressions); production receiver binding and external transport NOT IMPLEMENTED; activation DISABLED; general post-wait plan supply and operation-scoped Approval proof UNRESOLVED / DEFERRED; live activation requires separate strict approval |
 | **PCR-R1** | Production Continuation Receiver — Core contract / lifecycle semantics | IMPLEMENTED LOCALLY / AWAITING REVIEW on base `c0e1f9d`; immutable receiver `supportedCapabilities` narrowing (fail-closed empty/dup/malformed); package-internal non-authoritative constraint driving early + effect-time capability rechecks; Family-A recheck constrained-only (allowlist unchanged, `isFamilyACapability` defined once); guarded-start-bound `boundTaskFacts { capability, intentType }`; three-state `ContinuationReceiverOutcome` (SUCCEEDED/FAILED/UNRESOLVED, no new TaskRunStatus); bounded provider-agnostic `ContinuationRoutingAudit` DTO in the port layer; escaped receiver exception → UNRESOLVED (STARTED retained, no retry/redispatch/replacement, no persisted UNRESOLVED audit); `DELIVERED_TEST_CONTRACT_CHANGE = YES`; ADR-0089 amended; activation DISABLED; R2/R3 NOT STARTED; live authorization separate |
 | **PCR-R2** | Production Continuation Receiver — offline provider-backed receiver | IMPLEMENTED LOCALLY / AWAITING REVIEW on base `ccb1864` (R1 = CLOSED + DELIVERED via PR #79). Core `ContinuationProviderRoutingService` (sibling of `RuntimeProviderRoutingService`, reuses Stage2B primitives; not a wrapper/CapabilityRouter/AiProvider caller); Core `PromptComposer.composeContinuation` + separate bounded validation corpus (identifiers only; no conversation reframe; fail-closed bounds); app `ProviderBackedContinuationReceiver` (`supportedCapabilities = [GENERAL_CHAT]`, narrow deps, bounded FAILED preflight, platform-owned `MARKDOWN_REPORT`, provider artifact ids ignored, never terminalizes); routing policy `stage2b-continuation-general-chat-v1` (WORK/CHAT/AUTHORITY_SENSITIVE, `requiredRoutingClasses=[BALANCED]`) + chat policy hardened to CONVERSATIONAL; PRODUCTION config/digest change binding both validation profiles; PRIMARY_ONLY enforced in code; disposition mapping (pre-dispatch→FAILED, dispatched-uncertain→UNRESOLVED, returned→SUCCEEDED/FAILED); `QUOKY_CONTINUATION_RECEIVER_MODE = disabled|general-chat-v1` (default disabled, separate from routing mode, general-chat-v1 startup fail-closed until R3 containment); ADR-0089 cross-referenced; activation DISABLED / NOT LIVE-READY; R3 NOT STARTED; no live provider/network/containment/external trigger |
+| **Personal v1** | First product release ("Quoky Personal v1") | Scope ratified by the Product Owner 2026-10-02; ADR-0091/0092/0093/0094 + ADR-0073 amendment; see "First product release" below; implementation in separate bounded tasks |
 | **Future** | Memory improvements · Codex · additional connectors | per ADR sequence |
+
+## First product release — Quoky Personal v1
+
+Scope ratified by the Product Owner on 2026-10-02. Distinct from the closed `v1.0.0` source release above:
+this is the first release intended for daily single-owner use. Live UAT and any runtime/Discord/provider
+execution remain separately approved Strict gates.
+
+**Acceptance criteria (summary)**
+
+| # | Criterion | Decision |
+|---|---|---|
+| 1 | Only configured owners reach Quoky, in allowlisted channels (and their threads) or owner DMs; no mention needed; startup fails closed without owner ids | ADR-0091 |
+| 2 | General chat is served by local Ollama when its daemon and configured model are ready, otherwise by Claude; code analysis/implementation/review stay on Claude | ADR-0092 |
+| 3 | Claude runs with a configurable model (default `sonnet`) and an adapter-owned capability→effort mapping; no Core contract change | ADR-0092 |
+| 4 | Durable memory recall follows the owner across channels, DMs and resets; writer and existing records unchanged | ADR-0073 amendment |
+| 5 | `도움말`/`/help` and `새 대화`/`/reset` work in every state; a pending approval expires after 30 minutes and otherwise captures turns with a reminder | ADR-0093 |
+| 6 | Local code flow works end to end: preview → approved apply → test/typecheck → optional approved local commit on a non-main branch | ADR-0040–0046, ADR-0094 |
+| 7 | Remote git is off by default (`QUOKY_GIT_REMOTE_ENABLED=false`); commits on `main`/`master` are refused | ADR-0094 |
+| 8 | Offline verification green (typecheck + tests) for every slice; independent review before merge | `AGENTS.md` |
+
+**Deferred from Personal v1**
+
+- R3 / Stage 2B / continuation track (continuation activation, production trust, ADR-0090 work).
+- Execution-time provider fallback (Ollama failure → Claude re-execution); difficulty-based Claude effort.
+- Chat pass-through while an approval is pending.
+- `TEST_EXECUTION` approval.
+- GitHub push → PR → merge → cleanup chain.
+- New-file and multi-file apply.
+- M3 connector expansion.
+- Vector retrieval; Codex provider.
+- MLX provider — 2nd-release candidate.
 
 ## Deferred capabilities (YAGNI)
 
