@@ -8,6 +8,7 @@ import {
   GIT_BRANCH_TURN_HANDLER_ID,
   GitBranchTurnHandler,
   detectGitBranchCommand,
+  detectGitBranchDeleteRequest,
   gitBranchReplies,
   type GitBranchTurnHandlerGit,
 } from './git-branch-command';
@@ -140,6 +141,35 @@ describe('detectGitBranchCommand — unsupported companions', () => {
   });
 });
 
+describe('detectGitBranchDeleteRequest (QA-V2-W8)', () => {
+  it.each([
+    '브랜치 삭제해줘 feature/x',
+    'feature/x 브랜치 지워줘',
+    'delete branch feature/x',
+    'remove the branch feature/x',
+    '로컬 브랜치 삭제해줘',
+    '브랜치 정리해줘',
+    'git branch -D feature/x',
+    'git branch --delete feature/x',
+  ])('%s → delete request', (text) => {
+    expect(detectGitBranchDeleteRequest(text)).toBe(true);
+  });
+
+  it.each([
+    '브랜치 목록 보여줘',
+    '지금 브랜치 뭐야',
+    '브랜치 삭제는 어떻게 해?',
+    'how do I delete a branch',
+    '브랜치 삭제하면 어떻게 돼',
+    '브랜치 삭제하지 마',
+    '브랜치 만들어줘 feature/x',
+    '커밋해줘',
+    '',
+  ])('%s → not a delete request', (text) => {
+    expect(detectGitBranchDeleteRequest(text)).toBe(false);
+  });
+});
+
 describe('detectGitBranchCommand — no collision with other flows', () => {
   it.each([
     '브랜치 정리해줘',
@@ -265,6 +295,34 @@ describe('GitBranchTurnHandler — registration shape', () => {
     expect(await new GitBranchTurnHandler({ git }).handle(ctx)).toBeNull();
     expect(calls).toEqual([]);
     expect(resolved.count).toBe(0);
+  });
+
+  it.each([null, { status: 'WORKSPACE_APPLIED' }, { status: 'PR_MERGED' }])(
+    'answers a branch delete request with the fixed refusal and no git call (anchor %j)',
+    async (anchor) => {
+      const { git, calls } = fakeGit();
+      const { ctx, resolved } = ctxOf('브랜치 삭제해줘 feature/x', anchor);
+      const out = await new GitBranchTurnHandler({ git }).handle(ctx);
+      expect(out?.reply.text).toBe(gitBranchReplies.deleteUnsupported());
+      expect(out?.status).toBeUndefined();
+      expect(calls).toEqual([]);
+      expect(resolved.count).toBe(0);
+    },
+  );
+
+  it.each(['MAIN_SYNCED', 'BRANCH_CLEANED', 'REMOTE_BRANCH_CLEANUP_APPROVED', 'REMOTE_BRANCH_CLEANED'])(
+    'leaves the post-merge cleanup phrase to the runtime cleanup flow at %s',
+    async (status) => {
+      const { git, calls } = fakeGit();
+      expect(await new GitBranchTurnHandler({ git }).handle(ctxOf('브랜치 정리해줘', { status }).ctx)).toBeNull();
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it.each(['브랜치 목록 보여줘', '브랜치 삭제는 어떻게 해?', '지금 브랜치 뭐야'])('keeps "%s" routing to the classifier', async (text) => {
+    const { git, calls } = fakeGit();
+    expect(await new GitBranchTurnHandler({ git }).handle(ctxOf(text).ctx)).toBeNull();
+    expect(calls).toEqual([]);
   });
 });
 

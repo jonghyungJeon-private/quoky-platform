@@ -1038,6 +1038,13 @@ const PUSH_WORDS =
 const PUSH_FORBIDDEN_COMPANION =
   /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
 
+/** Push-request shape guard for the no-anchor fall-through: an imperative/execution phrase or a bare command. */
+const PUSH_REQUEST_SHAPE =
+  /((해\s*줘요?|해\s*주세요|해\s*주라|해라|해\s*봐|하자|실행|올려\s*줘요?|올려\s*주세요|보내\s*줘요?|보내\s*주세요|\bnow\b|\bplease\b)\s*[.!~]*$)|(^\s*(git\s+)?(force[\s-]+)?push(\s+(-f|--force|--force-with-lease|origin\S*|now|please))*\s*[.!]*$)/i;
+/** Questions / how-to / notification topics that merely mention push are ordinary chat. */
+const PUSH_CHAT_TOPIC =
+  /[?？]|뭐|무엇|뭔|어떻게|어떤|왜|방법|알려|설명|차이|알림|notification|설정|구현|\bhow\b|\bwhat\b|\bwhy\b|\bexplain\b|\bdifference\b|\bwhen\b/i;
+
 /** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
 const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
   'PR_APPROVED',
@@ -1676,6 +1683,19 @@ export class ConversationRuntime {
     if (!unnegatedMatch(text, [PUSH_WORDS])) return null; // (CA #2) no (non-negated) push word → not push handling
     if (unnegatedMatch(text, [PUSH_FORBIDDEN_COMPANION])) return 'push-unsupported'; // push + force/PR/deploy/tag/branch/…
     return 'push';
+  }
+
+  /**
+   * A push request that reaches the no-relevant-anchor fall-through (QA-V2-W8): the strict imperative/execution
+   * shape of {@link interpretPushIntent}. A question or a topic mention ("git push가 뭐야?", "푸시 알림 설정하는 법",
+   * "push notification 구현 방법") is `null` and stays ordinary chat.
+   */
+  static interpretNoAnchorPushRequest(text: string): 'push' | 'push-unsupported' | null {
+    const kind = ConversationRuntime.interpretPushIntent(text);
+    if (kind === null) return null;
+    const t = text.trim();
+    if (PUSH_CHAT_TOPIC.test(t) || !PUSH_REQUEST_SHAPE.test(t)) return null;
+    return kind;
   }
 
   /**
@@ -2374,6 +2394,22 @@ export class ConversationRuntime {
       // No anchor at all (or a stale one, already auto-cleared by findAnchor). An explicit apply phrase
       // must NEVER be reinterpreted as a new, unscoped code-change request (CA review).
       return this.handleApplyPreviewUnavailableTurn(message, session);
+    }
+    // (QA-V2-W8) A push / push-execution request with no push-relevant anchor (none, or not yet committed): the
+    // chain states above own every anchored push phrase, so this is only the no-chain fall-through. Deterministic
+    // reply — a free-text model reply could fabricate a push or advise `git push -f`. No git/hosting call.
+    if (
+      !(
+        applyAnchor &&
+        (applyAnchor.status === 'GIT_COMMITTED' ||
+          applyAnchor.status === 'PUSH_APPROVED' ||
+          applyAnchor.status === 'GIT_PUSHED' ||
+          POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status))
+      )
+    ) {
+      const noAnchorPush = ConversationRuntime.interpretNoAnchorPushRequest(message.text);
+      if (noAnchorPush === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
+      if (noAnchorPush === 'push') return this.handleNoPushTargetTurn(message, session);
     }
     // Anything else: fall through untouched — an ELIGIBLE/APPROVED/PATCH_READY/WORKSPACE_APPLIED anchor is
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
@@ -4728,6 +4764,13 @@ export class ConversationRuntime {
   /** A push phrase while already PUSH_APPROVED (Sprint 2z) — already approved; not pushed, no new approval. */
   private async handlePushAlreadyApprovedTurn(message: InboundMessage, session: Session): Promise<TurnResult> {
     const reply = this.deps.composer.composePushAlreadyApproved(message.context);
+    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+    return this.responded(session, reply);
+  }
+
+  /** A push request with no commit chain in progress (QA-V2-W8) — fixed reply; no approval, no git. */
+  private async handleNoPushTargetTurn(message: InboundMessage, session: Session): Promise<TurnResult> {
+    const reply = this.deps.composer.composeNoPushTarget(message.context);
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return this.responded(session, reply);
   }

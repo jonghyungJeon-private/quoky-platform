@@ -1288,6 +1288,14 @@ describe('ResponseComposer.composeCommit* replies (ADR-0045)', () => {
     expect(composer.composeCommitApprovalDenied(CTX).text).not.toBe(composer.composeCommitApprovalCancelled(CTX).text);
   });
 
+  it('composeNoPushTarget states there is no commit to push and that git push was not run (QA-V2-W8)', () => {
+    const reply = composer.composeNoPushTarget(CTX);
+    expect(reply.text).toContain('push할 커밋이 없어요');
+    expect(reply.text).toContain('"푸시해줘"');
+    expect(reply.text).toContain('git push는 하지 않았어요');
+    expect(reply.text).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+  });
+
   it('wrong-state unavailable and git-status-read-failure are distinct; read-failure precise (CA 69)', () => {
     const wrongState = composer.composeCommitUnavailable(CTX);
     const readFail = composer.composeCommitStatusUnavailable(CTX);

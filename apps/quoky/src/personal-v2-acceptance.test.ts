@@ -292,6 +292,7 @@ const PUSHED = { commitHash: '0123456789abcdef0123456789abcdef01234567', remote:
 function runtimeReplyLabel(composer: ResponseComposer, context: ConversationContext, text: string): string {
   if (text === composer.composePushAlreadyPushed(context, PUSHED).text) return 'push-already-pushed';
   if (text === composer.composePushUnsupportedCompanion(context).text) return 'push-unsupported';
+  if (text === composer.composeNoPushTarget(context).text) return 'push-no-target';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
   return 'other';
 }

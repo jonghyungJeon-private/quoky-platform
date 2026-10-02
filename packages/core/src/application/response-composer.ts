@@ -1985,6 +1985,17 @@ export class ResponseComposer {
   }
 
   /**
+   * A push / push-execution request with no commit chain in progress (no code-change anchor, or one that has not
+   * reached a committed state). Fixed copy — never a provider call; no git/hosting call was made.
+   */
+  composeNoPushTarget(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text: '지금 push할 커밋이 없어요. 코드 변경을 적용하고 커밋한 뒤 "푸시해줘"라고 알려 주세요. git push는 하지 않았어요.',
+    };
+  }
+
+  /**
    * Approved git push EXECUTED (Sprint 3a, ADR-0048) — the first remote mutation. States the short hash +
    * bounded remote/branch and, per the no-overclaim rule, that PR creation and deployment were NOT done.
    * Never says ready-to-push / push-safe / deploy-ready / PR created (CA #1/#14).
