@@ -16,6 +16,7 @@
     "provider:benchmark": "node apps/quoky/dist/tools/provider-benchmark-cli.js",
     "provider:semantic": "node apps/quoky/dist/tools/provider-semantic-validation-cli.js",
     "provider:semantic:shadow": "node apps/quoky/dist/tools/provider-semantic-shadow-cli.js",
+    "eval:answers": "node apps/quoky/dist/tools/answer-quality-eval-cli.js",
     "test": "vitest run"
   },
   "devDependencies": {
