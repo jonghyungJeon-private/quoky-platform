@@ -1,7 +1,23 @@
-import type { ConnectorItem, ConnectorProvider, ConnectorQuery, ConnectorResult, Metadata } from '@quoky/core';
+import {
+  ConnectorQueryError,
+  ConnectorQueryName,
+  connectorQueryErrorReasonForStatus,
+  parsePersonalWorkParams,
+  resolveConnectorQueryTimeoutMs,
+  toConnectorDueDate,
+  toConnectorTimestamp,
+  type ConnectorItem,
+  type ConnectorProvider,
+  type ConnectorQuery,
+  type ConnectorResult,
+  type Metadata,
+  type PersonalWorkFilter,
+} from '@quoky/core';
 
 const DESCRIPTION_LIMIT = 500;
 const RAW_JSON_LIMIT = 20_000;
+const STATUS_LIMIT = 100;
+const SEARCH_FIELDS = 'summary,status,duedate,updated,description';
 
 export interface JiraConnectorConfig {
   /** Jira Cloud host, with or without an https:// prefix (for example, example.atlassian.net). */
@@ -10,38 +26,41 @@ export interface JiraConnectorConfig {
   apiToken: string;
   /** Injectable for deterministic unit tests. Production defaults to the platform fetch implementation. */
   fetchImpl?: typeof fetch;
+  /** Per-request timeout in milliseconds (default 10000). */
+  timeoutMs?: number;
 }
 
 export type JiraConnectorHttpErrorKind =
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
   | 'NOT_FOUND'
+  | 'RATE_LIMITED'
   | 'SERVER_ERROR'
   | 'HTTP_ERROR';
 
 /** A sanitized Jira HTTP failure. It never contains response content, credentials, or request headers. */
-export class JiraConnectorHttpError extends Error {
+export class JiraConnectorHttpError extends ConnectorQueryError {
   constructor(
     readonly kind: JiraConnectorHttpErrorKind,
     readonly status: number,
   ) {
-    super(`jira connector: query failed (${kind.toLowerCase()})`);
+    super(connectorQueryErrorReasonForStatus(status), `jira connector: query failed (${kind.toLowerCase()})`);
     this.name = 'JiraConnectorHttpError';
   }
 }
 
-/** A sanitized transport failure. The underlying fetch error is deliberately not retained. */
-export class JiraConnectorRequestError extends Error {
+/** A sanitized transport or timeout failure. The underlying fetch error is deliberately not retained. */
+export class JiraConnectorRequestError extends ConnectorQueryError {
   constructor() {
-    super('jira connector: query request failed');
+    super('UNAVAILABLE', 'jira connector: query request failed');
     this.name = 'JiraConnectorRequestError';
   }
 }
 
 /** A sanitized response-shape failure. Raw response content is deliberately not retained. */
-export class JiraConnectorResponseError extends Error {
+export class JiraConnectorResponseError extends ConnectorQueryError {
   constructor() {
-    super('jira connector: query returned an unexpected response');
+    super('INVALID_RESPONSE', 'jira connector: query returned an unexpected response');
     this.name = 'JiraConnectorResponseError';
   }
 }
@@ -51,6 +70,10 @@ interface JiraIssue {
   fields?: {
     summary?: unknown;
     description?: unknown;
+    status?: unknown;
+    duedate?: unknown;
+    updated?: unknown;
+    project?: unknown;
   };
 }
 
@@ -62,6 +85,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
   private readonly authorization: string;
   private readonly apiToken: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(config: JiraConnectorConfig) {
     const host = requireNonEmpty(config?.host, 'host');
@@ -72,6 +96,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
     this.authorization = `Basic ${Buffer.from(`${email}:${apiToken}`, 'utf8').toString('base64')}`;
     this.apiToken = apiToken;
     this.fetchImpl = config.fetchImpl ?? fetch;
+    this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'jira connector');
   }
 
   async isAvailable(): Promise<boolean> {
@@ -79,11 +104,15 @@ export class JiraConnectorProvider implements ConnectorProvider {
   }
 
   async query(input: ConnectorQuery): Promise<ConnectorResult> {
-    const jql = input?.query === 'personal-work'
-      ? personalWorkJql(input.params?.actorExternalId)
-      : requireNonEmpty(input?.query, 'query');
-    const url = new URL('/rest/api/3/search', this.baseUrl);
-    url.searchParams.set('jql', jql);
+    // Named queries only: Jira never receives caller-supplied JQL (ADR-0100 D7).
+    if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
+    }
+    const { actorExternalId, filter, limit } = parsePersonalWorkParams(input.params, 'jira connector');
+    const url = new URL('/rest/api/3/search/jql', this.baseUrl);
+    url.searchParams.set('jql', personalWorkJql(actorExternalId, filter));
+    url.searchParams.set('fields', SEARCH_FIELDS);
+    url.searchParams.set('maxResults', String(limit));
 
     let response: Response;
     try {
@@ -93,6 +122,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
           Accept: 'application/json',
           Authorization: this.authorization,
         },
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new JiraConnectorRequestError();
@@ -111,7 +141,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
       throw new JiraConnectorResponseError();
     }
 
-    const items = payload.issues.map((issue) => this.mapIssue(issue));
+    const items = payload.issues.slice(0, limit).map((issue) => this.mapIssue(issue));
     return { source: this.source, items };
   }
 
@@ -133,6 +163,17 @@ export class JiraConnectorProvider implements ConnectorProvider {
       raw: this.serializeRaw(value),
     };
     if (description.length > 0) item.summary = description.slice(0, DESCRIPTION_LIMIT);
+
+    const status = isRecord(fields?.status) && typeof fields.status.name === 'string'
+      ? this.redactToken(fields.status.name.trim())
+      : '';
+    if (status.length > 0) item.status = status.slice(0, STATUS_LIMIT);
+    const dueDate = toConnectorDueDate(fields?.duedate);
+    if (dueDate) item.dueDate = dueDate;
+    const updatedAt = toConnectorTimestamp(fields?.updated);
+    if (updatedAt) item.updatedAt = updatedAt;
+    const container = projectKey(key, fields?.project);
+    if (container) item.container = container;
     return item;
   }
 
@@ -153,9 +194,20 @@ export class JiraConnectorProvider implements ConnectorProvider {
   }
 }
 
-function personalWorkJql(actorExternalId: unknown): string {
-  const identity = requireNonEmpty(actorExternalId, 'actor identity');
-  return `assignee = "${identity.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" AND resolution = Unresolved`;
+/** The adapter owns JQL rendering and escaping; the identity is always a quoted, escaped string literal. */
+function personalWorkJql(identity: string, filter: PersonalWorkFilter): string {
+  const base = `assignee = "${identity.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" AND resolution = Unresolved`;
+  if (filter === 'all') return `${base} ORDER BY updated DESC`;
+  if (filter === 'due-this-week') return `${base} AND duedate <= endOfWeek() ORDER BY duedate ASC`;
+  throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported personal-work filter');
+}
+
+function projectKey(issueKey: string, project: unknown): string | undefined {
+  const fromKey = /^([A-Za-z][A-Za-z0-9_]*)-\d+$/.exec(issueKey)?.[1];
+  if (fromKey) return fromKey;
+  return isRecord(project) && typeof project.key === 'string' && project.key.trim().length > 0
+    ? project.key.trim()
+    : undefined;
 }
 
 function requireNonEmpty(value: unknown, label: string): string {
@@ -183,6 +235,7 @@ function mapHttpError(status: number): JiraConnectorHttpError {
   if (status === 401) return new JiraConnectorHttpError('UNAUTHORIZED', status);
   if (status === 403) return new JiraConnectorHttpError('FORBIDDEN', status);
   if (status === 404) return new JiraConnectorHttpError('NOT_FOUND', status);
+  if (status === 429) return new JiraConnectorHttpError('RATE_LIMITED', status);
   if (status >= 500) return new JiraConnectorHttpError('SERVER_ERROR', status);
   return new JiraConnectorHttpError('HTTP_ERROR', status);
 }

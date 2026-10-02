@@ -71,7 +71,7 @@ describe('composition-root connector registration', () => {
     const { logger: testLogger } = logger();
     const fetchStub = vi.fn(async (input: string | URL | Request): Promise<Response> => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
-      if (url.pathname === '/rest/api/3/search') {
+      if (url.pathname === '/rest/api/3/search/jql') {
         return Response.json({ issues: [] });
       }
       if (url.pathname === '/api/conversations.list') {
@@ -101,7 +101,7 @@ describe('composition-root connector registration', () => {
     );
 
     expect(manager.list().map((connector) => connector.source)).toEqual(['jira', 'slack', 'confluence']);
-    await expect(manager.query('jira', { query: 'project = DEMO' })).resolves.toEqual({ source: 'jira', items: [] });
+    await expect(manager.query('jira', { query: 'personal-work', params: { actorExternalId: 'account-123' } })).resolves.toEqual({ source: 'jira', items: [] });
     await expect(manager.query('slack', { query: '', params: { kind: 'channels' } })).resolves.toEqual({
       source: 'slack',
       items: [],
