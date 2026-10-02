@@ -12,6 +12,7 @@ import {
   reportProviderReadiness,
 } from './bootstrap-preflight';
 import { parseProviderRoutingMode } from './provider-routing/provider-routing-activation';
+import { loadConfig, QuokyConfigErrorCode } from './config';
 
 interface LogLine { level: 'info' | 'warn' | 'error'; message: string; fields?: LogFields }
 
@@ -84,6 +85,36 @@ describe('describeStartupFailure', () => {
     expect(failure.hint).toContain('QUOKY_PROVIDER_ROUTING_MODE');
     expect(failure.hint).toContain('stage2b-general-chat-v1');
     expect(JSON.stringify(failure)).not.toContain('bogus-mode-value');
+  });
+
+  it('maps a missing QUOKY_DISCORD_OWNER_IDS (thrown by the real loader) to a hint naming only the variable', () => {
+    let caught: unknown;
+    try { loadConfig({}); } catch (err) { caught = err; }
+    const failure = describeStartupFailure(caught);
+    expect(failure.message).toBe('DISCORD_OWNER_IDS_MISSING');
+    expect(failure.hint).toContain('QUOKY_DISCORD_OWNER_IDS');
+  });
+
+  it.each([
+    [{ QUOKY_DISCORD_OWNER_IDS: 'not-a-snowflake-SECRETVALUE' }, 'DISCORD_OWNER_IDS_INVALID', 'QUOKY_DISCORD_OWNER_IDS'],
+    [{ QUOKY_DISCORD_OWNER_IDS: '111111111111111111', QUOKY_DISCORD_CHANNEL_IDS: 'oops-SECRETVALUE' }, 'DISCORD_CHANNEL_IDS_INVALID', 'QUOKY_DISCORD_CHANNEL_IDS'],
+    [{ QUOKY_DISCORD_OWNER_IDS: '111111111111111111', QUOKY_OLLAMA_ENABLED: 'yes-SECRETVALUE' }, 'OLLAMA_ENABLED_INVALID', 'QUOKY_OLLAMA_ENABLED'],
+    [{ QUOKY_DISCORD_OWNER_IDS: '111111111111111111', QUOKY_CLAUDE_MODEL: '--bad-SECRETVALUE' }, 'CLAUDE_MODEL_INVALID', 'QUOKY_CLAUDE_MODEL'],
+    [{ QUOKY_DISCORD_OWNER_IDS: '111111111111111111', QUOKY_GIT_REMOTE_ENABLED: '1-SECRETVALUE' }, 'GIT_REMOTE_ENABLED_INVALID', 'QUOKY_GIT_REMOTE_ENABLED'],
+    [{ QUOKY_DISCORD_OWNER_IDS: '111111111111111111', QUOKY_CONTEXT_MAX_TOKENS: '-5-SECRETVALUE' }, 'CONTEXT_MAX_TOKENS_INVALID', 'QUOKY_CONTEXT_MAX_TOKENS'],
+  ])('maps the real loader error for %j to a variable-naming hint without echoing the value', (env, code, variable) => {
+    let caught: unknown;
+    try { loadConfig(env as NodeJS.ProcessEnv); } catch (err) { caught = err; }
+    const failure = describeStartupFailure(caught);
+    expect(failure.message).toBe(code);
+    expect(failure.hint).toContain(variable);
+    expect(JSON.stringify(failure)).not.toContain('SECRETVALUE');
+  });
+
+  it('has a hint for every Personal-edition config error code', () => {
+    for (const code of Object.values(QuokyConfigErrorCode)) {
+      expect(describeStartupFailure(new Error(code)).hint, code).toMatch(/QUOKY_/);
+    }
   });
 
   it('passes unknown errors through with secrets redacted and no hint', () => {

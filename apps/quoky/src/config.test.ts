@@ -1,5 +1,19 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from './config';
+import { loadConfig as loadConfigFromEnv, QuokyConfigError } from './config';
+
+const OWNER = '111111111111111111';
+const OWNER_2 = '222222222222222222';
+const CHANNEL = '444444444444444444';
+const CHANNEL_2 = '555555555555555555';
+
+/**
+ * Personal edition requires owner ids (ADR-0091), so every unrelated fixture gets a valid one unless it sets
+ * the variable itself. Tests of the owner-id parsing itself use `loadConfigFromEnv` directly.
+ */
+function loadConfig(raw: NodeJS.ProcessEnv): ReturnType<typeof loadConfigFromEnv> {
+  return loadConfigFromEnv({ QUOKY_DISCORD_OWNER_IDS: OWNER, ...raw });
+}
 
 /** Build a minimal env with only the given keys set (Sprint 3d-A, ADR-0051, CA change 8). */
 function env(overrides: Record<string, string>): NodeJS.ProcessEnv {
@@ -11,7 +25,7 @@ describe('loadConfig — ContextBuilder GENERAL_CHAT defaults', () => {
     expect(loadConfig(env({})).contextBuilder).toEqual({
       rankingEnabled: true,
       compressionEnabled: true,
-      maxTokens: 1024,
+      maxTokens: 6000,
       recencyWeight: 0.4,
       relevanceWeight: 0.6,
       compressionConfig: { minimumCharactersPerEntry: 80 },
@@ -344,6 +358,8 @@ describe('loadConfig — static AgentProfile configuration (M3E-6H, ADR-0089)', 
   });
 });
 
+const repoRoot = path.resolve(__dirname, '../../..');
+
 describe('Product namespace environment compatibility', () => {
   const values = {
     DB_PATH: '/fixture/data.db', VECTOR_PATH: '/fixture/vectors', WORKSPACE_ROOT: '/fixture/work',
@@ -377,7 +393,8 @@ describe('Product namespace environment compatibility', () => {
 
   it('preserves defaults when both namespaces are absent', () => {
     expect(loadConfig({})).toMatchObject({
-      storage: { dbPath: './data/chunsik.db' }, vector: { storePath: './data/vectors' },
+      storage: { dbPath: path.resolve(repoRoot, 'data/chunsik.db') },
+      vector: { storePath: path.resolve(repoRoot, 'data/vectors') },
       workspace: { workspaceRoot: process.cwd() },
       githubToken: undefined, repositoryHosting: undefined,
       connectors: { jira: undefined, slack: undefined, confluence: undefined },
@@ -419,4 +436,150 @@ describe('production continuation mode startup guard (R2)', () => {
       }));
     },
   );
+});
+
+describe('loadConfig — Discord owner ids (ADR-0091)', () => {
+  it('parses one or several comma-separated owner snowflakes, trimming and de-duplicating', () => {
+    expect(loadConfigFromEnv({ QUOKY_DISCORD_OWNER_IDS: OWNER }).discord.ownerIds).toEqual([OWNER]);
+    expect(loadConfigFromEnv({ QUOKY_DISCORD_OWNER_IDS: ` ${OWNER} , ${OWNER_2},${OWNER}` }).discord.ownerIds)
+      .toEqual([OWNER, OWNER_2]);
+  });
+
+  it.each([undefined, '', '   '])('fails closed when owner ids are missing or blank (%j)', (value) => {
+    const source: NodeJS.ProcessEnv = value === undefined ? {} : { QUOKY_DISCORD_OWNER_IDS: value };
+    expect(() => loadConfigFromEnv(source)).toThrow('DISCORD_OWNER_IDS_MISSING');
+    expect(() => loadConfigFromEnv(source)).toThrow(QuokyConfigError);
+  });
+
+  it.each(['abc', '123', `${OWNER},`, `,${OWNER}`, `${OWNER},,${OWNER_2}`, `${OWNER};${OWNER_2}`, '1'.repeat(21), '<@111111111111111111>'])(
+    'rejects malformed owner list %j without echoing it',
+    (value) => {
+      let caught: unknown;
+      try { loadConfigFromEnv({ QUOKY_DISCORD_OWNER_IDS: value }); } catch (err) { caught = err; }
+      expect(caught).toBeInstanceOf(QuokyConfigError);
+      expect((caught as QuokyConfigError).code).toBe('DISCORD_OWNER_IDS_INVALID');
+      expect((caught as Error).message).toBe('DISCORD_OWNER_IDS_INVALID');
+    },
+  );
+
+  it('rejects an oversized owner list', () => {
+    const many = Array.from({ length: 65 }, (_, i) => String(100000000000000000 + i)).join(',');
+    expect(() => loadConfigFromEnv({ QUOKY_DISCORD_OWNER_IDS: many })).toThrow('DISCORD_OWNER_IDS_INVALID');
+  });
+});
+
+describe('loadConfig — Discord channel ids (ADR-0091)', () => {
+  it('defaults to an empty list (owner DMs only) when unset or blank', () => {
+    expect(loadConfig(env({})).discord.channelIds).toEqual([]);
+    expect(loadConfig(env({ QUOKY_DISCORD_CHANNEL_IDS: '' })).discord.channelIds).toEqual([]);
+    expect(loadConfig(env({ QUOKY_DISCORD_CHANNEL_IDS: '  ' })).discord.channelIds).toEqual([]);
+  });
+
+  it('parses comma-separated channel snowflakes', () => {
+    expect(loadConfig(env({ QUOKY_DISCORD_CHANNEL_IDS: `${CHANNEL}, ${CHANNEL_2}` })).discord.channelIds)
+      .toEqual([CHANNEL, CHANNEL_2]);
+  });
+
+  it.each(['general', `${CHANNEL},`, `${CHANNEL},,${CHANNEL_2}`, '#general'])('rejects malformed channel list %j', (value) => {
+    expect(() => loadConfig(env({ QUOKY_DISCORD_CHANNEL_IDS: value }))).toThrow('DISCORD_CHANNEL_IDS_INVALID');
+  });
+});
+
+describe('loadConfig — Ollama registration flag (ADR-0092)', () => {
+  it('defaults to enabled (opt-out) and accepts exact true/false', () => {
+    expect(loadConfig(env({})).ai.ollamaEnabled).toBe(true);
+    expect(loadConfig(env({ QUOKY_OLLAMA_ENABLED: 'true' })).ai.ollamaEnabled).toBe(true);
+    expect(loadConfig(env({ QUOKY_OLLAMA_ENABLED: 'false' })).ai.ollamaEnabled).toBe(false);
+  });
+
+  it('is never inferred from OLLAMA_MODEL / OLLAMA_CLI_BIN', () => {
+    expect(loadConfig(env({ OLLAMA_MODEL: '' })).ai.ollamaEnabled).toBe(true);
+    expect(loadConfig(env({ OLLAMA_MODEL: 'llama3.1', OLLAMA_CLI_BIN: '' })).ai.ollamaEnabled).toBe(true);
+    expect(loadConfig(env({ QUOKY_OLLAMA_ENABLED: 'false', OLLAMA_MODEL: 'llama3.1' })).ai.ollamaEnabled).toBe(false);
+  });
+
+  it.each(['', ' ', 'TRUE', 'False', '1', '0', 'yes', 'on', ' true'])('rejects non-exact value %j', (value) => {
+    expect(() => loadConfig(env({ QUOKY_OLLAMA_ENABLED: value }))).toThrow('OLLAMA_ENABLED_INVALID');
+  });
+});
+
+describe('loadConfig — Claude model (ADR-0092)', () => {
+  it('defaults to sonnet', () => {
+    expect(loadConfig(env({})).ai.claudeModel).toBe('sonnet');
+  });
+
+  it.each(['opus', 'claude-sonnet-4-5', 'claude-opus-4-1-20250805', 'sonnet[1m]', 'anthropic/claude:latest'])(
+    'accepts a bounded alias or model token %j',
+    (value) => {
+      expect(loadConfig(env({ QUOKY_CLAUDE_MODEL: value })).ai.claudeModel).toBe(value);
+    },
+  );
+
+  it.each(['', ' ', '--dangerously-skip-permissions', '-p', 'two words', 'a;b', 'sonnet\n', 'x'.repeat(129), '$(whoami)'])(
+    'rejects an unsafe or unbounded model %j',
+    (value) => {
+      expect(() => loadConfig(env({ QUOKY_CLAUDE_MODEL: value }))).toThrow('CLAUDE_MODEL_INVALID');
+    },
+  );
+});
+
+describe('loadConfig — git remote flag (ADR-0094)', () => {
+  it('defaults to false and accepts exact true/false', () => {
+    expect(loadConfig(env({})).git.remoteEnabled).toBe(false);
+    expect(loadConfig(env({ QUOKY_GIT_REMOTE_ENABLED: 'true' })).git.remoteEnabled).toBe(true);
+    expect(loadConfig(env({ QUOKY_GIT_REMOTE_ENABLED: 'false' })).git.remoteEnabled).toBe(false);
+  });
+
+  it('is not inferred from GitHub App or PAT configuration', () => {
+    expect(
+      loadConfig(env({ QUOKY_GITHUB_APP_ID: '1', QUOKY_GITHUB_APP_PRIVATE_KEY: 'k', QUOKY_GITHUB_TOKEN: 't' })).git.remoteEnabled,
+    ).toBe(false);
+  });
+
+  it.each(['', 'TRUE', '1', 'yes', ' false'])('rejects non-exact value %j', (value) => {
+    expect(() => loadConfig(env({ QUOKY_GIT_REMOTE_ENABLED: value }))).toThrow('GIT_REMOTE_ENABLED_INVALID');
+  });
+});
+
+describe('loadConfig — context budget', () => {
+  it('raises the default GENERAL_CHAT budget to 6000 estimated tokens', () => {
+    expect(loadConfig(env({})).contextBuilder.maxTokens).toBe(6000);
+  });
+
+  it('accepts a positive integer override and keeps the rest of the policy', () => {
+    const cfg = loadConfig(env({ QUOKY_CONTEXT_MAX_TOKENS: '2048' }));
+    expect(cfg.contextBuilder.maxTokens).toBe(2048);
+    expect(cfg.contextBuilder.compressionConfig).toEqual({ minimumCharactersPerEntry: 80 });
+    expect(cfg.contextBuilder.rankingEnabled).toBe(true);
+  });
+
+  it.each(['', '0', '-1', '1.5', '1e3', 'abc', ' 100', '200001', '99999999'])('rejects invalid budget %j', (value) => {
+    expect(() => loadConfig(env({ QUOKY_CONTEXT_MAX_TOKENS: value }))).toThrow('CONTEXT_MAX_TOKENS_INVALID');
+  });
+});
+
+describe('loadConfig — data paths resolve against the repository root, not the working directory', () => {
+  it('resolves the default relative db and vector paths to absolute repository-root paths', () => {
+    const cfg = loadConfig(env({}));
+    expect(path.isAbsolute(cfg.storage.dbPath)).toBe(true);
+    expect(cfg.storage.dbPath).toBe(path.resolve(repoRoot, 'data/chunsik.db'));
+    expect(cfg.vector.storePath).toBe(path.resolve(repoRoot, 'data/vectors'));
+  });
+
+  it('does not depend on process.cwd()', () => {
+    const before = loadConfig(env({})).storage.dbPath;
+    const original = process.cwd();
+    try {
+      process.chdir(path.sep);
+      expect(loadConfig(env({})).storage.dbPath).toBe(before);
+    } finally {
+      process.chdir(original);
+    }
+  });
+
+  it('resolves an explicit relative path the same way and leaves absolute and :memory: paths unchanged', () => {
+    expect(loadConfig(env({ QUOKY_DB_PATH: './var/q.db' })).storage.dbPath).toBe(path.resolve(repoRoot, 'var/q.db'));
+    expect(loadConfig(env({ QUOKY_DB_PATH: '/abs/q.db' })).storage.dbPath).toBe('/abs/q.db');
+    expect(loadConfig(env({ QUOKY_DB_PATH: ':memory:' })).storage.dbPath).toBe(':memory:');
+  });
 });

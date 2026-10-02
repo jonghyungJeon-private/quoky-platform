@@ -23,9 +23,12 @@ async function registryFrom(profiles: readonly AgentProfile[]): Promise<AgentPro
   }
 }
 
+// Personal edition requires an owner id (ADR-0091); unrelated to the profile settings under test.
+const OWNER_ID = '111111111111111111';
+
 describe('AgentProfileRegistry composition (M3E-6H, ADR-0089)', () => {
   it('resolves an empty composition-time registry with no configuration and no fallback agent', async () => {
-    const registry = await registryFrom(loadConfig({} as NodeJS.ProcessEnv).agentProfiles);
+    const registry = await registryFrom(loadConfig({ QUOKY_DISCORD_OWNER_IDS: OWNER_ID } as NodeJS.ProcessEnv).agentProfiles);
     expect(registry.list()).toEqual([]);
     // Unknown lookup stays fail-closed exactly as before, so continuation cannot proceed.
     expect(() => registry.get(agentProfileId('receiver'))).toThrow(/Unknown AgentProfile id/);
@@ -33,7 +36,7 @@ describe('AgentProfileRegistry composition (M3E-6H, ADR-0089)', () => {
 
   it('resolves an empty registry for an explicit empty array without activating anything', async () => {
     const registry = await registryFrom(
-      loadConfig({ QUOKY_AGENT_PROFILES: '[]' } as NodeJS.ProcessEnv).agentProfiles,
+      loadConfig({ QUOKY_DISCORD_OWNER_IDS: OWNER_ID, QUOKY_AGENT_PROFILES: '[]' } as NodeJS.ProcessEnv).agentProfiles,
     );
     expect(registry.list()).toEqual([]);
     expect(() => registry.get(agentProfileId('receiver'))).toThrow(/Unknown AgentProfile id/);
@@ -41,6 +44,7 @@ describe('AgentProfileRegistry composition (M3E-6H, ADR-0089)', () => {
 
   it('carries configured profiles through the composition root to the existing lookup path', async () => {
     const configured = loadConfig({
+      QUOKY_DISCORD_OWNER_IDS: OWNER_ID,
       QUOKY_AGENT_PROFILES: JSON.stringify([profile, { ...profile, id: 'source', displayName: 'Source' }]),
     } as NodeJS.ProcessEnv).agentProfiles;
     const registry = await registryFrom(configured);
