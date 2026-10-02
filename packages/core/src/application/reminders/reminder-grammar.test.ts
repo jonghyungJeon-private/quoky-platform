@@ -831,3 +831,61 @@ describe('reminder grammar — body hygiene', () => {
     expect(parse(message)).toEqual({ kind: 'NOT_REMINDER' });
   });
 });
+
+describe('reminder grammar — a generic 알려줘 information request is not a reminder (ADR-0101 D2)', () => {
+  it.each([
+    // A direct question: the time sits inside the question.
+    '내일 9시에 뭐 있어? 알려줘',
+    '9시에 뭐 있어 알려줘',
+    '내일 9시에 날씨 어때? 알려줘',
+    '3시에 회의실 어디야 알려줘',
+    '내일 3시에 회의 있나 알려줘',
+    '내일 9시에 회의 있어요? 알려줘',
+    '9시에 회의 몇 개 알려줘',
+    // An adnominal clause: the time binds the inner predicate, not the verb.
+    '9시에 오픈하는 식당 알려줘',
+    '9시에 출발하는 기차 알려줘',
+    '11시에 문 닫는 카페 알려줘',
+    '5시에 퇴근하는 법 알려줘',
+    '3시에 시작하는 회의 정보 알려줘',
+    '내일 10시에 출발할 버스 알려줘',
+    '3시에 끝난 회의 내용 알려줘',
+    // English has no generic `tell me` reminder verb.
+    "tell me what's at 9 tomorrow",
+    'tell me at 9 tomorrow what the weather is',
+  ])('%j → NOT_REMINDER', (message) => {
+    expect(parse(message)).toEqual({ kind: 'NOT_REMINDER' });
+  });
+
+  it.each([
+    ['내일 9시에 회의 준비 알려줘', '회의 준비', '2026-10-03T09:00'],
+    ['9시에 약 먹기 알려줘', '약 먹기', '2026-10-02T21:00'],
+    ['내일 9시에 뭐 있어 리마인드 해줘', '뭐 있어', '2026-10-03T09:00'], // an explicit reminder verb stays a reminder
+    ['내일 9시에 오픈하는 식당 리마인드 해줘', '오픈하는 식당', '2026-10-03T09:00'],
+    ['내일 9시에 날씨 어때 알림 줘', '날씨 어때', '2026-10-03T09:00'],
+    ['9시에 출근 준비 알려줘', '출근 준비', '2026-10-02T21:00'], // `출근` / `회의실` / `기한` end in ㄴ/ㄹ but are nouns
+    ['9시에 회의실 청소 알려줘', '회의실 청소', '2026-10-02T21:00'],
+    ['내일 9시에 유통기한 확인 알려줘', '유통기한 확인', '2026-10-03T09:00'],
+    ['9시에 역할 분담 알려줘', '역할 분담', '2026-10-02T21:00'],
+    ['9시에 언니 생일 알려줘', '언니 생일', '2026-10-02T21:00'],
+    ['9시에 할 일 알려줘', '할 일', '2026-10-02T21:00'],
+    ['9시에 마을 회의 알려줘', '마을 회의', '2026-10-02T21:00'],
+    ['내일 9시에 회의 알려줄래?', '회의', '2026-10-03T09:00'], // a `?` after the verb is a polite request
+    ['remind me at 9 tomorrow to X', 'X', '2026-10-03T09:00'],
+  ])('%j stays CREATE %j at %s', (message, body, local) => {
+    expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
+  });
+
+  it('a daily brief with a generic 알려줘 stays CREATE', () => {
+    expect(parse('매일 아침 8시에 오늘 할 일 알려줘')).toMatchObject({
+      kind: 'CREATE',
+      body: '오늘 할 일',
+      bodyKind: 'BRIEF',
+      schedule: { type: 'DAILY', time: { hour: 8, minute: 0 } },
+    });
+  });
+
+  it('a bound duration with no body stays a reminder (CLARIFY EMPTY_BODY), not chat', () => {
+    expect(parse('30분 뒤에 알려줘')).toEqual({ kind: 'CLARIFY', reason: 'EMPTY_BODY' });
+  });
+});

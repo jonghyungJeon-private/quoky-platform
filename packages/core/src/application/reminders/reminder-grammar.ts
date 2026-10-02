@@ -25,6 +25,9 @@ import {
  *
  * - CREATE needs a reminder verb (`알려줘`, `리마인드 해줘`, `알림 줘`, `remind me`, …) that is not negated, plus a time
  *   expression bound to it: Korean by `에` / `뒤에` / `후에`, English by `at` / `in` / `on` / `tomorrow` / `every`.
+ *   The generic `알려줘` is also an information request: with a direct question as the body (`9시에 뭐 있어? 알려줘`,
+ *   `내일 3시에 회의 있나 알려줘`) or the time bound to an adnominal clause (`9시에 오픈하는 식당 알려줘`,
+ *   `11시에 문 닫는 카페 알려줘`) it is `NOT_REMINDER`; the explicit verbs (`리마인드 해줘`, `알림 줘`) stay reminders.
  *   A Korean verb is a closed imperative form ending the word: inflected, past, permissive or noun uses
  *   (`알려줘서`, `알려줘도 돼`, `알려주라고 했는데`, `리마인드 메일`, `리마인드됐어`) are not requests, nor are
  *   `안 알려줘`, `필요 없어`, `no need to remind me`, `you forgot to remind me`.
@@ -797,6 +800,60 @@ function isKoEmbeddedQuestion(body: string): boolean {
 }
 
 /**
+ * A direct question as the body of a generic `알려줘` (`9시에 뭐 있어? 알려줘`, `3시에 회의실 어디야 알려줘`, `내일 3시에
+ * 회의 있나 알려줘`): the time sits inside the question, so it is an information request, not a reminder. A wh-word
+ * must open a word; a question ending is matched on the body's last word (a polite `요` aside) and limited to
+ * predicate forms so nouns (`언니`, `바나나`, `분야`) are not read as questions.
+ */
+const KO_WH_WORD_START = /(?:^|\s)(?:뭐|뭘|뭔|무엇|무슨|어디|언제|누가|누구|몇|어때|어떄|어떻게|어떤|어느|왜|얼마)/;
+const KO_QUESTION_ENDING =
+  /(?:어때|어떄|까|냐|(?:있|없|했|됐|맞|좋|많|괜찮|갔|왔|있었|없었)(?:어|나|니|지)|(?:되|오)(?:나|니)|(?:이|거|건)야|(?:인|일|건)가)$/;
+
+function isKoDirectQuestion(body: string, beforeVerb: string): boolean {
+  if (/[?？]/.test(beforeVerb)) return true;
+  if (KO_WH_WORD_START.test(body)) return true;
+  return KO_QUESTION_ENDING.test(body.replace(/요$/, ''));
+}
+
+/** Two-syllable nouns ending in `한`/`할` that are not `하다` adnominals (`기한 확인`, `역할 분담`). */
+const KO_HAN_NOUN = /(?:기한|제한|권한|시한|무한|유한|역할|분할)$/;
+const KO_ADNOMINAL_NEUN_STEM = /(?:하|되|가|오|보|타|열리|끝나|만나|떠나|닫히)는$/;
+const KO_ADNOMINAL_EUN = /(?:먹|닫|받|읽|찾|넣|잡|앉|좋|많|작|높|낮|같|괜찮)은$/;
+const KO_ADNOMINAL_EUL = /(?:먹|닫|받|읽|찾|있|없|넣|씻|잡|앉)을$/;
+const KO_ADNOMINAL_IRREGULAR = /(?:열릴|열린|끝날|끝난|만날|만난|떠날|떠난|걸릴|걸린)$/;
+/** One-syllable adnominals (`갈 곳`, `올 버스`); `할`/`한`/`줄` are left out (`할 일`, `한 번`, `줄 서기`). */
+const KO_ADNOMINAL_SINGLE = new Set(['갈', '간', '올', '온', '볼', '본', '탈', '탄', '될', '된']);
+
+/**
+ * A Hangul adnominal predicate (`오픈하는`, `닫는`, `출발할`, `시작한`, `먹은`, `가던`): a following noun makes the
+ * preceding time bind that inner clause (`9시에 오픈하는 식당`), not the reminder verb.
+ */
+function isKoAdnominal(word: string): boolean {
+  if (!/^[가-힣]+$/.test(word)) return false;
+  if (word.length === 1) return KO_ADNOMINAL_SINGLE.has(word);
+  if (word.endsWith('던')) return word !== '런던';
+  if (word.endsWith('는')) return hasBatchim(word.slice(-2, -1)) || KO_ADNOMINAL_NEUN_STEM.test(word);
+  if (KO_ADNOMINAL_EUN.test(word) || KO_ADNOMINAL_EUL.test(word) || KO_ADNOMINAL_IRREGULAR.test(word)) return true;
+  const last = word.slice(-1);
+  const final = finalConsonant(last);
+  if (final !== 4 && final !== 8) return false;
+  const open = String.fromCharCode(last.charCodeAt(0) - final);
+  return (open === '하' || open === '되') && !KO_HAN_NOUN.test(word);
+}
+
+/**
+ * Whether the bound time is directly followed by an adnominal clause that a noun completes: the first word after
+ * the time (`9시에 오픈하는 식당`) or the second one after its argument (`11시에 문 닫는 카페`). A predicate further
+ * away has its own modifier (`9시에 3일 동안 먹을 약`) and does not take the time.
+ */
+function hasKoAdnominalClause(region: string): boolean {
+  const words = region
+    .split(new RegExp(`[\\s.,!?~${WRAP}]+`))
+    .filter((w) => w.length > 0);
+  return words.slice(0, Math.min(2, words.length - 1)).some(isKoAdnominal);
+}
+
+/**
  * The sentence holding every used span, as a same-length copy of `text` with the other sentences blanked (`… 알려줘.
  * 고마워` → the thanks is not body). Null when the spans cross a sentence end.
  */
@@ -902,12 +959,19 @@ function parseKorean(text: string, ctx: ResolveContext): ReminderCommand {
   }
   if (expressions.some((e) => !used.includes(e))) return clarify('AMBIGUOUS_TIME');
 
-  const resolved = resolveSpec(spec, ctx);
-  if (!resolved.ok) return clarify(resolved.reason);
-
   const spans = [...used, verbSpan];
   const sentence = koSentenceWindow(text, spans) ?? text;
   const body = cleanBody(stripKoTrailingParticles(cleanBody(stripKoSelfAddressee(removeSpans(sentence, spans)))));
+  if (!strongVerb) {
+    // A generic `알려줘` is also an information request: a question (`9시에 뭐 있어 알려줘`) or a time bound to an inner
+    // clause (`9시에 오픈하는 식당 알려줘`) falls through to chat. Explicit reminder verbs stay reminders.
+    const afterTime = verbSpan.start >= core.end ? text.slice(core.end, verbSpan.start) : text.slice(core.end);
+    if (isKoDirectQuestion(body, text.slice(0, verbSpan.start)) || hasKoAdnominalClause(afterTime)) return NOT_REMINDER;
+  }
+
+  const resolved = resolveSpec(spec, ctx);
+  if (!resolved.ok) return clarify(resolved.reason);
+
   if (isKoEmbeddedQuestion(body)) return NOT_REMINDER;
   const bodyKind = bodyKindOf(body);
   if (bodyKind === 'TEXT') {
