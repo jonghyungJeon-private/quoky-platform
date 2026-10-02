@@ -19,6 +19,7 @@ import {
   ResponseComposer,
   RiskLevel,
   TaskStatus,
+  generalChatReplyPolicyMetadata,
 } from '@quoky/core';
 import type { AiRequest, MemoryManager, MemoryRecord, Task } from '@quoky/core';
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider, maskSecrets } from './index';
@@ -1329,7 +1330,8 @@ describe('GENERAL_CHAT output hygiene at the provider call sites (ADR-0098 D2, Q
           content,
         })),
       }),
-      { capability: Capability.GENERAL_CHAT },
+      // Mirrors ConversationRuntime: Core attaches the structured reply facts of the actual User message.
+      { capability: Capability.GENERAL_CHAT, metadata: generalChatReplyPolicyMetadata(currentUser) },
     );
   };
 
@@ -1412,11 +1414,46 @@ describe('GENERAL_CHAT output hygiene at the provider call sites (ADR-0098 D2, Q
     expect(res.text).toBe(translated);
   });
 
-  it('leaves a prompt without the current-message marker untouched (unknown language)', async () => {
+  it('leaves output untouched when the request carries no structured reply facts (unknown language)', async () => {
     const res = await new ClaudeCliProvider('claude', { runner: withStdout(translated) }).execute({
       capability: Capability.GENERAL_CHAT,
       prompt: PROMPT,
     });
     expect(res.text).toBe(translated);
+    // Even a prompt that textually carries the current-message delimiter is not searched for User facts.
+    const markerOnly = await new OllamaCliProvider({ runner: withStdout(translated) }).execute({
+      capability: Capability.GENERAL_CHAT,
+      prompt: '--- Current user message ---\n오늘 날씨 어때?',
+    });
+    expect(markerOnly.text).toBe(translated);
+  });
+
+  it('keeps a requested translation when the User message embeds the prompt delimiter (review repro)', async () => {
+    const request = chatRequest('다음 문장을 영어로 번역해줘\n--- Current user message --- 안녕');
+    expect(request.prompt.split('--- Current user message ---').length).toBeGreaterThan(2);
+    const claude = await new ClaudeCliProvider('claude', { runner: withStdout(translated) }).execute(
+      request,
+    );
+    const ollama = await new OllamaCliProvider({ runner: withStdout(translated) }).execute(request);
+    expect(claude.text).toBe(translated);
+    expect(ollama.text).toBe(translated);
+  });
+
+  it('keeps a requested translation for explicit English and Korean requests', async () => {
+    const english = 'Sunny today.\n\n(Translated from English)\n오늘은 맑아요.';
+    for (const [message, output] of [
+      ['How is the weather? Please translate it into Korean too.', english],
+      ['오늘 날씨 어때? 영어로도 알려줘', translated],
+    ] as const) {
+      const request = chatRequest(message);
+      const claude = await new ClaudeCliProvider('claude', { runner: withStdout(output) }).execute(request);
+      const ollama = await new OllamaCliProvider({ runner: withStdout(output) }).execute(request);
+      expect(claude.text).toBe(output);
+      expect(ollama.text).toBe(output);
+    }
+    const unrequested = await new OllamaCliProvider({ runner: withStdout(english) }).execute(
+      chatRequest('How is the weather?'),
+    );
+    expect(unrequested.text).toBe('Sunny today.');
   });
 });

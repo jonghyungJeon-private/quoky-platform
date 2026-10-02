@@ -57,6 +57,52 @@ export function hasExplicitLanguageRequest(text: string): boolean {
   return EXPLICIT_LANGUAGE_REQUEST.test(text);
 }
 
+/**
+ * Structured reply facts Core derives from the actual current User message for one GENERAL_CHAT turn. Adapters read
+ * this from `AiRequest.metadata` instead of re-deriving it from the serialized prompt, whose text can contain
+ * User-supplied copies of any template delimiter.
+ */
+export interface GeneralChatReplyPolicy {
+  readonly replyLanguage: ReplyLanguage;
+  /** True when the current User message asks for a specific reply language or for a translation. */
+  readonly explicitLanguageRequest: boolean;
+}
+
+/** The `AiRequest.metadata` key under which Core passes the `GeneralChatReplyPolicy` of a GENERAL_CHAT turn. */
+export const GENERAL_CHAT_REPLY_POLICY_METADATA_KEY = 'generalChatReplyPolicy';
+
+/** Derive the reply facts for one GENERAL_CHAT turn from the current User message. */
+export function generalChatReplyPolicy(currentUserMessage: string): GeneralChatReplyPolicy {
+  return Object.freeze({
+    replyLanguage: detectReplyLanguage(currentUserMessage),
+    explicitLanguageRequest: hasExplicitLanguageRequest(currentUserMessage),
+  });
+}
+
+/** `AiRequest.metadata` carrying the reply facts for one GENERAL_CHAT turn. */
+export function generalChatReplyPolicyMetadata(
+  currentUserMessage: string,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    [GENERAL_CHAT_REPLY_POLICY_METADATA_KEY]: generalChatReplyPolicy(currentUserMessage),
+  });
+}
+
+/**
+ * Read the reply facts from `AiRequest.metadata`. Returns `undefined` when absent or malformed, which callers treat as
+ * "unknown language" (no language-dependent output rewriting).
+ */
+export function readGeneralChatReplyPolicy(
+  metadata: Readonly<Record<string, unknown>> | undefined,
+): GeneralChatReplyPolicy | undefined {
+  const value: unknown = metadata?.[GENERAL_CHAT_REPLY_POLICY_METADATA_KEY];
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { replyLanguage, explicitLanguageRequest } = value as Record<string, unknown>;
+  if (replyLanguage !== 'ko' && replyLanguage !== 'en' && replyLanguage !== 'unknown') return undefined;
+  if (typeof explicitLanguageRequest !== 'boolean') return undefined;
+  return Object.freeze({ replyLanguage, explicitLanguageRequest });
+}
+
 const REPLY_LANGUAGE_NAME: Readonly<Record<Exclude<ReplyLanguage, 'unknown'>, string>> = Object.freeze({
   ko: 'Korean (ko)',
   en: 'English (en)',

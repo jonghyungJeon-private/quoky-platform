@@ -10,10 +10,14 @@ export {
   CHAT_NO_UNREQUESTED_TRANSLATION_RULE,
   ENGLISH_LETTER_SHARE_THRESHOLD,
   GENERAL_CHAT_POLICY_RULES,
+  GENERAL_CHAT_REPLY_POLICY_METADATA_KEY,
   KOREAN_LETTER_SHARE_THRESHOLD,
   detectReplyLanguage,
+  generalChatReplyPolicy,
+  generalChatReplyPolicyMetadata,
   hasExplicitLanguageRequest,
+  readGeneralChatReplyPolicy,
   renderGeneralChatPolicyRules,
   replyLanguageFact,
 } from './chat-response-policy';
-export type { ReplyLanguage } from './chat-response-policy';
+export type { GeneralChatReplyPolicy, ReplyLanguage } from './chat-response-policy';

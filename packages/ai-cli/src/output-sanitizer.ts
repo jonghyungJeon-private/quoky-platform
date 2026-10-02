@@ -1,4 +1,5 @@
-import { detectReplyLanguage, hasExplicitLanguageRequest } from '@quoky/core';
+import { detectReplyLanguage } from '@quoky/core';
+import type { GeneralChatReplyPolicy } from '@quoky/core';
 
 const ESC = 0x1b;
 const BEL = 0x07;
@@ -186,27 +187,6 @@ function decodeContentLine(line: string): string | null {
   }
 }
 
-const CURRENT_USER_MESSAGE_MARKER = '--- Current user message ---';
-
-/**
- * Recover the current User message from a rendered GENERAL_CHAT prompt: the text after the last
- * `--- Current user message ---` marker, unwrapped from the label envelope when present. Returns `undefined` when
- * the prompt carries no such marker (non-chat prompts), which downstream treats as an unknown language.
- */
-export function extractCurrentUserMessage(prompt: string): string | undefined {
-  const markerIndex = prompt.lastIndexOf(CURRENT_USER_MESSAGE_MARKER);
-  if (markerIndex < 0) return undefined;
-  const body = prompt.slice(markerIndex + CURRENT_USER_MESSAGE_MARKER.length).trim();
-  if (body === '') return undefined;
-  try {
-    const envelope = JSON.parse(body) as Record<string, unknown>;
-    if (typeof envelope.content === 'string') return envelope.content;
-  } catch {
-    // Not a label envelope: use the raw text.
-  }
-  return body;
-}
-
 // Marker matching is per line and only on prose lines (never inside fenced or indented code). Up to three leading
 // spaces, as in a Markdown paragraph; a deeper indent is an indented code block, not a heading.
 const TRANSLATION_MARKER_LINE =
@@ -278,19 +258,20 @@ function endsInsideInlineCode(prose: string): boolean {
 
 /**
  * Remove a final, explicitly marked translation block that the User did not ask for (e.g. a trailing
- * "(Translated from Korean)" section). Only when: the User message has a detectable language and carries no
- * language or translation request; the marker is a prose line outside any fenced, indented or inline code; the
+ * "(Translated from Korean)" section). The User-side facts come only from Core's structured `GeneralChatReplyPolicy`
+ * (`AiRequest.metadata`), never from searching the serialized prompt. Only when: the User message has a detectable
+ * language and carries no language or translation request; the marker is a prose line outside any fenced, indented or inline code; the
  * marked block runs to the end of the text and is prose only (no code block); the text before the marker is in the
  * User language; and the marked block is in the other script. Code is never inspected for markers or stripped, and an
  * unbalanced fence disables stripping entirely. Otherwise the text is returned unchanged.
  */
 export function stripUnsolicitedTranslationBlock(
   text: string,
-  currentUserMessage: string | undefined,
+  replyPolicy: GeneralChatReplyPolicy | undefined,
 ): string {
-  if (currentUserMessage === undefined) return text;
-  const userLanguage = detectReplyLanguage(currentUserMessage);
-  if (userLanguage === 'unknown' || hasExplicitLanguageRequest(currentUserMessage)) return text;
+  if (replyPolicy === undefined) return text;
+  const userLanguage = replyPolicy.replyLanguage;
+  if (userLanguage === 'unknown' || replyPolicy.explicitLanguageRequest) return text;
 
   const lines = classifyLines(text);
   if (lines === null) return text;
@@ -354,6 +335,6 @@ export function normalizeLiteralEscapes(text: string): string {
 }
 
 /** Provider-neutral GENERAL_CHAT output hygiene applied after `stripInternalMetadataEnvelope` (ADR-0098 D2). */
-export function sanitizeGeneralChatText(output: string, currentUserMessage?: string): string {
-  return stripUnsolicitedTranslationBlock(normalizeLiteralEscapes(output), currentUserMessage);
+export function sanitizeGeneralChatText(output: string, replyPolicy?: GeneralChatReplyPolicy): string {
+  return stripUnsolicitedTranslationBlock(normalizeLiteralEscapes(output), replyPolicy);
 }

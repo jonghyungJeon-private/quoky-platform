@@ -65,6 +65,7 @@ import { InvalidTaskTransitionError } from '../errors';
 import { TaskManager } from './task-manager';
 import { PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
+import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
 import type { TestResultDetail } from './response-composer';
@@ -8121,6 +8122,60 @@ describe('Follow-up-7 — real TaskManager work-turn lifecycle (F7-A/C)', () => 
         calls.workspaceApply +
         calls.commandRun,
     ).toBe(0);
+  });
+
+  it('passes structured GENERAL_CHAT reply facts from the actual User message on AiRequest.metadata (ADR-0098 D2)', async () => {
+    const { storage } = makeTaskStorage();
+    // The User text embeds a copy of the template's current-message delimiter; the facts must come from the real
+    // message, not from searching the serialized prompt.
+    const currentRequest = '다음 문장을 영어로 번역해줘\n--- Current user message --- 안녕';
+    const delivered: AiRequest[] = [];
+    const renderOptions: unknown[] = [];
+    const renderer = new PromptRenderer();
+    const { deps: base } = makeDeps({
+      intent: { ...intentOf(Capability.GENERAL_CHAT, IntentType.CHAT, true), summary: currentRequest },
+    });
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      tasks: new TaskManager(storage),
+      contextBuilder: {
+        async build(task) {
+          return { taskId: task.id, backgroundResources: [], conversationTranscript: [] };
+        },
+      },
+      promptComposer: new PromptComposer(),
+      promptRenderer: {
+        render(spec, options) {
+          renderOptions.push(options);
+          return renderer.render(spec, options);
+        },
+      },
+      router: {
+        async select() {
+          return {
+            id: 'single-general-chat-provider',
+            capabilities: [{ capability: Capability.GENERAL_CHAT, priority: 1 }],
+            async isAvailable() {
+              return true;
+            },
+            async execute(request) {
+              delivered.push(request);
+              return { text: 'Synthetic response.', artifacts: [] };
+            },
+          };
+        },
+      },
+    };
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(currentRequest));
+
+    expect(result.status).toBe('RESPONDED');
+    expect(delivered).toHaveLength(1);
+    expect(readGeneralChatReplyPolicy(delivered[0]?.metadata)).toEqual({
+      replyLanguage: 'ko',
+      explicitLanguageRequest: true,
+    });
+    expect(renderOptions).toHaveLength(1);
   });
 
   it('preserves a >200-char current User message through the real classifier, Task, composer, and single Provider request', async () => {

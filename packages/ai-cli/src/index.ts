@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { AiFailureKind, AiProviderError, ArtifactKind, newId, now } from '@quoky/core';
+import {
+  AiFailureKind,
+  AiProviderError,
+  ArtifactKind,
+  newId,
+  now,
+  readGeneralChatReplyPolicy,
+} from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionResult,
@@ -11,7 +18,6 @@ import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { defaultCliRunner, maskSecrets } from './cli-runner';
 import type { CliRunner } from './cli-runner';
 import {
-  extractCurrentUserMessage,
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
   stripInternalMetadataEnvelope,
@@ -385,7 +391,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const text = (request.capability === Capability.GENERAL_CHAT
       ? sanitizeGeneralChatText(
           stripInternalMetadataEnvelope(sanitizedOutput),
-          extractCurrentUserMessage(request.prompt),
+          readGeneralChatReplyPolicy(request.metadata),
         )
       : sanitizedOutput
     ).trim();
@@ -598,7 +604,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
             stripInternalMetadataEnvelope(sanitizedOutput),
             request.prompt,
           ),
-          extractCurrentUserMessage(request.prompt),
+          readGeneralChatReplyPolicy(request.metadata),
         )
       : sanitizedOutput
     ).trim();
