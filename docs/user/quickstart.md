@@ -277,6 +277,7 @@ pnpm dev
 | Ollama로 대화하는데 앞의 대화/기억을 자주 잊음 | Ollama 서버가 기본 4096 토큰 창으로 모델을 실행하는데 Quoky 기본 예산은 약 6000 토큰. `ollama serve`를 실행하는 환경에 `OLLAMA_CONTEXT_LENGTH=8192`를 설정해 서버를 다시 시작하거나, `.env.local`의 `QUOKY_CONTEXT_MAX_TOKENS`를 4096보다 충분히 낮게 설정 (5절) |
 | `ollama list`에 모델이 있는데 로그에 `provider not ready` (ollama) | `OLLAMA_MODEL`의 태그가 설치된 모델과 다름 (예: `llama3.1`로 지정했는데 `llama3.1:8b`만 설치됨). `ollama list`에 보이는 이름 그대로(`OLLAMA_MODEL=llama3.1:8b`) 설정 |
 | `claude`가 API 과금을 일으킬까 걱정됨 | `env | grep ANTHROPIC | cut -d= -f1`로 확인하고 `unset ANTHROPIC_API_KEY` |
+| 코드 수정 미리보기가 "이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요"로 거절됨 | 비밀번호·토큰·API 키 같은 이름의 키에 실제 값이 적힌 파일(예: `password: "..."`, `API_KEY=...`)은 안전을 위해 보수적으로 거절함 (값이 무해해 보여도 거절될 수 있음). 값을 환경 변수(`process.env.API_KEY`, `${API_KEY}`)나 비밀 저장소로 옮긴 뒤 다시 요청 |
 | 큰 미리보기가 안 보임 | 봇에 **Attach Files** 권한이 없을 수 있음 (2절 4번) |
 | `pnpm install`에서 `better-sqlite3` 빌드 실패 | 네이티브 빌드 도구 설치 (1절) |
 

@@ -57,54 +57,176 @@ export function containsCredentialMaterial(text: string): boolean {
   );
 }
 
-/** File keys: {@link EN_KEYWORD} minus pin/otp/card number (`pin: 13` is routine hardware/config). */
-const FILE_KEYWORD =
-  '(?:password|passwd|pwd|passcode|pass\\s?phrase|api[\\s_-]?key|access[\\s_-]?(?:key|token)|auth[\\s_-]?token|token|secret(?:[\\s_-]?key)?|private[\\s_-]?key)';
-/** A credential-named key (any identifier prefix, optionally quoted) and its separator. */
-const FILE_KEY = `(?<![A-Za-z0-9])${FILE_KEYWORD}${KEY_QUOTE}[ \\t]*(?:=(?![=>])|:)[ \\t]*`;
-/** `password = "x"`, `"private_key": "x"`, `token: 'x'` — a quoted, non-empty, whitespace-free literal. */
-const FILE_QUOTED_ASSIGNMENT = new RegExp(`${FILE_KEY}(["'\`])([^"'\`\\s]+)\\1`, 'giu');
 /**
- * Line-oriented unquoted value (.env / YAML / INI / properties): `DB_PASSWORD=hunter2`, `password: x`.
- * Restricted to a whole-line `key<sep>value` whose value carries no code punctuation, so source like
- * `token = getToken();` or `password: string;` does not match.
+ * FILE-content guard ("refuse rather than leak"). Deliberately conservative: a credential-named key
+ * followed by an assignment operator and ANY literal value refuses the file. Only the explicit
+ * reference forms below pass; everything else that looks like a value (bare identifiers, dotted
+ * names, numbers, quoted text of any shape) counts as a literal. Known, accepted false positives:
+ * `{ token: 'identifier' }`, `this.token = token`, `token = settings.API_TOKEN`.
  */
-const FILE_UNQUOTED_ASSIGNMENT = new RegExp(
-  `^[ \\t]*(?:export[ \\t]+)?["']?[A-Za-z0-9_.-]*?${FILE_KEY}([^\\s"'\`#;,(){}\\[\\]<>$%]+)[ \\t]*(?:#.*)?$`,
-  'gimu',
-);
-/** Placeholder / type-name / self-named values that are not secrets (quoted or not). */
-const PLACEHOLDER_VALUE = new RegExp(
-  [
-    '^(?:\\$|\\{\\{|<|%)',
-    '^(?:string|number|boolean|null|undefined|none|nil|true|false|any|unknown|str|int|bytes|optional|required|redacted|x{3,}|\\*+)$',
-    `^${EN_KEYWORD}$`,
-  ].join('|'),
-  'iu',
-);
-/** Unquoted dotted identifiers are code references (`settings.API_TOKEN`, `process.env.TOKEN`). */
-const CODE_REFERENCE_VALUE = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/u;
 
-function hasSecretAssignment(pattern: RegExp, text: string, valueGroup: number, unquoted: boolean): boolean {
-  for (const m of text.matchAll(pattern)) {
-    const value = m[valueGroup] ?? '';
-    if (!value || PLACEHOLDER_VALUE.test(value)) continue;
-    if (unquoted && CODE_REFERENCE_VALUE.test(value)) continue;
-    return true;
+/** Any key token, quoted (may hold spaces/Korean) or bare (identifier chars, dots, dashes), plus operator. */
+const FILE_KEY_ASSIGNMENT = new RegExp(
+  `(?:(["'\`])([^"'\`\\n]{1,64})\\1|(?<![\\p{L}\\p{N}_$.\\-])([\\p{L}\\p{N}_$\\-][\\p{L}\\p{N}_$.\\-]*)(["'\`]?))` +
+    `[ \\t]*(\\?)?[ \\t]*(:=|=>|=(?!=)|:(?!:))`,
+  'gu',
+);
+/** Key word segments (camelCase / snake / kebab / dotted split) that name a credential. */
+const CREDENTIAL_KEY_WORDS = new Set([
+  'password', 'passwords', 'passwd', 'pwd', 'pass', 'passcode', 'passphrase', 'secret', 'secrets',
+  'token', 'tokens', 'auth', 'credential', 'credentials', 'apikey', 'apikeys', 'accesskey', 'privatekey',
+]);
+const CREDENTIAL_KEY_PAIRS = new Set(['api key', 'access key', 'private key']);
+const KO_CREDENTIAL_KEY = /(?:비밀\s?번호|패스워드|비번|암호|토큰|시크릿|(?:^|[^가-힣]|액세스|비밀|개인|인증)키)$/u;
+/** `maxTokens: 4096`, `token_ttl: 3600` — counts, not credentials (numeric values only). */
+const TOKEN_COUNT_WORDS = new Set([
+  'max', 'min', 'num', 'total', 'count', 'limit', 'budget', 'usage', 'input', 'output', 'prompt',
+  'completion', 'ttl', 'expiry', 'expires', 'length', 'len', 'size',
+]);
+
+const VALUE_END = /^[ \t]*(?:$|\r?\n|[,;)\]}])/u;
+/** The value token ends here: end of line, a separator/closer, or a trailing comment. */
+const TOKEN_END = '(?=[ \\t]*(?:$|\\r?\\n|[,;)\\]}#]|//))';
+const TEMPLATE_PLACEHOLDER = /\$\{[^}\n]*\}|\{\{[^}\n]*\}\}|%\([^)\n]*\)s/gu;
+const ENV_REFERENCE = /^(?:process\.env|import\.meta\.env|os\.environ|ENV)(?![\w$])(?:\??\.[\w$]+|\[[^\]\n]*\])*/u;
+const CALL_EXPRESSION = /^(?:(?:await|new)\s+)?[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*[ \t]*\(/u;
+const KEYWORD_LITERAL = new RegExp(`^(?:true|false|null|undefined|none|nil)${TOKEN_END}`, 'iu');
+const NUMERIC_LITERAL = new RegExp(`^-?\\d[\\d_]*(?:\\.\\d+)?${TOKEN_END}`, 'u');
+const FALLBACK_OPERATOR = /^[ \t]*(?:\?\?|\|\||or\b)[ \t]*/u;
+const TYPE_ATOM =
+  '(?:[A-Z][\\w$]*(?:\\.[A-Z][\\w$]*)*|string|number|boolean|bigint|symbol|object|unknown|any|never|void|undefined|null|str|int|float|bool|bytes)' +
+  '(?:<[^<>\\n]*>|\\[[^\\[\\]\\n]*\\])?(?:\\[\\])*';
+const TYPE_ANNOTATION = new RegExp(
+  `^${TYPE_ATOM}(?:[ \\t]*\\|[ \\t]*${TYPE_ATOM})*(?=[ \\t]*(?:$|\\r?\\n|[;,)=]))`,
+  'u',
+);
+const TYPE_DECLARATION_HEAD = /\b(?:interface|class)\s+[\w$]+[^{};=]*$|\btype\s+[\w$]+(?:<[^>]*>)?\s*=\s*$/u;
+
+function keyWordSegments(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter(Boolean);
+}
+
+/** 'count' for token-count keys (`maxTokens`), true for other credential keys, false otherwise. */
+function classifyKey(key: string): boolean | 'count' {
+  const words = keyWordSegments(key);
+  const credential = words.filter(
+    (w, i) => CREDENTIAL_KEY_WORDS.has(w) || CREDENTIAL_KEY_PAIRS.has(`${w} ${words[i + 1] ?? ''}`),
+  );
+  if (credential.length === 0) return KO_CREDENTIAL_KEY.test(key.trim());
+  const onlyTokens = credential.every((w) => w === 'token' || w === 'tokens');
+  return onlyTokens && words.some((w) => TOKEN_COUNT_WORDS.has(w)) ? 'count' : true;
+}
+
+/** Nearest unclosed `(` (parameter list) or `{` opened by an interface/class/type declaration. */
+function inTypeContext(src: string, keyStart: number): boolean {
+  let depth = 0;
+  for (let i = keyStart - 1; i >= Math.max(0, keyStart - 4000); i--) {
+    const c = src[i];
+    if (c === '}' || c === ')') depth++;
+    else if (c === '{' || c === '(') {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      return c === '(' || TYPE_DECLARATION_HEAD.test(src.slice(Math.max(0, i - 200), i));
+    }
   }
   return false;
 }
 
+function quotedContent(value: string): string {
+  const q = value[0];
+  let out = '';
+  for (let i = 1; i < value.length; i++) {
+    const c = value[i];
+    if (c === '\\') {
+      out += value[++i] ?? '';
+    } else if (c === q || (c === '\n' && q !== '`')) {
+      break;
+    } else out += c;
+  }
+  return out;
+}
+
+function closingParen(value: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < value.length; i++) {
+    if (value[i] === '(') depth++;
+    else if (value[i] === ')' && --depth === 0) return i + 1;
+  }
+  return value.length;
+}
+
+interface ValueContext {
+  readonly typePosition: boolean;
+  readonly typeContext: () => boolean;
+  readonly countKey: boolean;
+}
+
+/** True when the value starting at `value` is a literal (i.e. not an explicit reference form). */
+function isLiteralValue(value: string, ctx: ValueContext, depth = 0): boolean {
+  if (depth > 3) return true;
+  let v = value.replace(/^[ \t]*(?:[[(][ \t]*)*/u, '');
+  if (VALUE_END.test(v)) return false;
+  const quoted = /^(?:[rbuf]{1,2}(?=["'`]))?(["'`])/iu.exec(v);
+  if (quoted) {
+    return quotedContent(v.slice(quoted[0].length - 1)).replace(TEMPLATE_PLACEHOLDER, '').trim() !== '';
+  }
+  const placeholders = /^(?:\$\{[^}\n]*\}|\{\{[^}\n]*\}\}|%\([^)\n]*\)s)+/u.exec(v);
+  if (placeholders) return !VALUE_END.test(v.slice(placeholders[0].length));
+  // A nested object/block: its own keys are scanned separately.
+  if (v.startsWith('{')) return false;
+  if (KEYWORD_LITERAL.test(v)) return false;
+  if (ctx.countKey && NUMERIC_LITERAL.test(v)) return false;
+  const call = CALL_EXPRESSION.exec(v);
+  const env = call ? null : ENV_REFERENCE.exec(v);
+  if (call || env) {
+    const rest = v.slice(call ? closingParen(v, call[0].length - 1) : (env?.[0].length ?? 0));
+    const fallback = FALLBACK_OPERATOR.exec(rest);
+    return fallback ? isLiteralValue(rest.slice(fallback[0].length), ctx, depth + 1) : false;
+  }
+  if (ctx.typePosition) {
+    const type = TYPE_ANNOTATION.exec(v);
+    if (type) {
+      const named = type[0]
+        .split('|')
+        .some((atom) => /^[A-Z]/u.test(atom.trim()) && !/^None\b/u.test(atom.trim()));
+      if (named && !ctx.typeContext()) return true;
+      v = v.slice(type[0].length);
+      const defaultValue = /^[ \t]*=(?!=)/u.exec(v);
+      return defaultValue ? isLiteralValue(v.slice(defaultValue[0].length), ctx, depth + 1) : false;
+    }
+  }
+  return true;
+}
+
 /**
  * True when workspace FILE content carries credential material: a private-key block, a vendor
- * key/token, or a credential-named key assigned a literal value (JSON / YAML / .env / code string
- * literal). Korean prose and card-number shapes are deliberately not scanned here (docs/comments and
- * numeric literals would trip them); references like `${DB_PASSWORD}` or `process.env.TOKEN` pass.
+ * key/token, or a credential-named key (password/secret/token/api key/auth/credentials …, any
+ * prefix/suffix; Korean 비밀번호/암호/토큰/키) assigned any literal with `:`, `=`, `=>`, or `:=`.
+ * Reference forms pass: env lookups, call expressions, `${…}`/`{{…}}`/`%(…)s` placeholders, type
+ * annotations, comparisons, empty values, and booleans/null. Korean prose and card-number shapes
+ * are not scanned here.
  */
 export function containsCredentialFileContent(content: string): boolean {
-  return (
-    SECRET_TOKEN_SHAPED.test(content) ||
-    hasSecretAssignment(FILE_QUOTED_ASSIGNMENT, content, 2, false) ||
-    hasSecretAssignment(FILE_UNQUOTED_ASSIGNMENT, content, 1, true)
-  );
+  if (SECRET_TOKEN_SHAPED.test(content)) return true;
+  for (const m of content.matchAll(FILE_KEY_ASSIGNMENT)) {
+    const key = m[2] ?? m[3] ?? '';
+    const kind = classifyKey(key);
+    if (!kind) continue;
+    const keyStart = m.index ?? 0;
+    const ctx: ValueContext = {
+      typePosition: m[6] === ':' && m[3] !== undefined && !m[4],
+      typeContext: () => m[5] === '?' || inTypeContext(content, keyStart),
+      countKey: kind === 'count',
+    };
+    const valueStart = keyStart + m[0].length;
+    if (isLiteralValue(content.slice(valueStart, valueStart + 512), ctx)) return true;
+  }
+  return false;
 }
