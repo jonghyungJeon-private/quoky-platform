@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConnectorQueryError } from '@quoky/core';
 import {
   SlackConnectorProvider,
   type SlackConnectorConfig,
@@ -162,5 +163,134 @@ describe('SlackConnectorProvider', () => {
     expect(fake.calls).toHaveLength(0);
     await slack.connect();
     await expect(slack.isAvailable()).resolves.toBe(true);
+  });
+
+  describe('named search query', () => {
+    const match = {
+      channel: { id: 'C123', name: 'eng' },
+      ts: '1727859600.000100',
+      text: `Deploy   finished ${TOKEN}`,
+      permalink: 'https://example.slack.com/archives/C123/p1727859600000100',
+    };
+
+    it('uses GET search.messages with bounded count and timestamp sort, and maps matches', async () => {
+      const fake = fakeFetch({ status: 200, body: { ok: true, messages: { matches: [match], paging: { count: 1 } } } });
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy "now"', limit: 50 } });
+
+      const url = new URL(fake.calls[0]!.url);
+      expect(url.origin + url.pathname).toBe('https://slack.com/api/search.messages');
+      expect(url.searchParams.get('query')).toBe('deploy "now"');
+      expect(url.searchParams.get('count')).toBe('20');
+      expect(url.searchParams.get('sort')).toBe('timestamp');
+      expect(fake.calls[0]!.init?.method).toBe('GET');
+      expect(fake.calls[0]!.init?.body).toBeUndefined();
+      expect(fake.calls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
+      expect(result).toEqual({
+        source: 'slack',
+        items: [{
+          id: 'C123:1727859600.000100',
+          title: 'Deploy finished [redacted]',
+          summary: 'Deploy finished [redacted]',
+          url: 'https://example.slack.com/archives/C123/p1727859600000100',
+          container: '#eng',
+          updatedAt: '2024-10-02T09:00:00.000Z',
+          raw: { kind: 'message', channelId: 'C123', ts: '1727859600.000100' },
+        }],
+      });
+      expect(JSON.stringify(result)).not.toContain(TOKEN);
+    });
+
+    it('bounds the title to 120 characters, skips malformed matches and drops non-Slack permalinks', async () => {
+      const fake = fakeFetch({
+        status: 200,
+        body: {
+          ok: true,
+          messages: {
+            matches: [
+              { ...match, text: 'x'.repeat(300), permalink: 'https://evil.example.com/p' },
+              { channel: {}, ts: '1.0', text: 'no channel id' },
+              { channel: { id: 'C9' }, text: 'no ts' },
+            ],
+          },
+        },
+      });
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'x' } });
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]!.title).toHaveLength(120);
+      expect(result.items[0]).not.toHaveProperty('url');
+    });
+
+    it.each([
+      [undefined],
+      [''],
+      ['   '],
+      ['y'.repeat(101)],
+    ])('rejects invalid search text %j before any request', async (text) => {
+      const fake = fakeFetch({ status: 200, body: { ok: true, messages: { matches: [] } } });
+      await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text } })).rejects.toMatchObject({
+        reason: 'UNSUPPORTED_QUERY',
+      });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it('maps not_allowed_token_type and missing_scope to INSUFFICIENT_SCOPE', async () => {
+      for (const error of ['not_allowed_token_type', 'missing_scope']) {
+        const fake = fakeFetch({ status: 200, body: { ok: false, error } });
+        const promise = provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } });
+        await expect(promise).rejects.toMatchObject({ name: 'SlackConnectorHttpError', kind: 'INSUFFICIENT_SCOPE', reason: 'INSUFFICIENT_SCOPE' });
+        await expect(promise).rejects.toBeInstanceOf(ConnectorQueryError);
+      }
+    });
+
+    it.each([
+      [401, 'UNAUTHORIZED'],
+      [403, 'FORBIDDEN'],
+      [404, 'NOT_FOUND'],
+      [429, 'RATE_LIMITED'],
+      [500, 'UNAVAILABLE'],
+    ] as const)('maps HTTP %i to reason %s without leaking the token', async (status, reason) => {
+      const fake = fakeFetch({ status, body: { ok: false, error: TOKEN } });
+      const promise = provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } });
+      await expect(promise).rejects.toMatchObject({ reason });
+      await expect(promise).rejects.not.toThrow(TOKEN);
+    });
+
+    it('maps a timeout to UNAVAILABLE and a malformed body to INVALID_RESPONSE', async () => {
+      const hanging = provider(((_url: URL | RequestInfo, init?: RequestInit) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+      })) as typeof fetch, { timeoutMs: 5 });
+      await expect(hanging.query({ query: 'search', params: { text: 'deploy' } })).rejects.toMatchObject({
+        name: 'SlackConnectorRequestError',
+        reason: 'UNAVAILABLE',
+      });
+
+      const fake = fakeFetch({ status: 200, body: { ok: true, messages: { nope: [] } } });
+      await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } })).rejects.toMatchObject({
+        reason: 'INVALID_RESPONSE',
+      });
+    });
+
+    it('rejects personal-work, unknown names and unknown kinds as UNSUPPORTED_QUERY', async () => {
+      const fake = fakeFetch({ status: 200, body: { ok: true, channels: [] } });
+      const slack = provider(fake.fetchImpl);
+      await expect(slack.query({ query: 'personal-work', params: { actorExternalId: 'U1' } })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+      await expect(slack.query({ query: 'chat.postMessage' })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+      await expect(slack.query({ query: '', params: { kind: 'post' } })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it('is UNAVAILABLE while disconnected and issues only GET requests across all kinds', async () => {
+      const fake = fakeFetch(
+        { status: 200, body: { ok: true, channels: [] } },
+        { status: 200, body: { ok: true, messages: { matches: [] } } },
+      );
+      const slack = provider(fake.fetchImpl);
+      await slack.listItems();
+      await slack.query({ query: 'search', params: { text: 'a' } });
+      expect(fake.calls.map((call) => call.init?.method)).toEqual(['GET', 'GET']);
+
+      await slack.disconnect();
+      await expect(slack.query({ query: 'search', params: { text: 'a' } })).rejects.toMatchObject({ reason: 'UNAVAILABLE' });
+    });
   });
 });

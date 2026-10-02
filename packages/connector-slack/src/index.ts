@@ -1,4 +1,15 @@
-import type { ConnectorItem, ConnectorProvider, ConnectorQuery, ConnectorResult } from '@quoky/core';
+import {
+  ConnectorQueryError,
+  ConnectorQueryName,
+  parseSearchParams,
+  resolveConnectorQueryTimeoutMs,
+  toConnectorTimestamp,
+  type ConnectorItem,
+  type ConnectorProvider,
+  type ConnectorQuery,
+  type ConnectorQueryErrorReason,
+  type ConnectorResult,
+} from '@quoky/core';
 
 const SLACK_API_ORIGIN = 'https://slack.com';
 const PAGE_SIZE = 100;
@@ -8,6 +19,7 @@ const MAX_ITEMS_LIMIT = 500;
 const MAX_PAGES_LIMIT = 10;
 const TITLE_LIMIT = 120;
 const SUMMARY_LIMIT = 500;
+const SEARCH_PERMALINK_PATTERN = /^https:\/\/[A-Za-z0-9.-]+\.slack\.com\//;
 
 export interface SlackConnectorConfig {
   token: string;
@@ -15,6 +27,8 @@ export interface SlackConnectorConfig {
   fetchImpl?: typeof fetch;
   maxItems?: number;
   maxPages?: number;
+  /** Per-request timeout in milliseconds (default 10000). */
+  timeoutMs?: number;
 }
 
 export type SlackListItemsInput =
@@ -30,6 +44,7 @@ export interface SlackGetItemInput {
 export type SlackConnectorHttpErrorKind =
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
+  | 'INSUFFICIENT_SCOPE'
   | 'RATE_LIMITED'
   | 'NOT_FOUND'
   | 'SERVER_ERROR'
@@ -37,35 +52,35 @@ export type SlackConnectorHttpErrorKind =
   | 'API_ERROR';
 
 /** A sanitized Slack failure. It never contains response content, credentials, or request headers. */
-export class SlackConnectorHttpError extends Error {
+export class SlackConnectorHttpError extends ConnectorQueryError {
   constructor(
     readonly kind: SlackConnectorHttpErrorKind,
     readonly status: number,
   ) {
-    super(`slack connector: query failed (${kind.toLowerCase()})`);
+    super(reasonForKind(kind), `slack connector: query failed (${kind.toLowerCase()})`);
     this.name = 'SlackConnectorHttpError';
   }
 }
 
 /** A sanitized transport failure. The underlying fetch error is deliberately not retained. */
-export class SlackConnectorRequestError extends Error {
+export class SlackConnectorRequestError extends ConnectorQueryError {
   constructor() {
-    super('slack connector: query request failed');
+    super('UNAVAILABLE', 'slack connector: query request failed');
     this.name = 'SlackConnectorRequestError';
   }
 }
 
 /** A sanitized response-shape failure. Raw response content is deliberately not retained. */
-export class SlackConnectorResponseError extends Error {
+export class SlackConnectorResponseError extends ConnectorQueryError {
   constructor() {
-    super('slack connector: query returned an unexpected response');
+    super('INVALID_RESPONSE', 'slack connector: query returned an unexpected response');
     this.name = 'SlackConnectorResponseError';
   }
 }
 
-export class SlackConnectorStateError extends Error {
+export class SlackConnectorStateError extends ConnectorQueryError {
   constructor() {
-    super('slack connector: connector is disconnected');
+    super('UNAVAILABLE', 'slack connector: connector is disconnected');
     this.name = 'SlackConnectorStateError';
   }
 }
@@ -85,6 +100,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
   private readonly fetchImpl: typeof fetch;
   private readonly maxItems: number;
   private readonly maxPages: number;
+  private readonly timeoutMs: number;
   private connected = true;
 
   constructor(config: SlackConnectorConfig) {
@@ -92,6 +108,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.maxItems = boundedInteger(config.maxItems, DEFAULT_MAX_ITEMS, 1, MAX_ITEMS_LIMIT, 'maxItems');
     this.maxPages = boundedInteger(config.maxPages, DEFAULT_MAX_PAGES, 1, MAX_PAGES_LIMIT, 'maxPages');
+    this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'slack connector');
   }
 
   async connect(): Promise<void> {
@@ -107,7 +124,15 @@ export class SlackConnectorProvider implements ConnectorProvider {
   }
 
   async query(input: ConnectorQuery): Promise<ConnectorResult> {
+    const name = input?.query;
+    if (name === ConnectorQueryName.SEARCH) return this.search(input);
+    if (name === ConnectorQueryName.PERSONAL_WORK) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'slack connector: unsupported query');
+    }
     const kind = input?.params?.kind;
+    if (kind === undefined && typeof name === 'string' && name.trim().length > 0) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'slack connector: unsupported query');
+    }
     if (kind === undefined || kind === 'channels') return this.listItems({ kind: 'channels' });
     if (kind === 'messages') {
       return this.listItems({ kind, channelId: requireNonEmpty(input.params?.channelId, 'channelId') });
@@ -119,7 +144,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
         threadTs: requireNonEmpty(input.params?.threadTs, 'threadTs'),
       });
     }
-    throw new Error('slack connector: unsupported query kind');
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'slack connector: unsupported query kind');
   }
 
   async listItems(input: SlackListItemsInput = { kind: 'channels' }): Promise<ConnectorResult> {
@@ -144,6 +169,25 @@ export class SlackConnectorProvider implements ConnectorProvider {
       source: this.source,
       items: values.map((value) => mapMessage(value, channelId, this.token)).filter(isConnectorItem),
     };
+  }
+
+  /** Named `search` query: GET search.messages. Needs a user token with search:read (a bot token gets INSUFFICIENT_SCOPE). */
+  private async search(input: ConnectorQuery): Promise<ConnectorResult> {
+    this.assertConnected();
+    const { text, limit } = parseSearchParams(input.params, 'slack connector');
+    const url = new URL('/api/search.messages', SLACK_API_ORIGIN);
+    url.searchParams.set('query', text);
+    url.searchParams.set('count', String(limit));
+    url.searchParams.set('sort', 'timestamp');
+
+    const payload = await readSlackPayload(await this.request(url));
+    const messages = isRecord(payload.messages) ? payload.messages : undefined;
+    if (!messages || !Array.isArray(messages.matches)) throw new SlackConnectorResponseError();
+    const items = messages.matches
+      .slice(0, limit)
+      .map((match) => mapSearchMatch(match, this.token))
+      .filter(isConnectorItem);
+    return { source: this.source, items };
   }
 
   async getItem(input: SlackGetItemInput): Promise<ConnectorItem | undefined> {
@@ -186,6 +230,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
           Accept: 'application/json',
           Authorization: `Bearer ${this.token}`,
         },
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new SlackConnectorRequestError();
@@ -195,7 +240,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
   }
 }
 
-async function parseSlackPage(response: Response, method: string): Promise<SlackPage> {
+async function readSlackPayload(response: Response): Promise<Record<string, unknown>> {
   let payload: unknown;
   try {
     payload = await response.json();
@@ -204,7 +249,11 @@ async function parseSlackPage(response: Response, method: string): Promise<Slack
   }
   if (!isRecord(payload) || typeof payload.ok !== 'boolean') throw new SlackConnectorResponseError();
   if (!payload.ok) throw mapSlackApiError(typeof payload.error === 'string' ? payload.error : '');
+  return payload;
+}
 
+async function parseSlackPage(response: Response, method: string): Promise<SlackPage> {
+  const payload = await readSlackPayload(response);
   const field = method === 'conversations.list' ? 'channels' : 'messages';
   if (!Array.isArray(payload[field])) throw new SlackConnectorResponseError();
   const metadata = isRecord(payload.response_metadata) ? payload.response_metadata : undefined;
@@ -242,6 +291,40 @@ function mapMessage(value: unknown, channelId: string, token: string): Connector
   return item;
 }
 
+function mapSearchMatch(value: unknown, token: string): ConnectorItem | undefined {
+  if (!isRecord(value) || typeof value.ts !== 'string' || value.ts.trim().length === 0) return undefined;
+  const channel = isRecord(value.channel) ? value.channel : undefined;
+  if (typeof channel?.id !== 'string' || channel.id.trim().length === 0) return undefined;
+  const channelId = channel.id.trim();
+  const ts = value.ts.trim();
+  const text = typeof value.text === 'string' ? redactToken(value.text.replace(/\s+/g, ' ').trim(), token) : '';
+  const item: ConnectorItem = {
+    id: `${channelId}:${ts}`,
+    title: (text || `Slack message ${ts}`).slice(0, TITLE_LIMIT),
+    raw: { kind: 'message', channelId, ts },
+  };
+  if (text.length > 0) item.summary = text.slice(0, SUMMARY_LIMIT);
+  if (typeof value.permalink === 'string' && SEARCH_PERMALINK_PATTERN.test(value.permalink)) item.url = value.permalink;
+  const channelName = typeof channel.name === 'string' ? redactToken(channel.name.trim(), token) : '';
+  if (channelName.length > 0) item.container = `#${channelName}`;
+  const updatedAt = toConnectorTimestamp(Number(ts) * 1000);
+  if (updatedAt) item.updatedAt = updatedAt;
+  return item;
+}
+
+function reasonForKind(kind: SlackConnectorHttpErrorKind): ConnectorQueryErrorReason {
+  switch (kind) {
+    case 'UNAUTHORIZED':
+    case 'FORBIDDEN':
+    case 'INSUFFICIENT_SCOPE':
+    case 'NOT_FOUND':
+    case 'RATE_LIMITED':
+      return kind;
+    default:
+      return 'UNAVAILABLE';
+  }
+}
+
 function mapHttpError(status: number): SlackConnectorHttpError {
   if (status === 401) return new SlackConnectorHttpError('UNAUTHORIZED', status);
   if (status === 403) return new SlackConnectorHttpError('FORBIDDEN', status);
@@ -255,9 +338,10 @@ function mapSlackApiError(code: string): SlackConnectorHttpError {
   if (['invalid_auth', 'not_authed', 'account_inactive', 'token_revoked'].includes(code)) {
     return new SlackConnectorHttpError('UNAUTHORIZED', 200);
   }
-  if (['missing_scope', 'not_allowed_token_type', 'restricted_action'].includes(code)) {
-    return new SlackConnectorHttpError('FORBIDDEN', 200);
+  if (['missing_scope', 'not_allowed_token_type'].includes(code)) {
+    return new SlackConnectorHttpError('INSUFFICIENT_SCOPE', 200);
   }
+  if (code === 'restricted_action') return new SlackConnectorHttpError('FORBIDDEN', 200);
   if (['channel_not_found', 'thread_not_found', 'message_not_found'].includes(code)) {
     return new SlackConnectorHttpError('NOT_FOUND', 200);
   }

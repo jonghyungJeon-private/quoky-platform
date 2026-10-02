@@ -1,7 +1,21 @@
-import type { ConnectorItem, ConnectorProvider, ConnectorQuery, ConnectorResult } from '@quoky/core';
+import {
+  ConnectorQueryError,
+  ConnectorQueryName,
+  connectorQueryErrorReasonForStatus,
+  parsePersonalWorkParams,
+  resolveConnectorQueryTimeoutMs,
+  toConnectorTimestamp,
+  type ConnectorItem,
+  type ConnectorProvider,
+  type ConnectorQuery,
+  type ConnectorResult,
+  type PersonalWorkFilter,
+} from '@quoky/core';
 
 const GITHUB_API_BASE = 'https://api.github.com';
 const GITHUB_API_VERSION = '2022-11-28';
+const SUMMARY_LIMIT = 500;
+const REPOSITORY_URL_PATTERN = /^https:\/\/api\.github\.com\/repos\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
 
 export type GitHubConnectorAuth =
   | { kind: 'github-app'; tokenSource: () => Promise<string> }
@@ -10,7 +24,46 @@ export type GitHubConnectorAuth =
 export interface GitHubConnectorConfig {
   auth: GitHubConnectorAuth;
   fetchImpl?: typeof fetch;
+  /** Per-request timeout in milliseconds (default 10000). */
   timeoutMs?: number;
+}
+
+export type GitHubConnectorHttpErrorKind =
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'RATE_LIMITED'
+  | 'SERVER_ERROR'
+  | 'HTTP_ERROR';
+
+/** A sanitized GitHub HTTP failure. It never contains response content, credentials, or request headers. */
+export class GitHubConnectorHttpError extends ConnectorQueryError {
+  constructor(
+    readonly kind: GitHubConnectorHttpErrorKind,
+    readonly status: number,
+  ) {
+    super(
+      kind === 'RATE_LIMITED' ? 'RATE_LIMITED' : connectorQueryErrorReasonForStatus(status),
+      `github connector: query failed (${kind.toLowerCase()})`,
+    );
+    this.name = 'GitHubConnectorHttpError';
+  }
+}
+
+/** A sanitized transport or timeout failure. The underlying fetch error is deliberately not retained. */
+export class GitHubConnectorRequestError extends ConnectorQueryError {
+  constructor() {
+    super('UNAVAILABLE', 'github connector: query request failed');
+    this.name = 'GitHubConnectorRequestError';
+  }
+}
+
+/** A sanitized response-shape failure. Raw response content is deliberately not retained. */
+export class GitHubConnectorResponseError extends ConnectorQueryError {
+  constructor() {
+    super('INVALID_RESPONSE', 'github connector: query returned an unexpected response');
+    this.name = 'GitHubConnectorResponseError';
+  }
 }
 
 export class GitHubConnectorProvider implements ConnectorProvider {
@@ -19,7 +72,7 @@ export class GitHubConnectorProvider implements ConnectorProvider {
 
   private readonly auth: GitHubConnectorAuth;
   private readonly fetchImpl: typeof fetch;
-  private readonly timeoutMs?: number;
+  private readonly timeoutMs: number;
 
   constructor(config: GitHubConnectorConfig) {
     if (config?.auth?.kind === 'pat') {
@@ -32,7 +85,7 @@ export class GitHubConnectorProvider implements ConnectorProvider {
       throw new Error('github connector: a valid auth config is required');
     }
     this.fetchImpl = config.fetchImpl ?? fetch;
-    this.timeoutMs = config.timeoutMs;
+    this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'github connector');
   }
 
   async isAvailable(): Promise<boolean> {
@@ -40,14 +93,11 @@ export class GitHubConnectorProvider implements ConnectorProvider {
   }
 
   async query(input: ConnectorQuery): Promise<ConnectorResult> {
-    if (input.query !== 'personal-work') {
-      throw new Error('github connector: unsupported query');
+    if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported query');
     }
-    const actorExternalId = input.params?.actorExternalId;
-    if (typeof actorExternalId !== 'string' || actorExternalId.trim().length === 0) {
-      throw new Error('github connector: actor identity is required');
-    }
-    const q = `involves:${githubQualifier(actorExternalId)} is:open archived:false`;
+    const { actorExternalId, filter, limit } = parsePersonalWorkParams(input.params, 'github connector');
+    const q = personalWorkSearch(githubQualifier(actorExternalId), filter);
     const token = await this.currentToken();
     const headers = {
       Accept: 'application/vnd.github+json',
@@ -55,54 +105,104 @@ export class GitHubConnectorProvider implements ConnectorProvider {
       'X-GitHub-Api-Version': GITHUB_API_VERSION,
       'User-Agent': 'quoky-platform',
     };
-    const init: RequestInit = { method: 'GET', headers };
-    if (this.timeoutMs !== undefined) init.signal = AbortSignal.timeout(this.timeoutMs);
+    const init: RequestInit = { method: 'GET', headers, signal: AbortSignal.timeout(this.timeoutMs) };
+    const url = `${GITHUB_API_BASE}/search/issues?q=${encodeURIComponent(q)}&sort=updated&order=desc&per_page=${limit}`;
 
     let response: Response;
     try {
-      response = await this.fetchImpl(`${GITHUB_API_BASE}/search/issues?q=${encodeURIComponent(q)}&per_page=100`, init);
+      response = await this.fetchImpl(url, init);
     } catch {
-      throw new Error('github connector: query request failed');
+      throw new GitHubConnectorRequestError();
     }
-    if (!response.ok) throw new Error(`github connector: query failed with status ${response.status}`);
+    if (!response.ok) throw mapHttpError(response);
 
     let payload: unknown;
     try {
       payload = await response.json();
     } catch {
-      throw new Error('github connector: query returned an unexpected response');
+      throw new GitHubConnectorResponseError();
     }
     if (!isRecord(payload) || !Array.isArray(payload.items)) {
-      throw new Error('github connector: query returned an unexpected response');
+      throw new GitHubConnectorResponseError();
     }
-    return { source: this.source, items: payload.items.map(mapItem) };
+    return { source: this.source, items: payload.items.slice(0, limit).map((item) => mapItem(item, token)) };
   }
 
   private async currentToken(): Promise<string> {
-    const token = this.auth.kind === 'pat' ? this.auth.token : await this.auth.tokenSource();
-    if (!token) throw new Error('github connector: auth source returned an empty token');
+    let token: string | undefined;
+    try {
+      token = this.auth.kind === 'pat' ? this.auth.token : await this.auth.tokenSource();
+    } catch {
+      throw new ConnectorQueryError('UNAVAILABLE', 'github connector: auth source failed');
+    }
+    if (typeof token !== 'string' || !token) {
+      throw new ConnectorQueryError('UNAUTHORIZED', 'github connector: auth source returned an empty token');
+    }
     return token;
   }
 }
 
-function mapItem(value: unknown): ConnectorItem {
-  if (!isRecord(value) || typeof value.id !== 'number' || typeof value.title !== 'string' || typeof value.html_url !== 'string') {
-    throw new Error('github connector: query returned an unexpected item');
+/** The adapter owns GitHub search qualifier rendering; the login is validated before it reaches a qualifier. */
+function personalWorkSearch(login: string, filter: PersonalWorkFilter): string {
+  if (filter === 'all') return `involves:${login} is:open archived:false`;
+  if (filter === 'review-requested') return `is:pr is:open archived:false review-requested:${login}`;
+  throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported personal-work filter');
+}
+
+function mapItem(value: unknown, token: string): ConnectorItem {
+  if (
+    !isRecord(value) ||
+    typeof value.number !== 'number' ||
+    !Number.isInteger(value.number) ||
+    typeof value.title !== 'string' ||
+    typeof value.html_url !== 'string' ||
+    typeof value.repository_url !== 'string'
+  ) {
+    throw new GitHubConnectorResponseError();
   }
-  return {
-    id: String(value.id),
-    title: value.title,
+  const repository = REPOSITORY_URL_PATTERN.exec(value.repository_url);
+  if (!repository) throw new GitHubConnectorResponseError();
+  const container = `${repository[1]}/${repository[2]}`;
+
+  const item: ConnectorItem = {
+    id: `${container}#${value.number}`,
+    title: redactToken(value.title, token),
     url: value.html_url,
-    ...(typeof value.body === 'string' && value.body.trim() ? { summary: value.body.slice(0, 500) } : {}),
+    container,
   };
+  if (typeof value.body === 'string' && value.body.trim()) {
+    item.summary = redactToken(value.body, token).slice(0, SUMMARY_LIMIT);
+  }
+  const status = value.draft === true ? 'draft' : value.state === 'open' || value.state === 'closed' ? value.state : undefined;
+  if (status) item.status = status;
+  const updatedAt = toConnectorTimestamp(value.updated_at);
+  if (updatedAt) item.updatedAt = updatedAt;
+  return item;
+}
+
+function mapHttpError(response: Response): GitHubConnectorHttpError {
+  const status = response.status;
+  if (status === 401) return new GitHubConnectorHttpError('UNAUTHORIZED', status);
+  if (status === 403) {
+    const exhausted = response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after');
+    return new GitHubConnectorHttpError(exhausted ? 'RATE_LIMITED' : 'FORBIDDEN', status);
+  }
+  if (status === 404) return new GitHubConnectorHttpError('NOT_FOUND', status);
+  if (status === 429) return new GitHubConnectorHttpError('RATE_LIMITED', status);
+  if (status >= 500) return new GitHubConnectorHttpError('SERVER_ERROR', status);
+  return new GitHubConnectorHttpError('HTTP_ERROR', status);
 }
 
 function githubQualifier(value: string): string {
   const identity = value.trim();
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(identity)) {
-    throw new Error('github connector: actor identity is invalid');
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: actor identity is invalid');
   }
   return identity;
+}
+
+function redactToken(value: string, token: string): string {
+  return value.split(token).join('[redacted]');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
