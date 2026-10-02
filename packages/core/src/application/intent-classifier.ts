@@ -12,10 +12,48 @@ import { detectExplicitValidationKinds, isDeniedValidationRequest } from './vali
  *   - everything else → general chat (becomes a Task).
  * AI-driven classification arrives later; the `router` is held for it.
  */
+export interface IntentClassifyContext {
+  /** False when the conversation has no active project; omitted keeps the context-free behavior. */
+  readonly hasActiveProject?: boolean;
+}
+
 export class IntentClassifier {
   constructor(private readonly router: CapabilityRouter) {}
 
-  async classify(message: InboundMessage): Promise<Intent> {
+  async classify(message: InboundMessage, ctx?: IntentClassifyContext): Promise<Intent> {
+    const intent = this.classifyText(message);
+    if (ctx?.hasActiveProject === false && IntentClassifier.isBareProjectKeywordMatch(message.text.trim(), intent)) {
+      return {
+        type: IntentType.CHAT,
+        capability: Capability.GENERAL_CHAT,
+        confidence: 1,
+        requiresWork: true,
+        summary: message.text.trim().slice(0, 200) || '(empty message)',
+      };
+    }
+    return intent;
+  }
+
+  /**
+   * With no active project, a code/test/analysis keyword alone ("이 문장 분석해줘", "7/3 회의 등록해줘") is
+   * everyday chat. A project noun, a file path, or an explicit /preview keeps the project routing.
+   */
+  private static isBareProjectKeywordMatch(text: string, intent: Intent): boolean {
+    if (
+      intent.type !== IntentType.IMPLEMENT_CODE &&
+      intent.type !== IntentType.RUN_TESTS &&
+      intent.type !== IntentType.PROJECT_ANALYSIS
+    ) {
+      return false;
+    }
+    if (/^\/preview\b/i.test(text)) return false;
+    if (/(프로젝트|저장소|repo(?:sitory)?|codebase)/i.test(text)) return false;
+    if (/[A-Za-z_.~-][\w@.~-]*\/[\w@./-]+|(?:^|\s)\/[\w@.-]+/.test(text)) return false;
+    if (/\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|py|go|rs|java|yml|yaml|toml|sh|css|html)\b/i.test(text)) return false;
+    return true;
+  }
+
+  private classifyText(message: InboundMessage): Intent {
     void this.router;
     const text = message.text.trim();
 
@@ -163,9 +201,9 @@ export class IntentClassifier {
     return undefined;
   }
 
-  /** First absolute POSIX path in the text, if any. */
+  /** First absolute POSIX path (>= 2 segments, at a token start) in the text, if any — so "7/3" is not a path. */
   private static extractLocalPath(text: string): string | undefined {
-    const match = text.match(/(\/[^\s]+)/);
+    const match = text.match(/(?:^|[\s"'`(])(\/[^\s/]+(?:\/[^\s/]+)+)/);
     return match ? match[1] : undefined;
   }
 

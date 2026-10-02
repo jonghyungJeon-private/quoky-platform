@@ -343,4 +343,40 @@ describe('IntentClassifier — Follow-up-7 preview-request routing (Gate 5 turn-
       expect(intent.raw, t).toEqual({ kind: 'preview' });
     }
   });
+
+  describe('everyday-request precision (T2)', () => {
+    const noProject = { hasActiveProject: false };
+
+    it('does not treat "7/3" as a project path', async () => {
+      for (const ctx of [undefined, noProject]) {
+        const intent = await classifier.classify(msg('7/3 회의 등록해줘'), ctx);
+        expect(intent.type).toBe(IntentType.CHAT);
+      }
+    });
+
+    it('still registers an absolute multi-segment path', async () => {
+      const intent = await classifier.classify(msg('/Users/me/repo 프로젝트 등록해줘'), noProject);
+      expect(intent.type).toBe(IntentType.REGISTER_PROJECT);
+    });
+
+    it('downgrades bare keywords to GENERAL_CHAT without an active project', async () => {
+      for (const text of ['이 문장 분석해줘', '이 코드 버그 고쳐줘 const a = 1;', '테스트 실행해줘']) {
+        const intent = await classifier.classify(msg(text), noProject);
+        expect(intent.type, text).toBe(IntentType.CHAT);
+        expect(intent.capability, text).toBe(Capability.GENERAL_CHAT);
+      }
+    });
+
+    it('keeps project routing for project nouns, file paths and /preview', async () => {
+      expect((await classifier.classify(msg('이 프로젝트 분석해줘'), noProject)).type).toBe(IntentType.PROJECT_ANALYSIS);
+      expect((await classifier.classify(msg('src/app.ts 버그 고쳐줘'), noProject)).type).toBe(IntentType.IMPLEMENT_CODE);
+      expect((await classifier.classify(msg('/preview 로그인 수정'), noProject)).raw).toEqual({ kind: 'preview' });
+    });
+
+    it('omitted ctx or hasActiveProject=true keeps the context-free behavior', async () => {
+      for (const ctx of [undefined, {}, { hasActiveProject: true }]) {
+        expect((await classifier.classify(msg('이 문장 분석해줘'), ctx)).type).toBe(IntentType.PROJECT_ANALYSIS);
+      }
+    });
+  });
 });
