@@ -11,8 +11,11 @@
  * it never executes.
  *
  * Deliberately conservative and whole-message: any rejection signal anywhere in the text vetoes execution (a
- * mixed "A 하지 말고 B 실행해" is not executed; the user can re-send the plain command). Each gate still requires
- * its OWN target noun via its step grammar — this guard never makes a phrase executable on its own.
+ * mixed "A 하지 말고 B 실행해" is not executed; the user can re-send the plain command).
+ *
+ * AUTHORITY (orchestrator decision after the Codex wave-8 reviews): a gate executes ONLY through
+ * {@link isAcceptedExecutionPhrase} — whole-message equality with the gate's closed {@link EXECUTION_PHRASES} list
+ * after normalization. {@link isAffirmativeExecutionCommand} is kept inside it as a defence-in-depth veto only.
  */
 
 /** A command is short; longer free text (reports, pasted logs, quoted instructions) is never an execution command. */
@@ -56,4 +59,117 @@ export function executionCommandRejection(text: string): ExecutionCommandRejecti
  */
 export function isAffirmativeExecutionCommand(text: string): boolean {
   return executionCommandRejection(text) === null;
+}
+
+// ── Allow-list: the AUTHORITY for every approved execution gate (orchestrator decision after Codex wave-8 review) ──
+
+/** An approved / direct execution gate that performs a mutation (git, hosting, workspace write, command run). */
+export type ExecutionGate =
+  | 'commit'
+  | 'push'
+  | 'prCreate'
+  | 'merge'
+  | 'mainSync'
+  | 'localCleanup'
+  | 'remoteCleanup'
+  | 'patchApply'
+  | 'validationTest'
+  | 'validationTypecheck';
+
+/**
+ * The closed set of accepted execution phrases per gate. The FIRST entry is the documented phrase the composer / help
+ * copy tells the user to send. A gate executes ONLY when the whole message equals one entry after
+ * {@link normalizeExecutionPhrase} (plus an optional leading "지금"/"이제"/"now" and trailing "now"/"please") — no
+ * substring, co-occurrence or regex grammar. Anything else that mentions the step gets the state's non-mutating reply,
+ * which quotes the documented phrase.
+ */
+export const EXECUTION_PHRASES: Readonly<Record<ExecutionGate, readonly string[]>> = {
+  commit: [
+    '커밋 실행', '커밋 실행해줘', '승인된 커밋 실행', '승인된 커밋 실행해줘', '실제 커밋해줘', '실제로 커밋해줘',
+    'execute commit', 'execute approved commit', 'run approved commit', 'commit approved changes',
+  ],
+  push: [
+    '푸시 실행', '푸시 실행해줘', '승인된 푸시 실행해줘', 'push 실행', 'push 실행해줘', '승인된 push 실행해줘',
+    '실제 푸시해줘', '실제 push 해줘', 'execute push', 'execute approved push', 'run approved push', 'push approved commit',
+  ],
+  prCreate: [
+    'PR 생성 실행', 'PR 생성 실행해줘', 'PR 생성해줘', 'PR 만들어줘', 'PR 열어줘', '깃허브 PR 만들어줘', 'GitHub PR 만들어줘',
+    'GitHub PR 열어줘', 'pull request 만들어줘', 'pull request 생성해줘', 'merge request 만들어줘', 'open a PR', 'open PR',
+    'open a pull request', 'create a PR', 'create PR', 'create pull request', 'create a pull request', 'create merge request',
+  ],
+  merge: [
+    '머지해줘', '머지 실행', '머지 실행해줘', 'PR 머지해줘', '이 PR 머지해줘', '승인된 PR 머지해줘', '실제 머지해줘', '실제로 머지해줘',
+    'merge this PR', 'merge the PR', 'merge approved PR', 'merge the approved PR', 'merge now', 'execute merge',
+    'execute approved merge',
+  ],
+  mainSync: [
+    'main 동기화해줘', 'main 동기화', '로컬 main 동기화해줘', 'main 최신화해줘', '로컬 main 최신화해줘', 'main 받아와줘',
+    '머지된 main 받아와줘', 'sync main', 'sync local main', 'update main', 'update local main', 'pull main',
+  ],
+  localCleanup: [
+    '브랜치 정리해줘', '로컬 브랜치 정리해줘', '머지된 브랜치 정리해줘', '브랜치 삭제해줘', '로컬 브랜치 삭제해줘',
+    'feature branch 삭제해줘', 'merged branch 정리해줘', 'cleanup local branch', 'clean up local branch', 'delete local branch',
+    'delete local merged branch', 'delete merged branch',
+  ],
+  remoteCleanup: [
+    '원격 브랜치 삭제 실행해줘', '원격 브랜치 삭제 실행', '원격 브랜치 제거 실행해줘', '원격 브랜치 정리 실행해줘',
+    '원격 브랜치 삭제 진행해줘', '지금 원격 브랜치 삭제해줘', '실행해줘', '실행', '진행해', '진행해줘', 'proceed', 'go ahead',
+    'execute', 'execute remote branch cleanup', 'execute remote branch deletion',
+  ],
+  patchApply: [
+    '패치 적용해줘', '패치 적용', '최종 적용해줘', '최종 적용', '파일에 적용해줘', 'workspace에 적용해줘', 'apply patch',
+    'apply to workspace',
+  ],
+  validationTest: ['테스트 실행해줘', '테스트 실행', '테스트 돌려줘', 'pnpm test 실행해줘', 'pnpm test', 'run tests', 'run the tests'],
+  validationTypecheck: [
+    '타입체크 실행해줘', '타입체크 해줘', '타입체크 돌려줘', 'typecheck 해줘', 'typecheck 실행해줘', 'pnpm typecheck 실행해줘',
+    'pnpm typecheck', 'run typecheck',
+  ],
+};
+
+/**
+ * Normalize a message (or a list entry) for exact allow-list comparison: trim, collapse whitespace, case-fold, strip
+ * trailing `.`/`!`/`~`, fold polite endings (`…해줘요`/`…해 주세요` → `…해줘`, `…줘요`/`…주세요` → `…줘`) and glue a
+ * detached request verb (`실행 해줘` / `실행 해 줘` → `실행해줘`). Nothing else is rewritten.
+ */
+export function normalizeExecutionPhrase(text: string): string {
+  if (typeof text !== 'string') return '';
+  let t = text.trim().replace(/\s+/g, ' ').toLowerCase();
+  t = t.replace(/[\s.!~。！]+$/u, '');
+  t = t.replace(/\s*주세요$/u, '줘').replace(/줘요$/u, '줘');
+  t = t.replace(/해\s+줘$/u, '해줘').replace(/\s+해줘$/u, '해줘');
+  return t.trim();
+}
+
+const OPTIONAL_PREFIX = /^(지금|이제|now)\s+/u;
+const OPTIONAL_SUFFIX = /\s+(now|please)$/u;
+
+/** The normalized message plus the forms without one optional leading "지금/이제/now" and/or trailing "now/please". */
+function candidateForms(text: string): string[] {
+  const base = normalizeExecutionPhrase(text);
+  const noPrefix = base.replace(OPTIONAL_PREFIX, '');
+  const forms = new Set(
+    [base, noPrefix, base.replace(OPTIONAL_SUFFIX, ''), noPrefix.replace(OPTIONAL_SUFFIX, '')].map(normalizeExecutionPhrase),
+  );
+  return [...forms].filter((f) => f.length > 0);
+}
+
+const NORMALIZED_PHRASES: Readonly<Record<ExecutionGate, ReadonlySet<string>>> = Object.fromEntries(
+  Object.entries(EXECUTION_PHRASES).map(([gate, phrases]) => [gate, new Set(phrases.map(normalizeExecutionPhrase))]),
+) as unknown as Record<ExecutionGate, ReadonlySet<string>>;
+
+/** The documented phrase for a gate (the first allow-list entry) — what a non-mutating reply tells the user to send. */
+export function documentedExecutionPhrase(gate: ExecutionGate): string {
+  return EXECUTION_PHRASES[gate][0]!;
+}
+
+/**
+ * True iff `text` is EXACTLY one of the gate's accepted execution phrases (after normalization and the optional
+ * leading/trailing words) AND passes the {@link isAffirmativeExecutionCommand} veto (defence in depth). This is the
+ * only way any approved / direct execution gate performs its mutation.
+ */
+export function isAcceptedExecutionPhrase(gate: ExecutionGate, text: string): boolean {
+  if (!isAffirmativeExecutionCommand(text)) return false;
+  const accepted = NORMALIZED_PHRASES[gate];
+  return candidateForms(text).some((form) => accepted.has(form));
 }

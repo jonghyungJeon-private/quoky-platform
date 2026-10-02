@@ -6,7 +6,7 @@
     "stray-decision": { "minAccuracy": 1, "minTotal": 38 },
     "conversation-control": { "minAccuracy": 1, "minTotal": 26 },
     "project-registration": { "minAccuracy": 1, "minTotal": 20 },
-    "turn-handler-routing": { "minAccuracy": 1, "minTotal": 78 },
+    "turn-handler-routing": { "minAccuracy": 1, "minTotal": 84 },
     "reminder-todo-precedence": { "minAccuracy": 1, "minTotal": 24 }
   }
 }

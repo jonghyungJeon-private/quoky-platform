@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { executionCommandRejection, isAffirmativeExecutionCommand, MAX_EXECUTION_COMMAND_CHARS } from './execution-command-guard';
+import {
+  documentedExecutionPhrase,
+  EXECUTION_PHRASES,
+  executionCommandRejection,
+  type ExecutionGate,
+  isAcceptedExecutionPhrase,
+  isAffirmativeExecutionCommand,
+  MAX_EXECUTION_COMMAND_CHARS,
+  normalizeExecutionPhrase,
+} from './execution-command-guard';
 
 describe('isAffirmativeExecutionCommand (Codex wave-8 re-review)', () => {
   it.each([
@@ -63,5 +72,92 @@ describe('isAffirmativeExecutionCommand (Codex wave-8 re-review)', () => {
 
   it('a non-string input is rejected', () => {
     expect(isAffirmativeExecutionCommand(undefined as unknown as string)).toBe(false);
+  });
+});
+
+describe('execution allow-list (orchestrator decision after the Codex wave-8 reviews)', () => {
+  const GATES = Object.keys(EXECUTION_PHRASES) as ExecutionGate[];
+
+  it('the documented phrase is the first entry of each gate', () => {
+    expect(GATES.map((g) => [g, documentedExecutionPhrase(g)])).toEqual([
+      ['commit', '커밋 실행'],
+      ['push', '푸시 실행'],
+      ['prCreate', 'PR 생성 실행'],
+      ['merge', '머지해줘'],
+      ['mainSync', 'main 동기화해줘'],
+      ['localCleanup', '브랜치 정리해줘'],
+      ['remoteCleanup', '원격 브랜치 삭제 실행해줘'],
+      ['patchApply', '패치 적용해줘'],
+      ['validationTest', '테스트 실행해줘'],
+      ['validationTypecheck', '타입체크 실행해줘'],
+    ]);
+  });
+
+  it('every entry is accepted by its own gate, passes the affirmative veto, and by NO other gate', () => {
+    for (const gate of GATES) {
+      for (const phrase of EXECUTION_PHRASES[gate]) {
+        expect(isAffirmativeExecutionCommand(phrase), phrase).toBe(true);
+        expect(isAcceptedExecutionPhrase(gate, phrase), `${gate}: ${phrase}`).toBe(true);
+        for (const other of GATES.filter((g) => g !== gate)) {
+          expect(isAcceptedExecutionPhrase(other, phrase), `${other} must not accept ${phrase}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it.each([
+    ['  커밋   실행  ', '커밋 실행'],
+    ['푸시 실행!', '푸시 실행'],
+    ['머지해줘~', '머지해줘'],
+    ['원격 브랜치 삭제 실행 해줘', '원격 브랜치 삭제 실행해줘'],
+    ['원격 브랜치 삭제 실행해 줘', '원격 브랜치 삭제 실행해줘'],
+    ['원격 브랜치 삭제 실행해 주세요', '원격 브랜치 삭제 실행해줘'],
+    ['원격 브랜치 삭제 실행해줘요.', '원격 브랜치 삭제 실행해줘'],
+    ['PR 만들어 주세요', 'pr 만들어줘'],
+    ['Merge This PR', 'merge this pr'],
+  ])('normalizes "%s" → "%s"', (text, normalized) => {
+    expect(normalizeExecutionPhrase(text)).toBe(normalized);
+  });
+
+  it.each([
+    ['commit', '이제 실제 커밋해줘'],
+    ['push', '지금 푸시 실행'],
+    ['merge', 'merge this PR now'],
+    ['merge', 'now merge this PR'],
+    ['remoteCleanup', 'proceed please'],
+    ['mainSync', 'sync main please'],
+    ['remoteCleanup', '지금 원격 브랜치 삭제해줘'],
+  ] as const)('%s accepts the optional leading/trailing word in "%s"', (gate, text) => {
+    expect(isAcceptedExecutionPhrase(gate, text)).toBe(true);
+  });
+
+  it.each([
+    // Codex final-check repros (each was one mutation before the allow-list)
+    ['push', '푸시 실행할 필요 없어'],
+    ['localCleanup', '브랜치 정리할 필요 없어'],
+    ['mainSync', 'main 동기화해도 좋을까'],
+    ['merge', 'merge the config files now'],
+    ['remoteCleanup', '원격 브랜치 백업 파일 삭제 실행해줘'],
+    // earlier rounds
+    ['push', '푸시 실행해도 돼?'],
+    ['push', '푸시 실행했어'],
+    ['merge', 'do not execute approved merge'],
+    ['mainSync', 'main 동기화하지 마'],
+    ['localCleanup', 'do not delete local branch'],
+    ['remoteCleanup', 'delete the file now'],
+    ['remoteCleanup', 'execute approved push'],
+    // the bare step word / an optional word alone is never a command
+    ['merge', 'merge'],
+    ['merge', '머지'],
+    ['remoteCleanup', '지금'],
+    ['remoteCleanup', 'now'],
+    ['remoteCleanup', '원격 브랜치 삭제해줘'],
+    ['commit', '커밋해줘'],
+    ['commit', '승인된 커밋 실행해줘 메시지는 "feat: x"'],
+    ['prCreate', 'PR'],
+    ['patchApply', '적용해줘'],
+    ['validationTest', '테스트'],
+  ] as const)('%s rejects "%s"', (gate, text) => {
+    expect(isAcceptedExecutionPhrase(gate, text)).toBe(false);
   });
 });

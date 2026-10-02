@@ -296,6 +296,9 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composePushAlreadyApproved(context).text) return 'push-already-approved';
   if (text === composer.composeMergeAlreadyApproved(context).text) return 'merge-already-approved';
   if (text === composer.composeRemoteBranchCleanupAlreadyApproved(context).text) return 'remote-cleanup-already-approved';
+  for (const step of ['main-sync', 'local-cleanup', 'validation'] as const) {
+    if (text === composer.composeExecutionPhraseHint(context, step).text) return `execution-phrase-hint:${step}`;
+  }
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
   return 'other';
 }

@@ -77,6 +77,7 @@ import type { CapabilityRouter } from './capability-router';
 import { buildCanonicalDiff, splitCanonicalDiff } from './preview-delivery';
 import { IntentResolver } from './intent-resolver';
 import { ExecutionOutcomeStatus, ExecutionStage } from './execution-orchestrator';
+import { EXECUTION_PHRASES } from './execution-command-guard';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
 import { ConversationRuntime, filterInScopeChanges, toCodeChangePreview, toCodeDiffPreview } from './conversation-runtime';
 import type {
@@ -1135,35 +1136,43 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
 
 // ── Sprint 2k — Conversation Runtime core ───────────────────────────────────────────────────────
 
-// ── Codex wave-8 re-review: ONE table for every approved execution gate (isAffirmativeExecutionCommand). ──
-// `positives` lead with the phrase the composer / help copy tells the user to send for that state; each must execute
-// exactly once with a valid anchor + approval. `executionGateNegatives` derives questions / negations / past-tense /
-// reported-speech / hypothetical forms from the step's own stem and adds foreign-target phrases — zero mutations.
+// ── Allow-list execution gates (orchestrator decision after the Codex wave-8 reviews). ──
+// `positives` are the gate's EXACT accepted phrases (EXECUTION_PHRASES — the documented phrase first) plus
+// normalization variants of each; every one must execute exactly once with a valid anchor + approval.
+// `executionGateNegatives` derives questions / negations / past-tense / reported-speech / hypothetical forms from the
+// step's own stem and adds foreign-target phrases and the Codex repros — zero mutations.
 interface ExecutionGateCase {
   /** Korean stem the negative templates attach to ("커밋 실행" → "커밋 실행해도 돼?", "커밋 실행하지 마", …). */
   readonly stem: string;
   /** English command the negative templates wrap ("do not …", "should I …?", "… was already done"). */
   readonly en: string;
   readonly positives: readonly string[];
-  /** Phrases with an execute verb but a target that is NOT this step's. */
+  /** Phrases with an execute verb but a target that is NOT this step's, plus the Codex review repros. */
   readonly foreign: readonly string[];
 }
+/** Normalization variants the allow-list accepts for an entry (punctuation, spacing, case, polite form, now/지금/please). */
+function phraseVariants(p: string): string[] {
+  const out = [p, `${p}.`, `${p}!`, `  ${p}  `, `지금 ${p}`, `이제 ${p}`, `${p} please`, p.toUpperCase()];
+  if (p.endsWith('해줘')) out.push(p.replace(/해줘$/, '해 주세요'), p.replace(/해줘$/, '해줘요'), p.replace(/해줘$/, ' 해 줘'));
+  return out;
+}
+const withVariants = (phrases: readonly string[]) => [...new Set(phrases.flatMap(phraseVariants))];
 const EXECUTION_GATES = {
-  commit: { stem: '커밋 실행', en: 'execute commit', positives: ['커밋 실행', '커밋 실행해줘', '승인된 커밋 실행해줘', '이제 실제 커밋해줘', 'execute commit'], foreign: ['파일 실행해줘', 'execute the deploy now'] },
-  push: { stem: '푸시 실행', en: 'execute approved push', positives: ['푸시 실행', '승인된 push 실행해줘', 'push 실행해줘', 'execute approved push', 'push approved commit'], foreign: ['파일 실행해줘', 'execute the deploy now'] },
-  pr: { stem: 'PR 생성', en: 'create pull request', positives: ['PR 생성 실행', 'PR 만들어줘', 'open a PR', 'create pull request'], foreign: ['이슈 생성해줘', 'open the file'] },
-  merge: { stem: '머지', en: 'execute approved merge', positives: ['머지해줘', '이 PR 머지해줘', 'merge this PR', 'merge approved PR', 'merge the approved PR', 'execute approved merge', 'merge now'], foreign: ['파일 실행해줘', 'execute the deploy now'] },
-  sync: { stem: 'main 동기화', en: 'sync main', positives: ['main 동기화해줘', '로컬 main 최신화해줘', 'sync main'], foreign: ['파일 동기화해줘', 'sync the docs'] },
-  localCleanup: { stem: '브랜치 정리', en: 'delete local branch', positives: ['브랜치 정리해줘', '로컬 브랜치 정리해줘', 'delete local merged branch'], foreign: ['delete the file now', '파일 삭제해줘'] },
-  remoteCleanup: { stem: '원격 브랜치 삭제 실행', en: 'execute remote branch cleanup', positives: ['원격 브랜치 삭제 실행해줘', '원격 브랜치 제거 실행해줘', '실행해줘', '진행해', 'proceed', 'go ahead', 'execute remote branch cleanup'], foreign: ['delete the file now', '파일 삭제 실행해줘', '로컬 파일 지금 삭제해줘'] },
-  apply: { stem: '패치 적용', en: 'apply patch', positives: ['패치 적용해줘', '최종 적용해줘', 'apply patch'], foreign: ['설정 적용해줘', 'apply the theme'] },
-  validation: { stem: '테스트 실행', en: 'run the tests', positives: ['테스트 실행해줘', '타입체크 실행해줘'], foreign: ['린트 실행해줘'] },
+  commit: { stem: '커밋 실행', en: 'execute commit', positives: withVariants(EXECUTION_PHRASES.commit), foreign: ['파일 실행해줘', 'execute the deploy now', '승인된 커밋 실행해줘 메시지는 "x"'] },
+  push: { stem: '푸시 실행', en: 'execute approved push', positives: withVariants(EXECUTION_PHRASES.push), foreign: ['파일 실행해줘', 'execute the deploy now', '푸시 실행할 필요 없어'] },
+  pr: { stem: 'PR 생성', en: 'create pull request', positives: withVariants(EXECUTION_PHRASES.prCreate), foreign: ['이슈 생성해줘', 'open the file', 'PR 설명 만들어줘'] },
+  merge: { stem: '머지', en: 'execute approved merge', positives: withVariants(EXECUTION_PHRASES.merge), foreign: ['파일 실행해줘', 'execute the deploy now', 'merge the config files now', '머지 로그 정리해줘'] },
+  sync: { stem: 'main 동기화', en: 'sync main', positives: withVariants(EXECUTION_PHRASES.mainSync), foreign: ['파일 동기화해줘', 'sync the docs', 'main 동기화해도 좋을까'] },
+  localCleanup: { stem: '브랜치 정리', en: 'delete local branch', positives: withVariants(EXECUTION_PHRASES.localCleanup), foreign: ['delete the file now', '파일 삭제해줘', '브랜치 정리할 필요 없어'] },
+  remoteCleanup: { stem: '원격 브랜치 삭제 실행', en: 'execute remote branch cleanup', positives: withVariants(EXECUTION_PHRASES.remoteCleanup), foreign: ['delete the file now', '파일 삭제 실행해줘', '로컬 파일 지금 삭제해줘', '원격 브랜치 백업 파일 삭제 실행해줘', '지금 삭제해줘'] },
+  apply: { stem: '패치 적용', en: 'apply patch', positives: withVariants(EXECUTION_PHRASES.patchApply), foreign: ['설정 적용해줘', 'apply the theme', '패치 적용 결과 정리해줘'] },
+  validation: { stem: '테스트 실행', en: 'run the tests', positives: withVariants([...EXECUTION_PHRASES.validationTest, ...EXECUTION_PHRASES.validationTypecheck]), foreign: ['린트 실행해줘', '테스트 실행할 필요 없어'] },
 } satisfies Record<string, ExecutionGateCase>;
 function executionGateNegatives(g: ExecutionGateCase): string[] {
   const s = g.stem;
   return [
-    `${s}해도 돼?`, `${s}해도 돼`, `${s}할까`, `${s}해도 될까`, // questions / permission asks
-    `${s}하지 마`, `${s}하지 말아줘`, `${s} 안 해`, `do not ${g.en}`, `don't ${g.en}`, `never ${g.en}`, // negations
+    `${s}해도 돼?`, `${s}해도 돼`, `${s}할까`, `${s}해도 될까`, `${s}해도 좋을까`, // questions / permission asks
+    `${s}하지 마`, `${s}하지 말아줘`, `${s} 안 해`, `${s}할 필요 없어`, `do not ${g.en}`, `don't ${g.en}`, `never ${g.en}`, // negations
     `${s}했어`, `${s} 완료됐어`, `이미 ${s}했어`, `${g.en} was already done`, // past / statement / completion
     `"${s}"라고 하면 어떻게 돼`, `${s}하면 어떻게 돼`, `should I ${g.en}?`, `can we ${g.en}`, // reported / hypothetical
     ...g.foreign,
@@ -3361,7 +3370,7 @@ describe('PatchRef → WorkspaceWrite Apply — runtime (Sprint 2u, ADR-0042)', 
     }
   });
 
-  it('Codex W8 re-review gate table — final workspace apply @ PATCH_READY: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — final workspace apply @ PATCH_READY: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.apply;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: patchReadyAnchor() });
@@ -3604,7 +3613,7 @@ describe('Post-Apply Validation Command — runtime (Sprint 2v, ADR-0043)', () =
     }
   });
 
-  it('Codex W8 re-review gate table — post-apply validation @ WORKSPACE_APPLIED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — post-apply validation @ WORKSPACE_APPLIED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.validation;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: validatedAnchor() });
@@ -4479,7 +4488,7 @@ describe('Approved Git Commit Execution — runtime (Sprint 2y, ADR-0046)', () =
     }
   });
 
-  it('Codex W8 re-review gate table — commit execution @ COMMIT_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — commit execution @ COMMIT_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.commit;
     for (const text of gate.positives) {
       const { deps, calls } = execDeps();
@@ -4650,8 +4659,13 @@ describe('Approved Git Commit Execution — runtime (Sprint 2y, ADR-0046)', () =
   });
 
   it('execution never accepts a new message; commitFiles message === approved message (CA 31–32)', async () => {
+    // (allow-list, Codex wave-8 review) a phrase carrying an extra message override is not an exact accepted phrase,
+    // so it does not execute at all; the plain phrase commits with the APPROVED message only.
+    const sneaky = execDeps();
+    await new ConversationRuntime(sneaky.deps).handle(messageOf('승인된 커밋 실행해줘 메시지는 "feat: sneaky override"'));
+    expect(sneaky.calls.gitCommit).toBe(0);
     const { deps, calls } = execDeps();
-    await new ConversationRuntime(deps).handle(messageOf('승인된 커밋 실행해줘 메시지는 "feat: sneaky override"'));
+    await new ConversationRuntime(deps).handle(messageOf('승인된 커밋 실행해줘'));
     expect(calls.gitCommit).toBe(1);
     expect(calls.lastGitCommitInput?.message).toBe(COMMIT_MSG);
     expect(calls.lastGitCommitInput?.message).not.toContain('sneaky');
@@ -5293,7 +5307,7 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
   const EXEC_PHRASES = ['승인된 push 실행해줘', 'push 실행해줘', '이제 실제 push 해줘', 'execute approved push', 'push approved commit'];
 
   // ── execute + gating (CA 1–12) ──────────────────────────────────────────────────────────────
-  it('Codex W8 re-review gate table — push execution @ PUSH_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — push execution @ PUSH_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.push;
     for (const text of gate.positives) {
       const { deps, calls } = execDeps();
@@ -7495,7 +7509,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     '강제 푸시 실행해줘',
   ];
 
-  it('Codex W8 re-review gate table — PR creation execution @ PR_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — PR creation execution @ PR_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.pr;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
@@ -7510,7 +7524,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     }
   });
 
-  it('Codex W8 re-review gate table — merge execution @ MERGE_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — merge execution @ MERGE_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.merge;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
@@ -7525,7 +7539,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     }
   });
 
-  it('Codex W8 re-review gate table — local main sync @ PR_MERGED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — local main sync @ PR_MERGED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.sync;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
@@ -7540,7 +7554,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     }
   });
 
-  it('Codex W8 re-review gate table — local branch cleanup @ MAIN_SYNCED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — local branch cleanup @ MAIN_SYNCED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.localCleanup;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
@@ -7555,7 +7569,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     }
   });
 
-  it('Codex W8 re-review gate table — remote branch cleanup execution @ REMOTE_BRANCH_CLEANUP_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+  it('Allow-list gate table — remote branch cleanup execution @ REMOTE_BRANCH_CLEANUP_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
     const gate = EXECUTION_GATES.remoteCleanup;
     for (const text of gate.positives) {
       const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
@@ -7617,7 +7631,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   });
 
   it('Codex W8 P1: the legitimate remote-cleanup execution phrases still execute exactly ONE delete', async () => {
-    for (const text of ['실행해줘', '진행해', 'go ahead', '원격 브랜치 삭제 진행해줘', '머지된 원격 브랜치 삭제 실행해줘']) {
+    for (const text of ['실행해줘', '진행해', 'go ahead', '원격 브랜치 삭제 진행해줘', '원격 브랜치 제거 실행해줘']) {
       const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
       await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.hostingDeleteRemoteBranch, text).toBe(1);
