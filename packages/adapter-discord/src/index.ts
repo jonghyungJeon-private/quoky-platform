@@ -1,9 +1,10 @@
 import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'discord.js';
-import type { Message } from 'discord.js';
+import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
+import { isAdmittedReaction, toRating } from './reactions';
 
 export {
   chunkText,
@@ -26,6 +27,8 @@ export type {
   NotificationSendOptions,
   OwnerNotificationDeps,
 } from './notification';
+export { isAdmittedReaction, toRating } from './reactions';
+export type { ReactionAdmissionInput } from './reactions';
 import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
@@ -35,9 +38,12 @@ import type {
   Logger,
   NotificationSink,
   NotificationSinkOutcome,
+  OutboundDeliveryReceipt,
   OutboundMessage,
   OwnerNotification,
   PlatformAdapter,
+  PlatformFeedbackAction,
+  PlatformFeedbackHandler,
 } from '@quoky/core';
 
 export interface DiscordConfig {
@@ -83,6 +89,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
   private client?: Client;
   private messageHandler?: InboundMessageHandler;
   private approvalHandler?: ApprovalDecisionHandler;
+  private feedbackHandler?: PlatformFeedbackHandler;
   /** Active self-refreshing typing loops, keyed by target channel/thread id. */
   private readonly typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -99,6 +106,11 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     this.approvalHandler = handler;
   }
 
+  /** ADR-0098 D3: admitted 👍/👎 reactions on this bot's replies. */
+  onFeedback(handler: PlatformFeedbackHandler): void {
+    this.feedbackHandler = handler;
+  }
+
   async start(): Promise<void> {
     const client = new Client({
       intents: [
@@ -107,13 +119,23 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         GatewayIntentBits.MessageContent,
         // ADR-0091: owner direct messages. DM channels arrive uncached, so the Channel partial is required.
         GatewayIntentBits.DirectMessages,
+        // ADR-0098 D3: reaction feedback (non-privileged intents). Partials let add/remove events for an uncached
+        // user/reaction still arrive; admission itself never fetches.
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.DirectMessageReactions,
       ],
-      partials: [Partials.Channel],
+      partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
     });
     this.client = client;
 
     client.on(Events.MessageCreate, (message) => {
       void this.handleMessageCreate(message);
+    });
+    client.on(Events.MessageReactionAdd, (reaction, user) => {
+      void this.handleReaction(reaction, user, 'ADDED');
+    });
+    client.on(Events.MessageReactionRemove, (reaction, user) => {
+      void this.handleReaction(reaction, user, 'REMOVED');
     });
 
     await client.login(this.config.token);
@@ -126,14 +148,21 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     this.client = undefined;
   }
 
-  async sendMessage(message: OutboundMessage): Promise<void> {
+  /**
+   * Delivers one reply and returns the ids of every Discord message posted for it (text chunks, preview parts,
+   * attachments and notices, in posting order; ADR-0098 D3) — including after a partial failure, so the parts that
+   * did arrive stay rateable. Nothing posted → an empty receipt.
+   */
+  async sendMessage(message: OutboundMessage): Promise<OutboundDeliveryReceipt> {
     const target = message.context.threadId ?? message.context.channelId;
+    const platformMessageIds: string[] = [];
+    const receipt: OutboundDeliveryReceipt = { platformMessageIds };
     // The response is arriving — stop the "is typing…" loop for this target.
     this.clearTyping(target);
     const channel = await this.fetchChannel(target);
     if (!channel?.isSendable()) {
       this.logger.warn('send skipped: channel not sendable', { channelId: target });
-      return;
+      return receipt;
     }
 
     // F5-C/D/E (Sprint 4c-Follow-up-5): a complete structured preview is delivered LOSSLESSLY — ordered
@@ -142,17 +171,18 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     if (message.preview) {
       const report = await deliverPreview(message.preview, {
         sendText: async (chunk) => {
-          await channel.send(chunk);
+          platformMessageIds.push((await channel.send(chunk)).id);
         },
         sendAttachment: async (canonicalDiff, filename, caption) => {
-          await channel.send({
+          const sent = await channel.send({
             content: caption,
             files: [{ attachment: Buffer.from(canonicalDiff, 'utf8'), name: filename }],
           });
+          platformMessageIds.push(sent.id);
         },
         notify: async (notice) => {
           try {
-            await channel.send(notice);
+            platformMessageIds.push((await channel.send(notice)).id);
           } catch (err) {
             this.logger.warn('preview notice send failed', {
               channelId: target,
@@ -174,18 +204,18 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       if (report.outcome === 'DELIVERY_FAILED') {
         this.logger.error('preview delivery failed', { channelId: target, previewId: report.previewId, deliveryMode: report.deliveryMode });
       }
-      return;
+      return receipt;
     }
 
     const report = await deliverWithNotice(
       message.text,
       async (chunk) => {
-        await channel.send(chunk);
+        platformMessageIds.push((await channel.send(chunk)).id);
       },
       async (notice) => {
         // Single best-effort notice; if it also fails, log only (ADR-0016).
         try {
-          await channel.send(notice);
+          platformMessageIds.push((await channel.send(notice)).id);
         } catch (err) {
           this.logger.warn('partial-failure notice send failed', {
             channelId: target,
@@ -204,7 +234,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         totalChunks: report.totalChunks,
         error: report.error,
       });
-      return;
+      return receipt;
     }
     if (report.totalChunks > 1) {
       this.logger.info('message delivered in chunks', {
@@ -213,6 +243,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         fileAttachmentThresholdHit: report.totalChunks > FILE_ATTACHMENT_CHUNK_THRESHOLD,
       });
     }
+    return receipt;
   }
 
   async sendTyping(context: ConversationContext): Promise<void> {
@@ -327,6 +358,62 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     } catch (err) {
       this.logger.error('message handling failed', {
         error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * ADR-0098 D3 reaction feedback. Admission ({@link isAdmittedReaction}: 👍/👎 only, owner reactor, bot-authored
+   * target, ADR-0091 location) runs on data already present in the gateway event and cache — BEFORE any fetch or
+   * logging. Nothing is fetched at all: an uncached (partial) target has no known author and is dropped, so
+   * feedback is captured for replies still in the message cache. A dropped reaction is never logged; the handler
+   * failure log carries no ids or content. Nothing is ever sent in response.
+   */
+  private async handleReaction(
+    reaction: MessageReaction | PartialMessageReaction,
+    user: User | PartialUser,
+    action: PlatformFeedbackAction,
+  ): Promise<void> {
+    try {
+      const rating = toRating(reaction.emoji.id ? null : reaction.emoji.name);
+      if (!rating) return;
+      const message = reaction.message;
+      const channel = (message.channel ?? null) as { isThread?: () => boolean; parentId?: string | null } | null;
+      const isThread = channel?.isThread?.() === true;
+      const parentId = isThread ? (channel?.parentId ?? null) : null;
+      const admitted = isAdmittedReaction({
+        userId: user.id,
+        ownerIds: this.config.ownerIds,
+        messageAuthorId: message.partial ? null : message.author?.id,
+        botUserId: this.client?.user?.id,
+        guildId: message.guildId ?? null,
+        ...(this.config.guildId ? { configuredGuildId: this.config.guildId } : {}),
+        channelId: message.channelId,
+        isThread,
+        parentId,
+        channelIds: this.config.channelIds ?? [],
+      });
+      if (!admitted) return;
+      const handler = this.feedbackHandler;
+      if (!handler) return;
+      const context: ConversationContext = {
+        platform: this.platform,
+        channelId: isThread ? (parentId ?? message.channelId) : message.channelId,
+        userId: user.id,
+        ...(message.guildId ? { spaceId: message.guildId } : {}),
+        ...(isThread ? { threadId: message.channelId } : {}),
+      };
+      await handler({
+        platform: this.platform,
+        context,
+        targetPlatformMessageId: message.id,
+        rating,
+        action,
+        occurredAt: now(),
+      });
+    } catch (err) {
+      this.logger.warn('feedback reaction handling failed', {
+        errorName: err instanceof Error ? err.name : typeof err,
       });
     }
   }
