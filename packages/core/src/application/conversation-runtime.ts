@@ -2515,9 +2515,12 @@ export class ConversationRuntime {
         maxFileBytes: MAX_CODEGEN_CONTEXT_FILE_BYTES,
         maxTotalBytes: MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
       });
-      return this.failComposed(
-        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
-      );
+      // A target whose content carries credential material is never sent to the provider; the path
+      // (user-supplied) goes to the reply only — the log above carries just the target index.
+      const reply = context.reason === 'target-contains-credential'
+        ? this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, context.targetPath)
+        : this.deps.composer.composeCodeGenerationPreviewFailed(message.context);
+      return this.failComposed(message, session, reply, outcome);
     }
 
     let generation: CodeGeneration;

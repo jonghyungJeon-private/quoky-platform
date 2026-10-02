@@ -854,6 +854,24 @@ export class ResponseComposer {
   }
 
   /**
+   * A validated target's CONTENT carries credential material (private key, vendor token, credential
+   * assignment), so it was never sent to the AI provider. Names the target so the user can move the
+   * secret out; never echoes any content.
+   */
+  composeCodeGenerationPreviewCredentialRefused(context: ConversationContext, targetPath: string): OutboundMessage {
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          `이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요: ${targetPath}`,
+          '민감한 값은 환경 변수나 비밀 저장소로 옮긴 뒤 다시 요청해 주세요.',
+          '파일은 수정되지 않았어요.',
+        ].join('\n'),
+      ),
+    };
+  }
+
+  /**
    * Every proposed path was outside the validated targetFiles (AI Code Generation Preview, ADR-0038).
    * Distinct from {@link composeCodeGenerationPreviewFailed}: generation itself succeeded, but
    * nothing it proposed matched the confirmed target — a different, more precise claim. Never

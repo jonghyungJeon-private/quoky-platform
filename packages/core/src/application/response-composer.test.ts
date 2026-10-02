@@ -385,6 +385,20 @@ describe('ResponseComposer.composeCodeGenerationPreviewFailed', () => {
   });
 });
 
+describe('ResponseComposer.composeCodeGenerationPreviewCredentialRefused', () => {
+  it('names the target, asks to move the secret out, and states nothing was modified', () => {
+    const reply = composer.composeCodeGenerationPreviewCredentialRefused(CTX, 'config/service-account.json');
+    expect(reply.text).toBe(
+      '이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요: config/service-account.json\n' +
+        '민감한 값은 환경 변수나 비밀 저장소로 옮긴 뒤 다시 요청해 주세요.\n' +
+        '파일은 수정되지 않았어요.',
+    );
+    for (const word of FORBIDDEN_MUTATION_WORDS) {
+      expect(reply.text).not.toContain(word);
+    }
+  });
+});
+
 describe('ResponseComposer.composeCodeGenerationPreviewNoValidChange', () => {
   it('does not claim a successful proposal; states the file was not modified', () => {
     const reply = composer.composeCodeGenerationPreviewNoValidChange(CTX, ['other.ts']);

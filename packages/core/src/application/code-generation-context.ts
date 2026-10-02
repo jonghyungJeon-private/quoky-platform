@@ -1,4 +1,5 @@
 import type { ContextFile, WorkspaceRef } from '../domain';
+import { containsCredentialFileContent } from './credential-guard';
 import { normalizeRelativePath } from './target-scope';
 
 /**
@@ -9,9 +10,11 @@ import { normalizeRelativePath } from './target-scope';
  * `readFile` that refuses secret/binary/oversized/out-of-root files) and bounds the result.
  *
  * It never writes, never lists beyond the given targets, never truncates silently, and never guesses
- * targets: on any unreadable target or size overflow it returns a typed failure so the caller can fail
- * the preview/stage closed (a validated target whose current content cannot be read is a failed preview,
- * never an implicit 'add' — ADR-0039). Pure Application-layer helper; not a capability, port, or adapter.
+ * targets: on any unreadable target, size overflow, or target whose CONTENT carries credential material
+ * (the workspace policy only refuses secret-looking file NAMES) it returns a typed failure so the caller
+ * can fail the preview/stage closed (a validated target whose current content cannot be read is a failed
+ * preview, never an implicit 'add' — ADR-0039). Pure Application-layer helper; not a capability, port, or
+ * adapter.
  */
 
 /** Per-file cap (UTF-8 bytes) on target content injected into a code-generation prompt. */
@@ -22,15 +25,24 @@ export const MAX_CODEGEN_CONTEXT_TOTAL_BYTES = 256 * 1024;
 export type CodeGenerationContextFailureReason =
   | 'target-read-failed'
   | 'target-too-large'
-  | 'context-total-too-large';
+  | 'context-total-too-large'
+  | 'target-contains-credential';
 
 export type CodeGenerationContextResult =
   | { readonly ok: true; readonly contextFiles: ContextFile[] }
   | {
       readonly ok: false;
-      readonly reason: CodeGenerationContextFailureReason;
+      readonly reason: Exclude<CodeGenerationContextFailureReason, 'target-contains-credential'>;
       /** Index into the deduplicated read order — never the path or content (log-safe). */
       readonly targetIndex: number;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: 'target-contains-credential';
+      /** Index into the deduplicated read order (log-safe). */
+      readonly targetIndex: number;
+      /** The user-supplied target path, for the user-facing reply ONLY — never logged. */
+      readonly targetPath: string;
     };
 
 /** The single read-only Workspace method this helper needs (structurally `WorkspaceManager.read`). */
@@ -69,6 +81,9 @@ export async function readCodeGenerationContextFiles(
     const bytes = utf8Bytes(content);
     if (bytes > MAX_CODEGEN_CONTEXT_FILE_BYTES) {
       return { ok: false, reason: 'target-too-large', targetIndex };
+    }
+    if (containsCredentialFileContent(content)) {
+      return { ok: false, reason: 'target-contains-credential', targetIndex, targetPath: target };
     }
     total += bytes;
     if (total > MAX_CODEGEN_CONTEXT_TOTAL_BYTES) {

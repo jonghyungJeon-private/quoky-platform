@@ -198,7 +198,12 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     const retriever: MemoryRetriever = {
       retrieve: async () => [
         durable('secret', '내 비밀번호는 hunter2야'),
+        durable('json-secret', '{"password":"demo-value"}'),
+        durable('ko-no-space', '비밀번호는테스트값이야'),
         durable('ok', '내 배포 창은 화요일이야'),
+        durable('ok-uat', '내 UAT 확인 단어는 파랑 고래야'),
+        durable('ok-policy', '비밀번호 정책 문서는 Confluence에 있어'),
+        durable('ok-crypto', '암호화 방식은 AES야'),
       ],
     };
 
@@ -206,7 +211,14 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
       taskWith({ sessionId: 'S1' }),
     );
 
-    expect(bundle.durableRecall?.map((entry) => entry.content)).toEqual(['내 배포 창은 화요일이야']);
+    expect(bundle.durableRecall?.map((entry) => entry.content).sort()).toEqual(
+      [
+        '내 배포 창은 화요일이야',
+        '내 UAT 확인 단어는 파랑 고래야',
+        '비밀번호 정책 문서는 Confluence에 있어',
+        '암호화 방식은 AES야',
+      ].sort(),
+    );
   });
 
   it('keeps non-identical durable content because transcript deduplication is identity-based', async () => {

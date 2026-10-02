@@ -537,6 +537,16 @@ describe('ExecutionOrchestrator CODE_GENERATION target context (QA-012)', () => 
     expect(calls.diff).toBe(0);
   });
 
+  it('a target whose content carries credential material → STOPPED_ON_FAILURE; generate never called, no path in reason', async () => {
+    const { deps, calls } = makeDeps({ read: () => '{"private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE"}' });
+    const out = await new ExecutionOrchestrator(deps).run(codeChange({ targetFiles: ['config/app.json'] }));
+    expect(out.status).toBe(ExecutionOutcomeStatus.STOPPED_ON_FAILURE);
+    expect(out.lastStage).toBe(ExecutionStage.CODE_GENERATION);
+    expect(out.stoppedReason).toContain('target-contains-credential');
+    expect(out.stoppedReason).not.toContain('config/app.json');
+    expect(calls.codeGen).toBe(0);
+  });
+
   it('an oversized target → STOPPED_ON_FAILURE at CODE_GENERATION (never truncated); generate never called', async () => {
     const { deps, calls } = makeDeps({ read: () => 'x'.repeat(64 * 1024 + 1) });
     const out = await new ExecutionOrchestrator(deps).run(codeChange({ targetFiles: ['src/big.js'] }));

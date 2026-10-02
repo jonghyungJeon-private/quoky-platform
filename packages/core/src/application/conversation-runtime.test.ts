@@ -1183,6 +1183,12 @@ describe('ConversationRuntime', () => {
     'remember: private key is abc',
     'remember: pin is 4321',
     '기억해: 키는 sk-abcdefghijklmnopqrstuvwxyz',
+    '기억해: {"password":"demo-value"}',
+    '기억해: 비밀번호는테스트값이야',
+    "기억해: {'token': 'abc123'}",
+    '기억해: 비밀번호가테스트값이야',
+    '기억해: 패스워드:abc123',
+    'remember: DB_PASSWORD=hunter2',
   ])('credential declaration %s is refused, nothing stored, no provider call', async (text) => {
     const { deps, calls } = makeDeps();
 
@@ -2547,6 +2553,22 @@ describe('Code-generation preview target context (QA-012)', () => {
     const log = branchLog(calls, 'context-target-too-large');
     expect(log?.fields?.maxFileBytes).toBe(64 * 1024);
     expect(JSON.stringify(log)).not.toContain('xxxx');
+  });
+
+  it('a target whose content carries credential material → refused before any AI call, path only in the reply', async () => {
+    const pem = '{ "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEsecretbody\\n-----END PRIVATE KEY-----" }';
+    const { result, calls } = await approveWith({ workspaceRead: () => pem }, planningOnlyRequestOf());
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(
+      new ResponseComposer().composeCodeGenerationPreviewCredentialRefused(CTX, TARGET_FILE).text,
+    );
+    expect(result.reply.text).not.toContain('MIIEsecretbody');
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(calls.workspaceDiff).toBe(0);
+    const log = branchLog(calls, 'context-target-contains-credential');
+    expect(log?.fields?.targetIndex).toBe(0);
+    expect(JSON.stringify(calls.loggerWarnCalls)).not.toContain(TARGET_FILE);
+    expect(JSON.stringify(calls.loggerWarnCalls)).not.toContain('MIIEsecretbody');
   });
 
   it('targets that together exceed the 256 KiB total cap → failed preview, generate never called', async () => {

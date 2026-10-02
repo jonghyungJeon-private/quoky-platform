@@ -58,4 +58,20 @@ describe('readCodeGenerationContextFiles (QA-012)', () => {
       ok: false, reason: 'context-total-too-large', targetIndex: 4,
     });
   });
+
+  it('refuses a target whose CONTENT carries credential material (name passes the workspace policy)', async () => {
+    const key = '{ "type": "service_account", "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n" }';
+    const ws = reader({ 'src/a.js': 'A', 'config/app.json': key });
+    expect(await readCodeGenerationContextFiles(ws, REF, ['src/a.js', 'config/app.json'])).toEqual({
+      ok: false, reason: 'target-contains-credential', targetIndex: 1, targetPath: 'config/app.json',
+    });
+  });
+
+  it.each(['{"password":"demo-value"}', 'DB_PASSWORD=hunter2', 'const k = "AKIAIOSFODNN7EXAMPLE";'])(
+    'refuses credential content %j',
+    async (content) => {
+      const out = await readCodeGenerationContextFiles(reader({ f: content }), REF, ['f']);
+      expect(out).toMatchObject({ ok: false, reason: 'target-contains-credential', targetIndex: 0 });
+    },
+  );
 });
