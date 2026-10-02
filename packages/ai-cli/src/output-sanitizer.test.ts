@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { generalChatReplyPolicy } from '@quoky/core';
 import {
+  UNSUPPORTED_ACTION_NOTICE_EN,
+  UNSUPPORTED_ACTION_NOTICE_KO,
+  claimsUnsupportedExternalAction,
+  guardUnsupportedActionClaims,
   normalizeLiteralEscapes,
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -327,5 +331,100 @@ describe('sanitizeGeneralChatText', () => {
 
   it('leaves ordinary answers unchanged', () => {
     expect(sanitizeGeneralChatText('안녕하세요!', generalChatReplyPolicy('안녕'))).toBe('안녕하세요!');
+  });
+});
+
+describe('action-claim guard (ADR-0098 amendment D2)', () => {
+  const ko = generalChatReplyPolicy('내일 회의 캘린더에 추가해줘');
+  const en = generalChatReplyPolicy('Add the meeting to my calendar');
+  const ja = generalChatReplyPolicy('明日の会議をカレンダーに追加して');
+
+  it.each([
+    '네! 구글 캘린더에 내일 오후 3시 회의를 추가해 드릴게요.',
+    '구글 캘린더에 일정을 등록했어요.',
+    '캘린더에 넣어 드렸어요!',
+    '회의 일정을 잡아 드렸어요.',
+    '내일 오전 회의를 일정에 추가해 드렸습니다.',
+    '김부장님께 메일을 보내드릴게요.',
+    '이메일 발송을 완료했습니다.',
+    '메일로 보냈어요.',
+    '동생에게 문자를 보냈습니다.',
+    '엄마에게 전화 걸어 드릴게요.',
+    '강남역 식당 예약했어요.',
+    '예약이 완료되었습니다.',
+    'KTX 예매해 드렸어요.',
+    '결제를 진행했어요. 결제가 완료되었습니다.',
+    '송금했습니다!',
+    '엄마 계좌로 10만원을 보내드렸어요.',
+    '트위터에 올렸어요.',
+    '슬랙 채널에 공지를 게시했습니다.',
+    'Sure! I have added the meeting to your calendar.',
+    "I've added it to your Google Calendar.",
+    "I'll send the email to your manager right away.",
+    'I will send him a text now.',
+    'Let me book a table for two at 7pm.',
+    "I'm scheduling the meeting for tomorrow.",
+    'I sent the email.',
+    "I've emailed John the report.",
+    'I paid the electricity bill.',
+    'I posted it on LinkedIn.',
+    'Done! Your meeting has been added to your calendar.',
+    'Your reservation has been confirmed.',
+  ])('flags a claimed external action: %s', (reply) => {
+    expect(claimsUnsupportedExternalAction(reply)).toBe(true);
+  });
+
+  it.each([
+    '저는 캘린더에 일정을 추가할 수 없어요. 직접 추가해 주세요.',
+    '메일을 보내는 방법은 다음과 같아요.',
+    '메일 초안을 써 드릴게요:\n\n안녕하세요, 김부장님.',
+    '예약했는지 앱에서 확인해 보세요.',
+    '메일을 보냈다면 답장을 기다려 보세요.',
+    '결제가 완료되었는지 카드사 앱에서 확인할 수 있어요.',
+    '여행 일정에 박물관 방문을 추가했어요.',
+    '회의록을 정리했어요.',
+    '예시 코드에 함수를 추가했어요.',
+    '결제 완료 화면을 만들려면 상태 값을 하나 두면 돼요.',
+    '아무것도 보내지 않았어요.',
+    "I can't add events to your calendar, but here is a draft invite.",
+    "I haven't sent anything.",
+    'I will not send the email.',
+    'If I sent the email, you would get a copy.',
+    'Here is a draft email you can send to your manager.',
+    'To send an email, open Gmail and click Compose.',
+    "I've added a comment to the code below.",
+    'I paid close attention to the wording.',
+    '```\nawait calendar.events.insert(event); // 캘린더에 추가했어요\n```',
+    'Use `sendMail()`; it reports "메일을 보냈어요" when it succeeds.',
+    '> 구글 캘린더에 추가해 드릴게요.\n\n이런 문장은 실제로 실행된 작업이 없을 때 쓰면 안 돼요.',
+  ])('keeps a reply that claims no action: %s', (reply) => {
+    expect(claimsUnsupportedExternalAction(reply)).toBe(false);
+  });
+
+  it('replaces the whole reply with the notice in the reply language', () => {
+    const reply = '네! 구글 캘린더에 내일 오후 3시 회의를 추가해 드릴게요. 다른 일정도 있으면 말씀해 주세요.';
+    expect(guardUnsupportedActionClaims(reply, ko)).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
+    expect(guardUnsupportedActionClaims("I've added the meeting to your calendar.", en)).toBe(UNSUPPORTED_ACTION_NOTICE_EN);
+    expect(UNSUPPORTED_ACTION_NOTICE_KO).toMatch(/실행된 작업은 없어요/);
+    expect(UNSUPPORTED_ACTION_NOTICE_EN).toMatch(/Nothing was done/);
+  });
+
+  it('follows the Core reply language over the reply text, and falls back to the reply text, then to both', () => {
+    expect(guardUnsupportedActionClaims("I've added the meeting to your calendar.", ko)).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
+    expect(guardUnsupportedActionClaims('캘린더에 추가해 드렸어요.')).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
+    expect(guardUnsupportedActionClaims('I sent the email.', undefined)).toBe(UNSUPPORTED_ACTION_NOTICE_EN);
+    expect(guardUnsupportedActionClaims('カレンダーに追加しました。I have added it to your calendar.', ja)).toBe(
+      `${UNSUPPORTED_ACTION_NOTICE_KO}\n\n${UNSUPPORTED_ACTION_NOTICE_EN}`,
+    );
+  });
+
+  it('returns a reply without a claim unchanged', () => {
+    const reply = '메일 초안이에요.\n\n안녕하세요, 일정 변경 건으로 연락드립니다.';
+    expect(guardUnsupportedActionClaims(reply, ko)).toBe(reply);
+  });
+
+  it('runs inside sanitizeGeneralChatText after the existing hygiene steps', () => {
+    expect(sanitizeGeneralChatText('네!\\n구글 캘린더에 회의를 추가해 드릴게요.\\n다른 일정도 말씀해 주세요.', ko)).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
+    expect(sanitizeGeneralChatText('안녕하세요!', ko)).toBe('안녕하세요!');
   });
 });

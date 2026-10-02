@@ -336,7 +336,154 @@ export function normalizeLiteralEscapes(text: string): string {
     .join('');
 }
 
-/** Provider-neutral GENERAL_CHAT output hygiene applied after `stripInternalMetadataEnvelope` (ADR-0098 D2). */
+/** Deterministic Korean notice that replaces a reply claiming an unsupported external action (ADR-0098 amendment D2). */
+export const UNSUPPORTED_ACTION_NOTICE_KO =
+  'Quoky는 캘린더 등록, 메일·문자 발송, 예약, 결제, 외부 서비스 게시 같은 외부 작업을 직접 할 수 없어요. ' +
+  '이 요청으로 실행된 작업은 없어요. 할 수 있는 일은 "도움말"에서 확인할 수 있어요.';
+
+/** Deterministic English notice that replaces a reply claiming an unsupported external action (ADR-0098 amendment D2). */
+export const UNSUPPORTED_ACTION_NOTICE_EN =
+  "Quoky can't perform external actions such as adding calendar entries, sending email or messages, bookings, " +
+  'payments or posting to other services. Nothing was done for this request. Type "/help" to see what Quoky can do.';
+
+// Korean claim endings. SERVICE: the assistant did / will do it for the User ("추가해 드릴게요", "예약해 드렸어요",
+// "등록해 놨어요", "완료됐어요"). ANY: SERVICE plus plain past/future ("추가했어요", "보낼게요").
+const KO_SERVICE_END = String.raw`(?:해\s*(?:드릴게|드릴께|드리겠|드렸|놓을게|놓았|놨|뒀|두었|둘게|줄게|줬)|완료\s*(?:했|하였|됐|되었|해\s*드렸)|됐|되었)`;
+const KO_ANY_END = String.raw`(?:${KO_SERVICE_END}|했|하였|하겠|할게|할께)`;
+const KO_PARTICLE = String.raw`(?:\s*(?:을|를|이|가|은|는))?\s*`;
+const KO_GIVE = String.raw`\s*(?:드릴게|드릴께|드리겠|드렸|놓을게|놓았|놨|뒀|두었|둘게|줄게|줬)`;
+/** "보내 드렸어요", "보냈어요", "보낼게요", "보내겠습니다" — the same shape for 올리다/걸다/넣다/잡다. */
+function koNativeVerb(stem: string, past: string, promise: string, intent: string): string {
+  return String.raw`(?:${stem}${KO_GIVE}|${past}|${promise}(?:게|께)|${intent}겠)`;
+}
+const KO_SEND = koNativeVerb('보내', '보냈', '보낼', '보내');
+const KO_POST = koNativeVerb('올려', '올렸', '올릴', '올리');
+const KO_CALL = koNativeVerb('걸어', '걸었', '걸', '걸');
+const KO_PUT = String.raw`(?:${koNativeVerb('넣어', '넣었', '넣을', '넣')}|${koNativeVerb('잡아', '잡았', '잡을', '잡')})`;
+const KO_PUT_SERVICE = String.raw`(?:넣어|잡아)${KO_GIVE}`;
+/** A conditional, question or negated continuation means the sentence does not claim the action. */
+const KO_NOT_A_CLAIM = String.raw`(?!\s*(?:는지|냐|나요|다면|다고|다는|더라도|던|을\s*(?:때|경우|수)|으면|면|지\s*(?:않|못|마)|기\s*(?:전|위해)|어야|야\s*(?:해|합)))`;
+const GAP = String.raw`[^.!?\n]{0,40}?`;
+
+function koClaim(source: string): RegExp {
+  return new RegExp(`(?:${source})${KO_NOT_A_CLAIM}`, 'iu');
+}
+
+const KO_ACTION_CLAIMS: readonly RegExp[] = [
+  // calendar: a calendar service noun with any claim; a bare 일정/회의 noun only with a service claim
+  koClaim(String.raw`(?:캘린더|달력|calendar|outlook|아웃룩)${GAP}(?:(?:추가|등록|입력|생성|저장|예약)${KO_PARTICLE}${KO_ANY_END}|${KO_PUT})`),
+  koClaim(String.raw`(?:일정|스케줄|미팅|회의(?!록))${GAP}(?:(?:추가|등록|입력|생성|예약)${KO_PARTICLE}${KO_SERVICE_END}|${KO_PUT_SERVICE})`),
+  // email
+  koClaim(String.raw`(?:메일|이메일|e-?mail|gmail|지메일)${GAP}(?:(?:발송|전송|회신|답장|전달|포워딩)${KO_PARTICLE}${KO_ANY_END}|${KO_SEND})`),
+  // SMS / messenger / phone
+  koClaim(String.raw`(?:문자|sms|카톡|카카오톡|메시지|메세지|알림톡)${GAP}(?:(?:발송|전송)${KO_PARTICLE}${KO_ANY_END}|${KO_SEND})`),
+  koClaim(String.raw`(?:전화|통화)${GAP}${KO_CALL}|(?:전화|통화)${KO_PARTICLE}${KO_ANY_END}`),
+  // booking / payment: the action noun itself carries the claim
+  koClaim(String.raw`(?:예약|예매)${KO_PARTICLE}(?:${KO_ANY_END}|${KO_PUT})`),
+  koClaim(String.raw`(?:결제|송금|이체|입금|구매|구입|주문)${KO_PARTICLE}${KO_ANY_END}`),
+  koClaim(String.raw`계좌${GAP}${KO_SEND}`),
+  // posting to an external service
+  koClaim(String.raw`(?:트위터|트윗|페이스북|인스타(?:그램)?|링크드인|블로그|슬랙|slack|게시판|sns|커뮤니티|레딧|reddit|유튜브|twitter|facebook|instagram|linkedin)${GAP}(?:(?:게시|포스팅|업로드|공유|등록|트윗)${KO_PARTICLE}${KO_ANY_END}|${KO_POST})`),
+];
+
+// English: the assistant as subject ("I have added", "I'll send", "Let me book", "I'm posting"), never after a
+// conditional ("if I sent ..."); a negation ("I haven't sent", "I can't add", "I will not send") never matches.
+const EN_SUBJECT_PAST = String.raw`(?<!\b(?:if|once|when|after|before|until|unless|whether)\s)\bI(?:'ve|\s+have)?(?:\s+(?:just|already|now|successfully|also))?\s+`;
+const EN_SUBJECT_FUTURE = String.raw`(?:(?<!\b(?:if|once|when|after|before|until|unless|whether)\s)\bI(?:'ll|\s+will|'m\s+going\s+to|\s+am\s+going\s+to)\s+(?:now\s+|also\s+|go\s+ahead\s+and\s+)?|\blet\s+me\s+(?:go\s+ahead\s+and\s+)?)`;
+const EN_SUBJECT_PROGRESSIVE = String.raw`\bI(?:'m|\s+am)\s+(?:now\s+)?`;
+
+function enClaim(past: string, base: string, progressive: string, noun?: string): RegExp {
+  const verb = String.raw`(?:${EN_SUBJECT_PAST}(?:${past})|${EN_SUBJECT_FUTURE}(?:${base})|${EN_SUBJECT_PROGRESSIVE}(?:${progressive}))\b`;
+  return new RegExp(noun === undefined ? verb : String.raw`${verb}[^.!?\n]*\b(?:${noun})\b`, 'iu');
+}
+
+const EN_ACTION_CLAIMS: readonly RegExp[] = [
+  // calendar / booking
+  enClaim('added|put', 'add|put', 'adding|putting', 'calendars?|outlook'),
+  enClaim(
+    'scheduled|set\\s+up|booked',
+    'schedule|set\\s+up|book',
+    'scheduling|setting\\s+up|booking',
+    'calendars?|meetings?|appointments?|invites?|calls?|tables?|flights?|hotels?|rooms?|tickets?|seats?|reservations?',
+  ),
+  enClaim('booked|reserved', 'reserve', 'reserving'),
+  // email / SMS / messenger / phone
+  enClaim('sent|forwarded', 'send|forward', 'sending|forwarding', 'e-?mails?|mails?|inbox|texts?|sms|messages?|invites?'),
+  enClaim('emailed|texted|messaged|tweeted', 'email|text|tweet', 'emailing|texting|tweeting'),
+  enClaim('called|phoned', 'call|phone', 'calling|phoning', 'phones?|numbers?|mom|dad|him|her|them|back'),
+  // payment / purchase
+  enClaim(
+    'paid|transferred|wired',
+    'pay|transfer|wire',
+    'paying|transferring|wiring',
+    'bills?|invoices?|rent|payments?|money|funds|fees?|dollars?|won|accounts?',
+  ),
+  enClaim('purchased|bought', 'purchase|buy', 'purchasing|buying'),
+  enClaim('ordered|placed', 'order|place', 'ordering|placing', 'orders?|food|pizza|delivery|takeout'),
+  // posting to an external service
+  enClaim(
+    'posted|published|shared|uploaded',
+    'post|publish|share|upload',
+    'posting|publishing|sharing|uploading',
+    'twitter|x\\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|social\\s+media|channel',
+  ),
+  // passive completion ("Your meeting has been added to your calendar", "The email has been sent")
+  /\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|sent|forwarded|emailed|paid|transferred|ordered|posted|published)\b[^.!?\n]*\b(?:calendars?|meetings?|appointments?|e-?mails?|inbox|texts?|messages?|reservations?|bookings?|payments?|orders?|twitter|facebook|instagram|linkedin|blog|slack)\b/iu,
+  /\b(?:calendars?|meetings?|appointments?|e-?mails?|messages?|reservations?|bookings?|payments?|orders?|tables?|flights?|tickets?|posts?|tweets?)\b[^.!?\n]*\b(?:has|have)\s+(?:now\s+)?been\s+(?:successfully\s+)?(?:added|scheduled|booked|reserved|sent|forwarded|emailed|paid|transferred|placed|posted|published|confirmed)\b/iu,
+];
+
+/** The prose of a reply: fenced and inline code, double-quoted text and block quotes are mentions, never claims. */
+function claimProse(text: string): string[] {
+  const prose = text
+    .replace(/(?:^|\n)[ ]{0,3}(`{3,}|~{3,})[\s\S]*?(?:\n[ ]{0,3}\1[ \t]*(?=\n|$)|$)/gu, '\n')
+    .replace(/`[^`\n]*`/gu, ' ')
+    .replace(/"[^"\n]*"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』/gu, ' ')
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s{0,3}>/u.test(line))
+    .join('\n');
+  return prose.split(/(?<=[.!?。])\s+|\n+/u).filter((sentence) => sentence.trim() !== '');
+}
+
+/**
+ * True when a chat reply claims to have performed, or to be about to perform, an external action Quoky has no
+ * capability for (calendar entries, email/SMS/messenger sends, phone calls, bookings, payments, posting to external
+ * services). Deterministic and provider-neutral (ADR-0098 amendment D2). Questions, conditionals, negations
+ * ("보낼 수 없어요", "I can't send"), code, double-quoted text and block quotes never count. Matching is per sentence
+ * (sentence punctuation or a line break), so a noun and a verb on different lines are not combined.
+ */
+export function claimsUnsupportedExternalAction(text: string): boolean {
+  return claimProse(text).some(
+    (sentence) =>
+      KO_ACTION_CLAIMS.some((pattern) => pattern.test(sentence)) ||
+      EN_ACTION_CLAIMS.some((pattern) => pattern.test(sentence)),
+  );
+}
+
+/** The notice in the reply language: the Core reply policy first, then the reply's own language, else both. */
+function unsupportedActionNotice(text: string, replyPolicy: GeneralChatReplyPolicy | undefined): string {
+  const fromPolicy = replyPolicy?.replyLanguage;
+  const language = fromPolicy === 'ko' || fromPolicy === 'en' ? fromPolicy : detectReplyLanguage(text);
+  if (language === 'ko') return UNSUPPORTED_ACTION_NOTICE_KO;
+  if (language === 'en') return UNSUPPORTED_ACTION_NOTICE_EN;
+  return `${UNSUPPORTED_ACTION_NOTICE_KO}\n\n${UNSUPPORTED_ACTION_NOTICE_EN}`;
+}
+
+/**
+ * Provider-neutral action-claim guard (ADR-0098 amendment D2): a chat reply that claims an unsupported external
+ * action is replaced as a whole by a deterministic notice that Quoky cannot do it and nothing was done. Any other
+ * reply is returned unchanged.
+ */
+export function guardUnsupportedActionClaims(text: string, replyPolicy?: GeneralChatReplyPolicy): string {
+  return claimsUnsupportedExternalAction(text) ? unsupportedActionNotice(text, replyPolicy) : text;
+}
+
+/**
+ * Provider-neutral chat output hygiene applied after `stripInternalMetadataEnvelope` to every GENERAL_CHAT and
+ * POLICY_SENSITIVE_CHAT reply (ADR-0098 D2 and amendment D2).
+ */
 export function sanitizeGeneralChatText(output: string, replyPolicy?: GeneralChatReplyPolicy): string {
-  return stripUnsolicitedTranslationBlock(normalizeLiteralEscapes(output), replyPolicy);
+  return guardUnsupportedActionClaims(
+    stripUnsolicitedTranslationBlock(normalizeLiteralEscapes(output), replyPolicy),
+    replyPolicy,
+  );
 }

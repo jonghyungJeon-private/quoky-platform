@@ -16,6 +16,7 @@ export class RiskPolicy {
   /** Baseline risk implied by a capability (before per-operation escalation). */
   private static readonly CAPABILITY_RISK: Record<Capability, RiskLevel> = {
     [Capability.GENERAL_CHAT]: RiskLevel.LOW,
+    [Capability.POLICY_SENSITIVE_CHAT]: RiskLevel.LOW,
     [Capability.SUMMARIZATION]: RiskLevel.LOW,
     [Capability.DOCUMENT_ANALYSIS]: RiskLevel.LOW,
     [Capability.READONLY_LOOKUP]: RiskLevel.LOW,

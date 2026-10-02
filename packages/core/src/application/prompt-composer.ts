@@ -64,7 +64,10 @@ export interface CodeGenerationPromptInput {
  */
 export class PromptComposer {
   compose(task: Task, context: ContextBundle, readout?: ProjectReadout): PromptSpec {
-    const isGeneralChat = task.intent.capability === Capability.GENERAL_CHAT;
+    // ADR-0098 amendment: a POLICY_SENSITIVE_CHAT turn is a chat turn and gets the identical chat prompt and policy.
+    const isGeneralChat =
+      task.intent.capability === Capability.GENERAL_CHAT ||
+      task.intent.capability === Capability.POLICY_SENSITIVE_CHAT;
     const currentFacts = [
       PromptComposer.label(
         'CORE_RUNTIME',
@@ -330,6 +333,7 @@ export class PromptComposer {
 
   private developerFor(capability: Capability): string {
     switch (capability) {
+      case Capability.POLICY_SENSITIVE_CHAT:
       case Capability.GENERAL_CHAT:
         return (
           'MANDATORY LANGUAGE RULE: Respond in the same language the user used in their current message. ' +
