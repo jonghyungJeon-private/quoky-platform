@@ -280,6 +280,24 @@ export const MIGRATIONS: readonly Migration[] = [
         ON feedback_signals(turn_id, source, source_key);`);
     },
   },
+  {
+    version: 13,
+    name: 'reminders table (owner reminders, ADR-0101)',
+    up(db) {
+      // Purely additive, no backfill (ADR-0101 D9). `data` is the domain JSON; the other columns mirror it for the
+      // due-claim and per-owner indexes and the CAS predicates. `display_no` is the stable per-owner `#N`.
+      db.exec(`CREATE TABLE IF NOT EXISTS reminders (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        display_no INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        next_fire_at TEXT NULL,
+        data TEXT NOT NULL,
+        UNIQUE(actor_id, display_no));`);
+      db.exec(`CREATE INDEX IF NOT EXISTS reminders_due ON reminders(status, next_fire_at);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS reminders_actor ON reminders(actor_id, status);`);
+    },
+  },
 ];
 
 /** The schema version this build targets (the highest migration version). */
