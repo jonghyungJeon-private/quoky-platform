@@ -5,8 +5,12 @@ import type { ExecutionPlanRef } from './execution-plan';
 import type { ApprovalRef } from './approval';
 import type { WorkspaceRef } from './workspace';
 
-/** Per-file outcome of applying one PatchOperation (CAP-006, ADR-0027). */
-export type FileChangeStatus = 'applied' | 'failed' | 'skipped';
+/**
+ * Per-file outcome of applying one PatchOperation (CAP-006, ADR-0027). `rolled_back`
+ * (ADR-0099): the file was written by a change set and then restored to its
+ * pre-apply state (an added file was removed) after another file in the set failed.
+ */
+export type FileChangeStatus = 'applied' | 'failed' | 'skipped' | 'rolled_back';
 
 /**
  * The record of what happened to ONE file. The file is the atomic unit of a
@@ -47,6 +51,22 @@ export interface WorkspaceChange {
   results: FileChangeResult[];
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
+}
+
+/**
+ * Outcome of applying a whole change set all-or-nothing (ADR-0099,
+ * `WorkspaceWriter.applyChangeSet`):
+ * - `applied` — every operation was written;
+ * - `rolled_back` — an operation failed and nothing the set wrote remains (either
+ *   nothing was written, or every written file was restored / removed);
+ * - `rollback_failed` — an operation failed and at least one restore step failed,
+ *   so the workspace may hold part of the set ("may have applied").
+ * Atomic-ish only: guards against Quoky's own failures, not external writers or a
+ * crash mid-rollback. `results` holds one entry per operation, in operation order.
+ */
+export interface ChangeSetApplyResult {
+  outcome: 'applied' | 'rolled_back' | 'rollback_failed';
+  results: FileChangeResult[];
 }
 
 /** Lightweight handle (V2 Ref model). */
