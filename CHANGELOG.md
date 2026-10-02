@@ -8,7 +8,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Quoky Personal v1 — first release (waves 1-3) — 2026-10-02
 
 First product release for daily single-owner use (ADR-0091..0094 + ADR-0073 amendment). Setup:
-[docs/user/quickstart.md](docs/user/quickstart.md). Attended Live UAT (AC12): `docs/uat/first-release-uat-packet.md`
+[docs/user/quickstart.md](docs/user/quickstart.md). Attended Live UAT (AC12; ROADMAP criterion 9): `docs/uat/first-release-uat-packet.md`
 (NOT EXECUTED; requires separate Strict Product Owner approval).
 
 **User-visible changes**
@@ -19,14 +19,15 @@ First product release for daily single-owner use (ADR-0091..0094 + ADR-0073 amen
 - Everyday chat prefers a ready local Ollama (daemon answering and `OLLAMA_MODEL` present; opt out with
   `QUOKY_OLLAMA_ENABLED=false`) and falls back to Claude; Claude CLI receives `--model` (`QUOKY_CLAUDE_MODEL`, default
   `sonnet`) and an adapter-owned capability-based `--effort`. Provider availability is cached ~30s; a distinct
-  "AI not configured" reply when no provider is ready.
+  Korean "AI가 아직 설정되지 않았어요…" reply (`NO_PROVIDER_USER_MESSAGE`) when no provider is ready.
 - Startup preflight: blank-token fail-fast, secret-free remediation hints for configuration errors, provider readiness
   lines, resolved database path, and the `started (Quoky Personal v1)` banner. Relative DB/vector paths resolve against the
   repository root.
 - Durable memory (`기억해: ...`) is recalled for the same owner across channels, DMs and `새 대화` (ADR-0073 amendment).
 - `도움말` / `/help` and `새 대화` / `/reset` work in every state; a pending approval expires after 30 minutes and
   otherwise captures turns with a reminder (ADR-0093). `새 대화` also drops the active project binding.
-- Approval decisions are whole-token and negation-aware: `진행하지 마` never approves; questions and hedges re-prompt.
+- Approval decisions are whole-token and negation-aware: `진행하지 마` never approves; questions and hedges re-prompt. Approve is the narrow case: an approve word plus any further content (`진행 상황 알려줘`, `ok but only src/a.ts`, `진행 싫어`) re-prompts and the approval stays pending; `진행 멈춰` cancels.
+- With `QUOKY_GIT_REMOTE_ENABLED=false` the REST PR/merge/remote-branch-cleanup routes are also unreachable (no hosting manager is composed). A reset can no longer be undone by a turn that was still running (a closed Session stays closed). After a provider execution fails UNAVAILABLE its cached readiness is dropped so the next turn re-routes.
 - Intent routing precision: a bare code/test keyword without a project or file path stays everyday chat; negated or
   descriptive test requests do not run tests. Apply-flow copy names the real next step (`패치 만들어줘`, `패치 적용해줘`,
   `테스트 실행해줘`).

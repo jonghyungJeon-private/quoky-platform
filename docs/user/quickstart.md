@@ -56,16 +56,19 @@ claude --version
 
 - CLI는 `--model`, `--effort`, `--tools` 옵션을 지원해야 합니다. 이 문서는 **Claude Code 2.1.287**로
   확인했습니다. 더 오래된 버전은 업데이트하세요.
-- **경고: 셸에 `ANTHROPIC_API_KEY`가 설정되어 있으면 CLI가 구독 대신 API 과금을 할 수 있습니다.** Quoky를
-  시작하는 셸에서는 반드시 해제하세요.
+- **경고: Quoky가 실행하는 `claude`는 `HOME` 아래의 claude 로그인 정보를 그대로 씁니다.** (`ANTHROPIC_API_KEY`
+  같은 셸 변수는 자식 프로세스로 전달되지 않습니다.) 구독 계정으로 로그인했는지 `claude`에서 확인하세요.
+  같은 셸에서 `claude`를 직접 실행할 때 API 과금을 피하려면 아래처럼 해제하는 것도 권장합니다.
 
   ```sh
   env | grep ANTHROPIC | cut -d= -f1   # 이름이 보이면
   unset ANTHROPIC_API_KEY
   ```
 
-- Quoky의 Claude 사용량은 **Claude 구독 사용 한도**에 포함됩니다. 코드 분석/수정/리뷰는 항상 Claude를
-  사용하므로, 한도가 빠듯하면 일상 대화를 Ollama로 돌리는 것이 도움이 됩니다.
+- Quoky의 Claude 사용량은 **Claude 구독 사용 한도**에 포함됩니다. 코드 분석과 코드 리뷰는 Claude만 처리합니다.
+  코드 수정은 Claude가 우선이며, Claude가 준비되지 않았을 때만 로컬 Ollama로 대체될 수 있습니다. 한도가
+  빠듯하면 Ollama를 켜 두세요. 일상 대화, 요약, 문서 분석, 읽기 전용 조회는 Ollama가 준비되어 있으면 Ollama가
+  먼저 처리합니다.
 - 모델: `QUOKY_CLAUDE_MODEL` (기본 `sonnet`). 별칭 또는 전체 이름이며 CLI에 `--model`로 전달됩니다.
 - effort: 설정하지 않습니다. 작업 종류(capability)에 따라 Quoky가 정한 값이 자동으로 전달됩니다.
 
@@ -73,7 +76,7 @@ claude --version
 
 일상 대화(`GENERAL_CHAT`)는 **로컬 Ollama가 준비되어 있으면 Ollama가 먼저** 처리하고, 준비되지 않았으면
 **자동으로 Claude로 대체**됩니다. Ollama를 쓰지 않으려면 `.env.local`에 `QUOKY_OLLAMA_ENABLED=false`를
-넣으세요 (기본값은 `true`). 코드 분석/수정/리뷰는 이 설정과 상관없이 Claude가 처리합니다.
+넣으세요 (기본값은 `true`). 코드 분석/리뷰는 이 설정과 상관없이 Claude가 처리합니다. `QUOKY_OLLAMA_ENABLED=true`(기본)이면 요약·문서 분석·읽기 조회도 Ollama가 우선이고, 코드 수정은 Claude가 준비되지 않았을 때 Ollama로 대체될 수 있습니다. 코드 수정을 항상 Claude로만 하려면 `QUOKY_OLLAMA_ENABLED=false`.
 
 ```sh
 ollama --version
@@ -110,6 +113,9 @@ QUOKY_DISCORD_OWNER_IDS=<내 사용자 ID>          # 필수. 쉼표로 여러 �
 QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 DM만
 ```
 
+`.env.example`에는 `QUOKY_DISCORD_CHANNEL_IDS=`가 빈 값으로 들어 있습니다. 이 줄에 채널 ID를 넣으세요. 줄 앞에
+`#`을 붙이거나 비워 두면 소유자 DM만 동작하고, 채널 메시지는 답 없이 무시됩니다.
+
 | 변수 | 설명 |
 |---|---|
 | `DISCORD_BOT_TOKEN` | 필수. Discord 봇 토큰 |
@@ -121,6 +127,10 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_CLAUDE_MODEL` | 선택. 기본 `sonnet` |
 | `QUOKY_GIT_REMOTE_ENABLED` | 선택. 기본 `false`. 7절의 "원격 git" 참고 |
 | `QUOKY_CONTEXT_MAX_TOKENS` | 선택. 대화 한 턴에 넣는 기억/문맥의 추정 토큰 예산. 기본 6000, 최대 200000 |
+
+`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`는 빈 값(예:
+`QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
+주석 처리하세요.
 
 **주의 — 같은 이름의 셸 환경 변수가 `.env.local`보다 우선합니다.** 이미 셸에 `DISCORD_BOT_TOKEN`,
 `DISCORD_GUILD_ID` 등이 있으면 `.env.local` 값은 무시됩니다. 시작 전에 **이름만** 확인하세요 (값은 출력하지
@@ -146,8 +156,9 @@ pnpm dev
 - `provider not ready` — 준비되지 않은 provider (예: Ollama 서버가 꺼져 있음). Claude가 준비되어 있으면 정상 동작
 - `started (Quoky Personal v1)` — 시작 완료
 
-준비된 provider 중 일상 대화를 처리할 수 있는 것이 하나도 없으면 아래 경고가 나오고 대화는 "AI not configured"로
-답합니다.
+준비된 provider 중 일상 대화를 처리할 수 있는 것이 하나도 없으면 아래 경고가 나오고, 봇은 "AI가 아직 설정되지
+않았어요. 관리자가 Claude CLI 설치·로그인 또는 로컬 AI(Ollama) 설정을 확인해야 합니다."라고 답합니다 (로그의
+"AI not configured"는 이 안내를 뜻합니다).
 
 > no ready provider for GENERAL_CHAT: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or Ollama is running with the configured model
 
@@ -243,7 +254,8 @@ pnpm dev
 | `CLAUDE_MODEL_INVALID` — "QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters)." | 모델 이름 형식 오류 |
 | `GIT_REMOTE_ENABLED_INVALID` — "QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false"." | `true`/`false`만 허용 |
 | `CONTEXT_MAX_TOKENS_INVALID` — "QUOKY_CONTEXT_MAX_TOKENS must be unset or a positive integer (at most 200000)." | 양의 정수, 최대 200000 |
-| 로그에 `no ready provider for GENERAL_CHAT ...` / 봇이 "AI not configured"로 답함 | Claude CLI 미설치/미로그인이고 Ollama도 준비 안 됨. `claude --version`, Claude 로그인, Ollama 서버/모델(`ollama list`) 확인 |
+| 로그에 `no ready provider for GENERAL_CHAT ...` / 봇이 "AI가 아직 설정되지 않았어요…"로 답함 | Claude CLI 미설치(`claude --version` 실패)이고 Ollama도 준비 안 됨. `claude --version`, Ollama 서버/모델(`ollama list`) 확인 |
+| 봇이 "AI 인증이 필요해요. 관리자가 Claude CLI 로그인을 확인해야 합니다."로 답함 | Claude CLI는 설치됐지만 로그인되지 않음. 준비 확인은 `claude --version`만 보므로 로그에 `provider ready claude-cli`가 나와도 이 상태일 수 있음. `claude`를 실행해 로그인 후 재시도 |
 | 로그에 `provider not ready` (ollama) | Ollama 서버가 꺼져 있거나 `OLLAMA_MODEL`이 없음. Claude가 준비되어 있으면 자동으로 Claude로 답함 |
 | 봇이 아무 답도 안 함 | 보낸 사람이 `QUOKY_DISCORD_OWNER_IDS`에 없거나, 채널이 `QUOKY_DISCORD_CHANNEL_IDS`에 없음 (소유자가 아니면 의도적으로 무응답). 서버를 제한하는 `DISCORD_GUILD_ID`도 확인. MESSAGE CONTENT INTENT 확인 |
 | `.env.local`을 고쳤는데 반영이 안 됨 | 같은 이름의 셸 환경 변수가 우선함. `env | grep DISCORD | cut -d= -f1`로 이름 확인 후 `env -u NAME`으로 제거해 실행. 수정 후에는 재시작 필요 |

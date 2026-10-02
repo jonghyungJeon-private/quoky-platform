@@ -14655,3 +14655,31 @@ whatever branch is checked out, including `main`.
 
 `[NOW]` remote-off default, main/master commit refusal, composition-root decorator. `[LATER]` the GitHub
 push/PR/merge chain as a release feature, a configurable protected-branch list, and branch creation.
+
+## ADR-0091..0094 implementation record — Quoky Personal v1 (2026-10-02)
+
+- **Status:** Implementation record only (integration branch `claude/v1-integration`, local; not pushed, no PR,
+  no release). Offline acceptance: `apps/quoky/src/first-release-acceptance.test.ts`. Live UAT is NOT executed.
+- **ADR-0091:** owner gate and channel allowlist are adapter-owned (`packages/adapter-discord`); startup fails
+  closed without owner ids. Implemented as ratified.
+- **ADR-0092:** Ollama registration via `QUOKY_OLLAMA_ENABLED`; adapter readiness (daemon + model); Claude
+  `--model` and the capability-to-effort table. A capability outside the table passes no `--effort` flag, as
+  ratified. Selection-time fallback only: after an execution fails UNAVAILABLE the selected provider's cached
+  probe is dropped so the next turn re-probes.
+- **ADR-0093:** `도움말`/`새 대화`, reset closing the Session, and the 30-minute lazy approval TTL. `CLOSED` is
+  terminal in the SQLite session repository, so a turn still running at reset time cannot reopen the Session.
+- **ADR-0094:** composition-root `PersonalGitGuard`. With remote off it also refuses `deleteMergedLocalBranch`
+  (a local operation tied to the post-merge chain), and the composition root withholds the repository-hosting
+  manager so the REST PR/merge/remote-cleanup routes reply "not configured" before any token is minted.
+- **Implementation details NOT covered by the ratified text and awaiting Product Owner ratification (recorded
+  here so the settled ADR text and the code are not silently different):**
+  1. ADR-0032 §6 approval words: `interpretApprovalDecision` uses whole-token matching, drops bare `y`/`n`,
+     adds `okay/approve/proceed/go ahead`, `거부/deny/reject/refuse` and `철회/중지/멈춰/cancel/stop/abort`;
+     a negated approve is a deny; approve is the narrow case (an approve word plus any further content word,
+     question, hedge, refusal qualifier or condition is `ambiguous` and the approval stays pending).
+  2. Intent routing: an `IMPLEMENT_CODE`, `RUN_TESTS` or `PROJECT_ANALYSIS` intent becomes `GENERAL_CHAT` when
+     the Session has no active project and the text has no project noun or file path. Reset closes the
+     Session, so the project binding is dropped (the reset reply says so).
+  3. `ClaudeCliProvider` adds `--tools ""` (all built-in tools off) for requests without a workspace.
+  4. The 30-second provider availability cache lives in Core `AiProviderManager` (all providers), not in the
+     Ollama adapter alone.

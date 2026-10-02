@@ -9,7 +9,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 **STATUS: IMPLEMENTED LOCALLY on the integration branch (waves 1-3); offline acceptance PASS
 (`apps/quoky/src/first-release-acceptance.test.ts`; `pnpm typecheck` and full `pnpm test` green: 188 files / 4178
-tests); Live UAT (AC12) NOT EXECUTED — requires separate Strict Product Owner approval
+tests); Live UAT (AC12 in the packet; ROADMAP criterion 9) NOT EXECUTED — requires separate Strict Product Owner approval
 (`docs/uat/first-release-uat-packet.md`). Not pushed, no PR, no release.** User setup:
 `docs/user/quickstart.md`. Original decision record below: docs-only ADR task on branch
 `claude/v1-t4-release-adrs` from main `ddcedb12cdf654b91eaee4a828e719d3665e9aed`. The Product Owner
@@ -36,7 +36,9 @@ ratified the first product release scope ("Quoky Personal v1") on 2026-10-02. `D
 `ROADMAP.md` gains the Personal v1 row, acceptance criteria and deferred list (R3/Stage 2B/continuation,
 execution-time fallback, chat pass-through during pending approval, `TEST_EXECUTION` approval, GitHub
 push/PR/merge chain, new-file/multi-file apply, M3 connector expansion, vector retrieval/Codex, MLX as a
-2nd-release candidate). No source, test, schema, runtime, provider, Discord, network or secret change.
+2nd-release candidate). The ADRs and ROADMAP rows were docs-only decision records; the implementation landed
+afterwards on the integration branch (see the status line above and the "ADR-0091..0094 implementation record"
+in `DECISIONS.md`, which also lists four implementation details awaiting Product Owner ratification).
 Active-milestone and ADR-0090/R3 statuses below are unchanged.
 
 ### R3-B3-2C — Trust-root feasibility & deployment binding (read-only discovery) (2026-09-29)

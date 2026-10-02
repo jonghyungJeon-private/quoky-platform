@@ -50,7 +50,7 @@ are a separate capability with their own approval and authentication boundaries.
 
 **Quoky Personal v1** (first release: owner-only Discord entry, provider readiness with Ollama/Claude, actor-scoped
 memory recall, `도움말`/`새 대화`, 30-minute approval expiry, remote-git-off-by-default; ADR-0091..0094) is
-implemented locally with offline acceptance passing; the attended Live UAT (AC12) has not been executed. See
+implemented locally with offline acceptance passing; the attended Live UAT (AC12 in the packet; ROADMAP criterion 9) has not been executed. See
 [CURRENT_STATE.md](CURRENT_STATE.md).
 
 M3 Personal Work OS foundations are active. M3E-5 Atomic TaskRun Start was delivered through

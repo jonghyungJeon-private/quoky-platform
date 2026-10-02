@@ -23,8 +23,10 @@ prerequisite; this packet covers only what offline fakes cannot prove (a real Di
 3. `pnpm typecheck` and `pnpm test` are green on that commit.
 4. A Discord application and bot exist with **MESSAGE CONTENT INTENT** enabled and an invite per
    [`docs/user/quickstart.md`](../user/quickstart.md). The owner's user ID and one channel ID are known.
-5. `claude --version` works (Claude Code CLI with `--model`/`--effort`/`--tools`; tested with 2.1.287) and
-   `ANTHROPIC_API_KEY` is **unset** in the launching shell. Ollama (optional): server running with `OLLAMA_MODEL`
+5. `claude --version` works (Claude Code CLI with `--model`/`--effort`/`--tools`; tested with 2.1.287), the
+   `claude` login is a **subscription** login (Quoky's child process uses the login under `HOME`; shell variables
+   such as `ANTHROPIC_API_KEY` are not forwarded), and, as optional hygiene, `ANTHROPIC_API_KEY` is **unset** in the
+   launching shell. Ollama (optional): server running with `OLLAMA_MODEL`
    pulled. Record which providers are expected to be ready.
 6. Sandbox repo for Part 2 (see section 5) exists on a **non-main branch**.
 7. A second Discord account (not an owner) is available to send the non-owner message.
@@ -73,8 +75,8 @@ Use the owner account. Record the observed reply gist (never secrets) and PASS/F
 | 1.2 | In the **designated channel**, send `안녕` | A reply arrives in that channel |
 | 1.3 | In the same place, send a follow-up that depends on the previous answer (e.g. `방금 답을 이어서 설명해줘`) | The reply continues the topic (context kept) |
 | 1.4 | Send `도움말` | Fixed help text ("Quoky로 할 수 있는 일이에요.") listing `기억해:`, the code flow phrases, `도움말`, `새 대화`; arrives immediately (no model latency) |
-| 1.5 | Send `기억해: 내 UAT 암호는 파랑 고래야` (use a harmless fact, never a real secret) | Acknowledged as remembered |
-| 1.6 | Ask `내 UAT 암호가 뭐였지?` | The answer contains the remembered fact |
+| 1.5 | Send `기억해: 내 UAT 확인 단어는 파랑 고래야` (use a harmless fact, never a real secret) | Acknowledged as remembered |
+| 1.6 | Ask `내 UAT 확인 단어가 뭐였지?` | The answer contains the remembered fact |
 | 1.7 | Send `새 대화` | Reply "새 대화를 시작할게요..." and says applied changes/commits are not rolled back and remembered content stays |
 | 1.8 | Repeat 1.6 | Fact is recalled after the reset |
 | 1.9 | From the **other** surface (DM if 1.5 was in the channel, or vice versa) repeat 1.6 | Fact is recalled across DM/channel |
