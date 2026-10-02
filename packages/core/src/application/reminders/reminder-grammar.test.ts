@@ -296,6 +296,61 @@ describe('reminder grammar — clarify, never guess', () => {
     expect(parse(message)).toEqual({ kind: 'CLARIFY', reason });
   });
 
+  it.each([
+    // A day reference the grammar does not resolve, next to a bare time, is never folded into the body while the
+    // time is read as today's (now = Fri 2026-10-02 14:00 KST).
+    ['15일 오후 3시에 회의 알려줘', 'AMBIGUOUS_TIME'],
+    ['3일 9시에 회의 알려줘', 'AMBIGUOUS_TIME'],
+    ['20일 오전 10시에 월세 알려줘', 'AMBIGUOUS_TIME'],
+    ['회의 15일 3시에 알려줘', 'AMBIGUOUS_TIME'],
+    ['다음 주 오후 3시에 보고 알려줘', 'AMBIGUOUS_TIME'],
+    ['다음주 9시에 보고 알려줘', 'AMBIGUOUS_TIME'],
+    ['이번 주 9시에 보고 알려줘', 'AMBIGUOUS_TIME'],
+    ['다음 달 3일 9시에 회의 알려줘', 'AMBIGUOUS_TIME'],
+    ['이번 달 9시에 정산 알려줘', 'AMBIGUOUS_TIME'],
+    ['주말 9시에 청소 알려줘', 'AMBIGUOUS_TIME'],
+    ['이번 주말 10시에 청소 알려줘', 'AMBIGUOUS_TIME'],
+    ['다음 주말 10시에 캠핑 알려줘', 'AMBIGUOUS_TIME'],
+    ['월말 9시에 정산 알려줘', 'AMBIGUOUS_TIME'],
+    ['remind me on the 15th at 3pm to pay rent', 'AMBIGUOUS_TIME'],
+    ['remind me next week at 9am to x', 'AMBIGUOUS_TIME'],
+    ['remind me this weekend at 10am to clean', 'AMBIGUOUS_TIME'],
+    ['remind me next month at 9am to renew', 'AMBIGUOUS_TIME'],
+    ['remind me at the end of the month at 9am to pay', 'AMBIGUOUS_TIME'],
+    ['remind me at 3pm friday to submit', 'AMBIGUOUS_TIME'], // a weekday not bound by on/next/this
+  ] as const)('unsupported day reference: %j → CLARIFY %s', (message, reason) => {
+    expect(parse(message)).toEqual({ kind: 'CLARIFY', reason });
+  });
+
+  it.each([
+    // Durations and look-alikes are not day references.
+    ['내일 9시에 3일치 약 챙기기 알려줘', '3일치 약 챙기기', '2026-10-03T09:00'],
+    ['9시에 3일 동안 먹을 약 알려줘', '3일 동안 먹을 약', '2026-10-02T21:00'],
+    ['9시에 다음 주제 발표 알려줘', '다음 주제 발표', '2026-10-02T21:00'],
+    ['내일 9시에 다음 주 회의 준비 알려줘', '다음 주 회의 준비', '2026-10-03T09:00'], // the bound time has its own day
+    ['30분 뒤에 주말 계획 정리 알려줘', '주말 계획 정리', '2026-10-02T14:30'],
+    ["remind me at 9 to send friday's report", "send friday's report", '2026-10-02T21:00'],
+    ['remind me tomorrow at 9am to plan next week', 'plan next week', '2026-10-03T09:00'],
+  ])('%j → %j at %s', (message, body, local) => {
+    expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
+  });
+
+  it.each([
+    // A reminder request with a day but no clock asks for the time instead of falling through to chat.
+    '내일 회의 리마인드 해줘',
+    '리마인드 해줘 내일 회의',
+    '다음 주 보고 리마인드 해줘',
+    '15일 월세 알림 설정해줘',
+    '아침에 약 리마인드 해줘',
+    '내일 오전에 회의 알려줘',
+    '모레 저녁에 운동 알려줘',
+    '매일 아침에 약 먹으라고 알려줘',
+    'remind me next week to call mom',
+    'remind me on the 15th to pay rent',
+  ])('%j → CLARIFY MISSING_TIME', (message) => {
+    expect(parse(message)).toEqual({ kind: 'CLARIFY', reason: 'MISSING_TIME' });
+  });
+
   it('a one-minute lead is allowed; less is TOO_SOON', () => {
     expect(once('오늘 14시 1분에 회의 알려줘', at('2026-10-02T14:00')).at).toBe(kst('2026-10-02T14:01'));
     expect(parse('오늘 14시에 회의 알려줘', at('2026-10-02T13:59:30'))).toEqual({ kind: 'CLARIFY', reason: 'TOO_SOON' });
@@ -343,6 +398,9 @@ describe('reminder grammar — NOT_REMINDER corpus (falls through untouched)', (
     'what time is it',
     'meeting at 3pm',
     'tell me about tomorrow at 9am',
+    '내일 날씨 알려줘 오전에', // no day + part of day bound by 에, generic verb
+    '내일 일정 알려줘',
+    '저녁 메뉴 알려줘',
   ])('%j → NOT_REMINDER', (message) => {
     expect(parse(message)).toEqual({ kind: 'NOT_REMINDER' });
   });
@@ -485,6 +543,11 @@ describe('reminder grammar — English', () => {
     ['remind me on 2026-10-05 at 9am to file', 'file', '2026-10-05T09:00'],
     ['Remind me tomorrow at 9AM to call mom.', 'call mom', '2026-10-03T09:00'],
     ['please remind me tomorrow at 9am about the dentist', 'the dentist', '2026-10-03T09:00'],
+    ['can you remind me at 9pm to x', 'x', '2026-10-02T21:00'],
+    ['Could you please remind me at 9pm to water the plants?', 'water the plants', '2026-10-02T21:00'],
+    ['hey, can you remind me tomorrow at 9am to call mom', 'call mom', '2026-10-03T09:00'],
+    ['pls remind me in 45 minutes to stretch', 'stretch', '2026-10-02T14:45'],
+    ['remind me at 9 that so and so is coming', 'so and so is coming', '2026-10-02T21:00'], // only text before the verb is a lead-in
   ])('%j → %j at %s', (message, body, local) => {
     expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
   });

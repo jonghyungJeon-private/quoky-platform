@@ -28,7 +28,11 @@ import {
  * - Meridiem: an explicit marker (`오전`/`오후`/`아침`/`저녁`/`밤`/`am`/`pm`, …) or a 24-hour time wins; with a date
  *   (day word, weekday, date or recurrence) 1–6 → PM, 7–11 → AM, 12 → noon; a bare time → nearest future.
  * - Clarify, never guess: past, nonexistent, more than 366 days or less than 1 minute ahead, sub-daily or other
- *   unsupported recurrence, empty or over-200-character body, ambiguous combinations.
+ *   unsupported recurrence, empty or over-200-character body, ambiguous combinations, and a day reference the
+ *   grammar does not resolve (`15일`, `다음 주` without a weekday, `주말`, `다음 달`, `on the 15th`, `next week`)
+ *   next to a bare time — it is never folded into the body while the time is read as today's.
+ * - A reminder request with a day but no clock is `CLARIFY(MISSING_TIME)`, not chat: `remind me tomorrow to …`,
+ *   `내일 오전에 회의 알려줘`, and any day or part-of-day word with an explicit verb (`내일 회의 리마인드 해줘`).
  * - Every message that starts with an anchored to-do prefix of the closed ADR-0100 D1 list is `NOT_REMINDER`.
  * - LIST and CANCEL match the whole message only.
  *
@@ -641,6 +645,27 @@ function stripKoTrailingParticles(body: string): string {
 
 const KO_STRAY_DAY_WORD = /(?:^|\s)(?:오늘|내일|낼|모레|글피|[월화수목금토일]요일|\d{1,2}\s?월\s?\d{1,2}\s?일)(?=$|\s|[은는에의도])/;
 
+/**
+ * Day references the grammar does not resolve: a bare day of month (`15일`, not the durations `3일 동안`/`3일치`/
+ * `3일 뒤`), a week or month without a weekday or date (`다음 주`, `이번 달`), the weekend, `월말`, `내년`, ….
+ */
+const KO_UNSUPPORTED_DAY = new RegExp(
+  '(?:^|\\s)(?:' +
+    '\\d{1,2}\\s?일(?!\\s?(?:뒤|후|전|동안|이내|마다|씩))' +
+    '|(?:다다음|다음|담|이번|돌아오는|지난)\\s?(?:주말|주|달)' +
+    '|주말|월말|월초|연말|연초|내년|다음\\s?해' +
+    ')(?=$|\\s|[은는에의도까,.!?])',
+);
+
+/** A part-of-day word standing on its own (`오전`, `아침`, `저녁`, …). */
+const KO_PART_OF_DAY_WORD = /(?:^|\s)(?:오전|오후|아침|점심|저녁|밤|새벽|낮)(?=$|\s|[은는에의도])/;
+
+/** Whether `text` names a day (resolved or not) outside a bound time expression. */
+function hasKoDayWord(text: string): boolean {
+  const padded = ` ${text}`;
+  return KO_STRAY_DAY_WORD.test(padded) || KO_UNSUPPORTED_DAY.test(padded);
+}
+
 function cleanBody(raw: string): string {
   return raw
     .replace(/\s+/g, ' ')
@@ -685,7 +710,19 @@ function parseKorean(text: string, ctx: ResolveContext): ReminderCommand {
     if (s.relativeMs !== undefined || hasTimeOfDay(s)) return true;
     return strongVerb && (hasDayInfo(s) || s.recurrence !== undefined);
   });
-  if (meaningful.length === 0) return NOT_REMINDER;
+  if (meaningful.length === 0) {
+    // A reminder request with a day but no clock must not fall through to chat (which could promise a reminder that
+    // is never created): a day or recurrence plus a part of the day bound by 에 (`내일 오전에 회의 알려줘`), or an
+    // explicit reminder verb with any day or part-of-day word (`내일 회의 리마인드 해줘`). `내일 날씨 알려줘` stays chat.
+    const dayWithPartOfDay = expressions.some(
+      (e) => e.spec.meridiem !== undefined && (hasDayInfo(e.spec) || e.spec.recurrence !== undefined),
+    );
+    const outsideVerb = removeSpans(text, [verbSpan]);
+    if (dayWithPartOfDay || (strongVerb && (hasKoDayWord(outsideVerb) || KO_PART_OF_DAY_WORD.test(` ${outsideVerb}`)))) {
+      return clarify('MISSING_TIME');
+    }
+    return NOT_REMINDER;
+  }
   if (meaningful.length > 1) return clarify('AMBIGUOUS_TIME');
   const expression = meaningful[0];
   if (expression === undefined) return NOT_REMINDER;
@@ -696,8 +733,9 @@ function parseKorean(text: string, ctx: ResolveContext): ReminderCommand {
   const body = stripKoTrailingParticles(cleanBody(removeSpans(text, [expression, verbSpan])));
   const bodyKind = bodyKindOf(body);
   const s = expression.spec;
-  if (bodyKind === 'TEXT' && !hasDayInfo(s) && s.recurrence === undefined && s.relativeMs === undefined && KO_STRAY_DAY_WORD.test(` ${body}`)) {
-    // `내일 회의 9시에 알려줘`: the day sits outside the bound time — never guess which day was meant.
+  if (bodyKind === 'TEXT' && !hasDayInfo(s) && s.recurrence === undefined && s.relativeMs === undefined && hasKoDayWord(body)) {
+    // `내일 회의 9시에 알려줘`, `15일 오후 3시에 회의 알려줘`, `다음 주 오후 3시에 보고 알려줘`: a day sits outside the
+    // bound time (or is one the grammar does not resolve) — never read the time as today's and guess the day.
     return clarify('AMBIGUOUS_TIME');
   }
   return finishCreate(body, bodyKind, resolved, ctx);
@@ -748,6 +786,17 @@ function enUnitMs(unit: string): number {
 const EN_END = '(?=$|[\\s.,!?;])';
 const EN_VERB = /\bremind\s+me\b/gi;
 const EN_PAST = /\b(?:yesterday|last\s+(?:week|night|month|year|(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday))|\d+\s+(?:minutes?|hours?|days?|weeks?)\s+ago)\b/i;
+/**
+ * Day references the English grammar does not resolve: a bare ordinal day (`on the 15th`), a week, weekend, month
+ * or year without a date (`next week`, `this weekend`, `end of the month`).
+ */
+const EN_UNSUPPORTED_DAY =
+  /\b(?:on\s+the\s+\d{1,2}(?:st|nd|rd|th)?|the\s+\d{1,2}(?:st|nd|rd|th)|(?:next|this|coming)\s+(?:week|weekend|month|year)|(?:on|at|over)\s+the\s+weekend|end\s+of\s+(?:the\s+|this\s+|next\s+)?(?:week|month|year))\b/i;
+/** A weekday name not bound by `on`/`next`/`this`/`every` (`at 3pm friday`); a possessive (`friday's`) is a noun. */
+const EN_STRAY_WEEKDAY = /\b(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)s?\b(?!['’]s)/i;
+/** Politeness / request lead-ins that may precede `remind me` and never belong to the body. */
+const EN_LEAD_IN = /^(?:(?:hey|hi|hello|ok|okay|so|also|um|quoky|can|could|would|will|you|please|pls|plz|kindly)\b[\s,!]*)*$/i;
+const EN_LEAD_IN_MAX_CHARS = 48;
 const EN_UNSUPPORTED = /\b(?:every\s+(?:\d+\s+|other\s+)?(?:seconds?|minutes?|mins?|hours?|hrs?|months?|years?)|hourly|monthly|yearly|annually|every\s+other\s+\w+)\b/i;
 
 const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegExpExecArray) => void }> = [
@@ -867,6 +916,9 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
   };
   const verbStart = verb.index ?? 0;
   blank(verbStart, verbStart + verb[0].length);
+  // `can you remind me at 9pm to x` / `hey, please remind me …`: the lead-in is not part of the body.
+  const leadIn = text.slice(0, verbStart);
+  if (leadIn.length > 0 && leadIn.length <= EN_LEAD_IN_MAX_CHARS && EN_LEAD_IN.test(leadIn)) blank(0, verbStart);
 
   const hasUnsupported = EN_UNSUPPORTED.test(text);
   for (const component of EN_COMPONENTS) {
@@ -885,8 +937,20 @@ function parseEnglish(text: string, ctx: ResolveContext): ReminderCommand {
 
   const hasTime = spec.relativeMs !== undefined || hasTimeOfDay(spec);
   if (!hasTime) {
-    // `remind me what we discussed` is a question; `remind me tomorrow to …` is a reminder without a time.
-    return hasDayInfo(spec) || spec.recurrence !== undefined ? clarify('MISSING_TIME') : NOT_REMINDER;
+    // `remind me what we discussed` is a question; `remind me tomorrow to …` / `remind me next week to …` is a
+    // reminder without a time.
+    return hasDayInfo(spec) || spec.recurrence !== undefined || EN_UNSUPPORTED_DAY.test(working)
+      ? clarify('MISSING_TIME')
+      : NOT_REMINDER;
+  }
+  if (
+    !hasDayInfo(spec) &&
+    spec.recurrence === undefined &&
+    spec.relativeMs === undefined &&
+    (EN_UNSUPPORTED_DAY.test(working) || EN_STRAY_WEEKDAY.test(working))
+  ) {
+    // `remind me on the 15th at 3pm …`, `remind me next week at 9am …`: never read the time as today's.
+    return clarify('AMBIGUOUS_TIME');
   }
   const resolved = resolveSpec(spec, ctx);
   if (!resolved.ok) return clarify(resolved.reason);
