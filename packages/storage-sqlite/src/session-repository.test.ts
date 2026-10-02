@@ -40,6 +40,33 @@ describe('SqliteSessionRepository', () => {
     await store.close();
   });
 
+  it('CLOSED protection is atomic: a stale ACTIVE save already in flight when reset writes CLOSED cannot reopen it', async () => {
+    const store = await freshStore();
+    await store.sessions.save(session);
+    // A turn that loaded the session before the reset starts its (stale, ACTIVE) save but does not await it; the
+    // reset's CLOSED write runs before that promise settles. A read-then-write guard read ACTIVE before the
+    // reset and then wrote ACTIVE over CLOSED here.
+    const stale = store.sessions.save({ ...session, activeTaskId: 't-late' });
+    await store.sessions.save({ ...session, status: SessionStatus.CLOSED });
+    await stale;
+    expect((await store.sessions.get('s1'))?.status).toBe(SessionStatus.CLOSED);
+    expect(await store.sessions.findActiveByContext('c1')).toBeNull();
+    // and a stale ACTIVE save issued after the CLOSED write is refused by the same UPSERT
+    const late = await store.sessions.save({ ...session, activeTaskId: 't-later' });
+    expect(late.status).toBe(SessionStatus.CLOSED);
+    expect((await store.sessions.get('s1'))?.activeTaskId).toBeUndefined();
+    expect(await store.sessions.findActiveByContext('c1')).toBeNull();
+    await store.close();
+  });
+
+  it('a CLOSED session can still be re-saved as CLOSED (e.g. a second reset)', async () => {
+    const store = await freshStore();
+    await store.sessions.save({ ...session, status: SessionStatus.CLOSED });
+    await store.sessions.save({ ...session, status: SessionStatus.CLOSED, lastActivityAt: '2026-06-29T01:00:00.000Z' });
+    expect((await store.sessions.get('s1'))?.lastActivityAt).toBe('2026-06-29T01:00:00.000Z');
+    await store.close();
+  });
+
   it('an ACTIVE session still saves and closes normally', async () => {
     const store = await freshStore();
     await store.sessions.save(session);
