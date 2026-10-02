@@ -4690,16 +4690,16 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
       pushApprovalId: 'apply-appr-1',
       pushCommitHash: HEAD_SHA,
       pushRemote: 'origin',
-      pushBranch: 'main',
-      pushUpstreamRef: 'origin/main',
+      pushBranch: 'feature/quoky',
+      pushUpstreamRef: 'origin/feature/quoky',
       ...o,
     });
   const pushApprovedAnchor = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
     pushPendingAnchor({ status: 'PUSH_APPROVED', ...o });
   /** A clean, ahead-1, not-diverged status with an upstream — the push-ready shape. */
-  const pushReady = { clean: true, staged: [] as string[], unstaged: [] as string[], untracked: [] as string[], upstream: 'origin/main', ahead: 1, behind: 0 };
+  const pushReady = { clean: true, staged: [] as string[], unstaged: [] as string[], untracked: [] as string[], upstream: 'origin/feature/quoky', ahead: 1, behind: 0 };
   const pushDeps = (o: Partial<Opts> = {}): ReturnType<typeof makeDeps> =>
-    makeDeps({ applyAnchor: committedAnchor(), gitInfo: repoInfoOf(), gitStatus: gitStatusOf(pushReady), ...o });
+    makeDeps({ applyAnchor: committedAnchor(), gitInfo: repoInfoOf({ branch: 'feature/quoky' }), gitStatus: gitStatusOf(pushReady), ...o });
   const composer = new ResponseComposer();
   const PUSH_PHRASES = ['푸시해줘', 'git push 해줘', '원격에 올려줘', 'push this commit'];
 
@@ -4713,7 +4713,7 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
       expect(calls.lastApplyAnchor?.status, text).toBe('PUSH_APPROVAL_PENDING');
       expect(result.status, text).toBe('AWAITING_APPROVAL');
       expect(result.reply.text, text).toBe(
-        composer.composePushApprovalRequested(CTX, { commitHash: HEAD_SHA, remote: 'origin', branch: 'main', upstream: 'origin/main', ahead: 1 }).text,
+        composer.composePushApprovalRequested(CTX, { commitHash: HEAD_SHA, remote: 'origin', branch: 'feature/quoky', upstream: 'origin/feature/quoky', ahead: 1 }).text,
       );
     }
   });
@@ -4950,6 +4950,18 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     expect(calls.lastApplyAnchor?.pushUpstreamRef).toBe('origin/feature/x');
   });
 
+  it('a feature branch tracking origin/main → protected-branch reply, no approval, no push', async () => {
+    const { deps, calls } = pushDeps({
+      gitInfo: repoInfoOf({ branch: 'feature/quoky' }),
+      gitStatus: gitStatusOf({ ...pushReady, upstream: 'origin/main' }),
+    });
+    const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+    expect(calls.requestForRisk).toBe(0);
+    expect(calls.lastApplyAnchor).toBeUndefined();
+    expect(calls.gitPush).toBe(0);
+    expect(result.reply.text).toBe(composer.composePushProtectedBranch(CTX).text);
+  });
+
   // ── approval reason (CA 41–49) ──────────────────────────────────────────────────────────────
   it('approval reason includes commit/remote/upstream/branch/ahead + no-push + permission + not-in-2z + future-step + CRITICAL, no diff (CA 41–49)', async () => {
     const { deps, calls } = pushDeps();
@@ -4957,7 +4969,7 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     const reason = calls.lastRequestForRiskInput?.reason ?? '';
     expect(reason).toContain(HEAD_SHA);
     expect(reason).toContain('origin');
-    expect(reason).toContain('origin/main');
+    expect(reason).toContain('origin/feature/quoky');
     expect(reason).toContain('no git push has been performed');
     expect(reason).toContain('records permission only');
     expect(reason).toContain('NOT executed in Sprint 2z');
@@ -5038,8 +5050,8 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     expect(a?.pushApprovalId).toBe('apply-appr-1');
     expect(a?.pushCommitHash).toBe(HEAD_SHA);
     expect(a?.pushRemote).toBe('origin');
-    expect(a?.pushBranch).toBe('main');
-    expect(a?.pushUpstreamRef).toBe('origin/main');
+    expect(a?.pushBranch).toBe('feature/quoky');
+    expect(a?.pushUpstreamRef).toBe('origin/feature/quoky');
     expect(a?.commitHash).toBe(HEAD_SHA);
     expect(a?.committedFiles).toEqual([TARGET_FILE]);
     expect(a?.commitApprovalId).toBe('apply-appr-1');
@@ -5081,8 +5093,8 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
 
 describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => {
   const REMOTE = 'origin';
-  const BRANCH = 'main';
-  const UPSTREAM = 'origin/main';
+  const BRANCH = 'feature/quoky';
+  const UPSTREAM = 'origin/feature/quoky';
   /** A PUSH_APPROVED anchor with complete, valid execution context. */
   const pushApprovedAnchor = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
     approvedAnchorOf({
@@ -5115,7 +5127,7 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
     makeDeps({
       applyAnchor: pushApprovedAnchor(),
       approvalsGetResult: approvedApprovalOf(),
-      gitInfo: repoInfoOf(),
+      gitInfo: repoInfoOf({ branch: BRANCH }),
       gitStatus: gitStatusOf(execReady),
       ...o,
     });
@@ -5151,7 +5163,7 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
   it('GIT_COMMITTED + push-execution phrase → 2z push APPROVAL, no pushApprovedCommit (CA 8–9)', async () => {
     for (const text of ['이제 실제 push 해줘', 'execute approved push']) {
       const anchor = approvedAnchorOf({ status: 'GIT_COMMITTED', workspaceChangeRef: { id: 'wc-1', status: WorkspaceChangeStatus.APPLIED }, commitApprovalId: 'apply-appr-1', commitHash: HEAD_SHA, committedFiles: [TARGET_FILE] });
-      const { deps, calls } = makeDeps({ applyAnchor: anchor, gitInfo: repoInfoOf(), gitStatus: gitStatusOf(execReady) });
+      const { deps, calls } = makeDeps({ applyAnchor: anchor, gitInfo: repoInfoOf({ branch: BRANCH }), gitStatus: gitStatusOf(execReady) });
       await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.gitPush, text).toBe(0);
       expect(calls.requestForRisk, text).toBe(1); // 2z CRITICAL push approval
@@ -5338,7 +5350,7 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
   });
 
   it('ADR-0099 D5: a legacy anchor without pushMode stays upstream mode — a vanished upstream is drift, never a new-branch push', async () => {
-    const { deps, calls } = execDeps({ gitInfo: repoInfoOf({ branch: 'main' }), gitStatus: gitStatusOf(NO_UPSTREAM_EXEC) });
+    const { deps, calls } = execDeps({ gitInfo: repoInfoOf({ branch: 'feature/quoky' }), gitStatus: gitStatusOf(NO_UPSTREAM_EXEC) });
     const result = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
     expect(calls.gitPush).toBe(0);
     expect(result.reply.text).toBe(composer.composePushExecutionUnavailable(CTX).text);
@@ -5438,7 +5450,7 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
   // the PR-approval flow — here `pushedAnchor()` pushed to `main`, so head == base → no approval. A bare
   // deploy phrase still gets the (now deploy-only) future-sprint reply.
   it('GIT_PUSHED + PR phrase (head==base main) → head/base limitation, no push, no approval (Sprint 3b)', async () => {
-    const { deps, calls } = makeDeps({ applyAnchor: pushedAnchor() });
+    const { deps, calls } = makeDeps({ applyAnchor: pushedAnchor({ pushBranch: 'main', pushUpstreamRef: 'origin/main', pushedBranch: 'main', pushedUpstreamRef: 'origin/main' }) });
     const result = await new ConversationRuntime(deps).handle(messageOf('PR 만들어줘'));
     expect(calls.gitPush).toBe(0);
     expect(calls.requestForRisk).toBe(0);

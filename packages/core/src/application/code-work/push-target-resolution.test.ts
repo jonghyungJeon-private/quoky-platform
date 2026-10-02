@@ -61,11 +61,13 @@ describe('resolvePushTarget (approval planning, ADR-0099 D5)', () => {
       ok: true,
       target: { mode: 'upstream', remote: 'origin', branch: 'feature/x', upstreamRef: 'origin/feature/x', ahead: 2 },
     });
-    // legacy: an upstream on main stays upstream mode here (the composition-root guard refuses the push itself)
-    expect(resolve(infoOf({ branch: 'main' }), tracking({ upstream: 'origin/main' }))).toMatchObject({
-      ok: true,
-      target: { mode: 'upstream', branch: 'main' },
-    });
+    // an upstream on main/master is refused here too (defense in depth; ADR-0099 D5 applies to both modes)
+    expect(resolve(infoOf({ branch: 'main' }), tracking({ upstream: 'origin/main' }))).toEqual({ ok: false, reason: 'protected-branch' });
+  });
+
+  it('refuses a feature branch that tracks origin/main or origin/master (git checkout -b feat origin/main)', () => {
+    expect(resolve(infoOf({ branch: 'feature/x' }), tracking({ upstream: 'origin/main' }))).toEqual({ ok: false, reason: 'protected-branch' });
+    expect(resolve(infoOf({ branch: 'feature/x' }), tracking({ upstream: 'origin/master' }))).toEqual({ ok: false, reason: 'protected-branch' });
   });
 
   it('upstream mode: unparseable upstream, nothing to push, diverged', () => {
@@ -107,6 +109,11 @@ describe('resolvePushTarget (approval planning, ADR-0099 D5)', () => {
 });
 
 describe('verifyApprovedPushTarget (execution drift checks, ADR-0099 D5)', () => {
+  it('refuses at execution when the approved upstream target is main/master', () => {
+    const approved = { mode: 'upstream' as const, remote: 'origin', branch: 'main', upstreamRef: 'origin/main', commitHash: SHA };
+    expect(verifyApprovedPushTarget({ info: infoOf({ branch: 'feature/x' }), status: tracking({ upstream: 'origin/main' }), approved })).toEqual({ ok: false, reason: 'protected-branch' });
+  });
+
   const upstreamApproved = { mode: 'upstream' as const, remote: 'origin', branch: 'feature/x', upstreamRef: 'origin/feature/x', commitHash: SHA };
   const newApproved = { mode: 'new-remote-branch' as const, remote: 'origin', branch: 'feature/x', upstreamRef: 'origin/feature/x', commitHash: SHA };
 

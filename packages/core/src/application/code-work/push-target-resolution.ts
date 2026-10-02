@@ -141,6 +141,8 @@ export function resolvePushTarget(input: {
   if (status.upstream) {
     const parsed = parsePushUpstreamRef(status.upstream);
     if (!parsed) return { ok: false, reason: 'no-upstream' };
+    // A feature branch created from origin/main tracks origin/main: pushing it would update the remote main.
+    if (isProtectedBranch(parsed.branch) || isProtectedBranch(info.branch)) return { ok: false, reason: 'protected-branch' };
     const counted = checkAheadBehind(status);
     if ('refusal' in counted) return { ok: false, reason: counted.refusal };
     return {
@@ -195,6 +197,7 @@ export function verifyApprovedPushTarget(input: {
     ) {
       return { ok: false, reason: 'drift' };
     }
+    if (isProtectedBranch(parsed.branch) || isProtectedBranch(info.branch)) return { ok: false, reason: 'protected-branch' };
     const counted = checkAheadBehind(status);
     if ('refusal' in counted) return { ok: false, reason: counted.refusal };
     return {
