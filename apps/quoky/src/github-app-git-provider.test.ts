@@ -140,6 +140,28 @@ describe('GitHubAppGitProvider (Sprint 4b, ADR-0061 + review RC1/RC3/RC4)', () =
     expect(s.askpass).not.toContain('ghs_SENTINEL');
   });
 
+  it('resets ambient credential helpers (e.g. osxkeychain) so they cannot shadow or persist the App token', async () => {
+    process.env.GIT_CONFIG_COUNT = '2';
+    process.env.GIT_CONFIG_KEY_0 = 'credential.helper';
+    process.env.GIT_CONFIG_VALUE_0 = 'osxkeychain';
+    process.env.GIT_CONFIG_KEY_1 = 'user.name';
+    process.env.GIT_CONFIG_VALUE_1 = 'x';
+    try {
+      const { provider, spawns } = harness({ tokenSource: async () => 'ghs_SENTINEL' });
+      await provider.pushApprovedCommit('/repo', 'origin', 'uat/x', 'abc1234');
+      const env = spawns[0]!.env;
+      expect(env.GIT_CONFIG_COUNT).toBe('1');
+      expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+      expect(env.GIT_CONFIG_VALUE_0).toBe('');
+      expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+      expect(env.GIT_CONFIG_VALUE_1).toBeUndefined();
+    } finally {
+      for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1']) {
+        delete process.env[k];
+      }
+    }
+  });
+
   it('does not mutate process.env and leaves no temp askpass dir after a remote op', async () => {
     const before = JSON.stringify(process.env);
     const dirsBefore = tmpAskpassCount();

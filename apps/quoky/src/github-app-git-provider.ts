@@ -207,10 +207,16 @@ export class GitHubAppGitProvider implements GitProvider {
       const askpassPath = join(dir, 'askpass.sh');
       writeFileSync(askpassPath, ASKPASS_SCRIPT, { mode: 0o700 });
       const childEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...withoutInheritedGitConfigEnv(process.env),
         GIT_ASKPASS: askpassPath,
         GIT_APP_TOKEN: token,
         GIT_TERMINAL_PROMPT: '0',
+        // Reset every configured credential helper (system/global/repo, e.g. macOS `osxkeychain`): an ambient helper
+        // is consulted BEFORE GIT_ASKPASS, so it would shadow the App token with another identity's credential, and
+        // on success git would `approve` (persist) the App token into that helper. Empty value clears the list.
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'credential.helper',
+        GIT_CONFIG_VALUE_0: '',
       };
       const spawn = this.spawn;
       runner = (args, opts) => spawn(args, opts, childEnv);
@@ -262,6 +268,20 @@ function preMutationMessage(op: string, err: unknown): string {
 }
 
 /** Best-effort removal of the one-shot askpass dir; never masks the operation's result/error. */
+/**
+ * Drop inherited `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` so the credentialed child's
+ * env-injected git config is exactly the credential-helper reset set by `withRemoteCredential` (an inherited
+ * entry could otherwise re-add a helper or be silently truncated by our count).
+ */
+function withoutInheritedGitConfigEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key === 'GIT_CONFIG_COUNT' || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 function safeRemove(dir: string | undefined): void {
   if (dir === undefined) return;
   try {
