@@ -22,6 +22,9 @@ export function parseCodeProposal(text: string): ProposedChange[] {
 
   const changes = (parsed as { changes?: unknown }).changes;
   if (!Array.isArray(changes)) throw new Error('AI proposal is missing a "changes" array');
+  // QA-012: an empty proposal is NOT a successful generation — the manager records FAILED/EMPTY_OUTPUT
+  // so the user is told truthfully that no change proposal was produced (never a zero-change "success").
+  if (changes.length === 0) throw new Error('AI proposal has an empty "changes" array');
 
   return changes.map((raw, i) => toProposedChange(raw, i));
 }

@@ -9,6 +9,48 @@ export interface IntentClassifyContext {
   readonly hasActiveProject?: boolean;
 }
 
+/** `Intent.raw.kind` of a REGISTER_PROJECT intent whose path is not absolute (QA-015). */
+export const NON_ABSOLUTE_REGISTRATION_KIND = 'non-absolute-path';
+
+const REGISTER_VERB = /등록|register/i;
+const PROJECT_NOUN = /(프로젝트|저장소|레포|\bprojects?\b|\brepos?\b|\brepositor(?:y|ies)\b)/i;
+
+/** First absolute POSIX path (>= 2 segments, at a token start) in the text, if any — so "7/3" is not a path. */
+function extractLocalPath(text: string): string | undefined {
+  const match = text.match(/(?:^|[\s"'`(:=])(\/[^\s/]+(?:\/[^\s/]+)+)/);
+  return match ? match[1] : undefined;
+}
+
+/**
+ * A path-like token that is NOT absolute (QA-015): `./x`, `../x`, `~/x`, `.`/`..`, or an ASCII slash path with a
+ * letter (`my/repo`; prose such as "등록/삭제" is not a path). A leading `/` is never reported here (absolute, or a one-segment `/repo` left to existing handling),
+ * and a digits-only slash token ("7/3") is a date, not a path.
+ */
+function extractNonAbsolutePathToken(text: string): string | undefined {
+  for (const raw of text.split(/[\s:"'`()<>]+/)) {
+    const token = /^\.+$/.test(raw) ? raw : raw.replace(/[.,!?]+$/, '');
+    if (!token || token.startsWith('/')) continue;
+    if (/^(?:\.{1,2}|~)(?:\/|$)/.test(token)) return token;
+    if (/^[\w.~-]+(?:\/[\w.~-]*)+$/.test(token) && /[A-Za-z]/.test(token)) return token;
+  }
+  return undefined;
+}
+
+/**
+ * Explicit local project registration (ADR-0018; QA-015). Absolute: an absolute path (>= 2 segments) plus a
+ * register word — unchanged. Non-absolute: a project noun (프로젝트/저장소/레포/repo/project) AND a register word
+ * AND a relative/home path-like token, so "7/3 회의 등록해줘" (no project noun, no path) stays ordinary chat.
+ */
+export function detectProjectRegistration(text: string): { path: string; absolute: boolean } | null {
+  if (!REGISTER_VERB.test(text)) return null;
+  const absolute = extractLocalPath(text);
+  if (absolute) return { path: absolute, absolute: true };
+  // The project noun must be prose, not part of a path ("~/code/repo 등록해줘" has no project noun).
+  if (!PROJECT_NOUN.test(text.replace(/\S*\/\S*/g, ' '))) return null;
+  const relative = extractNonAbsolutePathToken(text);
+  return relative ? { path: relative, absolute: false } : null;
+}
+
 /**
  * Classifies a natural-language message into an Intent. v1 is MINIMAL and
  * deterministic:
@@ -95,15 +137,28 @@ export class IntentClassifier {
       };
     }
 
-    const path = IntentClassifier.extractLocalPath(text);
-    if (path && /등록|register/i.test(text)) {
+    const registration = detectProjectRegistration(text);
+    if (registration?.absolute) {
       return {
         type: IntentType.REGISTER_PROJECT,
         capability: Capability.READONLY_LOOKUP,
         confidence: 1,
         requiresWork: false,
-        summary: `Register project: ${path}`,
-        raw: { path },
+        summary: `Register project: ${registration.path}`,
+        raw: { path: registration.path },
+      };
+    }
+    if (registration) {
+      // QA-015: an explicit project registration with a relative/home path ("이 프로젝트 등록해줘: ../../etc") is
+      // still a registration request — the runtime answers with the absolute-path rule, never a code-change
+      // clarification or chat. `raw.path` is deliberately absent so nothing can register it.
+      return {
+        type: IntentType.REGISTER_PROJECT,
+        capability: Capability.READONLY_LOOKUP,
+        confidence: 1,
+        requiresWork: false,
+        summary: 'Register project (non-absolute path)',
+        raw: { kind: NON_ABSOLUTE_REGISTRATION_KIND },
       };
     }
 
@@ -215,12 +270,6 @@ export class IntentClassifier {
       return 'change';
     }
     return undefined;
-  }
-
-  /** First absolute POSIX path (>= 2 segments, at a token start) in the text, if any — so "7/3" is not a path. */
-  private static extractLocalPath(text: string): string | undefined {
-    const match = text.match(/(?:^|[\s"'`(:=])(\/[^\s/]+(?:\/[^\s/]+)+)/);
-    return match ? match[1] : undefined;
   }
 
   /**

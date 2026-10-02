@@ -187,6 +187,7 @@ function harness(options: { withPendingApproval?: boolean; memoryStore?: ReturnT
       async open() { throw new Error('workspace must not open'); },
       async list() { return []; },
       async diff() { throw new Error('diff must not run'); },
+      async read() { throw new Error('read must not run'); },
     },
     commandExecutions: { async get() { return null; } },
     command: { async run() { throw new Error('command must not run'); } },

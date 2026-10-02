@@ -231,6 +231,15 @@ describe('ResponseComposer.composeCodeChangeApprovalRequired', () => {
     expect(reply.text).toContain('"거절"');
   });
 
+  it('discloses that target file content goes to the AI provider (max 3 paths, then 외 N개)', () => {
+    const one = composer.composeCodeChangeApprovalRequired(CTX, ['a.ts']).text;
+    expect(one).toContain('지정한 파일(a.ts)의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요');
+    expect(one).toContain('모든 경우를 걸러내지는 못해요');
+    const many = composer.composeCodeChangeApprovalRequired(CTX, ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts']).text;
+    expect(many).toContain('(a.ts, b.ts, c.ts 외 2개)');
+    expect(composer.composeCodeChangeApprovalRequired(CTX).text).not.toContain('AI에게 전달');
+  });
+
   it('is distinct from the generic composeApprovalRequired wording', () => {
     const generic = composer.composeApprovalRequired(CTX);
     const codeChange = composer.composeCodeChangeApprovalRequired(CTX);
@@ -379,6 +388,20 @@ describe('ResponseComposer.composeCodeGenerationPreviewFailed', () => {
 
   it('does not imply a file was written or a patch was created', () => {
     const reply = composer.composeCodeGenerationPreviewFailed(CTX);
+    for (const word of FORBIDDEN_MUTATION_WORDS) {
+      expect(reply.text).not.toContain(word);
+    }
+  });
+});
+
+describe('ResponseComposer.composeCodeGenerationPreviewCredentialRefused', () => {
+  it('names the target, asks to move the secret out, and states nothing was modified', () => {
+    const reply = composer.composeCodeGenerationPreviewCredentialRefused(CTX, 'config/service-account.json');
+    expect(reply.text).toBe(
+      '이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요: config/service-account.json\n' +
+        '민감한 값은 환경 변수나 비밀 저장소로 옮긴 뒤 다시 요청해 주세요.\n' +
+        '파일은 수정되지 않았어요.',
+    );
     for (const word of FORBIDDEN_MUTATION_WORDS) {
       expect(reply.text).not.toContain(word);
     }
@@ -1034,6 +1057,22 @@ describe('ResponseComposer.composeGit* preview replies (ADR-0044)', () => {
     for (const f of FORBIDDEN) expect(reply.text, f).not.toContain(f);
   });
 
+  it('QA-020: mutation copy never claims local commit is unsupported; remote copy names the flag and "커밋해줘"', () => {
+    const local = composer.composeGitMutationNotSupported(CTX).text;
+    const remoteOff = composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: false }).text;
+    const remoteOn = composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: true }).text;
+    for (const text of [local, remoteOff, remoteOn]) {
+      expect(text).not.toContain('add/commit/push');
+      expect(text).toContain('"커밋해줘"');
+      expect(text).toContain('git 명령은 실행하지 않았어요');
+    }
+    expect(remoteOff).toContain(
+      '원격 git 작업(push 등)은 Personal v1에서 꺼져 있어요(QUOKY_GIT_REMOTE_ENABLED=false). 로컬 커밋은 "커밋해줘"로 할 수 있어요.',
+    );
+    expect(remoteOn).not.toContain('꺼져 있어요');
+    expect(local).toContain('reset/stash');
+  });
+
   it('preview-unavailable: safe failure — read WAS attempted, so it must NOT claim no git command ran (CA impl review)', () => {
     const reply = composer.composeGitPreviewUnavailable(CTX);
     expect(reply.text).toContain('읽지 못했어요');
@@ -1080,6 +1119,14 @@ describe('ResponseComposer.composeCommit* replies (ADR-0045)', () => {
   it('approval-recorded says recorded but no commit performed (CA 67)', () => {
     const reply = composer.composeCommitApprovalRecorded(CTX);
     expect(reply.text).toContain('커밋 승인은 기록했어요');
+    // QA-021: names the exact next phrase the runtime accepts
+    expect(reply.text).toContain('실제로 커밋하려면 "커밋 실행"이라고 보내 주세요.');
+    expect(composer.composeCommitAlreadyApproved(CTX).text).toContain('"커밋 실행"');
+    // QA-022: the protected-branch refusal is specific and never claims a commit or an approval
+    const protectedBranch = composer.composeCommitProtectedBranch(CTX).text;
+    expect(protectedBranch).toContain('main/master 브랜치에는 커밋하지 않아요.');
+    expect(protectedBranch).toContain('커밋 승인 요청은 만들지 않았어요');
+    for (const f of FORBIDDEN) expect(protectedBranch, f).not.toContain(f);
     expect(reply.text).toContain('아직 실제 git add/commit/push는 수행하지 않았어요');
     for (const f of FORBIDDEN) expect(reply.text, f).not.toContain(f);
   });
@@ -1330,8 +1377,8 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       'pending reminder',
       () => composer.composePendingApprovalReminder(CTX, approval, 20 * 60_000).text,
       [
-        '승인을 기다리는 작업이 있어요 (HIGH):',
-        'Change packages/core/src/foo.ts',
+        '승인을 기다리는 작업이 있어요.',
+        '위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요',
         APPROVE_DENY,
         '남은 시간: 약 20분 (지나면 자동으로 거절돼요)',
         '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
@@ -1341,8 +1388,8 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       'approval expired',
       () => composer.composeApprovalExpired(CTX, approval, 1_800_000).text,
       [
-        '승인 요청이 30분 안에 결정되지 않아 자동으로 거절했어요:',
-        'Change packages/core/src/foo.ts',
+        '승인 요청이 30분 안에 결정되지 않아 자동으로 거절했어요.',
+        '위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요',
         '이 요청은 이제 승인할 수 없어요. 필요하면 처음부터 다시 요청해 주세요.',
       ],
     ],
@@ -1350,8 +1397,11 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
       'help',
       () => composer.composeHelp(CTX).text,
       [
-        '"도움말" 또는 "/help"',
-        '"새 대화" 또는 "/reset"',
+        '- "도움말": 이 안내를 다시 보여줘요.',
+        '- "새 대화": 지금 대화를 끝내고 새로 시작해요.',
+        // QA-011: "/help"/"/reset" still work, but Discord opens the slash-command picker — close it with Esc
+        '"/help", "/reset"',
+        'Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
         '승인 요청에는 "승인" 또는 "거절"로 답해 주세요.',
         '"적용해줘"',
         '"패치 만들어줘"',
@@ -1411,6 +1461,39 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
     expect(reminder.text.length).toBeLessThanOrEqual(1900);
   });
 
+  it('QA-017: approval replies never show the internal English reason or the raw risk enum', () => {
+    const internal = { ...approval, reason: 'HIGH risk requires human approval' };
+    for (const text of [
+      composer.composeApprovalNotice(CTX, internal).text,
+      composer.composePendingApprovalReminder(CTX, internal, 20 * 60_000).text,
+      composer.composeApprovalExpired(CTX, internal, 1_800_000).text,
+    ]) {
+      expect(text).not.toContain('requires human approval');
+      expect(text).not.toMatch(/\bHIGH\b/);
+      expect(text).toContain('위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요');
+    }
+  });
+
+  it.each<[RiskLevel, string]>([
+    [RiskLevel.CRITICAL, '위험도: 매우 높음'],
+    [RiskLevel.HIGH, '위험도: 높음'],
+    [RiskLevel.MEDIUM, '위험도: 보통'],
+    [RiskLevel.LOW, '위험도: 낮음'],
+  ])('QA-017: %s renders the Korean risk label', (riskLevel, label) => {
+    const text = composer.composePendingApprovalReminder(CTX, { ...approval, riskLevel, reason: 'operation: git push approval planning' }, 60_000).text;
+    expect(text).toContain(label);
+    expect(text).not.toContain('operation:');
+    expect(text).not.toContain(riskLevel);
+  });
+
+  it('QA-018: a stray decision with nothing pending says so without claiming any approval', () => {
+    const text = composer.composeNoPendingDecision(CTX).text;
+    expect(text).toBe(
+      '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. 새로 요청하려면 원하는 작업을 말해 주세요.',
+    );
+    expect(text).not.toMatch(/접수|승인했|승인됐/);
+  });
+
   it('a reset without a pending approval does not claim one was denied', () => {
     expect(composer.composeConversationReset(CTX, { deniedPendingApproval: false }).text).not.toContain('거절');
   });
@@ -1420,5 +1503,28 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
     expect(merged.text.startsWith('NOTICE\n\n')).toBe(true);
     expect(merged.text).toContain(composer.composeHelp(CTX).text);
     expect(merged.context).toBe(CTX);
+  });
+});
+
+describe('ResponseComposer — QA-015/QA-016 path replies', () => {
+  it('rejected-path reply echoes the typed path in inline code with the relative-path example', () => {
+    expect(composer.composeTargetPathRejected(CTX, 'src/nope.js').text).toBe(
+      '요청한 파일을 프로젝트 안에서 찾을 수 없거나 프로젝트 밖 경로예요: `src/nope.js`\n' +
+        '등록한 프로젝트 기준 상대경로(예: src/app.ts)로 다시 요청해 주세요.',
+    );
+  });
+
+  it('rejected-path reply strips backticks/control characters and truncates a long path', () => {
+    const text = composer.composeTargetPathRejected(CTX, `a/\`b\u0007/${'x'.repeat(200)}.ts`).text;
+    expect(text).not.toContain('\u0007');
+    expect(text.match(/`/g)).toHaveLength(2); // only the wrapping pair
+    expect(text).toContain('…`');
+    expect(text.length).toBeLessThan(200);
+  });
+
+  it('non-absolute project registration reply', () => {
+    expect(composer.composeProjectPathNotAbsolute(CTX).text).toBe(
+      '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo',
+    );
   });
 });

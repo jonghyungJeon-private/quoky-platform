@@ -134,6 +134,7 @@ function acceptanceHarness(options: { memoryStore?: ReturnType<typeof memoryRepo
       async open() { return { id: 'workspace-1', projectId: 'project-1', rootPath: '/test/project', createdAt: timestamp }; },
       async list(_workspace: unknown, glob?: string) { return glob === 'src/target.ts' ? ['src/target.ts'] : []; },
       async diff() { throw new Error('diff must not run before approval'); },
+      async read() { throw new Error('read must not run before approval'); },
     },
     commandExecutions: { async get() { return null; } },
     command: { async run() { throw new Error('command must not run'); } },

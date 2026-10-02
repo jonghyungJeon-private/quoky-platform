@@ -10,6 +10,7 @@ import type {
 import { createDurableMemory, createMemoryCandidate, MemoryType } from '../domain';
 import { now } from '../util/clock';
 import { newId } from '../util/id';
+import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 
 export type MemoryWriteDecision =
   | {
@@ -306,9 +307,11 @@ export class DefaultMemoryWriter implements MemoryWriter {
     }
     if (
       SECRET_MATERIAL.test(candidate.content) ||
-      SECRET_MATERIAL.test(candidate.sourceContent)
+      SECRET_MATERIAL.test(candidate.sourceContent) ||
+      containsCredentialMaterial(candidate.content) ||
+      containsCredentialMaterial(candidate.sourceContent)
     ) {
-      return 'candidate contains credential or authentication material';
+      return CREDENTIAL_REJECTION_REASON;
     }
     return undefined;
   }

@@ -367,7 +367,9 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       );
     }
     if (result.code !== 0) {
-      const kind = ClaudeCliProvider.classifyStderr(result.stderr);
+      // The CLI prints "Not logged in · Please run /login" on STDOUT (stderr empty), so
+      // classify on stderr + stdout. Only masked stderr is echoed; never the prompt.
+      const kind = ClaudeCliProvider.classifyStderr(`${result.stderr}\n${result.stdout}`);
       throw new AiProviderError(
         kind,
         `claude CLI exited ${result.code}: ${maskSecrets(result.stderr).slice(0, 300)}`,

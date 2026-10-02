@@ -68,6 +68,10 @@ interface HarnessOptions {
   resumable?: boolean;
   /** Runs inside `memory.recordShortTerm` — i.e. AFTER the turn-start expiry check, BEFORE any decision. */
   onRecordShortTerm?: () => void;
+  /** Seed a pending code-scope clarification (ADR-0037) on the session (stateful fake flow). */
+  pendingScope?: boolean;
+  /** Fake `projects.register`; omitted means registering must not happen. */
+  register?: (path: string) => Promise<{ ok: boolean; message: string }>;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -86,6 +90,8 @@ function harness(opts: HarnessOptions = {}) {
     orchestratorResume: 0,
     applyAnchorWrites: [] as ApplyPreviewAnchor[],
     applyClear: 0,
+    scopeClear: 0,
+    register: [] as string[],
   };
 
   const storage = {
@@ -177,6 +183,7 @@ function harness(opts: HarnessOptions = {}) {
   sessions.set(seeded.id, seeded);
 
   let currentAnchor: ApplyPreviewAnchor | null = opts.applyAnchor ?? null;
+  let scopePending = Boolean(opts.pendingScope);
   const applyPreviewFlow: ApplyPreviewFlow = {
     async findAnchor() {
       return currentAnchor;
@@ -220,7 +227,15 @@ function harness(opts: HarnessOptions = {}) {
         return { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'chat' };
       },
     },
-    projects: { register: bad('projects.register'), get: async () => null },
+    projects: {
+      register: opts.register
+        ? async (path: string) => {
+            calls.register.push(path);
+            return opts.register!(path);
+          }
+        : bad('projects.register'),
+      get: async () => null,
+    } as unknown as ConversationRuntimeDeps['projects'],
     analyzer: { prepare: bad('analyzer.prepare') },
     tasks: {
       async createTask(intent, context, anchor) {
@@ -245,7 +260,7 @@ function harness(opts: HarnessOptions = {}) {
       async completeRun() { return undefined; },
       async failRun() { return undefined; },
     },
-    workspace: { prepare: async () => undefined, open: bad('workspace.open'), list: bad('workspace.list'), diff: bad('workspace.diff') },
+    workspace: { prepare: async () => undefined, open: bad('workspace.open'), list: bad('workspace.list'), diff: bad('workspace.diff'), read: bad('workspace.read') },
     commandExecutions: { get: bad('commandExecutions.get') },
     command: { run: bad('command.run') },
     contextBuilder: { async build() { return {} as Awaited<ReturnType<ConversationRuntimeDeps['contextBuilder']['build']>>; } },
@@ -272,7 +287,16 @@ function harness(opts: HarnessOptions = {}) {
       requestForRisk: bad('approvals.requestForRisk'),
     },
     approvalFlow,
-    scopeClarificationFlow: { async findPending() { return null; }, anchor: bad('scope.anchor'), clear: bad('scope.clear') },
+    scopeClarificationFlow: {
+      async findPending() {
+        return scopePending ? { kind: 'code-scope-clarification' as const, summary: 'fix foo', createdAt: T0 } : null;
+      },
+      anchor: bad('scope.anchor'),
+      async clear() {
+        calls.scopeClear++;
+        scopePending = false;
+      },
+    },
     applyPreviewFlow,
     codeGeneration: { generate: bad('codeGeneration.generate'), getProposal: bad('codeGeneration.getProposal') },
     patch: { generate: bad('patch.generate'), get: bad('patch.get') },
@@ -570,7 +594,8 @@ describe('ConversationRuntime — pending-approval reminder (ADR-0093)', () => {
     h.setClock(at(10 * MINUTE));
     const result = await h.send('음 글쎄, 오늘 날씨 어때?');
     expect(result.status).toBe('AWAITING_APPROVAL');
-    expect(result.reply.text).toContain('Change packages/core/src/foo.ts'); // names what is pending
+    expect(result.reply.text).toContain('위험도: 높음'); // names the pending risk in Korean (QA-017)
+    expect(result.reply.text).not.toContain('Change packages/core/src/foo.ts'); // internal reason is never shown
     expect(result.reply.text).toContain('"승인"');
     expect(result.reply.text).toContain('"거절"');
     expect(result.reply.text).toContain('남은 시간: 약 20분');
@@ -586,7 +611,8 @@ describe('ConversationRuntime — pending-approval reminder (ADR-0093)', () => {
     h.setClock(at(29 * MINUTE + 30_000));
     const result = await h.send('이거 뭐였지?');
     expect(result.status).toBe('AWAITING_APPROVAL');
-    expect(result.reply.text).toContain('Commit packages/core/src/foo.ts');
+    expect(result.reply.text).toContain('위험도: 높음');
+    expect(result.reply.text).not.toContain('Commit packages/core/src/foo.ts');
     expect(result.reply.text).toContain('남은 시간: 약 1분');
     expect(result.reply.text).toContain('"새 대화"');
     expect(h.approvals.get('apply-appr-1')!.status).toBe(ApprovalStatus.PENDING);
@@ -670,6 +696,13 @@ describe('Help text names only phrases the runtime actually accepts (ADR-0093)',
     expect(interpret()).toBe(expected);
   });
 
+  it('QA-021: the phrase named after a commit approval is accepted as commit execution', () => {
+    const recorded = composer.composeCommitApprovalRecorded(CTX).text;
+    const phrase = recorded.match(/"([^"]+)"/)?.[1];
+    expect(phrase).toBe('커밋 실행');
+    expect(ConversationRuntime.interpretCommitExecutionIntent(phrase!)).toBe('execute');
+  });
+
   it('the project-registration example classifies as REGISTER_PROJECT', async () => {
     const example = '이 프로젝트 등록해줘: /path/to/project';
     expect(help).toContain(`"${example}"`);
@@ -678,5 +711,91 @@ describe('Help text names only phrases the runtime actually accepts (ADR-0093)',
       { hasActiveProject: false },
     );
     expect(intent.type).toBe(IntentType.REGISTER_PROJECT);
+  });
+});
+
+describe('ConversationRuntime — stray decision with nothing pending (QA-018)', () => {
+  const NO_PENDING =
+    '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. 새로 요청하려면 원하는 작업을 말해 주세요.';
+
+  it.each(['승인', '승인해줘', '거절', '거절합니다', '취소', '취소해 주세요', 'approve', 'ok', 'OK thanks', '진행해'])(
+    '"%s" with no pending approval gets the deterministic reply — no classifier, provider or Task',
+    async (text) => {
+      const h = harness();
+      const result = await h.send(text);
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toBe(NO_PENDING);
+      expect(h.calls.classify).toHaveLength(0);
+      expect(h.calls.routerSelect).toHaveLength(0);
+      expect(h.calls.providerExecute).toBe(0);
+      expect(h.calls.createTask).toBe(0);
+    },
+  );
+
+  it.each(['승인 절차가 뭐야?', '승인 절차 설명해줘', '회의 취소해줘', '좋아', '아니', '네'])(
+    '"%s" is not a stray decision and still goes to chat',
+    async (text) => {
+      const h = harness();
+      const result = await h.send(text);
+      expect(result.reply.text).not.toBe(NO_PENDING);
+      expect(h.calls.routerSelect).toEqual([Capability.GENERAL_CHAT]);
+    },
+  );
+
+  it('with an anchor that holds no pending approval (COMMIT_APPROVED) "승인" decides nothing and says so', async () => {
+    const anchor: ApplyPreviewAnchor = { ...commitPendingAnchor(), status: 'COMMIT_APPROVED' };
+    const h = harness({ applyAnchor: anchor });
+    const result = await h.send('승인');
+    expect(result.reply.text).toBe(NO_PENDING);
+    expect(h.calls.providerExecute).toBe(0);
+    expect(h.calls.applyAnchorWrites).toHaveLength(0);
+  });
+
+  it('a real pending approval still takes "거절" as its decision (not the stray reply)', async () => {
+    const h = harness({ pendingApproval: true });
+    const result = await h.send('거절');
+    expect(result.reply.text).not.toBe(NO_PENDING);
+    expect(h.approvals.get('appr-1')!.status).toBe(ApprovalStatus.REJECTED);
+  });
+});
+
+describe('ConversationRuntime — project registration with a non-absolute path (QA-015)', () => {
+  const ABSOLUTE_RULE = '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo';
+  const realClassifier = () => new IntentClassifier({} as CapabilityRouter);
+
+  it('"이 프로젝트 등록해줘: ../../etc" gets the register-specific absolute-path reply; nothing is registered', async () => {
+    const h = harness({ classifier: realClassifier() });
+    const result = await h.send('이 프로젝트 등록해줘: ../../etc');
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(ABSOLUTE_RULE);
+    expect(result.reply.text).not.toContain('수정할 파일 경로');
+    expect(h.calls.routerSelect).toHaveLength(0);
+    expect(h.calls.providerExecute).toBe(0);
+  });
+
+  it('"7/3 회의 등록해줘" stays ordinary chat (T2)', async () => {
+    const h = harness({ classifier: realClassifier() });
+    const result = await h.send('7/3 회의 등록해줘');
+    expect(result.reply.text).not.toBe(ABSOLUTE_RULE);
+    expect(h.calls.routerSelect).toEqual([Capability.GENERAL_CHAT]);
+  });
+
+  it('while a code-scope clarification is pending, a non-absolute register request is NOT read as the file reply', async () => {
+    const h = harness({ classifier: realClassifier(), pendingScope: true });
+    const result = await h.send('이 프로젝트 등록해줘: ../../etc');
+    expect(result.reply.text).toBe(ABSOLUTE_RULE);
+    expect(h.calls.scopeClear).toBe(1); // the next-turn-only clarification is consumed
+  });
+
+  it('while a code-scope clarification is pending, an absolute register request registers the project', async () => {
+    const h = harness({
+      classifier: realClassifier(),
+      pendingScope: true,
+      register: async () => ({ ok: true, message: 'registered' }),
+    });
+    const result = await h.send('이 프로젝트 등록해줘: /Users/me/my-repo');
+    expect(h.calls.register).toEqual(['/Users/me/my-repo']);
+    expect(result.reply.text).toBe('registered');
+    expect(h.calls.scopeClear).toBe(1);
   });
 });

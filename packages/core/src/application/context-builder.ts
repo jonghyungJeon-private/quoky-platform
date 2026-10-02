@@ -16,6 +16,7 @@ import {
   createRetrievedMemory,
 } from '../domain';
 import { ESTIMATED_CHARACTERS_PER_TOKEN, estimateTokenCount } from '../util/token-estimator';
+import { containsCredentialMaterial } from './credential-guard';
 import type { MemoryManager } from './memory-manager';
 import type { MemoryRetriever } from './memory-retriever';
 import { scoreSemanticRelevance } from './semantic-relevance';
@@ -229,6 +230,8 @@ export class ContextBuilder {
         try {
           if (typeof candidate !== 'object' || candidate === null) return [];
           const memory = createDurableMemory({ ...candidate.memory });
+          // Defense in depth: never inject a credential-like durable record (e.g. stored before the write gate).
+          if (containsCredentialMaterial(memory.content)) return [];
           return [
             createRetrievedMemory({
               memory,

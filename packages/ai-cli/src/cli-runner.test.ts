@@ -164,6 +164,8 @@ interface StartedRun {
 const PARENT_WITH_SECRETS: NodeJS.ProcessEnv = {
   PATH: '/usr/bin:/bin',
   HOME: '/Users/tester',
+  USER: 'tester',
+  LOGNAME: 'tester',
   LANG: 'en_US.UTF-8',
   LC_ALL: 'en_US.UTF-8',
   LC_CTYPE: 'UTF-8',
@@ -282,6 +284,8 @@ describe('contained CLI runner: parent environment isolation', () => {
     expect(Object.keys(env).sort()).toEqual([...INHERITED_ENV_ALLOWLIST, 'TMPDIR'].sort());
     expect(env.PATH).toBe('/usr/bin:/bin');
     expect(env.HOME).toBe('/Users/tester');
+    expect(env.USER).toBe('tester');
+    expect(env.LOGNAME).toBeUndefined();
     expect(env.LANG).toBe('en_US.UTF-8');
     expect(env.LC_ALL).toBe('en_US.UTF-8');
     expect(env.LC_CTYPE).toBe('UTF-8');
@@ -394,6 +398,8 @@ describe('contained CLI runner: parent environment isolation', () => {
         OLLAMA_HOST: 'http://127.0.0.1:11434', OLLAMA_NO_CLOUD: '1',
       });
       expect(isolated.env.PATH).toBeUndefined();
+      expect(isolated.env.USER).toBeUndefined();
+      expect(isolated.env.LOGNAME).toBeUndefined();
       expect(isolated.env.HTTP_PROXY).toBeUndefined();
       expect(isolated.env.GITHUB_TOKEN).toBeUndefined();
     }

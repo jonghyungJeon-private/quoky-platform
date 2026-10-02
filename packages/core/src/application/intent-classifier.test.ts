@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IntentClassifier } from './intent-classifier';
+import { IntentClassifier, NON_ABSOLUTE_REGISTRATION_KIND, detectProjectRegistration } from './intent-classifier';
 import { Capability, IntentType } from '../domain';
 import type { InboundMessage } from '../domain';
 import type { CapabilityRouter } from './capability-router';
@@ -437,5 +437,40 @@ describe('IntentClassifier — Follow-up-7 preview-request routing (Gate 5 turn-
         expect((await classifier.classify(msg('이 문장 분석해줘'), ctx)).type).toBe(IntentType.PROJECT_ANALYSIS);
       }
     });
+  });
+});
+
+describe('IntentClassifier — non-absolute project registration (QA-015)', () => {
+  const noProject = { hasActiveProject: false };
+
+  it.each([
+    ['이 프로젝트 등록해줘: ../../etc', '../../etc'],
+    ['이 프로젝트 등록해줘: ./my-repo', './my-repo'],
+    ['이 프로젝트 등록해줘: ~/code/my-repo', '~/code/my-repo'],
+    ['이 저장소 등록해줘 my-org/my-repo', 'my-org/my-repo'],
+    ['register this repo: ../repo', '../repo'],
+  ])('"%s" is a REGISTER_PROJECT request without a registrable path', async (text, path) => {
+    const intent = await classifier.classify(msg(text), noProject);
+    expect(intent.type).toBe(IntentType.REGISTER_PROJECT);
+    expect(intent.raw).toEqual({ kind: NON_ABSOLUTE_REGISTRATION_KIND });
+    expect(intent.raw?.path).toBeUndefined(); // nothing for ProjectManager to resolve against the cwd
+    expect(detectProjectRegistration(text)).toEqual({ path, absolute: false });
+  });
+
+  it.each([
+    '7/3 회의 등록해줘', // T2: no project noun, date is not a path
+    '~/code/repo 등록해줘', // the only "repo" is inside the path — not a project noun
+    '프로젝트 등록/삭제 방법 알려줘', // prose with a slash is not a path
+    '프로젝트 등록하는 방법 알려줘', // no path at all
+    '7/3 프로젝트 회의 등록해줘', // digits-only slash token is a date
+  ])('"%s" is not a project registration', async (text) => {
+    expect((await classifier.classify(msg(text), noProject)).type).not.toBe(IntentType.REGISTER_PROJECT);
+    expect(detectProjectRegistration(text)).toBeNull();
+  });
+
+  it('an absolute path still registers exactly as before', async () => {
+    const intent = await classifier.classify(msg('이 프로젝트 등록해줘: /Users/me/my-repo'), noProject);
+    expect(intent.type).toBe(IntentType.REGISTER_PROJECT);
+    expect(intent.raw).toEqual({ path: '/Users/me/my-repo' });
   });
 });

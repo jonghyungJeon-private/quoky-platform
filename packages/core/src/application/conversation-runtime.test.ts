@@ -65,6 +65,7 @@ import { InvalidTaskTransitionError } from '../errors';
 import { TaskManager } from './task-manager';
 import { PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
+import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
 import type { TestResultDetail } from './response-composer';
 import { IntentClassifier } from './intent-classifier';
@@ -176,7 +177,8 @@ const commandExecOf = (
 
 const gitStatusOf = (o: Partial<GitStatus> = {}): GitStatus => ({
   clean: false,
-  branch: 'main',
+  // A work branch by default: Personal v1 refuses commit approval on main/master up front (QA-022).
+  branch: 'feature/quoky',
   staged: ['a.ts'],
   unstaged: ['b.ts'],
   untracked: ['c.ts'],
@@ -260,6 +262,9 @@ const testIntent = intentOf(Capability.TEST_EXECUTION, IntentType.RUN_TESTS, tru
 
 /** A validated target file used across Live Code Change Planning tests (Sprint 2o, ADR-0036). */
 const TARGET_FILE = 'packages/core/src/application/foo.ts';
+
+/** Default current content the fake `workspace.read` returns for a target (QA-012). */
+const CURRENT_TARGET_CONTENT = 'export const greet = (name: string) => `hi ${name}`;\n';
 
 /** Fake `workspace.list` that reports an exact hit only for `path`, nothing for anything else. */
 const hitsFor = (path: string) => (glob?: string): string[] => (glob === path ? [path] : []);
@@ -411,6 +416,8 @@ interface Calls {
   lastCodeGenerationInput?: GenerateCodeInput;
   workspaceDiff: number;
   lastWorkspaceDiffInput?: ProposedChange[];
+  workspaceRead: number;
+  workspaceReadPaths: string[];
   applyFindAnchor: number;
   applyAnchorSet: number;
   applyClear: number;
@@ -574,6 +581,9 @@ interface Opts {
    *  failure, or a literal `WorkspaceDiff` to force a specific (e.g. empty, or `changeKind: 'add'`)
    *  result. */
   workspaceDiff?: WorkspaceDiff | 'throw';
+  /** `workspace.read` (QA-012, codegen target context) — defaults to `CURRENT_TARGET_CONTENT` for
+   *  every path; return/throw per path to simulate a missing, unreadable, or oversized target. */
+  workspaceRead?: (path: string) => string;
   /** Initial apply-preview anchor (Sprint 2s) — the fake is stateful: `anchor()` sets it, `clear()`
    *  nulls it, so a test can drive multiple sequential `handle()` calls realistically. */
   applyAnchor?: ApplyPreviewAnchor | null;
@@ -694,6 +704,8 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     codeGenerationGenerate: 0,
     codeGenerationGetProposal: 0,
     workspaceDiff: 0,
+    workspaceRead: 0,
+    workspaceReadPaths: [],
     applyFindAnchor: 0,
     applyAnchorSet: 0,
     applyClear: 0,
@@ -859,6 +871,11 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.lastWorkspaceDiffInput = changes;
         if (opts.workspaceDiff === 'throw') throw new Error('diff failed');
         return opts.workspaceDiff ?? workspaceDiffOf(changes);
+      },
+      async read(_ref, relPath) {
+        calls.workspaceRead++;
+        calls.workspaceReadPaths.push(relPath);
+        return opts.workspaceRead ? opts.workspaceRead(relPath) : CURRENT_TARGET_CONTENT;
       },
     },
     commandExecutions: {
@@ -1144,6 +1161,76 @@ describe('ConversationRuntime', () => {
       metadata: { sourceReferences: ['mem-1'] },
     });
   });
+
+  it.each([
+    '기억해: 내 비밀번호는 hunter2야',
+    '기억해: 패스워드: abc123',
+    '기억해줘: 암호는 파랑고래',
+    '기억해: 내 비번 = 1234',
+    '기억해: 인증번호는 482913',
+    '기억해: OTP는 551122',
+    '기억해: 핀번호는 0987',
+    '기억해: 카드번호는 1234-5678-9012-3456',
+    '기억해: 계좌 비밀번호는 9911',
+    '기억해: API 키는 abcd1234',
+    '기억해: 토큰: xyz789',
+    '기억해: 시크릿은 s3cr3t',
+    '기억해: 개인키는 MIIEvQ',
+    'remember: my password is hunter2',
+    'remember: passwd=hunter2',
+    'remember: api key: abcd1234',
+    'remember: token is xyz',
+    'remember: private key is abc',
+    'remember: pin is 4321',
+    '기억해: 키는 sk-abcdefghijklmnopqrstuvwxyz',
+    '기억해: {"password":"demo-value"}',
+    '기억해: 비밀번호는테스트값이야',
+    "기억해: {'token': 'abc123'}",
+    '기억해: 비밀번호가테스트값이야',
+    '기억해: 패스워드:abc123',
+    'remember: DB_PASSWORD=hunter2',
+  ])('credential declaration %s is refused, nothing stored, no provider call', async (text) => {
+    const { deps, calls } = makeDeps();
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toContain('민감한 정보는 기억하지 않아요');
+    expect(calls.memoryCreateCandidate).toBe(0);
+    expect(calls.memoryPromote).toBe(0);
+    expect(calls.classify).toBe(0);
+  });
+
+  it.each([
+    '기억해: 내 UAT 확인 단어는 파랑 고래야',
+    '기억해: 내 배포 창은 화요일이야',
+    '기억해: 비밀번호 정책 문서는 Confluence에 있어',
+    '기억해: 암호화 방식은 AES야',
+    'remember: use pnpm for this project',
+  ])('harmless fact %s is still stored', async (text) => {
+    const { deps, calls } = makeDeps();
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+
+    expect(result.reply.text).toBe('요청한 내용을 기억해 둘게요.');
+    expect(calls.memoryPromote).toBe(1);
+  });
+
+  it.each(['기억해:', '기억해줘:   ', 'remember:', '기억해: \n '])(
+    'empty explicit command %j replies with a usage hint, stores nothing, no provider call',
+    async (text) => {
+      const { deps, calls } = makeDeps();
+
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toContain('기억할 내용을 함께 보내 주세요');
+      expect(result.reply.text).toContain('기억해: 내 배포 창은 화요일이야');
+      expect(calls.memoryCreateCandidate).toBe(0);
+      expect(calls.memoryPromote).toBe(0);
+      expect(calls.classify).toBe(0);
+    },
+  );
 
   it('a message without an activation prefix follows normal classifier routing unchanged', async () => {
     const { deps, calls } = makeDeps();
@@ -1463,7 +1550,7 @@ describe('Live Code Change Planning — runtime', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf(`${TARGET_FILE}에서 이 버그 고쳐줘`));
     expect(result.status).toBe('AWAITING_APPROVAL');
     expect(calls.anchor).toBe(1);
-    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX, [TARGET_FILE]).text);
     expect(result.reply.text).not.toBe(new ResponseComposer().composeApprovalRequired(CTX).text);
   });
 
@@ -1534,14 +1621,14 @@ describe('Code Change Scope Collection — runtime', () => {
     expect(calls.scopeAnchor).toBe(1);
   });
 
-  it('a path candidate that does not validate (fake workspace.list returns []) → clarification, no run', async () => {
+  it('a path candidate that does not validate (fake workspace.list returns []) → rejected-path reply naming it, no run (QA-016)', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
     const result = await new ConversationRuntime(deps).handle(messageOf(`${TARGET_FILE}에서 이 버그 고쳐줘`));
     expect(calls.run).toBe(0);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, TARGET_FILE).text);
   });
 
-  it('a workspace.list hit that does not normalize-equal the candidate is not trusted (glob false-positive guard)', async () => {
+  it('a workspace.list hit that does not normalize-equal the candidate is not trusted (glob false-positive guard) → rejected-path reply', async () => {
     const { deps, calls } = makeDeps({
       intent: codeIntent,
       // A hit is returned, but for a DIFFERENT path than the candidate — must not be accepted.
@@ -1549,7 +1636,7 @@ describe('Code Change Scope Collection — runtime', () => {
     });
     const result = await new ConversationRuntime(deps).handle(messageOf(`${TARGET_FILE}에서 이 버그 고쳐줘`));
     expect(calls.run).toBe(0);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, TARGET_FILE).text);
   });
 
   it('a validated candidate threads the Workspace-returned hit into targetFiles, not the raw candidate', async () => {
@@ -1564,15 +1651,18 @@ describe('Code Change Scope Collection — runtime', () => {
   });
 
   it('secret/ignored/outside-workspace mentions all fail validation (mirrors the real provider, workspace-local/src/index.test.ts:147)', async () => {
-    for (const text of [
-      '.env에서 이 버그 고쳐줘',
-      'node_modules/foo.ts에서 이 버그 고쳐줘',
-      '/etc/passwd에서 이 버그 고쳐줘',
-    ]) {
+    const composer = new ResponseComposer();
+    for (const [text, expected] of [
+      // no path separator → no path was typed → the original clarification copy
+      ['.env에서 이 버그 고쳐줘', composer.composeTargetScopeClarification(CTX).text],
+      // a typed path that cannot be used → the rejected-path copy (QA-016), never revealing existence
+      ['node_modules/foo.ts에서 이 버그 고쳐줘', composer.composeTargetPathRejected(CTX, 'node_modules/foo.ts').text],
+      ['/etc/passwd에서 이 버그 고쳐줘', composer.composeTargetPathRejected(CTX, '/etc/passwd').text],
+    ] as const) {
       const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
       const result = await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.run).toBe(0);
-      expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+      expect(result.reply.text).toBe(expected);
     }
   });
 
@@ -1581,6 +1671,26 @@ describe('Code Change Scope Collection — runtime', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf('../escape.ts에서 이 버그 고쳐줘'));
     expect(calls.workspaceList).toBe(0);
     expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, '../escape.ts').text);
+  });
+
+  it.each([
+    ['src/nope.js 파일을 수정해줘', 'src/nope.js'],
+    ['../../.ssh/config 파일을 수정해줘', '../../.ssh/config'],
+    ['/etc/hosts 파일을 수정해줘', '/etc/hosts'],
+  ])('QA-016: "%s" names the rejected path instead of asking for a path that was given', async (text, typed) => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, typed).text);
+    expect(result.reply.text).not.toContain('수정할 파일 경로와 함께 다시 요청해 주세요');
+    // out-of-root / traversal paths are never looked up, so nothing about their existence can leak
+    if (!typed.startsWith('src/')) expect(calls.workspaceList).toBe(0);
+  });
+
+  it('QA-016: with no path typed at all the original clarification copy stays', async () => {
+    const { deps } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
+    const result = await new ConversationRuntime(deps).handle(messageOf('로그인 처리 부분 수정해줘'));
     expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
   });
 
@@ -1675,20 +1785,20 @@ describe('Explicit new-file preview target (A2)', () => {
     expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
   });
 
-  it('a non-existent path WITHOUT a create-file marker still routes to scope clarification (unchanged)', async () => {
+  it('a non-existent path WITHOUT a create-file marker still routes to scope clarification, naming the rejected path (QA-016)', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
     const result = await new ConversationRuntime(deps).handle(messageOf('docs/uat/x.md 내용 미리보기 보여줘'));
     expect(calls.run).toBe(0);
     expect(calls.scopeAnchor).toBe(1);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, 'docs/uat/x.md').text);
   });
 
-  it('an unsafe (traversal) path with a create-file marker is rejected → scope clarification, no run', async () => {
+  it('an unsafe (traversal) path with a create-file marker is rejected → rejected-path reply, no run', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent });
     const result = await new ConversationRuntime(deps).handle(messageOf('파일 생성: ../escape.md 미리보기'));
     expect(calls.workspaceList).toBe(0); // rejected at extraction — never a candidate
     expect(calls.run).toBe(0);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, '../escape.md').text);
   });
 });
 
@@ -1720,7 +1830,7 @@ describe('Multi-turn Code Scope Clarification — runtime', () => {
     expect(calls.lastRunRequest?.targetFiles).toEqual([TARGET_FILE]);
     expect(calls.lastRunRequest?.planningOnly).toBe(true);
     expect(result.status).toBe('AWAITING_APPROVAL');
-    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodeChangeApprovalRequired(CTX, [TARGET_FILE]).text);
   });
 
   it('Case 3: an invalid path reply clears the anchor without recovering, and does not re-anchor', async () => {
@@ -1734,7 +1844,7 @@ describe('Multi-turn Code Scope Clarification — runtime', () => {
     expect(calls.run).toBe(0);
     expect(calls.scopeClear).toBe(1);
     expect(calls.scopeAnchor).toBe(1); // still just the original anchor — no re-anchor on failure
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, 'node_modules/foo.ts').text);
     // CA Implementation Review (Round 1): the clarification reply must be recorded to memory exactly
     // once per turn, not twice (respondComposed already records it — no separate manual call).
     expect(calls.recordAssistant - recordAssistantBeforeTurn2).toBe(1);
@@ -2341,6 +2451,162 @@ describe('New-file add-diff preview + preview-failure branch logging (Sprint 4c-
     expect(calls.hostingCreatePR).toBe(0);
     // apply approval stays separate — the preview success did NOT create a new (apply) approval
     expect(calls.requestForRisk).toBe(0);
+  });
+});
+
+// ── QA-012 — code-generation preview carries the target's CURRENT content as contextFiles ─────────
+describe('Code-generation preview target context (QA-012)', () => {
+  const PREVIEW_FAILED = new ResponseComposer().composeCodeGenerationPreviewFailed(CTX).text;
+  const branchLog = (calls: Calls, branch: string) => calls.loggerWarnCalls.find((c) => c.fields?.branch === branch);
+
+  /** A REAL CodeGenerationManager (real PromptComposer/PromptRenderer/parser) over in-memory stores, with a
+   *  fake provider that records the exact AiRequest it receives. */
+  function realCodeGeneration(reply: (req: AiRequest) => string) {
+    const gens = new Map<string, CodeGeneration>();
+    const props = new Map<string, CodeProposal>();
+    const storage = {
+      codeGenerations: {
+        async get(id: string) { return gens.get(id) ?? null; },
+        async save(g: CodeGeneration) { gens.set(g.id, g); return g; },
+        async findByExecutionPlan(id: string) { return [...gens.values()].filter((g) => g.executionPlanRef.id === id); },
+      },
+      codeProposals: {
+        async get(id: string) { return props.get(id) ?? null; },
+        async save(p: CodeProposal) { props.set(p.id, p); return p; },
+      },
+    } as unknown as StorageProvider;
+    const requests: AiRequest[] = [];
+    const provider = {
+      id: 'fake-claude',
+      capabilities: [{ capability: Capability.CODE_IMPLEMENTATION, priority: 100 }],
+      isAvailable: async () => true,
+      execute: async (req: AiRequest) => {
+        requests.push(req);
+        return { text: reply(req) };
+      },
+    };
+    const mgr = new CodeGenerationManager(storage, { select: async () => provider }, new PromptComposer(), new PromptRenderer());
+    return { mgr, requests };
+  }
+
+  async function approveWithRealCodeGen(opts: Opts, request: ExecutionRequest, reply: (req: AiRequest) => string) {
+    const { deps, calls } = makeDeps({
+      ...opts,
+      pending: pendingApprovalOf(),
+      reconstruct: { request, prior: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL) },
+    });
+    const real = realCodeGeneration(reply);
+    const result = await new ConversationRuntime({ ...deps, codeGeneration: real.mgr }).handle(messageOf('승인'));
+    return { result, calls, requests: real.requests };
+  }
+
+  it('reads the validated target via workspace.read and passes its current content as contextFiles to generate()', async () => {
+    const { result, calls } = await approveWith({}, planningOnlyRequestOf());
+    expect(result.status).toBe('RESPONDED');
+    expect(calls.workspaceReadPaths).toEqual([TARGET_FILE]);
+    expect(calls.lastCodeGenerationInput?.contextFiles).toEqual([{ path: TARGET_FILE, content: CURRENT_TARGET_CONTENT }]);
+  });
+
+  it('end to end with the real CodeGenerationManager: the provider AiRequest prompt contains the current file content, carries no cwd, and a valid proposal renders a diff preview', async () => {
+    const { result, requests } = await approveWithRealCodeGen({}, planningOnlyRequestOf(), () =>
+      '```json\n' + JSON.stringify({ changes: [{ path: TARGET_FILE, newContent: 'export const greet = () => "hello";\n' }] }) + '\n```',
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.prompt).toContain(`### ${TARGET_FILE}`);
+    expect(requests[0]!.prompt).toContain(CURRENT_TARGET_CONTENT);
+    expect(requests[0]!.workspace).toBeUndefined(); // CAP-008 MB-2 — still no workspace cwd
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).not.toBe(PREVIEW_FAILED);
+  });
+
+  it('an empty {"changes":[]} proposal (plus prose) is a FAILED generation (EMPTY_OUTPUT) → truthful preview-failed copy, no diff', async () => {
+    const { result, calls } = await approveWithRealCodeGen({}, planningOnlyRequestOf(), () =>
+      'I could not see the file.\n```json\n{"changes":[]}\n```',
+    );
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.workspaceDiff).toBe(0);
+    expect(branchLog(calls, 'code-generation-not-succeeded')?.fields?.failureKind).toBe(AiFailureKind.EMPTY_OUTPUT);
+    expect(branchLog(calls, 'out-of-scope-proposal')).toBeUndefined();
+  });
+
+  it('a missing/unreadable target → failed preview before any AI call (never an implicit add), branch logged without content', async () => {
+    const { result, calls } = await approveWith(
+      { workspaceRead: () => { throw new Error('ENOENT: no such file'); } },
+      planningOnlyRequestOf(),
+    );
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(calls.workspaceDiff).toBe(0);
+    const log = branchLog(calls, 'context-target-read-failed');
+    expect(log?.fields?.targetIndex).toBe(0);
+    expect(JSON.stringify(log)).not.toContain('ENOENT');
+  });
+
+  it('a target over the 64 KiB per-file cap → failed preview, never truncated, generate never called', async () => {
+    const big = 'x'.repeat(64 * 1024 + 1);
+    const { result, calls } = await approveWith({ workspaceRead: () => big }, planningOnlyRequestOf());
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    const log = branchLog(calls, 'context-target-too-large');
+    expect(log?.fields?.maxFileBytes).toBe(64 * 1024);
+    expect(JSON.stringify(log)).not.toContain('xxxx');
+  });
+
+  it('a target whose content carries credential material → refused before any AI call, path only in the reply', async () => {
+    const pem = '{ "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEsecretbody\\n-----END PRIVATE KEY-----" }';
+    const { result, calls } = await approveWith({ workspaceRead: () => pem }, planningOnlyRequestOf());
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(
+      new ResponseComposer().composeCodeGenerationPreviewCredentialRefused(CTX, TARGET_FILE).text,
+    );
+    expect(result.reply.text).not.toContain('MIIEsecretbody');
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(calls.workspaceDiff).toBe(0);
+    const log = branchLog(calls, 'context-target-contains-credential');
+    expect(log?.fields?.targetIndex).toBe(0);
+    expect(JSON.stringify(calls.loggerWarnCalls)).not.toContain(TARGET_FILE);
+    expect(JSON.stringify(calls.loggerWarnCalls)).not.toContain('MIIEsecretbody');
+  });
+
+  it('targets that together exceed the 256 KiB total cap → failed preview, generate never called', async () => {
+    const targets = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts'];
+    const { result, calls } = await approveWith(
+      { workspaceRead: () => 'y'.repeat(60 * 1024) },
+      planningOnlyRequestOf({ targetFiles: targets }),
+    );
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(branchLog(calls, 'context-context-total-too-large')?.fields?.targetIndex).toBe(4);
+  });
+
+  it('multi-byte content is bounded by UTF-8 bytes, not characters', async () => {
+    const korean = '가'.repeat(22 * 1024); // 22K chars × 3 bytes = 66 KiB > 64 KiB cap
+    const { result, calls } = await approveWith({ workspaceRead: () => korean }, planningOnlyRequestOf());
+    expect(result.status).toBe('FAILED');
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(branchLog(calls, 'context-target-too-large')).toBeDefined();
+  });
+
+  it('an explicit new-file target is never read (it must not exist yet) and generate() gets no contextFiles for it', async () => {
+    const { calls } = await approveWith(
+      {
+        workspaceList: () => [],
+        workspaceDiff: {
+          refId: WORKSPACE.id,
+          files: [{ path: TARGET_FILE, changeKind: 'add', unified: '@@ -0,0 +1 @@\n+new\n', binary: false }],
+          estimatedChangedLines: 1,
+          truncated: false,
+        },
+      },
+      planningOnlyRequestOf({ newFileTargets: [TARGET_FILE] }),
+    );
+    expect(calls.workspaceRead).toBe(0);
+    expect(calls.codeGenerationGenerate).toBe(1);
+    expect(calls.lastCodeGenerationInput?.contextFiles).toBeUndefined();
   });
 });
 
@@ -3562,6 +3828,7 @@ describe('Post-Validation Git Status Preview — runtime (Sprint 2w, ADR-0044)',
 
   const composer = new ResponseComposer();
   const mutationText = composer.composeGitMutationNotSupported(CTX).text;
+  const remoteMutationText = composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: false }).text;
   const unavailableText = composer.composeGitPreviewUnavailable(CTX).text;
 
   // ── status/diff calls (CA 1–6) ──────────────────────────────────────────────────────────────
@@ -3620,7 +3887,37 @@ describe('Post-Validation Git Status Preview — runtime (Sprint 2w, ADR-0044)',
       const result = await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.gitStatus, text).toBe(0);
       expect(calls.gitDiff, text).toBe(0);
-      expect(result.reply.text, text).toBe(mutationText);
+      expect(result.reply.text, text).toBe(text.startsWith('push') ? remoteMutationText : mutationText);
+    }
+  });
+
+  it('QA-020: a push request says remote git is off and local commit is available — never "commit unsupported"', async () => {
+    for (const text of ['푸시해줘', 'push 해줘', 'git push 해줘']) {
+      const { deps, calls } = makeDeps({ applyAnchor: gitAnchor() });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitStatus, text).toBe(0);
+      expect(result.reply.text, text).toBe(remoteMutationText);
+      expect(result.reply.text, text).toContain('QUOKY_GIT_REMOTE_ENABLED=false');
+      expect(result.reply.text, text).toContain('"커밋해줘"');
+      expect(result.reply.text, text).not.toMatch(/commit[^"]*지원하지 않아요/);
+    }
+  });
+
+  it('QA-020: with remote git enabled the push copy asks for a local commit first instead of claiming it is off', async () => {
+    const { deps } = makeDeps({ applyAnchor: gitAnchor() });
+    const result = await new ConversationRuntime(deps, { gitRemoteEnabled: true }).handle(messageOf('푸시해줘'));
+    expect(result.reply.text).toBe(composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: true }).text);
+    expect(result.reply.text).not.toContain('꺼져 있어요');
+  });
+
+  it('QA-020: reset/stash keep accurate local wording (unsupported) and name the supported local commit', async () => {
+    for (const text of ['git reset 해줘', 'stash 해줘']) {
+      const { deps } = makeDeps({ applyAnchor: gitAnchor() });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text, text).toContain('reset/stash');
+      expect(result.reply.text, text).toContain('지원하지 않아요');
+      expect(result.reply.text, text).toContain('"커밋해줘"');
+      expect(result.reply.text, text).not.toContain('push');
     }
   });
 
@@ -3837,6 +4134,27 @@ describe('Explicit Git Commit Approval — runtime (Sprint 2x, ADR-0045)', () =>
     expect(calls.commandRun).toBe(0);
     expect(result.reply.text).toBe(composer.composeCommitStatusUnavailable(CTX).text);
     expect(result.reply.text).not.toContain('git 명령은 실행하지 않았어요');
+  });
+
+  it.each(['main', 'master', 'Main', 'MASTER'])(
+    'QA-022: "커밋해줘" on branch %s is refused up front — no approval, no commit, specific reply',
+    async (branch) => {
+      const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf({ ...inScopeStatus, branch }) });
+      const result = await new ConversationRuntime(deps).handle(messageOf('커밋해줘'));
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.gitCommit).toBe(0);
+      expect(calls.lastApplyAnchor).toBeUndefined(); // stays WORKSPACE_APPLIED (no COMMIT_APPROVAL_PENDING)
+      expect(result.reply.text).toBe(composer.composeCommitProtectedBranch(CTX).text);
+      expect(result.reply.text).toContain(
+        'main/master 브랜치에는 커밋하지 않아요. 작업용 브랜치(예: feature/…)로 전환한 뒤 다시 요청해 주세요.',
+      );
+    },
+  );
+
+  it('QA-022: a work branch whose name merely contains "main" still gets a commit approval', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf({ ...inScopeStatus, branch: 'feature/main-menu' }) });
+    await new ConversationRuntime(deps).handle(messageOf('커밋해줘'));
+    expect(calls.requestForRisk).toBe(1);
   });
 
   // ── candidate files + path safety (CA 18–25) ────────────────────────────────────────────────
@@ -4370,7 +4688,7 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
     expect(calls.requestForRisk).toBe(0);
     expect(calls.gitInfo).toBe(0);
-    expect(result.reply.text).toBe(composer.composeGitMutationNotSupported(CTX).text);
+    expect(result.reply.text).toBe(composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: false }).text);
   });
 
   it('COMMIT_APPROVED + push phrase → existing 2y push-unsupported, no push approval (CA 8)', async () => {

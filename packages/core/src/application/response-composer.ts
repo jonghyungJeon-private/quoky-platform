@@ -1,3 +1,4 @@
+import { RiskLevel } from '../domain';
 import type {
   ApprovalRequest,
   Artifact,
@@ -119,6 +120,8 @@ const MAX_DIFF_CHARS_PER_FILE = 1000;
 /** Bound on displayed user-controllable git refs (remote/branch/upstream) in push replies (Sprint 2z,
  *  ADR-0047, CA #6) — a defensive display cap even though upstream parsing already rejects over-long refs. */
 const MAX_GIT_REF_DISPLAY = 80;
+/** Display bound on a user-typed path echoed back in the rejected-path reply (QA-016). */
+const MAX_REJECTED_PATH_DISPLAY = 80;
 /** Bound on a displayed PR URL (Sprint 3d-D) — the adapter already validates it to the canonical bounded
  *  github.com form; this is a defensive display cap. */
 const MAX_PR_URL_DISPLAY = 200;
@@ -161,16 +164,32 @@ const PATCH_PREVIEW_FOOTER = [
   '이 패치를 실제 파일에 적용하려면 "패치 적용해줘"라고 요청해 주세요.',
 ].join('\n');
 
-/** Display bound on an approval `reason` inside the reminder/expiry replies, so the decision and "새 대화"
- *  lines always survive the message clamp (ADR-0093). */
-const MAX_APPROVAL_REASON_DISPLAY = 400;
-
-function boundedReason(reason: string): string {
-  return reason.length > MAX_APPROVAL_REASON_DISPLAY ? `${reason.slice(0, MAX_APPROVAL_REASON_DISPLAY)}…` : reason;
+/**
+ * User-facing Korean risk line for an approval (QA-017). `ApprovalRequest.reason` is an internal English audit
+ * string ("HIGH risk requires human approval", "operation: git push approval planning …") and is never shown to
+ * the user; the reminder/notice/expiry replies render only this label for the request's risk level.
+ */
+function approvalRiskLine(riskLevel: RiskLevel): string {
+  switch (riskLevel) {
+    case RiskLevel.CRITICAL:
+      return '위험도: 매우 높음 — 원격 저장소처럼 되돌리기 어려운 곳의 변경으로 이어질 수 있어요';
+    case RiskLevel.HIGH:
+      return '위험도: 높음 — 실제 파일이나 Git 변경으로 이어질 수 있어요';
+    case RiskLevel.MEDIUM:
+      return '위험도: 보통';
+    case RiskLevel.LOW:
+      return '위험도: 낮음';
+    default:
+      return '위험도: 확인 필요';
+  }
 }
 
 /** How to decide a pending approval (ADR-0093) — the decision words `interpretApprovalDecision` accepts. */
 const APPROVAL_DECISION_LINE = '진행하려면 "승인", 거절하려면 "거절"이라고 답해 주세요.';
+
+/** The next phrase after a commit approval is recorded (QA-021) — "커밋 실행" is a COMMIT_EXECUTION_WORDS phrase
+ *  (`interpretCommitExecutionIntent` → 'execute' at COMMIT_APPROVED), the same phrase help names. */
+const COMMIT_EXECUTE_NEXT_LINE = '실제로 커밋하려면 "커밋 실행"이라고 보내 주세요.';
 
 /** Next phrases after a real workspace apply (ADR-0043 validation; ADR-0093 reset). "테스트 실행해줘" is an
  *  explicit validation request (`detectExplicitValidationKinds`); "새 대화" is the reset control phrase. */
@@ -191,8 +210,9 @@ const HELP_TEXT = [
   '승인 요청에는 "승인" 또는 "거절"로 답해 주세요. 30분 안에 답하지 않으면 자동으로 거절돼요.',
   '',
   '대화 제어:',
-  '- "도움말" 또는 "/help": 이 안내를 다시 보여줘요.',
-  '- "새 대화" 또는 "/reset": 지금 대화를 끝내고 새로 시작해요. 기다리던 승인 요청은 거절로 처리돼요.',
+  '- "도움말": 이 안내를 다시 보여줘요.',
+  '- "새 대화": 지금 대화를 끝내고 새로 시작해요. 기다리던 승인 요청은 거절로 처리돼요.',
+  '- "/help", "/reset"도 같아요. 다만 Discord에서는 "/"로 시작하면 명령 선택 창이 열리니, Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
 ].join('\n');
 
 /** Which stream a rendered excerpt came from, and which non-empty stream was left out. */
@@ -486,6 +506,17 @@ export class ResponseComposer {
     return { context, text: '요청한 내용을 기억해 둘게요.' };
   }
 
+  composeMemorySensitiveRefused(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text: '비밀번호·키·토큰 같은 민감한 정보는 기억하지 않아요. 안전한 비밀번호 관리자에 보관해 주세요.',
+    };
+  }
+
+  composeMemoryUsageHint(context: ConversationContext): OutboundMessage {
+    return { context, text: '기억할 내용을 함께 보내 주세요. 예: "기억해: 내 배포 창은 화요일이야"' };
+  }
+
   composeMemoryStoreFailed(context: ConversationContext): OutboundMessage {
     return { context, text: '지금은 요청한 내용을 장기 기억에 저장하지 못했어요. 대화는 계속할 수 있어요.' };
   }
@@ -506,7 +537,7 @@ export class ResponseComposer {
   composeApprovalNotice(context: ConversationContext, request: ApprovalRequest): OutboundMessage {
     return {
       context,
-      text: `이 작업은 승인이 필요해요 (${request.riskLevel}):\n${request.reason}\n${APPROVAL_DECISION_LINE}`,
+      text: `이 작업은 승인이 필요해요.\n${approvalRiskLine(request.riskLevel)}\n${APPROVAL_DECISION_LINE}`,
     };
   }
 
@@ -522,8 +553,8 @@ export class ResponseComposer {
   ): OutboundMessage {
     const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
     const text = [
-      `승인을 기다리는 작업이 있어요 (${request.riskLevel}):`,
-      boundedReason(request.reason),
+      '승인을 기다리는 작업이 있어요.',
+      approvalRiskLine(request.riskLevel),
       APPROVAL_DECISION_LINE,
       `남은 시간: 약 ${minutes}분 (지나면 자동으로 거절돼요)`,
       '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
@@ -531,12 +562,26 @@ export class ResponseComposer {
     return { context, text: clampToMessageBudget(text) };
   }
 
+  /**
+   * A bare decision word ("승인", "거절", "취소", "ok") arrived while nothing is pending (QA-018). Deterministic —
+   * never routed to a provider, so no model can claim an approval was accepted. States only what is true: there is
+   * nothing to decide now, and an earlier request may already have been decided or expired.
+   */
+  composeNoPendingDecision(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. ' +
+        '새로 요청하려면 원하는 작업을 말해 주세요.',
+    };
+  }
+
   /** A pending approval passed its lifetime and was recorded as denied (ADR-0093). It can no longer be approved. */
   composeApprovalExpired(context: ConversationContext, request: ApprovalRequest, ttlMs: number): OutboundMessage {
     const minutes = Math.round(ttlMs / 60_000);
     const text = [
-      `승인 요청이 ${minutes}분 안에 결정되지 않아 자동으로 거절했어요:`,
-      boundedReason(request.reason),
+      `승인 요청이 ${minutes}분 안에 결정되지 않아 자동으로 거절했어요.`,
+      approvalRiskLine(request.riskLevel),
       '이 요청은 이제 승인할 수 없어요. 필요하면 처음부터 다시 요청해 주세요.',
     ].join('\n');
     return { context, text: clampToMessageBudget(text) };
@@ -581,12 +626,20 @@ export class ResponseComposer {
    * specific than {@link composeApprovalRequired}: names this as a code-change request and states
    * explicitly that no file is modified yet — a `planningOnly` halt never mutates.
    */
-  composeCodeChangeApprovalRequired(context: ConversationContext): OutboundMessage {
+  composeCodeChangeApprovalRequired(context: ConversationContext, sentFilePaths: string[] = []): OutboundMessage {
+    const shown = sentFilePaths.slice(0, 3).join(', ');
+    const more = sentFilePaths.length > 3 ? ` 외 ${sentFilePaths.length - 3}개` : '';
+    // Disclosure: existing target files' content goes to the AI provider for the preview (best-effort credential guard).
+    const disclosure = sentFilePaths.length
+      ? `승인하면 지정한 파일(${shown}${more})의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요. ` +
+        '비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 모든 경우를 걸러내지는 못해요.\n'
+      : '';
     return {
       context,
       text:
         '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' +
         '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n' +
+        disclosure +
         APPROVAL_DECISION_LINE,
     };
   }
@@ -742,6 +795,29 @@ export class ResponseComposer {
     };
   }
 
+  /** A project registration named a relative/home path (QA-015). Nothing was registered or scanned. */
+  composeProjectPathNotAbsolute(context: ConversationContext): OutboundMessage {
+    return { context, text: '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo' };
+  }
+
+  /**
+   * A code-change request named a path that cannot be used as a target (QA-016): it does not exist in the project,
+   * or it is absolute / traversal / outside the project. The same wording covers every case so the reply never
+   * reveals whether an out-of-root file exists. The path is echoed as typed — inside inline code (no mention or
+   * markdown can fire), backticks/control characters stripped, truncated.
+   */
+  composeTargetPathRejected(context: ConversationContext, typedPath: string): OutboundMessage {
+    const cleaned = typedPath.replace(/[\u0000-\u001f\u007f`]/g, '').trim();
+    const shown =
+      cleaned.length > MAX_REJECTED_PATH_DISPLAY ? `${cleaned.slice(0, MAX_REJECTED_PATH_DISPLAY)}…` : cleaned;
+    return {
+      context,
+      text:
+        `요청한 파일을 프로젝트 안에서 찾을 수 없거나 프로젝트 밖 경로예요: \`${shown}\`\n` +
+        '등록한 프로젝트 기준 상대경로(예: src/app.ts)로 다시 요청해 주세요.',
+    };
+  }
+
   /**
    * Reply for "취소" while a code-change scope clarification is pending (Multi-turn Code Scope
    * Clarification, ADR-0037). No ExecutionPlan/ApprovalRequest/Patch ever existed for this request —
@@ -783,6 +859,24 @@ export class ResponseComposer {
   /** AI Code Generation failed to produce a usable proposal (ADR-0038). CA-specified wording verbatim. */
   composeCodeGenerationPreviewFailed(context: ConversationContext): OutboundMessage {
     return { context, text: '코드 변경 제안을 생성하지 못했어요.\n파일은 수정되지 않았어요.' };
+  }
+
+  /**
+   * A validated target's CONTENT carries credential material (private key, vendor token, credential
+   * assignment), so it was never sent to the AI provider. Names the target so the user can move the
+   * secret out; never echoes any content.
+   */
+  composeCodeGenerationPreviewCredentialRefused(context: ConversationContext, targetPath: string): OutboundMessage {
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          `이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요: ${targetPath}`,
+          '민감한 값은 환경 변수나 비밀 저장소로 옮긴 뒤 다시 요청해 주세요.',
+          '파일은 수정되지 않았어요.',
+        ].join('\n'),
+      ),
+    };
   }
 
   /**
@@ -1127,17 +1221,29 @@ export class ResponseComposer {
   }
 
   /**
-   * A git MUTATION phrase (커밋/푸시/add/reset/…, or any English `commit`) arrived on the post-apply path
-   * (ADR-0044, CA Q4) — read-only reminder; no git ran. States only status/diff preview is available and
-   * that git changes are a separate future step. Never implies a commit/push happened.
+   * A git MUTATION phrase other than a plain commit request (푸시/add/reset/stash/…, or a bare English `commit`)
+   * arrived on the post-apply path (ADR-0044, CA Q4) — no git ran. QA-020: local commit IS supported ("커밋해줘",
+   * ADR-0045/0046), so the copy never says commit is unsupported. `scope: 'remote'` (a push/remote phrase) says
+   * remote git is off in Personal v1 (`remoteEnabled` false, the default) or that a push needs a local commit
+   * first; `scope: 'local'` names the unsupported local operations. Never implies a commit/push happened.
    */
-  composeGitMutationNotSupported(context: ConversationContext): OutboundMessage {
-    return {
-      context,
-      text:
-        'git 변경 작업(add/commit/push/reset/stash 등)은 아직 지원하지 않아요.\n' +
-        '지금은 읽기 전용 미리보기(git 상태 / diff)만 할 수 있어요. git 명령은 실행하지 않았어요.',
-    };
+  composeGitMutationNotSupported(
+    context: ConversationContext,
+    input: { scope: 'remote' | 'local'; remoteEnabled?: boolean } = { scope: 'local' },
+  ): OutboundMessage {
+    const lines =
+      input.scope === 'remote'
+        ? input.remoteEnabled
+          ? ['push는 로컬 커밋을 먼저 한 뒤에 요청할 수 있어요. 먼저 "커밋해줘"로 커밋해 주세요.']
+          : [
+              '원격 git 작업(push 등)은 Personal v1에서 꺼져 있어요(QUOKY_GIT_REMOTE_ENABLED=false). ' +
+                '로컬 커밋은 "커밋해줘"로 할 수 있어요.',
+            ]
+        : [
+            'git add/reset/stash/checkout/merge 같은 git 작업은 지원하지 않아요. 로컬 커밋은 "커밋해줘"로 할 수 있어요.',
+            '읽기 전용 미리보기(git 상태 / diff)도 볼 수 있어요.',
+          ];
+    return { context, text: [...lines, 'git 명령은 실행하지 않았어요.'].join('\n') };
   }
 
   /**
@@ -1182,11 +1288,24 @@ export class ResponseComposer {
     return { context, text };
   }
 
+  /**
+   * Commit requested while the workspace is on main/master (QA-022, ADR-0094) — refused before any approval is
+   * created; no git mutation ran (only the read-only status that reported the branch).
+   */
+  composeCommitProtectedBranch(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        'main/master 브랜치에는 커밋하지 않아요. 작업용 브랜치(예: feature/…)로 전환한 뒤 다시 요청해 주세요.\n' +
+        '커밋 승인 요청은 만들지 않았어요. git add/commit/push는 하지 않았어요.',
+    };
+  }
+
   /** Commit approval RECORDED after "승인" (ADR-0045, CA #10) — records permission only; never says committed. */
   composeCommitApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '커밋 승인은 기록했어요.\n아직 실제 git add/commit/push는 수행하지 않았어요. (실제 커밋은 다음 단계에서 진행돼요)',
+      text: `커밋 승인은 기록했어요.\n아직 실제 git add/commit/push는 수행하지 않았어요.\n${COMMIT_EXECUTE_NEXT_LINE}`,
     };
   }
 
@@ -1260,7 +1379,7 @@ export class ResponseComposer {
   composeCommitAlreadyApproved(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '이미 커밋 승인을 받아 뒀어요.\n아직 실제 git add/commit/push는 수행하지 않았어요. (실제 커밋은 다음 단계에서 진행돼요)',
+      text: `이미 커밋 승인을 받아 뒀어요.\n아직 실제 git add/commit/push는 수행하지 않았어요.\n${COMMIT_EXECUTE_NEXT_LINE}`,
     };
   }
 

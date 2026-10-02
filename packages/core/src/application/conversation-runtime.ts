@@ -1,6 +1,7 @@
 import { describeAiFailure } from './ai-failure';
+import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { interpretApprovalDecision } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
 import {
@@ -9,7 +10,7 @@ import {
   detectConversationControl,
   pendingApprovalRemainingMs,
 } from './conversation-commands';
-import type { IntentClassifyContext } from './intent-classifier';
+import { NON_ABSOLUTE_REGISTRATION_KIND, detectProjectRegistration, type IntentClassifyContext } from './intent-classifier';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
 import {
@@ -107,7 +108,12 @@ import type {
 import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
-import { extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
+import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
+import {
+  MAX_CODEGEN_CONTEXT_FILE_BYTES,
+  MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
+  readCodeGenerationContextFiles,
+} from './code-generation-context';
 import { MAX_COMMIT_MESSAGE_CHARS, isValidCommitMessage } from './commit-message';
 import { isSafePushBranch, isSafePushRemote } from './push-target';
 import type {
@@ -582,6 +588,11 @@ export interface ConversationRuntimeDeps {
     /** Reused for post-approval diff preview (Sprint 2r, ADR-0039) — not a new port/capability; the
      *  same read-only WorkspaceManager.diff() ExecutionOrchestrator's WORKSPACE_DIFF stage uses. */
     diff(ref: WorkspaceRef, changes: ProposedChange[]): Promise<WorkspaceDiff>;
+    /** Reused for code-generation preview context (QA-012) — a type-only widening, not a new
+     *  port/capability: the same already-registered read-only WorkspaceManager.read() (CAP-001,
+     *  sandboxed; refuses secret/binary/oversized/out-of-root files). The AI request carries no cwd
+     *  (CAP-008 MB-2), so a target's current content reaches the provider only as `contextFiles`. */
+    read(ref: WorkspaceRef, relPath: string): Promise<string>;
   };
   readonly commandExecutions: { get(id: Id): Promise<CommandExecution | null> };
   /** Reused for post-apply validation (Sprint 2v, ADR-0043) — the SAME already-registered
@@ -735,6 +746,12 @@ export interface ConversationRuntimeDeps {
  */
 export interface ConversationRuntimeOptions {
   readonly clock?: () => IsoTimestamp;
+  /**
+   * Whether remote git operations (push etc.) are enabled for this deployment (Personal v1:
+   * `QUOKY_GIT_REMOTE_ENABLED`, default false; ADR-0094). Display-only here — it picks truthful copy for an
+   * unsupported push request (QA-020); the composition-root git guard remains the enforcement point.
+   */
+  readonly gitRemoteEnabled?: boolean;
 }
 
 /**
@@ -828,6 +845,9 @@ const PUSH_WORDS =
  *  consulted when a PUSH word is already present, so a bare "배포"/"branch"/"tag"/"reset" is NOT push handling. */
 const PUSH_FORBIDDEN_COMPANION =
   /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
+
+/** Branches Personal v1 never commits on (ADR-0094; QA-022 up-front refusal at commit-approval planning). */
+const PROTECTED_COMMIT_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
 
 /** Bound on user-controllable git ref (remote/branch/upstream) display length (Sprint 2z, CA #6). */
 const MAX_GIT_REF_DISPLAY = 80;
@@ -1259,12 +1279,14 @@ export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: strin
 
 export class ConversationRuntime {
   private readonly clock: () => IsoTimestamp;
+  private readonly gitRemoteEnabled: boolean;
 
   constructor(
     private readonly deps: ConversationRuntimeDeps,
     options: ConversationRuntimeOptions = {},
   ) {
     this.clock = options.clock ?? now;
+    this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
   }
 
   /** Capabilities that operate on files need a resolved workspace; chat does not. */
@@ -1639,7 +1661,12 @@ export class ConversationRuntime {
     // (planId present) is never routed here.
     const pendingScope = lookup.pendingScope;
     if (pendingScope) {
-      return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
+      // QA-015: an explicit project-registration request is a new request, not a reply naming the file to change.
+      // The clarification is next-turn-only, so it is consumed here and the turn is routed normally.
+      if (!detectProjectRegistration(message.text)) {
+        return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
+      }
+      await this.deps.scopeClarificationFlow.clear(session);
     }
 
     // (A3) Apply-preview routing (Sprint 2s, ADR-0040) — checked after approvalFlow/scopeClarificationFlow
@@ -2021,8 +2048,23 @@ export class ConversationRuntime {
     // Anything else: fall through untouched — an ELIGIBLE/APPROVED/PATCH_READY/WORKSPACE_APPLIED anchor is
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
 
+    // QA-018: every pending approval/anchor decision route has already run above, so a bare decision word here
+    // ("승인", "거절", "취소", "ok") decides nothing. Answer deterministically — no provider call, no Task — so a
+    // chat model can never claim an approval was accepted.
+    if (interpretStrayDecisionUtterance(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
+    }
+
     const durableMemoryContent = ConversationRuntime.explicitDurableMemoryContent(message.text);
+    if (durableMemoryContent === '') {
+      // QA-010: the explicit command with no content is a usage error, never ordinary chat.
+      return this.respondComposed(message, session, this.deps.composer.composeMemoryUsageHint(message.context));
+    }
     if (durableMemoryContent !== null) {
+      // QA-009: refuse credential declarations at the write gate; nothing is stored.
+      if (containsCredentialMaterial(durableMemoryContent)) {
+        return this.respondComposed(message, session, this.deps.composer.composeMemorySensitiveRefused(message.context));
+      }
       try {
         const candidate = this.deps.memoryWriter.createCandidate({
           content: durableMemoryContent,
@@ -2036,7 +2078,9 @@ export class ConversationRuntime {
         });
         const decision = await this.deps.memoryWriter.promote(candidate);
         const reply =
-          decision.outcome === 'REJECTED'
+          decision.outcome === 'REJECTED' && decision.policyReason === CREDENTIAL_REJECTION_REASON
+            ? this.deps.composer.composeMemorySensitiveRefused(message.context)
+            : decision.outcome === 'REJECTED'
             ? this.deps.composer.composeMemoryStoreFailed(message.context)
             : this.deps.composer.composeMemoryStored(message.context);
         return this.respondComposed(message, session, reply);
@@ -2097,6 +2141,10 @@ export class ConversationRuntime {
 
     // (B) Project registration — deterministic command (ADR-0018).
     if (intent.type === IntentType.REGISTER_PROJECT) {
+      if (intent.raw?.kind === NON_ABSOLUTE_REGISTRATION_KIND) {
+        // QA-015: a relative/home path is never resolved against the process cwd — ask for an absolute path.
+        return this.respondComposed(message, session, this.deps.composer.composeProjectPathNotAbsolute(message.context));
+      }
       const path = typeof intent.raw?.path === 'string' ? intent.raw.path : '';
       const result = await this.deps.projects.register(path, session);
       await this.deps.memory.recordAssistant(result.message, message.context, session.id);
@@ -2130,9 +2178,8 @@ export class ConversationRuntime {
 
   /** Exact, provider-free activation grammar. Pending governance flows have already run before this is called. */
   private static explicitDurableMemoryContent(text: string): string | null {
-    const match = text.trim().match(/^(?:기억해줘|기억해|remember)\s*:\s*(.+)$/isu);
-    const content = match?.[1]?.trim();
-    return content ? content : null;
+    const match = text.trim().match(/^(?:기억해줘|기억해|remember)\s*:\s*(.*)$/isu);
+    return match ? (match[1] ?? '').trim() : null;
   }
 
   /** Milliseconds before a pending approval expires (ADR-0093); `<= 0` means expired. */
@@ -2425,7 +2472,9 @@ export class ConversationRuntime {
    * (ADR-0038, ADR-0039). Never calls ExecutionOrchestrator, Patch, WorkspaceWrite, or
    * CommandExecution — this method's only side effects are at most one CodeGenerationManager.generate()
    * call (CAP-008) and at most one WorkspaceManager.diff() call (CAP-001) — both read-only, neither
-   * ever touches the filesystem.
+   * ever touches the filesystem. Before generate(), each validated (non-new-file) target's current
+   * content is read through the read-only WorkspaceManager.read() (CAP-001) and passed as bounded
+   * `contextFiles` (QA-012); an unreadable or oversized target fails the preview before any AI call.
    *
    * executionPlanRef, workspaceRef, and a non-empty targetFiles must ALL be present before
    * generate() is ever called — targetFiles is the only allowed scope source; there is no AI
@@ -2448,6 +2497,32 @@ export class ConversationRuntime {
       );
     }
 
+    // QA-012: the AI request carries no workspace cwd (CAP-008 MB-2), so each validated target's CURRENT
+    // content must arrive as read-only contextFiles — otherwise the provider only sees a bare path and
+    // cannot propose a faithful full-file `newContent`. Read via the existing read-only
+    // WorkspaceManager.read (CAP-001). An unreadable target or an oversized context is a failed preview
+    // (never truncated, never treated as an 'add'); explicit new-file targets are skipped (they must not
+    // exist yet). generate() is never called on any of these failures.
+    const context = await readCodeGenerationContextFiles(
+      this.deps.workspace,
+      request.workspaceRef,
+      targetFiles,
+      request.newFileTargets ?? [],
+    );
+    if (!context.ok) {
+      this.logPreviewFailure(`context-${context.reason}`, message, session, request, {
+        targetIndex: context.targetIndex,
+        maxFileBytes: MAX_CODEGEN_CONTEXT_FILE_BYTES,
+        maxTotalBytes: MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
+      });
+      // A target whose content carries credential material is never sent to the provider; the path
+      // (user-supplied) goes to the reply only — the log above carries just the target index.
+      const reply = context.reason === 'target-contains-credential'
+        ? this.deps.composer.composeCodeGenerationPreviewCredentialRefused(message.context, context.targetPath)
+        : this.deps.composer.composeCodeGenerationPreviewFailed(message.context);
+      return this.failComposed(message, session, reply, outcome);
+    }
+
     let generation: CodeGeneration;
     try {
       generation = await this.deps.codeGeneration.generate({
@@ -2456,6 +2531,7 @@ export class ConversationRuntime {
         instruction: request.instruction,
         workspaceRef: request.workspaceRef,
         targetFiles,
+        ...(context.contextFiles.length ? { contextFiles: context.contextFiles } : {}),
       });
     } catch {
       this.logPreviewFailure('code-generation-exception', message, session, request);
@@ -3044,7 +3120,14 @@ export class ConversationRuntime {
     // 1. (CA Q4/#6) A git MUTATION phrase → read-only "not supported" reply. NORMAL turn (RESPONDED),
     //    no git call, anchor unchanged.
     if (kind === 'mutating') {
-      return this.respondComposed(message, session, this.deps.composer.composeGitMutationNotSupported(message.context));
+      // QA-020: a push/remote request gets remote-specific copy; other local git mutations (add/reset/stash/…)
+      // keep the local wording. Both point at the supported local commit phrase "커밋해줘".
+      const scope = ConversationRuntime.interpretPushIntent(message.text) !== null ? 'remote' : 'local';
+      return this.respondComposed(
+        message,
+        session,
+        this.deps.composer.composeGitMutationNotSupported(message.context, { scope, remoteEnabled: this.gitRemoteEnabled }),
+      );
     }
 
     // 2. Anchor guard: WORKSPACE_APPLIED must carry the workspaceRef we read against (defensive).
@@ -3134,6 +3217,14 @@ export class ConversationRuntime {
     } catch {
       this.logCommitApprovalFailed(session, anchor, 'git status read failed');
       return this.failComposed(message, session, this.deps.composer.composeCommitStatusUnavailable(message.context));
+    }
+
+    // 2b. QA-022: Personal v1 never commits on main/master (ADR-0094). Refuse up front, from the branch the
+    //     read-only status above already reported, instead of asking for an approval that can only fail at
+    //     "커밋 실행". NO approval is created. The composition-root git guard still refuses at execution time
+    //     (defense in depth, and the authority for detached/unknown branches).
+    if (PROTECTED_COMMIT_BRANCHES.has(status.branch.trim().toLowerCase())) {
+      return this.respondComposed(message, session, this.deps.composer.composeCommitProtectedBranch(message.context));
     }
 
     // 3. Candidate files = changed ∩ targetFiles with defensive path safety (CA #6/#14). Clean → nothing to
@@ -5099,11 +5190,7 @@ export class ConversationRuntime {
           ...(session.activeProjectId ? { projectId: session.activeProjectId } : {}),
           createdAt: now(),
         });
-        return this.respondComposed(
-          message,
-          session,
-          this.deps.composer.composeTargetScopeClarification(message.context),
-        );
+        return this.respondComposed(message, session, this.composeTargetScopeReply(message, candidates));
       }
     }
 
@@ -5288,7 +5375,9 @@ export class ConversationRuntime {
       // ADR-0035: a code-change halt gets a more specific prompt than the generic approval text —
       // it names this as a code-change request and states that no file is modified yet.
       if (intent.capability === Capability.CODE_IMPLEMENTATION) {
-        const reply = this.deps.composer.composeCodeChangeApprovalRequired(message.context);
+        // New-file targets have no current content to send; only existing target files are disclosed.
+        const sentFiles = (request.targetFiles ?? []).filter((f) => !(request.newFileTargets ?? []).includes(f));
+        const reply = this.deps.composer.composeCodeChangeApprovalRequired(message.context, sentFiles);
         await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
         return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id, executionOutcome: outcome };
       }
@@ -5345,8 +5434,23 @@ export class ConversationRuntime {
       }
     }
 
-    const reply = this.deps.composer.composeTargetScopeClarification(message.context);
+    const reply = this.composeTargetScopeReply(message, candidates);
     return this.respondComposed(message, session, reply); // no re-anchor (next-turn-only)
+  }
+
+  /**
+   * The "which file?" reply for a code-change request with no usable target (ADR-0036/0037; QA-016). When the
+   * user DID type a path that could not be used (missing, outside the project, absolute, traversal), say so and
+   * echo the path as typed — never whether an out-of-root file exists. With no path typed at all (or an ambiguous
+   * multi-path new-file request), keep the original clarification copy.
+   */
+  private composeTargetScopeReply(message: InboundMessage, candidates: readonly string[]): OutboundMessage {
+    const mentioned = extractMentionedPathTokens(message.text);
+    const ambiguousNewFile = ConversationRuntime.isExplicitNewFileRequest(message.text) && candidates.length > 1;
+    const typed = mentioned[0];
+    return typed && !ambiguousNewFile
+      ? this.deps.composer.composeTargetPathRejected(message.context, typed)
+      : this.deps.composer.composeTargetScopeClarification(message.context);
   }
 
   /** Assemble the display-relevant facts for a ran/timed-out `CommandExecution` (ADR-0034). Raw only — no truncation, no text. */

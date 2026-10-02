@@ -31,7 +31,6 @@ import {
   PromptComposer,
   PromptRenderer,
   TaskManager,
-  ProviderDispatchCommitCoordinator,
   MemoryManager,
   ArtifactManager,
   WorkspaceManager,
@@ -104,6 +103,7 @@ import { toolManagerProvider } from './tool-manager-provider';
 import { continuationLifecycleProvider } from './continuation-lifecycle-provider';
 import { continuationExecutionEntryProvider, continuationExecutionProvider } from './continuation-execution-provider';
 import { createAgentProfileRegistryProvider } from './agent-profile-registry-provider';
+import { createProviderDispatchCommit } from './dispatch-commit-provider';
 
 const config = loadConfig();
 const coreLogger = new ConsoleLogger('quoky');
@@ -547,7 +547,7 @@ const application: Provider[] = [
       // StatelessApprovalFlow's plan-scoped lookup.
       const applyPreviewFlow = new StatelessApplyPreviewFlow(storage);
       return createProductionConversationRuntime(memory, {
-        dispatchCommit: new ProviderDispatchCommitCoordinator(storage.taskRuns),
+        dispatchCommit: createProviderDispatchCommit(storage),
         actors,
         sessions,
         memory,
@@ -596,7 +596,7 @@ const application: Provider[] = [
         repositoryHosting,
         runtimeProviderRouting,
         logger: coreLogger,
-      });
+      }, { gitRemoteEnabled: config.git.remoteEnabled });
     },
     inject: [
       STORAGE_PROVIDER,

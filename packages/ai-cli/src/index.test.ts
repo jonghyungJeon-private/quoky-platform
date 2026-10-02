@@ -67,6 +67,18 @@ describe('ClaudeCliProvider', () => {
     ).rejects.toMatchObject({ kind: AiFailureKind.UNAVAILABLE });
   });
 
+  it('stdout-only "Not logged in" with exit 1 → AUTH_REQUIRED (QA-006)', async () => {
+    await expect(
+      exec({ code: 1, stdout: 'Not logged in · Please run /login', stderr: '', timedOut: false }),
+    ).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+  });
+
+  it('non-auth stdout with exit 1 stays EXECUTION_FAILED', async () => {
+    await expect(
+      exec({ code: 1, stdout: 'something broke', stderr: '', timedOut: false }),
+    ).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
   it('auth stderr → AUTH_REQUIRED', async () => {
     await expect(
       exec({ code: 1, stdout: '', stderr: 'Error: Not logged in. Please run claude login', timedOut: false }),
@@ -1268,7 +1280,7 @@ describe('Provider regression through the contained runner', () => {
   });
 
   it('exposes only the allow-listed inherited names (contract documented in one place)', () => {
-    expect([...INHERITED_ENV_ALLOWLIST]).toEqual(['PATH', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE']);
+    expect([...INHERITED_ENV_ALLOWLIST]).toEqual(['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'LC_CTYPE']);
   });
 });
 

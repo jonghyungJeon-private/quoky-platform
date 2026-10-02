@@ -15,6 +15,7 @@ import type {
   CodeProposal,
   CommandExecution,
   ExecutionPlan,
+  GenerateCodeInput,
   PatchSet,
   ProposedChange,
   WorkspaceChange,
@@ -139,6 +140,8 @@ interface Calls {
   patch: number;
   write: number;
   command: number;
+  read: string[];
+  lastGenerateInput?: GenerateCodeInput;
 }
 
 interface FakeOpts {
@@ -150,6 +153,8 @@ interface FakeOpts {
   command?: CommandExecution;
   commandThrows?: Error;
   patchThrows?: boolean;
+  /** `workspace.read` (QA-012) — defaults to `current:<path>`; throw per path to simulate a missing file. */
+  read?: (path: string) => string;
 }
 
 function makeDeps(opts: FakeOpts = {}): { deps: ExecutionOrchestratorDeps; calls: Calls } {
@@ -162,6 +167,7 @@ function makeDeps(opts: FakeOpts = {}): { deps: ExecutionOrchestratorDeps; calls
     patch: 0,
     write: 0,
     command: 0,
+    read: [],
   };
   const deps: ExecutionOrchestratorDeps = {
     planning: {
@@ -171,8 +177,9 @@ function makeDeps(opts: FakeOpts = {}): { deps: ExecutionOrchestratorDeps; calls
       },
     },
     codeGeneration: {
-      async generate() {
+      async generate(input) {
         calls.codeGen++;
+        calls.lastGenerateInput = input;
         return opts.generation ?? codeGenOf();
       },
       async getProposal() {
@@ -186,6 +193,10 @@ function makeDeps(opts: FakeOpts = {}): { deps: ExecutionOrchestratorDeps; calls
       async diff(_ref, changes) {
         calls.diff++;
         return diffOf(changes);
+      },
+      async read(_ref, relPath) {
+        calls.read.push(relPath);
+        return opts.read ? opts.read(relPath) : `current:${relPath}`;
       },
     },
     approval: {
@@ -491,5 +502,64 @@ describe('ExecutionOrchestrator.resume', () => {
     expect(out).toBe(completed);
     expect(calls2.approvalGet).toBe(0);
     void calls;
+  });
+});
+
+describe('ExecutionOrchestrator CODE_GENERATION target context (QA-012)', () => {
+  it('reads each validated target via workspace.read and passes its current content as contextFiles', async () => {
+    const { deps, calls } = makeDeps();
+    const out = await new ExecutionOrchestrator(deps).run(codeChange({ targetFiles: ['src/greet.js'] }));
+    expect(out.status).toBe(ExecutionOutcomeStatus.COMPLETED);
+    expect(calls.read).toEqual(['src/greet.js']);
+    expect(calls.lastGenerateInput?.contextFiles).toEqual([{ path: 'src/greet.js', content: 'current:src/greet.js' }]);
+  });
+
+  it('skips explicit new-file targets (they must not exist yet) — no read, no contextFiles', async () => {
+    const { deps, calls } = makeDeps();
+    await new ExecutionOrchestrator(deps).run(
+      codeChange({ targetFiles: ['src/new.js'], newFileTargets: ['src/new.js'] }),
+    );
+    expect(calls.read).toEqual([]);
+    expect(calls.lastGenerateInput?.contextFiles).toBeUndefined();
+  });
+
+  it('an unreadable (missing) target → STOPPED_ON_FAILURE at CODE_GENERATION; generate never called', async () => {
+    const { deps, calls } = makeDeps({
+      read: () => {
+        throw new Error('ENOENT');
+      },
+    });
+    const out = await new ExecutionOrchestrator(deps).run(codeChange({ targetFiles: ['src/missing.js'] }));
+    expect(out.status).toBe(ExecutionOutcomeStatus.STOPPED_ON_FAILURE);
+    expect(out.lastStage).toBe(ExecutionStage.CODE_GENERATION);
+    expect(out.stoppedReason).toContain('target-read-failed');
+    expect(calls.codeGen).toBe(0);
+    expect(calls.diff).toBe(0);
+  });
+
+  it('a target whose content carries credential material → STOPPED_ON_FAILURE; generate never called, no path in reason', async () => {
+    const { deps, calls } = makeDeps({ read: () => '{"private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE"}' });
+    const out = await new ExecutionOrchestrator(deps).run(codeChange({ targetFiles: ['config/app.json'] }));
+    expect(out.status).toBe(ExecutionOutcomeStatus.STOPPED_ON_FAILURE);
+    expect(out.lastStage).toBe(ExecutionStage.CODE_GENERATION);
+    expect(out.stoppedReason).toContain('target-contains-credential');
+    expect(out.stoppedReason).not.toContain('config/app.json');
+    expect(calls.codeGen).toBe(0);
+  });
+
+  it('an oversized target → STOPPED_ON_FAILURE at CODE_GENERATION (never truncated); generate never called', async () => {
+    const { deps, calls } = makeDeps({ read: () => 'x'.repeat(64 * 1024 + 1) });
+    const out = await new ExecutionOrchestrator(deps).run(codeChange({ targetFiles: ['src/big.js'] }));
+    expect(out.status).toBe(ExecutionOutcomeStatus.STOPPED_ON_FAILURE);
+    expect(out.stoppedReason).toContain('target-too-large');
+    expect(calls.codeGen).toBe(0);
+  });
+
+  it('no targetFiles → unchanged behavior (no read, no contextFiles)', async () => {
+    const { deps, calls } = makeDeps();
+    const out = await new ExecutionOrchestrator(deps).run(codeChange());
+    expect(out.status).toBe(ExecutionOutcomeStatus.COMPLETED);
+    expect(calls.read).toEqual([]);
+    expect(calls.lastGenerateInput?.contextFiles).toBeUndefined();
   });
 });

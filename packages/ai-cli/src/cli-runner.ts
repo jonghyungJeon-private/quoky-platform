@@ -80,8 +80,13 @@ export const CHILD_TEMP_PREFIX = 'chunsik-cli-';
  * name. `HOME` is required and deliberately preserved: Claude's existing OAuth /
  * global configuration and Ollama's model inventory both live under it. Isolating
  * HOME is a separate, later Architecture Sprint — not this one.
+ *
+ * `USER` (a non-secret login name) is required on macOS: the Claude Code CLI reads
+ * its OAuth login from the login Keychain and needs `USER` to locate it; without it
+ * every `claude -p` fails with "Not logged in". `LOGNAME` is deliberately NOT
+ * forwarded: verified live, adding it alongside `USER` breaks the Keychain lookup.
  */
-export const INHERITED_ENV_ALLOWLIST = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE'] as const;
+export const INHERITED_ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'LC_CTYPE'] as const;
 
 /**
  * The only names a Provider adapter may add through `CliRunOptions.env`. Minimised
