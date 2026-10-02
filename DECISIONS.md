@@ -14939,9 +14939,11 @@ classifies secret access as CRITICAL and approval-gated.
      same anchor. No content is sent until every refused target is `GRANTED`.
    - **Reconstruction after restart.** Nothing in memory is authoritative. After a restart, the runtime rebuilds
      grant state from the session's anchor Task and its ApprovalRequests (the same lookup the ADR-0093 pending
-     capture uses). A grant whose ApprovalRequest is not `APPROVED` with `decidedBy` = owner is discarded and the
-     anchor is invalidated. A `PENDING` grant resumes the normal pending-override capture. A `CONSUMED` anchor stays
-     terminal.
+     capture uses). Per grant status: a `GRANTED` grant is kept only if its ApprovalRequest is `APPROVED` with
+     `decidedBy` = owner and is still within the ADR-0093 TTL; otherwise the anchor is invalidated. A `PENDING`
+     grant is kept only if its ApprovalRequest is still `PENDING` and unexpired, and it resumes the normal
+     pending-override capture; a `PENDING` grant whose request is `REJECTED`, expired or missing invalidates the
+     anchor. A `CONSUMED` anchor stays terminal.
    - **Invalidation.** All unconsumed grants and the anchor become `INVALIDATED`, and nothing is sent, on:
      **reset** (`새 대화` / Session close, reason `reset`); **denial** or cancel of any override in the set (`denied`,
      whole set, no partial dispatch); **expiry** (`expired`): a grant is valid only until its ApprovalRequest's
