@@ -7,6 +7,8 @@ import {
   FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS,
   FEEDBACK_SUMMARY_UNAVAILABLE_TEXT,
   composeFeedbackSummaryText,
+  feedbackCapabilityLabel,
+  feedbackIntentLabel,
   feedbackRequestExcerpt,
 } from './feedback-summary-composer';
 
@@ -39,16 +41,29 @@ describe('composeFeedbackSummaryText (ADR-0098 D6)', () => {
     expect(text).toContain('최근 30일 피드백 요약이에요.');
     expect(text).toContain('- 기록된 대화 4건 · 👍 2 · 👎 1 · 참고 신호 3');
     expect(text).toContain('기능별:');
-    expect(text).toContain('- GENERAL_CHAT: 대화 3건 · 👍 2 · 👎 1 · 참고 신호 3');
+    expect(text).toContain('- 일반 대화: 대화 3건 · 👍 2 · 👎 1 · 참고 신호 3');
     expect(text).toContain('- 기타: 대화 1건');
     expect(text).toContain('요청 유형별:');
+    expect(text).not.toMatch(/GENERAL_CHAT|CHAT/u);
     expect(text).toContain('최근 👎 답변:');
-    expect(text).toContain('- 2026-10-01 · CHAT · "배포 창을 알려줘"');
+    expect(text).toContain('- 2026-10-01 · 일반 대화 · "배포 창을 알려줘"');
   });
 
   it('never renders a provider id, a turn id or a run id', () => {
     const text = composeFeedbackSummaryText(summary(), new Map([['task-9', 'q']]));
     expect(text).not.toMatch(/provider|claude|ollama|turn-9|run-/iu);
+  });
+
+  it('maps every capability and intent enum to a Korean label and falls back safely', () => {
+    for (const key of Object.values(Capability)) expect(feedbackCapabilityLabel(key)).not.toMatch(/^[A-Z_]+$/u);
+    for (const key of Object.values(IntentType)) expect(feedbackIntentLabel(key)).not.toMatch(/^[A-Z_]+$/u);
+    expect(feedbackCapabilityLabel(Capability.POLICY_SENSITIVE_CHAT)).toBe('위험 민감 대화');
+    expect(feedbackCapabilityLabel(Capability.PROJECT_ANALYSIS)).toBe('프로젝트 분석');
+    expect(feedbackCapabilityLabel(Capability.SUMMARIZATION)).toBe('요약');
+    expect(feedbackCapabilityLabel('claude-cli')).toBe('기타');
+    expect(feedbackCapabilityLabel('toString')).toBe('기타');
+    expect(feedbackIntentLabel(undefined)).toBe('기타');
+    expect(feedbackIntentLabel('ollama-local')).toBe('기타');
   });
 
   it('a retraction is neither positive nor negative', () => {
@@ -65,11 +80,12 @@ describe('composeFeedbackSummaryText (ADR-0098 D6)', () => {
 
   it('bounds the breakdown rows', () => {
     const rows = Array.from({ length: FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS + 3 }, (_, i) => ({
-      key: `K${i}`, turns: 1, positive: 0, negative: 0, implicit: 0,
+      key: i === 0 ? Capability.CODE_IMPLEMENTATION : `K${i}`, turns: i + 1, positive: 0, negative: 0, implicit: 0,
     }));
     const text = composeFeedbackSummaryText(summary({ byCapability: rows, byIntent: [], recentNegative: [] }));
-    expect(text).toContain(`- K${FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS - 1}:`);
-    expect(text).not.toContain(`- K${FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS}:`);
+    expect(text).toContain('- 코드 작업: 대화 1건');
+    expect(text).toContain(`대화 ${FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS}건`);
+    expect(text).not.toContain(`대화 ${FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS + 1}건`);
     expect(text).toContain('- 외 3개');
   });
 

@@ -153,13 +153,22 @@ describe('ReminderReplyComposer.delivery', () => {
   });
 
   it('adds the original time on the late variant', () => {
-    expect(composer.delivery({ ...base, late: true })).toBe('알림 #4: 회의 준비 (예정 10/3 09:00, 늦게 전달)');
+    expect(composer.delivery({ ...base, late: true })).toBe('알림 #4: 회의 준비 (원래 오전 9:00 예정 — 늦게 전달됐어요)');
+  });
+
+  it('adds the date to the late note when delivery is on another local day', () => {
+    expect(composer.delivery({ ...base, late: true, deliveredAt: '2026-10-04T01:00:00.000Z' })).toBe(
+      '알림 #4: 회의 준비 (원래 10월 3일 오전 9:00 예정 — 늦게 전달됐어요)',
+    );
+    expect(composer.delivery({ ...base, late: true, deliveredAt: '2026-10-03T03:00:00.000Z' })).toBe(
+      '알림 #4: 회의 준비 (원래 오전 9:00 예정 — 늦게 전달됐어요)',
+    );
   });
 
   it('never exceeds the delivered-text bound and keeps the late note', () => {
     const text = composer.delivery({ ...base, body: '가'.repeat(5_000), late: true });
     expect(Array.from(text).length).toBeLessThanOrEqual(REMINDER_LIMITS.maxDeliveredTextChars);
-    expect(text.endsWith('(예정 10/3 09:00, 늦게 전달)')).toBe(true);
+    expect(text.endsWith('(원래 오전 9:00 예정 — 늦게 전달됐어요)')).toBe(true);
   });
 
   it('has a fallback-DM note', () => {

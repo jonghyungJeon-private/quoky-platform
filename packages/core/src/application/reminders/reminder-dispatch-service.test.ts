@@ -245,7 +245,7 @@ describe('ReminderDispatchService.dispatchDue', () => {
     const r = repository.seed({ schedule: ONCE_AT(scheduled), occurrenceAt: scheduled });
     const summary = await service.dispatchDue(NOW);
     expect(summary).toMatchObject({ delivered: 1, deliveredLate: 1 });
-    expect(sink.delivered[0]?.text).toBe('알림 #1: 회의 준비 (예정 10/2 09:00, 늦게 전달)');
+    expect(sink.delivered[0]?.text).toBe('알림 #1: 회의 준비 (원래 오전 9:00 예정 — 늦게 전달됐어요)');
     expect(repository.get(r.id).status).toBe(ReminderStatus.COMPLETED);
   });
 
