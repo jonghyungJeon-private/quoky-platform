@@ -30,6 +30,10 @@ describe('parseCodeProposal (CAP-008, ADR-0029)', () => {
     expect(() => parseCodeProposal(envelope({ changes: 'nope' }))).toThrow(/changes/);
   });
 
+  it('throws when changes is an empty array (an empty proposal is not a success — QA-012)', () => {
+    expect(() => parseCodeProposal(envelope({ changes: [] }))).toThrow(/empty/);
+  });
+
   it('throws when a change is missing a path', () => {
     expect(() => parseCodeProposal(envelope({ changes: [{ newContent: 'x' }] }))).toThrow(/path/);
   });

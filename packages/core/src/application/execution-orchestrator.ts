@@ -15,6 +15,7 @@ import type {
   CodeProposal,
   CodeProposalRef,
   CommandExecution,
+  ContextFile,
   ExecutionPlan,
   ExecutionPlanRef,
   GenerateCodeInput,
@@ -30,6 +31,7 @@ import type {
 } from '../domain';
 import type { Logger } from '../ports';
 import { ExecutionReceiptRecordingError } from './execution-receipt-manager';
+import { readCodeGenerationContextFiles } from './code-generation-context';
 
 /**
  * Execution Orchestrator (Sprint 2j, ADR-0031) — the FIRST Application-layer
@@ -159,7 +161,11 @@ export interface ExecutionOrchestratorDeps {
     getProposal(generation: CodeGeneration): Promise<CodeProposal | null>;
     get(id: Id): Promise<CodeGeneration | null>;
   };
-  readonly workspace: { diff(ref: WorkspaceRef, changes: ProposedChange[]): Promise<WorkspaceDiff> };
+  readonly workspace: {
+    diff(ref: WorkspaceRef, changes: ProposedChange[]): Promise<WorkspaceDiff>;
+    /** Read-only WorkspaceManager.read (CAP-001) — reused for codegen target context (QA-012). */
+    read(ref: WorkspaceRef, relPath: string): Promise<string>;
+  };
   readonly approval: {
     requestFor(plan: ExecutionPlan, requestedBy: string): Promise<ApprovalRequest>;
     get(id: Id): Promise<ApprovalRequest | null>;
@@ -229,6 +235,27 @@ export class ExecutionOrchestrator {
     let diff: WorkspaceDiff | undefined;
     if (selectedStages.includes(ExecutionStage.CODE_GENERATION)) {
       if (this.cancelledAt(ctx)) return this.cancelled(ExecutionStage.CODE_GENERATION, selectedStages, refs);
+      // QA-012: the AI request carries no cwd (CAP-008 MB-2) — inject each validated target's current
+      // content as bounded read-only contextFiles via WorkspaceManager.read (CAP-001). An unreadable or
+      // oversized target stops this stage before any AI call (never truncated, never an implicit 'add').
+      let contextFiles: ContextFile[] = [];
+      if (request.workspaceRef && request.targetFiles?.length) {
+        const context = await readCodeGenerationContextFiles(
+          this.deps.workspace,
+          request.workspaceRef,
+          request.targetFiles,
+          request.newFileTargets ?? [],
+        );
+        if (!context.ok) {
+          return this.failed(
+            ExecutionStage.CODE_GENERATION,
+            selectedStages,
+            refs,
+            `code generation context ${context.reason} (target #${context.targetIndex})`,
+          );
+        }
+        contextFiles = context.contextFiles;
+      }
       let generation: CodeGeneration;
       try {
         generation = await this.deps.codeGeneration.generate({
@@ -237,6 +264,7 @@ export class ExecutionOrchestrator {
           instruction: request.instruction,
           ...(request.workspaceRef ? { workspaceRef: request.workspaceRef } : {}),
           ...(request.targetFiles ? { targetFiles: request.targetFiles } : {}),
+          ...(contextFiles.length ? { contextFiles } : {}),
         });
       } catch (err) {
         return this.failed(ExecutionStage.CODE_GENERATION, selectedStages, refs, err);

@@ -109,6 +109,11 @@ import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import { extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
+import {
+  MAX_CODEGEN_CONTEXT_FILE_BYTES,
+  MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
+  readCodeGenerationContextFiles,
+} from './code-generation-context';
 import { MAX_COMMIT_MESSAGE_CHARS, isValidCommitMessage } from './commit-message';
 import { isSafePushBranch, isSafePushRemote } from './push-target';
 import type {
@@ -583,6 +588,11 @@ export interface ConversationRuntimeDeps {
     /** Reused for post-approval diff preview (Sprint 2r, ADR-0039) — not a new port/capability; the
      *  same read-only WorkspaceManager.diff() ExecutionOrchestrator's WORKSPACE_DIFF stage uses. */
     diff(ref: WorkspaceRef, changes: ProposedChange[]): Promise<WorkspaceDiff>;
+    /** Reused for code-generation preview context (QA-012) — a type-only widening, not a new
+     *  port/capability: the same already-registered read-only WorkspaceManager.read() (CAP-001,
+     *  sandboxed; refuses secret/binary/oversized/out-of-root files). The AI request carries no cwd
+     *  (CAP-008 MB-2), so a target's current content reaches the provider only as `contextFiles`. */
+    read(ref: WorkspaceRef, relPath: string): Promise<string>;
   };
   readonly commandExecutions: { get(id: Id): Promise<CommandExecution | null> };
   /** Reused for post-apply validation (Sprint 2v, ADR-0043) — the SAME already-registered
@@ -2435,7 +2445,9 @@ export class ConversationRuntime {
    * (ADR-0038, ADR-0039). Never calls ExecutionOrchestrator, Patch, WorkspaceWrite, or
    * CommandExecution — this method's only side effects are at most one CodeGenerationManager.generate()
    * call (CAP-008) and at most one WorkspaceManager.diff() call (CAP-001) — both read-only, neither
-   * ever touches the filesystem.
+   * ever touches the filesystem. Before generate(), each validated (non-new-file) target's current
+   * content is read through the read-only WorkspaceManager.read() (CAP-001) and passed as bounded
+   * `contextFiles` (QA-012); an unreadable or oversized target fails the preview before any AI call.
    *
    * executionPlanRef, workspaceRef, and a non-empty targetFiles must ALL be present before
    * generate() is ever called — targetFiles is the only allowed scope source; there is no AI
@@ -2458,6 +2470,29 @@ export class ConversationRuntime {
       );
     }
 
+    // QA-012: the AI request carries no workspace cwd (CAP-008 MB-2), so each validated target's CURRENT
+    // content must arrive as read-only contextFiles — otherwise the provider only sees a bare path and
+    // cannot propose a faithful full-file `newContent`. Read via the existing read-only
+    // WorkspaceManager.read (CAP-001). An unreadable target or an oversized context is a failed preview
+    // (never truncated, never treated as an 'add'); explicit new-file targets are skipped (they must not
+    // exist yet). generate() is never called on any of these failures.
+    const context = await readCodeGenerationContextFiles(
+      this.deps.workspace,
+      request.workspaceRef,
+      targetFiles,
+      request.newFileTargets ?? [],
+    );
+    if (!context.ok) {
+      this.logPreviewFailure(`context-${context.reason}`, message, session, request, {
+        targetIndex: context.targetIndex,
+        maxFileBytes: MAX_CODEGEN_CONTEXT_FILE_BYTES,
+        maxTotalBytes: MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
+      });
+      return this.failComposed(
+        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+      );
+    }
+
     let generation: CodeGeneration;
     try {
       generation = await this.deps.codeGeneration.generate({
@@ -2466,6 +2501,7 @@ export class ConversationRuntime {
         instruction: request.instruction,
         workspaceRef: request.workspaceRef,
         targetFiles,
+        ...(context.contextFiles.length ? { contextFiles: context.contextFiles } : {}),
       });
     } catch {
       this.logPreviewFailure('code-generation-exception', message, session, request);

@@ -291,6 +291,7 @@ function buildDeps(
       open: bad('workspace.open'),
       list: bad('workspace.list'),
       diff: bad('workspace.diff'),
+      read: bad('workspace.read'),
     },
     commandExecutions: { get: bad('commandExecutions.get') },
     contextBuilder: { build: bad('contextBuilder.build') },

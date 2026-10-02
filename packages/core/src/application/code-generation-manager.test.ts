@@ -127,6 +127,27 @@ describe('CodeGenerationManager (CAP-008, ADR-0029)', () => {
     expect(gen.failureKind).toBe(AiFailureKind.EMPTY_OUTPUT);
   });
 
+  it('FAILED/EMPTY_OUTPUT (never a zero-change SUCCEEDED) when the AI returns an empty changes array plus prose (QA-012)', async () => {
+    const { mgr, props } = harness(async () => ({
+      text: 'I cannot read src/greet.js, so here is nothing:\n' + envelope({ changes: [] }),
+    }));
+    const gen = await mgr.generate(input({ targetFiles: ['src/greet.js'] }));
+    expect(gen.status).toBe(CodeGenerationStatus.FAILED);
+    expect(gen.failureKind).toBe(AiFailureKind.EMPTY_OUTPUT);
+    expect(gen.codeProposalRef).toBeUndefined();
+    expect(props.size).toBe(0);
+  });
+
+  it('renders caller-supplied contextFiles (current target content) into the provider prompt (QA-012)', async () => {
+    const { mgr, execute } = harness(async () => ({ text: OK }));
+    const current = 'function greet(name) {\n  return "hello " + name;\n}\n';
+    await mgr.generate(input({ targetFiles: ['src/greet.js'], contextFiles: [{ path: 'src/greet.js', content: current }] }));
+    const req = execute.mock.calls[0]![0] as AiRequest;
+    expect(req.prompt).toContain('### src/greet.js');
+    expect(req.prompt).toContain(current);
+    expect(req.workspace).toBeUndefined(); // still no cwd — content arrives only via the prompt
+  });
+
   it('records into the history (queryable by ExecutionPlan)', async () => {
     const { mgr } = harness(async () => ({ text: OK }));
     const gen = await mgr.generate(input());

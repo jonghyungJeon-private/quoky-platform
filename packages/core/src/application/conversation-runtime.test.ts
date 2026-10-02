@@ -65,6 +65,7 @@ import { InvalidTaskTransitionError } from '../errors';
 import { TaskManager } from './task-manager';
 import { PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
+import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
 import type { TestResultDetail } from './response-composer';
 import { IntentClassifier } from './intent-classifier';
@@ -261,6 +262,9 @@ const testIntent = intentOf(Capability.TEST_EXECUTION, IntentType.RUN_TESTS, tru
 /** A validated target file used across Live Code Change Planning tests (Sprint 2o, ADR-0036). */
 const TARGET_FILE = 'packages/core/src/application/foo.ts';
 
+/** Default current content the fake `workspace.read` returns for a target (QA-012). */
+const CURRENT_TARGET_CONTENT = 'export const greet = (name: string) => `hi ${name}`;\n';
+
 /** Fake `workspace.list` that reports an exact hit only for `path`, nothing for anything else. */
 const hitsFor = (path: string) => (glob?: string): string[] => (glob === path ? [path] : []);
 
@@ -411,6 +415,8 @@ interface Calls {
   lastCodeGenerationInput?: GenerateCodeInput;
   workspaceDiff: number;
   lastWorkspaceDiffInput?: ProposedChange[];
+  workspaceRead: number;
+  workspaceReadPaths: string[];
   applyFindAnchor: number;
   applyAnchorSet: number;
   applyClear: number;
@@ -574,6 +580,9 @@ interface Opts {
    *  failure, or a literal `WorkspaceDiff` to force a specific (e.g. empty, or `changeKind: 'add'`)
    *  result. */
   workspaceDiff?: WorkspaceDiff | 'throw';
+  /** `workspace.read` (QA-012, codegen target context) — defaults to `CURRENT_TARGET_CONTENT` for
+   *  every path; return/throw per path to simulate a missing, unreadable, or oversized target. */
+  workspaceRead?: (path: string) => string;
   /** Initial apply-preview anchor (Sprint 2s) — the fake is stateful: `anchor()` sets it, `clear()`
    *  nulls it, so a test can drive multiple sequential `handle()` calls realistically. */
   applyAnchor?: ApplyPreviewAnchor | null;
@@ -694,6 +703,8 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     codeGenerationGenerate: 0,
     codeGenerationGetProposal: 0,
     workspaceDiff: 0,
+    workspaceRead: 0,
+    workspaceReadPaths: [],
     applyFindAnchor: 0,
     applyAnchorSet: 0,
     applyClear: 0,
@@ -859,6 +870,11 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.lastWorkspaceDiffInput = changes;
         if (opts.workspaceDiff === 'throw') throw new Error('diff failed');
         return opts.workspaceDiff ?? workspaceDiffOf(changes);
+      },
+      async read(_ref, relPath) {
+        calls.workspaceRead++;
+        calls.workspaceReadPaths.push(relPath);
+        return opts.workspaceRead ? opts.workspaceRead(relPath) : CURRENT_TARGET_CONTENT;
       },
     },
     commandExecutions: {
@@ -2405,6 +2421,146 @@ describe('New-file add-diff preview + preview-failure branch logging (Sprint 4c-
     expect(calls.hostingCreatePR).toBe(0);
     // apply approval stays separate — the preview success did NOT create a new (apply) approval
     expect(calls.requestForRisk).toBe(0);
+  });
+});
+
+// ── QA-012 — code-generation preview carries the target's CURRENT content as contextFiles ─────────
+describe('Code-generation preview target context (QA-012)', () => {
+  const PREVIEW_FAILED = new ResponseComposer().composeCodeGenerationPreviewFailed(CTX).text;
+  const branchLog = (calls: Calls, branch: string) => calls.loggerWarnCalls.find((c) => c.fields?.branch === branch);
+
+  /** A REAL CodeGenerationManager (real PromptComposer/PromptRenderer/parser) over in-memory stores, with a
+   *  fake provider that records the exact AiRequest it receives. */
+  function realCodeGeneration(reply: (req: AiRequest) => string) {
+    const gens = new Map<string, CodeGeneration>();
+    const props = new Map<string, CodeProposal>();
+    const storage = {
+      codeGenerations: {
+        async get(id: string) { return gens.get(id) ?? null; },
+        async save(g: CodeGeneration) { gens.set(g.id, g); return g; },
+        async findByExecutionPlan(id: string) { return [...gens.values()].filter((g) => g.executionPlanRef.id === id); },
+      },
+      codeProposals: {
+        async get(id: string) { return props.get(id) ?? null; },
+        async save(p: CodeProposal) { props.set(p.id, p); return p; },
+      },
+    } as unknown as StorageProvider;
+    const requests: AiRequest[] = [];
+    const provider = {
+      id: 'fake-claude',
+      capabilities: [{ capability: Capability.CODE_IMPLEMENTATION, priority: 100 }],
+      isAvailable: async () => true,
+      execute: async (req: AiRequest) => {
+        requests.push(req);
+        return { text: reply(req) };
+      },
+    };
+    const mgr = new CodeGenerationManager(storage, { select: async () => provider }, new PromptComposer(), new PromptRenderer());
+    return { mgr, requests };
+  }
+
+  async function approveWithRealCodeGen(opts: Opts, request: ExecutionRequest, reply: (req: AiRequest) => string) {
+    const { deps, calls } = makeDeps({
+      ...opts,
+      pending: pendingApprovalOf(),
+      reconstruct: { request, prior: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL) },
+    });
+    const real = realCodeGeneration(reply);
+    const result = await new ConversationRuntime({ ...deps, codeGeneration: real.mgr }).handle(messageOf('승인'));
+    return { result, calls, requests: real.requests };
+  }
+
+  it('reads the validated target via workspace.read and passes its current content as contextFiles to generate()', async () => {
+    const { result, calls } = await approveWith({}, planningOnlyRequestOf());
+    expect(result.status).toBe('RESPONDED');
+    expect(calls.workspaceReadPaths).toEqual([TARGET_FILE]);
+    expect(calls.lastCodeGenerationInput?.contextFiles).toEqual([{ path: TARGET_FILE, content: CURRENT_TARGET_CONTENT }]);
+  });
+
+  it('end to end with the real CodeGenerationManager: the provider AiRequest prompt contains the current file content, carries no cwd, and a valid proposal renders a diff preview', async () => {
+    const { result, requests } = await approveWithRealCodeGen({}, planningOnlyRequestOf(), () =>
+      '```json\n' + JSON.stringify({ changes: [{ path: TARGET_FILE, newContent: 'export const greet = () => "hello";\n' }] }) + '\n```',
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.prompt).toContain(`### ${TARGET_FILE}`);
+    expect(requests[0]!.prompt).toContain(CURRENT_TARGET_CONTENT);
+    expect(requests[0]!.workspace).toBeUndefined(); // CAP-008 MB-2 — still no workspace cwd
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).not.toBe(PREVIEW_FAILED);
+  });
+
+  it('an empty {"changes":[]} proposal (plus prose) is a FAILED generation (EMPTY_OUTPUT) → truthful preview-failed copy, no diff', async () => {
+    const { result, calls } = await approveWithRealCodeGen({}, planningOnlyRequestOf(), () =>
+      'I could not see the file.\n```json\n{"changes":[]}\n```',
+    );
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.workspaceDiff).toBe(0);
+    expect(branchLog(calls, 'code-generation-not-succeeded')?.fields?.failureKind).toBe(AiFailureKind.EMPTY_OUTPUT);
+    expect(branchLog(calls, 'out-of-scope-proposal')).toBeUndefined();
+  });
+
+  it('a missing/unreadable target → failed preview before any AI call (never an implicit add), branch logged without content', async () => {
+    const { result, calls } = await approveWith(
+      { workspaceRead: () => { throw new Error('ENOENT: no such file'); } },
+      planningOnlyRequestOf(),
+    );
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(calls.workspaceDiff).toBe(0);
+    const log = branchLog(calls, 'context-target-read-failed');
+    expect(log?.fields?.targetIndex).toBe(0);
+    expect(JSON.stringify(log)).not.toContain('ENOENT');
+  });
+
+  it('a target over the 64 KiB per-file cap → failed preview, never truncated, generate never called', async () => {
+    const big = 'x'.repeat(64 * 1024 + 1);
+    const { result, calls } = await approveWith({ workspaceRead: () => big }, planningOnlyRequestOf());
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    const log = branchLog(calls, 'context-target-too-large');
+    expect(log?.fields?.maxFileBytes).toBe(64 * 1024);
+    expect(JSON.stringify(log)).not.toContain('xxxx');
+  });
+
+  it('targets that together exceed the 256 KiB total cap → failed preview, generate never called', async () => {
+    const targets = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts'];
+    const { result, calls } = await approveWith(
+      { workspaceRead: () => 'y'.repeat(60 * 1024) },
+      planningOnlyRequestOf({ targetFiles: targets }),
+    );
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(PREVIEW_FAILED);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(branchLog(calls, 'context-context-total-too-large')?.fields?.targetIndex).toBe(4);
+  });
+
+  it('multi-byte content is bounded by UTF-8 bytes, not characters', async () => {
+    const korean = '가'.repeat(22 * 1024); // 22K chars × 3 bytes = 66 KiB > 64 KiB cap
+    const { result, calls } = await approveWith({ workspaceRead: () => korean }, planningOnlyRequestOf());
+    expect(result.status).toBe('FAILED');
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(branchLog(calls, 'context-target-too-large')).toBeDefined();
+  });
+
+  it('an explicit new-file target is never read (it must not exist yet) and generate() gets no contextFiles for it', async () => {
+    const { calls } = await approveWith(
+      {
+        workspaceList: () => [],
+        workspaceDiff: {
+          refId: WORKSPACE.id,
+          files: [{ path: TARGET_FILE, changeKind: 'add', unified: '@@ -0,0 +1 @@\n+new\n', binary: false }],
+          estimatedChangedLines: 1,
+          truncated: false,
+        },
+      },
+      planningOnlyRequestOf({ newFileTargets: [TARGET_FILE] }),
+    );
+    expect(calls.workspaceRead).toBe(0);
+    expect(calls.codeGenerationGenerate).toBe(1);
+    expect(calls.lastCodeGenerationInput?.contextFiles).toBeUndefined();
   });
 });
 

@@ -245,7 +245,7 @@ function harness(opts: HarnessOptions = {}) {
       async completeRun() { return undefined; },
       async failRun() { return undefined; },
     },
-    workspace: { prepare: async () => undefined, open: bad('workspace.open'), list: bad('workspace.list'), diff: bad('workspace.diff') },
+    workspace: { prepare: async () => undefined, open: bad('workspace.open'), list: bad('workspace.list'), diff: bad('workspace.diff'), read: bad('workspace.read') },
     commandExecutions: { get: bad('commandExecutions.get') },
     command: { run: bad('command.run') },
     contextBuilder: { async build() { return {} as Awaited<ReturnType<ConversationRuntimeDeps['contextBuilder']['build']>>; } },

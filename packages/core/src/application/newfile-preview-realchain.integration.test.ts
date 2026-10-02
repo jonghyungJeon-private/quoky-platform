@@ -37,7 +37,7 @@ function makeStorage(): StorageProvider {
 
 describe('new-file planningOnly preview — real orchestrator + real ApprovalManager (A2 real-chain)', () => {
   it('reaches AWAITING_APPROVAL for a NEW-file target without any codegen/diff/patch/write/command', async () => {
-    const calls = { plan: 0, codeGen: 0, workspaceDiff: 0, patch: 0, write: 0, command: 0 };
+    const calls = { plan: 0, codeGen: 0, workspaceDiff: 0, workspaceRead: 0, patch: 0, write: 0, command: 0 };
     const orchestrator = new ExecutionOrchestrator({
       planning: {
         async plan(req: PlanningRequest): Promise<ExecutionPlan> {
@@ -68,6 +68,10 @@ describe('new-file planningOnly preview — real orchestrator + real ApprovalMan
         async diff() {
           calls.workspaceDiff++;
           throw new Error('workspace.diff must not run for planningOnly');
+        },
+        async read() {
+          calls.workspaceRead++;
+          throw new Error('workspace.read must not run for planningOnly');
         },
       },
       approval: new ApprovalManager(makeStorage(), new ApprovalPolicy(new RiskPolicy())),
@@ -107,6 +111,7 @@ describe('new-file planningOnly preview — real orchestrator + real ApprovalMan
     expect(calls.plan).toBe(1); // real planning ran
     expect(calls.codeGen).toBe(0); // no pre-approval code generation / file read
     expect(calls.workspaceDiff).toBe(0);
+    expect(calls.workspaceRead).toBe(0); // no pre-approval codegen context read (QA-012)
     expect(calls.patch).toBe(0);
     expect(calls.write).toBe(0); // no workspace mutation
     expect(calls.command).toBe(0);

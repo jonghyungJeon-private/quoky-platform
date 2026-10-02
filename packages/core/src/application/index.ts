@@ -34,6 +34,7 @@ export * from './command-execution-manager';
 export * from './execution-receipt-manager';
 export * from './code-proposal-parser';
 export * from './code-generation-manager';
+export * from './code-generation-context';
 export * from './connector-manager';
 export * from './work-surface-query';
 export * from './work-manager';
