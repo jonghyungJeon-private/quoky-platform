@@ -267,7 +267,11 @@ function validatedClaudeModel(model: string): string {
 /** Bounded probe for the Ollama daemon + model inventory; a hung daemon must not stall routing. */
 const OLLAMA_PROBE_TIMEOUT_MS = 5_000;
 
-/** True when an `ollama list` table lists `model` (an untagged name means `:latest`). */
+/**
+ * True when an `ollama list` table lists `model` (an untagged name means `:latest`).
+ * The match is exact and case-sensitive: the configured OLLAMA_MODEL must equal the NAME
+ * column of `ollama list`, otherwise the provider is reported unavailable (fail closed).
+ */
 function ollamaListIncludesModel(listOutput: string, model: string): boolean {
   const wanted = model.includes(':') ? model : `${model}:latest`;
   return listOutput
@@ -308,7 +312,11 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     this.runner = options.runner ?? defaultCliRunner;
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
     this.model = validatedClaudeModel(options.model ?? DEFAULT_CLAUDE_MODEL);
-    this.effortByCapability = { ...DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, ...options.effortByCapability };
+    // An explicit `undefined` override means "use the default", never an invalid level.
+    const overrides = Object.fromEntries(
+      Object.entries(options.effortByCapability ?? {}).filter(([, level]) => level !== undefined),
+    ) as Partial<Record<Capability, ClaudeEffortLevel>>;
+    this.effortByCapability = { ...DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, ...overrides };
     for (const level of Object.values(this.effortByCapability)) {
       if (!CLAUDE_EFFORT_LEVELS.includes(level)) throw new TypeError('Invalid Claude effort level');
     }
@@ -323,6 +331,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const args = ['-p', '--model', this.model];
     if (request === undefined) return args;
     args.push('--effort', this.effortByCapability[request.capability] ?? FALLBACK_CLAUDE_EFFORT);
+    // `--tools` is variadic and must stay the LAST argv entry so it cannot swallow other flags.
     if (request.workspace === undefined) args.push('--tools', '');
     return args;
   }
@@ -536,10 +545,13 @@ export class OllamaCliProvider extends BaseCliAiProvider {
         OLLAMA_HOST: this.validationHost,
         OLLAMA_NO_CLOUD: '1',
       },
-      // Production policy: a missing model must abort the run at the first pull marker
-      // instead of downloading until the (120s) timeout. Only the isolated validation
-      // profile additionally changes the child environment.
-      downloadMarkerPolicy: 'OLLAMA_PULL' as const,
+      // A missing model must abort the run at the first pull marker instead of downloading
+      // until the (120s) timeout. Production scans stderr only (pull progress), because stdout
+      // is the user-visible answer and may legitimately quote a pull log; the isolated
+      // validation profile keeps the stricter both-streams scan and the child environment.
+      downloadMarkerPolicy: this.validationHost === null
+        ? 'OLLAMA_PULL_STDERR' as const
+        : 'OLLAMA_PULL' as const,
       ...(this.validationHost === null ? {} : {
         environmentProfile: 'ISOLATED_OLLAMA_VALIDATION' as const,
       }),

@@ -159,6 +159,12 @@ describe('ClaudeCliProvider', () => {
       .toEqual(['--effort', 'high']);
   });
 
+  it('treats an explicit undefined effort override as the default instead of throwing', async () => {
+    const options = { effortByCapability: { [Capability.GENERAL_CHAT]: undefined } };
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(3, 5))
+      .toEqual(['--effort', 'low']);
+  });
+
   it('disables tools only for requests without a workspace', async () => {
     const noWorkspace = await argsFor({ capability: Capability.CODE_IMPLEMENTATION });
     expect(noWorkspace.slice(-2)).toEqual(['--tools', '']);
@@ -901,7 +907,8 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       capability: Capability.GENERAL_CHAT,
       prompt: PROMPT,
     })).rejects.toMatchObject({ kind: AiFailureKind.UNAVAILABLE, message: expect.stringMatching(/not installed/) });
-    expect(calls[0]?.downloadMarkerPolicy).toBe('OLLAMA_PULL');
+    // Production scans stderr only, so a chat answer quoting a pull log is never aborted.
+    expect(calls[0]?.downloadMarkerPolicy).toBe('OLLAMA_PULL_STDERR');
     expect(calls[0]?.environmentProfile).toBeUndefined();
   });
 
