@@ -4820,9 +4820,8 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     expect(r2.reply.text).toBe(composer.composePushHeadMovedUnavailable(CTX).text);
   });
 
-  it('no / unparseable upstream → composePushNoUpstream, no approval (CA 27–30)', async () => {
+  it('unparseable upstream → composePushNoUpstream, no approval (CA 27–30)', async () => {
     const cases: Array<[string, Partial<GitStatus>]> = [
-      ['no upstream', { upstream: undefined, ahead: undefined, behind: undefined }],
       ['no slash', { upstream: 'originmain' }],
       ['empty remote', { upstream: '/main' }],
       ['empty branch', { upstream: 'origin/' }],
@@ -4834,6 +4833,84 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
       expect(calls.requestForRisk, label).toBe(0);
       expect(result.reply.text, label).toBe(composer.composePushNoUpstream(CTX).text);
     }
+  });
+
+  // ── ADR-0099 D5: new-remote-branch mode (no upstream) ───────────────────────────────────────
+  const NO_UPSTREAM = { upstream: undefined, ahead: undefined, behind: undefined };
+  it('ADR-0099 D5: no upstream on main/master → protected-branch reply, no approval (was: no-upstream reply)', async () => {
+    for (const branch of ['main', 'master', 'MAIN']) {
+      const { deps, calls } = pushDeps({ gitInfo: repoInfoOf({ branch }), gitStatus: gitStatusOf({ ...pushReady, ...NO_UPSTREAM }) });
+      const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+      expect(calls.requestForRisk, branch).toBe(0);
+      expect(calls.lastApplyAnchor, branch).toBeUndefined();
+      expect(result.reply.text, branch).toBe(composer.composePushProtectedBranch(CTX).text);
+      expect(calls.gitPush, branch).toBe(0);
+    }
+  });
+
+  it('ADR-0099 D5: no upstream on feature/x → CRITICAL approval for a NEW remote branch origin/feature/x (pushMode recorded)', async () => {
+    const { deps, calls } = pushDeps({ gitInfo: repoInfoOf({ branch: 'feature/x' }), gitStatus: gitStatusOf({ ...pushReady, ...NO_UPSTREAM }) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+    expect(result.status).toBe('AWAITING_APPROVAL');
+    expect(calls.requestForRisk).toBe(1);
+    expect(calls.lastRequestForRiskInput?.riskLevel).toBe(RiskLevel.CRITICAL);
+    expect(calls.lastApplyAnchor).toMatchObject({
+      status: 'PUSH_APPROVAL_PENDING',
+      pushRemote: 'origin',
+      pushBranch: 'feature/x',
+      pushUpstreamRef: 'origin/feature/x',
+      pushMode: 'new-remote-branch',
+      pushCommitHash: HEAD_SHA,
+    });
+    expect(result.reply.text).toBe(
+      composer.composePushApprovalRequested(CTX, {
+        commitHash: HEAD_SHA, remote: 'origin', branch: 'feature/x', upstream: 'origin/feature/x', ahead: 0, newRemoteBranch: true,
+      }).text,
+    );
+    expect(result.reply.text).toContain('새 브랜치로 만들어져요');
+    expect(result.reply.text).toContain('강제 push는 하지 않고');
+    const reason = calls.lastRequestForRiskInput?.reason ?? '';
+    expect(reason).toContain('mode: new remote branch');
+    expect(reason).toContain('creates: origin/feature/x');
+    expect(reason).toContain('no force push; no upstream (tracking) configuration; no fetch');
+    expect(reason).toContain('no git push has been performed');
+    expect(calls.gitPush).toBe(0);
+  });
+
+  it('ADR-0099 D5: upstream mode records pushMode "upstream" and keeps the legacy reply/reason', async () => {
+    const { deps, calls } = pushDeps({ gitStatus: gitStatusOf({ ...pushReady, upstream: 'origin/feature/x' }) });
+    await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+    expect(calls.lastApplyAnchor?.pushMode).toBe('upstream');
+    const reason = calls.lastRequestForRiskInput?.reason ?? '';
+    expect(reason).toContain('upstream: origin/feature/x');
+    expect(reason).toContain('ahead: 1');
+    expect(reason).not.toContain('new remote branch');
+  });
+
+  it('ADR-0099 D5: no upstream on an unsafe branch name → unsafe-name reply; dirty / detached still refuse first', async () => {
+    const unsafe = pushDeps({ gitInfo: repoInfoOf({ branch: 'feature..x' }), gitStatus: gitStatusOf({ ...pushReady, ...NO_UPSTREAM }) });
+    const r1 = await new ConversationRuntime(unsafe.deps).handle(messageOf('푸시해줘'));
+    expect(r1.reply.text).toBe(composer.composePushBranchNameUnsafe(CTX).text);
+    expect(unsafe.calls.requestForRisk).toBe(0);
+
+    const dirty = pushDeps({ gitInfo: repoInfoOf({ branch: 'feature/x' }), gitStatus: gitStatusOf({ ...pushReady, ...NO_UPSTREAM, clean: false, untracked: ['n.ts'] }) });
+    const r2 = await new ConversationRuntime(dirty.deps).handle(messageOf('푸시해줘'));
+    expect(r2.reply.text).toBe(composer.composePushDirtyWorkingTree(CTX).text);
+    expect(dirty.calls.requestForRisk).toBe(0);
+
+    const detached = pushDeps({ gitInfo: repoInfoOf({ branch: '', detached: true }), gitStatus: gitStatusOf({ ...pushReady, ...NO_UPSTREAM }) });
+    const r3 = await new ConversationRuntime(detached.deps).handle(messageOf('푸시해줘'));
+    expect(r3.reply.text).toBe(composer.composePushHeadMovedUnavailable(CTX).text);
+    expect(detached.calls.requestForRisk).toBe(0);
+  });
+
+  it('ADR-0099 D5: deny of a new-remote-branch approval clears pushMode with the other push fields', async () => {
+    const pending = pushPendingAnchor({ pushBranch: 'feature/x', pushUpstreamRef: 'origin/feature/x', pushMode: 'new-remote-branch' });
+    const { deps, calls } = pushDeps({ applyAnchor: pending, approvalsGetResult: { ...pendingApprovalOf(), id: 'apply-appr-1' } });
+    await new ConversationRuntime(deps).handle(messageOf('거절'));
+    expect(calls.lastApplyAnchor?.status).toBe('GIT_COMMITTED');
+    expect(calls.lastApplyAnchor?.pushMode).toBeUndefined();
+    expect(calls.lastApplyAnchor?.pushBranch).toBeUndefined();
   });
 
   it('branch not ahead → nothing to push; behind > 0 → diverged; no approval (CA 31–32)', async () => {
@@ -5205,6 +5282,66 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
       expect(calls.gitPush, label).toBe(0);
       expect(result.reply.text, label).toBe(expected(composer));
     }
+  });
+
+  // ── ADR-0099 D5: new-remote-branch execution + drift checks ────────────────────────────────
+  const newBranchApproved = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
+    pushApprovedAnchor({ pushBranch: 'feature/x', pushUpstreamRef: 'origin/feature/x', pushMode: 'new-remote-branch', ...o });
+  const NO_UPSTREAM_EXEC = { ...execReady, upstream: undefined, ahead: undefined, behind: undefined };
+  const newBranchDeps = (o: Partial<Opts> = {}): ReturnType<typeof makeDeps> =>
+    execDeps({ applyAnchor: newBranchApproved(), gitInfo: repoInfoOf({ branch: 'feature/x' }), gitStatus: gitStatusOf(NO_UPSTREAM_EXEC), ...o });
+
+  it('ADR-0099 D5: new-remote-branch → one non-force push of the approved commit to origin feature/x → GIT_PUSHED (new-branch copy)', async () => {
+    const { deps, calls } = newBranchDeps();
+    const result = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+    expect(calls.gitPush).toBe(1);
+    expect(calls.lastGitPushInput).toMatchObject({ remote: 'origin', branch: 'feature/x', commitHash: HEAD_SHA });
+    expect(calls.lastApplyAnchor).toMatchObject({
+      status: 'GIT_PUSHED',
+      pushedRemote: 'origin',
+      pushedBranch: 'feature/x',
+      pushedUpstreamRef: 'origin/feature/x',
+      pushedCommitHash: HEAD_SHA,
+      pushMode: 'new-remote-branch',
+    });
+    expect(result.reply.text).toBe(
+      composer.composePushExecuted(CTX, { commitHash: HEAD_SHA, remote: 'origin', branch: 'feature/x', newRemoteBranch: true }).text,
+    );
+    expect(result.reply.text).toContain('원격에 새 브랜치로 push했어요');
+  });
+
+  it('ADR-0099 D5: new-remote-branch with the synthesized upstream now present (ahead 1) still pushes', async () => {
+    const { deps, calls } = newBranchDeps({ gitStatus: gitStatusOf({ ...execReady, upstream: 'origin/feature/x', ahead: 1, behind: 0 }) });
+    await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+    expect(calls.gitPush).toBe(1);
+  });
+
+  it('ADR-0099 D5: drift between approval and execution is refused before any push', async () => {
+    const cases: Array<[string, Partial<Opts>, (c: ResponseComposer) => string]> = [
+      ['branch switched', { gitInfo: repoInfoOf({ branch: 'feature/y' }) }, (c) => c.composePushExecutionUnavailable(CTX).text],
+      ['detached', { gitInfo: repoInfoOf({ branch: '', detached: true }) }, (c) => c.composePushExecutionUnavailable(CTX).text],
+      ['HEAD moved', { gitInfo: repoInfoOf({ branch: 'feature/x', headSha: 'f'.repeat(40) }) }, (c) => c.composePushExecutionUnavailable(CTX).text],
+      ['other upstream appeared', { gitStatus: gitStatusOf({ ...execReady, upstream: 'origin/other', ahead: 1, behind: 0 }) }, (c) => c.composePushExecutionUnavailable(CTX).text],
+      ['synthesized upstream, nothing ahead', { gitStatus: gitStatusOf({ ...execReady, upstream: 'origin/feature/x', ahead: 0, behind: 0 }) }, (c) => c.composePushNothingToPush(CTX).text],
+      ['synthesized upstream, diverged', { gitStatus: gitStatusOf({ ...execReady, upstream: 'origin/feature/x', ahead: 1, behind: 1 }) }, (c) => c.composePushDiverged(CTX).text],
+      ['dirty', { gitStatus: gitStatusOf({ ...NO_UPSTREAM_EXEC, clean: false, unstaged: ['a.ts'] }) }, (c) => c.composePushDirtyWorkingTree(CTX).text],
+      ['tampered remote', { applyAnchor: newBranchApproved({ pushRemote: 'upstream', pushUpstreamRef: 'upstream/feature/x' }) }, (c) => c.composePushExecutionUnavailable(CTX).text],
+      ['protected target', { applyAnchor: newBranchApproved({ pushBranch: 'main', pushUpstreamRef: 'origin/main' }), gitInfo: repoInfoOf({ branch: 'main' }) }, (c) => c.composePushExecutionUnavailable(CTX).text],
+    ];
+    for (const [label, over, expected] of cases) {
+      const { deps, calls } = newBranchDeps(over);
+      const result = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+      expect(calls.gitPush, label).toBe(0);
+      expect(result.reply.text, label).toBe(expected(composer));
+      expect(calls.lastApplyAnchor?.status, label).not.toBe('GIT_PUSHED');
+    }
+  });
+
+  it('ADR-0099 D5: a legacy anchor without pushMode stays upstream mode — a vanished upstream is drift, never a new-branch push', async () => {
+    const { deps, calls } = execDeps({ gitInfo: repoInfoOf({ branch: 'main' }), gitStatus: gitStatusOf(NO_UPSTREAM_EXEC) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+    expect(calls.gitPush).toBe(0);
+    expect(result.reply.text).toBe(composer.composePushExecutionUnavailable(CTX).text);
   });
 
   // ── pushApprovedCommit input (CA 49–53) ─────────────────────────────────────────────────────
@@ -6047,17 +6184,40 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     PR_CREATED_ANCHOR({ status: 'MERGE_APPROVAL_PENDING', mergeApprovalId: 'apply-appr-1', mergeApprovalRequestedAt: TS, ...o });
   const MERGE_APPROVED_ANCHOR = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
     PR_CREATED_ANCHOR({ status: 'MERGE_APPROVED', mergeApprovalId: 'apply-appr-1', mergeApprovalRequestedAt: TS, mergeApprovedAt: TS, mergeApprovalDecisionBy: 'actor-1', ...o });
+  /** ADR-0099 D5: the merge-approval tests below run with the merge chain ON (QUOKY_GIT_MERGE_ENABLED=true). */
+  const MERGE_ON = { gitMergeEnabled: true } as const;
 
   it('PR_CREATED + explicit merge approval / merge phrase → MERGE_APPROVAL_PENDING, CRITICAL, no merge (CA 1/2)', async () => {
     for (const text of ['머지 승인해줘', 'PR 머지 승인 요청해줘', '이 PR 머지해도 되게 승인 요청해줘', 'approve merge', 'merge this PR', '머지해줘']) {
       const { deps, calls } = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
-      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      const r = await new ConversationRuntime(deps, MERGE_ON).handle(messageOf(text));
       expect(calls.requestForRisk, text).toBe(1);
       expect(calls.lastRequestForRiskInput?.riskLevel, text).toBe(RiskLevel.CRITICAL);
       expect(calls.lastApplyAnchor?.status, text).toBe('MERGE_APPROVAL_PENDING');
       expect(r.status, text).toBe('AWAITING_APPROVAL');
       expect(r.reply.text, text).toContain('아직 머지는 하지 않았어요');
     }
+  });
+
+  it('ADR-0099 D5: merge OFF (default) — every merge phrase at PR_CREATED gets the fixed merge-disabled reply, no approval, no anchor, no hosting call', async () => {
+    const composer = new ResponseComposer();
+    for (const options of [undefined, { gitMergeEnabled: false }, { gitRemoteEnabled: true, gitMergeEnabled: false }]) {
+      for (const text of ['머지 승인해줘', 'approve merge', 'merge this PR', '머지해줘', '병합해줘']) {
+        const { deps, calls } = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
+        const r = await new ConversationRuntime(deps, options).handle(messageOf(text));
+        expect(r.status, text).toBe('RESPONDED');
+        expect(r.reply.text, text).toBe(composer.composeMergeDisabled(CTX).text);
+        expect(r.reply.text, text).toContain('병합은 이 설정에서 꺼져 있어요');
+        expect(calls.requestForRisk, text).toBe(0);
+        expect(calls.lastApplyAnchor, text).toBeUndefined();
+        expect(calls.hostingMergePR + calls.hostingGetStatus + calls.hostingCreatePR, text).toBe(0);
+      }
+    }
+    // a merge-status question is still the read-only status preview (not the merge-disabled reply)
+    const status = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
+    const r = await new ConversationRuntime(status.deps).handle(messageOf('PR 상태 봐줘'));
+    expect(r.reply.text).not.toBe(composer.composeMergeDisabled(CTX).text);
+    expect(status.calls.hostingGetStatus).toBe(1);
   });
 
   it('PR_CREATED + merge question / deploy / status / "진행해" / bare noun → no merge approval (CA 3/4/5/71)', async () => {
@@ -6095,7 +6255,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
 
   it('reason: CRITICAL, deterministic, owner/repo/PR/head/base/commit + "no merge/deploy/release", "pr source", no secrets/safety (CA 13–25/65/76–80)', async () => {
     const { deps, calls } = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
-    await new ConversationRuntime(deps).handle(messageOf('머지 승인해줘'));
+    await new ConversationRuntime(deps, MERGE_ON).handle(messageOf('머지 승인해줘'));
     const reason = calls.lastRequestForRiskInput!.reason;
     expect(calls.lastRequestForRiskInput!.executionPlanRef).toEqual({ id: 'plan-1', goal: 'g' });
     expect(reason).toContain('acme/widgets');
@@ -6264,7 +6424,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   it('forbidden merge-execution triggers: PR_CREATED/PENDING/deploy never merge (CA 2/3/4)', async () => {
     // PR_CREATED + "머지해줘" → merge APPROVAL (3f), not execution
     const cr = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
-    await new ConversationRuntime(cr.deps).handle(messageOf('머지해줘'));
+    await new ConversationRuntime(cr.deps, MERGE_ON).handle(messageOf('머지해줘'));
     expect(cr.calls.hostingMergePR).toBe(0);
     expect(cr.calls.requestForRisk).toBe(1); // records approval, does not merge
     // MERGE_APPROVAL_PENDING + "머지해줘" → re-prompt, no merge/decide
@@ -9038,6 +9198,63 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
     expect(calls.lastRunRequest?.instruction).toBe('src/typo.ts에서 이 버그 고쳐줘');
     expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+  });
+
+  it('CODE-5 QA follow-up: single missing path → a full resend WITH create wording routes as a fresh request (no dead end)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const first = await new ConversationRuntime(deps).handle(messageOf(`${NEW}로 헬퍼를 분리해줘`));
+    expect(first.reply.text).toBe(composer.composeTargetPathRejected(CTX, NEW).text);
+    expect(calls.scopeAnchor).toBe(1);
+    expect(calls.run).toBe(0);
+
+    const resend = `새 파일 ${NEW} 만들어서 헬퍼를 분리해줘`;
+    const result = await new ConversationRuntime(deps).handle(messageOf(resend));
+    expect(calls.scopeClear).toBeGreaterThanOrEqual(1); // the clarification was consumed, not answered
+    expect(calls.classify).toBe(2); // the resend was classified as a fresh request
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+    expect(calls.lastRunRequest?.instruction).toBe(resend);
+    expect(result.status).toBe('AWAITING_APPROVAL');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [], [NEW]).text);
+  });
+
+  it('CODE-5 QA follow-up: create wording WITHOUT a path at a pending clarification keeps the bare-path recovery', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf('src/typo.ts에서 이 버그 고쳐줘'));
+    expect(calls.scopeAnchor).toBe(1);
+    const result = await new ConversationRuntime(deps).handle(messageOf('새 파일로 만들어줘'));
+    expect(calls.classify).toBe(1); // recovery turn, not a fresh classification
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetScopeClarification(CTX).text);
+  });
+
+  it.each(['승인', '거절', 'ok'])(
+    'QA-V2-004: a bare "%s" right after a rejected target → the deterministic nothing-to-approve reply, not the scope copy',
+    async (word) => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+      const first = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js 고쳐줘'));
+      expect(first.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'src/hardsecret.js').text);
+      expect(calls.scopeAnchor).toBe(1);
+
+      const result = await new ConversationRuntime(deps).handle(messageOf(word));
+      expect(result.reply.text).toBe(composer.composeNoPendingDecision(CTX).text);
+      expect(result.reply.text).not.toBe(composer.composeTargetScopeClarification(CTX).text);
+      expect(calls.run).toBe(0);
+      expect(calls.classify).toBe(1);
+      expect(calls.scopeAnchor).toBe(1); // consumed, never re-anchored
+      // the clarification is gone: the next bare decision word is the ordinary QA-018 reply
+      const again = await new ConversationRuntime(deps).handle(messageOf(word));
+      expect(again.reply.text).toBe(composer.composeNoPendingDecision(CTX).text);
+    },
+  );
+
+  it('QA-V2-004 regression: "취소" at a pending clarification still cancels the code-change request', async () => {
+    const { deps } = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf('src/typo.ts에서 이 버그 고쳐줘'));
+    const result = await new ConversationRuntime(deps).handle(messageOf('취소'));
+    expect(result.status).toBe('CANCELLED');
+    expect(result.reply.text).toBe(composer.composeScopeClarificationCancelled(CTX).text);
   });
 
   it('negated create wording does not turn a missing path into a new file', async () => {

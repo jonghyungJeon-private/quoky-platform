@@ -805,12 +805,13 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   return { promise, resolve };
 };
 
-/** The truthful reply when the request was cancelled while (or after) the granted content was sent. */
-const CANCELLED_AFTER_SEND = (): string =>
-  composer.composeWithNotice(
-    composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']),
-    composer.composeScopeClarificationCancelled(CTX),
-  ).text;
+/** The truthful reply when the request was cancelled while (or after) the granted content was sent (dedicated
+ *  sent-then-cancelled copy, CODE-5 QA follow-up — it still leads with the one-time-send notice). */
+const CANCELLED_AFTER_SEND = (): string => {
+  const text = composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/user.ts']).text;
+  expect(text.startsWith(composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']).text)).toBe(true);
+  return text;
+};
 
 describe('ConversationRuntime credential override — dispatch races (ADR-0097 D5, OVR-3 contract)', () => {
   // A single-target send turn reads the workspace three times: the coverage check, the context preparation and the
@@ -955,5 +956,39 @@ describe('ConversationRuntime credential override — dispatch races (ADR-0097 D
     const apply = h.store.activeTask()!.metadata?.conversationApplyPreviewAnchor as ApplyPreviewAnchor | undefined;
     expect(apply?.status).toBe('ELIGIBLE');
     expect(apply?.projectId).toBe('proj-1');
+  });
+});
+
+describe('ConversationRuntime credential override — failure after the one-time send (CODE-5 QA follow-up)', () => {
+  it('generate() failing after the granted send → "sent once, no proposal" (never the plain could-not-generate copy)', async () => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = USER_TS;
+    await promptFor(h);
+    h.onGenerate = async () => {
+      throw new Error('provider boom');
+    };
+
+    const result = await h.send('그래도 보내줘');
+
+    expect(h.generated).toHaveLength(1); // the content WAS handed to the provider once
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(composer.composeCredentialOverrideSentNoProposal(CTX, ['src/user.ts']).text);
+    expect(result.reply.text.startsWith(composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']).text)).toBe(true);
+    expect(result.reply.text).toContain('코드 변경 제안은 만들어지지 않았어요');
+    expect(result.reply.text).toContain('파일 전송 확인도 다시 받아 주세요');
+    expect(result.reply.text).not.toBe(composer.composeCodeGenerationPreviewFailed(CTX).text);
+    expect(h.store.overrideAnchor().status).toBe('CONSUMED');
+
+    // the consumed set is never replayed
+    const again = await h.send('그래도 보내줘');
+    expect(h.generated).toHaveLength(1);
+    expect(again.reply.text).toBe(composer.composeNoPendingCredentialOverride(CTX).text);
+  });
+
+  it('the sent-then-cancelled copy is dedicated: it is not the scope-clarification "request cancelled" text', () => {
+    const text = composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/user.ts']).text;
+    expect(text).not.toContain(composer.composeScopeClarificationCancelled(CTX).text);
+    expect(text).toContain('이번 한 번만 AI에게 보냈어요');
+    expect(text).toContain('보여 주지도 저장하지도 않았고');
   });
 });

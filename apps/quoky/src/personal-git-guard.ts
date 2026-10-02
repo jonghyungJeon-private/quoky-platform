@@ -28,6 +28,11 @@ export class PersonalGitPolicyError extends Error {
 export interface PersonalGitGuardOptions {
   /** `QUOKY_GIT_REMOTE_ENABLED`. When false, remote-touching operations are refused before reaching `inner`. */
   remoteEnabled: boolean;
+  /**
+   * `QUOKY_GIT_MERGE_ENABLED` (ADR-0099 D5; default false — omitted means false). Gates the post-merge chain: the
+   * local `main` sync and the merged-branch cleanup run only when remote AND merge are both on.
+   */
+  mergeEnabled?: boolean;
 }
 
 /**
@@ -45,7 +50,11 @@ export interface PersonalGitGuardOptions {
  *   `switchBranch` delegates (the adapter owns the name policy and the clean-tree rule). Both are local-only and
  *   work with remote off.
  * - `pushApprovedCommit` additionally refuses a protected TARGET branch (`main`/`master`) even when remote is on
- *   (`GitPushBlockedError`, ADR-0099 D5): the personal flow pushes feature branches only.
+ *   (`GitPushBlockedError`, ADR-0099 D5): the personal flow pushes feature branches only. Never a force push (the
+ *   port has no force option).
+ * - Merge chain (ADR-0099 D5): `syncMainFastForward` and `deleteMergedLocalBranch` are refused unless remote AND
+ *   `mergeEnabled` are both on (`QUOKY_GIT_MERGE_ENABLED`, default false), with the same typed pre-mutation errors.
+ *   The read-only `getRemoteRefCommit` needs only remote on.
  * - Everything else delegates unchanged.
  */
 export class PersonalGitGuard implements GitProvider {
@@ -136,6 +145,7 @@ export class PersonalGitGuard implements GitProvider {
     expectedPreviousCommit: string,
   ): Promise<GitMainSyncResult> {
     if (!this.options.remoteEnabled) throw new GitMainSyncBlockedError('git remote operations are disabled');
+    if (this.options.mergeEnabled !== true) throw new GitMainSyncBlockedError('git merge chain operations are disabled');
     return this.inner.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit);
   }
 
@@ -145,6 +155,7 @@ export class PersonalGitGuard implements GitProvider {
     expectedBranchCommit: string,
   ): Promise<GitBranchCleanupResult> {
     if (!this.options.remoteEnabled) throw new BranchCleanupBlockedError('git remote operations are disabled');
+    if (this.options.mergeEnabled !== true) throw new BranchCleanupBlockedError('git merge chain operations are disabled');
     return this.inner.deleteMergedLocalBranch(rootPath, branch, expectedBranchCommit);
   }
 }

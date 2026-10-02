@@ -145,6 +145,13 @@ const MAX_DIFF_CHARS_PER_FILE = 1000;
 /** Bound on displayed user-controllable git refs (remote/branch/upstream) in push replies (Sprint 2z,
  *  ADR-0047, CA #6) — a defensive display cap even though upstream parsing already rejects over-long refs. */
 const MAX_GIT_REF_DISPLAY = 80;
+/** The deterministic push-execution phrase the recorded push approval points at (matches the runtime grammar). */
+const PUSH_EXECUTION_PHRASE = '푸시 실행';
+/** The deterministic PR-creation execution phrase the recorded PR approval points at (matches the runtime grammar). */
+const PR_CREATION_EXECUTION_PHRASE = 'PR 생성 실행';
+/** The one-time override is consumed by a send: a retry needs a fresh request and a fresh confirmation. */
+const CREDENTIAL_OVERRIDE_USED_UP =
+  '이번 전송 확인은 이미 사용됐어요. 다시 하려면 처음부터 새로 요청하고 파일 전송 확인도 다시 받아 주세요.';
 /** Display bound on a user-typed path echoed back in the rejected-path reply (QA-016). */
 const MAX_REJECTED_PATH_DISPLAY = 80;
 /** Bound on a displayed PR URL (Sprint 3d-D) — the adapter already validates it to the canonical bounded
@@ -1100,6 +1107,42 @@ export class ResponseComposer {
     return { context, text: clampToMessageBudget(credentialOverrideSentNotice(targetPaths)) };
   }
 
+  /**
+   * A granted dispatch reached the provider but no usable proposal came back (generation failed, nothing in scope,
+   * diff unavailable). Truthful about the one-time send: the content WAS sent once and the override is used up; a
+   * fresh request and a fresh override are needed. Nothing was modified.
+   */
+  composeCredentialOverrideSentNoProposal(context: ConversationContext, targetPaths: readonly string[]): OutboundMessage {
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          credentialOverrideSentNotice(targetPaths),
+          '하지만 코드 변경 제안은 만들어지지 않았어요. 파일은 수정되지 않았어요.',
+          CREDENTIAL_OVERRIDE_USED_UP,
+        ].join('\n'),
+      ),
+    };
+  }
+
+  /**
+   * A granted dispatch's request was cancelled after the one-time send (the conversation was reset, the project
+   * changed, or a newer request took over while the provider ran). Dedicated copy: the content WAS sent once, the
+   * proposal was discarded (not shown, not kept), nothing was modified, and a fresh request + override are needed.
+   */
+  composeCredentialOverrideSentThenCancelled(context: ConversationContext, targetPaths: readonly string[]): OutboundMessage {
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          credentialOverrideSentNotice(targetPaths),
+          '그런데 그사이 대화가 초기화됐거나 프로젝트·요청이 바뀌어서 이 코드 변경 요청은 취소됐어요. 받은 제안은 보여 주지도 저장하지도 않았고, 파일은 수정되지 않았어요.',
+          CREDENTIAL_OVERRIDE_USED_UP,
+        ].join('\n'),
+      ),
+    };
+  }
+
   /** A send phrase with nothing pending (QA-018 pattern): nothing was sent. */
   composeNoPendingCredentialOverride(context: ConversationContext): OutboundMessage {
     return { context, text: clampToMessageBudget(credentialOverrideNoPending()) };
@@ -1761,16 +1804,30 @@ export class ResponseComposer {
    */
   composePushApprovalRequested(
     context: ConversationContext,
-    input: { commitHash: string; remote: string; branch: string; upstream: string; ahead: number },
+    input: {
+      commitHash: string;
+      remote: string;
+      branch: string;
+      upstream: string;
+      ahead: number;
+      /** ADR-0099 D5: the branch has no upstream; the first push creates it on the remote (ahead is not shown). */
+      newRemoteBranch?: boolean;
+    },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
     const remote = input.remote.slice(0, MAX_GIT_REF_DISPLAY);
     const branch = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
+    const target = input.newRemoteBranch
+      ? [
+          `대상: ${remote}/${branch} (원격에 아직 없는 브랜치 — push하면 원격에 새 브랜치로 만들어져요)`,
+          '강제 push는 하지 않고, 로컬 업스트림(추적 브랜치)도 설정하지 않아요.',
+        ]
+      : [`대상: ${remote}/${branch} (원격보다 ${input.ahead}개 앞섬)`];
     const text = clampToMessageBudget(
       [
         'push 승인을 요청했어요.',
         `커밋: ${shortHash}`,
-        `대상: ${remote}/${branch} (원격보다 ${input.ahead}개 앞섬)`,
+        ...target,
         '승인해도 이번 단계에서는 실제 git push를 하지 않아요.',
         '승인은 현재 확인한 Git 상태 기준이에요. 실제 push 실행 전에는 다시 확인이 필요해요.',
         '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
@@ -1783,7 +1840,9 @@ export class ResponseComposer {
   composePushApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: 'push 승인은 기록했어요.\n아직 실제 git push는 하지 않았어요. (실제 push는 이후 단계에서 Git 상태를 다시 확인한 뒤 진행돼요)',
+      text:
+        'push 승인은 기록했어요.\n아직 실제 git push는 하지 않았어요. (실제 push는 이후 단계에서 Git 상태를 다시 확인한 뒤 진행돼요)\n' +
+        `실제로 push하려면 "${PUSH_EXECUTION_PHRASE}"이라고 알려 주세요.`,
     };
   }
 
@@ -1848,6 +1907,29 @@ export class ResponseComposer {
     };
   }
 
+  /**
+   * The current branch has no upstream and is `main`/`master` (ADR-0099 D5): a first push never creates a protected
+   * remote branch. Points at the branch command. No approval, no push.
+   */
+  composePushProtectedBranch(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        'main/master 브랜치는 원격에 새로 push하지 않아요. 작업용 브랜치(예: feature/…)에서 커밋한 뒤 다시 요청해 주세요.\n' +
+        'push 승인은 만들지 않았어요. git push는 하지 않았어요.',
+    };
+  }
+
+  /** The current branch has no upstream and its name fails the conservative push-name check (ADR-0099 D5). */
+  composePushBranchNameUnsafe(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '지금 브랜치 이름으로는 원격에 새 브랜치를 안전하게 만들 수 없어요. 영문, 숫자, ".", "_", "/", "-"만 쓴 브랜치에서 다시 요청해 주세요.\n' +
+        'push 승인은 만들지 않았어요. git push는 하지 않았어요.',
+    };
+  }
+
   /** Nothing to push — the branch is not ahead of its upstream (Sprint 2z). No approval, no push. */
   composePushNothingToPush(context: ConversationContext): OutboundMessage {
     return {
@@ -1887,14 +1969,25 @@ export class ResponseComposer {
    */
   composePushExecuted(
     context: ConversationContext,
-    input: { commitHash: string; remote: string; branch: string },
+    input: {
+      commitHash: string;
+      remote: string;
+      branch: string;
+      /** ADR-0099 D5: the push created the branch on the remote (no force, no upstream configuration). */
+      newRemoteBranch?: boolean;
+    },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
     const remote = input.remote.slice(0, MAX_GIT_REF_DISPLAY);
     const branch = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = clampToMessageBudget(
-      [`원격에 push했어요: ${shortHash} → ${remote}/${branch}`, 'PR 생성과 배포는 하지 않았어요.'].join('\n'),
-    );
+    const lines = input.newRemoteBranch
+      ? [
+          `원격에 새 브랜치로 push했어요: ${shortHash} → ${remote}/${branch}`,
+          '강제 push는 하지 않았고, 로컬 업스트림(추적 브랜치)도 설정하지 않았어요.',
+          'PR 생성과 배포는 하지 않았어요. PR이 필요하면 "PR 만들어줘"라고 알려 주세요.',
+        ]
+      : [`원격에 push했어요: ${shortHash} → ${remote}/${branch}`, 'PR 생성과 배포는 하지 않았어요.'];
+    const text = clampToMessageBudget(lines.join('\n'));
     return { context, text };
   }
 
@@ -1992,7 +2085,9 @@ export class ResponseComposer {
   composePrApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: 'PR 생성 승인은 기록했어요.\n아직 PR은 만들지 않았어요. (실제 PR 생성은 이후 저장소 호스팅 단계에서 진행돼요)',
+      text:
+        'PR 생성 승인은 기록했어요.\n아직 PR은 만들지 않았어요. (실제 PR 생성은 이후 저장소 호스팅 단계에서 진행돼요)\n' +
+        `실제로 PR을 만들려면 "${PR_CREATION_EXECUTION_PHRASE}"이라고 알려 주세요.`,
     };
   }
 
@@ -2188,6 +2283,19 @@ export class ResponseComposer {
   }
 
   // ── Sprint 3f (ADR-0056): explicit PR merge APPROVAL — permission record only, never merged/deployed/released. ──
+
+  /**
+   * The merge chain is off in this deployment (`QUOKY_GIT_MERGE_ENABLED=false`, ADR-0099 D5): a merge request gets
+   * this fixed reply BEFORE any merge approval. Nothing was approved, merged, synced or deleted.
+   */
+  composeMergeDisabled(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '병합은 이 설정에서 꺼져 있어요(QUOKY_GIT_MERGE_ENABLED=false). PR은 GitHub에서 직접 검토하고 병합해 주세요.\n' +
+        '병합 승인은 만들지 않았어요. PR 병합, main 동기화, 브랜치 정리는 하지 않았어요.',
+    };
+  }
 
   /** Merge approval REQUESTED (Sprint 3f). Shows the PR target; says no merge happened; approval records permission only. */
   composeMergeApprovalRequested(
