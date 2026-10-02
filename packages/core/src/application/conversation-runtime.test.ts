@@ -1161,7 +1161,8 @@ describe('ConversationRuntime', () => {
 
     const result = await new ConversationRuntime(deps).handle(messageOf('기억해: 승인 흐름이 먼저야'));
 
-    expect(result.status).toBe('RESPONDED');
+    // The approval gate captures the turn: not an approval (extra content), so it re-prompts and stays pending.
+    expect(result.status).toBe('AWAITING_APPROVAL');
     expect(calls.memoryCreateCandidate).toBe(0);
     expect(calls.memoryPromote).toBe(0);
     expect(calls.classify).toBe(0);

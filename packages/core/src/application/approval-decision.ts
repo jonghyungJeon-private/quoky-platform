@@ -18,7 +18,7 @@ export type ApprovalDecisionResult = 'approve' | 'deny' | 'cancel' | 'ambiguous'
 
 const APPROVE_PHRASES = ['승인', '진행', '좋아', 'yes', 'ok', 'okay', 'approve', 'approved', 'proceed', 'go ahead'];
 const DENY_PHRASES = ['거절', '거부', '아니', 'no', 'deny', 'denied', 'reject', 'rejected', 'refuse', 'refused'];
-const CANCEL_PHRASES = ['취소', '철회', '중단', '중지', '그만', 'cancel', 'stop', 'abort'];
+const CANCEL_PHRASES = ['취소', '철회', '중단', '중지', '멈춰', '멈춰줘', '멈춰요', '멈추자', '그만', 'cancel', 'stop', 'abort'];
 
 /** Polite endings / particles that may follow a Korean stem and still be the same whole word
  *  ("승인해줘", "진행할게요", "아니요"). Anything outside this list ("승인하지", "진행상황") is NOT a match. */
@@ -36,10 +36,11 @@ const MAX_APPROVE_LENGTH = 80;
 const QUESTION_ENDING = /[?？]\s*$|(?:까|까요|나요|인가요|건가요|는가요)[\s.!]*$/;
 
 /** Wait / look-first hedges — "먼저 보고 승인할게" / "approve later" must not decide anything. */
-const HEDGE = /아직|먼저\s*(?:보|확인|검토|살펴|읽)|잠깐|잠시|나중|보고\s*(?:나서|서)|\b(?:yet|first|wait|later)\b|hold\s+on/;
+const HEDGE =
+  /아직|먼저\s*(?:보|확인|검토|살펴|읽)|잠깐|잠시|나중|내일|보고\s*(?:나서|서)|원(?:하)?지\s*(?:않|안)|원치|\b(?:yet|first|wait|later|tomorrow)\b|hold\s+on|let\s+me/;
 
 /** Negations `isNegated` does not cover but that still flip an approve ("승인 안 할래", "not approve"). */
-const KOREAN_SOFT_NEGATION = /(?:^|\s)(?:안|못)(?=\s|$|[하해할함했돼되됩])/;
+const KOREAN_SOFT_NEGATION = /(?:^|\s)(?:안|못)(?=\s|$|[하해할함했돼되됩됨])/;
 const SOFT_NEGATION = new RegExp(
   `${KOREAN_SOFT_NEGATION.source}|\\b(?:not|no|cannot|can['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t)\\b`,
 );
@@ -47,8 +48,37 @@ const SOFT_NEGATION = new RegExp(
 /** A refusal / hold word sitting next to an approve word ("승인 불가", "진행 마", "승인 X", "approve nothing")
  *  turns an otherwise-approve message into a non-decision. Whole tokens only, so "마음에 들어" is untouched. */
 const REFUSAL_QUALIFIER = new RegExp(
-  `${TOKEN_BEFORE}(?:불가능?|보류|반대|대기|마(?:세요|라)?|말아(?:요|줘)?|ㄴㄴ|x|nope|nothing|hold)${TOKEN_AFTER}`,
+  `${TOKEN_BEFORE}(?:불가능?|불허|반려|보류|반대|대기|싫(?:어|어요|다)?|마(?:세요|라)?|말아(?:요|줘)?|ㄴㄴ|x|nope|nothing|hold)${TOKEN_AFTER}`,
 );
+
+/**
+ * Words that may accompany an approve word WITHOUT adding content ("네, 진행할게요", "승인해 주세요",
+ * "yes please", "안녕, 승인"). After the approve words and these are removed, any remaining word is extra
+ * content (a status question, a restriction, an added instruction, a hedge we do not know) and the message is
+ * not a plain approval: the runtime re-prompts and the approval stays pending.
+ */
+const APPROVE_FILLERS = [
+  '네', '넵', '넹', '예', '응', '그래', '그럼', '그냥', '일단', '바로', '어서', '제발', '이제', '좀', '안녕', '하세요',
+  '주세요', '줘', '줘요', '부탁', '부탁해', '부탁해요', '부탁드려요', '부탁드립니다', '감사합니다', '고마워', '고마워요',
+  'please', 'pls', 'yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'thanks', 'thank', 'you', 'it', 'this', 'that', 'now', 'hi', 'hello',
+];
+const APPROVE_FILLER_TOKEN = new RegExp(
+  `${TOKEN_BEFORE}(?:${[...APPROVE_FILLERS].sort((a, b) => b.length - a.length).join('|')})${TOKEN_AFTER}`,
+  'g',
+);
+/** "please don't stop, go ahead": a negated cancel word is filler, the approve is still plain. */
+const NEGATED_CANCEL_FILLER = /\b(?:don['’]?t|do\s+not)\s+(?:stop|cancel|abort)\b/g;
+
+/** True when anything beyond approve words, fillers and punctuation remains. */
+function hasContentBeyondApproval(text: string): boolean {
+  const remainder = text
+    .replace(APPROVE.exact, ' ')
+    .replace(NEGATED_CANCEL_FILLER, ' ')
+    .replace(/[^가-힣a-z0-9]+/g, ' ')
+    .replace(APPROVE_FILLER_TOKEN, ' ')
+    .replace(APPROVE_FILLER_TOKEN, ' ');
+  return remainder.trim().length > 0;
+}
 
 /** A don't / never / "하지 마" anywhere in an approve message attaches a condition we cannot honor
  *  ("yes but don't touch tests"): ambiguous so the user restates it. */
@@ -123,7 +153,8 @@ function scan(text: string, matchers: PhraseMatchers): KindHits {
  *  4. negated approve phrase ("진행하지 마", "don't approve") → deny (never approve); contradictory or
  *     contrastive ("취소하지 말고 진행해") → ambiguous
  *  5. approve XOR deny (un-negated, whole token) → that decision; both or neither → ambiguous. An approve with a
- *     refusal qualifier ("승인 불가") or an attached don't-condition ("yes but don't touch tests") is ambiguous.
+ *     refusal qualifier ("승인 불가"), an attached don't-condition ("yes but don't touch tests") or ANY further
+ *     content word ("진행 상황 알려줘", "ok but only src/a.ts") is ambiguous: approve is the narrow case.
  * A negated deny/cancel ("거절하지 마", "거절 안 해") yields nothing positive, so it falls through to ambiguous;
  * "no problem" is likewise ambiguous rather than a false deny.
  */
@@ -148,6 +179,9 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   }
   if (approve.positive && !deny.positive) {
     if (t.length > MAX_APPROVE_LENGTH || SOFT_NEGATION.test(t) || REFUSAL_QUALIFIER.test(t)) return 'ambiguous';
+    // Approve is the narrow case: an approve word plus any further content word ("진행 상황 알려줘", "ok but only
+    // src/a.ts", "yes and also push it") is a question, a condition or an added instruction, not a decision.
+    if (hasContentBeyondApproval(t)) return 'ambiguous';
     // ("please don't stop, go ahead": the negation is on a cancel word, so it is still a plain approve.)
     if (CONDITION_NEGATION.test(t) && !cancel.negated && !deny.negated) return 'ambiguous';
     return 'approve';

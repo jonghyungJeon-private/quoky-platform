@@ -118,6 +118,40 @@ describe('interpretApprovalDecision', () => {
     // newly accepted spellings
     ['진행시켜', 'approve'],
     ['proceed', 'approve'],
+    // status questions / non-decisions that merely start with an approve stem
+    ['진행 상황 알려줘', 'ambiguous'],
+    ['진행 상황 좀', 'ambiguous'],
+    ['승인 대상 뭐야', 'ambiguous'],
+    ['승인 요청 내용 보여줘', 'ambiguous'],
+    ['이거 진행 전에 설명해줘', 'ambiguous'],
+    ['진행 여부는 내일 알려줄게', 'ambiguous'],
+    ['ok 내일 할게', 'ambiguous'],
+    ['ok let me think', 'ambiguous'],
+    ['좋아 보이는데 확인 좀', 'ambiguous'],
+    // refusals / stops that carry an approve stem
+    ['진행 멈춰', 'cancel'],
+    ['진행 싫어', 'ambiguous'],
+    ['승인 하기 싫어', 'ambiguous'],
+    ['승인 원하지 않음', 'ambiguous'],
+    ['진행 원치 않아', 'ambiguous'],
+    ['승인 불허', 'ambiguous'],
+    ['승인 반려', 'ambiguous'],
+    ['승인 노', 'ambiguous'],
+    ['승인 절대 안됨', 'ambiguous'],
+    ['진행 하면 안됨', 'ambiguous'],
+    ['승인 안됨', 'ambiguous'],
+    ['승인 안돼요', 'ambiguous'],
+    // conditional / extended approvals cannot be honored: re-prompt instead of approving the whole request
+    ['ok but only change src/a.ts', 'ambiguous'],
+    ['승인. 단 package.json은 제외', 'ambiguous'],
+    ['승인, package.json 빼고', 'ambiguous'],
+    ['진행해 단 README만 바꿔', 'ambiguous'],
+    ['진행해, 그리고 main에 바로 커밋해', 'ambiguous'],
+    ['yes and also push it', 'ambiguous'],
+    // plain approvals with only polite fillers keep approving
+    ['yes please', 'approve'],
+    ['네 승인해 주세요 감사합니다', 'approve'],
+    ['그냥 진행해줘', 'approve'],
     // contradictions
     ['yes no', 'ambiguous'],
     ['승인 거절', 'ambiguous'],
@@ -130,7 +164,7 @@ describe('interpretApprovalDecision', () => {
   });
 
   it('never approves a negated approve phrase (explicit safety table)', () => {
-    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve", '승인 거부', '승인 불가', '진행 불가', '승인 보류', '진행 보류', '승인 철회', '승인 반대', '진행 중지', '진행 대기', '진행 마', '승인 마', '진행 ㄴㄴ', '승인 X', 'I refuse to approve', 'approve nothing', '취소 말고 진행해', "yes but don't touch tests"]) {
+    for (const text of ['진행하지 마', '승인하지 마', "don't approve", 'do not proceed, approve nothing', '승인 안해', '진행 안해', "can't approve", "won't approve", '승인 거부', '승인 불가', '진행 불가', '승인 보류', '진행 보류', '승인 철회', '승인 반대', '진행 중지', '진행 대기', '진행 마', '승인 마', '진행 ㄴㄴ', '승인 X', 'I refuse to approve', 'approve nothing', '취소 말고 진행해', "yes but don't touch tests", '진행 상황 알려줘', '진행 멈춰', '진행 싫어', '승인 불허', '승인 반려', '승인 절대 안됨', 'ok 내일 할게', 'ok let me think', 'ok but only change src/a.ts', 'yes and also push it']) {
       expect(interpretApprovalDecision(text), text).not.toBe('approve');
     }
   });
