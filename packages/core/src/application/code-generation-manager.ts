@@ -4,15 +4,41 @@ import { AiProviderError } from '../errors';
 import { AiFailureKind, Capability, CodeGenerationStatus, codeProposalRef } from '../domain';
 import type {
   CodeGeneration,
+  CodeGenerationDispatch,
   CodeProposal,
   GenerateCodeInput,
   Id,
   ProposedChange,
 } from '../domain';
-import type { ProviderSelector, StorageProvider } from '../ports';
+import type { AiProvider, ProviderSelector, StorageProvider } from '../ports';
 import type { PromptComposer } from './prompt-composer';
 import type { PromptRenderer } from './prompt-renderer';
 import { parseCodeProposal } from './code-proposal-parser';
+
+/**
+ * An exception that escaped {@link CodeGenerationManager.generate} AFTER `provider.execute()` was invoked
+ * (ADR-0097 truthful copy): `dispatch` says whether the provider returned (`sent`) or the call itself threw
+ * (`uncertain`). Any other exception out of generate() was raised before the provider was invoked — nothing was
+ * sent ({@link codeGenerationDispatchOfError}).
+ */
+export class CodeGenerationDispatchedError extends Error {
+  constructor(
+    readonly dispatch: Exclude<CodeGenerationDispatch, 'not-sent'>,
+    cause: unknown,
+  ) {
+    super(`code generation failed after provider dispatch (${dispatch})`, { cause });
+    this.name = 'CodeGenerationDispatchedError';
+  }
+}
+
+/** The transmission state implied by an exception thrown out of {@link CodeGenerationManager.generate}. */
+export function codeGenerationDispatchOfError(err: unknown): CodeGenerationDispatch {
+  return err instanceof CodeGenerationDispatchedError ? err.dispatch : 'not-sent';
+}
+
+function failureKindOf(err: unknown): AiFailureKind {
+  return err instanceof AiProviderError ? err.kind : AiFailureKind.EXECUTION_FAILED;
+}
 
 /**
  * CAP-008 AI Code Generation (ADR-0029). Owns BOTH AI-Layer aggregates — the
@@ -40,7 +66,9 @@ export class CodeGenerationManager {
    * Generate a code proposal for a plan. Exactly ONE generation per call (no retry —
    * that is the Orchestrator's concern). Always records a `CodeGeneration`; on success
    * also records a `CodeProposal` and links it. Failures are classified (ADR-0015) and
-   * recorded as `FAILED` — the manager never throws past a recorded outcome.
+   * recorded as `FAILED` — the manager never throws past a recorded outcome. The returned value carries
+   * `dispatch` (whether the prompt reached the provider); an exception thrown after `provider.execute()` was
+   * invoked is a {@link CodeGenerationDispatchedError}.
    */
   async generate(input: GenerateCodeInput): Promise<CodeGeneration> {
     const capability = input.capability ?? Capability.CODE_IMPLEMENTATION;
@@ -79,57 +107,76 @@ export class CodeGenerationManager {
       updatedAt: ts,
     });
 
-    // Select a provider by capability (no concrete CLI named here) and execute.
-    let providerId: string;
-    let text: string;
-    let artifacts: CodeProposal['artifacts'];
+    // Select a provider by capability (no concrete CLI named here). A selection failure is recorded before
+    // anything was handed to a provider: `not-sent`.
+    let provider: AiProvider;
     try {
-      const provider = await this.selector.select(capability);
-      providerId = provider.id;
-      const result = await provider.execute(aiRequest);
-      text = result.text;
-      artifacts = result.artifacts;
+      provider = await this.selector.select(capability);
     } catch (err) {
-      return this.fail(base, err instanceof AiProviderError ? err.kind : AiFailureKind.EXECUTION_FAILED);
+      return this.fail(base, failureKindOf(err), 'not-sent');
     }
 
-    // Parse the (provider-agnostic) proposal. Malformed output → FAILED (not a source of truth).
-    let proposal: ProposedChange[];
+    // From here on `provider.execute()` is invoked, so an exception escaping generate() (e.g. a storage write
+    // failing) carries how far the run got — callers must never report such a run as "nothing was sent".
+    let dispatch: Exclude<CodeGenerationDispatch, 'not-sent'> = 'uncertain';
     try {
-      proposal = parseCodeProposal(text);
-    } catch {
-      return this.fail(base, AiFailureKind.EMPTY_OUTPUT);
+      let text: string;
+      let artifacts: CodeProposal['artifacts'];
+      try {
+        const result = await provider.execute(aiRequest);
+        text = result.text;
+        artifacts = result.artifacts;
+      } catch (err) {
+        // Invoked, then threw/timed out: whether the prompt reached the provider cannot be confirmed.
+        return await this.fail(base, failureKindOf(err), 'uncertain');
+      }
+      dispatch = 'sent';
+
+      // Parse the (provider-agnostic) proposal. Malformed output → FAILED (not a source of truth).
+      let proposal: ProposedChange[];
+      try {
+        proposal = parseCodeProposal(text);
+      } catch {
+        return await this.fail(base, AiFailureKind.EMPTY_OUTPUT, 'sent');
+      }
+
+      // Persist the OUTPUT aggregate first, then link it from the run aggregate.
+      const succeededRef = { id: base.id, status: CodeGenerationStatus.SUCCEEDED };
+      const codeProposal: CodeProposal = {
+        id: newId(),
+        codeGenerationRef: succeededRef,
+        proposal,
+        providerId: provider.id,
+        ...(artifacts ? { artifacts } : {}),
+        createdAt: now(),
+      };
+      await this.storage.codeProposals.save(codeProposal);
+
+      const generation: CodeGeneration = {
+        ...base,
+        status: CodeGenerationStatus.SUCCEEDED,
+        codeProposalRef: codeProposalRef(codeProposal),
+        updatedAt: now(),
+      };
+      return { ...(await this.storage.codeGenerations.save(generation)), dispatch: 'sent' };
+    } catch (err) {
+      throw new CodeGenerationDispatchedError(dispatch, err);
     }
-
-    // Persist the OUTPUT aggregate first, then link it from the run aggregate.
-    const succeededRef = { id: base.id, status: CodeGenerationStatus.SUCCEEDED };
-    const codeProposal: CodeProposal = {
-      id: newId(),
-      codeGenerationRef: succeededRef,
-      proposal,
-      providerId,
-      ...(artifacts ? { artifacts } : {}),
-      createdAt: now(),
-    };
-    await this.storage.codeProposals.save(codeProposal);
-
-    const generation: CodeGeneration = {
-      ...base,
-      status: CodeGenerationStatus.SUCCEEDED,
-      codeProposalRef: codeProposalRef(codeProposal),
-      updatedAt: now(),
-    };
-    return this.storage.codeGenerations.save(generation);
   }
 
-  private async fail(base: CodeGeneration, failureKind: AiFailureKind): Promise<CodeGeneration> {
+  private async fail(
+    base: CodeGeneration,
+    failureKind: AiFailureKind,
+    dispatch: CodeGenerationDispatch,
+  ): Promise<CodeGeneration> {
     const generation: CodeGeneration = {
       ...base,
       status: CodeGenerationStatus.FAILED,
       failureKind,
       updatedAt: now(),
     };
-    return this.storage.codeGenerations.save(generation);
+    // `dispatch` rides on the returned value only (never persisted — see `CodeGeneration.dispatch`).
+    return { ...(await this.storage.codeGenerations.save(generation)), dispatch };
   }
 
   async get(id: Id): Promise<CodeGeneration | null> {

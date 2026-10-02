@@ -27,9 +27,22 @@ export interface CodeGeneration {
   failureKind?: AiFailureKind;
   /** Read-only workspace the generation was contextualized against, if any. */
   workspaceRef?: WorkspaceRef;
+  /**
+   * Whether this run's prompt reached the AI provider (ADR-0097 truthful copy). Set by the manager on the
+   * value `generate()` RETURNS only — a run-outcome fact, not persisted (a stored record never carries it).
+   */
+  dispatch?: CodeGenerationDispatch;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
+
+/**
+ * Transmission state of one code-generation run (ADR-0097 truthful copy):
+ * - `not-sent`  — failed before `provider.execute()` was invoked (no provider available/selected, …);
+ * - `sent`      — `execute()` returned output (even if parsing or anything later failed);
+ * - `uncertain` — `execute()` was invoked and threw/timed out, so delivery cannot be confirmed.
+ */
+export type CodeGenerationDispatch = 'not-sent' | 'sent' | 'uncertain';
 
 /** Lightweight handle (V2 Ref model). */
 export interface CodeGenerationRef {
