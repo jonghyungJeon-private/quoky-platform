@@ -4,6 +4,11 @@ import type { CapabilityRouter } from './capability-router';
 import { hasCoLocatedUnnegated } from './intent-negation';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 
+export interface IntentClassifyContext {
+  /** False when the conversation has no active project; omitted keeps the context-free behavior. */
+  readonly hasActiveProject?: boolean;
+}
+
 /**
  * Classifies a natural-language message into an Intent. v1 is MINIMAL and
  * deterministic:
@@ -12,11 +17,6 @@ import { detectExplicitValidationKinds, isDeniedValidationRequest } from './vali
  *   - everything else → general chat (becomes a Task).
  * AI-driven classification arrives later; the `router` is held for it.
  */
-export interface IntentClassifyContext {
-  /** False when the conversation has no active project; omitted keeps the context-free behavior. */
-  readonly hasActiveProject?: boolean;
-}
-
 export class IntentClassifier {
   constructor(private readonly router: CapabilityRouter) {}
 
@@ -47,7 +47,7 @@ export class IntentClassifier {
       return false;
     }
     if (/^\/preview\b/i.test(text)) return false;
-    if (/(프로젝트|저장소|repo(?:sitory)?|codebase)/i.test(text)) return false;
+    if (/(프로젝트|저장소|레포|\bproject\b|\brepo(?:sitory)?\b|\bcodebase\b)/i.test(text)) return false;
     if (/[A-Za-z_.~-][\w@.~-]*\/[\w@./-]+|(?:^|\s)\/[\w@.-]+/.test(text)) return false;
     if (/\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|py|go|rs|java|yml|yaml|toml|sh|css|html)\b/i.test(text)) return false;
     return true;
@@ -203,7 +203,7 @@ export class IntentClassifier {
 
   /** First absolute POSIX path (>= 2 segments, at a token start) in the text, if any — so "7/3" is not a path. */
   private static extractLocalPath(text: string): string | undefined {
-    const match = text.match(/(?:^|[\s"'`(])(\/[^\s/]+(?:\/[^\s/]+)+)/);
+    const match = text.match(/(?:^|[\s"'`(:=])(\/[^\s/]+(?:\/[^\s/]+)+)/);
     return match ? match[1] : undefined;
   }
 

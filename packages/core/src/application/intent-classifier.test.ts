@@ -370,7 +370,25 @@ describe('IntentClassifier — Follow-up-7 preview-request routing (Gate 5 turn-
     it('keeps project routing for project nouns, file paths and /preview', async () => {
       expect((await classifier.classify(msg('이 프로젝트 분석해줘'), noProject)).type).toBe(IntentType.PROJECT_ANALYSIS);
       expect((await classifier.classify(msg('src/app.ts 버그 고쳐줘'), noProject)).type).toBe(IntentType.IMPLEMENT_CODE);
-      expect((await classifier.classify(msg('/preview 로그인 수정'), noProject)).raw).toEqual({ kind: 'preview' });
+      const preview = await classifier.classify(msg('/preview 로그인 수정'), noProject);
+      expect(preview.type).toBe(IntentType.IMPLEMENT_CODE);
+      expect(preview.raw).toEqual({ kind: 'preview' });
+    });
+
+    it('keeps project routing for English/Korean project nouns with no project', async () => {
+      for (const text of ['analyze this project', '이 레포 분석해줘']) {
+        expect((await classifier.classify(msg(text), noProject)).type).toBe(IntentType.PROJECT_ANALYSIS);
+      }
+    });
+
+    it('does not register a single-segment path, but accepts "경로:/a/b"', async () => {
+      expect((await classifier.classify(msg('/tmp 등록해줘'), noProject)).type).not.toBe(IntentType.REGISTER_PROJECT);
+      expect((await classifier.classify(msg('경로:/Users/me/repo 등록해줘'))).type).toBe(IntentType.REGISTER_PROJECT);
+    });
+
+    it('pins bare test-command routing: RUN_TESTS context-free, GENERAL_CHAT with no project', async () => {
+      expect((await classifier.classify(msg('pnpm test 실행해줘'))).type).toBe(IntentType.RUN_TESTS);
+      expect((await classifier.classify(msg('pnpm test 실행해줘'), noProject)).type).toBe(IntentType.CHAT);
     });
 
     it('omitted ctx or hasActiveProject=true keeps the context-free behavior', async () => {
