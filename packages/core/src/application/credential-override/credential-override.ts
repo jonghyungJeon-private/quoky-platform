@@ -40,14 +40,21 @@ export type CredentialOverrideGrantState = 'PENDING' | 'GRANTED' | 'CONSUMED' | 
  */
 export type CredentialOverrideAnchorStatus = CredentialOverrideGrantState;
 
-/** Why a set was invalidated (ADR-0097 D5/D7). Every invalidation sends nothing and asks for a fresh request. */
+/**
+ * Why a set was invalidated (ADR-0097 D5/D7). Every invalidation sends nothing and asks for a fresh request.
+ * `superseded` means a newer request (or a different actor/request) took the set's place; `inconsistent` means
+ * the stored record cannot be proven to be this request (malformed anchor, a decision recorded outside the anchor
+ * — e.g. a crash between `ApprovalManager.decide` and `recordGrant` — or an ApprovalRequest that is not this
+ * request's CRITICAL override).
+ */
 export type CredentialOverrideInvalidationReason =
   | 'reset'
   | 'denied'
   | 'expired'
   | 'project-changed'
   | 'changed'
-  | 'superseded';
+  | 'superseded'
+  | 'inconsistent';
 
 /** The original-request binding every grant (and its anchor) carries (ADR-0097 D5 "Binding"). */
 export interface CredentialOverrideBinding {
@@ -207,6 +214,10 @@ export function credentialOverrideContentSha256(content: string): string {
 const sameWorkspace = (a: WorkspaceRef | undefined, b: WorkspaceRef | undefined): boolean =>
   !!a && !!b && a.id === b.id && a.rootPath === b.rootPath && a.kind === b.kind;
 
+/** Whether an ApprovalRequest is this anchor's own CRITICAL override request (same plan, CRITICAL risk). */
+const isOverrideApprovalOf = (approval: ApprovalRequest, anchor: CredentialOverrideAnchor): boolean =>
+  approval.riskLevel === RiskLevel.CRITICAL && approval.executionPlanRef?.id === anchor.executionPlanId;
+
 /** Whether a grant's own binding equals its anchor's (every grant carries the full binding, D5). */
 function grantBoundToAnchor(grant: CredentialOverrideGrantRecord, anchor: CredentialOverrideAnchor): boolean {
   return (
@@ -272,12 +283,14 @@ export type CredentialOverrideAssessment =
  * set's state from the anchor and its ApprovalRequests alone. Pure.
  *
  * - `CONSUMED` (anchor or any grant) stays terminal.
+ * - Every grant's request must be a CRITICAL request of the anchor's own execution plan.
  * - A `GRANTED` grant is kept only if its request is `APPROVED` (decision true) with `decidedBy` = owner.
  * - A `PENDING` grant is kept only if its request is still `PENDING`.
  * - The whole set expires `PENDING_APPROVAL_TTL_MS` after its OLDEST grant's request was created (no new TTL);
  *   an unknown age (missing request, unparseable timestamp) is expired (fail closed).
  * Otherwise the set is invalid: `denied` for a rejected or non-owner decision, `expired` for age or a missing
- * request, `superseded` for a malformed anchor or a request decided outside the anchor's record.
+ * request, `inconsistent` for a malformed anchor, a foreign request, or a request decided outside the anchor's
+ * record. `pendingApproval` is only ever one of the anchor's own CRITICAL requests, never a foreign one.
  */
 export function assessCredentialOverrideAnchor(
   anchor: CredentialOverrideAnchor,
@@ -290,37 +303,40 @@ export function assessCredentialOverrideAnchor(
   const pendingApproval =
     grants
       .map((g) => (g ? approvals.get(g.approvalRequestId) ?? null : null))
-      .find((r): r is ApprovalRequest => r?.status === ApprovalStatus.PENDING) ?? null;
+      .find((r): r is ApprovalRequest => r?.status === ApprovalStatus.PENDING && isOverrideApprovalOf(r, anchor)) ??
+    null;
   const invalid = (reason: CredentialOverrideInvalidationReason): CredentialOverrideAssessment => ({
     kind: 'invalid', reason, pendingApproval,
   });
-  if (anchor.status === 'INVALIDATED') return invalid(anchor.invalidationReason ?? 'superseded');
-  if (!isWellFormedCredentialOverrideAnchor(anchor)) return invalid('superseded');
+  if (anchor.status === 'INVALIDATED') return invalid(anchor.invalidationReason ?? 'inconsistent');
+  if (!isWellFormedCredentialOverrideAnchor(anchor)) return invalid('inconsistent');
 
   let remainingMs = ttlMs;
   let pending: { grant: CredentialOverrideGrantRecord; approval: ApprovalRequest } | null = null;
   for (const grant of grants) {
     const approval = approvals.get(grant.approvalRequestId) ?? null;
     if (!approval) return invalid('expired'); // unknown age: never grantable
+    if (!isOverrideApprovalOf(approval, anchor)) return invalid('inconsistent'); // not this request's override
     if (approval.status === ApprovalStatus.REJECTED) return invalid('denied');
     if (grant.state === 'GRANTED') {
-      if (approval.status !== ApprovalStatus.APPROVED || approval.decision !== true) return invalid('superseded');
+      if (approval.status !== ApprovalStatus.APPROVED || approval.decision !== true) return invalid('inconsistent');
       const owner = anchor.ownerActorId;
       if (approval.decidedBy !== owner || grant.grantedBy !== owner) return invalid('denied');
     } else if (grant.state === 'PENDING') {
-      if (approval.status !== ApprovalStatus.PENDING) return invalid('superseded');
+      // Decided (approved) but never recorded on the anchor — e.g. a crash between decide and recordGrant.
+      if (approval.status !== ApprovalStatus.PENDING) return invalid('inconsistent');
       pending = { grant, approval };
     } else {
-      return invalid(grant.invalidationReason ?? 'superseded');
+      return invalid(grant.invalidationReason ?? 'inconsistent');
     }
     remainingMs = Math.min(remainingMs, pendingApprovalRemainingMs(approval.createdAt, at, ttlMs));
   }
   if (remainingMs <= 0) return invalid('expired');
   if (pending) {
-    if (anchor.status !== 'PENDING') return invalid('superseded');
+    if (anchor.status !== 'PENDING') return invalid('inconsistent');
     return { kind: 'awaiting-decision', grant: pending.grant, approval: pending.approval, remainingMs };
   }
-  if (anchor.status !== 'GRANTED') return invalid('superseded');
+  if (anchor.status !== 'GRANTED') return invalid('inconsistent');
   return { kind: 'ready', remainingMs };
 }
 
@@ -450,8 +466,18 @@ export type CredentialOverrideRequestResult =
        * `unbound`: the request cannot be bound (no plan/workspace/owner, or the pointer is not this request).
        * `chain-invalid`: the pointer holds an override set that is not a fully GRANTED set of this request; it
        * was invalidated (nothing raised), and `pendingApproval` is a still-PENDING request the caller closes.
+       * `anchor-failed`: the CRITICAL request was created but the anchor Task or the session pointer could not
+       * be saved. `pendingApproval` is that just-created request: the caller MUST close it as rejected through
+       * `ApprovalManager.decide`, because a pointer still on the plan-approval Task would otherwise let
+       * `StatelessApprovalFlow.findPending` surface it to the plain plan-approval vocabulary (ADR-0097 D3).
        */
-      readonly reason: 'unbound' | 'invalid-refusal' | 'too-many-targets' | 'duplicate-target' | 'chain-invalid';
+      readonly reason:
+        | 'unbound'
+        | 'invalid-refusal'
+        | 'too-many-targets'
+        | 'duplicate-target'
+        | 'chain-invalid'
+        | 'anchor-failed';
       readonly pendingApproval?: ApprovalRequest | null;
     };
 
@@ -462,6 +488,16 @@ export type CredentialOverrideGrantResult =
       readonly reason: 'not-found' | 'not-pending' | CredentialOverrideInvalidationReason;
       readonly pendingApproval?: ApprovalRequest | null;
     };
+
+/** What `invalidate` did to the session's override anchor. */
+export type CredentialOverrideInvalidationResult =
+  /** The set is (now, or already was) `INVALIDATED`: nothing was sent — the "nothing was sent" reply. */
+  | { readonly state: 'invalidated'; readonly anchor: CredentialOverrideAnchor }
+  /**
+   * The set was already consumed (its single dispatch won the per-anchor serialization, or has run): nothing was
+   * invalidated, and the caller MUST reply "already used", never "nothing was sent".
+   */
+  | { readonly state: 'consumed'; readonly anchor: CredentialOverrideAnchor };
 
 /** The current turn's facts every grant must equal at dispatch time (ADR-0097 D5 "Revalidate"). */
 export interface CredentialOverrideDispatchInput {
@@ -496,6 +532,20 @@ export type CredentialOverrideDispatchResult<T> =
 /**
  * Cross-turn credential-override mechanics behind one collaborator (ADR-0097 D4), like the other stateless flows.
  * Every method is a no-op on (or never touches) a session pointer that is not this flow's own anchor.
+ *
+ * Concurrency: every method that reads-and-writes an anchor is serialized per anchor (Personal is one process,
+ * ADR-0091), and `consumeAndDispatch` holds that serialization from its first read through the consume save. An
+ * invalidation (reset, denial, project change, supersession) therefore lands either before the consume — and the
+ * dispatch then fails and sends nothing — or after it, and reports `consumed`.
+ *
+ * Wiring obligations (OVR-4):
+ * - Before anchoring any NEWER request on the session pointer (e.g. `StatelessApprovalFlow.anchor`, which
+ *   overwrites `activeTaskId`), call `clear()` so a live older set is written `INVALIDATED{superseded}` (D7
+ *   audit) instead of being orphaned as `PENDING`/`GRANTED`.
+ * - Close every `pendingApproval` handed back (`findPending`, `requestOverride`, `recordGrant`) through
+ *   `ApprovalManager.decide`.
+ * - `consumeAndDispatch` releases the pointer right after the consume save, so later turns never keep hitting a
+ *   consumed anchor; a later send phrase then takes the stray-phrase path.
  */
 export interface CredentialOverrideFlow {
   /** Reconstruct the session's override anchor (restart-safe; invalidates and releases a no-longer-valid set). */
@@ -509,20 +559,24 @@ export interface CredentialOverrideFlow {
   /** After `ApprovalManager.decide(approved)`: mark the PENDING grant of `approvalId` GRANTED (re-verified). */
   recordGrant(session: Session, approvalId: Id): Promise<CredentialOverrideGrantResult>;
   /**
-   * Revalidate every grant, consume the whole set in one anchor save, then run `dispatch` (the single
-   * `generate()`) with the consumed grants, under a per-anchor single-flight claim held until it settles.
+   * Revalidate every grant, consume the whole set in one anchor save, release the session pointer, then run
+   * `dispatch` (the single `generate()`) with the consumed grants, under a per-anchor single-flight claim held
+   * until it settles.
    */
   consumeAndDispatch<T>(
     session: Session,
     input: CredentialOverrideDispatchInput,
     dispatch: (grants: readonly CredentialOverrideGrant[]) => Promise<T>,
   ): Promise<CredentialOverrideDispatchResult<T>>;
-  /** Invalidate every unconsumed grant and the anchor, and release the pointer. */
+  /**
+   * Invalidate every unconsumed grant and the anchor, and release the pointer. `null` when the pointer is not our
+   * anchor; `consumed` when the set was already consumed (nothing to invalidate — reply "already used").
+   */
   invalidate(
     session: Session,
     reason: CredentialOverrideInvalidationReason,
     invalidatedBy: string,
-  ): Promise<CredentialOverrideAnchor | null>;
+  ): Promise<CredentialOverrideInvalidationResult | null>;
   /** Release the pointer if it is ours; an unconsumed set is invalidated `superseded` first. */
   clear(session: Session): Promise<void>;
 }

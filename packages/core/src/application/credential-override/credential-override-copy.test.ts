@@ -15,7 +15,7 @@ import {
 const PATH = 'src/auth/user.ts';
 const EMOJI = /\p{Extended_Pictographic}/u;
 const REASONS: CredentialOverrideInvalidationReason[] = [
-  'reset', 'denied', 'expired', 'project-changed', 'changed', 'superseded',
+  'reset', 'denied', 'expired', 'project-changed', 'changed', 'superseded', 'inconsistent',
 ];
 
 const allCopy = (): string[] => [

@@ -94,13 +94,16 @@ class MemoryStore {
   readonly approvalRows = new Map<Id, ApprovalRequest>();
   session: Session;
   failTaskSave: ((task: Task) => boolean) | null = null;
+  failSessionSave: ((session: Session) => boolean) | null = null;
 
   constructor(session: Session) {
     this.session = session;
   }
 
   readonly sessions = {
+    get: async (id: Id): Promise<Session | null> => (this.session.id === id ? clone(this.session) : null),
     save: async (session: Session): Promise<Session> => {
+      if (this.failSessionSave?.(session)) throw new Error('disk full');
       this.session = clone(session);
       return session;
     },
@@ -358,32 +361,40 @@ describe('StatelessCredentialOverrideFlow — grant, consume and dispatch (ADR-0
     const row = store.taskRows.get(taskId)!;
     expect(row.status).toBe(TaskStatus.COMPLETED); // the inert row stays as the audit record
     expect(store.anchorOf(taskId).grants.every((g) => g.state === 'CONSUMED' && g.consumedAt)).toBe(true);
+    // The pointer is released after the consume save: later turns never keep hitting the consumed anchor.
+    expect(store.session.activeTaskId).toBeUndefined();
+    expect(await flow.findPending(store.session)).toBeNull();
+    expect(await flow.consumeAndDispatch(store.session, dispatchInput(), async () => 'twice')).toEqual({
+      ok: false, reason: 'not-found',
+    });
 
+    // A stale session copy still pointing at the consumed anchor is never replayed (also after a restart).
+    store.session = { ...store.session, activeTaskId: taskId };
     const again = await flow.consumeAndDispatch(store.session, dispatchInput(), async () => 'twice');
     expect(again).toEqual({ ok: false, reason: 'already-used' });
     expect(await flow.findPending(store.session)).toMatchObject({ state: 'consumed' });
-    // A restarted process reads the same terminal state.
     expect(await new StatelessCredentialOverrideFlow(store).findPending(store.session)).toMatchObject({ state: 'consumed' });
   });
 
   it('a concurrent second turn finds the single-flight claim held and gets "already used"', async () => {
     await grantedSingle();
+    const turn = store.session; // both turns hold the same pre-dispatch session copy
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     let calls = 0;
-    const first = flow.consumeAndDispatch(store.session, dispatchInput(), async () => {
+    const first = flow.consumeAndDispatch(turn, dispatchInput(), async () => {
       calls++;
       await gate;
       return 'one';
     });
-    const second = await flow.consumeAndDispatch(store.session, dispatchInput(), async () => {
+    const second = await flow.consumeAndDispatch(turn, dispatchInput(), async () => {
       calls++;
       return 'two';
     });
     expect(second).toEqual({ ok: false, reason: 'already-used' });
-    expect(await flow.findPending(store.session)).toMatchObject({ state: 'consumed' });
+    expect(await flow.findPending(turn)).toMatchObject({ state: 'consumed' });
     release();
     expect(await first).toEqual({ ok: true, value: 'one' });
     expect(calls).toBe(1);
@@ -408,7 +419,8 @@ describe('StatelessCredentialOverrideFlow — grant, consume and dispatch (ADR-0
     ).rejects.toThrow('provider timeout');
     expect(store.anchorOf(taskId).status).toBe('CONSUMED');
     const dispatch = vi.fn(async () => 'x');
-    expect(await flow.consumeAndDispatch(store.session, dispatchInput(), dispatch)).toEqual({
+    const stale = { ...store.session, activeTaskId: taskId };
+    expect(await flow.consumeAndDispatch(stale, dispatchInput(), dispatch)).toEqual({
       ok: false, reason: 'already-used',
     });
     expect(dispatch).not.toHaveBeenCalled();
@@ -480,7 +492,7 @@ describe('StatelessCredentialOverrideFlow — grant, consume and dispatch (ADR-0
     const raised = await raise();
     if (!raised.ok) throw new Error('raise');
     const result = await flow.recordGrant(store.session, raised.approval.id);
-    expect(result).toMatchObject({ ok: false, reason: 'superseded', pendingApproval: { id: raised.approval.id } });
+    expect(result).toMatchObject({ ok: false, reason: 'inconsistent', pendingApproval: { id: raised.approval.id } });
     expect(await flow.recordGrant(store.session, raised.approval.id)).toEqual({ ok: false, reason: 'not-found' });
   });
 
@@ -616,8 +628,10 @@ describe('StatelessCredentialOverrideFlow — reconstruction and invalidation', 
     await grantedSingle();
     await raise(refusalOf('src/b.ts', ASSIGN_B, 1, 1));
     const taskId = store.session.activeTaskId!;
-    const anchor = await flow.invalidate(store.session, 'reset', OWNER);
-    expect(anchor).toMatchObject({ status: 'INVALIDATED', invalidationReason: 'reset', invalidatedBy: OWNER });
+    const result = await flow.invalidate(store.session, 'reset', OWNER);
+    expect(result).toMatchObject({
+      state: 'invalidated', anchor: { status: 'INVALIDATED', invalidationReason: 'reset', invalidatedBy: OWNER },
+    });
     expect(store.anchorOf(taskId).grants.map((g) => [g.state, g.invalidationReason])).toEqual([
       ['INVALIDATED', 'reset'],
       ['INVALIDATED', 'reset'],
@@ -655,6 +669,154 @@ describe('StatelessCredentialOverrideFlow — reconstruction and invalidation', 
     await flow.clear(store.session);
     expect(store.anchorOf(taskId).status).toBe('CONSUMED');
     expect(store.session.activeTaskId).toBeUndefined();
+  });
+});
+
+/** A reader whose reads block until `open()` — holds a dispatch between its first read and its consume save. */
+const gatedReader = () => {
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  return {
+    open,
+    reading,
+    reader: {
+      read: async (ref: WorkspaceRef, path: string): Promise<string> => {
+        entered();
+        await gate;
+        return reader.read(ref, path);
+      },
+    },
+  };
+};
+
+describe('StatelessCredentialOverrideFlow — concurrency and partial failures', () => {
+  it('a reset landing mid-dispatch is never overwritten: it waits for the consume and reports "consumed"', async () => {
+    const { taskId } = await grantedSingle();
+    const turn = store.session;
+    const gated = gatedReader();
+    const dispatch = vi.fn(async () => 'sent');
+    const dispatching = flow.consumeAndDispatch(turn, dispatchInput({ reader: gated.reader }), dispatch);
+    await gated.reading; // the dispatch has read the anchor and is re-reading content
+    let resetSettled = false;
+    const resetting = flow.invalidate(turn, 'reset', OWNER).then((r) => {
+      resetSettled = true;
+      return r;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resetSettled).toBe(false); // serialized behind the in-flight revalidate-and-consume
+    expect(store.anchorOf(taskId).status).toBe('GRANTED'); // the reset did not write a row the dispatch then overwrites
+    gated.open();
+    expect(await dispatching).toEqual({ ok: true, value: 'sent' });
+    // The reset never claims "nothing was sent": the set was already consumed.
+    expect(await resetting).toMatchObject({ state: 'consumed', anchor: { status: 'CONSUMED' } });
+    expect(store.anchorOf(taskId).status).toBe('CONSUMED');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a reset queued before the dispatch wins: the set is INVALIDATED{reset} and nothing is sent', async () => {
+    const { taskId } = await grantedSingle();
+    const turn = store.session;
+    const resetting = flow.invalidate(turn, 'reset', OWNER);
+    const dispatch = vi.fn(async () => 'sent');
+    const dispatching = flow.consumeAndDispatch(turn, dispatchInput(), dispatch);
+    expect(await resetting).toMatchObject({ state: 'invalidated', anchor: { status: 'INVALIDATED', invalidationReason: 'reset' } });
+    expect(await dispatching).toEqual({ ok: false, reason: 'reset' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(store.anchorOf(taskId)).toMatchObject({ status: 'INVALIDATED', invalidationReason: 'reset' });
+  });
+
+  it('a clear or a new raise mid-dispatch also waits and never re-opens the consumed set', async () => {
+    const { taskId } = await grantedSingle();
+    const turn = store.session;
+    const gated = gatedReader();
+    const dispatching = flow.consumeAndDispatch(turn, dispatchInput({ reader: gated.reader }), async () => 'sent');
+    await gated.reading;
+    const clearing = flow.clear(turn);
+    const raising = raise(refusalOf('src/b.ts', ASSIGN_B, 1, 1));
+    gated.open();
+    expect(await dispatching).toEqual({ ok: true, value: 'sent' });
+    await clearing;
+    expect(await raising).toMatchObject({ ok: false });
+    expect(store.anchorOf(taskId).status).toBe('CONSUMED');
+    expect(store.approvalRows.size).toBe(1); // no CRITICAL request raised against the consumed set
+  });
+
+  it('a pointer moved outside the flow mid-dispatch sends nothing and leaves the new pointer alone', async () => {
+    for (const moved of [undefined, 'newer-anchor']) {
+      store.session = { ...store.session, activeTaskId: requestTask.id };
+      const { taskId } = await grantedSingle();
+      const turn = store.session;
+      const gated = gatedReader();
+      const dispatch = vi.fn(async () => 'sent');
+      const dispatching = flow.consumeAndDispatch(turn, dispatchInput({ reader: gated.reader }), dispatch);
+      await gated.reading;
+      store.session = { ...store.session, activeTaskId: moved }; // e.g. a runtime reset that bypasses the flow
+      gated.open();
+      expect(await dispatching).toEqual({ ok: false, reason: 'superseded' });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(store.anchorOf(taskId)).toMatchObject({ status: 'INVALIDATED', invalidationReason: 'superseded' });
+      expect(store.session.activeTaskId).toBe(moved);
+    }
+  });
+
+  it('a row rewritten outside the flow mid-dispatch is never overwritten with CONSUMED', async () => {
+    const { taskId } = await grantedSingle();
+    const turn = store.session;
+    const gated = gatedReader();
+    const dispatch = vi.fn(async () => 'sent');
+    const dispatching = flow.consumeAndDispatch(turn, dispatchInput({ reader: gated.reader }), dispatch);
+    await gated.reading;
+    const row = store.taskRows.get(taskId)!;
+    const anchor = store.anchorOf(taskId);
+    store.taskRows.set(taskId, {
+      ...row,
+      updatedAt: '2026-10-02T00:00:01.000Z',
+      metadata: { [ANCHOR_KEY]: { ...anchor, status: 'INVALIDATED', invalidationReason: 'reset', updatedAt: '2026-10-02T00:00:01.000Z' } },
+    });
+    gated.open();
+    expect(await dispatching).toEqual({ ok: false, reason: 'reset' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(store.anchorOf(taskId)).toMatchObject({ status: 'INVALIDATED', invalidationReason: 'reset' });
+  });
+
+  it('a failed anchor save hands the just-created CRITICAL request back so the caller can close it', async () => {
+    const approvalFlow = new StatelessApprovalFlow(store);
+    store.failTaskSave = () => true;
+    const result = await raise();
+    expect(result).toMatchObject({ ok: false, reason: 'anchor-failed', pendingApproval: { riskLevel: RiskLevel.CRITICAL } });
+    if (result.ok || !result.pendingApproval) throw new Error('expected anchor-failed');
+    expect(store.session.activeTaskId).toBe(requestTask.id);
+    // Left PENDING, the plan-approval flow WOULD surface it to the plain "승인" vocabulary ...
+    expect(await approvalFlow.findPending(store.session)).toMatchObject({ id: result.pendingApproval.id });
+    // ... so the caller closes it as rejected, and nothing is left for the plan path.
+    await decide(result.pendingApproval.id, false);
+    expect(await approvalFlow.findPending(store.session)).toBeNull();
+  });
+
+  it('a failed pointer move invalidates the unreachable anchor row and hands the request back', async () => {
+    store.failSessionSave = () => true;
+    const result = await raise();
+    expect(result).toMatchObject({ ok: false, reason: 'anchor-failed', pendingApproval: { riskLevel: RiskLevel.CRITICAL } });
+    expect(store.session.activeTaskId).toBe(requestTask.id);
+    const rows = [...store.taskRows.values()].filter((t) => t.id !== requestTask.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.metadata?.[ANCHOR_KEY]).toMatchObject({ status: 'INVALIDATED', invalidationReason: 'inconsistent' });
+  });
+
+  it('a failed extension save keeps the GRANTED set and hands the new request back', async () => {
+    const { taskId } = await grantedSingle();
+    store.failTaskSave = () => true;
+    const result = await raise(refusalOf('src/b.ts', ASSIGN_B, 1, 1));
+    expect(result).toMatchObject({ ok: false, reason: 'anchor-failed', pendingApproval: { riskLevel: RiskLevel.CRITICAL } });
+    expect(store.anchorOf(taskId).status).toBe('GRANTED');
+    expect(store.anchorOf(taskId).grants).toHaveLength(1);
   });
 });
 

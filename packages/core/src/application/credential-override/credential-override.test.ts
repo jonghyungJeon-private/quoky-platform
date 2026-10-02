@@ -175,7 +175,7 @@ describe('assessCredentialOverrideAnchor — restart reconstruction (ADR-0097 D5
       assessCredentialOverrideAnchor(anchor, mapOf(approvalOf({ status: ApprovalStatus.REJECTED, decision: false })), at(1)),
     ).toMatchObject({ kind: 'invalid', reason: 'denied' });
     expect(assessCredentialOverrideAnchor(anchor, mapOf(approvalOf()), at(1))).toMatchObject({
-      kind: 'invalid', reason: 'superseded',
+      kind: 'invalid', reason: 'inconsistent',
     });
   });
 
@@ -195,7 +195,27 @@ describe('assessCredentialOverrideAnchor — restart reconstruction (ADR-0097 D5
 
   it('invalidates a PENDING grant whose request was decided outside the anchor record', () => {
     expect(assessCredentialOverrideAnchor(anchorOf(), mapOf(approvedBy('appr-1')), at(1))).toMatchObject({
-      kind: 'invalid', reason: 'superseded',
+      kind: 'invalid', reason: 'inconsistent',
+    });
+  });
+
+  it('never honors a request that is not this anchor\'s own CRITICAL override, nor hands a foreign one back', () => {
+    const granted = anchorOf({
+      status: 'GRANTED',
+      grants: [grantOf({ state: 'GRANTED', grantedBy: 'owner-1', grantedAt: T0 })],
+    });
+    const low = approvalOf({ status: ApprovalStatus.APPROVED, decision: true, decidedBy: 'owner-1', riskLevel: RiskLevel.LOW });
+    const otherPlan = approvalOf({
+      status: ApprovalStatus.APPROVED, decision: true, decidedBy: 'owner-1', executionPlanRef: { id: 'plan-2', goal: 'g' },
+    });
+    for (const foreign of [low, otherPlan]) {
+      expect(assessCredentialOverrideAnchor(granted, mapOf(foreign), at(1))).toMatchObject({
+        kind: 'invalid', reason: 'inconsistent',
+      });
+    }
+    const foreignPending = approvalOf({ riskLevel: RiskLevel.LOW });
+    expect(assessCredentialOverrideAnchor(anchorOf(), mapOf(foreignPending), at(1))).toEqual({
+      kind: 'invalid', reason: 'inconsistent', pendingApproval: null,
     });
   });
 
@@ -250,7 +270,7 @@ describe('assessCredentialOverrideAnchor — restart reconstruction (ADR-0097 D5
     for (const anchor of malformed) {
       expect(isWellFormedCredentialOverrideAnchor(anchor)).toBe(false);
       expect(assessCredentialOverrideAnchor(anchor, mapOf(approvalOf()), at(1))).toMatchObject({
-        kind: 'invalid', reason: 'superseded',
+        kind: 'invalid', reason: 'inconsistent',
       });
     }
     expect(isWellFormedCredentialOverrideAnchor(anchorOf())).toBe(true);

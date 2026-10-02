@@ -81,6 +81,7 @@ export function credentialOverrideInvalidated(reason: CredentialOverrideInvalida
     'project-changed': '활성 프로젝트나 작업 공간이 바뀌어서 파일 전송 확인을 취소했어요.',
     changed: '확인을 요청한 뒤 파일 내용이 바뀌어서 파일 전송 확인을 취소했어요.',
     superseded: '더 새로운 요청이 있어서 이전 파일 전송 확인을 취소했어요.',
+    inconsistent: '파일 전송 확인 기록이 중간에 끊겼거나 맞지 않아서 확인을 취소했어요.',
   };
   return `${why[reason]} 아무 파일도 AI에게 보내지 않았어요. ${FRESH_REQUEST}`;
 }

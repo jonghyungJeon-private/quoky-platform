@@ -35,6 +35,7 @@ export type {
   CredentialOverrideGrantResult,
   CredentialOverrideGrantState,
   CredentialOverrideInvalidationReason,
+  CredentialOverrideInvalidationResult,
   CredentialOverrideLookup,
   CredentialOverrideRefusal,
   CredentialOverrideRequestInput,
