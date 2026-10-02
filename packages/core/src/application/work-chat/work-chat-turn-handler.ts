@@ -105,8 +105,11 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         handlerId: this.id,
         errorName: error instanceof Error ? error.name : 'unknown',
       });
+      // A hint-only command is not a mutation request: on failure the turn simply falls through.
+      if (command.kind === 'todo.hint' || command.kind === 'todo.status') return null;
       return { reply: { context: ctx.message.context, text: backstopText(command) }, status: 'FAILED' };
     }
+    if (outcome.kind === 'none') return null;
     if (outcome.kind === 'reply') return { reply: { context: ctx.message.context, text: outcome.text } };
     // Only lookups summarise, and only with summaries enabled; anything else gets the deterministic list.
     if (!this.deps.summaryEnabled || this.deps.mode !== 'lookup') {

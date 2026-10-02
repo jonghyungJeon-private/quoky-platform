@@ -43,6 +43,7 @@ import {
   renderTodoAmbiguous,
   renderTodoCanceled,
   renderTodoCompleted,
+  renderTodoCompletionHint,
   renderTodoCredentialRefused,
   renderTodoEmptyTitle,
   renderTodoFailure,
@@ -50,15 +51,19 @@ import {
   renderTodoLinked,
   renderTodoNotActive,
   renderTodoNotFound,
+  renderTodoStatusAnswer,
   renderTodoTitleTooLong,
   renderTodoTooManyRefs,
   renderWorkChatUsage,
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
+import { parseReminderMessage } from '../reminders/reminder-grammar';
 
 /** What the runtime presents for one work-chat command (ADR-0100 D8/D10). */
 export type WorkChatOutcome =
   | { readonly kind: 'reply'; readonly text: string }
+  /** The command did not apply (e.g. a completion hint that names no single open to-do): the turn falls through. */
+  | { readonly kind: 'none' }
   | {
       readonly kind: 'summarize';
       readonly readout: ExternalWorkReadout;
@@ -81,7 +86,7 @@ export interface WorkChatServiceDeps {
   readonly workSurface: { forActor(actor: Actor): Promise<WorkSurface> };
   readonly connectors: { list(): readonly ConnectorProvider[] };
   /** The only to-do state owner; to-do commands never touch storage directly. */
-  readonly work: Pick<WorkManager, 'create' | 'listActiveByActor' | 'transition' | 'correlate'>;
+  readonly work: Pick<WorkManager, 'create' | 'listByActor' | 'listActiveByActor' | 'transition' | 'correlate'>;
 }
 
 export interface WorkChatServiceOptions {
@@ -132,6 +137,39 @@ function compareTodos(left: WorkItem, right: WorkItem): number {
   );
 }
 
+/** Letters and digits only, NFC lower-cased: trivial whitespace/punctuation/quote differences do not matter. */
+function hintKey(text: string): string {
+  return text.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Exactly one open to-do named by an exact (hint-normalised) title or a listed number; anything else is `null`. */
+function resolveHintTarget(todos: readonly WorkItem[], target: WorkChatTarget): { no: number; item: WorkItem } | null {
+  if ('index' in target) {
+    const item = todos[target.index - 1];
+    return item ? { no: target.index, item } : null;
+  }
+  const wanted = hintKey(target.text);
+  if (wanted.length === 0) return null;
+  const matches = todos
+    .map((item, index) => ({ no: index + 1, item }))
+    .filter(({ item }) => item.title !== undefined && hintKey(item.title) === wanted);
+  return matches.length === 1 ? (matches[0] as { no: number; item: WorkItem }) : null;
+}
+
+/** A fixed instant: only "is this reminder-shaped at all" matters, never the resolved time. */
+const REMINDER_SHAPE_PROBE_NOW = '2026-01-01T00:00:00.000Z';
+
+/** Whether a to-do title contains a reminder-shaped phrase (reuses the ADR-0101 grammar; no duplicate rules). */
+function looksReminderShaped(title: string): boolean {
+  try {
+    const parsed = parseReminderMessage(title, { now: REMINDER_SHAPE_PROBE_NOW });
+    if (parsed.kind === 'CREATE') return true;
+    return parsed.kind === 'CLARIFY' && parsed.reason !== 'EMPTY_BODY' && parsed.reason !== 'MISSING_TIME';
+  } catch {
+    return false;
+  }
+}
+
 type Resolution =
   | { readonly kind: 'found'; readonly no: number; readonly item: WorkItem }
   | { readonly kind: 'ambiguous'; readonly candidates: ReadonlyArray<{ no: number; item: WorkItem }> }
@@ -174,6 +212,8 @@ export class WorkChatService implements WorkDesk {
   }
 
   async handle(command: WorkChatCommand, actor: Actor): Promise<WorkChatOutcome> {
+    if (command.kind === 'todo.hint') return this.completionHint(command, actor);
+    if (command.kind === 'todo.status') return this.statusAnswer(command, actor);
     try {
       switch (command.kind) {
         case 'todo.add':
@@ -196,6 +236,42 @@ export class WorkChatService implements WorkDesk {
     } catch (error) {
       if (command.kind === 'todo.list') return reply(renderTodoListFailure());
       return reply(isTodoCommand(command) ? this.todoFailureText(error) : renderLookupFailure(lookupSource(command), 'UNAVAILABLE'));
+    }
+  }
+
+  /**
+   * Read-only status question (QA-V2-W7-05): exactly one of the actor's to-dos (open or closed) by exact normalised
+   * title, or an open to-do by list number. Anything else is `none` and the turn falls through unchanged.
+   */
+  private async statusAnswer(command: Extract<WorkChatCommand, { kind: 'todo.status' }>, actor: Actor): Promise<WorkChatOutcome> {
+    try {
+      const all = [...(await this.deps.work.listByActor(actor.id))].sort(compareTodos);
+      const active = all.filter((item) => item.status === WorkItemStatus.ACTIVE);
+      const target = command.target;
+      let item: WorkItem | undefined;
+      if ('index' in target) {
+        item = active[target.index - 1];
+      } else {
+        const wanted = hintKey(target.text);
+        const matches = wanted.length === 0 ? [] : all.filter((candidate) => candidate.title !== undefined && hintKey(candidate.title) === wanted);
+        if (matches.length === 1) item = matches[0];
+      }
+      if (!item) return { kind: 'none' };
+      const no = active.indexOf(item) + 1;
+      return reply(renderTodoStatusAnswer(item, no));
+    } catch {
+      return { kind: 'none' };
+    }
+  }
+
+  /** Read-only: lists the actor's open to-dos, never transitions, never calls a provider. Any doubt means `none`. */
+  private async completionHint(command: Extract<WorkChatCommand, { kind: 'todo.hint' }>, actor: Actor): Promise<WorkChatOutcome> {
+    try {
+      const resolved = resolveHintTarget(await this.activeTodos(actor), command.target);
+      if (!resolved) return { kind: 'none' };
+      return reply(renderTodoCompletionHint(command.action, resolved.no, resolved.item));
+    } catch {
+      return { kind: 'none' };
     }
   }
 
@@ -226,7 +302,7 @@ export class WorkChatService implements WorkDesk {
         resourceRefs: refs,
         origin: 'conversation',
       });
-      return renderTodoAdded(item);
+      return renderTodoAdded(item, looksReminderShaped(title));
     } catch (error) {
       if (error instanceof WorkItemCorrelationError && error.code === 'TOO_MANY_REFS') {
         return renderTodoTooManyRefs(WORK_ITEM_MAX_RESOURCE_REFS);

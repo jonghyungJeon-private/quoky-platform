@@ -102,6 +102,7 @@ import { createProductionContextBuilder } from './context-builder-provider';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
 import { PersonalGitGuard } from './personal-git-guard';
+import { PersonalHostingGuard } from './personal-hosting-guard';
 import { createProductionRuntimeProviderRoutingActivation } from './provider-routing/provider-routing-activation';
 import { toolManagerProvider } from './tool-manager-provider';
 import { continuationLifecycleProvider } from './continuation-lifecycle-provider';
@@ -212,13 +213,22 @@ if (hostingAuthMode === 'github-app' && repositoryIdentity && config.githubApp) 
 }
 // ADR-0094: Personal-edition git safety, OUTERMOST so a refusal (remote off, commit on main/master) happens
 // before any git process or the GitHub App decorator could mint a token. Wraps both composed branches above.
-gitProvider = new PersonalGitGuard(gitProvider, { remoteEnabled: config.git.remoteEnabled });
+// ADR-0099 D5: the merge chain (main sync, post-merge local cleanup) additionally needs QUOKY_GIT_MERGE_ENABLED.
+gitProvider = new PersonalGitGuard(gitProvider, {
+  remoteEnabled: config.git.remoteEnabled,
+  mergeEnabled: config.git.mergeEnabled,
+});
 // ADR-0094: with QUOKY_GIT_REMOTE_ENABLED=false the REST remote mutations (PR create, merge, remote branch
 // delete) must be unreachable too, including from a stale apply-preview anchor (PR_CREATED / MERGE_APPROVED)
 // in an older database. No manager means the runtime replies "not configured" before any token is minted.
+// ADR-0099 D5: with remote on, the manager is wrapped in PersonalHostingGuard — PR create and PR status delegate;
+// PR merge and remote branch delete are refused pre-mutation unless QUOKY_GIT_MERGE_ENABLED=true.
 const repositoryHosting = {
   identity: repositoryIdentity,
-  manager: config.git.remoteEnabled ? repositoryHostingManager : undefined,
+  manager:
+    config.git.remoteEnabled && repositoryHostingManager
+      ? new PersonalHostingGuard(repositoryHostingManager, { mergeEnabled: config.git.mergeEnabled })
+      : undefined,
 };
 
 /**
@@ -643,7 +653,7 @@ const application: Provider[] = [
         // ADR-0097 (deps baseline 33 → 34): the credential-guard override flow.
         credentialOverrideFlow,
         logger: coreLogger,
-      }, { gitRemoteEnabled: config.git.remoteEnabled });
+      }, { gitRemoteEnabled: config.git.remoteEnabled, gitMergeEnabled: config.git.mergeEnabled });
     },
     inject: [
       STORAGE_PROVIDER,

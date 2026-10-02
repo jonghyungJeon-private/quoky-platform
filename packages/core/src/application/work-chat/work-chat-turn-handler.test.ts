@@ -265,3 +265,33 @@ describe('appendWorkSummaryFooter', () => {
     expect(appendWorkSummaryFooter('요약', '   ')).toBe('요약');
   });
 });
+
+describe('WorkChatTurnHandler — completion hint (QA-V2-W7-03)', () => {
+  it('replies with the desk hint at order 100, with no provider and no mutation by the handler', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: 'HINT' }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'mutation', summaryEnabled: true, logger });
+    expect(await handler.handle(ctxOf('보고서 초안 쓰기 완료'))).toEqual({ reply: { context: CTX, text: 'HINT' } });
+    expect(commands).toEqual([{ kind: 'todo.hint', action: 'complete', target: { text: '보고서 초안 쓰기' } }]);
+  });
+
+  it('is not claimed by the lookup handler', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: 'HINT' }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    expect(await handler.handle(ctxOf('보고서 초안 쓰기 완료'))).toBeNull();
+    expect(commands).toEqual([]);
+  });
+
+  it('falls through when the desk reports no single open to-do', async () => {
+    const { desk } = fakeDesk(() => ({ kind: 'none' }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'mutation', summaryEnabled: true, logger });
+    expect(await handler.handle(ctxOf('점심 먹기 완료'))).toBeNull();
+  });
+
+  it('falls through (no failure reply) when the desk throws on a hint', async () => {
+    const { desk } = fakeDesk(() => {
+      throw new Error('boom');
+    });
+    const handler = new WorkChatTurnHandler({ desk, mode: 'mutation', summaryEnabled: true, logger });
+    expect(await handler.handle(ctxOf('점심 먹기 완료'))).toBeNull();
+  });
+});

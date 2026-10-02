@@ -17,6 +17,7 @@ import {
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
+import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
 import {
@@ -50,6 +51,7 @@ import type {
   ApprovalRequest,
   Artifact,
   CodeGeneration,
+  CodeGenerationDispatch,
   CodeGenerationRef,
   CodeProposal,
   CodeProposalRef,
@@ -165,6 +167,14 @@ import {
   verifyAppliedChangeSet,
 } from './code-work/code-change-set';
 import type { CodeChangeTargetCollection } from './code-work/code-change-set';
+import {
+  type PushMode,
+  type PushTargetRefusal,
+  checkPushHead,
+  parsePushUpstreamRef,
+  resolvePushTarget,
+  verifyApprovedPushTarget,
+} from './code-work/push-target-resolution';
 import type {
   CancelToken,
   ExecutionOutcome,
@@ -455,8 +465,13 @@ export interface ApplyPreviewAnchor {
   pushRemote?: string;
   /** Resolved push branch name, derived from the upstream (Sprint 2z) — e.g. "main" (may contain "/"). */
   pushBranch?: string;
-  /** Full upstream tracking ref the push targets (Sprint 2z) — e.g. "origin/main". */
+  /** Full upstream tracking ref the push targets (Sprint 2z) — e.g. "origin/main". For a `new-remote-branch`
+   *  push (ADR-0099 D5) this is the synthesized `origin/<branch>` the first push creates. */
   pushUpstreamRef?: string;
+  /** How the push target was resolved (ADR-0099 D5): `'upstream'` (the branch tracks an upstream) or
+   *  `'new-remote-branch'` (no upstream; the first push creates the branch on `origin`). A missing value — every
+   *  anchor written before ADR-0099 — is treated as `'upstream'`. Set with the other push fields; cleared with them. */
+  pushMode?: PushMode;
   /** Set once `status` becomes `GIT_PUSHED` (Sprint 3a, ADR-0048) — the commit sha actually pushed
    *  (== the approved `pushCommitHash`). Pushed to the approved upstream only; NOT PR-created/deployed. */
   pushedCommitHash?: string;
@@ -842,6 +857,13 @@ export interface ConversationRuntimeOptions {
    * unsupported push request (QA-020); the composition-root git guard remains the enforcement point.
    */
   readonly gitRemoteEnabled?: boolean;
+  /**
+   * Whether the merge chain (PR merge, main sync, post-merge local and remote branch cleanup) is enabled
+   * (`QUOKY_GIT_MERGE_ENABLED`, default false; ADR-0099 D5). Display-only, like `gitRemoteEnabled`: when false a
+   * merge request at `PR_CREATED` gets the fixed "merge disabled" reply BEFORE any merge approval is created. The
+   * composition-root `PersonalHostingGuard` / `PersonalGitGuard` remain the enforcement points.
+   */
+  readonly gitMergeEnabled?: boolean;
 }
 
 /**
@@ -1016,6 +1038,18 @@ const PUSH_WORDS =
 const PUSH_FORBIDDEN_COMPANION =
   /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
 
+/** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
+const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
+  'PR_APPROVED',
+  'PR_CREATED',
+  'MERGE_APPROVED',
+  'PR_MERGED',
+  'MAIN_SYNCED',
+  'BRANCH_CLEANED',
+  'REMOTE_BRANCH_CLEANUP_APPROVED',
+  'REMOTE_BRANCH_CLEANED',
+]);
+
 /** Branches Personal v1 never commits on (ADR-0094; QA-022 up-front refusal at commit-approval planning). */
 const PROTECTED_COMMIT_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
 
@@ -1176,16 +1210,8 @@ function boundGitRef(ref: string): string {
  * `feature/x`). Read-only; no git call.
  */
 function parsePushUpstream(upstream: string): { remote: string; branch: string } | null {
-  if (typeof upstream !== 'string') return null;
-  const u = upstream.trim();
-  if (u.length === 0 || u.length > MAX_GIT_REF_DISPLAY) return null;
-  if ([...u].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return null; // no control chars
-  const slash = u.indexOf('/');
-  if (slash <= 0 || slash === u.length - 1) return null; // must be <remote>/<branch>, both non-empty
-  const remote = u.slice(0, slash);
-  const branch = u.slice(slash + 1);
-  if (/\s/.test(remote)) return null;
-  return { remote, branch };
+  // ADR-0099 D5: one parser for approval, execution and the PR step (the pure push-target resolver's).
+  return parsePushUpstreamRef(upstream);
 }
 
 /**
@@ -1199,15 +1225,28 @@ function buildPushApprovalReason(input: {
   remote: string;
   branch: string;
   upstream: string;
-  ahead: number;
+  ahead?: number;
+  mode?: PushMode;
 }): string {
+  const target =
+    input.mode === 'new-remote-branch'
+      ? [
+          'mode: new remote branch (the branch has no upstream; the first push creates it on the remote)',
+          `remote: ${boundGitRef(input.remote)}`,
+          `branch: ${boundGitRef(input.branch)}`,
+          `creates: ${boundGitRef(input.upstream)}`,
+          'no force push; no upstream (tracking) configuration; no fetch',
+        ]
+      : [
+          `remote: ${boundGitRef(input.remote)}`,
+          `branch: ${boundGitRef(input.branch)}`,
+          `upstream: ${boundGitRef(input.upstream)}`,
+          `ahead: ${input.ahead ?? 0}`,
+        ];
   return [
     'operation: git push approval planning',
     `commit: ${input.commitHash}`,
-    `remote: ${boundGitRef(input.remote)}`,
-    `branch: ${boundGitRef(input.branch)}`,
-    `upstream: ${boundGitRef(input.upstream)}`,
-    `ahead: ${input.ahead}`,
+    ...target,
     'risk: CRITICAL',
     'no git push has been performed',
     'this approval records permission only; actual git push is NOT executed in Sprint 2z — future execution requires a separate step',
@@ -1452,6 +1491,7 @@ export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: strin
 export class ConversationRuntime {
   private readonly clock: () => IsoTimestamp;
   private readonly gitRemoteEnabled: boolean;
+  private readonly gitMergeEnabled: boolean;
   /** The registered turn handlers per stage, each in `(order, id)` order (ADR-0096 D2). */
   private readonly turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
   /** The handlers' contributed help lines in registry order (ADR-0096 D6); bounded by the composer. */
@@ -1463,6 +1503,7 @@ export class ConversationRuntime {
   ) {
     this.clock = options.clock ?? now;
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
+    this.gitMergeEnabled = options.gitMergeEnabled ?? false;
     const registry = ConversationRuntime.orderTurnHandlers(deps.turnHandlers ?? []);
     this.turnHandlersByStage = {
       control: registry.filter((h) => h.stage === 'control'),
@@ -1908,7 +1949,11 @@ export class ConversationRuntime {
     if (pendingScope) {
       // QA-015: an explicit project-registration request is a new request, not a reply naming the file to change.
       // The clarification is next-turn-only, so it is consumed here and the turn is routed normally.
-      if (!detectProjectRegistration(message.text)) {
+      // ADR-0099 D1 (QA follow-up): a resend of the request WITH explicit create wording and a named path is a
+      // fresh request too — the bare-path recovery only routes existing files, so it would answer the same
+      // "not found" reply again (dead end). Routed normally, the create wording is honored and its own text is the
+      // instruction.
+      if (!detectProjectRegistration(message.text) && !ConversationRuntime.isFreshCreateResend(message.text)) {
         return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
       }
       await this.deps.scopeClarificationFlow.clear(session);
@@ -2026,6 +2071,20 @@ export class ConversationRuntime {
       if (DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePushPrDeployUnsupportedTurn(message, session);
       if (ConversationRuntime.interpretPushIntent(message.text) === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }
+    // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
+    // to chat (a free-text model reply could fabricate or advise e.g. `git push -f`). A push+forbidden companion
+    // (force/merge/deploy/PR/…) → the unsupported companion reply; any other push phrase → already pushed. Read-only
+    // PR/merge status phrases keep priority; no git/hosting call is ever made here.
+    if (
+      applyAnchor &&
+      POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status) &&
+      !ConversationRuntime.interpretPrStatusIntent(message.text) &&
+      !ConversationRuntime.interpretMergeStatusIntent(message.text)
+    ) {
+      const pushKind = ConversationRuntime.interpretPushIntent(message.text);
+      if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
+      if (pushKind === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
+    }
     // (Sprint 3b, ADR-0049) already PR-approved — a PR+forbidden → unsupported companion (before create, CA #9);
     // a PR-creation phrase → already approved (not created, Q11); a deploy-only phrase → state-specific reply.
     if (applyAnchor?.status === 'PR_APPROVED') {
@@ -2046,6 +2105,11 @@ export class ConversationRuntime {
       // (Sprint 3f, ADR-0056) an explicit merge approval / merge phrase → CRITICAL merge-approval halt (records
       // permission only; NO merge). Checked before create/companion so "머지해줘" plans an approval, not a companion.
       if (ConversationRuntime.interpretMergeIntent(message.text) === 'merge') {
+        // ADR-0099 D5: with QUOKY_GIT_MERGE_ENABLED=false the merge chain is off — the fixed reply comes BEFORE any
+        // merge ApprovalRequest or MERGE_APPROVAL_PENDING anchor (the hosting guard also refuses the merge call).
+        if (!this.gitMergeEnabled) {
+          return this.respondComposed(message, session, this.deps.composer.composeMergeDisabled(message.context));
+        }
         return this.handleMergeApprovalTurn(message, session, actor, applyAnchor);
       }
       const prKind = ConversationRuntime.interpretPrIntent(message.text);
@@ -2549,6 +2613,7 @@ export class ConversationRuntime {
           pushRemote: undefined,
           pushBranch: undefined,
           pushUpstreamRef: undefined,
+          pushMode: undefined,
         };
       case 'PR_APPROVAL_PENDING':
         return {
@@ -3080,6 +3145,25 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     const { planRef, workspaceRef, targetFiles, contextFiles } = prepared;
     const grants = override?.grants ?? [];
+    // QA follow-up (ADR-0097 D7): once a granted dispatch has reached the provider, every later failure must say
+    // the confirmed content WAS sent once but no proposal came of it (a fresh request and a fresh override are
+    // needed) — never the plain "could not generate" copy that reads as if nothing left the machine.
+    const afterSendFailure = (reply: OutboundMessage): OutboundMessage =>
+      override
+        ? this.deps.composer.composeCredentialOverrideSentNoProposal(message.context, grants.map((g) => g.path))
+        : reply;
+    // A failed generation reports truthfully how far the granted content got (ADR-0097 truthful copy): nothing
+    // sent (failure before the provider was invoked), sent (the provider returned) or uncertain (the provider
+    // call itself threw/timed out). The override was consumed in every case — it is never replayed.
+    const generationFailure = (dispatch: CodeGenerationDispatch): OutboundMessage => {
+      const failed = this.deps.composer.composeCodeGenerationPreviewFailed(message.context);
+      if (!override) return failed;
+      return dispatch === 'sent'
+        ? afterSendFailure(failed)
+        : this.deps.composer.composeCredentialOverrideGenerationFailed(
+          message.context, grants.map((g) => g.path), dispatch,
+        );
+    };
     if (override) {
       // Synchronous — nothing below may await before generate() is invoked.
       const denied = sameDispatchGrants(override.grants, override.preparedGrants)
@@ -3103,27 +3187,28 @@ export class ConversationRuntime {
         targetFiles,
         ...(contextFiles.length ? { contextFiles } : {}),
       });
-    } catch {
-      this.logPreviewFailure('code-generation-exception', message, session, request);
-      return this.failComposed(
-        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
-      );
+    } catch (err) {
+      // An exception raised before provider.execute() was invoked is untagged → nothing was sent.
+      const dispatch = codeGenerationDispatchOfError(err);
+      this.logPreviewFailure('code-generation-exception', message, session, request, { dispatch });
+      return this.failComposed(message, session, generationFailure(dispatch), outcome);
     }
     if (generation.status !== CodeGenerationStatus.SUCCEEDED) {
+      // A recorded failure without a transmission state cannot be claimed as "not sent".
+      const dispatch = generation.dispatch ?? 'uncertain';
       this.logPreviewFailure('code-generation-not-succeeded', message, session, request, {
         codeGenerationId: generation.id,
+        dispatch,
         ...(generation.failureKind ? { failureKind: String(generation.failureKind) } : {}),
       });
-      return this.failComposed(
-        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
-      );
+      return this.failComposed(message, session, generationFailure(dispatch), outcome);
     }
 
     const proposal = await this.deps.codeGeneration.getProposal(generation);
     if (!proposal) {
       this.logPreviewFailure('missing-proposal', message, session, request, { codeGenerationId: generation.id });
       return this.failComposed(
-        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+        message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
       );
     }
 
@@ -3139,7 +3224,7 @@ export class ConversationRuntime {
       return this.failComposed(
         message,
         session,
-        this.deps.composer.composeCodeGenerationPreviewNoValidChange(message.context, outOfScopeWarnings),
+        afterSendFailure(this.deps.composer.composeCodeGenerationPreviewNoValidChange(message.context, outOfScopeWarnings)),
         outcome,
       );
     }
@@ -3155,7 +3240,7 @@ export class ConversationRuntime {
         proposalId: proposal.id,
       });
       return this.failComposed(
-        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+        message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
       );
     }
 
@@ -3166,7 +3251,7 @@ export class ConversationRuntime {
         proposalId: proposal.id,
       });
       return this.failComposed(
-        message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+        message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
       );
     }
 
@@ -3191,7 +3276,7 @@ export class ConversationRuntime {
           proposalId: proposal.id,
         });
         return this.failComposed(
-          message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+          message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
         );
       }
       // Read-only existence re-check (only lists; never creates the file): an explicit new-file target
@@ -3207,7 +3292,7 @@ export class ConversationRuntime {
           proposalId: proposal.id,
         });
         return this.failComposed(
-          message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+          message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
         );
       }
       if (exists) {
@@ -3216,7 +3301,7 @@ export class ConversationRuntime {
           proposalId: proposal.id,
         });
         return this.failComposed(
-          message, session, this.deps.composer.composeCodeGenerationPreviewFailed(message.context), outcome,
+          message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
         );
       }
     }
@@ -3240,10 +3325,11 @@ export class ConversationRuntime {
           reason: reloaded.reason,
           codeGenerationId: generation.id,
         });
-        // Truthful: the granted content WAS sent once; the request itself is cancelled and nothing was kept.
-        const cancelled = this.deps.composer.composeWithNotice(
-          this.deps.composer.composeCredentialOverrideSentNotice(message.context, grants.map((g) => g.path)),
-          this.deps.composer.composeScopeClarificationCancelled(message.context),
+        // Truthful: the granted content WAS sent once; the request itself is cancelled and nothing was kept
+        // (dedicated copy — not the reused scope-clarification "request cancelled" text).
+        const cancelled = this.deps.composer.composeCredentialOverrideSentThenCancelled(
+          message.context,
+          grants.map((g) => g.path),
         );
         return this.failComposed(message, session, cancelled, outcome);
       }
@@ -4440,9 +4526,11 @@ export class ConversationRuntime {
    * Plan a git push and halt at a CRITICAL approval (Sprint 2z, ADR-0047) — reached ONLY at GIT_COMMITTED
    * with an explicit push phrase (§5.4). Re-verifies the committed context, then performs read-only
    * `git.info` + `git.status` (no network fetch) to check HEAD == committed hash, a clean tree, a safely-
-   * parseable upstream, ahead ≥ 1, not diverged; creates a CRITICAL `ApprovalRequest`; re-anchors
-   * `PUSH_APPROVAL_PENDING`. Performs NO `git push`, no CommandExecution/shell, no WorkspaceWrite/Patch/
-   * CodeGeneration, no ExecutionOrchestrator call. All facts are point-in-time.
+   * parseable upstream, ahead ≥ 1, not diverged — or, with NO upstream (ADR-0099 D5), a new remote branch on
+   * `origin` for the current non-main/master branch (the pure `resolvePushTarget`); creates a CRITICAL
+   * `ApprovalRequest`; re-anchors `PUSH_APPROVAL_PENDING` with the resolved `pushMode`. Performs NO `git push`,
+   * no CommandExecution/shell, no WorkspaceWrite/Patch/CodeGeneration, no ExecutionOrchestrator call. All facts
+   * are point-in-time.
    */
   private async handlePushApprovalTurn(
     message: InboundMessage,
@@ -4475,7 +4563,7 @@ export class ConversationRuntime {
       return this.failComposed(message, session, this.deps.composer.composePushStatusUnavailable(message.context));
     }
     // 4. (Constraint 8/Q6, CA #11) detached HEAD OR HEAD ≠ committed hash → no approval, new review needed.
-    if (info.detached || !info.headSha || info.headSha !== anchor.commitHash) {
+    if (!checkPushHead(info, anchor.commitHash).ok) {
       this.logPushApprovalFailed(session, anchor, 'HEAD detached or differs from committed hash');
       return this.failComposed(message, session, this.deps.composer.composePushHeadMovedUnavailable(message.context));
     }
@@ -4487,26 +4575,19 @@ export class ConversationRuntime {
       this.logPushApprovalFailed(session, anchor, 'git status read failed');
       return this.failComposed(message, session, this.deps.composer.composePushStatusUnavailable(message.context));
     }
-    // 6. (CA #10) dirty working tree blocks push approval — point-in-time; rechecked at future execution.
-    if (status.staged.length > 0 || status.unstaged.length > 0 || status.untracked.length > 0) {
-      return this.respondComposed(message, session, this.deps.composer.composePushDirtyWorkingTree(message.context));
+    // 6–8. (ADR-0099 D5) the pure push-target resolver: clean tree (CA #10), then either the ADR-0047 upstream
+    //    mode (upstream parses to <remote>/<branch>, ahead ≥ 1, behind = 0 — never a user-provided target) or, with
+    //    no upstream, the new-remote-branch mode (fixed `origin` + the CURRENT branch, never main/master, push-safe
+    //    name). Point-in-time; re-verified against the approved target before any future push.
+    const resolution = resolvePushTarget({ info, status, committedHash: anchor.commitHash });
+    if (!resolution.ok) {
+      return this.respondPushTargetRefusal(message, session, anchor, resolution.reason, 'approval');
     }
-    // 7. (Constraint 7/Q7) upstream must exist AND safely parse to <remote>/<branch> (CA #5). Never a
-    //    user-provided remote/branch; 2z never creates/asks for an upstream.
-    const parsed = status.upstream ? parsePushUpstream(status.upstream) : null;
-    if (!status.upstream || !parsed) {
-      return this.respondComposed(message, session, this.deps.composer.composePushNoUpstream(message.context));
-    }
-    // 8. (Constraint 8/Q8) ahead ≥ 1 else nothing to push; (Q23) behind === 0 else diverged.
-    if (!status.ahead || status.ahead < 1) {
-      return this.respondComposed(message, session, this.deps.composer.composePushNothingToPush(message.context));
-    }
-    if (status.behind && status.behind > 0) {
-      return this.respondComposed(message, session, this.deps.composer.composePushDiverged(message.context));
-    }
+    const target = resolution.target;
+    const newRemoteBranch = target.mode === 'new-remote-branch';
 
-    // 9. Create the CRITICAL push ApprovalRequest (Constraint 4). Reason = bounded op/commit/remote/branch/
-    //    upstream/ahead + no-push + permission-only + not-in-2z + future-step + point-in-time (CA #4/#6/#7).
+    // 9. Create the CRITICAL push ApprovalRequest (Constraint 4). Reason = bounded op/commit/mode/remote/branch/
+    //    upstream/ahead + no-push + permission-only + future-step + point-in-time (CA #4/#6/#7).
     //    NO diff/file content; NO validation/test context (CA #13). HEAD == commit & ahead ≥ 1 ⇒ the
     //    committed hash is the tip of the ahead range (Constraint 8).
     const approval = await this.deps.approvals.requestForRisk({
@@ -4514,10 +4595,11 @@ export class ConversationRuntime {
       riskLevel: RiskLevel.CRITICAL,
       reason: buildPushApprovalReason({
         commitHash: anchor.commitHash,
-        remote: parsed.remote,
-        branch: parsed.branch,
-        upstream: status.upstream,
-        ahead: status.ahead,
+        remote: target.remote,
+        branch: target.branch,
+        upstream: target.upstreamRef,
+        ...(target.ahead !== undefined ? { ahead: target.ahead } : {}),
+        mode: target.mode,
       }),
       requestedBy: actor.id,
     });
@@ -4528,17 +4610,27 @@ export class ConversationRuntime {
       status: 'PUSH_APPROVAL_PENDING',
       pushApprovalId: approval.id,
       pushCommitHash: anchor.commitHash,
-      pushRemote: parsed.remote,
-      pushBranch: parsed.branch,
-      pushUpstreamRef: status.upstream,
+      pushRemote: target.remote,
+      pushBranch: target.branch,
+      pushUpstreamRef: target.upstreamRef,
+      pushMode: target.mode,
     });
-    const reply = this.deps.composer.composePushApprovalRequested(message.context, {
-      commitHash: anchor.commitHash,
-      remote: parsed.remote,
-      branch: parsed.branch,
-      upstream: status.upstream,
-      ahead: status.ahead,
-    });
+    const reply = newRemoteBranch
+      ? this.deps.composer.composePushApprovalRequested(message.context, {
+          commitHash: anchor.commitHash,
+          remote: target.remote,
+          branch: target.branch,
+          upstream: target.upstreamRef,
+          ahead: 0,
+          newRemoteBranch: true,
+        })
+      : this.deps.composer.composePushApprovalRequested(message.context, {
+          commitHash: anchor.commitHash,
+          remote: target.remote,
+          branch: target.branch,
+          upstream: target.upstreamRef,
+          ahead: target.ahead ?? 0,
+        });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
   }
@@ -4616,6 +4708,7 @@ export class ConversationRuntime {
         pushRemote: undefined,
         pushBranch: undefined,
         pushUpstreamRef: undefined,
+        pushMode: undefined,
       });
       const reply =
         decision === 'deny'
@@ -4647,6 +4740,52 @@ export class ConversationRuntime {
     return this.responded(session, reply);
   }
 
+  /**
+   * The fixed reply for a push-target refusal from the pure resolver (ADR-0099 D5), keeping each ADR-0047/0048
+   * reason's existing copy: a dirty tree, nothing to push and diverged are plain replies; a missing/unparseable
+   * upstream keeps the no-upstream reply at approval; a protected or unsafe branch gets its own reply at approval;
+   * every execution-time drift (and any HEAD change) is the pre-push "not available — approve again" failure.
+   */
+  private respondPushTargetRefusal(
+    message: InboundMessage,
+    session: Session,
+    anchor: ApplyPreviewAnchor,
+    reason: PushTargetRefusal,
+    phase: 'approval' | 'execution',
+  ): Promise<TurnResult> {
+    const composer = this.deps.composer;
+    const ctx = message.context;
+    switch (reason) {
+      case 'dirty':
+        return this.respondComposed(message, session, composer.composePushDirtyWorkingTree(ctx));
+      case 'nothing-to-push':
+        return this.respondComposed(message, session, composer.composePushNothingToPush(ctx));
+      case 'diverged':
+        return this.respondComposed(message, session, composer.composePushDiverged(ctx));
+      default:
+        break;
+    }
+    if (phase === 'approval') {
+      switch (reason) {
+        case 'no-upstream':
+          return this.respondComposed(message, session, composer.composePushNoUpstream(ctx));
+        case 'protected-branch':
+          return this.respondComposed(message, session, composer.composePushProtectedBranch(ctx));
+        case 'unsafe-name':
+          return this.respondComposed(message, session, composer.composePushBranchNameUnsafe(ctx));
+        case 'detached':
+        case 'head-moved':
+          this.logPushApprovalFailed(session, anchor, 'HEAD detached or differs from committed hash');
+          return this.failComposed(message, session, composer.composePushHeadMovedUnavailable(ctx));
+        default:
+          this.logPushApprovalFailed(session, anchor, `push target refused: ${reason}`);
+          return this.failComposed(message, session, composer.composePushApprovalUnavailable(ctx));
+      }
+    }
+    this.logPushExecutionFailed(session, anchor, `push target drifted from the approved target: ${reason}`);
+    return this.failComposed(message, session, composer.composePushExecutionUnavailable(ctx));
+  }
+
   /** Structured, no-content failure log for a push-approval error (Sprint 2z) — never logs diff/file content.
    *  Optional field access so it never throws on incomplete context (Sprint 2x lesson). */
   private logPushApprovalFailed(session: Session, anchor: ApplyPreviewAnchor, reason: string): void {
@@ -4662,8 +4801,9 @@ export class ConversationRuntime {
    * Execute the approved git push (Sprint 3a, ADR-0048) — the FIRST real remote mutation. Reached ONLY at
    * PUSH_APPROVED with an explicit push-execution phrase (§5.6). Re-verifies the live approval + the
    * persisted approved target, re-reads `git.info` + `git.status`, and re-validates HEAD/upstream/ahead/
-   * behind/clean-tree against the approved snapshot, then pushes the exact approved commit to the exact
-   * approved upstream via the Ref-gated `GitManager.pushApprovedCommit`. NO force, NO PR, NO deploy, NO
+   * behind/clean-tree against the approved snapshot (ADR-0099 D5 `verifyApprovedPushTarget`: same mode and target;
+   * a new-remote-branch approval still on its branch with no upstream or exactly `origin/<branch>`), then pushes
+   * the exact approved commit to the exact approved upstream via the Ref-gated `GitManager.pushApprovedCommit`. NO force, NO PR, NO deploy, NO
    * rollback, NO CommandExecution/shell, NO WorkspaceWrite/Patch/CodeGeneration, NO ExecutionOrchestrator.
    * Remote-mutation safety (CA #2/#10/#11): a pre-push failure may say push was not attempted; a provider
    * failure never claims the remote is unchanged; a result-integrity mismatch after a reported success says
@@ -4725,12 +4865,7 @@ export class ConversationRuntime {
       return this.failComposed(message, session, this.deps.composer.composePushStatusUnavailable(message.context));
     }
     // 5. (Q5/Q6) not detached AND HEAD == pushCommitHash == commitHash — else the committed state changed.
-    if (
-      info.detached ||
-      !info.headSha ||
-      info.headSha !== anchor.pushCommitHash ||
-      anchor.commitHash !== anchor.pushCommitHash
-    ) {
+    if (!checkPushHead(info, anchor.pushCommitHash).ok || anchor.commitHash !== anchor.pushCommitHash) {
       this.logPushExecutionFailed(session, anchor, 'HEAD detached or differs from approved commit');
       return this.failComposed(message, session, this.deps.composer.composePushExecutionUnavailable(message.context));
     }
@@ -4742,28 +4877,23 @@ export class ConversationRuntime {
       this.logPushExecutionFailed(session, anchor, 'git status read failed');
       return this.failComposed(message, session, this.deps.composer.composePushStatusUnavailable(message.context));
     }
-    // 7. (Q9) clean working tree.
-    if (status.staged.length > 0 || status.unstaged.length > 0 || status.untracked.length > 0) {
-      return this.respondComposed(message, session, this.deps.composer.composePushDirtyWorkingTree(message.context));
-    }
-    // 8. (Q6) upstream present, parses, equals the approved upstream, parsed remote/branch equal the approved.
-    const parsedNow = status.upstream ? parsePushUpstream(status.upstream) : null;
-    if (
-      !status.upstream ||
-      !parsedNow ||
-      status.upstream !== anchor.pushUpstreamRef ||
-      parsedNow.remote !== anchor.pushRemote ||
-      parsedNow.branch !== anchor.pushBranch
-    ) {
-      this.logPushExecutionFailed(session, anchor, 'upstream drifted from approved target');
-      return this.failComposed(message, session, this.deps.composer.composePushExecutionUnavailable(message.context));
-    }
-    // 9. (Q7/Q8) ahead ≥ 1 else nothing to push; behind == 0 else diverged.
-    if (!status.ahead || status.ahead < 1) {
-      return this.respondComposed(message, session, this.deps.composer.composePushNothingToPush(message.context));
-    }
-    if (status.behind && status.behind > 0) {
-      return this.respondComposed(message, session, this.deps.composer.composePushDiverged(message.context));
+    // 7–9. (ADR-0099 D5 drift checks, the same pure resolver as approval) clean tree (Q9); the live target must be
+    //    the APPROVED one in the APPROVED mode — upstream mode: the upstream still parses and equals the approved
+    //    remote/branch/upstream (Q6); new-remote-branch mode: still on the approved branch, upstream absent or exactly
+    //    the synthesized `origin/<branch>`; then ahead ≥ 1 / behind = 0 against any upstream (Q7/Q8).
+    const verified = verifyApprovedPushTarget({
+      info,
+      status,
+      approved: {
+        mode: anchor.pushMode,
+        remote: anchor.pushRemote,
+        branch: anchor.pushBranch,
+        upstreamRef: anchor.pushUpstreamRef,
+        commitHash: anchor.pushCommitHash,
+      },
+    });
+    if (!verified.ok) {
+      return this.respondPushTargetRefusal(message, session, anchor, verified.reason, 'execution');
     }
 
     // 10. (first REMOTE mutation) push the exact approved target through the Ref-gated capability. A throw →
@@ -4817,6 +4947,8 @@ export class ConversationRuntime {
       commitHash: result.commitHash,
       remote: result.remote,
       branch: result.branch,
+      // ADR-0099 D5: a first push to a branch without an upstream says the remote branch was created.
+      ...(verified.target.mode === 'new-remote-branch' ? { newRemoteBranch: true } : {}),
     });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return this.responded(session, reply);
@@ -6127,6 +6259,15 @@ export class ConversationRuntime {
     );
   }
 
+  /**
+   * Whether a reply to a pending scope clarification is really a full resend of a code-change request with explicit
+   * (non-negated) create wording and at least one safe named path (ADR-0099 D1 QA follow-up). Such a resend is
+   * routed as a fresh request instead of the existing-files-only bare-path recovery.
+   */
+  private static isFreshCreateResend(text: string): boolean {
+    return ConversationRuntime.isExplicitNewFileRequest(text) && extractSafeTargetCandidates(text).candidates.length > 0;
+  }
+
   /** Resolve the active project's workspace for a needsWorkspace capability, or an early-return reply. */
   private async resolveExecutionWorkspace(
     message: InboundMessage,
@@ -6292,6 +6433,12 @@ export class ConversationRuntime {
       const reply = this.deps.composer.composeScopeClarificationCancelled(message.context);
       await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
       return { status: 'CANCELLED', reply, sessionId: session.id };
+    }
+    // QA-V2-004: a bare decision word ("승인", "거절", "ok") right after a rejected target is not a file path and
+    // there is no approval to decide — the deterministic QA-018 "nothing to approve" reply, never the "which file?"
+    // clarification copy. The clarification was consumed above.
+    if (interpretStrayDecisionUtterance(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
     }
 
     const ws = await this.resolveExecutionWorkspace(message, session, Capability.CODE_IMPLEMENTATION);

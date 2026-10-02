@@ -1497,6 +1497,95 @@ describe('ResponseComposer.composePush* replies (Sprint 2z, ADR-0047)', () => {
     ]);
     expect(set.size).toBe(13);
   });
+
+  // ── ADR-0099 D5 (CODE-5): new-remote-branch push, protected/unsafe branch, deterministic next phrases ──────
+  it('composePushApprovalRequested(newRemoteBranch) says a new remote branch is created, no force, no upstream; no ahead count', () => {
+    const reply = composer.composePushApprovalRequested(CTX, {
+      commitHash: HASH, remote: 'origin', branch: 'feature/x', upstream: 'origin/feature/x', ahead: 0, newRemoteBranch: true,
+    });
+    expect(reply.text).toContain('push 승인을 요청했어요');
+    expect(reply.text).toContain('대상: origin/feature/x');
+    expect(reply.text).toContain('원격에 새 브랜치로 만들어져요');
+    expect(reply.text).toContain('강제 push는 하지 않고, 로컬 업스트림(추적 브랜치)도 설정하지 않아요');
+    expect(reply.text).toContain('승인해도 이번 단계에서는 실제 git push를 하지 않아요');
+    expect(reply.text).not.toContain('앞섬');
+    for (const f of OVERCLAIM) expect(reply.text, f).not.toContain(f);
+    // the legacy upstream copy is byte-identical when the flag is absent
+    expect(composer.composePushApprovalRequested(CTX, reqInput).text).toContain('대상: origin/main (원격보다 2개 앞섬)');
+    expect(composer.composePushApprovalRequested(CTX, reqInput).text).not.toContain('새 브랜치');
+  });
+
+  it('composePushExecuted(newRemoteBranch) states the remote branch was created, no force/upstream, and the PR next phrase', () => {
+    const reply = composer.composePushExecuted(CTX, { commitHash: HASH, remote: 'origin', branch: 'feature/x', newRemoteBranch: true });
+    expect(reply.text).toContain(`원격에 새 브랜치로 push했어요: ${HASH.slice(0, 7)} → origin/feature/x`);
+    expect(reply.text).toContain('강제 push는 하지 않았고');
+    expect(reply.text).toContain('"PR 만들어줘"');
+    expect(composer.composePushExecuted(CTX, { commitHash: HASH, remote: 'origin', branch: 'main' }).text).toBe(
+      `원격에 push했어요: ${HASH.slice(0, 7)} → origin/main\nPR 생성과 배포는 하지 않았어요.`,
+    );
+  });
+
+  it('protected-branch and unsafe-name push replies refuse without approval or push, and are distinct', () => {
+    const protectedReply = composer.composePushProtectedBranch(CTX).text;
+    const unsafe = composer.composePushBranchNameUnsafe(CTX).text;
+    expect(protectedReply).toContain('main/master 브랜치는 원격에 새로 push하지 않아요');
+    for (const text of [protectedReply, unsafe]) {
+      expect(text).toContain('push 승인은 만들지 않았어요');
+      expect(text).toContain('git push는 하지 않았어요');
+      for (const f of OVERCLAIM) expect(text, f).not.toContain(f);
+    }
+    expect(new Set([protectedReply, unsafe, composer.composePushNoUpstream(CTX).text]).size).toBe(3);
+  });
+
+  it('the recorded push / PR approvals name the deterministic execution phrase', () => {
+    expect(composer.composePushApprovalRecorded(CTX).text).toContain('"푸시 실행"이라고 알려 주세요');
+    expect(composer.composePrApprovalRecorded(CTX).text).toContain('"PR 생성 실행"이라고 알려 주세요');
+    expect(composer.composePrApprovalRecorded(CTX).text).toContain('아직 PR은 만들지 않았어요');
+  });
+});
+
+describe('ResponseComposer merge-disabled and post-send override copy (CODE-5)', () => {
+  it('composeMergeDisabled names the flag and claims no merge, approval, sync or cleanup', () => {
+    const text = composer.composeMergeDisabled(CTX).text;
+    expect(text).toContain('병합은 이 설정에서 꺼져 있어요');
+    expect(text).toContain('QUOKY_GIT_MERGE_ENABLED=false');
+    expect(text).toContain('병합 승인은 만들지 않았어요');
+    expect(text).not.toContain('병합했어요');
+    expect(text).not.toContain('머지했어요');
+  });
+
+  it('sent-no-proposal and sent-then-cancelled lead with the one-time-send notice and ask for a fresh request + override', () => {
+    const notice = composer.composeCredentialOverrideSentNotice(CTX, ['src/a.ts']).text;
+    const noProposal = composer.composeCredentialOverrideSentNoProposal(CTX, ['src/a.ts']).text;
+    const cancelled = composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/a.ts']).text;
+    for (const text of [noProposal, cancelled]) {
+      expect(text.startsWith(notice)).toBe(true);
+      expect(text).toContain('파일은 수정되지 않았어요');
+      expect(text).toContain('이번 전송 확인은 이미 사용됐어요');
+      expect(text).not.toContain('아무 파일도 AI에게 보내지 않았어요');
+    }
+    expect(noProposal).toContain('코드 변경 제안은 만들어지지 않았어요');
+    expect(cancelled).toContain('이 코드 변경 요청은 취소됐어요');
+    expect(cancelled).not.toContain(composer.composeScopeClarificationCancelled(CTX).text);
+    expect(noProposal).not.toBe(cancelled);
+  });
+
+  it('a granted generation failure says truthfully how far the content got: not sent / uncertain (ADR-0097)', () => {
+    const sentNotice = composer.composeCredentialOverrideSentNotice(CTX, ['src/a.ts']).text;
+    const notSent = composer.composeCredentialOverrideGenerationFailed(CTX, ['src/a.ts'], 'not-sent').text;
+    const uncertain = composer.composeCredentialOverrideGenerationFailed(CTX, ['src/a.ts'], 'uncertain').text;
+    expect(notSent).toContain('파일 내용은 AI에게 보내지 않았어요: src/a.ts');
+    expect(notSent).toContain('코드 변경 제안을 만들지 못했어요');
+    expect(uncertain).toContain('AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: src/a.ts');
+    expect(uncertain).toContain('코드 변경 제안은 만들어지지 않았어요');
+    for (const text of [notSent, uncertain]) {
+      expect(text).not.toContain(sentNotice);
+      expect(text).not.toContain('AI에게 보냈어요');
+      expect(text).toContain('파일은 수정되지 않았어요');
+      expect(text).toContain('이번 전송 확인은 이미 사용됐어요'); // consumed in every case — never replayed
+    }
+    expect(notSent).not.toBe(uncertain);
+  });
 });
 
 

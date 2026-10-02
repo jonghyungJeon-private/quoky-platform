@@ -31,6 +31,9 @@ esac
 /** Timeout for the local `git remote get-url` read used by the HTTPS preflight. */
 const REMOTE_URL_READ_TIMEOUT_MS = 5000;
 
+/** Which remote URLs an operation uses: `'fetch'` → fetch URLs only; `'push'` → fetch and push URLs. */
+export type RemoteDirection = 'fetch' | 'push';
+
 /** A git spawn that mirrors git-local's `defaultGitRunner` but takes an explicit child env (carries the credential). */
 export type CredentialedSpawn = (
   args: string[],
@@ -48,10 +51,19 @@ export interface GitHubAppGitProviderDeps {
   /** Mint (or return a cached) short-lived installation token for the target repo. Adapter-local; never stored here. */
   tokenSource: () => Promise<string>;
   /**
-   * Read the configured remote URL for the HTTPS-github.com preflight (RC1). Injectable for tests; the default
-   * runs a credential-free local `git remote get-url <remote>` (no network, no askpass). Throws when unreadable.
+   * Read the configured remote URL(s) for the HTTPS-github.com preflight (RC1). Injectable for tests; the default
+   * runs credential-free local `git remote get-url --all` and `--push --all` reads (no network, no askpass) under
+   * `env` — the same sanitized git-config env the credentialed child runs with, so an `insteadOf`/`pushurl`
+   * rewrite cannot differ between preflight and execution. `direction` scopes the read: `'fetch'` (ls-remote /
+   * main sync) reads the fetch URLs; `'push'` also reads every push URL. Every returned URL is checked. Throws when
+   * unreadable.
    */
-  readRemoteUrl?: (rootPath: string, remote: string) => string;
+  readRemoteUrl?: (
+    rootPath: string,
+    remote: string,
+    env: NodeJS.ProcessEnv,
+    direction: RemoteDirection,
+  ) => string | readonly string[];
   /** Spawn git with an explicit child env. Injectable for tests; the default mirrors git-local's `defaultGitRunner`. */
   spawn?: CredentialedSpawn;
 }
@@ -76,7 +88,7 @@ export interface GitHubAppGitProviderDeps {
  */
 export class GitHubAppGitProvider implements GitProvider {
   private readonly localGit: GitProvider;
-  private readonly readRemoteUrl: (rootPath: string, remote: string) => string;
+  private readonly readRemoteUrl: NonNullable<GitHubAppGitProviderDeps['readRemoteUrl']>;
   private readonly spawn: CredentialedSpawn;
 
   constructor(private readonly deps: GitHubAppGitProviderDeps) {
@@ -149,6 +161,7 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.withRemoteCredential(
       rootPath,
       remote,
+      'push',
       (err) => new GitPushBlockedError(preMutationMessage('git push', err)),
       (git) => git.pushApprovedCommit(rootPath, remote, branch, commitHash),
     );
@@ -160,6 +173,7 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.withRemoteCredential(
       rootPath,
       remote,
+      'fetch',
       (err) =>
         err instanceof Error
           ? err
@@ -180,6 +194,7 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.withRemoteCredential(
       rootPath,
       remote,
+      'fetch',
       (err) => new GitMainSyncBlockedError(`${preMutationMessage('git main sync', err)}; not synchronized`),
       (git) => git.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit),
     );
@@ -194,20 +209,33 @@ export class GitHubAppGitProvider implements GitProvider {
   private async withRemoteCredential<T>(
     rootPath: string,
     remote: string,
+    direction: RemoteDirection,
     mapPreMutationError: (err: unknown) => Error,
     op: (git: GitProvider) => Promise<T>,
   ): Promise<T> {
     let dir: string | undefined;
     let runner: GitRunner;
     try {
-      const remoteUrl = this.readRemoteUrl(rootPath, remote); // unreadable → throws
-      assertHttpsGithubRemote(remoteUrl); // ssh / non-github / embedded-credential → throws
+      // Preflight and execution share ONE sanitized git-config env: inherited env-injected config is dropped and every
+      // credential helper (system/global/repo, e.g. macOS `osxkeychain`) is reset. An ambient helper is consulted
+      // BEFORE GIT_ASKPASS, so it would shadow the App token with another identity's credential, and on success git
+      // would `approve` (persist) the App token into that helper. An empty value clears the helper list.
+      const gitConfigEnv: NodeJS.ProcessEnv = {
+        ...withoutInheritedGitConfigEnv(process.env),
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'credential.helper',
+        GIT_CONFIG_VALUE_0: '',
+      };
+      const remoteUrls = this.readRemoteUrl(rootPath, remote, gitConfigEnv, direction); // unreadable → throws
+      const urls = typeof remoteUrls === 'string' ? [remoteUrls] : remoteUrls;
+      if (urls.length === 0) throw new Error('git remote url could not be read');
+      for (const url of urls) assertHttpsGithubRemote(url); // ssh / non-github / embedded-credential → throws
       const token = await this.deps.tokenSource(); // mint failure → throws
       dir = mkdtempSync(join(tmpdir(), 'quoky-askpass-'));
       const askpassPath = join(dir, 'askpass.sh');
       writeFileSync(askpassPath, ASKPASS_SCRIPT, { mode: 0o700 });
       const childEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...gitConfigEnv,
         GIT_ASKPASS: askpassPath,
         GIT_APP_TOKEN: token,
         GIT_TERMINAL_PROMPT: '0',
@@ -262,6 +290,21 @@ function preMutationMessage(op: string, err: unknown): string {
 }
 
 /** Best-effort removal of the one-shot askpass dir; never masks the operation's result/error. */
+/**
+ * Drop inherited env-injected git config — `GIT_CONFIG_PARAMETERS` (`git -c`, applied AFTER `GIT_CONFIG_COUNT`) and
+ * `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` — so the preflight read and the credentialed
+ * child see exactly the credential-helper reset set by `withRemoteCredential` (an inherited entry could otherwise
+ * re-add a helper, rewrite the remote URL, or be silently truncated by our count).
+ */
+function withoutInheritedGitConfigEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key === 'GIT_CONFIG_PARAMETERS' || key === 'GIT_CONFIG_COUNT' || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 function safeRemove(dir: string | undefined): void {
   if (dir === undefined) return;
   try {
@@ -271,16 +314,27 @@ function safeRemove(dir: string | undefined): void {
   }
 }
 
-/** Default HTTPS-preflight remote read: a credential-free local `git remote get-url <remote>` (no network). */
-function defaultReadRemoteUrl(rootPath: string, remote: string): string {
-  const res = spawnSync('git', ['remote', 'get-url', remote], {
-    cwd: rootPath,
-    timeout: REMOTE_URL_READ_TIMEOUT_MS,
-    encoding: 'utf8',
-  });
-  const url = typeof res.stdout === 'string' ? res.stdout.trim() : '';
-  if (res.status !== 0 || url.length === 0) throw new Error('git remote url could not be read');
-  return url;
+/**
+ * Default HTTPS-preflight remote read: credential-free local `git remote get-url --all <remote>` and, for a push,
+ * `git remote get-url --push --all <remote>` (no network), so every URL the operation can use (incl. a `pushurl`
+ * and `insteadOf`/`pushInsteadOf` rewrites, as resolved under `env`) is checked.
+ */
+function defaultReadRemoteUrl(
+  rootPath: string,
+  remote: string,
+  env: NodeJS.ProcessEnv,
+  direction: RemoteDirection,
+): readonly string[] {
+  const reads = [['remote', 'get-url', '--all', remote]];
+  if (direction === 'push') reads.push(['remote', 'get-url', '--push', '--all', remote]);
+  const urls: string[] = [];
+  for (const args of reads) {
+    const res = spawnSync('git', args, { cwd: rootPath, timeout: REMOTE_URL_READ_TIMEOUT_MS, encoding: 'utf8', env });
+    const lines = typeof res.stdout === 'string' ? res.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+    if (res.status !== 0 || lines.length === 0) throw new Error('git remote url could not be read');
+    urls.push(...lines);
+  }
+  return urls;
 }
 
 /** Default credentialed spawn: mirrors git-local's `defaultGitRunner` but with an explicit child env. */

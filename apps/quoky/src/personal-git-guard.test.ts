@@ -91,14 +91,44 @@ describe('PersonalGitGuard — remote disabled (ADR-0094)', () => {
 });
 
 describe('PersonalGitGuard — remote enabled', () => {
-  it('delegates push, remote ref read, sync and cleanup', async () => {
+  it('with remote AND merge on: delegates push, remote ref read, sync and cleanup', async () => {
     const { inner, invoked } = harness();
-    const guard = new PersonalGitGuard(inner, { remoteEnabled: true });
+    const guard = new PersonalGitGuard(inner, { remoteEnabled: true, mergeEnabled: true });
     await guard.pushApprovedCommit('/r', 'origin', 'feature/x', SHA);
     await guard.getRemoteRefCommit('/r', 'origin', 'main');
     await guard.syncMainFastForward('/r', 'origin', 'main', SHA, SHA);
     await guard.deleteMergedLocalBranch('/r', 'feature/x', SHA);
     expect(invoked).toEqual(['pushApprovedCommit', 'getRemoteRefCommit', 'syncMainFastForward', 'deleteMergedLocalBranch']);
+  });
+
+  it.each([{ remoteEnabled: true }, { remoteEnabled: true, mergeEnabled: false }])(
+    'ADR-0099 D5: remote on, merge off (%o) → push and the read-only remote ref still delegate; main sync and local cleanup are refused pre-mutation',
+    async (options) => {
+      const { inner, invoked } = harness();
+      const guard = new PersonalGitGuard(inner, options);
+      await guard.pushApprovedCommit('/r', 'origin', 'feature/x', SHA);
+      await guard.getRemoteRefCommit('/r', 'origin', 'feature/x');
+      await expect(guard.syncMainFastForward('/r', 'origin', 'main', SHA, SHA)).rejects.toBeInstanceOf(GitMainSyncBlockedError);
+      await expect(guard.deleteMergedLocalBranch('/r', 'feature/x', SHA)).rejects.toBeInstanceOf(BranchCleanupBlockedError);
+      expect(invoked).toEqual(['pushApprovedCommit', 'getRemoteRefCommit']);
+    },
+  );
+
+  it('ADR-0099 D5: merge on with remote off still refuses everything remote (remote is checked first)', async () => {
+    const { inner, invoked } = harness();
+    const guard = new PersonalGitGuard(inner, { remoteEnabled: false, mergeEnabled: true });
+    await expect(guard.pushApprovedCommit('/r', 'origin', 'feature/x', SHA)).rejects.toBeInstanceOf(GitPushBlockedError);
+    await expect(guard.syncMainFastForward('/r', 'origin', 'main', SHA, SHA)).rejects.toBeInstanceOf(GitMainSyncBlockedError);
+    await expect(guard.deleteMergedLocalBranch('/r', 'feature/x', SHA)).rejects.toBeInstanceOf(BranchCleanupBlockedError);
+    expect(invoked).toEqual([]);
+  });
+
+  it('ADR-0099 D5: the merge-off refusals carry no path, remote or branch', async () => {
+    const { inner } = harness();
+    const guard = new PersonalGitGuard(inner, { remoteEnabled: true });
+    const sync = await guard.syncMainFastForward('/secret/root', 'origin', 'main', SHA, SHA).catch((e: Error) => e);
+    const cleanup = await guard.deleteMergedLocalBranch('/secret/root', 'feature/secret', SHA).catch((e: Error) => e);
+    for (const err of [sync, cleanup]) expect((err as Error).message).not.toMatch(/secret|origin|main/);
   });
 
   it('still refuses commits on main', async () => {

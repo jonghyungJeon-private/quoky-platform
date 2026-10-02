@@ -511,7 +511,9 @@ describe('ConversationRuntime × work chat — to-do commands (order 100)', () =
     const log: string[] = [];
     const h = harness({ extraHandlers: [probe(log, 'reminders', 'pre-classify', 200, null)] });
     const result = await h.send('할 일 추가: 내일 9시에 회의 알려줘');
-    expect(result.reply.text).toBe('할 일을 추가했어요: "내일 9시에 회의 알려줘"');
+    expect(result.reply.text).toBe(
+      '할 일을 추가했어요: "내일 9시에 회의 알려줘"\n알림은 설정하지 않았어요. 알림이 필요하면 "내일 9시에 회의 알려줘"처럼 따로 보내 주세요.',
+    );
     expect(h.todos().map((item) => item.title)).toEqual(['내일 9시에 회의 알려줘']);
     expect(log).toEqual([]); // the order-200 reminder handler never saw the turn
     noProviderNoTask(h.calls);

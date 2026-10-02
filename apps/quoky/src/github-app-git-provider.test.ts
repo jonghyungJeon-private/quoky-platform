@@ -1,5 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { GitMainSyncBlockedError, GitMainSyncUnverifiedError, GitPushBlockedError } from '@quoky/core';
 import type { GitProvider } from '@quoky/core';
@@ -22,7 +24,9 @@ function tmpAskpassCount(): number {
 function harness(
   over: {
     tokenSource?: () => Promise<string>;
-    readRemoteUrl?: (rootPath: string, remote: string) => string;
+    readRemoteUrl?: (rootPath: string, remote: string, env: NodeJS.ProcessEnv) => string | readonly string[];
+    /** Use the provider's real default remote read (local `git remote get-url`, no network). */
+    realRemoteRead?: boolean;
     inner?: Partial<GitProvider>;
   } = {},
 ) {
@@ -116,7 +120,7 @@ function harness(
   const provider = new GitHubAppGitProvider({
     makeLocalGit,
     tokenSource: over.tokenSource ?? (async () => 'ghs_SENTINEL'),
-    readRemoteUrl: over.readRemoteUrl ?? (() => 'https://github.com/acme/widgets.git'),
+    ...(over.realRemoteRead ? {} : { readRemoteUrl: over.readRemoteUrl ?? (() => 'https://github.com/acme/widgets.git') }),
     spawn,
   });
   return { provider, invoked, spawns, commitOptions, branchCalls };
@@ -138,6 +142,148 @@ describe('GitHubAppGitProvider (Sprint 4b, ADR-0061 + review RC1/RC3/RC4)', () =
     // askpass helper references the env var, contains NO token literal
     expect(s.askpass).toContain('$GIT_APP_TOKEN');
     expect(s.askpass).not.toContain('ghs_SENTINEL');
+  });
+
+  it('resets ambient credential helpers (e.g. osxkeychain) so they cannot shadow or persist the App token', async () => {
+    process.env.GIT_CONFIG_COUNT = '2';
+    process.env.GIT_CONFIG_KEY_0 = 'credential.helper';
+    process.env.GIT_CONFIG_VALUE_0 = 'osxkeychain';
+    process.env.GIT_CONFIG_KEY_1 = 'user.name';
+    process.env.GIT_CONFIG_VALUE_1 = 'x';
+    try {
+      const { provider, spawns } = harness({ tokenSource: async () => 'ghs_SENTINEL' });
+      await provider.pushApprovedCommit('/repo', 'origin', 'uat/x', 'abc1234');
+      const env = spawns[0]!.env;
+      expect(env.GIT_CONFIG_COUNT).toBe('1');
+      expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+      expect(env.GIT_CONFIG_VALUE_0).toBe('');
+      expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+      expect(env.GIT_CONFIG_VALUE_1).toBeUndefined();
+    } finally {
+      for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1']) {
+        delete process.env[k];
+      }
+    }
+  });
+
+  it('drops inherited GIT_CONFIG_PARAMETERS (applied after GIT_CONFIG_COUNT) and preflights under the same env', async () => {
+    process.env.GIT_CONFIG_PARAMETERS = "'credential.helper'='osxkeychain'";
+    try {
+      const seen: NodeJS.ProcessEnv[] = [];
+      const { provider, spawns } = harness({
+        readRemoteUrl: (_root, _remote, env) => {
+          seen.push(env);
+          return 'https://github.com/acme/widgets.git';
+        },
+      });
+      await provider.pushApprovedCommit('/repo', 'origin', 'uat/x', 'abc1234');
+      expect(spawns[0]!.env.GIT_CONFIG_PARAMETERS).toBeUndefined();
+      expect(seen[0]!.GIT_CONFIG_PARAMETERS).toBeUndefined();
+      expect(seen[0]!.GIT_CONFIG_KEY_0).toBe('credential.helper');
+      expect(seen[0]!.GIT_CONFIG_VALUE_0).toBe('');
+      expect(seen[0]!.GIT_APP_TOKEN).toBeUndefined();
+    } finally {
+      delete process.env.GIT_CONFIG_PARAMETERS;
+    }
+  });
+
+  it('checks every returned remote URL — an SSH push URL among HTTPS fetch URLs is blocked before any spawn', async () => {
+    const { provider, spawns } = harness({
+      readRemoteUrl: () => ['https://github.com/acme/widgets.git', 'git@github.com:acme/widgets.git'],
+    });
+    await expect(provider.pushApprovedCommit('/repo', 'origin', 'uat/x', 'abc1234')).rejects.toBeInstanceOf(
+      GitPushBlockedError,
+    );
+    expect(spawns.length).toBe(0);
+  });
+
+  describe('default remote read (real local git, no network)', () => {
+    const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+    const withRepo = async (setup: (dir: string) => void, body: (dir: string) => Promise<void>) => {
+      const dir = mkdtempSync(join(tmpdir(), 'quoky-remote-read-'));
+      try {
+        git(dir, 'init', '-q');
+        setup(dir);
+        await body(dir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+
+    it('HTTPS fetch + push URLs → push proceeds', async () => {
+      await withRepo(
+        (dir) => git(dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git'),
+        async (dir) => {
+          const { provider, spawns } = harness({ realRemoteRead: true });
+          await provider.pushApprovedCommit(dir, 'origin', 'uat/x', 'abc1234');
+          expect(spawns.length).toBe(1);
+        },
+      );
+    });
+
+    it('an SSH pushurl behind an HTTPS url is blocked (push would otherwise use ambient SSH credentials)', async () => {
+      await withRepo(
+        (dir) => {
+          git(dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+          git(dir, 'config', 'remote.origin.pushurl', 'git@github.com:acme/widgets.git');
+        },
+        async (dir) => {
+          const { provider, spawns } = harness({ realRemoteRead: true });
+          await expect(provider.pushApprovedCommit(dir, 'origin', 'uat/x', 'abc1234')).rejects.toBeInstanceOf(
+            GitPushBlockedError,
+          );
+          expect(spawns.length).toBe(0);
+        },
+      );
+    });
+
+    it('an SSH pushurl does not block fetch-only ops (ls-remote, main sync) — they use only the fetch URL', async () => {
+      await withRepo(
+        (dir) => {
+          git(dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+          git(dir, 'config', 'remote.origin.pushurl', 'git@github.com:acme/widgets.git');
+        },
+        async (dir) => {
+          const { provider, invoked } = harness({ realRemoteRead: true });
+          await provider.getRemoteRefCommit(dir, 'origin', 'main');
+          await provider.syncMainFastForward(dir, 'origin', 'main', SHA40, SHA40B);
+          expect(invoked).toEqual(expect.arrayContaining(['getRemoteRefCommit', 'syncMainFastForward']));
+        },
+      );
+    });
+
+    it('an SSH fetch URL still blocks fetch-only ops', async () => {
+      await withRepo(
+        (dir) => git(dir, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'),
+        async (dir) => {
+          const { provider, invoked } = harness({ realRemoteRead: true });
+          await expect(provider.getRemoteRefCommit(dir, 'origin', 'main')).rejects.toThrow();
+          await expect(provider.syncMainFastForward(dir, 'origin', 'main', SHA40, SHA40B)).rejects.toBeInstanceOf(
+            GitMainSyncBlockedError,
+          );
+          expect(invoked).not.toContain('getRemoteRefCommit');
+          expect(invoked).not.toContain('syncMainFastForward');
+        },
+      );
+    });
+
+    it('an inherited env insteadOf rewrite (SSH → HTTPS) does not make an SSH origin pass the preflight', async () => {
+      process.env.GIT_CONFIG_PARAMETERS = "'url.https://github.com/.insteadof'='git@github.com:'";
+      try {
+        await withRepo(
+          (dir) => git(dir, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'),
+          async (dir) => {
+            const { provider, spawns } = harness({ realRemoteRead: true });
+            await expect(provider.pushApprovedCommit(dir, 'origin', 'uat/x', 'abc1234')).rejects.toBeInstanceOf(
+              GitPushBlockedError,
+            );
+            expect(spawns.length).toBe(0);
+          },
+        );
+      } finally {
+        delete process.env.GIT_CONFIG_PARAMETERS;
+      }
+    });
   });
 
   it('does not mutate process.env and leaves no temp askpass dir after a remote op', async () => {

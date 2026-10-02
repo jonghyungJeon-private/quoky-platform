@@ -66,6 +66,11 @@ class FakeWork {
     return item;
   }
 
+  async listByActor(actorId: string): Promise<WorkItem[]> {
+    this.calls.push('listByActor');
+    return this.items.filter((item) => item.actorId === actorId);
+  }
+
   async listActiveByActor(actorId: string): Promise<WorkItem[]> {
     this.calls.push('listActiveByActor');
     return this.items.filter((item) => item.actorId === actorId && item.status === WorkItemStatus.ACTIVE);
@@ -623,5 +628,149 @@ describe('isolation guarantees', () => {
     expect(list).toContain('불러오지 못했어요');
     expect(list).not.toContain('바뀌');
     expect(list).not.toContain('내 할 일');
+  });
+});
+
+describe('natural completion hints (QA-V2-W7-03, hint-only)', () => {
+  const other: Actor = { ...owner, id: 'other-1' };
+
+  async function seeded() {
+    const h = harness();
+    await h.say('할 일 추가: 내일 9시에 회의 알려줘');
+    await h.say('할 일 추가: 보고서 초안 쓰기');
+    h.work.calls.length = 0;
+    return h;
+  }
+
+  it.each([
+    ['보고서 초안 쓰기 완료', '"보고서 초안 쓰기" 할 일을 완료 처리하려면 "완료 처리: 2"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.'],
+    ['보고서 초안 쓰기 완료했어', '"완료 처리: 2"'],
+    ['보고서 초안 쓰기 완료했어요!', '"완료 처리: 2"'],
+    ['보고서 초안 쓰기 끝났어', '"완료 처리: 2"'],
+    ['보고서  초안 쓰기 다 했어.', '"완료 처리: 2"'],
+    ['"보고서 초안 쓰기" 완료', '"완료 처리: 2"'],
+    ['보고서 초안 쓰기, 완료', '"완료 처리: 2"'],
+    ['보고서 초안 쓰기 취소', '"할 일 취소: 2"'],
+    ['2번 완료했어', '"완료 처리: 2"'],
+    ['할 일 2 완료', '"완료 처리: 2"'],
+    ['할 일 1 취소', '"할 일 취소: 1"'],
+    ['2번 할 일 완료했어', '"완료 처리: 2"'],
+  ])('hints for %s without any mutation', async (text, expected) => {
+    const { say, work } = await seeded();
+    const out = await say(text);
+    expect(textOf(out)).toContain(expected);
+    expect(work.calls).toEqual(['listActiveByActor']);
+    expect(work.ofOwner().every((item) => item.status === WorkItemStatus.ACTIVE)).toBe(true);
+  });
+
+  it('falls through (none) for no match, a partial title, an out-of-range number and another actor', async () => {
+    const { say, work } = await seeded();
+    for (const text of ['점심 먹기 완료', '보고서 완료', '9번 완료했어', '할 일 7 완료']) {
+      expect(await say(text), text).toEqual({ kind: 'none' });
+    }
+    expect(await say('보고서 초안 쓰기 완료', other)).toEqual({ kind: 'none' });
+    expect(work.calls.every((call) => call === 'listActiveByActor')).toBe(true);
+  });
+
+  it('falls through when two open to-dos share the title, and for a closed to-do', async () => {
+    const { say, work } = harness();
+    await say('할 일 추가: 보고서 쓰기');
+    await say('할 일 추가: 보고서 쓰기');
+    expect(await say('보고서 쓰기 완료')).toEqual({ kind: 'none' });
+    await say('완료 처리: 1');
+    await say('완료 처리: 1');
+    expect(work.ofOwner().every((item) => item.status === WorkItemStatus.COMPLETED)).toBe(true);
+    expect(await say('보고서 쓰기 완료')).toEqual({ kind: 'none' });
+  });
+
+  it('falls through when reading the to-dos fails', async () => {
+    const { say, work } = await seeded();
+    work.listActiveByActor = async () => {
+      throw new Error('storage offline');
+    };
+    expect(await say('보고서 초안 쓰기 완료')).toEqual({ kind: 'none' });
+  });
+
+  it('keeps the anchored and numbered D1 forms mutating exactly as before', async () => {
+    const { say, work } = await seeded();
+    expect(textOf(await say('완료 처리: 2'))).toContain('완료 처리했어요: "보고서 초안 쓰기"');
+    expect(textOf(await say('2번 완료'))).toContain('2번 할 일');
+    expect(textOf(await say('할 일 취소: 1'))).toContain('취소했어요: "내일 9시에 회의 알려줘"');
+    expect(work.calls.filter((call) => call.startsWith('transition'))).toEqual([
+      `transition:${WorkItemStatus.COMPLETED}`,
+      `transition:${WorkItemStatus.CANCELED}`,
+    ]);
+  });
+});
+
+describe('reminder-shaped to-do add hint (QA-V2-W7-04)', () => {
+  const HINT = '알림은 설정하지 않았어요. 알림이 필요하면 "내일 9시에 회의 알려줘"처럼 따로 보내 주세요.';
+
+  it('appends one line when the title contains a reminder-shaped phrase, and still adds only the to-do', async () => {
+    const { say, work } = harness();
+    const text = textOf(await say('할 일 추가: 내일 9시에 회의 알려줘'));
+    expect(text).toBe(`할 일을 추가했어요: "내일 9시에 회의 알려줘"\n${HINT}`);
+    expect(work.calls).toEqual(['create']);
+  });
+
+  it('adds no hint for an ordinary title', async () => {
+    const { say } = harness();
+    expect(textOf(await say('할 일 추가: 보고서 초안 쓰기'))).toBe('할 일을 추가했어요: "보고서 초안 쓰기"');
+  });
+});
+
+describe('read-only to-do status questions (QA-V2-W7-05)', () => {
+  const other: Actor = { ...owner, id: 'other-1' };
+
+  async function seeded() {
+    const h = harness();
+    await h.say('할 일 추가: 점심 먹기');
+    await h.say('할 일 추가: 주간 보고서 쓰기');
+    await h.say('할 일 추가: 책 반납');
+    h.work.calls.length = 0;
+    return h;
+  }
+
+  it.each([
+    '주간 보고서 쓰기 완료했나?',
+    '주간 보고서 쓰기 완료했어?',
+    '주간 보고서 쓰기 완료됐어?',
+    '주간 보고서 쓰기 끝났어?',
+    '주간 보고서 쓰기 다 했나?',
+    '주간 보고서 쓰기 했나요?',
+    '주간 보고서 쓰기 완료했나',
+    '2번 할 일 완료됐어?',
+  ])('answers %s for an open to-do and mutates nothing', async (text) => {
+    const { say, work } = await seeded();
+    expect(textOf(await say(text))).toBe(
+      '"주간 보고서 쓰기"는 아직 열린 할 일이에요 (2번). 완료하려면 "완료 처리: 2"라고 보내 주세요.',
+    );
+    expect(work.calls).toEqual(['listByActor']);
+    expect(work.ofOwner().every((item) => item.status === WorkItemStatus.ACTIVE)).toBe(true);
+  });
+
+  it('answers completed and cancelled to-dos, numbering open ones by the active list', async () => {
+    const { say } = await seeded();
+    await say('완료 처리: 1');
+    await say('할 일 취소: 1');
+    expect(textOf(await say('점심 먹기 완료했나?'))).toBe('"점심 먹기"는 완료 처리된 할 일이에요.');
+    expect(textOf(await say('책 반납 완료했어?'))).toBe(
+      '"책 반납"는 아직 열린 할 일이에요 (1번). 완료하려면 "완료 처리: 1"라고 보내 주세요.',
+    );
+    expect(textOf(await say('주간 보고서 쓰기 끝났어?'))).toBe('"주간 보고서 쓰기"는 취소된 할 일이에요.');
+  });
+
+  it('falls through for no match, an unknown number, another actor, duplicates and read errors', async () => {
+    const { say, work } = await seeded();
+    for (const text of ['없는 일 완료했나?', '9번 할 일 완료됐어?', '주간 완료했나?']) {
+      expect(await say(text), text).toEqual({ kind: 'none' });
+    }
+    expect(await say('주간 보고서 쓰기 완료했나?', other)).toEqual({ kind: 'none' });
+    await say('할 일 추가: 책 반납');
+    expect(await say('책 반납 완료했나?')).toEqual({ kind: 'none' });
+    work.listByActor = async () => {
+      throw new Error('offline');
+    };
+    expect(await say('주간 보고서 쓰기 완료했나?')).toEqual({ kind: 'none' });
   });
 });

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AiFailureKind,
   ApprovalStatus,
   Capability,
   CodeGenerationStatus,
@@ -27,6 +28,7 @@ import { ApprovalManager } from './approval-manager';
 import type { ApprovalPolicy } from './approval-policy';
 import { ConversationRuntime } from './conversation-runtime';
 import type { ApplyPreviewAnchor, ConversationRuntimeDeps } from './conversation-runtime';
+import { CodeGenerationDispatchedError } from './code-generation-manager';
 import { classifyCredentialFileContent } from './credential-guard';
 import {
   CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
@@ -150,8 +152,9 @@ interface Harness {
   /** Count of workspace.read calls; `onRead` runs inside each one (awaited) before the content is returned. */
   reads: number;
   onRead: ((n: number, path: string) => void | Promise<void>) | null;
-  /** Awaited inside generate() after the input is recorded: a controllable provider call. */
-  onGenerate: (() => Promise<void>) | null;
+  /** Awaited inside generate() after the input is recorded: a controllable provider call. A returned patch
+   *  overrides fields of the returned CodeGeneration (e.g. a FAILED status with its `dispatch`). */
+  onGenerate: (() => Promise<void | Partial<CodeGeneration>>) | null;
   runtime: ConversationRuntime;
   send(text: string): ReturnType<ConversationRuntime['handle']>;
   /** Anchor a fresh planningOnly CODE_IMPLEMENTATION request awaiting its plan approval. */
@@ -287,7 +290,7 @@ function makeHarness(opts: { withFlow?: boolean; turnHandlers?: ConversationTurn
     codeGeneration: {
       generate: async (input: GenerateCodeInput): Promise<CodeGeneration> => {
         h.generated.push(clone(input));
-        await h.onGenerate?.();
+        const patch = await h.onGenerate?.();
         return {
           id: newId(),
           executionPlanRef: input.executionPlanRef,
@@ -296,6 +299,7 @@ function makeHarness(opts: { withFlow?: boolean; turnHandlers?: ConversationTurn
           codeProposalRef: { id: 'prop-1', status: CodeGenerationStatus.SUCCEEDED },
           createdAt: T0,
           updatedAt: T0,
+          ...(patch ?? {}),
         };
       },
       getProposal: async (generation: CodeGeneration): Promise<CodeProposal> => ({
@@ -805,12 +809,13 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   return { promise, resolve };
 };
 
-/** The truthful reply when the request was cancelled while (or after) the granted content was sent. */
-const CANCELLED_AFTER_SEND = (): string =>
-  composer.composeWithNotice(
-    composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']),
-    composer.composeScopeClarificationCancelled(CTX),
-  ).text;
+/** The truthful reply when the request was cancelled while (or after) the granted content was sent (dedicated
+ *  sent-then-cancelled copy, CODE-5 QA follow-up — it still leads with the one-time-send notice). */
+const CANCELLED_AFTER_SEND = (): string => {
+  const text = composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/user.ts']).text;
+  expect(text.startsWith(composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']).text)).toBe(true);
+  return text;
+};
 
 describe('ConversationRuntime credential override — dispatch races (ADR-0097 D5, OVR-3 contract)', () => {
   // A single-target send turn reads the workspace three times: the coverage check, the context preparation and the
@@ -955,5 +960,95 @@ describe('ConversationRuntime credential override — dispatch races (ADR-0097 D
     const apply = h.store.activeTask()!.metadata?.conversationApplyPreviewAnchor as ApplyPreviewAnchor | undefined;
     expect(apply?.status).toBe('ELIGIBLE');
     expect(apply?.projectId).toBe('proj-1');
+  });
+});
+
+describe('ConversationRuntime credential override — failure after the one-time send (CODE-5 QA follow-up)', () => {
+  const FAILED_RUN = (dispatch?: CodeGeneration['dispatch']): Partial<CodeGeneration> => ({
+    status: CodeGenerationStatus.FAILED,
+    codeProposalRef: undefined,
+    failureKind: AiFailureKind.EXECUTION_FAILED,
+    ...(dispatch ? { dispatch } : {}),
+  });
+  const SENT_NO_PROPOSAL = (): string => composer.composeCredentialOverrideSentNoProposal(CTX, ['src/user.ts']).text;
+  const NOT_SENT = (): string =>
+    composer.composeCredentialOverrideGenerationFailed(CTX, ['src/user.ts'], 'not-sent').text;
+  const UNCERTAIN = (): string =>
+    composer.composeCredentialOverrideGenerationFailed(CTX, ['src/user.ts'], 'uncertain').text;
+
+  it.each<[string, () => Promise<void | Partial<CodeGeneration>>, () => string]>([
+    // not-sent: the failure came before provider.execute() was invoked (storage write, provider selection,
+    // prompt build) — an untagged exception, or a recorded FAILED run with dispatch 'not-sent'.
+    ['an exception before the provider was invoked', async () => { throw new Error('storage write failed'); }, NOT_SENT],
+    ['a recorded failure before the provider was invoked', async () => FAILED_RUN('not-sent'), NOT_SENT],
+    // sent: the provider returned output, but no proposal came of it.
+    ['a recorded failure after the provider returned', async () => FAILED_RUN('sent'), SENT_NO_PROPOSAL],
+    [
+      'an exception after the provider returned',
+      async () => { throw new CodeGenerationDispatchedError('sent', new Error('proposal save failed')); },
+      SENT_NO_PROPOSAL,
+    ],
+    // uncertain: the provider call itself threw/timed out (or the run carries no transmission state).
+    ['a recorded failure of the provider call', async () => FAILED_RUN('uncertain'), UNCERTAIN],
+    [
+      'an exception escaping after the provider call threw',
+      async () => { throw new CodeGenerationDispatchedError('uncertain', new Error('fail save failed')); },
+      UNCERTAIN,
+    ],
+    ['a recorded failure without a transmission state', async () => FAILED_RUN(), UNCERTAIN],
+  ])('%s → the truthful copy; the override is consumed and never replayed', async (_name, onGenerate, expected) => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = USER_TS;
+    await promptFor(h);
+    h.onGenerate = onGenerate;
+
+    const result = await h.send('그래도 보내줘');
+
+    expect(h.generated).toHaveLength(1);
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(expected());
+    expect(result.reply.text).toContain('파일은 수정되지 않았어요');
+    expect(result.reply.text).toContain('파일 전송 확인도 다시 받아 주세요');
+    expect(result.reply.text).not.toBe(composer.composeCodeGenerationPreviewFailed(CTX).text);
+    expect(result.reply.preview).toBeUndefined();
+    expect(h.store.overrideAnchor().status).toBe('CONSUMED');
+
+    // the consumed set is never replayed
+    const again = await h.send('그래도 보내줘');
+    expect(h.generated).toHaveLength(1);
+    expect(again.reply.text).toBe(composer.composeNoPendingCredentialOverride(CTX).text);
+  });
+
+  it('only a provider that returned gets the "sent once" copy; not-sent and uncertain never claim a send', () => {
+    const sent = composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']).text;
+    expect(SENT_NO_PROPOSAL().startsWith(sent)).toBe(true);
+    expect(SENT_NO_PROPOSAL()).toContain('코드 변경 제안은 만들어지지 않았어요');
+    expect(NOT_SENT()).toContain('파일 내용은 AI에게 보내지 않았어요: src/user.ts');
+    expect(UNCERTAIN()).toContain('AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: src/user.ts');
+    for (const text of [NOT_SENT(), UNCERTAIN()]) expect(text).not.toContain('AI에게 보냈어요');
+  });
+
+  it.each<[string, () => Promise<void | Partial<CodeGeneration>>]>([
+    ['not-sent', async () => FAILED_RUN('not-sent')],
+    ['sent', async () => FAILED_RUN('sent')],
+    ['uncertain', async () => FAILED_RUN('uncertain')],
+    ['an untagged exception', async () => { throw new Error('boom'); }],
+  ])('without an override a generation failure (%s) keeps the plain could-not-generate copy', async (_name, onGenerate) => {
+    const h = makeHarness();
+    h.files['src/user.ts'] = 'export const ok = 1;\n';
+    h.onGenerate = onGenerate;
+
+    const result = await promptFor(h);
+
+    expect(h.generated).toHaveLength(1);
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(composer.composeCodeGenerationPreviewFailed(CTX).text);
+  });
+
+  it('the sent-then-cancelled copy is dedicated: it is not the scope-clarification "request cancelled" text', () => {
+    const text = composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/user.ts']).text;
+    expect(text).not.toContain(composer.composeScopeClarificationCancelled(CTX).text);
+    expect(text).toContain('이번 한 번만 AI에게 보냈어요');
+    expect(text).toContain('보여 주지도 저장하지도 않았고');
   });
 });
