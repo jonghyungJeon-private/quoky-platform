@@ -331,3 +331,112 @@ describe('ReminderTickDriver lifecycle', () => {
     });
   });
 });
+
+describe('ReminderTickDriver cooperative stop (at-most-once)', () => {
+  /** A batch of `n` reminders delivered sequentially with controllable sends; honours `shouldContinue`. */
+  function batchDispatch(n: number) {
+    const started: number[] = [];
+    const recorded: number[] = [];
+    const gates: Array<ReturnType<typeof deferred>> = Array.from({ length: n }, () => deferred());
+    const outcomeGate = deferred();
+    let holdOutcome = false;
+    return {
+      started,
+      recorded,
+      gates,
+      outcomeGate,
+      holdOutcomeWrite() { holdOutcome = true; },
+      dispatch: {
+        async recoverInterrupted() { return emptyRecovery; },
+        async dispatchDue(_at: string, options?: { shouldContinue?: () => boolean }) {
+          for (let i = 0; i < n; i += 1) {
+            if (options?.shouldContinue && !options.shouldContinue()) break;
+            started.push(i);
+            await gates[i]?.promise; // the send
+            if (holdOutcome) await outcomeGate.promise; // the outcome write
+            recorded.push(i);
+          }
+          return emptyDispatch;
+        },
+      },
+    };
+  }
+
+  function build(batch: ReturnType<typeof batchDispatch>, stopTimeoutMs = 1_000) {
+    const timers = new ManualTimers();
+    const logger = new RecordingLogger();
+    const driver = new ReminderTickDriver({
+      enabled: true, logger, clock: timers.now, timers, stopTimeoutMs, dispatch: batch.dispatch,
+    });
+    return { timers, logger, driver };
+  }
+
+  it('stop during a batch starts no further send, waits for the active one and its outcome, then resolves clean', async () => {
+    const batch = batchDispatch(3);
+    const { timers, driver, logger } = build(batch);
+    await driver.start();
+    expect(timers.fireNext()).toBe(true);
+    await Promise.resolve();
+    expect(batch.started).toEqual([0]);
+
+    let result: boolean | undefined;
+    const stopping = driver.stop().then((r) => { result = r; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(result).toBeUndefined();
+
+    batch.gates[0]?.resolve();
+    await stopping;
+
+    expect(result).toBe(true);
+    expect(batch.recorded).toEqual([0]); // outcome recorded before stop() resolved
+    expect(batch.started).toEqual([0]); // reminders 1 and 2 never started
+    expect(driver.state).toBe('STOPPED');
+    expect(logger.messages()).toContain('reminder.tick.stopped');
+  });
+
+  it('stop with a hung send is bounded, reported as forced, and records nothing (reminder stays FIRING)', async () => {
+    const batch = batchDispatch(2);
+    const { timers, driver, logger } = build(batch);
+    await driver.start();
+    expect(timers.fireNext()).toBe(true);
+    await Promise.resolve();
+
+    const stopping = driver.stop();
+    await Promise.resolve();
+    expect(timers.pendingWith(1_000)).toBe(1);
+    expect(timers.fireNext()).toBe(true);
+
+    expect(await stopping).toBe(false);
+    expect(driver.state).toBe('STOP_FORCED');
+    expect(batch.recorded).toEqual([]);
+    expect(batch.started).toEqual([0]);
+    expect(logger.messages()).toContain('reminder.tick.stop_timeout');
+    expect(logger.messages()).not.toContain('reminder.tick.stopped');
+    expect(await driver.stop()).toBe(false);
+    expect(driver.state).toBe('STOP_FORCED');
+  });
+
+  it('stop waits for a slow outcome write after the send completed', async () => {
+    const batch = batchDispatch(2);
+    batch.holdOutcomeWrite();
+    const { timers, driver } = build(batch);
+    await driver.start();
+    expect(timers.fireNext()).toBe(true);
+    await Promise.resolve();
+
+    let done = false;
+    const stopping = driver.stop().then((r) => { done = r; });
+    batch.gates[0]?.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(done).toBe(false);
+    expect(batch.recorded).toEqual([]);
+
+    batch.outcomeGate.resolve();
+    await stopping;
+    expect(done).toBe(true);
+    expect(batch.recorded).toEqual([0]);
+    expect(batch.started).toEqual([0]);
+  });
+});

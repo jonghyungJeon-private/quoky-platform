@@ -196,6 +196,25 @@ function setup(workItems: readonly WorkItem[] = []) {
 }
 
 describe('ReminderDispatchService.dispatchDue', () => {
+  it('stops starting new deliveries once shouldContinue is false; the active one is recorded, the rest stay FIRING', async () => {
+    const { repository, sink, service, logger } = setup();
+    const a = repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    const b = repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    const c = repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    let stopping = false;
+    sink.setScript(async () => {
+      stopping = true; // stop requested while the first send is in flight
+      return { status: 'SENT', via: 'dm' };
+    });
+    const summary = await service.dispatchDue(NOW, { shouldContinue: () => !stopping });
+    expect(summary).toMatchObject({ claimed: 3, delivered: 1 });
+    expect(sink.delivered).toHaveLength(1);
+    expect(repository.get(a.id).status).toBe(ReminderStatus.COMPLETED);
+    expect(repository.get(b.id).status).toBe(ReminderStatus.FIRING);
+    expect(repository.get(c.id).status).toBe(ReminderStatus.FIRING);
+    expect(logger.lines).toContainEqual({ level: 'warn', message: 'reminder.dispatch.cancelled', fields: { unstarted: 2 } });
+  });
+
   it('delivers an on-time ONCE reminder once and completes it', async () => {
     const { repository, sink, service } = setup();
     const r = repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
