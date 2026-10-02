@@ -696,6 +696,13 @@ describe('Help text names only phrases the runtime actually accepts (ADR-0093)',
     expect(interpret()).toBe(expected);
   });
 
+  it('QA-021: the phrase named after a commit approval is accepted as commit execution', () => {
+    const recorded = composer.composeCommitApprovalRecorded(CTX).text;
+    const phrase = recorded.match(/"([^"]+)"/)?.[1];
+    expect(phrase).toBe('커밋 실행');
+    expect(ConversationRuntime.interpretCommitExecutionIntent(phrase!)).toBe('execute');
+  });
+
   it('the project-registration example classifies as REGISTER_PROJECT', async () => {
     const example = '이 프로젝트 등록해줘: /path/to/project';
     expect(help).toContain(`"${example}"`);

@@ -187,6 +187,10 @@ function approvalRiskLine(riskLevel: RiskLevel): string {
 /** How to decide a pending approval (ADR-0093) — the decision words `interpretApprovalDecision` accepts. */
 const APPROVAL_DECISION_LINE = '진행하려면 "승인", 거절하려면 "거절"이라고 답해 주세요.';
 
+/** The next phrase after a commit approval is recorded (QA-021) — "커밋 실행" is a COMMIT_EXECUTION_WORDS phrase
+ *  (`interpretCommitExecutionIntent` → 'execute' at COMMIT_APPROVED), the same phrase help names. */
+const COMMIT_EXECUTE_NEXT_LINE = '실제로 커밋하려면 "커밋 실행"이라고 보내 주세요.';
+
 /** Next phrases after a real workspace apply (ADR-0043 validation; ADR-0093 reset). "테스트 실행해줘" is an
  *  explicit validation request (`detectExplicitValidationKinds`); "새 대화" is the reset control phrase. */
 const WORKSPACE_APPLIED_NEXT_LINE =
@@ -1261,7 +1265,7 @@ export class ResponseComposer {
   composeCommitApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '커밋 승인은 기록했어요.\n아직 실제 git add/commit/push는 수행하지 않았어요. (실제 커밋은 다음 단계에서 진행돼요)',
+      text: `커밋 승인은 기록했어요.\n아직 실제 git add/commit/push는 수행하지 않았어요.\n${COMMIT_EXECUTE_NEXT_LINE}`,
     };
   }
 
@@ -1335,7 +1339,7 @@ export class ResponseComposer {
   composeCommitAlreadyApproved(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '이미 커밋 승인을 받아 뒀어요.\n아직 실제 git add/commit/push는 수행하지 않았어요. (실제 커밋은 다음 단계에서 진행돼요)',
+      text: `이미 커밋 승인을 받아 뒀어요.\n아직 실제 git add/commit/push는 수행하지 않았어요.\n${COMMIT_EXECUTE_NEXT_LINE}`,
     };
   }
 

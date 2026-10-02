@@ -1096,6 +1096,9 @@ describe('ResponseComposer.composeCommit* replies (ADR-0045)', () => {
   it('approval-recorded says recorded but no commit performed (CA 67)', () => {
     const reply = composer.composeCommitApprovalRecorded(CTX);
     expect(reply.text).toContain('커밋 승인은 기록했어요');
+    // QA-021: names the exact next phrase the runtime accepts
+    expect(reply.text).toContain('실제로 커밋하려면 "커밋 실행"이라고 보내 주세요.');
+    expect(composer.composeCommitAlreadyApproved(CTX).text).toContain('"커밋 실행"');
     expect(reply.text).toContain('아직 실제 git add/commit/push는 수행하지 않았어요');
     for (const f of FORBIDDEN) expect(reply.text, f).not.toContain(f);
   });
