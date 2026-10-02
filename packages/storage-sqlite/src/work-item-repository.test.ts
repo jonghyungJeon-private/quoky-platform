@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ResourceRef, WorkItemStatus, WorkManager } from '@quoky/core';
-import type { Actor, Project } from '@quoky/core';
+import type { Actor, Project, WorkItem } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
 
 const dirs: string[] = [];
@@ -166,6 +166,69 @@ describe('SqliteWorkItemRepository (CAP-011) — migration v7', () => {
     expect(await manager.get('missing')).toBeNull();
     expect(await manager.listByActor('missing-actor')).toEqual([]);
     expect(await manager.listByResource(new ResourceRef({ source: 'jira', externalId: 'missing' }))).toEqual([]);
+    await store.close();
+  });
+
+  it('round-trips the title through the existing data JSON across reload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quoky-work-items-title-'));
+    dirs.push(dir);
+    const first = await storeAt(dir);
+    const created = await new WorkManager(first).create({
+      actorId: actor.id,
+      origin: 'conversation',
+      title: '  주간   보고서  ',
+    });
+    expect(created.title).toBe('주간 보고서');
+    await first.close();
+
+    const reloaded = await storeAt(dir);
+    const found = await new WorkManager(reloaded).get(created.id);
+    expect(found).toEqual(created);
+    expect(found?.title).toBe('주간 보고서');
+    await reloaded.close();
+  });
+
+  it('hydrates a legacy row whose data JSON has no title', async () => {
+    const store = await storeAt();
+    const legacy = {
+      id: 'legacy-1',
+      actorId: actor.id,
+      resourceRefs: [{ source: 'jira', externalId: 'OLD-1' }],
+      status: WorkItemStatus.ACTIVE,
+      origin: 'connector',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    };
+    await store.workItems.save(legacy as unknown as WorkItem);
+    const manager = new WorkManager(store);
+    const found = await manager.get('legacy-1');
+    expect(found).not.toHaveProperty('title');
+    expect(found?.resourceRefs[0]?.identity).toBe('jira:OLD-1');
+    expect((await manager.listActiveByActor(actor.id)).map((item) => item.id)).toEqual(['legacy-1']);
+    await store.close();
+  });
+
+  it('persists correlate refs that listByResource can find, keeping the title', async () => {
+    const store = await storeAt();
+    const manager = new WorkManager(store);
+    const created = await manager.create({ actorId: actor.id, origin: 'conversation', title: 'link me' });
+    const github = new ResourceRef({ source: 'github', externalId: 'owner/repo#7' });
+    const correlated = await manager.correlate(created.id, [github, github]);
+    expect(correlated.resourceRefs.map((ref) => ref.identity)).toEqual(['github:owner/repo#7']);
+    expect((await manager.get(created.id))?.title).toBe('link me');
+    expect((await manager.listByResource(github)).map((item) => item.id)).toEqual([created.id]);
+    await store.close();
+  });
+
+  it('refuses correlate on a terminal item and keeps it uncorrelated', async () => {
+    const store = await storeAt();
+    const manager = new WorkManager(store);
+    const created = await manager.create({ actorId: actor.id, origin: 'conversation', title: 'done' });
+    await manager.transition(created.id, WorkItemStatus.COMPLETED);
+    const github = new ResourceRef({ source: 'github', externalId: '9' });
+    await expect(manager.correlate(created.id, [github])).rejects.toThrow('ACTIVE');
+    expect(await manager.listByResource(github)).toEqual([]);
+    expect(await manager.listActiveByActor(actor.id)).toEqual([]);
     await store.close();
   });
 });
