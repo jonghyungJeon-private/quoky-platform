@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { generalChatReplyPolicy } from '@quoky/core';
+import { detectExternalActionRequest, generalChatReplyPolicy } from '@quoky/core';
 import {
+  UNSUPPORTED_ACTION_NOTICE_EN,
+  UNSUPPORTED_ACTION_NOTICE_KO,
+  claimsUnsupportedExternalAction,
+  guardUnsupportedActionClaims,
   normalizeLiteralEscapes,
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -327,5 +331,169 @@ describe('sanitizeGeneralChatText', () => {
 
   it('leaves ordinary answers unchanged', () => {
     expect(sanitizeGeneralChatText('안녕하세요!', generalChatReplyPolicy('안녕'))).toBe('안녕하세요!');
+  });
+});
+
+describe('action-claim guard (ADR-0098 amendment D2)', () => {
+  // Reply policies as Core builds them: the external-action field comes from Core's classification of the User message.
+  const koRequest = generalChatReplyPolicy('내일 회의 캘린더에 추가해줘', { kind: 'calendar' });
+  const enRequest = generalChatReplyPolicy('Add the meeting to my calendar', { kind: 'calendar' });
+  const unknownRequest = generalChatReplyPolicy('明日の会議をカレンダーに追加して', { kind: 'calendar' });
+
+  it.each([
+    '네! 구글 캘린더에 내일 오후 3시 회의를 추가해 드릴게요.',
+    '구글 캘린더에 일정을 등록했어요.',
+    '캘린더에 넣어 드렸어요!',
+    '회의 일정을 잡아 드렸어요.',
+    '내일 오전 회의를 일정에 추가해 드렸습니다.',
+    '회의 일정이 추가되었습니다.',
+    '캘린더에 추가해 드릴게요: 내일 오후 3시 회의',
+    '김부장님께 메일을 보내드릴게요.',
+    '이메일 발송을 완료했습니다.',
+    '메일로 보냈어요.',
+    '서버 설정과 별개로 제가 메일을 보냈어요.',
+    '동생에게 문자를 보냈습니다.',
+    '네, 문자가 전송되었습니다.',
+    '엄마에게 전화 걸어 드릴게요.',
+    '강남역 식당 예약했어요.',
+    '예약이 완료되었습니다.',
+    'KTX 예매해 드렸어요.',
+    '결제를 진행했어요. 결제가 완료되었습니다.',
+    '네, 결제가 완료되었어요.',
+    '송금했습니다!',
+    '엄마 계좌로 10만원을 보내드렸어요.',
+    '트위터에 올렸어요.',
+    '슬랙 채널에 공지를 게시했습니다.',
+    'Sure! I have added the meeting to your calendar.',
+    "I've added it to your Google Calendar.",
+    "I'll put it on your Outlook calendar.",
+    "I'll send the email to your manager right away.",
+    'I will send him a text now.',
+    'Let me book a table for two at 7pm.',
+    'I booked a table for two at 7pm.',
+    "I've reserved two seats for the 8pm show.",
+    "I'm scheduling the meeting for tomorrow.",
+    'I sent the email.',
+    "I've emailed John the report.",
+    "I'll call your mom now.",
+    'I paid the electricity bill.',
+    "I've transferred the money to your landlord.",
+    "I've placed your order.",
+    'I ordered pizza for you.',
+    'I bought the tickets.',
+    'I posted it on LinkedIn.',
+    "I'll share it on your Slack channel.",
+    'Done! Your meeting has been added to your calendar.',
+    'Your reservation has been confirmed.',
+    'The email has been sent to your manager.',
+    'Sure, sending the email now.',
+    'On it! Adding it to your calendar right away.',
+  ])('replaces a claimed external action on an external-action turn: %s', (reply) => {
+    expect(claimsUnsupportedExternalAction(reply)).toBe(true);
+    const policy = /[가-힣]/u.test(reply) ? koRequest : enRequest;
+    const notice = policy === koRequest ? UNSUPPORTED_ACTION_NOTICE_KO : UNSUPPORTED_ACTION_NOTICE_EN;
+    expect(guardUnsupportedActionClaims(reply, policy)).toBe(notice);
+  });
+
+  it.each([
+    '저는 캘린더에 일정을 추가할 수 없어요. 직접 추가해 주세요.',
+    '아무것도 보내지 않았어요.',
+    '메일을 보내는 방법은 다음과 같아요.',
+    '메일 초안을 써 드릴게요:\n\n안녕하세요, 김부장님.',
+    '예약했는지 앱에서 확인해 보세요.',
+    '메일을 보냈다면 답장을 기다려 보세요.',
+    '이미 메일을 보냈어요?',
+    "I can't add events to your calendar, but here is a draft invite.",
+    "I haven't sent anything.",
+    'I will not send the email.',
+    'If I sent the email, you would get a copy.',
+    'Here is a draft email you can send to your manager.',
+    '```\nawait calendar.events.insert(event); // 캘린더에 추가했어요\n```',
+    'Use `sendMail()`; it reports "메일을 보냈어요" when it succeeds.',
+    '> 구글 캘린더에 추가해 드릴게요.\n\n이런 문장은 실제로 실행된 작업이 없을 때 쓰면 안 돼요.',
+  ])('keeps a reply that claims no action on an external-action turn: %s', (reply) => {
+    expect(claimsUnsupportedExternalAction(reply)).toBe(false);
+    expect(guardUnsupportedActionClaims(reply, koRequest)).toBe(reply);
+  });
+
+  it('follows the Core reply language over the reply text, then the reply text, then both', () => {
+    expect(guardUnsupportedActionClaims("I've added the meeting to your calendar.", koRequest)).toBe(
+      UNSUPPORTED_ACTION_NOTICE_KO,
+    );
+    expect(guardUnsupportedActionClaims('캘린더에 추가해 드렸어요.', unknownRequest)).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
+    expect(guardUnsupportedActionClaims('I sent the email.', unknownRequest)).toBe(UNSUPPORTED_ACTION_NOTICE_EN);
+    expect(
+      guardUnsupportedActionClaims('カレンダーに追加しました。I have added it to your calendar.', unknownRequest),
+    ).toBe(`${UNSUPPORTED_ACTION_NOTICE_KO}\n\n${UNSUPPORTED_ACTION_NOTICE_EN}`);
+    expect(UNSUPPORTED_ACTION_NOTICE_KO).toMatch(/실행된 작업은 없어요/);
+    expect(UNSUPPORTED_ACTION_NOTICE_EN).toMatch(/Nothing was done/);
+  });
+
+  it('runs inside sanitizeGeneralChatText after the existing hygiene steps', () => {
+    expect(
+      sanitizeGeneralChatText('네!\\n구글 캘린더에 회의를 추가해 드릴게요.\\n다른 일정도 말씀해 주세요.', koRequest),
+    ).toBe(UNSUPPORTED_ACTION_NOTICE_KO);
+    expect(sanitizeGeneralChatText('안녕하세요!', koRequest)).toBe('안녕하세요!');
+  });
+
+  it('replaces a fabricated claim for a request Core classified from the actual User message', () => {
+    const userMessage = '김부장님께 회의 자료 메일로 보내줘';
+    const request = detectExternalActionRequest(userMessage);
+    expect(request).toEqual({ kind: 'email' });
+    const policy = generalChatReplyPolicy(userMessage, request);
+    expect(sanitizeGeneralChatText('네, 김부장님께 회의 자료를 메일로 보내 드렸어요.', policy)).toBe(
+      UNSUPPORTED_ACTION_NOTICE_KO,
+    );
+  });
+});
+
+describe('action-claim guard is off unless the User asked for an external action (ADR-0098 amendment D2)', () => {
+  // Independent review probes: drafts, and advice that restates the User's own past action. The User message asks
+  // Quoky for no external action, so Core sets no `externalActionRequested` and the reply passes through unchanged.
+  it.each([
+    [
+      '교수님께 보낼 메일 초안 써줘',
+      '메일 초안:\n\n안녕하세요, 교수님. 지난주 과제를 메일로 보내 드렸습니다. 확인 부탁드립니다.',
+    ],
+    ['Write a draft email to Bob about the invoice.', "Here is a draft:\n\nHi Bob,\n\nI've sent the invoice for March. Let me know if anything is missing."],
+    [
+      '교수님께 메일을 보냈는데 답장이 없어요. 어떻게 하죠?',
+      '교수님께 메일을 보냈는데 답장이 없으시다면, 일주일 정도 기다린 뒤 정중하게 다시 문의해 보세요.',
+    ],
+    ['이미 결제했는데 취소하고 싶어요.', '이미 결제했는데 취소하고 싶으시면, 결제한 앱의 주문 내역에서 취소를 요청해 보세요.'],
+    ['식당 예약했는데 못 갈 것 같아요.', '예약했는데 못 가게 되면, 가능한 한 빨리 식당에 연락해 취소해 두는 게 좋아요.'],
+    ['메일을 보냈는데도 답이 없으면 어떡해?', '메일을 보냈는데도 답이 없으면, 전화나 다른 채널로 한 번 더 확인해 보세요.'],
+  ])('passes a reply through unchanged for "%s"', (userMessage, reply) => {
+    const request = detectExternalActionRequest(userMessage);
+    expect(request).toBeUndefined();
+    const policy = generalChatReplyPolicy(userMessage, request);
+    expect(policy.externalActionRequested).toBeUndefined();
+    expect(guardUnsupportedActionClaims(reply, policy)).toBe(reply);
+    expect(sanitizeGeneralChatText(reply, policy)).toBe(reply);
+  });
+
+  const ordinaryChat = generalChatReplyPolicy('메일 쓰는 법 알려줘');
+
+  it.each([
+    // Claim-shaped text on an ordinary chat turn: never rewritten, whoever acted.
+    '캘린더에 추가해 드렸어요.',
+    "I've added the meeting to your calendar.",
+    '여행 일정에 박물관 방문을 추가했어요.',
+    '예시 코드에 함수를 추가했어요.',
+    "I've added a calendar component to the example below.",
+    "I've scheduled the cron job to run nightly; see the jobs table.",
+    "I'll send a message to the queue when the job finishes.",
+    'Your order has been placed - this is the success message the API returns.',
+    '사용자가 버튼을 누르면 예약이 완료됐어요 메시지를 보여줍니다.',
+    '"결제가 완료되었어요"라는 문구 대신 "결제 완료"를 쓰세요.',
+    '아래와 같이 일정을 추가해 드릴게요: 1) 기상 2) 운동',
+    '네, 로그상으로는 메일이 정상적으로 발송됐어요.',
+    '사용자가 결제했어요 → 서버가 영수증 메일을 보냈어요 순서로 동작해요.',
+    '김부장님이 어제 메일을 보냈어요.',
+    '친구가 문자를 보내 줬어요.',
+  ])('never rewrites an ordinary chat reply: %s', (reply) => {
+    expect(guardUnsupportedActionClaims(reply, ordinaryChat)).toBe(reply);
+    expect(guardUnsupportedActionClaims(reply, undefined)).toBe(reply);
+    expect(guardUnsupportedActionClaims(reply)).toBe(reply);
   });
 });

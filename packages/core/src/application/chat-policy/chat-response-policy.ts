@@ -66,25 +66,62 @@ export interface GeneralChatReplyPolicy {
   readonly replyLanguage: ReplyLanguage;
   /** True when the current User message asks for a specific reply language or for a translation. */
   readonly explicitLanguageRequest: boolean;
+  /**
+   * Present only when Core's deterministic intent classification found that the current User message asks Quoky
+   * itself to perform an unsupported external action (ADR-0098 amendment D1 a). The adapter's action-claim guard
+   * runs only then; it never infers this from the prompt or reply text.
+   */
+  readonly externalActionRequested?: ExternalActionRequest;
 }
 
-/** The `AiRequest.metadata` key under which Core passes the `GeneralChatReplyPolicy` of a GENERAL_CHAT turn. */
+/** Kinds of unsupported external action a User can ask Quoky to perform (ADR-0098 amendment D1 a). */
+export const EXTERNAL_ACTION_KINDS = Object.freeze([
+  'calendar',
+  'email',
+  'booking',
+  'payment',
+  'phone-sms',
+  'posting',
+] as const);
+export type ExternalActionKind = (typeof EXTERNAL_ACTION_KINDS)[number];
+
+/** The unsupported external action the current User message asks Quoky to perform. */
+export interface ExternalActionRequest {
+  readonly kind: ExternalActionKind;
+}
+
+export function isExternalActionKind(value: unknown): value is ExternalActionKind {
+  return typeof value === 'string' && (EXTERNAL_ACTION_KINDS as readonly string[]).includes(value);
+}
+
+/** The `AiRequest.metadata` key under which Core passes the `GeneralChatReplyPolicy` of a GENERAL_CHAT or POLICY_SENSITIVE_CHAT turn. */
 export const GENERAL_CHAT_REPLY_POLICY_METADATA_KEY = 'generalChatReplyPolicy';
 
-/** Derive the reply facts for one GENERAL_CHAT turn from the current User message. */
-export function generalChatReplyPolicy(currentUserMessage: string): GeneralChatReplyPolicy {
+/**
+ * Derive the reply facts for one chat turn from the current User message. `externalActionRequested` is Core's intent
+ * classification of that same message (the decision that routes the turn to POLICY_SENSITIVE_CHAT for the
+ * external-action reason); omit it when the message asks for no external action.
+ */
+export function generalChatReplyPolicy(
+  currentUserMessage: string,
+  externalActionRequested?: ExternalActionRequest,
+): GeneralChatReplyPolicy {
   return Object.freeze({
     replyLanguage: detectReplyLanguage(currentUserMessage),
     explicitLanguageRequest: hasExplicitLanguageRequest(currentUserMessage),
+    ...(externalActionRequested === undefined
+      ? {}
+      : { externalActionRequested: Object.freeze({ kind: externalActionRequested.kind }) }),
   });
 }
 
-/** `AiRequest.metadata` carrying the reply facts for one GENERAL_CHAT turn. */
+/** `AiRequest.metadata` carrying the reply facts for one chat turn. */
 export function generalChatReplyPolicyMetadata(
   currentUserMessage: string,
+  externalActionRequested?: ExternalActionRequest,
 ): Readonly<Record<string, unknown>> {
   return Object.freeze({
-    [GENERAL_CHAT_REPLY_POLICY_METADATA_KEY]: generalChatReplyPolicy(currentUserMessage),
+    [GENERAL_CHAT_REPLY_POLICY_METADATA_KEY]: generalChatReplyPolicy(currentUserMessage, externalActionRequested),
   });
 }
 
@@ -97,10 +134,15 @@ export function readGeneralChatReplyPolicy(
 ): GeneralChatReplyPolicy | undefined {
   const value: unknown = metadata?.[GENERAL_CHAT_REPLY_POLICY_METADATA_KEY];
   if (typeof value !== 'object' || value === null) return undefined;
-  const { replyLanguage, explicitLanguageRequest } = value as Record<string, unknown>;
+  const { replyLanguage, explicitLanguageRequest, externalActionRequested } = value as Record<string, unknown>;
   if (replyLanguage !== 'ko' && replyLanguage !== 'en' && replyLanguage !== 'unknown') return undefined;
   if (typeof explicitLanguageRequest !== 'boolean') return undefined;
-  return Object.freeze({ replyLanguage, explicitLanguageRequest });
+  if (externalActionRequested === undefined) return Object.freeze({ replyLanguage, explicitLanguageRequest });
+  // A malformed external-action field makes the whole policy malformed.
+  if (typeof externalActionRequested !== 'object' || externalActionRequested === null) return undefined;
+  const kind: unknown = (externalActionRequested as Record<string, unknown>).kind;
+  if (!isExternalActionKind(kind)) return undefined;
+  return Object.freeze({ replyLanguage, explicitLanguageRequest, externalActionRequested: Object.freeze({ kind }) });
 }
 
 const REPLY_LANGUAGE_NAME: Readonly<Record<Exclude<ReplyLanguage, 'unknown'>, string>> = Object.freeze({

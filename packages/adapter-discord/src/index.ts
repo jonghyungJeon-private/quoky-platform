@@ -1,7 +1,9 @@
-import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'discord.js';
 import type { Message } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
+import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
+import type { NotificationChannel, NotificationSendOptions } from './notification';
 
 export {
   chunkText,
@@ -12,6 +14,18 @@ export {
   PARTIAL_FAILURE_NOTICE,
 } from './delivery';
 export type { DeliveryReport, ChunkSender } from './delivery';
+export {
+  classifyDiscordError,
+  deliverOwnerNotification,
+  DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS,
+  DISCORD_NOTIFICATION_PLATFORM,
+} from './notification';
+export type {
+  NotificationAllowedMentions,
+  NotificationChannel,
+  NotificationSendOptions,
+  OwnerNotificationDeps,
+} from './notification';
 import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
@@ -19,7 +33,10 @@ import type {
   InboundMessage,
   InboundMessageHandler,
   Logger,
+  NotificationSink,
+  NotificationSinkOutcome,
   OutboundMessage,
+  OwnerNotification,
   PlatformAdapter,
 } from '@quoky/core';
 
@@ -37,6 +54,12 @@ export interface DiscordConfig {
    * channel id is listed. Empty/absent admits owner direct messages only.
    */
   channelIds?: readonly string[];
+  /**
+   * ADR-0101 D8 opt-in (QUOKY_REMINDERS_CHANNEL_DELIVERY): deliver TEXT notifications to the originating
+   * allowlisted guild channel/thread instead of the owner DM. Absent/false = owner DM only. The daily brief is
+   * always DM-only regardless of this flag.
+   */
+  channelDelivery?: boolean;
 }
 
 /** Discord typing indicator lasts ~10s; refresh under that while we work. */
@@ -54,7 +77,7 @@ const TYPING_MAX_TICKS = 16;
  * Note: reading message text requires the privileged **Message Content Intent**
  * to be enabled for the bot in the Discord Developer Portal.
  */
-export class DiscordPlatformAdapter implements PlatformAdapter {
+export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink {
   readonly platform = 'discord';
 
   private client?: Client;
@@ -234,6 +257,55 @@ export class DiscordPlatformAdapter implements PlatformAdapter {
     // Out of scope for Sprint 1a (no approval UI yet). See ADR-0010 / risk policy.
     void this.approvalHandler;
     throw new NotImplementedError('DiscordPlatformAdapter.requestApproval');
+  }
+
+  /**
+   * ADR-0101 D4/D8: owner-only notification delivery. Classification and target policy live in notification.ts;
+   * this method only supplies the live client. A client that is not started/ready is a confirmed non-send.
+   */
+  async deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome> {
+    const client = this.client;
+    if (!client || (typeof client.isReady === 'function' && !client.isReady())) {
+      this.logger.warn('owner notification delivery', {
+        correlationId: notification.correlationId,
+        kind: notification.kind,
+        status: 'NOT_SENT',
+        reason: 'NOT_CONNECTED',
+        retryable: true,
+      });
+      return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+    }
+    // ADR-0101 D6 (at-most-once): the shared client REST retries 5xx/transport failures up to 3 times, which could
+    // post a message the platform already accepted. Notification posts go through a dedicated REST with retries off.
+    const rest = new REST({
+      retries: 0,
+      timeout: DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS,
+    }).setToken(this.config.token);
+    const noRetryChannel = (channelId: string): NotificationChannel => ({
+      send: (options: NotificationSendOptions) =>
+        rest.post(Routes.channelMessages(channelId), {
+          body: {
+            content: options.content,
+            allowed_mentions: { parse: options.allowedMentions.parse, ...(options.allowedMentions.users ? { users: options.allowedMentions.users } : {}) },
+          },
+        }),
+    });
+    return deliverOwnerNotification(notification, {
+      ownerIds: this.config.ownerIds,
+      channelIds: this.config.channelIds ?? [],
+      ...(this.config.guildId ? { guildId: this.config.guildId } : {}),
+      channelDelivery: this.config.channelDelivery === true,
+      fetchChannel: async (id): Promise<NotificationChannel | null> => {
+        const channel = await this.fetchChannel(id);
+        return channel?.isSendable() ? noRetryChannel(channel.id) : null;
+      },
+      fetchOwnerDm: async (userId): Promise<NotificationChannel> => {
+        const user = await client.users.fetch(userId);
+        const dm = await user.createDM();
+        return noRetryChannel(dm.id);
+      },
+      logger: this.logger,
+    });
   }
 
   private async handleMessageCreate(message: Message): Promise<void> {

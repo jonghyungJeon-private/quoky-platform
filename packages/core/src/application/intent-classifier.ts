@@ -1,7 +1,9 @@
 import { Capability, IntentType } from '../domain';
 import type { InboundMessage, Intent } from '../domain';
 import type { CapabilityRouter } from './capability-router';
-import { hasCoLocatedUnnegated } from './intent-negation';
+import { detectReplyLanguage, isExternalActionKind } from './chat-policy';
+import type { ExternalActionKind, ExternalActionRequest } from './chat-policy';
+import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 
 export interface IntentClassifyContext {
@@ -50,6 +52,363 @@ export function detectProjectRegistration(text: string): { path: string; absolut
   const relative = extractNonAbsolutePathToken(text);
   return relative ? { path: relative, absolute: false } : null;
 }
+
+/** `Intent.raw.kind` of a chat intent that Core routed to `POLICY_SENSITIVE_CHAT` (ADR-0098 amendment). */
+export const POLICY_SENSITIVE_CHAT_KIND = 'policy-sensitive-chat';
+
+/** Why a chat turn is policy-sensitive (ADR-0098 amendment D1 a/b/c). */
+export type PolicySensitiveChatReason = 'external-action' | 'injection' | 'unsupported-language';
+
+/**
+ * Korean request endings after a verb stem ("…해줘", "…보내 주세요", "…해줄래?", "…해줄 수 있어?"). A descriptive or
+ * question-about form ("보내는 법", "추가하는 방법") never carries one, so it is not read as a request.
+ */
+const KO_REQUEST = String.raw`\s*(?:줘|주세요|주십시오|주실래요?|주시겠어요|주시겠습니까|줄래요?|줄\s*수\s*있|주실\s*수\s*있|달라|봐\s*줘|봐\s*주세요)`;
+const KO_PARTICLE = String.raw`(?:\s*(?:을|를|은|는|도|로|으로))?\s*(?:좀\s*|빨리\s*|바로\s*)?`;
+
+function koRequest(verbs: string): RegExp {
+  return new RegExp(`(?:${verbs})${KO_REQUEST}`, 'iu');
+}
+
+/**
+ * English request position: the verb starts a sentence, optionally after a greeting and "please" / "can you" /
+ * "go ahead and" / "I want you to". "How do I send an email?" therefore never counts as a request.
+ */
+const EN_REQUEST_PREFIX =
+  String.raw`(?:^|[.!?;]\s+|\n\s*)(?:(?:hey|hi|ok|okay)\b[^,.!?\n]{0,20},\s*)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|i(?:'d|\s+would)\s+like\s+you\s+to\s+)?`;
+
+function enRequest(body: string): RegExp {
+  return new RegExp(`${EN_REQUEST_PREFIX}(?:${body})`, 'iu');
+}
+
+const EN_SENTENCE_REST = String.raw`\b[^.!?\n]*\b`;
+
+/**
+ * Unsupported external actions (ADR-0098 amendment D1 a). Each entry is a noun/verb pair that must co-occur in one
+ * un-negated clause; the verb carries the Korean request ending. "회의" alone is not a calendar noun ("7/3 회의
+ * 등록해줘" stays ordinary chat, which the output action-claim guard does not inspect). `kind` is carried to the
+ * adapter as `GeneralChatReplyPolicy.externalActionRequested`.
+ */
+const KO_EXTERNAL_ACTIONS: readonly {
+  readonly kind: ExternalActionKind;
+  readonly noun: RegExp;
+  readonly verb: RegExp;
+  readonly blocker?: RegExp;
+}[] = [
+  // calendar / schedule; a job schedule in code ("cron 스케줄 추가해줘", "스케줄러에 작업 등록해줘", "이 코드에 스케줄
+  // 추가해줘") is not a calendar entry unless a calendar is named
+  {
+    kind: 'calendar',
+    noun: /(캘린더|달력|calendar|일정|스케줄(?!러)|schedule)/iu,
+    verb: koRequest(String.raw`(?:등록|추가|생성|입력|예약)${KO_PARTICLE}해|넣어|잡아`),
+    blocker: /^(?![\s\S]*(?:캘린더|달력|calendar))[\s\S]*(?:cron|크론|스케줄러|scheduler|코드|code|함수|\bjobs?\b|배치|작업|태스크|\btasks?\b|워크플로|workflow|크롤)/iu,
+  },
+  // email
+  {
+    kind: 'email',
+    noun: /(메일|이메일|e-?mail|gmail|지메일|아웃룩|outlook)/iu,
+    verb: koRequest(String.raw`(?:발송|전송|답장|회신|포워드|포워딩|전달)${KO_PARTICLE}해|보내|부쳐`),
+  },
+  // booking
+  {
+    kind: 'booking',
+    noun: /(예약|예매)/u,
+    verb: koRequest(String.raw`(?:예약|예매)${KO_PARTICLE}(?:해|잡아|진행해|취소해|변경해|걸어)`),
+  },
+  // payment
+  {
+    kind: 'payment',
+    noun: /(결제|송금|이체|입금|구매|구입|주문|계좌)/u,
+    verb: koRequest(String.raw`(?:결제|송금|이체|입금|구매|구입|주문)${KO_PARTICLE}(?:해|진행해|넣어)|보내|부쳐`),
+  },
+  // phone / SMS
+  // A code-side message ("에러 메시지", "커밋 메시지") is not a phone/SMS target.
+  {
+    kind: 'phone-sms',
+    noun: /(전화|문자(?!열)|sms|(?<!(?:에러|오류|커밋|로그|경고|예외|알림|error|commit|log)\s*)(?:메시지|메세지)|카톡|카카오톡|통화)/iu,
+    verb: koRequest(String.raw`(?:전화|문자|통화|카톡)${KO_PARTICLE}해|걸어|보내|돌려`),
+  },
+  // "남겨줘" is a phone/SMS action only for a voice/text message, never "에러 메시지 남겨줘" (log it).
+  {
+    kind: 'phone-sms',
+    noun: /(문자(?!열)|sms|카톡|음성\s*(?:메시지|메세지|사서함)|보이스\s*메일|voicemail|부재중)/iu,
+    verb: koRequest('남겨'),
+  },
+  // posting to an external service
+  {
+    kind: 'posting',
+    noun: /(트위터|트윗|페이스북|인스타(?:그램)?|링크드인|블로그|슬랙|slack|sns|게시판|커뮤니티|카페|스레드|레딧|reddit|유튜브|youtube|twitter|facebook|instagram|linkedin)/iu,
+    verb: koRequest(String.raw`올려|(?:게시|포스팅|업로드|공유|등록|트윗)${KO_PARTICLE}해`),
+  },
+  // Transmit to a work recipient without naming a mail noun ("팀에 회의록 보내줘", "팀장님께 전달해줘"): an email send.
+  // Listed last so a phone/payment/posting noun in the same message wins.
+  {
+    kind: 'email',
+    noun: /(?:팀원들?|우리\s*팀|팀|[가-힣]{0,4}(?:부장|팀장|과장|차장|대리|이사|사장|대표|교수|선생|실장|본부장|담당자|매니저|고객|거래처)(?:님|들)?)\s*(?:께서?|에게|한테|에게는|에)(?![가-힣])/u,
+    verb: koRequest(String.raw`(?:전송|전달|포워드|포워딩|공유)${KO_PARTICLE}해|보내`),
+  },
+];
+
+const EN_EXTERNAL_ACTIONS: readonly { readonly kind: ExternalActionKind; readonly pattern: RegExp }[] = [
+  { kind: 'calendar', pattern: enRequest(String.raw`(?:add|put|schedule|create|set\s+up|book)${EN_SENTENCE_REST}(?:calendars?|meetings?|appointments?)\b`) },
+  // "Send me an email template", "Can you send the email here?" ask for text in the chat, not a send. A draft is
+  // text Quoky writes or shows ("write a draft email"), unless it is TRANSMITTED to a recipient ("send this draft
+  // email to Alice").
+  { kind: 'email', pattern: enRequest(
+    String.raw`(?:send|forward|reply\s+to|write\s+and\s+send)(?![^.!?\n]*\b(?:templates?|examples?|samples?|outlines?|formats?|wording|subject\s+lines?|here)\b)(?![^.!?\n]*\bdrafts?\b(?![^.!?\n]*\b(?:to|for)\s+(?!me\b|us\b|here\b)[\p{L}\p{N}]))${EN_SENTENCE_REST}(?:e-?mails?|mails?|inbox)\b`,
+  ) },
+  { kind: 'email', pattern: enRequest(String.raw`(?:e-?mail)\s+(?!address)(?:my|him|her|them|the|this|[a-z]+\s+(?:about|that|the|a))\b`) },
+  // Bare verb with a named recipient or an address ("Can you email Alice?", "email bob@example.com").
+  { kind: 'email', pattern: enRequest(
+    String.raw`(?:e-?mail|mail)\s+(?:[\w.+-]+@[\w-]+\.[\w.-]+|(?!(?:address(?:es)?|templates?|drafts?|subject|body|format|etiquette|marketing|newsletters?|signatures?|clients?|apps?|providers?|tips?|examples?|samples?|here|it|is|was|and|or|me|us|you|from|in|on|at|of|for|with|without)\b)\p{L}+(?:\s+\p{L}+)?\s*(?:[?.!,]|$|\s+(?:about|that|regarding|and|tomorrow|today|now|asap|please|the|a|an|my)\b))`,
+  ) },
+  { kind: 'booking', pattern: enRequest(String.raw`(?:book|reserve)${EN_SENTENCE_REST}(?:tables?|flights?|hotels?|rooms?|tickets?|seats?|restaurants?|appointments?|reservations?|trains?|taxis?|cabs?)\b`) },
+  { kind: 'booking', pattern: enRequest(String.raw`make\s+(?:a|the|my)\s+(?:reservation|booking)\b`) },
+  // "pay attention to the rent calculation bug" is not a payment.
+  { kind: 'payment', pattern: enRequest(String.raw`(?:pay(?!\s+(?:close\s+|more\s+|special\s+|careful\s+|extra\s+)?attention\b)|transfer|wire)${EN_SENTENCE_REST}(?:bills?|invoices?|money|payments?|rent|dollars?|won)\b`) },
+  // "buy some time" / "buy into" are idioms and "buy or rent" is a comparison, not purchases.
+  { kind: 'payment', pattern: enRequest(
+    String.raw`(?:buy|purchase)\b(?!\s+(?:or|vs\.?|versus)\b)(?!\s+(?:(?:me|us|you|myself|yourself)\s+)?(?:some\s+|more\s+|a\s+(?:little|bit)\s+(?:of\s+)?(?:more\s+)?)?time\b)(?!\s+into\b)|place\s+(?:an?|the|my)\s+order\b`,
+  ) },
+  // "call back function" is a callback, not a phone call.
+  { kind: 'phone-sms', pattern: enRequest(
+    String.raw`(?:call|phone|ring|text)\s+(?:my\s+\w+|mom|mum|dad|him|her|them|back(?![\s-]*(?:functions?|handlers?|urls?|hell|patterns?)\b))\b`,
+  ) },
+  { kind: 'phone-sms', pattern: enRequest(String.raw`(?:send|leave)\s+(?:an?\s+|the\s+)?(?:text|sms|text\s+message|voicemail)\b|(?:make|place)\s+an?\s+(?:phone\s+)?call\b`) },
+  // "Share your thoughts on LinkedIn posts" asks for an opinion about the service, not a post to it.
+  { kind: 'posting', pattern: enRequest(
+    String.raw`(?:post|tweet|publish|share(?!\s+(?:your|my|some)\s+(?:thoughts|opinions?|views|tips|advice|ideas|experience)\b)|upload)${EN_SENTENCE_REST}(?:twitter|x\.com|facebook|instagram|linkedin|blog|slack|reddit|threads|youtube|social\s+media)\b(?!\s+(?:posts?|marketing|strateg(?:y|ies)|tips|content|best\s+practices|api|integration)\b)`,
+  ) },
+  { kind: 'posting', pattern: enRequest(String.raw`tweet\s+(?:this|that|it|about)\b`) },
+];
+
+/**
+ * Override-shaped input (ADR-0098 amendment D1 b): "ignore all previous instructions", "이전 지시는 무시하고". The
+ * `noun` group tells instruction nouns (instructions, prompts, 지시, 지침, 프롬프트) from tool-rule nouns (rules, 규칙,
+ * 명령), see `isOverrideInjection`.
+ */
+const OVERRIDE_PATTERNS: readonly RegExp[] = [
+  /\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+|any\s+)?(?:(?:of\s+)?(?:the|your|my|these|those)\s+)?(?:previous|prior|above|earlier|preceding|original|system|initial|all|your)\b[^.!?\n]{0,20}?\b(?<noun>instructions?|prompts?|rules?|directions?|guidelines?|guardrails?)\b/giu,
+  /(?:이전|앞의|앞선|위의|위\s*에|기존|모든|지금까지의?|시스템|원래)\s*(?:의\s*)?(?<noun>지시|지침|명령|규칙|프롬프트|instructions?)\S*\s*(?:은|는|을|를|들을|들은)?\s*(?:모두\s*|다\s*|전부\s*|싹\s*)?(?:무시|잊어|잊고|따르지\s*마|어기|무효)/giu,
+];
+/** Nouns that are as often a tool's rules or commands ("eslint rules", "git 명령") as the assistant's instructions. */
+const OVERRIDE_TOOL_RULE_NOUN = /^(?:rules?|규칙|명령)$/iu;
+/** A qualifier that points the tool-rule noun at the assistant's own conversation ("your rules", "지금까지의 규칙"). */
+const OVERRIDE_ASSISTANT_REF =
+  /\b(?:your|previous|prior|above|earlier|preceding|system|initial)\b|quoky|쿼키|너의|당신의|이전|앞의|앞선|위의|위\s*에|지금까지|시스템|원래/iu;
+/** A developer tool named in or just before the match ("eslint에서 모든 규칙", "git에서 이전 명령", "ignore all eslint rules"). */
+const OVERRIDE_TOOL =
+  /\b(?:eslint|tslint|prettier|stylelint|biome|tsconfig|tsc|git|gitignore|lint|linter|webpack|babel|jest|vitest|css|nginx|firewall|iptables)\b|린트|린터|컴파일러/iu;
+/** A how-to question about the override ("How do I ignore …", "무시하는 방법", "무시하려면?"). */
+const OVERRIDE_HOW_TO = /\bhow\s+(?:do|can|could|would|should)\s+(?:i|we|you)\b|\bhow\s+to\b|방법|하는\s*법|하려면|어떻게/iu;
+/** Instructions scoped to a document the User shares ("disregard previous instructions in this ticket"). */
+const OVERRIDE_DOCUMENT_SCOPE =
+  /^\s+(?:in|from|of|within|on)\s+(?:this|the|that)\s+(?:ticket|issue|file|doc(?:ument)?|pr|pull\s+request|thread|e-?mail|message|spec|readme|page|section|comment|task)s?\b/iu;
+
+/**
+ * True when the text asks the assistant to drop its own instructions. Not injection: instructions scoped to a shared
+ * document, an override next to a developer tool, and a tool-rule noun (rules/규칙/명령) that does not point at the
+ * assistant or is asked as a how-to ("How do I ignore all eslint rules for one file?", "tsconfig에서 기존 규칙
+ * 무시하고 새로 설정하려면?").
+ */
+function isOverrideInjection(text: string): boolean {
+  for (const pattern of OVERRIDE_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (OVERRIDE_DOCUMENT_SCOPE.test(text.slice(end))) continue;
+      if (OVERRIDE_TOOL.test(text.slice(Math.max(0, start - 20), end))) continue;
+      if (
+        OVERRIDE_TOOL_RULE_NOUN.test(match.groups?.noun ?? '') &&
+        (!OVERRIDE_ASSISTANT_REF.test(match[0]) || OVERRIDE_HOW_TO.test(text))
+      ) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Injection-shaped input (ADR-0098 amendment D1 b): reveal hidden instructions or jailbreak. */
+const INJECTION_PATTERNS: readonly RegExp[] = [
+  // A strong reveal verb with any hidden-instruction noun ("leak hidden instructions").
+  /\b(?:reveal|dump|leak|expose)\b[^.!?\n]{0,40}\b(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\b/iu,
+  // A display verb aimed at the assistant's own instructions ("print your system prompt", "show me the system
+  // prompt"), never "show me an example system prompt" or "tell me about system prompts".
+  /\b(?:show|print|display|output|repeat|share|copy|paste|tell\s+me(?!\s+about)|give\s+me(?!\s+(?:an?\s+)?examples?))\b[^.!?\n]{0,40}?\b(?:your|the|its|quoky's)\s+(?:(?:full|entire|exact|whole|complete|current|original|secret)\s+)?(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\b/iu,
+  // A what-is question only when it asks for the assistant's own instructions ("What is your system prompt?"), never
+  // the concept ("What is a system prompt in LLMs?").
+  /\bwhat(?:'s|\s+is|\s+are|\s+were)\b[^.!?\n]{0,30}?\b(?:your|quoky's)\s+(?:(?:full|entire|exact|current|original|secret)\s+)?(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\b|\bwhat(?:'s|\s+is|\s+are|\s+were)\b[^.!?\n]{0,30}?\b(?:system|initial|hidden|internal|developer|original)\s+(?:prompts?|instructions?|messages?|rules?)\s+(?:that\s+)?you\s+(?:were|are|have\s+been|got|use|follow)\b/iu,
+  /\b(?:jailbreak|jailbroken|developer\s+mode|do\s+anything\s+now)\b/iu,
+  // The assistant's own instructions ("너의 시스템 프롬프트 보여줘", "Quoky의 지침이 뭐야?").
+  /(?:너의|너\s+의|당신의|당신|quoky\s*의|쿼키\s*의|(?:^|\s)(?:네|니)\s)\s*(?:(?:시스템|내부|숨겨진|숨은|초기|개발자|원본)\s*(?:의\s*)?)?(?:프롬프트|지시(?:문|사항)?|지침|명령문)\S*\s*[^.!?\n]{0,15}(?:출력|보여|알려|공개|말해|읽어|복사|노출|뭐야|뭔지|뭐니|뭐예요|뭔가요|그대로)/iu,
+  // A reveal request for hidden instructions; a concept question ("시스템 프롬프트란 뭐야?", "시스템 프롬프트가 뭔지
+  // 알려줘", "시스템 프롬프트 작성법 알려줘") is not one.
+  /(?:시스템|내부|숨겨진|숨은|초기|개발자|원본)\s*(?:의\s*)?(?:프롬프트|지시(?:문|사항)?|지침|명령문)(?![가-힣]{0,2}\s*(?:란|이란|에\s*(?:대해|대한|관해|관한)|가\s*뭐|이\s*뭐|는\s*뭐|은\s*뭐|가\s*뭔|이\s*뭔|가\s*무엇|이\s*무엇|의\s*(?:역할|개념|의미|정의|예)|(?:를|을)?\s*(?:작성|엔지니어링|설계|잘\s*쓰|쓰는|만드는|짜는)|작성|엔지니어링|설계|예시|예제|샘플|템플릿|개념|역할))\S*\s*[^.!?\n]{0,15}(?:출력|보여|알려|공개|말해|읽어|복사|노출|그대로)/iu,
+  /(?:탈옥|제한\s*(?:을|를)?\s*(?:모두\s*)?(?:풀어|해제))/u,
+];
+
+
+/**
+ * Function words of common Latin-script languages other than English (Spanish, French, German, Portuguese, Italian,
+ * Dutch). Words that are also ordinary English words ("die", "son", "pour", "come") are left out.
+ */
+const OTHER_LATIN_FUNCTION_WORDS = new Set([
+  // es
+  'el', 'los', 'las', 'qué', 'que', 'cómo', 'como', 'está', 'estás', 'estoy', 'eres', 'por', 'para', 'hola',
+  'gracias', 'dónde', 'donde', 'cuál', 'cuándo', 'muy', 'pero', 'también', 'puedes', 'necesito', 'quiero', 'mi', 'tu',
+  'una', 'del', 'es', 'y', 'hoy',
+  // fr
+  'le', 'les', 'est', 'bonjour', 'merci', 'comment', 'pourquoi', 'je', 'vous', 'nous', 'avec', 'ça', 'une', 'des',
+  'suis', 'êtes', 'ce', 'cette', 'mais', 'aujourd', 'oui', 'très', 'il', 'elle', 'et', 'qui', 'quoi',
+  // de
+  'ich', 'du', 'wie', 'ist', 'nicht', 'und', 'der', 'das', 'bitte', 'danke', 'guten', 'geht', 'dir', 'mit', 'ein',
+  'eine', 'heute', 'warum', 'kannst', 'bist', 'sind', 'mir', 'mich', 'wo', 'ja', 'nein', 'auf',
+  // pt / it / nl
+  'você', 'obrigado', 'obrigada', 'olá', 'não', 'ciao', 'grazie', 'sono', 'sei', 'perché', 'buongiorno',
+  'hallo', 'dank', 'jij', 'niet', 'het', 'een', 'wat', 'hoe',
+]);
+const ENGLISH_FUNCTION_WORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'to', 'of', 'and', 'in', 'on', 'for', 'with', 'you', 'i', 'it',
+  'this', 'that', 'what', 'how', 'why', 'can', 'do', 'does', 'my', 'your', 'me', 'please', 'hello', 'hi', 'thanks',
+]);
+
+/**
+ * A Latin-script message in a language other than English. Conservative: an inverted "¿"/"¡", or at least two words
+ * that are non-English function words or carry a non-English diacritic (at least one a function word, since accented
+ * names and loanwords are common in English), making up at least 40% of the words and outnumbering English function
+ * words. "Comment out this line" and "Find a café near Zürich" stay English.
+ */
+function isOtherLatinLanguage(prose: string): boolean {
+  if (/[¿¡]/u.test(prose)) return true;
+  const words = prose.toLowerCase().match(/\p{Script=Latin}+(?:['’]\p{Script=Latin}+)?/gu) ?? [];
+  if (words.length === 0) return false;
+  let functionWords = 0;
+  let accented = 0;
+  let english = 0;
+  for (const word of words) {
+    const bare = word.replace(/['’].*$/u, '');
+    if (ENGLISH_FUNCTION_WORDS.has(bare)) english += 1;
+    else if (OTHER_LATIN_FUNCTION_WORDS.has(bare)) functionWords += 1;
+    else if (/[à-öø-ÿœß]/u.test(word)) accented += 1;
+  }
+  const foreign = functionWords + accented;
+  return functionWords >= 1 && foreign >= 2 && foreign / words.length >= 0.4 && foreign > english;
+}
+
+const NON_PROSE = /```[\s\S]*?(?:```|$)|`[^`\n]*`|\b(?:https?|ftp|file):\/\/\S+|\bwww\.\S+/giu;
+
+/**
+ * A message in a language other than Korean or English (ADR-0098 amendment D1 c). Reuses the chat-policy
+ * `detectReplyLanguage`: an `unknown` message whose prose has a substantial share (>= 20%) of letters from a script
+ * other than Hangul and Latin counts, so code-only, emoji-only and Korean/English mixes stay ordinary chat.
+ * `detectReplyLanguage` reads every Latin-script message as `en`, so a Latin-script message also counts when it
+ * carries a clear non-English signal (`isOtherLatinLanguage`). Known gap: a short or function-word-free message in
+ * another Latin-script language (e.g. a single noun) still reads as English.
+ */
+function isOtherLanguage(text: string): boolean {
+  const language = detectReplyLanguage(text);
+  const prose = text.replace(NON_PROSE, ' ');
+  if (language === 'en') return isOtherLatinLanguage(prose);
+  if (language !== 'unknown') return false;
+  const letters = prose.match(/\p{L}/gu)?.length ?? 0;
+  if (letters === 0) return false;
+  const hangul = prose.match(/\p{Script=Hangul}/gu)?.length ?? 0;
+  const latin = prose.match(/\p{Script=Latin}/gu)?.length ?? 0;
+  return (letters - hangul - latin) / letters >= 0.2;
+}
+
+/** Text inside "…", “…”, 「…」, 『…』, `…` and word-bounded '…' is a quoted example, not a request to Quoky. */
+const QUOTED_SPAN =
+  /"[^"\n]*"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|`[^`\n]*`|(?<![\p{L}\p{N}])'[^'\n]+'(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])‘[^’\n]+’(?![\p{L}\p{N}])/gu;
+
+function stripQuotedExamples(text: string): string {
+  return text.replace(QUOTED_SPAN, ' ');
+}
+
+/**
+ * Informational framing: a translation, meaning or phrasing question about a sentence, not an action request.
+ * "번역해서 보내줘" / "translate it and send" still act.
+ */
+const META_FRAMING =
+  /번역(?!\s*(?:해서|하고|한\s*(?:뒤|후|다음|걸)))|\btranslat(?:e|ion)\b(?![^.!?\n]*\b(?:and|then)\s+(?:send|email|forward|mail)\b)|뜻이\s*(?:뭐|무엇|뭔)|의미가\s*(?:뭐|무엇|뭔)|\bwhat\s+(?:does|do|did)\b[^.!?\n]*\bmeans?\b|\bhow\s+(?:do|can|would|should)\s+(?:i|you|we)\s+say\b|어떻게\s*(?:말|표현)|예문/iu;
+
+function isMetaFraming(text: string): boolean {
+  return META_FRAMING.test(text);
+}
+
+const RETRACTED_QUESTION = /[^.!?\n]*[?？]\s*(?:no|nope|nah|never\s*mind|아니(?:요|야)?|아냐)(?![\p{L}])/giu;
+
+/**
+ * Deterministic policy-sensitivity check for an otherwise GENERAL_CHAT message (ADR-0098 amendment D1). No LLM. A
+ * question about an action ("메일 쓰는 법 알려줘", "how do I send an email?") is not a request for it.
+ */
+export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReason | undefined {
+  if (isOverrideInjection(text) || INJECTION_PATTERNS.some((pattern) => pattern.test(text))) return 'injection';
+  if (detectExternalActionRequest(text) !== undefined) return 'external-action';
+  if (isOtherLanguage(text)) return 'unsupported-language';
+  return undefined;
+}
+
+/**
+ * The unsupported external action the message asks Quoky itself to perform (ADR-0098 amendment D1 a), or
+ * `undefined`. Deterministic, no LLM. A question about an action ("메일 쓰는 법 알려줘", "how do I send an email?"), a
+ * negated request and a request taken back in the same message are not requests.
+ */
+export function detectExternalActionRequest(text: string): ExternalActionRequest | undefined {
+  // A request the User takes back in the same message ("Post the code to slack? no, just explain") is not one.
+  const requests = stripQuotedExamples(text.replace(RETRACTED_QUESTION, ' '));
+  // Meta framing suppresses only its own clause: "Pay the rent. Translate the receipt." still asks for the payment.
+  const clauses = isMetaFraming(requests) ? requests.split(CLAUSE_BOUNDARY).filter((c) => !isMetaFraming(c)) : [requests];
+  for (const clause of clauses) {
+    const kind = externalActionKindOf(clause);
+    if (kind !== undefined) return { kind };
+  }
+  return undefined;
+}
+
+/** Sentence punctuation (followed by space or the end), newlines and "and then" / "그리고" connectives. */
+const CLAUSE_BOUNDARY = /[.!?。！？;；](?=\s|$)|[;；]|\n|\s+and\s+then\s+|\s+그리고(?:\s*나서)?\s+/iu;
+
+function externalActionKindOf(requests: string): ExternalActionKind | undefined {
+  const ko = KO_EXTERNAL_ACTIONS.find(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker));
+  if (ko !== undefined) return ko.kind;
+  return EN_EXTERNAL_ACTIONS.find(({ pattern }) => unnegatedMatch(requests, [pattern]))?.kind;
+}
+
+/**
+ * The external-action decision Core recorded on a chat intent at classification time (`Intent.raw`), or `undefined`.
+ * ConversationRuntime carries it to the adapter as `GeneralChatReplyPolicy.externalActionRequested`, so the
+ * action-claim guard runs only for turns whose User message asked for an unsupported external action.
+ */
+export function externalActionRequestOf(intent: Intent): ExternalActionRequest | undefined {
+  const raw = intent.raw;
+  if (raw?.kind !== POLICY_SENSITIVE_CHAT_KIND) return undefined;
+  const kind: unknown = raw.externalAction;
+  return isExternalActionKind(kind) ? { kind } : undefined;
+}
+
+/** "분리해서 설명해줘" explains by splitting; the change is a means of the explanation, not the request. */
+const KO_NOT_EXPLAIN = String.raw`(?!\s*(?:설명|알려|보여|말해|요약|이해))`;
+/** "고치고 싶은 부분" is a wish, not a request. */
+const KO_NOT_WISH = String.raw`(?!\s*싶)`;
+
+/**
+ * A path-scoped code-change verb (ADR-0098 amendment D3): with a real file path in the message, "src/a.ts를 고치고
+ * src/new-helper.ts로 헬퍼를 분리해줘" is a code change even without the words "코드"/"파일". Korean verbs are
+ * request/connective forms only (a request ending such as 줘/주세요, or a connective 고/서), so a descriptive
+ * "추가된"/"분리된" or a necessity question "고쳐야 해?" does not count; English verbs must sit in request position, so
+ * "how would you fix src/a.ts?" or "what does split do in src/a.ts?" stays chat.
+ */
+const KO_CHANGE_TAIL = String.raw`(?:\s*(?:줘|주세요|주십시오|주실래요?|주시겠어요|주시겠습니까|줄래요?|줄\s*수\s*있|봐\s*줘|봐\s*주세요|놔\s*줘|둬\s*줘)|서${KO_NOT_EXPLAIN}|라(?![가-힣]))`;
+const PATH_CHANGE_VERB_KO = new RegExp(
+  String.raw`(?:고쳐|바꿔|옮겨|쪼개|빼|(?:수정|분리|추가|변경|삭제|이동|교체|fix|update|change|modify|add|remove|delete|move|rename|refactor|extract|split)\s*해)${KO_CHANGE_TAIL}|고치(?:고${KO_NOT_WISH}|자)|바꾸고${KO_NOT_WISH}|(?:를|을)\s*빼고(?!\s*(?:나머지|말고|전부|다른))|(?:수정|분리|추가|변경|삭제|이동|교체)\s*(?:하고${KO_NOT_WISH}|하자|하여)`,
+  'iu',
+);
+const PATH_CHANGE_VERB_EN = enRequest(
+  String.raw`(?:fix|modify|refactor|extract|split|rename|add|update|change|move|remove|delete)\b`,
+);
 
 /**
  * Classifies a natural-language message into an Intent. v1 is MINIMAL and
@@ -203,13 +562,31 @@ export class IntentClassifier {
     return IntentClassifier.chatIntent(text);
   }
 
+  /**
+   * Every chat intent goes through here. ADR-0098 amendment: a policy-sensitive message (unsupported external action,
+   * injection-shaped, or a language other than Korean/English) keeps `IntentType.CHAT` but asks for the
+   * `POLICY_SENSITIVE_CHAT` capability, so only providers that meet the chat-policy bar serve it.
+   */
   private static chatIntent(text: string): Intent {
+    const policySensitive = detectPolicySensitiveChat(text);
+    // Recorded for every policy-sensitive reason, so an injection-shaped message that also asks for an external action
+    // still gets the action-claim guard.
+    const externalAction = policySensitive ? detectExternalActionRequest(text) : undefined;
     return {
       type: IntentType.CHAT,
-      capability: Capability.GENERAL_CHAT,
+      capability: policySensitive ? Capability.POLICY_SENSITIVE_CHAT : Capability.GENERAL_CHAT,
       confidence: 1,
       requiresWork: true,
       summary: text.slice(0, 200) || '(empty message)',
+      ...(policySensitive
+        ? {
+            raw: {
+              kind: POLICY_SENSITIVE_CHAT_KIND,
+              reason: policySensitive,
+              ...(externalAction ? { externalAction: externalAction.kind } : {}),
+            },
+          }
+        : {}),
     };
   }
 
@@ -251,7 +628,17 @@ export class IntentClassifier {
     const bugish = /(버그|bug|에러|오류|error)/i;
     const fixVerb = /(고쳐|고치|수정|fix)/i;
     if (bugish.test(text) && fixVerb.test(text)) return 'fix';
-    const changeVerb = /(고쳐|고치|수정해|수정\s*해|바꿔|바꾸어|변경해|구현해|fix|change|modify|implement)/i;
+    // ADR-0098 amendment D3: a real file path plus an un-negated change verb is a code change.
+    if (
+      IntentClassifier.hasFilePathSignal(text) &&
+      unnegatedMatch(text, [PATH_CHANGE_VERB_KO, PATH_CHANGE_VERB_EN])
+    ) {
+      return 'change';
+    }
+    // A necessity question ("src/a.ts 수정해야 할 부분이 있을까?", "왜 고쳐야 해?") asks about a change, not for one,
+    // and a wish ("고치고 싶은 부분 있으면 알려줘") is not a request.
+    const changeVerb =
+      /(?:고쳐|고치(?!고\s*싶)|수정해|수정\s*해|바꿔|바꾸어|변경해|구현해)(?!야[^.!\n]*(?:\?|까\s*$|나요?\s*$|니\s*$))|fix|change|modify|implement/i;
     const codeish = /(코드|code|파일|file|부분|함수|function|버그|bug)/i;
     if (changeVerb.test(text) && codeish.test(text)) return 'change';
     // F6 (Sprint 4c-Follow-up-6): an explicit create-file request is a CODE_IMPLEMENTATION intent. Require a

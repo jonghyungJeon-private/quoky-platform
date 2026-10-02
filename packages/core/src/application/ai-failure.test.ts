@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { describeAiFailure } from './ai-failure';
+import { POLICY_SENSITIVE_CHAT_UNAVAILABLE_MESSAGE, describeAiFailure } from './ai-failure';
 import { AiProviderError, NoProviderAvailableError } from '../errors';
-import { AiFailureKind } from '../domain';
+import { AiFailureKind, Capability } from '../domain';
 
 describe('describeAiFailure', () => {
   it('maps an AiProviderError kind to a friendly message + technical summary', () => {
@@ -41,5 +41,20 @@ describe('describeAiFailure', () => {
   it('caps the error summary length', () => {
     const d = describeAiFailure(new Error('x'.repeat(1000)));
     expect(d.errorSummary.length).toBeLessThanOrEqual(500);
+  });
+
+  it('gives a missing POLICY_SENSITIVE_CHAT provider a truthful deterministic reply, not "AI not configured" (ADR-0098 amendment)', () => {
+    const d = describeAiFailure(new NoProviderAvailableError(Capability.POLICY_SENSITIVE_CHAT));
+    const generic = describeAiFailure(new NoProviderAvailableError(Capability.GENERAL_CHAT));
+    expect(d.kind).toBe(AiFailureKind.UNAVAILABLE);
+    expect(d.userMessage).toBe(POLICY_SENSITIVE_CHAT_UNAVAILABLE_MESSAGE);
+    expect(d.userMessage).not.toBe(generic.userMessage);
+    expect(d.userMessage).toMatch(/아무 작업도 실행하지 않았어요/);
+    expect(d.userMessage).toMatch(/nothing was done/i);
+    expect(d.userMessage).not.toMatch(/추가했|보냈|예약했|드릴게요/);
+    expect(d.userMessage).not.toContain('POLICY_SENSITIVE_CHAT');
+    expect(d.errorSummary).toContain('POLICY_SENSITIVE_CHAT');
+    // Other capabilities keep the setup copy.
+    expect(describeAiFailure(new NoProviderAvailableError(Capability.SUMMARIZATION)).userMessage).toBe(generic.userMessage);
   });
 });

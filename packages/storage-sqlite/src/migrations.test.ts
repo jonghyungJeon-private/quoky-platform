@@ -23,14 +23,14 @@ describe('runMigrations (ADR-0020 — versioned schema)', () => {
     expect(res.from).toBe(0);
     expect(res.to).toBe(LATEST_SCHEMA_VERSION);
     expect(userVersion(db)).toBe(LATEST_SCHEMA_VERSION);
-    for (const t of ['actors', 'actor_identities', 'sessions', 'tasks', 'task_runs', 'artifacts', 'projects', 'memories', 'approvals', 'patches', 'workspace_changes', 'command_executions', 'code_generations', 'code_proposals', 'work_items', 'execution_receipts', 'work_handoffs', 'conversation_turns', 'turn_platform_messages', 'feedback_signals']) {
+    for (const t of ['actors', 'actor_identities', 'sessions', 'tasks', 'task_runs', 'artifacts', 'projects', 'memories', 'approvals', 'patches', 'workspace_changes', 'command_executions', 'code_generations', 'code_proposals', 'work_items', 'execution_receipts', 'work_handoffs', 'conversation_turns', 'turn_platform_messages', 'feedback_signals', 'reminders']) {
       expect(tableNames(db)).toContain(t);
     }
     db.close();
   });
 
   it('migration v7 preserves the CAP-011 work_items schema', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(12);
+    expect(LATEST_SCHEMA_VERSION).toBe(13);
     const db = new Database(':memory:');
     runMigrations(db);
     const cols = (db.pragma('table_info(work_items)') as Array<{ name: string }>).map((c) => c.name);
@@ -142,12 +142,13 @@ describe('migration v12 — feedback capture tables (ADR-0098 D4, ADR-0096 D10)'
     const before = tableNames(db);
     expect(before).not.toContain('conversation_turns');
 
-    expect(runMigrations(db)).toEqual({ from: 11, to: 12, applied: [12] });
+    const v12 = MIGRATIONS.slice(0, 12);
+    expect(runMigrations(db, v12)).toEqual({ from: 11, to: 12, applied: [12] });
     expect(tableNames(db)).toEqual(expect.arrayContaining([
       ...before, 'conversation_turns', 'turn_platform_messages', 'feedback_signals',
     ]));
     expect(db.prepare('SELECT id FROM sessions').all()).toEqual([{ id: 's1' }]);
-    expect(runMigrations(db)).toEqual({ from: 12, to: 12, applied: [] });
+    expect(runMigrations(db, v12)).toEqual({ from: 12, to: 12, applied: [] });
     // Re-running the v12 DDL itself is idempotent (IF NOT EXISTS throughout).
     expect(() => MIGRATIONS[11]!.up(db)).not.toThrow();
     db.close();
@@ -189,6 +190,71 @@ describe('migration v12 — feedback capture tables (ADR-0098 D4, ADR-0096 D10)'
       expect.objectContaining({ name: 'feedback_signals_turn_source', unique: 1 }),
     ]));
     expect(indexColumns(db, 'feedback_signals_turn_source')).toEqual(['turn_id', 'source', 'source_key']);
+    db.close();
+  });
+});
+
+describe('migration v13 — reminders table (ADR-0101 D9, ADR-0096 D10)', () => {
+  it('is the fixed version 13 appended after v12', () => {
+    expect(MIGRATIONS[11]).toMatchObject({ version: 12 });
+    expect(MIGRATIONS[12]).toMatchObject({ version: 13 });
+    expect(LATEST_SCHEMA_VERSION).toBe(13);
+  });
+
+  it('upgrades a v12 database to 13 additively, keeping v12 rows, and a second run is a no-op', () => {
+    const db = new Database(':memory:');
+    expect(runMigrations(db, MIGRATIONS.slice(0, 12))).toMatchObject({ from: 0, to: 12 });
+    db.prepare(`INSERT INTO sessions (id, channel_id, status, data) VALUES ('s1', 'c1', 'ACTIVE', '{}')`).run();
+    db.prepare(`INSERT INTO conversation_turns
+      (id, platform, channel_id, inbound_message_id, status, created_at, data)
+      VALUES ('t1', 'discord', 'c1', 'in-1', 'RESPONDED', '2026-10-02T00:00:00.000Z', '{}')`).run();
+    const before = tableNames(db);
+    expect(before).not.toContain('reminders');
+
+    expect(runMigrations(db)).toEqual({ from: 12, to: 13, applied: [13] });
+    expect(tableNames(db)).toEqual(expect.arrayContaining([...before, 'reminders']));
+    expect(db.prepare('SELECT id FROM sessions').all()).toEqual([{ id: 's1' }]);
+    expect(db.prepare('SELECT id FROM conversation_turns').all()).toEqual([{ id: 't1' }]);
+    expect(runMigrations(db)).toEqual({ from: 13, to: 13, applied: [] });
+    // Re-running the v13 DDL itself is idempotent (IF NOT EXISTS throughout).
+    expect(() => MIGRATIONS[12]!.up(db)).not.toThrow();
+    db.close();
+  });
+
+  it('migrates a v11 database through 12 and 13 with contiguous applied versions', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, MIGRATIONS.slice(0, 11));
+    expect(runMigrations(db)).toEqual({ from: 11, to: 13, applied: [12, 13] });
+    db.close();
+  });
+
+  it('stamps a legacy untracked database forward to 13 with the reminders table', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE actors (id TEXT PRIMARY KEY, data TEXT NOT NULL);`);
+    db.prepare(`INSERT INTO actors (id, data) VALUES ('a1', '{}')`).run();
+    expect(runMigrations(db)).toMatchObject({ from: 0, to: 13 });
+    expect(tableNames(db)).toContain('reminders');
+    expect(db.prepare('SELECT id FROM actors').all()).toEqual([{ id: 'a1' }]);
+    db.close();
+  });
+
+  it('creates the designed columns, the per-owner unique number and the due/actor indexes', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    expect(columns(db, 'reminders')).toEqual(['id', 'actor_id', 'display_no', 'status', 'next_fire_at', 'data']);
+    const info = db.pragma('table_info(reminders)') as Array<{ name: string; notnull: number; pk: number; type: string }>;
+    expect(info.filter((c) => c.pk > 0).map((c) => c.name)).toEqual(['id']);
+    expect(info.filter((c) => c.notnull === 0 && c.pk === 0).map((c) => c.name)).toEqual(['next_fire_at']);
+    expect(info.find((c) => c.name === 'display_no')?.type).toBe('INTEGER');
+    const list = indexes(db, 'reminders');
+    expect(list).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'reminders_due', unique: 0 }),
+      expect.objectContaining({ name: 'reminders_actor', unique: 0 }),
+    ]));
+    expect(indexColumns(db, 'reminders_due')).toEqual(['status', 'next_fire_at']);
+    expect(indexColumns(db, 'reminders_actor')).toEqual(['actor_id', 'status']);
+    const unique = list.filter((i) => i.unique === 1).map((i) => indexColumns(db, i.name));
+    expect(unique).toEqual(expect.arrayContaining([['actor_id', 'display_no']]));
     db.close();
   });
 });

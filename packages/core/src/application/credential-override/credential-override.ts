@@ -532,6 +532,34 @@ export type CredentialOverrideDispatchResult<T> =
         | CredentialOverrideInvalidationReason;
     };
 
+/** The canonical session re-loaded by {@link CredentialOverrideDispatchAuthorization.reloadSession}. */
+export type CredentialOverrideSessionReload =
+  | { readonly ok: true; readonly session: Session }
+  | { readonly ok: false; readonly reason: CredentialOverrideInvalidationReason };
+
+/**
+ * Handed to `dispatch` with the consumed grants (ADR-0097 D5, OVR-3 contract), so the caller can
+ * - re-check, SYNCHRONOUSLY and immediately before the provider call (no await between `recheck()` and the call),
+ *   that the dispatch is still authorized, and
+ * - re-load the canonical session once the provider call has settled, before writing anything onto it.
+ */
+export interface CredentialOverrideDispatchAuthorization {
+  /** The consumed anchor Task id (the session pointer the flow released after the consume save). */
+  readonly anchorTaskId: Id;
+  /**
+   * No I/O. `null` while this dispatch still holds its claim on the CONSUMED set, the TTL has not passed by the
+   * flow's injected clock, and the last canonical session load was ACTIVE and still bound to the set (owner, session,
+   * project); otherwise the reason nothing may be sent (the set stays `CONSUMED`; the caller replies nothing-sent).
+   */
+  recheck(): CredentialOverrideInvalidationReason | null;
+  /**
+   * Re-load the canonical session (never the turn's copy). `ok` with the FRESH session when it is still ACTIVE, bound
+   * to the set (owner, session, project) and its pointer is released (or still the consumed anchor); otherwise the
+   * reason the dispatch's result must be discarded (nothing written onto the session).
+   */
+  reloadSession(): Promise<CredentialOverrideSessionReload>;
+}
+
 /**
  * Cross-turn credential-override mechanics behind one collaborator (ADR-0097 D4), like the other stateless flows.
  * Every method is a no-op on (or never touches) a session pointer that is not this flow's own anchor.
@@ -569,13 +597,17 @@ export interface CredentialOverrideFlow {
   recordGrant(session: Session, approvalId: Id): Promise<CredentialOverrideGrantResult>;
   /**
    * Revalidate every grant, consume the whole set in one anchor save, release the session pointer, then run
-   * `dispatch` (the single `generate()`) with the consumed grants, under a per-anchor single-flight claim held
-   * until it settles.
+   * `dispatch` (the single `generate()`) with the consumed grants and their {@link CredentialOverrideDispatchAuthorization},
+   * under a per-anchor single-flight claim held until it settles. `dispatch` must perform no awaited I/O before the
+   * provider call (prepare any content BEFORE calling this), and re-check `authorization.recheck()` right before it.
    */
   consumeAndDispatch<T>(
     session: Session,
     input: CredentialOverrideDispatchInput,
-    dispatch: (grants: readonly CredentialOverrideGrant[]) => Promise<T>,
+    dispatch: (
+      grants: readonly CredentialOverrideGrant[],
+      authorization: CredentialOverrideDispatchAuthorization,
+    ) => Promise<T>,
   ): Promise<CredentialOverrideDispatchResult<T>>;
   /**
    * Invalidate every unconsumed grant and the anchor, and release the pointer. `null` when the pointer is not our
