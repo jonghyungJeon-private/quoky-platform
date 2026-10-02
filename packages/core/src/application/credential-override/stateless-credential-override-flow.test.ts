@@ -820,6 +820,129 @@ describe('StatelessCredentialOverrideFlow — concurrency and partial failures',
   });
 });
 
+describe('StatelessCredentialOverrideFlow — canonical session and TTL races at dispatch (ADR-0097 D5, ADR-0095 §5)', () => {
+  /** Runs `onConsume` synchronously inside the CONSUMED anchor save, i.e. while that persistence await is pending. */
+  const duringConsumeSave = (onConsume: () => void): void => {
+    store.failTaskSave = (task) => {
+      if ((task.metadata?.[ANCHOR_KEY] as CredentialOverrideAnchor)?.status === 'CONSUMED') onConsume();
+      return false;
+    };
+  };
+
+  type SessionRace = readonly [name: string, change: (s: Session) => Session, reason: CredentialOverrideInvalidationReason];
+  const sessionRaces: readonly SessionRace[] = [
+    ['the project changes', (s) => ({ ...s, activeProjectId: 'proj-2' }), 'project-changed'],
+    ['the session is closed by a reset', (s) => ({ ...s, status: SessionStatus.CLOSED }), 'reset'],
+  ];
+
+  it.each(sessionRaces)(
+    'when %s while the content is re-read, nothing is sent and the new session state is kept',
+    async (_name, change, reason) => {
+      const { taskId } = await grantedSingle();
+      const turn = store.session; // the turn's (soon stale) copy
+      const gated = gatedReader();
+      const dispatch = vi.fn(async () => 'sent');
+      const dispatching = flow.consumeAndDispatch(turn, dispatchInput({ reader: gated.reader }), dispatch);
+      await gated.reading;
+      store.session = change(store.session); // a canonical session write that bypasses the flow
+      const changed = clone(store.session);
+      gated.open();
+      expect(await dispatching).toEqual({ ok: false, reason });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(store.anchorOf(taskId)).toMatchObject({ status: 'INVALIDATED', invalidationReason: reason });
+      // Only the pointer this flow owns was cleared; the stale turn copy was never written back.
+      expect(store.session).toEqual({ ...changed, activeTaskId: undefined });
+    },
+  );
+
+  it.each(sessionRaces)(
+    'when %s while the consume save is pending, nothing is sent and the set stays CONSUMED',
+    async (_name, change, reason) => {
+      const { taskId } = await grantedSingle();
+      const turn = store.session;
+      let changed!: Session;
+      duringConsumeSave(() => {
+        store.session = change(store.session);
+        changed = clone(store.session);
+      });
+      const dispatch = vi.fn(async () => 'sent');
+      expect(await flow.consumeAndDispatch(turn, dispatchInput(), dispatch)).toEqual({ ok: false, reason });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(store.anchorOf(taskId).status).toBe('CONSUMED'); // terminal: never re-opened, never replayed
+      expect(store.session).toEqual({ ...changed, activeTaskId: undefined });
+      store.failTaskSave = null;
+      const stale = { ...turn, activeTaskId: taskId };
+      expect(await flow.consumeAndDispatch(stale, dispatchInput(), dispatch)).toEqual({ ok: false, reason: 'already-used' });
+      expect(dispatch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('the pointer release never writes back stale fields of the turn copy', async () => {
+    const { taskId } = await grantedSingle();
+    const turn = store.session;
+    const gated = gatedReader();
+    const dispatching = flow.consumeAndDispatch(turn, dispatchInput({ reader: gated.reader }), async () => 'sent');
+    await gated.reading;
+    store.session = { ...store.session, lastActivityAt: '2026-10-02T00:00:05.000Z', metadata: { note: 'kept' } };
+    gated.open();
+    expect(await dispatching).toEqual({ ok: true, value: 'sent' });
+    expect(store.anchorOf(taskId).status).toBe('CONSUMED');
+    expect(store.session.activeTaskId).toBeUndefined();
+    expect(store.session).toMatchObject({ lastActivityAt: '2026-10-02T00:00:05.000Z', metadata: { note: 'kept' } });
+  });
+
+  it('a consume at 29:59.999 whose save completes at 30:00 sends nothing, stays CONSUMED and reports expired', async () => {
+    let nowMs = Date.parse(T0);
+    flow = new StatelessCredentialOverrideFlow(store, { clock: () => new Date(nowMs).toISOString() });
+    const { taskId } = await grantedSingle(); // the CRITICAL request was created at T0 (TTL 30 min)
+    nowMs = Date.parse(T0) + 30 * 60_000 - 1; // 29:59.999 — every pre-save expiry check still passes
+    duringConsumeSave(() => {
+      nowMs = Date.parse(T0) + 30 * 60_000; // the save completes at 30:00.000
+    });
+    const dispatch = vi.fn(async () => 'sent');
+    expect(await flow.consumeAndDispatch(store.session, dispatchInput(), dispatch)).toEqual({
+      ok: false, reason: 'expired',
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(store.anchorOf(taskId)).toMatchObject({ status: 'CONSUMED', consumedAt: '2026-10-02T00:29:59.999Z' });
+    expect(store.session.activeTaskId).toBeUndefined();
+    // Non-replayable: a stale copy still pointing at the anchor never dispatches it.
+    store.failTaskSave = null;
+    const stale = { ...store.session, activeTaskId: taskId };
+    expect(await flow.consumeAndDispatch(stale, dispatchInput(), dispatch)).toEqual({ ok: false, reason: 'already-used' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('happy path with the injected clock: dispatched once just inside the TTL, then "already used"', async () => {
+    let nowMs = Date.parse(T0);
+    flow = new StatelessCredentialOverrideFlow(store, { clock: () => new Date(nowMs).toISOString() });
+    const { taskId } = await grantedSingle();
+    nowMs = Date.parse(T0) + 30 * 60_000 - 1;
+    const turn = store.session;
+    const dispatch = vi.fn(async () => 'sent');
+    expect(await flow.consumeAndDispatch(turn, dispatchInput(), dispatch)).toEqual({ ok: true, value: 'sent' });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(store.anchorOf(taskId).status).toBe('CONSUMED');
+    expect(store.session).toMatchObject({ status: SessionStatus.ACTIVE, activeProjectId: 'proj-1' });
+    expect(store.session.activeTaskId).toBeUndefined();
+    expect(await flow.consumeAndDispatch({ ...turn, activeTaskId: taskId }, dispatchInput(), dispatch)).toEqual({
+      ok: false, reason: 'already-used',
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('raising writes only the pointer onto the canonical session', async () => {
+    const turn = store.session;
+    store.session = { ...store.session, metadata: { note: 'kept' } };
+    const raised = await flow.requestOverride(
+      turn, { request, outcome, ownerActorId: OWNER, refusal: refusalOf('src/a.ts', ASSIGN_A, 3) }, approvals,
+    );
+    expect(raised.ok).toBe(true);
+    expect(store.session.metadata).toEqual({ note: 'kept' });
+    expect(store.session.activeTaskId).not.toBe(requestTask.id);
+  });
+});
+
 describe('StatelessCredentialOverrideFlow — storage init order (ADR-0062)', () => {
   it('constructed before the storage is initialized, it resolves the repositories at call time', async () => {
     class LateStore {
