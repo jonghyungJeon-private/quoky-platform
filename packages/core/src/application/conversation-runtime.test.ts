@@ -4735,6 +4735,42 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     expect(calls.gitStatus).toBe(0);
   });
 
+  it.each(['푸시 실행', '푸시해줘', 'push 실행해줘', 'git push 해줘', 'git push', 'push now'])(
+    'no anchor + "%s" → deterministic no-push-target reply, no classifier/orchestrator, no git (QA-V2-W8)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).toBe(composer.composeNoPushTarget(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(calls.run).toBe(0);
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.gitInfo).toBe(0);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each(['강제 푸시해줘', 'force push', 'git push --force', 'push -f'])(
+    'no anchor + force phrase "%s" → unsupported companion reply, no push (QA-V2-W8)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(calls.gitPush).toBe(0);
+    },
+  );
+
+  it.each(['git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'push notification 구현 방법', 'git push와 pull의 차이'])(
+    'no anchor + conceptual mention "%s" → still ordinary chat (QA-V2-W8)',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text).not.toBe(composer.composeNoPushTarget(CTX).text);
+      expect(result.reply.text).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      expect(calls.classify).toBe(1);
+    },
+  );
+
   it('WORKSPACE_APPLIED + push phrase → existing 2w mutating reject, no push approval (CA 7)', async () => {
     const { deps, calls } = makeDeps({ applyAnchor: approvedAnchorOf({ status: 'WORKSPACE_APPLIED', workspaceChangeRef: { id: 'wc-1', status: WorkspaceChangeStatus.APPLIED } }) });
     const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));

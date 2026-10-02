@@ -48,6 +48,14 @@
     {"id": "route-043", "text": "푸시하고 배포해줘", "ctx": {"applyAnchor": "MAIN_SYNCED"}, "expected": {"route": "runtime", "reply": "push-unsupported", "providerCalls": 0}, "source": "QA-V2-W7-02 post-push push+deploy companion → unsupported", "mustPass": true},
     {"id": "route-044", "text": "PR 상태 확인해줘", "ctx": {"applyAnchor": "PR_CREATED"}, "expected": {"route": "runtime", "reply": "other", "providerCalls": 0}, "source": "QA-V2-W7-02 read-only PR status keeps priority over the post-push push reply", "mustPass": true},
     {"id": "route-045", "text": "안녕", "expected": {"route": "classifier"}, "source": "UAT 1.1 ordinary chat reaches the classifier", "mustPass": true},
-    {"id": "route-046", "text": "7/3 회의 등록해줘", "expected": {"route": "classifier"}, "source": "UAT everyday request: neither a to-do, a reminder nor a project registration", "mustPass": true}
+    {"id": "route-046", "text": "7/3 회의 등록해줘", "expected": {"route": "classifier"}, "source": "UAT everyday request: neither a to-do, a reminder nor a project registration", "mustPass": true},
+    {"id": "route-047", "text": "푸시 실행", "expected": {"route": "runtime", "reply": "push-no-target", "providerCalls": 0}, "source": "QA-V2-W8 no-anchor push execution → no-push-target reply, never chat", "mustPass": true},
+    {"id": "route-048", "text": "푸시해줘", "expected": {"route": "runtime", "reply": "push-no-target", "providerCalls": 0}, "source": "QA-V2-W8 no-anchor push request → no-push-target reply", "mustPass": true},
+    {"id": "route-049", "text": "강제 푸시해줘", "expected": {"route": "runtime", "reply": "push-unsupported", "providerCalls": 0}, "source": "QA-V2-W8 no-anchor force push → unsupported companion, never chat", "mustPass": true},
+    {"id": "route-050", "text": "force push", "expected": {"route": "runtime", "reply": "push-unsupported", "providerCalls": 0}, "source": "QA-V2-W8 no-anchor literal force push → unsupported companion", "mustPass": true},
+    {"id": "route-051", "text": "브랜치 삭제해줘 feature/x", "expected": {"route": "git-branch", "providerCalls": 0}, "source": "QA-V2-W8 branch delete → deterministic git-branch refusal, no git call", "mustPass": true},
+    {"id": "route-052", "text": "git push가 뭐야?", "expected": {"route": "classifier"}, "source": "QA-V2-W8 conceptual push question still reaches chat", "mustPass": true},
+    {"id": "route-053", "text": "푸시 알림 설정하는 법 알려줘", "expected": {"route": "classifier"}, "source": "QA-V2-W8 push-notification how-to still reaches chat", "mustPass": true},
+    {"id": "route-054", "text": "브랜치 목록 보여줘", "expected": {"route": "classifier"}, "source": "QA-V2-W8 branch listing question keeps its routing", "mustPass": true}
   ]
 }
