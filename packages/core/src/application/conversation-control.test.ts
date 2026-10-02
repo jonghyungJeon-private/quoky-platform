@@ -68,6 +68,10 @@ interface HarnessOptions {
   resumable?: boolean;
   /** Runs inside `memory.recordShortTerm` — i.e. AFTER the turn-start expiry check, BEFORE any decision. */
   onRecordShortTerm?: () => void;
+  /** Seed a pending code-scope clarification (ADR-0037) on the session (stateful fake flow). */
+  pendingScope?: boolean;
+  /** Fake `projects.register`; omitted means registering must not happen. */
+  register?: (path: string) => Promise<{ ok: boolean; message: string }>;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -86,6 +90,8 @@ function harness(opts: HarnessOptions = {}) {
     orchestratorResume: 0,
     applyAnchorWrites: [] as ApplyPreviewAnchor[],
     applyClear: 0,
+    scopeClear: 0,
+    register: [] as string[],
   };
 
   const storage = {
@@ -177,6 +183,7 @@ function harness(opts: HarnessOptions = {}) {
   sessions.set(seeded.id, seeded);
 
   let currentAnchor: ApplyPreviewAnchor | null = opts.applyAnchor ?? null;
+  let scopePending = Boolean(opts.pendingScope);
   const applyPreviewFlow: ApplyPreviewFlow = {
     async findAnchor() {
       return currentAnchor;
@@ -220,7 +227,15 @@ function harness(opts: HarnessOptions = {}) {
         return { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'chat' };
       },
     },
-    projects: { register: bad('projects.register'), get: async () => null },
+    projects: {
+      register: opts.register
+        ? async (path: string) => {
+            calls.register.push(path);
+            return opts.register!(path);
+          }
+        : bad('projects.register'),
+      get: async () => null,
+    } as unknown as ConversationRuntimeDeps['projects'],
     analyzer: { prepare: bad('analyzer.prepare') },
     tasks: {
       async createTask(intent, context, anchor) {
@@ -272,7 +287,16 @@ function harness(opts: HarnessOptions = {}) {
       requestForRisk: bad('approvals.requestForRisk'),
     },
     approvalFlow,
-    scopeClarificationFlow: { async findPending() { return null; }, anchor: bad('scope.anchor'), clear: bad('scope.clear') },
+    scopeClarificationFlow: {
+      async findPending() {
+        return scopePending ? { kind: 'code-scope-clarification' as const, summary: 'fix foo', createdAt: T0 } : null;
+      },
+      anchor: bad('scope.anchor'),
+      async clear() {
+        calls.scopeClear++;
+        scopePending = false;
+      },
+    },
     applyPreviewFlow,
     codeGeneration: { generate: bad('codeGeneration.generate'), getProposal: bad('codeGeneration.getProposal') },
     patch: { generate: bad('patch.generate'), get: bad('patch.get') },
@@ -725,5 +749,46 @@ describe('ConversationRuntime — stray decision with nothing pending (QA-018)',
     const result = await h.send('거절');
     expect(result.reply.text).not.toBe(NO_PENDING);
     expect(h.approvals.get('appr-1')!.status).toBe(ApprovalStatus.REJECTED);
+  });
+});
+
+describe('ConversationRuntime — project registration with a non-absolute path (QA-015)', () => {
+  const ABSOLUTE_RULE = '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo';
+  const realClassifier = () => new IntentClassifier({} as CapabilityRouter);
+
+  it('"이 프로젝트 등록해줘: ../../etc" gets the register-specific absolute-path reply; nothing is registered', async () => {
+    const h = harness({ classifier: realClassifier() });
+    const result = await h.send('이 프로젝트 등록해줘: ../../etc');
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(ABSOLUTE_RULE);
+    expect(result.reply.text).not.toContain('수정할 파일 경로');
+    expect(h.calls.routerSelect).toHaveLength(0);
+    expect(h.calls.providerExecute).toBe(0);
+  });
+
+  it('"7/3 회의 등록해줘" stays ordinary chat (T2)', async () => {
+    const h = harness({ classifier: realClassifier() });
+    const result = await h.send('7/3 회의 등록해줘');
+    expect(result.reply.text).not.toBe(ABSOLUTE_RULE);
+    expect(h.calls.routerSelect).toEqual([Capability.GENERAL_CHAT]);
+  });
+
+  it('while a code-scope clarification is pending, a non-absolute register request is NOT read as the file reply', async () => {
+    const h = harness({ classifier: realClassifier(), pendingScope: true });
+    const result = await h.send('이 프로젝트 등록해줘: ../../etc');
+    expect(result.reply.text).toBe(ABSOLUTE_RULE);
+    expect(h.calls.scopeClear).toBe(1); // the next-turn-only clarification is consumed
+  });
+
+  it('while a code-scope clarification is pending, an absolute register request registers the project', async () => {
+    const h = harness({
+      classifier: realClassifier(),
+      pendingScope: true,
+      register: async () => ({ ok: true, message: 'registered' }),
+    });
+    const result = await h.send('이 프로젝트 등록해줘: /Users/me/my-repo');
+    expect(h.calls.register).toEqual(['/Users/me/my-repo']);
+    expect(result.reply.text).toBe('registered');
+    expect(h.calls.scopeClear).toBe(1);
   });
 });

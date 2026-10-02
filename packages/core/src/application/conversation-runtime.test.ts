@@ -1614,14 +1614,14 @@ describe('Code Change Scope Collection — runtime', () => {
     expect(calls.scopeAnchor).toBe(1);
   });
 
-  it('a path candidate that does not validate (fake workspace.list returns []) → clarification, no run', async () => {
+  it('a path candidate that does not validate (fake workspace.list returns []) → rejected-path reply naming it, no run (QA-016)', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
     const result = await new ConversationRuntime(deps).handle(messageOf(`${TARGET_FILE}에서 이 버그 고쳐줘`));
     expect(calls.run).toBe(0);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, TARGET_FILE).text);
   });
 
-  it('a workspace.list hit that does not normalize-equal the candidate is not trusted (glob false-positive guard)', async () => {
+  it('a workspace.list hit that does not normalize-equal the candidate is not trusted (glob false-positive guard) → rejected-path reply', async () => {
     const { deps, calls } = makeDeps({
       intent: codeIntent,
       // A hit is returned, but for a DIFFERENT path than the candidate — must not be accepted.
@@ -1629,7 +1629,7 @@ describe('Code Change Scope Collection — runtime', () => {
     });
     const result = await new ConversationRuntime(deps).handle(messageOf(`${TARGET_FILE}에서 이 버그 고쳐줘`));
     expect(calls.run).toBe(0);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, TARGET_FILE).text);
   });
 
   it('a validated candidate threads the Workspace-returned hit into targetFiles, not the raw candidate', async () => {
@@ -1644,15 +1644,18 @@ describe('Code Change Scope Collection — runtime', () => {
   });
 
   it('secret/ignored/outside-workspace mentions all fail validation (mirrors the real provider, workspace-local/src/index.test.ts:147)', async () => {
-    for (const text of [
-      '.env에서 이 버그 고쳐줘',
-      'node_modules/foo.ts에서 이 버그 고쳐줘',
-      '/etc/passwd에서 이 버그 고쳐줘',
-    ]) {
+    const composer = new ResponseComposer();
+    for (const [text, expected] of [
+      // no path separator → no path was typed → the original clarification copy
+      ['.env에서 이 버그 고쳐줘', composer.composeTargetScopeClarification(CTX).text],
+      // a typed path that cannot be used → the rejected-path copy (QA-016), never revealing existence
+      ['node_modules/foo.ts에서 이 버그 고쳐줘', composer.composeTargetPathRejected(CTX, 'node_modules/foo.ts').text],
+      ['/etc/passwd에서 이 버그 고쳐줘', composer.composeTargetPathRejected(CTX, '/etc/passwd').text],
+    ] as const) {
       const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
       const result = await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.run).toBe(0);
-      expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+      expect(result.reply.text).toBe(expected);
     }
   });
 
@@ -1661,6 +1664,26 @@ describe('Code Change Scope Collection — runtime', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf('../escape.ts에서 이 버그 고쳐줘'));
     expect(calls.workspaceList).toBe(0);
     expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, '../escape.ts').text);
+  });
+
+  it.each([
+    ['src/nope.js 파일을 수정해줘', 'src/nope.js'],
+    ['../../.ssh/config 파일을 수정해줘', '../../.ssh/config'],
+    ['/etc/hosts 파일을 수정해줘', '/etc/hosts'],
+  ])('QA-016: "%s" names the rejected path instead of asking for a path that was given', async (text, typed) => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, typed).text);
+    expect(result.reply.text).not.toContain('수정할 파일 경로와 함께 다시 요청해 주세요');
+    // out-of-root / traversal paths are never looked up, so nothing about their existence can leak
+    if (!typed.startsWith('src/')) expect(calls.workspaceList).toBe(0);
+  });
+
+  it('QA-016: with no path typed at all the original clarification copy stays', async () => {
+    const { deps } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
+    const result = await new ConversationRuntime(deps).handle(messageOf('로그인 처리 부분 수정해줘'));
     expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
   });
 
@@ -1755,20 +1778,20 @@ describe('Explicit new-file preview target (A2)', () => {
     expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
   });
 
-  it('a non-existent path WITHOUT a create-file marker still routes to scope clarification (unchanged)', async () => {
+  it('a non-existent path WITHOUT a create-file marker still routes to scope clarification, naming the rejected path (QA-016)', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
     const result = await new ConversationRuntime(deps).handle(messageOf('docs/uat/x.md 내용 미리보기 보여줘'));
     expect(calls.run).toBe(0);
     expect(calls.scopeAnchor).toBe(1);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, 'docs/uat/x.md').text);
   });
 
-  it('an unsafe (traversal) path with a create-file marker is rejected → scope clarification, no run', async () => {
+  it('an unsafe (traversal) path with a create-file marker is rejected → rejected-path reply, no run', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent });
     const result = await new ConversationRuntime(deps).handle(messageOf('파일 생성: ../escape.md 미리보기'));
     expect(calls.workspaceList).toBe(0); // rejected at extraction — never a candidate
     expect(calls.run).toBe(0);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, '../escape.md').text);
   });
 });
 
@@ -1814,7 +1837,7 @@ describe('Multi-turn Code Scope Clarification — runtime', () => {
     expect(calls.run).toBe(0);
     expect(calls.scopeClear).toBe(1);
     expect(calls.scopeAnchor).toBe(1); // still just the original anchor — no re-anchor on failure
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(result.reply.text).toBe(new ResponseComposer().composeTargetPathRejected(CTX, 'node_modules/foo.ts').text);
     // CA Implementation Review (Round 1): the clarification reply must be recorded to memory exactly
     // once per turn, not twice (respondComposed already records it — no separate manual call).
     expect(calls.recordAssistant - recordAssistantBeforeTurn2).toBe(1);

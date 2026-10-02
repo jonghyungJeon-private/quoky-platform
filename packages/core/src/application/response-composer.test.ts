@@ -1455,3 +1455,26 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
     expect(merged.context).toBe(CTX);
   });
 });
+
+describe('ResponseComposer — QA-015/QA-016 path replies', () => {
+  it('rejected-path reply echoes the typed path in inline code with the relative-path example', () => {
+    expect(composer.composeTargetPathRejected(CTX, 'src/nope.js').text).toBe(
+      '요청한 파일을 프로젝트 안에서 찾을 수 없거나 프로젝트 밖 경로예요: `src/nope.js`\n' +
+        '등록한 프로젝트 기준 상대경로(예: src/app.ts)로 다시 요청해 주세요.',
+    );
+  });
+
+  it('rejected-path reply strips backticks/control characters and truncates a long path', () => {
+    const text = composer.composeTargetPathRejected(CTX, `a/\`b\u0007/${'x'.repeat(200)}.ts`).text;
+    expect(text).not.toContain('\u0007');
+    expect(text.match(/`/g)).toHaveLength(2); // only the wrapping pair
+    expect(text).toContain('…`');
+    expect(text.length).toBeLessThan(200);
+  });
+
+  it('non-absolute project registration reply', () => {
+    expect(composer.composeProjectPathNotAbsolute(CTX).text).toBe(
+      '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo',
+    );
+  });
+});

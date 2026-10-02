@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
+import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
 
 describe('extractTargetPathCandidates (Sprint 2o, ADR-0036)', () => {
   it('extracts a project-relative file path mentioned in natural language', () => {
@@ -60,5 +60,28 @@ describe('normalizeRelativePath (Sprint 2o, ADR-0036)', () => {
 
   it('does not attempt to resolve ".." — leaves it untouched', () => {
     expect(normalizeRelativePath('../escape.ts')).toBe('../escape.ts');
+  });
+});
+
+describe('extractMentionedPathTokens (QA-016)', () => {
+  it.each([
+    ['src/nope.js 파일을 수정해줘', ['src/nope.js']],
+    ['../../.ssh/config 파일 수정해줘', ['../../.ssh/config']],
+    ['/etc/hosts 파일 수정해줘', ['/etc/hosts']],
+    ['~/.zshrc 고쳐줘', ['~/.zshrc']],
+    ['packages/core/src 디렉터리 수정', ['packages/core/src']],
+  ])('"%s" mentions %j', (text, expected) => {
+    expect(extractMentionedPathTokens(text)).toEqual(expected);
+  });
+
+  it.each([
+    '로그인 처리 부분 수정해줘',
+    'README.md 고쳐줘', // root-level file: no separator, the original clarification applies
+    '7/3 일정 버그 고쳐줘',
+    'UI/UX 버그 고쳐줘',
+    'https://example.com/a 링크 버그 고쳐줘',
+    '이 코드 고쳐줘\n```js\nimport x from "./utils/x.js";\n```',
+  ])('"%s" mentions no path', (text) => {
+    expect(extractMentionedPathTokens(text)).toEqual([]);
   });
 });

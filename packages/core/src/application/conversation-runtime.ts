@@ -10,7 +10,7 @@ import {
   detectConversationControl,
   pendingApprovalRemainingMs,
 } from './conversation-commands';
-import type { IntentClassifyContext } from './intent-classifier';
+import { NON_ABSOLUTE_REGISTRATION_KIND, detectProjectRegistration, type IntentClassifyContext } from './intent-classifier';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
 import {
@@ -108,7 +108,7 @@ import type {
 import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
-import { extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
+import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
 import {
   MAX_CODEGEN_CONTEXT_FILE_BYTES,
   MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
@@ -1650,7 +1650,12 @@ export class ConversationRuntime {
     // (planId present) is never routed here.
     const pendingScope = lookup.pendingScope;
     if (pendingScope) {
-      return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
+      // QA-015: an explicit project-registration request is a new request, not a reply naming the file to change.
+      // The clarification is next-turn-only, so it is consumed here and the turn is routed normally.
+      if (!detectProjectRegistration(message.text)) {
+        return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
+      }
+      await this.deps.scopeClarificationFlow.clear(session);
     }
 
     // (A3) Apply-preview routing (Sprint 2s, ADR-0040) — checked after approvalFlow/scopeClarificationFlow
@@ -2125,6 +2130,10 @@ export class ConversationRuntime {
 
     // (B) Project registration — deterministic command (ADR-0018).
     if (intent.type === IntentType.REGISTER_PROJECT) {
+      if (intent.raw?.kind === NON_ABSOLUTE_REGISTRATION_KIND) {
+        // QA-015: a relative/home path is never resolved against the process cwd — ask for an absolute path.
+        return this.respondComposed(message, session, this.deps.composer.composeProjectPathNotAbsolute(message.context));
+      }
       const path = typeof intent.raw?.path === 'string' ? intent.raw.path : '';
       const result = await this.deps.projects.register(path, session);
       await this.deps.memory.recordAssistant(result.message, message.context, session.id);
@@ -5152,11 +5161,7 @@ export class ConversationRuntime {
           ...(session.activeProjectId ? { projectId: session.activeProjectId } : {}),
           createdAt: now(),
         });
-        return this.respondComposed(
-          message,
-          session,
-          this.deps.composer.composeTargetScopeClarification(message.context),
-        );
+        return this.respondComposed(message, session, this.composeTargetScopeReply(message, candidates));
       }
     }
 
@@ -5398,8 +5403,23 @@ export class ConversationRuntime {
       }
     }
 
-    const reply = this.deps.composer.composeTargetScopeClarification(message.context);
+    const reply = this.composeTargetScopeReply(message, candidates);
     return this.respondComposed(message, session, reply); // no re-anchor (next-turn-only)
+  }
+
+  /**
+   * The "which file?" reply for a code-change request with no usable target (ADR-0036/0037; QA-016). When the
+   * user DID type a path that could not be used (missing, outside the project, absolute, traversal), say so and
+   * echo the path as typed — never whether an out-of-root file exists. With no path typed at all (or an ambiguous
+   * multi-path new-file request), keep the original clarification copy.
+   */
+  private composeTargetScopeReply(message: InboundMessage, candidates: readonly string[]): OutboundMessage {
+    const mentioned = extractMentionedPathTokens(message.text);
+    const ambiguousNewFile = ConversationRuntime.isExplicitNewFileRequest(message.text) && candidates.length > 1;
+    const typed = mentioned[0];
+    return typed && !ambiguousNewFile
+      ? this.deps.composer.composeTargetPathRejected(message.context, typed)
+      : this.deps.composer.composeTargetScopeClarification(message.context);
   }
 
   /** Assemble the display-relevant facts for a ran/timed-out `CommandExecution` (ADR-0034). Raw only — no truncation, no text. */

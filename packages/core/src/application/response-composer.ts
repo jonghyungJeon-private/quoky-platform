@@ -120,6 +120,8 @@ const MAX_DIFF_CHARS_PER_FILE = 1000;
 /** Bound on displayed user-controllable git refs (remote/branch/upstream) in push replies (Sprint 2z,
  *  ADR-0047, CA #6) — a defensive display cap even though upstream parsing already rejects over-long refs. */
 const MAX_GIT_REF_DISPLAY = 80;
+/** Display bound on a user-typed path echoed back in the rejected-path reply (QA-016). */
+const MAX_REJECTED_PATH_DISPLAY = 80;
 /** Bound on a displayed PR URL (Sprint 3d-D) — the adapter already validates it to the canonical bounded
  *  github.com form; this is a defensive display cap. */
 const MAX_PR_URL_DISPLAY = 200;
@@ -777,6 +779,29 @@ export class ResponseComposer {
         '예: packages/core/src/application/foo.ts 파일에서 이 버그 고쳐줘\n\n' +
         '"로그인 처리 부분"처럼 설명만으로는 아직 부족해요. 어떤 부분을 고치려는지는 파일 경로와 함께 ' +
         '추가로 적어주면 더 좋아요.',
+    };
+  }
+
+  /** A project registration named a relative/home path (QA-015). Nothing was registered or scanned. */
+  composeProjectPathNotAbsolute(context: ConversationContext): OutboundMessage {
+    return { context, text: '프로젝트는 절대경로로 등록해 주세요. 예: 이 프로젝트 등록해줘: /Users/me/my-repo' };
+  }
+
+  /**
+   * A code-change request named a path that cannot be used as a target (QA-016): it does not exist in the project,
+   * or it is absolute / traversal / outside the project. The same wording covers every case so the reply never
+   * reveals whether an out-of-root file exists. The path is echoed as typed — inside inline code (no mention or
+   * markdown can fire), backticks/control characters stripped, truncated.
+   */
+  composeTargetPathRejected(context: ConversationContext, typedPath: string): OutboundMessage {
+    const cleaned = typedPath.replace(/[\u0000-\u001f\u007f`]/g, '').trim();
+    const shown =
+      cleaned.length > MAX_REJECTED_PATH_DISPLAY ? `${cleaned.slice(0, MAX_REJECTED_PATH_DISPLAY)}…` : cleaned;
+    return {
+      context,
+      text:
+        `요청한 파일을 프로젝트 안에서 찾을 수 없거나 프로젝트 밖 경로예요: \`${shown}\`\n` +
+        '등록한 프로젝트 기준 상대경로(예: src/app.ts)로 다시 요청해 주세요.',
     };
   }
 
