@@ -17,6 +17,18 @@ describe('describeAiFailure', () => {
     const d = describeAiFailure(new NoProviderAvailableError('GENERAL_CHAT'));
     expect(d.kind).toBe(AiFailureKind.UNAVAILABLE);
     expect(d.userMessage).toBeTruthy();
+    expect(d.errorSummary).toContain('GENERAL_CHAT');
+  });
+
+  it('gives NoProviderAvailableError its own "AI not configured" copy, distinct from "try again later"', () => {
+    const notConfigured = describeAiFailure(new NoProviderAvailableError('GENERAL_CHAT'));
+    const transient = describeAiFailure(new AiProviderError(AiFailureKind.UNAVAILABLE, 'claude CLI could not run'));
+    expect(notConfigured.userMessage).toMatch(/설정/);
+    expect(notConfigured.userMessage).not.toMatch(/잠시 후 다시/);
+    expect(transient.userMessage).toMatch(/잠시 후 다시/);
+    expect(notConfigured.userMessage).not.toBe(transient.userMessage);
+    // Setup guidance only: no capability name or other technical detail reaches the user.
+    expect(notConfigured.userMessage).not.toContain('GENERAL_CHAT');
   });
 
   it('treats unknown errors as EXECUTION_FAILED and never leaks raw detail into userMessage', () => {

@@ -224,6 +224,62 @@ export interface CliProviderOptions {
   timeoutMs?: number;
 }
 
+/** Claude CLI `--effort` levels (verified against `claude --help`). */
+export type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+const CLAUDE_EFFORT_LEVELS: readonly ClaudeEffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export const DEFAULT_CLAUDE_MODEL = 'sonnet';
+
+/**
+ * Adapter-owned capability -> reasoning effort policy (decision D2). Core never sees
+ * this: it only advertises a capability, and the adapter decides how hard to think.
+ * Capabilities not listed here (e.g. TEST_EXECUTION) use {@link FALLBACK_CLAUDE_EFFORT}.
+ */
+export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>> = {
+  [Capability.GENERAL_CHAT]: 'low',
+  [Capability.READONLY_LOOKUP]: 'low',
+  [Capability.SUMMARIZATION]: 'low',
+  [Capability.DOCUMENT_ANALYSIS]: 'medium',
+  [Capability.PROJECT_ANALYSIS]: 'medium',
+  [Capability.CODE_REVIEW]: 'medium',
+  [Capability.ARCHITECTURE_PLANNING]: 'high',
+  [Capability.CODE_IMPLEMENTATION]: 'high',
+};
+
+const FALLBACK_CLAUDE_EFFORT: ClaudeEffortLevel = 'medium';
+
+export interface ClaudeCliProviderOptions extends CliProviderOptions {
+  /** Claude model alias or full name passed as `--model`. Default `sonnet`. */
+  model?: string;
+  /** Per-capability overrides merged over {@link DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY}. */
+  effortByCapability?: Partial<Record<Capability, ClaudeEffortLevel>>;
+}
+
+/** The model goes into argv, so refuse anything that could be read as another flag. */
+function validatedClaudeModel(model: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(model)) {
+    throw new TypeError('Invalid Claude model name');
+  }
+  return model;
+}
+
+/** Bounded probe for the Ollama daemon + model inventory; a hung daemon must not stall routing. */
+const OLLAMA_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * True when an `ollama list` table lists `model` (an untagged name means `:latest`).
+ * The match is exact and case-sensitive: the configured OLLAMA_MODEL must equal the NAME
+ * column of `ollama list`, otherwise the provider is reported unavailable (fail closed).
+ */
+function ollamaListIncludesModel(listOutput: string, model: string): boolean {
+  const wanted = model.includes(':') ? model : `${model}:latest`;
+  return listOutput
+    .split('\n')
+    .slice(1) // header row: NAME ID SIZE MODIFIED
+    .some((line) => line.trim().split(/\s+/u)[0] === wanted);
+}
+
 /**
  * Claude CLI provider (Sprint 1b-2). Executes via `claude -p` with the prompt on
  * **stdin**, in a **neutral cwd**, with a **timeout**, capturing stdout/stderr.
@@ -235,6 +291,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   protected readonly bin: string;
   private readonly runner: CliRunner;
   private readonly defaultTimeoutMs: number;
+  private readonly model: string;
+  private readonly effortByCapability: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>>;
 
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
     { capability: Capability.ARCHITECTURE_PLANNING, priority: 100 },
@@ -248,16 +306,34 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     { capability: Capability.TEST_EXECUTION, priority: 50 },
   ];
 
-  constructor(bin = 'claude', options: CliProviderOptions = {}) {
+  constructor(bin = 'claude', options: ClaudeCliProviderOptions = {}) {
     super();
     this.bin = bin;
     this.runner = options.runner ?? defaultCliRunner;
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
+    this.model = validatedClaudeModel(options.model ?? DEFAULT_CLAUDE_MODEL);
+    // An explicit `undefined` override means "use the default", never an invalid level.
+    const overrides = Object.fromEntries(
+      Object.entries(options.effortByCapability ?? {}).filter(([, level]) => level !== undefined),
+    ) as Partial<Record<Capability, ClaudeEffortLevel>>;
+    this.effortByCapability = { ...DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, ...overrides };
+    for (const level of Object.values(this.effortByCapability)) {
+      if (!CLAUDE_EFFORT_LEVELS.includes(level)) throw new TypeError('Invalid Claude effort level');
+    }
   }
 
-  /** Non-interactive print mode. Prompt is supplied via stdin, never as an argv. */
-  buildArgs(): string[] {
-    return ['-p'];
+  /**
+   * Non-interactive print mode with an explicit model. Prompt is supplied via stdin,
+   * never as an argv. A request adds the capability's `--effort`, and a request with
+   * no workspace is text-only, so every tool is disabled (`--tools ""`) to cut overhead.
+   */
+  buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace'>): string[] {
+    const args = ['-p', '--model', this.model];
+    if (request === undefined) return args;
+    args.push('--effort', this.effortByCapability[request.capability] ?? FALLBACK_CLAUDE_EFFORT);
+    // `--tools` is variadic and must stay the LAST argv entry so it cannot swallow other flags.
+    if (request.workspace === undefined) args.push('--tools', '');
+    return args;
   }
 
   override async isAvailable(): Promise<boolean> {
@@ -279,7 +355,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const cwd = request.workspace?.rootPath ?? tmpdir();
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
-    const result = await this.runner(this.bin, this.buildArgs(), { cwd, input, timeoutMs });
+    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
     if (result.timedOut) {
@@ -419,15 +495,28 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     return ['run', this.model];
   }
 
+  /**
+   * Ready means the daemon answers AND the configured model is installed.
+   * `ollama list` talks to the daemon (non-zero exit when it is down or the CLI is
+   * missing), so one bounded call covers both; a model that is not listed would make
+   * `ollama run` start an implicit pull, so it is reported unavailable instead.
+   */
   override async isAvailable(): Promise<boolean> {
     try {
-      const r = await this.runner(this.bin, ['--version'], {
+      const r = await this.runner(this.bin, ['list'], {
         cwd: tmpdir(),
         input: '',
-        timeoutMs: 10_000,
-        env: OLLAMA_COLOR_ENV,
+        timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
+        env: this.validationHost === null ? OLLAMA_COLOR_ENV : {
+          ...OLLAMA_COLOR_ENV,
+          OLLAMA_HOST: this.validationHost,
+          OLLAMA_NO_CLOUD: '1',
+        },
+        ...(this.validationHost === null ? {} : {
+          environmentProfile: 'ISOLATED_OLLAMA_VALIDATION' as const,
+        }),
       });
-      return r.code === 0;
+      return r.code === 0 && !r.timedOut && ollamaListIncludesModel(r.stdout, this.model);
     } catch {
       return false;
     }
@@ -456,11 +545,24 @@ export class OllamaCliProvider extends BaseCliAiProvider {
         OLLAMA_HOST: this.validationHost,
         OLLAMA_NO_CLOUD: '1',
       },
+      // A missing model must abort the run at the first pull marker instead of downloading
+      // until the (120s) timeout. Production scans stderr only (pull progress), because stdout
+      // is the user-visible answer and may legitimately quote a pull log; the isolated
+      // validation profile keeps the stricter both-streams scan and the child environment.
+      downloadMarkerPolicy: this.validationHost === null
+        ? 'OLLAMA_PULL_STDERR' as const
+        : 'OLLAMA_PULL' as const,
       ...(this.validationHost === null ? {} : {
         environmentProfile: 'ISOLATED_OLLAMA_VALIDATION' as const,
-        downloadMarkerPolicy: 'OLLAMA_PULL' as const,
       }),
     });
+
+    if (result.downloadObserved === true) {
+      throw new AiProviderError(
+        AiFailureKind.UNAVAILABLE,
+        'ollama model is not installed locally; implicit model download was aborted',
+      );
+    }
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves. Ollama is
     // local + auth-free, so there is no AUTH_REQUIRED path.

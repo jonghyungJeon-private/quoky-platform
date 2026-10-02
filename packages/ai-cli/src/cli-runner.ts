@@ -21,8 +21,13 @@ export interface CliRunOptions {
   env?: Readonly<Record<string, string>>;
   /** Opt-in environment used only by the app-private Ollama generation validator. */
   environmentProfile?: 'ISOLATED_OLLAMA_VALIDATION';
-  /** Bounded observation only; this does not prevent bytes sent before a marker. */
-  downloadMarkerPolicy?: 'OLLAMA_PULL';
+  /**
+   * Bounded observation only; this does not prevent bytes sent before a marker.
+   * `OLLAMA_PULL` scans stdout and stderr (isolated validation, controlled prompts).
+   * `OLLAMA_PULL_STDERR` scans stderr only: `ollama run` prints pull progress there, so a
+   * production answer on stdout that merely quotes a pull log is never mistaken for a download.
+   */
+  downloadMarkerPolicy?: 'OLLAMA_PULL' | 'OLLAMA_PULL_STDERR';
 }
 
 export interface CliRunResult {
@@ -490,7 +495,10 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
           requestTermination();
           return;
         }
-        if (options.downloadMarkerPolicy === 'OLLAMA_PULL') {
+        if (
+          options.downloadMarkerPolicy === 'OLLAMA_PULL' ||
+          (options.downloadMarkerPolicy === 'OLLAMA_PULL_STDERR' && !isStdout)
+        ) {
           const observed = `${markerTail}${chunk.toString('utf8')}`.toLocaleLowerCase('en-US');
           markerTail = observed.slice(-128);
           if (

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 
 import {
+  AiProviderManager,
   QuokyCore,
   PLATFORM_ADAPTER,
   STORAGE_PROVIDER,
@@ -19,6 +20,14 @@ import { ConsoleLogger } from './console-logger';
 import { loadLocalEnvironment } from './env-loader';
 import { serializeError } from './error-diagnostics';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
+import {
+  STARTUP_BANNER,
+  assertDiscordTokenConfigured,
+  describeStartupFailure,
+  logResolvedDatabasePath,
+  reportProviderReadiness,
+} from './bootstrap-preflight';
+import { loadConfig } from './config';
 
 const log = new ConsoleLogger('quoky');
 
@@ -27,14 +36,15 @@ const log = new ConsoleLogger('quoky');
  * Discord is the interface). Resolves providers/services from DI, wires the
  * inbound handler, and starts infrastructure.
  *
- * Sprint 1b-1 — the inbound handler is `QuokyCore.handleInboundMessage`,
- * which runs the real pipeline: resolve Actor → open Session → classify →
- * create Task → plan → ContextBuilder → PromptComposer → route → provider →
- * Artifact → reply. The AI provider is a deterministic placeholder in 1b-1;
- * Sprint 1b-2 swaps in the real Claude CLI execution.
+ * The inbound handler is `QuokyCore.handleInboundMessage`, which runs the real
+ * pipeline: resolve Actor → open Session → classify → create Task → plan →
+ * ContextBuilder → PromptComposer → route → provider → Artifact → reply.
+ * Startup preflight (token, provider readiness, resolved DB path) lives in
+ * `bootstrap-preflight.ts`.
  */
 async function bootstrap(): Promise<void> {
   loadLocalEnvironment();
+  assertDiscordTokenConfigured(process.env);
   const { AppModule } = await import('./app.module');
 
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -47,6 +57,10 @@ async function bootstrap(): Promise<void> {
   const platform = app.get<PlatformAdapter>(PLATFORM_ADAPTER);
   const core = app.get(QuokyCore);
   const actorIdentityProvisioner = app.get(ActorIdentityProvisioner);
+  const aiProviders = app.get(AiProviderManager);
+
+  logResolvedDatabasePath(loadConfig().storage.dbPath, log);
+  await reportProviderReadiness(aiProviders, log);
 
   // Track B (Sprint 4c-Follow-up-2): secret-free structured diagnostics — name/message/redacted stack/cause plus
   // non-secret correlation context (stage + message/channel/user ids). The raw message text is deliberately NOT
@@ -94,10 +108,12 @@ async function bootstrap(): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  log.info('started (Sprint 1g — gated project analysis, ADR-0019)');
+  log.info(STARTUP_BANNER);
 }
 
 bootstrap().catch((err) => {
-  log.error('failed to start', { error: err instanceof Error ? err.message : String(err) });
+  const failure = describeStartupFailure(err);
+  log.error('failed to start', { error: failure.message });
+  if (failure.hint) log.error('how to fix', { hint: failure.hint });
   process.exit(1);
 });

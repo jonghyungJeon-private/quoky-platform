@@ -1,4 +1,5 @@
-import type { Actor, ExternalIdentity, StorageProvider } from '@quoky/core';
+import type { Actor, ExternalIdentity, Logger, StorageProvider } from '@quoky/core';
+import { ConsoleLogger } from './console-logger';
 import type { ActorIdentityMapping } from './config';
 
 /** App-private startup service for explicit, additive links to existing Actors. */
@@ -6,19 +7,26 @@ export class ActorIdentityProvisioner {
   constructor(
     private readonly storage: StorageProvider,
     private readonly mappings: readonly ActorIdentityMapping[],
+    private readonly log: Logger = new ConsoleLogger('actor-identity'),
   ) {}
 
   async provision(): Promise<void> {
     const plans = new Map<string, { actor: Actor; additions: ExternalIdentity[]; targets: Map<string, string> }>();
     const claimedTargets = new Map<string, string>();
 
-    for (const mapping of this.mappings) {
+    for (const [index, mapping] of this.mappings.entries()) {
       const actor = await this.storage.actors.findByExternalIdentity(
         mapping.actor.platform,
         mapping.actor.externalId,
       );
       if (!actor) {
-        throw new Error(`ACTOR_IDENTITY_PROVISIONING_ACTOR_NOT_FOUND:discord:${mapping.actor.externalId}`);
+        // The Actor is created on the owner's first inbound message, so a fresh install has none yet.
+        // Skip (never crash startup); the mapping applies on the next start. Only the index is logged.
+        this.log.warn(
+          'skipped QUOKY_ACTOR_IDENTITY_MAPPINGS entry: no matching Actor yet (message the bot once, then restart)',
+          { platform: mapping.actor.platform, mappingIndex: index },
+        );
+        continue;
       }
       const plan = plans.get(actor.id) ?? { actor, additions: [], targets: new Map<string, string>() };
       plans.set(actor.id, plan);
