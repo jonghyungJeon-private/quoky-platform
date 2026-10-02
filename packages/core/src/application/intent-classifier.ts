@@ -359,11 +359,22 @@ export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReas
 export function detectExternalActionRequest(text: string): ExternalActionRequest | undefined {
   // A request the User takes back in the same message ("Post the code to slack? no, just explain") is not one.
   const requests = stripQuotedExamples(text.replace(RETRACTED_QUESTION, ' '));
-  if (isMetaFraming(requests)) return undefined;
+  // Meta framing suppresses only its own clause: "Pay the rent. Translate the receipt." still asks for the payment.
+  const clauses = isMetaFraming(requests) ? requests.split(CLAUSE_BOUNDARY).filter((c) => !isMetaFraming(c)) : [requests];
+  for (const clause of clauses) {
+    const kind = externalActionKindOf(clause);
+    if (kind !== undefined) return { kind };
+  }
+  return undefined;
+}
+
+/** Sentence punctuation (followed by space or the end), newlines and "and then" / "그리고" connectives. */
+const CLAUSE_BOUNDARY = /[.!?。！？](?=\s|$)|\n|\s+and\s+then\s+|\s+그리고(?:\s*나서)?\s+/iu;
+
+function externalActionKindOf(requests: string): ExternalActionKind | undefined {
   const ko = KO_EXTERNAL_ACTIONS.find(({ noun, verb, blocker }) => hasCoLocatedUnnegated(requests, noun, verb, blocker));
-  if (ko !== undefined) return { kind: ko.kind };
-  const en = EN_EXTERNAL_ACTIONS.find(({ pattern }) => unnegatedMatch(requests, [pattern]));
-  return en === undefined ? undefined : { kind: en.kind };
+  if (ko !== undefined) return ko.kind;
+  return EN_EXTERNAL_ACTIONS.find(({ pattern }) => unnegatedMatch(requests, [pattern]))?.kind;
 }
 
 /**

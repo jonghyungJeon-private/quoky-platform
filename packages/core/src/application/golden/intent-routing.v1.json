@@ -148,6 +148,8 @@
     {"id": "intent-144", "text": "Can you email Alice?", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: bare email verb with a recipient", "mustPass": true},
     {"id": "intent-145", "text": "팀에 회의록 보내줘", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: recipient-directed transmit", "mustPass": true},
     {"id": "intent-146", "text": "메일 초안 써줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "Codex P1: writing a draft stays chat", "mustPass": true},
-    {"id": "intent-147", "text": "\"메일 보내줘\"라는 문장을 영어로 번역해줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "Codex P2: quoted example with translate framing is not an action", "mustPass": true}
+    {"id": "intent-147", "text": "\"메일 보내줘\"라는 문장을 영어로 번역해줘", "expected": {"type": "CHAT", "capability": "GENERAL_CHAT"}, "source": "Codex P2: quoted example with translate framing is not an action", "mustPass": true},
+    {"id": "intent-148", "text": "Pay the rent for me. Translate the receipt into Korean.", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: meta framing is per clause", "mustPass": true},
+    {"id": "intent-149", "text": "Send the email to my manager now. Translate the reply into Korean.", "expected": {"type": "CHAT", "capability": "POLICY_SENSITIVE_CHAT", "rawKind": "policy-sensitive-chat"}, "source": "Codex P1: meta framing is per clause", "mustPass": true}
   ]
 }

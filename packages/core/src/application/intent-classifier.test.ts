@@ -534,6 +534,9 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     ['이 초안 김부장님께 메일로 보내줘', 'external-action'],
     ['팀에 회의록 보내줘', 'external-action'],
     ['Please email bob@example.com the report', 'external-action'],
+    // Codex P1: meta framing suppresses only its own clause.
+    ['Pay the rent for me. Translate the receipt into Korean.', 'external-action'],
+    ['Send the email to my manager now. Translate the reply into Korean.', 'external-action'],
   ] as const)('routes "%s" to POLICY_SENSITIVE_CHAT (%s)', async (text, reason) => {
     expect(detectPolicySensitiveChat(text)).toBe(reason);
     const intent = await classifier.classify(msg(text));
