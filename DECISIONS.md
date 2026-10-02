@@ -14726,7 +14726,7 @@ those details so the settled decisions and the code agree.
 
 ## ADR-0096 — Personal v2 integration seams: deterministic turn-handler registry (control / post-anchor / pre-classify), contributed help lines, feature-provider composition. Amends ADR-0032: ConversationRuntimeDeps baseline 32→33. Amends ADR-0093: help text accepts contributed lines.
 
-- **Status:** Proposed
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
 - **Date:** 2026-10-02
 - **Amends:** ADR-0032 M3 amendment (accepted `ConversationRuntimeDeps` baseline 32 → 33), ADR-0093 (help text =
   fixed base text + contributed lines). ADR-0032 and ADR-0093 text is not edited.
@@ -14878,7 +14878,7 @@ None live. Product Owner ratification gates the SEAM-1 and SEAM-2 merges. Indepe
 
 ## ADR-0097 — Owner one-time, hash-bound CRITICAL override for credential-guard refusals in the code-change preview, plus the strict-only credential guard. QA-023 resolved; deps baseline 33→34.
 
-- **Status:** Proposed
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
 - **Date:** 2026-10-02
 - **Amends:** ADR-0032 M3 amendment (deps baseline 33 → 34 on top of ADR-0096). Resolves UAT QA-023.
 - **Relates:** ADR-0019/0022 (secret filenames skipped in the adapter), ADR-0025/0035/0038 (approvals), ADR-0040
@@ -15024,7 +15024,7 @@ review before OVR-4 merges. Deleting the superseded QA-023 branch and worktree i
 
 ## ADR-0098 — Personal v2 answer quality: chat response policy, local feedback capture (schema v12, PlatformAdapter receipt/onFeedback, '피드백 요약' as a control-stage handler), golden evaluation, opt-in local embedding recall. Amends ADR-0073 and ADR-0093.
 
-- **Status:** Proposed
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
 - **Date:** 2026-10-02
 - **Amends:** ADR-0073 ("no selected vector product" → `LocalVectorProvider` + Ollama-CLI embeddings), ADR-0093 (a
   third control phrase, `피드백 요약`, delivered through the ADR-0096 `control` stage). Supersedes the ROADMAP
@@ -15158,7 +15158,7 @@ embedding recall. `[LATER]` candidates D/E, transcript embedding recall, network
 
 ## ADR-0099 — Code-work expansion: bounded change sets of up to 5 files with update/add and atomic-ish apply, new-file commit, owner branch create/switch (post-anchor handler), opt-in push→PR chain with a separate QUOKY_GIT_MERGE_ENABLED. Amends ADR-0027, 0042, 0046, 0047/0048, 0094.
 
-- **Status:** Proposed
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
 - **Date:** 2026-10-02
 - **Amends:** ADR-0027 (best-effort per-file write; adds an atomic-ish change-set mode), ADR-0042 (single `update`
   op), ADR-0046 (no `git add`), ADR-0047/0048 (push requires an upstream), ADR-0094 (no branch creation; remote
@@ -15261,7 +15261,7 @@ merge flag. `[LATER]` delete/rename, >5 files, undo after apply, live merge/sync
 
 ## ADR-0100 — Chat entry point for personal work: read-only connector lookups (named queries, ConnectorQueryError, optional item facts) and WorkItem to-dos (title and correlate) through pre-classify handlers. Amends ADR-0075; extends ADR-0072/0074; no classifier hook and no deps change.
 
-- **Status:** Proposed
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
 - **Date:** 2026-10-02
 - **Amends:** ADR-0075 (WorkItem `title`, `WorkManager.correlate`). **Extends:** ADR-0072/ADR-0074 (named queries,
   neutral errors, optional item facts). ADR-0032 M3 amendment is preserved: no deps key is added.
@@ -15386,7 +15386,7 @@ free-text search, `ResourceResolver`, Team Edition sharing.
 
 ## ADR-0101 — Owner reminders: deterministic KO/EN time grammar (pre-classify handler), durable reminder store (schema v13), bounded composition-root tick dispatcher, owner-only NotificationSink, local-only daily brief. Ratifies the ADR-0081 D15 scheduling slice; updates ROADMAP deferred Scheduler/Notification and ARCHITECTURE §4/§10/§13. No runtime dep (uses ADR-0096).
 
-- **Status:** Proposed
+- **Status:** Ratified by the Product Owner on 2026-10-02 (all recommended owner defaults accepted; see the ratification record below)
 - **Date:** 2026-10-02
 - **Amends:** ROADMAP "Deferred capabilities" row "Feedback learning, Feature registry, **Scheduler, Notification**:
   none (no Core seam)" — Scheduler/Notification gain a bounded Core seam for owner reminders only.
@@ -15558,3 +15558,18 @@ needs a new ADR.
 `[NOW]` reminder aggregate, KO/EN grammar, v13 store, conversation and dispatch services, tick driver, owner-only
 sink, local brief, default-off flag. `[LATER]` snooze/edit, sub-daily recurrence, richer brief (new ADR),
 non-reminder notifications, distributed scheduler, reminders for other actors.
+
+
+## ADR-0096..0101 ratification record — Quoky Personal v2 (2026-10-02)
+
+- **Ratified by:** the Product Owner, in chat on 2026-10-02, after the Codex architecture review and delta reviews
+  (all 7 findings resolved; restart reconstruction clarified in ADR-0097 D5).
+- **Owner decisions:** every "Owner decisions requested" item in ADR-0096..0101 takes its recommended default, with
+  these explicit choices:
+  1. Work-lookup summaries may fall back to Claude when Ollama is not ready: `QUOKY_WORK_SUMMARY_ENABLED=true`
+     (default on). Corporate connector text can leave the host through the owner's Claude subscription.
+  2. The stricter credential file-content guard (ADR-0097, OVR-1) merges in wave 1, before the override UX (wave 4).
+  3. Reminder delivery: owner DM only by default; channel delivery requires `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`.
+  4. Delivery governance for the Personal v2 execution plan: per wave, Push → PR → Merge proceeds automatically when the
+     wave's independent review, integrated offline validation and Codex review all pass. Every Live UAT, runtime,
+     Discord, provider/network and secret-access step still needs its own exact-scope Strict approval.
