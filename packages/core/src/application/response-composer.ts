@@ -131,7 +131,15 @@ const DIFF_BUDGET_MARGIN_CHARS = 20;
 
 const DIFF_PREVIEW_HEADER =
   '코드 변경 제안을 diff로 보여드려요. 아직 실제로 적용되지 않았어요. 파일은 수정되지 않았어요.';
-const DIFF_PREVIEW_FOOTER = '이 제안을 실제로 적용하는 기능은 아직 지원하지 않아요.';
+/** Apply-INcapable preview footer — the change shape (an added/deleted file, several files, or binary content)
+ *  is outside what the WorkspaceWrite integrity gate accepts, so THIS preview has no apply step and must not
+ *  offer the "적용해줘" request phrase. It replaces the old blanket "apply is not supported" wording, which
+ *  became false once preview → apply approval → patch → apply shipped (ADR-0040–0042; Personal v1 scope D5),
+ *  and names the real next step instead: re-request a single existing-file change. */
+const DIFF_PREVIEW_FOOTER = [
+  '이 제안은 파일 추가·삭제, 여러 파일 또는 바이너리 변경이라 바로 적용할 수는 없어요.',
+  '파일에 적용까지 하려면 기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요.',
+].join('\n');
 /** Apply-CAPABLE preview footer (Footer Minimal Fix). Shown only when the previewed change is the one
  *  shape the WorkspaceWrite integrity gate accepts (a single, non-binary, existing-file `update`). It
  *  states files are still unmodified, that apply is now available, the explicit apply-REQUEST phrase, and
@@ -151,6 +159,40 @@ const PATCH_PREVIEW_HEADER =
 const PATCH_PREVIEW_FOOTER = [
   '파일은 아직 그대로예요.',
   '이 패치를 실제 파일에 적용하려면 "패치 적용해줘"라고 요청해 주세요.',
+].join('\n');
+
+/** Display bound on an approval `reason` inside the reminder/expiry replies, so the decision and "새 대화"
+ *  lines always survive the message clamp (ADR-0093). */
+const MAX_APPROVAL_REASON_DISPLAY = 400;
+
+function boundedReason(reason: string): string {
+  return reason.length > MAX_APPROVAL_REASON_DISPLAY ? `${reason.slice(0, MAX_APPROVAL_REASON_DISPLAY)}…` : reason;
+}
+
+/** How to decide a pending approval (ADR-0093) — the decision words `interpretApprovalDecision` accepts. */
+const APPROVAL_DECISION_LINE = '진행하려면 "승인", 거절하려면 "거절"이라고 답해 주세요.';
+
+/** Next phrases after a real workspace apply (ADR-0043 validation; ADR-0093 reset). "테스트 실행해줘" is an
+ *  explicit validation request (`detectExplicitValidationKinds`); "새 대화" is the reset control phrase. */
+const WORKSPACE_APPLIED_NEXT_LINE =
+  '다음으로 "테스트 실행해줘"로 검증할 수 있고, 여기서 마치려면 "새 대화"라고 보내 주세요.';
+
+/** Fixed help text (ADR-0093). Lists only what Personal v1 actually does, with phrases the runtime accepts. */
+const HELP_TEXT = [
+  'Quoky로 할 수 있는 일이에요.',
+  '- 일상 대화와 질문 답변',
+  '- 기억: "기억해: <내용>"이라고 보내면 오래 기억해 둬요.',
+  '- 프로젝트 등록: "이 프로젝트 등록해줘: /path/to/project"',
+  '- 등록한 프로젝트 분석·설명과 코드 리뷰',
+  '- 코드 수정: 파일 경로와 함께 요청 → "승인" → 미리보기 확인 → "적용해줘" → "승인" → "패치 만들어줘" → "패치 적용해줘"',
+  '- 적용 후 검증: "테스트 실행해줘" 또는 "타입체크 실행해줘"',
+  '- 로컬 커밋: 적용 후 "커밋해줘" → "승인" → "커밋 실행" (main/master 브랜치에는 커밋하지 않아요)',
+  '',
+  '승인 요청에는 "승인" 또는 "거절"로 답해 주세요. 30분 안에 답하지 않으면 자동으로 거절돼요.',
+  '',
+  '대화 제어:',
+  '- "도움말" 또는 "/help": 이 안내를 다시 보여줘요.',
+  '- "새 대화" 또는 "/reset": 지금 대화를 끝내고 새로 시작해요. 기다리던 승인 요청은 거절로 처리돼요.',
 ].join('\n');
 
 /** Which stream a rendered excerpt came from, and which non-empty stream was left out. */
@@ -464,8 +506,61 @@ export class ResponseComposer {
   composeApprovalNotice(context: ConversationContext, request: ApprovalRequest): OutboundMessage {
     return {
       context,
-      text: `이 작업은 승인이 필요해요 (${request.riskLevel}):\n${request.reason}\n진행하려면 "승인", 그만두려면 "취소"라고 답해 주세요.`,
+      text: `이 작업은 승인이 필요해요 (${request.riskLevel}):\n${request.reason}\n${APPROVAL_DECISION_LINE}`,
     };
+  }
+
+  /**
+   * Reminder for an ordinary message while an unexpired approval is pending (ADR-0093). The message is not
+   * routed to chat or a provider; this names what is pending, how to approve or deny, the remaining time
+   * (rounded up to whole minutes, never 0), and "새 대화" as the way out.
+   */
+  composePendingApprovalReminder(
+    context: ConversationContext,
+    request: ApprovalRequest,
+    remainingMs: number,
+  ): OutboundMessage {
+    const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+    const text = [
+      `승인을 기다리는 작업이 있어요 (${request.riskLevel}):`,
+      boundedReason(request.reason),
+      APPROVAL_DECISION_LINE,
+      `남은 시간: 약 ${minutes}분 (지나면 자동으로 거절돼요)`,
+      '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
+    ].join('\n');
+    return { context, text: clampToMessageBudget(text) };
+  }
+
+  /** A pending approval passed its lifetime and was recorded as denied (ADR-0093). It can no longer be approved. */
+  composeApprovalExpired(context: ConversationContext, request: ApprovalRequest, ttlMs: number): OutboundMessage {
+    const minutes = Math.round(ttlMs / 60_000);
+    const text = [
+      `승인 요청이 ${minutes}분 안에 결정되지 않아 자동으로 거절했어요:`,
+      boundedReason(request.reason),
+      '이 요청은 이제 승인할 수 없어요. 필요하면 처음부터 다시 요청해 주세요.',
+    ].join('\n');
+    return { context, text: clampToMessageBudget(text) };
+  }
+
+  /** Fixed help reply (ADR-0093): Personal v1 capabilities, the control phrases, and how to approve or deny. */
+  composeHelp(context: ConversationContext): OutboundMessage {
+    return { context, text: HELP_TEXT };
+  }
+
+  /**
+   * Reset reply (ADR-0093). States what reset did (session closed, a pending approval denied) and what it did
+   * not do: no applied change or commit is rolled back and remembered knowledge stays.
+   */
+  composeConversationReset(context: ConversationContext, input: { deniedPendingApproval: boolean }): OutboundMessage {
+    const lines = ['새 대화를 시작할게요. 다음 메시지부터 새 대화로 이어져요.'];
+    if (input.deniedPendingApproval) lines.push('기다리던 승인 요청은 거절로 처리했어요.');
+    lines.push('이미 적용한 파일 변경이나 커밋은 되돌리지 않았고, "기억해:"로 저장한 내용은 그대로 있어요.');
+    return { context, text: lines.join('\n') };
+  }
+
+  /** Prepend a notice (e.g. an approval-expiry notice) to another reply, keeping the reply's own fields. */
+  composeWithNotice(notice: OutboundMessage, reply: OutboundMessage): OutboundMessage {
+    return { ...reply, text: clampToMessageBudget(`${notice.text}\n\n${reply.text}`) };
   }
 
   /**
@@ -476,7 +571,7 @@ export class ResponseComposer {
   composeApprovalRequired(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '이 작업은 승인이 필요해요. 진행하려면 "승인", 그만두려면 "취소"라고 답해 주세요.',
+      text: `이 작업은 승인이 필요해요. ${APPROVAL_DECISION_LINE}`,
     };
   }
 
@@ -491,7 +586,7 @@ export class ResponseComposer {
       text:
         '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' +
         '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n' +
-        '진행하려면 "승인", 그만두려면 "취소"라고 답해 주세요.',
+        APPROVAL_DECISION_LINE,
     };
   }
 
@@ -678,7 +773,9 @@ export class ResponseComposer {
     ];
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
     if (warning) lines.push(warning);
-    lines.push('이 제안을 실제로 적용하는 기능은 아직 지원하지 않아요.');
+    // Same apply-capable rule as composeCodeDiffPreview: only a single existing-file `update` has an apply step.
+    const only = preview.changes.length === 1 ? preview.changes[0] : undefined;
+    lines.push(only?.kind === 'update' ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER);
     return { context, text: clampToMessageBudget(lines.join('\n')) };
   }
 
@@ -717,7 +814,7 @@ export class ResponseComposer {
   composeCodeDiffPreview(context: ConversationContext, preview: CodeDiffPreview): OutboundMessage {
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
     // Footer Minimal Fix: an apply-capable single existing-file `update` truthfully advertises apply;
-    // every other shape keeps the existing "적용 미지원" footer (accurate — the update-only gate rejects it).
+    // every other shape gets the "this shape cannot be applied" footer (accurate — the update-only gate rejects it).
     const footer = isApplyCapablePreview(preview) ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER;
     const footerLines = [...(warning ? [warning] : []), footer];
     const blocks = preview.changes.map(renderDiffChange);
@@ -847,7 +944,8 @@ export class ResponseComposer {
         `파일을 수정했어요: ${targetFiles.join(', ')}\n` +
         'git 명령은 실행하지 않았어요. 커밋/푸시는 하지 않았어요.\n' +
         '작업 트리에는 방금 적용한 파일 변경이 남아 있을 수 있어요.\n' +
-        '테스트도 실행하지 않았어요.',
+        '테스트도 실행하지 않았어요.\n' +
+        WORKSPACE_APPLIED_NEXT_LINE,
     };
   }
 
