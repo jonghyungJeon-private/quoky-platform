@@ -1,7 +1,8 @@
 import { WorkspaceNotSafeError } from '../errors';
 import { ApprovalStatus } from '../domain';
-import type { ApprovalRef, GitBranchCleanupResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryInfo } from '../domain';
+import type { ApprovalRef, GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryInfo } from '../domain';
 import type { GitProvider } from '../ports';
+import { isCreatableOwnerBranch } from './code-work/branch-name-policy';
 import { isValidCommitMessage } from './commit-message';
 import { isSafePushBranch, isSafePushRemote } from './push-target';
 
@@ -117,14 +118,19 @@ export class GitManager {
    * WorkspaceWriteManager): validates `approvalRef.status === APPROVED` + defensive inputs (non-empty
    * rootPath/files, all safe relative paths, unique after trim, valid bounded single-line message) BEFORE
    * delegating to the provider. The runtime performs the full context/scope re-validation first; this is the
-   * capability-level backstop. The provider owns the argv details and commits exactly `files` (no `git add`,
-   * no push). The ApprovalRef is consumed here and NOT passed to the provider.
+   * capability-level backstop. The provider owns the argv details and commits exactly `files` (no push).
+   * The ApprovalRef is consumed here and NOT passed to the provider.
+   *
+   * `newFiles` (ADR-0099 D3) marks the approved UNTRACKED paths among `files`: each must be safe, unique and a
+   * member of `files` (`newFiles ⊆ files`, compared after trim). Only then does the provider run
+   * `git add -- <newFiles>` before the commit. Omitted or empty → the provider is called exactly as before.
    */
   async commitFiles(input: {
     rootPath: string;
     files: string[];
     message: string;
     approvalRef: ApprovalRef;
+    newFiles?: string[];
   }): Promise<GitCommitResult> {
     if (input.approvalRef.status !== ApprovalStatus.APPROVED) {
       throw new Error(`git commit requires an APPROVED approval (got ${input.approvalRef.status})`);
@@ -135,7 +141,57 @@ export class GitManager {
     if (cleaned.some(isUnsafeCommitPath)) throw new Error('git commit rejects an unsafe file path');
     if (new Set(cleaned).size !== cleaned.length) throw new Error('git commit rejects duplicate files');
     if (!isValidCommitMessage(input.message)) throw new Error('git commit rejects an invalid message');
+    if (input.newFiles !== undefined && input.newFiles.length > 0) {
+      const newFiles = input.newFiles.map((f) => (typeof f === 'string' ? f.trim() : ''));
+      if (newFiles.some(isUnsafeCommitPath)) throw new Error('git commit rejects an unsafe new file path');
+      if (new Set(newFiles).size !== newFiles.length) throw new Error('git commit rejects duplicate new files');
+      const approved = new Set(cleaned);
+      if (newFiles.some((f) => !approved.has(f))) throw new Error('git commit rejects a new file that is not in the commit set');
+      return this.provider.commitFiles(input.rootPath, cleaned, input.message, { newFiles });
+    }
     return this.provider.commitFiles(input.rootPath, cleaned, input.message);
+  }
+
+  /**
+   * READ-ONLY (CAP-002, ADR-0058/0099): the LOCAL branch tip, or `null` when the branch does not exist. Rejects an
+   * unsafe branch name before any git call. Lets a caller refuse a create/switch with a precise reason.
+   */
+  async getLocalRefCommit(rootPath: string, branch: string): Promise<{ commitHash: string } | null> {
+    if (!rootPath.trim()) throw new Error('git rev-parse requires a rootPath');
+    if (!isSafePushBranch(branch)) throw new Error('git rev-parse rejects an unsafe branch');
+    return this.provider.getLocalRefCommit(rootPath, branch);
+  }
+
+  /**
+   * Owner LOCAL branch creation (CAP-002, ADR-0099 D4). No ApprovalRef: an explicit owner command, local,
+   * non-destructive and reversible. Validates the branch name (`isCreatableOwnerBranch`: ASCII, bounded,
+   * never `main`/`master`/`HEAD`/`refs/…`) and the SHA shape of `expectedHeadSha` BEFORE delegating; the provider
+   * owns the state preflight (attached HEAD, no merge/rebase in progress, HEAD CAS, branch absent) and the
+   * read-back. The result is checked once more (`branch`, `created`).
+   */
+  async createBranch(rootPath: string, branch: string, expectedHeadSha: string): Promise<GitBranchResult> {
+    if (!rootPath.trim()) throw new Error('git branch create requires a rootPath');
+    if (!isCreatableOwnerBranch(branch)) throw new Error('git branch create rejects an unsafe or protected branch name');
+    if (!SYNC_SHA_SHAPED.test(expectedHeadSha)) throw new Error('git branch create rejects an invalid expected HEAD');
+    const result = await this.provider.createBranch(rootPath, branch, expectedHeadSha);
+    if (result.branch !== branch || result.created !== true) {
+      throw new Error('git branch create: the result could not be verified');
+    }
+    return result;
+  }
+
+  /**
+   * Owner LOCAL branch switch (CAP-002, ADR-0099 D4). No ApprovalRef. Validates the branch name with the same
+   * policy as creation before delegating; the provider requires an existing local branch and a clean tree.
+   */
+  async switchBranch(rootPath: string, branch: string): Promise<GitBranchResult> {
+    if (!rootPath.trim()) throw new Error('git branch switch requires a rootPath');
+    if (!isCreatableOwnerBranch(branch)) throw new Error('git branch switch rejects an unsafe or protected branch name');
+    const result = await this.provider.switchBranch(rootPath, branch);
+    if (result.branch !== branch || result.created !== false) {
+      throw new Error('git branch switch: the result could not be verified');
+    }
+    return result;
   }
 
   /**

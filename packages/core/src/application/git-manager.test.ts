@@ -8,7 +8,7 @@ import {
 } from './git-manager';
 import { WorkspaceNotSafeError } from '../errors';
 import { ApprovalStatus } from '../domain';
-import type { ApprovalRef, GitBranchCleanupResult, GitCommitResult, GitMainSyncResult, GitStatus, RepositoryInfo } from '../domain';
+import type { ApprovalRef, GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitMainSyncResult, GitStatus, RepositoryInfo } from '../domain';
 import type { GitProvider } from '../ports';
 
 function fakeProvider(over: Partial<GitProvider> = {}): GitProvider {
@@ -29,7 +29,7 @@ function fakeProvider(over: Partial<GitProvider> = {}): GitProvider {
 
 const planRef = { id: 'plan-1', goal: 'do x' };
 const approvedRef: ApprovalRef = { id: 'appr-1', status: ApprovalStatus.APPROVED, executionPlanRef: planRef };
-const commitInput = (over: Partial<{ rootPath: string; files: string[]; message: string; approvalRef: ApprovalRef }> = {}) =>
+const commitInput = (over: Partial<{ rootPath: string; files: string[]; message: string; approvalRef: ApprovalRef; newFiles: string[] }> = {}) =>
   ({ rootPath: '/repo', files: ['a.ts'], message: 'chore: update a.ts', approvalRef: approvedRef, ...over });
 
 describe('GitManager (CAP-002, read-only)', () => {
@@ -339,5 +339,139 @@ describe('GitManager.deleteMergedLocalBranch (CAP-002, ADR-0059 — post-merge l
     await expect(runCleanup(wrongBranch)).rejects.toBeInstanceOf(BranchCleanupUnverifiedError);
     const notDeleted = cleanupProvider({ async deleteMergedLocalBranch() { return { branch: TARGET, deleted: false, alreadyAbsent: false }; } });
     await expect(runCleanup(notDeleted)).rejects.toBeInstanceOf(BranchCleanupUnverifiedError);
+  });
+});
+
+describe('GitManager.commitFiles — new-file support (ADR-0099 D3)', () => {
+  const commitProvider = () => {
+    const commitFiles = vi.fn(
+      async (_rootPath: string, files: string[], message: string, _options?: { newFiles?: string[] }): Promise<GitCommitResult> => ({
+        commitHash: 'a'.repeat(40), committedFiles: files, message,
+      }),
+    );
+    return { provider: fakeProvider({ commitFiles }), commitFiles };
+  };
+
+  it('passes the trimmed newFiles to the provider when they are a subset of files', async () => {
+    const { provider, commitFiles } = commitProvider();
+    await new GitManager(provider).commitFiles(commitInput({ files: ['a.ts', ' lib/new.ts '], newFiles: ['lib/new.ts'] }));
+    expect(commitFiles).toHaveBeenCalledWith('/repo', ['a.ts', 'lib/new.ts'], 'chore: update a.ts', { newFiles: ['lib/new.ts'] });
+  });
+
+  it('calls the provider with exactly three arguments when newFiles is absent or empty', async () => {
+    const { provider, commitFiles } = commitProvider();
+    await new GitManager(provider).commitFiles(commitInput());
+    await new GitManager(provider).commitFiles(commitInput({ newFiles: [] }));
+    expect(commitFiles.mock.calls.map((c) => c.length)).toEqual([3, 3]);
+  });
+
+  it('rejects a new file that is not in the commit set, before any git call', async () => {
+    const { provider, commitFiles } = commitProvider();
+    await expect(new GitManager(provider).commitFiles(commitInput({ files: ['a.ts'], newFiles: ['b.ts'] }))).rejects.toThrow(/not in the commit set/);
+    expect(commitFiles).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate or blank new files, before any git call', async () => {
+    const { provider, commitFiles } = commitProvider();
+    for (const newFiles of [['n.ts', 'n.ts'], ['n.ts', ' n.ts'], [''], ['n.ts', '']]) {
+      await expect(new GitManager(provider).commitFiles(commitInput({ files: ['a.ts', 'n.ts'], newFiles }))).rejects.toThrow();
+    }
+    expect(commitFiles).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsafe path in files even when it is also listed as a new file', async () => {
+    const { provider, commitFiles } = commitProvider();
+    for (const bad of ['../x.ts', '/abs.ts']) {
+      await expect(new GitManager(provider).commitFiles(commitInput({ files: [bad], newFiles: [bad] }))).rejects.toThrow(/unsafe/);
+    }
+    expect(commitFiles).not.toHaveBeenCalled();
+  });
+
+  it('still requires an APPROVED approval when newFiles are given', async () => {
+    const { provider, commitFiles } = commitProvider();
+    const pending: ApprovalRef = { ...approvedRef, status: ApprovalStatus.PENDING };
+    await expect(
+      new GitManager(provider).commitFiles(commitInput({ files: ['n.ts'], newFiles: ['n.ts'], approvalRef: pending })),
+    ).rejects.toThrow(/APPROVED/);
+    expect(commitFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe('GitManager.getLocalRefCommit / createBranch / switchBranch (ADR-0099 D4)', () => {
+  const SHA = 'a'.repeat(40);
+  const branchProvider = (over: Partial<GitProvider> = {}) => {
+    const createBranch = vi.fn(
+      async (_r: string, branch: string, head: string): Promise<GitBranchResult> => ({ branch, headSha: head, created: true }),
+    );
+    const switchBranch = vi.fn(async (_r: string, branch: string): Promise<GitBranchResult> => ({ branch, headSha: SHA, created: false }));
+    const getLocalRefCommit = vi.fn(async () => ({ commitHash: SHA }));
+    return { provider: fakeProvider({ createBranch, switchBranch, getLocalRefCommit, ...over }), createBranch, switchBranch, getLocalRefCommit };
+  };
+
+  it('createBranch delegates a valid name and SHA and returns the verified result', async () => {
+    const { provider, createBranch } = branchProvider();
+    await expect(new GitManager(provider).createBranch('/repo', 'feature/x', SHA)).resolves.toEqual({
+      branch: 'feature/x', headSha: SHA, created: true,
+    });
+    expect(createBranch).toHaveBeenCalledWith('/repo', 'feature/x', SHA);
+  });
+
+  it('createBranch accepts a short (7+) hex SHA', async () => {
+    const { provider, createBranch } = branchProvider();
+    await new GitManager(provider).createBranch('/repo', 'feature/x', 'abc1234');
+    expect(createBranch).toHaveBeenCalledTimes(1);
+  });
+
+  it('createBranch rejects unsafe/protected names and malformed SHAs before the provider runs', async () => {
+    const { provider, createBranch } = branchProvider();
+    const mgr = new GitManager(provider);
+    for (const name of ['main', 'Master', 'HEAD', 'refs/heads/x', 'a b', '-x', 'a..b', '기능', 'x'.repeat(101), '']) {
+      await expect(mgr.createBranch('/repo', name, SHA), name).rejects.toThrow(/branch name/);
+    }
+    for (const sha of ['', 'abc', 'zzzzzzzz', `${SHA}0`, 'abc123; rm']) {
+      await expect(mgr.createBranch('/repo', 'feature/x', sha), sha).rejects.toThrow(/expected HEAD/);
+    }
+    await expect(mgr.createBranch('  ', 'feature/x', SHA)).rejects.toThrow(/rootPath/);
+    expect(createBranch).not.toHaveBeenCalled();
+  });
+
+  it('createBranch rejects a provider result that does not match the request', async () => {
+    const { provider } = branchProvider({ createBranch: async () => ({ branch: 'other', headSha: SHA, created: true }) });
+    await expect(new GitManager(provider).createBranch('/repo', 'feature/x', SHA)).rejects.toThrow(/could not be verified/);
+    const { provider: p2 } = branchProvider({ createBranch: async (_r, branch) => ({ branch, headSha: SHA, created: false }) });
+    await expect(new GitManager(p2).createBranch('/repo', 'feature/x', SHA)).rejects.toThrow(/could not be verified/);
+  });
+
+  it('createBranch propagates a provider refusal', async () => {
+    const { provider } = branchProvider({ createBranch: async () => { throw new Error('dirty'); } });
+    await expect(new GitManager(provider).createBranch('/repo', 'feature/x', SHA)).rejects.toThrow('dirty');
+  });
+
+  it('switchBranch delegates a valid name and returns the verified result', async () => {
+    const { provider, switchBranch } = branchProvider();
+    await expect(new GitManager(provider).switchBranch('/repo', 'feature/y')).resolves.toEqual({
+      branch: 'feature/y', headSha: SHA, created: false,
+    });
+    expect(switchBranch).toHaveBeenCalledWith('/repo', 'feature/y');
+  });
+
+  it('switchBranch rejects unsafe/protected names before the provider runs and a mismatched result', async () => {
+    const { provider, switchBranch } = branchProvider();
+    const mgr = new GitManager(provider);
+    for (const name of ['main', 'MASTER', 'HEAD', 'refs/heads/x', 'a:b', '']) {
+      await expect(mgr.switchBranch('/repo', name), name).rejects.toThrow(/branch name/);
+    }
+    expect(switchBranch).not.toHaveBeenCalled();
+    const { provider: p2 } = branchProvider({ switchBranch: async (_r, branch) => ({ branch, headSha: SHA, created: true }) });
+    await expect(new GitManager(p2).switchBranch('/repo', 'feature/y')).rejects.toThrow(/could not be verified/);
+  });
+
+  it('getLocalRefCommit delegates after the name guard', async () => {
+    const { provider, getLocalRefCommit } = branchProvider();
+    const mgr = new GitManager(provider);
+    await expect(mgr.getLocalRefCommit('/repo', 'main')).resolves.toEqual({ commitHash: SHA });
+    expect(getLocalRefCommit).toHaveBeenCalledWith('/repo', 'main');
+    await expect(mgr.getLocalRefCommit('/repo', 'a b')).rejects.toThrow(/unsafe branch/);
+    expect(getLocalRefCommit).toHaveBeenCalledTimes(1);
   });
 });
