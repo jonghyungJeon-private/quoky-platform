@@ -1126,6 +1126,28 @@ export class ResponseComposer {
   }
 
   /**
+   * A granted dispatch's generation failed and the copy must say truthfully how far the content got (ADR-0097
+   * truthful copy). `not-sent`: the failure came before the provider was invoked, so the content was NOT sent;
+   * `uncertain`: the provider call itself failed, so delivery cannot be confirmed. Either way the override is
+   * used up (never replayed) and nothing was modified. A `sent` failure is
+   * {@link composeCredentialOverrideSentNoProposal}.
+   */
+  composeCredentialOverrideGenerationFailed(
+    context: ConversationContext,
+    targetPaths: readonly string[],
+    dispatch: 'not-sent' | 'uncertain',
+  ): OutboundMessage {
+    const paths = targetPaths.join(', ');
+    const lead = dispatch === 'not-sent'
+      ? `코드 변경 제안을 만들지 못했어요. 파일 내용은 AI에게 보내지 않았어요: ${paths}`
+      : `AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: ${paths}`;
+    const outcome = dispatch === 'not-sent'
+      ? '파일은 수정되지 않았어요.'
+      : '코드 변경 제안은 만들어지지 않았어요. 파일은 수정되지 않았어요.';
+    return { context, text: clampToMessageBudget([lead, outcome, CREDENTIAL_OVERRIDE_USED_UP].join('\n')) };
+  }
+
+  /**
    * A granted dispatch's request was cancelled after the one-time send (the conversation was reset, the project
    * changed, or a newer request took over while the provider ran). Dedicated copy: the content WAS sent once, the
    * proposal was discarded (not shown, not kept), nothing was modified, and a fresh request + override are needed.

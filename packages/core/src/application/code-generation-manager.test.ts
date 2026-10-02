@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CodeGenerationManager } from './code-generation-manager';
+import {
+  CodeGenerationDispatchedError,
+  CodeGenerationManager,
+  codeGenerationDispatchOfError,
+} from './code-generation-manager';
 import { PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
 import { AiProviderError } from '../errors';
@@ -69,7 +73,7 @@ function harness(execImpl: (req: AiRequest) => Promise<AiExecutionResult>) {
   };
   const selector: ProviderSelector = { select: async () => provider };
   const mgr = new CodeGenerationManager(storage, selector, new PromptComposer(), new PromptRenderer());
-  return { mgr, storage, execute, gens, props };
+  return { mgr, storage, execute, gens, props, selector };
 }
 
 function input(over: Partial<GenerateCodeInput> = {}): GenerateCodeInput {
@@ -158,5 +162,96 @@ describe('CodeGenerationManager (CAP-008, ADR-0029)', () => {
     const { mgr } = harness(async () => ({ text: OK }));
     const gen = await mgr.generate(input({ capability: Capability.CODE_REVIEW }));
     expect(gen.capability).toBe(Capability.CODE_REVIEW);
+  });
+});
+
+describe('CodeGenerationManager transmission state (ADR-0097 truthful copy)', () => {
+  it("'sent' on success — on the returned value only, never persisted", async () => {
+    const { mgr, gens } = harness(async () => ({ text: OK }));
+    const gen = await mgr.generate(input());
+    expect(gen.status).toBe(CodeGenerationStatus.SUCCEEDED);
+    expect(gen.dispatch).toBe('sent');
+    expect(gens.get(gen.id)?.dispatch).toBeUndefined();
+    expect((await mgr.get(gen.id))?.dispatch).toBeUndefined();
+  });
+
+  it("'sent' when the provider returned but its output could not be parsed", async () => {
+    const { mgr, execute } = harness(async () => ({ text: 'I cannot help with that.' }));
+    const gen = await mgr.generate(input());
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(gen.status).toBe(CodeGenerationStatus.FAILED);
+    expect(gen.dispatch).toBe('sent');
+  });
+
+  it("'uncertain' when provider.execute() was invoked and threw/timed out", async () => {
+    for (const err of [new AiProviderError(AiFailureKind.TIMEOUT, 'timed out'), new Error('spawn failed')]) {
+      const { mgr, execute } = harness(async () => {
+        throw err;
+      });
+      const gen = await mgr.generate(input());
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(gen.status).toBe(CodeGenerationStatus.FAILED);
+      expect(gen.dispatch).toBe('uncertain');
+    }
+  });
+
+  it("'not-sent' when no provider could be selected (execute() never invoked)", async () => {
+    const { mgr, execute, selector } = harness(async () => ({ text: OK }));
+    selector.select = async () => {
+      throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'no provider');
+    };
+    const gen = await mgr.generate(input());
+    expect(execute).not.toHaveBeenCalled();
+    expect(gen.status).toBe(CodeGenerationStatus.FAILED);
+    expect(gen.failureKind).toBe(AiFailureKind.UNAVAILABLE);
+    expect(gen.dispatch).toBe('not-sent');
+  });
+
+  it("a storage failure before execute() throws untagged → 'not-sent'", async () => {
+    const { mgr, execute, storage } = harness(async () => ({ text: OK }));
+    storage.codeGenerations.save = async () => {
+      throw new Error('disk full');
+    };
+    const err = await mgr.generate(input()).catch((e: unknown) => e);
+    expect(execute).not.toHaveBeenCalled();
+    expect(err).not.toBeInstanceOf(CodeGenerationDispatchedError);
+    expect(codeGenerationDispatchOfError(err)).toBe('not-sent');
+  });
+
+  it("a prompt build failure throws untagged → 'not-sent'", async () => {
+    const { mgr, execute } = harness(async () => ({ text: OK }));
+    vi.spyOn(PromptRenderer.prototype, 'render').mockImplementationOnce(() => {
+      throw new Error('render failed');
+    });
+    const err = await mgr.generate(input()).catch((e: unknown) => e);
+    expect(execute).not.toHaveBeenCalled();
+    expect(codeGenerationDispatchOfError(err)).toBe('not-sent');
+  });
+
+  it("a storage failure after execute() returned throws CodeGenerationDispatchedError('sent')", async () => {
+    const { mgr, execute, storage } = harness(async () => ({ text: OK }));
+    storage.codeProposals.save = async () => {
+      throw new Error('disk full');
+    };
+    const err = await mgr.generate(input()).catch((e: unknown) => e);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(err).toBeInstanceOf(CodeGenerationDispatchedError);
+    expect(codeGenerationDispatchOfError(err)).toBe('sent');
+    expect((err as Error).cause).toEqual(new Error('disk full'));
+  });
+
+  it("a storage failure recording a thrown execute() throws CodeGenerationDispatchedError('uncertain')", async () => {
+    const { mgr, storage } = harness(async () => {
+      throw new Error('provider boom');
+    });
+    const save = storage.codeGenerations.save.bind(storage.codeGenerations);
+    let calls = 0;
+    storage.codeGenerations.save = async (g: CodeGeneration) => {
+      calls += 1;
+      if (calls > 1) throw new Error('disk full'); // the GENERATING write succeeds, the FAILED write does not
+      return save(g);
+    };
+    const err = await mgr.generate(input()).catch((e: unknown) => e);
+    expect(codeGenerationDispatchOfError(err)).toBe('uncertain');
   });
 });

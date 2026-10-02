@@ -1569,6 +1569,23 @@ describe('ResponseComposer merge-disabled and post-send override copy (CODE-5)',
     expect(cancelled).not.toContain(composer.composeScopeClarificationCancelled(CTX).text);
     expect(noProposal).not.toBe(cancelled);
   });
+
+  it('a granted generation failure says truthfully how far the content got: not sent / uncertain (ADR-0097)', () => {
+    const sentNotice = composer.composeCredentialOverrideSentNotice(CTX, ['src/a.ts']).text;
+    const notSent = composer.composeCredentialOverrideGenerationFailed(CTX, ['src/a.ts'], 'not-sent').text;
+    const uncertain = composer.composeCredentialOverrideGenerationFailed(CTX, ['src/a.ts'], 'uncertain').text;
+    expect(notSent).toContain('파일 내용은 AI에게 보내지 않았어요: src/a.ts');
+    expect(notSent).toContain('코드 변경 제안을 만들지 못했어요');
+    expect(uncertain).toContain('AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: src/a.ts');
+    expect(uncertain).toContain('코드 변경 제안은 만들어지지 않았어요');
+    for (const text of [notSent, uncertain]) {
+      expect(text).not.toContain(sentNotice);
+      expect(text).not.toContain('AI에게 보냈어요');
+      expect(text).toContain('파일은 수정되지 않았어요');
+      expect(text).toContain('이번 전송 확인은 이미 사용됐어요'); // consumed in every case — never replayed
+    }
+    expect(notSent).not.toBe(uncertain);
+  });
 });
 
 

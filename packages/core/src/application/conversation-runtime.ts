@@ -17,6 +17,7 @@ import {
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
+import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
 import {
@@ -50,6 +51,7 @@ import type {
   ApprovalRequest,
   Artifact,
   CodeGeneration,
+  CodeGenerationDispatch,
   CodeGenerationRef,
   CodeProposal,
   CodeProposalRef,
@@ -3124,6 +3126,18 @@ export class ConversationRuntime {
       override
         ? this.deps.composer.composeCredentialOverrideSentNoProposal(message.context, grants.map((g) => g.path))
         : reply;
+    // A failed generation reports truthfully how far the granted content got (ADR-0097 truthful copy): nothing
+    // sent (failure before the provider was invoked), sent (the provider returned) or uncertain (the provider
+    // call itself threw/timed out). The override was consumed in every case — it is never replayed.
+    const generationFailure = (dispatch: CodeGenerationDispatch): OutboundMessage => {
+      const failed = this.deps.composer.composeCodeGenerationPreviewFailed(message.context);
+      if (!override) return failed;
+      return dispatch === 'sent'
+        ? afterSendFailure(failed)
+        : this.deps.composer.composeCredentialOverrideGenerationFailed(
+          message.context, grants.map((g) => g.path), dispatch,
+        );
+    };
     if (override) {
       // Synchronous — nothing below may await before generate() is invoked.
       const denied = sameDispatchGrants(override.grants, override.preparedGrants)
@@ -3147,20 +3161,21 @@ export class ConversationRuntime {
         targetFiles,
         ...(contextFiles.length ? { contextFiles } : {}),
       });
-    } catch {
-      this.logPreviewFailure('code-generation-exception', message, session, request);
-      return this.failComposed(
-        message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
-      );
+    } catch (err) {
+      // An exception raised before provider.execute() was invoked is untagged → nothing was sent.
+      const dispatch = codeGenerationDispatchOfError(err);
+      this.logPreviewFailure('code-generation-exception', message, session, request, { dispatch });
+      return this.failComposed(message, session, generationFailure(dispatch), outcome);
     }
     if (generation.status !== CodeGenerationStatus.SUCCEEDED) {
+      // A recorded failure without a transmission state cannot be claimed as "not sent".
+      const dispatch = generation.dispatch ?? 'uncertain';
       this.logPreviewFailure('code-generation-not-succeeded', message, session, request, {
         codeGenerationId: generation.id,
+        dispatch,
         ...(generation.failureKind ? { failureKind: String(generation.failureKind) } : {}),
       });
-      return this.failComposed(
-        message, session, afterSendFailure(this.deps.composer.composeCodeGenerationPreviewFailed(message.context)), outcome,
-      );
+      return this.failComposed(message, session, generationFailure(dispatch), outcome);
     }
 
     const proposal = await this.deps.codeGeneration.getProposal(generation);
