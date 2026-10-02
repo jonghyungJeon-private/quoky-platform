@@ -65,7 +65,18 @@ export function containsCredentialMaterial(text: string): boolean {
  * reference forms below pass; everything else that looks like a value (bare identifiers, dotted
  * names, numbers, quoted text of any shape) counts as a literal. Known, accepted false positives
  * (absorbed by the owner's one-time override, never by loosening this rule):
- * `{ token: 'identifier' }`, `this.token = token`, `token = settings.API_TOKEN`, `let password: Secret;`.
+ * - literal-looking references: `{ token: 'identifier' }`, `this.token = token`,
+ *   `token = settings.API_TOKEN`, `let password: Secret;`, C# `{ get; set; } = string.Empty;`;
+ * - any quoted literal later in the expression after a reference head, including call arguments of a
+ *   chained call (`getToken().concat("x")`, `obj.method().other("x")`, and a wrapped builder
+ *   `const auth = createAuth()\n  .withProvider("github")`), quoted text in a comment inside the
+ *   expression, and a `/* … *\/` comment at a line end (read as a trailing `/` operator);
+ * - arrows with a parameter list (`async (t) => t.token`, `(x) => x.token`): only `() => …` and an
+ *   `async`/`static` head with a non-literal body pass;
+ * - bare elements after a separator inside the value's bracket (`tokens = [getA(), fallbackToken]`).
+ * Accepted residuals (not refused): an object-literal value is judged by its own keys only
+ * (`password: {a: "", b: hunter2}`); `#` comment lines between a reference and its continuation end the
+ * expression; elements of nested brackets inside the value are not judged bare (`[[a, hunter2]]`).
  */
 
 /** Any key token, quoted (may hold spaces/Korean) or bare (identifier chars, dots, dashes), plus operator. */
@@ -112,10 +123,13 @@ const TYPE_DECLARATION_HEAD = /\b(?:interface|class)\s+[\w$]+[^{};=]*$|\btype\s+
 /** A line ending with an operator continues the expression on the next line (`a ??`, `a +`, `cond ?`). */
 const CONTINUES_AFTER = /(?:[+\-*/%\\?:=&|^~,]|\?\?)$/u;
 /**
- * A next line starting with an operator continues the expression (Prettier's wrapped ternary / `??` /
- * `||` / chained-call layout: `a\n  ? b\n  : "x"`, `a\n  ?? "x"`). `//` and `/*` comment lines do not.
+ * A next code line starting with an operator continues the expression (Prettier's wrapped ternary / `??` /
+ * `||` / chained-call layout: `a\n  ? b\n  : "x"`, `a\n  ?? "x"`). It is tested at the next CODE
+ * character ({@link nextCodeIndex}), so blank lines and `//` / `/* … *\/` comments between the two lines
+ * (`a\n  // dev\n  ?? "x"`) do not end the expression; a comment itself never starts a continuation.
  */
 const CONTINUES_BEFORE = /\s*(?:\?\?|\|\||&&|\?\.?|:(?!:)|\.(?!\.\.)|[+\-*%]|\/(?![/*]))/uy;
+const LEADING_SPACE = /\s*/uy;
 /** The pre-ADR-0097 continuation test on the raw line (a trailing `+` or backslash, comments included). */
 const RAW_LINE_CONTINUES = /[+\\][ \t\r]*$/u;
 /** A raw string opener after `#` (Rust `r#"…"#`, Swift `#"…"#`): not a comment. */
@@ -129,7 +143,7 @@ const RAW_STRING_HASHES = /#*"/uy;
 const LITERAL_WRAPPER_CALL =
   /^(?:new\s+)?(?:pydantic\.)?(?:String|SecretString|SecretStr|SecretBytes|Secret|SecretBox|Zeroizing|str|bytes|Some|Ok|atob|base64\.(?:b64|urlsafe_b64|b32|b16)decode|Base64\.(?:strict_|urlsafe_)?decode64)(?:::<[^>\n]*>)?(?:(?:::|\.)(?:from|new|of))?[ \t]*(?=\()/u;
 /** `Buffer.from("…", "base64")`: a literal FIRST argument is the value (`Buffer.from(raw, "base64")` is not). */
-const FIRST_ARG_WRAPPER_CALL = /^Buffer\.from[ \t]*\([ \t]*(?=["'`])/u;
+const FIRST_ARG_WRAPPER_CALL = /^Buffer\.from[ \t]*\(\s*(?=["'`])/u;
 /**
  * Env lookups with a default (`os.getenv("K", "x")`, `os.environ.get("K", "x")`, `ENV.fetch("K", "x")`,
  * Laravel `env("K", "x")`): a non-blank literal after the first argument is a hard-coded fallback value.
@@ -141,19 +155,50 @@ const ARROW_HEAD = /^(?:(?:async|static)\s+)*(?:fn\s*)?(?:<[^\n=()]*>\s*)?/u;
 const PASSING_ARROW_HEAD = /^(?:\([ \t]*\)|(?:async|static)[ \t]*\()/u;
 
 const KEY_IDENTIFIER = '[\\p{L}_][\\p{L}\\p{N}_]*';
+/** A Go type after the key: optional pointer / slice / array prefixes, then a (qualified) type name. */
+const GO_TYPE = '(?:\\*|\\[\\d*\\])*[\\p{L}_][\\p{L}\\p{N}_.]*';
+/** The text before a Go `const (` / `var (` group's opening parenthesis. */
+const GO_GROUP_HEAD = /(?:^|\n)[ \t]*(?:const|var)[ \t]*$/u;
+
+/** True when `keyStart` sits directly inside a Go `const ( … )` / `var ( … )` group. */
+function inGoDeclarationGroup(src: string, keyStart: number): boolean {
+  let depth = 0;
+  for (let i = keyStart - 1; i >= Math.max(0, keyStart - 4000); i--) {
+    const c = src[i];
+    if (c === ')' || c === ']' || c === '}') depth++;
+    else if (c === '(' || c === '[' || c === '{') {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      return c === '(' && GO_GROUP_HEAD.test(src.slice(Math.max(0, i - 200), i));
+    }
+  }
+  return false;
+}
+
+interface TypedDeclaration {
+  readonly pattern: RegExp;
+  /** Extra scope check on the key's offset (default: every match counts). */
+  readonly inScope?: (src: string, keyStart: number) => boolean;
+}
+
 /**
  * Declarations where a type or accessor sits between the key and `=` (or the key is a string argument),
  * so {@link FILE_KEY_ASSIGNMENT} does not see them. Applied to EVERY file (there is no path input):
- * Go `const Password string = "x"` (line-anchored `const`/`var`), C# `Password { get; set; } = "x"`,
- * PHP `define("DB_PASSWORD", "x")`. Group 1 is the key.
+ * Go `const Password string = "x"` (line-anchored `const`/`var`) and the member lines of a grouped
+ * `const (` / `var (` declaration (`\tPassword string = "x"`), C# `Password { get; set; } = "x"` (the
+ * accessor block and the initializer may sit on the following lines), PHP `define("DB_PASSWORD", "x")`.
+ * Group 1 is the key.
  */
-const TYPED_DECLARATIONS: readonly RegExp[] = [
-  new RegExp(
-    `(?:^|\\n)[ \\t]*(?:const|var)[ \\t]+(${KEY_IDENTIFIER})[ \\t]+(?:\\*|\\[\\d*\\])*[\\p{L}_][\\p{L}\\p{N}_.]*[ \\t]*=(?!=)`,
-    'gu',
-  ),
-  new RegExp(`(?<![\\p{L}\\p{N}_$.])(${KEY_IDENTIFIER})[ \\t]*\\{[^{}\\n]*\\}[ \\t]*=(?!=)`, 'gu'),
-  /(?<![\p{L}\p{N}_$])define[ \t]*\([ \t]*["']([^"'\n]{1,64})["'][ \t]*,/giu,
+const TYPED_DECLARATIONS: readonly TypedDeclaration[] = [
+  { pattern: new RegExp(`(?:^|\\n)[ \\t]*(?:const|var)[ \\t]+(${KEY_IDENTIFIER})[ \\t]+${GO_TYPE}[ \\t]*=(?!=)`, 'gu') },
+  {
+    pattern: new RegExp(`(?:^|\\n)[ \\t]+(${KEY_IDENTIFIER})[ \\t]+${GO_TYPE}[ \\t]*=(?!=)`, 'gu'),
+    inScope: inGoDeclarationGroup,
+  },
+  { pattern: new RegExp(`(?<![\\p{L}\\p{N}_$.])(${KEY_IDENTIFIER})\\s*\\{[^{}]{0,200}\\}\\s*=(?!=)`, 'gu') },
+  { pattern: /(?<![\p{L}\p{N}_$])define[ \t]*\([ \t]*["']([^"'\n]{1,64})["'][ \t]*,/giu },
 ];
 
 function keyWordSegments(key: string): string[] {
@@ -228,20 +273,61 @@ function isCommentStart(s: string, i: number): boolean {
   return !RAW_STRING_HASHES.test(s);
 }
 
+/** Index of the next code character at or after `i`: whitespace and `//` / `/* … *\/` comments are skipped. */
+function nextCodeIndex(s: string, i: number): number {
+  let j = i;
+  for (;;) {
+    LEADING_SPACE.lastIndex = j;
+    j += (LEADING_SPACE.exec(s) as RegExpExecArray)[0].length;
+    if (s.startsWith('//', j)) {
+      const nl = s.indexOf('\n', j);
+      if (nl < 0) return s.length;
+      j = nl;
+    } else if (s.startsWith('/*', j)) {
+      const close = s.indexOf('*/', j + 2);
+      if (close < 0) return s.length;
+      j = close + 2;
+    } else return j;
+  }
+}
+
+/** A bare element of an open bracket (`hunter2`, `1234`, `a.b`): not a quote, bracket, or `${…}` placeholder. */
+const BARE_ELEMENT_START = /^(?!\$\{)[\p{L}\p{N}_$]/u;
+
+/**
+ * True when an element right after a separator inside the value's own bracket (`["", hunter2]`,
+ * `[null, 1234]`, `[getA(), b]`) is a bare scalar rather than a reference form (a call, an env
+ * reference, or a keyword literal), matching the strict rule for a first element (`password: [x]`).
+ */
+function isBareElement(element: string): boolean {
+  if (!BARE_ELEMENT_START.test(element) || KEYWORD_LITERAL.test(element) || ENV_REFERENCE.test(element)) {
+    return false;
+  }
+  return NON_CALL_HEAD.test(element) || !CALL_EXPRESSION.test(element);
+}
+
 /**
  * True when ANY quoted literal with non-blank content appears in the rest of the assigned expression
  * (`"" + "x"`, `"" "x"`, `getPw() + "x"`, `a ? "x" : b`) up to the end of the statement. `depth` is the
  * number of brackets already open around the value (`password = (""\n  "x"\n)`, `['', 'x']`): line
- * breaks and separators inside them do not end the expression; closing past them does. At depth 0 a
- * line break ends it unless the line ends with an operator or the next line starts with one.
+ * breaks and separators inside them do not end the expression; closing past them does; a bare element
+ * after a separator directly inside them ({@link isBareElement}) is a literal too. At depth 0 a line
+ * break ends it unless the line ends with an operator, the next code line starts with one, or the break
+ * sits inside a `/* … *\/` comment. Comment text is still scanned, so a quoted literal in it refuses.
  */
 function tailHasLiteral(s: string, depth = 0): boolean {
   let open = depth;
   let lineStart = 0;
   /** Index just past the last code character on the current line (-1: none yet). */
   let lastCode = -1;
+  /** Index just past the `*\/` closing the `/* … *\/` comment last opened (-1: none). */
+  let blockCommentEnd = -1;
   for (let i = 0; i < s.length; i++) {
     const c = s[i] as string;
+    if (i >= blockCommentEnd && s.startsWith('/*', i)) {
+      const close = s.indexOf('*/', i + 2);
+      blockCommentEnd = close < 0 ? s.length : close + 2;
+    }
     if (c === '"' || c === "'" || c === '`') {
       const lit = readLiteral(s, i);
       if (hasLiteralText(lit.content)) return true;
@@ -252,9 +338,9 @@ function tailHasLiteral(s: string, depth = 0): boolean {
       if (nl < 0) return false;
       i = nl - 1;
     } else if (c === '\n') {
-      if (open === 0) {
+      if (open === 0 && i >= blockCommentEnd) {
         const lineEnd = lastCode < 0 ? '' : s.slice(Math.max(0, lastCode - 2), lastCode);
-        CONTINUES_BEFORE.lastIndex = i + 1;
+        CONTINUES_BEFORE.lastIndex = nextCodeIndex(s, i + 1);
         const continued =
           CONTINUES_AFTER.test(lineEnd) ||
           RAW_LINE_CONTINUES.test(s.slice(lineStart, i)) ||
@@ -271,6 +357,7 @@ function tailHasLiteral(s: string, depth = 0): boolean {
       open--;
       lastCode = i + 1;
     } else if (open === 0 && (c === ';' || c === ',')) return false;
+    else if (c === ',' && open === depth && isBareElement(s.slice(nextCodeIndex(s, i + 1)))) return true;
     else if (!/\s/u.test(c)) lastCode = i + 1;
   }
   return false;
@@ -471,13 +558,13 @@ function firstCredentialAssignment(content: string): number {
       break;
     }
   }
-  for (const pattern of TYPED_DECLARATIONS) {
+  for (const { pattern, inScope } of TYPED_DECLARATIONS) {
     for (const m of content.matchAll(pattern)) {
       const key = m[1] as string;
       const keyStart = (m.index ?? 0) + m[0].indexOf(key);
       if (first >= 0 && keyStart >= first) break;
       const kind = classifyKey(key);
-      if (!kind) continue;
+      if (!kind || (inScope && !inScope(content, keyStart))) continue;
       const valueStart = (m.index ?? 0) + m[0].length;
       const ctx: ValueContext = { ...NO_TYPE_POSITION, countKey: kind === 'count' };
       if (isLiteralValue(content.slice(valueStart, valueStart + VALUE_WINDOW), ctx)) {

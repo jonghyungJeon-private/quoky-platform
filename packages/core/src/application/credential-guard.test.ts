@@ -183,7 +183,10 @@ describe('containsCredentialFileContent (code-generation context)', () => {
 
 /**
  * ADR-0097 strict-only guard: the refusal-adding QA-023 fixes re-implemented on the strict rule. Every
- * "refuses" row below PASSED the pre-ADR-0097 guard (a bypass); no row may be relaxed.
+ * "refuses" row below PASSED the pre-ADR-0097 guard (a bypass); no row may be relaxed. The hardening only
+ * adds refusals, with one known exception that is not a leak: the pre-ADR-0097 call-argument scan did not
+ * skip quoted text, so a call whose quoted argument contains `)` (`getPw(")??\"x\"")`) was mis-parsed
+ * and refused; it is now read as a call with a literal argument, which passes like `getPw("x")`.
  */
 describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () => {
   it.each([
@@ -194,6 +197,11 @@ describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () =>
     ['unindented element inside an open bracket', 'password = [\nfoo, "x"]'],
     ['object element before a literal', 'tokens = [{ id: 1 }, "x"]'],
     ['keyword element before a literal', 'password = (null, "x")'],
+    ['bare element after an empty literal', 'password: ["", hunter2]'],
+    ['bare element after a keyword', 'password: [null, hunter2]'],
+    ['bare element after a call', 'password = [getA(), hunter2]'],
+    ['numeric element after a call', 'password = [getA(), 1234]'],
+    ['bare element on the next line', 'passwords = [\n  getA(),\n  hunter2,\n]'],
     ['placeholder element before a literal', 'password = [${A}, "x"]'],
     ['raw string inside brackets', 'password = ["", r#"x"#]'],
     ['Swift raw string inside brackets', 'password = ["", #"x"#]'],
@@ -205,6 +213,12 @@ describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () =>
     ['Python backslash continuation', 'password = get_pw() \\\n  + "hunter2"'],
     ['keyword then a fallback on the next line', 'password = null\n  ?? "hunter2"'],
     ['concatenation after a trailing comment-free operator', 'password = getPw() + // note\n  "x"'],
+    ['line comment between a reference and its fallback', 'const password = process.env.PW\n  // fallback for local dev\n  ?? "hunter2";'],
+    ['block comment line between a reference and its fallback', 'const password = process.env.PW\n  /* dev */\n  ?? "hunter2";'],
+    ['line comment between a call and a concatenation', 'const password = getPw()\n  // c\n  + "x";'],
+    ['block comment before the fallback operator', 'password = process.env.A\n  /* c */ ?? "x"'],
+    ['multi-line block comment before a fallback', 'const password = process.env.PW\n  /* multi\n  line */\n  ?? "hunter2";'],
+    ['blank and comment lines before a fallback', 'const password = process.env.PW\n\n  // a\n\n  /* b */\n  ?? "hunter2";'],
     // (c) the whole rest of the statement after a call / env reference head
     ['call plus literal', 'const password = getPw() + "x"'],
     ['env ternary', 'const password = process.env.X ? "a" : "b"'],
@@ -228,6 +242,8 @@ describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () =>
     ['atob', 'const token = atob("aHVudGVy")'],
     ['base64.b64decode', 'token = base64.b64decode("aHVudGVy")'],
     ['Buffer.from with a literal', 'const password = Buffer.from("aHVudGVy", "base64").toString()'],
+    ['Buffer.from with the literal on the next line', 'password = Buffer.from(\n  "aGk=",\n  "base64"\n)'],
+    ['Buffer.from with an unindented literal on the next line', 'password = Buffer.from(\n"aGk="\n)'],
     ['wrapper plus a literal after it', 'password = SecretStr(get()) + "x"'],
     ['wrapped env lookup with a literal default', 'password = SecretStr(os.getenv("PW", "hunter2"))'],
     ['wrapped call plus a literal', 'password = str(get_pw()) + "x"'],
@@ -248,6 +264,12 @@ describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () =>
     ['Go typed const', 'const Password string = "hunter2"'],
     ['Go typed var', 'var Token string = "hunter2"'],
     ['Go typed pointer var', '\tvar apiKey *string = &literal'],
+    ['Go grouped var member', 'var (\n\tPassword string = "x"\n)'],
+    ['Go grouped const member', 'const (\n\tPassword string = "x"\n)'],
+    ['Go grouped const member after another member', 'const (\n\tName string = "app"\n\tPassword string = "x"\n)'],
+    ['C# accessor block on the next line', 'public string Password\n{ get; set; } = "x";'],
+    ['C# initializer on the next line', 'public string Password { get; set; }\n  = "x";'],
+    ['C# multi-line accessor block', 'public string Password\n{\n  get;\n  set;\n} = "x";'],
     ['C# auto-property initializer', 'public string Password { get; set; } = "hunter2";'],
     ['C# getter-only initializer', 'public string ApiKey { get; } = "hunter2";'],
     ['documented false positive: C# dotted default', 'public string Password { get; set; } = string.Empty;'],
@@ -291,11 +313,16 @@ describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () =>
     ['hash comment after a call', 'token = get_token()  # see "docs"'],
     ['trailing comment ending in an operator does not continue', 'const token = getToken() // TODO:\nconst name = "bob";'],
     ['comment line after a statement', 'const token = getToken()\n// "note"\nconst name = "bob";'],
+    ['doc block comment after a statement', 'const token = getToken()\n/**\n * docs "q"\n */\nexport const name = "bob";'],
+    ['blank and comment lines then a new statement', 'const token = getToken()\n\n// a\n/* b */\nconst name = "bob";'],
     ['empty fallback', 'const password = process.env.PW ?? ""'],
     ['env fallback to env', 'const password = process.env.A ?? process.env.B;'],
     ['chained call on the next line', 'const token = getToken()\n  .trim();'],
     ['parenthesised env lookup across lines', 'password = (\n  os.getenv("PW")\n)'],
     ['array of calls across lines', 'tokens = [\n  getA(),\n  getB(),\n]'],
+    ['array of references and keywords', 'tokens = [getA(), process.env.B, null]'],
+    ['array of calls with comments', 'tokens = [\n  getA(), // primary\n  /* backup */ getB(),\n]'],
+    ['call arguments are not array elements', 'password = getPw() + join(a, b)'],
     ['object element without a literal after it', 'tokens = [{ id: 1 }]'],
     ['parenthesised await', 'password = (await getPw())'],
     ['empty array', 'password = [\n]'],
@@ -303,6 +330,9 @@ describe('containsCredentialFileContent strict-only hardening (ADR-0097)', () =>
     ['Go untyped const is the generic rule', 'const MaxTokens int = 4096'],
     ['Go typed var from an env lookup', 'var password string = os.Getenv("PW")'],
     ['Go typed var without a value', 'var token string'],
+    ['Go grouped var from an env lookup', 'var (\n\tPassword string = os.Getenv("PW")\n)'],
+    ['Go struct field with a tag', 'type Cfg struct {\n\tPassword string `json:"password"`\n}'],
+    ['C# property without an initializer, then another property', 'public string Password { get; set; }\npublic string Name { get; set; } = "x";'],
     ['C# auto-property without an initializer', 'public string Password { get; set; }'],
     ['PHP define from getenv', 'define("DB_PASSWORD", getenv("DB_PASSWORD"));'],
     ['PHP define of a non-credential', 'define("APP_NAME", "quoky");'],
@@ -337,6 +367,8 @@ describe('classifyCredentialFileContent', () => {
     ['typed declaration before a generic match', 'package main\nconst Password string = "x"\npassword = "y"\n', 2],
     ['generic match before a typed declaration', 'password = "y"\nconst Password string = "x"\n', 1],
     ['PHP define line', '<?php\n\ndefine("DB_PASSWORD", "x");\n', 3],
+    ['Go grouped declaration member line', 'package main\n\nvar (\n\tName string = "a"\n\tPassword string = "x"\n)\n', 5],
+    ['fallback after a comment line reports the key line', 'const password = process.env.PW\n  // dev\n  ?? "x";\n', 1],
   ])('reports credential-assignment with the 1-based line: %s', (_label, content, line) => {
     expect(classifyCredentialFileContent(content)).toEqual({ kind: 'credential-assignment', line });
     expect(containsCredentialFileContent(content)).toBe(true);
