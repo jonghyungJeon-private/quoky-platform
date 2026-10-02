@@ -237,6 +237,36 @@ describe('GitHubAppGitProvider (Sprint 4b, ADR-0061 + review RC1/RC3/RC4)', () =
       );
     });
 
+    it('an SSH pushurl does not block fetch-only ops (ls-remote, main sync) — they use only the fetch URL', async () => {
+      await withRepo(
+        (dir) => {
+          git(dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+          git(dir, 'config', 'remote.origin.pushurl', 'git@github.com:acme/widgets.git');
+        },
+        async (dir) => {
+          const { provider, invoked } = harness({ realRemoteRead: true });
+          await provider.getRemoteRefCommit(dir, 'origin', 'main');
+          await provider.syncMainFastForward(dir, 'origin', 'main', SHA40, SHA40B);
+          expect(invoked).toEqual(expect.arrayContaining(['getRemoteRefCommit', 'syncMainFastForward']));
+        },
+      );
+    });
+
+    it('an SSH fetch URL still blocks fetch-only ops', async () => {
+      await withRepo(
+        (dir) => git(dir, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git'),
+        async (dir) => {
+          const { provider, invoked } = harness({ realRemoteRead: true });
+          await expect(provider.getRemoteRefCommit(dir, 'origin', 'main')).rejects.toThrow();
+          await expect(provider.syncMainFastForward(dir, 'origin', 'main', SHA40, SHA40B)).rejects.toBeInstanceOf(
+            GitMainSyncBlockedError,
+          );
+          expect(invoked).not.toContain('getRemoteRefCommit');
+          expect(invoked).not.toContain('syncMainFastForward');
+        },
+      );
+    });
+
     it('an inherited env insteadOf rewrite (SSH → HTTPS) does not make an SSH origin pass the preflight', async () => {
       process.env.GIT_CONFIG_PARAMETERS = "'url.https://github.com/.insteadof'='git@github.com:'";
       try {

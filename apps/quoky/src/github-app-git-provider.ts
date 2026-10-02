@@ -31,6 +31,9 @@ esac
 /** Timeout for the local `git remote get-url` read used by the HTTPS preflight. */
 const REMOTE_URL_READ_TIMEOUT_MS = 5000;
 
+/** Which remote URLs an operation uses: `'fetch'` → fetch URLs only; `'push'` → fetch and push URLs. */
+export type RemoteDirection = 'fetch' | 'push';
+
 /** A git spawn that mirrors git-local's `defaultGitRunner` but takes an explicit child env (carries the credential). */
 export type CredentialedSpawn = (
   args: string[],
@@ -51,9 +54,16 @@ export interface GitHubAppGitProviderDeps {
    * Read the configured remote URL(s) for the HTTPS-github.com preflight (RC1). Injectable for tests; the default
    * runs credential-free local `git remote get-url --all` and `--push --all` reads (no network, no askpass) under
    * `env` — the same sanitized git-config env the credentialed child runs with, so an `insteadOf`/`pushurl`
-   * rewrite cannot differ between preflight and execution. Every returned URL is checked. Throws when unreadable.
+   * rewrite cannot differ between preflight and execution. `direction` scopes the read: `'fetch'` (ls-remote /
+   * main sync) reads the fetch URLs; `'push'` also reads every push URL. Every returned URL is checked. Throws when
+   * unreadable.
    */
-  readRemoteUrl?: (rootPath: string, remote: string, env: NodeJS.ProcessEnv) => string | readonly string[];
+  readRemoteUrl?: (
+    rootPath: string,
+    remote: string,
+    env: NodeJS.ProcessEnv,
+    direction: RemoteDirection,
+  ) => string | readonly string[];
   /** Spawn git with an explicit child env. Injectable for tests; the default mirrors git-local's `defaultGitRunner`. */
   spawn?: CredentialedSpawn;
 }
@@ -78,7 +88,7 @@ export interface GitHubAppGitProviderDeps {
  */
 export class GitHubAppGitProvider implements GitProvider {
   private readonly localGit: GitProvider;
-  private readonly readRemoteUrl: (rootPath: string, remote: string, env: NodeJS.ProcessEnv) => string | readonly string[];
+  private readonly readRemoteUrl: NonNullable<GitHubAppGitProviderDeps['readRemoteUrl']>;
   private readonly spawn: CredentialedSpawn;
 
   constructor(private readonly deps: GitHubAppGitProviderDeps) {
@@ -151,6 +161,7 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.withRemoteCredential(
       rootPath,
       remote,
+      'push',
       (err) => new GitPushBlockedError(preMutationMessage('git push', err)),
       (git) => git.pushApprovedCommit(rootPath, remote, branch, commitHash),
     );
@@ -162,6 +173,7 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.withRemoteCredential(
       rootPath,
       remote,
+      'fetch',
       (err) =>
         err instanceof Error
           ? err
@@ -182,6 +194,7 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.withRemoteCredential(
       rootPath,
       remote,
+      'fetch',
       (err) => new GitMainSyncBlockedError(`${preMutationMessage('git main sync', err)}; not synchronized`),
       (git) => git.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit),
     );
@@ -196,6 +209,7 @@ export class GitHubAppGitProvider implements GitProvider {
   private async withRemoteCredential<T>(
     rootPath: string,
     remote: string,
+    direction: RemoteDirection,
     mapPreMutationError: (err: unknown) => Error,
     op: (git: GitProvider) => Promise<T>,
   ): Promise<T> {
@@ -212,7 +226,7 @@ export class GitHubAppGitProvider implements GitProvider {
         GIT_CONFIG_KEY_0: 'credential.helper',
         GIT_CONFIG_VALUE_0: '',
       };
-      const remoteUrls = this.readRemoteUrl(rootPath, remote, gitConfigEnv); // unreadable → throws
+      const remoteUrls = this.readRemoteUrl(rootPath, remote, gitConfigEnv, direction); // unreadable → throws
       const urls = typeof remoteUrls === 'string' ? [remoteUrls] : remoteUrls;
       if (urls.length === 0) throw new Error('git remote url could not be read');
       for (const url of urls) assertHttpsGithubRemote(url); // ssh / non-github / embedded-credential → throws
@@ -301,13 +315,20 @@ function safeRemove(dir: string | undefined): void {
 }
 
 /**
- * Default HTTPS-preflight remote read: credential-free local `git remote get-url --all <remote>` and
- * `git remote get-url --push --all <remote>` (no network), so every fetch URL and every push URL (incl. a
- * `pushurl` and `insteadOf`/`pushInsteadOf` rewrites, as resolved under `env`) is checked.
+ * Default HTTPS-preflight remote read: credential-free local `git remote get-url --all <remote>` and, for a push,
+ * `git remote get-url --push --all <remote>` (no network), so every URL the operation can use (incl. a `pushurl`
+ * and `insteadOf`/`pushInsteadOf` rewrites, as resolved under `env`) is checked.
  */
-function defaultReadRemoteUrl(rootPath: string, remote: string, env: NodeJS.ProcessEnv): readonly string[] {
+function defaultReadRemoteUrl(
+  rootPath: string,
+  remote: string,
+  env: NodeJS.ProcessEnv,
+  direction: RemoteDirection,
+): readonly string[] {
+  const reads = [['remote', 'get-url', '--all', remote]];
+  if (direction === 'push') reads.push(['remote', 'get-url', '--push', '--all', remote]);
   const urls: string[] = [];
-  for (const args of [['remote', 'get-url', '--all', remote], ['remote', 'get-url', '--push', '--all', remote]]) {
+  for (const args of reads) {
     const res = spawnSync('git', args, { cwd: rootPath, timeout: REMOTE_URL_READ_TIMEOUT_MS, encoding: 'utf8', env });
     const lines = typeof res.stdout === 'string' ? res.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : [];
     if (res.status !== 0 || lines.length === 0) throw new Error('git remote url could not be read');
