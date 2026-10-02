@@ -127,6 +127,15 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | S1–S3,S5 | 주간 보고서 쓰기 완료했나? → 완료 처리: 2 → 끝났어? / 보고서 초안 쓰기 다 했나? | PASS (QA-V2-W7-05 fixed, 62c1661) — open "(2번)… 완료 처리: 2", then "완료 처리된 할 일이에요" |
 | S4 | 완료 처리 어떻게 해? | NOTE QA-V2-W7-06 (MINOR) — GENERAL_CHAT; vague local answer with an appended "(Translated from …)" meta line (Ollama artifact) → v3 (model quality / help-intent routing) |
 
+## Wave 8 (integration claude/v2-wave8) — INT-1 follow-ups, live smoke
+
+| ID | Input | Result |
+|---|---|---|
+| W8-2 | 브랜치 삭제해줘 feature/quoky-uat-1 (PR_CREATED) | PASS (a23776c) — deterministic refusal: chat does not delete branches; cleanup only after merge + main sync ("브랜치 정리해줘"); no git call |
+| W8-3/W8-5 | 푸시 실행 / 푸시해줘 (PR_CREATED) | PASS — "이미 push했어요: 350b62f → origin/feature/quoky-uat-1…" |
+| W8-4 | 도움말 | PASS — v2 help lines present (memory, override, multi/new files, feedback, branch, reminders, to-dos, lookups) |
+| W8-1 | git push가 뭐야? (PR_CREATED) | FAIL QA-V2-W8-01 (MINOR) — the W7-02 post-push block answered "이미 push했어요" to a conceptual question → FIXED d804fd8 (strict request shape; golden route-055/056); retest PASS — ordinary chat answer |
+
 ## Findings index
 
 | ID | Severity | Summary | State |
@@ -147,6 +156,8 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | QA-V2-W7-06 | MINOR | Vague local answer to "완료 처리 어떻게 해?" with an appended "(Translated from …)" line | OPEN, v3 (model quality / help-intent routing) |
 | G11 (config) | operator | PR status says it could not check: the GitHub App lacks the Checks permission | Operator configuration, see `docs/uat/operator-guide.md`; partial status without Checks is a v3 candidate |
 | G5 (note) | MINOR | The proposed PR title is the raw instruction text | OPEN, v3 (generated PR title/body) |
+| QA-V2-W8-01 | MINOR | Conceptual push question at a post-push state got the already-pushed reply | FIXED d804fd8, retest PASS |
+| INT-1 (offline) | MEDIUM | No-anchor push/force-push and branch-delete phrases fell through to chat (provider call) | FIXED a23776c (deterministic replies, golden route-047..054); W8-2 live PASS |
 
 ## Not live-verified (still pending)
 
