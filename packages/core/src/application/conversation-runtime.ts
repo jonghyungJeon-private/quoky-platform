@@ -1,4 +1,5 @@
 import { describeAiFailure } from './ai-failure';
+import { generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
@@ -616,7 +617,10 @@ export interface ConversationRuntimeDeps {
   readonly contextBuilder: { build(task: Task, excludeMemoryIds: Id[]): Promise<ContextBundle> };
   readonly promptComposer: { compose(task: Task, bundle: ContextBundle, readout?: ProjectReadout): PromptSpec };
   readonly promptRenderer: {
-    render(spec: PromptSpec, opts: { capability: Capability; workspace?: WorkspaceRef }): AiRequest;
+    render(
+      spec: PromptSpec,
+      opts: { capability: Capability; workspace?: WorkspaceRef; metadata?: Readonly<Record<string, unknown>> },
+    ): AiRequest;
   };
   readonly router: { select(capability: Capability): Promise<AiProvider> };
   /** Optional Slice 5A seam. Only TaskRun-backed GENERAL_CHAT work turns may use it. */
@@ -5800,6 +5804,11 @@ export class ConversationRuntime {
       const aiRequest = this.deps.promptRenderer.render(promptSpec, {
         capability,
         ...(workspace ? { workspace } : {}),
+        // ADR-0098 D2: structured reply facts from the actual current User message (the same text PromptComposer
+        // renders as the current turn), so adapters never re-derive them from the serialized prompt.
+        ...(capability === Capability.GENERAL_CHAT
+          ? { metadata: generalChatReplyPolicyMetadata(task.description) }
+          : {}),
       });
 
       if (capability === Capability.GENERAL_CHAT && this.deps.runtimeProviderRouting) {

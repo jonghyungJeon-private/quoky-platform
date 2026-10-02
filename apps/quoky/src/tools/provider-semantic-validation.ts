@@ -1379,6 +1379,12 @@ export const PROVIDER_EXECUTION_PATH_MODULES: readonly BindingModule[] = Object.
     CORE_BUILD_INFO,
   ),
   bindingModule(
+    'core-chat-response-policy',
+    'packages/core/src/application/chat-policy/chat-response-policy.ts',
+    'packages/core/dist/application/chat-policy/chat-response-policy.js',
+    CORE_BUILD_INFO,
+  ),
+  bindingModule(
     'core-prompt-content-normalizer',
     'packages/core/src/application/prompt-content-normalizer.ts',
     'packages/core/dist/application/prompt-content-normalizer.js',

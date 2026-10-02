@@ -4,7 +4,8 @@ import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { runMigrations } from './migrations';
 import { SqliteContinuationBindingRepository } from './continuation-binding-repository';
-import type { ContinuationBindingRepository } from '@quoky/core';
+import { SqliteFeedbackRepository } from './feedback-repository';
+import type { ContinuationBindingRepository, FeedbackRepository } from '@quoky/core';
 import type {
   Actor,
   ActorRepository,
@@ -1103,6 +1104,8 @@ export class SqliteStorageProvider implements StorageProvider {
   workHandoffs!: WorkHandoffRepository;
   codeGenerations!: CodeGenerationRepository;
   codeProposals!: CodeProposalRepository;
+  /** Feedback capture store (ADR-0098 D4, schema v12). Deliberately not part of `StorageProvider`. */
+  feedback!: FeedbackRepository;
 
   constructor(private readonly config: SqliteConfig) {}
 
@@ -1117,8 +1120,14 @@ export class SqliteStorageProvider implements StorageProvider {
     db.pragma('journal_mode = WAL');
     // Schema is applied by a versioned, forward-only migration runner (ADR-0020).
     // Backward compatible: a legacy DB (user_version = 0) re-runs the idempotent
-    // baseline and is stamped forward; no behavior or table change.
-    runMigrations(db);
+    // baseline and is stamped forward; no behavior or table change. A non-contiguous migration list or a
+    // database ahead of this build fails startup (ADR-0096 D10); the connection is closed before rethrowing.
+    try {
+      runMigrations(db);
+    } catch (err) {
+      db.close();
+      throw err;
+    }
 
     this.db = db;
     this.actors = new SqliteActorRepository(db, 'actors');
@@ -1138,6 +1147,7 @@ export class SqliteStorageProvider implements StorageProvider {
     this.workHandoffs = new SqliteWorkHandoffRepository(db);
     this.codeGenerations = new SqliteCodeGenerationRepository(db, 'code_generations');
     this.codeProposals = new SqliteCodeProposalRepository(db, 'code_proposals');
+    this.feedback = new SqliteFeedbackRepository(db);
   }
 
   async close(): Promise<void> {

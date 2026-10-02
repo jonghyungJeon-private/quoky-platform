@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GitMainSyncBlockedError, GitMainSyncUnverifiedError, GitPushBlockedError } from '@quoky/core';
 import type { GitProvider } from '@quoky/core';
 import type { GitRunner } from '@quoky/git-local';
@@ -27,6 +27,8 @@ function harness(
   } = {},
 ) {
   const invoked: string[] = [];
+  const commitOptions: Array<{ newFiles?: string[] } | undefined> = [];
+  const branchCalls: string[][] = [];
   const spawns: Array<{ args: string[]; env: NodeJS.ProcessEnv; askpass: string }> = [];
   const spawn: CredentialedSpawn = (args, _opts, env) => {
     let askpass = '';
@@ -60,13 +62,24 @@ function harness(
         invoked.push('diff');
         return { files: [], unified: '', truncated: false };
       },
-      commitFiles: async (_rootPath: string, files: string[], message: string) => {
+      commitFiles: async (_rootPath: string, files: string[], message: string, options?: { newFiles?: string[] }) => {
         invoked.push('commitFiles');
+        commitOptions.push(options);
         return { commitHash: 'abc1234', committedFiles: files, message };
+      },
+      createBranch: async (_rootPath: string, branch: string, expectedHeadSha: string) => {
+        invoked.push('createBranch');
+        branchCalls.push(['createBranch', branch, expectedHeadSha]);
+        return { branch, headSha: 'abc1234', created: true };
+      },
+      switchBranch: async (_rootPath: string, branch: string) => {
+        invoked.push('switchBranch');
+        branchCalls.push(['switchBranch', branch]);
+        return { branch, headSha: 'abc1234', created: false };
       },
       pushApprovedCommit: async (rootPath: string, remote: string, branch: string, commitHash: string) => {
         invoked.push('pushApprovedCommit');
-        runner?.(['--no-pager', 'push', remote, `HEAD:${branch}`], { cwd: rootPath, timeoutMs: 5000 });
+        runner?.(['--no-pager', 'push', remote, `HEAD:refs/heads/${branch}`], { cwd: rootPath, timeoutMs: 5000 });
         return { remote, branch, upstreamRef: `${remote}/${branch}`, commitHash };
       },
       getRemoteRefCommit: async (rootPath: string, remote: string, branch: string) => {
@@ -106,7 +119,7 @@ function harness(
     readRemoteUrl: over.readRemoteUrl ?? (() => 'https://github.com/acme/widgets.git'),
     spawn,
   });
-  return { provider, invoked, spawns };
+  return { provider, invoked, spawns, commitOptions, branchCalls };
 }
 
 describe('GitHubAppGitProvider (Sprint 4b, ADR-0061 + review RC1/RC3/RC4)', () => {
@@ -243,5 +256,50 @@ describe('GitHubAppGitProvider (Sprint 4b, ADR-0061 + review RC1/RC3/RC4)', () =
       expect(() => assertHttpsGithubRemote('http://github.com/acme/widgets.git')).toThrow();
       expect(() => assertHttpsGithubRemote('https://x-access-token:tok@github.com/acme/widgets.git')).toThrow();
     });
+  });
+});
+
+describe('GitHubAppGitProvider — local commit/branch forwarding (ADR-0099)', () => {
+  it('forwards commitFiles newFiles to the local provider with no token mint, spawn or remote read', async () => {
+    const tokenSource = vi.fn(async () => 'ghs_SENTINEL');
+    const readRemoteUrl = vi.fn(() => 'https://github.com/acme/widgets.git');
+    const { provider, invoked, spawns, commitOptions } = harness({ tokenSource, readRemoteUrl });
+    await provider.commitFiles('/repo', ['a.ts', 'n.ts'], 'msg', { newFiles: ['n.ts'] });
+    expect(invoked).toEqual(['commitFiles']);
+    expect(commitOptions).toEqual([{ newFiles: ['n.ts'] }]);
+    expect(tokenSource).not.toHaveBeenCalled();
+    expect(readRemoteUrl).not.toHaveBeenCalled();
+    expect(spawns).toEqual([]);
+  });
+
+  it('calls the local commitFiles without options when none were given', async () => {
+    const spy = vi.fn(async (_r: string, files: string[], message: string) => ({
+      commitHash: 'abc1234', committedFiles: files, message,
+    }));
+    const { provider } = harness({ inner: { commitFiles: spy as unknown as GitProvider['commitFiles'] } });
+    await provider.commitFiles('/repo', ['a.ts'], 'msg');
+    expect(spy).toHaveBeenCalledWith('/repo', ['a.ts'], 'msg');
+  });
+
+  it('createBranch and switchBranch delegate locally and never mint a token, read the remote or spawn', async () => {
+    const tokenSource = vi.fn(async () => 'ghs_SENTINEL');
+    const readRemoteUrl = vi.fn(() => 'https://github.com/acme/widgets.git');
+    const { provider, invoked, spawns, branchCalls } = harness({ tokenSource, readRemoteUrl });
+    await expect(provider.createBranch('/repo', 'feature/x', SHA40)).resolves.toMatchObject({ branch: 'feature/x', created: true });
+    await expect(provider.switchBranch('/repo', 'feature/y')).resolves.toMatchObject({ branch: 'feature/y', created: false });
+    expect(invoked).toEqual(['createBranch', 'switchBranch']);
+    expect(branchCalls).toEqual([['createBranch', 'feature/x', SHA40], ['switchBranch', 'feature/y']]);
+    expect(tokenSource).not.toHaveBeenCalled();
+    expect(readRemoteUrl).not.toHaveBeenCalled();
+    expect(spawns).toEqual([]);
+  });
+
+  it('branch operations still work when the token source would fail (no credential path at all)', async () => {
+    const { provider } = harness({
+      tokenSource: async () => { throw new Error('mint failed'); },
+      readRemoteUrl: () => { throw new Error('no remote'); },
+    });
+    await expect(provider.createBranch('/repo', 'feature/x', SHA40)).resolves.toMatchObject({ created: true });
+    await expect(provider.switchBranch('/repo', 'feature/x')).resolves.toMatchObject({ created: false });
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConnectorQueryError } from '@quoky/core';
 import {
   ConfluenceConnectorProvider,
   type ConfluenceConnectorConfig,
@@ -160,6 +161,147 @@ describe('ConfluenceConnectorProvider', () => {
     const fake = fakeFetch({ status: 200, body: { results: [], padding: 'x'.repeat(1_000_000) } });
     await expect(provider(fake.fetchImpl).listItems({ kind: 'pages' })).rejects.toMatchObject({
       name: 'ConfluenceConnectorResponseError',
+    });
+  });
+
+  describe('named search query', () => {
+    const result = {
+      content: { id: '42', type: 'page', title: '@@@hl@@@Deploy@@@endhl@@@ guide', _links: { webui: '/spaces/ENG/pages/42/Deploy+guide' } },
+      title: '@@@hl@@@Deploy@@@endhl@@@ guide',
+      excerpt: `How to @@@hl@@@deploy@@@endhl@@@ <b>safely</b> &amp; fast ${TOKEN}`,
+      lastModified: '2026-10-01T08:30:00.000Z',
+      resultGlobalContainer: { title: 'Engineering', displayUrl: '/spaces/ENG' },
+    };
+
+    it('uses GET /wiki/rest/api/search with an escaped CQL literal and bounded limit', async () => {
+      const fake = fakeFetch({
+        status: 200,
+        body: { results: [result], _links: { base: 'https://example.atlassian.net/wiki' } },
+      });
+      const out = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'dep"loy \\ now', limit: 99 } });
+
+      const url = new URL(fake.calls[0]!.url);
+      expect(url.origin + url.pathname).toBe('https://example.atlassian.net/wiki/rest/api/search');
+      expect(url.searchParams.get('cql')).toBe('type=page AND text ~ "dep loy now"');
+      expect(url.searchParams.get('limit')).toBe('20');
+      expect(fake.calls[0]!.init?.method).toBe('GET');
+      expect(fake.calls[0]!.init?.body).toBeUndefined();
+      expect(fake.calls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
+      expect(new Headers(fake.calls[0]!.init?.headers).get('authorization')).toBe(`Bearer ${TOKEN}`);
+
+      expect(out.items).toEqual([{
+        id: '42',
+        title: 'Deploy guide',
+        url: 'https://example.atlassian.net/wiki/spaces/ENG/pages/42/Deploy+guide',
+        summary: 'How to deploy safely & fast [redacted]',
+        updatedAt: '2026-10-01T08:30:00.000Z',
+        container: 'Engineering',
+        raw: { json: JSON.stringify(result).split(TOKEN).join('[redacted]') },
+      }]);
+      expect(JSON.stringify(out)).not.toContain(TOKEN);
+    });
+
+    it('prevents a CQL injection through quotes: the text stays a single escaped literal', async () => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+      await provider(fake.fetchImpl).query({ query: 'search', params: { text: '" OR space = SECRET OR text ~ "' } });
+      expect(new URL(fake.calls[0]!.url).searchParams.get('cql')).toBe(
+        'type=page AND text ~ "or space = SECRET or text"',
+      );
+    });
+
+    it.each([
+      ['incident OR title:secret', 'incident or title secret'],
+      ['deploy AND NOT (draft OR wip)', 'deploy and not draft or wip'],
+      ['+must -exclude secr* te?t fuzzy~2 boost^4', 'must exclude secr te t fuzzy 2 boost 4'],
+      ['[a TO z] {x TO y} /regex/ a&&b c||d !e', 'a to z x to y regex a b c d e'],
+      ['\u201csmart\u201d \\escaped "phrase" 배포 가이드', 'smart escaped phrase 배포 가이드'],
+    ])('neutralizes full-text syntax inside the CQL literal: %j', async (text, terms) => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+      await provider(fake.fetchImpl).query({ query: 'search', params: { text } });
+      expect(new URL(fake.calls[0]!.url).searchParams.get('cql')).toBe(`type=page AND text ~ "${terms}"`);
+    });
+
+    it.each([['"" ** ??'], ['- + ~ :'], ['()[]{}']])(
+      'rejects text %j with no searchable terms before any request',
+      async (text) => {
+        const fake = fakeFetch({ status: 200, body: { results: [] } });
+        await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text } })).rejects.toMatchObject({
+          reason: 'UNSUPPORTED_QUERY',
+        });
+        expect(fake.calls).toHaveLength(0);
+      },
+    );
+
+    it('ignores an off-host _links.base, falls back to the page-id url, truncates the excerpt and skips id-less results', async () => {
+      const fake = fakeFetch({
+        status: 200,
+        body: {
+          _links: { base: 'https://evil.example.com/wiki' },
+          results: [
+            { content: { id: '7', title: 'Seven', _links: { webui: '/spaces/ENG/pages/7' } }, excerpt: 'e'.repeat(900) },
+            { content: { id: '8', title: 'Eight' } },
+            { content: { title: 'No id' } },
+            { title: 'No content' },
+          ],
+        },
+      });
+      const out = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'x' } });
+      expect(out.items.map((item) => item.url)).toEqual([
+        'https://example.atlassian.net/wiki/spaces/ENG/pages/7',
+        'https://example.atlassian.net/wiki/pages/viewpage.action?pageId=8',
+      ]);
+      expect(out.items[0]!.summary).toHaveLength(500);
+      expect(out.items[1]).not.toHaveProperty('summary');
+    });
+
+    it.each([[undefined], [''], ['y'.repeat(101)]])('rejects invalid search text %j before any request', async (text) => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+      await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text } })).rejects.toMatchObject({
+        reason: 'UNSUPPORTED_QUERY',
+      });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it.each([
+      [401, 'UNAUTHORIZED'],
+      [403, 'FORBIDDEN'],
+      [404, 'NOT_FOUND'],
+      [429, 'RATE_LIMITED'],
+      [500, 'UNAVAILABLE'],
+    ] as const)('maps HTTP %i to reason %s without leaking the token', async (status, reason) => {
+      const fake = fakeFetch({ status, body: { message: TOKEN } });
+      const promise = provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } });
+      await expect(promise).rejects.toMatchObject({ name: 'ConfluenceConnectorHttpError', reason });
+      await expect(promise).rejects.toBeInstanceOf(ConnectorQueryError);
+      await expect(promise).rejects.not.toThrow(TOKEN);
+    });
+
+    it('maps a timeout to UNAVAILABLE and a malformed body to INVALID_RESPONSE', async () => {
+      const hanging = provider(((_url: URL | RequestInfo, init?: RequestInit) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+      })) as typeof fetch, { timeoutMs: 5 });
+      await expect(hanging.query({ query: 'search', params: { text: 'deploy' } })).rejects.toMatchObject({
+        name: 'ConfluenceConnectorRequestError',
+        reason: 'UNAVAILABLE',
+      });
+
+      const fake = fakeFetch({ status: 200, body: { nope: [] } });
+      await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } })).rejects.toMatchObject({
+        reason: 'INVALID_RESPONSE',
+      });
+    });
+
+    it('rejects personal-work, unknown names and unknown kinds as UNSUPPORTED_QUERY', async () => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+      const confluence = provider(fake.fetchImpl);
+      await expect(confluence.query({ query: 'personal-work', params: { actorExternalId: 'u' } })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+      await expect(confluence.query({ query: 'type=page' })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+      await expect(confluence.query({ query: '', params: { kind: 'delete' } })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it('rejects an invalid timeout at construction', () => {
+      expect(() => provider((async () => new Response('{}')) as typeof fetch, { timeoutMs: -1 })).toThrow(/timeoutMs/);
     });
   });
 });

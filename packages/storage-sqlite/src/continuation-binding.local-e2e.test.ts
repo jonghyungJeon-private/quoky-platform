@@ -7,7 +7,7 @@ import { ApprovalManager, ApprovalPolicy, RiskPolicy, AgentProfileRegistry, agen
   WorkHandoffManager, WorkHandoffConsumptionService, WorkHandoffContinuationService,
   WorkItemStatus, WorkManager, TaskRunStatus, TaskStatus, RiskLevel, ExecutionStatus } from '@quoky/core';
 import { SqliteStorageProvider } from './index';
-import { MIGRATIONS, runMigrations } from './migrations';
+import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from './migrations';
 
 const dirs: string[] = [];
 const stores: SqliteStorageProvider[] = [];
@@ -145,7 +145,9 @@ describe('M3E-4 disposable SQLite admission', () => {
       for (const m of MIGRATIONS.filter(m => m.version <= 9)) m.up(db);
       db.pragma('user_version = 9');
       db.prepare('INSERT INTO tasks (id, channel_id, data) VALUES (?, ?, ?)').run('historical', 'channel', '{"id":"historical"}');
-      expect(runMigrations(db)).toEqual({ from: 9, to: 11, applied: [10, 11] });
+      expect(runMigrations(db)).toEqual({
+        from: 9, to: LATEST_SCHEMA_VERSION, applied: MIGRATIONS.filter(m => m.version > 9).map(m => m.version),
+      });
       expect(runMigrations(db).applied).toEqual([]);
       expect(db.prepare('SELECT data FROM tasks WHERE id = ?').get('historical')).toEqual({ data: '{"id":"historical"}' });
       expect((db.pragma('table_info(continuation_bindings)') as {name: string}[]).map(x => x.name))

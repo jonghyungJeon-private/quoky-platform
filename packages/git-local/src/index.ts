@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import type { GitBranchCleanupResult, GitCommitResult, GitDiff, GitMainSyncResult, GitProvider, GitPushResult, GitStatus, RepositoryInfo } from '@quoky/core';
+import { resolve } from 'node:path';
+import type { GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitProvider, GitPushResult, GitStatus, RepositoryInfo } from '@quoky/core';
 import {
   BranchCleanupBlockedError,
   BranchCleanupUnverifiedError,
   GitMainSyncBlockedError,
   GitMainSyncUnverifiedError,
+  isCreatableOwnerBranch,
   isSafePushBranch,
   isSafePushRemote,
 } from '@quoky/core';
@@ -82,6 +84,22 @@ export function assertSafeCommitPaths(files: string[]): string[] {
 }
 
 /**
+ * Defensively validate the approved NEW-file subset of a commit (ADR-0099 D3): every entry must be a safe relative
+ * path (same rules as {@link assertSafeCommitPaths}), unique, a member of `safeFiles`, and free of git pathspec
+ * magic (`*`, `?`, `[`, `\\`, a leading `:`), so `git add -- <newFiles>` can only ever stage the exact approved
+ * files and never glob onto another untracked path. Throws BEFORE any git command runs.
+ */
+export function assertSafeNewFiles(newFiles: string[], safeFiles: string[]): string[] {
+  const safe = assertSafeCommitPaths(newFiles);
+  const approved = new Set(safeFiles);
+  for (const p of safe) {
+    if (!approved.has(p)) throw new Error(`git commit rejects a new file that is not in the commit set: ${p}`);
+    if (/[*?[\\]/.test(p) || p.startsWith(':')) throw new Error(`git commit rejects a new file path with pathspec magic: ${p}`);
+  }
+  return safe;
+}
+
+/**
  * Defensively validate a push target (ADR-0048, CA #4/#5) — conservative git ref rules (reusing core
  * `isSafePushRemote`/`isSafePushBranch`) + a SHA-shaped commitHash. Throws BEFORE any git command runs on
  * an unsafe target, so an unsafe branch never reaches argv as `HEAD:<branch>`.
@@ -100,7 +118,7 @@ function isDir(path: string): boolean {
   }
 }
 
-/** Parse `git status --porcelain=v1 -b` output into a GitStatus. */
+/** Parse `git status --porcelain=v1 -b --untracked-files=all` output into a GitStatus. */
 export function parsePorcelain(stdout: string): GitStatus {
   const staged: string[] = [];
   const unstaged: string[] = [];
@@ -179,7 +197,7 @@ function parseBranchTracking(line: string): { upstream?: string; ahead?: number;
 }
 
 /**
- * Read-only git repository inspection over a local path (CAP-002, ADR-0023).
+ * Local git repository inspection over a local path (CAP-002, ADR-0023; mutations per ADR-0046/0048/0058/0059/0099).
  * Git ≠ Workspace: operates purely on `rootPath`, imports no Workspace type, and
  * runs only read-only subcommands via argument-array spawn. No writes, no
  * worktree, no remote-URL exposure.
@@ -230,7 +248,7 @@ export class LocalGitProvider implements GitProvider {
   }
 
   async status(rootPath: string): Promise<GitStatus> {
-    const res = this.exec(rootPath, ['status', '--porcelain=v1', '-b']);
+    const res = this.exec(rootPath, ['status', '--porcelain=v1', '-b', '--untracked-files=all']);
     if (res.code !== 0) throw this.failure('status', res);
     return parsePorcelain(res.stdout);
   }
@@ -265,36 +283,138 @@ export class LocalGitProvider implements GitProvider {
   }
 
   /**
-   * The ONLY mutating git operation (CAP-002, ADR-0046) — commit EXACTLY the given tracked files with
-   * `message`. Argument-array only (no shell), NO separate `git add` (CA #1 — avoids a partial-stage side
-   * effect that would persist on commit failure, since Sprint 2y has no rollback): a single
+   * The first mutating git operation (CAP-002, ADR-0046; new-file support ADR-0099 D3) — commit EXACTLY the given
+   * files with `message`. Argument-array only (no shell). Without `options.newFiles` this is unchanged: NO
+   * separate `git add` (CA #1 — a partial-stage side effect would persist on commit failure), a single
    * `git commit --only -m <message> -- <files>` of the exact pathspecs, then `rev-parse HEAD` for the sha.
-   * Paths are validated + de-duped first (CA #7) → throws with NO git command run on an unsafe path. Never
-   * runs add/push/reset/checkout/stash/branch/tag/merge/rebase. Approval gating is the manager's job.
+   *
+   * With `options.newFiles` (the approved UNTRACKED subset of `files`): each must be untracked (`git ls-files`),
+   * then `git add -- <newFiles>` (exact pathspecs) runs, then the same `commit --only`. If the commit fails the
+   * adapter compensates with `git rm --cached --quiet -- <newFiles>` (the new files are untracked again; the
+   * working-tree content is never touched) and rethrows the commit failure. Paths are validated + de-duped first
+   * (CA #7) → throws with NO git command run on an unsafe path. Never runs push/reset/checkout/stash/branch/tag/
+   * merge/rebase. Approval gating is the manager's job.
    */
-  async commitFiles(rootPath: string, files: string[], message: string): Promise<GitCommitResult> {
+  async commitFiles(rootPath: string, files: string[], message: string, options?: { newFiles?: string[] }): Promise<GitCommitResult> {
     const safeFiles = assertSafeCommitPaths(files); // throws (no git run) on absolute/traversal/empty
+    const newFiles =
+      options?.newFiles !== undefined && options.newFiles.length > 0 ? assertSafeNewFiles(options.newFiles, safeFiles) : [];
+
+    if (newFiles.length > 0) {
+      // A "new" file that is already tracked must never reach `git add`/`git rm --cached` (the compensation would
+      // otherwise stage a deletion of a tracked file).
+      const tracked = this.exec(rootPath, ['--no-pager', 'ls-files', '--', ...newFiles]);
+      if (tracked.code !== 0) throw this.failure('ls-files', tracked);
+      if (tracked.stdout.trim().length > 0) throw new Error('git commit rejects a new file that is already tracked');
+      const addRes = this.exec(rootPath, ['--no-pager', 'add', '--', ...newFiles]);
+      if (addRes.code !== 0) throw this.failure('add', addRes);
+    }
+
     // `--only` commits exactly these pathspecs from the working tree, ignoring other index entries; the
     // message is a single argv element (never shell-interpolated); `--` separates the pathspecs.
     const commitRes = this.exec(rootPath, ['--no-pager', 'commit', '--only', '-m', message, '--', ...safeFiles]);
-    if (commitRes.code !== 0) throw this.failure('commit', commitRes);
+    if (commitRes.code !== 0) {
+      if (newFiles.length > 0) this.unstageNewFiles(rootPath, newFiles);
+      throw this.failure('commit', commitRes);
+    }
     const headRes = this.exec(rootPath, ['--no-pager', 'rev-parse', 'HEAD']);
     if (headRes.code !== 0) throw this.failure('commit', headRes);
     return { commitHash: headRes.stdout.trim(), committedFiles: safeFiles, message };
   }
 
+  /** Best-effort compensation after a failed new-file commit: drop the index entries `git add` created. */
+  private unstageNewFiles(rootPath: string, newFiles: string[]): void {
+    try {
+      this.exec(rootPath, ['--no-pager', 'rm', '--cached', '--quiet', '--', ...newFiles]);
+    } catch {
+      // best-effort: the original commit failure is the error the caller must see
+    }
+  }
+
+  /** True while a merge / rebase / cherry-pick / revert is in progress (state files via `rev-parse --git-path`). */
+  private hasOperationInProgress(rootPath: string): boolean {
+    for (const name of ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']) {
+      const res = this.exec(rootPath, ['--no-pager', 'rev-parse', '--git-path', name]);
+      if (res.code !== 0) throw this.failure('rev-parse', res); // cannot prove "no operation" → fail closed
+      const p = res.stdout.trim();
+      if (p.length > 0 && existsSync(resolve(rootPath, p))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Owner LOCAL branch creation (CAP-002, ADR-0099 D4). Every refusal happens BEFORE `git switch -c`:
+   * unsafe/protected name or malformed SHA (no git run), a merge/rebase/cherry-pick in progress, a detached or
+   * unborn HEAD, HEAD != `expectedHeadSha` (compare-and-swap; a 7+ char prefix of the full sha is accepted), or
+   * an existing `refs/heads/<branch>`. Then ONE `git switch -c <branch>` (carries a dirty tree; never forces,
+   * never touches a remote) and a read-back (`info().branch === branch`, HEAD unchanged).
+   */
+  async createBranch(rootPath: string, branch: string, expectedHeadSha: string): Promise<GitBranchResult> {
+    if (!isCreatableOwnerBranch(branch)) throw new Error('git branch create rejects an unsafe or protected branch name');
+    if (!SYNC_SHA_SHAPED.test(expectedHeadSha)) throw new Error('git branch create rejects an invalid expected HEAD');
+    if (this.hasOperationInProgress(rootPath)) throw new Error('git branch create refused: a merge, rebase or cherry-pick is in progress');
+    const sym = this.exec(rootPath, ['--no-pager', 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (sym.code !== 0 || sym.stdout.trim() === '') throw new Error('git branch create refused: HEAD is detached');
+    const head = this.exec(rootPath, ['--no-pager', 'rev-parse', 'HEAD']);
+    const headSha = head.code === 0 ? head.stdout.trim().toLowerCase() : '';
+    if (!SYNC_SHA_SHAPED.test(headSha) || !headSha.startsWith(expectedHeadSha.toLowerCase())) {
+      throw new Error('git branch create refused: HEAD does not match the expected commit');
+    }
+    const exists = this.exec(rootPath, ['--no-pager', 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
+    if (exists.code === 0) throw new Error('git branch create refused: the branch already exists');
+
+    const res = this.exec(rootPath, ['--no-pager', 'switch', '-c', branch]);
+    if (res.code !== 0) throw this.failure('switch', res);
+    return this.verifyBranchState(rootPath, branch, true, headSha);
+  }
+
+  /**
+   * Owner LOCAL branch switch (CAP-002, ADR-0099 D4). Refuses BEFORE any switch: unsafe/protected name (no git
+   * run), a merge/rebase/cherry-pick in progress, a detached HEAD, a missing LOCAL branch (never creates a
+   * remote-tracking branch), or any non-clean tree (staged, unstaged or untracked). Then ONE
+   * `git switch --no-guess <branch>` and a read-back.
+   */
+  async switchBranch(rootPath: string, branch: string): Promise<GitBranchResult> {
+    if (!isCreatableOwnerBranch(branch)) throw new Error('git branch switch rejects an unsafe or protected branch name');
+    if (this.hasOperationInProgress(rootPath)) throw new Error('git branch switch refused: a merge, rebase or cherry-pick is in progress');
+    const sym = this.exec(rootPath, ['--no-pager', 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (sym.code !== 0 || sym.stdout.trim() === '') throw new Error('git branch switch refused: HEAD is detached');
+    const exists = this.exec(rootPath, ['--no-pager', 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
+    if (exists.code !== 0) throw new Error('git branch switch refused: no such local branch');
+    const status = await this.status(rootPath);
+    if (!status.clean || status.hasUnmergedPaths) throw new Error('git branch switch refused: the working tree is not clean');
+
+    const res = this.exec(rootPath, ['--no-pager', 'switch', '--no-guess', branch]);
+    if (res.code !== 0) throw this.failure('switch', res);
+    return this.verifyBranchState(rootPath, branch, false);
+  }
+
+  /** Read back the checkout after a branch operation; throws when it is not the requested branch. */
+  private async verifyBranchState(rootPath: string, branch: string, created: boolean, expectedHeadSha?: string): Promise<GitBranchResult> {
+    const info = await this.info(rootPath);
+    const headSha = info.headSha ?? '';
+    if (info.detached || info.branch !== branch || !SYNC_SHA_SHAPED.test(headSha)) {
+      throw new Error('git branch operation could not be verified: the checkout is not the requested branch');
+    }
+    if (expectedHeadSha !== undefined && headSha.toLowerCase() !== expectedHeadSha) {
+      throw new Error('git branch operation could not be verified: HEAD moved');
+    }
+    return { branch, headSha, created };
+  }
+
   /**
    * The SECOND mutating git operation (CAP-002, ADR-0048) — the first REMOTE mutation. Pushes EXACTLY the
-   * current HEAD to `<remote> HEAD:<branch>`. Argument-array only (no shell); a single `git --no-pager push
-   * <remote> HEAD:<branch>` — NEVER `--force`/`-f`/`--tags`/`--all`/`-u`/`--set-upstream`/bare `git push`/an
+   * current HEAD to `<remote> HEAD:refs/heads/<branch>`. Argument-array only (no shell); a single `git --no-pager push
+   * <remote> HEAD:refs/heads/<branch>` — NEVER `--force`/`-f`/`--tags`/`--all`/`-u`/`--set-upstream`/bare `git push`/an
    * arbitrary refspec. The target is conservatively validated first (CA #4/#5) → throws with NO git command
    * run on an unsafe remote/branch/hash. Returns the provider-reported target (NOT independent remote
    * verification). Approval gating is the manager's job.
    */
   async pushApprovedCommit(rootPath: string, remote: string, branch: string, commitHash: string): Promise<GitPushResult> {
     assertSafePushTarget(remote, branch, commitHash); // throws (no git run) on an unsafe target
-    // exactly one refspec argv element `HEAD:<branch>` (never a shell string); pushes the current HEAD.
-    const res = this.exec(rootPath, ['--no-pager', 'push', remote, `HEAD:${branch}`]);
+    // exactly one refspec argv element `HEAD:refs/heads/<branch>` (fully qualified, ADR-0099 — so a branch that
+    // does not exist on the remote yet is created unambiguously; never a shell string); pushes the current HEAD.
+    const res = this.exec(rootPath, ['--no-pager', 'push', remote, `HEAD:refs/heads/${branch}`]);
     if (res.code !== 0) throw this.failure('push', res);
     return { remote, branch, upstreamRef: `${remote}/${branch}`, commitHash };
   }
