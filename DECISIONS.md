@@ -15573,3 +15573,27 @@ non-reminder notifications, distributed scheduler, reminders for other actors.
   4. Delivery governance for the Personal v2 execution plan: per wave, Push → PR → Merge proceeds automatically when the
      wave's independent review, integrated offline validation and Codex review all pass. Every Live UAT, runtime,
      Discord, provider/network and secret-access step still needs its own exact-scope Strict approval.
+
+## ADR-0098 amendment — Policy-sensitive chat routing and a provider-neutral action-claim guard (2026-10-02)
+
+- **Status:** Ratified by the Product Owner on 2026-10-02 (Personal v2 Live QA finding QA-V2-001).
+- **Context:** Live QA on wave 2 showed the chat response policy (ADR-0098 D1/D2) is correct but the local model
+  (Ollama `llama3.1:8b`) does not follow it: it fabricated an external action ("구글 캘린더에 … 추가해 드릴게요"), parroted
+  an injection request, and answered a Japanese question in Korean. The same inputs on Claude passed. Selecting a
+  provider by id would break ARCHITECTURE.md §5.
+- **Decision:**
+  1. New capability `POLICY_SENSITIVE_CHAT`. Core assigns it deterministically (no LLM) to a GENERAL_CHAT turn when the
+     message (a) asks Quoky to perform an external action it has no capability for (calendar/schedule, email/메일 send,
+     booking/예약, payment/결제, phone/문자/SMS, posting to external services), (b) is injection-shaped (instructions to
+     ignore/override prior instructions, reveal system prompt/internal instructions), or (c) is in a language other than
+     Korean or English. Routing stays capability/priority/isAvailable-based: providers advertise the capability only if
+     they meet the policy bar (Claude CLI advertises it; Ollama does not). If no ready provider advertises it, the turn
+     gets a deterministic reply instead of a downgraded answer.
+  2. A provider-neutral output guard (applied in the shared GENERAL_CHAT sanitizer path for every provider): a reply
+     that claims to have performed or to be about to perform an unsupported external action is replaced by a
+     deterministic Korean/English notice that Quoky cannot do that action and nothing was done.
+  3. The classifier fix for code-change requests phrased as "<path>를 고치고 … 분리해줘" (QA-V2 note) is in scope.
+- **Consequences:** + no fabricated actions or injection compliance on the default (hybrid) setup; + no provider-id
+  branching. − Policy-sensitive turns use the Claude subscription (more cloud egress/usage for those turns only).
+- **Implementation:** task QUAL-6 (wave 4): `domain/enums.ts` (Capability), `intent-classifier.ts` (+test),
+  `packages/ai-cli/src/index.ts` (capability advertisement, +test), `packages/ai-cli/src/output-sanitizer.ts` (+test).
