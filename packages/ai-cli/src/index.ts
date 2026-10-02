@@ -620,12 +620,13 @@ export class OllamaCliProvider extends BaseCliAiProvider {
    * A non-zero exit because the DAEMON is unreachable (it stopped after a successful readiness probe) is
    * UNAVAILABLE, so the router drops its cached probe and the next turn re-probes instead of re-selecting a
    * dead provider. Matching is conservative — only the CLI's own connection errors ("could not connect to
-   * ollama app/server", "ollama server not responding", a refused TCP dial); anything else (model not found,
+   * ollama app/server", "ollama server not responding", a refused dial to the local daemon address); a refused
+   * dial to a remote registry during a model download stays EXECUTION_FAILED; anything else (model not found,
    * a runtime error) stays EXECUTION_FAILED.
    */
   private static classifyExitStderr(stderr: string): AiFailureKind {
     const s = stderr.toLowerCase();
-    if (/could not connect to ollama|ollama server not responding|connect: connection refused|econnrefused/.test(s)) {
+    if (/could not connect to ollama|ollama server not responding|(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0):\d+[^\n]*connect: connection refused/.test(s)) {
       return AiFailureKind.UNAVAILABLE;
     }
     return AiFailureKind.EXECUTION_FAILED;

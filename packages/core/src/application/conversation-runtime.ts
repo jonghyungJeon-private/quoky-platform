@@ -2277,15 +2277,25 @@ export class ConversationRuntime {
    * approval that was live then can be past its deadline by the time it would be approved. Every
    * `approvals.decide(..., approved: true)` site for a conversational pending approval calls this first: when
    * expired it records the same `system`/`expired` denial (and anchor release) as the turn-start path and returns
-   * the expiry-notice turn; otherwise `null` and the caller approves.
+   * the expiry-notice turn; otherwise `null` and the caller approves. The deadline check is SYNCHRONOUS and
+   * callers must not await it on the live path, so no yield point separates the check from `approvals.decide`.
    */
-  private async expiredBeforeApprove(
+  private expiredBeforeApprove(
     message: InboundMessage,
     session: Session,
     approval: ApprovalRequest,
     applyAnchor: ApplyPreviewAnchor | null,
-  ): Promise<TurnResult | null> {
+  ): Promise<TurnResult> | null {
     if (this.remainingMs(approval) > 0) return null;
+    return this.recordExpiryBeforeApprove(message, session, approval, applyAnchor);
+  }
+
+  private async recordExpiryBeforeApprove(
+    message: InboundMessage,
+    session: Session,
+    approval: ApprovalRequest,
+    applyAnchor: ApplyPreviewAnchor | null,
+  ): Promise<TurnResult> {
     await this.expirePendingApproval(session, {
       planPending: applyAnchor ? null : approval,
       pendingScope: null,
@@ -2384,8 +2394,8 @@ export class ConversationRuntime {
         await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
         return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
       }
-      const expired = await this.expiredBeforeApprove(message, session, pending, null);
-      if (expired) return expired;
+      const expired = this.expiredBeforeApprove(message, session, pending, null);
+      if (expired) return await expired;
       await this.deps.approvals.decide(pending.id, this.decisionOf(pending.id, actor.id, true));
       const outcome = await this.deps.orchestrator.resume(ctx.request, ctx.prior);
       // ADR-0038: a cleanly-resumed planningOnly request now runs an AI CodeGeneration preview
@@ -2684,8 +2694,8 @@ export class ConversationRuntime {
     const approved = decision === 'approve';
     if (approved) {
       const request = await this.deps.approvals.get(anchor.approvalId!);
-      const expired = request ? await this.expiredBeforeApprove(message, session, request, anchor) : null;
-      if (expired) return expired;
+      const expired = request ? this.expiredBeforeApprove(message, session, request, anchor) : null;
+      if (expired) return await expired;
     }
     await this.deps.approvals.decide(anchor.approvalId!, this.decisionOf(anchor.approvalId!, actor.id, approved));
 
@@ -3218,8 +3228,8 @@ export class ConversationRuntime {
     }
     const approved = decision === 'approve';
     if (approved) {
-      const expired = await this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return expired;
+      const expired = this.expiredBeforeApprove(message, session, request, anchor);
+      if (expired) return await expired;
     }
     await this.deps.approvals.decide(anchor.commitApprovalId, this.decisionOf(anchor.commitApprovalId, actor.id, approved));
     if (!approved) {
@@ -3621,8 +3631,8 @@ export class ConversationRuntime {
     }
     const approved = decision === 'approve';
     if (approved) {
-      const expired = await this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return expired;
+      const expired = this.expiredBeforeApprove(message, session, request, anchor);
+      if (expired) return await expired;
     }
     await this.deps.approvals.decide(anchor.pushApprovalId, this.decisionOf(anchor.pushApprovalId, actor.id, approved));
     if (!approved) {
@@ -4022,8 +4032,8 @@ export class ConversationRuntime {
     }
     const approved = decision === 'approve';
     if (approved) {
-      const expired = await this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return expired;
+      const expired = this.expiredBeforeApprove(message, session, request, anchor);
+      if (expired) return await expired;
     }
     await this.deps.approvals.decide(anchor.prApprovalId, this.decisionOf(anchor.prApprovalId, actor.id, approved));
     if (!approved) {
@@ -4381,8 +4391,8 @@ export class ConversationRuntime {
     }
     const approved = decision === 'approve';
     if (approved) {
-      const expired = await this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return expired;
+      const expired = this.expiredBeforeApprove(message, session, request, anchor);
+      if (expired) return await expired;
     }
     await this.deps.approvals.decide(anchor.mergeApprovalId, this.decisionOf(anchor.mergeApprovalId, actor.id, approved));
     if (!approved) {
@@ -4839,8 +4849,8 @@ export class ConversationRuntime {
     }
     const approved = decision === 'approve';
     if (approved) {
-      const expired = await this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return expired;
+      const expired = this.expiredBeforeApprove(message, session, request, anchor);
+      if (expired) return await expired;
     }
     await this.deps.approvals.decide(
       anchor.remoteBranchCleanupApprovalId,

@@ -828,6 +828,14 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
     ).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
   });
 
+  it('a refused dial to a remote registry during a model download stays EXECUTION_FAILED (daemon is reachable)', async () => {
+    const stderr =
+      'Error: pull model manifest: Get "https://registry.ollama.ai/v2/library/x/manifests/latest": dial tcp 104.21.0.1:443: connect: connection refused';
+    await expect(ollamaExec({ code: 1, stdout: '', stderr, timedOut: false })).rejects.toMatchObject({
+      kind: AiFailureKind.EXECUTION_FAILED,
+    });
+  });
+
   it.each([
     'Error: could not connect to ollama app, is it running?',
     "Error: could not connect to ollama server, run 'ollama serve' to start it",
