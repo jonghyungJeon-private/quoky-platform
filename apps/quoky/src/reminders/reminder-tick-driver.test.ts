@@ -440,3 +440,13 @@ describe('ReminderTickDriver cooperative stop (at-most-once)', () => {
     expect(batch.started).toEqual([0]);
   });
 });
+
+describe('ReminderTickDriver stop bound (Codex delta)', () => {
+  it('covers the worst-case delivery: resolve + send for the target and an owner-DM fallback, plus a margin', async () => {
+    const { REMINDER_TICK_STOP_TIMEOUT_MS } = await import('./reminder-tick-driver');
+    const { DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS, DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS } = await import('@quoky/adapter-discord');
+    expect(REMINDER_TICK_STOP_TIMEOUT_MS).toBeGreaterThan(
+      2 * (DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS + DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS),
+    );
+  });
+});

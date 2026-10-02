@@ -1,3 +1,4 @@
+import { DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS, DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS } from '@quoky/adapter-discord';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, ReminderDispatchOptions, ReminderDispatchService } from '@quoky/core';
 
@@ -24,8 +25,13 @@ import type { IsoTimestamp, Logger, ReminderDispatchOptions, ReminderDispatchSer
 
 export const REMINDER_TICK_INITIAL_DELAY_MS = 5_000;
 export const REMINDER_TICK_PERIOD_MS = 15_000;
-/** Per-send bound (Discord sends allow 20 s) plus a margin for the outcome write. */
-export const REMINDER_TICK_STOP_TIMEOUT_MS = 25_000;
+/**
+ * Worst-case single delivery: target resolution + send, twice (an opt-in channel target that fails over to the owner
+ * DM), plus a margin for the outcome write. Past this bound the stop is reported as forced; a delivery whose outcome
+ * was not recorded stays FIRING and the next startup records it DELIVERY_UNCERTAIN (at-most-once, ADR-0101 D4/D6).
+ */
+export const REMINDER_TICK_STOP_TIMEOUT_MS =
+  2 * (DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS + DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS) + 5_000;
 
 /** Injectable timer seam (tests use a manual fake). Handles are opaque. */
 export interface ReminderTickTimers {

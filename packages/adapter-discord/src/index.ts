@@ -18,6 +18,7 @@ export type { DeliveryReport, ChunkSender } from './delivery';
 export {
   classifyDiscordError,
   deliverOwnerNotification,
+  DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS,
   DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS,
   DISCORD_NOTIFICATION_PLATFORM,
 } from './notification';
