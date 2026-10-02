@@ -144,11 +144,16 @@ describe('ClaudeCliProvider', () => {
     [Capability.CODE_REVIEW, 'medium'],
     [Capability.ARCHITECTURE_PLANNING, 'high'],
     [Capability.CODE_IMPLEMENTATION, 'high'],
-    [Capability.TEST_EXECUTION, 'medium'],
   ] as const)('passes --model sonnet and the default effort for %s (%s)', async (capability, effort) => {
     const args = await argsFor({ capability });
     expect(args.slice(0, 5)).toEqual(['-p', '--model', 'sonnet', '--effort', effort]);
     expect(args).not.toContain(PROMPT); // prompt stays on stdin
+  });
+
+  it('passes no --effort flag for a capability outside the effort table (ADR-0092: CLI default)', async () => {
+    const args = await argsFor({ capability: Capability.TEST_EXECUTION });
+    expect(args.slice(0, 3)).toEqual(['-p', '--model', 'sonnet']);
+    expect(args).not.toContain('--effort');
   });
 
   it('honours a configured model and partial effort overrides over the defaults', async () => {

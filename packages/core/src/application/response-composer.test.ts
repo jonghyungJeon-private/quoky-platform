@@ -1367,6 +1367,7 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
         '새 대화를 시작할게요. 다음 메시지부터 새 대화로 이어져요.',
         '기다리던 승인 요청은 거절로 처리했어요.',
         '이미 적용한 파일 변경이나 커밋은 되돌리지 않았고, "기억해:"로 저장한 내용은 그대로 있어요.',
+        '대화에 연결돼 있던 프로젝트는 풀렸어요. 코드 작업은 프로젝트를 다시 등록한 뒤 요청해 주세요.',
       ],
     ],
   ])('%s names the literal next phrases', (_name, render, expected) => {

@@ -234,7 +234,7 @@ export const DEFAULT_CLAUDE_MODEL = 'sonnet';
 /**
  * Adapter-owned capability -> reasoning effort policy (decision D2). Core never sees
  * this: it only advertises a capability, and the adapter decides how hard to think.
- * Capabilities not listed here (e.g. TEST_EXECUTION) use {@link FALLBACK_CLAUDE_EFFORT}.
+ * Capabilities not listed here (e.g. TEST_EXECUTION) pass no `--effort` flag (CLI default; ADR-0092).
  */
 export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>> = {
   [Capability.GENERAL_CHAT]: 'low',
@@ -246,8 +246,6 @@ export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capabi
   [Capability.ARCHITECTURE_PLANNING]: 'high',
   [Capability.CODE_IMPLEMENTATION]: 'high',
 };
-
-const FALLBACK_CLAUDE_EFFORT: ClaudeEffortLevel = 'medium';
 
 export interface ClaudeCliProviderOptions extends CliProviderOptions {
   /** Claude model alias or full name passed as `--model`. Default `sonnet`. */
@@ -330,7 +328,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace'>): string[] {
     const args = ['-p', '--model', this.model];
     if (request === undefined) return args;
-    args.push('--effort', this.effortByCapability[request.capability] ?? FALLBACK_CLAUDE_EFFORT);
+    const effort = this.effortByCapability[request.capability];
+    if (effort !== undefined) args.push('--effort', effort);
     // `--tools` is variadic and must stay the LAST argv entry so it cannot swallow other flags.
     if (request.workspace === undefined) args.push('--tools', '');
     return args;

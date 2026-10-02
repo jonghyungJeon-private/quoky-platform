@@ -54,6 +54,15 @@ export class AiProviderManager {
     return available.filter((p) => p.capabilities.some((c) => c.capability === capability));
   }
 
+  /**
+   * Forget a provider's cached probe so the next routing decision re-probes it. Called after an execution
+   * failed with UNAVAILABLE, so a daemon that stopped after a positive probe is not selected for the rest
+   * of the TTL (ADR-0092: no execution-time fallback, selection-time readiness only).
+   */
+  invalidate(provider: AiProvider): void {
+    this.probes.delete(provider);
+  }
+
   private nowMs(): number {
     return Date.parse(this.clock());
   }

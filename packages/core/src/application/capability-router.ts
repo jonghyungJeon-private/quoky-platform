@@ -1,5 +1,5 @@
-import { NoProviderAvailableError } from '../errors';
-import type { Capability } from '../domain';
+import { AiProviderError, NoProviderAvailableError } from '../errors';
+import { AiFailureKind, type Capability } from '../domain';
 import type { AiProvider, ProviderSelector } from '../ports';
 import type { AiProviderManager } from './ai-provider-manager';
 
@@ -21,7 +21,34 @@ export class CapabilityRouter implements ProviderSelector {
     }
     candidates.sort((a, b) => this.priority(b, capability) - this.priority(a, capability));
     // Non-null: length checked above; noUncheckedIndexedAccess-safe via assertion.
-    return candidates[0] as AiProvider;
+    return this.invalidatingOnUnavailable(candidates[0] as AiProvider);
+  }
+
+  /**
+   * The selected provider's `execute` drops its cached readiness probe when it fails UNAVAILABLE, so the
+   * next turn re-probes (and can route to another provider) instead of reusing a stale "ready" for the TTL.
+   * Every other member is delegated unchanged; the error is rethrown as-is.
+   */
+  private invalidatingOnUnavailable(provider: AiProvider): AiProvider {
+    const manager = this.manager;
+    return new Proxy(provider, {
+      get(target, prop) {
+        if (prop === 'execute') {
+          return async (...args: Parameters<AiProvider['execute']>) => {
+            try {
+              return await target.execute(...args);
+            } catch (err) {
+              if (err instanceof AiProviderError && err.kind === AiFailureKind.UNAVAILABLE) {
+                manager.invalidate(target);
+              }
+              throw err;
+            }
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
   }
 
   private priority(provider: AiProvider, capability: Capability): number {

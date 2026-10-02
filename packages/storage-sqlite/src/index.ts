@@ -198,7 +198,17 @@ class SqliteActorRepository extends JsonRepository<Actor> implements ActorReposi
 }
 
 class SqliteSessionRepository extends JsonRepository<Session> implements SessionRepository {
+  /**
+   * CLOSED is terminal (ADR-0093 reset). A turn that was still running when the owner said "새 대화" saves the
+   * Session object it loaded at its start (status ACTIVE) when it finishes; without this guard that late write
+   * would reopen the closed Session and the reset would silently not take effect. A save that would move a
+   * CLOSED session back to another status is ignored and the stored CLOSED session is returned.
+   */
   override async save(session: Session): Promise<Session> {
+    if (session.status !== 'CLOSED') {
+      const stored = await this.get(session.id);
+      if (stored?.status === 'CLOSED') return stored;
+    }
     this.db
       .prepare(
         `INSERT INTO sessions (id, channel_id, thread_id, status, data) VALUES (?, ?, ?, ?, ?)

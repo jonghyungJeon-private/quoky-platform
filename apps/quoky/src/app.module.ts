@@ -204,7 +204,13 @@ if (hostingAuthMode === 'github-app' && repositoryIdentity && config.githubApp) 
 // ADR-0094: Personal-edition git safety, OUTERMOST so a refusal (remote off, commit on main/master) happens
 // before any git process or the GitHub App decorator could mint a token. Wraps both composed branches above.
 gitProvider = new PersonalGitGuard(gitProvider, { remoteEnabled: config.git.remoteEnabled });
-const repositoryHosting = { identity: repositoryIdentity, manager: repositoryHostingManager };
+// ADR-0094: with QUOKY_GIT_REMOTE_ENABLED=false the REST remote mutations (PR create, merge, remote branch
+// delete) must be unreachable too, including from a stale apply-preview anchor (PR_CREATED / MERGE_APPROVED)
+// in an older database. No manager means the runtime replies "not configured" before any token is minted.
+const repositoryHosting = {
+  identity: repositoryIdentity,
+  manager: config.git.remoteEnabled ? repositoryHostingManager : undefined,
+};
 
 /**
  * Port -> concrete bindings. Swapping an implementation (e.g. Postgres storage,
