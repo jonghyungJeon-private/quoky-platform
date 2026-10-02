@@ -596,7 +596,7 @@ const application: Provider[] = [
         repositoryHosting,
         runtimeProviderRouting,
         logger: coreLogger,
-      });
+      }, { gitRemoteEnabled: config.git.remoteEnabled });
     },
     inject: [
       STORAGE_PROVIDER,

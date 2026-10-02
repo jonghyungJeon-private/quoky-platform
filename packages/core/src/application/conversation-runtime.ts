@@ -746,6 +746,12 @@ export interface ConversationRuntimeDeps {
  */
 export interface ConversationRuntimeOptions {
   readonly clock?: () => IsoTimestamp;
+  /**
+   * Whether remote git operations (push etc.) are enabled for this deployment (Personal v1:
+   * `QUOKY_GIT_REMOTE_ENABLED`, default false; ADR-0094). Display-only here — it picks truthful copy for an
+   * unsupported push request (QA-020); the composition-root git guard remains the enforcement point.
+   */
+  readonly gitRemoteEnabled?: boolean;
 }
 
 /**
@@ -1270,12 +1276,14 @@ export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: strin
 
 export class ConversationRuntime {
   private readonly clock: () => IsoTimestamp;
+  private readonly gitRemoteEnabled: boolean;
 
   constructor(
     private readonly deps: ConversationRuntimeDeps,
     options: ConversationRuntimeOptions = {},
   ) {
     this.clock = options.clock ?? now;
+    this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
   }
 
   /** Capabilities that operate on files need a resolved workspace; chat does not. */
@@ -3106,7 +3114,14 @@ export class ConversationRuntime {
     // 1. (CA Q4/#6) A git MUTATION phrase → read-only "not supported" reply. NORMAL turn (RESPONDED),
     //    no git call, anchor unchanged.
     if (kind === 'mutating') {
-      return this.respondComposed(message, session, this.deps.composer.composeGitMutationNotSupported(message.context));
+      // QA-020: a push/remote request gets remote-specific copy; other local git mutations (add/reset/stash/…)
+      // keep the local wording. Both point at the supported local commit phrase "커밋해줘".
+      const scope = ConversationRuntime.interpretPushIntent(message.text) !== null ? 'remote' : 'local';
+      return this.respondComposed(
+        message,
+        session,
+        this.deps.composer.composeGitMutationNotSupported(message.context, { scope, remoteEnabled: this.gitRemoteEnabled }),
+      );
     }
 
     // 2. Anchor guard: WORKSPACE_APPLIED must carry the workspaceRef we read against (defensive).

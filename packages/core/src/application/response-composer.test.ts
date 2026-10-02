@@ -1034,6 +1034,22 @@ describe('ResponseComposer.composeGit* preview replies (ADR-0044)', () => {
     for (const f of FORBIDDEN) expect(reply.text, f).not.toContain(f);
   });
 
+  it('QA-020: mutation copy never claims local commit is unsupported; remote copy names the flag and "커밋해줘"', () => {
+    const local = composer.composeGitMutationNotSupported(CTX).text;
+    const remoteOff = composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: false }).text;
+    const remoteOn = composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: true }).text;
+    for (const text of [local, remoteOff, remoteOn]) {
+      expect(text).not.toContain('add/commit/push');
+      expect(text).toContain('"커밋해줘"');
+      expect(text).toContain('git 명령은 실행하지 않았어요');
+    }
+    expect(remoteOff).toContain(
+      '원격 git 작업(push 등)은 Personal v1에서 꺼져 있어요(QUOKY_GIT_REMOTE_ENABLED=false). 로컬 커밋은 "커밋해줘"로 할 수 있어요.',
+    );
+    expect(remoteOn).not.toContain('꺼져 있어요');
+    expect(local).toContain('reset/stash');
+  });
+
   it('preview-unavailable: safe failure — read WAS attempted, so it must NOT claim no git command ran (CA impl review)', () => {
     const reply = composer.composeGitPreviewUnavailable(CTX);
     expect(reply.text).toContain('읽지 못했어요');

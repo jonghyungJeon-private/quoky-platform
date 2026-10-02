@@ -2,6 +2,7 @@ import {
   ConversationRuntime,
   DefaultMemoryWriter,
   type ConversationRuntimeDeps,
+  type ConversationRuntimeOptions,
   type MemoryManager,
 } from '@quoky/core';
 
@@ -11,9 +12,13 @@ export type ProductionConversationRuntimeDeps = Omit<ConversationRuntimeDeps, 'm
 export function createProductionConversationRuntime(
   memory: MemoryManager,
   deps: ProductionConversationRuntimeDeps,
+  options: ConversationRuntimeOptions = {},
 ): ConversationRuntime {
-  return new ConversationRuntime({
-    ...deps,
-    memoryWriter: new DefaultMemoryWriter(memory),
-  });
+  return new ConversationRuntime(
+    {
+      ...deps,
+      memoryWriter: new DefaultMemoryWriter(memory),
+    },
+    options,
+  );
 }

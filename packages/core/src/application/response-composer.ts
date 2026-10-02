@@ -1190,17 +1190,29 @@ export class ResponseComposer {
   }
 
   /**
-   * A git MUTATION phrase (커밋/푸시/add/reset/…, or any English `commit`) arrived on the post-apply path
-   * (ADR-0044, CA Q4) — read-only reminder; no git ran. States only status/diff preview is available and
-   * that git changes are a separate future step. Never implies a commit/push happened.
+   * A git MUTATION phrase other than a plain commit request (푸시/add/reset/stash/…, or a bare English `commit`)
+   * arrived on the post-apply path (ADR-0044, CA Q4) — no git ran. QA-020: local commit IS supported ("커밋해줘",
+   * ADR-0045/0046), so the copy never says commit is unsupported. `scope: 'remote'` (a push/remote phrase) says
+   * remote git is off in Personal v1 (`remoteEnabled` false, the default) or that a push needs a local commit
+   * first; `scope: 'local'` names the unsupported local operations. Never implies a commit/push happened.
    */
-  composeGitMutationNotSupported(context: ConversationContext): OutboundMessage {
-    return {
-      context,
-      text:
-        'git 변경 작업(add/commit/push/reset/stash 등)은 아직 지원하지 않아요.\n' +
-        '지금은 읽기 전용 미리보기(git 상태 / diff)만 할 수 있어요. git 명령은 실행하지 않았어요.',
-    };
+  composeGitMutationNotSupported(
+    context: ConversationContext,
+    input: { scope: 'remote' | 'local'; remoteEnabled?: boolean } = { scope: 'local' },
+  ): OutboundMessage {
+    const lines =
+      input.scope === 'remote'
+        ? input.remoteEnabled
+          ? ['push는 로컬 커밋을 먼저 한 뒤에 요청할 수 있어요. 먼저 "커밋해줘"로 커밋해 주세요.']
+          : [
+              '원격 git 작업(push 등)은 Personal v1에서 꺼져 있어요(QUOKY_GIT_REMOTE_ENABLED=false). ' +
+                '로컬 커밋은 "커밋해줘"로 할 수 있어요.',
+            ]
+        : [
+            'git add/reset/stash/checkout/merge 같은 git 작업은 지원하지 않아요. 로컬 커밋은 "커밋해줘"로 할 수 있어요.',
+            '읽기 전용 미리보기(git 상태 / diff)도 볼 수 있어요.',
+          ];
+    return { context, text: [...lines, 'git 명령은 실행하지 않았어요.'].join('\n') };
   }
 
   /**

@@ -3805,6 +3805,7 @@ describe('Post-Validation Git Status Preview — runtime (Sprint 2w, ADR-0044)',
 
   const composer = new ResponseComposer();
   const mutationText = composer.composeGitMutationNotSupported(CTX).text;
+  const remoteMutationText = composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: false }).text;
   const unavailableText = composer.composeGitPreviewUnavailable(CTX).text;
 
   // ── status/diff calls (CA 1–6) ──────────────────────────────────────────────────────────────
@@ -3863,7 +3864,37 @@ describe('Post-Validation Git Status Preview — runtime (Sprint 2w, ADR-0044)',
       const result = await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.gitStatus, text).toBe(0);
       expect(calls.gitDiff, text).toBe(0);
-      expect(result.reply.text, text).toBe(mutationText);
+      expect(result.reply.text, text).toBe(text.startsWith('push') ? remoteMutationText : mutationText);
+    }
+  });
+
+  it('QA-020: a push request says remote git is off and local commit is available — never "commit unsupported"', async () => {
+    for (const text of ['푸시해줘', 'push 해줘', 'git push 해줘']) {
+      const { deps, calls } = makeDeps({ applyAnchor: gitAnchor() });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitStatus, text).toBe(0);
+      expect(result.reply.text, text).toBe(remoteMutationText);
+      expect(result.reply.text, text).toContain('QUOKY_GIT_REMOTE_ENABLED=false');
+      expect(result.reply.text, text).toContain('"커밋해줘"');
+      expect(result.reply.text, text).not.toMatch(/commit[^"]*지원하지 않아요/);
+    }
+  });
+
+  it('QA-020: with remote git enabled the push copy asks for a local commit first instead of claiming it is off', async () => {
+    const { deps } = makeDeps({ applyAnchor: gitAnchor() });
+    const result = await new ConversationRuntime(deps, { gitRemoteEnabled: true }).handle(messageOf('푸시해줘'));
+    expect(result.reply.text).toBe(composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: true }).text);
+    expect(result.reply.text).not.toContain('꺼져 있어요');
+  });
+
+  it('QA-020: reset/stash keep accurate local wording (unsupported) and name the supported local commit', async () => {
+    for (const text of ['git reset 해줘', 'stash 해줘']) {
+      const { deps } = makeDeps({ applyAnchor: gitAnchor() });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.reply.text, text).toContain('reset/stash');
+      expect(result.reply.text, text).toContain('지원하지 않아요');
+      expect(result.reply.text, text).toContain('"커밋해줘"');
+      expect(result.reply.text, text).not.toContain('push');
     }
   });
 
@@ -4613,7 +4644,7 @@ describe('Explicit Git Push Approval — runtime (Sprint 2z, ADR-0047)', () => {
     const result = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
     expect(calls.requestForRisk).toBe(0);
     expect(calls.gitInfo).toBe(0);
-    expect(result.reply.text).toBe(composer.composeGitMutationNotSupported(CTX).text);
+    expect(result.reply.text).toBe(composer.composeGitMutationNotSupported(CTX, { scope: 'remote', remoteEnabled: false }).text);
   });
 
   it('COMMIT_APPROVED + push phrase → existing 2y push-unsupported, no push approval (CA 8)', async () => {
