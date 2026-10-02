@@ -2,6 +2,7 @@ import { describeAiFailure } from './ai-failure';
 import { generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
+import { isAffirmativeExecutionCommand } from './execution-command-guard';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
@@ -1128,7 +1129,7 @@ const MERGE_EXECUTION_VERB = /(해줘|해\s*줘|실제|실행|지금|승인된|\
 // (Codex wave-8 review) the execution verb must attach to the merge word itself ("머지해줘", "머지 실행해줘", "merge
 // this PR", "merge now", "execute merge") — a trailing "해줘" on another verb ("머지 로그 요약해줘") is never a merge.
 const MERGE_EXECUTION_ATTACHED =
-  /((머지|병합)\s*(을|를)?\s*(좀\s*)?(해|실행|진행|하자|시켜)|\bmerge\s+(this|it|the|now|pr)\b|\b(execute|run|do)\s+(the\s+)?(approved\s+)?merge\b|\bapproved\s+merge\b)/i;
+  /((머지|병합)\s*(을|를)?\s*(좀\s*)?(해|실행|진행|하자|시켜)|\bmerge\s+(this|it|the|now|pr|approved)\b|\b(execute|run|do)\s+(the\s+)?(approved\s+)?merge\b|\bapproved\s+merge\b)/i;
 // Chain verbs foreign to the merge step (Codex wave-8 review): a merge bundled with push/deploy/sync/branch-delete/
 // force/reset/rebase is never a merge-EXECUTION command.
 const MERGE_EXECUTION_FOREIGN =
@@ -1146,7 +1147,7 @@ const MAIN_SYNC_REMOTE = 'origin';
 // Post-merge LOCAL branch cleanup (Sprint 3i, ADR-0059) — only consulted at MAIN_SYNCED/BRANCH_CLEANED. A cleanup
 // command needs a cleanup VERB + a BRANCH word. A REMOTE qualifier routes to the "unsupported" reply (remote
 // deletion deferred); bulk/wildcard and a "main"-delete target never trigger.
-const CLEANUP_VERB = /(정리|삭제|지워|없애|\bcleanup\b|clean\s*up|\bdelete\b|\bremove\b|\bprune\b)/i;
+const CLEANUP_VERB = /(정리|삭제|제거|지워|지우|없애|\bcleanup\b|clean\s*up|\bdelete\b|\bremove\b|\bprune\b)/i;
 const CLEANUP_BRANCH_WORD = /(브랜치|\bbranch\b)/i;
 const CLEANUP_REMOTE_WORD = /(원격|\bremote\b|\borigin\b|github)/i;
 const CLEANUP_BULK = /(다\s*(삭제|지워|정리)|전부|모두|\ball\b|every|\*|패턴|pattern|wildcard)/i;
@@ -1871,7 +1872,16 @@ export class ConversationRuntime {
     // approved push", "푸시 실행해도 돼?"), never a statement/question, never an execute word with unrelated content.
     if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null;
     if (REMOTE_CLEANUP_BARE_EXECUTE.test(t)) return 'execute'; // "실행해줘" / "proceed" — the approved step's own command
-    if (CLEANUP_VERB.test(t) && unnegatedMatch(t, [REMOTE_CLEANUP_EXECUTE_VERB])) return 'execute';
+    // Otherwise the step's OWN target is required (Codex wave-8 re-review): a cleanup verb + a branch word + a remote
+    // qualifier + an execute verb — "delete the file now" names no remote branch and never executes.
+    if (
+      CLEANUP_VERB.test(t) &&
+      CLEANUP_BRANCH_WORD.test(t) &&
+      CLEANUP_REMOTE_WORD.test(t) &&
+      unnegatedMatch(t, [REMOTE_CLEANUP_EXECUTE_VERB])
+    ) {
+      return 'execute';
+    }
     return null;
   }
 
@@ -2105,7 +2115,12 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'COMMIT_APPROVED') {
       const execKind = ConversationRuntime.interpretCommitExecutionIntent(message.text);
       if (execKind === 'push-unsupported') return this.handleCommitPushUnsupportedTurn(message, session);
-      if (execKind === 'execute') return this.handleCommitExecutionTurn(message, session, applyAnchor);
+      if (execKind === 'execute') {
+        // (Codex wave-8 re-review) one affirmative-execution guard on every approved execution gate: a question /
+        // negation / past-tense / reported phrase that names the step never executes it → already-approved reply.
+        if (!isAffirmativeExecutionCommand(message.text)) return this.handleCommitAlreadyApprovedTurn(message, session);
+        return this.handleCommitExecutionTurn(message, session, applyAnchor);
+      }
     }
     if (applyAnchor?.status === 'GIT_COMMITTED') {
       // (Sprint 2z, ADR-0047) push is checked FIRST so "푸시해줘" plans a push approval rather than hitting
@@ -2125,7 +2140,10 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'PUSH_APPROVED') {
       const exKind = ConversationRuntime.interpretPushExecutionIntent(message.text);
       if (exKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
-      if (exKind === 'execute') return this.handlePushExecutionTurn(message, session, actor, applyAnchor);
+      if (exKind === 'execute') {
+        if (!isAffirmativeExecutionCommand(message.text)) return this.handlePushAlreadyApprovedTurn(message, session); // (Codex W8)
+        return this.handlePushExecutionTurn(message, session, actor, applyAnchor);
+      }
       // (Sprint 2z) a bare push phrase at PUSH_APPROVED → already approved (not pushed).
       const pushKind = ConversationRuntime.interpretPushIntent(message.text);
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
@@ -2173,7 +2191,12 @@ export class ConversationRuntime {
       if (prKind === 'pr-unsupported') return this.handlePrUnsupportedCompanionTurn(message, session);
       // (Sprint 3d-D, ADR-0054) an explicit PR create/open phrase at PR_APPROVED now EXECUTES creation
       // (state-driven trigger — the same grammar requested approval at GIT_PUSHED). Bare noun/승인/진행해 → null.
-      if (prKind === 'create') return this.handlePrCreationExecutionTurn(message, session, actor, applyAnchor);
+      if (prKind === 'create') {
+        if (!isAffirmativeExecutionCommand(message.text)) {
+          return this.respondComposed(message, session, this.deps.composer.composePrAlreadyApproved(message.context)); // (Codex W8)
+        }
+        return this.handlePrCreationExecutionTurn(message, session, actor, applyAnchor);
+      }
       if (DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePrApprovedDeployUnsupportedTurn(message, session);
     }
     // (Sprint 3d-D) After a PR was created/connected: a PR create phrase → already created (+ URL, no new call);
@@ -2212,6 +2235,7 @@ export class ConversationRuntime {
       }
       // (Sprint 3g, ADR-0057, CA change 1) "머지해줘"/"이 PR 머지해줘"/"merge this PR"/"실제 머지해줘"/… → EXECUTE.
       if (ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute') {
+        if (!isAffirmativeExecutionCommand(message.text)) return this.handleMergeAlreadyApprovedTurn(message, session); // (Codex W8)
         return this.handleMergeExecutionTurn(message, session, actor, applyAnchor);
       }
       // A bare "머지"/"merge" mention (merge word, no execution verb, not a status phrase) → already approved,
@@ -2229,7 +2253,8 @@ export class ConversationRuntime {
     // read-only preview (keeps PR_MERGED); any merge phrase → already merged (NO new mutation); deploy/release/
     // companion → unsupported future step.
     if (applyAnchor?.status === 'PR_MERGED') {
-      if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
+      // (Codex W8) a sync question / prohibition / statement never syncs — it falls through to the routes below.
+      if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync' && isAffirmativeExecutionCommand(message.text)) {
         return this.handleMainSyncTurn(message, session, actor, applyAnchor);
       }
       if (
@@ -2256,7 +2281,8 @@ export class ConversationRuntime {
       if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
         return this.handleRemoteBranchCleanupUnsupportedTurn(message, session);
       }
-      if (ConversationRuntime.interpretBranchCleanupIntent(message.text) === 'local') {
+      // (Codex W8) "do not delete local branch" / "브랜치 정리해도 돼?" never deletes — falls through to the routes below.
+      if (ConversationRuntime.interpretBranchCleanupIntent(message.text) === 'local' && isAffirmativeExecutionCommand(message.text)) {
         return this.handleBranchCleanupTurn(message, session, actor, applyAnchor);
       }
       if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
@@ -2314,6 +2340,7 @@ export class ConversationRuntime {
     // → read-only preview (keeps the state); a merge phrase → already merged; deploy/release/companion → unsupported.
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANUP_APPROVED') {
       if (ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(message.text) === 'execute') {
+        if (!isAffirmativeExecutionCommand(message.text)) return this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session); // (Codex W8)
         return this.handleRemoteBranchCleanupExecutionTurn(message, session, actor, applyAnchor);
       }
       if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
@@ -2384,7 +2411,10 @@ export class ConversationRuntime {
     // token, so it falls through to the commit check unaffected.
     if (applyAnchor?.status === 'WORKSPACE_APPLIED') {
       const validationKind = ConversationRuntime.interpretPostApplyValidationIntent(message.text);
-      if (validationKind) {
+      // (Codex W8 re-review) a run ('test'/'typecheck') executes a command, so it also needs the affirmative guard
+      // ("run the tests was already done" never runs); clarify/unsupported replies execute nothing and stay as-is.
+      const runsCommand = validationKind === 'test' || validationKind === 'typecheck';
+      if (validationKind && (!runsCommand || isAffirmativeExecutionCommand(message.text))) {
         return this.handlePostApplyValidationTurn(message, session, applyAnchor, validationKind);
       }
       // (Sprint 2x) explicit commit request → commit-approval PLANNING (halt, no git mutation). A
@@ -2415,6 +2445,8 @@ export class ConversationRuntime {
     // APPLY_WORDS so "패치 적용해줘" is a file-apply, not a Sprint 2s apply-intent). Only fires on PATCH_READY.
     if (ConversationRuntime.interpretFinalApplyIntent(message.text)) {
       if (applyAnchor?.status === 'PATCH_READY') {
+        // (Codex W8) "패치 적용해도 돼?" / "패치 적용하지 마" never writes files → patch-ready (not applied) reply.
+        if (!isAffirmativeExecutionCommand(message.text)) return this.handlePatchAlreadyGeneratedTurn(message, session);
         return this.handleWorkspaceApplyTurn(message, session, applyAnchor);
       }
       if (applyAnchor?.status === 'WORKSPACE_APPLIED') {

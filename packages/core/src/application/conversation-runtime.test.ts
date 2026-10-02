@@ -1135,6 +1135,44 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
 
 // ── Sprint 2k — Conversation Runtime core ───────────────────────────────────────────────────────
 
+// ── Codex wave-8 re-review: ONE table for every approved execution gate (isAffirmativeExecutionCommand). ──
+// `positives` lead with the phrase the composer / help copy tells the user to send for that state; each must execute
+// exactly once with a valid anchor + approval. `executionGateNegatives` derives questions / negations / past-tense /
+// reported-speech / hypothetical forms from the step's own stem and adds foreign-target phrases — zero mutations.
+interface ExecutionGateCase {
+  /** Korean stem the negative templates attach to ("커밋 실행" → "커밋 실행해도 돼?", "커밋 실행하지 마", …). */
+  readonly stem: string;
+  /** English command the negative templates wrap ("do not …", "should I …?", "… was already done"). */
+  readonly en: string;
+  readonly positives: readonly string[];
+  /** Phrases with an execute verb but a target that is NOT this step's. */
+  readonly foreign: readonly string[];
+}
+const EXECUTION_GATES = {
+  commit: { stem: '커밋 실행', en: 'execute commit', positives: ['커밋 실행', '커밋 실행해줘', '승인된 커밋 실행해줘', '이제 실제 커밋해줘', 'execute commit'], foreign: ['파일 실행해줘', 'execute the deploy now'] },
+  push: { stem: '푸시 실행', en: 'execute approved push', positives: ['푸시 실행', '승인된 push 실행해줘', 'push 실행해줘', 'execute approved push', 'push approved commit'], foreign: ['파일 실행해줘', 'execute the deploy now'] },
+  pr: { stem: 'PR 생성', en: 'create pull request', positives: ['PR 생성 실행', 'PR 만들어줘', 'open a PR', 'create pull request'], foreign: ['이슈 생성해줘', 'open the file'] },
+  merge: { stem: '머지', en: 'execute approved merge', positives: ['머지해줘', '이 PR 머지해줘', 'merge this PR', 'merge approved PR', 'merge the approved PR', 'execute approved merge', 'merge now'], foreign: ['파일 실행해줘', 'execute the deploy now'] },
+  sync: { stem: 'main 동기화', en: 'sync main', positives: ['main 동기화해줘', '로컬 main 최신화해줘', 'sync main'], foreign: ['파일 동기화해줘', 'sync the docs'] },
+  localCleanup: { stem: '브랜치 정리', en: 'delete local branch', positives: ['브랜치 정리해줘', '로컬 브랜치 정리해줘', 'delete local merged branch'], foreign: ['delete the file now', '파일 삭제해줘'] },
+  remoteCleanup: { stem: '원격 브랜치 삭제 실행', en: 'execute remote branch cleanup', positives: ['원격 브랜치 삭제 실행해줘', '원격 브랜치 제거 실행해줘', '실행해줘', '진행해', 'proceed', 'go ahead', 'execute remote branch cleanup'], foreign: ['delete the file now', '파일 삭제 실행해줘', '로컬 파일 지금 삭제해줘'] },
+  apply: { stem: '패치 적용', en: 'apply patch', positives: ['패치 적용해줘', '최종 적용해줘', 'apply patch'], foreign: ['설정 적용해줘', 'apply the theme'] },
+  validation: { stem: '테스트 실행', en: 'run the tests', positives: ['테스트 실행해줘', '타입체크 실행해줘'], foreign: ['린트 실행해줘'] },
+} satisfies Record<string, ExecutionGateCase>;
+function executionGateNegatives(g: ExecutionGateCase): string[] {
+  const s = g.stem;
+  return [
+    `${s}해도 돼?`, `${s}해도 돼`, `${s}할까`, `${s}해도 될까`, // questions / permission asks
+    `${s}하지 마`, `${s}하지 말아줘`, `${s} 안 해`, `do not ${g.en}`, `don't ${g.en}`, `never ${g.en}`, // negations
+    `${s}했어`, `${s} 완료됐어`, `이미 ${s}했어`, `${g.en} was already done`, // past / statement / completion
+    `"${s}"라고 하면 어떻게 돼`, `${s}하면 어떻게 돼`, `should I ${g.en}?`, `can we ${g.en}`, // reported / hypothetical
+    ...g.foreign,
+  ];
+}
+/** Every git / hosting / workspace / command mutation the runtime can perform. */
+const mutationCalls = (c: { gitCommit: number; gitPush: number; hostingCreatePR: number; hostingMergePR: number; gitSyncMain: number; gitDeleteBranch: number; hostingDeleteRemoteBranch: number; workspaceApply: number; commandRun: number }) =>
+  c.gitCommit + c.gitPush + c.hostingCreatePR + c.hostingMergePR + c.gitSyncMain + c.gitDeleteBranch + c.hostingDeleteRemoteBranch + c.workspaceApply + c.commandRun;
+
 describe('ConversationRuntime', () => {
   it('dispatches the personal-work intent to WorkSurfaceQuery and presents partial availability', async () => {
     const { deps } = makeDeps({
@@ -3323,6 +3361,21 @@ describe('PatchRef → WorkspaceWrite Apply — runtime (Sprint 2u, ADR-0042)', 
     }
   });
 
+  it('Codex W8 re-review gate table — final workspace apply @ PATCH_READY: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.apply;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: patchReadyAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.workspaceApply, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: patchReadyAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
   it('success re-anchors WORKSPACE_APPLIED (CA 2), preserving the workspaceChangeRef (CA 3) and every prior ref (CA 4)', async () => {
     const anchor = patchReadyAnchor();
     const { deps, calls } = makeDeps({ applyAnchor: anchor });
@@ -3548,6 +3601,21 @@ describe('Post-Apply Validation Command — runtime (Sprint 2v, ADR-0043)', () =
       expect(calls.commandRun, text).toBe(1);
       expect(calls.lastCommandRunInput?.command, text).toBe('pnpm');
       expect(calls.lastCommandRunInput?.args, text).toEqual(['test']);
+    }
+  });
+
+  it('Codex W8 re-review gate table — post-apply validation @ WORKSPACE_APPLIED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.validation;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: validatedAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.commandRun, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: validatedAnchor() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
     }
   });
 
@@ -4411,6 +4479,21 @@ describe('Approved Git Commit Execution — runtime (Sprint 2y, ADR-0046)', () =
     }
   });
 
+  it('Codex W8 re-review gate table — commit execution @ COMMIT_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.commit;
+    for (const text of gate.positives) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitCommit, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
   it('ambiguous words at COMMIT_APPROVED do not execute (CA 5)', async () => {
     for (const text of ['좋아', '오케이', '확인', '진행해', '다음 단계']) {
       const { deps, calls } = execDeps();
@@ -5210,6 +5293,21 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
   const EXEC_PHRASES = ['승인된 push 실행해줘', 'push 실행해줘', '이제 실제 push 해줘', 'execute approved push', 'push approved commit'];
 
   // ── execute + gating (CA 1–12) ──────────────────────────────────────────────────────────────
+  it('Codex W8 re-review gate table — push execution @ PUSH_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.push;
+    for (const text of gate.positives) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitPush, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = execDeps();
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
   it('PUSH_APPROVED + each execution phrase → git.pushApprovedCommit once, GIT_PUSHED (CA 1–5)', async () => {
     for (const text of EXEC_PHRASES) {
       const { deps, calls } = execDeps();
@@ -7396,6 +7494,81 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     'git push --force origin feature/x',
     '강제 푸시 실행해줘',
   ];
+
+  it('Codex W8 re-review gate table — PR creation execution @ PR_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.pr;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingCreatePR, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 re-review gate table — merge execution @ MERGE_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.merge;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingMergePR, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 re-review gate table — local main sync @ PR_MERGED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.sync;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitSyncMain, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 re-review gate table — local branch cleanup @ MAIN_SYNCED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.localCleanup;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.gitDeleteBranch, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: MAIN_SYNCED_ANCHOR() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
+
+  it('Codex W8 re-review gate table — remote branch cleanup execution @ REMOTE_BRANCH_CLEANUP_APPROVED: documented/accepted phrases execute once; questions/negations/past/reported/foreign never', async () => {
+    const gate = EXECUTION_GATES.remoteCleanup;
+    for (const text of gate.positives) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.hostingDeleteRemoteBranch, text).toBe(1);
+      expect(mutationCalls(calls), text).toBe(1);
+    }
+    for (const text of executionGateNegatives(gate)) {
+      const { deps, calls } = makeDeps({ applyAnchor: REMOTE_CLEANUP_APPROVED_ANCHOR(), approvalsGetResult: approvedApprovalOf() });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(mutationCalls(calls), text).toBe(0);
+    }
+  });
 
   it('Codex W8 P1: REMOTE_BRANCH_CLEANUP_APPROVED (valid approval) + push phrase → already pushed / unsupported, ZERO deleteRemoteBranch', async () => {
     for (const text of PUSH_PHRASES_AT_APPROVED_STEP) {

@@ -293,6 +293,9 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composePushAlreadyPushed(context, PUSHED).text) return 'push-already-pushed';
   if (text === composer.composePushUnsupportedCompanion(context).text) return 'push-unsupported';
   if (text === composer.composeNoPushTarget(context).text) return 'push-no-target';
+  if (text === composer.composePushAlreadyApproved(context).text) return 'push-already-approved';
+  if (text === composer.composeMergeAlreadyApproved(context).text) return 'merge-already-approved';
+  if (text === composer.composeRemoteBranchCleanupAlreadyApproved(context).text) return 'remote-cleanup-already-approved';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
   return 'other';
 }

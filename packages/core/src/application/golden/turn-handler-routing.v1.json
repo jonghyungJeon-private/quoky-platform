@@ -72,6 +72,14 @@
     {"id": "route-067", "text": "브랜치 삭제했어", "expected": {"route": "classifier"}, "source": "Codex W8 review P2: a past-tense branch statement is not a delete request", "mustPass": true},
     {"id": "route-068", "text": "브랜치 삭제 로그를 요약해줘", "expected": {"route": "classifier"}, "source": "Codex W8 review P2: summarizing a delete log is not a delete request", "mustPass": true},
     {"id": "route-069", "text": "브랜치 정리 완료", "expected": {"route": "classifier"}, "source": "Codex W8 review P2: a cleanup-complete statement is not a delete request", "mustPass": true},
-    {"id": "route-070", "text": "feature/x 브랜치 지워줘", "expected": {"route": "git-branch", "providerCalls": 0}, "source": "Codex W8 review P2: imperative branch delete keeps the deterministic refusal", "mustPass": true}
+    {"id": "route-070", "text": "feature/x 브랜치 지워줘", "expected": {"route": "git-branch", "providerCalls": 0}, "source": "Codex W8 review P2: imperative branch delete keeps the deterministic refusal", "mustPass": true},
+    {"id": "route-071", "text": "푸시 실행해도 돼?", "ctx": {"applyAnchor": "PUSH_APPROVED"}, "expected": {"route": "runtime", "reply": "push-already-approved", "providerCalls": 0}, "source": "Codex W8 re-review P1: a push-execution question at PUSH_APPROVED never pushes", "mustPass": true},
+    {"id": "route-072", "text": "푸시 실행했어", "ctx": {"applyAnchor": "PUSH_APPROVED"}, "expected": {"route": "runtime", "reply": "push-already-approved", "providerCalls": 0}, "source": "Codex W8 re-review P1: a past-tense push statement at PUSH_APPROVED never pushes", "mustPass": true},
+    {"id": "route-073", "text": "do not execute approved merge", "ctx": {"applyAnchor": "MERGE_APPROVED"}, "expected": {"route": "runtime", "reply": "merge-already-approved", "providerCalls": 0}, "source": "Codex W8 re-review P1: a negated merge command never merges", "mustPass": true},
+    {"id": "route-074", "text": "main 동기화해도 돼?", "ctx": {"applyAnchor": "PR_MERGED"}, "expected": {"route": "classifier"}, "source": "Codex W8 re-review P1: a sync question at PR_MERGED never syncs", "mustPass": true},
+    {"id": "route-075", "text": "main 동기화하지 마", "ctx": {"applyAnchor": "PR_MERGED"}, "expected": {"route": "classifier"}, "source": "Codex W8 re-review P1: a sync prohibition at PR_MERGED never syncs", "mustPass": true},
+    {"id": "route-076", "text": "do not delete local branch", "ctx": {"applyAnchor": "MAIN_SYNCED"}, "expected": {"route": "classifier"}, "source": "Codex W8 re-review P1: a negated local cleanup never deletes", "mustPass": true},
+    {"id": "route-077", "text": "delete the file now", "ctx": {"applyAnchor": "REMOTE_BRANCH_CLEANUP_APPROVED"}, "expected": {"route": "classifier"}, "source": "Codex W8 re-review P1: an execute word with a foreign target never deletes the remote branch", "mustPass": true},
+    {"id": "route-078", "text": "원격 브랜치 삭제 실행됐어", "ctx": {"applyAnchor": "REMOTE_BRANCH_CLEANUP_APPROVED"}, "expected": {"route": "runtime", "reply": "remote-cleanup-already-approved", "providerCalls": 0}, "source": "Codex W8 re-review P1: a past-tense remote cleanup statement never deletes", "mustPass": true}
   ]
 }
