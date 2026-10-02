@@ -1261,6 +1261,19 @@ export class ResponseComposer {
     return { context, text };
   }
 
+  /**
+   * Commit requested while the workspace is on main/master (QA-022, ADR-0094) — refused before any approval is
+   * created; no git mutation ran (only the read-only status that reported the branch).
+   */
+  composeCommitProtectedBranch(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        'main/master 브랜치에는 커밋하지 않아요. 작업용 브랜치(예: feature/…)로 전환한 뒤 다시 요청해 주세요.\n' +
+        '커밋 승인 요청은 만들지 않았어요. git add/commit/push는 하지 않았어요.',
+    };
+  }
+
   /** Commit approval RECORDED after "승인" (ADR-0045, CA #10) — records permission only; never says committed. */
   composeCommitApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {

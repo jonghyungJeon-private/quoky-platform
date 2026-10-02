@@ -846,6 +846,9 @@ const PUSH_WORDS =
 const PUSH_FORBIDDEN_COMPANION =
   /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
 
+/** Branches Personal v1 never commits on (ADR-0094; QA-022 up-front refusal at commit-approval planning). */
+const PROTECTED_COMMIT_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
+
 /** Bound on user-controllable git ref (remote/branch/upstream) display length (Sprint 2z, CA #6). */
 const MAX_GIT_REF_DISPLAY = 80;
 
@@ -3211,6 +3214,14 @@ export class ConversationRuntime {
     } catch {
       this.logCommitApprovalFailed(session, anchor, 'git status read failed');
       return this.failComposed(message, session, this.deps.composer.composeCommitStatusUnavailable(message.context));
+    }
+
+    // 2b. QA-022: Personal v1 never commits on main/master (ADR-0094). Refuse up front, from the branch the
+    //     read-only status above already reported, instead of asking for an approval that can only fail at
+    //     "커밋 실행". NO approval is created. The composition-root git guard still refuses at execution time
+    //     (defense in depth, and the authority for detached/unknown branches).
+    if (PROTECTED_COMMIT_BRANCHES.has(status.branch.trim().toLowerCase())) {
+      return this.respondComposed(message, session, this.deps.composer.composeCommitProtectedBranch(message.context));
     }
 
     // 3. Candidate files = changed ∩ targetFiles with defensive path safety (CA #6/#14). Clean → nothing to

@@ -177,7 +177,8 @@ const commandExecOf = (
 
 const gitStatusOf = (o: Partial<GitStatus> = {}): GitStatus => ({
   clean: false,
-  branch: 'main',
+  // A work branch by default: Personal v1 refuses commit approval on main/master up front (QA-022).
+  branch: 'feature/quoky',
   staged: ['a.ts'],
   unstaged: ['b.ts'],
   untracked: ['c.ts'],
@@ -4111,6 +4112,27 @@ describe('Explicit Git Commit Approval — runtime (Sprint 2x, ADR-0045)', () =>
     expect(calls.commandRun).toBe(0);
     expect(result.reply.text).toBe(composer.composeCommitStatusUnavailable(CTX).text);
     expect(result.reply.text).not.toContain('git 명령은 실행하지 않았어요');
+  });
+
+  it.each(['main', 'master', 'Main', 'MASTER'])(
+    'QA-022: "커밋해줘" on branch %s is refused up front — no approval, no commit, specific reply',
+    async (branch) => {
+      const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf({ ...inScopeStatus, branch }) });
+      const result = await new ConversationRuntime(deps).handle(messageOf('커밋해줘'));
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.gitCommit).toBe(0);
+      expect(calls.lastApplyAnchor).toBeUndefined(); // stays WORKSPACE_APPLIED (no COMMIT_APPROVAL_PENDING)
+      expect(result.reply.text).toBe(composer.composeCommitProtectedBranch(CTX).text);
+      expect(result.reply.text).toContain(
+        'main/master 브랜치에는 커밋하지 않아요. 작업용 브랜치(예: feature/…)로 전환한 뒤 다시 요청해 주세요.',
+      );
+    },
+  );
+
+  it('QA-022: a work branch whose name merely contains "main" still gets a commit approval', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf({ ...inScopeStatus, branch: 'feature/main-menu' }) });
+    await new ConversationRuntime(deps).handle(messageOf('커밋해줘'));
+    expect(calls.requestForRisk).toBe(1);
   });
 
   // ── candidate files + path safety (CA 18–25) ────────────────────────────────────────────────
