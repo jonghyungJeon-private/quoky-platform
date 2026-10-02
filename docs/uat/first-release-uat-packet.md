@@ -95,15 +95,18 @@ Create a throwaway pnpm repo **outside** the Quoky checkout, on a feature branch
 ```sh
 mkdir -p ~/quoky-uat-sandbox && cd ~/quoky-uat-sandbox
 git init -b main && git checkout -b uat/sandbox
+mkdir src
 cat > package.json <<'EOF'
 { "name": "uat-sandbox", "private": true, "scripts": { "test": "node test.js" } }
 EOF
-printf "module.exports = { greet: () => 'hello' };\n" > index.js
-printf "const assert = require('node:assert');\nassert.strictEqual(require('./index').greet(), 'hello');\nconsole.log('ok');\n" > test.js
+printf "module.exports = { greet: () => 'hello' };\n" > src/greet.js
+printf "const assert = require('node:assert');\nassert.strictEqual(require('./src/greet').greet(), 'hello');\nconsole.log('ok');\n" > test.js
 git add -A && git -c user.name=uat -c user.email=uat@example.invalid commit -m "init sandbox"
 ```
 
 (The sandbox needs no dependencies; `pnpm test` just runs `node test.js`.) No remote is configured.
+
+**The target file must live in a subdirectory.** Target-path recognition requires a relative path with at least one directory segment (e.g. `src/greet.js`). A bare root-level filename (`index.js`, `README.md`) or a path starting with `./` or `/` is not recognized as a target, and Quoky would answer with a "which file?" clarification instead of the approval request, which would make every later step fail.
 
 ### 5.2 Steps
 
@@ -113,13 +116,13 @@ Send each phrase as its own message in the owner's DM or designated channel.
 |---|---|---|
 | 2.1 | `새 대화` | Clean session (project binding cleared) |
 | 2.2 | `이 프로젝트 등록해줘: <absolute path of ~/quoky-uat-sandbox>` | Project registered and active |
-| 2.3 | `index.js 파일을 수정해줘: 파일 맨 위에 한 줄 주석을 추가해줘` (or `/preview index.js ...`) | A code-change **approval request** (risk HIGH). File unchanged |
+| 2.3 | `src/greet.js 파일을 수정해줘: 파일 맨 위에 한 줄 주석을 추가해줘` (or `/preview src/greet.js ...`) | A code-change **approval request** (risk HIGH). File unchanged |
 | 2.4 | `진행하지 마` (negated approval) | **Refused**: treated as a denial, not an approval. The request is not applied; file unchanged (`git status` in sandbox clean). Then send the request in 2.3 again |
-| 2.5 | `승인` | A read-only **diff preview** of `index.js` is delivered. File unchanged |
+| 2.5 | `승인` | A read-only **diff preview** of `src/greet.js` is delivered. File unchanged |
 | 2.6 | `적용해줘` | A second approval request for applying. File still unchanged |
 | 2.7 | `승인` | "적용 승인만 기록했어요..." and the next phrase `패치 만들어줘`. File still unchanged |
-| 2.8 | `패치 만들어줘` | Patch preview; "아직 실제 파일 적용은 하지 않았어요". File unchanged |
-| 2.9 | `패치 적용해줘` | `파일을 수정했어요: index.js`; states git commands, commit/push, and tests were **not** run. `git diff` in the sandbox now shows exactly the previewed change (state WORKSPACE_APPLIED) |
+| 2.8 | `패치 만들어줘` | Patch preview starting with "패치 미리보기를 만들었어요. 아직 실제 파일에는 적용하지 않았어요. 파일은 수정되지 않았어요." and ending with a footer that names `"패치 적용해줘"`. File unchanged |
+| 2.9 | `패치 적용해줘` | `파일을 수정했어요: src/greet.js`; states git commands, commit/push, and tests were **not** run. `git diff` in the sandbox now shows exactly the previewed change (state WORKSPACE_APPLIED) |
 | 2.10 | `테스트 실행해줘` | Quoky runs `pnpm test` in the sandbox and reports the result. **No separate approval is requested** — this is the documented behavior; the sandbox must therefore be disposable. The comment-only change keeps the sandbox test passing; record the reported result. |
 | 2.11 | `테스트 실행하지 마` | **No** test run starts; the message is not treated as a test request |
 | 2.12 | Optional: `도움말` while a request is pending, and an unrelated message while an approval is pending | `도움말` returns help; the unrelated message gets the pending-approval reminder (with remaining minutes), not chat |

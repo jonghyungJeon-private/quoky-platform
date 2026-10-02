@@ -43,7 +43,7 @@ import { PersonalGitGuard, PersonalGitPolicyError } from './personal-git-guard';
 
 /**
  * Quoky Personal v1 — first-release OFFLINE acceptance (AC1..AC11 composed properties). Everything is an
- * in-process fake: no Discord gateway, no provider CLI, no network, no real git, no real clock dependency.
+ * in-process fake: no Discord gateway, no provider CLI, no network, no real git. Approval TTL checks use the default clock with a 30-minute margin, so results stay deterministic.
  * Live attended verification (AC12) is a separate gate: docs/uat/first-release-uat-packet.md.
  */
 
