@@ -282,7 +282,7 @@ export function stripUnsolicitedTranslationBlock(
     const line = lines[index];
     if (line === undefined || line.code) continue;
     // A marker on an indented-code line (4+ spaces or a tab, Markdown code block) is code, not prose.
-    if (/^(?: {4}|\t)/u.test(line.text)) continue;
+    if (INDENTED_CODE_LINE.test(line.text)) continue;
     const match = TRANSLATION_MARKER_LINE.exec(line.text);
     if (match === null) continue;
     markerIndex = index;

@@ -206,6 +206,8 @@ describe('stripUnsolicitedTranslationBlock', () => {
       expect(sanitizeGeneralChatText(text, generalChatReplyPolicy('백업 설명해줘'))).toBe(text);
       const tab = '설명입니다.\n\n\tIn English:\nNever delete the backup.';
       expect(sanitizeGeneralChatText(tab, generalChatReplyPolicy('백업 설명해줘'))).toBe(tab);
+      const mixed = '설명입니다.\n\n \tIn English:\nNever delete the backup.';
+      expect(sanitizeGeneralChatText(mixed, generalChatReplyPolicy('백업 설명해줘'))).toBe(mixed);
     });
     it('keeps a fenced example that contains a translation marker (review repro)', () => {
       const text = [
