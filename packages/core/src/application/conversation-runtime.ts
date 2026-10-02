@@ -1038,6 +1038,18 @@ const PUSH_WORDS =
 const PUSH_FORBIDDEN_COMPANION =
   /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
 
+/** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
+const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
+  'PR_APPROVED',
+  'PR_CREATED',
+  'MERGE_APPROVED',
+  'PR_MERGED',
+  'MAIN_SYNCED',
+  'BRANCH_CLEANED',
+  'REMOTE_BRANCH_CLEANUP_APPROVED',
+  'REMOTE_BRANCH_CLEANED',
+]);
+
 /** Branches Personal v1 never commits on (ADR-0094; QA-022 up-front refusal at commit-approval planning). */
 const PROTECTED_COMMIT_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
 
@@ -2058,6 +2070,20 @@ export class ConversationRuntime {
       if (prKind === 'create') return this.handlePrApprovalTurn(message, session, actor, applyAnchor);
       if (DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePushPrDeployUnsupportedTurn(message, session);
       if (ConversationRuntime.interpretPushIntent(message.text) === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
+    }
+    // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
+    // to chat (a free-text model reply could fabricate or advise e.g. `git push -f`). A push+forbidden companion
+    // (force/merge/deploy/PR/…) → the unsupported companion reply; any other push phrase → already pushed. Read-only
+    // PR/merge status phrases keep priority; no git/hosting call is ever made here.
+    if (
+      applyAnchor &&
+      POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status) &&
+      !ConversationRuntime.interpretPrStatusIntent(message.text) &&
+      !ConversationRuntime.interpretMergeStatusIntent(message.text)
+    ) {
+      const pushKind = ConversationRuntime.interpretPushIntent(message.text);
+      if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
+      if (pushKind === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }
     // (Sprint 3b, ADR-0049) already PR-approved — a PR+forbidden → unsupported companion (before create, CA #9);
     // a PR-creation phrase → already approved (not created, Q11); a deploy-only phrase → state-specific reply.
