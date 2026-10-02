@@ -8932,7 +8932,57 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(calls.codeGenerationGenerate).toBe(0);
     expect(result.status).toBe('RESPONDED');
     expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, [B]).text);
-    expect(calls.scopeAnchor).toBe(1); // the next turn may still name the paths (ADR-0037)
+    // The reply asks for the WHOLE request again, so it is never anchored: the resend routes fresh.
+    expect(calls.scopeAnchor).toBe(0);
+  });
+
+  it('missing reply → a resend WITH create wording plans update + add with the NEW instruction (no stale anchor)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const first = await new ConversationRuntime(deps).handle(messageOf(`${A}를 고치고 ${NEW}로 헬퍼를 분리해줘`));
+    expect(first.reply.text).toBe(composer.composeTargetsMissing(CTX, [NEW]).text);
+    expect(calls.scopeAnchor).toBe(0);
+    expect(calls.run).toBe(0);
+
+    const resend = `${A}를 고치고 새 파일 ${NEW}도 만들어줘`;
+    const result = await new ConversationRuntime(deps).handle(messageOf(resend));
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A, NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+    expect(calls.lastRunRequest?.instruction).toBe(resend); // the corrected request, never the first one
+    expect(result.status).toBe('AWAITING_APPROVAL');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A], [NEW]).text);
+  });
+
+  it('reviewer probe R1→R2: the create-wording resend plans on the second turn, not the third', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const r1 = await new ConversationRuntime(deps).handle(messageOf('src/a.ts를 고치고 src/new-helper.ts로 헬퍼를 분리해줘'));
+    expect(r1.reply.text).toBe(composer.composeTargetsMissing(CTX, [NEW]).text);
+    expect(calls.run).toBe(0);
+    expect(calls.scopeAnchor).toBe(0);
+
+    const r2Text = 'src/a.ts를 고치고 새 파일 src/new-helper.ts도 만들어줘';
+    const r2 = await new ConversationRuntime(deps).handle(messageOf(r2Text));
+    expect(r2.status).toBe('AWAITING_APPROVAL');
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A, NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+    expect(calls.lastRunRequest?.instruction).toBe(r2Text);
+    expect(calls.classify).toBe(2); // R2 was classified as a fresh request, never a scope-clarification recovery
+    expect(calls.scopeClear).toBe(0);
+  });
+
+  it('single missing path regression: still anchored, and a bare existing path recovers the ORIGINAL instruction', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const first = await new ConversationRuntime(deps).handle(messageOf('src/typo.ts에서 이 버그 고쳐줘'));
+    expect(first.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'src/typo.ts').text);
+    expect(calls.scopeAnchor).toBe(1);
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(A));
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(calls.lastRunRequest?.instruction).toBe('src/typo.ts에서 이 버그 고쳐줘');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
   });
 
   it('negated create wording does not turn a missing path into a new file', async () => {

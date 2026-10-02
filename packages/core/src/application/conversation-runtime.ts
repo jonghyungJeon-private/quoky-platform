@@ -5432,6 +5432,13 @@ export class ConversationRuntime {
         );
       }
       if (!targetFiles) {
+        // ADR-0099 D1: a "some named paths are missing" reply asks for the WHOLE request again (with create
+        // wording for a new file), so it is NOT anchored — the resend must route as a fresh request, where the
+        // create wording is honored and its own text becomes the instruction. Anchoring it would send the resend
+        // to the existing-files-only recovery with the stale instruction and dead-end on the same reply.
+        if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
+          return this.respondComposed(message, session, this.composeTargetScopeReply(message, collected, unsafe));
+        }
         // ADR-0037: anchor so the user's very next reply (even a bare path) can recover this
         // request. Reached only for a fresh CODE_IMPLEMENTATION request with an active project and
         // an opened workspace (both already required to reach this line) and no validated target.
@@ -5720,6 +5727,19 @@ export class ConversationRuntime {
   }
 
   /**
+   * Whether the target-scope reply is {@link ResponseComposer.composeTargetsMissing} — some named paths resolved
+   * but others are missing, or several are missing (ADR-0099 D1). That reply asks the owner to resend the WHOLE
+   * request (adding create wording for a new file), so it is never anchored as a scope clarification: a bare-path
+   * recovery could neither honor the create wording nor take the corrected instruction. A single missing path,
+   * an unsafe path, or no path at all keeps the ADR-0037 bare-path clarification.
+   */
+  private static asksForWholeRequestAgain(
+    collected: CodeChangeTargetCollection,
+  ): collected is Extract<CodeChangeTargetCollection, { kind: 'missing' }> {
+    return collected.kind === 'missing' && (collected.resolved.length > 0 || collected.missing.length > 1);
+  }
+
+  /**
    * The "which file?" reply for a code-change request with no usable target set (ADR-0036/0037; QA-016;
    * ADR-0099 D1). Some named paths resolved but others are missing, or several are missing → name every
    * missing path and ask again (never a silent drop). Otherwise, when the user DID type a path that could not
@@ -5732,7 +5752,7 @@ export class ConversationRuntime {
     collected: CodeChangeTargetCollection,
     unsafe: readonly string[],
   ): OutboundMessage {
-    if (collected.kind === 'missing' && (collected.resolved.length > 0 || collected.missing.length > 1)) {
+    if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
       return this.deps.composer.composeTargetsMissing(message.context, collected.missing);
     }
     // A missing safe path is the one the owner meant; only with no safe path at all is the unsafe one echoed.
