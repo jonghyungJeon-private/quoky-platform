@@ -6575,6 +6575,64 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   const MAIN_SYNCED_ANCHOR = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
     PR_MERGED_ANCHOR({ status: 'MAIN_SYNCED', syncedMainCommit: MERGE_COMMIT, mainSyncedAt: TS, mainSyncBranch: 'main', syncMode: 'ref-only', workingTreeUpdated: false, previousMainCommit: 'aaaaaaa', ...o });
 
+  // ── QA-V2-W7-02: push phrases after the push → deterministic already-pushed / unsupported reply, never chat ──
+  const POST_PUSH_ANCHORS: Array<[string, () => ApplyPreviewAnchor]> = [
+    ['PR_APPROVED', () => prApprovedAnchor()],
+    ['PR_CREATED', () => PR_CREATED_ANCHOR()],
+    ['MERGE_APPROVED', () => MERGE_APPROVED_ANCHOR()],
+    ['PR_MERGED', () => PR_MERGED_ANCHOR()],
+    ['MAIN_SYNCED', () => MAIN_SYNCED_ANCHOR()],
+  ];
+  const noExternalCalls = (c: { gitPush: number; gitCommit: number; gitSyncMain: number; gitDeleteBranch: number; hostingCreatePR: number; hostingMergePR: number; hostingDeleteRemoteBranch: number; classify: number; run: number }) =>
+    c.gitPush + c.gitCommit + c.gitSyncMain + c.gitDeleteBranch + c.hostingCreatePR + c.hostingMergePR + c.hostingDeleteRemoteBranch + c.classify + c.run;
+
+  it('post-push chain states + push/push-execution phrase → already pushed, no provider/git/hosting call, anchor unchanged', async () => {
+    for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
+      for (const text of ['푸시 실행', '푸시해줘', 'push', '승인된 push 실행해줘']) {
+        const anchor = anchorOf();
+        const { deps, calls } = makeDeps({ applyAnchor: anchor });
+        const r = await new ConversationRuntime(deps).handle(messageOf(text));
+        const key = `${label}: ${text}`;
+        expect(noExternalCalls(calls), key).toBe(0);
+        expect(r.reply.text, key).toBe(
+          composer.composePushAlreadyPushed(CTX, { commitHash: anchor.pushedCommitHash, remote: anchor.pushedRemote, branch: anchor.pushedBranch }).text,
+        );
+        expect(calls.lastApplyAnchor, key).toBeUndefined(); // anchor never re-written
+      }
+    }
+  });
+
+  it('post-push chain states + push with force/merge/deploy companion → unsupported companion reply, nothing executed', async () => {
+    for (const [label, anchorOf] of POST_PUSH_ANCHORS) {
+      for (const text of ['강제 푸시해줘', 'force push', 'git push --force', '푸시하고 머지해줘', '푸시하고 배포해줘']) {
+        const { deps, calls } = makeDeps({ applyAnchor: anchorOf() });
+        const r = await new ConversationRuntime(deps).handle(messageOf(text));
+        const key = `${label}: ${text}`;
+        expect(noExternalCalls(calls), key).toBe(0);
+        expect(r.reply.text, key).toBe(composer.composePushUnsupportedCompanion(CTX).text);
+      }
+    }
+  });
+
+  it('post-push routing regression: PR create / merge / PR status phrases keep their handlers', async () => {
+    const created = makeDeps({ applyAnchor: prApprovedAnchor(), approvalsGetResult: APPROVED_REQ() });
+    await new ConversationRuntime(created.deps).handle(messageOf('PR 생성 실행'));
+    expect(created.calls.hostingCreatePR).toBe(1);
+    const again = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
+    const a0 = PR_CREATED_ANCHOR();
+    const alreadyPushed = composer.composePushAlreadyPushed(CTX, { commitHash: a0.pushedCommitHash, remote: a0.pushedRemote, branch: a0.pushedBranch }).text;
+    const r1 = await new ConversationRuntime(again.deps).handle(messageOf('PR 만들어줘'));
+    expect(r1.reply.text).toBe(composer.composePrAlreadyCreated(CTX, { prNumber: 42, prUrl: 'https://github.com/acme/widgets/pull/42' }).text);
+    expect(r1.reply.text).not.toBe(alreadyPushed);
+    const merge = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
+    await new ConversationRuntime(merge.deps, MERGE_ON).handle(messageOf('머지해줘'));
+    expect(merge.calls.lastApplyAnchor?.status).toBe('MERGE_APPROVAL_PENDING');
+    const status = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
+    const r2 = await new ConversationRuntime(status.deps).handle(messageOf('PR 상태 확인해줘'));
+    expect(status.calls.hostingGetStatus).toBe(1);
+    expect(r2.reply.text).not.toBe(alreadyPushed);
+  });
+
   it('PR_MERGED + explicit sync command → local sync preflight runs, anchors MAIN_SYNCED (CA 1/11/12)', async () => {
     for (const text of ['main 동기화해줘', '로컬 main 최신화해줘', '머지된 main 받아와줘', 'sync main', 'update local main']) {
       const { deps, calls } = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
