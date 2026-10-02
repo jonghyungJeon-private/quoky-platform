@@ -56,8 +56,11 @@ export function detectProjectRegistration(text: string): { path: string; absolut
 /** `Intent.raw.kind` of a chat intent that Core routed to `POLICY_SENSITIVE_CHAT` (ADR-0098 amendment). */
 export const POLICY_SENSITIVE_CHAT_KIND = 'policy-sensitive-chat';
 
-/** Why a chat turn is policy-sensitive (ADR-0098 amendment D1 a/b/c). */
-export type PolicySensitiveChatReason = 'external-action' | 'injection' | 'unsupported-language';
+/**
+ * Why a chat turn is policy-sensitive (ADR-0098 amendment D1 a/b/c, plus `personal-data`: a question about the owner's
+ * own schedule, mail, money or messages, which Quoky cannot see — QA-V2-005).
+ */
+export type PolicySensitiveChatReason = 'external-action' | 'injection' | 'unsupported-language' | 'personal-data';
 
 /**
  * Korean request endings after a verb stem ("…해줘", "…보내 주세요", "…해줄래?", "…해줄 수 있어?"). A descriptive or
@@ -348,7 +351,112 @@ export function detectPolicySensitiveChat(text: string): PolicySensitiveChatReas
   if (isOverrideInjection(text) || INJECTION_PATTERNS.some((pattern) => pattern.test(text))) return 'injection';
   if (detectExternalActionRequest(text) !== undefined) return 'external-action';
   if (isOtherLanguage(text)) return 'unsupported-language';
+  if (isPersonalDataQuestion(text)) return 'personal-data';
   return undefined;
+}
+
+// ---- personal-data questions (QA-V2-005) ----
+// The local model fabricated "내일 9시에는 일정이나 예약이 없어요" for a question about the owner's own schedule. Quoky has no
+// calendar, mailbox, bank or messenger access, so such a question is routed like the other policy-sensitive turns and
+// answered (truthfully: "I cannot see that") by a provider that meets the chat-policy bar. Deterministic, no LLM.
+
+const KO_DAY = String.raw`(?:오늘|내일|모레|글피|이번\s*주|다음\s*주|담주|주말|(?:월|화|수|목|금|토|일)요일|\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?|\d{1,2}\s*월\s*\d{1,2}\s*일|\d{1,2}\s*[/.]\s*\d{1,2})`;
+const KO_DAYPART = String.raw`(?:오전|오후|아침|저녁|밤|낮)`;
+const KO_TIME_PARTICLE = String.raw`(?:에는|에|엔|은|는)?`;
+/** A day / weekday / clock time, optionally with a part of day ("내일 오후 3시에", "9시에"). "저녁" alone is a meal. */
+const KO_TIME = String.raw`(?:${KO_DAYPART}\s*)?${KO_DAY}(?:\s*${KO_TIME_PARTICLE}\s*(?:${KO_DAYPART}\s*)?${KO_DAY}|\s*${KO_TIME_PARTICLE}\s*${KO_DAYPART})*`;
+const KO_POSSESSIVE = String.raw`(?<![가-힣])(?:내|제|나의|저의|우리|우리의)\s+`;
+/** An optional short qualifier between the context and the noun ("점심 약속", "팀 회의"). */
+const KO_MODIFIER = String.raw`(?:[가-힣]{1,4}\s+)?`;
+const KO_PARTICLE_GAP = String.raw`(?:이|가|은|는|을|를|좀|도|에는|에서|에|엔)?\s*(?:좀\s*)?`;
+const KO_ASK = String.raw`(?:뭐|뭔|무엇|무슨|어때|어떻|어떤|있|없|잡혀|알려|보여|확인|말해|읽어|체크|조회|브리핑|요약|몇)`;
+const KO_AGENDA_NOUN = String.raw`(?:일정|스케줄(?!러)|약속|캘린더|달력|미팅|회의(?!록|실)|예약(?:\s*(?:내역|현황|목록))?)`;
+const KO_MAIL_NOUN = String.raw`(?:이?메일(?!함)|e-?mail)`;
+const KO_CHAT_NOUN = String.raw`(?:카톡|카카오톡|문자(?!열)|(?<!(?:에러|오류|커밋|로그|경고|예외|알림|error|commit|log)\s*)(?:메시지|메세지)|디엠|dm)`;
+const KO_OWNER_CONTEXT = String.raw`(?:${KO_POSSESSIVE}|${KO_TIME}\s*${KO_TIME_PARTICLE}\s*)`;
+
+const EN_DAY = String.raw`(?:today|tomorrow|tonight|tmrw|this\s+(?:morning|afternoon|evening|week|weekend)|next\s+(?:week|month|(?:mon|tues|wednes|thurs|fri|satur|sun)day)|(?:mon|tues|wednes|thurs|fri|satur|sun)day)`;
+const EN_ASK = String.raw`\b(?:what|show|tell|check|list|read|summari[sz]e|any|do\s+i|did\s+i|have\s+i|how\s+much|is\s+there|are\s+there|look\s+up|pull\s+up|open|see|got)\b`;
+const EN_OWNED_NOUN = String.raw`\b(?:my|our)\s+(?:(?:google|outlook|work|personal|bank|account|new|unread)\s+)*(?:calendar|schedule|agenda|appointments?|meetings?(?!\s+notes?)|inbox|e-?mails?|text(?:\s+messages?)?s?|dms?|messages|balance|transactions?|statements?|reservations?|bookings?|payments?)\b`;
+
+const ANY_CLAUSE = /(?:)/u;
+
+/**
+ * Questions about the owner's own data Quoky cannot see. `noun` and `verb` must co-occur in one un-negated clause. The
+ * Korean rules are single adjacency patterns (the noun directly followed by an ask), so "일정 관리 팁" never matches.
+ */
+const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegExp }[] = [
+  // "내일 9시에 뭐 있어?", "오늘 뭐 있어" — a day/time directly followed by "뭐 있", not "점심 뭐 있어"
+  {
+    noun: new RegExp(
+      String.raw`${KO_TIME}\s*${KO_TIME_PARTICLE}\s*(?:(?:내가|제가|나|저|우리)\s*)?(?:또\s*)?(?:뭐|무슨\s*(?:일|약속|일정))\s*(?:가|이)?\s*(?:있|잡혀)`,
+      'u',
+    ),
+    verb: ANY_CLAUSE,
+  },
+  // "내 일정 알려줘", "오늘 일정 어때", "다음 주 팀 회의 있어?", "내일 예약 있어?"
+  { noun: new RegExp(`${KO_OWNER_CONTEXT}${KO_MODIFIER}${KO_AGENDA_NOUN}${KO_PARTICLE_GAP}${KO_ASK}`, 'u'), verb: ANY_CLAUSE },
+  { noun: new RegExp(String.raw`예약\s*(?:내역|현황|목록)${KO_PARTICLE_GAP}${KO_ASK}`, 'u'), verb: ANY_CLAUSE },
+  // mailbox / inbox; "내 메일 확인해줘", "새 메일 왔어?", "안 읽은 메일 있어?"
+  {
+    noun: new RegExp(
+      String.raw`(?:메일함|받은\s*편지함|inbox|지메일|gmail)${KO_PARTICLE_GAP}${KO_ASK}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ASK}|왔|와\s*있|온)`,
+      'iu',
+    ),
+    verb: ANY_CLAUSE,
+  },
+  // bank / card: 잔액, 결제·거래·지출 내역, "통장에 얼마 있어"
+  {
+    noun: new RegExp(
+      String.raw`(?:잔액|잔고|결제\s*내역|거래\s*내역|입출금\s*내역|지출\s*내역|카드\s*(?:내역|명세서|사용\s*내역|청구)|계좌\s*내역|통장)${KO_PARTICLE_GAP}(?:${KO_ASK}|얼마|남았|남아)`,
+      'u',
+    ),
+    verb: ANY_CLAUSE,
+  },
+  // messages: "카톡 왔어?", "문자 온 거 있어?", "내 메시지 확인해줘", "부재중 전화 있어?"
+  {
+    noun: new RegExp(
+      String.raw`${KO_CHAT_NOUN}${KO_PARTICLE_GAP}(?:왔|와\s*있|안\s*왔|온\s*(?:거|게|것|건))|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ASK}|부재중\s*전화`,
+      'iu',
+    ),
+    verb: ANY_CLAUSE,
+  },
+  // English: "what's on my calendar", "what's on tomorrow", "what do I have planned today", "am I free tomorrow"
+  {
+    noun: new RegExp(
+      String.raw`\bwhat(?:'s|’s|\s+is)\s+(?:on|in)\s+my\s+(?:calendar|schedule|agenda|plate|diary|inbox)\b|\bwhat(?:'s|’s|\s+is)\s+on\s+(?:for\s+)?${EN_DAY}\b|\bwhat\s+do\s+i\s+have\s+(?:on|planned|scheduled|going\s+on|coming\s+up|for\s+${EN_DAY}|${EN_DAY})\b|\bwhat\s+am\s+i\s+(?:doing|up\s+to)\s+${EN_DAY}\b|\bwhat\s+are\s+my\s+(?:plans|meetings|appointments|events)\b|\bam\s+i\s+(?:free|busy|available)\s+${EN_DAY}\b`,
+      'iu',
+    ),
+    verb: ANY_CLAUSE,
+  },
+  // "do I have meetings tomorrow", "do I have any dentist appointments"
+  {
+    noun: /\bdo\s+i\s+have\s+(?:(?:any|a|an|some)\s+)?(?:\w+\s+)?(?:meetings?|appointments?|events?|calls?|plans|reservations?|bookings?|deadlines?)\b/iu,
+    verb: ANY_CLAUSE,
+  },
+  // "any new emails?", "did I get any unread messages"
+  {
+    noun: /\b(?:any|(?:do|did)\s+i\s+(?:have|get|receive)(?:\s+any)?|have\s+i\s+(?:got|received)(?:\s+any)?)\s+(?:new|unread|important)\s+(?:e-?mails?|messages?|texts?|dms?)\b/iu,
+    verb: ANY_CLAUSE,
+  },
+  // "check my email", "what is my bank balance"; "how much money do I have"
+  { noun: new RegExp(EN_OWNED_NOUN, 'iu'), verb: new RegExp(EN_ASK, 'iu') },
+  { noun: /\bhow\s+much\s+(?:money\s+)?do\s+i\s+have\b/iu, verb: ANY_CLAUSE },
+];
+
+/**
+ * Not a question about the owner's data: how-to / advice / template framing and code or product work ("결제 내역 조회
+ * API 만들어줘", "my calendar app").
+ */
+const PERSONAL_DATA_BLOCKER =
+  /방법|하는\s*법|쓰는\s*법|추천|팁|예시|예문|예제|템플릿|코드|함수|컴포넌트|엔드포인트|스키마|테이블|쿼리|구현|개발(?:해|하)|만들어|짜\s*줘|작성|설계|앱(?![가-힣])|\bhow\s+(?:do|to|can|should|would)\b|\b(?:tips?|recommend\w*|templates?|examples?|typos?|grammar|proofread|draft|api|code|component|function|endpoint|schema|database|table|class|module|script|implement|build|write|design|app|bot)\b/iu;
+
+function isPersonalDataQuestion(text: string): boolean {
+  const requests = stripQuotedExamples(text.replace(RETRACTED_QUESTION, ' '));
+  return requests
+    .split(CLAUSE_BOUNDARY)
+    .filter((clause) => !isMetaFraming(clause) && !PERSONAL_DATA_BLOCKER.test(clause))
+    .some((clause) => PERSONAL_DATA_RULES.some(({ noun, verb }) => hasCoLocatedUnnegated(clause, noun, verb)));
 }
 
 /**
