@@ -52,7 +52,7 @@ line to use the default.
 | `QUOKY_EMBEDDING_MODEL` | `nomic-embed-text` | A name or tag containing `cloud` is refused |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | `3000` | 100-30000 |
 | `QUOKY_CONTEXT_MAX_TOKENS` | `6000` | Keep below the Ollama server context window (see 0.5) |
-| `QUOKY_ACTOR_IDENTITY_MAPPINGS` | unset | Non-secret JSON linking the Discord actor to Jira assignee / GitHub login. Without it the work view says "identity 미설정" |
+| `QUOKY_ACTOR_IDENTITY_MAPPINGS` | unset | Non-secret JSON linking the Discord actor to Jira assignee / GitHub login. Without it the work view reports that the account identity is not set |
 
 Connector credentials (all optional; a connector is registered only when its full set is present; legacy `CHUNSIK_*`
 aliases are accepted, `QUOKY_*` wins):

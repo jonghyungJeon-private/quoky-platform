@@ -106,7 +106,7 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | ID | Input / action | Result |
 |---|---|---|
 | T1 | 할 일 추가: 내일 9시에 회의 알려줘 | PASS (R5 retest) — to-do added, no reminder (to-do wins by ADR-0100 D1). MINOR QA-V2-W7-04: no hint that no reminder was set → side-job fix |
-| T2/T3/T4 | 할 일 추가: 보고서 초안 쓰기 → 할 일 목록 / 내 할 일 보여줘 | PASS — numbered list (Discord ordered list) + Jira/GitHub section truthful "identity 미설정" (connector credentials pending owner) |
+| T2/T3/T4 | 할 일 추가: 보고서 초안 쓰기 → 할 일 목록 / 내 할 일 보여줘 | PASS — numbered list (Discord ordered list) + Jira/GitHub section truthfully reporting that identity is not set (connector credentials pending owner) |
 | T5 | 할 일 추가: (empty) | PASS — refused with example |
 | T6 | 보고서 초안 쓰기 완료 (natural phrase) | FAIL QA-V2-W7-03 (MEDIUM) — GENERAL_CHAT; local model "보고서 초안을 성공적으로 완성하였습니다." (fabricated action) → side-job fix: hint-only recognition of exact open to-do title/number |
 | T7 | 할 일 추가: 내 API 키는 sk-… 이야 | PASS — refused, not stored |
@@ -153,13 +153,14 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 These are NOT claimed as done anywhere in the repository docs:
 
 - Connector lookups on real Jira, Slack, Confluence and GitHub tenants (the owner is adding credentials). The wave-7
-  to-do QA showed the Jira/GitHub section truthfully reporting "identity 미설정".
+  to-do QA showed the Jira/GitHub section truthfully reporting that identity is not set.
 - Reminders channel delivery (`QUOKY_REMINDERS_CHANNEL_DELIVERY=true`) and the allowlist-removal DM fallback.
 - The release-default flip for `QUOKY_REMINDERS_ENABLED` (still `false`; it was `true` in the QA environment only).
 - Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED` stayed `false`; the merge path was only checked to refuse).
 - Embedding recall live probe (`QUOKY_EMBEDDING_ENABLED=true` with a local embedding model).
 - Multi-file and new-file previews beyond the single new-file preview used in the wave-7 chain (G2).
 - Answer-quality harness provider runs (none recorded here; each needs separate exact-scope approval).
+- Override copy follow-ups (e8e2c91 transmission-state wording; 43976e1 single-missing-path create-wording resend, sent-then-cancelled copy, QA-V2-004): unit-tested only, not re-run live.
 
 ## Open follow-ups
 
@@ -169,7 +170,8 @@ These are NOT claimed as done anywhere in the repository docs:
    (`apps/quoky/src/app.module.ts`), and the status preview calls the check-runs endpoint. Granting the App the Checks
    permission is documented as required, but whether the minted token carries it was not re-tested after the
    permission change; verify in the connector/PR-status live QA before relying on the PR status preview.
-3. Override copy items from the wave-4 record: the post-send failure wording is addressed by e8e2c91 (generation
-   failures after an override report not-sent / sent / uncertain). The single-missing-path plus create-wording recovery
-   and a dedicated sent-then-cancelled copy are not confirmed closed by any source available to DOC-B; fb0e59a changed
-   only the multi-path missing reply, and a single missing path keeps the ADR-0037 clarification.
+3. Override copy items from the wave-4 record are implemented and unit-tested, but have not been re-run live:
+   e8e2c91 (generation failures after an override report not-sent / sent / uncertain by transmission state) and 43976e1
+   (a single missing path with create wording is routed as a fresh request and resent in full, a dedicated
+   sent-then-cancelled copy `composeCredentialOverrideSentThenCancelled` that differs from the scope-clarification
+   cancelled copy, and QA-V2-004). Re-run them in the next attended live QA.

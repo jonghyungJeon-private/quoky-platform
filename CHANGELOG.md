@@ -7,7 +7,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Quoky Personal v2 — waves 1-8 — 2026-10-03
 
-Waves 1-7 are merged through PRs #105-#111 (2026-10-02). Wave 8 is INT-1 (offline integration acceptance) plus DOC-B (this
+Waves 1-7 are merged through PRs #105-#111 (2026-10-02/03). Wave 8 is INT-1 (offline integration acceptance) plus DOC-B (this
 documentation closeout) and lands in the wave-8 PR. Spec: ADR-0096..0101 and the ADR-0098 amendment;
 plan `docs/plans/personal-v2-execution-plan.md`; live QA record `docs/uat/personal-v2-qa-record.md`. Operator setup:
 `docs/uat/operator-guide.md`. Phrases: `docs/user/quickstart.md`.

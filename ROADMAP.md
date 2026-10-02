@@ -101,7 +101,7 @@ The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that wer
 | Item | Status |
 |---|---|
 | A. Feedback capture (👍/👎 reactions, implicit signals, local store, `피드백 요약`) | DONE (ADR-0098; schema v12) |
-| B. Golden evaluation set and accuracy ratchet | DONE offline (QUAL-2; INT-1 routing ratchet in wave 8) |
+| B. Golden evaluation set and accuracy ratchet | DONE offline (QUAL-2); INT-1 routing ratchet pending in the wave-8 PR |
 | C. Local embedding retrieval | DONE, opt-in (`QUOKY_EMBEDDING_ENABLED=false` by default); live probe pending |
 | D. Feedback-driven examples injected by `PromptComposer` | NOT DONE (v3: feedback learning) |
 | E. Local fine-tuning (MLX LoRA) | NOT DONE (deferred until enough personal data exists) |
@@ -115,7 +115,7 @@ The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that wer
 **Remaining before calling Personal v2 closed:** the separately approved live sessions above (connector lookups on real
 Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the release-default decision for reminders).
 
-**Personal v3 candidates (themes only; the plan will be `docs/plans/personal-v3-plan.md`, to be written by the orchestrator)**
+**Personal v3 candidates (themes only; planned: `docs/plans/personal-v3-plan.md`, not yet written)**
 
 - Multi-agent and continuation, which needs a deployment substrate (the deferred R3 / Stage 2B track).
 - Multimodal input and output.
