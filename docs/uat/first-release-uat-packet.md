@@ -106,7 +106,7 @@ git add -A && git -c user.name=uat -c user.email=uat@example.invalid commit -m "
 
 (The sandbox needs no dependencies; `pnpm test` just runs `node test.js`.) No remote is configured.
 
-**The target file must live in a subdirectory.** Target-path recognition requires a relative path with at least one directory segment (e.g. `src/greet.js`). A bare root-level filename (`index.js`, `README.md`) or a path starting with `./` or `/` is not recognized as a target, and Quoky would answer with a "which file?" clarification instead of the approval request, which would make every later step fail.
+**The target file must live in a subdirectory.** Target-path recognition requires a relative path with at least one directory segment (e.g. `src/greet.js`). A bare root-level filename (`index.js`, `README.md`) is not recognized as a target, and Quoky would answer with the clarification "수정할 파일 경로와 함께 다시 요청해 주세요." instead of the approval request, which would make every later step fail.
 
 ### 5.2 Steps
 

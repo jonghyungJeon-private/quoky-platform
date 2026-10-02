@@ -60,7 +60,7 @@ claude --version
   시작하는 셸에서는 반드시 해제하세요.
 
   ```sh
-  env | grep ANTHROPIC          # 이름이 보이면
+  env | grep ANTHROPIC | cut -d= -f1   # 이름이 보이면
   unset ANTHROPIC_API_KEY
   ```
 
@@ -212,7 +212,7 @@ pnpm dev
 | 8. 검증 | `테스트 실행해줘` 또는 `타입체크 실행해줘` | 등록한 저장소에서 `pnpm test` / `pnpm typecheck` 실행 |
 | 9. (선택) 로컬 커밋 | `커밋해줘` -> `승인` -> `커밋 실행` | 로컬 커밋만. `main`/`master` 브랜치에는 커밋하지 않음 |
 
-> **파일 경로 규칙:** 대상 파일 경로는 프로젝트 기준 상대 경로이며 디렉터리를 최소 하나 포함해야 합니다(예: `src/app.ts`). 저장소 루트의 파일(`README.md`, `index.js`)이나 `./src/x.ts`, `/src/x.ts`처럼 `./` 또는 `/`로 시작하는 경로는 Personal v1에서 대상으로 인식되지 않아 "어떤 파일인가요?"라는 확인 질문이 반복됩니다.
+> **파일 경로 규칙:** 대상 파일 경로는 프로젝트 기준 상대 경로이며 디렉터리를 최소 하나 포함해야 합니다(예: `src/app.ts`). 저장소 루트의 파일(`README.md`, `index.js`)은 Personal v1에서 대상으로 인식되지 않으며, 이 경우 "수정할 파일 경로와 함께 다시 요청해 주세요."라는 안내가 한 번 돌아옵니다. 경로를 포함해 다시 요청하면 됩니다.
 
 > **경고 — 8단계의 `테스트 실행해줘`는 별도 승인 없이 등록한 저장소 체크아웃에서 `pnpm test`를 실행합니다.**
 > 신뢰하지 않는 프로젝트나 테스트 스크립트가 위험한 저장소는 등록하지 마세요. 부정문("테스트 실행하지 마")은 실행으로
@@ -236,7 +236,7 @@ pnpm dev
 | `DISCORD_BOT_TOKEN_MISSING` — "Set DISCORD_BOT_TOKEN in the process environment or .env.local (Discord Developer Portal -> Bot -> Reset Token), then restart." | 토큰이 없거나 비어 있음. `.env.local`에 채우고 재시작 |
 | `DISCORD_TOKEN_INVALID` — "DISCORD_BOT_TOKEN was rejected by Discord. Reset the bot token in the Developer Portal and update it." | 토큰이 틀리거나 재발급됨. 같은 이름의 셸 환경 변수가 덮어쓰고 있지 않은지도 확인 |
 | `DISCORD_DISALLOWED_INTENTS` — "Enable the "Message Content Intent" under Discord Developer Portal -> Bot -> Privileged Gateway Intents, then restart." | 2절 3번을 안 함 |
-| `DISCORD_OWNER_IDS_MISSING` — "Set QUOKY_DISCORD_OWNER_IDS to your Discord user id (comma-separated for several; ...), then restart." | 소유자 ID 없음 (시작 시 fail-closed) |
+| `DISCORD_OWNER_IDS_MISSING` — "Set QUOKY_DISCORD_OWNER_IDS to your Discord user id (comma-separated for several; Discord -> Settings -> Advanced -> Developer Mode, then right-click your name -> Copy User ID), then restart." | 소유자 ID 없음 (시작 시 fail-closed) |
 | `DISCORD_OWNER_IDS_INVALID` — "QUOKY_DISCORD_OWNER_IDS must be comma-separated Discord user ids (17-20 digits each, no empty entries)." | 형식 오류 (빈 항목, 자릿수) |
 | `DISCORD_CHANNEL_IDS_INVALID` — "QUOKY_DISCORD_CHANNEL_IDS must be unset/empty (direct messages only) or comma-separated Discord channel ids (17-20 digits each, no empty entries)." | 채널 ID 형식 오류 |
 | `OLLAMA_ENABLED_INVALID` — "QUOKY_OLLAMA_ENABLED must be unset, "true", or "false"." | `True`, `1`, `yes` 등은 불가 |
