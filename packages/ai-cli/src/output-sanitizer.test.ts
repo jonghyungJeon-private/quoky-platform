@@ -201,6 +201,12 @@ describe('stripUnsolicitedTranslationBlock', () => {
   });
 
   describe('code is never inspected or stripped', () => {
+    it('ignores a translation marker on an indented-code line (Codex delta repro)', () => {
+      const text = '설명입니다.\n\n    In English:\nNever delete the backup.';
+      expect(sanitizeGeneralChatText(text, generalChatReplyPolicy('백업 설명해줘'))).toBe(text);
+      const tab = '설명입니다.\n\n\tIn English:\nNever delete the backup.';
+      expect(sanitizeGeneralChatText(tab, generalChatReplyPolicy('백업 설명해줘'))).toBe(tab);
+    });
     it('keeps a fenced example that contains a translation marker (review repro)', () => {
       const text = [
         '백업 정책은 이렇게 적으면 됩니다.',
