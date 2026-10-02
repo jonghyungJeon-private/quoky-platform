@@ -1,3 +1,5 @@
+import { detectReplyLanguage, hasExplicitLanguageRequest } from '@quoky/core';
+
 const ESC = 0x1b;
 const BEL = 0x07;
 const CSI = 0x9b;
@@ -182,4 +184,81 @@ function decodeContentLine(line: string): string | null {
   } catch {
     return null;
   }
+}
+
+const CURRENT_USER_MESSAGE_MARKER = '--- Current user message ---';
+
+/**
+ * Recover the current User message from a rendered GENERAL_CHAT prompt: the text after the last
+ * `--- Current user message ---` marker, unwrapped from the label envelope when present. Returns `undefined` when
+ * the prompt carries no such marker (non-chat prompts), which downstream treats as an unknown language.
+ */
+export function extractCurrentUserMessage(prompt: string): string | undefined {
+  const markerIndex = prompt.lastIndexOf(CURRENT_USER_MESSAGE_MARKER);
+  if (markerIndex < 0) return undefined;
+  const body = prompt.slice(markerIndex + CURRENT_USER_MESSAGE_MARKER.length).trim();
+  if (body === '') return undefined;
+  try {
+    const envelope = JSON.parse(body) as Record<string, unknown>;
+    if (typeof envelope.content === 'string') return envelope.content;
+  } catch {
+    // Not a label envelope: use the raw text.
+  }
+  return body;
+}
+
+const TRANSLATION_MARKER_LINE =
+  /^[ \t]*[(\[]?[ \t]*(?:translated from [\p{L}]+|(?:english |korean )?translation|in english|in korean|(?:영어 |한국어 )?번역)[ \t]*(?:[:：)\]]|\r?$)/gimu;
+
+/**
+ * Remove a final, explicitly marked translation block that the User did not ask for (e.g. a trailing
+ * "(Translated from Korean)" section). Only when: the User message has a detectable language and carries no
+ * language or translation request; the text before the marker is in that language; and the marked block is in the
+ * other script. Otherwise the text is returned unchanged.
+ */
+export function stripUnsolicitedTranslationBlock(
+  text: string,
+  currentUserMessage: string | undefined,
+): string {
+  if (currentUserMessage === undefined) return text;
+  const userLanguage = detectReplyLanguage(currentUserMessage);
+  if (userLanguage === 'unknown' || hasExplicitLanguageRequest(currentUserMessage)) return text;
+
+  let marker: RegExpExecArray | null = null;
+  for (const match of text.matchAll(TRANSLATION_MARKER_LINE)) marker = match;
+  if (marker === null) return text;
+
+  const body = text.slice(0, marker.index);
+  const block = text.slice(marker.index + marker[0].length);
+  if (body.trim() === '') return text;
+  if (detectReplyLanguage(body) !== userLanguage) return text;
+  const blockLanguage = detectReplyLanguage(block);
+  if (blockLanguage === 'unknown' || blockLanguage === userLanguage) return text;
+  return body.trimEnd();
+}
+
+const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/u;
+const LITERAL_NEWLINE = /(?<!\\)\\n/gu;
+
+/**
+ * Convert a literal two-character `\n` artifact to a real newline, outside code fences and inline code. Applies only
+ * when the text has no real line break and at least two literal occurrences, so a single `\n` (or any `\n` in code
+ * or a multi-line answer) is preserved.
+ */
+export function normalizeLiteralEscapes(text: string): string {
+  if (/[\r\n]/u.test(text)) return text;
+  const segments = text.split(CODE_SEGMENT);
+  let occurrences = 0;
+  for (let i = 0; i < segments.length; i += 2) {
+    occurrences += segments[i]?.match(LITERAL_NEWLINE)?.length ?? 0;
+  }
+  if (occurrences < 2) return text;
+  return segments
+    .map((segment, index) => (index % 2 === 0 ? segment.replace(LITERAL_NEWLINE, '\n') : segment))
+    .join('');
+}
+
+/** Provider-neutral GENERAL_CHAT output hygiene applied after `stripInternalMetadataEnvelope` (ADR-0098 D2). */
+export function sanitizeGeneralChatText(output: string, currentUserMessage?: string): string {
+  return stripUnsolicitedTranslationBlock(normalizeLiteralEscapes(output), currentUserMessage);
 }

@@ -8,6 +8,7 @@ import type {
   Task,
 } from '../domain';
 import type { ProjectReadout } from '../ports';
+import { renderGeneralChatPolicyRules, replyLanguageFact } from './chat-policy/chat-response-policy';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
 import {
   assertContinuationFacts,
@@ -86,6 +87,16 @@ export class PromptComposer {
               'CORE_RUNTIME',
               'AUTHORITATIVE_CURRENT_FACT',
               `Active project id selected for this Task: "${task.projectId}".`,
+            ),
+          ]
+        : []),
+      // ADR-0098 D1: Core names the reply language for this chat turn (GENERAL_CHAT only).
+      ...(isGeneralChat
+        ? [
+            PromptComposer.label(
+              'CORE_RUNTIME',
+              'AUTHORITATIVE_CURRENT_FACT',
+              replyLanguageFact(task.description),
             ),
           ]
         : []),
@@ -324,7 +335,9 @@ export class PromptComposer {
           'MANDATORY LANGUAGE RULE: Respond in the same language the user used in their current message. ' +
           'Your entire response must use that language unless the user explicitly requests a different language ' +
           'in their current message. Never choose the response language from transcript or background content. ' +
-          'For a Korean current message, respond naturally in Korean. Respond conversationally and briefly. ' +
+          'For a Korean current message, respond naturally in Korean. ' +
+          `${renderGeneralChatPolicyRules()} ` +
+          'Respond conversationally and briefly. ' +
           'Interpret the current User task naturally using only relevant conversation continuity. ' +
           'Treat a self-contained greeting or small-talk message as ' +
           'self-contained: respond naturally and directly without asking a clarifying question, and do not mention, continue, summarize, or ' +
