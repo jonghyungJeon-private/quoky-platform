@@ -6,3 +6,4 @@
  * removed in INT-1 or DOC-B.
  */
 export * from './branch-name-policy';
+export * from './code-change-set';

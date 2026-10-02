@@ -27,10 +27,8 @@ import {
   CodeGenerationStatus,
   CommandExecutionStatus,
   IntentType,
-  PatchStatus,
   RiskLevel,
   TaskStatus,
-  WorkspaceChangeStatus,
   approvalRef,
   codeGenerationRef,
   codeProposalRef,
@@ -121,7 +119,7 @@ import type {
 import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
-import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from './target-scope';
+import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
   MAX_CODEGEN_CONTEXT_FILE_BYTES,
   MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
@@ -129,6 +127,18 @@ import {
 } from './code-generation-context';
 import { MAX_COMMIT_MESSAGE_CHARS, isValidCommitMessage } from './commit-message';
 import { isSafePushBranch, isSafePushRemote } from './push-target';
+import {
+  classifyUnverifiedChangeSet,
+  collectCodeChangeTargets,
+  extractSafeTargetCandidates,
+  isSingleUpdateChangeSet,
+  newFileCommitCandidates,
+  partitionCommitCandidates,
+  validateChangeSetForApply,
+  validatePatchableDiff,
+  verifyAppliedChangeSet,
+} from './code-work/code-change-set';
+import type { CodeChangeTargetCollection } from './code-work/code-change-set';
 import type {
   CancelToken,
   ExecutionOutcome,
@@ -360,6 +370,10 @@ export interface ApplyPreviewAnchor {
   executionPlanRef: ExecutionPlanRef;
   workspaceRef: WorkspaceRef;
   targetFiles: string[];
+  /** The subset of `targetFiles` the owner explicitly asked to create (ADR-0099 D1, ADR-0062 wording) — the
+   *  ONLY paths an `add` may target at patch, apply and commit time. Absent on an anchor written before
+   *  ADR-0099 (or with no new file) and then treated as [] (fail closed: every add is rejected). */
+  newFileTargets?: string[];
   codeGenerationRef: CodeGenerationRef;
   codeProposalRef: CodeProposalRef;
   /** The original request's instruction — restated in the apply-approval's `reason`, never re-derived
@@ -673,7 +687,13 @@ export interface ConversationRuntimeDeps {
   /** Reused for the first real file mutation (Sprint 2u, ADR-0042) — the same already-registered
    *  WorkspaceWriteManager ExecutionOrchestrator already depends on. The ONLY thing that mutates files;
    *  Ref-gated, never queries ApprovalManager, never calls git/command execution. */
-  readonly workspaceWrite: { apply(input: ApplyInput): Promise<WorkspaceChange> };
+  readonly workspaceWrite: {
+    apply(input: ApplyInput): Promise<WorkspaceChange>;
+    /** All-or-nothing change-set apply (ADR-0099 D2) — the same WorkspaceWriteManager, same Ref gate. Used for
+     *  every change set other than the single-`update` ADR-0042 shape. Optional only so narrow fakes that never
+     *  reach a change set need not stub it; when absent a change set fails closed before any write. */
+    applyChangeSet?(input: ApplyInput): Promise<WorkspaceChange>;
+  };
   /** Reused for the read-only post-apply git preview (Sprint 2w, ADR-0044) — the already-registered
    *  GitManager (CAP-002). READ-ONLY: `status` is unchanged; `diff` is a new read-only extension. The
    *  runtime never shells out to git and never calls a mutating git operation on this path. */
@@ -682,8 +702,15 @@ export interface ConversationRuntimeDeps {
     diff(rootPath: string): Promise<GitDiff>;
     /** Reused for approved exact-file git commit (Sprint 2y, ADR-0046) — the same already-registered
      *  GitManager. The ONLY git mutation; Ref-gated (APPROVED), commits exactly the approved tracked files,
-     *  never pushes, never runs `git add`. */
-    commitFiles(input: { rootPath: string; files: string[]; message: string; approvalRef: ApprovalRef }): Promise<GitCommitResult>;
+     *  never pushes. `newFiles` (ADR-0099 D3) ⊆ `files` are the approved untracked new-file targets — the only
+     *  paths the provider `git add`s (exact pathspecs); omitted when there are none (no `git add` at all). */
+    commitFiles(input: {
+      rootPath: string;
+      files: string[];
+      message: string;
+      approvalRef: ApprovalRef;
+      newFiles?: string[];
+    }): Promise<GitCommitResult>;
     /** Reused for read-only push-approval inspection (Sprint 2z, ADR-0047) — `GitManager.info` already
      *  exists (branch/headSha/detached). READ-ONLY, no network fetch, no mutation; a type-only widening. */
     info(rootPath: string): Promise<RepositoryInfo>;
@@ -1022,10 +1049,13 @@ function buildCommitApprovalReason(
   candidateFiles: string[],
   commitMessage: string,
   validation: { command: string; status: string } | 'unavailable' | 'none',
+  newFiles: readonly string[] = [],
 ): string {
   const shown = candidateFiles.slice(0, MAX_COMMIT_CANDIDATE_FILES);
   const omitted = candidateFiles.length - shown.length;
-  const files = `${shown.join(', ')}${omitted > 0 ? ` (외 ${omitted}개 생략)` : ''}`;
+  // ADR-0099 D3: a new file is marked so the approval covers the `git add` it implies.
+  const isNew = new Set(newFiles);
+  const files = `${shown.map((f) => (isNew.has(f) ? `${f} (new file)` : f)).join(', ')}${omitted > 0 ? ` (외 ${omitted}개 생략)` : ''}`;
   const validationText =
     validation === 'none'
       ? 'no post-apply validation on record'
@@ -1263,10 +1293,6 @@ function buildRemoteBranchCleanupApprovalReason(input: {
   ].join('\n');
 }
 
-/** Bound on how many extracted target-path candidates trigger a workspace.list call per turn
- *  (Sprint 2o, ADR-0036) — a chat message must never drive an unbounded number of workspace scans. */
-const MAX_TARGET_CANDIDATES = 5;
-
 /** Map an Execution Orchestrator outcome status to the ResponseComposer reply status. */
 function toReplyStatus(status: ExecutionOutcomeStatus): ExecutionReplyStatus {
   return status as unknown as ExecutionReplyStatus; // identical string values (ADR-0032)
@@ -1327,6 +1353,9 @@ export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: strin
     kind: f.changeKind === 'delete' ? 'delete' : f.changeKind === 'add' ? 'add' : 'update',
     unified: f.unified, // '' when binary or size-skipped by the provider
     binary: f.binary,
+    // ADR-0099 D1 byte bounds for the apply-capable footer; only when the provider reported them.
+    ...(f.oldSize !== undefined ? { oldSize: f.oldSize } : {}),
+    ...(f.newSize !== undefined ? { newSize: f.newSize } : {}),
   }));
   return { changes, outOfScopeWarnings };
 }
@@ -2881,6 +2910,8 @@ export class ConversationRuntime {
       executionPlanRef: planRef,
       workspaceRef: request.workspaceRef,
       targetFiles,
+      // ADR-0099 D1: persist the explicit new-file targets — the only paths a later add may target.
+      ...(newFileTargets.size ? { newFileTargets: [...newFileTargets] } : {}),
       codeGenerationRef: codeGenerationRef(generation),
       codeProposalRef: codeProposalRef(proposal),
       instruction: request.instruction,
@@ -3055,13 +3086,26 @@ export class ConversationRuntime {
       this.logPatchGenerationFailed(session, anchor, 'workspace diff failed');
       return this.failComposed(message, session, this.deps.composer.composePatchGenerationFailed(message.context));
     }
-    // No PatchSet for empty / changeKind:add / binary / oversized(empty unified) results.
-    const unrenderable =
-      diff.files.length === 0 ||
-      diff.files.some((f) => f.changeKind === 'add' || f.binary || !f.unified.trim());
-    if (unrenderable) {
-      this.logPatchGenerationFailed(session, anchor, 'unrenderable diff (empty/add/binary/oversized)');
+    // No PatchSet for empty / delete / binary / oversized (empty unified) / out-of-bounds results, nor for an
+    // `add` outside the anchor's persisted newFileTargets (ADR-0099 D1; a pre-ADR-0099 anchor admits none).
+    const patchable = validatePatchableDiff(diff, anchor);
+    if (!patchable.ok) {
+      this.logPatchGenerationFailed(session, anchor, patchable.reason);
       return this.failComposed(message, session, this.deps.composer.composePatchGenerationFailed(message.context));
+    }
+    // Each `add` path is re-checked absent (read-only list; never creates anything) — ADR-0099 D1.
+    for (const addPath of patchable.addPaths) {
+      let exists: boolean;
+      try {
+        const hits = await this.deps.workspace.list(anchor.workspaceRef, addPath);
+        exists = hits.some((hit) => normalizeRelativePath(hit) === normalizeRelativePath(addPath));
+      } catch {
+        exists = true; // cannot confirm absence → fail closed
+      }
+      if (exists) {
+        this.logPatchGenerationFailed(session, anchor, 'new-file target exists or could not be checked');
+        return this.failComposed(message, session, this.deps.composer.composePatchGenerationFailed(message.context));
+      }
     }
 
     // 5. Application derives the ApprovalRef; PatchManager receives it and re-validates.
@@ -3120,8 +3164,9 @@ export class ConversationRuntime {
   /**
    * An explicit final workspace-apply command arrived while the anchor is PATCH_READY (Sprint 2u,
    * ADR-0042) — the first real file mutation. Loads the PatchSet by patchRef, verifies its integrity
-   * (identity/status/approval/plan/single-`update`-op/in-scope), applies exactly one `update` op through
-   * WorkspaceWrite (the ONLY file mutator; its applyPatch re-validates the diff against current content),
+   * (identity/status/approval/plan, 1..5 in-scope `update`/`add` ops with add ⇔ newFileTargets — ADR-0099),
+   * applies it through WorkspaceWrite (the ONLY file mutator: a single `update` via the per-file `apply`, any
+   * other set via the all-or-nothing `applyChangeSet`; both re-validate each diff against current content),
    * verifies the returned WorkspaceChange, and re-anchors WORKSPACE_APPLIED. Never calls git,
    * CommandExecution, ExecutionOrchestrator, PatchManager.generate, or CodeGeneration.
    */
@@ -3142,54 +3187,54 @@ export class ConversationRuntime {
       return this.failComposed(message, session, this.deps.composer.composeWorkspaceApplyFailed(message.context));
     }
 
-    // 3. PatchSet integrity (CA Q5 + CA Round 1 #1/#2). Sprint 2u accepts exactly one `update` op whose
-    //    path is within the user-approved targetFiles; add/delete/binary/multi-op all rejected.
-    const op = patchSet.operations[0];
-    const badIntegrity =
-      patchSet.id !== anchor.patchRef.id ||
-      patchSet.status !== PatchStatus.GENERATED ||
-      patchSet.approvalRef.status !== ApprovalStatus.APPROVED ||
-      patchSet.approvalRef.id !== anchor.approvalId ||
-      patchSet.executionPlanRef.id !== anchor.executionPlanRef.id ||
-      patchSet.operations.length !== 1 ||
-      !op ||
-      op.operation !== 'update' ||
-      op.metadata?.['binary'] === true ||
-      !anchor.targetFiles.some((tf) => normalizeRelativePath(tf) === normalizeRelativePath(op.path));
-    if (badIntegrity || !op) {
-      this.logWorkspaceApplyFailed(session, anchor, 'patch set failed integrity/support checks');
+    // 3. PatchSet integrity (CA Q5 + CA Round 1 #1/#2, widened by ADR-0099 D1): the anchored, GENERATED,
+    //    approval/plan-bound PatchSet with 1..5 unique in-scope `update`/`add` ops, add ⇔ newFileTargets;
+    //    delete/binary/out-of-scope all rejected.
+    const integrity = validateChangeSetForApply(patchSet, anchor);
+    if (!integrity.ok) {
+      this.logWorkspaceApplyFailed(session, anchor, `patch set failed integrity/support checks: ${integrity.reason}`);
       return this.failComposed(message, session, this.deps.composer.composeWorkspaceApplyFailed(message.context));
     }
 
-    // 4. Apply through WorkspaceWrite — the ONLY file mutation. Its per-file applyPatch re-validates the
-    //    `update` diff against current content (CA Round 1 #4): a stale diff → 'failed', file unchanged.
+    // 4. Apply through WorkspaceWrite — the ONLY file mutation. The single-`update` ADR-0042 shape keeps the
+    //    per-file `apply` (its applyPatch re-validates the diff against current content: stale → 'failed',
+    //    file unchanged). Every other allowed set goes through the all-or-nothing `applyChangeSet` (ADR-0099 D2).
+    const applyInput: ApplyInput = {
+      patchSet,
+      approvalRef: patchSet.approvalRef, // the approval that authorized THIS patch (§5.3)
+      workspaceRef: anchor.workspaceRef,
+    };
+    const single = isSingleUpdateChangeSet(patchSet.operations);
+    const applyChangeSet = this.deps.workspaceWrite.applyChangeSet?.bind(this.deps.workspaceWrite);
+    if (!single && !applyChangeSet) {
+      this.logWorkspaceApplyFailed(session, anchor, 'change-set apply unavailable');
+      return this.failComposed(message, session, this.deps.composer.composeWorkspaceApplyFailed(message.context));
+    }
     let change: WorkspaceChange;
     try {
-      change = await this.deps.workspaceWrite.apply({
-        patchSet,
-        approvalRef: patchSet.approvalRef, // the approval that authorized THIS patch (§5.3)
-        workspaceRef: anchor.workspaceRef,
-      });
+      change = single || !applyChangeSet
+        ? await this.deps.workspaceWrite.apply(applyInput)
+        : await applyChangeSet(applyInput);
     } catch {
       this.logWorkspaceApplyFailed(session, anchor, 'workspace write threw');
       return this.failComposed(message, session, this.deps.composer.composeWorkspaceApplyFailed(message.context));
     }
 
-    // 5. Result-integrity gate (CA Round 1 #3/#4). Success requires APPLIED AND a full match of the
-    //    returned change to the artifact/context; anything else → no WORKSPACE_APPLIED, safe failure.
-    const r = change.results[0];
-    const applyOk =
-      change.status === WorkspaceChangeStatus.APPLIED &&
-      change.patchRef.id === patchSet.id &&
-      change.approvalRef.id === patchSet.approvalRef.id &&
-      change.executionPlanRef.id === patchSet.executionPlanRef.id &&
-      change.workspaceRef.id === anchor.workspaceRef.id &&
-      change.results.length === 1 &&
-      r?.status === 'applied' &&
-      r?.path === op.path;
-    if (!applyOk) {
+    // 5. Result-integrity gate (CA Round 1 #3/#4, ADR-0099 D2). Success requires APPLIED AND a full match of the
+    //    returned change to the artifact/context, results one-to-one with the ops; anything else → no
+    //    WORKSPACE_APPLIED. A change set reports by outcome: rolled back → "nothing changed"; a partial or
+    //    unverifiable state → "may have applied" with the file list.
+    if (!verifyAppliedChangeSet(change, patchSet, anchor.workspaceRef)) {
       this.logWorkspaceApplyFailed(session, anchor, `workspace change not cleanly applied (status ${change.status})`);
-      return this.failComposed(message, session, this.deps.composer.composeWorkspaceApplyFailed(message.context));
+      const outcome = single ? 'failed' : classifyUnverifiedChangeSet(change);
+      const files = patchSet.operations.map((o) => o.path);
+      const reply =
+        outcome === 'rolled-back'
+          ? this.deps.composer.composeWorkspaceApplyRolledBack(message.context, files)
+          : outcome === 'may-have-applied'
+            ? this.deps.composer.composeWorkspaceApplyPartiallyApplied(message.context, files)
+            : this.deps.composer.composeWorkspaceApplyFailed(message.context);
+      return this.failComposed(message, session, reply);
     }
 
     // 6. Success — re-anchor WORKSPACE_APPLIED, preserving the WorkspaceChangeRef for a future git/test sprint.
@@ -3198,7 +3243,11 @@ export class ConversationRuntime {
       status: 'WORKSPACE_APPLIED',
       workspaceChangeRef: workspaceChangeRef(change),
     });
-    const reply = this.deps.composer.composeWorkspaceApplied(message.context, anchor.targetFiles);
+    const reply = this.deps.composer.composeWorkspaceApplied(
+      message.context,
+      patchSet.operations.map((o) => o.path),
+      integrity.newFiles,
+    );
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return this.responded(session, reply);
   }
@@ -3468,13 +3517,15 @@ export class ConversationRuntime {
 
     // 4. Read-only validation context (reused 2w helper) — display only, never blocks (CA #10/Q10).
     const validation = await this.loadValidationContext(anchor);
+    // ADR-0099 D3: untracked candidates that are anchored new-file targets are marked as new files.
+    const newFiles = newFileCommitCandidates(candidateFiles, anchor, status);
 
     // 5. Create the HIGH commit ApprovalRequest (CA Constraint 2, #4/#11/Q11). Reason names op/workspace/
     //    bounded candidate files/message/validation + "approval only, actual commit deferred". NO raw diff.
     const approval = await this.deps.approvals.requestForRisk({
       executionPlanRef: anchor.executionPlanRef,
       riskLevel: RiskLevel.HIGH,
-      reason: buildCommitApprovalReason(anchor.workspaceRef, candidateFiles, commitMessage, validation),
+      reason: buildCommitApprovalReason(anchor.workspaceRef, candidateFiles, commitMessage, validation, newFiles),
       requestedBy: actor.id,
     });
 
@@ -3486,7 +3537,12 @@ export class ConversationRuntime {
       proposedCommitMessage: commitMessage,
       commitCandidateFiles: candidateFiles,
     });
-    const reply = this.deps.composer.composeCommitApprovalRequested(message.context, { candidateFiles, commitMessage, validation });
+    const reply = this.deps.composer.composeCommitApprovalRequested(message.context, {
+      candidateFiles,
+      commitMessage,
+      validation,
+      ...(newFiles.length ? { newFiles } : {}),
+    });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
   }
@@ -3603,10 +3659,11 @@ export class ConversationRuntime {
   /**
    * Execute the approved git commit (Sprint 2y, ADR-0046) — the FIRST real git mutation. Reached ONLY at
    * COMMIT_APPROVED with an explicit commit-EXECUTION phrase (§5.4). Re-verifies the live approval + exact
-   * candidate scope against a FRESH `git.status`, then commits exactly the approved TRACKED files via the
-   * Ref-gated `GitManager.commitFiles`. NO `git add`, NO push, NO rollback, NO CommandExecution/shell, NO
-   * WorkspaceWrite/Patch/CodeGeneration, NO ExecutionOrchestrator. An untracked approved candidate is blocked
-   * with a DISTINCT reply (CA #1/#2/#3). Any scope drift / stale approval / invalid message → safe failure
+   * candidate scope against a FRESH `git.status`, then commits exactly the approved files via the Ref-gated
+   * `GitManager.commitFiles`. The only `git add` is of the approved untracked candidates that are anchored
+   * new-file targets (ADR-0099 D3, passed as `newFiles`); NO push, NO rollback, NO CommandExecution/shell, NO
+   * WorkspaceWrite/Patch/CodeGeneration, NO ExecutionOrchestrator. Any other untracked approved candidate is
+   * blocked with a DISTINCT reply (CA #1/#2/#3). Any scope drift / stale approval / invalid message → safe failure
    * requiring a NEW approval; no commit. On success → re-anchor GIT_COMMITTED (committed only, NOT pushed).
    */
   private async handleCommitExecutionTurn(
@@ -3655,40 +3712,21 @@ export class ConversationRuntime {
     //    normalized + de-duplicated so a candidate appearing in BOTH staged and unstaged is still eligible.
     //    unavailable() = composeCommitExecutionUnavailable (needs a new approval); untracked() = the DISTINCT
     //    composeCommitExecutionUntrackedUnsupported. Any block → NO commit.
-    const unavailable = (): Promise<TurnResult> =>
-      this.failComposed(message, session, this.deps.composer.composeCommitExecutionUnavailable(message.context));
-    const candidates = anchor.commitCandidateFiles.map(safeRelativePath);
-    if (candidates.some((c) => c === null)) return unavailable(); // unsafe approved candidate (Q22)
-    const safeCandidates = [...new Set(candidates as string[])];
-    const scope = new Set(anchor.targetFiles.map(normalizeRelativePath));
-    if (safeCandidates.some((c) => !scope.has(c))) return unavailable(); // candidate outside targetFiles (Q23)
-    const norm = (xs: string[]): (string | null)[] => xs.map(safeRelativePath);
-    const stagedN = norm(status.staged);
-    const unstagedN = norm(status.unstaged);
-    const untrackedN = norm(status.untracked);
-    if ([...stagedN, ...unstagedN, ...untrackedN].some((c) => c === null)) return unavailable(); // unsafe changed path
-    const trackedChanged = new Set([...stagedN, ...unstagedN].filter((c): c is string => c !== null)); // staged ∪ unstaged
-    const untrackedSet = new Set(untrackedN.filter((c): c is string => c !== null));
-    const stagedSet = new Set(stagedN.filter((c): c is string => c !== null));
+    //    ADR-0099 D3: an untracked candidate is admitted only as one of the anchor's newFileTargets (passed as
+    //    `newFiles` for the exact `git add`); every other untracked candidate keeps the distinct reply.
+    const partition = partitionCommitCandidates({ candidates: anchor.commitCandidateFiles, scope: anchor, status });
+    if (!partition.ok) {
+      if (partition.reason === 'untracked-unsupported') {
+        this.logCommitExecutionFailed(session, anchor, 'approved candidate is untracked');
+        return this.failComposed(message, session, this.deps.composer.composeCommitExecutionUntrackedUnsupported(message.context));
+      }
+      if (partition.reason === 'scope-drift') {
+        this.logCommitExecutionFailed(session, anchor, 'approved commit scope no longer matches working tree');
+      }
+      return this.failComposed(message, session, this.deps.composer.composeCommitExecutionUnavailable(message.context));
+    }
+    const safeCandidates = partition.files;
     const candSet = new Set(safeCandidates);
-    // (CA #1/#2) untracked approved candidate → DISTINCT untracked-unsupported reply (no separate git add here).
-    if (safeCandidates.some((c) => untrackedSet.has(c) && !trackedChanged.has(c))) {
-      this.logCommitExecutionFailed(session, anchor, 'approved candidate is untracked');
-      return this.failComposed(message, session, this.deps.composer.composeCommitExecutionUntrackedUnsupported(message.context));
-    }
-    // every approved candidate still a TRACKED change (Q5); in-scope tracked-changed set EQUALS candidate set
-    // (Q6); no changed file (tracked or untracked) outside targetFiles (Q4); no staged file outside candidates
-    // (Constraint 4).
-    const allChanged = new Set([...trackedChanged, ...untrackedSet]);
-    const inScopeTrackedChanged = [...trackedChanged].filter((c) => scope.has(c));
-    const missing = safeCandidates.filter((c) => !trackedChanged.has(c));
-    const extraInScope = inScopeTrackedChanged.filter((c) => !candSet.has(c));
-    const outOfScope = [...allChanged].filter((c) => !scope.has(c));
-    const stagedOutsideCandidates = [...stagedSet].filter((c) => !candSet.has(c));
-    if (missing.length || extraInScope.length || outOfScope.length || stagedOutsideCandidates.length) {
-      this.logCommitExecutionFailed(session, anchor, 'approved commit scope no longer matches working tree');
-      return unavailable();
-    }
 
     // 6. Execute the exact-file commit through the Git capability (Ref-gated). A throw → safe failure: NO fake
     //    success, NO push, NO rollback (Q8/CA #10).
@@ -3699,6 +3737,7 @@ export class ConversationRuntime {
         files: safeCandidates,
         message: anchor.proposedCommitMessage,
         approvalRef: gitApprovalRef,
+        ...(partition.newFiles.length ? { newFiles: partition.newFiles } : {}),
       });
     } catch {
       this.logCommitExecutionFailed(session, anchor, 'git commit failed');
@@ -3733,6 +3772,7 @@ export class ConversationRuntime {
     const reply = this.deps.composer.composeCommitExecuted(message.context, {
       commitHash: result.commitHash,
       files: result.committedFiles,
+      ...(partition.newFiles.length ? { newFiles: partition.newFiles } : {}),
     });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return this.responded(session, reply);
@@ -5370,33 +5410,35 @@ export class ConversationRuntime {
     let authoritativeInstruction: string | undefined;
     if (intent.capability === Capability.CODE_IMPLEMENTATION) {
       authoritativeInstruction = message.text;
-      const candidates = extractTargetPathCandidates(message.text).slice(0, MAX_TARGET_CANDIDATES);
-      for (const candidate of candidates) {
-        const hits = await this.deps.workspace.list(workspaceRef!, candidate);
-        // Never assume list()'s glob is exact-match — verify the returned hit normalizes to the
-        // same path as the candidate, and use THAT hit as targetFiles, never the raw candidate.
-        const matched = hits.find((hit) => normalizeRelativePath(hit) === normalizeRelativePath(candidate));
-        if (matched) {
-          targetFiles = [matched];
-          break;
-        }
+      // ADR-0099 D1: EVERY safe named path is a target (≤ MAX_CHANGE_SET_FILES), never only the first hit.
+      // An existing path is an update target; a missing one is a new-file target only with the negation-aware
+      // ADR-0062 create wording (A2, now for each missing path — F3-A marks it as an explicit new-file origin
+      // so runCodeGenerationPreview may accept its `add` diff, still re-checked absent at diff time); otherwise
+      // the reply names the missing paths and asks again. This changes ROUTING only: preview stays
+      // non-mutating and the apply/commit/push/PR approval gates are untouched. A typed absolute / home /
+      // traversal / dot-leading path is never a target (never rewritten into an in-project path) but does not
+      // refuse a request that also names a safe target — an API route or import specifier in the prose is
+      // instruction content. Fenced code is pasted content, never a target.
+      const { candidates, unsafe } = extractSafeTargetCandidates(message.text);
+      const collected = await this.collectCodeChangeTargets(
+        workspaceRef!, candidates, ConversationRuntime.isExplicitNewFileRequest(message.text),
+      );
+      if (collected.kind === 'targets') {
+        targetFiles = collected.targets;
+        if (collected.newFileTargets.length) newFileTargets = collected.newFileTargets;
+      } else if (collected.kind === 'too-many') {
+        return this.respondComposed(
+          message, session, this.deps.composer.composeTooManyTargets(message.context, collected.count, collected.max),
+        );
       }
       if (!targetFiles) {
-        // A2 (Sprint 4c-Follow-up-2, ADR-0062): an EXPLICIT new-file request — a create-file marker plus EXACTLY
-        // ONE safe candidate path that does not exist yet — is a valid planning/preview target, not a reason to
-        // ask "which file?". `candidates` are already absolute/traversal/dot-filtered by extractTargetPathCandidates.
-        // This changes ROUTING only: preview stays non-mutating and the apply/commit/push/PR approval gates are
-        // untouched (planningOnly → PLANNING + APPROVAL, no code-gen/diff/write). Ambiguous/missing/unsafe paths
-        // still fall through to scope clarification below.
-        const newFileTarget = ConversationRuntime.explicitNewFileTarget(message.text, candidates);
-        if (newFileTarget) {
-          targetFiles = [newFileTarget];
-          // F3-A: mark this target as an explicit new-file origin so runCodeGenerationPreview may accept
-          // its `changeKind='add'` diff (still gated by a read-only non-existence re-check at diff time).
-          newFileTargets = [newFileTarget];
+        // ADR-0099 D1: a "some named paths are missing" reply asks for the WHOLE request again (with create
+        // wording for a new file), so it is NOT anchored — the resend must route as a fresh request, where the
+        // create wording is honored and its own text becomes the instruction. Anchoring it would send the resend
+        // to the existing-files-only recovery with the stale instruction and dead-end on the same reply.
+        if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
+          return this.respondComposed(message, session, this.composeTargetScopeReply(message, collected, unsafe));
         }
-      }
-      if (!targetFiles) {
         // ADR-0037: anchor so the user's very next reply (even a bare path) can recover this
         // request. Reached only for a fresh CODE_IMPLEMENTATION request with an active project and
         // an opened workspace (both already required to reach this line) and no validated target.
@@ -5410,7 +5452,7 @@ export class ConversationRuntime {
           ...(session.activeProjectId ? { projectId: session.activeProjectId } : {}),
           createdAt: now(),
         });
-        return this.respondComposed(message, session, this.composeTargetScopeReply(message, candidates));
+        return this.respondComposed(message, session, this.composeTargetScopeReply(message, collected, unsafe));
       }
     }
 
@@ -5434,12 +5476,11 @@ export class ConversationRuntime {
     /(만들어\s*줘|만들어\s*주(?:세요|실래요|시겠어요)?|만들어\s*줄래|만들어라|만들자|생성\s*해(?:\s*줘|\s*주세요)?|\bcreate\b|\bmake\b)/i;
 
   /**
-   * An explicitly-requested single new-file target (Sprint 4c-Follow-up-2, A2; extended 4c-Follow-up-6). Returns
-   * the normalized path ONLY for an UNAMBIGUOUS explicit new-file creation: a create-file request AND exactly
-   * ONE candidate path. `candidates` are already absolute/traversal/dot-filtered by extractTargetPathCandidates.
-   * Returns null otherwise (no create request, or 0 / >1 candidates) so the caller falls back to scope
-   * clarification. Pure/synchronous; no I/O, no workspace mutation — it only lets a new-file path be a valid
-   * planning/preview TARGET.
+   * The pre-ADR-0099 single new-file rule (Sprint 4c-Follow-up-2, A2; extended 4c-Follow-up-6): the normalized
+   * path for a create-file request with exactly ONE candidate, else null. NOT used for routing any more — a
+   * code-change request now collects every named path (≤ MAX_CHANGE_SET_FILES) through
+   * `collectCodeChangeTargets` with {@link isExplicitNewFileRequest} as the create gate. Kept only as the public,
+   * pure seam the create-wording tests exercise (`isExplicitNewFileRequest` itself is private). No I/O.
    */
   static explicitNewFileTarget(text: string, candidates: readonly string[]): string | null {
     if (!ConversationRuntime.isExplicitNewFileRequest(text)) return null;
@@ -5597,7 +5638,9 @@ export class ConversationRuntime {
       if (intent.capability === Capability.CODE_IMPLEMENTATION) {
         // New-file targets have no current content to send; only existing target files are disclosed.
         const sentFiles = (request.targetFiles ?? []).filter((f) => !(request.newFileTargets ?? []).includes(f));
-        const reply = this.deps.composer.composeCodeChangeApprovalRequired(message.context, sentFiles);
+        const reply = this.deps.composer.composeCodeChangeApprovalRequired(
+          message.context, sentFiles, request.newFileTargets ?? [],
+        );
         await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
         return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id, executionOutcome: outcome };
       }
@@ -5641,34 +5684,83 @@ export class ConversationRuntime {
       ...(pending.rawKind ? { raw: { kind: pending.rawKind } } : {}),
     };
 
-    const candidates = extractTargetPathCandidates(message.text).slice(0, MAX_TARGET_CANDIDATES);
-    for (const candidate of candidates) {
-      const hits = await this.deps.workspace.list(ws.workspaceRef!, candidate);
-      const matched = hits.find((hit) => normalizeRelativePath(hit) === normalizeRelativePath(candidate));
-      if (matched) {
-        // F4-B/RC4: recover with the ORIGINAL full instruction from the anchor — never `message.text`
-        // (the bare-path follow-up) and never the ≤200-char summary.
-        return this.runResolvedExecution(
-          message, session, actor, recovered, ws.workspaceRef, [matched], undefined, pending.authoritativeInstruction,
-        );
-      }
+    // ADR-0099 D1: the same collector as a fresh request. Recovery only ever routes EXISTING files (never a
+    // new-file origin), so a missing path here is named and asked again; an unsafe typed path is never a target
+    // and is refused when no safe target is left.
+    const { candidates, unsafe } = extractSafeTargetCandidates(message.text);
+    const collected = await this.collectCodeChangeTargets(ws.workspaceRef!, candidates, false);
+    if (collected.kind === 'targets') {
+      // F4-B/RC4: recover with the ORIGINAL full instruction from the anchor — never `message.text`
+      // (the bare-path follow-up) and never the ≤200-char summary.
+      return this.runResolvedExecution(
+        message, session, actor, recovered, ws.workspaceRef, collected.targets, undefined, pending.authoritativeInstruction,
+      );
+    }
+    if (collected.kind === 'too-many') {
+      return this.respondComposed(
+        message, session, this.deps.composer.composeTooManyTargets(message.context, collected.count, collected.max),
+      );
     }
 
-    const reply = this.composeTargetScopeReply(message, candidates);
+    const reply = this.composeTargetScopeReply(message, collected, unsafe);
     return this.respondComposed(message, session, reply); // no re-anchor (next-turn-only)
   }
 
   /**
-   * The "which file?" reply for a code-change request with no usable target (ADR-0036/0037; QA-016). When the
-   * user DID type a path that could not be used (missing, outside the project, absolute, traversal), say so and
-   * echo the path as typed — never whether an out-of-root file exists. With no path typed at all (or an ambiguous
-   * multi-path new-file request), keep the original clarification copy.
+   * ADR-0099 D1 target collection over the read-only workspace listing. Never assume list()'s glob is
+   * exact-match — a hit counts only when it normalizes to the candidate, and THAT hit (never the raw
+   * candidate) becomes the target. At most MAX_CHANGE_SET_FILES lookups; more candidates are refused unlooked.
    */
-  private composeTargetScopeReply(message: InboundMessage, candidates: readonly string[]): OutboundMessage {
+  private collectCodeChangeTargets(
+    workspaceRef: WorkspaceRef,
+    candidates: readonly string[],
+    allowNewFiles: boolean,
+  ): Promise<CodeChangeTargetCollection> {
+    return collectCodeChangeTargets({
+      candidates,
+      allowNewFiles,
+      resolveExisting: async (candidate) => {
+        const hits = await this.deps.workspace.list(workspaceRef, candidate);
+        return hits.find((hit) => normalizeRelativePath(hit) === normalizeRelativePath(candidate)) ?? null;
+      },
+    });
+  }
+
+  /**
+   * Whether the target-scope reply is {@link ResponseComposer.composeTargetsMissing} — some named paths resolved
+   * but others are missing, or several are missing (ADR-0099 D1). That reply asks the owner to resend the WHOLE
+   * request (adding create wording for a new file), so it is never anchored as a scope clarification: a bare-path
+   * recovery could neither honor the create wording nor take the corrected instruction. A single missing path,
+   * an unsafe path, or no path at all keeps the ADR-0037 bare-path clarification.
+   */
+  private static asksForWholeRequestAgain(
+    collected: CodeChangeTargetCollection,
+  ): collected is Extract<CodeChangeTargetCollection, { kind: 'missing' }> {
+    return collected.kind === 'missing' && (collected.resolved.length > 0 || collected.missing.length > 1);
+  }
+
+  /**
+   * The "which file?" reply for a code-change request with no usable target set (ADR-0036/0037; QA-016;
+   * ADR-0099 D1). Some named paths resolved but others are missing, or several are missing → name every
+   * missing path and ask again (never a silent drop). Otherwise, when the user DID type a path that could not
+   * be used (missing, outside the project, absolute, traversal), say so and echo the path as typed — never
+   * whether an out-of-root file exists; with no safe path left, a typed unsafe path (`unsafe`, already dropped
+   * as a target) is the one echoed. With no path typed at all, keep the original clarification copy.
+   */
+  private composeTargetScopeReply(
+    message: InboundMessage,
+    collected: CodeChangeTargetCollection,
+    unsafe: readonly string[],
+  ): OutboundMessage {
+    if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
+      return this.deps.composer.composeTargetsMissing(message.context, collected.missing);
+    }
+    // A missing safe path is the one the owner meant; only with no safe path at all is the unsafe one echoed.
     const mentioned = extractMentionedPathTokens(message.text);
-    const ambiguousNewFile = ConversationRuntime.isExplicitNewFileRequest(message.text) && candidates.length > 1;
-    const typed = mentioned[0];
-    return typed && !ambiguousNewFile
+    const typed = collected.kind === 'none'
+      ? (unsafe[0] ?? mentioned[0])
+      : (mentioned.find((token) => !unsafe.includes(token)) ?? mentioned[0]);
+    return typed
       ? this.deps.composer.composeTargetPathRejected(message.context, typed)
       : this.deps.composer.composeTargetScopeClarification(message.context);
   }

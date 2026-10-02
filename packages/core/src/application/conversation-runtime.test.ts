@@ -383,6 +383,19 @@ const workspaceChangeOf = (input: ApplyInput = applyInputOf(), o: Partial<Worksp
   };
 };
 
+/** An APPLIED change-set WorkspaceChange (ADR-0099 D2): one `applied` result per operation, in order. */
+const changeSetChangeOf = (input: ApplyInput, o: Partial<WorkspaceChange> = {}): WorkspaceChange => ({
+  ...workspaceChangeOf(input),
+  results: input.patchSet.operations.map((op) => ({
+    path: op.path,
+    operation: op.operation,
+    status: 'applied' as const,
+    message: op.operation === 'add' ? 'created' : 'updated',
+    durationMs: 1,
+  })),
+  ...o,
+});
+
 /** An APPROVED ApprovalRequest matching the apply anchor's approvalId (Sprint 2t). */
 const approvedApprovalOf = (): ApprovalRequest => ({
   ...pendingApprovalOf(),
@@ -437,6 +450,9 @@ interface Calls {
   codeProposalsGet: number;
   workspaceApply: number;
   lastWorkspaceApplyInput?: ApplyInput;
+  /** ADR-0099 D2: `workspaceWrite.applyChangeSet` calls + last input. */
+  workspaceApplyChangeSet: number;
+  lastWorkspaceApplyChangeSetInput?: ApplyInput;
   commandRun: number;
   lastCommandRunInput?: RunCommandInput;
   gitStatus: number;
@@ -605,6 +621,10 @@ interface Opts {
    *  input (`workspaceChangeOf`); pass 'throw' to simulate a write error, or a literal WorkspaceChange to
    *  force a specific (e.g. FAILED / mismatched) result. */
   workspaceApply?: WorkspaceChange | 'throw';
+  /** `workspaceWrite.applyChangeSet` result (ADR-0099 D2) — defaults to an APPLIED change with one `applied`
+   *  result per operation (`changeSetChangeOf`); 'throw' simulates a pre-write refusal; 'absent' omits the
+   *  method (a narrow fake), or a literal WorkspaceChange forces ROLLED_BACK / PARTIALLY_APPLIED / mismatch. */
+  workspaceApplyChangeSet?: WorkspaceChange | 'throw' | 'absent';
   /** `command.run` result (Sprint 2v) — defaults to a SUCCEEDED CommandExecution echoing the input args
    *  (via `commandExecOf`); pass 'throw' to simulate a runner throw, or a literal CommandExecution to force
    *  a FAILED / TIMED_OUT result. */
@@ -716,6 +736,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     patchGet: 0,
     codeProposalsGet: 0,
     workspaceApply: 0,
+    workspaceApplyChangeSet: 0,
     commandRun: 0,
     gitStatus: 0,
     gitSyncMain: 0,
@@ -979,6 +1000,17 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         if (opts.workspaceApply === 'throw') throw new Error('workspace write boom');
         return opts.workspaceApply ?? workspaceChangeOf(input);
       },
+      ...(opts.workspaceApplyChangeSet === 'absent'
+        ? {}
+        : {
+            async applyChangeSet(input: ApplyInput) {
+              calls.workspaceApplyChangeSet++;
+              calls.lastWorkspaceApplyChangeSetInput = input;
+              const forced = opts.workspaceApplyChangeSet;
+              if (forced === 'throw') throw new Error('change set refused');
+              return forced && forced !== 'absent' ? forced : changeSetChangeOf(input);
+            },
+          }),
     },
     command: {
       async run(input) {
@@ -1698,11 +1730,15 @@ describe('Code Change Scope Collection — runtime', () => {
     expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
   });
 
-  it('bounds validation attempts at MAX_TARGET_CANDIDATES (5) even with more candidates in one message', async () => {
+  it('more than MAX_CHANGE_SET_FILES (5) named paths → "split the request" reply with NO workspace scan at all (ADR-0099 D1)', async () => {
     const manyPaths = Array.from({ length: 8 }, (_, i) => `packages/core/src/f${i}.ts`);
-    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
-    await new ConversationRuntime(deps).handle(messageOf(`${manyPaths.join(' ')} 고쳐줘`));
-    expect(calls.workspaceList).toBe(5);
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => manyPaths });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${manyPaths.join(' ')} 고쳐줘`));
+    expect(calls.workspaceList).toBe(0);
+    expect(calls.run).toBe(0);
+    expect(calls.scopeAnchor).toBe(0);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(new ResponseComposer().composeTooManyTargets(CTX, 8, 5).text);
   });
 
   it('TEST_EXECUTION never calls workspace.list nor anchors a scope clarification (gate is CODE_IMPLEMENTATION-only)', async () => {
@@ -1779,14 +1815,20 @@ describe('Explicit new-file preview target (A2)', () => {
     expect(calls.lastRunRequest?.targetFiles).toEqual(['docs/uat/smoke.md']);
   });
 
-  it('ambiguous (two candidate paths) with a marker still routes to scope clarification', async () => {
-    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: () => [] });
+  it('two new paths with a marker are BOTH new-file targets (ADR-0099 D1 — no longer ambiguous)', async () => {
+    const { deps, calls } = makeDeps({
+      intent: codeIntent,
+      runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL),
+      workspaceList: () => [],
+    });
     const result = await new ConversationRuntime(deps).handle(
       messageOf('파일 생성: docs/a.md 그리고 docs/b.md 미리보기'),
     );
-    expect(calls.run).toBe(0);
-    expect(calls.scopeAnchor).toBe(1);
-    expect(result.reply.text).toBe(new ResponseComposer().composeTargetScopeClarification(CTX).text);
+    expect(calls.run).toBe(1);
+    expect(calls.scopeAnchor).toBe(0);
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['docs/a.md', 'docs/b.md']);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual(['docs/a.md', 'docs/b.md']);
+    expect(result.status).toBe('AWAITING_APPROVAL');
   });
 
   it('a non-existent path WITHOUT a create-file marker still routes to scope clarification, naming the rejected path (QA-016)', async () => {
@@ -8833,5 +8875,564 @@ describe('Follow-up-7 — final isolated E2E (F7-E)', () => {
     // WorkspaceWrite/git are still zero here — the conservative verdict is about the *possibility* of a
     // command/test side effect the runtime cannot prove did not happen, not about WorkspaceWrite specifically.
     expect(calls.workspaceApply + calls.gitCommit + calls.gitPush + calls.hostingCreatePR).toBe(0);
+  });
+});
+
+// ── CODE-3 (ADR-0099 D1–D3) — bounded change sets: collection, add-aware preview/patch/apply, new-file commit ──
+
+describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
+  const A = 'src/a.ts';
+  const B = 'src/b.ts';
+  const NEW = 'src/new-helper.ts';
+  const composer = new ResponseComposer();
+  /** Fake `workspace.list`: an exact hit only for the given existing paths. */
+  const listOf = (existing: string[]) => (glob?: string): string[] => (glob && existing.includes(glob) ? [glob] : []);
+  const modifyDiff = (path: string) => ({
+    path,
+    changeKind: 'modify' as const,
+    unified: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+    binary: false,
+    oldSize: 4,
+    newSize: 4,
+  });
+  const addDiff = (path: string) => ({
+    path,
+    changeKind: 'add' as const,
+    unified: `--- ${path}\n+++ ${path}\n@@ -0,0 +1 @@\n+helper\n`,
+    binary: false,
+    newSize: 7,
+  });
+  const diffOf = (files: WorkspaceDiff['files']): WorkspaceDiff => ({ refId: WORKSPACE.id, files, estimatedChangedLines: files.length, truncated: false });
+  const proposalOf = (paths: string[]) => codeProposalOf({ proposal: paths.map((path) => ({ path, newContent: 'x' })) });
+
+  // ── target collection (D1) ─────────────────────────────────────────────────────────────────
+  it('two existing named paths are BOTH targets — never only the first hit', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, B]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${A}와 ${B}에서 이 버그 고쳐줘`));
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A, B]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A, B]).text);
+  });
+
+  it('an existing path + a missing path with create wording → update + add targets; only the existing one is disclosed', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${A}를 고치고 새 파일 ${NEW}도 만들어줘`));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A, NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+    // The created path is named before "승인" so a typo of an existing file is visible (ADR-0099 D1).
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A], [NEW]).text);
+    expect(result.reply.text).toContain(`새로 만들 파일: ${NEW}`);
+  });
+
+  it('a named missing path without create wording asks again naming it — no plan, no provider call, nothing dropped', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${A}와 ${B}에서 이 버그 고쳐줘`));
+    expect(calls.run).toBe(0);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, [B]).text);
+    // The reply asks for the WHOLE request again, so it is never anchored: the resend routes fresh.
+    expect(calls.scopeAnchor).toBe(0);
+  });
+
+  it('missing reply → a resend WITH create wording plans update + add with the NEW instruction (no stale anchor)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const first = await new ConversationRuntime(deps).handle(messageOf(`${A}를 고치고 ${NEW}로 헬퍼를 분리해줘`));
+    expect(first.reply.text).toBe(composer.composeTargetsMissing(CTX, [NEW]).text);
+    expect(calls.scopeAnchor).toBe(0);
+    expect(calls.run).toBe(0);
+
+    const resend = `${A}를 고치고 새 파일 ${NEW}도 만들어줘`;
+    const result = await new ConversationRuntime(deps).handle(messageOf(resend));
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A, NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+    expect(calls.lastRunRequest?.instruction).toBe(resend); // the corrected request, never the first one
+    expect(result.status).toBe('AWAITING_APPROVAL');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A], [NEW]).text);
+  });
+
+  it('reviewer probe R1→R2: the create-wording resend plans on the second turn, not the third', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const r1 = await new ConversationRuntime(deps).handle(messageOf('src/a.ts를 고치고 src/new-helper.ts로 헬퍼를 분리해줘'));
+    expect(r1.reply.text).toBe(composer.composeTargetsMissing(CTX, [NEW]).text);
+    expect(calls.run).toBe(0);
+    expect(calls.scopeAnchor).toBe(0);
+
+    const r2Text = 'src/a.ts를 고치고 새 파일 src/new-helper.ts도 만들어줘';
+    const r2 = await new ConversationRuntime(deps).handle(messageOf(r2Text));
+    expect(r2.status).toBe('AWAITING_APPROVAL');
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A, NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+    expect(calls.lastRunRequest?.instruction).toBe(r2Text);
+    expect(calls.classify).toBe(2); // R2 was classified as a fresh request, never a scope-clarification recovery
+    expect(calls.scopeClear).toBe(0);
+  });
+
+  it('single missing path regression: still anchored, and a bare existing path recovers the ORIGINAL instruction', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const first = await new ConversationRuntime(deps).handle(messageOf('src/typo.ts에서 이 버그 고쳐줘'));
+    expect(first.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'src/typo.ts').text);
+    expect(calls.scopeAnchor).toBe(1);
+
+    const result = await new ConversationRuntime(deps).handle(messageOf(A));
+    expect(calls.run).toBe(1);
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(calls.lastRunRequest?.instruction).toBe('src/typo.ts에서 이 버그 고쳐줘');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+  });
+
+  it('negated create wording does not turn a missing path into a new file', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${A} 고쳐줘. ${B}는 새 파일 생성 금지`));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, [B]).text);
+  });
+
+  it('exactly six named paths → split-the-request reply before any lookup', async () => {
+    const six = Array.from({ length: 6 }, (_, i) => `src/f${i}.ts`);
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf(six) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${six.join(', ')} 고쳐줘`));
+    expect(calls.workspaceList).toBe(0);
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTooManyTargets(CTX, 6).text);
+  });
+
+  // ── unsafe typed paths are never targets, never rewritten (ADR-0099 D1) ─────────────────────
+  const UNSAFE_REWRITES = [A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml', 'etc/x.ts', 'lib/util.js'];
+  describe.each([
+    ['absolute', '/etc/hosts.txt'],
+    ['traversal', '../outside/x.ts'],
+    ['dot-leading', '.github/workflows/ci.yml'],
+    ['home-relative', '~/outside/x.ts'],
+  ])('an %s typed path', (_shape, unsafe) => {
+    it.each([
+      ['without create wording', `${A} 고치고 ${unsafe}도 고쳐줘`],
+      ['with create wording', `${A} 수정하고 ${unsafe} 새 파일 만들어줘`],
+    ])('%s, next to an existing path → only the safe path is a target, the unsafe one is never rewritten', async (_wording, text) => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+      expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+      expect(calls.workspaceList).toBe(1); // only the safe path was looked up
+      expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+    });
+
+    it('alone → refused as typed even though its rewritten spelling exists; no lookup, no plan', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+      const result = await new ConversationRuntime(deps).handle(messageOf(`${unsafe} 고쳐줘`));
+      expect(calls.run).toBe(0);
+      expect(calls.workspaceList).toBe(0);
+      expect(calls.lastRunRequest).toBeUndefined();
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, unsafe).text);
+    });
+
+    it('in a scope-clarification follow-up → only the safe path is recovered', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+      await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
+      await new ConversationRuntime(deps).handle(messageOf(`${A} ${unsafe}`));
+      expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    });
+
+    it('alone in a scope-clarification follow-up → refused as typed, nothing recovered, no re-anchor', async () => {
+      const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+      await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
+      const result = await new ConversationRuntime(deps).handle(messageOf(unsafe));
+      expect(calls.run).toBe(0);
+      expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, unsafe).text);
+      expect(calls.scopeAnchor).toBe(1);
+    });
+  });
+
+  it('/etc/x.ts alone is refused and never rewritten into the existing etc/x.ts', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(UNSAFE_REWRITES) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('/etc/x.ts 고쳐줘'));
+    expect(calls.lastRunRequest).toBeUndefined();
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, '/etc/x.ts').text);
+  });
+
+  // An absolute route, log path, home config or `../` import in the instruction prose is content, not a target:
+  // the single named file stays the target exactly as before ADR-0099 (reviewer probe set).
+  it.each([
+    ['src/routes.ts 에 /api/v1/users 라우트 추가해줘', 'src/routes.ts'],
+    ['src/server.ts 에서 /api/health 엔드포인트 응답을 바꿔줘', 'src/server.ts'],
+    ['src/app.ts 에서 로그 경로를 /var/log/app.log 로 바꿔줘', 'src/app.ts'],
+    ['src/config.ts 에서 ~/.config/app.json 읽도록 바꿔줘', 'src/config.ts'],
+    ['src/app.ts 의 import 를 ../lib/util.js 에서 가져오도록 바꿔줘', 'src/app.ts'],
+  ])('%s → reaches the approval prompt with the one named target', async (text, target) => {
+    const { deps, calls } = makeDeps({
+      intent: codeIntent,
+      runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL),
+      workspaceList: listOf([target, 'var/log/app.log', 'config/app.json', 'lib/util.js', 'api/v1/users']),
+    });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([target]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(calls.lastRunRequest?.instruction).toBe(text); // the prose path still reaches the AI instruction
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [target]).text);
+  });
+
+  it('a valid target plus ../lib/util.js in prose never makes lib/util.js a target, even with create wording', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf(`${A} 에서 ../lib/util.js 를 쓰는 새 파일 만들어줘`));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+  });
+
+  it('a plain ./ prefix is not unsafe: ./src/a.ts is the update target src/a.ts', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf(`./${A} 고쳐줘`));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+  });
+
+  // ── fenced code is pasted content, never a target ───────────────────────────────────────────
+  it('a single existing path + a fenced snippet with a relative import → one target and the approval prompt', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const text = `${A} 에 아래 코드를 추가해줘:\n\`\`\`ts\nimport { helper } from './lib/helpers.js';\nimport { x } from '../outside/x.js';\n\`\`\``;
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+    expect(calls.lastRunRequest?.newFileTargets).toBeUndefined();
+    expect(calls.lastRunRequest?.instruction).toBe(text); // the snippet still reaches the AI instruction
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, [A]).text);
+  });
+
+  it('create wording + a fenced snippet → only the named new file is an add; the import path is not', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([]) });
+    const text = `${NEW} 새 파일 만들어줘. 내용:\n\`\`\`ts\nimport { a } from './lib/a.js';\n\`\`\``;
+    await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([NEW]);
+    expect(calls.lastRunRequest?.newFileTargets).toEqual([NEW]);
+  });
+
+  it('a URL in the request is never a target path', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf(`${A} 고쳐줘. 참고: https://github.com/acme/repo/blob/main/docs/x.md`));
+    expect(calls.lastRunRequest?.targetFiles).toEqual([A]);
+  });
+
+  it('scope clarification: a follow-up naming two existing paths recovers BOTH; one missing among them asks again', async () => {
+    const ok = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, B]) });
+    await new ConversationRuntime(ok.deps).handle(messageOf('이 버그 고쳐줘'));
+    await new ConversationRuntime(ok.deps).handle(messageOf(`${A} ${B}`));
+    expect(ok.calls.lastRunRequest?.targetFiles).toEqual([A, B]);
+    expect(ok.calls.lastRunRequest?.instruction).toBe('이 버그 고쳐줘');
+
+    const missing = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    await new ConversationRuntime(missing.deps).handle(messageOf('이 버그 고쳐줘'));
+    const result = await new ConversationRuntime(missing.deps).handle(messageOf(`${A} ${B}`));
+    expect(missing.calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, [B]).text);
+    expect(missing.calls.scopeAnchor).toBe(1); // next-turn-only: no re-anchor
+  });
+
+  // ── preview (D1) ───────────────────────────────────────────────────────────────────────────
+  it('an update + add preview persists newFileTargets on the anchor and is apply-capable, marking the new file', async () => {
+    const { result, calls } = await approveWith(
+      { workspaceList: listOf([A]), codeProposal: proposalOf([A, NEW]), workspaceDiff: diffOf([modifyDiff(A), addDiff(NEW)]) },
+      planningOnlyRequestOf({ targetFiles: [A, NEW], newFileTargets: [NEW] }),
+    );
+    expect(calls.codeGenerationGenerate).toBe(1);
+    expect(calls.workspaceReadPaths).toEqual([A]); // the new file has no content to send
+    expect(calls.lastApplyAnchor?.status).toBe('ELIGIBLE');
+    expect(calls.lastApplyAnchor?.targetFiles).toEqual([A, NEW]);
+    expect(calls.lastApplyAnchor?.newFileTargets).toEqual([NEW]);
+    expect(result.reply.text).toContain(`${NEW} (새 파일)`);
+    expect(result.reply.text).toContain('"적용해줘"');
+    expect(calls.workspaceApply + calls.workspaceApplyChangeSet).toBe(0);
+  });
+
+  it('a single existing-file preview anchor carries no newFileTargets key (unchanged ADR-0042 anchor shape)', async () => {
+    const { calls } = await approveWith({ workspaceList: hitsFor(TARGET_FILE) }, planningOnlyRequestOf());
+    expect(calls.lastApplyAnchor?.status).toBe('ELIGIBLE');
+    expect(calls.lastApplyAnchor).not.toHaveProperty('newFileTargets');
+  });
+
+  // ── patch (D1) ─────────────────────────────────────────────────────────────────────────────
+  const patchDeps = (anchor: Partial<ApplyPreviewAnchor>, existing: string[]) =>
+    makeDeps({
+      applyAnchor: approvedAnchorOf({ targetFiles: [A, NEW], ...anchor }),
+      approvalsGetResult: approvedApprovalOf(),
+      codeProposalGet: proposalOf([A, NEW]),
+      workspaceDiff: diffOf([modifyDiff(A), addDiff(NEW)]),
+      workspaceList: listOf(existing),
+    });
+
+  it('an add for an anchored new-file target that is still absent produces a PatchSet (PATCH_READY)', async () => {
+    const { deps, calls } = patchDeps({ newFileTargets: [NEW] }, [A]);
+    await new ConversationRuntime(deps).handle(messageOf('패치 만들어줘'));
+    expect(calls.patchGenerate).toBe(1);
+    expect(calls.lastPatchInput?.diff.files.map((f) => f.changeKind)).toEqual(['modify', 'add']);
+    expect(calls.lastApplyAnchor?.status).toBe('PATCH_READY');
+    expect(calls.lastApplyAnchor?.newFileTargets).toEqual([NEW]);
+  });
+
+  it('an add for a path NOT in newFileTargets (incl. a pre-ADR-0099 anchor) is rejected at patch — no PatchSet', async () => {
+    for (const anchor of [{}, { newFileTargets: [] as string[] }, { newFileTargets: [B] }]) {
+      const { deps, calls } = patchDeps(anchor, [A]);
+      const result = await new ConversationRuntime(deps).handle(messageOf('패치 만들어줘'));
+      expect(calls.patchGenerate).toBe(0);
+      expect(result.reply.text).toBe(composer.composePatchGenerationFailed(CTX).text);
+      expect(calls.lastApplyAnchor).toBeUndefined();
+    }
+  });
+
+  it('an add whose path now exists (or cannot be checked) is rejected at patch', async () => {
+    const exists = patchDeps({ newFileTargets: [NEW] }, [A, NEW]);
+    await new ConversationRuntime(exists.deps).handle(messageOf('패치 만들어줘'));
+    expect(exists.calls.patchGenerate).toBe(0);
+
+    const { deps, calls } = patchDeps({ newFileTargets: [NEW] }, [A]);
+    const throwing = { ...deps, workspace: { ...deps.workspace, async list() { throw new Error('list boom'); } } };
+    await new ConversationRuntime(throwing).handle(messageOf('패치 만들어줘'));
+    expect(calls.patchGenerate).toBe(0);
+  });
+
+  // ── apply (D2) ─────────────────────────────────────────────────────────────────────────────
+  const csAnchor = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
+    approvedAnchorOf({
+      status: 'PATCH_READY',
+      patchRef: { id: 'patch-1', status: PatchStatus.GENERATED },
+      targetFiles: [A, NEW],
+      newFileTargets: [NEW],
+      ...o,
+    });
+  const opOf = (path: string, operation: 'update' | 'add' | 'delete' = 'update') => ({
+    path,
+    operation,
+    diff: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-x\n+y\n`,
+  });
+  const csDeps = (ops: ReturnType<typeof opOf>[], o: Partial<Opts> = {}) =>
+    makeDeps({ applyAnchor: csAnchor(), patchGetResult: patchSetGeneratedOf({ operations: ops }), ...o });
+
+  it('update + add → exactly ONE applyChangeSet call, NO apply() call, WORKSPACE_APPLIED, new file marked', async () => {
+    const { deps, calls } = csDeps([opOf(A), opOf(NEW, 'add')]);
+    const result = await new ConversationRuntime(deps).handle(messageOf('패치 적용해줘'));
+    expect(calls.workspaceApplyChangeSet).toBe(1);
+    expect(calls.workspaceApply).toBe(0);
+    expect(calls.lastWorkspaceApplyChangeSetInput?.patchSet.operations.map((op) => op.operation)).toEqual(['update', 'add']);
+    expect(calls.lastApplyAnchor?.status).toBe('WORKSPACE_APPLIED');
+    expect(calls.lastApplyAnchor?.newFileTargets).toEqual([NEW]);
+    expect(result.reply.text).toBe(composer.composeWorkspaceApplied(CTX, [A, NEW], [NEW]).text);
+    expect(calls.gitCommit + calls.commandRun).toBe(0);
+  });
+
+  it('two existing updates → exactly ONE applyChangeSet call and NO apply() call', async () => {
+    const { deps, calls } = csDeps([opOf(A), opOf(B)], { applyAnchor: csAnchor({ targetFiles: [A, B], newFileTargets: undefined }) });
+    await new ConversationRuntime(deps).handle(messageOf('패치 적용해줘'));
+    expect(calls.workspaceApplyChangeSet).toBe(1);
+    expect(calls.workspaceApply).toBe(0);
+    expect(calls.lastApplyAnchor?.status).toBe('WORKSPACE_APPLIED');
+  });
+
+  it('the single-`update` ADR-0042 shape keeps the per-file apply() path (never applyChangeSet)', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: approvedAnchorOf({ status: 'PATCH_READY', patchRef: { id: 'patch-1', status: PatchStatus.GENERATED } }) });
+    await new ConversationRuntime(deps).handle(messageOf('패치 적용해줘'));
+    expect(calls.workspaceApply).toBe(1);
+    expect(calls.workspaceApplyChangeSet).toBe(0);
+  });
+
+  it('rejected before any write: add not in newFileTargets, pre-ADR-0099 anchor + add, delete, out-of-scope, six ops', async () => {
+    const six = Array.from({ length: 6 }, (_, i) => `src/f${i}.ts`);
+    const cases: Array<[string, ReturnType<typeof opOf>[], Partial<ApplyPreviewAnchor>]> = [
+      ['add not in newFileTargets', [opOf(A), opOf(B, 'add')], { targetFiles: [A, B] }],
+      ['pre-ADR-0099 anchor without newFileTargets', [opOf(A), opOf(NEW, 'add')], { newFileTargets: undefined }],
+      ['delete', [opOf(A), opOf(NEW, 'delete')], {}],
+      ['out of scope', [opOf(A), opOf('src/other.ts')], {}],
+      ['six ops', six.map((p) => opOf(p)), { targetFiles: six, newFileTargets: undefined }],
+    ];
+    for (const [name, ops, anchor] of cases) {
+      const { deps, calls } = csDeps(ops, { applyAnchor: csAnchor(anchor) });
+      const result = await new ConversationRuntime(deps).handle(messageOf('패치 적용해줘'));
+      expect(calls.workspaceApplyChangeSet + calls.workspaceApply, name).toBe(0);
+      expect(result.reply.text, name).toBe(composer.composeWorkspaceApplyFailed(CTX).text);
+      expect(calls.lastApplyAnchor, name).toBeUndefined();
+    }
+  });
+
+  it('ROLLED_BACK → "nothing changed" reply, no WORKSPACE_APPLIED', async () => {
+    const rolledBack = changeSetChangeOf(
+      { patchSet: patchSetGeneratedOf({ operations: [opOf(A), opOf(NEW, 'add')] }), approvalRef: patchSetGeneratedOf().approvalRef, workspaceRef: WORKSPACE },
+      { status: WorkspaceChangeStatus.ROLLED_BACK },
+    );
+    const { deps, calls } = csDeps([opOf(A), opOf(NEW, 'add')], { workspaceApplyChangeSet: rolledBack });
+    const result = await new ConversationRuntime(deps).handle(messageOf('패치 적용해줘'));
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(composer.composeWorkspaceApplyRolledBack(CTX, [A, NEW]).text);
+    expect(calls.lastApplyAnchor).toBeUndefined();
+  });
+
+  it('PARTIALLY_APPLIED → "may have applied" reply naming the files, no WORKSPACE_APPLIED', async () => {
+    const partial = changeSetChangeOf(
+      { patchSet: patchSetGeneratedOf({ operations: [opOf(A), opOf(NEW, 'add')] }), approvalRef: patchSetGeneratedOf().approvalRef, workspaceRef: WORKSPACE },
+      { status: WorkspaceChangeStatus.PARTIALLY_APPLIED },
+    );
+    const { deps, calls } = csDeps([opOf(A), opOf(NEW, 'add')], { workspaceApplyChangeSet: partial });
+    const result = await new ConversationRuntime(deps).handle(messageOf('패치 적용해줘'));
+    expect(result.reply.text).toBe(composer.composeWorkspaceApplyPartiallyApplied(CTX, [A, NEW]).text);
+    expect(calls.lastApplyAnchor).toBeUndefined();
+  });
+
+  it('an applyChangeSet throw → failed reply; a deps without applyChangeSet fails closed before any write', async () => {
+    const threw = csDeps([opOf(A), opOf(NEW, 'add')], { workspaceApplyChangeSet: 'throw' });
+    const r1 = await new ConversationRuntime(threw.deps).handle(messageOf('패치 적용해줘'));
+    expect(r1.reply.text).toBe(composer.composeWorkspaceApplyFailed(CTX).text);
+    expect(threw.calls.lastApplyAnchor).toBeUndefined();
+
+    const absent = csDeps([opOf(A), opOf(NEW, 'add')], { workspaceApplyChangeSet: 'absent' });
+    const r2 = await new ConversationRuntime(absent.deps).handle(messageOf('패치 적용해줘'));
+    expect(absent.calls.workspaceApply).toBe(0);
+    expect(r2.reply.text).toBe(composer.composeWorkspaceApplyFailed(CTX).text);
+  });
+
+  // ── commit (D3) ────────────────────────────────────────────────────────────────────────────
+  const appliedSetAnchor = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
+    csAnchor({ status: 'WORKSPACE_APPLIED', workspaceChangeRef: { id: 'wc-1', status: WorkspaceChangeStatus.APPLIED }, ...o });
+  const commitApprovedSetAnchor = (o: Partial<ApplyPreviewAnchor> = {}): ApplyPreviewAnchor =>
+    appliedSetAnchor({
+      status: 'COMMIT_APPROVED',
+      commitApprovalId: 'apply-appr-1',
+      proposedCommitMessage: 'chore: update src/a.ts 외 1개',
+      commitCandidateFiles: [A, NEW],
+      ...o,
+    });
+  const setStatus = (o: Partial<GitStatus> = {}) => gitStatusOf({ staged: [], unstaged: [A], untracked: [NEW], ...o });
+
+  it('commit approval for a modified + a new file creates ONE HIGH approval and marks the new file', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: appliedSetAnchor(), gitStatus: setStatus() });
+    const result = await new ConversationRuntime(deps).handle(messageOf('커밋해줘'));
+    expect(calls.requestForRisk).toBe(1);
+    expect(calls.lastApplyAnchor?.status).toBe('COMMIT_APPROVAL_PENDING');
+    expect(calls.lastApplyAnchor?.commitCandidateFiles).toEqual([A, NEW]);
+    expect(calls.lastRequestForRiskInput?.reason).toContain(`candidate files: ${A}, ${NEW} (new file)`);
+    expect(result.reply.text).toContain(`대상 파일: ${A}, ${NEW} (새 파일)`);
+  });
+
+  it('commit execution passes newFiles EXACTLY (the new file only) and marks it in the reply', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: commitApprovedSetAnchor(), approvalsGetResult: approvedApprovalOf(), gitStatus: setStatus() });
+    const result = await new ConversationRuntime(deps).handle(messageOf('커밋 실행'));
+    expect(calls.gitCommit).toBe(1);
+    expect(calls.lastGitCommitInput?.files).toEqual([A, NEW]);
+    expect((calls.lastGitCommitInput as { newFiles?: string[] } | undefined)?.newFiles).toEqual([NEW]);
+    expect(calls.lastApplyAnchor?.status).toBe('GIT_COMMITTED');
+    expect(result.reply.text).toContain(`${NEW} (새 파일)`);
+  });
+
+  it('a stray untracked file still blocks the commit (no commit, needs a new approval)', async () => {
+    const { deps, calls } = makeDeps({
+      applyAnchor: commitApprovedSetAnchor(),
+      approvalsGetResult: approvedApprovalOf(),
+      gitStatus: setStatus({ untracked: [NEW, 'stray.txt'] }),
+    });
+    const result = await new ConversationRuntime(deps).handle(messageOf('커밋 실행'));
+    expect(calls.gitCommit).toBe(0);
+    expect(result.reply.text).toBe(composer.composeCommitExecutionUnavailable(CTX).text);
+  });
+
+  it('an untracked candidate that is not an anchored new-file target keeps the distinct untracked reply (no git add)', async () => {
+    const { deps, calls } = makeDeps({
+      applyAnchor: commitApprovedSetAnchor({ newFileTargets: undefined }),
+      approvalsGetResult: approvedApprovalOf(),
+      gitStatus: setStatus(),
+    });
+    const result = await new ConversationRuntime(deps).handle(messageOf('커밋 실행'));
+    expect(calls.gitCommit).toBe(0);
+    expect(result.reply.text).toBe(composer.composeCommitExecutionUntrackedUnsupported(CTX).text);
+  });
+
+  it('a tracked-only commit passes no newFiles key at all (unchanged ADR-0046 call)', async () => {
+    const { deps, calls } = makeDeps({
+      applyAnchor: commitApprovedSetAnchor({ commitCandidateFiles: [A], targetFiles: [A], newFileTargets: undefined }),
+      approvalsGetResult: approvedApprovalOf(),
+      gitStatus: setStatus({ untracked: [] }),
+    });
+    await new ConversationRuntime(deps).handle(messageOf('커밋 실행'));
+    expect(calls.gitCommit).toBe(1);
+    expect(calls.lastGitCommitInput).not.toHaveProperty('newFiles');
+  });
+
+  // ── the full UAT phrase chain on a 2-file update+add set ───────────────────────────────────
+  it('UAT phrases: request → 승인 → 적용해줘 → 승인 → 패치 만들어줘 → 패치 적용해줘 → 커밋해줘 → 승인 → 커밋 실행', async () => {
+    const pendingPlan: ApprovalRequest = { ...pendingApprovalOf(), id: 'plan-appr-1' };
+    let pending: ApprovalRequest | null = null;
+    let anchored: { request: ExecutionRequest; prior: ExecutionOutcome } | null = null;
+    let commitStatus = setStatus({ unstaged: [], untracked: [] });
+    const approvals = new Map<string, ApprovalRequest>();
+    const { deps, calls } = makeDeps({
+      intent: codeIntent,
+      runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL),
+      workspaceList: listOf([A]),
+      codeProposal: proposalOf([A, NEW]),
+      codeProposalGet: proposalOf([A, NEW]),
+      workspaceDiff: diffOf([modifyDiff(A), addDiff(NEW)]),
+    });
+    const runtimeDeps: ConversationRuntimeDeps = {
+      ...deps,
+      approvalFlow: {
+        async findPending() { return pending; },
+        async anchor(_s, request, prior) { anchored = { request, prior }; pending = pendingPlan; },
+        async reconstructResume() { return anchored; },
+      },
+      approvals: {
+        ...deps.approvals,
+        async decide(id, decision) {
+          pending = null;
+          const prev = approvals.get(id) ?? { ...pendingApprovalOf(), id };
+          const next = { ...prev, status: decision.approved ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED };
+          approvals.set(id, next);
+          return next;
+        },
+        async get(id) { return approvals.get(id) ?? null; },
+        async requestForRisk(input) {
+          const req = await deps.approvals.requestForRisk(input);
+          const id = `risk-${approvals.size + 1}`;
+          const stored = { ...req, id };
+          approvals.set(id, stored);
+          return stored;
+        },
+      },
+      patch: {
+        ...deps.patch,
+        async generate(input) {
+          const set = await deps.patch.generate(input);
+          // the real PatchManager maps changeKind add → operation add
+          return { ...set, operations: set.operations.map((op) => (op.path === NEW ? { ...op, operation: 'add' as const } : op)) };
+        },
+      },
+      git: { ...deps.git, async status(root) { await deps.git.status(root); return commitStatus; } },
+    };
+    let patchSet: PatchSet | null = null;
+    const wrapped: ConversationRuntimeDeps = {
+      ...runtimeDeps,
+      patch: {
+        async generate(input) { patchSet = await runtimeDeps.patch.generate(input); return patchSet; },
+        async get() { return patchSet; },
+      },
+    };
+    const rt = new ConversationRuntime(wrapped);
+    const say = (text: string) => rt.handle(messageOf(text));
+
+    expect((await say(`${A}를 고치고 새 파일 ${NEW}도 만들어줘`)).status).toBe('AWAITING_APPROVAL');
+    const preview = await say('승인');
+    expect(preview.reply.text).toContain(`${NEW} (새 파일)`);
+    expect((await say('적용해줘')).status).toBe('AWAITING_APPROVAL');
+    await say('승인');
+    const patchReply = await say('패치 만들어줘');
+    expect(patchReply.reply.text).toContain(`${NEW} (새 파일)`);
+    const applied = await say('패치 적용해줘');
+    expect(applied.reply.text).toBe(composer.composeWorkspaceApplied(CTX, [A, NEW], [NEW]).text);
+    expect(calls.workspaceApplyChangeSet).toBe(1);
+    expect(calls.workspaceApply).toBe(0);
+    commitStatus = setStatus();
+    expect((await say('커밋해줘')).status).toBe('AWAITING_APPROVAL');
+    await say('승인');
+    const committed = await say('커밋 실행');
+    expect(calls.gitCommit).toBe(1);
+    expect((calls.lastGitCommitInput as { newFiles?: string[] } | undefined)?.newFiles).toEqual([NEW]);
+    expect(committed.reply.text).toContain(`${NEW} (새 파일)`);
   });
 });

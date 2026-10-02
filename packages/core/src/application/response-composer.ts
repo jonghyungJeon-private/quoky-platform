@@ -12,6 +12,11 @@ import type {
 import type { AiExecutionResult } from '../ports';
 import { newId } from '../util/id';
 import { buildCanonicalDiff } from './preview-delivery';
+import {
+  MAX_CHANGE_SET_FILES,
+  MAX_CHANGE_SET_FILE_BYTES,
+  MAX_CHANGE_SET_TOTAL_BYTES,
+} from './code-work/code-change-set';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
 import type { WorkSurface } from './work-surface-query';
@@ -85,7 +90,15 @@ export interface CodeChangePreview {
  * (`ConversationRuntime.runCodeGenerationPreview`), so it never reaches rendering.
  */
 export interface CodeDiffPreview {
-  changes: Array<{ path: string; kind: 'add' | 'update' | 'delete'; unified: string; binary: boolean }>;
+  changes: Array<{
+    path: string;
+    kind: 'add' | 'update' | 'delete';
+    unified: string;
+    binary: boolean;
+    /** Byte sizes from the workspace diff, when known — the ADR-0099 D1 bounds checked for the apply footer. */
+    oldSize?: number;
+    newSize?: number;
+  }>;
   outOfScopeWarnings: string[];
 }
 
@@ -134,17 +147,17 @@ const DIFF_BUDGET_MARGIN_CHARS = 20;
 
 const DIFF_PREVIEW_HEADER =
   '코드 변경 제안을 diff로 보여드려요. 아직 실제로 적용되지 않았어요. 파일은 수정되지 않았어요.';
-/** Apply-INcapable preview footer — the change shape (an added/deleted file, several files, or binary content)
- *  is outside what the WorkspaceWrite integrity gate accepts, so THIS preview has no apply step and must not
- *  offer the "적용해줘" request phrase. It replaces the old blanket "apply is not supported" wording, which
- *  became false once preview → apply approval → patch → apply shipped (ADR-0040–0042; Personal v1 scope D5),
- *  and names the real next step instead: re-request a single existing-file change. */
+/** Apply-INcapable preview footer — the change shape (a deleted file, binary or undisplayable content, or more
+ *  than MAX_CHANGE_SET_FILES files) is outside what the WorkspaceWrite integrity gate accepts (ADR-0099 D1), so
+ *  THIS preview has no apply step and must not offer the "적용해줘" request phrase. It replaces the old blanket
+ *  "apply is not supported" wording, which became false once preview → apply approval → patch → apply shipped
+ *  (ADR-0040–0042; Personal v1 scope D5), and names the real next step instead. */
 const DIFF_PREVIEW_FOOTER = [
-  '이 제안은 파일 추가·삭제, 여러 파일 또는 바이너리 변경이라 바로 적용할 수는 없어요.',
-  '파일에 적용까지 하려면 기존 파일 하나만 고치도록 파일 경로와 함께 다시 요청해 주세요.',
+  `이 제안은 파일 삭제, 바이너리·표시할 수 없는 변경 또는 ${MAX_CHANGE_SET_FILES}개보다 많은 파일이 포함돼 바로 적용할 수는 없어요.`,
+  `파일에 적용까지 하려면 고칠 기존 파일이나 새로 만들 파일을 ${MAX_CHANGE_SET_FILES}개까지 경로와 함께 다시 요청해 주세요.`,
 ].join('\n');
-/** Apply-CAPABLE preview footer (Footer Minimal Fix). Shown only when the previewed change is the one
- *  shape the WorkspaceWrite integrity gate accepts (a single, non-binary, existing-file `update`). It
+/** Apply-CAPABLE preview footer (Footer Minimal Fix). Shown only when the previewed change is a shape the
+ *  WorkspaceWrite integrity gate accepts (1..5 non-binary `update`/`add` files, ADR-0099 D1). It
  *  states files are still unmodified, that apply is now available, the explicit apply-REQUEST phrase, and
  *  that a bare "승인" does not modify files. The phrase is "적용해줘" (an APPLY_WORDS entry that drives the
  *  ELIGIBLE→apply-approval transition) — deliberately NOT the later FINAL_APPLY phrase "파일에 적용", which
@@ -206,6 +219,7 @@ const HELP_CAPABILITY_LINES: readonly string[] = [
   '- 프로젝트 등록: "이 프로젝트 등록해줘: /path/to/project"',
   '- 등록한 프로젝트 분석·설명과 코드 리뷰',
   '- 코드 수정: 파일 경로와 함께 요청 → "승인" → 미리보기 확인 → "적용해줘" → "승인" → "패치 만들어줘" → "패치 적용해줘"',
+  `- 여러 파일·새 파일: 한 요청에 파일 경로를 ${MAX_CHANGE_SET_FILES}개까지 적을 수 있어요. 없는 파일은 "새 파일 만들어줘"처럼 요청해야 새로 만들어요.`,
   '- 적용 후 검증: "테스트 실행해줘" 또는 "타입체크 실행해줘"',
   '- 로컬 커밋: 적용 후 "커밋해줘" → "승인" → "커밋 실행" (main/master 브랜치에는 커밋하지 않아요)',
 ];
@@ -313,6 +327,20 @@ function renderExcerptBlock(summary: OutputSummary): string {
   return lines.join('\n');
 }
 
+/** A user-typed path for echoing inside inline code (QA-016): backticks/control characters stripped, truncated. */
+function sanitizeTypedPath(typedPath: string): string {
+  const cleaned = typedPath.replace(/[\u0000-\u001f\u007f`]/g, '').trim();
+  return cleaned.length > MAX_REJECTED_PATH_DISPLAY ? `${cleaned.slice(0, MAX_REJECTED_PATH_DISPLAY)}…` : cleaned;
+}
+
+/** A bounded, comma-joined file list with new files marked "(새 파일)" (ADR-0099 D3) and a "외 N개" suffix. */
+function renderFileList(files: readonly string[], newFiles: readonly string[] = [], max: number = MAX_GIT_CHANGED_FILES): string {
+  const isNew = new Set(newFiles);
+  const shown = files.slice(0, max).map((f) => (isNew.has(f) ? `${f} (새 파일)` : f));
+  const omitted = files.length - shown.length;
+  return `${shown.join(', ')}${omitted > 0 ? ` 외 ${omitted}개` : ''}`;
+}
+
 /** Defensive final-length guard (CA review, required change #6) — belt-and-suspenders over the excerpt cap. */
 function clampToMessageBudget(text: string): string {
   return text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS - 1)}…` : text;
@@ -338,13 +366,53 @@ function renderOutOfScopeWarning(paths: string[]): string | undefined {
 
 /** Clamp one file's unified diff to a bounded number of lines, then chars (Unified Diff Preview,
  *  ADR-0039); reports whether either cap fired so the caller can add a truncation notice. */
-function clampDiffText(unified: string): { text: string; truncated: boolean } {
+function clampDiffText(unified: string, maxChars: number = MAX_DIFF_CHARS_PER_FILE): { text: string; truncated: boolean } {
   const lines = unified.split('\n');
   const lineTruncated = lines.length > MAX_DIFF_LINES_PER_FILE;
   let text = (lineTruncated ? lines.slice(0, MAX_DIFF_LINES_PER_FILE) : lines).join('\n');
-  const charTruncated = text.length > MAX_DIFF_CHARS_PER_FILE;
-  if (charTruncated) text = text.slice(0, MAX_DIFF_CHARS_PER_FILE);
+  const charTruncated = text.length > maxChars;
+  if (charTruncated) text = text.slice(0, maxChars);
   return { text, truncated: lineTruncated || charTruncated };
+}
+
+/** Floor on a file's share of the text-fallback diff budget, so a share is never uselessly small. */
+const MIN_DIFF_CHARS_PER_FILE_SHARE = 120;
+/** Most shrink rounds {@link fitDiffBlocks} takes before leaving any remaining overflow to the drop rule. */
+const MAX_DIFF_FIT_ROUNDS = 8;
+
+/**
+ * Render one block per file within the message budget (ADR-0099 D1). A single file keeps
+ * MAX_DIFF_CHARS_PER_FILE; for a change set every block is rendered, then each file's diff share is shrunk by
+ * the measured overflow — so the REAL per-block overhead (path label, fences, truncation note) is accounted
+ * for, and a long path never pushes a later file out. Only when even the floor share cannot fit does
+ * {@link assembleBoundedBody}'s drop-with-notice rule apply — the accepted bound: five blocks fit with paths up to
+ * ~120 chars; past that a block may be dropped with the explicit "N개 생략" notice (path labels are never
+ * shortened, and the lossless structured preview still carries every full diff).
+ */
+function fitDiffBlocks(header: string, footerLines: string[], count: number, render: (i: number, maxChars: number) => string): string[] {
+  const renderAll = (maxChars: number): string[] => Array.from({ length: count }, (_, i) => render(i, maxChars));
+  let maxChars = MAX_DIFF_CHARS_PER_FILE;
+  let blocks = renderAll(maxChars);
+  if (count <= 1) return blocks;
+  const bodyBudget = diffBodyBudget(header, footerLines);
+  for (let round = 0; round < MAX_DIFF_FIT_ROUNDS && maxChars > MIN_DIFF_CHARS_PER_FILE_SHARE; round++) {
+    // +1 per block for the joining newline.
+    const used = blocks.reduce((n, b) => n + b.length + 1, 0);
+    if (used <= bodyBudget) break;
+    // Shrink from the longest block actually rendered (a line-capped diff may be far below maxChars).
+    const longest = Math.max(...blocks.map((b) => b.length));
+    const next = Math.min(maxChars, longest) - Math.ceil((used - bodyBudget) / count);
+    maxChars = Math.max(MIN_DIFF_CHARS_PER_FILE_SHARE, next);
+    blocks = renderAll(maxChars);
+  }
+  return blocks;
+}
+
+/** The body budget left for file blocks once the header, footer and omitted-notice are reserved. */
+function diffBodyBudget(header: string, footerLines: string[]): number {
+  const footer = footerLines.join('\n');
+  const reserved = header.length + footer.length + MAX_OMITTED_NOTICE_CHARS + DIFF_BUDGET_MARGIN_CHARS;
+  return Math.max(0, MAX_MESSAGE_CHARS - reserved);
 }
 
 /**
@@ -352,12 +420,12 @@ function clampDiffText(unified: string): { text: string; truncated: boolean } {
  * say plainly that a diff could not be displayed — never phrased as if one was shown — and repeat that
  * the file was not modified (CA Round 1 Required Change #4).
  */
-function renderDiffChange(c: CodeDiffPreview['changes'][number]): string {
+function renderDiffChange(c: CodeDiffPreview['changes'][number], maxChars: number = MAX_DIFF_CHARS_PER_FILE): string {
   if (c.binary) return `- ${c.path}: 바이너리 파일이라 diff를 표시할 수 없어요. (파일은 수정되지 않았어요)`;
   if (!c.unified.trim()) {
     return `- ${c.path}: 내용이 너무 커서 diff를 표시할 수 없어요. (파일은 수정되지 않았어요)`;
   }
-  const { text, truncated } = clampDiffText(c.unified);
+  const { text, truncated } = clampDiffText(c.unified, maxChars);
   const fence = fenceFor(text);
   // F3-A (Sprint 4c-Follow-up-3): an 'add' is an explicit new-file preview — every line is an addition,
   // rendered against empty content. Same bounded, backtick-safe rendering as update/delete.
@@ -367,12 +435,13 @@ function renderDiffChange(c: CodeDiffPreview['changes'][number]): string {
 }
 
 /** Render one PatchSet operation's block (Sprint 2t, ADR-0041). Operations only ever carry a real
- *  unified diff here — binary/empty/add are rejected before PatchSet generation — so this reuses the
- *  same bounded, backtick-safe rendering as {@link renderDiffChange}. */
-function renderPatchOperation(op: PatchSetPreview['operations'][number]): string {
-  const { text, truncated } = clampDiffText(op.unified);
+ *  unified diff here — binary/empty/delete are rejected before PatchSet generation, and an `add` is an
+ *  anchored new-file target (ADR-0099 D1) — so this reuses the same bounded, backtick-safe rendering as
+ *  {@link renderDiffChange}. */
+function renderPatchOperation(op: PatchSetPreview['operations'][number], maxChars: number = MAX_DIFF_CHARS_PER_FILE): string {
+  const { text, truncated } = clampDiffText(op.unified, maxChars);
   const fence = fenceFor(text);
-  const label = op.kind === 'delete' ? `${op.path} (삭제)` : op.path;
+  const label = op.kind === 'delete' ? `${op.path} (삭제)` : op.kind === 'add' ? `${op.path} (새 파일)` : op.path;
   const note = truncated ? '\n(diff가 길어서 일부만 보여드렸어요.)' : '';
   return `- ${label}\n${fence}diff\n${text}\n${fence}${note}`;
 }
@@ -385,9 +454,7 @@ function renderPatchOperation(op: PatchSetPreview['operations'][number]): string
  * is a defensive backstop, not the primary guarantee.
  */
 function assembleBoundedBody(header: string, footerLines: string[], blocks: string[]): string {
-  const footer = footerLines.join('\n');
-  const reserved = header.length + footer.length + MAX_OMITTED_NOTICE_CHARS + DIFF_BUDGET_MARGIN_CHARS;
-  const bodyBudget = Math.max(0, MAX_MESSAGE_CHARS - reserved);
+  const bodyBudget = diffBodyBudget(header, footerLines);
 
   const kept: string[] = [];
   let used = 0;
@@ -408,10 +475,25 @@ function assembleBoundedBody(header: string, footerLines: string[], blocks: stri
 }
 
 /**
- * Pre-apply SHAPE signal for footer wording ONLY (Footer Minimal Fix). A previewed change is
- * apply-capable iff it is exactly one non-binary existing-file `update` — the same shape the
- * authoritative WorkspaceWrite integrity gate (ConversationRuntime.handleWorkspaceApplyTurn) accepts;
- * add/delete/rename/binary/multi-file are not applicable via WorkspaceWrite today. This is NOT an
+ * The ADR-0099 D1 byte bounds (per file on current and proposed content, and the proposed total) over the sizes
+ * the diff reported — the same bounds the patch-time check enforces, so a preview never offers "적용해줘" for a
+ * set that "패치 만들어줘" would refuse. An unknown size is not counted (the patch-time check stays authoritative).
+ */
+function withinChangeSetByteBounds(changes: CodeDiffPreview['changes']): boolean {
+  let total = 0;
+  for (const c of changes) {
+    if ((c.oldSize ?? 0) > MAX_CHANGE_SET_FILE_BYTES || (c.newSize ?? 0) > MAX_CHANGE_SET_FILE_BYTES) return false;
+    total += c.newSize ?? 0;
+  }
+  return total <= MAX_CHANGE_SET_TOTAL_BYTES;
+}
+
+/**
+ * Pre-apply SHAPE signal for footer wording ONLY (Footer Minimal Fix, widened by ADR-0099 D1). A previewed
+ * change is apply-capable iff it is 1..MAX_CHANGE_SET_FILES non-binary, displayable `update`/`add` files — the
+ * shapes the authoritative WorkspaceWrite integrity gate (ConversationRuntime.handleWorkspaceApplyTurn) accepts
+ * (an `add` only ever reaches a preview for an explicit, re-checked new-file target); delete/binary/undisplayable
+ * and larger sets are not applicable. This is NOT an
  * authorization check: it deliberately does not — and must not — inspect the ApprovalRef, PatchSet, or
  * ExecutionPlan binding (the runtime owns that gate; it is never re-implemented here). It reads only the
  * deterministic change metadata already present on the preview, and does not query any Manager, the DB,
@@ -419,8 +501,19 @@ function assembleBoundedBody(header: string, footerLines: string[], blocks: stri
  * (the preview is built solely from validated, in-scope targetFiles).
  */
 function isApplyCapablePreview(preview: CodeDiffPreview): boolean {
-  const only = preview.changes.length === 1 ? preview.changes[0] : undefined;
-  return !!only && only.kind === 'update' && !only.binary;
+  const n = preview.changes.length;
+  return (
+    n >= 1 &&
+    n <= MAX_CHANGE_SET_FILES &&
+    withinChangeSetByteBounds(preview.changes) &&
+    preview.changes.every((c) => {
+      if (c.binary) return false;
+      const displayable = c.unified.trim().length > 0;
+      // A lone `update` keeps the original ADR-0042 rule unchanged; every other allowed file must be displayable.
+      if (c.kind === 'update') return n === 1 || displayable;
+      return c.kind === 'add' && displayable;
+    })
+  );
 }
 
 /**
@@ -660,7 +753,11 @@ export class ResponseComposer {
    * specific than {@link composeApprovalRequired}: names this as a code-change request and states
    * explicitly that no file is modified yet — a `planningOnly` halt never mutates.
    */
-  composeCodeChangeApprovalRequired(context: ConversationContext, sentFilePaths: string[] = []): OutboundMessage {
+  composeCodeChangeApprovalRequired(
+    context: ConversationContext,
+    sentFilePaths: string[] = [],
+    newFilePaths: readonly string[] = [],
+  ): OutboundMessage {
     const shown = sentFilePaths.slice(0, 3).join(', ');
     const more = sentFilePaths.length > 3 ? ` 외 ${sentFilePaths.length - 3}개` : '';
     // Disclosure: existing target files' content goes to the AI provider for the preview (best-effort credential guard).
@@ -668,11 +765,19 @@ export class ResponseComposer {
       ? `승인하면 지정한 파일(${shown}${more})의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요. ` +
         '비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 모든 경우를 걸러내지는 못해요.\n'
       : '';
+    // ADR-0099 D1: in a multi-file set, name the paths that will be CREATED, so a typo of an existing file the
+    // owner meant to update is visible before "승인" (create wording applies to every missing path named).
+    const creates =
+      newFilePaths.length && sentFilePaths.length + newFilePaths.length > 1
+        ? `새로 만들 파일: ${renderFileList(newFilePaths, [], MAX_CHANGE_SET_FILES)} ` +
+          '(기존 파일을 고치려던 거라면 "거절"하고 경로를 확인해 다시 요청해 주세요.)\n'
+        : '';
     return {
       context,
       text:
         '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' +
         '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n' +
+        creates +
         disclosure +
         APPROVAL_DECISION_LINE,
     };
@@ -841,14 +946,44 @@ export class ResponseComposer {
    * markdown can fire), backticks/control characters stripped, truncated.
    */
   composeTargetPathRejected(context: ConversationContext, typedPath: string): OutboundMessage {
-    const cleaned = typedPath.replace(/[\u0000-\u001f\u007f`]/g, '').trim();
-    const shown =
-      cleaned.length > MAX_REJECTED_PATH_DISPLAY ? `${cleaned.slice(0, MAX_REJECTED_PATH_DISPLAY)}…` : cleaned;
+    const shown = sanitizeTypedPath(typedPath);
     return {
       context,
       text:
         `요청한 파일을 프로젝트 안에서 찾을 수 없거나 프로젝트 밖 경로예요: \`${shown}\`\n` +
         '등록한 프로젝트 기준 상대경로(예: src/app.ts)로 다시 요청해 주세요.',
+    };
+  }
+
+  /**
+   * Some paths a code-change request named do not exist in the project and the request has no create wording
+   * (ADR-0099 D1) — never silently dropped, never guessed. Names every missing path (sanitized like
+   * {@link composeTargetPathRejected}) and asks for the request again. Nothing was planned or modified.
+   */
+  composeTargetsMissing(context: ConversationContext, missingPaths: readonly string[]): OutboundMessage {
+    const shown = missingPaths.slice(0, MAX_CHANGE_SET_FILES).map((p) => `\`${sanitizeTypedPath(p)}\``);
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          `요청한 파일 중 프로젝트에서 찾을 수 없는 파일이 있어요: ${shown.join(', ')}`,
+          '경로를 확인해서 전체 요청을 다시 보내 주세요. 새로 만들 파일이라면 "새 파일 만들어줘"처럼 함께 적어 주세요.',
+          '파일은 수정되지 않았어요.',
+        ].join('\n'),
+      ),
+    };
+  }
+
+  /**
+   * A code-change request named more files than one change set may carry (ADR-0099 D1) — refused before any
+   * lookup; the owner splits the request. Nothing was planned or modified.
+   */
+  composeTooManyTargets(context: ConversationContext, count: number, max: number = MAX_CHANGE_SET_FILES): OutboundMessage {
+    return {
+      context,
+      text:
+        `한 번에 바꿀 수 있는 파일은 ${max}개까지예요. 이 요청에는 파일 경로가 ${count}개 있어요.\n` +
+        `요청을 ${max}개 이하의 파일로 나눠서 다시 보내 주세요. 파일은 수정되지 않았어요.`,
     };
   }
 
@@ -884,7 +1019,9 @@ export class ResponseComposer {
     ];
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
     if (warning) lines.push(warning);
-    // Same apply-capable rule as composeCodeDiffPreview: only a single existing-file `update` has an apply step.
+    // Legacy excerpt-only preview (no runtime caller): it carries no binary/displayability/size facts, so it keeps
+    // its original rule — only a single existing-file `update` has an apply step. The ADR-0099 D1 change-set rule
+    // lives in isApplyCapablePreview (unified diff previews) and is not approximated here.
     const only = preview.changes.length === 1 ? preview.changes[0] : undefined;
     lines.push(only?.kind === 'update' ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER);
     return { context, text: clampToMessageBudget(lines.join('\n')) };
@@ -946,7 +1083,9 @@ export class ResponseComposer {
     // every other shape gets the "this shape cannot be applied" footer (accurate — the update-only gate rejects it).
     const footer = isApplyCapablePreview(preview) ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER;
     const footerLines = [...(warning ? [warning] : []), footer];
-    const blocks = preview.changes.map(renderDiffChange);
+    const blocks = fitDiffBlocks(DIFF_PREVIEW_HEADER, footerLines, preview.changes.length, (i, maxChars) =>
+      renderDiffChange(preview.changes[i]!, maxChars),
+    );
     const text = assembleBoundedBody(DIFF_PREVIEW_HEADER, footerLines, blocks);
     // F5-A (Sprint 4c-Follow-up-5): also attach a COMPLETE structured preview (full canonical diff, never
     // clamped). A preview-aware adapter delivers this losslessly (multipart or `.diff` attachment) so the
@@ -1023,7 +1162,9 @@ export class ResponseComposer {
    * once, that files were not modified; never "적용했어요"/"반영했어요"/"수정했어요"/"변경 완료"/"적용 완료".
    */
   composePatchSetPreview(context: ConversationContext, preview: PatchSetPreview): OutboundMessage {
-    const blocks = preview.operations.map(renderPatchOperation);
+    const blocks = fitDiffBlocks(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], preview.operations.length, (i, maxChars) =>
+      renderPatchOperation(preview.operations[i]!, maxChars),
+    );
     return { context, text: assembleBoundedBody(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], blocks) };
   }
 
@@ -1066,11 +1207,14 @@ export class ResponseComposer {
    * run, and the working tree may now hold the change. Never "git 변경 없음"/committed/pushed/deployed/
    * verified/적용 완료 — after a write the working tree is NOT clean.
    */
-  composeWorkspaceApplied(context: ConversationContext, targetFiles: string[]): OutboundMessage {
+  composeWorkspaceApplied(context: ConversationContext, targetFiles: string[], newFiles: readonly string[] = []): OutboundMessage {
+    // ADR-0099 D3: a created file is marked; with no new file the text is unchanged.
+    const isNew = new Set(newFiles);
+    const files = targetFiles.map((f) => (isNew.has(f) ? `${f} (새 파일)` : f)).join(', ');
     return {
       context,
       text:
-        `파일을 수정했어요: ${targetFiles.join(', ')}\n` +
+        `파일을 수정했어요: ${files}\n` +
         'git 명령은 실행하지 않았어요. 커밋/푸시는 하지 않았어요.\n' +
         '작업 트리에는 방금 적용한 파일 변경이 남아 있을 수 있어요.\n' +
         '테스트도 실행하지 않았어요.\n' +
@@ -1098,6 +1242,40 @@ export class ResponseComposer {
     return {
       context,
       text: '이 패치를 파일에 적용하지 못했어요. 파일 내용이 바뀌었거나 지원하지 않는 변경일 수 있어요. git 명령이나 테스트는 실행하지 않았어요.',
+    };
+  }
+
+  /**
+   * A change-set apply failed and was rolled back (ADR-0099 D2, `ROLLED_BACK`) — every file the set wrote was
+   * restored and every created file removed, so nothing changed. The patch is still ready; no git/test ran.
+   */
+  composeWorkspaceApplyRolledBack(context: ConversationContext, files: readonly string[]): OutboundMessage {
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          `변경 묶음을 파일에 적용하지 못해서 되돌렸어요. 바뀐 파일은 없어요: ${renderFileList(files)}`,
+          '파일 내용이 바뀌었거나 지원하지 않는 변경일 수 있어요. git 명령이나 테스트는 실행하지 않았어요.',
+        ].join('\n'),
+      ),
+    };
+  }
+
+  /**
+   * A change-set apply could not be verified or its rollback failed (ADR-0099 D2, `PARTIALLY_APPLIED`) — part
+   * of the set MAY be on disk. Uses the existing "may have applied" wording and names the files to check; never
+   * claims nothing changed and never claims it applied.
+   */
+  composeWorkspaceApplyPartiallyApplied(context: ConversationContext, files: readonly string[]): OutboundMessage {
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          '변경 묶음을 적용하던 중 문제가 생겼고, 일부 파일에는 변경이 적용됐을 수 있어요.',
+          `확인할 파일: ${renderFileList(files)}`,
+          '파일 상태를 직접 확인해 주세요. git 명령이나 테스트는 실행하지 않았어요.',
+        ].join('\n'),
+      ),
     };
   }
 
@@ -1304,11 +1482,10 @@ export class ResponseComposer {
    */
   composeCommitApprovalRequested(
     context: ConversationContext,
-    input: { candidateFiles: string[]; commitMessage: string; validation: ValidationContext },
+    input: { candidateFiles: string[]; commitMessage: string; validation: ValidationContext; newFiles?: readonly string[] },
   ): OutboundMessage {
-    const shown = input.candidateFiles.slice(0, MAX_GIT_CHANGED_FILES);
-    const omitted = input.candidateFiles.length - shown.length;
-    const files = `${shown.join(', ')}${omitted > 0 ? ` 외 ${omitted}개` : ''}`;
+    // ADR-0099 D3: new files are marked "(새 파일)" — the commit will `git add` exactly those.
+    const files = renderFileList(input.candidateFiles, input.newFiles);
     const text = clampToMessageBudget(
       [
         '커밋 승인을 요청했어요.',
@@ -1432,12 +1609,10 @@ export class ResponseComposer {
    */
   composeCommitExecuted(
     context: ConversationContext,
-    input: { commitHash: string; files: string[] },
+    input: { commitHash: string; files: string[]; newFiles?: readonly string[] },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
-    const shown = input.files.slice(0, MAX_GIT_CHANGED_FILES);
-    const omitted = input.files.length - shown.length;
-    const files = shown.length ? `${shown.join(', ')}${omitted > 0 ? ` 외 ${omitted}개` : ''}` : '(없음)';
+    const files = input.files.length ? renderFileList(input.files, input.newFiles) : '(없음)';
     const text = clampToMessageBudget(
       [`커밋했어요: ${shortHash}`, `대상 파일: ${files}`, 'git push는 하지 않았어요.'].join('\n'),
     );
@@ -1468,16 +1643,16 @@ export class ResponseComposer {
   }
 
   /**
-   * An approved candidate is an untracked (new) file (Sprint 2y, ADR-0046, CA #3) — DISTINCT from
-   * unavailable. This sprint performs NO separate `git add`, so a new-file commit needs a separate step.
-   * Nothing committed, no push.
+   * An approved candidate is an untracked (new) file that was NOT requested as a new file (Sprint 2y, ADR-0046,
+   * CA #3; ADR-0099 D3) — DISTINCT from unavailable. Only files the owner asked to create in the code-change
+   * request are `git add`ed; any other untracked file is never added. Nothing committed, no push.
    */
   composeCommitExecutionUntrackedUnsupported(context: ConversationContext): OutboundMessage {
     return {
       context,
       text:
-        '승인된 후보 파일 중 새 파일(untracked)이 있어 이번 단계에서는 커밋하지 않았어요.\n' +
-        'git add를 별도로 수행하지 않기 때문에, 새 파일 커밋은 별도 단계가 필요해요. git push는 하지 않았어요.',
+        '승인된 후보 파일 중 새로 만들기로 요청하지 않은 새 파일(untracked)이 있어 커밋하지 않았어요.\n' +
+        '코드 변경 요청에서 새 파일로 요청한 파일만 git add해서 커밋해요. git push는 하지 않았어요.',
     };
   }
 
