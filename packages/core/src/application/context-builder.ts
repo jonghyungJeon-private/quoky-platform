@@ -208,11 +208,9 @@ export class ContextBuilder {
   ): Promise<RetrievedMemory[]> {
     if (!this.memoryRetriever) return [];
 
-    const scope: DurableMemoryScope = {
-      ...(task.sessionId ? { sessionId: task.sessionId } : {}),
-      ...(task.projectId ? { projectId: task.projectId } : {}),
-    };
-    if (!scope.sessionId && !scope.projectId) return [];
+    // ADR-0073 amendment: durable recall is actor-scoped; no session/project filter.
+    if (!task.actorId) return [];
+    const scope: DurableMemoryScope = { actorId: task.actorId };
 
     try {
       const resolved = await this.memoryRetriever.retrieve(

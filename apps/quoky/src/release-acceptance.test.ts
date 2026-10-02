@@ -68,8 +68,10 @@ function memoryRepository() {
   };
 }
 
-function acceptanceHarness() {
-  const memoryStore = memoryRepository();
+function acceptanceHarness(options: { memoryStore?: ReturnType<typeof memoryRepository>; actorId?: string; sessionId?: string } = {}) {
+  const memoryStore = options.memoryStore ?? memoryRepository();
+  const actorId = options.actorId ?? 'actor-1';
+  const sessionId = options.sessionId ?? 'session-1';
   const storage = { memories: memoryStore.repository } as StorageProvider;
   const memory = new MemoryManager(storage, {} as VectorProvider);
   const productionContextBuilder = createProductionContextBuilder(memory, storage, {});
@@ -90,7 +92,7 @@ function acceptanceHarness() {
   };
   const classifier = new IntentClassifier({ select: async () => provider } as never);
   const session: Session = {
-    id: 'session-1', actorId: 'actor-1', context, status: SessionStatus.ACTIVE,
+    id: sessionId, actorId, context, status: SessionStatus.ACTIVE,
     createdAt: timestamp, lastActivityAt: timestamp,
   };
   let taskSequence = 0;
@@ -100,7 +102,7 @@ function acceptanceHarness() {
   const approvalAnchors: unknown[] = [];
   const deps = {
     dispatchCommit: { async commit() { return {} as TaskRun; } },
-    actors: { async resolveFromContext() { return { id: 'actor-1', displayName: 'User', identities: [], createdAt: timestamp }; } },
+    actors: { async resolveFromContext() { return { id: actorId, displayName: 'User', identities: [], createdAt: timestamp }; } },
     sessions: { async openForContext() { return session; }, async touch() { return session; } },
     memory,
     classifier,
@@ -122,7 +124,7 @@ function acceptanceHarness() {
       async transition(task: Task, status: TaskStatus) { return { ...task, status, updatedAt: timestamp }; },
       async startRun(task: Task, capability: Capability) {
         runSequence += 1;
-        return { id: `run-${runSequence}`, taskId: task.id, attempt: 1, status: TaskRunStatus.RUNNING, capability, artifactIds: [], startedAt: timestamp } satisfies TaskRun;
+        return { id: `run-${runSequence}`, taskId: task.id, attempt: 1, status: TaskRunStatus.STARTED, capability, artifactIds: [], startedAt: timestamp } satisfies TaskRun;
       },
       async completeRun() { return undefined; },
       async failRun() { return undefined; },
@@ -191,7 +193,7 @@ describe('release acceptance — production composition boundary', () => {
     );
   });
 
-  it('pins current writer/retriever scope asymmetry while ADR-0073 durable recall remains a known open gap', async () => {
+  it('recalls actor-scoped durable memory written with the exact write scope (ADR-0073 amendment)', async () => {
     const harness = acceptanceHarness();
     const firstRuntime = harness.runtime();
 
@@ -204,10 +206,32 @@ describe('release acceptance — production composition boundary', () => {
     expect(durable[0]?.content).toBe('내 배포 창은 화요일이야');
     expect(durable[0]?.scope).toEqual({ sessionId: 'session-1', userId: 'actor-1' });
     expect(resumed.status).toBe('RESPONDED');
-    // Pins current behavior only: the writer persists userId=actorId, while ContextBuilder omits actorId
-    // from retrieval, so scopeMatches rejects the record. ADR-0073 durable recall remains a known gap
-    // for a separately approved scope-reconciliation task, not a ratified release-accepted behavior.
-    expect(harness.bundles.at(-1)?.durableRecall).toBeUndefined();
+    expect(harness.bundles.at(-1)?.durableRecall?.map((entry) => entry.content)).toContain('내 배포 창은 화요일이야');
+  });
+
+  it('recalls the same actor memory from a fresh runtime in another session and never for another actor', async () => {
+    const memoryStore = memoryRepository();
+    await acceptanceHarness({ memoryStore }).runtime().handle(inbound('기억해: 내 배포 창은 화요일이야'));
+
+    const sameActor = acceptanceHarness({ memoryStore, sessionId: 'session-2' });
+    const resumed = await sameActor.runtime().handle(inbound('내 배포 창을 알려줘'));
+    expect(resumed.status).toBe('RESPONDED');
+    expect(sameActor.bundles.at(-1)?.conversationTranscript.some((entry) => entry.content.includes('화요일'))).toBe(false);
+    expect(sameActor.bundles.at(-1)?.durableRecall?.map((entry) => entry.content)).toContain('내 배포 창은 화요일이야');
+
+    const otherActor = acceptanceHarness({ memoryStore, sessionId: 'session-3', actorId: 'actor-2' });
+    await otherActor.runtime().handle(inbound('내 배포 창을 알려줘'));
+    expect(otherActor.bundles.at(-1)?.durableRecall).toBeUndefined();
+  });
+
+  it('still recalls an actor record that also carries a projectId', async () => {
+    const memoryStore = memoryRepository();
+    await acceptanceHarness({ memoryStore }).runtime().handle(inbound('기억해: 내 배포 창은 화요일이야'));
+    const [saved] = [...memoryStore.records.values()].filter((record) => record.type === MemoryType.LONG_TERM);
+    memoryStore.records.set(saved!.id, { ...saved!, scope: { ...saved!.scope, projectId: 'project-9' } });
+    const harness = acceptanceHarness({ memoryStore, sessionId: 'session-2' });
+    await harness.runtime().handle(inbound('내 배포 창을 알려줘'));
+    expect(harness.bundles.at(-1)?.durableRecall?.map((entry) => entry.content)).toContain(saved!.content);
   });
 
   it('never promotes ordinary chat and keeps SHORT_TERM transcript separate from LONG_TERM recall', async () => {
@@ -221,9 +245,7 @@ describe('release acceptance — production composition boundary', () => {
     const bundle = harness.bundles.at(-1)!;
 
     expect(bundle.conversationTranscript.some((entry) => entry.content === '장기 사실')).toBe(false);
-    // Pins current behavior only: writer userId=actorId and actorId-free ContextBuilder retrieval cannot
-    // scope-match. This known ADR-0073 durable-recall gap requires a separately approved reconciliation task.
-    expect(bundle.durableRecall).toBeUndefined();
+    expect(bundle.durableRecall?.map((entry) => entry.content)).toContain('장기 사실');
     expect(bundle.conversationTranscript.every((entry) => entry.provenance !== 'DURABLE_MEMORY')).toBe(true);
   });
 
