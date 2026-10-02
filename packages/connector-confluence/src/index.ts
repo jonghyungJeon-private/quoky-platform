@@ -137,7 +137,7 @@ export class ConfluenceConnectorProvider implements ConnectorProvider {
   private async search(input: ConnectorQuery): Promise<ConnectorResult> {
     const { text, limit } = parseSearchParams(input.params, 'confluence connector');
     const url = new URL('/wiki/rest/api/search', this.baseUrl);
-    url.searchParams.set('cql', `type=page AND text ~ "${escapeCqlText(text)}"`);
+    url.searchParams.set('cql', `type=page AND text ~ "${escapeCqlText(confluenceSearchTerms(text))}"`);
     url.searchParams.set('limit', String(limit));
     const payload = await this.requestJson(url);
     if (!isRecord(payload) || !Array.isArray(payload.results)) throw new ConfluenceConnectorResponseError();
@@ -254,6 +254,30 @@ export class ConfluenceConnectorProvider implements ConnectorProvider {
     if (summary.length > 0) item.summary = summary.slice(0, SUMMARY_LIMIT);
     return item;
   }
+}
+
+// Reserved characters of the full-text syntax that Confluence applies inside a `text ~ "..."` literal (Lucene-style):
+// boolean/required/prohibited prefixes, grouping, ranges, boosting, fuzzy/proximity, wildcards, field qualifiers,
+// phrase quotes (ASCII and typographic), escapes and regex slashes.
+const CQL_TEXT_RESERVED = /[+\-&|!(){}[\]^"\u201c\u201d~*?:\\/]/gu;
+const CQL_TEXT_BOOLEAN_WORD = /^(?:OR|AND|NOT|TO)$/u;
+
+/**
+ * Render bounded User search text as plain literal terms for the CQL `text ~` operator (ADR-0100 D7: the adapter owns
+ * CQL rendering and escaping). Beyond the string-literal escaping (`escapeCqlText`), the full-text syntax inside the
+ * literal is neutralized: reserved characters become separators and the uppercase boolean/range words are lowercased,
+ * so the text can only match as ordinary words. Text with no remaining term is UNSUPPORTED_QUERY.
+ */
+function confluenceSearchTerms(text: string): string {
+  const terms = text
+    .replace(CQL_TEXT_RESERVED, ' ')
+    .split(/\s+/u)
+    .filter((term) => term.length > 0)
+    .map((term) => (CQL_TEXT_BOOLEAN_WORD.test(term) ? term.toLowerCase() : term));
+  if (terms.length === 0) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'confluence connector: search text has no searchable terms');
+  }
+  return terms.join(' ');
 }
 
 /** CQL string-literal escaping: backslash first, then double quote. */

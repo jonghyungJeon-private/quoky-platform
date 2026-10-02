@@ -176,7 +176,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
     this.assertConnected();
     const { text, limit } = parseSearchParams(input.params, 'slack connector');
     const url = new URL('/api/search.messages', SLACK_API_ORIGIN);
-    url.searchParams.set('query', text);
+    url.searchParams.set('query', slackSearchQuery(text));
     url.searchParams.set('count', String(limit));
     url.searchParams.set('sort', 'timestamp');
 
@@ -310,6 +310,33 @@ function mapSearchMatch(value: unknown, token: string): ConnectorItem | undefine
   const updatedAt = toConnectorTimestamp(Number(ts) * 1000);
   if (updatedAt) item.updatedAt = updatedAt;
   return item;
+}
+
+// Slack search syntax: phrase quotes (ASCII and typographic), the `modifier:` colon (in:, from:, to:, has:, is:,
+// before:, after:, on:, during:, with:, ...), the `*` wildcard and grouping/angle brackets.
+const SLACK_SEARCH_SYNTAX = /["\u201c\u201d\u201e\u201f:*()<>]/gu;
+// A leading `-` excludes a term; `+`, `~` and `!` are stripped as well so no prefix operator survives.
+const SLACK_TERM_PREFIX = /^[-+~!]+/u;
+const SLACK_BOOLEAN_WORD = /^(?:OR|AND|NOT)$/u;
+
+/**
+ * Render bounded User search text as Slack literal terms (ADR-0100 D7: the adapter owns Slack search rendering and
+ * escaping). Slack's query language has no escape character, so syntax characters become separators, prefix
+ * operators are dropped, boolean words are lowercased, and every remaining term is quoted so it can only ever match
+ * literally (an implicit AND of terms). No modifier, exclusion, wildcard or operator can be injected. Text with no
+ * remaining term is UNSUPPORTED_QUERY.
+ */
+function slackSearchQuery(text: string): string {
+  const terms = text
+    .replace(SLACK_SEARCH_SYNTAX, ' ')
+    .split(/\s+/u)
+    .map((term) => term.replace(SLACK_TERM_PREFIX, ''))
+    .filter((term) => term.length > 0)
+    .map((term) => (SLACK_BOOLEAN_WORD.test(term) ? term.toLowerCase() : term));
+  if (terms.length === 0) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'slack connector: search text has no searchable terms');
+  }
+  return terms.map((term) => `"${term}"`).join(' ');
 }
 
 function reasonForKind(kind: SlackConnectorHttpErrorKind): ConnectorQueryErrorReason {

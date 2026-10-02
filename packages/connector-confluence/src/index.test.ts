@@ -182,7 +182,7 @@ describe('ConfluenceConnectorProvider', () => {
 
       const url = new URL(fake.calls[0]!.url);
       expect(url.origin + url.pathname).toBe('https://example.atlassian.net/wiki/rest/api/search');
-      expect(url.searchParams.get('cql')).toBe('type=page AND text ~ "dep\\"loy \\\\ now"');
+      expect(url.searchParams.get('cql')).toBe('type=page AND text ~ "dep loy now"');
       expect(url.searchParams.get('limit')).toBe('20');
       expect(fake.calls[0]!.init?.method).toBe('GET');
       expect(fake.calls[0]!.init?.body).toBeUndefined();
@@ -205,9 +205,32 @@ describe('ConfluenceConnectorProvider', () => {
       const fake = fakeFetch({ status: 200, body: { results: [] } });
       await provider(fake.fetchImpl).query({ query: 'search', params: { text: '" OR space = SECRET OR text ~ "' } });
       expect(new URL(fake.calls[0]!.url).searchParams.get('cql')).toBe(
-        'type=page AND text ~ "\\" OR space = SECRET OR text ~ \\""',
+        'type=page AND text ~ "or space = SECRET or text"',
       );
     });
+
+    it.each([
+      ['incident OR title:secret', 'incident or title secret'],
+      ['deploy AND NOT (draft OR wip)', 'deploy and not draft or wip'],
+      ['+must -exclude secr* te?t fuzzy~2 boost^4', 'must exclude secr te t fuzzy 2 boost 4'],
+      ['[a TO z] {x TO y} /regex/ a&&b c||d !e', 'a to z x to y regex a b c d e'],
+      ['\u201csmart\u201d \\escaped "phrase" 배포 가이드', 'smart escaped phrase 배포 가이드'],
+    ])('neutralizes full-text syntax inside the CQL literal: %j', async (text, terms) => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+      await provider(fake.fetchImpl).query({ query: 'search', params: { text } });
+      expect(new URL(fake.calls[0]!.url).searchParams.get('cql')).toBe(`type=page AND text ~ "${terms}"`);
+    });
+
+    it.each([['"" ** ??'], ['- + ~ :'], ['()[]{}']])(
+      'rejects text %j with no searchable terms before any request',
+      async (text) => {
+        const fake = fakeFetch({ status: 200, body: { results: [] } });
+        await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text } })).rejects.toMatchObject({
+          reason: 'UNSUPPORTED_QUERY',
+        });
+        expect(fake.calls).toHaveLength(0);
+      },
+    );
 
     it('ignores an off-host _links.base, falls back to the page-id url, truncates the excerpt and skips id-less results', async () => {
       const fake = fakeFetch({

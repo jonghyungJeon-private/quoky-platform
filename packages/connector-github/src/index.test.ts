@@ -97,6 +97,22 @@ describe('GitHubConnectorProvider', () => {
     expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 
+  it.each([
+    ['octocat repo:secret/private'],
+    ['octocat:x'],
+    ['-octocat'],
+    ['octo"cat'],
+    ['octocat+OR+is:private'],
+    ['octocat\tis:private'],
+    ['a'.repeat(40)],
+  ])('rejects a qualifier-injecting actor identity %j before any request', async (actorExternalId) => {
+    const fetchImpl = vi.fn();
+    await expect(patProvider(fetchImpl).query({ query: 'personal-work', params: { actorExternalId } })).rejects.toMatchObject({
+      reason: 'UNSUPPORTED_QUERY',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('rejects unsupported names, filters and missing identity without network access', async () => {
     const fetchImpl = vi.fn();
     const provider = patProvider(fetchImpl);

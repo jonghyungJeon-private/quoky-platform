@@ -179,7 +179,7 @@ describe('SlackConnectorProvider', () => {
 
       const url = new URL(fake.calls[0]!.url);
       expect(url.origin + url.pathname).toBe('https://slack.com/api/search.messages');
-      expect(url.searchParams.get('query')).toBe('deploy "now"');
+      expect(url.searchParams.get('query')).toBe('"deploy" "now"');
       expect(url.searchParams.get('count')).toBe('20');
       expect(url.searchParams.get('sort')).toBe('timestamp');
       expect(fake.calls[0]!.init?.method).toBe('GET');
@@ -199,6 +199,34 @@ describe('SlackConnectorProvider', () => {
       });
       expect(JSON.stringify(result)).not.toContain(TOKEN);
     });
+
+    it.each([
+      ['incident OR in:private', '"incident" "or" "in" "private"'],
+      ['from:@boss -draft has:link', '"from" "@boss" "draft" "has" "link"'],
+      ['before:2026-01-01 after:2025-12-01 during:march', '"before" "2026-01-01" "after" "2025-12-01" "during" "march"'],
+      ['"exact phrase" AND NOT secret*', '"exact" "phrase" "and" "not" "secret"'],
+      ['\u201csmart\u201d quotes (grouped) <@U123>', '"smart" "quotes" "grouped" "@U123"'],
+      ['+must ~fuzzy !bang 배포 상태', '"must" "fuzzy" "bang" "배포" "상태"'],
+      ['in-flight re-deploy', '"in-flight" "re-deploy"'],
+    ])('renders %j as escaped literal terms (no operator, modifier or exclusion injection)', async (text, expected) => {
+      const fake = fakeFetch({ status: 200, body: { ok: true, messages: { matches: [] } } });
+      await provider(fake.fetchImpl).query({ query: 'search', params: { text } });
+      const query = new URL(fake.calls[0]!.url).searchParams.get('query') ?? '';
+      expect(query).toBe(expected);
+      // Every term is a quoted literal: nothing outside quotes, and no syntax inside them.
+      expect(query.replace(/"[^"\s:*]+"/g, '').trim()).toBe('');
+    });
+
+    it.each([['"" :: **'], ['- -- +'], ['() <> \u201c\u201d']])(
+      'rejects text %j with no searchable terms before any request',
+      async (text) => {
+        const fake = fakeFetch({ status: 200, body: { ok: true, messages: { matches: [] } } });
+        await expect(provider(fake.fetchImpl).query({ query: 'search', params: { text } })).rejects.toMatchObject({
+          reason: 'UNSUPPORTED_QUERY',
+        });
+        expect(fake.calls).toHaveLength(0);
+      },
+    );
 
     it('bounds the title to 120 characters, skips malformed matches and drops non-Slack permalinks', async () => {
       const fake = fakeFetch({
