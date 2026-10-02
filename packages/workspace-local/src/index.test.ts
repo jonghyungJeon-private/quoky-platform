@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceRef } from '@quoky/core';
-import { LocalCloneWorkspaceProvider } from './index';
+import { DEFAULT_WORKSPACE_POLICY, LocalCloneWorkspaceProvider } from './index';
 
 const provider = new LocalCloneWorkspaceProvider({ workspaceRoot: tmpdir() });
 const created: string[] = [];
@@ -131,6 +131,38 @@ describe('LocalCloneWorkspaceProvider — v2 Workspace capability (ADR-0022, rea
     writeFileSync(join(dir, '.env'), 'DISCORD_BOT_TOKEN=zzz');
     await expect(provider.readFile(ref(dir), '.env')).rejects.toThrow(/secret/);
   });
+
+  it.each([
+    'config/service-account.json',
+    'gcp-service_account-prod.json',
+    'credentials.json',
+    'server.pem',
+    'tls.key',
+    'client.p12',
+    'cert.pfx',
+    'release.keystore',
+    'release.jks',
+    'id_rsa',
+    'id_rsa.pub',
+    'id_ed25519',
+    '.npmrc',
+    '.pypirc',
+    '.netrc',
+    '.git-credentials',
+    'secrets.yaml',
+  ])('readFile() refuses the conventional credential file %s', async (relPath) => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'config'), { recursive: true });
+    writeFileSync(join(dir, relPath), 'redacted');
+    await expect(provider.readFile(ref(dir), relPath)).rejects.toThrow(/secret/);
+  });
+
+  it.each(['package.json', 'account.ts', 'service.json', 'pem-notes.md', 'README.md', 'id.ts'])(
+    'does not treat %s as a credential file name',
+    (name) => {
+      expect(DEFAULT_WORKSPACE_POLICY.isSecret(name)).toBe(false);
+    },
+  );
 
   it('readFile() enforces the large-file guard', async () => {
     const dir = tempDir();
