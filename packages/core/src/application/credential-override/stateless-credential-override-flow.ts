@@ -1,6 +1,6 @@
 import { newId } from '../../util/id';
 import { now } from '../../util/clock';
-import { Capability, IntentType, RiskLevel, TaskStatus } from '../../domain';
+import { Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../../domain';
 import type {
   ApprovalRequest,
   ExecutionPlanRef,
@@ -77,6 +77,17 @@ const sameWorkspace = (a: WorkspaceRef | undefined, b: WorkspaceRef | undefined)
  *   revalidate-and-consume of a dispatch, from its first read through the consume save) runs alone on its anchor,
  *   so an invalidation can never be overwritten by a dispatch that read the anchor before it.
  *
+ * Session writes are POINTER-ONLY on a freshly re-read canonical session: this flow never saves a caller's turn copy
+ * of the Session, so it can never revert a project switch or a reset close that landed while it awaited. The
+ * dispatch path re-loads the canonical session after its content reads and again after the consume save, and
+ * requires it to be ACTIVE and still bound to the grant (owner, session, project — the active workspace is
+ * resolved from the active project). Remaining assumption (documented, not enforceable here): the storage port
+ * has no compare-and-set, so a session writer OUTSIDE this flow (e.g. `SessionManager.close`/`setActiveProject`
+ * from another process, or one that bypasses `invalidate`) can still interleave with the few-microsecond
+ * read-to-save window of a pointer write, and between the last session re-load and the provider call. Personal is a
+ * single process (ADR-0091); the runtime routes reset/project changes through `invalidate` first (serialized with
+ * the consume), so only a bypassing writer is left to the re-load checks.
+ *
  * Holds the LIVE storage seam (ADR-0062): repositories are resolved at call time, never in the constructor.
  */
 export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
@@ -148,10 +159,15 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     return this.store.tasks.save(saved);
   }
 
-  /** Release `session.activeTaskId` — the caller has already proven it points at `taskId` (our anchor). */
-  private async releasePointer(session: Session, taskId: Id, at: IsoTimestamp): Promise<void> {
-    if (session.activeTaskId !== taskId) return;
-    await this.store.sessions.save({ ...session, activeTaskId: undefined, lastActivityAt: at });
+  /**
+   * Release the canonical session's `activeTaskId` iff it still points at `taskId` (our anchor). The session is
+   * RE-READ and only the pointer field this flow owns is cleared on that fresh copy — a caller's (possibly stale)
+   * Session object is never written back, so a project switch or reset close that landed meanwhile is kept.
+   */
+  private async releasePointer(sessionId: Id, taskId: Id): Promise<void> {
+    const live = await this.store.sessions.get(sessionId);
+    if (live?.activeTaskId !== taskId) return;
+    await this.store.sessions.save({ ...live, activeTaskId: undefined });
   }
 
   /**
@@ -168,7 +184,7 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     const terminal = found.anchor.status === 'INVALIDATED' || found.anchor.status === 'CONSUMED';
     const anchor = terminal ? found.anchor : invalidateCredentialOverrideAnchor(found.anchor, reason, invalidatedBy, at);
     if (!terminal) await this.saveAnchor(found.task, anchor);
-    await this.releasePointer(session, found.task.id, at);
+    await this.releasePointer(session.id, found.task.id);
     return anchor.status === 'CONSUMED' ? { state: 'consumed', anchor } : { state: 'invalidated', anchor };
   }
 
@@ -219,6 +235,22 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     if (anchor.projectId !== session.activeProjectId) return 'project-changed';
     if (anchor.sessionId !== session.id || anchor.ownerActorId !== session.actorId) return 'superseded';
     return null;
+  }
+
+  /**
+   * Why the CANONICAL session (just re-loaded from storage) no longer admits this anchor's dispatch, if it does not:
+   * missing → `inconsistent`; not ACTIVE (closed by a reset) → `reset`; pointer no longer `pointer` → `superseded`
+   * (`pointer` null skips this, once the flow has released the pointer itself); then project/owner/session drift.
+   */
+  private liveSessionFailure(
+    live: Session | null,
+    anchor: CredentialOverrideAnchor,
+    pointer: Id | null,
+  ): CredentialOverrideInvalidationReason | null {
+    if (!live) return 'inconsistent';
+    if (live.status !== SessionStatus.ACTIVE) return 'reset';
+    if (pointer !== null && live.activeTaskId !== pointer) return 'superseded';
+    return this.sessionDrift(live, anchor);
   }
 
   async requestOverride(
@@ -367,7 +399,11 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
       return { ok: false, reason: 'anchor-failed', pendingApproval: approval };
     }
     try {
-      await this.store.sessions.save({ ...session, activeTaskId: task.id, lastActivityAt: at });
+      // Pointer-only write onto the re-read canonical session (never the turn's copy), and only if the pointer still
+      // holds the request this anchor is bound to.
+      const live = await this.store.sessions.get(session.id);
+      if (!live || live.activeTaskId !== pointer) throw new Error('session pointer moved');
+      await this.store.sessions.save({ ...live, activeTaskId: task.id });
     } catch {
       // Best effort: the unreachable row must not stay a live PENDING audit record.
       await this.saveAnchor(task, invalidateCredentialOverrideAnchor(anchor, 'inconsistent', SYSTEM, at)).catch(
@@ -431,10 +467,17 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     if (this.claims.has(claimId)) return { ok: false, reason: 'already-used' };
     this.claims.add(claimId);
     try {
-      // Revalidate and consume under the anchor's serialization (first read through the consume save), so no
-      // reset/denial/supersession can land between them; the provider call itself runs outside it.
+      // Revalidate and consume under the anchor's serialization (first read through the post-consume session
+      // re-load), so no reset/denial/supersession routed through this flow can land between them; the provider call
+      // itself runs outside it.
       const consumed = await this.serialized(claimId, () => this.consume(session, claimId, input));
       if (!consumed.ok) return consumed;
+      // ADR-0095 §5: the LAST expiry check runs synchronously with the injected clock, after every persistence
+      // await (consume save, pointer release, session re-load) and immediately before the provider call. Past the
+      // TTL nothing is sent; the set stays CONSUMED (one-time, never replayable) and the caller replies "expired".
+      if (assessCredentialOverrideAnchor(consumed.granted, consumed.approvals, this.clock()).kind !== 'ready') {
+        return { ok: false, reason: 'expired' };
+      }
       return { ok: true, value: await dispatch(consumed.grants) };
     } finally {
       this.claims.delete(claimId);
@@ -447,7 +490,13 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     claimId: Id,
     input: CredentialOverrideDispatchInput,
   ): Promise<
-    | { readonly ok: true; readonly grants: CredentialOverrideGrant[] }
+    | {
+        readonly ok: true;
+        readonly grants: CredentialOverrideGrant[];
+        /** The GRANTED set as revalidated (pre-consume) and its requests, for the final pre-dispatch expiry check. */
+        readonly granted: CredentialOverrideAnchor;
+        readonly approvals: ReadonlyMap<Id, ApprovalRequest | null>;
+      }
     | Extract<CredentialOverrideDispatchResult<never>, { ok: false }>
   > {
     type Failure = Extract<CredentialOverrideDispatchResult<never>, { ok: false }>;
@@ -494,11 +543,14 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
       const reason = latest?.status === 'INVALIDATED' ? latest.invalidationReason : undefined;
       return { ok: false, reason: reason ?? 'inconsistent' }; // never overwrite a row we did not revalidate
     }
-    const liveSession = await this.store.sessions.get(session.id);
-    if (liveSession?.activeTaskId !== claimId) {
-      // The pointer moved on without us: write the audit row only, never touch a pointer that is no longer ours.
-      await this.saveAnchor(latestTask, invalidateCredentialOverrideAnchor(anchor, 'superseded', SYSTEM, this.clock()));
-      return { ok: false, reason: 'superseded' };
+    // The CANONICAL session, re-loaded after every await (never the turn's copy): a reset close, a project switch or
+    // a moved pointer that landed while the content was re-read voids the set before anything is consumed.
+    const live = await this.store.sessions.get(session.id);
+    const liveFailure = this.liveSessionFailure(live, anchor, claimId);
+    if (liveFailure) {
+      await this.saveAnchor(latestTask, invalidateCredentialOverrideAnchor(anchor, liveFailure, SYSTEM, this.clock()));
+      await this.releasePointer(session.id, task.id); // pointer-only, and only if it is still ours
+      return { ok: false, reason: liveFailure };
     }
 
     // ADR-0095 §5: the expiry re-check sits after every await, immediately before the consume save.
@@ -517,14 +569,25 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     } catch {
       return { ok: false, reason: 'consume-failed' }; // nothing sent
     }
+    // The consume save was an await: re-load the canonical session (fail closed if unreadable). From here on the set
+    // is CONSUMED — terminal and never replayable — so a failure sends nothing and leaves the row CONSUMED.
+    const afterConsume = await this.store.sessions.get(session.id).catch(() => null);
+    const afterFailure = this.liveSessionFailure(afterConsume, anchor, claimId);
     // Release the pointer so later turns never keep hitting a consumed anchor. Best effort: the CONSUMED row is
     // authoritative, and a pointer left on it only ever yields "already used".
-    await this.releasePointer(session, task.id, at).catch(() => undefined);
+    await this.releasePointer(session.id, task.id).catch(() => undefined);
+    if (afterFailure) return { ok: false, reason: afterFailure };
+    // ... and the release was an await too: one last re-load (pointer already released by us, so not checked).
+    const final = await this.store.sessions.get(session.id).catch(() => null);
+    const finalFailure = this.liveSessionFailure(final, anchor, null);
+    if (finalFailure) return { ok: false, reason: finalFailure };
     return {
       ok: true,
       grants: consumed.grants.map((g) => ({
         path: g.path, contentSha256: g.contentSha256, detector: g.detector, line: g.line, state: 'CONSUMED',
       })),
+      granted: anchor,
+      approvals,
     };
   }
 

@@ -519,7 +519,10 @@ export type CredentialOverrideDispatchResult<T> =
       /**
        * `already-used`: consumed, or a claim is held by another turn. `not-granted`: some grant still awaits a
        * decision (nothing changed). `consume-failed`: the consume save failed (nothing sent). Any invalidation
-       * reason: the set was invalidated and nothing was sent.
+       * reason: nothing was sent. Before the consume save the set is saved `INVALIDATED{reason}`; when the
+       * canonical-session re-load after the consume save fails (`reset`, `project-changed`, `superseded`,
+       * `inconsistent`) or the final pre-dispatch expiry check fails (`expired`), the set stays `CONSUMED` — terminal
+       * and never replayable — and the caller still replies that nothing was sent.
        */
       readonly reason:
         | 'not-found'
@@ -536,12 +539,18 @@ export type CredentialOverrideDispatchResult<T> =
  * Concurrency: every method that reads-and-writes an anchor is serialized per anchor (Personal is one process,
  * ADR-0091), and `consumeAndDispatch` holds that serialization from its first read through the consume save. An
  * invalidation (reset, denial, project change, supersession) therefore lands either before the consume — and the
- * dispatch then fails and sends nothing — or after it, and reports `consumed`.
+ * dispatch then fails and sends nothing — or after it, and reports `consumed`. Session changes made OUTSIDE the flow
+ * are caught by re-loading the canonical session (ACTIVE, same owner/session/project, pointer still ours) after the
+ * content reads and after the consume save; the TTL is re-checked synchronously right before `dispatch` runs. The
+ * flow writes the session pointer only, onto a freshly re-read session, never a caller's stale copy.
  *
  * Wiring obligations (OVR-4):
  * - Before anchoring any NEWER request on the session pointer (e.g. `StatelessApprovalFlow.anchor`, which
  *   overwrites `activeTaskId`), call `clear()` so a live older set is written `INVALIDATED{superseded}` (D7
  *   audit) instead of being orphaned as `PENDING`/`GRANTED`.
+ * - Route a reset or project change through `invalidate()` BEFORE closing the session / switching the project, so it
+ *   is serialized with an in-flight consume (the re-load checks only cover writers that bypass the flow; there is
+ *   no compare-and-set across processes — Personal is a single process, ADR-0091).
  * - Close every `pendingApproval` handed back (`findPending`, `requestOverride`, `recordGrant`) through
  *   `ApprovalManager.decide`.
  * - `consumeAndDispatch` releases the pointer right after the consume save, so later turns never keep hitting a
