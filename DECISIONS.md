@@ -14458,8 +14458,8 @@ latency bounded per kind of work.
 ### Decision
 
 - **Chat preference is expressed only through composition-root registration.** `OllamaCliProvider` is
-  registered when `QUOKY_OLLAMA_ENABLED` is on (**default on**; exact `true`/`false`, anything else is a
-  startup error); off means Claude-only. No priority override, no new policy, and no provider-id branching
+  registered when `QUOKY_OLLAMA_ENABLED` is on (**default on**, i.e. opt-out registration; exact
+  `true`/`false`, anything else is a startup error); off means Claude-only. No priority override, no new policy, and no provider-id branching
   in Core (`ARCHITECTURE.md` §5.1, §5.2, §12). Existing advertised priorities are unchanged: `GENERAL_CHAT`
   prefers Ollama; `CODE_IMPLEMENTATION` (Claude 50 > Ollama 40), `CODE_REVIEW`, `PROJECT_ANALYSIS` and
   `ARCHITECTURE_PLANNING` stay on Claude.
@@ -14527,6 +14527,10 @@ effectively lost on the next conversation, defeating durable memory for a single
   equals the request actor and ignores `sessionId` and `projectId` for eligibility. Records carrying
   `channelId`, `threadId` or `taskId`, records with no actor, and records of another actor are never
   recalled. A request with no actor returns no durable recall (fail closed).
+- **Candidate retrieval is widened too, not only eligibility.** `ContextBuilder`/`DefaultMemoryRetriever`
+  query `MemoryRepository.findDurableCandidates` with the actor only (`{ userId: actorId }`, no `sessionId`
+  or `projectId` filter) and return early with no actor. The SQLite repository already filters only the keys
+  it is given, so no port, schema or migration change is required.
 - **Everything else is unchanged.** Expiry, supersession, authority fitness, normalized-content
   deduplication, ranking and the hard limits stay as implemented; `ContextBuilder` remains the single
   final budget owner.
@@ -14579,12 +14583,15 @@ semantic routing; these controls are its minimal v1 form inside the existing run
   approve or deny.
 - **Reset** closes the current Session (`SessionStatus.CLOSED`); the next message opens a new Session. If an
   approval is pending, it is first recorded as denied through the existing `ApprovalManager.decide`
-  (`approved: false`, comment `reset`). Reset does not cancel a running TaskRun, roll back an applied
+  (`approved: false`, comment `reset`, `decidedBy` = the resolved owner actor id, because the owner asked for
+  it). Reset does not cancel a running TaskRun, roll back an applied
   workspace change or commit, or delete any memory; durable recall continues (ADR-0073 amendment).
 - **Pending-approval TTL = 30 minutes** (1,800,000 ms) from `ApprovalRequest.createdAt`, measured with the
   shared clock. Expiry is evaluated lazily on the next inbound turn (no scheduler): an expired PENDING
-  approval is recorded as denied via `decide` (`approved: false`, comment `expired`), and that turn gets only
-  an expiry notice. An expired approval can never be approved. No new persisted field (`expiresAt` stays
+  approval is recorded as denied via `decide` (`approved: false`, comment `expired`, `decidedBy: 'system'` —
+  the existing system-attribution convention used for auto-approval — and `decidedAt` from the shared clock).
+  Precedence: control phrases are evaluated first; if the turn is help/reset, the expiry is still recorded and
+  the control action runs with the expiry notice prepended. Any other turn gets only the expiry notice. An expired approval can never be approved. No new persisted field (`expiresAt` stays
   reserved).
 - **Pending approval keeps capturing turns.** While an unexpired approval is pending, an ordinary message is
   not routed to chat or a provider; it gets a reminder of what is pending, how to approve or deny, the
