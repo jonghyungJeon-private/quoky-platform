@@ -7,7 +7,11 @@ const fakeClient: {
   channels: Map<string, unknown>;
   dm: { send: (o: unknown) => Promise<unknown> };
   sent: unknown[];
+  posts: Array<{ url: string; body: unknown }>;
+  statuses: number[];
 } = {
+  posts: [],
+  statuses: [],
   ready: true,
   channels: new Map(),
   sent: [],
@@ -36,7 +40,23 @@ vi.mock('discord.js', async (importOriginal) => {
     }
     async destroy(): Promise<void> {}
   }
-  return { ...actual, Client: FakeClient };
+  // Real REST (retry logic included) over a scripted transport: statuses are consumed per HTTP request.
+  class FakeREST extends actual.REST {
+    constructor(options: Record<string, unknown> = {}) {
+      super({
+        ...options,
+        makeRequest: (async (url: string, init: { body?: unknown }) => {
+          fakeClient.posts.push({ url, body: init.body });
+          const status = fakeClient.statuses.shift() ?? 200;
+          return new Response(JSON.stringify(status === 200 ? { id: 'm1' } : {}), {
+            status,
+            headers: { 'content-type': 'application/json' },
+          });
+        }) as never,
+      });
+    }
+  }
+  return { ...actual, Client: FakeClient, REST: FakeREST };
 });
 
 import { DiscordPlatformAdapter } from './index';
@@ -301,6 +321,19 @@ describe('deliverOwnerNotification: outcome classification', () => {
     expect(await deliverOwnerNotification(note(), h.deps)).toEqual({ status: 'UNCERTAIN', reason: 'TIMEOUT' });
   });
 
+  it('a never-resolving DM resolution is NOT_SENT retryable within the resolve deadline, with no send', async () => {
+    const h = harness({ resolveTimeoutMs: 10, fetchOwnerDm: () => new Promise(() => undefined) });
+    expect(await deliverOwnerNotification(note(), h.deps)).toEqual({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    expect(h.dm.sent).toHaveLength(0);
+  });
+
+  it('a never-resolving channel resolution is NOT_SENT retryable with no DM fallback and no send', async () => {
+    const h = harness({ channelDelivery: true, resolveTimeoutMs: 10, fetchChannel: () => new Promise(() => undefined) });
+    expect(await deliverOwnerNotification(note(), h.deps)).toEqual({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    expect(h.fetchOwnerDm).not.toHaveBeenCalled();
+    expect(h.dm.sent).toHaveLength(0);
+  });
+
   it('failing to open the DM is NOT_SENT: refusals non-retryable, transport trouble retryable', async () => {
     const refused = harness({ fetchOwnerDm: async () => { throw apiError(404, 10013); } });
     expect(await deliverOwnerNotification(note(), refused.deps)).toEqual({ status: 'NOT_SENT', reason: 'UNKNOWN_TARGET', retryable: false });
@@ -358,25 +391,50 @@ describe('DiscordPlatformAdapter.deliver', () => {
   });
 
   it('delivers to the owner DM by default and to the channel only with channelDelivery', async () => {
-    const dmSent: unknown[] = [];
-    fakeClient.dm = { send: async (o) => { dmSent.push(o); return undefined; } };
-    const channelSent: unknown[] = [];
-    fakeClient.channels.set(CHANNEL, { isSendable: () => true, send: async (o: unknown) => { channelSent.push(o); } });
+    fakeClient.dm = { id: 'dm-1' } as never;
+    fakeClient.statuses = [];
+    fakeClient.posts = [];
+    const urls = () => fakeClient.posts.map((p) => p.url);
+    fakeClient.channels.set(CHANNEL, { id: CHANNEL, isSendable: () => true });
 
     const off = build();
     await off.adapter.start();
     expect(await off.adapter.deliver(note())).toEqual({ status: 'SENT', via: 'dm' });
-    expect(channelSent).toHaveLength(0);
+    expect(urls()).toEqual([expect.stringContaining('/channels/dm-1/messages')]);
 
+    fakeClient.posts = [];
     const on = build({ channelDelivery: true });
     await on.adapter.start();
     expect(await on.adapter.deliver(note())).toEqual({ status: 'SENT', via: 'channel' });
-    expect(channelSent).toHaveLength(1);
+    expect(urls()).toEqual([expect.stringContaining(`/channels/${CHANNEL}/messages`)]);
 
     // A non-sendable channel falls back to the DM.
-    fakeClient.channels.set(CHANNEL, { isSendable: () => false });
+    fakeClient.posts = [];
+    fakeClient.channels.set(CHANNEL, { id: CHANNEL, isSendable: () => false });
     expect(await on.adapter.deliver(note())).toEqual({ status: 'SENT', via: 'dm' });
     // The brief stays in the DM.
     expect(await on.adapter.deliver(note({ kind: 'BRIEF' }))).toEqual({ status: 'SENT', via: 'dm' });
+    expect(urls().every((u) => u.includes('/channels/dm-1/messages'))).toBe(true);
+  });
+
+  it('never lets the transport retry a send: mocked 500 then 200 is exactly one POST and UNCERTAIN', async () => {
+    fakeClient.dm = { id: 'dm-1', send: async () => { throw new Error('discord.js client send must not be used'); } } as never;
+    fakeClient.posts = [];
+    fakeClient.statuses = [500, 200];
+    const { adapter } = build();
+    await adapter.start();
+    expect(await adapter.deliver(note())).toEqual({ status: 'UNCERTAIN', reason: 'PLATFORM_ERROR' });
+    expect(fakeClient.posts).toHaveLength(1);
+    expect(fakeClient.posts[0]?.url).toContain('/channels/dm-1/messages');
+  });
+
+  it('a successful notification is one POST via the dedicated REST', async () => {
+    fakeClient.dm = { id: 'dm-1' } as never;
+    fakeClient.posts = [];
+    fakeClient.statuses = [200];
+    const { adapter } = build();
+    await adapter.start();
+    expect(await adapter.deliver(note())).toEqual({ status: 'SENT', via: 'dm' });
+    expect(fakeClient.posts).toHaveLength(1);
   });
 });

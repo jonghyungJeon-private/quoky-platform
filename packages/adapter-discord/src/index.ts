@@ -1,9 +1,9 @@
-import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'discord.js';
 import type { Message } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
-import { deliverOwnerNotification } from './notification';
-import type { NotificationChannel } from './notification';
+import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
+import type { NotificationChannel, NotificationSendOptions } from './notification';
 
 export {
   chunkText,
@@ -275,6 +275,21 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       });
       return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
     }
+    // ADR-0101 D6 (at-most-once): the shared client REST retries 5xx/transport failures up to 3 times, which could
+    // post a message the platform already accepted. Notification posts go through a dedicated REST with retries off.
+    const rest = new REST({
+      retries: 0,
+      timeout: DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS,
+    }).setToken(this.config.token);
+    const noRetryChannel = (channelId: string): NotificationChannel => ({
+      send: (options: NotificationSendOptions) =>
+        rest.post(Routes.channelMessages(channelId), {
+          body: {
+            content: options.content,
+            allowed_mentions: { parse: options.allowedMentions.parse, ...(options.allowedMentions.users ? { users: options.allowedMentions.users } : {}) },
+          },
+        }),
+    });
     return deliverOwnerNotification(notification, {
       ownerIds: this.config.ownerIds,
       channelIds: this.config.channelIds ?? [],
@@ -282,11 +297,12 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       channelDelivery: this.config.channelDelivery === true,
       fetchChannel: async (id): Promise<NotificationChannel | null> => {
         const channel = await this.fetchChannel(id);
-        return channel?.isSendable() ? channel : null;
+        return channel?.isSendable() ? noRetryChannel(channel.id) : null;
       },
       fetchOwnerDm: async (userId): Promise<NotificationChannel> => {
         const user = await client.users.fetch(userId);
-        return user.createDM();
+        const dm = await user.createDM();
+        return noRetryChannel(dm.id);
       },
       logger: this.logger,
     });
