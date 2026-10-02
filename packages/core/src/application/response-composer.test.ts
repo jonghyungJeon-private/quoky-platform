@@ -681,6 +681,11 @@ describe('ResponseComposer.composeApplyApprovalRecorded', () => {
     expect(reply.text).toContain('파일은 수정되지 않았어요');
   });
 
+  it('names the exact next phrase "패치 만들어줘"', () => {
+    const reply = composer.composeApplyApprovalRecorded(CTX);
+    expect(reply.text).toContain('"패치 만들어줘"');
+  });
+
   it('never uses wording that implies a completed mutation', () => {
     const reply = composer.composeApplyApprovalRecorded(CTX);
     for (const word of FORBIDDEN_MUTATION_WORDS) {
@@ -706,6 +711,14 @@ describe('ResponseComposer.composePatchSetPreview', () => {
     expect(reply.text).toContain('패치 미리보기');
     const notApplied = (reply.text.match(/적용하지 않았어요|적용은 아직 지원하지 않아요|수정되지 않았어요/g) ?? []).length;
     expect(notApplied).toBeGreaterThanOrEqual(2);
+  });
+
+  it('footer says files are unchanged and names the exact apply phrase; no false "unsupported" wording', () => {
+    const reply = composer.composePatchSetPreview(CTX, previewOf());
+    expect(reply.text).toContain('파일은 아직 그대로예요.');
+    expect(reply.text).toContain('"패치 적용해줘"');
+    expect(reply.text).not.toContain('적용은 아직 지원하지 않아요');
+    expect(reply.text).not.toContain('지원하지 않아요');
   });
 
   it('lists the operation path and its diff', () => {

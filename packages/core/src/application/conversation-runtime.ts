@@ -1,5 +1,6 @@
 import { describeAiFailure } from './ai-failure';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
+import { interpretApprovalDecision } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
@@ -716,8 +717,8 @@ export interface ConversationRuntimeDeps {
   readonly logger: Logger;
 }
 
-const APPROVE_WORDS = ['승인', '진행', '좋아', 'yes', 'y', 'ok'];
-const DENY_WORDS = ['거절', '아니', 'no', 'n'];
+// Approve/deny/cancel decision phrases for pending approvals live in ./approval-decision (whole-token,
+// negation-aware); "APPROVE_WORDS" in the comments below refers to that approve phrase set.
 const CANCEL_WORDS = ['취소', '중단', '그만'];
 
 /** Explicit apply-only phrases (Sprint 2s, ADR-0040) — "좋아"/"오케이"/"확인"/"괜찮네" must NEVER match;
@@ -1231,13 +1232,7 @@ export class ConversationRuntime {
 
   /** Interpret a user message as an approval decision (only meaningful while a pending approval exists). */
   static interpretDecision(text: string): ApprovalDecisionKind {
-    const t = text.trim().toLowerCase();
-    const has = (words: string[]): boolean => words.some((w) => t === w || t.includes(w));
-    // cancel takes precedence over deny ("중단" etc. are unambiguous abandons)
-    if (has(CANCEL_WORDS)) return 'cancel';
-    if (has(APPROVE_WORDS) && !has(DENY_WORDS)) return 'approve';
-    if (has(DENY_WORDS) && !has(APPROVE_WORDS)) return 'deny';
-    return 'ambiguous';
+    return interpretApprovalDecision(text);
   }
 
   /** Explicit apply intent only (Sprint 2s, ADR-0040) — deliberately NOT interpretDecision/APPROVE_WORDS;
