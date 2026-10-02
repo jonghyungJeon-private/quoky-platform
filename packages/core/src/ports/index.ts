@@ -16,6 +16,12 @@ export * from './connector-provider.port';
 export * from './tool-provider.port';
 export * from './continuation-binding.port';
 export * from './continuation-receiver.port';
+// Personal v2 seams (ADR-0096 D1/D8): the turn-handler port plus inert stubs filled by their track tasks.
+export * from './conversation-turn-handler.port';
+export * from './connector-query';
+export * from './feedback-repository.port';
+export * from './reminder-repository.port';
+export * from './notification-sink.port';
 
 export * from './continuation-routing-audit';
 export * from './continuation-containment-audit';
