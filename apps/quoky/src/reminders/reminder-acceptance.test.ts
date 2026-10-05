@@ -42,14 +42,16 @@ import {
   type TaskRun,
   type VectorProvider,
 } from '@quoky/core';
+import { DiscordPlatformAdapter, deliverOwnerNotification, type DiscordConfig } from '@quoky/adapter-discord';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
+import { loadConfig } from '../config';
 import { createProductionContextBuilder } from '../context-builder-provider';
 import {
   createProductionConversationRuntime,
   type ProductionConversationRuntimeDeps,
 } from '../conversation-runtime-provider';
 import { REMINDER_TURN_HANDLERS } from '../features/feature-tokens';
-import { createRemindersProviders } from '../features/reminders.providers';
+import { createRemindersProviders, withReminderChannelDelivery } from '../features/reminders.providers';
 import type { ReminderConfig } from './reminder-config';
 import { ReminderTickDriver, type ReminderTickTimers } from './reminder-tick-driver';
 
@@ -277,9 +279,9 @@ function conversationRuntime(
   return {
     providerCalls: () => providerCalls,
     tasksCreated: () => tasksCreated,
-    async say(text: string) {
+    async say(text: string, context: ConversationContext = dmContext) {
       sequence += 1;
-      const message: InboundMessage = { id: `message-${sequence}`, context: dmContext, text, receivedAt: clock.now() };
+      const message: InboundMessage = { id: `message-${sequence}`, context, text, receivedAt: clock.now() };
       return runtime.handle(message);
     },
   };
@@ -362,6 +364,76 @@ describe('reminders offline acceptance — composition', () => {
     for (const forbidden of ['AI_PROVIDERS', 'CONNECTOR_PROVIDERS', 'TOOL_PROVIDERS', 'AiProviderManager', 'ConnectorManager', 'ConversationRuntime']) {
       expect(source).not.toContain(forbidden);
     }
+  });
+});
+
+describe('reminders offline acceptance — channel delivery wiring (ADR-0101 D8, live QA)', () => {
+  const GUILD_ID = '222222222222222222';
+  const REMINDER_CHANNEL = '333333333333333333';
+  const baseEnv = {
+    QUOKY_DISCORD_OWNER_IDS: OWNER_ID,
+    QUOKY_DISCORD_CHANNEL_IDS: REMINDER_CHANNEL,
+    DISCORD_GUILD_ID: GUILD_ID,
+    DISCORD_BOT_TOKEN: 'fixture-not-a-token',
+  };
+  /** The Discord adapter keeps its config private; the composition test reads it only to prove the wiring. */
+  const adapterConfigOf = (env: NodeJS.ProcessEnv): DiscordConfig => {
+    const config = loadConfig(env);
+    const adapter = new DiscordPlatformAdapter(withReminderChannelDelivery(config.discord, config.reminders), new RecordingLogger());
+    return (adapter as unknown as { config: DiscordConfig }).config;
+  };
+
+  it('the PLATFORM_ADAPTER receives channelDelivery=true when reminders and QUOKY_REMINDERS_CHANNEL_DELIVERY are on', () => {
+    const config = adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_ENABLED: 'true', QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true' });
+    expect(config.channelDelivery).toBe(true);
+    expect(config).toMatchObject({ guildId: GUILD_ID, ownerIds: [OWNER_ID], channelIds: [REMINDER_CHANNEL] });
+  });
+
+  it('channelDelivery is false by default and stays inert while reminders are off', () => {
+    expect(adapterConfigOf({ ...baseEnv }).channelDelivery).toBe(false);
+    expect(adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_ENABLED: 'true' }).channelDelivery).toBe(false);
+    expect(adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true' }).channelDelivery).toBe(false);
+  });
+
+  it('app.module builds the Discord adapter from the reminder-aware config (not the bare discord config)', () => {
+    const appModule = readFileSync(new URL('../app.module.ts', import.meta.url), 'utf8');
+    expect(appModule).toContain('withReminderChannelDelivery(config.discord, config.reminders)');
+    expect(appModule).not.toMatch(/new DiscordPlatformAdapter\(config\.discord\b/);
+  });
+
+  it('a reminder created in an allowlisted guild channel targets that guild (spaceId) and is delivered to the channel', async () => {
+    const clock = new TestClock();
+    const c = await compose(tempDbPath(), clock, new RecordingLogger(), { channelDelivery: true });
+    const chat = conversationRuntime(c.handlers, clock);
+    await c.driver.start();
+    // The Discord adapter maps a guild message to this context (spaceId = message.guildId; see adapter tests).
+    const guildContext: ConversationContext = { platform: 'discord', channelId: REMINDER_CHANNEL, userId: OWNER_ID, spaceId: GUILD_ID };
+
+    expect((await chat.say('30분 뒤에 스트레칭 알려줘', guildContext)).reply.text).toContain('#1');
+    clock.advance(31 * MINUTE);
+    await tick(c);
+
+    expect(c.platform.deliveries).toHaveLength(1);
+    const notification = c.platform.deliveries[0]!;
+    expect(notification.target).toEqual(guildContext);
+
+    // The persisted target passes the adapter's guild-target admission (spaceId === configured guild) → channel.
+    const posted: string[] = [];
+    const dmPosts: string[] = [];
+    const deps = {
+      ownerIds: [OWNER_ID],
+      channelIds: [REMINDER_CHANNEL],
+      guildId: GUILD_ID,
+      fetchChannel: async (id: string) => ({ send: async () => { posted.push(id); return {}; } }),
+      fetchOwnerDm: async () => ({ send: async () => { dmPosts.push('dm'); return {}; } }),
+      logger: new RecordingLogger(),
+    };
+    await expect(deliverOwnerNotification(notification, { ...deps, channelDelivery: true })).resolves.toEqual({ status: 'SENT', via: 'channel' });
+    expect(posted).toEqual([REMINDER_CHANNEL]);
+    expect(dmPosts).toHaveLength(0);
+    // Default (flag off) the same target goes to the owner DM.
+    await expect(deliverOwnerNotification(notification, { ...deps, channelDelivery: false })).resolves.toEqual({ status: 'SENT', via: 'dm' });
+    expect(dmPosts).toHaveLength(1);
   });
 });
 

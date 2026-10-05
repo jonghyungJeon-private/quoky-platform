@@ -111,7 +111,7 @@ import { createAgentProfileRegistryProvider } from './agent-profile-registry-pro
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
 import { feedbackProviders } from './features/feedback.providers';
-import { remindersProviders } from './features/reminders.providers';
+import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
 
@@ -271,7 +271,12 @@ const infrastructure: Provider[] = [
   {
     provide: PLATFORM_ADAPTER,
     // ADR-0091: the owner/channel admission gate is Discord-adapter config; Core never receives these ids.
-    useFactory: () => new DiscordPlatformAdapter(config.discord, new ConsoleLogger('discord')),
+    // ADR-0101 D8: the reminder channel-delivery opt-in reaches the adapter here (inert while reminders are off).
+    useFactory: () =>
+      new DiscordPlatformAdapter(
+        withReminderChannelDelivery(config.discord, config.reminders),
+        new ConsoleLogger('discord'),
+      ),
   },
   {
     provide: AI_PROVIDERS,

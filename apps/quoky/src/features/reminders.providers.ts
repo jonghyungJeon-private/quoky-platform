@@ -1,4 +1,5 @@
 import type { Provider } from '@nestjs/common';
+import type { DiscordConfig } from '@quoky/adapter-discord';
 import {
   NOTIFICATION_SINK,
   PLATFORM_ADAPTER,
@@ -31,6 +32,8 @@ import { REMINDER_TURN_HANDLERS } from './feature-tokens';
  *   only after `storage.init()`, which runs after DI construction, so nothing is captured here);
  * - `NOTIFICATION_SINK` — the platform adapter itself (the Discord adapter implements the owner-only sink, PRO-4);
  * - the reply composer, the conversation and dispatch services (Core), the tick driver (composition root);
+ * - `withReminderChannelDelivery` — the one reminder value the composition root reads: it applies the
+ *   `QUOKY_REMINDERS_CHANNEL_DELIVERY` opt-in to the Discord adapter config behind `PLATFORM_ADAPTER`;
  * - `REMINDER_TURN_HANDLERS` — the always-registered order-200 `pre-classify` handler. With
  *   `QUOKY_REMINDERS_ENABLED=false` it still answers a reminder phrase with the fixed disabled reply and the tick
  *   driver never starts.
@@ -38,6 +41,19 @@ import { REMINDER_TURN_HANDLERS } from './feature-tokens';
  * The dispatch service's whole surface is repository + sink + composer + a read-only WorkItem lister + logger:
  * no provider, connector or tool reaches reminders.
  */
+
+/**
+ * The Discord adapter config with the reminder channel-delivery opt-in applied (ADR-0101 D8). The adapter owns
+ * channel admission, so `QUOKY_REMINDERS_CHANNEL_DELIVERY` must reach it through its config; the composition root
+ * builds `PLATFORM_ADAPTER` from this. Inert while reminders are off: `channelDelivery` is true only when
+ * `QUOKY_REMINDERS_ENABLED=true` AND `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`.
+ */
+export function withReminderChannelDelivery(
+  discord: Omit<DiscordConfig, 'channelDelivery'>,
+  reminders: Pick<ReminderConfig, 'enabled' | 'channelDelivery'>,
+): DiscordConfig {
+  return { ...discord, channelDelivery: reminders.enabled && reminders.channelDelivery };
+}
 
 /** App-local token for this feature's parsed config (SEAM-2 `config.reminders`). */
 export const REMINDER_FEATURE_CONFIG = Symbol('ReminderFeatureConfig');
