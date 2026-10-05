@@ -360,6 +360,47 @@ describe('loadConfig — static AgentProfile configuration (M3E-6H, ADR-0089)', 
 
 const repoRoot = path.resolve(__dirname, '../../..');
 
+describe('Confluence connector email (Atlassian Cloud Basic auth)', () => {
+  const base = {
+    QUOKY_CONFLUENCE_BASE_URL: 'https://site.atlassian.net/wiki',
+    QUOKY_CONFLUENCE_TOKEN: 'fixture-atlassian-token',
+  };
+  const jira = {
+    QUOKY_JIRA_BASE_URL: 'https://site.atlassian.net',
+    QUOKY_JIRA_EMAIL: 'jira@example.test',
+    QUOKY_JIRA_TOKEN: 'fixture-atlassian-token',
+  };
+
+  it('uses QUOKY_CONFLUENCE_EMAIL when set', () => {
+    expect(loadConfig(env({ ...base, ...jira, QUOKY_CONFLUENCE_EMAIL: ' wiki@example.test ' })).connectors.confluence)
+      .toEqual({ host: base.QUOKY_CONFLUENCE_BASE_URL, token: base.QUOKY_CONFLUENCE_TOKEN, email: 'wiki@example.test' });
+  });
+
+  it('reuses the Jira email when the Confluence and Jira base URLs share a host', () => {
+    expect(loadConfig(env({ ...base, ...jira })).connectors.confluence).toEqual({
+      host: base.QUOKY_CONFLUENCE_BASE_URL, token: base.QUOKY_CONFLUENCE_TOKEN, email: 'jira@example.test',
+    });
+    // Scheme-less and differently cased hosts still compare equal.
+    expect(loadConfig(env({ ...base, ...jira, QUOKY_JIRA_BASE_URL: 'SITE.atlassian.net' })).connectors.confluence?.email)
+      .toBe('jira@example.test');
+    // Legacy Jira aliases are honoured the same way.
+    expect(loadConfig(env({ ...base, CHUNSIK_JIRA_BASE_URL: jira.QUOKY_JIRA_BASE_URL, CHUNSIK_JIRA_EMAIL: 'legacy@example.test' }))
+      .connectors.confluence?.email).toBe('legacy@example.test');
+  });
+
+  it('does not reuse the Jira email for a different host (Bearer stays)', () => {
+    expect(loadConfig(env({ ...base, ...jira, QUOKY_JIRA_BASE_URL: 'https://other.atlassian.net' })).connectors.confluence)
+      .toEqual({ host: base.QUOKY_CONFLUENCE_BASE_URL, token: base.QUOKY_CONFLUENCE_TOKEN });
+    expect(loadConfig(env({ ...base, QUOKY_JIRA_EMAIL: 'jira@example.test' })).connectors.confluence)
+      .toEqual({ host: base.QUOKY_CONFLUENCE_BASE_URL, token: base.QUOKY_CONFLUENCE_TOKEN });
+  });
+
+  it('treats an explicitly empty QUOKY_CONFLUENCE_EMAIL as Bearer and skips the Jira reuse', () => {
+    expect(loadConfig(env({ ...base, ...jira, QUOKY_CONFLUENCE_EMAIL: '' })).connectors.confluence)
+      .toEqual({ host: base.QUOKY_CONFLUENCE_BASE_URL, token: base.QUOKY_CONFLUENCE_TOKEN });
+  });
+});
+
 describe('Product namespace environment compatibility', () => {
   const values = {
     DB_PATH: '/fixture/data.db', VECTOR_PATH: '/fixture/vectors', WORKSPACE_ROOT: '/fixture/work',

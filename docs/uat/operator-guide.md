@@ -59,9 +59,14 @@ aliases are accepted, `QUOKY_*` wins):
 
 | Connector | Variables | Notes |
 |---|---|---|
-| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Live behaviour of the Jira search endpoint is unverified |
-| Slack | `QUOKY_SLACK_TOKEN` | Message search may need a user token rather than a bot token. Unverified live |
-| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN` | Auth style unverified live |
+| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Basic auth `email:token`. `BASE_URL` is the site origin only (`https://<site>.atlassian.net`). Live behaviour of the Jira search endpoint is unverified |
+| Slack | `QUOKY_SLACK_TOKEN` | Must be a Slack **user** token (`xoxp-`): `search.messages` refuses bot tokens. Scopes: `search:read` (search), `channels:read` (channel list, public channels only), `channels:history` (public channel messages and threads); add `groups:history` only to read a private channel by id. `groups:read` is not needed (the list does not request private channels). Unverified live |
+| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN`, optional `QUOKY_CONFLUENCE_EMAIL` | `BASE_URL` may be the site root or end in `/wiki` (requests go to `/wiki/...` exactly once). With an email the connector sends Basic `email:token` (Atlassian Cloud API token); without one it sends `Bearer` (Data Center PAT only; Cloud rejects Bearer for API tokens). If `QUOKY_CONFLUENCE_EMAIL` is unset and the Jira base URL has the same host, the Jira email is reused; set it to an empty value to force Bearer. Unverified live |
+
+On Atlassian Cloud, Jira and Confluence on one site share **one** Atlassian API token: create it for your account at
+<https://id.atlassian.com/manage-profile/security/api-tokens> and put the same value in `QUOKY_JIRA_TOKEN` and
+`QUOKY_CONFLUENCE_TOKEN`. With `QUOKY_JIRA_EMAIL` set and both base URLs on the same host, no Confluence email is
+needed. The email and tokens are never logged.
 | GitHub (work lookups) | the GitHub App below | Read token requests Issues: Read and Pull requests: Read |
 
 Connector lookups on real Jira, Slack, Confluence and GitHub tenants have **not** been run live (credentials are being

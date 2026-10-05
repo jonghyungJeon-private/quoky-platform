@@ -55,7 +55,11 @@ export interface QuokyConfig {
   connectors: {
     jira?: { host: string; email: string; apiToken: string };
     slack?: { token: string };
-    confluence?: { host: string; token: string };
+    /**
+     * `email` selects Atlassian Cloud Basic auth (`email:apiToken`); absent → Bearer (Data Center PAT). See
+     * `resolveConfluenceConnector` for the Jira-email reuse rule.
+     */
+    confluence?: { host: string; token: string; email?: string };
   };
   /**
    * Repository identity for hosting operations (Sprint 3d-A, ADR-0051). RAW/unvalidated here; validated by
@@ -487,10 +491,42 @@ function resolveSlackConnector(env: NodeJS.ProcessEnv): { token: string } | unde
   return token ? { token } : undefined;
 }
 
-function resolveConfluenceConnector(env: NodeJS.ProcessEnv): { host: string; token: string } | undefined {
+/**
+ * Confluence connector config. On Atlassian Cloud a user API token needs Basic `email:apiToken`, so an email is
+ * resolved as follows:
+ * 1. `QUOKY_CONFLUENCE_EMAIL` when defined. A defined-but-empty value is an explicit "no email" (Bearer, for a
+ *    Data Center PAT) and disables the Jira reuse below.
+ * 2. Otherwise the Jira email (`QUOKY_JIRA_EMAIL`, legacy alias accepted) when the Confluence and Jira base URLs
+ *    name the same host — one Atlassian Cloud site, so the same Atlassian account and API token.
+ * 3. Otherwise none → Bearer.
+ * The email is a credential component: it is never logged.
+ */
+function resolveConfluenceConnector(
+  env: NodeJS.ProcessEnv,
+): { host: string; token: string; email?: string } | undefined {
   const host = nonBlank(env.QUOKY_CONFLUENCE_BASE_URL ?? env.CHUNSIK_CONFLUENCE_BASE_URL);
   const token = nonBlank(env.QUOKY_CONFLUENCE_TOKEN ?? env.CHUNSIK_CONFLUENCE_TOKEN);
-  return host && token ? { host, token } : undefined;
+  if (!host || !token) return undefined;
+  const email = resolveConfluenceEmail(env, host);
+  return email ? { host, token, email } : { host, token };
+}
+
+function resolveConfluenceEmail(env: NodeJS.ProcessEnv, confluenceHost: string): string | undefined {
+  if (env.QUOKY_CONFLUENCE_EMAIL !== undefined) return nonBlank(env.QUOKY_CONFLUENCE_EMAIL);
+  const jiraEmail = nonBlank(env.QUOKY_JIRA_EMAIL ?? env.CHUNSIK_JIRA_EMAIL);
+  const jiraHost = nonBlank(env.QUOKY_JIRA_BASE_URL ?? env.CHUNSIK_JIRA_BASE_URL);
+  if (!jiraEmail || !jiraHost) return undefined;
+  const confluenceHostname = hostnameOf(confluenceHost);
+  return confluenceHostname !== undefined && confluenceHostname === hostnameOf(jiraHost) ? jiraEmail : undefined;
+}
+
+/** Lower-cased hostname of a base URL given with or without a scheme; `undefined` when it does not parse. */
+function hostnameOf(value: string): string | undefined {
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 /**

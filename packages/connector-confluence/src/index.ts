@@ -20,9 +20,19 @@ const SUMMARY_LIMIT = 500;
 const RAW_JSON_LIMIT = 20_000;
 
 export interface ConfluenceConnectorConfig {
-  /** Confluence Cloud host, with or without an https:// prefix (for example, example.atlassian.net). */
+  /**
+   * Confluence host, with or without an https:// prefix (for example, example.atlassian.net). The site root and the
+   * `/wiki` context path are both accepted (`https://example.atlassian.net/wiki`); requests always go to
+   * `<origin>/wiki/...` exactly once.
+   */
   host: string;
+  /** Atlassian Cloud API token (with `email`) or a Data Center personal access token (without `email`). */
   token: string;
+  /**
+   * Atlassian account email. When present the connector uses HTTP Basic `email:token` (Atlassian Cloud user API
+   * token); when absent it sends `Bearer <token>` (Data Center PAT). Never logged.
+   */
+  email?: string;
   /** Injectable for deterministic unit tests. Production defaults to the platform fetch implementation. */
   fetchImpl?: typeof fetch;
   /** Maximum number of values accepted from one REST response. */
@@ -79,6 +89,7 @@ export class ConfluenceConnectorProvider implements ConnectorProvider {
 
   private readonly baseUrl: string;
   private readonly token: string;
+  private readonly authorization: string;
   private readonly fetchImpl: typeof fetch;
   private readonly limit: number;
   private readonly timeoutMs: number;
@@ -86,6 +97,7 @@ export class ConfluenceConnectorProvider implements ConnectorProvider {
   constructor(config: ConfluenceConnectorConfig) {
     this.baseUrl = normalizeHost(requireNonEmpty(config?.host, 'host'));
     this.token = requireNonEmpty(config?.token, 'token');
+    this.authorization = authorizationHeader(this.token, config?.email);
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.limit = boundedLimit(config?.limit);
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'confluence connector');
@@ -166,7 +178,7 @@ export class ConfluenceConnectorProvider implements ConnectorProvider {
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          Authorization: `Bearer ${this.token}`,
+          Authorization: this.authorization,
         },
         signal: AbortSignal.timeout(this.timeoutMs),
       });
@@ -347,6 +359,21 @@ function serializeRaw(value: unknown, token: string): Metadata {
   return { json };
 }
 
+/**
+ * Atlassian Cloud user API tokens authenticate with Basic `email:token`; Bearer is only valid for Data Center
+ * personal access tokens (and OAuth). An email therefore selects Basic. The header value is held in memory only.
+ */
+function authorizationHeader(token: string, email: unknown): string {
+  if (email === undefined) return `Bearer ${token}`;
+  const account = requireNonEmpty(email, 'email');
+  return `Basic ${Buffer.from(`${account}:${token}`, 'utf8').toString('base64')}`;
+}
+
+/**
+ * Normalize the configured host to an https origin. The site root and the Confluence `/wiki` context path are both
+ * accepted (the request paths below already carry `/wiki`, so keeping it here would double it); any other path is
+ * rejected.
+ */
 function normalizeHost(host: string): string {
   const candidate = host.startsWith('https://') ? host : `https://${host}`;
   let url: URL;
@@ -355,8 +382,11 @@ function normalizeHost(host: string): string {
   } catch {
     throw new Error('confluence connector: host must be a valid Confluence Cloud host');
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('confluence connector: host must be an https host without credentials, port, path, query, or fragment');
+  const pathAccepted = url.pathname === '/' || url.pathname === '/wiki' || url.pathname === '/wiki/';
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || !pathAccepted || url.search || url.hash) {
+    throw new Error(
+      'confluence connector: host must be an https host (optionally ending in /wiki) without credentials, port, other path, query, or fragment',
+    );
   }
   return url.origin;
 }
