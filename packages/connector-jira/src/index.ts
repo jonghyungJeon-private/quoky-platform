@@ -194,9 +194,13 @@ export class JiraConnectorProvider implements ConnectorProvider {
   }
 }
 
-/** The adapter owns JQL rendering and escaping; the identity is always a quoted, escaped string literal. */
+/**
+ * The adapter owns JQL rendering and escaping; the identity is always a quoted, escaped string literal. Open work is
+ * `resolution = Unresolved AND statusCategory != Done`: some workflows move an issue to a done-category status
+ * (e.g. "완료"/"취소") without setting a resolution, and those must not appear as open items (live QA, 50 of 193).
+ */
 function personalWorkJql(identity: string, filter: PersonalWorkFilter): string {
-  const base = `assignee = "${identity.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" AND resolution = Unresolved`;
+  const base = `assignee = "${identity.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" AND resolution = Unresolved AND statusCategory != Done`;
   if (filter === 'all') return `${base} ORDER BY updated DESC`;
   if (filter === 'due-this-week') return `${base} AND duedate <= endOfWeek() ORDER BY duedate ASC`;
   throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported personal-work filter');
