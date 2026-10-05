@@ -187,7 +187,12 @@ export function isSafeGitHubPullRequestUrl(
 // file paths / diff / file content is ever represented here.
 
 export type PullRequestState = 'open' | 'closed' | 'merged' | 'unknown';
-export type PullRequestChecksState = 'success' | 'failure' | 'pending' | 'neutral' | 'skipped' | 'unknown';
+/**
+ * `unavailable` = the provider did not let this read see check results (for example the hosting credential lacks
+ * check-read permission). It carries zero counts and is a PARTIAL status — never success, never failure, and never a
+ * merge signal.
+ */
+export type PullRequestChecksState = 'success' | 'failure' | 'pending' | 'neutral' | 'skipped' | 'unknown' | 'unavailable';
 export type PullRequestReviewState = 'approved' | 'changes_requested' | 'commented' | 'none' | 'unknown';
 
 // ─── Sprint 3g (ADR-0057) — PR MERGE EXECUTION preflight + result types ─────────────────────────────────────
@@ -307,6 +312,11 @@ export interface PullRequestStatusPreview {
   baseBranch: string;
   headCommitHash: string;
   isDraft?: boolean;
+  /**
+   * Provider-reported mergeability at read time (display only). NOT a merge gate: a merge always re-reads live state
+   * through `getMergePreflight`.
+   */
+  mergeability?: PullRequestMergeability;
   checks: {
     state: PullRequestChecksState;
     totalCount: number;

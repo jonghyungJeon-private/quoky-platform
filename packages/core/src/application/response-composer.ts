@@ -7,6 +7,7 @@ import type {
   GitStatus,
   OutboundMessage,
   PreviewFile,
+  PullRequestMergeability,
   PullRequestStatusPreview,
 } from '../domain';
 import type { AiExecutionResult } from '../ports';
@@ -146,6 +147,14 @@ const MAX_DIFF_CHARS_PER_FILE = 1000;
 /** Bound on displayed user-controllable git refs (remote/branch/upstream) in push replies (Sprint 2z,
  *  ADR-0047, CA #6) — a defensive display cap even though upstream parsing already rejects over-long refs. */
 const MAX_GIT_REF_DISPLAY = 80;
+/** Display-only wording for the provider-reported mergeability in a PR status preview — never a merge verdict. */
+const MERGEABILITY_KO: Readonly<Record<PullRequestMergeability, string>> = {
+  MERGEABLE: '충돌 없음',
+  CONFLICTING: '충돌 있음',
+  BLOCKED: '병합이 막혀 있음(필수 조건 미충족 또는 draft)',
+  STALE_HEAD: '기준 브랜치보다 뒤처짐',
+  UNKNOWN: '아직 확인되지 않음',
+};
 /** The deterministic push-execution phrase the recorded push approval points at (matches the runtime grammar). */
 const PUSH_EXECUTION_PHRASE = '푸시 실행';
 /** The deterministic PR-creation execution phrase the recorded PR approval points at (matches the runtime grammar). */
@@ -2299,7 +2308,9 @@ export class ResponseComposer {
       preview.state === 'open' ? '열림' : preview.state === 'closed' ? '닫힘(provider 보고)' : preview.state === 'merged' ? '머지됨(provider 보고)' : '알 수 없음';
     const c = preview.checks;
     const checksLine =
-      c.totalCount === 0
+      c.state === 'unavailable'
+        ? '- 체크: 체크 결과는 권한이 없어 확인하지 못했어요 (체크가 통과했거나 실패했다는 뜻은 아니에요)'
+        : c.totalCount === 0
         ? '- 체크: 현재 표시할 체크 결과가 없거나 확인되지 않았어요'
         : `- 체크: 성공 ${c.successCount} / 실패 ${c.failureCount} / 대기 ${c.pendingCount} (총 ${c.totalCount}) — 제공자 보고 기준이라 일부 체크는 반영되지 않을 수 있어요`;
     const lines = [
@@ -2308,8 +2319,11 @@ export class ResponseComposer {
       `- 상태: ${stateKo}${preview.isDraft ? ' (draft)' : ''}`,
       `- 브랜치: ${head} → ${base}`,
       `- 커밋: ${preview.headCommitHash.slice(0, 7)}`,
-      checksLine,
     ];
+    if (preview.state === 'open' && preview.mergeability !== undefined) {
+      lines.push(`- 병합 가능 여부(GitHub 보고): ${MERGEABILITY_KO[preview.mergeability]}`);
+    }
+    lines.push(checksLine);
     if (preview.reviews && preview.reviews.state !== 'unknown') {
       lines.push(
         `- 리뷰: 승인 ${preview.reviews.approvedCount ?? 0} / 변경요청 ${preview.reviews.changesRequestedCount ?? 0} (현재 리뷰 신호이며 머지 승인 게이트는 아니에요)`,

@@ -40,8 +40,61 @@ const SHA_SHAPED = /^[0-9a-f]{7,40}$/i;
  * ONLY as an `Authorization: Bearer` header — never logged, returned, or placed in an error.
  */
 export type GitHubHostingAuth =
-  | { kind: 'github-app'; tokenSource: () => Promise<string> }
+  | {
+      kind: 'github-app';
+      tokenSource: () => Promise<string>;
+      /**
+       * Optional READ-ONLY token source for the PR status read path (see `createPullRequestStatusTokenSource`).
+       * When absent the status path uses `tokenSource` and assumes check runs are readable.
+       */
+      statusTokenSource?: () => Promise<GitHubStatusReadToken>;
+    }
   | { kind: 'pat'; token: string };
+
+/**
+ * A read-only token for the PR status path plus whether it was minted WITH check-run read access. The token value is
+ * adapter-local (Bearer header only); `checksReadable` is a non-secret flag.
+ */
+export interface GitHubStatusReadToken {
+  token: string;
+  checksReadable: boolean;
+}
+
+type InstallationPermissions = Record<string, 'read' | 'write'>;
+
+/** Read-only permissions for the PR status preview: the PR + reviews, its head commit's check runs, contents. */
+export const PULL_REQUEST_STATUS_PERMISSIONS: Readonly<InstallationPermissions> = Object.freeze({
+  pull_requests: 'read',
+  checks: 'read',
+  contents: 'read',
+});
+
+/** Fallback when the App has not been granted the Checks permission: everything above except `checks`. */
+export const PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS: Readonly<InstallationPermissions> = Object.freeze({
+  pull_requests: 'read',
+  contents: 'read',
+});
+
+/**
+ * Build the PR-status token source for GitHub App auth. It first mints with {@link PULL_REQUEST_STATUS_PERMISSIONS};
+ * when that mint is refused because a requested permission is not granted to the App (`isPermissionNotGranted`,
+ * GitHub 422), it mints once more without `checks` and reports `checksReadable: false`, so the status preview can
+ * still show the PR state and reviews with the checks marked unavailable. Any other mint failure propagates. The
+ * push / PR-creation token source is separate and unchanged.
+ */
+export function createPullRequestStatusTokenSource(
+  mint: (permissions: InstallationPermissions) => Promise<string>,
+  isPermissionNotGranted: (error: unknown) => boolean,
+): () => Promise<GitHubStatusReadToken> {
+  return async () => {
+    try {
+      return { token: await mint({ ...PULL_REQUEST_STATUS_PERMISSIONS }), checksReadable: true };
+    } catch (error) {
+      if (!isPermissionNotGranted(error)) throw error;
+    }
+    return { token: await mint({ ...PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS }), checksReadable: false };
+  };
+}
 
 export interface GitHubHostingConfig {
   /** Auth source (ADR-0061). Adapter-local — the token value never leaves the adapter except as a Bearer header. */
@@ -97,6 +150,21 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
       throw new Error('github hosting: the app token source returned an empty token');
     }
     return token;
+  }
+
+  /**
+   * The Bearer value for the read-only PR status path: the App's dedicated status token source when configured,
+   * otherwise the regular token (assumed able to read check runs). Same handling rules as `currentToken`.
+   */
+  private async statusReadToken(): Promise<GitHubStatusReadToken> {
+    if (this.auth.kind === 'pat' || this.auth.statusTokenSource === undefined) {
+      return { token: await this.currentToken(), checksReadable: true };
+    }
+    const result = await this.auth.statusTokenSource();
+    if (typeof result?.token !== 'string' || result.token.length === 0) {
+      throw new Error('github hosting: the app status token source returned an empty token');
+    }
+    return { token: result.token, checksReadable: result.checksReadable === true };
   }
 
   async repositoryExists(identity: RepositoryIdentity): Promise<boolean> {
@@ -168,14 +236,24 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     const owner = enc(identity.owner);
     const repo = enc(identity.repo);
     const number = pullRequestRef.pullRequestNumber;
+    // One read-only token for all three GETs (never the write token when a status source is configured).
+    const read = await this.statusReadToken();
 
     // 1. GET the pull request.
-    const pullRes = await this.request('getPullRequestStatus', 'GET', `/repos/${owner}/${repo}/pulls/${number}`);
+    const pullRes = await this.request(
+      'getPullRequestStatus',
+      'GET',
+      `/repos/${owner}/${repo}/pulls/${number}`,
+      undefined,
+      read.token,
+    );
     if (pullRes.status !== 200) throw this.statusError('getPullRequestStatus', pullRes.status);
     const pull = (await this.json(pullRes, 'getPullRequestStatus')) as GitHubPull & {
       state?: unknown;
       merged?: unknown;
       draft?: unknown;
+      mergeable?: unknown;
+      mergeable_state?: unknown;
     };
     const headRef = pull?.head?.ref;
     const baseRef = pull?.base?.ref;
@@ -187,36 +265,19 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
       pull?.merged === true ? 'merged' : pull?.state === 'open' ? 'open' : pull?.state === 'closed' ? 'closed' : 'unknown';
 
     // 2. GET check-runs for the head sha (check-runs only for 3e; legacy commit statuses may be unrepresented).
-    const checkRes = await this.request(
-      'getPullRequestStatus',
-      'GET',
-      `/repos/${owner}/${repo}/commits/${enc(headSha)}/check-runs?per_page=100`,
-    );
-    if (checkRes.status !== 200) throw this.statusError('getPullRequestStatus', checkRes.status);
-    const checkBody = (await this.json(checkRes, 'getPullRequestStatus')) as {
-      total_count?: unknown;
-      check_runs?: Array<{ status?: unknown; conclusion?: unknown }>;
-    };
-    const runs = Array.isArray(checkBody?.check_runs) ? checkBody.check_runs : [];
-    let successCount = 0;
-    let failureCount = 0;
-    let pendingCount = 0;
-    for (const r of runs) {
-      if (r?.status !== 'completed') pendingCount += 1;
-      else if (r?.conclusion === 'success') successCount += 1;
-      else if (r?.conclusion === 'failure' || r?.conclusion === 'timed_out' || r?.conclusion === 'cancelled' || r?.conclusion === 'action_required')
-        failureCount += 1;
-      // neutral/skipped contribute to totalCount but neither success nor failure.
-    }
-    const totalCount = runs.length;
-    const checksState: PullRequestChecksState =
-      totalCount === 0 ? 'unknown' : failureCount > 0 ? 'failure' : pendingCount > 0 ? 'pending' : successCount > 0 ? 'success' : 'neutral';
+    //    PARTIAL status: when the token was minted without check access, or GitHub answers 403 (not a rate limit)
+    //    for check runs, the checks are reported `unavailable` (zero counts) — never success, never a failure.
+    const checks = read.checksReadable
+      ? await this.readCheckRuns(`/repos/${owner}/${repo}/commits/${enc(headSha)}/check-runs?per_page=100`, read.token)
+      : UNAVAILABLE_CHECKS;
 
     // 3. GET reviews (latest signal per reviewer).
     const reviewRes = await this.request(
       'getPullRequestStatus',
       'GET',
       `/repos/${owner}/${repo}/pulls/${number}/reviews?per_page=100`,
+      undefined,
+      read.token,
     );
     if (reviewRes.status !== 200) throw this.statusError('getPullRequestStatus', reviewRes.status);
     const reviewArr = (await this.json(reviewRes, 'getPullRequestStatus')) as Array<{
@@ -247,11 +308,38 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
       baseBranch: baseRef,
       headCommitHash: headSha,
       isDraft: pull?.draft === true,
-      checks: { state: checksState, totalCount, successCount, failureCount, pendingCount },
+      mergeability: mapMergeability(pull?.merged, pull?.mergeable, pull?.mergeable_state),
+      checks,
       reviews: { state: reviewsState, approvedCount, changesRequestedCount },
       // observedAt is generated internally at read time — never caller/user-supplied (CA change 3).
       observedAt: new Date().toISOString(),
     };
+  }
+
+  /** Check-run summary for the status preview; 403 (permission, not a rate limit) → unavailable checks. */
+  private async readCheckRuns(path: string, token: string): Promise<PullRequestStatusPreview['checks']> {
+    const checkRes = await this.request('getPullRequestStatus', 'GET', path, undefined, token);
+    if (checkRes.status === 403 && !isRateLimited(checkRes)) return UNAVAILABLE_CHECKS;
+    if (checkRes.status !== 200) throw this.statusError('getPullRequestStatus', checkRes.status);
+    const checkBody = (await this.json(checkRes, 'getPullRequestStatus')) as {
+      total_count?: unknown;
+      check_runs?: Array<{ status?: unknown; conclusion?: unknown }>;
+    };
+    const runs = Array.isArray(checkBody?.check_runs) ? checkBody.check_runs : [];
+    let successCount = 0;
+    let failureCount = 0;
+    let pendingCount = 0;
+    for (const r of runs) {
+      if (r?.status !== 'completed') pendingCount += 1;
+      else if (r?.conclusion === 'success') successCount += 1;
+      else if (r?.conclusion === 'failure' || r?.conclusion === 'timed_out' || r?.conclusion === 'cancelled' || r?.conclusion === 'action_required')
+        failureCount += 1;
+      // neutral/skipped contribute to totalCount but neither success nor failure.
+    }
+    const totalCount = runs.length;
+    const state: PullRequestChecksState =
+      totalCount === 0 ? 'unknown' : failureCount > 0 ? 'failure' : pendingCount > 0 ? 'pending' : successCount > 0 ? 'success' : 'neutral';
+    return { state, totalCount, successCount, failureCount, pendingCount };
   }
 
   async getMergePreflight(input: {
@@ -424,8 +512,9 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     jsonBody?: unknown,
+    readToken?: string,
   ): Promise<Response> {
-    const token = await this.currentToken();
+    const token = readToken ?? (await this.currentToken());
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
@@ -463,6 +552,22 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
       throw this.parseError(op);
     }
   }
+}
+
+/** Checks the status read could not see (no permission) — zero counts, never rendered as success or failure. */
+const UNAVAILABLE_CHECKS: PullRequestStatusPreview['checks'] = Object.freeze({
+  state: 'unavailable',
+  totalCount: 0,
+  successCount: 0,
+  failureCount: 0,
+  pendingCount: 0,
+}) as PullRequestStatusPreview['checks'];
+
+/** A 403 that is a primary/secondary rate limit, not a missing permission (those stay a whole-read failure). */
+function isRateLimited(res: Response): boolean {
+  const headers = res.headers as Headers | undefined;
+  if (typeof headers?.get !== 'function') return false;
+  return headers.get('x-ratelimit-remaining') === '0' || headers.get('retry-after') !== null;
 }
 
 /** Encode a single REST path segment (owner/repo/branch as one segment); encodes `/` too. */

@@ -88,9 +88,9 @@ import { LocalQueueProvider } from '@quoky/queue-local';
 import { LocalVectorProvider } from '@quoky/vector-local';
 import { LocalCloneWorkspaceProvider, LocalWorkspaceWriter } from '@quoky/workspace-local';
 import { LocalGitProvider } from '@quoky/git-local';
-import { GitHubRepositoryHostingProvider } from '@quoky/repository-hosting-github';
+import { GitHubRepositoryHostingProvider, createPullRequestStatusTokenSource } from '@quoky/repository-hosting-github';
 import { GitHubConnectorProvider } from '@quoky/connector-github';
-import { GitHubAppAuth } from '@quoky/github-app-auth';
+import { GitHubAppAuth, isPermissionNotGrantedError } from '@quoky/github-app-auth';
 import { LocalCommandRunner } from '@quoky/command-local';
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliEmbeddingProvider, OllamaCliProvider } from '@quoky/ai-cli';
 
@@ -198,8 +198,16 @@ if (hostingAuthMode === 'github-app' && repositoryIdentity && config.githubApp) 
     await currentInstallationId(),
     { permissions: { issues: 'read', pull_requests: 'read' } },
   );
+  // PR status preview reads with its OWN read-only, repo-down-scoped token ({pull_requests, checks, contents}: read).
+  // If the App lacks the Checks permission the mint is refused (422) and the source re-mints without `checks`, so
+  // the preview is PARTIAL (state + reviews, checks "unavailable") instead of failing. The push/PR-create token above
+  // is unchanged (contents + pull_requests write only). Merge preflight keeps using that token and never reads checks.
+  const statusTokenSource = createPullRequestStatusTokenSource(
+    async (permissions) => appAuth.tokenForRepository(await currentInstallationId(), identity.owner, identity.repo, permissions),
+    isPermissionNotGrantedError,
+  );
   repositoryHostingManager = new RepositoryHostingManager(
-    new GitHubRepositoryHostingProvider({ auth: { kind: 'github-app', tokenSource } }),
+    new GitHubRepositoryHostingProvider({ auth: { kind: 'github-app', tokenSource, statusTokenSource } }),
   );
   connectorProviders.push(new GitHubConnectorProvider({ auth: { kind: 'github-app', tokenSource: readTokenSource } }));
   gitProvider = new GitHubAppGitProvider({ makeLocalGit: (runner) => new LocalGitProvider(runner), tokenSource });

@@ -86,13 +86,15 @@ Required App permissions:
 | Contents | Read and write | push of the work branch (the installation token is minted down-scoped to the single repository with `contents: write`) |
 | Pull requests | Read and write | PR creation and status (`pull_requests: write`) |
 | Metadata | Read | granted to every App; required by the API |
-| Checks | Read | PR status preview reads the head commit's check runs. **Without it the PR status reply truthfully says it could not check (live QA G11)**; push and PR creation are unaffected |
+| Checks | Read | PR status preview reads the head commit's check runs. **Without it the status reply is partial**: PR state, branch, commit, GitHub-reported mergeability and reviews are shown, and the checks line says "체크 결과는 권한이 없어 확인하지 못했어요"; push and PR creation are unaffected |
 | Issues | Read | GitHub work lookups (the read token requests `issues: read` and `pull_requests: read`) |
 
-Caveat to verify in the first PR-status live run: at this base, `apps/quoky/src/app.module.ts` mints the repository
-installation token with `contents: write` and `pull_requests: write` only. Granting the App the Checks permission is
-necessary, but this documentation does not claim it is sufficient; if the status reply still cannot check, the mint scope
-needs a code follow-up (tracked with "partial PR status without Checks" in `ROADMAP.md`).
+Token scopes: push and PR creation use an installation token down-scoped to the single repository with
+`contents: write` and `pull_requests: write`. The PR status preview uses its own read-only token for the same repository
+with `pull_requests: read`, `checks: read` and `contents: read`. If the App has not been granted Checks, GitHub refuses
+that mint (422); Quoky then mints without `checks` and replies with the partial status above. A 403 on the check-runs
+read gives the same partial reply. Merge preflight does not read checks; it relies on GitHub's mergeability, and
+"unavailable" checks are never treated as passing. Not yet verified in a live run.
 
 App-auth git path (live finding QA-V2-W7-01, fixed):
 

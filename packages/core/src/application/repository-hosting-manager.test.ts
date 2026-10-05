@@ -513,6 +513,14 @@ describe('RepositoryHostingManager (CAP-010 skeleton, ADR-0052, Sprint 3d-B)', (
       p.statusResult = validStatus({ checks: { state: 'unknown', totalCount: -1, successCount: 0, failureCount: 0, pendingCount: 0 } });
       await expect(runStatus(p)).rejects.toThrow();
     });
+    it('passes a PARTIAL status with unavailable checks through; rejects unavailable checks with non-zero counts', async () => {
+      const ok = new FakeProvider();
+      ok.statusResult = validStatus({ checks: { state: 'unavailable', totalCount: 0, successCount: 0, failureCount: 0, pendingCount: 0 } });
+      await expect(runStatus(ok)).resolves.toMatchObject({ state: 'open', checks: { state: 'unavailable', totalCount: 0 } });
+      const bad = new FakeProvider();
+      bad.statusResult = validStatus({ checks: { state: 'unavailable', totalCount: 1, successCount: 1, failureCount: 0, pendingCount: 0 } });
+      await expect(runStatus(bad)).rejects.toThrow('invalid status check counts');
+    });
     it('does not forward a raw provider error message on read failure', async () => {
       const p = new FakeProvider();
       p.statusThrows = true;
