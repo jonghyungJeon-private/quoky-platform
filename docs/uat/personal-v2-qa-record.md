@@ -145,6 +145,23 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | W8-8 | git push --force origin feature/quoky-uat-1 | PASS — unsupported-companion reply, no push |
 | W8-9 | 머지해줘 | PASS — merge disabled reply, no approval |
 
+## Post-v2 connector and channel session (2026-10-06, branch claude/v2-post-connect)
+
+Owner-attended, dev bot, owner's real tenants (Atlassian Cloud, GitHub sandbox App, own Discord server). Read-only
+connector probes, one request each, then chat lookups.
+
+| ID | Input / action | Result |
+|---|---|---|
+| PC-1 | GitHub App `quoky-dev` permissions | App had Checks: Read + Issues: Read, but the installation had not accepted them (mint 422) → accepted via the installation "Review request" page; API re-check: installation perms include checks/issues read, check-runs 200. NOTE: installation repository access is "All repositories" (was "selected") — owner decision pending |
+| PC-2 | PR 상태 알려줘 (PR_CREATED, PR #1 closed) | FAIL → FIXED 6a59526 (read-only status token with checks:read + partial status). Retest PASS — state 닫힘, branch, commit, reviews; "체크 결과 없음" (sandbox has no CI) |
+| PC-3 | `#reminder` channel (created in the owner's server, allowlisted) + QUOKY_REMINDERS_CHANNEL_DELIVERY=true: "1분 뒤에 물 마시기 알려줘" | FAIL QA-V2-PC-01 (MAJOR) — delivered via DM (viaChannel=0): the flag was parsed but never passed to the Discord adapter → FIXED af419b7. Retest PASS — "@전종형 알림 #5: 스트레칭" posted in #reminder (viaChannel=1) |
+| PC-4 | Jira probes (myself, search/jql) | PASS — 200/200, accountId matches the identity mapping |
+| PC-5 | Confluence probe | FAIL QA-V2-PC-02 (MAJOR) — connector used Bearer; Atlassian Cloud API tokens need Basic email:token (Bearer 404, Basic 200) → FIXED a71078f. Retest "Confluence에서 회의록 검색" PASS (results + source links) |
+| PC-6 | 내 Jira 이슈 보여줘 / 내 할 일 보여줘 | PASS data (unresolved assignee issues, 20 in the combined view). NOTE QA-V2-PC-03 (MEDIUM, model quality): the local Ollama work summary is garbled (English heading, truncated lines, "7.취소", fabricated help text); the deterministic list is clean → owner decision pending on QUOKY_WORK_SUMMARY_ENABLED=false until v3 LLM work |
+| PC-7 | Confluence에서 배포 검색 (PR_CREATED) | FAIL QA-V2-PC-04 (MEDIUM) — captured by the PR_CREATED deploy-companion reply → FIXED b185507 (lookup commands skip companion-word replies). Retest PASS; "배포해줘" still refused |
+| PC-8 | GitHub 리뷰 요청 보여줘 | PASS — "결과가 없어요" (none pending) |
+| PC-9 | Slack | NOT RUN — no user token yet (instructions given to the owner) |
+
 ## Findings index
 
 | ID | Severity | Summary | State |
@@ -167,6 +184,11 @@ Wave-5 Codex review: CHANGES_REQUIRED (HIGH: tick driver stop() returned while a
 | G5 (note) | MINOR | The proposed PR title is the raw instruction text | OPEN, v3 (generated PR title/body) |
 | QA-V2-W8-01 | MINOR | Conceptual push question at a post-push state got the already-pushed reply | FIXED d804fd8, retest PASS |
 | QA-V2-W8-02 | MINOR (model quality) | Local model affirmed an unverifiable git state ("브랜치 삭제했어" → "삭제된 상태가 맞습니다") | OPEN, v3 (DET/LLM) |
+| QA-V2-PC-01 | MAJOR | Reminder channel delivery flag never reached the Discord adapter (always DM) | FIXED af419b7, retest PASS |
+| QA-V2-PC-02 | MAJOR | Confluence connector used Bearer auth; Atlassian Cloud needs Basic email:token | FIXED a71078f, retest PASS |
+| QA-V2-PC-03 | MEDIUM (model quality) | Local work summaries garbled / fabricated help text | OPEN — owner decision on summary flag; v3 LLM |
+| QA-V2-PC-04 | MEDIUM | Work lookup with a deploy word captured by the code-chain companion reply | FIXED b185507, retest PASS |
+| PC-2 | MAJOR | PR status unreadable: status token lacked checks:read; installation had not accepted new permissions | FIXED 6a59526 + installation accept, retest PASS |
 | INT-1 (offline) | MEDIUM | No-anchor push/force-push and branch-delete phrases fell through to chat (provider call) | FIXED a23776c (deterministic replies, golden route-047..054); W8-2 live PASS |
 
 ## Not live-verified (still pending)
