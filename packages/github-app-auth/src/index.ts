@@ -49,10 +49,23 @@ export interface TokenScope {
 
 /** Sanitized App-auth failure — NEVER carries the token, App JWT, private key, or a raw payload (ADR-0061). */
 export class AppAuthError extends Error {
-  constructor(message: string) {
+  /** The GitHub HTTP status of a sanitized status failure (a bare number; never a body/header/token). */
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'AppAuthError';
+    if (status !== undefined) this.status = status;
   }
+}
+
+/**
+ * True when an installation-token mint was refused with 422 — GitHub's answer when the requested `permissions`
+ * include one the App was not granted (for example `checks: read` before the owner approves the Checks permission).
+ * Lets a caller retry with a narrower permission set instead of failing outright.
+ */
+export function isPermissionNotGrantedError(error: unknown): boolean {
+  return error instanceof AppAuthError && error.status === 422;
 }
 
 interface CachedToken {
@@ -246,8 +259,8 @@ export class GitHubAppAuth {
 
   /** Bounded, deterministic status error — never the token/App JWT/key or the raw response body. */
   private statusError(op: string, status: number): AppAuthError {
-    if (status === 401 || status === 403) return new AppAuthError(`github app: ${op} authorization failed`);
-    return new AppAuthError(`github app: ${op} failed with status ${status}`);
+    if (status === 401 || status === 403) return new AppAuthError(`github app: ${op} authorization failed`, status);
+    return new AppAuthError(`github app: ${op} failed with status ${status}`, status);
   }
 
   private async json(res: Response, op: string): Promise<unknown> {

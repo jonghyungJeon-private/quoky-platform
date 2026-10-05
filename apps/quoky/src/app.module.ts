@@ -88,9 +88,9 @@ import { LocalQueueProvider } from '@quoky/queue-local';
 import { LocalVectorProvider } from '@quoky/vector-local';
 import { LocalCloneWorkspaceProvider, LocalWorkspaceWriter } from '@quoky/workspace-local';
 import { LocalGitProvider } from '@quoky/git-local';
-import { GitHubRepositoryHostingProvider } from '@quoky/repository-hosting-github';
+import { GitHubRepositoryHostingProvider, createPullRequestStatusTokenSource } from '@quoky/repository-hosting-github';
 import { GitHubConnectorProvider } from '@quoky/connector-github';
-import { GitHubAppAuth } from '@quoky/github-app-auth';
+import { GitHubAppAuth, isPermissionNotGrantedError } from '@quoky/github-app-auth';
 import { LocalCommandRunner } from '@quoky/command-local';
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliEmbeddingProvider, OllamaCliProvider } from '@quoky/ai-cli';
 
@@ -111,7 +111,7 @@ import { createAgentProfileRegistryProvider } from './agent-profile-registry-pro
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
 import { feedbackProviders } from './features/feedback.providers';
-import { remindersProviders } from './features/reminders.providers';
+import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
 
@@ -198,8 +198,16 @@ if (hostingAuthMode === 'github-app' && repositoryIdentity && config.githubApp) 
     await currentInstallationId(),
     { permissions: { issues: 'read', pull_requests: 'read' } },
   );
+  // PR status preview reads with its OWN read-only, repo-down-scoped token ({pull_requests, checks, contents}: read).
+  // If the App lacks the Checks permission the mint is refused (422) and the source re-mints without `checks`, so
+  // the preview is PARTIAL (state + reviews, checks "unavailable") instead of failing. The push/PR-create token above
+  // is unchanged (contents + pull_requests write only). Merge preflight keeps using that token and never reads checks.
+  const statusTokenSource = createPullRequestStatusTokenSource(
+    async (permissions) => appAuth.tokenForRepository(await currentInstallationId(), identity.owner, identity.repo, permissions),
+    isPermissionNotGrantedError,
+  );
   repositoryHostingManager = new RepositoryHostingManager(
-    new GitHubRepositoryHostingProvider({ auth: { kind: 'github-app', tokenSource } }),
+    new GitHubRepositoryHostingProvider({ auth: { kind: 'github-app', tokenSource, statusTokenSource } }),
   );
   connectorProviders.push(new GitHubConnectorProvider({ auth: { kind: 'github-app', tokenSource: readTokenSource } }));
   gitProvider = new GitHubAppGitProvider({ makeLocalGit: (runner) => new LocalGitProvider(runner), tokenSource });
@@ -263,7 +271,12 @@ const infrastructure: Provider[] = [
   {
     provide: PLATFORM_ADAPTER,
     // ADR-0091: the owner/channel admission gate is Discord-adapter config; Core never receives these ids.
-    useFactory: () => new DiscordPlatformAdapter(config.discord, new ConsoleLogger('discord')),
+    // ADR-0101 D8: the reminder channel-delivery opt-in reaches the adapter here (inert while reminders are off).
+    useFactory: () =>
+      new DiscordPlatformAdapter(
+        withReminderChannelDelivery(config.discord, config.reminders),
+        new ConsoleLogger('discord'),
+      ),
   },
   {
     provide: AI_PROVIDERS,

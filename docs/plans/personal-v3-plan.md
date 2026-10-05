@@ -1,6 +1,6 @@
 # Quoky Personal v3 — Plan
 
-- **Status:** Proposed. Planning only: nothing here ratifies an ADR or authorizes a Strict action. Every new decision is
+- **Status:** Proposed; owner decisions 1, 2, 4, 5 and 7 recorded 2026-10-06 (section 7). Planning only: nothing here ratifies an ADR or authorizes a Strict action. Every new decision is
   written as `TBD-ADR-n` and gets a real ADR number when GOV-3 appends it to `DECISIONS.md`.
 - **Date:** 2026-10-03
 - **Base:** `claude/v2-wave8` `eaacca2` (Personal v2 waves 1-7 on `main` at `ba28314`, plus INT-1 and DOC-B; the wave-8
@@ -511,6 +511,19 @@ This mirrors the v2 run.
 ## 7. Open decisions for the owner
 
 Each decision has a recommended default.
+
+**Owner decisions recorded 2026-10-06** (answers to the five decisions asked first):
+
+| # | Decision | Owner answer |
+|---|---|---|
+| 1 | Standing approval for v3 waves | **Renewed** — auto Push/PR/Merge per wave after offline validation, independent review and Codex review pass; Live UAT of new external targets still confirmed per target |
+| 2 | Deployment substrate | **macOS first** — launchd user agent on the owner's Mac (a dedicated Mac mini later is compatible); no cloud VM |
+| 4 | Calendar | **As recommended** — Google Calendar read-only (`calendar.readonly`), local-only summaries, no Claude fallback for calendar text |
+| 5 | Learning consent | **Consented as recommended** — per-item consent, 365-day retention, `LOCAL_ONLY` by default, `QUOKY_LEARNING_EXAMPLES_ENABLED=false` until LRN-2 is measured |
+| 7 | Merge enablement | **As recommended** — release default stays `QUOKY_GIT_MERGE_ENABLED=false` |
+| 8 (partial) | Reminders channel | Owner asked for channel delivery in a dedicated `#reminder` text channel on the owner's own Discord server (created 2026-10-06, allowlisted); DM stays the default elsewhere. The C2 UAT runs there |
+
+Decisions 3, 6 and 9-12 remain open; the recommended defaults below apply until the owner says otherwise.
 
 1. **Standing approval for v3 waves.** Renew the v2 auto Push/PR/Merge approval for v3 waves, which applies after
    offline validation, independent review and Codex review pass. Live UAT of new external targets still needs

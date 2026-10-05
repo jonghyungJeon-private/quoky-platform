@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { GitHubRepositoryHostingProvider } from './index';
+import {
+  GitHubRepositoryHostingProvider,
+  PULL_REQUEST_STATUS_PERMISSIONS,
+  PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS,
+  createPullRequestStatusTokenSource,
+} from './index';
 import type { GitHubHostingAuth, GitHubHostingConfig } from './index';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '@quoky/core';
 import type { PullRequestCreationInput, PullRequestRef, RepositoryIdentity } from '@quoky/core';
@@ -310,6 +315,9 @@ describe('GitHubRepositoryHostingProvider (CAP-010 adapter, ADR-0053, Sprint 3d-
       expect(s.headCommitHash).toBe('abc1234');
       expect(s.checks).toEqual({ state: 'success', totalCount: 2, successCount: 2, failureCount: 0, pendingCount: 0 });
       expect(s.reviews).toEqual({ state: 'approved', approvedCount: 1, changesRequestedCount: 0 });
+      expect(s.mergeability).toBe('UNKNOWN');
+      const clean = await provider(statusFetch({ pull: { state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean', head: { ref: 'feature/x', sha: 'abc1234' }, base: { ref: 'main' } } }).fn).getPullRequestStatus(statusInput);
+      expect(clean.mergeability).toBe('MERGEABLE');
       expect(typeof s.observedAt).toBe('string');
       expect(s.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO-like, internally generated
       expect(s.ref).toEqual(PR_REF);
@@ -335,6 +343,133 @@ describe('GitHubRepositoryHostingProvider (CAP-010 adapter, ADR-0053, Sprint 3d-
       await p.getPullRequestStatus(statusInput).catch((e: unknown) => {
         expect(String((e as Error).message)).toMatch(/github hosting/);
         expect(String((e as Error).message)).not.toContain(TOKEN);
+      });
+    });
+
+    describe('dedicated read-only status token + partial status without check access', () => {
+      const WRITE = 'ghs_writeTokenForContentsAndPulls';
+      const READ_WITH_CHECKS = 'ghs_statusReadWithChecks';
+      const READ_NO_CHECKS = 'ghs_statusReadWithoutChecks';
+      const UNAVAILABLE = { state: 'unavailable', totalCount: 0, successCount: 0, failureCount: 0, pendingCount: 0 };
+      function bearerOf(c: Call): string | undefined {
+        return (c.init.headers as Record<string, string>).Authorization;
+      }
+      /** Route GETs; the check-runs answer is configurable (status + optional headers). */
+      function routedFetch(check: { status: number; headers?: Record<string, string>; body?: unknown }) {
+        const calls: Call[] = [];
+        const fn = (async (url: unknown, init?: unknown) => {
+          const u = String(url);
+          calls.push({ url: u, init: (init ?? {}) as RequestInit });
+          if (u.includes('/check-runs')) {
+            return {
+              status: check.status,
+              headers: new Headers(check.headers ?? {}),
+              json: async () => check.body ?? { check_runs: [{ status: 'completed', conclusion: 'success' }] },
+            } as unknown as Response;
+          }
+          if (u.endsWith('/reviews?per_page=100')) {
+            return { status: 200, json: async () => [{ state: 'APPROVED', user: { login: 'r1' } }] } as unknown as Response;
+          }
+          return {
+            status: 200,
+            json: async () => ({ state: 'open', merged: false, draft: false, head: { ref: 'feature/x', sha: 'abc1234' }, base: { ref: 'main' } }),
+          } as unknown as Response;
+        }) as unknown as typeof fetch;
+        return { fn, calls };
+      }
+      function appProvider(fn: typeof fetch, statusTokenSource: () => Promise<{ token: string; checksReadable: boolean }>) {
+        return new GitHubRepositoryHostingProvider({
+          auth: { kind: 'github-app', tokenSource: async () => WRITE, statusTokenSource },
+          fetchImpl: fn,
+        });
+      }
+      /** A fake App mint that records requested permission sets and optionally refuses `checks` with "422". */
+      function fakeMint(opts: { checksGranted: boolean; failWith?: Error }) {
+        const requested: Array<Record<string, string>> = [];
+        const notGranted = new Error('github app: tokenForInstallation failed with status 422');
+        const mint = async (permissions: Record<string, 'read' | 'write'>) => {
+          requested.push({ ...permissions });
+          if (opts.failWith) throw opts.failWith;
+          if ('checks' in permissions && !opts.checksGranted) throw notGranted;
+          return 'checks' in permissions ? READ_WITH_CHECKS : READ_NO_CHECKS;
+        };
+        return { requested, source: createPullRequestStatusTokenSource(mint, (e) => e === notGranted) };
+      }
+
+      it('mints {pull_requests, checks, contents}: read and uses it for all three GETs — never the write token', async () => {
+        const mint = fakeMint({ checksGranted: true });
+        const { fn, calls } = routedFetch({ status: 200 });
+        const s = await appProvider(fn, mint.source).getPullRequestStatus(statusInput);
+        expect(mint.requested).toEqual([{ pull_requests: 'read', checks: 'read', contents: 'read' }]);
+        expect(PULL_REQUEST_STATUS_PERMISSIONS).toEqual({ pull_requests: 'read', checks: 'read', contents: 'read' });
+        expect(calls).toHaveLength(3);
+        expect(calls.every((c) => bearerOf(c) === `Bearer ${READ_WITH_CHECKS}`)).toBe(true);
+        expect(s.checks).toEqual({ state: 'success', totalCount: 1, successCount: 1, failureCount: 0, pendingCount: 0 });
+      });
+
+      it('422 on the checks mint → re-mints without checks and returns a PARTIAL status (no check-runs call)', async () => {
+        const mint = fakeMint({ checksGranted: false });
+        const { fn, calls } = routedFetch({ status: 200 });
+        const s = await appProvider(fn, mint.source).getPullRequestStatus(statusInput);
+        expect(mint.requested).toEqual([{ ...PULL_REQUEST_STATUS_PERMISSIONS }, { ...PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS }]);
+        expect(PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS).toEqual({ pull_requests: 'read', contents: 'read' });
+        expect(calls.some((c) => c.url.includes('/check-runs'))).toBe(false);
+        expect(calls.every((c) => bearerOf(c) === `Bearer ${READ_NO_CHECKS}`)).toBe(true);
+        expect(s.state).toBe('open');
+        expect(s.reviews).toEqual({ state: 'approved', approvedCount: 1, changesRequestedCount: 0 });
+        expect(s.mergeability).toBe('UNKNOWN'); // fixture omits mergeable → conservative UNKNOWN
+        expect(s.checks).toEqual(UNAVAILABLE);
+      });
+
+      it('any other mint failure propagates (no silent fallback)', async () => {
+        const mint = fakeMint({ checksGranted: true, failWith: new Error('github app: tokenForInstallation authorization failed') });
+        const { fn, calls } = routedFetch({ status: 200 });
+        await expect(appProvider(fn, mint.source).getPullRequestStatus(statusInput)).rejects.toThrow(/authorization failed/);
+        expect(mint.requested).toHaveLength(1);
+        expect(calls).toHaveLength(0);
+      });
+
+      it('403 on check-runs → PARTIAL status with unavailable checks (App and PAT alike)', async () => {
+        const app = routedFetch({ status: 403, body: { message: 'Resource not accessible by integration' } });
+        const s = await appProvider(app.fn, fakeMint({ checksGranted: true }).source).getPullRequestStatus(statusInput);
+        expect(s.checks).toEqual(UNAVAILABLE);
+        expect(s.state).toBe('open');
+        expect(s.reviews?.state).toBe('approved');
+        const pat = routedFetch({ status: 403 });
+        await expect(provider(pat.fn).getPullRequestStatus(statusInput)).resolves.toMatchObject({ checks: UNAVAILABLE });
+      });
+
+      it('a rate-limited 403 or a 5xx on check-runs stays a whole-read failure (not reported as a missing permission)', async () => {
+        for (const headers of [{ 'x-ratelimit-remaining': '0' }, { 'retry-after': '60' }]) {
+          const { fn } = routedFetch({ status: 403, headers });
+          await expect(provider(fn).getPullRequestStatus(statusInput)).rejects.toThrow(/authorization failed/);
+        }
+        const { fn } = routedFetch({ status: 500 });
+        await expect(provider(fn).getPullRequestStatus(statusInput)).rejects.toThrow(/status 500/);
+      });
+
+      it('an empty status token is refused before any request', async () => {
+        const { fn, calls } = routedFetch({ status: 200 });
+        await expect(
+          appProvider(fn, async () => ({ token: '', checksReadable: true })).getPullRequestStatus(statusInput),
+        ).rejects.toThrow(/empty token/);
+        expect(calls).toHaveLength(0);
+      });
+
+      it('no regression: PR create and merge preflight keep the write token source; the status source is never used', async () => {
+        let statusMints = 0;
+        const statusTokenSource = async () => {
+          statusMints += 1;
+          return { token: READ_WITH_CHECKS, checksReadable: true };
+        };
+        const create = fakeFetch(() => ({ status: 201, body: ghPull() }));
+        await appProvider(create.fn, statusTokenSource).createPullRequest(createInput);
+        expect(bearerOf(create.calls[0]!)).toBe(`Bearer ${WRITE}`);
+        const pre = fakeFetch(() => ({ status: 200, body: { ...ghPull(), state: 'open', merged: false, mergeable: true, mergeable_state: 'clean' } }));
+        await appProvider(pre.fn, statusTokenSource).getMergePreflight(statusInput);
+        expect(pre.calls.every((c) => bearerOf(c) === `Bearer ${WRITE}`)).toBe(true);
+        expect(pre.calls.some((c) => c.url.includes('/check-runs'))).toBe(false);
+        expect(statusMints).toBe(0);
       });
     });
   });

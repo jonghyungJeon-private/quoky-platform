@@ -6368,6 +6368,28 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     }
   });
 
+  it('unavailable checks (no check-read permission) → PARTIAL preview: state + reviews shown, checks "could not check" (never pass/fail)', async () => {
+    const { deps, calls } = makeDeps({
+      applyAnchor: PR_CREATED_ANCHOR(),
+      hostingStatus: prStatusOf(
+        { identity: PR_IDENTITY, pullRequestRef: PR_CREATED_ANCHOR().pullRequestRef!, expectedHeadBranch: HEAD, expectedBaseBranch: BASE, expectedCommitHash: HEAD_SHA },
+        { mergeability: 'MERGEABLE', checks: { state: 'unavailable', totalCount: 0, successCount: 0, failureCount: 0, pendingCount: 0 } },
+      ),
+    });
+    const r = await new ConversationRuntime(deps).handle(messageOf('PR 상태 확인해줘'));
+    const t = r.reply.text;
+    expect(calls.applyAnchorSet).toBe(0);
+    expect(t).toContain('현재 조회 기준으로 PR 상태를 확인했어요');
+    expect(t).toContain('- 상태: 열림');
+    expect(t).toContain('- 리뷰: 승인 1 / 변경요청 0');
+    expect(t).toContain('- 병합 가능 여부(GitHub 보고): 충돌 없음');
+    expect(t).toContain('- 체크: 체크 결과는 권한이 없어 확인하지 못했어요 (체크가 통과했거나 실패했다는 뜻은 아니에요)');
+    expect(t).not.toContain('현재 PR 상태를 확인하지 못했어요');
+    expect(t).not.toContain('표시할 체크 결과가 없거나');
+    expect(t).not.toMatch(/성공 \d|체크 통과|CI 성공/);
+    expect(t).toContain('안전하게 머지해도 된다는 뜻은 아니에요');
+  });
+
   it('status preview performs NO git/command/create side effects — only the read-only manager call (CA 38–49)', async () => {
     const { deps, calls } = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
     await new ConversationRuntime(deps).handle(messageOf('PR 상태 확인해줘'));

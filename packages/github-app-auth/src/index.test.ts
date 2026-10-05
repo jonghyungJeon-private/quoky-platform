@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { AppAuthError, GitHubAppAuth } from './index';
+import { AppAuthError, GitHubAppAuth, isPermissionNotGrantedError } from './index';
 
 // A real RSA key so signAppJwt() exercises built-in RS256 signing deterministically — no network, no fixed secret.
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -116,6 +116,25 @@ describe('GitHubAppAuth (Sprint 4b, ADR-0061)', () => {
       expect(err).toBeInstanceOf(AppAuthError);
       expect(String((err as Error).message)).toMatch(/authorization failed/);
       expect(String((err as Error).message)).not.toMatch(/ghs_/);
+    });
+
+    it('marks a 422 mint (permission not granted to the App) as retryable with narrower permissions', async () => {
+      const { fn } = fakeFetch(() => ({ status: 422, body: { message: 'The permissions requested are not granted to this app.' } }));
+      const err = await auth(fn)
+        .tokenForInstallation(987, { permissions: { checks: 'read' } })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AppAuthError);
+      expect((err as AppAuthError).status).toBe(422);
+      expect(isPermissionNotGrantedError(err)).toBe(true);
+      expect(String((err as Error).message)).toBe('github app: tokenForInstallation failed with status 422');
+    });
+
+    it('does not treat other failures as a missing permission', async () => {
+      const { fn } = fakeFetch(() => ({ status: 401 }));
+      const err = await auth(fn).tokenForInstallation(987).catch((e: unknown) => e);
+      expect(isPermissionNotGrantedError(err)).toBe(false);
+      expect(isPermissionNotGrantedError(new Error('github app: x failed with status 422'))).toBe(false);
+      expect(isPermissionNotGrantedError(undefined)).toBe(false);
     });
   });
 

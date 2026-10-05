@@ -47,7 +47,7 @@ describe('composition-root connector registration', () => {
             CHUNSIK_JIRA_EMAIL: 'builder@example.com',
             CHUNSIK_JIRA_TOKEN: 'jira-token',
             CHUNSIK_SLACK_TOKEN: 'slack-token',
-            CHUNSIK_CONFLUENCE_BASE_URL: 'https://confluence.example.atlassian.net/wiki',
+            CHUNSIK_CONFLUENCE_BASE_URL: 'https://confluence.example.atlassian.net/wiki/spaces',
             CHUNSIK_CONFLUENCE_TOKEN: 'confluence-token',
           }),
         ).connectors,
@@ -63,7 +63,8 @@ describe('composition-root connector registration', () => {
     });
     expect(warn).toHaveBeenNthCalledWith(2, 'connector configuration rejected; connector not registered', {
       source: 'confluence',
-      reason: 'confluence connector: host must be an https host without credentials, port, path, query, or fragment',
+      reason:
+        'confluence connector: host must be an https host (optionally ending in /wiki) without credentials, port, other path, query, or fragment',
     });
   });
 
@@ -111,5 +112,34 @@ describe('composition-root connector registration', () => {
       items: [],
     });
     expect(fetchStub).toHaveBeenCalledTimes(3);
+  });
+
+  it('authenticates Confluence Cloud with the shared Jira account email when both name the same site', async () => {
+    const { logger: testLogger, warn } = logger();
+    const fetchStub = vi.fn(async (): Promise<Response> => Response.json({ results: [] }));
+    vi.stubGlobal('fetch', fetchStub);
+
+    const manager = new ConnectorManager(
+      createConnectorProviders(
+        loadConfig(
+          env({
+            QUOKY_JIRA_BASE_URL: 'https://site.atlassian.net',
+            QUOKY_JIRA_EMAIL: 'owner@example.com',
+            QUOKY_JIRA_TOKEN: 'atlassian-api-token',
+            QUOKY_CONFLUENCE_BASE_URL: 'https://site.atlassian.net/wiki',
+            QUOKY_CONFLUENCE_TOKEN: 'atlassian-api-token',
+          }),
+        ).connectors,
+        testLogger,
+      ),
+    );
+
+    await manager.query('confluence', { query: '', params: { kind: 'pages' } });
+    const [url, init] = fetchStub.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe('https://site.atlassian.net/wiki/api/v2/pages?limit=100');
+    expect(new Headers(init.headers).get('authorization')).toBe(
+      `Basic ${Buffer.from('owner@example.com:atlassian-api-token', 'utf8').toString('base64')}`,
+    );
+    expect(warn).not.toHaveBeenCalled();
   });
 });

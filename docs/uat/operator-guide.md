@@ -59,9 +59,14 @@ aliases are accepted, `QUOKY_*` wins):
 
 | Connector | Variables | Notes |
 |---|---|---|
-| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Live behaviour of the Jira search endpoint is unverified |
-| Slack | `QUOKY_SLACK_TOKEN` | Message search may need a user token rather than a bot token. Unverified live |
-| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN` | Auth style unverified live |
+| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Basic auth `email:token`. `BASE_URL` is the site origin only (`https://<site>.atlassian.net`). Live behaviour of the Jira search endpoint is unverified |
+| Slack | `QUOKY_SLACK_TOKEN` | Must be a Slack **user** token (`xoxp-`): `search.messages` refuses bot tokens. Scopes: `search:read` (search), `channels:read` (channel list, public channels only), `channels:history` (public channel messages and threads); add `groups:history` only to read a private channel by id. `groups:read` is not needed (the list does not request private channels). Unverified live |
+| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN`, optional `QUOKY_CONFLUENCE_EMAIL` | `BASE_URL` may be the site root or end in `/wiki` (requests go to `/wiki/...` exactly once). With an email the connector sends Basic `email:token` (Atlassian Cloud API token); without one it sends `Bearer` (Data Center PAT only; Cloud rejects Bearer for API tokens). If `QUOKY_CONFLUENCE_EMAIL` is unset and the Jira base URL has the same host, the Jira email is reused; set it to an empty value to force Bearer. Unverified live |
+
+On Atlassian Cloud, Jira and Confluence on one site share **one** Atlassian API token: create it for your account at
+<https://id.atlassian.com/manage-profile/security/api-tokens> and put the same value in `QUOKY_JIRA_TOKEN` and
+`QUOKY_CONFLUENCE_TOKEN`. With `QUOKY_JIRA_EMAIL` set and both base URLs on the same host, no Confluence email is
+needed. The email and tokens are never logged.
 | GitHub (work lookups) | the GitHub App below | Read token requests Issues: Read and Pull requests: Read |
 
 Connector lookups on real Jira, Slack, Confluence and GitHub tenants have **not** been run live (credentials are being
@@ -81,13 +86,15 @@ Required App permissions:
 | Contents | Read and write | push of the work branch (the installation token is minted down-scoped to the single repository with `contents: write`) |
 | Pull requests | Read and write | PR creation and status (`pull_requests: write`) |
 | Metadata | Read | granted to every App; required by the API |
-| Checks | Read | PR status preview reads the head commit's check runs. **Without it the PR status reply truthfully says it could not check (live QA G11)**; push and PR creation are unaffected |
+| Checks | Read | PR status preview reads the head commit's check runs. **Without it the status reply is partial**: PR state, branch, commit, GitHub-reported mergeability and reviews are shown, and the checks line says "체크 결과는 권한이 없어 확인하지 못했어요"; push and PR creation are unaffected |
 | Issues | Read | GitHub work lookups (the read token requests `issues: read` and `pull_requests: read`) |
 
-Caveat to verify in the first PR-status live run: at this base, `apps/quoky/src/app.module.ts` mints the repository
-installation token with `contents: write` and `pull_requests: write` only. Granting the App the Checks permission is
-necessary, but this documentation does not claim it is sufficient; if the status reply still cannot check, the mint scope
-needs a code follow-up (tracked with "partial PR status without Checks" in `ROADMAP.md`).
+Token scopes: push and PR creation use an installation token down-scoped to the single repository with
+`contents: write` and `pull_requests: write`. The PR status preview uses its own read-only token for the same repository
+with `pull_requests: read`, `checks: read` and `contents: read`. If the App has not been granted Checks, GitHub refuses
+that mint (422); Quoky then mints without `checks` and replies with the partial status above. A 403 on the check-runs
+read gives the same partial reply. Merge preflight does not read checks; it relies on GitHub's mergeability, and
+"unavailable" checks are never treated as passing. Not yet verified in a live run.
 
 App-auth git path (live finding QA-V2-W7-01, fixed):
 

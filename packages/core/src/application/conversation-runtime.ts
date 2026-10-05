@@ -131,6 +131,7 @@ import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import type { ExternalWorkReadout } from './work-chat/external-work-readout';
+import { detectWorkChatCommand } from './work-chat/work-chat-command';
 import { isExternalWorkReadout, isWorkSummaryRequestTextWithheld } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
@@ -1789,6 +1790,11 @@ export class ConversationRuntime {
     return PR_STATUS_NOUN.test(t) && PR_STATUS_QUERY.test(t);
   }
 
+  /** True for an explicit work-chat lookup/search command (reuses the work-chat grammar; never a to-do mutation). */
+  static isWorkChatLookupCommand(text: string): boolean {
+    return detectWorkChatCommand(text)?.kind === 'lookup';
+  }
+
   /**
    * Explicit merge-APPROVAL intent (Sprint 3f, ADR-0056) — only consulted at PR_CREATED, AFTER the status
    * intent. Returns `'merge'` only for a merge word + an explicit approval/execution request verb; a merge
@@ -2061,6 +2067,10 @@ export class ConversationRuntime {
     // (A3) Apply-preview routing (Sprint 2s, ADR-0040) — checked after approvalFlow/scopeClarificationFlow
     // so neither is ever pre-empted. (All three were already read, in this order, by findPendingApproval.)
     const applyAnchor = lookup.applyAnchor;
+    // (QA-V2 post-connect) an explicit work-chat lookup/search command ("Confluence에서 배포 검색") is never captured by the
+    // anchored-chain companion/deploy/merge-word replies below; it falls through to the work-chat handler. Pending-approval
+    // intercepts and execution allow-list gates above/below are untouched.
+    const workLookup = ConversationRuntime.isWorkChatLookupCommand(message.text);
     // A real second ApprovalRequest is pending decision — intercepts EVERY turn, exactly like the first
     // approval does, regardless of whether the message is an apply phrase.
     if (applyAnchor?.status === 'AWAITING_APPROVAL') {
@@ -2159,7 +2169,7 @@ export class ConversationRuntime {
       const prKind = ConversationRuntime.interpretPrIntent(message.text);
       if (prKind === 'pr-unsupported') return this.handlePrUnsupportedCompanionTurn(message, session);
       if (prKind === 'create') return this.handlePrApprovalTurn(message, session, actor, applyAnchor);
-      if (DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePushPrDeployUnsupportedTurn(message, session);
+      if (!workLookup && DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePushPrDeployUnsupportedTurn(message, session);
       if (ConversationRuntime.interpretPushIntent(message.text) === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }
     // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
@@ -2197,7 +2207,7 @@ export class ConversationRuntime {
         // not an exact accepted phrase (allow-list) → already approved; the reply quotes "PR 생성 실행".
         return this.respondComposed(message, session, this.deps.composer.composePrAlreadyApproved(message.context));
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePrApprovedDeployUnsupportedTurn(message, session);
+      if (!workLookup && DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePrApprovedDeployUnsupportedTurn(message, session);
     }
     // (Sprint 3d-D) After a PR was created/connected: a PR create phrase → already created (+ URL, no new call);
     // a deploy/merge/release/companion phrase → unsupported future step. Never re-creates / merges / deploys.
@@ -2218,7 +2228,7 @@ export class ConversationRuntime {
       }
       const prKind = ConversationRuntime.interpretPrIntent(message.text);
       if (prKind === 'create') return this.handlePrAlreadyCreatedTurn(message, session, applyAnchor);
-      if (prKind === 'pr-unsupported' || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (prKind === 'pr-unsupported' || (!workLookup && PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handlePrCreatedCompanionUnsupportedTurn(message, session);
       }
     }
@@ -2242,10 +2252,10 @@ export class ConversationRuntime {
       // A bare "머지"/"merge" mention (merge word, no execution verb, not a status phrase) → already approved,
       // ask to merge explicitly (CA change 4). NO mutation. Checked before the deploy/companion words so a merge
       // noun does not fall into the companion-unsupported reply.
-      if (MERGE_WORD.test(message.text)) {
+      if (!workLookup && MERGE_WORD.test(message.text)) {
         return this.handleMergeAlreadyApprovedTurn(message, session);
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handleMergeApprovedCompanionUnsupportedTurn(message, session);
       }
     }
@@ -2267,11 +2277,11 @@ export class ConversationRuntime {
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        MERGE_WORD.test(message.text)
+        (!workLookup && MERGE_WORD.test(message.text))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2301,11 +2311,11 @@ export class ConversationRuntime {
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        MERGE_WORD.test(message.text)
+        (!workLookup && MERGE_WORD.test(message.text))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2331,11 +2341,11 @@ export class ConversationRuntime {
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        MERGE_WORD.test(message.text)
+        (!workLookup && MERGE_WORD.test(message.text))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2362,11 +2372,11 @@ export class ConversationRuntime {
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        MERGE_WORD.test(message.text)
+        (!workLookup && MERGE_WORD.test(message.text))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2394,11 +2404,11 @@ export class ConversationRuntime {
       }
       if (
         ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        MERGE_WORD.test(message.text)
+        (!workLookup && MERGE_WORD.test(message.text))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text)) {
+      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }

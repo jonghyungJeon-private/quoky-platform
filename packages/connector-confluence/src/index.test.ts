@@ -304,4 +304,79 @@ describe('ConfluenceConnectorProvider', () => {
       expect(() => provider((async () => new Response('{}')) as typeof fetch, { timeoutMs: -1 })).toThrow(/timeoutMs/);
     });
   });
+
+  describe('authentication mode and base URL normalization', () => {
+    it('uses Basic email:apiToken when an email is configured (Atlassian Cloud user API token)', async () => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+
+      await provider(fake.fetchImpl, { email: 'owner@example.com' }).listItems({ kind: 'pages' });
+
+      const header = new Headers(fake.calls[0]!.init?.headers).get('authorization');
+      expect(header).toBe(`Basic ${Buffer.from(`owner@example.com:${TOKEN}`, 'utf8').toString('base64')}`);
+      expect(header).not.toContain(TOKEN);
+    });
+
+    it('keeps Bearer when no email is configured (Data Center personal access token)', async () => {
+      const fake = fakeFetch({ status: 200, body: { results: [] } });
+
+      await provider(fake.fetchImpl).listItems({ kind: 'spaces' });
+
+      expect(new Headers(fake.calls[0]!.init?.headers).get('authorization')).toBe(`Bearer ${TOKEN}`);
+    });
+
+    it('rejects a blank configured email instead of silently switching to Bearer', () => {
+      expect(() => provider(fakeFetch().fetchImpl, { email: '   ' })).toThrow('confluence connector: a non-empty email is required');
+    });
+
+    it.each([
+      'example.atlassian.net',
+      'https://example.atlassian.net',
+      'https://example.atlassian.net/',
+      'https://example.atlassian.net/wiki',
+      'https://example.atlassian.net/wiki/',
+      'example.atlassian.net/wiki',
+    ])('accepts %s and sends requests to /wiki/api/v2 exactly once', async (host) => {
+      const fake = fakeFetch(
+        { status: 200, body: { results: [] } },
+        { status: 200, body: { id: '42', title: 'Page' } },
+        { status: 200, body: { results: [] } },
+      );
+      const connector = provider(fake.fetchImpl, { host, email: 'owner@example.com' });
+
+      await connector.listItems({ kind: 'pages' });
+      await connector.getItem({ pageId: '42' });
+      await connector.query({ query: 'search', params: { text: 'roadmap' } });
+
+      expect(fake.calls.map((call) => new URL(call.url).pathname)).toEqual([
+        '/wiki/api/v2/pages',
+        '/wiki/api/v2/pages/42',
+        '/wiki/rest/api/search',
+      ]);
+      for (const call of fake.calls) expect(new URL(call.url).origin).toBe('https://example.atlassian.net');
+    });
+
+    it.each([
+      'https://example.atlassian.net/wiki/spaces',
+      'https://example.atlassian.net/confluence',
+      'https://example.atlassian.net/wikis',
+      'http://example.atlassian.net/wiki',
+      'https://user:pw@example.atlassian.net',
+      'https://example.atlassian.net:8443/wiki',
+      'https://example.atlassian.net/wiki?x=1',
+    ])('rejects %s', (host) => {
+      expect(() => provider(fakeFetch().fetchImpl, { host })).toThrow(/confluence connector: host must be/);
+    });
+
+    it('never puts the token or email into a sanitized HTTP error', async () => {
+      const fake = fakeFetch({ status: 401, body: { message: 'bad credentials' } });
+
+      const error = await provider(fake.fetchImpl, { email: 'owner@example.com' })
+        .listItems({ kind: 'pages' })
+        .catch((caught: unknown) => caught as Error);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(String((error as Error).message)).not.toContain(TOKEN);
+      expect(String((error as Error).message)).not.toContain('owner@example.com');
+    });
+  });
 });

@@ -299,6 +299,11 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   for (const step of ['main-sync', 'local-cleanup', 'validation'] as const) {
     if (text === composer.composeExecutionPhraseHint(context, step).text) return `execution-phrase-hint:${step}`;
   }
+  if (text === composer.composePushPrDeployUnsupported(context).text) return 'push-pr-deploy-unsupported';
+  if (text === composer.composePrApprovedDeployUnsupported(context).text) return 'pr-approved-deploy-unsupported';
+  if (text === composer.composePrCreatedCompanionUnsupported(context).text) return 'pr-created-companion-unsupported';
+  if (text === composer.composeMergeApprovedCompanionUnsupported(context).text) return 'merge-approved-companion-unsupported';
+  if (text === composer.composeMergeExecutionUnsupportedCompanion(context).text) return 'merge-execution-companion-unsupported';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
   return 'other';
 }

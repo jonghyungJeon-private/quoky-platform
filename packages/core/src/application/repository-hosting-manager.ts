@@ -242,6 +242,9 @@ export class RepositoryHostingManager {
     ]) {
       if (!Number.isInteger(n) || n < 0) throw new Error('repository hosting: invalid status check counts');
     }
+    if (preview.checks.state === 'unavailable' && preview.checks.totalCount !== 0) {
+      throw new Error('repository hosting: invalid status check counts');
+    }
     return preview;
   }
 
