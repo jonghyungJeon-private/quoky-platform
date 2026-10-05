@@ -75,7 +75,7 @@ describe('JiraConnectorProvider', () => {
     expect(fake.calls).toHaveLength(1);
     const url = new URL(fake.calls[0]!.url);
     expect(url.origin + url.pathname).toBe('https://example.atlassian.net/rest/api/3/search/jql');
-    expect(url.searchParams.get('jql')).toBe('assignee = "account-123" AND resolution = Unresolved ORDER BY updated DESC');
+    expect(url.searchParams.get('jql')).toBe('assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done ORDER BY updated DESC');
     expect(url.searchParams.get('fields')).toBe('summary,status,duedate,updated,description');
     expect(url.searchParams.get('maxResults')).toBe('20');
     expect(fake.calls[0]!.init?.method).toBe('GET');
@@ -87,7 +87,7 @@ describe('JiraConnectorProvider', () => {
     await provider(fake.fetchImpl).query(personalWork('account-123', { filter: 'due-this-week', limit: 5 }));
     const url = new URL(fake.calls[0]!.url);
     expect(url.searchParams.get('jql')).toBe(
-      'assignee = "account-123" AND resolution = Unresolved AND duedate <= endOfWeek() ORDER BY duedate ASC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND duedate <= endOfWeek() ORDER BY duedate ASC',
     );
     expect(url.searchParams.get('maxResults')).toBe('5');
   });
@@ -125,7 +125,7 @@ describe('JiraConnectorProvider', () => {
     const fake = fakeFetch(200, { issues: [] });
     await provider(fake.fetchImpl).query(personalWork('a"b\\c" OR project = SECRET'));
     expect(new URL(fake.calls[0]!.url).searchParams.get('jql')).toBe(
-      'assignee = "a\\"b\\\\c\\" OR project = SECRET" AND resolution = Unresolved ORDER BY updated DESC',
+      'assignee = "a\\"b\\\\c\\" OR project = SECRET" AND resolution = Unresolved AND statusCategory != Done ORDER BY updated DESC',
     );
 
     await expect(provider(fake.fetchImpl).query(personalWork('a\nb'))).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
