@@ -29,6 +29,9 @@ importers:
       '@quoky/command-local':
         specifier: workspace:*
         version: link:../../packages/command-local
+      '@quoky/connector-calendar-google':
+        specifier: workspace:*
+        version: link:../../packages/connector-calendar-google
       '@quoky/connector-confluence':
         specifier: workspace:*
         version: link:../../packages/connector-confluence
@@ -100,6 +103,12 @@ importers:
         version: link:../core
 
   packages/command-local:
+    dependencies:
+      '@quoky/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/connector-calendar-google:
     dependencies:
       '@quoky/core':
         specifier: workspace:*

@@ -24,6 +24,9 @@ export * from './reminder-repository.port';
 export * from './notification-sink.port';
 // Personal v3 (ADR-0107 D2, LRN-1).
 export * from './learning-repository.port';
+// Personal v3 (ADR-0110 D1, CAL-1).
+export * from './calendar-reader.port';
+export * from './calendar-window';
 
 export * from './continuation-routing-audit';
 export * from './continuation-containment-audit';
