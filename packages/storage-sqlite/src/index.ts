@@ -18,6 +18,10 @@ export {
   LEARNING_SCHEMA_VERSION, SqliteLearningRepository, openLearningExportReader,
 } from './learning-repository';
 export type { LearningExportReader } from './learning-repository';
+export { openLearningReportReader } from './learning-report-reader';
+export type {
+  LearningReportItem, LearningReportReader, LearningReportTurn, LearningReportTurnQuery,
+} from './learning-report-reader';
 export {
   CONNECTOR_WRITE_RECEIPTS_SCHEMA_VERSION, SqliteConnectorWriteReceiptRepository,
 } from './connector-write-receipt-repository';
