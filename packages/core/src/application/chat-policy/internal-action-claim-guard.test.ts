@@ -290,3 +290,79 @@ describe('v3 wave-1 fixes (Codex P2 + live QA W1-L02)', () => {
     expect(guardInternalActionClaims('네, 저장했어요.', '이 문서 어때?').guarded).toBe(false);
   });
 });
+
+describe('v3 wave-1 fix loop 2 (Codex re-review P2s)', () => {
+  it('exemptions are clause-scoped: a state asserted in one clause is caught despite a how-to / report in another (:406)', () => {
+    for (const [reply, domain] of [
+      ['Your PR is merged, so you can delete the branch.', 'merge'],
+      ['Your changes are pushed, and you can open a PR now.', 'push'],
+      ['Your reminder is set; you can cancel it with "알림 N 취소".', 'reminder'],
+      ["Your PR is merged, but the branch isn't deleted yet.", 'merge'],
+      ['You said the tests pass, but your PR is merged already.', 'merge'],
+      ['The branch was deleted — you should pull main now.', 'branch'],
+      ['PR이 머지됐으니 브랜치를 지우셔도 돼요.', 'merge'],
+      ['PR이 머지되어 있으니 브랜치를 지우셔도 돼요.', 'merge'],
+      ['커밋을 확인해 보니 이미 푸시되었습니다.', 'push'],
+    ] as const) {
+      expect(guardInternalActionClaims(reply, 'status?'), reply).toMatchObject({ guarded: true, domain });
+    }
+    for (const reply of [
+      'You said your PR is merged, so you can delete the branch.',
+      'If your PR is merged, you can delete the branch.',
+      "Your PR isn't merged, so you can't delete the branch yet.",
+      'To merge, you can use the merge button; the changes are merged into main.',
+      'In Git, a branch is deleted with git branch -d, and you can restore it from the reflog.',
+    ]) {
+      expect(guardInternalActionClaims(reply, 'status?').guarded, reply).toBe(false);
+    }
+  });
+
+  it('a determiner or adjective after a User subject is not an embedded clause; a governing relative verb is (:190)', () => {
+    for (const reply of [
+      '사용자가 다른 브랜치를 삭제했습니다.',
+      '사용자가 새 브랜치를 만들었어요.',
+      '사용자님이 그 브랜치를 삭제했습니다.',
+      '당신이 모든 변경 사항을 커밋했어요.',
+      '사용자가 여러 파일을 수정했습니다.',
+      '사용자가 중요한 브랜치를 삭제했습니다.',
+      '사용자가 PR을 만들었고 브랜치를 삭제했습니다.',
+      '제가 확인해 보니 사용자가 브랜치를 삭제했군요.',
+    ]) {
+      expect(guardInternalActionClaims(reply, '브랜치 삭제했어').guarded, reply).toBe(false);
+    }
+    for (const [reply, domain] of [
+      ['당신이 말한 거 기억했습니다.', 'memory'],
+      ['사용자님이 요청하신 브랜치를 삭제했습니다.', 'branch'],
+      ['당신이 만든 브랜치를 삭제했어요.', 'branch'],
+      ['사용자가 알려준 PR을 머지했어요.', 'merge'],
+      ['사용자가 요청해 주신 브랜치를 삭제했습니다.', 'branch'],
+      ['사용자님이 요청하셔서 제가 브랜치를 삭제했어요.', 'branch'],
+    ] as const) {
+      expect(guardInternalActionClaims(reply, '방금 내가 말한 거 기억해 줬지?'), reply).toMatchObject({ guarded: true, domain });
+    }
+  });
+
+  it('English memory claims need Quoky ownership; technical memory statements pass (:402)', () => {
+    for (const [user, reply] of [
+      ['How does RAM work?', 'Data is stored in memory during program execution.'],
+      ['How does RAM work?', 'Variables are stored in memory while the program runs.'],
+      ['What is a cache?', 'A cache keeps recently used data stored in memory for faster access.'],
+      ['What happens on restart?', 'The session state has been saved in memory and is lost on restart.'],
+      ['메모리 누수가 뭐야?', '실행 중에는 데이터가 메모리에 저장됐다가 해제돼요.'],
+      ['How does RAM work?', 'The OS stored the page in memory before the swap.'],
+    ] as const) {
+      expect(guardInternalActionClaims(reply, user).guarded, reply).toBe(false);
+    }
+    for (const reply of [
+      "I've saved that to my memory.",
+      'I saved it to memory.',
+      "I'll store that in my long-term memory.",
+      'Got it — saved to memory.',
+      'That is now stored in your Quoky memory.',
+      'Yes, I remembered what you said.',
+      'Your memory is saved.',
+    ]) {
+      expect(guardInternalActionClaims(reply, 'remember this'), reply).toMatchObject({ guarded: true, domain: 'memory' });
+    }
+  });
+});

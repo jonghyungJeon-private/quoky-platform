@@ -17,9 +17,11 @@
  * 커밋했습니다 영어로 번역해줘"); conditionals and how-to forms ("~하면", "~하려면", "~했다면"); imperatives addressed
  * to the User ("커밋하세요"); questions; negations ("하지 않았어요", "상태가 맞지 않습니다", "I haven't pushed"); and an
  * acknowledgement of the User's OWN action — a reportative ending ("삭제했군요", "커밋했네요") or a second-person subject
- * ("사용자가 브랜치를 삭제했습니다", "you said your PR is merged") — unless the sentence names Quoky itself as the
- * subject ("제가", "Quoky가"). A language preference ("한국어로 답해줘", "in English please") is never an exemption: it
- * does not make a claiming reply a rendering.
+ * ("사용자가 브랜치를 삭제했습니다", "you said your PR is merged") — unless Quoky itself is the nearest subject ("제가",
+ * "Quoky가"). Exemptions are clause-scoped (";", a dash, ", so/and/but/then", Korean connectives): a how-to, report or
+ * negation in one clause never hides a claim in another ("Your PR is merged, so you can delete the branch."). A memory
+ * claim needs Quoky's own memory ("기억", "my/your memory"), never a technical "memory"/"메모리". A language preference
+ * ("한국어로 답해줘", "in English please") is never an exemption: it does not make a claiming reply a rendering.
  */
 import type { GeneralChatReplyPolicy } from './chat-response-policy';
 import {
@@ -156,38 +158,92 @@ const KO_NOUNLESS_STORE = new RegExp(
  * 삭제했군요", "커밋했네요", "PR을 만들었다니", "푸시했잖아요"), it does not report Quoky's own action.
  */
 const KO_REPORTATIVE_TAIL = /^\s*(?:군|구나|구먼|구려|네요|네(?![가-힣])|다니|다면서|잖)/u;
-/** Quoky (the reply's speaker) named as the subject: a claim even with a reportative ending ("제가 커밋했잖아요"). */
-const KO_FIRST_PERSON = /(?<![\p{L}\p{N}])(?:제가|저는|저도|저희가|내가|나는|(?:quoky|쿼키|퀴키)(?:가|는|도|에서))(?![\p{L}\p{N}])/iu;
+/** Quoky (the reply's speaker) named as the subject ("제가 커밋했잖아요", "Quoky가 삭제했습니다"). */
+const KO_FIRST_PERSON = String.raw`(?:제가|저는|저도|저희가|내가|나는|(?:quoky|쿼키|퀴키)(?:가|는|도|에서))`;
 /** The User named as the subject ("사용자가 브랜치를 삭제했습니다", "당신이 커밋했어요"). */
-const KO_SECOND_PERSON =
-  /(?<![\p{L}\p{N}])(?:당신(?:이|은|께서)|사용자(?:님)?(?:이|가|께서|는|은)|회원님(?:이|께서|은)|고객님(?:이|께서|은)|본인(?:이|께서))(?![\p{L}\p{N}])/gu;
+const KO_SECOND_PERSON = String.raw`(?:당신(?:이|은|께서)|사용자(?:님)?(?:이|가|께서|는|은)|회원님(?:이|께서|은)|고객님(?:이|께서|은)|본인(?:이|께서))`;
+/** Every person subject in a sentence; group 1 is set for Quoky (first person), group 2 for the User. */
+const KO_PERSON_SUBJECT = new RegExp(
+  String.raw`(?<![\p{L}\p{N}])(?:(${KO_FIRST_PERSON})|(${KO_SECOND_PERSON}))(?![\p{L}\p{N}])`,
+  'giu',
+);
 
 /**
- * True when a word is a Korean noun-modifier (관형형: "말한", "만든", "요청하신", "할", "했던", "원하시는"): the
- * subject before it belongs to that embedded clause ("당신이 말한 거 기억했습니다" — "당신이" is the subject of
- * "말한", Quoky of "기억했").
+ * Clause boundaries inside one sentence: ";", a dash, ", so/and/but/then/because", a Korean comma, and a Korean
+ * connective ending (-니까/-으니/-어서/-고/-지만/-는데/-면서) before a space. An exemption (negation, how-to, report,
+ * subject) applies to its own clause only, so "Your PR is merged, so you can delete the branch." still claims.
  */
-function isKoModifierWord(word: string): boolean {
-  const stripped = word.replace(/[^\p{L}\p{N}]+$/u, '');
-  if (/(?:던|는)$/u.test(stripped)) return true;
-  const last = stripped.codePointAt(stripped.length - 1) ?? 0;
-  if (last < 0xac00 || last > 0xd7a3) return false;
-  const final = (last - 0xac00) % 28;
-  return final === 4 || final === 8; // ㄴ or ㄹ 받침
+const CLAUSE_BOUNDARY = new RegExp(
+  [
+    String.raw`\s*[;—–]\s*`,
+    String.raw`\s+-\s+`,
+    String.raw`,\s*(?=(?:so|and|but|then|because)\b)`,
+    String.raw`(?<=[가-힣]),\s*`,
+    String.raw`(?<=[가-힣](?:니까|으니|어서|아서|해서|여서|고|지만|는데|면서))\s+`,
+  ].join('|'),
+  'giu',
+);
+
+/** The `[start, end)` clauses of a sentence (boundaries excluded). */
+function clauseRanges(sentence: string): Array<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  let cursor = 0;
+  for (const boundary of sentence.matchAll(CLAUSE_BOUNDARY)) {
+    if (boundary.index > cursor) ranges.push([cursor, boundary.index]);
+    cursor = boundary.index + boundary[0].length;
+  }
+  if (cursor < sentence.length) ranges.push([cursor, sentence.length]);
+  return ranges;
+}
+
+/** The clauses of a sentence as text. */
+function clausesOf(sentence: string): string[] {
+  return clauseRanges(sentence).map(([start, end]) => sentence.slice(start, end));
+}
+
+/** Start offset of the clause holding `index`. */
+function clauseStartOf(sentence: string, index: number): number {
+  let start = 0;
+  for (const [from] of clauseRanges(sentence)) if (from <= index) start = from;
+  return start;
 }
 
 /**
- * True when the Korean claim at `[start, end)` acknowledges the User's own action rather than claiming Quoky's: a
- * reportative ending, or a second-person subject of this verb — never when the sentence names Quoky as the subject.
+ * A closed list of Korean verbs in a relative (관형형) form that govern a preceding subject ("당신이 말한 거",
+ * "사용자님이 요청하신 브랜치", "당신이 만든 브랜치"): the User subject belongs to that embedded clause, Quoky is the
+ * subject of the main verb. Determiners and adjectives ("다른", "새", "이", "그", "모든", "여러", "중요한") are not in
+ * it, so "사용자가 다른 브랜치를 삭제했습니다" stays the User's own action.
+ */
+const KO_HA_STEMS =
+  '말|말씀|얘기|이야기|요청|부탁|언급|작성|지정|선택|입력|추가|생성|삭제|등록|설정|제안|공유|수정|원|지시|설명|질문|명령|업로드|커밋|푸시|머지|병합|확인|사용|이용|준비|기록|저장|예약|변경|전환|정리|제거|완료|처리';
+const KO_HA_RELATIVE = '한|하신|하는|하시는|했던|하셨던|하던|하시던|할|하실';
+const KO_NATIVE_RELATIVE =
+  '만든|만드신|만드는|만들던|만들|쓴|쓰신|쓰는|쓰던|보낸|보내신|보내는|보내던|올린|올리신|올리는|올리던|준|주신|주는|주던|줬던|' +
+  '적은|적으신|적는|적던|고른|고르신|남긴|남기신|넣은|넣으신|바꾼|바꾸신|고친|고치신|지운|지우신|붙인|붙이신|' +
+  '알려준|알려주신|알려주는|받은|받으신|정한|정하신|한|하신|하는|했던|하던|할';
+const KO_RELATIVE_VERB = new RegExp(
+  String.raw`^(?:(?:${KO_HA_STEMS})\s?(?:${KO_HA_RELATIVE})|${KO_NATIVE_RELATIVE}|[가-힣]*(?:해|어|아|여)(?:준|주신|주는|주던|줬던))$`,
+  'u',
+);
+
+/**
+ * True when the Korean claim at `[start, end)` acknowledges the User's own action rather than claiming Quoky's. The
+ * nearest person subject before the verb decides (a subject carries over into the next clause, "사용자가 PR을
+ * 만들었고 브랜치를 삭제했습니다"): Quoky in the same clause is always a claim; a reportative ending ("삭제했군요")
+ * is the User's; a User subject is the User's unless a relative verb from the closed list governs it ("당신이 말한 거
+ * 기억했습니다").
  */
 function koUsersOwnAction(sentence: string, start: number, end: number): boolean {
-  if (KO_FIRST_PERSON.test(sentence)) return false;
-  if (KO_REPORTATIVE_TAIL.test(sentence.slice(end))) return true;
-  let subjectEnd = -1;
-  for (const subject of sentence.slice(0, start).matchAll(KO_SECOND_PERSON)) subjectEnd = subject.index + subject[0].length;
-  if (subjectEnd < 0) return false;
-  const between = sentence.slice(subjectEnd, start).trim();
-  return between === '' || !between.split(/\s+/u).some(isKoModifierWord);
+  let nearest: { readonly firstPerson: boolean; readonly index: number; readonly end: number } | null = null;
+  for (const subject of sentence.slice(0, start).matchAll(KO_PERSON_SUBJECT)) {
+    nearest = { firstPerson: subject[1] !== undefined, index: subject.index, end: subject.index + subject[0].length };
+  }
+  const reportative = KO_REPORTATIVE_TAIL.test(sentence.slice(end));
+  if (nearest?.firstPerson) return nearest.index < clauseStartOf(sentence, start) && reportative;
+  if (reportative) return true;
+  if (nearest === null) return false;
+  const between = sentence.slice(nearest.end, start).trim();
+  return between === '' || !between.split(/\s+/u).some((word) => KO_RELATIVE_VERB.test(word.replace(/[^\p{L}\p{N}]+$/u, '')));
 }
 
 /** The first match of a global Korean claim pattern that Quoky claims (not the User's own action), or `null`. */
@@ -279,14 +335,30 @@ const EN_PRESENT_STATE = new RegExp(
     String.raw`(?!\s+(?:with|by|using|via|through|when|if|once|after|before|automatically)\b)`,
   'iu',
 );
-/** Generic / instructional prose: a present passive there describes how things work, not a state Quoky asserts. */
+/** Generic / instructional prose (clause-scoped): a present passive there describes how things work. */
 const EN_GENERIC =
-  /\b(?:usually|typically|generally|normally|often|always|sometimes|by\s+default|you\s+(?:can|could|should|may|might|need\s+to|have\s+to)|can\s+be|in\s+git(?:hub)?)\b|^\s*to\s+[a-z]+\s*,/iu;
+  /\b(?:usually|typically|generally|normally|often|always|sometimes|by\s+default|you\s+(?:can|could|should|may|might|need\s+to|have\s+to)|can\s+be|in\s+git(?:hub)?)\b/iu;
+/** A sentence-initial purpose frame ("To merge, …") makes the whole sentence instructional. */
+const EN_INSTRUCTION_FRAME = /^\s*to\s+[a-z]+\s*,/iu;
 /** The reply relays the User's own report ("you said your PR is merged"), it does not assert the state itself. */
 const EN_REPORTED =
   /\b(?:you\s+(?:said|say|mentioned|told\s+me|wrote|reported|noted|confirmed|indicated)|you(?:'ve|\s+have)\s+(?:said|mentioned|told\s+me|confirmed)|according\s+to\s+you|as\s+you\s+(?:said|mentioned|noted))\b/iu;
-/** A subject-less "saved to memory" report ("Got it — saved to memory.", "That is now stored in my memory."). */
-const EN_MEMORY_STORED = /\b(?:saved|stored)\s+(?:(?:it|that|this)\s+)?(?:in|to)\s+(?:my\s+|your\s+)?(?:long-term\s+)?memory\b/iu;
+/**
+ * A memory-save report that names Quoky's memory or is a subject-less clause-initial report ("That is now stored in my
+ * memory.", "saved to your Quoky memory", "Got it — saved to memory."). A technical passive ("Data is stored in memory
+ * during program execution.") names no owner and is not one.
+ */
+const EN_MEMORY_STORED = new RegExp(
+  String.raw`\b(?:saved|stored|noted|recorded)\s+(?:(?:it|that|this)\s+)?(?:in|to)\s+(?:my|your|quoky(?:'s)?)\s+(?:quoky\s+)?(?:long-term\s+)?memory\b` +
+    String.raw`|^\s*(?:(?:got\s+it|done|ok(?:ay)?|sure|alright)\s*[,.!]?\s*)?(?:all\s+|now\s+)?(?:saved|stored)\s+(?:(?:it|that|this)\s+)?(?:in|to)\s+(?:long-term\s+)?memory\b`,
+  'iu',
+);
+/**
+ * A memory claim must be about Quoky's own memory: a "기억" word, an owned memory ("my / your / Quoky memory") or a
+ * remember request; a technical "memory" / "메모리" alone (RAM, a cache) is not Quoky's memory.
+ */
+const MEMORY_OWNERSHIP =
+  /기억|\b(?:my|your)\s+(?:quoky\s+)?(?:long-term\s+)?memor|quoky(?:'s)?\s+memor|(?:quoky|쿼키|퀴키)의?\s*(?:기억|메모리)|long-term\s+memory|\bremember/iu;
 const EN_NEGATION = /\b(?:not|never|n't|no\s+longer)\b/iu;
 /** A subordinate / instruction clause around an English state ("Once the changes are committed, push them"). */
 const EN_SUBORDINATE = /\b(?:if|once|when|whenever|after|before|until|unless|whether|make\s+sure|ensure|check|verify)\b/iu;
@@ -392,24 +464,50 @@ function domainNamedIn(text: string, withVerbs: boolean): InternalActionDomain |
 function sentenceClaim(sentence: string, userMessage: string, translationClauseExempt = true): InternalActionDomain | null {
   if (isQuestion(sentence) || (translationClauseExempt && TRANSLATION_CLAUSE.test(sentence))) return null;
   for (const [domain, pattern] of KO_SPECIAL) if (koQuokyClaim(sentence, pattern)) return domain;
-  for (const [domain, pattern] of KO_DOMAIN_CLAIMS) if (koQuokyClaim(sentence, pattern)) return domain;
+  for (const [domain, pattern] of KO_DOMAIN_CLAIMS) {
+    if (!koQuokyClaim(sentence, pattern)) continue;
+    // "메모리에 저장됐습니다" in a technical answer is not Quoky's memory (`MEMORY_OWNERSHIP`).
+    if (domain === 'memory' && !MEMORY_OWNERSHIP.test(sentence) && !MEMORY_OWNERSHIP.test(userMessage)) continue;
+    return domain;
+  }
   for (const [domain, pattern] of EN_SPECIAL) if (pattern.test(sentence)) return domain;
   for (const [domain, pattern] of EN_DOMAIN_CLAIMS) if (pattern.test(sentence)) return domain;
-  const enAssertive = !EN_NEGATION.test(sentence) && !EN_SUBORDINATE.test(sentence) && !EN_REPORTED.test(sentence);
   // A noun-less "저장했어요" / "saved to memory" answering a memory question (W1-L02): no chat turn writes memory.
   const userDomain = domainNamedIn(userMessage, true);
-  if (userDomain === 'memory' && koQuokyClaim(sentence, KO_NOUNLESS_STORE)) return 'memory';
-  if (enAssertive && EN_MEMORY_STORED.test(sentence)) return 'memory';
+  if (userDomain === 'memory' && MEMORY_OWNERSHIP.test(userMessage) && koQuokyClaim(sentence, KO_NOUNLESS_STORE)) return 'memory';
   const koState = koQuokyClaim(sentence, KO_STATE_ASSERTION);
-  const enState =
-    koState === null && enAssertive
-      ? (sentence.match(EN_STATE_ASSERTION) ?? (EN_GENERIC.test(sentence) ? null : sentence.match(EN_PRESENT_STATE)))
-      : null;
-  const state = koState ?? enState;
-  if (state === null) return null;
-  // The asserted verb names the domain when it is a domain verb itself ("커밋된 상태", "has been merged").
-  for (const [domain, pattern] of STATE_VERB_DOMAINS) if (pattern.test(state[0])) return domain;
-  return domainNamedIn(sentence, false) ?? userDomain;
+  if (koState !== null) return stateDomain(koState[0], sentence, userMessage, userDomain);
+  // English exemptions are clause-scoped: a negation, condition, report or how-to in one clause never hides a state
+  // asserted in another ("Your PR is merged, so you can delete the branch.").
+  const instructional = EN_INSTRUCTION_FRAME.test(sentence);
+  for (const clause of clausesOf(sentence)) {
+    if (EN_NEGATION.test(clause) || EN_SUBORDINATE.test(clause) || EN_REPORTED.test(clause)) continue;
+    if (EN_MEMORY_STORED.test(clause)) return 'memory';
+    const enState =
+      clause.match(EN_STATE_ASSERTION) ??
+      (instructional || EN_GENERIC.test(clause) ? null : clause.match(EN_PRESENT_STATE));
+    if (enState === null) continue;
+    const domain = stateDomain(enState[0], clause, userMessage, userDomain);
+    if (domain !== null) return domain;
+  }
+  return null;
+}
+
+/**
+ * The domain of an asserted state: the asserted verb when it is a domain verb itself ("커밋된 상태", "has been
+ * merged"), else the noun of `scope`, else the User message's domain. A memory state needs Quoky's own memory in
+ * `scope` or the User message (`MEMORY_OWNERSHIP`): "the cache has been saved in memory" is not a memory claim.
+ */
+function stateDomain(
+  asserted: string,
+  scope: string,
+  userMessage: string,
+  userDomain: InternalActionDomain | null,
+): InternalActionDomain | null {
+  for (const [domain, pattern] of STATE_VERB_DOMAINS) if (pattern.test(asserted)) return domain;
+  const domain = domainNamedIn(scope, false) ?? userDomain;
+  if (domain === 'memory' && !MEMORY_OWNERSHIP.test(scope) && !MEMORY_OWNERSHIP.test(userMessage)) return null;
+  return domain;
 }
 
 /** A User message that explicitly asks for a translation ("번역해줘", "translate this"), not a language preference. */
