@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_OAUTH_TOKEN_URL } from '@quoky/connector-calendar-google';
+import {
+  GOOGLE_CALENDAR_EVENTS_SCOPE,
+  GOOGLE_CALENDAR_READONLY_SCOPE,
+  GOOGLE_CALENDAR_READ_WRITE_SCOPE,
+  GOOGLE_OAUTH_TOKEN_URL,
+} from '@quoky/connector-calendar-google';
 
 import {
   EXIT_BLOCKED,
@@ -22,7 +27,7 @@ interface Harness {
   deps: CalendarAuthDeps;
   out: string[];
   err: string[];
-  written: Array<{ path: string; token: string }>;
+  written: Array<{ path: string; token: string; scope?: string }>;
   fetchCalls: Array<{ url: string; body: string }>;
   closed: () => boolean;
   /** Resolves with the printed consent URL once the helper is waiting for the redirect. */
@@ -33,7 +38,7 @@ interface Harness {
 function harness(options: { tokenResponse?: Response; exists?: boolean; env?: NodeJS.ProcessEnv; waitMs?: number } = {}): Harness {
   const out: string[] = [];
   const err: string[] = [];
-  const written: Array<{ path: string; token: string }> = [];
+  const written: Array<{ path: string; token: string; scope?: string }> = [];
   const fetchCalls: Array<{ url: string; body: string }> = [];
   let handler: CallbackHandler | undefined;
   let closed = false;
@@ -53,8 +58,8 @@ function harness(options: { tokenResponse?: Response; exists?: boolean; env?: No
       ({ QUOKY_CALENDAR_GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com', QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET: CLIENT_SECRET } as NodeJS.ProcessEnv),
     fetchImpl,
     fileExists: () => options.exists ?? false,
-    writeTokenFile: (path, token) => {
-      written.push({ path, token });
+    writeTokenFile: (path, token, scope) => {
+      written.push({ path, token, scope });
     },
     listen: async (h) => {
       handler = h;
@@ -112,7 +117,9 @@ describe('calendar consent helper (ADR-0110 D2)', () => {
     expect(h.callback(`/oauth2callback?state=${state}&code=${encodeURIComponent(CODE)}&scope=x`).status).toBe(200);
     await expect(run).resolves.toBe(EXIT_OK);
 
-    expect(h.written).toEqual([{ path: '/tmp/quoky-test/google-calendar-token.json', token: REFRESH_TOKEN }]);
+    expect(h.written).toEqual([
+      { path: '/tmp/quoky-test/google-calendar-token.json', token: REFRESH_TOKEN, scope: GOOGLE_CALENDAR_READONLY_SCOPE },
+    ]);
     expect(h.fetchCalls).toHaveLength(1);
     expect(h.fetchCalls[0]!.url).toBe(GOOGLE_OAUTH_TOKEN_URL);
     const form = new URLSearchParams(h.fetchCalls[0]!.body);
@@ -160,6 +167,38 @@ describe('calendar consent helper (ADR-0110 D2)', () => {
     expect(h.err.join('\n')).toContain('more than calendar.readonly');
     expect(h.written).toHaveLength(0);
     assertNoSecretsPrinted(h);
+  });
+
+  it('--with-events requests readonly + events, requires both, and records the read + write scope (ADR-0110 amendment D1)', async () => {
+    const h = harness({
+      tokenResponse: new Response(
+        JSON.stringify({ refresh_token: REFRESH_TOKEN, scope: `${GOOGLE_CALENDAR_EVENTS_SCOPE} ${GOOGLE_CALENDAR_READONLY_SCOPE}` }),
+        { status: 200 },
+      ),
+    });
+    const run = runCli(['--out', '/tmp/rw.json', '--with-events'], h.deps);
+    const consent = await h.consentUrl();
+    expect(consent.searchParams.get('scope')).toBe(GOOGLE_CALENDAR_READ_WRITE_SCOPE);
+    h.callback(`/oauth2callback?state=${consent.searchParams.get('state')}&code=${CODE}`);
+    await expect(run).resolves.toBe(EXIT_OK);
+    expect(h.written).toEqual([{ path: '/tmp/rw.json', token: REFRESH_TOKEN, scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE }]);
+    expect(h.out.join('\n')).toContain('QUOKY_CALENDAR_WRITE_ENABLED=true');
+    assertNoSecretsPrinted(h);
+  });
+
+  it('--with-events refuses a read-only grant and writes nothing', async () => {
+    const h = harness();
+    const run = runCli(['--with-events', '--out', '/tmp/rw.json'], h.deps);
+    const state = (await h.consentUrl()).searchParams.get('state');
+    h.callback(`/oauth2callback?state=${state}&code=${CODE}`);
+    await expect(run).resolves.toBe(EXIT_FAILED);
+    expect(h.err.join('\n')).toContain('did not grant every requested calendar permission');
+    expect(h.written).toHaveLength(0);
+  });
+
+  it('rejects a repeated --with-events flag as a usage error', async () => {
+    const h = harness();
+    await expect(runCli(['--out', '/tmp/x.json', '--with-events', '--with-events'], h.deps)).resolves.toBe(EXIT_USAGE);
   });
 
   it('times out without a redirect', async () => {

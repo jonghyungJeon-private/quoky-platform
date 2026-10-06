@@ -215,7 +215,7 @@ function tableNames(db: BetterSqliteDb): string[] {
   );
 }
 
-/** Build a v11 database, then step it to 12 and 13 with the production migration list (ADR-0096 D10). */
+/** Build a v11 database, then step it to 12, 13, 14 and 15 with the production migration list (ADR-0096 D10). */
 function prepareMigratedDatabase(path: string): void {
   const db = openRawDb(path);
   try {
@@ -230,8 +230,11 @@ function prepareMigratedDatabase(path: string): void {
     migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 13)));
     expect(tableNames(db)).toContain('reminders');
     expect(tableNames(db)).not.toContain('learning_items');
-    migrationSteps.push(runMigrations(raw, MIGRATIONS));
+    migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 14)));
     expect(tableNames(db)).toContain('learning_items');
+    expect(tableNames(db)).not.toContain('connector_write_receipts');
+    migrationSteps.push(runMigrations(raw, MIGRATIONS));
+    expect(tableNames(db)).toContain('connector_write_receipts');
   } finally {
     db.close();
   }
@@ -513,31 +516,32 @@ afterAll(async () => {
 
 
 describe('Personal v2 acceptance — migration lane (ADR-0096 D10)', () => {
-  it('the migration list is exactly 1..14, contiguous, and LATEST_SCHEMA_VERSION is 14 (v14: ADR-0107 learning)', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 14 }, (_, i) => i + 1));
-    expect(LATEST_SCHEMA_VERSION).toBe(14);
+  it('the migration list is exactly 1..15, contiguous, and LATEST_SCHEMA_VERSION is 15 (v15: ADR-0112 write receipts)', () => {
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
+    expect(LATEST_SCHEMA_VERSION).toBe(15);
   });
 
-  it('a temp DB was migrated 0 → 11, then 11 → 12 (feedback), 12 → 13 (reminders) and 13 → 14 (learning), one version per step', () => {
+  it('a temp DB was migrated 0 → 11, then 12 (feedback), 13 (reminders), 14 (learning) and 15 (write receipts), one version per step', () => {
     expect(migrationSteps).toEqual([
       { from: 0, to: 11, applied: Array.from({ length: 11 }, (_, i) => i + 1) },
       { from: 11, to: 12, applied: [12] },
       { from: 12, to: 13, applied: [13] },
       { from: 13, to: 14, applied: [14] },
+      { from: 14, to: 15, applied: [15] },
     ]);
   });
 
-  it('the production storage opened that DB without re-migrating, and it stays at 14 with every v12/v13/v14 table', () => {
+  it('the production storage opened that DB without re-migrating, and it stays at 15 with every v12..v15 table', () => {
     const db = openRawDb(dbPath);
     try {
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(14);
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(15);
       expect(tableNames(db)).toEqual(expect.arrayContaining([
-        'conversation_turns', 'feedback_signals', 'reminders', 'learning_items',
+        'conversation_turns', 'feedback_signals', 'reminders', 'learning_items', 'connector_write_receipts',
       ]));
-      // A build that knows only up to 13 refuses the v14 DB (fail closed, never a downgrade).
+      // A build that knows only up to 14 refuses the v15 DB (fail closed, never a downgrade).
       type Db = Parameters<typeof runMigrations>[0];
-      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 13))).toThrow('SCHEMA_VERSION_AHEAD');
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(14);
+      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 14))).toThrow('SCHEMA_VERSION_AHEAD');
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(15);
     } finally {
       db.close();
     }

@@ -2,7 +2,7 @@
   "name": "@quoky/connector-jira",
   "version": "0.1.0",
   "private": true,
-  "description": "Read-only Jira Cloud connector implementing the Quoky ConnectorProvider port.",
+  "description": "Jira Cloud connector: the read-only ConnectorProvider plus the allowlisted comment and transition writers.",
   "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
