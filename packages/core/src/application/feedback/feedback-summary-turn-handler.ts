@@ -1,11 +1,16 @@
 import type { FeedbackSummary, Id, Task } from '../../domain';
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import type { FeedbackCapabilityTrend } from './feedback-recorder';
 import { composeFeedbackSummaryText, FEEDBACK_SUMMARY_UNAVAILABLE_TEXT } from './feedback-summary-composer';
 import { detectFeedbackTurnControl } from './implicit-feedback';
 
-/** The 30-day summary source — structurally `FeedbackRecorder.summarize` (null when the store cannot be read). */
+/**
+ * The 30-day summary source — structurally `FeedbackRecorder.summarize`/`trend` (null when the store cannot be read).
+ * `trend` (ADR-0107 D3) is optional: without it, or when it returns null, the reply has no trend line.
+ */
 export interface FeedbackSummarySource {
   summarize(actorId: Id): Promise<FeedbackSummary | null>;
+  trend?(actorId: Id): Promise<FeedbackCapabilityTrend | null>;
 }
 
 /** Read-only Task lookup for the request text of recent 👎 turns. */
@@ -51,7 +56,8 @@ export class FeedbackSummaryTurnHandler implements ConversationTurnHandler {
         const description = await this.describeTask(turn.taskId);
         if (description !== undefined) excerpts.set(turn.taskId, description);
       }
-      const text = composeFeedbackSummaryText(summary, excerpts);
+      const trend = summary && this.deps.feedback.trend ? await this.deps.feedback.trend(ctx.actor.id) : null;
+      const text = composeFeedbackSummaryText(summary, excerpts, trend);
       return summary ? { reply: { context, text } } : { reply: { context, text }, status: 'FAILED' };
     } catch (err) {
       this.logFailure(err);

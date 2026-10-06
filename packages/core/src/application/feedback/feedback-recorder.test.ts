@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Capability, FeedbackSignalKind, IntentType } from '../../domain';
-import type { ConversationTurnRecord, FeedbackSignal, FeedbackSummary, InboundMessage } from '../../domain';
+import type { ConversationTurnRecord, FeedbackRatedTurn, FeedbackSignal, FeedbackSummary, InboundMessage } from '../../domain';
 import type { FeedbackRepository, FeedbackSummaryQuery, FeedbackTurnLocation, Logger, SaveTurnResult } from '../../ports';
 import {
   FEEDBACK_PRUNE_MAX_ROWS, FEEDBACK_PREVIOUS_TURN_LOOKBACK_MS, FEEDBACK_RETENTION_MS, FEEDBACK_SUMMARY_RECENT_NEGATIVE_LIMIT,
@@ -48,6 +48,9 @@ class FakeFeedbackRepository implements FeedbackRepository {
   async summarize(query: FeedbackSummaryQuery): Promise<FeedbackSummary> {
     this.summaryQueries.push(query);
     return { since: query.since, turnCount: 0, signals: [], byCapability: [], byIntent: [], recentNegative: [] };
+  }
+  async listRatedTurns(): Promise<FeedbackRatedTurn[]> {
+    return [];
   }
   async pruneOlderThan(cutoff: string, maxRows: number): Promise<number> {
     this.pruneCalls.push({ cutoff, maxRows });
@@ -256,5 +259,40 @@ describe('FeedbackRecorder failure isolation and summary', () => {
       recentNegativeLimit: FEEDBACK_SUMMARY_RECENT_NEGATIVE_LIMIT,
     }]);
     expect(FEEDBACK_SUMMARY_RECENT_NEGATIVE_LIMIT).toBe(5);
+  });
+
+  it('trend reads this window and the previous one (exclusive upper bound) from one clock reading (ADR-0107 D3)', async () => {
+    const repository = new FakeFeedbackRepository();
+    repository.summarize = vi.fn(async (query: FeedbackSummaryQuery) => {
+      repository.summaryQueries.push(query);
+      const turns = query.until === undefined ? 4 : 2;
+      return {
+        since: query.since, turnCount: turns, signals: [],
+        byCapability: [{ key: Capability.GENERAL_CHAT, turns, positive: 0, negative: 1, implicit: 0 }],
+        byIntent: [], recentNegative: [],
+      };
+    });
+    const { recorder } = setup(repository);
+    const trend = await recorder.trend('actor-1');
+    const since = new Date(Date.parse(NOW) - FEEDBACK_SUMMARY_WINDOW_MS).toISOString();
+    expect(repository.summaryQueries).toEqual([
+      { actorId: 'actor-1', since, recentNegativeLimit: 0 },
+      {
+        actorId: 'actor-1', since: new Date(Date.parse(NOW) - 2 * FEEDBACK_SUMMARY_WINDOW_MS).toISOString(),
+        until: since, recentNegativeLimit: 0,
+      },
+    ]);
+    expect(trend).toEqual({
+      current: [{ key: Capability.GENERAL_CHAT, turns: 4, positive: 0, negative: 1, implicit: 0 }],
+      previous: [{ key: Capability.GENERAL_CHAT, turns: 2, positive: 0, negative: 1, implicit: 0 }],
+    });
+  });
+
+  it('trend is null (logged, never thrown) when the store cannot be read', async () => {
+    const repository = new FakeFeedbackRepository();
+    repository.summarize = vi.fn().mockRejectedValue(new Error('locked'));
+    const { recorder, logger } = setup(repository);
+    await expect(recorder.trend('actor-1')).resolves.toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith('feedback capture failed', { stage: 'trend', errorName: 'Error' });
   });
 });

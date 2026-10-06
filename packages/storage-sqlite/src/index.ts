@@ -6,9 +6,16 @@ import { runMigrations } from './migrations';
 import { SqliteContinuationBindingRepository } from './continuation-binding-repository';
 import { SqliteFeedbackRepository } from './feedback-repository';
 import { SqliteReminderRepository } from './reminder-repository';
-import type { ContinuationBindingRepository, FeedbackRepository, ReminderRepository } from '@quoky/core';
+import { SqliteLearningRepository } from './learning-repository';
+import type {
+  ContinuationBindingRepository, FeedbackRepository, LearningRepository, ReminderRepository,
+} from '@quoky/core';
 
 export { SqliteReminderRepository } from './reminder-repository';
+export {
+  LEARNING_SCHEMA_VERSION, SqliteLearningRepository, openLearningExportReader,
+} from './learning-repository';
+export type { LearningExportReader } from './learning-repository';
 import type {
   Actor,
   ActorRepository,
@@ -1111,6 +1118,8 @@ export class SqliteStorageProvider implements StorageProvider {
   feedback!: FeedbackRepository;
   /** Owner reminder store (ADR-0101 D9, schema v13). Deliberately not part of `StorageProvider`. */
   reminders!: ReminderRepository;
+  /** Owner-curated learning store (ADR-0107 D2, schema v14). Deliberately not part of `StorageProvider`. */
+  learning!: LearningRepository;
 
   constructor(private readonly config: SqliteConfig) {}
 
@@ -1154,6 +1163,7 @@ export class SqliteStorageProvider implements StorageProvider {
     this.codeProposals = new SqliteCodeProposalRepository(db, 'code_proposals');
     this.feedback = new SqliteFeedbackRepository(db);
     this.reminders = new SqliteReminderRepository(db);
+    this.learning = new SqliteLearningRepository(db);
   }
 
   async close(): Promise<void> {

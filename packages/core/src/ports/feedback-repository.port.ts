@@ -1,4 +1,4 @@
-import type { ConversationTurnRecord, FeedbackSignal, FeedbackSummary, Id, IsoTimestamp } from '../domain';
+import type { ConversationTurnRecord, FeedbackRatedTurn, FeedbackSignal, FeedbackSummary, Id, IsoTimestamp } from '../domain';
 
 /**
  * PORT: feedback capture persistence (ADR-0098 D4; DI token `FEEDBACK_REPOSITORY`).
@@ -18,7 +18,19 @@ export interface FeedbackSummaryQuery {
   actorId: Id;
   /** Inclusive lower bound on turn `createdAt`. */
   since: IsoTimestamp;
+  /** Exclusive upper bound on turn `createdAt` (ADR-0107 D3 trend: the previous window); absent means no bound. */
+  until?: IsoTimestamp;
   recentNegativeLimit: number;
+}
+
+/** ADR-0107 D3 `피드백 후보`: the actor's rated, non-control turns that have a Task, newest first. */
+export interface FeedbackRatedTurnQuery {
+  actorId: Id;
+  /** Inclusive lower bound on turn `createdAt`. */
+  since: IsoTimestamp;
+  limit: number;
+  /** Restrict to this one turn (re-checking a listed candidate before a save). */
+  turnId?: Id;
 }
 
 export interface SaveTurnResult {
@@ -42,6 +54,11 @@ export interface FeedbackRepository {
   upsertSignal(signal: FeedbackSignal): Promise<FeedbackSignal>;
   /** Counts over the actor's non-control turns since `query.since`; never returns text or provider ids. */
   summarize(query: FeedbackSummaryQuery): Promise<FeedbackSummary>;
+  /**
+   * The actor's non-control turns since `query.since` that have a Task and a current 👍 or 👎 rating (a retracted
+   * reaction does not count), newest first; ids, routing facts and rating counts only (ADR-0107 D3).
+   */
+  listRatedTurns(query: FeedbackRatedTurnQuery): Promise<FeedbackRatedTurn[]>;
   /** Delete at most `maxRows` turns created before `cutoff` (oldest first) with their messages and signals. */
   pruneOlderThan(cutoff: IsoTimestamp, maxRows: number): Promise<number>;
 }

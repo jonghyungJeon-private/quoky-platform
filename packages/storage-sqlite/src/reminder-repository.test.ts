@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { REMINDER_LIMITS, ReminderStatus, createReminderDraft, planFiringCompletion } from '@quoky/core';
 import type { Reminder, ReminderDraft, ReminderFiringResult, ReminderRepository, ReminderSchedule } from '@quoky/core';
 import { SqliteReminderRepository } from './reminder-repository';
-import { MIGRATIONS, runMigrations } from './migrations';
+import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from './migrations';
 import { SqliteStorageProvider } from './index';
 
 const dirs: string[] = [];
@@ -433,7 +433,7 @@ describe('SqliteReminderRepository — startup recovery of FIRING rows', () => {
     await after.close();
   });
 
-  it('a SqliteStorageProvider opened on a v12 database migrates to 13 and exposes a working reminders store', async () => {
+  it('a SqliteStorageProvider opened on a v12 database migrates to the latest version (13+) and exposes a working reminders store', async () => {
     const dbPath = tempDbPath();
     const seed = new Database(dbPath);
     runMigrations(seed, MIGRATIONS.slice(0, 12));
@@ -449,7 +449,8 @@ describe('SqliteReminderRepository — startup recovery of FIRING rows', () => {
     await storage.close();
 
     const check = new Database(dbPath, { readonly: true });
-    expect(Number(check.pragma('user_version', { simple: true }))).toBe(13);
+    expect(Number(check.pragma('user_version', { simple: true }))).toBe(LATEST_SCHEMA_VERSION);
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(13);
     expect(check.prepare('SELECT id FROM sessions').all()).toEqual([{ id: 's1' }]);
     expect(check.prepare('SELECT id, display_no FROM reminders').all()).toEqual([{ id: 'r1', display_no: 1 }]);
     check.close();

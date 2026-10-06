@@ -8,3 +8,7 @@ export * from './implicit-feedback';
 export * from './feedback-recorder';
 export * from './feedback-summary-composer';
 export * from './feedback-summary-turn-handler';
+// ADR-0107 (LRN-1): owner-curated learning candidates and examples.
+export * from './learning-commands';
+export * from './learning-service';
+export * from './learning-turn-handler';

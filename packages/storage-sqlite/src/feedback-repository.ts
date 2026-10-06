@@ -1,9 +1,10 @@
 import type Database from 'better-sqlite3';
 import { FEEDBACK_FINGERPRINT_MAX_ENTRIES, FeedbackSignalKind } from '@quoky/core';
 import type {
-  Capability, ConversationTurnRecord, FeedbackBreakdownRow, FeedbackRepository, FeedbackSignal, FeedbackSignalCount,
-  FeedbackSignalSource, FeedbackSignalValue, FeedbackSummary, FeedbackSummaryQuery, FeedbackTurnControl,
-  FeedbackTurnLocation, FeedbackTurnStatus, IntentType, IsoTimestamp, SaveTurnResult,
+  Capability, ConversationTurnRecord, FeedbackBreakdownRow, FeedbackRatedTurn, FeedbackRatedTurnQuery,
+  FeedbackRepository, FeedbackSignal, FeedbackSignalCount, FeedbackSignalSource, FeedbackSignalValue, FeedbackSummary,
+  FeedbackSummaryQuery, FeedbackTurnControl, FeedbackTurnLocation, FeedbackTurnStatus, IntentType, IsoTimestamp,
+  SaveTurnResult,
 } from '@quoky/core';
 
 type Db = Database.Database;
@@ -71,8 +72,10 @@ function breakdown(rows: BreakdownSqlRow[]): FeedbackBreakdownRow[] {
   }));
 }
 
-// Turn filter shared by every summary query: the actor's non-control turns in the window.
-const SUMMARY_TURNS = `t.actor_id = @actorId AND t.created_at >= @since AND json_extract(t.data, '$.control') IS NULL`;
+// Turn filter shared by every summary query: the actor's non-control turns in the window (`@until` exclusive, or
+// NULL for no upper bound — ADR-0107 D3 trend).
+const SUMMARY_TURNS = `t.actor_id = @actorId AND t.created_at >= @since AND (@until IS NULL OR t.created_at < @until)
+  AND json_extract(t.data, '$.control') IS NULL`;
 const RATING = `s.kind = '${FeedbackSignalKind.EXPLICIT_RATING}' AND s.source = 'REACTION'`;
 const BREAKDOWN_SELECT = `COUNT(DISTINCT t.id) AS turns,
   SUM(CASE WHEN ${RATING} AND s.value = 'POSITIVE' THEN 1 ELSE 0 END) AS positive,
@@ -155,7 +158,7 @@ export class SqliteFeedbackRepository implements FeedbackRepository {
   }
 
   async summarize(query: FeedbackSummaryQuery): Promise<FeedbackSummary> {
-    const params = { actorId: query.actorId, since: query.since };
+    const params = { actorId: query.actorId, since: query.since, until: query.until ?? null };
     const limit = Math.max(0, Math.trunc(query.recentNegativeLimit));
     return this.db.transaction((): FeedbackSummary => {
       const turnCount = (this.db.prepare(
@@ -190,6 +193,34 @@ export class SqliteFeedbackRepository implements FeedbackRepository {
         }));
       return { since: query.since, turnCount, signals, byCapability, byIntent, recentNegative };
     })();
+  }
+
+  async listRatedTurns(query: FeedbackRatedTurnQuery): Promise<FeedbackRatedTurn[]> {
+    const limit = Math.max(0, Math.trunc(query.limit));
+    if (limit === 0) return [];
+    const rows = this.db.prepare(
+      `SELECT t.id AS turnId, t.created_at AS createdAt, json_extract(t.data, '$.taskId') AS taskId,
+         json_extract(t.data, '$.intentType') AS intentType, json_extract(t.data, '$.capability') AS capability,
+         SUM(CASE WHEN s.value = 'POSITIVE' THEN 1 ELSE 0 END) AS positive,
+         SUM(CASE WHEN s.value = 'NEGATIVE' THEN 1 ELSE 0 END) AS negative
+       FROM conversation_turns t JOIN feedback_signals s ON s.turn_id = t.id AND ${RATING}
+       WHERE t.actor_id = @actorId AND t.created_at >= @since AND json_extract(t.data, '$.control') IS NULL
+         AND json_extract(t.data, '$.taskId') IS NOT NULL AND (@turnId IS NULL OR t.id = @turnId)
+       GROUP BY t.id HAVING positive > 0 OR negative > 0
+       ORDER BY t.created_at DESC, t.rowid DESC LIMIT @limit`,
+    ).all({ actorId: query.actorId, since: query.since, turnId: query.turnId ?? null, limit }) as Array<{
+      turnId: string; createdAt: string; taskId: string; intentType: string | null; capability: string | null;
+      positive: number; negative: number;
+    }>;
+    return rows.map((row) => ({
+      turnId: row.turnId,
+      createdAt: row.createdAt,
+      taskId: row.taskId,
+      ...(row.intentType !== null ? { intentType: row.intentType as IntentType } : {}),
+      ...(row.capability !== null ? { capability: row.capability as Capability } : {}),
+      positive: row.positive,
+      negative: row.negative,
+    }));
   }
 
   async pruneOlderThan(cutoff: IsoTimestamp, maxRows: number): Promise<number> {
