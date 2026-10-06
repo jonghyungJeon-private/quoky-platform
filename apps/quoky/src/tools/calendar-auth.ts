@@ -1,5 +1,6 @@
 /**
- * Google Calendar one-time consent helper (ADR-0110 D2, CAL-1). Running it is a Strict owner action.
+ * Google Calendar one-time consent helper (ADR-0110 D2, CAL-1; scopes per the ADR-0110 amendment D1, 2026-10-06).
+ * Running it is a Strict owner action.
  *
  *   node apps/quoky/dist/tools/calendar-auth.js --out <new token file> [--with-events]
  *
@@ -9,7 +10,8 @@
  * owner approves in the browser it exchanges the code with `oauth2.googleapis.com` and writes the refresh token to a
  * NEW file with mode 600 (an existing file is never overwritten). The authorization code, access token and refresh
  * token are never printed; the console shows the consent URL (no secret in it), the file path and the next step.
- * A grant broader than `calendar.readonly` is refused and nothing is written.
+ * A grant broader than `calendar.readonly` + `calendar.events` (the full `calendar` scope, `calendar.settings.*`,
+ * ACL/sharing scopes, `openid`, …) is refused and nothing is written.
  *
  * `--with-events` (ADR-0110 amendment D1) requests `calendar.readonly` + `calendar.events` instead, for calendar writes
  * on the primary calendar (`QUOKY_CALENDAR_WRITE_ENABLED`); the grant must contain both and nothing else, and the token
@@ -20,13 +22,16 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import {
+  GOOGLE_CALENDAR_ALLOWED_SCOPES,
   GoogleCalendarScopeError,
   GoogleCalendarNoRefreshTokenError,
   GoogleCalendarTokenFileError,
+  assertGrantedCalendarScopes,
   buildGoogleConsentUrl,
   createGoogleOAuthState,
   createGooglePkcePair,
   exchangeGoogleAuthorizationCode,
+  grantIncludesCalendarEvents,
   writeGoogleCalendarTokenFile,
 } from '@quoky/connector-calendar-google';
 import { isConnectorQueryError } from '@quoky/core';
@@ -43,6 +48,8 @@ export const CALENDAR_AUTH_CALLBACK_PATH = '/oauth2callback';
 /** How long the helper waits for the browser redirect. */
 export const CALENDAR_AUTH_DEFAULT_WAIT_MS = 5 * 60_000;
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000;
+/** The most the consent ever requests (`--with-events`; ADR-0110 amendment D1); a grant may hold nothing broader. */
+export const CALENDAR_AUTH_REQUESTED_SCOPES: readonly string[] = GOOGLE_CALENDAR_ALLOWED_SCOPES;
 const CODE_MAX_LENGTH = 2048;
 
 /** A loopback callback listener. `onRequest` receives the request path with its query string. */
@@ -57,6 +64,7 @@ export interface CalendarAuthDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly fetchImpl: typeof fetch;
   readonly fileExists: (path: string) => boolean;
+  /** Writes the refresh token and the normalized granted scopes to a NEW mode-600 file. */
   readonly writeTokenFile: (path: string, refreshToken: string, scope: string) => void;
   readonly listen: (handler: CallbackHandler) => Promise<CallbackListener>;
   readonly waitMs: number;
@@ -191,9 +199,13 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
       { code: result.code, codeVerifier: pkce.verifier, redirectUri },
       { fetchImpl: deps.fetchImpl, timeoutMs: TOKEN_REQUEST_TIMEOUT_MS, requireEventsScope: options.withEvents },
     );
-    deps.writeTokenFile(outPath, granted.refreshToken, granted.scope);
+    // Defence in depth over the adapter's own check: never persist a grant outside the two allowed scopes.
+    const grant = assertGrantedCalendarScopes(granted.scope);
+    deps.writeTokenFile(outPath, granted.refreshToken, grant);
     deps.stdout(
-      `Saved a ${options.withEvents ? 'calendar.readonly + calendar.events' : 'calendar.readonly'} refresh token (mode 600) to ${outPath}`,
+      grantIncludesCalendarEvents(grant)
+        ? `Saved a calendar.readonly + calendar.events refresh token (mode 600) to ${outPath}`
+        : `Saved a calendar.readonly refresh token (mode 600) to ${outPath} (calendar.events was not granted: calendar writes will stay unavailable; run again with --with-events to enable them)`,
     );
     deps.stdout(`Next: set QUOKY_CALENDAR_GOOGLE_TOKEN_FILE=${outPath} in .env.local and restart Quoky.`);
     if (options.withEvents) deps.stdout('Calendar writes stay off until you also set QUOKY_CALENDAR_WRITE_ENABLED=true.');

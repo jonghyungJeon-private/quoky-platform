@@ -4,7 +4,8 @@ import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_READ_WRITE_SCOPE } from
 /**
  * The local refresh-token file (ADR-0110 D2): a small JSON file written once by the consent helper with mode 600 and
  * read at startup. The reader refuses a symlink, a non-regular file, a file another user owns, a file group or others
- * can read or write, an oversized file and any other scope. Errors carry a fixed code only, never the path's content.
+ * can read or write, an oversized file and any scope outside the allowed grant (`calendar.readonly`, optionally with
+ * `calendar.events`; ADR-0110 amendment D1). Errors carry a fixed code only, never the path's content.
  *
  * File shape: `{ "version": 1, "scope": "<scope>", "refresh_token": "<token>" }`, where `<scope>` is `calendar.readonly`
  * or, for a read + write grant (ADR-0110 amendment D1), `calendar.readonly calendar.events` (normalized order).

@@ -140,6 +140,22 @@ export function assertReadonlyScope(scope: unknown): void {
   assertCalendarScope(scope, [GOOGLE_CALENDAR_READONLY_SCOPE]);
 }
 
+/**
+ * The read-path grant check returning the normalized grant (CAL-2; ADR-0110 amendment D1): `calendar.readonly` is
+ * required (else `MISSING`), `calendar.events` is allowed, anything else (`calendar`, `calendar.settings.*`, ACL or
+ * sharing scopes, `openid`, …) is `TOO_BROAD`. Returns the allowed scopes that were granted, in
+ * `GOOGLE_CALENDAR_ALLOWED_SCOPES` order, space-separated (`calendar.readonly` or `GOOGLE_CALENDAR_READ_WRITE_SCOPE`).
+ */
+export function assertGrantedCalendarScopes(scope: unknown): string {
+  const granted = assertCalendarScope(scope, [GOOGLE_CALENDAR_READONLY_SCOPE]);
+  return GOOGLE_CALENDAR_ALLOWED_SCOPES.filter((allowed) => granted.has(allowed)).join(' ');
+}
+
+/** Whether a normalized grant (see `assertGrantedCalendarScopes`) includes `calendar.events`. */
+export function grantIncludesCalendarEvents(scope: string): boolean {
+  return scope.split(/\s+/).includes(GOOGLE_CALENDAR_EVENTS_SCOPE);
+}
+
 /** A PKCE verifier (43 base64url characters) and its S256 challenge. */
 export function createGooglePkcePair(): { readonly verifier: string; readonly challenge: string } {
   const verifier = randomBytes(32).toString('base64url');

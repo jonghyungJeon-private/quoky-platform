@@ -172,3 +172,5 @@ export * from './help-intent';
 export * from './memory-commands';
 // Personal v3 connector writes (ADR-0112, ADR-0110 amendment; CWR-1).
 export * from './connector-writes';
+// ADR-0110 calendar schedule questions (CAL-2).
+export * from './calendar';

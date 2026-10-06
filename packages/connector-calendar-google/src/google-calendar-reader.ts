@@ -58,8 +58,9 @@ interface MappedEvent {
 }
 
 /**
- * Read-only Google Calendar adapter for the `CalendarReader` port (ADR-0110 D1/D2). GET requests only, scope
- * `calendar.readonly` only, a timeout on every call, redirects refused. The access token lives in memory only; the
+ * Read-only Google Calendar adapter for the `CalendarReader` port (ADR-0110 D1/D2). GET requests only; the grant must
+ * hold `calendar.readonly` and nothing broader than `calendar.events` (ADR-0110 amendment D1 — that scope is for the
+ * wave-5 writer, never used here); a timeout on every call, redirects refused. The access token lives in memory only; the
  * refresh token, client secret and access token are never logged and never appear in an error.
  */
 export class GoogleCalendarReader implements CalendarReader {
