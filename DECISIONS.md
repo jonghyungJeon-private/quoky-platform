@@ -16750,3 +16750,11 @@ OPS-2b merge (no-bypass extraction).
      (wave 4); writes ship with the connector-write flow in wave 5 (CWR-2), after CWR-1's receipts (v15).
 - **Consequences:** + the calendar becomes a real assistant surface; + no third party is e-mailed. − a mistaken approved
   write changes the owner's company calendar (mitigated by exact preview + one-time approval + receipts).
+
+### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
+
+- **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase
+  are chat, and negated/reported/past clauses are skipped per clause. Some structures (e.g. one negation shared across
+  coordinated clauses, "Do not cancel A and reschedule B") are misclassified. Accepted because both failure modes are
+  harmless: a truthful "calendar writes are off, nothing changed" reply, or ordinary chat guarded by the DET
+  internal-action claim guard; and once writes ship (CWR-2) every write still needs an exact-payload one-time approval.

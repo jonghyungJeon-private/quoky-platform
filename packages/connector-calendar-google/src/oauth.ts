@@ -9,12 +9,19 @@ import {
 
 /**
  * Google OAuth 2.0 for the calendar adapter (ADR-0110 D2): the refresh-token grant used at runtime, and the
- * authorization-code + PKCE exchange used once by the local consent helper. The only scope ever requested or accepted
- * is `calendar.readonly`. Egress is fixed to `oauth2.googleapis.com`; redirects are refused. Nothing here logs, and no
+ * authorization-code + PKCE exchange used once by the local consent helper. The only scopes ever requested or accepted
+ * are `calendar.readonly` and, for writes (ADR-0110 amendment D1), `calendar.events`; a grant containing any other
+ * scope is refused. Egress is fixed to `oauth2.googleapis.com`; redirects are refused. Nothing here logs, and no
  * error carries a token, secret, code or response content.
  */
 
 export const GOOGLE_CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+/** Event create/update/delete (ADR-0110 amendment D1). Never calendar settings, ACL or sharing scopes. */
+export const GOOGLE_CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+/** The complete set of scopes Quoky may hold. A grant with any scope outside it is `TOO_BROAD`. */
+export const GOOGLE_CALENDAR_ALLOWED_SCOPES: readonly string[] = [GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE];
+/** The normalized grant string for read + write (readonly first). */
+export const GOOGLE_CALENDAR_READ_WRITE_SCOPE = `${GOOGLE_CALENDAR_READONLY_SCOPE} ${GOOGLE_CALENDAR_EVENTS_SCOPE}`;
 export const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 /** Opened by the owner's browser during consent; Quoky itself never sends a request to this host. */
 export const GOOGLE_OAUTH_CONSENT_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -43,11 +50,14 @@ export class GoogleCalendarNoRefreshTokenError extends ConnectorQueryError {
   }
 }
 
-/** Exchange the long-lived refresh token for a short-lived access token (`grant_type=refresh_token`). */
+/**
+ * Exchange the long-lived refresh token for a short-lived access token (`grant_type=refresh_token`). The granted scope
+ * must contain every `requiredScopes` entry (default `calendar.readonly`) and nothing outside the allowed set.
+ */
 export async function refreshGoogleAccessToken(
   client: GoogleOAuthClient,
   refreshToken: string,
-  options: GoogleTokenRequestOptions & { readonly nowMs: number },
+  options: GoogleTokenRequestOptions & { readonly nowMs: number; readonly requiredScopes?: readonly string[] },
 ): Promise<GoogleAccessToken> {
   const payload = await postTokenRequest(
     {
@@ -58,7 +68,7 @@ export async function refreshGoogleAccessToken(
     },
     options,
   );
-  assertReadonlyScope(payload.scope);
+  assertCalendarScope(payload.scope, options.requiredScopes ?? [GOOGLE_CALENDAR_READONLY_SCOPE]);
   const token = payload.access_token;
   const expiresIn = payload.expires_in;
   if (typeof token !== 'string' || token.length === 0) throw new GoogleCalendarResponseError('token');
@@ -77,11 +87,15 @@ export interface GoogleAuthorizationCodeExchange {
   readonly redirectUri: string;
 }
 
-/** The consent helper's one-time exchange (`grant_type=authorization_code` with PKCE). Returns the refresh token. */
+/**
+ * The consent helper's one-time exchange (`grant_type=authorization_code` with PKCE). Returns the refresh token and the
+ * normalized granted scope (`calendar.readonly`, or `calendar.readonly calendar.events`). With `requireEventsScope`
+ * the grant must include `calendar.events` too; a grant outside the allowed set is always refused.
+ */
 export async function exchangeGoogleAuthorizationCode(
   client: GoogleOAuthClient,
   exchange: GoogleAuthorizationCodeExchange,
-  options: GoogleTokenRequestOptions,
+  options: GoogleTokenRequestOptions & { readonly requireEventsScope?: boolean },
 ): Promise<{ readonly refreshToken: string; readonly scope: string }> {
   const payload = await postTokenRequest(
     {
@@ -94,21 +108,52 @@ export async function exchangeGoogleAuthorizationCode(
     },
     options,
   );
-  assertReadonlyScope(payload.scope);
+  const required = options.requireEventsScope === true
+    ? [GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE]
+    : [GOOGLE_CALENDAR_READONLY_SCOPE];
+  const granted = assertCalendarScope(payload.scope, required);
   const refreshToken = payload.refresh_token;
   if (typeof refreshToken !== 'string' || refreshToken.length === 0) throw new GoogleCalendarNoRefreshTokenError();
-  return { refreshToken, scope: GOOGLE_CALENDAR_READONLY_SCOPE };
+  return {
+    refreshToken,
+    scope: granted.has(GOOGLE_CALENDAR_EVENTS_SCOPE) ? GOOGLE_CALENDAR_READ_WRITE_SCOPE : GOOGLE_CALENDAR_READONLY_SCOPE,
+  };
 }
 
 /**
- * The granted scope must be exactly `calendar.readonly`: missing → `GoogleCalendarScopeError('MISSING')`, anything
- * else alongside it → `GoogleCalendarScopeError('TOO_BROAD')`. An absent scope field cannot be verified and is refused.
+ * The granted scope must contain every `required` scope (else `GoogleCalendarScopeError('MISSING')`) and nothing outside
+ * `calendar.readonly` + `calendar.events` (else `GoogleCalendarScopeError('TOO_BROAD')`; ADR-0110 amendment D1). An
+ * absent scope field cannot be verified and is refused. Returns the granted set.
  */
-export function assertReadonlyScope(scope: unknown): void {
+export function assertCalendarScope(scope: unknown, required: readonly string[]): ReadonlySet<string> {
   if (typeof scope !== 'string') throw new GoogleCalendarScopeError('MISSING');
   const granted = new Set(scope.split(/\s+/).filter((entry) => entry.length > 0));
-  if (!granted.has(GOOGLE_CALENDAR_READONLY_SCOPE)) throw new GoogleCalendarScopeError('MISSING');
-  if (granted.size > 1) throw new GoogleCalendarScopeError('TOO_BROAD');
+  if (required.some((entry) => !granted.has(entry))) throw new GoogleCalendarScopeError('MISSING');
+  for (const entry of granted) {
+    if (!GOOGLE_CALENDAR_ALLOWED_SCOPES.includes(entry)) throw new GoogleCalendarScopeError('TOO_BROAD');
+  }
+  return granted;
+}
+
+/** The read path's check: `calendar.readonly` must be granted; `calendar.events` may be granted alongside it. */
+export function assertReadonlyScope(scope: unknown): void {
+  assertCalendarScope(scope, [GOOGLE_CALENDAR_READONLY_SCOPE]);
+}
+
+/**
+ * The read-path grant check returning the normalized grant (CAL-2; ADR-0110 amendment D1): `calendar.readonly` is
+ * required (else `MISSING`), `calendar.events` is allowed, anything else (`calendar`, `calendar.settings.*`, ACL or
+ * sharing scopes, `openid`, …) is `TOO_BROAD`. Returns the allowed scopes that were granted, in
+ * `GOOGLE_CALENDAR_ALLOWED_SCOPES` order, space-separated (`calendar.readonly` or `GOOGLE_CALENDAR_READ_WRITE_SCOPE`).
+ */
+export function assertGrantedCalendarScopes(scope: unknown): string {
+  const granted = assertCalendarScope(scope, [GOOGLE_CALENDAR_READONLY_SCOPE]);
+  return GOOGLE_CALENDAR_ALLOWED_SCOPES.filter((allowed) => granted.has(allowed)).join(' ');
+}
+
+/** Whether a normalized grant (see `assertGrantedCalendarScopes`) includes `calendar.events`. */
+export function grantIncludesCalendarEvents(scope: string): boolean {
+  return scope.split(/\s+/).includes(GOOGLE_CALENDAR_EVENTS_SCOPE);
 }
 
 /** A PKCE verifier (43 base64url characters) and its S256 challenge. */
@@ -128,10 +173,12 @@ export interface GoogleConsentUrlInput {
   readonly redirectUri: string;
   readonly state: string;
   readonly codeChallenge: string;
+  /** Also request `calendar.events` (writes; ADR-0110 amendment D1). Default: `calendar.readonly` only. */
+  readonly includeEventsScope?: boolean;
 }
 
 /**
- * The consent URL for `calendar.readonly` only, offline access, consent always shown (so a refresh token is
+ * The consent URL for `calendar.readonly` (plus `calendar.events` when asked), offline access, consent always shown (so a refresh token is
  * returned), no incremental grants (so no earlier, broader grant is merged in), PKCE S256. It contains no secret.
  */
 export function buildGoogleConsentUrl(input: GoogleConsentUrlInput): string {
@@ -142,7 +189,10 @@ export function buildGoogleConsentUrl(input: GoogleConsentUrlInput): string {
   url.searchParams.set('client_id', input.clientId);
   url.searchParams.set('redirect_uri', input.redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', GOOGLE_CALENDAR_READONLY_SCOPE);
+  url.searchParams.set(
+    'scope',
+    input.includeEventsScope === true ? GOOGLE_CALENDAR_READ_WRITE_SCOPE : GOOGLE_CALENDAR_READONLY_SCOPE,
+  );
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('prompt', 'consent');
   url.searchParams.set('include_granted_scopes', 'false');

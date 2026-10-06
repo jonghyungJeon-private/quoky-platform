@@ -67,6 +67,17 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_EMBEDDING_TIMEOUT_MS must be unset or an integer from 100 to 30000.',
   [QuokyConfigErrorCode.LEARNING_EXAMPLES_ENABLED_INVALID]:
     'QUOKY_LEARNING_EXAMPLES_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.CONNECTOR_WRITES_ENABLED_INVALID]:
+    'QUOKY_CONNECTOR_WRITES_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.CALENDAR_WRITE_ENABLED_INVALID]: 'QUOKY_CALENDAR_WRITE_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.CONNECTOR_WRITE_JIRA_PROJECTS_INVALID]:
+    'QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS must be unset or a comma-separated list of distinct Jira project keys such as "PROJ,TEST" (at most 50).',
+  [QuokyConfigErrorCode.CONNECTOR_WRITE_SLACK_CHANNELS_INVALID]:
+    'QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS must be unset or a comma-separated list of distinct "name:CHANNELID" or "CHANNELID" entries such as "dev-test:C0123ABCD9" (at most 50).',
+  [QuokyConfigErrorCode.CONNECTOR_WRITE_SLACK_TOKEN_INVALID]:
+    'QUOKY_CONNECTOR_WRITE_SLACK_TOKEN must be a Slack bot token (chat:write) of the Quoky app; a user token is refused.',
+  [QuokyConfigErrorCode.CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE]:
+    'QUOKY_CONNECTOR_WRITE_SLACK_TOKEN must differ from QUOKY_SLACK_TOKEN: Slack writes use a separate bot token.',
   [QuokyConfigErrorCode.MEMORY_ARCHIVE_DAYS_INVALID]:
     'QUOKY_MEMORY_ARCHIVE_DAYS must be unset or a whole number of days from 0 to 365 (0 = forgotten memories are deleted at once, no archive).',
   [QuokyConfigErrorCode.REMINDERS_ENABLED_INVALID]: 'QUOKY_REMINDERS_ENABLED must be unset, "true", or "false".',

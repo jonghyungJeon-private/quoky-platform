@@ -10,8 +10,10 @@ import {
   CONNECTOR_PROVIDERS,
   Capability,
   FeedbackRecorder,
+  MemoryCommandService,
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
+  ReminderConversationService,
   ReminderStatus,
   RiskLevel,
   STORAGE_PROVIDER,
@@ -57,7 +59,7 @@ interface Fakes {
   readonly container: OpsUiContainer;
 }
 
-function fakes(options: { owners?: Record<string, string> } = {}): Fakes {
+function fakes(options: { owners?: Record<string, string>; extra?: ReadonlyArray<[unknown, unknown]> } = {}): Fakes {
   const lookups: unknown[] = [];
   const memoryQueries: DurableMemoryQuery[] = [];
   const owners = options.owners ?? { 'owner-discord-id': 'actor-1' };
@@ -127,7 +129,13 @@ function fakes(options: { owners?: Record<string, string> } = {}): Fakes {
         { availabilityTtlMs: 0 },
       ),
     ],
-    [REMINDER_REPOSITORY, { listActiveByActor: async () => [reminder] }],
+    [
+      REMINDER_REPOSITORY,
+      {
+        listActiveByActor: async () => [reminder],
+        getByDisplayNo: async (actorId: string, displayNo: number) => (actorId === 'actor-1' && displayNo === 1 ? reminder : null),
+      },
+    ],
     [ReminderTickDriver, { state: 'RUNNING' }],
     [PLATFORM_ADAPTER, { readConnectedIdentity: async () => ({ botUserId: 'BOT_ID_MARKER', guildIds: [], channels: [], unreachableChannelIds: [] }) }],
     [CONNECTOR_PROVIDERS, [{ source: 'jira', readOnly: true, isAvailable: async () => true }]],
@@ -138,6 +146,7 @@ function fakes(options: { owners?: Record<string, string> } = {}): Fakes {
         trend: async () => null,
       },
     ],
+    ...(options.extra ?? []),
   ]);
   const container: OpsUiContainer = {
     get<T>(token: unknown): T {
@@ -316,5 +325,74 @@ describe('OPS-1 wiring (ADR-0113 D1/D8)', () => {
     expect(opsUiErrorRing.size).toBe(Math.min(before + 1, 100));
     expect(opsUiErrorRing.recent(1)[0]).toMatchObject({ component: 'quoky', category: 'inbound', code: 'TypeError' });
     expect(inner.lines).toHaveLength(1);
+  });
+
+  it('wires OPS-2 handling to the container chat services, acting as the owner Actor', async () => {
+    const cancels: unknown[] = [];
+    const forgetRequests: unknown[] = [];
+    const reminderService = {
+      cancelByDisplayNo: async (request: unknown) => {
+        cancels.push(request);
+        return { status: 'CANCELED', displayNo: 1, reply: 'CHAT_REPLY_BODY_MARKER' };
+      },
+    };
+    const memoryService = {
+      archiveDays: 7,
+      listable: async () => [],
+      requestForgetConfirmation: async (request: unknown, number: number) => {
+        forgetRequests.push([request, number]);
+        return { status: 'NOT_FOUND', number, total: 0 };
+      },
+      confirmForget: async () => ({ outcome: 'confirm-unknown', text: '', status: 'RESPONDED' }),
+    };
+    const f = fakes({ extra: [[ReminderConversationService, reminderService], [MemoryCommandService, memoryService]] });
+    const handle = await startOpsUi(input(f.container, { QUOKY_OPS_UI_ENABLED: 'true' }, { portOverride: 0 }));
+    handles.push(handle);
+    const port = handle.port ?? 0;
+    const token = readFileSync(path.join(dir, 'data', 'ops-ui.token'), 'utf8').trim();
+    const cookie = cookieFrom(await send({ port, method: 'POST', path: '/session', origin: `http://127.0.0.1:${port}`, form: { token } }));
+    const dashboard = (await send({ port, path: '/', cookie })).body;
+    expect(dashboard).toContain('href="/actions/reminders/cancel?no=1"');
+    expect(dashboard).toContain('href="/memories"');
+
+    const confirmPage = (await send({ port, path: '/actions/reminders/cancel?no=1', cookie })).body;
+    const csrf = /name="csrf" value="([^"]+)"/.exec(confirmPage)?.[1] ?? '';
+    const nonce = /name="nonce" value="([^"]+)"/.exec(confirmPage)?.[1] ?? '';
+    const done = await send({ port, method: 'POST', path: '/actions/reminders/cancel', origin: `http://127.0.0.1:${port}`, cookie, form: { csrf, nonce } });
+    expect(done.body).toContain('CANCELED');
+    expect(done.body).not.toContain('CHAT_REPLY_BODY_MARKER');
+    expect(cancels).toEqual([{ actorId: 'actor-1', displayNo: 1, now: expect.any(String) }]);
+
+    await send({ port, method: 'POST', path: '/actions/memories/forget/request', origin: `http://127.0.0.1:${port}`, cookie, form: { csrf, number: '2' } });
+    expect(forgetRequests).toEqual([[{ actorId: 'actor-1', now: expect.any(String) }, 2]]);
+  });
+
+  it('serves no handling link or route when the chat services are not bound (Phase 1 only)', async () => {
+    const handle = await startOpsUi(input(fakes().container, { QUOKY_OPS_UI_ENABLED: 'true' }, { portOverride: 0 }));
+    handles.push(handle);
+    const port = handle.port ?? 0;
+    const token = readFileSync(path.join(dir, 'data', 'ops-ui.token'), 'utf8').trim();
+    const cookie = cookieFrom(await send({ port, method: 'POST', path: '/session', origin: `http://127.0.0.1:${port}`, form: { token } }));
+    const dashboard = (await send({ port, path: '/', cookie })).body;
+    expect(dashboard).not.toContain('/actions/');
+    expect(dashboard).not.toContain('href="/memories"');
+    expect((await send({ port, path: '/memories', cookie })).status).toBe(404);
+  });
+
+  it('disables handling links when the owner ids map to several Actors', async () => {
+    const f = fakes({
+      owners: { a: 'actor-1', b: 'actor-2' },
+      extra: [[ReminderConversationService, { cancelByDisplayNo: async () => ({ status: 'CANCELED' }) }]],
+    });
+    const base = input(f.container, { QUOKY_OPS_UI_ENABLED: 'true' }, { portOverride: 0 });
+    const handle = await startOpsUi({ ...base, config: { ...base.config, discord: { ownerIds: ['a', 'b'] } } });
+    handles.push(handle);
+    const port = handle.port ?? 0;
+    const token = readFileSync(path.join(dir, 'data', 'ops-ui.token'), 'utf8').trim();
+    const cookie = cookieFrom(await send({ port, method: 'POST', path: '/session', origin: `http://127.0.0.1:${port}`, form: { token } }));
+    expect((await send({ port, path: '/', cookie })).body).not.toContain('/actions/reminders/cancel');
+    const refused = await send({ port, path: '/actions/reminders/cancel?no=1', cookie });
+    expect(refused.body).toContain('ACTIONS_DISABLED');
+    expect(refused.body).not.toContain('name="nonce"');
   });
 });

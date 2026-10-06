@@ -421,9 +421,19 @@ const ANY_CLAUSE = /(?:)/u;
  * Korean rules are single adjacency patterns (the noun directly followed by an ask), so "일정 관리 팁" never matches.
  * Every pattern is unanchored and non-repeating: no nested or ambiguous quantifier, so matching is linear in the message.
  */
-const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegExp }[] = [
+const PERSONAL_DATA_RULES: readonly {
+  /**
+   * What the rule asks about (ADR-0110 QUAL-7 switch): `schedule` rules are the owner's calendar / availability
+   * questions; `mixed` rules also cover mail, messages or money and count as schedule questions only when the clause
+   * names no mail, message or money noun; `other` rules never do.
+   */
+  readonly topic: 'schedule' | 'mixed' | 'other';
+  readonly noun: RegExp;
+  readonly verb: RegExp;
+}[] = [
   // "내일 9시에 뭐 있어?", "오늘 뭐 있어" — a day/time directly followed by "뭐 있", not "점심 뭐 있어"
   {
+    topic: 'schedule',
     noun: new RegExp(
       String.raw`${KO_TIME}${KO_TIME_GAP}(?:(?:내가|제가|나|저|우리)\s*)?(?:또\s*)?(?:뭐|무슨\s*(?:일|약속|일정))\s*(?:가|이)?\s*(?:있(?:어(?!서|도|야)|나|니|냐|는지|을까|지(?!만)|는가|을지|습니까)|잡혀)`,
       'u',
@@ -432,14 +442,16 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // "내 일정 알려줘", "오늘 일정 어때", "다음 주 팀 회의 있어?", "내일 예약 있어?", "다음 회의 언제야?", "오늘 일정은?"
   {
+    topic: 'schedule',
     noun: new RegExp(`(?:${KO_OWNER_CONTEXT}|(?<![가-힣])다음\\s*)${KO_MODIFIER}${KO_AGENDA_NOUN}${KO_PARTICLE_GAP}(?:${KO_ASK}|${KO_WHEN})`, 'u'),
     verb: ANY_CLAUSE,
   },
-  { noun: new RegExp(`${KO_OWNER_CONTEXT}${KO_MODIFIER}${KO_AGENDA_NOUN}${KO_TOPIC_END}`, 'u'), verb: ANY_CLAUSE },
-  { noun: new RegExp(String.raw`예약\s*(?:내역|현황|목록)${KO_PARTICLE_GAP}${KO_ASK}`, 'u'), verb: ANY_CLAUSE },
+  { topic: 'schedule', noun: new RegExp(`${KO_OWNER_CONTEXT}${KO_MODIFIER}${KO_AGENDA_NOUN}${KO_TOPIC_END}`, 'u'), verb: ANY_CLAUSE },
+  { topic: 'other', noun: new RegExp(String.raw`예약\s*(?:내역|현황|목록)${KO_PARTICLE_GAP}${KO_ASK}`, 'u'), verb: ANY_CLAUSE },
   // mailbox / inbox; "내 메일 확인해줘", "새 메일 왔어?", "안 읽은 메일 있어?", "메일 왔어?", "메일 확인해줘", "중요한 메일 있어?"
   // (a demonstrative before the noun — "이 메일 확인해줘" — is a pasted mail, see PERSONAL_DATA_BLOCKER)
   {
+    topic: 'other',
     noun: new RegExp(
       String.raw`(?:메일함|받은\s*편지함|inbox|지메일|gmail)${KO_PARTICLE_GAP}${KO_OWNER_ASK}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ASK}|왔|와\s*있|온)|${KO_MODIFIER}${KO_MAIL_NOUN}${KO_PARTICLE_GAP}(?:${KO_ARRIVAL}|${KO_READ}|${KO_HAVE_Q}|${KO_HAVE_PLAIN})`,
       'iu',
@@ -448,6 +460,7 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // bank / card: 잔액, 결제·거래·지출 내역, "통장에 얼마 있어"
   {
+    topic: 'other',
     noun: new RegExp(
       String.raw`(?:잔액|잔고|결제\s*내역|거래\s*내역|입출금\s*내역|지출\s*내역|카드\s*(?:내역|명세서|사용\s*내역|청구)|계좌\s*내역|통장)${KO_PARTICLE_GAP}(?:${KO_OWNER_ASK}|얼마)`,
       'u',
@@ -456,6 +469,7 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // messages: "카톡 왔어?", "문자 온 거 있어?", "내 메시지 확인해줘", "문자 확인해줘", "부재중 전화 있어?"
   {
+    topic: 'other',
     noun: new RegExp(
       String.raw`${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ARRIVAL}|(?:${KO_POSSESSIVE}|새\s*|안\s*읽은\s*|읽지\s*않은\s*|받은\s*)${KO_MODIFIER}${KO_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_ASK}|${KO_PERSONAL_CHAT_NOUN}${KO_PARTICLE_GAP}${KO_READ}|부재중\s*(?:전화|통화|콜)${KO_PARTICLE_GAP}(?:${KO_OWNER_ASK}|${KO_ARRIVAL}|누구)`,
       'iu',
@@ -464,6 +478,7 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // availability of the owner: "나 내일 바빠?", "내일 오후 3시 비어 있어?", "내일 시간 돼?" (needs a time and a "?" or question ending)
   {
+    topic: 'schedule',
     noun: new RegExp(
       String.raw`(?:${KO_SELF}${KO_TIME}${KO_TIME_GAP}|${KO_TIME}${KO_TIME_GAP}${KO_SELF})${KO_AVAIL_MOD}(?:${KO_AVAIL_PLAIN}|${KO_AVAIL_Q})|${KO_TIME}${KO_TIME_GAP}${KO_AVAIL_MOD}(?:비어\s*있어(?:요)?(?=\s*${QUESTION_MARK})|비어\s*있(?:나|니|을까|는지)|시간\s*(?:돼|되|괜찮아)(?:요)?(?=\s*${QUESTION_MARK})|시간\s*(?:되나|될까|되니|되는지))`,
       'u',
@@ -471,9 +486,10 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
     verb: ANY_CLAUSE,
   },
   // "my next meeting", "what's my upcoming appointment", "when is my next event"
-  { noun: /\bmy\s+(?:next|upcoming)\s+(?:meeting|appointment|event|call|class|flight)s?\b(?!\s+notes?)/iu, verb: /\b(?:what|when|show|tell|check|list|see|any)\b/iu },
+  { topic: 'schedule', noun: /\bmy\s+(?:next|upcoming)\s+(?:meeting|appointment|event|call|class|flight)s?\b(?!\s+notes?)/iu, verb: /\b(?:what|when|show|tell|check|list|see|any)\b/iu },
   // English: "what's on my calendar\", "what's on tomorrow", "what do I have planned today", "am I free tomorrow"
   {
+    topic: 'mixed',
     noun: new RegExp(
       String.raw`\bwhat(?:'s|’s|\s+is)\s+(?:on|in)\s+my\s+(?:calendar|schedule|agenda|plate|diary|inbox)\b|\bwhat(?:'s|’s|\s+is)\s+on\s+(?:for\s+)?${EN_DAY}\b|\bwhat\s+do\s+i\s+have\s+(?:on|planned|scheduled|going\s+on|coming\s+up|for\s+${EN_DAY}|${EN_DAY})\b|\bwhat\s+am\s+i\s+(?:doing|up\s+to)\s+${EN_DAY}\b|\bwhat\s+are\s+my\s+(?:plans|meetings|appointments|events)\b|\bam\s+i\s+(?:free|busy|available)\s+${EN_WHEN}|\bam\s+i\s+(?:free|busy|available)\s*(?=${QUESTION_MARK}|$|[?.!,])|\bdo\s+i\s+have\s+(?:any\s+)?(?:free\s+)?time\s+${EN_WHEN}`,
       'iu',
@@ -482,6 +498,7 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // "what meetings do I have today?", "when is my next meeting?", "do I have anything today?", "do I have anything on tomorrow?"
   {
+    topic: 'schedule',
     noun: new RegExp(
       String.raw`\bwhat\s+(?:meetings|appointments|events|plans|calls)\s+do\s+i\s+have\b|\bwhen(?:'s|’s|\s+is)\s+my\s+next\s+(?:meeting|appointment|event|call|class|flight)\b|\bdo\s+i\s+have\s+(?:anything|something|plans?)\s+(?:(?:on|for)\s+)?${EN_DAY}\b|\bdo\s+i\s+have\s+(?:anything|something)\s+(?:planned|scheduled|going\s+on|coming\s+up)\b`,
       'iu',
@@ -490,11 +507,13 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // "do I have meetings tomorrow", "do I have any dentist appointments"
   {
+    topic: 'schedule',
     noun: /\bdo\s+i\s+have\s+(?:(?:any|a|an|some)\s+)?(?:\w+\s+)?(?:meetings?|appointments?|events?|calls?|plans|reservations?|bookings?|deadlines?)\b/iu,
     verb: ANY_CLAUSE,
   },
   // "any new emails?", "did I get any unread messages", "did I get any emails?", "do I have new mail?"
   {
+    topic: 'other',
     noun: new RegExp(
       String.raw`\b(?:any|(?:do|did)\s+i\s+(?:have|get|receive)(?:\s+any)?|have\s+i\s+(?:got|received)(?:\s+any)?)\s+(?:new|unread|important)\s+${EN_MESSAGE_NOUN}\b|\b(?:do|did)\s+i\s+(?:have|get|receive)\s+(?:any\s+)?${EN_MESSAGE_NOUN}\b(?!\s+(?:address|template|client|account|server|validation|format|list))|\bhave\s+i\s+(?:got|received)\s+(?:any\s+)?${EN_MESSAGE_NOUN}\b`,
       'iu',
@@ -503,12 +522,13 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
   },
   // "Any meetings today?", "Any emails from my boss?", "Any texts?" — an opening "any", so "if there are any messages" stays chat
   {
+    topic: 'mixed',
     noun: /^\W*(?:(?:hey|hi|so|and|also|quoky)\W+)?any\s+(?:(?:new|unread|important|urgent)\s+)?(?:meetings?|appointments?|e-?mails?|messages?|texts?|dms?)\b/iu,
     verb: ANY_CLAUSE,
   },
   // "check my email", "what is my bank balance", "check my bank account"; "how much money do I have"
-  { noun: new RegExp(EN_OWNED_NOUN, 'iu'), verb: new RegExp(EN_ASK, 'iu') },
-  { noun: /\bhow\s+much\s+(?:money\s+)?do\s+i\s+have\b/iu, verb: ANY_CLAUSE },
+  { topic: 'mixed', noun: new RegExp(EN_OWNED_NOUN, 'iu'), verb: new RegExp(EN_ASK, 'iu') },
+  { topic: 'other', noun: /\bhow\s+much\s+(?:money\s+)?do\s+i\s+have\b/iu, verb: ANY_CLAUSE },
 ];
 
 /**
@@ -518,7 +538,8 @@ const PERSONAL_DATA_RULES: readonly { readonly noun: RegExp; readonly verb: RegE
 const PERSONAL_DATA_BLOCKER =
   /방법|하는\s*법|쓰는\s*법|추천|팁|예시|예문|예제|템플릿|코드|함수|컴포넌트|엔드포인트|스키마|테이블|쿼리|구현|개발(?:해|하)|만들어|짜\s*줘|작성|설계|앱(?![가-힣])|(?<![가-힣])(?:이|그|해당|아래|위)\s+(?:[가-힣]{1,4}\s+)?(?:이?메일|e-?mail|문자|카톡|메시지|메세지)|\bhow\s+(?:do|to|can|should|would)\b|\bof\s+power\b|\b(?:tips?|recommend\w*|templates?|examples?|typos?|grammar|proofread|draft|api|code|component|function|endpoint|schema|database|table|class|module|script|implement|build|write|design|app|bot|regex|array|handler|queue|variable|field)\b/iu;
 
-function isPersonalDataQuestion(text: string): boolean {
+/** The un-negated, non-meta, non-blocked clauses a personal-data rule is matched against. */
+function personalDataClauses(text: string): string[] {
   const requests = stripQuotedExamples(text.replace(RETRACTED_QUESTION, ' '))
     .replace(/[?？](?=\s|$)/gu, '\n')
     // One separator per whitespace run (a newline stays a clause boundary): the clause splitters scan `\s+` runs, which
@@ -526,8 +547,37 @@ function isPersonalDataQuestion(text: string): boolean {
     .replace(/\s+/gu, (run) => (run.includes('\n') ? '\n' : ' '));
   return requests
     .split(CLAUSE_BOUNDARY)
-    .filter((clause) => !isMetaFraming(clause) && !PERSONAL_DATA_BLOCKER.test(clause))
-    .some((clause) => PERSONAL_DATA_RULES.some(({ noun, verb }) => hasCoLocatedUnnegated(clause, noun, verb)));
+    .filter((clause) => !isMetaFraming(clause) && !PERSONAL_DATA_BLOCKER.test(clause));
+}
+
+function isPersonalDataQuestion(text: string): boolean {
+  return personalDataClauses(text).some((clause) =>
+    PERSONAL_DATA_RULES.some(({ noun, verb }) => hasCoLocatedUnnegated(clause, noun, verb)),
+  );
+}
+
+/** A non-schedule personal-data noun: a `mixed` clause naming one of these is not a schedule question. */
+const NON_SCHEDULE_PERSONAL_NOUN =
+  /(?:메일|문자(?!열)|카톡|메시지|메세지|잔액|통장|\b(?:inbox|e-?mails?|mail|messages?|texts?|dms?|balance|transactions?|statements?|payments?|accounts?|money)\b)/iu;
+
+/**
+ * ADR-0110 QUAL-7 switch: whether the message is a question about the owner's OWN schedule or availability — the subset
+ * of the QA-V2-005 personal-data questions a configured calendar can answer ("내일 일정 뭐야?", "다음 회의 언제야?",
+ * "나 내일 바빠?", "What's my next meeting?", "Am I free tomorrow?"). Same clause splitting, negation, meta framing and
+ * blockers as the personal-data route, so a how-to or code question ("일정 관리 팁", "my calendar app") never counts;
+ * mail, message and money questions never count. Deterministic, no LLM.
+ *
+ * The classifier itself is unchanged: with no calendar configured these questions still route to POLICY_SENSITIVE_CHAT
+ * (ADR-0110 D5); with a calendar, the `pre-classify` calendar handler (order 150) claims them first.
+ */
+export function isPersonalScheduleQuestion(text: string): boolean {
+  return personalDataClauses(text).some((clause) =>
+    PERSONAL_DATA_RULES.some(({ topic, noun, verb }) => {
+      if (topic === 'other') return false;
+      if (topic === 'mixed' && NON_SCHEDULE_PERSONAL_NOUN.test(clause)) return false;
+      return hasCoLocatedUnnegated(clause, noun, verb);
+    }),
+  );
 }
 
 /**

@@ -165,6 +165,18 @@ export interface MemoryCommandResult {
   readonly history?: MemoryCommandHistory;
 }
 
+/** OPS-2: the typed forget request — the issued code and the chat confirmation preview, or the list size. */
+export type MemoryForgetConfirmationRequest =
+  | {
+      readonly status: 'CONFIRMATION';
+      readonly number: number;
+      /** The confirmation preview chat shows (bounded, Discord-escaped, masked when credential-like). */
+      readonly preview: string;
+      /** The ADR-0106 D4 one-time code `기억 확인 <code>` accepts. */
+      readonly code: string;
+    }
+  | { readonly status: 'NOT_FOUND'; readonly number: number; readonly total: number };
+
 export interface MemoryCommandHistory {
   readonly user?: string;
   readonly assistant?: string;
@@ -556,14 +568,44 @@ export class MemoryCommandService {
   }
 
   private async requestForget(request: MemoryCommandRequest, number: number, language: MemoryCommandLanguage) {
+    const issued = await this.requestForgetConfirmation(request, number, language);
+    return issued.status === 'NOT_FOUND'
+      ? this.reply('not-found', renderMemoryNotFound(number, issued.total, language))
+      : this.reply('forget-confirmation', renderForgetConfirmation(number, issued.preview, issued.code, language));
+  }
+
+  /**
+   * OPS-2 (ADR-0113 D7): the typed entry of `기억 N 잊어줘` that the chat path above and the operations UI share. It
+   * numbers the owner's listable memories exactly as `기억 목록` does and issues the same ADR-0106 D4 content-bound,
+   * one-time code (same pending set, same window). `preview` is the confirmation preview chat shows (masked when
+   * credential-like). Store failures propagate (the chat path answers them with the fixed failure copy).
+   */
+  async requestForgetConfirmation(
+    request: MemoryCommandRequest,
+    number: number,
+    language: MemoryCommandLanguage = 'ko',
+  ): Promise<MemoryForgetConfirmationRequest> {
     const records = await this.listable(request.actorId, request.now);
     const record = records[number - 1];
-    if (record === undefined) {
-      return this.reply('not-found', renderMemoryNotFound(number, records.length, language));
-    }
+    if (record === undefined) return { status: 'NOT_FOUND', number, total: records.length };
     const code = this.issue(request, record, { kind: 'forget' });
     const preview = this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS);
-    return this.reply('forget-confirmation', renderForgetConfirmation(number, preview, code, language));
+    return { status: 'CONFIRMATION', number, preview, code };
+  }
+
+  /**
+   * OPS-2 (ADR-0113 D7): `기억 확인 <code>` restricted to a pending **forget** code — the same one-time spend, the same
+   * re-check that the record is still listable and unchanged, and the same {@link executeForget} as chat. A code
+   * issued for an edit, restore or permanent delete is answered as unknown and stays pending (nothing is spent).
+   * Never throws: a store failure becomes a `failed` result.
+   */
+  async confirmForget(request: MemoryCommandRequest, code: string, language: MemoryCommandLanguage = 'ko'): Promise<MemoryCommandResult> {
+    try {
+      return await this.confirm(request, code, language, 'forget');
+    } catch (error) {
+      this.log('warn', 'memory_commands.failed', { command: 'confirm', errorName: errorName(error) });
+      return { outcome: 'failed', text: renderMemoryCommandFailed(language), status: 'FAILED' };
+    }
   }
 
   private async requestEdit(
@@ -602,11 +644,19 @@ export class MemoryCommandService {
     );
   }
 
-  private async confirm(request: MemoryCommandRequest, rawCode: string, language: MemoryCommandLanguage) {
+  private async confirm(
+    request: MemoryCommandRequest,
+    rawCode: string,
+    language: MemoryCommandLanguage,
+    onlyAction?: PendingAction['kind'],
+  ) {
     const code = rawCode.toUpperCase();
     const window = memoryConfirmationWindow(request.now);
     const entries = this.livePending(request.actorId, window);
-    const entry = code.length === CODE_LENGTH ? entries.find((candidate) => candidate.code === code) : undefined;
+    const entry =
+      code.length === CODE_LENGTH
+        ? entries.find((candidate) => candidate.code === code && (onlyAction === undefined || candidate.action.kind === onlyAction))
+        : undefined;
     if (entry === undefined) return this.reply('confirm-unknown', renderConfirmUnknown(language));
     // One-time: the code is spent whatever happens next, and remembered as spent for this record.
     this.setPending(

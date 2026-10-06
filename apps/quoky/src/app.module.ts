@@ -101,6 +101,7 @@ import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
 import { createProductionContextBuilder } from './context-builder-provider';
+import { createImageUnderstandingProviders } from './image-understanding-provider';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
 import { PersonalGitGuard } from './personal-git-guard';
@@ -113,6 +114,7 @@ import { createAgentProfileRegistryProvider } from './agent-profile-registry-pro
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
 import { feedbackProviders } from './features/feedback.providers';
+import { createCalendarProviders } from './features/calendar.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
@@ -304,6 +306,12 @@ const infrastructure: Provider[] = [
             }),
           ]
         : []),
+      // ADR-0111 D4/D5 (MM-2): opt-in local vision model (QUOKY_OLLAMA_VISION_MODEL). Advertises only
+      // IMAGE_UNDERSTANDING and declares LOCAL; image bytes never go to any other provider.
+      ...createImageUnderstandingProviders(process.env, {
+        ollamaBin: config.ai.ollamaBin,
+        logger: new ConsoleLogger('image-understanding'),
+      }),
     ],
   },
   { provide: CONNECTOR_PROVIDERS, useValue: connectorProviders },
@@ -735,6 +743,9 @@ const features: Provider[] = [
   // ADR-0106 (MEM-1): memory management commands (pre-classify order 50) over the existing writer and vector cache.
   // ADR-0106 amendment: forgotten memories are archived for QUOKY_MEMORY_ARCHIVE_DAYS (default 7; 0 = delete at once).
   ...createMemoryProviders({ archiveDays: config.memory.archiveDays }),
+  // ADR-0110 (CAL-2): schedule questions from the read-only calendar (pre-classify order 150). CALENDAR_READER and the
+  // handler are bound only when the calendar is configured; otherwise QUAL-7 routing is unchanged (D5).
+  ...createCalendarProviders({ calendar: config.calendar, timeZone: config.reminders.timeZone }),
   turnHandlersProvider,
 ];
 

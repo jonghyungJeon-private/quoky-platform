@@ -4,7 +4,16 @@ import type { AddressInfo } from 'node:net';
 import type { Socket } from 'node:net';
 
 import { OPS_UI_CSS, OPS_UI_DEFAULT_REFRESH_SECONDS, OPS_UI_JS, OPS_UI_MIN_REFRESH_SECONDS } from './assets';
-import { renderDashboard, renderSignInPage, renderStatusPage } from './render';
+import { OPS_MAX_CODE_ATTEMPTS, OpsIntentStore } from './intents';
+import {
+  renderActionOutcome,
+  renderDashboard,
+  renderForgetConfirm,
+  renderMemoryPage,
+  renderReminderCancelConfirm,
+  renderSignInPage,
+  renderStatusPage,
+} from './render';
 import {
   OPS_UI_SECURITY_HEADERS,
   OPS_UI_SESSION_COOKIE,
@@ -18,7 +27,7 @@ import {
 } from './security';
 import type { OpsUiSession } from './security';
 import { removeTokenFile, writeTokenFile } from './token-file';
-import type { OpsUiEventLog, OpsViewModelSource } from './view-model';
+import type { OpsActions, OpsUiEventLog, OpsViewModelSource } from './view-model';
 
 /**
  * The OPS-1 listener (ADR-0113 D1–D4): one `node:http` server inside the Quoky process.
@@ -34,7 +43,10 @@ import type { OpsUiEventLog, OpsViewModelSource } from './view-model';
  *   in-session state changes (sign-out, the only one in Phase 1) also need the session's CSRF token.
  * - **Headers.** Every response carries the exact ADR-0113 D4 CSP plus `nosniff`, `no-referrer` and `no-store`; no
  *   CORS header is ever sent.
- * - **Read-only.** Phase 1 has no state-changing endpoint other than sign-in and sign-out.
+ * - **Handling (OPS-2, ADR-0113 D7).** Only when `actions` is given: reminder cancel and memory forget, each a
+ *   same-origin `POST` with the session CSRF token. Executing posts also carry a one-time action nonce bound to the
+ *   session and to the subject shown on the confirmation page (`intents.ts`), so a double submit runs once. There is
+ *   no approve or reject route (OPS-2b). Without `actions` the listener is the Phase 1 read-only screen.
  */
 
 export const OPS_UI_BIND_HOST = '127.0.0.1';
@@ -60,6 +72,8 @@ export interface OpsUiServerOptions {
   readonly log: OpsUiEventLog;
   readonly nowMs?: () => number;
   readonly refreshSeconds?: number;
+  /** OPS-2 owner handling; absent = Phase 1 read-only (no handling route exists). */
+  readonly actions?: OpsActions;
 }
 
 export type OpsUiStartResult =
@@ -84,12 +98,14 @@ export class OpsUiServer {
   private readonly sessions: OpsUiSessionStore;
   private readonly limiter: SignInRateLimiter;
   private readonly refreshSeconds: number;
+  private readonly intents: OpsIntentStore;
 
   constructor(private readonly options: OpsUiServerOptions) {
     if (options.host !== OPS_UI_BIND_HOST) throw new OpsUiBindError();
     this.nowMs = options.nowMs ?? Date.now;
     this.sessions = new OpsUiSessionStore(this.nowMs);
     this.limiter = new SignInRateLimiter(this.nowMs);
+    this.intents = new OpsIntentStore(this.nowMs);
     this.refreshSeconds = Math.max(OPS_UI_MIN_REFRESH_SECONDS, options.refreshSeconds ?? OPS_UI_DEFAULT_REFRESH_SECONDS);
   }
 
@@ -163,6 +179,7 @@ export class OpsUiServer {
     this.server = null;
     this.token = null;
     this.sessions.clear();
+    this.intents.clear();
     if (server !== null) {
       for (const socket of this.sockets) socket.destroy();
       this.sockets.clear();
@@ -205,7 +222,11 @@ export class OpsUiServer {
         return;
       }
       const handler: Handler | undefined =
-        path === '/session' ? (q, s) => this.signIn(q, s) : path === '/session/end' ? (q, s) => this.signOut(q, s) : undefined;
+        path === '/session'
+          ? (q, s) => this.signIn(q, s)
+          : path === '/session/end'
+            ? (q, s) => this.signOut(q, s)
+            : this.actionPost(path);
       if (handler === undefined) {
         req.resume();
         this.sendPage(res, 404, renderStatusPage('없음', '없는 화면이에요.'));
@@ -237,12 +258,136 @@ export class OpsUiServer {
         const session = this.currentSession(req);
         if (session === undefined) return this.redirect(res, '/signin');
         const view = await this.options.view();
-        this.sendPage(res, 200, renderDashboard(view, session.csrfToken, this.refreshSeconds));
+        this.sendPage(res, 200, renderDashboard(view, session.csrfToken, this.refreshSeconds, this.options.actions !== undefined));
+        return;
+      }
+      case '/actions/reminders/cancel':
+      case '/memories': {
+        const actions = this.options.actions;
+        if (actions === undefined) break;
+        const session = this.currentSession(req);
+        if (session === undefined) return this.redirect(res, '/signin');
+        if (path === '/memories') {
+          this.sendPage(res, 200, renderMemoryPage(await actions.listMemories(), session.csrfToken));
+          return;
+        }
+        const displayNo = positiveNumber(queryParam(req.url, 'no'));
+        if (displayNo === undefined) {
+          this.sendPage(res, 400, renderStatusPage('요청 거부', '알림 번호가 올바르지 않아요.'));
+          return;
+        }
+        const preview = await actions.reminderCancelPreview(displayNo);
+        if (preview.status !== 'FOUND') {
+          this.sendPage(res, 200, renderActionOutcome('알림 취소', preview.outcome));
+          return;
+        }
+        const nonce = this.intents.issue(session.id, 'reminder-cancel', String(preview.displayNo));
+        this.sendPage(res, 200, renderReminderCancelConfirm(preview, session.csrfToken, nonce));
         return;
       }
       default:
-        this.sendPage(res, 404, renderStatusPage('없음', '없는 화면이에요.'));
+        break;
     }
+    this.sendPage(res, 404, renderStatusPage('없음', '없는 화면이에요.'));
+  }
+
+  /** The OPS-2 handling POST routes (only with `actions`). */
+  private actionPost(path: string): Handler | undefined {
+    const actions = this.options.actions;
+    if (actions === undefined) return undefined;
+    switch (path) {
+      case '/actions/reminders/cancel':
+        return (req, res) =>
+          this.inSession(req, res, async (session, form) => {
+            const intent = this.intents.find(session.id, 'reminder-cancel', form.get('nonce') ?? undefined);
+            if (intent === undefined) return this.staleIntent(res);
+            const displayNo = Number(intent.subject);
+            const run = await this.intents.runOnce(intent, () => actions.cancelReminder(displayNo));
+            this.audit('reminder.cancel', run.outcome.code, run.status === 'REPEATED');
+            this.sendPage(res, 200, renderActionOutcome('알림 취소', run.outcome, run.status === 'REPEATED'));
+          });
+      case '/actions/memories/forget/request':
+        return (req, res) =>
+          this.inSession(req, res, async (session, form) => {
+            const number = positiveNumber(form.get('number') ?? undefined);
+            if (number === undefined) {
+              this.sendPage(res, 400, renderStatusPage('요청 거부', '기억 번호가 올바르지 않아요.'));
+              return;
+            }
+            const request = await actions.requestForget(number);
+            this.audit('memory.forget.request', request.status === 'CONFIRMATION' ? 'CODE_ISSUED' : request.outcome.code, false);
+            if (request.status !== 'CONFIRMATION') {
+              this.sendPage(res, 200, renderActionOutcome('기억 잊기', request.outcome));
+              return;
+            }
+            const nonce = this.intents.issue(session.id, 'memory-forget', JSON.stringify(request));
+            this.sendPage(res, 200, renderForgetConfirm(request, session.csrfToken, nonce));
+          });
+      case '/actions/memories/forget/confirm':
+        return (req, res) =>
+          this.inSession(req, res, async (session, form) => {
+            const intent = this.intents.find(session.id, 'memory-forget', form.get('nonce') ?? undefined);
+            if (intent === undefined) return this.staleIntent(res);
+            const request = JSON.parse(intent.subject) as Parameters<typeof renderForgetConfirm>[0];
+            const entered = (form.get('code') ?? '').trim().toUpperCase();
+            if (!constantTimeEquals(entered, request.code)) {
+              intent.attempts += 1;
+              this.audit('memory.forget.confirm', 'CODE_MISMATCH', false);
+              if (intent.attempts >= OPS_MAX_CODE_ATTEMPTS && intent.result === undefined) {
+                this.intents.drop(intent.nonce);
+                this.sendPage(
+                  res,
+                  200,
+                  renderActionOutcome('기억 잊기', {
+                    code: 'CODE_ATTEMPTS_EXCEEDED',
+                    message: '확인 코드가 여러 번 틀려서 이 요청을 닫았어요. 기억 목록에서 다시 시작하세요.',
+                    ok: false,
+                  }),
+                );
+                return;
+              }
+              this.sendPage(res, 200, renderForgetConfirm(request, session.csrfToken, intent.nonce, true));
+              return;
+            }
+            const run = await this.intents.runOnce(intent, () => actions.confirmForget(request.code));
+            this.audit('memory.forget.confirm', run.outcome.code, run.status === 'REPEATED');
+            this.sendPage(res, 200, renderActionOutcome('기억 잊기', run.outcome, run.status === 'REPEATED'));
+          });
+      default:
+        return undefined;
+    }
+  }
+
+  /** Session first (no body read without one), then the form and its CSRF token, then the handler. */
+  private async inSession(
+    req: IncomingMessage,
+    res: ServerResponse,
+    handle: (session: OpsUiSession, form: URLSearchParams) => Promise<void>,
+  ): Promise<void> {
+    const session = this.currentSession(req);
+    if (session === undefined) {
+      req.resume();
+      this.options.log.warn('ops-ui.post_refused', { reason: 'SESSION' });
+      this.sendPage(res, 403, renderStatusPage('요청 거부', '로그인이 필요해요.'));
+      return;
+    }
+    const form = await readForm(req);
+    if (!constantTimeEquals(form.get('csrf') ?? '', session.csrfToken)) {
+      this.options.log.warn('ops-ui.post_refused', { reason: 'CSRF' });
+      this.sendPage(res, 403, renderStatusPage('요청 거부', '요청을 확인하지 못했어요. 화면을 새로 고친 뒤 다시 시도하세요.'));
+      return;
+    }
+    await handle(session, form);
+  }
+
+  private staleIntent(res: ServerResponse): void {
+    this.options.log.warn('ops-ui.post_refused', { reason: 'INTENT' });
+    this.sendPage(res, 409, renderStatusPage('요청 만료', '이 확인 화면은 만료됐거나 이미 닫혔어요. 운영 화면에서 다시 시작하세요.'));
+  }
+
+  /** Content-free audit line for every handling step (ADR-0113 D7 audit: the `ops-ui` surface marker, codes only). */
+  private audit(action: string, outcome: string, repeated: boolean): void {
+    this.options.log.info('ops-ui.action', { surface: 'ops-ui', action, outcome, repeated });
   }
 
   private async signIn(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -283,6 +428,7 @@ export class OpsUiServer {
       return;
     }
     this.sessions.end(session.id);
+    this.intents.endSession(session.id);
     res.setHeader('Set-Cookie', clearedSessionCookie());
     this.options.log.info('ops-ui.signout');
     this.redirect(res, '/signin');
@@ -316,6 +462,20 @@ function requestPath(rawUrl: string | undefined): string {
   } catch {
     return '/__invalid__';
   }
+}
+
+function queryParam(rawUrl: string | undefined, name: string): string | undefined {
+  try {
+    return new URL(rawUrl ?? '/', 'http://127.0.0.1').searchParams.get(name) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A list number as the chat grammar takes it: a positive integer of at most 4 digits. */
+function positiveNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || !/^[1-9][0-9]{0,3}$/.test(raw.trim())) return undefined;
+  return Number(raw.trim());
 }
 
 async function readForm(req: IncomingMessage): Promise<URLSearchParams> {

@@ -3,10 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { ConnectorQueryError } from '@quoky/core';
 import { GoogleCalendarScopeError } from './errors';
 import {
+  GOOGLE_CALENDAR_EVENTS_SCOPE,
   GOOGLE_CALENDAR_READONLY_SCOPE,
+  GOOGLE_CALENDAR_READ_WRITE_SCOPE,
   GOOGLE_OAUTH_TOKEN_URL,
+  assertCalendarScope,
+  refreshGoogleAccessToken,
   GoogleCalendarNoRefreshTokenError,
+  assertGrantedCalendarScopes,
   assertReadonlyScope,
+  grantIncludesCalendarEvents,
   buildGoogleConsentUrl,
   createGoogleOAuthState,
   createGooglePkcePair,
@@ -31,7 +37,7 @@ function fake(response: Response): { fetchImpl: typeof fetch; calls: Array<{ url
 }
 
 describe('Google OAuth helpers (ADR-0110 D2)', () => {
-  it('builds a calendar.readonly-only, offline, PKCE consent URL with no secret in it', () => {
+  it('builds a calendar.readonly-only (by default), offline, PKCE consent URL with no secret in it', () => {
     const url = new URL(
       buildGoogleConsentUrl({ clientId: CLIENT.clientId, redirectUri: REDIRECT, state: 'state-1', codeChallenge: 'challenge-1' }),
     );
@@ -76,12 +82,17 @@ describe('Google OAuth helpers (ADR-0110 D2)', () => {
     expect(createGoogleOAuthState()).not.toBe(createGoogleOAuthState());
   });
 
-  it('accepts exactly calendar.readonly and refuses missing or broader scopes', () => {
-    expect(() => assertReadonlyScope(GOOGLE_CALENDAR_READONLY_SCOPE)).not.toThrow();
-    expect(() => assertReadonlyScope(` ${GOOGLE_CALENDAR_READONLY_SCOPE}  `)).not.toThrow();
+  it('accepts calendar.readonly with or without calendar.events and refuses missing or broader scopes (amendment D1)', () => {
+    expect(assertGrantedCalendarScopes(GOOGLE_CALENDAR_READONLY_SCOPE)).toBe(GOOGLE_CALENDAR_READONLY_SCOPE);
+    expect(assertGrantedCalendarScopes(` ${GOOGLE_CALENDAR_READONLY_SCOPE}  `)).toBe(GOOGLE_CALENDAR_READONLY_SCOPE);
+    // Normalized to the request order, whatever order Google lists them in.
+    const both = `${GOOGLE_CALENDAR_READONLY_SCOPE} ${GOOGLE_CALENDAR_EVENTS_SCOPE}`;
+    expect(assertGrantedCalendarScopes(`${GOOGLE_CALENDAR_EVENTS_SCOPE} ${GOOGLE_CALENDAR_READONLY_SCOPE}`)).toBe(both);
+    expect(grantIncludesCalendarEvents(both)).toBe(true);
+    expect(grantIncludesCalendarEvents(GOOGLE_CALENDAR_READONLY_SCOPE)).toBe(false);
     const missing = (() => {
       try {
-        assertReadonlyScope('openid');
+        assertGrantedCalendarScopes('openid');
       } catch (error) {
         return error as GoogleCalendarScopeError;
       }
@@ -89,8 +100,18 @@ describe('Google OAuth helpers (ADR-0110 D2)', () => {
     })();
     expect(missing?.kind).toBe('MISSING');
     expect(missing?.reason).toBe('INSUFFICIENT_SCOPE');
-    expect(() => assertReadonlyScope(undefined)).toThrow(GoogleCalendarScopeError);
-    expect(() => assertReadonlyScope(`${GOOGLE_CALENDAR_READONLY_SCOPE} openid email`)).toThrow('more than calendar.readonly');
+    expect(() => assertGrantedCalendarScopes(undefined)).toThrow(GoogleCalendarScopeError);
+    // calendar.events alone is not enough: reads need calendar.readonly.
+    expect(() => assertGrantedCalendarScopes(GOOGLE_CALENDAR_EVENTS_SCOPE)).toThrow('does not grant the required calendar scope');
+    const base = 'https://www.googleapis.com/auth/';
+    for (const broader of ['calendar', 'calendar.settings.readonly', 'calendar.acls', 'calendar.calendarlist', 'calendar.app.created']) {
+      expect(() => assertGrantedCalendarScopes(`${both} ${base}${broader}`), broader).toThrow(
+        'more than calendar.readonly and calendar.events',
+      );
+    }
+    expect(() => assertGrantedCalendarScopes(`${GOOGLE_CALENDAR_READONLY_SCOPE} openid email`)).toThrow(
+      'more than calendar.readonly and calendar.events',
+    );
   });
 
   it('exchanges an authorization code with the PKCE verifier and returns the refresh token', async () => {
@@ -101,6 +122,16 @@ describe('Google OAuth helpers (ADR-0110 D2)', () => {
       { fetchImpl: google.fetchImpl, timeoutMs: 1000 },
     );
     expect(result).toEqual({ refreshToken: '1//refresh', scope: GOOGLE_CALENDAR_READONLY_SCOPE });
+    const withEvents = fake(
+      json(200, { refresh_token: 'refresh-placeholder', scope: `${GOOGLE_CALENDAR_EVENTS_SCOPE} ${GOOGLE_CALENDAR_READONLY_SCOPE}` }),
+    );
+    await expect(
+      exchangeGoogleAuthorizationCode(
+        CLIENT,
+        { code: '4/code', codeVerifier: 'verifier', redirectUri: REDIRECT },
+        { fetchImpl: withEvents.fetchImpl, timeoutMs: 1000 },
+      ),
+    ).resolves.toEqual({ refreshToken: 'refresh-placeholder', scope: `${GOOGLE_CALENDAR_READONLY_SCOPE} ${GOOGLE_CALENDAR_EVENTS_SCOPE}` });
     expect(google.calls).toHaveLength(1);
     expect(google.calls[0]!.url).toBe(GOOGLE_OAUTH_TOKEN_URL);
     expect(google.calls[0]!.init?.redirect).toBe('error');
@@ -137,5 +168,56 @@ describe('Google OAuth helpers (ADR-0110 D2)', () => {
     expect((error as ConnectorQueryError).reason).toBe('UNAUTHORIZED');
     expect((error as Error).message).not.toContain('secret-code');
     expect((error as Error).message).not.toContain(CLIENT.clientSecret);
+  });
+});
+
+describe('Google OAuth helpers — calendar.events for writes (ADR-0110 amendment D1)', () => {
+  it('requests calendar.events alongside calendar.readonly only when asked', () => {
+    const url = new URL(buildGoogleConsentUrl({
+      clientId: CLIENT.clientId, redirectUri: REDIRECT, state: 's', codeChallenge: 'c', includeEventsScope: true,
+    }));
+    expect(url.searchParams.get('scope')).toBe(`${GOOGLE_CALENDAR_READONLY_SCOPE} ${GOOGLE_CALENDAR_EVENTS_SCOPE}`);
+    expect(url.searchParams.get('include_granted_scopes')).toBe('false');
+  });
+
+  it('assertCalendarScope: required scopes must be granted and nothing outside readonly + events is accepted', () => {
+    expect([...assertCalendarScope(GOOGLE_CALENDAR_READ_WRITE_SCOPE, [GOOGLE_CALENDAR_EVENTS_SCOPE])].sort()).toEqual(
+      [GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_READONLY_SCOPE].sort(),
+    );
+    expect(() => assertReadonlyScope(GOOGLE_CALENDAR_READ_WRITE_SCOPE)).not.toThrow();
+    const kind = (fn: () => unknown): string | undefined => {
+      try { fn(); } catch (error) { return (error as GoogleCalendarScopeError).kind; }
+      return undefined;
+    };
+    expect(kind(() => assertCalendarScope(GOOGLE_CALENDAR_READONLY_SCOPE, [GOOGLE_CALENDAR_EVENTS_SCOPE]))).toBe('MISSING');
+    expect(kind(() => assertCalendarScope(`${GOOGLE_CALENDAR_READ_WRITE_SCOPE} https://www.googleapis.com/auth/calendar`, [GOOGLE_CALENDAR_EVENTS_SCOPE]))).toBe('TOO_BROAD');
+    expect(kind(() => assertCalendarScope(`${GOOGLE_CALENDAR_EVENTS_SCOPE} https://www.googleapis.com/auth/calendar.settings.readonly`, [GOOGLE_CALENDAR_EVENTS_SCOPE]))).toBe('TOO_BROAD');
+    expect(kind(() => assertCalendarScope(undefined, [GOOGLE_CALENDAR_EVENTS_SCOPE]))).toBe('MISSING');
+  });
+
+  it('an exchange with requireEventsScope needs both scopes and returns the normalized read + write scope', async () => {
+    const both = fake(json(200, { refresh_token: '1//r', scope: `${GOOGLE_CALENDAR_EVENTS_SCOPE} ${GOOGLE_CALENDAR_READONLY_SCOPE}` }));
+    await expect(exchangeGoogleAuthorizationCode(
+      CLIENT, { code: 'c', codeVerifier: 'v', redirectUri: REDIRECT },
+      { fetchImpl: both.fetchImpl, timeoutMs: 1000, requireEventsScope: true },
+    )).resolves.toEqual({ refreshToken: '1//r', scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE });
+
+    const readonlyOnly = fake(json(200, { refresh_token: '1//r', scope: GOOGLE_CALENDAR_READONLY_SCOPE }));
+    await expect(exchangeGoogleAuthorizationCode(
+      CLIENT, { code: 'c', codeVerifier: 'v', redirectUri: REDIRECT },
+      { fetchImpl: readonlyOnly.fetchImpl, timeoutMs: 1000, requireEventsScope: true },
+    )).rejects.toBeInstanceOf(GoogleCalendarScopeError);
+  });
+
+  it('a refresh can require calendar.events', async () => {
+    const token = 'access-' + 'token-value';
+    const ok = fake(json(200, { access_token: token, expires_in: 3599, scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE, token_type: 'Bearer' }));
+    await expect(refreshGoogleAccessToken(CLIENT, '1//r', {
+      fetchImpl: ok.fetchImpl, timeoutMs: 1000, nowMs: 0, requiredScopes: [GOOGLE_CALENDAR_EVENTS_SCOPE],
+    })).resolves.toEqual({ token, expiresAtMs: 3_599_000 });
+    const readonlyOnly = fake(json(200, { access_token: token, expires_in: 3599, scope: GOOGLE_CALENDAR_READONLY_SCOPE }));
+    await expect(refreshGoogleAccessToken(CLIENT, '1//r', {
+      fetchImpl: readonlyOnly.fetchImpl, timeoutMs: 1000, nowMs: 0, requiredScopes: [GOOGLE_CALENDAR_EVENTS_SCOPE],
+    })).rejects.toBeInstanceOf(GoogleCalendarScopeError);
   });
 });

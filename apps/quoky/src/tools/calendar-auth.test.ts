@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_OAUTH_TOKEN_URL } from '@quoky/connector-calendar-google';
+import {
+  GOOGLE_CALENDAR_EVENTS_SCOPE,
+  GOOGLE_CALENDAR_READONLY_SCOPE,
+  GOOGLE_CALENDAR_READ_WRITE_SCOPE,
+  GOOGLE_OAUTH_TOKEN_URL,
+} from '@quoky/connector-calendar-google';
 
 import {
   EXIT_BLOCKED,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
+  CALENDAR_AUTH_REQUESTED_SCOPES,
   classifyCallback,
   listenOnLoopback,
   runCli,
@@ -17,12 +23,15 @@ const CLIENT_SECRET = 'client-secret-value';
 const REFRESH_TOKEN = '1//refresh-token-value';
 const CODE = '4/authorization-code-value';
 const PORT = 53682;
+const BOTH_SCOPES = `${GOOGLE_CALENDAR_READONLY_SCOPE} ${GOOGLE_CALENDAR_EVENTS_SCOPE}`;
+/** An access token placeholder (not token-shaped). */
+const ACCESS_TOKEN = 'access-token-value';
 
 interface Harness {
   deps: CalendarAuthDeps;
   out: string[];
   err: string[];
-  written: Array<{ path: string; token: string }>;
+  written: Array<{ path: string; token: string; scope: string }>;
   fetchCalls: Array<{ url: string; body: string }>;
   closed: () => boolean;
   /** Resolves with the printed consent URL once the helper is waiting for the redirect. */
@@ -33,7 +42,7 @@ interface Harness {
 function harness(options: { tokenResponse?: Response; exists?: boolean; env?: NodeJS.ProcessEnv; waitMs?: number } = {}): Harness {
   const out: string[] = [];
   const err: string[] = [];
-  const written: Array<{ path: string; token: string }> = [];
+  const written: Array<{ path: string; token: string; scope: string }> = [];
   const fetchCalls: Array<{ url: string; body: string }> = [];
   let handler: CallbackHandler | undefined;
   let closed = false;
@@ -42,7 +51,7 @@ function harness(options: { tokenResponse?: Response; exists?: boolean; env?: No
     return (
       options.tokenResponse ??
       new Response(
-        JSON.stringify({ access_token: 'ya29.x', refresh_token: REFRESH_TOKEN, expires_in: 3599, scope: GOOGLE_CALENDAR_READONLY_SCOPE }),
+        JSON.stringify({ access_token: ACCESS_TOKEN, refresh_token: REFRESH_TOKEN, expires_in: 3599, scope: GOOGLE_CALENDAR_READONLY_SCOPE }),
         { status: 200 },
       )
     );
@@ -53,8 +62,8 @@ function harness(options: { tokenResponse?: Response; exists?: boolean; env?: No
       ({ QUOKY_CALENDAR_GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com', QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET: CLIENT_SECRET } as NodeJS.ProcessEnv),
     fetchImpl,
     fileExists: () => options.exists ?? false,
-    writeTokenFile: (path, token) => {
-      written.push({ path, token });
+    writeTokenFile: (path, token, scope) => {
+      written.push({ path, token, scope });
     },
     listen: async (h) => {
       handler = h;
@@ -93,16 +102,24 @@ function harness(options: { tokenResponse?: Response; exists?: boolean; env?: No
 
 function assertNoSecretsPrinted(h: Harness): void {
   const printed = [...h.out, ...h.err].join('\n');
-  for (const secret of [CLIENT_SECRET, REFRESH_TOKEN, CODE, 'ya29.x']) expect(printed).not.toContain(secret);
+  for (const secret of [CLIENT_SECRET, REFRESH_TOKEN, CODE, ACCESS_TOKEN]) expect(printed).not.toContain(secret);
 }
 
-describe('calendar consent helper (ADR-0110 D2)', () => {
+function grantResponse(scope: string): Response {
+  return new Response(JSON.stringify({ refresh_token: REFRESH_TOKEN, scope }), { status: 200 });
+}
+
+describe('calendar consent helper (ADR-0110 D2, amendment D1)', () => {
   it('runs the loopback PKCE flow, writes the refresh token to a new file and prints no secret', async () => {
     const h = harness();
     const run = runCli(['--out', '/tmp/quoky-test/google-calendar-token.json'], h.deps);
     const consent = await h.consentUrl();
 
+    // ADR-0110 amendment D1: at most calendar.readonly and calendar.events are ever requested (the latter only with
+    // --with-events); without the flag the consent stays read-only.
+    expect(CALENDAR_AUTH_REQUESTED_SCOPES).toEqual([GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE]);
     expect(consent.searchParams.get('scope')).toBe(GOOGLE_CALENDAR_READONLY_SCOPE);
+    expect(consent.searchParams.get('include_granted_scopes')).toBe('false');
     expect(consent.searchParams.get('redirect_uri')).toBe(`http://127.0.0.1:${PORT}/oauth2callback`);
     expect(consent.searchParams.get('code_challenge_method')).toBe('S256');
     const state = consent.searchParams.get('state') ?? '';
@@ -112,7 +129,9 @@ describe('calendar consent helper (ADR-0110 D2)', () => {
     expect(h.callback(`/oauth2callback?state=${state}&code=${encodeURIComponent(CODE)}&scope=x`).status).toBe(200);
     await expect(run).resolves.toBe(EXIT_OK);
 
-    expect(h.written).toEqual([{ path: '/tmp/quoky-test/google-calendar-token.json', token: REFRESH_TOKEN }]);
+    expect(h.written).toEqual([
+      { path: '/tmp/quoky-test/google-calendar-token.json', token: REFRESH_TOKEN, scope: GOOGLE_CALENDAR_READONLY_SCOPE },
+    ]);
     expect(h.fetchCalls).toHaveLength(1);
     expect(h.fetchCalls[0]!.url).toBe(GOOGLE_OAUTH_TOKEN_URL);
     const form = new URLSearchParams(h.fetchCalls[0]!.body);
@@ -146,20 +165,82 @@ describe('calendar consent helper (ADR-0110 D2)', () => {
     expect(h.written).toHaveLength(0);
   });
 
-  it('refuses a broader grant and writes nothing', async () => {
-    const h = harness({
-      tokenResponse: new Response(
-        JSON.stringify({ refresh_token: REFRESH_TOKEN, scope: `${GOOGLE_CALENDAR_READONLY_SCOPE} https://www.googleapis.com/auth/calendar` }),
-        { status: 200 },
-      ),
-    });
+  it('refuses any grant broader than calendar.readonly + calendar.events and writes nothing', async () => {
+    const base = 'https://www.googleapis.com/auth/';
+    for (const extra of ['calendar', 'calendar.settings.readonly', 'calendar.acls', 'calendar.calendarlist', 'userinfo.email']) {
+      const h = harness({ tokenResponse: grantResponse(`${BOTH_SCOPES} ${base}${extra}`) });
+      const run = runCli(['--out', '/tmp/x.json'], h.deps);
+      const state = (await h.consentUrl()).searchParams.get('state');
+      h.callback(`/oauth2callback?state=${state}&code=${CODE}`);
+      await expect(run, extra).resolves.toBe(EXIT_FAILED);
+      expect(h.err.join('\n'), extra).toContain('more than calendar.readonly and calendar.events');
+      expect(h.written, extra).toHaveLength(0);
+      assertNoSecretsPrinted(h);
+    }
+  });
+
+  it('refuses a grant without calendar.readonly (calendar.events alone) and writes nothing', async () => {
+    const h = harness({ tokenResponse: grantResponse(GOOGLE_CALENDAR_EVENTS_SCOPE) });
     const run = runCli(['--out', '/tmp/x.json'], h.deps);
     const state = (await h.consentUrl()).searchParams.get('state');
     h.callback(`/oauth2callback?state=${state}&code=${CODE}`);
     await expect(run).resolves.toBe(EXIT_FAILED);
-    expect(h.err.join('\n')).toContain('more than calendar.readonly');
+    expect(h.err.join('\n')).toContain('did not grant every requested calendar permission');
     expect(h.written).toHaveLength(0);
+  });
+
+  it('saves a calendar.readonly-only grant and says writes stay unavailable', async () => {
+    const h = harness({ tokenResponse: grantResponse(GOOGLE_CALENDAR_READONLY_SCOPE) });
+    const run = runCli(['--out', '/tmp/x.json'], h.deps);
+    const state = (await h.consentUrl()).searchParams.get('state');
+    h.callback(`/oauth2callback?state=${state}&code=${CODE}`);
+    await expect(run).resolves.toBe(EXIT_OK);
+    expect(h.written).toEqual([{ path: '/tmp/x.json', token: REFRESH_TOKEN, scope: GOOGLE_CALENDAR_READONLY_SCOPE }]);
+    expect(h.out.join('\n')).toContain('calendar writes will stay unavailable');
     assertNoSecretsPrinted(h);
+  });
+
+  it('records a read + write grant without --with-events when Google grants both (still nothing broader)', async () => {
+    const h = harness({ tokenResponse: grantResponse(BOTH_SCOPES) });
+    const run = runCli(['--out', '/tmp/x.json'], h.deps);
+    const state = (await h.consentUrl()).searchParams.get('state');
+    h.callback(`/oauth2callback?state=${state}&code=${CODE}`);
+    await expect(run).resolves.toBe(EXIT_OK);
+    expect(h.written).toEqual([{ path: '/tmp/x.json', token: REFRESH_TOKEN, scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE }]);
+    expect(h.out.join('\n')).toContain('calendar.readonly + calendar.events refresh token');
+    assertNoSecretsPrinted(h);
+  });
+
+  it('--with-events requests readonly + events, requires both, and records the read + write scope (ADR-0110 amendment D1)', async () => {
+    const h = harness({
+      tokenResponse: new Response(
+        JSON.stringify({ refresh_token: REFRESH_TOKEN, scope: `${GOOGLE_CALENDAR_EVENTS_SCOPE} ${GOOGLE_CALENDAR_READONLY_SCOPE}` }),
+        { status: 200 },
+      ),
+    });
+    const run = runCli(['--out', '/tmp/rw.json', '--with-events'], h.deps);
+    const consent = await h.consentUrl();
+    expect(consent.searchParams.get('scope')).toBe(GOOGLE_CALENDAR_READ_WRITE_SCOPE);
+    h.callback(`/oauth2callback?state=${consent.searchParams.get('state')}&code=${CODE}`);
+    await expect(run).resolves.toBe(EXIT_OK);
+    expect(h.written).toEqual([{ path: '/tmp/rw.json', token: REFRESH_TOKEN, scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE }]);
+    expect(h.out.join('\n')).toContain('QUOKY_CALENDAR_WRITE_ENABLED=true');
+    assertNoSecretsPrinted(h);
+  });
+
+  it('--with-events refuses a read-only grant and writes nothing', async () => {
+    const h = harness();
+    const run = runCli(['--with-events', '--out', '/tmp/rw.json'], h.deps);
+    const state = (await h.consentUrl()).searchParams.get('state');
+    h.callback(`/oauth2callback?state=${state}&code=${CODE}`);
+    await expect(run).resolves.toBe(EXIT_FAILED);
+    expect(h.err.join('\n')).toContain('did not grant every requested calendar permission');
+    expect(h.written).toHaveLength(0);
+  });
+
+  it('rejects a repeated --with-events flag as a usage error', async () => {
+    const h = harness();
+    await expect(runCli(['--out', '/tmp/x.json', '--with-events', '--with-events'], h.deps)).resolves.toBe(EXIT_USAGE);
   });
 
   it('times out without a redirect', async () => {

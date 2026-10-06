@@ -402,3 +402,11 @@ function isConnectorItem(value: ConnectorItem | undefined): value is ConnectorIt
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+// ADR-0112 D2/D4 (CWR-1): the separate, allowlisted bot-token post adapter. The read-only provider above is unchanged.
+export {
+  SlackChannelWriter,
+  escapeSlackText,
+  type SlackChannelWriterConfig,
+  type SlackWriteChannel,
+} from './slack-channel-writer';

@@ -313,13 +313,27 @@ describe('OPS-1 listener: Origin and CSRF (ADR-0113 D4)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('has no state-changing endpoint beyond sign-in and sign-out (Phase 1)', async () => {
+  it('has no state-changing endpoint beyond sign-in and sign-out without OPS-2 actions (Phase 1)', async () => {
     const h = await startServer();
     const cookie = await signIn(h);
     const csrf = csrfOf((await send({ port: h.port, path: '/', cookie })).body);
-    for (const p of ['/', '/approve', '/reject', '/reminders/cancel', '/memory/forget', '/api/snapshot', '/chat']) {
+    for (const p of [
+      '/',
+      '/approve',
+      '/reject',
+      '/reminders/cancel',
+      '/memory/forget',
+      '/actions/reminders/cancel',
+      '/actions/memories/forget/request',
+      '/actions/memories/forget/confirm',
+      '/api/snapshot',
+      '/chat',
+    ]) {
       const res = await send({ port: h.port, method: 'POST', path: p, origin: origin(h.port), cookie, form: { csrf } });
       expect(res.status).toBe(404);
+    }
+    for (const p of ['/memories', '/actions/reminders/cancel?no=1']) {
+      expect((await send({ port: h.port, path: p, cookie })).status).toBe(404);
     }
     for (const method of ['PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
       const res = await send({ port: h.port, method, path: '/', origin: origin(h.port), cookie });

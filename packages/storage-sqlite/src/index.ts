@@ -7,8 +7,10 @@ import { SqliteContinuationBindingRepository } from './continuation-binding-repo
 import { SqliteFeedbackRepository } from './feedback-repository';
 import { SqliteReminderRepository } from './reminder-repository';
 import { SqliteLearningRepository } from './learning-repository';
+import { SqliteConnectorWriteReceiptRepository } from './connector-write-receipt-repository';
 import type {
-  ContinuationBindingRepository, FeedbackRepository, LearningRepository, ReminderRepository,
+  ConnectorWriteReceiptRepository, ContinuationBindingRepository, FeedbackRepository, LearningRepository,
+  ReminderRepository,
 } from '@quoky/core';
 
 export { SqliteReminderRepository } from './reminder-repository';
@@ -16,6 +18,9 @@ export {
   LEARNING_SCHEMA_VERSION, SqliteLearningRepository, openLearningExportReader,
 } from './learning-repository';
 export type { LearningExportReader } from './learning-repository';
+export {
+  CONNECTOR_WRITE_RECEIPTS_SCHEMA_VERSION, SqliteConnectorWriteReceiptRepository,
+} from './connector-write-receipt-repository';
 import type {
   Actor,
   ActorRepository,
@@ -1146,6 +1151,8 @@ export class SqliteStorageProvider implements StorageProvider {
   reminders!: ReminderRepository;
   /** Owner-curated learning store (ADR-0107 D2, schema v14). Deliberately not part of `StorageProvider`. */
   learning!: LearningRepository;
+  /** Connector write receipts (ADR-0112 D3, schema v15). Deliberately not part of `StorageProvider`. */
+  connectorWriteReceipts!: ConnectorWriteReceiptRepository;
 
   constructor(private readonly config: SqliteConfig) {}
 
@@ -1190,6 +1197,7 @@ export class SqliteStorageProvider implements StorageProvider {
     this.feedback = new SqliteFeedbackRepository(db);
     this.reminders = new SqliteReminderRepository(db);
     this.learning = new SqliteLearningRepository(db);
+    this.connectorWriteReceipts = new SqliteConnectorWriteReceiptRepository(db);
   }
 
   async close(): Promise<void> {

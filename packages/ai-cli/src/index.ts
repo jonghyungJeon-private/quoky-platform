@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   AiFailureKind,
@@ -12,6 +13,7 @@ import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
   AiExecutionResult,
+  AiImageInput,
   AiRequest,
   Artifact,
 } from '@quoky/core';
@@ -254,6 +256,17 @@ function isChatCapability(capability: Capability): boolean {
   return capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT;
 }
 
+/**
+ * ADR-0111 D5 (owner decision 9): a provider that does not serve `IMAGE_UNDERSTANDING` never receives image bytes.
+ * Core already routes images only to a LOCAL `IMAGE_UNDERSTANDING` provider; this adapter-side refusal is defense in
+ * depth so a misrouted request fails closed before anything is spawned.
+ */
+function refuseImages(request: AiRequest, cli: string): void {
+  if ((request.images?.length ?? 0) > 0) {
+    throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, `${cli} provider does not accept images`);
+  }
+}
+
 export interface CliProviderOptions {
   runner?: CliRunner;
   timeoutMs?: number;
@@ -380,6 +393,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    refuseImages(request, 'claude CLI'); // ADR-0111 D5: no image egress to the Claude CLI.
     const input = request.prompt; // already rendered by the core PromptRenderer (ADR-0029)
     // Neutral cwd avoids ingesting the repo's CLAUDE.md; a workspace task may set its own.
     const cwd = request.workspace?.rootPath ?? tmpdir();
@@ -568,6 +582,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    refuseImages(request, 'ollama CLI'); // ADR-0111 D4: images go only to the separate vision provider instance.
     const serializedConversation = isChatCapability(request.capability)
       ? serializeGeneralChat(request.prompt)
       : null;
@@ -658,6 +673,233 @@ export class OllamaCliProvider extends BaseCliAiProvider {
         model,
         sanitizedCommand: ['ollama', 'run', model],
         promptSha256,
+        captureMode: 'pipe',
+        colorDisabled: true,
+        outputSanitized: true,
+      },
+    };
+  }
+}
+
+/** Default `IMAGE_UNDERSTANDING` timeout: a local vision model reads images more slowly than it chats. */
+export const DEFAULT_OLLAMA_VISION_TIMEOUT_MS = 180_000;
+/** Images per request (ADR-0111 D2 bounds a message to 3 attachments). */
+export const MAX_OLLAMA_VISION_IMAGES = 3;
+/** Image file bound (ADR-0111 D2: images ≤ 8 MiB), re-checked before the CLI reads the file. */
+export const MAX_OLLAMA_VISION_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/** An image-file token as the Ollama CLI recognizes one inside a prompt (an image extension at a word boundary). */
+const OLLAMA_IMAGE_TOKEN = /\.(png|jpe?g|webp)\b/giu;
+/**
+ * An absolute path of plain segments (no `.`/`..`, no whitespace, quotes, backslashes or control characters) ending in
+ * an image extension. The Ollama CLI finds image paths in its prompt by pattern, so anything looser could be split or
+ * merged with neighbouring text.
+ */
+const SAFE_OLLAMA_IMAGE_PATH = /^\/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:png|jpe?g|webp)$/iu;
+const IMAGE_EXTENSIONS_BY_MIME: Readonly<Record<AiImageInput['mimeType'], readonly string[]>> = {
+  'image/png': ['png'],
+  'image/jpeg': ['jpg', 'jpeg'],
+  'image/webp': ['webp'],
+};
+/** What `ollama run` prints on stderr for each image it loaded from the prompt. */
+const OLLAMA_IMAGE_ADDED_MARKER = /Added image '/gu;
+
+/** The model goes into argv, so refuse anything that could be read as a flag or carry whitespace. */
+function validatedOllamaVisionModel(model: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u.test(model)) {
+    throw new TypeError('Invalid Ollama vision model name');
+  }
+  return model;
+}
+
+/**
+ * True when `ollama show <model>` lists `vision` under its `Capabilities` section — Ollama's own statement that the
+ * installed model reads images (for example `gemma3:4b`). Any other shape is "not vision-capable" (fail closed).
+ */
+export function ollamaShowAdvertisesVision(showOutput: string): boolean {
+  const lines = sanitizeTerminalOutput(showOutput).split('\n');
+  const header = lines.findIndex((line) => line.trim().toLowerCase() === 'capabilities');
+  if (header < 0) return false;
+  const headerIndent = (lines[header] ?? '').search(/\S/u);
+  for (const line of lines.slice(header + 1)) {
+    if (line.trim() === '') break;
+    if (line.search(/\S/u) <= headerIndent) break;
+    if (line.trim().toLowerCase() === 'vision') return true;
+  }
+  return false;
+}
+
+/**
+ * Neutralize every image-file token in the stdin text (`.png` → `[.]png`), so the Ollama CLI loads ONLY the paths this
+ * provider passes as arguments — never a path that untrusted caption or file text names. The text is also ended with
+ * a newline so no pattern match can run from the stdin text into the first argument.
+ */
+export function defangOllamaImageTokens(prompt: string): string {
+  const defanged = prompt.replace(OLLAMA_IMAGE_TOKEN, '[.]$1');
+  return defanged.endsWith('\n') ? defanged : `${defanged}\n`;
+}
+
+/** Validate one image reference against ADR-0111 D2 before the CLI sees it; a vanished temp file fails closed. */
+function validatedVisionImagePath(image: AiImageInput): string {
+  const path = image.path;
+  const tokens = path.match(OLLAMA_IMAGE_TOKEN) ?? [];
+  const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  if (
+    !SAFE_OLLAMA_IMAGE_PATH.test(path) ||
+    tokens.length !== 1 ||
+    !(IMAGE_EXTENSIONS_BY_MIME[image.mimeType] ?? []).includes(extension)
+  ) {
+    throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision: image reference refused');
+  }
+  let stats;
+  try {
+    stats = lstatSync(path);
+  } catch {
+    throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision: image reference is no longer available');
+  }
+  if (!stats.isFile() || stats.size === 0 || stats.size > MAX_OLLAMA_VISION_IMAGE_BYTES) {
+    throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision: image reference refused');
+  }
+  return path;
+}
+
+function withoutImagePaths(text: string, paths: readonly string[]): string {
+  return paths.reduce((acc, path) => acc.split(path).join('<image>'), text);
+}
+
+export interface OllamaCliVisionProviderOptions {
+  /** The operator-chosen Ollama vision model (e.g. `gemma3:4b`); required, never defaulted. */
+  model: string;
+  bin?: string;
+  providerId?: string;
+  runner?: CliRunner;
+  timeoutMs?: number;
+}
+
+/**
+ * Local Ollama vision provider (ADR-0111 D4/D5, MM-2): a separate provider instance that advertises ONLY
+ * `IMAGE_UNDERSTANDING`. `ollama run <model> <image path>…` loads the images named as arguments (the CLI reads them
+ * from the runner-owned temp files and hands them to the local daemon); the prompt goes on stdin with every image-file
+ * token neutralized, so untrusted text cannot make the CLI load another file. Ready means the daemon answers, the
+ * model is installed, and `ollama show` reports the `vision` capability. A cloud-served model (`*cloud*`) declares
+ * `REMOTE`, is never ready, and refuses every request: image bytes never leave this host (owner decision 9).
+ * The image paths never appear in the result, audit or error text.
+ */
+export class OllamaCliVisionProvider extends BaseCliAiProvider {
+  readonly id: string;
+  readonly executionLocality: AiExecutionLocality;
+  protected readonly bin: string;
+  private readonly model: string;
+  private readonly runner: CliRunner;
+  private readonly defaultTimeoutMs: number;
+
+  readonly capabilities: readonly AiCapabilityDescriptor[] = [
+    { capability: Capability.IMAGE_UNDERSTANDING, priority: 100 },
+  ];
+
+  constructor(options: OllamaCliVisionProviderOptions) {
+    super();
+    this.model = validatedOllamaVisionModel(options.model);
+    this.id = options.providerId ?? 'ollama-vision-cli';
+    this.bin = options.bin ?? 'ollama';
+    this.executionLocality = ollamaModelExecutionLocality(this.model);
+    this.runner = options.runner ?? defaultCliRunner;
+    this.defaultTimeoutMs = options.timeoutMs ?? DEFAULT_OLLAMA_VISION_TIMEOUT_MS;
+  }
+
+  /** `ollama run <model> <image path>…`; the prompt is supplied via stdin, never as an argv. */
+  buildArgs(imagePaths: readonly string[] = []): string[] {
+    return ['run', this.model, ...imagePaths];
+  }
+
+  /** Real readiness: LOCAL, daemon up, model installed (no implicit pull), and Ollama reports `vision` for it. */
+  override async isAvailable(): Promise<boolean> {
+    if (this.executionLocality !== 'LOCAL') return false;
+    try {
+      const probe = { cwd: tmpdir(), input: '', timeoutMs: OLLAMA_PROBE_TIMEOUT_MS, env: OLLAMA_COLOR_ENV };
+      const list = await this.runner(this.bin, ['list'], probe);
+      if (list.code !== 0 || list.timedOut || !ollamaListIncludesModel(list.stdout, this.model)) return false;
+      const show = await this.runner(this.bin, ['show', this.model], probe);
+      return show.code === 0 && !show.timedOut && ollamaShowAdvertisesVision(show.stdout);
+    } catch {
+      return false;
+    }
+  }
+
+  override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    if (request.capability !== Capability.IMAGE_UNDERSTANDING) {
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision provider serves IMAGE_UNDERSTANDING only');
+    }
+    if (this.executionLocality !== 'LOCAL') {
+      throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'ollama vision model is not local; images are not sent');
+    }
+    const images = request.images ?? [];
+    if (images.length === 0 || images.length > MAX_OLLAMA_VISION_IMAGES) {
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision: 1 to 3 images are required');
+    }
+    const paths = images.map(validatedVisionImagePath);
+    if (new Set(paths).size !== paths.length) {
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision: image reference refused');
+    }
+    const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
+    const promptSha256 = createHash('sha256').update(Buffer.from(request.prompt, 'utf8')).digest('hex');
+
+    const result = await this.runner(this.bin, this.buildArgs(paths), {
+      cwd: tmpdir(),
+      input: defangOllamaImageTokens(request.prompt),
+      timeoutMs,
+      env: OLLAMA_COLOR_ENV,
+      downloadMarkerPolicy: 'OLLAMA_PULL_STDERR',
+    });
+    const stderr = withoutImagePaths(result.stderr, paths);
+
+    if (result.downloadObserved === true) {
+      throw new AiProviderError(
+        AiFailureKind.UNAVAILABLE,
+        'ollama vision model is not installed locally; implicit model download was aborted',
+      );
+    }
+    if (result.timedOut) {
+      throw new AiProviderError(AiFailureKind.TIMEOUT, `ollama vision CLI timed out after ${timeoutMs}ms`);
+    }
+    if (result.code === null) {
+      throw new AiProviderError(
+        AiFailureKind.UNAVAILABLE,
+        `ollama vision CLI could not run: ${maskSecrets(stderr).slice(0, 300)}`,
+      );
+    }
+    if (result.code !== 0) {
+      throw new AiProviderError(
+        classifyOllamaExitStderr(stderr),
+        `ollama vision CLI exited ${result.code}: ${maskSecrets(stderr).slice(0, 300)}`,
+      );
+    }
+    // The CLI silently skips an image it cannot find; an answer without the image would be a guess, so fail closed.
+    if ((result.stderr.match(OLLAMA_IMAGE_ADDED_MARKER) ?? []).length < paths.length) {
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision CLI did not load every attached image');
+    }
+
+    const text = withoutImagePaths(sanitizeTerminalOutput(result.stdout), paths).trim();
+    if (!text) {
+      throw new AiProviderError(AiFailureKind.EMPTY_OUTPUT, 'ollama vision CLI returned empty output');
+    }
+    const model = sanitizedOllamaModelName(this.model);
+    const artifact: Artifact = {
+      id: newId(),
+      kind: ArtifactKind.MARKDOWN_REPORT,
+      title: 'ollama-vision-response',
+      content: text,
+      createdAt: now(),
+    };
+    return {
+      text,
+      artifacts: [artifact],
+      raw: { exitCode: result.code },
+      audit: {
+        model,
+        sanitizedCommand: ['ollama', 'run', model, ...paths.map(() => '<image>')],
+        promptSha256,
+        imageCount: paths.length,
         captureMode: 'pipe',
         colorDisabled: true,
         outputSanitized: true,

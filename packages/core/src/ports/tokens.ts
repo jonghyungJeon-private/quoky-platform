@@ -41,3 +41,10 @@ export const LEARNING_REPOSITORY = Symbol('LearningRepository');
 // Personal v3 (ADR-0110 D1, CAL-1): the read-only calendar reader. Bound only when a calendar is fully configured
 // (CAL-2 composition); absent means no calendar, and QUAL-7 routing stays unchanged (ADR-0110 D5).
 export const CALENDAR_READER = Symbol('CalendarReader');
+// Personal v3 (ADR-0112 D2/D3, ADR-0110 amendment; CWR-1): narrow connector write ports and the v15 write receipts.
+// Bound only when connector writes are enabled and allowlisted (CWR-2 composition); absent means writes stay refused.
+export const ISSUE_COMMENT_WRITER = Symbol('IssueCommentWriter');
+export const ISSUE_TRANSITION_WRITER = Symbol('IssueTransitionWriter');
+export const CHANNEL_MESSAGE_WRITER = Symbol('ChannelMessageWriter');
+export const CALENDAR_EVENT_WRITER = Symbol('CalendarEventWriter');
+export const CONNECTOR_WRITE_RECEIPT_REPOSITORY = Symbol('ConnectorWriteReceiptRepository');
