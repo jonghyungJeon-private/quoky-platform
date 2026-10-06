@@ -68,6 +68,8 @@ import { CURATED_EXAMPLES_SECTION_TITLE, PromptComposer } from './prompt-compose
 import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { renderInternalActionClaimNotice, renderInternalActionNotDone } from './chat-policy/internal-action-vocabulary';
+import { renderOwnMemoryNotFound } from './chat-policy/own-memory-recall';
+import { DefaultMemoryRetriever } from './memory-retriever';
 import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
 import { StatelessApplyPreviewFlow } from './stateless-apply-preview-flow';
@@ -10815,6 +10817,183 @@ describe('ADR-0104 DET-1 — state-aware code-chain status replies (QA-V2-W8-02)
     const { result, calls } = await statusTurn('푸시했어', { status: 'GIT_PUSHED' });
     expect(result.reply.text.startsWith('이미 push했어요')).toBe(true);
     expect(calls.classify).toBe(0);
+  });
+});
+
+describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3, ADR-0106)', () => {
+  const QUESTION = '내가 좋아하는 과일이 뭐였지?';
+  const NOT_FOUND = renderOwnMemoryNotFound('ko');
+  const durableEntry = (content: string): NonNullable<ContextBundle['durableRecall']>[number] => ({
+    content,
+    provenance: 'USER_PROVIDED',
+    epistemicStatus: 'NON_AUTHORITATIVE_BACKGROUND',
+    relevanceScore: 0.5,
+    retrievalReason: 'test',
+    source: {
+      memoryId: `mem-${content.length}`,
+      kind: 'SEMANTIC',
+      authorityLevel: 'USER_CLAIM_OR_INTENT',
+      scope: { actorId: ACTOR.id },
+      createdAt: TS,
+      updatedAt: TS,
+      metadata: {},
+    },
+  });
+
+  /** A chat work turn whose ContextBuilder yields `bundle` (or a real ContextBuilder), counting every provider touch. */
+  function ownMemoryRuntime(opts: {
+    bundle?: Partial<ContextBundle>;
+    contextBuilder?: ConversationRuntimeDeps['contextBuilder'];
+    routed?: boolean;
+    capability?: Capability;
+  } = {}) {
+    const { storage, runSaves, taskSaves } = makeTaskStorage();
+    const { deps: base, calls } = makeDeps({
+      intent: intentOf(opts.capability ?? Capability.GENERAL_CHAT, IntentType.CHAT, true),
+      session: sessionOf({ activeProjectId: undefined }),
+    });
+    const recorded: string[] = [];
+    const execute = vi.fn(async () => ({ text: 'provider answer', artifacts: [] }));
+    const select = vi.fn(async () => ({ id: 'any-provider', capabilities: [], isAvailable: async () => true, execute }));
+    const routedExecute = vi.fn(async () => {
+      const accepted = routedResultOf(ProviderGatewayTerminalStatus.ACCEPTED);
+      return { ...accepted, output: { ...accepted.output!, text: 'routed answer', artifacts: [] } } as RuntimeProviderRoutingResult;
+    });
+    const commit = vi.fn(async () => ({}) as TaskRun);
+    const compose = vi.fn(() => ({}) as unknown as PromptSpec);
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      ...workTurnHappyPathDeps(),
+      tasks: new TaskManager(storage),
+      dispatchCommit: { commit },
+      contextBuilder: opts.contextBuilder ?? {
+        async build(task) {
+          return { taskId: task.id, conversationTranscript: [], backgroundResources: [], ...opts.bundle };
+        },
+      },
+      promptComposer: { compose },
+      memory: { ...base.memory, async recordAssistant(reply: string) { recorded.push(reply); return undefined; } },
+      router: { select },
+      ...(opts.routed ? { runtimeProviderRouting: { execute: routedExecute } } : {}),
+    };
+    const providerTouches = () =>
+      execute.mock.calls.length + select.mock.calls.length + routedExecute.mock.calls.length + commit.mock.calls.length;
+    return { runtime: new ConversationRuntime(deps), calls, recorded, runSaves, taskSaves, providerTouches, compose };
+  }
+
+  it.each([false, true])('no recall hit → the fixed truthful reply with zero provider calls (routed seam=%s)', async (routed) => {
+    const h = ownMemoryRuntime({ routed });
+    const result = await h.runtime.handle(messageOf(QUESTION));
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(NOT_FOUND);
+    expect(h.providerTouches()).toBe(0);
+    expect(h.compose).not.toHaveBeenCalled();
+    expect(h.recorded).toEqual([NOT_FOUND]);
+    // The chat Task/TaskRun close normally (no provider id) — nothing is left RUNNING.
+    expect(h.runSaves.at(-1)).toMatchObject({ status: TaskRunStatus.SUCCEEDED, metadata: { deterministicReply: 'own-memory-not-found' } });
+    expect(h.runSaves.at(-1)?.providerId).toBeUndefined();
+    expect(h.taskSaves.at(-1)?.status).toBe(TaskStatus.COMPLETED);
+    expect(result.workFacts?.providerId).toBeUndefined();
+    const logged = h.calls.loggerInfoCalls.find((c) => c.message === 'own memory question answered without recall hit');
+    expect(logged).toBeDefined();
+    expect(JSON.stringify(logged)).not.toContain('과일');
+  });
+
+  it('an English question gets the English reply; POLICY_SENSITIVE_CHAT is covered too', async () => {
+    const en = ownMemoryRuntime();
+    expect((await en.runtime.handle(messageOf('what did I say my favourite fruit was?'))).reply.text).toBe(
+      renderOwnMemoryNotFound('en'),
+    );
+    const sensitive = ownMemoryRuntime({ capability: Capability.POLICY_SENSITIVE_CHAT });
+    expect((await sensitive.runtime.handle(messageOf(QUESTION))).reply.text).toBe(NOT_FOUND);
+    expect(sensitive.providerTouches()).toBe(0);
+  });
+
+  it.each([false, true])('a recall hit keeps the provider flow unchanged (routed seam=%s)', async (routed) => {
+    const h = ownMemoryRuntime({ routed, bundle: { durableRecall: [durableEntry('좋아하는 과일은 귤')] } });
+    const result = await h.runtime.handle(messageOf(QUESTION));
+    expect(result.reply.text).toBe(routed ? 'routed answer' : 'provider answer');
+    expect(h.compose).toHaveBeenCalledTimes(1);
+    expect(h.providerTouches()).toBeGreaterThan(0);
+  });
+
+  it("the User's own earlier turn in this conversation is a hit (the provider answers from the transcript)", async () => {
+    const h = ownMemoryRuntime({
+      bundle: { conversationTranscript: [{ role: 'user', content: '나는 과일 중에 귤이 제일 좋아', provenance: 'USER', epistemicStatus: 'USER_CLAIM_OR_INTENT' }] },
+    });
+    expect((await h.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
+  });
+
+  it('any durable recall in the built context keeps the provider flow; ordinary chat and general knowledge reach the provider', async () => {
+    // The retriever decides relevance; the runtime never re-judges a recalled entry lexically (Codex P2).
+    const anyRecall = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
+    expect((await anyRecall.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
+    expect(anyRecall.providerTouches()).toBeGreaterThan(0);
+    for (const text of ['사과의 효능이 뭐야?', '너가 좋아하는 과일이 뭐야?', '내 생일 기억해?', '내가 방금 뭐라고 했지?']) {
+      const h = ownMemoryRuntime();
+      expect((await h.runtime.handle(messageOf(text))).reply.text, text).toBe('provider answer');
+    }
+  });
+
+  it('an archived record counts as no hit through the real ContextBuilder and DefaultMemoryRetriever; restored, it is a hit', async () => {
+    const record = (archived: boolean): MemoryRecord => ({
+      id: 'durable-fruit',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content: '좋아하는 과일은 귤',
+      metadata: {
+        kind: 'SEMANTIC',
+        provenance: 'USER_PROVIDED',
+        authorityLevel: 'USER_CLAIM_OR_INTENT',
+        ...(archived ? { archivedAt: TS, archiveExpiresAt: '2026-07-08T00:00:00.000Z' } : {}),
+      },
+      createdAt: TS,
+      updatedAt: TS,
+    });
+    const realContext = (archived: boolean) =>
+      new ContextBuilder(
+        { async recentShortTerm() { return []; } } as unknown as MemoryManager,
+        {},
+        // A repository that ignores the archived filter: the retriever's own re-check must still drop the record.
+        new DefaultMemoryRetriever({ async findDurableCandidates() { return [record(archived)]; } } as never),
+      );
+    const archived = ownMemoryRuntime({ contextBuilder: realContext(true) });
+    expect((await archived.runtime.handle(messageOf(QUESTION))).reply.text).toBe(NOT_FOUND);
+    expect(archived.providerTouches()).toBe(0);
+    const active = ownMemoryRuntime({ contextBuilder: realContext(false) });
+    expect((await active.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
+    expect(active.providerTouches()).toBeGreaterThan(0);
+  });
+
+  it('Codex P2 regression: a semantically recalled memory with no shared word ("나는 철수야" for "내 이름이 뭐였지?") is a hit', async () => {
+    const record: MemoryRecord = {
+      id: 'durable-name',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content: '나는 철수야',
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    const scored: string[] = [];
+    const contextBuilder = new ContextBuilder(
+      { async recentShortTerm() { return []; } } as unknown as MemoryManager,
+      {},
+      new DefaultMemoryRetriever({ async findDurableCandidates() { return [record]; } } as never, {
+        semanticScorer: {
+          async score(_query, candidates) {
+            scored.push(...candidates.map((c) => c.id));
+            return new Map(candidates.map((c) => [c.id, 0.99]));
+          },
+        },
+      }),
+    );
+    const h = ownMemoryRuntime({ contextBuilder });
+    const result = await h.runtime.handle(messageOf('내 이름이 뭐였지?'));
+    expect(scored).toEqual(['durable-name']);
+    expect(result.reply.text).toBe('provider answer');
+    expect(h.compose).toHaveBeenCalledTimes(1);
+    expect(h.providerTouches()).toBeGreaterThan(0);
   });
 });
 

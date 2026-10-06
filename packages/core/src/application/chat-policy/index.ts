@@ -47,3 +47,5 @@ export type {
 } from './internal-action-vocabulary';
 export { detectInternalActionClaim, guardInternalActionClaims } from './internal-action-claim-guard';
 export type { InternalActionClaim, InternalActionGuardResult } from './internal-action-claim-guard';
+export { detectOwnMemoryRecallQuestion, hasOwnMemoryRecallHit, renderOwnMemoryNotFound } from './own-memory-recall';
+export type { OwnMemoryRecallContext, OwnMemoryRecallQuestion, OwnMemoryRelation } from './own-memory-recall';

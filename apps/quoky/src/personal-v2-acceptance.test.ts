@@ -39,6 +39,7 @@ import {
   generalChatReplyPolicy,
   guardInternalActionClaims,
   renderInternalActionNotDone,
+  renderOwnMemoryNotFound,
   type AiProvider,
   type ApplyPreviewAnchor,
   type ConversationContext,
@@ -333,7 +334,11 @@ async function boot(): Promise<Harness> {
         route,
         handler: claimed[0] !== undefined ? (PRECEDENCE_LABEL[claimed[0]] ?? claimed[0]) : 'none',
         ...(claimed[0] === 'work-chat.todo' || claimed[0] === 'work-chat.lookup' ? { kind } : {}),
-        ...(route === 'runtime' ? { reply: runtimeReplyLabel(composer, context, replyText) } : {}),
+        ...(route === 'runtime'
+          ? { reply: runtimeReplyLabel(composer, context, replyText) }
+          : route === 'classifier' && isOwnMemoryNotFound(replyText)
+            ? { reply: 'own-memory-not-found' }
+            : {}),
         providerCalls: providerCalls - providerBefore,
         availabilityProbes: availabilityProbes - probesBefore,
         text: replyText,
@@ -372,6 +377,11 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
     }
   }
   return 'other';
+}
+
+/** W3-L01: the deterministic own-memory "not in memory" reply (sent after classification, on the chat path). */
+function isOwnMemoryNotFound(text: string): boolean {
+  return text === renderOwnMemoryNotFound('ko') || text === renderOwnMemoryNotFound('en');
 }
 
 /** Finer labels for the action-shaped corpus' state-aware replies (existing replies the routing corpus labels `other`). */
@@ -621,7 +631,10 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
 describe('Personal v2 acceptance — deterministic turns never reach a provider', () => {
   it('every deterministic routing case made zero provider calls and zero availability probes (setup included)', async () => {
     const byId = await observeSuite(routing);
-    const deterministic = routing.cases.filter((golden) => golden.expected.route !== 'classifier');
+    // W3-L01: a `classifier` case pinned to `providerCalls: 0` is a deterministic chat-path reply (own-memory no hit).
+    const deterministic = routing.cases.filter(
+      (golden) => golden.expected.route !== 'classifier' || golden.expected.providerCalls === 0,
+    );
     expect(deterministic.length).toBeGreaterThan(30);
     for (const golden of deterministic) {
       const seen = byId.get(golden.id) as CaseObservation;
@@ -633,7 +646,9 @@ describe('Personal v2 acceptance — deterministic turns never reach a provider'
 
   it('positive control: a fall-through turn does reach the (stubbed) provider, so the counter is live', async () => {
     const byId = await observeSuite(routing);
-    const fallThrough = routing.cases.filter((golden) => golden.expected.route === 'classifier');
+    const fallThrough = routing.cases.filter(
+      (golden) => golden.expected.route === 'classifier' && golden.expected.providerCalls !== 0,
+    );
     expect(fallThrough.length).toBeGreaterThan(0);
     for (const golden of fallThrough) {
       const seen = byId.get(golden.id) as CaseObservation;
@@ -768,7 +783,7 @@ describe('Personal v3 DET-1 — action-shaped fall-through corpus (ADR-0104 D6)'
     );
     for (const golden of turnCases()) {
       const seen = byId.get(golden.id) as CaseObservation;
-      if (golden.expected.route === 'classifier') {
+      if (golden.expected.route === 'classifier' && golden.expected.providerCalls !== 0) {
         expect(seen.providerCalls, `${golden.id} ${golden.text}`).toBeGreaterThan(0);
         continue;
       }
@@ -1294,6 +1309,31 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect(purge.purged).toBeGreaterThanOrEqual(1);
     expect(await harness.storage.memories.get(record.id)).toBeNull();
     expect((await harness.turn(owner, '보관함')).text).toContain('보관함이 비어 있어요');
+  });
+
+  it('W3-L01 live case: own-memory question → provider with the memory; archived → truthful not-in-memory reply, zero provider calls; restored → provider again', async () => {
+    const owner = harness.freshContext();
+    const question = '내가 좋아하는 과일이 뭐였지?';
+    const notFound = renderOwnMemoryNotFound('ko');
+    expect((await harness.turn(owner, '기억해: 내가 좋아하는 과일은 귤이야')).reply).toBe('memory-stored');
+    const withMemory = await harness.turn(owner, question);
+    expect(withMemory).toMatchObject({ route: 'classifier', text: STUB_REPLY });
+    expect(withMemory.providerCalls).toBe(1);
+
+    const ask = await harness.turn(owner, '기억 1 잊어줘');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(ask.text)}`)).text).toContain('이 기억을 잊었어요');
+    const before = harness.providerCalls() + harness.availabilityProbes();
+    const archived = await harness.turn(owner, question);
+    expect(archived).toMatchObject({ route: 'classifier', reply: 'own-memory-not-found', providerCalls: 0, text: notFound });
+    expect(harness.providerCalls() + harness.availabilityProbes() - before).toBe(0);
+    // Asking again is still no hit (the earlier question in history is not evidence).
+    expect((await harness.turn(owner, question)).text).toBe(notFound);
+
+    const restoreAsk = await harness.turn(owner, '기억 복원 1');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(restoreAsk.text)}`)).text).toContain('기억을 복원했어요');
+    const restored = await harness.turn(owner, question);
+    expect(restored).toMatchObject({ route: 'classifier', text: STUB_REPLY });
+    expect(restored.providerCalls).toBe(1);
   });
 
   it('credential-like record text is never archived (deleted at once), and QUOKY_MEMORY_ARCHIVE_DAYS=0 deletes at once (real SQLite)', async () => {
