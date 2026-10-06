@@ -61,7 +61,7 @@ on a decision. P0 and P1 make up the 85% target.
 |---|---|
 | P0 | v2 carry-over live sessions (section 2), SUB-1/2 always-on runtime, DET deterministic coverage, LLM local-model quality, MEM memory commands, LRN-1/2 measurement and owner-curated loop, CODE-6/7 PR status and PR title/body |
 | P1 | CAL-1/2 calendar read, MM-1/2 files and images, CWR-1/2 Jira comment/transition and Slack post, LRN-3 offline mining, OPS-1 local operations UI (monitoring), OPS-2 (reminder cancel and memory forget from the UI) |
-| P2 | SUB-3 continuation activation, CODE-8 multi-repo, CODE-9 merge enablement, LRN-4 local fine-tuning, calendar writes, OPS-2b (UI approve and reject: approval decision extraction from `conversation-runtime.ts`, chat preview reference line, `OPS_DECISION_RESULT`, config fold) |
+| P2 | SUB-3 continuation activation, CODE-8 multi-repo, CODE-9 merge enablement, LRN-4 local fine-tuning, OPS-2b (UI approve and reject: approval decision extraction from `conversation-runtime.ts`, chat preview reference line, `OPS_DECISION_RESULT`, config fold) |
 | Out | Multi-agent runtime, Team/Hosted tenancy, deploy/release automation, Confluence/GitHub-issue writes, remote access to the operations UI (Tailscale or other tunnels, LAN binding) and a separate mobile/desktop client (Team/Hosted, ADR-0113 D11), **a Telegram platform adapter (post-v3 extension: owner decision 2026-10-06, after all v3 development completes; see `ROADMAP.md` "Post-v3 extensions")** |
 
 ## 2. Carry-over from v2 (not yet live, or accepted residuals)
@@ -628,6 +628,8 @@ This mirrors the v2 run.
 | Connector credentials still not provided | CAL/CWR live QA slips; their offline work still merges, flag-gated |
 | The operations UI opens a local listener and a second approval surface (OPS) | Loopback-only, per-start `0600` token, CSRF and Host/Origin checks, default off; shared Core use cases with the chat confirmations; approve needs the chat preview reference |
 | Scope creep across 10 tracks | Tiers: P2 is droppable; the "needed for a real user?" gate on every new item |
+
+**Calendar writes (2026-10-06):** promoted from P2 to P1 by the owner — ADR-0110 amendment (primary calendar only, `calendar.events`, exact-payload CRITICAL approval, no invitations, `QUOKY_CALENDAR_WRITE_ENABLED` default false); ships with CWR-2 in wave 5.
 
 ## 7. Open decisions for the owner
 

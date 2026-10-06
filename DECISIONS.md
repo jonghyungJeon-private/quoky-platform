@@ -16725,3 +16725,28 @@ OPS-2b merge (no-bypass extraction).
   token, recorded here as part of D6's interface reach. Restore clears the flag and re-embeds lazily on the next
   semantic-recall cache miss (the command service makes no provider call). An archive's expiry is fixed when it is
   archived; lowering `QUOKY_MEMORY_ARCHIVE_DAYS` later does not shorten existing archives.
+
+## ADR-0110 amendment — Calendar writes on the owner's primary calendar behind exact-payload approvals (2026-10-06)
+
+- **Status:** Ratified by the Product Owner on 2026-10-06 ("캘린더 쓰기 권장안으로 ratify"). Amends ADR-0110 ("writes are
+  refused") and ADR-0112's "calendar writes stay refused"; owner decision 4 is extended from read-only to read + write.
+- **Context:** The owner connects the company Google Workspace calendar and wants Quoky to create, move and delete events,
+  not only read them.
+- **Decision:**
+  1. **Scope.** OAuth requests `calendar.readonly` and `calendar.events` only (no calendar settings, ACL or sharing
+     scopes). The `calendar-auth` helper refuses a grant broader than these two. Reads keep using the read path.
+  2. **Target.** The owner's **primary** calendar only. Other, shared or delegated calendars are never written.
+  3. **Operations.** Create, update (time/title/location/description) and delete of events Quoky can identify
+     unambiguously; recurring-series edits are refused in v3 (single instances only).
+  4. **Approval.** Every write uses the ADR-0112 pattern: a deterministic preview of the exact payload (title, start/end
+     with time zone, location, description), a one-time CRITICAL approval bound to the payload hash, execution of
+     exactly the approved payload, a write receipt (v15 `connector_write_receipts`, no payload text), no automatic retry
+     on an UNCERTAIN outcome, and truthful copy on every outcome.
+  5. **No invitations.** Attendees are not set and `sendUpdates=none` is always passed, so no e-mail leaves for other
+     people. Adding attendees needs a separate owner decision.
+  6. **Egress.** Calendar text stays local-only as before (LOCAL providers for any summary; no Claude fallback); the
+     write preview is deterministic and needs no provider.
+  7. **Flag and phasing.** `QUOKY_CALENDAR_WRITE_ENABLED` (default `false`) gates all writes. Reads ship with CAL-2
+     (wave 4); writes ship with the connector-write flow in wave 5 (CWR-2), after CWR-1's receipts (v15).
+- **Consequences:** + the calendar becomes a real assistant surface; + no third party is e-mailed. − a mistaken approved
+  write changes the owner's company calendar (mitigated by exact preview + one-time approval + receipts).
