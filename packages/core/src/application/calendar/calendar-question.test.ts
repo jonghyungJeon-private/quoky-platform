@@ -106,6 +106,9 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
       '내일 일정 뭐야?',
       '내일 9시에 회의 알려줘',
       '회의 잡는 법 알려줘',
+      '내일 회의록 만들어줘',
+      '오늘 통화 내용을 표로 만들어줘',
+      '내일 회의 자료 만들어줘',
       // Codex P2 (wave 4): quoted phrases, requests about a phrase, negated / reported / past statements.
       '"금요일 일정 삭제해줘"를 영어로 번역해줘',
       '내일 일정 삭제해줘라고 요청하지 않았어',

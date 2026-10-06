@@ -87,8 +87,10 @@ const WRITE_KO = new RegExp(String.raw`${WRITE_NOUN_KO}[^.!?？\n]{0,20}?${WRITE
 const CREATE_TIME_KO = String.raw`(?:오늘|내일|모레|글피|이번\s*주|다음\s*주|[월화수목금토일]요일|오전|오후|아침|저녁|점심|\d{1,2}\s*시)`;
 const CREATE_NOUN_KO = String.raw`(?:회의|미팅|약속|일정|면담|통화|콜)`;
 const CREATE_VERB_KO = String.raw`(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)\s*(?:줘|주세요|줄래|주실래요|줄\s*수\s*있)`;
+// The booking verb must follow the meeting noun directly (only a particle / "하나" / "좀" in between), so content
+// requests ("내일 회의록 만들어줘", "오늘 통화 내용을 표로 만들어줘") are not bookings (Codex P2).
 const CREATE_KO = new RegExp(
-  String.raw`${CREATE_TIME_KO}[^.!?？\n]{0,30}?${CREATE_NOUN_KO}[^.!?？\n]{0,12}?${CREATE_VERB_KO}`,
+  String.raw`${CREATE_TIME_KO}[^.!?？\n]{0,30}?${CREATE_NOUN_KO}(?:\s*(?:을|를|이|가|도|하나|한\s*개|좀|일정))?\s*${CREATE_VERB_KO}`,
   'u',
 );
 const WRITE_EN =
