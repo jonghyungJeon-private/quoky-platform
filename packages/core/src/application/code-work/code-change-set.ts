@@ -135,31 +135,65 @@ const TECHNOLOGY_JS_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Receiver / global identifiers that commonly prefix a method or property spelled like `name.ext` (`res.json`,
- * `el.html`, `this.css`, `JSON.md`…) — code, never a root file name (compared lowercased). Deliberately excludes real
- * root-file stems (`app`, `index`, `main`, `server`, `config`, `test`).
+ * Language receiver keywords (`this`, `self`, `super`). A dotted token that starts with one (`this.res.json`) is a
+ * member chain — the `res.json` part follows a `.` — never a file name. These are keywords, not a name heuristic: no
+ * project file is named `this.<…>`.
  */
-const RECEIVER_STEMS: ReadonlySet<string> = new Set([
-  'res', 'resp', 'response', 'req', 'request', 'ctx', 'el', 'elem', 'element', 'obj', 'this', 'self', 'body',
-  'result', 'window', 'document', 'console', 'process', 'err', 'error', 'e', 'r', 'json', 'object', 'array', 'math',
-  'promise', 'module', 'exports',
-]);
+const RECEIVER_KEYWORDS: ReadonlySet<string> = new Set(['this', 'self', 'super']);
 
 /**
  * A bare root-level filename (`test.js`, `package.json`, `README.md`): not preceded by an identifier character
  * (`\w`, `$`), a dot or `->` (a member access such as `obj.res.json` / `obj->config.json`), `~`, `:`, `@`, a slash or
  * a backslash (a dot-file, Windows or absolute spelling is never rewritten into a root file), and not followed by a
  * path character. A Korean particle may follow directly (`test.js와`, `test.js에`). A match that is a method call is
- * rejected separately ({@link CALL_AFTER_TOKEN}).
+ * rejected separately ({@link isCallAfterToken}).
  */
 const BARE_FILE_PATTERN = /(?<![\w$./\\~:@-])(?<!->)[A-Za-z0-9_][\w.-]*\.([A-Za-z][A-Za-z0-9]*)(?![\w$/\\-])/g;
 
+/** Upper bound on the generic-argument run {@link isCallAfterToken} scans (`<Array<Array<string>>>`). */
+const MAX_GENERIC_SCAN = 200;
+
 /**
- * What follows a method-call or member-chain use of a `name.ext` token: optional whitespace, optional generic
- * arguments (`<T>`, one nesting level), optional `?.`, then `(` — `res.json()`, `res.json ()`, `res.json<T>()`,
- * `res.json?.()` — or an optional-chaining continuation (`res.json?.data`). Such a token is code, never a file.
+ * Whether the text right after a `name.ext` token makes it a method call or member chain — code, never a file:
+ * optional whitespace, an optional BALANCED generic-argument list (`<T>`, `<Array<Array<string>>>`; depth-counted,
+ * bounded by {@link MAX_GENERIC_SCAN}; an unbalanced or over-long run is not a call), optional whitespace, an optional
+ * `?.`, then `(` — `res.json()`, `res.json ()`, `res.json<T>()`, `res.json?.()` — or an optional-chaining
+ * continuation directly after the token (`res.json?.data`).
  */
-const CALL_AFTER_TOKEN = /^\s*(?:<[^<>()\n]*(?:<[^<>()\n]*>[^<>()\n]*)*>\s*)?(?:\?\.\s*)?\(|^\?\./;
+function isCallAfterToken(after: string): boolean {
+  if (after.startsWith('?.')) return true;
+  let i = 0;
+  const skipSpace = (): void => {
+    while (i < after.length && /\s/.test(after[i] ?? '')) i += 1;
+  };
+  skipSpace();
+  if (after[i] === '<') {
+    let depth = 0;
+    const limit = Math.min(after.length, i + MAX_GENERIC_SCAN);
+    let closed = false;
+    for (; i < limit; i += 1) {
+      const ch = after[i];
+      if (ch === '<') depth += 1;
+      else if (ch === '>') {
+        depth -= 1;
+        if (depth === 0) {
+          i += 1;
+          closed = true;
+          break;
+        }
+      } else if (ch === '(' || ch === ')' || ch === '\n') {
+        return false;
+      }
+    }
+    if (!closed) return false;
+    skipSpace();
+  }
+  if (after.startsWith('?.', i)) {
+    i += 2;
+    skipSpace();
+  }
+  return after[i] === '(';
+}
 
 /**
  * Bare root-level filename candidates with their positions (QA-V2-CL-01, ADR-0099 D1 "every safe named path").
@@ -175,9 +209,9 @@ function bareRootFileCandidates(text: string): Array<{ index: number; path: stri
     if (!BARE_FILE_EXTENSIONS.has(extension)) continue;
     const stem = token.slice(0, token.length - extension.length - 1).toLowerCase();
     if (extension === 'js' && TECHNOLOGY_JS_NAMES.has(stem)) continue;
-    if (RECEIVER_STEMS.has(stem) || RECEIVER_STEMS.has(stem.split('.')[0] ?? '')) continue; // `res.json`, `this.res.json`
+    if (stem.includes('.') && RECEIVER_KEYWORDS.has(stem.split('.')[0] ?? '')) continue; // `this.res.json`
     const index = match.index ?? 0;
-    if (CALL_AFTER_TOKEN.test(text.slice(index + token.length))) continue;
+    if (isCallAfterToken(text.slice(index + token.length))) continue;
     out.push({ index, path: token });
   }
   return out;

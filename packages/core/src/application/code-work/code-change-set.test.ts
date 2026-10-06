@@ -145,11 +145,27 @@ describe('extractSafeTargetCandidates — bare root-level filenames (QA-V2-CL-01
     ['src/server.js 에서 this.res.json 을 바꿔줘'],
     ['src/server.js 에서 obj->config.json 을 바꿔줘'],
     ['src/server.js 에서 $el.html 을 바꿔줘'],
-    ['src/server.js 에서 `res.json` 을 `res.send` 로 바꿔줘'],
+    ['src/server.js 에서 api.json<Array<Array<string>>>() 호출을 바꿔줘'],
+    ['src/server.js 에서 api.json < Array<string> > () 호출을 바꿔줘'],
+    ['src/server.js 에서 api.json<T>?.() 호출을 바꿔줘'],
+    ['src/server.js 에서 `res.json()` 와 `res.json<T>()` 를 바꿔줘'],
     ['src/server.js 에서 `res.json()` 을 바꿔줘'],
     ['src/server.js 에 `import cfg from "config.json"` 를 추가해줘'],
   ])('Codex P2 #1: %s → a method call / member access / code span is never a bare target', (text) => {
     expect(extractSafeTargetCandidates(text).candidates).toEqual(['src/server.js']);
+  });
+
+  it.each([
+    ['src/a.ts 와 `response.json` 고쳐줘', ['src/a.ts', 'response.json']],
+    ['`config.json` 고쳐줘', ['config.json']],
+    ['package.json 고쳐줘', ['package.json']],
+    ['src/server.js 에서 `res.json` 을 `res.send` 로 바꿔줘', ['src/server.js', 'res.json']],
+    ['src/server.js 에서 res.json 을 바꿔줘', ['src/server.js', 'res.json']],
+    ['src/server.js 에서 api.json<T 를 바꿔줘', ['src/server.js', 'api.json']],
+    ['jest.config.js 와 tsconfig.base.json 고쳐줘', ['jest.config.js', 'tsconfig.base.json']],
+  ])('Codex P2 loop 2: structural rules only — a quoted or bare non-call name stays a candidate: %s', (text, candidates) => {
+    // A candidate that does not exist is named in the missing-target reply (ADR-0099 D1), never silently dropped.
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(candidates);
   });
 
   it.each([

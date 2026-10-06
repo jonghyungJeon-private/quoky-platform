@@ -9926,6 +9926,17 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, ['package.json']).text);
   });
 
+  it('Codex P2 loop 2: a quoted `response.json` is a named target — targeted when it exists, named when it does not', async () => {
+    const text = `${A} 와 \`response.json\` 고쳐줘`;
+    const present = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, 'response.json']) });
+    await new ConversationRuntime(present.deps).handle(messageOf(text));
+    expect(present.calls.lastRunRequest?.targetFiles).toEqual([A, 'response.json']);
+    const absent = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(absent.deps).handle(messageOf(text));
+    expect(absent.calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, ['response.json']).text);
+  });
+
   it('QA-V2-CL-01: a technology name such as "Node.js" is prose, never a target', async () => {
     const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/server.js']) });
     await new ConversationRuntime(deps).handle(messageOf('Node.js 18 기준으로 src/server.js 고쳐줘'));
