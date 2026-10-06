@@ -101,6 +101,7 @@ import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
 import { createProductionContextBuilder } from './context-builder-provider';
+import { createImageUnderstandingProviders } from './image-understanding-provider';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
 import { PersonalGitGuard } from './personal-git-guard';
@@ -305,6 +306,12 @@ const infrastructure: Provider[] = [
             }),
           ]
         : []),
+      // ADR-0111 D4/D5 (MM-2): opt-in local vision model (QUOKY_OLLAMA_VISION_MODEL). Advertises only
+      // IMAGE_UNDERSTANDING and declares LOCAL; image bytes never go to any other provider.
+      ...createImageUnderstandingProviders(process.env, {
+        ollamaBin: config.ai.ollamaBin,
+        logger: new ConsoleLogger('image-understanding'),
+      }),
     ],
   },
   { provide: CONNECTOR_PROVIDERS, useValue: connectorProviders },

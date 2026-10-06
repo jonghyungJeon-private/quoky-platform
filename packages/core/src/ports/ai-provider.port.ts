@@ -2,9 +2,20 @@ import type {
   Artifact,
   Capability,
   ContextFile,
+  InboundImageMimeType,
   Metadata,
   WorkspaceRef,
 } from '../domain';
+
+/**
+ * One image of an `IMAGE_UNDERSTANDING` request (ADR-0111 D1/D4): the runner-owned local temporary file the platform
+ * adapter wrote (an `InboundImageAttachment.imageRef`), valid only until the turn settles. A provider reads it in place
+ * and never copies, persists, embeds or logs it.
+ */
+export interface AiImageInput {
+  readonly path: string;
+  readonly mimeType: InboundImageMimeType;
+}
 
 /**
  * What a provider can do, and how strongly it should be preferred for it.
@@ -44,6 +55,11 @@ export interface AiRequest {
   workspace?: WorkspaceRef;
   timeoutMs?: number;
   metadata?: Metadata;
+  /**
+   * ADR-0111 D1/D5 (optional, additive): images for an `IMAGE_UNDERSTANDING` request. Core sets it only for a provider
+   * that advertises that capability AND declares `executionLocality: 'LOCAL'`; every other request omits it.
+   */
+  images?: readonly AiImageInput[];
 }
 
 export interface AiExecutionResult {

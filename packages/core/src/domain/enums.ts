@@ -72,6 +72,11 @@ export enum Capability {
    * deterministic reply instead of a downgraded answer.
    */
   POLICY_SENSITIVE_CHAT = 'POLICY_SENSITIVE_CHAT',
+  /**
+   * Reading attached images (ADR-0111 D4/D5). Only a provider that advertises it AND declares `executionLocality:
+   * 'LOCAL'` ever receives image bytes (owner decision 9); with none ready the turn gets a deterministic reply.
+   */
+  IMAGE_UNDERSTANDING = 'IMAGE_UNDERSTANDING',
 }
 
 /** What the user is (probably) trying to do, before it becomes a Capability. */

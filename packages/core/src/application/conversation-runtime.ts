@@ -14,6 +14,15 @@ import {
   renderInternalActionNotDone,
 } from './chat-policy/internal-action-vocabulary';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
+import {
+  IMAGE_UNDERSTANDING_INTENT_KIND,
+  composeImageUnderstandingPrompt,
+  imageAttachmentsOf,
+  imageInputsOf,
+  renderImageUnderstandingUnavailable,
+  textAttachmentsOf,
+} from './image-understanding';
+import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { isAcceptedExecutionPhrase } from './execution-command-guard';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
@@ -85,6 +94,7 @@ import type {
   GitStatus,
   RepositoryInfo,
   Id,
+  InboundImageAttachment,
   InboundMessage,
   Intent,
   IsoTimestamp,
@@ -2125,6 +2135,14 @@ export class ConversationRuntime {
     // Every approval-pending state above keeps its own decision flow; later states keep their own replies.
     if (applyAnchor?.status === 'ELIGIBLE' && ConversationRuntime.isPreviewDiscardUtterance(message.text)) {
       return this.handlePreviewDiscardTurn(message, session, applyAnchor);
+    }
+    // (A3b) ADR-0111 D4/D5 (MM-2): a message carrying an admitted image is an image turn — after every pending
+    // approval / scope / override intercept above (they keep their decision semantics; the image is not read there)
+    // and before every `post-anchor` / `pre-classify` handler and the classifier. Images reach only a LOCAL
+    // `IMAGE_UNDERSTANDING` provider; with none ready the reply is deterministic.
+    const images = imageAttachmentsOf(message);
+    if (images.length > 0) {
+      return this.handleImageUnderstandingTurn(message, session, actor, images);
     }
     // (A4) ADR-0096 `post-anchor` turn handlers — every pending approval / scope clarification / `*_PENDING`
     // intercept above has already captured its turn, so a handler can never pre-empt a decision. Runs BEFORE the
@@ -7176,7 +7194,13 @@ export class ConversationRuntime {
    * content-free (domain only).
    */
   private guardChatReply(capability: Capability, text: string, currentUserMessage: string, taskId?: Id): string {
-    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return text;
+    if (
+      capability !== Capability.GENERAL_CHAT &&
+      capability !== Capability.POLICY_SENSITIVE_CHAT &&
+      capability !== Capability.IMAGE_UNDERSTANDING
+    ) {
+      return text;
+    }
     const guarded = guardInternalActionClaims(text, currentUserMessage, generalChatReplyPolicy(currentUserMessage));
     if (!guarded.guarded) return text;
     this.deps.logger.info('internal action claim replaced', {
@@ -7185,6 +7209,106 @@ export class ConversationRuntime {
       ...(taskId ? { taskId } : {}),
     });
     return guarded.text;
+  }
+
+  /**
+   * ADR-0111 D3–D5 (MM-2): one image turn. The provider is selected by capability (`IMAGE_UNDERSTANDING`) and must
+   * declare `executionLocality: 'LOCAL'` (data, never its id; owner decision 9) — a REMOTE selection is treated as no
+   * provider and receives nothing. With no ready LOCAL provider the reply is the truthful deterministic notice and no
+   * Task runs. The request carries the bounded prompt (caption and text attachments as untrusted, JSON-quoted
+   * readout) and the adapter's opaque temp-file references; the provider call is awaited inside the turn, so each
+   * reference stays valid until it settles and the adapter deletes it afterwards. Image references are never
+   * recorded in memory, Task/TaskRun metadata or logs (counts only).
+   */
+  private async handleImageUnderstandingTurn(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    images: readonly InboundImageAttachment[],
+  ): Promise<TurnResult> {
+    const capability = Capability.IMAGE_UNDERSTANDING;
+    let provider: AiProvider;
+    try {
+      provider = await this.deps.router.select(capability);
+    } catch (err) {
+      if (!(err instanceof NoProviderAvailableError)) throw err;
+      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'no-ready-provider');
+    }
+    if (executionLocalityOf(provider) !== 'LOCAL') {
+      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'provider-not-local');
+    }
+
+    const intent: Intent = {
+      type: IntentType.ANALYZE_DOCUMENT,
+      capability,
+      confidence: 1,
+      requiresWork: true,
+      summary: 'Image understanding',
+      raw: { kind: IMAGE_UNDERSTANDING_INTENT_KIND, imageCount: images.length },
+    };
+    let task = await this.deps.tasks.createTask(intent, message.context, {
+      requestText: message.text,
+      actorId: actor.id,
+      sessionId: session.id,
+      ...(session.activeProjectId ? { projectId: session.activeProjectId } : {}),
+    });
+    task = await this.deps.tasks.transition(task, TaskStatus.PLANNING);
+    task = await this.deps.tasks.transition(task, TaskStatus.RUNNING);
+    const run = await this.deps.tasks.startRun(task, capability);
+    const providerId = provider.id;
+    const workFacts: TurnWorkFacts = {
+      intentType: intent.type,
+      capability,
+      taskId: task.id,
+      runId: run.id,
+      providerId,
+    };
+    try {
+      const request: AiRequest = {
+        capability,
+        prompt: composeImageUnderstandingPrompt({
+          caption: message.text,
+          images,
+          textAttachments: textAttachmentsOf(message),
+        }),
+        images: imageInputsOf(images),
+      };
+      await this.deps.dispatchCommit.commit(run.id, run.id);
+      const executed = await provider.execute(request);
+      // ADR-0104 D1: the provider-neutral internal-action claim guard also covers an image reply.
+      const result = { ...executed, text: this.guardChatReply(capability, executed.text, message.text, task.id) };
+      const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
+      await this.deps.tasks.completeRun(run, {
+        artifactIds,
+        providerId,
+        metadata: { ...(result.audit ?? {}), imageCount: images.length },
+      });
+      await this.deps.memory.recordAssistant(result.text, message.context, task.sessionId ?? session.id);
+      await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
+      this.deps.logger.info('image turn answered', { taskId: task.id, imageCount: images.length });
+      const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      return this.responded(session, reply, workFacts);
+    } catch (err) {
+      const failure = describeAiFailure(err);
+      await this.deps.tasks.failRun(run, failure.errorSummary, { providerId });
+      await this.deps.tasks.transition(task, TaskStatus.FAILED);
+      this.deps.logger.error('image turn failed', { taskId: task.id, runId: run.id, kind: failure.kind });
+      const reply = this.deps.composer.composeError(message.context, failure.userMessage);
+      return { status: 'FAILED', reply, sessionId: session.id, workFacts };
+    }
+  }
+
+  /** ADR-0111 D4: the truthful "image analysis unavailable" reply; no provider runs and nothing is sent anywhere. */
+  private async respondImageUnderstandingUnavailable(
+    message: InboundMessage,
+    session: Session,
+    imageCount: number,
+    reason: 'no-ready-provider' | 'provider-not-local',
+  ): Promise<TurnResult> {
+    // Content-free: a fixed reason and a count, never a file name, reference or caption.
+    this.deps.logger.info('image turn answered without a provider', { reason, imageCount });
+    const text = renderImageUnderstandingUnavailable(noticeLanguage(undefined, message.text));
+    return this.respondComposed(message, session, { context: message.context, text });
   }
 
   /**
