@@ -46,6 +46,23 @@ export function connectorWriteLabel(operation: ConnectorWriteOperation): string 
   }
 }
 
+/** True when the last Korean syllable of `word` ends in a final consonant (batchim); false for non-Hangul endings. */
+function hasBatchim(word: string): boolean {
+  const code = word.charCodeAt(word.length - 1);
+  if (code < 0xac00 || code > 0xd7a3) return false;
+  return (code - 0xac00) % 28 !== 0;
+}
+
+/** "Jira 댓글" → "Jira 댓글을", "Slack 게시" → "Slack 게시를" (the object particle chosen by the final consonant). */
+function withObjectParticle(word: string): string {
+  return `${word}${hasBatchim(word) ? '을' : '를'}`;
+}
+
+/** "Jira 댓글" → "Jira 댓글은", "Slack 게시" → "Slack 게시는". */
+function withTopicParticle(word: string): string {
+  return `${word}${hasBatchim(word) ? '은' : '는'}`;
+}
+
 function isCalendar(operation: ConnectorWriteOperation): boolean {
   return operation.startsWith('CALENDAR_');
 }
@@ -191,7 +208,20 @@ export function renderConnectorWriteApproved(operation: ConnectorWriteOperation,
 
 /** A bare "승인" after the approval was already recorded. */
 export function renderConnectorWriteAlreadyApproved(operation: ConnectorWriteOperation, executionPhrase: string): string {
-  return `${connectorWriteLabel(operation)}은(는) 이미 승인됐고 아직 실행하지 않았어요. 실행하려면 "${executionPhrase}"이라고 보내 주세요.`;
+  return `${withTopicParticle(connectorWriteLabel(operation))} 이미 승인됐고 아직 실행하지 않았어요. 실행하려면 "${executionPhrase}"이라고 보내 주세요.`;
+}
+
+/** A question or negation about the execution step while the write is approved: a non-mutating reminder (W5-L01). */
+export function renderConnectorWriteApprovedReminder(operation: ConnectorWriteOperation, executionPhrase: string): string {
+  return isCalendar(operation)
+    ? `승인은 기록돼 있어요. 실제로 반영하려면 "${executionPhrase}"이라고만 보내 주세요. 아직 캘린더를 바꾸지 않았어요.`
+    : `승인은 기록돼 있어요. 실제로 보내려면 "${executionPhrase}"이라고만 보내 주세요. 아직 아무것도 보내지 않았어요.`;
+}
+
+/** The execution phrase repeated after the same kind of write was already SENT (W5-L02). */
+export function renderConnectorWriteAlreadyExecuted(operation: ConnectorWriteOperation, externalRef?: string, url?: string): string {
+  void operation;
+  return ['이미 실행했어요 — 다시 보내지 않았어요.', ...linkLine(url, externalRef)].join('\n');
 }
 
 function linkLine(url: string | undefined, externalRef: string | undefined): string[] {
@@ -226,7 +256,7 @@ export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, 
     case 'NOT_SENT':
       if (outcome.reason === 'TARGET_CHANGED') return targetChangedCopy(operation);
       return [
-        `${label}을(를) 하지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. ${nothingDone(operation)}`,
+        `${withObjectParticle(label)} 하지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. ${nothingDone(operation)}`,
         '자동으로 다시 시도하지 않아요. 필요하면 새로 요청해 주세요.',
       ].join('\n');
     case 'UNCERTAIN':
@@ -276,12 +306,12 @@ export function renderConnectorWriteRepeat(
   const label = connectorWriteLabel(operation);
   switch (status) {
     case 'SENT':
-      return [`이 ${label}은(는) 이미 실행했어요. 다시 실행하지 않았어요.`, ...linkLine(url, externalRef)].join('\n');
+      return [`이 ${withTopicParticle(label)} 이미 실행했어요. 다시 실행하지 않았어요.`, ...linkLine(url, externalRef)].join('\n');
     case 'NOT_SENT':
-      return `이 ${label}은(는) 이미 실패로 끝났어요. 다시 실행하지 않아요. 필요하면 새로 요청해 주세요.`;
+      return `이 ${withTopicParticle(label)} 이미 실패로 끝났어요. 다시 실행하지 않아요. 필요하면 새로 요청해 주세요.`;
     default:
       return [
-        `이 ${label}은(는) 이미 한 번 실행했고 결과를 확인하지 못했어요. 반영됐을 수도 있어요.`,
+        `이 ${withTopicParticle(label)} 이미 한 번 실행했고 결과를 확인하지 못했어요. 반영됐을 수도 있어요.`,
         '중복을 막기 위해 다시 실행하지 않아요. 직접 확인해 주세요.',
       ].join('\n');
   }
@@ -289,7 +319,7 @@ export function renderConnectorWriteRepeat(
 
 export function renderConnectorWriteAlreadySent(operation: ConnectorWriteOperation, externalRef?: string, url?: string): string {
   return [
-    `같은 대상에 같은 내용의 ${connectorWriteLabel(operation)}을(를) 이미 실행했어요. 이미 보냈어요 — 다시 실행하지 않았어요.`,
+    `같은 대상에 같은 내용의 ${withObjectParticle(connectorWriteLabel(operation))} 이미 실행했어요. 이미 보냈어요 — 다시 실행하지 않았어요.`,
     ...linkLine(url, externalRef),
   ].join('\n');
 }

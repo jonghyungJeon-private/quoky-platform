@@ -51,6 +51,10 @@ class FakeReceipts implements ConnectorWriteReceiptRepository {
     return null;
   }
 
+  async findLatestForOperation(): Promise<ConnectorWriteReceipt | null> {
+    return null;
+  }
+
   async markInterruptedPreparedUncertain(): Promise<number> {
     return 0;
   }

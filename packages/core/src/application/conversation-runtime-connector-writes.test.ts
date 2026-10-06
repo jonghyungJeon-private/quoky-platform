@@ -131,6 +131,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
         .pop() ?? null
     );
   }
+  async findLatestForOperation(actorId: string, operation: string): Promise<ConnectorWriteReceipt | null> {
+    return [...this.rows.values()].filter((row) => row.actorId === actorId && row.operation === operation).pop() ?? null;
+  }
   async markInterruptedPreparedUncertain(): Promise<number> {
     this.reconciled++;
     return 0;
@@ -573,7 +576,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     await notSent.send('PROJ-12에 댓글: x');
     await notSent.send('승인');
     const failed = await notSent.send('댓글 실행');
-    expect(failed.reply.text).toContain('Jira 댓글을(를) 하지 못했어요: 권한이 없어요. 아무것도 보내지 않았어요.');
+    expect(failed.reply.text).toContain('Jira 댓글을 하지 못했어요: 권한이 없어요. 아무것도 보내지 않았어요.');
     expect((await notSent.send('댓글 실행')).reply.text).toContain('이미 실패로 끝났어요');
     expect(notSent.writes.addComment).toHaveLength(1);
   });
@@ -1085,12 +1088,42 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     expect(h.writes.addComment).toEqual([{ issueKey: 'PROJ-12', text: 'owner only' }]);
   });
 
+  it('a question about the execution step while a grant waits gets the non-mutating reminder (W5-L01)', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    const reply = await h.send('댓글 실행해도 돼?');
+    expect(reply.reply.text).toBe('승인은 기록돼 있어요. 실제로 보내려면 "댓글 실행"이라고만 보내 주세요. 아직 아무것도 보내지 않았어요.');
+    expect((await h.send('댓글 실행하지 마')).reply.text).toContain('아직 아무것도 보내지 않았어요');
+    expect(h.totalWrites()).toBe(0);
+    expect((await h.send('댓글 실행')).reply.text).toContain('댓글을 달았어요');
+
+    const post = harness();
+    await post.send('#dev에 게시: 배포 시작');
+    await post.send('승인');
+    expect((await post.send('Slack 게시 실행해도 돼?')).reply.text).toContain('"Slack 게시 실행"이라고만 보내 주세요');
+    expect(post.totalWrites()).toBe(0);
+  });
+
+  it('a repeated execution phrase after a SENT write says it was already executed, with the link (W5-L02)', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    await h.send('새 대화');
+    const again = await h.send('댓글 실행');
+    expect(again.reply.text).toContain('이미 실행했어요 — 다시 보내지 않았어요.');
+    expect(again.reply.text).not.toContain('승인된 외부 쓰기 요청이 없어요');
+    expect(h.writes.addComment).toHaveLength(1);
+    expect((await h.send('Slack 게시 실행')).reply.text).toContain('승인된 외부 쓰기 요청이 없어요');
+  });
+
   it('another write’s phrase while a grant waits names the right phrase instead of claiming nothing is approved', async () => {
     const h = harness();
     await h.send('#dev에 게시: 배포 시작');
     await h.send('승인');
     const reply = await h.send('댓글 실행');
-    expect(reply.reply.text).toContain('Slack 게시은(는) 이미 승인됐고 아직 실행하지 않았어요');
+    expect(reply.reply.text).toContain('Slack 게시는 이미 승인됐고 아직 실행하지 않았어요');
     expect(reply.reply.text).toContain('"Slack 게시 실행"');
     expect(reply.reply.text).not.toContain('승인된 외부 쓰기 요청이 없어요');
     expect(h.totalWrites()).toBe(0);

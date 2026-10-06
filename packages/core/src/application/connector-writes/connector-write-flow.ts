@@ -341,6 +341,11 @@ export interface ConnectorWriteFlow {
   supports(draft: ConnectorWriteDraft): boolean;
   find(session: Session): Promise<ConnectorWriteAnchorView | null>;
   /**
+   * The link/reference of this actor's most recent write of `operation`, but only when that write was SENT (a receipt);
+   * null when it was not sent or nothing was ever written (W5-L02: a repeated execution phrase after a send).
+   */
+  latestSentOutcome(actorId: Id, operation: ConnectorWriteOperation): Promise<{ externalRef?: string; url?: string } | null>;
+  /**
    * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
    */
@@ -381,6 +386,28 @@ export function isAnyConnectorWriteExecutionPhrase(text: string): boolean {
   return CONNECTOR_WRITE_OPERATIONS.some((operation) =>
     isAcceptedExecutionPhrase(connectorWriteExecutionGate(operation), text),
   );
+}
+
+/** The operations whose exact execution phrase `text` is (usually one). */
+export function connectorWriteOperationsOfPhrase(text: string): ConnectorWriteOperation[] {
+  return CONNECTOR_WRITE_OPERATIONS.filter((operation) => isAcceptedExecutionPhrase(connectorWriteExecutionGate(operation), text));
+}
+
+const EXECUTION_STEP_MENTIONS: readonly RegExp[] = [
+  /댓글실행/u,
+  /상태변경실행/u,
+  /게시실행/u,
+  /일정(?:추가|변경|삭제)실행/u,
+  /execute(?:approved)?(?:comment|transition|post|slackpost|eventcreate|eventupdate|eventdelete)/u,
+];
+
+/**
+ * True when a message talks about a connector-write execution step ("댓글 실행해도 돼?", "일정 추가 실행할까?") without
+ * being the exact phrase. Used only to pick a non-mutating reminder — never to execute (W5-L01).
+ */
+export function mentionsConnectorWriteExecutionStep(text: string): boolean {
+  const squashed = text.toLowerCase().replace(/\s+/gu, '');
+  return EXECUTION_STEP_MENTIONS.some((pattern) => pattern.test(squashed));
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */
@@ -434,6 +461,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return null;
     }
     return { taskId: task.id, anchor, approval };
+  }
+
+  async latestSentOutcome(actorId: Id, operation: ConnectorWriteOperation): Promise<{ externalRef?: string; url?: string } | null> {
+    const latest = await this.deps.receipts.findLatestForOperation(actorId, operation);
+    if (!latest || latest.status !== 'SENT') return null;
+    return {
+      ...(latest.data.externalRef ? { externalRef: latest.data.externalRef } : {}),
+      ...(latest.data.url ? { url: latest.data.url } : {}),
+    };
   }
 
   async releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null> {

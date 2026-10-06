@@ -20,12 +20,12 @@ function event(partial: Partial<CalendarEvent> & Pick<CalendarEvent, 'start' | '
   return { id: partial.id ?? `e-${partial.start}`, title: 'Event', allDay: false, status: 'confirmed', calendarName: 'primary', ...partial };
 }
 
-function render(span: CalendarSpan, events: readonly CalendarEvent[], options: { language?: 'ko' | 'en'; timeZone?: string; now?: string } = {}) {
+function render(span: CalendarSpan, events: readonly CalendarEvent[], options: { language?: 'ko' | 'en'; timeZone?: string; now?: string; writesEnabled?: boolean } = {}) {
   const timeZone = options.timeZone ?? SEOUL;
   const now = options.now ?? NOW;
   const window = placeCalendarSpan(span, now, timeZone);
   if (window === undefined) throw new Error('no window');
-  return renderCalendarEvents(window, events, { timeZone, now, language: options.language ?? 'ko', limit: 50 });
+  return renderCalendarEvents(window, events, { timeZone, now, language: options.language ?? 'ko', limit: 50, ...(options.writesEnabled === undefined ? {} : { writesEnabled: options.writesEnabled }) });
 }
 
 describe('calendar reply renderer (ADR-0110 D3)', () => {
@@ -44,6 +44,15 @@ describe('calendar reply renderer (ADR-0110 D3)', () => {
         '(Asia/Seoul 기준 · 캘린더 읽기 전용)',
       ].join('\n'),
     );
+  });
+
+  it('drops the read-only note from the footer when calendar writes are on (W5-L04)', () => {
+    const events = [event({ title: '팀 회의', start: '2026-10-06T00:00:00.000Z', end: '2026-10-06T01:00:00.000Z' })];
+    const on = render({ kind: 'day', offset: 0 }, events, { writesEnabled: true });
+    expect(on).toContain('(Asia/Seoul 기준)');
+    expect(on).not.toContain('읽기 전용');
+    expect(render({ kind: 'day', offset: 0 }, events, { writesEnabled: true, language: 'en' })).toContain('(Times in Asia/Seoul)');
+    expect(render({ kind: 'day', offset: 0 }, events, { writesEnabled: false })).toContain('캘린더 읽기 전용');
   });
 
   it('places events by the local date: a UTC-evening event is tomorrow in Seoul', () => {

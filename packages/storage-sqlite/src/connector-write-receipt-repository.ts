@@ -135,6 +135,15 @@ export class SqliteConnectorWriteReceiptRepository implements ConnectorWriteRece
     return row ? receiptOf(row) : null;
   }
 
+  async findLatestForOperation(actorId: Id, operation: ConnectorWriteOperation): Promise<ConnectorWriteReceipt | null> {
+    const row = this.db.prepare(
+      `SELECT * FROM connector_write_receipts
+       WHERE actor_id = ? AND operation = ?
+       ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+    ).get(actorId, operation) as ReceiptRow | undefined;
+    return row ? receiptOf(row) : null;
+  }
+
   async markInterruptedPreparedUncertain(now: IsoTimestamp): Promise<number> {
     return this.db.prepare(
       `UPDATE connector_write_receipts SET status = 'UNCERTAIN', updated_at = ?, data = ?
