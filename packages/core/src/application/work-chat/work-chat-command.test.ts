@@ -499,3 +499,51 @@ describe('status question detection (QA-V2-W7-05)', () => {
     expect(detectWorkChatCommand('주간 보고서 쓰기 완료했어')?.kind).toBe('todo.hint');
   });
 });
+
+describe('exact connector-write requests (ADR-0112 D5, CWR-2)', () => {
+  const write = (source: 'jira' | 'slack', draft: unknown) => ({ kind: 'connector-write', source, draft });
+
+  it.each([
+    ['JIRA-123에 댓글 달아줘: 배포 완료했습니다', write('jira', { kind: 'issue-comment', issueKey: 'JIRA-123', text: '배포 완료했습니다' })],
+    ['Jira PROJ-1에 댓글: 확인했어요', write('jira', { kind: 'issue-comment', issueKey: 'PROJ-1', text: '확인했어요' })],
+    ['지라 proj-7 이슈에 코멘트 남겨줘：  여러 줄\n둘째 줄  ', write('jira', { kind: 'issue-comment', issueKey: 'PROJ-7', text: '여러 줄\n둘째 줄' })],
+    ['comment on PROJ-2: LGTM', write('jira', { kind: 'issue-comment', issueKey: 'PROJ-2', text: 'LGTM' })],
+    ['PROJ-1에 댓글: 내일 9시에 배포한다고 알려줘', write('jira', { kind: 'issue-comment', issueKey: 'PROJ-1', text: '내일 9시에 배포한다고 알려줘' })],
+    ['PROJ-1에 댓글: "따옴표 안"', write('jira', { kind: 'issue-comment', issueKey: 'PROJ-1', text: '따옴표 안' })],
+    ['JIRA-123 진행 중으로 바꿔줘', write('jira', { kind: 'issue-transition', issueKey: 'JIRA-123', toStatus: '진행 중' })],
+    ['Jira PROJ-1 상태 Done로 변경', write('jira', { kind: 'issue-transition', issueKey: 'PROJ-1', toStatus: 'Done' })],
+    ['PROJ-9 상태를 In Review로 바꿔 주세요', write('jira', { kind: 'issue-transition', issueKey: 'PROJ-9', toStatus: 'In Review' })],
+    ['move PROJ-3 to Done', write('jira', { kind: 'issue-transition', issueKey: 'PROJ-3', toStatus: 'Done' })],
+    ['#dev에 배포 완료라고 올려줘', write('slack', { kind: 'channel-post', channel: 'dev', text: '배포 완료' })],
+    ['#dev에 "오늘 18시 배포"라고 올려줘', write('slack', { kind: 'channel-post', channel: 'dev', text: '오늘 18시 배포' })],
+    ['Slack #release 채널에 게시: v3 배포합니다', write('slack', { kind: 'channel-post', channel: 'release', text: 'v3 배포합니다' })],
+    ['슬랙 #dev에 올려줘: 점심', write('slack', { kind: 'channel-post', channel: 'dev', text: '점심' })],
+    ['post to #dev: hello team', write('slack', { kind: 'channel-post', channel: 'dev', text: 'hello team' })],
+    ['PROJ-1에 댓글 달아줘', write('jira', { kind: 'usage', topic: 'issue-comment' })],
+    ['PROJ-1에 댓글:   ', write('jira', { kind: 'usage', topic: 'issue-comment' })],
+    ['#dev에 올려줘', write('slack', { kind: 'usage', topic: 'channel-post' })],
+  ] as const)('"%s"', (text, expected) => {
+    const command = detectWorkChatCommand(text);
+    expect(command).toEqual(expected);
+    expect(workChatCommandMode(command as WorkChatCommand)).toBe('mutation');
+  });
+
+  it.each([
+    'PROJ-1에 댓글 달지 마',
+    'PROJ-1에 댓글 달았어',
+    'PROJ-1 진행 중으로 바꿨어',
+    'PROJ-1 진행 중으로 바꾸지 마',
+    'PROJ-1 진행 중으로 바꿔도 돼?',
+    'PROJ-1 담당자를 민수로 바꿔줘',
+    '#dev에 배포 완료라고 올렸어',
+    '# 제목에 올려줘: x',
+    'ABC-123 뭐야?',
+    '댓글 실행',
+  ])('"%s" is not an exact write request', (text) => {
+    expect(detectWorkChatCommand(text)?.kind).not.toBe('connector-write');
+  });
+
+  it('an anchored to-do prefix still wins ("할 일 추가: PROJ-1에 댓글: x" is a to-do)', () => {
+    expect(detectWorkChatCommand('할 일 추가: PROJ-1에 댓글: x')?.kind).toBe('todo.add');
+  });
+});

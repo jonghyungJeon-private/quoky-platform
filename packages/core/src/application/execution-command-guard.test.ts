@@ -90,6 +90,12 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
       ['patchApply', '패치 적용해줘'],
       ['validationTest', '테스트 실행해줘'],
       ['validationTypecheck', '타입체크 실행해줘'],
+      ['issueComment', '댓글 실행'],
+      ['issueTransition', '상태 변경 실행'],
+      ['channelPost', 'Slack 게시 실행'],
+      ['calendarCreate', '일정 추가 실행'],
+      ['calendarUpdate', '일정 변경 실행'],
+      ['calendarDelete', '일정 삭제 실행'],
     ]);
   });
 
@@ -157,6 +163,21 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
     ['prCreate', 'PR'],
     ['patchApply', '적용해줘'],
     ['validationTest', '테스트'],
+    // ADR-0112 / CWR-2 connector-write gates: questions, negations, reports and bare words never execute
+    ['issueComment', '댓글 실행해도 돼?'],
+    ['issueComment', '댓글 실행하지 마'],
+    ['issueComment', '댓글 실행했어'],
+    ['issueComment', '"댓글 실행"이라고 하면 어떻게 돼'],
+    ['issueComment', '댓글'],
+    ['issueComment', '실행'],
+    ['issueComment', 'KEY-1에 댓글: 댓글 실행'],
+    ['issueTransition', '상태 변경 실행할까'],
+    ['channelPost', 'Slack 게시 실행하지 말아줘'],
+    ['channelPost', '게시'],
+    ['calendarCreate', '일정 추가 실행해도 될까?'],
+    ['calendarUpdate', '일정 변경 실행 안 해'],
+    ['calendarDelete', '일정 삭제 실행 취소'],
+    ['calendarDelete', '일정 삭제해줘'],
   ] as const)('%s rejects "%s"', (gate, text) => {
     expect(isAcceptedExecutionPhrase(gate, text)).toBe(false);
   });

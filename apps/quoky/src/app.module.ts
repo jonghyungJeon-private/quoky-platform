@@ -68,6 +68,7 @@ import {
 import type {
   ContinuationBindingRepository,
   ConversationTurnHandler,
+  ConnectorWriteFlow,
   AiProvider,
   CommandRunner,
   ConnectorProvider,
@@ -115,6 +116,7 @@ import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
 import { feedbackProviders } from './features/feedback.providers';
 import { createCalendarProviders } from './features/calendar.providers';
+import { CONNECTOR_WRITE_FLOW, createConnectorWriteComposition } from './features/connector-writes.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
@@ -122,6 +124,10 @@ import { workChatProviders } from './features/work-chat.providers';
 
 const config = loadConfig();
 const coreLogger = new ConsoleLogger('quoky');
+// ADR-0112 / ADR-0110 amendment (CWR-2): the writers whose flags, allowlists and credentials are complete (default:
+// none), the v15 receipts view and the runtime's optional write flow. Built once: the calendar handler's help line
+// follows whether a calendar writer exists.
+const connectorWrites = createConnectorWriteComposition({ config, timeZone: config.reminders.timeZone });
 const runtimeProviderRouting = createProductionRuntimeProviderRoutingActivation({
   mode: config.providerRoutingMode,
   ollama: { ollamaBin: config.ai.ollamaBin },
@@ -605,6 +611,7 @@ const application: Provider[] = [
       workspaceWrite: WorkspaceWriteManager,
       git: GitManager,
       turnHandlers: readonly ConversationTurnHandler[],
+      connectorWriteFlow: ConnectorWriteFlow | null,
     ) => {
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
@@ -680,6 +687,9 @@ const application: Provider[] = [
         turnHandlers,
         // ADR-0097 (deps baseline 33 → 34): the credential-guard override flow.
         credentialOverrideFlow,
+        // ADR-0112 D5 (deps baseline 34 → 35): connector writes behind exact-payload one-time CRITICAL approvals;
+        // `undefined` when no writer is built (every write request keeps its fixed "writes are off" reply).
+        connectorWriteFlow: connectorWriteFlow ?? undefined,
         logger: coreLogger,
       }, { gitRemoteEnabled: config.git.remoteEnabled, gitMergeEnabled: config.git.mergeEnabled });
     },
@@ -709,6 +719,7 @@ const application: Provider[] = [
       WorkspaceWriteManager,
       GitManager,
       CONVERSATION_TURN_HANDLERS,
+      CONNECTOR_WRITE_FLOW,
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -745,7 +756,14 @@ const features: Provider[] = [
   ...createMemoryProviders({ archiveDays: config.memory.archiveDays }),
   // ADR-0110 (CAL-2): schedule questions from the read-only calendar (pre-classify order 150). CALENDAR_READER and the
   // handler are bound only when the calendar is configured; otherwise QUAL-7 routing is unchanged (D5).
-  ...createCalendarProviders({ calendar: config.calendar, timeZone: config.reminders.timeZone }),
+  // ADR-0110 amendment (CWR-2): with a calendar writer bound the handler's help line lists the approved write forms.
+  ...createCalendarProviders({
+    calendar: config.calendar,
+    timeZone: config.reminders.timeZone,
+    writesEnabled: connectorWrites.calendarWritesEnabled,
+  }),
+  // ADR-0112 (CWR-2): connector-write writers, receipts view and the optional runtime write flow.
+  ...connectorWrites.providers,
   turnHandlersProvider,
 ];
 

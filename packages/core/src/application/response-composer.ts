@@ -31,6 +31,14 @@ import {
 } from './credential-override/credential-override-copy';
 import type { CredentialOverrideInvalidationReason } from './credential-override/credential-override';
 import { documentedExecutionPhrase } from './execution-command-guard';
+import {
+  renderConnectorWriteAlreadyApproved,
+  renderConnectorWritePending,
+  renderConnectorWriteStep,
+  renderNoApprovedConnectorWrite,
+} from './connector-writes/connector-write-copy';
+import type { ConnectorWritePreview, ConnectorWriteStep } from './connector-writes/connector-write-flow';
+import type { ConnectorWriteOperation } from '../ports';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
 import type { WorkSurface } from './work-surface-query';
@@ -264,8 +272,12 @@ const HELP_CONTROL_LINES: readonly string[] = [
 ];
 const HELP_TEXT = [...HELP_CAPABILITY_LINES, ...HELP_CONTROL_LINES].join('\n');
 
-/** ADR-0096 D6: at most this many contributed help lines are shown (the rest are dropped, in registry order). */
-export const MAX_CONTRIBUTED_HELP_LINES = 12;
+/**
+ * ADR-0096 D6: at most this many contributed help lines are shown (the rest are dropped, in registry order). Raised
+ * 12 → 14 by CWR-2 (the connector-write lines; the 120-character line bound is unchanged): with every feature on the
+ * registry contributed exactly 12, and the Jira/Slack write line(s) need room without dropping an existing line.
+ */
+export const MAX_CONTRIBUTED_HELP_LINES = 14;
 /** ADR-0096 D6: a contributed help line longer than this is cut, ending in `…`. */
 export const MAX_CONTRIBUTED_HELP_LINE_CHARS = 120;
 
@@ -1127,6 +1139,44 @@ export class ResponseComposer {
         ].join('\n'),
       ),
     };
+  }
+
+  // ADR-0112 / ADR-0110 amendment connector-write copy (CWR-2): thin delegates over `connector-write-copy`. The preview,
+  // the pending reminder and the numbered choice are never clamped: the approval binds the full payload and a choice
+  // accepts every listed number, so cutting either would hide what is approved or chosen. Their rendered length is not
+  // bounded by one message (escaping and fences grow it); the adapter delivers a long reply in lossless chunks.
+
+  /** One connector-write flow step (preview, choice, refusal, approval recorded, outcome, repeat, …). */
+  composeConnectorWriteStep(
+    context: ConversationContext,
+    step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>,
+  ): OutboundMessage {
+    const text = renderConnectorWriteStep(step);
+    return { context, text: step.kind === 'preview' || step.kind === 'choice' ? text : clampToMessageBudget(text) };
+  }
+
+  /** Any non-decision message while a connector-write approval is pending (ADR-0093 reminder with the preview). */
+  composeConnectorWritePending(
+    context: ConversationContext,
+    preview: ConnectorWritePreview,
+    remainingMs: number,
+    executionPhrase: string,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWritePending(preview, remainingMs, executionPhrase) };
+  }
+
+  /** A bare "승인" after the connector-write approval was already recorded: nothing runs until the exact phrase. */
+  composeConnectorWriteAlreadyApproved(
+    context: ConversationContext,
+    operation: ConnectorWriteOperation,
+    executionPhrase: string,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteAlreadyApproved(operation, executionPhrase) };
+  }
+
+  /** A connector-write execution phrase with no approved write to run (QA-018 pattern). */
+  composeNoApprovedConnectorWrite(context: ConversationContext): OutboundMessage {
+    return { context, text: renderNoApprovedConnectorWrite() };
   }
 
   // ADR-0097 credential-guard override copy: thin, budget-clamped delegates over `credential-override-copy`

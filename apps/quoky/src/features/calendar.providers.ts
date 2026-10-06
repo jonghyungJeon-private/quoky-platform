@@ -34,6 +34,8 @@ export interface CalendarCompositionOptions {
   readonly timeZone: string;
   /** Offline acceptance only: replaces the configured adapter (production passes none). */
   readonly reader?: CalendarReader;
+  /** Whether a calendar writer is bound (ADR-0110 amendment, CWR-2): picks the handler's help line only. */
+  readonly writesEnabled?: boolean;
   readonly logger?: Logger;
 }
 
@@ -49,7 +51,7 @@ export function createCalendarProviders(options: CalendarCompositionOptions): Pr
     {
       provide: CALENDAR_TURN_HANDLERS,
       useFactory: (calendarReader: CalendarReader): readonly ConversationTurnHandler[] => [
-        createCalendarTurnHandler({ reader: calendarReader, timeZone, logger }),
+        createCalendarTurnHandler({ reader: calendarReader, timeZone, logger, writesEnabled: options.writesEnabled === true }),
       ],
       inject: [CALENDAR_READER],
     },

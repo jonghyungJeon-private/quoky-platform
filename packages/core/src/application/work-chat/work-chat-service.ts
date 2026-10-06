@@ -229,6 +229,9 @@ export class WorkChatService implements WorkDesk {
         case 'lookup':
           return await this.lookup(command.source, command.query, command.text, actor);
         case 'external-write-unsupported':
+        // ADR-0112 D5: the turn handler hands an exact write request to the runtime's write flow; reaching the desk
+        // (no handler in between) still answers with the fixed refusal — the desk never writes.
+        case 'connector-write':
           return reply(renderExternalWriteRefusal(command.source));
         case 'usage':
           return reply(renderWorkChatUsage(command.topic));
@@ -436,5 +439,7 @@ function isTodoCommand(command: WorkChatCommand): boolean {
 }
 
 function lookupSource(command: WorkChatCommand): WorkChatSource {
-  return command.kind === 'lookup' || command.kind === 'external-write-unsupported' ? command.source : 'jira';
+  return command.kind === 'lookup' || command.kind === 'external-write-unsupported' || command.kind === 'connector-write'
+    ? command.source
+    : 'jira';
 }
