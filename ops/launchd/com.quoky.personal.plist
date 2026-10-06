@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Quoky Personal always-on runtime (ADR-0102 D1, D8): launchd user agent template (this comment is dropped when rendered).
+  Do not load this file directly: `ops/launchd/quokyctl.sh install` fills the placeholders with absolute
+  paths and writes the result to ~/Library/LaunchAgents/<label>.plist. Installing is a Strict owner-host action.
+
+  No secrets and no EnvironmentVariables here, on purpose: quoky-launch.sh builds the app's environment from nothing
+  (env -i) plus the private host .env.local it is given (ADR-0102 D2).
+  KeepAlive/SuccessfulExit=false: launchd relaunches only after an abnormal exit (crash, kill -9), at most every
+  ThrottleInterval seconds; a clean stop and the launcher's "too many configuration exits" stop both exit 0.
+  ExitTimeOut (90 s) is above the reminder drain bound (65 s, REMINDER_TICK_STOP_TIMEOUT_MS) so SIGTERM can finish.
+  Standard output/error go to the launchd fallback log; the launcher rotates and appends to quoky.log itself.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@@LABEL@@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@LAUNCHER@@</string>
+    <string>run</string>
+    <string>--repo</string>
+    <string>@@REPO@@</string>
+    <string>--env-file</string>
+    <string>@@ENV_FILE@@</string>
+    <string>--node</string>
+    <string>@@NODE@@</string>
+    <string>--path</string>
+    <string>@@CHILD_PATH@@</string>
+    <string>--home</string>
+    <string>@@HOME@@</string>
+    <string>--data-dir</string>
+    <string>@@DATA_DIR@@</string>
+    <string>--log-dir</string>
+    <string>@@LOG_DIR@@</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@@REPO@@</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ExitTimeOut</key>
+  <integer>90</integer>
+  <key>StandardOutPath</key>
+  <string>@@LOG_DIR@@/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOG_DIR@@/launchd.log</string>
+</dict>
+</plist>
