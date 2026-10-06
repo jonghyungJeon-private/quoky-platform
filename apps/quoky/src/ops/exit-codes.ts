@@ -2,8 +2,10 @@ import type { StartupFailureReport } from '../bootstrap-preflight';
 import { QuokyConfigErrorCode } from '../config';
 import { ContinuationReceiverActivationErrorCode } from '../continuation/continuation-receiver-activation';
 import { ProviderRoutingActivationErrorCode } from '../provider-routing/provider-routing-activation';
+import { BackupErrorCode } from './backup-job';
 import { EnvFileErrorCode } from './env-file-guard';
 import { InstanceLockErrorCode } from './instance-lock';
+import { OpsConfigErrorCode } from './ops-config';
 import { StartupIdentityErrorCode } from './startup-identity-check';
 
 /**
@@ -22,6 +24,10 @@ export const QuokyExitCode = {
 const CONFIGURATION_FAILURES: ReadonlySet<string> = new Set<string>([
   ...Object.values(QuokyConfigErrorCode),
   ...Object.values(EnvFileErrorCode),
+  ...Object.values(OpsConfigErrorCode),
+  // ADR-0102 D3: relaunching cannot help until the owner frees disk space / fixes the backup directory; the launcher
+  // stops after 3 in a row instead of retrying a full-database copy every 10 seconds.
+  BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED,
   InstanceLockErrorCode.INSTANCE_ALREADY_RUNNING,
   StartupIdentityErrorCode.DISCORD_IDENTITY_MISMATCH,
   ProviderRoutingActivationErrorCode.INVALID_MODE,
