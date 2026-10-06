@@ -6,12 +6,27 @@ import {
   lengthWithin,
   noCapabilityPromise,
   noComplianceAnnouncement,
+  containsRelevantTokens,
+  hedgesUncheckable,
+  noHelpDeflection,
+  noInventedSpecifics,
   noLiteralEscapes,
   noSystemCopyImitation,
   noTranslationBlock,
   runChecks,
 } from './answer-quality-checkers';
-import type { CheckContext } from './answer-quality-checkers';
+import type { CheckContext, CheckName } from './answer-quality-checkers';
+
+const POLICY_CHECKS: readonly CheckName[] = [
+  'languageMatches',
+  'noTranslationBlock',
+  'noComplianceAnnouncement',
+  'noCapabilityPromise',
+  'noLiteralEscapes',
+  'noSystemCopyImitation',
+  'lengthWithin',
+  'noHelpDeflection',
+];
 
 const ko: CheckContext = { userMessage: '안녕하세요! 오늘 처음 써 봐요.' };
 const en: CheckContext = { userMessage: 'What is the difference between a process and a thread?' };
@@ -67,12 +82,72 @@ describe('answer-quality checkers flag the recorded UAT bad outputs', () => {
   });
 });
 
+describe('helpfulness checkers flag non-answers and invention', () => {
+  it('noHelpDeflection: the live gemma3:4b non-answers and other help pointers', () => {
+    expect(noHelpDeflection('도움말을 확인해보세요').passed).toBe(false);
+    expect(noHelpDeflection('도움말을 확인해보세요.').passed).toBe(false);
+    expect(noHelpDeflection('도움말: 파이썬 정렬에 대한 안내를 제공합니다.').passed).toBe(false);
+    expect(noHelpDeflection('**도움말:** 안내를 드려요').passed).toBe(false);
+    expect(noHelpDeflection('네, 좋아요.\n- 도움말: 기능 목록').passed).toBe(false);
+    expect(noHelpDeflection('정렬 관련 안내를 제공합니다.').passed).toBe(false);
+    expect(noHelpDeflection('도움말을 알고 싶으세요?').passed).toBe(false);
+    expect(noHelpDeflection('"도움말"이라고 입력해 보세요').passed).toBe(false);
+    expect(noHelpDeflection('Please type help to see what I can do.').passed).toBe(false);
+  });
+
+  it('noHelpDeflection: a real answer, or help named only inside code, is not a deflection', () => {
+    expect(noHelpDeflection('`sorted(nums, reverse=True)`로 내림차순 정렬해요.').passed).toBe(true);
+    expect(noHelpDeflection('파이썬 `help(sorted)` 로 문서를 볼 수도 있지만 핵심은 reverse=True 예요.').passed).toBe(true);
+    expect(noHelpDeflection('오늘 많이 피곤하셨나 봐요. 잠깐 쉬어 가요.').passed).toBe(true);
+  });
+
+  it('containsRelevantTokens: every group needs one token, case-insensitively', () => {
+    const ctx: CheckContext = { userMessage: 'x', requiredTokenGroups: [['sorted', 'sort('], ['reverse']] };
+    expect(containsRelevantTokens('Use SORTED(nums, Reverse=True)', ctx).passed).toBe(true);
+    expect(containsRelevantTokens('Use sorted(nums)', ctx).passed).toBe(false);
+    expect(containsRelevantTokens('정렬하면 됩니다', ctx).passed).toBe(false);
+    expect(containsRelevantTokens('sorted reverse', { userMessage: 'x' }).passed).toBe(false);
+    const list: CheckContext = { userMessage: 'x', requiredTokenGroups: [['\n- ', '\n1.']] };
+    expect(containsRelevantTokens('팁이에요.\n- 하나', list).passed).toBe(true);
+    expect(containsRelevantTokens('팁이에요: 하나, 둘, 셋', list).passed).toBe(false);
+  });
+
+  it('hedgesUncheckable: needs an admission that the fact cannot be checked', () => {
+    expect(hedgesUncheckable('저는 실시간 날씨를 확인할 수 없어요.').passed).toBe(true);
+    expect(hedgesUncheckable('정확한 종가는 알 수 없어요.').passed).toBe(true);
+    expect(hedgesUncheckable('그 값은 제가 모르겠어요.').passed).toBe(true);
+    expect(hedgesUncheckable("I can't check live weather.").passed).toBe(true);
+    expect(hedgesUncheckable('지금 서울은 맑아요. 앱에서 확인해 보세요.').passed).toBe(false);
+  });
+
+  it('noInventedSpecifics: figures, dates, and asserted live conditions are flagged', () => {
+    for (const text of [
+      '기온은 18도예요.',
+      '강수 확률은 30%입니다.',
+      '코스피는 2,650.12포인트로 마감했어요.',
+      '종가는 2650.12였어요.',
+      '2026년 10월 5일 기준이에요.',
+      '오후 3시에 비가 와요.',
+      '지금 서울은 맑아요.',
+      '비가 옵니다.',
+      '가격은 15000원이에요.',
+    ]) {
+      expect(noInventedSpecifics(text).passed, text).toBe(false);
+    }
+  });
+
+  it('noInventedSpecifics: an honest hedge without figures passes, including text inside code', () => {
+    expect(noInventedSpecifics('저는 날씨를 확인할 수 없어요. 기상청 예보를 확인해 보세요. 맑은지 흐린지는 알 수 없어요.').passed).toBe(true);
+    expect(noInventedSpecifics('예보를 보세요.\n```\ntemp = 18.5\n```').passed).toBe(true);
+  });
+});
+
 describe('answer-quality checkers pass clean outputs', () => {
   it('passes natural Korean and English replies', () => {
     const koReply = '안녕하세요! 만나서 반가워요. 궁금한 게 있으면 편하게 물어보세요.';
-    expect(runChecks(koReply, [...CHECK_NAMES], { ...ko, limits: { minChars: 2, maxChars: 500 } }).every((r) => r.passed)).toBe(true);
+    expect(runChecks(koReply, POLICY_CHECKS, { ...ko, limits: { minChars: 2, maxChars: 500 } }).every((r) => r.passed)).toBe(true);
     const enReply = 'A process owns its memory space; threads inside it share that memory.';
-    expect(runChecks(enReply, [...CHECK_NAMES], { ...en, limits: { minChars: 5, maxChars: 500 } }).every((r) => r.passed)).toBe(true);
+    expect(runChecks(enReply, POLICY_CHECKS, { ...en, limits: { minChars: 5, maxChars: 500 } }).every((r) => r.passed)).toBe(true);
   });
 
   it('keeps Korean replies with Latin technical terms in Korean', () => {
@@ -118,6 +193,10 @@ describe('check registry', () => {
       'noLiteralEscapes',
       'noSystemCopyImitation',
       'lengthWithin',
+      'noHelpDeflection',
+      'containsRelevantTokens',
+      'hedgesUncheckable',
+      'noInventedSpecifics',
     ]);
     expect(isCheckName('noLiteralEscapes')).toBe(true);
     expect(isCheckName('nope')).toBe(false);
