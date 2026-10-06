@@ -1772,7 +1772,7 @@ export class ResponseComposer {
   composeCommitUnavailable(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '지금은 커밋 승인을 준비할 수 없어요. 먼저 코드 변경을 적용(WORKSPACE_APPLIED)한 뒤에 커밋을 요청해 주세요. git 명령은 실행하지 않았어요.',
+      text: '지금은 커밋 승인을 준비할 수 없어요. 먼저 코드 변경을 적용한 뒤에 "커밋해줘"라고 요청해 주세요. git 명령은 실행하지 않았어요.',
     };
   }
 
@@ -1949,7 +1949,7 @@ export class ResponseComposer {
   composePushApprovalUnavailable(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '지금은 push 승인을 준비할 수 없어요. 먼저 커밋을 완료(GIT_COMMITTED)한 뒤에 push를 요청해 주세요. git push는 하지 않았어요.',
+      text: '지금은 push 승인을 준비할 수 없어요. 먼저 커밋을 완료한 뒤에 push를 요청해 주세요. git push는 하지 않았어요.',
     };
   }
 
@@ -2207,7 +2207,7 @@ export class ResponseComposer {
   composePrApprovalUnavailable(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '지금은 PR 생성 승인을 준비할 수 없어요. 먼저 push를 완료(GIT_PUSHED)한 뒤에 요청해 주세요. PR은 만들지 않았어요.',
+      text: '지금은 PR 생성 승인을 준비할 수 없어요. 먼저 push를 완료한 뒤에 요청해 주세요. PR은 만들지 않았어요.',
     };
   }
 
