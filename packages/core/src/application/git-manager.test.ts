@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { classifyGitFailure } from './git-manager';
 import {
   BranchCleanupBlockedError,
   BranchCleanupUnverifiedError,
@@ -473,5 +474,22 @@ describe('GitManager.getLocalRefCommit / createBranch / switchBranch (ADR-0099 D
     expect(getLocalRefCommit).toHaveBeenCalledWith('/repo', 'main');
     await expect(mgr.getLocalRefCommit('/repo', 'a b')).rejects.toThrow(/unsafe branch/);
     expect(getLocalRefCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('classifyGitFailure (W2-L02) — secret-free reason classes', () => {
+  it.each([
+    ['git push timed out after 60000ms', 'timeout'],
+    ['git push failed (exit 1): ! [rejected] main -> main (non-fast-forward)', 'rejected-non-fast-forward'],
+    ['git push failed (exit 128): fatal: Authentication failed for https://***@github.com/o/r.git', 'auth'],
+    ['git push failed (exit 128): fatal: could not read Username for https://github.com: terminal prompts disabled', 'auth'],
+    ['git push failed (exit 128): fatal: unable to access: Could not resolve host: github.com', 'network'],
+    ['git push failed (exit 128): remote: Repository not found.', 'remote-not-found'],
+    ['git push boom', 'other'],
+  ] as const)('%s -> %s', (msg, cls) => {
+    expect(classifyGitFailure(new Error(msg))).toBe(cls);
+  });
+  it('non-Error input is other', () => {
+    expect(classifyGitFailure(undefined)).toBe('other');
   });
 });

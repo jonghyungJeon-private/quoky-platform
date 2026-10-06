@@ -647,7 +647,7 @@ interface Opts {
   /** `git.pushApprovedCommit` result (Sprint 3a) — defaults to a valid `gitPushResultOf` echoing the input;
    *  pass 'throw' to simulate a push failure, 'throw-blocked' → GitPushBlockedError (App-auth pre-mutation;
    *  ADR-0061, Sprint 4b), or a literal GitPushResult to force an integrity mismatch. */
-  gitPush?: GitPushResult | 'throw' | 'throw-blocked';
+  gitPush?: GitPushResult | 'throw' | 'throw-blocked' | 'throw-timeout' | 'throw-secret-stderr';
   /** `git.syncMain` result (Sprint 3h) — defaults to a valid `gitMainSyncResultOf` echoing the input;
    *  'throw-blocked' → GitMainSyncBlockedError, 'throw-unverified' → GitMainSyncUnverifiedError, 'throw-generic'
    *  → a plain Error, or a literal GitMainSyncResult (e.g. ref-only / already-up-to-date). */
@@ -1065,6 +1065,10 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.lastGitPushInput = input;
         if (opts.gitPush === 'throw-blocked') throw new GitPushBlockedError('push blocked pre-mutation (App-auth)');
         if (opts.gitPush === 'throw') throw new Error('git push boom');
+        if (opts.gitPush === 'throw-timeout') throw new Error('git push timed out after 60000ms');
+        if (opts.gitPush === 'throw-secret-stderr') {
+          throw new Error('git push failed (exit 128): fatal: Authentication failed for https://x-access-token:ghs_SECRETSECRET123@github.com/o/r.git');
+        }
         return opts.gitPush ?? gitPushResultOf(input);
       },
       async syncMain(input) {
@@ -5765,6 +5769,30 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
     expect(result.reply.text).toBe(composer.composePushExecutionFailed(CTX).text);
     expect(result.reply.text).not.toContain('원격 변경 없음');
     expect(result.reply.text).toContain('rollback은 하지 않았어요');
+  });
+
+  it('provider push timeout → timed-out copy (maybe pushed, retry safe), never "not pushed", logs reasonClass timeout (W2-L02)', async () => {
+    const { deps, calls } = execDeps({ gitPush: 'throw-timeout' });
+    const result = await new ConversationRuntime(deps).handle(messageOf('승인된 push 실행해줘'));
+    expect(calls.lastApplyAnchor?.status).not.toBe('GIT_PUSHED');
+    expect(result.status).toBe('FAILED');
+    expect(result.reply.text).toBe(composer.composePushExecutionTimedOut(CTX).text);
+    expect(result.reply.text).toContain('아닐 수도');
+    expect(result.reply.text).not.toBe(composer.composePushExecutionUnavailable(CTX).text);
+    const log = calls.loggerWarnCalls.find((c) => c.message === 'push execution failed');
+    expect(log?.fields?.reasonClass).toBe('timeout');
+  });
+
+  it('provider push failure logs a sanitized reasonClass, never stderr/URL/token (W2-L02)', async () => {
+    const { deps, calls } = execDeps({ gitPush: 'throw-secret-stderr' });
+    const result = await new ConversationRuntime(deps).handle(messageOf('승인된 push 실행해줘'));
+    expect(result.reply.text).toBe(composer.composePushExecutionFailed(CTX).text);
+    const log = calls.loggerWarnCalls.find((c) => c.message === 'push execution failed');
+    expect(log?.fields?.reasonClass).toBe('auth');
+    const serialized = JSON.stringify(calls.loggerWarnCalls);
+    expect(serialized).not.toContain('ghs_SECRETSECRET123');
+    expect(serialized).not.toContain('x-access-token');
+    expect(serialized).not.toContain('github.com');
   });
 
   it('provider push GitPushBlockedError (App-auth pre-mutation) → composePushExecutionUnavailable, keep PUSH_APPROVED, no GIT_PUSHED (ADR-0061, Sprint 4b)', async () => {

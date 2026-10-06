@@ -15,8 +15,38 @@ import {
 /** SHA-shape guard for the sync commits. */
 const SYNC_SHA_SHAPED = /^[0-9a-f]{7,40}$/i;
 
-/** Per-call git timeout (ms). */
-const GIT_TIMEOUT_MS = 5000;
+/** Per-call timeout (ms) for LOCAL-only git commands. */
+export const GIT_TIMEOUT_MS = 5000;
+/** Bounded timeout (ms) for `git push` — a network round-trip (W2-L02: cold network + token mint exceeded 5 s). */
+export const GIT_PUSH_TIMEOUT_MS = 60_000;
+/** Bounded timeout (ms) for `git fetch` (main sync). */
+export const GIT_FETCH_TIMEOUT_MS = 60_000;
+/** Bounded timeout (ms) for `git ls-remote`. */
+export const GIT_LS_REMOTE_TIMEOUT_MS = 30_000;
+
+/** The git subcommand of an argv (skipping leading global flags such as `--no-pager`). */
+function gitSubcommand(args: readonly string[]): string {
+  return args.find((a) => !a.startsWith('-')) ?? '';
+}
+
+/** Timeout for a git subcommand: network operations get a longer bounded timeout, local commands stay short. */
+export function gitTimeoutMsForSubcommand(subcommand: string): number {
+  switch (subcommand) {
+    case 'push':
+      return GIT_PUSH_TIMEOUT_MS;
+    case 'fetch':
+      return GIT_FETCH_TIMEOUT_MS;
+    case 'ls-remote':
+      return GIT_LS_REMOTE_TIMEOUT_MS;
+    default:
+      return GIT_TIMEOUT_MS;
+  }
+}
+
+/** Timeout for a full git argv (see {@link gitTimeoutMsForSubcommand}). */
+export function gitTimeoutMsForArgs(args: readonly string[]): number {
+  return gitTimeoutMsForSubcommand(gitSubcommand(args));
+}
 
 /** Hard safety cap on the raw unified diff the adapter returns to core (ADR-0044) — a backstop above the
  *  ResponseComposer's display bounds so an enormous diff never reaches the Application layer. */
@@ -208,11 +238,11 @@ export class LocalGitProvider implements GitProvider {
   constructor(private readonly run: GitRunner = defaultGitRunner) {}
 
   private exec(rootPath: string, args: string[]): GitRunResult {
-    return this.run(args, { cwd: rootPath, timeoutMs: GIT_TIMEOUT_MS });
+    return this.run(args, { cwd: rootPath, timeoutMs: gitTimeoutMsForArgs(args) });
   }
 
   private failure(label: string, res: GitRunResult): Error {
-    if (res.timedOut) return new Error(`git ${label} timed out after ${GIT_TIMEOUT_MS}ms`);
+    if (res.timedOut) return new Error(`git ${label} timed out after ${gitTimeoutMsForSubcommand(label)}ms`);
     if (res.failed) return new Error(`git ${label} could not run (is git installed?)`);
     return new Error(`git ${label} failed (exit ${res.code}): ${sanitizeGitStderr(res.stderr)}`);
   }
@@ -464,7 +494,10 @@ export class LocalGitProvider implements GitProvider {
     // ── PRE-ref-update phase → GitMainSyncBlockedError on any failure (nothing local moved). ────────────────
     // 1. bounded fetch of the remote branch (updates FETCH_HEAD / remote-tracking ref; no working-tree change).
     const fetchRes = this.exec(rootPath, ['--no-pager', 'fetch', '--no-tags', remote, branch]);
-    if (fetchRes.code !== 0) throw new GitMainSyncBlockedError(`git main sync: fetch failed: ${sanitizeGitStderr(fetchRes.stderr)}`);
+    if (fetchRes.code !== 0) {
+      const why = fetchRes.timedOut ? `timed out after ${GIT_FETCH_TIMEOUT_MS}ms` : sanitizeGitStderr(fetchRes.stderr);
+      throw new GitMainSyncBlockedError(`git main sync: fetch failed: ${why}`);
+    }
     // 2. verify the fetched tip equals the expected remote commit (else stale).
     const fetched = this.exec(rootPath, ['--no-pager', 'rev-parse', '--verify', '--quiet', 'FETCH_HEAD']);
     if (fetched.code !== 0 || fetched.stdout.trim() !== expectedRemoteCommit) {

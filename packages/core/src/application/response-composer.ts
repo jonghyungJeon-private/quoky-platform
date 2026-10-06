@@ -2112,6 +2112,17 @@ export class ResponseComposer {
   }
 
   /**
+   * The `git push` hit its bounded timeout (W2-L02) — it may or may not have reached the remote (at/after-mutation:
+   * Unverified, never "not pushed"); NO rollback; the owner can check the remote or retry "푸시 실행".
+   */
+  composePushExecutionTimedOut(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text: 'push가 제한 시간 안에 끝나지 않았어요. 원격에 반영됐을 수도, 아닐 수도 있어요. 원격 상태를 확인하거나 "푸시 실행"을 다시 시도해 주세요. rollback은 하지 않았어요.',
+    };
+  }
+
+  /**
    * The `git push` provider reported success but the result did not match the approved target (Sprint 3a,
    * ADR-0048, CA #2/#10) — the push may have been attempted; the result could not be verified; check the
    * remote manually; NO rollback; NOT re-anchored to GIT_PUSHED.

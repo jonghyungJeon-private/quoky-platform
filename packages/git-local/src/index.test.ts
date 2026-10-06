@@ -4,8 +4,13 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  GIT_FETCH_TIMEOUT_MS,
+  GIT_LS_REMOTE_TIMEOUT_MS,
+  GIT_PUSH_TIMEOUT_MS,
+  GIT_TIMEOUT_MS,
   LocalGitProvider,
   assertSafeNewFiles,
+  gitTimeoutMsForArgs,
   parsePorcelain,
   sanitizeGitStderr,
   type GitRunner,
@@ -1141,5 +1146,41 @@ describe('LocalGitProvider.pushApprovedCommit — real push to a LOCAL bare repo
     const res = await provider.pushApprovedCommit(dir, 'origin', 'feature/from-main', sha);
     expect(res.upstreamRef).toBe('origin/feature/from-main');
     expect(git(bare, 'rev-parse', 'refs/heads/feature/from-main').trim()).toBe(sha);
+  });
+});
+
+describe('git timeouts by command type (W2-L02)', () => {
+  const run = (calls: Array<{ args: string[]; timeoutMs: number }>, timedOutFor?: string): GitRunner => (args, opts) => {
+    calls.push({ args, timeoutMs: opts.timeoutMs });
+    const timedOut = timedOutFor !== undefined && args.includes(timedOutFor);
+    return { code: timedOut ? null : 0, stdout: args.includes('ls-remote') ? 'a'.repeat(40) + '\trefs/heads/x\n' : '', stderr: '', timedOut, failed: false };
+  };
+
+  it('classifies network commands with longer bounded timeouts and local commands with the short one', () => {
+    expect(gitTimeoutMsForArgs(['--no-pager', 'push', 'origin', 'HEAD:refs/heads/x'])).toBe(GIT_PUSH_TIMEOUT_MS);
+    expect(gitTimeoutMsForArgs(['--no-pager', 'fetch', '--no-tags', 'origin', 'main'])).toBe(GIT_FETCH_TIMEOUT_MS);
+    expect(gitTimeoutMsForArgs(['--no-pager', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main'])).toBe(GIT_LS_REMOTE_TIMEOUT_MS);
+    for (const local of [['status'], ['--no-pager', 'commit', '-m', 'push'], ['rev-parse', 'HEAD'], ['--no-pager', 'diff']]) {
+      expect(gitTimeoutMsForArgs(local)).toBe(GIT_TIMEOUT_MS);
+    }
+    expect(GIT_PUSH_TIMEOUT_MS).toBeGreaterThan(GIT_TIMEOUT_MS);
+    expect(GIT_LS_REMOTE_TIMEOUT_MS).toBeGreaterThan(GIT_TIMEOUT_MS);
+  });
+
+  it('push / ls-remote are spawned with their network timeout', async () => {
+    const calls: Array<{ args: string[]; timeoutMs: number }> = [];
+    const git = new LocalGitProvider(run(calls));
+    await git.pushApprovedCommit('/r', 'origin', 'feat-x', 'a'.repeat(40));
+    await git.getRemoteRefCommit('/r', 'origin', 'main');
+    expect(calls.find((c) => c.args.includes('push'))?.timeoutMs).toBe(GIT_PUSH_TIMEOUT_MS);
+    expect(calls.find((c) => c.args.includes('ls-remote'))?.timeoutMs).toBe(GIT_LS_REMOTE_TIMEOUT_MS);
+  });
+
+  it('a timed-out push throws a plain timeout Error (at/after-mutation: never a Blocked/"not pushed" error)', async () => {
+    const git = new LocalGitProvider(run([], 'push'));
+    const err = await git.pushApprovedCommit('/r', 'origin', 'feat-x', 'a'.repeat(40)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe(`git push timed out after ${GIT_PUSH_TIMEOUT_MS}ms`);
+    expect((err as Error).name).toBe('Error');
   });
 });
