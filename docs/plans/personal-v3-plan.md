@@ -1,7 +1,8 @@
 # Quoky Personal v3 — Plan
 
-- **Status:** Proposed; owner decisions 1, 2, 4, 5 and 7 recorded 2026-10-06 (section 7). Planning only: nothing here ratifies an ADR or authorizes a Strict action. Every new decision is
-  written as `TBD-ADR-n` and gets a real ADR number when GOV-3 appends it to `DECISIONS.md`.
+- **Status:** Proposed; owner decisions 1, 2, 4, 5 and 7 recorded 2026-10-06 (section 7). Planning only: nothing here ratifies an ADR or authorizes a Strict action. GOV-3
+  (2026-10-06) appended the new decisions to `DECISIONS.md` as ADR-0102..0112, each **Proposed (awaiting owner
+  ratification)**; the former `TBD-ADR-n` placeholders below now carry the real numbers.
 - **Date:** 2026-10-03
 - **Base:** `claude/v2-wave8` `eaacca2` (Personal v2 waves 1-7 on `main` at `ba28314`, plus INT-1 and DOC-B; the wave-8
   PR is not merged yet). SQLite schema v13, `ConversationRuntimeDeps` = 34, five registered turn handlers.
@@ -9,6 +10,17 @@
   Part 0, ADR-0096..0101 and the ADR-0098 amendment, `ROADMAP.md` "Personal v3 candidates".
 - **Structure:** mirrors `docs/plans/personal-v2-execution-plan.md`. Where this plan and a ratified ADR disagree, the ADR
   wins and this plan is corrected.
+
+**ADR mapping (GOV-3, 2026-10-06; all Proposed):**
+
+| Placeholder | ADR | Track | Placeholder | ADR | Track |
+|---|---|---|---|---|---|
+| TBD-ADR-1 | ADR-0102 runtime substrate | SUB-1/2 | TBD-ADR-7 | ADR-0108 PR title/body, status token | CODE-6/7/9 |
+| TBD-ADR-2 | ADR-0103 Personal trust for continuation | SUB-3 | TBD-ADR-8 | ADR-0109 multi-repo allowlist | CODE-8 |
+| TBD-ADR-3 | ADR-0104 internal-action guard, help intent | DET-1, LLM-1 | TBD-ADR-9 | ADR-0110 calendar read | CAL-1/2 |
+| TBD-ADR-4 | ADR-0105 model choice, MLX provider | LLM-2/3 | TBD-ADR-10 | ADR-0111 files and images | MM-1/2 |
+| TBD-ADR-5 | ADR-0106 memory commands | MEM-1 | TBD-ADR-11 | ADR-0112 connector writes (v15) | CWR-1/2 |
+| TBD-ADR-6 | ADR-0107 learning store (v14), locality | LRN-1..4 | | | |
 
 ## 1. Goal and scope
 
@@ -56,15 +68,15 @@ None of these items is done. The QA record and operator guide Part 0.6 list each
 
 | # | Item | State | v3 handling |
 |---|---|---|---|
-| C1 | Connector lookups on real Jira, Slack, Confluence and GitHub tenants | NOT EXECUTED; waiting for the owner's credentials. Also unverified: the Jira `/search/jql` endpoint, the Confluence auth style, and whether Slack search needs a user token | **W0**, one read-only GET probe per connector, then attended work-chat QA. This must pass before CWR or CAL starts its own live QA. Any fix lands in the connector package only |
-| C2 | Reminders channel delivery and the allowlist-removal DM fallback | NOT EXECUTED | **W0** attended UAT with `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` |
-| C3 | Release default of `QUOKY_REMINDERS_ENABLED` (still `false`) | Pending a decision | Flip to `true` once the DM path has passed live (it has) and SUB-1 is live. Channel delivery stays `false` (owner decision 8) |
+| C1 | Connector lookups on real Jira, Slack, Confluence and GitHub tenants | **Jira, Confluence and GitHub ran live 2026-10-06** (PC-4..PC-8; Confluence fixed to Basic auth); Slack NOT RUN (no user token yet). Original note: NOT EXECUTED; waiting for the owner's credentials. Also unverified: the Jira `/search/jql` endpoint, the Confluence auth style, and whether Slack search needs a user token | **W0**, one read-only GET probe per connector, then attended work-chat QA. This must pass before CWR or CAL starts its own live QA. Any fix lands in the connector package only |
+| C2 | Reminders channel delivery and the allowlist-removal DM fallback | **Channel delivery PASS 2026-10-06** in the owner's `#reminder` channel (PC-3, after fix af419b7) | **W0** attended UAT with `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` |
+| C3 | Release default of `QUOKY_REMINDERS_ENABLED` (still `false`) | Pending a decision | Flip to `true` once the DM path has passed live (it has) and SUB-1 is live. Release default of channel delivery stays `false`; the owner host enables it for `#reminder` (ADR-0102 D9) |
 | C4 | Merge-flag enablement | Never live-tested; the merge path was only checked to refuse | P2 as CODE-9. The release default stays `false` (owner decision 7) |
-| C5 | GitHub App Checks permission and token scope (QA G11) | The repository token is minted with only `contents: write` and `pull_requests: write` (`app.module.ts`), so check-runs return 403 even when the App has the Checks permission | **CODE-6**: mint a separate read token for status with `checks: read` and `pull_requests: read`. The write token stays at its current minimum. If checks are still unavailable, the status reply shows the PR and its reviews and says "checks unavailable" |
+| C5 | GitHub App Checks permission and token scope (QA G11) | **DONE in PR #113 (6a59526), live PC-2 PASS 2026-10-06**; recorded for ratification as ADR-0108 D1. Original note: the repository token is minted with only `contents: write` and `pull_requests: write` (`app.module.ts`), so check-runs return 403 even when the App has the Checks permission | **CODE-6**: mint a separate read token for status with `checks: read` and `pull_requests: read`. The write token stays at its current minimum. If checks are still unavailable, the status reply shows the PR and its reviews and says "checks unavailable" |
 | C6 | Embedding recall live probe | NOT EXECUTED | W0 Strict probe (`ollama pull nomic-embed-text` by the owner). It is an input to LRN-2 |
 | C7 | Override copy follow-ups (e8e2c91, 43976e1, QA-V2-004) | Unit-tested only | Re-run in the W0 attended session |
 | C8 | Answer-quality harness provider runs | None recorded | **LLM-2** runs them (Strict per run and per target) |
-| R1 | Storage has no compare-and-set (override consumption is single-flight within one process; small stale-write window) | Accepted in v2 (PRs #107, #108) | **Keep while Quoky runs as one process.** SUB-1 enforces a single instance with a lock file. If SUB-3 or anything else adds a second writer process, add guarded CAS on the affected repositories first (TBD-ADR-1 records this trigger) |
+| R1 | Storage has no compare-and-set (override consumption is single-flight within one process; small stale-write window) | Accepted in v2 (PRs #107, #108) | **Keep while Quoky runs as one process.** SUB-1 enforces a single instance with a lock file. If SUB-3 or anything else adds a second writer process, add guarded CAS on the affected repositories first (ADR-0102 records this trigger) |
 | R2 | Delete/write TOCTOU against a parent-directory symlink swap (Node has no `openat`/`unlinkat`); detected after the write and rolled back | Accepted in v2 (PRs #105, #106) | **Keep.** Exploiting it needs a same-user local process, which could already write outside the workspace, so no privilege boundary is crossed. Revisit only if workspaces ever run under a different OS user |
 | R3 | Credential guard is a best-effort regex check, not DLP | Accepted in v1/v2 (ADR-0097) | **Keep the strict guard and widen its reach.** Run it on every new outbound path in v3: connector write payloads, calendar and attachment text, curated examples. Add the corpus cases each track finds. Do not claim DLP |
 | R4 | A forced stop past the 65 s bound can close the platform while a send is in flight (at-most-once still holds) | Accepted in v2 (PR #109) | Keep. SUB-1's service stop timeout is set longer than the 65 s drain bound |
@@ -104,16 +116,17 @@ its live QA. Constraints common to all tracks:
   - When SUB-1 is live, the dedicated runtime launcher exists, so the AGENTS.md temporary section may be retired.
     Removing it needs its own approval.
   - **SUB-3 (decision-gated)** revisits R3 for the Personal edition only. On a single-owner host, the owner's machine
-    is the trust root. TBD-ADR-2 would scope the remote-attestation requirement (ADR-0090 R3-B3) to the Team/Hosted
+    is the trust root. ADR-0103 would scope the remote-attestation requirement (ADR-0090 R3-B3) to the Team/Hosted
     editions and define a local containment-evidence model for Personal. Only after that is ratified may the
     `general-chat-v1` continuation receiver be activated for one explicit trigger, such as a long-running summary that
     reports back by DM. Multi-agent stays behind the `AgentProfile` seam and out of v3.
-- **ADRs.** TBD-ADR-1 (Personal runtime substrate: launchd, single instance, backup, environment source; the R1 CAS
-  trigger). TBD-ADR-2 (Personal trust model for continuation; amends ADR-0089/0090 for the Personal edition only;
+- **ADRs.** ADR-0102 (Personal runtime substrate: launchd, single instance, backup, environment source; the R1 CAS
+  trigger). ADR-0103 (Personal trust model for continuation; scopes the Proposed ADR-0090 R3-B3 requirement for the Personal
+  edition only and keeps every ratified ADR-0089 activation prerequisite;
   P2).
 - **Risks.**
   - The Mac sleeping: document `pmset`/power settings, and catch-up stays as it is.
-  - Weakening R3 by accident: TBD-ADR-2 changes nothing for Team/Hosted, and continuation stays fail-closed until it
+  - Weakening R3 by accident: ADR-0103 changes nothing for Team/Hosted, and continuation stays fail-closed until it
     is ratified.
   - Plaintext `.env.local` secrets on disk: file mode 600, never logged.
 - **AC.**
@@ -141,7 +154,7 @@ its live QA. Constraints common to all tracks:
     fixed notice that nothing was done, plus the exact command to use.
   - A new golden corpus, `action-shaped-fallthrough.v1.json`, records every live-QA miss as a `mustPass` case. The
     owner curates it (ADR-0098 D7). INT ratchets it.
-- **ADRs.** TBD-ADR-3: an ADR-0098 amendment for the internal-action claim guard and its lexicon bounds, with
+- **ADRs.** ADR-0104: an ADR-0098 amendment for the internal-action claim guard and its lexicon bounds, with
   translation and quotation exemptions mirroring QUAL-6.
 - **Risks.** False positives on legitimate explanations ("커밋은 이렇게 해요"). Mitigation: claim shape only (first
   person, completed aspect), the quoted/translated-clause exemptions from wave 4, and negative corpus cases.
@@ -172,12 +185,14 @@ its live QA. Constraints common to all tracks:
     and `exaone3.5:7.8b` (Korean-strong). Pick a model by pass rate, Korean-script purity and latency on the owner's
     hardware. This is an `OLLAMA_MODEL` operator change; no code change is involved.
   - **LLM-3, MLX evaluation (P1, optional).** On Apple Silicon, benchmark `mlx_lm` against Ollama for the chosen
-    model. If it wins clearly (for example ≥1.5× tokens/s at equal harness score), add a separate `packages/ai-mlx`
-    adapter that implements the unchanged `AiProvider` through the `mlx_lm` **CLI**, contained by the existing
-    `CliRunner` with the same environment contract (ADR-0098 D8). Routing stays capability/priority-based. Docker
+    model. If it wins clearly (for example ≥1.5× tokens/s at equal harness score), add an MLX
+    provider (`MlxCliProvider` inside `packages/ai-cli`, ADR-0105 D2: a separate `packages/ai-mlx` reusing the
+    `ai-cli` runner would make one adapter depend on another) that implements the unchanged `AiProvider` through the
+    `mlx_lm` **CLI**, contained by the existing `CliRunner` under its own offline `MLX_LOCAL` profile (ADR-0105 D4,
+    amending ADR-0098 D8). Routing stays capability/priority-based. Docker
     stays out: on macOS it adds isolation only, with no Metal acceleration.
 - **ADRs.** None for LLM-1/2; they are covered by ADR-0096/0098. A help-intent handler is an ADR-0096 registration
-  plus an ADR-0093 note in GOV-3. LLM-3 needs TBD-ADR-4 (a new provider adapter and its containment).
+  plus an ADR-0093 note, recorded in ADR-0104 D4/D5. LLM-3 needs ADR-0105 (a new provider and its containment).
 - **Risks.**
   - Over-stripping legitimate CJK text: limited to the `ko` reply language and covered by tests.
   - Model churn invalidating Stage 2A bindings: re-run the approved bindings.
@@ -202,7 +217,7 @@ its live QA. Constraints common to all tracks:
   Numbers are bound to the last listing (session-scoped and short-lived, like to-dos). Forget also removes the
   record's vector from `LocalVectorProvider` (rebuildable cache) and any LRN example derived from it. No migration is
   needed. The listing never shows the scope of other actors (single actor today; keeps the Team seam honest).
-- **ADRs.** TBD-ADR-5 (the memory command grammar and its precedence against `기억해:` and to-do prefixes; amends
+- **ADRs.** ADR-0106 (the memory command grammar and its precedence against `기억해:` and to-do prefixes; amends
   ADR-0073 for the user-facing forget surface).
 - **Risks.** Grammar collisions with to-do and reminder prefixes: fixed stage/order, plus negative corpus cases. Stale
   numbering: bind each number to a listing id and refuse it after 30 minutes or after any change.
@@ -249,7 +264,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
       enabled (`QUOKY_EMBEDDING_ENABLED`) and lexically otherwise, under a fixed token budget, as non-authoritative
       `EXAMPLE` entries. They are never framed as facts.
     - `LOCAL_ONLY` examples are injected only when the routed provider declares local execution. That needs a
-      provider **descriptor attribute** (data, not an id branch), which is a Core contract change under TBD-ADR-6.
+      provider **descriptor attribute** (data, not an id branch), which is a Core contract change under ADR-0107.
     - Flag `QUOKY_LEARNING_EXAMPLES_ENABLED`, default `false`.
   - **LRN-3, offline rule mining (P1).**
     - An offline report clusters 👎 and implicit-correction turns by intent, capability, keyword fingerprint and
@@ -262,7 +277,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
     - MLX LoRA on the owner host only, producing a new local model tag. It is adopted only when it beats the base model
       on the harness and on a held-out slice of the examples. The base stays registered for rollback.
     - Training data never leaves the host.
-- **ADRs.** TBD-ADR-6: the learning store (v14), consent model, local-only egress attribute, example injection, and
+- **ADRs.** ADR-0107: the learning store (v14), consent model, local-only egress attribute, example injection, and
   retention/forget cascade. It amends ADR-0098, whose "no learning loop" consequence becomes "no *automatic* learning
   loop". LRN-4 needs its own ADR later.
 - **Risks.**
@@ -286,8 +301,9 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
   - There is one target repository (`QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO`).
   - Merge has never been enabled.
 - **Approach.**
-  - **CODE-6:** partial PR status as described in C5 (PR state, mergeability, reviews; checks shown as unavailable on
-    403), with a separate status token scope.
+  - **CODE-6 (largely delivered by PR #113, 6a59526):** partial PR status as described in C5 (PR state, mergeability, reviews; checks shown as unavailable on
+    403), with a separate read-only status token `{pull_requests, checks, contents}: read`. Remaining scope: residual
+    tests or copy found in review, and ratification of ADR-0108 D1.
   - **CODE-7:** PR title and body.
     - Deterministic first. Title: the head commit subject (Conventional Commits). Body: changed files, commit list, and
       "generated by Quoky; not merged".
@@ -299,7 +315,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
     repositories only.
   - **CODE-9 (P2, decision-gated):** merge enablement is a sandbox UAT of the merge scenarios (operator guide
     Scenarios B/C) with `QUOKY_GIT_MERGE_ENABLED=true`. The release default stays `false`.
-- **ADRs.** TBD-ADR-7 (an ADR-0099 amendment: PR title/body binding and the status token scope). TBD-ADR-8 (the
+- **ADRs.** ADR-0108 (an ADR-0099 and ADR-0049 amendment: PR title/body binding and the status token scope). ADR-0109 (the
   multi-repo allowlist; P2).
 - **Risks.** The model-generated body leaking diff secrets: credential guard plus the deterministic default. Token
   scope creep: keep separate tokens per direction and test the minted scopes.
@@ -319,8 +335,8 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
   - **CAL-1:** a read-only calendar adapter package. The provider is decision 4: Google Calendar `calendar.readonly`
     is recommended; Microsoft 365 / CalDAV are alternatives. It implements a narrow `CalendarReader` port (list events
     in a time window) or a `ConnectorProvider` resource kind, whichever ADR-0072/0100 fits without a contract change.
-    TBD-ADR-9 decides. Tokens come from `.env.local` or a local token file; none are logged.
-  - **CAL-2:** a `work`-stage handler answers schedule questions deterministically ("오늘/내일/이번 주 일정") in
+    ADR-0110 D1 decides: a narrow `CalendarReader` port. Tokens come from `.env.local` or a local token file; none are logged.
+  - **CAL-2:** a `pre-classify` handler (order 150, ADR-0110 D3; ADR-0096 has no `work` stage) answers schedule questions deterministically ("오늘/내일/이번 주 일정") in
     `QUOKY_TIMEZONE`, with an optional summary.
     - Summaries are local-only by default. Unlike `QUOKY_WORK_SUMMARY_ENABLED`, there is no Claude fallback for
       calendar text.
@@ -347,7 +363,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
     providers that advertise it are selected: a local Ollama vision model (for example `qwen2.5vl` or
     `llama3.2-vision`, operator-chosen) by default. The Claude CLI receives images only if decision 9 allows it. With
     no capable provider, the reply truthfully says image analysis is unavailable. Image bytes are never persisted.
-- **ADRs.** TBD-ADR-10 (attachment intake, bounds, the new capability, egress policy; amends ADR-0091/0098).
+- **ADRs.** ADR-0111 (attachment intake, bounds, the new capability, egress policy; amends ADR-0091/0098).
 - **Risks.**
   - A second untrusted inbound content type: injection rules apply, and attachment text is untrusted readout.
   - Download abuse: owner-only, size limits checked before download.
@@ -377,7 +393,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
     - `UNCERTAIN` is never retried;
     - a repeated request on an already sent receipt replies "이미 보냈어요".
   - The credential guard runs on every payload. Confluence and GitHub-issue writes stay out of v3.
-- **ADRs.** TBD-ADR-11 (write ports, receipts v15, approval binding, allowlists; amends ADR-0100's "writes refused").
+- **ADRs.** ADR-0112 (write ports, receipts v15, approval binding, allowlists; amends ADR-0100's "writes refused").
 - **Risks.**
   - The first irreversible external writes to corporate systems: off by default (`QUOKY_CONNECTOR_WRITES_ENABLED=false`),
     allowlisted targets, exact preview.
@@ -395,34 +411,35 @@ Owned files are exclusive within a wave. `core/` = `packages/core/src/`, `app/` 
 | Wave | Task | Track | Owned files (summary) | Deps |
 |---|---|---|---|---|
 | 0 | LIVE-0 | carry-over | No code. Strict sessions C1, C2, C6, C7, then the C3 decision; fixes go to the owning package | v2 wave-8 PR merged |
-| 1 | GOV-3 | GOV | `DECISIONS.md` (append TBD-ADR-1..11 with real numbers), this plan | — |
-| 1 | SUB-1 | SUB | `app/main.ts`, `app/config.ts`, `.env.example`, new `ops/launchd/*`, launcher script (+tests), `docs/user/quickstart.md` service section | TBD-ADR-1 |
-| 1 | DET-1 | DET | `conversation-runtime.ts` (+test), `core/application/chat-policy/*`, `golden/action-shaped-fallthrough.v1.json`, `app/features/turn-handlers.providers.ts` | TBD-ADR-3 |
+| 1 | GOV-3 | GOV | `DECISIONS.md` (ADR-0102..0112 appended, Proposed), this plan | — |
+| 1 | SUB-1 | SUB | `app/main.ts`, `app/config.ts`, `.env.example`, new `ops/launchd/*`, launcher script (+tests), `docs/user/quickstart.md` service section | ADR-0102 |
+| 1 | DET-1 | DET | `conversation-runtime.ts` (+test), `core/application/chat-policy/*`, `golden/action-shaped-fallthrough.v1.json`, `app/features/turn-handlers.providers.ts` | ADR-0104 |
 | 1 | LLM-1 | LLM | `packages/ai-cli/src/output-sanitizer.ts` (+test), `ai-cli/src/index.ts`, new help-intent handler module | — |
-| 1 | CODE-6 | CODE | `response-composer.ts` (+test; PR status copy), `app.module.ts` (status token mint), `packages/repository-hosting-github/src/index.ts` (+test; partial status on check-runs 403) | TBD-ADR-7 |
-| 2 | MEM-1 | MEM | new `core/application/memory-commands/*` (+tests), `memory-writer.ts`, `packages/vector-local` delete, `app/features/memory.providers.ts`, `app.module.ts`, `turn-handlers.providers.ts` | DET-1, TBD-ADR-5 |
-| 2 | LRN-1 | LRN | `migrations.ts` (+test; **v14**), `storage-sqlite` learning repository, `core/application/feedback/*`, `app/tools/learning-export.ts`, `config.ts` | TBD-ADR-6 |
+| 1 | CODE-6 | CODE | **Largely delivered by PR #113 (6a59526).** Remaining: residual tests/copy from review only; ratification of ADR-0108 D1 | ADR-0108 |
+| 2 | MEM-1 | MEM | new `core/application/memory-commands/*` (+tests), `memory-writer.ts`, `packages/vector-local` delete, `app/features/memory.providers.ts`, `app.module.ts`, `turn-handlers.providers.ts` | DET-1, ADR-0106 |
+| 2 | LRN-1 | LRN | `migrations.ts` (+test; **v14**), `storage-sqlite` learning repository, `core/application/feedback/*`, `app/tools/learning-export.ts`, `config.ts` | ADR-0107 |
 | 2 | CODE-7 | CODE | `conversation-runtime.ts` (+test), `response-composer.ts` (+test), `code-work/pr-description.ts` | CODE-6 |
 | 2 | LLM-2 | LLM | `docs/uat/` eval record only (Strict runs; `OLLAMA_MODEL` operator change) | LLM-1 |
 | 2 | SUB-2 | SUB | backup/health modules under `app/ops/*` (+tests), `main.ts` | SUB-1 |
-| 3 | LRN-2 | LRN | `prompt-composer.ts` (+test), provider descriptor attribute (`core/ports` AI provider file, `ai-cli` providers), `app/context-builder-provider.ts` | LRN-1, TBD-ADR-6 |
-| 3 | CAL-1 | CAL | new `packages/connector-calendar-*`, calendar port in `core/ports`, `config.ts`, `.env.example` | C1, TBD-ADR-9 |
-| 3 | MM-1 | MM | `platform-adapter.port.ts`, `adapter-discord/src/index.ts` (+test), new `adapter-discord/src/attachments.ts` | TBD-ADR-10 |
-| 3 | LLM-3 | LLM | new `packages/ai-mlx` (optional, if the benchmark passes) | LLM-2, TBD-ADR-4 |
+| 3 | LRN-2 | LRN | `prompt-composer.ts` (+test), provider descriptor attribute (`core/ports` AI provider file, `ai-cli` providers), `app/context-builder-provider.ts` | LRN-1, ADR-0107 |
+| 3 | CAL-1 | CAL | new `packages/connector-calendar-*`, calendar port in `core/ports`, `config.ts`, `.env.example` | C1, ADR-0110 |
+| 3 | MM-1 | MM | `platform-adapter.port.ts`, `adapter-discord/src/index.ts` (+test), new `adapter-discord/src/attachments.ts` | ADR-0111 |
+| 3 | LLM-3 | LLM | `MlxCliProvider` in `packages/ai-cli` (optional, if the benchmark passes; not a new package, ADR-0105 D2) | LLM-2, ADR-0105 |
 | 4 | CAL-2 | CAL | calendar turn handler, `chat-policy/*` (QUAL-7 switch), `turn-handlers.providers.ts`, `app/features/calendar.providers.ts`, `app.module.ts` | CAL-1 |
 | 4 | MM-2 | MM | `domain/enums.ts` (`IMAGE_UNDERSTANDING`), `conversation-runtime.ts` (+test), `ai-cli/src/index.ts` (image path argument) | MM-1 |
-| 4 | CWR-1 | CWR | write ports in `core/ports`, `migrations.ts` (**v15**), receipts repository, `connector-jira`/`connector-slack` writers (+tests), `config.ts` | C1, LRN-1 merged, TBD-ADR-11 |
+| 4 | CWR-1 | CWR | write ports in `core/ports`, `migrations.ts` (**v15**), receipts repository, `connector-jira`/`connector-slack` writers (+tests), `config.ts` | C1, LRN-1 merged, ADR-0112 |
 | 5 | CWR-2 | CWR | `conversation-runtime.ts` (+test), `response-composer.ts` (+test), `app.module.ts`, `app/features/connector-writes.providers.ts` | CWR-1 |
 | 5 | LRN-3 | LRN | `app/tools/learning-report.ts` (+test), corpus additions via reviewed PR | LRN-1 |
-| 5 | CODE-8 | CODE | `push-target-resolution.ts`, `personal-hosting-guard.ts`, `config.ts` (P2) | CODE-7, TBD-ADR-8 |
-| 6 | SUB-3 | SUB | continuation activation wiring, `main.ts`, `app.module.ts` (P2) | SUB-2, TBD-ADR-2 ratified |
+| 5 | CODE-8 | CODE | `push-target-resolution.ts`, `personal-hosting-guard.ts`, `config.ts` (P2) | CODE-7, ADR-0109 |
+| 6 | SUB-3 | SUB | continuation activation wiring, `main.ts`, `app.module.ts` (P2) | SUB-2, ADR-0103 ratified |
 | 6 | CODE-9 | CODE | No code expected; sandbox merge UAT (P2) | owner decision 7 |
 | 6 | INT-2 | INT | `app/personal-v3-acceptance.test.ts`, golden routing additions, `baseline` | all merged tracks |
 | 6 | DOC-C | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation records), `ROADMAP.md`, quickstart, operator guide | all merged tracks |
 
 Registration notes: LLM-1 ships the help-intent handler module; DET-1 (the W1 `turn-handlers.providers.ts` owner)
-registers it. LLM-3 lands as a package only in W3; its composition-root wiring is a small W6 hunk coordinated with
-SUB-3 (the W6 `app.module.ts` owner).
+registers it. LLM-3 lands in W3 as a new module inside `packages/ai-cli` (ADR-0105 D2) without touching
+`ai-cli/src/index.ts` (the W3 LRN-2 hot file); its export line and composition-root wiring are a small W6 hunk coordinated
+with SUB-3 (the W6 `app.module.ts` owner).
 
 Parallel and sequential work: inside a wave, the tasks run in parallel in separate worktrees. A track's later task waits
 for its earlier one. CAL and CWR wait for the C1 read-only connector QA. P2 tasks (SUB-3, CODE-8, CODE-9, LLM-3, LRN-4)
@@ -460,15 +477,16 @@ Strict, and that includes the always-on host's DB, which becomes the owner's rea
 | `DECISIONS.md` | GOV-3 | — | — | — | — | DOC-C |
 
 **Deps baseline.** 34 at the base. A track that needs a new `ConversationRuntimeDeps` entry must say so in its ADR.
-Moving the baseline is expected only for CWR-2 (the write-approval flow) and SUB-3. Every task asserts the baseline in
+Moving the baseline is expected only for CWR-2 (the write-approval flow, ADR-0112: 34 → 35) and SUB-3 (ADR-0103
+authorizes none; an amendment must state any key). Every task asserts the baseline in
 force when it merges.
 
 ## 5. Governance and validation
 
 This mirrors the v2 run.
 
-- **ADR gate.** A track's first code merge waits for the Product Owner to ratify its TBD-ADR (Proposed → Accepted).
-  GOV-3 drafts all eleven. A stalled ADR stalls only its own track.
+- **ADR gate.** A track's first code merge waits for the Product Owner to ratify its ADR (Proposed → Accepted).
+  GOV-3 drafted all eleven (ADR-0102..0112). A stalled ADR stalls only its own track.
 - **Per wave:**
   1. Implementation in separate worktrees.
   2. Offline validation: `pnpm typecheck` plus focused tests. A task on a hot file runs the full `pnpm test`. INT-2
@@ -502,7 +520,7 @@ This mirrors the v2 run.
 | The learning store adds the first consented text column | Per-item consent, a separate table, the credential guard twice, `LOCAL_ONLY` default, forget cascade, flag off by default |
 | The first irreversible corporate writes (CWR) | Off by default, allowlists, exact-payload one-time approvals, no retry on `UNCERTAIN`, read-only QA first |
 | The always-on host now holds the real data | Backups and a restore drill (SUB-2); migrations there are Strict; single instance |
-| R3 weakened by the Personal trust re-scope | TBD-ADR-2 is Personal-only and P2; continuation stays fail-closed until it is ratified |
+| R3 weakened by the Personal trust re-scope | ADR-0103 is Personal-only and P2; continuation stays fail-closed until it is ratified |
 | Guard false positives (DET) frustrate normal chat | Claim-shape matching, exemptions, negative corpora, live sweep |
 | Model switch regressions (LLM-2) | The harness decides; the old tag stays installed for rollback |
 | Connector credentials still not provided | CAL/CWR live QA slips; their offline work still merges, flag-gated |
@@ -530,8 +548,8 @@ Decisions 3, 6 and 9-12 remain open; the recommended defaults below apply until 
    confirmation per target. *Recommended: renew.*
 2. **Deployment substrate.** Use a launchd user agent on an always-on owner Mac (or a dedicated Mac mini); no cloud VM.
    *Recommended: yes.* State which machine.
-3. **Continuation and the R3 re-scope (SUB-3).** *Recommended:* keep it P2. Draft TBD-ADR-2 (Personal-only local
-   trust) only after SUB-1/2 are live. Multi-agent stays out of v3.
+3. **Continuation and the R3 re-scope (SUB-3).** *Recommended:* keep it P2. ADR-0103 (Personal-only local trust) is
+   drafted as Proposed; ratify it only after SUB-1/2 are live. Multi-agent stays out of v3.
 4. **Calendar provider and egress.** *Recommended:* Google Calendar read-only (`calendar.readonly`), local-only
    summaries, no Claude fallback for calendar text. Alternatives are Microsoft 365 or CalDAV, if the work calendar
    lives there.

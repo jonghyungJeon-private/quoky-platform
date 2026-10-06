@@ -15695,3 +15695,698 @@ record. Live results are in `docs/uat/personal-v2-qa-record.md`.
 - **Secret-looking file names.** The ADR-0019/0022 secret-filename rule is unchanged; a request naming such a file is now
   refused by name with a truthful reply instead of the not-found copy (QA-V2-CL-02, b15289c), without any lookup, so
   existence of out-of-root paths is still never revealed (QA-016).
+
+## Personal v3 proposed ADRs — GOV-3 (2026-10-06)
+
+Docs-only proposal block written by GOV-3 for `docs/plans/personal-v3-plan.md`. It appends ADR-0102..0112 (plan
+`TBD-ADR-1..11`, in order). Every ADR below is **Proposed (awaiting owner ratification)**; none grants implementation,
+runtime, provider, network, secret or Live UAT authority, and no ratified ADR text above is edited.
+
+- **Owner decisions already recorded (2026-10-06, plan §7) and written in as decided:** (1) standing auto Push/PR/Merge
+  per v3 wave after offline validation, independent review and Codex review pass; Live UAT of each new external target
+  is still confirmed per target; (2) launchd user agent on the owner's Mac, macOS first, no cloud VM; (4) Google
+  Calendar read-only, local-only summaries, no Claude fallback for calendar text; (5) learning consent per item,
+  365-day retention, `LOCAL_ONLY` by default, `QUOKY_LEARNING_EXAMPLES_ENABLED=false` until LRN-2 is measured; (7) the
+  release default stays `QUOKY_GIT_MERGE_ENABLED=false`; (8, partial) reminders channel delivery is used in the owner's
+  allowlisted `#reminder` channel.
+- **Still open (plan §7 items 3, 6, 9, 10, 11, 12):** each ADR writes the recommended default as the proposed decision
+  and marks it *pending owner decision N* inline. Ratifying an ADR with such a marker ratifies the recommended default
+  unless the owner says otherwise.
+- **Lanes.** The v2 freezes in ADR-0096 D9 (no `config.ts`/`.env.example` edit after wave 1) and D11 (v2 hot-file lanes)
+  were scoped to the v2 execution plan. For v3 the plan §4 migration and hot-file lanes govern; the ADR-0096 D10 rules
+  (fixed numbers, contiguity, `SCHEMA_VERSION_AHEAD`, no renumbering after merge) carry over unchanged to v14/v15.
+- **Ratification gate.** A track's first code merge waits for its ADR (plan §5). A stalled ADR stalls only its track.
+
+## ADR-0102 — Personal always-on runtime substrate: macOS launchd user agent, fixed environment source, single-instance lock, startup identity check, scheduled SQLite backup and an owner-DM health notice. Amends ADR-0101 (one non-reminder owner notice). Records the R1 storage-CAS trigger.
+
+- **Status:** Proposed (awaiting owner ratification)
+- **Date:** 2026-10-06
+- **Amends:** ADR-0101 D1 / `[LATER]` "non-reminder notifications" (one fixed ops-notice kind through the unchanged
+  `NotificationSink`). **Relates:** ADR-0020 (migration runner), ADR-0061 §10.2 (dev-only PAT fallback), ADR-0091,
+  ADR-0096 D10, ADR-0101 D6/D8 (tick driver, 65 s drain bound, channel opt-in), AGENTS.md "Temporary Local/UAT Runtime
+  Environment", R3-B3-2C (`DEPLOYMENT_SUBSTRATE = UNRESOLVED`). Plan track SUB-1/SUB-2.
+
+### Context
+
+Quoky runs only while an operator runs `pnpm dev` under the AGENTS.md temporary rules, so reminders fire late after
+downtime and the inherited-`DISCORD_*` collision class stays open. R3-B3-2C recorded the deployment substrate as
+unresolved. The owner chose (decision 2) a macOS launchd user agent on the owner's always-on Mac; a dedicated Mac mini
+later is the same substrate. Ollama and the logged-in Claude CLI live on that host, so local-first holds.
+
+### Decision
+
+1. **Substrate.** A launchd **user agent** (`ops/launchd/<label>.plist`, `RunAtLoad`, `KeepAlive` on abnormal exit,
+   `ThrottleInterval` 10 s) runs the built app (`node apps/quoky/dist/main.js`) through `ops/launchd/quoky-launch.sh`.
+   No cloud VM, container or HTTP endpoint is added. Install, upgrade and uninstall are Strict owner-host actions.
+2. **One fixed environment source.** The launcher builds the child environment from nothing (`env -i`): fixed `HOME`,
+   a fixed `PATH` naming the `node`, `ollama` and `claude` directories, `LANG`, and the path of the host's `.env.local`
+   (mode 600, never logged). No shell variable is inherited, which closes the `DISCORD_*` collision class by
+   construction. The launcher's environment construction is a pure, unit-tested function.
+3. **Host identity of the data.** The service sets `QUOKY_RUNTIME_ENV=prod` (so the ADR-0061 §10.2 dev-only PAT
+   fallback is off) and a `QUOKY_DB_PATH`/`QUOKY_VECTOR_PATH` outside the repository (under
+   `~/Library/Application Support/Quoky/`). That DB is the owner's real data, **not** the AUTONOMOUS_DEV_DB delegated
+   database: starting a build whose `LATEST_SCHEMA_VERSION` is above the host DB's `user_version` is a Strict
+   migration apply and requires a fresh verified backup (D6) first.
+4. **Single instance (records the R1 trigger).** Startup takes an exclusive lock file next to the DB (`O_EXCL`, pid and
+   start time; a stale lock is taken over only when its pid is gone). A second process on the same DB fails startup
+   with a typed error before `storage.init()`. Accepted residual R1 (no storage compare-and-set) stays accepted only
+   while this lock guarantees one writer; any design that adds a second writer process (including SUB-3) must add
+   guarded CAS on the affected repositories first. Residuals R1-R4 (plan §2) all stay accepted as documented *(pending
+   owner decision 12; recommended: keep all four)*.
+5. **Startup identity check.** After the Discord client is ready and before the reminder tick starts, the app compares
+   the connected bot user id, guild and allowlisted channels with `.env.local` (new optional
+   `QUOKY_DISCORD_EXPECTED_BOT_ID`; required when the launcher runs). A mismatch stops the platform and exits with a
+   distinct configuration code; the launcher stops relaunching after 3 consecutive configuration exits.
+6. **Backup (SUB-2).** A composition-root lifecycle job (same non-overlapping, unref'd timer pattern as ADR-0101 D6)
+   writes a daily `VACUUM INTO` copy at 04:00 `QUOKY_TIMEZONE`, plus one before any startup migration, into a backup
+   directory (mode 700, files 600). Each copy is verified read-only (`PRAGMA integrity_check`, `user_version`).
+   Retention: 7 daily + 4 weekly; pruning deletes only files the job created, by name pattern. A restore runbook ships in
+   `docs/user/quickstart.md`; restoring is a manual Strict owner action.
+7. **Health notice (amends ADR-0101 narrowly).** One fixed notice kind, `OPS_NOTICE`, delivered through the unchanged
+   `NotificationSink` to the **owner DM only** (never a channel): sent once after a successful start that follows ≥3
+   restarts in 10 minutes (counted by the launcher in a local state file), and once per failed or unverifiable backup.
+   Fixed text, no provider, no connector, at most 3 per day. It is not a scheduler and decides nothing.
+8. **Shutdown and logs.** launchd `ExitTimeOut` is 90 s, above the ADR-0101 65 s drain bound (R4 stays accepted). The
+   app logs to stdout; the plist redirects to `~/Library/Logs/Quoky/`; the launcher rotates at start above 10 MiB,
+   keeping 5 files. Secrets never reach logs.
+9. **Reminder defaults on the host.** The owner host sets `QUOKY_REMINDERS_ENABLED=true` and, per the recorded owner
+   choice, `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` with `#reminder` allowlisted (the ADR-0101 D8 acknowledgement
+   applies; the brief and `OPS_NOTICE` stay DM-only). The **release default** of `QUOKY_REMINDERS_ENABLED` flips to
+   `true` once SUB-1 is live, and the release default of channel delivery stays `false` *(pending owner decision 8,
+   release-default part)*.
+10. **AGENTS.md temporary section.** When SUB-1 is live, the dedicated launcher exists; retiring the AGENTS.md and
+    `CLAUDE.md` temporary-runtime sections is a separate, separately approved docs change.
+
+No Core port, token or migration. `ConversationRuntimeDeps` stays 34. Power settings (`pmset`) are documented, not
+automated.
+
+### Consequences
+
+- **+** Reminders and chat work without an operator; one environment source; data survives a disk failure.
+- **−** The owner Mac becomes production for Personal: upgrades that migrate are Strict, and a sleeping Mac still delays
+  delivery (catch-up rules of ADR-0101 D6 unchanged).
+- **−** A second non-reminder use of `NotificationSink`; it stays owner-DM-only, fixed text and bounded.
+
+### Acceptance criteria
+
+The service starts at login, restarts within 30 s after `kill -9`, and refuses a second instance; a reminder due during
+a restart is delivered once; a backup restores into a disposable DB with a matching `user_version`; offline tests cover
+the launcher environment (no inherited `DISCORD_*`), the lock, and the identity-mismatch exit.
+
+### Strict gates
+
+Host install and every upgrade, `.env.local` edits on the host, any migration on the host DB, the restore drill, and
+the live reboot/crash/reminder-across-restart session. Independent Chief Architect review is not mandatory (no
+boundary change) but the review must confirm D3 and D4.
+
+## ADR-0103 — Personal-edition trust model for continuation activation: scope ADR-0090 R3-B3 remote attestation to Team/Hosted, define local owner-host containment evidence for Personal, activate one explicit trigger. P2.
+
+- **Status:** Proposed (awaiting owner ratification) — **the whole ADR is pending owner decision 3**; recommended
+  default: keep SUB-3 at P2 and ratify only after ADR-0102 (SUB-1/SUB-2) is live.
+- **Date:** 2026-10-06
+- **Relates (does not edit):** ADR-0089 (**Ratified**: continuation activation readiness), ADR-0090 and its R3-B3,
+  R3-B3-1, R3-B3-2 and R3-B3-2C amendments (all still **Proposed**), ADR-0079/0080/0084, ADR-0102 D4. Plan track SUB-3.
+
+### Context
+
+The `general-chat-v1` continuation receiver is implemented (R2) and fails closed at startup because production trust
+is FAIL CLOSED: R3-B3 requires two independent verification channels with distinct signing roots, and R3-B3-2C found
+`REAL_TRUST_ROOT = NO_FEASIBLE_REAL_TRUST_ROOT_YET` with `DEPLOYMENT_SUBSTRATE = UNRESOLVED`. On a single-owner host
+the owner's machine already is the trust root: anything that can forge local evidence can also edit the code. Remote
+attestation protects a Team/Hosted operator from a tenant, which Personal does not have.
+
+### Decision
+
+1. **Edition scoping, not weakening.** The R3-B3 dual-channel remote-attestation requirement applies to the Team and
+   Hosted editions unchanged. For Personal only, a separate trust domain `PERSONAL_LOCAL` is added beside `TEST` and
+   `PRODUCTION`. It is never accepted where `PRODUCTION` is required, and a `PERSONAL_LOCAL` capability is never
+   issuable in a Team/Hosted composition. The edition is a composition-root wiring choice (ARCHITECTURE.md §2.7), never
+   a Core branch.
+2. **Local containment evidence.** The composition root issues `PERSONAL_LOCAL` evidence only from facts it verifies
+   itself at startup: the ADR-0102 single-instance lock is held; the running build's manifest hash equals the
+   installed service manifest; the receiver's runner containment profile id is the expected one; the host is the
+   configured owner host. Any unverifiable fact fails closed.
+3. **ADR-0089 is not relaxed.** Every ratified ADR-0089 activation prerequisite (exact `ApprovalRequest` scope proof,
+   `STARTED → CANCELED` semantics, ambiguous-outcome handling, zero automatic retry, offline activation acceptance)
+   stays required before activation.
+4. **One trigger.** Activation is limited to one explicit owner trigger, a long-running summary that reports back by
+   owner DM (through the ADR-0101 sink, DM only). Which trigger is *pending owner decision 3*. No multi-agent runtime;
+   `AgentProfile` stays configuration only.
+5. **Deps and storage.** This ADR authorizes no `ConversationRuntimeDeps` key and no migration. If activation needs
+   either, an amendment states it before code merges. ADR-0102 D4 applies: a second writer process requires CAS first.
+
+### Consequences
+
+- **+** A path to the first deferred-work feature on Personal without inventing a fake production root.
+- **−** Two trust domains to keep separate; a review must prove `PERSONAL_LOCAL` cannot satisfy a `PRODUCTION` check.
+- **Conflict recorded, not resolved here:** ADR-0090 and its R3-B3 amendments are Proposed, so this ADR cannot amend
+  their text. When ADR-0090 is ratified it must either adopt this edition scoping or reject this ADR.
+
+### Acceptance criteria
+
+Offline tests prove `PERSONAL_LOCAL` evidence is refused by every `PRODUCTION` check and in a non-Personal composition;
+continuation stays fail-closed with any D2 fact missing; the ADR-0089 activation acceptance suite passes.
+
+### Strict gates
+
+Ratification (decision 3); independent Chief Architect review before SUB-3 merges; activation and its Live UAT.
+
+## ADR-0104 — Deterministic answer coverage: internal-action claim guard (Quoky-domain actions) with bounded lexicon and exemptions, action-shaped fall-through corpus, help-intent handler, GENERAL_CHAT hygiene extension. Amends the ADR-0098 amendment (guard scope) and ADR-0098 D2; adds one ADR-0096 D5 handler.
+
+- **Status:** Proposed (awaiting owner ratification)
+- **Date:** 2026-10-06
+- **Amends:** ADR-0098 amendment (2026-10-02) D2: the action-claim guard also covers Quoky-internal actions; ADR-0098
+  D2 (sanitizer hygiene, LLM-1); ADR-0096 D5 (adds the `pre-classify` help-intent handler, order 400); ADR-0093 note
+  (help answers may be a filtered subset of contributed help lines). **Relates:** ADR-0096 D6, ADR-0098 D7, ADR-0095.
+  Plan tracks DET-1, LLM-1.
+
+### Context
+
+v2 Live QA kept finding action-shaped phrases that missed every deterministic handler and reached GENERAL_CHAT, where
+the local model claimed an outcome ("푸시를 실행할 수 있습니다", "성공적으로 완성하였습니다", "삭제된 상태가 맞습니다":
+QA-V2-005, W7-02/03/05, W8-02). Each fix covered one phrase family. The existing guard runs only when Core flagged an
+external-action request (calendar, email, payment) and does not cover commit, push, PR, to-do, reminder or memory.
+
+### Decision
+
+1. **Internal-action claim guard.** In the shared GENERAL_CHAT sanitizer path (every provider, no id branching; also
+   `POLICY_SENSITIVE_CHAT`), a reply that **claims a completed Quoky-domain action or asserts a Quoky-domain state Quoky
+   did not report** is replaced by a fixed KO/EN notice: nothing was done, plus the exact command for that domain
+   (taken from the handler-contributed help lines). Domains: commit, push, PR, merge, branch, apply, to-do, reminder,
+   memory, connector write.
+2. **Bounded lexicon, claim shape only.** A closed, versioned lexicon in `application/chat-policy/` pairs a domain noun
+   or verb with a completed or assertive form: first person or impersonal completed aspect (`커밋했습니다`,
+   `푸시했어요`, `추가했습니다`, `완료 처리했습니다`, `I've pushed`, `has been merged`) and completed-state assertions
+   about a domain object (`삭제된 상태가 맞습니다`, `완료된 상태로 보입니다`). Exemptions mirror QUAL-6: quoted or
+   fenced text, a translation clause, conditionals and how-to forms (`~하면`, `~하려면`), imperatives addressed to the
+   user (`커밋하세요`), questions, and negations (`하지 않았어요`). Changing the lexicon needs a corpus update.
+3. **State-aware handler replies.** DET-1 writes a per-feature vocabulary inventory (verbs and nouns per handler family
+   and anchor state). Each existing handler answers its own vocabulary in every state it owns, extending the v2
+   post-push pattern. This adds phrases inside existing handlers; it changes no order.
+4. **Help-intent handler (amends ADR-0096 D5).** A `pre-classify` handler, order 400 (after work lookups, before the
+   classifier), answers how-to questions about Quoky's own commands ("완료 처리 어떻게 해?", "알림 어떻게 지워?") with
+   the matching contributed help lines, provider-free. It matches only a how-to shape plus a command keyword from the
+   help-line index; generic programming questions fall through. LLM-1 ships the module; DET-1 registers it.
+5. **Hygiene extension (ADR-0098 D2, LLM-1).** `sanitizeGeneralChatText` also drops a trailing standalone
+   `(Translated from …)` / `(…에서 번역됨)` line when no translation was requested, and strips an isolated Han
+   character inside a Hangul run only when the reply language is `ko` and the character has no Hangul-word neighbour.
+   It removes stray markers only; it never rephrases.
+6. **Corpus.** `golden/action-shaped-fallthrough.v1.json` holds every v2 live-QA miss as `mustPass`, plus negative
+   cases (legitimate explanations). It joins `baseline.v1.json` with `minTotal` raised; owner-curated (ADR-0098 D7).
+
+No port, token, migration or deps change (baseline stays 34).
+
+### Consequences
+
+- **+** The class "model claims a Quoky action" is closed by construction, not by phrase-by-phrase fixes.
+- **−** False positives on legitimate explanations are possible; mitigated by claim-shape matching, exemptions,
+  negative corpus cases and the live sweep. A false positive costs one replaced reply, never an action.
+- **−** Precedence grows by one handler; the turn-handler routing corpus pins order 400.
+
+### Acceptance criteria
+
+Every v2 live-QA miss replays deterministically with zero provider calls; zero guard false positives on the existing
+intent-routing and how-to corpora; QA-V2-003 and W7-06 shapes fixed in sanitizer tests; how-to questions reach help
+with zero provider calls; the new corpus is in the baseline ratchet.
+
+### Strict gates
+
+The attended ego-browser edge-case sweep (about 40 phrasings per feature state). Independent Chief Architect review
+before DET-1 merges.
+
+## ADR-0105 — Local model choice by measurement and an optional MLX CLI provider inside `packages/ai-cli` with its own offline containment profile. Amends ADR-0098 D8 (runner profile set).
+
+- **Status:** Proposed (awaiting owner ratification) — D1 and D3 are *pending owner decision 10* (recommended default
+  written below).
+- **Date:** 2026-10-06
+- **Amends:** ADR-0098 D8 (adds one runner profile; `CALLER_ENV_ALLOWLIST` and `INHERITED_ENV_ALLOWLIST` for chat are
+  unchanged). **Relates:** ADR-0014, ADR-0064 / Stage 2A bindings, ADR-0092 (registration expresses preference),
+  ADR-0098 D7 (harness), ADR-0107 D6 (execution locality). Plan tracks LLM-2, LLM-3.
+
+### Context
+
+`llama3.1:8b` is weak in Korean (QA-V2-003, 008, W7-06, PC-03). The answer-quality harness exists but has no recorded
+provider runs. On Apple Silicon, `mlx_lm` may be faster than Ollama for the same model. The plan proposed a separate
+`packages/ai-mlx` that reuses the `ai-cli` `CliRunner`; that would make one adapter package depend on another, which
+AGENTS.md forbids.
+
+### Decision
+
+1. **Model choice by measurement (LLM-2).** Candidates: `llama3.1:8b`, `qwen2.5:7b`/`14b`, `gemma3`,
+   `exaone3.5:7.8b`. Each harness `run` is Strict and local, on the synthetic fixtures plus the v2 QA prompts. The
+   choice weighs pass rate, Korean-script purity and latency on the owner host, and is recorded as a table in
+   `docs/uat/`. It is an `OLLAMA_MODEL` operator change; the previous tag stays installed for rollback. Approved Stage 2A
+   bindings are re-run after a switch. *(pending owner decision 10)*
+2. **MLX provider placement.** If D3 adopts MLX, `MlxCliProvider` lives in `packages/ai-cli` beside the Claude, Codex and
+   Ollama CLI providers (one package for the CLI-provider concern), not in a new package, so no adapter depends on
+   another adapter. It implements the unchanged `AiProvider`, runs the `mlx_lm` **CLI** with the prompt on stdin through
+   the existing `CliRunner`, and needs no AI HTTP API (ARCHITECTURE.md §5.5).
+3. **Adoption bar and routing.** MLX is added only if the benchmark shows a clear win (for example ≥1.5× tokens/s at an
+   equal harness score) *(pending owner decision 10)*. Registration is the preference (ADR-0092): `QUOKY_MLX_ENABLED`
+   (default `false`); when on, it advertises `GENERAL_CHAT` at 110 (above Ollama 100), never `POLICY_SENSITIVE_CHAT`,
+   `EMBEDDING` or `IMAGE_UNDERSTANDING`. Readiness is real (binary present, model directory present). Core does not
+   branch on its id. It declares `executionLocality: 'LOCAL'` (ADR-0107 D6).
+4. **Offline containment profile (amends ADR-0098 D8).** A new runner profile `MLX_LOCAL`: the default inherited
+   allowlist, a runner-owned `TMPDIR`, and two fixed (never caller-supplied) values `HF_HUB_OFFLINE=1` and
+   `TRANSFORMERS_OFFLINE=1`. The model is an absolute local directory (`QUOKY_MLX_MODEL_PATH`), never a hub repo id, so
+   no download can start. Chat profiles are unchanged; adding any other variable needs a further amendment.
+5. **Docker stays out** on macOS (no Metal acceleration). Only the legacy `CapabilityRouter` path is affected; the
+   Stage 2B routed seam and ARCHITECTURE.md §5.8–§5.13 are untouched.
+
+No Core port, token, migration or deps change.
+
+### Consequences
+
+- **+** Model choice becomes evidence-based; MLX, if adopted, is a registration change, not a Core change.
+- **−** A Python toolchain on the owner host (installed by the owner, Strict); another readiness probe.
+- **−** Prompt behaviour differs per engine; the harness must be re-run when either engine changes.
+
+### Acceptance criteria
+
+An evaluation table with the recorded decision in `docs/uat/`; if MLX ships: unit tests for argv, the `MLX_LOCAL`
+environment (offline variables present, `OLLAMA_*` and caller variables refused), readiness, and the capability table;
+the turn-routing corpus unchanged with `QUOKY_MLX_ENABLED=false`.
+
+### Strict gates
+
+Every harness run (per run and per target); `ollama pull` and the MLX model download (network, owner); `.env.local`
+edits; the live 20-prompt Korean chat set.
+
+## ADR-0106 — Memory management chat commands: list, view, edit and forget the owner's durable memories through a pre-classify handler with content-bound confirmation and a forget cascade. Amends ADR-0073 (user-facing forget) and the ADR-0073 amendment; adds one ADR-0096 D5 handler.
+
+- **Status:** Proposed (awaiting owner ratification)
+- **Date:** 2026-10-06
+- **Amends:** ADR-0073 (adds a user-facing forget and edit surface over `MemoryWriter`); the ADR-0073 amendment
+  (`[LATER]` actor-wide forget, delivered here for exact records); ADR-0096 D5 (handler at `pre-classify` order 50).
+  **Relates:** ADR-0093 (help lines), ADR-0097 (`containsCredentialMaterial` unchanged), ADR-0098 D8 (vector cache),
+  ADR-0107 D7 (cascade). Plan track MEM-1.
+
+### Context
+
+The owner can add memories (`기억해:`) but cannot see, correct or delete them. `MemoryWriter.forget` (exact id,
+scope-bound) and superseding promotion exist, but no chat command reaches them. Durable recall is actor-scoped
+(ADR-0073 amendment) while writes stay exact-scope, so a record saved in another Session is invisible to any
+session-scoped command.
+
+### Decision
+
+1. **Grammar (`application/memory-commands/`, pure).** Whole-message, negation-aware, KO/EN: `기억 목록` (`기억 목록
+   2` for the next page, 10 per page), `기억 N 보여줘`, `기억 N 수정: <text>`, `기억 N 잊어줘`, and the confirmation
+   `기억 확인 <code>`; English `list memories`, `show memory N`, `edit memory N: …`, `forget memory N`. Bulk forget
+   ("내 기억 다 지워줘") is refused with the one-by-one instruction. `기억해:` keeps its runtime block, which runs before
+   the `pre-classify` stage, so no collision.
+2. **Placement (amends ADR-0096 D5).** A `pre-classify` handler, order 50, before to-do mutations (100). Precedence
+   becomes: `기억해:` > memory commands (50) > learning commands (60, ADR-0107) > anchored to-dos (100) > calendar
+   (150, ADR-0110) > reminders (200) > work lookups (300) > help intent (400, ADR-0104) > classifier. The connector-write
+   grammar (ADR-0112) lives inside the work-chat handlers and adds no order. Help lines are contributed.
+3. **What is listed.** Only records eligible for the owner's durable recall: the resolving owner actor, `LONG_TERM`,
+   no `channelId`/`threadId`/`taskId`, not expired, not superseded. Numbers are computed at command time by `createdAt`
+   ascending (the ADR-0100 to-do convention; no session state). Previews are bounded (120 chars) and pass the credential
+   guard; another actor's records are never listed or counted.
+4. **Content-bound confirmation for edit and forget.** `기억 N 잊어줘` and `기억 N 수정: …` reply with the full preview
+   and a 4-character code derived from SHA-256 of (record id, content hash, proposed new text or `forget`, 30-minute
+   window). Only `기억 확인 <code>` within the current or previous window executes, so a shifted number or a changed
+   record cannot be confirmed by mistake. No `ApprovalRequest` (a handler never creates one, ADR-0096 D4); the
+   explicit confirmation is the consent, as for to-dos.
+5. **Effects.** Forget calls `MemoryWriter.forget` with the record's own write scope after checking the record's actor
+   equals the owner. Edit writes a superseding record in the original scope through the normal writer policy, so the
+   credential guard refuses a credential-shaped edit. Forget and edit also delete the record's vector from the
+   `VectorProvider` (existing `delete`) and, once v14 exists, every `learning_items` row whose `source_memory_id` is that
+   record (ADR-0107 D7).
+6. **Risk.** View is LOW; edit and forget are LOW owner-instructed local writes with explicit confirmation. Nothing
+   leaves the host. No provider call, migration, port, token or deps change.
+
+### Consequences
+
+- **+** The owner can see and take back what Quoky knows: the trust and privacy gap in the plan closes.
+- **−** Two-step edit and forget; numbering can shift between list and command (the confirmation names the record).
+- **−** Precedence grows by one handler at order 50; golden routing cases pin it against to-do and reminder phrases.
+
+### Acceptance criteria
+
+List, view, edit and forget work end to end; after forget, lexical and embedding recall no longer return the record;
+a stale or wrong code changes nothing; a credential-shaped edit is refused; another actor's record is never listed;
+golden routing cases cover `기억해:` versus `기억 목록` versus to-do and reminder phrases.
+
+### Strict gates
+
+The attended list → forget → recall check → edit → recall check session, on a DB copy.
+
+## ADR-0107 — Owner-curated learning: consent-scoped learning store (schema v14), feedback trends and candidates, curated few-shot examples injected only into providers that declare local execution, offline export and mining. Amends ADR-0098 (D4 posture and "no learning loop"), ARCHITECTURE.md §5 (provider execution-locality attribute) and ADR-0096 D5.
+
+- **Status:** Proposed (awaiting owner ratification) — consent, retention, egress and the examples flag follow owner
+  decision 5 (recorded 2026-10-06). LRN-4 (D9) is *pending owner decision 11*.
+- **Date:** 2026-10-06
+- **Amends:** ADR-0098 Consequences ("No learning loop" becomes "no **automatic** learning loop") and D4 (v12 stays
+  text-free; owner-approved text lives only in the separate v14 table); **ARCHITECTURE.md §5** (a new provider
+  rule: `executionLocality` is provider-declared data, written into §5 before LRN-2 merges); ADR-0096 D5 (learning
+  commands at `pre-classify` order 60). **Relates:** ADR-0063, ADR-0073, ADR-0098 D6/D7/D8, ADR-0106 D5. Plan LRN-1..4.
+
+### Context
+
+v2 captures 👍/👎 and implicit signals with no text (ADR-0098 D4); `피드백 요약` shows counts. Nothing turns a signal
+into a better answer (ROADMAP candidates D and E). The owner asked for learning and consented (decision 5) to per-item,
+owner-approved text, kept locally by default. Choosing "local providers only" without branching on a provider id needs
+the provider to declare where it executes.
+
+### Decision
+
+1. **Principles (binding).** The owner approves every change; no online self-modification. Text enters the store only
+   through an explicit owner command on that item. The strict credential guard runs at capture and again at use; a
+   match is refused, never redacted-and-kept. Measured: a change counts only if it moves a metric.
+2. **Schema v14 (ADR-0096 D10 lane, LRN-1, fixed number).** Additive, idempotent `learning_items(id PK, actor_id, kind
+   GOLDEN_CANDIDATE|EXAMPLE, capability, language, source_turn_id NULL, source_memory_id NULL, egress, created_at,
+   expires_at, data JSON)` with indexes on `(actor_id, kind, created_at)`, `expires_at`, `source_turn_id` and
+   `source_memory_id`. `data` holds the owner-approved request text, the ideal answer or note, and expected behaviour,
+   each bounded (2,000 chars). `egress` has one value in v3, `LOCAL_ONLY`; a wider value needs an amendment.
+   Retention 365 days from creation with lazy bounded pruning; caps 1,000 items per actor. A new
+   `LearningRepository` port and token; `StorageProvider` unchanged. v15 (ADR-0112) is blocked until v14 is on `main`.
+3. **Measurement and candidates (LRN-1).** `피드백 요약` (control, read-only, unchanged stage) gains a trend line: 👎 rate
+   per capability, this 30 days against the previous 30. New commands: `피드백 후보` lists recent rated turns
+   (numbered at command time, request text from the locally stored Task, truncated and guarded); `후보 N 메모: <note>`
+   on a 👎 turn saves a `GOLDEN_CANDIDATE`; `후보 N 예시로 저장` on a 👍 turn saves an `EXAMPLE`; `예시 목록`, `예시 N
+   수정: <ideal answer>`, `예시 N 삭제`. The reply text is used only if it is stored locally; otherwise the owner supplies
+   the ideal answer. A `pre-classify` handler at order 60 owns these commands; help lines are contributed.
+4. **Export (LRN-1).** `apps/quoky/src/tools/learning-export.ts` writes approved candidates as golden corpus cases to a
+   local file, no network. Cases enter the repository only through an owner-reviewed PR; committing them publishes that
+   text to the repository remote, which the owner decides per case.
+5. **Curated examples (LRN-2, closes candidate D).** `ContextBuilder` selects at most 2 `EXAMPLE` items for GENERAL_CHAT
+   (embedding scorer when `QUOKY_EMBEDDING_ENABLED`, else lexical) under a fixed budget (≤2,400 chars); `PromptComposer`
+   layers them as non-authoritative `EXAMPLE` entries, never as facts. `QUOKY_LEARNING_EXAMPLES_ENABLED` defaults to
+   `false` until LRN-2 is measured (decision 5). With the flag off, prompts are byte-identical to v2.
+6. **Execution locality (amends ARCHITECTURE.md §5).** `AiProvider` gains optional readonly `executionLocality: 'LOCAL'
+   | 'REMOTE'`; absent means `REMOTE` (fail closed). It is declared data like `capabilities`, not an id branch. Ollama
+   providers declare `LOCAL` only when the configured model name and tag contain no `cloud` (mirrors ADR-0098 D8);
+   Claude and Codex declare `REMOTE`. The example layer is composed only after the provider for this execution is
+   resolved and declares `LOCAL`; otherwise the request is composed without it (ADR-0092 has no re-execution on another
+   provider). The Stage 2B routed seam gets no examples in v3. ADR-0110 and ADR-0111 reuse this attribute.
+7. **Forget cascade.** ADR-0106 forget/edit deletes rows with that `source_memory_id`; `예시 N 삭제` deletes one row;
+   expiry deletes rows. Deletes are the only destructive path and are scoped to the owner actor.
+8. **Offline mining (LRN-3).** `apps/quoky/src/tools/learning-report.ts` clusters 👎 and implicit-correction turns
+   locally and proposes golden cases, handler patterns and embedding-recall parameters as a reviewed PR. Nothing is
+   applied automatically.
+9. **LRN-4 deferred.** Local fine-tuning waits for ≥300 approved examples and a measured LRN-2 gain, needs its own ADR,
+   and training data never leaves the host *(pending owner decision 11)*.
+
+No `ConversationRuntimeDeps` change. `prompt-composer.ts` edits invalidate Stage 2A bindings until re-run.
+
+### Consequences
+
+- **+** Feedback can improve answers, always through owner approval; ROADMAP candidate D closes.
+- **−** The first consented text store besides memory: separate table, guard twice, local-only, forgettable, capped.
+- **−** A Core contract addition (`executionLocality`); every future provider must declare it or be treated as remote.
+
+### Acceptance criteria
+
+Flags off: byte-identical prompts. Tests cover consent, credential refusal at capture and use, the forget cascade,
+expiry, `LOCAL_ONLY` enforcement (a `REMOTE` provider never receives an example), and export validity. LRN-2 shows a
+non-negative harness delta and a 30-day 👎-rate report.
+
+### Strict gates
+
+v14 apply outside the delegated dev DB (including the ADR-0102 host DB); harness runs; the attended LRN Live QA,
+including a policy-sensitive (Claude) turn that must receive no example. Independent Chief Architect review before
+LRN-1 and LRN-2 merge.
+
+## ADR-0108 — Code work v3: deterministic PR title and body bound to the PR approval by hash, optional model-proposed text, and ratification of the delivered read-only PR status token with partial status (PR #113). Amends ADR-0099 and ADR-0049 (title/body rules).
+
+- **Status:** Proposed (awaiting owner ratification). D1 records behaviour **already implemented** on `main` (PR #113,
+  commit 6a59526) that no ratified ADR covers yet; ratifying D1 makes the settled text and the code agree (the ADR-0095
+  pattern).
+- **Date:** 2026-10-06
+- **Amends:** ADR-0099 D5 (status token scope; PR approval payload) and ADR-0049 Q8/CA #4–#5 (title = sanitized
+  instruction; body = file **count only, no file paths**). **Relates:** ADR-0047/0048, ADR-0050, ADR-0061 (App tokens),
+  ADR-0093/0095, ADR-0097. Plan tracks CODE-6, CODE-7, C5, CODE-9.
+
+### Context
+
+The PR title is the sanitized instruction text (QA G5). PR status failed when check runs were unreadable (G11/C5) because
+the write token is minted with only `contents` and `pull_requests` write. PR #113 fixed status on 2026-10-06 (live
+PC-2 PASS). ADR-0049 fixed the body to a file count with no paths, which the plan's richer body would change.
+
+### Decision
+
+1. **Read-only status token (implemented, CODE-6).** PR status mints its own repository-down-scoped installation token
+   with `{pull_requests, checks, contents}: read`. If GitHub refuses the mint with 422 (permission not granted), the
+   source re-mints without `checks`; a non-rate-limit 403 on check runs is handled the same way. The result is a PARTIAL
+   status: state, branch, commit, reviews and GitHub-reported mergeability (display only), with checks in the
+   provider-agnostic `unavailable` state (zero counts, never success or failure) and copy saying checks could not be
+   read for lack of permission. Push, PR creation and merge preflight keep the write token unchanged; merge preflight
+   never reads checks. Tokens stay adapter-local and are never logged. Remaining CODE-6 scope is only residual tests
+   or copy found in review.
+2. **Deterministic title (amends ADR-0049 CA #4).** The PR title is the approved commit's subject, which the anchor
+   records at commit approval (`committedSubject`, ≤72 chars, single line, credential-guarded). If it is absent or
+   refused, the title is `chore: update <first path> (+N files)`. The instruction text is never the title.
+3. **Deterministic body (amends ADR-0049 CA #5).** The body lists the approved commit (short hash and subject), the
+   workspace-relative paths of the committed files (≤20, then "+N more"), head→base, and "Generated by Quoky; not
+   merged". Paths of committed files may appear; file content, diffs and secret-looking names never do (those files
+   cannot be committed, ADR-0019/0022). Body ≤4,000 chars.
+4. **Optional model proposal.** With `QUOKY_PR_DESCRIPTION_MODEL_ENABLED=true` (default `false`), a title/body is
+   proposed through `Capability.SUMMARIZATION` routing (no id branching) from the subject, the paths and a diff stat
+   only (no diff content). It is credential-guarded and length-bounded; on any failure the deterministic text is used.
+5. **Hash binding (amends ADR-0099 D5).** The PR preview shows the exact title and body. The CRITICAL PR approval stores
+   SHA-256 of (title, body). At execution the stored text is re-hashed; any mismatch creates no PR and asks for a fresh
+   request.
+6. **Merge default unchanged.** `QUOKY_GIT_MERGE_ENABLED` stays `false` by release default (owner decision 7). CODE-9
+   is an optional sandbox UAT of merge scenarios B/C, run only if the owner wants merge from chat.
+
+No migration, port, token or deps change; `PullRequestCreationInput` already carries title and body.
+
+### Consequences
+
+- **+** PR titles and bodies are meaningful and exactly what the owner approved; status works without Checks.
+- **−** ADR-0049's no-paths body rule is relaxed: committed file paths reach GitHub in the PR body (they are already in
+  the pushed commit).
+- **−** An optional model call adds egress of paths and a diff stat when enabled.
+
+### Acceptance criteria
+
+The title is never the instruction; an approved PR uses exactly the previewed title and body (hash test); status works
+with and without the Checks permission (already covered by PR #113 tests); minted-token scope tests pass.
+
+### Strict gates
+
+The sandbox session on `quoky-uat-sandbox`: branch → commit → push → PR (title/body check) → status with and without
+Checks → close unmerged. Merge-flag UAT (CODE-9) only on explicit owner request.
+
+## ADR-0109 — Multi-repository allowlist for code work: one allowlisted GitHub repository per registered project, push-target and hosting validation against the allowlist, App installation limited to the allowlisted repositories. Amends ADR-0051 and ADR-0099 D5. P2.
+
+- **Status:** Proposed (awaiting owner ratification). P2; it may be dropped without blocking INT-2.
+- **Date:** 2026-10-06
+- **Amends:** ADR-0051 (one configured `provider/owner/repo` identity becomes an allowlist of identities) and ADR-0099 D5
+  (the push-target resolver also validates the allowlist). **Relates:** ADR-0018 (project registration), ADR-0061 (App
+  tokens), ADR-0094, ADR-0108. Plan track CODE-8.
+
+### Context
+
+Code work targets one repository (`QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO`). The owner has several projects. Live
+session PC-1 (2026-10-06) found the GitHub App installation's repository access set to "All repositories"; with that
+setting an installation token minted without a repository filter could reach every repository of the account.
+
+### Decision
+
+1. **Allowlist.** `QUOKY_GITHUB_REPOS` (comma-separated `owner/repo`, ≤10, validated at startup; a malformed entry is a
+   typed startup error). The legacy pair is accepted as an allowlist of one; setting both is a startup error.
+2. **One repository per project.** A registered project resolves its repository identity from its workspace `origin`
+   fetch and push URLs (read under the ADR-0061 sanitized git environment, HTTPS `github.com` only). The identity must
+   be on the allowlist, otherwise every remote step (push, PR, status, merge, cleanup) is refused before any token
+   mint. Two projects resolving to the same repository are allowed; one project resolving to two is refused.
+3. **Per-operation scoping stays.** Every installation token stays repository-down-scoped to the one resolved
+   repository (`tokenForRepository`), so a token never covers a second repository even under "All repositories".
+4. **Installation access.** The operator guide requires "Only select repositories" with exactly the allowlisted
+   repositories. Whether to switch the current "All repositories" installation back is *pending owner decision (PC-1
+   note; recommended: switch to selected repositories before CODE-8 merges)*.
+5. **Guards unchanged.** `PersonalGitGuard`, `PersonalHostingGuard`, the merge flag, main/master refusal and per-step
+   CRITICAL approvals apply per repository exactly as today.
+
+No migration (the identity is derived, not stored), no port, token or deps change.
+
+### Consequences
+
+- **+** Code work on several owner repositories with the same safety chain.
+- **−** Identity now depends on each workspace's remote configuration; a rewritten remote URL (`insteadOf`, `pushurl`)
+  is refused by the existing preflight rather than followed.
+
+### Acceptance criteria
+
+A non-allowlisted repository is refused before any token mint or network call; minted tokens name exactly one
+repository; the legacy single-repository configuration behaves byte-identically.
+
+### Strict gates
+
+Changing the App installation's repository access; a sandbox Live UAT on a second allowlisted repository.
+
+## ADR-0110 — Calendar read: a narrow read-only `CalendarReader` port, a Google Calendar `calendar.readonly` adapter, a deterministic schedule-question handler, and local-only summaries with no cloud fallback. Amends ADR-0096 D5 and the ADR-0098 amendment (QUAL-7 routing when a calendar is configured).
+
+- **Status:** Proposed (awaiting owner ratification). Provider, scope and egress follow owner decision 4 (recorded
+  2026-10-06).
+- **Date:** 2026-10-06
+- **Amends:** ADR-0096 D5 (a `pre-classify` handler at order 150; the plan's "work-stage" wording is replaced, since
+  ADR-0096 has only the control, post-anchor and pre-classify stages); ADR-0098 amendment / QUAL-7 (schedule questions
+  go to the calendar handler instead of `POLICY_SENSITIVE_CHAT` when a calendar is configured). **Relates:** ADR-0072,
+  ADR-0100 D7/D8 (error vocabulary, untrusted readout), ADR-0101 (zone), ADR-0107 D6. Plan tracks CAL-1, CAL-2.
+
+### Context
+
+"내일 9시에 뭐 있어?" is the most frequent personal-data question. QUAL-7 routes it to Claude, which truthfully says it
+cannot see the schedule. A calendar event has a start, an end, an all-day flag and a zone, which `ConnectorItem`
+(`dueDate` only) does not model; widening the shared connector item for one source would bend ADR-0072/0100.
+
+### Decision
+
+1. **Port.** `CalendarReader` in `packages/core/src/ports` (new token): `listEvents({ from, to, limit ≤50 })` →
+   `CalendarEvent[]` (`id`, `title`, `start`, `end`, `allDay`, `location?`, `status`, `calendarName`), domain types only.
+   Failures reuse the ADR-0100 `ConnectorQueryError` reasons. Read-only; no write method exists.
+2. **Adapter.** `packages/connector-calendar-google`: Google Calendar API, scope `calendar.readonly` only, GET only, a
+   timeout on every call, egress to `googleapis.com`/`oauth2.googleapis.com` only. The refresh token and OAuth client
+   live in the host's `.env.local` or a local token file (mode 600), access tokens in memory; nothing is logged. A
+   local one-time consent helper (`apps/quoky/src/tools/calendar-auth.ts`, loopback redirect) obtains the refresh
+   token; running it is a Strict owner action.
+3. **Handler (amends ADR-0096 D5).** `pre-classify`, order 150, between to-do mutations (100) and reminders (200). Its
+   pure grammar claims only a schedule question: a day or range word (`오늘`, `내일`, `이번 주`, a date, a weekday)
+   plus a calendar noun (`일정`, `스케줄`, `캘린더`, `약속`, `미팅`) or `뭐 있어`, as a question or with `알려줘`/`보여줘`
+   **without** a time bound by `에`/`뒤에`/`후에` followed by a reminder body. `내일 9시에 회의 알려줘` stays a reminder;
+   golden cases pin both. Answers are deterministic, in `QUOKY_TIMEZONE`, from a pure formatter (all-day, multi-day and
+   zone-boundary cases tested).
+4. **Summaries are local-only (decision 4).** An optional summary uses the ADR-0100 `summarize` path only when the
+   resolved provider declares `executionLocality: 'LOCAL'` (ADR-0107 D6); otherwise the deterministic list is the
+   reply. There is **no Claude fallback** for calendar text, unlike `QUOKY_WORK_SUMMARY_ENABLED`. Event text is
+   untrusted readout (ADR-0100 D8). If ADR-0107 D6 is not ratified, summaries stay off.
+5. **No calendar configured.** The handler is registered only when the adapter is configured; QUAL-7 routing is then
+   unchanged.
+6. **Writes stay refused.** Create or move requests get the fixed read-only refusal. Calendar writes are P2 behind the
+   ADR-0112 approval model; "회의 10분 전 알림" needs its own ADR-0101 amendment.
+
+No migration and no deps change.
+
+### Consequences
+
+- **+** The most frequent personal question gets a correct, deterministic answer; calendar text stays on the host.
+- **−** A new external read target, OAuth refresh handling, and one more handler in the precedence list.
+
+### Acceptance criteria
+
+Fixture-adapter tests return correct today/tomorrow/week answers across all-day and zone boundaries; with no calendar
+configured QUAL-7 routing is unchanged; event text never reaches a `REMOTE` provider; reminder phrases with a time stay
+reminders.
+
+### Strict gates
+
+The calendar account as a new external target (owner confirmation), the consent helper run, one read-only probe, then
+about 15 attended schedule phrasings.
+
+## ADR-0111 — Files and images in Discord: bounded owner-only attachment intake, text files as untrusted bounded Resources, a new `IMAGE_UNDERSTANDING` capability served by a local vision provider, no image bytes persisted. Amends ADR-0091 and ADR-0098.
+
+- **Status:** Proposed (awaiting owner ratification) — image egress (D5) is *pending owner decision 9*.
+- **Date:** 2026-10-06
+- **Amends:** ADR-0091 (admitted owner messages may carry attachments; intake happens only after admission) and ADR-0098
+  (a new capability; the D1 injection and capability-honesty rules extend to attachment content). **Relates:**
+  ADR-0074 (`ResourceRef`), ADR-0097 (credential guard), ADR-0100 D8 (untrusted readout), ADR-0107 D6. Plan MM-1, MM-2.
+
+### Context
+
+Attachments are ignored; the owner pastes screenshots and logs. Attachment content is a second untrusted inbound type,
+and images raise an egress question the owner has not answered yet (decision 9).
+
+### Decision
+
+1. **Port change, additive.** `InboundMessage` gains optional `attachments?: readonly InboundAttachment[]` (`name`,
+   `mimeType`, `sizeBytes`, `kind: 'text' | 'image' | 'unsupported'`, and either bounded `text` or an opaque local
+   `imageRef`). No Discord type crosses the port. `AiRequest` gains optional `images?: readonly { path; mimeType }[]`.
+   Both are recorded here before code merges (ARCHITECTURE.md §11.7).
+2. **Intake (adapter-owned, amends ADR-0091).** Only messages that already passed the ADR-0091 owner and location gate
+   are considered. Size and type are checked from metadata before any download and enforced while streaming: text
+   ≤256 KiB (UTF-8, `text/*`, `.log`, `.md`, `.json`); images ≤8 MiB (png, jpeg, webp); at most 3 attachments per
+   message. Downloads come only from the platform's CDN host into a runner-owned temporary directory; a temp file is
+   deleted after the turn and swept after 10 minutes. Anything else is `unsupported` and named in the reply.
+3. **Text files.** Become one bounded `Resource` in the context (`Resource` and `Artifact` stay separate), rendered as
+   non-authoritative untrusted readout that never carries instructions. The credential guard refuses a credential-shaped
+   file with a reply naming it. Never written into a workspace or durable memory. Text follows the same egress as the
+   message text the owner typed.
+4. **Images route by capability.** New `Capability.IMAGE_UNDERSTANDING`. A separate local vision provider instance
+   (an Ollama vision model chosen by the operator, real readiness, the existing containment) advertises it; Core
+   never branches on an id. With no ready provider the reply truthfully says image analysis is unavailable. Image bytes
+   are never persisted, embedded or logged.
+5. **Image egress.** In v3, image bytes go only to a provider that advertises `IMAGE_UNDERSTANDING` **and** declares
+   `executionLocality: 'LOCAL'` (ADR-0107 D6); the Claude CLI does not advertise the capability *(pending owner
+   decision 9; recommended: local only)*.
+6. **No deps change.** The runtime reads attachments from `InboundMessage`; no migration.
+
+### Consequences
+
+- **+** Screenshots and logs become usable in chat without leaving the host.
+- **−** A second untrusted inbound content type, a larger Discord adapter surface, and a vision model on the host.
+
+### Acceptance criteria
+
+Bounded intake is tested (oversize and unsupported types refused before download); a credential-shaped text file is
+refused; image turns reach only `IMAGE_UNDERSTANDING` providers declaring `LOCAL`; no provider gives a deterministic
+reply; a non-allowlisted channel's attachment is dropped with the message.
+
+### Strict gates
+
+The attended session (text log, screenshot, oversize, unsupported type, non-allowlisted channel, image with an injection
+caption); pulling the vision model; any Claude image egress needs its own owner approval. Independent Chief Architect
+review before MM-1 merges.
+
+## ADR-0112 — Connector writes behind exact-payload one-time approvals: narrow write ports (Jira comment, Jira transition, Slack post), write receipts (schema v15) with an at-most-once state machine, target allowlists, writes off by default. Amends ADR-0100 D9; deps baseline 34→35.
+
+- **Status:** Proposed (awaiting owner ratification) — the write scope (D1) and the Slack token type (D4) are *pending
+  owner decision 6*.
+- **Date:** 2026-10-06
+- **Amends:** ADR-0100 D9 (writes are no longer always refused: allowlisted Jira and Slack writes run behind D5) and the
+  ADR-0032 M3 amendment (`ConversationRuntimeDeps` baseline 34 → 35). **Relates:** ARCHITECTURE.md §10/§13 (HIGH
+  minimum; separately approved narrow ports), ADR-0072, ADR-0093/0095, ADR-0096 D4, ADR-0097 (one-time pattern),
+  ADR-0101 D4 (outcome contract). Plan tracks CWR-1, CWR-2.
+
+### Context
+
+Work chat is read-only (ADR-0100 D9). Commenting on a Jira issue or posting to Slack is the natural next step and the
+first irreversible write to corporate systems. ARCHITECTURE.md §13 requires separately approved narrow ports, and §10
+sets HIGH as the minimum; v3 applies the stricter one-time, hash-bound pattern of ADR-0097.
+
+### Decision
+
+1. **Scope.** Jira comment, Jira transition to a named status, Slack post to an allowlisted channel. Confluence,
+   GitHub-issue and calendar writes stay refused *(pending owner decision 6; recommended as written)*.
+2. **Narrow ports (core/ports, new tokens).** `IssueCommentWriter.addComment`, `IssueTransitionWriter.transition`,
+   `ChannelMessageWriter.post`, each returning `SENT{externalRef} | NOT_SENT{reason, retryable: false} |
+   UNCERTAIN{reason}` (the ADR-0101 D4 classification: when in doubt, `UNCERTAIN`). `ConnectorProvider` stays read-only;
+   the writers are separate classes in `connector-jira` and `connector-slack`.
+3. **Receipts (schema v15, fixed number, blocked until v14 is on `main`).** Additive, idempotent
+   `connector_write_receipts(id PK, actor_id, idempotency_key UNIQUE, connector, operation, target, payload_sha256,
+   status PREPARED|SENT|NOT_SENT|UNCERTAIN, created_at, updated_at, data JSON)`. **No payload text column**; the exact
+   payload lives only on the approval's anchor Task. `PREPARED` is written before any network call; a `PREPARED` row
+   found at startup becomes `UNCERTAIN`.
+4. **Allowlists and tokens.** `QUOKY_CONNECTOR_WRITES_ENABLED` (default `false`), `QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS`
+   and `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS`; a non-allowlisted target is refused before any network call. Slack posts
+   use a bot token with `chat:write` posting as the app, separate from the read token *(pending owner decision 6)*. The
+   Atlassian API token already permits writes, so the gate is Quoky-side; this is stated in the operator guide.
+5. **Flow (CWR-2).** The work-chat grammar parses `Jira KEY-1에 댓글: <text>`, `Jira KEY-1 상태 <name>로 변경`, `Slack
+   #<channel>에 게시: <text>` and returns a write-draft reply variant (handlers create no approval, ADR-0096 D4). A new
+   optional dep `connectorWriteFlow?` (baseline 34 → 35; absent means writes stay refused) builds the preview showing
+   the exact target and payload (a transition is first checked against the issue's available transitions with a GET),
+   creates a **CRITICAL** `ApprovalRequest` and a plan-less anchor binding actor, session, target, operation and payload
+   SHA-256. Approval uses the ADR-0095 interpreter, the ADR-0093 TTL and the expiry re-check. On approval the grant is
+   consumed (anchor saved) before exactly one send; the payload text is the owner's text verbatim, never model-drafted.
+6. **At-most-once.** `UNCERTAIN` is never retried and the reply says it may have been posted; `NOT_SENT` is reported and
+   needs a new request. A repeated request whose target and payload hash match a `SENT` receipt replies "이미 보냈어요"
+   with the link. The credential guard runs on every payload; a match is refused.
+
+### Consequences
+
+- **+** The owner can act on work items from chat with an exact, single-use, audited approval.
+- **−** First irreversible corporate writes; mitigated by default-off, allowlists, CRITICAL one-time approvals and no
+  retry on `UNCERTAIN`. A transient failure after the request may lose a post rather than duplicate it.
+- **−** One more deps key and a migration; ARCHITECTURE.md §10/§13 are satisfied, not amended.
+
+### Acceptance criteria
+
+The approval binds the payload hash; replays and a consumed grant are refused; `UNCERTAIN` has no retry; a
+non-allowlisted target is refused before any network call; writes are off by default; the deps baseline test asserts 35.
+
+### Strict gates
+
+Each write target as a new external target (a Jira test project issue and a Slack test channel); the attended session
+(comment, transition, post, deny, replay, network failure mid-send); v15 apply outside the delegated dev DB.
+Independent Chief Architect review before CWR-2 merges.
