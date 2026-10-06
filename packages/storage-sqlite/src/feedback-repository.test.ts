@@ -180,6 +180,65 @@ describe('SqliteFeedbackRepository (ADR-0098 D4, migration v12)', () => {
   });
 });
 
+describe('SqliteFeedbackRepository — ADR-0107 D3 additions (trend window, rated turns)', () => {
+  it('summarize honours an exclusive `until` (the previous window) and is unchanged without it', async () => {
+    const { repository } = repo();
+    await repository.saveTurn(turn({ id: 'old', inboundMessageId: 'in-old', createdAt: '2026-08-20T00:00:00.000Z' }));
+    await repository.saveTurn(turn({ id: 'edge', inboundMessageId: 'in-edge', createdAt: '2026-09-02T00:00:00.000Z' }));
+    await repository.saveTurn(turn({ id: 'new', inboundMessageId: 'in-new', createdAt: '2026-09-20T00:00:00.000Z' }));
+    await repository.upsertSignal(rating('old', 'NEGATIVE'));
+    await repository.upsertSignal(rating('new', 'NEGATIVE'));
+    const previous = await repository.summarize({
+      actorId: 'actor-1', since: '2026-08-03T00:00:00.000Z', until: '2026-09-02T00:00:00.000Z', recentNegativeLimit: 5,
+    });
+    expect(previous.turnCount).toBe(1);
+    expect(previous.byCapability).toEqual([{ key: Capability.GENERAL_CHAT, turns: 1, positive: 0, negative: 1, implicit: 0 }]);
+    expect(previous.recentNegative.map((t) => t.turnId)).toEqual(['old']);
+    const current = await repository.summarize({ actorId: 'actor-1', since: '2026-09-02T00:00:00.000Z', recentNegativeLimit: 5 });
+    expect(current.turnCount).toBe(2);
+    expect(current.byCapability).toEqual([{ key: Capability.GENERAL_CHAT, turns: 2, positive: 0, negative: 1, implicit: 0 }]);
+  });
+
+  it('lists the actor\'s rated non-control turns that have a Task, newest first, with no text or provider id', async () => {
+    const { repository } = repo();
+    await repository.saveTurn(turn({ id: 'neg', inboundMessageId: 'in-1', createdAt: '2026-10-02T10:00:00.000Z' }));
+    await repository.saveTurn(turn({ id: 'pos', inboundMessageId: 'in-2', createdAt: '2026-10-02T11:00:00.000Z', taskId: 'task-2', capability: undefined }));
+    await repository.saveTurn(turn({ id: 'retracted', inboundMessageId: 'in-3', createdAt: '2026-10-02T12:00:00.000Z' }));
+    await repository.saveTurn(turn({ id: 'no-task', inboundMessageId: 'in-4', taskId: undefined }));
+    await repository.saveTurn(turn({ id: 'control', inboundMessageId: 'in-5', control: 'help' }));
+    await repository.saveTurn(turn({ id: 'other-actor', inboundMessageId: 'in-6', actorId: 'actor-2' }));
+    await repository.saveTurn(turn({ id: 'too-old', inboundMessageId: 'in-7', createdAt: '2026-08-01T00:00:00.000Z' }));
+    await repository.saveTurn(turn({ id: 'implicit-only', inboundMessageId: 'in-8' }));
+    await repository.upsertSignal(rating('neg', 'NEGATIVE'));
+    await repository.upsertSignal(rating('pos', 'POSITIVE', 'u1:POSITIVE'));
+    await repository.upsertSignal(rating('retracted', 'RETRACTED'));
+    for (const id of ['no-task', 'control', 'other-actor', 'too-old']) await repository.upsertSignal(rating(id, 'NEGATIVE'));
+    await repository.upsertSignal({
+      id: 'imp', turnId: 'implicit-only', kind: FeedbackSignalKind.IMPLICIT_CORRECTION, source: 'IMPLICIT',
+      sourceKey: 'IMPLICIT_CORRECTION', value: 'OBSERVED', createdAt: '2026-10-02T10:05:00.000Z', updatedAt: '2026-10-02T10:05:00.000Z',
+    });
+
+    const rows = await repository.listRatedTurns({ actorId: 'actor-1', since: '2026-09-02T00:00:00.000Z', limit: 10 });
+    expect(rows).toEqual([
+      { turnId: 'pos', createdAt: '2026-10-02T11:00:00.000Z', taskId: 'task-2', intentType: IntentType.CHAT, positive: 1, negative: 0 },
+      {
+        turnId: 'neg', createdAt: '2026-10-02T10:00:00.000Z', taskId: 'task-1', intentType: IntentType.CHAT,
+        capability: Capability.GENERAL_CHAT, positive: 0, negative: 1,
+      },
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('provider-x');
+    expect(await repository.listRatedTurns({ actorId: 'actor-1', since: '2026-09-02T00:00:00.000Z', limit: 1 }))
+      .toHaveLength(1);
+    expect(await repository.listRatedTurns({ actorId: 'actor-1', since: '2026-09-02T00:00:00.000Z', limit: 0 })).toEqual([]);
+    expect((await repository.listRatedTurns({
+      actorId: 'actor-1', since: '2026-09-02T00:00:00.000Z', limit: 10, turnId: 'neg',
+    })).map((row) => row.turnId)).toEqual(['neg']);
+    expect(await repository.listRatedTurns({
+      actorId: 'actor-2', since: '2026-09-02T00:00:00.000Z', limit: 10, turnId: 'neg',
+    })).toEqual([]);
+  });
+});
+
 describe('FeedbackRecorder over SQLite (QUAL-3 end to end, disposable DB)', () => {
   it('persists no message or reply text anywhere in the feedback tables', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'quoky-feedback-'));

@@ -22,6 +22,8 @@ export * from './connector-query';
 export * from './feedback-repository.port';
 export * from './reminder-repository.port';
 export * from './notification-sink.port';
+// Personal v3 (ADR-0107 D2, LRN-1).
+export * from './learning-repository.port';
 
 export * from './continuation-routing-audit';
 export * from './continuation-containment-audit';

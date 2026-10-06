@@ -70,6 +70,13 @@ export interface QuokyConfig {
    * `timeoutMs` bounds one embedding call; `maxNewPerTurn` is fixed at 4.
    */
   embedding: { enabled: boolean; model: string; timeoutMs: number; maxNewPerTurn: number };
+  /**
+   * Owner-curated learning (ADR-0107). `examplesEnabled` (`QUOKY_LEARNING_EXAMPLES_ENABLED`, exact true/false,
+   * default false — owner decision 5) gates the LRN-2 curated-example layer only; LRN-1 parses it and no consumer
+   * reads it yet. The learning commands themselves are always available: they store text only on an explicit owner
+   * command per item, `LOCAL_ONLY`.
+   */
+  learning: { examplesEnabled: boolean };
   connectors: {
     jira?: { host: string; email: string; apiToken: string };
     slack?: { token: string };
@@ -153,6 +160,7 @@ export const QuokyConfigErrorCode = {
   EMBEDDING_MODEL_INVALID: 'EMBEDDING_MODEL_INVALID',
   EMBEDDING_MODEL_CLOUD_REFUSED: 'EMBEDDING_MODEL_CLOUD_REFUSED',
   EMBEDDING_TIMEOUT_INVALID: 'EMBEDDING_TIMEOUT_INVALID',
+  LEARNING_EXAMPLES_ENABLED_INVALID: 'LEARNING_EXAMPLES_ENABLED_INVALID',
   ...ReminderConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
@@ -255,6 +263,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),
       timeoutMs: parseEmbeddingTimeoutMs(env.QUOKY_EMBEDDING_TIMEOUT_MS),
       maxNewPerTurn: EMBEDDING_MAX_NEW_PER_TURN,
+    },
+    learning: {
+      examplesEnabled: parseExactBoolean(
+        env.QUOKY_LEARNING_EXAMPLES_ENABLED,
+        false,
+        QuokyConfigErrorCode.LEARNING_EXAMPLES_ENABLED_INVALID,
+      ),
     },
     connectors: {
       jira: resolveJiraConnector(env),

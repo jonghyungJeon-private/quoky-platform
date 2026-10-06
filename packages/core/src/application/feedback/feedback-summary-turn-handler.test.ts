@@ -99,4 +99,21 @@ describe('FeedbackSummaryTurnHandler (ADR-0098 D6)', () => {
       reply: { context: CTX, text: FEEDBACK_SUMMARY_UNAVAILABLE_TEXT }, status: 'FAILED',
     });
   });
+
+  it('adds the ADR-0107 D3 trend line when the source provides one, and omits it when the trend is unavailable', async () => {
+    const summarize = vi.fn(async () => SUMMARY);
+    const trend = vi.fn(async () => ({
+      current: [{ key: 'GENERAL_CHAT', turns: 2, positive: 0, negative: 1, implicit: 0 }],
+      previous: [],
+    }));
+    const handler = new FeedbackSummaryTurnHandler({ feedback: { summarize, trend }, tasks: { get: async () => null } });
+    const reply = await handler.handle(ctxOf('피드백 요약'));
+    expect(trend).toHaveBeenCalledWith('actor-1');
+    expect(reply?.reply.text).toContain('- 일반 대화: 50% (👎 1/2) · 이전 - · 비교 불가');
+
+    const noTrend = new FeedbackSummaryTurnHandler({
+      feedback: { summarize, trend: vi.fn(async () => null) }, tasks: { get: async () => null },
+    });
+    expect((await noTrend.handle(ctxOf('피드백 요약')))?.reply.text).not.toContain('👎 비율 추이');
+  });
 });

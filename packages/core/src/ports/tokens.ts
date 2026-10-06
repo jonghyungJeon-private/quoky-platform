@@ -35,3 +35,6 @@ export const CONVERSATION_TURN_HANDLERS = Symbol('ConversationTurnHandlers');
 export const FEEDBACK_REPOSITORY = Symbol('FeedbackRepository');
 export const REMINDER_REPOSITORY = Symbol('ReminderRepository');
 export const NOTIFICATION_SINK = Symbol('NotificationSink');
+// Personal v3 (ADR-0107 D2, LRN-1): the owner-curated learning store. Also the seam the ADR-0106 memory forget path
+// (MEM-1) calls to delete learning items derived from a forgotten memory record (ADR-0107 D7).
+export const LEARNING_REPOSITORY = Symbol('LearningRepository');

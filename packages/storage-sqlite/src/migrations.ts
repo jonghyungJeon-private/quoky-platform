@@ -298,6 +298,33 @@ export const MIGRATIONS: readonly Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS reminders_actor ON reminders(actor_id, status);`);
     },
   },
+  {
+    version: 14,
+    name: 'learning items table (owner-curated learning, ADR-0107)',
+    up(db) {
+      // Purely additive, no backfill (ADR-0107 D2, ADR-0096 D10). The first consented text store besides memory:
+      // `data` holds only owner-approved, guarded, bounded text (request, ideal answer or note, expected behaviour)
+      // written by an explicit owner command on one item. `egress` is `LOCAL_ONLY` in v3 (enforced by the repository,
+      // so a later amendment widens it without a table rebuild). Rows expire at `expires_at` (365 days).
+      db.exec(`CREATE TABLE IF NOT EXISTS learning_items (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        language TEXT NOT NULL,
+        source_turn_id TEXT NULL,
+        source_memory_id TEXT NULL,
+        egress TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        data TEXT NOT NULL);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS learning_items_actor_kind
+        ON learning_items(actor_id, kind, created_at);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS learning_items_expires ON learning_items(expires_at);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS learning_items_source_turn ON learning_items(source_turn_id);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS learning_items_source_memory ON learning_items(source_memory_id);`);
+    },
+  },
 ];
 
 /** The schema version this build targets (the highest migration version). */

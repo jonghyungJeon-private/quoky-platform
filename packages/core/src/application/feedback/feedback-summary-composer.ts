@@ -1,5 +1,6 @@
 import { Capability, FeedbackSignalKind, IntentType } from '../../domain';
 import type { FeedbackBreakdownRow, FeedbackSummary, Id } from '../../domain';
+import type { FeedbackCapabilityTrend } from './feedback-recorder';
 import { containsCredentialMaterial } from '../credential-guard';
 
 /**
@@ -19,7 +20,8 @@ export const FEEDBACK_SUMMARY_EMPTY_TEXT =
   '최근 30일 동안 기록된 대화가 없어요. 답변에 👍/👎 반응을 남기면 여기에서 확인할 수 있어요.';
 const SUPPRESSED_EXCERPT = '(민감한 내용일 수 있어 표시하지 않아요)';
 const MISSING_EXCERPT = '(요청 내용을 찾을 수 없어요)';
-const FOOTER = '피드백은 품질 확인용 기록일 뿐이며 답변 방식이 자동으로 바뀌지는 않아요. 메시지 내용은 저장하지 않아요.';
+const FOOTER =
+  '피드백은 품질 확인용 기록이며 답변 방식이 자동으로 바뀌지는 않아요. 메시지 내용은 "후보 N 메모"나 "예시로 저장"으로 직접 고른 것만 이 기기에 저장해요.';
 
 /** Task request text by Task id, for the recent 👎 turns; a missing id shows a neutral placeholder. */
 export type FeedbackRequestExcerpts = ReadonlyMap<Id, string>;
@@ -98,6 +100,46 @@ function breakdownLines(
   return lines;
 }
 
+/** A 👎 rate as a whole percentage of the window's turns; `-` when the window has no turns. */
+function negativeRate(row: Pick<FeedbackBreakdownRow, 'turns' | 'negative'> | undefined): string {
+  if (!row || row.turns === 0) return '-';
+  return `${Math.round((row.negative / row.turns) * 100)}% (👎 ${row.negative}/${row.turns})`;
+}
+
+function trendWord(
+  current: Pick<FeedbackBreakdownRow, 'turns' | 'negative'> | undefined,
+  previous: Pick<FeedbackBreakdownRow, 'turns' | 'negative'> | undefined,
+): string {
+  if (!current || current.turns === 0 || !previous || previous.turns === 0) return '비교 불가';
+  // Compare the exact ratios (cross-multiplied), never the rounded percentages.
+  const now = current.negative * previous.turns;
+  const before = previous.negative * current.turns;
+  return now < before ? '개선' : now > before ? '악화' : '같음';
+}
+
+/**
+ * ADR-0107 D3 trend line: 👎 rate per capability (👎-rated turns ÷ recorded turns), this 30 days against the
+ * previous 30. Empty when neither window has a turn. Capability keys only, shown as Korean labels.
+ */
+export function feedbackTrendLines(trend: FeedbackCapabilityTrend | null | undefined): string[] {
+  if (!trend) return [];
+  const keys: Array<string | null> = [];
+  for (const row of [...trend.current, ...trend.previous]) {
+    if (row.turns > 0 && !keys.includes(row.key)) keys.push(row.key);
+  }
+  if (keys.length === 0) return [];
+  const find = (rows: readonly FeedbackBreakdownRow[], key: string | null) => rows.find((row) => row.key === key);
+  const shown = keys.slice(0, FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS);
+  const lines = ['👎 비율 추이(최근 30일 · 이전 30일):'];
+  for (const key of shown) {
+    const current = find(trend.current, key);
+    const previous = find(trend.previous, key);
+    lines.push(`- ${feedbackCapabilityLabel(key)}: ${negativeRate(current)} · 이전 ${negativeRate(previous)} · ${trendWord(current, previous)}`);
+  }
+  if (keys.length > shown.length) lines.push(`- 외 ${keys.length - shown.length}개`);
+  return lines;
+}
+
 /**
  * Compose the `피드백 요약` reply. `summary` null means the store could not be read. Provider ids are never part of
  * the input and never rendered; only fixed copy, counts, Korean capability/intent labels, UTC dates and guarded excerpts.
@@ -105,6 +147,7 @@ function breakdownLines(
 export function composeFeedbackSummaryText(
   summary: FeedbackSummary | null,
   excerpts: FeedbackRequestExcerpts = new Map(),
+  trend?: FeedbackCapabilityTrend | null,
 ): string {
   if (!summary) return FEEDBACK_SUMMARY_UNAVAILABLE_TEXT;
   if (summary.turnCount === 0) return FEEDBACK_SUMMARY_EMPTY_TEXT;
@@ -120,6 +163,8 @@ export function composeFeedbackSummaryText(
   ];
   const byCapability = breakdownLines('기능별:', summary.byCapability, feedbackCapabilityLabel);
   if (byCapability.length > 0) lines.push('', ...byCapability);
+  const trendLines = feedbackTrendLines(trend);
+  if (trendLines.length > 0) lines.push('', ...trendLines);
   const byIntent = breakdownLines('요청 유형별:', summary.byIntent, feedbackIntentLabel);
   if (byIntent.length > 0) lines.push('', ...byIntent);
   if (summary.recentNegative.length > 0) {
