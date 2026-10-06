@@ -91,7 +91,7 @@ describe('connector-write copy (CWR-2)', () => {
   it('every refusal says nothing was sent or changed', () => {
     const reasons: ConnectorWriteRefusal[] = [
       'target-not-allowed', 'invalid-target', 'invalid-text', 'text-too-long', 'credential', 'transition-unavailable',
-      'transition-lookup-failed', 'event-not-found', 'too-many-events', 'calendar-read-failed', 'all-day-move',
+      'transition-lookup-failed', 'event-not-found', 'event-unversioned', 'too-many-events', 'calendar-read-failed', 'all-day-move',
       'invalid-time', 'no-change', 'invalid-choice', 'binding-mismatch', 'grant-expired',
     ];
     for (const reason of reasons) {

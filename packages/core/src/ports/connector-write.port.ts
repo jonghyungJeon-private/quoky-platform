@@ -212,16 +212,17 @@ export interface CalendarEventCreateRequest {
 
 /**
  * The state of an existing event the owner approved a change to (ADR-0112: bound in the approved payload). The writer
- * re-reads the event and refuses (`NOT_SENT('TARGET_CHANGED')`) when it no longer matches: a different start, end or
- * all-day shape, or — when the reader gave one — a different provider version (any edit since the preview).
+ * re-reads the event and refuses (`NOT_SENT('TARGET_CHANGED')`) when it no longer matches: a different provider
+ * version (any edit since the preview), start, end or all-day shape. The version is REQUIRED: the write is always
+ * conditional on it, and a missing or malformed version is `NOT_SENT('TARGET_CHANGED')` before any network call.
  */
 export interface CalendarEventExpectation {
   readonly allDay: boolean;
   /** As `CalendarEvent.start`: a UTC instant for a timed event, a `YYYY-MM-DD` date for an all-day one. */
   readonly start: string;
   readonly end: string;
-  /** The provider's opaque event version at preview time (for example an HTTP entity tag), when known. */
-  readonly version?: string;
+  /** The provider's opaque event version at preview time (for example an HTTP entity tag). */
+  readonly version: string;
 }
 
 export interface CalendarEventUpdateRequest {

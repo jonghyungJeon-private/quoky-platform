@@ -333,6 +333,8 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'transition-unavailable': '이 이슈는 지금 그 상태로 바꿀 수 없어요.',
   'transition-lookup-failed': '이 이슈에서 바꿀 수 있는 상태를 확인하지 못했어요.',
   'event-not-found': '그 날짜·시간에 맞는 일정을 기본 캘린더에서 찾지 못했어요.',
+  'event-unversioned':
+    '이 일정은 미리보기 이후 바뀌었는지 확인할 버전 정보가 없어서 바꾸거나 삭제하지 않아요. 승인할 요청도 만들지 않았어요.',
   'too-many-events': '맞는 일정이 너무 많아요. 시간이나 따옴표로 제목을 더 정확히 적어 주세요.',
   'calendar-read-failed': '캘린더를 읽지 못해서 어떤 일정인지 확인할 수 없었어요.',
   'all-day-move': '종일 일정의 시간은 바꿀 수 없어요.',

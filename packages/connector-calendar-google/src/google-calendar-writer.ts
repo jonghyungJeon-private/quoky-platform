@@ -32,9 +32,10 @@ import { GOOGLE_CALENDAR_EVENTS_SCOPE, refreshGoogleAccessToken, type GoogleAcce
  * - Target: the owner's `primary` calendar only — the calendar id is a constant, never caller input.
  * - Every write passes `sendUpdates=none`, and no request ever sets attendees, conferencing or reminders.
  * - Update and delete first read the event and refuse a recurring series (single instances are allowed), and refuse an
- *   event that no longer matches the approved one (start, end, all-day shape, and its entity tag when the preview had
- *   one): `NOT_SENT('TARGET_CHANGED')`. The write itself carries `If-Match` with that tag, so an edit racing the
- *   pre-check is refused by Google (412) instead of overwritten.
+ *   event that no longer matches the approved one (its entity tag, start, end, all-day shape):
+ *   `NOT_SENT('TARGET_CHANGED')`. The bound entity tag is required — without a valid one nothing is read or written
+ *   (`TARGET_CHANGED`) — and the write itself always carries `If-Match` with it, so an edit racing the pre-check is
+ *   refused by Google (412) instead of overwritten.
  * - Create derives the provider event id from the idempotency key, so a repeated create cannot add a second event.
  * - One write request per call, with a timeout and redirects refused; no retry of the write. Nothing is logged, and no
  *   outcome or error carries a token, a secret, the payload or a response body.
@@ -116,14 +117,11 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
 
   async updateEvent(request: CalendarEventUpdateRequest): Promise<ConnectorWriteOutcome> {
     const changes = request?.changes;
-    if (
-      !isValidEventId(request?.eventId) ||
-      !isValidExpectation(request.expected) ||
-      changes === undefined ||
-      !changesValid(changes)
-    ) {
+    if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected) || changes === undefined || !changesValid(changes)) {
       return connectorWriteNotSent('INVALID_REQUEST');
     }
+    // Never an unconditional write: without the approved version the event cannot be proven unchanged.
+    if (!isValidVersion(request.expected.version)) return connectorWriteNotSent('TARGET_CHANGED');
     const refused = await this.precheckSingleEvent(request.eventId, request.expected);
     if (refused !== undefined) return refused;
     const body: Record<string, unknown> = {
@@ -137,6 +135,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
 
   async deleteEvent(request: CalendarEventDeleteRequest): Promise<ConnectorWriteOutcome> {
     if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected)) return connectorWriteNotSent('INVALID_REQUEST');
+    if (!isValidVersion(request.expected.version)) return connectorWriteNotSent('TARGET_CHANGED');
     const refused = await this.precheckSingleEvent(request.eventId, request.expected);
     if (refused !== undefined) return refused;
     return this.write('DELETE', eventsUrl(request.eventId), undefined, 'delete', request.eventId, request.expected.version);
@@ -370,17 +369,21 @@ function isValidEventId(value: unknown): value is string {
   return typeof value === 'string' && EVENT_ID.test(value);
 }
 
+/** The shape of the bound expectation (its version is checked separately: missing or malformed = TARGET_CHANGED). */
 function isValidExpectation(value: CalendarEventExpectation | undefined): value is CalendarEventExpectation {
   if (!isRecord(value) || typeof value.allDay !== 'boolean') return false;
   if (typeof value.start !== 'string' || typeof value.end !== 'string') return false;
-  if (value.version !== undefined && (typeof value.version !== 'string' || !ETAG.test(value.version))) return false;
   if (value.allDay) return DATE.test(value.start) && DATE.test(value.end);
   return Number.isFinite(Date.parse(value.start)) && Number.isFinite(Date.parse(value.end));
 }
 
-/** The live event (pre-check read) is still the approved one: same all-day shape, start and end, and entity tag. */
+function isValidVersion(value: unknown): value is string {
+  return typeof value === 'string' && ETAG.test(value);
+}
+
+/** The live event (pre-check read) is still the approved one: same entity tag, all-day shape, start and end. */
 function matchesExpectation(event: Record<string, unknown>, expected: CalendarEventExpectation): boolean {
-  if (expected.version !== undefined && event.etag !== expected.version) return false;
+  if (typeof event.etag !== 'string' || event.etag !== expected.version) return false;
   const start = isRecord(event.start) ? event.start : undefined;
   const end = isRecord(event.end) ? event.end : undefined;
   if (start === undefined || end === undefined) return false;

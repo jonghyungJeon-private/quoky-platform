@@ -234,6 +234,7 @@ export type ConnectorWriteRefusal =
   | 'transition-unavailable'
   | 'transition-lookup-failed'
   | 'event-not-found'
+  | 'event-unversioned'
   | 'too-many-events'
   | 'calendar-read-failed'
   | 'all-day-move'
@@ -793,12 +794,16 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         return channelMessages ? () => channelMessages.post({ channel: payload.channel, text: payload.text }) : null;
       case 'CALENDAR_EVENT_CREATE':
         return calendarEvents ? () => calendarEvents.createEvent({ draft: payload.draft, idempotencyKey }) : null;
+      // An approved update / delete without a usable bound version (an anchor from before versions were required) is
+      // recorded NOT_SENT('TARGET_CHANGED') without calling the writer: it is never sent unconditionally.
       case 'CALENDAR_EVENT_UPDATE':
-        return calendarEvents
-          ? () => calendarEvents.updateEvent({ eventId: payload.eventId, expected: payload.expected, changes: payload.changes })
-          : null;
+        if (!calendarEvents) return null;
+        if (!isEventVersion(payload.expected.version)) return async () => connectorWriteNotSent('TARGET_CHANGED');
+        return () => calendarEvents.updateEvent({ eventId: payload.eventId, expected: payload.expected, changes: payload.changes });
       case 'CALENDAR_EVENT_DELETE':
-        return calendarEvents ? () => calendarEvents.deleteEvent({ eventId: payload.eventId, expected: payload.expected }) : null;
+        if (!calendarEvents) return null;
+        if (!isEventVersion(payload.expected.version)) return async () => connectorWriteNotSent('TARGET_CHANGED');
+        return () => calendarEvents.deleteEvent({ eventId: payload.eventId, expected: payload.expected });
     }
   }
 
@@ -843,13 +848,10 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const writer = this.deps.writers.calendarEvents;
     if (!writer) return { kind: 'writes-off' };
     const target = `${writer.target}/${event.id}`;
-    // The event as previewed: an edit after this (time, shape or any change of its version) refuses the write.
-    const expected: CalendarEventExpectation = {
-      allDay: event.allDay,
-      start: event.start,
-      end: event.end,
-      ...(event.version !== undefined ? { version: event.version } : {}),
-    };
+    // The event as previewed: an edit after this (any change of its version, time or shape) refuses the write. Without
+    // a usable version the write could not be made conditional, so nothing is proposed (no approval, no change).
+    if (!isEventVersion(event.version)) return { kind: 'refused', reason: 'event-unversioned', family: 'calendar' };
+    const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version: event.version };
     if (mode === 'delete') {
       return this.propose(
         input,
@@ -1164,15 +1166,20 @@ function isNumericId(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9]{1,20}$/.test(value);
 }
 
+/** The shape of a bound event expectation (its version is checked when sending: missing = NOT_SENT TARGET_CHANGED). */
 function isExpectation(value: CalendarEventExpectation | undefined): value is CalendarEventExpectation {
   return (
     typeof value === 'object' &&
     value !== null &&
     typeof value.allDay === 'boolean' &&
     typeof value.start === 'string' &&
-    typeof value.end === 'string' &&
-    (value.version === undefined || typeof value.version === 'string')
+    typeof value.end === 'string'
   );
+}
+
+/** A usable provider event version (printable ASCII, bounded) — the condition every update / delete is sent under. */
+function isEventVersion(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
 }
 
 /** Events on the referenced day that match the start time and every title word. Never a best guess. */

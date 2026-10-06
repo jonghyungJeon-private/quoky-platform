@@ -40,7 +40,12 @@ import { ApprovalManager } from './approval-manager';
 import type { ApprovalPolicy } from './approval-policy';
 import { createCalendarTurnHandler } from './calendar/calendar-turn-handler';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { StatelessConnectorWriteFlow, type ConnectorWriteWriters } from './connector-writes/connector-write-flow';
+import {
+  StatelessConnectorWriteFlow,
+  connectorWriteApprovalReason,
+  type ConnectorWriteWriters,
+} from './connector-writes/connector-write-flow';
+import { connectorWritePayloadSha256 } from './connector-writes/connector-write-payload';
 import { ConversationRuntime, type ConversationRuntimeDeps } from './conversation-runtime';
 import { IntentResolver } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
@@ -81,9 +86,12 @@ const WEEKLY: CalendarEvent = {
   location: '3층',
   status: 'confirmed',
   calendarName: 'primary',
+  version: '"v-weekly-1"',
 };
-const ONE_ON_ONE: CalendarEvent = { ...WEEKLY, id: 'evt-1on1', title: '1:1 면담', location: undefined } as CalendarEvent;
-const LUNCH: CalendarEvent = { ...WEEKLY, id: 'evt-lunch', title: '점심', start: '2026-10-07T03:00:00.000Z', end: '2026-10-07T04:00:00.000Z' };
+const ONE_ON_ONE: CalendarEvent = { ...WEEKLY, id: 'evt-1on1', title: '1:1 면담', location: undefined, version: '"v-1on1-1"' } as CalendarEvent;
+const LUNCH: CalendarEvent = {
+  ...WEEKLY, id: 'evt-lunch', title: '점심', start: '2026-10-07T03:00:00.000Z', end: '2026-10-07T04:00:00.000Z', version: '"v-lunch-1"',
+};
 
 class MemoryReceipts implements ConnectorWriteReceiptRepository {
   readonly rows = new Map<string, ConnectorWriteReceipt>();
@@ -269,8 +277,8 @@ function harness(opts: HarnessOptions = {}) {
     if (!event) return connectorWriteNotSent('NOT_FOUND');
     const { expected } = request;
     const same =
-      event.allDay === expected.allDay && event.start === expected.start && event.end === expected.end &&
-      (expected.version === undefined || event.version === expected.version);
+      typeof expected.version === 'string' && event.version === expected.version &&
+      event.allDay === expected.allDay && event.start === expected.start && event.end === expected.end;
     return same ? undefined : connectorWriteNotSent('TARGET_CHANGED');
   };
   const issueComments: IssueCommentWriter = {
@@ -718,7 +726,7 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     await h.send('승인');
     await h.send('일정 삭제 실행');
     expect(h.writes.deleteEvent).toEqual([
-      { eventId: 'evt-1on1', expected: { allDay: false, start: ONE_ON_ONE.start, end: ONE_ON_ONE.end } },
+      { eventId: 'evt-1on1', expected: { allDay: false, start: ONE_ON_ONE.start, end: ONE_ON_ONE.end, version: '"v-1on1-1"' } },
     ]);
     expect(h.writes.updateEvent).toHaveLength(0);
   });
@@ -742,7 +750,7 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     expect(h.writes.updateEvent).toEqual([
       {
         eventId: 'evt-weekly',
-        expected: { allDay: false, start: WEEKLY.start, end: WEEKLY.end },
+        expected: { allDay: false, start: WEEKLY.start, end: WEEKLY.end, version: WEEKLY.version },
         changes: { time: { allDay: false, start: '2026-10-07T07:00:00.000Z', end: '2026-10-07T08:00:00.000Z', timeZone: SEOUL } },
       },
     ]);
@@ -849,7 +857,7 @@ describe('connector writes — immutable target binding (ADR-0112, Codex P1)', (
     await h.send('승인');
     h.live.events = [{ ...WEEKLY, start: '2026-10-07T08:00:00.000Z', end: '2026-10-07T09:00:00.000Z' }, LUNCH];
     const reply = await h.send('일정 변경 실행');
-    expect(h.writes.updateEvent[0]?.expected).toEqual({ allDay: false, start: WEEKLY.start, end: WEEKLY.end });
+    expect(h.writes.updateEvent[0]?.expected).toEqual({ allDay: false, start: WEEKLY.start, end: WEEKLY.end, version: WEEKLY.version });
     expect(reply.reply.text).toContain(EVENT_CHANGED);
     expect(reply.reply.text).toContain('캘린더는 바꾸지 않았어요');
     expect(reply.reply.text).not.toContain('일정을 바꿨어요');
@@ -876,6 +884,47 @@ describe('connector writes — immutable target binding (ADR-0112, Codex P1)', (
     const done = await g.send('일정 삭제 실행');
     expect(done.reply.text).toContain('일정을 삭제했어요');
     expect([...g.receipts.rows.values()][0]).toMatchObject({ status: 'SENT' });
+  });
+
+  it('Codex P2: an event without a usable version is never proposed — nothing approved, nothing changed', async () => {
+    for (const version of [undefined, '', 'two\nlines']) {
+      const unversioned = { ...WEEKLY, version } as CalendarEvent;
+      for (const text of ['내일 3시 회의 취소해줘', '내일 3시 회의 4시로 옮겨줘']) {
+        const h = harness({ events: [unversioned, LUNCH] });
+        const reply = await h.send(text);
+        expect(reply.reply.text).toContain('버전 정보가 없어서 바꾸거나 삭제하지 않아요');
+        expect(reply.reply.text).toContain('캘린더는 바꾸지 않았어요');
+        expect(h.approvals.size).toBe(0);
+        expect((await h.send('승인')).reply.text).not.toContain('승인을 기록했어요');
+        expect(h.totalWrites()).toBe(0);
+        expect(h.receipts.rows.size).toBe(0);
+      }
+    }
+  });
+
+  it('Codex P2: an approved update / delete whose bound version is missing is NOT_SENT TARGET_CHANGED without a writer call', async () => {
+    for (const [request, phrase] of [['내일 3시 회의 취소해줘', '일정 삭제 실행'], ['내일 3시 회의 4시로 옮겨줘', '일정 변경 실행']] as const) {
+      const h = harness({ events: [WEEKLY, LUNCH] });
+      await h.send(request);
+      await h.send('승인');
+      // An anchor approved without a bound version (e.g. from before versions were required): rebind its hash so only
+      // the missing version is wrong, as a legitimately approved old-shape payload would be.
+      const task = h.anchorTask() as Task;
+      const anchor = task.metadata?.connectorWriteAnchor as {
+        operation: 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_DELETE'; target: string; approvalId: string; payloadSha256: string;
+        payload: { operation: string; expected: { version?: string } };
+      };
+      delete anchor.payload.expected.version;
+      const { operation: _op, ...sendable } = anchor.payload;
+      anchor.payloadSha256 = connectorWritePayloadSha256(anchor.operation, anchor.target, sendable);
+      const approval = h.approvals.get(anchor.approvalId) as ApprovalRequest;
+      h.approvals.set(approval.id, { ...approval, reason: connectorWriteApprovalReason(anchor.operation, anchor.target, anchor.payloadSha256) });
+      h.tasks.set(task.id, task);
+      const reply = await h.send(phrase);
+      expect(reply.reply.text).toContain(EVENT_CHANGED);
+      expect(h.writes.updateEvent.length + h.writes.deleteEvent.length).toBe(0);
+      expect([...h.receipts.rows.values()][0]).toMatchObject({ status: 'NOT_SENT', data: { reason: 'TARGET_CHANGED' } });
+    }
   });
 
   it('a numbered choice binds the listed event: a change after the listing refuses the execution', async () => {

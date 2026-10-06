@@ -296,13 +296,38 @@ describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', (
         expect(google.calendarCalls).toHaveLength(1);
       }
     }
-    // Without a known version, start / end / shape still bind; an all-day expectation compares dates.
-    const allDay: CalendarEventExpectation = { allDay: true, start: '2026-10-07', end: '2026-10-08' };
-    const ok = fakeGoogle([json(200, live({ etag: '"other"', start: { date: '2026-10-07' }, end: { date: '2026-10-08' } })), new Response(null, { status: 204 })]);
+    // An all-day expectation compares dates (and the tag); the write is conditional on the tag.
+    const allDay: CalendarEventExpectation = { allDay: true, start: '2026-10-07', end: '2026-10-08', version: ETAG };
+    const ok = fakeGoogle([json(200, live({ start: { date: '2026-10-07' }, end: { date: '2026-10-08' } })), new Response(null, { status: 204 })]);
     expect(await writer(ok.fetchImpl).deleteEvent({ eventId: 'evt123', expected: allDay })).toMatchObject({ status: 'SENT' });
-    expect((ok.calendarCalls[1]!.init?.headers as Record<string, string>)['If-Match']).toBeUndefined();
+    expect((ok.calendarCalls[1]!.init?.headers as Record<string, string>)['If-Match']).toBe(ETAG);
     const moved = fakeGoogle([json(200, live({ start: { date: '2026-10-08' }, end: { date: '2026-10-09' } }))]);
     expect(await writer(moved.fetchImpl).deleteEvent({ eventId: 'evt123', expected: allDay })).toMatchObject({ reason: 'TARGET_CHANGED' });
+    // The live event lost its tag: it cannot be proven unchanged.
+    const untagged = fakeGoogle([json(200, live({ etag: undefined }))]);
+    expect(await writer(untagged.fetchImpl).deleteEvent({ eventId: 'evt123', expected: EXPECTED })).toMatchObject({ reason: 'TARGET_CHANGED' });
+  });
+
+  it('Codex P2: a missing or malformed bound version is NOT_SENT TARGET_CHANGED before any network call (never unconditional)', async () => {
+    const { version: _version, ...unversioned } = EXPECTED;
+    for (const expected of [
+      unversioned,
+      { ...EXPECTED, version: '' },
+      { ...EXPECTED, version: 'two\nlines' },
+      { ...EXPECTED, version: 42 },
+    ] as unknown as CalendarEventExpectation[]) {
+      // Even when the live event was edited (title change, new tag), nothing is read or written.
+      const google = fakeGoogle([json(200, live({ etag: '"after-title-change"' })), new Response(null, { status: 204 })]);
+      const calendar = writer(google.fetchImpl);
+      expect(await calendar.deleteEvent({ eventId: 'evt123', expected })).toEqual({
+        status: 'NOT_SENT', reason: 'TARGET_CHANGED', retryable: false,
+      });
+      expect(await calendar.updateEvent({ eventId: 'evt123', expected, changes: { title: 'x' } })).toEqual({
+        status: 'NOT_SENT', reason: 'TARGET_CHANGED', retryable: false,
+      });
+      expect(google.calendarCalls).toHaveLength(0);
+      expect(google.tokenCalls).toHaveLength(0);
+    }
   });
 
   it('a 412 on the conditional write (edited after the pre-check) is NOT_SENT TARGET_CHANGED', async () => {
@@ -328,8 +353,7 @@ describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', (
     const malformed = [
       undefined,
       { allDay: false, start: 'not a time', end: EXPECTED.end },
-      { allDay: true, start: '2026-10-07T00:00:00Z', end: '2026-10-08' },
-      { ...EXPECTED, version: 'two\nlines' },
+      { allDay: true, start: '2026-10-07T00:00:00Z', end: '2026-10-08', version: ETAG },
     ] as unknown as CalendarEventExpectation[];
     for (const expected of malformed) {
       expect(await calendar.deleteEvent({ eventId: 'evt123', expected })).toMatchObject({ reason: 'INVALID_REQUEST' });
