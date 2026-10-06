@@ -1050,3 +1050,67 @@ describe('MemoryCommandService — fix loop 2 (Codex re-review)', () => {
     expect(h.records.map((record) => record.content)).toEqual(['평범한 기억']);
   });
 });
+
+describe('MemoryCommandService — typed forget entries (OPS-2, ADR-0113 D7)', () => {
+  it('requestForgetConfirmation issues the same code and preview the chat request shows', async () => {
+    const h = harness([memory('커피는 아메리카노'), memory('홍차도 좋아')], { archiveDays: 7 });
+    const chat = await h.run('기억 2 잊어줘');
+    const typed = await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 2);
+    expect(typed).toEqual({ status: 'CONFIRMATION', number: 2, preview: '홍차도 좋아', code: codeOf(chat) });
+    expect(await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 9)).toEqual({
+      status: 'NOT_FOUND',
+      number: 9,
+      total: 2,
+    });
+    // Another actor sees none of the owner's records.
+    expect(await h.service.requestForgetConfirmation({ actorId: OTHER, now: NOW }, 1)).toEqual({
+      status: 'NOT_FOUND',
+      number: 1,
+      total: 0,
+    });
+  });
+
+  it('confirmForget runs the chat forget once; the code is one-time across both surfaces', async () => {
+    const coffee = memory('커피는 아메리카노');
+    const h = harness([coffee, memory('홍차도 좋아')], { archiveDays: 7 });
+    const typed = await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 1);
+    if (typed.status !== 'CONFIRMATION') throw new Error('expected a confirmation');
+    const done = await h.service.confirmForget({ actorId: OWNER, now: NOW }, typed.code);
+    expect(done.outcome).toBe('forgotten');
+    expect(h.records.find((record) => record.id === coffee.id)?.metadata).toMatchObject({ archivedAt: NOW });
+    expect((await h.service.confirmForget({ actorId: OWNER, now: NOW }, typed.code)).outcome).toBe('confirm-unknown');
+    expect((await h.run(`기억 확인 ${typed.code}`)).outcome).toBe('confirm-unknown');
+  });
+
+  it('confirmForget never executes an edit, restore or permanent-delete code, and leaves it pending for chat', async () => {
+    const h = harness([memory('버전 1')], { archiveDays: 7 });
+    const editCode = codeOf(await h.run('기억 1 수정: 버전 2'));
+    expect((await h.service.confirmForget({ actorId: OWNER, now: NOW }, editCode)).outcome).toBe('confirm-unknown');
+    expect(h.records[0]?.content).toBe('버전 1');
+    expect((await h.run(`기억 확인 ${editCode}`)).outcome).toBe('edited');
+  });
+
+  it('confirmForget refuses another actor and a stale record like chat does', async () => {
+    const coffee = memory('커피는 아메리카노');
+    const h = harness([coffee], { archiveDays: 7 });
+    const typed = await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 1);
+    if (typed.status !== 'CONFIRMATION') throw new Error('expected a confirmation');
+    expect((await h.service.confirmForget({ actorId: OTHER, now: NOW }, typed.code)).outcome).toBe('confirm-unknown');
+    const index = h.records.findIndex((record) => record.id === coffee.id);
+    h.records[index] = { ...coffee, content: '커피는 라테' };
+    expect((await h.service.confirmForget({ actorId: OWNER, now: NOW }, typed.code)).outcome).toBe('confirm-stale');
+    expect(isArchivedMemory(h.records[index] as MemoryRecord)).toBe(false);
+  });
+
+  it('confirmForget answers a store failure with the fixed failure result', async () => {
+    const h = harness([memory('커피는 아메리카노')], { archiveDays: 7 });
+    const typed = await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 1);
+    if (typed.status !== 'CONFIRMATION') throw new Error('expected a confirmation');
+    h.repository.get = async () => {
+      throw new Error('db down: 커피는 아메리카노');
+    };
+    const failed = await h.service.confirmForget({ actorId: OWNER, now: NOW }, typed.code);
+    expect(failed).toMatchObject({ outcome: 'failed', status: 'FAILED' });
+    expect(h.logs.join('\n')).not.toContain('아메리카노');
+  });
+});

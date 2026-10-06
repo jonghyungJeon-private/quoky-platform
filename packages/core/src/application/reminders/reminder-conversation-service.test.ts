@@ -278,3 +278,55 @@ describe('ReminderConversationService storage failure', () => {
     expect(serialized).not.toContain('db down');
   });
 });
+
+describe('ReminderConversationService typed cancel entry (OPS-2, ADR-0113 D7)', () => {
+  it('returns the chat cancel reply with a typed status, through the same repository call', async () => {
+    const chat = setup();
+    const typed = setup();
+    for (const h of [chat, typed]) await h.turn('내일 오전 9시에 회의 준비 알려줘');
+    const chatReply = (await chat.turn('알림 1 취소'))?.text;
+    const result = await typed.service.cancelByDisplayNo({ actorId: ACTOR, displayNo: 1, now: NOW });
+    expect(result).toEqual({ status: 'CANCELED', displayNo: 1, reply: chatReply });
+    expect(typed.repository.rows).toEqual(chat.repository.rows);
+    expect(await typed.service.cancelByDisplayNo({ actorId: ACTOR, displayNo: 1, now: NOW })).toMatchObject({
+      status: 'ALREADY_FINAL',
+      reply: (await chat.turn('알림 1 취소'))?.text,
+    });
+    expect(await typed.service.cancelByDisplayNo({ actorId: ACTOR, displayNo: 9, now: NOW })).toEqual({
+      status: 'NOT_FOUND',
+      displayNo: 9,
+      reply: (await chat.turn('알림 9 취소'))?.text,
+    });
+  });
+
+  it('reports a reminder being sent as IN_FLIGHT and another actor reminder as NOT_FOUND', async () => {
+    const { repository, service, turn } = setup();
+    await turn('내일 오전 9시에 회의 준비 알려줘');
+    expect((await service.cancelByDisplayNo({ actorId: 'actor-2', displayNo: 1, now: NOW })).status).toBe('NOT_FOUND');
+    repository.rows[0] = claimReminder(repository.rows[0] as Reminder, 'att', NOW);
+    expect((await service.cancelByDisplayNo({ actorId: ACTOR, displayNo: 1, now: NOW })).status).toBe('IN_FLIGHT');
+  });
+
+  it('is DISABLED with the fixed disabled reply when reminders are off, and never writes', async () => {
+    const { repository, service, composer } = setup({ enabled: false });
+    expect(await service.cancelByDisplayNo({ actorId: ACTOR, displayNo: 1, now: NOW })).toEqual({
+      status: 'DISABLED',
+      displayNo: 1,
+      reply: composer.disabled(),
+    });
+    expect(repository.writes).toBe(0);
+  });
+
+  it('is FAILED with the storage-failure reply on a repository throw, logging the class only', async () => {
+    const { repository, service, composer, logger } = setup();
+    repository.throwOn = 'cancel';
+    expect(await service.cancelByDisplayNo({ actorId: ACTOR, displayNo: 1, now: NOW })).toEqual({
+      status: 'FAILED',
+      displayNo: 1,
+      reply: composer.storageFailure(),
+    });
+    expect(logger.lines).toEqual([
+      { level: 'error', message: 'reminder.conversation.failed', fields: { operation: 'CANCEL', errorName: 'Error' } },
+    ]);
+  });
+});

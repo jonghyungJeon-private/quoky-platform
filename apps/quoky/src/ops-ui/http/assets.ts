@@ -75,7 +75,7 @@ p.empty, ul.notes { color: var(--muted); font-size: 12px; }
 ul.notes { margin: 8px 0 0; padding-left: 18px; }
 p.error { color: var(--bad); }
 label { display: block; margin: 12px 0 4px; }
-input[type="password"] {
+input[type="password"], input[type="text"] {
   width: 100%;
   padding: 8px;
   border: 1px solid var(--line);
@@ -93,6 +93,11 @@ button {
   cursor: pointer;
 }
 header.top button { margin-top: 0; }
+td form { margin: 0; }
+td form button, td a.action { margin-top: 0; }
+a.action { color: var(--accent); }
+p.links { margin: 10px 0 0; }
+blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--line); overflow-wrap: anywhere; }
 .refresh { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
 .refresh label { display: inline; margin: 0; }
 `;

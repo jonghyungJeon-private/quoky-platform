@@ -26,8 +26,8 @@ function specifiers(source: string): string[] {
 describe('ops-ui/http import boundary (ADR-0113 D8)', () => {
   const files = readdirSync(HTTP_DIR).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
 
-  it('covers the listener, auth, CSRF, rendering, assets and view-model modules', () => {
-    expect(files.sort()).toEqual(['assets.ts', 'render.ts', 'security.ts', 'server.ts', 'token-file.ts', 'view-model.ts']);
+  it('covers the listener, auth, CSRF, action intents, rendering, assets and view-model modules', () => {
+    expect(files.sort()).toEqual(['assets.ts', 'intents.ts', 'render.ts', 'security.ts', 'server.ts', 'token-file.ts', 'view-model.ts']);
   });
 
   it.each(files)('%s imports only node:* built-ins and sibling http modules', (file) => {

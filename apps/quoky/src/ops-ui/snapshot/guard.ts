@@ -1,6 +1,6 @@
 import { learningTextHasCredential } from '@quoky/core';
 
-import type { OpsPanelView, OpsTable, OpsViewModel } from '../http/view-model';
+import type { OpsLink, OpsPanelView, OpsTable, OpsViewModel } from '../http/view-model';
 
 /**
  * ADR-0113 D5: every string that enters the view model passes the ADR-0097 strict credential guard (the chat-text
@@ -18,11 +18,16 @@ export function guardText(value: string): string {
   return chars.length <= OPS_MAX_STRING_CHARS ? value : `${chars.slice(0, OPS_MAX_STRING_CHARS - 1).join('')}…`;
 }
 
+function guardLink(link: OpsLink): OpsLink {
+  return { label: guardText(link.label), href: guardText(link.href) };
+}
+
 function guardTable(table: OpsTable): OpsTable {
   return {
     columns: table.columns.map(guardText),
     rows: table.rows.map((row) => row.map(guardText)),
     emptyText: guardText(table.emptyText),
+    ...(table.rowLinks !== undefined ? { rowLinks: table.rowLinks.map((link) => (link === null ? null : guardLink(link))) } : {}),
   };
 }
 
@@ -35,6 +40,7 @@ function guardPanel(panel: OpsPanelView): OpsPanelView {
     fields: panel.fields.map((field) => ({ label: guardText(field.label), value: guardText(field.value) })),
     ...(panel.table !== undefined ? { table: guardTable(panel.table) } : {}),
     notes: panel.notes.map(guardText),
+    ...(panel.links !== undefined ? { links: panel.links.map(guardLink) } : {}),
   };
 }
 
