@@ -44,7 +44,7 @@ Ratified 2026-10-02) and `docs/plans/personal-v2-execution-plan.md`. Latest merg
 | `QUOKY_OLLAMA_ENABLED` | `true` | Register local Ollama for chat, summaries and read-only work |
 | `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote git reads |
 | `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag (else `GIT_MERGE_REQUIRES_REMOTE`); merge still needs its own approval steps |
-| `QUOKY_REMINDERS_ENABLED` | `false` | With `false`, a reminder phrase gets a fixed "off" reply; no tick runs |
+| `QUOKY_REMINDERS_ENABLED` | `true` | Release default flipped to `true` in v3 wave 3 (ADR-0102 D9, owner decision 8). With `false`, a reminder phrase gets a fixed "off" reply; no tick runs |
 | `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the channel they were made in (visible to its members) |
 | `QUOKY_WORK_SUMMARY_ENABLED` | `true` | Connector summaries may fall back to Claude when Ollama is not ready |
 | `QUOKY_EMBEDDING_ENABLED` | `false` | Local embedding recall (model `nomic-embed-text`, must be pulled by the owner) |
@@ -64,8 +64,7 @@ connector lookups (ADR-0100); reminders store v13, grammar, tick driver and owne
   (`quoky-uat-sandbox`): branch, new-file commit, push, PR #1 (closed unmerged afterwards), merge refused while disabled.
   Findings and fixes (including the BLOCKER QA-V2-W7-01, an ambient git credential helper) are in the record.
 - **STILL PENDING (not claimed as done):** connector live QA on real Jira, Slack, Confluence and GitHub tenants (the owner
-  is adding credentials); reminders channel-delivery UAT; flipping the release default of `QUOKY_REMINDERS_ENABLED`
-  (reminders were enabled in the QA environment only); any merge-flag enablement; embedding recall on a live model.
+  is adding credentials); reminders channel-delivery UAT; any merge-flag enablement; embedding recall on a live model.
   The GitHub App must have the Checks permission for the PR status preview to work (it truthfully says it cannot check
   otherwise); see `docs/uat/operator-guide.md`.
 - Open quality items (v3 candidates): local-model quality (QA-V2-003, QA-V2-008, QA-V2-W7-06), raw-text PR titles.

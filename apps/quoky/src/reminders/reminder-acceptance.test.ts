@@ -395,7 +395,13 @@ describe('reminders offline acceptance — channel delivery wiring (ADR-0101 D8,
   it('channelDelivery is false by default and stays inert while reminders are off', () => {
     expect(adapterConfigOf({ ...baseEnv }).channelDelivery).toBe(false);
     expect(adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_ENABLED: 'true' }).channelDelivery).toBe(false);
-    expect(adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true' }).channelDelivery).toBe(false);
+    expect(
+      adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_ENABLED: 'false', QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true' }).channelDelivery,
+    ).toBe(false);
+  });
+
+  it('with reminders on by default (ADR-0102 D9), the channel opt-in alone enables channel delivery', () => {
+    expect(adapterConfigOf({ ...baseEnv, QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true' }).channelDelivery).toBe(true);
   });
 
   it('app.module builds the Discord adapter from the reminder-aware config (not the bare discord config)', () => {

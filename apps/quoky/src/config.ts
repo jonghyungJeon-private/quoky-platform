@@ -63,7 +63,7 @@ export interface QuokyConfig {
    * `work.summaryEnabled` (`QUOKY_WORK_SUMMARY_ENABLED`, default true; ADR-0100).
    */
   work: { summaryEnabled: boolean };
-  /** `QUOKY_REMINDERS_ENABLED`, `QUOKY_REMINDERS_CHANNEL_DELIVERY`, `QUOKY_TIMEZONE` (ADR-0101; default off). */
+  /** `QUOKY_REMINDERS_ENABLED`, `QUOKY_REMINDERS_CHANNEL_DELIVERY`, `QUOKY_TIMEZONE` (ADR-0101; reminders default on per ADR-0102 D9, channel delivery default off). */
   reminders: ReminderConfig;
   /**
    * Opt-in local embedding recall (ADR-0098 D8). `model` is a bounded token and never a cloud-served model.
