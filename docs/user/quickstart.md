@@ -197,9 +197,11 @@ pnpm dev
 - 서비스는 `QUOKY_RUNTIME_ENV=prod`로 실행되고 DB와 벡터 저장소는 저장소 밖
   `~/Library/Application Support/Quoky/`(`quoky.db`, `vectors`)를 씁니다. 이 값은 `.env.local`의 같은 이름보다 우선합니다.
   이 DB는 소유자의 실제 데이터입니다.
-- 같은 DB를 쓰는 프로세스는 하나만 시작됩니다 (DB 옆 `quoky.db.lock`). 두 번째 프로세스는
-  `INSTANCE_ALREADY_RUNNING`으로 시작하지 않습니다. 이전 프로세스가 죽어서 남은 잠금은 그 pid가 없거나 재부팅 뒤면
-  자동으로 넘겨받습니다.
+- 같은 DB를 쓰는 프로세스는 하나만 시작됩니다 (DB 옆 `quoky.db.lock/` 디렉터리). 두 번째 프로세스는
+  `INSTANCE_ALREADY_RUNNING`으로 시작하지 않습니다. 이전 프로세스가 죽어서 남은 잠금은 그 pid가 없을 때만 자동으로
+  넘겨받습니다(pid가 살아 있으면 재부팅으로 boot id가 바뀐 경우에만 — 시계 변경은 영향을 주지 않습니다).
+  이전 빌드가 남긴 `quoky.db.lock` **파일**이 있으면 `INSTANCE_LOCK_UNAVAILABLE`로 멈추니, Quoky가 꺼진 상태에서 그
+  파일을 지우세요.
 - Discord 연결 직후, 알림을 보내기 전에 실제 연결된 봇 ID, 서버(`DISCORD_GUILD_ID`), 허용 채널
   (`QUOKY_DISCORD_CHANNEL_IDS`)이 `.env.local`과 같은지 확인합니다. 다르면 `DISCORD_IDENTITY_MISMATCH`로 멈춥니다.
 - 설정 문제로 멈추면 종료 코드 78로 끝나고, **연속 3번**이면 launcher가 더 이상 다시 띄우지 않습니다. 고친 뒤

@@ -314,7 +314,16 @@ cmd_status() {
   local exits=0
   if [ -f "$CONFIG_EXITS_FILE" ]; then exits=$(head -n 1 "$CONFIG_EXITS_FILE" 2>/dev/null); fi
   echo "configuration exits in a row: ${exits:-0} (the launcher stops relaunching at 3; 'restart --apply' clears it)"
-  if [ -f "$DATA_DIR/quoky.db.lock" ]; then echo "instance lock: $DATA_DIR/quoky.db.lock (present)"; else echo "instance lock: none"; fi
+  # ADR-0102 D4: the lock is a directory of generations; the highest one is the current state (held or released).
+  local lock_dir="$DATA_DIR/quoky.db.lock" latest=""
+  if [ -d "$lock_dir" ]; then
+    latest=$(ls "$lock_dir" 2>/dev/null | grep -E '^gen-[0-9]+$' | sed 's/^gen-//' | sort -n | tail -n 1)
+  fi
+  if [ -n "$latest" ]; then
+    echo "instance lock: $lock_dir/gen-$latest $(tr -d '\n' < "$lock_dir/gen-$latest" 2>/dev/null | head -c 300)"
+  else
+    echo "instance lock: none"
+  fi
   echo "logs:    $LOG_DIR/quoky.log"
 }
 
