@@ -1,8 +1,7 @@
 # Quoky Personal v3 — Plan
 
-- **Status:** Proposed; owner decisions 1, 2, 4, 5 and 7 recorded 2026-10-06 (section 7). Planning only: nothing here ratifies an ADR or authorizes a Strict action. GOV-3
-  (2026-10-06) appended the new decisions to `DECISIONS.md` as ADR-0102..0112, each **Proposed (awaiting owner
-  ratification)**; the former `TBD-ADR-n` placeholders below now carry the real numbers.
+- **Status:** Approved for execution; ADR-0102..0112 ratified by the Product Owner on 2026-10-06 with all recommended defaults (ratification record in `DECISIONS.md`). Planning only: nothing here ratifies an ADR or authorizes a Strict action. GOV-3
+  (2026-10-06) appended the new decisions to `DECISIONS.md` as ADR-0102..0112, each **Ratified 2026-10-06** (previously Proposed); the former `TBD-ADR-n` placeholders below now carry the real numbers.
 - **Date:** 2026-10-03
 - **Base:** `claude/v2-wave8` `eaacca2` (Personal v2 waves 1-7 on `main` at `ba28314`, plus INT-1 and DOC-B; the wave-8
   PR is not merged yet). SQLite schema v13, `ConversationRuntimeDeps` = 34, five registered turn handlers.
@@ -11,7 +10,7 @@
 - **Structure:** mirrors `docs/plans/personal-v2-execution-plan.md`. Where this plan and a ratified ADR disagree, the ADR
   wins and this plan is corrected.
 
-**ADR mapping (GOV-3, 2026-10-06; all Proposed):**
+**ADR mapping (GOV-3, 2026-10-06; all Ratified 2026-10-06):**
 
 | Placeholder | ADR | Track | Placeholder | ADR | Track |
 |---|---|---|---|---|---|
@@ -411,7 +410,7 @@ Owned files are exclusive within a wave. `core/` = `packages/core/src/`, `app/` 
 | Wave | Task | Track | Owned files (summary) | Deps |
 |---|---|---|---|---|
 | 0 | LIVE-0 | carry-over | No code. Strict sessions C1, C2, C6, C7, then the C3 decision; fixes go to the owning package | v2 wave-8 PR merged |
-| 1 | GOV-3 | GOV | `DECISIONS.md` (ADR-0102..0112 appended, Proposed), this plan | — |
+| 1 | GOV-3 | GOV | `DECISIONS.md` (ADR-0102..0112 appended; ratified 2026-10-06), this plan | — |
 | 1 | SUB-1 | SUB | `app/main.ts`, `app/config.ts`, `.env.example`, new `ops/launchd/*`, launcher script (+tests), `docs/user/quickstart.md` service section | ADR-0102 |
 | 1 | DET-1 | DET | `conversation-runtime.ts` (+test), `core/application/chat-policy/*`, `golden/action-shaped-fallthrough.v1.json`, `app/features/turn-handlers.providers.ts` | ADR-0104 |
 | 1 | LLM-1 | LLM | `packages/ai-cli/src/output-sanitizer.ts` (+test), `ai-cli/src/index.ts`, new help-intent handler module | — |
@@ -541,7 +540,7 @@ Each decision has a recommended default.
 | 7 | Merge enablement | **As recommended** — release default stays `QUOKY_GIT_MERGE_ENABLED=false` |
 | 8 (partial) | Reminders channel | Owner asked for channel delivery in a dedicated `#reminder` text channel on the owner's own Discord server (created 2026-10-06, allowlisted); DM stays the default elsewhere. The C2 UAT runs there |
 
-Decisions 3, 6 and 9-12 remain open; the recommended defaults below apply until the owner says otherwise.
+All remaining decisions (3, 6, 9-12) were ratified with their recommended defaults on 2026-10-06 ("우선은 모두 권장 값으로 ratify").
 
 1. **Standing approval for v3 waves.** Renew the v2 auto Push/PR/Merge approval for v3 waves, which applies after
    offline validation, independent review and Codex review pass. Live UAT of new external targets still needs
