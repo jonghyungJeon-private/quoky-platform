@@ -65,3 +65,47 @@ llama invented-weather and invented-index outputs are synthetic reconstructions 
 text. The new fixture digest and checker version change the plan digest, so the earlier approval does not carry over:
 a re-run of the model comparison needs a fresh `--approved-plan-digest`. A pass means "none of the known non-answer
 or invention shapes", not "the answer is correct".
+
+## Wave 2 deployment to the always-on service + live QA (2026-10-06, owner-approved "응 둘 다 진행해")
+
+| ID | Step / input | Result |
+|---|---|---|
+| DP1 | Service DB backup (`Quoky-backup-pre-v14-*`), deploy worktree → main 28817ae, build, `quokyctl restart --apply` | PASS — SUB-2 took its own verified pre-migration backup (`backup.pre_migration.verified`, userVersion 13), migration v13→v14 applied (`PRAGMA user_version`=14, integrity ok), identity verified, backup schedule started |
+| LM1 | OLLAMA_MODEL → gemma3:4b (LLM-2 recommendation), live chat: "점심 뭐 먹을지 추천해줘", "파이썬 리스트 정렬 방법", "비 오는 날 노래 3곡", "회의 팁" | FAIL QA-V3-W2-LM (MAJOR, model quality) — non-answers prefixed "도움말:" ("도움말을 확인해보세요", "…안내를 제공합니다."). The harness measures policy compliance, not helpfulness → reverted to llama3.1:8b immediately (answers, but invents facts: song/artist pairs). Follow-up: add helpfulness cases to the harness (v3 LLM), re-evaluate candidates with the chat prompt |
+| M1 | 기억 목록 | PASS — 2 memories listed, management hints |
+| ME1–ME4 | 기억 1 수정: … → 기억 확인 0000 → 기억 확인 96D2 → 기억 확인 96D2 | PASS — preview + code; wrong code refused; correct code edits; replay refused |
+| MF1–MF3 | 기억 2 잊어줘 → 기억 확인 4TK4 → 기억 목록 | PASS — forgotten incl. 1 earlier version; list shows 1 memory |
+| MF4 | 내가 좋아하는 커피가 뭐였지? (after forget) | FAIL W2-L01 (MEDIUM) — answered "아이스 아메리카노였어요": LONG_TERM rows removed, but 10 SHORT_TERM session-history rows (incl. the memory-command turns) still carried the text → side-job fix (forget/edit purge the actor's short-term copies) |
+| M3 | 피드백 후보 | PASS — truthful empty state |
+| P0–P10 | Register sandbox, 브랜치 만들어줘 feature/quoky-uat-2, new file preview, 적용해줘/승인/패치 만들어줘/패치 적용해줘, 커밋해줘/승인/커밋 실행 | PASS — commit d050b2d |
+| P11–P13 | 푸시해줘 → 승인 → 푸시 실행 | FAIL W2-L02 (MAJOR) — "push를 완료하지 못했어요": git-local uses a 5 s timeout for every git command; the same App-token push took 3.3 s warm under the launchd minimal env and exceeded 5 s in the service → side-job fix (longer bounded network timeouts + sanitized failure reason in logs). Diagnosis pushed the approved commit to the approved target |
+| P14 | 푸시 실행 (retry) | PASS — "원격에 새 브랜치로 push했어요: d050b2d → origin/feature/quoky-uat-2" |
+| P15–P17 | PR 만들어줘 → 승인 → PR 생성 실행 | PASS (CODE-7) — approval preview showed the exact title "chore: update docs/release-notes.md" (commit subject, not the raw instruction) and body (commit, branch, changed files); PR #2 created with that title/body |
+| P18 | PR 상태 알려줘 | PASS — 열림, 병합 가능 여부(GitHub 보고): 충돌 없음, checks none, reviews 0/0 |
+| CLEAN | gh pr close 2 --delete-branch (GH_TOKEN of jonghyungJeon-private) | DONE — sandbox has only main |
+
+### W2-L01 retest after PR #121 (memory archive), deployed to the service
+
+| ID | Input | Result |
+|---|---|---|
+| A1–A3 | 기억해: 내가 제일 좋아하는 과일은 샤인머스캣이야 → 내가 좋아하는 과일이 뭐였지? → 기억 목록 | PASS — answered 샤인머스캣 (paraphrased into history); listed |
+| A4–A5 | 기억 2 잊어줘 → 기억 확인 7YJ4 | PASS — "이제 대화에 쓰지 않아요. 보관함에 7일 …", "이번 대화 기록도 비웠어요." |
+| A6 | 내가 좋아하는 과일이 뭐였지? | PASS (W2-L01 fixed) — the forgotten content is no longer used. FAIL W3-L01 (MEDIUM, model) — the local model invented "귤이였어요" (fabricated personal fact with no memory) → side-job: deterministic "기억에 없어요" for memory-recall questions with no hit |
+| A7 | 보관함 | PASS — 1 archived, "(7일 남음)", separate numbering note |
+| A8–A10 | 기억 복원 1 → 기억 확인 W489 → 기억 목록 | PASS — restored, listed again |
+| A11 | 내가 좋아하는 과일이 뭐였지? | PASS — 샤인머스캣 (restored memory used again) |
+
+## Waves 3–4 deployment + live QA (2026-10-06)
+
+| ID | Step / input | Result |
+|---|---|---|
+| D3 | Deploy wave 3 + W3-L01 (PR #122/#123) to the service (backup first; no migration) | PASS — identity verified, archive purge ran at startup |
+| GCP | Google Cloud (owner-approved, via ego-browser after the owner re-authenticated): project quoky-personal-510806 under org gcar.co.kr, Calendar API enabled, OAuth consent **Internal**, scopes calendar.readonly + calendar.events, Desktop client quoky-calendar; client id/secret written straight to main + service .env.local (0600, never printed). The Google API user-data policy checkbox was accepted during setup | DONE |
+| D4 | Deploy wave 4 (PR #125) incl. migration **v15** (owner-approved) | PASS — SUB-2 pre-migration backup verified (userVersion 14), user_version 15, integrity ok |
+| CA | `calendar-auth --with-events` → consent in ego-browser (company account; screen listed exactly 2 scopes) → token file 0600 in the service data dir; QUOKY_CALENDAR_GOOGLE_TOKEN_FILE set; writes stay off | PASS — "Saved a calendar.readonly + calendar.events refresh token (mode 600)"; token never printed |
+| C1 | 오늘 일정 뭐야? | PASS — 2 real events (times, rooms), "(Asia/Seoul 기준 · 캘린더 읽기 전용)" |
+| C2 | 이번 주 일정 알려줘 | PASS — 5 events grouped by day |
+| C3 | 다음 회의 언제야? | PASS — next event after now |
+| C4 | 내일 오후 3시에 회의 잡아줘 | FAIL W4-L01 (MEDIUM) — fell to chat (model asked back) → FIXED PR #126 (natural booking pattern; Codex P2 content-request hijack fixed); retest PASS — "지금은 캘린더를 읽기만 할 수 있어요 … 아무것도 바꾸지 않았어요." |
+| C5 | 내일 회의록 만들어줘 | PASS — ordinary chat (not a booking) |
+| C6 | 내일 바빠? | FAIL W4-L02 (MEDIUM) — chat; model asserted "회의가 잡혀있었잖아요" → FIXED PR #127; retest PASS — tomorrow's real event list |
