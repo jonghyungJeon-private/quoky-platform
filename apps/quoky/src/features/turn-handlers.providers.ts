@@ -1,5 +1,11 @@
 import type { Provider } from '@nestjs/common';
-import { CONVERSATION_TURN_HANDLERS, type ConversationTurnHandler } from '@quoky/core';
+import {
+  CONVERSATION_TURN_HANDLERS,
+  TURN_HANDLER_STAGES,
+  createHelpIntentTurnHandler,
+  type ConversationTurnHandler,
+} from '@quoky/core';
+import { ConsoleLogger } from '../console-logger';
 import {
   CODE_WORK_TURN_HANDLERS,
   FEEDBACK_TURN_HANDLERS,
@@ -10,9 +16,27 @@ import {
 type TurnHandlerList = readonly ConversationTurnHandler[];
 
 /**
+ * The handlers' contributed help lines in dispatch order — `(stage, order, id)`, stages in `TURN_HANDLER_STAGES`
+ * order, ids by code unit — the same order `ConversationRuntime` lists them in the full help reply (ADR-0096 D6).
+ */
+function contributedHelpLinesOf(handlers: TurnHandlerList): readonly string[] {
+  const stageIndex = (handler: ConversationTurnHandler) => TURN_HANDLER_STAGES.indexOf(handler.stage);
+  return [...handlers]
+    .sort(
+      (a, b) =>
+        stageIndex(a) - stageIndex(b) || a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    )
+    .flatMap((handler) => handler.helpLines ?? []);
+}
+
+/**
  * Binds the Core `CONVERSATION_TURN_HANDLERS` token to the concatenation of the four feature handler lists
- * (ADR-0096 D7). The concatenation order carries no meaning: `ConversationRuntime` rejects duplicate ids and
- * dispatches by `(stage, order, id)` (ADR-0096 D2/D5).
+ * (ADR-0096 D7) plus the help-intent handler (ADR-0104 D4: `pre-classify`, order 400, after work lookups and before
+ * the classifier; LLM-1 ships the module, the composition root registers it). The concatenation order carries no
+ * meaning: `ConversationRuntime` rejects duplicate ids and dispatches by `(stage, order, id)` (ADR-0096 D2/D5).
+ *
+ * The help-intent handler answers from the help lines of the final, fully-registered list (a getter, so it always
+ * sees exactly what the full help reply lists); it ignores its own line.
  */
 export const turnHandlersProvider: Provider = {
   provide: CONVERSATION_TURN_HANDLERS,
@@ -21,6 +45,15 @@ export const turnHandlersProvider: Provider = {
     workChat: TurnHandlerList,
     reminders: TurnHandlerList,
     feedback: TurnHandlerList,
-  ): TurnHandlerList => [...codeWork, ...workChat, ...reminders, ...feedback],
+  ): TurnHandlerList => {
+    const registered: ConversationTurnHandler[] = [...codeWork, ...workChat, ...reminders, ...feedback];
+    registered.push(
+      createHelpIntentTurnHandler({
+        helpLines: () => contributedHelpLinesOf(registered),
+        logger: new ConsoleLogger('help-intent'),
+      }),
+    );
+    return registered;
+  },
   inject: [CODE_WORK_TURN_HANDLERS, WORK_CHAT_TURN_HANDLERS, REMINDER_TURN_HANDLERS, FEEDBACK_TURN_HANDLERS],
 };

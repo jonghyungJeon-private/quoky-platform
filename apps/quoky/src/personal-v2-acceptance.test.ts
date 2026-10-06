@@ -62,7 +62,8 @@ import actionShapedCorpus from '../../../packages/core/src/application/golden/ac
  * stub, so no CLI is ever spawned and every provider touch is visible. Turns go through the production
  * `ConversationRuntime` exactly as `QuokyCore` would call it.
  *
- * It pins: the dispatch-boundary deps baseline, the five handlers in their fixed stages/orders, the contributed help
+ * It pins: the dispatch-boundary deps baseline, the six handlers in their fixed stages/orders (the five v2 handlers
+ * plus the ADR-0104 D4 help-intent handler, registered at wave-1 integration), the contributed help
  * lines and their bounds, zero provider calls on deterministic turns, the ADR-0100 D1 anchored-prefix precedence and
  * the turn-handler routing golden ratchet (including the wave-7 live-QA fixes), and the migration contiguity.
  */
@@ -113,6 +114,8 @@ const EXPECTED_REGISTRY: ReadonlyArray<readonly [string, TurnHandlerStage, numbe
   ['work-chat.todo', 'pre-classify', 100],
   ['reminders', 'pre-classify', 200],
   ['work-chat.lookup', 'pre-classify', 300],
+  // ADR-0104 D4 (amends ADR-0096 D5): how-to questions about Quoky's own commands, after work lookups, before the classifier.
+  ['help-intent', 'pre-classify', 400],
 ];
 
 /** Precedence-suite labels for the registered handler ids (the corpus predates the final ids). */
@@ -490,9 +493,9 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);
   });
 
-  it('registers exactly five turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
-    expect(harness.handlers).toHaveLength(5);
-    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(5);
+  it('registers exactly six turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
+    expect(harness.handlers).toHaveLength(6);
+    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(6);
     const byStage = (harness.runtime as unknown as {
       turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
     }).turnHandlersByStage;
@@ -539,7 +542,7 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(cut).toBeDefined();
     expect(Array.from(cut as string)).toHaveLength(MAX_CONTRIBUTED_HELP_LINE_CHARS);
     expect(cut?.endsWith('…')).toBe(true);
-    // Registry order is kept and only the first 12 bounded lines survive: the cut line, the 7 real lines, then
+    // Registry order is kept and only the first 12 bounded lines survive: the cut line, the real lines, then
     // extras up to the cap; the rest are dropped (never wrapped onto the next line, never reordered).
     const keptExtras = MAX_CONTRIBUTED_HELP_LINES - 1 - contributed.length;
     expect(keptExtras).toBeGreaterThanOrEqual(0);
@@ -659,8 +662,9 @@ describe('Personal v2 acceptance — golden turn-handler routing ratchet (ADR-00
     }
     expect(route('주간 보고서 쓰기 완료', todo)).toMatchObject({ route: 'work-chat.todo', kind: 'todo.hint', providerCalls: 0 });
     expect(route('주간 보고서 쓰기 완료했나?', todo)).toMatchObject({ route: 'work-chat.todo', kind: 'todo.status', providerCalls: 0 });
-    expect(route('완료 처리 어떻게 해?')).toEqual({ route: 'classifier' });
-    expect(route('완료 처리 어떻게 해?', todo)).toEqual({ route: 'classifier' });
+    // ADR-0104 D4: the W7-06 how-to question is now answered by the help-intent handler (it fell through to chat in v2).
+    expect(route('완료 처리 어떻게 해?')).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('완료 처리 어떻게 해?', todo)).toEqual({ route: 'help-intent', providerCalls: 0 });
   });
 });
 
@@ -729,5 +733,82 @@ describe('Personal v3 DET-1 — action-shaped fall-through corpus (ADR-0104 D6)'
     } finally {
       stubReply = STUB_REPLY;
     }
+  });
+});
+
+describe('Personal v3 wave 1 — help intent (ADR-0104 D4, LLM-1 module registered at order 400)', () => {
+  const KO_HEAD = 'Quoky에서는 이렇게 하면 돼요.';
+  const KO_FOOT = '전체 안내는 "도움말"이라고 보내 주세요.';
+  const EN_HEAD = 'Here is how to do that in Quoky (the commands are in Korean):';
+  const EN_FOOT = 'Send "/help" for the full guide.';
+  /** Generic how-to questions and ordinary chat the help-intent handler must never hijack (pinned in the corpus). */
+  const NOT_HIJACKED = [
+    'git 브랜치 어떻게 만들어?',
+    '파이썬 리스트 정렬 어떻게 해?',
+    '아이폰 알림 어떻게 꺼?',
+    '알림 소리 어떻게 바꿔?',
+    '슬랙 어떻게 써?',
+    '할 일 관리 잘하는 법',
+    'how do I reverse a list in python?',
+    '오늘 점심 뭐 먹을까?',
+  ] as const;
+
+  it('how-to questions are answered by the help-intent handler from the contributed lines, with zero provider calls', async () => {
+    const byId = await observeSuite(routing);
+    const helpCases = routing.cases.filter((golden) => golden.expected.route === 'help-intent');
+    expect(helpCases.length).toBeGreaterThanOrEqual(10);
+    const contributed = (harness.runtime as unknown as { contributedHelpLines: readonly string[] }).contributedHelpLines;
+    const own = harness.handlers.find((handler) => handler.id === 'help-intent')?.helpLines ?? [];
+    expect(own.length).toBeGreaterThan(0);
+    for (const golden of helpCases) {
+      const seen = byId.get(golden.id) as CaseObservation;
+      const label = `${golden.id} ${golden.text}`;
+      expect(seen.route, label).toBe('help-intent');
+      expect(seen.providerCalls + seen.availabilityProbes, label).toBe(0);
+      expect(seen.setupProviderTouches, `${label} setup`).toBe(0);
+      const lines = seen.text.split('\n');
+      const english = lines[0] === EN_HEAD;
+      expect(lines[0], label).toBe(english ? EN_HEAD : KO_HEAD);
+      expect(lines.at(-1), label).toBe(english ? EN_FOOT : KO_FOOT);
+      const answered = lines.slice(1, -1);
+      expect(answered.length, label).toBeGreaterThan(0);
+      // A filtered subset of the full help reply (ADR-0093 note): every line verbatim, never the handler's own line.
+      for (const line of answered) {
+        expect(contributed, `${label}: ${line}`).toContain(line);
+        expect(own, `${label}: ${line}`).not.toContain(line);
+      }
+    }
+  });
+
+  it('the W7-06 question names the completion command, with or without an open to-do, and mutates nothing', async () => {
+    const byId = await observeSuite(routing);
+    for (const id of ['route-021', 'route-022']) {
+      const seen = byId.get(id) as CaseObservation;
+      expect(seen.route, id).toBe('help-intent');
+      expect(seen.text, id).toContain('"완료 처리: 번호"');
+    }
+    const withTodo = byId.get('route-022') as CaseObservation;
+    const items = await harness.storage.workItems.listByActor(await actorIdOf(withTodo.context));
+    expect(items.map((item) => [item.title, item.status])).toEqual([['주간 보고서 쓰기', 'ACTIVE']]);
+  });
+
+  it('ordinary chat and generic how-to questions are not hijacked: they reach the classifier and the provider', async () => {
+    const byId = await observeSuite(routing);
+    for (const text of NOT_HIJACKED) {
+      const golden = routing.cases.find((c) => c.text === text && c.ctx === undefined);
+      expect(golden, `routing corpus pins "${text}"`).toBeDefined();
+      expect(golden?.expected).toEqual({ route: 'classifier' });
+      const seen = byId.get((golden as RoutingCase).id) as CaseObservation;
+      expect(seen.route, text).toBe('classifier');
+      expect(seen.providerCalls, text).toBeGreaterThan(0);
+      expect(seen.text, text).toBe(STUB_REPLY);
+    }
+  });
+
+  it('the full help reply still lists every contributed line, including the help-intent line', async () => {
+    const own = harness.handlers.find((handler) => handler.id === 'help-intent')?.helpLines ?? [];
+    const help = await harness.turn(harness.freshContext(), '도움말');
+    expect(help.route).toBe('runtime');
+    for (const line of own) expect(help.text.split('\n')).toContain(line);
   });
 });

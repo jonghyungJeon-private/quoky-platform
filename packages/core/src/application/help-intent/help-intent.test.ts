@@ -150,8 +150,16 @@ describe('detectHelpIntent: everything else falls through', () => {
 });
 
 describe('detectHelpIntent over the existing golden corpora (zero hijacks)', () => {
-  /** The only corpus texts that are Quoky how-to questions: they now belong to the help intent (route-021/022). */
-  const EXPECTED_HELP = new Set(['완료 처리 어떻게 해?']);
+  /**
+   * The only corpus texts that are Quoky how-to questions: the routing cases pinned to the help-intent handler
+   * (route-021/022 and the wave-1 integration help cases). Every other corpus text must stay unmatched.
+   */
+  const EXPECTED_HELP = new Set([
+    '완료 처리 어떻게 해?',
+    ...(routingCorpus as { cases: ReadonlyArray<{ text: string; expected: { route?: string } }> }).cases
+      .filter((c) => c.expected.route === 'help-intent')
+      .map((c) => c.text),
+  ]);
   const corpora = [
     approvalCorpus,
     controlCorpus,
