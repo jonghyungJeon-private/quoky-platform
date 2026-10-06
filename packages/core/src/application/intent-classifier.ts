@@ -476,11 +476,12 @@ const PERSONAL_DATA_RULES: readonly {
     ),
     verb: ANY_CLAUSE,
   },
-  // availability of the owner: "나 내일 바빠?", "내일 오후 3시 비어 있어?", "내일 시간 돼?" (needs a time and a "?" or question ending)
+  // availability of the owner: "나 내일 바빠?", "내일 오후 3시 비어 있어?", "내일 시간 돼?" (needs a time and a "?" or question ending);
+  // a message that STARTS with the time phrase needs no "나" ("내일 바빠?", live QA W4-L02)
   {
     topic: 'schedule',
     noun: new RegExp(
-      String.raw`(?:${KO_SELF}${KO_TIME}${KO_TIME_GAP}|${KO_TIME}${KO_TIME_GAP}${KO_SELF})${KO_AVAIL_MOD}(?:${KO_AVAIL_PLAIN}|${KO_AVAIL_Q})|${KO_TIME}${KO_TIME_GAP}${KO_AVAIL_MOD}(?:비어\s*있어(?:요)?(?=\s*${QUESTION_MARK})|비어\s*있(?:나|니|을까|는지)|시간\s*(?:돼|되|괜찮아)(?:요)?(?=\s*${QUESTION_MARK})|시간\s*(?:되나|될까|되니|되는지))`,
+      String.raw`(?:${KO_SELF}${KO_TIME}${KO_TIME_GAP}|${KO_TIME}${KO_TIME_GAP}${KO_SELF})${KO_AVAIL_MOD}(?:${KO_AVAIL_PLAIN}|${KO_AVAIL_Q})|^\s*${KO_TIME}${KO_TIME_GAP}${KO_AVAIL_MOD}${KO_AVAIL_PLAIN}|${KO_TIME}${KO_TIME_GAP}${KO_AVAIL_MOD}(?:비어\s*있어(?:요)?(?=\s*${QUESTION_MARK})|비어\s*있(?:나|니|을까|는지)|시간\s*(?:돼|되|괜찮아)(?:요)?(?=\s*${QUESTION_MARK})|시간\s*(?:되나|될까|되니|되는지))`,
       'u',
     ),
     verb: ANY_CLAUSE,
