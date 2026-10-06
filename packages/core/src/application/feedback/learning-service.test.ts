@@ -137,6 +137,27 @@ describe('LearningService — 피드백 후보 listing (ADR-0107 D3)', () => {
     expect(result.text).toContain('(민감한 내용일 수 있어 표시하지 않아요)');
   });
 
+  it('hides a request only the strict (file-content) guard catches, in the candidate and the example listings', async () => {
+    const strictOnly = 'const dbPassword = "SYNTHETIC_ONLY"';
+    expect(learningTextRefusal(strictOnly)).toBe('CREDENTIAL');
+    const { run, learning } = setup({ tasks: { 'task-t-neg': strictOnly, 'task-t-pos': '평범한 요청' } });
+    const candidates = await run('피드백 후보');
+    expect(candidates.text).not.toContain('SYNTHETIC_ONLY');
+    expect(candidates.text).not.toContain('dbPassword');
+    expect(candidates.text).toContain('1. 2026-10-05 · 👎 · 일반 대화 · (민감한 내용일 수 있어 표시하지 않아요)');
+    expect(candidates.text).toContain('2. 2026-10-05 · 👍 · 기타 · "평범한 요청"');
+
+    // A stored example whose request only the strict guard catches is never shown verbatim either.
+    learning.items.push({
+      id: 'legacy', actorId: SCOPE.actorId, kind: LearningItemKind.EXAMPLE, capability: Capability.GENERAL_CHAT,
+      language: 'en', sourceTurnId: 't-old', egress: LEARNING_EGRESS_LOCAL_ONLY, createdAt: NOW,
+      expiresAt: at(LEARNING_RETENTION_MS), data: { requestText: strictOnly, sourceRating: 'POSITIVE' },
+    });
+    const examples = await run('예시 목록');
+    expect(examples.text).not.toContain('SYNTHETIC_ONLY');
+    expect(examples.text).toContain('(민감한 내용이 감지돼 사용하지 않아요. 삭제를 권해요)');
+  });
+
   it('answers a fixed empty copy when nothing is rated', async () => {
     const { run } = setup({ turns: [] });
     expect((await run('피드백 후보')).text).toContain('👍/👎를 남긴 답변이 없어요');

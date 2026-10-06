@@ -18,7 +18,9 @@ export const FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS = 8;
 export const FEEDBACK_SUMMARY_UNAVAILABLE_TEXT = '피드백 요약을 지금 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
 export const FEEDBACK_SUMMARY_EMPTY_TEXT =
   '최근 30일 동안 기록된 대화가 없어요. 답변에 👍/👎 반응을 남기면 여기에서 확인할 수 있어요.';
-const SUPPRESSED_EXCERPT = '(민감한 내용일 수 있어 표시하지 않아요)';
+/** What a request excerpt shows instead of a guarded request (never a redacted copy). */
+export const FEEDBACK_SUPPRESSED_EXCERPT = '(민감한 내용일 수 있어 표시하지 않아요)';
+const SUPPRESSED_EXCERPT = FEEDBACK_SUPPRESSED_EXCERPT;
 const MISSING_EXCERPT = '(요청 내용을 찾을 수 없어요)';
 const FOOTER =
   '피드백은 품질 확인용 기록이며 답변 방식이 자동으로 바뀌지는 않아요. 메시지 내용은 "후보 N 메모"나 "예시로 저장"으로 직접 고른 것만 이 기기에 저장해요.';

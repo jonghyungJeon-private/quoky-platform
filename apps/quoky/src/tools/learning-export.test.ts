@@ -69,6 +69,19 @@ describe('buildLearningExport / validateLearningExport (ADR-0107 D4)', () => {
     expect(JSON.stringify(file)).not.toContain('hunter2');
   });
 
+  it('applies the strict (file-content) guard at export, not only the chat guard', () => {
+    const strictOnly = 'const dbPassword = "SYNTHETIC_ONLY"';
+    const { file, skipped } = buildLearningExport([
+      item({ id: 'strict-request', data: { ...item().data, requestText: strictOnly } }),
+      item({ id: 'strict-note', data: { ...item().data, note: strictOnly } }),
+      item({ id: 'strict-behavior', data: { ...item().data, expectedBehavior: strictOnly } }),
+      item({ id: 'ok' }),
+    ], NOW);
+    expect(file.cases.map((c) => c.id)).toEqual(['lrn-ok']);
+    expect(skipped.guarded).toBe(3);
+    expect(JSON.stringify(file)).not.toContain('SYNTHETIC_ONLY');
+  });
+
   it('leaves out examples, non-LOCAL_ONLY egress and candidates without a note', () => {
     const { file, skipped } = buildLearningExport([
       item({ id: 'ex', kind: LearningItemKind.EXAMPLE }),

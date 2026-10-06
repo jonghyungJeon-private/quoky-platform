@@ -15,7 +15,7 @@ import type { FeedbackRepository, LearningRepository, Logger } from '../../ports
 import { newId } from '../../util/id';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
 import { FEEDBACK_SUMMARY_WINDOW_MS } from './feedback-recorder';
-import { feedbackCapabilityLabel, feedbackRequestExcerpt } from './feedback-summary-composer';
+import { FEEDBACK_SUPPRESSED_EXCERPT, feedbackCapabilityLabel, feedbackRequestExcerpt } from './feedback-summary-composer';
 import type { LearningCommand } from './learning-commands';
 
 /**
@@ -89,6 +89,17 @@ export function learningTextRefusal(text: string | undefined): LearningTextRefus
   if (learningTextHasCredential(text)) return 'CREDENTIAL';
   if ([...text].length > LEARNING_TEXT_MAX_CHARS) return 'TOO_LONG';
   return null;
+}
+
+/**
+ * A request excerpt for a learning listing: hidden (never shown verbatim or redacted) when the strict learning guard
+ * matches the full request, otherwise the feedback excerpt (which adds the chat guard, the bound and mention
+ * neutralisation). The chat-only guard of {@link feedbackRequestExcerpt} misses file-content credentials such as
+ * `const dbPassword = "…"`, so every learning surface goes through this function (ADR-0107 D1 "again at use").
+ */
+export function learningRequestExcerpt(text: string | undefined): string {
+  if (text !== undefined && learningTextHasCredential(text)) return FEEDBACK_SUPPRESSED_EXCERPT;
+  return feedbackRequestExcerpt(text);
 }
 
 /** True when every stored text field of `data` still passes the guard and bound (ADR-0107 D1 "again at use"). */
@@ -221,7 +232,7 @@ export class LearningService {
     const lines = [`최근 평가한 답변이에요(최근 30일, 최신순 ${turns.length}개). 번호는 30분 동안 쓸 수 있어요.`];
     for (const [i, turn] of turns.entries()) {
       const request = await this.requestTextOf(turn.taskId);
-      lines.push(`${i + 1}. ${turn.createdAt.slice(0, 10)} · ${RATING_EMOJI[ratingOf(turn)]} · ${feedbackCapabilityLabel(turn.capability)} · ${feedbackRequestExcerpt(request)}`);
+      lines.push(`${i + 1}. ${turn.createdAt.slice(0, 10)} · ${RATING_EMOJI[ratingOf(turn)]} · ${feedbackCapabilityLabel(turn.capability)} · ${learningRequestExcerpt(request)}`);
     }
     lines.push(
       '',
@@ -330,7 +341,7 @@ export class LearningService {
         continue;
       }
       const answer = item.data.idealAnswer !== undefined ? '답변 있음' : '답변 없음';
-      lines.push(`${i + 1}. ${date} · 요청 ${feedbackRequestExcerpt(item.data.requestText)} · ${answer}`);
+      lines.push(`${i + 1}. ${date} · 요청 ${learningRequestExcerpt(item.data.requestText)} · ${answer}`);
     }
     lines.push('', '"예시 N 수정: 좋은 답변"으로 답변을 채우거나 고치고, "예시 N 삭제"로 지울 수 있어요.');
     return { text: lines.join('\n'), status: 'RESPONDED' };
