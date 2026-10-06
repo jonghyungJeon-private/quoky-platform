@@ -109,3 +109,31 @@ or invention shapes", not "the answer is correct".
 | C4 | 내일 오후 3시에 회의 잡아줘 | FAIL W4-L01 (MEDIUM) — fell to chat (model asked back) → FIXED PR #126 (natural booking pattern; Codex P2 content-request hijack fixed); retest PASS — "지금은 캘린더를 읽기만 할 수 있어요 … 아무것도 바꾸지 않았어요." |
 | C5 | 내일 회의록 만들어줘 | PASS — ordinary chat (not a booking) |
 | C6 | 내일 바빠? | FAIL W4-L02 (MEDIUM) — chat; model asserted "회의가 잡혀있었잖아요" → FIXED PR #127; retest PASS — tomorrow's real event list |
+
+## Wave 5 deployment + connector/calendar write live UAT (2026-10-07, owner-approved targets)
+
+Service at main 4a23f76 (wave 5, PR #129; no migration). Allowlists: Jira project BE, Slack #quoky-test (C0C83C52PFS,
+private). QUOKY_CONNECTOR_WRITES_ENABLED=true and QUOKY_CALENDAR_WRITE_ENABLED=true on the service only. Slack bot
+token (chat:write, separate from the read token) added by the owner. Test issue BE-881 created via the Atlassian
+connector for the UAT and cancelled at the end.
+
+| ID | Input | Result |
+|---|---|---|
+| J1 | BE-881에 댓글: Quoky UAT 댓글 테스트입니다. | PASS — exact preview, CRITICAL, "승인" then "댓글 실행" |
+| J2 | 댓글 실행 (before approval) | PASS — still waiting for 승인/거절; nothing sent |
+| J3 | 승인 | PASS — approval recorded, not executed |
+| J4 | 댓글 실행해도 돼? | PASS (nothing executed). NOTE W5-L01 (MINOR): fell to chat; the model replied "네, 댓글을 실행할 수 있어요." → deterministic hint wanted |
+| J5 | 댓글 실행 | PASS — comment posted, link returned |
+| J6 | 댓글 실행 (repeat) | PASS (nothing sent). NOTE W5-L02 (MINOR): "승인된 외부 쓰기 요청이 없어요" instead of "이미 보냈어요" |
+| T1–T3 | BE-881 작업중으로 바꿔줘 → 승인 → 상태 변경 실행 | PASS — preview shows status id 10247 / transition id 21; transitioned |
+| T4–T5 | BE-881 완료로 바꿔줘 → 거절 | PASS — picked transition 2 whose destination is exactly 완료 (another transition named 완료 leads to 배포 완료); rejected, nothing sent |
+| T6/T8 | BE-1에 댓글 … → 거절 | PASS (BE is allowlisted) |
+| T7 | OP26-918 comment while another approval is pending | PASS — pending approval intercepts; nothing sent |
+| T9 | OP26-918에 댓글: … | PASS — "쓰기가 허용된 대상이 아니에요 … 아무것도 보내지 않았어요." |
+| S1–S3 | #quoky-test 게시 → 승인 → Slack 게시 실행 (bot not invited yet) | PASS (truthful NOT_SENT: "대상을 찾지 못했어요. 아무것도 보내지 않았어요."). NOTE W5-L03 (MINOR): particle "Slack 게시을(를)" |
+| S4–S6 | after the owner invited the bot | PASS — posted, Slack link |
+| S7 | same request again | PASS — "이미 보냈어요 — 다시 실행하지 않았어요." + link |
+| K1–K4 | 내일 오후 5시에 "Quoky UAT 테스트" 일정 잡아줘 → 승인 → 일정 추가 실행 → 내일 일정 뭐야? | PASS — primary calendar, no attendees, sendUpdates=none; event listed. NOTE W5-L04 (MINOR): the list footer still says "캘린더 읽기 전용" while writes are on |
+| K5–K7 | 일정 오후 6시로 옮겨줘 → 승인 → 일정 변경 실행 | PASS — preview binds the event as previewed; moved |
+| K8–K11 | 일정 취소해줘 → 승인 → 일정 삭제 실행 → 내일 일정 뭐야? | PASS — deleted, no cancellation mail; calendar back to its original state |
+| J7–J9 | BE-881 취소로 바꿔줘 → 승인 → 상태 변경 실행 | PASS — cleanup: test issue cancelled |
