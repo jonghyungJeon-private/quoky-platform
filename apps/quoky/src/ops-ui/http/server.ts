@@ -41,7 +41,7 @@ import type { OpsActions, OpsUiEventLog, OpsViewModelSource } from './view-model
  *   sets an `HttpOnly; SameSite=Strict; Path=/` session cookie. Failed sign-ins are rate-limited.
  * - **Origin and CSRF.** Every `POST` must carry `Origin` equal to the listener origin, checked before any handler;
  *   in-session state changes (sign-out, the only one in Phase 1) also need the session's CSRF token.
- * - **Headers.** Every response carries the exact ADR-0113 D4 CSP plus `nosniff`, `no-referrer` and `no-store`; no
+ * - **Headers.** Every response carries the exact ADR-0113 D4 CSP plus `nosniff`, `same-origin (Chromium sends Origin: null under no-referrer)` and `no-store`; no
  *   CORS header is ever sent.
  * - **Handling (OPS-2, ADR-0113 D7).** Only when `actions` is given: reminder cancel and memory forget, each a
  *   same-origin `POST` with the session CSRF token. Executing posts also carry a one-time action nonce bound to the

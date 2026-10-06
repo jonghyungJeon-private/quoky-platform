@@ -35,7 +35,7 @@ function page(title: string, bodyAttributes: string, content: string): string {
     '<head>',
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    '<meta name="referrer" content="no-referrer">',
+    '<meta name="referrer" content="same-origin">',
     `<title>${escapeHtml(title)}</title>`,
     '<link rel="stylesheet" href="/ops.css">',
     '<script src="/ops.js" defer></script>',

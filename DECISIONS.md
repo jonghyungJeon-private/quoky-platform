@@ -16765,3 +16765,10 @@ OPS-2b merge (no-bypass extraction).
 - **Change:** the contributed help reply bound moves from 12 × 120 characters to **14 × 120** characters (per-line bound
   unchanged), because the v3 write flows (CWR-2: Jira, Slack, calendar) add usage lines on top of a help reply that was
   already at 12/12 after CAL-2. The INT acceptance test pins the new bound; truncation behaviour is unchanged.
+
+### ADR-0113 D4 implementation note — Referrer-Policy same-origin (2026-10-07)
+
+- Live finding: with `Referrer-Policy: no-referrer`, Chromium serializes the `Origin` of a same-origin form POST as
+  `null`, so the D4 Origin check refused the sign-in ("허용되지 않은 출처예요"). The header (and the page's referrer meta)
+  is now `same-origin`: the browser sends the real Origin to the UI itself and still sends no referrer to any other
+  origin. The Origin check, CSRF token, loopback bind and CSP are unchanged.
