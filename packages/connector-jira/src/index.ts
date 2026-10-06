@@ -269,7 +269,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export {
   JiraIssueCommentWriter,
   JiraIssueTransitionWriter,
+  findApprovedTransition,
   plainTextDocument,
-  selectTransition,
   type JiraIssueWriterConfig,
 } from './jira-issue-writer';

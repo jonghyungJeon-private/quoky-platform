@@ -354,6 +354,27 @@ describe('GoogleCalendarReader (ADR-0110 D1/D2)', () => {
     await expect(reader(empty.fetchImpl).listEvents(SEOUL_TODAY)).resolves.toEqual([]);
   });
 
+  it('reads the event entity tag as its opaque version (bound by connector writes); a malformed tag is dropped', async () => {
+    const google = fakeGoogle({
+      calendar: () =>
+        json(200, {
+          summary: 'c',
+          items: [
+            timed('tagged', 'a', '2026-10-06T09:00:00+09:00', '2026-10-06T10:00:00+09:00', { etag: '"3181161784712000"' }),
+            timed('bad', 'b', '2026-10-06T11:00:00+09:00', '2026-10-06T12:00:00+09:00', { etag: 'two\nlines' }),
+            timed('none', 'c', '2026-10-06T13:00:00+09:00', '2026-10-06T14:00:00+09:00'),
+          ],
+        }),
+    });
+    const events = await reader(google.fetchImpl).listEvents(SEOUL_TODAY);
+    expect(events.map((event) => [event.id, event.version])).toEqual([
+      ['tagged', '"3181161784712000"'],
+      ['bad', undefined],
+      ['none', undefined],
+    ]);
+    expect(google.calendarCalls[0]!.url.searchParams.get('fields')).toContain('items(id,etag,');
+  });
+
   it('maps Calendar API HTTP failures to the ADR-0100 reasons without content', async () => {
     const cases: Array<[Response, string]> = [
       [json(404, { error: { code: 404, message: 'Not Found' } }), 'NOT_FOUND'],

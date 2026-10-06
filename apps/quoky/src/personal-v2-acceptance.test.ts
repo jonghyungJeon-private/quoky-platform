@@ -409,6 +409,8 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composeMergeExecutionUnsupportedCompanion(context).text) return 'merge-execution-companion-unsupported';
   if (text === composer.composeCodePreviewDiscarded(context).text) return 'preview-discarded';
   if (text === composer.composeNoPendingDecision(context).text) return 'no-pending-decision';
+  // ADR-0112 (CWR-2): a connector-write execution phrase with no approved write.
+  if (text === composer.composeNoApprovedConnectorWrite(context).text) return 'no-approved-connector-write';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
   // ADR-0106 D1: the runtime's explicit `기억해:` save (it runs before the pre-classify memory commands).
   if (text === composer.composeMemoryStored(context).text) return 'memory-stored';
@@ -593,7 +595,7 @@ describe('Personal v2 acceptance — migration lane (ADR-0096 D10)', () => {
 });
 
 describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)', () => {
-  it('ConversationRuntimeDeps: the production runtime receives every key of the deps type; the dispatch-boundary baseline is 34', () => {
+  it('ConversationRuntimeDeps: the production runtime receives every key of the deps type; the dispatch-boundary baseline is 35', () => {
     // Compile-time exhaustive list of the deps TYPE's keys (adding or removing a key breaks this literal).
     const typeKeys: Record<keyof ConversationRuntimeDeps, true> = {
       dispatchCommit: true, actors: true, sessions: true, memory: true, memoryWriter: true, classifier: true,
@@ -602,16 +604,16 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
       artifacts: true, composer: true, workSurface: true, intentResolver: true, orchestrator: true, approvals: true,
       approvalFlow: true, scopeClarificationFlow: true, applyPreviewFlow: true, codeGeneration: true, patch: true,
       codeProposals: true, workspaceWrite: true, git: true, repositoryHosting: true, turnHandlers: true,
-      credentialOverrideFlow: true, logger: true,
+      credentialOverrideFlow: true, connectorWriteFlow: true, logger: true,
     };
     const composed = Object.keys((harness.runtime as unknown as { deps: ConversationRuntimeDeps }).deps).sort();
     expect(composed).toEqual(Object.keys(typeKeys).sort());
-    expect(composed).toHaveLength(35);
-    // The accepted ADR-0032 M3 / ADR-0096 / ADR-0097 baseline (32 → 33 → 34) counts the dispatch-boundary deps.
-    // `runtimeProviderRouting` is the optional offline Stage 2A routing seam (added before the 32 baseline was
-    // taken) that the baseline has never counted (conversation-runtime.test.ts asserts 34 without it).
-    expect(composed.filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(34);
-    expect(composed).toEqual(expect.arrayContaining(['turnHandlers', 'credentialOverrideFlow']));
+    expect(composed).toHaveLength(36);
+    // The accepted ADR-0032 M3 / ADR-0096 / ADR-0097 / ADR-0112 baseline (32 → 33 → 34 → 35) counts the
+    // dispatch-boundary deps. `runtimeProviderRouting` is the optional offline Stage 2A routing seam (added before the
+    // 32 baseline was taken) that the baseline has never counted (conversation-runtime.test.ts asserts 35 without it).
+    expect(composed.filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(35);
+    expect(composed).toEqual(expect.arrayContaining(['turnHandlers', 'credentialOverrideFlow', 'connectorWriteFlow']));
     // No feature smuggled a dependency in beside `turnHandlers` (ADR-0096 D2: no reminders/feedback/work deps).
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);
   });
@@ -629,7 +631,7 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(dispatchOrder).toEqual(EXPECTED_REGISTRY);
   });
 
-  it('help lists every contributed line verbatim, in registry order, within 12 lines × 120 characters', async () => {
+  it('help lists every contributed line verbatim, in registry order, within 14 lines × 120 characters (CWR-2 raised 12 → 14)', async () => {
     const contributed = (harness.runtime as unknown as { contributedHelpLines: readonly string[] }).contributedHelpLines;
     const registered = EXPECTED_REGISTRY.flatMap(([id]) => harness.handlers.find((h) => h.id === id)?.helpLines ?? []);
     expect(contributed).toEqual(registered);
@@ -1502,7 +1504,14 @@ describe('Personal v3 CAL-2 — schedule questions from the configured calendar 
 
   it('every claimed schedule question read the calendar once with a local-day window and answered from it', async () => {
     const byId = await observeSuite(routing);
-    const writes = new Set(['내일 3시 회의 일정 추가해줘', 'cancel my 3pm meeting']);
+    // CWR-2 added the write-draft cases (route-193..195); with writes off in this composition they all get the refusal.
+    const writes = new Set([
+      '내일 3시 회의 일정 추가해줘',
+      'cancel my 3pm meeting',
+      '내일 3시 회의 4시로 옮겨줘',
+      '내일 3시 회의 취소해줘',
+      '내일 오후 3시에 회의 잡아줘 제목 주간 회의',
+    ]);
     for (const golden of calendarCases()) {
       const seen = byId.get(golden.id) as CaseObservation;
       expect(seen.route, golden.id).toBe('calendar');

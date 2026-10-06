@@ -93,6 +93,16 @@ const CREATE_KO = new RegExp(
   String.raw`${CREATE_TIME_KO}[^.!?？\n]{0,30}?${CREATE_NOUN_KO}(?:\s*(?:을|를|이|가|도|하나|한\s*개|좀|일정))?\s*${CREATE_VERB_KO}`,
   'u',
 );
+/**
+ * Natural move / delete requests for a meeting without a calendar noun (CWR-2: "내일 3시 회의 4시로 옮겨줘", "내일 3시 회의
+ * 취소해줘"): a day/time phrase + a meeting noun + (optionally a new time + 로) + a change verb. Like CREATE_KO the verb
+ * must follow the noun directly (only a particle or a new time in between), so "오늘 회의 내용을 표로 바꿔줘" stays chat.
+ */
+const CHANGE_MOVE_TARGET_KO = String.raw`(?:(?:오늘|내일|모레|글피|[월화수목금토일]요일)\s*)?(?:(?:오전|오후|아침|저녁|밤|낮)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분|\s*반)?\s*(?:으로|로)\s*`;
+const CHANGE_KO = new RegExp(
+  String.raw`${CREATE_TIME_KO}[^.!?？\n]{0,30}?${CREATE_NOUN_KO}(?:\s*(?:을|를|은|는|도|좀))?\s*(?:${CHANGE_MOVE_TARGET_KO})?${WRITE_VERB_KO}`,
+  'u',
+);
 const WRITE_EN =
   /(?:^|[.!?]\s+)(?:(?:please|can\s+you|could\s+you|would\s+you)\s+)*(?:move|reschedule|cancel|delete|remove|push\s+back|postpone)\b[^.!?\n]{0,40}\b(?:calendar|meetings?|appointments?|events?)\b/iu;
 /** A cron / code / job "schedule" is not the owner's calendar (mirrors the ADR-0098 calendar external-action blocker). */
@@ -123,7 +133,7 @@ function clauseIsWriteRequest(rawClause: string): boolean {
   const clause = rawClause.replace(LEADING_CONNECTIVE, '');
   if (clause.trim().length === 0 || NOT_A_REQUEST.test(clause)) return false;
   if (detectExternalActionRequest(clause)?.kind === 'calendar') return true;
-  return WRITE_KO.test(clause) || CREATE_KO.test(clause) || WRITE_EN.test(clause);
+  return WRITE_KO.test(clause) || CREATE_KO.test(clause) || CHANGE_KO.test(clause) || WRITE_EN.test(clause);
 }
 
 /** Whether the message asks Quoky to create, move or delete a calendar event (refused while calendar writes are off). */

@@ -20,7 +20,7 @@ import { refreshGoogleAccessToken, type GoogleAccessToken } from './oauth';
 export const GOOGLE_CALENDAR_API_ORIGIN = 'https://www.googleapis.com';
 /** The minimised partial response (ADR-0110 D1): no description, attendees, organizer, links or conference data. */
 export const GOOGLE_CALENDAR_EVENT_FIELDS =
-  'summary,nextPageToken,items(id,status,summary,location,start(date,dateTime),end(date,dateTime))';
+  'summary,nextPageToken,items(id,etag,status,summary,location,start(date,dateTime),end(date,dateTime))';
 export const GOOGLE_CALENDAR_MAX_CALENDARS = 10;
 /** Pages followed per calendar per call; with `limit ≤ 50` events per page this bounds one read. */
 const MAX_PAGES_PER_CALENDAR = 5;
@@ -236,6 +236,8 @@ export class GoogleCalendarReader implements CalendarReader {
       ...(location.length > 0 ? { location } : {}),
       status: value.status === 'tentative' ? 'tentative' : 'confirmed',
       calendarName,
+      // The entity tag changes on every edit; a connector write binds it (ADR-0112). Opaque, never shown.
+      ...(typeof value.etag === 'string' && /^[\x21-\x7e]{1,200}$/.test(value.etag) ? { version: value.etag } : {}),
     };
     // A zero-length timed event still occupies its start instant.
     return { event, startMs, endMs: endMs === startMs ? endMs + 1 : endMs };

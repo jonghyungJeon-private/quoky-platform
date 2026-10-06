@@ -1817,7 +1817,8 @@ describe('ResponseComposer — contributed help lines (ADR-0096 D6)', () => {
   });
 
   it(`bounds contributed lines to ${MAX_CONTRIBUTED_HELP_LINES} lines of at most ${MAX_CONTRIBUTED_HELP_LINE_CHARS} characters`, () => {
-    expect(MAX_CONTRIBUTED_HELP_LINES).toBe(12);
+    // CWR-2 raised the line bound 12 → 14 for the connector-write lines; the 120-character bound is unchanged.
+    expect(MAX_CONTRIBUTED_HELP_LINES).toBe(14);
     expect(MAX_CONTRIBUTED_HELP_LINE_CHARS).toBe(120);
     const many = Array.from({ length: 20 }, (_, i) => `- line ${i + 1}`);
     const lines = composer.composeHelp(CTX, many).text.split('\n');
@@ -2051,5 +2052,38 @@ describe('PR approval preview — exact title and body (ADR-0108 D5)', () => {
     expect(text).toContain('PR을 만들지 않았어요');
     expect(text).toContain('"PR 만들어줘"');
     expect(text).not.toMatch(/만들었어요|생성했어요|merged|deployed/);
+  });
+});
+
+describe('ResponseComposer — connector writes (ADR-0112, CWR-2)', () => {
+  const context = { platform: 'test', channelId: 'c', userId: 'u' };
+  const composer = new ResponseComposer();
+
+  it('the pending reminder repeats the exact target, says nothing was sent and names both steps', () => {
+    const text = composer.composeConnectorWritePending(
+      context,
+      { operation: 'CHANNEL_POST', channelLabel: 'dev', channelId: 'C0DEV', text: 'hi' },
+      5 * 60_000,
+      'Slack 게시 실행',
+    ).text;
+    expect(text).toContain('Slack 게시 승인을 기다리고 있어요. 아직 아무것도 보내지 않았어요.');
+    expect(text).toContain('대상: Slack #dev (C0DEV)');
+    expect(text).toContain('"승인" 또는 "거절"');
+    expect(text).toContain('"Slack 게시 실행"');
+    expect(text).toContain('약 5분');
+  });
+
+  it('stray and already-approved replies never claim a write', () => {
+    expect(composer.composeNoApprovedConnectorWrite(context).text).toContain('아무것도 보내거나 바꾸지 않았어요');
+    const approved = composer.composeConnectorWriteAlreadyApproved(context, 'CALENDAR_EVENT_DELETE', '일정 삭제 실행').text;
+    expect(approved).toContain('아직 실행하지 않았어요');
+    expect(approved).toContain('"일정 삭제 실행"');
+    expect(approved).not.toMatch(/삭제했어요/);
+  });
+
+  it('a step reply is clamped to the message budget except the bounded preview', () => {
+    const repeat = composer.composeConnectorWriteStep(context, { kind: 'repeat', operation: 'ISSUE_COMMENT', status: 'SENT', url: 'https://example.atlassian.net/browse/P-1' });
+    expect(repeat.text).toContain('이미 실행했어요');
+    expect(repeat.text).toContain('<https://example.atlassian.net/browse/P-1>');
   });
 });

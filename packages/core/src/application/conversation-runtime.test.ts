@@ -1139,6 +1139,10 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     // scenario keeps the terminal credential refusal; the override is driven end-to-end, with the real flow, in
     // conversation-runtime-credential-override.test.ts.
     credentialOverrideFlow: undefined,
+    // ADR-0112 (CWR-2): the connector-write dep slot (baseline 35) is present but unwired here, so every existing
+    // scenario keeps the fixed "writes are off" replies; the flow is driven end-to-end, with the real flow, in
+    // conversation-runtime-connector-writes.test.ts.
+    connectorWriteFlow: undefined,
     logger: {
       ...silentLogger,
       warn: (message: string, fields?: LogFields) => {
@@ -1235,9 +1239,10 @@ describe('ConversationRuntime', () => {
     expect(result.reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
   });
 
-  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 34 (ADR-0096, ADR-0097)', () => {
+  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 35 (ADR-0096, ADR-0097, ADR-0112)', () => {
     const { deps } = makeDeps();
-    expect(Object.keys(deps)).toHaveLength(34);
+    expect(Object.keys(deps)).toHaveLength(35);
+    expect(Object.keys(deps)).toContain('connectorWriteFlow');
     expect(Object.keys(deps)).toContain('turnHandlers');
     expect(Object.keys(deps)).toContain('credentialOverrideFlow');
     expect(Object.keys(deps)).not.toContain('risk');

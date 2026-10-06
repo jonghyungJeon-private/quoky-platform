@@ -1,6 +1,5 @@
 import {
   ConnectorQueryError,
-  ISSUE_TRANSITION_STATUS_MAX_LENGTH,
   connectorQueryErrorReasonForStatus,
   connectorWriteNotSent,
   connectorWriteSent,
@@ -17,14 +16,20 @@ import {
 } from '@quoky/core';
 
 /**
- * Jira Cloud WRITE adapters (ADR-0112 D1/D2/D4): add a comment, and transition an issue to a named status. Separate
- * classes from the read-only `JiraConnectorProvider`. The Atlassian API token already permits writes, so the gate is
+ * Jira Cloud WRITE adapters (ADR-0112 D1/D2/D4): add a comment, and perform one approved transition. Separate classes
+ * from the read-only `JiraConnectorProvider`. The Atlassian API token already permits writes, so the gate is
  * Quoky-side: only issues of allowlisted projects are written, checked before any network call. Every write is a
  * single request with a timeout and redirects refused; there is no retry. Nothing is logged, and no outcome or error
  * carries the token, a header, the payload or a response body.
+ *
+ * Drift (ADR-0112: the executed payload must equal the approved payload): before the write, each writer re-reads the
+ * issue and refuses (`NOT_SENT('TARGET_CHANGED')`) when the approved key now resolves to a moved issue (Jira keeps an
+ * old key as an alias of the moved issue, which may be outside the allowlist). The transition writer performs only the
+ * approved transition id, and only while it still leads to the approved destination status id — never a name match.
  */
 
 const ISSUE_KEY = /^([A-Z][A-Z0-9_]{0,63})-[1-9][0-9]{0,9}$/;
+const NUMERIC_ID = /^[0-9]{1,20}$/;
 const PROJECT_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
 const NAME_MAX_LENGTH = 100;
 const MAX_TRANSITIONS = 100;
@@ -120,14 +125,42 @@ class JiraWriteClient {
     }
     const options: IssueTransitionOption[] = [];
     for (const entry of payload.transitions.slice(0, MAX_TRANSITIONS)) {
-      if (!isRecord(entry) || typeof entry.id !== 'string' || !/^[0-9]{1,20}$/.test(entry.id)) {
+      if (!isRecord(entry) || typeof entry.id !== 'string' || !NUMERIC_ID.test(entry.id)) {
         throw new ConnectorQueryError('INVALID_RESPONSE', 'jira writer: transitions response was unexpected');
       }
       const name = boundName(entry.name);
       const toStatus = isRecord(entry.to) ? boundName(entry.to.name) : '';
-      options.push({ id: entry.id, name, toStatus });
+      const toStatusId = isRecord(entry.to) && typeof entry.to.id === 'string' && NUMERIC_ID.test(entry.to.id) ? entry.to.id : '';
+      options.push({ id: entry.id, name, toStatus, toStatusId });
     }
     return options;
+  }
+
+  /**
+   * The pre-write identity check: the issue still answers to exactly the approved key. A moved issue answers its old
+   * key with its new one; that (and any read failure) is NOT_SENT, since nothing has been written yet. Undefined = go.
+   */
+  async confirmIssueKey(issueKey: string): Promise<ConnectorWriteOutcome | undefined> {
+    const url = this.issueUrl(issueKey);
+    url.searchParams.set('fields', 'project');
+    let response: Response;
+    try {
+      response = await this.request(url, 'GET');
+    } catch {
+      return connectorWriteNotSent('UNAVAILABLE');
+    }
+    if (!response.ok) {
+      await discardBody(response);
+      return connectorWriteNotSent(precheckReason(response.status));
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return connectorWriteNotSent('UNAVAILABLE');
+    }
+    if (!isRecord(payload) || typeof payload.key !== 'string') return connectorWriteNotSent('UNAVAILABLE');
+    return payload.key === issueKey ? undefined : connectorWriteNotSent('TARGET_CHANGED');
   }
 }
 
@@ -147,6 +180,8 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
   async addComment(request: IssueCommentRequest): Promise<ConnectorWriteOutcome> {
     if (!this.client.allowsIssue(request?.issueKey)) return connectorWriteNotSent('TARGET_NOT_ALLOWED');
     if (!isValidConnectorWriteText(request.text)) return connectorWriteNotSent('INVALID_REQUEST');
+    const drifted = await this.client.confirmIssueKey(request.issueKey);
+    if (drifted !== undefined) return drifted;
 
     let response: Response;
     try {
@@ -164,12 +199,12 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
       return connectorWriteUncertain('INVALID_RESPONSE');
     }
     const id = isRecord(payload) ? payload.id : undefined;
-    if (typeof id !== 'string' || !/^[0-9]{1,20}$/.test(id)) return connectorWriteUncertain('INVALID_RESPONSE');
+    if (typeof id !== 'string' || !NUMERIC_ID.test(id)) return connectorWriteUncertain('INVALID_RESPONSE');
     return connectorWriteSent(id, `${this.client.browseUrl(request.issueKey)}?focusedCommentId=${id}`);
   }
 }
 
-/** Jira transition writer (`IssueTransitionWriter`): moves an issue to a named status through one available transition. */
+/** Jira transition writer (`IssueTransitionWriter`): performs exactly the approved transition id, nothing else. */
 export class JiraIssueTransitionWriter implements IssueTransitionWriter {
   readonly source = 'jira';
   private readonly client: JiraWriteClient;
@@ -188,13 +223,9 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
 
   async transition(request: IssueTransitionRequest): Promise<ConnectorWriteOutcome> {
     if (!this.client.allowsIssue(request?.issueKey)) return connectorWriteNotSent('TARGET_NOT_ALLOWED');
-    if (
-      typeof request.toStatus !== 'string' ||
-      request.toStatus.trim().length === 0 ||
-      Array.from(request.toStatus).length > ISSUE_TRANSITION_STATUS_MAX_LENGTH
-    ) {
-      return connectorWriteNotSent('INVALID_REQUEST');
-    }
+    if (!isNumericId(request.transitionId) || !isNumericId(request.toStatusId)) return connectorWriteNotSent('INVALID_REQUEST');
+    const drifted = await this.client.confirmIssueKey(request.issueKey);
+    if (drifted !== undefined) return drifted;
 
     let options: IssueTransitionOption[];
     try {
@@ -203,8 +234,8 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
       // The pre-check read failed: the transition itself was never sent.
       return connectorWriteNotSent(notSentReasonOf(error));
     }
-    const chosen = selectTransition(options, request.toStatus);
-    if (chosen === undefined) return connectorWriteNotSent('TRANSITION_UNAVAILABLE');
+    const chosen = findApprovedTransition(options, request.transitionId, request.toStatusId);
+    if (chosen === undefined) return connectorWriteNotSent('TARGET_CHANGED');
 
     let response: Response;
     try {
@@ -221,21 +252,22 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
 }
 
 /**
- * The single transition whose target status equals `toStatus` (trimmed, case-insensitive); failing that, the single
- * transition whose own name does. No match or more than one distinct transition → undefined.
+ * The approved transition, only if the live list still has a transition with exactly `transitionId` and it still
+ * leads to exactly `toStatusId`. Ids only: a name that now means another transition or status is never followed.
  */
-export function selectTransition(
+export function findApprovedTransition(
   options: readonly IssueTransitionOption[],
-  toStatus: string,
+  transitionId: string,
+  toStatusId: string,
 ): IssueTransitionOption | undefined {
-  const wanted = normalizeName(toStatus);
-  for (const field of ['toStatus', 'name'] as const) {
-    const matches = options.filter((option) => option[field].length > 0 && normalizeName(option[field]) === wanted);
-    const ids = new Set(matches.map((option) => option.id));
-    if (ids.size === 1) return matches[0];
-    if (ids.size > 1) return undefined;
-  }
-  return undefined;
+  const matches = options.filter((option) => option.id === transitionId);
+  if (matches.length !== 1) return undefined;
+  const chosen = matches[0] as IssueTransitionOption;
+  return chosen.toStatusId.length > 0 && chosen.toStatusId === toStatusId ? chosen : undefined;
+}
+
+function isNumericId(value: unknown): value is string {
+  return typeof value === 'string' && NUMERIC_ID.test(value);
 }
 
 /** The owner's text verbatim as an Atlassian Document: one plain paragraph per line, no markup interpreted. */
@@ -258,6 +290,15 @@ async function failedWrite(response: Response): Promise<ConnectorWriteOutcome> {
   return connectorWriteNotSent('REJECTED');
 }
 
+/** A failed pre-write read (the write never left). */
+function precheckReason(status: number): ConnectorWriteNotSentReason {
+  if (status === 401) return 'UNAUTHORIZED';
+  if (status === 403) return 'FORBIDDEN';
+  if (status === 404) return 'NOT_FOUND';
+  if (status === 429) return 'RATE_LIMITED';
+  return 'UNAVAILABLE';
+}
+
 function notSentReasonOf(error: unknown): ConnectorWriteNotSentReason {
   if (!(error instanceof ConnectorQueryError)) return 'UNAVAILABLE';
   switch (error.reason) {
@@ -272,10 +313,6 @@ function notSentReasonOf(error: unknown): ConnectorWriteNotSentReason {
     default:
       return 'UNAVAILABLE';
   }
-}
-
-function normalizeName(value: string): string {
-  return value.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 /** Untrusted names (ADR-0100 D8): control characters removed, whitespace collapsed, bounded. */

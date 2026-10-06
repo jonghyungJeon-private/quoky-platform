@@ -27,6 +27,7 @@ import {
 } from './work-chat-command';
 import type { WorkChatCommand, WorkChatMode } from './work-chat-command';
 import {
+  renderExternalWriteRefusal,
   renderLookupFailure,
   renderTodoFailure,
   renderTodoListFailure,
@@ -95,6 +96,12 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
     const command = detectWorkChatCommand(ctx.message.text);
     if (!command || workChatCommandMode(command) !== this.deps.mode) return null;
+    // ADR-0112 D5 (CWR-2): an exact Jira comment / transition or Slack post request is handed to the runtime's
+    // connector-write flow (this handler creates no approval and makes no write). `fallbackText` is the fixed refusal
+    // the runtime replies with while writes are off.
+    if (command.kind === 'connector-write') {
+      return { kind: 'write-draft', draft: command.draft, fallbackText: renderExternalWriteRefusal(command.source) };
+    }
     let outcome: WorkChatOutcome;
     try {
       outcome = await this.deps.desk.handle(command, ctx.actor);
@@ -138,6 +145,7 @@ function backstopText(command: WorkChatCommand): string {
       return renderTodoListFailure();
     case 'lookup':
     case 'external-write-unsupported':
+    case 'connector-write':
       return renderLookupFailure(command.source, 'UNAVAILABLE');
     case 'usage':
       return command.topic.startsWith('todo-') ? renderTodoFailure() : renderTodoListFailure();

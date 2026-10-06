@@ -40,6 +40,12 @@ export const CONNECTOR_WRITE_NOT_SENT_REASONS = [
   'RECURRING_SERIES_REFUSED',
   /** An event with the idempotency-derived id already exists (a calendar create was already performed). */
   'ALREADY_EXISTS',
+  /**
+   * The approved target drifted between preview and execution (ADR-0112: the executed payload must equal the approved
+   * one): the bound Jira transition is gone or now leads to another status, the issue key now names a moved issue, or
+   * the bound calendar event changed. Checked before the write request; the write was never sent.
+   */
+  'TARGET_CHANGED',
   /** A step before the write request failed (token refresh, a pre-check read); the write was never sent. */
   'UNAVAILABLE',
 ] as const;
@@ -117,15 +123,26 @@ export interface IssueCommentWriter {
 
 /** One transition available on an issue (for the CWR-2 preview check). Names are untrusted readout. */
 export interface IssueTransitionOption {
+  /** The transition id (digits). */
   readonly id: string;
   readonly name: string;
+  /** The destination status name. */
   readonly toStatus: string;
+  /** The destination status id (digits), or empty when the provider did not give one (such a transition is never bound). */
+  readonly toStatusId: string;
 }
 
+/**
+ * An APPROVED transition, bound by immutable identifiers (ADR-0112). The preview resolved the owner's status name to
+ * exactly one transition; execution performs that transition id only while it still leads to the same destination
+ * status id. Names are never matched at execution.
+ */
 export interface IssueTransitionRequest {
   readonly issueKey: string;
-  /** The target status name as the owner wrote it (matched case-insensitively against the available transitions). */
-  readonly toStatus: string;
+  /** The transition id the preview resolved (digits). */
+  readonly transitionId: string;
+  /** The destination status id the preview showed (digits). */
+  readonly toStatusId: string;
 }
 
 export interface IssueTransitionWriter {
@@ -134,8 +151,8 @@ export interface IssueTransitionWriter {
   /** Read-only: the transitions currently available on an allowlisted issue. Throws `ConnectorQueryError`. */
   listTransitions(issueKey: string): Promise<readonly IssueTransitionOption[]>;
   /**
-   * Re-reads the available transitions, picks the single one whose target status (or, failing that, whose name)
-   * equals `toStatus`, and performs it. No match or an ambiguous match is `NOT_SENT('TRANSITION_UNAVAILABLE')`.
+   * Re-reads the available transitions and performs `transitionId` only when a transition with that id still exists
+   * AND leads to `toStatusId`; otherwise `NOT_SENT('TARGET_CHANGED')` and nothing is sent. Never falls back to a name.
    */
   transition(request: IssueTransitionRequest): Promise<ConnectorWriteOutcome>;
 }
@@ -193,13 +210,30 @@ export interface CalendarEventCreateRequest {
   readonly idempotencyKey: string;
 }
 
+/**
+ * The state of an existing event the owner approved a change to (ADR-0112: bound in the approved payload). The writer
+ * re-reads the event and refuses (`NOT_SENT('TARGET_CHANGED')`) when it no longer matches: a different provider
+ * version (any edit since the preview), start, end or all-day shape. The version is REQUIRED: the write is always
+ * conditional on it, and a missing or malformed version is `NOT_SENT('TARGET_CHANGED')` before any network call.
+ */
+export interface CalendarEventExpectation {
+  readonly allDay: boolean;
+  /** As `CalendarEvent.start`: a UTC instant for a timed event, a `YYYY-MM-DD` date for an all-day one. */
+  readonly start: string;
+  readonly end: string;
+  /** The provider's opaque event version at preview time (for example an HTTP entity tag). */
+  readonly version: string;
+}
+
 export interface CalendarEventUpdateRequest {
   readonly eventId: string;
+  readonly expected: CalendarEventExpectation;
   readonly changes: CalendarEventChanges;
 }
 
 export interface CalendarEventDeleteRequest {
   readonly eventId: string;
+  readonly expected: CalendarEventExpectation;
 }
 
 /**

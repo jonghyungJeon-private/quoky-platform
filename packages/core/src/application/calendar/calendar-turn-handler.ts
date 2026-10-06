@@ -1,9 +1,15 @@
-import type { ConversationTurnHandler, TurnHandlerContext, TurnHandlerReply } from '../../ports/conversation-turn-handler.port';
+import type {
+  ConversationTurnHandler,
+  TurnHandlerContext,
+  TurnHandlerReply,
+  TurnHandlerWriteDraft,
+} from '../../ports/conversation-turn-handler.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { CALENDAR_EVENTS_MAX_LIMIT, type CalendarEvent, type CalendarReader } from '../../ports/calendar-reader.port';
 import { isConnectorQueryError } from '../../ports/connector-query';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage } from './calendar-question';
+import { parseCalendarWriteRequest } from './calendar-write-request';
 import {
   renderCalendarEvents,
   renderCalendarHistoryNote,
@@ -26,6 +32,10 @@ export const CALENDAR_READ_TIMEOUT_MS = 30_000;
 export const CALENDAR_HELP_LINES: readonly string[] = Object.freeze([
   '- 캘린더(읽기 전용): "오늘 일정", "내일 일정 뭐야?", "이번 주 일정", "다음 회의 언제야?"',
 ]);
+/** The help line while calendar writes are on (ADR-0110 amendment, CWR-2): reads plus the approved write forms. */
+export const CALENDAR_WRITE_HELP_LINES: readonly string[] = Object.freeze([
+  '- 캘린더: "오늘 일정", "다음 회의 언제야?", "내일 오후 3시에 회의 잡아줘 제목 주간 회의", "내일 3시 회의 취소해줘"(승인 후 실행)',
+]);
 
 export interface CalendarTurnHandlerDeps {
   readonly reader: CalendarReader;
@@ -34,6 +44,12 @@ export interface CalendarTurnHandlerDeps {
   readonly logger?: Logger;
   /** Injectable for tests; production uses CALENDAR_READ_TIMEOUT_MS. */
   readonly timeoutMs?: number;
+  /**
+   * Whether calendar writes are bound (ADR-0110 amendment D7: `QUOKY_CALENDAR_WRITE_ENABLED=true` AND a writer was
+   * built). Picks the help line only: a write request is always handed to the runtime as a `write-draft`, and the
+   * runtime replies with the fixed read-only refusal whenever no calendar writer is bound.
+   */
+  readonly writesEnabled?: boolean;
 }
 
 class CalendarReadTimeout extends Error {
@@ -49,7 +65,8 @@ class CalendarReadTimeout extends Error {
  * calendar the QUAL-7 routing is unchanged.
  *
  * - A message the reminder grammar recognizes is never claimed ("내일 9시에 회의 알려줘" stays a reminder).
- * - A calendar write request gets the fixed read-only refusal (D6); no read is made.
+ * - A calendar write request is handed to the runtime as a `write-draft` (CWR-2); while writes are off the runtime
+ *   replies with the fixed read-only refusal (D6). No read is made here.
  * - A schedule question reads `[from, to)` in `QUOKY_TIMEZONE` once and answers with the deterministic list. There is no
  *   summary and no provider call of any kind (D4: summaries would be LOCAL-only, and the turn-handler `summarize`
  *   outcome cannot be restricted to a LOCAL provider, so none is ever returned — no Claude fallback for calendar text).
@@ -62,11 +79,13 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
   readonly id = CALENDAR_TURN_HANDLER_ID;
   readonly stage = 'pre-classify' as const;
   readonly order = CALENDAR_TURN_HANDLER_ORDER;
-  readonly helpLines = CALENDAR_HELP_LINES;
+  readonly helpLines: readonly string[];
 
-  constructor(private readonly deps: CalendarTurnHandlerDeps) {}
+  constructor(private readonly deps: CalendarTurnHandlerDeps) {
+    this.helpLines = deps.writesEnabled === true ? CALENDAR_WRITE_HELP_LINES : CALENDAR_HELP_LINES;
+  }
 
-  async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+  async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerWriteDraft | null> {
     const text = ctx.message.text;
     let question: ReturnType<typeof parseCalendarQuestion>;
     try {
@@ -78,8 +97,16 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     if (question === null) return null;
     const language = question.language;
     if (question.kind === 'write-refused') {
-      this.log('info', 'calendar.turn_handler.write_refused', {});
-      return this.reply(ctx, renderCalendarWriteRefused(language), 'RESPONDED', language);
+      // ADR-0110 amendment (CWR-2): the exact request (or a usage hint) goes to the runtime's connector-write flow; this
+      // handler creates no approval and makes no write. While writes are off the runtime replies `fallbackText`, the
+      // fixed read-only refusal. The history keeps a fixed note, never event text.
+      this.log('info', 'calendar.turn_handler.write_draft', {});
+      return {
+        kind: 'write-draft',
+        draft: parseCalendarWriteRequest(text, { now: ctx.now, timeZone: this.deps.timeZone }),
+        fallbackText: renderCalendarWriteRefused(language),
+        history: { assistant: renderCalendarHistoryNote(language) },
+      };
     }
 
     const window = placeCalendarSpan(question.span, ctx.now, this.deps.timeZone);

@@ -4,6 +4,7 @@ import { ConnectorQueryError } from '../../ports/connector-query';
 import type { TurnHandlerContext } from '../../ports/conversation-turn-handler.port';
 import {
   CALENDAR_HELP_LINES,
+  CALENDAR_WRITE_HELP_LINES,
   CALENDAR_TURN_HANDLER_ID,
   CALENDAR_TURN_HANDLER_ORDER,
   createCalendarTurnHandler,
@@ -118,14 +119,33 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('refuses calendar writes with fixed copy and makes no read', async () => {
+  it('hands calendar writes to the runtime as a write draft with the fixed read-only refusal as fallback, and makes no read', async () => {
     const { reader, calls } = fakeReader(async () => [MEETING]);
     const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
     const ko = await handler.handle(ctx('내일 3시 회의 일정 추가해줘'));
-    expect(ko?.reply.text).toBe('지금은 캘린더를 읽기만 할 수 있어요. 일정 추가·변경·삭제는 아직 지원하지 않아서 아무것도 바꾸지 않았어요.');
-    expect(ko?.status).toBe('RESPONDED');
-    expect((await handler.handle(ctx('cancel my 3pm meeting')))?.reply.text).toContain('nothing was changed');
+    expect(ko).toMatchObject({ kind: 'write-draft' });
+    if (ko?.kind !== 'write-draft') throw new Error('expected a write draft');
+    expect(ko.fallbackText).toBe('지금은 캘린더를 읽기만 할 수 있어요. 일정 추가·변경·삭제는 아직 지원하지 않아서 아무것도 바꾸지 않았어요.');
+    expect(ko.history?.assistant).toBe(renderCalendarHistoryNote('ko'));
+    expect(ko.draft).toMatchObject({ kind: 'calendar-create', event: { title: '회의' } });
+    const en = await handler.handle(ctx('cancel my 3pm meeting'));
+    expect(en?.kind === 'write-draft' && en.fallbackText).toContain('nothing was changed');
+    expect(en?.kind === 'write-draft' && en.draft.kind).toBe('usage');
+    // The move / delete forms without a calendar noun are writes too (CWR-2), never schedule questions.
+    for (const text of ['내일 3시 회의 4시로 옮겨줘', '내일 3시 회의 취소해줘']) {
+      const draft = await handler.handle(ctx(text));
+      expect(draft?.kind, text).toBe('write-draft');
+    }
     expect(calls).toHaveLength(0);
+  });
+
+  it('lists the write forms in its help line only when calendar writes are bound', () => {
+    const { reader } = fakeReader(async () => []);
+    expect(createCalendarTurnHandler({ reader, timeZone: SEOUL }).helpLines).toEqual(CALENDAR_HELP_LINES);
+    const writable = createCalendarTurnHandler({ reader, timeZone: SEOUL, writesEnabled: true });
+    expect(writable.helpLines).toEqual(CALENDAR_WRITE_HELP_LINES);
+    for (const line of writable.helpLines) expect(Array.from(line).length).toBeLessThanOrEqual(120);
+    expect(writable.helpLines.join('\n')).not.toContain('읽기 전용');
   });
 
   it('answers a failed read truthfully (FAILED, never "no events") and logs the reason code only', async () => {

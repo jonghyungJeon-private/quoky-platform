@@ -74,7 +74,14 @@ export type ExecutionGate =
   | 'remoteCleanup'
   | 'patchApply'
   | 'validationTest'
-  | 'validationTypecheck';
+  | 'validationTypecheck'
+  // ADR-0112 D5 / ADR-0110 amendment D4 (CWR-2): an approved connector write runs only through its exact phrase.
+  | 'issueComment'
+  | 'issueTransition'
+  | 'channelPost'
+  | 'calendarCreate'
+  | 'calendarUpdate'
+  | 'calendarDelete';
 
 /**
  * The closed set of accepted execution phrases per gate. The FIRST entry is the documented phrase the composer / help
@@ -125,6 +132,21 @@ export const EXECUTION_PHRASES: Readonly<Record<ExecutionGate, readonly string[]
     '타입체크 실행해줘', '타입체크 해줘', '타입체크 돌려줘', 'typecheck 해줘', 'typecheck 실행해줘', 'pnpm typecheck 실행해줘',
     'pnpm typecheck', 'run typecheck',
   ],
+  // ADR-0112 D5 (CWR-2): the approved Jira comment / transition and Slack post. No bare "실행" here — that is the
+  // remote-cleanup gate's — so every connector-write phrase names its own write.
+  issueComment: ['댓글 실행', '댓글 실행해줘', 'Jira 댓글 실행', 'Jira 댓글 실행해줘', '승인된 댓글 실행해줘', 'execute comment', 'execute approved comment'],
+  issueTransition: [
+    '상태 변경 실행', '상태 변경 실행해줘', 'Jira 상태 변경 실행', 'Jira 상태 변경 실행해줘', 'execute transition',
+    'execute approved transition',
+  ],
+  channelPost: [
+    'Slack 게시 실행', 'Slack 게시 실행해줘', '슬랙 게시 실행', '슬랙 게시 실행해줘', '게시 실행', '게시 실행해줘', 'execute post',
+    'execute slack post',
+  ],
+  // ADR-0110 amendment D4 (CWR-2): the approved event create / update / delete on the owner's primary calendar.
+  calendarCreate: ['일정 추가 실행', '일정 추가 실행해줘', '캘린더 일정 추가 실행', 'execute event create'],
+  calendarUpdate: ['일정 변경 실행', '일정 변경 실행해줘', '캘린더 일정 변경 실행', 'execute event update'],
+  calendarDelete: ['일정 삭제 실행', '일정 삭제 실행해줘', '캘린더 일정 삭제 실행', 'execute event delete'],
 };
 
 /**

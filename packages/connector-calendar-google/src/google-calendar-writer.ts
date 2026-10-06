@@ -14,6 +14,7 @@ import {
   type CalendarEventChanges,
   type CalendarEventCreateRequest,
   type CalendarEventDeleteRequest,
+  type CalendarEventExpectation,
   type CalendarEventTime,
   type CalendarEventUpdateRequest,
   type CalendarEventWriter,
@@ -30,7 +31,11 @@ import { GOOGLE_CALENDAR_EVENTS_SCOPE, refreshGoogleAccessToken, type GoogleAcce
  *
  * - Target: the owner's `primary` calendar only — the calendar id is a constant, never caller input.
  * - Every write passes `sendUpdates=none`, and no request ever sets attendees, conferencing or reminders.
- * - Update and delete first read the event and refuse a recurring series (single instances are allowed).
+ * - Update and delete first read the event and refuse a recurring series (single instances are allowed), and refuse an
+ *   event that no longer matches the approved one (its entity tag, start, end, all-day shape):
+ *   `NOT_SENT('TARGET_CHANGED')`. The bound entity tag is required — without a valid one nothing is read or written
+ *   (`TARGET_CHANGED`) — and the write itself always carries `If-Match` with it, so an edit racing the pre-check is
+ *   refused by Google (412) instead of overwritten.
  * - Create derives the provider event id from the idempotency key, so a repeated create cannot add a second event.
  * - One write request per call, with a timeout and redirects refused; no retry of the write. Nothing is logged, and no
  *   outcome or error carries a token, a secret, the payload or a response body.
@@ -40,6 +45,8 @@ const GOOGLE_CALENDAR_API_ORIGIN = 'https://www.googleapis.com';
 const PRIMARY = 'primary';
 const ACCESS_TOKEN_EXPIRY_SKEW_MS = 60_000;
 const EVENT_ID = /^[A-Za-z0-9_-]{1,1024}$/;
+/** A Google entity tag (quoted, printable ASCII). */
+const ETAG = /^[\x21-\x7e]{1,200}$/;
 const HTML_LINK = /^https:\/\/(?:www\.google\.com\/calendar\/|calendar\.google\.com\/)[\x21-\x7e]{1,1500}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -110,10 +117,12 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
 
   async updateEvent(request: CalendarEventUpdateRequest): Promise<ConnectorWriteOutcome> {
     const changes = request?.changes;
-    if (!isValidEventId(request?.eventId) || changes === undefined || !changesValid(changes)) {
+    if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected) || changes === undefined || !changesValid(changes)) {
       return connectorWriteNotSent('INVALID_REQUEST');
     }
-    const refused = await this.precheckSingleEvent(request.eventId);
+    // Never an unconditional write: without the approved version the event cannot be proven unchanged.
+    if (!isValidVersion(request.expected.version)) return connectorWriteNotSent('TARGET_CHANGED');
+    const refused = await this.precheckSingleEvent(request.eventId, request.expected);
     if (refused !== undefined) return refused;
     const body: Record<string, unknown> = {
       ...(changes.title !== undefined ? { summary: changes.title } : {}),
@@ -121,23 +130,25 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
       ...(changes.location !== undefined ? { location: changes.location } : {}),
       ...(changes.description !== undefined ? { description: changes.description } : {}),
     };
-    return this.write('PATCH', eventsUrl(request.eventId), body, 'update');
+    return this.write('PATCH', eventsUrl(request.eventId), body, 'update', undefined, request.expected.version);
   }
 
   async deleteEvent(request: CalendarEventDeleteRequest): Promise<ConnectorWriteOutcome> {
-    if (!isValidEventId(request?.eventId)) return connectorWriteNotSent('INVALID_REQUEST');
-    const refused = await this.precheckSingleEvent(request.eventId);
+    if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected)) return connectorWriteNotSent('INVALID_REQUEST');
+    if (!isValidVersion(request.expected.version)) return connectorWriteNotSent('TARGET_CHANGED');
+    const refused = await this.precheckSingleEvent(request.eventId, request.expected);
     if (refused !== undefined) return refused;
-    return this.write('DELETE', eventsUrl(request.eventId), undefined, 'delete', request.eventId);
+    return this.write('DELETE', eventsUrl(request.eventId), undefined, 'delete', request.eventId, request.expected.version);
   }
 
   /**
-   * Reads the event before an update or delete: it must exist on the primary calendar, not be cancelled, and not be a
-   * recurring series (`recurrence` set). Any failure here is NOT_SENT — the write has not been sent.
+   * Reads the event before an update or delete: it must exist on the primary calendar, not be cancelled, not be a
+   * recurring series (`recurrence` set), and still be the approved event (`expected`). Any failure here is NOT_SENT —
+   * the write has not been sent.
    */
-  private async precheckSingleEvent(eventId: string): Promise<ConnectorWriteOutcome | undefined> {
+  private async precheckSingleEvent(eventId: string, expected: CalendarEventExpectation): Promise<ConnectorWriteOutcome | undefined> {
     const url = eventsUrl(eventId);
-    url.searchParams.set('fields', 'id,status,recurrence,recurringEventId');
+    url.searchParams.set('fields', 'id,etag,status,recurrence,recurringEventId,start(date,dateTime),end(date,dateTime)');
     let response: Response;
     try {
       response = await this.send('GET', url, undefined, await this.currentAccessToken());
@@ -164,6 +175,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     if (Array.isArray(payload.recurrence) && payload.recurrence.length > 0) {
       return connectorWriteNotSent('RECURRING_SERIES_REFUSED');
     }
+    if (payload.id !== eventId || !matchesExpectation(payload, expected)) return connectorWriteNotSent('TARGET_CHANGED');
     return undefined;
   }
 
@@ -174,6 +186,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     body: Record<string, unknown> | undefined,
     kind: 'create' | 'update' | 'delete',
     deletedId?: string,
+    ifMatch?: string,
   ): Promise<ConnectorWriteOutcome> {
     url.searchParams.set('sendUpdates', 'none');
     let token: string;
@@ -184,7 +197,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     }
     let response: Response;
     try {
-      response = await this.send(method, url, body, token);
+      response = await this.send(method, url, body, token, ifMatch);
     } catch {
       return connectorWriteUncertain('TRANSPORT');
     }
@@ -210,13 +223,20 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     return connectorWriteSent(payload.id, link);
   }
 
-  private async send(method: string, url: URL, body: Record<string, unknown> | undefined, accessToken: string): Promise<Response> {
+  private async send(
+    method: string,
+    url: URL,
+    body: Record<string, unknown> | undefined,
+    accessToken: string,
+    ifMatch?: string,
+  ): Promise<Response> {
     return this.fetchImpl(url, {
       method,
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(ifMatch !== undefined ? { 'If-Match': ifMatch } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       redirect: 'error',
@@ -349,6 +369,29 @@ function isValidEventId(value: unknown): value is string {
   return typeof value === 'string' && EVENT_ID.test(value);
 }
 
+/** The shape of the bound expectation (its version is checked separately: missing or malformed = TARGET_CHANGED). */
+function isValidExpectation(value: CalendarEventExpectation | undefined): value is CalendarEventExpectation {
+  if (!isRecord(value) || typeof value.allDay !== 'boolean') return false;
+  if (typeof value.start !== 'string' || typeof value.end !== 'string') return false;
+  if (value.allDay) return DATE.test(value.start) && DATE.test(value.end);
+  return Number.isFinite(Date.parse(value.start)) && Number.isFinite(Date.parse(value.end));
+}
+
+function isValidVersion(value: unknown): value is string {
+  return typeof value === 'string' && ETAG.test(value);
+}
+
+/** The live event (pre-check read) is still the approved one: same entity tag, all-day shape, start and end. */
+function matchesExpectation(event: Record<string, unknown>, expected: CalendarEventExpectation): boolean {
+  if (typeof event.etag !== 'string' || event.etag !== expected.version) return false;
+  const start = isRecord(event.start) ? event.start : undefined;
+  const end = isRecord(event.end) ? event.end : undefined;
+  if (start === undefined || end === undefined) return false;
+  if (expected.allDay) return start.date === expected.start && end.date === expected.end && start.dateTime === undefined;
+  if (typeof start.dateTime !== 'string' || typeof end.dateTime !== 'string') return false;
+  return Date.parse(start.dateTime) === Date.parse(expected.start) && Date.parse(end.dateTime) === Date.parse(expected.end);
+}
+
 function precheckReason(status: number): ConnectorWriteNotSentReason {
   if (status === 401) return 'UNAUTHORIZED';
   if (status === 403) return 'FORBIDDEN';
@@ -364,6 +407,8 @@ function failedWrite(status: number, kind: 'create' | 'update' | 'delete'): Conn
   if (status === 403) return connectorWriteNotSent('FORBIDDEN');
   if (status === 404 || status === 410) return connectorWriteNotSent('NOT_FOUND');
   if (status === 409 && kind === 'create') return connectorWriteNotSent('ALREADY_EXISTS');
+  // `If-Match` failed: the event was edited after the pre-check; Google applied nothing.
+  if (status === 412 && kind !== 'create') return connectorWriteNotSent('TARGET_CHANGED');
   if (status === 429) return connectorWriteNotSent('RATE_LIMITED');
   return connectorWriteNotSent('REJECTED');
 }
