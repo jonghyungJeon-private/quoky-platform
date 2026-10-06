@@ -438,6 +438,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         ...(sources.length > 0 ? { attachmentCount: sources.length } : {}),
       });
       // ADR-0111 D2: attachment intake only AFTER the ADR-0091 gate above; a dropped message downloads nothing.
+      // It runs before the handler, so before any wait the composition root adds there (ADR-0102 D5 identity gate);
+      // see the ordering note on InboundMessageHandler.
       const intake = sources.length > 0 ? await this.attachmentIntake.intake(sources) : undefined;
       try {
         if (intake) await this.reportAttachmentIntake(message, intake);

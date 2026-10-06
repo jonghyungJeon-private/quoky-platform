@@ -18,6 +18,11 @@ import type {
  * `kind: 'unsupported'` with its reason. Text arrives in memory as UNTRUSTED readout that already passed the
  * credential guard; an image arrives only as an opaque runner-owned `imageRef` that stays valid until the handler's
  * promise settles (the adapter deletes it after the turn). Core never persists either.
+ * Ordering note: intake (and its refusal note) runs in the adapter BEFORE the handler is called, so it precedes any
+ * wait the composition root puts in front of the handler — notably the ADR-0102 D5 startup identity gate. Content
+ * taken in while that gate is closed is dropped with the turn if the identity turns out mismatched; only the
+ * download, the short-lived image temp file and the refusal note can happen first (open rule question for the
+ * Chief Architect: whether D5's "never handled" covers adapter intake).
  */
 export type InboundMessageHandler = (message: InboundMessage) => Promise<void>;
 export type ApprovalDecisionHandler = (decision: ApprovalDecision) => Promise<void>;

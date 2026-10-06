@@ -83,11 +83,18 @@ export interface AttachmentIntakeResult {
   release(): Promise<void>;
 }
 
-/** Strips control and bidi-override characters and bounds the length; never empty. */
+/**
+ * Invisible and direction-changing characters removed from a display name: C0/C1 controls, the Arabic letter mark,
+ * zero-width space/non-joiner/joiner, LRM/RLM, the line/paragraph separators, the bidi embeddings and overrides
+ * (LRE..RLO), the word joiner and invisible operators, the bidi isolates (LRI..PDI) and the BOM / zero-width no-break
+ * space. Written as escapes so no invisible character sits in the source.
+ */
+const INVISIBLE_NAME_CHARACTERS =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/gu;
+
+/** Strips control, zero-width and bidi characters and bounds the length; never empty. */
 export function sanitizeAttachmentName(name: string | null | undefined): string {
-  const cleaned = (name ?? '')
-    .replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/gu, '')
-    .trim();
+  const cleaned = (name ?? '').replace(INVISIBLE_NAME_CHARACTERS, '').trim();
   const bounded = Array.from(cleaned).slice(0, MAX_NAME_LENGTH).join('');
   return bounded.length > 0 ? bounded : 'attachment';
 }
@@ -193,7 +200,11 @@ function decodeUtf8Text(bytes: Buffer): string | undefined {
   }
 }
 
-/** The same strict guard learning excerpts use (ADR-0097 / ADR-0107 D1): chat-style and file-style detectors. */
+/**
+ * The same strict guard learning excerpts use (ADR-0097 / ADR-0107 D1): chat-style and file-style detectors. It runs
+ * synchronously on up to 256 KiB of untrusted text; the file guard is bounded-time (a shape it cannot scan in linear
+ * time, such as a long base64 run before `=`, is refused as credential-shaped instead of scanned).
+ */
 function isCredentialShaped(text: string): boolean {
   return containsCredentialMaterial(text) || containsCredentialFileContent(text);
 }
@@ -228,24 +239,24 @@ export class AttachmentIntake {
     this.nowMs = options.nowMs ?? Date.now;
   }
 
-  /** Takes in at most {@link ATTACHMENT_MAX_COUNT} attachments, in upload order. Never throws. */
+  /** Takes in at most {@link ATTACHMENT_MAX_COUNT} attachments (concurrently), results in upload order. Never throws. */
   async intake(sources: readonly AttachmentSource[]): Promise<AttachmentIntakeResult> {
     const created: string[] = [];
-    const attachments: InboundAttachment[] = [];
-    for (const [index, source] of sources.entries()) {
-      const name = sanitizeAttachmentName(source.name);
-      const mime = baseMimeType(source.contentType);
-      const base = {
-        name,
-        ...(mime ? { mimeType: mime } : {}),
-        sizeBytes: Number.isFinite(source.size) && source.size >= 0 ? source.size : 0,
-      };
-      if (index >= ATTACHMENT_MAX_COUNT) {
-        attachments.push({ ...base, kind: 'unsupported', reason: 'TOO_MANY' });
-        continue;
-      }
-      attachments.push(await this.intakeOne(source, base, created));
-    }
+    // The (at most ATTACHMENT_MAX_COUNT) downloads run concurrently, so a slow file does not delay the others and the
+    // whole intake is bounded by one download timeout instead of the sum. Results keep upload order.
+    const attachments: InboundAttachment[] = await Promise.all(
+      sources.map((source, index): InboundAttachment | Promise<InboundAttachment> => {
+        const name = sanitizeAttachmentName(source.name);
+        const mime = baseMimeType(source.contentType);
+        const base = {
+          name,
+          ...(mime ? { mimeType: mime } : {}),
+          sizeBytes: Number.isFinite(source.size) && source.size >= 0 ? source.size : 0,
+        };
+        if (index >= ATTACHMENT_MAX_COUNT) return { ...base, kind: 'unsupported', reason: 'TOO_MANY' };
+        return this.intakeOne(source, base, created);
+      }),
+    );
     let released = false;
     return {
       attachments,
