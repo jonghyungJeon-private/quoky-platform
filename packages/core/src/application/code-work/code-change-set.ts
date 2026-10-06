@@ -11,7 +11,7 @@ import type {
   WorkspaceRef,
 } from '../../domain';
 import { isSecretLookingFileName } from '../secret-file-name';
-import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from '../target-scope';
+import { blankFencedCode, extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from '../target-scope';
 
 /**
  * Bounded code change sets (ADR-0099 D1–D3). Pure helpers the conversational code-change flow uses so its
@@ -55,15 +55,25 @@ function normalizedSet(paths: readonly string[] | undefined): Set<string> {
 
 /** URLs are links, not project paths: `https://host/a/b.md` must never become a target candidate. */
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]*/gi;
-/** Fenced code is pasted content, not a mention — the same rule as `extractMentionedPathTokens`. */
-const FENCED_CODE_PATTERN = /```[\s\S]*?(?:```|$)/g;
+/** One inline code span (single backticks, one line). */
+const INLINE_CODE_PATTERN = /`([^`\n]*)`/g;
+/** An inline code span whose whole content is ONE path-shaped token (`src/a.ts`, `test.js`) — a quoted file name. */
+const QUOTED_PATH_TOKEN = /^\s*[\w@.~/\\-]+\s*$/;
 
 /**
- * The request text with fenced code blocks and URLs blanked out, for target-path extraction only (never the
- * AI instruction). An `import './lib/x.js'` inside a pasted snippet is content, not a named target.
+ * The request text with code and URLs blanked out, for target-path extraction only (never the AI instruction). The
+ * same rule for slash-bearing and bare root-level paths:
+ * - fenced code blocks (``` or ~~~, 3+ characters, any info string — `blankFencedCode`, shared with
+ *   `extractMentionedPathTokens`) are pasted content: an `import './lib/x.js'` in a snippet is never a target;
+ * - an inline code span is a quoted file NAME only when its whole content is one path-shaped token (`` `test.js` ``);
+ *   any other span (`` `res.json()` ``, `` `import x from 'util.js'` ``) is code and is blanked;
+ * - URLs are links, never project paths.
  */
 export function targetExtractionText(text: string): string {
-  return text.replace(FENCED_CODE_PATTERN, ' ').replace(URL_PATTERN, ' ');
+  return blankFencedCode(text)
+    .replace(INLINE_CODE_PATTERN, (span, inner: string) =>
+      QUOTED_PATH_TOKEN.test(inner) ? ` ${inner} ` : ' '.repeat(span.length))
+    .replace(URL_PATTERN, ' ');
 }
 
 /**
@@ -125,12 +135,31 @@ const TECHNOLOGY_JS_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A bare root-level filename (`test.js`, `package.json`, `README.md`): not preceded by a path/word character, a dot
- * (`.eslintrc.json` stays a dot-file, never rewritten to `eslintrc.json`), `~`, `:`, `@` or a backslash (a
- * Windows/absolute spelling is never rewritten into a root file), and not followed by a path character or `(` (a
- * method call such as `res.json()` is content). A Korean particle may follow directly (`test.js와`, `test.js에`).
+ * Receiver / global identifiers that commonly prefix a method or property spelled like `name.ext` (`res.json`,
+ * `el.html`, `this.css`, `JSON.md`…) — code, never a root file name (compared lowercased). Deliberately excludes real
+ * root-file stems (`app`, `index`, `main`, `server`, `config`, `test`).
  */
-const BARE_FILE_PATTERN = /(?<![\w./\\~:@-])[A-Za-z0-9_][\w.-]*\.([A-Za-z][A-Za-z0-9]*)(?![\w/\\(-])/g;
+const RECEIVER_STEMS: ReadonlySet<string> = new Set([
+  'res', 'resp', 'response', 'req', 'request', 'ctx', 'el', 'elem', 'element', 'obj', 'this', 'self', 'body',
+  'result', 'window', 'document', 'console', 'process', 'err', 'error', 'e', 'r', 'json', 'object', 'array', 'math',
+  'promise', 'module', 'exports',
+]);
+
+/**
+ * A bare root-level filename (`test.js`, `package.json`, `README.md`): not preceded by an identifier character
+ * (`\w`, `$`), a dot or `->` (a member access such as `obj.res.json` / `obj->config.json`), `~`, `:`, `@`, a slash or
+ * a backslash (a dot-file, Windows or absolute spelling is never rewritten into a root file), and not followed by a
+ * path character. A Korean particle may follow directly (`test.js와`, `test.js에`). A match that is a method call is
+ * rejected separately ({@link CALL_AFTER_TOKEN}).
+ */
+const BARE_FILE_PATTERN = /(?<![\w$./\\~:@-])(?<!->)[A-Za-z0-9_][\w.-]*\.([A-Za-z][A-Za-z0-9]*)(?![\w$/\\-])/g;
+
+/**
+ * What follows a method-call or member-chain use of a `name.ext` token: optional whitespace, optional generic
+ * arguments (`<T>`, one nesting level), optional `?.`, then `(` — `res.json()`, `res.json ()`, `res.json<T>()`,
+ * `res.json?.()` — or an optional-chaining continuation (`res.json?.data`). Such a token is code, never a file.
+ */
+const CALL_AFTER_TOKEN = /^\s*(?:<[^<>()\n]*(?:<[^<>()\n]*>[^<>()\n]*)*>\s*)?(?:\?\.\s*)?\(|^\?\./;
 
 /**
  * Bare root-level filename candidates with their positions (QA-V2-CL-01, ADR-0099 D1 "every safe named path").
@@ -146,7 +175,10 @@ function bareRootFileCandidates(text: string): Array<{ index: number; path: stri
     if (!BARE_FILE_EXTENSIONS.has(extension)) continue;
     const stem = token.slice(0, token.length - extension.length - 1).toLowerCase();
     if (extension === 'js' && TECHNOLOGY_JS_NAMES.has(stem)) continue;
-    out.push({ index: match.index ?? 0, path: token });
+    if (RECEIVER_STEMS.has(stem) || RECEIVER_STEMS.has(stem.split('.')[0] ?? '')) continue; // `res.json`, `this.res.json`
+    const index = match.index ?? 0;
+    if (CALL_AFTER_TOKEN.test(text.slice(index + token.length))) continue;
+    out.push({ index, path: token });
   }
   return out;
 }

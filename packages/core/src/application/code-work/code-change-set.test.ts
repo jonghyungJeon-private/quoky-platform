@@ -135,6 +135,33 @@ describe('extractSafeTargetCandidates — bare root-level filenames (QA-V2-CL-01
     expect(extractSafeTargetCandidates(text).candidates).toEqual(['src/server.js']);
   });
 
+  it.each([
+    ['src/server.js 에서 res.json<T>() 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json<Map<string, number>>() 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json () 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json?.() 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json?.data 를 써줘'],
+    ['src/server.js 에서 api.json() 호출을 바꿔줘'],
+    ['src/server.js 에서 this.res.json 을 바꿔줘'],
+    ['src/server.js 에서 obj->config.json 을 바꿔줘'],
+    ['src/server.js 에서 $el.html 을 바꿔줘'],
+    ['src/server.js 에서 `res.json` 을 `res.send` 로 바꿔줘'],
+    ['src/server.js 에서 `res.json()` 을 바꿔줘'],
+    ['src/server.js 에 `import cfg from "config.json"` 를 추가해줘'],
+  ])('Codex P2 #1: %s → a method call / member access / code span is never a bare target', (text) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(['src/server.js']);
+  });
+
+  it.each([
+    ['src/a.ts 고쳐줘\n~~~js\nutil.js\n~~~', ['src/a.ts']],
+    ['src/a.ts 고쳐줘\n~~~~\nconst x = require("helper.js")\n~~~~\n그리고 test.js 도', ['src/a.ts', 'test.js']],
+    ['src/a.ts 고쳐줘\n````md\n```\nutil.js\n```\n````\nREADME.md 도', ['src/a.ts', 'README.md']],
+    ['src/a.ts 고쳐줘\n~~~\nsrc/b.ts', ['src/a.ts']],
+    ['`src/a.ts` 와 `test.js` 고쳐줘', ['src/a.ts', 'test.js']],
+  ])('Codex P2 #2: fences (``` and ~~~, any length, info strings) and inline code are blanked consistently — %j', (text, candidates) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(candidates);
+  });
+
   it('never rewrites a dot-file, an unsafe path or a Windows path into a root file', () => {
     expect(extractSafeTargetCandidates('.eslintrc.json 고쳐줘').candidates).toEqual([]);
     expect(extractSafeTargetCandidates('../test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['../test.js'] });
