@@ -209,7 +209,7 @@ function bareRootFileCandidates(text: string): Array<{ index: number; path: stri
     if (!BARE_FILE_EXTENSIONS.has(extension)) continue;
     const stem = token.slice(0, token.length - extension.length - 1).toLowerCase();
     if (extension === 'js' && TECHNOLOGY_JS_NAMES.has(stem)) continue;
-    if (stem.includes('.') && RECEIVER_KEYWORDS.has(stem.split('.')[0] ?? '')) continue; // `this.res.json`
+    if (RECEIVER_KEYWORDS.has(stem.split('.')[0] ?? '')) continue; // `this.json`, `this.res.json` (member access)
     const index = match.index ?? 0;
     if (isCallAfterToken(text.slice(index + token.length))) continue;
     out.push({ index, path: token });
