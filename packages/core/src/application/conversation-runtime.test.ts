@@ -10923,10 +10923,11 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
     expect((await h.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
   });
 
-  it('unrelated memories are no hit; ordinary chat and general-knowledge questions still reach the provider', async () => {
-    const unrelated = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
-    expect((await unrelated.runtime.handle(messageOf(QUESTION))).reply.text).toBe(NOT_FOUND);
-    expect(unrelated.providerTouches()).toBe(0);
+  it('any durable recall in the built context keeps the provider flow; ordinary chat and general knowledge reach the provider', async () => {
+    // The retriever decides relevance; the runtime never re-judges a recalled entry lexically (Codex P2).
+    const anyRecall = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
+    expect((await anyRecall.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
+    expect(anyRecall.providerTouches()).toBeGreaterThan(0);
     for (const text of ['사과의 효능이 뭐야?', '너가 좋아하는 과일이 뭐야?', '내 생일 기억해?', '내가 방금 뭐라고 했지?']) {
       const h = ownMemoryRuntime();
       expect((await h.runtime.handle(messageOf(text))).reply.text, text).toBe('provider answer');
@@ -10961,5 +10962,36 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
     const active = ownMemoryRuntime({ contextBuilder: realContext(false) });
     expect((await active.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
     expect(active.providerTouches()).toBeGreaterThan(0);
+  });
+
+  it('Codex P2 regression: a semantically recalled memory with no shared word ("나는 철수야" for "내 이름이 뭐였지?") is a hit', async () => {
+    const record: MemoryRecord = {
+      id: 'durable-name',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content: '나는 철수야',
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    const scored: string[] = [];
+    const contextBuilder = new ContextBuilder(
+      { async recentShortTerm() { return []; } } as unknown as MemoryManager,
+      {},
+      new DefaultMemoryRetriever({ async findDurableCandidates() { return [record]; } } as never, {
+        semanticScorer: {
+          async score(_query, candidates) {
+            scored.push(...candidates.map((c) => c.id));
+            return new Map(candidates.map((c) => [c.id, 0.99]));
+          },
+        },
+      }),
+    );
+    const h = ownMemoryRuntime({ contextBuilder });
+    const result = await h.runtime.handle(messageOf('내 이름이 뭐였지?'));
+    expect(scored).toEqual(['durable-name']);
+    expect(result.reply.text).toBe('provider answer');
+    expect(h.compose).toHaveBeenCalledTimes(1);
+    expect(h.providerTouches()).toBeGreaterThan(0);
   });
 });

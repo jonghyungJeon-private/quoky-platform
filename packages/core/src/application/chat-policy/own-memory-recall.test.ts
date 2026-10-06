@@ -115,9 +115,17 @@ describe('hasOwnMemoryRecallHit', () => {
     expect(hasOwnMemoryRecallHit(fruit, durable('나는 귤을 좋아해'))).toBe(true);
   });
 
-  it('unrelated durable entries are not a hit', () => {
-    expect(hasOwnMemoryRecallHit(fruit, durable('커피는 아메리카노', '주간 회의는 화요일'))).toBe(false);
-    expect(hasOwnMemoryRecallHit(cat, durable('커피는 아메리카노'))).toBe(false);
+  it('ANY durable recall entry in the built context is a hit, even with no shared word (the retriever chose it)', () => {
+    // Codex P2 regression: a semantic match with no lexical overlap must never get "not in memory".
+    const name = detectOwnMemoryRecallQuestion('내 이름이 뭐였지?')!;
+    expect(hasOwnMemoryRecallHit(name, durable('나는 철수야'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(fruit, durable('커피는 아메리카노', '주간 회의는 화요일'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(cat, durable('커피는 아메리카노'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(cat, { conversationTranscript: [], durableRecall: [] })).toBe(false);
+  });
+
+  it('an unrelated earlier User turn is not a hit', () => {
+    expect(hasOwnMemoryRecallHit(cat, { conversationTranscript: [userTurn('커피는 아메리카노')] })).toBe(false);
   });
 
   it("the User's own earlier turn in this conversation is a hit; assistant turns and repeated questions are not", () => {
@@ -135,7 +143,7 @@ describe('hasOwnMemoryRecallHit', () => {
   it('English topics match case-insensitively', () => {
     const en = detectOwnMemoryRecallQuestion('what did I say my favourite fruit was?')!;
     expect(hasOwnMemoryRecallHit(en, durable('My favourite Fruit is mango'))).toBe(true);
-    expect(hasOwnMemoryRecallHit(en, durable('coffee: americano'))).toBe(false);
+    expect(hasOwnMemoryRecallHit(en, { conversationTranscript: [userTurn('coffee: americano')] })).toBe(false);
   });
 });
 

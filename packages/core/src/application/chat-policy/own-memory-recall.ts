@@ -9,10 +9,11 @@
  *   recall-shaped ending and a concrete topic, and it never matches general-knowledge questions ("사과의 효능이
  *   뭐야?"), questions about the assistant, schedules / to-dos / reminders / code work (their own handlers and the
  *   QUAL-7 path), memory management (the ADR-0106 commands) or credentials.
- * - `hasOwnMemoryRecallHit` decides, from the turn's assembled context (the actor's active durable recall and the
- *   User's own earlier turns of this conversation, exactly what a provider would see), whether anything relevant to
- *   the question exists. Relevance is lexical and generous on purpose: any shared topic stem — or, for a preference
- *   question, any stated preference — counts as a hit, so an uncertain case keeps the existing provider flow.
+ * - `hasOwnMemoryRecallHit` decides, from the turn's assembled context (exactly what a provider would see), whether
+ *   anything that could answer the question exists. Any active durable recall entry in the built context is a hit
+ *   (the retriever's ranking — lexical, or semantic when configured — already chose it, and a lexical re-check would
+ *   miss "나는 철수야" for "내 이름이 뭐였지?"); otherwise one of the User's own earlier turns that shares a topic stem
+ *   (or, for a preference question, states any preference) is a hit. Uncertain cases keep the provider flow.
  * - `renderOwnMemoryNotFound` is the fixed KO/EN truthful reply the runtime sends instead of calling a provider when
  *   there is no hit (a local model used to invent a personal fact: "그땐 귤이였어요").
  */
@@ -208,16 +209,16 @@ function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {
 }
 
 /**
- * True when the turn's assembled context holds anything relevant to the question: an active durable recall entry
- * (archived, expired and superseded records never reach it — ADR-0106 amendment) or one of the User's own earlier
- * turns of this conversation that mentions a topic stem (or, for a preference question, any stated preference).
+ * True when the turn's assembled context could answer the question: ANY active durable recall entry (archived,
+ * expired and superseded records never reach it — ADR-0106 amendment; relevance is the retriever's decision, never
+ * re-judged lexically here), or one of the User's own earlier turns of this conversation that mentions a topic stem
+ * (or, for a preference question, any stated preference). So "not in memory" is replied only when the built context
+ * holds no durable recall at all and no such turn.
  * Earlier own-memory questions are not evidence (asking twice must not count as having told). Assistant turns are
  * never evidence: a reply may itself have been an invented fact.
  */
 export function hasOwnMemoryRecallHit(question: OwnMemoryRecallQuestion, context: OwnMemoryRecallContext): boolean {
-  for (const entry of context.durableRecall ?? []) {
-    if (mentions(question, entry.content)) return true;
-  }
+  if ((context.durableRecall?.length ?? 0) > 0) return true;
   for (const entry of context.conversationTranscript ?? []) {
     const fromUser = entry.role === 'user' || (entry.role === undefined && entry.provenance === 'USER');
     if (!fromUser) continue;
