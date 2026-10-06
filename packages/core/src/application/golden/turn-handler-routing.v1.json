@@ -111,6 +111,7 @@
     {"id": "route-106", "text": "취소해줘", "ctx": {"applyAnchor": "ELIGIBLE"}, "expected": {"route": "runtime", "reply": "preview-discarded", "providerCalls": 0}, "source": "QA-V2-CL-03: \"취소\" at a diff preview awaiting \"적용해줘\" discards the preview (never the QA-018 nothing-to-decide reply)", "mustPass": true},
     {"id": "route-107", "text": "거절", "ctx": {"applyAnchor": "ELIGIBLE"}, "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "QA-V2-CL-03 scope: only a cancel at ELIGIBLE discards; deny/approve words and later states keep the QA-018 reply", "mustPass": true},
     {"id": "route-108", "text": "취소", "ctx": {"applyAnchor": "APPROVED"}, "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "QA-V2-CL-03 scope: only a cancel at ELIGIBLE discards; deny/approve words and later states keep the QA-018 reply", "mustPass": true},
-    {"id": "route-109", "text": "취소", "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "QA-V2-CL-03 scope: only a cancel at ELIGIBLE discards; deny/approve words and later states keep the QA-018 reply", "mustPass": true}
+    {"id": "route-109", "text": "취소", "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "QA-V2-CL-03 scope: only a cancel at ELIGIBLE discards; deny/approve words and later states keep the QA-018 reply", "mustPass": true},
+    {"id": "route-110", "text": "`취소`", "ctx": {"applyAnchor": "ELIGIBLE"}, "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "Codex P2 #3: only a genuinely bare message discards a preview; a cancel word in code formatting never does", "mustPass": true}
   ]
 }

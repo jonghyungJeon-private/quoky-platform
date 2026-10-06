@@ -2,11 +2,13 @@ import { newId } from '../util/id';
 import { now } from '../util/clock';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { Id, Session, Task } from '../domain';
-import type { ApplyPreviewAnchor, ApplyPreviewFlow } from './conversation-runtime';
+import type { ApplyPreviewAnchor, ApplyPreviewAnchorIdentity, ApplyPreviewFlow } from './conversation-runtime';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ApplyPreviewFlowStore {
-  readonly sessions: { save(session: Session): Promise<Session> };
+  /** `get` re-reads the live session for {@link StatelessApplyPreviewFlow.clearIfCurrent}; without it that method
+   *  fails closed (clears nothing). */
+  readonly sessions: { save(session: Session): Promise<Session>; get?(id: Id): Promise<Session | null> };
   readonly tasks: { get(id: Id): Promise<Task | null>; save(task: Task): Promise<Task> };
 }
 
@@ -83,6 +85,26 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
     };
     await this.store.tasks.save(task);
     await this.store.sessions.save({ ...session, activeTaskId: task.id, lastActivityAt: ts });
+  }
+
+  /**
+   * Conditional clear (QA-V2-CL-03): re-reads the LIVE session (the caller's copy may be stale — another turn may have
+   * re-anchored ELIGIBLE → AWAITING_APPROVAL → APPROVED meanwhile, each on a fresh anchor Task) and clears only while
+   * its current anchor is our discriminated anchor for the same code generation, in the same status and the same
+   * project. The save is built from the live session, never the stale one. Returns whether it cleared.
+   */
+  async clearIfCurrent(session: Session, expected: ApplyPreviewAnchorIdentity): Promise<boolean> {
+    if (!this.store.sessions.get) return false;
+    const live = await this.store.sessions.get(session.id);
+    if (!live) return false;
+    const found = await this.anchorTask(live);
+    if (!found) return false;
+    const { anchor } = found;
+    if (anchor.status !== expected.status) return false;
+    if (anchor.codeGenerationRef?.id !== expected.codeGenerationId) return false;
+    if (anchor.projectId !== live.activeProjectId) return false;
+    await this.store.sessions.save({ ...live, activeTaskId: undefined, lastActivityAt: now() });
+    return true;
   }
 
   async clear(session: Session): Promise<void> {

@@ -323,6 +323,8 @@ async function seedPostPushAnchor(h: Harness, context: ConversationContext, stat
     status,
     projectId,
     instruction: 'apply the approved change',
+    // The preview's generation — the identity the QA-V2-CL-03 conditional preview discard matches on.
+    codeGenerationRef: { id: 'int1-generation', status: 'SUCCEEDED' },
     pushedCommitHash: PUSHED.commitHash,
     pushedRemote: PUSHED.remote,
     pushedBranch: PUSHED.branch,

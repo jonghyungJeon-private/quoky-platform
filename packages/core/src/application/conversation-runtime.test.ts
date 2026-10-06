@@ -68,6 +68,7 @@ import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
+import { StatelessApplyPreviewFlow } from './stateless-apply-preview-flow';
 import type { TestResultDetail } from './response-composer';
 import { IntentClassifier } from './intent-classifier';
 import { ContextBuilder } from './context-builder';
@@ -841,6 +842,13 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     async clear() {
       calls.applyClear++;
       currentApplyAnchor = null;
+    },
+    async clearIfCurrent(_session, expected) {
+      if (currentApplyAnchor?.status !== expected.status) return false;
+      if (currentApplyAnchor.codeGenerationRef.id !== expected.codeGenerationId) return false;
+      calls.applyClear++;
+      currentApplyAnchor = null;
+      return true;
     },
   };
 
@@ -3014,6 +3022,85 @@ describe('Explicit Preview Apply Approval — runtime (Sprint 2s, ADR-0040)', ()
     const result = await new ConversationRuntime(deps).handle(messageOf(text));
     expect(result.reply.text).toBe(new ResponseComposer().composeNoPendingDecision(CTX).text);
     expect(calls.applyClear).toBe(0);
+  });
+
+  it.each([
+    ['fenced', '```\ncancel\n```'],
+    ['tilde-fenced', '~~~\n취소\n~~~'],
+    ['inline code', '`cancel`'],
+    ['multi-line', '취소\n취소'],
+  ])('Codex P2 #3: a %s message that merely contains a cancel word never discards the preview', async (_shape, text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.applyClear).toBe(0);
+    expect(result.reply.text).not.toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, []).text);
+  });
+
+  it('Codex P2 #4: a delayed "취소" never clears an anchor another turn advanced to APPROVED (in-memory storage)', async () => {
+    const sessions = new Map<string, Session>();
+    const tasks = new Map<string, Task>();
+    const store = {
+      sessions: {
+        async get(id: string) { return sessions.get(id) ?? null; },
+        async save(saved: Session) { sessions.set(saved.id, saved); return saved; },
+      },
+      tasks: {
+        async get(id: string) { return tasks.get(id) ?? null; },
+        async save(saved: Task) { tasks.set(saved.id, saved); return saved; },
+      },
+    };
+    const real = new StatelessApplyPreviewFlow(store);
+    const eligible = applyAnchorOf({ projectId: 'proj-1' });
+    await real.anchor(sessionOf(), eligible);
+    const turnSession = sessions.get('sess-1')!; // the cancel turn's copy — about to go stale
+    let advanced = false;
+    // Interleaving: right after the cancel turn reads ELIGIBLE, another turn requests and grants the apply approval
+    // (each transition re-anchors on a fresh Task and re-points the live session).
+    const racing: ApplyPreviewFlow = {
+      async findAnchor(session) {
+        const found = await real.findAnchor(session);
+        if (!advanced && found) {
+          advanced = true;
+          await real.anchor(sessions.get('sess-1')!, { ...found, status: 'AWAITING_APPROVAL', approvalId: 'apply-appr-1' });
+          await real.anchor(sessions.get('sess-1')!, { ...found, status: 'APPROVED', approvalId: 'apply-appr-1', approvedAt: TS });
+        }
+        return found;
+      },
+      anchor: (session, anchor) => real.anchor(session, anchor),
+      clear: (session) => real.clear(session),
+      clearIfCurrent: (session, expected) => real.clearIfCurrent(session, expected),
+    };
+    const { deps } = makeDeps({ session: turnSession });
+    const result = await new ConversationRuntime({ ...deps, applyPreviewFlow: racing }).handle(messageOf('취소'));
+
+    expect(advanced).toBe(true);
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscardSuperseded(CTX).text);
+    const live = sessions.get('sess-1')!;
+    expect(live.activeTaskId).toBeDefined();
+    expect(live.activeTaskId).not.toBe(turnSession.activeTaskId);
+    expect((await real.findAnchor(live))?.status).toBe('APPROVED');
+  });
+
+  it('Codex P2 #4: the conditional clear still discards when the live anchor is the same ELIGIBLE preview (in-memory storage)', async () => {
+    const sessions = new Map<string, Session>();
+    const tasks = new Map<string, Task>();
+    const store = {
+      sessions: {
+        async get(id: string) { return sessions.get(id) ?? null; },
+        async save(saved: Session) { sessions.set(saved.id, saved); return saved; },
+      },
+      tasks: {
+        async get(id: string) { return tasks.get(id) ?? null; },
+        async save(saved: Task) { tasks.set(saved.id, saved); return saved; },
+      },
+    };
+    const real = new StatelessApplyPreviewFlow(store);
+    await real.anchor(sessionOf(), applyAnchorOf({ projectId: 'proj-1' }));
+    const { deps } = makeDeps({ session: sessions.get('sess-1')! });
+    const result = await new ConversationRuntime({ ...deps, applyPreviewFlow: real }).handle(messageOf('취소'));
+    expect(result.status).toBe('CANCELLED');
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, []).text);
+    expect(sessions.get('sess-1')!.activeTaskId).toBeUndefined();
   });
 
   it('QA-V2-CL-03 scope: a cancel word inside a longer request at ELIGIBLE is not a discard', async () => {

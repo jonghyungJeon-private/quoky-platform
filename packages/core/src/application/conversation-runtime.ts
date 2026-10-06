@@ -613,6 +613,19 @@ export interface ApplyPreviewFlow {
   /** Consume/clear the anchor — called only on deny/cancel (approving re-anchors as `APPROVED` instead).
    *  A no-op unless `session.activeTaskId` still points at THIS flow's own anchor Task. */
   clear(session: Session): Promise<void>;
+  /**
+   * Conditional clear (QA-V2-CL-03 preview discard): re-read the LIVE session from storage (never trust the turn's
+   * possibly stale copy) and clear only while its current anchor is still the expected one — same code generation
+   * (`codeGenerationRef.id`) and same `status`. Returns whether it cleared. Optional: a flow without it makes the
+   * caller fail closed (nothing cleared).
+   */
+  clearIfCurrent?(session: Session, expected: ApplyPreviewAnchorIdentity): Promise<boolean>;
+}
+
+/** Identifies one apply-preview anchor state for {@link ApplyPreviewFlow.clearIfCurrent}. */
+export interface ApplyPreviewAnchorIdentity {
+  readonly status: ApplyPreviewAnchorStatus;
+  readonly codeGenerationId: Id;
 }
 
 export interface ConversationRuntimeDeps {
@@ -3831,6 +3844,9 @@ export class ConversationRuntime {
    */
   private static isPreviewDiscardUtterance(text: string): boolean {
     const trimmed = text.trim();
+    // Only a genuinely bare message: the stray-decision parser strips punctuation, so a fenced/inline code block or a
+    // multi-line message that merely contains "cancel" must never discard a preview.
+    if (trimmed.length === 0 || /[`\n\r]|~~~/.test(trimmed)) return false;
     if (interpretStrayDecisionUtterance(trimmed) === 'cancel') return true;
     const withoutNoun = trimmed.replace(ConversationRuntime.PREVIEW_DISCARD_NOUN, '');
     return withoutNoun !== trimmed && interpretStrayDecisionUtterance(withoutNoun) === 'cancel';
@@ -3841,13 +3857,25 @@ export class ConversationRuntime {
    * ApprovalRequest existed, no PatchSet, no file change — so a later "적용해줘" gets the apply-unavailable reply.
    * Deterministic, provider-free. Truthful copy: preview discarded, no file changed; content already sent to the AI
    * under an owner override (ADR-0097) cannot be unsent.
+   *
+   * The clear is conditional ({@link ApplyPreviewFlow.clearIfCurrent}): the flow re-reads the live session and clears
+   * only while its current anchor is still THIS preview (same code generation) at `ELIGIBLE`. If another turn
+   * advanced it meanwhile (ELIGIBLE → AWAITING_APPROVAL → APPROVED) nothing is cleared and the reply is the
+   * non-mutating "state changed" copy. A flow without the conditional clear fails closed the same way.
    */
   private async handlePreviewDiscardTurn(
     message: InboundMessage,
     session: Session,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    await this.deps.applyPreviewFlow.clear(session);
+    // A malformed persisted anchor without a generation id cannot be matched — fail closed like a lost race.
+    const codeGenerationId = anchor.codeGenerationRef?.id;
+    const cleared = this.deps.applyPreviewFlow.clearIfCurrent && codeGenerationId
+      ? await this.deps.applyPreviewFlow.clearIfCurrent(session, { status: 'ELIGIBLE', codeGenerationId })
+      : false;
+    if (!cleared) {
+      return this.respondComposed(message, session, this.deps.composer.composeCodePreviewDiscardSuperseded(message.context));
+    }
     const reply = this.deps.composer.composeCodePreviewDiscarded(message.context, anchor.credentialOverrideSentPaths ?? []);
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return { status: 'CANCELLED', reply, sessionId: session.id };

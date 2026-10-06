@@ -219,3 +219,43 @@ describe('StatelessApplyPreviewFlow (Sprint 2s, ADR-0040)', () => {
     expect(sessions.get('sess-1')?.activeTaskId).toBeUndefined();
   });
 });
+
+describe('StatelessApplyPreviewFlow.clearIfCurrent (QA-V2-CL-03, Codex P2 #4)', () => {
+  function liveStore() {
+    const { store, sessions, tasks } = makeStore();
+    return { store: { ...store, sessions: { ...store.sessions, async get(id: string) { return sessions.get(id) ?? null; } } }, sessions, tasks };
+  }
+
+  it('clears only while the LIVE anchor is the same generation in the same status', async () => {
+    const { store, sessions } = liveStore();
+    const flow = new StatelessApplyPreviewFlow(store);
+    await flow.anchor(sessionOf(), anchorOf());
+    const stale = sessions.get('sess-1')!;
+    expect(await flow.clearIfCurrent(stale, { status: 'ELIGIBLE', codeGenerationId: 'gen-other' })).toBe(false);
+    expect(await flow.clearIfCurrent(stale, { status: 'APPROVED', codeGenerationId: 'gen-1' })).toBe(false);
+    expect(sessions.get('sess-1')!.activeTaskId).toBe(stale.activeTaskId);
+    expect(await flow.clearIfCurrent(stale, { status: 'ELIGIBLE', codeGenerationId: 'gen-1' })).toBe(true);
+    expect(sessions.get('sess-1')!.activeTaskId).toBeUndefined();
+  });
+
+  it('a stale ELIGIBLE copy never clears an anchor advanced to APPROVED meanwhile', async () => {
+    const { store, sessions } = liveStore();
+    const flow = new StatelessApplyPreviewFlow(store);
+    await flow.anchor(sessionOf(), anchorOf());
+    const stale = sessions.get('sess-1')!;
+    await flow.anchor(sessions.get('sess-1')!, anchorOf({ status: 'AWAITING_APPROVAL', approvalId: 'a-1' }));
+    await flow.anchor(sessions.get('sess-1')!, anchorOf({ status: 'APPROVED', approvalId: 'a-1', approvedAt: TS }));
+    const approvedTask = sessions.get('sess-1')!.activeTaskId;
+    expect(await flow.clearIfCurrent(stale, { status: 'ELIGIBLE', codeGenerationId: 'gen-1' })).toBe(false);
+    expect(sessions.get('sess-1')!.activeTaskId).toBe(approvedTask);
+    expect((await flow.findAnchor(sessions.get('sess-1')!))?.status).toBe('APPROVED');
+  });
+
+  it('fails closed (clears nothing) when the store cannot re-read the session', async () => {
+    const { store, sessions } = makeStore();
+    const flow = new StatelessApplyPreviewFlow(store);
+    await flow.anchor(sessionOf(), anchorOf());
+    expect(await flow.clearIfCurrent(sessions.get('sess-1')!, { status: 'ELIGIBLE', codeGenerationId: 'gen-1' })).toBe(false);
+    expect(sessions.get('sess-1')!.activeTaskId).toBeDefined();
+  });
+});

@@ -1877,6 +1877,13 @@ describe('ResponseComposer change-set replies (ADR-0099)', () => {
     expect(sent).not.toBe(composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/config.ts']).text);
   });
 
+  it('composeCodePreviewDiscardSuperseded (Codex P2 #4) says the cancel was not processed and nothing changed', () => {
+    const text = composer.composeCodePreviewDiscardSuperseded(CTX).text;
+    expect(text).toContain('이번 취소는 처리하지 않았어요');
+    expect(text).toContain('아무것도 바뀌지 않았어요');
+    for (const word of FORBIDDEN_MUTATION_WORDS) expect(text).not.toContain(word);
+  });
+
   it('composeTooManyTargets states the 5-file limit and the count, and asks to split', () => {
     const text = composer.composeTooManyTargets(CTX, 7).text;
     expect(text).toContain('5개까지');

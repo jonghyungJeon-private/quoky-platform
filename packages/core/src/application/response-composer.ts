@@ -1068,6 +1068,19 @@ export class ResponseComposer {
   }
 
   /**
+   * "취소" for a preview whose state changed before the discard could run (QA-V2-CL-03 race): another turn already
+   * advanced it (e.g. an apply approval was requested or granted) or it is gone. Nothing was cleared or changed.
+   */
+  composeCodePreviewDiscardSuperseded(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '미리보기 상태가 그사이 바뀌어서 이번 취소는 처리하지 않았어요. 아무것도 바뀌지 않았어요.\n' +
+        '진행 중인 승인 요청이 있다면 그 요청에 "거절"이나 "취소"로 답해 주세요.',
+    };
+  }
+
+  /**
    * A successful AI code-change proposal preview (AI Code Generation Preview, ADR-0038). Repeats,
    * not merely mentions once, that nothing was applied — never uses wording that could be read as
    * "적용했어요"/"수정했어요"/"반영했어요"/"변경 완료". AI content is rendered inside a fence
