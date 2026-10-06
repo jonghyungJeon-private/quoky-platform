@@ -2,6 +2,8 @@
 
 - **Status:** Approved for execution; ADR-0102..0112 ratified by the Product Owner on 2026-10-06 with all recommended defaults (ratification record in `DECISIONS.md`). Planning only: nothing here ratifies an ADR or authorizes a Strict action. GOV-3
   (2026-10-06) appended the new decisions to `DECISIONS.md` as ADR-0102..0112, each **Ratified 2026-10-06** (previously Proposed); the former `TBD-ADR-n` placeholders below now carry the real numbers.
+  GOV-4 (2026-10-06) added **ADR-0113 (local operations UI, track OPS) — Ratified by the owner 2026-10-06** and
+  recorded the owner decision that a Telegram platform adapter is a post-v3 extension.
 - **Date:** 2026-10-03
 - **Base:** `claude/v2-wave8` `eaacca2` (Personal v2 waves 1-7 on `main` at `ba28314`, plus INT-1 and DOC-B; the wave-8
   PR is not merged yet). SQLite schema v13, `ConversationRuntimeDeps` = 34, five registered turn handlers.
@@ -19,7 +21,7 @@
 | TBD-ADR-3 | ADR-0104 internal-action guard, help intent | DET-1, LLM-1 | TBD-ADR-9 | ADR-0110 calendar read | CAL-1/2 |
 | TBD-ADR-4 | ADR-0105 model choice, MLX provider | LLM-2/3 | TBD-ADR-10 | ADR-0111 files and images | MM-1/2 |
 | TBD-ADR-5 | ADR-0106 memory commands | MEM-1 | TBD-ADR-11 | ADR-0112 connector writes (v15) | CWR-1/2 |
-| TBD-ADR-6 | ADR-0107 learning store (v14), locality | LRN-1..4 | | | |
+| TBD-ADR-6 | ADR-0107 learning store (v14), locality | LRN-1..4 | — | ADR-0113 local operations UI (**Ratified 2026-10-06**, GOV-4) | OPS-1/2 |
 
 ## 1. Goal and scope
 
@@ -49,7 +51,8 @@ user to use the service?" For a real user, "done" means all of the following:
   a model switch backed by an evaluation.
 
 The remaining ~15% is left out of v3 on purpose: multi-agent runtime, local fine-tuning (pending enough curated data),
-merge/deploy automation, more platforms, and anything for the Team or Hosted editions.
+merge/deploy automation, more platforms (a Telegram adapter is a post-v3 extension, owner decision 2026-10-06), and
+anything for the Team or Hosted editions, including remote access to the operations UI.
 
 **Priority tiers.** P0 is needed for a real user. P1 makes the service clearly more useful. P2 is stretch work or waits
 on a decision. P0 and P1 make up the 85% target.
@@ -57,9 +60,9 @@ on a decision. P0 and P1 make up the 85% target.
 | Tier | Items |
 |---|---|
 | P0 | v2 carry-over live sessions (section 2), SUB-1/2 always-on runtime, DET deterministic coverage, LLM local-model quality, MEM memory commands, LRN-1/2 measurement and owner-curated loop, CODE-6/7 PR status and PR title/body |
-| P1 | CAL-1/2 calendar read, MM-1/2 files and images, CWR-1/2 Jira comment/transition and Slack post, LRN-3 offline mining |
-| P2 | SUB-3 continuation activation, CODE-8 multi-repo, CODE-9 merge enablement, LRN-4 local fine-tuning, calendar writes |
-| Out | Multi-agent runtime, Team/Hosted tenancy, deploy/release automation, Confluence/GitHub-issue writes |
+| P1 | CAL-1/2 calendar read, MM-1/2 files and images, CWR-1/2 Jira comment/transition and Slack post, LRN-3 offline mining, OPS-1 local operations UI (monitoring), OPS-2 (reminder cancel and memory forget from the UI) |
+| P2 | SUB-3 continuation activation, CODE-8 multi-repo, CODE-9 merge enablement, LRN-4 local fine-tuning, calendar writes, OPS-2b (UI approve and reject: approval decision extraction from `conversation-runtime.ts`, chat preview reference line, `OPS_DECISION_RESULT`, config fold) |
+| Out | Multi-agent runtime, Team/Hosted tenancy, deploy/release automation, Confluence/GitHub-issue writes, remote access to the operations UI (Tailscale or other tunnels, LAN binding) and a separate mobile/desktop client (Team/Hosted, ADR-0113 D11), **a Telegram platform adapter (post-v3 extension: owner decision 2026-10-06, after all v3 development completes; see `ROADMAP.md` "Post-v3 extensions")** |
 
 ## 2. Carry-over from v2 (not yet live, or accepted residuals)
 
@@ -412,6 +415,85 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
 - **Live QA.** Owner-confirmed new external targets (a Jira test project issue and a Slack test channel). Comment,
   transition, post, deny, replay, network failure mid-send.
 
+### OPS — Local operations UI (P1; ADR-0113 Ratified 2026-10-06)
+
+- **Problem.** Once SUB-1 makes Quoky an unattended service, the owner sees its state only through Discord replies, the
+  `OPS_NOTICE` DM and log files. There is no single place to check health, provider readiness, queued reminders,
+  waiting approvals, connectors, recent errors, feedback and backups, or to act on them outside chat. Owner direction
+  (2026-10-06): a monitoring and handling screen is needed, with no separate client for now.
+- **User value.** One local page shows whether the service is healthy and what it is waiting on; later the owner can
+  cancel, forget, reject and approve from it under the same gates as chat.
+- **Approach.**
+  - **OPS-1, Phase 1 read-only monitoring (W3, after SUB-2).**
+    - A `node:http` listener inside the Quoky process, bound to `127.0.0.1` only and off by default
+      (`QUOKY_OPS_UI_ENABLED=false`, `QUOKY_OPS_UI_PORT`).
+    - Access: a random per-start token in a `0600` file in the host data directory (a stale file is unlinked before the
+      exclusive create), a `SameSite=Strict` session cookie, CSRF tokens inside the session, and Host/Origin checks
+      plus a rate limit on sign-in.
+    - CSP: an exact CSP with `script-src 'self'; style-src 'self'`. The script and stylesheet are served as `/ops.js`
+      and `/ops.css`. Nothing is inline, and `'unsafe-inline'` is forbidden.
+    - Panels: runtime/health, provider readiness **per capability** (provider ids only if the §5.3/§12 rule question,
+      owner decision 14, is answered that way), reminder queue, pending approvals (metadata only), connector status,
+      recent errors (codes and categories from an in-memory ring buffer), feedback stats, and SUB-2 backup status.
+      Manifest hash and restart count show as "unknown" until SUB-3's manifest or a documented SUB-1 launcher state
+      file exists.
+    - Display: no secrets, tokens, conversation bodies or approval payloads are ever displayed. `snapshot/*` applies
+      the credential guard when it builds the view model. `http/*` imports only `node:*` and renders guarded strings.
+    - Code lives in `apps/quoky/src/ops-ui/` (`http/*`, `snapshot/*`, `ops-ui-wiring.ts`). `main.ts` makes one call
+      into `ops-ui-wiring.ts`, which looks up its dependencies from the Nest container, so `app.module.ts` is not
+      touched and later phases change only `app/ops-ui/*`.
+    - Config: its flags are parsed in its own `app/ops-ui/ops-ui-config.ts`, because `config.ts` and `.env.example`
+      belong to CAL-1 in W3. They are documented in the OPS-1 section of `docs/user/quickstart.md` until OPS-2b folds
+      them into `config.ts`/`.env.example` in W6. The flags are new keys with no `CHUNSIK_*` alias.
+    - Checked at `a737223`: no test or rule requires every env key to live in `config.ts` or `.env.example`, and app
+      files already read `QUOKY_*` keys outside `config.ts`.
+    - Core gets no HTTP dependency and no port, token or contract change. No npm dependency, workspace package or
+      migration is added.
+  - **OPS-2, Phase 2a handling (W4, after MEM-1): reminder cancel and memory forget only.**
+    - Both already live outside `conversation-runtime.ts`: reminder cancel in `ReminderConversationService`
+      (`core/application/reminders/`), and memory forget in MEM-1's `core/application/memory-commands/*`.
+    - OPS-2 exposes a typed cancel entry on `ReminderConversationService` and has the chat `CANCEL` path call it, so
+      chat replies stay byte-identical. Forget uses the ADR-0106 content-bound code.
+    - The UI session acts as the owner `Actor` through the token, a declared ADR-0091 extension for this surface. If the
+      owner ids do not map to exactly one Actor, the actions are disabled.
+    - There is no approve or reject in W4: the approval decision path for every kind lives only inside
+      `conversation-runtime.ts`, which MM-2 owns in W4 and CWR-2 owns in W5.
+  - **OPS-2b, Phase 2b handling (W6, P2): approve and reject.** This is the scheduled home of approval handling, not an
+    "if needed" step.
+    - In W6, `conversation-runtime.ts` and `response-composer.ts` are free. OPS-2b extracts each kind's decision path
+      into one Core `ApprovalDecisionService` that the runtime's decision turns call, with byte-identical replies and
+      existing tests green.
+    - It adds the confirmation reference line to the chat approval preview. The line appears only when the UI is on.
+      The reference is a 6-character code from the approval id, binding digest, owner actor and 30-minute window. It
+      is single-use, and it is refused after expiry.
+    - Approve and reject from the UI run the same decision path and the same executors as chat. The originating
+      session ends as it would after the chat decision. The result reaches the owner DM as `OPS_DECISION_RESULT`, a
+      narrow ADR-0101 D1 amendment. The UI shows only the outcome category.
+    - OPS-2b also folds the OPS flags into `config.ts`/`.env.example`.
+- **ADRs.** ADR-0113 (Ratified 2026-10-06) covers the listener, its security model, the display rule, the phases, the no-bypass
+  rule and placement. It amends ADR-0102 D1 ("No cloud VM, container or HTTP endpoint is added") narrowly; ADR-0102 D7
+  is not amended. It amends ADR-0101 D1 narrowly for `OPS_DECISION_RESULT` (OPS-2b), and extends ADR-0091 for the UI
+  surface. Remote access and a separate client are out of v3 (Team/Hosted).
+- **Risks.**
+  - A local TCP listener: loopback-only bind, Host/Origin checks, a per-start `0600` token, `SameSite=Strict`, CSRF, a
+    strict CSP with no inline code, default off.
+  - A second approval surface: the extracted shared decision service, the confirmation reference, per-approval
+    serialization and the existing one-time grants. It ships only in OPS-2b, which can be dropped, and chat stays a
+    complete approval surface.
+  - Provider readiness against ARCHITECTURE.md §5.3/§12 is an open rule question (owner decision 14). The safe default
+    is readiness per capability, with no provider id shown.
+- **AC.** As ADR-0113's acceptance criteria, split by OPS-1 / OPS-2 / OPS-2b. Notably:
+  - No port opens when disabled.
+  - A foreign Host or Origin, a missing CSRF token, or no session is refused.
+  - The exact CSP header is asserted.
+  - A fixture with credential-shaped strings and message bodies yields a view model and page with none of them.
+  - OPS-2 cancel and forget match the chat effects on one fixture.
+  - OPS-2b approve and reject match the chat decision on one fixture. An approval cannot be granted without a valid
+    reference, and a chat/UI race yields one decision.
+- **Live QA.** Enable on the owner host (Strict `.env.local` edit). Sign in, check each panel against chat output, send a
+  foreign-Origin request, and restart to confirm the token rotates. For OPS-2, cancel and forget on a DB copy. For
+  OPS-2b, reject and approve on a DB copy against a sandbox repository.
+
 ## 4. Waves
 
 Owned files are exclusive within a wave. `core/` = `packages/core/src/`, `app/` = `apps/quoky/src/`.
@@ -420,6 +502,7 @@ Owned files are exclusive within a wave. `core/` = `packages/core/src/`, `app/` 
 |---|---|---|---|---|
 | 0 | LIVE-0 | carry-over | No code. Strict sessions C1, C2, C6, C7, then the C3 decision; fixes go to the owning package | v2 wave-8 PR merged |
 | 1 | GOV-3 | GOV | `DECISIONS.md` (ADR-0102..0112 appended; ratified 2026-10-06), this plan | — |
+| 1 | GOV-4 | GOV | `DECISIONS.md` (ADR-0113 appended, Proposed), this plan, `ROADMAP.md` (Telegram as post-v3 extension) | GOV-3 merged |
 | 1 | SUB-1 | SUB | `app/main.ts`, `app/config.ts`, `.env.example`, new `ops/launchd/*`, launcher script (+tests), `docs/user/quickstart.md` service section | ADR-0102 |
 | 1 | DET-1 | DET | `conversation-runtime.ts` (+test), `core/application/chat-policy/*`, `golden/action-shaped-fallthrough.v1.json`, `app/features/turn-handlers.providers.ts` | ADR-0104 |
 | 1 | LLM-1 | LLM | `packages/ai-cli/src/output-sanitizer.ts` (+test), `ai-cli/src/index.ts`, new help-intent handler module | — |
@@ -433,19 +516,26 @@ Owned files are exclusive within a wave. `core/` = `packages/core/src/`, `app/` 
 | 3 | CAL-1 | CAL | new `packages/connector-calendar-*`, calendar port in `core/ports`, `config.ts`, `.env.example` | C1, ADR-0110 |
 | 3 | MM-1 | MM | `platform-adapter.port.ts`, `adapter-discord/src/index.ts` (+test), new `adapter-discord/src/attachments.ts` | ADR-0111 |
 | 3 | LLM-3 | LLM | `MlxCliProvider` in `packages/ai-cli` (optional, if the benchmark passes; not a new package, ADR-0105 D2) | LLM-2, ADR-0105 |
+| 3 | OPS-1 | OPS | new `app/ops-ui/*` (`http/*`, `snapshot/*`, `ops-ui-wiring.ts`, `ops-ui-config.ts`; +tests), `main.ts` (one call into `ops-ui-wiring.ts`), `docs/user/quickstart.md` operations-UI section (documents the OPS flags) | SUB-2, ADR-0113 ratified |
 | 4 | CAL-2 | CAL | calendar turn handler, `chat-policy/*` (QUAL-7 switch), `turn-handlers.providers.ts`, `app/features/calendar.providers.ts`, `app.module.ts` | CAL-1 |
 | 4 | MM-2 | MM | `domain/enums.ts` (`IMAGE_UNDERSTANDING`), `conversation-runtime.ts` (+test), `ai-cli/src/index.ts` (image path argument) | MM-1 |
 | 4 | CWR-1 | CWR | write ports in `core/ports`, `migrations.ts` (**v15**), receipts repository, `connector-jira`/`connector-slack` writers (+tests), `config.ts` | C1, LRN-1 merged, ADR-0112 |
+| 4 | OPS-2 | OPS | `app/ops-ui/*` (+tests), `core/application/reminders/reminder-conversation-service.ts` (+test; typed cancel entry that the chat `CANCEL` path also calls), MEM-1's `core/application/memory-commands/*` service (typed forget entry only, if none exists). Reminder cancel and memory forget only; no approve or reject; no `conversation-runtime.ts`, `response-composer.ts` or `main.ts` edit | OPS-1, MEM-1 |
 | 5 | CWR-2 | CWR | `conversation-runtime.ts` (+test), `response-composer.ts` (+test), `app.module.ts`, `app/features/connector-writes.providers.ts` | CWR-1 |
 | 5 | LRN-3 | LRN | `app/tools/learning-report.ts` (+test), corpus additions via reviewed PR | LRN-1 |
 | 5 | CODE-8 | CODE | `push-target-resolution.ts`, `personal-hosting-guard.ts`, `config.ts` (P2) | CODE-7, ADR-0109 |
 | 6 | SUB-3 | SUB | continuation activation wiring, `main.ts`, `app.module.ts` (P2) | SUB-2, ADR-0103 ratified |
 | 6 | CODE-9 | CODE | No code expected; sandbox merge UAT (P2) | owner decision 7 |
+| 6 | OPS-2b | OPS | new `core/application/approval-decision-service.ts` (+test), `conversation-runtime.ts` (+test; decision turns call the extracted service, replies byte-identical), `response-composer.ts` (+test; preview reference line only when the UI is on), `OPS_DECISION_RESULT` notice kind (`domain/reminder.ts` kind union, sink adapter), `config.ts`/`.env.example` fold of the OPS flags, `app/ops-ui/*` (P2; UI approve and reject) | OPS-2, CWR-2 |
 | 6 | INT-2 | INT | `app/personal-v3-acceptance.test.ts`, golden routing additions, `baseline` | all merged tracks |
 | 6 | DOC-C | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation records), `ROADMAP.md`, quickstart, operator guide | all merged tracks |
 
 Registration notes: LLM-1 ships the help-intent handler module; DET-1 (the W1 `turn-handlers.providers.ts` owner)
-registers it. LLM-3 lands in W3 as a new module inside `packages/ai-cli` (ADR-0105 D2) without touching
+registers it. OPS-1 adds one call from `main.ts` (free in W3) into `app/ops-ui/ops-ui-wiring.ts`; OPS-2 and OPS-2b
+change only `app/ops-ui/*` and their listed Core files, never `main.ts` or `app.module.ts`. If OPS-2b's extracted
+service needs an `app.module.ts` provider, that is a small W6 hunk coordinated with SUB-3, stated by an ADR-0113
+amendment first. OPS-1 and OPS-2 do not edit `config.ts` or `.env.example`; OPS-2b folds the flags in during W6, when
+both are free. LLM-3 lands in W3 as a new module inside `packages/ai-cli` (ADR-0105 D2) without touching
 `ai-cli/src/index.ts` (the W3 LRN-2 hot file); its export line and composition-root wiring are a small W6 hunk coordinated
 with SUB-3 (the W6 `app.module.ts` owner).
 
@@ -471,22 +561,25 @@ Strict, and that includes the always-on host's DB, which becomes the owner's rea
 
 | File | W1 | W2 | W3 | W4 | W5 | W6 |
 |---|---|---|---|---|---|---|
-| `conversation-runtime.ts` (~6,800 lines) | DET-1 | CODE-7 | — | MM-2 | CWR-2 | — |
-| `response-composer.ts` | CODE-6 | CODE-7 | — | — | CWR-2 | — |
+| `conversation-runtime.ts` (~6,800 lines) | DET-1 | CODE-7 | — | MM-2 | CWR-2 | OPS-2b |
+| `response-composer.ts` | CODE-6 | CODE-7 | — | — | CWR-2 | OPS-2b |
 | `app.module.ts` | CODE-6 | MEM-1 | LRN-2 | CAL-2 | CWR-2 | SUB-3 |
 | `turn-handlers.providers.ts` | DET-1 | MEM-1 | — | CAL-2 | — | — |
 | `prompt-composer.ts` | — | — | LRN-2 | — | — | — |
 | `ai-cli/src/index.ts` | LLM-1 | — | LRN-2 | MM-2 | — | — |
 | `platform-adapter.port.ts`, `adapter-discord/src/index.ts` | — | — | MM-1 | — | — | — |
 | `migrations.ts` / `storage-sqlite/src/index.ts` | — | LRN-1 | — | CWR-1 | — | — |
-| `config.ts`, `.env.example` | SUB-1 | LRN-1 | CAL-1 | CWR-1 | CODE-8 | — |
-| `main.ts` | SUB-1 | SUB-2 | — | — | — | SUB-3 |
+| `config.ts`, `.env.example` | SUB-1 | LRN-1 | CAL-1 | CWR-1 | CODE-8 | OPS-2b |
+| `main.ts` | SUB-1 | SUB-2 | OPS-1 | — | — | SUB-3 |
+| `app/ops-ui/*` | — | — | OPS-1 | OPS-2 | — | OPS-2b |
 | `chat-policy/*`, `intent-classifier.ts` | DET-1 | — | — | CAL-2 | — | — |
-| `DECISIONS.md` | GOV-3 | — | — | — | — | DOC-C |
+| `DECISIONS.md` | GOV-3, then GOV-4 | — | — | — | — | DOC-C |
 
 **Deps baseline.** 34 at the base. A track that needs a new `ConversationRuntimeDeps` entry must say so in its ADR.
 Moving the baseline is expected only for CWR-2 (the write-approval flow, ADR-0112: 34 → 35) and SUB-3 (ADR-0103
-authorizes none; an amendment must state any key). Every task asserts the baseline in
+authorizes none; an amendment must state any key). OPS-1, OPS-2 and OPS-2b add none (ADR-0113 D8: the UI is not a
+runtime dependency, `ApprovalDecisionService` is built from ports the runtime already holds, and no npm dependency,
+workspace package or migration is added). Any key needs an ADR-0113 amendment before OPS-2b merges. Every task asserts the baseline in
 force when it merges.
 
 ## 5. Governance and validation
@@ -494,14 +587,15 @@ force when it merges.
 This mirrors the v2 run.
 
 - **ADR gate.** A track's first code merge waits for the Product Owner to ratify its ADR (Proposed → Accepted).
-  GOV-3 drafted all eleven (ADR-0102..0112). A stalled ADR stalls only its own track.
+  GOV-3 drafted all eleven (ADR-0102..0112). GOV-4 drafted ADR-0113 (OPS), which is Proposed: OPS-1 waits for its
+  ratification. A stalled ADR stalls only its own track.
 - **Per wave:**
   1. Implementation in separate worktrees.
   2. Offline validation: `pnpm typecheck` plus focused tests. A task on a hot file runs the full `pnpm test`. INT-2
      adds `pnpm build`. Docs-only tasks run `git diff --check` and check that `grep '^## ADR-' DECISIONS.md` gives
      unique numbers.
   3. An independent review (reviewer ≠ implementer). The independent Chief Architect review is mandatory before
-     DET-1, LRN-1, LRN-2, MM-1, CWR-2 and SUB-3 merge.
+     DET-1, LRN-1, LRN-2, MM-1, CWR-2, SUB-3, OPS-1 and OPS-2 merge.
   4. A sparse Codex review: once per wave on the integration head, plus a delta review after fixes.
   5. Push, PR and merge.
 - **Approval boundary.** Push, PR and merge run automatically after steps 1-4 pass, **only under the owner's standing
@@ -515,7 +609,7 @@ This mirrors the v2 run.
   temporary-environment rules on a DB copy until SUB-1 replaces them.
 - **Strict, per target.** Live UAT against any **new external target** needs explicit owner confirmation for that
   target. That covers real connector tenants, a calendar account, Slack/Jira write targets, the always-on host install,
-  the merge flag, and Claude receiving images. So do harness `run`s, `ollama pull`, `.env.local` edits, and any
+  the merge flag, Claude receiving images, and enabling the operations UI on the owner host. So do harness `run`s, `ollama pull`, `.env.local` edits, and any
   production DB migration.
 - **Honesty.** No doc claims a live result before the session that produced it has run. DOC-C keeps Pending items
   Pending.
@@ -524,7 +618,7 @@ This mirrors the v2 run.
 
 | Risk | Mitigation |
 |---|---|
-| `conversation-runtime.ts` (~6,800 lines) edited in four waves | One editor per wave; prefer handlers over runtime hunks; rebase on the merged wave head; full `pnpm test` |
+| `conversation-runtime.ts` (~6,800 lines) edited in five waves (W6: OPS-2b extraction) | One editor per wave; prefer handlers over runtime hunks; rebase on the merged wave head; full `pnpm test` |
 | The learning store adds the first consented text column | Per-item consent, a separate table, the credential guard twice, `LOCAL_ONLY` default, forget cascade, flag off by default |
 | The first irreversible corporate writes (CWR) | Off by default, allowlists, exact-payload one-time approvals, no retry on `UNCERTAIN`, read-only QA first |
 | The always-on host now holds the real data | Backups and a restore drill (SUB-2); migrations there are Strict; single instance |
@@ -532,7 +626,8 @@ This mirrors the v2 run.
 | Guard false positives (DET) frustrate normal chat | Claim-shape matching, exemptions, negative corpora, live sweep |
 | Model switch regressions (LLM-2) | The harness decides; the old tag stays installed for rollback |
 | Connector credentials still not provided | CAL/CWR live QA slips; their offline work still merges, flag-gated |
-| Scope creep across 9 tracks | Tiers: P2 is droppable; the "needed for a real user?" gate on every new item |
+| The operations UI opens a local listener and a second approval surface (OPS) | Loopback-only, per-start `0600` token, CSRF and Host/Origin checks, default off; shared Core use cases with the chat confirmations; approve needs the chat preview reference |
+| Scope creep across 10 tracks | Tiers: P2 is droppable; the "needed for a real user?" gate on every new item |
 
 ## 7. Open decisions for the owner
 
@@ -550,6 +645,10 @@ Each decision has a recommended default.
 | 8 (partial) | Reminders channel | Owner asked for channel delivery in a dedicated `#reminder` text channel on the owner's own Discord server (created 2026-10-06, allowlisted); DM stays the default elsewhere. The C2 UAT runs there |
 
 All remaining decisions (3, 6, 9-12) were ratified with their recommended defaults on 2026-10-06 ("우선은 모두 권장 값으로 ratify").
+
+**Recorded 2026-10-06 after GOV-3:** the owner asked for a monitoring and handling screen with no separate client for
+now (track OPS, ADR-0113 Proposed, decisions 13 and 14 below), and decided that a Telegram platform adapter is a post-v3
+extension, taken up only after all v3 development completes (`ROADMAP.md` "Post-v3 extensions").
 
 1. **Standing approval for v3 waves.** Renew the v2 auto Push/PR/Merge approval for v3 waves, which applies after
    offline validation, independent review and Codex review pass. Live UAT of new external targets still needs
@@ -577,3 +676,16 @@ All remaining decisions (3, 6, 9-12) were ratified with their recommended defaul
 11. **Fine-tuning (LRN-4).** *Recommended:* defer until ≥300 approved examples exist and LRN-2 shows a gain.
 12. **Accepted residuals R1-R4.** *Recommended:* keep all four as documented. Address R1 (storage CAS) only if a second
     writer process is introduced.
+13. **Operations UI (ADR-0113, open).** *Recommended:* ratify ADR-0113 as written: a loopback-only, token-gated UI that
+    is off by default. The plan:
+    - Phase 1 is read-only (OPS-1, W3).
+    - Reminder cancel and memory forget follow in OPS-2 (W4), through the chat services.
+    - Approve and reject follow in OPS-2b (W6, P2), through a decision service extracted from the runtime. Approving
+      from the UI needs the confirmation reference that chat shows with the exact preview, and the result reaches the
+      owner DM as `OPS_DECISION_RESULT`.
+    - Remote access and a separate client stay out of v3.
+14. **Provider readiness by provider id (ADR-0113 D6, open rule question).** ARCHITECTURE.md §5.3 item 3 and §12 forbid
+    surfacing the selected provider id to the user by default. Either an operator health screen listing readiness per
+    provider id is inside that text, or it needs an ARCHITECTURE.md amendment. The owner or the Chief Architect review
+    decides. *Recommended:* ship readiness per capability (no provider id) in OPS-1. Show ids only if the review
+    accepts the §5.3 reading in writing.
