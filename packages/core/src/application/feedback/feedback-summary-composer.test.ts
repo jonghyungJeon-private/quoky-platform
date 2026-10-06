@@ -8,6 +8,7 @@ import {
   FEEDBACK_SUMMARY_UNAVAILABLE_TEXT,
   composeFeedbackSummaryText,
   feedbackCapabilityLabel,
+  feedbackTrendLines,
   feedbackIntentLabel,
   feedbackRequestExcerpt,
 } from './feedback-summary-composer';
@@ -112,5 +113,64 @@ describe('feedbackRequestExcerpt', () => {
     const excerpt = feedbackRequestExcerpt('@everyone `rm` 해줘');
     expect(excerpt).not.toContain('@everyone');
     expect(excerpt).not.toContain('`');
+  });
+});
+
+describe('feedbackTrendLines (ADR-0107 D3 trend line)', () => {
+  const row = (key: string | null, turns: number, negative: number) => ({ key, turns, positive: 0, negative, implicit: 0 });
+
+  it('shows the 👎 rate per capability, this 30 days against the previous 30, with the direction', () => {
+    const lines = feedbackTrendLines({
+      current: [row(Capability.GENERAL_CHAT, 20, 2), row(Capability.SUMMARIZATION, 4, 2), row(null, 3, 0)],
+      previous: [row(Capability.GENERAL_CHAT, 10, 2), row(Capability.SUMMARIZATION, 4, 1), row(Capability.CODE_REVIEW, 2, 1)],
+    });
+    expect(lines).toEqual([
+      '👎 비율 추이(최근 30일 · 이전 30일):',
+      '- 일반 대화: 10% (👎 2/20) · 이전 20% (👎 2/10) · 개선',
+      '- 요약: 50% (👎 2/4) · 이전 25% (👎 1/4) · 악화',
+      '- 기타: 0% (👎 0/3) · 이전 - · 비교 불가',
+      '- 코드 리뷰: - · 이전 50% (👎 1/2) · 비교 불가',
+    ]);
+  });
+
+  it('compares exact ratios, not rounded percentages, and is empty without turns', () => {
+    expect(feedbackTrendLines({ current: [row(Capability.GENERAL_CHAT, 3, 1)], previous: [row(Capability.GENERAL_CHAT, 6, 2)] }))
+      .toContain('- 일반 대화: 33% (👎 1/3) · 이전 33% (👎 2/6) · 같음');
+    expect(feedbackTrendLines({ current: [], previous: [] })).toEqual([]);
+    expect(feedbackTrendLines(null)).toEqual([]);
+    expect(feedbackTrendLines(undefined)).toEqual([]);
+  });
+
+  it('bounds the rows like the breakdowns', () => {
+    const keys = Object.values(Capability);
+    const lines = feedbackTrendLines({ current: keys.map((key) => row(key, 1, 0)), previous: [] });
+    expect(lines).toHaveLength(1 + FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS + 1);
+    expect(lines.at(-1)).toBe(`- 외 ${keys.length - FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS}개`);
+  });
+
+  it('the summary includes the trend after the capability breakdown, and is unchanged without one', () => {
+    const base = composeFeedbackSummaryText(summary());
+    expect(composeFeedbackSummaryText(summary(), new Map(), null)).toBe(base);
+    const withTrend = composeFeedbackSummaryText(summary(), new Map(), {
+      current: [row(Capability.GENERAL_CHAT, 3, 1)], previous: [row(Capability.GENERAL_CHAT, 2, 1)],
+    });
+    expect(withTrend).toContain('기능별:');
+    expect(withTrend).toContain('👎 비율 추이(최근 30일 · 이전 30일):\n- 일반 대화: 33% (👎 1/3) · 이전 50% (👎 1/2) · 개선');
+    expect(withTrend.indexOf('기능별:')).toBeLessThan(withTrend.indexOf('👎 비율 추이'));
+    expect(withTrend.indexOf('👎 비율 추이')).toBeLessThan(withTrend.indexOf('요청 유형별:'));
+  });
+
+  it('the footer says text is stored only when the owner chooses it', () => {
+    const text = composeFeedbackSummaryText(summary());
+    expect(text).toContain('답변 방식이 자동으로 바뀌지는 않아요');
+    expect(text).toContain('직접 고른 것만 이 기기에 저장해요');
+  });
+});
+
+describe('feedbackRequestExcerpt strict guard (Codex wave-2 follow-up)', () => {
+  it('hides file-content credentials such as const dbPassword = "…"', () => {
+    const excerpt = feedbackRequestExcerpt('const dbPassword = "SYNTHETIC_ONLY" 이거 고쳐줘');
+    expect(excerpt).not.toContain('SYNTHETIC_ONLY');
+    expect(excerpt).not.toContain('dbPassword');
   });
 });

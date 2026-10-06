@@ -1,7 +1,7 @@
 import { FeedbackSignalKind } from '../../domain';
 import type {
-  ConversationTurnRecord, FeedbackSignalValue, FeedbackSummary, FeedbackTurnStatus, Id, InboundMessage, IsoTimestamp,
-  Session, TurnWorkFacts,
+  ConversationTurnRecord, FeedbackBreakdownRow, FeedbackSignalValue, FeedbackSummary, FeedbackTurnStatus, Id,
+  InboundMessage, IsoTimestamp, Session, TurnWorkFacts,
 } from '../../domain';
 import type { FeedbackRepository, Logger } from '../../ports';
 import { now } from '../../util/clock';
@@ -21,6 +21,15 @@ export const FEEDBACK_SUMMARY_RECENT_NEGATIVE_LIMIT = 5;
  * re-prompt (judged by status only) is still linked; the reply-relative windows are enforced by the detector.
  */
 export const FEEDBACK_PREVIOUS_TURN_LOOKBACK_MS = PENDING_APPROVAL_TTL_MS;
+
+/**
+ * ADR-0107 D3 trend: 👎 rate per capability, the last {@link FEEDBACK_SUMMARY_WINDOW_MS} against the window before it.
+ * Rows are the per-capability breakdowns of the two windows (counts only, no text, no provider id).
+ */
+export interface FeedbackCapabilityTrend {
+  current: FeedbackBreakdownRow[];
+  previous: FeedbackBreakdownRow[];
+}
 
 /** Session lookup used only to resolve the turn's actor. */
 export interface FeedbackSessionLookup {
@@ -148,6 +157,28 @@ export class FeedbackRecorder {
       });
     } catch (err) {
       this.logFailure('summarize', err);
+      return null;
+    }
+  }
+
+  /**
+   * The actor's per-capability breakdown for this window and the previous one (ADR-0107 D3), from one clock reading,
+   * or null when the store cannot be read.
+   */
+  async trend(actorId: Id): Promise<FeedbackCapabilityTrend | null> {
+    try {
+      const at = this.clock();
+      const since = shiftIso(at, -FEEDBACK_SUMMARY_WINDOW_MS);
+      const current = await this.repository.summarize({ actorId, since, recentNegativeLimit: 0 });
+      const previous = await this.repository.summarize({
+        actorId,
+        since: shiftIso(at, -2 * FEEDBACK_SUMMARY_WINDOW_MS),
+        until: since,
+        recentNegativeLimit: 0,
+      });
+      return { current: current.byCapability, previous: previous.byCapability };
+    } catch (err) {
+      this.logFailure('trend', err);
       return null;
     }
   }

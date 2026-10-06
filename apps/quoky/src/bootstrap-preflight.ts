@@ -65,6 +65,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_EMBEDDING_MODEL must name a local model; a name or tag containing "cloud" is refused.',
   [QuokyConfigErrorCode.EMBEDDING_TIMEOUT_INVALID]:
     'QUOKY_EMBEDDING_TIMEOUT_MS must be unset or an integer from 100 to 30000.',
+  [QuokyConfigErrorCode.LEARNING_EXAMPLES_ENABLED_INVALID]:
+    'QUOKY_LEARNING_EXAMPLES_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.REMINDERS_ENABLED_INVALID]: 'QUOKY_REMINDERS_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID]:
     'QUOKY_REMINDERS_CHANNEL_DELIVERY must be unset, "true", or "false".',

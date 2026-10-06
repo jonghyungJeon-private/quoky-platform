@@ -32,3 +32,5 @@ export * from './continuation-binding';
 // Personal v2 inert stubs (ADR-0096 D8), filled by QUAL-3 (feedback) and PRO-1 (reminder).
 export * from './feedback';
 export * from './reminder';
+// Personal v3 (ADR-0107, LRN-1): the owner-curated learning store.
+export * from './learning';

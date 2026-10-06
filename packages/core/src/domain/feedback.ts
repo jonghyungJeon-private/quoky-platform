@@ -103,6 +103,20 @@ export interface FeedbackRecentNegativeTurn {
   taskId?: Id;
 }
 
+/**
+ * A recent explicitly rated turn that has a locally stored Task (ADR-0107 D3 `피드백 후보`): ids, routing facts and
+ * rating counts only, no text and no provider id. `negative`/`positive` count the current (non-retracted) 👎/👍 rows.
+ */
+export interface FeedbackRatedTurn {
+  turnId: Id;
+  createdAt: IsoTimestamp;
+  taskId: Id;
+  intentType?: IntentType;
+  capability?: Capability;
+  positive: number;
+  negative: number;
+}
+
 /** Aggregate over one actor's non-control turns created at or after `since` (ADR-0098 D6). */
 export interface FeedbackSummary {
   since: IsoTimestamp;

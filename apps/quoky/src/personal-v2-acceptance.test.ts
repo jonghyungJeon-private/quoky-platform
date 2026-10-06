@@ -9,15 +9,24 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDERS,
   CODE_CHAIN_STATUS_DOMAINS,
+  Capability,
   CONVERSATION_TURN_HANDLERS,
   ConversationRuntime,
+  DURABLE_MEMORY_VECTOR_COLLECTION,
+  DefaultMemoryRetriever,
+  FeedbackSignalKind,
+  createMemoryRetrievalRequest,
   IntentClassifier,
+  IntentType,
+  LearningItemKind,
   MAX_CONTRIBUTED_HELP_LINES,
   MAX_CONTRIBUTED_HELP_LINE_CHARS,
   ResponseComposer,
   STORAGE_PROVIDER,
+  RiskLevel,
   StatelessApplyPreviewFlow,
   TURN_HANDLER_STAGES,
+  TaskStatus,
   VECTOR_PROVIDER,
   WorkChatService,
   generalChatReplyPolicy,
@@ -29,6 +38,7 @@ import {
   type ConversationRuntimeDeps,
   type ConversationTurnHandler,
   type InboundMessage,
+  type Task,
   type TurnHandlerStage,
   type VectorProvider,
 } from '@quoky/core';
@@ -63,8 +73,9 @@ import actionShapedCorpus from '../../../packages/core/src/application/golden/ac
  * stub, so no CLI is ever spawned and every provider touch is visible. Turns go through the production
  * `ConversationRuntime` exactly as `QuokyCore` would call it.
  *
- * It pins: the dispatch-boundary deps baseline, the six handlers in their fixed stages/orders (the five v2 handlers
- * plus the ADR-0104 D4 help-intent handler, registered at wave-1 integration), the contributed help
+ * It pins: the dispatch-boundary deps baseline, the eight handlers in their fixed stages/orders (the five v2 handlers
+ * plus the ADR-0104 D4 help-intent handler, registered at wave-1 integration, the ADR-0106 memory-command handler,
+ * registered by MEM-1, and the ADR-0107 D3 learning-command handler, LRN-1), the contributed help
  * lines and their bounds, zero provider calls on deterministic turns, the ADR-0100 D1 anchored-prefix precedence and
  * the turn-handler routing golden ratchet (including the wave-7 live-QA fixes), and the migration contiguity.
  */
@@ -116,6 +127,10 @@ const ANCHORED_TODO_HEADS = [
 const EXPECTED_REGISTRY: ReadonlyArray<readonly [string, TurnHandlerStage, number]> = [
   ['feedback.summary', 'control', 100],
   ['git-branch', 'post-anchor', 100],
+  // ADR-0106 D2 (amends ADR-0096 D5): memory commands after the runtime's `기억해:` block, before anchored to-dos.
+  ['memory-commands', 'pre-classify', 50],
+  // ADR-0107 D3 (amends ADR-0096 D5): owner learning commands, after memory commands (50), before to-dos (100).
+  ['feedback.learning', 'pre-classify', 60],
   ['work-chat.todo', 'pre-classify', 100],
   ['reminders', 'pre-classify', 200],
   ['work-chat.lookup', 'pre-classify', 300],
@@ -149,6 +164,8 @@ interface Harness {
   readonly storage: SqliteStorageProvider;
   readonly handlers: readonly ConversationTurnHandler[];
   readonly composer: ResponseComposer;
+  /** The production vector cache (ADR-0098 D8), for the MEM-1 forget cascade check. */
+  readonly vectors: VectorProvider;
   providerCalls(): number;
   availabilityProbes(): number;
   /** Send one turn in `context` and report which layer answered it. */
@@ -197,8 +214,11 @@ function prepareMigratedDatabase(path: string): void {
     migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 12)));
     expect(tableNames(db)).toContain('feedback_signals');
     expect(tableNames(db)).not.toContain('reminders');
-    migrationSteps.push(runMigrations(raw, MIGRATIONS));
+    migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 13)));
     expect(tableNames(db)).toContain('reminders');
+    expect(tableNames(db)).not.toContain('learning_items');
+    migrationSteps.push(runMigrations(raw, MIGRATIONS));
+    expect(tableNames(db)).toContain('learning_items');
   } finally {
     db.close();
   }
@@ -268,6 +288,7 @@ async function boot(): Promise<Harness> {
     storage,
     handlers,
     composer,
+    vectors: app.get<VectorProvider>(VECTOR_PROVIDER),
     providerCalls: () => providerCalls,
     availabilityProbes: () => availabilityProbes,
     freshContext() {
@@ -327,6 +348,8 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composeCodePreviewDiscarded(context).text) return 'preview-discarded';
   if (text === composer.composeNoPendingDecision(context).text) return 'no-pending-decision';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
+  // ADR-0106 D1: the runtime's explicit `기억해:` save (it runs before the pre-classify memory commands).
+  if (text === composer.composeMemoryStored(context).text) return 'memory-stored';
   // ADR-0104 D3 (DET-1): the code-chain not-done reply for a status question / completion statement.
   for (const domain of CODE_CHAIN_STATUS_DOMAINS) {
     for (const language of ['ko', 'en'] as const) {
@@ -465,28 +488,31 @@ afterAll(async () => {
 
 
 describe('Personal v2 acceptance — migration lane (ADR-0096 D10)', () => {
-  it('the migration list is exactly 1..13, contiguous, and LATEST_SCHEMA_VERSION is 13', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1));
-    expect(LATEST_SCHEMA_VERSION).toBe(13);
+  it('the migration list is exactly 1..14, contiguous, and LATEST_SCHEMA_VERSION is 14 (v14: ADR-0107 learning)', () => {
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 14 }, (_, i) => i + 1));
+    expect(LATEST_SCHEMA_VERSION).toBe(14);
   });
 
-  it('a temp DB was migrated 0 → 11, then 11 → 12 (feedback) and 12 → 13 (reminders), one version per step', () => {
+  it('a temp DB was migrated 0 → 11, then 11 → 12 (feedback), 12 → 13 (reminders) and 13 → 14 (learning), one version per step', () => {
     expect(migrationSteps).toEqual([
       { from: 0, to: 11, applied: Array.from({ length: 11 }, (_, i) => i + 1) },
       { from: 11, to: 12, applied: [12] },
       { from: 12, to: 13, applied: [13] },
+      { from: 13, to: 14, applied: [14] },
     ]);
   });
 
-  it('the production storage opened that DB without re-migrating, and it stays at 13 with every v12/v13 table', () => {
+  it('the production storage opened that DB without re-migrating, and it stays at 14 with every v12/v13/v14 table', () => {
     const db = openRawDb(dbPath);
     try {
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(13);
-      expect(tableNames(db)).toEqual(expect.arrayContaining(['conversation_turns', 'feedback_signals', 'reminders']));
-      // A build that knows only up to 12 refuses the v13 DB (fail closed, never a downgrade).
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(14);
+      expect(tableNames(db)).toEqual(expect.arrayContaining([
+        'conversation_turns', 'feedback_signals', 'reminders', 'learning_items',
+      ]));
+      // A build that knows only up to 13 refuses the v14 DB (fail closed, never a downgrade).
       type Db = Parameters<typeof runMigrations>[0];
-      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 12))).toThrow('SCHEMA_VERSION_AHEAD');
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(13);
+      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 13))).toThrow('SCHEMA_VERSION_AHEAD');
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(14);
     } finally {
       db.close();
     }
@@ -517,9 +543,9 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);
   });
 
-  it('registers exactly six turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
-    expect(harness.handlers).toHaveLength(6);
-    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(6);
+  it('registers exactly eight turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
+    expect(harness.handlers).toHaveLength(8);
+    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(8);
     const byStage = (harness.runtime as unknown as {
       turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
     }).turnHandlersByStage;
@@ -872,5 +898,240 @@ describe('Personal v3 wave 1 — live QA W1-L01 / W1-L03 with a registered proje
       expect(seen.text, golden.id).toBe(STUB_REPLY);
       expect(seen.text, golden.id).not.toMatch(/WORKSPACE_APPLIED|커밋 승인을 준비할 수 없어요|수정할 파일 경로와 함께/u);
     }
+  });
+});
+
+describe('Personal v3 LRN-1 — owner learning commands end to end (ADR-0107 D1/D3, offline)', () => {
+  const CREDENTIAL = '비밀번호는 hunter2-secret 이야';
+
+  it('lists a 👎 turn, saves an owner note only on command, refuses a credential, and adds the 👎-rate trend', async () => {
+    const context = harness.freshContext();
+    const providerBefore = harness.providerCalls() + harness.availabilityProbes();
+    const empty = await harness.turn(context, '피드백 후보');
+    expect(empty.route).toBe('feedback.learning');
+    expect(empty.text).toContain('👍/👎를 남긴 답변이 없어요');
+    const actorId = await actorIdOf(context);
+
+    // Seed one rated work turn the way capture stores it: a Task (the request text) and a content-free turn + 👎.
+    const at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await harness.storage.tasks.save({
+      id: 'lrn-task-1', title: 'chat', description: '내일 회의 몇 시야?', status: TaskStatus.COMPLETED,
+      intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: false, summary: 'chat' },
+      riskLevel: RiskLevel.LOW, context, actorId, createdAt: at, updatedAt: at,
+    } as Task);
+    await harness.storage.feedback.saveTurn({
+      id: 'lrn-turn-1', actorId, platform: context.platform, channelId: context.channelId, inboundMessageId: 'lrn-in-1',
+      platformUserId: context.userId, status: 'RESPONDED', createdAt: at, latencyMs: 10, replyChars: 20,
+      intentType: IntentType.CHAT, capability: Capability.GENERAL_CHAT, taskId: 'lrn-task-1', requestFingerprint: [],
+      platformMessageIds: ['lrn-out-1'],
+    });
+    await harness.storage.feedback.upsertSignal({
+      id: 'lrn-sig-1', turnId: 'lrn-turn-1', kind: FeedbackSignalKind.EXPLICIT_RATING, source: 'REACTION',
+      sourceKey: `${context.userId}:NEGATIVE`, value: 'NEGATIVE', createdAt: at, updatedAt: at,
+    });
+
+    const listing = await harness.turn(context, '피드백 후보');
+    expect(listing.route).toBe('feedback.learning');
+    expect(listing.text).toContain('1. ');
+    expect(listing.text).toContain('👎 · 일반 대화 · "내일 회의 몇 시야?"');
+    const list = () => harness.storage.learning.list({
+      actorId, kind: LearningItemKind.GOLDEN_CANDIDATE, now: new Date().toISOString(), limit: 10,
+    });
+    expect(await list()).toEqual([]);
+
+    const refused = await harness.turn(context, `후보 1 메모: ${CREDENTIAL}`);
+    expect(refused.route).toBe('feedback.learning');
+    expect(refused.text).toContain('저장하지 않았어요');
+    expect(await list()).toEqual([]);
+
+    const saved = await harness.turn(context, '후보 1 메모: 회의 시간 대신 날씨를 답했어');
+    expect(saved.route).toBe('feedback.learning');
+    expect(saved.text).toContain('학습 후보로 저장했어요');
+    const items = await list();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      actorId, sourceTurnId: 'lrn-turn-1', egress: 'LOCAL_ONLY', capability: Capability.GENERAL_CHAT,
+      data: { requestText: '내일 회의 몇 시야?', note: '회의 시간 대신 날씨를 답했어', sourceRating: 'NEGATIVE' },
+    });
+
+    const summary = await harness.turn(context, '피드백 요약');
+    expect(summary.route).toBe('feedback.summary');
+    expect(summary.text).toContain('👎 비율 추이(최근 30일 · 이전 30일):');
+    expect(summary.text).toContain('- 일반 대화: 100% (👎 1/1) · 이전 - · 비교 불가');
+
+    // Every learning turn was deterministic: no provider call and no availability probe.
+    expect(harness.providerCalls() + harness.availabilityProbes()).toBe(providerBefore);
+  });
+
+  it('example commands work only from a fresh listing, and 예시 N 삭제 removes exactly that row', async () => {
+    const context = harness.freshContext();
+    expect((await harness.turn(context, '예시 1 삭제')).text).toContain('먼저 "예시 목록"');
+    const listing = await harness.turn(context, '예시 목록');
+    expect(listing.route).toBe('feedback.learning');
+    expect(listing.text).toContain('저장된 예시가 없어요');
+  });
+});
+
+describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)', () => {
+  const codeIn = (text: string): string => /기억 확인 ([A-Z0-9]{4})/u.exec(text)?.[1] ?? '';
+  // Listing numbers follow `createdAt` (ms) with an id tie-break; a pause keeps consecutive saves in save order.
+  const nextMs = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
+  const recall = async (actorId: string, query: string): Promise<string[]> => {
+    const retriever = new DefaultMemoryRetriever(harness.storage.memories);
+    const results = await retriever.retrieve(
+      createMemoryRetrievalRequest({
+        query,
+        capability: Capability.GENERAL_CHAT,
+        scope: { actorId },
+        authorityFitness: ['USER_CLAIM_OR_INTENT'],
+        maxResults: 10,
+      }),
+    );
+    return results.map((result) => result.memory.content);
+  };
+
+  it('list → forget (stale and foreign codes change nothing) → recall check → edit → recall check, provider-free', async () => {
+    const owner = harness.freshContext();
+    const other = harness.freshContext();
+    const providerBefore = harness.providerCalls() + harness.availabilityProbes();
+    expect((await harness.turn(owner, '기억해: 커피는 아메리카노')).reply).toBe('memory-stored');
+    await nextMs();
+    expect((await harness.turn(owner, '기억해: 주간 회의는 화요일')).reply).toBe('memory-stored');
+    expect((await harness.turn(other, '기억해: 다른 사람의 메모')).reply).toBe('memory-stored');
+    const ownerId = await actorIdOf(owner);
+    const otherId = await actorIdOf(other);
+
+    const listed = await harness.turn(owner, '기억 목록');
+    expect(listed.route).toBe('memory-commands');
+    expect(listed.text).toContain('1. 커피는 아메리카노');
+    expect(listed.text).toContain('2. 주간 회의는 화요일');
+    expect(listed.text).not.toContain('다른 사람');
+    expect(listed.text).toContain('저장된 기억 2개 중');
+
+    // Forget #1: a wrong code and another actor's use of the right code change nothing.
+    const ask = await harness.turn(owner, '기억 1 잊어줘');
+    expect(ask.text).toContain('> 커피는 아메리카노');
+    const code = codeIn(ask.text);
+    expect(code).toMatch(/^[A-Z0-9]{4}$/u);
+    const wrong = await harness.turn(owner, `기억 확인 ${code === 'AAAA' ? 'BBBB' : 'AAAA'}`);
+    expect(wrong.text).toContain('아무것도 바뀌지 않았어요');
+    expect((await harness.turn(other, `기억 확인 ${code}`)).text).toContain('아무것도 바뀌지 않았어요');
+    expect(await recall(ownerId, '커피 아메리카노')).toContain('커피는 아메리카노');
+
+    const forgotten = await harness.turn(owner, `기억 확인 ${code}`);
+    expect(forgotten).toMatchObject({ route: 'memory-commands', providerCalls: 0 });
+    expect(forgotten.text).toContain('이 기억을 잊었어요');
+    expect(await recall(ownerId, '커피 아메리카노')).not.toContain('커피는 아메리카노');
+    const remaining = await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 50 });
+    expect(remaining.map((record) => record.content)).toEqual(['주간 회의는 화요일']);
+    // The code was one-time.
+    expect((await harness.turn(owner, `기억 확인 ${code}`)).text).toContain('아무것도 바뀌지 않았어요');
+
+    // Edit #1 ("주간 회의는 화요일" after the shift): a credential-shaped edit is refused, then a real edit supersedes.
+    const secret = await harness.turn(owner, '기억 1 수정: password = hunter2hunter2');
+    expect(secret.text).toContain('민감한 정보');
+    expect(secret.text).not.toMatch(/기억 확인 [A-Z0-9]{4}/u);
+    const editAsk = await harness.turn(owner, '기억 1 수정: 주간 회의는 수요일');
+    expect(editAsk.text).toContain('지금: 주간 회의는 화요일');
+    const edited = await harness.turn(owner, `기억 확인 ${codeIn(editAsk.text)}`);
+    expect(edited.text).toContain('기억을 바꿨어요');
+    expect(await recall(ownerId, '주간 회의')).toEqual(['주간 회의는 수요일']);
+    expect((await harness.turn(owner, '기억 목록')).text).toContain('1. 주간 회의는 수요일');
+
+    // The other actor's memory was never listed, counted or changed.
+    expect(await recall(otherId, '다른 사람 메모')).toEqual(['다른 사람의 메모']);
+    expect((await harness.turn(other, '기억 목록')).text).toContain('1. 다른 사람의 메모');
+    expect(harness.providerCalls() + harness.availabilityProbes() - providerBefore).toBe(0);
+  });
+
+  it('forget also removes the memory\'s cached vector (ADR-0098 D8 cache, ADR-0106 D5)', async () => {
+    const owner = harness.freshContext();
+    await harness.turn(owner, '기억해: 벡터로도 저장된 기억');
+    const [record] = await harness.storage.memories.findDurableCandidates({
+      scope: { userId: await actorIdOf(owner) },
+      limit: 5,
+    });
+    if (!record) throw new Error('memory was not saved');
+    await harness.vectors.upsert(DURABLE_MEMORY_VECTOR_COLLECTION, [{ id: record.id, vector: [1, 0, 0] }]);
+    const ids = async () => (await harness.vectors.query(DURABLE_MEMORY_VECTOR_COLLECTION, [1, 0, 0], 100)).map((r) => r.id);
+    expect(await ids()).toContain(record.id);
+    const ask = await harness.turn(owner, '기억 1 잊어줘');
+    await harness.turn(owner, `기억 확인 ${codeIn(ask.text)}`);
+    expect(await ids()).not.toContain(record.id);
+    expect(await harness.storage.memories.get(record.id)).toBeNull();
+  });
+
+  it('forget and edit remove the learning items derived from the memory, actor-scoped (ADR-0106 D5, ADR-0107 D7)', async () => {
+    const owner = harness.freshContext();
+    const other = harness.freshContext();
+    const providerBefore = harness.providerCalls() + harness.availabilityProbes();
+    await harness.turn(owner, '기억해: 학습 연쇄 삭제용 기억');
+    await nextMs();
+    await harness.turn(owner, '기억해: 학습 연쇄 수정용 기억');
+    await harness.turn(other, '기억 목록'); // resolves the other actor (no memory of its own)
+    const ownerId = await actorIdOf(owner);
+    const otherId = await actorIdOf(other);
+    const records = await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 10 });
+    const byContent = (content: string) => {
+      const found = records.find((record) => record.content === content);
+      if (!found) throw new Error(`memory was not saved: ${content}`);
+      return found;
+    };
+    const forgetMe = byContent('학습 연쇄 삭제용 기억');
+    const editMe = byContent('학습 연쇄 수정용 기억');
+
+    const now = new Date();
+    const learningItem = (id: string, actorId: string, sourceMemoryId: string | undefined) => ({
+      id, actorId, kind: LearningItemKind.EXAMPLE, capability: Capability.GENERAL_CHAT, language: 'ko' as const,
+      ...(sourceMemoryId === undefined ? {} : { sourceMemoryId }),
+      egress: 'LOCAL_ONLY' as const, createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      data: { requestText: '학습 예시 요청', idealAnswer: '학습 예시 답변', sourceRating: 'POSITIVE' as const },
+    });
+    for (const item of [
+      learningItem('lrn-cascade-forget', ownerId, forgetMe.id),
+      learningItem('lrn-cascade-edit', ownerId, editMe.id),
+      learningItem('lrn-cascade-unrelated', ownerId, undefined),
+      // Another actor's row naming the same memory id is never touched (deletes are owner-scoped).
+      learningItem('lrn-cascade-foreign', otherId, forgetMe.id),
+    ]) {
+      expect(await harness.storage.learning.insertWithinCap(item, 1000, now.toISOString())).toBe('INSERTED');
+    }
+    const ids = async (actorId: string) =>
+      (await harness.storage.learning.list({ actorId, kind: LearningItemKind.EXAMPLE, now: new Date().toISOString(), limit: 50 }))
+        .map((item) => item.id)
+        .sort();
+    expect(await ids(ownerId)).toEqual(['lrn-cascade-edit', 'lrn-cascade-forget', 'lrn-cascade-unrelated']);
+
+    // Saved order: 1 = the forget target, 2 = the edit target (which becomes 1 after the forget shifts the list).
+    const listed = await harness.turn(owner, '기억 목록');
+    expect(listed.text).toContain('1. 학습 연쇄 삭제용 기억');
+    expect(listed.text).toContain('2. 학습 연쇄 수정용 기억');
+
+    const forgetAsk = await harness.turn(owner, '기억 1 잊어줘');
+    expect(forgetAsk.text).toContain('> 학습 연쇄 삭제용 기억');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(forgetAsk.text)}`)).text).toContain('이 기억을 잊었어요');
+    expect(await harness.storage.memories.get(forgetMe.id)).toBeNull();
+    expect(await ids(ownerId)).toEqual(['lrn-cascade-edit', 'lrn-cascade-unrelated']);
+    expect(await ids(otherId)).toEqual(['lrn-cascade-foreign']);
+
+    const editAsk = await harness.turn(owner, '기억 1 수정: 학습 연쇄 수정된 기억');
+    expect(editAsk.text).toContain('지금: 학습 연쇄 수정용 기억');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(editAsk.text)}`)).text).toContain('기억을 바꿨어요');
+    expect(await ids(ownerId)).toEqual(['lrn-cascade-unrelated']);
+    expect(await ids(otherId)).toEqual(['lrn-cascade-foreign']);
+    expect(harness.providerCalls() + harness.availabilityProbes() - providerBefore).toBe(0);
+  });
+
+  it('pins the golden memory-command routing (기억해: still saves; to-do and reminder phrases keep their handlers)', () => {
+    const route = (text: string) => routing.cases.find((c) => c.text === text)?.expected;
+    expect(route('기억해: 커피는 아메리카노')).toEqual({ route: 'runtime', reply: 'memory-stored', providerCalls: 0 });
+    expect(route('기억해: 기억 목록')).toEqual({ route: 'runtime', reply: 'memory-stored', providerCalls: 0 });
+    for (const text of ['기억 목록', '기억 1 보여줘', '기억 1 잊어줘', '기억 1 수정: 커피는 라떼', '기억 확인 AAAA', '내 기억 다 지워줘']) {
+      expect(route(text), text).toEqual({ route: 'memory-commands', providerCalls: 0 });
+    }
+    expect(route('할 일 추가: 기억 목록 정리')).toMatchObject({ route: 'work-chat.todo' });
+    expect(route('30분 뒤에 기억 목록 정리 알려줘')).toMatchObject({ route: 'reminders' });
+    expect(route('기억 어떻게 지워?')).toMatchObject({ route: 'help-intent' });
   });
 });

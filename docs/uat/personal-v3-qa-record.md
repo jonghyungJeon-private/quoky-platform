@@ -27,3 +27,28 @@ accepted residual R5 (best-effort lexical claim guard, `DECISIONS.md`) → PASS.
 Pending Strict live steps for SUB-1 (owner approval required): `ops/launchd/quokyctl.sh install --apply` on the owner's
 Mac, Claude CLI under the minimal launchd environment, restart within 30 s after `kill -9`, a reminder across a
 restart, and moving the dev DB into the service DB location.
+
+## SUB-1 host install (Strict, owner-approved 2026-10-06 "응 계속 진행해")
+
+| ID | Step | Result |
+|---|---|---|
+| SV0 | Deploy worktree `.worktrees/quoky-platform/quoky-service` (detached at main eef71a9), built; `.env.local` copied (mode 600) + `QUOKY_DISCORD_EXPECTED_BOT_ID`; dev DB (v13, integrity ok) + vectors copied to `~/Library/Application Support/Quoky/` with a separate pre-migration backup; QA runtime stopped first (no duplicate bot) | DONE |
+| SV1 | `quokyctl.sh install --dry-run` then `--apply` | PASS — gui/501/com.quoky.personal loaded, running; startup identity verified (bot/guild/2 channels match) |
+| SV2 | Claude CLI under the launchd minimal env: "내일 오전 9시에 내 일정 뭐 있어?" | PASS — POLICY_SENSITIVE_CHAT answered by Claude, truthful "확인할 수 없어요" |
+| SV3 | `kill -9` of the app process | PASS — launcher logged exit 137 and restarted within ~1 s; stale lock taken over (dead pid); identity re-verified |
+| SV4 | Reminder created in #reminder before the kill, due 12:14 | PASS — delivered once in #reminder after the restart (viaChannel=1) |
+
+## LLM-2 answer-quality harness (Strict, owner-approved 2026-10-06; Ollama only, local-process egress)
+
+`pnpm eval:answers -- --mode run --target ollama --model <m> --calls 3 --approved-plan-digest <digest>`; 11 cases × 3
+calls; results in the QA worktree `data/eval/answer-quality-2026-10-06T03-*-ollama.json`.
+
+| Model | languageMatches | noComplianceAnnouncement | noCapabilityPromise | noLiteralEscapes | lengthWithin | Overall (7 checks) | Wall time | Qualitative |
+|---|---|---|---|---|---|---|---|---|
+| llama3.1:8b (current) | 25/30 | 29/33 | 33/33 | 32/33 | 32/33 | 211/225 (93.8%) | ~3 min | still appends "(Translated from …)" |
+| qwen3:8b | 9/29 | 31/32 | 32/32 | 26/32 | 6/32 | 164/218 (75.0%) | ~13 min | thinking output / overlength; 1 error |
+| gemma3:4b | 27/30 | 33/33 | 33/33 | 33/33 | 28/33 | 214/225 (95.1%) | ~1 min | concise natural Korean; one wrong translation source |
+| granite3.3:8b | 28/30 | 30/33 | 33/33 | 33/33 | 32/33 | 216/225 (96.0%) | ~4 min | verbose, imitates system instructions, English answer to a Korean translate request |
+| mistral:7b | 27/30 | 29/33 | 32/33 | 33/33 | 29/33 | 210/225 (93.3%) | ~8 min | — |
+
+(noTranslationBlock and noSystemCopyImitation were 30/30 for all.) Recommendation (ADR-0105 D1): gemma3:4b.
