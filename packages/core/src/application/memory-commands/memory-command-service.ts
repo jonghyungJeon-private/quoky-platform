@@ -9,7 +9,7 @@ import type {
 } from '../../domain';
 import { isArchivedMemory, MEMORY_ARCHIVE_EXPIRES_AT_KEY, MEMORY_ARCHIVED_AT_KEY, MemoryType } from '../../domain';
 import type { DurableMemoryQuery, Logger } from '../../ports';
-import { CREDENTIAL_REJECTION_REASON } from '../credential-guard';
+import { containsCredentialFileContent, CREDENTIAL_REJECTION_REASON } from '../credential-guard';
 import {
   durableScopeOfRecord,
   isCredentialLikeMemoryText,
@@ -187,6 +187,34 @@ interface PendingConfirmation {
   readonly recordId: Id;
   readonly window: number;
   readonly action: PendingAction;
+  /** The record's archive generation when the code was issued (its `archivedAt`; absent for a live record). */
+  readonly generation?: string;
+  /** Disambiguates a re-issue whose code was already spent for the same record and generation. */
+  readonly nonce: number;
+}
+
+/** A spent code, remembered per actor for the windows it could still be accepted in. */
+interface ConsumedConfirmation {
+  readonly code: string;
+  readonly recordId: Id;
+  readonly window: number;
+}
+
+/** Re-issue attempts before giving up on finding an unspent code (practically never more than one). */
+const MAX_CODE_NONCE = 16;
+
+/**
+ * The strict credential guard (ADR-0107 D1, as the learning store uses it): the writer's predicate (chat-text
+ * detector plus the secret-assignment pattern) and the stricter file-content detector. Credential-like record text
+ * is never archived and never shown (ADR-0106 amendment D4).
+ */
+export function isStrictCredentialMemoryText(text: string): boolean {
+  return isCredentialLikeMemoryText(text) || containsCredentialFileContent(text);
+}
+
+/** The archive generation of a record: its `archivedAt` while archived, `undefined` while live. */
+function archiveGenerationOf(record: MemoryRecord): string | undefined {
+  return metadataText(record, MEMORY_ARCHIVED_AT_KEY);
 }
 
 function sha256(text: string): string {
@@ -210,11 +238,16 @@ export function deriveMemoryConfirmationCode(input: {
   readonly content: string;
   readonly action: ConfirmationAction;
   readonly window: number;
+  /** ADR-0106 amendment: the archive generation (`archivedAt`) the code is bound to; absent for a live record. */
+  readonly generation?: string;
+  /** A re-issue counter, so a code spent for this record and generation is never handed out again. */
+  readonly nonce?: number;
 }): string {
   const actionKey = typeof input.action === 'string' ? input.action : `edit:${sha256(input.action.edit)}`;
-  const digest = createHash('sha256')
-    .update(JSON.stringify(['quoky.memory-command.v1', input.recordId, sha256(input.content), actionKey, input.window]))
-    .digest();
+  const parts: unknown[] = ['quoky.memory-command.v1', input.recordId, sha256(input.content), actionKey, input.window];
+  // Appended only when present, so a live record's first code is unchanged from ADR-0106 D4.
+  if (input.generation !== undefined || (input.nonce ?? 0) > 0) parts.push(input.generation ?? null, input.nonce ?? 0);
+  const digest = createHash('sha256').update(JSON.stringify(parts)).digest();
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i += 1) code += CODE_ALPHABET[(digest[i] ?? 0) % CODE_ALPHABET.length];
   return code;
@@ -292,6 +325,8 @@ function byCreation(a: MemoryRecord, b: MemoryRecord): number {
  */
 export class MemoryCommandService {
   private readonly pending = new Map<Id, PendingConfirmation[]>();
+  /** Spent codes per actor (still inside an accepting window), so a re-issue never hands one out again. */
+  private readonly consumed = new Map<Id, ConsumedConfirmation[]>();
   private readonly cascades: readonly MemoryRemovalCascade[];
   readonly archiveDays: number;
 
@@ -402,6 +437,19 @@ export class MemoryCommandService {
             continue;
           }
           try {
+            // Conditional delete: re-read right before deleting and abort when the record is no longer the same expired
+            // archive entry (a restore admitted just before expiry wins). Residual R1: no compare-and-set in the store,
+            // so a restore landing between this read and the writer's own read-then-delete remains a one-await window.
+            const current = await this.deps.records.get(record.id);
+            if (
+              current === null ||
+              !isArchivedMemory(current) ||
+              archiveGenerationOf(current) !== archiveGenerationOf(record) ||
+              !(archiveExpiryMs(current) <= Date.parse(now))
+            ) {
+              skipped.add(record.id);
+              continue;
+            }
             const result = await this.deps.writer.forget({ memoryId: record.id, scope });
             if (result.outcome === 'REJECTED') {
               skipped.add(record.id);
@@ -409,6 +457,7 @@ export class MemoryCommandService {
             } else {
               purged += 1;
               progressed = true;
+              this.dropPendingFor(new Set([record.id]));
             }
           } catch {
             skipped.add(record.id);
@@ -444,7 +493,7 @@ export class MemoryCommandService {
     if (record === undefined) {
       return this.reply('not-found', renderMemoryNotFound(number, records.length, language));
     }
-    const body = isCredentialLikeMemoryText(record.content) ? maskedMemoryText(language) : memoryBody(record.content);
+    const body = isStrictCredentialMemoryText(record.content) ? maskedMemoryText(language) : memoryBody(record.content);
     return this.reply('viewed', renderMemoryView(number, body, language));
   }
 
@@ -546,11 +595,12 @@ export class MemoryCommandService {
     const entries = this.livePending(request.actorId, window);
     const entry = code.length === CODE_LENGTH ? entries.find((candidate) => candidate.code === code) : undefined;
     if (entry === undefined) return this.reply('confirm-unknown', renderConfirmUnknown(language));
-    // One-time: the code is spent whatever happens next.
+    // One-time: the code is spent whatever happens next, and remembered as spent for this record.
     this.setPending(
       request.actorId,
       entries.filter((candidate) => candidate !== entry),
     );
+    this.liveConsumed(request.actorId, window).push({ code: entry.code, recordId: entry.recordId, window: entry.window });
 
     const record = await this.deps.records.get(entry.recordId);
     const nowMs = Date.parse(request.now);
@@ -563,26 +613,39 @@ export class MemoryCommandService {
     const unchanged =
       record !== null &&
       eligible &&
+      archiveGenerationOf(record) === entry.generation &&
       deriveMemoryConfirmationCode({
         recordId: record.id,
         content: record.content,
         action: confirmationActionOf(entry.action),
         window: entry.window,
+        ...(entry.generation === undefined ? {} : { generation: entry.generation }),
+        nonce: entry.nonce,
       }) === entry.code;
     if (!unchanged || record === null) {
       return this.reply('confirm-stale', renderConfirmStale(language, onArchive ? 'archive' : 'list'));
     }
 
+    let result: MemoryCommandResult;
     switch (entry.action.kind) {
       case 'forget':
-        return this.executeForget(request, record, language);
+        result = await this.executeForget(request, record, language);
+        break;
       case 'edit':
-        return this.executeEdit(request, record, entry.action, language);
+        result = await this.executeEdit(request, record, entry.action, language);
+        break;
       case 'restore':
-        return this.executeRestore(request.actorId, record, language);
+        result = await this.executeRestore(request.actorId, record, language);
+        break;
       case 'purge':
-        return this.executePurge(request.actorId, record, language);
+        result = await this.executePurge(request.actorId, record, language);
+        break;
     }
+    // Any executed state change (even a partial one) ends every outstanding code for the record and its chain: a
+    // code issued before the change can never act on the record's next state (e.g. a permanent-delete code issued
+    // before a restore can never delete a later archive of the same record).
+    this.dropPendingFor(new Set([record.id, ...(await this.earlierVersionIds(request.actorId, record))]));
+    return result;
   }
 
   /**
@@ -603,7 +666,8 @@ export class MemoryCommandService {
     // `include`: a version archived by an earlier, interrupted forget still belongs to the chain (archiving it again is
     // a no-op; the permanent-delete path deletes it), so the chain walk never stops at it.
     const history = await this.earlierVersions(actorId, record);
-    const sensitive = [record, ...history].some((version) => isCredentialLikeMemoryText(version.content));
+    // The strict guard over the whole version chain: one credential-like version keeps the chain out of the archive.
+    const sensitive = [record, ...history].some((version) => isStrictCredentialMemoryText(version.content));
     const archive = this.archiveDays > 0 && !sensitive;
     const mode = archive ? 'archived' : 'deleted';
     const incomplete = (removedVersions: number, current: 'kept' | 'unknown') => ({
@@ -674,8 +738,19 @@ export class MemoryCommandService {
    */
   private async executeRestore(actorId: Id, record: MemoryRecord, language: MemoryCommandLanguage) {
     const versions = (await this.earlierVersions(actorId, record)).filter((version) => isArchivedMemory(version));
+    const generation = archiveGenerationOf(record);
     try {
-      for (const target of [...versions.reverse(), record]) await this.deps.records.save(withoutArchive(target));
+      for (const target of [...versions.reverse(), record]) {
+        // Re-read right before each write: a record the expiry purge deleted (or that changed) is never re-created by
+        // the restore's upsert. Residual R1: the store has no compare-and-set, so a delete landing between this read
+        // and the write below can still be undone by it (single process, one await apart).
+        const current = await this.deps.records.get(target.id);
+        if (current === null || archiveGenerationOf(current) !== archiveGenerationOf(target)) {
+          throw new MemoryArchiveStateChangedError();
+        }
+        await this.deps.records.save(withoutArchive(current));
+      }
+      if (generation === undefined) throw new MemoryArchiveStateChangedError();
     } catch (error) {
       this.log('warn', 'memory_commands.restore.failed', { errorName: errorName(error) });
       return { outcome: 'restore-incomplete' as const, text: renderRestoreIncomplete(language), status: 'FAILED' as const };
@@ -876,16 +951,26 @@ export class MemoryCommandService {
 
   private issue(request: MemoryCommandRequest, record: MemoryRecord, action: PendingAction): string {
     const window = memoryConfirmationWindow(request.now);
-    const code = deriveMemoryConfirmationCode({
-      recordId: record.id,
-      content: record.content,
-      action: confirmationActionOf(action),
-      window,
-    });
+    const generation = archiveGenerationOf(record);
+    const spent = this.liveConsumed(request.actorId, window);
+    let nonce = 0;
+    let code = '';
+    for (; nonce < MAX_CODE_NONCE; nonce += 1) {
+      code = deriveMemoryConfirmationCode({
+        recordId: record.id,
+        content: record.content,
+        action: confirmationActionOf(action),
+        window,
+        ...(generation === undefined ? {} : { generation }),
+        nonce,
+      });
+      if (!spent.some((entry) => entry.code === code)) break;
+    }
+    if (nonce >= MAX_CODE_NONCE) throw new MemoryArchiveStateChangedError();
     const kept = this.livePending(request.actorId, window).filter(
       (entry) => entry.code !== code && !(entry.recordId === record.id && entry.action.kind === action.kind),
     );
-    kept.push({ code, recordId: record.id, window, action });
+    kept.push({ code, recordId: record.id, window, action, ...(generation === undefined ? {} : { generation }), nonce });
     this.setPending(request.actorId, kept.slice(-MAX_PENDING_PER_ACTOR));
     return code;
   }
@@ -902,8 +987,33 @@ export class MemoryCommandService {
     else this.pending.set(actorId, entries);
   }
 
+  /** The actor's spent codes still inside an accepting window (older ones are dropped); the live array. */
+  private liveConsumed(actorId: Id, window: number): ConsumedConfirmation[] {
+    const live = (this.consumed.get(actorId) ?? []).filter((entry) => window - entry.window <= 1 && window >= entry.window);
+    this.consumed.set(actorId, live);
+    return live;
+  }
+
+  /** Ends every outstanding code (any actor) for these record ids. */
+  private dropPendingFor(recordIds: ReadonlySet<Id>): void {
+    for (const [actorId, entries] of [...this.pending]) {
+      this.setPending(
+        actorId,
+        entries.filter((entry) => !recordIds.has(entry.recordId)),
+      );
+    }
+  }
+
+  private async earlierVersionIds(actorId: Id, record: MemoryRecord): Promise<Id[]> {
+    try {
+      return (await this.earlierVersions(actorId, record)).map((version) => version.id);
+    } catch {
+      return [];
+    }
+  }
+
   private previewOf(content: string, language: MemoryCommandLanguage, maxChars?: number): string {
-    return isCredentialLikeMemoryText(content) ? maskedMemoryText(language) : memoryPreview(content, maxChars);
+    return isStrictCredentialMemoryText(content) ? maskedMemoryText(language) : memoryPreview(content, maxChars);
   }
 
   private reply(outcome: MemoryCommandOutcome, text: string): MemoryCommandResult {
@@ -950,6 +1060,14 @@ export function memoryCommandHistory(
     : undefined;
   if (user === undefined && assistant === undefined) return undefined;
   return { ...(user === undefined ? {} : { user }), ...(assistant === undefined ? {} : { assistant }) };
+}
+
+/** A record's archive state changed between the check and the write (restore aborted; nothing re-created). */
+class MemoryArchiveStateChangedError extends Error {
+  constructor() {
+    super('memory archive state changed');
+    this.name = 'MemoryArchiveStateChangedError';
+  }
 }
 
 function errorName(error: unknown): string {

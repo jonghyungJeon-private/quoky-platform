@@ -1317,6 +1317,20 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect(done.text).toContain('보관함에 두지 않고 바로 완전히 지웠어요');
     expect(await harness.storage.memories.get('legacy-credential-memory')).toBeNull();
     expect((await harness.turn(owner, '보관함')).text).toContain('보관함이 비어 있어요');
+    // Fix loop 1 (P1): text only the strict file-content guard flags is never archived either.
+    await harness.storage.memories.save({
+      id: 'legacy-file-content-credential',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ownerId },
+      content: 'const dbPassword = "synthetic-value"',
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: at,
+      updatedAt: at,
+    });
+    const strictAsk = await harness.turn(owner, '기억 1 잊어줘');
+    expect(strictAsk.text).not.toContain('synthetic-value');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(strictAsk.text)}`)).text).toContain('바로 완전히 지웠어요');
+    expect(await harness.storage.memories.get('legacy-file-content-credential')).toBeNull();
 
     // The ARCHIVE_DAYS=0 composition over the same real SQLite store: forget deletes permanently at once.
     const immediate = new MemoryCommandService({

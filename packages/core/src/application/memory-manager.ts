@@ -73,7 +73,8 @@ export class MemoryManager {
         ...(sessionId ? { sessionId } : {}),
       },
       content,
-      metadata: { role },
+      // The platform makes the turn's owner unambiguous ((platform, user id), ADR-0106 D5 history purge).
+      metadata: { role, platform: context.platform },
       createdAt: ts,
       updatedAt: ts,
     };
@@ -91,6 +92,16 @@ export class MemoryManager {
     const record = await this.storage.memories.get(id);
     if (record === null || record.type !== MemoryType.SHORT_TERM) return;
     await this.storage.memories.save({ ...record, content, updatedAt: now() });
+  }
+
+  /**
+   * ADR-0106 D5 fail-closed fallback: remove one recorded SHORT_TERM turn whose redaction could not be applied. An
+   * absent or non-SHORT_TERM record is left alone.
+   */
+  async deleteShortTerm(id: Id): Promise<void> {
+    const record = await this.storage.memories.get(id);
+    if (record === null || record.type !== MemoryType.SHORT_TERM) return;
+    await this.storage.memories.delete(id);
   }
 
   /** Keep only the newest MAX_SESSION_SHORT_TERM SHORT_TERM memories per session. */

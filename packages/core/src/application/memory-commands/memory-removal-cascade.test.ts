@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryType, type Actor, type MemoryRecord } from '../../domain';
+import { MemoryType, SessionStatus, type Actor, type MemoryRecord, type Session } from '../../domain';
 import { MEMORY_CONFIRM_PREVIEW_MAX_CHARS, memoryBody, memoryPreview, renderForgetConfirmation } from './memory-command-renderer';
 import {
   createLearningItemsRemovalCascade,
@@ -72,7 +72,7 @@ describe('createShortTermHistoryRemovalCascade (ADR-0106 D5, W2-L01)', () => {
       type: MemoryType.SHORT_TERM,
       scope: { userId, channelId: 'channel-1', sessionId: 'session-1' },
       content,
-      metadata: { role },
+      metadata: { role, platform: userId.startsWith('tg-') ? 'telegram' : 'discord' },
       createdAt: at,
       updatedAt: at,
     };
@@ -85,6 +85,7 @@ describe('createShortTermHistoryRemovalCascade (ADR-0106 D5, W2-L01)', () => {
       reads,
       deps: {
         actors: { get: async (id: string) => actors.find((actor) => actor.id === id) ?? null },
+        sessions: { get: async () => null },
         history: {
           findShortTermByUser: async (userId: string) => {
             reads.push(userId);
@@ -183,26 +184,43 @@ describe('createSessionHistoryClearer (ADR-0106 amendment D5)', () => {
     ],
     createdAt: '2026-10-06T00:00:00.000Z',
   };
-  const turn = (id: string, userId: string, sessionId: string, type = MemoryType.SHORT_TERM): MemoryRecord => ({
+  const turn = (
+    id: string,
+    userId: string,
+    sessionId: string,
+    type = MemoryType.SHORT_TERM,
+    platform?: string,
+  ): MemoryRecord => ({
     id,
     type,
     scope: { userId, channelId: 'channel-1', sessionId },
     content: `${id} 내용`,
-    metadata: { role: 'assistant' },
+    // No platform = a turn recorded before turns carried it: derived from its session record.
+    metadata: { role: 'assistant', ...(platform === undefined ? {} : { platform }) },
     createdAt: '2026-10-06T00:00:00.000Z',
     updatedAt: '2026-10-06T00:00:00.000Z',
+  });
+
+  const session = (id: string, platform: string): Session => ({
+    id,
+    actorId: 'whoever',
+    context: { platform, channelId: 'channel-1', userId: 'whoever' },
+    status: SessionStatus.ACTIVE,
+    createdAt: '2026-10-06T00:00:00.000Z',
+    lastActivityAt: '2026-10-06T00:00:00.000Z',
   });
 
   it("deletes only the actor's own short-term turns of that session (both roles), never another user's or session's", async () => {
     const rows: MemoryRecord[] = [
       turn('mine-1', 'discord-owner', 'session-1'),
-      turn('mine-2', 'slack-owner', 'session-1'),
+      turn('mine-2', 'slack-owner', 'session-1', MemoryType.SHORT_TERM, 'slack'),
       turn('other-user', 'discord-other', 'session-1'),
       turn('other-session', 'discord-owner', 'session-2'),
       turn('durable', 'discord-owner', 'session-1', MemoryType.LONG_TERM),
     ];
     const clearer = createSessionHistoryClearer({
       actors: { get: async (id) => (id === OWNER.id ? OWNER : null) },
+      sessions: { get: async (id) => session(id, 'discord') },
       history: {
         findByScope: async (scope, type) =>
           rows.filter((row) => row.scope.sessionId === scope.sessionId && (type === undefined || row.type === type)),
@@ -218,5 +236,72 @@ describe('createSessionHistoryClearer (ADR-0106 amendment D5)', () => {
     expect(await clearer.clearSession('actor-1', 'session-1')).toBe(0);
     expect(await clearer.clearSession('actor-x', 'session-2')).toBe(0);
     expect(rows).toHaveLength(3);
+  });
+});
+
+describe('history ownership is (platform, user id) — fix loop 1 (ADR-0106 D5)', () => {
+  // Two actors that share the numeric user id 123 on two platforms.
+  const A: Actor = { id: 'actor-a', displayName: 'a', identities: [{ platform: 'discord', externalId: '123' }], createdAt: '2026-10-06T00:00:00.000Z' };
+  const B: Actor = { id: 'actor-b', displayName: 'b', identities: [{ platform: 'telegram', externalId: '123' }], createdAt: '2026-10-06T00:00:00.000Z' };
+  const session = (id: string, platform: string): Session => ({
+    id,
+    actorId: 'whoever',
+    context: { platform, channelId: `channel-${id}`, userId: '123' },
+    status: SessionStatus.ACTIVE,
+    createdAt: '2026-10-06T00:00:00.000Z',
+    lastActivityAt: '2026-10-06T00:00:00.000Z',
+  });
+  const SESSIONS: Record<string, Session> = { 's-discord': session('s-discord', 'discord'), 's-telegram': session('s-telegram', 'telegram') };
+  const turn = (id: string, sessionId: string | undefined, platform?: string): MemoryRecord => ({
+    id,
+    type: MemoryType.SHORT_TERM,
+    scope: { userId: '123', channelId: 'c', ...(sessionId === undefined ? {} : { sessionId }) },
+    content: '공유 비밀 메모',
+    metadata: { role: 'user', ...(platform === undefined ? {} : { platform }) },
+    createdAt: '2026-10-06T00:00:00.000Z',
+    updatedAt: '2026-10-06T00:00:00.000Z',
+  });
+  const fixture = () => {
+    const rows: MemoryRecord[] = [
+      turn('a-new', 's-discord', 'discord'),
+      turn('b-new', 's-telegram', 'telegram'),
+      turn('a-legacy', 's-discord'), // platform derived from the session record
+      turn('b-legacy', 's-telegram'),
+      turn('orphan-legacy', undefined), // no platform, no session: nobody's (left alone)
+    ];
+    const history = {
+      findShortTermByUser: async (userId: string) => rows.filter((row) => row.scope.userId === userId),
+      findByScope: async (scope: { sessionId?: string }) => rows.filter((row) => row.scope.sessionId === scope.sessionId),
+      delete: async (id: string) => {
+        const index = rows.findIndex((row) => row.id === id);
+        if (index >= 0) rows.splice(index, 1);
+      },
+    };
+    const deps = {
+      actors: { get: async (id: string) => [A, B].find((actor) => actor.id === id) ?? null },
+      sessions: { get: async (id: string) => SESSIONS[id] ?? null },
+      history,
+    };
+    return { rows, deps };
+  };
+
+  it("A's forget never deletes B's history even though both are user 123", async () => {
+    const { rows, deps } = fixture();
+    await createShortTermHistoryRemovalCascade(deps).onMemoriesRemoved({
+      actorId: 'actor-a',
+      reason: 'forget',
+      memoryIds: ['m'],
+      vectorIds: [],
+      contents: ['공유 비밀 메모'],
+    });
+    expect(rows.map((row) => row.id)).toEqual(['b-new', 'b-legacy', 'orphan-legacy']);
+  });
+
+  it("clearing A's session leaves B's turns, and B clearing a Discord session touches nothing", async () => {
+    const { rows, deps } = fixture();
+    const clearer = createSessionHistoryClearer(deps);
+    expect(await clearer.clearSession('actor-b', 's-discord')).toBe(0);
+    expect(await clearer.clearSession('actor-a', 's-discord')).toBe(2);
+    expect(rows.map((row) => row.id)).toEqual(['b-new', 'b-legacy', 'orphan-legacy']);
   });
 });

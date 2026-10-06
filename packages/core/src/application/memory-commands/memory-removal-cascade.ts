@@ -1,4 +1,4 @@
-import type { Actor, Id, MemoryRecord } from '../../domain';
+import type { Actor, ExternalIdentity, Id, MemoryRecord, Session } from '../../domain';
 import { MemoryType } from '../../domain';
 import type { LearningMemoryForgetCascade, MemoryRepository, VectorProvider } from '../../ports';
 import { DURABLE_MEMORY_VECTOR_COLLECTION } from '../recall/semantic-recall-scorer';
@@ -108,18 +108,52 @@ export function historyTurnCarriesMemory(record: Pick<MemoryRecord, 'content'>, 
   return needles.some((needle) => haystack.includes(needle));
 }
 
+/** Session lookup for a history turn recorded before turns carried their platform (`metadata.platform`). */
+export interface HistorySessionLookup {
+  get(id: Id): Promise<Session | null>;
+}
+
+/**
+ * Whether a SHORT_TERM turn belongs to one of `identities`, matched on (platform, platform user id) — never on the
+ * user id alone, so actors that share a numeric id on two platforms never touch each other's history. The turn's
+ * platform is its `metadata.platform` (recorded since this fix); for an older turn it is derived from the turn's own
+ * session record. A turn whose platform cannot be established is not the actor's (conservative: left alone).
+ */
+export async function historyTurnBelongsTo(
+  turn: MemoryRecord,
+  identities: readonly ExternalIdentity[],
+  sessions: HistorySessionLookup,
+  sessionPlatforms: Map<Id, string | null> = new Map(),
+): Promise<boolean> {
+  if (turn.type !== MemoryType.SHORT_TERM || turn.scope.userId === undefined) return false;
+  let platform: string | undefined =
+    typeof turn.metadata?.['platform'] === 'string' ? (turn.metadata['platform'] as string) : undefined;
+  if (platform === undefined && turn.scope.sessionId !== undefined) {
+    const sessionId = turn.scope.sessionId;
+    if (!sessionPlatforms.has(sessionId)) {
+      const session = await sessions.get(sessionId);
+      sessionPlatforms.set(sessionId, session === null || session.id !== sessionId ? null : session.context.platform);
+    }
+    platform = sessionPlatforms.get(sessionId) ?? undefined;
+  }
+  if (platform === undefined) return false;
+  return identities.some((identity) => identity.platform === platform && identity.externalId === turn.scope.userId);
+}
+
 export interface ShortTermHistoryRemovalDeps {
   /** Resolves the actor's platform identities: SHORT_TERM turns are recorded under the platform user id. */
   readonly actors: { get(id: Id): Promise<Actor | null> };
   readonly history: Pick<MemoryRepository, 'findShortTermByUser' | 'delete'>;
+  /** Establishes the platform of a turn recorded without `metadata.platform` (see {@link historyTurnBelongsTo}). */
+  readonly sessions: HistorySessionLookup;
 }
 
 /**
  * ADR-0106 D5 (forget means Quoky no longer uses that content), live finding W2-L01: deletes the actor's own
  * SHORT_TERM conversation-history turns (any session, either role) that carry a removed record's text — including
  * the memory-command request/confirmation/result turns that echoed it — so neither the chat transcript nor the
- * generated context files bring it back. Only the matching turns go, never the whole session; turns recorded under
- * another user id are never read or touched. Deleting an already absent turn succeeds, so the cascade is idempotent
+ * generated context files bring it back. Only the matching turns go, never the whole session; a turn is the actor's
+ * only when its (platform, user id) is one of the actor's identities, so another actor's turns are never touched. Deleting an already absent turn succeeds, so the cascade is idempotent
  * and a failed forget is retried by asking again.
  */
 export function createShortTermHistoryRemovalCascade(deps: ShortTermHistoryRemovalDeps): MemoryRemovalCascade {
@@ -131,10 +165,14 @@ export function createShortTermHistoryRemovalCascade(deps: ShortTermHistoryRemov
       const actor = await deps.actors.get(event.actorId);
       if (actor === null || actor.id !== event.actorId) return;
       const userIds = new Set(actor.identities.map((identity) => identity.externalId));
+      const sessionPlatforms = new Map<Id, string | null>();
       for (const userId of userIds) {
         for (const turn of await deps.history.findShortTermByUser(userId)) {
           if (turn.type !== MemoryType.SHORT_TERM || turn.scope.userId !== userId) continue;
-          if (historyTurnCarriesMemory(turn, needles)) await deps.history.delete(turn.id);
+          if (!historyTurnCarriesMemory(turn, needles)) continue;
+          if (await historyTurnBelongsTo(turn, actor.identities, deps.sessions, sessionPlatforms)) {
+            await deps.history.delete(turn.id);
+          }
         }
       }
     },
@@ -156,6 +194,8 @@ export interface SessionHistoryClearerDeps {
   /** Resolves the actor's platform identities: SHORT_TERM turns are recorded under the platform user id. */
   readonly actors: { get(id: Id): Promise<Actor | null> };
   readonly history: Pick<MemoryRepository, 'findByScope' | 'delete'>;
+  /** Establishes the platform of a turn recorded without `metadata.platform` (see {@link historyTurnBelongsTo}). */
+  readonly sessions: HistorySessionLookup;
 }
 
 export function createSessionHistoryClearer(deps: SessionHistoryClearerDeps): SessionHistoryClearer {
@@ -163,11 +203,11 @@ export function createSessionHistoryClearer(deps: SessionHistoryClearerDeps): Se
     async clearSession(actorId, sessionId) {
       const actor = await deps.actors.get(actorId);
       if (actor === null || actor.id !== actorId) return 0;
-      const userIds = new Set(actor.identities.map((identity) => identity.externalId));
+      const sessionPlatforms = new Map<Id, string | null>();
       let deleted = 0;
       for (const turn of await deps.history.findByScope({ sessionId }, MemoryType.SHORT_TERM)) {
         if (turn.type !== MemoryType.SHORT_TERM || turn.scope.sessionId !== sessionId) continue;
-        if (turn.scope.userId === undefined || !userIds.has(turn.scope.userId)) continue;
+        if (!(await historyTurnBelongsTo(turn, actor.identities, deps.sessions, sessionPlatforms))) continue;
         await deps.history.delete(turn.id);
         deleted += 1;
       }

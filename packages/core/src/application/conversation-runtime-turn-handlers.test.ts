@@ -109,6 +109,8 @@ interface HarnessOptions {
   pendingScope?: boolean;
   activeProjectId?: string;
   workspaceOpenThrows?: boolean;
+  /** Extra `deps.memory` methods (the W2-L01 history rewrite seams). */
+  memoryExtras?: Partial<ConversationRuntimeDeps['memory']>;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -267,7 +269,12 @@ function harness(opts: HarnessOptions = {}) {
   };
 
   const project: Project = { id: 'proj-1', name: 'demo', rootPath: '/active' } as Project;
-  const logger: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+  const warnings: string[] = [];
+  const logger: Logger = {
+    info: () => undefined,
+    warn: (message, fields) => void warnings.push(`${message} ${JSON.stringify(fields ?? {})}`),
+    error: () => undefined,
+  };
   const deps: ConversationRuntimeDeps = {
     dispatchCommit: { async commit() { return {} as TaskRun; } } as unknown as ConversationRuntimeDeps['dispatchCommit'],
     actors: { async resolveFromContext() { return OWNER; } },
@@ -283,6 +290,7 @@ function harness(opts: HarnessOptions = {}) {
         return undefined;
       },
       async recordToolMemory() { return undefined; },
+      ...(opts.memoryExtras ?? {}),
     },
     memoryWriter,
     classifier: {
@@ -383,6 +391,7 @@ function harness(opts: HarnessOptions = {}) {
     runtime,
     calls,
     log,
+    warnings,
     approvals,
     approvalFlow,
     setClock(ts: IsoTimestamp) {
@@ -944,5 +953,69 @@ describe('ConversationRuntime turn handlers — contributed help lines (ADR-0096
     const bounded = await harness({ turnHandlers: [many.handler] }).send('도움말');
     const contributed = bounded.reply.text.split('\n').filter((line) => /^- L\d+$/u.test(line));
     expect(contributed).toHaveLength(MAX_CONTRIBUTED_HELP_LINES);
+  });
+});
+
+describe('ConversationRuntime turn handlers — history redaction fails closed (ADR-0106 D5, W2-L01 fix loop 1)', () => {
+  const editLike = (ctx: TurnHandlerContext): TurnHandlerReply => ({
+    reply: { context: ctx.message.context, text: '확인 코드를 보냈어요' },
+    history: { user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)', assistant: '(note)' },
+  });
+
+  it('a failed rewrite removes the recorded inbound turn instead of keeping it verbatim; logs stay content-free', async () => {
+    const removed: string[] = [];
+    const h = harness({
+      turnHandlers: [probe([], 'mem', 'pre-classify', 50, editLike).handler],
+      memoryExtras: {
+        async redactShortTerm() {
+          throw new TypeError('disk full: 보관된 비밀 내용');
+        },
+        async deleteShortTerm(id: string) {
+          removed.push(id);
+        },
+      },
+    });
+    const result = await h.send('기억 1 수정: 보관된 비밀 내용');
+    expect(result.reply.text).toBe('확인 코드를 보냈어요');
+    expect(removed).toEqual(['mem-user']);
+    expect(h.warnings.join('\n')).not.toContain('보관된 비밀');
+    expect(h.warnings[0]).toMatch(/^turn handler history redaction failed .*"errorName":"TypeError"/u);
+  });
+
+  it('without a working rewrite or removal the turn is still answered and the failure is logged', async () => {
+    const h = harness({
+      turnHandlers: [probe([], 'mem', 'pre-classify', 50, editLike).handler],
+      memoryExtras: {
+        async deleteShortTerm() {
+          throw new Error('locked');
+        },
+      },
+    });
+    const result = await h.send('기억 1 수정: 보관된 비밀 내용');
+    expect(result.status).toBe('RESPONDED');
+    expect(h.warnings.map((line) => line.split(' {')[0])).toEqual([
+      'turn handler history removal failed',
+      'turn handler history could not be withheld',
+    ]);
+  });
+
+  it('a successful rewrite removes nothing', async () => {
+    const removed: string[] = [];
+    const redacted: Array<[string, string]> = [];
+    const h = harness({
+      turnHandlers: [probe([], 'mem', 'pre-classify', 50, editLike).handler],
+      memoryExtras: {
+        async redactShortTerm(id: string, content: string) {
+          redacted.push([id, content]);
+        },
+        async deleteShortTerm(id: string) {
+          removed.push(id);
+        },
+      },
+    });
+    await h.send('기억 1 수정: 새 내용');
+    expect(redacted).toEqual([['mem-user', '기억 1 수정: (내용은 대화 기록에 남기지 않아요)']]);
+    expect(removed).toEqual([]);
+    expect(h.warnings).toEqual([]);
   });
 });

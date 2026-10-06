@@ -667,6 +667,8 @@ export interface ConversationRuntimeDeps {
     recordToolMemory(text: string, opts: { projectId?: Id; sessionId?: Id }): Promise<unknown>;
     /** W2-L01: rewrite a recorded SHORT_TERM turn (a turn handler's `history.user`); `MemoryManager` provides it. */
     redactShortTerm?(id: Id, content: string): Promise<unknown>;
+    /** Fail-closed fallback when that rewrite fails: remove the recorded SHORT_TERM turn; `MemoryManager` provides it. */
+    deleteShortTerm?(id: Id): Promise<unknown>;
   };
   /** Required durable-memory activation policy collaborator (M2, ADR-0073). */
   readonly memoryWriter: MemoryWriter;
@@ -3031,7 +3033,9 @@ export class ConversationRuntime {
   /**
    * A deterministic handler reply, recorded to SHORT_TERM history as the handler asks (ADR-0106 D5, W2-L01): its
    * `history.user` replaces the inbound turn recorded earlier, its `history.assistant` is recorded instead of the
-   * reply text. A failed rewrite of the inbound turn is logged and never fails the turn (the reply already happened).
+   * reply text. The rewrite fails closed: when it cannot be applied the recorded inbound turn is removed instead, so
+   * its verbatim text never reaches a later transcript; failures are logged content-free and never fail the turn (the
+   * reply already happened).
    */
   private async recordTurnHandlerReply(
     message: InboundMessage,
@@ -3040,15 +3044,37 @@ export class ConversationRuntime {
     handled: TurnHandlerReply,
   ): Promise<TurnResult> {
     const userHistory = handled.history?.user;
-    if (userHistory !== undefined && this.deps.memory.redactShortTerm) {
-      try {
-        await this.deps.memory.redactShortTerm(userMemoryId, userHistory);
-      } catch (error) {
-        this.deps.logger.warn('turn handler history redaction failed', {
-          messageId: message.id,
-          sessionId: session.id,
-          errorName: error instanceof Error ? error.name : typeof error,
-        });
+    if (userHistory !== undefined) {
+      let redacted = false;
+      if (this.deps.memory.redactShortTerm) {
+        try {
+          await this.deps.memory.redactShortTerm(userMemoryId, userHistory);
+          redacted = true;
+        } catch (error) {
+          this.deps.logger.warn('turn handler history redaction failed', {
+            messageId: message.id,
+            sessionId: session.id,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        }
+      }
+      if (!redacted) {
+        let removed = false;
+        if (this.deps.memory.deleteShortTerm) {
+          try {
+            await this.deps.memory.deleteShortTerm(userMemoryId);
+            removed = true;
+          } catch (error) {
+            this.deps.logger.warn('turn handler history removal failed', {
+              messageId: message.id,
+              sessionId: session.id,
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+          }
+        }
+        if (!removed) {
+          this.deps.logger.warn('turn handler history could not be withheld', { messageId: message.id, sessionId: session.id });
+        }
       }
     }
     await this.deps.memory.recordAssistant(handled.history?.assistant ?? handled.reply.text, message.context, session.id);

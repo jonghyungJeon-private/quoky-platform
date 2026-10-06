@@ -727,14 +727,20 @@ describe('MemoryCommandService — archive with restore (ADR-0106 amendment)', (
     expect((await confirm(h, restoreAsk, NOW, OTHER)).outcome).toBe('confirm-unknown');
     expect((await h.run('보관함', NOW, OTHER)).outcome).toBe('archive-empty');
     expect((await h.run('기억 복원 1', NOW, OTHER)).outcome).toBe('archive-empty');
-    // The record leaves the archive (permanently deleted) before the restore code is used: stale, nothing happens.
+    // The record leaves the archive (permanently deleted) before the restore code is used: that state change ended
+    // the outstanding restore code, so it is unknown and nothing happens.
     const purgeAsk = await h.run('기억 완전 삭제 1');
     expect((await confirm(h, purgeAsk)).outcome).toBe('purged');
-    const stale = await confirm(h, restoreAsk);
+    expect((await confirm(h, restoreAsk)).outcome).toBe('confirm-unknown');
+    // A change outside the commands (the record vanishes from the store) makes an outstanding code stale.
+    await confirm(h, await h.run('기억 1 잊어줘'));
+    const lateAsk = await h.run('기억 복원 1');
+    h.records.splice(0, h.records.length);
+    const stale = await confirm(h, lateAsk);
     expect(stale.outcome).toBe('confirm-stale');
     expect(stale.text).toContain('"보관함"으로 다시 확인해 주세요');
     expect((await h.run('기억 복원 3')).outcome).toBe('archive-empty');
-    expect(h.records.map((record) => record.content)).toEqual(['둘']);
+    expect(h.records).toEqual([]);
   });
 
   it('a listed number past the archive answers with the archive count (archive numbers are separate)', async () => {
@@ -893,5 +899,103 @@ describe('MemoryCommandService — interrupted archive retry (ADR-0106 amendment
     await h.run(`기억 확인 ${codeOf(await h.run('기억 복원 1'))}`);
     expect(h.records.some((record) => isArchivedMemory(record))).toBe(false);
     expect((await h.run('기억 목록')).text).toContain('1. 버전 3');
+  });
+});
+
+describe('MemoryCommandService — fix loop 1 (Codex review of the ADR-0106 amendment)', () => {
+  const DAY = 24 * 60 * 60 * 1_000;
+  const confirmAt = (h: ReturnType<typeof harness>, ask: MemoryCommandResult, now = NOW) => h.run(`기억 확인 ${codeOf(ask)}`, now);
+
+  it('P1: text only the strict (file-content) guard flags is never archived — deleted at once and never shown', async () => {
+    const text = 'const dbPassword = "synthetic-value"';
+    const h = harness([memory(text)], { archiveDays: 7 });
+    const listed = await h.run('기억 목록');
+    expect(listed.text).not.toContain('synthetic-value');
+    const ask = await h.run('기억 1 잊어줘');
+    expect(ask.text).not.toContain('synthetic-value');
+    const done = await confirmAt(h, ask);
+    expect(done.text).toContain('보관함에 두지 않고 바로 완전히 지웠어요');
+    expect(h.records).toEqual([]);
+  });
+
+  it('P1: one strict-guard version anywhere in the chain keeps the whole chain out of the archive', async () => {
+    const h = harness([memory('const dbPassword = "synthetic-value"')], { archiveDays: 7 });
+    // A legacy chain: the old version holds the secret, the current text is harmless.
+    const old = h.records[0];
+    if (old === undefined) throw new Error('missing');
+    const head = memory('배포 설정은 따로 관리해');
+    old.metadata = { ...old.metadata, supersededBy: head.id };
+    h.records.push(head);
+    const done = await confirmAt(h, await h.run('기억 1 잊어줘'));
+    expect(done.text).toContain('보관함에 두지 않고 바로 완전히 지웠어요');
+    expect(h.records).toEqual([]);
+  });
+
+  it('P2: restore → forget → restore in one window never re-issues a spent code; an old permanent-delete code dies with the restore', async () => {
+    const h = harness([memory('되살릴 기억')], { archiveDays: 7 });
+    await confirmAt(h, await h.run('기억 1 잊어줘')); // archived at NOW
+    const purgeAsk = await h.run('기억 완전 삭제 1'); // outstanding, never used
+    const firstRestore = await h.run('기억 복원 1');
+    expect((await confirmAt(h, firstRestore)).outcome).toBe('restored');
+    await confirmAt(h, await h.run('기억 1 잊어줘')); // archived again, same clock reading (same archivedAt)
+    const secondRestore = await h.run('기억 복원 1');
+    expect(codeOf(secondRestore)).not.toBe(codeOf(firstRestore));
+    // The spent restore code and the pre-restore permanent-delete code change nothing on the new archive.
+    expect((await confirmAt(h, firstRestore)).outcome).toBe('confirm-unknown');
+    expect((await confirmAt(h, purgeAsk)).outcome).toBe('confirm-unknown');
+    expect(h.records).toHaveLength(1);
+    expect(isArchivedMemory(h.records[0] ?? {})).toBe(true);
+    expect((await confirmAt(h, secondRestore)).outcome).toBe('restored');
+  });
+
+  it('P2: a code is bound to the archive generation: a re-archive at another instant invalidates it', async () => {
+    const h = harness([memory('세대 기억')], { archiveDays: 7 });
+    await confirmAt(h, await h.run('기억 1 잊어줘'));
+    const ask = await h.run('기억 완전 삭제 1');
+    // The archive generation changes behind the service's back (e.g. another instance restored and re-archived it).
+    const record = h.records[0];
+    if (record === undefined) throw new Error('missing');
+    record.metadata = { ...record.metadata, archivedAt: at(60_000), archiveExpiresAt: at(7 * DAY + 60_000) };
+    expect((await confirmAt(h, ask)).outcome).toBe('confirm-stale');
+    expect(h.records).toHaveLength(1);
+  });
+
+  it('P2: the expiry purge re-checks each record right before deleting — a restore admitted just before expiry wins', async () => {
+    const h = harness([memory('막 복원된 기억')], { archiveDays: 7 });
+    await confirmAt(h, await h.run('기억 1 잊어줘'));
+    const find = h.repository.findDurableCandidates.bind(h.repository);
+    // The purge's query snapshot still sees the archive entry, then the restore lands before the delete.
+    (h.service as unknown as { deps: { records: { findDurableCandidates: typeof find } } }).deps.records.findDurableCandidates =
+      async (query) => {
+        const rows = await find(query);
+        if (query.archived === 'only') {
+          for (const row of h.records) {
+            const metadata = { ...row.metadata };
+            delete metadata['archivedAt'];
+            delete metadata['archiveExpiresAt'];
+            row.metadata = metadata;
+          }
+        }
+        return rows;
+      };
+    expect(await h.service.purgeExpiredArchive(at(8 * DAY))).toEqual({ purged: 0, failed: 0 });
+    expect(h.records.map((record) => record.content)).toEqual(['막 복원된 기억']);
+  });
+
+  it('P2: a restore never re-creates a record the expiry purge deleted after the confirmation check', async () => {
+    const h = harness([memory('지워질 기억')], { archiveDays: 7 });
+    await confirmAt(h, await h.run('기억 1 잊어줘'));
+    const ask = await h.run('기억 복원 1');
+    const get = h.repository.get.bind(h.repository);
+    let reads = 0;
+    // The confirmation reads the record; the purge deletes it before the restore's own re-read.
+    (h.service as unknown as { deps: { records: { get: typeof get } } }).deps.records.get = async (id) => {
+      reads += 1;
+      if (reads === 2) h.records.splice(0, h.records.length);
+      return get(id);
+    };
+    const done = await confirmAt(h, ask);
+    expect(done).toMatchObject({ outcome: 'restore-incomplete', status: 'FAILED' });
+    expect(h.records).toEqual([]);
   });
 });

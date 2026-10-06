@@ -189,3 +189,25 @@ describe('MemoryManager durable persistence boundary (ADR-0073)', () => {
     );
   });
 });
+
+describe('MemoryManager short-term turn ownership and fail-closed removal (ADR-0106 D5)', () => {
+  it('records the platform with each turn, and deleteShortTerm removes only a SHORT_TERM turn', async () => {
+    const { storage, mem } = fakeStorage();
+    const mm = new MemoryManager(storage, {} as VectorProvider);
+    const user = await mm.recordShortTerm(msg('m1', '기억 1 수정: 비밀'), 'S1');
+    await mm.recordAssistant('답', ctx, 'S1');
+    expect(mem.map((record) => record.metadata?.['platform'])).toEqual(['discord', 'discord']);
+    const durable = await mm.saveDurable({
+      id: 'durable-1',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: 'u' },
+      content: '장기 기억',
+      createdAt: '2026-10-06T00:00:00.000Z',
+      updatedAt: '2026-10-06T00:00:00.000Z',
+    });
+    await mm.deleteShortTerm(user.id);
+    await mm.deleteShortTerm(durable.id); // not a conversation turn: left alone
+    await mm.deleteShortTerm('absent');
+    expect(mem.map((record) => record.content)).toEqual(['답', '장기 기억']);
+  });
+});

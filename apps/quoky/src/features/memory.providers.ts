@@ -73,6 +73,7 @@ export function createMemoryProviders(options: MemoryCompositionOptions = {}): P
             createLearningItemsRemovalCascade(learning),
             createShortTermHistoryRemovalCascade({
               actors: { get: (id) => storage.actors.get(id) },
+              sessions: { get: (id) => storage.sessions.get(id) },
               history: {
                 findShortTermByUser: (userId) => storage.memories.findShortTermByUser(userId),
                 delete: (id) => storage.memories.delete(id),
@@ -82,6 +83,7 @@ export function createMemoryProviders(options: MemoryCompositionOptions = {}): P
           ],
           sessionHistory: createSessionHistoryClearer({
             actors: { get: (id) => storage.actors.get(id) },
+            sessions: { get: (id) => storage.sessions.get(id) },
             history: {
               findByScope: (scope, type) => storage.memories.findByScope(scope, type),
               delete: (id) => storage.memories.delete(id),
