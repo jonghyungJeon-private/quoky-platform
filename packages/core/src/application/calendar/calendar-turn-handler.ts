@@ -127,6 +127,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       now: ctx.now,
       language,
       limit: CALENDAR_EVENTS_MAX_LIMIT,
+      writesEnabled: this.deps.writesEnabled === true,
     });
     return this.reply(ctx, reply, 'RESPONDED', language);
   }

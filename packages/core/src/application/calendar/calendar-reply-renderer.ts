@@ -150,9 +150,16 @@ function periodLabel(window: CalendarWindow, language: CalendarLanguage): string
   return name === undefined ? range : `${name} · ${range}`;
 }
 
-function footer(timeZone: string, language: CalendarLanguage, truncatedAt?: number): string {
+function footer(timeZone: string, language: CalendarLanguage, truncatedAt?: number, writesEnabled = false): string {
   const zone = escapeDiscordText(timeZone);
-  const base = language === 'en' ? `(Times in ${zone} · read-only calendar)` : `(${zone} 기준 · 캘린더 읽기 전용)`;
+  const base =
+    language === 'en'
+      ? writesEnabled
+        ? `(Times in ${zone})`
+        : `(Times in ${zone} · read-only calendar)`
+      : writesEnabled
+        ? `(${zone} 기준)`
+        : `(${zone} 기준 · 캘린더 읽기 전용)`;
   if (truncatedAt === undefined) return base;
   return language === 'en'
     ? `${base}\nOnly the first ${truncatedAt} events were read; there may be more.`
@@ -186,6 +193,8 @@ export interface CalendarRenderOptions {
   readonly language: CalendarLanguage;
   /** The `limit` the read used: a full page means there may be more events. */
   readonly limit: number;
+  /** Calendar writes are bound: the footer then omits the "read-only" note. */
+  readonly writesEnabled?: boolean;
 }
 
 /** The answer to a day, week or weekend question. */
@@ -205,7 +214,7 @@ export function renderCalendarEvents(
     .sort((a, b) => Number(b.event.allDay) - Number(a.event.allDay) || a.startMs - b.startMs);
   const period = periodLabel(window, language);
   const truncatedAt = events.length >= options.limit ? options.limit : undefined;
-  const tail = footer(timeZone, language, truncatedAt);
+  const tail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
   if (placed.length === 0) {
     const none = language === 'en' ? `${period}: nothing on your calendar.` : `${period}: 캘린더에 일정이 없어요.`;
     return `${none}\n${tail}`;
@@ -251,7 +260,7 @@ function renderNextEvent(window: CalendarWindow, events: readonly CalendarEvent[
   const next =
     placed.find((entry) => !entry.event.allDay && entry.startMs >= nowMs) ??
     placed.find((entry) => entry.event.allDay && compareLocalDates(entry.firstDate, today) > 0);
-  const tail = footer(timeZone, language);
+  const tail = footer(timeZone, language, undefined, options.writesEnabled === true);
   if (next === undefined) {
     return language === 'en'
       ? `Nothing upcoming on your calendar in the next ${window.days} days.\n${tail}`

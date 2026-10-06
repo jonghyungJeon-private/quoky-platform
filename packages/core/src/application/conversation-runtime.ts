@@ -32,6 +32,8 @@ import {
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
   isAnyConnectorWriteExecutionPhrase,
+  connectorWriteOperationsOfPhrase,
+  mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
@@ -2637,6 +2639,20 @@ export class ConversationRuntime {
     // ADR-0112 (CWR-2): a connector-write execution phrase with no approved write of that kind runs nothing and says so
     // (with or without the flow) — a chat model must never claim a comment, post or calendar change happened.
     if (isAnyConnectorWriteExecutionPhrase(message.text)) {
+      // W5-L02: when this actor's latest write of that kind was SENT, say so (with the link) instead of "nothing approved".
+      const flow = this.deps.connectorWriteFlow;
+      if (flow) {
+        for (const operation of connectorWriteOperationsOfPhrase(message.text)) {
+          const sent = await flow.latestSentOutcome(actor.id, operation);
+          if (sent) {
+            return this.respondComposed(
+              message,
+              session,
+              this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent.externalRef, sent.url),
+            );
+          }
+        }
+      }
       return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
     }
     if (interpretStrayDecisionUtterance(message.text)) {
@@ -3382,6 +3398,16 @@ export class ConversationRuntime {
         // phrase that would (the generic "nothing approved" would be untrue).
         if (decision === 'approve' || isAnyConnectorWriteExecutionPhrase(message.text)) {
           const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // W5-L01: a question/negation about the execution step ("댓글 실행해도 돼?") gets the non-mutating reminder, never
+        // chat (a model must not claim a send) and never an execution (the exact phrase stays the only executor).
+        if (mentionsConnectorWriteExecutionStep(message.text, anchor.operation)) {
+          const reply = this.deps.composer.composeConnectorWriteApprovedReminder(
             message.context,
             anchor.operation,
             documentedExecutionPhrase(gate),

@@ -341,6 +341,11 @@ export interface ConnectorWriteFlow {
   supports(draft: ConnectorWriteDraft): boolean;
   find(session: Session): Promise<ConnectorWriteAnchorView | null>;
   /**
+   * The link/reference of this actor's most recent write of `operation`, but only when that write was SENT (a receipt);
+   * null when it was not sent or nothing was ever written (W5-L02: a repeated execution phrase after a send).
+   */
+  latestSentOutcome(actorId: Id, operation: ConnectorWriteOperation): Promise<{ externalRef?: string; url?: string } | null>;
+  /**
    * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
    */
@@ -381,6 +386,34 @@ export function isAnyConnectorWriteExecutionPhrase(text: string): boolean {
   return CONNECTOR_WRITE_OPERATIONS.some((operation) =>
     isAcceptedExecutionPhrase(connectorWriteExecutionGate(operation), text),
   );
+}
+
+/** The operations whose exact execution phrase `text` is (usually one). */
+export function connectorWriteOperationsOfPhrase(text: string): ConnectorWriteOperation[] {
+  return CONNECTOR_WRITE_OPERATIONS.filter((operation) => isAcceptedExecutionPhrase(connectorWriteExecutionGate(operation), text));
+}
+
+const EXECUTION_STEP_MENTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
+  ISSUE_COMMENT: /댓글실행|execute(?:approved)?comment/u,
+  ISSUE_TRANSITION: /상태변경실행|execute(?:approved)?transition/u,
+  CHANNEL_POST: /게시실행|execute(?:slack)?post/u,
+  CALENDAR_EVENT_CREATE: /일정추가실행|executeeventcreate/u,
+  CALENDAR_EVENT_UPDATE: /일정변경실행|executeeventupdate/u,
+  CALENDAR_EVENT_DELETE: /일정삭제실행|executeeventdelete/u,
+};
+
+/** Explanation / how-to requests about a step are ordinary chat, not a question about the pending write. */
+const EXPLANATION_REQUEST = /설명|방법|어떻게|알려|explain|how/u;
+
+/**
+ * True when a message talks about the execution step OF `operation` ("댓글 실행해도 돼?" while a comment is approved)
+ * without being the exact phrase. Mentions of another operation's step and explanation requests are not matched.
+ * Used only to pick a non-mutating reminder — never to execute (W5-L01).
+ */
+export function mentionsConnectorWriteExecutionStep(text: string, operation: ConnectorWriteOperation): boolean {
+  const lowered = text.toLowerCase();
+  if (EXPLANATION_REQUEST.test(lowered)) return false;
+  return EXECUTION_STEP_MENTIONS[operation].test(lowered.replace(/\s+/gu, ''));
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */
@@ -434,6 +467,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return null;
     }
     return { taskId: task.id, anchor, approval };
+  }
+
+  async latestSentOutcome(actorId: Id, operation: ConnectorWriteOperation): Promise<{ externalRef?: string; url?: string } | null> {
+    const latest = await this.deps.receipts.findLatestForOperation(actorId, operation);
+    if (!latest || latest.status !== 'SENT') return null;
+    return {
+      ...(latest.data.externalRef ? { externalRef: latest.data.externalRef } : {}),
+      ...(latest.data.url ? { url: latest.data.url } : {}),
+    };
   }
 
   async releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null> {

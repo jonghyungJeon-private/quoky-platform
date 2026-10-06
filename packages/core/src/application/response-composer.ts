@@ -33,6 +33,8 @@ import type { CredentialOverrideInvalidationReason } from './credential-override
 import { documentedExecutionPhrase } from './execution-command-guard';
 import {
   renderConnectorWriteAlreadyApproved,
+  renderConnectorWriteAlreadyExecuted,
+  renderConnectorWriteApprovedReminder,
   renderConnectorWritePending,
   renderConnectorWriteStep,
   renderNoApprovedConnectorWrite,
@@ -1172,6 +1174,25 @@ export class ResponseComposer {
     executionPhrase: string,
   ): OutboundMessage {
     return { context, text: renderConnectorWriteAlreadyApproved(operation, executionPhrase) };
+  }
+
+  /** A question or negation about the execution step while the write waits approved (W5-L01): never executes. */
+  composeConnectorWriteApprovedReminder(
+    context: ConversationContext,
+    operation: ConnectorWriteOperation,
+    executionPhrase: string,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase) };
+  }
+
+  /** The execution phrase repeated after the same kind of write was SENT (W5-L02). */
+  composeConnectorWriteAlreadyExecuted(
+    context: ConversationContext,
+    operation: ConnectorWriteOperation,
+    externalRef?: string,
+    url?: string,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteAlreadyExecuted(operation, externalRef, url) };
   }
 
   /** A connector-write execution phrase with no approved write to run (QA-018 pattern). */

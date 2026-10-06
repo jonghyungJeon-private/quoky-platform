@@ -76,6 +76,8 @@ export interface ConnectorWriteReceiptRepository {
   findByIdempotencyKey(idempotencyKey: string): Promise<ConnectorWriteReceipt | null>;
   /** The newest `SENT` receipt for the same actor, connector, operation, target and payload hash, or null. */
   findLatestSent(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null>;
+  /** The newest receipt of any status for this actor and operation (any target), or null. */
+  findLatestForOperation(actorId: Id, operation: ConnectorWriteOperation): Promise<ConnectorWriteReceipt | null>;
   /**
    * Startup reconciliation: every `PREPARED` receipt (a write interrupted mid-flight) becomes `UNCERTAIN` with reason
    * `INTERRUPTED`. Returns the number of receipts changed. Must run before any new write.

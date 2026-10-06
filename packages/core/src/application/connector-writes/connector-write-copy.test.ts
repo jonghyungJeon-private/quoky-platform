@@ -9,6 +9,8 @@ import {
 import { ResponseComposer } from '../response-composer';
 import {
   connectorWriteTimeLabel,
+  renderConnectorWriteAlreadyExecuted,
+  renderConnectorWriteAlreadySent,
   renderConnectorWriteOutcome,
   renderConnectorWriteRefusal,
   renderConnectorWriteRepeat,
@@ -105,6 +107,26 @@ describe('connector-write copy (CWR-2)', () => {
     expect(connectorWriteTimeLabel({ allDay: true, startDate: '2026-10-09', endDate: '2026-10-10' }, 'Asia/Seoul')).toBe('2026-10-09(금) 종일');
     expect(connectorWriteTimeLabel({ allDay: true, startDate: '2026-10-09', endDate: '2026-10-12' }, 'Asia/Seoul')).toBe(
       '2026-10-09(금) ~ 2026-10-11(일) 종일',
+    );
+  });
+
+  it('uses the right Korean particle for every operation label (W5-L03)', () => {
+    const notSent = connectorWriteNotSent('FORBIDDEN');
+    for (const operation of CONNECTOR_WRITE_OPERATIONS) {
+      const all = [
+        renderConnectorWriteOutcome(operation, notSent),
+        renderConnectorWriteAlreadySent(operation),
+        ...(['SENT', 'NOT_SENT', 'UNCERTAIN'] as const).map((status) => renderConnectorWriteRepeat(operation, status)),
+      ].join('\n');
+      expect(all).not.toMatch(/을\(를\)|은\(는\)/u);
+    }
+    expect(renderConnectorWriteOutcome('CHANNEL_POST', notSent)).toContain('Slack 게시를 하지 못했어요');
+    expect(renderConnectorWriteOutcome('ISSUE_COMMENT', notSent)).toContain('Jira 댓글을 하지 못했어요');
+    expect(renderConnectorWriteOutcome('ISSUE_TRANSITION', notSent)).toContain('Jira 상태 변경을 하지 못했어요');
+    expect(renderConnectorWriteOutcome('CALENDAR_EVENT_CREATE', notSent)).toContain('캘린더 일정 추가를 하지 못했어요');
+    expect(renderConnectorWriteRepeat('CHANNEL_POST', 'SENT')).toContain('이 Slack 게시는 이미 실행했어요');
+    expect(renderConnectorWriteAlreadyExecuted('CHANNEL_POST', 'ref', 'https://example.com/x')).toBe(
+      '이미 실행했어요 — 다시 보내지 않았어요.\n링크: <https://example.com/x>',
     );
   });
 });

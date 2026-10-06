@@ -83,6 +83,7 @@ export function createConnectorWriteComposition(options: ConnectorWriteCompositi
         complete: (id, outcome, now) => storage.connectorWriteReceipts.complete(id, outcome, now),
         findByIdempotencyKey: (key) => storage.connectorWriteReceipts.findByIdempotencyKey(key),
         findLatestSent: (match) => storage.connectorWriteReceipts.findLatestSent(match),
+        findLatestForOperation: (actorId, operation) => storage.connectorWriteReceipts.findLatestForOperation(actorId, operation),
         markInterruptedPreparedUncertain: (now) => storage.connectorWriteReceipts.markInterruptedPreparedUncertain(now),
       }),
       inject: [STORAGE_PROVIDER],
