@@ -102,9 +102,11 @@ export interface OpsSnapshotSources {
   readonly backup: () => BackupStatus | undefined;
   /** Archived memory records of the owner (ADR-0106 amendment); a count only, never content. */
   readonly archivedMemoryCount?: (actorId: Id) => Promise<{ readonly count: number; readonly capped: boolean }>;
+  /** OPS-2 (ADR-0113 D7): which handling actions are wired; their links appear only for a resolved owner. */
+  readonly handling?: { readonly reminderCancel: boolean; readonly memoryForget: boolean };
 }
 
-type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes'>;
+type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes' | 'links'>;
 
 function errorCodeOf(err: unknown): string {
   if (typeof err === 'object' && err !== null && 'code' in err) {
@@ -117,7 +119,15 @@ function errorCodeOf(err: unknown): string {
 async function panel(id: string, title: string, build: () => Promise<PanelBody>): Promise<OpsPanelView> {
   try {
     const body = await build();
-    return { id, title, state: 'OK', fields: body.fields, notes: body.notes, ...(body.table ? { table: body.table } : {}) };
+    return {
+      id,
+      title,
+      state: 'OK',
+      fields: body.fields,
+      notes: body.notes,
+      ...(body.table ? { table: body.table } : {}),
+      ...(body.links && body.links.length > 0 ? { links: body.links } : {}),
+    };
   } catch (err) {
     return { id, title, state: 'UNAVAILABLE', errorCode: errorCodeOf(err), fields: [], notes: [] };
   }
@@ -149,14 +159,7 @@ export class OpsSnapshotBuilder {
   }
 
   private time(iso: string | undefined): string {
-    if (iso === undefined) return OPS_UNKNOWN;
-    try {
-      const z = toZonedDateTime(iso, this.sources.timeZone);
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${z.year}-${pad(z.month)}-${pad(z.day)} ${pad(z.hour)}:${pad(z.minute)}:${pad(z.second)}`;
-    } catch {
-      return OPS_UNKNOWN;
-    }
+    return formatOpsTime(iso, this.sources.timeZone);
   }
 
   private async runtime(): Promise<PanelBody> {
@@ -250,12 +253,23 @@ export class OpsSnapshotBuilder {
     });
     const notes = ['예정(SCHEDULED)과 전달 중(FIRING)인 알림만 보여요. 끝난 알림 기록은 Phase 1에서 보이지 않아요.'];
     if (reminders.length > rows.length) notes.push(`외 ${reminders.length - rows.length}건은 생략했어요.`);
+    const cancelable = this.sources.handling?.reminderCancel === true && config.enabled;
+    const rowLinks = cancelable
+      ? reminders
+          .slice(0, OPS_MAX_TABLE_ROWS)
+          .map((reminder) =>
+            reminder.status === ReminderStatus.SCHEDULED
+              ? { label: '취소…', href: `/actions/reminders/cancel?no=${reminder.displayNo}` }
+              : null,
+          )
+      : undefined;
     return {
       fields,
       table: {
         columns: ['번호', '다음 시각', '반복', '상태', '대상', '지난 결과', '내용 (알림 목록과 같음)'],
         rows,
         emptyText: '예정된 알림이 없어요.',
+        ...(rowLinks === undefined ? {} : { rowLinks }),
       },
       notes,
     };
@@ -279,7 +293,7 @@ export class OpsSnapshotBuilder {
         expired ? 'PENDING (만료됨, 다음 대화에서 기록)' : 'PENDING',
       ];
     });
-    const notes = ['내용(미리보기, diff, 대상, 설명)은 표시하지 않아요. 승인과 거절은 채팅에서 해요.'];
+    const notes = ['내용(미리보기, diff, 대상, 설명)은 표시하지 않아요. 승인과 거절은 채팅에서 해요 (운영 화면 승인/거절은 OPS-2b).'];
     if (pending.length > rows.length) notes.push(`외 ${pending.length - rows.length}건은 생략했어요.`);
     return {
       fields: [],
@@ -396,13 +410,27 @@ export class OpsSnapshotBuilder {
 
   private async memory(owner: OpsOwnerResolution): Promise<PanelBody> {
     if (owner.status !== 'RESOLVED') return { fields: [], notes: [ownerNote(owner)] };
+    const links = this.sources.handling?.memoryForget === true ? [{ label: '기억 잊기 (확인 코드 필요)', href: '/memories' }] : [];
     const source = this.sources.archivedMemoryCount;
-    if (source === undefined) return { fields: [{ label: '보관함 기억 수', value: OPS_UNKNOWN }], notes: [] };
+    if (source === undefined) return { fields: [{ label: '보관함 기억 수', value: OPS_UNKNOWN }], notes: [], links };
     const { count, capped } = await source(owner.actorId);
     return {
       fields: [{ label: '보관함 기억 수', value: `${count}${capped ? '+' : ''}` }],
       notes: ['기억 내용은 표시하지 않아요.'],
+      links,
     };
+  }
+}
+
+/** `YYYY-MM-DD HH:mm:ss` in the owner's zone, or `unknown`. */
+export function formatOpsTime(iso: string | undefined, timeZone: string): string {
+  if (iso === undefined) return OPS_UNKNOWN;
+  try {
+    const z = toZonedDateTime(iso, timeZone);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${z.year}-${pad(z.month)}-${pad(z.day)} ${pad(z.hour)}:${pad(z.minute)}:${pad(z.second)}`;
+  } catch {
+    return OPS_UNKNOWN;
   }
 }
 

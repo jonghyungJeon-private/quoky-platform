@@ -5,8 +5,10 @@ import {
   AiProviderManager,
   CONNECTOR_PROVIDERS,
   FeedbackRecorder,
+  MemoryCommandService,
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
+  ReminderConversationService,
   STORAGE_PROVIDER,
 } from '@quoky/core';
 import type {
@@ -25,6 +27,7 @@ import { ConsoleLogger } from '../console-logger';
 import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
+import { OpsUiActions } from './actions/ops-actions';
 import { OPS_UI_BIND_HOST, OpsUiServer } from './http/server';
 import type { OpsUiEventLog } from './http/view-model';
 import { loadOpsUiConfig } from './ops-ui-config';
@@ -33,7 +36,7 @@ import type { OpsOwnerResolution, OpsSnapshotSources } from './snapshot/build-sn
 import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
 
 /**
- * OPS-1 wiring (ADR-0113 D8): the one entry point `main.ts` calls. It reads its own flags (`ops-ui-config.ts`), looks
+ * OPS-1/OPS-2 wiring (ADR-0113 D7/D8): the one entry point `main.ts` calls. It reads its own flags (`ops-ui-config.ts`), looks
  * its dependencies up from the Nest container (so `app.module.ts` is untouched) and starts the loopback listener.
  *
  *   const log = recordOpsUiErrors(new ConsoleLogger('quoky'), 'quoky');   // feeds the "recent errors" ring
@@ -41,6 +44,11 @@ import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
  *   const opsUi = await startOpsUi({ app, config, ops, instanceLockHeld, identityVerified });
  *   ...on shutdown...
  *   await opsUi.stop();
+ *
+ * OPS-2 adds owner handling (reminder cancel, memory forget) from the same container: the chat
+ * `ReminderConversationService` and `MemoryCommandService` singletons (so a forget code issued in either surface is
+ * the same pending code), acting as the owner Actor resolved read-only per request. A missing service disables only
+ * its action; approve and reject do not exist before OPS-2b.
  *
  * With `QUOKY_OPS_UI_ENABLED` unset or `false` nothing is opened. An invalid flag, a taken port or a token file that
  * cannot be created disables only the UI (logged by code); the rest of Quoky keeps running.
@@ -212,7 +220,33 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
     feedback: { summarize: (actorId) => feedback.summarize(actorId), trend: (actorId) => feedback.trend(actorId) },
     backup: () => input.ops.backupStatus(),
     archivedMemoryCount: (actorId) => archivedMemoryCount(storage, actorId),
+    handling: {
+      reminderCancel: reminderRepository !== undefined && optional(app, ReminderConversationService) !== undefined,
+      memoryForget: optional(app, MemoryCommandService) !== undefined,
+    },
   };
+}
+
+/** OPS-2 handling over the chat services in the container (ADR-0113 D7); undefined when neither service is bound. */
+export function opsUiActions(input: OpsUiWiringInput, logger: Logger): OpsUiActions | undefined {
+  const { app, config } = input;
+  const storage = app.get<StorageProvider>(STORAGE_PROVIDER);
+  const reminderRepository = optional<ReminderRepository>(app, REMINDER_REPOSITORY);
+  const reminderService = optional<ReminderConversationService>(app, ReminderConversationService);
+  const memory = optional<MemoryCommandService>(app, MemoryCommandService);
+  const reminders =
+    reminderRepository !== undefined && reminderService !== undefined
+      ? { service: reminderService, repository: reminderRepository }
+      : undefined;
+  if (reminders === undefined && memory === undefined) return undefined;
+  return new OpsUiActions({
+    owner: () => resolveOwner(storage, config.discord.ownerIds),
+    clock: () => new Date(input.nowMs?.() ?? Date.now()).toISOString(),
+    timeZone: config.reminders.timeZone,
+    ...(reminders === undefined ? {} : { reminders }),
+    ...(memory === undefined ? {} : { memory }),
+    logger,
+  });
 }
 
 /** Start the operations UI when enabled; otherwise return a no-op handle without opening any port. */
@@ -226,8 +260,10 @@ export async function startOpsUi(input: OpsUiWiringInput): Promise<OpsUiHandle> 
 
   const errorRing = input.errorRing ?? opsUiErrorRing;
   let builder: OpsSnapshotBuilder;
+  let actions: OpsUiActions | undefined;
   try {
     builder = new OpsSnapshotBuilder(opsSnapshotSources(input, errorRing));
+    actions = opsUiActions(input, logger);
   } catch {
     // A missing container binding disables only the UI; the rest of Quoky keeps running.
     logger.warn('ops-ui.unavailable', { reason: 'WIRING_FAILED' });
@@ -241,6 +277,7 @@ export async function startOpsUi(input: OpsUiWiringInput): Promise<OpsUiHandle> 
     view: cachedViewSource(() => builder.build(), OPS_UI_SNAPSHOT_MIN_INTERVAL_MS, nowMs),
     log: eventLog(logger),
     nowMs,
+    ...(actions === undefined ? {} : { actions }),
   });
   const started = await server.start();
   if (started.status !== 'LISTENING') return DISABLED;
