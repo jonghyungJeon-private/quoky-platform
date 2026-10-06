@@ -2,6 +2,7 @@ import { IntentType, ResourceRef } from '../../domain';
 import type { Intent } from '../../domain';
 import { CONNECTOR_SEARCH_TEXT_MAX_LENGTH } from '../../ports';
 import { unnegatedMatch } from '../intent-negation';
+import type { ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 
 /**
  * Deterministic KO/EN work-chat grammar (ADR-0100 D1/D6). Pure: no clock, id, IO, connector or model call.
@@ -81,6 +82,11 @@ export type WorkChatCommand =
       readonly text?: string;
     }
   | { readonly kind: 'external-write-unsupported'; readonly source: WorkChatSource }
+  /**
+   * An exact Jira comment / transition or Slack post request (ADR-0112 D5, CWR-2), or its usage hint. The handler hands
+   * it to the runtime as a `write-draft` outcome; `source` picks the fixed refusal used while writes are off.
+   */
+  | { readonly kind: 'connector-write'; readonly source: 'jira' | 'slack'; readonly draft: ConnectorWriteDraft }
   | { readonly kind: 'usage'; readonly topic: WorkChatUsageTopic };
 
 /**
@@ -102,6 +108,9 @@ export function workChatCommandMode(command: WorkChatCommand): WorkChatMode {
     case 'todo.link':
     case 'todo.hint':
     case 'todo.status':
+    // ADR-0112 D5: the exact write commands are anchored (a key or `#channel` first), so they run at order 100, before
+    // reminders — a comment text that mentions a time ("KEY-1에 댓글: 내일 9시에 배포 알려줘") is never a reminder.
+    case 'connector-write':
       return 'mutation';
     case 'usage':
       return command.topic.startsWith('todo-') ? 'mutation' : 'lookup';
@@ -685,7 +694,109 @@ export function detectWorkChatCommand(text: string): WorkChatCommand | null {
   if (typeof text !== 'string') return null;
   const normalized = normalizeInput(text);
   if (normalized.length === 0) return null;
-  return detectAnchored(normalized) ?? detectUnanchored(normalized);
+  return detectAnchored(normalized) ?? detectConnectorWriteRequest(normalized) ?? detectUnanchored(normalized);
+}
+
+// -- exact connector-write requests (ADR-0112 D5, CWR-2) ---------------------------------------------------------------
+
+/**
+ * Jira comment / transition and Slack post requests with an exact target and text, anchored on the issue key or the
+ * `#channel` at the start of the message (an optional `Jira`/`Slack` word first). The text after `:` (or inside
+ * `…라고 올려줘`) is the owner's text verbatim — only the outer whitespace and one pair of wrapping quotes are removed.
+ * Whole-message patterns ending in an imperative, so a negated, past or reported sentence never matches. A
+ * write-shaped request without the text is a usage hint. Everything else falls through to the old grammar (including
+ * the fixed write refusal).
+ */
+const ISSUE_KEY_TOKEN = String.raw`([A-Za-z][A-Za-z0-9_]{0,63}-[1-9]\d{0,8})`;
+const JIRA_WORD = String.raw`(?:(?:jira|지라)\s*)?`;
+const ISSUE_NOUN = String.raw`(?:\s*(?:이슈|티켓))?`;
+const REQUEST_ENDING = String.raw`(?:\s*(?:줘|주세요|줄래(?:요)?|줘요))`;
+const COMMENT_VERB = String.raw`(?:\s*(?:을|를))?(?:\s*(?:달아|남겨|써|작성해|추가해|등록해)${REQUEST_ENDING}?)?`;
+const COMMENT_KO = new RegExp(
+  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}\s*에\s*(?:댓글|코멘트)${COMMENT_VERB}\s*[:：]\s*([\s\S]*)$`,
+  'iu',
+);
+const COMMENT_KO_NO_TEXT = new RegExp(
+  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}\s*에\s*(?:댓글|코멘트)${COMMENT_VERB}\s*[.!~]*$`,
+  'iu',
+);
+const COMMENT_EN = new RegExp(
+  String.raw`^(?:please\s+)?(?:add\s+(?:a\s+)?comment\s+(?:to|on)|comment\s+on)\s+(?:jira\s+)?${ISSUE_KEY_TOKEN}\s*[:：]\s*([\s\S]*)$`,
+  'iu',
+);
+const TRANSITION_VERB = String.raw`(?:바꿔|변경(?:해)?|전환(?:해)?|이동(?:해)?|옮겨|넘겨)${REQUEST_ENDING}?`;
+const TRANSITION_KO = new RegExp(
+  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}(?:\s*(?:의|을|를))?\s*(?:상태\s*(?:를|을)?\s*)?([^\n:：]{1,100}?)\s*(?:으로|로)\s*${TRANSITION_VERB}\s*[.!~]*$`,
+  'iu',
+);
+const TRANSITION_EN = new RegExp(
+  String.raw`^(?:please\s+)?(?:move|transition)\s+(?:jira\s+)?${ISSUE_KEY_TOKEN}\s+to\s+([^\n:：]{1,100}?)\s*[.!]*$`,
+  'iu',
+);
+/** A field other than the status: never a transition ("KEY-1 담당자를 민수로 바꿔줘"). */
+const NON_STATUS_FIELD = /담당자|담당|우선순위|제목|설명|라벨|레이블|기한|마감|스프린트|에픽|assignee|priority|title|summary|description|label|due|sprint|epic/iu;
+const CHANNEL_TOKEN = String.raw`#([\p{L}\p{N}][\p{L}\p{N}._-]{0,79})`;
+const SLACK_WORD = String.raw`(?:(?:slack|슬랙)\s*)?`;
+const CHANNEL_NOUN = String.raw`(?:\s*채널)?`;
+const POST_VERB = String.raw`(?:(?:메시지|글)\s*(?:을|를)?\s*)?(?:게시|올려|보내|포스트|전송)(?:\s*해)?${REQUEST_ENDING}?`;
+const POST_COLON_KO = new RegExp(
+  String.raw`^${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*${POST_VERB}\s*[:：]\s*([\s\S]*)$`,
+  'iu',
+);
+const POST_QUOTED_KO = new RegExp(
+  String.raw`^${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*([\s\S]+?)\s*(?:이라고|라고)\s*(?:게시해|올려|보내|남겨|써|전송해)${REQUEST_ENDING}\s*[.!~]*$`,
+  'iu',
+);
+const POST_KO_NO_TEXT = new RegExp(String.raw`^${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*${POST_VERB}\s*[.!~]*$`, 'iu');
+const POST_EN = new RegExp(
+  String.raw`^(?:please\s+)?(?:post|send)\s+(?:a\s+message\s+)?(?:to|in)\s+(?:slack\s+)?${CHANNEL_TOKEN}\s*[:：]\s*([\s\S]*)$`,
+  'iu',
+);
+const WRAPPING_QUOTES: ReadonlyArray<readonly [string, string]> = [['"', '"'], ["'", "'"], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
+
+/** The owner's text: outer whitespace trimmed and one pair of wrapping quotes removed; nothing else changes. */
+function ownerText(raw: string): string {
+  const trimmed = raw.trim();
+  for (const [open, close] of WRAPPING_QUOTES) {
+    if (trimmed.length >= 2 && trimmed.startsWith(open) && trimmed.endsWith(close)) {
+      const inner = trimmed.slice(open.length, trimmed.length - close.length);
+      if (!inner.includes(open) && !inner.includes(close)) return inner.trim();
+    }
+  }
+  return trimmed;
+}
+
+function connectorWrite(source: 'jira' | 'slack', draft: ConnectorWriteDraft): WorkChatCommand {
+  return { kind: 'connector-write', source, draft };
+}
+
+function detectConnectorWriteRequest(text: string): WorkChatCommand | null {
+  const comment = COMMENT_KO.exec(text) ?? COMMENT_EN.exec(text);
+  if (comment) {
+    const body = ownerText(comment[2] ?? '');
+    if (body.length === 0) return connectorWrite('jira', { kind: 'usage', topic: 'issue-comment' });
+    return connectorWrite('jira', { kind: 'issue-comment', issueKey: (comment[1] as string).toUpperCase(), text: body });
+  }
+  if (COMMENT_KO_NO_TEXT.test(text)) return connectorWrite('jira', { kind: 'usage', topic: 'issue-comment' });
+  const transition = TRANSITION_KO.exec(text) ?? TRANSITION_EN.exec(text);
+  if (transition) {
+    const status = ownerText(transition[2] ?? '');
+    if (status.length > 0 && !NON_STATUS_FIELD.test(status)) {
+      return connectorWrite('jira', {
+        kind: 'issue-transition',
+        issueKey: (transition[1] as string).toUpperCase(),
+        toStatus: status,
+      });
+    }
+  }
+  const post = POST_COLON_KO.exec(text) ?? POST_QUOTED_KO.exec(text) ?? POST_EN.exec(text);
+  if (post) {
+    const body = ownerText(post[2] ?? '');
+    if (body.length === 0) return connectorWrite('slack', { kind: 'usage', topic: 'channel-post' });
+    return connectorWrite('slack', { kind: 'channel-post', channel: post[1] as string, text: body });
+  }
+  if (POST_KO_NO_TEXT.test(text)) return connectorWrite('slack', { kind: 'usage', topic: 'channel-post' });
+  return null;
 }
 
 /**

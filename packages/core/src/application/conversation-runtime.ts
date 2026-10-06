@@ -24,7 +24,15 @@ import {
 } from './image-understanding';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { isAcceptedExecutionPhrase } from './execution-command-guard';
+import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './execution-command-guard';
+import {
+  type ConnectorWriteAnchorView,
+  type ConnectorWriteFlow,
+  type ConnectorWriteStep,
+  connectorWriteExecutionGate,
+  isAnyConnectorWriteExecutionPhrase,
+} from './connector-writes/connector-write-flow';
+import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
@@ -137,6 +145,7 @@ import {
   type TurnHandlerReply,
   type TurnHandlerSummarizeReply,
   type TurnHandlerStage,
+  type TurnHandlerWriteDraft,
 } from '../ports';
 import { now } from '../util/clock';
 import type {
@@ -915,6 +924,12 @@ export interface ConversationRuntimeDeps {
    * (fail closed) and no override phrase is recognized.
    */
   readonly credentialOverrideFlow?: CredentialOverrideFlow;
+  /**
+   * Connector writes behind exact-payload one-time CRITICAL approvals (ADR-0112 D5, ADR-0110 amendment; amends
+   * ADR-0032: baseline 34 → 35). OPTIONAL: when absent every write request gets its handler's fixed "writes are off"
+   * reply and no write can ever run.
+   */
+  readonly connectorWriteFlow?: ConnectorWriteFlow;
   readonly logger: Logger;
 }
 
@@ -957,6 +972,11 @@ interface PendingApprovalLookup {
    * apply-preview anchor (the same session pointer, so at most one of them is ever set).
    */
   override: CredentialOverrideLookup | null;
+  /**
+   * The session's connector-write anchor (ADR-0112), looked up after the credential-override set and before the
+   * apply-preview anchor (the same session pointer, so at most one of them is ever set).
+   */
+  connectorWrite?: ConnectorWriteAnchorView | null;
   pending: ApprovalRequest | null;
 }
 
@@ -1587,7 +1607,8 @@ export class ConversationRuntime {
       'post-anchor': registry.filter((h) => h.stage === 'post-anchor'),
       'pre-classify': registry.filter((h) => h.stage === 'pre-classify'),
     };
-    this.contributedHelpLines = registry.flatMap((h) => h.helpLines ?? []);
+    // ADR-0112 (CWR-2): the write flow's lines (only for writes it can perform) follow the registry's lines.
+    this.contributedHelpLines = [...registry.flatMap((h) => h.helpLines ?? []), ...(deps.connectorWriteFlow?.helpLines ?? [])];
   }
 
   /**
@@ -2093,6 +2114,15 @@ export class ConversationRuntime {
       return this.respondComposed(message, session, this.deps.composer.composeCredentialOverrideAlreadyUsed(message.context));
     }
 
+    // (A2c) Connector-write routing (ADR-0112 D5/D6, CWR-2) — same position class as the override: a PENDING CRITICAL
+    // write approval intercepts EVERY turn (decision flow only); an approved grant runs ONLY on its exact execution
+    // phrase; a numbered choice is next-turn-only; a finished write answers a repeated phrase without sending again.
+    // Anything else falls through to normal routing (the anchor stays, except an abandoned choice).
+    if (lookup.connectorWrite && this.deps.connectorWriteFlow) {
+      const handled = await this.handleConnectorWriteAnchorTurn(message, session, actor, lookup.connectorWrite);
+      if (handled) return handled;
+    }
+
     // (A3) Apply-preview routing (Sprint 2s, ADR-0040) — checked after approvalFlow/scopeClarificationFlow
     // so neither is ever pre-empted. (All three were already read, in this order, by findPendingApproval.)
     const applyAnchor = lookup.applyAnchor;
@@ -2584,6 +2614,11 @@ export class ConversationRuntime {
     if (this.deps.credentialOverrideFlow && isStrayCredentialOverridePhrase(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingCredentialOverride(message.context));
     }
+    // ADR-0112 (CWR-2): a connector-write execution phrase with no approved write of that kind runs nothing and says so
+    // (with or without the flow) — a chat model must never claim a comment, post or calendar change happened.
+    if (isAnyConnectorWriteExecutionPhrase(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
+    }
     if (interpretStrayDecisionUtterance(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
     }
@@ -2765,6 +2800,14 @@ export class ConversationRuntime {
           : null;
       return { planPending: null, pendingScope: null, applyAnchor: null, override, pending };
     }
+    const connectorWrite = (await this.deps.connectorWriteFlow?.find(session)) ?? null;
+    if (connectorWrite) {
+      const pending =
+        connectorWrite.anchor.status === 'APPROVAL_PENDING' && connectorWrite.approval?.status === ApprovalStatus.PENDING
+          ? connectorWrite.approval
+          : null;
+      return { planPending: null, pendingScope: null, applyAnchor: null, override: null, connectorWrite, pending };
+    }
     const applyAnchor = await this.deps.applyPreviewFlow.findAnchor(session);
     const approvalId = applyAnchor ? ConversationRuntime.pendingApprovalIdOf(applyAnchor) : undefined;
     if (!approvalId) return { planPending: null, pendingScope: null, applyAnchor, override: null, pending: null };
@@ -2878,6 +2921,9 @@ export class ConversationRuntime {
     if (lookup.override) {
       // ADR-0097 D5: an expired override invalidates its whole set (`system`/`expired`); nothing is sent.
       await this.deps.credentialOverrideFlow?.invalidate(session, 'expired', 'system');
+    } else if (lookup.connectorWrite) {
+      // ADR-0112: an expired connector-write approval closes its anchor; nothing is sent.
+      await this.deps.connectorWriteFlow?.close(session, lookup.connectorWrite, 'expired', this.clock());
     } else if (!lookup.planPending && lookup.applyAnchor) {
       const released = ConversationRuntime.anchorAfterRejection(lookup.applyAnchor);
       if (released) await this.deps.applyPreviewFlow.anchor(session, released);
@@ -2993,7 +3039,8 @@ export class ConversationRuntime {
           handlerId: handler.id,
           stage,
           sessionId: ctx.session.id,
-          status: handled.kind === 'summarize' ? 'SUMMARIZE' : handled.status ?? 'RESPONDED',
+          status:
+            handled.kind === 'summarize' ? 'SUMMARIZE' : handled.kind === 'write-draft' ? 'WRITE_DRAFT' : handled.status ?? 'RESPONDED',
         });
         return handled;
       }
@@ -3062,6 +3109,7 @@ export class ConversationRuntime {
     handled: TurnHandlerOutcome,
   ): Promise<TurnResult> {
     if (handled.kind === 'summarize') return this.handleTurnHandlerSummary(message, session, actor, userMemoryId, handled);
+    if (handled.kind === 'write-draft') return this.handleConnectorWriteDraft(message, session, actor, handled);
     return this.recordTurnHandlerReply(message, session, userMemoryId, handled);
   }
 
@@ -3122,8 +3170,8 @@ export class ConversationRuntime {
     message: InboundMessage,
     outcome: TurnHandlerOutcome,
   ): { reply: OutboundMessage; status?: 'RESPONDED' | 'FAILED' } {
-    if (outcome.kind !== 'summarize') return outcome;
-    this.deps.logger.warn('control turn handler summarize outcome ignored', { messageId: message.id });
+    if (outcome.kind !== 'summarize' && outcome.kind !== 'write-draft') return outcome;
+    this.deps.logger.warn('control turn handler outcome degraded to its fallback', { messageId: message.id, kind: outcome.kind });
     return { reply: { context: message.context, text: outcome.fallbackText } };
   }
 
@@ -3179,6 +3227,210 @@ export class ConversationRuntime {
     }
     if (result.status !== 'RESPONDED') return fallback();
     return { ...result, reply: { ...result.reply, text: appendWorkSummaryFooter(result.reply.text, summary.footer) } };
+  }
+
+  // ── ADR-0112 / ADR-0110 amendment: connector writes behind exact-payload one-time approvals (CWR-2) ──────────
+
+  /**
+   * A handler's `write-draft` (ADR-0112 D5): the flow normalizes the target, checks the allowlist and the credential
+   * guard, builds the exact payload and its deterministic preview, and raises the one-time CRITICAL approval bound to
+   * the payload hash. With no flow, or no writer for this draft (writes are off), the handler's fixed `fallbackText` is
+   * the reply. Nothing is written on this turn in any case.
+   */
+  private async handleConnectorWriteDraft(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    outcome: TurnHandlerWriteDraft,
+  ): Promise<TurnResult> {
+    const flow = this.deps.connectorWriteFlow;
+    const history = outcome.history?.assistant;
+    if (!flow || !flow.supports(outcome.draft)) {
+      return this.respondConnectorWrite(message, session, { context: message.context, text: outcome.fallbackText }, 'RESPONDED', history);
+    }
+    let step: ConnectorWriteStep;
+    try {
+      step = await flow.prepare({ session, actor, draft: outcome.draft, now: this.clock() });
+    } catch (err) {
+      return this.failReadOnlyTurn(message, session, err); // no write call happens while preparing
+    }
+    return this.respondConnectorWriteStep(message, session, step, outcome.fallbackText, history);
+  }
+
+  /**
+   * A turn while the session holds a connector-write anchor. Returns `null` to let the turn route normally.
+   *
+   * - `APPROVAL_PENDING` intercepts every turn: the ADR-0095 interpreter decides; "승인" is re-checked against the
+   *   ADR-0093 lifetime immediately before `ApprovalManager.decide`; anything ambiguous re-prompts with the preview.
+   * - `APPROVED` executes ONLY on the operation's exact allow-listed phrase (EXECUTION_PHRASES); a bare decision word
+   *   answers (already approved / discarded); anything else falls through and the grant waits.
+   * - `AWAITING_CHOICE` takes a number on the next turn only; any other message abandons the choice.
+   * - After execution a repeated phrase reports the recorded outcome and never sends again.
+   */
+  private async handleConnectorWriteAnchorTurn(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    view: ConnectorWriteAnchorView,
+  ): Promise<TurnResult | null> {
+    const flow = this.deps.connectorWriteFlow;
+    if (!flow) return null;
+    const { anchor } = view;
+    const history = anchor.family === 'calendar' ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : undefined;
+    const respond = (step: ConnectorWriteStep): Promise<TurnResult> =>
+      this.respondConnectorWriteStep(message, session, step, '', history);
+    switch (anchor.status) {
+      case 'APPROVAL_PENDING': {
+        const approval = view.approval;
+        if (!approval || !anchor.operation || !anchor.preview) return null;
+        const phrase = documentedExecutionPhrase(connectorWriteExecutionGate(anchor.operation));
+        // Only the actor who asked may decide (the anchor binds actor and session); anyone else is re-prompted.
+        const decision = anchor.actorId === actor.id ? ConversationRuntime.interpretDecision(message.text) : 'ambiguous';
+        this.deps.logger.info('approval decision interpreted', { approvalId: approval.id, decision });
+        if (decision === 'ambiguous') {
+          const reply = this.deps.composer.composeConnectorWritePending(
+            message.context,
+            anchor.preview,
+            this.remainingMs(approval),
+            phrase,
+          );
+          return this.respondConnectorWrite(message, session, reply, 'AWAITING_APPROVAL', history);
+        }
+        if (decision === 'approve') {
+          // ADR-0093 expiry re-check, synchronous, immediately before the positive decision.
+          if (this.remainingMs(approval) <= 0) {
+            await this.expirePendingApproval(session, {
+              planPending: null,
+              pendingScope: null,
+              applyAnchor: null,
+              override: null,
+              connectorWrite: view,
+              pending: approval,
+            });
+            const reply = this.deps.composer.composeApprovalExpired(message.context, approval, PENDING_APPROVAL_TTL_MS);
+            return this.respondConnectorWrite(message, session, reply, 'DENIED', history);
+          }
+          await this.deps.approvals.decide(approval.id, this.decisionOf(approval.id, actor.id, true));
+          return respond(await flow.recordApproval({ session, actor, view, now: this.clock() }));
+        }
+        await this.deps.approvals.decide(approval.id, this.decisionOf(approval.id, actor.id, false));
+        const reason = decision === 'deny' ? 'denied' : 'cancelled';
+        await flow.close(session, view, reason, this.clock());
+        return respond({ kind: 'closed', reason, family: anchor.family });
+      }
+      case 'AWAITING_CHOICE': {
+        const index = ConversationRuntime.connectorWriteChoiceIndex(message.text);
+        if (index !== null) {
+          let step: ConnectorWriteStep;
+          try {
+            step = await flow.choose({ session, actor, view, index, now: this.clock() });
+          } catch (err) {
+            return this.failReadOnlyTurn(message, session, err);
+          }
+          return respond(step);
+        }
+        const decision = interpretStrayDecisionUtterance(message.text);
+        await flow.close(session, view, 'abandoned', this.clock());
+        if (decision === 'deny' || decision === 'cancel') return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
+        return null; // next-turn-only: any other message is a new turn
+      }
+      case 'APPROVED': {
+        if (!anchor.operation) return null;
+        const gate = connectorWriteExecutionGate(anchor.operation);
+        if (isAcceptedExecutionPhrase(gate, message.text)) {
+          // Not caught here: after the consume save a failure may follow the send, so the `handle` backstop's
+          // "cannot verify" wording is the truthful one.
+          return respond(await flow.execute({ session, actor, view, now: this.clock() }));
+        }
+        const decision = interpretStrayDecisionUtterance(message.text);
+        if (decision === 'approve') {
+          const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        if (decision === 'deny' || decision === 'cancel') {
+          const reason = decision === 'deny' ? 'denied' : 'cancelled';
+          await flow.close(session, view, reason, this.clock());
+          return respond({ kind: 'closed', reason, family: anchor.family });
+        }
+        return null;
+      }
+      case 'EXECUTING':
+      case 'SENT':
+      case 'NOT_SENT':
+      case 'UNCERTAIN': {
+        if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {
+          return null;
+        }
+        return respond(await flow.execute({ session, actor, view, now: this.clock() }));
+      }
+      default:
+        return null;
+    }
+  }
+
+  /** "1", "2번", "1번이요", "2번으로" — a choice number, or null. */
+  private static connectorWriteChoiceIndex(text: string): number | null {
+    const match = /^\s*(\d{1,2})\s*(?:번(?:째)?)?\s*(?:이요|요|으로|로|으로\s*해\s*줘|로\s*해\s*줘|이에요|입니다)?\s*[.!~]*\s*$/u.exec(text);
+    if (!match) return null;
+    const index = Number(match[1]);
+    return Number.isInteger(index) && index >= 1 ? index : null;
+  }
+
+  private respondConnectorWriteStep(
+    message: InboundMessage,
+    session: Session,
+    step: ConnectorWriteStep,
+    fallbackText: string,
+    history?: string,
+  ): Promise<TurnResult> {
+    if (step.kind === 'writes-off') {
+      const text = fallbackText.length > 0 ? fallbackText : this.deps.composer.composeNoApprovedConnectorWrite(message.context).text;
+      return this.respondConnectorWrite(message, session, { context: message.context, text }, 'RESPONDED', history);
+    }
+    const reply = this.deps.composer.composeConnectorWriteStep(message.context, step);
+    const status: RuntimeTurnStatus =
+      step.kind === 'preview'
+        ? 'AWAITING_APPROVAL'
+        : step.kind === 'closed'
+          ? step.reason === 'denied'
+            ? 'DENIED'
+            : 'CANCELLED'
+          : 'RESPONDED';
+    // A calendar step keeps the fixed write note (never event text); the handler's own note covers only its fallback.
+    const calendar = ConversationRuntime.isCalendarWriteStep(step);
+    return this.respondConnectorWrite(message, session, reply, status, calendar ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : history);
+  }
+
+  /** Whether a step concerns the calendar (its history keeps a fixed note, never event text — ADR-0110 D4). */
+  private static isCalendarWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): boolean {
+    switch (step.kind) {
+      case 'usage':
+        return step.topic.startsWith('calendar');
+      case 'refused':
+      case 'closed':
+        return step.family === 'calendar';
+      case 'choice':
+        return true;
+      case 'preview':
+        return step.preview.operation.startsWith('CALENDAR_');
+      default:
+        return step.operation.startsWith('CALENDAR_');
+    }
+  }
+
+  private async respondConnectorWrite(
+    message: InboundMessage,
+    session: Session,
+    reply: OutboundMessage,
+    status: RuntimeTurnStatus,
+    history?: string,
+  ): Promise<TurnResult> {
+    await this.deps.memory.recordAssistant(history ?? reply.text, message.context, session.id);
+    return { status, reply, sessionId: session.id };
   }
 
   /**
