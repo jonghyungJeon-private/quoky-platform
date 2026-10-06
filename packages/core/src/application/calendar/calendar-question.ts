@@ -95,9 +95,20 @@ function languageOf(text: string): CalendarLanguage {
 }
 
 /** Whether the message asks Quoky to create, move or delete a calendar event (refused while calendar writes are off). */
+const QUOTED_SEGMENT = /"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』/u;
+/** Requests ABOUT a phrase (translate it, explain it) are ordinary chat, never a calendar write. */
+const ABOUT_A_PHRASE = /번역|translate|뜻이|무슨 뜻|의미|meaning|예문|example sentence/iu;
+/** Negated, reported or past-tense statements are not requests ("…라고 요청하지 않았어", "I didn't ask to cancel"). */
+const NOT_A_REQUEST =
+  /라고|라는|다고|하지\s*않|않았|않을|말고|하지\s*마|안\s*해|안\s*했|취소했|삭제했|옮겼|추가했|\b(?:don'?t|didn'?t|do not|did not|never|wasn'?t|weren'?t|haven'?t|already)\b/iu;
+
 export function isCalendarWriteRequest(text: string): boolean {
   const message = normalize(text);
   if (CODE_SCHEDULE.test(message)) return false;
+  // Codex P2 (wave 4): a quoted phrase, a request about a phrase, or a negated / reported / past-tense statement is
+  // ordinary chat ("'금요일 일정 삭제해줘'를 영어로 번역해줘", "내일 일정 삭제해줘라고 요청하지 않았어").
+  if (QUOTED_SEGMENT.test(message) || ABOUT_A_PHRASE.test(message)) return false;
+  if (NOT_A_REQUEST.test(message)) return false;
   if (detectExternalActionRequest(message)?.kind === 'calendar') return true;
   return WRITE_KO.test(message) || WRITE_EN.test(message);
 }

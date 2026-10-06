@@ -90,7 +90,18 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
       expect(isCalendarWriteRequest(text), text).toBe(true);
       expect(parseCalendarQuestion(text)?.kind, text).toBe('write-refused');
     }
-    for (const text of ['cron 스케줄 추가해줘', '스케줄러에 작업 등록해줘', '7/3 회의 등록해줘', '내일 일정 뭐야?']) {
+    for (const text of [
+      'cron 스케줄 추가해줘',
+      '스케줄러에 작업 등록해줘',
+      '7/3 회의 등록해줘',
+      '내일 일정 뭐야?',
+      // Codex P2 (wave 4): quoted phrases, requests about a phrase, negated / reported / past statements.
+      '"금요일 일정 삭제해줘"를 영어로 번역해줘',
+      '내일 일정 삭제해줘라고 요청하지 않았어',
+      '금요일 일정 삭제해줘 무슨 뜻이야?',
+      '어제 회의 일정 이미 삭제했어',
+      "I didn't ask you to cancel my 3pm meeting",
+    ]) {
       expect(isCalendarWriteRequest(text), text).toBe(false);
     }
   });
