@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 
 import {
   AiProviderManager,
+  NOTIFICATION_SINK,
   QuokyCore,
   PLATFORM_ADAPTER,
   STORAGE_PROVIDER,
@@ -10,11 +11,14 @@ import {
   QUEUE_PROVIDER,
 } from '@quoky/core';
 import type {
+  NotificationSink,
   PlatformAdapter,
   QueueProvider,
   StorageProvider,
   VectorProvider,
 } from '@quoky/core';
+
+import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
 
 import { ConsoleLogger } from './console-logger';
 import { loadLocalEnvironment } from './env-loader';
@@ -32,6 +36,7 @@ import { ReminderTickDriver } from './reminders/reminder-tick-driver';
 import { assertPrivateEnvFile } from './ops/env-file-guard';
 import { startupExitCode } from './ops/exit-codes';
 import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
+import { createOpsRuntime } from './ops/ops-runtime';
 import { startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 
 const log = new ConsoleLogger('quoky');
@@ -50,8 +55,12 @@ const log = new ConsoleLogger('quoky');
  * ADR-0102 (always-on runtime, SUB-1): under `ops/launchd/quoky-launch.sh` the environment comes from one private
  * env file (`QUOKY_ENV_FILE`, checked owner-only here too); a single-instance lock beside the database is taken
  * before the composition root is evaluated; the connected Discord identity is verified before the reminder tick
- * starts; and a startup refusal exits with the configuration code the launcher counts. Backup and the health notice
- * (SUB-2) attach to this lifecycle later, between the identity check and the reminder start.
+ * starts; and a startup refusal exits with the configuration code the launcher counts.
+ *
+ * ADR-0102 D6/D7 (SUB-2, `ops/ops-runtime.ts`): a verified pre-migration backup is taken before `storage.init()`
+ * when this build migrates an existing database (a failure refuses the start); the daily backup chain and the
+ * crash-loop `OPS_NOTICE` start between the identity check and the reminder start; the backup chain stops right
+ * after the reminder tick on shutdown.
  */
 async function bootstrap(): Promise<void> {
   const envFilePath = resolveEnvFilePath(process.env);
@@ -81,6 +90,14 @@ async function bootstrap(): Promise<void> {
   // ADR-0101 D6: composition-root reminder tick (bound in features/reminders.providers.ts). It starts only after
   // storage and the platform are up, never when QUOKY_REMINDERS_ENABLED=false, and stops first on shutdown.
   const reminderDriver = app.get(ReminderTickDriver);
+  // ADR-0102 D6/D7: backup + owner-DM health notice through the unchanged NotificationSink (bound with reminders).
+  const ops = createOpsRuntime({
+    env: process.env,
+    config,
+    sink: app.get<NotificationSink>(NOTIFICATION_SINK),
+    platform: DISCORD_NOTIFICATION_PLATFORM,
+    logger: new ConsoleLogger('ops'),
+  });
 
   logResolvedDatabasePath(config.storage.dbPath, log);
   await reportProviderReadiness(aiProviders, log);
@@ -122,6 +139,9 @@ async function bootstrap(): Promise<void> {
     ),
   );
 
+  // ADR-0102 D3/D6: a schema migration on an existing database needs a fresh verified backup first; nothing has
+  // opened the database yet, so the copy can never overlap a migration.
+  await ops.ensurePreMigrationBackup();
   await storage.init();
   await actorIdentityProvisioner.provision();
   await vector.init();
@@ -142,6 +162,9 @@ async function bootstrap(): Promise<void> {
       throw err;
     }
   }
+  // ADR-0102 D6/D7: the daily backup chain, and the crash-loop OPS_NOTICE when the launcher counted >=3 starts in 10
+  // minutes (owner DM only, fixed text, at most 3 per day; sent without delaying the start).
+  ops.start();
   // Startup recovery (FIRING → DELIVERY_UNCERTAIN, never resent) runs inside start(); the first tick then delivers
   // a missed one-time reminder late once and catches a recurring one up only within 60 minutes.
   await reminderDriver.start();
@@ -157,6 +180,9 @@ async function bootstrap(): Promise<void> {
     // next startup turns it into DELIVERY_UNCERTAIN (never resent).
     const cleanStop = await reminderDriver.stop().catch(() => false);
     if (!cleanStop) log.warn('reminder tick stop was forced; an in-flight reminder may be left FIRING');
+    // An in-flight backup copy is aborted (its worker terminated, its partial file removed); it uses its own
+    // read-only connection, so it never holds the storage connection open.
+    await ops.stop().catch(() => undefined);
     await platform.stop().catch(() => undefined);
     await queue.stop().catch(() => undefined);
     await storage.close().catch(() => undefined);

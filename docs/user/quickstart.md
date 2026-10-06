@@ -248,10 +248,72 @@ tail -f ~/Library/Logs/Quoky/quoky.log
   같은 메시지에 답할 수 있습니다. 먼저 `uninstall --apply` 또는 `launchctl bootout gui/$(id -u)/com.quoky.personal`로
   멈추세요.
 - 기존 `./data/chunsik.db` 데이터를 서비스 DB로 옮기는 것과, 서비스 DB 스키마를 올리는 업그레이드(마이그레이션)는
-  Strict 작업입니다. 서비스를 멈춘 상태에서 DB를 먼저 백업하세요. 정기 백업과 복구 절차, 장애 알림은 다음 단계
-  (SUB-2)에서 추가됩니다.
+  Strict 작업입니다. 서비스를 멈춘 상태에서 DB를 먼저 백업하세요. 정기 백업, 복구 절차, 운영 알림은 아래
+  "백업과 운영 알림"을 보세요.
 - Mac이 잠자기 상태면 알림이 늦게 전달됩니다. 전원 설정은 자동으로 바꾸지 않습니다. 필요하면 직접
   `시스템 설정 -> 배터리/에너지` 또는 `sudo pmset -c sleep 0`(전원 연결 시 잠자기 끔)을 설정하세요.
+
+### 백업과 운영 알림 (ADR-0102 D6/D7)
+
+**백업이 하는 일**
+
+- 서비스(launchd)로 실행하면 기본으로 켜집니다. `pnpm dev`(개발 DB)에서는 기본으로 꺼져 있습니다.
+- 매일 `QUOKY_TIMEZONE` 기준 04:00에 SQLite `VACUUM INTO`로 DB 사본을 만들고, 사본을 읽기 전용으로 검증합니다
+  (`PRAGMA integrity_check`가 `ok`, `user_version`이 원본과 같음). 검증된 사본만 최종 이름을 받습니다. 한 번의
+  복사+검증은 최대 5분이며 별도 스레드에서 돌아 Discord 응답과 알림을 멈추지 않습니다.
+- Mac이 04:00에 잠자고 있었다면 깨어난 뒤 15분 안에 만듭니다. 시작할 때 최근 24시간 안의 일일 사본이 없으면
+  시작 10분 뒤에 하나 만듭니다.
+- 새 빌드가 기존 DB의 스키마를 올려야 하면(마이그레이션) `storage.init()` **전에** 사본을 하나 더 만들고
+  검증합니다(`pre-migration`). 검증에 실패하면 마이그레이션 없이 시작을 거절합니다
+  (`BACKUP_PRE_MIGRATION_FAILED`, 종료 코드 78: 3번 연속이면 launcher가 다시 띄우지 않습니다).
+- 위치: `~/Library/Application Support/Quoky/backups/` (디렉터리 700, 파일 600).
+  이름: `quoky-<UTC 시각>-daily.db`, `quoky-<UTC 시각>-pre-migration.db`.
+- 보관: 최근 7일의 일일 사본 + 최근 4주의 주간 사본(그 주의 가장 최신 사본) + 최근 pre-migration 사본 3개.
+  정리는 위 이름 형식의 일반 파일만 지웁니다. 같은 디렉터리의 다른 파일은 건드리지 않습니다.
+- 상태: `backups/backup-status.json` (마지막 실행 시각과 결과, 검증 여부, 마지막 검증 사본, 보관 개수, 다음 예정
+  시각; 파일 이름만 담고 경로나 내용은 담지 않습니다).
+
+설정 (`.env.local`, 선택):
+
+```sh
+QUOKY_BACKUP_ENABLED=true            # 기본: 서비스에서 true, 그 밖에는 false. 정확히 true/false만 허용
+QUOKY_BACKUP_DIR=/Volumes/Backup/quoky   # 기본: DB 디렉터리의 backups/. 절대 경로만 허용 (외장 디스크 권장)
+```
+
+**운영 알림 (`OPS_NOTICE`)**
+
+소유자 **DM으로만** 고정 문구를 보냅니다(채널로는 절대 보내지 않음, 비밀 값이나 대화 내용 없음).
+
+- 10분 안에 3번 이상 다시 시작된 뒤 정상적으로 시작했을 때 한 번 (같은 재시작 묶음에는 한 번만).
+- 백업이 실패했거나 검증되지 않았을 때마다 한 번.
+- 하루(24시간)에 최대 3개. 이 한도는 DB 옆 `ops/notice-ledger.json`(600)에 기록되어 재시작 후에도 유지됩니다.
+
+알림을 받으면 `~/Library/Logs/Quoky/quoky.log`에서 `backup.failed`(실패 코드) 또는 재시작 원인을 확인하세요.
+
+**복구 절차 (Strict, 소유자가 직접 승인·실행)**
+
+복구는 자동으로 하지 않습니다. 실제 DB를 바꾸기 전에 반드시 임시 위치에서 연습(drill)합니다.
+
+```sh
+B="$HOME/Library/Application Support/Quoky/backups"
+D="$HOME/Library/Application Support/Quoky"
+ls -l "$B"; cat "$B/backup-status.json"                     # 1. 복구할 사본 고르기
+cp "$B/<사본 이름>" /tmp/quoky-restore-drill.db               # 2. 연습: 임시 DB로 복사
+sqlite3 /tmp/quoky-restore-drill.db 'PRAGMA integrity_check; PRAGMA user_version;'
+#    -> "ok"와, backup-status.json의 userVersion과 같은 숫자가 나와야 합니다
+launchctl bootout gui/$(id -u)/com.quoky.personal          # 3. 서비스 중지
+mkdir -p "$D/before-restore"                                # 4. 현재 DB와 WAL 파일을 옆으로 옮김
+mv "$D/quoky.db" "$D/quoky.db-wal" "$D/quoky.db-shm" "$D/before-restore/" 2>/dev/null
+cp "$B/<사본 이름>" "$D/quoky.db" && chmod 600 "$D/quoky.db"    # 5. 사본을 DB 자리에 복사
+ops/launchd/quokyctl.sh install --apply                     # 6. 서비스 다시 시작
+rm /tmp/quoky-restore-drill.db
+```
+
+- 4단계에서 `quoky.db-wal`/`quoky.db-shm`을 반드시 함께 옮깁니다. 남겨 두면 옛 WAL이 복구한 DB에 적용될 수
+  있습니다.
+- 사본의 `user_version`이 지금 빌드보다 낮으면 다음 시작에서 마이그레이션이 일어납니다(Strict). 이때도 먼저
+  pre-migration 사본이 자동으로 만들어집니다.
+- 문제가 없으면 나중에 `before-restore/`를 직접 지우세요. 백업 정리 기능은 이 디렉터리를 건드리지 않습니다.
 
 ## 8. 처음 사용하기
 
