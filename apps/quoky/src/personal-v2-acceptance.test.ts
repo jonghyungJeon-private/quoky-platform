@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDERS,
+  CODE_CHAIN_STATUS_DOMAINS,
   CONVERSATION_TURN_HANDLERS,
   ConversationRuntime,
   IntentClassifier,
@@ -18,6 +19,9 @@ import {
   TURN_HANDLER_STAGES,
   VECTOR_PROVIDER,
   WorkChatService,
+  generalChatReplyPolicy,
+  guardInternalActionClaims,
+  renderInternalActionNotDone,
   type AiProvider,
   type ApplyPreviewAnchor,
   type ConversationContext,
@@ -47,6 +51,7 @@ import type {
 } from '../../../packages/core/src/application/golden/golden-eval';
 import precedenceCorpus from '../../../packages/core/src/application/golden/reminder-todo-precedence.v1.json';
 import routingCorpus from '../../../packages/core/src/application/golden/turn-handler-routing.v1.json';
+import actionShapedCorpus from '../../../packages/core/src/application/golden/action-shaped-fallthrough.v1.json';
 
 /**
  * Personal v2 — integration acceptance (INT-1, plan wave 8; ADR-0096..ADR-0101). OFFLINE and in-process: the REAL
@@ -86,6 +91,11 @@ interface PrecedenceCase extends GoldenCase<{ handler: string }> {
 }
 
 const routing = routingCorpus as unknown as GoldenSuiteFile<RoutingCase>;
+/** ADR-0104 D6 (DET-1): `guard` cases replay a chat reply through the claim guard; `turn` cases route like `RoutingCase`. */
+type ActionShapedCase =
+  | (GoldenCase<{ guarded: boolean; domain?: string }> & { readonly kind: 'guard'; readonly userText: string })
+  | (RoutingCase & { readonly kind: 'turn' });
+const actionShaped = actionShapedCorpus as unknown as GoldenSuiteFile<ActionShapedCase>;
 const precedence = precedenceCorpus as unknown as GoldenSuiteFile<PrecedenceCase>;
 
 /** ADR-0100 D1: the closed list of anchored to-do heads (literal mirror; the precedence corpus pins one case each). */
@@ -113,6 +123,8 @@ const PRECEDENCE_LABEL: Readonly<Record<string, string>> = {
 };
 
 const STUB_REPLY = 'INT-1 stub provider reply';
+/** What the counting provider stub answers; DET-1 swaps it to replay a claiming chat reply end-to-end. */
+let stubReply: string = STUB_REPLY;
 
 interface TurnObservation {
   readonly route: string;
@@ -209,7 +221,7 @@ async function boot(): Promise<Harness> {
       },
       async execute() {
         providerCalls += 1;
-        return { text: STUB_REPLY, artifacts: [] };
+        return { text: stubReply, artifacts: [] };
       },
     });
   }
@@ -307,7 +319,23 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composeCodePreviewDiscarded(context).text) return 'preview-discarded';
   if (text === composer.composeNoPendingDecision(context).text) return 'no-pending-decision';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
+  // ADR-0104 D3 (DET-1): the code-chain not-done reply for a status question / completion statement.
+  for (const domain of CODE_CHAIN_STATUS_DOMAINS) {
+    for (const language of ['ko', 'en'] as const) {
+      if (text === renderInternalActionNotDone(domain, language)) return `internal-action-not-done:${domain}`;
+    }
+  }
   return 'other';
+}
+
+/** Finer labels for the action-shaped corpus' state-aware replies (existing replies the routing corpus labels `other`). */
+function actionShapedReplyLabel(reply: string | undefined, text: string): string | undefined {
+  if (reply !== 'other') return reply;
+  if (text.startsWith('이미 커밋했어요')) return 'commit-already-committed';
+  if (text.startsWith('이미 PR을 만들었어요')) return 'pr-already-created';
+  if (text.startsWith('로컬 브랜치') && text.includes('이미 없어요')) return 'branch-already-cleaned';
+  if (text.startsWith('원격 브랜치') && text.includes('이미 정리됐어요')) return 'remote-branch-already-cleaned';
+  return reply;
 }
 
 /** Seed a post-push apply-preview anchor (ADR-0040 inert anchor Task) on the context's session. */
@@ -633,5 +661,73 @@ describe('Personal v2 acceptance — golden turn-handler routing ratchet (ADR-00
     expect(route('주간 보고서 쓰기 완료했나?', todo)).toMatchObject({ route: 'work-chat.todo', kind: 'todo.status', providerCalls: 0 });
     expect(route('완료 처리 어떻게 해?')).toEqual({ route: 'classifier' });
     expect(route('완료 처리 어떻게 해?', todo)).toEqual({ route: 'classifier' });
+  });
+});
+
+describe('Personal v3 DET-1 — action-shaped fall-through corpus (ADR-0104 D6)', () => {
+  const turnCases = () => actionShaped.cases.filter((c): c is Extract<ActionShapedCase, { kind: 'turn' }> => c.kind === 'turn');
+
+  it('scores every case against the production composition and the baseline ratchet', async () => {
+    expect(actionShaped.suite).toBe('action-shaped-fallthrough');
+    expect(validateGoldenCases(actionShaped.cases)).toEqual([]);
+    expect(actionShaped.cases.every((golden) => golden.mustPass)).toBe(true);
+    const byId = await observeSuite(
+      { ...actionShaped, cases: turnCases() } as unknown as GoldenSuiteFile<GoldenCase & { ctx?: RoutingCtx }>,
+    );
+    const result = await evaluateGoldenSuiteAsync(
+      actionShaped.cases as readonly GoldenCase[],
+      async (golden) => {
+        const c = golden as ActionShapedCase;
+        if (c.kind === 'guard') {
+          const guarded = guardInternalActionClaims(c.text, c.userText, generalChatReplyPolicy(c.userText));
+          return guarded.guarded ? { guarded: true, domain: guarded.domain } : { guarded: false };
+        }
+        const { context: _context, text, setupProviderTouches: _setup, reply, ...observed } = byId.get(c.id) as CaseObservation;
+        const label = actionShapedReplyLabel(reply, text);
+        return { ...observed, ...(label === undefined ? {} : { reply: label }) };
+      },
+      actionShaped.suite,
+    );
+    console.info(formatGoldenSummary(result));
+    expect(mustPassFailures(result), 'action-shaped-fallthrough mustPass failures').toEqual([]);
+    expect(ratchetViolations(result, baseline.suites[actionShaped.suite]), actionShaped.suite).toEqual([]);
+  });
+
+  it('every deterministic turn case made zero provider calls and probes; chat cases still reach the provider', async () => {
+    const byId = await observeSuite(
+      { ...actionShaped, cases: turnCases() } as unknown as GoldenSuiteFile<GoldenCase & { ctx?: RoutingCtx }>,
+    );
+    for (const golden of turnCases()) {
+      const seen = byId.get(golden.id) as CaseObservation;
+      if (golden.expected.route === 'classifier') {
+        expect(seen.providerCalls, `${golden.id} ${golden.text}`).toBeGreaterThan(0);
+        continue;
+      }
+      expect(seen.providerCalls + seen.availabilityProbes, `${golden.id} ${golden.text}`).toBe(0);
+      expect(seen.setupProviderTouches, `${golden.id} setup`).toBe(0);
+    }
+  });
+
+  it('the guard replaces a chat reply that claims a Quoky action end-to-end, whichever provider answered', async () => {
+    const cases = [
+      ['그 브랜치 어떻게 됐어', '네, 브랜치가 삭제된 상태가 맞습니다.', '이 답변으로 실행된 작업은 없어요. Quoky는 브랜치를'],
+      ['나 고양이 키워. 이름은 나비야', '말씀하신 내용을 기억해 둘게요.', '이 답변으로 실행된 작업은 없어요. Quoky는 기억을'],
+      ['tell me about my cat Nabi', "Got it, I'll save that to my memory.", 'Nothing was done by this reply'],
+    ] as const;
+    try {
+      for (const [user, claim, notice] of cases) {
+        stubReply = claim;
+        const seen = await harness.turn(harness.freshContext(), user);
+        expect(seen.route, user).toBe('classifier');
+        expect(seen.providerCalls, user).toBe(1);
+        expect(seen.text.startsWith(notice), `${user} → ${seen.text}`).toBe(true);
+        expect(seen.text).not.toContain(claim);
+      }
+      // A claim-free reply passes through unchanged.
+      stubReply = STUB_REPLY;
+      expect((await harness.turn(harness.freshContext(), '안녕')).text).toBe(STUB_REPLY);
+    } finally {
+      stubReply = STUB_REPLY;
+    }
   });
 });
