@@ -325,6 +325,31 @@ export const MIGRATIONS: readonly Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS learning_items_source_memory ON learning_items(source_memory_id);`);
     },
   },
+  {
+    version: 15,
+    name: 'connector write receipts (ADR-0112)',
+    up(db) {
+      // Purely additive, no backfill (ADR-0112 D3, ADR-0096 D10). One receipt per idempotency key; the at-most-once
+      // state machine is PREPARED -> SENT | NOT_SENT | UNCERTAIN (PREPARED is written before any network call).
+      // There is NO payload text column: the exact payload lives only on the approval's anchor Task; `data` holds the
+      // outcome's external reference, link and reason only.
+      db.exec(`CREATE TABLE IF NOT EXISTS connector_write_receipts (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        connector TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        target TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data TEXT NOT NULL);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS connector_write_receipts_match
+        ON connector_write_receipts(actor_id, connector, operation, target, payload_sha256, status);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS connector_write_receipts_status ON connector_write_receipts(status);`);
+    },
+  },
 ];
 
 /** The schema version this build targets (the highest migration version). */

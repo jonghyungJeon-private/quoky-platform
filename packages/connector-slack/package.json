@@ -2,7 +2,7 @@
   "name": "@quoky/connector-slack",
   "version": "0.1.0",
   "private": true,
-  "description": "Read-only Slack Web API connector implementing the Quoky ConnectorProvider port.",
+  "description": "Slack Web API connector: the read-only ConnectorProvider plus the allowlisted bot-token channel writer.",
   "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -92,6 +92,27 @@ export interface QuokyConfig {
     confluence?: { host: string; token: string; email?: string };
   };
   /**
+   * Connector writes (ADR-0112 D4, ADR-0110 amendment D7; CWR-1). Parsed and validated here; the writers are built only
+   * when their flag is on and their allowlist is non-empty (`connector-writers-provider.ts`), and the chat flow that
+   * uses them is CWR-2. Off by default.
+   * - `enabled` (`QUOKY_CONNECTOR_WRITES_ENABLED`, exact true/false, default false) gates Jira and Slack writes.
+   * - `jiraProjects` (`QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS`, comma-separated project keys): the Jira write allowlist;
+   *   Jira writes reuse the read connector's Atlassian credentials (that token already permits writes).
+   * - `slack` (`QUOKY_CONNECTOR_WRITE_SLACK_TOKEN` + `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS`): a BOT token with
+   *   `chat:write`, separate from the read token, and the channel allowlist (`name:ID` or `ID` entries). `undefined`
+   *   unless both are set.
+   * - `calendarEnabled` (`QUOKY_CALENDAR_WRITE_ENABLED`, exact true/false, default false) gates every calendar write on
+   *   the primary calendar, independently of `enabled`; it needs the calendar to be configured with a
+   *   `calendar.events` grant.
+   * Secrets here are passed only to the adapters and are never logged.
+   */
+  connectorWrites: {
+    enabled: boolean;
+    jiraProjects: string[];
+    slack?: { token: string; channels: Array<{ id: string; name?: string }> };
+    calendarEnabled: boolean;
+  };
+  /**
    * Read-only calendar (ADR-0110 D2, CAL-1). `undefined` unless the Google OAuth client id, client secret and a refresh
    * token source are all set (partial configuration is "not configured", never a startup error). The refresh token
    * comes from `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN` (inline) or `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` (a mode-600 file the
@@ -191,6 +212,12 @@ export const QuokyConfigErrorCode = {
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
   DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
   LAUNCHER_INVALID: 'LAUNCHER_INVALID',
+  CONNECTOR_WRITES_ENABLED_INVALID: 'CONNECTOR_WRITES_ENABLED_INVALID',
+  CONNECTOR_WRITE_JIRA_PROJECTS_INVALID: 'CONNECTOR_WRITE_JIRA_PROJECTS_INVALID',
+  CONNECTOR_WRITE_SLACK_CHANNELS_INVALID: 'CONNECTOR_WRITE_SLACK_CHANNELS_INVALID',
+  CONNECTOR_WRITE_SLACK_TOKEN_INVALID: 'CONNECTOR_WRITE_SLACK_TOKEN_INVALID',
+  CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE: 'CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE',
+  CALENDAR_WRITE_ENABLED_INVALID: 'CALENDAR_WRITE_ENABLED_INVALID',
 } as const;
 export type QuokyConfigErrorCode = (typeof QuokyConfigErrorCode)[keyof typeof QuokyConfigErrorCode];
 
@@ -309,6 +336,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       slack: resolveSlackConnector(env),
       confluence: resolveConfluenceConnector(env),
     },
+    connectorWrites: parseConnectorWrites(env),
     ...(calendar !== undefined ? { calendar } : {}),
     // Provider fixed to 'github'. Undefined when both owner and repo are absent; a single one present yields a raw
     // config the resolver classifies (invalid-owner / invalid-repo). No provider/token env var is read here.
@@ -606,6 +634,83 @@ function resolveJiraConnector(
 function resolveSlackConnector(env: NodeJS.ProcessEnv): { token: string } | undefined {
   const token = nonBlank(env.QUOKY_SLACK_TOKEN ?? env.CHUNSIK_SLACK_TOKEN);
   return token ? { token } : undefined;
+}
+
+/** Jira project keys (ADR-0112 D4 allowlist). */
+const JIRA_PROJECT_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+/** Slack channel ids and lowercase channel names (ADR-0112 D4 allowlist). */
+const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{8,20}$/;
+const SLACK_CHANNEL_NAME = /^[a-z0-9][a-z0-9._-]{0,79}$/;
+/** Built by concatenation so no token-shaped literal appears in the source. */
+const SLACK_BOT_TOKEN_PREFIX = 'xox' + 'b-';
+const CONNECTOR_WRITE_ALLOWLIST_MAX = 50;
+
+/** See `QuokyConfig.connectorWrites`. Every value is validated even while writes are off (fail closed, value-free). */
+function parseConnectorWrites(env: NodeJS.ProcessEnv): QuokyConfig['connectorWrites'] {
+  const enabled = parseExactBoolean(
+    env.QUOKY_CONNECTOR_WRITES_ENABLED,
+    false,
+    QuokyConfigErrorCode.CONNECTOR_WRITES_ENABLED_INVALID,
+  );
+  const calendarEnabled = parseExactBoolean(
+    env.QUOKY_CALENDAR_WRITE_ENABLED,
+    false,
+    QuokyConfigErrorCode.CALENDAR_WRITE_ENABLED_INVALID,
+  );
+  const jiraProjects = parseAllowlist(env.QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS, QuokyConfigErrorCode.CONNECTOR_WRITE_JIRA_PROJECTS_INVALID)
+    .map((entry) => {
+      if (!JIRA_PROJECT_KEY.test(entry)) throw new QuokyConfigError(QuokyConfigErrorCode.CONNECTOR_WRITE_JIRA_PROJECTS_INVALID);
+      return entry;
+    });
+  if (new Set(jiraProjects).size !== jiraProjects.length) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.CONNECTOR_WRITE_JIRA_PROJECTS_INVALID);
+  }
+  const channels = parseSlackWriteChannels(env.QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS);
+  const token = nonBlank(env.QUOKY_CONNECTOR_WRITE_SLACK_TOKEN);
+  if (token !== undefined) {
+    if (!token.startsWith(SLACK_BOT_TOKEN_PREFIX) || token.length <= SLACK_BOT_TOKEN_PREFIX.length) {
+      throw new QuokyConfigError(QuokyConfigErrorCode.CONNECTOR_WRITE_SLACK_TOKEN_INVALID);
+    }
+    // ADR-0112 D4: the write token is separate from the read token.
+    if (token === resolveSlackConnector(env)?.token) {
+      throw new QuokyConfigError(QuokyConfigErrorCode.CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE);
+    }
+  }
+  return {
+    enabled,
+    jiraProjects,
+    ...(token !== undefined && channels.length > 0 ? { slack: { token, channels } } : {}),
+    calendarEnabled,
+  };
+}
+
+/** Comma-separated, trimmed, non-empty entries; unset or blank is an empty list; more than 50 entries is an error. */
+function parseAllowlist(raw: string | undefined, error: QuokyConfigErrorCode): string[] {
+  const value = nonBlank(raw);
+  if (value === undefined) return [];
+  const entries = value.split(',').map((entry) => entry.trim());
+  if (entries.some((entry) => entry.length === 0) || entries.length > CONNECTOR_WRITE_ALLOWLIST_MAX) {
+    throw new QuokyConfigError(error);
+  }
+  return entries;
+}
+
+/** `name:ID` or `ID` entries (a leading `#` on the name is allowed); ids and names must be unique. */
+function parseSlackWriteChannels(raw: string | undefined): Array<{ id: string; name?: string }> {
+  const error = QuokyConfigErrorCode.CONNECTOR_WRITE_SLACK_CHANNELS_INVALID;
+  const channels = parseAllowlist(raw, error).map((entry) => {
+    const separator = entry.lastIndexOf(':');
+    const id = (separator === -1 ? entry : entry.slice(separator + 1)).trim();
+    const rawName = separator === -1 ? undefined : entry.slice(0, separator).trim();
+    const name = rawName === undefined ? undefined : rawName.startsWith('#') ? rawName.slice(1) : rawName;
+    if (!SLACK_CHANNEL_ID.test(id)) throw new QuokyConfigError(error);
+    if (name !== undefined && !SLACK_CHANNEL_NAME.test(name)) throw new QuokyConfigError(error);
+    return name === undefined ? { id } : { id, name };
+  });
+  const ids = channels.map((channel) => channel.id);
+  const names = channels.flatMap((channel) => (channel.name === undefined ? [] : [channel.name]));
+  if (new Set(ids).size !== ids.length || new Set(names).size !== names.length) throw new QuokyConfigError(error);
+  return channels;
 }
 
 /**

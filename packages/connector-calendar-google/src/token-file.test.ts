@@ -2,10 +2,11 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { GOOGLE_CALENDAR_READONLY_SCOPE } from './oauth';
+import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_READ_WRITE_SCOPE } from './oauth';
 import {
   GoogleCalendarTokenFileError,
   readGoogleCalendarTokenFile,
+  readGoogleCalendarTokenGrant,
   writeGoogleCalendarTokenFile,
 } from './token-file';
 
@@ -98,5 +99,34 @@ describe('Google Calendar token file (ADR-0110 D2)', () => {
       ),
     ).toBe('CALENDAR_TOKEN_FILE_INVALID');
     expect(codeOf(() => readGoogleCalendarTokenFile(writeRaw('e.json', 'x'.repeat(17 * 1024))))).toBe('CALENDAR_TOKEN_FILE_TOO_LARGE');
+  });
+});
+
+describe('Google Calendar token file — read + write grants (ADR-0110 amendment D1)', () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'quoky-calendar-token-rw-'));
+  });
+
+  it('records the read + write scope and reports canWrite; a readonly file reports canWrite false', () => {
+    const rw = join(dir, 'rw.json');
+    writeGoogleCalendarTokenFile(rw, TOKEN, GOOGLE_CALENDAR_READ_WRITE_SCOPE);
+    expect(JSON.parse(readFileSync(rw, 'utf8'))).toEqual({ version: 1, scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE, refresh_token: TOKEN });
+    expect(statSync(rw).mode & 0o777).toBe(0o600);
+    expect(readGoogleCalendarTokenGrant(rw)).toEqual({ refreshToken: TOKEN, scope: GOOGLE_CALENDAR_READ_WRITE_SCOPE, canWrite: true });
+    expect(readGoogleCalendarTokenFile(rw)).toBe(TOKEN);
+    const ro = join(dir, 'ro.json');
+    writeGoogleCalendarTokenFile(ro, TOKEN);
+    expect(readGoogleCalendarTokenGrant(ro)).toEqual({ refreshToken: TOKEN, scope: GOOGLE_CALENDAR_READONLY_SCOPE, canWrite: false });
+  });
+
+  it('refuses to write or read any other scope string, including the events scope alone or reordered', () => {
+    const events = 'https://www.googleapis.com/auth/calendar.events';
+    for (const scope of [events, `${events} ${GOOGLE_CALENDAR_READONLY_SCOPE}`, 'https://www.googleapis.com/auth/calendar']) {
+      expect(codeOf(() => writeGoogleCalendarTokenFile(join(dir, 'x.json'), TOKEN, scope))).toBe('CALENDAR_TOKEN_FILE_INVALID');
+      const path = join(dir, `raw-${scope.length}.json`);
+      writeFileSync(path, JSON.stringify({ version: 1, scope, refresh_token: TOKEN }), { mode: 0o600 });
+      chmodSync(path, 0o600);
+      expect(codeOf(() => readGoogleCalendarTokenGrant(path))).toBe('CALENDAR_TOKEN_FILE_INVALID');
+    }
   });
 });
