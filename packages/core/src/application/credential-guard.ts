@@ -203,10 +203,15 @@ const TYPED_DECLARATIONS: readonly TypedDeclaration[] = [
   { pattern: /(?<![\p{L}\p{N}_$])define[ \t]*\([ \t]*["']([^"'\n]{1,64})["'][ \t]*,/giu },
 ];
 
+/**
+ * Same segments as the baseline's split (`ABCDef` → `ABC Def`), in linear time: the baseline's
+ * `/([A-Z]+)([A-Z][a-z])/` backtracks quadratically on a long upper-case run. The lookahead form inserts the
+ * space at exactly the same places (the consumed `[A-Z][a-z]` can never be the `[A-Z]` before a split).
+ */
 function keyWordSegments(key: string): string[] {
   return key
     .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+    .replace(/([A-Z])(?=[A-Z][a-z])/gu, '$1 ')
     .toLowerCase()
     .split(/[^a-z0-9]+/u)
     .filter(Boolean);
@@ -595,16 +600,54 @@ export type CredentialFileFinding =
  */
 export function classifyCredentialFileContent(content: string): CredentialFileFinding {
   if (SECRET_TOKEN_SHAPED.test(content)) return { kind: 'secret-token' };
+  // Bounded time: a shape the key scans would backtrack on quadratically refuses the file (fail closed, refusal-ADDING
+  // like every ADR-0097 change), and the key scans then read only the text BEFORE it, so an earlier credential key
+  // still reports its own (earlier) line.
+  const unscannable = unscannableOffset(content);
+  const scanned = unscannable >= 0 ? content.slice(0, unscannable) : content;
   // ADR-0097 is refusal-ADDING only: whatever the strict rule below concludes, the file is refused whenever
   // the frozen pre-hardening guard (d99d19c) refuses it — new refusals are a superset of the baseline's.
-  const baseline = baselineFileContentRefusal(content);
+  const baseline = baselineFileContentRefusal(scanned);
   if (baseline?.kind === 'secret-token') return { kind: 'secret-token' };
-  const strict = firstCredentialAssignment(content);
-  const at = baseline && (strict < 0 || baseline.offset < strict) ? baseline.offset : strict;
-  if (at < 0) return { kind: 'none' };
+  const offsets = [baseline?.offset ?? -1, firstCredentialAssignment(scanned), unscannable].filter((o) => o >= 0);
+  if (offsets.length === 0) return { kind: 'none' };
+  return { kind: 'credential-assignment', line: lineAt(content, Math.min(...offsets)) };
+}
+
+/** 1-based line of `offset`. */
+function lineAt(content: string, offset: number): number {
   let line = 1;
-  for (let i = content.indexOf('\n'); i >= 0 && i < at; i = content.indexOf('\n', i + 1)) line++;
-  return { kind: 'credential-assignment', line };
+  for (let i = content.indexOf('\n'); i >= 0 && i < offset; i = content.indexOf('\n', i + 1)) line++;
+  return line;
+}
+
+/**
+ * Longest key-token run and blank run the key scans are allowed to see. The key-assignment scan (shared with the
+ * FROZEN baseline, which may not be edited) costs O(L²) per key on a key of length L made of one upper-case run
+ * (the camel-case split) and O(W²) on a run of W blanks right after a key token (`[ \t]*(\?)?[ \t]*`), so an
+ * untrusted 256 KiB input like `"AAAA…A="` (a base64 blob) would hold the event loop for about a minute.
+ * With both bounded to this length the whole scan stays linear in the content (cost ≈ content × bound).
+ */
+export const CREDENTIAL_SCAN_MAX_RUN = 256;
+/** A key token longer than the bound that is followed by an assignment operator (the scan would classify it). */
+const OVERSIZED_KEY = new RegExp(
+  `(?<![\\p{L}\\p{N}_$.\\-])[\\p{L}\\p{N}_$\\-][\\p{L}\\p{N}_$.\\-]{${CREDENTIAL_SCAN_MAX_RUN},}` +
+    `["'\`]?[ \\t]*\\??[ \\t]*(?::=|=>|=(?!=)|:(?!:))`,
+  'u',
+);
+/** A blank run longer than the bound right after a key character or a closing quote. */
+const OVERSIZED_BLANK = new RegExp(`[\\p{L}\\p{N}_$.\\-"'\`][ \\t]{${CREDENTIAL_SCAN_MAX_RUN + 1},}`, 'u');
+
+/**
+ * Offset of a shape the key scans cannot judge in bounded time, or -1. Such content is refused as a
+ * `credential-assignment` (overridable by the owner like any other, ADR-0095) rather than scanned: refusing what
+ * cannot be checked is the ADR-0097 "refuse rather than leak" direction. The earliest such shape wins.
+ */
+function unscannableOffset(content: string): number {
+  const blank = OVERSIZED_BLANK.exec(content)?.index ?? -1;
+  // Only the text before a long blank run is searched for an oversized key, so that search never meets one.
+  const key = OVERSIZED_KEY.exec(blank >= 0 ? content.slice(0, blank) : content)?.index ?? -1;
+  return key >= 0 ? key : blank;
 }
 
 /**

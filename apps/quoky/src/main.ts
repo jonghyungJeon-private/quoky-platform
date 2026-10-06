@@ -38,9 +38,11 @@ import { assertPrivateEnvFile } from './ops/env-file-guard';
 import { startupExitCode } from './ops/exit-codes';
 import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
-import { startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
+import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
+import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
 
-const log = new ConsoleLogger('quoky');
+// ADR-0113 D6: composition-root errors also feed the OPS-1 recent-error ring (codes only, in memory).
+const log = recordOpsUiErrors(new ConsoleLogger('quoky'), 'quoky');
 
 /**
  * Boots Quoky as a standalone Nest application context (no HTTP server —
@@ -98,7 +100,7 @@ async function bootstrap(): Promise<void> {
     config,
     sink: app.get<NotificationSink>(NOTIFICATION_SINK),
     platform: DISCORD_NOTIFICATION_PLATFORM,
-    logger: new ConsoleLogger('ops'),
+    logger: recordOpsUiErrors(new ConsoleLogger('ops'), 'ops'),
     // ADR-0106 amendment D2: expired memory-archive entries are deleted at start and daily, independent of backups.
     memoryArchivePurge: (now) => memoryCommands.purgeExpiredArchive(now),
   });
@@ -112,6 +114,8 @@ async function bootstrap(): Promise<void> {
   let openInbound: (verified: boolean) => void = () => undefined;
   const inboundGate: Promise<boolean> =
     identity === undefined ? Promise.resolve(true) : new Promise<boolean>((resolve) => (openInbound = resolve));
+  // The adapter's own inbound effects (attachment download, temp file, refusal note) wait for the same gate.
+  applyInboundGate(platform, inboundGate);
 
   // Track B (Sprint 4c-Follow-up-2): secret-free structured diagnostics — name/message/redacted stack/cause plus
   // non-secret correlation context (stage + message/channel/user ids). The raw message text is deliberately NOT
@@ -172,6 +176,8 @@ async function bootstrap(): Promise<void> {
   // Startup recovery (FIRING → DELIVERY_UNCERTAIN, never resent) runs inside start(); the first tick then delivers
   // a missed one-time reminder late once and catches a recurring one up only within 60 minutes.
   await reminderDriver.start();
+  // ADR-0113 (OPS-1): the loopback-only, token-gated, read-only operations UI; off unless QUOKY_OPS_UI_ENABLED=true.
+  const opsUi = await startOpsUi({ app, config, ops, instanceLockHeld: lockPath !== undefined, identityVerified: identity !== undefined });
 
   // ADR-0102 D8: launchd sends SIGTERM and allows ExitTimeOut (90 s) before SIGKILL, above the reminder stop bound
   // (REMINDER_TICK_STOP_TIMEOUT_MS, 65 s). A repeated signal while stopping is ignored.
@@ -184,6 +190,7 @@ async function bootstrap(): Promise<void> {
     // next startup turns it into DELIVERY_UNCERTAIN (never resent).
     const cleanStop = await reminderDriver.stop().catch(() => false);
     if (!cleanStop) log.warn('reminder tick stop was forced; an in-flight reminder may be left FIRING');
+    await opsUi.stop().catch(() => undefined);
     // An in-flight backup copy is aborted (its worker terminated, its partial file removed); it uses its own
     // read-only connection, so it never holds the storage connection open.
     await ops.stop().catch(() => undefined);

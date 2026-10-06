@@ -1,13 +1,16 @@
 /**
- * Reminder configuration (ADR-0096 D9 / ADR-0101). Parsed once here; nothing consumes it until the reminder
- * track (PRO) wires it. Parsing a variable authorizes no behaviour. Exact `true`/`false` only, safe inert
- * defaults, typed value-free errors (the message is the code only; a configured value is never echoed).
+ * Reminder configuration (ADR-0096 D9 / ADR-0101 / ADR-0102 D9). Parsed once here and consumed by the reminder
+ * handler and tick driver. Exact `true`/`false` only; reminders default on (owner DM), channel delivery defaults
+ * off, typed value-free errors (the message is the code only; a configured value is never echoed).
  *
  * The error type lives here, not in `config.ts`, so `config.ts` can import this module without an import cycle;
  * `config.ts` re-exposes these codes through `QuokyConfigErrorCode` so startup hints cover them.
  */
 export interface ReminderConfig {
-  /** `QUOKY_REMINDERS_ENABLED`, default false. */
+  /**
+   * `QUOKY_REMINDERS_ENABLED`, release default true since the SUB-1 always-on runtime is live (ADR-0102 D9, owner
+   * decision 8). Set `false` to turn reminders off.
+   */
   enabled: boolean;
   /**
    * `QUOKY_REMINDERS_CHANNEL_DELIVERY`, default false (owner DM only). Inert while reminders are off. When true,
@@ -41,18 +44,20 @@ const IANA_TIME_ZONE_SHAPE = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9][A-Za-z0-9
 
 export function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderConfig {
   return {
-    enabled: parseBoolean(env.QUOKY_REMINDERS_ENABLED, ReminderConfigErrorCode.REMINDERS_ENABLED_INVALID),
+    // ADR-0102 D9 (owner decision 8): reminders default on; channel delivery stays opt-in.
+    enabled: parseBoolean(env.QUOKY_REMINDERS_ENABLED, true, ReminderConfigErrorCode.REMINDERS_ENABLED_INVALID),
     channelDelivery: parseBoolean(
       env.QUOKY_REMINDERS_CHANNEL_DELIVERY,
+      false,
       ReminderConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID,
     ),
     timeZone: parseTimeZone(env.QUOKY_TIMEZONE),
   };
 }
 
-/** Exact `true`/`false`; unset is the inert default `false`. Anything else (including empty) is a startup error. */
-function parseBoolean(raw: string | undefined, error: ReminderConfigErrorCode): boolean {
-  if (raw === undefined) return false;
+/** Exact `true`/`false`; unset yields `fallback`. Anything else (including empty) is a startup error. */
+function parseBoolean(raw: string | undefined, fallback: boolean, error: ReminderConfigErrorCode): boolean {
+  if (raw === undefined) return fallback;
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new ReminderConfigError(error);

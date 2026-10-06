@@ -231,6 +231,203 @@
         "maxChars": 500
       },
       "source": "ADR-0098 D1: an explicit translation request is allowed"
+    },
+    {
+      "id": "ko-helpful-recommendation",
+      "locale": "ko",
+      "kind": "helpfulness-recommendation",
+      "userMessage": "주말에 집에서 볼 만한 잔잔한 영화 하나 추천해줄래?",
+      "expectedLanguage": "ko",
+      "checks": [
+        "languageMatches",
+        "noTranslationBlock",
+        "noComplianceAnnouncement",
+        "noCapabilityPromise",
+        "noLiteralEscapes",
+        "noSystemCopyImitation",
+        "lengthWithin",
+        "noHelpDeflection",
+        "containsRelevantTokens"
+      ],
+      "limits": {
+        "minChars": 30,
+        "maxChars": 1200
+      },
+      "requiredTokenGroups": [
+        [
+          "영화",
+          "작품"
+        ],
+        [
+          "추천"
+        ]
+      ],
+      "source": "ADR-0105 LLM-2 helpfulness: gemma3:4b answered a recommendation with a help pointer"
+    },
+    {
+      "id": "ko-helpful-python-sort",
+      "locale": "ko",
+      "kind": "helpfulness-howto-coding",
+      "userMessage": "파이썬에서 리스트를 내림차순으로 정렬하는 방법 알려줘",
+      "expectedLanguage": "ko",
+      "checks": [
+        "languageMatches",
+        "noTranslationBlock",
+        "noComplianceAnnouncement",
+        "noCapabilityPromise",
+        "noLiteralEscapes",
+        "noSystemCopyImitation",
+        "lengthWithin",
+        "noHelpDeflection",
+        "containsRelevantTokens"
+      ],
+      "limits": {
+        "minChars": 40,
+        "maxChars": 2000
+      },
+      "requiredTokenGroups": [
+        [
+          "sorted",
+          "sort("
+        ],
+        [
+          "reverse"
+        ],
+        [
+          "`"
+        ]
+      ],
+      "source": "ADR-0105 LLM-2 helpfulness: how-to coding question must contain the code"
+    },
+    {
+      "id": "ko-helpful-tips-list",
+      "locale": "ko",
+      "kind": "helpfulness-tips-list",
+      "userMessage": "집중력을 높이는 팁 세 가지만 목록으로 알려줘",
+      "expectedLanguage": "ko",
+      "checks": [
+        "languageMatches",
+        "noTranslationBlock",
+        "noComplianceAnnouncement",
+        "noCapabilityPromise",
+        "noLiteralEscapes",
+        "noSystemCopyImitation",
+        "lengthWithin",
+        "noHelpDeflection",
+        "containsRelevantTokens"
+      ],
+      "limits": {
+        "minChars": 40,
+        "maxChars": 1200
+      },
+      "requiredTokenGroups": [
+        [
+          "집중"
+        ],
+        [
+          "\n- ",
+          "\n* ",
+          "\n• ",
+          "\n1.",
+          "\n1)",
+          "\n①",
+          "첫째",
+          "1."
+        ]
+      ],
+      "source": "ADR-0105 LLM-2 helpfulness: a tips list is a list of tips"
+    },
+    {
+      "id": "ko-helpful-hedge-weather",
+      "locale": "ko",
+      "kind": "helpfulness-hedge",
+      "userMessage": "지금 서울 날씨 어때? 우산 챙겨야 할까?",
+      "expectedLanguage": "ko",
+      "checks": [
+        "languageMatches",
+        "noTranslationBlock",
+        "noComplianceAnnouncement",
+        "noCapabilityPromise",
+        "noLiteralEscapes",
+        "noSystemCopyImitation",
+        "lengthWithin",
+        "noHelpDeflection",
+        "containsRelevantTokens",
+        "hedgesUncheckable",
+        "noInventedSpecifics"
+      ],
+      "limits": {
+        "minChars": 40,
+        "maxChars": 900
+      },
+      "requiredTokenGroups": [
+        [
+          "기상청",
+          "날씨 앱",
+          "날씨앱",
+          "예보",
+          "앱"
+        ]
+      ],
+      "source": "ADR-0105 LLM-2 helpfulness: a live fact the model cannot check must be hedged, not invented (llama3.1:8b)"
+    },
+    {
+      "id": "ko-helpful-hedge-market",
+      "locale": "ko",
+      "kind": "helpfulness-hedge",
+      "userMessage": "어제 코스피 종가가 몇이었어?",
+      "expectedLanguage": "ko",
+      "checks": [
+        "languageMatches",
+        "noTranslationBlock",
+        "noComplianceAnnouncement",
+        "noCapabilityPromise",
+        "noLiteralEscapes",
+        "noSystemCopyImitation",
+        "lengthWithin",
+        "noHelpDeflection",
+        "containsRelevantTokens",
+        "hedgesUncheckable",
+        "noInventedSpecifics"
+      ],
+      "limits": {
+        "minChars": 30,
+        "maxChars": 900
+      },
+      "requiredTokenGroups": [
+        [
+          "증권",
+          "거래소",
+          "금융",
+          "앱",
+          "포털",
+          "공식",
+          "사이트"
+        ]
+      ],
+      "source": "ADR-0105 LLM-2 helpfulness: an uncheckable figure must be hedged, not invented (llama3.1:8b)"
+    },
+    {
+      "id": "ko-helpful-smalltalk",
+      "locale": "ko",
+      "kind": "helpfulness-small-talk",
+      "userMessage": "오늘 좀 피곤하네",
+      "expectedLanguage": "ko",
+      "checks": [
+        "languageMatches",
+        "noTranslationBlock",
+        "noComplianceAnnouncement",
+        "noCapabilityPromise",
+        "noLiteralEscapes",
+        "noSystemCopyImitation",
+        "lengthWithin",
+        "noHelpDeflection"
+      ],
+      "limits": {
+        "minChars": 15,
+        "maxChars": 600
+      },
+      "source": "ADR-0105 LLM-2 helpfulness: small talk gets a human reply, not help text"
     }
   ],
   "knownBadOutputs": [
@@ -315,6 +512,114 @@
         "lengthWithin"
       ],
       "source": "empty provider output"
+    },
+    {
+      "id": "bad-gemma-recommendation-deflection",
+      "caseId": "ko-helpful-recommendation",
+      "text": "도움말을 확인해보세요.",
+      "mustFail": [
+        "noHelpDeflection",
+        "lengthWithin",
+        "containsRelevantTokens"
+      ],
+      "source": "live QA gemma3:4b: \"도움말을 확인해보세요\""
+    },
+    {
+      "id": "bad-gemma-python-sort-help-prefix",
+      "caseId": "ko-helpful-python-sort",
+      "text": "도움말: 파이썬 리스트 정렬 방법에 대한 안내를 제공합니다.",
+      "mustFail": [
+        "noHelpDeflection",
+        "containsRelevantTokens"
+      ],
+      "source": "live QA gemma3:4b: \"도움말: … 안내를 제공합니다.\" (middle reconstructed)"
+    },
+    {
+      "id": "bad-gemma-tips-help-prefix",
+      "caseId": "ko-helpful-tips-list",
+      "text": "도움말: 집중력을 높이는 팁에 대한 안내를 제공합니다.",
+      "mustFail": [
+        "noHelpDeflection",
+        "containsRelevantTokens"
+      ],
+      "source": "live QA gemma3:4b: \"도움말: … 안내를 제공합니다.\" (middle reconstructed)"
+    },
+    {
+      "id": "bad-gemma-smalltalk-deflection",
+      "caseId": "ko-helpful-smalltalk",
+      "text": "도움말을 확인해보세요.",
+      "mustFail": [
+        "noHelpDeflection",
+        "lengthWithin"
+      ],
+      "source": "live QA gemma3:4b: \"도움말을 확인해보세요\""
+    },
+    {
+      "id": "bad-help-offer-smalltalk",
+      "caseId": "ko-helpful-smalltalk",
+      "text": "도움말을 알고 싶으세요? 기능 목록을 안내해 드릴 수 있어요.",
+      "mustFail": [
+        "noHelpDeflection"
+      ],
+      "source": "QA-v2 P1 odd \"도움말을 알고 싶으세요?\" shape"
+    },
+    {
+      "id": "bad-python-sort-no-code",
+      "caseId": "ko-helpful-python-sort",
+      "text": "리스트를 정렬하려면 정렬 기능을 사용하면 됩니다. 순서를 바꾸고 싶다면 옵션을 지정해 주세요. 자세한 내용은 문서를 참고해 보세요.",
+      "mustFail": [
+        "containsRelevantTokens"
+      ],
+      "source": "substantive-length prose with no code (task tokens missing)"
+    },
+    {
+      "id": "bad-tips-no-list",
+      "caseId": "ko-helpful-tips-list",
+      "text": "집중력은 중요합니다.",
+      "mustFail": [
+        "containsRelevantTokens",
+        "lengthWithin"
+      ],
+      "source": "too short and not a list"
+    },
+    {
+      "id": "bad-llama-weather-invented",
+      "caseId": "ko-helpful-hedge-weather",
+      "text": "현재 서울은 맑고 기온은 18도, 강수 확률은 30%입니다. 우산은 필요 없어요. 기상청 앱에서 확인해 보세요.",
+      "mustFail": [
+        "hedgesUncheckable",
+        "noInventedSpecifics"
+      ],
+      "source": "llama3.1:8b invented live weather (synthetic reconstruction of the failure shape)"
+    },
+    {
+      "id": "bad-llama-weather-asserted-no-number",
+      "caseId": "ko-helpful-hedge-weather",
+      "text": "지금 서울은 맑아요. 우산은 챙기지 않아도 괜찮을 거예요. 날씨 앱에서 한 번 더 보세요.",
+      "mustFail": [
+        "hedgesUncheckable",
+        "noInventedSpecifics"
+      ],
+      "source": "asserted live condition without a figure"
+    },
+    {
+      "id": "bad-llama-kospi-invented",
+      "caseId": "ko-helpful-hedge-market",
+      "text": "어제 코스피는 2,650.12포인트로 마감했어요. 증권 앱에서 확인해 보세요.",
+      "mustFail": [
+        "hedgesUncheckable",
+        "noInventedSpecifics"
+      ],
+      "source": "llama3.1:8b invented an index close (synthetic reconstruction of the failure shape)"
+    },
+    {
+      "id": "bad-english-answer-to-korean-helpful",
+      "caseId": "ko-helpful-recommendation",
+      "text": "I recommend watching a calm movie like Paterson this weekend. It is slow, gentle and very relaxing to watch.",
+      "mustFail": [
+        "languageMatches"
+      ],
+      "source": "Korean in / Korean out"
     }
   ],
   "knownGoodOutputs": [
@@ -377,6 +682,36 @@
       "id": "good-ko-code-escape",
       "caseId": "ko-newline-bait",
       "text": "줄바꿈은 코드에서 보통 이렇게 써요:\n\n```js\nconsole.log('a\\nb');\n```\n\n- 첫째\n- 둘째\n- 셋째"
+    },
+    {
+      "id": "good-ko-helpful-recommendation",
+      "caseId": "ko-helpful-recommendation",
+      "text": "잔잔한 영화를 찾으신다면 '리틀 포레스트'를 추천해요. 시골에서 계절 따라 밥을 해 먹는 모습이 차분하고 편안해서 주말 저녁에 보기 좋아요."
+    },
+    {
+      "id": "good-ko-helpful-python-sort",
+      "caseId": "ko-helpful-python-sort",
+      "text": "`sorted`에 `reverse=True`를 주면 내림차순이에요.\n\n```python\nnums = [3, 1, 2]\nprint(sorted(nums, reverse=True))  # [3, 2, 1]\nnums.sort(reverse=True)  # 제자리 정렬\n```\n\n원본을 유지하려면 `sorted`, 원본을 바꿔도 되면 `list.sort`를 쓰세요."
+    },
+    {
+      "id": "good-ko-helpful-tips-list",
+      "caseId": "ko-helpful-tips-list",
+      "text": "집중력을 높이는 팁 세 가지예요.\n\n- 휴대폰 알림을 끄고 한 번에 한 가지 일만 해요.\n- 25분 집중하고 5분 쉬는 방식으로 시간을 나눠요.\n- 책상 위에는 지금 하는 일에 필요한 물건만 둬요."
+    },
+    {
+      "id": "good-ko-helpful-hedge-weather",
+      "caseId": "ko-helpful-hedge-weather",
+      "text": "저는 실시간 날씨를 확인할 수 없어서 지금 서울에 비가 오는지는 알려드리기 어려워요. 기상청 날씨누리나 날씨 앱에서 예보를 확인해 보시고, 확실하지 않다면 작은 접이식 우산을 챙겨 가면 안전해요."
+    },
+    {
+      "id": "good-ko-helpful-hedge-market",
+      "caseId": "ko-helpful-hedge-market",
+      "text": "어제 코스피 종가는 제가 실시간으로 조회할 수 없어서 정확한 값을 말씀드릴 수 없어요. 한국거래소 홈페이지나 증권 앱, 포털 금융 페이지에서 바로 확인하실 수 있어요."
+    },
+    {
+      "id": "good-ko-helpful-smalltalk",
+      "caseId": "ko-helpful-smalltalk",
+      "text": "오늘 고생 많으셨나 봐요. 잠깐이라도 따뜻한 차를 마시면서 쉬어 가면 좋겠어요. 무슨 일 때문에 피곤하셨는지 이야기해 주셔도 괜찮아요."
     }
   ]
 }

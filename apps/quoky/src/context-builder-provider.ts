@@ -1,8 +1,12 @@
 import {
   ContextBuilder,
+  CuratedExampleSelector,
   DefaultMemoryRetriever,
+  LEARNING_EXAMPLE_VECTOR_COLLECTION,
   SemanticRecallScorer,
+  localOnlyProviderSelector,
   type ContextBuilderConfig,
+  type LearningRepository,
   type Logger,
   type MemoryManager,
   type MemoryRepository,
@@ -30,6 +34,19 @@ export interface ProductionSemanticRecallOptions {
 }
 
 /**
+ * Owner-curated example layer (ADR-0107 D5/D6, LRN-2). Passed only when `QUOKY_LEARNING_EXAMPLES_ENABLED=true`
+ * (default false); without it the bundle carries no examples and prompts stay byte-identical to v2. The examples are
+ * ranked by the local embedding scorer when `semanticRecall` is also composed (`QUOKY_EMBEDDING_ENABLED=true`) and
+ * lexically otherwise. Example text is `LOCAL_ONLY`, so the scorer may use only an `EMBEDDING` provider that declares
+ * `LOCAL` execution, and caches vectors (no text) in its own collection. Whether an example reaches a prompt is decided
+ * later, by the composer, from the resolved chat provider's declared locality.
+ */
+export interface ProductionCuratedExampleOptions {
+  learning: Pick<LearningRepository, 'list'>;
+  logger?: Logger;
+}
+
+/**
  * Construct the production ContextBuilder while preserving the storage provider's
  * post-init repository ownership. Nest creates application services before
  * SqliteStorageProvider.init(), so each operation must resolve `memories` lazily.
@@ -39,6 +56,7 @@ export function createProductionContextBuilder(
   storage: StorageProvider,
   config: ContextBuilderConfig,
   semanticRecall?: ProductionSemanticRecallOptions,
+  curatedExamples?: ProductionCuratedExampleOptions,
 ): ContextBuilder {
   const repository: MemoryRepository = {
     get: (id) => storage.memories.get(id),
@@ -68,5 +86,28 @@ export function createProductionContextBuilder(
           ),
         },
   );
-  return new ContextBuilder(memory, config, retriever);
+  const exampleSelector =
+    curatedExamples === undefined
+      ? undefined
+      : new CuratedExampleSelector({
+          learning: curatedExamples.learning,
+          ...(semanticRecall === undefined
+            ? {}
+            : {
+                semanticScorer: new SemanticRecallScorer(
+                  {
+                    selector: localOnlyProviderSelector(semanticRecall.selector),
+                    vectors: semanticRecall.vectors,
+                    ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
+                  },
+                  {
+                    collection: LEARNING_EXAMPLE_VECTOR_COLLECTION,
+                    maxNewEmbeddingsPerTurn: semanticRecall.maxNewPerTurn,
+                    embeddingTimeoutMs: semanticRecall.timeoutMs,
+                  },
+                ),
+              }),
+          ...(curatedExamples.logger === undefined ? {} : { logger: curatedExamples.logger }),
+        });
+  return new ContextBuilder(memory, config, retriever, exampleSelector);
 }

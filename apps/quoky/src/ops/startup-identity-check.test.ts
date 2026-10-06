@@ -1,14 +1,17 @@
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { LogFields, Logger } from '@quoky/core';
 import { DiscordPlatformAdapter } from '@quoky/adapter-discord';
 import { describeStartupFailure } from '../bootstrap-preflight';
 import { startupExitCode } from './exit-codes';
 import {
+  applyInboundGate,
   compareStartupIdentity,
   startupIdentityExpectation,
   verifyStartupIdentity,
 } from './startup-identity-check';
-import type { ConnectedIdentityFacts, ConnectedIdentityReader } from './startup-identity-check';
+import type { ConnectedIdentityFacts, ConnectedIdentityReader, InboundGateTarget } from './startup-identity-check';
 
 const BOT = '888888888888888888';
 const OTHER_BOT = '777777777777777777';
@@ -147,5 +150,16 @@ describe('verifyStartupIdentity (ADR-0102 D5)', () => {
       new RecordingLogger(),
     );
     expect(typeof adapter.readConnectedIdentity).toBe('function');
+  });
+
+  it('the Discord adapter takes the inbound gate, and main.ts hands it over before the platform starts', () => {
+    const adapter: InboundGateTarget = new DiscordPlatformAdapter({ token: 'unused', ownerIds: [] }, new RecordingLogger());
+    expect(applyInboundGate(adapter, Promise.resolve(true))).toBe(true);
+    expect(applyInboundGate({ platform: 'other' }, Promise.resolve(true))).toBe(false);
+    expect(applyInboundGate(undefined, Promise.resolve(true))).toBe(false);
+    const main = readFileSync(path.join(__dirname, '..', 'main.ts'), 'utf8');
+    const handOver = main.indexOf('applyInboundGate(platform, inboundGate)');
+    expect(handOver).toBeGreaterThan(main.indexOf('const inboundGate'));
+    expect(handOver).toBeLessThan(main.indexOf('await platform.start()'));
   });
 });

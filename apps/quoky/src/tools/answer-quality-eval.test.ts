@@ -8,6 +8,7 @@ import {
   buildCaseRequest,
   buildPlan,
   canonicalJson,
+  checkOutputForCase,
   checkSavedOutputs,
   computePlanDigest,
   loadFixtures,
@@ -51,6 +52,11 @@ describe('fixtures', () => {
       'capability-request',
       'bare-approval-as-chat',
       'literal-newline-bait',
+      'helpfulness-recommendation',
+      'helpfulness-howto-coding',
+      'helpfulness-tips-list',
+      'helpfulness-hedge',
+      'helpfulness-small-talk',
     ]) {
       expect(kinds.has(kind), kind).toBe(true);
     }
@@ -65,6 +71,44 @@ describe('fixtures', () => {
     expect(texts).toContain('승인이 접수되었습니다.');
     expect(texts).toContain('(Translated from Korean)');
     expect(texts).toContain('\\n');
+  });
+
+  it('record the live gemma3:4b non-answers as known-bad and gate every helpfulness case on them', () => {
+    const bad = fixtures.knownBadOutputs.map((b) => b.text);
+    expect(bad).toContain('도움말을 확인해보세요.');
+    expect(bad.some((text) => text.startsWith('도움말:') && text.includes('안내를 제공합니다.'))).toBe(true);
+    const helpful = fixtures.cases.filter((c) => c.kind.startsWith('helpfulness-'));
+    expect(helpful.length).toBeGreaterThanOrEqual(6);
+    for (const testCase of helpful) {
+      expect(testCase.checks, testCase.id).toContain('noHelpDeflection');
+      expect(testCase.checks, testCase.id).toContain('languageMatches');
+      expect(testCase.expectedLanguage, testCase.id).toBe('ko');
+      expect(testCase.limits?.minChars, testCase.id).toBeGreaterThanOrEqual(15);
+    }
+    for (const testCase of helpful.filter((c) => c.kind === 'helpfulness-hedge')) {
+      expect(testCase.checks).toEqual(expect.arrayContaining(['hedgesUncheckable', 'noInventedSpecifics']));
+    }
+    const sortCase = caseById('ko-helpful-python-sort');
+    expect(sortCase.requiredTokenGroups?.flat()).toEqual(expect.arrayContaining(['sorted', 'reverse', '`']));
+    const nonAnswer = checkOutputForCase(caseById('ko-helpful-recommendation'), '도움말을 확인해보세요.');
+    expect(nonAnswer.filter((r) => !r.passed).map((r) => r.name)).toEqual(
+      expect.arrayContaining(['noHelpDeflection', 'lengthWithin', 'containsRelevantTokens']),
+    );
+  });
+
+  it('reject token-group and hedge-pairing mistakes in helpfulness cases', () => {
+    const broken: AnswerQualityFixtures = {
+      ...fixtures,
+      cases: [
+        { ...caseById('ko-helpful-python-sort'), id: 'no-groups', requiredTokenGroups: [] },
+        { ...caseById('ko-helpful-hedge-weather'), id: 'unpaired', checks: ['languageMatches', 'noInventedSpecifics'] },
+      ],
+      knownBadOutputs: [],
+      knownGoodOutputs: [],
+    };
+    const problems = validateFixtures(broken);
+    expect(problems.some((p) => p.includes('no-groups') && p.includes('requiredTokenGroups'))).toBe(true);
+    expect(problems.some((p) => p.includes('unpaired') && p.includes('hedgesUncheckable'))).toBe(true);
   });
 
   it('are rejected when malformed or when a known-bad output is not flagged', () => {

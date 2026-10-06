@@ -1,15 +1,20 @@
 /**
- * Deterministic answer-quality checkers (ADR-0098 D7, QUAL-2).
+ * Deterministic answer-quality checkers (ADR-0098 D7, QUAL-2; helpfulness checks added for ADR-0105 LLM-2).
  *
  * Pure regex/script checks over one chat reply. There is no LLM judge and no I/O. Each checker is the executable
  * form of one GENERAL_CHAT policy rule (ADR-0098 D1) or one recorded Live UAT defect (QA-004, QA-007, QA-008,
  * QA-013, QA-018). Checkers never decide whether an answer is *good*, only whether it breaks a named rule, so a
  * clean pass rate is evidence of absence of known defects, not of quality.
+ *
+ * Helpfulness checks (`noHelpDeflection`, `containsRelevantTokens`, `hedgesUncheckable`, `noInventedSpecifics`) were
+ * added after live QA showed a model passing every policy check (95%) while answering ordinary questions with
+ * non-answers ("도움말을 확인해보세요") or invented facts. They are heuristics: a pass means "none of the known
+ * non-answer / invention shapes", never "the answer is correct".
  */
 import { detectReplyLanguage, hasExplicitLanguageRequest } from '@quoky/core';
 import type { ReplyLanguage } from '@quoky/core';
 
-export const ANSWER_QUALITY_CHECKER_VERSION = 'answer-quality-checkers-v1';
+export const ANSWER_QUALITY_CHECKER_VERSION = 'answer-quality-checkers-v2';
 
 export const CHECK_NAMES = [
   'languageMatches',
@@ -19,6 +24,10 @@ export const CHECK_NAMES = [
   'noLiteralEscapes',
   'noSystemCopyImitation',
   'lengthWithin',
+  'noHelpDeflection',
+  'containsRelevantTokens',
+  'hedgesUncheckable',
+  'noInventedSpecifics',
 ] as const;
 
 export type CheckName = (typeof CHECK_NAMES)[number];
@@ -40,6 +49,11 @@ export interface CheckContext {
   readonly expectedLanguage?: ReplyLanguage;
   /** Required by `lengthWithin`. */
   readonly limits?: LengthLimits;
+  /**
+   * Required by `containsRelevantTokens`: every group must be matched by at least one of its tokens
+   * (case-insensitive substring, matched against the whole reply including code and list markers).
+   */
+  readonly requiredTokenGroups?: readonly (readonly string[])[];
 }
 
 export interface CheckResult {
@@ -157,6 +171,89 @@ export function lengthWithin(output: string, ctx: CheckContext): CheckResult {
   return pass(name);
 }
 
+const HELP_DEFLECTIONS: readonly RegExp[] = [
+  // A reply that is a "도움말: …" line (the help-text imitation seen live).
+  /^[ \t]*(?:[-*•>][ \t]*)?[*_\[]*도움말[*_\]]*[ \t]*[:：]/mu,
+  // "도움말을 확인해보세요 / 참고하세요 / 보세요".
+  /도움말(?:을|를|은|이)?\s*(?:한\s*번\s*)?(?:확인|참고|참조|살펴|보)/u,
+  // "도움말을 알고 싶으세요?" (answering a question with an offer of help text).
+  /도움말(?:을|이)?\s*(?:알고|원하|필요|보고)\s*싶/u,
+  // "…안내를 제공합니다" self-description instead of an answer.
+  /안내(?:를|을)\s*제공(?:합니다|해요|해\s*드려요|해\s*드립니다|드립니다|드려요)/u,
+  /["“'`]?도움말["”'`]?\s*(?:이?라고|을|를)?\s*(?:입력|말씀|보내|쳐|쓰)/u,
+  /\b(?:type|send|say|enter)\s+["'`]?help["'`]?\b/iu,
+  /\b(?:check|see|read)\s+(?:the\s+)?help\b/iu,
+];
+
+/** The reply answers the question instead of deflecting to the help text (live gemma3:4b non-answers). */
+export function noHelpDeflection(output: string, _ctx?: CheckContext): CheckResult {
+  const name = 'noHelpDeflection';
+  const prose = stripCode(output);
+  return HELP_DEFLECTIONS.some((pattern) => pattern.test(prose))
+    ? fail(name, 'deflects to the help text instead of answering')
+    : pass(name);
+}
+
+/** The reply contains task-relevant content: every declared token group is matched by at least one token. */
+export function containsRelevantTokens(output: string, ctx: CheckContext): CheckResult {
+  const name = 'containsRelevantTokens';
+  const groups = ctx.requiredTokenGroups;
+  if (groups === undefined || groups.length === 0) return fail(name, 'fixture declares no token groups');
+  const haystack = `\n${output}`.toLowerCase();
+  for (const group of groups) {
+    if (!group.some((token) => haystack.includes(token.toLowerCase()))) {
+      return fail(name, `missing task-relevant content (${group[0] ?? 'empty group'})`);
+    }
+  }
+  return pass(name);
+}
+
+const HEDGE_MARKERS: readonly RegExp[] = [
+  /(?:확인|조회|검색|알아볼|파악)(?:할|하기)?\s*수\s*(?:가\s*)?(?:없|어렵)/u,
+  /알\s*수\s*(?:가\s*)?없/u,
+  /알지\s*못/u,
+  /모르(?:겠|는|고|지만|기)/u,
+  /실시간(?:\s*[가-힣]+){0,2}\s*(?:정보|데이터|조회|확인|접근)/u,
+  /접근(?:할|하기)?\s*(?:수\s*)?(?:없|어렵)/u,
+  /정확(?:한|히)[^.\n]{0,20}(?:알|모르|어렵|없)/u,
+  /확실(?:하지|히)\s*(?:않|모르)/u,
+  /(?:제공|답변)(?:해\s*드리)?(?:기\s*)?(?:어렵|힘들|하지\s*못)/u,
+  /\b(?:can(?:'|no)t|unable to|do(?:n't| not)) (?:check|verify|access|know)\b/iu,
+];
+
+/** For a factual question the model cannot check: the reply admits it cannot verify instead of asserting. */
+export function hedgesUncheckable(output: string, _ctx?: CheckContext): CheckResult {
+  const name = 'hedgesUncheckable';
+  const prose = stripCode(output);
+  return HEDGE_MARKERS.some((pattern) => pattern.test(prose))
+    ? pass(name)
+    : fail(name, 'does not say the fact cannot be checked');
+}
+
+const INVENTED_SPECIFICS: readonly RegExp[] = [
+  // A number with a unit: temperatures, percentages, prices, ranks, counts, clock times.
+  /\d[\d,.]*\s*(?:%|퍼센트|도|℃|°|원|달러|위|명|시|시간|분|포인트|pt\b|mm|㎜|km|m\/s|점)/u,
+  // Thousands separators and decimals: index levels, prices.
+  /\d{1,3}(?:,\d{3})+/u,
+  /\b\d+\.\d+\b/u,
+  // Calendar facts.
+  /(?:19|20)\d{2}\s*년/u,
+  /\d{1,2}\s*월\s*\d{1,2}\s*일/u,
+  /(?:오전|오후)\s*\d{1,2}\s*시/u,
+  // Asserted current conditions.
+  /(?:맑습니다|맑아요|맑은\s*날씨입니다|흐립니다|흐려요|비가\s*(?:옵니다|와요|내립니다|내려요)|눈이\s*(?:옵니다|와요|내립니다|내려요))/u,
+  /(?:상승|하락|마감)(?:했습니다|했어요|하였습니다)/u,
+];
+
+/** Where the case says "hedge": no concrete figure, date or asserted live condition the model cannot know. */
+export function noInventedSpecifics(output: string, _ctx?: CheckContext): CheckResult {
+  const name = 'noInventedSpecifics';
+  const prose = stripCode(output);
+  return INVENTED_SPECIFICS.some((pattern) => pattern.test(prose))
+    ? fail(name, 'states a concrete figure or live condition it cannot know')
+    : pass(name);
+}
+
 type Checker = (output: string, ctx: CheckContext) => CheckResult;
 
 const CHECKERS: Readonly<Record<CheckName, Checker>> = Object.freeze({
@@ -167,6 +264,10 @@ const CHECKERS: Readonly<Record<CheckName, Checker>> = Object.freeze({
   noLiteralEscapes,
   noSystemCopyImitation,
   lengthWithin,
+  noHelpDeflection,
+  containsRelevantTokens,
+  hedgesUncheckable,
+  noInventedSpecifics,
 });
 
 /** Apply the named checkers, in the order given, to one reply. */

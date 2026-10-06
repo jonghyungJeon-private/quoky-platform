@@ -21,6 +21,7 @@
     { "path": "../../packages/connector-github" },
     { "path": "../../packages/tool-mcp" },
     { "path": "../../packages/connector-jira" },
-    { "path": "../../packages/connector-slack" }
+    { "path": "../../packages/connector-slack" },
+    { "path": "../../packages/connector-calendar-google" }
   ]
 }
