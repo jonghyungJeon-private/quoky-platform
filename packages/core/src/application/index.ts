@@ -156,6 +156,8 @@ export * from './local-continuity-admission-coordinator';
 export * from './trusted-current-unavailability-observation';
 export * from './canonical-provider-reachability-observation';
 export { routingContextDigest } from './routing-context-digest';
+// ADR-0111 D3: adapters run the same ADR-0097 credential guard on inbound text attachments.
+export { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
 // Personal v2 track sub-barrels (ADR-0096 D8). Each track exports its modules from its own sub-barrel only.
 export * from './credential-override';
 export * from './chat-policy';

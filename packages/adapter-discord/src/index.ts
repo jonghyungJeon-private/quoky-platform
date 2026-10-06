@@ -7,6 +7,8 @@ import type { NotificationChannel, NotificationSendOptions } from './notificatio
 import { isAdmittedReaction, toRating } from './reactions';
 import { readConnectedIdentity } from './connected-identity';
 import type { DiscordConnectedIdentity } from './connected-identity';
+import { AttachmentIntake, renderAttachmentIntakeNote, summarizeAttachmentIntake } from './attachments';
+import type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
 
 export {
   chunkText,
@@ -38,10 +40,23 @@ export {
 } from './connected-identity';
 export type { DiscordConnectedIdentity, IdentityClientView } from './connected-identity';
 export type { ReactionAdmissionInput } from './reactions';
+export {
+  ATTACHMENT_CDN_HOSTS,
+  ATTACHMENT_MAX_COUNT,
+  ATTACHMENT_SWEEP_AGE_MS,
+  AttachmentIntake,
+  classifyAttachment,
+  DEFAULT_ATTACHMENT_TEMP_ROOT,
+  IMAGE_ATTACHMENT_MAX_BYTES,
+  renderAttachmentIntakeNote,
+  TEXT_ATTACHMENT_MAX_BYTES,
+} from './attachments';
+export type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
 import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
   ConversationContext,
+  InboundAttachment,
   InboundMessage,
   InboundMessageHandler,
   Logger,
@@ -77,6 +92,15 @@ export interface DiscordConfig {
   channelDelivery?: boolean;
 }
 
+/** Optional collaborators (test seams); the composition root may omit them. */
+export interface DiscordAdapterOptions {
+  /** ADR-0111 attachment intake options (fetch seam, temp directory). */
+  readonly attachments?: AttachmentIntakeOptions;
+}
+
+/** How often the runner-owned attachment temp directory is swept (ADR-0111 D2: files older than 10 minutes). */
+const ATTACHMENT_SWEEP_INTERVAL_MS = 60_000;
+
 /** Discord typing indicator lasts ~10s; refresh under that while we work. */
 const TYPING_REFRESH_MS = 8_000;
 /** Safety cap so a typing loop can never leak (≈ covers the 120s CLI timeout). */
@@ -101,11 +125,17 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
   private feedbackHandler?: PlatformFeedbackHandler;
   /** Active self-refreshing typing loops, keyed by target channel/thread id. */
   private readonly typingTimers = new Map<string, ReturnType<typeof setInterval>>();
+  /** ADR-0111: bounded intake for admitted messages' attachments. */
+  private readonly attachmentIntake: AttachmentIntake;
+  private attachmentSweepTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly config: DiscordConfig,
     private readonly logger: Logger,
-  ) {}
+    options: DiscordAdapterOptions = {},
+  ) {
+    this.attachmentIntake = new AttachmentIntake(options.attachments);
+  }
 
   onMessage(handler: InboundMessageHandler): void {
     this.messageHandler = handler;
@@ -137,6 +167,12 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     });
     this.client = client;
 
+    // ADR-0111 D2: leftovers from an earlier run are swept now, then every minute (files older than 10 minutes).
+    void this.attachmentIntake.sweep();
+    const sweepTimer = setInterval(() => void this.attachmentIntake.sweep(), ATTACHMENT_SWEEP_INTERVAL_MS);
+    sweepTimer.unref?.();
+    this.attachmentSweepTimer = sweepTimer;
+
     client.on(Events.MessageCreate, (message) => {
       void this.handleMessageCreate(message);
     });
@@ -153,6 +189,9 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
   async stop(): Promise<void> {
     for (const timer of this.typingTimers.values()) clearInterval(timer);
     this.typingTimers.clear();
+    if (this.attachmentSweepTimer) clearInterval(this.attachmentSweepTimer);
+    this.attachmentSweepTimer = undefined;
+    await this.attachmentIntake.dispose();
     await this.client?.destroy();
     this.client = undefined;
   }
@@ -391,12 +430,22 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       if (!this.isAdmitted(message)) return;
       const handler = this.messageHandler;
       if (!handler) return;
+      const sources = readAttachmentSources(message);
       this.logger.info('message received', {
         messageId: message.id,
         channelId: message.channelId,
         userId: message.author.id,
+        ...(sources.length > 0 ? { attachmentCount: sources.length } : {}),
       });
-      await handler(this.toInbound(message));
+      // ADR-0111 D2: attachment intake only AFTER the ADR-0091 gate above; a dropped message downloads nothing.
+      const intake = sources.length > 0 ? await this.attachmentIntake.intake(sources) : undefined;
+      try {
+        if (intake) await this.reportAttachmentIntake(message, intake);
+        await handler(this.toInbound(message, intake?.attachments));
+      } finally {
+        // ADR-0111 D2: temp files live only for the turn.
+        await intake?.release();
+      }
     } catch (err) {
       this.logger.error('message handling failed', {
         error: err instanceof Error ? err.message : String(err),
@@ -473,8 +522,28 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     return channel.isThread() && channel.parentId !== null && channelIds.includes(channel.parentId);
   }
 
+  /**
+   * ADR-0111 D2/D3: logs content-free counts and, when an attachment was not taken in, posts one deterministic note
+   * naming it and why (best-effort, no mentions). Never echoes attachment content.
+   */
+  private async reportAttachmentIntake(message: Message, intake: AttachmentIntakeResult): Promise<void> {
+    this.logger.info('attachment intake', { messageId: message.id, ...summarizeAttachmentIntake(intake.attachments) });
+    const note = renderAttachmentIntakeNote(intake.attachments);
+    if (!note) return;
+    try {
+      const channel = await this.fetchChannel(message.channelId);
+      if (!channel?.isSendable()) return;
+      await channel.send({ content: note, allowedMentions: { parse: [] } });
+    } catch (err) {
+      this.logger.warn('attachment intake note send failed', {
+        channelId: message.channelId,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+    }
+  }
+
   /** Translate a Discord Message into a normalized InboundMessage. */
-  private toInbound(message: Message): InboundMessage {
+  private toInbound(message: Message, attachments?: readonly InboundAttachment[]): InboundMessage {
     const inThread = message.channel.isThread();
     const channelId = inThread ? (message.channel.parentId ?? message.channelId) : message.channelId;
     const threadId = inThread ? message.channelId : undefined;
@@ -491,6 +560,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       id: message.id,
       context,
       text: message.content,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
       receivedAt: now(),
     };
   }
@@ -499,4 +569,16 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     if (!this.client) return null;
     return this.client.channels.fetch(id).catch(() => null);
   }
+}
+
+/** Metadata of a Discord message's attachments, in upload order (no content, no download). */
+function readAttachmentSources(message: Message): AttachmentSource[] {
+  const collection = message.attachments;
+  if (!collection || typeof collection.values !== 'function') return [];
+  return [...collection.values()].map((attachment) => ({
+    name: attachment.name,
+    contentType: attachment.contentType,
+    size: attachment.size,
+    url: attachment.url,
+  }));
 }
