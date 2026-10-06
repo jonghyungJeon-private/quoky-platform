@@ -16758,3 +16758,10 @@ OPS-2b merge (no-bypass extraction).
   coordinated clauses, "Do not cancel A and reschedule B") are misclassified. Accepted because both failure modes are
   harmless: a truthful "calendar writes are off, nothing changed" reply, or ordinary chat guarded by the DET
   internal-action claim guard; and once writes ship (CWR-2) every write still needs an exact-payload one-time approval.
+
+### ADR-0096 D6 amendment — help budget 14 lines (2026-10-07)
+
+- **Status:** Approved by the Product Owner on 2026-10-07 ("도움말 14줄 승인할게").
+- **Change:** the contributed help reply bound moves from 12 × 120 characters to **14 × 120** characters (per-line bound
+  unchanged), because the v3 write flows (CWR-2: Jira, Slack, calendar) add usage lines on top of a help reply that was
+  already at 12/12 after CAL-2. The INT acceptance test pins the new bound; truncation behaviour is unchanged.
