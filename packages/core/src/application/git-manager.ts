@@ -73,6 +73,35 @@ export class GitPushBlockedError extends Error {
   }
 }
 
+/** Coarse, secret-free class of a failed git remote step — safe to log (a fixed enum, never raw stderr). */
+export type GitFailureReasonClass =
+  | 'timeout'
+  | 'rejected-non-fast-forward'
+  | 'auth'
+  | 'network'
+  | 'remote-not-found'
+  | 'other';
+
+/**
+ * Classify a git failure into a {@link GitFailureReasonClass} from the (already sanitized) provider error message.
+ * Only the fixed class is returned — the message/stderr itself is never echoed, so no URL or token can leak.
+ */
+export function classifyGitFailure(err: unknown): GitFailureReasonClass {
+  const m = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  if (/timed out after \d+\s*ms/i.test(m)) return 'timeout';
+  if (/non-fast-forward|fetch first|\[rejected\]|tip of your current branch is behind|updates were rejected/i.test(m)) {
+    return 'rejected-non-fast-forward';
+  }
+  if (/authentication failed|could not read (username|password)|permission denied|\b40[13]\b|invalid credentials|terminal prompts disabled/i.test(m)) {
+    return 'auth';
+  }
+  if (/repository not found|does not appear to be a git repository|\b404\b|not found/i.test(m)) return 'remote-not-found';
+  if (/could not resolve host|unable to access|failed to connect|connection (timed out|refused|reset)|network is unreachable|ssl|tls|unexpected disconnect|early eof/i.test(m)) {
+    return 'network';
+  }
+  return 'other';
+}
+
 /** Reject an absolute / `..` traversal / empty commit pathspec (ADR-0046 defensive gate). */
 function isUnsafeCommitPath(p: string): boolean {
   const t = typeof p === 'string' ? p.trim() : '';

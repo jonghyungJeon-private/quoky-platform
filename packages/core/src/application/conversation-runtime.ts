@@ -35,6 +35,7 @@ import {
   GitMainSyncBlockedError,
   GitMainSyncUnverifiedError,
   GitPushBlockedError,
+  classifyGitFailure,
 } from './git-manager';
 import {
   ApprovalStatus,
@@ -5140,11 +5141,19 @@ export class ConversationRuntime {
       // (composePushExecutionUnavailable). Any OTHER throw stays the conservative could-not-complete / check-remote
       // reply (never claims "not pushed"). Both keep PUSH_APPROVED and never set GIT_PUSHED (CA #2/#11).
       if (err instanceof GitPushBlockedError) {
-        this.logPushExecutionFailed(session, anchor, 'git push blocked pre-mutation (App-auth credential/remote preflight)');
+        this.logPushExecutionFailed(session, anchor, 'git push blocked pre-mutation (App-auth credential/remote preflight)', err);
         return this.failComposed(message, session, this.deps.composer.composePushExecutionUnavailable(message.context));
       }
-      this.logPushExecutionFailed(session, anchor, 'git push failed');
-      return this.failComposed(message, session, this.deps.composer.composePushExecutionFailed(message.context));
+      this.logPushExecutionFailed(session, anchor, 'git push failed', err);
+      // A timed-out push may or may not have reached the remote (at/after-mutation → Unverified, never "not pushed").
+      const timedOut = classifyGitFailure(err) === 'timeout';
+      return this.failComposed(
+        message,
+        session,
+        timedOut
+          ? this.deps.composer.composePushExecutionTimedOut(message.context)
+          : this.deps.composer.composePushExecutionFailed(message.context),
+      );
     }
 
     // 11. (Constraint 9/10, CA #10) result-integrity gate. On mismatch AFTER a reported success → do NOT
@@ -5205,9 +5214,10 @@ export class ConversationRuntime {
 
   /** Structured, no-content failure log for a push-EXECUTION error (Sprint 3a) — never logs diff/file
    *  content or stderr. Optional field access so it never throws on incomplete context (Sprint 2x lesson). */
-  private logPushExecutionFailed(session: Session, anchor: ApplyPreviewAnchor, reason: string): void {
+  private logPushExecutionFailed(session: Session, anchor: ApplyPreviewAnchor, reason: string, err?: unknown): void {
     this.deps.logger.warn('push execution failed', {
       reason,
+      ...(err !== undefined ? { reasonClass: classifyGitFailure(err) } : {}),
       sessionId: session.id,
       executionPlanId: anchor.executionPlanRef?.id,
       pushApprovalId: anchor.pushApprovalId,
