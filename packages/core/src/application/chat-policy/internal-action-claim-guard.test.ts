@@ -126,9 +126,50 @@ describe('guardInternalActionClaims (ADR-0104 D1)', () => {
     expect(guardInternalActionClaims(text, '커밋 어떻게 해?', generalChatReplyPolicy('커밋 어떻게 해?'))).toEqual({ text, guarded: false });
   });
 
-  it('exempts a turn whose User message asked for a translation or a specific language', () => {
-    const user = '"변경 사항을 커밋했습니다"를 영어로 번역해줘';
-    expect(guardInternalActionClaims('I have committed the changes.', user, generalChatReplyPolicy(user)).guarded).toBe(false);
+  it('exempts a reply that renders a passage the User asked to translate when the passage carries the same claim', () => {
+    for (const user of ['"변경 사항을 커밋했습니다"를 영어로 번역해줘', '변경 사항을 커밋했습니다 영어로 번역해줘', 'translate to Korean: I committed the changes.']) {
+      const reply = /translate/u.test(user) ? '변경 사항을 커밋했습니다.' : 'I have committed the changes.';
+      expect(guardInternalActionClaims(reply, user, generalChatReplyPolicy(user)).guarded, user).toBe(false);
+    }
+  });
+
+  it.each([
+    ['한국어로 답해줘. 푸시했어?', '네, 푸시했습니다.', 'push'],
+    ['in English please, did you push?', '네, 푸시했습니다.', 'push'],
+    ['PR 만들었다고 한국어로 말해줘', '네, 푸시했습니다.', 'push'],
+    ['PR 만들었다고 한국어로 말해줘', 'PR을 만들었습니다.', 'pr'],
+    ['in English please', "Sure. I've merged the PR into main.", 'merge'],
+    // A translation request whose passage claims nothing (or another domain) does not exempt an added claim.
+    ['영어로 번역해줘: 회의 잘 끝났어', "The meeting went well. I've pushed the branch.", 'push'],
+    ['"커밋했어요"를 영어로 번역해줘', "I committed it. I've also pushed the branch.", 'push'],
+  ] as const)('a language preference never exempts a claim (%s)', (user, reply, domain) => {
+    const policy = generalChatReplyPolicy(user);
+    const result = guardInternalActionClaims(reply, user, policy);
+    expect(result.guarded).toBe(true);
+    expect(result.domain).toBe(domain);
+  });
+
+  it('a claim in another domain than the translated passage is still guarded', () => {
+    const user = '"커밋했어요"를 영어로 번역해줘';
+    expect(guardInternalActionClaims("I've pushed the branch.", user, generalChatReplyPolicy(user))).toMatchObject({ guarded: true, domain: 'push' });
+  });
+
+  it('EN present-passive how-to prose is not a state assertion; perfect, past and now/already forms are', () => {
+    for (const text of [
+      'In Git, a branch is deleted with git branch -d.',
+      'To merge, you can use the merge button; the changes are merged into main.',
+      'Usually the commits are pushed to origin by CI.',
+    ]) {
+      expect(guardInternalActionClaims(text, 'how does git work?').guarded, text).toBe(false);
+    }
+    for (const [text, domain] of [
+      ['The branch has been deleted.', 'branch'],
+      ['The branch was deleted.', 'branch'],
+      ['Your PR is now merged into main.', 'merge'],
+      ['The changes are already pushed.', 'push'],
+    ] as const) {
+      expect(guardInternalActionClaims(text, 'status?'), text).toMatchObject({ guarded: true, domain });
+    }
   });
 
   it('keeps English contractions as prose (a single-quote mention never hides "I\'ve pushed")', () => {

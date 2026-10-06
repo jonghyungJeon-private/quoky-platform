@@ -74,7 +74,10 @@ describe('internal-action vocabulary inventory (ADR-0104 D3)', () => {
       const ko = renderInternalActionNotDone(domain, 'ko');
       expect(ko).toContain(`Quoky는 ${INTERNAL_ACTION_VOCABULARY[domain].notDoneKo} 않았어요.`);
       expect(ko).not.toMatch(/맞습니다|맞아요|됐어요\./u);
+      // The same wording answers a question and a User's own report ("커밋했어"): it never contradicts the User.
+      expect(ko).toContain('직접 실행하신 git 작업은 Quoky가 볼 수 없고');
       expect(renderInternalActionNotDone(domain, 'en')).toContain('did not check the repository');
+      expect(renderInternalActionNotDone(domain, 'en')).toContain('Quoky cannot see git actions you run yourself');
     }
   });
 

@@ -12,9 +12,11 @@
  *    ("커밋했습니다", "푸시했어요", "할 일을 추가했습니다", "완료 처리했습니다", "I've pushed", "has been merged");
  *  - completed-state assertions about a domain object ("삭제된 상태가 맞습니다", "완료된 상태로 보입니다", "성공적으로
  *    완성하였습니다"), whose domain comes from the sentence or, failing that, from the current User message.
- * Exemptions (mirroring QUAL-6): fenced/inline code, double-quoted text and block quotes; a translation clause or a
- * turn whose User message asked for a translation; conditionals and how-to forms ("~하면", "~하려면", "~했다면");
- * imperatives addressed to the User ("커밋하세요"); questions; and negations ("하지 않았어요", "I haven't pushed").
+ * Exemptions (mirroring QUAL-6): fenced/inline code, double-quoted text and block quotes; a translation clause; a
+ * reply that renders a passage the User asked to translate when that passage itself carries the same claim ("변경 사항을
+ * 커밋했습니다 영어로 번역해줘"); conditionals and how-to forms ("~하면", "~하려면", "~했다면"); imperatives addressed
+ * to the User ("커밋하세요"); questions; and negations ("하지 않았어요", "I haven't pushed"). A language preference
+ * ("한국어로 답해줘", "in English please") is never an exemption: it does not make a claiming reply a rendering.
  */
 import type { GeneralChatReplyPolicy } from './chat-response-policy';
 import {
@@ -189,9 +191,14 @@ const EN_SPECIAL: ReadonlyArray<readonly [InternalActionDomain, RegExp]> = [
   ],
 ];
 
-/** Impersonal completion / state assertions; the domain comes from the sentence's nouns or the User message. */
+/**
+ * Impersonal completion / state assertions; the domain comes from the sentence's nouns or the User message. Perfect
+ * ("has been merged") and past ("was deleted") passives assert a state; a plain present passive is how-to prose ("In
+ * Git, a branch is deleted with git branch -d", "the changes are merged into main") and asserts a state only with
+ * "now" / "already" ("your PR is now merged").
+ */
 const EN_STATE_ASSERTION =
-  /\b(?:has|have)\s+(?:now\s+|already\s+)?been\s+(?:successfully\s+)?(?:committed|pushed|merged|created|opened|added|completed|marked|set|scheduled|saved|deleted|removed|cancell?ed|applied|updated|posted)\b|\b(?:is|are|was|were)\s+(?:now\s+|already\s+)?(?:successfully\s+)?(?:committed|pushed|merged|deleted|completed|done|cancell?ed|applied|removed)\b/iu;
+  /\b(?:has|have)\s+(?:now\s+|already\s+)?been\s+(?:successfully\s+)?(?:committed|pushed|merged|created|opened|added|completed|marked|set|scheduled|saved|deleted|removed|cancell?ed|applied|updated|posted)\b|\b(?:was|were)\s+(?:now\s+|already\s+)?(?:successfully\s+)?(?:committed|pushed|merged|deleted|completed|done|cancell?ed|applied|removed)\b|\b(?:is|are)\s+(?:now|already)\s+(?:successfully\s+)?(?:committed|pushed|merged|deleted|completed|done|cancell?ed|applied|removed)\b/iu;
 const EN_NEGATION = /\b(?:not|never|n't|no\s+longer)\b/iu;
 /** A subordinate / instruction clause around an English state ("Once the changes are committed, push them"). */
 const EN_SUBORDINATE = /\b(?:if|once|when|whenever|after|before|until|unless|whether|make\s+sure|ensure|check|verify)\b/iu;
@@ -259,9 +266,12 @@ function domainNamedIn(text: string, withVerbs: boolean): InternalActionDomain |
   return null;
 }
 
-/** The domain one sentence claims, or `null`. */
-function sentenceClaim(sentence: string, userMessage: string): InternalActionDomain | null {
-  if (isQuestion(sentence) || TRANSLATION_CLAUSE.test(sentence)) return null;
+/**
+ * The domain one sentence claims, or `null`. `translationClauseExempt` is false only when scanning the User's own
+ * passage to translate, whose sentence carries the "번역해줘" instruction itself.
+ */
+function sentenceClaim(sentence: string, userMessage: string, translationClauseExempt = true): InternalActionDomain | null {
+  if (isQuestion(sentence) || (translationClauseExempt && TRANSLATION_CLAUSE.test(sentence))) return null;
   for (const [domain, pattern] of KO_SPECIAL) if (pattern.test(sentence)) return domain;
   for (const [domain, pattern] of KO_DOMAIN_CLAIMS) if (pattern.test(sentence)) return domain;
   for (const [domain, pattern] of EN_SPECIAL) if (pattern.test(sentence)) return domain;
@@ -278,6 +288,28 @@ function sentenceClaim(sentence: string, userMessage: string): InternalActionDom
   return domainNamedIn(sentence, false) ?? domainNamedIn(userMessage, true);
 }
 
+/** A User message that explicitly asks for a translation ("번역해줘", "translate this"), not a language preference. */
+const TRANSLATION_REQUEST = /번역|translat/iu;
+
+/**
+ * The domains claimed by the passage of a User translation request ("변경 사항을 커밋했습니다 영어로 번역해줘",
+ * "\"푸시했어요\"를 영어로 번역해줘"); empty when the message is not a translation request. Quotes are unwrapped (the
+ * passage is often quoted) but code is still dropped. A reply's claim in one of these domains renders the User's text;
+ * any other claim in the same reply is still Quoky's own.
+ */
+function translatedPassageDomains(userMessage: string): ReadonlySet<InternalActionDomain> {
+  const domains = new Set<InternalActionDomain>();
+  if (typeof userMessage !== 'string' || !TRANSLATION_REQUEST.test(userMessage)) return domains;
+  const passage = userMessage
+    .replace(/`[^`\n]*`/gu, ' ')
+    .replace(/["“”‘’「」『』']/gu, '');
+  for (const sentence of passage.split(/(?<=[.!?。！？])\s+|\n+/u)) {
+    const domain = sentence.trim() === '' ? null : sentenceClaim(sentence.trim(), '', false);
+    if (domain) domains.add(domain);
+  }
+  return domains;
+}
+
 /** What the guard found in one reply. */
 export interface InternalActionClaim {
   readonly domain: InternalActionDomain;
@@ -289,10 +321,18 @@ export interface InternalActionClaim {
  * "브랜치 삭제했어"). Deterministic, provider-neutral and side-effect free.
  */
 export function detectInternalActionClaim(text: string, currentUserMessage = ''): InternalActionClaim | null {
+  return firstClaim(text, currentUserMessage, new Set());
+}
+
+function firstClaim(
+  text: string,
+  currentUserMessage: string,
+  exemptDomains: ReadonlySet<InternalActionDomain>,
+): InternalActionClaim | null {
   if (typeof text !== 'string' || text.trim() === '') return null;
   for (const sentence of claimSentences(text)) {
     const domain = sentenceClaim(sentence, currentUserMessage);
-    if (domain) return Object.freeze({ domain });
+    if (domain && !exemptDomains.has(domain)) return Object.freeze({ domain });
   }
   return null;
 }
@@ -307,16 +347,16 @@ export interface InternalActionGuardResult {
 /**
  * Provider-neutral internal-action claim guard (ADR-0104 D1). Applies to every GENERAL_CHAT and POLICY_SENSITIVE_CHAT
  * reply. A reply that claims a Quoky-domain action is replaced as a whole by the fixed notice in the reply language
- * (the Core reply policy first, then the reply's own script, else Korean). A turn whose User message explicitly asked
- * for a translation or a specific language is exempt (the reply is a rendering of the User's text, not a claim).
+ * (the Core reply policy first, then the reply's own script, else Korean). The only turn-level exemption is a User
+ * message that asks to translate a passage carrying the same claim (the reply renders the User's text). A language
+ * preference ("한국어로 답해줘. 푸시했어?", "in English please, did you push?") is not exempt.
  */
 export function guardInternalActionClaims(
   text: string,
   currentUserMessage: string,
-  replyPolicy?: Pick<GeneralChatReplyPolicy, 'replyLanguage' | 'explicitLanguageRequest'>,
+  replyPolicy?: Pick<GeneralChatReplyPolicy, 'replyLanguage'>,
 ): InternalActionGuardResult {
-  if (replyPolicy?.explicitLanguageRequest === true) return Object.freeze({ text, guarded: false });
-  const claim = detectInternalActionClaim(text, currentUserMessage);
+  const claim = firstClaim(text, currentUserMessage, translatedPassageDomains(currentUserMessage));
   if (!claim) return Object.freeze({ text, guarded: false });
   const language = noticeLanguage(replyPolicy?.replyLanguage, text);
   return Object.freeze({

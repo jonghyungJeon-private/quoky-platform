@@ -234,14 +234,16 @@ export function renderInternalActionClaimNotice(domain: InternalActionDomain, la
 
 /**
  * The state-aware reply for a code-chain status question or completion statement when the anchor shows Quoky did not
- * perform that action in the current code work (ADR-0104 D3, QA-V2-W8-02). It never affirms the User's statement.
+ * perform that action in the current code work (ADR-0104 D3, QA-V2-W8-02). It never affirms the User's statement, and
+ * it never contradicts a User's report of a git action they ran themselves ("커밋했어", "PR 머지 완료"): it says Quoky
+ * cannot see such actions and did not check the repository, so the same wording fits a question and a statement.
  */
 export function renderInternalActionNotDone(domain: CodeChainStatusDomain, language: NoticeLanguage): string {
   const entry = INTERNAL_ACTION_VOCABULARY[domain];
   if (language === 'en') {
-    return `In the current code work Quoky did not ${entry.notDoneEn}, and it did not check the repository either.\n${entry.commandEn}`;
+    return `In the current code work Quoky did not ${entry.notDoneEn}. Quoky cannot see git actions you run yourself, and it did not check the repository.\n${entry.commandEn}`;
   }
-  return `지금 진행 중인 코드 작업에서 Quoky는 ${entry.notDoneKo} 않았어요. 저장소 상태를 직접 확인하지도 않았어요.\n${entry.commandKo}`;
+  return `지금 진행 중인 코드 작업에서 Quoky는 ${entry.notDoneKo} 않았어요. 직접 실행하신 git 작업은 Quoky가 볼 수 없고, 저장소 상태를 확인하지도 않았어요.\n${entry.commandKo}`;
 }
 
 // ── status-turn shape (code-chain domains only) ───────────────────────────────────────────────────────────────

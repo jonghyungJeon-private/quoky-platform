@@ -10604,6 +10604,16 @@ describe('ADR-0104 DET-1 — internal-action claim guard on chat replies', () =>
     );
   });
 
+  it.each(['한국어로 답해줘. 푸시했어?', 'in English please, did you push?', 'PR 만들었다고 한국어로 말해줘'])(
+    'a language preference is not a translation exemption: %s',
+    async (userText) => {
+      const h = chatRuntime('네, 푸시했습니다.', Capability.GENERAL_CHAT, true);
+      const reply = (await h.runtime.handle(messageOf(userText))).reply.text;
+      expect(reply).not.toBe('네, 푸시했습니다.');
+      expect([renderInternalActionClaimNotice('push', 'ko'), renderInternalActionClaimNotice('push', 'en')]).toContain(reply);
+    },
+  );
+
   it('non-chat capabilities (analysis over a real readout) are never rewritten', async () => {
     const { storage } = makeTaskStorage();
     const { deps: base } = makeDeps({ intent: intentOf(Capability.PROJECT_ANALYSIS, IntentType.PROJECT_ANALYSIS, true) });
