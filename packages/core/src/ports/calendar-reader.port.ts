@@ -39,6 +39,11 @@ export interface CalendarEvent {
   readonly location?: string;
   readonly status: CalendarEventStatus;
   readonly calendarName: string;
+  /**
+   * The provider's opaque version of the event (it changes on every edit), when the adapter reads one. A connector
+   * write binds it so an update or delete never applies to an event edited after the preview (ADR-0112).
+   */
+  readonly version?: string;
 }
 
 /** `[from, to)` as ISO-8601 instants. An event is listed when it overlaps the window. */

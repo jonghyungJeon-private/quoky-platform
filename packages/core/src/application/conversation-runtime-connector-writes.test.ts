@@ -252,6 +252,27 @@ function harness(opts: HarnessOptions = {}) {
   /** `session.activeTaskId` as each turn's apply-preview lookup saw it. */
   const applyLookups: Array<string | undefined> = [];
   const enabled = new Set(opts.writers ?? ['comment', 'transition', 'post', 'calendar']);
+  /**
+   * The provider's live state, mutable between preview and execution (drift). The fake writers honour the port
+   * contract: a transition runs only by the bound id while it still leads to the bound status id, and an update /
+   * delete only while the event still matches what was previewed — otherwise NOT_SENT('TARGET_CHANGED').
+   */
+  const live = {
+    transitions: opts.transitions ?? [
+      { id: '21', name: 'Start Progress', toStatus: '진행 중', toStatusId: '3' },
+      { id: '31', name: 'Done', toStatus: '완료', toStatusId: '10002' },
+    ],
+    events: opts.events ?? [WEEKLY, LUNCH],
+  };
+  const eventDrift = (request: CalendarEventUpdateRequest | CalendarEventDeleteRequest): ConnectorWriteOutcome | undefined => {
+    const event = live.events.find((candidate) => candidate.id === request.eventId);
+    if (!event) return connectorWriteNotSent('NOT_FOUND');
+    const { expected } = request;
+    const same =
+      event.allDay === expected.allDay && event.start === expected.start && event.end === expected.end &&
+      (expected.version === undefined || event.version === expected.version);
+    return same ? undefined : connectorWriteNotSent('TARGET_CHANGED');
+  };
   const issueComments: IssueCommentWriter = {
     source: opts.commentSource ?? 'jira',
     allowsIssue: (key) => /^PROJ-\d+$/.test(key),
@@ -265,14 +286,13 @@ function harness(opts: HarnessOptions = {}) {
     allowsIssue: (key) => /^PROJ-\d+$/.test(key),
     async listTransitions(key) {
       writes.listTransitions.push(key);
-      return opts.transitions ?? [
-        { id: '21', name: 'Start Progress', toStatus: '진행 중' },
-        { id: '31', name: 'Done', toStatus: '완료' },
-      ];
+      return live.transitions;
     },
     async transition(request) {
       writes.transition.push(request);
-      return connectorWriteSent(`${request.issueKey}:${request.toStatus}`);
+      const bound = live.transitions.filter((option) => option.id === request.transitionId);
+      if (bound.length !== 1 || bound[0]?.toStatusId !== request.toStatusId) return connectorWriteNotSent('TARGET_CHANGED');
+      return connectorWriteSent(`${request.issueKey}:${request.transitionId}`);
     },
   };
   const channelMessages: ChannelMessageWriter = {
@@ -295,11 +315,11 @@ function harness(opts: HarnessOptions = {}) {
     },
     async updateEvent(request) {
       writes.updateEvent.push(request);
-      return connectorWriteSent(request.eventId);
+      return eventDrift(request) ?? connectorWriteSent(request.eventId);
     },
     async deleteEvent(request) {
       writes.deleteEvent.push(request);
-      return connectorWriteSent(request.eventId);
+      return eventDrift(request) ?? connectorWriteSent(request.eventId);
     },
   };
   const calendarReader: CalendarReader = {
@@ -308,7 +328,7 @@ function harness(opts: HarnessOptions = {}) {
     async listEvents() {
       writes.listEvents++;
       if (opts.calendarReadFails) throw new Error('down');
-      return opts.events ?? [WEEKLY, LUNCH];
+      return live.events;
     },
   };
   const writers: ConnectorWriteWriters = {
@@ -424,7 +444,7 @@ function harness(opts: HarnessOptions = {}) {
   };
   return {
     send, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor,
-    applyLookups,
+    applyLookups, live,
   };
 }
 
@@ -620,10 +640,13 @@ describe('connector writes — Jira transition and Slack post', () => {
     const h = harness();
     const preview = await h.send('PROJ-12 진행 중으로 바꿔줘');
     expect(h.writes.listTransitions).toEqual(['PROJ-12']);
-    expect(preview.reply.text).toContain('바꿀 상태: 진행 중 (전환: Start Progress)');
+    expect(preview.reply.text).toContain('바꿀 상태: 진행 중 (상태 ID 3)');
+    expect(preview.reply.text).toContain('전환: Start Progress (전환 ID 21)');
     await h.send('승인');
-    await h.send('상태 변경 실행');
-    expect(h.writes.transition).toEqual([{ issueKey: 'PROJ-12', toStatus: '진행 중' }]);
+    const sent = await h.send('상태 변경 실행');
+    // The approved ids are what executes — never the status name.
+    expect(h.writes.transition).toEqual([{ issueKey: 'PROJ-12', transitionId: '21', toStatusId: '3' }]);
+    expect(sent.reply.text).toContain('상태를 바꿨어요');
 
     const g = harness();
     const unavailable = await g.send('PROJ-12 상태를 리뷰 중으로 변경해줘');
@@ -694,7 +717,9 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     expect(preview.reply.text).toContain('삭제할 일정: 1:1 면담');
     await h.send('승인');
     await h.send('일정 삭제 실행');
-    expect(h.writes.deleteEvent).toEqual([{ eventId: 'evt-1on1' }]);
+    expect(h.writes.deleteEvent).toEqual([
+      { eventId: 'evt-1on1', expected: { allDay: false, start: ONE_ON_ONE.start, end: ONE_ON_ONE.end } },
+    ]);
     expect(h.writes.updateEvent).toHaveLength(0);
   });
 
@@ -717,6 +742,7 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     expect(h.writes.updateEvent).toEqual([
       {
         eventId: 'evt-weekly',
+        expected: { allDay: false, start: WEEKLY.start, end: WEEKLY.end },
         changes: { time: { allDay: false, start: '2026-10-07T07:00:00.000Z', end: '2026-10-07T08:00:00.000Z', timeZone: SEOUL } },
       },
     ]);
@@ -735,6 +761,130 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     const h = harness({ writers: ['comment'] });
     expect((await h.send('내일 오후 3시에 회의 잡아줘')).reply.text).toBe(CALENDAR_READ_ONLY);
     expect(h.approvals.size).toBe(0);
+  });
+});
+
+describe('connector writes — immutable target binding (ADR-0112, Codex P1)', () => {
+  const TRANSITION_CHANGED = 'Jira 상태 전환 조건이 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.';
+  const EVENT_CHANGED = '일정이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.';
+  const FINISH = [
+    { id: '21', name: 'Start Progress', toStatus: '진행 중', toStatusId: '3' },
+    { id: '31', name: 'Finish', toStatus: 'Done', toStatusId: '10002' },
+  ];
+
+  async function approvedTransition() {
+    const h = harness({ transitions: FINISH });
+    const preview = await h.send('PROJ-12 Done으로 바꿔줘');
+    expect(preview.reply.text).toContain('바꿀 상태: Done (상태 ID 10002)');
+    expect(preview.reply.text).toContain('전환: Finish (전환 ID 31)');
+    const anchor = h.anchorTask()?.metadata?.connectorWriteAnchor as { payload: Record<string, unknown> };
+    // The hashed, approved payload binds the transition and its destination by id (and the names it showed).
+    expect(anchor.payload).toEqual({
+      operation: 'ISSUE_TRANSITION',
+      issueKey: 'PROJ-12',
+      transitionId: '31',
+      transitionName: 'Finish',
+      toStatusId: '10002',
+      toStatus: 'Done',
+    });
+    await h.send('승인');
+    return h;
+  }
+
+  function expectRefusedDrift(h: ReturnType<typeof harness>, text: string, expected: string): void {
+    expect(text).toContain(expected);
+    expect(text).toContain('아무것도 보내지 않았어요');
+    expect(text).not.toMatch(/완료:|바꿨어요|삭제했어요/);
+    const receipts = [...h.receipts.rows.values()];
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ status: 'NOT_SENT', data: { reason: 'TARGET_CHANGED' } });
+  }
+
+  it('Codex scenario: the approved Finish → Done is gone and the name now leads to Closed — NOT_SENT, never a name match', async () => {
+    const h = await approvedTransition();
+    h.live.transitions = [
+      { id: '41', name: 'Done', toStatus: 'Closed', toStatusId: '6' },
+      { id: '42', name: 'Finish', toStatus: 'Closed', toStatusId: '6' },
+    ];
+    const reply = await h.send('상태 변경 실행');
+    expect(h.writes.transition).toEqual([{ issueKey: 'PROJ-12', transitionId: '31', toStatusId: '10002' }]);
+    expectRefusedDrift(h, reply.reply.text, TRANSITION_CHANGED);
+    // Recorded as failed: a repeated phrase sends nothing again.
+    expect((await h.send('상태 변경 실행')).reply.text).toContain('이미 실패로 끝났어요');
+    expect(h.writes.transition).toHaveLength(1);
+  });
+
+  it('the approved transition id still exists but now leads to another status — NOT_SENT', async () => {
+    const h = await approvedTransition();
+    h.live.transitions = [{ id: '31', name: 'Finish', toStatus: 'Closed', toStatusId: '6' }];
+    expectRefusedDrift(h, (await h.send('상태 변경 실행')).reply.text, TRANSITION_CHANGED);
+  });
+
+  it('the approved transition id was removed — NOT_SENT even though the status is still reachable another way', async () => {
+    const h = await approvedTransition();
+    h.live.transitions = [{ id: '99', name: 'Close out', toStatus: 'Done', toStatusId: '10002' }];
+    expectRefusedDrift(h, (await h.send('상태 변경 실행')).reply.text, TRANSITION_CHANGED);
+  });
+
+  it('the bound ids are covered by the approval hash: an anchored id changed after approval never runs', async () => {
+    const h = await approvedTransition();
+    const task = h.anchorTask() as Task;
+    (task.metadata?.connectorWriteAnchor as { payload: { transitionId: string } }).payload.transitionId = '41';
+    h.tasks.set(task.id, task);
+    const reply = await h.send('상태 변경 실행');
+    expect(reply.reply.text).toContain('승인한 요청과 지금 요청이 일치하는지 확인할 수 없어요');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('a preview never binds a transition without a destination status id', async () => {
+    const h = harness({ transitions: [{ id: '31', name: 'Finish', toStatus: 'Done', toStatusId: '' }] });
+    const reply = await h.send('PROJ-12 Done으로 바꿔줘');
+    expect(reply.reply.text).toContain('바꿀 수 있는 상태를 확인하지 못했어요');
+    expect(h.approvals.size).toBe(0);
+  });
+
+  it('a calendar event moved between preview and execution is NOT_SENT; the calendar is not changed', async () => {
+    const h = harness({ events: [WEEKLY, LUNCH] });
+    await h.send('내일 3시 회의 4시로 옮겨줘');
+    await h.send('승인');
+    h.live.events = [{ ...WEEKLY, start: '2026-10-07T08:00:00.000Z', end: '2026-10-07T09:00:00.000Z' }, LUNCH];
+    const reply = await h.send('일정 변경 실행');
+    expect(h.writes.updateEvent[0]?.expected).toEqual({ allDay: false, start: WEEKLY.start, end: WEEKLY.end });
+    expect(reply.reply.text).toContain(EVENT_CHANGED);
+    expect(reply.reply.text).toContain('캘린더는 바꾸지 않았어요');
+    expect(reply.reply.text).not.toContain('일정을 바꿨어요');
+    expect([...h.receipts.rows.values()][0]).toMatchObject({ status: 'NOT_SENT', data: { reason: 'TARGET_CHANGED' } });
+  });
+
+  it('binds the event version: an edit after the preview (same time) refuses a delete; an unchanged one is deleted', async () => {
+    const versioned = { ...WEEKLY, version: '"v1"' };
+    const h = harness({ events: [versioned, LUNCH] });
+    const preview = await h.send('내일 3시 회의 취소해줘');
+    expect(preview.reply.text).toContain('삭제할 일정: 주간 회의');
+    expect(preview.reply.text).toContain('미리보기 그대로일 때만 실행해요');
+    await h.send('승인');
+    h.live.events = [{ ...versioned, title: '주간 회의 (안건 추가)', version: '"v2"' }, LUNCH];
+    const refused = await h.send('일정 삭제 실행');
+    expect(h.writes.deleteEvent).toEqual([
+      { eventId: 'evt-weekly', expected: { allDay: false, start: WEEKLY.start, end: WEEKLY.end, version: '"v1"' } },
+    ]);
+    expect(refused.reply.text).toContain(EVENT_CHANGED);
+
+    const g = harness({ events: [versioned, LUNCH] });
+    await g.send('내일 3시 회의 취소해줘');
+    await g.send('승인');
+    const done = await g.send('일정 삭제 실행');
+    expect(done.reply.text).toContain('일정을 삭제했어요');
+    expect([...g.receipts.rows.values()][0]).toMatchObject({ status: 'SENT' });
+  });
+
+  it('a numbered choice binds the listed event: a change after the listing refuses the execution', async () => {
+    const h = harness({ events: [WEEKLY, ONE_ON_ONE] });
+    await h.send('내일 3시 회의 취소해줘');
+    await h.send('1번');
+    await h.send('승인');
+    h.live.events = [{ ...WEEKLY, end: '2026-10-07T07:30:00.000Z' }, ONE_ON_ONE];
+    expect((await h.send('일정 삭제 실행')).reply.text).toContain(EVENT_CHANGED);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CalendarEventDraft } from '@quoky/core';
+import type { CalendarEventDraft, CalendarEventExpectation } from '@quoky/core';
 import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_READ_WRITE_SCOPE, GOOGLE_OAUTH_TOKEN_URL } from './oauth';
 import { GoogleCalendarWriter, googleCalendarEventIdFor, type GoogleCalendarWriterConfig } from './google-calendar-writer';
 
@@ -182,20 +182,41 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
 });
 
 describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', () => {
-  const single = (): Response => json(200, { id: 'evt123', status: 'confirmed' });
+  const ETAG = '"3181161784712000"';
+  /** The event as the preview listed it (start/end as the reader gives them: UTC instants). */
+  const EXPECTED: CalendarEventExpectation = {
+    allDay: false,
+    start: '2026-10-07T06:00:00.000Z',
+    end: '2026-10-07T07:00:00.000Z',
+    version: ETAG,
+  };
+  const live = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'evt123',
+    etag: ETAG,
+    status: 'confirmed',
+    start: { dateTime: '2026-10-07T15:00:00+09:00' },
+    end: { dateTime: '2026-10-07T16:00:00+09:00' },
+    ...overrides,
+  });
+  const single = (): Response => json(200, live());
 
   it('updates only the changed fields of a single event with sendUpdates=none after a read pre-check', async () => {
     const google = fakeGoogle([single(), json(200, { id: 'evt123', htmlLink: EVENT_LINK })]);
     const outcome = await writer(google.fetchImpl).updateEvent({
       eventId: 'evt123',
+      expected: EXPECTED,
       changes: { title: '회의 (변경)', time: { allDay: true, startDate: '2026-10-08', endDate: '2026-10-09' } },
     });
     expect(outcome).toEqual({ status: 'SENT', externalRef: 'evt123', url: EVENT_LINK });
     const [read, patch] = google.calendarCalls;
     expect(read!.init?.method).toBe('GET');
     expect(read!.url.pathname).toBe('/calendar/v3/calendars/primary/events/evt123');
-    expect(read!.url.searchParams.get('fields')).toBe('id,status,recurrence,recurringEventId');
+    expect(read!.url.searchParams.get('fields')).toBe(
+      'id,etag,status,recurrence,recurringEventId,start(date,dateTime),end(date,dateTime)',
+    );
     expect(patch!.init?.method).toBe('PATCH');
+    // The write is conditional on the approved version: an edit racing the pre-check is refused by Google (412).
+    expect((patch!.init?.headers as Record<string, string>)['If-Match']).toBe(ETAG);
     expect(patch!.url.pathname).toBe('/calendar/v3/calendars/primary/events/evt123');
     expect(patch!.url.searchParams.get('sendUpdates')).toBe('none');
     expect(bodyOf(patch!)).toEqual({
@@ -207,21 +228,21 @@ describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', (
 
   it('allows a single instance of a series but refuses the recurring series itself', async () => {
     const instance = fakeGoogle([
-      json(200, { id: 'evt123_20261007T010000Z', status: 'confirmed', recurringEventId: 'evt123' }),
+      json(200, live({ id: 'evt123_20261007T010000Z', recurringEventId: 'evt123' })),
       new Response(null, { status: 204 }),
     ]);
-    expect(await writer(instance.fetchImpl).deleteEvent({ eventId: 'evt123_20261007T010000Z' })).toEqual({
+    expect(await writer(instance.fetchImpl).deleteEvent({ eventId: 'evt123_20261007T010000Z', expected: EXPECTED })).toEqual({
       status: 'SENT', externalRef: 'evt123_20261007T010000Z',
     });
     expect(instance.calendarCalls[1]!.init?.method).toBe('DELETE');
     expect(instance.calendarCalls[1]!.url.searchParams.get('sendUpdates')).toBe('none');
 
     for (const op of ['update', 'delete'] as const) {
-      const series = fakeGoogle([json(200, { id: 'evt123', status: 'confirmed', recurrence: ['RRULE:FREQ=WEEKLY'] })]);
+      const series = fakeGoogle([json(200, live({ recurrence: ['RRULE:FREQ=WEEKLY'] }))]);
       const calendar = writer(series.fetchImpl);
       const outcome = op === 'update'
-        ? await calendar.updateEvent({ eventId: 'evt123', changes: { title: 'x' } })
-        : await calendar.deleteEvent({ eventId: 'evt123' });
+        ? await calendar.updateEvent({ eventId: 'evt123', expected: EXPECTED, changes: { title: 'x' } })
+        : await calendar.deleteEvent({ eventId: 'evt123', expected: EXPECTED });
       expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'RECURRING_SERIES_REFUSED', retryable: false });
       expect(series.calendarCalls).toHaveLength(1);
     }
@@ -231,12 +252,14 @@ describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', (
     for (const [reply, reason] of [
       [json(404, {}), 'NOT_FOUND'],
       [json(410, {}), 'NOT_FOUND'],
-      [json(200, { id: 'evt123', status: 'cancelled' }), 'NOT_FOUND'],
+      [json(200, live({ status: 'cancelled' })), 'NOT_FOUND'],
       [json(500, {}), 'UNAVAILABLE'],
       [new Error('offline'), 'UNAVAILABLE'],
     ] as const) {
       const google = fakeGoogle([reply]);
-      expect(await writer(google.fetchImpl).deleteEvent({ eventId: 'evt123' })).toEqual({ status: 'NOT_SENT', reason, retryable: false });
+      expect(await writer(google.fetchImpl).deleteEvent({ eventId: 'evt123', expected: EXPECTED })).toEqual({
+        status: 'NOT_SENT', reason, retryable: false,
+      });
       expect(google.calendarCalls).toHaveLength(1);
     }
   });
@@ -247,19 +270,71 @@ describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', (
       tokens += 1;
       return tokenOk();
     });
-    expect(await writer(google.fetchImpl).updateEvent({ eventId: 'evt123', changes: { location: '본사' } })).toEqual({
+    expect(await writer(google.fetchImpl).updateEvent({ eventId: 'evt123', expected: EXPECTED, changes: { location: '본사' } })).toEqual({
       status: 'UNCERTAIN', reason: 'SERVER_ERROR',
     });
     expect(tokens).toBe(2);
     expect(google.calendarCalls.map((call) => call.init?.method)).toEqual(['GET', 'GET', 'PATCH']);
   });
 
-  it('refuses invalid ids or empty changes before any network call', async () => {
+  it('refuses (TARGET_CHANGED) an event that changed after the preview, and never writes it', async () => {
+    const drifts: Array<Record<string, unknown>> = [
+      live({ etag: '"3181161784799999"' }),
+      live({ start: { dateTime: '2026-10-07T16:00:00+09:00' }, end: { dateTime: '2026-10-07T17:00:00+09:00' } }),
+      live({ end: { dateTime: '2026-10-07T16:30:00+09:00' } }),
+      live({ start: { date: '2026-10-07' }, end: { date: '2026-10-08' } }),
+      live({ id: 'evt999' }),
+    ];
+    for (const body of drifts) {
+      for (const op of ['update', 'delete'] as const) {
+        const google = fakeGoogle([json(200, body)]);
+        const calendar = writer(google.fetchImpl);
+        const outcome = op === 'update'
+          ? await calendar.updateEvent({ eventId: 'evt123', expected: EXPECTED, changes: { title: 'x' } })
+          : await calendar.deleteEvent({ eventId: 'evt123', expected: EXPECTED });
+        expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'TARGET_CHANGED', retryable: false });
+        expect(google.calendarCalls).toHaveLength(1);
+      }
+    }
+    // Without a known version, start / end / shape still bind; an all-day expectation compares dates.
+    const allDay: CalendarEventExpectation = { allDay: true, start: '2026-10-07', end: '2026-10-08' };
+    const ok = fakeGoogle([json(200, live({ etag: '"other"', start: { date: '2026-10-07' }, end: { date: '2026-10-08' } })), new Response(null, { status: 204 })]);
+    expect(await writer(ok.fetchImpl).deleteEvent({ eventId: 'evt123', expected: allDay })).toMatchObject({ status: 'SENT' });
+    expect((ok.calendarCalls[1]!.init?.headers as Record<string, string>)['If-Match']).toBeUndefined();
+    const moved = fakeGoogle([json(200, live({ start: { date: '2026-10-08' }, end: { date: '2026-10-09' } }))]);
+    expect(await writer(moved.fetchImpl).deleteEvent({ eventId: 'evt123', expected: allDay })).toMatchObject({ reason: 'TARGET_CHANGED' });
+  });
+
+  it('a 412 on the conditional write (edited after the pre-check) is NOT_SENT TARGET_CHANGED', async () => {
+    for (const op of ['update', 'delete'] as const) {
+      const google = fakeGoogle([single(), json(412, {})]);
+      const calendar = writer(google.fetchImpl);
+      const outcome = op === 'update'
+        ? await calendar.updateEvent({ eventId: 'evt123', expected: EXPECTED, changes: { title: 'x' } })
+        : await calendar.deleteEvent({ eventId: 'evt123', expected: EXPECTED });
+      expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'TARGET_CHANGED', retryable: false });
+      expect(google.calendarCalls).toHaveLength(2);
+    }
+  });
+
+  it('refuses invalid ids, a missing or malformed expectation, or empty changes before any network call', async () => {
     const google = fakeGoogle([]);
     const calendar = writer(google.fetchImpl);
-    expect(await calendar.updateEvent({ eventId: 'evt123', changes: {} })).toMatchObject({ reason: 'INVALID_REQUEST' });
-    expect(await calendar.updateEvent({ eventId: '../other', changes: { title: 'x' } })).toMatchObject({ reason: 'INVALID_REQUEST' });
-    expect(await calendar.deleteEvent({ eventId: '' })).toMatchObject({ reason: 'INVALID_REQUEST' });
+    expect(await calendar.updateEvent({ eventId: 'evt123', expected: EXPECTED, changes: {} })).toMatchObject({ reason: 'INVALID_REQUEST' });
+    expect(await calendar.updateEvent({ eventId: '../other', expected: EXPECTED, changes: { title: 'x' } })).toMatchObject({
+      reason: 'INVALID_REQUEST',
+    });
+    expect(await calendar.deleteEvent({ eventId: '', expected: EXPECTED })).toMatchObject({ reason: 'INVALID_REQUEST' });
+    const malformed = [
+      undefined,
+      { allDay: false, start: 'not a time', end: EXPECTED.end },
+      { allDay: true, start: '2026-10-07T00:00:00Z', end: '2026-10-08' },
+      { ...EXPECTED, version: 'two\nlines' },
+    ] as unknown as CalendarEventExpectation[];
+    for (const expected of malformed) {
+      expect(await calendar.deleteEvent({ eventId: 'evt123', expected })).toMatchObject({ reason: 'INVALID_REQUEST' });
+      expect(await calendar.updateEvent({ eventId: 'evt123', expected, changes: { title: 'x' } })).toMatchObject({ reason: 'INVALID_REQUEST' });
+    }
     expect(google.calendarCalls).toHaveLength(0);
   });
 

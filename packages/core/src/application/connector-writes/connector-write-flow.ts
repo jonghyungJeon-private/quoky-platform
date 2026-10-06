@@ -10,6 +10,7 @@ import {
   isValidConnectorWriteText,
   type CalendarEventChanges,
   type CalendarEventDraft,
+  type CalendarEventExpectation,
   type CalendarEventTime,
   type CalendarEventWriter,
   type ChannelMessageWriter,
@@ -55,6 +56,10 @@ import { connectorWritePayloadSha256 } from './connector-write-payload';
  *   twice. `UNCERTAIN` is never retried; a repeated phrase after any outcome only reports it.
  * - **Never guess.** An update or delete lists the referenced day on the PRIMARY calendar; zero matches is "not found",
  *   several is a numbered choice (next turn only).
+ * - **Immutable targets.** The approved payload (and so its hash) binds identifiers, not names that can drift: a Jira
+ *   transition binds the resolved transition id and destination status id (plus the names the preview showed), a Slack
+ *   post the resolved channel id, a calendar update / delete the event id and the event's previewed start, end and
+ *   provider version. The writer re-checks them before the write and answers `NOT_SENT('TARGET_CHANGED')` on drift.
  * - **Lazy expiry.** An approved grant that is never executed, and a numbered choice that is never answered, lapse after
  *   the ADR-0093 lifetime (`PENDING_APPROVAL_TTL_MS`, from the approval / from the listing): `releaseExpired` closes the
  *   anchor `expired` at the start of the next turn and hands back the pointer it displaced, so a displaced code-change
@@ -104,16 +109,32 @@ export interface ConnectorWriteEventSummary {
   readonly end: string;
   readonly allDay: boolean;
   readonly location?: string;
+  /** The provider's opaque event version at listing time (bound by an update / delete; never shown). */
+  readonly version?: string;
 }
 
-/** EXACTLY what is sent (and hashed). */
+/** EXACTLY what is sent (and hashed). Targets are bound by immutable identifiers (ADR-0112). */
 export type ConnectorWritePayload =
   | { readonly operation: 'ISSUE_COMMENT'; readonly issueKey: string; readonly text: string }
-  | { readonly operation: 'ISSUE_TRANSITION'; readonly issueKey: string; readonly toStatus: string }
+  | {
+      readonly operation: 'ISSUE_TRANSITION';
+      readonly issueKey: string;
+      /** The transition the preview resolved, by id (executed only while it still leads to `toStatusId`). */
+      readonly transitionId: string;
+      readonly transitionName: string;
+      /** The destination status, by id (and the name the preview showed). */
+      readonly toStatusId: string;
+      readonly toStatus: string;
+    }
   | { readonly operation: 'CHANNEL_POST'; readonly channel: string; readonly text: string }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly draft: CalendarEventDraft }
-  | { readonly operation: 'CALENDAR_EVENT_UPDATE'; readonly eventId: string; readonly changes: CalendarEventChanges }
-  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly eventId: string };
+  | {
+      readonly operation: 'CALENDAR_EVENT_UPDATE';
+      readonly eventId: string;
+      readonly expected: CalendarEventExpectation;
+      readonly changes: CalendarEventChanges;
+    }
+  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly eventId: string; readonly expected: CalendarEventExpectation };
 
 /** What the deterministic preview shows (the payload plus display-only facts). */
 export type ConnectorWritePreview =
@@ -122,7 +143,9 @@ export type ConnectorWritePreview =
       readonly operation: 'ISSUE_TRANSITION';
       readonly issueKey: string;
       readonly toStatus: string;
+      readonly toStatusId: string;
       readonly transitionName: string;
+      readonly transitionId: string;
     }
   | { readonly operation: 'CHANNEL_POST'; readonly channelLabel: string; readonly channelId: string; readonly text: string }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly event: CalendarEventDraft; readonly timeZone: string }
@@ -484,13 +507,22 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         }
         const match = matchTransition(options, wanted);
         if (!match) return refused('transition-unavailable', { availableStatuses: availableStatuses(options) });
+        // Bind the resolved transition and its destination by id: names may later mean something else.
+        if (!isNumericId(match.id) || !isNumericId(match.toStatusId)) return refused('transition-lookup-failed');
+        const bound = {
+          issueKey: key,
+          transitionId: match.id,
+          transitionName: match.name,
+          toStatusId: match.toStatusId,
+          toStatus: match.toStatus,
+        };
         return this.propose(
           input,
           family,
           writer.source,
           key,
-          { operation: 'ISSUE_TRANSITION', issueKey: key, toStatus: match.toStatus },
-          { operation: 'ISSUE_TRANSITION', issueKey: key, toStatus: match.toStatus, transitionName: match.name },
+          { operation: 'ISSUE_TRANSITION', ...bound },
+          { operation: 'ISSUE_TRANSITION', ...bound },
         );
       }
       case 'channel-post': {
@@ -721,7 +753,13 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           checkOwnerText(payload.text, CONNECTOR_WRITE_PREVIEW_TEXT_MAX_LENGTH) === null
         );
       case 'ISSUE_TRANSITION':
-        return this.deps.writers.issueTransitions?.allowsIssue(payload.issueKey) === true && !containsCredentialMaterial(payload.toStatus);
+        // An anchor without the bound ids (approved before ids were bound) can never run.
+        return (
+          this.deps.writers.issueTransitions?.allowsIssue(payload.issueKey) === true &&
+          isNumericId(payload.transitionId) &&
+          isNumericId(payload.toStatusId) &&
+          !containsCredentialMaterial(payload.toStatus)
+        );
       case 'CHANNEL_POST':
         return (
           this.deps.writers.channelMessages?.resolveChannel(payload.channel) === payload.channel &&
@@ -730,9 +768,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       case 'CALENDAR_EVENT_CREATE':
         return this.deps.writers.calendarEvents !== undefined && checkEventDraft(payload.draft) === null;
       case 'CALENDAR_EVENT_UPDATE':
-        return this.deps.writers.calendarEvents !== undefined && checkChanges(payload.changes) === null;
+        return this.deps.writers.calendarEvents !== undefined && isExpectation(payload.expected) && checkChanges(payload.changes) === null;
       case 'CALENDAR_EVENT_DELETE':
-        return this.deps.writers.calendarEvents !== undefined;
+        return this.deps.writers.calendarEvents !== undefined && isExpectation(payload.expected);
     }
   }
 
@@ -743,15 +781,24 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       case 'ISSUE_COMMENT':
         return issueComments ? () => issueComments.addComment({ issueKey: payload.issueKey, text: payload.text }) : null;
       case 'ISSUE_TRANSITION':
-        return issueTransitions ? () => issueTransitions.transition({ issueKey: payload.issueKey, toStatus: payload.toStatus }) : null;
+        return issueTransitions
+          ? () =>
+              issueTransitions.transition({
+                issueKey: payload.issueKey,
+                transitionId: payload.transitionId,
+                toStatusId: payload.toStatusId,
+              })
+          : null;
       case 'CHANNEL_POST':
         return channelMessages ? () => channelMessages.post({ channel: payload.channel, text: payload.text }) : null;
       case 'CALENDAR_EVENT_CREATE':
         return calendarEvents ? () => calendarEvents.createEvent({ draft: payload.draft, idempotencyKey }) : null;
       case 'CALENDAR_EVENT_UPDATE':
-        return calendarEvents ? () => calendarEvents.updateEvent({ eventId: payload.eventId, changes: payload.changes }) : null;
+        return calendarEvents
+          ? () => calendarEvents.updateEvent({ eventId: payload.eventId, expected: payload.expected, changes: payload.changes })
+          : null;
       case 'CALENDAR_EVENT_DELETE':
-        return calendarEvents ? () => calendarEvents.deleteEvent({ eventId: payload.eventId }) : null;
+        return calendarEvents ? () => calendarEvents.deleteEvent({ eventId: payload.eventId, expected: payload.expected }) : null;
     }
   }
 
@@ -796,13 +843,20 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const writer = this.deps.writers.calendarEvents;
     if (!writer) return { kind: 'writes-off' };
     const target = `${writer.target}/${event.id}`;
+    // The event as previewed: an edit after this (time, shape or any change of its version) refuses the write.
+    const expected: CalendarEventExpectation = {
+      allDay: event.allDay,
+      start: event.start,
+      end: event.end,
+      ...(event.version !== undefined ? { version: event.version } : {}),
+    };
     if (mode === 'delete') {
       return this.propose(
         input,
         'calendar',
         writer.source,
         target,
-        { operation: 'CALENDAR_EVENT_DELETE', eventId: event.id },
+        { operation: 'CALENDAR_EVENT_DELETE', eventId: event.id, expected },
         { operation: 'CALENDAR_EVENT_DELETE', before: event, timeZone: this.deps.timeZone },
         inheritedPrevious,
       );
@@ -814,7 +868,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       'calendar',
       writer.source,
       target,
-      { operation: 'CALENDAR_EVENT_UPDATE', eventId: event.id, changes: resolved.changes },
+      { operation: 'CALENDAR_EVENT_UPDATE', eventId: event.id, expected, changes: resolved.changes },
       { operation: 'CALENDAR_EVENT_UPDATE', before: event, after: resolved.after, timeZone: this.deps.timeZone },
       inheritedPrevious,
     );
@@ -1102,7 +1156,23 @@ function summaryOf(event: CalendarEvent): ConnectorWriteEventSummary {
     end: event.end,
     allDay: event.allDay,
     ...(event.location !== undefined ? { location: event.location } : {}),
+    ...(event.version !== undefined ? { version: event.version } : {}),
   };
+}
+
+function isNumericId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9]{1,20}$/.test(value);
+}
+
+function isExpectation(value: CalendarEventExpectation | undefined): value is CalendarEventExpectation {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof value.allDay === 'boolean' &&
+    typeof value.start === 'string' &&
+    typeof value.end === 'string' &&
+    (value.version === undefined || typeof value.version === 'string')
+  );
 }
 
 /** Events on the referenced day that match the start time and every title word. Never a best guess. */

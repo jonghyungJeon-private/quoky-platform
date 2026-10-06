@@ -114,6 +114,7 @@ function eventLines(event: CalendarEventDraft, timeZone: string): string[] {
 
 const NO_INVITES = '참석자: 없음 · 초대·변경 메일: 보내지 않음 (sendUpdates=none)';
 const PRIMARY = '캘린더: 내 기본 캘린더(primary)';
+const UNCHANGED_EVENT_ONLY = '실행할 때 이 일정이 미리보기 그대로일 때만 실행해요. 그사이 일정이 바뀌면 실행하지 않아요.';
 
 function previewBody(preview: ConnectorWritePreview): string[] {
   switch (preview.operation) {
@@ -122,7 +123,9 @@ function previewBody(preview: ConnectorWritePreview): string[] {
     case 'ISSUE_TRANSITION':
       return [
         `대상: Jira ${preview.issueKey}`,
-        `바꿀 상태: ${inline(preview.toStatus)} (전환: ${inline(preview.transitionName)})`,
+        `바꿀 상태: ${inline(preview.toStatus)} (상태 ID ${preview.toStatusId})`,
+        `전환: ${inline(preview.transitionName)} (전환 ID ${preview.transitionId})`,
+        '실행할 때 이 전환이 그대로 이 상태로 이어질 때만 실행해요. 조건이 바뀌면 실행하지 않아요.',
       ];
     case 'CHANNEL_POST':
       return [`대상: Slack #${inline(preview.channelLabel)} (${preview.channelId})`, '메시지 (이대로 한 번만 보내요):', fenced(preview.text)];
@@ -136,6 +139,7 @@ function previewBody(preview: ConnectorWritePreview): string[] {
         `- 제목: ${inline(preview.after.title || '(제목 없음)')}`,
         `- 시간: ${connectorWriteTimeLabel(preview.after.time, preview.timeZone)}`,
         ...(preview.after.location !== undefined ? [`- 장소: ${inline(preview.after.location)}`] : []),
+        UNCHANGED_EVENT_ONLY,
         NO_INVITES,
       ];
     case 'CALENDAR_EVENT_DELETE':
@@ -143,6 +147,7 @@ function previewBody(preview: ConnectorWritePreview): string[] {
         PRIMARY,
         `삭제할 일정: ${inline(preview.before.title || '(제목 없음)')} · ${summaryTime(preview.before, preview.timeZone)}`,
         ...(preview.before.location !== undefined ? [`장소: ${inline(preview.before.location)}`] : []),
+        UNCHANGED_EVENT_ONLY,
         NO_INVITES,
       ];
   }
@@ -209,6 +214,7 @@ const NOT_SENT_REASON_KO: Readonly<Record<ConnectorWriteNotSentReason, string>> 
   TRANSITION_UNAVAILABLE: '지금은 그 상태로 바꿀 수 없어요',
   RECURRING_SERIES_REFUSED: '반복 일정 전체는 바꾸지 않아요 (한 번짜리 일정만 바꿀 수 있어요)',
   ALREADY_EXISTS: '같은 요청으로 만든 일정이 이미 있어요',
+  TARGET_CHANGED: '미리보기 이후 대상이 바뀌었어요',
   UNAVAILABLE: '연결에 실패해서 요청을 보내기 전에 멈췄어요',
 };
 
@@ -218,6 +224,7 @@ export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, 
     case 'SENT':
       return [`${label} 완료: ${sentVerb(operation)}`, ...linkLine(outcome.url, outcome.externalRef)].join('\n');
     case 'NOT_SENT':
+      if (outcome.reason === 'TARGET_CHANGED') return targetChangedCopy(operation);
       return [
         `${label}을(를) 하지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. ${nothingDone(operation)}`,
         '자동으로 다시 시도하지 않아요. 필요하면 새로 요청해 주세요.',
@@ -228,6 +235,19 @@ export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, 
         `중복을 막기 위해 자동으로 다시 시도하지 않아요. ${isCalendar(operation) ? '캘린더' : '대상'}에서 직접 확인해 주세요.`,
       ].join('\n');
   }
+}
+
+/** The approved target drifted before the write (ADR-0112): truthfully not executed, and nothing retried. */
+function targetChangedCopy(operation: ConnectorWriteOperation): string {
+  const reason =
+    operation === 'ISSUE_TRANSITION'
+      ? 'Jira 상태 전환 조건이 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.'
+      : operation === 'ISSUE_COMMENT'
+        ? 'Jira 이슈가 미리보기 이후 다른 키로 옮겨져서 실행하지 않았어요. 다시 요청해 주세요.'
+        : isCalendar(operation)
+          ? '일정이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.'
+          : '대상이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.';
+  return [reason, `${nothingDone(operation)} 자동으로 다시 시도하지 않아요.`].join('\n');
 }
 
 function sentVerb(operation: ConnectorWriteOperation): string {
