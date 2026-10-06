@@ -2152,29 +2152,53 @@ export class ResponseComposer {
   // ── Sprint 3b (ADR-0049): explicit Pull Request creation APPROVAL — approval-only, never PR-created ──
 
   /**
-   * PR-creation approval REQUESTED (Sprint 3b, CA #1/#12). Shows the deterministic head→base target + pushed
-   * short hash + bounded title. Says approval only — no PR is created this step; never claims the branch is
+   * PR-creation approval REQUESTED (Sprint 3b, CA #1/#12; ADR-0108 D5). Shows the deterministic head→base target +
+   * pushed short hash + the EXACT title and body the approval covers and the PR will use, each verbatim in its own
+   * fenced block (fence longer than any backtick run inside). Not clamped to one message: both are bounded by
+   * construction (title ≤72, body ≤4,000 chars) and plain-text delivery chunks losslessly, so the owner sees every
+   * character that will be sent. Says approval only — no PR is created this step; never claims the branch is
    * verified on a hosting provider or that a PR can definitely be created.
    */
   composePrApprovalRequested(
     context: ConversationContext,
-    input: { pushedCommitHash: string; headBranch: string; baseBranch: string; title: string },
+    input: { pushedCommitHash: string; headBranch: string; baseBranch: string; title: string; body: string },
   ): OutboundMessage {
     const shortHash = input.pushedCommitHash.slice(0, 7);
     const head = input.headBranch.slice(0, MAX_GIT_REF_DISPLAY);
     const base = input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const title = input.title.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = clampToMessageBudget(
-      [
-        'PR 생성 승인을 요청했어요.',
-        `대상: ${head} → ${base} (커밋 ${shortHash})`,
-        `제목(안): ${title}`,
-        '승인해도 이번 단계에서는 실제 PR을 만들지 않아요.',
-        '지금 기록된 push 정보를 기준으로 한 승인이에요. 실제 PR 생성은 이후 단계에서 진행돼요.',
-        '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
-      ].join('\n'),
-    );
+    const titleFence = fenceFor(input.title);
+    const bodyFence = fenceFor(input.body);
+    const text = [
+      'PR 생성 승인을 요청했어요.',
+      `대상: ${head} → ${base} (커밋 ${shortHash})`,
+      '승인하면 아래 제목과 본문을 그대로 사용해요.',
+      '제목:',
+      titleFence,
+      input.title,
+      titleFence,
+      '본문:',
+      bodyFence,
+      input.body,
+      bodyFence,
+      '승인해도 이번 단계에서는 실제 PR을 만들지 않아요.',
+      '지금 기록된 push 정보를 기준으로 한 승인이에요. 실제 PR 생성은 이후 단계에서 진행돼요.',
+      '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
+    ].join('\n');
     return { context, text };
+  }
+
+  /**
+   * The approved PR title/body no longer match the hash recorded with the PR approval (ADR-0108 D5) — or the
+   * approval predates the binding. Pre-mutation: NO PR was created; the PR approval context was released, so the
+   * owner asks for a fresh PR request (a new CRITICAL approval with a new preview).
+   */
+  composePrDescriptionMismatch(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '승인된 PR 제목/본문이 기록된 내용과 일치하지 않아 PR을 만들지 않았어요.\n' +
+        '이전 PR 승인은 더 이상 사용할 수 없어요. "PR 만들어줘"라고 다시 요청하면 새 미리보기와 승인을 준비할게요.',
+    };
   }
 
   /** PR-creation approval RECORDED after "승인" (Sprint 3b) — records permission only; never says PR created. */
