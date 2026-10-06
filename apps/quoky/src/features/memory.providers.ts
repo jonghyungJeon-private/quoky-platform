@@ -8,6 +8,7 @@ import {
   VECTOR_PROVIDER,
   createLearningItemsRemovalCascade,
   createMemoryCommandTurnHandler,
+  createShortTermHistoryRemovalCascade,
   createVectorRemovalCascade,
   type ConversationTurnHandler,
   type LearningMemoryForgetCascade,
@@ -27,7 +28,9 @@ import { ConsoleLogger } from '../console-logger';
  *   through the ADR-0073 `DefaultMemoryWriter` (the same writer the runtime's `기억해:` block uses) and the
  *   forget/edit cascade (ADR-0106 D5): the durable-memory vector cache, then the owner's v14 `learning_items` rows
  *   whose `source_memory_id` is a removed record (ADR-0107 D7), through the `LEARNING_REPOSITORY` port that
- *   `feedback.providers.ts` binds (only its `deleteBySourceMemory` seam is used here).
+ *   `feedback.providers.ts` binds (only its `deleteBySourceMemory` seam is used here), then the owner's own SHORT_TERM
+ *   conversation-history turns that carry a removed record's text (W2-L01), through the storage provider's actor and
+ *   memory repositories.
  * - `MEMORY_TURN_HANDLERS` — the `pre-classify` order-50 handler; `turn-handlers.providers.ts` concatenates it.
  */
 
@@ -37,7 +40,7 @@ export const MEMORY_TURN_HANDLERS = Symbol('MemoryTurnHandlers');
 /** Composition seam for offline acceptance only; production passes none. */
 export interface MemoryCompositionOptions {
   readonly logger?: Logger;
-  /** Extra cascades after the vector cache and learning-items cascades. */
+  /** Extra cascades after the vector cache, learning-items and conversation-history cascades. */
   readonly extraCascades?: readonly MemoryRemovalCascade[];
 }
 
@@ -61,6 +64,13 @@ export function createMemoryProviders(options: MemoryCompositionOptions = {}): P
           cascades: [
             createVectorRemovalCascade(vectors),
             createLearningItemsRemovalCascade(learning),
+            createShortTermHistoryRemovalCascade({
+              actors: { get: (id) => storage.actors.get(id) },
+              history: {
+                findShortTermByUser: (userId) => storage.memories.findShortTermByUser(userId),
+                delete: (id) => storage.memories.delete(id),
+              },
+            }),
             ...(options.extraCascades ?? []),
           ],
           logger,

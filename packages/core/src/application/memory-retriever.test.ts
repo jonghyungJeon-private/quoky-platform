@@ -65,6 +65,9 @@ function repository(records: MemoryRecord[]): MemoryRepository {
         .filter((candidate) => !query.excludeIds?.includes(candidate.id))
         .slice(0, query.limit);
     },
+    async findShortTermByUser() {
+      return [];
+    },
   };
 }
 

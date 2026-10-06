@@ -55,6 +55,12 @@ export interface TurnHandlerReply {
   readonly reply: OutboundMessage;
   /** Defaults to `RESPONDED`. */
   readonly status?: 'RESPONDED' | 'FAILED';
+  /**
+   * What the SHORT_TERM conversation history keeps for this turn instead of the verbatim texts (ADR-0106 D5, W2-L01):
+   * `user` replaces the already-recorded inbound text, `assistant` is recorded instead of `reply.text`. Omitted fields
+   * are recorded verbatim. Ignored at `control`, which records nothing.
+   */
+  readonly history?: { readonly user?: string; readonly assistant?: string };
 }
 
 /**

@@ -60,6 +60,9 @@ function memoryRepository() {
         .filter((record) => !query.excludeIds?.includes(record.id))
         .slice(0, query.limit);
     },
+    async findShortTermByUser(userId) {
+      return [...records.values()].filter((record) => record.type === MemoryType.SHORT_TERM && record.scope.userId === userId);
+    },
   };
   return {
     repository,

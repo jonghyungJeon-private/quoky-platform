@@ -38,7 +38,9 @@ import {
   renderForgetConfirmation,
   renderForgetIncomplete,
   renderForgotten,
+  renderEditRequestHistory,
   renderMemoryCommandFailed,
+  renderMemoryCommandHistoryReply,
   renderMemoryList,
   renderMemoryListEmpty,
   renderMemoryNotFound,
@@ -111,6 +113,16 @@ export interface MemoryCommandResult {
   readonly outcome: MemoryCommandOutcome;
   readonly text: string;
   readonly status: 'RESPONDED' | 'FAILED';
+  /**
+   * W2-L01: what the SHORT_TERM conversation history keeps for this turn instead of the verbatim texts — set for edit
+   * requests (`user`) and for the edit/forget replies that echo memory text (`assistant`). Omitted = verbatim.
+   */
+  readonly history?: MemoryCommandHistory;
+}
+
+export interface MemoryCommandHistory {
+  readonly user?: string;
+  readonly assistant?: string;
 }
 
 type PendingAction = { readonly kind: 'forget' } | { readonly kind: 'edit'; readonly text: string; readonly sourceText: string };
@@ -198,6 +210,12 @@ export class MemoryCommandService {
 
   /** Run one parsed command. Never throws: a store failure becomes a `failed` reply. */
   async execute(command: MemoryCommand, request: MemoryCommandRequest): Promise<MemoryCommandResult> {
+    const result = await this.run(command, request);
+    const history = memoryCommandHistory(command, result.outcome);
+    return history === undefined ? result : { ...result, history };
+  }
+
+  private async run(command: MemoryCommand, request: MemoryCommandRequest): Promise<MemoryCommandResult> {
     const language = command.language;
     try {
       switch (command.kind) {
@@ -520,6 +538,7 @@ export class MemoryCommandService {
       reason: input.reason,
       memoryIds: input.records.map((record) => record.id),
       vectorIds: input.records.flatMap((record) => (record.vectorId === undefined ? [] : [record.vectorId])),
+      contents: input.records.map((record) => record.content),
     };
     for (const cascade of this.cascades) {
       try {
@@ -574,6 +593,28 @@ export class MemoryCommandService {
       // best-effort
     }
   }
+}
+
+/**
+ * W2-L01 (ADR-0106 D5): the edit/forget command turns keep no memory text in the SHORT_TERM history. An edit request
+ * is recorded as the command with its text withheld (whatever the outcome — a refused credential-shaped edit too),
+ * and a reply that echoes memory text (the confirmation previews, the forgotten/edited result) as a content-free
+ * note. Every other turn carries no memory text, or only what a later forget purges, and stays verbatim.
+ */
+export function memoryCommandHistory(
+  command: MemoryCommand,
+  outcome: MemoryCommandOutcome,
+): MemoryCommandHistory | undefined {
+  const user = command.kind === 'edit' ? renderEditRequestHistory(command.number, command.language) : undefined;
+  const assistant =
+    outcome === 'forget-confirmation' ||
+    outcome === 'edit-confirmation' ||
+    outcome === 'forgotten' ||
+    outcome === 'edited'
+      ? renderMemoryCommandHistoryReply(outcome, command.language)
+      : undefined;
+  if (user === undefined && assistant === undefined) return undefined;
+  return { ...(user === undefined ? {} : { user }), ...(assistant === undefined ? {} : { assistant }) };
 }
 
 function errorName(error: unknown): string {

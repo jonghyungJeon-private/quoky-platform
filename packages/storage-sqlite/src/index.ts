@@ -1033,6 +1033,17 @@ class SqliteMemoryRepository extends JsonRepository<MemoryRecord> implements Mem
     return rows.map((r) => JSON.parse(r.data) as MemoryRecord);
   }
 
+  async findShortTermByUser(userId: string): Promise<MemoryRecord[]> {
+    // No user column exists (the domain JSON is the source); a json_extract filter needs no migration.
+    const rows = this.db
+      .prepare(
+        `SELECT data FROM memories WHERE type = 'SHORT_TERM' AND json_extract(data, '$.scope.userId') = ?
+         ORDER BY json_extract(data, '$.createdAt') ASC, rowid ASC`,
+      )
+      .all(userId) as Row[];
+    return rows.map((row) => JSON.parse(row.data) as MemoryRecord);
+  }
+
   async findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]> {
     if (!Number.isInteger(query.limit) || query.limit < 1) {
       throw new RangeError('DurableMemoryQuery.limit must be a positive integer');

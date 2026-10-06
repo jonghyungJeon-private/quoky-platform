@@ -136,3 +136,28 @@ describe('SqliteMemoryRepository durable candidates', () => {
     await store.close();
   });
 });
+
+describe('SqliteMemoryRepository short-term history by user (W2-L01)', () => {
+  it('returns only the user\'s SHORT_TERM turns, oldest first, across sessions', async () => {
+    const store = await freshStore();
+    const turn = (id: string, userId: string, sessionId: string, createdAt: string): MemoryRecord => ({
+      id,
+      type: MemoryType.SHORT_TERM,
+      scope: { userId, channelId: 'channel-1', sessionId },
+      content: id,
+      metadata: { role: 'user' },
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await store.memories.save(turn('later', 'user-1', 'session-2', '2026-08-02T00:00:00.000Z'));
+    await store.memories.save(turn('earlier', 'user-1', 'session-1', '2026-08-01T00:00:00.000Z'));
+    await store.memories.save(turn('foreign', 'user-2', 'session-1', '2026-08-01T00:00:01.000Z'));
+    // A durable record scoped to the same id string is not conversation history.
+    await store.memories.save(memory('durable', { userId: 'user-1' }));
+
+    expect((await store.memories.findShortTermByUser('user-1')).map(({ id }) => id)).toEqual(['earlier', 'later']);
+    expect((await store.memories.findShortTermByUser('user-2')).map(({ id }) => id)).toEqual(['foreign']);
+    expect(await store.memories.findShortTermByUser('nobody')).toEqual([]);
+    await store.close();
+  });
+});

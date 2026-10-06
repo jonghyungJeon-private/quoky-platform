@@ -243,6 +243,45 @@ export function renderEditDuplicate(language: MemoryCommandLanguage): string {
     : '같은 내용의 기억이 이미 있어서 바꾸지 않았어요.';
 }
 
+/**
+ * W2-L01: what the SHORT_TERM conversation history keeps of an edit request — the command with its text withheld, so
+ * the new text is not copied into the chat transcript (the memory itself holds it).
+ */
+export function renderEditRequestHistory(number: number, language: MemoryCommandLanguage): string {
+  return language === 'en'
+    ? `edit memory ${number}: (text not kept in the conversation history)`
+    : `기억 ${number} 수정: (내용은 대화 기록에 남기지 않아요)`;
+}
+
+/** W2-L01: the content-free note the conversation history keeps instead of an edit/forget reply that echoed memory text. */
+export function renderMemoryCommandHistoryReply(
+  outcome: 'forget-confirmation' | 'edit-confirmation' | 'forgotten' | 'edited',
+  language: MemoryCommandLanguage,
+): string {
+  if (language === 'en') {
+    switch (outcome) {
+      case 'forget-confirmation':
+        return '(Asked for a confirmation code before forgetting a memory; its text is not kept in the conversation history.)';
+      case 'edit-confirmation':
+        return '(Asked for a confirmation code before changing a memory; its text is not kept in the conversation history.)';
+      case 'forgotten':
+        return '(Forgot the requested memory; its content is no longer used.)';
+      case 'edited':
+        return '(Changed the requested memory; its text is not kept in the conversation history.)';
+    }
+  }
+  switch (outcome) {
+    case 'forget-confirmation':
+      return '(기억을 잊기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)';
+    case 'edit-confirmation':
+      return '(기억을 바꾸기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)';
+    case 'forgotten':
+      return '(요청한 기억을 잊었어요. 그 내용은 더 이상 쓰지 않아요.)';
+    case 'edited':
+      return '(요청한 기억을 바꿨어요. 기억 내용은 대화 기록에 남기지 않아요.)';
+  }
+}
+
 export function renderMemoryCommandFailed(language: MemoryCommandLanguage): string {
   return language === 'en'
     ? 'I could not complete that memory request. Nothing was changed; please try again in a moment.'

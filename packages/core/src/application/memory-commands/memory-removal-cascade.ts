@@ -1,6 +1,14 @@
-import type { Id } from '../../domain';
-import type { LearningMemoryForgetCascade, VectorProvider } from '../../ports';
+import type { Actor, Id, MemoryRecord } from '../../domain';
+import { MemoryType } from '../../domain';
+import type { LearningMemoryForgetCascade, MemoryRepository, VectorProvider } from '../../ports';
 import { DURABLE_MEMORY_VECTOR_COLLECTION } from '../recall/semantic-recall-scorer';
+import {
+  MEMORY_CONFIRM_PREVIEW_MAX_CHARS,
+  MEMORY_PREVIEW_MAX_CHARS,
+  MEMORY_VIEW_MAX_CHARS,
+  memoryBody,
+  memoryPreview,
+} from './memory-command-renderer';
 
 /**
  * What a memory command removed from the owner's durable recall (ADR-0106 D5):
@@ -14,6 +22,8 @@ export interface MemoryRemovalEvent {
   readonly memoryIds: readonly Id[];
   /** Vector ids the records carried besides their own ids (`MemoryRecord.vectorId`), if any. */
   readonly vectorIds: readonly Id[];
+  /** The removed records' texts (W2-L01: the conversation-history purge matches on them). Never logged. */
+  readonly contents: readonly string[];
 }
 
 /**
@@ -21,9 +31,10 @@ export interface MemoryRemovalEvent {
  * memory goes. This is an application-level hook, not a port — it adds no DI token (ADR-0106 D6); the composition
  * root passes the list it has. Implementations are idempotent: removing what is already absent succeeds.
  *
- * Wired at the composition root: the `VectorProvider` cache entry ({@link createVectorRemovalCascade}) and, since the
- * v3 wave-2 integration, LRN-1's v14 `learning_items` store ({@link createLearningItemsRemovalCascade}): every row
- * whose `source_memory_id` is one of `memoryIds`, scoped to `actorId`.
+ * Wired at the composition root: the `VectorProvider` cache entry ({@link createVectorRemovalCascade}), LRN-1's v14
+ * `learning_items` store ({@link createLearningItemsRemovalCascade}): every row whose `source_memory_id` is one of
+ * `memoryIds`, scoped to `actorId`, and the actor's own SHORT_TERM conversation history
+ * ({@link createShortTermHistoryRemovalCascade}, W2-L01).
  */
 export interface MemoryRemovalCascade {
   /** A short, content-free name for logs. */
@@ -61,6 +72,70 @@ export function createLearningItemsRemovalCascade(learning: LearningMemoryForget
     async onMemoriesRemoved(event) {
       for (const memoryId of new Set(event.memoryIds)) {
         await learning.deleteBySourceMemory(event.actorId, memoryId);
+      }
+    },
+  };
+}
+
+/** NFC and whitespace-collapsed: both sides of a conversation-history match are compared in this form. */
+export function normalizeForHistoryMatch(text: string): string {
+  return text.normalize('NFC').replace(/\s+/gu, ' ').trim();
+}
+
+/**
+ * The fragments whose presence marks a history turn as carrying a removed memory's text (W2-L01): the text itself,
+ * and the forms a memory-command reply echoed it in — the Discord-escaped body (`기억 N 보여줘`) and previews (list,
+ * confirmation, result). A clipped rendering contributes its kept part (the trailing `…` dropped).
+ */
+export function memoryHistoryNeedles(contents: readonly string[]): string[] {
+  const needles = new Set<string>();
+  const add = (rendered: string) => {
+    const needle = normalizeForHistoryMatch(rendered.endsWith('…') ? rendered.slice(0, -1) : rendered);
+    if (needle.length > 0) needles.add(needle);
+  };
+  for (const content of contents) {
+    add(content);
+    add(memoryBody(content, MEMORY_VIEW_MAX_CHARS));
+    add(memoryPreview(content, MEMORY_PREVIEW_MAX_CHARS));
+    add(memoryPreview(content, MEMORY_CONFIRM_PREVIEW_MAX_CHARS));
+  }
+  return [...needles];
+}
+
+/** Whether one SHORT_TERM turn carries any of `needles` (from {@link memoryHistoryNeedles}). */
+export function historyTurnCarriesMemory(record: Pick<MemoryRecord, 'content'>, needles: readonly string[]): boolean {
+  const haystack = normalizeForHistoryMatch(record.content);
+  return needles.some((needle) => haystack.includes(needle));
+}
+
+export interface ShortTermHistoryRemovalDeps {
+  /** Resolves the actor's platform identities: SHORT_TERM turns are recorded under the platform user id. */
+  readonly actors: { get(id: Id): Promise<Actor | null> };
+  readonly history: Pick<MemoryRepository, 'findShortTermByUser' | 'delete'>;
+}
+
+/**
+ * ADR-0106 D5 (forget means Quoky no longer uses that content), live finding W2-L01: deletes the actor's own
+ * SHORT_TERM conversation-history turns (any session, either role) that carry a removed record's text — including
+ * the memory-command request/confirmation/result turns that echoed it — so neither the chat transcript nor the
+ * generated context files bring it back. Only the matching turns go, never the whole session; turns recorded under
+ * another user id are never read or touched. Deleting an already absent turn succeeds, so the cascade is idempotent
+ * and a failed forget is retried by asking again.
+ */
+export function createShortTermHistoryRemovalCascade(deps: ShortTermHistoryRemovalDeps): MemoryRemovalCascade {
+  return {
+    id: 'short-term-history',
+    async onMemoriesRemoved(event) {
+      const needles = memoryHistoryNeedles(event.contents);
+      if (needles.length === 0) return;
+      const actor = await deps.actors.get(event.actorId);
+      if (actor === null || actor.id !== event.actorId) return;
+      const userIds = new Set(actor.identities.map((identity) => identity.externalId));
+      for (const userId of userIds) {
+        for (const turn of await deps.history.findShortTermByUser(userId)) {
+          if (turn.type !== MemoryType.SHORT_TERM || turn.scope.userId !== userId) continue;
+          if (historyTurnCarriesMemory(turn, needles)) await deps.history.delete(turn.id);
+        }
       }
     },
   };

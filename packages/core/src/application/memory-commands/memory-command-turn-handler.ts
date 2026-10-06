@@ -1,7 +1,7 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
 import { parseMemoryCommand } from './memory-command-grammar';
 import { renderMemoryCommandFailed } from './memory-command-renderer';
-import type { MemoryCommandService } from './memory-command-service';
+import { memoryCommandHistory, type MemoryCommandService } from './memory-command-service';
 
 export const MEMORY_COMMAND_TURN_HANDLER_ID = 'memory-commands';
 /**
@@ -44,7 +44,12 @@ export class MemoryCommandTurnHandler implements ConversationTurnHandler {
         now: ctx.now,
         sourceText: ctx.message.text,
       });
-      return { reply: { context, text: result.text, replyToMessageId: ctx.message.id }, status: result.status };
+      return {
+        reply: { context, text: result.text, replyToMessageId: ctx.message.id },
+        status: result.status,
+        // W2-L01: edit/forget turns keep no memory text in the conversation history.
+        ...(result.history === undefined ? {} : { history: result.history }),
+      };
     } catch (error) {
       try {
         this.deps.logger?.warn('memory_commands.turn_handler.failed', {
@@ -54,9 +59,11 @@ export class MemoryCommandTurnHandler implements ConversationTurnHandler {
       } catch {
         // best-effort
       }
+      const history = memoryCommandHistory(command, 'failed');
       return {
         reply: { context, text: renderMemoryCommandFailed(command.language), replyToMessageId: ctx.message.id },
         status: 'FAILED',
+        ...(history === undefined ? {} : { history }),
       };
     }
   }

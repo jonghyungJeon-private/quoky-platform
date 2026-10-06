@@ -82,9 +82,25 @@ describe('createVectorRemovalCascade', () => {
   it('deletes the memory ids and carried vector ids from the durable-memory collection, once each', async () => {
     const vectors = { delete: vi.fn(async () => undefined) };
     const cascade = createVectorRemovalCascade(vectors);
-    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'forget', memoryIds: ['m1', 'm2'], vectorIds: ['m1', 'v9'] });
+    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'forget', memoryIds: ['m1', 'm2'], vectorIds: ['m1', 'v9'], contents: [] });
     expect(vectors.delete).toHaveBeenCalledWith('durable-memory-v1', ['m1', 'm2', 'v9']);
-    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'edit', memoryIds: [], vectorIds: [] });
+    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'edit', memoryIds: [], vectorIds: [], contents: [] });
     expect(vectors.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the service\'s conversation-history form (W2-L01), and withholds a failed edit request text', async () => {
+    const history = { user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)', assistant: '(note)' };
+    const execute = vi.fn(async () => ({ outcome: 'edit-confirmation' as const, text: '확인', status: 'RESPONDED' as const, history }));
+    const outcome = await createMemoryCommandTurnHandler({ service: { execute } }).handle(ctx('기억 1 수정: 새 내용'));
+    expect(outcome).toMatchObject({ history });
+
+    const throwing = createMemoryCommandTurnHandler({
+      service: { execute: vi.fn(async () => Promise.reject(new Error('boom'))) },
+    });
+    expect(await throwing.handle(ctx('기억 1 수정: 새 내용'))).toMatchObject({
+      status: 'FAILED',
+      history: { user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)' },
+    });
+    expect(await throwing.handle(ctx('기억 목록'))).not.toHaveProperty('history');
   });
 });

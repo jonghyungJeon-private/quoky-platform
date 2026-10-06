@@ -131,6 +131,11 @@ export interface DurableMemoryQuery {
 export interface MemoryRepository extends Repository<MemoryRecord> {
   findByScope(scope: MemoryScope, type?: MemoryType): Promise<MemoryRecord[]>;
   findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]>;
+  /**
+   * ADR-0106 D5 (W2-L01): every `SHORT_TERM` conversation-history record whose `scope.userId` is `userId` — the
+   * platform user id the turn was recorded under — oldest first. Only the forget/edit history purge reads it.
+   */
+  findShortTermByUser(userId: string): Promise<MemoryRecord[]>;
 }
 
 export interface ArtifactRepository extends Repository<Artifact> {

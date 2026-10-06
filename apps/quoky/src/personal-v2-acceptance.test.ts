@@ -11,6 +11,7 @@ import {
   CODE_CHAIN_STATUS_DOMAINS,
   Capability,
   CONVERSATION_TURN_HANDLERS,
+  ContextBuilder,
   ConversationRuntime,
   DURABLE_MEMORY_VECTOR_COLLECTION,
   DefaultMemoryRetriever,
@@ -20,6 +21,8 @@ import {
   IntentType,
   LearningItemKind,
   MAX_CONTRIBUTED_HELP_LINES,
+  MemoryManager,
+  MemoryType,
   MAX_CONTRIBUTED_HELP_LINE_CHARS,
   ResponseComposer,
   STORAGE_PROVIDER,
@@ -166,6 +169,9 @@ interface Harness {
   readonly composer: ResponseComposer;
   /** The production vector cache (ADR-0098 D8), for the MEM-1 forget cascade check. */
   readonly vectors: VectorProvider;
+  /** The production context assembly (W2-L01: what a provider would see of the conversation history). */
+  readonly contextBuilder: ContextBuilder;
+  readonly memory: MemoryManager;
   providerCalls(): number;
   availabilityProbes(): number;
   /** Send one turn in `context` and report which layer answered it. */
@@ -289,6 +295,8 @@ async function boot(): Promise<Harness> {
     handlers,
     composer,
     vectors: app.get<VectorProvider>(VECTOR_PROVIDER),
+    contextBuilder: app.get(ContextBuilder),
+    memory: app.get(MemoryManager),
     providerCalls: () => providerCalls,
     availabilityProbes: () => availabilityProbes,
     freshContext() {
@@ -1121,6 +1129,83 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect(await ids(ownerId)).toEqual(['lrn-cascade-unrelated']);
     expect(await ids(otherId)).toEqual(['lrn-cascade-foreign']);
     expect(harness.providerCalls() + harness.availabilityProbes() - providerBefore).toBe(0);
+  });
+
+  it('W2-L01: edit and forget also purge the actor\'s own short-term history copies; another user\'s turns stay', async () => {
+    const owner = harness.freshContext();
+    // Another user in the SAME channel shares the owner's session: actor isolation inside one conversation.
+    const other: ConversationContext = { ...harness.freshContext(), channelId: owner.channelId };
+    const oldText = '내가 제일 좋아하는 커피는 따뜻한 라떼야';
+    const newText = '내가 제일 좋아하는 커피는 아이스 아메리카노야';
+    const ownerHistory = async () =>
+      (await harness.storage.memories.findShortTermByUser(owner.userId)).map((record) => record.content);
+    const carries = (rows: readonly string[], fragment: string) => rows.filter((row) => row.includes(fragment));
+
+    await harness.turn(owner, `기억해: ${oldText}`);
+    await harness.turn(owner, `참고로 ${newText}`); // ordinary chat: the owner's own turn quotes the text
+    await harness.turn(other, `${newText} 나도 그래`); // the other user's turn in the same session
+    const session = await harness.storage.sessions.findActiveByContext(owner.channelId);
+    if (!session) throw new Error('session was not opened');
+    const ownerId = await actorIdOf(owner);
+    const task: Task = {
+      id: 'w2-l01-task',
+      title: 'recall check',
+      description: '',
+      status: TaskStatus.PENDING,
+      intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: '내가 좋아하는 커피가 뭐였지?' },
+      riskLevel: RiskLevel.LOW,
+      context: owner,
+      actorId: ownerId,
+      sessionId: session.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    // Every piece of the provider's context that carries `fragment`: transcript turns, durable recall, context-file lines.
+    const providerView = async (fragment: string) => {
+      const bundle = await harness.contextBuilder.build(task);
+      const files = await harness.memory.buildContextFiles(task);
+      return [
+        ...bundle.conversationTranscript.map((entry) => entry.content),
+        ...(bundle.durableRecall ?? []).map((entry) => entry.content),
+        ...files.flatMap((file) => file.content.split('\n')),
+      ].filter((piece) => piece.includes(fragment));
+    };
+    // The live precondition: the conversation history (and so the provider's context) carries both texts.
+    expect(carries(await ownerHistory(), '라떼')).not.toEqual([]);
+    expect(await providerView('아이스 아메리카노')).toContain(`참고로 ${newText}`);
+
+    // Edit: the superseded text leaves the owner's history; the edit turns themselves keep no memory text.
+    const editAsk = await harness.turn(owner, `기억 1 수정: ${newText}`);
+    expect(editAsk.text).toContain('지금: 내가 제일 좋아하는 커피는 따뜻한 라떼야'); // the reply copy is unchanged
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(editAsk.text)}`)).text).toContain('기억을 바꿨어요');
+    let history = await ownerHistory();
+    expect(carries(history, '라떼')).toEqual([]);
+    expect(history).toContain('기억 1 수정: (내용은 대화 기록에 남기지 않아요)');
+    expect(history).toContain('(기억을 바꾸기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)');
+    expect(carries(history, '아이스 아메리카노')).toEqual([`참고로 ${newText}`]); // the current memory's chat turn
+
+    // Forget the edited memory: the text and its earlier version leave the owner's history entirely.
+    const forgetAsk = await harness.turn(owner, '기억 1 잊어줘');
+    expect(forgetAsk.text).toContain(`> ${newText}`);
+    const forgotten = await harness.turn(owner, `기억 확인 ${codeIn(forgetAsk.text)}`);
+    expect(forgotten.text).toBe(`이 기억을 잊었어요:\n> ${newText}\n이전에 고쳐 쓰기 전 버전 1개도 함께 지웠어요.`);
+    history = await ownerHistory();
+    expect(carries(history, '아이스 아메리카노')).toEqual([]);
+    expect(carries(history, '라떼')).toEqual([]);
+    expect(history.at(-1)).toBe('(요청한 기억을 잊었어요. 그 내용은 더 이상 쓰지 않아요.)');
+    expect(await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 10 })).toEqual([]);
+
+    // Neither the context builder nor the generated context files bring the owner's copies back for the recall
+    // question: what remains is only the other user's own turn in the shared session (never touched, below).
+    const otherTurn = `${newText} 나도 그래`;
+    expect(await providerView('아이스 아메리카노')).toEqual([otherTurn, `- ${otherTurn}`]);
+    expect(await providerView('라떼')).toEqual([]);
+    expect(await recall(ownerId, '좋아하는 커피')).toEqual([]);
+
+    // The other user's turn in the same session was never touched (its rows are recorded under its own user id).
+    const otherRows = await harness.storage.memories.findShortTermByUser(other.userId);
+    expect(otherRows.map((record) => record.content)).toContain(otherTurn);
+    expect(otherRows.every((record) => record.type === MemoryType.SHORT_TERM)).toBe(true);
   });
 
   it('pins the golden memory-command routing (기억해: still saves; to-do and reminder phrases keep their handlers)', () => {

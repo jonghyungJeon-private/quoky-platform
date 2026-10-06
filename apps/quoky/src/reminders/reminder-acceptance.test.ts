@@ -152,6 +152,9 @@ function memoryRepository(): MemoryRepository {
       return [...records.values()].filter((r) => matches(r, scope) && (type === undefined || r.type === type));
     },
     async findDurableCandidates() { return []; },
+    async findShortTermByUser(userId) {
+      return [...records.values()].filter((r) => String(r.type) === 'SHORT_TERM' && r.scope.userId === userId);
+    },
   };
 }
 

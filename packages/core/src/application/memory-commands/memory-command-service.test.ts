@@ -79,6 +79,8 @@ function harness(initial: MemoryRecord[], options: { cascades?: MemoryRemovalCas
             !(query.excludeSuperseded && record.metadata?.['supersededBy'] !== undefined),
         )
         .slice(0, query.limit),
+    findShortTermByUser: async (userId) =>
+      records.filter((record) => record.type === MemoryType.SHORT_TERM && record.scope.userId === userId),
   };
   const writer = new DefaultMemoryWriter({
     durableMemory: (id) => repository.get(id),
@@ -307,7 +309,13 @@ describe('MemoryCommandService — forget (ADR-0106 D5)', () => {
     );
     expect(h.records).toHaveLength(2);
     const done = await h.run(`기억 확인 ${codeOf(request)}`);
-    expect(done).toEqual({ outcome: 'forgotten', status: 'RESPONDED', text: '이 기억을 잊었어요:\n> 커피는 아메리카노' });
+    expect(done).toEqual({
+      outcome: 'forgotten',
+      status: 'RESPONDED',
+      text: '이 기억을 잊었어요:\n> 커피는 아메리카노',
+      // W2-L01: the conversation history keeps a content-free note instead of the reply's preview.
+      history: { assistant: '(요청한 기억을 잊었어요. 그 내용은 더 이상 쓰지 않아요.)' },
+    });
     expect(h.records.map((record) => record.id)).not.toContain(coffee.id);
     expect(h.vectors.delete).toHaveBeenCalledWith('durable-memory-v1', [coffee.id, 'vector-legacy']);
     expect(await lexicalRecall(h.repository, '커피 아메리카노')).not.toContain('커피는 아메리카노');
@@ -331,7 +339,7 @@ describe('MemoryCommandService — forget (ADR-0106 D5)', () => {
     const h = harness([memory('지울 기억')], { cascades: [learning] });
     const target = h.records[0] as MemoryRecord;
     await h.run(`기억 확인 ${codeOf(await h.run('기억 1 잊어줘'))}`);
-    expect(events).toEqual([{ actorId: OWNER, reason: 'forget', memoryIds: [target.id], vectorIds: [] }]);
+    expect(events).toEqual([{ actorId: OWNER, reason: 'forget', memoryIds: [target.id], vectorIds: [], contents: ['지울 기억'] }]);
     expect(h.records).toEqual([]);
 
     const failing: MemoryRemovalCascade = {
@@ -538,5 +546,50 @@ describe('MemoryCommandService — status, usage and failures', () => {
     await h.run(`기억 확인 ${codeOf(await h.run('기억 1 잊어줘'))}`);
     expect(h.logs.length).toBeGreaterThan(0);
     expect(h.logs.join('\n')).not.toContain('커피');
+  });
+});
+
+describe('MemoryCommandService — conversation-history form of edit/forget turns (W2-L01)', () => {
+  it('withholds the edit request text and replaces the replies that echo memory text with content-free notes', async () => {
+    const h = harness([memory('커피는 라떼'), memory('홍차도 좋아')]);
+    const listed = await h.run('기억 목록');
+    expect(listed.history).toBeUndefined(); // no edit/forget turn: recorded verbatim (a later forget purges it)
+    expect((await h.run('기억 1 보여줘')).history).toBeUndefined();
+
+    const editAsk = await h.run('기억 1 수정: 커피는 아이스 아메리카노');
+    expect(editAsk.text).toContain('새 내용: 커피는 아이스 아메리카노'); // the reply itself is unchanged
+    expect(editAsk.history).toEqual({
+      user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)',
+      assistant: '(기억을 바꾸기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)',
+    });
+    const edited = await h.run(`기억 확인 ${codeOf(editAsk)}`);
+    expect(edited.history).toEqual({ assistant: '(요청한 기억을 바꿨어요. 기억 내용은 대화 기록에 남기지 않아요.)' });
+
+    // A refused (credential-shaped) edit request is withheld too; its reply echoes nothing.
+    const secret = await h.run('기억 1 수정: password = hunter2hunter2');
+    expect(secret.outcome).toBe('edit-sensitive');
+    expect(secret.history).toEqual({ user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)' });
+
+    const forgetAsk = await h.run('forget memory 1');
+    expect(forgetAsk.history).toEqual({
+      assistant: '(Asked for a confirmation code before forgetting a memory; its text is not kept in the conversation history.)',
+    });
+    expect((await h.run(`confirm memory ${codeOf(forgetAsk)}`)).history).toEqual({
+      assistant: '(Forgot the requested memory; its content is no longer used.)',
+    });
+    expect((await h.run('기억 확인 AAAA')).history).toBeUndefined();
+  });
+
+  it('hands every removed text to the cascades: the record and its earlier versions on forget, the old text on edit', async () => {
+    const events: MemoryRemovalEvent[] = [];
+    const h = harness([memory('버전 1')], {
+      cascades: [{ id: 'recording', onMemoriesRemoved: async (event) => void events.push(event) }],
+    });
+    await h.run(`기억 확인 ${codeOf(await h.run('기억 1 수정: 버전 2'))}`);
+    await h.run(`기억 확인 ${codeOf(await h.run('기억 1 잊어줘'))}`);
+    expect(events.map((event) => [event.reason, event.contents])).toEqual([
+      ['edit', ['버전 1']],
+      ['forget', ['버전 2', '버전 1']],
+    ]);
   });
 });

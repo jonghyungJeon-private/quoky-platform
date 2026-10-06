@@ -47,6 +47,7 @@ export function createProductionContextBuilder(
     list: () => storage.memories.list(),
     findByScope: (scope, type) => storage.memories.findByScope(scope, type),
     findDurableCandidates: (query) => storage.memories.findDurableCandidates(query),
+    findShortTermByUser: (userId) => storage.memories.findShortTermByUser(userId),
   };
 
   const retriever = new DefaultMemoryRetriever(

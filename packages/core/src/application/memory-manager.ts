@@ -82,6 +82,17 @@ export class MemoryManager {
     return saved;
   }
 
+  /**
+   * ADR-0106 D5 (W2-L01): replace the text of one recorded SHORT_TERM turn — a memory-command turn whose verbatim
+   * text would keep memory content in the conversation history. The turn keeps its place (createdAt) and role; an
+   * absent or non-SHORT_TERM record is left alone.
+   */
+  async redactShortTerm(id: Id, content: string): Promise<void> {
+    const record = await this.storage.memories.get(id);
+    if (record === null || record.type !== MemoryType.SHORT_TERM) return;
+    await this.storage.memories.save({ ...record, content, updatedAt: now() });
+  }
+
   /** Keep only the newest MAX_SESSION_SHORT_TERM SHORT_TERM memories per session. */
   private async pruneSession(sessionId: Id): Promise<void> {
     const all = await this.storage.memories.findByScope({ sessionId }, MemoryType.SHORT_TERM);

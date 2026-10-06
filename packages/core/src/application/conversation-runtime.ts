@@ -117,6 +117,7 @@ import {
   type TurnHandlerAnchorSnapshot,
   type TurnHandlerContext,
   type TurnHandlerOutcome,
+  type TurnHandlerReply,
   type TurnHandlerSummarizeReply,
   type TurnHandlerStage,
 } from '../ports';
@@ -663,6 +664,8 @@ export interface ConversationRuntimeDeps {
     recordShortTerm(message: InboundMessage, sessionId?: Id): Promise<{ id: Id }>;
     recordAssistant(text: string, context: ConversationContext, sessionId?: Id): Promise<unknown>;
     recordToolMemory(text: string, opts: { projectId?: Id; sessionId?: Id }): Promise<unknown>;
+    /** W2-L01: rewrite a recorded SHORT_TERM turn (a turn handler's `history.user`); `MemoryManager` provides it. */
+    redactShortTerm?(id: Id, content: string): Promise<unknown>;
   };
   /** Required durable-memory activation policy collaborator (M2, ADR-0073). */
   readonly memoryWriter: MemoryWriter;
@@ -3021,9 +3024,34 @@ export class ConversationRuntime {
     handled: TurnHandlerOutcome,
   ): Promise<TurnResult> {
     if (handled.kind === 'summarize') return this.handleTurnHandlerSummary(message, session, actor, userMemoryId, handled);
-    return handled.status === 'FAILED'
-      ? this.failComposed(message, session, handled.reply)
-      : this.respondComposed(message, session, handled.reply);
+    return this.recordTurnHandlerReply(message, session, userMemoryId, handled);
+  }
+
+  /**
+   * A deterministic handler reply, recorded to SHORT_TERM history as the handler asks (ADR-0106 D5, W2-L01): its
+   * `history.user` replaces the inbound turn recorded earlier, its `history.assistant` is recorded instead of the
+   * reply text. A failed rewrite of the inbound turn is logged and never fails the turn (the reply already happened).
+   */
+  private async recordTurnHandlerReply(
+    message: InboundMessage,
+    session: Session,
+    userMemoryId: Id,
+    handled: TurnHandlerReply,
+  ): Promise<TurnResult> {
+    const userHistory = handled.history?.user;
+    if (userHistory !== undefined && this.deps.memory.redactShortTerm) {
+      try {
+        await this.deps.memory.redactShortTerm(userMemoryId, userHistory);
+      } catch (error) {
+        this.deps.logger.warn('turn handler history redaction failed', {
+          messageId: message.id,
+          sessionId: session.id,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
+    }
+    await this.deps.memory.recordAssistant(handled.history?.assistant ?? handled.reply.text, message.context, session.id);
+    return { status: handled.status === 'FAILED' ? 'FAILED' : 'RESPONDED', reply: handled.reply, sessionId: session.id };
   }
 
   /** A `control` handler outcome as a deterministic reply; a `summarize` outcome degrades to its fallback list. */
