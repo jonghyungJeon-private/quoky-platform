@@ -90,6 +90,7 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
       'Can you cancel my meeting titled "Review"?',
       'Can you reschedule my meeting with Kim? It is already on my calendar.',
       '"주간회의" 일정 삭제해줘',
+      'I did not cancel my appointment, but cancel my meeting',
     ]) {
       expect(isCalendarWriteRequest(text), text).toBe(true);
       expect(parseCalendarQuestion(text)?.kind, text).toBe('write-refused');

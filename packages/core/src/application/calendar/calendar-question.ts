@@ -104,7 +104,10 @@ const NOT_A_REQUEST =
 /** Clause boundaries: sentence ends, commas, and coordinating connectives (exclusions are clause-scoped, Codex P2). */
 const CLAUSE_SPLIT = /[.!?。！？]\s+|[,;]\s*|\s+(?:and|but|then)\s+|\s*(?:그리고|하지만|근데|그런데)\s+/iu;
 
-function clauseIsWriteRequest(clause: string): boolean {
+const LEADING_CONNECTIVE = /^\s*(?:and|but|then|so|그리고|하지만|근데|그런데)\s+/iu;
+
+function clauseIsWriteRequest(rawClause: string): boolean {
+  const clause = rawClause.replace(LEADING_CONNECTIVE, '');
   if (clause.trim().length === 0 || NOT_A_REQUEST.test(clause)) return false;
   if (detectExternalActionRequest(clause)?.kind === 'calendar') return true;
   return WRITE_KO.test(clause) || WRITE_EN.test(clause);
