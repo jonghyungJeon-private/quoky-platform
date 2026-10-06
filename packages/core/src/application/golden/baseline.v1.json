@@ -8,6 +8,6 @@
     "project-registration": { "minAccuracy": 1, "minTotal": 20 },
     "turn-handler-routing": { "minAccuracy": 1, "minTotal": 127 },
     "reminder-todo-precedence": { "minAccuracy": 1, "minTotal": 24 },
-    "action-shaped-fallthrough": { "minAccuracy": 1, "minTotal": 106 }
+    "action-shaped-fallthrough": { "minAccuracy": 1, "minTotal": 113 }
   }
 }
