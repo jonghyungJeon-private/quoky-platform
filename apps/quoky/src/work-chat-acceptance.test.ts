@@ -53,6 +53,7 @@ import {
   type ProductionConversationRuntimeDeps,
 } from './conversation-runtime-provider';
 import { CODE_WORK_TURN_HANDLERS, FEEDBACK_TURN_HANDLERS } from './features/feature-tokens';
+import { MEMORY_TURN_HANDLERS } from './features/memory.providers';
 import { createRemindersProviders } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { createWorkChatProviders } from './features/work-chat.providers';
@@ -235,6 +236,7 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
       { provide: WorkManager, useFactory: (s: StorageProvider) => new WorkManager(s), inject: [STORAGE_PROVIDER] },
       { provide: CODE_WORK_TURN_HANDLERS, useValue: [] },
       { provide: FEEDBACK_TURN_HANDLERS, useValue: [] },
+      { provide: MEMORY_TURN_HANDLERS, useValue: [] },
       ...createWorkChatProviders(() => ({ summaryEnabled: options.summaryEnabled ?? true }), { logger }),
       ...createRemindersProviders(() => ({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' }), { logger }),
       turnHandlersProvider,

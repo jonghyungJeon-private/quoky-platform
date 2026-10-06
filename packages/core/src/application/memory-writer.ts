@@ -83,10 +83,40 @@ class MemoryWriterPersistenceError extends Error {
   }
 }
 
-const MAX_DURABLE_CONTENT_CHARACTERS = 4_000;
+/** Upper bound for durable content; `promote` rejects a longer candidate (ADR-0073). */
+export const MAX_DURABLE_CONTENT_CHARACTERS = 4_000;
 const WRITER_OWNED_LIFECYCLE_METADATA = ['expiresAt', 'supersededBy'] as const;
 const SECRET_MATERIAL =
   /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*\S+)/i;
+
+/**
+ * The writer's credential predicate: the same test `promote` applies to a candidate's content and source content
+ * (QA-009 / ADR-0097 `containsCredentialMaterial`, plus the writer's own secret-assignment pattern). Exported so a
+ * surface that DISPLAYS durable content (ADR-0106 memory commands) never shows what the writer would refuse to store.
+ */
+export function isCredentialLikeMemoryText(text: string): boolean {
+  return SECRET_MATERIAL.test(text) || containsCredentialMaterial(text);
+}
+
+/**
+ * The exact write scope of a persisted durable record, as `forget` and supersession compare it (ADR-0073). A
+ * record carrying a channel, thread or task scope has no durable write scope and returns `null`.
+ */
+export function durableScopeOfRecord(record: MemoryRecord): DurableMemoryScope | null {
+  if (
+    record.scope.channelId !== undefined ||
+    record.scope.threadId !== undefined ||
+    record.scope.taskId !== undefined
+  ) {
+    return null;
+  }
+  const scope: DurableMemoryScope = {
+    ...(record.scope.sessionId ? { sessionId: record.scope.sessionId } : {}),
+    ...(record.scope.projectId ? { projectId: record.scope.projectId } : {}),
+    ...(record.scope.userId ? { actorId: record.scope.userId } : {}),
+  };
+  return Object.keys(scope).length > 0 ? scope : null;
+}
 
 function persistenceScope(scope: DurableMemoryScope): MemoryScope {
   return {
@@ -305,12 +335,7 @@ export class DefaultMemoryWriter implements MemoryWriter {
     if (candidate.content.length > MAX_DURABLE_CONTENT_CHARACTERS) {
       return `candidate exceeds ${MAX_DURABLE_CONTENT_CHARACTERS} characters`;
     }
-    if (
-      SECRET_MATERIAL.test(candidate.content) ||
-      SECRET_MATERIAL.test(candidate.sourceContent) ||
-      containsCredentialMaterial(candidate.content) ||
-      containsCredentialMaterial(candidate.sourceContent)
-    ) {
+    if (isCredentialLikeMemoryText(candidate.content) || isCredentialLikeMemoryText(candidate.sourceContent)) {
       return CREDENTIAL_REJECTION_REASON;
     }
     return undefined;

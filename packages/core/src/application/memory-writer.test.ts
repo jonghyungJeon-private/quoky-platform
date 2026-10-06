@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryType } from '../domain';
 import type { MemoryCandidateInput, MemoryRecord, MemoryScope } from '../domain';
-import { DefaultMemoryWriter } from './memory-writer';
+import { DefaultMemoryWriter, durableScopeOfRecord, isCredentialLikeMemoryText } from './memory-writer';
 
 const candidateInput = (
   overrides: Partial<MemoryCandidateInput> = {},
@@ -270,5 +270,18 @@ describe('DefaultMemoryWriter lifecycle', () => {
       operation: 'PROMOTE',
       cause,
     });
+  });
+
+  it('exports the writer credential predicate and the exact durable write scope of a record (ADR-0106)', () => {
+    expect(isCredentialLikeMemoryText('password = hunter2hunter2')).toBe(true);
+    expect(isCredentialLikeMemoryText('ghp_abcdefghijklmnopqrstuvwxyz0123456789')).toBe(true);
+    expect(isCredentialLikeMemoryText('커피는 아메리카노')).toBe(false);
+
+    expect(durableScopeOfRecord(durableRecord())).toEqual({ actorId: 'actor-1' });
+    expect(
+      durableScopeOfRecord(durableRecord({ scope: { userId: 'actor-1', sessionId: 's1', projectId: 'p1' } })),
+    ).toEqual({ actorId: 'actor-1', sessionId: 's1', projectId: 'p1' });
+    expect(durableScopeOfRecord(durableRecord({ scope: { userId: 'actor-1', channelId: 'c1' } }))).toBeNull();
+    expect(durableScopeOfRecord(durableRecord({ scope: {} }))).toBeNull();
   });
 });
