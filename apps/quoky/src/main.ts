@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 
 import {
   AiProviderManager,
+  MemoryCommandService,
   NOTIFICATION_SINK,
   QuokyCore,
   PLATFORM_ADAPTER,
@@ -90,6 +91,7 @@ async function bootstrap(): Promise<void> {
   // ADR-0101 D6: composition-root reminder tick (bound in features/reminders.providers.ts). It starts only after
   // storage and the platform are up, never when QUOKY_REMINDERS_ENABLED=false, and stops first on shutdown.
   const reminderDriver = app.get(ReminderTickDriver);
+  const memoryCommands = app.get(MemoryCommandService);
   // ADR-0102 D6/D7: backup + owner-DM health notice through the unchanged NotificationSink (bound with reminders).
   const ops = createOpsRuntime({
     env: process.env,
@@ -97,6 +99,8 @@ async function bootstrap(): Promise<void> {
     sink: app.get<NotificationSink>(NOTIFICATION_SINK),
     platform: DISCORD_NOTIFICATION_PLATFORM,
     logger: new ConsoleLogger('ops'),
+    // ADR-0106 amendment D2: expired memory-archive entries are deleted at start and daily, independent of backups.
+    memoryArchivePurge: (now) => memoryCommands.purgeExpiredArchive(now),
   });
 
   logResolvedDatabasePath(config.storage.dbPath, log);

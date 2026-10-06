@@ -140,3 +140,38 @@ export function createShortTermHistoryRemovalCascade(deps: ShortTermHistoryRemov
     },
   };
 }
+
+/**
+ * ADR-0106 amendment D5: clears the actor's own SHORT_TERM history of one session — the conversation the forget or
+ * edit was confirmed in — so a paraphrase of the memory (which the exact-text purge above cannot recognise) is not
+ * used again. Project binding and long-term memories are untouched; another user's turns in a shared session are
+ * never read or deleted; purged history is not archived.
+ */
+export interface SessionHistoryClearer {
+  /** Delete the actor's SHORT_TERM turns recorded in `sessionId`; resolves to the number deleted. Idempotent. */
+  clearSession(actorId: Id, sessionId: Id): Promise<number>;
+}
+
+export interface SessionHistoryClearerDeps {
+  /** Resolves the actor's platform identities: SHORT_TERM turns are recorded under the platform user id. */
+  readonly actors: { get(id: Id): Promise<Actor | null> };
+  readonly history: Pick<MemoryRepository, 'findByScope' | 'delete'>;
+}
+
+export function createSessionHistoryClearer(deps: SessionHistoryClearerDeps): SessionHistoryClearer {
+  return {
+    async clearSession(actorId, sessionId) {
+      const actor = await deps.actors.get(actorId);
+      if (actor === null || actor.id !== actorId) return 0;
+      const userIds = new Set(actor.identities.map((identity) => identity.externalId));
+      let deleted = 0;
+      for (const turn of await deps.history.findByScope({ sessionId }, MemoryType.SHORT_TERM)) {
+        if (turn.type !== MemoryType.SHORT_TERM || turn.scope.sessionId !== sessionId) continue;
+        if (turn.scope.userId === undefined || !userIds.has(turn.scope.userId)) continue;
+        await deps.history.delete(turn.id);
+        deleted += 1;
+      }
+      return deleted;
+    },
+  };
+}

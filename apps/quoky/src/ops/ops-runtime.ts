@@ -1,7 +1,8 @@
 import { LATEST_SCHEMA_VERSION, readSqliteUserVersion, writeVerifiedSqliteCopy } from '@quoky/storage-sqlite';
-import type { IsoTimestamp, Logger, NotificationSink } from '@quoky/core';
+import type { IsoTimestamp, Logger, MemoryArchivePurgeResult, NotificationSink } from '@quoky/core';
 import type { QuokyConfig } from '../config';
 import { BackupJob, type BackupJobTimers, type BackupStatus } from './backup-job';
+import { MemoryArchivePurgeJob } from './memory-archive-purge';
 import { loadOpsConfig } from './ops-config';
 import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, type OpsNoticeLedgerStore } from './ops-notice';
 
@@ -17,6 +18,8 @@ import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, type OpsNoticeLedg
  *
  * `start()` sends the crash-loop `OPS_NOTICE` (fire and forget, never delaying the start) when the launcher counted
  * ≥3 starts in the last 10 minutes, and arms the daily backup chain, whose failures send the backup `OPS_NOTICE`.
+ * ADR-0106 amendment: `start()` also starts the memory-archive expiry purge (`memory-archive-purge.ts`) — once at start,
+ * then daily — independent of whether backups are enabled or succeed; `stop()` stops it with the backup chain.
  * `backupStatus()` is the in-process read for the OPS-1 screen (ADR-0113 D6); the same data is in
  * `<backup dir>/backup-status.json`.
  */
@@ -36,6 +39,8 @@ export interface OpsRuntimeInput {
   /** The sink's platform name (`DISCORD_NOTIFICATION_PLATFORM`). */
   readonly platform: string;
   readonly logger: Logger;
+  /** ADR-0106 amendment: deletes the expired memory-archive entries (`MemoryCommandService.purgeExpiredArchive`). */
+  readonly memoryArchivePurge?: (now: IsoTimestamp) => Promise<MemoryArchivePurgeResult>;
   /** Offline-test seams; production passes none. */
   readonly clock?: () => IsoTimestamp;
   readonly timers?: BackupJobTimers;
@@ -72,6 +77,16 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     ...(input.timers ? { timers: input.timers } : {}),
   });
   if (!ops.backup.enabled) logger.info('backup.disabled');
+  const archivePurge =
+    input.memoryArchivePurge === undefined
+      ? undefined
+      : new MemoryArchivePurgeJob({
+          purge: input.memoryArchivePurge,
+          timeZone: config.reminders.timeZone,
+          logger,
+          ...(input.clock ? { clock: input.clock } : {}),
+          ...(input.timers ? { timers: input.timers } : {}),
+        });
 
   return {
     async ensurePreMigrationBackup() {
@@ -81,8 +96,11 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     start() {
       if (isCrashLoopStart(config.host)) void notices.notify('CRASH_LOOP');
       backup.start();
+      archivePurge?.start();
     },
-    stop: () => backup.stop(),
+    async stop() {
+      await Promise.all([backup.stop(), archivePurge?.stop()]);
+    },
     backupStatus: () => backup.status(),
   };
 }

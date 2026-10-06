@@ -3,6 +3,7 @@ import { MemoryType, type Actor, type MemoryRecord } from '../../domain';
 import { MEMORY_CONFIRM_PREVIEW_MAX_CHARS, memoryBody, memoryPreview, renderForgetConfirmation } from './memory-command-renderer';
 import {
   createLearningItemsRemovalCascade,
+  createSessionHistoryClearer,
   createShortTermHistoryRemovalCascade,
   historyTurnCarriesMemory,
   memoryHistoryNeedles,
@@ -169,5 +170,53 @@ describe('createShortTermHistoryRemovalCascade (ADR-0106 D5, W2-L01)', () => {
       history: { ...h.deps.history, delete: async () => Promise.reject(new Error('disk')) },
     });
     await expect(cascade.onMemoriesRemoved(event(['지울 내용']))).rejects.toThrow('disk');
+  });
+});
+
+describe('createSessionHistoryClearer (ADR-0106 amendment D5)', () => {
+  const OWNER: Actor = {
+    id: 'actor-1',
+    displayName: 'owner',
+    identities: [
+      { platform: 'discord', externalId: 'discord-owner' },
+      { platform: 'slack', externalId: 'slack-owner' },
+    ],
+    createdAt: '2026-10-06T00:00:00.000Z',
+  };
+  const turn = (id: string, userId: string, sessionId: string, type = MemoryType.SHORT_TERM): MemoryRecord => ({
+    id,
+    type,
+    scope: { userId, channelId: 'channel-1', sessionId },
+    content: `${id} 내용`,
+    metadata: { role: 'assistant' },
+    createdAt: '2026-10-06T00:00:00.000Z',
+    updatedAt: '2026-10-06T00:00:00.000Z',
+  });
+
+  it("deletes only the actor's own short-term turns of that session (both roles), never another user's or session's", async () => {
+    const rows: MemoryRecord[] = [
+      turn('mine-1', 'discord-owner', 'session-1'),
+      turn('mine-2', 'slack-owner', 'session-1'),
+      turn('other-user', 'discord-other', 'session-1'),
+      turn('other-session', 'discord-owner', 'session-2'),
+      turn('durable', 'discord-owner', 'session-1', MemoryType.LONG_TERM),
+    ];
+    const clearer = createSessionHistoryClearer({
+      actors: { get: async (id) => (id === OWNER.id ? OWNER : null) },
+      history: {
+        findByScope: async (scope, type) =>
+          rows.filter((row) => row.scope.sessionId === scope.sessionId && (type === undefined || row.type === type)),
+        delete: async (id) => {
+          const index = rows.findIndex((row) => row.id === id);
+          if (index >= 0) rows.splice(index, 1);
+        },
+      },
+    });
+    expect(await clearer.clearSession('actor-1', 'session-1')).toBe(2);
+    expect(rows.map((row) => row.id)).toEqual(['other-user', 'other-session', 'durable']);
+    // Idempotent; an unknown actor touches nothing.
+    expect(await clearer.clearSession('actor-1', 'session-1')).toBe(0);
+    expect(await clearer.clearSession('actor-x', 'session-2')).toBe(0);
+    expect(rows).toHaveLength(3);
   });
 });

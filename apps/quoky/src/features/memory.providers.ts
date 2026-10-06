@@ -8,6 +8,7 @@ import {
   VECTOR_PROVIDER,
   createLearningItemsRemovalCascade,
   createMemoryCommandTurnHandler,
+  createSessionHistoryClearer,
   createShortTermHistoryRemovalCascade,
   createVectorRemovalCascade,
   type ConversationTurnHandler,
@@ -31,6 +32,9 @@ import { ConsoleLogger } from '../console-logger';
  *   `feedback.providers.ts` binds (only its `deleteBySourceMemory` seam is used here), then the owner's own SHORT_TERM
  *   conversation-history turns that carry a removed record's text (W2-L01), through the storage provider's actor and
  *   memory repositories.
+ * - ADR-0106 amendment: a confirmed forget archives the record for `archiveDays` (`QUOKY_MEMORY_ARCHIVE_DAYS`,
+ *   default 7; 0 = delete at once) and clears the owner's short-term history of the current session; the daily
+ *   maintenance (`ops/memory-archive-purge.ts`, driven from `main.ts`) calls `purgeExpiredArchive`.
  * - `MEMORY_TURN_HANDLERS` — the `pre-classify` order-50 handler; `turn-handlers.providers.ts` concatenates it.
  */
 
@@ -42,6 +46,8 @@ export interface MemoryCompositionOptions {
   readonly logger?: Logger;
   /** Extra cascades after the vector cache, learning-items and conversation-history cascades. */
   readonly extraCascades?: readonly MemoryRemovalCascade[];
+  /** `config.memory.archiveDays` (`QUOKY_MEMORY_ARCHIVE_DAYS`); the service default (7) when absent. */
+  readonly archiveDays?: number;
 }
 
 export function createMemoryProviders(options: MemoryCompositionOptions = {}): Provider[] {
@@ -59,6 +65,7 @@ export function createMemoryProviders(options: MemoryCompositionOptions = {}): P
           records: {
             get: (id) => storage.memories.get(id),
             findDurableCandidates: (query) => storage.memories.findDurableCandidates(query),
+            save: (record) => storage.memories.save(record),
           },
           writer: new DefaultMemoryWriter(memory),
           cascades: [
@@ -73,6 +80,14 @@ export function createMemoryProviders(options: MemoryCompositionOptions = {}): P
             }),
             ...(options.extraCascades ?? []),
           ],
+          sessionHistory: createSessionHistoryClearer({
+            actors: { get: (id) => storage.actors.get(id) },
+            history: {
+              findByScope: (scope, type) => storage.memories.findByScope(scope, type),
+              delete: (id) => storage.memories.delete(id),
+            },
+          }),
+          ...(options.archiveDays === undefined ? {} : { archiveDays: options.archiveDays }),
           logger,
         }),
       inject: [MemoryManager, STORAGE_PROVIDER, VECTOR_PROVIDER, LEARNING_REPOSITORY],
@@ -86,5 +101,3 @@ export function createMemoryProviders(options: MemoryCompositionOptions = {}): P
     },
   ];
 }
-
-export const memoryProviders: Provider[] = createMemoryProviders();

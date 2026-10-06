@@ -126,9 +126,22 @@ export interface DurableMemoryQuery {
   excludeIds?: string[];
   excludeExpired?: boolean;
   excludeSuperseded?: boolean;
+  /**
+   * ADR-0106 amendment: archived records (`metadata.archivedAt`) are excluded unless asked for — `'exclude'` (the
+   * default, every recall/listing/context read), `'only'` (the owner's archive view and the expiry purge) or
+   * `'include'` (a forget/restore/permanent-delete chain lookup).
+   */
+  archived?: 'exclude' | 'include' | 'only';
+  /** With `archived: 'only'`: only records whose `metadata.archiveExpiresAt` is at or before this instant. */
+  archiveExpiredBy?: IsoTimestamp;
 }
 
 export interface MemoryRepository extends Repository<MemoryRecord> {
+  /**
+   * Records in `scope` (optionally of one `type`). Never returns an archived record (ADR-0106 amendment), so every
+   * context, recall and duplicate-check read built on it excludes archived memories centrally. `get(id)` stays an
+   * exact-id read that returns a record whatever its archive state (the lifecycle and command paths need it).
+   */
   findByScope(scope: MemoryScope, type?: MemoryType): Promise<MemoryRecord[]>;
   findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]>;
   /**

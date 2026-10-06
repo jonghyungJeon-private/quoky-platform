@@ -7,7 +7,14 @@ import type {
   MemoryRecord,
   MemoryScope,
 } from '../domain';
-import { createDurableMemory, createMemoryCandidate, MemoryType } from '../domain';
+import {
+  createDurableMemory,
+  createMemoryCandidate,
+  isArchivedMemory,
+  MEMORY_ARCHIVE_EXPIRES_AT_KEY,
+  MEMORY_ARCHIVED_AT_KEY,
+  MemoryType,
+} from '../domain';
 import { now } from '../util/clock';
 import { newId } from '../util/id';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
@@ -85,7 +92,12 @@ class MemoryWriterPersistenceError extends Error {
 
 /** Upper bound for durable content; `promote` rejects a longer candidate (ADR-0073). */
 export const MAX_DURABLE_CONTENT_CHARACTERS = 4_000;
-const WRITER_OWNED_LIFECYCLE_METADATA = ['expiresAt', 'supersededBy'] as const;
+const WRITER_OWNED_LIFECYCLE_METADATA = [
+  'expiresAt',
+  'supersededBy',
+  MEMORY_ARCHIVED_AT_KEY,
+  MEMORY_ARCHIVE_EXPIRES_AT_KEY,
+] as const;
 const SECRET_MATERIAL =
   /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*\S+)/i;
 
@@ -194,8 +206,10 @@ export class DefaultMemoryWriter implements MemoryWriter {
       throw new MemoryWriterPersistenceError('PROMOTE', cause);
     }
 
+    // An archived (forgotten) record never makes a new save a duplicate (ADR-0106 amendment).
     const duplicate = existing.find(
       (record) =>
+        !isArchivedMemory(record) &&
         sameScope(record, candidate.scope) &&
         metadataText(record, 'provenance') === candidate.provenance &&
         normalizedContent(record.content) === normalizedContent(candidate.content),
@@ -360,6 +374,9 @@ export class DefaultMemoryWriter implements MemoryWriter {
     }
     if (metadataText(prior, 'supersededBy') !== undefined) {
       return { policyReason: 'superseded memory is already superseded' };
+    }
+    if (isArchivedMemory(prior)) {
+      return { policyReason: 'an archived memory cannot be superseded' };
     }
     return { record: prior };
   }

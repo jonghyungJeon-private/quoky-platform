@@ -102,6 +102,37 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     expect(sink.delivered).toEqual([]);
   });
 
+  it('the memory-archive purge runs at start whether or not backups are enabled (ADR-0106 amendment D2)', async () => {
+    const purges: string[] = [];
+    const ops = createOpsRuntime({
+      env: {},
+      config: {
+        storage: { dbPath: path.join(root, 'quoky.db') },
+        host: { recentStarts: 0 },
+        reminders: { enabled: true, channelDelivery: true, timeZone: 'Asia/Seoul' },
+        discord: { ownerIds: [OWNER] },
+      },
+      sink,
+      platform: 'discord',
+      logger: new QuietLogger(),
+      clock: timers.now,
+      timers,
+      ledger,
+      memoryArchivePurge: async (now) => {
+        purges.push(now);
+        return { purged: 0, failed: 0 };
+      },
+    });
+    ops.start();
+    await settle();
+    expect(ops.backupStatus()).toMatchObject({ enabled: false, state: 'DISABLED' });
+    expect(purges).toEqual([new Date(T0).toISOString()]);
+    // Only the purge chain is armed (backups are off), and stop() disarms it.
+    expect(timers.pending).toHaveLength(1);
+    await ops.stop();
+    expect(timers.pending).toEqual([]);
+  });
+
   it('outside the launcher backups are off by default: nothing is written', async () => {
     const ops = runtime({ recentStarts: 0 });
     await ops.ensurePreMigrationBackup();

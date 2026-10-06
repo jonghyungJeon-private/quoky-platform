@@ -1,6 +1,6 @@
 import { newId } from '../util/id';
 import { now } from '../util/clock';
-import { MemoryType } from '../domain';
+import { isArchivedMemory, MemoryType } from '../domain';
 import type {
   ContextFile,
   ConversationContext,
@@ -211,7 +211,8 @@ export class MemoryManager {
       taskId: task.id,
       ...(task.projectId ? { projectId: task.projectId } : {}),
     };
-    const records = await this.storage.memories.findByScope(scope);
+    // The repository never returns an archived record from a scope read (ADR-0106 amendment); re-checked here.
+    const records = (await this.storage.memories.findByScope(scope)).filter((record) => !isArchivedMemory(record));
     return [
       { path: '.chunsik/context.md', content: this.renderContext(records) },
       { path: '.chunsik/task.md', content: this.renderTask(task) },

@@ -143,6 +143,7 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_EMBEDDING_ENABLED` | 선택. 기본 `false`. `true`면 기억 회상을 **로컬** Ollama 임베딩으로 재정렬 (실패하면 기존 방식). 모델은 자동으로 받지 않음: 먼저 `ollama pull nomic-embed-text` |
 | `QUOKY_EMBEDDING_MODEL` | 선택. 기본 `nomic-embed-text`. 이름 또는 태그에 `cloud`가 들어가면 거부 |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000 |
+| `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
 
 `QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`)은 빈 값(예:
 `QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
@@ -349,6 +350,21 @@ rm /tmp/quoky-restore-drill.db
 
 `기억해: <내용>` (또는 `기억해줘: <내용>`, `remember: <내용>`)으로 보낸 내용은 오래 보관되며, **채널/DM/새 대화와
 상관없이 같은 소유자의 이후 대화에서 회상**됩니다. 평범한 대화는 장기 기억으로 저장되지 않습니다.
+
+저장된 기억은 `기억 목록`, `기억 N 보여줘`, `기억 N 수정: <내용>`, `기억 N 잊어줘`로 관리합니다. 수정과 잊기는 답장에
+나온 확인 코드를 `기억 확인 <코드>`로 보내야 실행됩니다.
+
+- **잊기 = 더 이상 쓰지 않음.** 확인한 기억(과 고쳐 쓰기 전 버전)은 **보관함**으로 옮겨져 목록, 회상, 대화 문맥,
+  학습 어디에도 쓰이지 않습니다. 기본 7일(`QUOKY_MEMORY_ARCHIVE_DAYS`) 뒤 매일 정리 작업이 완전히 지웁니다.
+- **이번 대화 기록도 비웁니다.** 잊기/수정을 확인하면 그 내용이 담긴 내 대화 기록(다른 대화 포함)을 지우고, 지금
+  대화의 내 기록도 비웁니다(답장에 "이번 대화 기록도 비웠어요"). 프로젝트 연결과 다른 기억은 그대로이고, 지운 대화
+  기록은 보관하지 않습니다.
+- `보관함`: 보관된 기억과 남은 일수를 봅니다. **보관함 번호는 `기억 목록` 번호와 따로 매겨집니다.**
+- `기억 복원 N`: 보관함 N번을 되돌립니다(다시 목록·회상에 쓰임). `기억 완전 삭제 N`: 보관함 N번을 바로 완전히 지웁니다.
+  둘 다 확인 코드(`기억 확인 <코드>`)가 필요합니다.
+- 비밀번호·토큰처럼 보이는 내용은 보관하지 않고 바로 완전히 지웁니다. `QUOKY_MEMORY_ARCHIVE_DAYS=0`이면 모든 잊기가
+  바로 완전 삭제입니다.
+- 영어: `list memories`, `forget memory N`, `memory archive`, `restore memory N`, `permanently delete memory N`.
 
 ### 승인
 

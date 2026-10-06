@@ -77,6 +77,11 @@ export interface QuokyConfig {
    * command per item, `LOCAL_ONLY`.
    */
   learning: { examplesEnabled: boolean };
+  /**
+   * ADR-0106 amendment: `archiveDays` (`QUOKY_MEMORY_ARCHIVE_DAYS`, integer 0–365, default 7) is how long a forgotten
+   * memory stays restorable in the archive before the daily maintenance deletes it; `0` deletes at once.
+   */
+  memory: { archiveDays: number };
   connectors: {
     jira?: { host: string; email: string; apiToken: string };
     slack?: { token: string };
@@ -161,6 +166,7 @@ export const QuokyConfigErrorCode = {
   EMBEDDING_MODEL_CLOUD_REFUSED: 'EMBEDDING_MODEL_CLOUD_REFUSED',
   EMBEDDING_TIMEOUT_INVALID: 'EMBEDDING_TIMEOUT_INVALID',
   LEARNING_EXAMPLES_ENABLED_INVALID: 'LEARNING_EXAMPLES_ENABLED_INVALID',
+  MEMORY_ARCHIVE_DAYS_INVALID: 'MEMORY_ARCHIVE_DAYS_INVALID',
   ...ReminderConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
@@ -194,6 +200,10 @@ const DEFAULT_EMBEDDING_TIMEOUT_MS = 3000;
 const MIN_EMBEDDING_TIMEOUT_MS = 100;
 const MAX_EMBEDDING_TIMEOUT_MS = 30_000;
 const EMBEDDING_MAX_NEW_PER_TURN = 4;
+
+/** ADR-0106 amendment: the memory archive retention (days). Mirrors the core service's bounds. */
+const DEFAULT_MEMORY_ARCHIVE_DAYS = 7;
+const MAX_MEMORY_ARCHIVE_DAYS = 365;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const continuationReceiverMode = parseContinuationReceiverMode(env.QUOKY_CONTINUATION_RECEIVER_MODE);
@@ -271,6 +281,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
         QuokyConfigErrorCode.LEARNING_EXAMPLES_ENABLED_INVALID,
       ),
     },
+    memory: { archiveDays: parseMemoryArchiveDays(env.QUOKY_MEMORY_ARCHIVE_DAYS) },
     connectors: {
       jira: resolveJiraConnector(env),
       slack: resolveSlackConnector(env),
@@ -390,6 +401,15 @@ function parseEmbeddingTimeoutMs(raw: string | undefined): number {
     throw new QuokyConfigError(QuokyConfigErrorCode.EMBEDDING_TIMEOUT_INVALID);
   }
   return value;
+}
+
+/** Whole days 0–365 (plain decimal digits only, like the other bounded integers); unset yields the default (7). */
+function parseMemoryArchiveDays(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_MEMORY_ARCHIVE_DAYS;
+  if (!/^[0-9]{1,3}$/.test(raw)) throw new QuokyConfigError(QuokyConfigErrorCode.MEMORY_ARCHIVE_DAYS_INVALID);
+  const days = Number(raw);
+  if (days > MAX_MEMORY_ARCHIVE_DAYS) throw new QuokyConfigError(QuokyConfigErrorCode.MEMORY_ARCHIVE_DAYS_INVALID);
+  return days;
 }
 
 /** Positive integer count of ESTIMATED tokens, bounded; unset yields the default budget. */

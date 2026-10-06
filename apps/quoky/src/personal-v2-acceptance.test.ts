@@ -21,9 +21,13 @@ import {
   IntentType,
   LearningItemKind,
   MAX_CONTRIBUTED_HELP_LINES,
+  MemoryCommandService,
   MemoryManager,
   MemoryType,
   MAX_CONTRIBUTED_HELP_LINE_CHARS,
+  DefaultMemoryWriter,
+  isArchivedMemory,
+  parseMemoryCommand,
   ResponseComposer,
   STORAGE_PROVIDER,
   RiskLevel,
@@ -172,6 +176,8 @@ interface Harness {
   /** The production context assembly (W2-L01: what a provider would see of the conversation history). */
   readonly contextBuilder: ContextBuilder;
   readonly memory: MemoryManager;
+  /** ADR-0106 amendment: the production memory-command service (the daily maintenance calls its expiry purge). */
+  readonly memoryCommands: MemoryCommandService;
   providerCalls(): number;
   availabilityProbes(): number;
   /** Send one turn in `context` and report which layer answered it. */
@@ -297,6 +303,7 @@ async function boot(): Promise<Harness> {
     vectors: app.get<VectorProvider>(VECTOR_PROVIDER),
     contextBuilder: app.get(ContextBuilder),
     memory: app.get(MemoryManager),
+    memoryCommands: app.get(MemoryCommandService),
     providerCalls: () => providerCalls,
     availabilityProbes: () => availabilityProbes,
     freshContext() {
@@ -997,6 +1004,29 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     );
     return results.map((result) => result.memory.content);
   };
+  const recallTask = (context: ConversationContext, actorId: string, sessionId: string, summary: string): Task => ({
+    id: `recall-task-${sessionId}`,
+    title: 'recall check',
+    description: '',
+    status: TaskStatus.PENDING,
+    intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary },
+    riskLevel: RiskLevel.LOW,
+    context,
+    actorId,
+    sessionId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  // Every piece of the provider's context that carries `fragment`: transcript turns, durable recall, context-file lines.
+  const providerViewOf = async (task: Task, fragment: string): Promise<string[]> => {
+    const bundle = await harness.contextBuilder.build(task);
+    const files = await harness.memory.buildContextFiles(task);
+    return [
+      ...bundle.conversationTranscript.map((entry) => entry.content),
+      ...(bundle.durableRecall ?? []).map((entry) => entry.content),
+      ...files.flatMap((file) => file.content.split('\n')),
+    ].filter((piece) => piece.includes(fragment));
+  };
 
   it('list → forget (stale and foreign codes change nothing) → recall check → edit → recall check, provider-free', async () => {
     const owner = harness.freshContext();
@@ -1066,7 +1096,8 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     const ask = await harness.turn(owner, '기억 1 잊어줘');
     await harness.turn(owner, `기억 확인 ${codeIn(ask.text)}`);
     expect(await ids()).not.toContain(record.id);
-    expect(await harness.storage.memories.get(record.id)).toBeNull();
+    // ADR-0106 amendment: the record itself is archived (restorable), its vector is gone at archive time.
+    expect(isArchivedMemory((await harness.storage.memories.get(record.id)) ?? {})).toBe(true);
   });
 
   it('forget and edit remove the learning items derived from the memory, actor-scoped (ADR-0106 D5, ADR-0107 D7)', async () => {
@@ -1119,7 +1150,7 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     const forgetAsk = await harness.turn(owner, '기억 1 잊어줘');
     expect(forgetAsk.text).toContain('> 학습 연쇄 삭제용 기억');
     expect((await harness.turn(owner, `기억 확인 ${codeIn(forgetAsk.text)}`)).text).toContain('이 기억을 잊었어요');
-    expect(await harness.storage.memories.get(forgetMe.id)).toBeNull();
+    expect(isArchivedMemory((await harness.storage.memories.get(forgetMe.id)) ?? {})).toBe(true);
     expect(await ids(ownerId)).toEqual(['lrn-cascade-edit', 'lrn-cascade-unrelated']);
     expect(await ids(otherId)).toEqual(['lrn-cascade-foreign']);
 
@@ -1131,8 +1162,10 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect(harness.providerCalls() + harness.availabilityProbes() - providerBefore).toBe(0);
   });
 
-  it('W2-L01: edit and forget also purge the actor\'s own short-term history copies; another user\'s turns stay', async () => {
+  it('W2-L01: edit and forget purge the actor\'s history copies in other sessions and clear the current session; another user\'s turns stay', async () => {
     const owner = harness.freshContext();
+    // The owner's second conversation (another channel = another session) quotes the text in ordinary chat.
+    const ownerElsewhere: ConversationContext = { ...harness.freshContext(), userId: owner.userId };
     // Another user in the SAME channel shares the owner's session: actor isolation inside one conversation.
     const other: ConversationContext = { ...harness.freshContext(), channelId: owner.channelId };
     const oldText = '내가 제일 좋아하는 커피는 따뜻한 라떼야';
@@ -1142,57 +1175,50 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     const carries = (rows: readonly string[], fragment: string) => rows.filter((row) => row.includes(fragment));
 
     await harness.turn(owner, `기억해: ${oldText}`);
-    await harness.turn(owner, `참고로 ${newText}`); // ordinary chat: the owner's own turn quotes the text
-    await harness.turn(other, `${newText} 나도 그래`); // the other user's turn in the same session
+    await harness.turn(ownerElsewhere, `참고로 ${newText}`); // ordinary chat in another session quotes the text
+    await harness.turn(other, `${newText} 나도 그래`); // the other user's turn in the owner's session
     const session = await harness.storage.sessions.findActiveByContext(owner.channelId);
     if (!session) throw new Error('session was not opened');
     const ownerId = await actorIdOf(owner);
-    const task: Task = {
-      id: 'w2-l01-task',
-      title: 'recall check',
-      description: '',
-      status: TaskStatus.PENDING,
-      intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: '내가 좋아하는 커피가 뭐였지?' },
-      riskLevel: RiskLevel.LOW,
-      context: owner,
-      actorId: ownerId,
-      sessionId: session.id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    // Every piece of the provider's context that carries `fragment`: transcript turns, durable recall, context-file lines.
-    const providerView = async (fragment: string) => {
-      const bundle = await harness.contextBuilder.build(task);
-      const files = await harness.memory.buildContextFiles(task);
-      return [
-        ...bundle.conversationTranscript.map((entry) => entry.content),
-        ...(bundle.durableRecall ?? []).map((entry) => entry.content),
-        ...files.flatMap((file) => file.content.split('\n')),
-      ].filter((piece) => piece.includes(fragment));
-    };
-    // The live precondition: the conversation history (and so the provider's context) carries both texts.
+    const task = recallTask(owner, ownerId, session.id, '내가 좋아하는 커피가 뭐였지?');
+    const providerView = (fragment: string) => providerViewOf(task, fragment);
+    // The live precondition: the conversation history carries both texts.
     expect(carries(await ownerHistory(), '라떼')).not.toEqual([]);
-    expect(await providerView('아이스 아메리카노')).toContain(`참고로 ${newText}`);
+    expect(carries(await ownerHistory(), '아이스 아메리카노')).toEqual([`참고로 ${newText}`]);
 
-    // Edit: the superseded text leaves the owner's history; the edit turns themselves keep no memory text.
+    // Edit: the superseded text leaves the owner's history; the current session's owner turns are cleared.
     const editAsk = await harness.turn(owner, `기억 1 수정: ${newText}`);
     expect(editAsk.text).toContain('지금: 내가 제일 좋아하는 커피는 따뜻한 라떼야'); // the reply copy is unchanged
-    expect((await harness.turn(owner, `기억 확인 ${codeIn(editAsk.text)}`)).text).toContain('기억을 바꿨어요');
+    const edited = await harness.turn(owner, `기억 확인 ${codeIn(editAsk.text)}`);
+    expect(edited.text).toContain('기억을 바꿨어요');
+    expect(edited.text.split('\n').at(-1)).toBe('이번 대화 기록도 비웠어요.');
     let history = await ownerHistory();
     expect(carries(history, '라떼')).toEqual([]);
-    expect(history).toContain('기억 1 수정: (내용은 대화 기록에 남기지 않아요)');
-    expect(history).toContain('(기억을 바꾸기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)');
-    expect(carries(history, '아이스 아메리카노')).toEqual([`참고로 ${newText}`]); // the current memory's chat turn
+    // Left: the other session's turns (its quote of the CURRENT memory and the stub answer to it), and the
+    // content-free note of the edit result; every other owner turn of the current session was cleared.
+    expect(history).toEqual([
+      `참고로 ${newText}`,
+      STUB_REPLY,
+      '(요청한 기억을 바꿨어요. 기억 내용은 대화 기록에 남기지 않아요.)',
+    ]);
 
-    // Forget the edited memory: the text and its earlier version leave the owner's history entirely.
+    // Forget the edited memory: its text leaves the owner's history in every session (the other session's quote too).
     const forgetAsk = await harness.turn(owner, '기억 1 잊어줘');
     expect(forgetAsk.text).toContain(`> ${newText}`);
     const forgotten = await harness.turn(owner, `기억 확인 ${codeIn(forgetAsk.text)}`);
-    expect(forgotten.text).toBe(`이 기억을 잊었어요:\n> ${newText}\n이전에 고쳐 쓰기 전 버전 1개도 함께 지웠어요.`);
+    expect(forgotten.text).toBe(
+      [
+        '이 기억을 잊었어요:',
+        `> ${newText}`,
+        '이전에 고쳐 쓰기 전 버전 1개도 함께 보관함으로 옮겼어요.',
+        '이제 대화에 쓰지 않아요. 보관함에 7일 동안 두었다가 완전히 지워요. 되돌리려면 "보관함"에서 번호를 확인한 뒤 "기억 복원 N"이라고 보내 주세요.',
+        '이번 대화 기록도 비웠어요.',
+      ].join('\n'),
+    );
     history = await ownerHistory();
     expect(carries(history, '아이스 아메리카노')).toEqual([]);
     expect(carries(history, '라떼')).toEqual([]);
-    expect(history.at(-1)).toBe('(요청한 기억을 잊었어요. 그 내용은 더 이상 쓰지 않아요.)');
+    expect(history).toEqual([STUB_REPLY, '(요청한 기억을 잊었어요. 그 내용은 더 이상 쓰지 않아요.)']);
     expect(await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 10 })).toEqual([]);
 
     // Neither the context builder nor the generated context files bring the owner's copies back for the recall
@@ -1208,6 +1234,113 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect(otherRows.every((record) => record.type === MemoryType.SHORT_TERM)).toBe(true);
   });
 
+  it('live case: memory → paraphrased answer → forget → next context has neither; archive listed; restore brings recall back; expiry purge', async () => {
+    const owner = harness.freshContext();
+    const other = harness.freshContext();
+    const fact = '내 차는 파란색 아반떼야';
+    const paraphrase = '파란 아반떼를 타고 다니시는군요! 색이 예쁘겠어요.';
+    expect((await harness.turn(owner, `기억해: ${fact}`)).reply).toBe('memory-stored');
+    stubReply = paraphrase; // the provider answers with a paraphrase that never contains the memory text verbatim
+    try {
+      const chat = await harness.turn(owner, '내 차 기억나?');
+      expect(chat.text).toContain('파란 아반떼');
+    } finally {
+      stubReply = STUB_REPLY;
+    }
+    const ownerId = await actorIdOf(owner);
+    const session = await harness.storage.sessions.findActiveByContext(owner.channelId);
+    if (!session) throw new Error('session was not opened');
+    const task = recallTask(owner, ownerId, session.id, '내 차 무슨 색이었지?');
+    // Precondition: the next context carries both the record (durable recall) and the paraphrase (transcript).
+    expect(await providerViewOf(task, '아반떼')).toEqual(expect.arrayContaining([fact, paraphrase]));
+
+    const ask = await harness.turn(owner, '기억 1 잊어줘');
+    const done = await harness.turn(owner, `기억 확인 ${codeIn(ask.text)}`);
+    expect(done).toMatchObject({ route: 'memory-commands', providerCalls: 0 });
+    expect(done.text).toContain('보관함에 7일 동안 두었다가 완전히 지워요');
+    expect(done.text).toContain('이번 대화 기록도 비웠어요.');
+    // The next context contains neither the record nor the paraphrase.
+    expect(await providerViewOf(task, '아반떼')).toEqual([]);
+    expect(await recall(ownerId, '차 아반떼')).toEqual([]);
+
+    // The archive lists it (with its own numbering); the listing itself is not kept verbatim in history.
+    const archive = await harness.turn(owner, '보관함');
+    expect(archive).toMatchObject({ route: 'memory-commands', providerCalls: 0 });
+    expect(archive.text).toContain(`1. ${fact} (7일 남음)`);
+    expect(archive.text).toContain('보관함 번호는 "기억 목록" 번호와 따로 매겨져요');
+    expect(await providerViewOf(task, '아반떼')).toEqual([]);
+    // Actor isolation: another actor sees an empty archive and cannot restore the owner's record.
+    expect((await harness.turn(other, '보관함')).text).toContain('보관함이 비어 있어요');
+    expect((await harness.turn(other, '기억 복원 1')).text).toContain('보관함이 비어 있어요');
+
+    // Restore (confirmed) → recall works again.
+    const restoreAsk = await harness.turn(owner, '기억 복원 1');
+    expect(restoreAsk.text).toContain('보관함 1번 기억을 복원할까요?');
+    expect((await harness.turn(other, `기억 확인 ${codeIn(restoreAsk.text)}`)).text).toContain('아무것도 바뀌지 않았어요');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(restoreAsk.text)}`)).text).toContain('기억을 복원했어요');
+    expect(await recall(ownerId, '차 아반떼')).toEqual([fact]);
+    expect((await harness.turn(owner, '기억 목록')).text).toContain(`1. ${fact}`);
+
+    // Forget again, then the expiry purge (injected clock): nothing at 6 days, gone for good at 7 days.
+    const [record] = await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 5 });
+    if (!record) throw new Error('restored memory missing');
+    const again = await harness.turn(owner, '기억 1 잊어줘');
+    await harness.turn(owner, `기억 확인 ${codeIn(again.text)}`);
+    const archivedAt = Date.parse(String((await harness.storage.memories.get(record.id))?.metadata?.['archivedAt']));
+    const DAY = 24 * 60 * 60 * 1000;
+    await harness.memoryCommands.purgeExpiredArchive(new Date(archivedAt + 6 * DAY).toISOString());
+    expect(isArchivedMemory((await harness.storage.memories.get(record.id)) ?? {})).toBe(true);
+    const purge = await harness.memoryCommands.purgeExpiredArchive(new Date(archivedAt + 7 * DAY).toISOString());
+    expect(purge.purged).toBeGreaterThanOrEqual(1);
+    expect(await harness.storage.memories.get(record.id)).toBeNull();
+    expect((await harness.turn(owner, '보관함')).text).toContain('보관함이 비어 있어요');
+  });
+
+  it('credential-like record text is never archived (deleted at once), and QUOKY_MEMORY_ARCHIVE_DAYS=0 deletes at once (real SQLite)', async () => {
+    const owner = harness.freshContext();
+    await harness.turn(owner, '보관함'); // resolves the owner's actor
+    const ownerId = await actorIdOf(owner);
+    // A legacy record the writer would refuse today: inserted directly into the real store.
+    const at = new Date().toISOString();
+    await harness.storage.memories.save({
+      id: 'legacy-credential-memory',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ownerId },
+      content: '운영 DB password = hunter2hunter2',
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: at,
+      updatedAt: at,
+    });
+    const ask = await harness.turn(owner, '기억 1 잊어줘');
+    expect(ask.text).not.toContain('hunter2');
+    const done = await harness.turn(owner, `기억 확인 ${codeIn(ask.text)}`);
+    expect(done.text).toContain('보관함에 두지 않고 바로 완전히 지웠어요');
+    expect(await harness.storage.memories.get('legacy-credential-memory')).toBeNull();
+    expect((await harness.turn(owner, '보관함')).text).toContain('보관함이 비어 있어요');
+
+    // The ARCHIVE_DAYS=0 composition over the same real SQLite store: forget deletes permanently at once.
+    const immediate = new MemoryCommandService({
+      records: {
+        get: (id) => harness.storage.memories.get(id),
+        findDurableCandidates: (query) => harness.storage.memories.findDurableCandidates(query),
+        save: (record) => harness.storage.memories.save(record),
+      },
+      writer: new DefaultMemoryWriter(harness.memory),
+      archiveDays: 0,
+    });
+    expect((await harness.turn(owner, '기억해: 바로 지워질 기억')).reply).toBe('memory-stored');
+    const run = async (text: string) => {
+      const command = parseMemoryCommand(text);
+      if (command === null) throw new Error(text);
+      return immediate.execute(command, { actorId: ownerId, now: new Date().toISOString(), sourceText: text });
+    };
+    const zeroAsk = await run('기억 1 잊어줘');
+    const zeroDone = await run(`기억 확인 ${codeIn(zeroAsk.text)}`);
+    expect(zeroDone.text).toBe('이 기억을 잊었어요:\n> 바로 지워질 기억');
+    expect(await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 5, archived: 'include' })).toEqual([]);
+    expect((await run('보관함')).text).toBe('보관함이 비어 있어요. 지금 설정에서는 잊은 기억을 보관하지 않고 바로 완전히 지워요.');
+  });
+
   it('pins the golden memory-command routing (기억해: still saves; to-do and reminder phrases keep their handlers)', () => {
     const route = (text: string) => routing.cases.find((c) => c.text === text)?.expected;
     expect(route('기억해: 커피는 아메리카노')).toEqual({ route: 'runtime', reply: 'memory-stored', providerCalls: 0 });
@@ -1218,5 +1351,11 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect(route('할 일 추가: 기억 목록 정리')).toMatchObject({ route: 'work-chat.todo' });
     expect(route('30분 뒤에 기억 목록 정리 알려줘')).toMatchObject({ route: 'reminders' });
     expect(route('기억 어떻게 지워?')).toMatchObject({ route: 'help-intent' });
+    // ADR-0106 amendment: the archive commands are the same handler (order 50), never a to-do or chat.
+    for (const text of ['보관함', '기억 복원 1', '기억 완전 삭제 1', 'memory archive', 'restore memory 1']) {
+      expect(route(text), text).toEqual({ route: 'memory-commands', providerCalls: 0 });
+    }
+    expect(route('할 일 추가: 보관함 정리')).toMatchObject({ route: 'work-chat.todo' });
+    expect(route('기억 복원 1 하지 마')).toMatchObject({ route: 'classifier' });
   });
 });

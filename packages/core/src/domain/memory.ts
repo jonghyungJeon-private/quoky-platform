@@ -33,6 +33,21 @@ export interface MemoryRecord {
 }
 
 /**
+ * ADR-0106 amendment (archive with restore): a forgotten durable record is kept for a bounded time with these two
+ * metadata keys in its existing JSON document (no migration). `archivedAt` marks it archived; `archiveExpiresAt` is
+ * when the daily maintenance deletes it permanently. An archived record takes part in nothing — no listing, recall
+ * (lexical or semantic), context building or learning — until it is restored (both keys removed).
+ */
+export const MEMORY_ARCHIVED_AT_KEY = 'archivedAt';
+export const MEMORY_ARCHIVE_EXPIRES_AT_KEY = 'archiveExpiresAt';
+
+/** Whether a record is archived (ADR-0106 amendment): it carries an `archivedAt` metadata value. */
+export function isArchivedMemory(record: Pick<MemoryRecord, 'metadata'>): boolean {
+  const value = record.metadata?.[MEMORY_ARCHIVED_AT_KEY];
+  return value !== undefined && value !== null;
+}
+
+/**
  * A file that the MemoryManager materializes into the workspace so a stateless
  * CLI can "see" the relevant memory. Path is workspace-relative, e.g.
  * "CLAUDE.md", "AGENTS.md", ".chunsik/context.md", ".chunsik/task.md".

@@ -161,3 +161,64 @@ describe('SqliteMemoryRepository short-term history by user (W2-L01)', () => {
     await store.close();
   });
 });
+
+describe('SqliteMemoryRepository archive exclusion (ADR-0106 amendment)', () => {
+  const archived = (id: string, archivedAt: string, archiveExpiresAt: string, scope: MemoryScope = { userId: 'actor-1' }) =>
+    memory(id, scope, {
+      metadata: {
+        kind: 'SEMANTIC',
+        provenance: 'USER_PROVIDED',
+        authorityLevel: 'USER_CLAIM_OR_INTENT',
+        archivedAt,
+        archiveExpiresAt,
+      },
+    });
+
+  it('findByScope and the default durable query never return an archived record; get still does', async () => {
+    const store = await freshStore();
+    await store.memories.save(memory('live', { userId: 'actor-1' }));
+    await store.memories.save(archived('gone', '2026-10-06T03:00:00.000Z', '2026-10-13T03:00:00.000Z'));
+
+    expect((await store.memories.findByScope({ userId: 'actor-1' })).map(({ id }) => id)).toEqual(['live']);
+    expect((await store.memories.findByScope({}, MemoryType.LONG_TERM)).map(({ id }) => id)).toEqual(['live']);
+    const durable = (query: Partial<Parameters<typeof store.memories.findDurableCandidates>[0]> = {}) =>
+      store.memories
+        .findDurableCandidates({ scope: { userId: 'actor-1' }, limit: 10, ...query })
+        .then((rows) => rows.map(({ id }) => id).sort());
+    expect(await durable()).toEqual(['live']);
+    expect(await durable({ archived: 'exclude', excludeExpired: true, excludeSuperseded: true })).toEqual(['live']);
+    expect(await durable({ archived: 'only' })).toEqual(['gone']);
+    expect(await durable({ archived: 'include' })).toEqual(['gone', 'live']);
+    expect((await store.memories.get('gone'))?.metadata?.['archivedAt']).toBe('2026-10-06T03:00:00.000Z');
+    await store.close();
+  });
+
+  it('archiveExpiredBy selects the archived records due at or before the instant, across actors', async () => {
+    const store = await freshStore();
+    await store.memories.save(archived('due-earlier', '2026-09-01T00:00:00.000Z', '2026-09-08T00:00:00.000Z'));
+    await store.memories.save(archived('due-exactly', '2026-09-03T00:00:00.000Z', '2026-09-10T00:00:00.000Z', { userId: 'actor-2' }));
+    await store.memories.save(archived('not-yet', '2026-09-05T00:00:00.000Z', '2026-09-12T00:00:00.000Z'));
+    await store.memories.save(memory('live', { userId: 'actor-1' }));
+    const due = await store.memories.findDurableCandidates({
+      scope: {},
+      limit: 10,
+      archived: 'only',
+      archiveExpiredBy: '2026-09-10T00:00:00.000Z',
+    });
+    expect(due.map(({ id }) => id).sort()).toEqual(['due-earlier', 'due-exactly']);
+    await store.close();
+  });
+
+  it('a restored record (archive keys removed) is a live record again', async () => {
+    const store = await freshStore();
+    const record = archived('back', '2026-10-06T03:00:00.000Z', '2026-10-13T03:00:00.000Z');
+    await store.memories.save(record);
+    const metadata = { ...record.metadata };
+    delete metadata['archivedAt'];
+    delete metadata['archiveExpiresAt'];
+    await store.memories.save({ ...record, metadata });
+    expect((await store.memories.findByScope({ userId: 'actor-1' })).map(({ id }) => id)).toEqual(['back']);
+    expect(await store.memories.findDurableCandidates({ scope: {}, limit: 10, archived: 'only' })).toEqual([]);
+    await store.close();
+  });
+});

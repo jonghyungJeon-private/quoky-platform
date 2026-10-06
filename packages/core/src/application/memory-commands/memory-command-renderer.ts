@@ -184,19 +184,76 @@ export function renderConfirmUnknown(language: MemoryCommandLanguage): string {
     : '확인 코드가 맞지 않거나 만료됐어요. 아무것도 바뀌지 않았어요. "기억 N 잊어줘" 또는 "기억 N 수정: 내용"으로 다시 요청해 주세요.';
 }
 
-export function renderConfirmStale(language: MemoryCommandLanguage): string {
+export function renderConfirmStale(language: MemoryCommandLanguage, surface: 'list' | 'archive' = 'list'): string {
+  if (surface === 'archive') {
+    return language === 'en'
+      ? 'That archived memory changed or left the archive after the request, so nothing was done. Send "memory archive" to check again.'
+      : '요청한 뒤에 그 기억이 바뀌었거나 보관함에서 없어져서 실행하지 않았어요. "보관함"으로 다시 확인해 주세요.';
+  }
   return language === 'en'
     ? 'That memory changed or was removed after the request, so nothing was done. Send "list memories" to check again.'
     : '요청한 뒤에 그 기억이 바뀌었거나 없어져서 실행하지 않았어요. "기억 목록"으로 다시 확인해 주세요.';
 }
 
-export function renderForgotten(preview: string, earlierVersions: number, language: MemoryCommandLanguage): string {
+/**
+ * How a confirmed forget ended (ADR-0106 amendment): `archived` (kept `archiveDays` days, restorable), `deleted`
+ * (no archive configured: `QUOKY_MEMORY_ARCHIVE_DAYS=0`) or `deleted-sensitive` (credential-like text is never
+ * archived). `sessionCleared` adds the line saying the current conversation's history was cleared too.
+ */
+export interface ForgottenReplyOptions {
+  readonly mode?: 'archived' | 'deleted' | 'deleted-sensitive';
+  readonly archiveDays?: number;
+  readonly sessionCleared?: boolean;
+}
+
+/** The line a forget/edit reply ends with when the current session's short-term history was cleared. */
+export function renderSessionHistoryCleared(language: MemoryCommandLanguage): string {
+  return language === 'en' ? "I also cleared this conversation's history." : '이번 대화 기록도 비웠어요.';
+}
+
+export function renderForgotten(
+  preview: string,
+  earlierVersions: number,
+  language: MemoryCommandLanguage,
+  options: ForgottenReplyOptions = {},
+): string {
+  const mode = options.mode ?? 'deleted';
+  const days = options.archiveDays ?? 0;
+  const lines: string[] = [];
   if (language === 'en') {
-    const versions = earlierVersions > 0 ? `\nIts ${earlierVersions} earlier version${earlierVersions === 1 ? ' was' : 's were'} removed too.` : '';
-    return `Forgot this memory:\n> ${preview}${versions}`;
+    lines.push('Forgot this memory:', `> ${preview}`);
+    if (earlierVersions > 0) {
+      const verb = mode === 'archived' ? 'moved to the archive' : 'removed';
+      lines.push(`Its ${earlierVersions} earlier version${earlierVersions === 1 ? ' was' : 's were'} ${verb} too.`);
+    }
+    if (mode === 'archived') {
+      lines.push(
+        `It is no longer used. It stays in the archive for ${days} day${days === 1 ? '' : 's'}, then is deleted for good. ` +
+          'To undo, send "memory archive" to find its number, then "restore memory N".',
+      );
+    } else if (mode === 'deleted-sensitive') {
+      lines.push('It looked like a secret or credential, so it was deleted for good at once instead of being archived.');
+    }
+  } else {
+    lines.push('이 기억을 잊었어요:', `> ${preview}`);
+    if (earlierVersions > 0) {
+      lines.push(
+        mode === 'archived'
+          ? `이전에 고쳐 쓰기 전 버전 ${earlierVersions}개도 함께 보관함으로 옮겼어요.`
+          : `이전에 고쳐 쓰기 전 버전 ${earlierVersions}개도 함께 지웠어요.`,
+      );
+    }
+    if (mode === 'archived') {
+      lines.push(
+        `이제 대화에 쓰지 않아요. 보관함에 ${days}일 동안 두었다가 완전히 지워요. ` +
+          '되돌리려면 "보관함"에서 번호를 확인한 뒤 "기억 복원 N"이라고 보내 주세요.',
+      );
+    } else if (mode === 'deleted-sensitive') {
+      lines.push('비밀번호·토큰처럼 보이는 내용이라 보관함에 두지 않고 바로 완전히 지웠어요.');
+    }
   }
-  const versions = earlierVersions > 0 ? `\n이전에 고쳐 쓰기 전 버전 ${earlierVersions}개도 함께 지웠어요.` : '';
-  return `이 기억을 잊었어요:\n> ${preview}${versions}`;
+  if (options.sessionCleared === true) lines.push(renderSessionHistoryCleared(language));
+  return lines.join('\n');
 }
 
 /**
@@ -209,32 +266,42 @@ export function renderForgetIncomplete(
   removedVersions: number,
   current: 'kept' | 'unknown',
   language: MemoryCommandLanguage,
+  mode: 'deleted' | 'archived' = 'deleted',
 ): string {
   if (language === 'en') {
+    const verb = mode === 'archived' ? 'moved to the archive' : 'removed';
     const head =
       removedVersions > 0
-        ? `I only partly forgot this memory: ${removedVersions} earlier version${removedVersions === 1 ? ' was' : 's were'} removed, but I could not finish.`
+        ? `I only partly forgot this memory: ${removedVersions} earlier version${removedVersions === 1 ? ' was' : 's were'} ${verb}, but I could not finish.`
         : 'I could not finish forgetting this memory. Some data derived from it may already be removed.';
     const state = current === 'kept' ? 'The memory itself is still in your list.' : 'The memory itself may still be stored.';
     return `${head}\n${state} Send "list memories" to find its number, then "forget memory N" to try again.`;
   }
   const head =
     removedVersions > 0
-      ? `기억을 일부만 지웠어요: 이전 버전 ${removedVersions}개는 지웠지만 끝까지 마치지 못했어요.`
+      ? mode === 'archived'
+        ? `기억을 일부만 잊었어요: 이전 버전 ${removedVersions}개는 보관함으로 옮겼지만 끝까지 마치지 못했어요.`
+        : `기억을 일부만 지웠어요: 이전 버전 ${removedVersions}개는 지웠지만 끝까지 마치지 못했어요.`
       : '기억을 끝까지 지우지 못했어요. 관련 데이터는 일부 지워졌을 수 있어요.';
   const state = current === 'kept' ? '이 기억은 아직 목록에 남아 있어요.' : '이 기억이 아직 남아 있을 수 있어요.';
   return `${head}\n${state} "기억 목록"에서 번호를 확인한 뒤 "기억 N 잊어줘"로 다시 시도해 주세요.`;
 }
 
-export function renderEdited(preview: string, language: MemoryCommandLanguage, cleanupPending = false): string {
+export function renderEdited(
+  preview: string,
+  language: MemoryCommandLanguage,
+  cleanupPending = false,
+  sessionCleared = false,
+): string {
   const base =
     language === 'en'
       ? `Updated the memory:\n> ${preview}\nAn edited memory moves to the end of the list.`
       : `기억을 바꿨어요:\n> ${preview}\n바꾼 기억은 목록 맨 뒤로 옮겨져요.`;
-  if (!cleanupPending) return base;
+  const cleared = sessionCleared ? `\n${renderSessionHistoryCleared(language)}` : '';
+  if (!cleanupPending) return `${base}${cleared}`;
   return language === 'en'
-    ? `${base}\nSome data derived from the old text could not be cleaned up yet.`
-    : `${base}\n다만 이전 내용에서 파생된 데이터 일부는 아직 정리하지 못했어요.`;
+    ? `${base}\nSome data derived from the old text could not be cleaned up yet.${cleared}`
+    : `${base}\n다만 이전 내용에서 파생된 데이터 일부는 아직 정리하지 못했어요.${cleared}`;
 }
 
 export function renderEditDuplicate(language: MemoryCommandLanguage): string {
@@ -253,13 +320,35 @@ export function renderEditRequestHistory(number: number, language: MemoryCommand
     : `기억 ${number} 수정: (내용은 대화 기록에 남기지 않아요)`;
 }
 
-/** W2-L01: the content-free note the conversation history keeps instead of an edit/forget reply that echoed memory text. */
+/** The memory-command outcomes whose reply echoes memory text and is kept in history as a content-free note. */
+export type MemoryCommandHistoryNoteOutcome =
+  | 'forget-confirmation'
+  | 'edit-confirmation'
+  | 'forgotten'
+  | 'edited'
+  | 'archive-listed'
+  | 'restore-confirmation'
+  | 'purge-confirmation'
+  | 'restored'
+  | 'purged';
+
+/** W2-L01: the content-free note the conversation history keeps instead of a reply that echoed memory text. */
 export function renderMemoryCommandHistoryReply(
-  outcome: 'forget-confirmation' | 'edit-confirmation' | 'forgotten' | 'edited',
+  outcome: MemoryCommandHistoryNoteOutcome,
   language: MemoryCommandLanguage,
 ): string {
   if (language === 'en') {
     switch (outcome) {
+      case 'archive-listed':
+        return '(Showed the memory archive; archived text is not kept in the conversation history.)';
+      case 'restore-confirmation':
+        return '(Asked for a confirmation code before restoring an archived memory; its text is not kept in the conversation history.)';
+      case 'purge-confirmation':
+        return '(Asked for a confirmation code before permanently deleting an archived memory; its text is not kept in the conversation history.)';
+      case 'restored':
+        return '(Restored the requested memory from the archive; its text is not kept in the conversation history.)';
+      case 'purged':
+        return '(Permanently deleted the requested archived memory.)';
       case 'forget-confirmation':
         return '(Asked for a confirmation code before forgetting a memory; its text is not kept in the conversation history.)';
       case 'edit-confirmation':
@@ -271,6 +360,16 @@ export function renderMemoryCommandHistoryReply(
     }
   }
   switch (outcome) {
+    case 'archive-listed':
+      return '(보관함을 보여줬어요. 보관된 기억 내용은 대화 기록에 남기지 않아요.)';
+    case 'restore-confirmation':
+      return '(보관함의 기억을 복원하기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)';
+    case 'purge-confirmation':
+      return '(보관함의 기억을 완전히 지우기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)';
+    case 'restored':
+      return '(요청한 기억을 보관함에서 복원했어요. 기억 내용은 대화 기록에 남기지 않아요.)';
+    case 'purged':
+      return '(보관함의 요청한 기억을 완전히 지웠어요.)';
     case 'forget-confirmation':
       return '(기억을 잊기 전에 확인 코드를 보냈어요. 기억 내용은 대화 기록에 남기지 않아요.)';
     case 'edit-confirmation':
@@ -318,4 +417,134 @@ export function renderMemoryStatusNone(language: MemoryCommandLanguage): string 
   return language === 'en'
     ? 'Nothing is saved to memory yet. Send "remember: <text>" to save something.'
     : '아직 저장된 기억이 없어요. 기억해 두려면 "기억해: 내용"이라고 보내 주세요.';
+}
+
+// ADR-0106 amendment — the archive view, restore and permanent delete. Archive numbers are the archive's own (by
+// archive time, oldest first) and are never the active list's numbers; the replies say so.
+
+export interface MemoryArchiveRow {
+  readonly number: number;
+  /** Already masked or previewed. */
+  readonly preview: string;
+  /** Whole days until the daily maintenance deletes it (at least 1 while it is listed). */
+  readonly daysLeft: number;
+}
+
+export interface MemoryArchivePage {
+  readonly page: number;
+  readonly pages: number;
+  readonly total: number;
+  readonly rows: readonly MemoryArchiveRow[];
+}
+
+export function renderMemoryArchiveEmpty(archiveDays: number, language: MemoryCommandLanguage): string {
+  if (archiveDays === 0) {
+    return language === 'en'
+      ? 'The memory archive is empty. With the current setting a forgotten memory is deleted for good at once (no archive).'
+      : '보관함이 비어 있어요. 지금 설정에서는 잊은 기억을 보관하지 않고 바로 완전히 지워요.';
+  }
+  return language === 'en'
+    ? `The memory archive is empty. A forgotten memory stays here for ${archiveDays} day${archiveDays === 1 ? '' : 's'} before it is deleted for good.`
+    : `보관함이 비어 있어요. 잊은 기억은 여기에 ${archiveDays}일 동안 보관했다가 완전히 지워요.`;
+}
+
+export function renderMemoryArchive(page: MemoryArchivePage, language: MemoryCommandLanguage): string {
+  if (language === 'en') {
+    return [
+      `Memory archive: ${page.total} forgotten ${page.total === 1 ? 'memory' : 'memories'} (page ${page.page}/${page.pages}). Archive numbers are separate from the "list memories" numbers.`,
+      ...page.rows.map((row) => `${row.number}. ${row.preview} (${row.daysLeft} day${row.daysLeft === 1 ? '' : 's'} left)`),
+      ...(page.page < page.pages ? [`Next page: "memory archive ${page.page + 1}"`] : []),
+      'Send "restore memory N" to bring one back or "permanently delete memory N" to delete it now (each asks for a confirmation code).',
+    ].join('\n');
+  }
+  return [
+    `보관함에 잊은 기억 ${page.total}개가 있어요 (${page.page}/${page.pages}쪽). 보관함 번호는 "기억 목록" 번호와 따로 매겨져요.`,
+    ...page.rows.map((row) => `${row.number}. ${row.preview} (${row.daysLeft}일 남음)`),
+    ...(page.page < page.pages ? [`다음 쪽: "보관함 ${page.page + 1}"`] : []),
+    '"기억 복원 N"으로 되돌리거나 "기억 완전 삭제 N"으로 바로 지울 수 있어요 (확인 코드로 한 번 더 확인해요).',
+  ].join('\n');
+}
+
+export function renderMemoryArchivePageOutOfRange(pages: number, language: MemoryCommandLanguage): string {
+  return language === 'en'
+    ? `The memory archive has ${pages} page${pages === 1 ? '' : 's'}. Send "memory archive" to start from page 1.`
+    : `보관함은 ${pages}쪽까지 있어요. "보관함"으로 첫 쪽부터 볼 수 있어요.`;
+}
+
+export function renderArchivedMemoryNotFound(
+  number: number,
+  total: number,
+  archiveDays: number,
+  language: MemoryCommandLanguage,
+): string {
+  if (total === 0) return renderMemoryArchiveEmpty(archiveDays, language);
+  return language === 'en'
+    ? `There is no archived memory ${number}. The archive holds ${total}; send "memory archive" to see its numbers (they differ from "list memories").`
+    : `보관함에 ${number}번 기억은 없어요. 지금 보관함에는 ${total}개가 있어요. "보관함"으로 번호를 확인해 주세요 (기억 목록 번호와 달라요).`;
+}
+
+export function renderRestoreConfirmation(
+  number: number,
+  preview: string,
+  code: string,
+  language: MemoryCommandLanguage,
+): string {
+  return language === 'en'
+    ? [
+        `Restore archived memory ${number}?`,
+        `> ${preview}`,
+        `To confirm, send "confirm memory ${code}" within 30 minutes. Anything else changes nothing.`,
+      ].join('\n')
+    : [
+        `보관함 ${number}번 기억을 복원할까요?`,
+        `> ${preview}`,
+        `맞으면 30분 안에 "기억 확인 ${code}"라고 보내 주세요. 다른 말을 하면 아무것도 바꾸지 않아요.`,
+      ].join('\n');
+}
+
+export function renderPurgeConfirmation(
+  number: number,
+  preview: string,
+  code: string,
+  language: MemoryCommandLanguage,
+): string {
+  return language === 'en'
+    ? [
+        `Permanently delete archived memory ${number}? This cannot be undone.`,
+        `> ${preview}`,
+        `To confirm, send "confirm memory ${code}" within 30 minutes. Anything else deletes nothing.`,
+      ].join('\n')
+    : [
+        `보관함 ${number}번 기억을 완전히 지울까요? 지우면 되돌릴 수 없어요.`,
+        `> ${preview}`,
+        `맞으면 30분 안에 "기억 확인 ${code}"라고 보내 주세요. 다른 말을 하면 아무것도 지우지 않아요.`,
+      ].join('\n');
+}
+
+export function renderRestored(preview: string, language: MemoryCommandLanguage): string {
+  return language === 'en'
+    ? `Restored this memory from the archive:\n> ${preview}\nIt is used again; send "list memories" to see it.`
+    : `기억을 복원했어요:\n> ${preview}\n다시 대화에 쓰여요. "기억 목록"에서 확인할 수 있어요.`;
+}
+
+export function renderRestoreIncomplete(language: MemoryCommandLanguage): string {
+  return language === 'en'
+    ? 'I could not finish restoring that memory; it is still in the archive. Send "memory archive" to find its number and try again.'
+    : '기억을 끝까지 복원하지 못했어요. 그 기억은 아직 보관함에 있어요. "보관함"에서 번호를 확인한 뒤 다시 시도해 주세요.';
+}
+
+export function renderPurged(preview: string, earlierVersions: number, language: MemoryCommandLanguage): string {
+  if (language === 'en') {
+    const versions =
+      earlierVersions > 0 ? `\nIts ${earlierVersions} earlier version${earlierVersions === 1 ? ' was' : 's were'} deleted too.` : '';
+    return `Permanently deleted this archived memory:\n> ${preview}${versions}\nIt cannot be restored.`;
+  }
+  const versions = earlierVersions > 0 ? `\n이전에 고쳐 쓰기 전 버전 ${earlierVersions}개도 함께 지웠어요.` : '';
+  return `보관함의 기억을 완전히 지웠어요:\n> ${preview}${versions}\n이제 되돌릴 수 없어요.`;
+}
+
+export function renderPurgeIncomplete(language: MemoryCommandLanguage): string {
+  return language === 'en'
+    ? 'I could not finish deleting that archived memory; it may still be in the archive. Send "memory archive" to check, then "permanently delete memory N" to try again.'
+    : '보관함의 기억을 끝까지 지우지 못했어요. 아직 보관함에 남아 있을 수 있어요. "보관함"에서 확인한 뒤 "기억 완전 삭제 N"으로 다시 시도해 주세요.';
 }

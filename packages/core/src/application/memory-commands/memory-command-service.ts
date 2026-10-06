@@ -7,7 +7,7 @@ import type {
   IsoTimestamp,
   MemoryRecord,
 } from '../../domain';
-import { MemoryType } from '../../domain';
+import { isArchivedMemory, MEMORY_ARCHIVE_EXPIRES_AT_KEY, MEMORY_ARCHIVED_AT_KEY, MemoryType } from '../../domain';
 import type { DurableMemoryQuery, Logger } from '../../ports';
 import { CREDENTIAL_REJECTION_REASON } from '../credential-guard';
 import {
@@ -48,8 +48,19 @@ import {
   renderMemoryStatusLatest,
   renderMemoryStatusNone,
   renderMemoryView,
+  renderArchivedMemoryNotFound,
+  renderMemoryArchive,
+  renderMemoryArchiveEmpty,
+  renderMemoryArchivePageOutOfRange,
+  renderPurgeConfirmation,
+  renderPurged,
+  renderPurgeIncomplete,
+  renderRestoreConfirmation,
+  renderRestored,
+  renderRestoreIncomplete,
+  type MemoryCommandHistoryNoteOutcome,
 } from './memory-command-renderer';
-import type { MemoryRemovalCascade } from './memory-removal-cascade';
+import type { MemoryRemovalCascade, SessionHistoryClearer } from './memory-removal-cascade';
 
 /** ADR-0106 D4: the confirmation window; a code is accepted in the window it was issued in and the next one. */
 export const MEMORY_CONFIRMATION_WINDOW_MS = 30 * 60 * 1_000;
@@ -62,11 +73,26 @@ export const MEMORY_COMMAND_MAX_RECORDS = 2_000;
 const EDIT_CASCADE_ATTEMPTS = 2;
 /** Pending confirmations kept per actor; the oldest are dropped first. */
 const MAX_PENDING_PER_ACTOR = 10;
+/** ADR-0106 amendment: `QUOKY_MEMORY_ARCHIVE_DAYS` default, and its bounds (0 = no archive, delete at once). */
+export const DEFAULT_MEMORY_ARCHIVE_DAYS = 7;
+export const MIN_MEMORY_ARCHIVE_DAYS = 0;
+export const MAX_MEMORY_ARCHIVE_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+/** Rows read per expiry-purge batch (the purge repeats until a batch comes back short). */
+const ARCHIVE_PURGE_BATCH = 500;
 
-/** The read side the commands need — structurally the storage provider's memory repository. */
+/** The store side the commands need — structurally the storage provider's memory repository. */
 export interface MemoryCommandRecordSource {
   get(id: Id): Promise<MemoryRecord | null>;
   findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]>;
+  /** ADR-0106 amendment: archive and restore set/clear the archive keys of an existing record in place. */
+  save(record: MemoryRecord): Promise<MemoryRecord>;
+}
+
+/** What one expiry purge did (content-free; for the daily-maintenance log line). */
+export interface MemoryArchivePurgeResult {
+  readonly purged: number;
+  readonly failed: number;
 }
 
 export interface MemoryCommandServiceDeps {
@@ -75,6 +101,13 @@ export interface MemoryCommandServiceDeps {
   readonly writer: Pick<MemoryWriter, 'createCandidate' | 'promote' | 'forget'>;
   /** Derived-data cleanup on forget/edit (ADR-0106 D5): the vector cache today, LRN-1's learning items later. */
   readonly cascades?: readonly MemoryRemovalCascade[];
+  /**
+   * ADR-0106 amendment: days a forgotten memory stays in the archive (`QUOKY_MEMORY_ARCHIVE_DAYS`, integer 0–365,
+   * default 7). `0` = no archive: a confirmed forget deletes permanently at once.
+   */
+  readonly archiveDays?: number;
+  /** ADR-0106 amendment D5: clears the actor's history of the session a forget/edit is confirmed in. */
+  readonly sessionHistory?: SessionHistoryClearer;
   readonly logger?: Logger;
 }
 
@@ -84,6 +117,8 @@ export interface MemoryCommandRequest {
   readonly now: IsoTimestamp;
   /** The raw inbound text (kept as the edit's `sourceContent`; never logged). */
   readonly sourceText?: string;
+  /** The turn's session: a confirmed forget/edit clears the actor's short-term history of it (amendment D5). */
+  readonly sessionId?: Id;
 }
 
 export type MemoryCommandOutcome =
@@ -107,6 +142,16 @@ export type MemoryCommandOutcome =
   | 'bulk-refused'
   | 'usage'
   | 'status'
+  | 'archive-listed'
+  | 'archive-empty'
+  | 'archive-page-out-of-range'
+  | 'archive-not-found'
+  | 'restore-confirmation'
+  | 'purge-confirmation'
+  | 'restored'
+  | 'restore-incomplete'
+  | 'purged'
+  | 'purge-incomplete'
   | 'failed';
 
 export interface MemoryCommandResult {
@@ -125,7 +170,17 @@ export interface MemoryCommandHistory {
   readonly assistant?: string;
 }
 
-type PendingAction = { readonly kind: 'forget' } | { readonly kind: 'edit'; readonly text: string; readonly sourceText: string };
+type PendingAction =
+  | { readonly kind: 'forget' }
+  | { readonly kind: 'restore' }
+  | { readonly kind: 'purge' }
+  | { readonly kind: 'edit'; readonly text: string; readonly sourceText: string };
+
+type ConfirmationAction = 'forget' | 'restore' | 'purge' | { readonly edit: string };
+
+function confirmationActionOf(action: PendingAction): ConfirmationAction {
+  return action.kind === 'edit' ? { edit: action.text } : action.kind;
+}
 
 interface PendingConfirmation {
   readonly code: string;
@@ -146,16 +201,17 @@ export function memoryConfirmationWindow(now: IsoTimestamp): number {
 }
 
 /**
- * ADR-0106 D4: a 4-character code from SHA-256 of (record id, content hash, proposed new text or `forget`, window).
- * A changed record, a different proposal or another window gives a different code.
+ * ADR-0106 D4: a 4-character code from SHA-256 of (record id, content hash, proposed new text or the action name —
+ * `forget`, and with the amendment `restore` / `purge` — window). A changed record, a different proposal or action,
+ * or another window gives a different code.
  */
 export function deriveMemoryConfirmationCode(input: {
   readonly recordId: Id;
   readonly content: string;
-  readonly action: 'forget' | { readonly edit: string };
+  readonly action: ConfirmationAction;
   readonly window: number;
 }): string {
-  const actionKey = input.action === 'forget' ? 'forget' : `edit:${sha256(input.action.edit)}`;
+  const actionKey = typeof input.action === 'string' ? input.action : `edit:${sha256(input.action.edit)}`;
   const digest = createHash('sha256')
     .update(JSON.stringify(['quoky.memory-command.v1', input.recordId, sha256(input.content), actionKey, input.window]))
     .digest();
@@ -181,12 +237,46 @@ export function isListableMemory(record: MemoryRecord, actorId: Id, nowMs: numbe
   if (record.type !== MemoryType.LONG_TERM || record.scope.userId !== actorId) return false;
   if (durableScopeOfRecord(record) === null) return false;
   if (metadataText(record, 'supersededBy') !== undefined) return false;
+  if (isArchivedMemory(record)) return false;
   const expiresAt = metadataText(record, 'expiresAt');
   if (expiresAt !== undefined) {
     const expiresMs = Date.parse(expiresAt);
     if (Number.isNaN(expiresMs) || expiresMs < nowMs) return false;
   }
   return true;
+}
+
+/** When an archived record is due for permanent deletion (epoch ms); `NaN` when the record carries no valid expiry. */
+export function archiveExpiryMs(record: MemoryRecord): number {
+  const value = metadataText(record, MEMORY_ARCHIVE_EXPIRES_AT_KEY);
+  return value === undefined ? Number.NaN : Date.parse(value);
+}
+
+/**
+ * ADR-0106 amendment: a record the owner's archive view shows — the actor's own archived `LONG_TERM` head record
+ * (not superseded; its earlier versions travel with it) with a durable write scope and an expiry still ahead.
+ */
+export function isArchiveListableMemory(record: MemoryRecord, actorId: Id, nowMs: number): boolean {
+  if (record.type !== MemoryType.LONG_TERM || record.scope.userId !== actorId) return false;
+  if (durableScopeOfRecord(record) === null) return false;
+  if (metadataText(record, 'supersededBy') !== undefined) return false;
+  if (!isArchivedMemory(record)) return false;
+  const expiresMs = archiveExpiryMs(record);
+  return !Number.isNaN(expiresMs) && expiresMs > nowMs;
+}
+
+function byArchiveTime(a: MemoryRecord, b: MemoryRecord): number {
+  const at = metadataText(a, MEMORY_ARCHIVED_AT_KEY) ?? '';
+  const bt = metadataText(b, MEMORY_ARCHIVED_AT_KEY) ?? '';
+  return at < bt ? -1 : at > bt ? 1 : byCreation(a, b);
+}
+
+/** A copy of `record` without the archive keys (restore). */
+function withoutArchive(record: MemoryRecord): MemoryRecord {
+  const metadata = { ...(record.metadata ?? {}) };
+  delete metadata[MEMORY_ARCHIVED_AT_KEY];
+  delete metadata[MEMORY_ARCHIVE_EXPIRES_AT_KEY];
+  return { ...record, metadata };
 }
 
 function byCreation(a: MemoryRecord, b: MemoryRecord): number {
@@ -203,9 +293,15 @@ function byCreation(a: MemoryRecord, b: MemoryRecord): number {
 export class MemoryCommandService {
   private readonly pending = new Map<Id, PendingConfirmation[]>();
   private readonly cascades: readonly MemoryRemovalCascade[];
+  readonly archiveDays: number;
 
   constructor(private readonly deps: MemoryCommandServiceDeps) {
     this.cascades = deps.cascades ?? [];
+    const days = deps.archiveDays ?? DEFAULT_MEMORY_ARCHIVE_DAYS;
+    if (!Number.isInteger(days) || days < MIN_MEMORY_ARCHIVE_DAYS || days > MAX_MEMORY_ARCHIVE_DAYS) {
+      throw new RangeError(`archiveDays must be an integer from ${MIN_MEMORY_ARCHIVE_DAYS} to ${MAX_MEMORY_ARCHIVE_DAYS}`);
+    }
+    this.archiveDays = days;
   }
 
   /** Run one parsed command. Never throws: a store failure becomes a `failed` reply. */
@@ -233,6 +329,12 @@ export class MemoryCommandService {
           return this.reply('bulk-refused', renderBulkForgetRefused(language));
         case 'status':
           return await this.status(request, language);
+        case 'archive-list':
+          return await this.archiveList(request, command.page, language);
+        case 'restore':
+          return await this.requestArchiveAction(request, command.number, 'restore', language);
+        case 'purge':
+          return await this.requestArchiveAction(request, command.number, 'purge', language);
         case 'usage':
           return this.reply(
             'usage',
@@ -253,8 +355,74 @@ export class MemoryCommandService {
       limit: MEMORY_COMMAND_MAX_RECORDS,
       excludeExpired: true,
       excludeSuperseded: true,
+      archived: 'exclude',
     });
     return records.filter((record) => isListableMemory(record, actorId, nowMs)).sort(byCreation);
+  }
+
+  /** ADR-0106 amendment: the owner's archived memories, numbered from 1 by archive time (separately from the list). */
+  async archived(actorId: Id, now: IsoTimestamp): Promise<readonly MemoryRecord[]> {
+    const nowMs = Date.parse(now);
+    const records = await this.deps.records.findDurableCandidates({
+      scope: { userId: actorId },
+      limit: MEMORY_COMMAND_MAX_RECORDS,
+      excludeSuperseded: true,
+      archived: 'only',
+    });
+    return records.filter((record) => isArchiveListableMemory(record, actorId, nowMs)).sort(byArchiveTime);
+  }
+
+  /**
+   * ADR-0106 amendment D2: permanently delete every archived record whose archive expiry is at or before `now`, for
+   * every actor (the daily maintenance and the startup run). Content-free: logs and returns counts only. Never throws.
+   */
+  async purgeExpiredArchive(now: IsoTimestamp): Promise<MemoryArchivePurgeResult> {
+    let purged = 0;
+    let failed = 0;
+    const skipped = new Set<Id>();
+    try {
+      for (;;) {
+        const batch = await this.deps.records.findDurableCandidates({
+          scope: {},
+          limit: ARCHIVE_PURGE_BATCH,
+          archived: 'only',
+          archiveExpiredBy: now,
+          ...(skipped.size > 0 ? { excludeIds: [...skipped] } : {}),
+        });
+        let progressed = false;
+        for (const record of batch) {
+          if (!isArchivedMemory(record) || !(archiveExpiryMs(record) <= Date.parse(now))) {
+            skipped.add(record.id);
+            continue;
+          }
+          const scope = durableScopeOfRecord(record);
+          if (scope === null) {
+            skipped.add(record.id);
+            failed += 1;
+            continue;
+          }
+          try {
+            const result = await this.deps.writer.forget({ memoryId: record.id, scope });
+            if (result.outcome === 'REJECTED') {
+              skipped.add(record.id);
+              failed += 1;
+            } else {
+              purged += 1;
+              progressed = true;
+            }
+          } catch {
+            skipped.add(record.id);
+            failed += 1;
+          }
+        }
+        if (batch.length < ARCHIVE_PURGE_BATCH || !progressed) break;
+      }
+    } catch (error) {
+      this.log('warn', 'memory_archive.purge.failed', { purged, errorName: errorName(error) });
+      return { purged, failed: failed + 1 };
+    }
+    this.log('info', 'memory_archive.purge.done', { purged, failed });
+    return { purged, failed };
   }
 
   private async list(request: MemoryCommandRequest, page: number, language: MemoryCommandLanguage) {
@@ -285,6 +453,45 @@ export class MemoryCommandService {
     const latest = records.at(-1);
     if (latest === undefined) return this.reply('status', renderMemoryStatusNone(language));
     return this.reply('status', renderMemoryStatusLatest(this.previewOf(latest.content, language), records.length, language));
+  }
+
+  private async archiveList(request: MemoryCommandRequest, page: number, language: MemoryCommandLanguage) {
+    const records = await this.archived(request.actorId, request.now);
+    if (records.length === 0) return this.reply('archive-empty', renderMemoryArchiveEmpty(this.archiveDays, language));
+    const pages = Math.ceil(records.length / MEMORY_LIST_PAGE_SIZE);
+    if (page > pages) {
+      return this.reply('archive-page-out-of-range', renderMemoryArchivePageOutOfRange(pages, language));
+    }
+    const nowMs = Date.parse(request.now);
+    const start = (page - 1) * MEMORY_LIST_PAGE_SIZE;
+    const rows = records.slice(start, start + MEMORY_LIST_PAGE_SIZE).map((record, index) => ({
+      number: start + index + 1,
+      preview: this.previewOf(record.content, language),
+      daysLeft: Math.max(1, Math.ceil((archiveExpiryMs(record) - nowMs) / DAY_MS)),
+    }));
+    return this.reply('archive-listed', renderMemoryArchive({ page, pages, total: records.length, rows }, language));
+  }
+
+  private async requestArchiveAction(
+    request: MemoryCommandRequest,
+    number: number,
+    kind: 'restore' | 'purge',
+    language: MemoryCommandLanguage,
+  ) {
+    const records = await this.archived(request.actorId, request.now);
+    if (records.length === 0) return this.reply('archive-empty', renderMemoryArchiveEmpty(this.archiveDays, language));
+    const record = records[number - 1];
+    if (record === undefined) {
+      return this.reply(
+        'archive-not-found',
+        renderArchivedMemoryNotFound(number, records.length, this.archiveDays, language),
+      );
+    }
+    const code = this.issue(request, record, { kind });
+    const preview = this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS);
+    return kind === 'restore'
+      ? this.reply('restore-confirmation', renderRestoreConfirmation(number, preview, code, language))
+      : this.reply('purge-confirmation', renderPurgeConfirmation(number, preview, code, language));
   }
 
   private async requestForget(request: MemoryCommandRequest, number: number, language: MemoryCommandLanguage) {
@@ -347,64 +554,169 @@ export class MemoryCommandService {
 
     const record = await this.deps.records.get(entry.recordId);
     const nowMs = Date.parse(request.now);
+    const onArchive = entry.action.kind === 'restore' || entry.action.kind === 'purge';
+    const eligible =
+      record !== null &&
+      (onArchive
+        ? isArchiveListableMemory(record, request.actorId, nowMs)
+        : isListableMemory(record, request.actorId, nowMs));
     const unchanged =
       record !== null &&
-      isListableMemory(record, request.actorId, nowMs) &&
+      eligible &&
       deriveMemoryConfirmationCode({
         recordId: record.id,
         content: record.content,
-        action: entry.action.kind === 'forget' ? 'forget' : { edit: entry.action.text },
+        action: confirmationActionOf(entry.action),
         window: entry.window,
       }) === entry.code;
-    if (!unchanged || record === null) return this.reply('confirm-stale', renderConfirmStale(language));
+    if (!unchanged || record === null) {
+      return this.reply('confirm-stale', renderConfirmStale(language, onArchive ? 'archive' : 'list'));
+    }
 
-    return entry.action.kind === 'forget'
-      ? this.executeForget(request.actorId, record, language)
-      : this.executeEdit(request.actorId, record, entry.action, language);
+    switch (entry.action.kind) {
+      case 'forget':
+        return this.executeForget(request, record, language);
+      case 'edit':
+        return this.executeEdit(request, record, entry.action, language);
+      case 'restore':
+        return this.executeRestore(request.actorId, record, language);
+      case 'purge':
+        return this.executePurge(request.actorId, record, language);
+    }
   }
 
   /**
-   * ADR-0106 D5 forget, ordered so that it is always retryable and never leaves unreachable text (the memory store
-   * has no multi-record transaction):
-   *  1. the cascades run first, so derived data never outlives the memory;
-   *  2. the earlier (superseded) versions are deleted oldest first — each before the version that superseded it —
-   *     through `MemoryWriter.forget` with each record's own write scope;
-   *  3. the current, listable record is deleted last.
-   * If any step fails, everything not yet deleted is still reachable from the current record, which is still
-   * listable, so asking again (a fresh `기억 N 잊어줘`) finishes the chain. The reply then says only what happened.
+   * ADR-0106 D5 forget (with the amendment's archive), ordered so that it is always retryable and never leaves
+   * unreachable text (the memory store has no multi-record transaction):
+   *  1. the cascades run first (vector cache, learning items, history copies), then the actor's history of the
+   *     current session is cleared, so derived data never outlives the memory's use;
+   *  2. the earlier (superseded) versions are archived — or deleted, see below — oldest first, each before the version
+   *     that superseded it;
+   *  3. the current, listable record is archived (or deleted) last.
+   * Archive (default, `archiveDays` > 0) sets `archivedAt`/`archiveExpiresAt` in place; the daily maintenance deletes
+   * it at expiry. With `archiveDays` 0, or when any version's text is credential-like (never archived), every record
+   * is deleted permanently through `MemoryWriter.forget` instead. If any step fails, the current record is still
+   * listable, so asking again (a fresh `기억 N 잊어줘`) finishes the chain. The reply says only what happened.
    */
-  private async executeForget(actorId: Id, record: MemoryRecord, language: MemoryCommandLanguage) {
+  private async executeForget(request: MemoryCommandRequest, record: MemoryRecord, language: MemoryCommandLanguage) {
+    const actorId = request.actorId;
+    // `include`: a version archived by an earlier, interrupted forget still belongs to the chain (archiving it again is
+    // a no-op; the permanent-delete path deletes it), so the chain walk never stops at it.
     const history = await this.earlierVersions(actorId, record);
+    const sensitive = [record, ...history].some((version) => isCredentialLikeMemoryText(version.content));
+    const archive = this.archiveDays > 0 && !sensitive;
+    const mode = archive ? 'archived' : 'deleted';
     const incomplete = (removedVersions: number, current: 'kept' | 'unknown') => ({
       outcome: 'forget-incomplete' as const,
-      text: renderForgetIncomplete(removedVersions, current, language),
+      text: renderForgetIncomplete(removedVersions, current, language, mode),
       status: 'FAILED' as const,
     });
+    let sessionCleared: boolean;
     try {
       await this.runCascades({ actorId, reason: 'forget', records: [record, ...history] });
+      sessionCleared = await this.clearSessionHistory(request);
     } catch (error) {
       this.log('warn', 'memory_commands.forget.cascade_failed', { errorName: errorName(error) });
       return incomplete(0, 'kept');
     }
+    const expiresAt = new Date(Date.parse(request.now) + this.archiveDays * DAY_MS).toISOString();
+    const removeOne = (target: MemoryRecord) =>
+      archive ? this.archiveOne(actorId, target, request.now, expiresAt) : this.forgetOne(actorId, target);
     // `earlierVersions` lists the chain nearest first; reversed, every record precedes its successor.
     let removedVersions = 0;
     for (const target of [...history].reverse()) {
-      const removed = await this.forgetOne(actorId, target);
-      if (!removed) {
+      if (!(await removeOne(target))) {
         this.log('warn', 'memory_commands.forget.incomplete', { removedVersions, remainingVersions: history.length - removedVersions });
         return incomplete(removedVersions, 'kept');
       }
       removedVersions += 1;
     }
-    if (!(await this.forgetOne(actorId, record))) {
+    if (!(await removeOne(record))) {
       this.log('warn', 'memory_commands.forget.incomplete', { removedVersions, remainingVersions: 0 });
-      return incomplete(removedVersions, 'unknown');
+      return incomplete(removedVersions, archive ? 'kept' : 'unknown');
     }
-    this.log('info', 'memory_commands.forgotten', { removed: removedVersions + 1 });
+    this.log('info', archive ? 'memory_commands.archived' : 'memory_commands.forgotten', {
+      removed: removedVersions + 1,
+      sensitive: sensitive ? 1 : 0,
+    });
     return this.reply(
       'forgotten',
-      renderForgotten(this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), removedVersions, language),
+      renderForgotten(this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), removedVersions, language, {
+        mode: archive ? 'archived' : sensitive ? 'deleted-sensitive' : 'deleted',
+        archiveDays: this.archiveDays,
+        sessionCleared,
+      }),
     );
+  }
+
+  /** Archive one record of the owner's chain in place; `true` when it is archived. Never throws. */
+  private async archiveOne(actorId: Id, target: MemoryRecord, now: IsoTimestamp, expiresAt: IsoTimestamp): Promise<boolean> {
+    if (target.type !== MemoryType.LONG_TERM || target.scope.userId !== actorId) return false;
+    if (durableScopeOfRecord(target) === null) return false;
+    if (isArchivedMemory(target)) return true;
+    try {
+      await this.deps.records.save({
+        ...target,
+        metadata: { ...(target.metadata ?? {}), [MEMORY_ARCHIVED_AT_KEY]: now, [MEMORY_ARCHIVE_EXPIRES_AT_KEY]: expiresAt },
+      });
+      return true;
+    } catch (error) {
+      this.log('warn', 'memory_commands.archive.save_failed', { errorName: errorName(error) });
+      return false;
+    }
+  }
+
+  /**
+   * ADR-0106 amendment D3 restore: the archive keys are removed from the earlier versions first (they stay superseded,
+   * so never listed or recalled), then from the archived record, which is then listed and recalled again — the
+   * semantic recall re-embeds it into the vector cache on the next recall that sees it (the cache-miss path). If a
+   * step fails, the record itself is still in the archive and asking again finishes the job.
+   */
+  private async executeRestore(actorId: Id, record: MemoryRecord, language: MemoryCommandLanguage) {
+    const versions = (await this.earlierVersions(actorId, record)).filter((version) => isArchivedMemory(version));
+    try {
+      for (const target of [...versions.reverse(), record]) await this.deps.records.save(withoutArchive(target));
+    } catch (error) {
+      this.log('warn', 'memory_commands.restore.failed', { errorName: errorName(error) });
+      return { outcome: 'restore-incomplete' as const, text: renderRestoreIncomplete(language), status: 'FAILED' as const };
+    }
+    this.log('info', 'memory_commands.restored', { restored: versions.length + 1 });
+    return this.reply('restored', renderRestored(this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), language));
+  }
+
+  /**
+   * ADR-0106 amendment D3 permanent delete from the archive, immediate: the earlier versions (archived or not) oldest
+   * first, then the archived record, through `MemoryWriter.forget`. Its derived data was already removed at archive.
+   */
+  private async executePurge(actorId: Id, record: MemoryRecord, language: MemoryCommandLanguage) {
+    const versions = await this.earlierVersions(actorId, record);
+    let removedVersions = 0;
+    for (const target of [...versions].reverse()) {
+      if (!(await this.forgetOne(actorId, target))) {
+        return { outcome: 'purge-incomplete' as const, text: renderPurgeIncomplete(language), status: 'FAILED' as const };
+      }
+      removedVersions += 1;
+    }
+    if (!(await this.forgetOne(actorId, record))) {
+      return { outcome: 'purge-incomplete' as const, text: renderPurgeIncomplete(language), status: 'FAILED' as const };
+    }
+    this.log('info', 'memory_commands.purged', { removed: removedVersions + 1 });
+    return this.reply(
+      'purged',
+      renderPurged(this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), removedVersions, language),
+    );
+  }
+
+  /** Clears the actor's history of the request's session; `true` when it ran. A failure propagates (retryable). */
+  private async clearSessionHistory(request: MemoryCommandRequest): Promise<boolean> {
+    if (this.deps.sessionHistory === undefined || request.sessionId === undefined) return false;
+    try {
+      await this.deps.sessionHistory.clearSession(request.actorId, request.sessionId);
+    } catch (error) {
+      this.log('warn', 'memory_commands.session_history.failed', { errorName: errorName(error) });
+      throw error;
+    }
+    return true;
   }
 
   /** Delete one record of the owner's chain; `true` when it is gone (already-absent counts as gone). Never throws. */
@@ -430,11 +742,12 @@ export class MemoryCommandService {
    * the old record stays only as superseded history, never in recall).
    */
   private async executeEdit(
-    actorId: Id,
+    request: MemoryCommandRequest,
     record: MemoryRecord,
     action: Extract<PendingAction, { kind: 'edit' }>,
     language: MemoryCommandLanguage,
   ) {
+    const actorId = request.actorId;
     const scope = durableScopeOfRecord(record);
     const kind = metadataText(record, 'kind');
     const provenance = metadataText(record, 'provenance');
@@ -476,9 +789,11 @@ export class MemoryCommandService {
     // The superseding write is done; the old record's derived data is cleaned up with one retry. A cleanup that still
     // fails is logged and the reply says so (the edit itself stands: the old record is out of recall as history).
     let cleanupPending = false;
+    let sessionCleared = false;
     for (let attempt = 1; ; attempt += 1) {
       try {
         await this.runCascades({ actorId, reason: 'edit', records: [record] });
+        sessionCleared = await this.clearSessionHistory(request);
         break;
       } catch (error) {
         this.log('warn', 'memory_commands.edit.cascade_failed', { attempt, errorName: errorName(error) });
@@ -491,17 +806,26 @@ export class MemoryCommandService {
     this.log('info', 'memory_commands.edited', { cleanupPending: cleanupPending ? 1 : 0 });
     return this.reply(
       'edited',
-      renderEdited(this.previewOf(decision.memory.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), language, cleanupPending),
+      renderEdited(
+        this.previewOf(decision.memory.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS),
+        language,
+        cleanupPending,
+        sessionCleared,
+      ),
     );
   }
 
-  /** Records whose `supersededBy` chain leads to `record` (same actor and write scope), newest first. */
+  /**
+   * Records whose `supersededBy` chain leads to `record` (same actor and write scope), newest first, archived or not
+   * (callers decide what an archived version means for them).
+   */
   private async earlierVersions(actorId: Id, record: MemoryRecord): Promise<MemoryRecord[]> {
     const all = await this.deps.records.findDurableCandidates({
       scope: { userId: actorId },
       limit: MEMORY_COMMAND_MAX_RECORDS,
       excludeExpired: false,
       excludeSuperseded: false,
+      archived: 'include',
     });
     const scopeKey = JSON.stringify(durableScopeOfRecord(record));
     const found: MemoryRecord[] = [];
@@ -555,7 +879,7 @@ export class MemoryCommandService {
     const code = deriveMemoryConfirmationCode({
       recordId: record.id,
       content: record.content,
-      action: action.kind === 'forget' ? 'forget' : { edit: action.text },
+      action: confirmationActionOf(action),
       window,
     });
     const kept = this.livePending(request.actorId, window).filter(
@@ -595,24 +919,35 @@ export class MemoryCommandService {
   }
 }
 
+/** Outcomes whose reply echoes memory text (live or archived) and is kept in history as a content-free note. */
+const HISTORY_NOTE_OUTCOMES: ReadonlySet<MemoryCommandOutcome> = new Set<MemoryCommandOutcome>([
+  'forget-confirmation',
+  'edit-confirmation',
+  'forgotten',
+  'edited',
+  'archive-listed',
+  'restore-confirmation',
+  'purge-confirmation',
+  'restored',
+  'purged',
+]);
+
 /**
  * W2-L01 (ADR-0106 D5): the edit/forget command turns keep no memory text in the SHORT_TERM history. An edit request
  * is recorded as the command with its text withheld (whatever the outcome — a refused credential-shaped edit too),
  * and a reply that echoes memory text (the confirmation previews, the forgotten/edited result) as a content-free
- * note. Every other turn carries no memory text, or only what a later forget purges, and stays verbatim.
+ * note — with the amendment also the archive view and the restore/permanent-delete prompts and results, so archived
+ * text never re-enters the conversation history. Every other turn carries no memory text, or only what a later
+ * forget purges, and stays verbatim.
  */
 export function memoryCommandHistory(
   command: MemoryCommand,
   outcome: MemoryCommandOutcome,
 ): MemoryCommandHistory | undefined {
   const user = command.kind === 'edit' ? renderEditRequestHistory(command.number, command.language) : undefined;
-  const assistant =
-    outcome === 'forget-confirmation' ||
-    outcome === 'edit-confirmation' ||
-    outcome === 'forgotten' ||
-    outcome === 'edited'
-      ? renderMemoryCommandHistoryReply(outcome, command.language)
-      : undefined;
+  const assistant = HISTORY_NOTE_OUTCOMES.has(outcome)
+    ? renderMemoryCommandHistoryReply(outcome as MemoryCommandHistoryNoteOutcome, command.language)
+    : undefined;
   if (user === undefined && assistant === undefined) return undefined;
   return { ...(user === undefined ? {} : { user }), ...(assistant === undefined ? {} : { assistant }) };
 }

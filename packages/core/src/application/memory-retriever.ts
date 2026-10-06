@@ -7,7 +7,7 @@ import type {
   MemoryRetrievalRequest,
   RetrievedMemory,
 } from '../domain';
-import { createDurableMemory, createRetrievedMemory } from '../domain';
+import { createDurableMemory, createRetrievedMemory, isArchivedMemory } from '../domain';
 import type { MemoryRepository } from '../ports';
 import { now } from '../util/clock';
 import { scoreSemanticRelevance } from './semantic-relevance';
@@ -158,6 +158,7 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
       excludeIds: [...request.excludeIds],
       excludeExpired: true,
       excludeSuperseded: true,
+      archived: 'exclude',
     });
 
     const eligible = records.flatMap((record) => {
@@ -165,6 +166,8 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
       const expiresAt = metadataText(record, 'expiresAt');
       if (expiresAt !== undefined && Date.parse(expiresAt) < retrievalTimeMs) return [];
       if (metadataText(record, 'supersededBy') !== undefined) return [];
+      // ADR-0106 amendment: the repository already excludes archived records; recall re-checks, like expiry above.
+      if (isArchivedMemory(record)) return [];
 
       try {
         const memory = toDurableMemory(record);

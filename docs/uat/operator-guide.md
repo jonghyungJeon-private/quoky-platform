@@ -52,6 +52,7 @@ line to use the default.
 | `QUOKY_EMBEDDING_MODEL` | `nomic-embed-text` | A name or tag containing `cloud` is refused |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | `3000` | 100-30000 |
 | `QUOKY_CONTEXT_MAX_TOKENS` | `6000` | Keep below the Ollama server context window (see 0.5) |
+| `QUOKY_MEMORY_ARCHIVE_DAYS` | `7` | Whole days 0-365 a forgotten memory stays restorable in the archive (`보관함`, `기억 복원 N`, `기억 완전 삭제 N`) before the daily maintenance (and each start) deletes it for good, independent of backups. `0` = no archive (forget deletes at once). Anything else, including an empty value, fails startup with `MEMORY_ARCHIVE_DAYS_INVALID`. Credential-like text is never archived. Archived text stays on disk (and in backups) until then |
 | `QUOKY_ACTOR_IDENTITY_MAPPINGS` | unset | Non-secret JSON linking the Discord actor to Jira assignee / GitHub login. Without it the work view reports that the account identity is not set |
 
 Connector credentials (all optional; a connector is registered only when its full set is present; legacy `CHUNSIK_*`
