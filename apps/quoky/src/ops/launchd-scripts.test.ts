@@ -571,6 +571,14 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh uninstall/restart --
     expect(result.stdout).toContain('state = running');
     expect(result.stdout).toContain('configuration exits in a row: 0');
     expect(result.stdout).toContain(`logs:    ${box.logDir}/quoky.log`);
+    expect(result.stdout).toContain('instance lock: none');
+    // ADR-0102 D4 lock directory: status shows the highest generation (numeric order, not lexical).
+    const lockDir = path.join(box.home, 'Library', 'Application Support', 'Quoky', 'quoky.db.lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(path.join(lockDir, 'gen-9'), '{"state":"released","pid":1}\n');
+    writeFileSync(path.join(lockDir, 'gen-10'), '{"state":"held","pid":4242}\n');
+    writeFileSync(path.join(lockDir, 'tmp-x-held-11'), '{"state":"held","pid":7}\n');
+    expect(runCtl(box, ['status']).stdout).toContain(`instance lock: ${lockDir}/gen-10 {"state":"held","pid":4242}`);
     expect(readFileSync(box.launchctlLog, 'utf8').trim().split('\n').every((c) => c.startsWith('print '))).toBe(true);
     expect(runCtl(box, ['status', '--apply']).status).not.toBe(0);
   });
