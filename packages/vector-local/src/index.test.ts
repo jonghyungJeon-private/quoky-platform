@@ -81,6 +81,33 @@ describe('LocalVectorProvider (ADR-0098 D8)', () => {
     expect(readdirSync(storePath)).toEqual([`${COLLECTION}.json`]);
   });
 
+  it('delete is idempotent and writes nothing when no id is stored (ADR-0106 D5 forget with recall off)', async () => {
+    const storePath = freshRoot();
+    let writes = 0;
+    const counting: VectorStoreIo = {
+      ...realIo,
+      writeFile: async (path, data) => {
+        writes += 1;
+        await realIo.writeFile(path, data);
+      },
+    };
+    const empty = new LocalVectorProvider(storePath, { io: counting });
+    await empty.delete(COLLECTION, ['never-stored']);
+    expect(writes).toBe(0);
+    expect(existsSync(storePath)).toBe(false);
+
+    await empty.upsert(COLLECTION, [{ id: 'kept', vector: [1, 0] }, { id: 'gone', vector: [0, 1] }]);
+    expect(writes).toBe(1);
+    await empty.delete(COLLECTION, ['absent']);
+    expect(writes).toBe(1);
+    await empty.delete(COLLECTION, ['gone', 'absent']);
+    expect(writes).toBe(2);
+    await empty.delete(COLLECTION, ['gone']);
+    expect(writes).toBe(2);
+    const reopened = new LocalVectorProvider(storePath);
+    expect((await reopened.query(COLLECTION, [1, 0], 10)).map((result) => result.id)).toEqual(['kept']);
+  });
+
   it('writes atomically: a failed write leaves the previous file and in-memory view intact', async () => {
     const storePath = freshRoot();
     const seeded = new LocalVectorProvider(storePath);

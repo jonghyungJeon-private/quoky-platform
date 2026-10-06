@@ -155,14 +155,24 @@ export class LocalVectorProvider implements VectorProvider {
     });
   }
 
+  /**
+   * Remove records by id (ADR-0106 D5: a forgotten or edited memory's vector). Idempotent: ids that are not stored
+   * are ignored, and when none of them is stored nothing is written — so a forget with semantic recall disabled
+   * never creates the store directory or a collection file.
+   */
   async delete(collection: string, ids: Id[]): Promise<void> {
     assertCollection(collection);
     if (ids.length === 0) return;
-    await this.mutate(collection, (current) => {
-      const next = new Map(current);
-      for (const id of ids) next.delete(id);
-      return next;
-    });
+    let changed = false;
+    await this.mutate(
+      collection,
+      (current) => {
+        const next = new Map(current);
+        for (const id of ids) changed = next.delete(id) || changed;
+        return next;
+      },
+      () => changed,
+    );
   }
 
   private filePath(collection: string): string {
@@ -218,11 +228,13 @@ export class LocalVectorProvider implements VectorProvider {
   private async mutate(
     collection: string,
     change: (current: ReadonlyMap<Id, StoredRecord>) => Map<Id, StoredRecord>,
+    shouldPersist: () => boolean = () => true,
   ): Promise<void> {
     const previous = this.writeChains.get(collection) ?? Promise.resolve();
     const run = previous.then(async () => {
       const current = await this.load(collection);
       const next = change(current);
+      if (!shouldPersist()) return;
       await this.persist(collection, next);
       this.collections.set(collection, Promise.resolve(next));
     });
