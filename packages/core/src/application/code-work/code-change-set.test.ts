@@ -108,6 +108,93 @@ describe('extractSafeTargetCandidates', () => {
   });
 });
 
+describe('extractSafeTargetCandidates — bare root-level filenames (QA-V2-CL-01)', () => {
+  it.each([
+    ['src/greet.js 와 test.js 에 각 함수 위에 한 줄 JSDoc 주석을 추가해줘', ['src/greet.js', 'test.js']],
+    ['test.js와 src/greet.js에 주석 추가해줘', ['test.js', 'src/greet.js']],
+    ['package.json 의 scripts 에 lint 추가해줘', ['package.json']],
+    ['README.md를 고쳐줘', ['README.md']],
+    ['index.ts에 export 추가', ['index.ts']],
+    ['`test.js` 고쳐줘', ['test.js']],
+    ['test.js. 끝', ['test.js']],
+    ['test.js:10 고쳐줘', ['test.js']],
+    ['src/a.ts, test.js, src/b.ts 고쳐줘', ['src/a.ts', 'test.js', 'src/b.ts']],
+  ])('%s → %j (in order of appearance)', (text, candidates) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(candidates);
+  });
+
+  it.each([
+    ['Node.js 로 src/server.js 를 바꿔줘'],
+    ['Next.js 와 Vue.js 차이를 반영해서 src/server.js 고쳐줘'],
+    ['e.g. v1.2.3 버전으로 src/server.js 고쳐줘'],
+    ['src/server.js 에서 console.log 를 지워줘'],
+    ['src/server.js 에서 res.json() 대신 res.send() 써줘'],
+    ['src/server.js 의 example.com 주소 고쳐줘'],
+    ['src/server.js 에서 me@test.js 지워줘'],
+  ])('%s → prose names are never bare targets', (text) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(['src/server.js']);
+  });
+
+  it.each([
+    ['src/server.js 에서 res.json<T>() 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json<Map<string, number>>() 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json () 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json?.() 호출을 바꿔줘'],
+    ['src/server.js 에서 res.json?.data 를 써줘'],
+    ['src/server.js 에서 api.json() 호출을 바꿔줘'],
+    ['src/server.js 에서 this.res.json 을 바꿔줘'],
+    ['src/server.js 에서 this.json 을 바꿔줘'],
+    ['src/server.js 에서 self.json 을 바꿔줘'],
+    ['src/server.js 에서 super.json 을 바꿔줘'],
+    ['src/server.js 에서 obj->config.json 을 바꿔줘'],
+    ['src/server.js 에서 $el.html 을 바꿔줘'],
+    ['src/server.js 에서 api.json<Array<Array<string>>>() 호출을 바꿔줘'],
+    ['src/server.js 에서 api.json < Array<string> > () 호출을 바꿔줘'],
+    ['src/server.js 에서 api.json<T>?.() 호출을 바꿔줘'],
+    ['src/server.js 에서 `res.json()` 와 `res.json<T>()` 를 바꿔줘'],
+    ['src/server.js 에서 `res.json()` 을 바꿔줘'],
+    ['src/server.js 에 `import cfg from "config.json"` 를 추가해줘'],
+  ])('Codex P2 #1: %s → a method call / member access / code span is never a bare target', (text) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(['src/server.js']);
+  });
+
+  it.each([
+    ['src/a.ts 와 `response.json` 고쳐줘', ['src/a.ts', 'response.json']],
+    ['`config.json` 고쳐줘', ['config.json']],
+    ['package.json 고쳐줘', ['package.json']],
+    ['src/server.js 에서 `res.json` 을 `res.send` 로 바꿔줘', ['src/server.js', 'res.json']],
+    ['src/server.js 에서 res.json 을 바꿔줘', ['src/server.js', 'res.json']],
+    ['src/server.js 에서 api.json<T 를 바꿔줘', ['src/server.js', 'api.json']],
+    ['jest.config.js 와 tsconfig.base.json 고쳐줘', ['jest.config.js', 'tsconfig.base.json']],
+  ])('Codex P2 loop 2: structural rules only — a quoted or bare non-call name stays a candidate: %s', (text, candidates) => {
+    // A candidate that does not exist is named in the missing-target reply (ADR-0099 D1), never silently dropped.
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(candidates);
+  });
+
+  it.each([
+    ['src/a.ts 고쳐줘\n~~~js\nutil.js\n~~~', ['src/a.ts']],
+    ['src/a.ts 고쳐줘\n~~~~\nconst x = require("helper.js")\n~~~~\n그리고 test.js 도', ['src/a.ts', 'test.js']],
+    ['src/a.ts 고쳐줘\n````md\n```\nutil.js\n```\n````\nREADME.md 도', ['src/a.ts', 'README.md']],
+    ['src/a.ts 고쳐줘\n~~~\nsrc/b.ts', ['src/a.ts']],
+    ['`src/a.ts` 와 `test.js` 고쳐줘', ['src/a.ts', 'test.js']],
+  ])('Codex P2 #2: fences (``` and ~~~, any length, info strings) and inline code are blanked consistently — %j', (text, candidates) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(candidates);
+  });
+
+  it('never rewrites a dot-file, an unsafe path or a Windows path into a root file', () => {
+    expect(extractSafeTargetCandidates('.eslintrc.json 고쳐줘').candidates).toEqual([]);
+    expect(extractSafeTargetCandidates('../test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['../test.js'] });
+    expect(extractSafeTargetCandidates('/etc/test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['/etc/test.js'] });
+    expect(extractSafeTargetCandidates('~/test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['~/test.js'] });
+    expect(extractSafeTargetCandidates('C:\\repo\\test.js 고쳐줘').candidates).toEqual([]);
+  });
+
+  it('ignores a bare filename inside fenced code or a URL', () => {
+    expect(extractSafeTargetCandidates('src/a.ts 고쳐줘\n```\nrequire("./util.js")\nutil.js\n```').candidates).toEqual(['src/a.ts']);
+    expect(extractSafeTargetCandidates('src/a.ts 고쳐줘 https://x.dev/test.js').candidates).toEqual(['src/a.ts']);
+  });
+});
+
 describe('collectCodeChangeTargets', () => {
   const existing = (paths: string[]) => {
     const looked: string[] = [];
@@ -142,6 +229,20 @@ describe('collectCodeChangeTargets', () => {
     const fs = existing(['src/a.ts']);
     const result = await collectCodeChangeTargets({ candidates: ['src/a.ts', 'src/typo.ts'], resolveExisting: fs.resolveExisting, allowNewFiles: false });
     expect(result).toEqual({ kind: 'missing', missing: ['src/typo.ts'], resolved: ['./src/a.ts'] });
+  });
+
+  it('QA-V2-CL-02: a secret-looking file name fails the whole set by name, before any lookup (ADR-0099 D6)', async () => {
+    const fs = existing(['src/a.ts', 'src/hardsecret.js']);
+    const result = await collectCodeChangeTargets({
+      candidates: ['src/a.ts', 'src/hardsecret.js', 'config/api-key.json'],
+      resolveExisting: fs.resolveExisting,
+      allowNewFiles: true,
+    });
+    expect(result).toEqual({ kind: 'secret-named', paths: ['src/hardsecret.js', 'config/api-key.json'] });
+    expect(fs.looked).toEqual([]);
+    // only the basename counts: a secret-looking DIRECTORY name does not refuse an ordinary file
+    expect((await collectCodeChangeTargets({ candidates: ['secrets/readme.md'], resolveExisting: existing(['secrets/readme.md']).resolveExisting, allowNewFiles: false })).kind)
+      .toBe('targets');
   });
 
   it('more than 5 distinct candidates → too-many before any lookup; 5 is allowed', async () => {

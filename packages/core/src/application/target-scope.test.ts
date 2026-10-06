@@ -81,6 +81,8 @@ describe('extractMentionedPathTokens (QA-016)', () => {
     'UI/UX 버그 고쳐줘',
     'https://example.com/a 링크 버그 고쳐줘',
     '이 코드 고쳐줘\n```js\nimport x from "./utils/x.js";\n```',
+    '이 코드 고쳐줘\n~~~js\nimport x from "./utils/x.js";\n~~~',
+    '이 코드 고쳐줘\n````\n```\nimport x from "../utils/x.js";\n```\n````',
   ])('"%s" mentions no path', (text) => {
     expect(extractMentionedPathTokens(text)).toEqual([]);
   });

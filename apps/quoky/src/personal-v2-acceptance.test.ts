@@ -304,6 +304,8 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composePrCreatedCompanionUnsupported(context).text) return 'pr-created-companion-unsupported';
   if (text === composer.composeMergeApprovedCompanionUnsupported(context).text) return 'merge-approved-companion-unsupported';
   if (text === composer.composeMergeExecutionUnsupportedCompanion(context).text) return 'merge-execution-companion-unsupported';
+  if (text === composer.composeCodePreviewDiscarded(context).text) return 'preview-discarded';
+  if (text === composer.composeNoPendingDecision(context).text) return 'no-pending-decision';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
   return 'other';
 }
@@ -321,6 +323,8 @@ async function seedPostPushAnchor(h: Harness, context: ConversationContext, stat
     status,
     projectId,
     instruction: 'apply the approved change',
+    // The preview's generation — the identity the QA-V2-CL-03 conditional preview discard matches on.
+    codeGenerationRef: { id: 'int1-generation', status: 'SUCCEEDED' },
     pushedCommitHash: PUSHED.commitHash,
     pushedRemote: PUSHED.remote,
     pushedBranch: PUSHED.branch,

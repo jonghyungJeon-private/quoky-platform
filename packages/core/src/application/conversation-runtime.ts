@@ -419,6 +419,10 @@ export interface ApplyPreviewAnchor {
   newFileTargets?: string[];
   codeGenerationRef: CodeGenerationRef;
   codeProposalRef: CodeProposalRef;
+  /** The target paths whose credential-flagged content was sent to the AI ONCE under an owner override for this
+   *  preview (ADR-0097 D7). Display-only: a "취소" at `ELIGIBLE` says that send cannot be undone (QA-V2-CL-03).
+   *  Absent when no override was used (and on every anchor written before QA-V2-CL-03). */
+  credentialOverrideSentPaths?: string[];
   /** The original request's instruction — restated in the apply-approval's `reason`, never re-derived
    *  from chat history. */
   instruction: string;
@@ -609,6 +613,19 @@ export interface ApplyPreviewFlow {
   /** Consume/clear the anchor — called only on deny/cancel (approving re-anchors as `APPROVED` instead).
    *  A no-op unless `session.activeTaskId` still points at THIS flow's own anchor Task. */
   clear(session: Session): Promise<void>;
+  /**
+   * Conditional clear (QA-V2-CL-03 preview discard): re-read the LIVE session from storage (never trust the turn's
+   * possibly stale copy) and clear only while its current anchor is still the expected one — same code generation
+   * (`codeGenerationRef.id`) and same `status`. Returns whether it cleared. Optional: a flow without it makes the
+   * caller fail closed (nothing cleared).
+   */
+  clearIfCurrent?(session: Session, expected: ApplyPreviewAnchorIdentity): Promise<boolean>;
+}
+
+/** Identifies one apply-preview anchor state for {@link ApplyPreviewFlow.clearIfCurrent}. */
+export interface ApplyPreviewAnchorIdentity {
+  readonly status: ApplyPreviewAnchorStatus;
+  readonly codeGenerationId: Id;
 }
 
 export interface ConversationRuntimeDeps {
@@ -2101,6 +2118,12 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANUP_PENDING') {
       return this.handleRemoteBranchCleanupDecisionTurn(message, session, actor, applyAnchor);
     }
+    // (QA-V2-CL-03) "취소" while a diff preview awaits "적용해줘" discards that preview — never the QA-018 "nothing to
+    // approve" reply, which ignored the open preview. ELIGIBLE only: no approval exists yet and no file was changed.
+    // Every approval-pending state above keeps its own decision flow; later states keep their own replies.
+    if (applyAnchor?.status === 'ELIGIBLE' && ConversationRuntime.isPreviewDiscardUtterance(message.text)) {
+      return this.handlePreviewDiscardTurn(message, session, applyAnchor);
+    }
     // (A4) ADR-0096 `post-anchor` turn handlers — every pending approval / scope clarification / `*_PENDING`
     // intercept above has already captured its turn, so a handler can never pre-empt a decision. Runs BEFORE the
     // ADR-0043 deny-fragment check and the WORKSPACE_APPLIED git-mutating-word reject below.
@@ -3503,6 +3526,7 @@ export class ConversationRuntime {
       ...(newFileTargets.size ? { newFileTargets: [...newFileTargets] } : {}),
       codeGenerationRef: codeGenerationRef(generation),
       codeProposalRef: codeProposalRef(proposal),
+      ...(grants.length ? { credentialOverrideSentPaths: grants.map((g) => g.path) } : {}),
       instruction: request.instruction,
       ...(anchorSession.activeProjectId ? { projectId: anchorSession.activeProjectId } : {}),
       createdAt: now(),
@@ -3807,6 +3831,54 @@ export class ConversationRuntime {
       decidedAt: this.clock(),
       comment,
     });
+  }
+
+  /** Optional "the preview / the change" noun before a cancel word ("미리보기 취소", "변경 취소해줘", "cancel the preview"). */
+  private static readonly PREVIEW_DISCARD_NOUN =
+    /^(?:(?:이|그|this|the)\s*)?(?:미리\s*보기|변경\s*사항|코드\s*변경|변경|수정\s*사항|preview|changes?)\s*(?:은|는|을|를|도)?\s*/i;
+
+  /**
+   * Whether a turn at an ELIGIBLE anchor asks to discard the shown preview (QA-V2-CL-03): a bare cancel utterance
+   * ("취소", "취소해줘", "cancel"), optionally led by a preview noun. Deny/approve words are NOT discards and keep the
+   * QA-018 reply; a cancel word inside a longer request ("결제 취소 기능 추가해줘") is not a bare utterance.
+   */
+  private static isPreviewDiscardUtterance(text: string): boolean {
+    const trimmed = text.trim();
+    // Only a genuinely bare message: the stray-decision parser strips punctuation, so a fenced/inline code block or a
+    // multi-line message that merely contains "cancel" must never discard a preview.
+    if (trimmed.length === 0 || /[`\n\r]|~~~/.test(trimmed)) return false;
+    if (interpretStrayDecisionUtterance(trimmed) === 'cancel') return true;
+    const withoutNoun = trimmed.replace(ConversationRuntime.PREVIEW_DISCARD_NOUN, '');
+    return withoutNoun !== trimmed && interpretStrayDecisionUtterance(withoutNoun) === 'cancel';
+  }
+
+  /**
+   * Discard an ELIGIBLE diff preview on "취소" (QA-V2-CL-03). Clears the inert apply-preview anchor only — no
+   * ApprovalRequest existed, no PatchSet, no file change — so a later "적용해줘" gets the apply-unavailable reply.
+   * Deterministic, provider-free. Truthful copy: preview discarded, no file changed; content already sent to the AI
+   * under an owner override (ADR-0097) cannot be unsent.
+   *
+   * The clear is conditional ({@link ApplyPreviewFlow.clearIfCurrent}): the flow re-reads the live session and clears
+   * only while its current anchor is still THIS preview (same code generation) at `ELIGIBLE`. If another turn
+   * advanced it meanwhile (ELIGIBLE → AWAITING_APPROVAL → APPROVED) nothing is cleared and the reply is the
+   * non-mutating "state changed" copy. A flow without the conditional clear fails closed the same way.
+   */
+  private async handlePreviewDiscardTurn(
+    message: InboundMessage,
+    session: Session,
+    anchor: ApplyPreviewAnchor,
+  ): Promise<TurnResult> {
+    // A malformed persisted anchor without a generation id cannot be matched — fail closed like a lost race.
+    const codeGenerationId = anchor.codeGenerationRef?.id;
+    const cleared = this.deps.applyPreviewFlow.clearIfCurrent && codeGenerationId
+      ? await this.deps.applyPreviewFlow.clearIfCurrent(session, { status: 'ELIGIBLE', codeGenerationId })
+      : false;
+    if (!cleared) {
+      return this.respondComposed(message, session, this.deps.composer.composeCodePreviewDiscardSuperseded(message.context));
+    }
+    const reply = this.deps.composer.composeCodePreviewDiscarded(message.context, anchor.credentialOverrideSentPaths ?? []);
+    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+    return { status: 'CANCELLED', reply, sessionId: session.id };
   }
 
   /** No eligible apply-preview anchor exists at all (Sprint 2s, ADR-0040) — an explicit apply phrase is
@@ -6684,14 +6756,22 @@ export class ConversationRuntime {
     collected: CodeChangeTargetCollection,
     unsafe: readonly string[],
   ): OutboundMessage {
+    // A missing safe path is the one the owner meant (echoed from the collection itself, so a bare root-level
+    // filename such as `test.js` — never a slash-bearing mention — is named too: QA-V2-CL-01); only with no safe
+    // path at all is the unsafe one echoed.
+    // QA-V2-CL-02: a secret-looking file NAME is refused by name (ADR-0099 D6) — never the "not found" copy, since the
+    // workspace never lists it. Name-only, so nothing is revealed about whether the file exists.
+    if (collected.kind === 'secret-named') {
+      return this.deps.composer.composeTargetSecretNamed(message.context, collected.paths);
+    }
+    const firstMissing = collected.kind === 'missing' ? collected.missing[0] : undefined;
     if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
       return this.deps.composer.composeTargetsMissing(message.context, collected.missing);
     }
-    // A missing safe path is the one the owner meant; only with no safe path at all is the unsafe one echoed.
     const mentioned = extractMentionedPathTokens(message.text);
     const typed = collected.kind === 'none'
       ? (unsafe[0] ?? mentioned[0])
-      : (mentioned.find((token) => !unsafe.includes(token)) ?? mentioned[0]);
+      : (firstMissing ?? mentioned.find((token) => !unsafe.includes(token)) ?? mentioned[0]);
     return typed
       ? this.deps.composer.composeTargetPathRejected(message.context, typed)
       : this.deps.composer.composeTargetScopeClarification(message.context);

@@ -1853,6 +1853,37 @@ describe('ResponseComposer change-set replies (ADR-0099)', () => {
     for (const word of FORBIDDEN_MUTATION_WORDS) expect(text).not.toContain(word);
   });
 
+  it('composeTargetSecretNamed (QA-V2-CL-02) refuses by NAME — never "not found" — and says nothing was sent or modified', () => {
+    const text = composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js', 'docs/`b`\u0007token.md']).text;
+    expect(text).toContain('`src/hardsecret.js`');
+    expect(text).toContain('`docs/btoken.md`');
+    expect(text).toContain('비밀 정보 파일처럼 보여서');
+    expect(text).toContain('AI에게 보내지 않았고');
+    expect(text).toContain('파일은 수정되지 않았어요');
+    expect(text).not.toContain('찾을 수 없');
+    expect(text).not.toContain('프로젝트 밖');
+    for (const word of FORBIDDEN_MUTATION_WORDS) expect(text).not.toContain(word);
+  });
+
+  it('composeCodePreviewDiscarded (QA-V2-CL-03) says the preview was discarded and nothing changed; an override send is not recalled', () => {
+    const plain = composer.composeCodePreviewDiscarded(CTX).text;
+    expect(plain).toContain('미리보기를 취소했어요');
+    expect(plain).toContain('파일은 수정되지 않았어요');
+    expect(plain).not.toContain('AI에게 보냈어요');
+    for (const word of FORBIDDEN_MUTATION_WORDS) expect(plain).not.toContain(word);
+    const sent = composer.composeCodePreviewDiscarded(CTX, ['src/config.ts']).text;
+    expect(sent).toContain('src/config.ts');
+    expect(sent).toContain('되돌릴 수 없어요');
+    expect(sent).not.toBe(composer.composeCredentialOverrideSentThenCancelled(CTX, ['src/config.ts']).text);
+  });
+
+  it('composeCodePreviewDiscardSuperseded (Codex P2 #4) says the cancel was not processed and nothing changed', () => {
+    const text = composer.composeCodePreviewDiscardSuperseded(CTX).text;
+    expect(text).toContain('이번 취소는 처리하지 않았어요');
+    expect(text).toContain('아무것도 바뀌지 않았어요');
+    for (const word of FORBIDDEN_MUTATION_WORDS) expect(text).not.toContain(word);
+  });
+
   it('composeTooManyTargets states the 5-file limit and the count, and asks to split', () => {
     const text = composer.composeTooManyTargets(CTX, 7).text;
     expect(text).toContain('5개까지');

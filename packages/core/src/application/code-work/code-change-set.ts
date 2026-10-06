@@ -10,7 +10,8 @@ import type {
   WorkspaceDiff,
   WorkspaceRef,
 } from '../../domain';
-import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from '../target-scope';
+import { isSecretLookingFileName } from '../secret-file-name';
+import { blankFencedCode, extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from '../target-scope';
 
 /**
  * Bounded code change sets (ADR-0099 D1–D3). Pure helpers the conversational code-change flow uses so its
@@ -54,15 +55,25 @@ function normalizedSet(paths: readonly string[] | undefined): Set<string> {
 
 /** URLs are links, not project paths: `https://host/a/b.md` must never become a target candidate. */
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]*/gi;
-/** Fenced code is pasted content, not a mention — the same rule as `extractMentionedPathTokens`. */
-const FENCED_CODE_PATTERN = /```[\s\S]*?(?:```|$)/g;
+/** One inline code span (single backticks, one line). */
+const INLINE_CODE_PATTERN = /`([^`\n]*)`/g;
+/** An inline code span whose whole content is ONE path-shaped token (`src/a.ts`, `test.js`) — a quoted file name. */
+const QUOTED_PATH_TOKEN = /^\s*[\w@.~/\\-]+\s*$/;
 
 /**
- * The request text with fenced code blocks and URLs blanked out, for target-path extraction only (never the
- * AI instruction). An `import './lib/x.js'` inside a pasted snippet is content, not a named target.
+ * The request text with code and URLs blanked out, for target-path extraction only (never the AI instruction). The
+ * same rule for slash-bearing and bare root-level paths:
+ * - fenced code blocks (``` or ~~~, 3+ characters, any info string — `blankFencedCode`, shared with
+ *   `extractMentionedPathTokens`) are pasted content: an `import './lib/x.js'` in a snippet is never a target;
+ * - an inline code span is a quoted file NAME only when its whole content is one path-shaped token (`` `test.js` ``);
+ *   any other span (`` `res.json()` ``, `` `import x from 'util.js'` ``) is code and is blanked;
+ * - URLs are links, never project paths.
  */
 export function targetExtractionText(text: string): string {
-  return text.replace(FENCED_CODE_PATTERN, ' ').replace(URL_PATTERN, ' ');
+  return blankFencedCode(text)
+    .replace(INLINE_CODE_PATTERN, (span, inner: string) =>
+      QUOTED_PATH_TOKEN.test(inner) ? ` ${inner} ` : ' '.repeat(span.length))
+    .replace(URL_PATTERN, ' ');
 }
 
 /**
@@ -89,17 +100,142 @@ const PATH_RUN_PATTERN = /[\w@.~/-]+/g;
  *
  * An unsafe path is refused as a target, NOT the whole request: an API route, log path or import specifier in
  * the instruction prose (`src/routes.ts 에 /api/v1/users 라우트 추가해줘`) leaves the safe named target intact.
- * The caller refuses with the typed unsafe path only when no safe candidate is left. Pure; no I/O.
+ * The caller refuses with the typed unsafe path only when no safe candidate is left. Candidates are the slash-bearing
+ * project-relative paths plus bare repository-root filenames (`test.js`, `package.json` — QA-V2-CL-01), in order of
+ * appearance. Pure; no I/O.
  */
 export function extractSafeTargetCandidates(text: string): { candidates: string[]; unsafe: string[] } {
   const unsafe = extractMentionedPathTokens(text).filter(isUnsafeMentionedPath);
   const extractionText = targetExtractionText(text);
-  if (unsafe.length === 0) return { candidates: extractTargetPathCandidates(extractionText), unsafe };
+  if (unsafe.length === 0) return { candidates: orderedTargetCandidates(extractionText), unsafe };
   const blocked = new Set(unsafe);
   const masked = extractionText.replace(PATH_RUN_PATTERN, (run) =>
     blocked.has(run.replace(/\.+$/, '')) ? ' '.repeat(run.length) : run,
   );
-  return { candidates: extractTargetPathCandidates(masked), unsafe };
+  return { candidates: orderedTargetCandidates(masked), unsafe };
+}
+
+/**
+ * Root-level file extensions a bare filename (no `/`) may carry to count as a named target (QA-V2-CL-01). Source,
+ * config and doc files only: a version (`v1.2.3`), an abbreviation (`e.g.`), a domain (`example.com`) or a method
+ * call (`console.log`) never ends in one of these.
+ */
+const BARE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'json', 'jsonc', 'json5', 'md', 'mdx', 'txt', 'yml', 'yaml',
+  'toml', 'ini', 'cfg', 'xml', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'vue', 'svelte', 'astro', 'py', 'rb',
+  'go', 'rs', 'java', 'kt', 'kts', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'sql',
+  'graphql', 'gql', 'prisma', 'proto',
+]);
+
+/** Technology names spelled like a `.js` file ("Node.js", "Next.js", "Vue.js") — prose, never a bare target. */
+const TECHNOLOGY_JS_NAMES: ReadonlySet<string> = new Set([
+  'node', 'next', 'nuxt', 'nest', 'vue', 'react', 'preact', 'solid', 'svelte', 'angular', 'ember', 'backbone',
+  'express', 'koa', 'fastify', 'hapi', 'deno', 'bun', 'three', 'd3', 'chart', 'p5', 'pixi', 'babylon', 'alpine',
+  'socket', 'moment', 'knockout', 'meteor', 'gatsby', 'remix', 'electron', 'anime', 'riot', 'mithril', 'polymer',
+]);
+
+/**
+ * Language receiver keywords (`this`, `self`, `super`). A dotted token that starts with one (`this.res.json`) is a
+ * member chain — the `res.json` part follows a `.` — never a file name. These are keywords, not a name heuristic: no
+ * project file is named `this.<…>`.
+ */
+const RECEIVER_KEYWORDS: ReadonlySet<string> = new Set(['this', 'self', 'super']);
+
+/**
+ * A bare root-level filename (`test.js`, `package.json`, `README.md`): not preceded by an identifier character
+ * (`\w`, `$`), a dot or `->` (a member access such as `obj.res.json` / `obj->config.json`), `~`, `:`, `@`, a slash or
+ * a backslash (a dot-file, Windows or absolute spelling is never rewritten into a root file), and not followed by a
+ * path character. A Korean particle may follow directly (`test.js와`, `test.js에`). A match that is a method call is
+ * rejected separately ({@link isCallAfterToken}).
+ */
+const BARE_FILE_PATTERN = /(?<![\w$./\\~:@-])(?<!->)[A-Za-z0-9_][\w.-]*\.([A-Za-z][A-Za-z0-9]*)(?![\w$/\\-])/g;
+
+/** Upper bound on the generic-argument run {@link isCallAfterToken} scans (`<Array<Array<string>>>`). */
+const MAX_GENERIC_SCAN = 200;
+
+/**
+ * Whether the text right after a `name.ext` token makes it a method call or member chain — code, never a file:
+ * optional whitespace, an optional BALANCED generic-argument list (`<T>`, `<Array<Array<string>>>`; depth-counted,
+ * bounded by {@link MAX_GENERIC_SCAN}; an unbalanced or over-long run is not a call), optional whitespace, an optional
+ * `?.`, then `(` — `res.json()`, `res.json ()`, `res.json<T>()`, `res.json?.()` — or an optional-chaining
+ * continuation directly after the token (`res.json?.data`).
+ */
+function isCallAfterToken(after: string): boolean {
+  if (after.startsWith('?.')) return true;
+  let i = 0;
+  const skipSpace = (): void => {
+    while (i < after.length && /\s/.test(after[i] ?? '')) i += 1;
+  };
+  skipSpace();
+  if (after[i] === '<') {
+    let depth = 0;
+    const limit = Math.min(after.length, i + MAX_GENERIC_SCAN);
+    let closed = false;
+    for (; i < limit; i += 1) {
+      const ch = after[i];
+      if (ch === '<') depth += 1;
+      else if (ch === '>') {
+        depth -= 1;
+        if (depth === 0) {
+          i += 1;
+          closed = true;
+          break;
+        }
+      } else if (ch === '(' || ch === ')' || ch === '\n') {
+        return false;
+      }
+    }
+    if (!closed) return false;
+    skipSpace();
+  }
+  if (after.startsWith('?.', i)) {
+    i += 2;
+    skipSpace();
+  }
+  return after[i] === '(';
+}
+
+/**
+ * Bare root-level filename candidates with their positions (QA-V2-CL-01, ADR-0099 D1 "every safe named path").
+ * ADR-0036's slash-only extractor ({@link extractTargetPathCandidates}) left a repository-root file untargetable —
+ * `src/greet.js 와 test.js 에 …` silently dropped `test.js`. A bare name counts only with a source/config/doc
+ * extension and is never a technology name; it is still only a CANDIDATE — existence is verified by the caller.
+ */
+function bareRootFileCandidates(text: string): Array<{ index: number; path: string }> {
+  const out: Array<{ index: number; path: string }> = [];
+  for (const match of text.matchAll(BARE_FILE_PATTERN)) {
+    const token = match[0];
+    const extension = (match[1] ?? '').toLowerCase();
+    if (!BARE_FILE_EXTENSIONS.has(extension)) continue;
+    const stem = token.slice(0, token.length - extension.length - 1).toLowerCase();
+    if (extension === 'js' && TECHNOLOGY_JS_NAMES.has(stem)) continue;
+    if (RECEIVER_KEYWORDS.has(stem.split('.')[0] ?? '')) continue; // `this.json`, `this.res.json` (member access)
+    const index = match.index ?? 0;
+    if (isCallAfterToken(text.slice(index + token.length))) continue;
+    out.push({ index, path: token });
+  }
+  return out;
+}
+
+/**
+ * Every safe target candidate in order of appearance: the slash-bearing project-relative paths
+ * ({@link extractTargetPathCandidates}, ADR-0036) merged with bare root-level filenames ({@link bareRootFileCandidates}).
+ * `text` is already URL/fence-blanked and unsafe-masked. Pure; no I/O.
+ */
+function orderedTargetCandidates(text: string): string[] {
+  const located: Array<{ index: number; path: string }> = [];
+  let from = 0;
+  for (const path of extractTargetPathCandidates(text)) {
+    const index = text.indexOf(path, from);
+    located.push({ index: index < 0 ? from : index, path });
+    if (index >= 0) from = index + path.length;
+  }
+  located.push(...bareRootFileCandidates(text));
+  const out: string[] = [];
+  for (const { path } of located.sort((a, b) => a.index - b.index)) {
+    if (!out.includes(path)) out.push(path);
+  }
+  return out;
 }
 
 function isUnsafeMentionedPath(token: string): boolean {
@@ -117,6 +253,12 @@ function isUnsafeMentionedPath(token: string): boolean {
 export type CodeChangeTargetCollection =
   /** No safe path was named at all. */
   | { readonly kind: 'none' }
+  /**
+   * Some named paths have a secret-looking file NAME (ADR-0019/0022 policy, ADR-0099 D6 "a secret filename on any
+   * target fails the whole set"; QA-V2-CL-02). Refused by name before any lookup — the workspace never lists, reads,
+   * sends or writes such a file, so it must not be reported as "not found". `paths` are as typed.
+   */
+  | { readonly kind: 'secret-named'; readonly paths: string[] }
   /** More than {@link MAX_CHANGE_SET_FILES} safe paths were named — split the request. Nothing was looked up. */
   | { readonly kind: 'too-many'; readonly count: number; readonly max: number }
   /** Named paths that do not exist (and no create wording) — ask again; `resolved` are the ones that did. */
@@ -130,8 +272,9 @@ export type CodeChangeTargetCollection =
  * a target, never only the first: an existing path (verified by `resolveExisting`, which returns the
  * workspace's own spelling of the hit) is an update target; a missing path is a new-file target only when
  * `allowNewFiles` (the negation-aware ADR-0062 create wording); otherwise it is reported as missing so the
- * caller asks again — never a silent drop and never an AI guess. More than {@link MAX_CHANGE_SET_FILES}
- * candidates are refused before any lookup.
+ * caller asks again — never a silent drop and never an AI guess. A secret-looking file name refuses the whole set
+ * by name ({@link isSecretLookingFileName}, ADR-0099 D6), and more than {@link MAX_CHANGE_SET_FILES} candidates are
+ * refused — both before any lookup.
  */
 export async function collectCodeChangeTargets(input: {
   readonly candidates: readonly string[];
@@ -147,6 +290,8 @@ export async function collectCodeChangeTargets(input: {
     unique.push(candidate);
   }
   if (unique.length === 0) return { kind: 'none' };
+  const secretNamed = unique.filter((candidate) => isSecretLookingFileName(normalizeRelativePath(candidate).split('/').pop() ?? ''));
+  if (secretNamed.length > 0) return { kind: 'secret-named', paths: secretNamed };
   if (unique.length > MAX_CHANGE_SET_FILES) {
     return { kind: 'too-many', count: unique.length, max: MAX_CHANGE_SET_FILES };
   }

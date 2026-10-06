@@ -986,6 +986,26 @@ export class ResponseComposer {
   }
 
   /**
+   * A code-change request named a file whose NAME looks like a secrets/credential file (QA-V2-CL-02; ADR-0019/0022
+   * policy, ADR-0099 D6). Such a file is never read, sent to the AI or written, so the whole request is refused —
+   * truthfully by name, never as "not found" (the workspace does not list it). The rule is name-only, so the reply
+   * reveals nothing about whether the file exists. Paths are echoed sanitized like {@link composeTargetPathRejected}.
+   */
+  composeTargetSecretNamed(context: ConversationContext, paths: readonly string[]): OutboundMessage {
+    const shown = paths.slice(0, MAX_CHANGE_SET_FILES).map((p) => `\`${sanitizeTypedPath(p)}\``);
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          `요청한 파일은 이름이 비밀 정보 파일처럼 보여서 채팅으로는 읽거나 수정할 수 없어요: ${shown.join(', ')}`,
+          '이름에 secret·token·key·credential·password가 들어가거나 .env·인증서·키 파일 형식인 파일은 AI에게 보내지도, 고치지도 않아요.',
+          '파일 내용은 AI에게 보내지 않았고, 파일은 수정되지 않았어요. 이 파일은 직접 편집하거나, 다른 파일이라면 경로와 함께 다시 요청해 주세요.',
+        ].join('\n'),
+      ),
+    };
+  }
+
+  /**
    * Some paths a code-change request named do not exist in the project and the request has no create wording
    * (ADR-0099 D1) — never silently dropped, never guessed. Names every missing path (sanitized like
    * {@link composeTargetPathRejected}) and asks for the request again. Nothing was planned or modified.
@@ -1028,6 +1048,35 @@ export class ResponseComposer {
     return {
       context,
       text: '코드 변경 요청을 취소했어요. 다시 필요하시면 파일 경로와 함께 새로 요청해 주세요.',
+    };
+  }
+
+  /**
+   * "취소" while a diff preview awaits "적용해줘" (QA-V2-CL-03): the preview was discarded. Nothing was applied or
+   * approved and no file changed, so there is nothing to roll back. When the preview was built from content sent
+   * to the AI once under an owner override (ADR-0097 D7), say that send cannot be undone — never imply it was
+   * recalled. Distinct from {@link composeCredentialOverrideSentThenCancelled}, which covers a request cancelled by
+   * a reset / project change WHILE the provider ran (the proposal was never shown).
+   */
+  composeCodePreviewDiscarded(context: ConversationContext, credentialOverrideSentPaths: readonly string[] = []): OutboundMessage {
+    const lines = ['코드 변경 미리보기를 취소했어요. 적용하지 않았고 파일은 수정되지 않았어요.'];
+    if (credentialOverrideSentPaths.length) {
+      lines.push(credentialOverrideSentNotice(credentialOverrideSentPaths), '이미 AI에게 보낸 내용은 되돌릴 수 없어요.');
+    }
+    lines.push('다시 필요하면 파일 경로와 함께 새로 요청해 주세요.');
+    return { context, text: clampToMessageBudget(lines.join('\n')) };
+  }
+
+  /**
+   * "취소" for a preview whose state changed before the discard could run (QA-V2-CL-03 race): another turn already
+   * advanced it (e.g. an apply approval was requested or granted) or it is gone. Nothing was cleared or changed.
+   */
+  composeCodePreviewDiscardSuperseded(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '미리보기 상태가 그사이 바뀌어서 이번 취소는 처리하지 않았어요. 아무것도 바뀌지 않았어요.\n' +
+        '진행 중인 승인 요청이 있다면 그 요청에 "거절"이나 "취소"로 답해 주세요.',
     };
   }
 

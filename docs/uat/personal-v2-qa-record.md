@@ -162,6 +162,29 @@ connector probes, one request each, then chat lookups.
 | PC-8 | GitHub 리뷰 요청 보여줘 | PASS — "결과가 없어요" (none pending) |
 | PC-9 | Slack | NOT RUN — no user token yet (instructions given to the owner) |
 
+## v2 closeout live session (2026-10-06) — remaining "not live-verified" items
+
+| ID | Input / action | Result |
+|---|---|---|
+| CL-E1..E4 | QUOKY_EMBEDDING_ENABLED=true (nomic-embed-text): "기억해: 내가 제일 좋아하는 커피는 콜드브루 라떼야", "기억해: 주말에는 보통 북한산 등산을 가", then "내가 즐겨 마시는 음료가 뭐였지?" / "주말에 내가 주로 하는 활동은?" | PASS — semantic recall scored (음료 ↔ 커피, 1.7 s) → "콜드브루 라떼야"; second turn hit the 3 s embedding timeout and fell back to lexical recall, answer still correct. NOTE QA-V2-CL-04 (MINOR): cold model swap (chat ↔ embed) can exceed QUOKY_EMBEDDING_TIMEOUT_MS=3000 → v3 LLM (timeout/keep-alive tuning); local answer slightly embellished |
+| CL-M1 | "src/greet.js 와 test.js 에 … JSDoc 주석을 추가해줘" | FAIL QA-V2-CL-01 (MEDIUM) — approval named only src/greet.js; repo-root test.js silently dropped → side-job fix |
+| CL-M2 | "src/greet.js 와 src/client.js 의 … JSDoc 주석을 추가해줘" → 승인 → (client.js `this.token = token` flagged) → 그래도 보내줘 | PASS — multi-file approval named both; override sent once with the exact disclosure; 2-file diff preview; "아직 적용되지 않았어요" |
+| CL-M3 | "취소" at the open preview | NOTE QA-V2-CL-03 (MINOR) — "지금 승인하거나 거절할 작업이 없어요" ignores the open preview → side-job fix |
+| CL-N1 | "src/math.js 새 파일 만들어줘: …add(a, b)…" → 승인 | PASS — new-file diff (`@@ -0,0 +1,3 @@`), not applied. NOTE (model quality): ESM `export` in a CommonJS project → v3 LLM/context |
+| CL-H1 | "새 대화" then 승인 / 그래도 보내줘 with no project | PASS — project unbound notice; stray 승인 / 그래도 보내줘 → nothing pending, nothing sent |
+| CL-H3 | "src/hardsecret.js 에 주석 한 줄 추가해줘" (file exists, token-shaped content) | FAIL QA-V2-CL-02 (MEDIUM) — "찾을 수 없거나 프로젝트 밖 경로예요" for an existing tracked file → side-job fix (truthful refusal) |
+| CL-R1 | #reminder: "2분 뒤에 DM 대체 테스트 알려줘" → channel removed from QUOKY_DISCORD_CHANNEL_IDS, restart before fire | PASS — delivered once via owner DM fallback (viaDm=1, viaChannel=0); allowlist restored afterwards |
+| CL-Q1 | Answer-quality harness | Offline only: validate-fixtures ok (11 cases); `plan --target ollama --model llama3.1:8b --calls 3` digest b91abbcb…; the Strict `run` is deferred to v3 LLM-2 under its own approval |
+| — | Reminders release default flip / merge enablement | Not v2 scope by owner decision (v3 decision 8 after SUB-1; merge stays false) |
+
+Retest after the side-job fixes (0fa6a91, b15289c, 18c92fa):
+
+| ID | Input | Result |
+|---|---|---|
+| CL-M1-R | "src/greet.js 와 test.js 에 … JSDoc …" → 승인 | PASS — approval names src/greet.js and test.js; 2-file diff incl. the repo-root test.js |
+| CL-M3-R | "취소" at the open preview | PASS — "코드 변경 미리보기를 취소했어요. 적용하지 않았고 파일은 수정되지 않았어요." |
+| CL-H3-R | "src/hardsecret.js 에 주석 한 줄 추가해줘" | PASS — truthful by-name refusal (secret-looking file name; nothing sent, nothing modified) |
+
 ## Findings index
 
 | ID | Severity | Summary | State |
@@ -188,22 +211,24 @@ connector probes, one request each, then chat lookups.
 | QA-V2-PC-02 | MAJOR | Confluence connector used Bearer auth; Atlassian Cloud needs Basic email:token | FIXED a71078f, retest PASS |
 | QA-V2-PC-03 | MEDIUM (model quality) | Local work summaries garbled / fabricated help text | OPEN — owner decision on summary flag; v3 LLM |
 | QA-V2-PC-04 | MEDIUM | Work lookup with a deploy word captured by the code-chain companion reply | FIXED b185507, retest PASS |
+| QA-V2-CL-01 | MEDIUM | Repo-root file names (test.js) silently dropped from code targets | FIXED 0fa6a91, retest PASS |
+| QA-V2-CL-02 | MEDIUM | Secret-named in-repo file reported as "not found" | FIXED b15289c (truthful by-name refusal), retest PASS |
+| QA-V2-CL-03 | MINOR | "취소" at an open diff preview ignored the preview | FIXED 18c92fa, retest PASS |
+| QA-V2-CL-04 | MINOR (model/latency) | Embedding recall can time out (3 s) on a cold chat↔embed model swap; lexical fallback answers | OPEN, v3 LLM |
 | PC-2 | MAJOR | PR status unreadable: status token lacked checks:read; installation had not accepted new permissions | FIXED 6a59526 + installation accept, retest PASS |
 | INT-1 (offline) | MEDIUM | No-anchor push/force-push and branch-delete phrases fell through to chat (provider call) | FIXED a23776c (deterministic replies, golden route-047..054); W8-2 live PASS |
 
 ## Not live-verified (still pending)
 
-These are NOT claimed as done anywhere in the repository docs:
+As of the 2026-10-06 sessions every v2 item has been run live except the following, each deliberately moved out of
+v2 by an owner decision:
 
-- Connector lookups on real Jira, Slack, Confluence and GitHub tenants (the owner is adding credentials). The wave-7
-  to-do QA showed the Jira/GitHub section truthfully reporting that identity is not set.
-- Reminders channel delivery (`QUOKY_REMINDERS_CHANNEL_DELIVERY=true`) and the allowlist-removal DM fallback.
-- The release-default flip for `QUOKY_REMINDERS_ENABLED` (still `false`; it was `true` in the QA environment only).
-- Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED` stayed `false`; the merge path was only checked to refuse).
-- Embedding recall live probe (`QUOKY_EMBEDDING_ENABLED=true` with a local embedding model).
-- Multi-file and new-file previews beyond the single new-file preview used in the wave-7 chain (G2).
-- Answer-quality harness provider runs (none recorded here; each needs separate exact-scope approval).
-- Override copy follow-ups (e8e2c91 transmission-state wording; 43976e1 single-missing-path create-wording resend, sent-then-cancelled copy, QA-V2-004): unit-tested only, not re-run live.
+- The release-default flip for `QUOKY_REMINDERS_ENABLED` (v3 decision 8: after the SUB-1 always-on runtime).
+- Merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED` stays `false`; merge is only verified to refuse).
+- Answer-quality harness provider `run` (Strict, per-run approval): offline validation and an Ollama plan digest are
+  recorded; the run is part of v3 LLM-2.
+- Override generation-failure copy by transmission state (e8e2c91): a live provider failure cannot be induced safely;
+  unit-tested only.
 
 ## Open follow-ups
 

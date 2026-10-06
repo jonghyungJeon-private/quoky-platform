@@ -68,6 +68,7 @@ import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
+import { StatelessApplyPreviewFlow } from './stateless-apply-preview-flow';
 import type { TestResultDetail } from './response-composer';
 import { IntentClassifier } from './intent-classifier';
 import { ContextBuilder } from './context-builder';
@@ -841,6 +842,13 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     async clear() {
       calls.applyClear++;
       currentApplyAnchor = null;
+    },
+    async clearIfCurrent(_session, expected) {
+      if (currentApplyAnchor?.status !== expected.status) return false;
+      if (currentApplyAnchor.codeGenerationRef.id !== expected.codeGenerationId) return false;
+      calls.applyClear++;
+      currentApplyAnchor = null;
+      return true;
     },
   };
 
@@ -2971,6 +2979,136 @@ describe('Explicit Preview Apply Approval — runtime (Sprint 2s, ADR-0040)', ()
       expect(result.status).toBe('RESPONDED');
     },
   );
+
+  // ── QA-V2-CL-03: "취소" at a preview awaiting "적용해줘" discards the preview ──────────────────────
+  it.each(['취소', '취소해줘', '취소할게요', 'cancel', '미리보기 취소', '변경 취소해줘', '이 미리보기는 취소할게'])(
+    'QA-V2-CL-03: "%s" at an ELIGIBLE anchor discards the preview — deterministic, no approval, no provider',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.status).toBe('CANCELLED');
+      expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, []).text);
+      expect(result.reply.text).not.toBe(new ResponseComposer().composeNoPendingDecision(CTX).text);
+      expect(calls.applyClear).toBe(1);
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.classify).toBe(0);
+      expect(calls.run).toBe(0);
+    },
+  );
+
+  it('QA-V2-CL-03: after the discard, "적용해줘" has nothing to apply (apply-unavailable)', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    await new ConversationRuntime(deps).handle(messageOf('취소'));
+    const result = await new ConversationRuntime(deps).handle(messageOf('적용해줘'));
+    expect(calls.requestForRisk).toBe(0);
+    expect(result.reply.text).toBe(new ResponseComposer().composeApplyPreviewUnavailable(CTX).text);
+  });
+
+  it('QA-V2-CL-03: a preview built under an owner override says the one-time send cannot be undone', async () => {
+    const { deps } = makeDeps({ applyAnchor: applyAnchorOf({ credentialOverrideSentPaths: [TARGET_FILE] }) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('취소'));
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, [TARGET_FILE]).text);
+    expect(result.reply.text).toContain(TARGET_FILE);
+    expect(result.reply.text).toContain('되돌릴 수 없어요');
+  });
+
+  it.each([
+    ['거절', 'ELIGIBLE'],
+    ['승인', 'ELIGIBLE'],
+    ['취소', 'APPROVED'],
+    ['취소', 'PATCH_READY'],
+  ] as const)('QA-V2-CL-03 scope: "%s" at %s keeps the QA-018 nothing-to-decide reply (anchor untouched)', async (text, status) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ status, approvalId: 'apply-appr-1' }) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(result.reply.text).toBe(new ResponseComposer().composeNoPendingDecision(CTX).text);
+    expect(calls.applyClear).toBe(0);
+  });
+
+  it.each([
+    ['fenced', '```\ncancel\n```'],
+    ['tilde-fenced', '~~~\n취소\n~~~'],
+    ['inline code', '`cancel`'],
+    ['multi-line', '취소\n취소'],
+  ])('Codex P2 #3: a %s message that merely contains a cancel word never discards the preview', async (_shape, text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.applyClear).toBe(0);
+    expect(result.reply.text).not.toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, []).text);
+  });
+
+  it('Codex P2 #4: a delayed "취소" never clears an anchor another turn advanced to APPROVED (in-memory storage)', async () => {
+    const sessions = new Map<string, Session>();
+    const tasks = new Map<string, Task>();
+    const store = {
+      sessions: {
+        async get(id: string) { return sessions.get(id) ?? null; },
+        async save(saved: Session) { sessions.set(saved.id, saved); return saved; },
+      },
+      tasks: {
+        async get(id: string) { return tasks.get(id) ?? null; },
+        async save(saved: Task) { tasks.set(saved.id, saved); return saved; },
+      },
+    };
+    const real = new StatelessApplyPreviewFlow(store);
+    const eligible = applyAnchorOf({ projectId: 'proj-1' });
+    await real.anchor(sessionOf(), eligible);
+    const turnSession = sessions.get('sess-1')!; // the cancel turn's copy — about to go stale
+    let advanced = false;
+    // Interleaving: right after the cancel turn reads ELIGIBLE, another turn requests and grants the apply approval
+    // (each transition re-anchors on a fresh Task and re-points the live session).
+    const racing: ApplyPreviewFlow = {
+      async findAnchor(session) {
+        const found = await real.findAnchor(session);
+        if (!advanced && found) {
+          advanced = true;
+          await real.anchor(sessions.get('sess-1')!, { ...found, status: 'AWAITING_APPROVAL', approvalId: 'apply-appr-1' });
+          await real.anchor(sessions.get('sess-1')!, { ...found, status: 'APPROVED', approvalId: 'apply-appr-1', approvedAt: TS });
+        }
+        return found;
+      },
+      anchor: (session, anchor) => real.anchor(session, anchor),
+      clear: (session) => real.clear(session),
+      clearIfCurrent: (session, expected) => real.clearIfCurrent(session, expected),
+    };
+    const { deps } = makeDeps({ session: turnSession });
+    const result = await new ConversationRuntime({ ...deps, applyPreviewFlow: racing }).handle(messageOf('취소'));
+
+    expect(advanced).toBe(true);
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscardSuperseded(CTX).text);
+    const live = sessions.get('sess-1')!;
+    expect(live.activeTaskId).toBeDefined();
+    expect(live.activeTaskId).not.toBe(turnSession.activeTaskId);
+    expect((await real.findAnchor(live))?.status).toBe('APPROVED');
+  });
+
+  it('Codex P2 #4: the conditional clear still discards when the live anchor is the same ELIGIBLE preview (in-memory storage)', async () => {
+    const sessions = new Map<string, Session>();
+    const tasks = new Map<string, Task>();
+    const store = {
+      sessions: {
+        async get(id: string) { return sessions.get(id) ?? null; },
+        async save(saved: Session) { sessions.set(saved.id, saved); return saved; },
+      },
+      tasks: {
+        async get(id: string) { return tasks.get(id) ?? null; },
+        async save(saved: Task) { tasks.set(saved.id, saved); return saved; },
+      },
+    };
+    const real = new StatelessApplyPreviewFlow(store);
+    await real.anchor(sessionOf(), applyAnchorOf({ projectId: 'proj-1' }));
+    const { deps } = makeDeps({ session: sessions.get('sess-1')! });
+    const result = await new ConversationRuntime({ ...deps, applyPreviewFlow: real }).handle(messageOf('취소'));
+    expect(result.status).toBe('CANCELLED');
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, []).text);
+    expect(sessions.get('sess-1')!.activeTaskId).toBeUndefined();
+  });
+
+  it('QA-V2-CL-03 scope: a cancel word inside a longer request at ELIGIBLE is not a discard', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    await new ConversationRuntime(deps).handle(messageOf('결제 취소 기능 추가해줘'));
+    expect(calls.applyClear).toBe(0);
+    expect(calls.classify).toBe(1);
+  });
 
   it('ordinary non-apply chat with an ELIGIBLE anchor falls through normally (soft hook)', async () => {
     const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
@@ -9713,7 +9851,7 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     async (word) => {
       const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
       const first = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js 고쳐줘'));
-      expect(first.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'src/hardsecret.js').text);
+      expect(first.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js']).text);
       expect(calls.scopeAnchor).toBe(1);
 
       const result = await new ConversationRuntime(deps).handle(messageOf(word));
@@ -9750,6 +9888,102 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(calls.workspaceList).toBe(0);
     expect(calls.run).toBe(0);
     expect(result.reply.text).toBe(composer.composeTooManyTargets(CTX, 6).text);
+  });
+
+  // ── QA-V2-CL-01: a bare repository-root filename is a named target, never silently dropped ──────
+  it('QA-V2-CL-01: "src/greet.js 와 test.js 에 …" → BOTH files are targets and both are named before "승인"', async () => {
+    const text = 'src/greet.js 와 test.js 에 각 함수 위에 한 줄 JSDoc 주석을 추가해줘';
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/greet.js', 'test.js']) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['src/greet.js', 'test.js']);
+    expect(calls.lastRunRequest?.instruction).toBe(text);
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, ['src/greet.js', 'test.js']).text);
+    expect(result.reply.text).toContain('test.js');
+  });
+
+  it('QA-V2-CL-01: a named root file that does not exist is NAMED in the missing reply (never dropped)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf(['src/greet.js']) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('src/greet.js 와 test.js 에 주석 추가해줘'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, ['test.js']).text);
+  });
+
+  it('QA-V2-CL-01: a single missing bare root file is echoed by name, not the generic "which file?" copy', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('test.js 에 주석 추가해줘'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'test.js').text);
+    expect(calls.scopeAnchor).toBe(1);
+  });
+
+  it('QA-V2-CL-01: a bare root filename recovers a pending scope clarification', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['package.json']) });
+    await new ConversationRuntime(deps).handle(messageOf('scripts 에 lint 추가해줘'));
+    expect(calls.scopeAnchor).toBe(1);
+    const result = await new ConversationRuntime(deps).handle(messageOf('package.json'));
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['package.json']);
+    expect(calls.lastRunRequest?.instruction).toBe('scripts 에 lint 추가해줘');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, ['package.json']).text);
+  });
+
+  it('Codex P2 loop 2: a quoted `response.json` is a named target — targeted when it exists, named when it does not', async () => {
+    const text = `${A} 와 \`response.json\` 고쳐줘`;
+    const present = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A, 'response.json']) });
+    await new ConversationRuntime(present.deps).handle(messageOf(text));
+    expect(present.calls.lastRunRequest?.targetFiles).toEqual([A, 'response.json']);
+    const absent = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(absent.deps).handle(messageOf(text));
+    expect(absent.calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, ['response.json']).text);
+  });
+
+  it('QA-V2-CL-01: a technology name such as "Node.js" is prose, never a target', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/server.js']) });
+    await new ConversationRuntime(deps).handle(messageOf('Node.js 18 기준으로 src/server.js 고쳐줘'));
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['src/server.js']);
+  });
+
+  // ── QA-V2-CL-02: a secret-looking file name is refused by NAME, never reported as "not found" ──────
+  it('QA-V2-CL-02: "src/hardsecret.js 에 주석 한 줄 추가해줘" → the truthful secret-name refusal; no lookup, no plan, no provider', async () => {
+    // The real workspace never lists a secret-named file; the fake lists it to prove the refusal is name-only.
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/hardsecret.js']) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js 에 주석 한 줄 추가해줘'));
+    expect(calls.workspaceList).toBe(0);
+    expect(calls.run).toBe(0);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js']).text);
+    expect(result.reply.text).not.toContain('찾을 수 없');
+  });
+
+  it('QA-V2-CL-02: a secret-named path next to an ordinary one fails the whole set (ADR-0099 D6), naming only the secret one', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${A} 와 .env.local 말고 src/token.ts 도 고쳐줘`));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/token.ts']).text);
+  });
+
+  it('QA-V2-CL-02: create wording never turns a secret-named path into a new-file target', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('새 파일 src/password.ts 만들어줘'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/password.ts']).text);
+  });
+
+  it('QA-V2-CL-02: an out-of-root secret-looking path keeps the QA-016 copy (existence never revealed)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('/etc/secret.txt 고쳐줘'));
+    expect(calls.workspaceList).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, '/etc/secret.txt').text);
+  });
+
+  it('QA-V2-CL-02: a secret-named path in a scope-clarification follow-up gets the same refusal (no re-anchor)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
+    const result = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js']).text);
+    expect(calls.scopeAnchor).toBe(1);
   });
 
   // ── unsafe typed paths are never targets, never rewritten (ADR-0099 D1) ─────────────────────

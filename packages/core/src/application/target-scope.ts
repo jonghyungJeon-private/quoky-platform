@@ -31,7 +31,7 @@ export function extractTargetPathCandidates(text: string): string[] {
  * "7/3", "A/B", "UI/UX" and URLs (`https://…`) are not paths. Fenced code blocks are ignored.
  */
 export function extractMentionedPathTokens(text: string): string[] {
-  const prose = text.replace(/```[\s\S]*?(?:```|$)/g, ' ');
+  const prose = blankFencedCode(text);
   const out: string[] = [];
   for (const match of prose.matchAll(/[\w@.~/-]+/g)) {
     const token = match[0].replace(/\.+$/, '');
@@ -54,4 +54,16 @@ export function extractMentionedPathTokens(text: string): string[] {
  */
 export function normalizeRelativePath(path: string): string {
   return path.replace(/^\.\//, '').replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
+/**
+ * A fenced code block — a backtick (```) or tilde (~~~) fence of 3+ characters with an optional info string — up to
+ * the next fence of the same character that is at least as long, or the end of the text when unterminated. Pasted
+ * code is content, never a named target path.
+ */
+const FENCED_CODE_BLOCK = /(`{3,}|~{3,})[\s\S]*?(?:\1[`~]*|$)/g;
+
+/** The text with every fenced code block ({@link FENCED_CODE_BLOCK}) replaced by a space. Pure. */
+export function blankFencedCode(text: string): string {
+  return text.replace(FENCED_CODE_BLOCK, ' ');
 }

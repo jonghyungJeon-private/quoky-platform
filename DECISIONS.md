@@ -15682,3 +15682,16 @@ record. Live results are in `docs/uat/personal-v2-qa-record.md`.
   delivery UAT and the release-default flip of the flag.
 - **Not claimed by this record.** Live UAT of connectors, reminders channel delivery, merge-flag enablement and embedding
   recall is pending exact-scope Product Owner approval; deployment-substrate work (multi-agent/continuation) is untouched.
+
+### Personal v2 post-closeout implementation note (2026-10-06)
+
+- **Live sessions now recorded.** Connector lookups (Jira, Confluence, Slack, GitHub) on the owner's real tenants,
+  reminders channel delivery and its allowlist-removal DM fallback, PR status with checks, and embedding recall were run
+  live on 2026-10-06 (`docs/uat/personal-v2-qa-record.md`). This supersedes the "Not claimed" line above for those items.
+- **ADR-0036 bare filenames.** ADR-0036 excluded bare (slash-less) file names from code targets "this sprint". ADR-0099
+  D1 (every safe named path is an allowed target) is the newer rule, so repo-root names with a source/config/doc
+  extension (`test.js`, `package.json`) are now targets (QA-V2-CL-01, 0fa6a91). Each is still checked against the real
+  workspace listing; technology names, method calls, dot-files, URLs and fenced code never become targets.
+- **Secret-looking file names.** The ADR-0019/0022 secret-filename rule is unchanged; a request naming such a file is now
+  refused by name with a truthful reply instead of the not-found copy (QA-V2-CL-02, b15289c), without any lookup, so
+  existence of out-of-root paths is still never revealed (QA-016).
