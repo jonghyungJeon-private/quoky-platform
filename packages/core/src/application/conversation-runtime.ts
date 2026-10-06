@@ -109,6 +109,7 @@ import type {
 } from '../domain';
 import {
   TURN_HANDLER_STAGES,
+  executionLocalityOf,
   type AiProvider,
   type AiRequest,
   type Logger,
@@ -142,7 +143,12 @@ import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import type { ExternalWorkReadout } from './work-chat/external-work-readout';
 import { detectWorkChatCommand } from './work-chat/work-chat-command';
-import { isExternalWorkReadout, isWorkSummaryRequestTextWithheld } from './prompt-composer';
+import {
+  curatedExamplesForPrompt,
+  isExternalWorkReadout,
+  isWorkSummaryRequestTextWithheld,
+  type PromptCompositionOptions,
+} from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
@@ -724,7 +730,13 @@ export interface ConversationRuntimeDeps {
   readonly contextBuilder: { build(task: Task, excludeMemoryIds: Id[]): Promise<ContextBundle> };
   /** ADR-0100 D8: the readout is widened by type only to carry a work summary's external-work readout. */
   readonly promptComposer: {
-    compose(task: Task, bundle: ContextBundle, readout?: ProjectReadout | ExternalWorkReadout): PromptSpec;
+    /** ADR-0107 D6: `options` (type-only widening) carries the resolved provider's locality for the example layer. */
+    compose(
+      task: Task,
+      bundle: ContextBundle,
+      readout?: ProjectReadout | ExternalWorkReadout,
+      options?: PromptCompositionOptions,
+    ): PromptSpec;
   };
   readonly promptRenderer: {
     render(
@@ -7003,7 +7015,7 @@ export class ConversationRuntime {
         ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
         : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
       const promptSpec = this.deps.promptComposer.compose(task, bundle, readout);
-      const aiRequest = this.deps.promptRenderer.render(promptSpec, {
+      const renderOptions = {
         capability,
         ...(workspace ? { workspace } : {}),
         // ADR-0098 D2: structured reply facts from the actual current User message (the same text PromptComposer
@@ -7013,7 +7025,8 @@ export class ConversationRuntime {
         ...(capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT
           ? { metadata: generalChatReplyPolicyMetadata(task.description, externalActionRequestOf(task.intent)) }
           : {}),
-      });
+      };
+      const aiRequest = this.deps.promptRenderer.render(promptSpec, renderOptions);
 
       if (capability === Capability.GENERAL_CHAT && this.deps.runtimeProviderRouting) {
         const recencyFact = [...(bundle.conversationTranscript ?? [])]
@@ -7079,16 +7092,32 @@ export class ConversationRuntime {
 
       const provider = await this.deps.router.select(capability);
       providerId = provider.id;
+      // ADR-0107 D6: the LOCAL_ONLY curated-example layer is composed only now that the provider for this execution
+      // is resolved, and only when it declares LOCAL execution (data, never its id). Otherwise — and on the routed
+      // seam above — the request stays exactly as composed without it; there is no re-execution elsewhere.
+      const composition = { executionLocality: executionLocalityOf(provider) };
+      const curatedExampleCount = curatedExamplesForPrompt(task, bundle, readout, composition).length;
+      const executionRequest =
+        curatedExampleCount > 0
+          ? this.deps.promptRenderer.render(
+              this.deps.promptComposer.compose(task, bundle, readout, composition),
+              renderOptions,
+            )
+          : aiRequest;
       await this.deps.dispatchCommit.commit(run.id, run.id);
-      const executed = await provider.execute(aiRequest);
+      const executed = await provider.execute(executionRequest);
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
       const result = { ...executed, text: this.guardChatReply(capability, executed.text, task.description, task.id) };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
+      // ADR-0107 measurement hook: the run records how many curated examples it carried (a count, never text or ids),
+      // so the 👎 rate of turns with and without examples can be compared.
+      const runMetadata =
+        curatedExampleCount > 0 ? { ...(result.audit ?? {}), curatedExampleCount } : result.audit;
       await this.deps.tasks.completeRun(run, {
         artifactIds,
         ...(providerId ? { providerId } : {}),
-        ...(result.audit ? { metadata: result.audit } : {}),
+        ...(runMetadata ? { metadata: runMetadata } : {}),
       });
       await this.deps.memory.recordAssistant(result.text, message.context, task.sessionId ?? session.id);
       if (capability === Capability.PROJECT_ANALYSIS && task.projectId) {

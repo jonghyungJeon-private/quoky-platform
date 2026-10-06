@@ -9,6 +9,7 @@ import {
 } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
+  AiExecutionLocality,
   AiExecutionResult,
   AiRequest,
   EmbeddingRole,
@@ -31,6 +32,14 @@ export const OLLAMA_COLOR_ENV = {
 
 /** Bounded probe for the Ollama daemon + model inventory; a hung daemon must not stall routing. */
 export const OLLAMA_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * ADR-0107 D6 (mirrors ADR-0098 D8): an Ollama provider declares `LOCAL` execution only when its configured model
+ * name and tag contain no `cloud` (case-insensitive); an Ollama cloud-served model runs off this host and is `REMOTE`.
+ */
+export function ollamaModelExecutionLocality(model: string): AiExecutionLocality {
+  return /cloud/i.test(model) ? 'REMOTE' : 'LOCAL';
+}
 
 /**
  * True when an `ollama list` table lists `model` (an untagged name means `:latest`).
@@ -126,6 +135,8 @@ function boundedInput(text: string): string {
  */
 export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
   readonly id: string;
+  /** ADR-0107 D6: a cloud-served model is refused at construction, so this is always `LOCAL` in practice. */
+  readonly executionLocality: AiExecutionLocality;
   protected readonly bin: string;
   private readonly model: string;
   private readonly runner: CliRunner;
@@ -141,6 +152,7 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
     this.id = options.providerId ?? 'ollama-embed-cli';
     this.bin = options.bin ?? 'ollama';
     this.model = validatedEmbeddingModel(options.model ?? DEFAULT_OLLAMA_EMBEDDING_MODEL);
+    this.executionLocality = ollamaModelExecutionLocality(this.model);
     this.runner = options.runner ?? defaultCliRunner;
     this.defaultTimeoutMs = options.timeoutMs ?? DEFAULT_OLLAMA_EMBEDDING_TIMEOUT_MS;
     this.rolePrefixes = options.rolePrefixes ?? defaultRolePrefixes(this.model);

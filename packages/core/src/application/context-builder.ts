@@ -1,6 +1,7 @@
 import type {
   ContextBundle,
   ConversationTranscriptEntry,
+  CuratedExampleEntry,
   DurableRecallEntry,
   DurableMemoryAuthorityLevel,
   DurableMemoryScope,
@@ -11,12 +12,14 @@ import type {
   Task,
 } from '../domain';
 import {
+  Capability,
   createDurableMemory,
   createMemoryRetrievalRequest,
   createRetrievedMemory,
 } from '../domain';
 import { ESTIMATED_CHARACTERS_PER_TOKEN, estimateTokenCount } from '../util/token-estimator';
 import { containsCredentialMaterial } from './credential-guard';
+import type { CuratedExampleSource } from './feedback/curated-example-selector';
 import type { MemoryManager } from './memory-manager';
 import type { MemoryRetriever } from './memory-retriever';
 import { scoreSemanticRelevance } from './semantic-relevance';
@@ -109,6 +112,11 @@ export class ContextBuilder {
     private readonly memory: MemoryManager,
     config: ContextBuilderConfig = {},
     private readonly memoryRetriever?: MemoryRetriever,
+    /**
+     * ADR-0107 D5 (LRN-2): owner-curated example selection for GENERAL_CHAT, composed only when
+     * `QUOKY_LEARNING_EXAMPLES_ENABLED=true`. Absent → no `curatedExamples` key (the v2 bundle, byte-identical).
+     */
+    private readonly curatedExamples?: CuratedExampleSource,
   ) {
     this.ranking = ContextBuilder.validateConfig(config);
   }
@@ -143,16 +151,21 @@ export class ContextBuilder {
         !transcript.some((entry) => durable.content === entry.content),
     );
 
+    const curatedExamples = await this.selectCuratedExamples(task);
+
     const minimumCompressionCharacters = this.ranking
       ? ContextBuilder.resolveMinimumCompressionCharacters(this.ranking)
       : undefined;
     if (!this.ranking || !budget) {
-      return ContextBuilder.bundle(
-        task.id,
-        transcript,
-        project,
-        ContextBuilder.selectDurableRecall(deduplicatedDurableCandidates),
-      );
+      return {
+        ...ContextBuilder.bundle(
+          task.id,
+          transcript,
+          project,
+          ContextBuilder.selectDurableRecall(deduplicatedDurableCandidates),
+        ),
+        ...(curatedExamples.length > 0 ? { curatedExamples } : {}),
+      };
     }
 
     let remainingBudget = budget.limit;
@@ -200,7 +213,22 @@ export class ContextBuilder {
       conversationTranscript,
       backgroundResources,
       ...(durableRecall.length > 0 ? { durableRecall } : {}),
+      ...(curatedExamples.length > 0 ? { curatedExamples } : {}),
     };
+  }
+
+  /**
+   * ADR-0107 D5: at most two owner-curated examples for a GENERAL_CHAT turn, under their own fixed budget (separate
+   * from the transcript/recall budget). Optional and degraded: any failure yields none.
+   */
+  private async selectCuratedExamples(task: Task): Promise<CuratedExampleEntry[]> {
+    if (!this.curatedExamples || task.intent.capability !== Capability.GENERAL_CHAT || !task.actorId) return [];
+    try {
+      const selected = await this.curatedExamples.select(task);
+      return Array.isArray(selected) ? selected : [];
+    } catch {
+      return [];
+    }
   }
 
   private async retrieveDurableCandidates(

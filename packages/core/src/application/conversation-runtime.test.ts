@@ -26,6 +26,7 @@ import type {
   CommandExecution,
   ContextBundle,
   ConversationContext,
+  CuratedExampleEntry,
   ExecutionPlanRef,
   GenerateCodeInput,
   GitCommitResult,
@@ -63,7 +64,7 @@ import { newId } from '../util/id';
 import { now } from '../util/clock';
 import { InvalidTaskTransitionError } from '../errors';
 import { TaskManager } from './task-manager';
-import { PromptComposer } from './prompt-composer';
+import { CURATED_EXAMPLES_SECTION_TITLE, PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { renderInternalActionClaimNotice, renderInternalActionNotDone } from './chat-policy/internal-action-vocabulary';
@@ -10814,5 +10815,134 @@ describe('ADR-0104 DET-1 — state-aware code-chain status replies (QA-V2-W8-02)
     const { result, calls } = await statusTurn('푸시했어', { status: 'GIT_PUSHED' });
     expect(result.reply.text.startsWith('이미 push했어요')).toBe(true);
     expect(calls.classify).toBe(0);
+  });
+});
+
+// ADR-0107 D5/D6 (LRN-2): LOCAL_ONLY curated examples reach only a provider resolved as LOCAL.
+describe('LRN-2 curated examples follow the resolved provider\'s declared locality (ADR-0107 D6)', () => {
+  const EXAMPLE_REQUEST = '회의록 요약 형식 알려줘';
+  const EXAMPLE_ANSWER = '핵심 결정, 담당자, 마감일 세 줄로 요약해요';
+  const example: CuratedExampleEntry = {
+    requestText: EXAMPLE_REQUEST,
+    idealAnswer: EXAMPLE_ANSWER,
+    egress: 'LOCAL_ONLY',
+    provenance: 'OWNER_CURATED_EXAMPLE',
+    epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
+    learningItemId: 'learning-item-1',
+  };
+
+  function exampleTurn(opts: {
+    locality?: 'LOCAL' | 'REMOTE' | 'absent';
+    capability?: Capability;
+    routed?: boolean;
+  }) {
+    const { storage, runSaves } = makeTaskStorage();
+    const capability = opts.capability ?? Capability.GENERAL_CHAT;
+    const { deps: base } = makeDeps({ intent: intentOf(capability, IntentType.CHAT, true) });
+    const prompts: string[] = [];
+    const sourceCalls: Task[] = [];
+    const contextBuilder = new ContextBuilder(
+      {
+        async recentShortTerm() { return []; },
+        async projectMemory() { return undefined; },
+      } as unknown as MemoryManager,
+      {},
+      undefined,
+      { async select(task) { sourceCalls.push(task); return [example]; } },
+    );
+    const routedRequests: AiRequest[] = [];
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      tasks: new TaskManager(storage),
+      contextBuilder,
+      promptComposer: new PromptComposer(),
+      promptRenderer: new PromptRenderer(),
+      router: {
+        async select() {
+          return {
+            id: 'locality-test-provider',
+            capabilities: [{ capability, priority: 1 }],
+            ...(opts.locality === undefined || opts.locality === 'absent'
+              ? {}
+              : { executionLocality: opts.locality }),
+            async isAvailable() { return true; },
+            async execute(request: AiRequest) {
+              prompts.push(request.prompt);
+              return { text: '요약 형식은 이렇게 해요', artifacts: [], audit: { providerAuditFact: 'kept' } };
+            },
+          };
+        },
+      },
+      ...(opts.routed
+        ? {
+            runtimeProviderRouting: {
+              async execute(input: { request: AiRequest }) {
+                routedRequests.push(input.request);
+                return routedResultOf(ProviderGatewayTerminalStatus.ACCEPTED);
+              },
+            } as unknown as ConversationRuntimeDeps['runtimeProviderRouting'],
+          }
+        : {}),
+    };
+    return { deps, prompts, runSaves, sourceCalls, routedRequests };
+  }
+
+  const succeededRunMetadata = (runSaves: TaskRun[]) =>
+    runSaves.filter((run) => run.status === TaskRunStatus.SUCCEEDED).map((run) => run.metadata);
+
+  it('a LOCAL provider receives the example layer, and the run records the example count only', async () => {
+    const turn = exampleTurn({ locality: 'LOCAL' });
+    const result = await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(result.status).toBe('RESPONDED');
+    expect(turn.prompts).toHaveLength(1);
+    expect(turn.prompts[0]).toContain(`## ${CURATED_EXAMPLES_SECTION_TITLE}`);
+    expect(turn.prompts[0]).toContain(EXAMPLE_ANSWER);
+    expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept', curatedExampleCount: 1 }]);
+    expect(JSON.stringify(turn.runSaves)).not.toContain(EXAMPLE_ANSWER);
+  });
+
+  it.each(['REMOTE', 'absent'] as const)(
+    'a %s provider never receives an example, and its request is byte-identical to one built without examples',
+    async (locality) => {
+      const turn = exampleTurn({ locality });
+      const result = await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+      expect(result.status).toBe('RESPONDED');
+      expect(turn.sourceCalls).toHaveLength(1);
+      expect(turn.prompts).toHaveLength(1);
+      expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
+      expect(turn.prompts[0]).not.toContain('Example request:');
+      expect(turn.prompts[0]).not.toContain(CURATED_EXAMPLES_SECTION_TITLE);
+      expect(turn.prompts[0]).not.toContain('OWNER_CURATED_EXAMPLE');
+      expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept' }]);
+
+      const bare = exampleTurn({ locality });
+      bare.deps.contextBuilder = new ContextBuilder(
+        {
+          async recentShortTerm() { return []; },
+          async projectMemory() { return undefined; },
+        } as unknown as MemoryManager,
+      );
+      await new ConversationRuntime(bare.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+      const withoutTaskIds = (prompt: string | undefined) => (prompt ?? '').replace(/[0-9a-f-]{36}/g, '<id>');
+      expect(withoutTaskIds(turn.prompts[0])).toBe(withoutTaskIds(bare.prompts[0]));
+    },
+  );
+
+  it('a POLICY_SENSITIVE_CHAT turn receives no example even on a LOCAL provider (none are selected for it)', async () => {
+    const turn = exampleTurn({ locality: 'LOCAL', capability: Capability.POLICY_SENSITIVE_CHAT });
+    await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(turn.sourceCalls).toHaveLength(0);
+    expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
+    expect(turn.prompts[0]).not.toContain('OWNER_CURATED_EXAMPLE');
+  });
+
+  it('the Stage 2B routed seam gets no examples in v3', async () => {
+    const turn = exampleTurn({ locality: 'LOCAL', routed: true });
+    const result = await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(result.status).toBe('RESPONDED');
+    expect(turn.routedRequests).toHaveLength(1);
+    expect(turn.routedRequests[0]?.prompt).not.toContain(EXAMPLE_ANSWER);
+    expect(turn.routedRequests[0]?.prompt).not.toContain('OWNER_CURATED_EXAMPLE');
+    expect(turn.prompts).toHaveLength(0);
   });
 });

@@ -7,14 +7,22 @@ import {
   GENERAL_CHAT_POLICY_RULES,
   renderGeneralChatPolicyRules,
 } from './chat-policy/chat-response-policy';
-import { PromptComposer, WORK_SUMMARY_REQUEST_WITHHELD_NOTICE } from './prompt-composer';
+import {
+  CURATED_EXAMPLES_GUIDANCE,
+  CURATED_EXAMPLES_SECTION_TITLE,
+  PromptComposer,
+  WORK_SUMMARY_REQUEST_WITHHELD_NOTICE,
+  curatedExamplesForPrompt,
+} from './prompt-composer';
+import { CURATED_EXAMPLE_BUDGET_CHARS, curatedExampleChars } from './feedback/curated-example-selector';
+import { learningTextHasCredential } from './feedback/learning-service';
 import {
   EXTERNAL_WORK_PROMPT_MAX_CHARS,
   buildExternalWorkReadout,
   renderExternalWorkReadoutForPrompt,
 } from './work-chat/external-work-readout';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
-import type { ContextBundle, Task } from '../domain';
+import type { ContextBundle, CuratedExampleEntry, Task } from '../domain';
 
 const mkTask = (
   capability: Capability,
@@ -1471,5 +1479,128 @@ describe('PromptComposer — external-work summary readout (ADR-0100 D8, WORK-T4
     const plain = composer.compose(mkTask(Capability.SUMMARIZATION), emptyBundle());
     expect(plain.developer).toBe('Summarize the provided content faithfully and concisely.');
     expect(plain.context).not.toContain('EXTERNAL WORK DATA');
+  });
+});
+
+// ADR-0107 D5/D6 (LRN-2): the owner-curated example layer.
+describe('PromptComposer — curated examples (ADR-0107 D5/D6)', () => {
+  const composer = new PromptComposer();
+  const GITHUB_TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const FILE_SECRET = 'const dbPassword = "Sup3rS3cretValue!";';
+  const example = (n: number, over: Partial<CuratedExampleEntry> = {}): CuratedExampleEntry => ({
+    requestText: `회의록 요약해줘 ${n}`,
+    idealAnswer: `세 줄로 요약했어요 ${n}`,
+    egress: 'LOCAL_ONLY',
+    provenance: 'OWNER_CURATED_EXAMPLE',
+    epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
+    learningItemId: `item-${n}`,
+    ...over,
+  });
+  const withExamples = (...examples: CuratedExampleEntry[]): ContextBundle => ({
+    ...emptyBundle(),
+    curatedExamples: examples,
+  });
+  const exampleEnvelope = (e: CuratedExampleEntry) =>
+    envelope(
+      'OWNER_CURATED_EXAMPLE',
+      'NON_AUTHORITATIVE_EXAMPLE',
+      `Example request: ${e.requestText}\nIdeal answer: ${e.idealAnswer}`,
+    );
+  const chat = () => mkTask(Capability.GENERAL_CHAT, { requestText: '오늘 회의록 요약해줘' });
+
+  it('is byte-identical to the v2 prompt without a LOCAL locality, whatever the bundle carries', () => {
+    const v2 = composer.compose(chat(), emptyBundle());
+    const bundle = withExamples(example(1), example(2));
+    expect(composer.compose(chat(), bundle)).toEqual(v2);
+    expect(composer.compose(chat(), bundle, undefined, {})).toEqual(v2);
+    expect(composer.compose(chat(), bundle, undefined, { executionLocality: 'REMOTE' })).toEqual(v2);
+    expect(
+      composer.compose(chat(), bundle, undefined, { executionLocality: 'cloud' as unknown as 'LOCAL' }),
+    ).toEqual(v2);
+    // A LOCAL provider with no examples in the bundle: also byte-identical.
+    expect(composer.compose(chat(), emptyBundle(), undefined, { executionLocality: 'LOCAL' })).toEqual(v2);
+    expect(JSON.stringify(composer.compose(chat(), bundle, undefined, { executionLocality: 'REMOTE' }))).not.toContain(
+      '회의록 요약해줘 1',
+    );
+  });
+
+  it('layers at most two examples as a non-authoritative section between recall and transcript for LOCAL', () => {
+    const bundle = withExamples(example(1), example(2), example(3));
+    const spec = composer.compose(chat(), bundle, undefined, { executionLocality: 'LOCAL' });
+    const body = sectionBody(spec.context, CURATED_EXAMPLES_SECTION_TITLE);
+    expect(body).toBe([CURATED_EXAMPLES_GUIDANCE, exampleEnvelope(example(1)), exampleEnvelope(example(2))].join('\n'));
+    expect(spec.context).not.toContain('회의록 요약해줘 3');
+    expect(spec.context.indexOf('## 2. Background resources')).toBeLessThan(
+      spec.context.indexOf(`## ${CURATED_EXAMPLES_SECTION_TITLE}`),
+    );
+    expect(spec.context.indexOf(`## ${CURATED_EXAMPLES_SECTION_TITLE}`)).toBeLessThan(
+      spec.context.indexOf('## 3. Conversation transcript'),
+    );
+    // Never framed as facts, never in the authority boundary, the task or the system/developer layers.
+    expect(sectionBody(spec.context, '1. Current-turn facts supplied by Core')).not.toContain('회의록 요약해줘 1');
+    expect(sectionBody(spec.context, '4. Current-turn authority decision boundary')).not.toContain('회의록');
+    expect(spec.task).toBe(currentTaskEnvelope('오늘 회의록 요약해줘'));
+    const v2 = composer.compose(chat(), emptyBundle());
+    expect(spec.system).toBe(v2.system);
+    expect(spec.developer).toBe(v2.developer);
+    expect(spec.context.replace(`## ${CURATED_EXAMPLES_SECTION_TITLE}\n${body}\n\n`, '')).toBe(v2.context);
+    expect(curatedExamplesForPrompt(chat(), bundle, undefined, { executionLocality: 'LOCAL' })).toHaveLength(2);
+  });
+
+  it('never layers examples for POLICY_SENSITIVE_CHAT, other capabilities or a readout, even on LOCAL', () => {
+    const bundle = withExamples(example(1));
+    const local = { executionLocality: 'LOCAL' } as const;
+    for (const capability of [
+      Capability.POLICY_SENSITIVE_CHAT,
+      Capability.SUMMARIZATION,
+      Capability.PROJECT_ANALYSIS,
+      Capability.CODE_IMPLEMENTATION,
+    ]) {
+      const task = mkTask(capability);
+      expect(composer.compose(task, bundle, undefined, local)).toEqual(composer.compose(task, emptyBundle()));
+    }
+    const readout = { tree: 'apps/', files: [] };
+    expect(composer.compose(chat(), bundle, readout, local)).toEqual(composer.compose(chat(), emptyBundle(), readout));
+    const external = buildExternalWorkReadout({
+      source: 'jira',
+      query: 'due-this-week',
+      items: [{ id: 'OPS-1', title: 'Rotate certificates', url: 'https://example.atlassian.net/browse/OPS-1' }],
+    });
+    const summary = mkTask(Capability.SUMMARIZATION, { requestText: '이슈 요약해줘' });
+    expect(JSON.stringify(composer.compose(summary, bundle, external, local))).not.toContain('회의록 요약해줘 1');
+  });
+
+  it('re-checks the strict credential guard and the egress at use: a failing example is dropped, never redacted', () => {
+    expect(learningTextHasCredential(FILE_SECRET)).toBe(true);
+    const bundle = withExamples(
+      example(1, { requestText: `토큰 ${GITHUB_TOKEN} 확인해줘` }),
+      example(2, { idealAnswer: FILE_SECRET }),
+      example(3, { egress: 'ANYWHERE' as unknown as 'LOCAL_ONLY' }),
+      example(4, { provenance: 'USER' as unknown as 'OWNER_CURATED_EXAMPLE' }),
+      example(5, { idealAnswer: '   ' }),
+      example(6),
+    );
+    const spec = composer.compose(chat(), bundle, undefined, { executionLocality: 'LOCAL' });
+    const text = JSON.stringify(spec);
+    expect(text).not.toContain('ghp_');
+    expect(text).not.toContain('Sup3rS3cret');
+    expect(text).not.toContain('[REDACTED');
+    for (const n of [1, 2, 3, 4, 5]) expect(text).not.toContain(`세 줄로 요약했어요 ${n}`);
+    expect(sectionBody(spec.context, CURATED_EXAMPLES_SECTION_TITLE)).toBe(
+      [CURATED_EXAMPLES_GUIDANCE, exampleEnvelope(example(6))].join('\n'),
+    );
+  });
+
+  it('keeps every layered example inside the fixed 2,400-character budget (skipping, never truncating)', () => {
+    const big = example(1, { requestText: '가'.repeat(1000), idealAnswer: '나'.repeat(1000) });
+    const second = example(2, { requestText: '다'.repeat(300), idealAnswer: '라'.repeat(200) });
+    const fits = example(3, { requestText: '마'.repeat(100), idealAnswer: '바'.repeat(100) });
+    const layered = curatedExamplesForPrompt(chat(), withExamples(big, second, fits), undefined, {
+      executionLocality: 'LOCAL',
+    });
+    expect(layered.map((e) => e.learningItemId)).toEqual(['item-1', 'item-3']);
+    expect(layered.reduce((total, e) => total + curatedExampleChars(e), 0)).toBeLessThanOrEqual(
+      CURATED_EXAMPLE_BUDGET_CHARS,
+    );
   });
 });

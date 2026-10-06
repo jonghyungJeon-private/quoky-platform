@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   Capability,
   IntentType,
+  LEARNING_EXAMPLE_VECTOR_COLLECTION,
+  LearningItemKind,
   MemoryManager,
   MemoryType,
   NoProviderAvailableError,
@@ -11,6 +13,7 @@ import {
   formatEmbeddingEnvelope,
   type AiProvider,
   type AiRequest,
+  type LearningItem,
   type MemoryRecord,
   type MemoryRepository,
   type StorageProvider,
@@ -240,5 +243,96 @@ describe('production ContextBuilder composition with opt-in semantic recall (ADR
       entries?.map((entry) => [entry.source.memoryId, entry.retrievalReason]);
     expect(view(degraded.durableRecall)).toEqual(view(lexical.durableRecall));
     expect(degraded.durableRecall?.every((entry) => !entry.retrievalReason.includes('semantic='))).toBe(true);
+  });
+});
+
+// ADR-0107 D5/D6 (LRN-2): the curated-example layer is composed only when the flag passes its options.
+describe('production ContextBuilder composition with curated examples (ADR-0107 D5/D6)', () => {
+  const exampleItem: LearningItem = {
+    id: 'learning-item-1',
+    actorId: 'actor-1',
+    kind: LearningItemKind.EXAMPLE,
+    capability: Capability.GENERAL_CHAT,
+    language: 'ko',
+    sourceTurnId: 'turn-1',
+    egress: 'LOCAL_ONLY',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    expiresAt: '2099-10-01T00:00:00.000Z',
+    data: { requestText: '고양이 이름 짓기 도와줘', idealAnswer: '후보 세 개와 이유를 짧게', sourceRating: 'POSITIVE' },
+  };
+  const exampleTask: Task = { ...task, id: 'task-example', description: '고양이 이름 추천해줘' };
+
+  function builderWith(opts: {
+    examples?: boolean;
+    semantic?: { embedder: AiProvider; vectors: VectorProvider };
+  }) {
+    const list = vi.fn(async () => [exampleItem]);
+    const storageState = {} as { memories: MemoryRepository };
+    const storage = storageState as StorageProvider;
+    const memory = new MemoryManager(storage, {} as VectorProvider);
+    const builder = createProductionContextBuilder(
+      memory,
+      storage,
+      {},
+      opts.semantic
+        ? {
+            selector: { select: async () => opts.semantic!.embedder },
+            vectors: opts.semantic.vectors,
+            timeoutMs: 1_000,
+            maxNewPerTurn: 4,
+          }
+        : undefined,
+      opts.examples ? { learning: { list } } : undefined,
+    );
+    storageState.memories = {
+      get: async () => null,
+      save: async (record) => record,
+      delete: async () => undefined,
+      list: async () => [],
+      findByScope: async () => [],
+      findDurableCandidates: async () => [],
+    };
+    return { builder, list };
+  }
+
+  it('flag off (no options): the learning store is never read and the bundle carries no examples', async () => {
+    const { builder, list } = builderWith({});
+    const bundle = await builder.build(exampleTask);
+    expect(list).not.toHaveBeenCalled();
+    expect(bundle).not.toHaveProperty('curatedExamples');
+  });
+
+  it('flag on: the owner example is selected lexically when embeddings are off', async () => {
+    const { builder, list } = builderWith({ examples: true });
+    const bundle = await builder.build(exampleTask);
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'actor-1', kind: LearningItemKind.EXAMPLE }));
+    expect(bundle.curatedExamples?.map((entry) => entry.learningItemId)).toEqual([exampleItem.id]);
+  });
+
+  it('example text reaches only an EMBEDDING provider that declares LOCAL, cached in its own collection', async () => {
+    const collections: string[] = [];
+    const vectors: VectorProvider = {
+      init: async () => undefined,
+      upsert: async (collection) => {
+        collections.push(collection);
+      },
+      query: async (collection) => {
+        collections.push(collection);
+        return [];
+      },
+      delete: async () => undefined,
+    };
+    const remote = new FakeEmbedder();
+    await builderWith({ examples: true, semantic: { embedder: remote, vectors } }).builder.build(exampleTask);
+    expect(remote.prompts.join('\n')).not.toContain(exampleItem.data.requestText);
+
+    const local = Object.assign(new FakeEmbedder(), { executionLocality: 'LOCAL' as const });
+    const bundle = await builderWith({ examples: true, semantic: { embedder: local, vectors } }).builder.build(
+      exampleTask,
+    );
+    expect(local.prompts.join('\n')).toContain(exampleItem.data.requestText);
+    expect(local.prompts.join('\n')).not.toContain(exampleItem.data.idealAnswer);
+    expect(collections).toContain(LEARNING_EXAMPLE_VECTOR_COLLECTION);
+    expect(bundle.curatedExamples?.map((entry) => entry.learningItemId)).toEqual([exampleItem.id]);
   });
 });

@@ -211,6 +211,14 @@ fixed; the implementations are not.
     ratification and subject validity grant no execution or mutation authority. Live ProviderRegistry mutation, a
     profile-authorization aggregate, approval persistence/revocation, and authenticated benchmark provenance are
     deferred (ADR-0067).
+14. **Execution locality is provider-declared data** (ADR-0107 D6). `AiProvider` has an optional readonly
+    `executionLocality: 'LOCAL' | 'REMOTE'`; absent means `REMOTE` (fail closed). It is declared data like
+    `capabilities`, never a provider-id branch. Ollama providers declare `LOCAL` only when the configured model name
+    and tag contain no `cloud` (mirrors ADR-0098 D8); Claude and Codex declare `REMOTE`. Every future provider must
+    declare it or is treated as `REMOTE`. Data whose egress is `LOCAL_ONLY` (the owner-curated learning examples of
+    ADR-0107 D5) is composed into a request only after the provider for that execution is resolved and declares
+    `LOCAL`; otherwise the request is composed without it, and there is no re-execution on another provider
+    (ADR-0092). The Stage 2B routed seam gets no examples in v3. ADR-0110 and ADR-0111 reuse this attribute.
 
 ---
 
