@@ -87,6 +87,25 @@ export interface QuokyConfig {
     confluence?: { host: string; token: string; email?: string };
   };
   /**
+   * Read-only calendar (ADR-0110 D2, CAL-1). `undefined` unless the Google OAuth client id, client secret and a refresh
+   * token source are all set (partial configuration is "not configured", never a startup error). The refresh token
+   * comes from `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN` (inline) or `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` (a mode-600 file the
+   * consent helper wrote, read by the composition root); setting both is a conflict the composition root refuses.
+   * `calendarIds` (`QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS`, comma-separated, default `primary`) is validated by the
+   * adapter. `timeZone` is `QUOKY_TIMEZONE` (the reminder zone). Secrets here are passed only to the adapter and are
+   * never logged.
+   */
+  calendar?: {
+    google: {
+      clientId: string;
+      clientSecret: string;
+      refreshToken?: string;
+      tokenFile?: string;
+      calendarIds: string[];
+    };
+    timeZone: string;
+  };
+  /**
    * Repository identity for hosting operations (Sprint 3d-A, ADR-0051). RAW/unvalidated here; validated by
    * `RepositoryIdentityResolver` at the composition root. `undefined` when unset (the safe missing path).
    * `provider` is FIXED to `'github'`. Owner/repo prefer the NEW `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO`
@@ -228,6 +247,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     throw new QuokyConfigError(QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED);
   }
 
+  const reminders = parseReminderConfig(env);
+  const calendar = resolveCalendar(env, reminders.timeZone);
+
   return {
     discord: {
       token: env.DISCORD_BOT_TOKEN ?? '',
@@ -257,7 +279,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
         QuokyConfigErrorCode.WORK_SUMMARY_ENABLED_INVALID,
       ),
     },
-    reminders: parseReminderConfig(env),
+    reminders,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),
       model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),
@@ -276,6 +298,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       slack: resolveSlackConnector(env),
       confluence: resolveConfluenceConnector(env),
     },
+    ...(calendar !== undefined ? { calendar } : {}),
     // Provider fixed to 'github'. Undefined when both owner and repo are absent; a single one present yields a raw
     // config the resolver classifies (invalid-owner / invalid-repo). No provider/token env var is read here.
     repositoryHosting: owner || repo ? { provider: 'github', owner: owner ?? '', repo: repo ?? '' } : undefined,
@@ -563,6 +586,39 @@ function resolveJiraConnector(
 function resolveSlackConnector(env: NodeJS.ProcessEnv): { token: string } | undefined {
   const token = nonBlank(env.QUOKY_SLACK_TOKEN ?? env.CHUNSIK_SLACK_TOKEN);
   return token ? { token } : undefined;
+}
+
+/**
+ * The Google OAuth client for the calendar adapter and its consent helper (ADR-0110 D2): a "Desktop app" client from
+ * the owner's Google Cloud project. `undefined` unless both values are non-blank. Never logged.
+ */
+export function resolveGoogleCalendarOAuthClient(
+  env: NodeJS.ProcessEnv,
+): { clientId: string; clientSecret: string } | undefined {
+  const clientId = nonBlank(env.QUOKY_CALENDAR_GOOGLE_CLIENT_ID);
+  const clientSecret = nonBlank(env.QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET);
+  return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
+
+/** See `QuokyConfig.calendar`. No `CHUNSIK_*` alias: these are new keys. */
+function resolveCalendar(env: NodeJS.ProcessEnv, timeZone: string): QuokyConfig['calendar'] {
+  const client = resolveGoogleCalendarOAuthClient(env);
+  const refreshToken = nonBlank(env.QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN);
+  const tokenFile = nonBlank(env.QUOKY_CALENDAR_GOOGLE_TOKEN_FILE);
+  if (client === undefined || (refreshToken === undefined && tokenFile === undefined)) return undefined;
+  const calendarIds = (nonBlank(env.QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS) ?? 'primary')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  return {
+    google: {
+      ...client,
+      ...(refreshToken !== undefined ? { refreshToken } : {}),
+      ...(tokenFile !== undefined ? { tokenFile: resolveDataPath(tokenFile) } : {}),
+      calendarIds,
+    },
+    timeZone,
+  };
 }
 
 /**

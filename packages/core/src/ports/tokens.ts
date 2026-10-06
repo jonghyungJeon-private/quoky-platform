@@ -38,3 +38,6 @@ export const NOTIFICATION_SINK = Symbol('NotificationSink');
 // Personal v3 (ADR-0107 D2, LRN-1): the owner-curated learning store. Also the seam the ADR-0106 memory forget path
 // (MEM-1) calls to delete learning items derived from a forgotten memory record (ADR-0107 D7).
 export const LEARNING_REPOSITORY = Symbol('LearningRepository');
+// Personal v3 (ADR-0110 D1, CAL-1): the read-only calendar reader. Bound only when a calendar is fully configured
+// (CAL-2 composition); absent means no calendar, and QUAL-7 routing stays unchanged (ADR-0110 D5).
+export const CALENDAR_READER = Symbol('CalendarReader');
