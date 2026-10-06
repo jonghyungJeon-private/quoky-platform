@@ -140,6 +140,10 @@ interface HarnessOptions {
   calendarReadFails?: boolean;
   /** A pre-existing session pointer (e.g. an open code-change anchor) the write must restore. */
   priorActiveTaskId?: string;
+  /** The comment writer's receipt label (an invalid one makes the executor refuse the request). */
+  commentSource?: string;
+  /** Which receipt step throws (storage failure). */
+  receiptFails?: 'prepare' | 'complete';
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -242,9 +246,14 @@ function harness(opts: HarnessOptions = {}) {
 
   const approvalManager = new ApprovalManager(storage as unknown as StorageProvider, {} as ApprovalPolicy);
   const receipts = new MemoryReceipts();
+  if (opts.receiptFails === 'prepare') receipts.prepare = async () => { throw new Error('disk full'); };
+  if (opts.receiptFails === 'complete') receipts.complete = async () => { throw new Error('disk full'); };
+  let actor: Actor = OWNER;
+  /** `session.activeTaskId` as each turn's apply-preview lookup saw it. */
+  const applyLookups: Array<string | undefined> = [];
   const enabled = new Set(opts.writers ?? ['comment', 'transition', 'post', 'calendar']);
   const issueComments: IssueCommentWriter = {
-    source: 'jira',
+    source: opts.commentSource ?? 'jira',
     allowsIssue: (key) => /^PROJ-\d+$/.test(key),
     async addComment(request) {
       writes.addComment.push(request);
@@ -334,7 +343,7 @@ function harness(opts: HarnessOptions = {}) {
 
   const deps: ConversationRuntimeDeps = {
     dispatchCommit: { async commit() { return {} as TaskRun; } } as unknown as ConversationRuntimeDeps['dispatchCommit'],
-    actors: { async resolveFromContext() { return OWNER; } },
+    actors: { async resolveFromContext() { return actor; } },
     sessions: new SessionManager(storage as unknown as StorageProvider),
     memory: {
       async recordShortTerm() { return { id: 'mem-user' }; },
@@ -379,7 +388,14 @@ function harness(opts: HarnessOptions = {}) {
     },
     approvalFlow: new StatelessApprovalFlow(storage),
     scopeClarificationFlow: { findPending: async () => null, anchor: bad('scope.anchor'), clear: async () => undefined },
-    applyPreviewFlow: { findAnchor: async () => null, anchor: bad('applyPreview.anchor'), clear: async () => undefined },
+    applyPreviewFlow: {
+      findAnchor: async (s: Session) => {
+        applyLookups.push(s.activeTaskId);
+        return null;
+      },
+      anchor: bad('applyPreview.anchor'),
+      clear: async () => undefined,
+    },
     codeGeneration: { generate: bad('codeGeneration.generate'), getProposal: bad('codeGeneration.getProposal') },
     patch: { generate: bad('patch.generate'), get: bad('patch.get') },
     codeProposals: { get: bad('codeProposals.get') },
@@ -403,7 +419,13 @@ function harness(opts: HarnessOptions = {}) {
     const pointer = sessions.get('sess-1')?.activeTaskId;
     return pointer ? tasks.get(pointer) : undefined;
   };
-  return { send, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask };
+  const setActor = (next: Actor) => {
+    actor = next;
+  };
+  return {
+    send, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor,
+    applyLookups,
+  };
 }
 
 beforeEach(() => {
@@ -771,5 +793,167 @@ describe('connector writes — supersession and outside decisions', () => {
     await h.send('새 대화');
     expect([...h.approvals.values()][0]).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'reset' });
     expect(h.totalWrites()).toBe(0);
+  });
+});
+
+const OTHER: Actor = { id: 'other-actor', displayName: 'Other', identities: [], createdAt: '2026-10-01T00:00:00.000Z' };
+const anchorOf = (task: Task | undefined) => task?.metadata?.connectorWriteAnchor as { status: string; closedReason?: string } | undefined;
+
+describe('connector writes — lazy expiry of grants and choices (review fixes)', () => {
+  it('an approved grant left unexecuted past its lifetime is released on the next unrelated turn and the chain restored', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('PROJ-12에 댓글: later');
+    await h.send('승인');
+    const anchorTaskId = h.sessions.get('sess-1')?.activeTaskId as string;
+    // Within the lifetime an unrelated message leaves the grant waiting (and the chain hidden).
+    advanceMinutes(10);
+    await h.send('안녕');
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe(anchorTaskId);
+    advanceMinutes(21);
+    h.applyLookups.length = 0;
+    await h.send('안녕');
+    expect(anchorOf(h.tasks.get(anchorTaskId))).toMatchObject({ status: 'CLOSED', closedReason: 'expired' });
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+    // The restored chain is looked up on the very turn that released the grant.
+    expect(h.applyLookups).toEqual(['task-prior']);
+    expect((await h.send('댓글 실행')).reply.text).toContain('지금 실행할 승인된 외부 쓰기 요청이 없어요');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('the exact phrase after the lifetime says the grant expired, restores the pointer and sends nothing', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('PROJ-12에 댓글: late');
+    await h.send('승인');
+    advanceMinutes(30);
+    const late = await h.send('댓글 실행');
+    expect(late.reply.text).toContain('승인이 만료됐어요');
+    expect(late.reply.text).toContain('아무것도 보내지 않았어요');
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+    expect(h.totalWrites()).toBe(0);
+    expect(h.receipts.rows.size).toBe(0);
+  });
+
+  it('a numbered choice answered after the lifetime is refused as expired; nothing is proposed or written', async () => {
+    const h = harness({ events: [WEEKLY, ONE_ON_ONE], priorActiveTaskId: 'task-prior' });
+    await h.send('내일 3시 회의 취소해줘');
+    advanceMinutes(31);
+    const late = await h.send('1번');
+    expect(late.reply.text).toContain('선택이 만료됐어요');
+    expect(late.reply.text).toContain('캘린더는 바꾸지 않았어요');
+    expect(late.reply.text).not.toContain('삭제할 일정');
+    expect(h.approvals.size).toBe(0);
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+    expect(h.recorded.at(-1)).toBe(CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE);
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('the flow itself refuses a lapsed choice (defence in depth behind the turn-start release)', async () => {
+    const h = harness({ events: [WEEKLY, ONE_ON_ONE] });
+    await h.send('내일 3시 회의 취소해줘');
+    const session = h.sessions.get('sess-1') as Session;
+    const view = await h.flow!.find(session);
+    advanceMinutes(31);
+    const step = await h.flow!.choose({ session, actor: OWNER, view: view!, index: 1, now: new Date().toISOString() });
+    expect(step).toEqual({ kind: 'refused', reason: 'choice-expired', family: 'calendar' });
+    expect(h.approvals.size).toBe(0);
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBeUndefined();
+  });
+
+  it('an abandoned choice hands the restored chain to the same turn', async () => {
+    const h = harness({ events: [WEEKLY, ONE_ON_ONE], priorActiveTaskId: 'task-prior' });
+    await h.send('내일 3시 회의 취소해줘');
+    h.applyLookups.length = 0;
+    await h.send('안녕');
+    expect(h.applyLookups).toEqual(['task-prior']);
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+  });
+});
+
+describe('connector writes — actor binding, other phrases and pre-send failures (review fixes)', () => {
+  it('a different actor can neither execute nor discard the owner’s grant', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: owner only');
+    await h.send('승인');
+    const anchorTaskId = h.sessions.get('sess-1')?.activeTaskId as string;
+    h.setActor(OTHER);
+    const refused = await h.send('댓글 실행');
+    expect(refused.reply.text).toContain('승인한 요청과 지금 요청이 일치하는지 확인할 수 없어요');
+    await h.send('취소');
+    expect(anchorOf(h.tasks.get(anchorTaskId))?.status).toBe('APPROVED');
+    expect(h.totalWrites()).toBe(0);
+    h.setActor(OWNER);
+    expect((await h.send('댓글 실행')).reply.text).toContain('댓글을 달았어요');
+    expect(h.writes.addComment).toEqual([{ issueKey: 'PROJ-12', text: 'owner only' }]);
+  });
+
+  it('another write’s phrase while a grant waits names the right phrase instead of claiming nothing is approved', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('승인');
+    const reply = await h.send('댓글 실행');
+    expect(reply.reply.text).toContain('Slack 게시은(는) 이미 승인됐고 아직 실행하지 않았어요');
+    expect(reply.reply.text).toContain('"Slack 게시 실행"');
+    expect(reply.reply.text).not.toContain('승인된 외부 쓰기 요청이 없어요');
+    expect(h.totalWrites()).toBe(0);
+    await h.send('Slack 게시 실행');
+    expect(h.writes.post).toHaveLength(1);
+  });
+
+  it('a receipt that cannot be prepared is NOT_SENT (the writer was never called), and is never retried', async () => {
+    const h = harness({ receiptFails: 'prepare' });
+    await h.send('PROJ-12에 댓글: x');
+    await h.send('승인');
+    const reply = await h.send('댓글 실행');
+    expect(reply.reply.text).toContain('요청을 보내기 전에 멈췄어요');
+    expect(reply.reply.text).toContain('아무것도 보내지 않았어요');
+    expect(reply.reply.text).not.toContain('게시됐을 수도');
+    expect(h.totalWrites()).toBe(0);
+    expect((await h.send('댓글 실행')).reply.text).toContain('이미 실패로 끝났어요');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('an invalid request is NOT_SENT INVALID_REQUEST before any receipt or send', async () => {
+    const h = harness({ commentSource: 'Not A Label' });
+    await h.send('PROJ-12에 댓글: x');
+    await h.send('승인');
+    const reply = await h.send('댓글 실행');
+    expect(reply.reply.text).toContain('요청 형식이 올바르지 않아요');
+    expect(h.receipts.rows.size).toBe(0);
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('a failure after the writer was called stays UNCERTAIN (it may have been sent)', async () => {
+    const h = harness({ receiptFails: 'complete' });
+    await h.send('PROJ-12에 댓글: x');
+    await h.send('승인');
+    const reply = await h.send('댓글 실행');
+    expect(h.writes.addComment).toHaveLength(1);
+    expect(reply.reply.text).toContain('결과를 확인하지 못했어요');
+    expect((await h.send('댓글 실행')).reply.text).toContain('다시 실행하지 않아요');
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+});
+
+describe('connector writes — long replies are never cut (review fix)', () => {
+  it('the pending reminder keeps the whole payload and the decision instructions past one message', async () => {
+    const h = harness();
+    const text = '`'.repeat(1400);
+    const preview = await h.send(`PROJ-12에 댓글: ${text}`);
+    expect(preview.status).toBe('AWAITING_APPROVAL');
+    const pending = await h.send('이거 뭐야?');
+    expect(pending.reply.text.length).toBeGreaterThan(1900);
+    expect(pending.reply.text).toContain(text);
+    expect(pending.reply.text).toContain('"승인" 또는 "거절"로 답해 주세요.');
+    expect(pending.reply.text.endsWith('"새 대화"라고 보내 주세요.')).toBe(true);
+  });
+
+  it('a ten-candidate choice lists every number it accepts', async () => {
+    const long = 'x'.repeat(180);
+    const events = Array.from({ length: 10 }, (_, i) => ({ ...WEEKLY, id: `evt-${i}`, title: `회의 ${long} ${i}`, location: '*'.repeat(150) }));
+    const h = harness({ events });
+    const choice = await h.send('내일 3시 회의 취소해줘');
+    expect(choice.reply.text).toContain('조건에 맞는 일정이 10개예요');
+    expect(choice.reply.text).toContain('\n10. ');
+    expect(choice.reply.text.endsWith('다른 말을 보내면 선택은 취소돼요.')).toBe(true);
   });
 });

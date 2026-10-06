@@ -28,6 +28,7 @@ import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './executio
 import {
   type ConnectorWriteAnchorView,
   type ConnectorWriteFlow,
+  type ConnectorWriteRelease,
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
   isAnyConnectorWriteExecutionPhrase,
@@ -2013,6 +2014,13 @@ export class ConversationRuntime {
     let session = await this.deps.sessions.openForContext(message.context, actor.id);
     await this.deps.sessions.touch(session);
 
+    // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
+    // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the
+    // pointer it displaced is handed back — mirrored on this turn's copy so the restored chain (e.g. an open code-change
+    // anchor) routes on this very turn and no later save re-points the session at the closed anchor.
+    const lapsedWrite = (await this.deps.connectorWriteFlow?.releaseExpired(session, this.clock())) ?? null;
+    if (lapsedWrite) session = { ...session, activeTaskId: lapsedWrite.activeTaskId };
+
     // (0) Conversation control + pending-approval lifetime (ADR-0093) — BEFORE memory capture, approval/anchor
     // routing and classification, in every conversation state. Expiry is lazy (no scheduler): an expired
     // PENDING approval is recorded denied on this turn. Control phrases take precedence: help/reset still run
@@ -2027,6 +2035,8 @@ export class ConversationRuntime {
         lookup.pending,
         PENDING_APPROVAL_TTL_MS,
       );
+      // ADR-0112: the expired write's anchor handed the pointer back; mirror it on this turn's copy.
+      if (lookup.connectorWrite) session = { ...session, activeTaskId: lookup.connectorWrite.anchor.previousActiveTaskId };
     }
     // ADR-0097 D5: a credential-override set that is no longer live released its anchor pointer on the canonical
     // session (invalidated now, or consumed earlier). Mirror the release on this turn's copy so no later save in
@@ -2070,6 +2080,10 @@ export class ConversationRuntime {
       await this.deps.memory.recordAssistant(expiryNotice.text, message.context, session.id);
       return { status: 'DENIED', reply: expiryNotice, sessionId: session.id };
     }
+    // ADR-0112: the follow-up the lapsed write was waiting for (its exact execution phrase, or a choice number) is told
+    // that it lapsed — never run, and never handed to a model as a bare "1".
+    const lapsedReply = lapsedWrite ? ConversationRuntime.lapsedConnectorWriteStep(lapsedWrite, message.text) : null;
+    if (lapsedReply) return this.respondConnectorWriteStep(message, session, lapsedReply, '');
 
     // (A) Approval-decision routing — ONLY when a pending approval is derived for this session.
     const pending = lookup.planPending;
@@ -2118,14 +2132,20 @@ export class ConversationRuntime {
     // write approval intercepts EVERY turn (decision flow only); an approved grant runs ONLY on its exact execution
     // phrase; a numbered choice is next-turn-only; a finished write answers a repeated phrase without sending again.
     // Anything else falls through to normal routing (the anchor stays, except an abandoned choice).
+    let applyAnchor = lookup.applyAnchor;
     if (lookup.connectorWrite && this.deps.connectorWriteFlow) {
       const handled = await this.handleConnectorWriteAnchorTurn(message, session, actor, lookup.connectorWrite);
-      if (handled) return handled;
+      if (handled === 'released') {
+        // The anchor was closed and handed its pointer back: mirror it and read the restored chain for this turn.
+        session = { ...session, activeTaskId: lookup.connectorWrite.anchor.previousActiveTaskId };
+        applyAnchor = await this.deps.applyPreviewFlow.findAnchor(session);
+      } else if (handled) {
+        return handled;
+      }
     }
 
     // (A3) Apply-preview routing (Sprint 2s, ADR-0040) — checked after approvalFlow/scopeClarificationFlow
     // so neither is ever pre-empted. (All three were already read, in this order, by findPendingApproval.)
-    const applyAnchor = lookup.applyAnchor;
     // (QA-V2 post-connect) an explicit work-chat lookup/search command ("Confluence에서 배포 검색") is never captured by the
     // anchored-chain companion/deploy/merge-word replies below; it falls through to the work-chat handler. Pending-approval
     // intercepts and execution allow-list gates above/below are untouched.
@@ -3258,12 +3278,27 @@ export class ConversationRuntime {
   }
 
   /**
-   * A turn while the session holds a connector-write anchor. Returns `null` to let the turn route normally.
+   * The reply for the follow-up a lapsed write was waiting for: its exact execution phrase after an expired grant, or a
+   * choice number after an expired choice. Anything else routes as a new turn (null).
+   */
+  private static lapsedConnectorWriteStep(lapsed: ConnectorWriteRelease, text: string): ConnectorWriteStep | null {
+    if (lapsed.status === 'APPROVED') {
+      if (!lapsed.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(lapsed.operation), text)) return null;
+      return { kind: 'refused', reason: 'grant-expired', family: lapsed.family };
+    }
+    if (ConversationRuntime.connectorWriteChoiceIndex(text) === null) return null;
+    return { kind: 'refused', reason: 'choice-expired', family: lapsed.family };
+  }
+
+  /**
+   * A turn while the session holds a connector-write anchor. Returns `null` to let the turn route normally, or
+   * `'released'` when the anchor was closed on the way (an abandoned choice) so the caller mirrors the restored pointer.
    *
    * - `APPROVAL_PENDING` intercepts every turn: the ADR-0095 interpreter decides; "승인" is re-checked against the
    *   ADR-0093 lifetime immediately before `ApprovalManager.decide`; anything ambiguous re-prompts with the preview.
-   * - `APPROVED` executes ONLY on the operation's exact allow-listed phrase (EXECUTION_PHRASES); a bare decision word
-   *   answers (already approved / discarded); anything else falls through and the grant waits.
+   * - `APPROVED` executes ONLY on the operation's exact allow-listed phrase (EXECUTION_PHRASES); another write's phrase
+   *   or a bare "승인" names the right phrase; the owner's "거절"/"취소" discards it; anything else falls through and the
+   *   grant waits — at most the ADR-0093 lifetime (`releaseExpired` at turn start).
    * - `AWAITING_CHOICE` takes a number on the next turn only; any other message abandons the choice.
    * - After execution a repeated phrase reports the recorded outcome and never sends again.
    */
@@ -3272,7 +3307,7 @@ export class ConversationRuntime {
     session: Session,
     actor: Actor,
     view: ConnectorWriteAnchorView,
-  ): Promise<TurnResult | null> {
+  ): Promise<TurnResult | 'released' | null> {
     const flow = this.deps.connectorWriteFlow;
     if (!flow) return null;
     const { anchor } = view;
@@ -3332,7 +3367,7 @@ export class ConversationRuntime {
         const decision = interpretStrayDecisionUtterance(message.text);
         await flow.close(session, view, 'abandoned', this.clock());
         if (decision === 'deny' || decision === 'cancel') return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
-        return null; // next-turn-only: any other message is a new turn
+        return 'released'; // next-turn-only: any other message is a new turn
       }
       case 'APPROVED': {
         if (!anchor.operation) return null;
@@ -3343,7 +3378,9 @@ export class ConversationRuntime {
           return respond(await flow.execute({ session, actor, view, now: this.clock() }));
         }
         const decision = interpretStrayDecisionUtterance(message.text);
-        if (decision === 'approve') {
+        // Another write's execution phrase while this one waits approved: it runs nothing, and the reply names the
+        // phrase that would (the generic "nothing approved" would be untrue).
+        if (decision === 'approve' || isAnyConnectorWriteExecutionPhrase(message.text)) {
           const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
             message.context,
             anchor.operation,
@@ -3351,7 +3388,8 @@ export class ConversationRuntime {
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
-        if (decision === 'deny' || decision === 'cancel') {
+        // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here.
+        if ((decision === 'deny' || decision === 'cancel') && anchor.actorId === actor.id) {
           const reason = decision === 'deny' ? 'denied' : 'cancelled';
           await flow.close(session, view, reason, this.clock());
           return respond({ kind: 'closed', reason, family: anchor.family });

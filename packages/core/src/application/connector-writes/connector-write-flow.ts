@@ -5,6 +5,7 @@ import { CALENDAR_EVENTS_MAX_LIMIT } from '../../ports/calendar-reader.port';
 import {
   CONNECTOR_WRITE_OPERATIONS,
   ISSUE_TRANSITION_STATUS_MAX_LENGTH,
+  connectorWriteNotSent,
   connectorWriteUncertain,
   isValidConnectorWriteText,
   type CalendarEventChanges,
@@ -33,7 +34,7 @@ import {
   type ConnectorWriteFamily,
   type ConnectorWriteUsageTopic,
 } from './connector-write-draft';
-import { ConnectorWriteExecutor } from './connector-write-executor';
+import { ConnectorWriteExecutor, ConnectorWriteRequestError } from './connector-write-executor';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
 
 /**
@@ -54,15 +55,23 @@ import { connectorWritePayloadSha256 } from './connector-write-payload';
  *   twice. `UNCERTAIN` is never retried; a repeated phrase after any outcome only reports it.
  * - **Never guess.** An update or delete lists the referenced day on the PRIMARY calendar; zero matches is "not found",
  *   several is a numbered choice (next turn only).
+ * - **Lazy expiry.** An approved grant that is never executed, and a numbered choice that is never answered, lapse after
+ *   the ADR-0093 lifetime (`PENDING_APPROVAL_TTL_MS`, from the approval / from the listing): `releaseExpired` closes the
+ *   anchor `expired` at the start of the next turn and hands back the pointer it displaced, so a displaced code-change
+ *   chain is hidden for at most that long.
  * - Core never branches on a connector id: the writer family comes from the draft kind, the receipt label from the
  *   writer's own `source`.
  */
 
 export const CONNECTOR_WRITE_ANCHOR_KIND = 'connector-write' as const;
 const ANCHOR_KEY = 'connectorWriteAnchor';
-/** Owner text shown in the preview must fit one message with its fenced block, so it is bounded below the port's 4000. */
+/**
+ * Owner text is bounded below the port's 4000 so the preview stays readable. The preview, the pending reminder and the
+ * choice list are never clamped (a long reply is delivered in lossless, fence-aware chunks by the adapter), so the
+ * approval always shows the whole payload and the full approve / deny instructions.
+ */
 export const CONNECTOR_WRITE_PREVIEW_TEXT_MAX_LENGTH = 1400;
-/** A calendar event description, likewise bounded for the preview. */
+/** A calendar event description, likewise bounded. */
 export const CONNECTOR_WRITE_PREVIEW_DESCRIPTION_MAX_LENGTH = 500;
 /** At most this many candidate events are listed for a choice; more means the owner must be more specific. */
 export const CONNECTOR_WRITE_MAX_CHOICES = 10;
@@ -165,6 +174,26 @@ export interface ConnectorWriteAnchor {
   readonly closedReason?: ConnectorWriteCloseReason;
 }
 
+/** What `releaseExpired` released: the lapsed anchor's state and the session pointer after the release. */
+export interface ConnectorWriteRelease {
+  readonly status: 'APPROVED' | 'AWAITING_CHOICE';
+  readonly family: ConnectorWriteFamily;
+  readonly operation?: ConnectorWriteOperation;
+  /** `Session.activeTaskId` after the release (the pointer the anchor displaced, or none). */
+  readonly activeTaskId: Id | undefined;
+}
+
+/**
+ * Whether an APPROVED grant or an AWAITING_CHOICE choice has outlived the ADR-0093 lifetime at `now`. A grant counts
+ * from its approval, a choice from its listing; a missing or unreadable timestamp counts as lapsed.
+ */
+export function isConnectorWriteAnchorLapsed(anchor: ConnectorWriteAnchor, now: IsoTimestamp): boolean {
+  const since = anchor.status === 'APPROVED' ? anchor.approvedAt : anchor.status === 'AWAITING_CHOICE' ? anchor.createdAt : null;
+  if (since === null) return false;
+  const start = since === undefined ? Number.NaN : Date.parse(since);
+  return !Number.isFinite(start) || Date.parse(now) - start >= PENDING_APPROVAL_TTL_MS;
+}
+
 /** The session's connector-write anchor as the runtime sees it. */
 export interface ConnectorWriteAnchorView {
   readonly taskId: Id;
@@ -189,7 +218,8 @@ export type ConnectorWriteRefusal =
   | 'no-change'
   | 'invalid-choice'
   | 'binding-mismatch'
-  | 'grant-expired';
+  | 'grant-expired'
+  | 'choice-expired';
 
 /** What one flow step produced; the runtime renders it through `ResponseComposer` (reply text lives there). */
 export type ConnectorWriteStep =
@@ -286,6 +316,11 @@ export interface ConnectorWriteFlow {
   /** Whether a writer is bound for the draft's family (false → writes are off for it). */
   supports(draft: ConnectorWriteDraft): boolean;
   find(session: Session): Promise<ConnectorWriteAnchorView | null>;
+  /**
+   * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
+   * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
+   */
+  releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null>;
   prepare(input: FlowInput & { readonly draft: ConnectorWriteDraft }): Promise<ConnectorWriteStep>;
   choose(input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number }): Promise<ConnectorWriteStep>;
   recordApproval(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
@@ -363,12 +398,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   // ── lookup ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
   async find(session: Session): Promise<ConnectorWriteAnchorView | null> {
-    if (!session.activeTaskId) return null;
-    const task = await this.deps.store.tasks.get(session.activeTaskId);
-    if (!task || task.planId) return null;
-    const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
-    if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id) return null;
-    if (anchor.status === 'CLOSED') return null;
+    const found = await this.openAnchorOf(session);
+    if (!found) return null;
+    const { task, anchor } = found;
     if (anchor.status !== 'APPROVAL_PENDING') return { taskId: task.id, anchor, approval: null };
     const approval = anchor.approvalId ? await this.deps.approvals.get(anchor.approvalId) : null;
     if (!approval || approval.status !== ApprovalStatus.PENDING) {
@@ -378,6 +410,34 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return null;
     }
     return { taskId: task.id, anchor, approval };
+  }
+
+  async releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null> {
+    const found = await this.openAnchorOf(session);
+    if (!found) return null;
+    const { task, anchor } = found;
+    if ((anchor.status !== 'APPROVED' && anchor.status !== 'AWAITING_CHOICE') || !isConnectorWriteAnchorLapsed(anchor, now)) {
+      return null;
+    }
+    await this.close(session, { taskId: task.id, anchor, approval: null }, 'expired', now);
+    this.log('info', 'connector_write.lapsed', { status: anchor.status, ...(anchor.operation ? { operation: anchor.operation } : {}) });
+    return {
+      status: anchor.status,
+      family: anchor.family,
+      ...(anchor.operation ? { operation: anchor.operation } : {}),
+      activeTaskId: anchor.previousActiveTaskId,
+    };
+  }
+
+  /** The session's own, not yet closed connector-write anchor (via `activeTaskId`), or null. */
+  private async openAnchorOf(session: Session): Promise<{ task: Task; anchor: ConnectorWriteAnchor } | null> {
+    if (!session.activeTaskId) return null;
+    const task = await this.deps.store.tasks.get(session.activeTaskId);
+    if (!task || task.planId) return null;
+    const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id) return null;
+    if (anchor.status === 'CLOSED') return null;
+    return { task, anchor };
   }
 
   // ── prepare: draft → exact payload → preview + CRITICAL approval ───────────────────────────────────────────────
@@ -501,6 +561,11 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const choice = anchor.choice;
     if (anchor.status !== 'AWAITING_CHOICE' || !choice) return { kind: 'refused', reason: 'invalid-choice', family: anchor.family };
     if (!this.bound(input.view, input)) return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
+    // The candidates were read at listing time; past the lifetime they may no longer match the live calendar.
+    if (isConnectorWriteAnchorLapsed(anchor, input.now)) {
+      await this.close(input.session, input.view, 'expired', input.now);
+      return { kind: 'refused', reason: 'choice-expired', family: anchor.family };
+    }
     const picked = choice.candidates[input.index - 1];
     if (!Number.isInteger(input.index) || picked === undefined) {
       return { kind: 'refused', reason: 'invalid-choice', family: anchor.family };
@@ -542,13 +607,16 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return repeatOf(anchor, operation);
     }
     if (anchor.status !== 'APPROVED') return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
+    // Only the actor who asked (in the session it was asked in) may execute; anyone else is refused and the owner's
+    // grant stays as it is (like a non-owner decision on a pending approval, which only re-prompts).
+    if (!this.bound(input.view, input)) return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
     const { payload, payloadSha256, target, connector, approvalId, preview } = anchor;
-    if (!payload || !payloadSha256 || !target || !connector || !approvalId || !preview || !this.bound(input.view, input)) {
+    if (!payload || !payloadSha256 || !target || !connector || !approvalId || !preview) {
       await this.close(input.session, input.view, 'inconsistent', input.now);
       return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
     }
     // The grant lives as long as a pending approval does (ADR-0093), counted from the approval decision.
-    if (!anchor.approvedAt || Date.parse(input.now) - Date.parse(anchor.approvedAt) >= PENDING_APPROVAL_TTL_MS) {
+    if (isConnectorWriteAnchorLapsed(anchor, input.now)) {
       await this.close(input.session, input.view, 'expired', input.now);
       return { kind: 'refused', reason: 'grant-expired', family: anchor.family };
     }
@@ -580,10 +648,17 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     await this.reconcileOnce(input.now);
     const executor = new ConnectorWriteExecutor({ receipts: this.deps.receipts, now: () => input.now, newId: this.deps.newId });
     let outcome: ConnectorWriteOutcome;
+    // Whether the writer was ever called: the executor validates the request and writes the PREPARED receipt first,
+    // so a throw before this flips is provably "nothing was sent".
+    let sendStarted = false;
+    const sendOnce = (): Promise<ConnectorWriteOutcome> => {
+      sendStarted = true;
+      return send();
+    };
     try {
       const result = await executor.executeOnce(
         { actorId: input.actor.id, idempotencyKey: `cwr:${approvalId}`, connector, operation, target, payloadSha256 },
-        send,
+        sendOnce,
       );
       if (!result.executed) {
         // A receipt already existed for this approval: nothing was sent now (whatever its status).
@@ -598,9 +673,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         outcome = result.outcome;
       }
     } catch (error) {
-      // An invalid request is refused before any receipt or send; anything else after the consume is UNCERTAIN.
-      this.log('warn', 'connector_write.execute_failed', { errorName: error instanceof Error ? error.name : 'unknown' });
-      outcome = connectorWriteUncertain('UNKNOWN');
+      // Before the writer was called (an invalid request, or the PREPARED receipt could not be written) nothing left:
+      // NOT_SENT. After it (recording the outcome failed) the request may have left: UNCERTAIN, never retried.
+      this.log('warn', 'connector_write.execute_failed', {
+        errorName: error instanceof Error ? error.name : 'unknown',
+        sendStarted,
+      });
+      outcome = sendStarted
+        ? connectorWriteUncertain('UNKNOWN')
+        : connectorWriteNotSent(error instanceof ConnectorWriteRequestError ? 'INVALID_REQUEST' : 'UNAVAILABLE');
     }
     const terminal: ConnectorWriteAnchor = {
       ...consumed,

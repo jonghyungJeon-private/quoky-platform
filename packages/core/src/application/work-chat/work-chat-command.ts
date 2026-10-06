@@ -703,6 +703,10 @@ export function detectWorkChatCommand(text: string): WorkChatCommand | null {
  * Jira comment / transition and Slack post requests with an exact target and text, anchored on the issue key or the
  * `#channel` at the start of the message (an optional `Jira`/`Slack` word first). The text after `:` (or inside
  * `…라고 올려줘`) is the owner's text verbatim — only the outer whitespace and one pair of wrapping quotes are removed.
+ * The one accepted normalization is Unicode NFC (`normalizeInput`, applied to the whole message before any grammar):
+ * the patterns match precomposed Hangul, so a decomposed (NFD) message — e.g. typed on macOS — is matched and sent in
+ * its canonically equivalent composed form. It renders identically and is exactly what the preview shows and the
+ * approval hash covers; no other character is changed.
  * Whole-message patterns ending in an imperative, so a negated, past or reported sentence never matches. A
  * write-shaped request without the text is a usage hint. Everything else falls through to the old grammar (including
  * the fixed write refusal).

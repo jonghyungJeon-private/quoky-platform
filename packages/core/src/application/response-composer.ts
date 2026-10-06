@@ -1141,8 +1141,10 @@ export class ResponseComposer {
     };
   }
 
-  // ADR-0112 / ADR-0110 amendment connector-write copy (CWR-2): thin delegates over `connector-write-copy`. A preview is
-  // bounded by the flow so it always fits one message whole; it is never clamped (the approval binds the full payload).
+  // ADR-0112 / ADR-0110 amendment connector-write copy (CWR-2): thin delegates over `connector-write-copy`. The preview,
+  // the pending reminder and the numbered choice are never clamped: the approval binds the full payload and a choice
+  // accepts every listed number, so cutting either would hide what is approved or chosen. Their rendered length is not
+  // bounded by one message (escaping and fences grow it); the adapter delivers a long reply in lossless chunks.
 
   /** One connector-write flow step (preview, choice, refusal, approval recorded, outcome, repeat, …). */
   composeConnectorWriteStep(
@@ -1150,7 +1152,7 @@ export class ResponseComposer {
     step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>,
   ): OutboundMessage {
     const text = renderConnectorWriteStep(step);
-    return { context, text: step.kind === 'preview' ? text : clampToMessageBudget(text) };
+    return { context, text: step.kind === 'preview' || step.kind === 'choice' ? text : clampToMessageBudget(text) };
   }
 
   /** Any non-decision message while a connector-write approval is pending (ADR-0093 reminder with the preview). */
@@ -1160,7 +1162,7 @@ export class ResponseComposer {
     remainingMs: number,
     executionPhrase: string,
   ): OutboundMessage {
-    return { context, text: clampToMessageBudget(renderConnectorWritePending(preview, remainingMs, executionPhrase)) };
+    return { context, text: renderConnectorWritePending(preview, remainingMs, executionPhrase) };
   }
 
   /** A bare "승인" after the connector-write approval was already recorded: nothing runs until the exact phrase. */

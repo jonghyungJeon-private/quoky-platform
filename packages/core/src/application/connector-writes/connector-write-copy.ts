@@ -321,6 +321,7 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'invalid-choice': '목록에 있는 번호가 아니에요.',
   'binding-mismatch': '승인한 요청과 지금 요청이 일치하는지 확인할 수 없어요.',
   'grant-expired': '승인한 지 30분이 지나 승인이 만료됐어요.',
+  'choice-expired': '일정 목록을 보여 드린 지 30분이 지나 선택이 만료됐어요 (그사이 일정이 바뀌었을 수 있어요).',
 };
 
 export function renderConnectorWriteRefusal(
@@ -332,7 +333,7 @@ export function renderConnectorWriteRefusal(
   if (reason === 'transition-unavailable' && availableStatuses.length > 0) {
     lines.push(`지금 바꿀 수 있는 상태: ${availableStatuses.map(inline).join(', ')}`);
   }
-  if (reason === 'binding-mismatch' || reason === 'grant-expired' || reason === 'invalid-choice') {
+  if (reason === 'binding-mismatch' || reason === 'grant-expired' || reason === 'choice-expired' || reason === 'invalid-choice') {
     lines.push('필요하면 처음부터 다시 요청해 주세요.');
   }
   return lines.join('\n');
