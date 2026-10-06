@@ -15830,7 +15830,11 @@ attestation protects a Team/Hosted operator from a tenant, which Personal does n
    stays required before activation.
 4. **One trigger.** Activation is limited to one explicit owner trigger, a long-running summary that reports back by
    owner DM (through the ADR-0101 sink, DM only). Which trigger is *owner decision (ratified 2026-10-06: recommended default) 3*. No multi-agent runtime;
-   `AgentProfile` stays configuration only.
+   `AgentProfile` stays configuration only. **Amends ADR-0101 D1 narrowly:** besides reminders (ADR-0101) and the fixed
+   `OPS_NOTICE` (ADR-0102), the `NotificationSink` may carry exactly one more kind, `CONTINUATION_RESULT`: owner DM
+   only (never channel delivery), text bounded by the ADR-0101 delivered-text limit, produced only by an activated
+   continuation run under this ADR, with the SENT / NOT_SENT / UNCERTAIN outcomes and no automatic resend on
+   UNCERTAIN. Any other non-reminder notification stays deferred.
 5. **Deps and storage.** This ADR authorizes no `ConversationRuntimeDeps` key and no migration. If activation needs
    either, an amendment states it before code merges. ADR-0102 D4 applies: a second writer process requires CAS first.
 
