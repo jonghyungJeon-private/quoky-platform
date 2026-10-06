@@ -16418,35 +16418,54 @@ Independent Chief Architect review before CWR-2 merges.
   (ADR-0107) before LRN-2 merges; ADR-0049 CA #4/#5 is amended by ADR-0108; ADR-0096 D5 precedence gains the
   calendar handler at pre-classify order 150 (ADR-0110); ADR-0101 D1 gains the single SUB health notice (ADR-0102).
 
-## ADR-0113 — Local operations UI (OPS-UI): a loopback-only, token-gated, default-off web screen served by the Quoky process; Phase 1 read-only monitoring, Phase 2 owner handling through the same Core use cases and approval gates as chat. Amends ADR-0102 D1/D7 narrowly (one local HTTP listener); remote access stays out of v3.
+## ADR-0113 — Local operations UI (OPS-UI): a loopback-only, token-gated, default-off web screen served by the Quoky process; Phase 1 read-only monitoring, Phase 2 owner handling through the same Core use cases and approval gates as chat. Amends ADR-0102 D1 narrowly (one local HTTP listener); remote access stays out of v3.
 
 - **Status:** Proposed (awaiting owner ratification)
 - **Date:** 2026-10-06
-- **Amends (on ratification):** ADR-0102 D1 ("no … HTTP endpoint is added") and D7 ("no HTTP endpoint") narrowly:
-  exactly one loopback-only, token-gated operations listener inside the Quoky process, off by default. Nothing else in
-  ADR-0102 changes; `OPS_NOTICE` stays the only push health signal. **Relates (does not edit):** ARCHITECTURE.md §2.2
-  (no HTTP type in Core), §3 (composition root / adapters), §5.3 and §12 (provider id not surfaced in normal
-  behaviour), §5.5 (no AI HTTP API), §10 (risk and approval), §13 (Platform "+ web" via adapters); ADR-0091 (owner
-  admission), ADR-0093/0095 (approval TTL and interpreter), ADR-0096 D4 (handlers create no approval), ADR-0097
-  (credential guard, one-time CRITICAL pattern), ADR-0098 (feedback counts), ADR-0101 (reminders), ADR-0102 D3/D4/D6
-  (host data path, single instance, backup), ADR-0106 (memory forget with content-bound confirmation), ADR-0112
-  (connector-write approvals). Plan track OPS-1 / OPS-2.
+- **Amends (on ratification):**
+  - ADR-0102 D1 ("No cloud VM, container or HTTP endpoint is added"), narrowly: exactly one loopback-only, token-gated
+    operations listener inside the Quoky process, off by default. ADR-0102 D7 is **not** amended: `OPS_NOTICE` stays
+    the only push health signal, and the UI is a pull surface. Nothing else in ADR-0102 changes.
+  - ADR-0101 D1 (notification kinds, as already amended by ADR-0102 D7 and ADR-0103 D4), narrowly and only from
+    OPS-2b: the `NotificationSink` may carry one more kind, `OPS_DECISION_RESULT` (D7).
+- **Extends (on ratification):** ADR-0091 (owner admission) for this surface only: holding the per-start UI token
+  stands in for Discord owner admission and maps to the owner `Actor` (D7). The Discord entry boundary itself is
+  unchanged.
+- **Relates (does not edit):** ARCHITECTURE.md §2.2 (no HTTP type in Core), §3 (composition root / adapters), §5.3
+  and §12 (provider id not surfaced; an open rule question here, D6), §5.5 (no AI HTTP API), §10 (risk and approval),
+  §13 (Platform "+ web" via adapters); ADR-0009 (Actor / identity mapping), ADR-0093/0095 (approval TTL and
+  interpreter), ADR-0096 D4 (handlers create no approval), ADR-0097 (credential guard, one-time CRITICAL pattern),
+  ADR-0098 (feedback counts), ADR-0102 D3/D4/D6 (host data path, single instance, backup), ADR-0106 (memory forget
+  with content-bound confirmation), ADR-0112 (connector-write approvals). Plan track OPS-1 / OPS-2 / OPS-2b.
 
 ### Context
 
 Owner direction (2026-10-06): a screen to monitor and handle the running service is needed; no separate client for
 now. Once SUB-1 makes Quoky an unattended launchd service, the owner has only Discord replies, the `OPS_NOTICE` DM and
 log files to see its state: whether the platform is connected, whether providers are ready, which reminders are queued,
-which approvals are waiting, whether connectors and backups are healthy, and what failed recently. ADR-0102 D1/D7
+which approvals are waiting, whether connectors and backups are healthy, and what failed recently. ADR-0102 D1
 deliberately added no HTTP endpoint, so this ADR is the explicit, narrow amendment that a local screen needs.
-ARCHITECTURE.md §13 already lists "web" as a platform evolution through adapters; nothing here touches Core contracts.
+ARCHITECTURE.md §13 already lists "web" as a platform evolution through adapters; Phase 1 touches no Core contract.
+
+Where the Phase 2 use cases live today (checked at `a737223`):
+- **Reminder cancel:** `ReminderConversationService` in `core/application/reminders/` (reached through the reminder
+  turn handler, outside `conversation-runtime.ts`); its `cancel` step is private behind the text grammar.
+- **Memory forget:** MEM-1 (W2) adds it in `core/application/memory-commands/*` as a pre-classify handler (ADR-0106
+  D2), outside `conversation-runtime.ts`.
+- **Approval decisions (approve and reject):** only inside `conversation-runtime.ts`. `ApprovalManager.decide` records
+  the status, but each kind (the conversational pending approval, apply, commit, push, PR, merge, remote-branch
+  cleanup, credential override) has its own decision turn in the runtime that re-anchors or clears session state,
+  composes the reply, and on approve runs the approved action in the same turn. `approval-decision.ts` is only the text
+  interpreter. There is no shared decision service yet, for reject either.
 
 ### Decision
 
 1. **Shape: a local web UI served by the Quoky process.** One HTTP listener built on Node's `node:http` (no web
-   framework, no new third-party npm dependency, no frontend build step; server-rendered HTML with a small inline
-   script). It is started and stopped by the composition root with the app lifecycle and exists only when
-   `QUOKY_OPS_UI_ENABLED=true` (default `false`). No separate desktop or mobile client, no second process.
+   framework, no new third-party npm dependency, no frontend build step). Pages are server-rendered HTML; the one
+   stylesheet and the one script are fixed same-origin static routes (`/ops.css`, `/ops.js`) served from constants
+   in the adapter, never inline (D4). The listener is started and stopped by the composition root with the app
+   lifecycle and exists only when `QUOKY_OPS_UI_ENABLED=true` (default `false`). No separate desktop or mobile client,
+   no second process.
 2. **Local only.** The listener binds `127.0.0.1` only (`QUOKY_OPS_UI_PORT`, default `47613`, validated 1024-65535).
    No configuration accepts another bind address; startup fails closed with a typed configuration error if the bind
    would not be loopback, and a taken port disables only the UI (the rest of Quoky still starts and the log records
@@ -16454,35 +16473,54 @@ ARCHITECTURE.md §13 already lists "web" as a platform evolution through adapter
    `127.0.0.1:<port>` or `localhost:<port>` is rejected (DNS-rebinding defence). No port forwarding, tunnel, reverse
    proxy or LAN exposure is configured or documented.
 3. **Access token.** At each start the process generates a random 256-bit token (`node:crypto`) and writes it to
-   `ops-ui.token` in the ADR-0102 D3 host data directory (`~/Library/Application Support/Quoky/`), created with mode
-   `0600` via exclusive create; the file is removed on clean shutdown and replaced at the next start, so a token never
-   outlives one process. The owner pastes it into the UI's sign-in form (`POST /session`); a constant-time match sets an
-   `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie bound to that process start. The token is never put in a URL,
-   never logged and never shown back. Failed sign-ins are rate-limited (5 per minute, then a 60 s lockout).
-4. **CSRF and browser hardening.** Every state-changing request is `POST` with a per-session CSRF token (synchronizer
-   pattern) and must carry an `Origin` equal to the listener origin; anything else is refused before any handler runs.
-   No CORS headers are sent. Every response sets `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`,
-   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. All dynamic text is
-   HTML-escaped by one rendering helper.
+   `ops-ui.token` in the ADR-0102 D3 host data directory (`~/Library/Application Support/Quoky/`). Startup first
+   unlinks any stale `ops-ui.token` left by an unclean stop, then creates the file with mode `0600` by exclusive create
+   (`O_EXCL`, not following a symlink); if the unlink or the create fails, only the UI is disabled (fail closed) and the
+   log records why. The file is removed on clean shutdown, so a token never outlives one process. The owner pastes it
+   into the UI's sign-in form (`POST /session`); a constant-time match sets an `HttpOnly`, `SameSite=Strict`, `Path=/`
+   session cookie bound to that process start. The token is never put in a URL, never logged and never shown back.
+   Failed sign-ins are rate-limited (5 per minute, then a 60 s lockout).
+4. **CSRF and browser hardening.**
+   - **Origin and CSRF.** Every state-changing request is `POST` and must carry an `Origin` equal to the listener
+     origin; anything else is refused before any handler runs. Every state-changing request made inside a session also
+     carries that session's CSRF token (synchronizer pattern). Sign-in (`POST /session`) runs before a session exists,
+     so it carries no CSRF token: it is protected by the Host and Origin checks, the absence of CORS headers, and the
+     D3 rate limit. Sign-out requires the session CSRF token. No CORS headers are sent.
+   - **Headers.** Every response sets exactly
+     `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+     plus `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
+     `'unsafe-inline'`, `'unsafe-eval'`, nonces and hashes are not used: pages contain no inline `<script>`, no inline
+     `<style>`, no `style=` attributes and no inline event handlers; behaviour lives only in `/ops.js` and styling only
+     in `/ops.css`. Those two routes and the sign-in page are the only responses served without a session; they carry
+     no data.
+   - **Escaping.** All dynamic text is HTML-escaped by one rendering helper.
 5. **Display rule (no secrets, tokens or conversation bodies).** The UI never displays secrets, credentials, tokens,
    message or reply bodies of conversation turns, prompt or context text, approval payloads (diffs, PR bodies, connector
    write payloads), attachment content or image bytes, or memory content beyond what D9 allows. It may display only
    metadata and the bounded, credential-guarded text that an existing chat command already shows the owner, under the
-   same bounds; every displayed string passes the ADR-0097 strict credential guard again at render time and a match
-   renders as a fixed "[hidden]" marker. Errors are shown by code and category, never by raw exception text.
-6. **Phase 1 — read-only monitoring (OPS-1, bundled with SUB-2: wave 3, right after SUB-2 lands in wave 2, since it
-   reads SUB-2's backup status).** Panels, all read-only, refreshed on page load and by a bounded poll (≥10 s):
-   - **Runtime / health:** build version and manifest hash, uptime, process start time, `user_version` of the host DB,
-     single-instance lock held (ADR-0102 D4), platform connected and identity check passed (D5), reminder tick last
-     run, restart count from the launcher state file.
-   - **Provider readiness:** per registered provider, `isAvailable()` / configured model readiness as operator health.
-     This is not "surfacing the selected provider" (§5.3/§12 govern the conversation's normal behaviour): the UI shows
-     no per-turn selection and never which provider answered a turn. If the independent review reads §12 otherwise,
-     the panel falls back to readiness per capability.
+   same bounds. Every displayed string passes the ADR-0097 strict credential guard again **when `snapshot/*` builds the
+   view model** (D8), and a match becomes a fixed "[hidden]" marker there; `http/*` renders only view-model strings and
+   escapes them. Errors are shown by code and category, never by raw exception text.
+6. **Phase 1 — read-only monitoring (OPS-1, wave 3, right after SUB-2 lands in wave 2, since it reads SUB-2's backup
+   status).** Panels, all read-only, refreshed on page load and by a bounded poll (≥10 s):
+   - **Runtime / health:** build version, uptime, process start time, `user_version` of the host DB, single-instance
+     lock held (ADR-0102 D4), platform connected and identity check passed (ADR-0102 D5), reminder tick last run.
+     Two fields are **shown as "unknown" until their source exists**, and OPS-1 depends on neither: the installed
+     manifest hash (it exists only once SUB-3 installs the ADR-0103 manifest, W6) and the restart count (read from the
+     ADR-0102 D7 launcher state file only if SUB-1 has documented that file's path and format by W3; OPS-1 does not
+     ask SUB-1 to change).
+   - **Provider readiness — open rule question for the owner or the Chief Architect review.** ARCHITECTURE.md §5.3
+     item 3 says the selected provider id "MUST NOT be surfaced to the user by default", and §12 forbids "Surfacing the
+     selected provider to the user as a normal behavior". Whether an operator health screen that lists readiness *per
+     registered provider id* (with no per-turn selection and never which provider answered a turn) is inside that text,
+     or needs an ARCHITECTURE.md amendment, is **not settled by this ADR**. **Default, shipped in OPS-1:** readiness
+     **per capability** (for each capability: ready / degraded / unavailable, from the registered providers'
+     `isAvailable()` and configured-model readiness), with no provider id shown. Provider ids are shown only if the
+     review explicitly accepts the §5.3 reading in writing (*owner decision 14*); otherwise they stay hidden.
    - **Reminder queue:** pending and recent reminders with due time, delivery target kind (DM/channel), status and the
      last delivery outcome (SENT/NOT_SENT/UNCERTAIN); the reminder label only as `알림 목록` already shows it.
    - **Pending approvals (metadata only):** short id, risk level, operation kind, created and expiry time, status. No
-     payload, preview, diff, target text or confirmation code.
+     payload, preview, diff, target text or confirmation reference.
    - **Connector status:** per connector, configured yes/no, reads/writes enabled flags, last probe or call outcome
      category and time. No URLs carrying credentials, tokens, account ids or query text.
    - **Recent errors:** a bounded in-memory ring buffer (last 100, not persisted) of error code, category, component,
@@ -16491,38 +16529,83 @@ ARCHITECTURE.md §13 already lists "web" as a platform evolution through adapter
    - **Backup status (from SUB-2):** last backup time, verified yes/no (`integrity_check`, `user_version`), retained
      copy count and the next scheduled run; file names only.
    Phase 1 has no state-changing endpoint other than sign-in and sign-out.
-7. **Phase 2 — owner handling (OPS-2, wave 4 or later, after MEM-1).** Cancel a reminder, forget a memory, and approve
-   or reject a pending approval. Binding rules:
-   - **No bypass.** Every action calls the same Core application use case the chat command reaches (the ADR-0101
-     reminder cancel, the ADR-0106 memory forget, the approval decision path of ADR-0093/0095 with expiry re-check),
-     with the owner actor resolved exactly as the chat path resolves it. The UI never writes storage, a repository or a
-     receipt directly, and never calls a provider, connector, git or workspace operation. Where a use case exists only
-     inside `conversation-runtime.ts` today, OPS-2 first extracts it into a Core application service that both the
-     runtime and the UI call, with the runtime's behaviour unchanged (byte-identical replies, existing tests green).
+7. **Phase 2 — owner handling, in two steps.**
+   - **OPS-2 (wave 4, after MEM-1): reminder cancel and memory forget only.** Both already live in Core services
+     outside `conversation-runtime.ts` (Context). OPS-2 exposes a typed cancel entry on `ReminderConversationService`
+     (the same repository call and the same composer outcomes as the chat `CANCEL` path; the chat path then calls that
+     entry, so its replies stay byte-identical) and calls the MEM-1 memory-commands service for forget.
+   - **OPS-2b (wave 6, when `conversation-runtime.ts` and `response-composer.ts` are free): approve and reject.** OPS-2b
+     first extracts the approval decision path for each kind out of `conversation-runtime.ts` into one Core application
+     service (`ApprovalDecisionService`) that the runtime's decision turns call, with the runtime's behaviour unchanged
+     (byte-identical replies, existing tests green), then wires the UI to it and adds the chat preview reference line.
+     No UI approve or reject exists before OPS-2b; chat stays a complete approval surface if OPS-2b is dropped.
+   Binding rules for both steps:
+   - **Owner identity (extends ADR-0091 for this surface).** The UI has no platform identity. Holding the per-start
+     token (D3) is the admission: a signed-in UI session acts as the owner `Actor` that the ADR-0091 owner admission
+     maps to through the ADR-0009 identity mapping, resolved once by the composition root. If the configured owner ids
+     do not map to exactly one `Actor`, Phase 2 actions are disabled (fail closed) and only Phase 1 is served. The trust
+     argument is the token file's: only a process running as the owner can read it (Consequences). This replaces
+     Discord admission for this surface only; the Discord entry boundary is unchanged.
+   - **No bypass.** Every action calls the same Core application service the chat command reaches (D7 steps above),
+     with that owner `Actor`. UI code never writes storage, a repository or a receipt directly, and never calls a
+     provider, connector, git or workspace operation itself.
+   - **What approve does (OPS-2b).** The UI calls `ApprovalDecisionService` with the approval id, the decision, the
+     owner `Actor`, the confirmation reference and the `ops-ui` surface marker. The service runs exactly the code path
+     the chat decision turn runs for that approval kind: expiry re-check (ADR-0093), the decision record, the
+     session re-anchor or clear, and on approve the approved action (commit, push, PR, merge, connector write,
+     override) through the same executors the chat turn uses. The originating conversation's session state ends as
+     it would after the chat decision, and the composed reply is recorded into that session's history as chat records
+     it, so a later chat `승인` gets the existing "already decided" reply. The result is delivered to the owner by the
+     ADR-0101 `NotificationSink` as kind `OPS_DECISION_RESULT`: owner DM only (never channel delivery), text bounded by
+     the ADR-0101 delivered-text limit, SENT / NOT_SENT / UNCERTAIN outcomes, no automatic resend on UNCERTAIN (amends
+     ADR-0101 D1 narrowly; the same kind carries a reject result). The UI shows only the outcome category and error
+     code, never the reply text. Decisions on one approval id are serialized in-process (single instance, ADR-0102 D4),
+     so the `PENDING` check and the save cannot interleave; the first of chat and UI wins and the other gets the
+     existing "already decided" outcome.
    - **Same confirmations.** Where chat requires a confirmation the UI requires the same one: memory forget uses the
      ADR-0106 content-bound code; a one-time or hash-bound approval (ADR-0097 override, ADR-0112 connector write,
      code-work push/PR) keeps its grant binding and is consumed exactly as in chat.
-   - **Approve needs the chat preview.** Because the UI never shows payloads (D5), approving from the UI requires the
-     owner to enter a short confirmation reference that chat shows together with the exact preview (OPS-2 adds that
-     reference line to the approval preview reply if it is not there yet; the chat approval grammar is unchanged), so
-     an approval is never granted on metadata alone *(pending owner decision 13; recommended as written)*. Reject and
-     cancel need no payload and use a single explicit confirm step.
+   - **Approve needs the chat preview (confirmation reference).** Because the UI never shows payloads (D5), approving
+     from the UI requires the owner to enter the confirmation reference that chat shows with the exact preview, so an
+     approval is never granted on metadata alone *(pending owner decision 13; recommended as written)*. Definition:
+     - *Derivation:* the first 6 characters (Crockford base32) of SHA-256 over the canonical tuple (approval id,
+       binding digest, owner actor id, window index). The binding digest is SHA-256 over the approval's
+       execution-plan ref, risk level, reason and the kind-specific grant binding that chat's consume step already
+       checks (for example the approved push commit hash, the ADR-0112 payload hash, the ADR-0097 override hash).
+       The window index is the 30-minute window, in the style of the ADR-0106 code.
+     - *Validity:* the current or the previous window, and never past the approval's expiry. A changed payload or
+       binding changes the digest, so an old reference no longer matches.
+     - *Single use:* the reference is consumed with the decision. The approval leaves `PENDING`, so the same reference
+       cannot decide again from either surface. Five wrong references for one approval disable UI approve for that
+       approval for the rest of the window; chat is unaffected.
+     - *Where it appears:* OPS-2b adds one reference line to the chat approval preview reply **only when
+       `QUOKY_OPS_UI_ENABLED=true`**, so chat replies stay byte-identical when the UI is off. The chat approval grammar
+       is unchanged. The UI never displays the reference.
+     Reject and cancel need no payload and use a single explicit confirm step.
    - **Audit.** Each UI action is recorded through the existing governance records with an `ops-ui` surface marker in
      the decision's metadata, so chat and UI decisions are distinguishable; no new table.
-8. **Placement and dependencies.** The UI is an apps-level adapter in `apps/quoky/src/ops-ui/`, split into
-   `ops-ui/http/*` (listener, auth, CSRF, rendering; imports only `node:*` built-ins and its own view-model types; no
-   Nest, Discord, SQLite or provider import) and `ops-ui/snapshot/*` (assembles a bounded view model from existing Core
-   ports and application read services and from composition-root facts). Core gains no HTTP dependency, no port, no
-   token and no contract change in Phase 1; Phase 2 may add Core application services only by extraction (D7), never an
-   HTTP or UI type. Extracting `ops-ui/http/*` into a `packages/adapter-web-ops` package later is a mechanical move
-   with no Core impact and needs no new ADR. **Deps baseline:** `ConversationRuntimeDeps` is unchanged (34, or 35 after
-   CWR-2); the UI is not a runtime dependency. If an OPS-2 extraction would need a deps key, an amendment states it
-   before that code merges. No migration, no new npm dependency, no new workspace package.
+8. **Placement and dependencies.** The UI is an apps-level adapter in `apps/quoky/src/ops-ui/`, split as follows:
+   - `ops-ui/http/*`: listener, auth, CSRF, rendering and the two static assets. It imports only `node:*` built-ins
+     and its own view-model types: no Core, Nest, Discord, SQLite or provider import. It does not run the credential
+     guard; it receives already-guarded view-model strings.
+   - `ops-ui/snapshot/*`: assembles a bounded view model from existing Core ports and application read services and
+     from composition-root facts, and applies the ADR-0097 strict credential guard to every string it puts into the
+     view model (D5).
+   - `ops-ui/ops-ui-wiring.ts`: the one entry point `main.ts` calls (OPS-1). It looks up its dependencies from the Nest
+     container, so `app.module.ts` is not touched, and later phases change only `app/ops-ui/*`.
+   Core gains no HTTP dependency, no port, no token and no contract change in Phase 1. Phase 2 may add Core application
+   services only by extraction (D7), never an HTTP or UI type. Extracting `ops-ui/http/*` into a
+   `packages/adapter-web-ops` package later is a mechanical move with no Core impact and needs no new ADR.
+   **Deps baseline:** `ConversationRuntimeDeps` is unchanged (34, or 35 after CWR-2); the UI is not a runtime
+   dependency. `ApprovalDecisionService` is built from ports the runtime already holds. If it would need a deps key or
+   an `app.module.ts` provider, an amendment states it before OPS-2b merges, and the provider hunk is coordinated with
+   the W6 `app.module.ts` owner (SUB-3). No migration, no new npm dependency, no new workspace package.
 9. **Memory display (Phase 2 only).** To pick a memory to forget, the UI shows exactly the `기억 목록` previews of
    ADR-0106 D3 (owner actor only, 120 characters, credential-guarded), never full content and never another actor's
    records. Phase 1 shows no memory content.
 10. **Not an AI API.** The UI cannot send a chat turn, compose a prompt, invoke a provider, run code work or call a
-    connector; ARCHITECTURE.md §5.5 ("no AI HTTP API") is unaffected.
+    connector on its own; an approved action runs only through the shared decision service (D7). ARCHITECTURE.md §5.5
+    ("no AI HTTP API") is unaffected.
 11. **Out of v3 (recorded).** Remote access of any kind (Tailscale or other tunnels, LAN binding, a hosted dashboard)
     and a separate mobile or desktop client are out of v3 and belong to the Team/Hosted editions, where multi-actor
     authentication and authorization exist. A later edition replaces this listener's adapter and auth, never Core
@@ -16530,31 +16613,59 @@ ARCHITECTURE.md §13 already lists "web" as a platform evolution through adapter
 
 ### Consequences
 
-- **+** The owner can see the unattended service's state in one place and, in Phase 2, cancel, forget, reject and
-  approve without the chat, under the same gates and confirmations as chat.
+- **+** The owner can see the unattended service's state in one place. In Phase 2 the owner can cancel and forget
+  (OPS-2) and then reject and approve (OPS-2b) without the chat, under the same gates and confirmations as chat.
 - **+** No new dependency, package, port or migration; Core stays HTTP-free.
 - **−** Quoky now listens on a local TCP port. Mitigated by loopback-only bind, Host/Origin checks, a per-start 0600
-  token, `SameSite=Strict` cookies and CSRF tokens, and default-off. Any process running as the owner can read the
-  token file; that is the same trust boundary as `.env.local` (accepted residual R2's reasoning: a same-user process
-  already has the owner's authority).
-- **−** A second surface for approval decisions; mitigated by the no-bypass rule, the shared use cases and the
-  approve-needs-chat-preview rule.
-- **−** The provider readiness panel needs an explicit review reading of ARCHITECTURE.md §12 (D6).
+  token, `SameSite=Strict` cookies and CSRF tokens, a strict CSP with no inline code, and default-off. Any process
+  running as the owner can read the token file; that is the same trust boundary as `.env.local` (accepted residual R2's
+  reasoning: a same-user process already has the owner's authority).
+- **−** A second surface for approval decisions, and a second notice kind on the owner DM. Mitigated by the no-bypass
+  rule, the extracted shared decision service, the confirmation reference and per-approval serialization.
+- **−** OPS-2b is a runtime extraction in the 6,800-line `conversation-runtime.ts`; it is P2 and droppable, and chat
+  remains a complete approval surface without it.
+- **−** The provider readiness panel stays per capability unless the §5.3/§12 rule question is answered (D6).
 
 ### Acceptance criteria
 
-Offline: the listener refuses a non-loopback bind and a foreign `Host`; requests without a valid session are refused;
-sign-in rejects a wrong token in constant time and rate-limits; state-changing requests without the CSRF token or with
-a foreign `Origin` are refused; the token file is created `0600`, removed on clean stop and differs per start; a fixture
-snapshot containing credential-shaped strings and message bodies renders none of them; Phase 1 exposes no
-state-changing endpoint beyond sign-in/out; with `QUOKY_OPS_UI_ENABLED=false` no port is opened. Phase 2: each action
-goes through the same use case as chat (tests drive both surfaces against one fixture and compare effects), memory
-forget requires the ADR-0106 code, no approval can be granted without the chat-shown reference, a consumed one-time
-grant cannot be reused from either surface, and an expired approval is refused.
+Offline, OPS-1:
+- The listener refuses a non-loopback bind and a foreign `Host`. With `QUOKY_OPS_UI_ENABLED=false` no port is opened.
+- Requests without a valid session are refused, except the sign-in page and the two static assets.
+- Sign-in rejects a wrong token in constant time and rate-limits. Sign-in with a foreign `Origin` is refused.
+- In-session state-changing requests without the CSRF token, or with a foreign `Origin`, are refused.
+- Every response carries the exact D4 CSP header string, which contains no `'unsafe-inline'` or `'unsafe-eval'`.
+  Rendered pages contain no inline `<script>`, `<style>`, `style=` attribute or `on*=` handler.
+- The token file is created `0600` and removed on clean stop, and the token differs per start. A stale token file left
+  by an unclean stop is replaced at the next start.
+- A fixture snapshot containing credential-shaped strings and message bodies yields a view model from `snapshot/*` in
+  which none of them appear, and the rendered page shows none of them.
+- `http/*` imports nothing outside `node:*` and its own view-model types (an import test).
+- Provider readiness shows no provider id by default. Manifest hash and restart count render as "unknown" when their
+  source is absent.
+- Phase 1 exposes no state-changing endpoint beyond sign-in/out.
+
+Offline, OPS-2:
+- Reminder cancel and memory forget go through the same service as chat. Tests drive both surfaces against one
+  fixture and compare effects. The chat replies stay byte-identical.
+- Memory forget requires the ADR-0106 code.
+- With owner ids that map to zero or several Actors, Phase 2 actions are disabled.
+
+Offline, OPS-2b:
+- The runtime's existing approval tests stay green unchanged, and replies stay byte-identical with the UI off.
+- Approve and reject from the UI reach `ApprovalDecisionService` with the owner `Actor` and the `ops-ui` marker, and
+  produce the same decision record and session state as the chat decision on one fixture.
+- Approve executes through the same executor fakes as chat, and delivers one `OPS_DECISION_RESULT` to the owner DM
+  through a fake sink. The UI shows the outcome category only.
+- No approval can be granted without a valid reference. A reference for a changed binding digest, from another actor,
+  past its window or past expiry is refused. Five wrong references disable UI approve for that approval.
+- A consumed one-time grant cannot be reused from either surface. A chat decision and a UI decision racing on one
+  approval produce exactly one decision. An expired approval is refused.
+- The reference line appears in the chat preview only when the UI is enabled.
 
 ### Strict gates
 
 Enabling the UI on the owner host (`.env.local` edit) and its attended live check (sign-in, each panel, a foreign
-`Origin` request, restart rotates the token); for OPS-2, the attended cancel / forget / reject / approve session on a DB
-copy. Independent Chief Architect review before OPS-1 merges (new listener, ADR-0102 amendment, §12 reading) and before
-OPS-2 merges (no-bypass extraction).
+`Origin` request, restart rotates the token). For OPS-2, an attended cancel and forget session on a DB copy. For
+OPS-2b, an attended reject and approve session on a DB copy against a sandbox repository. Independent Chief Architect
+review before OPS-1 merges (new listener, the ADR-0102 D1 amendment, the §5.3/§12 question) and before OPS-2 and
+OPS-2b merge (no-bypass extraction).

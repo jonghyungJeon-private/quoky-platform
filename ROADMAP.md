@@ -129,8 +129,9 @@ Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the relea
 - Partial PR status when the GitHub App has no Checks permission (PR and reviews without checks).
 - MLX and Docker isolation options for local models.
 - Local operations UI (track OPS, ADR-0113 **Proposed**, 2026-10-06): a loopback-only, token-gated, default-off web
-  screen served by the Quoky process. Phase 1 is read-only monitoring (wave 3, after SUB-2). Phase 2 handles cancel,
-  forget, reject and approve through the same Core use cases and approval gates as chat (wave 4+, after MEM-1). Remote
+  screen served by the Quoky process. Phase 1 is read-only monitoring (wave 3, after SUB-2). Phase 2 handles reminder
+  cancel and memory forget in wave 4 (after MEM-1), then reject and approve in wave 6 (P2), through a decision service
+  extracted from the runtime, with the same approval gates as chat. Remote
   access (Tailscale or other tunnels) and a separate mobile/desktop client are out of v3 and belong to Team/Hosted.
 
 **Post-v3 extensions (taken up only after all Personal v3 development completes)**
