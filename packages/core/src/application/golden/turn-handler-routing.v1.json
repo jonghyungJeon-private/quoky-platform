@@ -1,7 +1,7 @@
 {
   "suite": "turn-handler-routing",
   "version": 1,
-  "note": "INT-1 (ADR-0096 D2/D5 golden routing ratchet). Scored end-to-end by apps/quoky/src/personal-v2-acceptance.test.ts against the production AppModule: `route` is the registered handler id that claimed the turn, `runtime` (a deterministic runtime branch: help, post-push replies) or `classifier` (fell through to intent classification/chat). `kind` is the work-chat command kind; `reply` labels a runtime reply; `providerCalls: 0` pins a deterministic turn. `ctx.openTodos` are added through the to-do handler first; `ctx.applyAnchor` seeds a post-push apply-preview anchor.",
+  "note": "INT-1 (ADR-0096 D2/D5 golden routing ratchet). Scored end-to-end by apps/quoky/src/personal-v2-acceptance.test.ts against the production AppModule: `route` is the registered handler id that claimed the turn, `runtime` (a deterministic runtime branch: help, post-push replies) or `classifier` (fell through to intent classification/chat). `kind` is the work-chat command kind; `reply` labels a runtime reply; `providerCalls: 0` pins a deterministic turn. `ctx.openTodos` are added through the to-do handler first; `ctx.applyAnchor` seeds a post-push apply-preview anchor; `ctx.registeredProject` registers a real sandbox git repository first and `ctx.priorTurns` are sent after it (v3 W1-L01).",
   "cases": [
     {"id": "route-001", "text": "피드백 요약", "expected": {"route": "feedback.summary", "providerCalls": 0}, "source": "ADR-0098 D6 control-stage handler (order 100)", "mustPass": true},
     {"id": "route-002", "text": "도움말", "expected": {"route": "runtime", "reply": "help", "providerCalls": 0}, "source": "ADR-0093 help (runtime control branch, before every handler stage)", "mustPass": true},
@@ -129,6 +129,11 @@
     {"id": "route-124", "text": "슬랙 어떻게 써?", "expected": {"route": "classifier"}, "source": "ADR-0104 D4 negative: other services are absent from the help topic index", "mustPass": true},
     {"id": "route-125", "text": "할 일 관리 잘하는 법", "expected": {"route": "classifier"}, "source": "ADR-0104 D4 negative: productivity advice, not a command how-to", "mustPass": true},
     {"id": "route-126", "text": "how do I reverse a list in python?", "expected": {"route": "classifier"}, "source": "ADR-0104 D4 negative: English programming how-to is ordinary chat", "mustPass": true},
-    {"id": "route-127", "text": "오늘 점심 뭐 먹을까?", "expected": {"route": "classifier"}, "source": "ADR-0104 D4 negative: ordinary chat is not hijacked", "mustPass": true}
+    {"id": "route-127", "text": "오늘 점심 뭐 먹을까?", "expected": {"route": "classifier"}, "source": "ADR-0104 D4 negative: ordinary chat is not hijacked", "mustPass": true},
+    {"id": "route-128", "text": "완료 처리 어떻게 해?", "ctx": {"registeredProject": true}, "expected": {"route": "help-intent", "providerCalls": 0}, "source": "v3 W1-L01: the how-to question with a registered project (the dev bot had one; the corpus had none)", "mustPass": true},
+    {"id": "route-129", "text": "완료 처리 어떻게 해?", "ctx": {"registeredProject": true, "priorTurns": ["로그인 버그 고쳐줘"]}, "expected": {"route": "help-intent", "providerCalls": 0}, "source": "v3 W1-L01 live: a pending code-change scope clarification captured the how-to question; a how-to question with no file is a new question", "mustPass": true},
+    {"id": "route-130", "text": "알림 어떻게 지워?", "ctx": {"registeredProject": true, "priorTurns": ["로그인 버그 고쳐줘"]}, "expected": {"route": "help-intent", "providerCalls": 0}, "source": "v3 W1-L01 family: reminder how-to after a scope clarification", "mustPass": true},
+    {"id": "route-131", "text": "git commit 은 어떻게 하는 거야?", "expected": {"route": "classifier"}, "source": "v3 W1-L03 live: a git-commit how-to question got the commit-unavailable reply; it is ordinary chat", "mustPass": true},
+    {"id": "route-132", "text": "git commit 은 어떻게 하는 거야?", "ctx": {"registeredProject": true, "priorTurns": ["로그인 버그 고쳐줘"]}, "expected": {"route": "classifier"}, "source": "v3 W1-L03 with a registered project and a pending scope clarification: still ordinary chat", "mustPass": true}
   ]
 }

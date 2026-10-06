@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,6 +77,10 @@ interface RoutingCtx {
   readonly openTodos?: readonly string[];
   /** A post-push apply-preview anchor status seeded on the session before the case's text is sent. */
   readonly applyAnchor?: ApplyPreviewAnchor['status'];
+  /** Register a real sandbox git repository as the session's project first (live QA W1-L01: the dev bot had one). */
+  readonly registeredProject?: boolean;
+  /** Turns sent (after the project registration) before the case's text, e.g. a code change that leaves a clarification. */
+  readonly priorTurns?: readonly string[];
 }
 interface RoutingExpected {
   readonly route: string;
@@ -372,6 +377,19 @@ interface CaseObservation extends TurnObservation {
   readonly setupProviderTouches: number;
 }
 
+let sandboxRepoPath = '';
+/** One real, empty sandbox git repository (created once) for `registeredProject` cases. */
+function sandboxRepo(): string {
+  if (sandboxRepoPath !== '') return sandboxRepoPath;
+  const path = join(tempDir, 'sandbox-repo');
+  mkdirSync(path, { recursive: true });
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'int', GIT_AUTHOR_EMAIL: 'int@example.invalid', GIT_COMMITTER_NAME: 'int', GIT_COMMITTER_EMAIL: 'int@example.invalid' };
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: path, env });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: path, env });
+  sandboxRepoPath = path;
+  return path;
+}
+
 /** Run one case in its own fresh context (its own actor, session, to-dos and reminders), applying `ctx` first. */
 async function observeCase(golden: { text: string; ctx?: RoutingCtx }): Promise<CaseObservation> {
   const context = harness.freshContext();
@@ -380,6 +398,12 @@ async function observeCase(golden: { text: string; ctx?: RoutingCtx }): Promise<
     const added = await harness.turn(context, `할 일 추가: ${title}`);
     if (added.route !== 'work-chat.todo') throw new Error(`setup to-do was not added: ${title}`);
   }
+  if (golden.ctx?.registeredProject) {
+    await harness.turn(context, `이 프로젝트 등록해줘: ${sandboxRepo()}`);
+    const session = await harness.storage.sessions.findActiveByContext(context.channelId, context.threadId);
+    if (!session?.activeProjectId) throw new Error('setup project was not registered');
+  }
+  for (const text of golden.ctx?.priorTurns ?? []) await harness.turn(context, text);
   if (golden.ctx?.applyAnchor) await seedPostPushAnchor(harness, context, golden.ctx.applyAnchor);
   const setupProviderTouches = harness.providerCalls() + harness.availabilityProbes() - before;
   return { ...(await harness.turn(context, golden.text)), context, setupProviderTouches };
@@ -810,5 +834,43 @@ describe('Personal v3 wave 1 — help intent (ADR-0104 D4, LLM-1 module register
     const help = await harness.turn(harness.freshContext(), '도움말');
     expect(help.route).toBe('runtime');
     for (const line of own) expect(help.text.split('\n')).toContain(line);
+  });
+});
+
+describe('Personal v3 wave 1 — live QA W1-L01 / W1-L03 with a registered project', () => {
+  const PROJECT = { registeredProject: true };
+  const CLARIFYING = { registeredProject: true, priorTurns: ['로그인 버그 고쳐줘'] };
+  const route = (text: string, ctx?: RoutingCtx) =>
+    routing.cases.find((c) => c.text === text && JSON.stringify(c.ctx ?? null) === JSON.stringify(ctx ?? null));
+
+  it('the corpus pins the registered-project cases', () => {
+    expect(route('완료 처리 어떻게 해?', PROJECT)?.expected).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('완료 처리 어떻게 해?', CLARIFYING)?.expected).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('알림 어떻게 지워?', CLARIFYING)?.expected).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('git commit 은 어떻게 하는 거야?')?.expected).toEqual({ route: 'classifier' });
+    expect(route('git commit 은 어떻게 하는 거야?', CLARIFYING)?.expected).toEqual({ route: 'classifier' });
+  });
+
+  it('W1-L01: a how-to question right after a code-change clarification reaches the help-intent handler', async () => {
+    const byId = await observeSuite(routing);
+    const golden = route('완료 처리 어떻게 해?', CLARIFYING) as RoutingCase;
+    const seen = byId.get(golden.id) as CaseObservation;
+    expect(seen.route).toBe('help-intent');
+    expect(seen.text).toContain('"완료 처리: 번호"');
+    expect(seen.text).not.toContain('수정할 파일 경로와 함께');
+    // The registered project was really active for the case.
+    const session = await harness.storage.sessions.findActiveByContext(seen.context.channelId, seen.context.threadId);
+    expect(session?.activeProjectId).toBeTruthy();
+  });
+
+  it('W1-L03: a git-commit how-to question is ordinary chat, never the commit-unavailable reply or an internal state name', async () => {
+    const byId = await observeSuite(routing);
+    for (const ctx of [undefined, CLARIFYING]) {
+      const golden = route('git commit 은 어떻게 하는 거야?', ctx) as RoutingCase;
+      const seen = byId.get(golden.id) as CaseObservation;
+      expect(seen.route, golden.id).toBe('classifier');
+      expect(seen.text, golden.id).toBe(STUB_REPLY);
+      expect(seen.text, golden.id).not.toMatch(/WORKSPACE_APPLIED|커밋 승인을 준비할 수 없어요|수정할 파일 경로와 함께/u);
+    }
   });
 });

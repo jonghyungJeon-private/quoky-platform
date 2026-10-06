@@ -41,7 +41,7 @@ interface IntentCase extends GoldenCase<IntentExpected> {
 }
 type PrecedenceCase = GoldenCase<{ handler: string }>;
 interface RoutingCase extends GoldenCase<{ route: string; kind?: string; reply?: string; providerCalls?: number }> {
-  ctx?: { openTodos?: string[]; applyAnchor?: string };
+  ctx?: { openTodos?: string[]; applyAnchor?: string; registeredProject?: boolean; priorTurns?: string[] };
 }
 /** ADR-0104 D6: `guard` cases replay a chat reply through the claim guard; `turn` cases route like `RoutingCase`. */
 type ActionShapedCase =

@@ -1,4 +1,5 @@
 import { describeAiFailure } from './ai-failure';
+import { detectHelpIntent } from './help-intent/help-intent';
 import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { guardInternalActionClaims } from './chat-policy/internal-action-claim-guard';
 import {
@@ -1090,6 +1091,15 @@ const PUSH_REQUEST_SHAPES: readonly RegExp[] = [
   /^\s*git\s+push(\s+[\w./:@+=~^-]+)*\s*[.!]*$/i,
 ];
 /** Questions / how-to / notification topics that merely mention push are ordinary chat. */
+/**
+ * A how-to / explanation question (live QA W1-L01, W1-L03): "git commit 은 어떻게 하는 거야?", "커밋해 주는 방법",
+ * "완료 처리 어떻게 해?", "what is git commit?". It asks how something works and never requests the action, so it is
+ * never a commit request, a git-mutation reject or the reply to a pending scope clarification; it reaches the
+ * `pre-classify` help-intent handler or ordinary chat. No execution gate consults it (those stay exact allow-lists).
+ */
+const HOW_TO_QUESTION =
+  /어떻게|방법|하는\s*법|사용법|뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻이|차이|설명해|\bhow\s+(?:do|does|can|should|would|to)\b|\bwhat\s+(?:is|does|are)\b|\bexplain\b/i;
+
 const PUSH_CHAT_TOPIC =
   /[?？]|뭐|무엇|뭔|어떻게|어떤|왜|방법|알려|설명|차이|알림|notification|설정|구현|\bhow\b|\bwhat\b|\bwhy\b|\bexplain\b|\bdifference\b|\bwhen\b/i;
 
@@ -1715,7 +1725,8 @@ export class ConversationRuntime {
    */
   static interpretGitPreviewIntent(text: string): 'status' | 'diff' | 'mutating' | null {
     const t = text.trim().toLowerCase();
-    if (GIT_MUTATING_WORDS.test(t)) return 'mutating';
+    // W1-L03: a how-to question about a git mutation ("git commit 어떻게 해?") is chat, not a mutation to reject.
+    if (GIT_MUTATING_WORDS.test(t)) return HOW_TO_QUESTION.test(t) ? null : 'mutating';
     if (GIT_DIFF_WORDS.test(t)) return 'diff';
     if (GIT_STATUS_WORDS.test(t)) return 'status';
     return null;
@@ -1734,6 +1745,8 @@ export class ConversationRuntime {
     // "commit and push" / "커밋하고 push" is rejected as unsupported (never routed to a plain commit or the
     // 2w mutating reply). The plain-commit trigger stays conservative via COMMIT_WORDS. Negation-aware
     // (ADR-0062 draft): a NEGATED commit/companion token ("커밋하지 마", "do not commit/push") is NOT a request.
+    // W1-L03: a how-to question ("git commit 은 어떻게 하는 거야?") asks about committing — never a commit request.
+    if (HOW_TO_QUESTION.test(text)) return null;
     const hasCommitToken = unnegatedMatch(text, [/커밋|\bcommit\b/i]);
     if (hasCommitToken && unnegatedMatch(text, [COMMIT_FORBIDDEN_COMPANION])) return 'commit-with-forbidden';
     if (!unnegatedMatch(text, [COMMIT_WORDS])) return null; // "커밋 전"/push-only/negated/etc. → not a commit request
@@ -2078,7 +2091,13 @@ export class ConversationRuntime {
       // fresh request too — the bare-path recovery only routes existing files, so it would answer the same
       // "not found" reply again (dead end). Routed normally, the create wording is honored and its own text is the
       // instruction.
-      if (!detectProjectRegistration(message.text) && !ConversationRuntime.isFreshCreateResend(message.text)) {
+      // W1-L01 (live QA): a how-to question that names no file ("완료 처리 어떻게 해?") is a new question, not the
+      // reply naming the file — routed normally, it reaches the `pre-classify` help-intent handler or chat.
+      if (
+        !detectProjectRegistration(message.text) &&
+        !ConversationRuntime.isFreshCreateResend(message.text) &&
+        !ConversationRuntime.isHowToQuestionWithoutTarget(message.text)
+      ) {
         return this.handleScopeClarificationTurn(message, session, actor, pendingScope);
       }
       await this.deps.scopeClarificationFlow.clear(session);
@@ -6524,6 +6543,12 @@ export class ConversationRuntime {
    * (non-negated) create wording and at least one safe named path (ADR-0099 D1 QA follow-up). Such a resend is
    * routed as a fresh request instead of the existing-files-only bare-path recovery.
    */
+  private static isHowToQuestionWithoutTarget(text: string): boolean {
+    if (detectHelpIntent(text) === null && !HOW_TO_QUESTION.test(text)) return false;
+    const { candidates, unsafe } = extractSafeTargetCandidates(text);
+    return candidates.length === 0 && unsafe.length === 0;
+  }
+
   private static isFreshCreateResend(text: string): boolean {
     return ConversationRuntime.isExplicitNewFileRequest(text) && extractSafeTargetCandidates(text).candidates.length > 0;
   }

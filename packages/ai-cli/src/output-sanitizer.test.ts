@@ -572,60 +572,80 @@ describe('stripTrailingTranslationMetaLine (ADR-0104 D5, QA-V2-W7-06)', () => {
 describe('stripStrayHanCharacters (ADR-0104 D5, QA-V2-003)', () => {
   const ko = generalChatReplyPolicy('메일 쓰는 법 알려줘');
 
-  it('removes an isolated Han character standing between Hangul words (the live "栏" shape)', () => {
-    expect(stripStrayHanCharacters('메일 제목 栏 에 요점을 적어요.', ko)).toBe('메일 제목 에 요점을 적어요.');
-    expect(stripStrayHanCharacters('받는 사람을 확인하고 栏 본문을 써요.', ko)).toBe('받는 사람을 확인하고 본문을 써요.');
-    expect(sanitizeGeneralChatText('먼저 제목을 栏 정해요.\n그다음 본문을 써요.', ko)).toBe(
-      '먼저 제목을 정해요.\n그다음 본문을 써요.',
-    );
+  it('removes a lone Han / Kana character fused inside a Hangul word (the live "栏" artifact)', () => {
+    expect(stripStrayHanCharacters('메일 제목栏에 요점을 적어요.', ko)).toBe('메일 제목에 요점을 적어요.');
+    expect(stripStrayHanCharacters('받는 사람을 확인하고 본栏문을 써요.', ko)).toBe('받는 사람을 확인하고 본문을 써요.');
+    expect(stripStrayHanCharacters('제목을 정하고の본문을 써요.', ko)).toBe('제목을 정하고본문을 써요.');
+    expect(sanitizeGeneralChatText('먼저 제목栏을 정해요.\n그다음 본문을 써요.', ko)).toBe('먼저 제목을 정해요.\n그다음 본문을 써요.');
   });
 
   it('only for a Korean reply language without a language or translation request', () => {
-    const text = '메일 제목 栏 에 요점을 적어요.';
+    const text = '메일 제목栏에 요점을 적어요.';
     expect(stripStrayHanCharacters(text, generalChatReplyPolicy('How do I write an email?'))).toBe(text);
     expect(stripStrayHanCharacters(text, generalChatReplyPolicy('중국어로 번역해줘'))).toBe(text);
     expect(stripStrayHanCharacters(text, generalChatReplyPolicy('👍'))).toBe(text);
     expect(stripStrayHanCharacters(text, undefined)).toBe(text);
   });
 
-  it('keeps Han runs, glosses, mixed words, edge positions and conventional standalone Hanja', () => {
-    const ko2 = generalChatReplyPolicy('한자 알려줘');
+  it('keeps whitespace-separated tokens, Han runs, glosses, quotes, edges and conventional Hanja (P2 :388)', () => {
     for (const text of [
+      '한자는 木 나무를 나타냅니다.',
+      '나무는 木 이라고 써요.',
+      '메일 제목 栏 에 요점을 적어요.',
+      '받는 사람을 확인하고 栏 본문을 써요.',
       '대한민국은 韓國 이라고도 써요.',
+      '대한韓國민국',
       '강(江)은 물줄기를 뜻해요.',
       '강 (江) 은 물줄기예요.',
-      '제목栏에 적어요.',
-      '栏 제목에 적어요.',
-      '제목에 적어요 栏',
-      '前 장관이 말했어요.',
-      '故 김 씨를 기려요.',
-      '한국 對 일본 경기예요.',
-      '中 사이즈로 주세요.',
-      '숫자 3 日 뒤에 봐요.',
-      '제목 栏. 다음 줄이에요.',
+      '괄호(설명江설명) 안이에요.',
+      '따옴표 "설명江설명" 안이에요.',
+      '「설명江설명」 안이에요.',
+      '栏제목에 적어요.',
+      '제목에 적어요栏',
+      '前장관이 말했어요.',
+      '한국對일본 경기예요.',
+      '숫자 3日뒤에 봐요.',
       '日本語 では こう 書きます.',
     ]) {
-      expect(stripStrayHanCharacters(text, ko2), text).toBe(text);
+      expect(stripStrayHanCharacters(text, ko), text).toBe(text);
     }
   });
 
-  it('never inspects code: fences, indented code, inline code or a line with an unmatched backtick', () => {
-    const fenced = '설명이에요.\n```\n제목 栏 에\n```\n끝이에요.';
+  it('never touches a reply that discusses characters, Hanja or another language', () => {
+    for (const text of [
+      '한자 수업에서 나무목木자를 배웠어요.',
+      '일본어 조사는の처럼 써요.',
+      '이 글자는 중국어로栏이라고 읽어요.',
+    ]) {
+      expect(stripStrayHanCharacters(text, ko), text).toBe(text);
+    }
+  });
+
+  it('never inspects code: fences, indented code, inline code (also across lines) or an unmatched backtick', () => {
+    const fenced = '설명이에요.\n```\n제목栏에\n```\n끝이에요.';
     expect(stripStrayHanCharacters(fenced, ko)).toBe(fenced);
-    const indented = '설명이에요.\n\n    제목 栏 에';
+    const indented = '설명이에요.\n\n    제목栏에';
     expect(stripStrayHanCharacters(indented, ko)).toBe(indented);
-    const inline = '코드 `제목 栏 에` 그대로예요.';
+    const inline = '코드 `제목栏에` 그대로예요.';
     expect(stripStrayHanCharacters(inline, ko)).toBe(inline);
-    const unmatched = '코드 `제목 栏 에 그대로예요.';
+    const unmatched = '코드 `제목栏에 그대로예요.';
     expect(stripStrayHanCharacters(unmatched, ko)).toBe(unmatched);
-    const unbalanced = '설명 栏 이에요.\n```\n열린 펜스';
+    const unbalanced = '설명栏이에요.\n```\n열린 펜스';
     expect(stripStrayHanCharacters(unbalanced, ko)).toBe(unbalanced);
+    // P2 :417 — a valid multiline code span keeps every character, including a line whose backticks pair differently.
+    const multiline = '값은 `첫째\n제목栏에서` 이고 `b` 예요.';
+    expect(stripStrayHanCharacters(multiline, ko)).toBe(multiline);
+    const multilineSpaced = '값은 `첫째\n제목 栏 에서` 와 `b` 예요.';
+    expect(stripStrayHanCharacters(multilineSpaced, ko)).toBe(multilineSpaced);
+    const doubleTicks = '값은 ``a ` 제목栏에서\n끝`` 이에요.';
+    expect(stripStrayHanCharacters(doubleTicks, ko)).toBe(doubleTicks);
     // Prose next to inline code is still cleaned; the code span is kept byte for byte.
-    expect(stripStrayHanCharacters('값은 `a 栏 b` 이고 제목 栏 에 써요.', ko)).toBe('값은 `a 栏 b` 이고 제목 에 써요.');
+    expect(stripStrayHanCharacters('값은 `a栏b` 이고 제목栏에 써요.', ko)).toBe('값은 `a栏b` 이고 제목에 써요.');
+    expect(stripStrayHanCharacters('값은 `첫째\n둘째` 이고\n제목栏에 써요.', ko)).toBe('값은 `첫째\n둘째` 이고\n제목에 써요.');
   });
 
   it('keeps every other line and line ending byte for byte', () => {
-    const text = '첫 줄이에요.\r\n제목 栏 에 써요.\r\n\r\n마지막 줄.';
-    expect(stripStrayHanCharacters(text, ko)).toBe('첫 줄이에요.\r\n제목 에 써요.\r\n\r\n마지막 줄.');
+    const text = '첫 줄이에요.\r\n제목栏에 써요.\r\n\r\n마지막 줄.';
+    expect(stripStrayHanCharacters(text, ko)).toBe('첫 줄이에요.\r\n제목에 써요.\r\n\r\n마지막 줄.');
   });
 });
