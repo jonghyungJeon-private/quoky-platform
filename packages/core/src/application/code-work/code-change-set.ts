@@ -89,17 +89,86 @@ const PATH_RUN_PATTERN = /[\w@.~/-]+/g;
  *
  * An unsafe path is refused as a target, NOT the whole request: an API route, log path or import specifier in
  * the instruction prose (`src/routes.ts 에 /api/v1/users 라우트 추가해줘`) leaves the safe named target intact.
- * The caller refuses with the typed unsafe path only when no safe candidate is left. Pure; no I/O.
+ * The caller refuses with the typed unsafe path only when no safe candidate is left. Candidates are the slash-bearing
+ * project-relative paths plus bare repository-root filenames (`test.js`, `package.json` — QA-V2-CL-01), in order of
+ * appearance. Pure; no I/O.
  */
 export function extractSafeTargetCandidates(text: string): { candidates: string[]; unsafe: string[] } {
   const unsafe = extractMentionedPathTokens(text).filter(isUnsafeMentionedPath);
   const extractionText = targetExtractionText(text);
-  if (unsafe.length === 0) return { candidates: extractTargetPathCandidates(extractionText), unsafe };
+  if (unsafe.length === 0) return { candidates: orderedTargetCandidates(extractionText), unsafe };
   const blocked = new Set(unsafe);
   const masked = extractionText.replace(PATH_RUN_PATTERN, (run) =>
     blocked.has(run.replace(/\.+$/, '')) ? ' '.repeat(run.length) : run,
   );
-  return { candidates: extractTargetPathCandidates(masked), unsafe };
+  return { candidates: orderedTargetCandidates(masked), unsafe };
+}
+
+/**
+ * Root-level file extensions a bare filename (no `/`) may carry to count as a named target (QA-V2-CL-01). Source,
+ * config and doc files only: a version (`v1.2.3`), an abbreviation (`e.g.`), a domain (`example.com`) or a method
+ * call (`console.log`) never ends in one of these.
+ */
+const BARE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'json', 'jsonc', 'json5', 'md', 'mdx', 'txt', 'yml', 'yaml',
+  'toml', 'ini', 'cfg', 'xml', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'vue', 'svelte', 'astro', 'py', 'rb',
+  'go', 'rs', 'java', 'kt', 'kts', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'sql',
+  'graphql', 'gql', 'prisma', 'proto',
+]);
+
+/** Technology names spelled like a `.js` file ("Node.js", "Next.js", "Vue.js") — prose, never a bare target. */
+const TECHNOLOGY_JS_NAMES: ReadonlySet<string> = new Set([
+  'node', 'next', 'nuxt', 'nest', 'vue', 'react', 'preact', 'solid', 'svelte', 'angular', 'ember', 'backbone',
+  'express', 'koa', 'fastify', 'hapi', 'deno', 'bun', 'three', 'd3', 'chart', 'p5', 'pixi', 'babylon', 'alpine',
+  'socket', 'moment', 'knockout', 'meteor', 'gatsby', 'remix', 'electron', 'anime', 'riot', 'mithril', 'polymer',
+]);
+
+/**
+ * A bare root-level filename (`test.js`, `package.json`, `README.md`): not preceded by a path/word character, a dot
+ * (`.eslintrc.json` stays a dot-file, never rewritten to `eslintrc.json`), `~`, `:`, `@` or a backslash (a
+ * Windows/absolute spelling is never rewritten into a root file), and not followed by a path character or `(` (a
+ * method call such as `res.json()` is content). A Korean particle may follow directly (`test.js와`, `test.js에`).
+ */
+const BARE_FILE_PATTERN = /(?<![\w./\\~:@-])[A-Za-z0-9_][\w.-]*\.([A-Za-z][A-Za-z0-9]*)(?![\w/\\(-])/g;
+
+/**
+ * Bare root-level filename candidates with their positions (QA-V2-CL-01, ADR-0099 D1 "every safe named path").
+ * ADR-0036's slash-only extractor ({@link extractTargetPathCandidates}) left a repository-root file untargetable —
+ * `src/greet.js 와 test.js 에 …` silently dropped `test.js`. A bare name counts only with a source/config/doc
+ * extension and is never a technology name; it is still only a CANDIDATE — existence is verified by the caller.
+ */
+function bareRootFileCandidates(text: string): Array<{ index: number; path: string }> {
+  const out: Array<{ index: number; path: string }> = [];
+  for (const match of text.matchAll(BARE_FILE_PATTERN)) {
+    const token = match[0];
+    const extension = (match[1] ?? '').toLowerCase();
+    if (!BARE_FILE_EXTENSIONS.has(extension)) continue;
+    const stem = token.slice(0, token.length - extension.length - 1).toLowerCase();
+    if (extension === 'js' && TECHNOLOGY_JS_NAMES.has(stem)) continue;
+    out.push({ index: match.index ?? 0, path: token });
+  }
+  return out;
+}
+
+/**
+ * Every safe target candidate in order of appearance: the slash-bearing project-relative paths
+ * ({@link extractTargetPathCandidates}, ADR-0036) merged with bare root-level filenames ({@link bareRootFileCandidates}).
+ * `text` is already URL/fence-blanked and unsafe-masked. Pure; no I/O.
+ */
+function orderedTargetCandidates(text: string): string[] {
+  const located: Array<{ index: number; path: string }> = [];
+  let from = 0;
+  for (const path of extractTargetPathCandidates(text)) {
+    const index = text.indexOf(path, from);
+    located.push({ index: index < 0 ? from : index, path });
+    if (index >= 0) from = index + path.length;
+  }
+  located.push(...bareRootFileCandidates(text));
+  const out: string[] = [];
+  for (const { path } of located.sort((a, b) => a.index - b.index)) {
+    if (!out.includes(path)) out.push(path);
+  }
+  return out;
 }
 
 function isUnsafeMentionedPath(token: string): boolean {

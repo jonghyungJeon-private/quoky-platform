@@ -108,6 +108,47 @@ describe('extractSafeTargetCandidates', () => {
   });
 });
 
+describe('extractSafeTargetCandidates — bare root-level filenames (QA-V2-CL-01)', () => {
+  it.each([
+    ['src/greet.js 와 test.js 에 각 함수 위에 한 줄 JSDoc 주석을 추가해줘', ['src/greet.js', 'test.js']],
+    ['test.js와 src/greet.js에 주석 추가해줘', ['test.js', 'src/greet.js']],
+    ['package.json 의 scripts 에 lint 추가해줘', ['package.json']],
+    ['README.md를 고쳐줘', ['README.md']],
+    ['index.ts에 export 추가', ['index.ts']],
+    ['`test.js` 고쳐줘', ['test.js']],
+    ['test.js. 끝', ['test.js']],
+    ['test.js:10 고쳐줘', ['test.js']],
+    ['src/a.ts, test.js, src/b.ts 고쳐줘', ['src/a.ts', 'test.js', 'src/b.ts']],
+  ])('%s → %j (in order of appearance)', (text, candidates) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(candidates);
+  });
+
+  it.each([
+    ['Node.js 로 src/server.js 를 바꿔줘'],
+    ['Next.js 와 Vue.js 차이를 반영해서 src/server.js 고쳐줘'],
+    ['e.g. v1.2.3 버전으로 src/server.js 고쳐줘'],
+    ['src/server.js 에서 console.log 를 지워줘'],
+    ['src/server.js 에서 res.json() 대신 res.send() 써줘'],
+    ['src/server.js 의 example.com 주소 고쳐줘'],
+    ['src/server.js 에서 me@test.js 지워줘'],
+  ])('%s → prose names are never bare targets', (text) => {
+    expect(extractSafeTargetCandidates(text).candidates).toEqual(['src/server.js']);
+  });
+
+  it('never rewrites a dot-file, an unsafe path or a Windows path into a root file', () => {
+    expect(extractSafeTargetCandidates('.eslintrc.json 고쳐줘').candidates).toEqual([]);
+    expect(extractSafeTargetCandidates('../test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['../test.js'] });
+    expect(extractSafeTargetCandidates('/etc/test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['/etc/test.js'] });
+    expect(extractSafeTargetCandidates('~/test.js 고쳐줘')).toEqual({ candidates: [], unsafe: ['~/test.js'] });
+    expect(extractSafeTargetCandidates('C:\\repo\\test.js 고쳐줘').candidates).toEqual([]);
+  });
+
+  it('ignores a bare filename inside fenced code or a URL', () => {
+    expect(extractSafeTargetCandidates('src/a.ts 고쳐줘\n```\nrequire("./util.js")\nutil.js\n```').candidates).toEqual(['src/a.ts']);
+    expect(extractSafeTargetCandidates('src/a.ts 고쳐줘 https://x.dev/test.js').candidates).toEqual(['src/a.ts']);
+  });
+});
+
 describe('collectCodeChangeTargets', () => {
   const existing = (paths: string[]) => {
     const looked: string[] = [];

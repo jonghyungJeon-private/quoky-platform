@@ -9752,6 +9752,48 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     expect(result.reply.text).toBe(composer.composeTooManyTargets(CTX, 6).text);
   });
 
+  // ── QA-V2-CL-01: a bare repository-root filename is a named target, never silently dropped ──────
+  it('QA-V2-CL-01: "src/greet.js 와 test.js 에 …" → BOTH files are targets and both are named before "승인"', async () => {
+    const text = 'src/greet.js 와 test.js 에 각 함수 위에 한 줄 JSDoc 주석을 추가해줘';
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/greet.js', 'test.js']) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['src/greet.js', 'test.js']);
+    expect(calls.lastRunRequest?.instruction).toBe(text);
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, ['src/greet.js', 'test.js']).text);
+    expect(result.reply.text).toContain('test.js');
+  });
+
+  it('QA-V2-CL-01: a named root file that does not exist is NAMED in the missing reply (never dropped)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf(['src/greet.js']) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('src/greet.js 와 test.js 에 주석 추가해줘'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetsMissing(CTX, ['test.js']).text);
+  });
+
+  it('QA-V2-CL-01: a single missing bare root file is echoed by name, not the generic "which file?" copy', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('test.js 에 주석 추가해줘'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'test.js').text);
+    expect(calls.scopeAnchor).toBe(1);
+  });
+
+  it('QA-V2-CL-01: a bare root filename recovers a pending scope clarification', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['package.json']) });
+    await new ConversationRuntime(deps).handle(messageOf('scripts 에 lint 추가해줘'));
+    expect(calls.scopeAnchor).toBe(1);
+    const result = await new ConversationRuntime(deps).handle(messageOf('package.json'));
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['package.json']);
+    expect(calls.lastRunRequest?.instruction).toBe('scripts 에 lint 추가해줘');
+    expect(result.reply.text).toBe(composer.composeCodeChangeApprovalRequired(CTX, ['package.json']).text);
+  });
+
+  it('QA-V2-CL-01: a technology name such as "Node.js" is prose, never a target', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/server.js']) });
+    await new ConversationRuntime(deps).handle(messageOf('Node.js 18 기준으로 src/server.js 고쳐줘'));
+    expect(calls.lastRunRequest?.targetFiles).toEqual(['src/server.js']);
+  });
+
   // ── unsafe typed paths are never targets, never rewritten (ADR-0099 D1) ─────────────────────
   const UNSAFE_REWRITES = [A, 'etc/hosts.txt', 'outside/x.ts', 'github/workflows/ci.yml', 'etc/x.ts', 'lib/util.js'];
   describe.each([

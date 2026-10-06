@@ -6684,14 +6684,17 @@ export class ConversationRuntime {
     collected: CodeChangeTargetCollection,
     unsafe: readonly string[],
   ): OutboundMessage {
+    // A missing safe path is the one the owner meant (echoed from the collection itself, so a bare root-level
+    // filename such as `test.js` — never a slash-bearing mention — is named too: QA-V2-CL-01); only with no safe
+    // path at all is the unsafe one echoed.
+    const firstMissing = collected.kind === 'missing' ? collected.missing[0] : undefined;
     if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
       return this.deps.composer.composeTargetsMissing(message.context, collected.missing);
     }
-    // A missing safe path is the one the owner meant; only with no safe path at all is the unsafe one echoed.
     const mentioned = extractMentionedPathTokens(message.text);
     const typed = collected.kind === 'none'
       ? (unsafe[0] ?? mentioned[0])
-      : (mentioned.find((token) => !unsafe.includes(token)) ?? mentioned[0]);
+      : (firstMissing ?? mentioned.find((token) => !unsafe.includes(token)) ?? mentioned[0]);
     return typed
       ? this.deps.composer.composeTargetPathRejected(message.context, typed)
       : this.deps.composer.composeTargetScopeClarification(message.context);
