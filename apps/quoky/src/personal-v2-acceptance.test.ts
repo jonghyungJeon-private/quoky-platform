@@ -1355,6 +1355,28 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     expect((await run('보관함')).text).toBe('보관함이 비어 있어요. 지금 설정에서는 잊은 기억을 보관하지 않고 바로 완전히 지워요.');
   });
 
+  it('fix loop 2: an edit request never reaches history verbatim, even when the rewrite AND the removal both fail', async () => {
+    const owner = harness.freshContext();
+    expect((await harness.turn(owner, '기억해: 평범한 기억이야')).reply).toBe('memory-stored');
+    const redact = vi.spyOn(harness.memory, 'redactShortTerm').mockRejectedValue(new Error('disk full'));
+    const remove = vi.spyOn(harness.memory, 'deleteShortTerm').mockRejectedValue(new Error('disk full'));
+    try {
+      const strict = await harness.turn(owner, '기억 1 수정: const dbPassword = "synthetic-value"');
+      expect(strict.text).toContain('민감한 정보');
+      expect(strict.text).not.toContain('synthetic-value');
+      const ask = await harness.turn(owner, '기억 1 수정: 아주 새로운 비공개 문장');
+      expect(ask.text).toContain('새 내용: 아주 새로운 비공개 문장'); // the reply itself is unchanged
+      expect(redact).toHaveBeenCalled();
+      expect(remove).toHaveBeenCalled();
+    } finally {
+      redact.mockRestore();
+      remove.mockRestore();
+    }
+    const history = (await harness.storage.memories.findShortTermByUser(owner.userId)).map((record) => record.content);
+    expect(history.filter((row) => row.includes('synthetic-value') || row.includes('아주 새로운 비공개 문장'))).toEqual([]);
+    expect(history.filter((row) => row === '기억 1 수정: (내용은 대화 기록에 남기지 않아요)')).toHaveLength(2);
+  });
+
   it('pins the golden memory-command routing (기억해: still saves; to-do and reminder phrases keep their handlers)', () => {
     const route = (text: string) => routing.cases.find((c) => c.text === text)?.expected;
     expect(route('기억해: 커피는 아메리카노')).toEqual({ route: 'runtime', reply: 'memory-stored', providerCalls: 0 });

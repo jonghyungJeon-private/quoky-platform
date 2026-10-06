@@ -1,6 +1,7 @@
 import { newId } from '../util/id';
 import { now } from '../util/clock';
 import { isArchivedMemory, MemoryType } from '../domain';
+import { memoryCommandHistoryUserText } from './memory-commands/memory-command-history';
 import type {
   ContextFile,
   ConversationContext,
@@ -31,9 +32,13 @@ export class MemoryManager {
     private readonly vector: VectorProvider,
   ) {}
 
-  /** Persist the latest USER message as short-term session memory (ADR-0017). */
+  /**
+   * Persist the latest USER message as short-term session memory (ADR-0017). A memory-edit request is stored with
+   * its text withheld (ADR-0106 D5, decided here at write time so no failure path leaves the raw text in history).
+   */
   async recordShortTerm(message: InboundMessage, sessionId?: Id): Promise<MemoryRecord> {
-    return this.saveShortTerm('user', message.text, message.context, sessionId);
+    const content = memoryCommandHistoryUserText(message.text) ?? message.text;
+    return this.saveShortTerm('user', content, message.context, sessionId);
   }
 
   /** Persist the assistant's response as short-term session memory (ADR-0017). */

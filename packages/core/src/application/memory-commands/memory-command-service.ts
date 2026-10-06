@@ -191,6 +191,8 @@ interface PendingConfirmation {
   readonly generation?: string;
   /** Disambiguates a re-issue whose code was already spent for the same record and generation. */
   readonly nonce: number;
+  /** The record's in-process state generation when the code was issued (bumped by every executed change). */
+  readonly stateGeneration: number;
 }
 
 /** A spent code, remembered per actor for the windows it could still be accepted in. */
@@ -242,11 +244,19 @@ export function deriveMemoryConfirmationCode(input: {
   readonly generation?: string;
   /** A re-issue counter, so a code spent for this record and generation is never handed out again. */
   readonly nonce?: number;
+  /**
+   * A monotonic per-record state generation: every executed change to the record (forget/archive, edit, restore,
+   * permanent delete, expiry purge) bumps it, so no code issued before a change can match after it — even when the
+   * record returns to an identical stored state (same `archivedAt`).
+   */
+  readonly stateGeneration?: number;
 }): string {
   const actionKey = typeof input.action === 'string' ? input.action : `edit:${sha256(input.action.edit)}`;
   const parts: unknown[] = ['quoky.memory-command.v1', input.recordId, sha256(input.content), actionKey, input.window];
   // Appended only when present, so a live record's first code is unchanged from ADR-0106 D4.
-  if (input.generation !== undefined || (input.nonce ?? 0) > 0) parts.push(input.generation ?? null, input.nonce ?? 0);
+  if (input.generation !== undefined || (input.nonce ?? 0) > 0 || (input.stateGeneration ?? 0) > 0) {
+    parts.push(input.generation ?? null, input.nonce ?? 0, input.stateGeneration ?? 0);
+  }
   const digest = createHash('sha256').update(JSON.stringify(parts)).digest();
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i += 1) code += CODE_ALPHABET[(digest[i] ?? 0) % CODE_ALPHABET.length];
@@ -327,6 +337,8 @@ export class MemoryCommandService {
   private readonly pending = new Map<Id, PendingConfirmation[]>();
   /** Spent codes per actor (still inside an accepting window), so a re-issue never hands one out again. */
   private readonly consumed = new Map<Id, ConsumedConfirmation[]>();
+  /** Monotonic per-record state generations (in process; pending codes do not survive a restart either). */
+  private readonly stateGenerations = new Map<Id, number>();
   private readonly cascades: readonly MemoryRemovalCascade[];
   readonly archiveDays: number;
 
@@ -562,7 +574,8 @@ export class MemoryCommandService {
   ) {
     const next = text.trim();
     // Refused before any lookup: a credential-shaped edit never produces a code (ADR-0106 acceptance).
-    if (isCredentialLikeMemoryText(next) || isCredentialLikeMemoryText(request.sourceText ?? '')) {
+    // The strict guard (chat + file-content, ADR-0107 D1) before any lookup, preview or code.
+    if (isStrictCredentialMemoryText(next) || isStrictCredentialMemoryText(request.sourceText ?? '')) {
       return this.reply('edit-sensitive', renderEditSensitiveRefused(language));
     }
     if (next.length > MAX_DURABLE_CONTENT_CHARACTERS) {
@@ -582,7 +595,7 @@ export class MemoryCommandService {
       renderEditConfirmation(
         number,
         this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS),
-        memoryPreview(next, MEMORY_CONFIRM_PREVIEW_MAX_CHARS),
+        this.previewOf(next, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS),
         code,
         language,
       ),
@@ -614,6 +627,7 @@ export class MemoryCommandService {
       record !== null &&
       eligible &&
       archiveGenerationOf(record) === entry.generation &&
+      this.stateGenerationOf(record.id) === entry.stateGeneration &&
       deriveMemoryConfirmationCode({
         recordId: record.id,
         content: record.content,
@@ -621,6 +635,7 @@ export class MemoryCommandService {
         window: entry.window,
         ...(entry.generation === undefined ? {} : { generation: entry.generation }),
         nonce: entry.nonce,
+        stateGeneration: entry.stateGeneration,
       }) === entry.code;
     if (!unchanged || record === null) {
       return this.reply('confirm-stale', renderConfirmStale(language, onArchive ? 'archive' : 'list'));
@@ -952,6 +967,7 @@ export class MemoryCommandService {
   private issue(request: MemoryCommandRequest, record: MemoryRecord, action: PendingAction): string {
     const window = memoryConfirmationWindow(request.now);
     const generation = archiveGenerationOf(record);
+    const stateGeneration = this.stateGenerationOf(record.id);
     const spent = this.liveConsumed(request.actorId, window);
     let nonce = 0;
     let code = '';
@@ -963,6 +979,7 @@ export class MemoryCommandService {
         window,
         ...(generation === undefined ? {} : { generation }),
         nonce,
+        stateGeneration,
       });
       if (!spent.some((entry) => entry.code === code)) break;
     }
@@ -970,7 +987,15 @@ export class MemoryCommandService {
     const kept = this.livePending(request.actorId, window).filter(
       (entry) => entry.code !== code && !(entry.recordId === record.id && entry.action.kind === action.kind),
     );
-    kept.push({ code, recordId: record.id, window, action, ...(generation === undefined ? {} : { generation }), nonce });
+    kept.push({
+      code,
+      recordId: record.id,
+      window,
+      action,
+      ...(generation === undefined ? {} : { generation }),
+      nonce,
+      stateGeneration,
+    });
     this.setPending(request.actorId, kept.slice(-MAX_PENDING_PER_ACTOR));
     return code;
   }
@@ -994,9 +1019,23 @@ export class MemoryCommandService {
     return live;
   }
 
-  /** Ends every outstanding code (any actor) for these record ids. */
+  private stateGenerationOf(recordId: Id): number {
+    return this.stateGenerations.get(recordId) ?? 0;
+  }
+
+  /**
+   * A state change happened to these records: bump each one's state generation, and end every outstanding code for
+   * them (any actor) by RETIRING it into that actor's spent set — kept until it would have expired — so an ended code
+   * can never be accepted or handed out again.
+   */
   private dropPendingFor(recordIds: ReadonlySet<Id>): void {
+    for (const recordId of recordIds) this.stateGenerations.set(recordId, this.stateGenerationOf(recordId) + 1);
     for (const [actorId, entries] of [...this.pending]) {
+      const ended = entries.filter((entry) => recordIds.has(entry.recordId));
+      if (ended.length === 0) continue;
+      const spent = this.consumed.get(actorId) ?? [];
+      for (const entry of ended) spent.push({ code: entry.code, recordId: entry.recordId, window: entry.window });
+      this.consumed.set(actorId, spent);
       this.setPending(
         actorId,
         entries.filter((entry) => !recordIds.has(entry.recordId)),

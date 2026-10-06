@@ -211,3 +211,20 @@ describe('MemoryManager short-term turn ownership and fail-closed removal (ADR-0
     expect(mem.map((record) => record.content)).toEqual(['답', '장기 기억']);
   });
 });
+
+describe('MemoryManager write-time history redaction (ADR-0106 D5, fix loop 2)', () => {
+  it('stores a memory-edit request with its text withheld at write time; other turns verbatim', async () => {
+    const { storage, mem } = fakeStorage();
+    const mm = new MemoryManager(storage, {} as VectorProvider);
+    await mm.recordShortTerm(msg('m1', '기억 1 수정: const dbPassword = "synthetic-value"'), 'S1');
+    await mm.recordShortTerm(msg('m2', 'edit memory 2: my new secret text'), 'S1');
+    await mm.recordShortTerm(msg('m3', '기억 목록'), 'S1');
+    await mm.recordShortTerm(msg('m4', '오늘 날씨 어때?'), 'S1');
+    expect(mem.map((record) => record.content)).toEqual([
+      '기억 1 수정: (내용은 대화 기록에 남기지 않아요)',
+      'edit memory 2: (text not kept in the conversation history)',
+      '기억 목록',
+      '오늘 날씨 어때?',
+    ]);
+  });
+});

@@ -999,3 +999,54 @@ describe('MemoryCommandService — fix loop 1 (Codex review of the ADR-0106 amen
     expect(h.records).toEqual([]);
   });
 });
+
+describe('MemoryCommandService — fix loop 2 (Codex re-review)', () => {
+  const confirmAt = (h: ReturnType<typeof harness>, ask: MemoryCommandResult, now = NOW) => h.run(`기억 확인 ${codeOf(ask)}`, now);
+
+  it('an invalidated code is retired: restore → re-archive with the SAME archivedAt → a new permanent-delete request never re-issues it', async () => {
+    const h = harness([memory('같은 시각 기억')], { archiveDays: 7 });
+    await confirmAt(h, await h.run('기억 1 잊어줘')); // archivedAt = NOW
+    const oldPurge = await h.run('기억 완전 삭제 1'); // outstanding, then invalidated by the restore below
+    expect((await confirmAt(h, await h.run('기억 복원 1'))).outcome).toBe('restored');
+    await confirmAt(h, await h.run('기억 1 잊어줘')); // re-archived with the same clock reading
+    expect(h.records[0]?.metadata?.['archivedAt']).toBe(NOW);
+    const newPurge = await h.run('기억 완전 삭제 1');
+    expect(codeOf(newPurge)).not.toBe(codeOf(oldPurge));
+    expect((await confirmAt(h, oldPurge)).outcome).toBe('confirm-unknown');
+    expect(h.records).toHaveLength(1);
+    expect((await confirmAt(h, newPurge)).outcome).toBe('purged');
+    expect(h.records).toEqual([]);
+  });
+
+  it('every code issued before a state change is retired, even one never re-requested before the change repeats', async () => {
+    const h = harness([memory('반복 기억')], { archiveDays: 7 });
+    const codes = new Set<string>();
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const forgetAsk = await h.run('기억 1 잊어줘');
+      expect(codes.has(codeOf(forgetAsk))).toBe(false);
+      codes.add(codeOf(forgetAsk));
+      await confirmAt(h, forgetAsk);
+      const purgeAsk = await h.run('기억 완전 삭제 1');
+      expect(codes.has(codeOf(purgeAsk))).toBe(false);
+      codes.add(codeOf(purgeAsk));
+      const restoreAsk = await h.run('기억 복원 1');
+      expect(codes.has(codeOf(restoreAsk))).toBe(false);
+      codes.add(codeOf(restoreAsk));
+      await confirmAt(h, restoreAsk);
+    }
+    for (const code of codes) expect((await h.run(`기억 확인 ${code}`)).outcome).toBe('confirm-unknown');
+    expect(h.records).toHaveLength(1);
+  });
+
+  it('edit refuses strict-guard text before any lookup, preview or code, with the existing refusal copy', async () => {
+    const h = harness([memory('평범한 기억')], { archiveDays: 7 });
+    const refused = await h.run('기억 1 수정: const dbPassword = "synthetic-value"');
+    expect(refused.outcome).toBe('edit-sensitive');
+    expect(refused.text).toBe('비밀번호·토큰 같은 민감한 정보는 기억으로 저장하지 않아요. 아무것도 바꾸지 않았어요.');
+    expect(refused.text).not.toContain('synthetic-value');
+    expect(refused.text).not.toMatch(/기억 확인 [A-Z0-9]{4}/u);
+    // The history keeps the request with its text withheld.
+    expect(refused.history?.user).toBe('기억 1 수정: (내용은 대화 기록에 남기지 않아요)');
+    expect(h.records.map((record) => record.content)).toEqual(['평범한 기억']);
+  });
+});

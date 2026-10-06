@@ -3033,9 +3033,10 @@ export class ConversationRuntime {
   /**
    * A deterministic handler reply, recorded to SHORT_TERM history as the handler asks (ADR-0106 D5, W2-L01): its
    * `history.user` replaces the inbound turn recorded earlier, its `history.assistant` is recorded instead of the
-   * reply text. The rewrite fails closed: when it cannot be applied the recorded inbound turn is removed instead, so
-   * its verbatim text never reaches a later transcript; failures are logged content-free and never fail the turn (the
-   * reply already happened).
+   * reply text. For memory-edit requests the withheld form is already what `MemoryManager.recordShortTerm` wrote (the
+   * decision is made at write time, so no failure here can leave the raw text); this rewrite is the generic path for
+   * any other handler and fails closed: when it cannot be applied the recorded inbound turn is removed instead.
+   * Failures are logged content-free and never fail the turn (the reply already happened).
    */
   private async recordTurnHandlerReply(
     message: InboundMessage,
