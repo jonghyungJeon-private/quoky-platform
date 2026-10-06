@@ -3406,7 +3406,7 @@ export class ConversationRuntime {
         }
         // W5-L01: a question/negation about the execution step ("댓글 실행해도 돼?") gets the non-mutating reminder, never
         // chat (a model must not claim a send) and never an execution (the exact phrase stays the only executor).
-        if (mentionsConnectorWriteExecutionStep(message.text)) {
+        if (mentionsConnectorWriteExecutionStep(message.text, anchor.operation)) {
           const reply = this.deps.composer.composeConnectorWriteApprovedReminder(
             message.context,
             anchor.operation,

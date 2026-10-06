@@ -1105,6 +1105,17 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     expect(post.totalWrites()).toBe(0);
   });
 
+  it('the reminder covers only the approved operation’s own step and never explanation requests (W5-L01 review)', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('승인');
+    expect((await h.send('Jira 댓글 실행 방식 설명해줘')).reply.text).not.toContain('아직 아무것도 보내지 않았어요');
+    expect((await h.send('댓글 실행해도 돼?')).reply.text).not.toContain('"Slack 게시 실행"이라고만');
+    expect((await h.send('Slack 게시 실행은 어떻게 해?')).reply.text).not.toContain('승인은 기록돼 있어요');
+    expect((await h.send('Slack 게시 실행해도 돼?')).reply.text).toContain('"Slack 게시 실행"이라고만 보내 주세요');
+    expect(h.totalWrites()).toBe(0);
+  });
+
   it('a repeated execution phrase after a SENT write says it was already executed, with the link (W5-L02)', async () => {
     const h = harness();
     await h.send('PROJ-12에 댓글: 한 번만');

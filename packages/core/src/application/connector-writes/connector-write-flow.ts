@@ -393,21 +393,27 @@ export function connectorWriteOperationsOfPhrase(text: string): ConnectorWriteOp
   return CONNECTOR_WRITE_OPERATIONS.filter((operation) => isAcceptedExecutionPhrase(connectorWriteExecutionGate(operation), text));
 }
 
-const EXECUTION_STEP_MENTIONS: readonly RegExp[] = [
-  /댓글실행/u,
-  /상태변경실행/u,
-  /게시실행/u,
-  /일정(?:추가|변경|삭제)실행/u,
-  /execute(?:approved)?(?:comment|transition|post|slackpost|eventcreate|eventupdate|eventdelete)/u,
-];
+const EXECUTION_STEP_MENTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
+  ISSUE_COMMENT: /댓글실행|execute(?:approved)?comment/u,
+  ISSUE_TRANSITION: /상태변경실행|execute(?:approved)?transition/u,
+  CHANNEL_POST: /게시실행|execute(?:slack)?post/u,
+  CALENDAR_EVENT_CREATE: /일정추가실행|executeeventcreate/u,
+  CALENDAR_EVENT_UPDATE: /일정변경실행|executeeventupdate/u,
+  CALENDAR_EVENT_DELETE: /일정삭제실행|executeeventdelete/u,
+};
+
+/** Explanation / how-to requests about a step are ordinary chat, not a question about the pending write. */
+const EXPLANATION_REQUEST = /설명|방법|어떻게|알려|explain|how/u;
 
 /**
- * True when a message talks about a connector-write execution step ("댓글 실행해도 돼?", "일정 추가 실행할까?") without
- * being the exact phrase. Used only to pick a non-mutating reminder — never to execute (W5-L01).
+ * True when a message talks about the execution step OF `operation` ("댓글 실행해도 돼?" while a comment is approved)
+ * without being the exact phrase. Mentions of another operation's step and explanation requests are not matched.
+ * Used only to pick a non-mutating reminder — never to execute (W5-L01).
  */
-export function mentionsConnectorWriteExecutionStep(text: string): boolean {
-  const squashed = text.toLowerCase().replace(/\s+/gu, '');
-  return EXECUTION_STEP_MENTIONS.some((pattern) => pattern.test(squashed));
+export function mentionsConnectorWriteExecutionStep(text: string, operation: ConnectorWriteOperation): boolean {
+  const lowered = text.toLowerCase();
+  if (EXPLANATION_REQUEST.test(lowered)) return false;
+  return EXECUTION_STEP_MENTIONS[operation].test(lowered.replace(/\s+/gu, ''));
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */
