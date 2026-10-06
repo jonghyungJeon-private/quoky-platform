@@ -1,5 +1,12 @@
 import { describeAiFailure } from './ai-failure';
-import { generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
+import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
+import { guardInternalActionClaims } from './chat-policy/internal-action-claim-guard';
+import {
+  type CodeChainStatusDomain,
+  detectInternalActionStatusTurn,
+  noticeLanguage,
+  renderInternalActionNotDone,
+} from './chat-policy/internal-action-vocabulary';
 import { CREDENTIAL_REJECTION_REASON, containsCredentialMaterial } from './credential-guard';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { isAcceptedExecutionPhrase } from './execution-command-guard';
@@ -1091,6 +1098,15 @@ const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new 
   'PR_APPROVED',
   'PR_CREATED',
   'MERGE_APPROVED',
+  'PR_MERGED',
+  'MAIN_SYNCED',
+  'BRANCH_CLEANED',
+  'REMOTE_BRANCH_CLEANUP_APPROVED',
+  'REMOTE_BRANCH_CLEANED',
+]);
+
+/** Chain states after a successful merge (ADR-0104 D3 status replies: "머지됐어?" → already merged). */
+const MERGED_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
   'PR_MERGED',
   'MAIN_SYNCED',
   'BRANCH_CLEANED',
@@ -2620,6 +2636,14 @@ export class ConversationRuntime {
     const preClassifyHandled = preClassifyDispatch ? await preClassifyDispatch : null;
     if (preClassifyHandled) return this.respondTurnHandler(message, session, actor, userMemory.id, preClassifyHandled);
 
+    // (B0b) ADR-0104 D3 (DET-1, QA-V2-W8-02): a whole-message status question or completion statement about a
+    // code-chain action ("커밋됐어?", "푸시했어", "브랜치 삭제했어", "did you push?") that no route above answered is
+    // answered from the apply-preview anchor — never by a chat model, which cannot see the repository and used to affirm
+    // states it never checked. Every anchored reply above keeps its precedence; the turn-handler registry and its
+    // stages/orders (ADR-0096) are unchanged, and no git/hosting call or provider call is made here.
+    const statusDomain = detectInternalActionStatusTurn(message.text);
+    if (statusDomain) return this.handleInternalActionStatusTurn(message, session, applyAnchor, statusDomain);
+
     let intent: Intent;
     try {
       intent = await this.deps.classifier.classify(message, { hasActiveProject: Boolean(session.activeProjectId) });
@@ -2690,7 +2714,8 @@ export class ConversationRuntime {
     // (E) Fast path — conversational, no Task needed.
     if (!intent.requiresWork) {
       const provider = await this.deps.router.select(intent.capability);
-      const result = await provider.execute({ capability: intent.capability, prompt: message.text });
+      const raw = await provider.execute({ capability: intent.capability, prompt: message.text });
+      const result = { ...raw, text: this.guardChatReply(intent.capability, raw.text, message.text) };
       const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
       await this.deps.memory.recordAssistant(result.text, message.context, session.id);
       return this.responded(session, reply);
@@ -6953,6 +6978,7 @@ export class ConversationRuntime {
             throw new Error('Accepted routing result is incomplete');
           }
           providerId = routed.acceptedProviderId;
+          const replyText = this.guardChatReply(capability, routed.output.text, task.description, task.id);
           const artifacts: Artifact[] = routed.output.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
           await this.deps.tasks.completeRun(run, {
@@ -6960,17 +6986,9 @@ export class ConversationRuntime {
             providerId,
             metadata: { routingAudit },
           });
-          await this.deps.memory.recordAssistant(
-            routed.output.text,
-            message.context,
-            task.sessionId ?? session.id,
-          );
+          await this.deps.memory.recordAssistant(replyText, message.context, task.sessionId ?? session.id);
           await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
-          const reply = this.deps.composer.compose(
-            message.context,
-            { text: routed.output.text, artifacts },
-            artifacts,
-          );
+          const reply = this.deps.composer.compose(message.context, { text: replyText, artifacts }, artifacts);
           return this.responded(session, reply, workFacts(providerId));
         }
 
@@ -7001,7 +7019,9 @@ export class ConversationRuntime {
       const provider = await this.deps.router.select(capability);
       providerId = provider.id;
       await this.deps.dispatchCommit.commit(run.id, run.id);
-      const result = await provider.execute(aiRequest);
+      const executed = await provider.execute(aiRequest);
+      // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
+      const result = { ...executed, text: this.guardChatReply(capability, executed.text, task.description, task.id) };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       await this.deps.tasks.completeRun(run, {
@@ -7030,6 +7050,78 @@ export class ConversationRuntime {
       const reply = this.deps.composer.composeError(message.context, failure.userMessage);
       return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(providerId) };
     }
+  }
+
+  /**
+   * ADR-0104 D1 (DET-1): the provider-neutral internal-action claim guard on a GENERAL_CHAT / POLICY_SENSITIVE_CHAT
+   * reply. A reply claiming a Quoky-domain action (commit, push, PR, merge, branch, file change, to-do, reminder,
+   * memory, connector write) or asserting such a state is replaced as a whole by the fixed not-done notice. Other
+   * capabilities (analysis over a real readout, summarization, code generation) are returned unchanged. The log line is
+   * content-free (domain only).
+   */
+  private guardChatReply(capability: Capability, text: string, currentUserMessage: string, taskId?: Id): string {
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return text;
+    const guarded = guardInternalActionClaims(text, currentUserMessage, generalChatReplyPolicy(currentUserMessage));
+    if (!guarded.guarded) return text;
+    this.deps.logger.info('internal action claim replaced', {
+      capability,
+      domain: guarded.domain,
+      ...(taskId ? { taskId } : {}),
+    });
+    return guarded.text;
+  }
+
+  /**
+   * ADR-0104 D3 (DET-1): answer a code-chain status question / completion statement from the apply-preview anchor.
+   * A state the anchor proves reuses that state's existing deterministic reply (already committed / pushed / PR
+   * created / merged / branch cleaned, or the already-approved replies); otherwise the fixed not-done reply, which
+   * never affirms the User's statement. Read-only: no git, hosting or provider call, no anchor change.
+   */
+  private async handleInternalActionStatusTurn(
+    message: InboundMessage,
+    session: Session,
+    anchor: ApplyPreviewAnchor | null | undefined,
+    domain: CodeChainStatusDomain,
+  ): Promise<TurnResult> {
+    const status = anchor?.status;
+    if (anchor && status) {
+      if (domain === 'commit') {
+        if (status === 'COMMIT_APPROVED') return this.handleCommitAlreadyApprovedTurn(message, session);
+        if (status === 'GIT_COMMITTED' || status === 'PUSH_APPROVED' || status === 'GIT_PUSHED' || POST_PUSH_CHAIN_STATUSES.has(status)) {
+          return this.handleCommitAlreadyCommittedTurn(message, session, {
+            ...anchor,
+            commitHash: anchor.commitHash ?? anchor.pushedCommitHash,
+          });
+        }
+      }
+      if (domain === 'push') {
+        if (status === 'PUSH_APPROVED') return this.handlePushAlreadyApprovedTurn(message, session);
+        if (status === 'GIT_PUSHED' || POST_PUSH_CHAIN_STATUSES.has(status)) {
+          return this.handlePushAlreadyPushedTurn(message, session, anchor);
+        }
+      }
+      if (domain === 'pr') {
+        if (status === 'PR_APPROVED') {
+          return this.respondComposed(message, session, this.deps.composer.composePrAlreadyApproved(message.context));
+        }
+        if (POST_PUSH_CHAIN_STATUSES.has(status) && anchor.pullRequestNumber) {
+          return this.handlePrAlreadyCreatedTurn(message, session, anchor);
+        }
+      }
+      if (domain === 'merge') {
+        if (status === 'MERGE_APPROVED') return this.handleMergeAlreadyApprovedTurn(message, session);
+        // A merged state never gets the not-done reply (the existing already-merged reply has its own fallback).
+        if (MERGED_CHAIN_STATUSES.has(status)) return this.handleMergeAlreadyMergedTurn(message, session, anchor);
+      }
+      if (domain === 'branch') {
+        if (status === 'REMOTE_BRANCH_CLEANED') return this.handleRemoteBranchAlreadyCleanedTurn(message, session, anchor);
+        if (status === 'BRANCH_CLEANED' || status === 'REMOTE_BRANCH_CLEANUP_APPROVED') {
+          return this.handleBranchAlreadyCleanedTurn(message, session, anchor);
+        }
+      }
+    }
+    const text = renderInternalActionNotDone(domain, noticeLanguage(undefined, message.text));
+    return this.respondComposed(message, session, { context: message.context, text });
   }
 
   private decisionOf(approvalId: Id, decidedBy: string, approved: boolean): ApprovalDecision {
