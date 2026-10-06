@@ -419,6 +419,10 @@ export interface ApplyPreviewAnchor {
   newFileTargets?: string[];
   codeGenerationRef: CodeGenerationRef;
   codeProposalRef: CodeProposalRef;
+  /** The target paths whose credential-flagged content was sent to the AI ONCE under an owner override for this
+   *  preview (ADR-0097 D7). Display-only: a "취소" at `ELIGIBLE` says that send cannot be undone (QA-V2-CL-03).
+   *  Absent when no override was used (and on every anchor written before QA-V2-CL-03). */
+  credentialOverrideSentPaths?: string[];
   /** The original request's instruction — restated in the apply-approval's `reason`, never re-derived
    *  from chat history. */
   instruction: string;
@@ -2101,6 +2105,12 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANUP_PENDING') {
       return this.handleRemoteBranchCleanupDecisionTurn(message, session, actor, applyAnchor);
     }
+    // (QA-V2-CL-03) "취소" while a diff preview awaits "적용해줘" discards that preview — never the QA-018 "nothing to
+    // approve" reply, which ignored the open preview. ELIGIBLE only: no approval exists yet and no file was changed.
+    // Every approval-pending state above keeps its own decision flow; later states keep their own replies.
+    if (applyAnchor?.status === 'ELIGIBLE' && ConversationRuntime.isPreviewDiscardUtterance(message.text)) {
+      return this.handlePreviewDiscardTurn(message, session, applyAnchor);
+    }
     // (A4) ADR-0096 `post-anchor` turn handlers — every pending approval / scope clarification / `*_PENDING`
     // intercept above has already captured its turn, so a handler can never pre-empt a decision. Runs BEFORE the
     // ADR-0043 deny-fragment check and the WORKSPACE_APPLIED git-mutating-word reject below.
@@ -3503,6 +3513,7 @@ export class ConversationRuntime {
       ...(newFileTargets.size ? { newFileTargets: [...newFileTargets] } : {}),
       codeGenerationRef: codeGenerationRef(generation),
       codeProposalRef: codeProposalRef(proposal),
+      ...(grants.length ? { credentialOverrideSentPaths: grants.map((g) => g.path) } : {}),
       instruction: request.instruction,
       ...(anchorSession.activeProjectId ? { projectId: anchorSession.activeProjectId } : {}),
       createdAt: now(),
@@ -3807,6 +3818,39 @@ export class ConversationRuntime {
       decidedAt: this.clock(),
       comment,
     });
+  }
+
+  /** Optional "the preview / the change" noun before a cancel word ("미리보기 취소", "변경 취소해줘", "cancel the preview"). */
+  private static readonly PREVIEW_DISCARD_NOUN =
+    /^(?:(?:이|그|this|the)\s*)?(?:미리\s*보기|변경\s*사항|코드\s*변경|변경|수정\s*사항|preview|changes?)\s*(?:은|는|을|를|도)?\s*/i;
+
+  /**
+   * Whether a turn at an ELIGIBLE anchor asks to discard the shown preview (QA-V2-CL-03): a bare cancel utterance
+   * ("취소", "취소해줘", "cancel"), optionally led by a preview noun. Deny/approve words are NOT discards and keep the
+   * QA-018 reply; a cancel word inside a longer request ("결제 취소 기능 추가해줘") is not a bare utterance.
+   */
+  private static isPreviewDiscardUtterance(text: string): boolean {
+    const trimmed = text.trim();
+    if (interpretStrayDecisionUtterance(trimmed) === 'cancel') return true;
+    const withoutNoun = trimmed.replace(ConversationRuntime.PREVIEW_DISCARD_NOUN, '');
+    return withoutNoun !== trimmed && interpretStrayDecisionUtterance(withoutNoun) === 'cancel';
+  }
+
+  /**
+   * Discard an ELIGIBLE diff preview on "취소" (QA-V2-CL-03). Clears the inert apply-preview anchor only — no
+   * ApprovalRequest existed, no PatchSet, no file change — so a later "적용해줘" gets the apply-unavailable reply.
+   * Deterministic, provider-free. Truthful copy: preview discarded, no file changed; content already sent to the AI
+   * under an owner override (ADR-0097) cannot be unsent.
+   */
+  private async handlePreviewDiscardTurn(
+    message: InboundMessage,
+    session: Session,
+    anchor: ApplyPreviewAnchor,
+  ): Promise<TurnResult> {
+    await this.deps.applyPreviewFlow.clear(session);
+    const reply = this.deps.composer.composeCodePreviewDiscarded(message.context, anchor.credentialOverrideSentPaths ?? []);
+    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
+    return { status: 'CANCELLED', reply, sessionId: session.id };
   }
 
   /** No eligible apply-preview anchor exists at all (Sprint 2s, ADR-0040) — an explicit apply phrase is

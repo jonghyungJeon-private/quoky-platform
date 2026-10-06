@@ -1052,6 +1052,22 @@ export class ResponseComposer {
   }
 
   /**
+   * "취소" while a diff preview awaits "적용해줘" (QA-V2-CL-03): the preview was discarded. Nothing was applied or
+   * approved and no file changed, so there is nothing to roll back. When the preview was built from content sent
+   * to the AI once under an owner override (ADR-0097 D7), say that send cannot be undone — never imply it was
+   * recalled. Distinct from {@link composeCredentialOverrideSentThenCancelled}, which covers a request cancelled by
+   * a reset / project change WHILE the provider ran (the proposal was never shown).
+   */
+  composeCodePreviewDiscarded(context: ConversationContext, credentialOverrideSentPaths: readonly string[] = []): OutboundMessage {
+    const lines = ['코드 변경 미리보기를 취소했어요. 적용하지 않았고 파일은 수정되지 않았어요.'];
+    if (credentialOverrideSentPaths.length) {
+      lines.push(credentialOverrideSentNotice(credentialOverrideSentPaths), '이미 AI에게 보낸 내용은 되돌릴 수 없어요.');
+    }
+    lines.push('다시 필요하면 파일 경로와 함께 새로 요청해 주세요.');
+    return { context, text: clampToMessageBudget(lines.join('\n')) };
+  }
+
+  /**
    * A successful AI code-change proposal preview (AI Code Generation Preview, ADR-0038). Repeats,
    * not merely mentions once, that nothing was applied — never uses wording that could be read as
    * "적용했어요"/"수정했어요"/"반영했어요"/"변경 완료". AI content is rendered inside a fence

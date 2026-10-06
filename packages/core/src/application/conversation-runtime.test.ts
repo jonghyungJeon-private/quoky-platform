@@ -2972,6 +2972,57 @@ describe('Explicit Preview Apply Approval — runtime (Sprint 2s, ADR-0040)', ()
     },
   );
 
+  // ── QA-V2-CL-03: "취소" at a preview awaiting "적용해줘" discards the preview ──────────────────────
+  it.each(['취소', '취소해줘', '취소할게요', 'cancel', '미리보기 취소', '변경 취소해줘', '이 미리보기는 취소할게'])(
+    'QA-V2-CL-03: "%s" at an ELIGIBLE anchor discards the preview — deterministic, no approval, no provider',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+      const result = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(result.status).toBe('CANCELLED');
+      expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, []).text);
+      expect(result.reply.text).not.toBe(new ResponseComposer().composeNoPendingDecision(CTX).text);
+      expect(calls.applyClear).toBe(1);
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.classify).toBe(0);
+      expect(calls.run).toBe(0);
+    },
+  );
+
+  it('QA-V2-CL-03: after the discard, "적용해줘" has nothing to apply (apply-unavailable)', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    await new ConversationRuntime(deps).handle(messageOf('취소'));
+    const result = await new ConversationRuntime(deps).handle(messageOf('적용해줘'));
+    expect(calls.requestForRisk).toBe(0);
+    expect(result.reply.text).toBe(new ResponseComposer().composeApplyPreviewUnavailable(CTX).text);
+  });
+
+  it('QA-V2-CL-03: a preview built under an owner override says the one-time send cannot be undone', async () => {
+    const { deps } = makeDeps({ applyAnchor: applyAnchorOf({ credentialOverrideSentPaths: [TARGET_FILE] }) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('취소'));
+    expect(result.reply.text).toBe(new ResponseComposer().composeCodePreviewDiscarded(CTX, [TARGET_FILE]).text);
+    expect(result.reply.text).toContain(TARGET_FILE);
+    expect(result.reply.text).toContain('되돌릴 수 없어요');
+  });
+
+  it.each([
+    ['거절', 'ELIGIBLE'],
+    ['승인', 'ELIGIBLE'],
+    ['취소', 'APPROVED'],
+    ['취소', 'PATCH_READY'],
+  ] as const)('QA-V2-CL-03 scope: "%s" at %s keeps the QA-018 nothing-to-decide reply (anchor untouched)', async (text, status) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ status, approvalId: 'apply-appr-1' }) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(result.reply.text).toBe(new ResponseComposer().composeNoPendingDecision(CTX).text);
+    expect(calls.applyClear).toBe(0);
+  });
+
+  it('QA-V2-CL-03 scope: a cancel word inside a longer request at ELIGIBLE is not a discard', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    await new ConversationRuntime(deps).handle(messageOf('결제 취소 기능 추가해줘'));
+    expect(calls.applyClear).toBe(0);
+    expect(calls.classify).toBe(1);
+  });
+
   it('ordinary non-apply chat with an ELIGIBLE anchor falls through normally (soft hook)', async () => {
     const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
     const result = await new ConversationRuntime(deps).handle(messageOf('오늘 뭐 할까?'));
