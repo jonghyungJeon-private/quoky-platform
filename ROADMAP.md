@@ -128,6 +128,21 @@ Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the relea
 - PR title and body generation (today the PR title is the sanitized instruction text).
 - Partial PR status when the GitHub App has no Checks permission (PR and reviews without checks).
 - MLX and Docker isolation options for local models.
+- Local operations UI (track OPS, ADR-0113 **Proposed**, 2026-10-06): a loopback-only, token-gated, default-off web
+  screen served by the Quoky process. Phase 1 is read-only monitoring (wave 3, after SUB-2). Phase 2 handles cancel,
+  forget, reject and approve through the same Core use cases and approval gates as chat (wave 4+, after MEM-1). Remote
+  access (Tailscale or other tunnels) and a separate mobile/desktop client are out of v3 and belong to Team/Hosted.
+
+**Post-v3 extensions (taken up only after all Personal v3 development completes)**
+
+- **Telegram platform adapter.** Owner decision 2026-10-06: a post-v3 extension, not part of the v3 plan. ARCHITECTURE.md
+  §13 already lists Telegram as a `PlatformAdapter` evolution. Prerequisites found while scoping it:
+  - Core still has Discord-specific text escaping in the work-chat renderers (`escapeDiscordText` in
+    `packages/core/src/application/work-chat/external-work-readout.ts`, used by `work-chat-renderer.ts`).
+  - Rendering must become platform-neutral before a second platform is added: Core emits neutral text, and each
+    platform adapter applies its own escaping and markup.
+  - A new ADR is needed at that time for per-platform owner admission (ADR-0091 is Discord-shaped: owner ids, channel
+    allowlist, DMs) and for identity mapping of a Telegram user to the owner `Actor` (ADR-0009 seam).
 
 ## Deferred capabilities (YAGNI)
 
