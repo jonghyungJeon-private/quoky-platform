@@ -19,6 +19,7 @@ export interface ConversationContext {
   userId: string;
 }
 
+/** Legacy, unused placeholder (pre-ADR-0111). Inbound attachments use {@link InboundAttachment}. */
 export interface Attachment {
   id: Id;
   name: string;
@@ -29,12 +30,76 @@ export interface Attachment {
   localPath?: string;
 }
 
+/** ADR-0111 D1: what a platform adapter's bounded intake made of one attachment. */
+export type InboundAttachmentKind = 'text' | 'image' | 'unsupported';
+
+/** Why an attachment was not taken in (ADR-0111 D2/D3); the reply names the file with this reason. */
+export type InboundAttachmentUnsupportedReason =
+  /** Neither a UTF-8 text file (`text/*`, `.log`, `.md`, `.json`) nor a png/jpeg/webp image. */
+  | 'UNSUPPORTED_TYPE'
+  /** Over the size bound (declared size or bytes actually received). */
+  | 'TOO_LARGE'
+  /** Past the per-message attachment count bound. */
+  | 'TOO_MANY'
+  /** A text file the credential guard refused (ADR-0097); its content is dropped. */
+  | 'CREDENTIAL_SHAPED'
+  /** Declared as text but not valid UTF-8 text. */
+  | 'NOT_UTF8_TEXT'
+  /** Not fetched from the platform's own CDN, or the transfer failed. */
+  | 'DOWNLOAD_FAILED';
+
+/** Image types the intake accepts (ADR-0111 D2). */
+export type InboundImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp';
+
+interface InboundAttachmentBase {
+  /** Display name as uploaded, sanitized by the adapter (control characters removed, bounded). Untrusted. */
+  readonly name: string;
+  /** The platform-declared MIME type, when one was given. */
+  readonly mimeType?: string;
+  /** The platform-declared size in bytes. */
+  readonly sizeBytes: number;
+}
+
+/**
+ * A text file (ADR-0111 D3): bounded UTF-8 content held in memory only. Always UNTRUSTED readout — data, never
+ * instructions — and already passed the credential guard. Never written into a workspace or durable memory.
+ */
+export interface InboundTextAttachment extends InboundAttachmentBase {
+  readonly kind: 'text';
+  readonly text: string;
+  readonly trust: 'UNTRUSTED';
+}
+
+/**
+ * An image (ADR-0111 D2/D4): an opaque, runner-owned local reference (a temporary file the adapter deletes after
+ * the turn). Core never reads, persists, embeds or logs it; only an `IMAGE_UNDERSTANDING` provider receives it.
+ */
+export interface InboundImageAttachment extends InboundAttachmentBase {
+  readonly kind: 'image';
+  readonly mimeType: InboundImageMimeType;
+  readonly imageRef: string;
+  readonly trust: 'UNTRUSTED';
+}
+
+/** An attachment the intake refused; it carries no content, only the reason. */
+export interface InboundUnsupportedAttachment extends InboundAttachmentBase {
+  readonly kind: 'unsupported';
+  readonly reason: InboundAttachmentUnsupportedReason;
+}
+
+/** One attachment of an admitted inbound message (ADR-0111 D1). Platform-neutral: no platform type crosses. */
+export type InboundAttachment = InboundTextAttachment | InboundImageAttachment | InboundUnsupportedAttachment;
+
 /** A normalized inbound message from any PlatformAdapter. */
 export interface InboundMessage {
   id: Id;
   context: ConversationContext;
   text: string;
-  attachments?: Attachment[];
+  /**
+   * ADR-0111 D1 (optional, additive): attachments of a message that already passed the adapter's admission gate,
+   * after bounded intake. Absent when the message had none.
+   */
+  attachments?: readonly InboundAttachment[];
   receivedAt: IsoTimestamp;
   metadata?: Metadata;
 }

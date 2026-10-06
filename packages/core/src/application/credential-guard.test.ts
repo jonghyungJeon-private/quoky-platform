@@ -6,6 +6,7 @@ import {
   classifyCredentialFileContent,
   containsCredentialFileContent,
   containsCredentialMaterial,
+  CREDENTIAL_SCAN_MAX_RUN,
 } from './credential-guard';
 import { baselineFileContentRefusal } from './credential-guard-baseline';
 
@@ -468,6 +469,73 @@ describe('containsCredentialFileContent monotonicity over the d99d19c baseline (
   it('the existing pass tables stay passing (the baseline adds no refusal there)', () => {
     for (const [label, content] of [...FILE_PASS_CASES, ...STRICT_PASS_CASES]) {
       expect({ label, baseline: baselineFileContentRefusal(content) }).toEqual({ label, baseline: null });
+    }
+  });
+});
+
+/**
+ * Bounded time on untrusted input (Discord attachments run this synchronously on up to 256 KiB): the key scans
+ * backtrack quadratically on a long key-token run before an operator and on a long blank run after a key, which held
+ * the event loop for about a minute on `"AAAA…A="`. Such shapes refuse instead of being scanned.
+ */
+describe('classifyCredentialFileContent is bounded-time on adversarial 256 KiB input', () => {
+  const SIZE = 256 * 1024;
+  /** Generous wall-clock bound (the unbounded scan took ~60 s on the first case; bounded runs take tens of ms). */
+  const BOUND_MS = 1_500;
+  const fill = (unit: string): string => unit.repeat(Math.ceil(SIZE / unit.length)).slice(0, SIZE);
+  const timed = (content: string) => {
+    const started = performance.now();
+    const finding = classifyCredentialFileContent(content);
+    const material = containsCredentialMaterial(content);
+    return { finding, material, ms: performance.now() - started };
+  };
+
+  it.each<[string, string]>([
+    ['a base64-like run ending in "="', `${'A'.repeat(SIZE)}=`],
+    ['a base64-like run ending in ":"', `${'A'.repeat(SIZE)}:`],
+    ['a long blank run after a key', `a${' '.repeat(SIZE)}`],
+    ['a long blank run around "?" after a key', `a${'\t'.repeat(SIZE / 2)}?${'\t'.repeat(SIZE / 2)}`],
+  ])('refuses %s quickly (fail closed)', (_label, content) => {
+    const { finding, ms } = timed(content);
+    expect(finding).toEqual({ kind: 'credential-assignment', line: 1 });
+    expect(ms).toBeLessThan(BOUND_MS);
+  });
+
+  it.each<[string, string]>([
+    ['keys just under the bound, each assigned', fill(`${'A'.repeat(CREDENTIAL_SCAN_MAX_RUN)}=\n`)],
+    ['blank runs just under the bound after keys', fill(`a${' '.repeat(CREDENTIAL_SCAN_MAX_RUN)}\n`)],
+    ['blank runs after quoted keys', fill(`"a"${' '.repeat(CREDENTIAL_SCAN_MAX_RUN)}\n`)],
+    ['a long key run with no operator', `${'A'.repeat(SIZE)} text`],
+    ['a long Go-style typed key (scanned: the camel-case split is linear)', `\nconst ${'A'.repeat(SIZE)} string = "x"`],
+    ['ordinary log lines', fill('2026-10-06T00:00:00Z INFO worker=3 status=ok elapsed_ms=12 path=/v1/items\n')],
+    ['wrapped base64 lines with padding', fill('QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo+/0123456789abcdefghijklmnopqrstuvwxyzAB==\n')],
+  ])('passes %s quickly', (_label, content) => {
+    const { finding, ms } = timed(content);
+    expect(finding).toEqual({ kind: 'none' });
+    expect(ms).toBeLessThan(BOUND_MS);
+  });
+
+  it('only refuses an oversized key run that is followed by an assignment operator', () => {
+    const run = 'A'.repeat(CREDENTIAL_SCAN_MAX_RUN + 1);
+    expect(classifyCredentialFileContent(`${run}=`)).toEqual({ kind: 'credential-assignment', line: 1 });
+    expect(classifyCredentialFileContent(`${'A'.repeat(CREDENTIAL_SCAN_MAX_RUN)}=`)).toEqual({ kind: 'none' });
+    expect(classifyCredentialFileContent(`${run} done`)).toEqual({ kind: 'none' });
+    expect(classifyCredentialFileContent(`${run}==`)).toEqual({ kind: 'none' });
+  });
+
+  it('still reports an earlier credential key at its own line, and a secret token as secret-token', () => {
+    const blob = `${'A'.repeat(SIZE)}=`;
+    expect(classifyCredentialFileContent(`a\npassword = "hunter2"\n${blob}`)).toEqual({ kind: 'credential-assignment', line: 2 });
+    expect(classifyCredentialFileContent(`a\nb\n${blob}`)).toEqual({ kind: 'credential-assignment', line: 3 });
+    expect(classifyCredentialFileContent(`${blob}\nghp_abcdefghijklmnopqrstuvwxyz0123456789\n`)).toEqual({ kind: 'secret-token' });
+  });
+
+  it('splits camel-case keys exactly as before (linear split)', () => {
+    for (const key of ['APIKey', 'DBPassword', 'XMLHttpToken', 'myAPIToken', 'AUTHToken', 'maxTOKENS']) {
+      expect({ key, refused: containsCredentialFileContent(`${key} = "x"`) }).toEqual({
+        key,
+        refused: baselineFileContentRefusal(`${key} = "x"`) !== null,
+      });
     }
   });
 });
