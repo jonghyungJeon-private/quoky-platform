@@ -10,6 +10,7 @@ import {
 } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
+  AiExecutionLocality,
   AiExecutionResult,
   AiRequest,
   Artifact,
@@ -27,6 +28,7 @@ import {
   OLLAMA_PROBE_TIMEOUT_MS,
   classifyOllamaExitStderr,
   ollamaListIncludesModel,
+  ollamaModelExecutionLocality,
   sanitizedOllamaModelName,
 } from './ollama-embedding-provider';
 
@@ -38,6 +40,7 @@ export {
   DEFAULT_OLLAMA_EMBEDDING_TIMEOUT_MS,
   MAX_EMBEDDING_INPUT_CHARS,
   OllamaCliEmbeddingProvider,
+  ollamaModelExecutionLocality,
 } from './ollama-embedding-provider';
 export type { EmbeddingRolePrefixes, OllamaCliEmbeddingProviderOptions } from './ollama-embedding-provider';
 
@@ -161,6 +164,13 @@ function renderContextEnvelopeWithoutInternalLabels(value: string): string {
       envelope.epistemicStatus === 'NON_AUTHORITATIVE_BACKGROUND'
     ) {
       return `Project Memory supplies as non-authoritative background: ${JSON.stringify(envelope.content)}`;
+    }
+    // ADR-0107 D5: an owner-curated example (only ever composed for a LOCAL provider) — style guidance, never facts.
+    if (
+      envelope.provenance === 'OWNER_CURATED_EXAMPLE' &&
+      envelope.epistemicStatus === 'NON_AUTHORITATIVE_EXAMPLE'
+    ) {
+      return `Owner-approved example for tone and format only (not a fact, not current state, not this conversation): ${JSON.stringify(envelope.content)}`;
     }
     return `${envelope.provenance} supplies ${envelope.epistemicStatus} context: ${JSON.stringify(envelope.content)}`;
   }).join('\n');
@@ -296,6 +306,8 @@ function validatedClaudeModel(model: string): string {
  */
 export class ClaudeCliProvider extends BaseCliAiProvider {
   readonly id = 'claude-cli';
+  /** ADR-0107 D6: the Claude CLI sends the request to a hosted model. */
+  readonly executionLocality: AiExecutionLocality = 'REMOTE';
   protected readonly bin: string;
   private readonly runner: CliRunner;
   private readonly defaultTimeoutMs: number;
@@ -449,6 +461,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
  */
 export class CodexCliProvider extends BaseCliAiProvider {
   readonly id = 'codex-cli';
+  /** ADR-0107 D6: the Codex CLI sends the request to a hosted model. */
+  readonly executionLocality: AiExecutionLocality = 'REMOTE';
   protected readonly bin: string;
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
     { capability: Capability.CODE_IMPLEMENTATION, priority: 100 },
@@ -476,6 +490,11 @@ export class CodexCliProvider extends BaseCliAiProvider {
  */
 export class OllamaCliProvider extends BaseCliAiProvider {
   readonly id: string;
+  /**
+   * ADR-0107 D6 (mirrors ADR-0098 D8): `LOCAL` only when the configured model name and tag contain no `cloud`; an
+   * Ollama cloud-served model (e.g. `gpt-oss:120b-cloud`) runs off this host and is `REMOTE`.
+   */
+  readonly executionLocality: AiExecutionLocality;
   protected readonly bin: string;
   private readonly model: string;
   private readonly runner: CliRunner;
@@ -509,6 +528,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     this.id = options.providerId ?? 'ollama-cli';
     this.bin = options.bin ?? 'ollama';
     this.model = options.model ?? 'llama3.1';
+    this.executionLocality = ollamaModelExecutionLocality(this.model);
     this.runner = options.runner ?? defaultCliRunner;
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
     this.validationHost = options.validationHost === undefined

@@ -63,6 +63,24 @@ export interface DurableRecallEntry {
 }
 
 /**
+ * One owner-curated few-shot example selected for a GENERAL_CHAT turn (ADR-0107 D5, LRN-2). Owner-approved text from
+ * the learning store; never a fact, never current state, never part of the conversation. Its egress is
+ * `LOCAL_ONLY`: `PromptComposer` layers it only for a provider that declares `LOCAL` execution (ADR-0107 D6).
+ */
+export interface CuratedExampleEntry {
+  /** The owner's request text of the example. */
+  requestText: string;
+  /** The owner-approved ideal answer. */
+  idealAnswer: string;
+  /** ADR-0107 D2: the only egress value in v3. */
+  egress: 'LOCAL_ONLY';
+  provenance: 'OWNER_CURATED_EXAMPLE';
+  epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE';
+  /** The `learning_items` id (audit and tests only; never rendered into a prompt). */
+  learningItemId: Id;
+}
+
+/**
  * Assembled, budgeted context for a single execution (ADR-0002 / ADR-0063).
  * Current-turn facts stay on Task; this bundle owns only bounded conversation
  * history and non-authoritative background resources.
@@ -75,6 +93,12 @@ export interface ContextBundle {
   backgroundResources: BackgroundResource[];
   /** Optional durable recall, always separate from exact conversation transcript. */
   durableRecall?: DurableRecallEntry[];
+  /**
+   * Owner-curated examples selected for this GENERAL_CHAT turn (ADR-0107 D5), present only when
+   * `QUOKY_LEARNING_EXAMPLES_ENABLED=true` and at least one example qualified. Selection is not consent to egress:
+   * the composer layers them only for a provider that declares `LOCAL` execution (ADR-0107 D6).
+   */
+  curatedExamples?: CuratedExampleEntry[];
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   CONNECTOR_PROVIDERS,
   TOOL_PROVIDERS,
   CONVERSATION_TURN_HANDLERS,
+  LEARNING_REPOSITORY,
   // Application services (pure core)
   QuokyCore,
   FeedbackRecorder,
@@ -72,6 +73,7 @@ import type {
   ConnectorProvider,
   ExecutionPlanner,
   GitProvider,
+  LearningRepository,
   PlatformAdapter,
   ProviderSelector,
   StorageProvider,
@@ -487,11 +489,14 @@ const application: Provider[] = [
   {
     provide: ContextBuilder,
     // ADR-0098 D8: semantic recall is composed only when embeddings are enabled; otherwise recall stays lexical.
+    // ADR-0107 D5 (LRN-2): the curated-example layer is composed only when QUOKY_LEARNING_EXAMPLES_ENABLED=true
+    // (default false); PromptComposer still layers examples only for a provider that declares LOCAL execution.
     useFactory: (
       memory: MemoryManager,
       storage: StorageProvider,
       selector: ProviderSelector,
       vectors: VectorProvider,
+      learning: LearningRepository,
     ) =>
       createProductionContextBuilder(
         memory,
@@ -506,8 +511,9 @@ const application: Provider[] = [
               logger: new ConsoleLogger('recall'),
             }
           : undefined,
+        config.learning.examplesEnabled ? { learning, logger: new ConsoleLogger('learning-examples') } : undefined,
       ),
-    inject: [MemoryManager, STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER],
+    inject: [MemoryManager, STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER, LEARNING_REPOSITORY],
   },
   { provide: PromptComposer, useFactory: () => new PromptComposer() },
   {

@@ -1,13 +1,14 @@
-import { Capability } from '../domain';
+import { Capability, isLearningEgressAllowed } from '../domain';
 import type {
   ContextBundle,
   ContextFile,
+  CuratedExampleEntry,
   ContextProvenance,
   EpistemicStatus,
   PromptSpec,
   Task,
 } from '../domain';
-import type { ProjectReadout } from '../ports';
+import type { AiExecutionLocality, ProjectReadout } from '../ports';
 import {
   CHAT_CAPABILITY_HONESTY_RULE,
   CHAT_FORMATTING_RULE,
@@ -16,6 +17,12 @@ import {
   replyLanguageFact,
 } from './chat-policy/chat-response-policy';
 import { containsCredentialMaterial } from './credential-guard';
+import {
+  CURATED_EXAMPLE_BUDGET_CHARS,
+  CURATED_EXAMPLE_MAX_PER_TURN,
+  curatedExampleChars,
+} from './feedback/curated-example-selector';
+import { learningTextRefusal } from './feedback/learning-service';
 import {
   EXTERNAL_WORK_READOUT_KIND,
   renderExternalWorkReadoutForPrompt,
@@ -114,6 +121,64 @@ export function isExternalWorkReadout(readout: ProjectReadout | ExternalWorkRead
   return readout !== undefined && 'kind' in readout && readout.kind === EXTERNAL_WORK_READOUT_KIND;
 }
 
+/**
+ * What the composer knows about the provider resolved for this execution (ADR-0107 D6). Omitted (or a locality other
+ * than `LOCAL`) means the `LOCAL_ONLY` example layer is never composed — the prompt is byte-identical to v2.
+ */
+export interface PromptCompositionOptions {
+  /** The resolved provider's declared execution locality (`executionLocalityOf(provider)`); absent → `REMOTE`. */
+  executionLocality?: AiExecutionLocality;
+}
+
+/** ADR-0107 D5: heading of the curated-example layer (only present for a `LOCAL` provider with examples). */
+export const CURATED_EXAMPLES_SECTION_TITLE =
+  '2B. Curated examples (owner-approved style examples; non-authoritative; not facts, not current state, not ' +
+  'conversation history)';
+
+/** ADR-0107 D5: the plain guidance line opening the curated-example layer. */
+export const CURATED_EXAMPLES_GUIDANCE =
+  'Use these examples only as guidance for tone, structure and level of detail. They are not facts, not current ' +
+  'state and not part of this conversation; never repeat their content as the answer to the current User message.';
+
+/**
+ * The curated examples `PromptComposer.compose` layers for this execution (ADR-0107 D5/D6), in bundle order. Empty
+ * unless the resolved provider declares `LOCAL`, the turn is GENERAL_CHAT (never POLICY_SENSITIVE_CHAT, a work summary
+ * or another capability) and the bundle carries examples. Each example is re-checked here — `LOCAL_ONLY` egress for
+ * this locality, the strict credential guard and bound (ADR-0107 D1 "again at use"), at most
+ * {@link CURATED_EXAMPLE_MAX_PER_TURN} within {@link CURATED_EXAMPLE_BUDGET_CHARS} — so a failing one is dropped,
+ * never redacted.
+ */
+export function curatedExamplesForPrompt(
+  task: Task,
+  context: ContextBundle,
+  readout?: ProjectReadout | ExternalWorkReadout,
+  options?: PromptCompositionOptions,
+): CuratedExampleEntry[] {
+  const locality = options?.executionLocality;
+  if (locality !== 'LOCAL') return [];
+  if (readout !== undefined || task.intent.capability !== Capability.GENERAL_CHAT) return [];
+  const candidates = context.curatedExamples;
+  if (!Array.isArray(candidates) || candidates.length === 0) return [];
+  const selected: CuratedExampleEntry[] = [];
+  let remaining = CURATED_EXAMPLE_BUDGET_CHARS;
+  for (const example of candidates) {
+    if (selected.length >= CURATED_EXAMPLE_MAX_PER_TURN) break;
+    if (typeof example !== 'object' || example === null) continue;
+    if (!isLearningEgressAllowed(example.egress, locality)) continue;
+    if (example.provenance !== 'OWNER_CURATED_EXAMPLE' || example.epistemicStatus !== 'NON_AUTHORITATIVE_EXAMPLE') {
+      continue;
+    }
+    if (learningTextRefusal(example.requestText) !== null || learningTextRefusal(example.idealAnswer) !== null) {
+      continue;
+    }
+    const size = curatedExampleChars(example);
+    if (size > remaining) continue;
+    selected.push(example);
+    remaining -= size;
+  }
+  return selected;
+}
+
 /** Read-only inputs for authoring a code-generation prompt (CAP-008). */
 export interface CodeGenerationPromptInput {
   instruction: string;
@@ -132,7 +197,12 @@ export class PromptComposer {
    * external-work readout of a work summary (ADR-0100 D8). Both are CORE_RUNTIME / NON_AUTHORITATIVE_BACKGROUND;
    * an external-work readout also selects the work-summary developer rules and names the reply language.
    */
-  compose(task: Task, context: ContextBundle, readout?: ProjectReadout | ExternalWorkReadout): PromptSpec {
+  compose(
+    task: Task,
+    context: ContextBundle,
+    readout?: ProjectReadout | ExternalWorkReadout,
+    options?: PromptCompositionOptions,
+  ): PromptSpec {
     if (isExternalWorkReadout(readout)) return this.composeWorkSummary(task, readout);
     // ADR-0098 amendment: a POLICY_SENSITIVE_CHAT turn is a chat turn and gets the identical chat prompt and policy.
     const isGeneralChat =
@@ -205,6 +275,14 @@ export class PromptComposer {
       ),
     );
 
+    // ADR-0107 D5/D6: owner-curated examples, only for a provider resolved as LOCAL (otherwise none, byte-identical).
+    const curatedExamples = curatedExamplesForPrompt(task, context, readout, options).map((example) =>
+      PromptComposer.exampleLabel(
+        `Example request: ${normalizePromptContextContent(example.requestText)}\n` +
+          `Ideal answer: ${normalizePromptContextContent(example.idealAnswer)}`,
+      ),
+    );
+
     const transcript = isGeneralChat
       ? PromptComposer.renderConversationTurns(context.conversationTranscript)
       : context.conversationTranscript.map((entry) =>
@@ -221,6 +299,14 @@ export class PromptComposer {
             PromptComposer.section(
               '2A. Durable recall (non-authoritative background; verify before relying)',
               durableRecall,
+            ),
+          ]
+        : []),
+      ...(curatedExamples.length > 0
+        ? [
+            PromptComposer.sectionFromBody(
+              CURATED_EXAMPLES_SECTION_TITLE,
+              [CURATED_EXAMPLES_GUIDANCE, ...curatedExamples].join('\n'),
             ),
           ]
         : []),
@@ -474,6 +560,15 @@ export class PromptComposer {
     content: string,
   ): string {
     return JSON.stringify({ provenance, epistemicStatus, content });
+  }
+
+  /** ADR-0107 D5: an owner-curated example entry — never a fact, never current state, never transcript. */
+  private static exampleLabel(content: string): string {
+    return JSON.stringify({
+      provenance: 'OWNER_CURATED_EXAMPLE',
+      epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
+      content,
+    });
   }
 
   /** Continuation provenance is bounded persona/handoff/plan data (not the ContextProvenance union). */

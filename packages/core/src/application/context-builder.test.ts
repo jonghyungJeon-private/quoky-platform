@@ -11,6 +11,7 @@ import {
   createRetrievedMemory,
 } from '../domain';
 import type {
+  CuratedExampleEntry,
   DurableMemoryScope,
   MemoryRecord,
   MemoryRetrievalRequest,
@@ -20,6 +21,7 @@ import type {
 import type { MemoryManager } from './memory-manager';
 import type { MemoryRetriever } from './memory-retriever';
 import { DefaultMemoryRetriever } from './memory-retriever';
+import type { CuratedExampleSource } from './feedback/curated-example-selector';
 import type { DurableMemoryQuery, MemoryRepository } from '../ports';
 
 const taskWith = (
@@ -1422,5 +1424,68 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
     await new ContextBuilder(memory).build(taskWith({ actorId: '' }));
 
     expect(captured).toEqual({ channelId: 'c' });
+  });
+});
+
+// ADR-0107 D5 (LRN-2): the optional curated-example source.
+describe('ContextBuilder — curated examples (ADR-0107 D5)', () => {
+  const memory = {
+    recentShortTerm: async () => [rec('1', 'user', 'exact transcript')],
+    projectMemory: async () => undefined,
+  } as unknown as MemoryManager;
+  const example: CuratedExampleEntry = {
+    requestText: '회의록 요약해줘',
+    idealAnswer: '세 줄로 요약했어요',
+    egress: 'LOCAL_ONLY',
+    provenance: 'OWNER_CURATED_EXAMPLE',
+    epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
+    learningItemId: 'item-1',
+  };
+  const sourceOf = (result: () => Promise<CuratedExampleEntry[]>) => {
+    const calls: Task[] = [];
+    const source: CuratedExampleSource = {
+      async select(task) {
+        calls.push(task);
+        return result();
+      },
+    };
+    return { source, calls };
+  };
+
+  it('adds the selected examples to a GENERAL_CHAT bundle on the flat and the ranked path', async () => {
+    for (const config of [{}, { rankingEnabled: true, maxTokens: 100 }]) {
+      const { source, calls } = sourceOf(async () => [example]);
+      const bundle = await new ContextBuilder(memory, config, undefined, source).build(taskWith({ sessionId: 's1' }));
+      expect(bundle.curatedExamples).toEqual([example]);
+      expect(calls).toHaveLength(1);
+      const plain = await new ContextBuilder(memory, config).build(taskWith({ sessionId: 's1' }));
+      expect(plain).not.toHaveProperty('curatedExamples');
+      const { curatedExamples: _ignored, ...rest } = bundle;
+      expect(rest).toEqual(plain);
+    }
+  });
+
+  it('never asks the source for another capability or an actor-less turn, and omits the key when none qualify', async () => {
+    const { source, calls } = sourceOf(async () => [example]);
+    const builder = new ContextBuilder(memory, {}, undefined, source);
+    for (const capability of [Capability.POLICY_SENSITIVE_CHAT, Capability.SUMMARIZATION, Capability.PROJECT_ANALYSIS]) {
+      expect(await builder.build(taskWith({ capability }))).not.toHaveProperty('curatedExamples');
+    }
+    expect(await builder.build(taskWith({ actorId: '' }))).not.toHaveProperty('curatedExamples');
+    expect(calls).toHaveLength(0);
+
+    const empty = sourceOf(async () => []);
+    expect(await new ContextBuilder(memory, {}, undefined, empty.source).build(taskWith())).not.toHaveProperty(
+      'curatedExamples',
+    );
+  });
+
+  it('degrades to no examples when the source fails', async () => {
+    const { source } = sourceOf(async () => {
+      throw new Error('store down');
+    });
+    const bundle = await new ContextBuilder(memory, {}, undefined, source).build(taskWith());
+    expect(bundle).not.toHaveProperty('curatedExamples');
+    expect(bundle.conversationTranscript).toHaveLength(1);
   });
 });
