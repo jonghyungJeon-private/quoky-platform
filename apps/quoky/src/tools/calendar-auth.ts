@@ -1,28 +1,38 @@
 /**
- * Google Calendar one-time consent helper (ADR-0110 D2, CAL-1). Running it is a Strict owner action.
+ * Google Calendar one-time consent helper (ADR-0110 D2, CAL-1; scopes per the ADR-0110 amendment D1, 2026-10-06).
+ * Running it is a Strict owner action.
  *
  *   node apps/quoky/dist/tools/calendar-auth.js --out <new token file>
  *
  * Reads the OAuth "Desktop app" client from `QUOKY_CALENDAR_GOOGLE_CLIENT_ID` / `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET`
  * (the process environment, then `.env.local`), listens on a loopback port (`127.0.0.1`, random port) for the
- * redirect, and prints a consent URL for the `calendar.readonly` scope only (PKCE S256, a one-time `state`). After the
- * owner approves in the browser it exchanges the code with `oauth2.googleapis.com` and writes the refresh token to a
- * NEW file with mode 600 (an existing file is never overwritten). The authorization code, access token and refresh
- * token are never printed; the console shows the consent URL (no secret in it), the file path and the next step.
- * A grant broader than `calendar.readonly` is refused and nothing is written.
+ * redirect, and prints a consent URL for exactly two scopes — `calendar.readonly` and `calendar.events` — (PKCE S256,
+ * a one-time `state`). After the owner approves in the browser it exchanges the code with `oauth2.googleapis.com` and
+ * writes the refresh token and the granted scopes to a NEW file with mode 600 (an existing file is never overwritten).
+ * The authorization code, access token and refresh token are never printed; the console shows the consent URL (no
+ * secret in it), the granted scopes, the file path and the next step.
+ *
+ * A grant without `calendar.readonly`, or broader than those two scopes (the full `calendar` scope,
+ * `calendar.settings.*`, ACL/sharing scopes, `openid`, …), is refused and nothing is written. A grant of
+ * `calendar.readonly` alone (the owner unticked event editing) is saved: reads work, and the wave-5 calendar writes
+ * stay unavailable until the helper is run again. Quoky itself never writes the calendar unless
+ * `QUOKY_CALENDAR_WRITE_ENABLED` and the ADR-0112 approval flow allow it (CWR-2).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import {
+  GOOGLE_CALENDAR_ALLOWED_SCOPES,
   GoogleCalendarScopeError,
   GoogleCalendarNoRefreshTokenError,
   GoogleCalendarTokenFileError,
+  assertGrantedCalendarScopes,
   buildGoogleConsentUrl,
   createGoogleOAuthState,
   createGooglePkcePair,
   exchangeGoogleAuthorizationCode,
+  grantIncludesCalendarEvents,
   writeGoogleCalendarTokenFile,
 } from '@quoky/connector-calendar-google';
 import { isConnectorQueryError } from '@quoky/core';
@@ -39,6 +49,8 @@ export const CALENDAR_AUTH_CALLBACK_PATH = '/oauth2callback';
 /** How long the helper waits for the browser redirect. */
 export const CALENDAR_AUTH_DEFAULT_WAIT_MS = 5 * 60_000;
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000;
+/** The only scopes the consent requests (ADR-0110 amendment D1); a grant may hold nothing broader. */
+export const CALENDAR_AUTH_REQUESTED_SCOPES: readonly string[] = GOOGLE_CALENDAR_ALLOWED_SCOPES;
 const CODE_MAX_LENGTH = 2048;
 
 /** A loopback callback listener. `onRequest` receives the request path with its query string. */
@@ -53,20 +65,23 @@ export interface CalendarAuthDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly fetchImpl: typeof fetch;
   readonly fileExists: (path: string) => boolean;
-  readonly writeTokenFile: (path: string, refreshToken: string) => void;
+  /** Writes the refresh token and the normalized granted scopes to a NEW mode-600 file. */
+  readonly writeTokenFile: (path: string, refreshToken: string, scope: string) => void;
   readonly listen: (handler: CallbackHandler) => Promise<CallbackListener>;
   readonly waitMs: number;
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
 }
 
-const HELP = `Google Calendar consent helper (ADR-0110 D2) — calendar.readonly only
+const HELP = `Google Calendar consent helper (ADR-0110 D2 + amendment D1) — calendar.readonly + calendar.events only
 
   node apps/quoky/dist/tools/calendar-auth.js --out <new token file>
 
 Needs QUOKY_CALENDAR_GOOGLE_CLIENT_ID and QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET (a Google OAuth "Desktop app" client).
-Open the printed URL in your browser on this machine and approve read-only calendar access. The refresh token is
-written to the new file with mode 600 and is never printed. Then set QUOKY_CALENDAR_GOOGLE_TOKEN_FILE to that path.
+Open the printed URL in your browser on this machine and approve calendar access (view events; edit events is used
+only for approved writes, which stay off unless QUOKY_CALENDAR_WRITE_ENABLED is set). Any broader grant (full calendar,
+settings, sharing/ACL) is refused. The refresh token is written to the new file with mode 600 and is never printed.
+Then set QUOKY_CALENDAR_GOOGLE_TOKEN_FILE to that path.
 `;
 
 const PAGE_RECEIVED = 'Quoky: approval received. Return to the terminal to confirm the token was saved. You can close this tab.';
@@ -145,7 +160,7 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
   let timer: NodeJS.Timeout | undefined;
   try {
     const redirectUri = `http://127.0.0.1:${listener.port}${CALENDAR_AUTH_CALLBACK_PATH}`;
-    deps.stdout('Open this URL in a browser on this machine and approve READ-ONLY calendar access:');
+    deps.stdout('Open this URL in a browser on this machine and approve calendar access (calendar.readonly + calendar.events only):');
     deps.stdout(buildGoogleConsentUrl({ clientId: client.clientId, redirectUri, state, codeChallenge: pkce.challenge }));
     deps.stdout(`Waiting up to ${Math.round(deps.waitMs / 60_000)} minutes for the browser redirect to ${redirectUri} …`);
 
@@ -173,8 +188,14 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
       { code: result.code, codeVerifier: pkce.verifier, redirectUri },
       { fetchImpl: deps.fetchImpl, timeoutMs: TOKEN_REQUEST_TIMEOUT_MS },
     );
-    deps.writeTokenFile(outPath, granted.refreshToken);
-    deps.stdout(`Saved a calendar.readonly refresh token (mode 600) to ${outPath}`);
+    // Defence in depth over the adapter's own check: never persist a grant outside the two allowed scopes.
+    const grant = assertGrantedCalendarScopes(granted.scope);
+    deps.writeTokenFile(outPath, granted.refreshToken, grant);
+    deps.stdout(
+      grantIncludesCalendarEvents(grant)
+        ? `Saved a calendar.readonly + calendar.events refresh token (mode 600) to ${outPath}`
+        : `Saved a calendar.readonly refresh token (mode 600) to ${outPath} (calendar.events was not granted: calendar writes will stay unavailable)`,
+    );
     deps.stdout(`Next: set QUOKY_CALENDAR_GOOGLE_TOKEN_FILE=${outPath} in .env.local and restart Quoky.`);
     return EXIT_OK;
   } catch (error) {
@@ -191,7 +212,7 @@ function describeFailure(error: unknown): string {
   if (error instanceof GoogleCalendarTokenFileError) return error.code;
   if (error instanceof GoogleCalendarScopeError) {
     return error.kind === 'TOO_BROAD'
-      ? 'Google granted more than calendar.readonly (refused)'
+      ? 'Google granted more than calendar.readonly and calendar.events (refused)'
       : 'Google did not grant calendar.readonly (tick the calendar permission on the consent screen)';
   }
   if (error instanceof GoogleCalendarNoRefreshTokenError) {

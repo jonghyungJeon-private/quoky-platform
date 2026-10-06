@@ -37,8 +37,9 @@ export class GoogleCalendarResponseError extends ConnectorQueryError {
 }
 
 /**
- * The granted OAuth scope is not exactly `calendar.readonly` (ADR-0110 D2). `MISSING` → `INSUFFICIENT_SCOPE`;
- * `TOO_BROAD` (any other scope granted alongside it) → `FORBIDDEN`: Quoky refuses to hold a broader grant.
+ * The granted OAuth scopes are outside the allowed set (ADR-0110 D2 and its 2026-10-06 amendment D1: `calendar.readonly`
+ * required, `calendar.events` allowed). `MISSING` → `INSUFFICIENT_SCOPE`; `TOO_BROAD` (any other scope granted
+ * alongside them) → `FORBIDDEN`: Quoky refuses to hold a broader grant.
  */
 export class GoogleCalendarScopeError extends ConnectorQueryError {
   constructor(readonly kind: 'MISSING' | 'TOO_BROAD') {
@@ -46,7 +47,7 @@ export class GoogleCalendarScopeError extends ConnectorQueryError {
       kind === 'MISSING' ? 'INSUFFICIENT_SCOPE' : 'FORBIDDEN',
       kind === 'MISSING'
         ? 'google calendar: the token does not grant calendar.readonly'
-        : 'google calendar: the token grants more than calendar.readonly; re-run the consent helper',
+        : 'google calendar: the token grants more than calendar.readonly and calendar.events; re-run the consent helper',
     );
     this.name = 'GoogleCalendarScopeError';
   }

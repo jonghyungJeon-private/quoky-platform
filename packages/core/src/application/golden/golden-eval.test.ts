@@ -182,7 +182,7 @@ describe('golden evaluation against the real deterministic Core', () => {
     expect(find('완료 처리 어떻게 해?')).toEqual({ route: 'help-intent', providerCalls: 0 });
     // Every registered handler id appears as a route at least once.
     const routes = new Set(routing.cases.map((c) => c.expected.route));
-    for (const id of ['feedback.summary', 'git-branch', 'work-chat.todo', 'reminders', 'work-chat.lookup', 'help-intent']) {
+    for (const id of ['feedback.summary', 'git-branch', 'work-chat.todo', 'calendar', 'reminders', 'work-chat.lookup', 'help-intent']) {
       expect(routes.has(id), id).toBe(true);
     }
   });

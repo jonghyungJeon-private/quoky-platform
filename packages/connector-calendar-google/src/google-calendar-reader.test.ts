@@ -422,7 +422,16 @@ describe('GoogleCalendarReader (ADR-0110 D1/D2)', () => {
     }
   });
 
-  it('refuses a token that does not grant exactly calendar.readonly', async () => {
+  it('accepts a calendar.readonly + calendar.events grant for reads (ADR-0110 amendment D1), still GET only', async () => {
+    const google = fakeGoogle({
+      token: () => tokenOk({ scope: `${GOOGLE_CALENDAR_READONLY_SCOPE} https://www.googleapis.com/auth/calendar.events` }),
+      calendar: () => json(200, { items: [] }),
+    });
+    await expect(reader(google.fetchImpl).listEvents(SEOUL_TODAY)).resolves.toEqual([]);
+    expect(google.calendarCalls.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a token that lacks calendar.readonly or grants more than calendar.readonly + calendar.events', async () => {
     const broader = fakeGoogle({
       token: () => tokenOk({ scope: `${GOOGLE_CALENDAR_READONLY_SCOPE} https://www.googleapis.com/auth/calendar` }),
       calendar: () => json(200, { items: [] }),

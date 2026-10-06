@@ -8,6 +8,7 @@ import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDERS,
+  CALENDAR_READER,
   CODE_CHAIN_STATUS_DOMAINS,
   Capability,
   CONVERSATION_TURN_HANDLERS,
@@ -42,6 +43,9 @@ import {
   renderOwnMemoryNotFound,
   type AiProvider,
   type ApplyPreviewAnchor,
+  type CalendarEvent,
+  type CalendarEventQuery,
+  type CalendarReader,
   type ConversationContext,
   type ConversationRuntimeDeps,
   type ConversationTurnHandler,
@@ -81,9 +85,10 @@ import actionShapedCorpus from '../../../packages/core/src/application/golden/ac
  * stub, so no CLI is ever spawned and every provider touch is visible. Turns go through the production
  * `ConversationRuntime` exactly as `QuokyCore` would call it.
  *
- * It pins: the dispatch-boundary deps baseline, the eight handlers in their fixed stages/orders (the five v2 handlers
+ * It pins: the dispatch-boundary deps baseline, the nine handlers in their fixed stages/orders (the five v2 handlers
  * plus the ADR-0104 D4 help-intent handler, registered at wave-1 integration, the ADR-0106 memory-command handler,
- * registered by MEM-1, and the ADR-0107 D3 learning-command handler, LRN-1), the contributed help
+ * registered by MEM-1, the ADR-0107 D3 learning-command handler, LRN-1, and the ADR-0110 calendar handler, CAL-2 —
+ * the harness configures a calendar whose adapter's `listEvents` is replaced by an offline fixture), the contributed help
  * lines and their bounds, zero provider calls on deterministic turns, the ADR-0100 D1 anchored-prefix precedence and
  * the turn-handler routing golden ratchet (including the wave-7 live-QA fixes), and the migration contiguity.
  */
@@ -140,6 +145,8 @@ const EXPECTED_REGISTRY: ReadonlyArray<readonly [string, TurnHandlerStage, numbe
   // ADR-0107 D3 (amends ADR-0096 D5): owner learning commands, after memory commands (50), before to-dos (100).
   ['feedback.learning', 'pre-classify', 60],
   ['work-chat.todo', 'pre-classify', 100],
+  // ADR-0110 D3 (amends ADR-0096 D5): schedule questions from the configured calendar, after to-dos, before reminders.
+  ['calendar', 'pre-classify', 150],
   ['reminders', 'pre-classify', 200],
   ['work-chat.lookup', 'pre-classify', 300],
   // ADR-0104 D4 (amends ADR-0096 D5): how-to questions about Quoky's own commands, after work lookups, before the classifier.
@@ -179,6 +186,8 @@ interface Harness {
   readonly memory: MemoryManager;
   /** ADR-0106 amendment: the production memory-command service (the daily maintenance calls its expiry purge). */
   readonly memoryCommands: MemoryCommandService;
+  /** ADR-0110 (CAL-2): every window the calendar handler read through the production `CALENDAR_READER`. */
+  readonly calendarReads: readonly CalendarEventQuery[];
   providerCalls(): number;
   availabilityProbes(): number;
   /** Send one turn in `context` and report which layer answered it. */
@@ -239,6 +248,25 @@ function prepareMigratedDatabase(path: string): void {
 
 let contextSeq = 0;
 
+/** The offline calendar fixture's one event title (it must never reach a provider or the conversation history). */
+const CALENDAR_FIXTURE_TITLE = 'INT calendar fixture standup';
+
+/** One timed event an hour into whatever window is read (deterministic relative to the window, any wall clock). */
+function calendarFixture(query: CalendarEventQuery): readonly CalendarEvent[] {
+  const start = Date.parse(query.from) + 60 * 60_000;
+  return [
+    {
+      id: 'int-calendar-1',
+      title: CALENDAR_FIXTURE_TITLE,
+      start: new Date(start).toISOString(),
+      end: new Date(start + 30 * 60_000).toISOString(),
+      allDay: false,
+      status: 'confirmed',
+      calendarName: 'primary',
+    },
+  ];
+}
+
 async function boot(): Promise<Harness> {
   const { AppModule } = await import('./app.module');
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
@@ -266,6 +294,16 @@ async function boot(): Promise<Harness> {
       },
     });
   }
+
+  // ADR-0110 (CAL-2): the configured Google adapter is the production instance; only its read is replaced (on the
+  // INSTANCE the handler holds), so no network call is possible and every read is recorded.
+  const calendarReads: CalendarEventQuery[] = [];
+  Object.assign(app.get<CalendarReader>(CALENDAR_READER), {
+    async listEvents(query: CalendarEventQuery): Promise<readonly CalendarEvent[]> {
+      calendarReads.push(query);
+      return calendarFixture(query);
+    },
+  });
 
   const handlers = app.get<readonly ConversationTurnHandler[]>(CONVERSATION_TURN_HANDLERS);
   const claims: string[] = [];
@@ -305,6 +343,7 @@ async function boot(): Promise<Harness> {
     contextBuilder: app.get(ContextBuilder),
     memory: app.get(MemoryManager),
     memoryCommands: app.get(MemoryCommandService),
+    calendarReads,
     providerCalls: () => providerCalls,
     availabilityProbes: () => availabilityProbes,
     freshContext() {
@@ -500,6 +539,11 @@ beforeAll(async () => {
     QUOKY_OLLAMA_ENABLED: 'false',
     QUOKY_REMINDERS_ENABLED: 'true',
     QUOKY_TIMEZONE: 'Asia/Seoul',
+    // ADR-0110 (CAL-2): a configured calendar (placeholder client and inline refresh token, never sent anywhere: the
+    // adapter's read is replaced right after boot and construction makes no network call).
+    QUOKY_CALENDAR_GOOGLE_CLIENT_ID: 'int-calendar-client',
+    QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET: 'int-calendar-client-placeholder',
+    QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN: 'int-calendar-refresh-placeholder',
   });
   harness = await boot();
 }, 60_000);
@@ -568,9 +612,9 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);
   });
 
-  it('registers exactly eight turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
-    expect(harness.handlers).toHaveLength(8);
-    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(8);
+  it('registers exactly nine turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
+    expect(harness.handlers).toHaveLength(9);
+    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(9);
     const byStage = (harness.runtime as unknown as {
       turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
     }).turnHandlersByStage;
@@ -619,12 +663,12 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(cut?.endsWith('…')).toBe(true);
     // Registry order is kept and only the first 12 bounded lines survive: the cut line, the real lines, then
     // extras up to the cap; the rest are dropped (never wrapped onto the next line, never reordered).
-    const keptExtras = MAX_CONTRIBUTED_HELP_LINES - 1 - contributed.length;
-    expect(keptExtras).toBeGreaterThanOrEqual(0);
-    const shown = [cut as string, ...contributed, ...extras.slice(0, keptExtras)];
+    // CAL-2: the real lines now fill the 12-line budget exactly, so the cut line pushes the last real line out too.
+    const offered = [cut as string, ...contributed, ...extras];
+    const shown = offered.slice(0, MAX_CONTRIBUTED_HELP_LINES);
     const first = lines.indexOf(cut as string);
     expect(lines.slice(first, first + MAX_CONTRIBUTED_HELP_LINES)).toEqual(shown);
-    for (const dropped of extras.slice(keptExtras)) expect(lines).not.toContain(dropped);
+    for (const dropped of offered.slice(MAX_CONTRIBUTED_HELP_LINES)) expect(lines).not.toContain(dropped);
   });
 });
 
@@ -1433,5 +1477,68 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     }
     expect(route('할 일 추가: 보관함 정리')).toMatchObject({ route: 'work-chat.todo' });
     expect(route('기억 복원 1 하지 마')).toMatchObject({ route: 'classifier' });
+  });
+});
+
+describe('Personal v3 CAL-2 — schedule questions from the configured calendar (ADR-0110 D3–D6)', () => {
+  const DAY_MS = 86_400_000;
+  const calendarCases = () => routing.cases.filter((golden) => golden.expected.route === 'calendar');
+
+  it('pins the golden calendar routing: the task phrases, the QUAL-7 switch, write refusals and the reminder pair', () => {
+    const route = (text: string) => routing.cases.find((c) => c.text === text)?.expected;
+    for (const text of ['오늘 일정', '내일 일정 뭐야?', '이번 주 일정', '다음 회의 언제야?', "What's my next meeting?", '나 내일 바빠?']) {
+      expect(route(text), text).toEqual({ route: 'calendar', providerCalls: 0 });
+    }
+    expect(route('내일 3시 회의 일정 추가해줘')).toEqual({ route: 'calendar', providerCalls: 0 });
+    expect(route('내일 9시에 회의 알려줘')).toEqual({ route: 'reminders', providerCalls: 0 });
+    expect(route('할 일 추가: 내일 일정 정리')).toMatchObject({ route: 'work-chat.todo' });
+    expect(route('일정 관리 팁 알려줘')).toEqual({ route: 'classifier' });
+    expect(calendarCases().length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('every claimed schedule question read the calendar once with a local-day window and answered from it', async () => {
+    const byId = await observeSuite(routing);
+    const writes = new Set(['내일 3시 회의 일정 추가해줘', 'cancel my 3pm meeting']);
+    for (const golden of calendarCases()) {
+      const seen = byId.get(golden.id) as CaseObservation;
+      expect(seen.route, golden.id).toBe('calendar');
+      expect(seen.providerCalls + seen.availabilityProbes, golden.id).toBe(0);
+      if (writes.has(golden.text)) {
+        expect(seen.text, golden.id).toMatch(/아무것도 바꾸지 않았어요|nothing was changed/);
+      } else {
+        expect(seen.text, golden.id).toContain(CALENDAR_FIXTURE_TITLE);
+        expect(seen.text, golden.id).toMatch(/Asia\/Seoul/);
+      }
+    }
+    // Write refusals make no read; each answered question made exactly one, inside the port's 31-day bound.
+    const answered = calendarCases().filter((golden) => !writes.has(golden.text)).length;
+    expect(harness.calendarReads).toHaveLength(answered);
+    for (const read of harness.calendarReads) {
+      const span = Date.parse(read.to) - Date.parse(read.from);
+      expect(span).toBeGreaterThan(0);
+      expect(span).toBeLessThanOrEqual(31 * DAY_MS);
+      expect(read.limit).toBe(50);
+    }
+    // Day and week windows start at a Seoul midnight (15:00 UTC).
+    expect(harness.calendarReads.filter((read) => read.from.endsWith('T15:00:00.000Z')).length).toBeGreaterThan(5);
+  });
+
+  it('calendar text never reaches a provider or the conversation history (ADR-0110 D4)', async () => {
+    const owner = harness.freshContext();
+    const providerBefore = harness.providerCalls();
+    const answer = await harness.turn(owner, '오늘 일정');
+    expect(answer.route).toBe('calendar');
+    expect(answer.text).toContain(CALENDAR_FIXTURE_TITLE);
+    // A chat turn afterwards: the provider prompt is built from the history, which carries the fixed note only.
+    await harness.turn(owner, '고마워');
+    expect(harness.providerCalls()).toBeGreaterThan(providerBefore);
+    const history = (await harness.storage.memories.findShortTermByUser(owner.userId)).map((record) => record.content);
+    expect(history.some((row) => row.includes(CALENDAR_FIXTURE_TITLE))).toBe(false);
+    expect(history).toContain('[캘린더 조회 응답 — 일정 내용은 대화 기록에 남기지 않아요.]');
+  });
+
+  it('the calendar help line is listed in the full help reply', async () => {
+    const help = await harness.turn(harness.freshContext(), '도움말');
+    expect(help.text).toContain('- 캘린더(읽기 전용): "오늘 일정", "내일 일정 뭐야?", "이번 주 일정", "다음 회의 언제야?"');
   });
 });

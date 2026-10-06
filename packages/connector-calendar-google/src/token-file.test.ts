@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -50,6 +50,21 @@ describe('Google Calendar token file (ADR-0110 D2)', () => {
       refresh_token: TOKEN,
     });
     expect(readGoogleCalendarTokenFile(path)).toBe(TOKEN);
+  });
+
+  it('records a calendar.readonly + calendar.events grant and reads it back; refuses to write a broader grant', () => {
+    const both = `${GOOGLE_CALENDAR_READONLY_SCOPE} https://www.googleapis.com/auth/calendar.events`;
+    const path = join(dir, 'token-events.json');
+    writeGoogleCalendarTokenFile(path, TOKEN, both);
+    expect(JSON.parse(readFileSync(path, 'utf8')).scope).toBe(both);
+    expect(readGoogleCalendarTokenFile(path)).toBe(TOKEN);
+    expect(
+      codeOf(() => writeGoogleCalendarTokenFile(join(dir, 'broad.json'), TOKEN, `${both} https://www.googleapis.com/auth/calendar`)),
+    ).toBe('CALENDAR_TOKEN_FILE_INVALID');
+    expect(existsSync(join(dir, 'broad.json'))).toBe(false);
+    // Only the normalized form the writer produces is read back.
+    const reversed = JSON.stringify({ version: 1, scope: both.split(' ').reverse().join(' '), refresh_token: TOKEN });
+    expect(codeOf(() => readGoogleCalendarTokenFile(writeRaw('rev.json', reversed)))).toBe('CALENDAR_TOKEN_FILE_INVALID');
   });
 
   it('never overwrites an existing file', () => {

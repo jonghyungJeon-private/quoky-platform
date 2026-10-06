@@ -170,3 +170,5 @@ export * from './reminders';
 export * from './help-intent';
 // ADR-0106 memory management commands (MEM-1).
 export * from './memory-commands';
+// ADR-0110 calendar schedule questions (CAL-2).
+export * from './calendar';

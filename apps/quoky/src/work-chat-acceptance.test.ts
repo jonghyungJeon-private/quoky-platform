@@ -53,6 +53,7 @@ import {
   type ProductionConversationRuntimeDeps,
 } from './conversation-runtime-provider';
 import { CODE_WORK_TURN_HANDLERS, FEEDBACK_TURN_HANDLERS } from './features/feature-tokens';
+import { CALENDAR_TURN_HANDLERS } from './features/calendar.providers';
 import { MEMORY_TURN_HANDLERS } from './features/memory.providers';
 import { createRemindersProviders } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
@@ -240,6 +241,8 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
       { provide: CODE_WORK_TURN_HANDLERS, useValue: [] },
       { provide: FEEDBACK_TURN_HANDLERS, useValue: [] },
       { provide: MEMORY_TURN_HANDLERS, useValue: [] },
+      // ADR-0110 (CAL-2): no calendar configured, so the calendar feature contributes no handler.
+      { provide: CALENDAR_TURN_HANDLERS, useValue: [] },
       ...createWorkChatProviders(() => ({ summaryEnabled: options.summaryEnabled ?? true }), { logger }),
       ...createRemindersProviders(() => ({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' }), { logger }),
       turnHandlersProvider,

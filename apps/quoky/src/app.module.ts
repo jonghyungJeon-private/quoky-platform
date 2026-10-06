@@ -113,6 +113,7 @@ import { createAgentProfileRegistryProvider } from './agent-profile-registry-pro
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
 import { feedbackProviders } from './features/feedback.providers';
+import { createCalendarProviders } from './features/calendar.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
@@ -735,6 +736,9 @@ const features: Provider[] = [
   // ADR-0106 (MEM-1): memory management commands (pre-classify order 50) over the existing writer and vector cache.
   // ADR-0106 amendment: forgotten memories are archived for QUOKY_MEMORY_ARCHIVE_DAYS (default 7; 0 = delete at once).
   ...createMemoryProviders({ archiveDays: config.memory.archiveDays }),
+  // ADR-0110 (CAL-2): schedule questions from the read-only calendar (pre-classify order 150). CALENDAR_READER and the
+  // handler are bound only when the calendar is configured; otherwise QUAL-7 routing is unchanged (D5).
+  ...createCalendarProviders({ calendar: config.calendar, timeZone: config.reminders.timeZone }),
   turnHandlersProvider,
 ];
 

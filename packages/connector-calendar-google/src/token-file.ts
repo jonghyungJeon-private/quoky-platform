@@ -1,12 +1,13 @@
 import { closeSync, constants, fchmodSync, fstatSync, openSync, readSync, writeSync } from 'node:fs';
-import { GOOGLE_CALENDAR_READONLY_SCOPE } from './oauth';
+import { GOOGLE_CALENDAR_READONLY_SCOPE, assertGrantedCalendarScopes } from './oauth';
 
 /**
  * The local refresh-token file (ADR-0110 D2): a small JSON file written once by the consent helper with mode 600 and
  * read at startup. The reader refuses a symlink, a non-regular file, a file another user owns, a file group or others
- * can read or write, an oversized file and any other scope. Errors carry a fixed code only, never the path's content.
+ * can read or write, an oversized file and any scope outside the allowed grant (`calendar.readonly`, optionally with
+ * `calendar.events`; ADR-0110 amendment D1). Errors carry a fixed code only, never the path's content.
  *
- * File shape: `{ "version": 1, "scope": "<calendar.readonly>", "refresh_token": "<token>" }`.
+ * File shape: `{ "version": 1, "scope": "<calendar.readonly[ calendar.events]>", "refresh_token": "<token>" }`.
  */
 
 export const GOOGLE_CALENDAR_TOKEN_FILE_VERSION = 1;
@@ -67,12 +68,21 @@ export function readGoogleCalendarTokenFile(path: string): string {
   }
 }
 
-/** Write a NEW token file with mode 600. An existing path is never overwritten (`EXISTS`). */
-export function writeGoogleCalendarTokenFile(path: string, refreshToken: string): void {
+/**
+ * Write a NEW token file with mode 600. An existing path is never overwritten (`EXISTS`). `scope` is the grant the
+ * exchange returned (default `calendar.readonly`); a grant outside the allowed set is refused (`INVALID`).
+ */
+export function writeGoogleCalendarTokenFile(
+  path: string,
+  refreshToken: string,
+  scope: string = GOOGLE_CALENDAR_READONLY_SCOPE,
+): void {
   if (!isPlausibleRefreshToken(refreshToken)) throw new GoogleCalendarTokenFileError(GoogleCalendarTokenFileErrorCode.INVALID);
+  const grant = normalizedGrantOrUndefined(scope);
+  if (grant === undefined) throw new GoogleCalendarTokenFileError(GoogleCalendarTokenFileErrorCode.INVALID);
   const content = `${JSON.stringify({
     version: GOOGLE_CALENDAR_TOKEN_FILE_VERSION,
-    scope: GOOGLE_CALENDAR_READONLY_SCOPE,
+    scope: grant,
     refresh_token: refreshToken,
   })}\n`;
   let fd: number;
@@ -103,7 +113,11 @@ function parseTokenFile(text: string): string {
     throw new GoogleCalendarTokenFileError(GoogleCalendarTokenFileErrorCode.INVALID);
   }
   const record = parsed as Record<string, unknown>;
-  if (record.version !== GOOGLE_CALENDAR_TOKEN_FILE_VERSION || record.scope !== GOOGLE_CALENDAR_READONLY_SCOPE) {
+  if (record.version !== GOOGLE_CALENDAR_TOKEN_FILE_VERSION || typeof record.scope !== 'string') {
+    throw new GoogleCalendarTokenFileError(GoogleCalendarTokenFileErrorCode.INVALID);
+  }
+  // Only the exact normalized forms the writer produces are accepted.
+  if (normalizedGrantOrUndefined(record.scope) !== record.scope) {
     throw new GoogleCalendarTokenFileError(GoogleCalendarTokenFileErrorCode.INVALID);
   }
   const token = record.refresh_token;
@@ -111,6 +125,14 @@ function parseTokenFile(text: string): string {
     throw new GoogleCalendarTokenFileError(GoogleCalendarTokenFileErrorCode.INVALID);
   }
   return token;
+}
+
+function normalizedGrantOrUndefined(scope: string): string | undefined {
+  try {
+    return assertGrantedCalendarScopes(scope);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Non-empty, bounded, printable ASCII with no whitespace (Google refresh tokens are of the form `1//…`). */
