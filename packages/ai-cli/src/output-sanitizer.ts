@@ -361,71 +361,140 @@ export function stripTrailingTranslationMetaLine(
   return body.trim() === '' ? text : body;
 }
 
-const HAN = /^\p{Script=Han}$/u;
+const HAN_OR_KANA = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u;
 const HANGUL = /\p{Script=Hangul}/u;
-/** A character that ends or starts a Hangul word next to a stray token (Hangul syllable or jamo). */
-const HANGUL_EDGE = /^\p{Script=Hangul}$/u;
+/** A precomposed Hangul syllable (a stray character must sit between two of them, inside one word). */
+const HANGUL_SYLLABLE = /^[\uAC00-\uD7A3]$/u;
 /**
- * Conventional standalone Hanja that Korean prose uses as a whole word (前 장관, 故 김 씨, 對 일본, 株 표기, 大·中·小
- * 사이즈). These are kept even when they stand alone between Hangul words.
+ * Conventional Hanja that Korean prose writes next to Hangul as a whole word (前 장관, 故 김 씨, 對 일본, 大·中·小).
+ * Never removed, even when fused into a Hangul word.
  */
 const CONVENTIONAL_STANDALONE_HANJA: ReadonlySet<string> = new Set(
   Array.from('前現故新舊對與野株大中小高低約總副正反上下內外男女第'),
 );
-
 /**
- * Remove stray isolated Han characters from one prose segment (no code inside). A token is removed only when it is a
- * single Han character standing alone as its own whitespace-delimited word (no Hangul neighbour inside the word), the
- * word before it ends in Hangul and the word after it starts with Hangul (it sits inside a Hangul run), and it is not a
- * conventional standalone Hanja. One separating space goes with it; nothing else changes.
+ * A reply that talks about characters, Hanja or another language: every Han / Kana character there is content
+ * ("한자는 木 나무를 나타냅니다", "일본어로 は는 조사예요"), so nothing is removed.
  */
-function stripStrayHanInSegment(segment: string): string {
-  const parts = segment.split(/([ \t]+)/u);
-  // parts alternates word, separator, word, …; a leading or trailing separator yields an empty word at that end.
-  const remove = new Set<number>();
-  for (let index = 2; index < parts.length - 2; index += 2) {
-    const word = parts[index] ?? '';
-    if (!HAN.test(word) || CONVENTIONAL_STANDALONE_HANJA.has(word)) continue;
-    const before = Array.from(parts[index - 2] ?? '').at(-1) ?? '';
-    const after = Array.from(parts[index + 2] ?? '')[0] ?? '';
-    if (HANGUL_EDGE.test(before) && HANGUL_EDGE.test(after)) remove.add(index);
+const CHARACTER_TOPIC =
+  /한자|漢字|한문|중국어|일본어|일어|중문|간체|번체|히라가나|가타카나|글자|문자|부수|훈독|음독|chinese|japanese|kanji|hanja|kana|hiragana|katakana|characters?\b/iu;
+/** Opening / closing brackets and curly quotes: a character inside any of them is quoted or glossed content. */
+const BRACKET_OPEN = '([{（［｛「『《〈【“‘';
+const BRACKET_CLOSE = ')]}）］｝」』》〉】”’';
+
+/** True when `prefix` (the line text before a character) leaves a bracket or a straight quote open. */
+function insideBracketOrQuote(prefix: string): boolean {
+  let depth = 0;
+  let doubleQuotes = 0;
+  let singleQuotes = 0;
+  for (const char of prefix) {
+    if (BRACKET_OPEN.includes(char)) depth += 1;
+    else if (BRACKET_CLOSE.includes(char)) depth = Math.max(0, depth - 1);
+    else if (char === '"') doubleQuotes += 1;
+    else if (char === "'") singleQuotes += 1;
   }
-  if (remove.size === 0) return segment;
-  // Drop the word and the separator that follows it, so "제목 栏 에서" becomes "제목 에서".
-  return parts.filter((_, index) => !remove.has(index) && !remove.has(index - 1)).join('');
+  return depth > 0 || doubleQuotes % 2 === 1 || singleQuotes % 2 === 1;
 }
 
 /**
- * Strip stray isolated Han characters from a Korean reply (ADR-0104 D5, ADR-0098 D2; live QA QA-V2-003: a stray "栏"
- * in Korean text). Only when Core's reply policy says the reply language is `ko` and the User asked for no language or
- * translation. Fenced code, indented code, inline code and every line holding an unmatched backtick are never
- * inspected; an unbalanced fence disables it. Han runs (a Hanja word, Chinese or Japanese text), glosses ("강(江)"),
- * a Han character inside a mixed Hangul word and conventional standalone Hanja (`前`, `故`, `對` …) are kept. It
- * removes the stray character only and never rephrases.
+ * The inline code spans of one paragraph (CommonMark: a backtick run opens a span that the next run of the SAME
+ * length closes, across line breaks inside the paragraph), as `[start, end)` offsets into `source`; `null` when a run
+ * is left unmatched or a backtick is backslash-escaped, so the code/prose split is not trustworthy.
+ */
+function inlineCodeSpans(source: string): Array<readonly [number, number]> | null {
+  if (source.includes('\\`')) return null;
+  const runs = Array.from(source.matchAll(/`+/gu), (match) => [match.index, match[0].length] as const);
+  const spans: Array<readonly [number, number]> = [];
+  for (let index = 0; index < runs.length; index += 1) {
+    const [start, length] = runs[index] ?? [0, 0];
+    const close = runs.findIndex((run, other) => other > index && run[1] === length);
+    if (close < 0) return null;
+    const [closeStart, closeLength] = runs[close] ?? [0, 0];
+    spans.push([start, closeStart + closeLength]);
+    index = close;
+  }
+  return spans;
+}
+
+/** A character to remove: its offset in the source text and its UTF-16 length. */
+type Removal = readonly [number, number];
+
+/**
+ * Collect the stray Han / Kana characters of one paragraph (consecutive prose lines). A character is removed only when
+ * it is fused inside a Hangul word — a precomposed Hangul syllable immediately before AND after it, so it is neither a
+ * whitespace-separated token nor part of a Han run — outside inline code, brackets and quotes, and not a conventional
+ * Hanja. Inline code spans are tracked across the paragraph's line breaks; an untrustworthy split skips the paragraph.
+ */
+function collectStrayCharacters(text: string, paragraph: readonly SourceLine[], removals: Removal[]): void {
+  const first = paragraph[0];
+  const last = paragraph.at(-1);
+  if (first === undefined || last === undefined) return;
+  const paragraphStart = first.start;
+  const spans = inlineCodeSpans(text.slice(paragraphStart, last.start + last.text.length));
+  if (spans === null) return;
+  const inCode = (offset: number) =>
+    spans.some(([start, end]) => offset >= paragraphStart + start && offset < paragraphStart + end);
+
+  for (const line of paragraph) {
+    if (!HAN_OR_KANA.test(line.text)) continue;
+    // The line with every inline-code character blanked, so code never counts as a neighbour, bracket or quote.
+    let masked = '';
+    for (let offset = 0; offset < line.text.length; offset += 1) masked += inCode(line.start + offset) ? ' ' : line.text[offset];
+    const chars: Array<{ readonly char: string; readonly offset: number }> = [];
+    let offset = 0;
+    for (const char of masked) {
+      chars.push({ char, offset });
+      offset += char.length;
+    }
+    chars.forEach(({ char, offset: at }, index) => {
+      if (!HAN_OR_KANA.test(char) || CONVENTIONAL_STANDALONE_HANJA.has(char)) return;
+      const before = chars[index - 1]?.char ?? '';
+      const after = chars[index + 1]?.char ?? '';
+      if (!HANGUL_SYLLABLE.test(before) || !HANGUL_SYLLABLE.test(after)) return;
+      if (insideBracketOrQuote(masked.slice(0, at))) return;
+      removals.push([line.start + at, char.length]);
+    });
+  }
+}
+
+/**
+ * Strip stray Han / Kana characters from a Korean reply (ADR-0104 D5, ADR-0098 D2; live QA QA-V2-003: a stray "栏"
+ * glued inside Korean text). Deliberately conservative — a missed artifact costs one odd character, a wrong removal
+ * changes the answer:
+ *  - only when Core's reply policy says the reply language is `ko` and the User asked for no language or translation,
+ *    and never in a reply that discusses characters, Hanja or another language (`CHARACTER_TOPIC`);
+ *  - only a single character fused inside a Hangul word ("제목栏에" → "제목에"); a whitespace-separated token
+ *    ("한자는 木 나무를 …"), a Han run, a gloss or quoted text, and conventional Hanja (`前`, `故`, `對` …) are kept;
+ *  - fenced code, indented code and inline code spans (tracked across line breaks within a paragraph, CommonMark
+ *    backtick runs) are never touched; an unmatched backtick skips its paragraph and an unbalanced fence disables it.
+ * It removes the stray character only and never rephrases.
  */
 export function stripStrayHanCharacters(text: string, replyPolicy: GeneralChatReplyPolicy | undefined): string {
   if (replyPolicy?.replyLanguage !== 'ko' || replyPolicy.explicitLanguageRequest) return text;
-  if (!/\p{Script=Han}/u.test(text) || !HANGUL.test(text)) return text;
+  if (!HAN_OR_KANA.test(text) || !HANGUL.test(text) || CHARACTER_TOPIC.test(text)) return text;
   const lines = classifyLines(text);
   if (lines === null) return text;
 
-  let changed = false;
+  const removals: Removal[] = [];
+  let paragraph: SourceLine[] = [];
+  const flush = () => {
+    if (paragraph.length > 0) collectStrayCharacters(text, paragraph, removals);
+    paragraph = [];
+  };
+  for (const line of lines) {
+    if (line.code || INDENTED_CODE_LINE.test(line.text) || line.text.trim() === '') flush();
+    else paragraph.push(line);
+  }
+  flush();
+  if (removals.length === 0) return text;
+
   let output = '';
   let cursor = 0;
-  for (const line of lines) {
-    if (line.code || INDENTED_CODE_LINE.test(line.text) || !/\p{Script=Han}/u.test(line.text)) continue;
-    const segments = line.text.split(/(`[^`]*`)/u);
-    // An unmatched backtick leaves a lone "`" in a prose segment: the code/prose split is not trustworthy.
-    if (segments.some((segment, index) => index % 2 === 0 && segment.includes('`'))) continue;
-    const cleaned = segments
-      .map((segment, index) => (index % 2 === 0 ? stripStrayHanInSegment(segment) : segment))
-      .join('');
-    if (cleaned === line.text) continue;
-    output += text.slice(cursor, line.start) + cleaned;
-    cursor = line.start + line.text.length;
-    changed = true;
+  for (const [start, length] of removals) {
+    output += text.slice(cursor, start);
+    cursor = start + length;
   }
-  return changed ? output + text.slice(cursor) : text;
+  return output + text.slice(cursor);
 }
 
 const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/u;
