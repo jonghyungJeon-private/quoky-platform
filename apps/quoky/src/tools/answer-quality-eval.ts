@@ -64,6 +64,8 @@ export interface AnswerQualityCase {
   readonly expectedLanguage?: ReplyLanguage;
   readonly checks: readonly CheckName[];
   readonly limits?: LengthLimits;
+  /** For `containsRelevantTokens`: each inner list is an any-of group; every group must match. */
+  readonly requiredTokenGroups?: readonly (readonly string[])[];
   readonly source?: string;
 }
 
@@ -117,6 +119,7 @@ export function checkContextFor(testCase: AnswerQualityCase): CheckContext {
     userMessage: testCase.userMessage,
     ...(testCase.expectedLanguage === undefined ? {} : { expectedLanguage: testCase.expectedLanguage }),
     ...(testCase.limits === undefined ? {} : { limits: testCase.limits }),
+    ...(testCase.requiredTokenGroups === undefined ? {} : { requiredTokenGroups: testCase.requiredTokenGroups }),
   };
 }
 
@@ -225,6 +228,22 @@ export function validateFixtures(fixtures: AnswerQualityFixtures): string[] {
       if (limits === undefined || !(limits.minChars >= 0) || !(limits.maxChars >= limits.minChars)) {
         problems.push(`${where}: lengthWithin needs limits with 0 <= minChars <= maxChars`);
       }
+    }
+    if (testCase.checks?.includes('containsRelevantTokens')) {
+      const groups = testCase.requiredTokenGroups;
+      const wellFormed =
+        Array.isArray(groups) &&
+        groups.length > 0 &&
+        groups.every(
+          (group) =>
+            Array.isArray(group) &&
+            group.length > 0 &&
+            group.every((token) => typeof token === 'string' && token.length > 0),
+        );
+      if (!wellFormed) problems.push(`${where}: containsRelevantTokens needs non-empty requiredTokenGroups`);
+    }
+    if (testCase.checks?.includes('noInventedSpecifics') && !testCase.checks.includes('hedgesUncheckable')) {
+      problems.push(`${where}: noInventedSpecifics must be paired with hedgesUncheckable`);
     }
     for (const turn of testCase.transcript ?? []) {
       if ((turn.role !== 'user' && turn.role !== 'assistant') || typeof turn.content !== 'string') {
