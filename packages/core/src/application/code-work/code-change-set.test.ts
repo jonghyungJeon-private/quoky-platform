@@ -185,6 +185,20 @@ describe('collectCodeChangeTargets', () => {
     expect(result).toEqual({ kind: 'missing', missing: ['src/typo.ts'], resolved: ['./src/a.ts'] });
   });
 
+  it('QA-V2-CL-02: a secret-looking file name fails the whole set by name, before any lookup (ADR-0099 D6)', async () => {
+    const fs = existing(['src/a.ts', 'src/hardsecret.js']);
+    const result = await collectCodeChangeTargets({
+      candidates: ['src/a.ts', 'src/hardsecret.js', 'config/api-key.json'],
+      resolveExisting: fs.resolveExisting,
+      allowNewFiles: true,
+    });
+    expect(result).toEqual({ kind: 'secret-named', paths: ['src/hardsecret.js', 'config/api-key.json'] });
+    expect(fs.looked).toEqual([]);
+    // only the basename counts: a secret-looking DIRECTORY name does not refuse an ordinary file
+    expect((await collectCodeChangeTargets({ candidates: ['secrets/readme.md'], resolveExisting: existing(['secrets/readme.md']).resolveExisting, allowNewFiles: false })).kind)
+      .toBe('targets');
+  });
+
   it('more than 5 distinct candidates → too-many before any lookup; 5 is allowed', async () => {
     const six = Array.from({ length: 6 }, (_, i) => `src/f${i}.ts`);
     const fs = existing(six);

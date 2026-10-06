@@ -45,6 +45,7 @@ export * from './orchestrator';
 export * from './execution-orchestrator';
 export * from './intent-resolver';
 export * from './target-scope';
+export * from './secret-file-name';
 export * from './conversation-runtime';
 export * from './stateless-approval-flow';
 export * from './stateless-scope-clarification-flow';

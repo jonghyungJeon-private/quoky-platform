@@ -18,7 +18,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { applyPatch, createTwoFilesPatch } from 'diff';
-import { NotImplementedError } from '@quoky/core';
+import { NotImplementedError, isSecretLookingFileName } from '@quoky/core';
 import type {
   ChangeSetApplyResult,
   ContextFile,
@@ -51,22 +51,8 @@ const ANALYSIS_ALLOW = new Set([
 /** Per-file read cap for analysis. */
 const MAX_FILE_BYTES = 8000;
 
-/**
- * Conventional credential-file names the substring rule below does not already cover (it already
- * catches `credentials.json`, `.git-credentials`, `*.key`, `*.keystore`, `secrets.*`): service-account
- * JSON, PEM / PKCS#12 / Java keystores, SSH private keys, and package-manager / network auth files.
- */
-const CREDENTIAL_FILE_NAME =
-  /(service[-_]?account.*\.json$|\.(pem|p12|pfx|jks)$|^id_(rsa|dsa|ecdsa|ed25519)|^\.(npmrc|pypirc|netrc)$)/i;
-
-/** Never read env / secret-looking files (ADR-0019). */
-function isSecretName(name: string): boolean {
-  return (
-    /\.env(\.|$)/i.test(name) ||
-    /(secret|token|key|credential|password)/i.test(name) ||
-    CREDENTIAL_FILE_NAME.test(name)
-  );
-}
+/** Never read env / secret-looking files (ADR-0019) — the shared core name rule (ADR-0099 D6, QA-V2-CL-02). */
+const isSecretName = isSecretLookingFileName;
 
 function isAnalysisAllowed(name: string): boolean {
   return ANALYSIS_ALLOW.has(name) || /^tsconfig.*\.json$/.test(name);

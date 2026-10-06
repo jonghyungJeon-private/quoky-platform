@@ -10,6 +10,7 @@ import type {
   WorkspaceDiff,
   WorkspaceRef,
 } from '../../domain';
+import { isSecretLookingFileName } from '../secret-file-name';
 import { extractMentionedPathTokens, extractTargetPathCandidates, normalizeRelativePath } from '../target-scope';
 
 /**
@@ -186,6 +187,12 @@ function isUnsafeMentionedPath(token: string): boolean {
 export type CodeChangeTargetCollection =
   /** No safe path was named at all. */
   | { readonly kind: 'none' }
+  /**
+   * Some named paths have a secret-looking file NAME (ADR-0019/0022 policy, ADR-0099 D6 "a secret filename on any
+   * target fails the whole set"; QA-V2-CL-02). Refused by name before any lookup — the workspace never lists, reads,
+   * sends or writes such a file, so it must not be reported as "not found". `paths` are as typed.
+   */
+  | { readonly kind: 'secret-named'; readonly paths: string[] }
   /** More than {@link MAX_CHANGE_SET_FILES} safe paths were named — split the request. Nothing was looked up. */
   | { readonly kind: 'too-many'; readonly count: number; readonly max: number }
   /** Named paths that do not exist (and no create wording) — ask again; `resolved` are the ones that did. */
@@ -199,8 +206,9 @@ export type CodeChangeTargetCollection =
  * a target, never only the first: an existing path (verified by `resolveExisting`, which returns the
  * workspace's own spelling of the hit) is an update target; a missing path is a new-file target only when
  * `allowNewFiles` (the negation-aware ADR-0062 create wording); otherwise it is reported as missing so the
- * caller asks again — never a silent drop and never an AI guess. More than {@link MAX_CHANGE_SET_FILES}
- * candidates are refused before any lookup.
+ * caller asks again — never a silent drop and never an AI guess. A secret-looking file name refuses the whole set
+ * by name ({@link isSecretLookingFileName}, ADR-0099 D6), and more than {@link MAX_CHANGE_SET_FILES} candidates are
+ * refused — both before any lookup.
  */
 export async function collectCodeChangeTargets(input: {
   readonly candidates: readonly string[];
@@ -216,6 +224,8 @@ export async function collectCodeChangeTargets(input: {
     unique.push(candidate);
   }
   if (unique.length === 0) return { kind: 'none' };
+  const secretNamed = unique.filter((candidate) => isSecretLookingFileName(normalizeRelativePath(candidate).split('/').pop() ?? ''));
+  if (secretNamed.length > 0) return { kind: 'secret-named', paths: secretNamed };
   if (unique.length > MAX_CHANGE_SET_FILES) {
     return { kind: 'too-many', count: unique.length, max: MAX_CHANGE_SET_FILES };
   }

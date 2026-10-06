@@ -986,6 +986,26 @@ export class ResponseComposer {
   }
 
   /**
+   * A code-change request named a file whose NAME looks like a secrets/credential file (QA-V2-CL-02; ADR-0019/0022
+   * policy, ADR-0099 D6). Such a file is never read, sent to the AI or written, so the whole request is refused —
+   * truthfully by name, never as "not found" (the workspace does not list it). The rule is name-only, so the reply
+   * reveals nothing about whether the file exists. Paths are echoed sanitized like {@link composeTargetPathRejected}.
+   */
+  composeTargetSecretNamed(context: ConversationContext, paths: readonly string[]): OutboundMessage {
+    const shown = paths.slice(0, MAX_CHANGE_SET_FILES).map((p) => `\`${sanitizeTypedPath(p)}\``);
+    return {
+      context,
+      text: clampToMessageBudget(
+        [
+          `요청한 파일은 이름이 비밀 정보 파일처럼 보여서 채팅으로는 읽거나 수정할 수 없어요: ${shown.join(', ')}`,
+          '이름에 secret·token·key·credential·password가 들어가거나 .env·인증서·키 파일 형식인 파일은 AI에게 보내지도, 고치지도 않아요.',
+          '파일 내용은 AI에게 보내지 않았고, 파일은 수정되지 않았어요. 이 파일은 직접 편집하거나, 다른 파일이라면 경로와 함께 다시 요청해 주세요.',
+        ].join('\n'),
+      ),
+    };
+  }
+
+  /**
    * Some paths a code-change request named do not exist in the project and the request has no create wording
    * (ADR-0099 D1) — never silently dropped, never guessed. Names every missing path (sanitized like
    * {@link composeTargetPathRejected}) and asks for the request again. Nothing was planned or modified.

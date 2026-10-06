@@ -6687,6 +6687,11 @@ export class ConversationRuntime {
     // A missing safe path is the one the owner meant (echoed from the collection itself, so a bare root-level
     // filename such as `test.js` — never a slash-bearing mention — is named too: QA-V2-CL-01); only with no safe
     // path at all is the unsafe one echoed.
+    // QA-V2-CL-02: a secret-looking file NAME is refused by name (ADR-0099 D6) — never the "not found" copy, since the
+    // workspace never lists it. Name-only, so nothing is revealed about whether the file exists.
+    if (collected.kind === 'secret-named') {
+      return this.deps.composer.composeTargetSecretNamed(message.context, collected.paths);
+    }
     const firstMissing = collected.kind === 'missing' ? collected.missing[0] : undefined;
     if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
       return this.deps.composer.composeTargetsMissing(message.context, collected.missing);

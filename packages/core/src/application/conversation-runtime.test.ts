@@ -9713,7 +9713,7 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     async (word) => {
       const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
       const first = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js 고쳐줘'));
-      expect(first.reply.text).toBe(composer.composeTargetPathRejected(CTX, 'src/hardsecret.js').text);
+      expect(first.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js']).text);
       expect(calls.scopeAnchor).toBe(1);
 
       const result = await new ConversationRuntime(deps).handle(messageOf(word));
@@ -9792,6 +9792,49 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
     const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/server.js']) });
     await new ConversationRuntime(deps).handle(messageOf('Node.js 18 기준으로 src/server.js 고쳐줘'));
     expect(calls.lastRunRequest?.targetFiles).toEqual(['src/server.js']);
+  });
+
+  // ── QA-V2-CL-02: a secret-looking file name is refused by NAME, never reported as "not found" ──────
+  it('QA-V2-CL-02: "src/hardsecret.js 에 주석 한 줄 추가해줘" → the truthful secret-name refusal; no lookup, no plan, no provider', async () => {
+    // The real workspace never lists a secret-named file; the fake lists it to prove the refusal is name-only.
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf(['src/hardsecret.js']) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js 에 주석 한 줄 추가해줘'));
+    expect(calls.workspaceList).toBe(0);
+    expect(calls.run).toBe(0);
+    expect(calls.codeGenerationGenerate).toBe(0);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js']).text);
+    expect(result.reply.text).not.toContain('찾을 수 없');
+  });
+
+  it('QA-V2-CL-02: a secret-named path next to an ordinary one fails the whole set (ADR-0099 D6), naming only the secret one', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([A]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf(`${A} 와 .env.local 말고 src/token.ts 도 고쳐줘`));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/token.ts']).text);
+  });
+
+  it('QA-V2-CL-02: create wording never turns a secret-named path into a new-file target', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, runOutcome: outcomeOf(ExecutionOutcomeStatus.AWAITING_APPROVAL), workspaceList: listOf([]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('새 파일 src/password.ts 만들어줘'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/password.ts']).text);
+  });
+
+  it('QA-V2-CL-02: an out-of-root secret-looking path keeps the QA-016 copy (existence never revealed)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([]) });
+    const result = await new ConversationRuntime(deps).handle(messageOf('/etc/secret.txt 고쳐줘'));
+    expect(calls.workspaceList).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetPathRejected(CTX, '/etc/secret.txt').text);
+  });
+
+  it('QA-V2-CL-02: a secret-named path in a scope-clarification follow-up gets the same refusal (no re-anchor)', async () => {
+    const { deps, calls } = makeDeps({ intent: codeIntent, workspaceList: listOf([A]) });
+    await new ConversationRuntime(deps).handle(messageOf('이 버그 고쳐줘'));
+    const result = await new ConversationRuntime(deps).handle(messageOf('src/hardsecret.js'));
+    expect(calls.run).toBe(0);
+    expect(result.reply.text).toBe(composer.composeTargetSecretNamed(CTX, ['src/hardsecret.js']).text);
+    expect(calls.scopeAnchor).toBe(1);
   });
 
   // ── unsafe typed paths are never targets, never rewritten (ADR-0099 D1) ─────────────────────
