@@ -3,6 +3,11 @@ import { detectHelpIntent } from './help-intent/help-intent';
 import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { guardInternalActionClaims } from './chat-policy/internal-action-claim-guard';
 import {
+  detectOwnMemoryRecallQuestion,
+  hasOwnMemoryRecallHit,
+  renderOwnMemoryNotFound,
+} from './chat-policy/own-memory-recall';
+import {
   type CodeChainStatusDomain,
   detectInternalActionStatusTurn,
   noticeLanguage,
@@ -7002,6 +7007,27 @@ export class ConversationRuntime {
       const bundle: ContextBundle = isExternalWorkReadout(readout)
         ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
         : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
+
+      // W3-L01 (ADR-0104 D3, ADR-0106): an own-memory recall question ("내가 좋아하는 과일이 뭐였지?") whose assembled
+      // context holds nothing relevant — no active durable recall (archived/expired/superseded records never reach the
+      // bundle) and no earlier User turn of this conversation mentioning it — is answered truthfully without a
+      // provider, which used to invent a personal fact. A hit keeps the provider flow below unchanged.
+      if (
+        (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT) &&
+        !isExternalWorkReadout(readout)
+      ) {
+        const ownMemoryQuestion = detectOwnMemoryRecallQuestion(message.text);
+        if (ownMemoryQuestion && !hasOwnMemoryRecallHit(ownMemoryQuestion, bundle)) {
+          const text = renderOwnMemoryNotFound(ownMemoryQuestion.language);
+          await this.deps.tasks.completeRun(run, { artifactIds: [], metadata: { deterministicReply: 'own-memory-not-found' } });
+          await this.deps.memory.recordAssistant(text, message.context, task.sessionId ?? session.id);
+          await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
+          // Content-free (no question or topic text).
+          this.deps.logger.info('own memory question answered without recall hit', { taskId: task.id, capability });
+          return this.responded(session, { context: message.context, text }, workFacts(undefined));
+        }
+      }
+
       const promptSpec = this.deps.promptComposer.compose(task, bundle, readout);
       const aiRequest = this.deps.promptRenderer.render(promptSpec, {
         capability,
