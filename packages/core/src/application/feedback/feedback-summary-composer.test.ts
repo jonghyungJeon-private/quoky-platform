@@ -166,3 +166,11 @@ describe('feedbackTrendLines (ADR-0107 D3 trend line)', () => {
     expect(text).toContain('직접 고른 것만 이 기기에 저장해요');
   });
 });
+
+describe('feedbackRequestExcerpt strict guard (Codex wave-2 follow-up)', () => {
+  it('hides file-content credentials such as const dbPassword = "…"', () => {
+    const excerpt = feedbackRequestExcerpt('const dbPassword = "SYNTHETIC_ONLY" 이거 고쳐줘');
+    expect(excerpt).not.toContain('SYNTHETIC_ONLY');
+    expect(excerpt).not.toContain('dbPassword');
+  });
+});

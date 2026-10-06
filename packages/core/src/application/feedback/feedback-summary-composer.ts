@@ -1,7 +1,7 @@
 import { Capability, FeedbackSignalKind, IntentType } from '../../domain';
 import type { FeedbackBreakdownRow, FeedbackSummary, Id } from '../../domain';
 import type { FeedbackCapabilityTrend } from './feedback-recorder';
-import { containsCredentialMaterial } from '../credential-guard';
+import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
 
 /**
  * `피드백 요약` reply text (ADR-0098 D6, QUAL-4). Pure and deterministic: no provider, no storage, no clock.
@@ -34,12 +34,13 @@ function countOf(summary: FeedbackSummary, predicate: (kind: FeedbackSignalKind,
 
 /**
  * One request excerpt: whitespace collapsed, at most {@link FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS} code points, mentions
- * neutralised (`@` → `@` + U+200B so a quoted `@everyone` never pings), and fully suppressed when the credential
- * guard matches the original request.
+ * neutralised (`@` → `@` + U+200B so a quoted `@everyone` never pings), and fully suppressed when the strict
+ * credential guard (chat + file-content detectors) matches the original request.
  */
 export function feedbackRequestExcerpt(text: string | undefined): string {
   if (text === undefined) return MISSING_EXCERPT;
-  if (containsCredentialMaterial(text)) return SUPPRESSED_EXCERPT;
+  // Strict check (chat + file-content detectors): a 👎 summary must never show `const dbPassword = "…"` verbatim.
+  if (containsCredentialMaterial(text) || containsCredentialFileContent(text)) return SUPPRESSED_EXCERPT;
   const flat = text.normalize('NFC').replace(/\s+/gu, ' ').trim();
   if (flat.length === 0) return MISSING_EXCERPT;
   const chars = [...flat];
