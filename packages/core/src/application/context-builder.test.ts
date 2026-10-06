@@ -458,6 +458,9 @@ describe('ContextBuilder (ADR-0063 structured context)', () => {
         queries.push(query);
         throw new Error('repository unavailable');
       },
+      async findShortTermByUser() {
+        return [];
+      },
     };
     const retriever = new DefaultMemoryRetriever(failingRepository, {
       clock: () => '2026-01-04T00:00:00.000Z',

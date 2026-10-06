@@ -4,6 +4,7 @@
  * handler (order 50). The composition root registers the handler (`apps/quoky/src/features/memory.providers.ts`).
  */
 export * from './memory-command-grammar';
+export * from './memory-command-history';
 export * from './memory-command-renderer';
 export * from './memory-removal-cascade';
 export * from './memory-command-service';

@@ -1,6 +1,7 @@
 import { newId } from '../util/id';
 import { now } from '../util/clock';
-import { MemoryType } from '../domain';
+import { isArchivedMemory, MemoryType } from '../domain';
+import { memoryCommandHistoryUserText } from './memory-commands/memory-command-history';
 import type {
   ContextFile,
   ConversationContext,
@@ -31,9 +32,13 @@ export class MemoryManager {
     private readonly vector: VectorProvider,
   ) {}
 
-  /** Persist the latest USER message as short-term session memory (ADR-0017). */
+  /**
+   * Persist the latest USER message as short-term session memory (ADR-0017). A memory-edit request is stored with
+   * its text withheld (ADR-0106 D5, decided here at write time so no failure path leaves the raw text in history).
+   */
   async recordShortTerm(message: InboundMessage, sessionId?: Id): Promise<MemoryRecord> {
-    return this.saveShortTerm('user', message.text, message.context, sessionId);
+    const content = memoryCommandHistoryUserText(message.text) ?? message.text;
+    return this.saveShortTerm('user', content, message.context, sessionId);
   }
 
   /** Persist the assistant's response as short-term session memory (ADR-0017). */
@@ -73,13 +78,35 @@ export class MemoryManager {
         ...(sessionId ? { sessionId } : {}),
       },
       content,
-      metadata: { role },
+      // The platform makes the turn's owner unambiguous ((platform, user id), ADR-0106 D5 history purge).
+      metadata: { role, platform: context.platform },
       createdAt: ts,
       updatedAt: ts,
     };
     const saved = await this.storage.memories.save(record);
     if (sessionId) await this.pruneSession(sessionId);
     return saved;
+  }
+
+  /**
+   * ADR-0106 D5 (W2-L01): replace the text of one recorded SHORT_TERM turn — a memory-command turn whose verbatim
+   * text would keep memory content in the conversation history. The turn keeps its place (createdAt) and role; an
+   * absent or non-SHORT_TERM record is left alone.
+   */
+  async redactShortTerm(id: Id, content: string): Promise<void> {
+    const record = await this.storage.memories.get(id);
+    if (record === null || record.type !== MemoryType.SHORT_TERM) return;
+    await this.storage.memories.save({ ...record, content, updatedAt: now() });
+  }
+
+  /**
+   * ADR-0106 D5 fail-closed fallback: remove one recorded SHORT_TERM turn whose redaction could not be applied. An
+   * absent or non-SHORT_TERM record is left alone.
+   */
+  async deleteShortTerm(id: Id): Promise<void> {
+    const record = await this.storage.memories.get(id);
+    if (record === null || record.type !== MemoryType.SHORT_TERM) return;
+    await this.storage.memories.delete(id);
   }
 
   /** Keep only the newest MAX_SESSION_SHORT_TERM SHORT_TERM memories per session. */
@@ -200,7 +227,8 @@ export class MemoryManager {
       taskId: task.id,
       ...(task.projectId ? { projectId: task.projectId } : {}),
     };
-    const records = await this.storage.memories.findByScope(scope);
+    // The repository never returns an archived record from a scope read (ADR-0106 amendment); re-checked here.
+    const records = (await this.storage.memories.findByScope(scope)).filter((record) => !isArchivedMemory(record));
     return [
       { path: '.chunsik/context.md', content: this.renderContext(records) },
       { path: '.chunsik/task.md', content: this.renderTask(task) },

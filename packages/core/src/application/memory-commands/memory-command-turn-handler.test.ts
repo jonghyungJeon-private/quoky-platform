@@ -26,16 +26,21 @@ function ctx(text: string): TurnHandlerContext {
 }
 
 describe('MemoryCommandTurnHandler (ADR-0106 D2)', () => {
-  it('is the pre-classify handler at order 50 with one bounded help line', () => {
+  it('is the pre-classify handler at order 50 with two bounded help lines (list/manage, archive)', () => {
     const handler = createMemoryCommandTurnHandler({ service: { execute: vi.fn() } });
     expect([handler.id, handler.stage, handler.order]).toEqual([MEMORY_COMMAND_TURN_HANDLER_ID, 'pre-classify', 50]);
     expect(MEMORY_COMMAND_TURN_HANDLER_ORDER).toBe(50);
     expect(handler.helpLines).toEqual(MEMORY_COMMAND_HELP_LINES);
-    expect(MEMORY_COMMAND_HELP_LINES).toHaveLength(1);
+    expect(MEMORY_COMMAND_HELP_LINES).toHaveLength(2);
     for (const line of MEMORY_COMMAND_HELP_LINES) {
       expect(Array.from(line).length).toBeLessThanOrEqual(MAX_CONTRIBUTED_HELP_LINE_CHARS);
-      expect(line).toContain('기억 목록');
+      expect(line).not.toMatch(/\n/);
     }
+    expect(MEMORY_COMMAND_HELP_LINES[0]).toContain('기억 목록');
+    // ADR-0106 amendment: the archive commands.
+    expect(MEMORY_COMMAND_HELP_LINES[1]).toContain('"보관함"');
+    expect(MEMORY_COMMAND_HELP_LINES[1]).toContain('"기억 복원 N"');
+    expect(MEMORY_COMMAND_HELP_LINES[1]).toContain('"기억 완전 삭제 N"');
   });
 
   it('falls through on anything that is not a memory command, without touching the service', async () => {
@@ -53,7 +58,8 @@ describe('MemoryCommandTurnHandler (ADR-0106 D2)', () => {
     const outcome = await handler.handle(ctx('기억 목록'));
     expect(execute).toHaveBeenCalledWith(
       { kind: 'list', page: 1, language: 'ko' },
-      { actorId: 'actor-1', now: '2026-10-06T03:00:00.000Z', sourceText: '기억 목록' },
+      // The turn's session: a confirmed forget/edit clears the actor's history of it (ADR-0106 amendment D5).
+      { actorId: 'actor-1', now: '2026-10-06T03:00:00.000Z', sourceText: '기억 목록', sessionId: 'session-1' },
     );
     expect(outcome).toEqual({
       reply: { context: ctx('').message.context, text: '목록', replyToMessageId: 'message-1' },
@@ -82,9 +88,25 @@ describe('createVectorRemovalCascade', () => {
   it('deletes the memory ids and carried vector ids from the durable-memory collection, once each', async () => {
     const vectors = { delete: vi.fn(async () => undefined) };
     const cascade = createVectorRemovalCascade(vectors);
-    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'forget', memoryIds: ['m1', 'm2'], vectorIds: ['m1', 'v9'] });
+    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'forget', memoryIds: ['m1', 'm2'], vectorIds: ['m1', 'v9'], contents: [] });
     expect(vectors.delete).toHaveBeenCalledWith('durable-memory-v1', ['m1', 'm2', 'v9']);
-    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'edit', memoryIds: [], vectorIds: [] });
+    await cascade.onMemoriesRemoved({ actorId: 'a', reason: 'edit', memoryIds: [], vectorIds: [], contents: [] });
     expect(vectors.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the service\'s conversation-history form (W2-L01), and withholds a failed edit request text', async () => {
+    const history = { user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)', assistant: '(note)' };
+    const execute = vi.fn(async () => ({ outcome: 'edit-confirmation' as const, text: '확인', status: 'RESPONDED' as const, history }));
+    const outcome = await createMemoryCommandTurnHandler({ service: { execute } }).handle(ctx('기억 1 수정: 새 내용'));
+    expect(outcome).toMatchObject({ history });
+
+    const throwing = createMemoryCommandTurnHandler({
+      service: { execute: vi.fn(async () => Promise.reject(new Error('boom'))) },
+    });
+    expect(await throwing.handle(ctx('기억 1 수정: 새 내용'))).toMatchObject({
+      status: 'FAILED',
+      history: { user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)' },
+    });
+    expect(await throwing.handle(ctx('기억 목록'))).not.toHaveProperty('history');
   });
 });

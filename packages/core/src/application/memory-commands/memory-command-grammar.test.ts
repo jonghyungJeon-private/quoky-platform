@@ -111,3 +111,50 @@ describe('parseMemoryCommand — ADR-0106 D1 grammar', () => {
     expect(parseMemoryCommand('기억 목록\n보여줘')).toBeNull();
   });
 });
+
+describe('parseMemoryCommand — ADR-0106 amendment: archive, restore, permanent delete', () => {
+  it.each([
+    ['보관함', { kind: 'archive-list', page: 1, language: 'ko' }],
+    ['기억 보관함', { kind: 'archive-list', page: 1, language: 'ko' }],
+    ['내 기억 보관함 보여줘', { kind: 'archive-list', page: 1, language: 'ko' }],
+    ['보관함 목록', { kind: 'archive-list', page: 1, language: 'ko' }],
+    ['보관함 2', { kind: 'archive-list', page: 2, language: 'ko' }],
+    ['보관함 2쪽', { kind: 'archive-list', page: 2, language: 'ko' }],
+    ['보관함?', { kind: 'archive-list', page: 1, language: 'ko' }],
+    ['memory archive', { kind: 'archive-list', page: 1, language: 'en' }],
+    ['Show my memory archive', { kind: 'archive-list', page: 1, language: 'en' }],
+    ['list archived memories', { kind: 'archive-list', page: 1, language: 'en' }],
+    ['memory archive 2', { kind: 'archive-list', page: 2, language: 'en' }],
+    ['기억 복원 3', { kind: 'restore', number: 3, language: 'ko' }],
+    ['기억 복원 3번', { kind: 'restore', number: 3, language: 'ko' }],
+    ['기억 복원 3번 해줘', { kind: 'restore', number: 3, language: 'ko' }],
+    ['기억 복구 1', { kind: 'restore', number: 1, language: 'ko' }],
+    ['restore memory 3', { kind: 'restore', number: 3, language: 'en' }],
+    ['기억 완전 삭제 2', { kind: 'purge', number: 2, language: 'ko' }],
+    ['기억 완전삭제 2번', { kind: 'purge', number: 2, language: 'ko' }],
+    ['기억 완전 삭제 2 해주세요', { kind: 'purge', number: 2, language: 'ko' }],
+    ['permanently delete memory 2', { kind: 'purge', number: 2, language: 'en' }],
+    ['purge memory #2', { kind: 'purge', number: 2, language: 'en' }],
+  ])('parses %s', (text, expected) => {
+    expect(parseMemoryCommand(text)).toEqual(expected);
+  });
+
+  it.each([
+    '보관함 보여주지 마',
+    '기억 복원하지 마',
+    '기억 복원 0',
+    '기억 복원',
+    '기억 완전 삭제',
+    '보관함 어떻게 써?',
+    '보관함에 뭐가 있었더라 기억이 안 나',
+    '할 일 추가: 보관함 정리',
+    'restore memory',
+  ])('falls through: %s', (text) => {
+    expect(parseMemoryCommand(text)).toBeNull();
+  });
+
+  it('a negated restore or permanent delete is never a command', () => {
+    expect(parseMemoryCommand('기억 복원 3 하지 마')).toBeNull();
+    expect(parseMemoryCommand('기억 완전 삭제 2 하지 마')).toBeNull();
+  });
+});

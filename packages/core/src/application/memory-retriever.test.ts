@@ -65,6 +65,9 @@ function repository(records: MemoryRecord[]): MemoryRepository {
         .filter((candidate) => !query.excludeIds?.includes(candidate.id))
         .slice(0, query.limit);
     },
+    async findShortTermByUser() {
+      return [];
+    },
   };
 }
 
@@ -432,5 +435,42 @@ describe('DefaultMemoryRetriever semantic re-ranking (ADR-0098 D8)', () => {
 
   it('rejects an out-of-range semantic weight', () => {
     expect(() => retriever([], { semanticWeight: 1.5 })).toThrow(RangeError);
+  });
+});
+
+describe('DefaultMemoryRetriever — archived memories (ADR-0106 amendment)', () => {
+  it('asks the repository to exclude archived records and never ranks or offers one to the semantic scorer', async () => {
+    const archived = record('archived-1', 'blue sky preference archived', {
+      metadata: {
+        kind: 'SEMANTIC',
+        provenance: 'USER_PROVIDED',
+        authorityLevel: 'USER_CLAIM_OR_INTENT',
+        archivedAt: '2026-08-20T00:00:00.000Z',
+        archiveExpiresAt: '2026-08-27T00:00:00.000Z',
+      },
+    });
+    const live = record('live-1', 'blue sky preference live');
+    const queries: DurableMemoryQuery[] = [];
+    const base = repository([archived, live]);
+    // A repository that ignores the filter: the retriever's own re-check still keeps the archived record out.
+    const leaky: MemoryRepository = {
+      ...base,
+      async findDurableCandidates(query) {
+        queries.push(query);
+        return base.findDurableCandidates(query);
+      },
+    };
+    const offered: string[] = [];
+    const scorer: SemanticRecallScoring = {
+      async score(_query, candidates: readonly SemanticRecallCandidate[]) {
+        offered.push(...candidates.map((candidate) => candidate.id));
+        return new Map(candidates.map((candidate) => [candidate.id, 1]));
+      },
+    };
+    const retriever = new DefaultMemoryRetriever(leaky, { clock: () => CURRENT_TIME, semanticScorer: scorer });
+    const results = await retriever.retrieve(request());
+    expect(results.map((result) => result.memory.id)).toEqual(['live-1']);
+    expect(offered).toEqual(['live-1']);
+    expect(queries[0]?.archived).toBe('exclude');
   });
 });

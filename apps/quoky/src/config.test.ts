@@ -721,3 +721,21 @@ describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
     }
   });
 });
+
+describe('loadConfig — memory archive retention (ADR-0106 amendment, QUOKY_MEMORY_ARCHIVE_DAYS)', () => {
+  it('defaults to 7 days and accepts whole days from 0 (no archive) to 365', () => {
+    expect(loadConfig(env({})).memory).toEqual({ archiveDays: 7 });
+    for (const [raw, days] of [['0', 0], ['1', 1], ['30', 30], ['365', 365], ['007', 7]] as const) {
+      expect(loadConfig(env({ QUOKY_MEMORY_ARCHIVE_DAYS: raw })).memory.archiveDays, raw).toBe(days);
+    }
+  });
+
+  it('refuses anything else with MEMORY_ARCHIVE_DAYS_INVALID and never echoes the value', () => {
+    for (const value of ['', ' 7', '7 ', '-1', '366', '1000', '7.5', '1e2', 'seven', 'SECRETVALUE']) {
+      let caught: unknown;
+      try { loadConfig(env({ QUOKY_MEMORY_ARCHIVE_DAYS: value })); } catch (err) { caught = err; }
+      expect(caught, JSON.stringify(value)).toBeInstanceOf(QuokyConfigError);
+      expect((caught as Error).message).toBe('MEMORY_ARCHIVE_DAYS_INVALID');
+    }
+  });
+});

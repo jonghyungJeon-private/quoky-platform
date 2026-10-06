@@ -1019,7 +1019,10 @@ class SqliteMemoryRepository extends JsonRepository<MemoryRecord> implements Mem
       clauses.push('type = ?');
       params.push(type);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    // ADR-0106 amendment: an archived (forgotten, restorable) record never reaches a scope read — context files,
+    // the writer's duplicate check and every other consumer built on it exclude archived memories here, centrally.
+    clauses.push(`json_type(data, '$.metadata.archivedAt') IS NULL`);
+    const where = `WHERE ${clauses.join(' AND ')}`;
     // MemoryManager/ContextBuilder consume SHORT_TERM records in persistence order when
     // legacy rows share the same createdAt value. SQLite does not guarantee row order
     // without ORDER BY, so make the domain timestamp primary and insertion order the
@@ -1031,6 +1034,17 @@ class SqliteMemoryRepository extends JsonRepository<MemoryRecord> implements Mem
       )
       .all(...params) as Row[];
     return rows.map((r) => JSON.parse(r.data) as MemoryRecord);
+  }
+
+  async findShortTermByUser(userId: string): Promise<MemoryRecord[]> {
+    // No user column exists (the domain JSON is the source); a json_extract filter needs no migration.
+    const rows = this.db
+      .prepare(
+        `SELECT data FROM memories WHERE type = 'SHORT_TERM' AND json_extract(data, '$.scope.userId') = ?
+         ORDER BY json_extract(data, '$.createdAt') ASC, rowid ASC`,
+      )
+      .all(userId) as Row[];
+    return rows.map((row) => JSON.parse(row.data) as MemoryRecord);
   }
 
   async findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]> {
@@ -1071,6 +1085,18 @@ class SqliteMemoryRepository extends JsonRepository<MemoryRecord> implements Mem
     }
     if (query.excludeSuperseded) {
       clauses.push(`json_type(data, '$.metadata.supersededBy') IS NULL`);
+    }
+    // ADR-0106 amendment: archived records are excluded unless the query asks for them (archive view, purge, chains).
+    const archived = query.archived ?? 'exclude';
+    if (archived === 'exclude') clauses.push(`json_type(data, '$.metadata.archivedAt') IS NULL`);
+    if (archived === 'only') {
+      clauses.push(`json_type(data, '$.metadata.archivedAt') IS NOT NULL`);
+      if (query.archiveExpiredBy !== undefined) {
+        clauses.push(
+          `json_type(data, '$.metadata.archiveExpiresAt') = 'text' AND datetime(json_extract(data, '$.metadata.archiveExpiresAt')) <= datetime(?)`,
+        );
+        params.push(query.archiveExpiredBy);
+      }
     }
 
     params.push(query.limit);

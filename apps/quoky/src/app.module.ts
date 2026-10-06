@@ -111,7 +111,7 @@ import { createAgentProfileRegistryProvider } from './agent-profile-registry-pro
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
 import { feedbackProviders } from './features/feedback.providers';
-import { memoryProviders } from './features/memory.providers';
+import { createMemoryProviders } from './features/memory.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
@@ -727,7 +727,8 @@ const features: Provider[] = [
   ...remindersProviders,
   ...feedbackProviders,
   // ADR-0106 (MEM-1): memory management commands (pre-classify order 50) over the existing writer and vector cache.
-  ...memoryProviders,
+  // ADR-0106 amendment: forgotten memories are archived for QUOKY_MEMORY_ARCHIVE_DAYS (default 7; 0 = delete at once).
+  ...createMemoryProviders({ archiveDays: config.memory.archiveDays }),
   turnHandlersProvider,
 ];
 

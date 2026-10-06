@@ -13,6 +13,9 @@ import { isNegated } from '../intent-negation';
  *  - confirm: `기억 확인 <code>`; `confirm memory <code>`
  *  - bulk forget (`내 기억 다 지워줘`, `forget all memories`) — recognised only to be refused (D1)
  *  - status (plan DET-1 follow-up): `기억했어?`, `기억 저장됐어?`, `did you remember that?` — answered from the store
+ *  - archive (ADR-0106 amendment): `보관함` / `기억 보관함` (`보관함 2` for a page); `memory archive`
+ *  - restore: `기억 복원 N`; `restore memory N` — N is the archive's own number, not the active list's
+ *  - permanent delete: `기억 완전 삭제 N`; `permanently delete memory N` (archive number)
  *
  * Anything else returns `null` and the turn falls through unchanged. `기억해: …` never matches (the runtime's
  * explicit-memory block runs before the `pre-classify` stage anyway), nor does a how-to question ("기억 어떻게
@@ -30,6 +33,9 @@ export type MemoryCommand =
   | { readonly kind: 'confirm'; readonly code: string; readonly language: MemoryCommandLanguage }
   | { readonly kind: 'bulk-forget'; readonly language: MemoryCommandLanguage }
   | { readonly kind: 'status'; readonly language: MemoryCommandLanguage }
+  | { readonly kind: 'archive-list'; readonly page: number; readonly language: MemoryCommandLanguage }
+  | { readonly kind: 'restore'; readonly number: number; readonly language: MemoryCommandLanguage }
+  | { readonly kind: 'purge'; readonly number: number; readonly language: MemoryCommandLanguage }
   | {
       readonly kind: 'usage';
       readonly usage: 'edit' | 'confirm';
@@ -49,6 +55,8 @@ const FORGET_VERB =
   String.raw`(?:잊어\s?줘|잊어\s?줘요|잊어\s?주세요|잊어|잊기|삭제|삭제\s?해\s?줘|삭제\s?해\s?줘요|삭제\s?해\s?주세요|삭제해|` +
   String.raw`지워\s?줘|지워\s?줘요|지워\s?주세요|지워|지우기)`;
 const EDIT_VERB = String.raw`(?:(?:수정|변경)(?:\s?해\s?줘|\s?해\s?주세요|해)?|고쳐\s?줘|고쳐|바꿔\s?줘|바꿔)`;
+
+const POLITE_DO = String.raw`(?:\s?(?:해\s?줘|해\s?줘요|해\s?주세요|해))?`;
 
 const TRAILING_PUNCTUATION = /[\s.!?？！~。…]+$/u;
 
@@ -74,6 +82,13 @@ const KO_BULK = [
     'u',
   ),
 ];
+/** ADR-0106 amendment: the archive view, restore and permanent delete (numbers are the archive's own). */
+const KO_ARCHIVE = new RegExp(
+  String.raw`^(?:(?:내\s?)?${MEMORY_NOUN}\s?)?보관함(?:\s?(\d{1,3})\s?(?:페이지|쪽)?)?(?:\s?(?:목록|${VIEW_VERB}))?$`,
+  'u',
+);
+const KO_RESTORE = new RegExp(String.raw`^${MEMORY_NOUN}\s?(?:복원|복구)\s?${NUMBER}${POLITE_DO}$`, 'u');
+const KO_PURGE = new RegExp(String.raw`^${MEMORY_NOUN}\s?완전\s?(?:삭제|지우기)\s?${NUMBER}${POLITE_DO}$`, 'u');
 /** A whole-message question whether something was saved to memory ("기억했어?", "기억 저장됐어?"). */
 const KO_STATUS = new RegExp(
   String.raw`^(?:(?:방금|아까|그거|그것도|잘)\s?)*기억(?:\s?저장)?\s?` +
@@ -93,6 +108,10 @@ const EN_CONFIRM = /^confirm\s+memory(?:\s+code)?\s*:?\s*([0-9a-z]+)$/u;
 const EN_CONFIRM_BARE = /^confirm\s+memory(?:\s+code)?$/u;
 const EN_BULK =
   /^(?:please\s+)?(?:forget|delete|erase|clear|remove|wipe)\s+(?:all\s+(?:of\s+)?(?:my\s+|your\s+)?memories|(?:all\s+)?my\s+memories|everything\s+you\s+(?:know|remember)(?:\s+about\s+me)?|your\s+(?:whole\s+)?memory|everything)$/u;
+const EN_ARCHIVE =
+  /^(?:(?:show|list|view)\s+)?(?:my\s+)?(?:the\s+)?(?:memory\s+archive|archived\s+memories)(?:\s+(?:page\s+)?(\d{1,3}))?$/u;
+const EN_RESTORE = /^restore\s+memory\s+#?(\d{1,4})$/u;
+const EN_PURGE = /^(?:permanently\s+delete|purge)\s+memory\s+#?(\d{1,4})$/u;
 const EN_STATUS = /^did\s+you\s+(?:remember|save|store)\s+(?:that|it)(?:\s+(?:to|in)\s+(?:your\s+)?memory)?$/u;
 
 /** NFC, whitespace collapsed, trimmed. */
@@ -170,6 +189,18 @@ export function parseMemoryCommand(text: string): MemoryCommand | null {
     const number = positive(match[1]);
     return number === null ? null : { kind: 'usage', usage: 'edit', number, language: 'ko' };
   }
+  if ((match = KO_ARCHIVE.exec(bare)) !== null) {
+    const page = match[1] === undefined ? 1 : positive(match[1]);
+    return page === null ? null : { kind: 'archive-list', page, language: 'ko' };
+  }
+  if ((match = KO_RESTORE.exec(bare)) !== null) {
+    const number = positive(match[1]);
+    return number === null ? null : { kind: 'restore', number, language: 'ko' };
+  }
+  if ((match = KO_PURGE.exec(bare)) !== null) {
+    const number = positive(match[1]);
+    return number === null ? null : { kind: 'purge', number, language: 'ko' };
+  }
   if ((match = KO_CONFIRM.exec(bare)) !== null) return parseConfirm(match[1], 'ko');
   if (KO_CONFIRM_BARE.test(bare)) return { kind: 'usage', usage: 'confirm', language: 'ko' };
   if (KO_BULK.some((pattern) => pattern.test(bare))) return { kind: 'bulk-forget', language: 'ko' };
@@ -193,6 +224,18 @@ export function parseMemoryCommand(text: string): MemoryCommand | null {
   if ((match = EN_EDIT_NO_COLON.exec(english)) !== null) {
     const number = positive(match[1]);
     return number === null ? null : { kind: 'usage', usage: 'edit', number, language: 'en' };
+  }
+  if ((match = EN_ARCHIVE.exec(english)) !== null) {
+    const page = match[1] === undefined ? 1 : positive(match[1]);
+    return page === null ? null : { kind: 'archive-list', page, language: 'en' };
+  }
+  if ((match = EN_RESTORE.exec(english)) !== null) {
+    const number = positive(match[1]);
+    return number === null ? null : { kind: 'restore', number, language: 'en' };
+  }
+  if ((match = EN_PURGE.exec(english)) !== null) {
+    const number = positive(match[1]);
+    return number === null ? null : { kind: 'purge', number, language: 'en' };
   }
   if ((match = EN_CONFIRM.exec(english)) !== null) return parseConfirm(match[1], 'en');
   if (EN_CONFIRM_BARE.test(english)) return { kind: 'usage', usage: 'confirm', language: 'en' };

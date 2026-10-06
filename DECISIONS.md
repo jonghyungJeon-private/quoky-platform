@@ -16687,3 +16687,41 @@ OPS-2b merge (no-bypass extraction).
 - **Scope:** Phase 1 read-only monitoring (OPS-1, wave 3 after SUB-2) and Phase 2 owner handling (OPS-2, after MEM-1)
   as written; loopback only, default off; remote access stays out of v3. A Telegram platform adapter is a post-v3
   extension (owner decision 2026-10-06), with its own ADR at that time.
+
+## ADR-0106 amendment — Forget means "not used": archive with restore, history purge, two interface additions (2026-10-06)
+
+- **Status:** Ratified by the Product Owner on 2026-10-06 ("보관함 포함 권장안으로 ratify. 기간은 30일보단 7일로 일단 해두고,
+  추후에 보관기간을 정할 수 있게끔 환경변수로도 빼줘").
+- **Context:** Live QA W2-L01 on the always-on service: after `기억 N 잊어줘` + confirmation, the LONG_TERM record was
+  removed but the actor's SHORT_TERM session history (including the memory-command turns and a paraphrased model
+  answer) still carried the content, and the next answer reused it. The owner also asked that a forgotten memory be
+  restorable for a bounded time.
+- **Decision:**
+  1. **Archive instead of immediate deletion.** `기억 N 잊어줘` (confirmed) moves the record and its superseded versions
+     to an archive: a flag in the existing JSON record (`archivedAt`, no migration). An archived record is excluded from
+     every use — listing, recall (lexical and semantic), context building, learning items and examples. Its vector
+     entry and derived learning items are removed at archive time (re-created on restore).
+  2. **Retention.** `QUOKY_MEMORY_ARCHIVE_DAYS` (integer, default **7**, bounds 0–365; invalid is a startup error).
+     `0` means no archive: forget deletes permanently at once. Expired archive entries are deleted permanently by the
+     SUB-2 daily maintenance job (ADR-0102), independent of the backup's success.
+  3. **Commands.** `보관함` (list the actor's archived memories with days left), `기억 복원 N` and `기억 완전 삭제 N`, each
+     confirmed with the ADR-0106 one-time record-bound code. Restore re-embeds and re-indexes the record. Permanent
+     deletion is immediate.
+  4. **Never archived.** A record whose text matches the strict credential guard is always deleted permanently at once,
+     with a truthful reply.
+  5. **History purge (not archived).** Forget and edit remove the actor's own SHORT_TERM history turns that contain the
+     record text (or its rendered previews), in any session, and additionally **clear the actor's short-term history of
+     the current session** (project binding and long-term memories unchanged); the reply says so. Purged history is
+     not archived — restoring the memory restores the information. Memory-command turns are stored in history in a
+     redacted form.
+  6. **Interface additions (amends D6 "no port change").** `MemoryRepository.findShortTermByUser(userId)` (actor-scoped
+     short-term lookup over the existing JSON data) and the optional `TurnHandlerReply.history` (what the runtime stores
+     in short-term history for that turn). No migration; deps baseline unchanged (34).
+- **Consequences:** + "잊어줘" now means Quoky no longer uses the content, with a 7-day safety net; + no migration.
+  − Archived text stays on disk until purge (bounded by the env value; credential-like text never archived);
+  − clearing the session history drops that session's earlier context.
+- **Implementation note (5f0cced, 2026-10-06).** The archive view and purge read archived records through two optional
+  fields on the existing `findDurableCandidates` query type (`archived`, `archiveExpiredBy`) — no new port method or DI
+  token, recorded here as part of D6's interface reach. Restore clears the flag and re-embeds lazily on the next
+  semantic-recall cache miss (the command service makes no provider call). An archive's expiry is fixed when it is
+  archived; lowering `QUOKY_MEMORY_ARCHIVE_DAYS` later does not shorten existing archives.

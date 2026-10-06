@@ -152,6 +152,15 @@
     {"id": "route-147", "text": "30분 뒤에 기억 목록 정리 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0106 D2 negative: a reminder whose body names memories stays a reminder", "mustPass": true},
     {"id": "route-148", "text": "기억 어떻게 지워?", "expected": {"route": "help-intent", "providerCalls": 0}, "source": "ADR-0106 D1 negative: a how-to question is the help-intent handler's (it lists the memory-command line)", "mustPass": true},
     {"id": "route-149", "text": "기억 1 지우지 마", "ctx": {"priorTurns": ["기억해: 커피는 아메리카노"]}, "expected": {"route": "classifier"}, "source": "ADR-0106 D1 negative: a negated command head is not a command", "mustPass": true},
-    {"id": "route-150", "text": "내 생일 기억해?", "expected": {"route": "classifier"}, "source": "ADR-0106 D1 negative: ordinary chat about remembering", "mustPass": true}
+    {"id": "route-150", "text": "내 생일 기억해?", "expected": {"route": "classifier"}, "source": "ADR-0106 D1 negative: ordinary chat about remembering", "mustPass": true},
+    {"id": "route-151", "text": "보관함", "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment D3: the archive view (empty archive: the empty-state reply, still provider-free)", "mustPass": true},
+    {"id": "route-152", "text": "보관함", "ctx": {"priorTurns": ["기억해: 커피는 아메리카노"]}, "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment D3: the archive view after a 기억해: save", "mustPass": true},
+    {"id": "route-153", "text": "기억 복원 1", "ctx": {"priorTurns": ["기억해: 커피는 아메리카노"]}, "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment D3: restore by archive number (asks for the record-bound code; here nothing is archived)", "mustPass": true},
+    {"id": "route-154", "text": "기억 완전 삭제 1", "ctx": {"priorTurns": ["기억해: 커피는 아메리카노"]}, "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment D3: permanent delete by archive number (record-bound code), never the forget path", "mustPass": true},
+    {"id": "route-155", "text": "memory archive", "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment D3: English archive view", "mustPass": true},
+    {"id": "route-156", "text": "restore memory 1", "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment D3: English restore", "mustPass": true},
+    {"id": "route-157", "text": "기억 복원 1", "ctx": {"openTodos": ["주간 보고서 쓰기"]}, "expected": {"route": "memory-commands", "providerCalls": 0}, "source": "ADR-0106 amendment: archive commands keep order 50, before anchored to-dos (100)", "mustPass": true},
+    {"id": "route-158", "text": "할 일 추가: 보관함 정리", "expected": {"route": "work-chat.todo", "kind": "todo.add", "providerCalls": 0}, "source": "ADR-0106 amendment negative: an anchored to-do whose body names the archive stays a to-do", "mustPass": true},
+    {"id": "route-159", "text": "기억 복원 1 하지 마", "expected": {"route": "classifier"}, "source": "ADR-0106 amendment negative: a negated restore is not a command", "mustPass": true}
   ]
 }
