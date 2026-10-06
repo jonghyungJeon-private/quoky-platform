@@ -199,10 +199,42 @@ export function renderForgotten(preview: string, earlierVersions: number, langua
   return `이 기억을 잊었어요:\n> ${preview}${versions}`;
 }
 
-export function renderEdited(preview: string, language: MemoryCommandLanguage): string {
+/**
+ * A forget that stopped part-way (ADR-0106 D5). States only what happened: how many earlier versions were removed,
+ * and whether the memory itself is known to remain (`kept`: its delete was never attempted) or may remain
+ * (`unknown`: its own delete failed). Deletion runs oldest version first, so whatever remains stays reachable and
+ * asking again finishes the job.
+ */
+export function renderForgetIncomplete(
+  removedVersions: number,
+  current: 'kept' | 'unknown',
+  language: MemoryCommandLanguage,
+): string {
+  if (language === 'en') {
+    const head =
+      removedVersions > 0
+        ? `I only partly forgot this memory: ${removedVersions} earlier version${removedVersions === 1 ? ' was' : 's were'} removed, but I could not finish.`
+        : 'I could not finish forgetting this memory. Some data derived from it may already be removed.';
+    const state = current === 'kept' ? 'The memory itself is still in your list.' : 'The memory itself may still be stored.';
+    return `${head}\n${state} Send "list memories" to find its number, then "forget memory N" to try again.`;
+  }
+  const head =
+    removedVersions > 0
+      ? `기억을 일부만 지웠어요: 이전 버전 ${removedVersions}개는 지웠지만 끝까지 마치지 못했어요.`
+      : '기억을 끝까지 지우지 못했어요. 관련 데이터는 일부 지워졌을 수 있어요.';
+  const state = current === 'kept' ? '이 기억은 아직 목록에 남아 있어요.' : '이 기억이 아직 남아 있을 수 있어요.';
+  return `${head}\n${state} "기억 목록"에서 번호를 확인한 뒤 "기억 N 잊어줘"로 다시 시도해 주세요.`;
+}
+
+export function renderEdited(preview: string, language: MemoryCommandLanguage, cleanupPending = false): string {
+  const base =
+    language === 'en'
+      ? `Updated the memory:\n> ${preview}\nAn edited memory moves to the end of the list.`
+      : `기억을 바꿨어요:\n> ${preview}\n바꾼 기억은 목록 맨 뒤로 옮겨져요.`;
+  if (!cleanupPending) return base;
   return language === 'en'
-    ? `Updated the memory:\n> ${preview}\nAn edited memory moves to the end of the list.`
-    : `기억을 바꿨어요:\n> ${preview}\n바꾼 기억은 목록 맨 뒤로 옮겨져요.`;
+    ? `${base}\nSome data derived from the old text could not be cleaned up yet.`
+    : `${base}\n다만 이전 내용에서 파생된 데이터 일부는 아직 정리하지 못했어요.`;
 }
 
 export function renderEditDuplicate(language: MemoryCommandLanguage): string {

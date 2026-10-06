@@ -36,6 +36,7 @@ import {
   renderEditUnchanged,
   renderEditUsage,
   renderForgetConfirmation,
+  renderForgetIncomplete,
   renderForgotten,
   renderMemoryCommandFailed,
   renderMemoryList,
@@ -55,6 +56,8 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 4;
 /** Upper bound on the owner's records read for one command (a personal store holds far fewer). */
 export const MEMORY_COMMAND_MAX_RECORDS = 2_000;
+/** The edit cascade is tried this many times in total (one retry) before the reply notes the pending cleanup. */
+const EDIT_CASCADE_ATTEMPTS = 2;
 /** Pending confirmations kept per actor; the oldest are dropped first. */
 const MAX_PENDING_PER_ACTOR = 10;
 
@@ -93,6 +96,7 @@ export type MemoryCommandOutcome =
   | 'edit-sensitive'
   | 'edit-too-long'
   | 'forgotten'
+  | 'forget-incomplete'
   | 'edited'
   | 'edit-duplicate'
   | 'edit-rejected'
@@ -342,33 +346,64 @@ export class MemoryCommandService {
   }
 
   /**
-   * ADR-0106 D5 forget: the cascades run first (so derived data never outlives the memory: if one fails, nothing is
-   * deleted and the owner can ask again), then `MemoryWriter.forget` with each record's own write scope — the record
-   * and the earlier versions it superseded, which are the same memory's history.
+   * ADR-0106 D5 forget, ordered so that it is always retryable and never leaves unreachable text (the memory store
+   * has no multi-record transaction):
+   *  1. the cascades run first, so derived data never outlives the memory;
+   *  2. the earlier (superseded) versions are deleted oldest first — each before the version that superseded it —
+   *     through `MemoryWriter.forget` with each record's own write scope;
+   *  3. the current, listable record is deleted last.
+   * If any step fails, everything not yet deleted is still reachable from the current record, which is still
+   * listable, so asking again (a fresh `기억 N 잊어줘`) finishes the chain. The reply then says only what happened.
    */
   private async executeForget(actorId: Id, record: MemoryRecord, language: MemoryCommandLanguage) {
     const history = await this.earlierVersions(actorId, record);
-    const removed = [record, ...history];
+    const incomplete = (removedVersions: number, current: 'kept' | 'unknown') => ({
+      outcome: 'forget-incomplete' as const,
+      text: renderForgetIncomplete(removedVersions, current, language),
+      status: 'FAILED' as const,
+    });
     try {
-      await this.runCascades({ actorId, reason: 'forget', records: removed });
+      await this.runCascades({ actorId, reason: 'forget', records: [record, ...history] });
     } catch (error) {
       this.log('warn', 'memory_commands.forget.cascade_failed', { errorName: errorName(error) });
-      return { outcome: 'failed' as const, text: renderMemoryCommandFailed(language), status: 'FAILED' as const };
+      return incomplete(0, 'kept');
     }
-    for (const target of removed) {
-      const scope = durableScopeOfRecord(target);
-      if (scope === null || target.scope.userId !== actorId) continue;
-      const result = await this.deps.writer.forget({ memoryId: target.id, scope });
-      if (result.outcome === 'REJECTED' && target.id === record.id) {
-        this.log('warn', 'memory_commands.forget.rejected', {});
-        return { outcome: 'failed' as const, text: renderMemoryCommandFailed(language), status: 'FAILED' as const };
+    // `earlierVersions` lists the chain nearest first; reversed, every record precedes its successor.
+    let removedVersions = 0;
+    for (const target of [...history].reverse()) {
+      const removed = await this.forgetOne(actorId, target);
+      if (!removed) {
+        this.log('warn', 'memory_commands.forget.incomplete', { removedVersions, remainingVersions: history.length - removedVersions });
+        return incomplete(removedVersions, 'kept');
       }
+      removedVersions += 1;
     }
-    this.log('info', 'memory_commands.forgotten', { removed: removed.length });
+    if (!(await this.forgetOne(actorId, record))) {
+      this.log('warn', 'memory_commands.forget.incomplete', { removedVersions, remainingVersions: 0 });
+      return incomplete(removedVersions, 'unknown');
+    }
+    this.log('info', 'memory_commands.forgotten', { removed: removedVersions + 1 });
     return this.reply(
       'forgotten',
-      renderForgotten(this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), history.length, language),
+      renderForgotten(this.previewOf(record.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), removedVersions, language),
     );
+  }
+
+  /** Delete one record of the owner's chain; `true` when it is gone (already-absent counts as gone). Never throws. */
+  private async forgetOne(actorId: Id, target: MemoryRecord): Promise<boolean> {
+    const scope = durableScopeOfRecord(target);
+    if (scope === null || target.scope.userId !== actorId) return false;
+    try {
+      const result = await this.deps.writer.forget({ memoryId: target.id, scope });
+      if (result.outcome === 'REJECTED') {
+        this.log('warn', 'memory_commands.forget.rejected', {});
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.log('warn', 'memory_commands.forget.delete_failed', { errorName: errorName(error) });
+      return false;
+    }
   }
 
   /**
@@ -420,13 +455,26 @@ export class MemoryCommandService {
           ? this.reply('edit-sensitive', renderEditSensitiveRefused(language))
           : this.reply('edit-rejected', renderEditFailed(language));
     }
-    try {
-      await this.runCascades({ actorId, reason: 'edit', records: [record] });
-    } catch (error) {
-      this.log('warn', 'memory_commands.edit.cascade_failed', { errorName: errorName(error) });
+    // The superseding write is done; the old record's derived data is cleaned up with one retry. A cleanup that still
+    // fails is logged and the reply says so (the edit itself stands: the old record is out of recall as history).
+    let cleanupPending = false;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await this.runCascades({ actorId, reason: 'edit', records: [record] });
+        break;
+      } catch (error) {
+        this.log('warn', 'memory_commands.edit.cascade_failed', { attempt, errorName: errorName(error) });
+        if (attempt >= EDIT_CASCADE_ATTEMPTS) {
+          cleanupPending = true;
+          break;
+        }
+      }
     }
-    this.log('info', 'memory_commands.edited', {});
-    return this.reply('edited', renderEdited(this.previewOf(decision.memory.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), language));
+    this.log('info', 'memory_commands.edited', { cleanupPending: cleanupPending ? 1 : 0 });
+    return this.reply(
+      'edited',
+      renderEdited(this.previewOf(decision.memory.content, language, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), language, cleanupPending),
+    );
   }
 
   /** Records whose `supersededBy` chain leads to `record` (same actor and write scope), newest first. */

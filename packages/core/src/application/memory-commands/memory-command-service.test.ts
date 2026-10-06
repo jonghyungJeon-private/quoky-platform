@@ -342,9 +342,64 @@ describe('MemoryCommandService — forget (ADR-0106 D5)', () => {
     };
     const f = harness([memory('남을 기억')], { cascades: [failing] });
     const result = await f.run(`기억 확인 ${codeOf(await f.run('기억 1 잊어줘'))}`);
-    expect(result).toMatchObject({ outcome: 'failed', status: 'FAILED' });
+    expect(result).toMatchObject({ outcome: 'forget-incomplete', status: 'FAILED' });
+    expect(result.text).toBe(
+      '기억을 끝까지 지우지 못했어요. 관련 데이터는 일부 지워졌을 수 있어요.\n이 기억은 아직 목록에 남아 있어요. "기억 목록"에서 번호를 확인한 뒤 "기억 N 잊어줘"로 다시 시도해 주세요.',
+    );
     expect(f.records).toHaveLength(1);
+    expect((await f.run('기억 목록')).text).toContain('1. 남을 기억');
     expect(f.logs.join('\n')).toContain('memory_commands.cascade.failed');
+  });
+
+  it('a failed history delete leaves the current memory listable and a retry removes the whole chain', async () => {
+    const h = harness([memory('버전 1')]);
+    expect((await h.run(`기억 확인 ${codeOf(await h.run('기억 1 수정: 버전 2'))}`)).outcome).toBe('edited');
+    expect((await h.run(`기억 확인 ${codeOf(await h.run('기억 1 수정: 버전 3'))}`)).outcome).toBe('edited');
+    const [v1, v2, v3] = h.records as [MemoryRecord, MemoryRecord, MemoryRecord];
+    expect(v3.metadata?.['supersedesMemoryId']).toBe(v2.id);
+    const order: string[] = [];
+    const realDelete = h.repository.delete;
+    let failOnce = true;
+    h.repository.delete = async (id) => {
+      order.push(id);
+      if (id === v2.id && failOnce) {
+        failOnce = false;
+        throw new Error('SQLITE_BUSY 버전 2');
+      }
+      return realDelete(id);
+    };
+
+    const partial = await h.run(`기억 확인 ${codeOf(await h.run('기억 1 잊어줘'))}`);
+    expect(partial).toMatchObject({ outcome: 'forget-incomplete', status: 'FAILED' });
+    expect(partial.text).toContain('일부만 지웠어요');
+    expect(partial.text).toContain('다시');
+    expect(partial.text).not.toContain('바뀐 것은 없어요');
+    expect(partial.text).toBe(
+      '기억을 일부만 지웠어요: 이전 버전 1개는 지웠지만 끝까지 마치지 못했어요.\n이 기억은 아직 목록에 남아 있어요. "기억 목록"에서 번호를 확인한 뒤 "기억 N 잊어줘"로 다시 시도해 주세요.',
+    );
+    // Oldest first: the current record is never deleted while its history remains.
+    expect(order).toEqual([v1.id, v2.id]);
+    expect(h.records.map((record) => record.id)).toEqual([v2.id, v3.id]);
+    expect((await h.run('기억 목록')).text).toContain('1. 버전 3');
+    expect(h.logs.join('\n')).not.toMatch(/SQLITE_BUSY|버전 [123]/u);
+
+    const retried = await h.run(`기억 확인 ${codeOf(await h.run('기억 1 잊어줘'))}`);
+    expect(retried.outcome).toBe('forgotten');
+    expect(retried.text).toContain('이전에 고쳐 쓰기 전 버전 1개도 함께 지웠어요.');
+    expect(h.records).toEqual([]);
+  });
+
+  it('a failed delete of the current memory itself is reported as incomplete, never as unchanged', async () => {
+    const h = harness([memory('지울 기억')]);
+    const target = h.records[0] as MemoryRecord;
+    h.repository.delete = async () => {
+      throw new Error('SQLITE_IOERR');
+    };
+    const result = await h.run(`confirm memory ${codeOf(await h.run('forget memory 1'))}`);
+    expect(result).toMatchObject({ outcome: 'forget-incomplete', status: 'FAILED' });
+    expect(result.text).toContain('try again');
+    expect(result.text).not.toContain('Nothing was changed');
+    expect(h.records.map((record) => record.id)).toEqual([target.id]);
   });
 
   it('refuses bulk forget with the one-by-one instruction and deletes nothing', async () => {
@@ -376,6 +431,33 @@ describe('MemoryCommandService — edit (ADR-0106 D5)', () => {
     expect((await h.run('기억 목록')).text).toContain('1. 커피는 라떼');
     const recalled = await lexicalRecall(h.repository, '커피');
     expect(recalled).toEqual(['커피는 라떼']);
+  });
+
+  it('retries a failed edit cascade once and notes a cleanup that still failed, without undoing the edit', async () => {
+    let failures = 1;
+    const flaky: MemoryRemovalCascade = {
+      id: 'learning',
+      onMemoriesRemoved: async () => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error('store locked');
+        }
+      },
+    };
+    const h = harness([memory('하나')], { cascades: [flaky] });
+    const retried = await h.run(`기억 확인 ${codeOf(await h.run('기억 1 수정: 둘'))}`);
+    expect(retried.outcome).toBe('edited');
+    expect(retried.text).toBe('기억을 바꿨어요:\n> 둘\n바꾼 기억은 목록 맨 뒤로 옮겨져요.');
+    expect(h.logs.join('\n')).toContain('memory_commands.edit.cascade_failed {"attempt":1');
+
+    failures = 2;
+    const pending = await h.run(`기억 확인 ${codeOf(await h.run('기억 1 수정: 셋'))}`);
+    expect(pending).toMatchObject({ outcome: 'edited', status: 'RESPONDED' });
+    expect(pending.text).toBe(
+      '기억을 바꿨어요:\n> 셋\n바꾼 기억은 목록 맨 뒤로 옮겨져요.\n다만 이전 내용에서 파생된 데이터 일부는 아직 정리하지 못했어요.',
+    );
+    expect(h.logs.join('\n')).toContain('memory_commands.edit.cascade_failed {"attempt":2');
+    expect((await h.run('기억 목록')).text).toContain('1. 셋');
   });
 
   it('refuses a credential-shaped edit before issuing any code', async () => {
