@@ -128,6 +128,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
   /** ADR-0111: bounded intake for admitted messages' attachments. */
   private readonly attachmentIntake: AttachmentIntake;
   private attachmentSweepTimer?: ReturnType<typeof setInterval>;
+  /** ADR-0102 D5: the composition root's startup identity gate; absent = open (no identity check configured). */
+  private inboundGate?: Promise<boolean>;
 
   constructor(
     private readonly config: DiscordConfig,
@@ -139,6 +141,15 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
 
   onMessage(handler: InboundMessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  /**
+   * ADR-0102 D5 (adapter-local, not part of `PlatformAdapter`): the startup identity gate. An admitted message waits
+   * for it BEFORE any adapter-side effect — attachment download, temp write, refusal note — and is dropped (no
+   * effect, no handler call) unless it resolves `true`. Set it before {@link start}.
+   */
+  gateInbound(gate: Promise<boolean>): void {
+    this.inboundGate = gate;
   }
 
   onApprovalDecision(handler: ApprovalDecisionHandler): void {
@@ -437,9 +448,10 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         userId: message.author.id,
         ...(sources.length > 0 ? { attachmentCount: sources.length } : {}),
       });
+      // ADR-0102 D5: nothing below (attachment download, temp write, refusal note, the turn) happens until the
+      // connected identity is verified; a failed or unverifiable identity drops the message with no effect.
+      if (!(await this.inboundGateOpen())) return;
       // ADR-0111 D2: attachment intake only AFTER the ADR-0091 gate above; a dropped message downloads nothing.
-      // It runs before the handler, so before any wait the composition root adds there (ADR-0102 D5 identity gate);
-      // see the ordering note on InboundMessageHandler.
       const intake = sources.length > 0 ? await this.attachmentIntake.intake(sources) : undefined;
       try {
         if (intake) await this.reportAttachmentIntake(message, intake);
@@ -452,6 +464,17 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       this.logger.error('message handling failed', {
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  /** `true` only when no identity gate is set or it resolved `true`; a rejected gate counts as closed. */
+  private async inboundGateOpen(): Promise<boolean> {
+    const gate = this.inboundGate;
+    if (!gate) return true;
+    try {
+      return (await gate) === true;
+    } catch {
+      return false;
     }
   }
 

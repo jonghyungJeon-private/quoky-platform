@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -20,7 +20,12 @@ import type {
  *   handed on as UNTRUSTED readout.
  * - An image is written to a runner-owned temporary directory under a random name (never the uploaded name) and
  *   handed on as an opaque `imageRef`; {@link AttachmentIntakeResult.release} deletes it after the turn and
- *   {@link AttachmentIntake.sweep} removes anything older than {@link ATTACHMENT_SWEEP_AGE_MS}.
+ *   {@link AttachmentIntake.sweep} removes intake files older than {@link ATTACHMENT_SWEEP_AGE_MS}.
+ * - Temp layout (Codex P1): the temp root must be a real directory (never a symlink) owned by this uid with mode
+ *   0700 (a looser mode on our own directory is repaired; anything else is refused before any traversal). Each
+ *   process writes into its own `mkdtemp` subdirectory `proc-XXXXXX` as `intake-<uuid>.<ext>`. The sweep never
+ *   follows a symlink: it lstat-checks every entry and deletes only regular files owned by this uid whose name is
+ *   an intake name, inside `proc-*` subdirectories (or legacy `<uuid>.<ext>` files directly in the root).
  * - Nothing here logs, persists or embeds attachment content.
  */
 
@@ -36,8 +41,24 @@ export const ATTACHMENT_SWEEP_AGE_MS = 10 * 60_000;
 export const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 20_000;
 /** Downloads come only from the platform's own CDN over https; redirects are refused. */
 export const ATTACHMENT_CDN_HOSTS: readonly string[] = ['cdn.discordapp.com', 'media.discordapp.net'];
-/** Default runner-owned temporary directory (created 0700; refused when not a plain directory owned by us). */
-export const DEFAULT_ATTACHMENT_TEMP_ROOT = path.join(os.tmpdir(), 'quoky-attachments');
+/** The current uid (`undefined` on platforms without POSIX ids). */
+function currentUid(): number | undefined {
+  return typeof process.getuid === 'function' ? process.getuid() : undefined;
+}
+/**
+ * Default runner-owned temporary root, per user (created 0700; refused when not a plain directory owned by us). Under
+ * launchd `os.tmpdir()` may be the shared `/tmp`, so the root itself is validated before every use.
+ */
+export const DEFAULT_ATTACHMENT_TEMP_ROOT = path.join(os.tmpdir(), `quoky-attachments-${currentUid() ?? 'user'}`);
+/** Prefix of each process's private `mkdtemp` subdirectory under the temp root. */
+const PROCESS_DIR_PREFIX = 'proc-';
+const PROCESS_DIR_PATTERN = /^proc-[A-Za-z0-9]{6}$/u;
+/** Intake-written files: `intake-<uuid>.<ext>` (current) or `<uuid>.<ext>` (legacy, directly in the root). */
+const INTAKE_FILE_PATTERN = /^intake-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|jpg|webp)$/u;
+const LEGACY_INTAKE_FILE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|jpg|webp)$/u;
+/** Opens a directory without following a symlink in its last component (best available flags per platform). */
+const OPEN_DIRECTORY_NOFOLLOW =
+  fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0);
 
 const TEXT_EXTENSIONS = new Set(['.log', '.md', '.json']);
 const IMAGE_MIME_TYPES = new Set<InboundImageMimeType>(['image/png', 'image/jpeg', 'image/webp']);
@@ -75,6 +96,8 @@ export interface AttachmentIntakeOptions {
   readonly downloadTimeoutMs?: number;
   /** Test seam for the sweep clock. */
   readonly nowMs?: () => number;
+  /** Test seam for the owning uid (defaults to `process.getuid()`); a foreign-owned root is refused. */
+  readonly uid?: number;
 }
 
 export interface AttachmentIntakeResult {
@@ -229,14 +252,19 @@ export class AttachmentIntake {
   private readonly fetchImpl: typeof fetch;
   private readonly downloadTimeoutMs: number;
   private readonly nowMs: () => number;
+  private readonly uid: number | undefined;
   /** Temp files created and not yet released (deleted on {@link dispose}). */
   private readonly liveFiles = new Set<string>();
+  /** This process's private `mkdtemp` subdirectory (created on the first image write). */
+  private processDir?: string;
+  private processDirPending?: Promise<string | undefined>;
 
   constructor(options: AttachmentIntakeOptions = {}) {
     this.tempRoot = options.tempRoot ?? DEFAULT_ATTACHMENT_TEMP_ROOT;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.downloadTimeoutMs = options.downloadTimeoutMs ?? ATTACHMENT_DOWNLOAD_TIMEOUT_MS;
     this.nowMs = options.nowMs ?? Date.now;
+    this.uid = options.uid ?? currentUid();
   }
 
   /** Takes in at most {@link ATTACHMENT_MAX_COUNT} attachments (concurrently), results in upload order. Never throws. */
@@ -294,10 +322,14 @@ export class AttachmentIntake {
     return { ...base, kind: 'image', mimeType: classification.mimeType, imageRef: file, trust: 'UNTRUSTED' };
   }
 
-  /** Writes under a random name (never the uploaded one), 0600, exclusive create. `undefined` on any failure. */
+  /**
+   * Writes under a random intake name (never the uploaded one) in this process's private subdirectory, 0600,
+   * exclusive create (never through an existing path or symlink). `undefined` on any failure.
+   */
   private async writeTempFile(bytes: Buffer, extension: string): Promise<string | undefined> {
-    if (!(await this.ensureTempRoot())) return undefined;
-    const file = path.join(this.tempRoot, `${randomUUID()}${extension}`);
+    const dir = await this.ensureProcessDir();
+    if (!dir) return undefined;
+    const file = path.join(dir, `intake-${randomUUID()}${extension}`);
     // Tracked before the write starts, so a stop() racing the write still deletes it.
     this.liveFiles.add(file);
     try {
@@ -309,23 +341,82 @@ export class AttachmentIntake {
     }
   }
 
-  /** Creates the temp root 0700, or accepts an existing one only when it is a real directory owned by this user. */
-  private async ensureTempRoot(): Promise<boolean> {
-    try {
-      await fs.mkdir(this.tempRoot, { mode: 0o700 });
-      return true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return false;
+  /** Concurrent writers of one intake share a single resolution, so they never create two subdirectories. */
+  private ensureProcessDir(): Promise<string | undefined> {
+    if (this.processDirPending) return this.processDirPending;
+    const pending: Promise<string | undefined> = this.resolveProcessDir().finally(() => {
+      if (this.processDirPending === pending) this.processDirPending = undefined;
+    });
+    this.processDirPending = pending;
+    return pending;
+  }
+
+  private async resolveProcessDir(): Promise<string | undefined> {
+    if (!(await this.ensurePrivateRoot({ create: true }))) return undefined;
+    if (this.processDir) {
+      const state = await this.inspectOwnedDirectory(this.processDir);
+      if (state === 'ok') return this.processDir;
+      if (state === 'invalid') return undefined;
+      // 'missing' (e.g. swept while idle): a fresh private subdirectory is created below.
     }
     try {
-      const stat = await fs.lstat(this.tempRoot);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
-      const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-      if (uid !== undefined && stat.uid !== uid) return false;
-      if ((stat.mode & 0o077) !== 0) await fs.chmod(this.tempRoot, 0o700);
+      // mkdtemp creates the directory 0700 under an unpredictable name.
+      const dir = await fs.mkdtemp(path.join(this.tempRoot, PROCESS_DIR_PREFIX));
+      if ((await this.inspectOwnedDirectory(dir)) !== 'ok') return undefined;
+      this.processDir = dir;
+      return dir;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Validates the temp root BEFORE any traversal or write: it must be a real directory (a symlink is refused), owned
+   * by this uid, and private. A looser mode on our own directory is repaired to 0700 through a no-follow handle (and
+   * re-checked); a foreign owner, a symlink or a non-directory is refused. With `create`, a missing root is created
+   * 0700 (non-recursive: the parent must already exist).
+   */
+  private async ensurePrivateRoot(options: { readonly create: boolean }): Promise<boolean> {
+    if (options.create) {
+      try {
+        await fs.mkdir(this.tempRoot, { mode: 0o700 });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return false;
+      }
+    }
+    try {
+      const link = await fs.lstat(this.tempRoot);
+      if (link.isSymbolicLink() || !link.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+    try {
+      handle = await fs.open(this.tempRoot, OPEN_DIRECTORY_NOFOLLOW);
+      const stat = await handle.stat();
+      if (!stat.isDirectory()) return false;
+      if (this.uid !== undefined && stat.uid !== this.uid) return false;
+      if ((stat.mode & 0o077) !== 0) {
+        await handle.chmod(0o700);
+        if (((await handle.stat()).mode & 0o077) !== 0) return false;
+      }
       return true;
     } catch {
       return false;
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  /** `ok` only for a real (non-symlink) directory owned by this uid with no group/other access. */
+  private async inspectOwnedDirectory(dir: string): Promise<'ok' | 'missing' | 'invalid'> {
+    try {
+      const stat = await fs.lstat(dir);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return 'invalid';
+      if (this.uid !== undefined && stat.uid !== this.uid) return 'invalid';
+      return (stat.mode & 0o077) === 0 ? 'ok' : 'invalid';
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid';
     }
   }
 
@@ -334,8 +425,16 @@ export class AttachmentIntake {
     await fs.rm(file, { force: true }).catch(() => undefined);
   }
 
-  /** Removes every regular file in the temp root older than {@link ATTACHMENT_SWEEP_AGE_MS}. Never throws. */
+  /**
+   * Removes intake files older than {@link ATTACHMENT_SWEEP_AGE_MS}. Never throws, never follows a symlink: the root
+   * is validated first (a symlinked, foreign-owned or otherwise unsafe root is not traversed at all), and only
+   * lstat-checked regular files owned by this uid with an intake name are deleted — inside `proc-*` subdirectories
+   * (themselves real directories owned by this uid), plus legacy `<uuid>.<ext>` files directly in the root. Another
+   * process's emptied, stale subdirectory is removed (rmdir only; a non-empty one stays). Returns the files deleted.
+   */
   async sweep(): Promise<number> {
+    if (!(await this.ensurePrivateRoot({ create: false }))) return 0;
+    const cutoff = this.nowMs() - ATTACHMENT_SWEEP_AGE_MS;
     let removed = 0;
     let entries: string[];
     try {
@@ -343,25 +442,63 @@ export class AttachmentIntake {
     } catch {
       return 0;
     }
-    const cutoff = this.nowMs() - ATTACHMENT_SWEEP_AGE_MS;
     for (const entry of entries) {
-      const file = path.join(this.tempRoot, entry);
+      const entryPath = path.join(this.tempRoot, entry);
+      if (LEGACY_INTAKE_FILE_PATTERN.test(entry)) {
+        if (await this.removeStaleIntakeFile(entryPath, cutoff)) removed += 1;
+        continue;
+      }
+      if (!PROCESS_DIR_PATTERN.test(entry)) continue;
+      let dirStat;
       try {
-        const stat = await fs.lstat(file);
-        if (!stat.isFile() || stat.mtimeMs > cutoff) continue;
-        await fs.rm(file, { force: true });
-        this.liveFiles.delete(file);
-        removed += 1;
+        dirStat = await fs.lstat(entryPath);
       } catch {
-        // best-effort: a file that vanished or cannot be read is left to the next sweep
+        continue;
+      }
+      if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) continue;
+      if (this.uid !== undefined && dirStat.uid !== this.uid) continue;
+      let files: string[];
+      try {
+        files = await fs.readdir(entryPath);
+      } catch {
+        continue;
+      }
+      for (const name of files) {
+        if (!INTAKE_FILE_PATTERN.test(name)) continue;
+        if (await this.removeStaleIntakeFile(path.join(entryPath, name), cutoff)) removed += 1;
+      }
+      // An earlier (or another) process's stale subdirectory goes once empty; ours is kept for the next write.
+      if (entryPath !== this.processDir && dirStat.mtimeMs <= cutoff) {
+        await fs.rmdir(entryPath).catch(() => undefined);
       }
     }
     return removed;
   }
 
+  /** Deletes `file` only when it is (by lstat) a regular file owned by this uid and older than `cutoff`. */
+  private async removeStaleIntakeFile(file: string, cutoff: number): Promise<boolean> {
+    try {
+      const stat = await fs.lstat(file);
+      if (stat.isSymbolicLink() || !stat.isFile()) return false;
+      if (this.uid !== undefined && stat.uid !== this.uid) return false;
+      if (stat.mtimeMs > cutoff) return false;
+      // unlink removes the entry itself (it never follows a symlink).
+      await fs.unlink(file);
+      this.liveFiles.delete(file);
+      return true;
+    } catch {
+      // best-effort: a file that vanished or cannot be read is left to the next sweep
+      return false;
+    }
+  }
+
   /** Deletes every temp file this instance still holds (adapter stop). Never throws. */
   async dispose(): Promise<void> {
     await Promise.all([...this.liveFiles].map((file) => this.removeFile(file)));
+    // This process's private subdirectory goes too (rmdir only: never anything it does not own or still holds).
+    const dir = this.processDir;
+    this.processDir = undefined;
+    if (dir) await fs.rmdir(dir).catch(() => undefined);
   }
 }
 

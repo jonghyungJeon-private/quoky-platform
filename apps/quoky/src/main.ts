@@ -38,7 +38,7 @@ import { assertPrivateEnvFile } from './ops/env-file-guard';
 import { startupExitCode } from './ops/exit-codes';
 import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
-import { startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
+import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
 
 // ADR-0113 D6: composition-root errors also feed the OPS-1 recent-error ring (codes only, in memory).
@@ -114,6 +114,8 @@ async function bootstrap(): Promise<void> {
   let openInbound: (verified: boolean) => void = () => undefined;
   const inboundGate: Promise<boolean> =
     identity === undefined ? Promise.resolve(true) : new Promise<boolean>((resolve) => (openInbound = resolve));
+  // The adapter's own inbound effects (attachment download, temp file, refusal note) wait for the same gate.
+  applyInboundGate(platform, inboundGate);
 
   // Track B (Sprint 4c-Follow-up-2): secret-free structured diagnostics — name/message/redacted stack/cause plus
   // non-secret correlation context (stage + message/channel/user ids). The raw message text is deliberately NOT

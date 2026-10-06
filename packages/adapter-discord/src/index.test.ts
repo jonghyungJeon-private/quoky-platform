@@ -94,6 +94,21 @@ beforeAll(async () => {
 afterAll(async () => {
   await fs.rm(scratchRoot, { recursive: true, force: true });
 });
+/** Every non-directory entry under `dir` (recursive, relative paths, sorted; symlinks are listed, not followed). */
+async function filesIn(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else out.push(path.relative(dir, full));
+    }
+  };
+  await walk(dir);
+  return out.sort();
+}
+
 /** A fetch that must never run (no live network in tests). */
 const forbiddenFetch = (async () => {
   throw new Error('network must not be used');
@@ -554,8 +569,8 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     await deliver(withAttachments({}, [att('shot.png', 'image/png')]));
     await settle();
     expect(seen).toHaveLength(2);
-    expect(seen.every((s) => s.existed && path.dirname(s.ref) === tempRoot)).toBe(true);
-    expect(await fs.readdir(tempRoot)).toEqual([]);
+    expect(seen.every((s) => s.existed && path.dirname(path.dirname(s.ref)) === tempRoot)).toBe(true);
+    expect(await filesIn(tempRoot)).toEqual([]);
     expect(logger.lines.some((l) => l.message === 'message handling failed')).toBe(true);
   });
 
@@ -630,12 +645,61 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     const blocked = new Promise<void>((resolve) => (release = resolve));
     adapter.onMessage(async () => blocked);
     await deliver(withAttachments({}, [att('shot.png', 'image/png')]));
-    for (let i = 0; i < 50 && (await fs.readdir(tempRoot)).length === 0; i++) {
+    for (let i = 0; i < 50 && (await filesIn(tempRoot)).length === 0; i++) {
       await new Promise((resolve) => setImmediate(resolve));
     }
-    expect(await fs.readdir(tempRoot)).toHaveLength(1);
+    expect(await filesIn(tempRoot)).toHaveLength(1);
     await adapter.stop();
     expect(await fs.readdir(tempRoot)).toEqual([]);
     release();
+  });
+
+  describe('ADR-0102 D5 identity gate (Codex P2): no attachment effect before the identity is verified', () => {
+    const refusedAndImage = () =>
+      withAttachments({}, [att('archive.zip', 'application/zip'), att('app.log', 'text/plain'), att('shot.png', 'image/png')]);
+
+    it('while the gate is pending: no download, no temp write, no note, no turn — then all of it once it opens', async () => {
+      const { adapter, deliver, handled, fetched, tempRoot, settle } = await intakeHarness();
+      const { sent } = sendableChannel(ALLOWED_CHANNEL);
+      let open: (verified: boolean) => void = () => undefined;
+      adapter.gateInbound(new Promise<boolean>((resolve) => (open = resolve)));
+      await deliver(refusedAndImage());
+      await settle();
+      expect(fetched).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(handled).toEqual([]);
+      expect(await fs.readdir(tempRoot)).toEqual([]);
+      open(true);
+      await settle();
+      expect(fetched).toEqual([`${CDN}/app.log`, `${CDN}/shot.png`]);
+      expect(sent).toHaveLength(1);
+      expect(handled).toHaveLength(1);
+      expect(await filesIn(tempRoot)).toEqual([]);
+    });
+
+    it('a failed gate drops the message: no download, no note, no turn', async () => {
+      const { adapter, deliver, handled, fetched, tempRoot, settle } = await intakeHarness();
+      const { sent } = sendableChannel(ALLOWED_CHANNEL);
+      adapter.gateInbound(Promise.resolve(false));
+      await deliver(refusedAndImage());
+      await settle();
+      expect(fetched).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(handled).toEqual([]);
+      expect(await fs.readdir(tempRoot)).toEqual([]);
+    });
+
+    it('a rejected gate counts as closed', async () => {
+      const { adapter, deliver, handled, fetched, settle } = await intakeHarness();
+      const { sent } = sendableChannel(ALLOWED_CHANNEL);
+      const rejected = Promise.reject(new Error('identity unreadable'));
+      rejected.catch(() => undefined);
+      adapter.gateInbound(rejected);
+      await deliver(refusedAndImage());
+      await settle();
+      expect(fetched).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(handled).toEqual([]);
+    });
   });
 });

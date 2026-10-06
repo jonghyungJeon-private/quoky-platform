@@ -64,8 +64,19 @@ afterEach(async () => {
   await fs.rm(scratch, { recursive: true, force: true });
 });
 
+/** Every non-directory entry under `dir` (recursive, relative paths, sorted; symlinks are listed, not followed). */
 async function filesIn(dir: string): Promise<string[]> {
-  return fs.readdir(dir).catch(() => []);
+  const out: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else out.push(path.relative(dir, full));
+    }
+  };
+  await walk(dir);
+  return out.sort();
 }
 
 describe('classifyAttachment — metadata-only bounds (ADR-0111 D2)', () => {
@@ -284,7 +295,7 @@ describe('AttachmentIntake — text files are bounded UNTRUSTED readout (ADR-011
 });
 
 describe('AttachmentIntake — images become an opaque temp reference with cleanup (ADR-0111 D2/D4)', () => {
-  it('writes png/jpeg/webp under a random 0600 name in the 0700 temp root; release deletes them', async () => {
+  it('writes png/jpeg/webp under a random 0600 intake name in a private per-process subdirectory; release deletes them', async () => {
     const fetch = fakeFetch({
       [`${CDN}/s.png`]: { body: PNG },
       [`${CDN}/p.jpg`]: { body: JPEG },
@@ -299,12 +310,16 @@ describe('AttachmentIntake — images become an opaque temp reference with clean
     const images = result.attachments.filter((a): a is Extract<InboundAttachment, { kind: 'image' }> => a.kind === 'image');
     expect(images.map((i) => i.mimeType)).toEqual(['image/png', 'image/jpeg', 'image/webp']);
     expect(images.every((i) => i.trust === 'UNTRUSTED')).toBe(true);
+    const processDir = path.dirname(images[0]!.imageRef);
+    expect(path.dirname(processDir)).toBe(tempRoot);
+    expect(path.basename(processDir)).toMatch(/^proc-[A-Za-z0-9]{6}$/u);
     for (const image of images) {
-      expect(path.dirname(image.imageRef)).toBe(tempRoot);
-      expect(path.basename(image.imageRef)).toMatch(/^[0-9a-f-]{36}\.(png|jpg|webp)$/u);
+      expect(path.dirname(image.imageRef)).toBe(processDir);
+      expect(path.basename(image.imageRef)).toMatch(/^intake-[0-9a-f-]{36}\.(png|jpg|webp)$/u);
       expect((await fs.stat(image.imageRef)).mode & 0o777).toBe(0o600);
     }
     expect((await fs.stat(tempRoot)).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(processDir)).mode & 0o777).toBe(0o700);
     expect(await fs.readFile(images[0]!.imageRef)).toEqual(PNG);
     expect(JSON.stringify(result.attachments)).not.toContain('fake-png-body');
 
@@ -350,13 +365,146 @@ describe('AttachmentIntake — images become an opaque temp reference with clean
     expect(await filesIn(tempRoot)).toEqual([]);
   });
 
-  it('dispose deletes every file still held', async () => {
+  it('dispose deletes every file still held and its own subdirectory', async () => {
     const fetch = fakeFetch({ [`${CDN}/s.png`]: { body: PNG } });
     const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
     await intake.intake([source('s.png', 'image/png', PNG.length, `${CDN}/s.png`)]);
     expect(await filesIn(tempRoot)).toHaveLength(1);
     await intake.dispose();
     expect(await filesIn(tempRoot)).toEqual([]);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it('concurrent images of one intake share one private subdirectory', async () => {
+    const fetch = fakeFetch({ [`${CDN}/a.png`]: { body: PNG }, [`${CDN}/b.png`]: { body: PNG }, [`${CDN}/c.png`]: { body: PNG } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
+    const result = await intake.intake(['a', 'b', 'c'].map((n) => source(`${n}.png`, 'image/png', PNG.length, `${CDN}/${n}.png`)));
+    const refs = result.attachments.map((a) => (a as Extract<InboundAttachment, { kind: 'image' }>).imageRef);
+    expect(new Set(refs.map((r) => path.dirname(r))).size).toBe(1);
+    expect(await fs.readdir(tempRoot)).toHaveLength(1);
+  });
+
+  it('recreates its private subdirectory when it was swept away while idle', async () => {
+    const fetch = fakeFetch({ [`${CDN}/s.png`]: { body: PNG } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
+    const first = await intake.intake([source('s.png', 'image/png', PNG.length, `${CDN}/s.png`)]);
+    const firstDir = path.dirname((first.attachments[0] as Extract<InboundAttachment, { kind: 'image' }>).imageRef);
+    await first.release();
+    await fs.rmdir(firstDir);
+    const second = await intake.intake([source('s.png', 'image/png', PNG.length, `${CDN}/s.png`)]);
+    expect(second.attachments[0]).toMatchObject({ kind: 'image' });
+  });
+});
+
+describe('AttachmentIntake — private temp root and symlink-safe sweep (Codex P1)', () => {
+  const OLD = new Date(Date.now() - ATTACHMENT_SWEEP_AGE_MS - 60_000);
+  const UUID = '0123abcd-4567-89ab-cdef-0123456789ab';
+
+  /** A victim directory full of stale files that must never be touched. */
+  async function victim(): Promise<string> {
+    const dir = path.join(scratch, 'victim');
+    await fs.mkdir(dir);
+    for (const name of ['notes.txt', `${UUID}.png`, `intake-${UUID}.png`]) {
+      await fs.writeFile(path.join(dir, name), 'precious');
+      await fs.utimes(path.join(dir, name), OLD, OLD);
+    }
+    return dir;
+  }
+
+  async function old(file: string, body: string | Buffer = PNG): Promise<void> {
+    await fs.writeFile(file, body);
+    await fs.utimes(file, OLD, OLD);
+  }
+
+  it('a symlinked root is refused: the sweep never traverses it and nothing is written through it', async () => {
+    const target = await victim();
+    await fs.symlink(target, tempRoot);
+    const fetch = fakeFetch({ [`${CDN}/s.png`]: { body: PNG } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
+    expect(await intake.sweep()).toBe(0);
+    const result = await intake.intake([source('s.png', 'image/png', PNG.length, `${CDN}/s.png`)]);
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'DOWNLOAD_FAILED' });
+    expect(await filesIn(target)).toEqual([`${UUID}.png`, `intake-${UUID}.png`, 'notes.txt'].sort());
+  });
+
+  it('a root owned by another uid is refused (no sweep, no write)', async () => {
+    await fs.mkdir(tempRoot, { mode: 0o700 });
+    const stale = path.join(tempRoot, `${UUID}.png`);
+    await old(stale);
+    const foreignUid = (process.getuid?.() ?? 0) + 1;
+    const fetch = fakeFetch({ [`${CDN}/s.png`]: { body: PNG } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot, uid: foreignUid });
+    expect(await intake.sweep()).toBe(0);
+    const result = await intake.intake([source('s.png', 'image/png', PNG.length, `${CDN}/s.png`)]);
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'DOWNLOAD_FAILED' });
+    expect(await filesIn(tempRoot)).toEqual([`${UUID}.png`]);
+  });
+
+  it('a root that is a regular file is refused', async () => {
+    await fs.writeFile(tempRoot, 'not a directory');
+    const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
+    expect(await intake.sweep()).toBe(0);
+    expect(await fs.readFile(tempRoot, 'utf8')).toBe('not a directory');
+  });
+
+  it('an own root with an insecure mode is repaired to 0700 before it is used', async () => {
+    await fs.mkdir(tempRoot);
+    await fs.chmod(tempRoot, 0o777);
+    await old(path.join(tempRoot, `${UUID}.png`));
+    const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
+    expect(await intake.sweep()).toBe(1);
+    expect((await fs.lstat(tempRoot)).mode & 0o777).toBe(0o700);
+  });
+
+  it('skips symlinks inside the root and inside process subdirectories, even with intake names', async () => {
+    const target = await victim();
+    await fs.mkdir(tempRoot, { mode: 0o700 });
+    await fs.symlink(path.join(target, `${UUID}.png`), path.join(tempRoot, `${UUID}.png`));
+    await fs.symlink(target, path.join(tempRoot, 'proc-AAAAAA'));
+    const procDir = path.join(tempRoot, 'proc-BBBBBB');
+    await fs.mkdir(procDir, { mode: 0o700 });
+    await fs.symlink(path.join(target, `intake-${UUID}.png`), path.join(procDir, `intake-${UUID}.png`));
+    const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
+    expect(await intake.sweep()).toBe(0);
+    expect(await filesIn(target)).toEqual([`${UUID}.png`, `intake-${UUID}.png`, 'notes.txt'].sort());
+    expect((await fs.lstat(path.join(tempRoot, `${UUID}.png`))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(tempRoot, 'proc-AAAAAA'))).isSymbolicLink()).toBe(true);
+  });
+
+  it('deletes only stale intake-named regular files; other files and directories are left alone', async () => {
+    await fs.mkdir(tempRoot, { mode: 0o700 });
+    const procDir = path.join(tempRoot, 'proc-CCCCCC');
+    await fs.mkdir(procDir, { mode: 0o700 });
+    await old(path.join(procDir, `intake-${UUID}.png`));
+    await old(path.join(procDir, 'keep.png'));
+    await old(path.join(tempRoot, `intake-${UUID}.png`)); // current-style name, but not in a process subdirectory
+    await old(path.join(tempRoot, `${UUID}.png`)); // legacy root-level intake file
+    await old(path.join(tempRoot, 'unrelated.txt'));
+    const otherDir = path.join(tempRoot, 'not-ours');
+    await fs.mkdir(otherDir);
+    await old(path.join(otherDir, `intake-${UUID}.png`));
+    const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
+    expect(await intake.sweep()).toBe(2);
+    expect(await filesIn(tempRoot)).toEqual(
+      [path.join('not-ours', `intake-${UUID}.png`), `intake-${UUID}.png`, path.join('proc-CCCCCC', 'keep.png'), 'unrelated.txt'].sort(),
+    );
+  });
+
+  it("removes an earlier process's stale, emptied subdirectory", async () => {
+    await fs.mkdir(tempRoot, { mode: 0o700 });
+    const procDir = path.join(tempRoot, 'proc-DDDDDD');
+    await fs.mkdir(procDir, { mode: 0o700 });
+    await old(path.join(procDir, `intake-${UUID}.webp`));
+    await fs.utimes(procDir, OLD, OLD);
+    const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
+    expect(await intake.sweep()).toBe(1);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it('a missing root is not created by the sweep', async () => {
+    const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
+    expect(await intake.sweep()).toBe(0);
+    await expect(fs.lstat(tempRoot)).rejects.toThrow();
   });
 });
 
