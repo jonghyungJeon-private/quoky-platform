@@ -461,7 +461,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
       session ends as it would after the chat decision. The result reaches the owner DM as `OPS_DECISION_RESULT`, a
       narrow ADR-0101 D1 amendment. The UI shows only the outcome category.
     - OPS-2b also folds the OPS flags into `config.ts`/`.env.example`.
-- **ADRs.** ADR-0113 (Proposed) covers the listener, its security model, the display rule, the phases, the no-bypass
+- **ADRs.** ADR-0113 (Ratified 2026-10-06) covers the listener, its security model, the display rule, the phases, the no-bypass
   rule and placement. It amends ADR-0102 D1 ("No cloud VM, container or HTTP endpoint is added") narrowly; ADR-0102 D7
   is not amended. It amends ADR-0101 D1 narrowly for `OPS_DECISION_RESULT` (OPS-2b), and extends ADR-0091 for the UI
   surface. Remote access and a separate client are out of v3 (Team/Hosted).

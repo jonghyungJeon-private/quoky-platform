@@ -16420,9 +16420,9 @@ Independent Chief Architect review before CWR-2 merges.
 
 ## ADR-0113 — Local operations UI (OPS-UI): a loopback-only, token-gated, default-off web screen served by the Quoky process; Phase 1 read-only monitoring, Phase 2 owner handling through the same Core use cases and approval gates as chat. Amends ADR-0102 D1 narrowly (one local HTTP listener); remote access stays out of v3.
 
-- **Status:** Proposed (awaiting owner ratification)
+- **Status:** Ratified by the Product Owner on 2026-10-06 ("ADR-0113 ratify")
 - **Date:** 2026-10-06
-- **Amends (on ratification):**
+- **Amends:**
   - ADR-0102 D1 ("No cloud VM, container or HTTP endpoint is added"), narrowly: exactly one loopback-only, token-gated
     operations listener inside the Quoky process, off by default. ADR-0102 D7 is **not** amended: `OPS_NOTICE` stays
     the only push health signal, and the UI is a pull surface. Nothing else in ADR-0102 changes.
@@ -16669,3 +16669,11 @@ Enabling the UI on the owner host (`.env.local` edit) and its attended live chec
 OPS-2b, an attended reject and approve session on a DB copy against a sandbox repository. Independent Chief Architect
 review before OPS-1 merges (new listener, the ADR-0102 D1 amendment, the §5.3/§12 question) and before OPS-2 and
 OPS-2b merge (no-bypass extraction).
+
+## ADR-0113 ratification record (2026-10-06)
+
+- **Ratified by:** the Product Owner, in chat on 2026-10-06 ("ADR-0113 ratify"), after the independent review fixes
+  (ADR-0102 citation, CSP vs inline script, OPS-2 ownership, approval semantics).
+- **Scope:** Phase 1 read-only monitoring (OPS-1, wave 3 after SUB-2) and Phase 2 owner handling (OPS-2, after MEM-1)
+  as written; loopback only, default off; remote access stays out of v3. A Telegram platform adapter is a post-v3
+  extension (owner decision 2026-10-06), with its own ADR at that time.
