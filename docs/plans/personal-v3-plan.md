@@ -2,7 +2,7 @@
 
 - **Status:** Approved for execution; ADR-0102..0112 ratified by the Product Owner on 2026-10-06 with all recommended defaults (ratification record in `DECISIONS.md`). Planning only: nothing here ratifies an ADR or authorizes a Strict action. GOV-3
   (2026-10-06) appended the new decisions to `DECISIONS.md` as ADR-0102..0112, each **Ratified 2026-10-06** (previously Proposed); the former `TBD-ADR-n` placeholders below now carry the real numbers.
-  GOV-4 (2026-10-06) added **ADR-0113 (local operations UI, track OPS) as Proposed (awaiting owner ratification)** and
+  GOV-4 (2026-10-06) added **ADR-0113 (local operations UI, track OPS) — Ratified by the owner 2026-10-06** and
   recorded the owner decision that a Telegram platform adapter is a post-v3 extension.
 - **Date:** 2026-10-03
 - **Base:** `claude/v2-wave8` `eaacca2` (Personal v2 waves 1-7 on `main` at `ba28314`, plus INT-1 and DOC-B; the wave-8
@@ -21,7 +21,7 @@
 | TBD-ADR-3 | ADR-0104 internal-action guard, help intent | DET-1, LLM-1 | TBD-ADR-9 | ADR-0110 calendar read | CAL-1/2 |
 | TBD-ADR-4 | ADR-0105 model choice, MLX provider | LLM-2/3 | TBD-ADR-10 | ADR-0111 files and images | MM-1/2 |
 | TBD-ADR-5 | ADR-0106 memory commands | MEM-1 | TBD-ADR-11 | ADR-0112 connector writes (v15) | CWR-1/2 |
-| TBD-ADR-6 | ADR-0107 learning store (v14), locality | LRN-1..4 | — | ADR-0113 local operations UI (**Proposed**, GOV-4) | OPS-1/2 |
+| TBD-ADR-6 | ADR-0107 learning store (v14), locality | LRN-1..4 | — | ADR-0113 local operations UI (**Ratified 2026-10-06**, GOV-4) | OPS-1/2 |
 
 ## 1. Goal and scope
 
@@ -406,7 +406,7 @@ The owner's request: "앞으로 데이터를 학습해야 질문 -> 답변에 �
 - **Live QA.** Owner-confirmed new external targets (a Jira test project issue and a Slack test channel). Comment,
   transition, post, deny, replay, network failure mid-send.
 
-### OPS — Local operations UI (P1; ADR-0113 Proposed)
+### OPS — Local operations UI (P1; ADR-0113 Ratified 2026-10-06)
 
 - **Problem.** Once SUB-1 makes Quoky an unattended service, the owner sees its state only through Discord replies, the
   `OPS_NOTICE` DM and log files. There is no single place to check health, provider readiness, queued reminders,
