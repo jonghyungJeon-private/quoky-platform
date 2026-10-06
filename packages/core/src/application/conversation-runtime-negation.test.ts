@@ -23,6 +23,31 @@ describe('ConversationRuntime negation-aware mutation gates', () => {
     it('R2: a genuine commit-with-forbidden-companion is unchanged', () => {
       expect(ConversationRuntime.interpretCommitIntent('커밋하고 푸시해줘')).toBe('commit-with-forbidden');
     });
+    it('W1-L03: a how-to question about committing is not a commit request (it reaches help or chat)', () => {
+      for (const text of [
+        'git commit 은 어떻게 하는 거야?',
+        'git commit 어떻게 해?',
+        '커밋해 주는 방법 알려줘',
+        '커밋하고 푸시하는 방법',
+        'how do I git commit?',
+        'what is git commit?',
+      ]) {
+        expect(ConversationRuntime.interpretCommitIntent(text), text).toBeNull();
+      }
+      // Requests (including a polite question-shaped request) are unchanged.
+      expect(ConversationRuntime.interpretCommitIntent('커밋해줄래?')).toBe('commit');
+      expect(ConversationRuntime.interpretCommitIntent('git commit 해줘')).toBe('commit');
+    });
+  });
+
+  describe('interpretGitPreviewIntent', () => {
+    it('W1-L03: a how-to question about a git mutation is not a mutation to reject; requests still are', () => {
+      expect(ConversationRuntime.interpretGitPreviewIntent('git commit 은 어떻게 하는 거야?')).toBeNull();
+      expect(ConversationRuntime.interpretGitPreviewIntent('how do I push?')).toBeNull();
+      expect(ConversationRuntime.interpretGitPreviewIntent('푸시해줘')).toBe('mutating');
+      expect(ConversationRuntime.interpretGitPreviewIntent('git add 해줘')).toBe('mutating');
+      expect(ConversationRuntime.interpretGitPreviewIntent('git diff 보여줘')).toBe('diff');
+    });
   });
 
   describe('interpretPushIntent', () => {

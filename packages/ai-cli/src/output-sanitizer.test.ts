@@ -9,6 +9,8 @@ import {
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
   stripInternalMetadataEnvelope,
+  stripStrayHanCharacters,
+  stripTrailingTranslationMetaLine,
   stripUnsolicitedTranslationBlock,
 } from './output-sanitizer';
 
@@ -495,5 +497,155 @@ describe('action-claim guard is off unless the User asked for an external action
     expect(guardUnsupportedActionClaims(reply, ordinaryChat)).toBe(reply);
     expect(guardUnsupportedActionClaims(reply, undefined)).toBe(reply);
     expect(guardUnsupportedActionClaims(reply)).toBe(reply);
+  });
+});
+
+describe('stripTrailingTranslationMetaLine (ADR-0104 D5, QA-V2-W7-06)', () => {
+  const ko = generalChatReplyPolicy('완료 처리 어떻게 해?');
+  const answer = '할 일을 완료하려면 "완료 처리: 번호"라고 보내 주세요.';
+
+  it.each([
+    '(Translated from English)',
+    '(Translated from Korean)',
+    '(translated from the original English)',
+    '(Auto-translated from English)',
+    '[Translated from English]',
+    '*(Translated from English)*',
+    '_(Translated from English)_',
+    '(Translation from English)',
+    '(영어에서 번역됨)',
+    '(영어에서 번역되었습니다)',
+    '(번역됨)',
+    '  (Translated from English).  ',
+  ])('drops a trailing standalone %s line', (marker) => {
+    expect(stripTrailingTranslationMetaLine(`${answer}\n\n${marker}`, ko)).toBe(answer);
+    expect(stripTrailingTranslationMetaLine(`${answer}\n${marker}\n\n`, ko)).toBe(answer);
+    expect(stripTrailingTranslationMetaLine(`${answer}\r\n\r\n${marker}\r\n`, ko)).toBe(answer);
+  });
+
+  it('replays the live W7-06 shape through the shared chat hygiene', () => {
+    const live = '완료 처리는 할 일 목록에서 해당 항목을 완료로 표시하는 것입니다.\n\n(Translated from English)';
+    expect(sanitizeGeneralChatText(live, ko)).toBe('완료 처리는 할 일 목록에서 해당 항목을 완료로 표시하는 것입니다.');
+    // English question, English answer: the meta line is still an artifact.
+    const en = generalChatReplyPolicy('How do I mark a task done?');
+    expect(sanitizeGeneralChatText('Use the complete command.\n(Translated from Korean)', en)).toBe(
+      'Use the complete command.',
+    );
+  });
+
+  it('keeps the line when the User asked for a translation or a language', () => {
+    const text = `${answer}\n\n(Translated from English)`;
+    expect(stripTrailingTranslationMetaLine(text, generalChatReplyPolicy('영어로 번역해줘'))).toBe(text);
+    expect(stripTrailingTranslationMetaLine(text, generalChatReplyPolicy('Please translate this'))).toBe(text);
+  });
+
+  it('keeps the text without a reply policy', () => {
+    const text = `${answer}\n\n(Translated from English)`;
+    expect(stripTrailingTranslationMetaLine(text, undefined)).toBe(text);
+    expect(sanitizeGeneralChatText(text)).toBe(text);
+  });
+
+  it('keeps a marker that is not the last line, carries other text, or is the whole reply', () => {
+    const middle = `${answer}\n(Translated from English)\n그 다음 줄이에요.`;
+    expect(stripTrailingTranslationMetaLine(middle, ko)).toBe(middle);
+    const sentence = `${answer}\n(Translated from English, the meaning is the same.) 참고하세요.`;
+    expect(stripTrailingTranslationMetaLine(sentence, ko)).toBe(sentence);
+    const unbracketed = `${answer}\nTranslated from English`;
+    expect(stripTrailingTranslationMetaLine(unbracketed, ko)).toBe(unbracketed);
+    expect(stripTrailingTranslationMetaLine('(Translated from English)', ko)).toBe('(Translated from English)');
+    const inlineMention = `${answer}\n"(Translated from English)" 같은 줄은 지워져요.`;
+    expect(stripTrailingTranslationMetaLine(inlineMention, ko)).toBe(inlineMention);
+  });
+
+  it('never touches code: fenced, indented, inline or an unbalanced fence', () => {
+    const fenced = `${answer}\n\n\`\`\`text\n(Translated from English)\n\`\`\``;
+    expect(stripTrailingTranslationMetaLine(fenced, ko)).toBe(fenced);
+    const lastInFence = `${answer}\n\n\`\`\`\n(Translated from English)`;
+    expect(stripTrailingTranslationMetaLine(lastInFence, ko)).toBe(lastInFence);
+    const indented = `${answer}\n\n    (Translated from English)`;
+    expect(stripTrailingTranslationMetaLine(indented, ko)).toBe(indented);
+    const inline = `${answer} \`code\n(Translated from English)`;
+    expect(stripTrailingTranslationMetaLine(inline, ko)).toBe(inline);
+  });
+});
+
+describe('stripStrayHanCharacters (ADR-0104 D5, QA-V2-003)', () => {
+  const ko = generalChatReplyPolicy('메일 쓰는 법 알려줘');
+
+  it('removes a lone Han / Kana character fused inside a Hangul word (the live "栏" artifact)', () => {
+    expect(stripStrayHanCharacters('메일 제목栏에 요점을 적어요.', ko)).toBe('메일 제목에 요점을 적어요.');
+    expect(stripStrayHanCharacters('받는 사람을 확인하고 본栏문을 써요.', ko)).toBe('받는 사람을 확인하고 본문을 써요.');
+    expect(stripStrayHanCharacters('제목을 정하고の본문을 써요.', ko)).toBe('제목을 정하고본문을 써요.');
+    expect(sanitizeGeneralChatText('먼저 제목栏을 정해요.\n그다음 본문을 써요.', ko)).toBe('먼저 제목을 정해요.\n그다음 본문을 써요.');
+  });
+
+  it('only for a Korean reply language without a language or translation request', () => {
+    const text = '메일 제목栏에 요점을 적어요.';
+    expect(stripStrayHanCharacters(text, generalChatReplyPolicy('How do I write an email?'))).toBe(text);
+    expect(stripStrayHanCharacters(text, generalChatReplyPolicy('중국어로 번역해줘'))).toBe(text);
+    expect(stripStrayHanCharacters(text, generalChatReplyPolicy('👍'))).toBe(text);
+    expect(stripStrayHanCharacters(text, undefined)).toBe(text);
+  });
+
+  it('keeps whitespace-separated tokens, Han runs, glosses, quotes, edges and conventional Hanja (P2 :388)', () => {
+    for (const text of [
+      '한자는 木 나무를 나타냅니다.',
+      '나무는 木 이라고 써요.',
+      '메일 제목 栏 에 요점을 적어요.',
+      '받는 사람을 확인하고 栏 본문을 써요.',
+      '대한민국은 韓國 이라고도 써요.',
+      '대한韓國민국',
+      '강(江)은 물줄기를 뜻해요.',
+      '강 (江) 은 물줄기예요.',
+      '괄호(설명江설명) 안이에요.',
+      '따옴표 "설명江설명" 안이에요.',
+      '「설명江설명」 안이에요.',
+      '栏제목에 적어요.',
+      '제목에 적어요栏',
+      '前장관이 말했어요.',
+      '한국對일본 경기예요.',
+      '숫자 3日뒤에 봐요.',
+      '日本語 では こう 書きます.',
+    ]) {
+      expect(stripStrayHanCharacters(text, ko), text).toBe(text);
+    }
+  });
+
+  it('never touches a reply that discusses characters, Hanja or another language', () => {
+    for (const text of [
+      '한자 수업에서 나무목木자를 배웠어요.',
+      '일본어 조사는の처럼 써요.',
+      '이 글자는 중국어로栏이라고 읽어요.',
+    ]) {
+      expect(stripStrayHanCharacters(text, ko), text).toBe(text);
+    }
+  });
+
+  it('never inspects code: fences, indented code, inline code (also across lines) or an unmatched backtick', () => {
+    const fenced = '설명이에요.\n```\n제목栏에\n```\n끝이에요.';
+    expect(stripStrayHanCharacters(fenced, ko)).toBe(fenced);
+    const indented = '설명이에요.\n\n    제목栏에';
+    expect(stripStrayHanCharacters(indented, ko)).toBe(indented);
+    const inline = '코드 `제목栏에` 그대로예요.';
+    expect(stripStrayHanCharacters(inline, ko)).toBe(inline);
+    const unmatched = '코드 `제목栏에 그대로예요.';
+    expect(stripStrayHanCharacters(unmatched, ko)).toBe(unmatched);
+    const unbalanced = '설명栏이에요.\n```\n열린 펜스';
+    expect(stripStrayHanCharacters(unbalanced, ko)).toBe(unbalanced);
+    // P2 :417 — a valid multiline code span keeps every character, including a line whose backticks pair differently.
+    const multiline = '값은 `첫째\n제목栏에서` 이고 `b` 예요.';
+    expect(stripStrayHanCharacters(multiline, ko)).toBe(multiline);
+    const multilineSpaced = '값은 `첫째\n제목 栏 에서` 와 `b` 예요.';
+    expect(stripStrayHanCharacters(multilineSpaced, ko)).toBe(multilineSpaced);
+    const doubleTicks = '값은 ``a ` 제목栏에서\n끝`` 이에요.';
+    expect(stripStrayHanCharacters(doubleTicks, ko)).toBe(doubleTicks);
+    // Prose next to inline code is still cleaned; the code span is kept byte for byte.
+    expect(stripStrayHanCharacters('값은 `a栏b` 이고 제목栏에 써요.', ko)).toBe('값은 `a栏b` 이고 제목에 써요.');
+    expect(stripStrayHanCharacters('값은 `첫째\n둘째` 이고\n제목栏에 써요.', ko)).toBe('값은 `첫째\n둘째` 이고\n제목에 써요.');
+  });
+
+  it('keeps every other line and line ending byte for byte', () => {
+    const text = '첫 줄이에요.\r\n제목栏에 써요.\r\n\r\n마지막 줄.';
+    expect(stripStrayHanCharacters(text, ko)).toBe('첫 줄이에요.\r\n제목에 써요.\r\n\r\n마지막 줄.');
   });
 });

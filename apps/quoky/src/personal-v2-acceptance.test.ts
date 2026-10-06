@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +8,7 @@ import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDERS,
+  CODE_CHAIN_STATUS_DOMAINS,
   CONVERSATION_TURN_HANDLERS,
   ConversationRuntime,
   IntentClassifier,
@@ -18,6 +20,9 @@ import {
   TURN_HANDLER_STAGES,
   VECTOR_PROVIDER,
   WorkChatService,
+  generalChatReplyPolicy,
+  guardInternalActionClaims,
+  renderInternalActionNotDone,
   type AiProvider,
   type ApplyPreviewAnchor,
   type ConversationContext,
@@ -47,6 +52,7 @@ import type {
 } from '../../../packages/core/src/application/golden/golden-eval';
 import precedenceCorpus from '../../../packages/core/src/application/golden/reminder-todo-precedence.v1.json';
 import routingCorpus from '../../../packages/core/src/application/golden/turn-handler-routing.v1.json';
+import actionShapedCorpus from '../../../packages/core/src/application/golden/action-shaped-fallthrough.v1.json';
 
 /**
  * Personal v2 — integration acceptance (INT-1, plan wave 8; ADR-0096..ADR-0101). OFFLINE and in-process: the REAL
@@ -57,7 +63,8 @@ import routingCorpus from '../../../packages/core/src/application/golden/turn-ha
  * stub, so no CLI is ever spawned and every provider touch is visible. Turns go through the production
  * `ConversationRuntime` exactly as `QuokyCore` would call it.
  *
- * It pins: the dispatch-boundary deps baseline, the five handlers in their fixed stages/orders, the contributed help
+ * It pins: the dispatch-boundary deps baseline, the six handlers in their fixed stages/orders (the five v2 handlers
+ * plus the ADR-0104 D4 help-intent handler, registered at wave-1 integration), the contributed help
  * lines and their bounds, zero provider calls on deterministic turns, the ADR-0100 D1 anchored-prefix precedence and
  * the turn-handler routing golden ratchet (including the wave-7 live-QA fixes), and the migration contiguity.
  */
@@ -70,6 +77,10 @@ interface RoutingCtx {
   readonly openTodos?: readonly string[];
   /** A post-push apply-preview anchor status seeded on the session before the case's text is sent. */
   readonly applyAnchor?: ApplyPreviewAnchor['status'];
+  /** Register a real sandbox git repository as the session's project first (live QA W1-L01: the dev bot had one). */
+  readonly registeredProject?: boolean;
+  /** Turns sent (after the project registration) before the case's text, e.g. a code change that leaves a clarification. */
+  readonly priorTurns?: readonly string[];
 }
 interface RoutingExpected {
   readonly route: string;
@@ -86,6 +97,11 @@ interface PrecedenceCase extends GoldenCase<{ handler: string }> {
 }
 
 const routing = routingCorpus as unknown as GoldenSuiteFile<RoutingCase>;
+/** ADR-0104 D6 (DET-1): `guard` cases replay a chat reply through the claim guard; `turn` cases route like `RoutingCase`. */
+type ActionShapedCase =
+  | (GoldenCase<{ guarded: boolean; domain?: string }> & { readonly kind: 'guard'; readonly userText: string })
+  | (RoutingCase & { readonly kind: 'turn' });
+const actionShaped = actionShapedCorpus as unknown as GoldenSuiteFile<ActionShapedCase>;
 const precedence = precedenceCorpus as unknown as GoldenSuiteFile<PrecedenceCase>;
 
 /** ADR-0100 D1: the closed list of anchored to-do heads (literal mirror; the precedence corpus pins one case each). */
@@ -103,6 +119,8 @@ const EXPECTED_REGISTRY: ReadonlyArray<readonly [string, TurnHandlerStage, numbe
   ['work-chat.todo', 'pre-classify', 100],
   ['reminders', 'pre-classify', 200],
   ['work-chat.lookup', 'pre-classify', 300],
+  // ADR-0104 D4 (amends ADR-0096 D5): how-to questions about Quoky's own commands, after work lookups, before the classifier.
+  ['help-intent', 'pre-classify', 400],
 ];
 
 /** Precedence-suite labels for the registered handler ids (the corpus predates the final ids). */
@@ -113,6 +131,8 @@ const PRECEDENCE_LABEL: Readonly<Record<string, string>> = {
 };
 
 const STUB_REPLY = 'INT-1 stub provider reply';
+/** What the counting provider stub answers; DET-1 swaps it to replay a claiming chat reply end-to-end. */
+let stubReply: string = STUB_REPLY;
 
 interface TurnObservation {
   readonly route: string;
@@ -209,7 +229,7 @@ async function boot(): Promise<Harness> {
       },
       async execute() {
         providerCalls += 1;
-        return { text: STUB_REPLY, artifacts: [] };
+        return { text: stubReply, artifacts: [] };
       },
     });
   }
@@ -307,7 +327,23 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composeCodePreviewDiscarded(context).text) return 'preview-discarded';
   if (text === composer.composeNoPendingDecision(context).text) return 'no-pending-decision';
   if (text.startsWith('Quoky로 할 수 있는 일이에요.')) return 'help';
+  // ADR-0104 D3 (DET-1): the code-chain not-done reply for a status question / completion statement.
+  for (const domain of CODE_CHAIN_STATUS_DOMAINS) {
+    for (const language of ['ko', 'en'] as const) {
+      if (text === renderInternalActionNotDone(domain, language)) return `internal-action-not-done:${domain}`;
+    }
+  }
   return 'other';
+}
+
+/** Finer labels for the action-shaped corpus' state-aware replies (existing replies the routing corpus labels `other`). */
+function actionShapedReplyLabel(reply: string | undefined, text: string): string | undefined {
+  if (reply !== 'other') return reply;
+  if (text.startsWith('이미 커밋했어요')) return 'commit-already-committed';
+  if (text.startsWith('이미 PR을 만들었어요')) return 'pr-already-created';
+  if (text.startsWith('로컬 브랜치') && text.includes('이미 없어요')) return 'branch-already-cleaned';
+  if (text.startsWith('원격 브랜치') && text.includes('이미 정리됐어요')) return 'remote-branch-already-cleaned';
+  return reply;
 }
 
 /** Seed a post-push apply-preview anchor (ADR-0040 inert anchor Task) on the context's session. */
@@ -341,6 +377,19 @@ interface CaseObservation extends TurnObservation {
   readonly setupProviderTouches: number;
 }
 
+let sandboxRepoPath = '';
+/** One real, empty sandbox git repository (created once) for `registeredProject` cases. */
+function sandboxRepo(): string {
+  if (sandboxRepoPath !== '') return sandboxRepoPath;
+  const path = join(tempDir, 'sandbox-repo');
+  mkdirSync(path, { recursive: true });
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'int', GIT_AUTHOR_EMAIL: 'int@example.invalid', GIT_COMMITTER_NAME: 'int', GIT_COMMITTER_EMAIL: 'int@example.invalid' };
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: path, env });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: path, env });
+  sandboxRepoPath = path;
+  return path;
+}
+
 /** Run one case in its own fresh context (its own actor, session, to-dos and reminders), applying `ctx` first. */
 async function observeCase(golden: { text: string; ctx?: RoutingCtx }): Promise<CaseObservation> {
   const context = harness.freshContext();
@@ -349,6 +398,12 @@ async function observeCase(golden: { text: string; ctx?: RoutingCtx }): Promise<
     const added = await harness.turn(context, `할 일 추가: ${title}`);
     if (added.route !== 'work-chat.todo') throw new Error(`setup to-do was not added: ${title}`);
   }
+  if (golden.ctx?.registeredProject) {
+    await harness.turn(context, `이 프로젝트 등록해줘: ${sandboxRepo()}`);
+    const session = await harness.storage.sessions.findActiveByContext(context.channelId, context.threadId);
+    if (!session?.activeProjectId) throw new Error('setup project was not registered');
+  }
+  for (const text of golden.ctx?.priorTurns ?? []) await harness.turn(context, text);
   if (golden.ctx?.applyAnchor) await seedPostPushAnchor(harness, context, golden.ctx.applyAnchor);
   const setupProviderTouches = harness.providerCalls() + harness.availabilityProbes() - before;
   return { ...(await harness.turn(context, golden.text)), context, setupProviderTouches };
@@ -462,9 +517,9 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);
   });
 
-  it('registers exactly five turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
-    expect(harness.handlers).toHaveLength(5);
-    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(5);
+  it('registers exactly six turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
+    expect(harness.handlers).toHaveLength(6);
+    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(6);
     const byStage = (harness.runtime as unknown as {
       turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
     }).turnHandlersByStage;
@@ -511,7 +566,7 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(cut).toBeDefined();
     expect(Array.from(cut as string)).toHaveLength(MAX_CONTRIBUTED_HELP_LINE_CHARS);
     expect(cut?.endsWith('…')).toBe(true);
-    // Registry order is kept and only the first 12 bounded lines survive: the cut line, the 7 real lines, then
+    // Registry order is kept and only the first 12 bounded lines survive: the cut line, the real lines, then
     // extras up to the cap; the rest are dropped (never wrapped onto the next line, never reordered).
     const keptExtras = MAX_CONTRIBUTED_HELP_LINES - 1 - contributed.length;
     expect(keptExtras).toBeGreaterThanOrEqual(0);
@@ -631,7 +686,191 @@ describe('Personal v2 acceptance — golden turn-handler routing ratchet (ADR-00
     }
     expect(route('주간 보고서 쓰기 완료', todo)).toMatchObject({ route: 'work-chat.todo', kind: 'todo.hint', providerCalls: 0 });
     expect(route('주간 보고서 쓰기 완료했나?', todo)).toMatchObject({ route: 'work-chat.todo', kind: 'todo.status', providerCalls: 0 });
-    expect(route('완료 처리 어떻게 해?')).toEqual({ route: 'classifier' });
-    expect(route('완료 처리 어떻게 해?', todo)).toEqual({ route: 'classifier' });
+    // ADR-0104 D4: the W7-06 how-to question is now answered by the help-intent handler (it fell through to chat in v2).
+    expect(route('완료 처리 어떻게 해?')).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('완료 처리 어떻게 해?', todo)).toEqual({ route: 'help-intent', providerCalls: 0 });
+  });
+});
+
+describe('Personal v3 DET-1 — action-shaped fall-through corpus (ADR-0104 D6)', () => {
+  const turnCases = () => actionShaped.cases.filter((c): c is Extract<ActionShapedCase, { kind: 'turn' }> => c.kind === 'turn');
+
+  it('scores every case against the production composition and the baseline ratchet', async () => {
+    expect(actionShaped.suite).toBe('action-shaped-fallthrough');
+    expect(validateGoldenCases(actionShaped.cases)).toEqual([]);
+    expect(actionShaped.cases.every((golden) => golden.mustPass)).toBe(true);
+    const byId = await observeSuite(
+      { ...actionShaped, cases: turnCases() } as unknown as GoldenSuiteFile<GoldenCase & { ctx?: RoutingCtx }>,
+    );
+    const result = await evaluateGoldenSuiteAsync(
+      actionShaped.cases as readonly GoldenCase[],
+      async (golden) => {
+        const c = golden as ActionShapedCase;
+        if (c.kind === 'guard') {
+          const guarded = guardInternalActionClaims(c.text, c.userText, generalChatReplyPolicy(c.userText));
+          return guarded.guarded ? { guarded: true, domain: guarded.domain } : { guarded: false };
+        }
+        const { context: _context, text, setupProviderTouches: _setup, reply, ...observed } = byId.get(c.id) as CaseObservation;
+        const label = actionShapedReplyLabel(reply, text);
+        return { ...observed, ...(label === undefined ? {} : { reply: label }) };
+      },
+      actionShaped.suite,
+    );
+    console.info(formatGoldenSummary(result));
+    expect(mustPassFailures(result), 'action-shaped-fallthrough mustPass failures').toEqual([]);
+    expect(ratchetViolations(result, baseline.suites[actionShaped.suite]), actionShaped.suite).toEqual([]);
+  });
+
+  it('every deterministic turn case made zero provider calls and probes; chat cases still reach the provider', async () => {
+    const byId = await observeSuite(
+      { ...actionShaped, cases: turnCases() } as unknown as GoldenSuiteFile<GoldenCase & { ctx?: RoutingCtx }>,
+    );
+    for (const golden of turnCases()) {
+      const seen = byId.get(golden.id) as CaseObservation;
+      if (golden.expected.route === 'classifier') {
+        expect(seen.providerCalls, `${golden.id} ${golden.text}`).toBeGreaterThan(0);
+        continue;
+      }
+      expect(seen.providerCalls + seen.availabilityProbes, `${golden.id} ${golden.text}`).toBe(0);
+      expect(seen.setupProviderTouches, `${golden.id} setup`).toBe(0);
+    }
+  });
+
+  it('the guard replaces a chat reply that claims a Quoky action end-to-end, whichever provider answered', async () => {
+    const cases = [
+      ['그 브랜치 어떻게 됐어', '네, 브랜치가 삭제된 상태가 맞습니다.', '이 답변으로 실행된 작업은 없어요. Quoky는 브랜치를'],
+      ['나 고양이 키워. 이름은 나비야', '말씀하신 내용을 기억해 둘게요.', '이 답변으로 실행된 작업은 없어요. Quoky는 기억을'],
+      ['tell me about my cat Nabi', "Got it, I'll save that to my memory.", 'Nothing was done by this reply'],
+    ] as const;
+    try {
+      for (const [user, claim, notice] of cases) {
+        stubReply = claim;
+        const seen = await harness.turn(harness.freshContext(), user);
+        expect(seen.route, user).toBe('classifier');
+        expect(seen.providerCalls, user).toBe(1);
+        expect(seen.text.startsWith(notice), `${user} → ${seen.text}`).toBe(true);
+        expect(seen.text).not.toContain(claim);
+      }
+      // A claim-free reply passes through unchanged.
+      stubReply = STUB_REPLY;
+      expect((await harness.turn(harness.freshContext(), '안녕')).text).toBe(STUB_REPLY);
+    } finally {
+      stubReply = STUB_REPLY;
+    }
+  });
+});
+
+describe('Personal v3 wave 1 — help intent (ADR-0104 D4, LLM-1 module registered at order 400)', () => {
+  const KO_HEAD = 'Quoky에서는 이렇게 하면 돼요.';
+  const KO_FOOT = '전체 안내는 "도움말"이라고 보내 주세요.';
+  const EN_HEAD = 'Here is how to do that in Quoky (the commands are in Korean):';
+  const EN_FOOT = 'Send "/help" for the full guide.';
+  /** Generic how-to questions and ordinary chat the help-intent handler must never hijack (pinned in the corpus). */
+  const NOT_HIJACKED = [
+    'git 브랜치 어떻게 만들어?',
+    '파이썬 리스트 정렬 어떻게 해?',
+    '아이폰 알림 어떻게 꺼?',
+    '알림 소리 어떻게 바꿔?',
+    '슬랙 어떻게 써?',
+    '할 일 관리 잘하는 법',
+    'how do I reverse a list in python?',
+    '오늘 점심 뭐 먹을까?',
+  ] as const;
+
+  it('how-to questions are answered by the help-intent handler from the contributed lines, with zero provider calls', async () => {
+    const byId = await observeSuite(routing);
+    const helpCases = routing.cases.filter((golden) => golden.expected.route === 'help-intent');
+    expect(helpCases.length).toBeGreaterThanOrEqual(10);
+    const contributed = (harness.runtime as unknown as { contributedHelpLines: readonly string[] }).contributedHelpLines;
+    const own = harness.handlers.find((handler) => handler.id === 'help-intent')?.helpLines ?? [];
+    expect(own.length).toBeGreaterThan(0);
+    for (const golden of helpCases) {
+      const seen = byId.get(golden.id) as CaseObservation;
+      const label = `${golden.id} ${golden.text}`;
+      expect(seen.route, label).toBe('help-intent');
+      expect(seen.providerCalls + seen.availabilityProbes, label).toBe(0);
+      expect(seen.setupProviderTouches, `${label} setup`).toBe(0);
+      const lines = seen.text.split('\n');
+      const english = lines[0] === EN_HEAD;
+      expect(lines[0], label).toBe(english ? EN_HEAD : KO_HEAD);
+      expect(lines.at(-1), label).toBe(english ? EN_FOOT : KO_FOOT);
+      const answered = lines.slice(1, -1);
+      expect(answered.length, label).toBeGreaterThan(0);
+      // A filtered subset of the full help reply (ADR-0093 note): every line verbatim, never the handler's own line.
+      for (const line of answered) {
+        expect(contributed, `${label}: ${line}`).toContain(line);
+        expect(own, `${label}: ${line}`).not.toContain(line);
+      }
+    }
+  });
+
+  it('the W7-06 question names the completion command, with or without an open to-do, and mutates nothing', async () => {
+    const byId = await observeSuite(routing);
+    for (const id of ['route-021', 'route-022']) {
+      const seen = byId.get(id) as CaseObservation;
+      expect(seen.route, id).toBe('help-intent');
+      expect(seen.text, id).toContain('"완료 처리: 번호"');
+    }
+    const withTodo = byId.get('route-022') as CaseObservation;
+    const items = await harness.storage.workItems.listByActor(await actorIdOf(withTodo.context));
+    expect(items.map((item) => [item.title, item.status])).toEqual([['주간 보고서 쓰기', 'ACTIVE']]);
+  });
+
+  it('ordinary chat and generic how-to questions are not hijacked: they reach the classifier and the provider', async () => {
+    const byId = await observeSuite(routing);
+    for (const text of NOT_HIJACKED) {
+      const golden = routing.cases.find((c) => c.text === text && c.ctx === undefined);
+      expect(golden, `routing corpus pins "${text}"`).toBeDefined();
+      expect(golden?.expected).toEqual({ route: 'classifier' });
+      const seen = byId.get((golden as RoutingCase).id) as CaseObservation;
+      expect(seen.route, text).toBe('classifier');
+      expect(seen.providerCalls, text).toBeGreaterThan(0);
+      expect(seen.text, text).toBe(STUB_REPLY);
+    }
+  });
+
+  it('the full help reply still lists every contributed line, including the help-intent line', async () => {
+    const own = harness.handlers.find((handler) => handler.id === 'help-intent')?.helpLines ?? [];
+    const help = await harness.turn(harness.freshContext(), '도움말');
+    expect(help.route).toBe('runtime');
+    for (const line of own) expect(help.text.split('\n')).toContain(line);
+  });
+});
+
+describe('Personal v3 wave 1 — live QA W1-L01 / W1-L03 with a registered project', () => {
+  const PROJECT = { registeredProject: true };
+  const CLARIFYING = { registeredProject: true, priorTurns: ['로그인 버그 고쳐줘'] };
+  const route = (text: string, ctx?: RoutingCtx) =>
+    routing.cases.find((c) => c.text === text && JSON.stringify(c.ctx ?? null) === JSON.stringify(ctx ?? null));
+
+  it('the corpus pins the registered-project cases', () => {
+    expect(route('완료 처리 어떻게 해?', PROJECT)?.expected).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('완료 처리 어떻게 해?', CLARIFYING)?.expected).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('알림 어떻게 지워?', CLARIFYING)?.expected).toEqual({ route: 'help-intent', providerCalls: 0 });
+    expect(route('git commit 은 어떻게 하는 거야?')?.expected).toEqual({ route: 'classifier' });
+    expect(route('git commit 은 어떻게 하는 거야?', CLARIFYING)?.expected).toEqual({ route: 'classifier' });
+  });
+
+  it('W1-L01: a how-to question right after a code-change clarification reaches the help-intent handler', async () => {
+    const byId = await observeSuite(routing);
+    const golden = route('완료 처리 어떻게 해?', CLARIFYING) as RoutingCase;
+    const seen = byId.get(golden.id) as CaseObservation;
+    expect(seen.route).toBe('help-intent');
+    expect(seen.text).toContain('"완료 처리: 번호"');
+    expect(seen.text).not.toContain('수정할 파일 경로와 함께');
+    // The registered project was really active for the case.
+    const session = await harness.storage.sessions.findActiveByContext(seen.context.channelId, seen.context.threadId);
+    expect(session?.activeProjectId).toBeTruthy();
+  });
+
+  it('W1-L03: a git-commit how-to question is ordinary chat, never the commit-unavailable reply or an internal state name', async () => {
+    const byId = await observeSuite(routing);
+    for (const ctx of [undefined, CLARIFYING]) {
+      const golden = route('git commit 은 어떻게 하는 거야?', ctx) as RoutingCase;
+      const seen = byId.get(golden.id) as CaseObservation;
+      expect(seen.route, golden.id).toBe('classifier');
+      expect(seen.text, golden.id).toBe(STUB_REPLY);
+      expect(seen.text, golden.id).not.toMatch(/WORKSPACE_APPLIED|커밋 승인을 준비할 수 없어요|수정할 파일 경로와 함께/u);
+    }
   });
 });

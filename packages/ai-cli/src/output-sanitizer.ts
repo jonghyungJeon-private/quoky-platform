@@ -315,6 +315,188 @@ export function stripUnsolicitedTranslationBlock(
   return body.trimEnd();
 }
 
+// A standalone translation meta line ("(Translated from English)", "*(Translated from the original Korean)*",
+// "(영어에서 번역됨)"): bracketed, optionally wrapped in Markdown emphasis, with a short letters-only description.
+const TRANSLATION_META_LINE = new RegExp(
+  String.raw`^ {0,3}([*_]{0,2})[ \t]*[(\[][ \t]*` +
+    String.raw`(?:(?:auto-?)?translated[ \t]+(?:from|by)[ \t]+[\p{L}\p{M}][\p{L}\p{M} \t,-]{0,40}` +
+    String.raw`|translation[ \t]+from[ \t]+[\p{L}\p{M}][\p{L}\p{M} \t,-]{0,40}` +
+    String.raw`|[\p{L}\p{M}][\p{L}\p{M} \t,]{0,20}에서[ \t]*번역(?:됨|되었음|되었습니다|됐습니다|했습니다|함|본)?` +
+    String.raw`|번역됨|번역본)` +
+    String.raw`[ \t]*[)\]][ \t]*\.?[ \t]*\1[ \t]*$`,
+  'iu',
+);
+
+/**
+ * Drop a trailing standalone translation meta line ("(Translated from …)", "(…에서 번역됨)") that a local model appends
+ * to a reply when the User asked for no language or translation (ADR-0104 D5, ADR-0098 D2; live QA QA-V2-W7-06). Only
+ * when: Core's reply policy is present and carries no explicit language/translation request; the line is the last
+ * non-blank line, prose (outside fenced, indented or inline code), and nothing but the bracketed marker; and real text
+ * precedes it. An unbalanced fence disables it. The answer itself is never touched or rephrased.
+ */
+export function stripTrailingTranslationMetaLine(
+  text: string,
+  replyPolicy: GeneralChatReplyPolicy | undefined,
+): string {
+  if (replyPolicy === undefined || replyPolicy.explicitLanguageRequest) return text;
+  const lines = classifyLines(text);
+  if (lines === null) return text;
+
+  let lastIndex = lines.length - 1;
+  while (lastIndex >= 0 && (lines[lastIndex]?.text.trim() ?? '') === '') lastIndex -= 1;
+  const last = lines[lastIndex];
+  if (last === undefined || last.code || INDENTED_CODE_LINE.test(last.text)) return text;
+  if (!TRANSLATION_META_LINE.test(last.text)) return text;
+
+  // The marker must not continue an inline code span opened earlier in its paragraph.
+  const paragraph: string[] = [];
+  for (let index = lastIndex - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (line === undefined || line.code || line.text.trim() === '') break;
+    paragraph.unshift(line.text);
+  }
+  if (endsInsideInlineCode(paragraph.join('\n'))) return text;
+
+  const body = text.slice(0, last.start).trimEnd();
+  return body.trim() === '' ? text : body;
+}
+
+const HAN_OR_KANA = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u;
+const HANGUL = /\p{Script=Hangul}/u;
+/** A precomposed Hangul syllable (a stray character must sit between two of them, inside one word). */
+const HANGUL_SYLLABLE = /^[\uAC00-\uD7A3]$/u;
+/**
+ * Conventional Hanja that Korean prose writes next to Hangul as a whole word (前 장관, 故 김 씨, 對 일본, 大·中·小).
+ * Never removed, even when fused into a Hangul word.
+ */
+const CONVENTIONAL_STANDALONE_HANJA: ReadonlySet<string> = new Set(
+  Array.from('前現故新舊對與野株大中小高低約總副正反上下內外男女第'),
+);
+/**
+ * A reply that talks about characters, Hanja or another language: every Han / Kana character there is content
+ * ("한자는 木 나무를 나타냅니다", "일본어로 は는 조사예요"), so nothing is removed.
+ */
+const CHARACTER_TOPIC =
+  /한자|漢字|한문|중국어|일본어|일어|중문|간체|번체|히라가나|가타카나|글자|문자|부수|훈독|음독|chinese|japanese|kanji|hanja|kana|hiragana|katakana|characters?\b/iu;
+/** Opening / closing brackets and curly quotes: a character inside any of them is quoted or glossed content. */
+const BRACKET_OPEN = '([{（［｛「『《〈【“‘';
+const BRACKET_CLOSE = ')]}）］｝」』》〉】”’';
+
+/** True when `prefix` (the line text before a character) leaves a bracket or a straight quote open. */
+function insideBracketOrQuote(prefix: string): boolean {
+  let depth = 0;
+  let doubleQuotes = 0;
+  let singleQuotes = 0;
+  for (const char of prefix) {
+    if (BRACKET_OPEN.includes(char)) depth += 1;
+    else if (BRACKET_CLOSE.includes(char)) depth = Math.max(0, depth - 1);
+    else if (char === '"') doubleQuotes += 1;
+    else if (char === "'") singleQuotes += 1;
+  }
+  return depth > 0 || doubleQuotes % 2 === 1 || singleQuotes % 2 === 1;
+}
+
+/**
+ * The inline code spans of one paragraph (CommonMark: a backtick run opens a span that the next run of the SAME
+ * length closes, across line breaks inside the paragraph), as `[start, end)` offsets into `source`; `null` when a run
+ * is left unmatched or a backtick is backslash-escaped, so the code/prose split is not trustworthy.
+ */
+function inlineCodeSpans(source: string): Array<readonly [number, number]> | null {
+  if (source.includes('\\`')) return null;
+  const runs = Array.from(source.matchAll(/`+/gu), (match) => [match.index, match[0].length] as const);
+  const spans: Array<readonly [number, number]> = [];
+  for (let index = 0; index < runs.length; index += 1) {
+    const [start, length] = runs[index] ?? [0, 0];
+    const close = runs.findIndex((run, other) => other > index && run[1] === length);
+    if (close < 0) return null;
+    const [closeStart, closeLength] = runs[close] ?? [0, 0];
+    spans.push([start, closeStart + closeLength]);
+    index = close;
+  }
+  return spans;
+}
+
+/** A character to remove: its offset in the source text and its UTF-16 length. */
+type Removal = readonly [number, number];
+
+/**
+ * Collect the stray Han / Kana characters of one paragraph (consecutive prose lines). A character is removed only when
+ * it is fused inside a Hangul word — a precomposed Hangul syllable immediately before AND after it, so it is neither a
+ * whitespace-separated token nor part of a Han run — outside inline code, brackets and quotes, and not a conventional
+ * Hanja. Inline code spans are tracked across the paragraph's line breaks; an untrustworthy split skips the paragraph.
+ */
+function collectStrayCharacters(text: string, paragraph: readonly SourceLine[], removals: Removal[]): void {
+  const first = paragraph[0];
+  const last = paragraph.at(-1);
+  if (first === undefined || last === undefined) return;
+  const paragraphStart = first.start;
+  const spans = inlineCodeSpans(text.slice(paragraphStart, last.start + last.text.length));
+  if (spans === null) return;
+  const inCode = (offset: number) =>
+    spans.some(([start, end]) => offset >= paragraphStart + start && offset < paragraphStart + end);
+
+  for (const line of paragraph) {
+    if (!HAN_OR_KANA.test(line.text)) continue;
+    // The line with every inline-code character blanked, so code never counts as a neighbour, bracket or quote.
+    let masked = '';
+    for (let offset = 0; offset < line.text.length; offset += 1) masked += inCode(line.start + offset) ? ' ' : line.text[offset];
+    const chars: Array<{ readonly char: string; readonly offset: number }> = [];
+    let offset = 0;
+    for (const char of masked) {
+      chars.push({ char, offset });
+      offset += char.length;
+    }
+    chars.forEach(({ char, offset: at }, index) => {
+      if (!HAN_OR_KANA.test(char) || CONVENTIONAL_STANDALONE_HANJA.has(char)) return;
+      const before = chars[index - 1]?.char ?? '';
+      const after = chars[index + 1]?.char ?? '';
+      if (!HANGUL_SYLLABLE.test(before) || !HANGUL_SYLLABLE.test(after)) return;
+      if (insideBracketOrQuote(masked.slice(0, at))) return;
+      removals.push([line.start + at, char.length]);
+    });
+  }
+}
+
+/**
+ * Strip stray Han / Kana characters from a Korean reply (ADR-0104 D5, ADR-0098 D2; live QA QA-V2-003: a stray "栏"
+ * glued inside Korean text). Deliberately conservative — a missed artifact costs one odd character, a wrong removal
+ * changes the answer:
+ *  - only when Core's reply policy says the reply language is `ko` and the User asked for no language or translation,
+ *    and never in a reply that discusses characters, Hanja or another language (`CHARACTER_TOPIC`);
+ *  - only a single character fused inside a Hangul word ("제목栏에" → "제목에"); a whitespace-separated token
+ *    ("한자는 木 나무를 …"), a Han run, a gloss or quoted text, and conventional Hanja (`前`, `故`, `對` …) are kept;
+ *  - fenced code, indented code and inline code spans (tracked across line breaks within a paragraph, CommonMark
+ *    backtick runs) are never touched; an unmatched backtick skips its paragraph and an unbalanced fence disables it.
+ * It removes the stray character only and never rephrases.
+ */
+export function stripStrayHanCharacters(text: string, replyPolicy: GeneralChatReplyPolicy | undefined): string {
+  if (replyPolicy?.replyLanguage !== 'ko' || replyPolicy.explicitLanguageRequest) return text;
+  if (!HAN_OR_KANA.test(text) || !HANGUL.test(text) || CHARACTER_TOPIC.test(text)) return text;
+  const lines = classifyLines(text);
+  if (lines === null) return text;
+
+  const removals: Removal[] = [];
+  let paragraph: SourceLine[] = [];
+  const flush = () => {
+    if (paragraph.length > 0) collectStrayCharacters(text, paragraph, removals);
+    paragraph = [];
+  };
+  for (const line of lines) {
+    if (line.code || INDENTED_CODE_LINE.test(line.text) || line.text.trim() === '') flush();
+    else paragraph.push(line);
+  }
+  flush();
+  if (removals.length === 0) return text;
+
+  let output = '';
+  let cursor = 0;
+  for (const [start, length] of removals) {
+    output += text.slice(cursor, start);
+    cursor = start + length;
+  }
+  return output + text.slice(cursor);
+}
+
 const CODE_SEGMENT = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)/u;
 const LITERAL_NEWLINE = /(?<!\\)\\n/gu;
 
@@ -500,11 +682,14 @@ export function guardUnsupportedActionClaims(text: string, replyPolicy?: General
 
 /**
  * Provider-neutral chat output hygiene applied after `stripInternalMetadataEnvelope` to every GENERAL_CHAT and
- * POLICY_SENSITIVE_CHAT reply (ADR-0098 D2 and amendment D2).
+ * POLICY_SENSITIVE_CHAT reply (ADR-0098 D2 and amendment D2; ADR-0104 D5). Order: literal escapes, an unsolicited
+ * translation block, a trailing translation meta line, stray Han characters in a Korean reply, then the action-claim
+ * guard. Each step removes machine artifacts only and returns its input unchanged when unsure.
  */
 export function sanitizeGeneralChatText(output: string, replyPolicy?: GeneralChatReplyPolicy): string {
-  return guardUnsupportedActionClaims(
+  const withoutTranslation = stripTrailingTranslationMetaLine(
     stripUnsolicitedTranslationBlock(normalizeLiteralEscapes(output), replyPolicy),
     replyPolicy,
   );
+  return guardUnsupportedActionClaims(stripStrayHanCharacters(withoutTranslation, replyPolicy), replyPolicy);
 }

@@ -28,3 +28,22 @@ export type {
   GeneralChatReplyPolicy,
   ReplyLanguage,
 } from './chat-response-policy';
+export {
+  CODE_CHAIN_STATUS_DOMAINS,
+  INTERNAL_ACTION_DOMAINS,
+  INTERNAL_ACTION_LEXICON_VERSION,
+  INTERNAL_ACTION_VOCABULARY,
+  detectInternalActionStatusTurn,
+  isInternalActionDomain,
+  noticeLanguage,
+  renderInternalActionClaimNotice,
+  renderInternalActionNotDone,
+} from './internal-action-vocabulary';
+export type {
+  CodeChainStatusDomain,
+  InternalActionDomain,
+  InternalActionVocabularyEntry,
+  NoticeLanguage,
+} from './internal-action-vocabulary';
+export { detectInternalActionClaim, guardInternalActionClaims } from './internal-action-claim-guard';
+export type { InternalActionClaim, InternalActionGuardResult } from './internal-action-claim-guard';

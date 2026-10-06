@@ -1296,6 +1296,17 @@ describe('ResponseComposer.composeCommit* replies (ADR-0045)', () => {
     expect(reply.text).not.toBe(composer.composePushUnsupportedCompanion(CTX).text);
   });
 
+  it('W1-L03: the code-chain unavailable replies never expose internal state names', () => {
+    for (const reply of [
+      composer.composeCommitUnavailable(CTX),
+      composer.composePushApprovalUnavailable(CTX),
+      composer.composePrApprovalUnavailable(CTX),
+    ]) {
+      expect(reply.text).not.toMatch(/\b[A-Z]+(?:_[A-Z]+)+\b/u);
+    }
+    expect(composer.composeCommitUnavailable(CTX).text).toContain('"커밋해줘"');
+  });
+
   it('wrong-state unavailable and git-status-read-failure are distinct; read-failure precise (CA 69)', () => {
     const wrongState = composer.composeCommitUnavailable(CTX);
     const readFail = composer.composeCommitStatusUnavailable(CTX);

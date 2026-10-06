@@ -66,6 +66,7 @@ import { TaskManager } from './task-manager';
 import { PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
+import { renderInternalActionClaimNotice, renderInternalActionNotDone } from './chat-policy/internal-action-vocabulary';
 import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
 import { StatelessApplyPreviewFlow } from './stateless-apply-preview-flow';
@@ -10536,5 +10537,165 @@ describe('ADR-0098 D6 "피드백 요약" control-stage handler through the runti
     const result = await new ConversationRuntime(f.deps).handle(messageOf('도움말'));
     expect(result.reply.text).toContain('👍/👎');
     expect(result.reply.text).toContain('"피드백 요약"');
+  });
+});
+
+describe('ADR-0104 DET-1 — internal-action claim guard on chat replies', () => {
+  const CLAIM = '네, 브랜치가 삭제된 상태가 맞습니다.';
+  const notice = renderInternalActionClaimNotice('branch', 'ko');
+
+  /** A runtime whose chat provider answers `text`, recording what reaches memory and the logger. */
+  function chatRuntime(text: string, capability: Capability, requiresWork: boolean, routed = false) {
+    const { storage } = makeTaskStorage();
+    const { deps: base, calls } = makeDeps({ intent: intentOf(capability, IntentType.CHAT, requiresWork) });
+    const recorded: string[] = [];
+    const execute = vi.fn(async () => ({ text, artifacts: [] }));
+    const routedExecute = vi.fn(async () => {
+      const accepted = routedResultOf(ProviderGatewayTerminalStatus.ACCEPTED);
+      return { ...accepted, output: { ...accepted.output!, text, artifacts: [] } } as RuntimeProviderRoutingResult;
+    });
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      ...workTurnHappyPathDeps(),
+      tasks: new TaskManager(storage),
+      memory: {
+        ...base.memory,
+        async recordAssistant(reply: string) { recorded.push(reply); return undefined; },
+      },
+      router: { async select() { return { id: 'any-provider', capabilities: [], isAvailable: async () => true, execute }; } },
+      ...(routed ? { runtimeProviderRouting: { execute: routedExecute } } : {}),
+    };
+    return { runtime: new ConversationRuntime(deps), recorded, execute, routedExecute, calls };
+  }
+
+  it.each([
+    ['fast path (no Task)', Capability.GENERAL_CHAT, false, false],
+    ['work turn, direct provider', Capability.GENERAL_CHAT, true, false],
+    ['work turn, routed provider seam', Capability.GENERAL_CHAT, true, true],
+    ['POLICY_SENSITIVE_CHAT work turn', Capability.POLICY_SENSITIVE_CHAT, true, false],
+  ] as const)('%s: a claiming reply is replaced by the fixed notice and the notice is what memory records', async (_label, capability, requiresWork, routed) => {
+    const h = chatRuntime(CLAIM, capability, requiresWork, routed);
+    const result = await h.runtime.handle(messageOf('브랜치 상태 알려줄래'));
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(notice);
+    expect(result.reply.text).not.toContain('맞습니다');
+    expect(h.recorded).toEqual([notice]);
+    expect(h.execute.mock.calls.length + h.routedExecute.mock.calls.length).toBe(1);
+    const logged = h.calls.loggerInfoCalls.find((c) => c.message === 'internal action claim replaced');
+    expect(logged?.fields).toMatchObject({ capability, domain: 'branch' });
+    expect(JSON.stringify(logged)).not.toContain('맞습니다');
+  });
+
+  it('a claim-free chat reply passes through unchanged and logs nothing', async () => {
+    const h = chatRuntime('커밋하려면 "커밋해줘"라고 보내 주세요.', Capability.GENERAL_CHAT, true);
+    const result = await h.runtime.handle(messageOf('커밋 어떻게 해?'));
+    expect(result.reply.text).toBe('커밋하려면 "커밋해줘"라고 보내 주세요.');
+    expect(h.calls.loggerInfoCalls.some((c) => c.message === 'internal action claim replaced')).toBe(false);
+  });
+
+  it('an English turn gets the English notice; a translation request is exempt', async () => {
+    const en = chatRuntime("Done, I've pushed your branch.", Capability.GENERAL_CHAT, true);
+    expect((await en.runtime.handle(messageOf('please push it for me'))).reply.text).toBe(
+      renderInternalActionClaimNotice('push', 'en'),
+    );
+    const translation = chatRuntime('I have committed the changes.', Capability.GENERAL_CHAT, true);
+    expect((await translation.runtime.handle(messageOf('변경 사항을 커밋했습니다 영어로 번역해줘'))).reply.text).toBe(
+      'I have committed the changes.',
+    );
+  });
+
+  it.each(['한국어로 답해줘. 푸시했어?', 'in English please, did you push?', 'PR 만들었다고 한국어로 말해줘'])(
+    'a language preference is not a translation exemption: %s',
+    async (userText) => {
+      const h = chatRuntime('네, 푸시했습니다.', Capability.GENERAL_CHAT, true);
+      const reply = (await h.runtime.handle(messageOf(userText))).reply.text;
+      expect(reply).not.toBe('네, 푸시했습니다.');
+      expect([renderInternalActionClaimNotice('push', 'ko'), renderInternalActionClaimNotice('push', 'en')]).toContain(reply);
+    },
+  );
+
+  it('non-chat capabilities (analysis over a real readout) are never rewritten', async () => {
+    const { storage } = makeTaskStorage();
+    const { deps: base } = makeDeps({ intent: intentOf(Capability.PROJECT_ANALYSIS, IntentType.PROJECT_ANALYSIS, true) });
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      ...workTurnHappyPathDeps(),
+      tasks: new TaskManager(storage),
+      router: { async select() { return { id: 'p', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: '최근 변경 사항을 커밋했습니다 (git log 기준).', artifacts: [] }) }; } },
+    };
+    const result = await new ConversationRuntime(deps).handle(messageOf('프로젝트 구조 분석해줘'));
+    expect(result.reply.text).toContain('커밋했습니다');
+  });
+});
+
+describe('ADR-0104 DET-1 — state-aware code-chain status replies (QA-V2-W8-02)', () => {
+  const PUSHED = {
+    commitHash: HEAD_SHA,
+    pushedCommitHash: HEAD_SHA,
+    pushedRemote: 'origin',
+    pushedBranch: 'feature/x',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/acme/widgets/pull/42',
+    pullRequestHeadBranch: 'feature/x',
+    repositoryIdentity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+  } as Partial<ApplyPreviewAnchor>;
+
+  async function statusTurn(text: string, anchor: Partial<ApplyPreviewAnchor> | null) {
+    const { deps, calls } = makeDeps({ applyAnchor: anchor ? applyAnchorOf({ ...PUSHED, ...anchor }) : null });
+    const select = vi.fn(deps.router.select);
+    const result = await new ConversationRuntime({ ...deps, router: { select } }).handle(messageOf(text));
+    return { result, calls, select };
+  }
+
+  it.each([
+    ['브랜치 삭제했어', null, renderInternalActionNotDone('branch', 'ko')],
+    ['브랜치 삭제했어', { status: 'PR_CREATED' }, renderInternalActionNotDone('branch', 'ko')],
+    ['브랜치 정리 완료', null, renderInternalActionNotDone('branch', 'ko')],
+    ['커밋했어?', null, renderInternalActionNotDone('commit', 'ko')],
+    ['커밋 됐나요?', { status: 'ELIGIBLE' }, renderInternalActionNotDone('commit', 'ko')],
+    ['푸시했어', null, renderInternalActionNotDone('push', 'ko')],
+    ['PR 만들었어?', null, renderInternalActionNotDone('pr', 'ko')],
+    ['머지됐어?', { status: 'GIT_PUSHED' }, renderInternalActionNotDone('merge', 'ko')],
+    ['is it merged?', null, renderInternalActionNotDone('merge', 'en')],
+  ] as const)('%j (anchor %j) → the deterministic not-done reply, no provider and no mutation', async (text, anchor, expected) => {
+    const { result, calls, select } = await statusTurn(text, anchor);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toBe(expected);
+    expect(calls.classify).toBe(0);
+    expect(select).not.toHaveBeenCalled();
+    expect(mutationCalls(calls)).toBe(0);
+    expect(calls.applyAnchorSet + calls.applyClear).toBe(0);
+  });
+
+  it.each([
+    ['커밋됐어?', 'GIT_COMMITTED', '이미 커밋했어요: 0123456'],
+    ['커밋 완료', 'PR_CREATED', '이미 커밋했어요: 0123456'],
+    ['커밋됐어?', 'COMMIT_APPROVED', '이미 커밋 승인을 받아 뒀어요.'],
+    ['푸시됐어?', 'PR_CREATED', '이미 push했어요: 0123456 → origin/feature/x'],
+    ['did you push?', 'MAIN_SYNCED', '이미 push했어요: 0123456'],
+    ['PR 만들어졌어?', 'MERGE_APPROVED', '이미 PR을 만들었어요: #42'],
+    ['is it merged?', 'PR_MERGED', '이 PR은 이미 머지되어 있어요.'],
+    ['브랜치 삭제됐어?', 'BRANCH_CLEANED', "로컬 브랜치 'feature/x'은 이미 없어요."],
+    ['is the branch deleted?', 'REMOTE_BRANCH_CLEANED', "원격 브랜치 'feature/x'는 이미 정리됐어요."],
+  ] as const)('%j at %s → that state\'s existing already-done reply', async (text, status, prefix) => {
+    const { result, calls, select } = await statusTurn(text, { status });
+    expect(result.reply.text.startsWith(prefix), result.reply.text).toBe(true);
+    expect(calls.classify).toBe(0);
+    expect(select).not.toHaveBeenCalled();
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(['git push가 뭐야?', '브랜치 전략 설명해줘', '커밋했으면 알려줘', '브랜치 삭제했어 그리고 새로 만들어줘'])(
+    '%j is not a status turn and still reaches the classifier',
+    async (text) => {
+      const { calls } = await statusTurn(text, null);
+      expect(calls.classify).toBe(1);
+    },
+  );
+
+  it('anchored chain replies keep precedence (a push phrase at GIT_PUSHED is still the existing already-pushed branch)', async () => {
+    const { result, calls } = await statusTurn('푸시했어', { status: 'GIT_PUSHED' });
+    expect(result.reply.text.startsWith('이미 push했어요')).toBe(true);
+    expect(calls.classify).toBe(0);
   });
 });

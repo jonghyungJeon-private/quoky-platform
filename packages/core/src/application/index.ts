@@ -164,3 +164,5 @@ export * from './recall';
 export * from './code-work';
 export * from './work-chat';
 export * from './reminders';
+// Personal v3 sub-barrels (ADR-0104 D4 help intent, LLM-1).
+export * from './help-intent';

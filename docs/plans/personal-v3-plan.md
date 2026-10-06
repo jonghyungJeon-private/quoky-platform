@@ -164,6 +164,15 @@ its live QA. Constraints common to all tracks:
   - Every v2 live-QA miss replays deterministically (zero provider calls).
   - The guard has zero false positives on the existing intent-routing and how-to corpora.
   - The new corpus is in `baseline.v1.json` (or a `baseline.v2.json`) with its `minTotal` raised.
+- **DET-1 delivery status (ADR-0104 D3 partially done; do not mark D3 complete at merge).** DET-1 answers the
+  code-chain status vocabulary (commit, push, PR, merge, branch) deterministically from the apply-preview anchor with
+  zero provider calls. Handler-owned status phrases for reminders, memory and the to-do forms the existing
+  `work-chat.todo` handler does not answer ("알림 설정했어?", "할 일 추가됐어?", "기억했어?") still reach chat and are
+  covered only by the reply guard. The QA-V2-W7-03 and W7-05 phrasings themselves replay as zero-provider-call turns
+  (corpus `asf-t003`/`asf-t004`), but their model-reply variants (`asf-g002`/`asf-g003`) are replayed through the guard
+  only. **Follow-up:** the memory phrases go to MEM-1 (the
+  `memory-commands` handler answers them); the to-do and reminder phrases go to a later DET follow-up lane, in the
+  `work-chat.todo` and reminders handlers. D3 is complete only after both land.
 - **Live QA.** An ego-browser edge-case sweep of about 40 phrasings per feature state on the dev bot, including
   negations, questions, typos, mixed Korean and English, and phrases sent in the wrong state.
 

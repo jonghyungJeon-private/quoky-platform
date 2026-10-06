@@ -72,6 +72,12 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_TIMEZONE must be unset or an IANA time zone such as "Asia/Seoul".',
   [QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID]:
     'QUOKY_CONTEXT_MAX_TOKENS must be unset or a positive integer (at most 200000).',
+  [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_INVALID]:
+    'QUOKY_DISCORD_EXPECTED_BOT_ID must be unset or the bot\'s Discord user id (17-20 digits; Developer Portal -> General Information -> Application ID).',
+  [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED]:
+    'The launchd service requires QUOKY_DISCORD_EXPECTED_BOT_ID in the host .env.local (the bot\'s user id, 17-20 digits). Set it, then restart the service.',
+  [QuokyConfigErrorCode.LAUNCHER_INVALID]:
+    'QUOKY_LAUNCHER and QUOKY_LAUNCHER_RECENT_STARTS are written by ops/launchd/quoky-launch.sh only; remove them from .env.local and the shell.',
 };
 
 function configErrorCode(err: unknown, message: string): QuokyConfigErrorCode | undefined {

@@ -16418,6 +16418,16 @@ Independent Chief Architect review before CWR-2 merges.
   (ADR-0107) before LRN-2 merges; ADR-0049 CA #4/#5 is amended by ADR-0108; ADR-0096 D5 precedence gains the
   calendar handler at pre-classify order 150 (ADR-0110); ADR-0101 D1 gains the single SUB health notice (ADR-0102).
 
+### ADR-0104 implementation note — accepted residual of the claim guard (2026-10-06)
+
+- **Best-effort, by design.** The internal-action claim guard (DET-1) is a deterministic lexical safety net, like the
+  credential regex guard (R3). After two Codex fix loops and an orchestrator follow-up, it catches the live-QA shapes
+  (W7-02/03/05, W8-02, W1-L02) and the reviewed English/Korean variants, but no closed lexicon can classify every
+  Korean subject/clause structure. **Accepted residual R5:** an unusual phrasing can slip past the guard (a missed
+  claim) or, rarely, replace a legitimate acknowledgement. Mitigations: deterministic handlers for every action-shaped
+  phrase in a feature's vocabulary (DET track), the action-shaped-fallthrough golden corpus as a ratchet, and live QA
+  findings added to that corpus. Revisit with LLM-2 (model choice) and LRN (curated examples).
+
 ## ADR-0113 — Local operations UI (OPS-UI): a loopback-only, token-gated, default-off web screen served by the Quoky process; Phase 1 read-only monitoring, Phase 2 owner handling through the same Core use cases and approval gates as chat. Amends ADR-0102 D1 narrowly (one local HTTP listener); remote access stays out of v3.
 
 - **Status:** Ratified by the Product Owner on 2026-10-06 ("ADR-0113 ratify")

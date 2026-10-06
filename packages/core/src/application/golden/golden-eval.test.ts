@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import actionShapedCorpus from './action-shaped-fallthrough.v1.json';
 import approvalCorpus from './approval-decision.v1.json';
 import baselineFile from './baseline.v1.json';
 import controlCorpus from './conversation-control.v1.json';
@@ -18,6 +19,13 @@ import {
 } from './golden-eval';
 import type { GoldenBaselineFile, GoldenCase, GoldenSuiteFile, GoldenSuiteResult } from './golden-eval';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from '../approval-decision';
+import { generalChatReplyPolicy } from '../chat-policy/chat-response-policy';
+import { guardInternalActionClaims } from '../chat-policy/internal-action-claim-guard';
+import {
+  INTERNAL_ACTION_LEXICON_VERSION,
+  detectInternalActionStatusTurn,
+  isInternalActionDomain,
+} from '../chat-policy/internal-action-vocabulary';
 import type { CapabilityRouter } from '../capability-router';
 import { detectConversationControl } from '../conversation-commands';
 import { IntentClassifier, detectProjectRegistration } from '../intent-classifier';
@@ -33,15 +41,19 @@ interface IntentCase extends GoldenCase<IntentExpected> {
 }
 type PrecedenceCase = GoldenCase<{ handler: string }>;
 interface RoutingCase extends GoldenCase<{ route: string; kind?: string; reply?: string; providerCalls?: number }> {
-  ctx?: { openTodos?: string[]; applyAnchor?: string };
+  ctx?: { openTodos?: string[]; applyAnchor?: string; registeredProject?: boolean; priorTurns?: string[] };
 }
+/** ADR-0104 D6: `guard` cases replay a chat reply through the claim guard; `turn` cases route like `RoutingCase`. */
+type ActionShapedCase =
+  | (GoldenCase<{ guarded: boolean; domain?: string }> & { kind: 'guard'; userText: string })
+  | (RoutingCase & { kind: 'turn' });
 
 /**
  * Suites that need the composed turn-handler registry (real handlers, real SQLite, the production runtime) are
  * scored end-to-end by INT-1's app acceptance (`apps/quoky/src/personal-v2-acceptance.test.ts`) against the same
  * `baseline.v1.json`; this file checks their structure and that their baseline entries exist.
  */
-const SCORED_BY_APP_ACCEPTANCE = ['turn-handler-routing', 'reminder-todo-precedence'] as const;
+const SCORED_BY_APP_ACCEPTANCE = ['turn-handler-routing', 'reminder-todo-precedence', 'action-shaped-fallthrough'] as const;
 
 const baseline = baselineFile as unknown as GoldenBaselineFile;
 const asSuite = <C extends GoldenCase>(file: unknown): GoldenSuiteFile<C> => file as GoldenSuiteFile<C>;
@@ -53,6 +65,7 @@ const controls = asSuite<GoldenCase<string | null>>(controlCorpus);
 const registrations = asSuite<GoldenCase<{ path: string; absolute: boolean } | null>>(registrationCorpus);
 const precedence = asSuite<PrecedenceCase>(precedenceCorpus);
 const routing = asSuite<RoutingCase>(routingCorpus);
+const actionShaped = asSuite<ActionShapedCase>(actionShapedCorpus);
 
 const classifier = new IntentClassifier({} as unknown as CapabilityRouter);
 
@@ -93,6 +106,7 @@ describe('golden corpora are well formed', () => {
     ['project-registration', registrations],
     ['reminder-todo-precedence', precedence],
     ['turn-handler-routing', routing],
+    ['action-shaped-fallthrough', actionShaped],
   ] as const)('%s', (name, file) => {
     expect(file.suite).toBe(name);
     expect(file.version).toBe(1);
@@ -164,12 +178,76 @@ describe('golden evaluation against the real deterministic Core', () => {
     expect(find('강제 푸시해줘', 'PR_CREATED')).toEqual({ route: 'runtime', reply: 'push-unsupported', providerCalls: 0 });
     const kinds = new Set(routing.cases.map((c) => c.expected.kind));
     expect(kinds.has('todo.hint') && kinds.has('todo.status')).toBe(true);
-    expect(find('완료 처리 어떻게 해?')).toEqual({ route: 'classifier' });
+    // ADR-0104 D4: the W7-06 how-to question is answered by the help-intent handler (it fell through to chat in v2).
+    expect(find('완료 처리 어떻게 해?')).toEqual({ route: 'help-intent', providerCalls: 0 });
     // Every registered handler id appears as a route at least once.
     const routes = new Set(routing.cases.map((c) => c.expected.route));
-    for (const id of ['feedback.summary', 'git-branch', 'work-chat.todo', 'reminders', 'work-chat.lookup']) {
+    for (const id of ['feedback.summary', 'git-branch', 'work-chat.todo', 'reminders', 'work-chat.lookup', 'help-intent']) {
       expect(routes.has(id), id).toBe(true);
     }
+  });
+});
+
+describe('action-shaped fall-through corpus (ADR-0104 D6, DET-1)', () => {
+  const guardCases = actionShaped.cases.filter((c): c is Extract<ActionShapedCase, { kind: 'guard' }> => c.kind === 'guard');
+  const turnCases = actionShaped.cases.filter((c): c is Extract<ActionShapedCase, { kind: 'turn' }> => c.kind === 'turn');
+  const predictGuard = (golden: GoldenCase<unknown>): unknown => {
+    const c = golden as Extract<ActionShapedCase, { kind: 'guard' }>;
+    const result = guardInternalActionClaims(c.text, c.userText, generalChatReplyPolicy(c.userText));
+    return result.guarded ? { guarded: true, domain: result.domain } : { guarded: false };
+  };
+
+  it('is a full mustPass corpus of guard and turn cases pinned to the current lexicon version', () => {
+    expect((actionShapedCorpus as { lexiconVersion?: number }).lexiconVersion).toBe(INTERNAL_ACTION_LEXICON_VERSION);
+    expect(actionShaped.cases.every((c) => c.mustPass)).toBe(true);
+    expect(guardCases.length + turnCases.length).toBe(actionShaped.cases.length);
+    expect(actionShaped.cases.length).toBeGreaterThanOrEqual(baseline.suites['action-shaped-fallthrough']?.minTotal ?? Infinity);
+    for (const c of guardCases) {
+      expect(typeof c.userText, c.id).toBe('string');
+      if (c.expected.guarded) expect(isInternalActionDomain(c.expected.domain), c.id).toBe(true);
+    }
+    // Both claim outcomes are covered: legitimate explanations (negatives) as well as claims.
+    expect(guardCases.filter((c) => c.expected.guarded).length).toBeGreaterThan(20);
+    expect(guardCases.filter((c) => !c.expected.guarded).length).toBeGreaterThan(20);
+  });
+
+  it('seeds every v2 live-QA miss (owner-curated, never auto-added)', () => {
+    const sources = actionShaped.cases.map((c) => c.source).join('\n');
+    for (const qa of ['QA-V2-W7-02', 'QA-V2-W7-03', 'QA-V2-W7-05', 'QA-V2-W7-06', 'QA-V2-W8-01', 'QA-V2-W8-02', 'QA-V2-003']) {
+      expect(sources, qa).toContain(qa);
+    }
+    const guardByReply = new Map(guardCases.map((c) => [c.text, c.expected]));
+    expect(guardByReply.get('네, 브랜치가 삭제된 상태가 맞습니다.')).toEqual({ guarded: true, domain: 'branch' });
+    expect(guardByReply.get('주간 보고서 쓰기는 완료된 상태로 보입니다.')).toEqual({ guarded: true, domain: 'todo' });
+    expect(guardByReply.get('보고서 초안을 성공적으로 완성하였습니다.')).toEqual({ guarded: true, domain: 'todo' });
+  });
+
+  it('every guard case replays deterministically through the real guard (no provider)', () => {
+    const result = evaluateGoldenSuite(guardCases as readonly GoldenCase<unknown>[], predictGuard, 'action-shaped-fallthrough:guard');
+    console.info(formatGoldenSummary(result));
+    expect(mustPassFailures(result)).toEqual([]);
+  });
+
+  it('turn cases agree with the pure status-turn detector (runtime-answered ones match, chat ones do not)', () => {
+    for (const c of turnCases) {
+      const reply = c.expected.reply ?? '';
+      const domain = detectInternalActionStatusTurn(c.text);
+      if (reply.startsWith('internal-action-not-done:')) expect(domain, c.id).toBe(reply.split(':')[1]);
+      if (c.expected.route === 'classifier') expect(domain, c.id).toBeNull();
+    }
+  });
+
+  it('the status-turn detector claims no existing corpus case except the two ADR-0104 W8-02 statements', () => {
+    const claimed: string[] = [];
+    for (const file of [intents, approvals, strays, controls, registrations, precedence, routing] as const) {
+      for (const c of file.cases) if (detectInternalActionStatusTurn(c.text)) claimed.push(`${file.suite}:${c.id}`);
+    }
+    expect(claimed.sort()).toEqual(['turn-handler-routing:route-067', 'turn-handler-routing:route-069']);
+  });
+
+  it('a guard that never fires fails the suite (mutation self-check)', () => {
+    const result = evaluateGoldenSuite(guardCases as readonly GoldenCase<unknown>[], () => ({ guarded: false }), 'mutated');
+    expect(mustPassFailures(result).length).toBeGreaterThan(20);
   });
 });
 

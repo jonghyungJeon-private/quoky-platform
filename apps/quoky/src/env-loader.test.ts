@@ -61,7 +61,7 @@ describe('loadLocalEnvironment', () => {
 
   it('loads the environment before dynamically importing AppModule without importing main', () => {
     const source = readFileSync(path.join(__dirname, 'main.ts'), 'utf8');
-    const loadPosition = source.indexOf('loadLocalEnvironment();');
+    const loadPosition = source.indexOf('loadLocalEnvironment(');
     const appModulePosition = source.indexOf("await import('./app.module')");
 
     expect(source).not.toMatch(/import\s+\{\s*AppModule\s*\}\s+from\s+['"]\.\/app\.module['"]/);

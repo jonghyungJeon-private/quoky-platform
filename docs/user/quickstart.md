@@ -180,6 +180,79 @@ pnpm dev
 
 시작 실패 시 `failed to start` 다음에 `how to fix`로 해결 방법이 출력됩니다 (9절 표).
 
+### 상시 실행: macOS launchd 서비스 (선택, ADR-0102)
+
+`pnpm dev`는 터미널을 닫으면 멈춥니다. 소유자의 Mac에서 Quoky를 로그인할 때 자동으로 띄우고, 비정상 종료 시
+다시 띄우려면 launchd **사용자 에이전트**를 씁니다. macOS 전용이며 다른 OS에서는 스크립트가 거절합니다.
+설치·업그레이드·제거·재시작은 소유자 컴퓨터의 로그인 세션을 바꾸는 **Strict 작업**이므로 소유자가 직접 승인하고
+실행합니다. 항상 `--dry-run`으로 계획을 먼저 확인하세요 (`--dry-run`은 아무것도 바꾸지 않습니다).
+
+**서비스가 하는 일**
+
+- 환경은 셸에서 **아무것도 물려받지 않고** (`env -i`) 고정 `HOME`, `PATH`(node·claude·ollama 디렉터리 + 시스템
+  디렉터리), `LANG`, `USER`와 호스트 `.env.local` 경로만으로 만듭니다. 셸에 `DISCORD_*`가 export되어 있어도 서비스에는
+  들어가지 않습니다.
+- `.env.local`은 **모드 600(본인 소유, group/other 권한 없음)** 이어야 합니다. 아니면 시작을 거절합니다. 스크립트는
+  파일 내용을 읽거나 출력하지 않습니다.
+- 서비스는 `QUOKY_RUNTIME_ENV=prod`로 실행되고 DB와 벡터 저장소는 저장소 밖
+  `~/Library/Application Support/Quoky/`(`quoky.db`, `vectors`)를 씁니다. 이 값은 `.env.local`의 같은 이름보다 우선합니다.
+  이 DB는 소유자의 실제 데이터입니다.
+- 같은 DB를 쓰는 프로세스는 하나만 시작됩니다 (DB 옆 `quoky.db.lock/` 디렉터리). 두 번째 프로세스는
+  `INSTANCE_ALREADY_RUNNING`으로 시작하지 않습니다. 이전 프로세스가 죽어서 남은 잠금은 그 pid가 없을 때만 자동으로
+  넘겨받습니다(pid가 살아 있으면 재부팅으로 boot id가 바뀐 경우에만 — 시계 변경은 영향을 주지 않습니다).
+  이전 빌드가 남긴 `quoky.db.lock` **파일**이 있으면 `INSTANCE_LOCK_UNAVAILABLE`로 멈추니, Quoky가 꺼진 상태에서 그
+  파일을 지우세요.
+- Discord 연결 직후, 알림을 보내기 전에 실제 연결된 봇 ID, 서버(`DISCORD_GUILD_ID`), 허용 채널
+  (`QUOKY_DISCORD_CHANNEL_IDS`)이 `.env.local`과 같은지 확인합니다. 다르면 `DISCORD_IDENTITY_MISMATCH`로 멈춥니다.
+- 설정 문제로 멈추면 종료 코드 78로 끝나고, **연속 3번**이면 launcher가 더 이상 다시 띄우지 않습니다. 고친 뒤
+  `restart --apply`로 다시 시작합니다. 그 밖의 비정상 종료(충돌, `kill -9`)는 launchd가 10초 간격으로 다시 띄웁니다.
+- 중지(`SIGTERM`)는 최대 90초를 기다립니다. 알림 전송 마무리 한도(65초)보다 깁니다.
+- 로그는 `~/Library/Logs/Quoky/quoky.log`입니다. 시작할 때 10 MiB를 넘으면 `quoky.log.1`로 돌리고 5개까지
+  보관합니다. `launchd.log`는 launcher가 로그 파일을 열기 전 출력용 예비 로그입니다. 비밀 값은 로그에 쓰지 않습니다.
+
+**준비**
+
+```sh
+pnpm install && pnpm build          # 서비스는 빌드된 apps/quoky/dist/main.js를 실행
+chmod 600 .env.local                # 필수
+```
+
+`.env.local`에 봇 자신의 사용자 ID를 넣습니다 (Developer Portal -> General Information -> Application ID, 봇의 사용자
+ID와 같음). 서비스로 실행할 때는 **필수**입니다.
+
+```sh
+QUOKY_DISCORD_EXPECTED_BOT_ID=<봇 사용자 ID>
+```
+
+권장 호스트 설정 (ADR-0102 D9): `QUOKY_REMINDERS_ENABLED=true`. 알림을 `#reminder` 같은 허용 채널로 받으려면
+`QUOKY_REMINDERS_CHANNEL_DELIVERY=true` (그 채널의 모든 멤버가 알림 내용을 볼 수 있음). 일일 브리핑은 항상 DM입니다.
+
+**설치, 상태, 재시작, 제거**
+
+```sh
+ops/launchd/quokyctl.sh install --dry-run     # 계획만 출력 (변경 없음)
+ops/launchd/quokyctl.sh install --apply       # Strict: plist 작성 + launchctl bootstrap gui/<uid>
+ops/launchd/quokyctl.sh status                # 읽기 전용: launchd 상태, 연속 설정 오류 횟수, 잠금, 로그 경로
+ops/launchd/quokyctl.sh restart --apply       # Strict: 설정 오류 중지 해제 + launchctl kickstart -k
+ops/launchd/quokyctl.sh uninstall --apply     # Strict: bootout + plist 삭제 (DB와 로그는 남김)
+tail -f ~/Library/Logs/Quoky/quoky.log
+```
+
+`install`은 여러 번 실행해도 안전합니다. plist가 같고 이미 로드되어 있으면 아무것도 하지 않고, 바뀌었으면 내렸다가
+다시 올립니다. `--node`, `--env-file`, `--repo`, `--label`로 기본값을 바꿀 수 있습니다. plist에는 비밀 값과 환경 변수가
+없습니다 (템플릿: `ops/launchd/com.quoky.personal.plist`).
+
+**주의**
+
+- 서비스가 도는 동안 같은 봇 토큰으로 `pnpm dev`를 띄우지 마세요. DB가 달라 잠금에 걸리지 않으므로 두 프로세스가
+  같은 메시지에 답할 수 있습니다. 먼저 `uninstall --apply` 또는 `launchctl bootout gui/$(id -u)/com.quoky.personal`로
+  멈추세요.
+- 기존 `./data/chunsik.db` 데이터를 서비스 DB로 옮기는 것과, 서비스 DB 스키마를 올리는 업그레이드(마이그레이션)는
+  Strict 작업입니다. 서비스를 멈춘 상태에서 DB를 먼저 백업하세요. 정기 백업과 복구 절차, 장애 알림은 다음 단계
+  (SUB-2)에서 추가됩니다.
+- Mac이 잠자기 상태면 알림이 늦게 전달됩니다. 전원 설정은 자동으로 바꾸지 않습니다. 필요하면 직접
+  `시스템 설정 -> 배터리/에너지` 또는 `sudo pmset -c sleep 0`(전원 연결 시 잠자기 끔)을 설정하세요.
+
 ## 8. 처음 사용하기
 
 봇에게 DM을 보내거나 `QUOKY_DISCORD_CHANNEL_IDS`에 넣은 채널에 메시지를 보냅니다 (@멘션 불필요).
@@ -346,6 +419,14 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | push가 "Repository not found"로 실패 | 이전 버전의 알려진 문제(시스템 git credential helper가 앱 토큰을 가림)는 고쳐졌습니다. 그래도 나면 원격이 HTTPS `github.com`인지, GitHub App이 해당 저장소에 설치됐는지 확인 (운영자 가이드) |
 | 큰 미리보기가 안 보임 | 봇에 **Attach Files** 권한이 없을 수 있음 (2절 4번) |
 | `pnpm install`에서 `better-sqlite3` 빌드 실패 | 네이티브 빌드 도구 설치 (1절) |
+| `INSTANCE_ALREADY_RUNNING` | 같은 DB를 쓰는 Quoky 프로세스가 이미 있음. `ops/launchd/quokyctl.sh status`로 서비스를 확인하고 하나만 실행 |
+| `INSTANCE_LOCK_UNAVAILABLE` | DB 옆에 잠금 파일을 만들 수 없음. `QUOKY_DB_PATH` 디렉터리와 쓰기 권한 확인 |
+| `ENV_FILE_INSECURE` / `ENV_FILE_MISSING` | 서비스용 `.env.local`이 없거나 모드가 600이 아님. `chmod 600 .env.local` 후 `restart --apply` |
+| `DISCORD_EXPECTED_BOT_ID_REQUIRED` / `DISCORD_EXPECTED_BOT_ID_INVALID` | 서비스 실행에는 `QUOKY_DISCORD_EXPECTED_BOT_ID`(봇 사용자 ID, 17-20자리)가 필요 |
+| `DISCORD_IDENTITY_MISMATCH` | 연결된 봇·서버·허용 채널이 `.env.local`과 다름 (다른 봇의 토큰, 봇이 없는 서버, 볼 수 없는 채널). 고친 뒤 `restart --apply` |
+| `DISCORD_IDENTITY_UNVERIFIABLE` | 연결은 됐지만 봇 정보를 읽지 못함 (게이트웨이 준비 지연 등). 서비스는 자동으로 다시 시도 |
+| `LAUNCHER_INVALID` | `QUOKY_LAUNCHER`/`QUOKY_LAUNCHER_RECENT_STARTS`는 launcher만 설정함. `.env.local`이나 셸에서 제거 |
+| 로그에 `not starting: 3 consecutive configuration exits` | 설정 오류로 3번 연속 멈춰 서비스가 재시작을 멈춤. `quoky.log`에서 원인을 고친 뒤 `ops/launchd/quokyctl.sh restart --apply` |
 
 ## 10. 더 알아보기
 
