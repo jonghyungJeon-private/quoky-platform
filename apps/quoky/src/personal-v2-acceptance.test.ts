@@ -974,6 +974,8 @@ describe('Personal v3 LRN-1 — owner learning commands end to end (ADR-0107 D1/
 
 describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)', () => {
   const codeIn = (text: string): string => /기억 확인 ([A-Z0-9]{4})/u.exec(text)?.[1] ?? '';
+  // Listing numbers follow `createdAt` (ms) with an id tie-break; a pause keeps consecutive saves in save order.
+  const nextMs = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
   const recall = async (actorId: string, query: string): Promise<string[]> => {
     const retriever = new DefaultMemoryRetriever(harness.storage.memories);
     const results = await retriever.retrieve(
@@ -993,6 +995,7 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     const other = harness.freshContext();
     const providerBefore = harness.providerCalls() + harness.availabilityProbes();
     expect((await harness.turn(owner, '기억해: 커피는 아메리카노')).reply).toBe('memory-stored');
+    await nextMs();
     expect((await harness.turn(owner, '기억해: 주간 회의는 화요일')).reply).toBe('memory-stored');
     expect((await harness.turn(other, '기억해: 다른 사람의 메모')).reply).toBe('memory-stored');
     const ownerId = await actorIdOf(owner);
@@ -1056,6 +1059,68 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     await harness.turn(owner, `기억 확인 ${codeIn(ask.text)}`);
     expect(await ids()).not.toContain(record.id);
     expect(await harness.storage.memories.get(record.id)).toBeNull();
+  });
+
+  it('forget and edit remove the learning items derived from the memory, actor-scoped (ADR-0106 D5, ADR-0107 D7)', async () => {
+    const owner = harness.freshContext();
+    const other = harness.freshContext();
+    const providerBefore = harness.providerCalls() + harness.availabilityProbes();
+    await harness.turn(owner, '기억해: 학습 연쇄 삭제용 기억');
+    await nextMs();
+    await harness.turn(owner, '기억해: 학습 연쇄 수정용 기억');
+    await harness.turn(other, '기억 목록'); // resolves the other actor (no memory of its own)
+    const ownerId = await actorIdOf(owner);
+    const otherId = await actorIdOf(other);
+    const records = await harness.storage.memories.findDurableCandidates({ scope: { userId: ownerId }, limit: 10 });
+    const byContent = (content: string) => {
+      const found = records.find((record) => record.content === content);
+      if (!found) throw new Error(`memory was not saved: ${content}`);
+      return found;
+    };
+    const forgetMe = byContent('학습 연쇄 삭제용 기억');
+    const editMe = byContent('학습 연쇄 수정용 기억');
+
+    const now = new Date();
+    const learningItem = (id: string, actorId: string, sourceMemoryId: string | undefined) => ({
+      id, actorId, kind: LearningItemKind.EXAMPLE, capability: Capability.GENERAL_CHAT, language: 'ko' as const,
+      ...(sourceMemoryId === undefined ? {} : { sourceMemoryId }),
+      egress: 'LOCAL_ONLY' as const, createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      data: { requestText: '학습 예시 요청', idealAnswer: '학습 예시 답변', sourceRating: 'POSITIVE' as const },
+    });
+    for (const item of [
+      learningItem('lrn-cascade-forget', ownerId, forgetMe.id),
+      learningItem('lrn-cascade-edit', ownerId, editMe.id),
+      learningItem('lrn-cascade-unrelated', ownerId, undefined),
+      // Another actor's row naming the same memory id is never touched (deletes are owner-scoped).
+      learningItem('lrn-cascade-foreign', otherId, forgetMe.id),
+    ]) {
+      expect(await harness.storage.learning.insertWithinCap(item, 1000, now.toISOString())).toBe('INSERTED');
+    }
+    const ids = async (actorId: string) =>
+      (await harness.storage.learning.list({ actorId, kind: LearningItemKind.EXAMPLE, now: new Date().toISOString(), limit: 50 }))
+        .map((item) => item.id)
+        .sort();
+    expect(await ids(ownerId)).toEqual(['lrn-cascade-edit', 'lrn-cascade-forget', 'lrn-cascade-unrelated']);
+
+    // Saved order: 1 = the forget target, 2 = the edit target (which becomes 1 after the forget shifts the list).
+    const listed = await harness.turn(owner, '기억 목록');
+    expect(listed.text).toContain('1. 학습 연쇄 삭제용 기억');
+    expect(listed.text).toContain('2. 학습 연쇄 수정용 기억');
+
+    const forgetAsk = await harness.turn(owner, '기억 1 잊어줘');
+    expect(forgetAsk.text).toContain('> 학습 연쇄 삭제용 기억');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(forgetAsk.text)}`)).text).toContain('이 기억을 잊었어요');
+    expect(await harness.storage.memories.get(forgetMe.id)).toBeNull();
+    expect(await ids(ownerId)).toEqual(['lrn-cascade-edit', 'lrn-cascade-unrelated']);
+    expect(await ids(otherId)).toEqual(['lrn-cascade-foreign']);
+
+    const editAsk = await harness.turn(owner, '기억 1 수정: 학습 연쇄 수정된 기억');
+    expect(editAsk.text).toContain('지금: 학습 연쇄 수정용 기억');
+    expect((await harness.turn(owner, `기억 확인 ${codeIn(editAsk.text)}`)).text).toContain('기억을 바꿨어요');
+    expect(await ids(ownerId)).toEqual(['lrn-cascade-unrelated']);
+    expect(await ids(otherId)).toEqual(['lrn-cascade-foreign']);
+    expect(harness.providerCalls() + harness.availabilityProbes() - providerBefore).toBe(0);
   });
 
   it('pins the golden memory-command routing (기억해: still saves; to-do and reminder phrases keep their handlers)', () => {
