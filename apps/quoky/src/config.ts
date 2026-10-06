@@ -21,7 +21,25 @@ export interface QuokyConfig {
    * adapter via the composition root; Core never receives them. `ownerIds` is non-empty (startup error
    * otherwise). An empty `channelIds` admits owner direct messages only.
    */
-  discord: { token: string; guildId?: string; ownerIds: string[]; channelIds: string[] };
+  discord: {
+    token: string;
+    guildId?: string;
+    ownerIds: string[];
+    channelIds: string[];
+    /**
+     * ADR-0102 D5 (`QUOKY_DISCORD_EXPECTED_BOT_ID`): the bot user id this runtime must connect as. When set, startup
+     * compares the connected bot, `guildId` and every `channelIds` entry before the reminder tick starts; a
+     * mismatch stops the process. Required when the launchd launcher runs (`host.launcher`).
+     */
+    expectedBotId?: string;
+  };
+  /**
+   * ADR-0102 always-on host runtime (SUB-1). Both values are written by `ops/launchd/quoky-launch.sh`, never by
+   * the owner's `.env.local`: `launcher` is `'launchd'` under the launcher (`QUOKY_LAUNCHER`), and `recentStarts` is
+   * the launcher's count of starts in the last 10 minutes (`QUOKY_LAUNCHER_RECENT_STARTS`, 0 outside the launcher;
+   * the seam for the SUB-2 crash-loop `OPS_NOTICE`, no consumer yet).
+   */
+  host: { launcher?: 'launchd'; recentStarts: number };
   storage: { dbPath: string };
   vector: { storePath: string };
   workspace: { workspaceRoot: string };
@@ -137,6 +155,9 @@ export const QuokyConfigErrorCode = {
   EMBEDDING_TIMEOUT_INVALID: 'EMBEDDING_TIMEOUT_INVALID',
   ...ReminderConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
+  DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
+  DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
+  LAUNCHER_INVALID: 'LAUNCHER_INVALID',
 } as const;
 export type QuokyConfigErrorCode = (typeof QuokyConfigErrorCode)[keyof typeof QuokyConfigErrorCode];
 
@@ -192,6 +213,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   // ADR-0091: fail closed before anything else is composed when no owner is configured.
   const ownerIds = parseDiscordIdList(env.QUOKY_DISCORD_OWNER_IDS, QuokyConfigErrorCode.DISCORD_OWNER_IDS_INVALID);
   if (ownerIds.length === 0) throw new QuokyConfigError(QuokyConfigErrorCode.DISCORD_OWNER_IDS_MISSING);
+  // ADR-0102 D5: the launcher-run service must name the bot it expects to connect as.
+  const host = parseHostRuntime(env);
+  const expectedBotId = parseExpectedBotId(env.QUOKY_DISCORD_EXPECTED_BOT_ID);
+  if (host.launcher === 'launchd' && expectedBotId === undefined) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED);
+  }
 
   return {
     discord: {
@@ -199,7 +226,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       guildId: env.DISCORD_GUILD_ID,
       ownerIds,
       channelIds: parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID),
+      ...(expectedBotId !== undefined ? { expectedBotId } : {}),
     },
+    host,
     storage: { dbPath: resolveDataPath(env.QUOKY_DB_PATH ?? env.CHUNSIK_DB_PATH ?? './data/chunsik.db') },
     vector: { storePath: resolveDataPath(env.QUOKY_VECTOR_PATH ?? env.CHUNSIK_VECTOR_PATH ?? './data/vectors') },
     workspace: { workspaceRoot: env.QUOKY_WORKSPACE_ROOT ?? env.CHUNSIK_WORKSPACE_ROOT ?? process.cwd() },
@@ -258,6 +287,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
 
 /** Discord snowflakes are decimal strings of 17-20 digits. */
 const DISCORD_SNOWFLAKE = /^[0-9]{17,20}$/;
+
+/**
+ * ADR-0102: the env file the launchd launcher passes (`QUOKY_ENV_FILE`, an absolute path to the host's `.env.local`).
+ * `undefined` outside the launcher, which keeps the repository `.env.local` default. Read before `.env.local` loads,
+ * so it can only come from the process environment the launcher built.
+ */
+export function resolveEnvFilePath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const value = env.QUOKY_ENV_FILE;
+  return value === undefined || value.trim().length === 0 ? undefined : value;
+}
+
+/** Unset/blank → undefined; otherwise exactly one Discord snowflake (never echoed on error). */
+function parseExpectedBotId(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw.trim().length === 0) return undefined;
+  const value = raw.trim();
+  if (!DISCORD_SNOWFLAKE.test(value)) throw new QuokyConfigError(QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_INVALID);
+  return value;
+}
+
+/** Launcher-written values only: `QUOKY_LAUNCHER` is unset or exactly `launchd`; the start count is 0-9999. */
+function parseHostRuntime(env: NodeJS.ProcessEnv): QuokyConfig['host'] {
+  const launcher = env.QUOKY_LAUNCHER;
+  if (launcher !== undefined && launcher !== 'launchd') throw new QuokyConfigError(QuokyConfigErrorCode.LAUNCHER_INVALID);
+  const rawStarts = env.QUOKY_LAUNCHER_RECENT_STARTS;
+  if (rawStarts !== undefined && !/^[0-9]{1,4}$/.test(rawStarts)) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.LAUNCHER_INVALID);
+  }
+  const recentStarts = rawStarts === undefined ? 0 : Number(rawStarts);
+  return launcher === 'launchd' ? { launcher, recentStarts } : { recentStarts };
+}
 const MAX_DISCORD_ID_ENTRIES = 64;
 
 /**

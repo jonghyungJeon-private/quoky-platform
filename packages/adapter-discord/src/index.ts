@@ -5,6 +5,8 @@ import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } fr
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
+import { readConnectedIdentity } from './connected-identity';
+import type { DiscordConnectedIdentity } from './connected-identity';
 
 export {
   chunkText,
@@ -29,6 +31,12 @@ export type {
   OwnerNotificationDeps,
 } from './notification';
 export { isAdmittedReaction, toRating } from './reactions';
+export {
+  DEFAULT_IDENTITY_READY_TIMEOUT_MS,
+  DiscordIdentityUnavailableError,
+  readConnectedIdentity,
+} from './connected-identity';
+export type { DiscordConnectedIdentity, IdentityClientView } from './connected-identity';
 export type { ReactionAdmissionInput } from './reactions';
 import type {
   ApprovalDecisionHandler,
@@ -283,6 +291,39 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       clearInterval(timer);
       this.typingTimers.delete(target);
     }
+  }
+
+  /**
+   * ADR-0102 D5 (adapter-local, not part of `PlatformAdapter`): read-only facts about the identity this client
+   * connected as — bot user id, guild ids and the given channel ids' guilds — for the composition root's startup
+   * identity check. Waits for the gateway READY up to `readyTimeoutMs`; never sends or changes anything.
+   */
+  async readConnectedIdentity(
+    channelIds: readonly string[],
+    options: { readonly readyTimeoutMs?: number } = {},
+  ): Promise<DiscordConnectedIdentity> {
+    const client = this.client;
+    if (!client) throw new Error('DISCORD_NOT_STARTED');
+    return readConnectedIdentity(
+      {
+        isReady: () => client.isReady(),
+        onceReady: (listener) => {
+          client.once(Events.ClientReady, listener);
+          return () => {
+            client.off(Events.ClientReady, listener);
+          };
+        },
+        botUserId: () => client.user?.id,
+        guildIds: () => client.guilds.cache.keys(),
+        channelGuildId: async (id) => {
+          const channel = await this.fetchChannel(id);
+          if (!channel) return undefined;
+          return 'guildId' in channel && typeof channel.guildId === 'string' ? channel.guildId : null;
+        },
+      },
+      channelIds,
+      options,
+    );
   }
 
   async requestApproval(_request: ApprovalRequest, _context: ConversationContext): Promise<void> {
