@@ -31,6 +31,9 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
     ['내일 9시에 뭐 있어?', { kind: 'day', offset: 1 }, 'ko'],
     ['오늘 뭐 있어?', { kind: 'day', offset: 0 }, 'ko'],
     ['나 내일 바빠?', { kind: 'day', offset: 1 }, 'ko'],
+    // Live QA W4-L02: a message that starts with the time phrase needs no "나".
+    ['내일 바빠?', { kind: 'day', offset: 1 }, 'ko'],
+    ['오늘 오후 한가해?', { kind: 'day', offset: 0 }, 'ko'],
     ['다음 주 일정', { kind: 'week', which: 'next' }, 'ko'],
     ['이번 주말 일정', { kind: 'weekend', which: 'this' }, 'ko'],
     ['다음 주 금요일 일정', { kind: 'weekday', weekday: 5, week: 'next' }, 'ko'],
