@@ -15,8 +15,8 @@ function codeOf(run: () => unknown): string | undefined {
 }
 
 describe('parseReminderConfig', () => {
-  it('defaults to disabled, DM-only delivery and Asia/Seoul', () => {
-    expect(parseReminderConfig(env({}))).toEqual({ enabled: false, channelDelivery: false, timeZone: 'Asia/Seoul' });
+  it('defaults to enabled (ADR-0102 D9, owner decision 8), DM-only delivery and Asia/Seoul', () => {
+    expect(parseReminderConfig(env({}))).toEqual({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' });
   });
 
   it('accepts exact true/false and an IANA zone', () => {

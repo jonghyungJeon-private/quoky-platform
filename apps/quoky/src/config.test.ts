@@ -630,7 +630,8 @@ describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
     const cfg = loadConfig(env({}));
     expect(cfg.git).toEqual({ remoteEnabled: false, mergeEnabled: false });
     expect(cfg.work).toEqual({ summaryEnabled: true });
-    expect(cfg.reminders).toEqual({ enabled: false, channelDelivery: false, timeZone: 'Asia/Seoul' });
+    // ADR-0102 D9 (owner decision 8): reminders default on once SUB-1 is live; channel delivery stays opt-in.
+    expect(cfg.reminders).toEqual({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' });
     expect(cfg.embedding).toEqual({ enabled: false, model: 'nomic-embed-text', timeoutMs: 3000, maxNewPerTurn: 4 });
     // ADR-0107 D5 / owner decision 5: curated examples stay off until LRN-2 is measured.
     expect(cfg.learning).toEqual({ examplesEnabled: false });

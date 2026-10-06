@@ -12,3 +12,5 @@ export * from './feedback-summary-turn-handler';
 export * from './learning-commands';
 export * from './learning-service';
 export * from './learning-turn-handler';
+// ADR-0107 D5/D6 (LRN-2): curated few-shot example selection for GENERAL_CHAT.
+export * from './curated-example-selector';

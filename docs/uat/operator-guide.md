@@ -44,7 +44,7 @@ line to use the default.
 | `QUOKY_CLAUDE_MODEL` | `sonnet` | Passed to the Claude CLI as `--model` |
 | `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote reads. Needs the GitHub App (0.3) |
 | `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag, else startup error `GIT_MERGE_REQUIRES_REMOTE`. Keep `false`; merge enablement is a separate Strict decision and was never live-tested |
-| `QUOKY_REMINDERS_ENABLED` | `false` | Release default stays `false` until the reminders UAT; enable in the QA environment only |
+| `QUOKY_REMINDERS_ENABLED` | `true` | Release default `true` since the SUB-1 always-on runtime is live (ADR-0102 D9, owner decision 8). `false` turns reminders off: a reminder phrase gets a fixed "off" reply and no tick runs |
 | `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the originating channel, so every channel member can read the text. Needs its own approved UAT. The daily brief is DM-only regardless |
 | `QUOKY_TIMEZONE` | `Asia/Seoul` | IANA zone; invalid is a startup error |
 | `QUOKY_WORK_SUMMARY_ENABLED` | `true` | With Ollama not ready, connector summaries fall back to Claude, so corporate connector text can leave the host through the owner's Claude subscription (owner decision, ADR-0100 #2). Set `false` where policy forbids it; lookups then return the deterministic list |
@@ -138,9 +138,8 @@ Still pending, each its own exact-scope Strict session:
 
 1. Connector live QA on real Jira, Slack, Confluence and GitHub tenants (one read-only probe per connector first).
 2. Reminders channel-delivery UAT (`QUOKY_REMINDERS_CHANNEL_DELIVERY=true`, plus the allowlist-removal DM fallback).
-3. The release-default decision for `QUOKY_REMINDERS_ENABLED`.
-4. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`).
-5. PR status with the Checks permission granted (see the caveat in 0.3), and an embedding recall probe.
+3. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`).
+4. PR status with the Checks permission granted (see the caveat in 0.3), and an embedding recall probe.
 
 ---
 

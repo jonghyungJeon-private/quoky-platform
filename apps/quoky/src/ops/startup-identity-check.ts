@@ -80,6 +80,30 @@ export function isConnectedIdentityReader(value: unknown): value is ConnectedIde
   );
 }
 
+/**
+ * Adapter-local capability (not part of `PlatformAdapter`): a platform that holds adapter-side inbound effects (the
+ * Discord adapter's attachment download, temp file and refusal note) until the startup identity gate opens.
+ */
+export interface InboundGateTarget {
+  gateInbound(gate: Promise<boolean>): void;
+}
+
+export function isInboundGateTarget(value: unknown): value is InboundGateTarget {
+  return (
+    typeof value === 'object' && value !== null && typeof (value as Partial<InboundGateTarget>).gateInbound === 'function'
+  );
+}
+
+/**
+ * ADR-0102 D5: hands the composition root's inbound gate to the platform, so its adapter-side inbound effects wait
+ * for the same verification as the turn itself. Returns whether the platform took it. Call before `platform.start()`.
+ */
+export function applyInboundGate(platform: unknown, gate: Promise<boolean>): boolean {
+  if (!isInboundGateTarget(platform)) return false;
+  platform.gateInbound(gate);
+  return true;
+}
+
 /** Reads the connected identity from `platform` and throws a typed error unless it matches `expected`. */
 export async function verifyStartupIdentity(
   platform: unknown,

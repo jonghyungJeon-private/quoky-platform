@@ -52,3 +52,16 @@ calls; results in the QA worktree `data/eval/answer-quality-2026-10-06T03-*-olla
 | mistral:7b | 27/30 | 29/33 | 32/33 | 33/33 | 29/33 | 210/225 (93.3%) | ~8 min | — |
 
 (noTranslationBlock and noSystemCopyImitation were 30/30 for all.) Recommendation (ADR-0105 D1): gemma3:4b.
+
+### LLM-2 follow-up: helpfulness checks (offline only, no provider run)
+
+Live QA showed gemma3:4b passing the 95% policy table above while answering ordinary questions with non-answers
+("도움말을 확인해보세요", "도움말: … 안내를 제공합니다.") and llama3.1:8b inventing facts, so the table measures policy
+compliance, not helpfulness. Checker version is now `answer-quality-checkers-v2` with four heuristic checks
+(`noHelpDeflection`, `containsRelevantTokens`, `hedgesUncheckable`, `noInventedSpecifics`) and six Korean helpfulness
+cases (recommendation, python sort how-to, tips list, two hedge cases, small talk), 17 cases in total. The live gemma
+non-answers are recorded as known-bad fixtures (the elided middle of the "도움말: …" line is reconstructed); the
+llama invented-weather and invented-index outputs are synthetic reconstructions of the failure shape, not saved live
+text. The new fixture digest and checker version change the plan digest, so the earlier approval does not carry over:
+a re-run of the model comparison needs a fresh `--approved-plan-digest`. A pass means "none of the known non-answer
+or invention shapes", not "the answer is correct".

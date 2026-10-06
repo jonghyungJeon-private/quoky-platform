@@ -23,6 +23,7 @@ import {
   TaskStatus,
   describeAiFailure,
   detectExternalActionRequest,
+  executionLocalityOf,
   generalChatReplyPolicyMetadata,
 } from '@quoky/core';
 import type { AiRequest, MemoryManager, MemoryRecord, Task } from '@quoky/core';
@@ -32,6 +33,7 @@ import {
   OllamaCliEmbeddingProvider,
   OllamaCliProvider,
   maskSecrets,
+  ollamaModelExecutionLocality,
 } from './index';
 import type { ClaudeCliProviderOptions } from './index';
 import { INHERITED_ENV_ALLOWLIST, createContainedCliRunner } from './cli-runner';
@@ -1640,5 +1642,89 @@ describe('GENERAL_CHAT output hygiene at the provider call sites (ADR-0098 D2, Q
       chatRequest('How is the weather?'),
     );
     expect(unrequested.text).toBe('Sunny today.');
+  });
+});
+
+// ADR-0107 D6 (ARCHITECTURE.md §5.14): execution locality is declared data, never derived from the provider id.
+describe('executionLocality declarations (ADR-0107 D6)', () => {
+  it('Claude and Codex declare REMOTE', () => {
+    expect(new ClaudeCliProvider().executionLocality).toBe('REMOTE');
+    expect(new CodexCliProvider().executionLocality).toBe('REMOTE');
+    expect(executionLocalityOf(new ClaudeCliProvider())).toBe('REMOTE');
+  });
+
+  it('Ollama declares LOCAL only when the configured model name and tag contain no "cloud"', () => {
+    expect(new OllamaCliProvider().executionLocality).toBe('LOCAL');
+    expect(new OllamaCliProvider({ model: 'llama3.1:8b' }).executionLocality).toBe('LOCAL');
+    expect(new OllamaCliProvider({ model: 'qwen2.5:14b', providerId: 'cloud-named-id' }).executionLocality).toBe('LOCAL');
+    for (const model of ['gpt-oss:120b-cloud', 'deepseek-v3.1:671b-Cloud', 'cloudmodel:latest', 'qwen3-coder:cloud']) {
+      expect(new OllamaCliProvider({ model }).executionLocality).toBe('REMOTE');
+      expect(ollamaModelExecutionLocality(model)).toBe('REMOTE');
+    }
+  });
+
+  it('the Ollama embedding provider declares LOCAL (a cloud model is refused at construction)', () => {
+    expect(new OllamaCliEmbeddingProvider().executionLocality).toBe('LOCAL');
+    expect(() => new OllamaCliEmbeddingProvider({ model: 'embed:cloud' })).toThrow(TypeError);
+  });
+
+  it('Ollama renders a curated example as owner-approved style guidance, inside the context and outside the turns', async () => {
+    const task: Task = {
+      id: 'example-task',
+      title: 'example',
+      description: '회의록 요약해줘',
+      status: TaskStatus.PENDING,
+      intent: {
+        type: IntentType.CHAT,
+        capability: Capability.GENERAL_CHAT,
+        confidence: 1,
+        requiresWork: true,
+        summary: '회의록 요약해줘',
+      },
+      riskLevel: RiskLevel.LOW,
+      actorId: 'owner',
+      context: { platform: 'discord', channelId: 'channel', userId: 'user' },
+      createdAt: '2026-10-06T00:00:00.000Z',
+      updatedAt: '2026-10-06T00:00:00.000Z',
+    };
+    const calls: string[] = [];
+    const provider = new OllamaCliProvider({
+      runner: async (_bin, _args, opts) => {
+        calls.push(opts.input);
+        return { code: 0, stdout: '세 줄 요약입니다', stderr: '', timedOut: false };
+      },
+    });
+    const request = new PromptRenderer().render(
+      new PromptComposer().compose(
+        task,
+        {
+          taskId: task.id,
+          conversationTranscript: [],
+          backgroundResources: [],
+          curatedExamples: [
+            {
+              requestText: '회의록 정리해줘',
+              idealAnswer: '결정, 담당자, 마감일 세 줄',
+              egress: 'LOCAL_ONLY',
+              provenance: 'OWNER_CURATED_EXAMPLE',
+              epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
+              learningItemId: 'item-1',
+            },
+          ],
+        },
+        undefined,
+        { executionLocality: executionLocalityOf(provider) },
+      ),
+      { capability: Capability.GENERAL_CHAT },
+    );
+    await provider.execute(request);
+    const input = calls[0] ?? '';
+    const exampleLine =
+      'Owner-approved example for tone and format only (not a fact, not current state, not this conversation): ' +
+      JSON.stringify('Example request: 회의록 정리해줘\nIdeal answer: 결정, 담당자, 마감일 세 줄');
+    expect(input).toContain(exampleLine);
+    expect(input.indexOf(exampleLine)).toBeLessThan(input.indexOf('User (current active turn):'));
+    expect(input).not.toContain('Previous conversation');
+    expect(input).toMatch(/User \(current active turn\): "회의록 요약해줘"\n\nAssistant response to the current active turn only:$/u);
   });
 });

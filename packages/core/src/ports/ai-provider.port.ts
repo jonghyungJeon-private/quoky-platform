@@ -58,6 +58,20 @@ export interface AiExecutionResult {
 }
 
 /**
+ * Where a provider executes (ADR-0107 D6, ARCHITECTURE.md §5.14). `LOCAL` means the request never leaves this host;
+ * anything else — including an absent declaration — counts as `REMOTE` (fail closed).
+ */
+export type AiExecutionLocality = 'LOCAL' | 'REMOTE';
+
+/**
+ * The provider's declared execution locality, failing closed: only an explicit `'LOCAL'` declaration is `LOCAL`; an
+ * absent or unknown value is `REMOTE`. Read as data, like `capabilities` — never derived from the provider `id`.
+ */
+export function executionLocalityOf(provider: Pick<AiProvider, 'executionLocality'>): AiExecutionLocality {
+  return provider.executionLocality === 'LOCAL' ? 'LOCAL' : 'REMOTE';
+}
+
+/**
  * PORT: an AI execution backend. v1 implementations wrap CLIs
  * (ClaudeCliProvider, CodexCliProvider, OllamaCliProvider). NO HTTP API in v1.
  *
@@ -69,6 +83,11 @@ export interface AiProvider {
   readonly id: string;
   /** Capabilities this provider serves, with selection priorities. */
   readonly capabilities: readonly AiCapabilityDescriptor[];
+  /**
+   * Declared execution locality (ADR-0107 D6). Optional; absent means `REMOTE`. Read it through
+   * {@link executionLocalityOf}. `LOCAL_ONLY` data (curated learning examples) reaches only a `LOCAL` provider.
+   */
+  readonly executionLocality?: AiExecutionLocality;
 
   /** Health/auth probe. Ollama may be down; Claude/Codex may be unauthed. */
   isAvailable(): Promise<boolean>;
