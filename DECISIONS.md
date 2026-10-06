@@ -16720,3 +16720,8 @@ OPS-2b merge (no-bypass extraction).
 - **Consequences:** + "잊어줘" now means Quoky no longer uses the content, with a 7-day safety net; + no migration.
   − Archived text stays on disk until purge (bounded by the env value; credential-like text never archived);
   − clearing the session history drops that session's earlier context.
+- **Implementation note (5f0cced, 2026-10-06).** The archive view and purge read archived records through two optional
+  fields on the existing `findDurableCandidates` query type (`archived`, `archiveExpiredBy`) — no new port method or DI
+  token, recorded here as part of D6's interface reach. Restore clears the flag and re-embeds lazily on the next
+  semantic-recall cache miss (the command service makes no provider call). An archive's expiry is fixed when it is
+  archived; lowering `QUOKY_MEMORY_ARCHIVE_DAYS` later does not shorten existing archives.
