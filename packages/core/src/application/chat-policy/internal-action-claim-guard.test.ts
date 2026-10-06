@@ -366,3 +366,22 @@ describe('v3 wave-1 fix loop 2 (Codex re-review P2s)', () => {
     }
   });
 });
+
+describe('orchestrator follow-up to the Codex final check (ADR-0104 best-effort guard)', () => {
+  it('a Quoky subject carried into a later clause stays a claim even with a reportative ending', () => {
+    expect(guardInternalActionClaims('제가 확인했고 브랜치를 삭제했네요.', '브랜치 어떻게 됐어?')).toMatchObject({ guarded: true });
+  });
+
+  it('an honorific reportative after a Quoky clause is the User’s own action', () => {
+    expect(guardInternalActionClaims('제가 보니 브랜치를 삭제하셨네요.', '브랜치 삭제했어').guarded).toBe(false);
+  });
+
+  it('"작업한" is a relative verb, so the User subject is embedded and Quoky claims the deletion', () => {
+    expect(guardInternalActionClaims('사용자가 작업한 브랜치를 삭제했습니다.', '브랜치 어떻게 됐어?')).toMatchObject({ guarded: true });
+  });
+
+  it('Korean "제/내 메모리" is Quoky-owned memory', () => {
+    expect(guardInternalActionClaims('제 메모리에 저장했습니다.', '아까 말한 거 저장했어?')).toMatchObject({ guarded: true, domain: 'memory' });
+    expect(guardInternalActionClaims('실행 중에는 데이터가 메모리에 저장됐다가 해제돼요.', 'RAM은 어떻게 동작해?').guarded).toBe(false);
+  });
+});

@@ -215,7 +215,7 @@ function clauseStartOf(sentence: string, index: number): number {
  * it, so "사용자가 다른 브랜치를 삭제했습니다" stays the User's own action.
  */
 const KO_HA_STEMS =
-  '말|말씀|얘기|이야기|요청|부탁|언급|작성|지정|선택|입력|추가|생성|삭제|등록|설정|제안|공유|수정|원|지시|설명|질문|명령|업로드|커밋|푸시|머지|병합|확인|사용|이용|준비|기록|저장|예약|변경|전환|정리|제거|완료|처리';
+  '말|말씀|얘기|이야기|요청|부탁|언급|작성|지정|선택|입력|추가|생성|삭제|등록|설정|제안|공유|수정|원|지시|설명|질문|명령|업로드|커밋|푸시|머지|병합|확인|사용|이용|준비|기록|저장|예약|변경|전환|정리|제거|완료|처리|작업|개발|구현|배포|빌드|테스트|검토|리뷰|관리|편집|복사|이동|분리|생성|연결';
 const KO_HA_RELATIVE = '한|하신|하는|하시는|했던|하셨던|하던|하시던|할|하실';
 const KO_NATIVE_RELATIVE =
   '만든|만드신|만드는|만들던|만들|쓴|쓰신|쓰는|쓰던|보낸|보내신|보내는|보내던|올린|올리신|올리는|올리던|준|주신|주는|주던|줬던|' +
@@ -239,7 +239,13 @@ function koUsersOwnAction(sentence: string, start: number, end: number): boolean
     nearest = { firstPerson: subject[1] !== undefined, index: subject.index, end: subject.index + subject[0].length };
   }
   const reportative = KO_REPORTATIVE_TAIL.test(sentence.slice(end));
-  if (nearest?.firstPerson) return nearest.index < clauseStartOf(sentence, start) && reportative;
+  // Quoky as the nearest subject is a claim even across clauses ("제가 확인했고 브랜치를 삭제했네요"); only an
+  // honorific reportative verb (-셨/-하신 …군요/네요) marks the User's own action after a Quoky clause ("제가 보니
+  // 브랜치를 삭제하셨네요").
+  if (nearest?.firstPerson) {
+    const honorific = /(?:셨|으신|하신)/u.test(sentence.slice(start, Math.min(sentence.length, end + 2)));
+    return nearest.index < clauseStartOf(sentence, start) && reportative && honorific;
+  }
   if (reportative) return true;
   if (nearest === null) return false;
   const between = sentence.slice(nearest.end, start).trim();
@@ -358,7 +364,7 @@ const EN_MEMORY_STORED = new RegExp(
  * remember request; a technical "memory" / "메모리" alone (RAM, a cache) is not Quoky's memory.
  */
 const MEMORY_OWNERSHIP =
-  /기억|\b(?:my|your)\s+(?:quoky\s+)?(?:long-term\s+)?memor|quoky(?:'s)?\s+memor|(?:quoky|쿼키|퀴키)의?\s*(?:기억|메모리)|long-term\s+memory|\bremember/iu;
+  /기억|\b(?:my|your)\s+(?:quoky\s+)?(?:long-term\s+)?memor|quoky(?:'s)?\s+memor|(?:quoky|쿼키|퀴키)의?\s*(?:기억|메모리)|(?<![\p{L}\p{N}])(?:제|내|저의|나의)\s*(?:장기\s*)?메모리|long-term\s+memory|\bremember/iu;
 const EN_NEGATION = /\b(?:not|never|n't|no\s+longer)\b/iu;
 /** A subordinate / instruction clause around an English state ("Once the changes are committed, push them"). */
 const EN_SUBORDINATE = /\b(?:if|once|when|whenever|after|before|until|unless|whether|make\s+sure|ensure|check|verify)\b/iu;
