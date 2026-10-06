@@ -94,23 +94,32 @@ function languageOf(text: string): CalendarLanguage {
   return detectReplyLanguage(text) === 'en' ? 'en' : 'ko';
 }
 
-/** Whether the message asks Quoky to create, move or delete a calendar event (refused while calendar writes are off). */
-const QUOTED_SEGMENT = /"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』/u;
+/** Quoted text (a title, a phrase to translate) is content, not part of the request: it is blanked before matching. */
+const QUOTED_SEGMENT = /"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』/gu;
 /** Requests ABOUT a phrase (translate it, explain it) are ordinary chat, never a calendar write. */
 const ABOUT_A_PHRASE = /번역|translate|뜻이|무슨 뜻|의미|meaning|예문|example sentence/iu;
-/** Negated, reported or past-tense statements are not requests ("…라고 요청하지 않았어", "I didn't ask to cancel"). */
+/** A negated, reported or past-tense clause is not a request ("…라고 요청하지 않았어", "I didn't ask to cancel"). */
 const NOT_A_REQUEST =
-  /라고|라는|다고|하지\s*않|않았|않을|말고|하지\s*마|안\s*해|안\s*했|취소했|삭제했|옮겼|추가했|\b(?:don'?t|didn'?t|do not|did not|never|wasn'?t|weren'?t|haven'?t|already)\b/iu;
+  /라고|라는|다고|하지\s*않|않았|않을|말고|하지\s*마|안\s*해|안\s*했|취소했|삭제했|옮겼|추가했|\b(?:don'?t|didn'?t|do not|did not|never|wasn'?t|weren'?t|haven'?t)\b/iu;
+/** Clause boundaries: sentence ends, commas, and coordinating connectives (exclusions are clause-scoped, Codex P2). */
+const CLAUSE_SPLIT = /[.!?。！？]\s+|[,;]\s*|\s+(?:and|but|then)\s+|\s*(?:그리고|하지만|근데|그런데)\s+/iu;
 
+function clauseIsWriteRequest(clause: string): boolean {
+  if (clause.trim().length === 0 || NOT_A_REQUEST.test(clause)) return false;
+  if (detectExternalActionRequest(clause)?.kind === 'calendar') return true;
+  return WRITE_KO.test(clause) || WRITE_EN.test(clause);
+}
+
+/** Whether the message asks Quoky to create, move or delete a calendar event (refused while calendar writes are off). */
 export function isCalendarWriteRequest(text: string): boolean {
   const message = normalize(text);
   if (CODE_SCHEDULE.test(message)) return false;
-  // Codex P2 (wave 4): a quoted phrase, a request about a phrase, or a negated / reported / past-tense statement is
-  // ordinary chat ("'금요일 일정 삭제해줘'를 영어로 번역해줘", "내일 일정 삭제해줘라고 요청하지 않았어").
-  if (QUOTED_SEGMENT.test(message) || ABOUT_A_PHRASE.test(message)) return false;
-  if (NOT_A_REQUEST.test(message)) return false;
-  if (detectExternalActionRequest(message)?.kind === 'calendar') return true;
-  return WRITE_KO.test(message) || WRITE_EN.test(message);
+  // Codex P2 (wave 4): a request ABOUT a phrase is ordinary chat ("'금요일 일정 삭제해줘'를 영어로 번역해줘"); quoted
+  // content is blanked (a quoted event title keeps the request a request); negated / reported / past-tense clauses
+  // are skipped one clause at a time ("…라고 요청하지 않았어"), so another clause can still be the request.
+  if (ABOUT_A_PHRASE.test(message)) return false;
+  const unquoted = message.replace(QUOTED_SEGMENT, ' ');
+  return unquoted.split(CLAUSE_SPLIT).some(clauseIsWriteRequest);
 }
 
 /**

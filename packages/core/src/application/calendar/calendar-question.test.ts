@@ -86,6 +86,10 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
       'add a meeting to my calendar tomorrow',
       'cancel my 3pm meeting',
       'Can you reschedule my meeting with Kim?',
+      // Codex P2 re-check: a quoted title or another clause must not hide a genuine request.
+      'Can you cancel my meeting titled "Review"?',
+      'Can you reschedule my meeting with Kim? It is already on my calendar.',
+      '"주간회의" 일정 삭제해줘',
     ]) {
       expect(isCalendarWriteRequest(text), text).toBe(true);
       expect(parseCalendarQuestion(text)?.kind, text).toBe('write-refused');
