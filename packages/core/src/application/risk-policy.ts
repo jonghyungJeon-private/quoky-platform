@@ -22,6 +22,8 @@ export class RiskPolicy {
     [Capability.READONLY_LOOKUP]: RiskLevel.LOW,
     [Capability.PROJECT_ANALYSIS]: RiskLevel.LOW,
     [Capability.EMBEDDING]: RiskLevel.LOW,
+    // ADR-0111: reading an attached image is read-only analysis.
+    [Capability.IMAGE_UNDERSTANDING]: RiskLevel.LOW,
     [Capability.ARCHITECTURE_PLANNING]: RiskLevel.LOW,
     [Capability.CODE_REVIEW]: RiskLevel.LOW,
     // HIGH by default (ADR-0035): even a suggest-only or planning-stage code-change request is a

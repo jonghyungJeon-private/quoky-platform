@@ -139,6 +139,8 @@ const DEFAULT_LOCAL_FALLBACK_BY_CAPABILITY: Readonly<Record<Capability, boolean>
   [Capability.EMBEDDING]: false,
   // ADR-0098 amendment: policy-sensitive chat is served only by providers that advertise it, never a local fallback.
   [Capability.POLICY_SENSITIVE_CHAT]: false,
+  // ADR-0111 D4/D5: image turns never enter the routed seam; images reach only an IMAGE_UNDERSTANDING provider.
+  [Capability.IMAGE_UNDERSTANDING]: false,
 });
 
 /**
