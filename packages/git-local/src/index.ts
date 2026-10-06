@@ -24,9 +24,24 @@ export const GIT_FETCH_TIMEOUT_MS = 60_000;
 /** Bounded timeout (ms) for `git ls-remote`. */
 export const GIT_LS_REMOTE_TIMEOUT_MS = 30_000;
 
-/** The git subcommand of an argv (skipping leading global flags such as `--no-pager`). */
-function gitSubcommand(args: readonly string[]): string {
-  return args.find((a) => !a.startsWith('-')) ?? '';
+/** Global git options whose value is the NEXT argv element (`-c name=value`, `-C <path>`, `--git-dir <dir>` …). */
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set(['-c', '-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
+
+/**
+ * The git subcommand of an argv: skips leading global flags (`--no-pager`) and the values of global options that take
+ * a separate value (`-c credential.helper=`, `-C <path>`), so `['-c','x=','push']` is `push`, not `x=`.
+ */
+export function gitSubcommand(args: readonly string[]): string {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] ?? '';
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
+      i += 1; // skip the option's value
+      continue;
+    }
+    if (arg.startsWith('-')) continue;
+    return arg;
+  }
+  return '';
 }
 
 /** Timeout for a git subcommand: network operations get a longer bounded timeout, local commands stay short. */

@@ -1159,6 +1159,11 @@ describe('git timeouts by command type (W2-L02)', () => {
   it('classifies network commands with longer bounded timeouts and local commands with the short one', () => {
     expect(gitTimeoutMsForArgs(['--no-pager', 'push', 'origin', 'HEAD:refs/heads/x'])).toBe(GIT_PUSH_TIMEOUT_MS);
     expect(gitTimeoutMsForArgs(['--no-pager', 'fetch', '--no-tags', 'origin', 'main'])).toBe(GIT_FETCH_TIMEOUT_MS);
+    // Codex P2: values of global options (-c / -C / --git-dir) are not the subcommand.
+    expect(gitTimeoutMsForArgs(['-c', 'credential.helper=', 'push', 'origin'])).toBe(GIT_PUSH_TIMEOUT_MS);
+    expect(gitTimeoutMsForArgs(['-C', '/repo', '--no-pager', 'ls-remote', 'origin'])).toBe(GIT_LS_REMOTE_TIMEOUT_MS);
+    expect(gitTimeoutMsForArgs(['--git-dir', '/repo/.git', 'fetch', 'origin'])).toBe(GIT_FETCH_TIMEOUT_MS);
+    expect(gitTimeoutMsForArgs(['-c', 'push.default=simple', 'status'])).toBe(GIT_TIMEOUT_MS);
     expect(gitTimeoutMsForArgs(['--no-pager', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main'])).toBe(GIT_LS_REMOTE_TIMEOUT_MS);
     for (const local of [['status'], ['--no-pager', 'commit', '-m', 'push'], ['rev-parse', 'HEAD'], ['--no-pager', 'diff']]) {
       expect(gitTimeoutMsForArgs(local)).toBe(GIT_TIMEOUT_MS);
