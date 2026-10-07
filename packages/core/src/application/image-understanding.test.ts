@@ -1,11 +1,16 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { InboundAttachment, InboundMessage } from '../domain';
 import {
+  LOCAL_ONLY_IMAGE_UNDERSTANDING_POLICY,
   MAX_IMAGE_CAPTION_CHARS,
   MAX_IMAGE_UNDERSTANDING_PROMPT_CHARS,
   composeImageUnderstandingPrompt,
   imageAttachmentsOf,
   imageInputsOf,
+  imageProviderAllowed,
+  imageUnderstandingAllowsRemote,
+  imageUnderstandingPolicyOf,
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
 } from './image-understanding';
@@ -113,5 +118,73 @@ describe('image-understanding (ADR-0111 MM-2)', () => {
   it('the unavailable reply is truthful in both languages', () => {
     expect(renderImageUnderstandingUnavailable('ko')).toContain('분석하지 않았어요');
     expect(renderImageUnderstandingUnavailable('en')).toContain('was not looked at and was not sent anywhere');
+  });
+
+  it('amendment A2: the unavailable reply claims local-only only under the local-only policy', () => {
+    expect(renderImageUnderstandingUnavailable('ko')).toContain('로컬 AI');
+    expect(renderImageUnderstandingUnavailable('en')).toContain('no local AI');
+    const cloud = imageUnderstandingPolicyOf(['LOCAL', 'REMOTE']);
+    for (const language of ['ko', 'en'] as const) {
+      const reply = renderImageUnderstandingUnavailable(language, cloud);
+      expect(reply).not.toMatch(/로컬|local/iu);
+      expect(reply).toMatch(language === 'ko' ? /어디로도 보내지 않았어요/u : /was not sent anywhere/u);
+    }
+  });
+
+  it('amendment A4: a credential-shaped caption is withheld whole before egress; an ordinary caption is kept', () => {
+    const secretCaption = '이 화면 설명해줘 pass' + 'word=demo-review-value';
+    const prompt = composeImageUnderstandingPrompt({ caption: secretCaption, images: [img(1)] as never });
+    expect(prompt).not.toContain('demo-review-value');
+    expect(prompt).toContain('User request: (withheld by Core because it contained credential-like text');
+    // Escape-split framing does not hide it (the guard also reads the normalized caption).
+    const split = composeImageUnderstandingPrompt({
+      caption: 'pass' + '\u001b[31m' + 'word=demo-review-value',
+      images: [img(1)] as never,
+    });
+    expect(split).not.toContain('demo-review-value');
+    const ordinary = composeImageUnderstandingPrompt({ caption: '비밀번호 입력 화면이 왜 깨져 보여?', images: [img(1)] as never });
+    expect(ordinary).toContain('User request (truncated=false): "비밀번호 입력 화면이 왜 깨져 보여?"');
+  });
+});
+
+describe('image-understanding locality policy (ADR-0111 amendment A2)', () => {
+  const local = { executionLocality: 'LOCAL' as const };
+  const remote = { executionLocality: 'REMOTE' as const };
+  const undeclared = {};
+
+  it('the default blocks REMOTE (and an undeclared locality, which fails closed to REMOTE)', () => {
+    const policy = imageUnderstandingPolicyOf(undefined);
+    expect(policy).toBe(LOCAL_ONLY_IMAGE_UNDERSTANDING_POLICY);
+    expect(policy.allowedLocalities).toEqual(['LOCAL']);
+    expect(imageProviderAllowed(local, policy)).toBe(true);
+    expect(imageProviderAllowed(remote, policy)).toBe(false);
+    expect(imageProviderAllowed(undeclared, policy)).toBe(false);
+    expect(imageUnderstandingAllowsRemote(policy)).toBe(false);
+  });
+
+  it('the owner cloud opt-in allows REMOTE as well as LOCAL', () => {
+    const policy = imageUnderstandingPolicyOf(['LOCAL', 'REMOTE']);
+    expect(imageProviderAllowed(local, policy)).toBe(true);
+    expect(imageProviderAllowed(remote, policy)).toBe(true);
+    expect(imageProviderAllowed(undeclared, policy)).toBe(true);
+    expect(imageUnderstandingAllowsRemote(policy)).toBe(true);
+  });
+
+  it('unknown values are dropped and an empty list allows nothing (fail closed)', () => {
+    expect(imageUnderstandingPolicyOf(['CLOUD' as never, 'REMOTE', 'REMOTE']).allowedLocalities).toEqual(['REMOTE']);
+    const none = imageUnderstandingPolicyOf([]);
+    expect(imageProviderAllowed(local, none)).toBe(false);
+    expect(imageProviderAllowed(remote, none)).toBe(false);
+  });
+
+  it('decides on the declared locality only, never on the provider id', () => {
+    const policy = imageUnderstandingPolicyOf(['LOCAL']);
+    // Same id, different localities: the decision follows the locality.
+    expect(imageProviderAllowed({ id: 'claude-vision-cli', executionLocality: 'LOCAL' } as never, policy)).toBe(true);
+    expect(imageProviderAllowed({ id: 'ollama-vision-cli', executionLocality: 'REMOTE' } as never, policy)).toBe(false);
+    // The module source names no concrete provider and reads no `.id`.
+    const source = readFileSync(new URL('./image-understanding.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/claude|ollama|anthropic|codex/iu);
+    expect(source).not.toMatch(/\.id\b/u);
   });
 });

@@ -20,6 +20,7 @@ import type {
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { defaultCliRunner, maskSecrets } from './cli-runner';
 import type { CliRunner } from './cli-runner';
+import { classifyClaudeCliFailure, validatedClaudeModel } from './claude-vision-provider';
 import {
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -45,6 +46,16 @@ export {
   ollamaModelExecutionLocality,
 } from './ollama-embedding-provider';
 export type { EmbeddingRolePrefixes, OllamaCliEmbeddingProviderOptions } from './ollama-embedding-provider';
+export {
+  CLAUDE_VISION_PROBE_TIMEOUT_MS,
+  ClaudeCliVisionProvider,
+  DEFAULT_CLAUDE_VISION_TIMEOUT_MS,
+  MAX_CLAUDE_VISION_IMAGES,
+  MAX_CLAUDE_VISION_IMAGE_BYTES,
+  buildClaudeVisionStreamJsonInput,
+  parseClaudeStreamJsonResult,
+} from './claude-vision-provider';
+export type { ClaudeCliVisionProviderOptions, ClaudeStreamJsonOutcome } from './claude-vision-provider';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
 
@@ -269,8 +280,10 @@ function isChatCapability(capability: Capability): boolean {
 
 /**
  * ADR-0111 D5 (owner decision 9): a provider that does not serve `IMAGE_UNDERSTANDING` never receives image bytes.
- * Core already routes images only to a LOCAL `IMAGE_UNDERSTANDING` provider; this adapter-side refusal is defense in
- * depth so a misrouted request fails closed before anything is spawned.
+ * Core already routes images only to an `IMAGE_UNDERSTANDING` provider whose locality the image policy allows (the
+ * Claude chat provider never advertises it; the separate `ClaudeCliVisionProvider` does, and only when the owner
+ * selected it); this adapter-side refusal is defense in depth so a misrouted request fails closed before anything is
+ * spawned.
  */
 function refuseImages(request: AiRequest, cli: string): void {
   if ((request.images?.length ?? 0) > 0) {
@@ -312,14 +325,6 @@ export interface ClaudeCliProviderOptions extends CliProviderOptions {
   model?: string;
   /** Per-capability overrides merged over {@link DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY}. */
   effortByCapability?: Partial<Record<Capability, ClaudeEffortLevel>>;
-}
-
-/** The model goes into argv, so refuse anything that could be read as another flag. */
-function validatedClaudeModel(model: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(model)) {
-    throw new TypeError('Invalid Claude model name');
-  }
-  return model;
 }
 
 /**
@@ -425,7 +430,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     if (result.code !== 0) {
       // The CLI prints "Not logged in · Please run /login" on STDOUT (stderr empty), so
       // classify on stderr + stdout. Only masked stderr is echoed; never the prompt.
-      const kind = ClaudeCliProvider.classifyStderr(`${result.stderr}\n${result.stdout}`);
+      const kind = classifyClaudeCliFailure(`${result.stderr}\n${result.stdout}`);
       throw new AiProviderError(
         kind,
         `claude CLI exited ${result.code}: ${maskSecrets(result.stderr).slice(0, 300)}`,
@@ -456,19 +461,6 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
     };
-  }
-
-  /** Map CLI stderr to an auth vs. generic execution failure. */
-  private static classifyStderr(stderr: string): AiFailureKind {
-    const s = stderr.toLowerCase();
-    if (
-      /(not logged in|please run.*login|authenticat|unauthor|invalid api key|\bapi key\b|oauth|credential|forbidden|\b401\b|\b403\b)/.test(
-        s,
-      )
-    ) {
-      return AiFailureKind.AUTH_REQUIRED;
-    }
-    return AiFailureKind.EXECUTION_FAILED;
   }
 }
 

@@ -77,6 +77,14 @@ claude --version
 - 일상 대화 중 **정책에 민감한 요청**(캘린더/메일 발송/예약/결제/문자 같은 외부 작업 요청, "이전 지시를 무시해" 같은 지시 변경, 한국어/영어가 아닌 언어)은 Ollama가 준비되어 있어도 **Claude로** 처리됩니다. 로컬 모델이 응답 정책을 잘 따르지 못했기 때문이며, 이런 턴은 Claude 구독 한도를 씁니다. Quoky는 외부 작업을 직접 할 수 없고, 했다고 말하는 답은 "하지 않았다"는 안내로 바뀝니다.
 - 모델: `QUOKY_CLAUDE_MODEL` (기본 `sonnet`). 별칭 또는 전체 이름이며 CLI에 `--model`로 전달됩니다.
 - effort: 설정하지 않습니다. 작업 종류(capability)에 따라 Quoky가 정한 값이 자동으로 전달됩니다.
+- **대화 provider를 바꿀 수 있는 범위 (지금 기준):**
+  - **Claude** — 모델은 `QUOKY_CLAUDE_MODEL`로 아무 Claude 모델이나 지정합니다. `QUOKY_OLLAMA_ENABLED=false`이면 일상 대화도
+    전부 Claude가 처리합니다 (소유자의 현재 설정, 대화 내용이 Anthropic으로 전송됨).
+  - **로컬 Ollama** — `QUOKY_OLLAMA_ENABLED=true`(기본)와 `OLLAMA_MODEL`로 아무 로컬 모델이나 지정합니다 (5절).
+  - **Codex** — adapter 자리표시자(`CodexCliProvider`)만 있고 실행이 구현되지 않았습니다. 구성에 등록되지 않아 선택할 수 없습니다
+    (`CODEX_CLI_BIN`은 읽기만 하고 쓰지 않음).
+  - **다른 클라우드 (OpenAI API, Gemini 등)** — 지금은 쓸 수 없습니다. 새 provider adapter를 만들어야 합니다.
+  - 이미지 분석 provider는 따로 고릅니다 (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`, 5절 "이미지").
 
 ## 5. Ollama (선택, 기본 사용)
 
@@ -99,9 +107,20 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
   재검증(W6-M5)은 **부분 통과**입니다: 4개 중 3개를 granite가 답했고(생성 21-38초), 1개는 동시에 돈 테스트로 부하가
   다시 올라 Claude로 대체되었습니다. 노래·가수 이름을 지어내는 문제는 남아 있어, 로컬 모델은 구체적인 사실을 지어낼 수
   있습니다. 한국어 일상 대화 20문항 세트는 아직 하지 않았습니다. 답이 단어 중간에서 끊기던 문제는 고쳤습니다(PR #133).
-- **이미지 (선택):** 이미지 첨부를 분석하려면 로컬 비전 모델을 받고 `QUOKY_OLLAMA_VISION_MODEL`에 그 이름을 적습니다
-  (예: `gemma3:4b`처럼 이미지 입력을 지원하는 모델). 비우면 이미지는 분석하지 않고 어디로도 보내지 않았다고 답합니다.
-  이름에 `cloud`가 들어간 모델은 거부합니다. 이미지 바이트는 Claude로 보내지 않습니다.
+- **이미지 (선택):** 이미지를 읽는 provider는 `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` 하나로 고릅니다 (ADR-0111 개정, 2026-10-07).
+  - `ollama` — 로컬 비전 모델. 모델을 받고 `QUOKY_OLLAMA_VISION_MODEL`에 이름을 적습니다 (예: `gemma3:4b`처럼 이미지 입력을
+    지원하는 모델). 이미지는 이 컴퓨터를 떠나지 않습니다. 이름에 `cloud`가 들어간 모델은 거부합니다.
+  - `claude` — Claude CLI가 이미지를 읽습니다. **첨부 이미지가 Anthropic(클라우드)으로 전송됩니다.** 모델은
+    `QUOKY_IMAGE_UNDERSTANDING_MODEL`, 없으면 `QUOKY_CLAUDE_MODEL`, 없으면 `sonnet`. 대화용 Claude와 같은 격리 옵션으로
+    실행하고 도구는 모두 끕니다. 이미지는 파일 경로가 아니라 표준 입력의 이미지 블록으로 보냅니다. Claude CLI가 설치되고
+    로그인되어 있어야 "준비됨"입니다 (`claude auth status`).
+  - `off` — 이미지 분석을 쓰지 않습니다.
+  - **설정하지 않으면** 예전과 같습니다: `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off`. 이때는 이미지 바이트가
+    클라우드로 가지 않습니다.
+  - 준비된 provider가 없으면 이미지는 분석하지 않고 어디로도 보내지 않았다고 답합니다.
+  - **`claude`를 고를 때 알아 둘 점:** 이미지 **안에** 보이는 비밀번호·토큰 같은 비밀값은 보내기 전에 찾아낼 수 없습니다
+    (이미지 내용은 검사하지 않음). 비밀값이 보이는 스크린샷은 올리지 마세요. 함께 적은 글(캡션)과 첨부한 텍스트 파일은
+    보내기 전에 비밀값 검사를 거치고, 답에 비밀값처럼 보이는 내용이 있으면 답 전체를 보여 주지 않고 저장하지도 않습니다.
 
 - **Ollama 서버가 실행 중**이어야 하고, `OLLAMA_MODEL`로 지정한 모델이 로컬에 있어야 "준비됨"으로 봅니다.
   준비 여부는 요청 시점에 확인하며(`ollama list`, 결과는 최대 약 30초 캐시), 나중에 서버를 켜거나 모델을 받아도
@@ -159,7 +178,9 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000 |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
 | `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음 |
-| `QUOKY_OLLAMA_VISION_MODEL` | 선택. 기본 없음. 이미지 분석용 로컬 Ollama 비전 모델 이름(5절). 잘못된 값이나 `cloud` 모델이면 이미지 분석만 꺼지고 시작은 계속 |
+| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `off` 정확히 이 세 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic(클라우드)으로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
+| `QUOKY_IMAGE_UNDERSTANDING_MODEL` | 선택. `claude`일 때만 읽음. 이미지용 Claude 모델 (없으면 `QUOKY_CLAUDE_MODEL`, 그다음 `sonnet`). 형식이 틀리면 시작 실패 |
+| `QUOKY_OLLAMA_VISION_MODEL` | 선택. 기본 없음. 이미지 분석용 로컬 Ollama 비전 모델 이름(5절). `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=ollama`이면 필수이고 없거나 잘못됐거나 `cloud` 모델이면 시작 실패. 선택값을 설정하지 않은 경우(예전 방식)에는 잘못된 값이나 `cloud` 모델이면 이미지 분석만 꺼지고 시작은 계속 |
 | `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET` | 선택. Google Calendar 읽기용 OAuth "Desktop app" 클라이언트 (8절 "캘린더 설정") |
 | `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` | 선택. 동의 도구가 만든 refresh token 파일 경로(모드 600). 또는 `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN`(둘 다 넣으면 캘린더 미등록). 클라이언트 ID/비밀과 토큰이 모두 있어야 캘린더가 켜짐 |
 | `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` | 선택. 기본 `primary`. 읽을 캘린더 ID (쉼표, 최대 10개) |
@@ -171,9 +192,9 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_OPS_UI_ENABLED`, `QUOKY_OPS_UI_PORT` | 선택. 기본 `false`, `47613`. 로컬 운영 화면 (7절 "운영 화면"). 잘못된 값은 시작 오류가 아니라 화면만 끔 |
 
 `QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`), Personal v3의
-`QUOKY_MEMORY_ARCHIVE_DAYS`, `QUOKY_LEARNING_EXAMPLES_ENABLED`, `QUOKY_CONNECTOR_WRITES_ENABLED`, `QUOKY_CALENDAR_WRITE_ENABLED`는 빈 값(예:
+`QUOKY_MEMORY_ARCHIVE_DAYS`, `QUOKY_LEARNING_EXAMPLES_ENABLED`, `QUOKY_CONNECTOR_WRITES_ENABLED`, `QUOKY_CALENDAR_WRITE_ENABLED`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER`는 빈 값(예:
 `QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 쓰기 허용 목록과 Slack 쓰기 토큰도 형식이 틀리면
-시작 오류입니다 (쓰기가 꺼져 있어도 검사). 반대로 `QUOKY_OPS_UI_*`와 `QUOKY_OLLAMA_VISION_MODEL`은 잘못되면 그 기능만 꺼집니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
+시작 오류입니다 (쓰기가 꺼져 있어도 검사). 반대로 `QUOKY_OPS_UI_*`와 (선택값을 설정하지 않았을 때의) `QUOKY_OLLAMA_VISION_MODEL`은 잘못되면 그 기능만 꺼집니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
 주석 처리하세요.
 
 **주의 — 같은 이름의 셸 환경 변수가 `.env.local`보다 우선합니다.** 이미 셸에 `DISCORD_BOT_TOKEN`,
@@ -552,7 +573,7 @@ Quoky는 그런 외부 작업을 할 수 없다고 정직하게 답합니다. �
 | Jira 상태 변경 | `ABC-1 진행 중으로 바꿔줘` → `승인` → `상태 변경 실행` | 위와 같음 | 미리보기에 나온 전환(transition)과 대상 상태만 실행. 그 사이 이슈가 바뀌면 실행하지 않음 |
 | Slack 게시 | `#dev-test에 게시: 배포 끝났어요` 또는 `#dev-test에 배포 끝났어요라고 올려줘` → `승인` → `Slack 게시 실행` | 쓰기 스위치 + Slack 봇 토큰 + 채널 허용 목록 | 허용된 채널에만. 봇을 채널에 초대하지 않았으면 "대상을 찾지 못했어요. 아무것도 보내지 않았어요." |
 | 첨부 파일 | 메시지에 텍스트 파일(`.txt`·`.log`·`.md`·`.json` 등, 256KiB까지) 첨부 | - | 내용을 대화 문맥으로 씀(신뢰하지 않는 입력, 비밀값처럼 보이면 거절). 한 메시지에 3개까지. 긴 파일은 앞뒤 일부만(모두 합쳐 약 2,000자, 이미지와 함께 보내도 같음). 파일 이름이 비밀값처럼 보이면 `attachment-1.log`처럼 바꿔 씀. 읽을 수 있는 첨부가 하나도 없을 때 메시지 글이 비어 있으면(멘션이나 보이지 않는 문자만 있어도 빈 것으로 봄) 모델에 묻지 않고 안내만 함. 글이 있으면 "첨부를 읽지 못함(내용 추측 금지)"을 알린 채 평소처럼 답함. 작업 폴더에 저장하지 않음 |
-| 이미지 | PNG·JPEG·WebP 첨부 (8MiB까지) | `QUOKY_OLLAMA_VISION_MODEL` (5절) | 로컬 비전 모델만 분석. 없으면 "분석하지 않았어요 … 어디로도 보내지 않았어요". 분석하는 동안만 비공개 임시 파일에 두고, 처리가 끝나면 지움(남은 임시 파일은 시작할 때와 주기적으로 정리) |
+| 이미지 | PNG·JPEG·WebP 첨부 (8MiB까지, 한 메시지에 3개까지) | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (`ollama`/`claude`/`off`, 5절) | 고른 provider 하나만 분석. 기본(미설정)은 로컬 비전 모델만(`QUOKY_OLLAMA_VISION_MODEL`). `claude`를 고르면 이미지가 Anthropic으로 전송됨(소유자가 명시적으로 고를 때만). 준비된 provider가 없으면 "분석하지 않았어요 … 어디로도 보내지 않았어요". 이미지 속 비밀값은 미리 찾을 수 없고, 답에 비밀값처럼 보이는 내용이 있으면 보여 주지도 저장하지도 않음. 분석하는 동안만 비공개 임시 파일에 두고, 처리가 끝나면 지움(남은 임시 파일은 시작할 때와 주기적으로 정리) |
 
 쓰기 실행 규칙 (Jira/Slack/캘린더 공통):
 
@@ -655,7 +676,10 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | Jira/Slack 쓰기 요청에 "쓰기가 허용된 대상이 아니에요" | 프로젝트 키나 채널이 허용 목록에 없음. 아무것도 보내지 않았음 |
 | 운영 화면 로그인에서 "허용되지 않은 출처예요" | 예전 빌드의 알려진 문제(PR #131에서 고침). 최신 빌드로 다시 시작. 주소는 `127.0.0.1` 또는 `localhost`와 설정한 포트만 |
 | 운영 화면이 열리지 않음 | `QUOKY_OPS_UI_ENABLED=true`인지, `quoky.log`의 `ops-ui.unavailable reason=...`(포트 사용 중 등) 확인 |
-| 이미지에 "분석하지 않았어요" | `QUOKY_OLLAMA_VISION_MODEL`이 비었거나 잘못됐거나, 그 모델이 Ollama에 없음 |
+| 이미지에 "분석하지 않았어요" | `ollama`: `QUOKY_OLLAMA_VISION_MODEL`이 비었거나 잘못됐거나, 그 모델이 Ollama에 없음. `claude`: Claude CLI가 없거나 로그인되지 않음(`claude auth status`). 운영 화면 "AI 공급자 준비 상태"의 `IMAGE_UNDERSTANDING` 행과 "이미지 이해 공급자 (설정)" 확인 |
+| `IMAGE_UNDERSTANDING_PROVIDER_INVALID` — "QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", or "off" (lowercase). "claude" sends attached images to Anthropic (cloud)." | 소문자 세 값만 허용. 빈 값도 불가 |
+| `IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING` / `IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID` / `IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL` | `ollama`를 골랐는데 `QUOKY_OLLAMA_VISION_MODEL`이 없거나 형식이 틀리거나 `cloud` 모델 |
+| `IMAGE_UNDERSTANDING_MODEL_INVALID` | `QUOKY_IMAGE_UNDERSTANDING_MODEL` 형식 오류 (`QUOKY_CLAUDE_MODEL`과 같은 규칙) |
 | 로그에 `not starting: 3 consecutive configuration exits` | 설정 오류로 3번 연속 멈춰 서비스가 재시작을 멈춤. `quoky.log`에서 원인을 고친 뒤 `ops/launchd/quokyctl.sh restart --apply` |
 
 ## 10. 더 알아보기

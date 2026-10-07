@@ -42,6 +42,7 @@ import {
   type ConversationContext,
   type ConversationRuntimeDeps,
   type ConversationTurnHandler,
+  type InboundAttachment,
   type InboundMessage,
   type IssueCommentRequest,
   type IssueTransitionOption,
@@ -59,6 +60,9 @@ import {
   type ExecutionGate,
 } from '../../../packages/core/src/application/execution-command-guard';
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, runMigrations } from '../../../packages/storage-sqlite/src/migrations';
+import { ClaudeCliVisionProvider } from '@quoky/ai-cli';
+import { renderAttachmentReplyWithheld } from '../../../packages/core/src/application/attachment-context';
+import { renderImageUnderstandingUnavailable } from '../../../packages/core/src/application/image-understanding';
 import { loadConfig } from './config';
 import { CONNECTOR_WRITE_FLOW } from './features/connector-writes.providers';
 import { OPS_UI_BIND_HOST } from './ops-ui/http/server';
@@ -80,7 +84,9 @@ import { startOpsUi, type OpsUiWiringInput } from './ops-ui/ops-ui-wiring';
  * line, zero provider calls on every deterministic v3 turn (memory archive, connector-write preview → approve →
  * execute gating, calendar read and write replies, OPS-UI-independent chat approvals) plus a fall-through positive
  * control, the migration lane through v15, the connector-write execution allow-list, and the operations UI default
- * (off) and its loopback bind.
+ * (off) and its loopback bind. ADR-0111 amendment A1/A2 (2026-10-07): the maximum configuration also selects the Claude
+ * image provider (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER=claude`, the owner's setup), so an image turn is scored end to end
+ * through the real composition against the stubbed Claude vision instance.
  */
 
 const OWNER_ID = '111111111111111111';
@@ -149,7 +155,9 @@ interface Harness {
   readonly primaryReads: CalendarEventQuery[];
   providerCalls(): number;
   availabilityProbes(): number;
-  turn(context: ConversationContext, text: string): Promise<TurnObservation>;
+  /** Every stubbed `execute`: which provider instance, for which capability, with how many images. */
+  readonly executions: Array<{ readonly provider: AiProvider; readonly capability: string; readonly imageCount: number }>;
+  turn(context: ConversationContext, text: string, attachments?: readonly InboundAttachment[]): Promise<TurnObservation>;
   /** A fresh context: its own channel (session) and its own user (actor), so receipts and memories never mix. */
   freshContext(userId?: string): ConversationContext;
 }
@@ -256,14 +264,16 @@ async function boot(): Promise<Harness> {
 
   let providerCalls = 0;
   let availabilityProbes = 0;
+  const executions: Harness['executions'] = [];
   for (const provider of app.get<AiProvider[]>(AI_PROVIDERS)) {
     Object.assign(provider, {
       async isAvailable() {
         availabilityProbes += 1;
         return true;
       },
-      async execute() {
+      async execute(request: { capability: string; images?: readonly unknown[] }) {
         providerCalls += 1;
+        executions.push({ provider, capability: request.capability, imageCount: request.images?.length ?? 0 });
         return { text: stubReply, artifacts: [] };
       },
     });
@@ -360,18 +370,25 @@ async function boot(): Promise<Harness> {
     primaryReads,
     providerCalls: () => providerCalls,
     availabilityProbes: () => availabilityProbes,
+    executions,
     freshContext(userId?: string) {
       contextSeq += 1;
       const n = String(contextSeq).padStart(4, '0');
       return { platform: 'discord', channelId: `88888888888888${n}`, userId: userId ?? `22222222222222${n}` };
     },
-    async turn(context, text) {
+    async turn(context, text, attachments) {
       const claimsBefore = claims.length;
       const classifyBefore = classifyCalls;
       const providerBefore = providerCalls;
       const probesBefore = availabilityProbes;
       messageSeq += 1;
-      const message: InboundMessage = { id: `int2-message-${messageSeq}`, context, text, receivedAt: new Date().toISOString() };
+      const message: InboundMessage = {
+        id: `int2-message-${messageSeq}`,
+        context,
+        text,
+        receivedAt: new Date().toISOString(),
+        ...(attachments ? { attachments } : {}),
+      };
       const result = await runtime.handle(message);
       const claimed = claims.slice(claimsBefore)[0];
       return {
@@ -435,6 +452,8 @@ beforeAll(async () => {
     QUOKY_CONNECTOR_WRITE_SLACK_TOKEN: `${'xox'}${'b-'}int2-placeholder`,
     QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS: `${SLACK_CHANNEL_NAME}:${SLACK_CHANNEL_ID}`,
     // QUOKY_OPS_UI_ENABLED is deliberately unset: the operations UI default is off (ADR-0113 D1).
+    // ADR-0111 amendment A1: the owner's image setup — Claude reads images (cloud, explicit opt-in).
+    QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude',
   });
   harness = await boot();
 }, 60_000);
@@ -871,6 +890,52 @@ describe('Personal v3 acceptance — operations UI (ADR-0113 D1/D2/D7)', () => {
     const after = await det(owner, previewText);
     expect(after.text).toBe(off.text);
     await det(owner, '거절');
+  });
+});
+
+describe('Personal v3 acceptance — image turn with the Claude image provider selected (ADR-0111 amendment A1/A2)', () => {
+  // A runner-owned temp-file reference as the Discord adapter produces it; the stubbed provider never opens it.
+  const IMAGE_REF = '/tmp/quoky-attachments-int2/proc-Int2/intake-0b7f2c1e-1111-4222-8333-944445555666.png';
+  const image: InboundAttachment = {
+    kind: 'image', name: 'chart.png', mimeType: 'image/png', sizeBytes: 2048, imageRef: IMAGE_REF, trust: 'UNTRUSTED',
+  };
+
+  it('registers exactly one IMAGE_UNDERSTANDING provider: the REMOTE Claude vision instance', () => {
+    const imageProviders = harness.app
+      .get<AiProvider[]>(AI_PROVIDERS)
+      .filter((provider) => provider.capabilities.some((c) => c.capability === 'IMAGE_UNDERSTANDING'));
+    expect(imageProviders).toHaveLength(1);
+    expect(imageProviders[0]).toBeInstanceOf(ClaudeCliVisionProvider);
+    expect(imageProviders[0]?.executionLocality).toBe('REMOTE');
+    expect(imageProviders[0]?.capabilities.map((c) => c.capability)).toEqual(['IMAGE_UNDERSTANDING']);
+    const policy = (harness.runtime as unknown as { imagePolicy: { allowedLocalities: readonly string[] } }).imagePolicy;
+    expect(policy.allowedLocalities).toEqual(['LOCAL', 'REMOTE']);
+  });
+
+  it('an image turn reaches the Claude vision instance with the image, skips the classifier, and is not "unavailable"', async () => {
+    const before = harness.executions.length;
+    const seen = await harness.turn(harness.freshContext(), '이 그래프 설명해줘', [image]);
+    expect(seen.route).toBe('runtime');
+    expect(seen.providerCalls).toBe(1);
+    expect(seen.text).toBe(STUB_REPLY);
+    expect(seen.text).not.toBe(renderImageUnderstandingUnavailable('ko'));
+    const executed = harness.executions.slice(before);
+    expect(executed).toHaveLength(1);
+    expect(executed[0]?.provider).toBeInstanceOf(ClaudeCliVisionProvider);
+    expect(executed[0]?.capability).toBe('IMAGE_UNDERSTANDING');
+    expect(executed[0]?.imageCount).toBe(1);
+    expect(logLines.join('\n')).not.toContain(IMAGE_REF);
+  });
+
+  it('a credential-shaped reply on an image-only turn is withheld (amendment A3)', async () => {
+    stubReply = '화면에 보이는 값은 pass' + 'word=int2-image-placeholder 입니다';
+    try {
+      const seen = await harness.turn(harness.freshContext(), '이 스크린샷에 뭐라고 써 있어?', [image]);
+      expect(seen.providerCalls).toBe(1);
+      expect(seen.text).toBe(renderAttachmentReplyWithheld('ko'));
+    } finally {
+      stubReply = STUB_REPLY;
+    }
   });
 });
 

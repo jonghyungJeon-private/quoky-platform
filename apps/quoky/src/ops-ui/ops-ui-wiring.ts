@@ -30,6 +30,7 @@ import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
 import { readSqliteUserVersion } from '@quoky/storage-sqlite';
 
 import { ConsoleLogger } from '../console-logger';
+import { describeImageUnderstandingSelection } from '../image-understanding-provider';
 import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
@@ -94,6 +95,8 @@ export interface OpsUiWiringInput {
     readonly discord: Pick<QuokyConfig['discord'], 'ownerIds'>;
     /** The OPS flags folded into `config.ts` (OPS-2b); absent → parsed from `env` (offline tests). */
     readonly opsUi?: QuokyConfig['opsUi'];
+    /** ADR-0111 amendment A5: the image-understanding selection shown in the providers panel; absent → `unknown`. */
+    readonly imageUnderstanding?: QuokyConfig['imageUnderstanding'];
   };
   readonly ops: Pick<OpsRuntime, 'backupStatus'>;
   /** ADR-0102 D4: whether `main.ts` took the single-instance lock (a file-backed database). */
@@ -216,6 +219,9 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       launcherRecentStarts: config.host.recentStarts,
     },
     providers: { all: () => providers.all(), available: () => providers.available() },
+    ...(config.imageUnderstanding !== undefined
+      ? { imageUnderstanding: describeImageUnderstandingSelection(config.imageUnderstanding) }
+      : {}),
     owner: () => resolveOwner(storage, config.discord.ownerIds),
     reminders: {
       enabled: config.reminders.enabled,

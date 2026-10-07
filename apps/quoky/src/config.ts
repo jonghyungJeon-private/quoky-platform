@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_CLAUDE_MODEL } from '@quoky/ai-cli';
+import { DEFAULT_CLAUDE_MODEL, ollamaModelExecutionLocality } from '@quoky/ai-cli';
 import { AgentProfileRegistry, agentProfileId, isAgentProfileId } from '@quoky/core';
 import type { AgentProfile, ContextBuilderConfig, RepositoryIdentityConfig } from '@quoky/core';
 import { parseProviderRoutingMode } from './provider-routing/provider-routing-activation';
@@ -55,6 +55,11 @@ export interface QuokyConfig {
     ollamaModel: string;
     ollamaEnabled: boolean;
   };
+  /**
+   * Image understanding provider selection (ADR-0111 D4/D5 and its 2026-10-07 amendment A1/A2). Exactly one provider is
+   * registered for `IMAGE_UNDERSTANDING`, or none. See {@link parseImageUnderstandingConfig}.
+   */
+  imageUnderstanding: ImageUnderstandingConfig;
   /** Personal-edition git safety (ADR-0094). `remoteEnabled` defaults to false (push/sync refused). */
   git: { remoteEnabled: boolean; mergeEnabled: boolean };
   /**
@@ -228,6 +233,11 @@ export const QuokyConfigErrorCode = {
   CONNECTOR_WRITE_SLACK_TOKEN_INVALID: 'CONNECTOR_WRITE_SLACK_TOKEN_INVALID',
   CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE: 'CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE',
   CALENDAR_WRITE_ENABLED_INVALID: 'CALENDAR_WRITE_ENABLED_INVALID',
+  IMAGE_UNDERSTANDING_PROVIDER_INVALID: 'IMAGE_UNDERSTANDING_PROVIDER_INVALID',
+  IMAGE_UNDERSTANDING_MODEL_INVALID: 'IMAGE_UNDERSTANDING_MODEL_INVALID',
+  IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING: 'IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING',
+  IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID: 'IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID',
+  IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL: 'IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL',
 } as const;
 export type QuokyConfigErrorCode = (typeof QuokyConfigErrorCode)[keyof typeof QuokyConfigErrorCode];
 
@@ -293,6 +303,81 @@ export function parseOpsUiFlags(env: NodeJS.ProcessEnv): OpsUiFlags {
 }
 const MAX_MEMORY_ARCHIVE_DAYS = 365;
 
+/** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` values (exact, lowercase). */
+export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'off'] as const;
+export type ImageUnderstandingProviderSelection = (typeof IMAGE_UNDERSTANDING_PROVIDERS)[number];
+
+/**
+ * Codes of the legacy implicit path only (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER` unset, `QUOKY_OLLAMA_VISION_MODEL` set):
+ * as before the selector existed, an unusable vision model disables image understanding (fail closed) and the
+ * composition logs the code — it never stops Quoky and is never echoed.
+ */
+export const ImageUnderstandingConfigErrorCode = {
+  VISION_MODEL_INVALID: 'OLLAMA_VISION_MODEL_INVALID',
+  VISION_MODEL_NOT_LOCAL: 'OLLAMA_VISION_MODEL_NOT_LOCAL',
+} as const;
+export type ImageUnderstandingConfigErrorCode =
+  (typeof ImageUnderstandingConfigErrorCode)[keyof typeof ImageUnderstandingConfigErrorCode];
+
+export type ImageUnderstandingConfig =
+  | { readonly provider: 'off'; readonly invalid?: ImageUnderstandingConfigErrorCode }
+  /** A local Ollama vision model (`LOCAL`); image bytes never leave this host. */
+  | { readonly provider: 'ollama'; readonly model: string }
+  /** The Claude CLI (`REMOTE`): the owner's explicit cloud opt-in (ADR-0111 amendment A1). */
+  | { readonly provider: 'claude'; readonly model: string };
+
+const OLLAMA_VISION_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
+const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
+
+/**
+ * ADR-0111 amendment A1 (owner decision 2026-10-07). `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `ollama` | `claude` | `off`
+ * (exact; anything else, including an empty value, is the startup error `IMAGE_UNDERSTANDING_PROVIDER_INVALID`).
+ * - Unset: `ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, otherwise `off` — exactly the behaviour before the
+ *   selector. On this implicit path an unusable vision model keeps its old fail-closed, non-fatal handling.
+ * - `ollama`: `QUOKY_OLLAMA_VISION_MODEL` is required and must be a plain local model name; a missing, malformed or
+ *   cloud-served (`*cloud*`) model is a startup error (an explicit selection fails loudly).
+ * - `claude`: the Claude CLI reads images in the cloud. The model is `QUOKY_IMAGE_UNDERSTANDING_MODEL` when set, else
+ *   `QUOKY_CLAUDE_MODEL`, else `sonnet`; a malformed `QUOKY_IMAGE_UNDERSTANDING_MODEL` is
+ *   `IMAGE_UNDERSTANDING_MODEL_INVALID`. `QUOKY_IMAGE_UNDERSTANDING_MODEL` is read only for `claude`.
+ * - `off`: no image provider; every image turn gets the truthful "unavailable" reply.
+ */
+export function parseImageUnderstandingConfig(
+  env: NodeJS.ProcessEnv,
+  claudeModel: string = parseClaudeModel(env.QUOKY_CLAUDE_MODEL),
+): ImageUnderstandingConfig {
+  const raw = env.QUOKY_IMAGE_UNDERSTANDING_PROVIDER;
+  const visionModel = env.QUOKY_OLLAMA_VISION_MODEL?.trim() ?? '';
+  if (raw === undefined) {
+    if (visionModel === '') return { provider: 'off' };
+    if (!OLLAMA_VISION_MODEL_SHAPE.test(visionModel)) {
+      return { provider: 'off', invalid: ImageUnderstandingConfigErrorCode.VISION_MODEL_INVALID };
+    }
+    if (ollamaModelExecutionLocality(visionModel) !== 'LOCAL') {
+      return { provider: 'off', invalid: ImageUnderstandingConfigErrorCode.VISION_MODEL_NOT_LOCAL };
+    }
+    return { provider: 'ollama', model: visionModel };
+  }
+  if (!(IMAGE_UNDERSTANDING_PROVIDERS as readonly string[]).includes(raw)) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_PROVIDER_INVALID);
+  }
+  const selection = raw as ImageUnderstandingProviderSelection;
+  if (selection === 'off') return { provider: 'off' };
+  if (selection === 'ollama') {
+    if (visionModel === '') throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING);
+    if (!OLLAMA_VISION_MODEL_SHAPE.test(visionModel)) {
+      throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID);
+    }
+    if (ollamaModelExecutionLocality(visionModel) !== 'LOCAL') {
+      throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL);
+    }
+    return { provider: 'ollama', model: visionModel };
+  }
+  const own = env.QUOKY_IMAGE_UNDERSTANDING_MODEL;
+  if (own === undefined) return { provider: 'claude', model: claudeModel };
+  if (!CLAUDE_MODEL_SHAPE.test(own)) throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_MODEL_INVALID);
+  return { provider: 'claude', model: own };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const continuationReceiverMode = parseContinuationReceiverMode(env.QUOKY_CONTINUATION_RECEIVER_MODE);
   // R2 production has no live containment. The offline activation factory is not AppModule wiring.
@@ -328,6 +413,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
 
   const reminders = parseReminderConfig(env);
   const calendar = resolveCalendar(env, reminders.timeZone);
+  const claudeModel = parseClaudeModel(env.QUOKY_CLAUDE_MODEL);
 
   return {
     discord: {
@@ -343,13 +429,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     workspace: { workspaceRoot: env.QUOKY_WORKSPACE_ROOT ?? env.CHUNSIK_WORKSPACE_ROOT ?? process.cwd() },
     ai: {
       claudeBin: env.CLAUDE_CLI_BIN ?? 'claude',
-      claudeModel: parseClaudeModel(env.QUOKY_CLAUDE_MODEL),
+      claudeModel,
       codexBin: env.CODEX_CLI_BIN ?? 'codex',
       ollamaBin: env.OLLAMA_CLI_BIN ?? 'ollama',
       ollamaModel: env.OLLAMA_MODEL ?? 'llama3.1',
       // Registration flag only (ADR-0092): opt-out, exact true/false, never inferred from OLLAMA_MODEL.
       ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
     },
+    imageUnderstanding: parseImageUnderstandingConfig(env, claudeModel),
     git: { remoteEnabled: gitRemoteEnabled, mergeEnabled: gitMergeEnabled },
     work: {
       summaryEnabled: parseExactBoolean(

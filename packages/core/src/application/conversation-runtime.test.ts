@@ -71,7 +71,7 @@ import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { renderInternalActionClaimNotice, renderInternalActionNotDone } from './chat-policy/internal-action-vocabulary';
 import { renderOwnMemoryNotFound } from './chat-policy/own-memory-recall';
-import { renderImageUnderstandingUnavailable } from './image-understanding';
+import { imageUnderstandingPolicyOf, renderImageUnderstandingUnavailable } from './image-understanding';
 import { ATTACHED_FILES_SECTION_TITLE, renderAttachmentReplyWithheld, renderAttachmentsNotRead } from './attachment-context';
 import { DefaultMemoryRetriever } from './memory-retriever';
 import { CodeGenerationManager } from './code-generation-manager';
@@ -11380,6 +11380,8 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     locality?: 'LOCAL' | 'REMOTE';
     noProvider?: boolean;
     execute?: (request: AiRequest) => Promise<AiExecutionResult>;
+    /** ADR-0111 amendment A2: the composition-time image policy (absent = the LOCAL-only default). */
+    imageLocalities?: readonly ('LOCAL' | 'REMOTE')[];
   } = {}) {
     const { storage, taskSaves, runSaves } = makeTaskStorage();
     const { deps: base, calls } = makeDeps();
@@ -11428,7 +11430,11 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
         },
       },
     };
-    return { runtime: new ConversationRuntime(deps), calls, selected, requests, recorded, completed, failed, execute, taskSaves, runSaves };
+    const runtime = new ConversationRuntime(
+      deps,
+      o.imageLocalities ? { imageUnderstandingLocalities: o.imageLocalities } : {},
+    );
+    return { runtime, calls, selected, requests, recorded, completed, failed, execute, taskSaves, runSaves };
   }
 
   /** Everything the turn persisted or logged except the user's own short-term record (which is the InboundMessage). */
@@ -11491,9 +11497,64 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     expect(h.taskSaves).toHaveLength(0);
     expect(h.recorded.at(-1)).toBe(renderImageUnderstandingUnavailable('ko'));
     expect(h.calls.loggerInfoCalls.find((c) => c.message === 'image turn answered without a provider')?.fields).toEqual({
-      reason: 'provider-not-local',
+      reason: 'locality-not-allowed',
       imageCount: 1,
     });
+  });
+
+  it('amendment A2: an explicit LOCAL-only policy behaves exactly like the default', async () => {
+    const h = imageTurn({ locality: 'REMOTE', imageLocalities: ['LOCAL'] });
+    const result = await h.runtime.handle(imageMessage('이거 뭐야?'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+  });
+
+  it('amendment A2: with the owner cloud opt-in a REMOTE IMAGE_UNDERSTANDING provider receives the image', async () => {
+    const h = imageTurn({ locality: 'REMOTE', imageLocalities: ['LOCAL', 'REMOTE'] });
+    const result = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text).toContain('주간 매출 막대 그래프예요.');
+    expect(h.selected).toEqual([Capability.IMAGE_UNDERSTANDING]);
+    expect(h.requests).toHaveLength(1);
+    expect(h.requests[0]?.images).toEqual([{ path: IMAGE_REF, mimeType: 'image/png' }]);
+    expect(h.requests[0]?.prompt).not.toContain(IMAGE_REF);
+    expect(h.completed).toEqual([{ providerId: 'vision-under-test', metadata: { imageCount: 1 } }]);
+    expect(persistedAndLogged(h)).not.toContain(IMAGE_REF);
+  });
+
+  it('amendment A2: with the cloud opt-in and no ready provider the reply no longer claims local-only', async () => {
+    const policy = ['LOCAL', 'REMOTE'] as const;
+    const h = imageTurn({ noProvider: true, imageLocalities: policy });
+    const result = await h.runtime.handle(imageMessage('이거 뭐야?'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko', imageUnderstandingPolicyOf(policy)));
+    expect(result.reply.text).not.toContain('로컬');
+    expect(result.reply.text).toContain('어디로도 보내지 않았어요');
+    expect(h.taskSaves).toHaveLength(0);
+  });
+
+  it.each([
+    ['LOCAL default', 'LOCAL' as const, undefined],
+    ['REMOTE under the cloud opt-in', 'REMOTE' as const, ['LOCAL', 'REMOTE'] as const],
+  ])('amendment A3 (%s): an image-only turn whose reply carries a credential is withheld; nothing of it is stored', async (_label, locality, imageLocalities) => {
+    const leaked = '화면에 보이는 값은 pass' + 'word=demo-review-value 입니다';
+    const h = imageTurn({
+      locality,
+      ...(imageLocalities ? { imageLocalities } : {}),
+      async execute() { return { text: leaked, artifacts: [] }; },
+    });
+    const result = await h.runtime.handle(imageMessage('이 스크린샷에 뭐라고 써 있어?'));
+    expect(result.reply.text).toBe(renderAttachmentReplyWithheld('ko'));
+    expect(h.recorded.at(-1)).toBe(renderAttachmentReplyWithheld('ko'));
+    expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves, h.completed])).not.toContain('demo-review-value');
+    expect(h.calls.loggerInfoCalls.some((c) => c.message === 'attachment turn reply withheld')).toBe(true);
+  });
+
+  it('amendment A4: a credential-shaped caption never reaches the image provider', async () => {
+    const h = imageTurn({ locality: 'REMOTE', imageLocalities: ['LOCAL', 'REMOTE'] });
+    await h.runtime.handle(imageMessage('이 화면 설명해줘 pass' + 'word=demo-review-value'));
+    expect(h.requests).toHaveLength(1);
+    expect(h.requests[0]?.prompt).not.toContain('demo-review-value');
+    expect(h.requests[0]?.prompt).toContain('withheld by Core');
   });
 
   it('no ready IMAGE_UNDERSTANDING provider → the truthful deterministic reply, in the caption language', async () => {
