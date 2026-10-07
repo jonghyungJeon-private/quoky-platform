@@ -119,13 +119,35 @@ export const CODEX_CHAT_PREAMBLE =
   'text only. Do not run commands, read or write files, browse, or call any tool.\n\n';
 
 /** JSONL item types that mean the agent acted (ran, edited, called or searched) instead of only answering. */
-const CODEX_ACTION_ITEM_TYPES = new Set([
+const CODEX_ACTION_ITEM_TYPES: ReadonlySet<string> = new Set([
   'command_execution',
   'file_change',
   'mcp_tool_call',
   'web_search',
   'collab_tool_call',
 ]);
+
+/**
+ * The only event types a supported `codex exec --json` stream may contain (0.160.0). Anything else — including a type
+ * a newer CLI adds — rejects the run: an unrecognised event could carry an action this adapter cannot see.
+ */
+const CODEX_ALLOWED_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'thread.started',
+  'turn.started',
+  'turn.completed',
+  'turn.failed',
+  'error',
+  'item.started',
+  'item.updated',
+  'item.completed',
+]);
+
+/**
+ * The only item types accepted inside `item.*` events: the reply, reasoning, and the CLI's non-fatal `error` notice
+ * (0.160.0 emits one per run because the disabled `code_mode_host` makes code mode fail closed). Action items are
+ * rejected separately; any other item type (a plan, a new tool) is unknown and also rejects the run.
+ */
+const CODEX_ALLOWED_ITEM_TYPES: ReadonlySet<string> = new Set(['agent_message', 'reasoning', 'error']);
 
 const CODEX_AUTH_FAILURE =
   /(not logged in|please (run|log ?in)|codex login|authenticat|unauthori[sz]ed|invalid api key|\b401\b|\b403\b|token (has )?expired|refresh token)/i;
@@ -143,19 +165,26 @@ export interface CodexCliProviderOptions {
   model?: string;
 }
 
+/** Why a stream is not a well-formed, supported, single-turn `codex exec --json` stream. Codes only, never text. */
+export type CodexStreamViolation =
+  | 'MALFORMED_LINE'
+  | 'UNKNOWN_EVENT_TYPE'
+  | 'UNKNOWN_ITEM_TYPE'
+  | 'MALFORMED_ITEM'
+  | 'TURN_NOT_COMPLETED_ONCE';
+
 interface ParsedCodexEvents {
   readonly lastAgentMessage: string | undefined;
   readonly agentMessageCount: number;
   readonly actionItemCount: number;
-  /**
-   * Non-fatal `error` items the CLI reports in the stream (0.160.0 emits one at thread start because the disabled
-   * `code_mode_host` makes code mode fail closed). Counted for the audit; they never become reply text.
-   */
+  /** Non-fatal `error` items (see {@link CODEX_ALLOWED_ITEM_TYPES}); counted for the audit, never reply text. */
   readonly warningItemCount: number;
   readonly jsonEventCount: number;
-  readonly nonJsonLineCount: number;
-  readonly turnCompleted: boolean;
+  readonly turnStartedCount: number;
+  readonly turnCompletedCount: number;
   readonly failureText: string | undefined;
+  /** Every protocol violation found, in order of first occurrence (deduplicated). Empty only for a valid stream. */
+  readonly violations: readonly CodexStreamViolation[];
   readonly usage: { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number };
 }
 
@@ -170,19 +199,22 @@ function countOf(value: unknown): number | undefined {
 }
 
 /**
- * Parse `codex exec --json` stdout (one JSON event per line). Only the final `agent_message` item becomes reply text;
- * reasoning, plans and any other item are never shown. Unknown event types are ignored, so a newer CLI that adds
- * events still parses.
+ * Parse and validate `codex exec --json` stdout (one JSON event per line) **fail closed**: every non-empty line must be
+ * a JSON object whose `type` is on {@link CODEX_ALLOWED_EVENT_TYPES}; every `item.*` event must carry an item whose
+ * `type` is on {@link CODEX_ALLOWED_ITEM_TYPES} or is an action type (counted, and rejected by the caller); the stream
+ * must contain exactly one `turn.started` and exactly one `turn.completed`. Missing or unreadable telemetry is a
+ * violation, never evidence that no action happened. Only the last completed `agent_message` becomes reply text.
  */
 export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
   let lastAgentMessage: string | undefined;
   let agentMessageCount = 0;
   let warningItemCount = 0;
   let jsonEventCount = 0;
-  let nonJsonLineCount = 0;
-  let turnCompleted = false;
+  let turnStartedCount = 0;
+  let turnCompletedCount = 0;
   let failureText: string | undefined;
   const actionItems = new Set<string>();
+  const violations = new Set<CodexStreamViolation>();
   const usage: ParsedCodexEvents['usage'] = {};
 
   for (const rawLine of stdout.split('\n')) {
@@ -194,25 +226,46 @@ export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
     } catch {
       event = undefined;
     }
-    if (event === undefined) {
-      nonJsonLineCount += 1;
+    if (event === undefined || typeof event.type !== 'string') {
+      violations.add('MALFORMED_LINE');
       continue;
     }
     jsonEventCount += 1;
     const type = event.type;
-    const item = asRecord(event.item);
-    if (item !== undefined && typeof item.type === 'string') {
+    if (!CODEX_ALLOWED_EVENT_TYPES.has(type)) {
+      violations.add('UNKNOWN_EVENT_TYPE');
+      continue;
+    }
+    if (type.startsWith('item.')) {
+      const item = asRecord(event.item);
+      if (item === undefined || typeof item.type !== 'string') {
+        violations.add('MALFORMED_ITEM');
+        continue;
+      }
       if (CODEX_ACTION_ITEM_TYPES.has(item.type)) {
         actionItems.add(typeof item.id === 'string' ? item.id : `#${jsonEventCount}`);
-      } else if (type === 'item.completed' && item.type === 'agent_message' && typeof item.text === 'string') {
+        continue;
+      }
+      if (!CODEX_ALLOWED_ITEM_TYPES.has(item.type)) {
+        violations.add('UNKNOWN_ITEM_TYPE');
+        continue;
+      }
+      if (type === 'item.completed' && item.type === 'agent_message') {
+        if (typeof item.text !== 'string') {
+          violations.add('MALFORMED_ITEM');
+          continue;
+        }
         lastAgentMessage = item.text;
         agentMessageCount += 1;
       } else if (type === 'item.completed' && item.type === 'error') {
         warningItemCount += 1;
       }
+      continue;
     }
-    if (type === 'turn.completed') {
-      turnCompleted = true;
+    if (type === 'turn.started') {
+      turnStartedCount += 1;
+    } else if (type === 'turn.completed') {
+      turnCompletedCount += 1;
       const reported = asRecord(event.usage);
       if (reported !== undefined) {
         const inputTokens = countOf(reported.input_tokens);
@@ -229,6 +282,7 @@ export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
       failureText = typeof event.message === 'string' ? event.message : 'error';
     }
   }
+  if (turnStartedCount !== 1 || turnCompletedCount !== 1) violations.add('TURN_NOT_COMPLETED_ONCE');
 
   return {
     lastAgentMessage,
@@ -236,9 +290,10 @@ export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
     actionItemCount: actionItems.size,
     warningItemCount,
     jsonEventCount,
-    nonJsonLineCount,
-    turnCompleted,
+    turnStartedCount,
+    turnCompletedCount,
     failureText,
+    violations: [...violations],
     usage,
   };
 }
@@ -264,8 +319,9 @@ function sha256(text: string): string {
  * stays on Claude. Runs `codex exec` non-interactively with the prompt on **stdin**, in a fresh **empty** temp cwd that
  * is removed afterwards, under the `read-only` sandbox with approvals `never`, without the owner's Codex config,
  * rules, project docs, skills, MCP servers, web search, shell tools or other agent features, and with nothing written
- * to session or history files. Only the final assistant message of the `--json` event stream becomes the reply; a
- * run that executed, edited, called or searched anything is refused as a whole.
+ * to session or history files. Only the final assistant message of the `--json` event stream becomes the reply; the
+ * stream must be a well-formed, allow-listed, single completed turn, and a run that executed, edited, called or
+ * searched anything is refused as a whole.
  *
  * Residual (ADR note): the CLI is an agent and offers no "no tools at all" switch. With the shell and other tools
  * disabled, the remaining containment is the read-only sandbox in an empty directory, the fail-closed check above,
@@ -387,6 +443,14 @@ export class CodexCliProvider extends BaseCliAiProvider {
           : `codex CLI failed (exit ${result.code})`,
       );
     }
+    // Fail closed on anything but a well-formed, supported, single completed turn: telemetry that cannot be read is
+    // never taken as "no action happened". Only the violation codes leave; no stream text is echoed.
+    if (events.violations.length > 0) {
+      throw new AiProviderError(
+        AiFailureKind.EXECUTION_FAILED,
+        `codex CLI event stream refused (${events.violations.join(',')}); the reply was withheld`,
+      );
+    }
 
     const message = sanitizeTerminalOutput(events.lastAgentMessage ?? '');
     const text = (request.capability === Capability.GENERAL_CHAT
@@ -416,11 +480,10 @@ export class CodexCliProvider extends BaseCliAiProvider {
         providerInputSha256: sha256(input),
         replySha256: sha256(text),
         jsonEventCount: events.jsonEventCount,
-        nonJsonLineCount: events.nonJsonLineCount,
         agentMessageCount: events.agentMessageCount,
         actionItemCount: events.actionItemCount,
         warningItemCount: events.warningItemCount,
-        turnCompleted: events.turnCompleted,
+        turnCompletedCount: events.turnCompletedCount,
         ...events.usage,
         captureMode: 'pipe',
         colorDisabled: true,

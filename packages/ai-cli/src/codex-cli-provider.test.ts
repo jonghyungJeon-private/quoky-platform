@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -24,6 +26,7 @@ import {
   parseCodexJsonEvents,
 } from './codex-cli-provider';
 import { ClaudeCliProvider } from './index';
+import { createContainedCliRunner } from './cli-runner';
 import type { CliRunOptions, CliRunResult, CliRunner } from './cli-runner';
 import { UNSUPPORTED_ACTION_NOTICE_KO } from './output-sanitizer';
 
@@ -206,6 +209,7 @@ describe('CodexCliProvider — output parsing', () => {
   it('returns only the final agent message; reasoning and earlier messages are never shown', async () => {
     const stdout = jsonl(
       { type: 'thread.started', thread_id: 't' },
+      { type: 'turn.started' },
       { type: 'item.completed', item: { id: 'r', type: 'reasoning', text: 'SECRET REASONING' } },
       { type: 'item.completed', item: { id: 'a1', type: 'agent_message', text: 'draft answer' } },
       { type: 'item.completed', item: { id: 'a2', type: 'agent_message', text: '\u001b[1m최종 답변\u001b[0m' } },
@@ -234,11 +238,10 @@ describe('CodexCliProvider — output parsing', () => {
       providerInputSha256: sha(`${CODEX_CHAT_PREAMBLE}${PROMPT}`),
       replySha256: sha(reply),
       jsonEventCount: 6,
-      nonJsonLineCount: 0,
       agentMessageCount: 1,
       actionItemCount: 0,
       warningItemCount: 1,
-      turnCompleted: true,
+      turnCompletedCount: 1,
       inputTokens: 1200,
       cachedInputTokens: 300,
       outputTokens: 80,
@@ -281,22 +284,75 @@ describe('CodexCliProvider — output parsing', () => {
     }
   });
 
-  it('parses events defensively: non-JSON lines are counted, unknown events ignored', () => {
-    const parsed = parseCodexJsonEvents(
-      `warning: something\n${jsonl({ type: 'future.event', x: 1 }, { type: 'item.completed', item: { type: 'agent_message', text: 'hi' } })}[]\n`,
-    );
+  it('accepts the observed 0.160.0 stream shape, including item.started/updated lifecycle events', () => {
+    const parsed = parseCodexJsonEvents(jsonl(
+      { type: 'thread.started', thread_id: 't' },
+      { type: 'item.completed', item: { id: 'w', type: 'error', message: 'notice' } },
+      { type: 'turn.started' },
+      { type: 'item.started', item: { id: 'r', type: 'reasoning', text: '' } },
+      { type: 'item.updated', item: { id: 'r', type: 'reasoning', text: 'x' } },
+      { type: 'item.completed', item: { id: 'r', type: 'reasoning', text: 'x' } },
+      { type: 'item.completed', item: { id: 'a', type: 'agent_message', text: 'hi' } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } },
+    ));
     expect(parsed).toMatchObject({
-      lastAgentMessage: 'hi',
-      agentMessageCount: 1,
-      jsonEventCount: 2,
-      nonJsonLineCount: 2,
-      actionItemCount: 0,
-      turnCompleted: false,
+      lastAgentMessage: 'hi', agentMessageCount: 1, actionItemCount: 0, warningItemCount: 1,
+      turnStartedCount: 1, turnCompletedCount: 1, violations: [],
+    });
+  });
+
+  describe('fails closed on anything but a well-formed, supported, single completed turn (Codex P2)', () => {
+    const reply = { type: 'item.completed', item: { id: 'a', type: 'agent_message', text: 'looks fine' } };
+    const exec0 = (stdout: string) =>
+      new CodexCliProvider('codex', { runner: async () => ok(stdout) }).execute({
+        capability: Capability.GENERAL_CHAT,
+        prompt: PROMPT,
+      });
+    const START = { type: 'turn.started' };
+    const DONE = { type: 'turn.completed', usage: {} };
+
+    it.each<[string, string, string]>([
+      [
+        'a malformed (truncated) action line next to a valid reply',
+        `${jsonl(START)}{"type":"item.started","item":{"id":"c","type":"command_exec\n${jsonl(reply, DONE)}`,
+        'MALFORMED_LINE',
+      ],
+      ['a non-JSON line', `warning: something\n${jsonl(START, reply, DONE)}`, 'MALFORMED_LINE'],
+      ['a JSON value that is not an event object', `${jsonl(START, reply, DONE)}[]\n`, 'MALFORMED_LINE'],
+      ['an event with no type', jsonl(START, { item: {} }, reply, DONE), 'MALFORMED_LINE'],
+      ['an unknown tool item', jsonl(START, { type: 'item.completed', item: { id: 't', type: 'patch_apply' } }, reply, DONE), 'UNKNOWN_ITEM_TYPE'],
+      ['an unknown plan item', jsonl(START, { type: 'item.completed', item: { id: 'p', type: 'todo_list', items: [] } }, reply, DONE), 'UNKNOWN_ITEM_TYPE'],
+      ['an unknown event type', jsonl(START, { type: 'exec.approval_request', command: 'rm -rf /' }, reply, DONE), 'UNKNOWN_EVENT_TYPE'],
+      ['an item event without an item', jsonl(START, { type: 'item.completed' }, reply, DONE), 'MALFORMED_ITEM'],
+      ['an agent message without text', jsonl(START, { type: 'item.completed', item: { id: 'a', type: 'agent_message' } }, DONE), 'MALFORMED_ITEM'],
+      ['no turn.completed', jsonl(START, reply), 'TURN_NOT_COMPLETED_ONCE'],
+      ['no turn.started', jsonl(reply, DONE), 'TURN_NOT_COMPLETED_ONCE'],
+      ['two completed turns', jsonl(START, reply, DONE, START, reply, DONE), 'TURN_NOT_COMPLETED_ONCE'],
+      ['an empty stream', '', 'TURN_NOT_COMPLETED_ONCE'],
+    ])('rejects %s', async (_label, stdout, violation) => {
+      expect(parseCodexJsonEvents(stdout).violations).toContain(violation);
+      const err = await exec0(stdout).catch((e: unknown) => e);
+      expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+      expect(String((err as Error).message)).toContain(violation);
+      expect(String((err as Error).message)).not.toContain('looks fine');
+    });
+
+    it('rejects every action-like item, even with a valid reply and a completed turn', async () => {
+      for (const type of ['command_execution', 'file_change', 'mcp_tool_call', 'web_search', 'collab_tool_call']) {
+        for (const phase of ['item.started', 'item.updated', 'item.completed']) {
+          const stdout = jsonl(START, { type: phase, item: { id: 'x', type } }, reply, DONE);
+          expect(parseCodexJsonEvents(stdout).actionItemCount, `${phase} ${type}`).toBe(1);
+          await expect(exec0(stdout), `${phase} ${type}`).rejects.toMatchObject({
+            kind: AiFailureKind.EXECUTION_FAILED,
+            message: expect.stringContaining('tool action'),
+          });
+        }
+      }
     });
   });
 
   it('no agent message or only whitespace → EMPTY_OUTPUT', async () => {
-    for (const stdout of [jsonl({ type: 'turn.completed', usage: {} }), answered('   \n  ')]) {
+    for (const stdout of [jsonl({ type: 'turn.started' }, { type: 'turn.completed', usage: {} }), answered('   \n  ')]) {
       await expect(
         new CodexCliProvider('codex', { runner: async () => ok(stdout) }).execute({
           capability: Capability.GENERAL_CHAT,
@@ -360,6 +416,32 @@ describe('CodexCliProvider — failures', () => {
     expect(classifyCodexFailure('401 Unauthorized')).toBe(AiFailureKind.UNAVAILABLE);
     expect(classifyCodexFailure('rate limit exceeded (429)')).toBe(AiFailureKind.UNAVAILABLE);
     expect(classifyCodexFailure('model returned an unexpected response')).toBe(AiFailureKind.EXECUTION_FAILED);
+  });
+
+  it('a wrapper whose native child ignores SIGTERM and holds the pipes still settles as TIMEOUT (Codex P2)', async () => {
+    const stream = () => Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } });
+    let child: (EventEmitter & { pid: number; stdout: ReturnType<typeof stream>; stderr: ReturnType<typeof stream> }) | undefined;
+    const groupSignals: string[] = [];
+    let spawnCwd = '';
+    const runner = createContainedCliRunner({
+      killGraceMs: 20,
+      processGroup: true,
+      killProcessGroup: (_pid, signal) => { groupSignals.push(signal); }, // the "native child" ignores it
+      spawnFn: (_bin, _args, options) => {
+        spawnCwd = String(options.cwd);
+        const stdin = Object.assign(stream(), { write: (_d: string, cb?: (e?: Error | null) => void) => { cb?.(null); return true; }, end: () => undefined });
+        child = Object.assign(new EventEmitter(), { pid: 31337, stdout: stream(), stderr: stream(), stdin, kill: () => true });
+        return child as unknown as ChildProcess; // never emits `close`
+      },
+    });
+    const codex = new CodexCliProvider('codex', { runner, timeoutMs: 20 });
+    await expect(codex.execute({ capability: Capability.GENERAL_CHAT, prompt: PROMPT })).rejects.toMatchObject({
+      kind: AiFailureKind.TIMEOUT,
+    });
+    expect(groupSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(child?.stdout.destroyed).toBe(true);
+    expect(spawnCwd).toContain(CODEX_CWD_PREFIX);
+    expect(existsSync(spawnCwd)).toBe(false);
   });
 
   it('removes the temp cwd even when the runner throws', async () => {
