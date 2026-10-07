@@ -1680,6 +1680,26 @@ describe('PromptComposer — files attached to the current User message (ADR-011
     );
   });
 
+  it('P1-1: re-guards the final normalized text; an escape-split secret is dropped and counted as not read', () => {
+    const escaped = 'pass' + '\u001b[31m' + 'word=demo-review-value';
+    const spec = new PromptComposer().compose(chatTask(), withFiles([file('a.log', LOG), file('n.txt', escaped)]));
+    expect(spec.context).not.toContain('demo-review-value');
+    expect(spec.context).toContain('PaymentGatewayTimeout');
+    expect(spec.context).toContain('1 other attachment of the current User message was not read by Core');
+    const only = new PromptComposer().compose(chatTask(), withFiles([file('n.txt', escaped)]));
+    expect(only.context).not.toContain('## 2C.');
+    expect(only.context).toContain('1 attachment of the current User message was not read by Core');
+  });
+
+  it('P1-2: a credential-shaped file name is rendered as a neutral label', () => {
+    const secretName = 'sk-' + 'D'.repeat(24) + '.log';
+    const spec = new PromptComposer().compose(chatTask(), withFiles([file(secretName, LOG)]));
+    expect(spec.context).not.toContain('D'.repeat(24));
+    expect(spec.context).toContain(
+      envelope('USER_ATTACHMENT', 'UNTRUSTED_ATTACHED_DATA', `Attached file "attachment-1.log" (truncated=false):\n${LOG}`),
+    );
+  });
+
   it('a bundle without attachments composes byte-identically to before', () => {
     const plain = new PromptComposer().compose(chatTask(), emptyBundle());
     const explicitNone = new PromptComposer().compose(chatTask(), { ...emptyBundle(), currentAttachments: undefined });

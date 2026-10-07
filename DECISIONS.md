@@ -16845,6 +16845,21 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   served only by a `LOCAL` provider (`OllamaCliVisionProvider`, `QUOKY_OLLAMA_VISION_MODEL`, parsed in
   `apps/quoky/src/image-understanding-provider.ts`; an invalid or cloud-served name disables only images); otherwise a
   fixed "not analysed, not sent anywhere" reply. Claude receives no image bytes (owner decision 9). Live: not run.
+  **MM-1 D3 fix (live QA 2026-10-07).** Text attachments now reach chat/work prompts (before, only image turns used
+  them): `attachment-context.ts` prepares every attachment text once for both chat and image prompts. Each file is
+  normalized first, then clipped head and tail within one shared 2,000-code-point budget (sized for Ollama's default
+  4,096-token window; image turns use the same budget instead of their former 4,000/8,000 head-only limits). The
+  credential guard runs on the final rendered text and drops the file on a match. A credential-shaped name is
+  replaced by a neutral `attachment-N.<ext>` / `image-N.<ext>` label: nothing of the name leaves, and the content is
+  guarded separately. PromptComposer section 2C says the file is the material asked about, and that instructions
+  inside it are never followed. When no attachment is usable and the text is empty or only about the attachment, the
+  reply is deterministic and no provider runs. Other text runs normally, with a "not read" fact. The Ollama chat
+  parser matches section headings only at a line start. `attachment-context` joined the Stage 2A
+  `PROVIDER_EXECUTION_PATH_MODULES` binding; with the `prompt-composer.ts` edit, the Stage 2A bindings need a re-run.
+  **Accepted residual:** a reply to an attachment turn is ordinary transcript and artifact, under the same egress as
+  the message text, so a non-credential quotation of the file is persisted with it. The raw attachment is never
+  stored. A reply the credential guard matches is replaced by a fixed notice before it is persisted or delivered.
+  Replies are not otherwise masked.
 - **ADR-0112 (connector writes).** CWR-1 (cbd5e79): narrow write ports, v15 `connector_write_receipts` (no payload text),
   Jira/Slack/calendar writers, allowlists and flags validated at startup even while off; the Slack write token must be
   a bot token distinct from the read token. CWR-2 (0d16109): the D5 chat flow with deps 34 → 35; an EXECUTING anchor

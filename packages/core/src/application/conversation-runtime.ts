@@ -22,7 +22,14 @@ import {
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
 } from './image-understanding';
-import { hasOnlyUnreadAttachments, renderAttachmentsNotRead, withAttachedTextFiles } from './attachment-context';
+import {
+  hasNoUsableAttachment,
+  isAttachmentOnlyRequest,
+  isAttachmentReplyWithheld,
+  renderAttachmentReplyWithheld,
+  renderAttachmentsNotRead,
+  withAttachedTextFiles,
+} from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
@@ -2259,10 +2266,12 @@ export class ConversationRuntime {
     if (images.length > 0) {
       return this.handleImageUnderstandingTurn(message, session, actor, images);
     }
-    // (A3c) ADR-0111 D2/D3: every attachment of the message was refused (credential-like, too large, unsupported type,
-    // …) and nothing readable remains. The adapter already named each file and why; no provider runs, so no model
-    // answers as if it had seen a file it never got (live QA: a refused config.yml produced an unrelated chat reply).
-    if (hasOnlyUnreadAttachments(message)) {
+    // (A3c) ADR-0111 D2/D3: no attachment of the message is usable — the adapter refused it (credential-like, too large,
+    // unsupported, …) or Core's final re-check dropped it — AND the text is only about the attachment (empty,
+    // "이거 확인해줘", "요약해줘", …). The adapter already named each refused file; no provider runs, so no model answers as if it
+    // had seen a file it never got (live QA: a refused config.yml produced an unrelated chat reply). Any other text
+    // ("What is 2 + 2?") routes normally, and a chat prompt then states that the attachment was not read.
+    if (hasNoUsableAttachment(message) && isAttachmentOnlyRequest(message.text)) {
       // Content-free: a count only, never a file name or reason text.
       this.deps.logger.info('attachment turn answered without a provider', {
         attachmentCount: message.attachments?.length ?? 0,
@@ -7073,8 +7082,12 @@ export class ConversationRuntime {
             throw new Error('Accepted routing result is incomplete');
           }
           providerId = routed.acceptedProviderId;
-          const replyText = this.guardChatReply(capability, routed.output.text, task.description, task.id);
-          const artifacts: Artifact[] = routed.output.artifacts.map((artifact) => ({ ...artifact }));
+          const guarded = this.guardAttachmentReply(bundle, message, {
+            text: this.guardChatReply(capability, routed.output.text, task.description, task.id),
+            artifacts: routed.output.artifacts,
+          }, task.id);
+          const replyText = guarded.text;
+          const artifacts: Artifact[] = guarded.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
           await this.deps.tasks.completeRun(run, {
             artifactIds,
@@ -7128,7 +7141,13 @@ export class ConversationRuntime {
       await this.deps.dispatchCommit.commit(run.id, run.id);
       const executed = await provider.execute(executionRequest);
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
-      const result = { ...executed, text: this.guardChatReply(capability, executed.text, task.description, task.id) };
+      const result = {
+        ...executed,
+        ...this.guardAttachmentReply(bundle, message, {
+          text: this.guardChatReply(capability, executed.text, task.description, task.id),
+          artifacts: executed.artifacts ?? [],
+        }, task.id),
+      };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       // ADR-0107 measurement hook: the run records how many curated examples it carried (a count, never text or ids),
@@ -7186,6 +7205,24 @@ export class ConversationRuntime {
       ...(taskId ? { taskId } : {}),
     });
     return guarded.text;
+  }
+
+  /**
+   * ADR-0111 D3 (P2-6): on a turn whose prompt carried attachment text, a reply the credential guard matches is replaced
+   * by a fixed notice with no artifacts, BEFORE anything is persisted or delivered (the file itself passed the guard, so
+   * a match is model-made). Other replies — including non-credential quotations of the file — are ordinary transcript.
+   */
+  private guardAttachmentReply(
+    bundle: ContextBundle,
+    message: InboundMessage,
+    reply: { text: string; artifacts: readonly Artifact[] },
+    taskId: Id,
+  ): { text: string; artifacts: Artifact[] } {
+    const carried = (bundle.currentAttachments?.textFiles.length ?? 0) > 0;
+    if (!carried || !isAttachmentReplyWithheld(reply.text)) return { text: reply.text, artifacts: [...reply.artifacts] };
+    // Content-free.
+    this.deps.logger.info('attachment turn reply withheld', { taskId });
+    return { text: renderAttachmentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }
 
   /**
@@ -7253,7 +7290,13 @@ export class ConversationRuntime {
       await this.deps.dispatchCommit.commit(run.id, run.id);
       const executed = await provider.execute(request);
       // ADR-0104 D1: the provider-neutral internal-action claim guard also covers an image reply.
-      const result = { ...executed, text: this.guardChatReply(capability, executed.text, message.text, task.id) };
+      const result = {
+        ...executed,
+        ...this.guardAttachmentReply(withAttachedTextFiles({ taskId: task.id, conversationTranscript: [], backgroundResources: [] }, message), message, {
+          text: this.guardChatReply(capability, executed.text, message.text, task.id),
+          artifacts: executed.artifacts ?? [],
+        }, task.id),
+      };
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       await this.deps.tasks.completeRun(run, {
         artifactIds,

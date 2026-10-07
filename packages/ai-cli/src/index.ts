@@ -100,9 +100,13 @@ function parseRenderedGeneralChatPrompt(prompt: string): RenderedPromptSections 
 
   const contextStart = contextIndex + contextMarker.length;
   const context = prompt.slice(contextStart, taskIndex);
-  const transcriptHeading = '## 3. Conversation transcript';
-  const transcriptIndex = context.indexOf(transcriptHeading);
-  if (transcriptIndex < 0) return null;
+  // Section headings are matched only at the start of a line. Every untrusted part (transcript, background, recall,
+  // attachment text) is a single-line JSON string, so a quoted "## 3. Conversation transcript" inside it can never
+  // be taken for the real boundary (an unanchored search found it inside an attached file and the parse failed).
+  const transcriptHeading = '\n## 3. Conversation transcript';
+  const headingAt = context.indexOf(transcriptHeading);
+  if (headingAt < 0) return null;
+  const transcriptIndex = headingAt + 1;
   const transcriptBodyStart = context.indexOf('\n', transcriptIndex);
   if (transcriptBodyStart < 0) return null;
   const transcriptBodyEnd = context.indexOf('\n\n## 4.', transcriptBodyStart + 1);

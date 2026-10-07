@@ -1,5 +1,6 @@
 import { Capability, isLearningEgressAllowed } from '../domain';
 import type {
+  AttachedTextFileEntry,
   ContextBundle,
   ContextFile,
   CuratedExampleEntry,
@@ -29,7 +30,13 @@ import {
   type ExternalWorkReadout,
 } from './work-chat/external-work-readout';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
-import { ATTACHED_FILES_GUIDANCE, ATTACHED_FILES_SECTION_TITLE } from './attachment-context';
+import {
+  ATTACHED_FILES_GUIDANCE,
+  ATTACHED_FILES_SECTION_TITLE,
+  isSendableAttachedFile,
+  promptSafeAttachmentName,
+  renderAttachedFileContent,
+} from './attachment-context';
 import {
   assertContinuationFacts,
   assertPlanSteps,
@@ -209,6 +216,8 @@ export class PromptComposer {
     const isGeneralChat =
       task.intent.capability === Capability.GENERAL_CHAT ||
       task.intent.capability === Capability.POLICY_SENSITIVE_CHAT;
+    // ADR-0111 D3: the attachment text exactly as it will be sent (normalized, credential-guarded on the final text).
+    const attachments = PromptComposer.sendableAttachments(context);
     const currentFacts = [
       PromptComposer.label(
         'CORE_RUNTIME',
@@ -235,7 +244,7 @@ export class PromptComposer {
           ]
         : []),
       // ADR-0111 D3: the current message's attachments (facts about the turn, never their content).
-      ...PromptComposer.attachmentFacts(context),
+      ...PromptComposer.attachmentFacts(attachments),
       // ADR-0098 D1: Core names the reply language for this chat turn (GENERAL_CHAT).
       ...(isGeneralChat
         ? [
@@ -287,13 +296,11 @@ export class PromptComposer {
     );
 
     // ADR-0111 D3: the current message's readable text files, as one untrusted, JSON-quoted line each.
-    const attachedFiles = (context.currentAttachments?.textFiles ?? []).map((file) =>
+    const attachedFiles = attachments.textFiles.map((file) =>
       JSON.stringify({
         provenance: file.provenance,
         epistemicStatus: file.epistemicStatus,
-        content:
-          `Attached file ${JSON.stringify(file.name)} (truncated=${String(file.truncated)}):\n` +
-          normalizePromptContextContent(file.content),
+        content: renderAttachedFileContent(file),
       }),
     );
 
@@ -585,12 +592,31 @@ export class PromptComposer {
   }
 
   /**
+   * ADR-0111 D3 (P1-1): the bundle's attachment files re-normalized and re-guarded exactly as rendered — defense in
+   * depth for a bundle not built by `prepareAttachedTextFiles`. A file that fails is dropped and counted as not read.
+   */
+  private static sendableAttachments(context: ContextBundle): { textFiles: AttachedTextFileEntry[]; notReadCount: number } {
+    const current = context.currentAttachments;
+    if (!current) return { textFiles: [], notReadCount: 0 };
+    const textFiles: AttachedTextFileEntry[] = [];
+    let notReadCount = current.notReadCount;
+    current.textFiles.forEach((file, index) => {
+      const entry: AttachedTextFileEntry = {
+        ...file,
+        name: promptSafeAttachmentName(file.name, 'attachment', index + 1),
+        content: normalizePromptContextContent(file.content),
+      };
+      if (isSendableAttachedFile(entry)) textFiles.push(entry);
+      else notReadCount += 1;
+    });
+    return { textFiles, notReadCount };
+  }
+
+  /**
    * ADR-0111 D3: authoritative facts about the current message's attachments — how many readable text files the
    * prompt carries (section 2C) and how many attachments Core did not read. Empty without attachments.
    */
-  private static attachmentFacts(context: ContextBundle): string[] {
-    const attachments = context.currentAttachments;
-    if (!attachments) return [];
+  private static attachmentFacts(attachments: { textFiles: AttachedTextFileEntry[]; notReadCount: number }): string[] {
     const facts: string[] = [];
     const readable = attachments.textFiles.length;
     if (readable > 0) {

@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { ContextBundle, InboundAttachment, InboundMessage } from '../domain';
 import {
-  MAX_CHAT_ATTACHMENT_NAME_CHARS,
-  MAX_CHAT_TEXT_ATTACHMENTS_TOTAL_CHARS,
+  MAX_ATTACHED_TEXT_TOTAL_CHARS,
+  MAX_ATTACHMENT_NAME_CHARS,
   clipHeadAndTail,
   currentTurnAttachmentsOf,
-  hasOnlyUnreadAttachments,
+  hasNoUsableAttachment,
+  isAttachmentOnlyRequest,
+  isAttachmentReplyWithheld,
+  prepareAttachedTextFiles,
+  promptSafeAttachmentName,
+  renderAttachedFileContent,
+  renderAttachmentReplyWithheld,
   renderAttachmentsNotRead,
   withAttachedTextFiles,
 } from './attachment-context';
+import { containsCredentialMaterial } from './credential-guard';
 
 const txt = (name: string, text: string): InboundAttachment => ({
   kind: 'text',
@@ -92,7 +99,7 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
     const files = current?.textFiles ?? [];
     expect(files).toHaveLength(2);
     const total = files.reduce((sum, f) => sum + points(f.content), 0);
-    expect(total).toBeLessThanOrEqual(MAX_CHAT_TEXT_ATTACHMENTS_TOTAL_CHARS);
+    expect(total).toBeLessThanOrEqual(MAX_ATTACHED_TEXT_TOTAL_CHARS);
     for (const [file, tag] of [[files[0], 'A'], [files[1], 'B']] as const) {
       expect(file?.truncated).toBe(true);
       expect(file?.content.startsWith(`${tag}-HEAD`)).toBe(true);
@@ -103,7 +110,7 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
 
   it('clips a name and leaves a short file untouched', () => {
     const current = currentTurnAttachmentsOf(messageWith([txt('n'.repeat(500), 'short')]));
-    expect(points(current?.textFiles[0]?.name ?? '')).toBe(MAX_CHAT_ATTACHMENT_NAME_CHARS);
+    expect(points(current?.textFiles[0]?.name ?? '')).toBe(MAX_ATTACHMENT_NAME_CHARS);
     expect(clipHeadAndTail('short', 100)).toEqual({ text: 'short', truncated: false });
     const clipped = clipHeadAndTail('가'.repeat(5_000), 1_000);
     expect(clipped.truncated).toBe(true);
@@ -116,12 +123,67 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
     expect(withAttachedTextFiles(bundle, messageWith([txt('a.log', LOG)])).currentAttachments?.textFiles).toHaveLength(1);
   });
 
-  it('hasOnlyUnreadAttachments: true only when every attachment was refused', () => {
-    expect(hasOnlyUnreadAttachments(messageWith())).toBe(false);
-    expect(hasOnlyUnreadAttachments(messageWith([refused('config.yml', 'CREDENTIAL_SHAPED')]))).toBe(true);
-    expect(hasOnlyUnreadAttachments(messageWith([refused('big.log', 'TOO_LARGE'), refused('m.mp4', 'UNSUPPORTED_TYPE')]))).toBe(true);
-    expect(hasOnlyUnreadAttachments(messageWith([refused('big.log', 'TOO_LARGE'), txt('a.log', 'ok')]))).toBe(false);
-    expect(hasOnlyUnreadAttachments(messageWith([refused('big.log', 'TOO_LARGE'), img]))).toBe(false);
+  it('hasNoUsableAttachment: true only when nothing of the attachments survives the final preparation', () => {
+    expect(hasNoUsableAttachment(messageWith())).toBe(false);
+    expect(hasNoUsableAttachment(messageWith([refused('config.yml', 'CREDENTIAL_SHAPED')]))).toBe(true);
+    expect(hasNoUsableAttachment(messageWith([refused('big.log', 'TOO_LARGE'), refused('m.mp4', 'UNSUPPORTED_TYPE')]))).toBe(true);
+    expect(hasNoUsableAttachment(messageWith([refused('big.log', 'TOO_LARGE'), txt('a.log', 'ok')]))).toBe(false);
+    expect(hasNoUsableAttachment(messageWith([refused('big.log', 'TOO_LARGE'), img]))).toBe(false);
+  });
+
+  it('P2-4: a text file Core drops at its final re-check counts as unusable, like an adapter refusal', () => {
+    const escaped = 'pass' + '\u001b[31m' + 'word=demo-review-value';
+    const message = messageWith([txt('notes.txt', escaped)]);
+    expect(currentTurnAttachmentsOf(message)).toEqual({ textFiles: [], notReadCount: 1 });
+    expect(hasNoUsableAttachment(message)).toBe(true);
+  });
+
+  it('P1-1: the guard runs on the normalized, clipped text exactly as sent (an escape cannot split a secret)', () => {
+    const escaped = 'line 1\npass' + '\u001b[31m' + 'word=demo-review-value\nline 3';
+    // The raw text hides the pattern from the detector; the normalized one does not.
+    expect(containsCredentialMaterial(escaped)).toBe(false);
+    expect(containsCredentialMaterial(escaped.replace('\u001b[31m', ''))).toBe(true);
+    const prepared = prepareAttachedTextFiles([{ name: 'app.log', text: escaped }]);
+    expect(prepared).toEqual({ files: [], droppedCount: 1 });
+    expect(JSON.stringify(currentTurnAttachmentsOf(messageWith([txt('app.log', escaped)])))).not.toContain('demo-review-value');
+  });
+
+  it('P1-1: terminal framing is stripped before clipping, so the content is exactly what a composer sends', () => {
+    const prepared = prepareAttachedTextFiles([{ name: 'c.log', text: '\u001b[31mERROR\u001b[0m boom' }]);
+    expect(prepared.files[0]?.content).toBe('ERROR boom');
+  });
+
+  it('P1-2: a credential-shaped file name is replaced by a neutral label; the harmless content is kept', () => {
+    const secretName = 'sk-' + 'A'.repeat(24) + '.log';
+    expect(containsCredentialMaterial(secretName)).toBe(true);
+    const current = currentTurnAttachmentsOf(messageWith([txt(secretName, LOG)]));
+    expect(current?.textFiles.map((f) => f.name)).toEqual(['attachment-1.log']);
+    expect(current?.textFiles[0]?.content).toBe(LOG);
+    expect(JSON.stringify(current)).not.toContain('A'.repeat(24));
+    expect(promptSafeAttachmentName(secretName, 'image', 2)).toBe('image-2.log');
+    expect(promptSafeAttachmentName('app-error.log', 'attachment', 1)).toBe('app-error.log');
+    expect(promptSafeAttachmentName('a\u001b[31mb.log', 'attachment', 1)).toBe('ab.log');
+  });
+
+  it('every prepared file renders to text the credential guard accepts', () => {
+    const prepared = prepareAttachedTextFiles([{ name: 'a.log', text: LOG }, { name: 'b.md', text: '# notes' }]);
+    for (const file of prepared.files) expect(containsCredentialMaterial(renderAttachedFileContent(file))).toBe(false);
+  });
+
+  it('P2-3: only an empty or attachment-referring short text counts as a request about the attachment', () => {
+    for (const text of ['', '   ', '이거 확인해줘', '이 설정 파일 확인해줘', '이 로그에서 문제 원인 요약해줘', '요약해줘', '확인해 주세요', 'check this file', 'summarize it', 'Please review']) {
+      expect(isAttachmentOnlyRequest(text), text).toBe(true);
+    }
+    for (const text of ['What is 2 + 2?', '오늘 날씨 어때?', '내일 오전 10시에 회의 잡아줘', `${'긴 질문 '.repeat(20)}파일`]) {
+      expect(isAttachmentOnlyRequest(text), text).toBe(false);
+    }
+  });
+
+  it('P2-6: a credential-shaped reply is withheld; an ordinary log summary is not', () => {
+    expect(isAttachmentReplyWithheld('결제 게이트웨이 타임아웃 후 서킷이 열렸어요.')).toBe(false);
+    expect(isAttachmentReplyWithheld('설정값은 pass' + 'word=demo-review-value 입니다')).toBe(true);
+    expect(renderAttachmentReplyWithheld('ko')).toContain('저장하지도 않았어요');
+    expect(renderAttachmentReplyWithheld('en')).toContain('not shown or saved');
   });
 
   it('the not-read reply is truthful in both languages', () => {
