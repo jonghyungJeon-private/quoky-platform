@@ -17262,22 +17262,32 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      size equal to the file length − 8, `VP8 `/`VP8L` or `VP8X` + optional `ALPH` + one bitstream, animation refused,
      `ICCP`/`EXIF`/`XMP `/unknown chunks dropped and `VP8X` rebuilt (or omitted). A malformed file is refused
      (`UNSUPPORTED_TYPE`, logged `INVALID_IMAGE` with a check code). Only the canonical bytes are written to the temp
-     file, so only they reach Claude or Ollama vision. Every kept PNG chunk must have its exact structure (Codex P2 on
-     9a39152), else it is dropped: `sRGB` 1 byte 0–3, `gAMA` 4 bytes > 0, `cHRM` 32 bytes, `pHYs` 9 bytes with unit
-     0/1, `PLTE` only for indexed colour (length a multiple of 3, ≤ 768 and ≤ 2^depth entries; invalid there refuses the
-     image; a suggested RGB(A) palette and a grey palette are dropped), `tRNS` 2 bytes grey / 6 bytes RGB / ≤ palette
-     entries after `PLTE`, never for grey+alpha or RGBA. Defense in depth (Codex P1 on 9a39152): ALL printable runs
-     (≥ 8 bytes) of the whole canonical file are screened by the strict credential guard in 64 KiB windows overlapping
-     by 1 KiB (≥ the longest detector match), so no match straddles a boundary; more than 2 MiB of printable text is
-     refused (`CREDENTIAL_SHAPED`, logged `TOO_MUCH_TEXT`), never skipped (fail closed). A 6 MiB incompressible PNG
-     canonicalizes in ~120 ms and screens in ~40 ms locally.
-     **Residuals:** (a) content inside the pixel data — a screenshot showing a secret, steganography — cannot be
-     screened structurally (as already documented for cloud images); (b) JPEG Huffman/scan data and WebP VP8/VP8L/ALPH
-     bitstreams are walked and bounded but not decoded, so bytes placed there are screened only by the credential guard,
-     whose word-boundary semantics are those of text attachments (a credential glued to a preceding letter is not
-     matched); (c) validation is synchronous CPU work on the event loop, up to ~244 ms for a PNG at the 128 MiB raw
-     verification cap; (d) compatibility of the canonical output with what Discord actually serves is proven locally
-     for PNG (pixel-identical decode with `sips`) and for `sips`-made JPEGs and sample WebPs (decodable), but not yet
-     against live Discord JPEG/WebP uploads — the live check covers PNG and JPEG.
+     file, so only they reach Claude or Ollama vision. **Kept fields (Coordinator decision after the third Codex
+     round):** PNG keeps only `IHDR`, `sRGB` (1 byte 0–3), `gAMA` (4 bytes > 0), `PLTE` (indexed colour only, required:
+     length a multiple of 3, ≤ 768 and ≤ 2^depth entries, invalid refuses the image), `tRNS` (indexed colour only, after
+     `PLTE`, ≤ one entry per palette colour), the re-deflated `IDAT` and `IEND`; `cHRM`, `pHYs`, grey/RGB `tRNS`, a
+     suggested RGB(A) palette and every other chunk are dropped — the image renders without them. JPEG: a JFIF `APP0`
+     is replaced by a fixed canonical segment (version 1.01, units 0, density 1×1, no thumbnail; no input byte copied)
+     and an Adobe `APP14` by a fixed segment carrying only the colour transform clamped to 0–2. The WebP `VP8X` is
+     rebuilt as before.
+     **Threat model.** Only the configured owner can upload (ADR-0091 admission), so the realistic risk is ACCIDENTAL
+     exposure: metadata (EXIF/XMP/comments/text chunks), pasted text appended to a file, a secret visible in a
+     screenshot. Canonicalization removes the first two. Deliberately crafted data hidden in format-required fields is
+     out of scope: the owner would be exfiltrating to a provider they selected themselves.
+     **Best-effort text screen (defense in depth).** All printable runs (≥ 8 bytes) of the whole canonical file are
+     joined and scanned ONCE by both strict credential detectors (no windows: an earlier windowed scan with a 1 KiB
+     overlap claimed to cover "the longest detector match", which was wrong — JWT and file-value patterns have unbounded
+     spans). More than 256 KiB of collected printable text is refused (`CREDENTIAL_SHAPED`, logged `TOO_MUCH_TEXT`),
+     never skipped (fail closed). Measured locally: noise PNGs of 6 / 8 MiB yield 13 / 17 KiB of printable text, noise
+     JPEGs of 3.3 / 11 MiB 9 / 1 KiB, real charts and photos under 1 KiB; an 8 MiB noise PNG canonicalizes in ~150 ms
+     and screens in ~75 ms.
+     **Residuals:** (a) deliberately crafted bytes in required structural fields — indexed `PLTE`/`tRNS`, JPEG
+     `DQT`/`DHT`/`SOF` tables, JPEG scan data and WebP `VP8 `/`VP8L`/`ALPH` bitstreams, and pixel data — are not screened
+     beyond the best-effort text scan, which a short credential (e.g. 5 bytes) or one glued to a preceding letter
+     evades (the detectors' word-boundary semantics are those of text attachments); (b) content in the pixels
+     themselves (a screenshot showing a secret, steganography), as already documented for cloud images; (c) validation
+     is synchronous CPU work on the event loop, up to ~244 ms for a PNG at the 128 MiB raw verification cap; (d) the
+     canonical output decodes locally (PNG pixel-identical with `sips`; `sips`-made JPEGs and sample WebPs decodable),
+     but compatibility with live Discord JPEG/WebP uploads is not yet proven — the live check covers PNG and JPEG.
   5. **No outbound rewriting.** A Markdown-table-to-bullets conversion was tried and removed (Codex P1 on df66418): it
      altered exact-payload connector-write previews; Discord replies are delivered byte-identical.

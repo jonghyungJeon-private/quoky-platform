@@ -30,7 +30,7 @@ describe('PNG canonicalization (Codex P1 on df66418)', () => {
     expect(canonicalizeImage(pngImage({ trailing: SECRET_TEXT }), 'image/png')).toEqual({ ok: false, code: 'TRAILING_BYTES' });
   });
 
-  it('keeps IHDR, safe rendering ancillaries, one fresh IDAT and IEND; drops text, EXIF, ICC and unknown chunks', () => {
+  it('keeps IHDR, sRGB, one fresh IDAT and IEND; drops text, EXIF, ICC, pHYs and unknown chunks', () => {
     // The shape of the sips-made `chart-crop.png` (sRGB + eXIf), plus every text chunk and an unknown ancillary.
     const input = pngImage({
       beforeIdat: [
@@ -46,7 +46,7 @@ describe('PNG canonicalization (Codex P1 on df66418)', () => {
       afterIdat: [pngChunk('tEXt', SECRET_TEXT)],
     });
     const out = ok(canonicalizeImage(input, 'image/png'));
-    expect(pngChunkTypes(out)).toEqual(['IHDR', 'sRGB', 'pHYs', 'IDAT', 'IEND']);
+    expect(pngChunkTypes(out)).toEqual(['IHDR', 'sRGB', 'IDAT', 'IEND']);
     expect(out.includes(SECRET_TEXT)).toBe(false);
     // Still decodable: the re-deflated image data is the same scanlines.
     const idatAt = out.indexOf('IDAT', 8, 'latin1');
@@ -158,7 +158,8 @@ describe('WebP canonicalization', () => {
   });
 });
 
-describe('PNG kept chunks must have their exact structure (Codex P2 on 9a39152)', () => {
+describe('PNG keeps only IHDR, sRGB, gAMA, indexed PLTE/tRNS, IDAT, IEND, each with its exact structure', () => {
+  const PWD = Buffer.from('pw' + 'd=x', 'latin1');
   const kept = (chunks: readonly Buffer[], colorType: 0 | 2 | 3 | 4 | 6 = 2) =>
     pngChunkTypes(ok(canonicalizeImage(pngImage({ colorType, beforeIdat: chunks }), 'image/png')));
   const palette = (entries: number) => pngChunk('PLTE', Buffer.alloc(entries * 3, 0x7f));
@@ -167,7 +168,6 @@ describe('PNG kept chunks must have their exact structure (Codex P2 on 9a39152)'
     data.writeUInt32BE(value, 0);
     return pngChunk('gAMA', data);
   };
-  const phys = (unit: number) => pngChunk('pHYs', Buffer.from([0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, unit]));
 
   it('sRGB: kept only as one byte 0-3', () => {
     expect(kept([pngChunk('sRGB', Buffer.from([3]))])).toEqual(['IHDR', 'sRGB', 'IDAT', 'IEND']);
@@ -184,16 +184,12 @@ describe('PNG kept chunks must have their exact structure (Codex P2 on 9a39152)'
     expect(kept([pngChunk('gAMA', Buffer.alloc(5, 1))])).toEqual(['IHDR', 'IDAT', 'IEND']);
   });
 
-  it('cHRM: kept only with length 32', () => {
-    expect(kept([pngChunk('cHRM', Buffer.alloc(32, 1))])).toEqual(['IHDR', 'cHRM', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('cHRM', Buffer.concat([Buffer.alloc(32, 1), SECRET_TEXT]))])).toEqual(['IHDR', 'IDAT', 'IEND']);
-  });
-
-  it('pHYs: kept only with length 9 and unit 0 or 1', () => {
-    expect(kept([phys(1)])).toEqual(['IHDR', 'pHYs', 'IDAT', 'IEND']);
-    expect(kept([phys(0)])).toEqual(['IHDR', 'pHYs', 'IDAT', 'IEND']);
-    expect(kept([phys(2)])).toEqual(['IHDR', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('pHYs', Buffer.concat([Buffer.alloc(9), SECRET_TEXT]))])).toEqual(['IHDR', 'IDAT', 'IEND']);
+  it('cHRM and pHYs are always dropped, so a short credential packed into their numeric fields never survives', () => {
+    const chrm = pngChunk('cHRM', Buffer.concat([PWD, Buffer.alloc(32 - PWD.length)]));
+    const phys = pngChunk('pHYs', Buffer.concat([PWD, Buffer.from([0, 0, 0, 1])]));
+    const out = ok(canonicalizeImage(pngImage({ beforeIdat: [chrm, phys] }), 'image/png'));
+    expect(pngChunkTypes(out)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(out.includes(PWD)).toBe(false);
   });
 
   it('PLTE: required and valid for indexed colour; a suggested palette (RGB/RGBA) and a grey palette are dropped', () => {
@@ -207,15 +203,36 @@ describe('PNG kept chunks must have their exact structure (Codex P2 on 9a39152)'
     expect(kept([palette(2)], 4)).toEqual(['IHDR', 'IDAT', 'IEND']);
   });
 
-  it('tRNS: length must match the colour type (2 grey, 6 RGB, <= palette entries), never for 4/6, after PLTE', () => {
-    expect(kept([pngChunk('tRNS', Buffer.alloc(2))], 0)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 0)).toEqual(['IHDR', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 2)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('tRNS', SECRET_TEXT)], 2)).toEqual(['IHDR', 'IDAT', 'IEND']);
+  it('tRNS: kept only for indexed colour, after PLTE, with at most one entry per palette colour', () => {
     expect(kept([palette(4), pngChunk('tRNS', Buffer.alloc(4))], 3)).toEqual(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']);
     expect(kept([palette(4), pngChunk('tRNS', Buffer.alloc(5))], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
     expect(kept([pngChunk('tRNS', Buffer.alloc(1)), palette(4)], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('tRNS', Buffer.alloc(2))], 4)).toEqual(['IHDR', 'IDAT', 'IEND']);
-    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 6)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    for (const colorType of [0, 2, 4, 6] as const) {
+      expect(kept([pngChunk('tRNS', Buffer.alloc(colorType === 0 ? 2 : 6))], colorType)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    }
+  });
+});
+
+describe('JPEG APP0 / APP14 are replaced by fixed segments (no input byte copied)', () => {
+  const PWD = Buffer.from('pw' + 'd=x', 'latin1');
+  const CANONICAL_JFIF = Buffer.concat([Buffer.from('JFIF\u0000', 'latin1'), Buffer.from([1, 1, 0, 0, 1, 0, 1, 0, 0])]);
+
+  it('a JFIF APP0 carrying a credential in its density/thumbnail fields becomes the canonical JFIF segment', () => {
+    const smuggled = jpegSegmentOf(0xe0, Buffer.concat([Buffer.from('JFIF\u0000', 'latin1'), Buffer.from([1, 2, 1]), PWD, Buffer.alloc(1), Buffer.from([1, 1]), Buffer.alloc(3, 0x41)]));
+    const input = jpegImage();
+    const app0End = 2 + 2 + input.readUInt16BE(4);
+    const out = ok(canonicalizeImage(Buffer.concat([input.subarray(0, 2), smuggled, input.subarray(app0End)]), 'image/jpeg'));
+    expect(out.subarray(2, 4 + 2 + CANONICAL_JFIF.length)).toEqual(Buffer.concat([Buffer.from([0xff, 0xe0, 0x00, 0x10]), CANONICAL_JFIF]));
+    expect(out.includes(PWD)).toBe(false);
+  });
+
+  it('an Adobe APP14 keeps only its colour transform (clamped to 0-2)', () => {
+    const adobe = (rest: Buffer, transform: number) => jpegSegmentOf(0xee, Buffer.concat([Buffer.from('Adobe', 'latin1'), rest, Buffer.from([transform])]));
+    const out = ok(canonicalizeImage(jpegImage({ extraSegments: [adobe(Buffer.concat([PWD, Buffer.alloc(1)]), 7)] }), 'image/jpeg'));
+    expect(out.includes(PWD)).toBe(false);
+    const at = out.indexOf(Buffer.from([0xff, 0xee]));
+    expect(out.subarray(at + 4, at + 16)).toEqual(Buffer.concat([Buffer.from('Adobe', 'latin1'), Buffer.from([0, 0x64, 0, 0, 0, 0, 2])]));
+    const one = ok(canonicalizeImage(jpegImage({ extraSegments: [adobe(Buffer.alloc(6), 1)] }), 'image/jpeg'));
+    expect(one[one.indexOf(Buffer.from([0xff, 0xee])) + 15]).toBe(1);
   });
 });

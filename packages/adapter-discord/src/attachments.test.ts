@@ -624,22 +624,34 @@ describe('AttachmentIntake — images are validated and canonicalized before any
   });
 
   it.each([
-    ['after 256 KiB of printable padding', Buffer.alloc(262_000, 0x41)],
-    ['after 1 MiB of binary padding', Buffer.alloc(1024 * 1024, 0x01)],
-  ])('screens the WHOLE canonical file: a credential %s is refused (Codex P1 on 9a39152)', async (_label, padding) => {
+    ['after ~256 KiB of printable padding (the old prefix bound)', Buffer.alloc(262_000, 0x41), 'CREDENTIAL_SHAPED'],
+    ['after 1 MiB of binary padding', Buffer.alloc(1024 * 1024, 0x01), 'CREDENTIAL_SHAPED'],
+  ])('screens the WHOLE canonical file: a credential %s is refused', async (_label, padding, detail) => {
     const jpeg = jpegImage();
     const scanEnd = jpeg.length - 2;
     const body = Buffer.concat([jpeg.subarray(0, scanEnd), padding, SECRET, jpeg.subarray(scanEnd)]);
     const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
     expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
-    expect(result.diagnostics[0]).toMatchObject({ detail: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail });
     expect(await filesIn(tempRoot)).toEqual([]);
   });
 
-  it('fails closed past the text budget: more printable text than 2 MiB is refused as TOO_MUCH_TEXT', async () => {
+  it('scans the collected text in ONE pass: a JWT just past 64 KiB of text is caught (Codex boundary repro)', async () => {
+    const jwt = ['ey' + 'JhbGciOiJIUzI1NiJ9', 'ey' + 'JzdWIiOiJ4In0', 'c2lnbmF0dXJlLXJldmlldy1vbmx5'].join('.');
+    // ~64 KiB of short printable runs separated by NUL bytes, then the JWT straddling the old 64 KiB window edge.
+    const runs = Buffer.concat(Array.from({ length: 7_281 }, () => Buffer.from('abcdefgh\u0000', 'latin1')));
     const jpeg = jpegImage();
     const scanEnd = jpeg.length - 2;
-    const text = Buffer.from('lorem ipsum dolor sit amet '.repeat(80_000), 'latin1');
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), runs, Buffer.from(jwt, 'latin1'), Buffer.from([0x00]), jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'CREDENTIAL_SHAPED' });
+  });
+
+  it('fails closed past the text budget: more than 256 KiB of printable text is refused as TOO_MUCH_TEXT', async () => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const text = Buffer.from('lorem ipsum dolor sit amet '.repeat(12_000), 'latin1');
     const body = Buffer.concat([jpeg.subarray(0, scanEnd), text, jpeg.subarray(scanEnd)]);
     const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
     expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });

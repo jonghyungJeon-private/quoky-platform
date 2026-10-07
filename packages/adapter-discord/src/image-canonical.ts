@@ -10,13 +10,13 @@ import type { InboundImageMimeType } from '@quoky/core';
  *   out of order, non-consecutive `IDAT`s or any byte after `IEND` is refused; `IHDR` is validated (dimensions up to
  *   {@link MAX_IMAGE_DIMENSION}, a legal bit depth / colour type, no unknown methods). The image data is inflated, its
  *   exact scanline size and filter bytes are checked, and it is RE-DEFLATED into one fresh `IDAT`; the output is
- *   `IHDR`, the safe rendering ancillaries `sRGB`/`gAMA`/`cHRM`/`pHYs`, `PLTE` (indexed colour only), `tRNS`, `IDAT`,
- *   `IEND`, each kept only with its exact structure (a malformed ancillary is dropped). Text, metadata,
- *   profiles and every other chunk (`tEXt`, `zTXt`, `iTXt`, `eXIf`, `iCCP`, …) are dropped.
+ *   `IHDR`, `sRGB` (1 byte 0–3), `gAMA` (4 bytes > 0), `PLTE` and `tRNS` (indexed colour only), `IDAT`, `IEND`, each
+ *   kept only with its exact structure. Text, metadata, profiles, `cHRM`, `pHYs`, grey/RGB `tRNS` and every other
+ *   chunk (`tEXt`, `zTXt`, `iTXt`, `eXIf`, `iCCP`, …) are dropped.
  * - **JPEG:** every segment from `SOI` to `EOI` is walked and its length validated; table segments are parsed to their
  *   exact length; only baseline / extended / progressive Huffman frames are accepted; `APP1`–`APP13`, `APP15` and
- *   `COM` are dropped, `APP0` is kept only as a thumbnail-free JFIF header and `APP14` only as the fixed-size Adobe
- *   colour-transform marker; any byte after `EOI` is refused.
+ *   `COM` are dropped, a JFIF `APP0` is replaced by a fixed canonical JFIF segment and an Adobe `APP14` by a fixed
+ *   segment carrying only the colour transform (clamped to 0–2); any byte after `EOI` is refused.
  * - **WebP:** the RIFF size must equal the file length minus 8 and the chunks must consume it exactly; a simple
  *   lossy (`VP8 `) or lossless (`VP8L`) image, or `VP8X` + optional `ALPH` + one bitstream, is accepted (animation is
  *   refused); `ICCP`, `EXIF`, `XMP ` and unknown chunks are dropped and `VP8X` is rebuilt (or omitted) to match.
@@ -116,7 +116,7 @@ const PNG_DEPTHS: Readonly<Record<number, readonly number[]>> = {
   6: [8, 16],
 };
 /** Ancillary chunks kept (rendering only, no text or metadata), and where they go. */
-const PNG_BEFORE_PLTE = new Set(['sRGB', 'gAMA', 'cHRM']);
+const PNG_BEFORE_PLTE = new Set(['sRGB', 'gAMA']);
 const ADAM7: ReadonlyArray<readonly [number, number, number, number]> = [
   [0, 0, 8, 8],
   [4, 0, 8, 8],
@@ -127,11 +127,10 @@ const ADAM7: ReadonlyArray<readonly [number, number, number, number]> = [
   [0, 1, 1, 2],
 ];
 
-/** `sRGB`: one rendering-intent byte 0–3; `gAMA`: a non-zero 4-byte gamma; `cHRM`: eight 4-byte values. */
+/** `sRGB`: one rendering-intent byte 0–3; `gAMA`: a non-zero 4-byte gamma. */
 function validColorSpaceChunk(type: string, data: Buffer): boolean {
   if (type === 'sRGB') return data.length === 1 && (data[0] as number) <= 3;
   if (type === 'gAMA') return data.length === 4 && data.readUInt32BE(0) > 0;
-  if (type === 'cHRM') return data.length === 32;
   return false;
 }
 
@@ -157,7 +156,6 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
   let seenPlte = false;
   let trns: Buffer | undefined;
   const colorSpace: Buffer[] = [];
-  let phys: Buffer | undefined;
   const idat: Buffer[] = [];
   let idatClosed = false;
   let ended = false;
@@ -212,11 +210,11 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
           !colorSpace.some((c) => c.toString('latin1', 4, 8) === type)
         ) {
           colorSpace.push(pngChunk(type, Buffer.from(data)));
-        } else if (type === 'tRNS' && trns === undefined && ((ihdr as Buffer)[9] !== 3 || seenPlte)) {
-          // Validated against the colour type (and palette size) when the output is assembled.
+        } else if (type === 'tRNS' && trns === undefined && (ihdr as Buffer)[9] === 3 && seenPlte) {
+          // Indexed colour only (palette transparency); validated against the palette size when the output is assembled.
+          // Grey/RGB tRNS (one free colour value), cHRM, pHYs and every other ancillary are dropped: the image renders
+          // without them and they would carry free values.
           trns = Buffer.from(data);
-        } else if (type === 'pHYs' && phys === undefined && length === 9 && ((data[8] as number) === 0 || data[8] === 1)) {
-          phys = pngChunk(type, Buffer.from(data));
         }
     }
   }
@@ -253,19 +251,14 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
     if ((raw[at] as number) > 4) fail('BAD_IMAGE_DATA');
     at += row;
   }
-  // tRNS is legal only for colour types 0, 2 and 3 (and bounded by the palette size for 3).
-  const trnsOk =
-    trns !== undefined &&
-    ((colorType === 0 && trns.length === 2) ||
-      (colorType === 2 && trns.length === 6) ||
-      (colorType === 3 && plte !== undefined && trns.length <= plte.length / 3));
+  // Kept only for indexed colour, bounded by the palette size.
+  const trnsOk = trns !== undefined && colorType === 3 && plte !== undefined && trns.length >= 1 && trns.length <= plte.length / 3;
   const out = Buffer.concat([
     PNG_SIGNATURE,
     pngChunk('IHDR', header),
     ...colorSpace,
     ...(plte !== undefined ? [pngChunk('PLTE', plte)] : []),
     ...(trnsOk ? [pngChunk('tRNS', trns as Buffer)] : []),
-    ...(phys !== undefined ? [phys] : []),
     pngChunk('IDAT', deflateSync(raw)),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
@@ -312,13 +305,12 @@ function validateDht(payload: Buffer): void {
   if (at !== payload.length || payload.length === 0) fail('BAD_STRUCTURE');
 }
 
-/** A thumbnail-free JFIF header (version, density) from an APP0 payload, or undefined when it is not JFIF. */
-function jfifHeader(payload: Buffer): Buffer | undefined {
-  if (payload.length < 14 || payload.toString('latin1', 0, 5) !== 'JFIF\u0000') return undefined;
-  const header = Buffer.from(payload.subarray(0, 14));
-  header[12] = 0; // Xthumbnail
-  header[13] = 0; // Ythumbnail
-  return header;
+/** The fixed canonical JFIF APP0 payload: version 1.01, no units, density 1×1, no thumbnail. No input byte is copied. */
+const CANONICAL_JFIF = Buffer.from([0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+
+/** A fixed Adobe APP14 payload (DCTEncode version 100, no flags) carrying only the colour transform, clamped to 0–2. */
+function canonicalAdobe(transform: number): Buffer {
+  return Buffer.from([0x41, 0x64, 0x6f, 0x62, 0x65, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, Math.min(transform, 2)]);
 }
 
 function canonicalJpeg(bytes: Buffer): { bytes: Buffer; width: number; height: number } {
@@ -351,15 +343,13 @@ function canonicalJpeg(bytes: Buffer): { bytes: Buffer; width: number; height: n
     const payload = bytes.subarray(at + 2, at + length);
     at += length;
     if (marker >= 0xe0 && marker <= 0xef) {
-      // APPn: only a thumbnail-free JFIF APP0 and the fixed Adobe APP14 colour-transform marker survive.
-      if (marker === 0xe0 && !jfifKept && frame === undefined) {
-        const header = jfifHeader(payload);
-        if (header !== undefined) {
-          out.push(segment(0xe0, header));
-          jfifKept = true;
-        }
+      // APPn: a JFIF APP0 becomes the fixed canonical JFIF segment and an Adobe APP14 a fixed segment carrying only
+      // its colour transform; no other byte of either is copied. Everything else is dropped.
+      if (marker === 0xe0 && !jfifKept && frame === undefined && payload.length >= 5 && payload.toString('latin1', 0, 5) === 'JFIF\u0000') {
+        out.push(segment(0xe0, CANONICAL_JFIF));
+        jfifKept = true;
       } else if (marker === 0xee && !adobeKept && payload.length === 12 && payload.toString('latin1', 0, 5) === 'Adobe') {
-        out.push(segment(0xee, Buffer.from(payload)));
+        out.push(segment(0xee, canonicalAdobe(payload[11] as number)));
         adobeKept = true;
       }
       continue;

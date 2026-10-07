@@ -340,14 +340,11 @@ function isCredentialShaped(text: string): boolean {
 /** Printable-ASCII runs of at least this many bytes are screened by the credential guard. */
 const PRINTABLE_RUN_MIN = 8;
 /**
- * Hard budget of printable text collected from one image (fail closed: more is refused as `TOO_MUCH_TEXT`, never
- * skipped). A photo or screenshot carries a few KiB at most; random compressed data ~0.1 % of its size.
+ * Hard budget of printable text collected from one canonical image; the whole collected text is scanned in ONE pass
+ * (no windows, so no detector match can be split). More is refused as `TOO_MUCH_TEXT` (fail closed), never skipped.
+ * Measured locally: incompressible (noise) PNGs of 6 / 8 MiB yield 13 / 17 KiB; noise JPEGs of 3.3 / 11 MiB 9 / 1 KiB.
  */
-export const IMAGE_TEXT_BUDGET_CHARS = 2 * 1024 * 1024;
-/** The credential guard runs over windows of this size ... */
-export const IMAGE_TEXT_WINDOW_CHARS = 64 * 1024;
-/** ... overlapping by at least the longest detector match, so no match can straddle a window boundary. */
-export const IMAGE_TEXT_WINDOW_OVERLAP_CHARS = 1024;
+export const IMAGE_TEXT_BUDGET_CHARS = 256 * 1024;
 
 /** The printable-ASCII runs of ALL of `bytes` (like `strings`), newline-joined; `undefined` past the budget. */
 export function printableRuns(bytes: Buffer, budget = IMAGE_TEXT_BUDGET_CHARS): string | undefined {
@@ -371,18 +368,14 @@ export function printableRuns(bytes: Buffer, budget = IMAGE_TEXT_BUDGET_CHARS): 
 }
 
 /**
- * Screens every printable run of the canonical image (Codex P1 on 9a39152: the whole file, not a prefix) with the
- * strict credential guard, in overlapping bounded windows. `TOO_MUCH_TEXT` when the text exceeds the hard budget.
+ * Best-effort defense in depth over the canonical image (threat model in DECISIONS, ADR-0111 live QA follow-ups): every
+ * printable run of the whole file, joined and scanned once by both credential detectors. `TOO_MUCH_TEXT` past the
+ * budget.
  */
 export function screenImageText(bytes: Buffer): 'CLEAN' | 'CREDENTIAL_SHAPED' | 'TOO_MUCH_TEXT' {
   const text = printableRuns(bytes);
   if (text === undefined) return 'TOO_MUCH_TEXT';
-  const step = IMAGE_TEXT_WINDOW_CHARS - IMAGE_TEXT_WINDOW_OVERLAP_CHARS;
-  for (let start = 0; start < text.length; start += step) {
-    if (isCredentialShaped(text.slice(start, start + IMAGE_TEXT_WINDOW_CHARS))) return 'CREDENTIAL_SHAPED';
-    if (start + IMAGE_TEXT_WINDOW_CHARS >= text.length) break;
-  }
-  return 'CLEAN';
+  return isCredentialShaped(text) ? 'CREDENTIAL_SHAPED' : 'CLEAN';
 }
 
 /** Magic-byte check so a mislabeled upload is never handed on as an image. */
