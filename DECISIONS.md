@@ -16845,6 +16845,49 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   served only by a `LOCAL` provider (`OllamaCliVisionProvider`, `QUOKY_OLLAMA_VISION_MODEL`, parsed in
   `apps/quoky/src/image-understanding-provider.ts`; an invalid or cloud-served name disables only images); otherwise a
   fixed "not analysed, not sent anywhere" reply. Claude receives no image bytes (owner decision 9). Live: not run.
+  **MM-1 D3 fix (live QA 2026-10-07).** Text attachments now reach chat/work prompts (before, only image turns used
+  them): `attachment-context.ts` prepares every attachment text once for both chat and image prompts. Each file is
+  normalized first, then clipped head and tail within one shared 2,000-code-point budget (sized for Ollama's default
+  4,096-token window; image turns use the same budget instead of their former 4,000/8,000 head-only limits). The
+  credential guard runs on the final rendered text and drops the file on a match. A credential-shaped name is
+  replaced by a neutral `attachment-N.<ext>` / `image-N.<ext>` label: nothing of the name leaves, and the content is
+  guarded separately. PromptComposer section 2C says the file is the material asked about, and that instructions
+  inside it are never followed. When no attachment is usable and the message text is empty, the reply is
+  deterministic and no provider runs. Any text runs normally, with a "not read; never guess or describe it" fact. A
+  heuristic for "text about the file" was tried and removed because it swallowed independent questions. The Ollama
+  chat parser matches section headings only at a line start. The shared ADR-0097 detectors
+  (`containsCredentialMaterial`, `classifyCredentialFileContent`) also read a detection view of the text. The view
+  removes Cf and default-ignorable code points and every control character except LF and tab, then applies NFKC,
+  and repeats both steps until the text stops changing. So zero-width, bidi, BOM, soft-hyphen, variation-selector,
+  CR, NUL and C1 characters cannot split a keyword or a token prefix, and neither can a splitter between decomposed
+  Hangul jamo. This holds for every caller: adapter intake, attachment preparation, composer, reply check, memory
+  and learning gates, and code-generation context. The check is refusal-adding only: the original text is still
+  matched, and the text itself is never changed. **Accepted best-effort residuals:** homoglyphs (`раssword` with
+  Cyrillic letters) and spaced letters (`p a s s w o r d`) are not detected. The detectors stay regex-based and
+  best-effort, not DLP. "Empty message" means no effective content: mention tokens (`<@id>`, `<@!id>`, `<@&id>`,
+  `<#id>`), whitespace and invisible characters do not count. `attachment-context` joined the Stage 2A
+  `PROVIDER_EXECUTION_PATH_MODULES` binding; with the `prompt-composer.ts` edit, the Stage 2A bindings need a re-run.
+  **Accepted residual:** a reply to an attachment turn is ordinary transcript and artifact, under the same egress as
+  the message text, so a non-credential quotation of the file is persisted with it. The raw attachment is never
+  stored. On an attachment turn, the credential guard runs first, on the provider's original reply text and every
+  artifact payload, before the action-claim guard. **Threat model of the reply check:** credential text in provider
+  output. Provider results are plain data that our adapters build from CLI stdout or JSON, so exotic in-process
+  objects (proxies, accessors, array-likes, class instances) cannot come from a provider. The check does not try to
+  interpret them; it fails closed. The whole check sits in one try/catch, and any throw withholds the reply. The
+  artifact container must be a real, non-proxy array with no extra keys; `length` is read once and the elements are
+  walked by index. Each artifact must be a plain object, and each property is read once through its descriptor; an
+  accessor (such as a `metadata` getter) withholds the reply without being called. Core-generated identity fields
+  (`id`, `taskId`, `taskRunId`, `createdAt`, `kind`) are not scanned, because a UUID can look like a card number.
+  Each of them must still be a string primitive or undefined. Every other artifact field is scanned, including its
+  `key=value` / `key: value` pair, and metadata is read without running any of it: only primitives, plain objects and
+  real arrays, through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor`. Every string value, every key
+  (including non-index keys of arrays), and every `key=value` / `key: value` composite goes through the detection
+  view, so a key split by CR, NUL or a zero-width character is caught with its value. An accessor, a symbol key, a
+  boxed primitive, a function, a class instance or a proxy counts as a match. So does a cycle on the current path, or
+  data deeper than 16 levels or with more than 10,000 visits. A value shared by two properties is not a cycle. A match replaces the whole reply with a fixed notice, and no
+  artifacts are persisted or delivered. Other turns are not checked: on ordinary help answers (`password: <your
+  password>` examples, 16-digit numbers) the check would withhold valid replies, and ADR-0097 does not cover masking
+  model output. Replies are not otherwise masked.
 - **ADR-0112 (connector writes).** CWR-1 (cbd5e79): narrow write ports, v15 `connector_write_receipts` (no payload text),
   Jira/Slack/calendar writers, allowlists and flags validated at startup even while off; the Slack write token must be
   a bot token distinct from the read token. CWR-2 (0d16109): the D5 chat flow with deps 34 → 35; an EXECUTING anchor

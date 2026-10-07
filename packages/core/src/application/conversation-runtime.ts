@@ -22,6 +22,14 @@ import {
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
 } from './image-understanding';
+import {
+  hasEffectiveText,
+  hasNoUsableAttachment,
+  isAttachmentReplyWithheld,
+  renderAttachmentReplyWithheld,
+  renderAttachmentsNotRead,
+  withAttachedTextFiles,
+} from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
@@ -2257,6 +2265,20 @@ export class ConversationRuntime {
     const images = imageAttachmentsOf(message);
     if (images.length > 0) {
       return this.handleImageUnderstandingTurn(message, session, actor, images);
+    }
+    // (A3c) ADR-0111 D2/D3: no attachment of the message is usable — the adapter refused it (credential-like, too large,
+    // unsupported, …) or Core's final re-check dropped it — AND the message has no text. The adapter already named each
+    // refused file; no provider runs, so no model answers about a file it never got. "No text" means no effective
+    // content: mention tokens, whitespace and invisible characters do not count. A message with ANY other text routes
+    // normally (guessing whether the text is "about the file" swallowed independent questions); a chat prompt then
+    // states that the attachment was not read and must not be guessed.
+    if (hasNoUsableAttachment(message) && !hasEffectiveText(message.text)) {
+      // Content-free: a count only, never a file name or reason text.
+      this.deps.logger.info('attachment turn answered without a provider', {
+        attachmentCount: message.attachments?.length ?? 0,
+      });
+      const text = renderAttachmentsNotRead(noticeLanguage(undefined, message.text));
+      return this.respondComposed(message, session, { context: message.context, text });
     }
     // (A4) ADR-0096 `post-anchor` turn handlers — every pending approval / scope clarification / `*_PENDING`
     // intercept above has already captured its turn, so a handler can never pre-empt a decision. Runs BEFORE the
@@ -6994,9 +7016,14 @@ export class ConversationRuntime {
         : undefined;
       // ADR-0100 D8 / ADR-0096 D4: a connector work summary is self-contained — no short-term history or durable
       // recall is read for it (PromptComposer also ignores the bundle for an external-work readout).
+      // ADR-0111 D3: the current message's text attachments join the bundle as one bounded, untrusted Resource
+      // (from the InboundMessage only; never persisted). A work summary stays self-contained and carries none.
       const bundle: ContextBundle = isExternalWorkReadout(readout)
         ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
-        : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
+        : withAttachedTextFiles(
+            await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []),
+            message,
+          );
 
       // W3-L01 (ADR-0104 D3, ADR-0106): an own-memory recall question ("내가 좋아하는 과일이 뭐였지?") whose assembled
       // context holds nothing relevant — no active durable recall (archived/expired/superseded records never reach the
@@ -7056,8 +7083,10 @@ export class ConversationRuntime {
             throw new Error('Accepted routing result is incomplete');
           }
           providerId = routed.acceptedProviderId;
-          const replyText = this.guardChatReply(capability, routed.output.text, task.description, task.id);
-          const artifacts: Artifact[] = routed.output.artifacts.map((artifact) => ({ ...artifact }));
+          // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
+          const withheld = this.withheldAttachmentReply(bundle, message, routed.output.text, routed.output.artifacts, task.id);
+          const replyText = withheld?.text ?? this.guardChatReply(capability, routed.output.text, task.description, task.id);
+          const artifacts: Artifact[] = withheld ? [] : routed.output.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
           await this.deps.tasks.completeRun(run, {
             artifactIds,
@@ -7111,7 +7140,11 @@ export class ConversationRuntime {
       await this.deps.dispatchCommit.commit(run.id, run.id);
       const executed = await provider.execute(executionRequest);
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
-      const result = { ...executed, text: this.guardChatReply(capability, executed.text, task.description, task.id) };
+      // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
+      const withheld = this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
+      const result = withheld
+        ? { ...executed, ...withheld }
+        : { ...executed, text: this.guardChatReply(capability, executed.text, task.description, task.id) };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       // ADR-0107 measurement hook: the run records how many curated examples it carried (a count, never text or ids),
@@ -7169,6 +7202,27 @@ export class ConversationRuntime {
       ...(taskId ? { taskId } : {}),
     });
     return guarded.text;
+  }
+
+  /**
+   * ADR-0111 D3: on a turn whose prompt carried attachment text, the provider's ORIGINAL reply and every artifact
+   * payload are checked by the credential guard before any other reply guard runs. A match withholds the whole reply:
+   * a fixed notice and no artifacts, before anything is persisted or delivered. `null` lets the reply through to the
+   * usual guards. Turns without attachment text are not checked here: a general check would withhold ordinary help
+   * answers (`password: <your password>` examples, 16-digit numbers) and is not part of ADR-0097's scope.
+   */
+  private withheldAttachmentReply(
+    bundle: ContextBundle,
+    message: InboundMessage,
+    text: string,
+    artifacts: readonly Artifact[],
+    taskId: Id,
+  ): { text: string; artifacts: Artifact[] } | null {
+    if ((bundle.currentAttachments?.textFiles.length ?? 0) === 0) return null;
+    if (!isAttachmentReplyWithheld(text, artifacts)) return null;
+    // Content-free.
+    this.deps.logger.info('attachment turn reply withheld', { taskId });
+    return { text: renderAttachmentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }
 
   /**
@@ -7236,7 +7290,17 @@ export class ConversationRuntime {
       await this.deps.dispatchCommit.commit(run.id, run.id);
       const executed = await provider.execute(request);
       // ADR-0104 D1: the provider-neutral internal-action claim guard also covers an image reply.
-      const result = { ...executed, text: this.guardChatReply(capability, executed.text, message.text, task.id) };
+      // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
+      const withheld = this.withheldAttachmentReply(
+        withAttachedTextFiles({ taskId: task.id, conversationTranscript: [], backgroundResources: [] }, message),
+        message,
+        executed.text,
+        executed.artifacts ?? [],
+        task.id,
+      );
+      const result = withheld
+        ? { ...executed, ...withheld }
+        : { ...executed, text: this.guardChatReply(capability, executed.text, message.text, task.id) };
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       await this.deps.tasks.completeRun(run, {
         artifactIds,

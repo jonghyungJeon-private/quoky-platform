@@ -1378,6 +1378,13 @@ export const PROVIDER_EXECUTION_PATH_MODULES: readonly BindingModule[] = Object.
     'packages/core/dist/application/prompt-composer.js',
     CORE_BUILD_INFO,
   ),
+  // ADR-0111 D3: PromptComposer renders attachment text through this module (preparation, prompt-safe names, guard).
+  bindingModule(
+    'core-attachment-context',
+    'packages/core/src/application/attachment-context.ts',
+    'packages/core/dist/application/attachment-context.js',
+    CORE_BUILD_INFO,
+  ),
   bindingModule(
     'core-chat-response-policy',
     'packages/core/src/application/chat-policy/chat-response-policy.ts',

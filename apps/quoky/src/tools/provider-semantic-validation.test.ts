@@ -663,6 +663,7 @@ describe('Finding 2: static code binding', () => {
     expect(ids).toContain('harness-cli');
     expect(ids).toContain('ai-cli-runner');
     expect(ids).toContain('core-prompt-composer');
+    expect(ids).toContain('core-attachment-context');
     expect(ids).toContain('core-prompt-renderer');
     expect(ids).toContain('core-chat-response-policy');
     expect(ids).toContain('ai-cli-output-sanitizer');

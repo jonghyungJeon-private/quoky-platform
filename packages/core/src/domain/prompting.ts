@@ -81,6 +81,29 @@ export interface CuratedExampleEntry {
 }
 
 /**
+ * One text file attached to the CURRENT User message (ADR-0111 D3): the bounded, credential-guarded readout the User
+ * asked about. Untrusted data — never instructions, never a fact, never written to a workspace or durable memory.
+ */
+export interface AttachedTextFileEntry {
+  /** Display name as uploaded (sanitized and bounded by the adapter, clipped again by Core). Untrusted. */
+  name: string;
+  /** The file text, clipped to the per-turn bounds. */
+  content: string;
+  /** Whether `content` was clipped. */
+  truncated: boolean;
+  provenance: 'USER_ATTACHMENT';
+  epistemicStatus: 'UNTRUSTED_ATTACHED_DATA';
+}
+
+/** The current User message's attachments as the prompt sees them (ADR-0111 D3). */
+export interface CurrentTurnAttachments {
+  /** Readable text files, in upload order. */
+  textFiles: AttachedTextFileEntry[];
+  /** Attachments of the same message that were NOT read (refused by intake or by Core's re-check); no content. */
+  notReadCount: number;
+}
+
+/**
  * Assembled, budgeted context for a single execution (ADR-0002 / ADR-0063).
  * Current-turn facts stay on Task; this bundle owns only bounded conversation
  * history and non-authoritative background resources.
@@ -99,6 +122,12 @@ export interface ContextBundle {
    * the composer layers them only for a provider that declares `LOCAL` execution (ADR-0107 D6).
    */
   curatedExamples?: CuratedExampleEntry[];
+  /**
+   * ADR-0111 D3: the text files attached to the current User message (set by the runtime from `InboundMessage`, never
+   * read from storage). Absent when the message had none; the prompt is then byte-identical to a message without
+   * attachments.
+   */
+  currentAttachments?: CurrentTurnAttachments;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   classifyCredentialFileContent,
   containsCredentialFileContent,
   containsCredentialMaterial,
+  credentialDetectionView,
   CREDENTIAL_SCAN_MAX_RUN,
 } from './credential-guard';
 import { baselineFileContentRefusal } from './credential-guard-baseline';
@@ -537,5 +538,83 @@ describe('classifyCredentialFileContent is bounded-time on adversarial 256 KiB i
         refused: baselineFileContentRefusal(`${key} = "x"`) !== null,
       });
     }
+  });
+});
+
+describe('detection view: invisible and control characters cannot split a credential (ADR-0097, ADR-0111 re-review)', () => {
+  const VALUE = 'demo-review-value';
+  const SPLITTERS: ReadonlyArray<readonly [string, string]> = [
+    ['U+200B zero-width space', '\u200B'],
+    ['U+200C zero-width non-joiner', '\u200C'],
+    ['U+200D zero-width joiner', '\u200D'],
+    ['U+2060 word joiner', '\u2060'],
+    ['U+202E right-to-left override', '\u202E'],
+    ['U+2066 left-to-right isolate', '\u2066'],
+    ['U+FEFF byte order mark', '\uFEFF'],
+    ['U+00AD soft hyphen', '\u00AD'],
+    ['U+FE0F variation selector', '\uFE0F'],
+    ['U+E0101 variation selector supplement', '\u{E0101}'],
+    ['U+034F combining grapheme joiner', '\u034F'],
+    ['CR', '\r'],
+    ['NUL', '\u0000'],
+    ['U+0085 C1 next line', '\u0085'],
+    ['U+009B C1 CSI', '\u009B'],
+    ['DEL', '\u007F'],
+  ];
+
+  it.each(SPLITTERS)('%s inside the keyword: chat and file detectors both refuse', (_label, ch) => {
+    const chat = 'my pass' + ch + 'word=' + VALUE;
+    const file = 'db_pass' + ch + 'word = "' + VALUE + '"\n';
+    expect(containsCredentialMaterial(chat)).toBe(true);
+    expect(containsCredentialFileContent(file)).toBe(true);
+    expect(classifyCredentialFileContent(file)).toEqual({ kind: 'credential-assignment', line: 1 });
+  });
+
+  it.each(SPLITTERS)('%s inside a token prefix: chat and file detectors both refuse', (_label, ch) => {
+    const token = 's' + ch + 'k-' + 'A'.repeat(24);
+    const ghToken = 'gh' + ch + 'p_' + 'b'.repeat(36);
+    expect(containsCredentialMaterial('key ' + token)).toBe(true);
+    expect(containsCredentialMaterial('key ' + ghToken)).toBe(true);
+    expect(classifyCredentialFileContent('KEY = ' + token + '\n')).toEqual({ kind: 'secret-token' });
+  });
+
+  it.each([
+    ['U+200B', '\u200B'],
+    ['U+200C', '\u200C'],
+    ['U+034F', '\u034F'],
+    ['U+FEFF', '\uFEFF'],
+    ['CR', '\r'],
+  ])('decomposed Hangul (NFD) split by %s between the first two jamo is refused (strip and NFKC to a fixed point)', (_label, ch) => {
+    const jamo = '비밀번호'.normalize('NFD');
+    const text = jamo.slice(0, 1) + ch + jamo.slice(1) + '는 ' + VALUE;
+    expect(containsCredentialMaterial(text)).toBe(true);
+    expect(credentialDetectionView(text)).toBe('비밀번호는 ' + VALUE);
+  });
+
+  it('NFKC: full-width keyword and token prefix are refused', () => {
+    expect(containsCredentialMaterial('ｐａｓｓｗｏｒｄ=' + VALUE)).toBe(true);
+    expect(containsCredentialMaterial('ｓｋ－' + 'A'.repeat(24))).toBe(true);
+  });
+
+  it('keeps line numbers: a split keyword on line 3 reports line 3, even with CRLF endings', () => {
+    const content = 'a = 1\r\nb = 2\r\napi_' + '\u200B' + 'key = "' + VALUE + '"\r\n';
+    expect(classifyCredentialFileContent(content)).toEqual({ kind: 'credential-assignment', line: 3 });
+  });
+
+  it('is detection only: the view strips invisibles, the caller keeps the original text', () => {
+    const original = 'pass' + '\u200B' + 'word=' + VALUE;
+    expect(credentialDetectionView(original)).toBe('password=' + VALUE);
+    expect(credentialDetectionView('line 1\n\tline 2')).toBe('line 1\n\tline 2');
+    expect(original).toContain('\u200B');
+  });
+
+  it('refusal-adding only: a match on the original text is never lost to the view', () => {
+    // Removing NUL would glue the prefix to the preceding letter and break `\bsk-`; the original still matches.
+    expect(containsCredentialMaterial('x' + '\u0000' + 'sk-' + 'A'.repeat(24))).toBe(true);
+  });
+
+  it('does not refuse harmless text that merely contains invisible characters', () => {
+    expect(containsCredentialMaterial('hello' + '\u200B' + 'world, 비밀' + '\u200C' + '번호 정책 문서')).toBe(false);
+    expect(containsCredentialFileContent('const greeting = ' + '\uFEFF' + 'getGreeting();\n')).toBe(false);
   });
 });

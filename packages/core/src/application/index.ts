@@ -10,6 +10,7 @@ export * from './intent-classifier';
 export * from './planner';
 export * from './context-builder';
 export * from './prompt-composer';
+export * from './attachment-context';
 export * from './continuation-prompt';
 export * from './prompt-renderer';
 export * from './task-manager';

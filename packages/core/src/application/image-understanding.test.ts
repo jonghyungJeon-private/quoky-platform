@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { InboundAttachment, InboundMessage } from '../domain';
 import {
   MAX_IMAGE_CAPTION_CHARS,
-  MAX_IMAGE_TURN_TEXT_ATTACHMENT_CHARS,
-  MAX_IMAGE_TURN_TEXT_ATTACHMENTS_TOTAL_CHARS,
   MAX_IMAGE_UNDERSTANDING_PROMPT_CHARS,
   composeImageUnderstandingPrompt,
   imageAttachmentsOf,
@@ -11,6 +9,7 @@ import {
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
 } from './image-understanding';
+import { MAX_ATTACHED_TEXT_TOTAL_CHARS } from './attachment-context';
 
 const img = (n: number): InboundAttachment => ({
   kind: 'image',
@@ -66,8 +65,8 @@ describe('image-understanding (ADR-0111 MM-2)', () => {
     );
   });
 
-  it('bounds the caption, each text file, all text files and the whole prompt', () => {
-    const files = [1, 2, 3].map((n) => txt(`f${n}.log`, String(n).repeat(MAX_IMAGE_TURN_TEXT_ATTACHMENT_CHARS * 2)));
+  it('bounds the caption and the whole prompt; text files share the ADR-0111 D3 head-and-tail budget (P2-7)', () => {
+    const files = [1, 2, 3].map((n) => txt(`f${n}.log`, `HEAD-${n}\n${'row ok\n'.repeat(2_000)}TAIL-${n}`));
     const prompt = composeImageUnderstandingPrompt({
       caption: '가'.repeat(MAX_IMAGE_CAPTION_CHARS * 3),
       images: [img(1), img(2), img(3)] as never,
@@ -79,10 +78,26 @@ describe('image-understanding (ADR-0111 MM-2)', () => {
     const fileLines = prompt.split('\n').filter((line) => /^\[\d\] name=/u.test(line));
     expect(fileLines).toHaveLength(3);
     expect(fileLines.every((line) => line.includes('truncated=true'))).toBe(true);
-    const contentChars = fileLines
-      .map((line) => JSON.parse(line.slice(line.indexOf('content=') + 'content='.length)) as string)
-      .reduce((sum, content) => sum + points(content), 0);
-    expect(contentChars).toBe(MAX_IMAGE_TURN_TEXT_ATTACHMENTS_TOTAL_CHARS);
+    const contents = fileLines.map((line) => JSON.parse(line.slice(line.indexOf('content=') + 'content='.length)) as string);
+    expect(contents.reduce((sum, content) => sum + points(content), 0)).toBeLessThanOrEqual(MAX_ATTACHED_TEXT_TOTAL_CHARS);
+    contents.forEach((content, i) => {
+      expect(content.startsWith(`HEAD-${i + 1}`)).toBe(true);
+      expect(content.endsWith(`TAIL-${i + 1}`)).toBe(true);
+    });
+  });
+
+  it('P1-2/P1-1: credential-shaped names become neutral labels and an escape-split secret file is not sent', () => {
+    const secretName = 'sk-' + 'B'.repeat(24);
+    const prompt = composeImageUnderstandingPrompt({
+      caption: '설명해줘',
+      images: [{ ...img(1), name: `${secretName}.png` }] as never,
+      textAttachments: [txt(`${secretName}.log`, 'ok'), txt('n.txt', 'pass' + '\u001b[31m' + 'word=demo-review-value')] as never,
+    });
+    expect(prompt).toContain('image/png name="image-1.png"');
+    expect(prompt).toContain('[1] name="attachment-1.log"');
+    expect(prompt).not.toContain('B'.repeat(24));
+    expect(prompt).not.toContain('demo-review-value');
+    expect(prompt).toContain('Attached text files not read (refused): 1.');
   });
 
   it('untrusted parts are JSON-quoted on one line, so none can start a section', () => {
