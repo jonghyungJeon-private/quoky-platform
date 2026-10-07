@@ -17264,9 +17264,11 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      (`UNSUPPORTED_TYPE`, logged `INVALID_IMAGE` with a check code). Only the canonical bytes are written to the temp
      file, so only they reach Claude or Ollama vision. **Kept fields (Coordinator decision after the third Codex
      round):** PNG keeps only `IHDR`, `sRGB` (1 byte 0–3), `gAMA` (4 bytes > 0), `PLTE` (indexed colour only, required:
-     length a multiple of 3, ≤ 768 and ≤ 2^depth entries, invalid refuses the image), `tRNS` (indexed colour only, after
-     `PLTE`, ≤ one entry per palette colour), the re-deflated `IDAT` and `IEND`; `cHRM`, `pHYs`, grey/RGB `tRNS`, a
-     suggested RGB(A) palette and every other chunk are dropped — the image renders without them. JPEG: a JFIF `APP0`
+     length a multiple of 3, ≤ 768 and ≤ 2^depth entries, invalid refuses the image), `tRNS` (before `IDAT`; indexed:
+     after `PLTE`, ≤ one entry per palette colour; grey: exactly 2 bytes, RGB: exactly 6 bytes, each sample ≤
+     2^bitDepth − 1; never for grey+alpha/RGBA — kept because dropping it made transparent images opaque, Codex P2 on
+     3968792), the re-deflated `IDAT` and `IEND`; `cHRM`, `pHYs`, a malformed `tRNS`, a suggested RGB(A) palette and
+     every other chunk are dropped — the image renders without them. JPEG: a JFIF `APP0`
      is replaced by a fixed canonical segment (version 1.01, units 0, density 1×1, no thumbnail; no input byte copied)
      and an Adobe `APP14` by a fixed segment carrying only the colour transform clamped to 0–2. The WebP `VP8X` is
      rebuilt as before.
@@ -17281,7 +17283,8 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      never skipped (fail closed). Measured locally: noise PNGs of 6 / 8 MiB yield 13 / 17 KiB of printable text, noise
      JPEGs of 3.3 / 11 MiB 9 / 1 KiB, real charts and photos under 1 KiB; an 8 MiB noise PNG canonicalizes in ~150 ms
      and screens in ~75 ms.
-     **Residuals:** (a) deliberately crafted bytes in required structural fields — indexed `PLTE`/`tRNS`, JPEG
+     **Residuals:** (a) deliberately crafted bytes in required structural fields — indexed `PLTE`/`tRNS`, the 2- or
+     6-byte grey/RGB `tRNS` colour key, JPEG
      `DQT`/`DHT`/`SOF` tables, JPEG scan data and WebP `VP8 `/`VP8L`/`ALPH` bitstreams, and pixel data — are not screened
      beyond the best-effort text scan, which a short credential (e.g. 5 bytes) or one glued to a preceding letter
      evades (the detectors' word-boundary semantics are those of text attachments); (b) content in the pixels

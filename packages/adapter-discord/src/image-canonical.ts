@@ -10,9 +10,10 @@ import type { InboundImageMimeType } from '@quoky/core';
  *   out of order, non-consecutive `IDAT`s or any byte after `IEND` is refused; `IHDR` is validated (dimensions up to
  *   {@link MAX_IMAGE_DIMENSION}, a legal bit depth / colour type, no unknown methods). The image data is inflated, its
  *   exact scanline size and filter bytes are checked, and it is RE-DEFLATED into one fresh `IDAT`; the output is
- *   `IHDR`, `sRGB` (1 byte 0–3), `gAMA` (4 bytes > 0), `PLTE` and `tRNS` (indexed colour only), `IDAT`, `IEND`, each
- *   kept only with its exact structure. Text, metadata, profiles, `cHRM`, `pHYs`, grey/RGB `tRNS` and every other
- *   chunk (`tEXt`, `zTXt`, `iTXt`, `eXIf`, `iCCP`, …) are dropped.
+ *   `IHDR`, `sRGB` (1 byte 0–3), `gAMA` (4 bytes > 0), `PLTE` (indexed colour only), `tRNS` (indexed, or exactly 2 /
+ *   6 bytes for grey / RGB with samples within the bit depth), `IDAT`, `IEND`, each kept only with its exact structure.
+ *   Text, metadata, profiles, `cHRM`, `pHYs` and every other chunk (`tEXt`, `zTXt`, `iTXt`, `eXIf`, `iCCP`, …) are
+ *   dropped.
  * - **JPEG:** every segment from `SOI` to `EOI` is walked and its length validated; table segments are parsed to their
  *   exact length; only baseline / extended / progressive Huffman frames are accepted; `APP1`–`APP13`, `APP15` and
  *   `COM` are dropped, a JFIF `APP0` is replaced by a fixed canonical JFIF segment and an Adobe `APP14` by a fixed
@@ -210,10 +211,9 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
           !colorSpace.some((c) => c.toString('latin1', 4, 8) === type)
         ) {
           colorSpace.push(pngChunk(type, Buffer.from(data)));
-        } else if (type === 'tRNS' && trns === undefined && (ihdr as Buffer)[9] === 3 && seenPlte) {
-          // Indexed colour only (palette transparency); validated against the palette size when the output is assembled.
-          // Grey/RGB tRNS (one free colour value), cHRM, pHYs and every other ancillary are dropped: the image renders
-          // without them and they would carry free values.
+        } else if (type === 'tRNS' && trns === undefined && ((ihdr as Buffer)[9] !== 3 || seenPlte)) {
+          // Transparency changes rendering, so it is kept (validated against the colour type, bit depth and palette size
+          // when the output is assembled). cHRM, pHYs and every other ancillary are dropped.
           trns = Buffer.from(data);
         }
     }
@@ -251,8 +251,18 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
     if ((raw[at] as number) > 4) fail('BAD_IMAGE_DATA');
     at += row;
   }
-  // Kept only for indexed colour, bounded by the palette size.
-  const trnsOk = trns !== undefined && colorType === 3 && plte !== undefined && trns.length >= 1 && trns.length <= plte.length / 3;
+  // tRNS: indexed — 1..palette-size alpha bytes; grey — exactly 2 bytes, RGB — exactly 6 bytes, each 16-bit sample
+  // within the bit depth; never for grey+alpha or RGBA (Codex P2 on 3968792: dropping it made transparent images opaque).
+  const sampleMax = 2 ** depth - 1;
+  const samplesOk = (data: Buffer) => {
+    for (let i = 0; i < data.length; i += 2) if (data.readUInt16BE(i) > sampleMax) return false;
+    return true;
+  };
+  const trnsOk =
+    trns !== undefined &&
+    ((colorType === 3 && plte !== undefined && trns.length >= 1 && trns.length <= plte.length / 3) ||
+      (colorType === 0 && trns.length === 2 && samplesOk(trns)) ||
+      (colorType === 2 && trns.length === 6 && samplesOk(trns)));
   const out = Buffer.concat([
     PNG_SIGNATURE,
     pngChunk('IHDR', header),

@@ -203,13 +203,34 @@ describe('PNG keeps only IHDR, sRGB, gAMA, indexed PLTE/tRNS, IDAT, IEND, each w
     expect(kept([palette(2)], 4)).toEqual(['IHDR', 'IDAT', 'IEND']);
   });
 
-  it('tRNS: kept only for indexed colour, after PLTE, with at most one entry per palette colour', () => {
+  it('tRNS: indexed after PLTE with at most one entry per palette colour; never for grey+alpha or RGBA', () => {
     expect(kept([palette(4), pngChunk('tRNS', Buffer.alloc(4))], 3)).toEqual(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']);
     expect(kept([palette(4), pngChunk('tRNS', Buffer.alloc(5))], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
     expect(kept([pngChunk('tRNS', Buffer.alloc(1)), palette(4)], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
-    for (const colorType of [0, 2, 4, 6] as const) {
-      expect(kept([pngChunk('tRNS', Buffer.alloc(colorType === 0 ? 2 : 6))], colorType)).toEqual(['IHDR', 'IDAT', 'IEND']);
-    }
+    expect(kept([pngChunk('tRNS', Buffer.alloc(2))], 4)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 6)).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+
+  it.each([
+    ['grey', 0 as const, Buffer.from([0x00, 0x00])],
+    // The builder's 1x1 RGB pixel is (0, 16, 32); the key matches it, so the pixel is fully transparent.
+    ['RGB', 2 as const, Buffer.from([0x00, 0x00, 0x00, 0x10, 0x00, 0x20])],
+  ])('a transparent 1x1 %s PNG keeps its tRNS byte-for-byte, so the pixel stays alpha 0 (Codex P2 on 3968792)', (_label, colorType, value) => {
+    const trns = pngChunk('tRNS', value);
+    const input = pngImage({ width: 1, height: 1, colorType, beforeIdat: [trns] });
+    const out = ok(canonicalizeImage(input, 'image/png'));
+    expect(pngChunkTypes(out)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
+    expect(out.includes(trns)).toBe(true);
+  });
+
+  it('a grey/RGB tRNS with the wrong length or a sample above the bit depth is dropped', () => {
+    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 0)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(2))], 2)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.concat([Buffer.alloc(6), Buffer.from('pw' + 'd=x', 'latin1')]))], 2)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    // 8-bit samples: 0x0100 is out of range.
+    expect(kept([pngChunk('tRNS', Buffer.from([0x01, 0x00]))], 0)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.from([0, 0, 0, 0xff, 0x01, 0x00]))], 2)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.from([0, 0xff]))], 0)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
   });
 });
 
