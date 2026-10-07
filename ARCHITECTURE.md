@@ -327,8 +327,8 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Importing a concrete provider, Discord, SQLite, or a CLI from `@quoky/core`.
 - ❌ Branching on a provider `id` anywhere in Core.
 - ❌ Letting any platform/storage/driver type cross a port boundary.
-- ❌ Pinning an AI provider to a Session/Task/Actor.
-- ❌ Surfacing the selected provider to the user as a normal behavior.
+- ❌ Pinning an AI provider to a Session/Task/Actor. (Exception, owner-approved 2026-10-07: an owner's explicit session-scoped chat-tier/image **preference** set by an owner command — ADR-0092 amendment — is a routing preference, not a pin: capability routing, readiness probes and the Claude fallback still apply, and it never affects code/review/policy capabilities.)
+- ❌ Surfacing the selected provider to the user as a normal behavior. (Explicit owner requests — `모델 상태`, the operations UI providers panel — may show the effective selection; ordinary replies never do.)
 - ❌ Storing context/memory **snapshots** on Session (rebuild per run).
 - ❌ Merging `Resource` (input) and `Artifact` (output).
 - ❌ Auto-commit / auto-push / auto-delete / force-push / external write without

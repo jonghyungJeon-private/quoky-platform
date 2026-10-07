@@ -14658,7 +14658,11 @@ reconciliation with ADR-0064/ADR-0090 routing.
   7. **Not a provider pin (ARCHITECTURE.md §12).** The override stores a selection label, never a provider instance or
      id; the router still selects by capability and readiness, falls back to Claude when the choice is not ready, and
      applies it to the chat tier only. It is the owner's tier preference that principle 1 now names, not "pinning an AI
-     provider to a Session"; this reading is for the Chief Architect review to confirm.
+     provider to a Session". Owner-approved 2026-10-07 and recorded in place in ARCHITECTURE.md §12: the "Pinning an AI
+     provider to a Session/Task/Actor" bullet carries the session-scoped owner-preference exception, and the "Surfacing
+     the selected provider" bullet allows only explicit owner requests (`모델 상태`, the operations UI providers panel) to
+     show the effective selection; ordinary replies never do (the composer, the runtime and every turn handler other than
+     `model-selection` emit no selection or provider label; `task_runs.providerId` stays audit-only).
   8. **Chat command** (ADR-0096 handler `model-selection`, `pre-classify` order 70 — after learning 60, before to-dos
      100; amends ADR-0096 D5): `모델 상태` / `/model status`, `모델 목록` / `/model` (numbered; numbers valid 30 minutes in
      that conversation, like the ADR-0107 listings), `모델 변경: <choice|N>` / `/model <choice>`, `이미지 모델 변경: …` /
