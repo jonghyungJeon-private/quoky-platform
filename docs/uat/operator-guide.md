@@ -253,7 +253,9 @@ default, `LOCAL` and `REMOTE` only when `claude` is selected (the policy is deri
 provider id). The Claude vision provider runs `claude -p` with the same isolation flags as chat
 (`--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`, neutral cwd) plus
 `--input-format stream-json --output-format stream-json --verbose --tools ""`: the image goes on stdin as a base64
-image content block, no tool is enabled, and the temp-file path and bytes never appear in argv, logs or errors. Limits:
+image content block, no tool is enabled, and the temp-file path and bytes never appear in argv, logs or errors (failure
+messages are fixed reasons and codes, never CLI output). This is specific to the Claude adapter: the local Ollama
+vision adapter passes the temp-file paths as `ollama run` arguments (redacted to `<image>` in its audit). Limits:
 PNG, JPEG or WebP (content signature checked), 8 MiB per image, 3 images per turn, 120 s per call. `task_runs` audit
 metadata carries the model, the image count, total bytes and SHA-256 hashes only. The startup log line
 `image understanding uses a cloud provider` and the operations UI providers panel field "이미지 이해 공급자 (설정)" show

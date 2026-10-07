@@ -112,7 +112,7 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
     지원하는 모델). 이미지는 이 컴퓨터를 떠나지 않습니다. 이름에 `cloud`가 들어간 모델은 거부합니다.
   - `claude` — Claude CLI가 이미지를 읽습니다. **첨부 이미지가 Anthropic(클라우드)으로 전송됩니다.** 모델은
     `QUOKY_IMAGE_UNDERSTANDING_MODEL`, 없으면 `QUOKY_CLAUDE_MODEL`, 없으면 `sonnet`. 대화용 Claude와 같은 격리 옵션으로
-    실행하고 도구는 모두 끕니다. 이미지는 파일 경로가 아니라 표준 입력의 이미지 블록으로 보냅니다. Claude CLI가 설치되고
+    실행하고 도구는 모두 끕니다. 이미지는 파일 경로가 아니라 표준 입력의 이미지 블록으로 보냅니다 (`claude`만 해당. `ollama`는 임시 파일 경로를 `ollama run` 인자로 넘깁니다). Claude CLI가 설치되고
     로그인되어 있어야 "준비됨"입니다 (`claude auth status`).
   - `off` — 이미지 분석을 쓰지 않습니다.
   - **설정하지 않으면** 예전과 같습니다: `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off`. 이때는 이미지 바이트가

@@ -16966,7 +16966,10 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      --input-format stream-json --output-format stream-json --verbose --tools ""` in a neutral cwd. Stdin is one
      stream-json `user` message: the base64 image blocks (`{type:'image', source:{type:'base64', media_type, data}}`) in
      upload order, then the rendered prompt as a text block. No tool is enabled; the temp-file path and bytes never
-     appear in argv, logs, errors, the result or the audit (counts, total bytes and SHA-256 hashes only). Limits: PNG /
+     appear in argv, logs, errors, the result or the audit (counts, total bytes and SHA-256 hashes only). Every failure
+     message is a fixed reason with bounded codes and never carries CLI output, which may echo the stdin payload (Codex
+     P2 on 3322ea2). This no-path-in-argv property is the Claude adapter's only: the local Ollama vision adapter still
+     passes the temp-file paths as `ollama run` arguments (redacted to `<image>` in its audit), unchanged. Limits: PNG /
      JPEG / WebP by content signature, 8 MiB per image checked on the open descriptor (no symlink), 3 images, 120 s.
      Readiness is `claude auth status --json` (`loggedIn: true`): CLI present and logged in. Shape verified against
      Claude Code 2.1.292 with one real call on 2026-10-07 (owner-approved).

@@ -8,6 +8,7 @@ import {
   AiProviderManager,
   Capability,
   CapabilityRouter,
+  describeAiFailure,
   executionLocalityOf,
 } from '@quoky/core';
 import type { AiImageInput, AiRequest } from '@quoky/core';
@@ -235,6 +236,45 @@ describe('ClaudeCliVisionProvider — execute', () => {
     expect(error).toMatchObject({ kind });
     expect(String((error as Error).message)).not.toContain(dir);
     expect(String((error as Error).message)).not.toContain(PNG.toString('base64'));
+  });
+
+  it('Codex P2: CLI text that echoes the payload (image base64, prompt) never reaches the error, summary or audit', async () => {
+    // A larger image so the base64 is long enough to probe for substrings.
+    const big = join(dir, 'echo.png');
+    writeFileSync(big, Buffer.concat([PNG, Buffer.from(Array.from({ length: 300 }, (_, i) => (i * 37) % 256))]));
+    const prompt = '# Task\nUser request: "PROMPT_ECHO_MARKER"';
+    const dataOf = (input: string) =>
+      ((JSON.parse(input) as { message: { content: Array<{ source?: { data: string } }> } }).message.content[0]?.source?.data ?? '');
+    const echoes: Array<[string, (data: string, input: string) => CliRunResult]> = [
+      ['stderr, exit 1', (data, input) => ({ code: 1, stdout: '', stderr: `invalid image data: ${data} ${input}`, timedOut: false })],
+      ['plain stdout, exit 1', (data) => ({ code: 1, stdout: `Error: bad image ${data}\n`, stderr: '', timedOut: false })],
+      ['stream-json error result, exit 1', (data) => ({
+        code: 1, stdout: streamJson({ subtype: 'error_during_execution', is_error: true, result: `bad ${data}` }), stderr: data, timedOut: false,
+      })],
+      ['stream-json error result, exit 0', (data) => ok(streamJson({ subtype: data.slice(0, 40), is_error: true, api_error_status: 400, result: `bad ${data}` }), data)],
+      ['spawn failure', (data) => ({ code: null, stdout: '', stderr: `cannot run ${data}`, timedOut: false })],
+      ['timeout', (data) => ({ code: null, stdout: data, stderr: data, timedOut: true })],
+      ['no result event', (data) => ok(`${data}\n`, data)],
+    ];
+    for (const [label, respond] of echoes) {
+      let data = '';
+      const { runner } = recordingRunner((_args, opts) => {
+        data = dataOf(opts.input);
+        return respond(data, opts.input);
+      });
+      const error = await new ClaudeCliVisionProvider({ model: 'sonnet', runner })
+        .execute(imageRequest([{ path: big, mimeType: 'image/png' }], prompt))
+        .catch((err: unknown) => err);
+      expect(data.length, label).toBeGreaterThan(200);
+      expect(error, label).toBeInstanceOf(Error);
+      const persisted = JSON.stringify([(error as Error).message, describeAiFailure(error), (error as { audit?: unknown }).audit ?? null]);
+      for (const probe of [data.slice(0, 40), data.slice(100, 140), data.slice(-40)]) {
+        expect(persisted, `${label}: base64 leaked`).not.toContain(probe);
+      }
+      expect(persisted, label).not.toContain('PROMPT_ECHO_MARKER');
+      expect(persisted, label).not.toContain(dir);
+      expect((error as Error).message, label).toMatch(/^claude vision CLI [a-z ]+/u);
+    }
   });
 
   it('requires IMAGE_UNDERSTANDING and 1–3 distinct images; spawns nothing otherwise', async () => {

@@ -12,7 +12,7 @@ import type {
   Artifact,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
-import { defaultCliRunner, maskSecrets } from './cli-runner';
+import { defaultCliRunner } from './cli-runner';
 import type { CliRunner } from './cli-runner';
 import { sanitizeTerminalOutput } from './output-sanitizer';
 
@@ -118,6 +118,9 @@ export function buildClaudeVisionStreamJsonInput(
   return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
 }
 
+/** `result` event subtypes named in a failure reason; anything else is reported as `error`. */
+const KNOWN_RESULT_SUBTYPES: readonly string[] = ['success', 'error_during_execution', 'error_max_turns', 'error_max_budget_usd'];
+
 export type ClaudeStreamJsonOutcome =
   | { readonly ok: true; readonly text: string }
   | { readonly ok: false; readonly kind: AiFailureKind; readonly reason: string };
@@ -151,9 +154,15 @@ export function parseClaudeStreamJsonResult(stdout: string): ClaudeStreamJsonOut
     return { ok: false, kind: classifyClaudeCliFailure(failureText), reason: 'no result event', failureText };
   }
   if (result.is_error === true || result.subtype !== 'success') {
-    const status = typeof result.api_error_status === 'number' ? result.api_error_status : undefined;
+    // Only bounded, known values reach the reason (it ends up in the persisted failure summary).
+    const status =
+      typeof result.api_error_status === 'number' && Number.isInteger(result.api_error_status) &&
+      result.api_error_status >= 100 && result.api_error_status <= 599
+        ? result.api_error_status
+        : undefined;
     const kind = status === 401 || status === 403 ? AiFailureKind.AUTH_REQUIRED : classifyClaudeCliFailure(failureText);
-    const subtype = typeof result.subtype === 'string' && /^[a-z_]{1,40}$/.test(result.subtype) ? result.subtype : 'error';
+    const subtype =
+      typeof result.subtype === 'string' && KNOWN_RESULT_SUBTYPES.includes(result.subtype) ? result.subtype : 'error';
     return { ok: false, kind, reason: `result ${subtype}${status === undefined ? '' : ` status ${status}`}`, failureText };
   }
   return { ok: true, text: resultText, failureText };
@@ -254,30 +263,27 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
     const args = this.buildArgs();
 
     const result = await this.runner(this.bin, args, { cwd: tmpdir(), input, timeoutMs });
-    // Defense in depth: the CLI never receives the path, but no diagnostic text may carry it either.
-    const stderr = scrubPaths(result.stderr, images);
 
+    // Every failure message is a FIXED reason plus bounded codes, never CLI text: stderr, stdout and a stream-json
+    // error `result` may echo the stdin payload (the image base64) or the prompt, and the message is persisted by Core
+    // as the TaskRun failure summary. CLI text is read only to classify the failure kind.
     if (result.timedOut) {
       throw new AiProviderError(AiFailureKind.TIMEOUT, `claude vision CLI timed out after ${timeoutMs}ms`);
     }
     if (result.code === null) {
-      throw new AiProviderError(
-        AiFailureKind.UNAVAILABLE,
-        `claude vision CLI could not run: ${maskSecrets(stderr).slice(0, 300)}`,
-      );
+      throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'claude vision CLI could not run (UNAVAILABLE)');
     }
     if (result.outputOverflowed === true) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'claude vision CLI output exceeded the capture bound');
     }
     const outcome = parseClaudeStreamJsonResult(result.stdout);
     if (result.code !== 0) {
-      throw new AiProviderError(
-        classifyClaudeCliFailure(`${result.stderr}\n${outcome.failureText}`),
-        `claude vision CLI exited ${result.code}: ${maskSecrets(stderr).slice(0, 300)}`,
-      );
+      const kind = classifyClaudeCliFailure(`${result.stderr}\n${outcome.failureText}`);
+      const exitCode = Number.isSafeInteger(result.code) ? result.code : 'unknown';
+      throw new AiProviderError(kind, `claude vision CLI exited ${exitCode} (${kind})`);
     }
     if (!outcome.ok) {
-      throw new AiProviderError(outcome.kind, `claude vision CLI failed: ${outcome.reason}`);
+      throw new AiProviderError(outcome.kind, `claude vision CLI failed: ${outcome.reason} (${outcome.kind})`);
     }
     const text = scrubPaths(sanitizeTerminalOutput(outcome.text), images).trim();
     if (!text) {
