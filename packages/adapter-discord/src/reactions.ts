@@ -27,8 +27,15 @@ export interface ReactionAdmissionInput {
   /** The reacting user. */
   userId: string;
   ownerIds: readonly string[];
-  /** Author of the reacted message; null/undefined when unknown (uncached partial) — never admitted. */
+  /** Author of the reacted message; null/undefined when unknown (an uncached partial). */
   messageAuthorId: string | null | undefined;
+  /**
+   * True when the reacted message is an uncached partial (e.g. posted before the last restart), so its author is
+   * unknown without a fetch. Such a reaction is admitted by location and owner only; core then attributes it solely
+   * through its own record of the bot's posted message ids (`turn_platform_messages`), so a non-bot message can never
+   * be rated. No fetch is made (ADR-0098 D3).
+   */
+  messagePartial?: boolean;
   /** This bot's user id; null/undefined when the client is not ready — never admitted. */
   botUserId: string | null | undefined;
   /** Guild of the reacted message; null for a direct message. */
@@ -46,12 +53,17 @@ export interface ReactionAdmissionInput {
 
 /**
  * The ADR-0091 owner/location gate plus the ADR-0098 bot-authored-target rule. Fail closed: an empty owner list
- * admits nobody; an unknown author or bot id admits nothing; the bot's own reactions are never feedback.
+ * admits nobody; an unknown bot id admits nothing; an unknown author admits nothing unless the target is an uncached
+ * partial (core matches it only against the bot's own posted message ids); the bot's own reactions are never feedback.
  */
 export function isAdmittedReaction(input: ReactionAdmissionInput): boolean {
   if (!input.ownerIds.includes(input.userId)) return false;
   if (!input.botUserId || input.userId === input.botUserId) return false;
-  if (!input.messageAuthorId || input.messageAuthorId !== input.botUserId) return false;
+  if (input.messageAuthorId) {
+    if (input.messageAuthorId !== input.botUserId) return false;
+  } else if (input.messagePartial !== true) {
+    return false;
+  }
   if (input.guildId === null) return true; // direct message
   if (input.configuredGuildId && input.guildId !== input.configuredGuildId) return false;
   if (input.channelIds.includes(input.channelId)) return true;

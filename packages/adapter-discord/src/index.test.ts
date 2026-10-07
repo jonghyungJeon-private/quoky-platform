@@ -252,7 +252,6 @@ describe('DiscordPlatformAdapter — reaction feedback (ADR-0098 D3)', () => {
     ['a non-owner reactor', { userId: STRANGER }],
     ['a non-owner reactor in a DM', { userId: STRANGER, guildId: null, channelId: DM_CHANNEL }],
     ['a message not authored by the bot', { authorId: OWNER }],
-    ['an uncached (partial) target with unknown author', { partial: true, authorId: null }],
     ['a non-allowlisted channel', { channelId: OTHER_CHANNEL }],
     ['a thread under a non-allowlisted parent', { channelId: THREAD, thread: { parentId: OTHER_CHANNEL } }],
     ['the bot reacting to its own reply', { userId: BOT_USER_ID }],
@@ -265,6 +264,24 @@ describe('DiscordPlatformAdapter — reaction feedback (ADR-0098 D3)', () => {
     expect(fetches).toEqual([]);
     expect(channelFetches).toEqual([]);
     expect(logger.lines).toEqual([]);
+  });
+
+  it('emits a signal for an uncached (partial) target posted before a restart, without fetching it', async () => {
+    const fetches: string[] = [];
+    const { signals, fire } = await reactionHarness();
+    await fire('add', { partial: true, authorId: null, emoji: '👎' }, fetches);
+    expect(signals.map((s) => [s.targetPlatformMessageId, s.rating, s.action])).toEqual([['bot-reply-1', 'NEGATIVE', 'ADDED']]);
+    expect(fetches).toEqual([]);
+    expect(JSON.stringify(signals[0])).not.toContain('secret reply text');
+  });
+
+  it('still drops a partial target reacted by a non-owner or outside an admitted location', async () => {
+    const fetches: string[] = [];
+    const { signals, fire } = await reactionHarness();
+    await fire('add', { partial: true, authorId: null, userId: STRANGER }, fetches);
+    await fire('add', { partial: true, authorId: null, channelId: OTHER_CHANNEL }, fetches);
+    expect(signals).toHaveLength(0);
+    expect(fetches).toEqual([]);
   });
 
   it('admits the owner in a DM and in a thread under an allowlisted parent without fetching anything', async () => {

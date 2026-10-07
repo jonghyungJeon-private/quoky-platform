@@ -70,10 +70,22 @@ describe('isAdmittedReaction (ADR-0091 + ADR-0098 D3)', () => {
     expect(isAdmittedReaction(input({ messageAuthorId: STRANGER, guildId: null }))).toBe(false);
   });
 
-  it('drops a reaction whose target author is unknown (uncached partial) or when the bot id is unknown', () => {
+  it('drops a reaction whose target author is unknown on a cached message, or when the bot id is unknown', () => {
     expect(isAdmittedReaction(input({ messageAuthorId: null }))).toBe(false);
     expect(isAdmittedReaction(input({ messageAuthorId: undefined }))).toBe(false);
     expect(isAdmittedReaction(input({ botUserId: undefined, messageAuthorId: undefined }))).toBe(false);
+    expect(isAdmittedReaction(input({ botUserId: undefined, messageAuthorId: null, messagePartial: true }))).toBe(false);
+  });
+
+  it('admits an uncached partial target (posted before a restart) by owner and location only', () => {
+    // Core attributes it solely via the bot's own posted message ids, so a non-bot message can never be rated.
+    expect(isAdmittedReaction(input({ messageAuthorId: null, messagePartial: true }))).toBe(true);
+    expect(isAdmittedReaction(input({ messageAuthorId: null, messagePartial: true, guildId: null }))).toBe(true);
+    expect(isAdmittedReaction(input({ messageAuthorId: null, messagePartial: true, userId: STRANGER }))).toBe(false);
+    expect(isAdmittedReaction(input({ messageAuthorId: null, messagePartial: true, channelId: 'not-allowlisted' }))).toBe(false);
+    expect(isAdmittedReaction(input({ messageAuthorId: null, messagePartial: true, userId: BOT, ownerIds: [BOT] }))).toBe(false);
+    // A known non-bot author stays dropped even if the message object is a partial.
+    expect(isAdmittedReaction(input({ messageAuthorId: OWNER, messagePartial: true }))).toBe(false);
   });
 
   it('never treats the bot\'s own reaction as feedback', () => {

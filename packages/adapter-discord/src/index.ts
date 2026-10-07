@@ -501,6 +501,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         userId: user.id,
         ownerIds: this.config.ownerIds,
         messageAuthorId: message.partial ? null : message.author?.id,
+        messagePartial: message.partial === true,
         botUserId: this.client?.user?.id,
         guildId: message.guildId ?? null,
         ...(this.config.guildId ? { configuredGuildId: this.config.guildId } : {}),
