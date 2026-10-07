@@ -21,6 +21,10 @@ describe('parseMemoryCommand — ADR-0106 D1 grammar', () => {
     ['기억 2 잊어줘', { kind: 'forget', number: 2, language: 'ko' }],
     ['기억 2번 잊어 줘', { kind: 'forget', number: 2, language: 'ko' }],
     ['기억 2번을 삭제해줘', { kind: 'forget', number: 2, language: 'ko' }],
+    // INT-2: a particle directly on the number (no 번) is still the command.
+    ['기억 1을 잊어줘', { kind: 'forget', number: 1, language: 'ko' }],
+    ['기억 2를 지워줘', { kind: 'forget', number: 2, language: 'ko' }],
+    ['기억 3은 보여줘', { kind: 'view', number: 3, language: 'ko' }],
     ['기억 2 지워줘.', { kind: 'forget', number: 2, language: 'ko' }],
     ['forget memory 2', { kind: 'forget', number: 2, language: 'en' }],
     ['Delete memory #2', { kind: 'forget', number: 2, language: 'en' }],

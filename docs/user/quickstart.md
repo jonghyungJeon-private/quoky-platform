@@ -1,4 +1,4 @@
-# Quoky Personal 빠른 시작 (v1 + v2)
+# Quoky Personal 빠른 시작 (v1 + v2 + v3)
 
 이 문서는 **한 명의 소유자(owner)** 가 자기 컴퓨터에서 Quoky를 Discord 봇으로 돌려 일상 대화, 기억,
 알림, 할 일과 업무 조회, 피드백, 코드 수정과 (선택) push/PR 흐름을 쓰는 방법을 설명합니다. 이 문서의 모든 환경 변수, 문구, 안내 메시지는 소스에 실제로
@@ -6,8 +6,10 @@
 `packages/core/src/application/`).
 
 > Quoky Personal은 단일 소유자용입니다. 팀/호스팅 사용은 범위가 아닙니다. Personal v2에서 알림, 피드백, 할 일/업무
-> 조회, 여러 파일/새 파일 변경, 브랜치 명령, 선택형 push → PR 흐름이 추가됐습니다 (8절). **머지와 배포는 기본으로
-> 꺼져 있고 배포/릴리즈는 하지 않습니다.** 운영자용 설정(GitHub App 권한, 커넥터 자격 증명 등)은
+> 조회, 여러 파일/새 파일 변경, 브랜치 명령, 선택형 push → PR 흐름이 추가됐습니다 (8절). Personal v3에서 상시 실행
+> 서비스(launchd), 기억 관리, 학습 후보/예시, 캘린더 조회와 (선택) 일정 쓰기, 첨부 파일/이미지, (선택) Jira/Slack 쓰기,
+> 로컬 운영 화면이 추가됐습니다 (7절, 8절 "Personal v3 기능"). **머지와 배포는 기본으로 꺼져 있고 배포/릴리즈는 하지
+> 않습니다.** 운영자용 설정(GitHub App 권한, 커넥터 자격 증명 등)은
 > [`docs/uat/operator-guide.md`](../uat/operator-guide.md)를 보세요.
 
 ## 1. 준비물
@@ -85,9 +87,21 @@ claude --version
 ```sh
 ollama --version
 ollama pull llama3.1            # OLLAMA_MODEL 기본값
-# 한국어 품질을 높이려면 (제안):
-ollama pull qwen2.5:7b          # 그리고 .env.local에 OLLAMA_MODEL=qwen2.5:7b
+# v3 측정에서 고른 모델 (아래 설명):
+ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.3:8b
 ```
+
+- **모델 선택 (v3 LLM-2 측정):** 답변 품질 하네스(도움이 되는 답인지 보는 검사 포함)로 비교했을 때 `granite3.3:8b`가 가장
+  좋았습니다(관련 내용 9/10, 확인할 수 없는 것을 얼버무리지 않고 밝힘 3/4, 지어낸 구체 정보 없음 4/4, 답변 언어 일치
+  96.9%). `gemma3:4b`는 정책 검사는 통과했지만 실제 대화에서 "도움말을 확인해보세요" 같은 답만 해서 쓰지 않습니다.
+  소유자 Mac(M3 Pro, 18GB)에서 `granite3.3:8b`는 약 5.7GB, GPU 100%, 초당 15-17 토큰, 처음 불러올 때 약 16초입니다.
+  `OLLAMA_MODEL`의 코드 기본값은 여전히 `llama3.1`이고, 바꾸는 것은 운영자 설정입니다. 부하가 내려간 뒤 한
+  재검증(W6-M5)은 **부분 통과**입니다: 4개 중 3개를 granite가 답했고(생성 21-38초), 1개는 동시에 돈 테스트로 부하가
+  다시 올라 Claude로 대체되었습니다. 노래·가수 이름을 지어내는 문제는 남아 있어, 로컬 모델은 구체적인 사실을 지어낼 수
+  있습니다. 한국어 일상 대화 20문항 세트는 아직 하지 않았습니다. 답이 단어 중간에서 끊기던 문제는 고쳤습니다(PR #133).
+- **이미지 (선택):** 이미지 첨부를 분석하려면 로컬 비전 모델을 받고 `QUOKY_OLLAMA_VISION_MODEL`에 그 이름을 적습니다
+  (예: `gemma3:4b`처럼 이미지 입력을 지원하는 모델). 비우면 이미지는 분석하지 않고 어디로도 보내지 않았다고 답합니다.
+  이름에 `cloud`가 들어간 모델은 거부합니다. 이미지 바이트는 Claude로 보내지 않습니다.
 
 - **Ollama 서버가 실행 중**이어야 하고, `OLLAMA_MODEL`로 지정한 모델이 로컬에 있어야 "준비됨"으로 봅니다.
   준비 여부는 요청 시점에 확인하며(`ollama list`, 결과는 최대 약 30초 캐시), 나중에 서버를 켜거나 모델을 받아도
@@ -144,9 +158,22 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_EMBEDDING_MODEL` | 선택. 기본 `nomic-embed-text`. 이름 또는 태그에 `cloud`가 들어가면 거부 |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000 |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
+| `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음 |
+| `QUOKY_OLLAMA_VISION_MODEL` | 선택. 기본 없음. 이미지 분석용 로컬 Ollama 비전 모델 이름(5절). 잘못된 값이나 `cloud` 모델이면 이미지 분석만 꺼지고 시작은 계속 |
+| `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET` | 선택. Google Calendar 읽기용 OAuth "Desktop app" 클라이언트 (8절 "캘린더 설정") |
+| `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` | 선택. 동의 도구가 만든 refresh token 파일 경로(모드 600). 또는 `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN`(둘 다 넣으면 캘린더 미등록). 클라이언트 ID/비밀과 토큰이 모두 있어야 캘린더가 켜짐 |
+| `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` | 선택. 기본 `primary`. 읽을 캘린더 ID (쉼표, 최대 10개) |
+| `QUOKY_CALENDAR_WRITE_ENABLED` | 선택. 기본 `false`. `true`면 **기본(primary) 캘린더**에 일정 추가/변경/삭제를 승인 후 실행. `calendar.events` 권한이 든 토큰 파일 필요. 참석자 없음, 초대 메일 없음 |
+| `QUOKY_CONNECTOR_WRITES_ENABLED` | 선택. 기본 `false`. Jira/Slack 쓰기 전체 스위치 |
+| `QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS` | 선택. 댓글/상태 변경을 허용할 Jira 프로젝트 키 (쉼표, 최대 50개, 예: `PROJ,TEST`). Jira 읽기 자격 증명을 그대로 씀 |
+| `QUOKY_CONNECTOR_WRITE_SLACK_TOKEN` | 선택. Slack **봇** 토큰 (`chat:write` 권한). `QUOKY_SLACK_TOKEN`(읽기용)과 다른 토큰이어야 함 |
+| `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS` | 선택. 게시를 허용할 채널 `이름:채널ID` 또는 `채널ID` (쉼표, 최대 50개). 토큰과 채널이 둘 다 있어야 Slack 쓰기가 켜짐. 봇을 그 채널에 초대해야 함 |
+| `QUOKY_OPS_UI_ENABLED`, `QUOKY_OPS_UI_PORT` | 선택. 기본 `false`, `47613`. 로컬 운영 화면 (7절 "운영 화면"). 잘못된 값은 시작 오류가 아니라 화면만 끔 |
 
-`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`)은 빈 값(예:
-`QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
+`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`), Personal v3의
+`QUOKY_MEMORY_ARCHIVE_DAYS`, `QUOKY_LEARNING_EXAMPLES_ENABLED`, `QUOKY_CONNECTOR_WRITES_ENABLED`, `QUOKY_CALENDAR_WRITE_ENABLED`는 빈 값(예:
+`QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 쓰기 허용 목록과 Slack 쓰기 토큰도 형식이 틀리면
+시작 오류입니다 (쓰기가 꺼져 있어도 검사). 반대로 `QUOKY_OPS_UI_*`와 `QUOKY_OLLAMA_VISION_MODEL`은 잘못되면 그 기능만 꺼집니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
 주석 처리하세요.
 
 **주의 — 같은 이름의 셸 환경 변수가 `.env.local`보다 우선합니다.** 이미 셸에 `DISCORD_BOT_TOKEN`,
@@ -316,11 +343,12 @@ rm /tmp/quoky-restore-drill.db
   pre-migration 사본이 자동으로 만들어집니다.
 - 문제가 없으면 나중에 `before-restore/`를 직접 지우세요. 백업 정리 기능은 이 디렉터리를 건드리지 않습니다.
 
-### 운영 화면 (선택, ADR-0113 OPS-1, 읽기 전용)
+### 운영 화면 (선택, ADR-0113 OPS-1/OPS-2/OPS-2b)
 
 Quoky 프로세스 안에서 도는 **로컬 전용** 웹 화면으로 서비스 상태를 봅니다. 기본으로 **꺼져 있고**, 켜도 이
 Mac의 `127.0.0.1`에서만 열립니다(같은 네트워크의 다른 기기, 터널, 포트 포워딩으로는 열리지 않으며 그런 설정도
-제공하지 않습니다). 이 단계(Phase 1)는 **보기만** 합니다. 승인, 거절, 알림 취소, 기억 삭제, 대화는 채팅에서 합니다.
+제공하지 않습니다). 상태를 보고(OPS-1), 알림 취소와 기억 잊기(OPS-2), 대기 중인 승인의 승인/거절(OPS-2b)을 할 수
+있습니다. 대화는 채팅에서 하며, 채팅만으로도 모든 결정을 그대로 할 수 있습니다.
 
 설정 (`.env.local`, 선택; 켜는 것은 소유자 호스트의 Strict 작업):
 
@@ -361,6 +389,30 @@ QUOKY_OPS_UI_PORT=47613       # 기본 47613. 1024-65535 (범위 밖이면 화�
 
 비밀 값, 토큰, 대화 본문, 프롬프트, 승인 내용, 기억 내용은 표시하지 않습니다. 화면에 들어가는 모든 문자열은 자격
 증명 검사를 한 번 더 거치고, 걸리면 `[hidden]`으로 바뀝니다.
+
+**처리 (OPS-2, OPS-2b)**
+
+모든 처리 버튼은 로그인 세션, 같은 출처(Origin), CSRF 토큰, 한 번만 쓰는 요청 값을 확인합니다. 같은 요청을 두 번
+보내도 한 번만 처리합니다. 처리 기록(감사 로그)에는 내용이 남지 않습니다.
+
+- **알림 취소:** 채팅의 `알림 N 취소`와 같은 처리입니다. 되돌릴 수 없습니다.
+- **기억 잊기:** 채팅의 `기억 N 잊어줘`와 같은 처리입니다. 화면에 나온 확인 코드를 한 번 더 입력해야 실행되고(5번까지),
+  잊은 기억은 채팅과 같이 보관함으로 갑니다.
+- **거절:** 대기 중인 승인을 거절합니다. 채팅에서 `거절`한 것과 같습니다.
+- **승인:** 운영 화면이 켜져 있는 동안 채팅의 승인 미리보기 끝에 `운영 화면 확인 코드: XXXXXX`(6자리) 줄이 붙습니다.
+  화면에서 승인하려면 이 코드를 입력합니다(가장 최근 미리보기의 코드, 30분 안, 한 번만). 5번 틀리면 그 승인은 30분 동안
+  화면에서 승인할 수 없고 채팅에서는 그대로 결정할 수 있습니다. 화면에는 미리보기, diff, 대상, 본문을 표시하지 않으니
+  내용은 채팅 미리보기에서 확인하세요.
+  - 화면의 승인은 **승인만 기록**합니다. 실제 실행(커밋, 푸시, PR, 머지, Jira/Slack/캘린더 쓰기 등)은 지금처럼 채팅의
+    실행 문구(`커밋 실행`, `댓글 실행` 등)로만 합니다.
+  - 승인하는 순간 작업이 이어서 실행되는 종류(코드 변경 계획 승인, `그래도 보내줘` 예외)는 채팅에서만 승인할 수 있고,
+    화면에서는 거절만 됩니다.
+  - 화면에서 승인/거절하면 결과가 소유자 DM으로 한 번 갑니다(`OPS_DECISION_RESULT`). 화면에는 결과 종류와 DM 전달
+    여부만 나옵니다. 채팅과 화면에서 동시에 결정해도 하나만 적용됩니다.
+- 소유자 ID가 정확히 하나의 사용자(Actor)에 연결되어 있지 않으면 처리 버튼은 동작하지 않습니다. 채팅을 쓰세요.
+
+> 실제 Mac에서 확인한 것은 로그인까지입니다(Chromium에서 출처 검사로 로그인이 거부되던 문제는 PR #131에서 고침).
+> 화면에서의 알림 취소, 기억 잊기, 승인/거절은 오프라인 테스트만 통과했고 실제 환경 검증은 아직입니다.
 
 ## 8. 처음 사용하기
 
@@ -473,14 +525,56 @@ QUOKY_OPS_UI_PORT=47613       # 기본 47613. 1024-65535 (범위 밖이면 화�
 | 할 일 보기 | `내 할 일 보여줘`, `할 일 목록` | - | 번호가 붙은 목록. Jira/GitHub 식별자가 설정돼 있으면 그 항목도 함께 (아니면 계정 정보(identity)가 설정되어 있지 않다는 안내) |
 | 할 일 완료/취소 | `완료 처리: 2`, `할 일 취소: 1` | - | 번호로 처리. 없는 번호는 아무것도 바꾸지 않음. 자연 문장(`보고서 쓰기 완료`)은 바꾸지 않고 `완료 처리: N` 사용을 안내 |
 | 할 일 연결 | `할 일 연결: 1 Jira ABC-1` | - | 링크만 기록하고 외부 시스템은 조회/변경하지 않음 |
-| 업무 조회 (읽기 전용) | `내 Jira 이슈 보여줘`, `GitHub 리뷰 요청 보여줘`, `Slack에서 배포 검색` | 커넥터 자격 증명 (운영자 가이드) | 읽기 전용 조회. 항목이 있으면 모델 요약이 붙을 수 있음 (`QUOKY_WORK_SUMMARY_ENABLED=false`면 목록만). 쓰기(이슈 생성 등)는 하지 않음 |
+| 업무 조회 (읽기 전용) | `내 Jira 이슈 보여줘`, `GitHub 리뷰 요청 보여줘`, `Slack에서 배포 검색` | 커넥터 자격 증명 (운영자 가이드) | 읽기 전용 조회. 항목이 있으면 모델 요약이 붙을 수 있음 (`QUOKY_WORK_SUMMARY_ENABLED=false`면 목록만). 이슈 생성 등은 하지 않음. Jira 댓글/상태 변경과 Slack 게시는 v3의 승인 흐름으로만 (아래 "Personal v3 기능") |
 | 피드백 | 봇 답장에 👍/👎 반응 (소유자만), 반응 제거 = 철회 | - | 로컬에 기록 (메시지 내용은 저장하지 않음) |
 | 피드백 요약 | `피드백 요약` (정확히 이 문구) | - | 최근 30일 집계 (일반 대화, 위험 민감 대화 등 한국어 라벨). 읽기 전용 |
 | 그래도 보내줘 | `그래도 보내줘` | 비밀 값처럼 보이는 파일이 대상일 때 | 위 "그래도 보내줘" 설명 참고. 한 번만 유효 |
 | 브랜치 | `브랜치 만들어줘 feature/x`, `feature/x 브랜치로 전환해줘` | 등록된 프로젝트 | 로컬 브랜치만 만들거나 전환 (`main`/`master`는 대상 아님, 삭제/푸시/강제 등은 처리 안 함) |
 
-정책에 민감한 질문(캘린더/메일 발송 같은 외부 작업, 내 일정/수신함 같은 본인 데이터, 한국어/영어 외 언어)은
-Claude가 처리하며, Quoky는 그런 외부 작업을 할 수 없고 내 일정은 볼 수 없다고 정직하게 답합니다.
+정책에 민감한 질문(메일 발송 같은 외부 작업, 내 수신함 같은 본인 데이터, 한국어/영어 외 언어)은 Claude가 처리하며,
+Quoky는 그런 외부 작업을 할 수 없다고 정직하게 답합니다. 캘린더가 설정되어 있으면 일정 질문은 캘린더에서 바로 답하고
+(아래), 설정되어 있지 않으면 내 일정은 볼 수 없다고 답합니다.
+
+### Personal v3 기능 (문구 모음)
+
+아래 문구도 소스의 문법/핸들러와 도움말 줄에서 확인한 것입니다. `도움말`은 켜진 기능의 줄만 보여 줍니다.
+
+| 기능 | 보낼 말 (예) | 필요 | 결과 |
+|---|---|---|---|
+| 사용법 질문 | `완료 처리 어떻게 해?`, `알림 어떻게 지워?` | - | 그 기능의 도움말 줄만 보여 줌. AI 호출 없음 |
+| 기억 관리 | `기억 목록`, `기억 2 보여줘`, `기억 2 수정: …`, `기억 2 잊어줘`, `보관함`, `기억 복원 1`, `기억 완전 삭제 1` | - | 위 "기억" 절. 수정/잊기/복원/완전 삭제는 `기억 확인 <코드>`로 한 번 더 확인 |
+| 기억에 없는 질문 | `내가 좋아하는 과일이 뭐였지?` (저장된 기억 없음) | - | "그 내용은 기억에 없어요. 알려 주시면 "기억해: …"로 저장해 둘게요." (지어내지 않음) |
+| 했다고 착각하는 답 막기 | (예: 모델이 "커밋했어요", "할 일에 넣었어요"라고 답하려 할 때) | - | 실제로 하지 않은 Quoky 작업을 했다고 말하는 답은 "하지 않았다"는 안내와 쓸 명령으로 바뀜. 문장 패턴 기반 best-effort |
+| 학습 후보 | `피드백 후보`, `후보 1 메모: 더 짧게`, `후보 1 예시로 저장`, `예시 목록`, `예시 1 수정: …`, `예시 1 삭제` | - | 👎/👍 받은 답을 하나씩 골라 이 컴퓨터에만 저장(365일, 비밀값처럼 보이면 거절). 예시를 실제 프롬프트에 쓰려면 `QUOKY_LEARNING_EXAMPLES_ENABLED=true` (로컬 모델에만) |
+| 캘린더 보기 | `오늘 일정`, `내일 일정 뭐야?`, `이번 주 일정`, `다음 회의 언제야?`, `내일 바빠?` | 캘린더 설정 (아래) | `QUOKY_TIMEZONE` 기준 일정 목록. AI 호출 없음. 일정 내용은 Claude로 보내지 않음 |
+| 일정 추가/변경/삭제 | `내일 오후 3시에 회의 잡아줘 제목 주간 회의` → `승인` → `일정 추가 실행`; `일정 오후 6시로 옮겨줘` → `승인` → `일정 변경 실행`; `내일 3시 회의 취소해줘` → `승인` → `일정 삭제 실행` | `QUOKY_CALENDAR_WRITE_ENABLED=true` + `calendar.events` 토큰 | 기본 캘린더만. 정확한 내용 미리보기 후 한 번만 실행. 참석자 없음, 초대/변경 메일 없음. 대상이 여러 개면 번호 목록으로 묻고 추측하지 않음. 쓰기가 꺼져 있으면 "읽기만 할 수 있어요 … 아무것도 바꾸지 않았어요" |
+| Jira 댓글 | `ABC-1에 댓글: 확인했습니다` → `승인` → `댓글 실행` | `QUOKY_CONNECTOR_WRITES_ENABLED=true` + 프로젝트 허용 목록 | 정확한 내용 미리보기, 한 번만 쓰는 승인(CRITICAL). 허용 목록 밖이면 아무것도 보내지 않음 |
+| Jira 상태 변경 | `ABC-1 진행 중으로 바꿔줘` → `승인` → `상태 변경 실행` | 위와 같음 | 미리보기에 나온 전환(transition)과 대상 상태만 실행. 그 사이 이슈가 바뀌면 실행하지 않음 |
+| Slack 게시 | `#dev-test에 게시: 배포 끝났어요` 또는 `#dev-test에 배포 끝났어요라고 올려줘` → `승인` → `Slack 게시 실행` | 쓰기 스위치 + Slack 봇 토큰 + 채널 허용 목록 | 허용된 채널에만. 봇을 채널에 초대하지 않았으면 "대상을 찾지 못했어요. 아무것도 보내지 않았어요." |
+| 첨부 파일 | 메시지에 텍스트 파일(`.txt`·`.log`·`.md`·`.json` 등, 256KiB까지) 첨부 | - | 내용을 대화 문맥으로 씀(신뢰하지 않는 입력, 비밀값처럼 보이면 거절). 한 메시지에 3개까지. 작업 폴더에 저장하지 않음 |
+| 이미지 | PNG·JPEG·WebP 첨부 (8MiB까지) | `QUOKY_OLLAMA_VISION_MODEL` (5절) | 로컬 비전 모델만 분석. 없으면 "분석하지 않았어요 … 어디로도 보내지 않았어요". 분석하는 동안만 비공개 임시 파일에 두고, 처리가 끝나면 지움(남은 임시 파일은 시작할 때와 주기적으로 정리) |
+
+쓰기 실행 규칙 (Jira/Slack/캘린더 공통):
+
+- 실행 문구(`댓글 실행`, `상태 변경 실행`, `Slack 게시 실행`, `일정 추가/변경/삭제 실행`)는 `승인` 뒤에 **안내된 문구 그대로**
+  보낼 때만 실행됩니다. "댓글 실행해도 돼?" 같은 질문에는 실행하지 않고 보낼 문구를 다시 안내합니다.
+- 승인한 내용과 정확히 같은 것만 한 번 보냅니다. 보냈는지 확실하지 않으면(`UNCERTAIN`) 다시 시도하지 않고 보냈을 수도
+  있다고 알립니다. 이미 보낸 뒤 같은 실행 문구를 다시 보내면 다시 보내지 않고 이미 실행했다고 링크와 함께 답합니다.
+- 승인하고 실행하지 않은 쓰기는 승인 만료 시간(30분)이 지나면 무효가 됩니다.
+
+**캘린더 설정 (Strict, 소유자가 직접):** Google Cloud 프로젝트에서 Calendar API를 켜고 OAuth "Desktop app" 클라이언트를
+만든 뒤 `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`/`QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET`를 `.env.local`에 넣습니다. 그리고 한 번
+동의 도구를 실행합니다. 토큰은 화면에 출력하지 않고 새 파일(모드 600)에만 씁니다.
+
+```sh
+pnpm build
+node apps/quoky/dist/tools/calendar-auth.js --out ./data/google-calendar-token.json                 # 읽기만
+node apps/quoky/dist/tools/calendar-auth.js --out ./data/google-calendar-token-rw.json --with-events  # 일정 쓰기도
+```
+
+`.env.local`의 `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE`에 만든 파일 경로를 넣고 재시작합니다. `calendar.readonly`와
+`calendar.events`보다 넓은 권한은 거부합니다. 서비스로 실행할 때는 토큰 파일을 서비스 데이터 디렉터리에 두는 것을
+권장합니다.
 
 ### push와 PR (선택, `QUOKY_GIT_REMOTE_ENABLED=true` 필요)
 
@@ -503,7 +597,8 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 - `main`/`master`로의 push(기능 브랜치가 `origin/main`을 추적하는 경우 포함)와 `main`/`master`에서의 커밋은 항상 거절됩니다.
 - 머지: `QUOKY_GIT_MERGE_ENABLED=false`(기본)이면 `PR 머지해줘`가 "병합은 이 설정에서 꺼져 있어요…"로 거절되고 승인도 만들지 않습니다.
   PR은 GitHub에서 직접 검토하고 병합하세요.
-- PR 제목은 현재 요청 문장에서 만든 것이라 어색할 수 있습니다 (생성형 제목/본문은 이후 버전).
+- PR 제목은 승인한 커밋의 제목(커밋 메시지 첫 줄)이고, 본문은 커밋, 브랜치, 바뀐 파일 목록입니다 (v3). 승인 미리보기에
+  나온 제목/본문 그대로만 PR을 만듭니다. 모델이 제안하는 제목/본문은 아직 없습니다.
 - 승인 절차는 우회되지 않습니다. 각 단계의 외부 영향은 해당 실행 문구를 보낼 때만 일어납니다.
 - 승인 후 실제 실행 단계(`커밋 실행`, `패치 적용해줘`, `푸시 실행`, `PR 생성 실행`, 머지, `main 동기화해줘`, `브랜치 정리해줘`, 원격 브랜치 삭제 실행)는 **안내된 문구 그대로**(띄어쓰기·마침표·존댓말 차이 정도만 허용) 보낼 때만 실행됩니다. 질문("푸시 실행해도 돼?"), 부정("…할 필요 없어"), 다른 표현에는 아무것도 바꾸지 않고 보낼 문구를 다시 안내합니다.
 
@@ -536,7 +631,7 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | `claude`가 API 과금을 일으킬까 걱정됨 | `env | grep ANTHROPIC | cut -d= -f1`로 확인하고 `unset ANTHROPIC_API_KEY` |
 | 코드 수정 미리보기가 "이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요"로 거절됨 | 비밀번호·토큰·API 키 같은 이름의 키에 실제 값이 적힌 파일(예: `password: "..."`, `API_KEY=...`)은 안전을 위해 보수적으로 거절함 (값이 무해해 보여도 거절될 수 있음). 값을 환경 변수(`process.env.API_KEY`, `${API_KEY}`)나 비밀 저장소로 옮긴 뒤 다시 요청 |
 | "확인을 받아도 보낼 수 없어요" | 비밀 파일 이름이거나 토큰/키 모양 내용이라 `그래도 보내줘`로도 보낼 수 없음. 값을 환경 변수로 옮기거나 다른 파일을 대상으로 지정 |
-| 알림 문구를 보냈는데 "알림 기능이 꺼져 있어요" | `QUOKY_REMINDERS_ENABLED`가 `false`(기본). `.env.local`에서 `true`로 켜고 재시작 |
+| 알림 문구를 보냈는데 "알림 기능이 꺼져 있어요" | `.env.local`에 `QUOKY_REMINDERS_ENABLED=false`가 있음 (v3부터 기본은 `true`). 줄을 지우거나 `true`로 바꾸고 재시작 |
 | 알림이 DM이 아니라 안 보임 | 알림은 기본으로 소유자 DM으로만 전달. 봇과 DM 창을 한 번 열어 두세요. 채널 전달은 운영자가 `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`로 별도 설정 |
 | `내 할 일 보여줘`에 계정 정보(identity)가 설정되어 있지 않다는 안내 | Jira/GitHub 식별자 매핑(`QUOKY_ACTOR_IDENTITY_MAPPINGS`)과 커넥터 자격 증명이 없음. 로컬 할 일은 그대로 동작. 운영자 가이드 참고 |
 | `PR 상태 알려줘`가 "현재 PR 상태를 확인하지 못했어요" | GitHub App에 Checks: Read 권한이 없을 수 있음 (운영자 가이드). PR 생성/push에는 영향 없음 |
@@ -550,13 +645,29 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | `DISCORD_IDENTITY_MISMATCH` | 연결된 봇·서버·허용 채널이 `.env.local`과 다름 (다른 봇의 토큰, 봇이 없는 서버, 볼 수 없는 채널). 고친 뒤 `restart --apply` |
 | `DISCORD_IDENTITY_UNVERIFIABLE` | 연결은 됐지만 봇 정보를 읽지 못함 (게이트웨이 준비 지연 등). 서비스는 자동으로 다시 시도 |
 | `LAUNCHER_INVALID` | `QUOKY_LAUNCHER`/`QUOKY_LAUNCHER_RECENT_STARTS`는 launcher만 설정함. `.env.local`이나 셸에서 제거 |
+| `MEMORY_ARCHIVE_DAYS_INVALID` | `QUOKY_MEMORY_ARCHIVE_DAYS`는 0-365의 정수만. 빈 값도 오류 |
+| `LEARNING_EXAMPLES_ENABLED_INVALID`, `CONNECTOR_WRITES_ENABLED_INVALID`, `CALENDAR_WRITE_ENABLED_INVALID` | 해당 변수는 정확히 `true`/`false`만 (또는 줄 삭제) |
+| `CONNECTOR_WRITE_JIRA_PROJECTS_INVALID` | 쉼표로 구분한 서로 다른 Jira 프로젝트 키(예: `PROJ,TEST`), 최대 50개 |
+| `CONNECTOR_WRITE_SLACK_CHANNELS_INVALID` | `이름:채널ID` 또는 `채널ID` 항목(예: `dev-test:C0123ABCD9`), 중복 없이 최대 50개 |
+| `CONNECTOR_WRITE_SLACK_TOKEN_INVALID` / `CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE` | 쓰기 토큰은 Slack **봇** 토큰이어야 하고 읽기용 `QUOKY_SLACK_TOKEN`과 달라야 함 |
+| 일정 질문에 캘린더 대신 "내 일정은 볼 수 없다"는 답 | 캘린더가 등록되지 않음: 클라이언트 ID, 비밀, 토큰(파일 또는 값 하나)이 모두 있어야 함. 토큰 파일은 모드 600, 심볼릭 링크 불가 |
+| 일정 쓰기 요청에 "읽기만 할 수 있어요" | `QUOKY_CALENDAR_WRITE_ENABLED=true`가 아니거나 토큰에 `calendar.events`가 없음. `--with-events`로 새 토큰 파일을 만들고 경로를 바꿔 재시작 |
+| Jira/Slack 쓰기 요청에 "쓰기가 허용된 대상이 아니에요" | 프로젝트 키나 채널이 허용 목록에 없음. 아무것도 보내지 않았음 |
+| 운영 화면 로그인에서 "허용되지 않은 출처예요" | 예전 빌드의 알려진 문제(PR #131에서 고침). 최신 빌드로 다시 시작. 주소는 `127.0.0.1` 또는 `localhost`와 설정한 포트만 |
+| 운영 화면이 열리지 않음 | `QUOKY_OPS_UI_ENABLED=true`인지, `quoky.log`의 `ops-ui.unavailable reason=...`(포트 사용 중 등) 확인 |
+| 이미지에 "분석하지 않았어요" | `QUOKY_OLLAMA_VISION_MODEL`이 비었거나 잘못됐거나, 그 모델이 Ollama에 없음 |
 | 로그에 `not starting: 3 consecutive configuration exits` | 설정 오류로 3번 연속 멈춰 서비스가 재시작을 멈춤. `quoky.log`에서 원인을 고친 뒤 `ops/launchd/quokyctl.sh restart --apply` |
 
 ## 10. 더 알아보기
 
 - 현재 구현 상태: [`CURRENT_STATE.md`](../../CURRENT_STATE.md)
 - 결정 기록: [`DECISIONS.md`](../../DECISIONS.md) — ADR-0091 (Discord 소유자 게이트), ADR-0092 (provider/모델),
-  ADR-0093 (도움말/새 대화/승인 만료), ADR-0094 (git 안전)
-- Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). 커넥터 실제 테넌트 조회, 알림 채널 전달, 알림 기본값 전환, 머지 활성화는 아직 실제 검증 전입니다.
+  ADR-0093 (도움말/새 대화/승인 만료), ADR-0094 (git 안전), Personal v3: ADR-0102 (상시 실행), ADR-0104 (결정적 답),
+  ADR-0106 (기억 관리), ADR-0107 (학습), ADR-0110 (캘린더), ADR-0111 (첨부/이미지), ADR-0112 (커넥터 쓰기),
+  ADR-0113 (운영 화면)
+- Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). Jira/Confluence/GitHub
+  실제 조회, 알림 채널 전달은 2026-10-06에 실제로 확인했습니다. Slack 읽기 조회와 머지 활성화는 아직 실제 검증 전입니다.
+- Personal v3 Live QA 기록: [`docs/uat/personal-v3-qa-record.md`](../uat/personal-v3-qa-record.md). 운영 화면의 처리/승인,
+  첨부·이미지, 학습 예시, 한국어 일상 대화 20문항 세트 등 아직 실행하지 않은 항목은 기록 끝의 PENDING 목록에 있습니다.
 - 운영자 설정 (환경 변수, GitHub App 권한, 커넥터, Ollama/Claude 격리): [`docs/uat/operator-guide.md`](../uat/operator-guide.md)
 - 첫 릴리스 attended Live UAT 절차: [`docs/uat/first-release-uat-packet.md`](../uat/first-release-uat-packet.md)

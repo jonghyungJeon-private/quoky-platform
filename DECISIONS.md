@@ -16772,3 +16772,102 @@ OPS-2b merge (no-bypass extraction).
   `null`, so the D4 Origin check refused the sign-in ("허용되지 않은 출처예요"). The header (and the page's referrer meta)
   is now `same-origin`: the browser sends the real Origin to the UI itself and still sends no referrer to any other
   origin. The Origin check, CSRF token, loopback bind and CSP are unchanged.
+
+## Personal v3 waves 1-6 implementation record (2026-10-07)
+
+Docs-only record written by DOC-C. It adds implementation notes only; no ratified ADR text above is edited and no
+decision is changed. Waves 1-6 merged through PRs #116-#132 (`main` at acfffb7); INT-2 (offline acceptance) lands with
+this record in wave 6. Live results are in `docs/uat/personal-v3-qa-record.md`; anything not listed there as run is not
+claimed here. Schema lane: v14 (LRN-1) then v15 (CWR-1), contiguous, ADR-0096 D10 rules unchanged. Deps baseline: 34,
+then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
+
+- **ADR-0102 (always-on runtime).** SUB-1 (d671bd9) ships `ops/launchd/quokyctl.sh` (install, status, restart,
+  uninstall; `--dry-run`/`--apply`, idempotent, macOS only), `quoky-launch.sh` (`env -i` environment, `.env.local` a
+  regular owner file with mode 600, symlinks refused) and the plist template. D4 is implemented as a lock **directory**
+  of `O_EXCL` generation files next to the DB (Codex P1 fix 16bf759): takeover creates the next generation and
+  re-checks, a live pid is never taken over unless the boot id changed, and no clock is used. D5 exits with code 78 on
+  an identity mismatch; the launcher stops after 3 consecutive configuration exits. SUB-2 (41c842f) adds the daily and
+  pre-migration verified `VACUUM INTO` backups (retention 7 daily, 4 weekly and the 3 latest pre-migration copies),
+  `QUOKY_BACKUP_ENABLED`/`QUOKY_BACKUP_DIR`, a status file, and `OPS_NOTICE` (owner DM only, at most 3 per day through a
+  persisted ledger). D9: the release default `QUOKY_REMINDERS_ENABLED=true` landed in 7890b71 after SUB-1 was live.
+  Live: install, Claude CLI under the launchd environment, `kill -9` restart and a reminder across the restart (SV0-SV4);
+  pre-migration backups before v14 and v15 (DP1, D4). Not run live: reboot start, an observed scheduled daily backup,
+  a restore drill. D10 (retiring the AGENTS.md temporary-runtime section) has not been done; it stays a separately
+  approved docs change.
+- **ADR-0103 (Personal trust for continuation).** Not implemented. SUB-3 stays P2 and deferred; continuation activation
+  stays fail-closed and R1 (no storage CAS) stays accepted under the single-instance lock.
+- **ADR-0104 (deterministic answer coverage).** DET-1 (ae8f9be, 1a46532) adds the provider-neutral internal-action claim
+  guard in the shared GENERAL_CHAT sanitizer path and deterministic code-chain status replies;
+  `action-shaped-fallthrough.v1.json` ships 119 `mustPass` cases. LLM-1 (5dada77, 54906e8) adds the D5 hygiene (trailing
+  translation marker lines; stray Han only between Hangul syllables, never inside code) and the D4 help-intent handler
+  (pre-classify, order 400, provider-free; 3efddfe). Live fixes W1-L01..L03 (f355026, 7e18f6e). D3 status phrases:
+  memory status (`기억했어?`) is answered by the MEM-1 grammar; to-do and reminder status phrases are still answered only
+  by the guard, so D3 remains partial. Residual R5 is recorded above.
+- **ADR-0105 (model choice, MLX).** D1: the harness ran five Ollama models (QA record, 2026-10-06) and recommended
+  gemma3:4b, which gave non-answers live (QA-V3-W2-LM) and was reverted. The harness gained helpfulness checks
+  (`answer-quality-checkers-v2`, 20909d1); the 2026-10-07 re-run picked granite3.3:8b, set on the owner's service as an
+  `OLLAMA_MODEL` operator change (no code change; the code default stays `llama3.1`). Its live re-test after the host
+  load cleared was a partial pass (QA record W6-M4/M5: 3 of 4 replies local, invented specifics remain); `ollama run`
+  now gets `--nowordwrap` (PR #133, W6-M6). D2-D4 (MLX provider, `MLX_LOCAL` profile): not implemented; no MLX benchmark ran.
+- **ADR-0106 (memory commands) and its amendment.** MEM-1 (9abb52d, 5321b6c, 6c0e98d): pre-classify order 50; a one-time
+  4-character code bound to the record, actor-scoped, 30 minutes; forget removes the vector and derived learning items
+  first. The amendment (5f0cced, da9e219, 3b78d4b; note above) made forget an archive with restore. OPS-2 (d6a279f) added
+  typed forget entries (`requestForgetConfirmation`, `confirmForget`) shared by chat and the operations UI, with chat
+  replies unchanged. W3-L01 (0996abd, 79f9baa) answers an own-memory question with no recall hit deterministically. Live:
+  list, edit, forget, archive, restore (QA record M1-MF4, A1-A11).
+- **ADR-0107 (learning).** LRN-1 (e92bae2): v14 `learning_items`, candidate/example commands, the 👎 trend line and
+  `apps/quoky/src/tools/learning-export.ts`; the strict credential guard runs on every learning and feedback excerpt
+  (7222308, b1eba74). LRN-2 (9f6b954, ARCHITECTURE.md §5.14 in 95d8aaf): `AiProvider.executionLocality` (`LOCAL` or
+  `REMOTE`, missing = `REMOTE`); at most 2 `LOCAL_ONLY` examples under a 2,400-character budget, re-guarded at use, only
+  for `LOCAL` providers and only with `QUOKY_LEARNING_EXAMPLES_ENABLED=true` (default `false`); other prompts are
+  byte-identical. LRN-3 (f9ef0d3): `apps/quoky/src/tools/learning-report.ts`, offline, no provider or network call,
+  no non-consented text. LRN-4: deferred (D9). Live: only the empty `피드백 후보` state (M3); notes, examples and
+  injection are not run live.
+- **ADR-0108 (PR title/body, status token).** D1 delivered in PR #113 (6a59526) and live PC-2. CODE-7 (1c1fdfb): D2 title =
+  approved commit subject, D3 deterministic body, D5 hash binding of both in the CRITICAL PR approval; live P15-P17
+  (sandbox PR #2, closed). D4 (`QUOKY_PR_DESCRIPTION_MODEL_ENABLED`, optional model text) is **not wired**; the key is not
+  parsed. Network git commands got bounded timeouts (push/fetch 60 s, ls-remote 30 s) after W2-L02 (97a4c7f, d95e0ed);
+  a timed-out push is reported as unverified, never as "not pushed".
+- **ADR-0109 (multi-repo allowlist).** Not implemented (CODE-8, P2, deferred). `QUOKY_GITHUB_REPOS` is not parsed; the
+  single `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO` target remains. Owner decision 12 still requires "Only select
+  repositories" before CODE-8 merges.
+- **ADR-0110 (calendar) and its amendment.** CAL-1 (260d089): `CalendarReader` port, `packages/connector-calendar-google`,
+  and `apps/quoky/src/tools/calendar-auth.ts` (PKCE loopback consent, token file mode 600, refuses scopes beyond
+  `calendar.readonly` plus optional `calendar.events`, never prints a token). CAL-2 (413900c): pre-classify order 150,
+  deterministic lists in `QUOKY_TIMEZONE` with no model call, a fixed history note instead of event titles, truthful read
+  failures, the QUAL-7 switch when a calendar is configured; W4-L01/L02 (59bdc5b, 6d2bd7f, e34f303); residual R6 above.
+  Amendment writes ship in CWR-1/2: primary calendar only, no attendees, `sendUpdates=none`, update/delete bound to the
+  event id, times and a required etag sent as `If-Match` (aba74d6). The list footer says "캘린더 읽기 전용" only while
+  writes are off (W5-L04). Live: reads C1-C6 and create/move/delete K1-K11 on the owner's company calendar.
+- **ADR-0111 (files and images).** MM-1 (f6bcb3c, 5e383f2, 09effa8): intake only after the ADR-0091 gate and the startup
+  identity gate; at most 3 attachments; text ≤256 KiB, PNG/JPEG/WebP ≤8 MiB; a private per-user, per-process temp root
+  with a symlink-safe sweep; bounded-time credential guard on text. MM-2 (be3eefe): `Capability.IMAGE_UNDERSTANDING`
+  served only by a `LOCAL` provider (`OllamaCliVisionProvider`, `QUOKY_OLLAMA_VISION_MODEL`, parsed in
+  `apps/quoky/src/image-understanding-provider.ts`; an invalid or cloud-served name disables only images); otherwise a
+  fixed "not analysed, not sent anywhere" reply. Claude receives no image bytes (owner decision 9). Live: not run.
+- **ADR-0112 (connector writes).** CWR-1 (cbd5e79): narrow write ports, v15 `connector_write_receipts` (no payload text),
+  Jira/Slack/calendar writers, allowlists and flags validated at startup even while off; the Slack write token must be
+  a bot token distinct from the read token. CWR-2 (0d16109): the D5 chat flow with deps 34 → 35; an EXECUTING anchor
+  before the receipt and the call; idempotency key `cwr:<approvalId>`; immutable target identifiers bound in the
+  approved payload with `TARGET_CHANGED` on drift (Jira transition id and destination status id, no name fallback;
+  490a020); lazy expiry of approved but unexecuted grants (dba397c). W5-L01..L03 (cf0e70b, d63860c): a question about
+  the approved operation's execution step gets a deterministic reminder, a repeated phrase after SENT reports it with
+  the link, Korean particles fixed. Live: Jira comment and transition, Slack post, deny, replay, allowlist refusal and
+  a truthful NOT_SENT (W5). Not run live: a mid-send network failure (`UNCERTAIN`), the W5-L01..L04 re-run.
+- **ADR-0113 (operations UI).** OPS-1 (f499594): `node:http` on `127.0.0.1` only, off by default, per-start 256-bit
+  token in `ops-ui.token` (mode 600, database directory, unlinked-then-exclusively-created on every start, removed on
+  clean stop), session cookie, CSRF, Host/Origin checks, sign-in rate limit, exact CSP with no inline code; readiness
+  is shown per capability with no provider id (decision 14 safe default). OPS-2 (d6a279f): reminder cancel and memory
+  forget through the chat services, one-time action nonces, typed-back forget code. D4 note (d305d21) above. OPS-2b
+  (57c7a8f, ce14858): `ApprovalDecisionService` extracted from `conversation-runtime.ts` and used by both chat and the
+  UI with unchanged chat replies; the `운영 화면 확인 코드` reference line in chat previews only while the listener is
+  up; UI approve needs that code plus session, Origin, CSRF and a one-time nonce; a UI approval records the grant only;
+  results go to the owner DM as `OPS_DECISION_RESULT` (the narrow ADR-0101 D1 amendment). Serialization (805ac5a,
+  b3c7e6a, bb27419): every approval transition takes the approval lock and then the session lock, re-reads live state
+  and acts only on `PENDING`; every write to an existing session goes through one process-wide `SESSION_WRITE_LOCK`
+  (`KeyedMutex`) with field-scoped writes. Accepted residual: two processes writing one session can still interleave
+  (no storage CAS), acceptable under ADR-0102 D4. The flags were folded into `config.ts`/`.env.example`; `main.ts` and
+  `app.module.ts` were not changed by OPS-2b. Live: sign-in after the D4 fix (W6-O1). Not run live: panel checks,
+  UI cancel/forget, UI approve/reject (W6-A2), foreign-Origin and token-rotation checks.
+- **Not claimed by this record.** Every PENDING item in the QA record's closeout list; SUB-3, CODE-8, CODE-9, LLM-3 and
+  LRN-4 are not implemented.

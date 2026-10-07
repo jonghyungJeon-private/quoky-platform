@@ -5,6 +5,109 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Personal v3 — implemented (waves 1-6), live verification partial (2026-10-07)
+
+**STATUS: IMPLEMENTED. Waves 1-6 are merged to `main` through PRs #116-#132 (`main` at acfffb7). Wave 6 closes with
+INT-2 (the offline v3 acceptance ratchet, run in parallel) and DOC-C (this documentation closeout); neither is part of
+the base this entry was written on.** Spec: ADR-0102..0112 and ADR-0113 (all Ratified 2026-10-06), the ADR-0106
+amendment (forget = archive with restore), the ADR-0110 amendment (calendar writes) and the ADR-0096 D6 amendment (help
+budget 14 lines); plan `docs/plans/personal-v3-plan.md`; live QA record `docs/uat/personal-v3-qa-record.md`. Latest
+merged offline validation (PR #132): `pnpm build`, `pnpm typecheck` and `pnpm test` passed, 314 files and 9600 tests.
+SQLite schema is v15. `ConversationRuntimeDeps` baseline is 35 (CWR-2, ADR-0112).
+
+**What the owner can do now (in addition to v2; phrases in `docs/user/quickstart.md`)**
+
+- **Always-on service:** a macOS launchd user agent (`ops/launchd/quokyctl.sh`) runs the built app with an `env -i`
+  environment, a single-instance lock, a startup bot/guild/channel identity check, a 90 s stop timeout and rotated logs.
+  A verified daily SQLite backup (plus a verified pre-migration backup) and a rate-limited owner-DM `OPS_NOTICE` run in
+  the process. Installed on the owner's Mac 2026-10-06 (QA record SV0-SV4).
+- **Honest answers:** a provider-neutral internal-action claim guard replaces a chat reply that claims a Quoky action
+  (commit, push, PR, merge, to-do, reminder, memory, file change) that did not happen; code-chain status phrases are
+  answered deterministically; how-to questions (`완료 처리 어떻게 해?`) are answered from the help lines with no provider
+  call; an own-memory question with no recall hit gets "그 내용은 기억에 없어요" instead of a model guess.
+- **Memory management:** `기억 목록`, `기억 N 보여줘`, `기억 N 수정: …`, `기억 N 잊어줘` with a one-time confirmation code.
+  Forget archives the memory for `QUOKY_MEMORY_ARCHIVE_DAYS` (default 7) and purges it from history; `보관함`,
+  `기억 복원 N`, `기억 완전 삭제 N`.
+- **Learning (owner-curated):** `피드백 요약` trend line, `피드백 후보`, `후보 N 메모: …`, `후보 N 예시로 저장`, `예시 목록`,
+  `예시 N 수정: …`, `예시 N 삭제`, stored per item, `LOCAL_ONLY`, 365 days. Curated examples reach only providers that
+  declare `LOCAL` execution and only with `QUOKY_LEARNING_EXAMPLES_ENABLED=true` (default `false`). Offline tools:
+  `learning-export` and `learning-report`.
+- **Calendar (Google, primary calendar):** deterministic schedule answers (`오늘 일정`, `이번 주 일정`, `다음 회의 언제야?`,
+  `내일 바빠?`) in `QUOKY_TIMEZONE`, no model call. With `QUOKY_CALENDAR_WRITE_ENABLED=true` and a `calendar.events`
+  grant: create, move and delete through an exact preview, `승인`, then `일정 추가/변경/삭제 실행`. No attendees,
+  `sendUpdates=none`, no recurring-series edits.
+- **Connector writes (off by default):** Jira comment and transition on allowlisted projects, Slack post to allowlisted
+  channels with a separate bot token. Each write shows the exact payload, needs a one-time CRITICAL approval bound to
+  the payload hash, runs only on its exact execution phrase (`댓글 실행`, `상태 변경 실행`, `Slack 게시 실행`), records a v15
+  receipt without payload text, and never retries `UNCERTAIN`. A repeated phrase after a sent write reports it instead
+  of sending again.
+- **Files and images:** owner messages in allowed locations may carry up to 3 attachments; text files (≤256 KiB) become
+  untrusted, credential-guarded context; PNG/JPEG/WebP images (≤8 MiB) go only to a local vision model
+  (`QUOKY_OLLAMA_VISION_MODEL`); with none set the reply says the image was not analysed and not sent anywhere. Claude
+  never receives image bytes.
+- **Code work:** the PR title is the approved commit's subject and the body is deterministic (commit, branch, changed
+  files); the PR approval binds both by hash. Push/fetch get bounded network timeouts (60 s; ls-remote 30 s).
+- **Operations UI (optional, `QUOKY_OPS_UI_ENABLED=false` by default):** `http://127.0.0.1:47613/`, signed in with a
+  per-start token from `ops-ui.token` (mode 600, in the database directory, replaced on every start). Read-only panels
+  (health, readiness per capability, reminders, approval metadata, connectors, recent errors, feedback, backups, archive
+  count), reminder cancel and memory forget, and approve/reject of a pending approval. Approving needs the 6-character
+  `운영 화면 확인 코드` that chat adds to the approval preview while the UI is on; a UI approval records the grant only
+  (execution still needs the chat phrase) and its result goes to the owner DM as `OPS_DECISION_RESULT`.
+
+**Feature flags added in v3 (see `.env.example`; exact `true`/`false` where boolean)**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `QUOKY_DISCORD_EXPECTED_BOT_ID` | unset | Bot user id for the startup identity check; required under the launchd launcher |
+| `QUOKY_BACKUP_ENABLED` / `QUOKY_BACKUP_DIR` | on under launchd, else off / `<db dir>/backups` | Daily verified backup and its absolute directory |
+| `QUOKY_MEMORY_ARCHIVE_DAYS` | `7` | Days a forgotten memory stays restorable (0-365; `0` deletes at once; invalid is a startup error) |
+| `QUOKY_LEARNING_EXAMPLES_ENABLED` | `false` | Curated examples in prompts of `LOCAL` providers only |
+| `QUOKY_OLLAMA_VISION_MODEL` | unset | Local Ollama vision model for images; unset or invalid disables only image understanding |
+| `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET`, `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` (or `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN`), `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` | unset; ids `primary` | Read-only calendar; registered only when the whole group is set |
+| `QUOKY_CALENDAR_WRITE_ENABLED` | `false` | Calendar writes on the primary calendar (needs a `calendar.events` grant) |
+| `QUOKY_CONNECTOR_WRITES_ENABLED` | `false` | Master switch for Jira and Slack writes |
+| `QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS` | empty | Jira project-key allowlist (reuses the Jira read credentials) |
+| `QUOKY_CONNECTOR_WRITE_SLACK_TOKEN` / `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS` | unset | Slack bot token (`chat:write`, must differ from `QUOKY_SLACK_TOKEN`) and `name:ID` channel allowlist |
+| `QUOKY_OPS_UI_ENABLED` / `QUOKY_OPS_UI_PORT` | `false` / `47613` | Local operations UI; an invalid value disables only the UI |
+
+`QUOKY_REMINDERS_ENABLED` now defaults to `true` (ADR-0102 D9, owner decision 8). `OLLAMA_MODEL` is unchanged in code
+(default `llama3.1`); the owner's service runs `granite3.3:8b` since 2026-10-07 (LLM-2 helpfulness re-run).
+
+**Delivered by track:** SUB-1/2 launchd runtime, backup and `OPS_NOTICE` (ADR-0102); DET-1 claim guard, state-aware
+code-chain replies, `action-shaped-fallthrough.v1.json` (ADR-0104); LLM-1 hygiene and help-intent handler (ADR-0104
+D4/D5); LLM-2 harness with helpfulness checks and the measured model choice (ADR-0105 D1); MEM-1 commands and the
+archive amendment (ADR-0106); LRN-1 v14 store and commands, LRN-2 LOCAL-only examples (ARCHITECTURE.md §5.14), LRN-3
+offline report (ADR-0107); CODE-6 status token (PR #113) and CODE-7 PR title/body (ADR-0108); CAL-1/2 reader and
+schedule handler (ADR-0110) and calendar writes (its amendment); MM-1/2 attachment intake and `IMAGE_UNDERSTANDING`
+(ADR-0111); CWR-1/2 write ports, v15 receipts and the chat approval flow (ADR-0112); OPS-1, OPS-2 and OPS-2b with a
+shared `ApprovalDecisionService` and serialized approval/session writes (ADR-0113).
+
+**Not delivered (deferred, not claimed):** SUB-3 continuation activation (ADR-0103, P2), CODE-8 multi-repository
+allowlist (ADR-0109, P2), CODE-9 merge enablement (P2; `QUOKY_GIT_MERGE_ENABLED` stays `false`), LLM-3 MLX provider
+(ADR-0105 D2-D4, no benchmark run), LRN-4 fine-tuning (deferred), the optional model-proposed PR title/body (ADR-0108
+D4, not wired), and the to-do/reminder status phrases of ADR-0104 D3 (memory status phrases are answered by MEM-1).
+
+**Live status (attended, dev bot and the owner's service, `docs/uat/personal-v3-qa-record.md`)**
+
+- Live PASS: the SUB-1 install, `kill -9` restart and a reminder across the restart; migrations v13 to v14 and v14 to
+  v15 on the service with verified pre-migration backups; memory list/edit/forget/archive/restore (W2-L01 and W3-L01
+  found and fixed); the code chain to PR with the CODE-7 title/body on the sandbox repo (W2-L02 push timeout found and
+  fixed); calendar reads on the company calendar (W4-L01/L02 fixed); Jira comment and transition, Slack post, calendar
+  create/move/delete with deny, replay and allowlist refusal (W5); operations UI sign-in after the PR #131 fix.
+- Model: gemma3:4b (the first LLM-2 pick) gave non-answers live and was reverted; the helpfulness re-run picked
+  granite3.3:8b, now on the service. Its first live check was confounded by host load (Claude fallback answered 3 of 4).
+- **STILL PENDING (not claimed as done):** the 20-prompt Korean daily-chat LLM set (granite3.3:8b re-test W6-M5 was a partial pass: 3 of 4 replies local, 21-38 s generation, invented song specifics remain; mid-word wrapping fixed in PR #133); live UI approve/reject and UI
+  reminder cancel/forget; attachments and images live; learning notes/examples live; a mid-send network failure on a
+  write; W5-L01..L04 live re-run; reboot start, an observed daily backup and a restore drill; the DET edge-case sweep;
+  Slack read lookups (no user token). The full list is at the end of the QA record.
+- Open quality items: local-model helpfulness and invented specifics (QA-V3-W2-LM, W6-M4), local work summaries
+  (QA-V2-PC-03), embedding recall timeouts on a cold model swap (QA-V2-CL-04), accepted residuals R5 (claim guard) and
+  R6 (calendar write-intent detection).
+
+**Progress estimate (an estimate, not a measured metric):** roughly 80% of the Personal edition after v3 against the
+plan's 85% target, up from roughly 65% after v2. The gap is mostly the pending live sessions above and local-model
+answer quality. Telegram is a post-v3 extension (`ROADMAP.md`).
+
 ### Personal v2 — implemented (waves 1-8), live verification partial (2026-10-03)
 
 **STATUS: IMPLEMENTED. Waves 1-7 are merged to `main` (PRs #105-#111, `main` at ba28314). Wave 8 is INT-1 (the offline

@@ -5,6 +5,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Quoky Personal v3 — waves 1-6 — 2026-10-07
+
+Merged through PRs #116-#132 (2026-10-06/07). Wave 6 closes with INT-2 (offline v3 acceptance) and DOC-C (this
+documentation closeout). Spec: ADR-0102..0113 (ratified 2026-10-06), the ADR-0106 amendment (archive), the ADR-0110
+amendment (calendar writes) and the ADR-0096 D6 amendment (help 14 lines); plan `docs/plans/personal-v3-plan.md`; live QA
+record `docs/uat/personal-v3-qa-record.md`. Setup: `docs/user/quickstart.md` and `docs/uat/operator-guide.md` Part 0.
+
+**By wave**
+
+| Wave | PR | Content |
+|---|---|---|
+| 1 | #116, #117, #118 | ADR-0102..0112 and ADR-0113 ratified; launchd always-on runtime pieces (SUB-1); internal-action claim guard and code-chain status replies (DET-1); chat hygiene and help-intent handler (LLM-1) |
+| 2 | #119, #120, #121 | Memory commands (MEM-1); learning store, schema v14 (LRN-1); PR title/body bound by hash (CODE-7); verified backup and `OPS_NOTICE` (SUB-2); bounded network git timeouts (W2-L02); forget = archive with restore and history purge (ADR-0106 amendment, W2-L01) |
+| 3 | #122, #123 | LOCAL-only curated examples (LRN-2); Google Calendar reader and consent helper (CAL-1); Discord attachment intake (MM-1); read-only operations UI (OPS-1); harness helpfulness checks; reminders release default `true`; truthful "기억에 없어요" (W3-L01) |
+| 4 | #124-#127 | ADR-0110 calendar-writes amendment; connector write ports, schema v15 receipts (CWR-1); calendar schedule handler (CAL-2, W4-L01/L02 fixes); local image understanding (MM-2); UI reminder cancel and memory forget (OPS-2) |
+| 5 | #128-#130 | Chat approval flow for Jira, Slack and calendar writes (CWR-2); offline learning report (LRN-3); help budget 14 lines; W5-L01..L04 copy fixes |
+| 6 | #131, #132 | Operations UI sign-in Origin fix (`Referrer-Policy: same-origin`); UI approve/reject through a shared `ApprovalDecisionService` with serialized approval and session writes (OPS-2b); INT-2 and DOC-C |
+
+**User-visible changes**
+
+- Always-on service on the owner's Mac (`ops/launchd/quokyctl.sh install|status|restart|uninstall`, `--dry-run` or
+  `--apply`), daily verified backups and an owner-DM health notice.
+- A chat reply that claims a Quoky action that did not happen is replaced by a notice and the command to use; how-to
+  questions get the matching help lines; own-memory questions with no recall get "그 내용은 기억에 없어요".
+- Memory: `기억 목록`, `기억 N 보여줘`, `기억 N 수정: …`, `기억 N 잊어줘`, `보관함`, `기억 복원 N`, `기억 완전 삭제 N`
+  (each change confirmed with `기억 확인 <코드>`).
+- Learning: `피드백 후보`, `후보 N 메모: …`, `후보 N 예시로 저장`, `예시 목록`, `예시 N 수정: …`, `예시 N 삭제`; a 👎-rate
+  trend in `피드백 요약`.
+- Calendar: `오늘 일정`, `이번 주 일정`, `다음 회의 언제야?`, `내일 바빠?`; with writes on, `내일 오후 3시에 회의 잡아줘 …`,
+  move and cancel, each through `승인` and `일정 추가/변경/삭제 실행`.
+- Connector writes: `KEY-1에 댓글: …` → `승인` → `댓글 실행`; `KEY-1 진행 중으로 바꿔줘` → `승인` → `상태 변경 실행`;
+  `#채널에 게시: …` → `승인` → `Slack 게시 실행`. Exact payload preview, one-time hash-bound CRITICAL approval, no retry of
+  an uncertain send, duplicate-send guard.
+- Attachments: text files as context; images only to a local vision model, otherwise a truthful "not analysed" reply.
+- PR title = commit subject; deterministic PR body.
+- Local operations UI (`http://127.0.0.1:47613/`, off by default): status panels, reminder cancel, memory forget,
+  approve/reject with the chat confirmation code; results go to the owner DM.
+- Schema migrations v14 (`learning_items`) and v15 (`connector_write_receipts`, no payload text), additive.
+
+**Live QA fixes (details in the QA record):** W1-L01..L03 (help/how-to routing, memory claim), W2-L01 (forgotten text
+still in history), W2-L02 (5 s push timeout), W3-L01 (invented personal fact), W4-L01/L02 (calendar phrasing),
+W5-L01..L04 (write-flow copy), W6-L01 (operations UI sign-in Origin).
+
+**Environment variables added in v3** (boolean flags are exact `true`/`false`; see `.env.example`)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `QUOKY_DISCORD_EXPECTED_BOT_ID` | unset | Required under the launchd launcher (startup identity check) |
+| `QUOKY_BACKUP_ENABLED`, `QUOKY_BACKUP_DIR` | on under launchd / `<db dir>/backups` | Absolute directory only |
+| `QUOKY_MEMORY_ARCHIVE_DAYS` | `7` | 0-365; `0` deletes at once; invalid is `MEMORY_ARCHIVE_DAYS_INVALID` |
+| `QUOKY_LEARNING_EXAMPLES_ENABLED` | `false` | Examples reach `LOCAL` providers only |
+| `QUOKY_OLLAMA_VISION_MODEL` | unset | Local vision model; invalid or cloud-served disables only image understanding |
+| `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET`, `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` / `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN`, `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` | unset; `primary` | Calendar is registered only when the group is complete |
+| `QUOKY_CALENDAR_WRITE_ENABLED` | `false` | Primary calendar only; needs a `calendar.events` grant |
+| `QUOKY_CONNECTOR_WRITES_ENABLED` | `false` | Jira and Slack writes |
+| `QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS` | empty | Project keys, at most 50 |
+| `QUOKY_CONNECTOR_WRITE_SLACK_TOKEN`, `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS` | unset | Bot token with `chat:write`, separate from the read token; `name:ID` entries |
+| `QUOKY_OPS_UI_ENABLED`, `QUOKY_OPS_UI_PORT` | `false`, `47613` | An invalid value disables only the UI |
+
+Changed default: `QUOKY_REMINDERS_ENABLED` is now `true`. `OLLAMA_MODEL` keeps its code default (`llama3.1`); the owner's
+service was switched to `granite3.3:8b` on 2026-10-07 as an operator change.
+
+**Fixed after closeout review:** local-model replies were hard-wrapped mid-word by `ollama run`; Ollama now runs with `--nowordwrap` (PR #133).
+
+**Not live-verified:** the 20-prompt Korean daily-chat set on granite3.3:8b (W6-M5 partial pass), UI approve/reject and UI cancel/forget, attachments and images,
+learning notes/examples, a mid-send write failure, W5-L01..L04 re-run, reboot/daily backup/restore drill, Slack read
+lookups. Not implemented: SUB-3, CODE-8, CODE-9 (P2, deferred), LLM-3 (MLX), LRN-4. See `CURRENT_STATE.md`.
+
 ## Quoky Personal v2 — waves 1-8 — 2026-10-03
 
 Waves 1-7 are merged through PRs #105-#111 (2026-10-02/03). Wave 8 is INT-1 (offline integration acceptance) plus DOC-B (this

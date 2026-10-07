@@ -60,6 +60,7 @@ does not claim Production Runtime readiness.
 | **PCR-R2** | Production Continuation Receiver — offline provider-backed receiver | IMPLEMENTED LOCALLY / AWAITING REVIEW on base `ccb1864` (R1 = CLOSED + DELIVERED via PR #79). Core `ContinuationProviderRoutingService` (sibling of `RuntimeProviderRoutingService`, reuses Stage2B primitives; not a wrapper/CapabilityRouter/AiProvider caller); Core `PromptComposer.composeContinuation` + separate bounded validation corpus (identifiers only; no conversation reframe; fail-closed bounds); app `ProviderBackedContinuationReceiver` (`supportedCapabilities = [GENERAL_CHAT]`, narrow deps, bounded FAILED preflight, platform-owned `MARKDOWN_REPORT`, provider artifact ids ignored, never terminalizes); routing policy `stage2b-continuation-general-chat-v1` (WORK/CHAT/AUTHORITY_SENSITIVE, `requiredRoutingClasses=[BALANCED]`) + chat policy hardened to CONVERSATIONAL; PRODUCTION config/digest change binding both validation profiles; PRIMARY_ONLY enforced in code; disposition mapping (pre-dispatch→FAILED, dispatched-uncertain→UNRESOLVED, returned→SUCCEEDED/FAILED); `QUOKY_CONTINUATION_RECEIVER_MODE = disabled|general-chat-v1` (default disabled, separate from routing mode, general-chat-v1 startup fail-closed until R3 containment); ADR-0089 cross-referenced; activation DISABLED / NOT LIVE-READY; R3 NOT STARTED; no live provider/network/containment/external trigger |
 | **Personal v1** | First product release ("Quoky Personal v1") | Scope ratified by the Product Owner 2026-10-02; ADR-0091/0092/0093/0094 + ADR-0073 amendment; see "First product release" below; IMPLEMENTED LOCALLY on the integration branch with offline acceptance PASS; Live UAT (criterion 9) NOT EXECUTED |
 | **Personal v2** | Personal v2 (owner reminders, work chat, answer quality, code-work expansion, credential override) | IMPLEMENTED (waves 1-8). ADR-0096..0101 + ADR-0098 amendment Ratified; plan `docs/plans/personal-v2-execution-plan.md`; waves 1-7 MERGED (PRs #105-#111); wave 8 = INT-1 offline acceptance + DOC-B docs (wave-8 PR); owner-attended live QA for waves 1-7 recorded in `docs/uat/personal-v2-qa-record.md`; Live UAT of connectors (real tenants), reminders channel delivery, the reminders release default and merge enablement NOT EXECUTED |
+| **Personal v3** | Personal v3 (always-on runtime, deterministic answers, memory commands, owner-curated learning, calendar, files and images, connector writes, local operations UI) | IMPLEMENTED (waves 1-6). ADR-0102..0113 Ratified 2026-10-06 (+ ADR-0106 and ADR-0110 amendments); plan `docs/plans/personal-v3-plan.md`; waves 1-6 MERGED (PRs #116-#132); INT-2 + DOC-C close wave 6; live QA in `docs/uat/personal-v3-qa-record.md`; SUB-3, CODE-8, CODE-9 DEFERRED (P2); granite live re-test, UI approve/reject, attachments/images and learning live sessions NOT EXECUTED |
 | **Future** | Memory improvements · Codex · additional connectors | per ADR sequence |
 
 ## First product release — Quoky Personal v1
@@ -103,7 +104,7 @@ The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that wer
 | A. Feedback capture (👍/👎 reactions, implicit signals, local store, `피드백 요약`) | DONE (ADR-0098; schema v12) |
 | B. Golden evaluation set and accuracy ratchet | DONE offline (QUAL-2); INT-1 routing ratchet pending in the wave-8 PR |
 | C. Local embedding retrieval | DONE, opt-in (`QUOKY_EMBEDDING_ENABLED=false` by default); live probe pending |
-| D. Feedback-driven examples injected by `PromptComposer` | NOT DONE (v3: feedback learning) |
+| D. Feedback-driven examples injected by `PromptComposer` | NOT DONE in v2; delivered in v3 as LRN-2 (owner-curated, `LOCAL` providers only, flag off by default) |
 | E. Local fine-tuning (MLX LoRA) | NOT DONE (deferred until enough personal data exists) |
 | Credential override (QA-023) | DONE and live-verified (ADR-0097) |
 | Chat policy and policy-sensitive routing | DONE and live-verified; local-model quality items remain (QA-V2-003/008, W7-06) |
@@ -114,25 +115,38 @@ The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that wer
 
 **Remaining before calling Personal v2 closed:** the separately approved live sessions above (connector lookups on real
 Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the release-default decision for reminders).
+Update 2026-10-06/07: connector lookups on the real Jira, Confluence and GitHub tenants, reminders channel delivery, PR
+status with checks and embedding recall ran live (`docs/uat/personal-v2-qa-record.md`), and the reminders release default
+is now `true` (Personal v3). Slack read lookups (no user token) and merge enablement have still not run.
 
-**Personal v3 candidates (themes only; plan: `docs/plans/personal-v3-plan.md`, Proposed — tracks, waves and owner decisions)**
+**Personal v3 — status (2026-10-07)**
 
-- Multi-agent and continuation, which needs a deployment substrate (the deferred R3 / Stage 2B track).
-- Multimodal input and output.
-- Connector writes (Jira, Slack, Confluence, GitHub) with their own approval model.
-- Calendar integration.
-- Memory management UI (inspect, edit, forget).
-- Feedback learning (the unfinished item D above).
-- Ollama model quality: QA-V2-003 (stray non-Korean text), QA-V2-008 (over-cautious answers) and QA-V2-W7-06 (vague
-  answers, help-intent routing). QA-V2-002 was a Claude isolation bug and is fixed.
-- PR title and body generation (today the PR title is the sanitized instruction text).
-- Partial PR status when the GitHub App has no Checks permission (PR and reviews without checks).
-- MLX and Docker isolation options for local models.
-- Local operations UI (track OPS, ADR-0113 **Proposed**, 2026-10-06): a loopback-only, token-gated, default-off web
-  screen served by the Quoky process. Phase 1 is read-only monitoring (wave 3, after SUB-2). Phase 2 handles reminder
-  cancel and memory forget in wave 4 (after MEM-1), then reject and approve in wave 6 (P2), through a decision service
-  extracted from the runtime, with the same approval gates as chat. Remote
-  access (Tailscale or other tunnels) and a separate mobile/desktop client are out of v3 and belong to Team/Hosted.
+Plan `docs/plans/personal-v3-plan.md`; ADR-0102..0113 Ratified 2026-10-06; waves 1-6 merged (PRs #116-#132); live QA
+record `docs/uat/personal-v3-qa-record.md`. "Live" means recorded there; everything else is offline-tested only.
+
+| Item | Status |
+|---|---|
+| SUB-1/2 always-on launchd service, single instance, identity check, verified backups, `OPS_NOTICE` (ADR-0102) | DONE; installed and live-verified on the owner's Mac (restart, reminder across restart, pre-migration backups); reboot, scheduled daily backup and restore drill PENDING |
+| SUB-3 continuation activation under the Personal trust model (ADR-0103) | DEFERRED (P2, not implemented; continuation stays fail-closed) |
+| DET-1 internal-action claim guard, code-chain status replies, fall-through corpus (ADR-0104) | DONE and live-verified on a sample; residual R5 accepted; to-do/reminder status phrases (D3) and the full edge-case sweep PENDING |
+| LLM-1 chat hygiene and help-intent handler | DONE and live-verified |
+| LLM-2 model choice by measurement (ADR-0105 D1) | DONE offline: helpfulness-aware harness picked `granite3.3:8b`, set on the owner's service 2026-10-07; live re-test W6-M5 partial pass (3 of 4 replies local, invented specifics remain), mid-word wrap fixed in PR #133; 20-prompt Korean daily-chat set PENDING |
+| LLM-3 MLX provider (ADR-0105 D2-D4) | NOT DONE (optional; no benchmark run) |
+| MEM-1 memory commands, archive with restore, history purge (ADR-0106 + amendment) | DONE and live-verified |
+| LRN-1 learning store v14, candidates and trend; LRN-3 offline report (ADR-0107) | DONE; only the empty `피드백 후보` state ran live |
+| LRN-2 curated examples for `LOCAL` providers only | DONE offline; `QUOKY_LEARNING_EXAMPLES_ENABLED=false` (off) until measured; live PENDING |
+| LRN-4 local fine-tuning | DEFERRED (needs ≥300 approved examples and a measured LRN-2 gain) |
+| CODE-6 read-only PR status token; CODE-7 PR title/body bound by hash (ADR-0108) | DONE and live-verified on the sandbox repo; optional model-proposed title/body (D4) not wired |
+| CODE-8 multi-repository allowlist (ADR-0109) | DEFERRED (P2, not implemented) |
+| CODE-9 merge enablement | DEFERRED (P2; release default `QUOKY_GIT_MERGE_ENABLED=false`) |
+| CAL-1/2 calendar read; calendar writes (ADR-0110 + amendment) | DONE and live-verified on the owner's company calendar (reads, create, move, delete) |
+| MM-1/2 attachments and local image understanding (ADR-0111) | DONE offline; images need an operator-chosen local vision model in `QUOKY_OLLAMA_VISION_MODEL`; live PENDING |
+| CWR-1/2 Jira comment/transition and Slack post behind exact-payload approvals, v15 receipts (ADR-0112) | DONE and live-verified on allowlisted test targets; mid-send failure (`UNCERTAIN`) PENDING |
+| OPS-1/2/2b local operations UI: monitoring, reminder cancel, memory forget, approve/reject (ADR-0113) | DONE; sign-in live-verified after the Origin fix (PR #131); UI handling and approve/reject live PENDING |
+
+Out of v3 by decision: the multi-agent runtime, Team/Hosted tenancy, deploy/release automation, Confluence and
+GitHub-issue writes, and remote access to the operations UI (Tailscale or other tunnels, LAN binding) or a separate
+mobile/desktop client (Team/Hosted, ADR-0113 D11).
 
 **Post-v3 extensions (taken up only after all Personal v3 development completes)**
 

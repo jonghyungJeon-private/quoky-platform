@@ -1511,6 +1511,9 @@ describe('Personal v3 CAL-2 — schedule questions from the configured calendar 
       '내일 3시 회의 4시로 옮겨줘',
       '내일 3시 회의 취소해줘',
       '내일 오후 3시에 회의 잡아줘 제목 주간 회의',
+      // INT-2: the v3 live-QA W4-L01 booking phrasings (route-205/206).
+      '내일 오후 3시에 회의 잡아줘',
+      '금요일 10시에 팀 미팅 넣어줘',
     ]);
     for (const golden of calendarCases()) {
       const seen = byId.get(golden.id) as CaseObservation;
