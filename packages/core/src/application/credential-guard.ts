@@ -58,13 +58,24 @@ const CARD_NUMBER = /\b(?:\d[ -]?){15}\d\b/u;
  */
 const DETECTION_INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 
+/** Upper bound of strip → NFKC rounds; the view is normally stable after the second round. */
+const DETECTION_VIEW_MAX_ROUNDS = 4;
+
 /**
- * The view the credential detectors read (ADR-0097, live QA follow-up): NFKC-normalized, with invisible and control
- * characters removed, so `pass<U+200B>word=…`, a BOM or CR inside a keyword, or a full-width key cannot split or
- * disguise a credential. Detection only — callers keep (and send, or refuse) the original text unchanged.
+ * The view the credential detectors read (ADR-0097, live QA follow-up): invisible and control characters removed and
+ * NFKC applied, repeated until the text no longer changes, so `pass<U+200B>word=…`, a BOM or CR inside a keyword, a
+ * full-width key, or decomposed Hangul jamo split by an invisible character (`ᄇ<U+200B>ᅵ밀번호는 …`, which NFKC can
+ * only recompose once the splitter is gone) cannot split or disguise a credential. Detection only — callers keep (and
+ * send, or refuse) the original text unchanged.
  */
 export function credentialDetectionView(text: string): string {
-  return text.normalize('NFKC').replace(DETECTION_INVISIBLE, '');
+  let view = text;
+  for (let round = 0; round < DETECTION_VIEW_MAX_ROUNDS; round += 1) {
+    const next = view.replace(DETECTION_INVISIBLE, '').normalize('NFKC');
+    if (next === view) return view;
+    view = next;
+  }
+  return view.replace(DETECTION_INVISIBLE, '');
 }
 
 /**

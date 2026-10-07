@@ -11233,6 +11233,17 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     }
   });
 
+  it.each(['<@123456789012345678>', '<@!123456789012345678>', '\u200B', '<@1> \uFEFF '])(
+    'a mention-only or invisible-only message with only refused attachments gets the deterministic reply: %j',
+    async (text) => {
+      const h = chatTurn();
+      const result = await h.runtime.handle(withAttachments(text, [refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));
+      expect(result.reply.text).toBe(renderAttachmentsNotRead('ko'));
+      expect(h.calls.classify).toBe(0);
+      expect(h.requests).toHaveLength(0);
+    },
+  );
+
   it.each([
     '이 설정 파일 확인해줘',
     '이 로그 말고 오늘 날씨 어때?',

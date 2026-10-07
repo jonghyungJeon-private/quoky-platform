@@ -16856,17 +16856,23 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   deterministic and no provider runs. Any text runs normally, with a "not read; never guess or describe it" fact. A
   heuristic for "text about the file" was tried and removed because it swallowed independent questions. The Ollama
   chat parser matches section headings only at a line start. The shared ADR-0097 detectors
-  (`containsCredentialMaterial`, `classifyCredentialFileContent`) also read a detection view of the text: NFKC, with
-  Cf and default-ignorable code points and every control character except LF and tab removed. So zero-width, bidi,
-  BOM, soft-hyphen, variation-selector, CR, NUL and C1 characters cannot split a keyword or token prefix, for every
-  caller (adapter intake, attachment preparation, composer, reply check, memory and learning gates, code-generation
-  context). The check is refusal-adding only: the original text is still matched, and the text itself is never
-  changed. `attachment-context` joined the Stage 2A
+  (`containsCredentialMaterial`, `classifyCredentialFileContent`) also read a detection view of the text. The view
+  removes Cf and default-ignorable code points and every control character except LF and tab, then applies NFKC,
+  and repeats both steps until the text stops changing. So zero-width, bidi, BOM, soft-hyphen, variation-selector,
+  CR, NUL and C1 characters cannot split a keyword or a token prefix, and neither can a splitter between decomposed
+  Hangul jamo. This holds for every caller: adapter intake, attachment preparation, composer, reply check, memory
+  and learning gates, and code-generation context. The check is refusal-adding only: the original text is still
+  matched, and the text itself is never changed. **Accepted best-effort residuals:** homoglyphs (`раssword` with
+  Cyrillic letters) and spaced letters (`p a s s w o r d`) are not detected. The detectors stay regex-based and
+  best-effort, not DLP. "Empty message" means no effective content: mention tokens (`<@id>`, `<@!id>`, `<@&id>`,
+  `<#id>`), whitespace and invisible characters do not count. `attachment-context` joined the Stage 2A
   `PROVIDER_EXECUTION_PATH_MODULES` binding; with the `prompt-composer.ts` edit, the Stage 2A bindings need a re-run.
   **Accepted residual:** a reply to an attachment turn is ordinary transcript and artifact, under the same egress as
   the message text, so a non-credential quotation of the file is persisted with it. The raw attachment is never
   stored. On an attachment turn, the credential guard runs first, on the provider's original reply text and every
-  artifact payload, before the action-claim guard. A match replaces the whole reply with a fixed notice, and no
+  artifact payload, before the action-claim guard. Artifact metadata is walked raw: every string value and key is
+  checked, and the chat detector also checks the serialized form. Cyclic data, or data deeper than 16 levels or
+  larger than 10,000 nodes, counts as a match. A match replaces the whole reply with a fixed notice, and no
   artifacts are persisted or delivered. Other turns are not checked: on ordinary help answers (`password: <your
   password>` examples, 16-digit numbers) the check would withhold valid replies, and ADR-0097 does not cover masking
   model output. Replies are not otherwise masked.

@@ -191,10 +191,57 @@ export function isAttachmentReplyWithheld(
   artifacts: readonly { title?: string; content?: string; uri?: string; metadata?: unknown }[] = [],
 ): boolean {
   if (isCredentialShaped(reply)) return true;
-  return artifacts.some((artifact) =>
-    [artifact.title, artifact.content, artifact.uri, artifact.metadata === undefined ? undefined : JSON.stringify(artifact.metadata)]
-      .some((part) => typeof part === 'string' && isCredentialShaped(part)),
+  return artifacts.some(
+    (artifact) =>
+      [artifact.title, artifact.content, artifact.uri].some((part) => typeof part === 'string' && isCredentialShaped(part)) ||
+      (artifact.metadata !== undefined && isCredentialShapedValue(artifact.metadata)),
   );
+}
+
+/** How deep and how many nodes a metadata walk reads; anything larger is withheld (fail closed). */
+const METADATA_WALK_MAX_DEPTH = 16;
+const METADATA_WALK_MAX_NODES = 10_000;
+
+/**
+ * Whether structured data carries credential material: both detectors run on every RAW string value and key (so a CR
+ * or NUL inside a value is seen as the character it is, not as a JSON escape), and the chat detector runs on the
+ * serialized form (so `{ password: 'x' }` is still caught as an assignment). The strict FILE detector is not run on the
+ * serialized form: it refuses any credential-named key with a literal, including counts such as `"tokens": 207`.
+ * Too deep, too large or cyclic data counts as matched.
+ */
+export function isCredentialShapedValue(value: unknown): boolean {
+  let nodes = 0;
+  const seen = new Set<object>();
+  const walk = (node: unknown, depth: number): boolean => {
+    nodes += 1;
+    if (nodes > METADATA_WALK_MAX_NODES || depth > METADATA_WALK_MAX_DEPTH) return true;
+    if (typeof node === 'string') return isCredentialShaped(node);
+    if (node === null || typeof node !== 'object') return false;
+    if (seen.has(node)) return true;
+    seen.add(node);
+    if (Array.isArray(node)) return node.some((item) => walk(item, depth + 1));
+    return Object.entries(node).some(([key, item]) => isCredentialShaped(key) || walk(item, depth + 1));
+  };
+  if (walk(value, 0)) return true;
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' && containsCredentialMaterial(serialized);
+  } catch {
+    return true;
+  }
+}
+
+/** Mention tokens of chat platforms (`<@id>`, `<@!id>`, `<@&id>`, `<#id>`, `<#C1|name>`): addressing, not content. */
+const MENTION_TOKEN = /<[@#][!&]?[A-Za-z0-9]+(?:\|[^<>\n]*)?>/gu;
+/** Whitespace, format, default-ignorable and control characters. */
+const NON_CONTENT = /[\s\p{Cf}\p{Default_Ignorable_Code_Point}\p{Cc}]/gu;
+
+/**
+ * Whether a message text says anything beyond addressing (P3): mention tokens, whitespace and invisible characters
+ * removed. A message with no effective content is treated as empty.
+ */
+export function hasEffectiveText(text: string): boolean {
+  return text.replace(MENTION_TOKEN, '').replace(NON_CONTENT, '').length > 0;
 }
 
 /** The fixed reply that replaces a withheld attachment-turn reply (never persisted with the original text). */

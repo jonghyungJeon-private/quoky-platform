@@ -5,6 +5,8 @@ import {
   MAX_ATTACHMENT_NAME_CHARS,
   clipHeadAndTail,
   currentTurnAttachmentsOf,
+  hasEffectiveText,
+  isCredentialShapedValue,
   hasNoUsableAttachment,
   isAttachmentReplyWithheld,
   prepareAttachedTextFiles,
@@ -175,6 +177,34 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
       expect(prepareAttachedTextFiles([{ name: 'a.log', text }])).toEqual({ files: [], droppedCount: 1 });
       const name = 's' + ch + 'k-' + 'A'.repeat(24) + '.log';
       expect(promptSafeAttachmentName(name, 'attachment', 1)).toBe('attachment-1.log');
+    }
+  });
+
+  it('re-review P2: metadata is walked raw, so a CR or NUL inside a value is not hidden by JSON escaping', () => {
+    for (const ch of ['\r', '\u0000']) {
+      const note = 'pass' + ch + 'word=demo-review-value';
+      expect(isAttachmentReplyWithheld('요약입니다', [{ title: 'r', metadata: { note } }])).toBe(true);
+      expect(isCredentialShapedValue({ nested: [{ deeper: { note } }] })).toBe(true);
+      expect(isCredentialShapedValue({ ['pass' + ch + 'word=demo-review-value']: 1 })).toBe(true);
+    }
+    // The structured assignment form is still caught through the serialized view.
+    expect(isCredentialShapedValue({ password: 'demo-review-value' })).toBe(true);
+    expect(isCredentialShapedValue({ model: 'granite3.3:8b', tokens: 207, ok: true })).toBe(false);
+    // Fail closed on cyclic or oversized data.
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(isCredentialShapedValue(cyclic)).toBe(true);
+    let deep: unknown = 'x';
+    for (let i = 0; i < 40; i += 1) deep = { d: deep };
+    expect(isCredentialShapedValue(deep)).toBe(true);
+  });
+
+  it('re-review P3: mention tokens, whitespace and invisible characters are not effective text', () => {
+    for (const text of ['', '   ', '<@123456789012345678>', '<@!123456789012345678>', '<@&42> <#99>', '\u200B', '\uFEFF \u200C\n', '<@1>\u200B ']) {
+      expect(hasEffectiveText(text), JSON.stringify(text)).toBe(false);
+    }
+    for (const text of ['<@1> 요약해줘', 'What is 2 + 2?', '?', 'ok']) {
+      expect(hasEffectiveText(text), text).toBe(true);
     }
   });
 

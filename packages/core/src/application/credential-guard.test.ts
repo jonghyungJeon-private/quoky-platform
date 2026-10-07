@@ -578,6 +578,19 @@ describe('detection view: invisible and control characters cannot split a creden
     expect(classifyCredentialFileContent('KEY = ' + token + '\n')).toEqual({ kind: 'secret-token' });
   });
 
+  it.each([
+    ['U+200B', '\u200B'],
+    ['U+200C', '\u200C'],
+    ['U+034F', '\u034F'],
+    ['U+FEFF', '\uFEFF'],
+    ['CR', '\r'],
+  ])('decomposed Hangul (NFD) split by %s between the first two jamo is refused (strip and NFKC to a fixed point)', (_label, ch) => {
+    const jamo = '비밀번호'.normalize('NFD');
+    const text = jamo.slice(0, 1) + ch + jamo.slice(1) + '는 ' + VALUE;
+    expect(containsCredentialMaterial(text)).toBe(true);
+    expect(credentialDetectionView(text)).toBe('비밀번호는 ' + VALUE);
+  });
+
   it('NFKC: full-width keyword and token prefix are refused', () => {
     expect(containsCredentialMaterial('ｐａｓｓｗｏｒｄ=' + VALUE)).toBe(true);
     expect(containsCredentialMaterial('ｓｋ－' + 'A'.repeat(24))).toBe(true);

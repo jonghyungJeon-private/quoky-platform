@@ -23,6 +23,7 @@ import {
   textAttachmentsOf,
 } from './image-understanding';
 import {
+  hasEffectiveText,
   hasNoUsableAttachment,
   isAttachmentReplyWithheld,
   renderAttachmentReplyWithheld,
@@ -2267,10 +2268,11 @@ export class ConversationRuntime {
     }
     // (A3c) ADR-0111 D2/D3: no attachment of the message is usable — the adapter refused it (credential-like, too large,
     // unsupported, …) or Core's final re-check dropped it — AND the message has no text. The adapter already named each
-    // refused file; no provider runs, so no model answers about a file it never got. A message with ANY text routes
+    // refused file; no provider runs, so no model answers about a file it never got. "No text" means no effective
+    // content: mention tokens, whitespace and invisible characters do not count. A message with ANY other text routes
     // normally (guessing whether the text is "about the file" swallowed independent questions); a chat prompt then
     // states that the attachment was not read and must not be guessed.
-    if (hasNoUsableAttachment(message) && message.text.trim().length === 0) {
+    if (hasNoUsableAttachment(message) && !hasEffectiveText(message.text)) {
       // Content-free: a count only, never a file name or reason text.
       this.deps.logger.info('attachment turn answered without a provider', {
         attachmentCount: message.attachments?.length ?? 0,
