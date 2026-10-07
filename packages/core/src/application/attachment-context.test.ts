@@ -6,7 +6,6 @@ import {
   clipHeadAndTail,
   currentTurnAttachmentsOf,
   hasNoUsableAttachment,
-  isAttachmentOnlyRequest,
   isAttachmentReplyWithheld,
   prepareAttachedTextFiles,
   promptSafeAttachmentName,
@@ -170,18 +169,22 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
     for (const file of prepared.files) expect(containsCredentialMaterial(renderAttachedFileContent(file))).toBe(false);
   });
 
-  it('P2-3: only an empty or attachment-referring short text counts as a request about the attachment', () => {
-    for (const text of ['', '   ', '이거 확인해줘', '이 설정 파일 확인해줘', '이 로그에서 문제 원인 요약해줘', '요약해줘', '확인해 주세요', 'check this file', 'summarize it', 'Please review']) {
-      expect(isAttachmentOnlyRequest(text), text).toBe(true);
-    }
-    for (const text of ['What is 2 + 2?', '오늘 날씨 어때?', '내일 오전 10시에 회의 잡아줘', `${'긴 질문 '.repeat(20)}파일`]) {
-      expect(isAttachmentOnlyRequest(text), text).toBe(false);
+  it('re-review P1: a zero-width or bidi character splitting a secret does not get a file through', () => {
+    for (const ch of ['\u200B', '\u200C', '\u202E', '\uFEFF', '\r']) {
+      const text = 'pass' + ch + 'word=demo-review-value';
+      expect(prepareAttachedTextFiles([{ name: 'a.log', text }])).toEqual({ files: [], droppedCount: 1 });
+      const name = 's' + ch + 'k-' + 'A'.repeat(24) + '.log';
+      expect(promptSafeAttachmentName(name, 'attachment', 1)).toBe('attachment-1.log');
     }
   });
 
-  it('P2-6: a credential-shaped reply is withheld; an ordinary log summary is not', () => {
+  it('P2-6: a credential-shaped reply or artifact is withheld; an ordinary log summary is not', () => {
     expect(isAttachmentReplyWithheld('결제 게이트웨이 타임아웃 후 서킷이 열렸어요.')).toBe(false);
     expect(isAttachmentReplyWithheld('설정값은 pass' + 'word=demo-review-value 입니다')).toBe(true);
+    expect(isAttachmentReplyWithheld('설정값은 pass' + '\u200B' + 'word=demo-review-value 입니다')).toBe(true);
+    expect(isAttachmentReplyWithheld('요약입니다', [{ title: 'r', content: 'pass' + 'word=demo-review-value' }])).toBe(true);
+    expect(isAttachmentReplyWithheld('요약입니다', [{ title: 'r', metadata: { note: 's' + 'k-' + 'A'.repeat(24) } }])).toBe(true);
+    expect(isAttachmentReplyWithheld('요약입니다', [{ title: 'r', content: '요약입니다' }])).toBe(false);
     expect(renderAttachmentReplyWithheld('ko')).toContain('저장하지도 않았어요');
     expect(renderAttachmentReplyWithheld('en')).toContain('not shown or saved');
   });

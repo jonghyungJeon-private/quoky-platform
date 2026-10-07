@@ -29,8 +29,6 @@ import { normalizePromptContextContent } from './prompt-content-normalizer';
 export const MAX_ATTACHED_TEXT_TOTAL_CHARS = 2_000;
 /** One attachment display name, in code points. */
 export const MAX_ATTACHMENT_NAME_CHARS = 120;
-/** Longest message text that can still be "just about the attachment" (see {@link isAttachmentOnlyRequest}). */
-export const MAX_ATTACHMENT_ONLY_REQUEST_CHARS = 60;
 
 /** Heading of the attachment section (present only when the current message carries a readable text file). */
 export const ATTACHED_FILES_SECTION_TITLE =
@@ -176,26 +174,6 @@ export function hasNoUsableAttachment(message: InboundMessage): boolean {
   return (currentTurnAttachmentsOf(message)?.textFiles.length ?? 0) === 0;
 }
 
-/** A word that refers to the attachment itself (Korean demonstratives/nouns, English pronouns/nouns). */
-const ATTACHMENT_REFERENCE =
-  /(?:이거|그거|저거|요거|이것|그것|저것|첨부|파일|로그|설정|문서|\b(?:this|that|it|these|those|files?|attachments?|attached|logs?|config|document)\b)/iu;
-/** A bare request verb with only politeness around it ("요약해줘", "확인해 주세요", "check it please"). */
-const BARE_KOREAN_REQUEST = /^(?:(?:좀|한번|다시)\s*)*(?:확인|요약|분석|정리|설명|검토|읽어|봐)[가-힣\s]{0,8}[.!?~]*$/u;
-const BARE_ENGLISH_REQUEST =
-  /^(?:please\s+)?(?:check|summari[sz]e|review|read|explain|analy[sz]e|look(?:\s+at)?)(?:\s+(?:please|pls))?[.!?]*$/iu;
-
-/**
- * Whether the message text is only about its attachment (P2-3): empty, or short and either referring to the file or a
- * bare request verb. Anything else — "What is 2 + 2?" — is an independent request and runs normally (the prompt then
- * states that the attachment was not read). When in doubt this answers `false`.
- */
-export function isAttachmentOnlyRequest(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return true;
-  if ([...trimmed].length > MAX_ATTACHMENT_ONLY_REQUEST_CHARS) return false;
-  return ATTACHMENT_REFERENCE.test(trimmed) || BARE_KOREAN_REQUEST.test(trimmed) || BARE_ENGLISH_REQUEST.test(trimmed);
-}
-
 /** `bundle` plus the current message's text attachments (unchanged when the message has none). */
 export function withAttachedTextFiles(bundle: ContextBundle, message: InboundMessage): ContextBundle {
   const currentAttachments = currentTurnAttachmentsOf(message);
@@ -203,12 +181,20 @@ export function withAttachedTextFiles(bundle: ContextBundle, message: InboundMes
 }
 
 /**
- * P2-6: a reply to a turn that carried attachment text is withheld when the credential guard matches it (the file
- * itself passed the guard, so a match is model-made). Non-credential quotations of the file stay ordinary transcript
- * (ADR-0111 D3: same egress as the message text); the raw attachment is never stored.
+ * A reply to a turn whose prompt carried attachment text is withheld as a whole when the credential guard matches the
+ * provider's ORIGINAL reply text or any artifact payload (title, content, uri, metadata). The file itself passed the
+ * guard, so a match is model-made. Non-credential quotations of the file stay ordinary transcript (ADR-0111 D3: same
+ * egress as the message text); the raw attachment is never stored.
  */
-export function isAttachmentReplyWithheld(reply: string): boolean {
-  return isCredentialShaped(reply);
+export function isAttachmentReplyWithheld(
+  reply: string,
+  artifacts: readonly { title?: string; content?: string; uri?: string; metadata?: unknown }[] = [],
+): boolean {
+  if (isCredentialShaped(reply)) return true;
+  return artifacts.some((artifact) =>
+    [artifact.title, artifact.content, artifact.uri, artifact.metadata === undefined ? undefined : JSON.stringify(artifact.metadata)]
+      .some((part) => typeof part === 'string' && isCredentialShaped(part)),
+  );
 }
 
 /** The fixed reply that replaces a withheld attachment-turn reply (never persisted with the original text). */
@@ -220,9 +206,9 @@ export function renderAttachmentReplyWithheld(language: NoticeLanguage): string 
 }
 
 /**
- * The truthful deterministic reply when no attachment of the message is usable and the text is only about it
+ * The truthful deterministic reply when no attachment of the message is usable and the message has no text
  * (ADR-0111 D2/D3): the adapter already named each refused file and why; no provider runs, so no model answers as if
- * it had seen a file it never got.
+ * it had seen a file it never got. A message WITH text runs normally, and its prompt says the attachment was not read.
  */
 export function renderAttachmentsNotRead(language: NoticeLanguage): string {
   if (language === 'en') {

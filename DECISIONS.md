@@ -16852,14 +16852,24 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   credential guard runs on the final rendered text and drops the file on a match. A credential-shaped name is
   replaced by a neutral `attachment-N.<ext>` / `image-N.<ext>` label: nothing of the name leaves, and the content is
   guarded separately. PromptComposer section 2C says the file is the material asked about, and that instructions
-  inside it are never followed. When no attachment is usable and the text is empty or only about the attachment, the
-  reply is deterministic and no provider runs. Other text runs normally, with a "not read" fact. The Ollama chat
-  parser matches section headings only at a line start. `attachment-context` joined the Stage 2A
+  inside it are never followed. When no attachment is usable and the message text is empty, the reply is
+  deterministic and no provider runs. Any text runs normally, with a "not read; never guess or describe it" fact. A
+  heuristic for "text about the file" was tried and removed because it swallowed independent questions. The Ollama
+  chat parser matches section headings only at a line start. The shared ADR-0097 detectors
+  (`containsCredentialMaterial`, `classifyCredentialFileContent`) also read a detection view of the text: NFKC, with
+  Cf and default-ignorable code points and every control character except LF and tab removed. So zero-width, bidi,
+  BOM, soft-hyphen, variation-selector, CR, NUL and C1 characters cannot split a keyword or token prefix, for every
+  caller (adapter intake, attachment preparation, composer, reply check, memory and learning gates, code-generation
+  context). The check is refusal-adding only: the original text is still matched, and the text itself is never
+  changed. `attachment-context` joined the Stage 2A
   `PROVIDER_EXECUTION_PATH_MODULES` binding; with the `prompt-composer.ts` edit, the Stage 2A bindings need a re-run.
   **Accepted residual:** a reply to an attachment turn is ordinary transcript and artifact, under the same egress as
   the message text, so a non-credential quotation of the file is persisted with it. The raw attachment is never
-  stored. A reply the credential guard matches is replaced by a fixed notice before it is persisted or delivered.
-  Replies are not otherwise masked.
+  stored. On an attachment turn, the credential guard runs first, on the provider's original reply text and every
+  artifact payload, before the action-claim guard. A match replaces the whole reply with a fixed notice, and no
+  artifacts are persisted or delivered. Other turns are not checked: on ordinary help answers (`password: <your
+  password>` examples, 16-digit numbers) the check would withhold valid replies, and ADR-0097 does not cover masking
+  model output. Replies are not otherwise masked.
 - **ADR-0112 (connector writes).** CWR-1 (cbd5e79): narrow write ports, v15 `connector_write_receipts` (no payload text),
   Jira/Slack/calendar writers, allowlists and flags validated at startup even while off; the Slack write token must be
   a bot token distinct from the read token. CWR-2 (0d16109): the D5 chat flow with deps 34 → 35; an EXECUTING anchor

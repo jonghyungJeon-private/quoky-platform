@@ -11164,7 +11164,7 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     id: 'm-att', context: CTX, text, receivedAt: TS, attachments,
   });
 
-  function chatTurn(reply = '결제 게이트웨이 타임아웃이 원인이에요.') {
+  function chatTurn(reply = '결제 게이트웨이 타임아웃이 원인이에요.', artifactContent = reply) {
     const { storage, taskSaves, runSaves } = makeTaskStorage();
     const { deps: base, calls } = makeDeps({ intent: intentOf(Capability.GENERAL_CHAT, IntentType.CHAT, true) });
     const requests: AiRequest[] = [];
@@ -11194,7 +11194,7 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
               requests.push(request);
               return {
                 text: reply,
-                artifacts: [{ id: 'a1', kind: ArtifactKind.MARKDOWN_REPORT, title: 'reply', content: reply, createdAt: TS }],
+                artifacts: [{ id: 'a1', kind: ArtifactKind.MARKDOWN_REPORT, title: 'reply', content: artifactContent, createdAt: TS }],
               };
             },
           };
@@ -11218,10 +11218,10 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves])).not.toContain('PaymentGatewayTimeout');
   });
 
-  it('a message whose every attachment was refused gets the deterministic reply; no classifier, no provider', async () => {
+  it('an EMPTY message whose every attachment was refused gets the deterministic reply; no classifier, no provider', async () => {
     for (const reason of ['CREDENTIAL_SHAPED', 'TOO_LARGE'] as const) {
       const h = chatTurn();
-      const result = await h.runtime.handle(withAttachments('이 설정 파일 확인해줘', [refusedFile('config.yml', reason)]));
+      const result = await h.runtime.handle(withAttachments('', [refusedFile('config.yml', reason)]));
       expect(result.status).toBe('RESPONDED');
       expect(result.reply.text).toBe(renderAttachmentsNotRead('ko'));
       expect(h.calls.classify).toBe(0);
@@ -11231,9 +11231,26 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
       expect(h.calls.loggerInfoCalls.find((c) => c.message === 'attachment turn answered without a provider')?.fields)
         .toEqual({ attachmentCount: 1 });
     }
-    const en = chatTurn();
-    const enResult = await en.runtime.handle(withAttachments('please check this config', [refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));
-    expect(enResult.reply.text).toBe(renderAttachmentsNotRead('en'));
+  });
+
+  it.each([
+    '이 설정 파일 확인해줘',
+    '이 로그 말고 오늘 날씨 어때?',
+    'What is this city known for?',
+    'What is 2 + 2?',
+  ])('any text next to only refused attachments runs normally with the not-read fact: %s', async (text) => {
+    const h = chatTurn('답변입니다.');
+    const result = await h.runtime.handle(withAttachments(text, [refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));
+    expect(result.reply.text).toContain('답변입니다.');
+    expect(h.calls.classify).toBe(1);
+    expect(h.requests).toHaveLength(1);
+    const prompt = h.requests[0]?.prompt ?? '';
+    expect(prompt).toContain(
+      '1 attachment of the current User message was not read by Core (unsupported, too large or credential-like): ' +
+        'that content is not available, so never guess or describe it.',
+    );
+    expect(prompt).not.toContain('## 2C.');
+    expect(prompt).not.toContain('config.yml');
   });
 
   it('a readable file next to a refused one still runs the turn and tells the model what was not read', async () => {
@@ -11245,17 +11262,6 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(prompt).not.toContain('config.yml');
   });
 
-  it('P2-3: unrelated text next to a refused attachment runs normally, with the not-read fact', async () => {
-    const h = chatTurn('4입니다.');
-    const result = await h.runtime.handle(withAttachments('What is 2 + 2?', [refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));
-    expect(result.reply.text).toContain('4입니다.');
-    expect(h.calls.classify).toBe(1);
-    expect(h.requests).toHaveLength(1);
-    const prompt = h.requests[0]?.prompt ?? '';
-    expect(prompt).toContain('1 attachment of the current User message was not read by Core');
-    expect(prompt).not.toContain('## 2C.');
-  });
-
   it('P2-3: an empty message with only a refused attachment gets the deterministic reply', async () => {
     const h = chatTurn();
     const result = await h.runtime.handle(withAttachments('', [refusedFile('big.log', 'TOO_LARGE')]));
@@ -11263,13 +11269,24 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(h.requests).toHaveLength(0);
   });
 
-  it('P2-4: a text file Core drops at its final re-check is treated like a refusal (no provider without 2C)', async () => {
-    const h = chatTurn();
+  it('P2-4: a text file Core drops at its final re-check counts as not read (empty text: no provider; text: no 2C)', async () => {
     const escaped: InboundAttachment = { ...logFile, name: 'notes.txt', text: 'pass' + '\u001b[31m' + 'word=demo-review-value' };
-    const result = await h.runtime.handle(withAttachments('이 파일 요약해줘', [escaped]));
-    expect(result.reply.text).toBe(renderAttachmentsNotRead('ko'));
-    expect(h.calls.classify).toBe(0);
-    expect(h.requests).toHaveLength(0);
+    const empty = chatTurn();
+    expect((await empty.runtime.handle(withAttachments('', [escaped]))).reply.text).toBe(renderAttachmentsNotRead('ko'));
+    expect(empty.requests).toHaveLength(0);
+    const h = chatTurn();
+    await h.runtime.handle(withAttachments('이 파일 요약해줘', [escaped]));
+    const prompt = h.requests[0]?.prompt ?? '';
+    expect(prompt).not.toContain('## 2C.');
+    expect(prompt).not.toContain('demo-review-value');
+    expect(prompt).toContain('1 attachment of the current User message was not read by Core');
+  });
+
+  it('re-review P1: a zero-width space splitting a secret in a file never reaches the provider', async () => {
+    const h = chatTurn();
+    const split: InboundAttachment = { ...logFile, name: 'app.log', text: `${LOG}\npass` + '\u200B' + 'word=demo-review-value' };
+    await h.runtime.handle(withAttachments('이 로그 요약해줘', [split]));
+    expect(h.requests[0]?.prompt ?? '').not.toContain('demo-review-value');
   });
 
   it('P1-1/P1-2: neither an escape-split secret nor a credential-shaped file name reaches the provider', async () => {
@@ -11294,6 +11311,23 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(h.recorded.at(-1)).toBe(renderAttachmentReplyWithheld('ko'));
     expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves, h.persistedArtifacts])).not.toContain('demo-review-value');
     expect(h.calls.loggerInfoCalls.some((c) => c.message === 'attachment turn reply withheld')).toBe(true);
+  });
+
+  it('re-review P2: a credential in an ARTIFACT (reply text clean) withholds the whole reply; nothing is persisted', async () => {
+    const h = chatTurn('요약입니다.', 'pass' + 'word=demo-review-value');
+    const result = await h.runtime.handle(withAttachments('이 로그에서 문제 원인 요약해줘', [logFile]));
+    expect(result.reply.text).toBe(renderAttachmentReplyWithheld('ko'));
+    expect(h.persistedArtifacts).toEqual([]);
+    expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves])).not.toContain('demo-review-value');
+  });
+
+  it('re-review P2: the credential check reads the ORIGINAL reply before the action-claim guard rewrites it', async () => {
+    // This reply both claims an internal action (the claim guard would replace it) and carries a credential.
+    const h = chatTurn('네, 브랜치가 삭제된 상태가 맞습니다. pass' + 'word=demo-review-value');
+    const result = await h.runtime.handle(withAttachments('이 로그에서 문제 원인 요약해줘', [logFile]));
+    expect(result.reply.text).toBe(renderAttachmentReplyWithheld('ko'));
+    expect(h.persistedArtifacts).toEqual([]);
+    expect(h.calls.loggerInfoCalls.some((c) => c.message === 'internal action claim replaced')).toBe(false);
   });
 
   it('P2-6: an ordinary reply quoting the log is kept as normal transcript (accepted residual)', async () => {

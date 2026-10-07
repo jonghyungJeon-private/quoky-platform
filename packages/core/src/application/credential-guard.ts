@@ -50,14 +50,50 @@ const SECRET_TOKEN_SHAPED = new RegExp(SECRET_TOKEN_PATTERNS.join('|'), 'u');
 /** Card-number shape: chat-only (16-digit literals are common in source files). */
 const CARD_NUMBER = /\b(?:\d[ -]?){15}\d\b/u;
 
-/** True when `text` declares a credential value or carries token-shaped secret material. */
-export function containsCredentialMaterial(text: string): boolean {
+/**
+ * Characters removed from the detection view: every Unicode format character (Cf: zero-width space/joiners, bidi
+ * controls, BOM, soft hyphen, …), every default-ignorable code point (variation selectors, combining grapheme joiner,
+ * Hangul fillers, …) and every control character except line feed and tab (CR, NUL, C0, DEL, C1). LF and tab stay so
+ * the file-content scan keeps its lines and indentation (line numbers in a finding stay valid).
+ */
+const DETECTION_INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
+
+/**
+ * The view the credential detectors read (ADR-0097, live QA follow-up): NFKC-normalized, with invisible and control
+ * characters removed, so `pass<U+200B>word=…`, a BOM or CR inside a keyword, or a full-width key cannot split or
+ * disguise a credential. Detection only — callers keep (and send, or refuse) the original text unchanged.
+ */
+export function credentialDetectionView(text: string): string {
+  return text.normalize('NFKC').replace(DETECTION_INVISIBLE, '');
+}
+
+/**
+ * Runs `detect` on the original text and, when it differs, on its detection view. Refusal-ADDING only: the original
+ * is still checked (removing a character can also break a match, e.g. a `\b` before a token prefix), and the view
+ * adds the disguised forms. Text without such characters is scanned once.
+ */
+function detectWithView<T>(text: string, detect: (value: string) => T, matched: (result: T) => boolean): T {
+  const direct = detect(text);
+  if (matched(direct)) return direct;
+  const view = credentialDetectionView(text);
+  return view === text ? direct : detect(view);
+}
+
+function containsCredentialMaterialIn(text: string): boolean {
   return (
     KOREAN_ASSIGNMENT.test(text) ||
     ENGLISH_ASSIGNMENT.test(text) ||
     SECRET_TOKEN_SHAPED.test(text) ||
     CARD_NUMBER.test(text)
   );
+}
+
+/**
+ * True when `text` declares a credential value or carries token-shaped secret material — in the text itself or in
+ * its {@link credentialDetectionView}.
+ */
+export function containsCredentialMaterial(text: string): boolean {
+  return detectWithView(text, containsCredentialMaterialIn, (found) => found);
 }
 
 /**
@@ -599,6 +635,11 @@ export type CredentialFileFinding =
  * where the file was refused without echoing any value.
  */
 export function classifyCredentialFileContent(content: string): CredentialFileFinding {
+  // The detection view keeps every line feed, so a finding's line is the same in the original content.
+  return detectWithView(content, classifyCredentialFileContentIn, (finding) => finding.kind !== 'none');
+}
+
+function classifyCredentialFileContentIn(content: string): CredentialFileFinding {
   if (SECRET_TOKEN_SHAPED.test(content)) return { kind: 'secret-token' };
   // Bounded time: a shape the key scans would backtrack on quadratically refuses the file (fail closed, refusal-ADDING
   // like every ADR-0097 change), and the key scans then read only the text BEFORE it, so an earlier credential key
