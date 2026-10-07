@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
+import { hasAttachedGitOperation, isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
 
 describe('isGitConceptQuestion (live QA 2026-10-07)', () => {
   it.each([
@@ -72,4 +72,67 @@ describe('isGitTopicOnlyMention (live QA 2026-10-07)', () => {
       expect(isGitTopicOnlyMention(text)).toBe(false);
     },
   );
+});
+
+describe('Codex review of f45ab9d — word boundaries, clause precedence and status priority', () => {
+  it.each(['차이나 서버 변경을 푸시해줘', '차이콥스키 PR 머지해줘', '비교적 오래된 원격 브랜치 삭제해줘', '설명서 업데이트 커밋해줘', '무방법 PR 만들어줘'])(
+    '%s → a marker inside another word is not a concept marker',
+    (text) => {
+      expect(isGitConceptQuestion(text)).toBe(false);
+      expect(isGitTopicOnlyMention(text)).toBe(false);
+    },
+  );
+
+  it.each(['rebase와 merge 차이', '차이가 뭐야', '차이를 알려줘', '차이점이 있어?', 'merge 방법을 알려줘', 'squash 머지의 의미가 뭐야'])(
+    '%s → a whole marker word (with a particle) still counts',
+    (text) => {
+      expect(isGitConceptQuestion(text)).toBe(true);
+    },
+  );
+
+  it.each(['머지해줘. 그리고 rebase와 차이를 설명해줘', '머지해줘, rebase와 차이도 설명해줘', '머지하고 rebase와 차이를 설명해줘', 'merge the PR and explain rebase'])(
+    '%s → an attached git imperative in another clause keeps the action handling',
+    (text) => {
+      expect(hasAttachedGitOperation(text)).toBe(true);
+      expect(isGitConceptQuestion(text)).toBe(false);
+      expect(isGitTopicOnlyMention(text)).toBe(false);
+    },
+  );
+
+  it.each(["what's the difference between rebase and merge", 'how to create a branch and merge it', '머지하는 방법 설명해줘', 'PR 만드는 법 알려줘'])(
+    '%s → one question clause, no attached imperative',
+    (text) => {
+      expect(hasAttachedGitOperation(text)).toBe(false);
+      expect(isGitConceptQuestion(text)).toBe(true);
+    },
+  );
+
+  it.each(['머지 가능한지 설명해줘', 'PR 리뷰 어때? 문제점 설명해줘', '머지 상태 설명해줘', 'CI 결과가 뭐야?', '머지됐는지 설명해줘'])(
+    '%s → a status ask keeps priority over the concept guard',
+    (text) => {
+      expect(isGitConceptQuestion(text)).toBe(false);
+    },
+  );
+});
+
+describe('isChainCompanionRequest (live QA 2026-10-07, LRN-2 at PR_CREATED)', () => {
+  it.each(['배포해줘', 'release 해줘', '릴리즈 진행해', '리뷰어 추가해줘', '리뷰어 alice 지정해줘', '라벨 붙여줘', '담당자 지정해줘', 'auto merge 켜줘', 'enable auto-merge', 'deploy it', '배포', '머지', 'auto merge', 'PR 만들고 배포하자'])(
+    '%s → a companion request',
+    (text) => {
+      expect(isChainCompanionRequest(text)).toBe(true);
+    },
+  );
+
+  it.each([
+    '예시 1 수정: 1) 결정 사항을 맨 위에 적어요. 2) 할 일은 담당자와 기한을 함께 적어요. 3) 논의 과정은 한두 줄로 줄여요.',
+    '할 일은 담당자와 기한을 함께 적어요',
+    '배포 일정 회의록',
+    '라벨 디자인 아이디어',
+    '리뷰어 후보가 너무 많네',
+    '오늘 머지 회의는 길었어',
+    '머지 충돌 해결해줘',
+    '',
+  ])('%j → free text that merely contains a companion noun', (text) => {
+    expect(isChainCompanionRequest(text)).toBe(false);
+  });
 });

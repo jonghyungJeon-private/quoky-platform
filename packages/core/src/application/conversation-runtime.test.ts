@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LearningTurnHandler, type LearningCommand } from './feedback';
 import {
   AiFailureKind,
   ApprovalStatus,
@@ -6534,7 +6535,8 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   // ─────────────────────────────────────────────────────────────────────────────────────────────
   // Sprint 3e (ADR-0055): read-only PR status preview (PR_CREATED + status phrase → keep PR_CREATED).
   // ─────────────────────────────────────────────────────────────────────────────────────────────
-  const STATUS_PHRASES = ['PR 상태 확인해줘', 'PR 상태 어때?', 'CI 상태 확인해줘', '체크 상태 봐줘', 'GitHub checks 봐줘', 'review 상태 알려줘'];
+  // + Codex review of f45ab9d (P2): "PR 리뷰 어때? 문제점 설명해줘" keeps the live status read.
+  const STATUS_PHRASES = ['PR 상태 확인해줘', 'PR 상태 어때?', 'CI 상태 확인해줘', '체크 상태 봐줘', 'GitHub checks 봐줘', 'review 상태 알려줘', 'PR 리뷰 어때? 문제점 설명해줘'];
 
   it('PR_CREATED + status phrase → read-only preview via manager; keeps PR_CREATED; no mutation (CA 1/7/50)', async () => {
     for (const text of STATUS_PHRASES) {
@@ -6905,7 +6907,8 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   });
 
   it('MERGE_APPROVED + merge STATUS/CHECK phrase → read-only status path, no execution (CA 31/32)', async () => {
-    for (const text of ['머지 상태 확인해줘', 'merge status 확인해줘', '머지 확인해줘', '머지 체크해줘', '머지 가능해?']) {
+    // + Codex review of f45ab9d (P2): a status-shaped explanation request keeps the live status read.
+    for (const text of ['머지 상태 확인해줘', 'merge status 확인해줘', '머지 확인해줘', '머지 체크해줘', '머지 가능해?', '머지 가능한지 설명해줘']) {
       const { deps, calls } = makeDeps({ applyAnchor: MERGE_APPROVED_ANCHOR(), approvalsGetResult: APPROVED_MERGE() });
       const r = await new ConversationRuntime(deps).handle(messageOf(text));
       expect(calls.hostingMergePR, text).toBe(0);
@@ -11512,5 +11515,104 @@ describe('Live QA 2026-10-07 — git concept questions are chat, never a git-ope
     expect(ConversationRuntime.interpretRemoteBranchCleanupIntent('원격 브랜치 삭제해줘')).toBe('remote');
     expect(ConversationRuntime.interpretBranchCleanupIntent('브랜치 정리해줘')).toBe('local');
     expect(ConversationRuntime.interpretGitPreviewIntent('rebase 해줘')).toBe('mutating');
+  });
+});
+
+describe('Codex review of f45ab9d + live QA 2026-10-07 (LRN-2 at PR_CREATED) — request shapes keep their priority', () => {
+  const composer = new ResponseComposer();
+  const CHAIN = {
+    commitHash: HEAD_SHA,
+    pushedCommitHash: HEAD_SHA,
+    pushedRemote: 'origin',
+    pushedBranch: 'feature/x',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/acme/widgets/pull/42',
+    pullRequestHeadBranch: 'feature/x',
+    repositoryIdentity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+    pullRequestRef: { provider: 'github', owner: 'acme', repo: 'widgets', pullRequestNumber: 42, pullRequestUrl: 'https://github.com/acme/widgets/pull/42' },
+    pullRequestCommitHash: HEAD_SHA,
+  } as Partial<ApplyPreviewAnchor>;
+  const EXAMPLE_EDIT =
+    '예시 1 수정: 1) 결정 사항을 맨 위에 적어요. 2) 할 일은 담당자와 기한을 함께 적어요. 3) 논의 과정은 한두 줄로 줄여요.';
+
+  it('the live LRN-2 repro at PR_CREATED reaches feedback.learning and edits example 1 (never the companion refusal)', async () => {
+    const executed: LearningCommand[] = [];
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_CREATED' }) });
+    const handler = new LearningTurnHandler({
+      service: {
+        async execute(command) {
+          executed.push(command);
+          return { text: '예시 1의 답변을 바꿨어요.', status: 'RESPONDED' as const };
+        },
+      },
+    });
+    const r = await new ConversationRuntime({ ...deps, turnHandlers: [handler] }).handle(messageOf(EXAMPLE_EDIT));
+    expect(r.reply.text).not.toBe(composer.composePrCreatedCompanionUnsupported(CTX).text);
+    expect(r.reply.text).toBe('예시 1의 답변을 바꿨어요.');
+    expect(executed).toHaveLength(1);
+    expect(executed[0]).toMatchObject({ kind: 'example-edit', index: 1 });
+    expect((executed[0] as { answer: string }).answer).toContain('담당자와 기한을 함께 적어요');
+    expect(calls.classify).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each([
+    ['PR_CREATED', '할 일은 담당자와 기한을 함께 적어요'],
+    ['PR_CREATED', '배포 일정 회의록'],
+    ['PR_CREATED', '라벨 디자인 아이디어'],
+    ['PR_CREATED', '리뷰어 후보가 너무 많네'],
+    ['GIT_PUSHED', '배포 일정 회의록'],
+    ['PR_APPROVED', '릴리즈 노트 초안 아이디어'],
+    ['MERGE_APPROVED', '라벨 디자인 아이디어'],
+    ['MERGE_APPROVED', '오늘 머지 회의는 길었어'],
+    ['PR_MERGED', '배포 일정 회의록'],
+    ['MAIN_SYNCED', '담당자와 기한 정리 아이디어'],
+    ['GIT_PUSHED', 'PR 설명에 배포 일정 적어줘'],
+  ] as const)('at %s, free text %j that merely contains a companion noun reaches the classifier', async (status, text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+    await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.classify, `${status} ${text}`).toBe(1);
+    expect(calls.requestForRisk).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(['배포해줘', 'release 해줘', '리뷰어 alice 지정해줘', '라벨 붙여줘', '담당자 지정해줘', '배포', 'auto merge 켜줘', 'enable auto-merge'])(
+    'PR_CREATED + real companion request %j → still the companion refusal',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_CREATED' }) });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(r.reply.text).toBe(composer.composePrCreatedCompanionUnsupported(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(mutationCalls(calls)).toBe(0);
+    },
+  );
+
+  it('P2-1: "차이" inside another word is not a concept marker — "차이나 서버 변경을 푸시해줘" at GIT_COMMITTED is still a push', async () => {
+    expect(ConversationRuntime.interpretPushIntent('차이나 서버 변경을 푸시해줘')).toBe('push');
+    expect(ConversationRuntime.interpretPrIntent('차이나 PR 만들어줘')).toBe('create');
+    expect(ConversationRuntime.interpretMergeIntent('차이콥스키 PR 머지해줘')).toBe('merge');
+    expect(ConversationRuntime.interpretRemoteBranchCleanupIntent('비교적 오래된 원격 브랜치 삭제해줘')).toBe('remote');
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'GIT_COMMITTED' }) });
+    await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경을 푸시해줘'));
+    expect(calls.classify).toBe(0);
+  });
+
+  it('P2-2: an explanation clause never hides an attached git imperative in another clause', async () => {
+    for (const text of ['머지해줘. 그리고 rebase와 차이를 설명해줘', '머지해줘, rebase와 차이도 설명해줘', 'merge the PR and explain rebase']) {
+      expect(ConversationRuntime.interpretMergeIntent(text), text).toBe('merge');
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_CREATED' }) });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(r.reply.text, text).toBe(composer.composeMergeDisabled(CTX).text);
+      expect(calls.classify, text).toBe(0);
+    }
+    // ...while a single how-to clause stays a question
+    expect(ConversationRuntime.interpretMergeIntent('머지하는 방법 설명해줘')).toBeNull();
+  });
+
+  it('P2-3: status-shaped questions keep priority over the concept guard (live reads pinned in the Sprint 3e/3g status tests)', () => {
+    for (const text of ['머지 가능한지 설명해줘', '머지 상태 설명해줘', 'CI 상태 설명해줘', '머지 가능한지 비교해줘']) {
+      expect(ConversationRuntime.interpretMergeStatusIntent(text) || ConversationRuntime.interpretPrStatusIntent(text), text).toBe(true);
+    }
+    expect(ConversationRuntime.interpretPrStatusIntent('PR 리뷰 어때? 문제점 설명해줘')).toBe(true);
   });
 });
