@@ -26,21 +26,40 @@ export interface PngOptions {
   readonly afterIdat?: readonly Buffer[];
   /** Bytes appended after IEND. */
   readonly trailing?: Buffer;
+  /** PNG colour type (8-bit samples; indexed pixels use palette index 0). Default 2 (RGB). */
+  readonly colorType?: 0 | 2 | 3 | 4 | 6;
+  /** Pseudo-random (seeded, incompressible) pixels instead of a gradient. */
+  readonly noise?: boolean;
 }
 
-/** An 8-bit RGB PNG of the given size (a grey gradient), with optional extra chunks. */
+const CHANNELS: Readonly<Record<number, number>> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+
+/** An 8-bit PNG of the given size (a gradient, or seeded noise), with optional extra chunks. */
 export function pngImage(options: PngOptions = {}): Buffer {
   const width = options.width ?? 4;
   const height = options.height ?? 3;
+  const colorType = options.colorType ?? 2;
+  const channels = CHANNELS[colorType] as number;
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // RGB
+  ihdr[9] = colorType;
+  let seed = 0x2545f491;
   const rows: Buffer[] = [];
   for (let y = 0; y < height; y++) {
-    const row = Buffer.alloc(1 + width * 3);
-    for (let x = 0; x < width * 3; x++) row[1 + x] = (x * 16 + y * 32) & 0xff;
+    const row = Buffer.alloc(1 + width * channels);
+    for (let x = 0; x < width * channels; x++) {
+      if (colorType === 3) continue;
+      if (options.noise) {
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        row[1 + x] = seed & 0xff;
+      } else {
+        row[1 + x] = (x * 16 + y * 32) & 0xff;
+      }
+    }
     rows.push(row);
   }
   return Buffer.concat([

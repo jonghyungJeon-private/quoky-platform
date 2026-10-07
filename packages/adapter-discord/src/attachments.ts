@@ -167,6 +167,7 @@ export type AttachmentRefusalDetail =
   | 'NOT_UTF8'
   | 'CREDENTIAL_SHAPED'
   | 'INVALID_IMAGE'
+  | 'TOO_MUCH_TEXT'
   | 'TEMP_WRITE_FAILED';
 
 export interface AttachmentIntakeResult {
@@ -338,11 +339,18 @@ function isCredentialShaped(text: string): boolean {
 
 /** Printable-ASCII runs of at least this many bytes are screened by the credential guard. */
 const PRINTABLE_RUN_MIN = 8;
-/** At most this much printable text is screened per image (the credential guard's text bound). */
-const PRINTABLE_SCREEN_MAX_CHARS = 256 * 1024;
+/**
+ * Hard budget of printable text collected from one image (fail closed: more is refused as `TOO_MUCH_TEXT`, never
+ * skipped). A photo or screenshot carries a few KiB at most; random compressed data ~0.1 % of its size.
+ */
+export const IMAGE_TEXT_BUDGET_CHARS = 2 * 1024 * 1024;
+/** The credential guard runs over windows of this size ... */
+export const IMAGE_TEXT_WINDOW_CHARS = 64 * 1024;
+/** ... overlapping by at least the longest detector match, so no match can straddle a window boundary. */
+export const IMAGE_TEXT_WINDOW_OVERLAP_CHARS = 1024;
 
-/** The printable-ASCII runs of `bytes` (like `strings`), newline-joined and bounded. */
-export function printableRuns(bytes: Buffer): string {
+/** The printable-ASCII runs of ALL of `bytes` (like `strings`), newline-joined; `undefined` past the budget. */
+export function printableRuns(bytes: Buffer, budget = IMAGE_TEXT_BUDGET_CHARS): string | undefined {
   const runs: string[] = [];
   let total = 0;
   let start = -1;
@@ -352,15 +360,29 @@ export function printableRuns(bytes: Buffer): string {
     if (printable && start < 0) start = i;
     if (!printable && start >= 0) {
       if (i - start >= PRINTABLE_RUN_MIN) {
-        const run = bytes.toString('latin1', start, i);
-        runs.push(run);
-        total += run.length + 1;
-        if (total >= PRINTABLE_SCREEN_MAX_CHARS) break;
+        total += i - start + 1;
+        if (total > budget) return undefined;
+        runs.push(bytes.toString('latin1', start, i));
       }
       start = -1;
     }
   }
-  return runs.join('\n').slice(0, PRINTABLE_SCREEN_MAX_CHARS);
+  return runs.join('\n');
+}
+
+/**
+ * Screens every printable run of the canonical image (Codex P1 on 9a39152: the whole file, not a prefix) with the
+ * strict credential guard, in overlapping bounded windows. `TOO_MUCH_TEXT` when the text exceeds the hard budget.
+ */
+export function screenImageText(bytes: Buffer): 'CLEAN' | 'CREDENTIAL_SHAPED' | 'TOO_MUCH_TEXT' {
+  const text = printableRuns(bytes);
+  if (text === undefined) return 'TOO_MUCH_TEXT';
+  const step = IMAGE_TEXT_WINDOW_CHARS - IMAGE_TEXT_WINDOW_OVERLAP_CHARS;
+  for (let start = 0; start < text.length; start += step) {
+    if (isCredentialShaped(text.slice(start, start + IMAGE_TEXT_WINDOW_CHARS))) return 'CREDENTIAL_SHAPED';
+    if (start + IMAGE_TEXT_WINDOW_CHARS >= text.length) break;
+  }
+  return 'CLEAN';
 }
 
 /** Magic-byte check so a mislabeled upload is never handed on as an image. */
@@ -620,9 +642,8 @@ export class AttachmentIntake {
     }
     // Defense in depth: credential-shaped text in any printable run of the canonical bytes (e.g. placed inside a
     // JPEG/WebP bitstream) is refused like a credential-shaped text file. Text drawn in the pixels is the residual.
-    if (isCredentialShaped(printableRuns(canonical.bytes))) {
-      return refuse('CREDENTIAL_SHAPED', { detail: 'CREDENTIAL_SHAPED', attempts });
-    }
+    const screen = screenImageText(canonical.bytes);
+    if (screen !== 'CLEAN') return refuse('CREDENTIAL_SHAPED', { detail: screen, attempts });
     const file = await this.writeTempFile(canonical.bytes, IMAGE_FILE_EXTENSIONS[sniffed]);
     if (!file) return refuse('DOWNLOAD_FAILED', { detail: 'TEMP_WRITE_FAILED', attempts });
     created.push(file);

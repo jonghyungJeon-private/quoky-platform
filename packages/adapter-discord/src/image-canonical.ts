@@ -10,7 +10,8 @@ import type { InboundImageMimeType } from '@quoky/core';
  *   out of order, non-consecutive `IDAT`s or any byte after `IEND` is refused; `IHDR` is validated (dimensions up to
  *   {@link MAX_IMAGE_DIMENSION}, a legal bit depth / colour type, no unknown methods). The image data is inflated, its
  *   exact scanline size and filter bytes are checked, and it is RE-DEFLATED into one fresh `IDAT`; the output is
- *   `IHDR`, the safe rendering ancillaries `sRGB`/`gAMA`/`cHRM`/`pHYs`, `PLTE`, `tRNS`, `IDAT`, `IEND`. Text, metadata,
+ *   `IHDR`, the safe rendering ancillaries `sRGB`/`gAMA`/`cHRM`/`pHYs`, `PLTE` (indexed colour only), `tRNS`, `IDAT`,
+ *   `IEND`, each kept only with its exact structure (a malformed ancillary is dropped). Text, metadata,
  *   profiles and every other chunk (`tEXt`, `zTXt`, `iTXt`, `eXIf`, `iCCP`, …) are dropped.
  * - **JPEG:** every segment from `SOI` to `EOI` is walked and its length validated; table segments are parsed to their
  *   exact length; only baseline / extended / progressive Huffman frames are accepted; `APP1`–`APP13`, `APP15` and
@@ -126,6 +127,14 @@ const ADAM7: ReadonlyArray<readonly [number, number, number, number]> = [
   [0, 1, 1, 2],
 ];
 
+/** `sRGB`: one rendering-intent byte 0–3; `gAMA`: a non-zero 4-byte gamma; `cHRM`: eight 4-byte values. */
+function validColorSpaceChunk(type: string, data: Buffer): boolean {
+  if (type === 'sRGB') return data.length === 1 && (data[0] as number) <= 3;
+  if (type === 'gAMA') return data.length === 4 && data.readUInt32BE(0) > 0;
+  if (type === 'cHRM') return data.length === 32;
+  return false;
+}
+
 /** The scanline row lengths (filter byte included) of the image, in stored order. */
 function pngRows(width: number, height: number, bitsPerPixel: number, interlaced: boolean): number[] {
   const rowBytes = (w: number) => 1 + Math.ceil((w * bitsPerPixel) / 8);
@@ -145,6 +154,7 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
   let offset = 8;
   let ihdr: Buffer | undefined;
   let plte: Buffer | undefined;
+  let seenPlte = false;
   let trns: Buffer | undefined;
   const colorSpace: Buffer[] = [];
   let phys: Buffer | undefined;
@@ -168,10 +178,20 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
         if (ihdr !== undefined || length !== 13) fail('BAD_HEADER');
         ihdr = Buffer.from(data);
         break;
-      case 'PLTE':
-        if (plte !== undefined || idat.length > 0 || length === 0 || length % 3 !== 0 || length > 768) fail('BAD_STRUCTURE');
-        plte = Buffer.from(data);
+      case 'PLTE': {
+        if (seenPlte || idat.length > 0) fail('BAD_STRUCTURE');
+        seenPlte = true;
+        const header = ihdr as Buffer;
+        const colorType = header[9] as number;
+        const entries = length / 3;
+        const valid =
+          length > 0 && length % 3 === 0 && length <= 768 && (colorType !== 3 || entries <= 2 ** (header[8] as number));
+        // Required (and must be valid) for indexed colour. For RGB(A) it is only a quantization suggestion that never
+        // changes rendering, and for grey(+alpha) it is not allowed: dropped in both cases (its bytes are arbitrary).
+        if (colorType === 3 && !valid) fail('BAD_STRUCTURE');
+        if (colorType === 3) plte = Buffer.from(data);
         break;
+      }
       case 'IDAT':
         if (idatClosed) fail('BAD_STRUCTURE');
         idat.push(data);
@@ -184,11 +204,18 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
         if (critical) fail('UNKNOWN_CRITICAL');
         // Kept rendering ancillaries are only meaningful before the image data; anything else is dropped.
         if (idat.length > 0) break;
-        if (PNG_BEFORE_PLTE.has(type) && plte === undefined && !colorSpace.some((c) => c.toString('latin1', 4, 8) === type)) {
+        // Each kept chunk must have its exact structure (Codex P2 on 9a39152); a malformed one is dropped, never copied.
+        if (
+          PNG_BEFORE_PLTE.has(type) &&
+          !seenPlte &&
+          validColorSpaceChunk(type, data) &&
+          !colorSpace.some((c) => c.toString('latin1', 4, 8) === type)
+        ) {
           colorSpace.push(pngChunk(type, Buffer.from(data)));
-        } else if (type === 'tRNS' && trns === undefined) {
+        } else if (type === 'tRNS' && trns === undefined && ((ihdr as Buffer)[9] !== 3 || seenPlte)) {
+          // Validated against the colour type (and palette size) when the output is assembled.
           trns = Buffer.from(data);
-        } else if (type === 'pHYs' && phys === undefined && length === 9) {
+        } else if (type === 'pHYs' && phys === undefined && length === 9 && ((data[8] as number) === 0 || data[8] === 1)) {
           phys = pngChunk(type, Buffer.from(data));
         }
     }
@@ -203,7 +230,6 @@ function canonicalPng(bytes: Buffer): { bytes: Buffer; width: number; height: nu
   if (!(PNG_DEPTHS[colorType] ?? []).includes(depth)) fail('BAD_HEADER');
   if (header[10] !== 0 || header[11] !== 0 || (header[12] !== 0 && header[12] !== 1)) fail('BAD_HEADER');
   if (colorType === 3 && plte === undefined) fail('BAD_STRUCTURE');
-  if ((colorType === 0 || colorType === 4) && plte !== undefined) fail('BAD_STRUCTURE');
   const rows = pngRows(width, height, (PNG_CHANNELS[colorType] as number) * depth, header[12] === 1);
   const rawSize = rows.reduce((sum, row) => sum + row, 0);
   if (rawSize > MAX_PNG_RAW_BYTES) fail('TOO_LARGE_TO_VERIFY');

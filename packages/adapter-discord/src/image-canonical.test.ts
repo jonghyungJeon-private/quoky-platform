@@ -157,3 +157,65 @@ describe('WebP canonicalization', () => {
     expect(canonicalizeImage(mismatch, 'image/webp')).toEqual({ ok: false, code: 'BAD_DIMENSIONS' });
   });
 });
+
+describe('PNG kept chunks must have their exact structure (Codex P2 on 9a39152)', () => {
+  const kept = (chunks: readonly Buffer[], colorType: 0 | 2 | 3 | 4 | 6 = 2) =>
+    pngChunkTypes(ok(canonicalizeImage(pngImage({ colorType, beforeIdat: chunks }), 'image/png')));
+  const palette = (entries: number) => pngChunk('PLTE', Buffer.alloc(entries * 3, 0x7f));
+  const gamma = (value: number) => {
+    const data = Buffer.alloc(4);
+    data.writeUInt32BE(value, 0);
+    return pngChunk('gAMA', data);
+  };
+  const phys = (unit: number) => pngChunk('pHYs', Buffer.from([0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, unit]));
+
+  it('sRGB: kept only as one byte 0-3', () => {
+    expect(kept([pngChunk('sRGB', Buffer.from([3]))])).toEqual(['IHDR', 'sRGB', 'IDAT', 'IEND']);
+    const smuggled = pngImage({ beforeIdat: [pngChunk('sRGB', Buffer.concat([Buffer.from([0]), SECRET_TEXT]))] });
+    const out = ok(canonicalizeImage(smuggled, 'image/png'));
+    expect(pngChunkTypes(out)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(out.includes(SECRET_TEXT)).toBe(false);
+    expect(kept([pngChunk('sRGB', Buffer.from([4]))])).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+
+  it('gAMA: kept only as a non-zero 4-byte value', () => {
+    expect(kept([gamma(45_455)])).toEqual(['IHDR', 'gAMA', 'IDAT', 'IEND']);
+    expect(kept([gamma(0)])).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('gAMA', Buffer.alloc(5, 1))])).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+
+  it('cHRM: kept only with length 32', () => {
+    expect(kept([pngChunk('cHRM', Buffer.alloc(32, 1))])).toEqual(['IHDR', 'cHRM', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('cHRM', Buffer.concat([Buffer.alloc(32, 1), SECRET_TEXT]))])).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+
+  it('pHYs: kept only with length 9 and unit 0 or 1', () => {
+    expect(kept([phys(1)])).toEqual(['IHDR', 'pHYs', 'IDAT', 'IEND']);
+    expect(kept([phys(0)])).toEqual(['IHDR', 'pHYs', 'IDAT', 'IEND']);
+    expect(kept([phys(2)])).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('pHYs', Buffer.concat([Buffer.alloc(9), SECRET_TEXT]))])).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+
+  it('PLTE: required and valid for indexed colour; a suggested palette (RGB/RGBA) and a grey palette are dropped', () => {
+    expect(kept([palette(4)], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+    expect(canonicalizeImage(pngImage({ colorType: 3, beforeIdat: [pngChunk('PLTE', Buffer.alloc(4))] }), 'image/png')).toEqual({ ok: false, code: 'BAD_STRUCTURE' });
+    expect(canonicalizeImage(pngImage({ colorType: 3, beforeIdat: [palette(257)] }), 'image/png')).toEqual({ ok: false, code: 'BAD_STRUCTURE' });
+    expect(canonicalizeImage(pngImage({ colorType: 3 }), 'image/png')).toEqual({ ok: false, code: 'BAD_STRUCTURE' });
+    expect(kept([palette(2)], 2)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('PLTE', Buffer.concat([Buffer.alloc(3), SECRET_TEXT]))], 6)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([palette(2)], 0)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([palette(2)], 4)).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+
+  it('tRNS: length must match the colour type (2 grey, 6 RGB, <= palette entries), never for 4/6, after PLTE', () => {
+    expect(kept([pngChunk('tRNS', Buffer.alloc(2))], 0)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 0)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 2)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', SECRET_TEXT)], 2)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([palette(4), pngChunk('tRNS', Buffer.alloc(4))], 3)).toEqual(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']);
+    expect(kept([palette(4), pngChunk('tRNS', Buffer.alloc(5))], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(1)), palette(4)], 3)).toEqual(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(2))], 4)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(kept([pngChunk('tRNS', Buffer.alloc(6))], 6)).toEqual(['IHDR', 'IDAT', 'IEND']);
+  });
+});

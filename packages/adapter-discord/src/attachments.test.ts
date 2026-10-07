@@ -623,6 +623,40 @@ describe('AttachmentIntake — images are validated and canonicalized before any
     expect(await filesIn(tempRoot)).toEqual([]);
   });
 
+  it.each([
+    ['after 256 KiB of printable padding', Buffer.alloc(262_000, 0x41)],
+    ['after 1 MiB of binary padding', Buffer.alloc(1024 * 1024, 0x01)],
+  ])('screens the WHOLE canonical file: a credential %s is refused (Codex P1 on 9a39152)', async (_label, padding) => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), padding, SECRET, jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'CREDENTIAL_SHAPED' });
+    expect(await filesIn(tempRoot)).toEqual([]);
+  });
+
+  it('fails closed past the text budget: more printable text than 2 MiB is refused as TOO_MUCH_TEXT', async () => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const text = Buffer.from('lorem ipsum dolor sit amet '.repeat(80_000), 'latin1');
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), text, jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'TOO_MUCH_TEXT' });
+  });
+
+  it('a large normal (incompressible) PNG of about 6 MiB is taken in within a reasonable time', async () => {
+    const body = pngImage({ width: 1450, height: 1450, noise: true });
+    expect(body.length).toBeGreaterThan(6 * 1024 * 1024);
+    const started = Date.now();
+    const result = await intakeOne(body, 'big.png', 'image/png');
+    const elapsed = Date.now() - started;
+    expect(result.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/png' });
+    expect(elapsed).toBeLessThan(5_000);
+    await result.release();
+  }, 20_000);
+
   it('JPEG and WebP metadata is dropped from the written file', async () => {
     const jpeg = await intakeOne(jpegImage(), 'p.jpg', 'image/jpeg');
     expect(jpeg.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/jpeg' });
