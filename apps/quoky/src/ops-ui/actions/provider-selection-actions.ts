@@ -75,6 +75,7 @@ const REFUSALS: Readonly<Record<SelectionRefusal, OpsActionOutcome>> = {
   IMAGE_CHOICE_INVALID: INVALID,
   PROVIDER_NOT_ON_HOST: { code: 'PROVIDER_NOT_ON_HOST', message: '그 모델은 이 컴퓨터에서 쓸 수 없어요. 바꾸지 않았어요.', ok: false },
   OLLAMA_MODEL_NOT_FOUND: { code: 'OLLAMA_MODEL_NOT_FOUND', message: '로컬 Ollama에 그 모델이 없어요. 바꾸지 않았어요.', ok: false },
+  OLLAMA_MODEL_NOT_CHAT: { code: 'OLLAMA_MODEL_NOT_CHAT', message: '그 Ollama 모델은 대화용이 아니에요 (예: 임베딩 전용). 바꾸지 않았어요.', ok: false },
   OLLAMA_UNAVAILABLE: { code: 'OLLAMA_UNAVAILABLE', message: 'Ollama가 응답하지 않아 모델을 확인하지 못했어요. 바꾸지 않았어요.', ok: false },
   IMAGE_OPTION_UNAVAILABLE: { code: 'IMAGE_OPTION_UNAVAILABLE', message: '그 이미지 모델은 이 컴퓨터에 설정되어 있지 않아요. 바꾸지 않았어요.', ok: false },
   TOO_MANY_MODELS: { code: 'TOO_MANY_MODELS', message: '이번 실행에서 고를 수 있는 모델 수를 넘었어요. 바꾸지 않았어요.', ok: false },

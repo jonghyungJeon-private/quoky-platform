@@ -48,10 +48,22 @@ export {
   classifyAttachment,
   DEFAULT_ATTACHMENT_TEMP_ROOT,
   IMAGE_ATTACHMENT_MAX_BYTES,
+  IMAGE_SIGNATURE_RETRY_DELAY_MS,
+  mimeClass,
   renderAttachmentIntakeNote,
+  sizeBucket,
+  sniffImageMimeType,
   TEXT_ATTACHMENT_MAX_BYTES,
 } from './attachments';
-export type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
+export { canonicalizeImage, MAX_IMAGE_DIMENSION } from './image-canonical';
+export type { CanonicalImage, ImageCheckCode } from './image-canonical';
+export type {
+  AttachmentIntakeOptions,
+  AttachmentIntakeResult,
+  AttachmentRefusalDetail,
+  AttachmentRefusalDiagnostic,
+  AttachmentSource,
+} from './attachments';
 import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
@@ -555,6 +567,10 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
    */
   private async reportAttachmentIntake(message: Message, intake: AttachmentIntakeResult): Promise<void> {
     this.logger.info('attachment intake', { messageId: message.id, ...summarizeAttachmentIntake(intake.attachments) });
+    // One content-free line per refused attachment: reason, step, MIME classes and size buckets — never a name or URL.
+    for (const diagnostic of intake.diagnostics) {
+      this.logger.info('attachment refused', { messageId: message.id, ...diagnostic });
+    }
     const note = renderAttachmentIntakeNote(intake.attachments);
     if (!note) return;
     try {

@@ -1,5 +1,5 @@
 import type { Provider } from '@nestjs/common';
-import { listLocalOllamaModels } from '@quoky/ai-cli';
+import { OllamaChatModelInventory } from '@quoky/ai-cli';
 import { AiProviderManager, SessionManager, STORAGE_PROVIDER } from '@quoky/core';
 import type { ConversationTurnHandler, StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
@@ -34,6 +34,8 @@ export interface ProviderSelectionComposition {
 
 export function createProviderSelectionProviders(input: ProviderSelectionComposition): Provider[] {
   const { config, catalog, store } = input;
+  // One inventory per process: its per-model capability cache keeps "모델 목록" to one `ollama list` once warm.
+  const ollamaInventory = new OllamaChatModelInventory({ bin: config.ai.ollamaBin });
   return [
     {
       provide: ProviderSelectionService,
@@ -50,7 +52,7 @@ export function createProviderSelectionProviders(input: ProviderSelectionComposi
           updateSessionEntry: (sessionId, key, update, onCommitted) =>
             sessions.updateMetadataEntry({ id: sessionId }, key, update, { onCommitted }),
           readiness: (provider) => manager.isReady(provider),
-          ollamaModels: () => listLocalOllamaModels(config.ai.ollamaBin),
+          ollamaModels: () => ollamaInventory.list(),
           logger: new ConsoleLogger('provider-selection'),
         }),
       inject: [STORAGE_PROVIDER, AiProviderManager, SessionManager],

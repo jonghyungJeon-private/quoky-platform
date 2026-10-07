@@ -10,16 +10,21 @@ import {
   classifyAttachment,
   IMAGE_ATTACHMENT_MAX_BYTES,
   isPlatformCdnUrl,
+  mimeClass,
   renderAttachmentIntakeNote,
   sanitizeAttachmentName,
+  sizeBucket,
+  sniffImageMimeType,
   TEXT_ATTACHMENT_MAX_BYTES,
 } from './attachments';
 import type { AttachmentSource } from './attachments';
+import { jpegImage, PNG_SIGNATURE, pngChunk, pngChunkTypes, pngImage, riffChunk, riffWebp, vp8lPayload } from './image-test-support';
 
 const CDN = 'https://cdn.discordapp.com/attachments/1/2';
-const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fake-png-body')]);
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('fake-jpeg-body')]);
-const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBPVP8 ')]);
+// Structurally valid images (canonical already, so the written file equals the input).
+const PNG = pngImage();
+const JPEG = jpegImage();
+const WEBP = riffWebp([riffChunk('VP8L', vp8lPayload())]);
 
 /** Offline fetch fake: serves registered bodies by URL, records every call (url + init). */
 function fakeFetch(routes: Record<string, { body: Buffer | Buffer[]; status?: number; headers?: Record<string, string> } | Error>) {
@@ -181,7 +186,8 @@ describe('AttachmentIntake — refusals before any download (ADR-0111 D2)', () =
       source('ok.txt', 'text/plain', 2, `${CDN}/ok.txt`),
     ]);
     expect(fetch.calls.map((c) => c.url)).toEqual([`${CDN}/ok.txt`]);
-    expect(fetch.calls[0]!.init?.redirect).toBe('error');
+    // Manual mode: a redirect is never followed; any 3xx is refused (see the REDIRECT diagnostic test).
+    expect(fetch.calls[0]!.init?.redirect).toBe('manual');
     expect(fetch.calls[0]!.init?.signal).toBeDefined();
     expect(result.attachments.map((a) => a.kind === 'unsupported' ? a.reason : a.kind)).toEqual(['DOWNLOAD_FAILED', 'DOWNLOAD_FAILED', 'text']);
   });
@@ -321,7 +327,7 @@ describe('AttachmentIntake — images become an opaque temp reference with clean
     expect((await fs.stat(tempRoot)).mode & 0o777).toBe(0o700);
     expect((await fs.stat(processDir)).mode & 0o777).toBe(0o700);
     expect(await fs.readFile(images[0]!.imageRef)).toEqual(PNG);
-    expect(JSON.stringify(result.attachments)).not.toContain('fake-png-body');
+    expect(JSON.stringify(result.attachments)).not.toContain('IDAT');
 
     await result.release();
     expect(await filesIn(tempRoot)).toEqual([]);
@@ -330,7 +336,7 @@ describe('AttachmentIntake — images become an opaque temp reference with clean
 
   it('refuses bytes that do not match the declared image type, writing nothing', async () => {
     const fetch = fakeFetch({ [`${CDN}/s.png`]: { body: Buffer.from('<svg onload=alert(1)>') } });
-    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot, imageRetryDelayMs: 0 });
     const result = await intake.intake([source('s.png', 'image/png', 21, `${CDN}/s.png`)]);
     expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' });
     expect(await filesIn(tempRoot)).toEqual([]);
@@ -505,6 +511,250 @@ describe('AttachmentIntake — private temp root and symlink-safe sweep (Codex P
     const intake = new AttachmentIntake({ fetchImpl: fakeFetch({}).impl, tempRoot });
     expect(await intake.sweep()).toBe(0);
     await expect(fs.lstat(tempRoot)).rejects.toThrow();
+  });
+});
+
+describe('live QA: a valid PNG refused as "지원하지 않는 형식" — the bytes decide the image type', () => {
+  // The shape of the refused `chart-crop.png`: a 1100x450 PNG whose upload (7577 bytes, with an eXIf chunk) Discord
+  // re-encoded, so the CDN serves a smaller, metadata-free PNG (2507 bytes) than the gateway `size` says.
+  const REENCODED = pngImage({ width: 40, height: 20 });
+
+  it('a PNG is taken in whatever the platform declared: an alias, a generic type, another image type, or nothing', async () => {
+    for (const declared of ['image/png', 'image/x-png', 'image/apng', 'application/octet-stream', 'image/jpeg', 'image/webp', null]) {
+      const fetch = fakeFetch({ [`${CDN}/chart-crop.png`]: { body: REENCODED, headers: { 'content-type': 'image/png' } } });
+      const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot, imageRetryDelayMs: 0 });
+      const result = await intake.intake([source('chart-crop.png', declared, 7577, `${CDN}/chart-crop.png`)]);
+      const image = result.attachments[0];
+      expect(image, `declared ${String(declared)}`).toMatchObject({ kind: 'image', mimeType: 'image/png', sizeBytes: 7577 });
+      expect(result.diagnostics).toEqual([]);
+      if (image?.kind === 'image') expect(path.extname(image.imageRef)).toBe('.png');
+      expect(fetch.calls).toHaveLength(1);
+      await result.release();
+    }
+  });
+
+  it('a gateway size larger than the served (re-encoded) bytes is not a refusal', async () => {
+    const fetch = fakeFetch({ [`${CDN}/c.png`]: { body: REENCODED, headers: { 'content-length': String(REENCODED.length) } } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
+    const result = await intake.intake([source('c.png', 'image/png', 7577, `${CDN}/c.png`)]);
+    expect(result.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/png' });
+    await result.release();
+  });
+
+  it('a body with no image signature is downloaded once more; a PNG on the second try is taken in', async () => {
+    let call = 0;
+    const impl = (async () => {
+      call += 1;
+      return call === 1 ? new Response('', { status: 200, headers: { 'content-type': 'text/html' } }) : new Response(new Uint8Array(REENCODED), { status: 200 });
+    }) as typeof fetch;
+    const intake = new AttachmentIntake({ fetchImpl: impl, tempRoot, imageRetryDelayMs: 0 });
+    const result = await intake.intake([source('c.png', 'image/png', 7577, `${CDN}/c.png`)]);
+    expect(call).toBe(2);
+    expect(result.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/png' });
+    await result.release();
+  });
+
+  it('the sniffed type wins over the declared one (a JPEG declared as PNG is handed on as JPEG)', async () => {
+    const fetch = fakeFetch({ [`${CDN}/p.png`]: { body: JPEG } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot });
+    const result = await intake.intake([source('p.png', 'image/png', JPEG.length, `${CDN}/p.png`)]);
+    expect(result.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/jpeg' });
+    const image = result.attachments[0];
+    if (image?.kind === 'image') expect(path.extname(image.imageRef)).toBe('.jpg');
+    await result.release();
+  });
+
+  it('classification: image extensions with a generic or other raster type are candidates; SVG and non-image names are not', () => {
+    expect(classifyAttachment(source('s.png', 'application/octet-stream', 10))).toEqual({ kind: 'image', mimeType: 'image/png' });
+    expect(classifyAttachment(source('s.jpeg', 'image/jpg', 10))).toEqual({ kind: 'image', mimeType: 'image/jpeg' });
+    expect(classifyAttachment(source('s.png', 'image/heic', 10))).toEqual({ kind: 'image', mimeType: 'image/png' });
+    expect(classifyAttachment(source('s.png', 'image/svg+xml', 10))).toEqual({ kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' });
+    expect(classifyAttachment(source('s.gif', 'application/octet-stream', 10))).toEqual({ kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' });
+    expect(sniffImageMimeType(PNG)).toBe('image/png');
+    expect(sniffImageMimeType(WEBP)).toBe('image/webp');
+    expect(sniffImageMimeType(Buffer.from('GIF89a'))).toBeUndefined();
+  });
+});
+
+describe('AttachmentIntake — images are validated and canonicalized before any provider sees them (Codex P1 on df66418)', () => {
+  const SECRET = Buffer.from('pass' + 'word=SYNTHETIC_REVIEW_ONLY', 'latin1');
+
+  async function intakeOne(body: Buffer, name: string, declared: string | null) {
+    const fetch = fakeFetch({ [`${CDN}/${name}`]: { body } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot, imageRetryDelayMs: 0 });
+    return intake.intake([source(name, declared, body.length, `${CDN}/${name}`)]);
+  }
+
+  it.each([
+    ['the signature followed by credential text, declared octet-stream', Buffer.concat([PNG_SIGNATURE, SECRET]), 'TRUNCATED'],
+    ['the 8 signature bytes alone', PNG_SIGNATURE, 'TRUNCATED'],
+    ['a valid PNG with credential text appended', Buffer.concat([pngImage(), SECRET]), 'TRAILING_BYTES'],
+  ])('refuses %s as INVALID_IMAGE and writes nothing', async (_label, body, imageCheck) => {
+    const result = await intakeOne(body, 'x.png', 'application/octet-stream');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'INVALID_IMAGE', imageCheck, attempts: 2 });
+    expect(await filesIn(tempRoot)).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain('SYNTHETIC');
+  });
+
+  it('writes only the canonical image: the sips-like sRGB + eXIf PNG is taken in with eXIf and text chunks dropped', async () => {
+    const body = pngImage({
+      width: 11,
+      height: 5,
+      beforeIdat: [pngChunk('sRGB', Buffer.from([0])), pngChunk('eXIf', Buffer.concat([Buffer.from('MM', 'latin1'), SECRET])), pngChunk('tEXt', SECRET)],
+    });
+    const result = await intakeOne(body, 'chart-crop.png', 'image/png');
+    const image = result.attachments[0];
+    expect(image).toMatchObject({ kind: 'image', mimeType: 'image/png' });
+    if (image?.kind !== 'image') throw new Error('not an image');
+    const written = await fs.readFile(image.imageRef);
+    expect(pngChunkTypes(written)).toEqual(['IHDR', 'sRGB', 'IDAT', 'IEND']);
+    expect(written.includes(SECRET)).toBe(false);
+    await result.release();
+  });
+
+  it('refuses credential text that survives canonicalization (inside a JPEG scan) as CREDENTIAL_SHAPED', async () => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), Buffer.from([0x00]), SECRET, jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'CREDENTIAL_SHAPED' });
+    expect(await filesIn(tempRoot)).toEqual([]);
+  });
+
+  it.each([
+    ['after ~256 KiB of printable padding (the old prefix bound)', Buffer.alloc(262_000, 0x41), 'CREDENTIAL_SHAPED'],
+    ['after 1 MiB of binary padding', Buffer.alloc(1024 * 1024, 0x01), 'CREDENTIAL_SHAPED'],
+  ])('screens the WHOLE canonical file: a credential %s is refused', async (_label, padding, detail) => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), padding, SECRET, jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail });
+    expect(await filesIn(tempRoot)).toEqual([]);
+  });
+
+  it('scans the collected text in ONE pass: a JWT just past 64 KiB of text is caught (Codex boundary repro)', async () => {
+    const jwt = ['ey' + 'JhbGciOiJIUzI1NiJ9', 'ey' + 'JzdWIiOiJ4In0', 'c2lnbmF0dXJlLXJldmlldy1vbmx5'].join('.');
+    // ~64 KiB of short printable runs separated by NUL bytes, then the JWT straddling the old 64 KiB window edge.
+    const runs = Buffer.concat(Array.from({ length: 7_281 }, () => Buffer.from('abcdefgh\u0000', 'latin1')));
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), runs, Buffer.from(jwt, 'latin1'), Buffer.from([0x00]), jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'CREDENTIAL_SHAPED' });
+  });
+
+  it('fails closed past the text budget: more than 256 KiB of printable text is refused as TOO_MUCH_TEXT', async () => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const text = Buffer.from('lorem ipsum dolor sit amet '.repeat(12_000), 'latin1');
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), text, jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'TOO_MUCH_TEXT' });
+  });
+
+  it('a large normal (incompressible) PNG of about 6 MiB is taken in within a reasonable time', async () => {
+    const body = pngImage({ width: 1450, height: 1450, noise: true });
+    expect(body.length).toBeGreaterThan(6 * 1024 * 1024);
+    const started = Date.now();
+    const result = await intakeOne(body, 'big.png', 'image/png');
+    const elapsed = Date.now() - started;
+    expect(result.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/png' });
+    expect(elapsed).toBeLessThan(5_000);
+    await result.release();
+  }, 20_000);
+
+  it('JPEG and WebP metadata is dropped from the written file', async () => {
+    const jpeg = await intakeOne(jpegImage(), 'p.jpg', 'image/jpeg');
+    expect(jpeg.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/jpeg' });
+    await jpeg.release();
+    const webpBody = riffWebp([riffChunk('VP8X', Buffer.from([0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0])), riffChunk('VP8L', vp8lPayload()), riffChunk('EXIF', SECRET)]);
+    const webp = await intakeOne(webpBody, 'w.webp', 'image/webp');
+    const image = webp.attachments[0];
+    if (image?.kind !== 'image') throw new Error('not an image');
+    expect(await fs.readFile(image.imageRef)).toEqual(riffWebp([riffChunk('VP8L', vp8lPayload())]));
+    await webp.release();
+  });
+});
+
+describe('AttachmentIntake — content-free refusal diagnostics', () => {
+  it('one entry per refused attachment with the reason, the step, MIME classes and size buckets only', async () => {
+    const fetch = fakeFetch({
+      [`${CDN}/secret-name.png`]: { body: Buffer.from('<html>not an image</html>'), headers: { 'content-type': 'text/html; charset=utf-8' } },
+      [`${CDN}/moved.png`]: { body: Buffer.alloc(0), status: 302, headers: { location: 'https://cdn.discordapp.com/elsewhere' } },
+      [`${CDN}/gone.log`]: { body: Buffer.from('x'), status: 404 },
+    });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot, imageRetryDelayMs: 0 });
+    const result = await intake.intake([
+      source('secret-name.png', 'image/png', 7577, `${CDN}/secret-name.png`),
+      source('moved.png', 'image/png', 2507, `${CDN}/moved.png`),
+      source('gone.log', 'text/plain', 1, `${CDN}/gone.log`),
+      source('more.zip', 'application/zip', 10),
+    ]);
+    expect(result.attachments.map((a) => (a.kind === 'unsupported' ? a.reason : a.kind))).toEqual([
+      'UNSUPPORTED_TYPE',
+      'DOWNLOAD_FAILED',
+      'DOWNLOAD_FAILED',
+      'TOO_MANY',
+    ]);
+    expect(result.diagnostics).toEqual([
+      {
+        index: 0,
+        reason: 'UNSUPPORTED_TYPE',
+        detail: 'SIGNATURE_MISMATCH',
+        declaredMime: 'image/png',
+        extension: 'image',
+        declaredSize: '<16KiB',
+        host: 'cdn',
+        httpStatus: 200,
+        responseMime: 'text/html',
+        downloadedSize: '<1KiB',
+        signature: 'other',
+        attempts: 2,
+      },
+      { index: 1, reason: 'DOWNLOAD_FAILED', detail: 'REDIRECT', declaredMime: 'image/png', extension: 'image', declaredSize: '<4KiB', host: 'cdn', httpStatus: 302, responseMime: 'none', attempts: 1 },
+      { index: 2, reason: 'DOWNLOAD_FAILED', detail: 'HTTP_STATUS', declaredMime: 'text/plain', extension: 'text', declaredSize: '<1KiB', host: 'cdn', httpStatus: 404, responseMime: 'none', attempts: 1 },
+      { index: 3, reason: 'TOO_MANY', detail: 'COUNT_BOUND', declaredMime: 'application/other', extension: 'other', declaredSize: '<1KiB', host: 'cdn' },
+    ]);
+    const logged = JSON.stringify(result.diagnostics);
+    for (const leaked of ['secret-name', 'moved', 'gone', 'more.zip', 'discordapp', 'not an image', 'elsewhere']) {
+      expect(logged).not.toContain(leaked);
+    }
+  });
+
+  it('metadata refusals say which bound or type refused them; a timeout is told apart from a network error', async () => {
+    const hung = (async (_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      })) as typeof fetch;
+    const intake = new AttachmentIntake({ fetchImpl: hung, tempRoot, downloadTimeoutMs: 5 });
+    const result = await intake.intake([
+      source('a.pdf', 'application/pdf', 10),
+      source('b.png', 'image/png', IMAGE_ATTACHMENT_MAX_BYTES + 1),
+      source('c.png', 'image/png', 10),
+    ]);
+    expect(result.diagnostics.map((d) => [d.reason, d.detail])).toEqual([
+      ['UNSUPPORTED_TYPE', 'DECLARED_TYPE'],
+      ['TOO_LARGE', 'DECLARED_SIZE'],
+      ['DOWNLOAD_FAILED', 'TIMEOUT'],
+    ]);
+    expect(result.diagnostics[1]?.declaredSize).toBe('>=8MiB');
+  });
+
+  it('classes and buckets are bounded', () => {
+    expect(mimeClass('IMAGE/PNG; charset=binary')).toBe('image/png');
+    expect(mimeClass('image/x-icon')).toBe('image/other');
+    expect(mimeClass('application/vnd.custom+secret')).toBe('application/other');
+    expect(mimeClass('weird')).toBe('other');
+    expect(mimeClass(null)).toBe('none');
+    expect([0, 1, 1023, 1024, 2507, 7577, 70_000, 300_000, 2_000_000, IMAGE_ATTACHMENT_MAX_BYTES].map(sizeBucket)).toEqual([
+      '0', '<1KiB', '<1KiB', '<4KiB', '<4KiB', '<16KiB', '<256KiB', '<1MiB', '<8MiB', '>=8MiB',
+    ]);
   });
 });
 

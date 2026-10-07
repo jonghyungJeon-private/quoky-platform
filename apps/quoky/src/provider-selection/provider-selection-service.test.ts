@@ -104,7 +104,10 @@ describe('session overrides are keyed by (Session, Actor)', () => {
     expect(await f.service.effectiveChat(a)).toMatchObject({ label: 'codex', source: 'session' });
     expect(await f.service.effectiveImage(a)).toMatchObject({ choice: 'claude', source: 'env' });
     expect(await f.service.imageLocalities(a)).toEqual(['LOCAL', 'REMOTE']);
-    expect(await f.service.imageLocalities(b)).toEqual(['LOCAL']);
+    expect(await f.service.imageLocalities(b)).toEqual({
+      allowedLocalities: [],
+      switchedOff: { scope: 'SESSION', choices: ['claude'], resetRestores: true },
+    });
     // B's reset clears only B.
     expect((await f.service.resetSession(b, 'all', { surface: 'chat', actor: 'actor-b' })).status).toBe('CLEARED');
     expect(await f.service.effectiveChat(a)).toMatchObject({ label: 'codex', source: 'session' });
@@ -230,14 +233,25 @@ describe('image understanding: eligibility and the Core locality policy follow t
     expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id, actorId: ACTOR })).id).toBe('ollama-vision-cli');
 
     await f.service.setSessionImage(scope(session), 'off', OWNER_CHAT);
-    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL']);
+    // An explicit `off` allows no locality and says where it was switched off and how to turn it back on.
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual({
+      allowedLocalities: [],
+      switchedOff: { scope: 'SESSION', choices: ['claude', 'ollama'], resetRestores: true },
+    });
     await expect(f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id, actorId: ACTOR })).rejects.toBeInstanceOf(
       NoProviderAvailableError,
     );
 
     // The operations-UI default switches every conversation without an override immediately.
     f.service.setDefaultImage('off', OPS);
-    expect(await f.service.imageLocalities({})).toEqual(['LOCAL']);
+    expect(await f.service.imageLocalities({})).toEqual({
+      allowedLocalities: [],
+      switchedOff: { scope: 'DEFAULT', choices: ['claude', 'ollama'], resetRestores: false },
+    });
+    // The session override is `off` too, and resetting it would not turn images back on any more.
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toMatchObject({
+      switchedOff: { scope: 'SESSION', resetRestores: false },
+    });
     await expect(f.router.select(Capability.IMAGE_UNDERSTANDING, {})).rejects.toBeInstanceOf(NoProviderAvailableError);
   });
 
@@ -281,7 +295,8 @@ describe('dispatch-time eligibility (synchronous, live selection)', () => {
     release();
     const provider = await selecting;
     expect(provider.id).toBe('ollama-vision-cli'); // eligibility was decided before the await
-    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL']); // locality alone would still allow it
+    // The locality policy is closed now too; the synchronous dispatch-time check below is what catches this race.
+    expect(await f.service.imageLocalities(ctx)).toMatchObject({ allowedLocalities: [] });
     expect(f.router.isStillEligible(Capability.IMAGE_UNDERSTANDING, ctx, provider)).toBe(false);
     expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'ollama-vision-cli')).toBe(false);
   });
@@ -377,6 +392,24 @@ describe('validation against this host', () => {
     expect(await f.service.validateChatToken('CLAUDE:Opus')).toEqual({ ok: true, choice: { provider: 'claude', model: 'opus' } });
     // The configured default model folds into "the default".
     expect(await f.service.validateChatToken('claude:sonnet')).toEqual({ ok: true, choice: { provider: 'claude' } });
+  });
+
+  it('refuses an installed model that cannot chat (embedding-only) at selection time and leaves it out of the list', async () => {
+    const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' }, present: ['ollama'] });
+    f.inventory = { status: 'OK', models: ['granite3.3:8b'], nonChat: ['nomic-embed-text:latest'] };
+    expect(await f.service.validateChatToken('ollama:nomic-embed-text')).toEqual({ ok: false, refusal: 'OLLAMA_MODEL_NOT_CHAT' });
+    expect(await f.service.validateChatToken('ollama:nomic-embed-text:latest')).toEqual({ ok: false, refusal: 'OLLAMA_MODEL_NOT_CHAT' });
+    expect(await f.service.validateChatToken('ollama:granite3.3:8b')).toMatchObject({ ok: true });
+    const tokens = (await f.service.options()).filter((o) => o.tier === 'chat').map((o) => o.token);
+    expect(tokens).toContain('ollama:granite3.3:8b');
+    expect(tokens.some((token) => token.includes('nomic-embed'))).toBe(false);
+  });
+
+  it('a configured OLLAMA_MODEL that cannot chat is not re-added to the list', async () => {
+    const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude', OLLAMA_MODEL: 'nomic-embed-text' }, present: ['ollama'] });
+    f.inventory = { status: 'OK', models: ['granite3.3:8b'], nonChat: ['nomic-embed-text:latest'] };
+    const tokens = (await f.service.options()).filter((o) => o.tier === 'chat').map((o) => o.token);
+    expect(tokens.filter((token) => token.startsWith('ollama:'))).toEqual(['ollama:granite3.3:8b']);
   });
 
   it('a full configured QUOKY_CLAUDE_MODEL stays selectable by its own label', async () => {
