@@ -1,5 +1,5 @@
-import { ApprovalStatus, Capability, IntentType, RiskLevel, TaskStatus } from '../../domain';
-import type { Actor, ApprovalRequest, ExecutionPlanRef, Id, IsoTimestamp, Session, Task } from '../../domain';
+import { ApprovalStatus, Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../../domain';
+import type { Actor, ApprovalRequest, ConversationContext, ExecutionPlanRef, Id, IsoTimestamp, Session, Task } from '../../domain';
 import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
 import { CALENDAR_EVENTS_MAX_LIMIT } from '../../ports/calendar-reader.port';
 import {
@@ -20,7 +20,7 @@ import {
   type IssueTransitionOption,
   type IssueTransitionWriter,
 } from '../../ports/connector-write.port';
-import type { ConnectorWriteReceiptRepository } from '../../ports/connector-write-receipt.port';
+import type { ConnectorWriteReceipt, ConnectorWriteReceiptRepository } from '../../ports/connector-write-receipt.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import { containsCredentialMaterial } from '../credential-guard';
@@ -219,6 +219,16 @@ export function isConnectorWriteAnchorLapsed(anchor: ConnectorWriteAnchor, now: 
 }
 
 /** The session's connector-write anchor as the runtime sees it. */
+/**
+ * A SENT anchor whose send is older than the ADR-0093 lifetime (`PENDING_APPROVAL_TTL_MS`, from the terminal save): a
+ * repeated phrase no longer reports it as just executed (live QA: an old link is not "what just happened").
+ */
+export function isConnectorWriteSendStale(anchor: ConnectorWriteAnchor, now: IsoTimestamp): boolean {
+  if (anchor.status !== 'SENT') return false;
+  const sent = Date.parse(anchor.updatedAt);
+  return !Number.isFinite(sent) || Date.parse(now) - sent >= PENDING_APPROVAL_TTL_MS;
+}
+
 export interface ConnectorWriteAnchorView {
   readonly taskId: Id;
   readonly anchor: ConnectorWriteAnchor;
@@ -294,10 +304,22 @@ export type ConnectorWriteStep =
     }
   | { readonly kind: 'closed'; readonly reason: ConnectorWriteCloseReason; readonly family: ConnectorWriteFamily };
 
-/** Narrow storage (satisfied by the live `StorageProvider`; resolved at call time, ADR-0062). */
+/**
+ * Narrow storage (satisfied by the live `StorageProvider`; resolved at call time, ADR-0062). `sessions.list` and
+ * `tasks.listByContext` serve only the stray-phrase lookups ({@link ConnectorWriteFlow.approvedElsewhere},
+ * {@link ConnectorWriteFlow.recentSentInSession}); nothing is ever executed from them.
+ */
 export interface ConnectorWriteFlowStore {
-  readonly sessions: { get(id: Id): Promise<Session | null>; save(session: Session): Promise<Session> };
-  readonly tasks: { get(id: Id): Promise<Task | null>; save(task: Task): Promise<Task> };
+  readonly sessions: {
+    get(id: Id): Promise<Session | null>;
+    save(session: Session): Promise<Session>;
+    list(): Promise<Session[]>;
+  };
+  readonly tasks: {
+    get(id: Id): Promise<Task | null>;
+    save(task: Task): Promise<Task>;
+    listByContext(channelId: string, threadId?: string): Promise<Task[]>;
+  };
 }
 
 export interface ConnectorWriteWriters {
@@ -344,10 +366,27 @@ export interface ConnectorWriteFlow {
   supports(draft: ConnectorWriteDraft): boolean;
   find(session: Session, held?: SessionLockHold): Promise<ConnectorWriteAnchorView | null>;
   /**
-   * The link/reference of this actor's most recent write of `operation`, but only when that write was SENT (a receipt);
-   * null when it was not sent or nothing was ever written (W5-L02: a repeated execution phrase after a send).
+   * An execution phrase in a conversation with no approved write of `operation`: this actor's APPROVED, unexecuted,
+   * unlapsed write of that kind waiting in ANOTHER active conversation (the newest), or null. Read-only and only a
+   * hint — execution stays bound to the conversation the approval was asked in.
    */
-  latestSentOutcome(actorId: Id, operation: ConnectorWriteOperation): Promise<{ externalRef?: string; url?: string } | null>;
+  approvedElsewhere(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteApprovedElsewhere | null>;
+  /**
+   * The link/reference of a write of `operation` whose approval was anchored in THIS conversation and whose receipt is
+   * SENT within the ADR-0093 lifetime (`PENDING_APPROVAL_TTL_MS`, from the receipt) — the newest; null otherwise
+   * (W5-L02: a repeated execution phrase right after a send; never another conversation's or an old receipt).
+   */
+  recentSentInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteRecentSend | null>;
   /**
    * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
@@ -364,6 +403,49 @@ export interface ConnectorWriteFlow {
     now: IsoTimestamp,
     held?: SessionLockHold,
   ): Promise<void>;
+}
+
+/** What a cross-conversation hint may name: the target only (never payload text, event text or a transition). */
+export type ConnectorWriteTargetSummary =
+  | { readonly kind: 'issue'; readonly issueKey: string }
+  | { readonly kind: 'channel'; readonly channelLabel: string; readonly channelId: string }
+  | { readonly kind: 'calendar' };
+
+/** An approved write waiting in another conversation ({@link ConnectorWriteFlow.approvedElsewhere}). */
+export interface ConnectorWriteApprovedElsewhere {
+  readonly operation: ConnectorWriteOperation;
+  readonly target: ConnectorWriteTargetSummary;
+  /** The conversation that holds the approval (where the phrase must be sent). */
+  readonly context: ConversationContext;
+  readonly executionPhrase: string;
+  /** What is left of the grant's ADR-0093 lifetime (from the approval). */
+  readonly remainingMs: number;
+}
+
+/** A recent send approved in this conversation ({@link ConnectorWriteFlow.recentSentInSession}). */
+export interface ConnectorWriteRecentSend {
+  readonly externalRef?: string;
+  readonly url?: string;
+  /** When the receipt became SENT. */
+  readonly sentAt: IsoTimestamp;
+  readonly target: ConnectorWriteTargetSummary;
+  /** The flow's display time zone (`QUOKY_TIMEZONE`). */
+  readonly timeZone: string;
+}
+
+/** The target part of a preview, for a hint shown outside the conversation that previewed it. */
+export function connectorWriteTargetOf(preview: ConnectorWritePreview): ConnectorWriteTargetSummary {
+  switch (preview.operation) {
+    case 'ISSUE_COMMENT':
+    case 'ISSUE_TRANSITION':
+      return { kind: 'issue', issueKey: preview.issueKey };
+    case 'CHANNEL_POST':
+      return { kind: 'channel', channelLabel: preview.channelLabel, channelId: preview.channelId };
+    case 'CALENDAR_EVENT_CREATE':
+    case 'CALENDAR_EVENT_UPDATE':
+    case 'CALENDAR_EVENT_DELETE':
+      return { kind: 'calendar' };
+  }
 }
 
 export interface FlowInput {
@@ -482,12 +564,67 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return { taskId: task.id, anchor, approval };
   }
 
-  async latestSentOutcome(actorId: Id, operation: ConnectorWriteOperation): Promise<{ externalRef?: string; url?: string } | null> {
-    const latest = await this.deps.receipts.findLatestForOperation(actorId, operation);
-    if (!latest || latest.status !== 'SENT') return null;
+  async approvedElsewhere(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteApprovedElsewhere | null> {
+    let best: { anchor: ConnectorWriteAnchor; context: ConversationContext; preview: ConnectorWritePreview } | null = null;
+    for (const other of await this.deps.store.sessions.list()) {
+      if (other.id === session.id || other.actorId !== actorId || other.status !== SessionStatus.ACTIVE) continue;
+      const found = await this.openAnchorOf(other);
+      if (!found) continue;
+      const { anchor } = found;
+      if (anchor.status !== 'APPROVED' || anchor.operation !== operation || anchor.actorId !== actorId || !anchor.preview) continue;
+      // A lapsed grant can no longer run there either (its own next turn releases it): never point at it.
+      if (isConnectorWriteAnchorLapsed(anchor, now)) continue;
+      if (!best || (anchor.approvedAt ?? '') > (best.anchor.approvedAt ?? '')) {
+        best = { anchor, context: other.context, preview: anchor.preview };
+      }
+    }
+    if (!best) return null;
+    const approvedMs = Date.parse(best.anchor.approvedAt ?? best.anchor.updatedAt);
     return {
-      ...(latest.data.externalRef ? { externalRef: latest.data.externalRef } : {}),
-      ...(latest.data.url ? { url: latest.data.url } : {}),
+      operation,
+      target: connectorWriteTargetOf(best.preview),
+      context: best.context,
+      executionPhrase: documentedExecutionPhrase(connectorWriteExecutionGate(operation)),
+      remainingMs: Math.max(0, approvedMs + PENDING_APPROVAL_TTL_MS - Date.parse(now)),
+    };
+  }
+
+  async recentSentInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteRecentSend | null> {
+    // The anchors this conversation created (the session id and the approval id live in the anchor's JSON; the receipt
+    // is keyed by the approval id), so no receipt column links a receipt to a conversation.
+    const tasks = await this.deps.store.tasks.listByContext(session.context.channelId, session.context.threadId);
+    const nowMs = Date.parse(now);
+    let best: { receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null = null;
+    for (const task of tasks) {
+      if (task.planId) continue;
+      const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+      if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id || anchor.actorId !== actorId) continue;
+      // Only a consumed grant can have a receipt (the grant is consumed before anything is written).
+      if (anchor.operation !== operation || !anchor.approvalId || !anchor.consumedAt || !anchor.preview) continue;
+      const receipt = await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`);
+      if (!receipt || receipt.status !== 'SENT' || receipt.actorId !== actorId || receipt.operation !== operation) continue;
+      const sentMs = Date.parse(receipt.updatedAt);
+      if (!Number.isFinite(sentMs) || !Number.isFinite(nowMs) || nowMs - sentMs >= PENDING_APPROVAL_TTL_MS) continue;
+      if (!best || receipt.updatedAt > best.receipt.updatedAt) best = { receipt, preview: anchor.preview };
+    }
+    if (!best) return null;
+    const { receipt, preview } = best;
+    return {
+      ...(receipt.data.externalRef ? { externalRef: receipt.data.externalRef } : {}),
+      ...(receipt.data.url ? { url: receipt.data.url } : {}),
+      sentAt: receipt.updatedAt,
+      target: connectorWriteTargetOf(preview),
+      timeZone: this.deps.timeZone,
     };
   }
 

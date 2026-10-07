@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDERS,
   APPROVAL_REFERENCE_LINE_PREFIX,
+  ApprovalStatus,
   CALENDAR_EVENT_WRITER,
   CALENDAR_READER,
   CHANNEL_MESSAGE_WRITER,
@@ -681,6 +682,48 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     // A channel outside the allowlist is refused before any approval.
     expect((await det(harness.freshContext(), '#random에 게시: hello')).text).toContain('쓰기가 허용된 대상이 아니에요');
     expect(harness.writes.post).toHaveLength(2);
+  });
+
+  it('live QA 2026-10-07: approved in the ops UI for a guild channel, "Slack 게시 실행" in the DM runs nothing and names the channel', async () => {
+    const dm = harness.freshContext();
+    const guild: ConversationContext = { ...harness.freshContext(dm.userId), spaceId: '777777777777777777' };
+    // An earlier, unrelated post of the same owner in the DM (the link the bot wrongly returned live).
+    await det(dm, `#${SLACK_CHANNEL_NAME}에 게시: INT-2 지난 게시물`);
+    await det(dm, '승인');
+    await det(dm, 'Slack 게시 실행');
+    const posts = harness.writes.post.length;
+
+    const decisions = harness.runtime.approvalDecisions;
+    decisions.setConfirmationReferenceEnabled(true);
+    try {
+      const preview = await det(guild, `#${SLACK_CHANNEL_NAME}에 게시: 운영 UI 승인 테스트입니다`);
+      const line = preview.text.split('\n').find((l) => l.startsWith(APPROVAL_REFERENCE_LINE_PREFIX));
+      const reference = line!.slice(APPROVAL_REFERENCE_LINE_PREFIX.length, APPROVAL_REFERENCE_LINE_PREFIX.length + 6);
+      const pending = (await harness.storage.approvals.list()).find((a) => a.status === ApprovalStatus.PENDING);
+      const actor = await harness.storage.actors.findByExternalIdentity('discord', dm.userId);
+      const decided = await decisions.decideFromOpsUi({
+        approvalId: pending!.id,
+        decision: 'approve',
+        actor: actor!,
+        reference,
+        sessions: async () => harness.storage.sessions.list(),
+      });
+      expect(decided).toMatchObject({ status: 'DECIDED', outcome: 'APPROVED', connectorWrite: { executionPhrase: 'Slack 게시 실행' } });
+    } finally {
+      decisions.setConfirmationReferenceEnabled(false);
+    }
+
+    const elsewhere = await det(dm, 'Slack 게시 실행');
+    expect(elsewhere.text).toBe(
+      [
+        `실행하지 않았어요. 승인된 Slack 게시(#${SLACK_CHANNEL_NAME})는 다른 대화에서 기다리고 있어요 (약 30분 남음).`,
+        `미리보기를 받은 <#${guild.channelId}>에서 "Slack 게시 실행"이라고 보내 주세요.`,
+      ].join('\n'),
+    );
+    expect(harness.writes.post).toHaveLength(posts);
+    await det(guild, 'Slack 게시 실행');
+    expect(harness.writes.post).toHaveLength(posts + 1);
+    expect(harness.writes.post[posts]).toMatchObject({ channel: SLACK_CHANNEL_ID, text: '운영 UI 승인 테스트입니다' });
   });
 
   it('calendar create (W4-L01 phrasing): preview → 승인 → a question is only a reminder → 일정 추가 실행 creates once (W5 K1–K4)', async () => {

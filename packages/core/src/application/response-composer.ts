@@ -34,12 +34,18 @@ import { documentedExecutionPhrase } from './execution-command-guard';
 import {
   renderConnectorWriteAlreadyApproved,
   renderConnectorWriteAlreadyExecuted,
+  renderConnectorWriteApprovedElsewhere,
   renderConnectorWriteApprovedReminder,
   renderConnectorWritePending,
   renderConnectorWriteStep,
   renderNoApprovedConnectorWrite,
 } from './connector-writes/connector-write-copy';
-import type { ConnectorWritePreview, ConnectorWriteStep } from './connector-writes/connector-write-flow';
+import type {
+  ConnectorWriteApprovedElsewhere,
+  ConnectorWritePreview,
+  ConnectorWriteRecentSend,
+  ConnectorWriteStep,
+} from './connector-writes/connector-write-flow';
 import type { ConnectorWriteOperation } from '../ports';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
@@ -1197,14 +1203,21 @@ export class ResponseComposer {
     return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase) };
   }
 
-  /** The execution phrase repeated after the same kind of write was SENT (W5-L02). */
+  /** The execution phrase repeated after a write of that kind approved in this conversation was SENT recently (W5-L02). */
   composeConnectorWriteAlreadyExecuted(
     context: ConversationContext,
     operation: ConnectorWriteOperation,
-    externalRef?: string,
-    url?: string,
+    sent: ConnectorWriteRecentSend,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteAlreadyExecuted(operation, externalRef, url) };
+    return { context, text: renderConnectorWriteAlreadyExecuted(operation, sent) };
+  }
+
+  /**
+   * The execution phrase where nothing of that kind is approved while the actor's approved write waits in another
+   * conversation: nothing runs; names the kind, target and place to send the phrase (never the payload).
+   */
+  composeConnectorWriteApprovedElsewhere(context: ConversationContext, elsewhere: ConnectorWriteApprovedElsewhere): OutboundMessage {
+    return { context, text: renderConnectorWriteApprovedElsewhere(elsewhere) };
   }
 
   /** A connector-write execution phrase with no approved write to run (QA-018 pattern). */

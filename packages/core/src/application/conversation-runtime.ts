@@ -33,6 +33,7 @@ import {
   connectorWriteExecutionGate,
   isAnyConnectorWriteExecutionPhrase,
   connectorWriteOperationsOfPhrase,
+  isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
@@ -2651,16 +2652,27 @@ export class ConversationRuntime {
     // ADR-0112 (CWR-2): a connector-write execution phrase with no approved write of that kind runs nothing and says so
     // (with or without the flow) — a chat model must never claim a comment, post or calendar change happened.
     if (isAnyConnectorWriteExecutionPhrase(message.text)) {
-      // W5-L02: when this actor's latest write of that kind was SENT, say so (with the link) instead of "nothing approved".
       const flow = this.deps.connectorWriteFlow;
       if (flow) {
-        for (const operation of connectorWriteOperationsOfPhrase(message.text)) {
-          const sent = await flow.latestSentOutcome(actor.id, operation);
+        const operations = connectorWriteOperationsOfPhrase(message.text);
+        const now = this.clock();
+        // Live QA (cross-session): the actor's approved write of that kind waits in ANOTHER conversation — run nothing
+        // here (execution stays bound to the approving conversation) and say where to send the phrase.
+        for (const operation of operations) {
+          const elsewhere = await flow.approvedElsewhere(session, actor.id, operation, now);
+          if (elsewhere) {
+            return this.respondComposed(message, session, this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere));
+          }
+        }
+        // W5-L02: a write of that kind approved in THIS conversation was SENT recently — say so (with the link) instead
+        // of "nothing approved". Never another conversation's receipt, never an old one.
+        for (const operation of operations) {
+          const sent = await flow.recentSentInSession(session, actor.id, operation, now);
           if (sent) {
             return this.respondComposed(
               message,
               session,
-              this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent.externalRef, sent.url),
+              this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent),
             );
           }
         }
@@ -3291,7 +3303,17 @@ export class ConversationRuntime {
         if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {
           return null;
         }
-        return respond(await flow.execute({ session, actor, view, now: this.clock() }));
+        const now = this.clock();
+        // Live QA (cross-session): this conversation's write is finished, but an approved one of the same kind waits in
+        // another conversation — run nothing and say where its phrase must be sent.
+        const elsewhere = await flow.approvedElsewhere(session, actor.id, anchor.operation, now);
+        if (elsewhere) {
+          const reply = this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere);
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // An old send is not "already executed" any more: the stray-phrase path answers (nothing approved).
+        if (isConnectorWriteSendStale(anchor, now)) return null;
+        return respond(await flow.execute({ session, actor, view, now }));
       }
       default:
         return null;

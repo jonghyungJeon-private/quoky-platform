@@ -12,11 +12,19 @@ import type {
   RiskLevel,
   Session,
 } from '../domain';
+import type { ConnectorWriteOperation } from '../ports/connector-write.port';
 import { now } from '../util/clock';
 import { sha256Canonical } from './canonical-digest';
 import { PENDING_APPROVAL_TTL_MS, pendingApprovalRemainingMs } from './conversation-commands';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import type { ConnectorWriteAnchorView, ConnectorWriteStep } from './connector-writes/connector-write-flow';
+import {
+  connectorWriteExecutionGate,
+  connectorWriteTargetOf,
+  type ConnectorWriteAnchorView,
+  type ConnectorWriteStep,
+  type ConnectorWriteTargetSummary,
+} from './connector-writes/connector-write-flow';
+import { documentedExecutionPhrase } from './execution-command-guard';
 import {
   CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
   CREDENTIAL_OVERRIDE_DENY_COMMENT,
@@ -394,8 +402,22 @@ export type ApprovalSurfaceDecision =
       readonly reply: OutboundMessage;
       /** The originating conversation (for the owner-DM result notice; never shown by the UI). */
       readonly chat: ConversationContext;
+      /**
+       * An APPROVED connector write only: what was approved (kind and target, never the payload), the exact phrase that
+       * runs it — which must be sent in `chat` (execution is bound to the approving conversation) — and the grant's
+       * lifetime, so the owner DM can say what, where and how long.
+       */
+      readonly connectorWrite?: ConnectorWriteApprovedNotice;
     }
   | { readonly status: 'REFUSED'; readonly refusal: ApprovalSurfaceRefusal };
+
+/** {@link ApprovalSurfaceDecision}'s approved connector-write details. */
+export interface ConnectorWriteApprovedNotice {
+  readonly operation: ConnectorWriteOperation;
+  readonly target: ConnectorWriteTargetSummary;
+  readonly executionPhrase: string;
+  readonly remainingMs: number;
+}
 
 export interface OpsUiDecisionInput {
   readonly approvalId: Id;
@@ -1413,7 +1435,25 @@ export class ApprovalDecisionService {
       // Only a decision that left PENDING settles the id (an UNAVAILABLE answer decided nothing).
       if (outcome !== 'UNAVAILABLE') this.settledByOpsUi.add(input.approvalId);
       this.deps.logger.info('approval decided', { approvalId: input.approvalId, surface: OPS_UI_DECISION_SURFACE, kind, outcome });
-      return { status: 'DECIDED', outcome, kind, reply: value.reply, chat: session.context };
+      const anchor = kind === 'CONNECTOR_WRITE' && outcome === 'APPROVED' ? lookup.connectorWrite?.anchor : undefined;
+      const connectorWrite: ConnectorWriteApprovedNotice | undefined =
+        anchor?.operation && anchor.preview
+          ? {
+              operation: anchor.operation,
+              target: connectorWriteTargetOf(anchor.preview),
+              executionPhrase: documentedExecutionPhrase(connectorWriteExecutionGate(anchor.operation)),
+              // Just approved: the whole ADR-0093 lifetime, counted from now.
+              remainingMs: PENDING_APPROVAL_TTL_MS,
+            }
+          : undefined;
+      return {
+        status: 'DECIDED',
+        outcome,
+        kind,
+        reply: value.reply,
+        chat: session.context,
+        ...(connectorWrite ? { connectorWrite } : {}),
+      };
     };
 
     // ADR-0093: an expired approval is recorded denied exactly as the next chat turn would; it can never be approved.
