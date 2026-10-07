@@ -9633,7 +9633,7 @@ describe('Stage 2B Slice 5A — ConversationRuntime integration seam', () => {
 
     expect(result.status).toBe('RESPONDED');
     expect(executeRouting).not.toHaveBeenCalled();
-    expect(legacySelect).toHaveBeenCalledWith(Capability.PROJECT_ANALYSIS);
+    expect(legacySelect).toHaveBeenCalledWith(Capability.PROJECT_ANALYSIS, { sessionId: expect.any(String) });
     expect(providerExecute).toHaveBeenCalledTimes(1);
   });
 
@@ -11380,8 +11380,11 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     locality?: 'LOCAL' | 'REMOTE';
     noProvider?: boolean;
     execute?: (request: AiRequest) => Promise<AiExecutionResult>;
-    /** ADR-0111 amendment A2: the composition-time image policy (absent = the LOCAL-only default). */
-    imageLocalities?: readonly ('LOCAL' | 'REMOTE')[];
+    /** ADR-0111 amendment A2: the composition-time image policy (absent = the LOCAL-only default), or (runtime
+     * switching) a per-turn resolver. */
+    imageLocalities?:
+      | readonly ('LOCAL' | 'REMOTE')[]
+      | ((context: { sessionId?: string }) => Promise<readonly ('LOCAL' | 'REMOTE')[]>);
   } = {}) {
     const { storage, taskSaves, runSaves } = makeTaskStorage();
     const { deps: base, calls } = makeDeps();
@@ -11423,18 +11426,20 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
         async recordAssistant(reply: string) { recorded.push(reply); return undefined; },
       },
       router: {
-        async select(capability) {
+        async select(capability, context) {
           selected.push(capability);
+          contexts.push(context);
           if (o.noProvider) throw new NoProviderAvailableError(capability);
           return provider;
         },
       },
     };
+    const contexts: unknown[] = [];
     const runtime = new ConversationRuntime(
       deps,
       o.imageLocalities ? { imageUnderstandingLocalities: o.imageLocalities } : {},
     );
-    return { runtime, calls, selected, requests, recorded, completed, failed, execute, taskSaves, runSaves };
+    return { runtime, calls, selected, contexts, requests, recorded, completed, failed, execute, taskSaves, runSaves };
   }
 
   /** Everything the turn persisted or logged except the user's own short-term record (which is the InboundMessage). */
@@ -11500,6 +11505,44 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
       reason: 'locality-not-allowed',
       imageCount: 1,
     });
+  });
+
+  it('runtime switching: the policy is resolved on EVERY image turn, so switching away from the cloud stops egress at once', async () => {
+    const effective = { localities: ['LOCAL', 'REMOTE'] as readonly ('LOCAL' | 'REMOTE')[] };
+    const asked: unknown[] = [];
+    const h = imageTurn({
+      locality: 'REMOTE',
+      imageLocalities: async (context) => {
+        asked.push(context);
+        return effective.localities;
+      },
+    });
+    const first = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(first.reply.text).toContain('주간 매출 막대 그래프예요.');
+    expect(h.requests).toHaveLength(1);
+    // The owner switches the image selection to ollama/off: the very next turn sends nothing to the REMOTE provider.
+    effective.localities = ['LOCAL'];
+    const second = await h.runtime.handle(imageMessage('이것도 설명해줘'));
+    expect(second.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.requests).toHaveLength(1);
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    // The resolver and the router both receive the turn's session.
+    expect(asked).toHaveLength(2);
+    expect(asked[0]).toEqual({ sessionId: expect.any(String) });
+    expect(h.contexts).toEqual([{ sessionId: expect.any(String) }, { sessionId: expect.any(String) }]);
+  });
+
+  it('runtime switching: a failing resolver means LOCAL only (fail closed)', async () => {
+    const h = imageTurn({
+      locality: 'REMOTE',
+      imageLocalities: async () => {
+        throw new Error('selection store unavailable');
+      },
+    });
+    const result = await h.runtime.handle(imageMessage('이거 뭐야?'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.calls.loggerWarnCalls.some((c) => c.message === 'image policy resolution failed; local only')).toBe(true);
   });
 
   it('amendment A2: an explicit LOCAL-only policy behaves exactly like the default', async () => {

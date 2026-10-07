@@ -55,6 +55,7 @@ import {
 import { CODE_WORK_TURN_HANDLERS, FEEDBACK_TURN_HANDLERS } from './features/feature-tokens';
 import { CALENDAR_TURN_HANDLERS } from './features/calendar.providers';
 import { MEMORY_TURN_HANDLERS } from './features/memory.providers';
+import { MODEL_SELECTION_TURN_HANDLERS } from './features/provider-selection.providers';
 import { createRemindersProviders } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { createWorkChatProviders } from './features/work-chat.providers';
@@ -243,6 +244,8 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
       { provide: MEMORY_TURN_HANDLERS, useValue: [] },
       // ADR-0110 (CAL-2): no calendar configured, so the calendar feature contributes no handler.
       { provide: CALENDAR_TURN_HANDLERS, useValue: [] },
+      // ADR-0092 amendment (runtime switching): the model command list, empty in this composition.
+      { provide: MODEL_SELECTION_TURN_HANDLERS, useValue: [] },
       ...createWorkChatProviders(() => ({ summaryEnabled: options.summaryEnabled ?? true }), { logger }),
       ...createRemindersProviders(() => ({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' }), { logger }),
       turnHandlersProvider,

@@ -6,6 +6,9 @@ import type {
   OpsLink,
   OpsMemoryList,
   OpsPanelView,
+  OpsProviderOptionView,
+  OpsProviderSelectionPage,
+  OpsProviderTierView,
   OpsReminderCancelPreview,
   OpsViewModel,
 } from './view-model';
@@ -317,4 +320,83 @@ export function renderApprovalConfirm(
     '</form>',
   );
   return handlingPage('승인 처리', parts);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Runtime model switch (ADR-0092 / ADR-0111 amendments, runtime switching): the providers page. Every option is its own
+// same-origin POST form with the session CSRF token and a one-time nonce whose server-side subject is that option, so a
+// tampered field cannot select anything else. No model output, prompt or conversation text is ever shown.
+// ---------------------------------------------------------------------------------------------------------------
+
+function renderProviderOption(option: OpsProviderOptionView, csrfToken: string, nonce: string | undefined, button: string): string {
+  const facts = [option.readiness, option.egress].filter((fact) => fact.length > 0).map(escapeHtml).join(' · ');
+  const parts = [
+    '<tr>',
+    `<td>${escapeHtml(option.label)}${option.current ? ' <span class="state state-ok">현재</span>' : ''}</td>`,
+    `<td>${facts}${option.warning ? `<br><span class="error">${escapeHtml(option.warning)}</span>` : ''}</td>`,
+    '<td>',
+  ];
+  if (!option.current && nonce !== undefined) {
+    parts.push(
+      '<form method="post" action="/actions/providers/select">',
+      hidden('csrf', csrfToken),
+      hidden('nonce', nonce),
+      `<button type="submit">${escapeHtml(button)}</button>`,
+      '</form>',
+    );
+  }
+  parts.push('</td>', '</tr>');
+  return parts.join('');
+}
+
+function renderProviderTier(
+  title: string,
+  tier: OpsProviderTierView,
+  csrfToken: string,
+  nonces: ReadonlyMap<string, string>,
+): string[] {
+  const parts = [
+    `<h3>${escapeHtml(title)}</h3>`,
+    '<dl>',
+    `<dt>현재 기본값</dt><dd>${escapeHtml(tier.effective)}</dd>`,
+    `<dt>출처</dt><dd>${escapeHtml(tier.source)}</dd>`,
+    `<dt>준비 상태</dt><dd>${escapeHtml(tier.readiness)}</dd>`,
+    '</dl>',
+    '<div class="table-wrap"><table>',
+    '<thead><tr><th>선택</th><th>상태</th><th>처리</th></tr></thead>',
+    '<tbody>',
+    ...tier.options.map((option) => renderProviderOption(option, csrfToken, nonces.get(option.subject), '기본값으로')),
+    '</tbody></table></div>',
+  ];
+  if (tier.reset !== undefined) {
+    const nonce = nonces.get(tier.reset.subject);
+    if (nonce !== undefined) {
+      parts.push(
+        '<form method="post" action="/actions/providers/select">',
+        hidden('csrf', csrfToken),
+        hidden('nonce', nonce),
+        `<button type="submit">${escapeHtml(tier.reset.label)}</button>`,
+        '</form>',
+      );
+    }
+  }
+  return parts;
+}
+
+/** The providers page: effective defaults with sources and readiness, and one form per selectable default. */
+export function renderProviderSelectionPage(
+  page: OpsProviderSelectionPage,
+  csrfToken: string,
+  nonces: ReadonlyMap<string, string>,
+): string {
+  if (page.status === 'REFUSED') return renderActionOutcome('모델 기본값', page.outcome);
+  const parts: string[] = [
+    '<h2>모델 기본값</h2>',
+    '<p>여기서 바꾼 값은 다시 시작해도 유지되고, 채팅에서 "모델 변경"으로 따로 바꾸지 않은 모든 대화에 바로 적용돼요.</p>',
+    `<p>대화별로 따로 바꾼 대화: ${escapeHtml(page.sessionOverrides)}</p>`,
+    ...renderProviderTier('대화 모델 (일반 대화·요약·문서 분석·조회)', page.chat, csrfToken, nonces),
+    ...renderProviderTier('이미지 이해', page.image, csrfToken, nonces),
+  ];
+  if (page.notes.length > 0) parts.push(`<ul class="notes">${page.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`);
+  return handlingPage('모델 기본값', parts);
 }

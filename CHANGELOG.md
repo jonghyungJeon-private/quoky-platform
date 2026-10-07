@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — runtime model switching: operations-UI default and `/model` per conversation (ADR-0092/ADR-0111 amendments, 2026-10-07)
+
+- Chat tier (chat, summaries, document analysis, read-only lookups) and image understanding switch without a restart.
+  Precedence per tier: session override → operations-UI default (`<db dir>/ops/provider-selection.json`, 0600, no
+  migration) → `QUOKY_CHAT_PROVIDER` / `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` → derived default. Code, review, planning,
+  tests and policy-sensitive chat stay on Claude.
+- Core: new `ProviderSelectionPolicy` port; `CapabilityRouter` applies its eligible keys/order as data (no provider-id
+  branching, source-scanned); `ProviderSelector.select` takes an optional `{ sessionId }`; the image locality policy can
+  be a per-turn resolver (REMOTE only while the effective image choice is `claude`); `SessionManager.updateMetadataEntry`
+  (field-scoped, under the session write lock); provider-free `parseModelSelectionCommand`.
+- Registration: Claude always; Codex when its CLI is present; Ollama chat when `OLLAMA_MODEL` is set and the CLI is
+  present; Claude and Ollama vision when configured. Claude aliases (`sonnet`/`opus`/`haiku`) and local `ollama list`
+  models run on bounded on-demand chat-tier-only instances.
+- Chat: `모델 상태`, `모델 목록`, `모델 변경: codex|N`, `/model claude:opus`, `이미지 모델 변경: off`, `모델 기본값으로`
+  (owner-only, this conversation only, handler `model-selection` at pre-classify 70).
+- Operations UI: providers panel shows the effective defaults and sources; `/providers` changes or resets them (session,
+  CSRF, one-time nonce, same-origin; owner DM `OPS_DECISION_RESULT`; `provider.selection.changed` audit line).
+- Help: the two feedback lines are one line, so the help budget stays 14 lines. ARCHITECTURE.md §2 principle 1 widened
+  (owner-approved).
+
 ## Unreleased — selectable chat provider: Claude, Codex or Ollama (ADR-0092 amendment, 2026-10-07)
 
 - `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` picks the chat-tier provider registered next to Claude. Unset

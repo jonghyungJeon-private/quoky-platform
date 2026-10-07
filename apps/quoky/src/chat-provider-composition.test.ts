@@ -144,3 +144,38 @@ describe('createChatAiProviders — routing by priority (no provider-id branchin
     expect(router).not.toMatch(/codex|QUOKY_CHAT_PROVIDER/i);
   });
 });
+
+describe('createChatAiProviders — switchable registration (ADR-0092 amendment, runtime switching)', () => {
+  it('with no CLI present the registration is exactly the configured selection (as before)', () => {
+    const logger = recordingLogger();
+    expect(ids(createChatAiProviders(aiConfig({ QUOKY_CHAT_PROVIDER: 'claude' }), logger, { cliPresent: () => false }))).toEqual(['claude-cli']);
+  });
+
+  it('Codex is registered when its CLI is present; Ollama chat needs OLLAMA_MODEL and its CLI', () => {
+    const logger = recordingLogger();
+    const all = (bin: string) => bin === 'codex' || bin === 'ollama';
+    expect(ids(createChatAiProviders(aiConfig({ QUOKY_CHAT_PROVIDER: 'claude' }), logger, { cliPresent: all }))).toEqual([
+      'claude-cli',
+      'codex-cli',
+    ]);
+    expect(
+      ids(createChatAiProviders(aiConfig({ QUOKY_CHAT_PROVIDER: 'claude', OLLAMA_MODEL: 'llama3.1' }), logger, { cliPresent: all })),
+    ).toEqual(['claude-cli', 'ollama-cli', 'codex-cli']);
+  });
+
+  it('a persisted default names its provider into the registration', () => {
+    const logger = recordingLogger();
+    expect(
+      ids(createChatAiProviders(aiConfig({ QUOKY_CHAT_PROVIDER: 'claude' }), logger, { persistedChat: { provider: 'ollama' } })),
+    ).toEqual(['claude-cli', 'ollama-cli']);
+  });
+
+  it('without a policy, registering everything would let priority pick: the policy (not registration) decides now', async () => {
+    const providers = createChatAiProviders(aiConfig({ QUOKY_CHAT_PROVIDER: 'claude', OLLAMA_MODEL: 'llama3.1' }), recordingLogger(), {
+      cliPresent: () => true,
+    });
+    // Documented consequence: the legacy priority path alone would choose a 100-priority provider over Claude, which is
+    // why the composition root always wires the ProviderSelectionPolicy into the router (see app.module.ts).
+    expect((await readyRouter(providers).select(Capability.GENERAL_CHAT)).id).not.toBe('claude-cli');
+  });
+});

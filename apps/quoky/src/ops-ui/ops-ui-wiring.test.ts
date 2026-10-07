@@ -24,6 +24,8 @@ import type { AiProvider, DurableMemoryQuery, Logger, LogFields, MemoryRecord, R
 
 import type { BackupStatus } from '../ops/backup-job';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
+import { ProviderSelectionService } from '../provider-selection/provider-selection-service';
+import { selectionFixture } from '../provider-selection/test-support';
 import { cookieFrom, send } from './test-support/http-client';
 import { OpsErrorRing } from './snapshot/error-ring';
 import { opsSnapshotSources, opsUiErrorRing, recordOpsUiErrors, startOpsUi } from './ops-ui-wiring';
@@ -380,6 +382,42 @@ describe('OPS-1 wiring (ADR-0113 D1/D8)', () => {
 
     await send({ port, method: 'POST', path: '/actions/memories/forget/request', origin: `http://127.0.0.1:${port}`, cookie, form: { csrf, number: '2' } });
     expect(forgetRequests).toEqual([[{ actorId: 'actor-1', now: expect.any(String) }, 2]]);
+  });
+
+  it('runtime model switch: serves the defaults page from the container service and sends the owner DM on a change', async () => {
+    const selection = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' }, present: ['codex'] });
+    const delivered: Array<{ kind: string; text: string; target: unknown }> = [];
+    const sink = {
+      deliver: async (notification: { kind: string; text: string; target: unknown }) => {
+        delivered.push(notification);
+        return { status: 'SENT', via: 'DM' };
+      },
+    };
+    const f = fakes({ extra: [[ProviderSelectionService, selection.service], [NOTIFICATION_SINK, sink]] });
+    const handle = await startOpsUi(input(f.container, { QUOKY_OPS_UI_ENABLED: 'true' }, { portOverride: 0 }));
+    handles.push(handle);
+    const port = handle.port ?? 0;
+    const origin = `http://127.0.0.1:${port}`;
+    const token = readFileSync(path.join(dir, 'data', 'ops-ui.token'), 'utf8').trim();
+    const cookie = cookieFrom(await send({ port, method: 'POST', path: '/session', origin, form: { token } }));
+    const dashboard = (await send({ port, path: '/', cookie })).body;
+    expect(dashboard).toContain('<a class="action" href="/providers">모델 기본값 바꾸기</a>');
+    expect(dashboard).toContain('claude:sonnet · 출처: 설정');
+    const page = (await send({ port, path: '/providers', cookie })).body;
+    const at = page.indexOf('<td>codex</td>');
+    const form = page.slice(page.indexOf('<form', at), page.indexOf('</form>', at));
+    const csrf = /name="csrf" value="([^"]+)"/.exec(form)?.[1] ?? '';
+    const nonce = /name="nonce" value="([^"]+)"/.exec(form)?.[1] ?? '';
+    const done = await send({ port, method: 'POST', path: '/actions/providers/select', origin, cookie, form: { csrf, nonce } });
+    expect(done.body).toContain('DEFAULT_SET');
+    expect(selection.store.get().chat).toEqual({ provider: 'codex' });
+    expect(delivered).toEqual([
+      expect.objectContaining({
+        kind: 'OPS_DECISION_RESULT',
+        target: { platform: 'discord', channelId: '', userId: 'owner-discord-id' },
+        text: expect.stringContaining('운영 화면에서 대화 모델을 codex로 바꿨어요.'),
+      }),
+    ]);
   });
 
   it('serves no handling link or route when the chat services are not bound (Phase 1 only)', async () => {

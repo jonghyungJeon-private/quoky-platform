@@ -68,6 +68,7 @@ import { CONNECTOR_WRITE_FLOW } from './features/connector-writes.providers';
 import { OPS_UI_BIND_HOST } from './ops-ui/http/server';
 import { OPS_UI_TOKEN_FILE_NAME } from './ops-ui/http/token-file';
 import { startOpsUi, type OpsUiWiringInput } from './ops-ui/ops-ui-wiring';
+import { stubProviderSelection } from './provider-selection/test-support';
 
 /**
  * Personal v3 — integration acceptance (INT-2, plan wave 6; ADR-0102..ADR-0113). OFFLINE and in-process, modelled on
@@ -108,6 +109,7 @@ const EXPECTED_REGISTRY: ReadonlyArray<readonly [string, TurnHandlerStage, numbe
   ['git-branch', 'post-anchor', 100],
   ['memory-commands', 'pre-classify', 50], // ADR-0106 D2 (MEM-1)
   ['feedback.learning', 'pre-classify', 60], // ADR-0107 D3 (LRN-1)
+  ['model-selection', 'pre-classify', 70], // ADR-0092 amendment (runtime model switch)
   ['work-chat.todo', 'pre-classify', 100],
   ['calendar', 'pre-classify', 150], // ADR-0110 D3 (CAL-2)
   ['reminders', 'pre-classify', 200],
@@ -265,7 +267,7 @@ async function boot(): Promise<Harness> {
   let providerCalls = 0;
   let availabilityProbes = 0;
   const executions: Harness['executions'] = [];
-  for (const provider of app.get<AiProvider[]>(AI_PROVIDERS)) {
+  const stubProvider = (provider: AiProvider): void => {
     Object.assign(provider, {
       async isAvailable() {
         availabilityProbes += 1;
@@ -277,7 +279,11 @@ async function boot(): Promise<Harness> {
         return { text: stubReply, artifacts: [] };
       },
     });
-  }
+  };
+  for (const provider of app.get<AiProvider[]>(AI_PROVIDERS)) stubProvider(provider);
+  // ADR-0092 amendment (runtime switching): on-demand model instances are stubbed as they are added, and the local
+  // Ollama inventory answers from a fixture, so no model command can spawn a CLI.
+  stubProviderSelection(app, stubProvider, { status: 'OK', models: [] });
 
   const calendarReads: CalendarEventQuery[] = [];
   Object.assign(app.get<CalendarReader>(CALENDAR_READER), {
@@ -525,7 +531,8 @@ describe('Personal v3 acceptance — composition in the maximum v3 configuration
     expect(deps.connectorWriteFlow).toBe(harness.flow);
   });
 
-  it('registers exactly nine turn handlers in their fixed stage/order', () => {
+  // Ratchet 9 → 10: the runtime model switch adds the `model-selection` handler (ADR-0092 amendment).
+  it('registers exactly ten turn handlers in their fixed stage/order', () => {
     expect(harness.handlers.map((handler) => handler.id).sort()).toEqual(EXPECTED_REGISTRY.map(([id]) => id).sort());
     const byStage = (harness.runtime as unknown as {
       turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
@@ -545,7 +552,8 @@ describe('Personal v3 acceptance — composition in the maximum v3 configuration
     const flowLines = harness.flow?.helpLines ?? [];
     expect(flowLines).toHaveLength(2); // the Jira line and the Slack line (calendar writes change the calendar line)
     expect(contributed).toEqual([...registered, ...flowLines]);
-    // The ratchet value: the maximum v3 configuration fills the amended budget exactly.
+    // The ratchet value: the maximum v3 configuration fills the amended budget exactly. The runtime model switch added
+    // its one line and kept the total at 14 by merging the two feedback lines into one (ADR-0092 amendment).
     expect(contributed).toHaveLength(14);
     expect(contributed.length).toBeLessThanOrEqual(MAX_CONTRIBUTED_HELP_LINES);
     for (const line of contributed) {
@@ -893,6 +901,67 @@ describe('Personal v3 acceptance — operations UI (ADR-0113 D1/D2/D7)', () => {
   });
 });
 
+describe('Personal v3 acceptance — runtime model switch from chat (ADR-0092 / ADR-0111 amendments, runtime switching)', () => {
+  const IMAGE: InboundAttachment = {
+    kind: 'image', name: 'chart.png', mimeType: 'image/png', sizeBytes: 2048,
+    imageRef: '/tmp/quoky-attachments-int2/proc-Int2/intake-0b7f2c1e-1111-4222-8333-944445555777.png', trust: 'UNTRUSTED',
+  };
+  const lastProviderId = () => harness.executions.at(-1)?.provider.id;
+
+  it('the owner switches this conversation to claude:opus; other conversations and code work stay on the default', async () => {
+    const owner = harness.freshContext(OWNER_ID);
+    const status = await harness.turn(owner, '모델 상태');
+    expect(status.route).toBe('model-selection');
+    expect(status.providerCalls).toBe(0);
+    expect(status.text).toContain('- 대화: claude:sonnet · 출처: 기본값(설정에서 도출)');
+
+    const set = await harness.turn(owner, '/model claude:opus');
+    expect(set.route).toBe('model-selection');
+    expect(set.providerCalls).toBe(0);
+    expect(set.text).toContain('이 대화의 대화 모델을 claude:opus로 바꿨어요. 이 대화에서만 적용돼요 (기본값은 운영 화면에서).');
+
+    const chat = await harness.turn(owner, 'INT-2 오늘 기분 어때?');
+    expect(chat.route).toBe('classifier');
+    expect(chat.providerCalls).toBe(1);
+    expect(lastProviderId()).toBe('claude-cli:opus');
+
+    // Another conversation of the same owner is unaffected.
+    await harness.turn(harness.freshContext(OWNER_ID), 'INT-2 오늘 기분 어때?');
+    expect(lastProviderId()).toBe('claude-cli');
+
+    // 새 대화 opens a new Session: the override ends with the old one.
+    await harness.turn(owner, '새 대화');
+    await harness.turn(owner, 'INT-2 오늘 기분 어때?');
+    expect(lastProviderId()).toBe('claude-cli');
+  });
+
+  it('switching the image model off stops the cloud image call at once; the reset restores it', async () => {
+    const owner = harness.freshContext(OWNER_ID);
+    const off = await harness.turn(owner, '이미지 모델 변경: off');
+    expect(off.route).toBe('model-selection');
+    const blocked = await harness.turn(owner, '이 그래프 설명해줘', [IMAGE]);
+    expect(blocked.providerCalls).toBe(0);
+    expect(blocked.text).toBe(renderImageUnderstandingUnavailable('ko'));
+
+    const reset = await harness.turn(owner, '모델 기본값으로');
+    expect(reset.text).toContain('이 대화의 모델 선택을 지웠어요.');
+    const allowed = await harness.turn(owner, '이 그래프 설명해줘', [IMAGE]);
+    expect(allowed.providerCalls).toBe(1);
+    expect(harness.executions.at(-1)?.provider).toBeInstanceOf(ClaudeCliVisionProvider);
+  });
+
+  it('a non-owner context changes nothing; near-miss phrasing is ordinary chat', async () => {
+    const stranger = harness.freshContext();
+    const refused = await harness.turn(stranger, '모델 변경: claude:haiku');
+    expect(refused.route).toBe('model-selection');
+    expect(refused.text).toBe('모델 변경은 소유자만 할 수 있어요.');
+    await harness.turn(stranger, 'INT-2 안녕?');
+    expect(lastProviderId()).toBe('claude-cli');
+    const nearMiss = await harness.turn(harness.freshContext(OWNER_ID), '모델 변경해야 할까?');
+    expect(nearMiss.route).toBe('classifier');
+  });
+});
+
 describe('Personal v3 acceptance — image turn with the Claude image provider selected (ADR-0111 amendment A1/A2)', () => {
   // A runner-owned temp-file reference as the Discord adapter produces it; the stubbed provider never opens it.
   const IMAGE_REF = '/tmp/quoky-attachments-int2/proc-Int2/intake-0b7f2c1e-1111-4222-8333-944445555666.png';
@@ -900,7 +969,7 @@ describe('Personal v3 acceptance — image turn with the Claude image provider s
     kind: 'image', name: 'chart.png', mimeType: 'image/png', sizeBytes: 2048, imageRef: IMAGE_REF, trust: 'UNTRUSTED',
   };
 
-  it('registers exactly one IMAGE_UNDERSTANDING provider: the REMOTE Claude vision instance', () => {
+  it('registers exactly one IMAGE_UNDERSTANDING provider: the REMOTE Claude vision instance', async () => {
     const imageProviders = harness.app
       .get<AiProvider[]>(AI_PROVIDERS)
       .filter((provider) => provider.capabilities.some((c) => c.capability === 'IMAGE_UNDERSTANDING'));
@@ -908,8 +977,13 @@ describe('Personal v3 acceptance — image turn with the Claude image provider s
     expect(imageProviders[0]).toBeInstanceOf(ClaudeCliVisionProvider);
     expect(imageProviders[0]?.executionLocality).toBe('REMOTE');
     expect(imageProviders[0]?.capabilities.map((c) => c.capability)).toEqual(['IMAGE_UNDERSTANDING']);
-    const policy = (harness.runtime as unknown as { imagePolicy: { allowedLocalities: readonly string[] } }).imagePolicy;
-    expect(policy.allowedLocalities).toEqual(['LOCAL', 'REMOTE']);
+    // ADR-0111 amendment (runtime switching): the policy is resolved per image turn from the effective selection; with the
+    // configured `claude` selection and no override it allows REMOTE.
+    const resolve = (harness.runtime as unknown as {
+      imagePolicy: (context: { sessionId?: string }) => Promise<readonly string[]>;
+    }).imagePolicy;
+    expect(typeof resolve).toBe('function');
+    expect(await resolve({})).toEqual(['LOCAL', 'REMOTE']);
   });
 
   it('an image turn reaches the Claude vision instance with the image, skips the classifier, and is not "unavailable"', async () => {

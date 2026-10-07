@@ -61,6 +61,35 @@ export class SessionManager {
     );
   }
 
+  /**
+   * Update ONE `metadata` key of the LIVE session row, field-scoped under the shared session write lock (ADR-0113 D7):
+   * the live row is re-read inside the lock, `update` receives that key's live value and returns the next one
+   * (`undefined` removes the key), and only that key changes — concurrent writers of other fields or other metadata keys
+   * never lose an update. A session that is gone or no longer ACTIVE is left untouched (`null`). Plain data only, never
+   * a snapshot of context or memory.
+   */
+  async updateMetadataEntry(
+    session: Pick<Session, 'id'>,
+    key: string,
+    update: (current: unknown) => unknown,
+    held?: SessionLockHold,
+  ): Promise<Session | null> {
+    return this.sessionLock.run(
+      session.id,
+      async () => {
+        const live = await this.storage.sessions.get(session.id);
+        if (live === null || live.status !== SessionStatus.ACTIVE) return null;
+        const metadata: Record<string, unknown> = { ...(live.metadata ?? {}) };
+        const next = update(metadata[key]);
+        if (next === undefined) delete metadata[key];
+        else metadata[key] = next;
+        const { metadata: _previous, ...rest } = live;
+        return this.storage.sessions.save(Object.keys(metadata).length > 0 ? { ...rest, metadata } : rest);
+      },
+      held,
+    );
+  }
+
   /** Bind a registered project to the session as its active project (ADR-0018). */
   async setActiveProject(session: Session, projectId: Id, held?: SessionLockHold): Promise<Session> {
     return this.sessionLock.saveFields(this.storage.sessions, session, { activeProjectId: projectId, lastActivityAt: now() }, held);

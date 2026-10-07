@@ -266,8 +266,9 @@ reminders, forgets memories (with the typed-back code) and rejects or approves p
 sends the result to the owner DM (`OPS_DECISION_RESULT`). Code-change plan and credential-override approvals can only be
 approved in chat. Remote access (tunnels, LAN) is out of v3.
 
-**Image understanding (ADR-0111 and its 2026-10-07 amendment).** One selector registers exactly one
-`IMAGE_UNDERSTANDING` provider, or none:
+**Image understanding (ADR-0111 and its 2026-10-07 amendments).** The selector is the configured image choice (since the
+runtime-switching amendment every configured option is registered and the effective choice decides, see "Runtime model
+switch" below):
 
 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | Provider | Locality | Ready when |
 |---|---|---|---|
@@ -276,9 +277,10 @@ approved in chat. Remote access (tunnels, LAN) is out of v3.
 | `claude` | `ClaudeCliVisionProvider` (`claude-vision-cli`), model `QUOKY_IMAGE_UNDERSTANDING_MODEL` / `QUOKY_CLAUDE_MODEL` / `sonnet` | `REMOTE` | `claude auth status --json` exits 0 with `loggedIn: true` (CLI present and logged in) |
 | `off` | none | - | never; image turns get the fixed "not analysed, not sent anywhere" reply |
 
-Core sends image bytes only to a provider whose declared locality is in the composition-time policy: `LOCAL` only by
-default, `LOCAL` and `REMOTE` only when `claude` is selected (the policy is derived from the selector, never from a
-provider id). The Claude vision provider runs `claude -p` with the same isolation flags as chat
+Core sends image bytes only to a provider whose declared locality is in the image policy: `LOCAL` only by default,
+`LOCAL` and `REMOTE` only while the EFFECTIVE image choice (session override → operations-UI default → selector) is
+`claude`. The policy is resolved on every image turn from that choice, never from a provider id, so switching to
+`ollama` or `off` stops cloud egress on the next image turn. The Claude vision provider runs `claude -p` with the same isolation flags as chat
 (`--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`, neutral cwd) plus
 `--input-format stream-json --output-format stream-json --verbose --tools ""`: the image goes on stdin as a base64
 image content block, no tool is enabled, and the temp-file path and bytes never appear in argv, logs or errors (failure
@@ -296,6 +298,34 @@ credential guard before egress (a credential-shaped caption is withheld from the
 turn passes the attachment-turn credential check: a credential-shaped reply is replaced by a fixed notice and is neither
 shown nor stored. The hosted API may refuse an image it considers too large even under the 8 MiB bound; that turn fails
 with the normal error reply and nothing is stored.
+
+**Runtime model switch (ADR-0092 and ADR-0111 amendments, runtime switching).** Without a restart, the owner can change
+the chat tier (chat, summaries, document analysis, read-only lookups) and image understanding:
+
+- **Precedence**, per tier: session override (chat command, that conversation only) → operations-UI default (persisted
+  in `<db dir>/ops/provider-selection.json`, mode 600, atomic write, survives restarts) → `QUOKY_CHAT_PROVIDER` /
+  `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` → derived default. A choice this host cannot run is skipped; a corrupt or
+  unreadable file is ignored with a value-free warning (`SELECTION_FILE_*`) and the configuration applies.
+- **Registration.** Claude always; Codex when the `codex` CLI is on `PATH` (or it is configured/persisted); Ollama chat
+  when `OLLAMA_MODEL` is set and the `ollama` CLI is present (or it is configured/persisted); Claude vision always (when
+  its model is valid) and Ollama vision when `QUOKY_OLLAMA_VISION_MODEL` is set. A Claude alias (`opus`, `haiku`) or an
+  Ollama model other than the configured one adds one chat-tier-only instance on first use (ids `claude-cli:<alias>`,
+  `ollama-cli:<model>`, at most 12 per process). Readiness probes run only for eligible providers; nothing loads a model.
+- **Routing.** The router asks the `ProviderSelectionPolicy` (Core port) for the eligible provider keys and their order:
+  chat tier = the effective choice, then Claude (selection-time fallback); images = the effective image provider only
+  (none for `off`); code, review, planning, project analysis, tests and policy-sensitive chat = Claude (plus the
+  configured Ollama chat model as the existing local code fallback when the global chat default is Ollama). A session
+  override never affects those.
+- **Chat command** (owner only, provider-free): `모델 상태`, `모델 목록` (numbers valid 30 min in that conversation),
+  `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model ollama:<model>`, `이미지 모델 변경: claude|ollama|off`,
+  `모델 기본값으로` / `/model reset`. The override is a field-scoped write of the session's `metadata`
+  (`quoky.providerSelection`) under the shared session write lock; `새 대화` opens a new Session, which has none.
+- **Operations UI**: providers panel → `모델 기본값 바꾸기` (`/providers`): one same-origin form per option with the
+  session CSRF token and a one-time nonce whose subject is the option; `설정 기본값으로 되돌리기` resets to the
+  configuration. A change sends one owner DM (`OPS_DECISION_RESULT`). The cloud image option shows the egress warning.
+- **Audit.** Every change logs `provider.selection.changed` with `surface` (`chat`/`ops-ui`), `actor`, `scope`
+  (`session`/`default`), `tier`, `selection` and the session id for overrides; `task_runs.providerId` still records the
+  provider that answered (e.g. `claude-cli:opus`).
 
 **Chat providers you can switch today.** Claude, any model via `QUOKY_CLAUDE_MODEL` (the owner's service runs chat on
 Claude with `QUOKY_OLLAMA_ENABLED=false` since 2026-10-07, an accepted cloud egress); local Ollama, any local model via

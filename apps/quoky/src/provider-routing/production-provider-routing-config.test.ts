@@ -292,14 +292,16 @@ describe('Stage 2B Slice 5B-1 production Provider routing configuration', () => 
     expect(appModule).toContain('runtimeProviderRouting,');
     expect(appModule).not.toMatch(/\.execute\s*\(/);
     expect(appModule).not.toContain('ProviderRoutingGateway');
-    // ADR-0092 amendment (2026-10-07): the chat providers moved into chat-provider-composition.ts, selected by
-    // QUOKY_CHAT_PROVIDER (unset derives from QUOKY_OLLAMA_ENABLED). Registration still expresses the preference.
+    // ADR-0092 amendment (2026-10-07): the chat providers moved into chat-provider-composition.ts. Since the runtime
+    // switch amendment every chat provider that can run on this host is registered through the provider catalog, and
+    // the owner's selection is the router's ProviderSelectionPolicy (data only).
     const chatComposition = readFileSync(resolve(__dirname, '../chat-provider-composition.ts'), 'utf8');
-    expect(appModule).toContain('...createChatAiProviders(config.ai, ');
+    expect(appModule).toContain('const providerCatalog = new ProviderCatalog({');
+    expect(appModule).toContain('useFactory: (): AiProvider[] => providerCatalog.providers');
+    expect(appModule).toContain('new CapabilityRouter(manager, selection)');
     expect(chatComposition).toContain('new ClaudeCliProvider(ai.claudeBin, { model: ai.claudeModel })');
     expect(chatComposition).toContain('new OllamaCliProvider({ bin: ai.ollamaBin, model: ai.ollamaModel })');
     expect(chatComposition).toContain('new CodexCliProvider(ai.codexBin, ');
-    expect(chatComposition).toContain('switch (chat.provider)');
     expect(chatComposition).not.toMatch(/\.execute\s*\(/);
     expect(productionSource).not.toContain('@quoky/provider-routing-validation');
   });

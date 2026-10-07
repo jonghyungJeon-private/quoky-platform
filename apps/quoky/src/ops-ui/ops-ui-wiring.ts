@@ -35,8 +35,11 @@ import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
 import { OpsUiActions } from './actions/ops-actions';
+import { OpsProviderSelectionActions } from './actions/provider-selection-actions';
+import { ProviderSelectionService } from '../provider-selection/provider-selection-service';
+import type { SelectionSource } from '../provider-selection/selection-choices';
 import { OPS_UI_BIND_HOST, OpsUiServer } from './http/server';
-import type { OpsUiEventLog } from './http/view-model';
+import type { OpsActions, OpsUiEventLog } from './http/view-model';
 import { loadOpsUiConfig, resolveOpsUiConfig } from './ops-ui-config';
 import { OpsSnapshotBuilder, cachedViewSource } from './snapshot/build-snapshot';
 import type { OpsOwnerResolution, OpsSnapshotSources } from './snapshot/build-snapshot';
@@ -189,6 +192,25 @@ async function archivedMemoryCount(storage: StorageProvider, actorId: Id): Promi
   return { count: archived.length, capped: records.length >= ARCHIVE_COUNT_LIMIT };
 }
 
+const SELECTION_SOURCE_TEXT: Readonly<Record<SelectionSource, string>> = {
+  session: '대화별 변경',
+  persisted: '운영 화면 기본값',
+  env: '설정',
+  default: '기본값(설정에서 도출)',
+};
+
+/** Runtime model switch: the effective defaults for the providers panel (labels and sources only). */
+function providerSelectionSummary(service: ProviderSelectionService): OpsSnapshotSources['providerSelection'] {
+  return async () => {
+    const status = await service.status();
+    return {
+      chat: { label: status.defaults.chat.label, source: SELECTION_SOURCE_TEXT[status.defaults.chat.source], ready: status.chat.ready },
+      image: { choice: status.defaults.image.choice, source: SELECTION_SOURCE_TEXT[status.defaults.image.source] },
+      sessionOverrides: await service.sessionOverrideCount().catch(() => undefined),
+    };
+  };
+}
+
 /** Assemble the snapshot sources from the container and composition-root facts. */
 export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorRing): OpsSnapshotSources {
   const { app, config } = input;
@@ -199,6 +221,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
   const platform = optional<PlatformAdapter>(app, PLATFORM_ADAPTER);
   const connectors = optional<readonly ConnectorProvider[]>(app, CONNECTOR_PROVIDERS) ?? [];
   const feedback = app.get<FeedbackRecorder>(FeedbackRecorder);
+  const selection = optional<ProviderSelectionService>(app, ProviderSelectionService);
   const cwd = input.cwd ?? process.cwd();
   const dbPath = config.storage.dbPath;
   const fileBacked = dbPath !== '' && dbPath !== ':memory:';
@@ -230,6 +253,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
     ...(config.imageUnderstanding !== undefined
       ? { imageUnderstanding: describeImageUnderstandingSelection(config.imageUnderstanding) }
       : {}),
+    ...(selection !== undefined ? { providerSelection: providerSelectionSummary(selection) } : {}),
     owner: () => resolveOwner(storage, config.discord.ownerIds),
     reminders: {
       enabled: config.reminders.enabled,
@@ -251,6 +275,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       reminderCancel: reminderRepository !== undefined && optional(app, ReminderConversationService) !== undefined,
       memoryForget: optional(app, MemoryCommandService) !== undefined,
       approvals: approvalHandling(app) !== undefined,
+      providerSelection: selection !== undefined,
     },
   };
 }
@@ -303,6 +328,53 @@ export function opsUiActions(input: OpsUiWiringInput, logger: Logger): OpsUiActi
   });
 }
 
+/**
+ * Runtime model switch (ADR-0092 / ADR-0111 amendments): the defaults page and change over the container's
+ * `ProviderSelectionService` (the same one the chat command and the router use), acting as the owner; the change notice
+ * goes to the owner DM through the container's `NotificationSink`. Undefined when the service is not bound.
+ */
+export function opsProviderSelectionActions(input: OpsUiWiringInput, logger: Logger): OpsProviderSelectionActions | undefined {
+  const { app, config } = input;
+  const service = optional<ProviderSelectionService>(app, ProviderSelectionService);
+  if (service === undefined) return undefined;
+  const storage = app.get<StorageProvider>(STORAGE_PROVIDER);
+  const sink = optional<NotificationSink>(app, NOTIFICATION_SINK);
+  const ownerId = config.discord.ownerIds[0];
+  return new OpsProviderSelectionActions({
+    service,
+    owner: () => resolveOwner(storage, config.discord.ownerIds),
+    ...(sink !== undefined && typeof sink.deliver === 'function' && ownerId !== undefined
+      ? { notice: { platform: DISCORD_NOTIFICATION_PLATFORM, userId: ownerId, notify: (n) => sink.deliver(n) } }
+      : {}),
+    clock: () => new Date(input.nowMs?.() ?? Date.now()).toISOString(),
+    logger,
+  });
+}
+
+/** The UI's handling surface: the OPS-2/OPS-2b actions plus the model-default page, each optional. */
+export function composeOpsActions(
+  base: OpsUiActions | undefined,
+  selection: OpsProviderSelectionActions | undefined,
+): OpsActions | undefined {
+  if (selection === undefined) return base;
+  const refused = { code: 'ACTION_UNAVAILABLE', message: '이 처리는 지금 쓸 수 없어요.', ok: false } as const;
+  return {
+    reminderCancelPreview: (n) => (base ? base.reminderCancelPreview(n) : Promise.resolve({ status: 'REFUSED', outcome: refused })),
+    cancelReminder: (n) => (base ? base.cancelReminder(n) : Promise.resolve(refused)),
+    listMemories: () => (base ? base.listMemories() : Promise.resolve({ status: 'REFUSED', outcome: refused })),
+    requestForget: (n) => (base ? base.requestForget(n) : Promise.resolve({ status: 'REFUSED', outcome: refused })),
+    confirmForget: (code) => (base ? base.confirmForget(code) : Promise.resolve(refused)),
+    ...(base?.approvalPreview !== undefined && base.decideApproval !== undefined
+      ? {
+          approvalPreview: (id: string) => base.approvalPreview(id),
+          decideApproval: (id: string, decision: 'approve' | 'reject', reference: string) => base.decideApproval(id, decision, reference),
+        }
+      : {}),
+    providerSelection: () => selection.page(),
+    setProviderDefault: (subject) => selection.setDefault(subject),
+  };
+}
+
 /** Start the operations UI when enabled; otherwise return a no-op handle without opening any port. */
 export async function startOpsUi(input: OpsUiWiringInput): Promise<OpsUiHandle> {
   const logger = input.logger ?? new ConsoleLogger('ops-ui');
@@ -317,10 +389,10 @@ export async function startOpsUi(input: OpsUiWiringInput): Promise<OpsUiHandle> 
 
   const errorRing = input.errorRing ?? opsUiErrorRing;
   let builder: OpsSnapshotBuilder;
-  let actions: OpsUiActions | undefined;
+  let actions: OpsActions | undefined;
   try {
     builder = new OpsSnapshotBuilder(opsSnapshotSources(input, errorRing));
-    actions = opsUiActions(input, logger);
+    actions = composeOpsActions(opsUiActions(input, logger), opsProviderSelectionActions(input, logger));
   } catch {
     // A missing container binding disables only the UI; the rest of Quoky keeps running.
     logger.warn('ops-ui.unavailable', { reason: 'WIRING_FAILED' });
