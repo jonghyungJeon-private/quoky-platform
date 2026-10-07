@@ -137,3 +137,38 @@ connector for the UAT and cancelled at the end.
 | K5–K7 | 일정 오후 6시로 옮겨줘 → 승인 → 일정 변경 실행 | PASS — preview binds the event as previewed; moved |
 | K8–K11 | 일정 취소해줘 → 승인 → 일정 삭제 실행 → 내일 일정 뭐야? | PASS — deleted, no cancellation mail; calendar back to its original state |
 | J7–J9 | BE-881 취소로 바꿔줘 → 승인 → 상태 변경 실행 | PASS — cleanup: test issue cancelled |
+
+## Wave 6 — operations UI sign-in, model re-selection, OPS-2b (2026-10-07, orchestrator-observed)
+
+Host: the owner's Mac (always-on launchd service). Facts below were observed by the orchestrator; any line
+marked PENDING has not been run and is not claimed.
+
+| ID | Step / input | Result |
+|---|---|---|
+| W6-O1 | Operations UI sign-in (Chromium, per-start token from `ops-ui.token`) | FAIL W6-L01 — refused with "허용되지 않은 출처예요": under `Referrer-Policy: no-referrer` Chromium sends `Origin: null` on the same-origin sign-in POST, which the ADR-0113 D4 exact Origin check rejects → FIXED PR #131 (d305d21, header and referrer meta `same-origin`; Origin check, CSRF, loopback bind and CSP unchanged). Retest PASS — browser sign-in succeeded |
+| W6-M1 | LLM-2 re-run of the model comparison with the helpfulness checks (`answer-quality-checkers-v2`, Ollama only) | DONE — granite3.3:8b best: `containsRelevantTokens` 9/10 (llama3.1:8b 7/10, gemma3:4b 0/10); `hedgesUncheckable` 3/4 (llama3.1:8b 1/4); `noInventedSpecifics` 4/4; `languageMatches` 96.9% (qwen3:8b 16.1%). Other per-model cells are not recorded here |
+| W6-M2 | Host spec check on the owner's Mac (Apple M3 Pro, 18 GB) | PASS — granite3.3:8b loads at 5.7 GB, 100% GPU; 15–17 tok/s idle and 15.3 tok/s under heavy CPU load; cold load about 16 s. The Ollama default keep-alive (5 min) is kept |
+| W6-M3 | Service model switch (operator change, no code change) | DONE — `OLLAMA_MODEL=granite3.3:8b` on the service (ADR-0105 D1) |
+| W6-M4 | First live check of granite3.3:8b on the service (4 chat prompts) | INCONCLUSIVE — the Ollama readiness probe (5 s) failed at startup while the host load average was about 20 from unrelated Gradle builds, so 3 of 4 replies came from the Claude CLI fallback (77–142 s). The one granite reply (110 s, including a 40 s embedding-recall timeout) still invented song and artist names (same shape as QA-V3-W2-LM) |
+| W6-M5 | granite3.3:8b live re-test on an idle host (daily-chat prompts, latency, invented specifics) | **PENDING** — not run |
+| W6-A1 | OPS-2b (UI approve and reject, PR #132) merged after 4 Codex rounds: round 1 P1 (reset, expiry and override send bypassed the approval lock), round 2 P2 (a stale chat `touch` overwrote a UI-set anchor), round 3 P2 (unlocked, non-atomic field-scoped session saves), round 4 PASS | DONE offline — `pnpm build`, `pnpm typecheck`, `pnpm test` green (314 files, 9600 tests per the PR) |
+| W6-A2 | Live UI approve and reject (confirmation code from the chat preview, `OPS_DECISION_RESULT` DM, chat/UI race) on a DB copy against the sandbox repository | **PENDING** — not run |
+
+Wave 5 follow-ups: W5-L01..L04 were fixed in PR #130 (cf0e70b, d63860c) and unit-tested; a live re-run of those four
+inputs is not recorded (**PENDING**).
+
+### v3 live items still PENDING at closeout (each needs its own session; none is claimed)
+
+- W6-M5 granite3.3:8b on an idle host, and the LLM live QA set (QA-V2-003/008/W7-06 re-run plus a 20-prompt Korean
+  daily-chat set, plan LLM track).
+- W6-A2 operations UI approve/reject; OPS-2 reminder cancel and memory forget from the UI; the per-panel check against
+  chat output, a foreign-Origin request and token rotation across a restart (ADR-0113 live QA).
+- MM: attachments live (text log, screenshot with a local vision model set in `QUOKY_OLLAMA_VISION_MODEL`, oversize,
+  unsupported type, non-allowlisted channel, injection caption).
+- LRN: `후보 N 메모`, `예시로 저장` and example injection with `QUOKY_LEARNING_EXAMPLES_ENABLED=true` (only the empty
+  `피드백 후보` state ran live, M3).
+- CWR: network failure mid-send (`UNCERTAIN` path); W5-L01..L04 re-run.
+- SUB: reboot start, scheduled daily backup observed on the host, and a restore drill on a DB copy (only the SUB-2
+  pre-migration backup ran live, DP1/D4).
+- DET: the ~40-phrasing edge-case sweep per feature state (wave 1 covered a sample).
+- Slack read lookups (no user token; v2 PC-9 NOT RUN). SUB-3, CODE-8, CODE-9 and LLM-3 were not implemented.

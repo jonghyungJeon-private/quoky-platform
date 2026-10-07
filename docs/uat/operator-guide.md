@@ -10,9 +10,9 @@
 
 ---
 
-## 0. Personal v2 operator setup (read first)
+## 0. Personal v2/v3 operator setup (read first)
 
-Added by DOC-B (wave 8). Sections 1-11 below are the older v1 RC lifecycle UAT script (sandbox repo, one scenario per
+Added by DOC-B (v2 wave 8); Personal v3 additions by DOC-C (v3 wave 6) are in 0.2, 0.5, 0.6 and 0.7. Sections 1-11 below are the older v1 RC lifecycle UAT script (sandbox repo, one scenario per
 lifecycle gate); this part is the operator reference for running Personal v2 features against the dev bot. Every
 variable below was checked against `apps/quoky/src/config.ts` and `.env.example`. Running any live step is a separate
 exact-scope Product Owner approval. Never print or paste secret values; list variable **names** only.
@@ -40,12 +40,12 @@ line to use the default.
 | `QUOKY_DISCORD_OWNER_IDS` | none (required) | Missing or malformed fails startup. Only these users are served |
 | `QUOKY_DISCORD_CHANNEL_IDS` | empty = owner DMs only | Owner messages in these channels (and their threads) are turns |
 | `QUOKY_OLLAMA_ENABLED` | `true` | Registers local Ollama (chat, summaries, read-only work). `false` forces Claude for everything |
-| `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b` |
+| `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b`. The owner's service runs `granite3.3:8b` since 2026-10-07 (see 0.5) |
 | `QUOKY_CLAUDE_MODEL` | `sonnet` | Passed to the Claude CLI as `--model` |
 | `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote reads. Needs the GitHub App (0.3) |
 | `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag, else startup error `GIT_MERGE_REQUIRES_REMOTE`. Keep `false`; merge enablement is a separate Strict decision and was never live-tested |
 | `QUOKY_REMINDERS_ENABLED` | `true` | Release default `true` since the SUB-1 always-on runtime is live (ADR-0102 D9, owner decision 8). `false` turns reminders off: a reminder phrase gets a fixed "off" reply and no tick runs |
-| `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the originating channel, so every channel member can read the text. Needs its own approved UAT. The daily brief is DM-only regardless |
+| `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the originating channel, so every channel member can read the text. Live PASS 2026-10-06 in the owner's `#reminder` channel (v2 QA record PC-3). The daily brief is DM-only regardless |
 | `QUOKY_TIMEZONE` | `Asia/Seoul` | IANA zone; invalid is a startup error |
 | `QUOKY_WORK_SUMMARY_ENABLED` | `true` | With Ollama not ready, connector summaries fall back to Claude, so corporate connector text can leave the host through the owner's Claude subscription (owner decision, ADR-0100 #2). Set `false` where policy forbids it; lookups then return the deterministic list |
 | `QUOKY_EMBEDDING_ENABLED` | `false` | Local embedding recall. Run `ollama pull nomic-embed-text` first; falls back to lexical recall on any failure |
@@ -54,6 +54,12 @@ line to use the default.
 | `QUOKY_CONTEXT_MAX_TOKENS` | `6000` | Keep below the Ollama server context window (see 0.5) |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | `7` | Whole days 0-365 a forgotten memory stays restorable in the archive (`보관함`, `기억 복원 N`, `기억 완전 삭제 N`) before the daily maintenance (and each start) deletes it for good, independent of backups. `0` = no archive (forget deletes at once). Anything else, including an empty value, fails startup with `MEMORY_ARCHIVE_DAYS_INVALID`. Credential-like text is never archived. Archived text stays on disk (and in backups) until then |
 | `QUOKY_ACTOR_IDENTITY_MAPPINGS` | unset | Non-secret JSON linking the Discord actor to Jira assignee / GitHub login. Without it the work view reports that the account identity is not set |
+| `QUOKY_LEARNING_EXAMPLES_ENABLED` | `false` | v3 (ADR-0107). Curated examples go only into GENERAL_CHAT prompts of providers that declare `LOCAL` execution (Ollama), at most 2. The learning commands work regardless and store text only per item, `LOCAL_ONLY`, 365 days |
+| `QUOKY_OLLAMA_VISION_MODEL` | unset | v3 (ADR-0111). Local Ollama vision model for image attachments; pull it yourself. Unset, invalid or cloud-served (`*cloud*`) disables only image understanding (log code `OLLAMA_VISION_MODEL_INVALID` / `OLLAMA_VISION_MODEL_NOT_LOCAL`); startup continues. Image bytes never go to Claude |
+| `QUOKY_DISCORD_EXPECTED_BOT_ID` | unset | v3 (ADR-0102 D5). Required under the launchd launcher; startup compares bot, guild and channels and exits 78 on a mismatch |
+| `QUOKY_BACKUP_ENABLED`, `QUOKY_BACKUP_DIR` | on under launchd, else off; `<db dir>/backups` | v3 (ADR-0102 D6). Daily verified backup at 04:00 `QUOKY_TIMEZONE`; absolute directory only |
+
+Personal v3 connector writes, calendar and operations UI flags are in 0.7.
 
 Connector credentials (all optional; a connector is registered only when its full set is present; legacy `CHUNSIK_*`
 aliases are accepted, `QUOKY_*` wins):
@@ -61,7 +67,7 @@ aliases are accepted, `QUOKY_*` wins):
 | Connector | Variables | Notes |
 |---|---|---|
 | Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Basic auth `email:token`. `BASE_URL` is the site origin only (`https://<site>.atlassian.net`). Live behaviour of the Jira search endpoint is unverified |
-| Slack | `QUOKY_SLACK_TOKEN` | Must be a Slack **user** token (`xoxp-`): `search.messages` refuses bot tokens. Scopes: `search:read` (search), `channels:read` (channel list, public channels only), `channels:history` (public channel messages and threads); add `groups:history` only to read a private channel by id. `groups:read` is not needed (the list does not request private channels). Unverified live |
+| Slack | `QUOKY_SLACK_TOKEN` | Must be a Slack **user** token (`xoxp-`): `search.messages` refuses bot tokens. Scopes: `search:read` (search), `channels:read` (channel list, public channels only), `channels:history` (public channel messages and threads); add `groups:history` only to read a private channel by id. `groups:read` is not needed (the list does not request private channels). Read lookups still unverified live (no user token yet, v2 PC-9). Slack **writes** use a separate bot token (0.7) |
 | Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN`, optional `QUOKY_CONFLUENCE_EMAIL` | `BASE_URL` may be the site root or end in `/wiki` (requests go to `/wiki/...` exactly once). With an email the connector sends Basic `email:token` (Atlassian Cloud API token); without one it sends `Bearer` (Data Center PAT only; Cloud rejects Bearer for API tokens). If `QUOKY_CONFLUENCE_EMAIL` is unset and the Jira base URL has the same host, the Jira email is reused; set it to an empty value to force Bearer. Unverified live |
 
 On Atlassian Cloud, Jira and Confluence on one site share **one** Atlassian API token: create it for your account at
@@ -70,8 +76,9 @@ On Atlassian Cloud, Jira and Confluence on one site share **one** Atlassian API 
 needed. The email and tokens are never logged.
 | GitHub (work lookups) | the GitHub App below | Read token requests Issues: Read and Pull requests: Read |
 
-Connector lookups on real Jira, Slack, Confluence and GitHub tenants have **not** been run live (credentials are being
-added by the owner). Treat the first run as a read-only probe, one request per connector, under its own approval.
+Connector lookups on the real Jira, Confluence and GitHub tenants ran live on 2026-10-06 (`docs/uat/personal-v2-qa-record.md`
+PC-4..PC-8; Confluence was fixed to Basic auth). Slack read lookups have **not** run (no user token). Treat a first run
+against a new tenant as a read-only probe, one request per connector, under its own approval.
 
 ### 0.3 GitHub App (push to PR chain and GitHub lookups)
 
@@ -95,7 +102,8 @@ Token scopes: push and PR creation use an installation token down-scoped to the 
 with `pull_requests: read`, `checks: read` and `contents: read`. If the App has not been granted Checks, GitHub refuses
 that mint (422); Quoky then mints without `checks` and replies with the partial status above. A 403 on the check-runs
 read gives the same partial reply. Merge preflight does not read checks; it relies on GitHub's mergeability, and
-"unavailable" checks are never treated as passing. Not yet verified in a live run.
+"unavailable" checks are never treated as passing. Verified live on the sandbox repo on 2026-10-06 (v2 QA record PC-1,
+PC-2) after the installation accepted the new permissions.
 
 App-auth git path (live finding QA-V2-W7-01, fixed):
 
@@ -125,21 +133,105 @@ Run Ollama **natively** on the host (`ollama serve`); Quoky shells out to the `o
 isolation only, and Quoky does not use it. Use a model tag that exists locally. The Ollama server defaults to a 4096 token
 window, below Quoky's 6000 token context budget: start the server with `OLLAMA_CONTEXT_LENGTH=8192` or lower
 `QUOKY_CONTEXT_MAX_TOKENS`. Known local-model quality limits (not policy bugs): stray non-Korean characters, over-cautious
-or vague answers, appended "(Translated from …)" lines (QA-V2-003, QA-V2-008, QA-V2-W7-06). For embeddings, pull the
-embedding model yourself; Quoky never pulls models.
+or vague answers, appended "(Translated from …)" lines (QA-V2-003, QA-V2-008, QA-V2-W7-06). v3 LLM-1 strips the trailing
+translation marker and stray Han characters glued between Hangul syllables. For embeddings, pull the embedding model
+yourself; Quoky never pulls models.
+
+**Model choice (v3 LLM-2, ADR-0105 D1).** Changing `OLLAMA_MODEL` is an operator change; running the answer-quality
+harness (`pnpm eval:answers -- --mode run …`) is Strict per run and needs a fresh `--approved-plan-digest`. The first
+comparison (policy checks only) picked `gemma3:4b`, which gave non-answers live and was reverted. The re-run with the
+helpfulness checks (`answer-quality-checkers-v2`) picked `granite3.3:8b` (relevant tokens 9/10, hedges uncheckable 3/4, no
+invented specifics 4/4, language match 96.9%). On the owner's M3 Pro (18 GB) it uses about 5.7 GB at 100% GPU, 15-17
+tok/s idle and about 15 tok/s under heavy CPU load, with a cold load of about 16 s; the Ollama default keep-alive (5
+minutes) is kept. The service runs it since 2026-10-07. **Its live re-test on an idle host is PENDING**: the first check
+ran while unrelated builds held the host load near 20, the 5 s readiness probe failed at startup and the Claude CLI
+answered 3 of 4 prompts. Keep the previous model tag available for rollback.
 
 ### 0.6 Live status and what still needs a session
 
-Done (owner-attended, dev bot, see `docs/uat/personal-v2-qa-record.md`): migrations to v13 on DB copies, chat policy and
-routing, the override flow, reminders on DM delivery including restart catch-up, feedback reactions and summary, to-dos,
-and the push to PR chain on the private sandbox repo with merge off.
+Done for v2 (owner-attended, dev bot, see `docs/uat/personal-v2-qa-record.md`): migrations to v13 on DB copies, chat
+policy and routing, the override flow, reminders on DM delivery including restart catch-up, feedback reactions and
+summary, to-dos, the push to PR chain on the private sandbox repo with merge off, and (2026-10-06) Jira, Confluence and
+GitHub lookups on real tenants, reminders channel delivery, PR status with checks and embedding recall.
+
+Done for v3 (see `docs/uat/personal-v3-qa-record.md`): the launchd install on the owner's Mac with a `kill -9` restart and
+a reminder across the restart; migrations v13 to v14 and v14 to v15 on the service DB with verified pre-migration
+backups; memory commands and the archive; the code chain to a PR with the v3 title/body; calendar reads and
+create/move/delete on the owner's calendar; Jira comment and transition and a Slack post on allowlisted test targets;
+operations UI sign-in.
 
 Still pending, each its own exact-scope Strict session:
 
-1. Connector live QA on real Jira, Slack, Confluence and GitHub tenants (one read-only probe per connector first).
-2. Reminders channel-delivery UAT (`QUOKY_REMINDERS_CHANNEL_DELIVERY=true`, plus the allowlist-removal DM fallback).
-3. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`).
-4. PR status with the Checks permission granted (see the caveat in 0.3), and an embedding recall probe.
+1. Slack read lookups (needs a Slack user token).
+2. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`, CODE-9, deferred).
+3. `granite3.3:8b` live re-test on an idle host (0.5).
+4. Operations UI handling: reminder cancel, memory forget, approve and reject (on a DB copy against the sandbox repo),
+   panel checks against chat, a foreign-Origin request, token rotation across a restart.
+5. Attachments and images (needs `QUOKY_OLLAMA_VISION_MODEL`), learning notes/examples with
+   `QUOKY_LEARNING_EXAMPLES_ENABLED=true`, a mid-send write failure (`UNCERTAIN`), the W5-L01..L04 re-run.
+6. Reboot start of the service, an observed scheduled daily backup, and a restore drill on a DB copy.
+
+### 0.7 Personal v3 operator additions
+
+Every variable here was checked against `apps/quoky/src/config.ts`, `apps/quoky/src/ops-ui/ops-ui-config.ts`,
+`apps/quoky/src/image-understanding-provider.ts` and `.env.example`. Enabling any of these on the owner host is a Strict
+`.env.local` edit, and each new external target needs its own live confirmation. List variable names only.
+
+**Always-on service (ADR-0102).** Install, status, restart and uninstall go through `ops/launchd/quokyctl.sh`
+(`--dry-run` first, `--apply` is Strict). The service uses `~/Library/Application Support/Quoky/` for the DB, vectors,
+backups and the operations UI token, and `~/Library/Logs/Quoky/quoky.log`. Details and the restore runbook are in
+`docs/user/quickstart.md` section 7. Do not run `pnpm dev` with the same bot token while the service runs.
+
+**Calendar (ADR-0110 and its amendment).**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET` | unset | OAuth "Desktop app" client from the owner's Google Cloud project with the Calendar API enabled |
+| `QUOKY_CALENDAR_GOOGLE_TOKEN_FILE` | unset | Refresh-token file written by the consent helper (mode 600, no symlink). Alternatively `QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN`; setting both leaves the calendar unregistered |
+| `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` | `primary` | Calendars to read, comma-separated, at most 10 |
+| `QUOKY_CALENDAR_WRITE_ENABLED` | `false` | Create, move and delete on the primary calendar only, independent of the connector-write switch; needs a token with `calendar.events` |
+
+The calendar is registered only when the client id, secret and one token source are all set; otherwise schedule
+questions keep the v2 routing. Consent helper (Strict; prints the consent URL, never a token; writes a new file only):
+`node apps/quoky/dist/tools/calendar-auth.js --out <new file>` for read-only, add `--with-events` for writes. A grant
+broader than `calendar.readonly` plus `calendar.events` is refused. Writes never set attendees and always send
+`sendUpdates=none`; recurring series are not edited; update and delete are bound to the previewed event version.
+
+**Connector writes (ADR-0112).**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `QUOKY_CONNECTOR_WRITES_ENABLED` | `false` | Master switch for Jira and Slack writes |
+| `QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS` | empty | Comma-separated distinct project keys (at most 50). Jira writes reuse the `QUOKY_JIRA_*` credentials; this allowlist is the gate |
+| `QUOKY_CONNECTOR_WRITE_SLACK_TOKEN` | unset | A Slack **bot** token with `chat:write`, different from `QUOKY_SLACK_TOKEN` (else `CONNECTOR_WRITE_SLACK_TOKEN_NOT_SEPARATE`). Invite the app to each allowlisted channel |
+| `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS` | empty | `name:CHANNELID` or `CHANNELID` entries (at most 50); the name is what the owner types after `#`. Slack writes need both the token and the list |
+
+All values are validated at startup even while writes are off; a malformed value stops startup with its
+`CONNECTOR_WRITE_*` / `CALENDAR_WRITE_ENABLED_INVALID` code. A target outside the allowlist is refused before any
+network call. Each write is an exact-payload preview, a one-time CRITICAL approval bound to the payload hash, and an
+exact execution phrase; a receipt (schema v15, no payload text) records SENT, NOT_SENT or UNCERTAIN, and UNCERTAIN is
+never retried. Confluence and GitHub-issue writes do not exist.
+
+**Operations UI (ADR-0113).**
+
+| Variable | Default | Notes |
+|---|---|---|
+| `QUOKY_OPS_UI_ENABLED` | `false` | Exact `true`/`false`; any other value disables only the UI (`OPS_UI_ENABLED_INVALID`), never startup |
+| `QUOKY_OPS_UI_PORT` | `47613` | 1024-65535; out of range or a taken port disables only the UI |
+
+The listener binds `127.0.0.1` only; there is no bind-address setting. Each start writes a new 256-bit token to
+`ops-ui.token` (mode 600) in the database directory: on the service `~/Library/Application Support/Quoky/ops-ui.token`,
+under `pnpm dev` `./data/ops-ui.token`. A stale file is replaced at start and the file is removed on a clean stop, so
+sign in again after every restart. Never paste the token into chat, logs or a URL. The UI shows status, cancels
+reminders, forgets memories (with the typed-back code) and rejects or approves pending approvals; approving needs the
+6-character confirmation code that chat adds to the approval preview while the UI is on, records the grant only, and
+sends the result to the owner DM (`OPS_DECISION_RESULT`). Code-change plan and credential-override approvals can only be
+approved in chat. Remote access (tunnels, LAN) is out of v3.
+
+**Not implemented in v3 (do not configure):** `QUOKY_GITHUB_REPOS` (CODE-8, ADR-0109), `QUOKY_PR_DESCRIPTION_MODEL_ENABLED`
+(ADR-0108 D4), an MLX provider (ADR-0105 D2-D4) and continuation activation (ADR-0103). The GitHub App installation
+stays as recorded in owner decision 12 of the ADR-0102..0112 ratification record ("Only select repositories" is required
+before CODE-8 merges).
 
 ---
 
