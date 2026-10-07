@@ -2748,7 +2748,7 @@ describe('harness execution under an approved binding', () => {
     expect(adapter.requests.map((request) => request.args)).toEqual([
       ['--version'],
       ['list'],
-      ['run', 'llama3.1'],
+      ['run', '--nowordwrap', 'llama3.1'],
     ]);
     const generation = adapter.requests[2];
     expect(generation?.executablePath).toBe(fixture.executable.realPath);

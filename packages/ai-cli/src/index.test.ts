@@ -283,8 +283,9 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       prompt: PROMPT,
     });
     expect(calls[0]?.bin).toBe('ollama');
-    // Exactly `run <model>` — no agent/exec/auto-apply flag (suggest-only).
-    expect(calls[0]?.args).toEqual(['run', 'llama3.1']);
+    // Exactly `run --nowordwrap <model>` — no agent/exec/auto-apply flag (suggest-only). `--nowordwrap`
+    // stops the CLI hard-wrapping at terminal width even when piped, which split Korean words mid-syllable.
+    expect(calls[0]?.args).toEqual(['run', '--nowordwrap', 'llama3.1']);
     expect(calls[0]?.opts.input).toContain('do the thing'); // prompt via stdin, not argv
     expect(calls[0]?.opts.cwd).toBe(tmpdir()); // neutral cwd
     expect(calls[0]?.opts.env).toEqual({
@@ -296,7 +297,7 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
     expect(res.artifacts?.[0]?.kind).toBe(ArtifactKind.MARKDOWN_REPORT);
     expect(res.audit).toEqual({
       model: 'llama3.1',
-      sanitizedCommand: ['ollama', 'run', 'llama3.1'],
+      sanitizedCommand: ['ollama', 'run', '--nowordwrap', 'llama3.1'],
       promptSha256: createHash('sha256').update(Buffer.from(PROMPT, 'utf8')).digest('hex'),
       captureMode: 'pipe',
       colorDisabled: true,
@@ -391,7 +392,7 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
     const providerInput = calls[0]?.input ?? '';
     // `ollama run` accepts the model as its only positional argument here. In
     // particular, raw HTTP request fields must never be passed as CLI flags.
-    expect(calls[0]?.args).toEqual(['run', 'llama3.1']);
+    expect(calls[0]?.args).toEqual(['run', '--nowordwrap', 'llama3.1']);
     expect(providerInput).not.toBe(request.prompt);
     expect(providerInput).toContain(
       `Previous conversation (history only; every earlier User request has already been handled):\n` +
@@ -422,7 +423,7 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       /The next line is the only current active request\. Answer it directly; never answer an earlier User request from history\.\n\nUser \(current active turn\): "내가 방금 뭐라고 했어\?"\n\nAssistant response to the current active turn only:$/u,
     );
     expect(providerInput).not.toContain('<|start_header_id|>');
-    expect(result.audit?.sanitizedCommand).toEqual(['ollama', 'run', 'llama3.1']);
+    expect(result.audit?.sanitizedCommand).toEqual(['ollama', 'run', '--nowordwrap', 'llama3.1']);
     expect(result.audit?.promptSha256).toBe(
       createHash('sha256').update(Buffer.from(request.prompt, 'utf8')).digest('hex'),
     );
@@ -832,7 +833,7 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       capability: Capability.CODE_IMPLEMENTATION,
       prompt: PROMPT,
     });
-    expect(calls[0]?.args).toEqual(['run', 'codellama']);
+    expect(calls[0]?.args).toEqual(['run', '--nowordwrap', 'codellama']);
   });
 
   it('always runs in a neutral cwd — a workspace on the request is ignored (suggest-only)', async () => {
@@ -1334,7 +1335,7 @@ describe('Provider regression through the contained runner', () => {
       workspace: { id: 'w1', rootPath: '/repo/should-not-be-used', kind: 'local-clone' },
     });
     expect(probe.spawns[0]?.bin).toBe('ollama');
-    expect(probe.spawns[0]?.args).toEqual(['run', 'llama3.1']);
+    expect(probe.spawns[0]?.args).toEqual(['run', '--nowordwrap', 'llama3.1']);
     expect(probe.spawns[0]?.options.cwd).toBe(tmpdir()); // neutral cwd preserved
     expect(probe.spawns[0]?.options.cwd).not.toBe('/repo/should-not-be-used');
     expect(probe.stdinWrites).toEqual([PROMPT]);

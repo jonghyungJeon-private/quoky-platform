@@ -58,7 +58,7 @@ function dependencies(
     generationRunner: async (bin, args, options) => {
       calls.value += 1;
       expect(bin).toBe('/approved/ollama');
-      expect(args).toEqual(['run', 'llama3.1:8b']);
+      expect(args).toEqual(['run', '--nowordwrap', 'llama3.1:8b']);
       expect(options).toMatchObject({
         input: VALIDATION_PROMPT,
         timeoutMs: 45_000,
