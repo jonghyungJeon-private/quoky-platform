@@ -11616,3 +11616,59 @@ describe('Codex review of f45ab9d + live QA 2026-10-07 (LRN-2 at PR_CREATED) —
     expect(ConversationRuntime.interpretPrStatusIntent('PR 리뷰 어때? 문제점 설명해줘')).toBe(true);
   });
 });
+
+describe('Codex re-review of 63ab7a0 — review nouns and verb-first merge forms', () => {
+  const composer = new ResponseComposer();
+  const CHAIN = {
+    commitHash: HEAD_SHA,
+    pushedCommitHash: HEAD_SHA,
+    pushedRemote: 'origin',
+    pushedBranch: 'feature/x',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/acme/widgets/pull/42',
+    pullRequestHeadBranch: 'feature/x',
+    repositoryIdentity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+    pullRequestRef: { provider: 'github', owner: 'acme', repo: 'widgets', pullRequestNumber: 42, pullRequestUrl: 'https://github.com/acme/widgets/pull/42' },
+    pullRequestCommitHash: HEAD_SHA,
+    mergeCommitHash: 'facefeed1234567890facefeed1234567890face',
+  } as Partial<ApplyPreviewAnchor>;
+
+  it.each(['PR_CREATED', 'MERGE_APPROVED'] as const)(
+    'P2-1: at %s, "PR 리뷰 어떻게 하는지 알려줘" (a review noun, no status predicate) is chat, with no status read',
+    async (status) => {
+      expect(ConversationRuntime.interpretPrStatusIntent('PR 리뷰 어떻게 하는지 알려줘')).toBe(false);
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+      await new ConversationRuntime(deps).handle(messageOf('PR 리뷰 어떻게 하는지 알려줘'));
+      expect(calls.hostingGetStatus).toBe(0);
+      expect(calls.classify).toBe(1);
+      expect(mutationCalls(calls)).toBe(0);
+    },
+  );
+
+  it('P2-1: a review status predicate still reads status ("PR 리뷰 어때? 문제점 설명해줘", "리뷰 통과했어?")', () => {
+    expect(ConversationRuntime.interpretPrStatusIntent('PR 리뷰 어때? 문제점 설명해줘')).toBe(true);
+    expect(ConversationRuntime.interpretPrStatusIntent('PR 리뷰 통과했어?')).toBe(true);
+  });
+
+  const MERGE_FORMS = ['merge PR #42', 'merge the pr', 'merge it', 'merge #42', 'PR #42 머지', '이 PR 머지'];
+
+  // ("merge the PR" is an exact EXECUTION_PHRASES entry, so at MERGE_APPROVED it is the allow-listed execution path.)
+  it.each(MERGE_FORMS.filter((t) => t !== 'merge the pr'))('P2-2: MERGE_APPROVED + %j → deterministic already-approved reply, never chat, never a merge', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'MERGE_APPROVED' }) });
+    const r = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(r.reply.text).toBe(composer.composeMergeAlreadyApproved(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.hostingMergePR).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(MERGE_FORMS)('P2-2: PR_MERGED + %j → deterministic already-merged reply, never chat, never a merge', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_MERGED' }) });
+    const r = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(r.reply.text).toContain('이미 머지되어 있어요');
+    expect(calls.classify).toBe(0);
+    expect(calls.hostingMergePR).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+});
+

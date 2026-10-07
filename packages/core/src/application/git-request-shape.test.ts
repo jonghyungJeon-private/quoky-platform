@@ -107,6 +107,13 @@ describe('Codex review of f45ab9d — word boundaries, clause precedence and sta
     },
   );
 
+  it.each(['PR 리뷰 어떻게 하는지 알려줘', 'code review 방법 설명해줘', '리뷰어와 리뷰의 차이'])(
+    '%s → a review noun alone is not a status predicate (Codex re-review of 63ab7a0)',
+    (text) => {
+      expect(isGitConceptQuestion(text)).toBe(true);
+    },
+  );
+
   it.each(['머지 가능한지 설명해줘', 'PR 리뷰 어때? 문제점 설명해줘', '머지 상태 설명해줘', 'CI 결과가 뭐야?', '머지됐는지 설명해줘'])(
     '%s → a status ask keeps priority over the concept guard',
     (text) => {
@@ -116,7 +123,7 @@ describe('Codex review of f45ab9d — word boundaries, clause precedence and sta
 });
 
 describe('isChainCompanionRequest (live QA 2026-10-07, LRN-2 at PR_CREATED)', () => {
-  it.each(['배포해줘', 'release 해줘', '릴리즈 진행해', '리뷰어 추가해줘', '리뷰어 alice 지정해줘', '라벨 붙여줘', '담당자 지정해줘', 'auto merge 켜줘', 'enable auto-merge', 'deploy it', '배포', '머지', 'auto merge', 'PR 만들고 배포하자'])(
+  it.each(['배포해줘', 'release 해줘', '릴리즈 진행해', '리뷰어 추가해줘', '리뷰어 alice 지정해줘', '라벨 붙여줘', '담당자 지정해줘', 'auto merge 켜줘', 'enable auto-merge', 'deploy it', '배포', '머지', 'auto merge', 'PR 만들고 배포하자', 'merge PR #42', 'merge the pr', 'merge it', 'merge #42', 'PR #42 머지', '이 PR 머지'])(
     '%s → a companion request',
     (text) => {
       expect(isChainCompanionRequest(text)).toBe(true);
@@ -131,6 +138,8 @@ describe('isChainCompanionRequest (live QA 2026-10-07, LRN-2 at PR_CREATED)', ()
     '리뷰어 후보가 너무 많네',
     '오늘 머지 회의는 길었어',
     '머지 충돌 해결해줘',
+    'merge conflicts are annoying',
+    'merge strategy for monorepos',
     '',
   ])('%j → free text that merely contains a companion noun', (text) => {
     expect(isChainCompanionRequest(text)).toBe(false);

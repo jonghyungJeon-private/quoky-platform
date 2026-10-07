@@ -34,9 +34,11 @@ const CLAUSE_SPLIT = /[.!?。！？]\s+|[.!?。！？]$|[,;]\s*|\s+(?:but|then)\
 /**
  * A git status / result / possibility ask ("PR 상태가 뭐야?", "CI 결과 알려줘", "머지됐어?", "머지 가능한지 설명해줘",
  * "PR 리뷰 어때?"). It keeps the deterministic read-only status replies, so a status ask is never a concept question.
+ * It needs a status PREDICATE — a bare review noun is not one ("PR 리뷰 어떻게 하는지 알려줘" is a how-to; Codex re-review
+ * of 63ab7a0).
  */
 const GIT_STATUS_ASK =
-  /상태|결과|진행\s*상황|됐|되었|돼\s*있|통과|열려\s*있|가능|안전|괜찮|어때|되나|리뷰(?!어)|\bstatus\b|\bci\b|체크(?!\s*아웃)|\bchecks?\b|\breview\b|\bmergeable\b|\bmerged\b|\bpushed\b|\bdeleted\b|\bsynced\b/i;
+  /상태|결과|진행\s*상황|됐|되었|돼\s*있|통과|열려\s*있|가능|안전|괜찮|어때|되나|\bstatus\b|\bci\b|체크(?!\s*아웃)|\bchecks?\b|\bmergeable\b|\bmerged\b|\bpushed\b|\bdeleted\b|\bsynced\b/i;
 
 /**
  * Concept / explanation / comparison / how-to markers. Each marker asks about something and never requests the action:
@@ -159,6 +161,12 @@ const COMPANION_REQUEST_SHAPES: readonly RegExp[] = [
   /\b(?:deploy|release)\s+(?:it|this|now|to|the)\b/i,
   /\b(?:add|set|assign|request)\s+(?:a\s+|the\s+)?(?:reviewers?|labels?|assignees?)\b/i,
   /\b(?:enable|turn\s+on)\s+auto[\s-]?merge\b/i,
+  // Verb-first English merge and number-bearing forms (Codex re-review of 63ab7a0): "merge PR #42", "merge the pr",
+  // "merge it", "merge #42", "PR #42 머지", "이 PR 머지". At the merge states they get the deterministic already-approved /
+  // already-merged reply; the exact execution allow-list still decides any execution.
+  /^\s*(?:please\s+)?merge\b(?!\s+(?:is|are|was|vs\.?|versus|and|or|conflicts?|strateg(?:y|ies)|commits?|requests?|queue)\b)/i,
+  /\bmerge\s+(?:this|it|the|now|pr|#\s*\d+)\b/i,
+  /(?:\bpr\b|풀\s*리퀘|#\s*\d+)\s*(?:을|를)?\s*(?:머지|병합)\s*(?:좀)?\s*[.!~]*$/iu,
   /^\s*(?:자동\s*머지|auto\s*-?\s*merge|배포|릴리즈|릴리스|머지|병합|deploy|release|merge|리뷰어|reviewers?|라벨|labels?|assignees?|담당자)\s*[.!?~]*$/iu,
 ];
 
