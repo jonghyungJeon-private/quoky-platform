@@ -97,6 +97,8 @@ export interface OpsUiWiringInput {
     readonly opsUi?: QuokyConfig['opsUi'];
     /** ADR-0111 amendment A5: the image-understanding selection shown in the providers panel; absent → `unknown`. */
     readonly imageUnderstanding?: QuokyConfig['imageUnderstanding'];
+    /** The chat-provider selection (ADR-0092 amendment) shown on the provider panel; absent in offline tests. */
+    readonly ai?: { readonly chat: Pick<QuokyConfig['ai']['chat'], 'provider' | 'source'> };
   };
   readonly ops: Pick<OpsRuntime, 'backupStatus'>;
   /** ADR-0102 D4: whether `main.ts` took the single-instance lock (a file-backed database). */
@@ -218,7 +220,13 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       launcher: config.host.launcher,
       launcherRecentStarts: config.host.recentStarts,
     },
-    providers: { all: () => providers.all(), available: () => providers.available() },
+    providers: {
+      all: () => providers.all(),
+      available: () => providers.available(),
+      ...(config.ai === undefined
+        ? {}
+        : { chatSelection: { provider: config.ai.chat.provider, source: config.ai.chat.source } }),
+    },
     ...(config.imageUnderstanding !== undefined
       ? { imageUnderstanding: describeImageUnderstandingSelection(config.imageUnderstanding) }
       : {}),

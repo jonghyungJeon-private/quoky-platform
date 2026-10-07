@@ -27,7 +27,11 @@ We optimize for **longevity and replaceability over short-term convenience.**
 
 1. **Capabilities are above models.** The user asks for an outcome; the system
    maps it to a `Capability`; a router picks an available provider. Users never
-   choose Claude/Codex/Ollama, and never normally see which answered.
+   pick a model per request: the system maps each request to a Capability and the
+   router selects a provider automatically. The owner may, however, select which
+   providers are installed for a capability tier through installation
+   configuration (Claude / Codex / Ollama, OpenClaw-style; ADR-0092 and ADR-0111
+   amendments). The provider that answered is recorded for audit only.
 2. **The Core knows nothing concrete.** No Discord, SQLite, Claude, Codex,
    Ollama, HTTP, or NestJS type may appear in `@quoky/core`. Core depends only
    on its own ports and domain.

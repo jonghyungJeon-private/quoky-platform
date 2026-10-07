@@ -56,6 +56,16 @@ export {
   parseClaudeStreamJsonResult,
 } from './claude-vision-provider';
 export type { ClaudeCliVisionProviderOptions, ClaudeStreamJsonOutcome } from './claude-vision-provider';
+export {
+  CODEX_CHAT_CAPABILITIES,
+  CODEX_CHAT_PRIORITY,
+  CodexCliProvider,
+  DEFAULT_CODEX_TIMEOUT_MS,
+  classifyCodexFailure,
+  isValidCodexModelName,
+  parseCodexJsonEvents,
+} from './codex-cli-provider';
+export type { CodexCliProviderOptions } from './codex-cli-provider';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
 
@@ -465,39 +475,10 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
 }
 
 /**
- * Codex CLI provider (CAP-008, ADR-0029). Advertised for code implementation, but
- * `execute()` is intentionally **NOT implemented** in CAP-008 (inherits the base
- * `NotImplementedError`). The Codex CLI has no deterministic suggest-only / no-tool /
- * no-exec mode: `codex exec --sandbox read-only` is read-only **agent** execution (a
- * tool/plan-act-observe loop), NOT proposal-only — which would cross the CAP-008
- * boundary (no tool calling, no autonomous action; the AI only proposes). Real Codex
- * execution is deferred to a future PR once a verified suggest-only contract exists
- * (or to the Agent Runtime / Orchestrator). Because `isAvailable()` also throws,
- * `AiProviderManager` treats it as unavailable and never selects it. The AI Code
- * Generation capability is provider-agnostic and runs on any suggest-only AiProvider.
- */
-export class CodexCliProvider extends BaseCliAiProvider {
-  readonly id = 'codex-cli';
-  /** ADR-0107 D6: the Codex CLI sends the request to a hosted model. */
-  readonly executionLocality: AiExecutionLocality = 'REMOTE';
-  protected readonly bin: string;
-  readonly capabilities: readonly AiCapabilityDescriptor[] = [
-    { capability: Capability.CODE_IMPLEMENTATION, priority: 100 },
-    { capability: Capability.TEST_EXECUTION, priority: 80 },
-    { capability: Capability.CODE_REVIEW, priority: 60 },
-  ];
-
-  constructor(bin = 'codex') {
-    super();
-    this.bin = bin;
-  }
-}
-
-/**
  * Ollama CLI provider (CAP-009, ADR-0030). The **second** `AiProvider` adapter for the
  * AI Code Generation capability (CAP-008, ADR-0029) — proof the contract is provider-
  * agnostic: no Core change, no new aggregate/manager/port/migration. Unlike Codex (whose
- * CLI has no deterministic suggest-only mode, so it stays NotImplemented), `ollama run
+ * CLI has no deterministic suggest-only mode, so it never serves code work), `ollama run
  * <model>` is **single-shot text generation** — no tools, no exec, no file access, no
  * plan-act loop — so it satisfies the suggest-only contract honestly: the model only
  * proposes. Prompt is fed on **stdin** (never an argv); the CLI runs in a **neutral cwd**
@@ -531,8 +512,8 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     { capability: Capability.READONLY_LOOKUP, priority: 70 },
     // CAP-009 (ADR-0030): code generation on a LOCAL model, suggest-only. Priority 40 is
     // BELOW Claude's 50 so Claude is preferred for code when available; Ollama serves when
-    // it is the best available (e.g. offline / local-only). Codex advertises 100 but is
-    // unavailable, so it never competes.
+    // it is the best available (e.g. offline / local-only). Codex never advertises code
+    // capabilities (ADR-0092 amendment, 2026-10-07), so it never competes.
     { capability: Capability.CODE_IMPLEMENTATION, priority: 40 },
   ];
 

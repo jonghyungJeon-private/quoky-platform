@@ -95,10 +95,11 @@ import { GitHubRepositoryHostingProvider, createPullRequestStatusTokenSource } f
 import { GitHubConnectorProvider } from '@quoky/connector-github';
 import { GitHubAppAuth, isPermissionNotGrantedError } from '@quoky/github-app-auth';
 import { LocalCommandRunner } from '@quoky/command-local';
-import { ClaudeCliProvider, CodexCliProvider, OllamaCliEmbeddingProvider, OllamaCliProvider } from '@quoky/ai-cli';
+import { OllamaCliEmbeddingProvider } from '@quoky/ai-cli';
 
 import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
+import { createChatAiProviders } from './chat-provider-composition';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
 import { createProductionContextBuilder } from './context-builder-provider';
@@ -291,16 +292,12 @@ const infrastructure: Provider[] = [
   },
   {
     provide: AI_PROVIDERS,
-    // Real CLI execution: Claude (Sprint 1b-2) + Ollama (CAP-009, ADR-0030, suggest-only).
-    // Codex stays stubbed (no deterministic suggest-only mode → unavailable, never selected).
-    // Selection is by capability via the router. Chat preference is expressed ONLY by registration
-    // (ADR-0092): Ollama is registered unless QUOKY_OLLAMA_ENABLED=false, and its real readiness probe keeps an
-    // unready Ollama from being selected, so the router falls back to Claude.
+    // Real CLI execution. Selection is by capability via the router. Chat preference is expressed ONLY by
+    // registration (ADR-0092 + amendment 2026-10-07): QUOKY_CHAT_PROVIDER (claude | codex | ollama; unset derives
+    // from QUOKY_OLLAMA_ENABLED) registers Claude alone, or Ollama/Codex next to Claude. A real readiness probe keeps
+    // an unready chat provider from being selected, so the router falls back to Claude.
     useFactory: (): AiProvider[] => [
-      new ClaudeCliProvider(config.ai.claudeBin, { model: config.ai.claudeModel }),
-      ...(config.ai.ollamaEnabled
-        ? [new OllamaCliProvider({ bin: config.ai.ollamaBin, model: config.ai.ollamaModel })]
-        : []),
+      ...createChatAiProviders(config.ai, new ConsoleLogger('ai-providers')),
       // ADR-0098 D8: opt-in local embeddings (QUOKY_EMBEDDING_ENABLED, default false). Advertises only EMBEDDING
       // and runs in the runner's default profile like Ollama chat; it never pulls a model.
       ...(config.embedding.enabled

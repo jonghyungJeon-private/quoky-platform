@@ -292,12 +292,15 @@ describe('Stage 2B Slice 5B-1 production Provider routing configuration', () => 
     expect(appModule).toContain('runtimeProviderRouting,');
     expect(appModule).not.toMatch(/\.execute\s*\(/);
     expect(appModule).not.toContain('ProviderRoutingGateway');
-    expect(appModule).toContain('new ClaudeCliProvider(config.ai.claudeBin, { model: config.ai.claudeModel })');
-    expect(appModule).toContain(
-      'new OllamaCliProvider({ bin: config.ai.ollamaBin, model: config.ai.ollamaModel })',
-    );
-    // ADR-0092: registration (not priority) expresses the chat preference; opt-out via QUOKY_OLLAMA_ENABLED.
-    expect(appModule).toContain('config.ai.ollamaEnabled');
+    // ADR-0092 amendment (2026-10-07): the chat providers moved into chat-provider-composition.ts, selected by
+    // QUOKY_CHAT_PROVIDER (unset derives from QUOKY_OLLAMA_ENABLED). Registration still expresses the preference.
+    const chatComposition = readFileSync(resolve(__dirname, '../chat-provider-composition.ts'), 'utf8');
+    expect(appModule).toContain('...createChatAiProviders(config.ai, ');
+    expect(chatComposition).toContain('new ClaudeCliProvider(ai.claudeBin, { model: ai.claudeModel })');
+    expect(chatComposition).toContain('new OllamaCliProvider({ bin: ai.ollamaBin, model: ai.ollamaModel })');
+    expect(chatComposition).toContain('new CodexCliProvider(ai.codexBin, ');
+    expect(chatComposition).toContain('switch (chat.provider)');
+    expect(chatComposition).not.toMatch(/\.execute\s*\(/);
     expect(productionSource).not.toContain('@quoky/provider-routing-validation');
   });
 });

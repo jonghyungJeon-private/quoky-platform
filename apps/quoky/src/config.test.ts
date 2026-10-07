@@ -544,6 +544,80 @@ describe('loadConfig — Ollama registration flag (ADR-0092)', () => {
   });
 });
 
+describe('loadConfig — chat provider selector (ADR-0092 amendment, 2026-10-07)', () => {
+  const chat = (raw: Record<string, string>) => loadConfig(env(raw)).ai.chat;
+
+  it('derives the selection from QUOKY_OLLAMA_ENABLED when the selector is unset (existing installs unchanged)', () => {
+    expect(chat({})).toEqual({ provider: 'ollama', source: 'QUOKY_OLLAMA_ENABLED' });
+    expect(chat({ QUOKY_OLLAMA_ENABLED: 'true' })).toEqual({ provider: 'ollama', source: 'QUOKY_OLLAMA_ENABLED' });
+    expect(chat({ QUOKY_OLLAMA_ENABLED: 'false' })).toEqual({ provider: 'claude', source: 'QUOKY_OLLAMA_ENABLED' });
+  });
+
+  it.each(['claude', 'codex', 'ollama'] as const)('accepts exactly %j', (value) => {
+    expect(chat({ QUOKY_CHAT_PROVIDER: value })).toEqual({ provider: value, source: 'QUOKY_CHAT_PROVIDER' });
+  });
+
+  it('agreeing values carry no warning', () => {
+    expect(chat({ QUOKY_CHAT_PROVIDER: 'codex', QUOKY_OLLAMA_ENABLED: 'false' }).warning).toBeUndefined();
+    expect(chat({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_OLLAMA_ENABLED: 'false' }).warning).toBeUndefined();
+    expect(chat({ QUOKY_CHAT_PROVIDER: 'ollama', QUOKY_OLLAMA_ENABLED: 'true' }).warning).toBeUndefined();
+  });
+
+  it.each([
+    ['codex', 'true'],
+    ['claude', 'true'],
+    ['ollama', 'false'],
+  ])('a conflict (%j with QUOKY_OLLAMA_ENABLED=%j): the selector wins with a warning code, startup continues', (selector, flag) => {
+    expect(chat({ QUOKY_CHAT_PROVIDER: selector, QUOKY_OLLAMA_ENABLED: flag })).toEqual({
+      provider: selector,
+      source: 'QUOKY_CHAT_PROVIDER',
+      warning: 'CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED',
+    });
+  });
+
+  it.each(['', ' ', 'Codex', 'CLAUDE', 'openai', 'gpt', ' codex', 'codex ', 'claude,codex', 'ollama-cli'])(
+    'rejects non-exact value %j with CHAT_PROVIDER_INVALID',
+    (value) => {
+      expect(() => loadConfig(env({ QUOKY_CHAT_PROVIDER: value }))).toThrow('CHAT_PROVIDER_INVALID');
+    },
+  );
+
+  it('an invalid QUOKY_OLLAMA_ENABLED still fails even when the selector is set', () => {
+    expect(() => loadConfig(env({ QUOKY_CHAT_PROVIDER: 'codex', QUOKY_OLLAMA_ENABLED: 'yes' }))).toThrow(
+      'OLLAMA_ENABLED_INVALID',
+    );
+  });
+
+  it('never echoes the configured value in the error', () => {
+    let caught: unknown;
+    try { loadConfig(env({ QUOKY_CHAT_PROVIDER: 'SECRETVALUE' })); } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(QuokyConfigError);
+    expect(String((caught as Error).message)).not.toContain('SECRETVALUE');
+  });
+});
+
+describe('loadConfig — Codex model (ADR-0092 amendment)', () => {
+  it('unset means the Codex CLI default (no model)', () => {
+    expect(loadConfig(env({})).ai.codexModel).toBeUndefined();
+    expect('codexModel' in loadConfig(env({})).ai).toBe(false);
+  });
+
+  it.each(['gpt-5.1-codex', 'gpt-5', 'o3', 'openai/gpt-5:latest'])('accepts a bounded model token %j', (value) => {
+    expect(loadConfig(env({ QUOKY_CODEX_MODEL: value })).ai.codexModel).toBe(value);
+  });
+
+  it.each(['', ' ', '--dangerously-bypass-approvals-and-sandbox', '-s', 'two words', 'a;b', 'gpt\n', 'x'.repeat(129), '$(whoami)'])(
+    'rejects an unsafe or unbounded model %j with CODEX_MODEL_INVALID',
+    (value) => {
+      expect(() => loadConfig(env({ QUOKY_CODEX_MODEL: value }))).toThrow('CODEX_MODEL_INVALID');
+    },
+  );
+
+  it('is validated even when Codex is not the selected chat provider', () => {
+    expect(() => loadConfig(env({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_CODEX_MODEL: '-m' }))).toThrow('CODEX_MODEL_INVALID');
+  });
+});
+
 describe('loadConfig — Claude model (ADR-0092)', () => {
   it('defaults to sonnet', () => {
     expect(loadConfig(env({})).ai.claudeModel).toBe('sonnet');

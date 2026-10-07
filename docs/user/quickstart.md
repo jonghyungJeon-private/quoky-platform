@@ -77,14 +77,61 @@ claude --version
 - 일상 대화 중 **정책에 민감한 요청**(캘린더/메일 발송/예약/결제/문자 같은 외부 작업 요청, "이전 지시를 무시해" 같은 지시 변경, 한국어/영어가 아닌 언어)은 Ollama가 준비되어 있어도 **Claude로** 처리됩니다. 로컬 모델이 응답 정책을 잘 따르지 못했기 때문이며, 이런 턴은 Claude 구독 한도를 씁니다. Quoky는 외부 작업을 직접 할 수 없고, 했다고 말하는 답은 "하지 않았다"는 안내로 바뀝니다.
 - 모델: `QUOKY_CLAUDE_MODEL` (기본 `sonnet`). 별칭 또는 전체 이름이며 CLI에 `--model`로 전달됩니다.
 - effort: 설정하지 않습니다. 작업 종류(capability)에 따라 Quoky가 정한 값이 자동으로 전달됩니다.
-- **대화 provider를 바꿀 수 있는 범위 (지금 기준):**
-  - **Claude** — 모델은 `QUOKY_CLAUDE_MODEL`로 아무 Claude 모델이나 지정합니다. `QUOKY_OLLAMA_ENABLED=false`이면 일상 대화도
-    전부 Claude가 처리합니다 (소유자의 현재 설정, 대화 내용이 Anthropic으로 전송됨).
-  - **로컬 Ollama** — `QUOKY_OLLAMA_ENABLED=true`(기본)와 `OLLAMA_MODEL`로 아무 로컬 모델이나 지정합니다 (5절).
-  - **Codex** — adapter 자리표시자(`CodexCliProvider`)만 있고 실행이 구현되지 않았습니다. 구성에 등록되지 않아 선택할 수 없습니다
-    (`CODEX_CLI_BIN`은 읽기만 하고 쓰지 않음).
-  - **다른 클라우드 (OpenAI API, Gemini 등)** — 지금은 쓸 수 없습니다. 새 provider adapter를 만들어야 합니다.
-  - 이미지 분석 provider는 따로 고릅니다 (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`, 5절 "이미지").
+- **바꿀 수 있는 provider (지금 기준):** 요청마다 고르지 않고, 설치 설정(`.env.local`)으로 작업 묶음마다 고릅니다.
+
+  | 작업 | 설정 | 고를 수 있는 값 | 미설정일 때 |
+  |---|---|---|---|
+  | 일상 대화, 요약, 문서 분석, 읽기 조회 | `QUOKY_CHAT_PROVIDER` (아래 "대화 모델 고르기") | `claude` / `codex` / `ollama` | `QUOKY_OLLAMA_ENABLED`로 결정 (`true`(기본) → `ollama`, `false` → `claude`) |
+  | 코드 수정, 코드 리뷰, 설계, 정책에 민감한 대화 | 없음 (모델만 `QUOKY_CLAUDE_MODEL`) | 항상 Claude | Claude `sonnet` |
+  | 이미지 분석 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (5절 "이미지") | `claude` / `ollama` / `off` (Codex는 아직 없음) | `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off` |
+  | 기억 임베딩 | `QUOKY_EMBEDDING_ENABLED` | 로컬 Ollama만 | 꺼짐 |
+
+  모델은 `QUOKY_CLAUDE_MODEL`(Claude), `QUOKY_CODEX_MODEL`(Codex), `OLLAMA_MODEL`(Ollama 대화)로 정합니다. 다른 클라우드
+  (OpenAI API, Gemini 등)는 지금은 쓸 수 없고 새 provider adapter가 필요합니다. 소유자 서비스는 현재
+  `QUOKY_OLLAMA_ENABLED=false`라 대화를 Claude가 처리합니다 (대화 내용이 Anthropic으로 전송됨).
+
+### 대화 모델 고르기: Claude, Codex, Ollama (`QUOKY_CHAT_PROVIDER`)
+
+일상 대화를 어느 모델이 맡을지 `.env.local`의 `QUOKY_CHAT_PROVIDER` 하나로 고릅니다 (ADR-0092 수정안, 2026-10-07).
+Claude는 항상 함께 등록됩니다.
+
+| 값 | 일상 대화·요약·문서 분석·읽기 조회 | 코드 수정·코드 리뷰·정책에 민감한 대화 | 대화 내용이 가는 곳 |
+|---|---|---|---|
+| `claude` | Claude | Claude | Anthropic (Claude 구독) |
+| `codex` | Codex CLI (OpenAI) | Claude | 대화 계열은 OpenAI (ChatGPT 로그인), 나머지는 Anthropic |
+| `ollama` | 로컬 Ollama (5절) | Claude | 대화 계열은 이 컴퓨터 안, 나머지는 Anthropic |
+
+- **설정하지 않으면** 예전처럼 `QUOKY_OLLAMA_ENABLED`로 정해집니다: `true`(기본)이면 `ollama`, `false`이면 `claude`.
+  기존 `.env.local`은 고치지 않아도 그대로 동작합니다.
+- 두 값이 서로 맞지 않으면(예: `QUOKY_CHAT_PROVIDER=codex`와 `QUOKY_OLLAMA_ENABLED=true`) **`QUOKY_CHAT_PROVIDER`가
+  이기고**, 시작 로그에 `CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED` 경고가 남습니다. 시작은 계속됩니다.
+- 선택한 모델이 준비되지 않았으면(로그인 안 됨, 서버 꺼짐) 그 턴은 **Claude가 대신** 답합니다.
+- 바꾼 뒤에는 Quoky를 재시작합니다. 시작 로그의 `chat provider selected`와 운영 화면의 공급자 패널
+  (`대화 공급자 선택`)에서 지금 값을 확인할 수 있습니다.
+
+**Codex를 쓰려면:**
+
+```sh
+codex --version          # codex-cli 0.160.0에서 확인
+codex login              # ChatGPT 계정으로 로그인
+codex login status       # "Logged in using ..."이 나와야 "준비됨"
+```
+
+```sh
+# .env.local
+QUOKY_CHAT_PROVIDER=codex
+# QUOKY_CODEX_MODEL=     # 선택. 비워 두면(줄을 지우면) Codex CLI 기본 모델
+```
+
+- **주의: `codex`를 고르면 일상 대화, 요약(업무 조회 요약 포함), 문서 분석, 첨부한 텍스트 파일 내용이 OpenAI로
+  갑니다.** 소유자가 Claude와 같은 기준으로 허용한 설정입니다. 사용량은 ChatGPT 요금제 한도에 포함되고, 한도에
+  걸리면 "지금은 AI를 사용할 수 없어요"로 답합니다. 비밀처럼 보이는 첨부 내용은 어느 모델로든 보내기 전에 걸러집니다.
+- **격리:** Quoky는 `codex exec`를 빈 임시 폴더에서 `--sandbox read-only`, 승인 `never`, `--ignore-user-config`,
+  `--ignore-rules`, `--ephemeral`로 실행하고 셸·웹 검색·MCP·플러그인·스킬·AGENTS.md를 끕니다. 질문은 명령줄이 아니라
+  표준 입력으로 전달하고, 답은 마지막 응답 메시지만 씁니다. 명령 실행이나 파일 변경을 시도한 답은 버립니다.
+  내 `~/.codex/config.toml` 설정(MCP 서버 등)은 읽지 않지만, 로그인 정보와 Codex 자체 기본 지시문은 `~/.codex`와
+  CLI에서 옵니다.
+- 실측(2026-10-07, 기본 모델): 짧은 한국어 추천 질문 한 번에 약 7.5-8초, 준비 확인(`codex login status`)은 0.2초 이하.
 
 ## 5. Ollama (선택, 기본 사용)
 
@@ -163,7 +210,9 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_DISCORD_OWNER_IDS` | 필수. 쉼표로 구분한 Discord **사용자** ID (각 17-20자리). 비어 있거나 형식이 틀리면 시작 실패. 소유자가 아닌 사람의 메시지는 **답장 없이 무시** |
 | `QUOKY_DISCORD_CHANNEL_IDS` | 선택. 쉼표로 구분한 **채널** ID. 목록의 채널(또는 그 채널의 스레드)에서 소유자 메시지를 처리. 비우면 소유자 DM만. @멘션은 필요 없음 |
 | `DISCORD_GUILD_ID` | 선택. 특정 서버만 허용 |
-| `QUOKY_OLLAMA_ENABLED` | 선택. `true`(기본) / `false` 정확히 이 두 값만 |
+| `QUOKY_CHAT_PROVIDER` | 선택. `claude` / `codex` / `ollama` 정확히 이 값만 (4절 "대화 모델 고르기"). 미설정이면 `QUOKY_OLLAMA_ENABLED`로 결정 |
+| `QUOKY_CODEX_MODEL` | 선택. `codex`일 때 쓸 모델. 미설정이면 Codex CLI 기본 모델 |
+| `QUOKY_OLLAMA_ENABLED` | 선택. `true`(기본) / `false` 정확히 이 두 값만. `QUOKY_CHAT_PROVIDER`가 있으면 그 값이 우선 |
 | `OLLAMA_MODEL` | 선택. 기본 `llama3.1` |
 | `QUOKY_CLAUDE_MODEL` | 선택. 기본 `sonnet` |
 | `QUOKY_GIT_REMOTE_ENABLED` | 선택. 기본 `false`. `true`면 push → PR 흐름 사용 가능 (8절 "push와 PR" 참고). 운영자 설정은 운영자 가이드 참고 |
@@ -191,7 +240,7 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS` | 선택. 게시를 허용할 채널 `이름:채널ID` 또는 `채널ID` (쉼표, 최대 50개). 토큰과 채널이 둘 다 있어야 Slack 쓰기가 켜짐. 봇을 그 채널에 초대해야 함 |
 | `QUOKY_OPS_UI_ENABLED`, `QUOKY_OPS_UI_PORT` | 선택. 기본 `false`, `47613`. 로컬 운영 화면 (7절 "운영 화면"). 잘못된 값은 시작 오류가 아니라 화면만 끔 |
 
-`QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`), Personal v3의
+`QUOKY_CHAT_PROVIDER`, `QUOKY_CODEX_MODEL`, `QUOKY_OLLAMA_ENABLED`, `QUOKY_CLAUDE_MODEL`, `QUOKY_GIT_REMOTE_ENABLED`, `QUOKY_CONTEXT_MAX_TOKENS`와 위의 Personal v2 변수들(`QUOKY_GIT_MERGE_ENABLED`, `QUOKY_WORK_SUMMARY_ENABLED`, `QUOKY_REMINDERS_*`, `QUOKY_TIMEZONE`, `QUOKY_EMBEDDING_*`), Personal v3의
 `QUOKY_MEMORY_ARCHIVE_DAYS`, `QUOKY_LEARNING_EXAMPLES_ENABLED`, `QUOKY_CONNECTOR_WRITES_ENABLED`, `QUOKY_CALENDAR_WRITE_ENABLED`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER`는 빈 값(예:
 `QUOKY_OLLAMA_ENABLED=`)을 "미설정"으로 보지 않고 시작 오류로 처리합니다. 쓰기 허용 목록과 Slack 쓰기 토큰도 형식이 틀리면
 시작 오류입니다 (쓰기가 꺼져 있어도 검사). 반대로 `QUOKY_OPS_UI_*`와 (선택값을 설정하지 않았을 때의) `QUOKY_OLLAMA_VISION_MODEL`은 잘못되면 그 기능만 꺼집니다. 기본값을 쓰려면 줄을 지우거나 `#`으로
@@ -637,6 +686,10 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | `DISCORD_CHANNEL_IDS_INVALID` — "QUOKY_DISCORD_CHANNEL_IDS must be unset/empty (direct messages only) or comma-separated Discord channel ids (17-20 digits each, no empty entries)." | 채널 ID 형식 오류 |
 | `OLLAMA_ENABLED_INVALID` — "QUOKY_OLLAMA_ENABLED must be unset, "true", or "false"." | `True`, `1`, `yes` 등은 불가 |
 | `CLAUDE_MODEL_INVALID` — "QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters)." | 모델 이름 형식 오류 |
+| `CHAT_PROVIDER_INVALID` — "QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", or "ollama" (exactly, lowercase)." | 대문자, 공백, 빈 값, 다른 이름은 불가 |
+| `CODEX_MODEL_INVALID` — "QUOKY_CODEX_MODEL must be unset (the Codex CLI default model) or a model name (letters, digits, and . _ : / [ ] -; up to 128 characters)." | Codex 모델 이름 형식 오류 |
+| 시작 로그에 `CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED` | `QUOKY_CHAT_PROVIDER`와 `QUOKY_OLLAMA_ENABLED`가 서로 다름. `QUOKY_CHAT_PROVIDER` 값으로 동작 중. 경고를 없애려면 `QUOKY_OLLAMA_ENABLED` 줄을 지우기 |
+| `QUOKY_CHAT_PROVIDER=codex`인데 대화를 Claude가 답함 | Codex가 준비되지 않음. `codex login status`가 "Logged in"인지, launchd 서비스라면 `CODEX_CLI_BIN`(절대 경로)과 `node`가 PATH에 있는지 확인 |
 | `GIT_REMOTE_ENABLED_INVALID` — "QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false"." | `true`/`false`만 허용 |
 | `CONTEXT_MAX_TOKENS_INVALID` — "QUOKY_CONTEXT_MAX_TOKENS must be unset or a positive integer (at most 200000)." | 양의 정수, 최대 200000 |
 | 로그에 `no ready provider for GENERAL_CHAT ...` / 봇이 "AI가 아직 설정되지 않았어요…"로 답함 | Claude CLI 미설치(`claude --version` 실패)이고 Ollama도 준비 안 됨. `claude --version`, Ollama 서버/모델(`ollama list`) 확인 |
