@@ -329,8 +329,8 @@ QUOKY_OPS_UI_ENABLED=true     # 기본 false. 정확히 true/false만 허용 (�
 QUOKY_OPS_UI_PORT=47613       # 기본 47613. 1024-65535 (범위 밖이면 화면만 꺼지고 로그에 OPS_UI_PORT_INVALID)
 ```
 
-이 두 값은 `config.ts`/`.env.example`이 아니라 `apps/quoky/src/ops-ui/ops-ui-config.ts`가 읽습니다(W6 OPS-2b에서
-합칩니다). 접속 주소(bind)를 바꾸는 설정은 없습니다.
+이 두 값은 `config.ts`가 읽고 `.env.example`에 설명이 있습니다(W6 OPS-2b에서 합침). 다른 설정과 달리 잘못된 값은
+시작 오류가 아니라 화면만 끕니다. 접속 주소(bind)를 바꾸는 설정은 없습니다.
 
 **접속**
 

@@ -740,3 +740,21 @@ describe('loadConfig — memory archive retention (ADR-0106 amendment, QUOKY_MEM
     }
   });
 });
+
+describe('loadConfig — local operations UI flags (ADR-0113 D1/D2, folded by OPS-2b)', () => {
+  it('is off by default and enables on exactly "true", on port 47613 unless set', () => {
+    expect(loadConfig(env({})).opsUi).toEqual({ enabled: false });
+    expect(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'false' })).opsUi).toEqual({ enabled: false });
+    expect(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'true' })).opsUi).toEqual({ enabled: true, port: 47613 });
+    expect(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'true', QUOKY_OPS_UI_PORT: '50000' })).opsUi).toEqual({ enabled: true, port: 50000 });
+  });
+
+  it('disables only the UI on an invalid value (never a startup error) and never echoes the value', () => {
+    expect(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'SECRETVALUE' })).opsUi).toEqual({ enabled: false, invalid: 'OPS_UI_ENABLED_INVALID' });
+    expect(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'true', QUOKY_OPS_UI_PORT: '80' })).opsUi).toEqual({
+      enabled: false,
+      invalid: 'OPS_UI_PORT_INVALID',
+    });
+    expect(JSON.stringify(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'SECRETVALUE' })).opsUi)).not.toContain('SECRETVALUE');
+  });
+});

@@ -1,11 +1,12 @@
 import path from 'node:path';
 
+import { OPS_UI_DEFAULT_PORT, OPS_UI_MAX_PORT, OPS_UI_MIN_PORT, OpsUiConfigErrorCode, parseOpsUiFlags } from '../config';
+import type { OpsUiFlags } from '../config';
 import { OPS_UI_TOKEN_FILE_NAME } from './http/token-file';
 
 /**
- * OPS-1 configuration (ADR-0113 D1–D3), parsed here from the process environment and not in `config.ts` (owned by
- * CAL-1 in wave 3; OPS-2b folds these keys into `config.ts`/`.env.example` in W6 without changing their meaning).
- * New `QUOKY_*` keys with no `CHUNSIK_*` alias.
+ * Operations UI configuration (ADR-0113 D1–D3). The flags themselves are parsed in `config.ts` (folded there by OPS-2b
+ * in W6 with the meaning OPS-1 gave them; see `parseOpsUiFlags`); this module only adds the token file location.
  *
  * - `QUOKY_OPS_UI_ENABLED`: exactly `true` or `false`; default `false` (no port is opened).
  * - `QUOKY_OPS_UI_PORT`: an integer 1024–65535; default `47613`.
@@ -19,15 +20,7 @@ import { OPS_UI_TOKEN_FILE_NAME } from './http/token-file';
  * (`~/Library/Application Support/Quoky/` under the launchd service; `./data` for the delegated dev DB).
  */
 
-export const OPS_UI_DEFAULT_PORT = 47613;
-export const OPS_UI_MIN_PORT = 1024;
-export const OPS_UI_MAX_PORT = 65535;
-
-export const OpsUiConfigErrorCode = {
-  OPS_UI_ENABLED_INVALID: 'OPS_UI_ENABLED_INVALID',
-  OPS_UI_PORT_INVALID: 'OPS_UI_PORT_INVALID',
-} as const;
-export type OpsUiConfigErrorCode = (typeof OpsUiConfigErrorCode)[keyof typeof OpsUiConfigErrorCode];
+export { OPS_UI_DEFAULT_PORT, OPS_UI_MAX_PORT, OPS_UI_MIN_PORT, OpsUiConfigErrorCode };
 
 export type OpsUiConfig =
   | { readonly enabled: false; readonly invalid?: OpsUiConfigErrorCode }
@@ -39,19 +32,13 @@ export function opsUiDataDir(dbPath: string, cwd: string = process.cwd()): strin
   return fileBacked ? path.dirname(path.resolve(cwd, dbPath)) : path.resolve(cwd, 'data');
 }
 
-export function loadOpsUiConfig(env: NodeJS.ProcessEnv, dbPath: string, cwd: string = process.cwd()): OpsUiConfig {
-  const rawEnabled = env.QUOKY_OPS_UI_ENABLED;
-  if (rawEnabled === undefined || rawEnabled === '' || rawEnabled === 'false') return { enabled: false };
-  if (rawEnabled !== 'true') return { enabled: false, invalid: OpsUiConfigErrorCode.OPS_UI_ENABLED_INVALID };
+/** The parsed flags (from `QuokyConfig.opsUi`) plus the token file path. */
+export function resolveOpsUiConfig(flags: OpsUiFlags, dbPath: string, cwd: string = process.cwd()): OpsUiConfig {
+  if (!flags.enabled) return flags.invalid === undefined ? { enabled: false } : { enabled: false, invalid: flags.invalid };
+  return { enabled: true, port: flags.port, tokenFilePath: path.join(opsUiDataDir(dbPath, cwd), OPS_UI_TOKEN_FILE_NAME) };
+}
 
-  const rawPort = env.QUOKY_OPS_UI_PORT;
-  let port = OPS_UI_DEFAULT_PORT;
-  if (rawPort !== undefined && rawPort !== '') {
-    if (!/^[0-9]{1,5}$/.test(rawPort)) return { enabled: false, invalid: OpsUiConfigErrorCode.OPS_UI_PORT_INVALID };
-    port = Number(rawPort);
-    if (port < OPS_UI_MIN_PORT || port > OPS_UI_MAX_PORT) {
-      return { enabled: false, invalid: OpsUiConfigErrorCode.OPS_UI_PORT_INVALID };
-    }
-  }
-  return { enabled: true, port, tokenFilePath: path.join(opsUiDataDir(dbPath, cwd), OPS_UI_TOKEN_FILE_NAME) };
+/** Parse straight from an environment (offline tests and the wiring's `env` seam). */
+export function loadOpsUiConfig(env: NodeJS.ProcessEnv, dbPath: string, cwd: string = process.cwd()): OpsUiConfig {
+  return resolveOpsUiConfig(parseOpsUiFlags(env), dbPath, cwd);
 }

@@ -2,16 +2,17 @@ import { newSecret } from './security';
 import type { OpsActionOutcome } from './view-model';
 
 /**
- * OPS-2 one-time action intents (ADR-0113 D7), `node:*` only.
+ * OPS-2 / OPS-2b one-time action intents (ADR-0113 D7), `node:*` only.
  *
  * A confirmation page carries a random nonce bound to the session, the action kind and its subject (the reminder
  * number, or the issued forget code). The executing `POST` names only the nonce: the subject comes from the
- * server-side intent, never from the form, so a tampered field cannot redirect the action. The first submit runs the
+ * server-side intent, never from the form, so a tampered field cannot redirect the action (an approval decision's
+ * approval id is its subject). The first submit runs the
  * action; any later or concurrent submit of the same nonce gets the same outcome without running it again
  * (double-submit is idempotent). Intents live in memory, per session, for at most {@link OPS_INTENT_TTL_MS}.
  */
 
-export type OpsIntentKind = 'reminder-cancel' | 'memory-forget';
+export type OpsIntentKind = 'reminder-cancel' | 'memory-forget' | 'approval-approve' | 'approval-reject';
 
 /** An intent is accepted for this long after its confirmation page was served (the ADR-0106 code window). */
 export const OPS_INTENT_TTL_MS = 30 * 60 * 1000;

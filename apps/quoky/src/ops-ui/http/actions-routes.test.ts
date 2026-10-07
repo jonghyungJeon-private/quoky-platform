@@ -13,7 +13,8 @@ import type { OpsActionOutcome, OpsActions, OpsViewModel } from './view-model';
 /**
  * OPS-2 request side (ADR-0113 D4/D7): every handling POST needs the session, the listener Origin and the session
  * CSRF token; executing posts also need the one-time action nonce, whose subject is fixed server-side; a double
- * submit runs the action once; the forget confirm needs the issued code typed back; there is no approve or reject.
+ * submit runs the action once; the forget confirm needs the issued code typed back; without approval handling in the
+ * actions there is no approve or reject route (OPS-2b, `approval-handling.test.ts`).
  */
 
 const VIEW: OpsViewModel = {
@@ -348,12 +349,12 @@ describe('OPS-2 routes: memory forget needs the code (ADR-0106 D4, ADR-0113 D7)'
   });
 });
 
-describe('OPS-2 routes: no approval decision surface (OPS-2b)', () => {
-  it('has no approve or reject route, even with handling actions wired', async () => {
+describe('OPS-2 routes: no approval decision surface without approval handling', () => {
+  it('has no approve or reject route when the actions offer no approval handling (OPS-2b wires it separately)', async () => {
     const h = await startServer();
     const cookie = await signIn(h);
     const csrf = await csrfOf(h, cookie);
-    for (const p of ['/approve', '/reject', '/actions/approvals/approve', '/actions/approvals/reject', '/actions/approve', '/actions/reject']) {
+    for (const p of ['/approve', '/reject', '/actions/approvals/approve', '/actions/approvals/reject', '/actions/approve', '/actions/reject', '/approvals/decide?id=approval-1']) {
       expect((await post(h, p, { csrf, id: 'approval-1' }, cookie)).status).toBe(404);
       expect((await send({ port: h.port, path: p, cookie })).status).toBe(404);
     }

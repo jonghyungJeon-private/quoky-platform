@@ -9,8 +9,10 @@ import {
   ApprovalStatus,
   CONNECTOR_PROVIDERS,
   Capability,
+  ConversationRuntime,
   FeedbackRecorder,
   MemoryCommandService,
+  NOTIFICATION_SINK,
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
   ReminderConversationService,
@@ -96,7 +98,9 @@ function fakes(options: { owners?: Record<string, string>; extra?: ReadonlyArray
         actors: {
           findByExternalIdentity: async (platform: string, externalId: string) =>
             platform === 'discord' && owners[externalId] ? { id: owners[externalId] } : null,
+          get: async (id: string) => (Object.values(owners).includes(id) ? { id } : null),
         },
+        sessions: { list: async () => [] },
         approvals: {
           list: async () => [
             {
@@ -377,6 +381,46 @@ describe('OPS-1 wiring (ADR-0113 D1/D8)', () => {
     expect(dashboard).not.toContain('/actions/');
     expect(dashboard).not.toContain('href="/memories"');
     expect((await send({ port, path: '/memories', cookie })).status).toBe(404);
+  });
+
+  it('wires OPS-2b approve/reject to the runtime decision service, and shows the chat reference line only while listening', async () => {
+    const enabled: boolean[] = [];
+    const decisions = {
+      setConfirmationReferenceEnabled: (on: boolean) => enabled.push(on),
+      locateForOpsUi: async () => ({ status: 'REFUSED', refusal: 'NOT_FOUND' }),
+      decideFromOpsUi: async () => ({ status: 'REFUSED', refusal: 'NOT_FOUND' }),
+    };
+    const f = fakes({
+      extra: [
+        [ConversationRuntime, { approvalDecisions: decisions }],
+        [NOTIFICATION_SINK, { deliver: async () => ({ status: 'SENT', via: 'dm' }) }],
+      ],
+    });
+    const handle = await startOpsUi(input(f.container, { QUOKY_OPS_UI_ENABLED: 'true' }, { portOverride: 0 }));
+    expect(enabled).toEqual([true]);
+    const port = handle.port ?? 0;
+    const token = readFileSync(path.join(dir, 'data', 'ops-ui.token'), 'utf8').trim();
+    const cookie = cookieFrom(await send({ port, method: 'POST', path: '/session', origin: `http://127.0.0.1:${port}`, form: { token } }));
+    const dashboard = (await send({ port, path: '/', cookie })).body;
+    expect(dashboard).toContain('href="/approvals/decide?id=approval-1234"');
+    expect(dashboard).not.toContain('APPROVAL_REASON_BODY_MARKER');
+    const refused = await send({ port, path: '/approvals/decide?id=approval-1234', cookie });
+    expect(refused.body).toContain('NOT_FOUND');
+    await handle.stop();
+    expect(enabled).toEqual([true, false]);
+  });
+
+  it('reads the folded QuokyConfig.opsUi flags when no env seam is given', async () => {
+    const f = fakes();
+    const base = input(f.container, {});
+    const { env: _env, ...rest } = base;
+    const off = await startOpsUi({ ...rest, config: { ...base.config, opsUi: { enabled: false } } });
+    expect(off.port).toBeUndefined();
+    expect(f.lookups).toEqual([]);
+    const port = await freePort();
+    const on = await startOpsUi({ ...rest, config: { ...base.config, opsUi: { enabled: true, port } } });
+    handles.push(on);
+    expect(on.port).toBe(port);
   });
 
   it('disables handling links when the owner ids map to several Actors', async () => {
