@@ -199,6 +199,62 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
     expect(isCredentialShapedValue(deep)).toBe(true);
   });
 
+  describe('metadata is read without executing anything (re-review P2, safe snapshot)', () => {
+    const VALUE = 'demo-review-value';
+    const withheld = (metadata: unknown) => isAttachmentReplyWithheld('요약입니다', [{ title: 'r', metadata }]);
+
+    it.each([
+      ['CR', '\r'],
+      ['NUL', '\u0000'],
+      ['ZWSP', '\u200B'],
+    ])('a key split by %s is caught together with its value', (_label, ch) => {
+      const key = 'pass' + ch + 'word';
+      expect(isCredentialShapedValue({ [key]: VALUE })).toBe(true);
+      expect(withheld({ [key]: VALUE })).toBe(true);
+      expect(withheld({ outer: [{ [key]: VALUE }] })).toBe(true);
+      expect(withheld({ ['api' + ch + '_key']: VALUE })).toBe(true);
+    });
+
+    it('a getter is never invoked and counts as a match', () => {
+      let calls = 0;
+      const metadata = {};
+      Object.defineProperty(metadata, 'note', { enumerable: true, get: () => { calls += 1; return 'ok'; } });
+      expect(withheld(metadata)).toBe(true);
+      expect(calls).toBe(0);
+    });
+
+    it('a throwing getter never runs: nothing escapes and the reply is withheld', () => {
+      const metadata = {};
+      Object.defineProperty(metadata, 'boom', { enumerable: true, get: () => { throw new Error('getter ran'); } });
+      expect(() => withheld(metadata)).not.toThrow();
+      expect(withheld(metadata)).toBe(true);
+    });
+
+    it('boxed primitives, toJSON, overridden array methods, class instances, symbol keys and proxies count as a match', () => {
+      expect(withheld({ note: new String('ok') })).toBe(true);
+      let toJsonCalls = 0;
+      expect(withheld({ note: { toJSON: () => { toJsonCalls += 1; return 'ok'; } } })).toBe(true);
+      expect(toJsonCalls).toBe(0);
+      const list = ['ok'];
+      let someCalls = 0;
+      Object.defineProperty(list, 'some', { value: () => { someCalls += 1; return false; } });
+      expect(withheld({ list })).toBe(true);
+      expect(someCalls).toBe(0);
+      class Note { readonly text = 'ok'; }
+      expect(withheld({ note: new Note() })).toBe(true);
+      expect(withheld({ [Symbol('k')]: 'ok' })).toBe(true);
+      expect(withheld({ note: new Proxy({}, {}) })).toBe(true);
+      expect(withheld({ fn: () => 'ok' })).toBe(true);
+    });
+
+    it('ordinary plain metadata is not withheld', () => {
+      expect(withheld({ tokens: 207, model: 'x' })).toBe(false);
+      expect(withheld({ model: 'granite3.3:8b', promptSha256: 'a'.repeat(64), outputSanitized: true, list: [1, 'two', null] })).toBe(false);
+      expect(withheld(Object.assign(Object.create(null) as object, { tokens: 3 }))).toBe(false);
+      expect(withheld({ password: VALUE })).toBe(true);
+    });
+  });
+
   it('re-review P3: mention tokens, whitespace and invisible characters are not effective text', () => {
     for (const text of ['', '   ', '<@123456789012345678>', '<@!123456789012345678>', '<@&42> <#99>', '\u200B', '\uFEFF \u200C\n', '<@1>\u200B ']) {
       expect(hasEffectiveText(text), JSON.stringify(text)).toBe(false);

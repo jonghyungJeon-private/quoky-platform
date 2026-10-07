@@ -9,6 +9,7 @@ import type {
 import type { NoticeLanguage } from './chat-policy/internal-action-vocabulary';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
+import { types } from 'node:util';
 
 /**
  * ADR-0111 D3 (MM-1): the text files attached to the current User message become one bounded, untrusted Resource of
@@ -191,23 +192,39 @@ export function isAttachmentReplyWithheld(
   artifacts: readonly { title?: string; content?: string; uri?: string; metadata?: unknown }[] = [],
 ): boolean {
   if (isCredentialShaped(reply)) return true;
-  return artifacts.some(
-    (artifact) =>
-      [artifact.title, artifact.content, artifact.uri].some((part) => typeof part === 'string' && isCredentialShaped(part)) ||
-      (artifact.metadata !== undefined && isCredentialShapedValue(artifact.metadata)),
-  );
+  for (let i = 0; i < artifacts.length; i += 1) {
+    const artifact = artifacts[i];
+    if (!artifact) continue;
+    for (const part of [artifact.title, artifact.content, artifact.uri]) {
+      if (typeof part === 'string' && isCredentialShaped(part)) return true;
+    }
+    if (artifact.metadata !== undefined && isCredentialShapedValue(artifact.metadata)) return true;
+  }
+  return false;
 }
+
+const { isProxy } = types;
 
 /** How deep and how many nodes a metadata walk reads; anything larger is withheld (fail closed). */
 const METADATA_WALK_MAX_DEPTH = 16;
 const METADATA_WALK_MAX_NODES = 10_000;
 
+/** Whether a `key`/`value` pair reads as a credential assignment (`key=value` or `key: value`, through the view). */
+function isCredentialPair(key: string, value: string | number): boolean {
+  return containsCredentialMaterial(`${key}=${value}`) || containsCredentialMaterial(`${key}: ${value}`);
+}
+
 /**
- * Whether structured data carries credential material: both detectors run on every RAW string value and key (so a CR
- * or NUL inside a value is seen as the character it is, not as a JSON escape), and the chat detector runs on the
- * serialized form (so `{ password: 'x' }` is still caught as an assignment). The strict FILE detector is not run on the
- * serialized form: it refuses any credential-named key with a literal, including counts such as `"tokens": 207`.
- * Too deep, too large or cyclic data counts as matched.
+ * Whether structured data (artifact metadata) carries credential material, read WITHOUT executing anything of it.
+ * Only primitives, plain objects (prototype `Object.prototype` or `null`) and real arrays (prototype
+ * `Array.prototype`) are read, and only through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor`: no getter,
+ * `toJSON`, iterator or overridable method (`some`, `map`, …) is ever called. Anything else — an accessor property, a
+ * symbol key, a boxed primitive, a function, a class instance, a proxy, cyclic, deeper than
+ * {@link METADATA_WALK_MAX_DEPTH} or larger than {@link METADATA_WALK_MAX_NODES} — counts as a match (withheld).
+ * On what is read, both detectors check every string value and key, and the chat detector checks every
+ * `key=value` / `key: value` composite of a string or number value, so a key split by a CR, NUL or zero-width
+ * character is caught together with its value. (The strict FILE detector is not run on composites: it would refuse
+ * counts such as `tokens: 207`.)
  */
 export function isCredentialShapedValue(value: unknown): boolean {
   let nodes = 0;
@@ -215,20 +232,41 @@ export function isCredentialShapedValue(value: unknown): boolean {
   const walk = (node: unknown, depth: number): boolean => {
     nodes += 1;
     if (nodes > METADATA_WALK_MAX_NODES || depth > METADATA_WALK_MAX_DEPTH) return true;
-    if (typeof node === 'string') return isCredentialShaped(node);
-    if (node === null || typeof node !== 'object') return false;
+    switch (typeof node) {
+      case 'string':
+        return isCredentialShaped(node);
+      case 'number':
+        return containsCredentialMaterial(String(node));
+      case 'boolean':
+      case 'undefined':
+        return false;
+      case 'object':
+        break;
+      default:
+        return true; // function, symbol, bigint
+    }
+    if (node === null) return false;
+    if (isProxy(node)) return true;
     if (seen.has(node)) return true;
     seen.add(node);
-    if (Array.isArray(node)) return node.some((item) => walk(item, depth + 1));
-    return Object.entries(node).some(([key, item]) => isCredentialShaped(key) || walk(item, depth + 1));
+    const proto: unknown = Object.getPrototypeOf(node);
+    const isArray = Array.isArray(node) && proto === Array.prototype;
+    if (!isArray && proto !== Object.prototype && proto !== null) return true;
+    for (const key of Reflect.ownKeys(node)) {
+      if (typeof key === 'symbol') return true;
+      const descriptor = Object.getOwnPropertyDescriptor(node, key);
+      if (!descriptor || !('value' in descriptor)) return true; // accessor (getter/setter): never invoked
+      if (isArray && key === 'length') continue;
+      const item: unknown = descriptor.value;
+      if (!isArray) {
+        if (isCredentialShaped(key)) return true;
+        if ((typeof item === 'string' || typeof item === 'number') && isCredentialPair(key, item)) return true;
+      }
+      if (walk(item, depth + 1)) return true;
+    }
+    return false;
   };
-  if (walk(value, 0)) return true;
-  try {
-    const serialized = JSON.stringify(value);
-    return typeof serialized === 'string' && containsCredentialMaterial(serialized);
-  } catch {
-    return true;
-  }
+  return walk(value, 0);
 }
 
 /** Mention tokens of chat platforms (`<@id>`, `<@!id>`, `<@&id>`, `<#id>`, `<#C1|name>`): addressing, not content. */
