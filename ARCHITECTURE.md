@@ -30,8 +30,9 @@ We optimize for **longevity and replaceability over short-term convenience.**
    pick a model per request: the system maps each request to a Capability and the
    router selects a provider automatically. The owner may, however, select which
    providers are installed for a capability tier through installation
-   configuration (Claude / Codex / Ollama, OpenClaw-style; ADR-0092 and ADR-0111
-   amendments). The provider that answered is recorded for audit only.
+   configuration, the operations UI, or an owner chat command (session-scoped)
+   (Claude / Codex / Ollama, OpenClaw-style; ADR-0092 and ADR-0111 amendments).
+   The provider that answered is recorded for audit only.
 2. **The Core knows nothing concrete.** No Discord, SQLite, Claude, Codex,
    Ollama, HTTP, or NestJS type may appear in `@quoky/core`. Core depends only
    on its own ports and domain.
@@ -326,8 +327,8 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Importing a concrete provider, Discord, SQLite, or a CLI from `@quoky/core`.
 - ❌ Branching on a provider `id` anywhere in Core.
 - ❌ Letting any platform/storage/driver type cross a port boundary.
-- ❌ Pinning an AI provider to a Session/Task/Actor.
-- ❌ Surfacing the selected provider to the user as a normal behavior.
+- ❌ Pinning an AI provider to a Session/Task/Actor. (Exception, owner-approved 2026-10-07: an owner's explicit session-scoped chat-tier/image **preference** set by an owner command — ADR-0092 amendment — is a routing preference, not a pin: capability routing, readiness probes and the Claude fallback still apply, and it never affects code/review/policy capabilities.)
+- ❌ Surfacing the selected provider to the user as a normal behavior. (Explicit owner requests — `모델 상태`, the operations UI providers panel — may show the effective selection; ordinary replies never do.)
 - ❌ Storing context/memory **snapshots** on Session (rebuild per run).
 - ❌ Merging `Resource` (input) and `Artifact` (output).
 - ❌ Auto-commit / auto-push / auto-delete / force-push / external write without

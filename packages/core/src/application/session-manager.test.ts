@@ -3,6 +3,7 @@ import { SessionStatus } from '../domain';
 import type { ConversationContext, Session } from '../domain';
 import type { StorageProvider } from '../ports';
 import { SessionManager } from './session-manager';
+import { SessionWriteLock } from './session-write-lock';
 
 const CTX: ConversationContext = { platform: 'test', channelId: 'chan-1', userId: 'u1' };
 
@@ -66,5 +67,65 @@ describe('SessionManager', () => {
     expect(next.id).not.toBe(opened.id);
     expect(next.status).toBe(SessionStatus.ACTIVE);
     expect(next.activeTaskId).toBeUndefined();
+  });
+
+  describe('updateMetadataEntry (ADR-0092 amendment, runtime switching; ADR-0113 D7 field-scoped saves)', () => {
+    it('changes only its own metadata key on the LIVE row, keeping every other field and key', async () => {
+      const { storage, rows } = storageWithSessions();
+      const manager = new SessionManager(storage);
+      const opened = await manager.openForContext(CTX, 'actor-1');
+      rows.set(opened.id, { ...opened, activeTaskId: 'task-live', metadata: { other: 1 } });
+      // The caller's copy is stale (no task, no metadata): it is never written back.
+      const saved = await manager.updateMetadataEntry(opened, 'quoky.providerSelection', () => ({ chat: { provider: 'codex' } }));
+      expect(saved).not.toBeNull();
+      expect(rows.get(opened.id)).toMatchObject({
+        activeTaskId: 'task-live',
+        metadata: { other: 1, 'quoky.providerSelection': { chat: { provider: 'codex' } } },
+      });
+      // `undefined` removes the key; an emptied metadata object is dropped.
+      await manager.updateMetadataEntry(opened, 'quoky.providerSelection', () => undefined);
+      expect(rows.get(opened.id)?.metadata).toEqual({ other: 1 });
+      await manager.updateMetadataEntry(opened, 'other', () => undefined);
+      expect(rows.get(opened.id)?.metadata).toBeUndefined();
+    });
+
+    it('passes the live value to the update and leaves a gone or CLOSED session untouched', async () => {
+      const { storage, rows, saves } = storageWithSessions();
+      const manager = new SessionManager(storage);
+      const opened = await manager.openForContext(CTX, 'actor-1');
+      await manager.updateMetadataEntry(opened, 'k', () => ({ n: 1 }));
+      const seen: unknown[] = [];
+      await manager.updateMetadataEntry(opened, 'k', (current) => {
+        seen.push(current);
+        return { n: 2 };
+      });
+      expect(seen).toEqual([{ n: 1 }]);
+      await manager.close(opened);
+      const before = saves.length;
+      expect(await manager.updateMetadataEntry(opened, 'k', () => ({ n: 3 }))).toBeNull();
+      expect(await manager.updateMetadataEntry({ id: 'missing' }, 'k', () => ({ n: 3 }))).toBeNull();
+      expect(saves.length).toBe(before);
+      expect(rows.get(opened.id)?.status).toBe(SessionStatus.CLOSED);
+    });
+
+    it('runs under the shared session write lock: a concurrent touch and metadata write never lose each other', async () => {
+      const { storage, rows } = storageWithSessions();
+      const lock = new SessionWriteLock();
+      const manager = new SessionManager(storage, lock);
+      const opened = await manager.openForContext(CTX, 'actor-1');
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      // Hold the session lock (as another writer would), then queue both writes behind it.
+      const holder = lock.run(opened.id, async () => gate);
+      const metadataWrite = manager.updateMetadataEntry(opened, 'quoky.providerSelection', () => ({ image: 'off' }));
+      const touch = manager.touch(opened);
+      await Promise.resolve();
+      expect(rows.get(opened.id)?.metadata).toBeUndefined(); // still queued behind the holder
+      release();
+      await Promise.all([holder, metadataWrite, touch]);
+      const live = rows.get(opened.id);
+      expect(live?.metadata).toEqual({ 'quoky.providerSelection': { image: 'off' } });
+      expect(live?.lastActivityAt).toBeDefined();
+    });
   });
 });

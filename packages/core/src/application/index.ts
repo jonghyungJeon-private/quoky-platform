@@ -170,6 +170,8 @@ export * from './work-chat';
 export * from './reminders';
 // Personal v3 sub-barrels (ADR-0104 D4 help intent, LLM-1).
 export * from './help-intent';
+// ADR-0092 amendment (runtime switching): the owner's model-selection command grammar (provider-free).
+export * from './model-selection';
 // ADR-0106 memory management commands (MEM-1).
 export * from './memory-commands';
 // Personal v3 connector writes (ADR-0112, ADR-0110 amendment; CWR-1).

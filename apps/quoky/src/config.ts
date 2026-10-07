@@ -56,6 +56,11 @@ export interface QuokyConfig {
     codexModel?: string;
     ollamaBin: string;
     ollamaModel: string;
+    /**
+     * Whether `OLLAMA_MODEL` is set (non-empty). ADR-0092 amendment (runtime switching): the Ollama chat provider is
+     * registered for switching only when a model is configured and the CLI is present (or Ollama is selected).
+     */
+    ollamaModelConfigured?: boolean;
     ollamaEnabled: boolean;
     /** The chat-provider selection (ADR-0092 amendment, 2026-10-07); see {@link parseChatProviderSelection}. */
     chat: ChatProviderSelection;
@@ -65,6 +70,11 @@ export interface QuokyConfig {
    * registered for `IMAGE_UNDERSTANDING`, or none. See {@link parseImageUnderstandingConfig}.
    */
   imageUnderstanding: ImageUnderstandingConfig;
+  /**
+   * ADR-0111 amendment (runtime switching): what each image option would use if the owner switched to it, and where the
+   * configured selection came from. See {@link parseImageUnderstandingOptions}.
+   */
+  imageUnderstandingOptions?: ImageUnderstandingOptions;
   /** Personal-edition git safety (ADR-0094). `remoteEnabled` defaults to false (push/sync refused). */
   git: { remoteEnabled: boolean; mergeEnabled: boolean };
   /**
@@ -385,6 +395,35 @@ export function parseImageUnderstandingConfig(
   return { provider: 'claude', model: own };
 }
 
+/**
+ * ADR-0111 amendment (runtime switching): the image options available for a switch without a restart, never failing
+ * startup (the strict selection itself is {@link parseImageUnderstandingConfig}).
+ * - `claudeModel`: `QUOKY_IMAGE_UNDERSTANDING_MODEL`, else `QUOKY_CLAUDE_MODEL`; absent when the former is malformed (the
+ *   Claude image option is then unavailable).
+ * - `ollamaModel`: `QUOKY_OLLAMA_VISION_MODEL` when it is a well-formed LOCAL model; absent otherwise.
+ * - `source`: `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` when that variable is set, else `derived` (the legacy implicit path).
+ */
+export interface ImageUnderstandingOptions {
+  readonly claudeModel?: string;
+  readonly ollamaModel?: string;
+  readonly source: 'QUOKY_IMAGE_UNDERSTANDING_PROVIDER' | 'derived';
+}
+
+export function parseImageUnderstandingOptions(env: NodeJS.ProcessEnv, claudeModel: string): ImageUnderstandingOptions {
+  const own = env.QUOKY_IMAGE_UNDERSTANDING_MODEL;
+  const claude = own === undefined ? claudeModel : CLAUDE_MODEL_SHAPE.test(own) ? own : undefined;
+  const vision = env.QUOKY_OLLAMA_VISION_MODEL?.trim() ?? '';
+  const ollama =
+    vision !== '' && OLLAMA_VISION_MODEL_SHAPE.test(vision) && ollamaModelExecutionLocality(vision) === 'LOCAL'
+      ? vision
+      : undefined;
+  return {
+    ...(claude !== undefined ? { claudeModel: claude } : {}),
+    ...(ollama !== undefined ? { ollamaModel: ollama } : {}),
+    source: env.QUOKY_IMAGE_UNDERSTANDING_PROVIDER !== undefined ? 'QUOKY_IMAGE_UNDERSTANDING_PROVIDER' : 'derived',
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const continuationReceiverMode = parseContinuationReceiverMode(env.QUOKY_CONTINUATION_RECEIVER_MODE);
   // R2 production has no live containment. The offline activation factory is not AppModule wiring.
@@ -441,11 +480,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ...parseCodexModel(env.QUOKY_CODEX_MODEL),
       ollamaBin: env.OLLAMA_CLI_BIN ?? 'ollama',
       ollamaModel: env.OLLAMA_MODEL ?? 'llama3.1',
+      ollamaModelConfigured: (env.OLLAMA_MODEL ?? '') !== '',
       // Registration flag only (ADR-0092): opt-out, exact true/false, never inferred from OLLAMA_MODEL.
       ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
       chat: parseChatProviderSelection(env),
     },
     imageUnderstanding: parseImageUnderstandingConfig(env, claudeModel),
+    imageUnderstandingOptions: parseImageUnderstandingOptions(env, claudeModel),
     git: { remoteEnabled: gitRemoteEnabled, mergeEnabled: gitMergeEnabled },
     work: {
       summaryEnabled: parseExactBoolean(

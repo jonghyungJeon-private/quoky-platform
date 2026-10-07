@@ -11,6 +11,7 @@ import {
   renderDashboard,
   renderForgetConfirm,
   renderMemoryPage,
+  renderProviderSelectionPage,
   renderReminderCancelConfirm,
   renderSignInPage,
   renderStatusPage,
@@ -48,6 +49,9 @@ import type { OpsActions, OpsUiEventLog, OpsViewModelSource } from './view-model
  *   same-origin `POST` with the session CSRF token. Executing posts also carry a one-time action nonce bound to the
  *   session and to the subject shown on the confirmation page (`intents.ts`), so a double submit runs once. Without
  *   `actions` the listener is the Phase 1 read-only screen.
+ * - **Model defaults (runtime switching, ADR-0092 / ADR-0111 amendments).** Only when `actions` offers them: `GET
+ *   /providers` lists every selectable default with one form each, and `POST /actions/providers/select` (session CSRF
+ *   token + a one-time nonce whose subject is that option) sets it. The outcome page shows a code and fixed copy only.
  * - **Approve and reject (OPS-2b, ADR-0113 D7).** Only when `actions` offers them: a metadata-only confirmation page
  *   (`GET /approvals/decide?id=`), then `POST /actions/approvals/approve` (with the chat preview's confirmation
  *   reference) or `POST /actions/approvals/reject`, each with the session CSRF token and its one-time nonce whose
@@ -290,6 +294,23 @@ export class OpsUiServer {
         );
         return;
       }
+      case '/providers': {
+        const actions = this.options.actions;
+        if (actions?.providerSelection === undefined || actions.setProviderDefault === undefined) break;
+        const session = this.currentSession(req);
+        if (session === undefined) return this.redirect(res, '/signin');
+        const page = await actions.providerSelection();
+        const nonces = new Map<string, string>();
+        if (page.status === 'OK') {
+          for (const tier of [page.chat, page.image]) {
+            for (const option of [...tier.options, ...(tier.reset ? [tier.reset] : [])]) {
+              if (!option.current) nonces.set(option.subject, this.intents.issue(session.id, 'provider-select', option.subject));
+            }
+          }
+        }
+        this.sendPage(res, 200, renderProviderSelectionPage(page, session.csrfToken, nonces));
+        return;
+      }
       case '/actions/reminders/cancel':
       case '/memories': {
         const actions = this.options.actions;
@@ -382,6 +403,23 @@ export class OpsUiServer {
             this.audit('memory.forget.confirm', run.outcome.code, run.status === 'REPEATED');
             this.sendPage(res, 200, renderActionOutcome('기억 잊기', run.outcome, run.status === 'REPEATED'));
           });
+      case '/actions/providers/select': {
+        const select = actions.setProviderDefault?.bind(actions);
+        if (select === undefined || actions.providerSelection === undefined) return undefined;
+        return (req, res) =>
+          this.inSession(req, res, async (session, form) => {
+            const intent = this.intents.find(session.id, 'provider-select', form.get('nonce') ?? undefined);
+            if (intent === undefined) return this.staleIntent(res);
+            const run = await this.intents.runOnce(intent, () => select(intent.subject));
+            // The other options of the same page stay valid; this one is spent.
+            this.audit('provider.select', run.outcome.code, run.status === 'REPEATED');
+            this.sendPage(
+              res,
+              200,
+              renderActionOutcome('모델 기본값', run.outcome, run.status === 'REPEATED', { label: '모델 기본값으로 돌아가기', href: '/providers' }),
+            );
+          });
+      }
       case '/actions/approvals/approve':
       case '/actions/approvals/reject': {
         const decide = actions.decideApproval?.bind(actions);

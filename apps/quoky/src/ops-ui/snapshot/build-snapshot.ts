@@ -66,6 +66,17 @@ export interface OpsImageUnderstandingSelection {
   readonly locality: 'LOCAL' | 'REMOTE' | 'NONE';
 }
 
+/**
+ * Runtime model switch (ADR-0092 / ADR-0111 amendments, runtime switching): the EFFECTIVE defaults (operations-UI
+ * default → configuration → derived), each with its source, and how many open conversations carry their own chat
+ * override. Labels only (`claude:sonnet`, `codex`, `ollama:<model>`; image `claude`/`ollama`/`off`).
+ */
+export interface OpsProviderSelectionSummary {
+  readonly chat: { readonly label: string; readonly source: string; readonly ready: boolean | undefined };
+  readonly image: { readonly choice: string; readonly source: string };
+  readonly sessionOverrides: number | undefined;
+}
+
 export interface OpsConnectorView {
   readonly source: string;
   readonly readOnly: boolean;
@@ -102,6 +113,8 @@ export interface OpsSnapshotSources {
   readonly providers: OpsProviderReadinessSource;
   /** ADR-0111 amendment A5: shown in the providers panel; absent → the field reads `unknown`. */
   readonly imageUnderstanding?: OpsImageUnderstandingSelection;
+  /** Runtime model switch: the effective defaults shown in the providers panel; absent → not shown. */
+  readonly providerSelection?: () => Promise<OpsProviderSelectionSummary>;
   readonly owner: () => Promise<OpsOwnerResolution>;
   readonly reminders: {
     readonly enabled: boolean;
@@ -119,7 +132,13 @@ export interface OpsSnapshotSources {
   /** Archived memory records of the owner (ADR-0106 amendment); a count only, never content. */
   readonly archivedMemoryCount?: (actorId: Id) => Promise<{ readonly count: number; readonly capped: boolean }>;
   /** OPS-2 (ADR-0113 D7): which handling actions are wired; their links appear only for a resolved owner. */
-  readonly handling?: { readonly reminderCancel: boolean; readonly memoryForget: boolean; readonly approvals?: boolean };
+  readonly handling?: {
+    readonly reminderCancel: boolean;
+    readonly memoryForget: boolean;
+    readonly approvals?: boolean;
+    /** Runtime model switch: the `/providers` defaults page is wired. */
+    readonly providerSelection?: boolean;
+  };
 }
 
 type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes' | 'links'>;
@@ -170,7 +189,7 @@ export class OpsSnapshotBuilder {
     const ownerPromise = this.sources.owner().catch((): OpsOwnerResolution => ({ status: 'NONE' }));
     const panels = await Promise.all([
       panel('runtime', '런타임 / 상태', () => this.runtime()),
-      panel('providers', 'AI 공급자 준비 상태 (기능별)', () => this.providers()),
+      panel('providers', 'AI 공급자 준비 상태 (기능별)', async () => this.providers(await ownerPromise)),
       panel('reminders', '알림 대기열', async () => this.reminders(await ownerPromise)),
       panel('approvals', '대기 중인 승인 (메타데이터만)', () => this.approvals(now)),
       panel('connectors', '커넥터 상태', () => this.connectors()),
@@ -217,7 +236,7 @@ export class OpsSnapshotBuilder {
     return { fields, notes: [] };
   }
 
-  private async providers(): Promise<PanelBody> {
+  private async providers(owner: OpsOwnerResolution): Promise<PanelBody> {
     const all = this.sources.providers.all();
     const available = new Set(await this.sources.providers.available());
     const capabilities: string[] = [];
@@ -248,11 +267,26 @@ export class OpsSnapshotBuilder {
         ? selection.provider
         : `${selection.provider} (QUOKY_OLLAMA_ENABLED에서 결정)`,
     }];
+    const effective = await this.sources.providerSelection?.().catch(() => undefined);
+    const effectiveFields: OpsField[] = effective === undefined ? [] : [
+      {
+        label: '대화 모델 기본값 (실행 중 적용)',
+        value: `${effective.chat.label} · 출처: ${effective.chat.source} · ${effective.chat.ready === true ? '준비됨' : effective.chat.ready === false ? '준비 안 됨 (Claude가 대신 답해요)' : OPS_UNKNOWN}`,
+      },
+      { label: '이미지 모델 기본값 (실행 중 적용)', value: `${effective.image.choice} · 출처: ${effective.image.source}` },
+      { label: '대화별로 바꾼 대화', value: effective.sessionOverrides === undefined ? OPS_UNKNOWN : `${effective.sessionOverrides}개` },
+    ];
+    const links =
+      this.sources.handling?.providerSelection === true && owner.status === 'RESOLVED'
+        ? [{ label: '모델 기본값 바꾸기', href: '/providers' }]
+        : [];
     return {
       fields: [
         ...fields,
         { label: '이미지 이해 공급자 (설정)', value: imageSelectionLabel(this.sources.imageUnderstanding) },
+        ...effectiveFields,
       ],
+      ...(links.length > 0 ? { links } : {}),
       table: { columns: ['기능', '상태', '준비/등록'], rows, emptyText: '등록된 공급자가 없어요.' },
       notes: [
         '공급자 이름은 표시하지 않아요 (ARCHITECTURE.md §5.3/§12, 소유자 결정 14 대기).',

@@ -9633,7 +9633,7 @@ describe('Stage 2B Slice 5A — ConversationRuntime integration seam', () => {
 
     expect(result.status).toBe('RESPONDED');
     expect(executeRouting).not.toHaveBeenCalled();
-    expect(legacySelect).toHaveBeenCalledWith(Capability.PROJECT_ANALYSIS);
+    expect(legacySelect).toHaveBeenCalledWith(Capability.PROJECT_ANALYSIS, { sessionId: expect.any(String), actorId: expect.any(String) });
     expect(providerExecute).toHaveBeenCalledTimes(1);
   });
 
@@ -11380,8 +11380,17 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     locality?: 'LOCAL' | 'REMOTE';
     noProvider?: boolean;
     execute?: (request: AiRequest) => Promise<AiExecutionResult>;
-    /** ADR-0111 amendment A2: the composition-time image policy (absent = the LOCAL-only default). */
-    imageLocalities?: readonly ('LOCAL' | 'REMOTE')[];
+    /** ADR-0111 amendment A2: the composition-time image policy (absent = the LOCAL-only default), or (runtime
+     * switching) a per-turn resolver. */
+    imageLocalities?:
+      | readonly ('LOCAL' | 'REMOTE')[]
+      | ((context: { sessionId?: string }) => Promise<readonly ('LOCAL' | 'REMOTE')[]>);
+    /** Runtime switching race tests: a pause gate inside the turn (before the Task is created). */
+    beforeCreateTask?: () => Promise<void>;
+    /** Runtime switching race tests: what the router answers from the second selection on. */
+    reselect?: 'same' | 'other' | 'none';
+    /** Runtime switching race tests: the router's synchronous dispatch-time check. */
+    stillEligible?: () => boolean;
   } = {}) {
     const { storage, taskSaves, runSaves } = makeTaskStorage();
     const { deps: base, calls } = makeDeps();
@@ -11401,11 +11410,15 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
         return execute(request);
       },
     };
+    const other: AiProvider = { ...provider, id: 'vision-switched-to', async execute(request) { requests.push(request); return execute(request); } };
     const taskManager = new TaskManager(storage);
     const deps: ConversationRuntimeDeps = {
       ...base,
       tasks: {
-        createTask: (...a) => taskManager.createTask(...a),
+        createTask: async (...a) => {
+          await o.beforeCreateTask?.();
+          return taskManager.createTask(...a);
+        },
         transition: (...a) => taskManager.transition(...a),
         startRun: (...a) => taskManager.startRun(...a),
         async completeRun(run, opts) {
@@ -11423,18 +11436,23 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
         async recordAssistant(reply: string) { recorded.push(reply); return undefined; },
       },
       router: {
-        async select(capability) {
+        async select(capability, context) {
           selected.push(capability);
+          contexts.push(context);
           if (o.noProvider) throw new NoProviderAvailableError(capability);
+          if (selected.length > 1 && o.reselect === 'none') throw new NoProviderAvailableError(capability);
+          if (selected.length > 1 && o.reselect === 'other') return other;
           return provider;
         },
+        ...(o.stillEligible ? { isStillEligible: () => (o.stillEligible as () => boolean)() } : {}),
       },
     };
+    const contexts: unknown[] = [];
     const runtime = new ConversationRuntime(
       deps,
       o.imageLocalities ? { imageUnderstandingLocalities: o.imageLocalities } : {},
     );
-    return { runtime, calls, selected, requests, recorded, completed, failed, execute, taskSaves, runSaves };
+    return { runtime, calls, selected, contexts, requests, recorded, completed, failed, execute, taskSaves, runSaves };
   }
 
   /** Everything the turn persisted or logged except the user's own short-term record (which is the InboundMessage). */
@@ -11447,7 +11465,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
 
     expect(result.status).toBe('RESPONDED');
     expect(result.reply.text).toContain('주간 매출 막대 그래프예요.');
-    expect(h.selected).toEqual([Capability.IMAGE_UNDERSTANDING]);
+    expect(h.selected).toEqual([Capability.IMAGE_UNDERSTANDING, Capability.IMAGE_UNDERSTANDING]); // selection + dispatch re-check
     expect(h.calls.classify).toBe(0);
     expect(h.requests).toHaveLength(1);
     const request = h.requests[0]!;
@@ -11502,6 +11520,109 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     });
   });
 
+  it('runtime switching: the policy is resolved on EVERY image turn, so switching away from the cloud stops egress at once', async () => {
+    const effective = { localities: ['LOCAL', 'REMOTE'] as readonly ('LOCAL' | 'REMOTE')[] };
+    const asked: unknown[] = [];
+    const h = imageTurn({
+      locality: 'REMOTE',
+      imageLocalities: async (context) => {
+        asked.push(context);
+        return effective.localities;
+      },
+    });
+    const first = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(first.reply.text).toContain('주간 매출 막대 그래프예요.');
+    expect(h.requests).toHaveLength(1);
+    // The owner switches the image selection to ollama/off: the very next turn sends nothing to the REMOTE provider.
+    effective.localities = ['LOCAL'];
+    const second = await h.runtime.handle(imageMessage('이것도 설명해줘'));
+    expect(second.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.requests).toHaveLength(1);
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    // The resolver and the router both receive the turn's session and Actor (the first turn re-checks at dispatch).
+    expect(asked).toHaveLength(3);
+    expect(asked[0]).toEqual({ sessionId: expect.any(String), actorId: expect.any(String) });
+    expect(h.contexts).toHaveLength(3);
+  });
+
+  it('runtime switching race: a selection change between selection and dispatch sends nothing (pause gate)', async () => {
+    const effective = { localities: ['LOCAL', 'REMOTE'] as readonly ('LOCAL' | 'REMOTE')[] };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let paused!: () => void;
+    const reachedGate = new Promise<void>((resolve) => (paused = resolve));
+    const h = imageTurn({
+      locality: 'REMOTE',
+      imageLocalities: async () => effective.localities,
+      beforeCreateTask: async () => {
+        paused();
+        await gate;
+      },
+    });
+    const turn = h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    await reachedGate;
+    // A concurrent `이미지 모델 변경: off` lands while the turn is between selection and dispatch.
+    effective.localities = ['LOCAL'];
+    release();
+    const result = await turn;
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+    expect(h.failed).toEqual(['image selection changed before dispatch; nothing was sent']);
+    expect(h.taskSaves.at(-1)?.status).toBe(TaskStatus.FAILED);
+    expect(h.calls.loggerInfoCalls.find((c) => c.message === 'image turn answered without a provider')?.fields).toEqual({
+      reason: 'selection-changed',
+      imageCount: 1,
+    });
+  });
+
+  it('runtime switching race: the synchronous live check runs last; a switch during the re-selection sends nothing', async () => {
+    const live = { eligible: true };
+    let reselections = 0;
+    const h = imageTurn({
+      locality: 'LOCAL',
+      imageLocalities: async () => {
+        reselections += 1;
+        // The second resolution happens inside the dispatch re-check; the owner switches `off` right then.
+        if (reselections === 2) live.eligible = false;
+        return ['LOCAL'];
+      },
+      stillEligible: () => live.eligible,
+    });
+    const result = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+    // Without the switch the same turn is sent once.
+    const ok = imageTurn({ locality: 'LOCAL', stillEligible: () => true });
+    await ok.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(ok.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['another provider', 'other' as const],
+    ['no provider', 'none' as const],
+  ])('runtime switching race: when the router now selects %s at dispatch, the first one receives nothing', async (_label, reselect) => {
+    const h = imageTurn({ locality: 'LOCAL', reselect });
+    const result = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it('runtime switching: a failing resolver means LOCAL only (fail closed)', async () => {
+    const h = imageTurn({
+      locality: 'REMOTE',
+      imageLocalities: async () => {
+        throw new Error('selection store unavailable');
+      },
+    });
+    const result = await h.runtime.handle(imageMessage('이거 뭐야?'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.calls.loggerWarnCalls.some((c) => c.message === 'image policy resolution failed; local only')).toBe(true);
+  });
+
   it('amendment A2: an explicit LOCAL-only policy behaves exactly like the default', async () => {
     const h = imageTurn({ locality: 'REMOTE', imageLocalities: ['LOCAL'] });
     const result = await h.runtime.handle(imageMessage('이거 뭐야?'));
@@ -11514,7 +11635,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     const result = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
     expect(result.status).toBe('RESPONDED');
     expect(result.reply.text).toContain('주간 매출 막대 그래프예요.');
-    expect(h.selected).toEqual([Capability.IMAGE_UNDERSTANDING]);
+    expect(h.selected).toEqual([Capability.IMAGE_UNDERSTANDING, Capability.IMAGE_UNDERSTANDING]); // selection + dispatch re-check
     expect(h.requests).toHaveLength(1);
     expect(h.requests[0]?.images).toEqual([{ path: IMAGE_REF, mimeType: 'image/png' }]);
     expect(h.requests[0]?.prompt).not.toContain(IMAGE_REF);

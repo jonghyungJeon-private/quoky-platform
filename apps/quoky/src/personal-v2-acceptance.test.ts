@@ -72,6 +72,7 @@ import type {
   GoldenCase,
   GoldenSuiteFile,
 } from '../../../packages/core/src/application/golden/golden-eval';
+import { stubProviderSelection } from './provider-selection/test-support';
 import precedenceCorpus from '../../../packages/core/src/application/golden/reminder-todo-precedence.v1.json';
 import routingCorpus from '../../../packages/core/src/application/golden/turn-handler-routing.v1.json';
 import actionShapedCorpus from '../../../packages/core/src/application/golden/action-shaped-fallthrough.v1.json';
@@ -144,6 +145,9 @@ const EXPECTED_REGISTRY: ReadonlyArray<readonly [string, TurnHandlerStage, numbe
   ['memory-commands', 'pre-classify', 50],
   // ADR-0107 D3 (amends ADR-0096 D5): owner learning commands, after memory commands (50), before to-dos (100).
   ['feedback.learning', 'pre-classify', 60],
+  // ADR-0092 amendment (runtime switching): the owner's model command (`모델 변경: …`, `/model`), after learning (60),
+  // before to-dos (100). Always registered: it is owner-only and changes only the conversation's own override.
+  ['model-selection', 'pre-classify', 70],
   ['work-chat.todo', 'pre-classify', 100],
   // ADR-0110 D3 (amends ADR-0096 D5): schedule questions from the configured calendar, after to-dos, before reminders.
   ['calendar', 'pre-classify', 150],
@@ -297,6 +301,22 @@ async function boot(): Promise<Harness> {
       },
     });
   }
+
+  // ADR-0092 amendment (runtime switching): the model command's two host touches are replaced the same way — the local
+  // Ollama inventory (`ollama list`) answers from a fixture, and an on-demand model instance the catalog adds later is
+  // stubbed as it is added — so no command can spawn a CLI here.
+  stubProviderSelection(app, (provider) =>
+    Object.assign(provider, {
+      async isAvailable() {
+        availabilityProbes += 1;
+        return true;
+      },
+      async execute() {
+        providerCalls += 1;
+        return { text: stubReply, artifacts: [] };
+      },
+    }),
+  );
 
   // ADR-0110 (CAL-2): the configured Google adapter is the production instance; only its read is replaced (on the
   // INSTANCE the handler holds), so no network call is possible and every read is recorded.
@@ -620,9 +640,10 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);
   });
 
-  it('registers exactly nine turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
-    expect(harness.handlers).toHaveLength(9);
-    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(9);
+  // Ratchet 9 → 10: the runtime model switch adds the `model-selection` handler (ADR-0092 amendment, runtime switching).
+  it('registers exactly ten turn handlers in their fixed stage/order (control → post-anchor → pre-classify)', () => {
+    expect(harness.handlers).toHaveLength(10);
+    expect(new Set(harness.handlers.map((handler) => handler.id)).size).toBe(10);
     const byStage = (harness.runtime as unknown as {
       turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
     }).turnHandlersByStage;

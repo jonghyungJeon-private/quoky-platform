@@ -22,6 +22,8 @@ export const WORKSPACE_WRITER = Symbol('WorkspaceWriter');
 export const COMMAND_RUNNER = Symbol('CommandRunner');
 export const EXECUTION_PLANNER = Symbol('ExecutionPlanner');
 export const PROVIDER_SELECTOR = Symbol('ProviderSelector');
+// ADR-0092 amendment (runtime switching): the owner's provider-selection policy the router consults.
+export const PROVIDER_SELECTION_POLICY = Symbol('ProviderSelectionPolicy');
 export const AI_PROVIDERS = Symbol('AiProviders');
 export const CONNECTOR_PROVIDERS = Symbol('ConnectorProviders');
 export const TOOL_PROVIDERS = Symbol('ToolProviders');

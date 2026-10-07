@@ -4,7 +4,7 @@ import type {
   InboundTextAttachment,
 } from '../domain';
 import { executionLocalityOf } from '../ports';
-import type { AiExecutionLocality, AiImageInput, AiProvider } from '../ports';
+import type { AiExecutionLocality, AiImageInput, AiProvider, ProviderSelectionContext } from '../ports';
 import type { NoticeLanguage } from './chat-policy/internal-action-vocabulary';
 import { prepareAttachedTextFiles, promptSafeAttachmentName } from './attachment-context';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
@@ -41,6 +41,16 @@ export function imageUnderstandingPolicyOf(
   const known = (['LOCAL', 'REMOTE'] as const).filter((locality) => allowedLocalities.includes(locality));
   return Object.freeze({ allowedLocalities: Object.freeze(known) });
 }
+
+/**
+ * ADR-0111 amendment (runtime switching): the image egress policy resolved per request from the owner's EFFECTIVE
+ * image selection (session override → operations-UI default → configuration), so switching away from a cloud image
+ * provider stops egress on the very next image turn. It must resolve; a rejection is treated as the local-only
+ * default (fail closed).
+ */
+export type ImageUnderstandingLocalitiesResolver = (
+  context: ProviderSelectionContext,
+) => Promise<readonly AiExecutionLocality[]>;
 
 /** Whether `provider` may receive image bytes under `policy` (its declared locality, as data). */
 export function imageProviderAllowed(

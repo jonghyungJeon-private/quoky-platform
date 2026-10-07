@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Runtime model switching — implemented on branch, not merged (2026-10-07)
+
+ADR-0092 and ADR-0111 runtime-switching amendments (owner decision 2026-10-07): the chat tier and image understanding are
+switchable without a restart — the operations UI sets the persisted default (`<db dir>/ops/provider-selection.json`),
+and the owner's chat command (`모델 변경: …`, `/model …`) overrides it for one conversation only. Precedence: session →
+persisted default → env selector → derived default. A new Core port (`ProviderSelectionPolicy`) gives the router the
+owner's preference as data; code, review, planning and policy-sensitive chat stay on Claude; cloud image egress is
+allowed only while the effective image choice is `claude`. No migration; `ConversationRuntimeDeps` stays 35; turn
+handlers 9 → 10. Live verification on the owner host is a Strict step and has not been run.
+
 ### Chat provider selector — implemented on branch, not merged (2026-10-07)
 
 ADR-0092 amendment (owner decision 2026-10-07): `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` (unset derives

@@ -310,6 +310,35 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(panelOf(none, 'providers').fields.map((f) => f.label)).toEqual(['이미지 이해 공급자 (설정)']);
   });
 
+  it('providers: the runtime model switch shows the effective defaults, sources, override count and the change link', async () => {
+    const base = fixture();
+    const view = await new OpsSnapshotBuilder({
+      ...base,
+      providerSelection: async () => ({
+        chat: { label: 'codex', source: '운영 화면 기본값', ready: false },
+        image: { choice: 'off', source: '설정' },
+        sessionOverrides: 2,
+      }),
+      handling: { reminderCancel: false, memoryForget: false, providerSelection: true },
+    }).build();
+    expect(field(view, 'providers', '대화 모델 기본값 (실행 중 적용)')).toBe('codex · 출처: 운영 화면 기본값 · 준비 안 됨 (Claude가 대신 답해요)');
+    expect(field(view, 'providers', '이미지 모델 기본값 (실행 중 적용)')).toBe('off · 출처: 설정');
+    expect(field(view, 'providers', '대화별로 바꾼 대화')).toBe('2개');
+    expect(panelOf(view, 'providers').links).toEqual([{ label: '모델 기본값 바꾸기', href: '/providers' }]);
+    // No link without a resolved owner, and no fields when the switch is not composed.
+    const noOwner = await new OpsSnapshotBuilder({
+      ...base,
+      owner: async () => ({ status: 'AMBIGUOUS' }),
+      handling: { reminderCancel: false, memoryForget: false, providerSelection: true },
+    }).build();
+    expect(panelOf(noOwner, 'providers').links).toBeUndefined();
+    expect(field(noOwner, 'providers', '대화별로 바꾼 대화')).toBeUndefined();
+    // A failing source keeps the panel up without the effective fields.
+    const failing = await new OpsSnapshotBuilder({ ...base, providerSelection: async () => { throw new Error('x'); } }).build();
+    expect(panelOf(failing, 'providers').state).toBe('OK');
+    expect(field(failing, 'providers', '대화 모델 기본값 (실행 중 적용)')).toBeUndefined();
+  });
+
   it('reminders: active ones by number, labels as `알림 목록` shows them, guarded on the full body', async () => {
     const view = await new OpsSnapshotBuilder(fixture()).build();
     const rows = panelOf(view, 'reminders').table?.rows ?? [];

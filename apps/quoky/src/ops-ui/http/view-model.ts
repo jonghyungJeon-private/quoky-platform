@@ -133,6 +133,41 @@ export type OpsApprovalPreview =
 
 export type OpsApprovalDecision = 'approve' | 'reject';
 
+/**
+ * Runtime model switch (ADR-0092 / ADR-0111 amendments, runtime switching): one selectable default on the providers
+ * page. `subject` is opaque to `http/*` (it becomes the one-time intent's subject; the form never carries it).
+ */
+export interface OpsProviderOptionView {
+  readonly subject: string;
+  readonly label: string;
+  readonly readiness: string;
+  readonly egress: string;
+  readonly current: boolean;
+  /** A one-line warning shown with the option (e.g. that images leave the host). */
+  readonly warning?: string;
+}
+
+export interface OpsProviderTierView {
+  /** The effective default and where it comes from. */
+  readonly effective: string;
+  readonly source: string;
+  readonly readiness: string;
+  readonly options: readonly OpsProviderOptionView[];
+  /** The "reset to the configuration default" option; absent when no operations-UI default is stored. */
+  readonly reset?: OpsProviderOptionView;
+}
+
+export type OpsProviderSelectionPage =
+  | {
+      readonly status: 'OK';
+      readonly chat: OpsProviderTierView;
+      readonly image: OpsProviderTierView;
+      /** How many open conversations carry their own chat-command override. */
+      readonly sessionOverrides: string;
+      readonly notes: readonly string[];
+    }
+  | { readonly status: 'REFUSED'; readonly outcome: OpsActionOutcome };
+
 export interface OpsActions {
   /** Read-only: what a cancel confirmation page shows for `알림 N`. */
   reminderCancelPreview(displayNo: number): Promise<OpsReminderCancelPreview>;
@@ -151,4 +186,8 @@ export interface OpsActions {
    * confirmation reference; it records the approval only. The outcome is a category and fixed copy, never the reply.
    */
   decideApproval?(approvalId: string, decision: OpsApprovalDecision, reference: string): Promise<OpsActionOutcome>;
+  /** Runtime model switch, read-only: the effective defaults, their sources, readiness and the selectable options. */
+  providerSelection?(): Promise<OpsProviderSelectionPage>;
+  /** Runtime model switch: set (or reset) one default. `subject` is the option's, taken from the server-side intent. */
+  setProviderDefault?(subject: string): Promise<OpsActionOutcome>;
 }

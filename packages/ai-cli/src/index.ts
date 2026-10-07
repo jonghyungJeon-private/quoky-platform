@@ -66,6 +66,13 @@ export {
   parseCodexJsonEvents,
 } from './codex-cli-provider';
 export type { CodexCliProviderOptions } from './codex-cli-provider';
+export {
+  MAX_LISTED_OLLAMA_MODELS,
+  listLocalOllamaModels,
+  parseOllamaListModelNames,
+  sameOllamaModel,
+} from './ollama-models';
+export type { OllamaModelInventory } from './ollama-models';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
 

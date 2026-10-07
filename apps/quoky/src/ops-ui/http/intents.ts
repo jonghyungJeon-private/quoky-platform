@@ -12,7 +12,7 @@ import type { OpsActionOutcome } from './view-model';
  * (double-submit is idempotent). Intents live in memory, per session, for at most {@link OPS_INTENT_TTL_MS}.
  */
 
-export type OpsIntentKind = 'reminder-cancel' | 'memory-forget' | 'approval-approve' | 'approval-reject';
+export type OpsIntentKind = 'reminder-cancel' | 'memory-forget' | 'approval-approve' | 'approval-reject' | 'provider-select';
 
 /** An intent is accepted for this long after its confirmation page was served (the ADR-0106 code window). */
 export const OPS_INTENT_TTL_MS = 30 * 60 * 1000;

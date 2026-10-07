@@ -22,6 +22,7 @@ import {
   WORK_CHAT_TURN_HANDLERS,
 } from './feature-tokens';
 import { MEMORY_TURN_HANDLERS } from './memory.providers';
+import { MODEL_SELECTION_TURN_HANDLERS } from './provider-selection.providers';
 import { turnHandlersProvider } from './turn-handlers.providers';
 
 const NOW = '2026-10-06T01:00:00.000Z';
@@ -40,6 +41,7 @@ async function compose(calendarProviders: Provider[]) {
       empty(REMINDER_TURN_HANDLERS),
       empty(FEEDBACK_TURN_HANDLERS),
       empty(MEMORY_TURN_HANDLERS),
+      empty(MODEL_SELECTION_TURN_HANDLERS),
       ...calendarProviders,
       turnHandlersProvider,
     ],

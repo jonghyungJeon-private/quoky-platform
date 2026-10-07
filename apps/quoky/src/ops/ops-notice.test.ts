@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -198,6 +198,21 @@ describe('OPS_NOTICE (ADR-0102 D7)', () => {
       expect(store.read()).toBe('{"version":1,"sent":[]}');
       expect(statSync(path.join(dir, 'ops')).mode & 0o777).toBe(0o700);
       expect(statSync(ledgerPath).mode & 0o777).toBe(0o600);
+    });
+
+    it('refuses a symlinked ledger directory or ledger file (the shared private-file helper; fail closed)', () => {
+      const outside = path.join(dir, 'outside');
+      mkdirSync(outside, { mode: 0o700 });
+      symlinkSync(outside, path.join(dir, 'ops'));
+      const store = fileLedgerStore(path.join(dir, 'ops', 'notice-ledger.json'));
+      expect(() => store.write('{"version":1,"sent":[]}')).toThrow();
+      expect(readdirSync(outside)).toEqual([]);
+      const linked = path.join(dir, 'linked.json');
+      symlinkSync(path.join(outside, 'x.json'), linked);
+      expect(() => fileLedgerStore(linked).read()).toThrow();
+      // A regular ledger file under a symlinked directory is not read either.
+      writeFileSync(path.join(outside, 'notice-ledger.json'), '{"version":1,"sent":[]}', { mode: 0o600 });
+      expect(() => store.read()).toThrow();
     });
   });
 });

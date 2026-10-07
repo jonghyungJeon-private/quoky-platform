@@ -27,9 +27,12 @@ export interface FeedbackSummaryTurnHandlerDeps {
 export const FEEDBACK_SUMMARY_TURN_HANDLER_ID = 'feedback.summary';
 /** ADR-0098 D6: `control` stage, order 100. */
 export const FEEDBACK_SUMMARY_TURN_HANDLER_ORDER = 100;
+/**
+ * One line (ADR-0096 D6 budget): the reaction note and the `피드백 요약` command were two lines until the runtime model
+ * switch (ADR-0092 amendment) needed a help line inside the 14-line budget; the text of both is unchanged.
+ */
 export const FEEDBACK_HELP_LINES: readonly string[] = [
-  '- 답변에 👍/👎 반응을 남기면 품질 확인에 쓰여요(반응을 지우면 취소돼요).',
-  '- "피드백 요약": 최근 30일 피드백을 확인해요.',
+  '- 답변에 👍/👎 반응을 남기면 품질 확인에 쓰여요(반응을 지우면 취소돼요). "피드백 요약": 최근 30일 피드백을 확인해요.',
 ];
 
 /**

@@ -99,11 +99,19 @@ import { OllamaCliEmbeddingProvider } from '@quoky/ai-cli';
 
 import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
-import { createChatAiProviders } from './chat-provider-composition';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
 import { createProductionContextBuilder } from './context-builder-provider';
-import { createImageUnderstandingProviders, imageUnderstandingLocalitiesFor } from './image-understanding-provider';
+import { logImageUnderstandingSelection, visionModelsOf } from './image-understanding-provider';
+import { isCliPresent } from './provider-selection/cli-presence';
+import { ProviderCatalog } from './provider-selection/provider-catalog';
+import { ProviderSelectionService } from './provider-selection/provider-selection-service';
+import {
+  ProviderSelectionStore,
+  providerSelectionFileIo,
+  providerSelectionFilePath,
+} from './provider-selection/selection-store';
+import { createProviderSelectionProviders } from './features/provider-selection.providers';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
 import { PersonalGitGuard } from './personal-git-guard';
@@ -129,6 +137,34 @@ const coreLogger = new ConsoleLogger('quoky');
 // none), the v15 receipts view and the runtime's optional write flow. Built once: the calendar handler's help line
 // follows whether a calendar writer exists.
 const connectorWrites = createConnectorWriteComposition({ config, timeZone: config.reminders.timeZone });
+// ADR-0092 amendment + ADR-0111 amendment (runtime switching): the persisted operations-UI default (a private JSON file
+// beside the database, no migration) and the registered providers the owner's selection chooses among. Every chat
+// provider that can run on this host is registered (Claude always; Codex when its CLI is present or it is selected;
+// Ollama chat when OLLAMA_MODEL is set and the CLI is present, or it is selected), plus every configured image option.
+// Which one answers is the router's ProviderSelectionPolicy (ProviderSelectionService); construction spawns nothing.
+const providerSelectionStore = new ProviderSelectionStore(
+  providerSelectionFileIo(providerSelectionFilePath(config.storage.dbPath)),
+  new ConsoleLogger('provider-selection'),
+);
+logImageUnderstandingSelection(config.imageUnderstanding, new ConsoleLogger('image-understanding'));
+const providerCatalog = new ProviderCatalog({
+  ai: config.ai,
+  vision: visionModelsOf(config),
+  ...(providerSelectionStore.get().chat ? { persistedChat: providerSelectionStore.get().chat } : {}),
+  cliPresent: (bin) => isCliPresent(bin),
+  // ADR-0098 D8: opt-in local embeddings (QUOKY_EMBEDDING_ENABLED, default false). Advertises only EMBEDDING and runs
+  // in the runner's default profile like Ollama chat; it never pulls a model.
+  extra: config.embedding.enabled
+    ? [
+        new OllamaCliEmbeddingProvider({
+          bin: config.ai.ollamaBin,
+          model: config.embedding.model,
+          timeoutMs: config.embedding.timeoutMs,
+        }),
+      ]
+    : [],
+  logger: new ConsoleLogger('ai-providers'),
+});
 const runtimeProviderRouting = createProductionRuntimeProviderRoutingActivation({
   mode: config.providerRoutingMode,
   ollama: { ollamaBin: config.ai.ollamaBin },
@@ -292,32 +328,11 @@ const infrastructure: Provider[] = [
   },
   {
     provide: AI_PROVIDERS,
-    // Real CLI execution. Selection is by capability via the router. Chat preference is expressed ONLY by
-    // registration (ADR-0092 + amendment 2026-10-07): QUOKY_CHAT_PROVIDER (claude | codex | ollama; unset derives
-    // from QUOKY_OLLAMA_ENABLED) registers Claude alone, or Ollama/Codex next to Claude. A real readiness probe keeps
-    // an unready chat provider from being selected, so the router falls back to Claude.
-    useFactory: (): AiProvider[] => [
-      ...createChatAiProviders(config.ai, new ConsoleLogger('ai-providers')),
-      // ADR-0098 D8: opt-in local embeddings (QUOKY_EMBEDDING_ENABLED, default false). Advertises only EMBEDDING
-      // and runs in the runner's default profile like Ollama chat; it never pulls a model.
-      ...(config.embedding.enabled
-        ? [
-            new OllamaCliEmbeddingProvider({
-              bin: config.ai.ollamaBin,
-              model: config.embedding.model,
-              timeoutMs: config.embedding.timeoutMs,
-            }),
-          ]
-        : []),
-      // ADR-0111 D4/D5 (MM-2) + amendment A1: exactly the selected image provider (QUOKY_IMAGE_UNDERSTANDING_PROVIDER;
-      // unset = the local Ollama vision model when QUOKY_OLLAMA_VISION_MODEL is set, else none). It advertises only
-      // IMAGE_UNDERSTANDING; the Claude one declares REMOTE and is reachable only under the matching Core policy below.
-      ...createImageUnderstandingProviders(config.imageUnderstanding, {
-        ollamaBin: config.ai.ollamaBin,
-        claudeBin: config.ai.claudeBin,
-        logger: new ConsoleLogger('image-understanding'),
-      }),
-    ],
+    // Real CLI execution. Selection is by capability via the router, with the owner's selection as the router's
+    // ProviderSelectionPolicy (ADR-0092 + amendments; ADR-0111 + amendments). The list is the catalog's live list: a
+    // chat-tier choice of a non-default Claude alias or Ollama model adds one bounded, chat-tier-only instance to it.
+    // A real readiness probe keeps an unready provider from being selected, so the router falls back to Claude.
+    useFactory: (): AiProvider[] => providerCatalog.providers,
   },
   { provide: CONNECTOR_PROVIDERS, useValue: connectorProviders },
   // CAP-012 foundation: immutable empty registry until a separately approved adapter is composed.
@@ -350,8 +365,9 @@ const application: Provider[] = [
   },
   {
     provide: CapabilityRouter,
-    useFactory: (manager: AiProviderManager) => new CapabilityRouter(manager),
-    inject: [AiProviderManager],
+    // ADR-0092 amendment (runtime switching): the owner's effective selection is the router's policy (data only).
+    useFactory: (manager: AiProviderManager, selection: ProviderSelectionService) => new CapabilityRouter(manager, selection),
+    inject: [AiProviderManager, ProviderSelectionService],
   },
   // CAP-008: provider selection is consumed via the ProviderSelector port
   // (CapabilityRouter is its implementation), so the AI capability depends on the
@@ -611,6 +627,7 @@ const application: Provider[] = [
       git: GitManager,
       turnHandlers: readonly ConversationTurnHandler[],
       connectorWriteFlow: ConnectorWriteFlow | null,
+      providerSelection: ProviderSelectionService,
     ) => {
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
@@ -693,8 +710,9 @@ const application: Provider[] = [
       }, {
         gitRemoteEnabled: config.git.remoteEnabled,
         gitMergeEnabled: config.git.mergeEnabled,
-        // ADR-0111 amendment A2: LOCAL only unless the owner selected the cloud (Claude) image provider.
-        imageUnderstandingLocalities: imageUnderstandingLocalitiesFor(config.imageUnderstanding),
+        // ADR-0111 amendment A2 + runtime switching: LOCAL only unless the EFFECTIVE image selection (session override →
+        // operations-UI default → configuration) is the cloud (Claude) image provider — resolved per image turn.
+        imageUnderstandingLocalities: (context) => providerSelection.imageLocalities(context),
       });
     },
     inject: [
@@ -724,6 +742,7 @@ const application: Provider[] = [
       GitManager,
       CONVERSATION_TURN_HANDLERS,
       CONNECTOR_WRITE_FLOW,
+      ProviderSelectionService,
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -768,6 +787,8 @@ const features: Provider[] = [
   }),
   // ADR-0112 (CWR-2): connector-write writers, receipts view and the optional runtime write flow.
   ...connectorWrites.providers,
+  // ADR-0092 amendment (runtime switching): the effective selection service and the owner's model command (pre-classify 70).
+  ...createProviderSelectionProviders({ config, catalog: providerCatalog, store: providerSelectionStore }),
   turnHandlersProvider,
 ];
 

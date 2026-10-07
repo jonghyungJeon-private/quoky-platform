@@ -14,6 +14,7 @@ import {
 } from './feature-tokens';
 import { CALENDAR_TURN_HANDLERS } from './calendar.providers';
 import { MEMORY_TURN_HANDLERS } from './memory.providers';
+import { MODEL_SELECTION_TURN_HANDLERS } from './provider-selection.providers';
 
 type TurnHandlerList = readonly ConversationTurnHandler[];
 
@@ -34,7 +35,8 @@ function contributedHelpLinesOf(handlers: TurnHandlerList): readonly string[] {
 /**
  * Binds the Core `CONVERSATION_TURN_HANDLERS` token to the concatenation of the feature handler lists (ADR-0096 D7:
  * code work, work chat, reminders, feedback, the ADR-0106 memory commands at `pre-classify` order 50 and the ADR-0110
- * calendar handler at `pre-classify` order 150 — an empty list when no calendar is configured, ADR-0110 D5) plus the
+ * calendar handler at `pre-classify` order 150 — an empty list when no calendar is configured, ADR-0110 D5, and the
+ * owner's model-selection command at `pre-classify` order 70 — ADR-0092 amendment, runtime switching) plus the
  * help-intent handler (ADR-0104 D4: `pre-classify`, order 400, after work lookups and before the classifier; LLM-1
  * ships the module, the composition root registers it). The concatenation order carries no meaning:
  * `ConversationRuntime` rejects duplicate ids and dispatches by `(stage, order, id)` (ADR-0096 D2/D5).
@@ -51,6 +53,7 @@ export const turnHandlersProvider: Provider = {
     feedback: TurnHandlerList,
     memory: TurnHandlerList,
     calendar: TurnHandlerList,
+    modelSelection: TurnHandlerList,
   ): TurnHandlerList => {
     const registered: ConversationTurnHandler[] = [
       ...codeWork,
@@ -59,6 +62,7 @@ export const turnHandlersProvider: Provider = {
       ...feedback,
       ...memory,
       ...calendar,
+      ...modelSelection,
     ];
     registered.push(
       createHelpIntentTurnHandler({
@@ -75,5 +79,6 @@ export const turnHandlersProvider: Provider = {
     FEEDBACK_TURN_HANDLERS,
     MEMORY_TURN_HANDLERS,
     CALENDAR_TURN_HANDLERS,
+    MODEL_SELECTION_TURN_HANDLERS,
   ],
 };

@@ -23,6 +23,8 @@ import {
   imageUnderstandingPolicyOf,
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
+  LOCAL_ONLY_IMAGE_UNDERSTANDING_POLICY,
+  type ImageUnderstandingLocalitiesResolver,
   type ImageUnderstandingPolicy,
 } from './image-understanding';
 import {
@@ -38,6 +40,7 @@ import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
 import { parseLearningCommand } from './feedback/learning-commands';
 import { parseMemoryCommand } from './memory-commands/memory-command-grammar';
+import { parseModelSelectionCommand } from './model-selection/model-selection-command';
 import { parseReminderMessage } from './reminders/reminder-grammar';
 import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './execution-command-guard';
 import {
@@ -161,6 +164,7 @@ import {
   TURN_HANDLER_STAGES,
   executionLocalityOf,
   type AiExecutionLocality,
+  type ProviderSelectionContext,
   type AiProvider,
   type AiRequest,
   type Logger,
@@ -796,7 +800,15 @@ export interface ConversationRuntimeDeps {
       opts: { capability: Capability; workspace?: WorkspaceRef; metadata?: Readonly<Record<string, unknown>> },
     ): AiRequest;
   };
-  readonly router: { select(capability: Capability): Promise<AiProvider> };
+  /**
+   * The provider selector. The runtime passes the turn's session as the selection context (ADR-0092 amendment, runtime
+   * switching), so the owner's session-scoped choice can apply; a selector may ignore it.
+   */
+  readonly router: {
+    select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider>;
+    /** Optional synchronous dispatch-time eligibility check (image turns; ADR-0111 amendment, runtime switching). */
+    isStillEligible?(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean;
+  };
   /** Optional Slice 5A seam. Only TaskRun-backed GENERAL_CHAT work turns may use it. */
   readonly runtimeProviderRouting?: RuntimeProviderRouting;
   readonly artifacts: { persistAll(taskId: Id, runId: Id, artifacts: Artifact[]): Promise<Id[]> };
@@ -986,8 +998,10 @@ export interface ConversationRuntimeOptions {
    * Absent → `['LOCAL']` (the ADR-0111 D5 default; behaviour unchanged). The composition root passes
    * `['LOCAL', 'REMOTE']` only when the owner explicitly selected a cloud image provider. A composition-time option,
    * not a deps key: it is configuration, like `gitRemoteEnabled`, and no collaborator.
+   * ADR-0111 amendment (runtime switching): it may instead be a resolver read on every image turn with the turn's
+   * session, so the policy follows the owner's effective image selection; a failing resolver means `['LOCAL']`.
    */
-  readonly imageUnderstandingLocalities?: readonly AiExecutionLocality[];
+  readonly imageUnderstandingLocalities?: readonly AiExecutionLocality[] | ImageUnderstandingLocalitiesResolver;
 }
 
 /** A code-change preview's refs, targets and prepared (read, classified, grant-checked) context content. */
@@ -1603,8 +1617,11 @@ export class ConversationRuntime {
   private readonly clock: () => IsoTimestamp;
   private readonly gitRemoteEnabled: boolean;
   private readonly gitMergeEnabled: boolean;
-  /** ADR-0111 amendment A2: which declared provider localities may receive image bytes (default `LOCAL` only). */
-  private readonly imagePolicy: ImageUnderstandingPolicy;
+  /**
+   * ADR-0111 amendment A2: which declared provider localities may receive image bytes (default `LOCAL` only) — fixed
+   * at composition, or resolved per image turn from the effective selection (runtime switching).
+   */
+  private readonly imagePolicy: ImageUnderstandingPolicy | ImageUnderstandingLocalitiesResolver;
   /** The registered turn handlers per stage, each in `(order, id)` order (ADR-0096 D2). */
   private readonly turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
   /** The handlers' contributed help lines in registry order (ADR-0096 D6); bounded by the composer. */
@@ -1622,7 +1639,8 @@ export class ConversationRuntime {
     this.clock = options.clock ?? now;
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
     this.gitMergeEnabled = options.gitMergeEnabled ?? false;
-    this.imagePolicy = imageUnderstandingPolicyOf(options.imageUnderstandingLocalities);
+    const localities = options.imageUnderstandingLocalities;
+    this.imagePolicy = typeof localities === 'function' ? localities : imageUnderstandingPolicyOf(localities);
     this.approvalDecisions = new ApprovalDecisionService(
       // Read through to the runtime's own deps object (the same collaborators, never a copy).
       {
@@ -2897,7 +2915,7 @@ export class ConversationRuntime {
 
     // (E) Fast path — conversational, no Task needed.
     if (!intent.requiresWork) {
-      const provider = await this.deps.router.select(intent.capability);
+      const provider = await this.deps.router.select(intent.capability, { sessionId: session.id, actorId: actor.id });
       const raw = await provider.execute({ capability: intent.capability, prompt: message.text });
       const result = { ...raw, text: this.guardChatReply(intent.capability, raw.text, message.text) };
       const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
@@ -2913,10 +2931,12 @@ export class ConversationRuntime {
   /**
    * An explicit deterministic command of a registered turn handler (live QA 2026-10-07): a memory command, a learning
    * command (`예시 N 수정: …`, `후보 N 메모: …`, `예시 목록`, …), a work-chat to-do / lookup / connector-write command, a
-   * reminder, or the runtime's own `기억해:` save. Each grammar is whole-message and anchored, so free chat never matches.
+   * reminder, the owner's model-selection command (`모델 변경: codex`, `/model`; ADR-0092 amendment, runtime switching),
+   * or the runtime's own `기억해:` save. Each grammar is whole-message and anchored, so free chat never matches.
    */
   private isExplicitTurnHandlerCommand(text: string): boolean {
     if (parseLearningCommand(text) !== null || parseMemoryCommand(text) !== null) return true;
+    if (parseModelSelectionCommand(text) !== null) return true;
     if (ConversationRuntime.explicitDurableMemoryContent(text) !== null) return true;
     const workChat = detectWorkChatCommand(text);
     if (workChat !== null && workChat.kind !== 'usage') return true;
@@ -7137,7 +7157,7 @@ export class ConversationRuntime {
         return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(undefined) };
       }
 
-      const provider = await this.deps.router.select(capability);
+      const provider = await this.deps.router.select(capability, { sessionId: session.id, actorId: actor.id });
       providerId = provider.id;
       // ADR-0107 D6: the LOCAL_ONLY curated-example layer is composed only now that the provider for this execution
       // is resolved, and only when it declares LOCAL execution (data, never its id). Otherwise — and on the routed
@@ -7258,15 +7278,18 @@ export class ConversationRuntime {
     images: readonly InboundImageAttachment[],
   ): Promise<TurnResult> {
     const capability = Capability.IMAGE_UNDERSTANDING;
+    // Resolved before selection, per turn: an owner who switched away from a cloud image provider stops egress now.
+    const selection = { sessionId: session.id, actorId: actor.id };
+    const imagePolicy = await this.imagePolicyFor(selection);
     let provider: AiProvider;
     try {
-      provider = await this.deps.router.select(capability);
+      provider = await this.deps.router.select(capability, selection);
     } catch (err) {
       if (!(err instanceof NoProviderAvailableError)) throw err;
-      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'no-ready-provider');
+      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'no-ready-provider', imagePolicy);
     }
-    if (!imageProviderAllowed(provider, this.imagePolicy)) {
-      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'locality-not-allowed');
+    if (!imageProviderAllowed(provider, imagePolicy)) {
+      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'locality-not-allowed', imagePolicy);
     }
 
     const intent: Intent = {
@@ -7305,6 +7328,18 @@ export class ConversationRuntime {
         images: imageInputsOf(images),
       };
       await this.deps.dispatchCommit.commit(run.id, run.id);
+      // Dispatch-time re-check (ADR-0111 amendment, runtime switching): the selection may have changed during the awaits
+      // above (a concurrent `이미지 모델 변경: off`, an operations-UI change). Re-resolve the effective image selection and
+      // its locality policy now; no I/O runs between this check and `execute`, so the provider that receives the image
+      // is one the CURRENT selection allows. Otherwise nothing is sent and the reply is the truthful notice.
+      const current = await this.imageDispatchStillAllowed(capability, selection, provider);
+      // Last, synchronously, with nothing awaited before `execute`: the LIVE selection must still make this provider
+      // eligible. A switch that landed while the re-selection above awaited readiness (`ollama` → `off`) is caught here.
+      if (!current.allowed || this.deps.router.isStillEligible?.(capability, selection, provider) === false) {
+        await this.deps.tasks.failRun(run, 'image selection changed before dispatch; nothing was sent', { providerId });
+        await this.deps.tasks.transition(task, TaskStatus.FAILED);
+        return this.respondImageUnderstandingUnavailable(message, session, images.length, 'selection-changed', current.policy);
+      }
       const executed = await provider.execute(request);
       // ADR-0104 D1: the provider-neutral internal-action claim guard also covers an image reply.
       // ADR-0111 D3 + amendment A3: the attachment credential check runs FIRST, on the original reply and every
@@ -7347,12 +7382,45 @@ export class ConversationRuntime {
     message: InboundMessage,
     session: Session,
     imageCount: number,
-    reason: 'no-ready-provider' | 'locality-not-allowed',
+    reason: 'no-ready-provider' | 'locality-not-allowed' | 'selection-changed',
+    imagePolicy: ImageUnderstandingPolicy,
   ): Promise<TurnResult> {
     // Content-free: a fixed reason and a count, never a file name, reference or caption.
     this.deps.logger.info('image turn answered without a provider', { reason, imageCount });
-    const text = renderImageUnderstandingUnavailable(noticeLanguage(undefined, message.text), this.imagePolicy);
+    const text = renderImageUnderstandingUnavailable(noticeLanguage(undefined, message.text), imagePolicy);
     return this.respondComposed(message, session, { context: message.context, text });
+  }
+
+  /**
+   * Whether the already selected image provider may still receive the image: the router, asked again with the same
+   * context, still selects the same provider (compared by its opaque key, never a literal) and the freshly resolved
+   * locality policy still allows its declared locality. Any doubt (no provider now, a resolver failure) is "no".
+   */
+  private async imageDispatchStillAllowed(
+    capability: Capability,
+    selection: ProviderSelectionContext,
+    provider: AiProvider,
+  ): Promise<{ readonly allowed: boolean; readonly policy: ImageUnderstandingPolicy }> {
+    let again: AiProvider;
+    try {
+      again = await this.deps.router.select(capability, selection);
+    } catch {
+      return { allowed: false, policy: await this.imagePolicyFor(selection) };
+    }
+    const policy = await this.imagePolicyFor(selection);
+    return { allowed: again.id === provider.id && imageProviderAllowed(provider, policy), policy };
+  }
+
+  /** The image egress policy for this turn: the composition-time one, or the resolver's answer (fail closed). */
+  private async imagePolicyFor(selection: ProviderSelectionContext): Promise<ImageUnderstandingPolicy> {
+    const policy = this.imagePolicy;
+    if (typeof policy !== 'function') return policy;
+    try {
+      return imageUnderstandingPolicyOf(await policy(selection));
+    } catch {
+      this.deps.logger.warn('image policy resolution failed; local only');
+      return LOCAL_ONLY_IMAGE_UNDERSTANDING_POLICY;
+    }
   }
 
   /**

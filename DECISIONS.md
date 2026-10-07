@@ -14606,6 +14606,110 @@ reconciliation with ADR-0064/ADR-0090 routing.
   image-provider selector lands), Codex for code work once a suggest-only contract exists, and execution-time
   fallback.
 
+### ADR-0092 amendment — Runtime model switching: operations-UI default and a session-scoped owner chat command (2026-10-07)
+
+- **Status:** Accepted — **Product Owner decision of 2026-10-07** ("둘다 권장안으로 진행해": build both the operations-UI
+  default and the OpenClaw-style `/model` command; widen ARCHITECTURE.md §2 principle 1). Amends the amendment above on
+  registration (D2) and visibility (D6); everything else above is unchanged. Independent Architecture Review of the
+  implementation is required before merge (new Core port, ARCHITECTURE.md §2 wording, a Session metadata field).
+- **Context:** The chat model was one `.env.local` setting plus a restart. The owner wants OpenClaw's behaviour: change
+  the default without a restart from the operations UI, and switch the model for the current conversation only from
+  chat, without ever changing the global default from chat.
+- **Decision:**
+  1. **Constitution (owner-approved).** ARCHITECTURE.md §2 principle 1 now reads "through installation configuration, the
+     operations UI, or an owner chat command (session-scoped)". "Users never pick a model per request", "the router
+     selects by capability" and "the answering provider is recorded for audit only" are kept; principle 2 is untouched.
+  2. **Core port `ProviderSelectionPolicy`** (`packages/core/src/ports/provider-selection-policy.port.ts`, token
+     `PROVIDER_SELECTION_POLICY`): `preferenceFor(capability, { sessionId? }) → Promise<{ eligible: string[]; order:
+     'listed' | 'priority' } | null>`. The keys are the registered providers' ids as opaque data; `CapabilityRouter`
+     (optional constructor argument) filters the providers advertising the capability by key, probes only those, and
+     ranks by listed position (`listed`) then advertised priority, or by priority only (`priority`). `null`, or no policy,
+     is exactly the legacy path. Core never names a provider: the router reads `.id` in one `selectionKeyOf` helper and
+     compares it only with the policy's keys (source-scan test). `ProviderSelector.select` gains an optional context;
+     `ConversationRuntime` passes the turn's `sessionId` at its three selection points. `ConversationRuntimeDeps` is
+     unchanged (35); the router dependency's signature widens additively.
+  3. **Precedence** (per tier, highest first): session override → persisted operations-UI default → `QUOKY_CHAT_PROVIDER`
+     → derived default (`QUOKY_OLLAMA_ENABLED`). A layer whose choice cannot run on this host is skipped and reported.
+     Implemented by the composition root's `ProviderSelectionService` (`apps/quoky/src/provider-selection/`), which is the
+     policy.
+  4. **What the switch covers.** The chat tier only — `GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`,
+     `READONLY_LOOKUP` (eligible: the effective choice, then Claude as the selection-time fallback) — plus image
+     understanding (ADR-0111 amendment, runtime switching). `CODE_IMPLEMENTATION`, `CODE_REVIEW`, `ARCHITECTURE_PLANNING`,
+     `PROJECT_ANALYSIS`, `TEST_EXECUTION` and `POLICY_SENSITIVE_CHAT` stay on Claude exactly as above and are fully
+     independent of every runtime selection — neither a session override nor the operations-UI default changes their
+     routing. Their eligible set depends only on the static installation configuration and equals what was registered
+     before runtime switching: Claude, plus the `OLLAMA_MODEL` chat instance (the CAP-009 local code fallback at priority
+     40, used only when Claude is not ready) only when `QUOKY_CHAT_PROVIDER` / `QUOKY_OLLAMA_ENABLED` select Ollama — the
+     same behaviour as before, never widened by a runtime choice (Codex review P2 on 52effe2; tested across every runtime
+     change). Every other capability (embedding) gets no preference.
+  5. **Registration (amends D2).** Every chat provider that can run on this host is registered: Claude always; Codex when
+     its CLI is on `PATH` (a filesystem lookup, no spawn) or it is configured or persisted; Ollama chat when `OLLAMA_MODEL`
+     is set and the CLI is present, or it is configured or persisted. Construction spawns nothing and loads no model;
+     readiness probes run only for eligible providers. Models within a provider are bounded: Claude by the alias
+     allow-list `sonnet` / `opus` / `haiku` (and the configured `QUOKY_CLAUDE_MODEL` by its own label); Ollama by the local
+     `ollama list` (LOCAL names only, validated at selection time); Codex by `QUOKY_CODEX_MODEL` or the CLI default only
+     (no per-choice Codex model). A non-default Claude alias or Ollama model is served by one on-demand, chat-tier-only
+     instance (`claude-cli:<alias>`, `ollama-cli:<model>`; at most 12 per process; a composition-root view that refuses
+     every other capability before spawning). This is per-provider-instance switching, not a per-call model argument:
+     `AiRequest` carries no model.
+  6. **Persistence.** The operations-UI default is a private JSON file beside the DB (`<db dir>/ops/provider-selection.json`,
+     mode 0600 in a 0700 directory, atomic replace, version 1) — no SQLite migration (host DB migrations are Strict). A
+     missing file is "no default"; a corrupt, unknown-version or invalid entry is ignored with a value-free code and the
+     configuration applies. The private file is written by the shared helper `writePrivateFileAtomic` (also the
+     `OPS_NOTICE` ledger's): the directory must be a real directory (lstat, never a symlink; 0700), the temp file has an
+     unpredictable name and is created with `O_CREAT | O_EXCL | O_NOFOLLOW` (0600), written, fsynced, closed and renamed;
+     a symlinked file is never read (Codex review P2 on 52effe2). Reads verify the directory too (Codex re-review P2 on
+     9080114): it must be a real directory (lstat, and its realpath is its parent's realpath plus its own name, so the
+     `ops/` directory itself resolves nowhere else) with mode 0700; otherwise the file is ignored, the configuration
+     applies and the store logs `SELECTION_FILE_REFUSED` (the `OPS_NOTICE` ledger read fails closed the same way). The session override is keyed by (Session, Actor)
+     (Codex review P2 on 52effe2: a channel Session is reused for every Actor in that channel or thread): it lives on the
+     Session row's existing JSON `metadata` as `quoky.providerSelection.byActor[<actorId>]`, written by
+     `SessionManager.updateMetadataEntry` — field-scoped on the live row under the shared `SessionWriteLock` (ADR-0113 D7),
+     never a whole-session save — and a write changes only the calling Actor's entry. `ProviderSelectionContext` carries
+     the turn's `actorId` next to its `sessionId`; without both there is no override. The model command reads and changes
+     only the caller's own override, and its list numbers are per (Session, Actor) too. A closed Session has none, so
+     `새 대화` (a new Session) ends it and it expires with its Session.
+  7. **Not a provider pin (ARCHITECTURE.md §12).** The override stores a selection label, never a provider instance or
+     id; the router still selects by capability and readiness, falls back to Claude when the choice is not ready, and
+     applies it to the chat tier only. It is the owner's tier preference that principle 1 now names, not "pinning an AI
+     provider to a Session". Owner-approved 2026-10-07 and recorded in place in ARCHITECTURE.md §12: the "Pinning an AI
+     provider to a Session/Task/Actor" bullet carries the session-scoped owner-preference exception, and the "Surfacing
+     the selected provider" bullet allows only explicit owner requests (`모델 상태`, the operations UI providers panel) to
+     show the effective selection; ordinary replies never do (the composer, the runtime and every turn handler other than
+     `model-selection` emit no selection or provider label; `task_runs.providerId` stays audit-only).
+  8. **Chat command** (ADR-0096 handler `model-selection`, `pre-classify` order 70 — after learning 60, before to-dos
+     100; amends ADR-0096 D5): `모델 상태` / `/model status`, `모델 목록` / `/model` (numbered; numbers valid 30 minutes in
+     that conversation, like the ADR-0107 listings), `모델 변경: <choice|N>` / `/model <choice>`, `이미지 모델 변경: …` /
+     `/model image …`, `모델 기본값으로` / `/model reset` (and the image-only reset). Owner-only (re-checked against
+     `QUOKY_DISCORD_OWNER_IDS` behind the ADR-0091 gate), deterministic, no provider execution (readiness probes and
+     `ollama list` only), no Task. The grammar is provider-free Core (`parseModelSelectionCommand`) and is part of the
+     runtime's explicit-command set, so the anchored-chain word detectors never capture it; "모델 변경해야 할까?" is chat.
+  9. **Help budget (ADR-0096 D6, 14 × 120 unchanged).** The command adds one line; the two feedback lines are merged
+     into one (text unchanged), so the maximum v3 configuration still contributes exactly 14 lines.
+  10. **Operations UI (ADR-0113 D7 rules).** The providers panel shows the effective defaults with their source, readiness
+      and the count of conversations with their own override, and links to `/providers`: one same-origin POST form per
+      option with the session CSRF token and a one-time nonce whose server-side subject is the option, owner-only (fail
+      closed), validated again at execution, persisted, audited, and announced once to the owner DM as
+      `OPS_DECISION_RESULT`. "Reset to the configuration default" removes the stored entry. The cloud image option shows
+      "이 선택은 첨부 이미지를 이 컴퓨터 밖(Anthropic)으로 보내요." No new route outside `ops-ui/*`, no new dependency.
+  11. **Audit.** `task_runs.providerId` still records the answering provider. Every selection change logs
+      `provider.selection.changed` with `surface` (`chat` / `ops-ui`), `actor`, `scope` (`session` / `default`), `tier`,
+      `selection` (a label) and the session id for overrides; never conversation content.
+- **Consequences:** + the owner switches models without a restart, per conversation or as the default; + Core stays
+  provider-agnostic (data-only policy, source-scanned). − Codex and Ollama are probed whenever they are eligible, so a
+  missing login shows as "준비 안 됨" instead of an unregistered provider. − Up to 12 extra chat-tier instances may be
+  registered per process (bounded). − Selection labels (`claude:opus`, `codex`, `ollama:<model>`) appear in the owner's
+  `모델 상태` reply and on the operations UI as configuration facts — never which provider answered a turn.
+- **Ratchets moved (offline acceptance):** turn handlers 9 → 10 (v2 and v3 INT suites); `turn-handler-routing` golden
+  corpus 279 → 300 cases (`minTotal` raised; command forms and near-misses added); the v3 help ratchet stays 14 lines.
+- **Accepted residuals:** a failed private-file check (symlinked `ops/` directory or ledger) now fails closed: the
+  default is not saved, and an `OPS_NOTICE` is suppressed as `SUPPRESSED_LEDGER_UNAVAILABLE`; the model listing's numbers live in process memory (lost on restart, like the learning
+  listings); the session override is ignored while an approval intercept owns the turn; per-call model arguments are not
+  supported (provider-level instances instead); a Codex model other than `QUOKY_CODEX_MODEL` is not selectable; the
+  Ollama vision model is not switchable at runtime (only the image provider is).
+- **Strict gates:** a live switch on the owner host (operations UI default change, chat override with Codex or Ollama),
+  which runs real providers; changing `.env.local`.
+
 ## ADR-0073 amendment — Actor-scoped durable recall retrieval (Quoky Personal v1)
 
 - **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** (decision D4).
@@ -17086,3 +17190,43 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   have no Codex option.)*
 - **Strict gates:** changing the selector on the owner host (`.env.local`) and a restart; a live image session with
   `claude` selected.
+
+### ADR-0111 amendment — Runtime switching of the image provider; the locality policy follows the effective selection (2026-10-07)
+
+- **Status:** Accepted — **Product Owner decision of 2026-10-07** (with the ADR-0092 runtime-switching amendment).
+  Amends A1 ("the composition root registers exactly the selected provider, or none") and A2 (the composition-time
+  policy). A3–A6 are unchanged.
+- **Decision:**
+  1. **Registration.** Every configured image option is registered: the Claude vision provider whenever its model is valid
+     (`QUOKY_IMAGE_UNDERSTANDING_MODEL` or `QUOKY_CLAUDE_MODEL`), the Ollama vision provider when
+     `QUOKY_OLLAMA_VISION_MODEL` is a valid local model. The startup validation of an explicit selection is unchanged.
+  2. **Effective selection.** Session override (`이미지 모델 변경: …`) → operations-UI default → the selector → the
+     derived default (`ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, else `off`). The router's policy makes only the
+     effective image provider eligible (none for `off`, which yields the truthful "not analysed" reply).
+  3. **Locality policy follows the selection (amends A2).** `ConversationRuntimeOptions.imageUnderstandingLocalities` may
+     be a resolver read on every image turn with the turn's session; the composition root resolves it from the effective
+     image choice: `['LOCAL', 'REMOTE']` only while that choice is `claude`, otherwise `['LOCAL']`. Switching to `ollama`
+     or `off` therefore stops cloud egress on the very next image turn, in that conversation (override) or everywhere
+     (default). A failing resolver means `['LOCAL']` (fail closed). Core still checks the provider's declared locality,
+     never its id. Still an option, not a deps key (baseline 35). **Dispatch-time re-check** (Codex review P2 on
+     52effe2): immediately before `execute` the runtime asks the router again with the same context and resolves the
+     policy again; unless the same provider (by opaque key) is still selected and its locality is still allowed, nothing
+     is sent, the TaskRun fails with a content-free summary and the reply is the truthful "not analysed, not sent" notice
+     (`reason: selection-changed`). Because the router decides eligibility before it awaits readiness, a switch landing
+     during that await could still return the old provider (Codex re-review P2 on 9080114: `ollama` → `off`); so the LAST
+     step, synchronous and with nothing awaited before `execute`, is `ProviderSelector.isStillEligible` →
+     `ProviderSelectionPolicy.isEligible(capability, context, providerKey)` (optional port members): the composition root
+     answers from the LIVE selection (a write-through in-memory mirror of the (Session, Actor) overrides, updated the
+     moment a write commits, plus the persisted default and the configuration). `off` makes every image provider
+     ineligible; an unmirrored scope is not eligible (fail closed). **Write fence** (Codex review P2 on f39006c): an
+     override write marks its (Session, Actor) key "write pending" synchronously before it starts and clears it in
+     `finally`; while pending, `isEligible` is `false`, so a change already committed to storage but not yet returned to
+     its setter can never let a turn dispatch on the old choice. The mirror takes the new value inside the session lock
+     right after the save returns (`SessionManager.updateMetadataEntry` `onCommitted`); a failed write keeps the old value.
+  4. **Display (amends A5).** Besides the configured selection, the providers panel shows the effective image default and
+     its source; choosing the cloud option on the operations UI shows the egress warning; `모델 상태` shows the effective
+     image choice, its source and where images go.
+- **Consequences:** + images can be switched to local or off immediately, without a restart. − With nothing configured
+  the Claude vision provider is registered but never eligible and REMOTE stays closed (tested); the readiness table
+  counts it under `IMAGE_UNDERSTANDING`.
+- **Residual:** the Ollama vision model itself is not switchable at runtime (`QUOKY_OLLAMA_VISION_MODEL` only).

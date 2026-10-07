@@ -55,6 +55,20 @@ export class AiProviderManager {
   }
 
   /**
+   * The given providers that currently pass their probe (cached for the TTL), in the given order. Only these are
+   * probed, so a provider the selection policy made ineligible spawns nothing (ADR-0092 amendment, runtime switching).
+   */
+  async readyAmong(providers: readonly AiProvider[]): Promise<AiProvider[]> {
+    const checks = await Promise.all(providers.map(async (p) => ({ p, ok: await this.cachedProbe(p) })));
+    return checks.filter((c) => c.ok).map((c) => c.p);
+  }
+
+  /** Whether one provider currently passes its probe (cached for the TTL); read-only status displays use it. */
+  isReady(provider: AiProvider): Promise<boolean> {
+    return this.cachedProbe(provider);
+  }
+
+  /**
    * Forget a provider's cached probe so the next routing decision re-probes it. Called after an execution
    * failed with UNAVAILABLE, so a daemon that stopped after a positive probe is not selected for the rest
    * of the TTL (ADR-0092: no execution-time fallback, selection-time readiness only).
