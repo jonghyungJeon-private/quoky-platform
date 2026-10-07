@@ -14635,9 +14635,13 @@ reconciliation with ADR-0064/ADR-0090 routing.
   4. **What the switch covers.** The chat tier only — `GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`,
      `READONLY_LOOKUP` (eligible: the effective choice, then Claude as the selection-time fallback) — plus image
      understanding (ADR-0111 amendment, runtime switching). `CODE_IMPLEMENTATION`, `CODE_REVIEW`, `ARCHITECTURE_PLANNING`,
-     `PROJECT_ANALYSIS`, `TEST_EXECUTION` and `POLICY_SENSITIVE_CHAT` stay on Claude exactly as above: eligible = Claude,
-     plus the configured Ollama chat instance (the existing CAP-009 local code fallback) only when the GLOBAL chat default
-     is Ollama; a session override never reaches them. Every other capability (embedding) gets no preference.
+     `PROJECT_ANALYSIS`, `TEST_EXECUTION` and `POLICY_SENSITIVE_CHAT` stay on Claude exactly as above and are fully
+     independent of every runtime selection — neither a session override nor the operations-UI default changes their
+     routing. Their eligible set depends only on the static installation configuration and equals what was registered
+     before runtime switching: Claude, plus the `OLLAMA_MODEL` chat instance (the CAP-009 local code fallback at priority
+     40, used only when Claude is not ready) only when `QUOKY_CHAT_PROVIDER` / `QUOKY_OLLAMA_ENABLED` select Ollama — the
+     same behaviour as before, never widened by a runtime choice (Codex review P2 on 52effe2; tested across every runtime
+     change). Every other capability (embedding) gets no preference.
   5. **Registration (amends D2).** Every chat provider that can run on this host is registered: Claude always; Codex when
      its CLI is on `PATH` (a filesystem lookup, no spawn) or it is configured or persisted; Ollama chat when `OLLAMA_MODEL`
      is set and the CLI is present, or it is configured or persisted. Construction spawns nothing and loads no model;
@@ -14651,10 +14655,17 @@ reconciliation with ADR-0064/ADR-0090 routing.
   6. **Persistence.** The operations-UI default is a private JSON file beside the DB (`<db dir>/ops/provider-selection.json`,
      mode 0600 in a 0700 directory, atomic replace, version 1) — no SQLite migration (host DB migrations are Strict). A
      missing file is "no default"; a corrupt, unknown-version or invalid entry is ignored with a value-free code and the
-     configuration applies. The session override lives on the Session row's existing JSON `metadata`
-     (`quoky.providerSelection`), written by `SessionManager.updateMetadataEntry` — field-scoped on the live row under the
-     shared `SessionWriteLock` (ADR-0113 D7), never a whole-session save. A closed Session has none, so `새 대화` (a new
-     Session) ends it and it expires with its Session.
+     configuration applies. The private file is written by the shared helper `writePrivateFileAtomic` (also the
+     `OPS_NOTICE` ledger's): the directory must be a real directory (lstat, never a symlink; 0700), the temp file has an
+     unpredictable name and is created with `O_CREAT | O_EXCL | O_NOFOLLOW` (0600), written, fsynced, closed and renamed;
+     a symlinked file is never read (Codex review P2 on 52effe2). The session override is keyed by (Session, Actor)
+     (Codex review P2 on 52effe2: a channel Session is reused for every Actor in that channel or thread): it lives on the
+     Session row's existing JSON `metadata` as `quoky.providerSelection.byActor[<actorId>]`, written by
+     `SessionManager.updateMetadataEntry` — field-scoped on the live row under the shared `SessionWriteLock` (ADR-0113 D7),
+     never a whole-session save — and a write changes only the calling Actor's entry. `ProviderSelectionContext` carries
+     the turn's `actorId` next to its `sessionId`; without both there is no override. The model command reads and changes
+     only the caller's own override, and its list numbers are per (Session, Actor) too. A closed Session has none, so
+     `새 대화` (a new Session) ends it and it expires with its Session.
   7. **Not a provider pin (ARCHITECTURE.md §12).** The override stores a selection label, never a provider instance or
      id; the router still selects by capability and readiness, falls back to Claude when the choice is not ready, and
      applies it to the chat tier only. It is the owner's tier preference that principle 1 now names, not "pinning an AI
@@ -14688,7 +14699,8 @@ reconciliation with ADR-0064/ADR-0090 routing.
   `모델 상태` reply and on the operations UI as configuration facts — never which provider answered a turn.
 - **Ratchets moved (offline acceptance):** turn handlers 9 → 10 (v2 and v3 INT suites); `turn-handler-routing` golden
   corpus 279 → 300 cases (`minTotal` raised; command forms and near-misses added); the v3 help ratchet stays 14 lines.
-- **Accepted residuals:** the model listing's numbers live in process memory (lost on restart, like the learning
+- **Accepted residuals:** a failed private-file check (symlinked `ops/` directory or ledger) now fails closed: the
+  default is not saved, and an `OPS_NOTICE` is suppressed as `SUPPRESSED_LEDGER_UNAVAILABLE`; the model listing's numbers live in process memory (lost on restart, like the learning
   listings); the session override is ignored while an approval intercept owns the turn; per-call model arguments are not
   supported (provider-level instances instead); a Codex model other than `QUOKY_CODEX_MODEL` is not selectable; the
   Ollama vision model is not switchable at runtime (only the image provider is).
@@ -17193,7 +17205,11 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      image choice: `['LOCAL', 'REMOTE']` only while that choice is `claude`, otherwise `['LOCAL']`. Switching to `ollama`
      or `off` therefore stops cloud egress on the very next image turn, in that conversation (override) or everywhere
      (default). A failing resolver means `['LOCAL']` (fail closed). Core still checks the provider's declared locality,
-     never its id. Still an option, not a deps key (baseline 35).
+     never its id. Still an option, not a deps key (baseline 35). **Dispatch-time re-check** (Codex review P2 on
+     52effe2): immediately before `execute` the runtime asks the router again with the same context and resolves the
+     policy again; unless the same provider (by opaque key) is still selected and its locality is still allowed, nothing
+     is sent, the TaskRun fails with a content-free summary and the reply is the truthful "not analysed, not sent" notice
+     (`reason: selection-changed`). No I/O runs between that check and `execute`.
   4. **Display (amends A5).** Besides the configured selection, the providers panel shows the effective image default and
      its source; choosing the cloud option on the operations UI shows the egress warning; `모델 상태` shows the effective
      image choice, its source and where images go.

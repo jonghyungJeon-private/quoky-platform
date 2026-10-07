@@ -4,6 +4,9 @@ import { selectionFixture, TEST_OWNER } from '../../provider-selection/test-supp
 import { OPS_CLOUD_IMAGE_WARNING, OpsProviderSelectionActions, providerDefaultNoticeText } from './provider-selection-actions';
 import type { OpsOwnerResolution } from '../snapshot/build-snapshot';
 
+const ACTOR = 'actor-owner';
+const scope = (session: { readonly id: string }) => ({ sessionId: session.id, actorId: ACTOR });
+
 /**
  * Runtime model switch, operations-UI side (ADR-0092 / ADR-0111 amendments; ADR-0113 D7 rules): owner only, through the
  * same `ProviderSelectionService` as chat, validated again at execution, persisted (the default only), audited, and
@@ -103,9 +106,9 @@ describe('OpsProviderSelectionActions.setDefault', () => {
   it('never touches a conversation\'s own override', async () => {
     const { ops, f } = actions();
     const session = await f.openSession();
-    await f.service.setSessionChat(session.id, { provider: 'claude', model: 'opus' }, { surface: 'chat', actor: 'actor-owner' });
+    await f.service.setSessionChat(scope(session), { provider: 'claude', model: 'opus' }, { surface: 'chat', actor: 'actor-owner' });
     await ops.setDefault('chat:codex');
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'claude:opus', source: 'session' });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'claude:opus', source: 'session' });
     const page = await ops.page();
     expect(page.status === 'OK' && page.sessionOverrides).toBe('1개');
   });

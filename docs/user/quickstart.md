@@ -142,7 +142,7 @@ Claude(`QUOKY_CLAUDE_MODEL`)가 맡습니다. 요청 하나하나마다 모델�
 
 **어떤 값이 이기나 (우선순위, 높은 것부터)** — 대화와 이미지 각각 따로 정해집니다.
 
-1. **이 대화의 변경** — 채팅 명령 `모델 변경: …` (그 대화에만, `새 대화`를 하면 사라짐)
+1. **이 대화의 변경** — 채팅 명령 `모델 변경: …` (그 대화에서 명령을 보낸 사람에게만, `새 대화`를 하면 사라짐. 같은 채널에 소유자가 여럿이면 각자 따로)
 2. **운영 화면 기본값** — 운영 화면에서 고른 값 (다시 시작해도 유지, DB 옆 `ops/provider-selection.json`, 모드 600)
 3. **설정** — `.env.local`의 `QUOKY_CHAT_PROVIDER` / `QUOKY_IMAGE_UNDERSTANDING_PROVIDER`
 4. **기본값** — 설정이 없을 때의 예전 규칙 (`QUOKY_OLLAMA_ENABLED`, `QUOKY_OLLAMA_VISION_MODEL`)

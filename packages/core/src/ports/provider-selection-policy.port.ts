@@ -8,6 +8,11 @@ import type { Capability, Id } from '../domain';
 export interface ProviderSelectionContext {
   /** The conversation Session the request belongs to, if any. */
   readonly sessionId?: Id;
+  /**
+   * The Actor whose turn this is. A session-scoped owner preference is keyed by (Session, Actor), so a channel Session
+   * shared by several Actors never applies one Actor's preference to another.
+   */
+  readonly actorId?: Id;
 }
 
 /**

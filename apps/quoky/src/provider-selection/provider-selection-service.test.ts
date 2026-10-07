@@ -8,6 +8,9 @@ import { CHAT_TIER_CAPABILITIES, CLAUDE_PINNED_CAPABILITIES } from './selection-
 import { SESSION_SELECTION_METADATA_KEY } from './provider-selection-service';
 import { ProviderSelectionStore, providerSelectionFileIo } from './selection-store';
 
+const ACTOR = 'actor-owner';
+const scope = (session: { readonly id: string }) => ({ sessionId: session.id, actorId: ACTOR });
+
 /**
  * ADR-0092 amendment + ADR-0111 amendment (runtime switching): the effective selection and its precedence
  * (session → persisted operations-UI default → env → derived default), applied by the REAL `CapabilityRouter` through
@@ -36,51 +39,80 @@ describe('precedence: session → persisted → env → derived default', () => 
       present: ['codex'],
     });
     const session = await f.openSession();
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'claude:sonnet', source: 'env' });
-    expect(await f.service.effectiveImage(session.id)).toMatchObject({ choice: 'claude', source: 'env' });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'claude:sonnet', source: 'env' });
+    expect(await f.service.effectiveImage(scope(session))).toMatchObject({ choice: 'claude', source: 'env' });
 
     f.service.setDefaultChat({ provider: 'codex' }, OPS);
     f.service.setDefaultImage('off', OPS);
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'codex', source: 'persisted' });
-    expect(await f.service.effectiveImage(session.id)).toMatchObject({ choice: 'off', source: 'persisted' });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'codex', source: 'persisted' });
+    expect(await f.service.effectiveImage(scope(session))).toMatchObject({ choice: 'off', source: 'persisted' });
 
-    await f.service.setSessionChat(session.id, { provider: 'claude', model: 'opus' }, OWNER_CHAT);
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'claude:opus', source: 'session' });
+    await f.service.setSessionChat(scope(session), { provider: 'claude', model: 'opus' }, OWNER_CHAT);
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'claude:opus', source: 'session' });
     // The image override is independent of the chat override.
-    expect(await f.service.effectiveImage(session.id)).toMatchObject({ choice: 'off', source: 'persisted' });
-    await f.service.setSessionImage(session.id, 'claude', OWNER_CHAT);
-    expect(await f.service.effectiveImage(session.id)).toMatchObject({ choice: 'claude', source: 'session' });
+    expect(await f.service.effectiveImage(scope(session))).toMatchObject({ choice: 'off', source: 'persisted' });
+    await f.service.setSessionImage(scope(session), 'claude', OWNER_CHAT);
+    expect(await f.service.effectiveImage(scope(session))).toMatchObject({ choice: 'claude', source: 'session' });
 
     // Another conversation, and a request with no conversation, see the persisted default only.
     const other = await f.openSession();
-    expect(await f.service.effectiveChat(other.id)).toMatchObject({ label: 'codex', source: 'persisted' });
+    expect(await f.service.effectiveChat(scope(other))).toMatchObject({ label: 'codex', source: 'persisted' });
     expect(await f.service.effectiveChat()).toMatchObject({ label: 'codex', source: 'persisted' });
 
     // Resetting the persisted default falls back to env; the session override is untouched.
     f.service.setDefaultChat(null, OPS);
-    expect(await f.service.effectiveChat(other.id)).toMatchObject({ label: 'claude:sonnet', source: 'env' });
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'claude:opus', source: 'session' });
+    expect(await f.service.effectiveChat(scope(other))).toMatchObject({ label: 'claude:sonnet', source: 'env' });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'claude:opus', source: 'session' });
   });
 
   it('a layer that cannot run on this host is skipped and reported (no Codex registered)', async () => {
     const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' } });
     const session = await f.openSession();
-    f.rows.set(session.id, { ...session, metadata: { [SESSION_SELECTION_METADATA_KEY]: { chat: { provider: 'codex' } } } });
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'claude:sonnet', source: 'env', ignored: ['session'] });
+    f.rows.set(session.id, { ...session, metadata: { [SESSION_SELECTION_METADATA_KEY]: { byActor: { [ACTOR]: { chat: { provider: 'codex' } } } } } });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'claude:sonnet', source: 'env', ignored: ['session'] });
   });
 
   it('a malformed session entry is ignored; a CLOSED session has no override', async () => {
     const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' }, present: ['codex'] });
     const session = await f.openSession();
-    f.rows.set(session.id, { ...session, metadata: { [SESSION_SELECTION_METADATA_KEY]: { chat: { provider: 'gpt' }, image: 'cloud' } } });
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ source: 'env' });
-    expect(await f.service.effectiveImage(session.id)).toMatchObject({ source: 'default' });
-    await f.service.setSessionChat(session.id, { provider: 'codex' }, OWNER_CHAT);
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ label: 'codex', source: 'session' });
+    f.rows.set(session.id, { ...session, metadata: { [SESSION_SELECTION_METADATA_KEY]: { byActor: { [ACTOR]: { chat: { provider: 'gpt' }, image: 'cloud' } } } } });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ source: 'env' });
+    expect(await f.service.effectiveImage(scope(session))).toMatchObject({ source: 'default' });
+    await f.service.setSessionChat(scope(session), { provider: 'codex' }, OWNER_CHAT);
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ label: 'codex', source: 'session' });
     const live = f.rows.get(session.id);
     if (live === undefined) throw new Error('no session');
     await f.sessions.close(live);
-    expect(await f.service.effectiveChat(session.id)).toMatchObject({ source: 'env' });
+    expect(await f.service.effectiveChat(scope(session))).toMatchObject({ source: 'env' });
+  });
+});
+
+describe('session overrides are keyed by (Session, Actor)', () => {
+  it('two owner Actors in one shared channel Session never read or overwrite each other\'s override', async () => {
+    const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude', QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' }, present: ['codex'] });
+    const shared = await f.openSession();
+    const a = { sessionId: shared.id, actorId: 'actor-a' };
+    const b = { sessionId: shared.id, actorId: 'actor-b' };
+    await f.service.setSessionChat(a, { provider: 'codex' }, { surface: 'chat', actor: 'actor-a' });
+    // B inherits nothing from A.
+    expect(await f.service.effectiveChat(b)).toMatchObject({ label: 'claude:sonnet', source: 'env' });
+    expect((await f.router.select(Capability.GENERAL_CHAT, b)).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.GENERAL_CHAT, a)).id).toBe('codex-cli');
+    // B's own change does not touch A's, in either direction.
+    await f.service.setSessionChat(b, { provider: 'claude', model: 'haiku' }, { surface: 'chat', actor: 'actor-b' });
+    await f.service.setSessionImage(b, 'off', { surface: 'chat', actor: 'actor-b' });
+    expect(await f.service.effectiveChat(a)).toMatchObject({ label: 'codex', source: 'session' });
+    expect(await f.service.effectiveImage(a)).toMatchObject({ choice: 'claude', source: 'env' });
+    expect(await f.service.imageLocalities(a)).toEqual(['LOCAL', 'REMOTE']);
+    expect(await f.service.imageLocalities(b)).toEqual(['LOCAL']);
+    // B's reset clears only B.
+    expect((await f.service.resetSession(b, 'all', { surface: 'chat', actor: 'actor-b' })).status).toBe('CLEARED');
+    expect(await f.service.effectiveChat(a)).toMatchObject({ label: 'codex', source: 'session' });
+    expect(await f.service.effectiveChat(b)).toMatchObject({ source: 'env' });
+    expect((await f.service.resetSession(b, 'all', { surface: 'chat', actor: 'actor-b' })).status).toBe('UNCHANGED');
+    // Without an Actor there is no override at all.
+    expect(await f.service.effectiveChat({ sessionId: shared.id })).toMatchObject({ source: 'env' });
+    expect(await f.service.sessionOverrideCount()).toBe(1);
   });
 });
 
@@ -89,28 +121,28 @@ describe('the router applies the selection as data (real CapabilityRouter + Prov
     const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' }, present: ['codex'] });
     const session = await f.openSession();
     for (const capability of CHAT_TIER_CAPABILITIES) {
-      expect((await f.router.select(capability, { sessionId: session.id })).id, capability).toBe('claude-cli');
+      expect((await f.router.select(capability, { sessionId: session.id, actorId: ACTOR })).id, capability).toBe('claude-cli');
     }
-    await f.service.setSessionChat(session.id, { provider: 'codex' }, OWNER_CHAT);
+    await f.service.setSessionChat(scope(session), { provider: 'codex' }, OWNER_CHAT);
     for (const capability of CHAT_TIER_CAPABILITIES) {
-      expect((await f.router.select(capability, { sessionId: session.id })).id, capability).toBe('codex-cli');
+      expect((await f.router.select(capability, { sessionId: session.id, actorId: ACTOR })).id, capability).toBe('codex-cli');
       // Another conversation is unaffected.
-      expect((await f.router.select(capability, { sessionId: 'other' })).id, capability).toBe('claude-cli');
+      expect((await f.router.select(capability, { sessionId: 'other', actorId: ACTOR })).id, capability).toBe('claude-cli');
     }
     for (const capability of CLAUDE_PINNED_CAPABILITIES) {
-      expect((await f.router.select(capability, { sessionId: session.id })).id, capability).toBe('claude-cli');
+      expect((await f.router.select(capability, { sessionId: session.id, actorId: ACTOR })).id, capability).toBe('claude-cli');
     }
   });
 
   it('a Claude alias choice runs on a chat-tier-only instance; it never serves pinned capabilities', async () => {
     const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' } });
     const session = await f.openSession();
-    await f.service.setSessionChat(session.id, { provider: 'claude', model: 'opus' }, OWNER_CHAT);
-    const chosen = await f.router.select(Capability.GENERAL_CHAT, { sessionId: session.id });
+    await f.service.setSessionChat(scope(session), { provider: 'claude', model: 'opus' }, OWNER_CHAT);
+    const chosen = await f.router.select(Capability.GENERAL_CHAT, { sessionId: session.id, actorId: ACTOR });
     expect(chosen.id).toBe('claude-cli:opus');
     expect(chosen.capabilities.map((c) => c.capability).sort()).toEqual([...CHAT_TIER_CAPABILITIES].sort());
-    expect((await f.router.select(Capability.CODE_IMPLEMENTATION, { sessionId: session.id })).id).toBe('claude-cli');
-    expect((await f.router.select(Capability.POLICY_SENSITIVE_CHAT, { sessionId: session.id })).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.CODE_IMPLEMENTATION, { sessionId: session.id, actorId: ACTOR })).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.POLICY_SENSITIVE_CHAT, { sessionId: session.id, actorId: ACTOR })).id).toBe('claude-cli');
   });
 
   it('an Ollama model choice adds one on-demand local instance and serves the chat tier only', async () => {
@@ -119,11 +151,11 @@ describe('the router applies the selection as data (real CapabilityRouter + Prov
     const validated = await f.service.validateChatToken('ollama:granite3.3:8b');
     expect(validated).toEqual({ ok: true, choice: { provider: 'ollama', model: 'granite3.3:8b' } });
     if (!validated.ok) throw new Error('unreachable');
-    await f.service.setSessionChat(session.id, validated.choice, OWNER_CHAT);
-    const chosen = await f.router.select(Capability.SUMMARIZATION, { sessionId: session.id });
+    await f.service.setSessionChat(scope(session), validated.choice, OWNER_CHAT);
+    const chosen = await f.router.select(Capability.SUMMARIZATION, { sessionId: session.id, actorId: ACTOR });
     expect(chosen.id).toBe('ollama-cli:granite3.3:8b');
     expect(chosen.executionLocality).toBe('LOCAL');
-    expect((await f.router.select(Capability.CODE_IMPLEMENTATION, { sessionId: session.id })).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.CODE_IMPLEMENTATION, { sessionId: session.id, actorId: ACTOR })).id).toBe('claude-cli');
   });
 
   it('a chosen provider that is not ready falls back to Claude (selection-time), and status says so truthfully', async () => {
@@ -136,13 +168,46 @@ describe('the router applies the selection as data (real CapabilityRouter + Prov
     await expect(f.router.select(Capability.GENERAL_CHAT)).rejects.toBeInstanceOf(NoProviderAvailableError);
   });
 
-  it('pinned capabilities keep the local Ollama code fallback only when the global chat default is Ollama', async () => {
-    const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'ollama' }, present: ['codex'] });
-    f.ready.set('claude-cli', false);
-    expect((await f.router.select(Capability.CODE_IMPLEMENTATION)).id).toBe('ollama-cli');
-    // A session override never widens pinned work; a global switch to codex removes the Ollama fallback.
-    f.service.setDefaultChat({ provider: 'codex' }, OPS);
-    await expect(f.router.select(Capability.CODE_IMPLEMENTATION)).rejects.toBeInstanceOf(NoProviderAvailableError);
+  it('no runtime selection (ops default or session override) ever changes code, review, planning, tests or policy routing', async () => {
+    // Two installations: env selects Ollama (main: Ollama registered, CAP-009 local code fallback), and env selects
+    // Claude with Ollama registered only for switching (main: Ollama not registered, so no code fallback).
+    const routes = async (f: ReturnType<typeof selectionFixture>, sessionId: string) => {
+      const seen: string[] = [];
+      for (const capability of CLAUDE_PINNED_CAPABILITIES) {
+        try {
+          seen.push(`${capability}:${(await f.router.select(capability, { sessionId, actorId: ACTOR })).id}`);
+        } catch (err) {
+          seen.push(`${capability}:${err instanceof NoProviderAvailableError ? 'none' : 'error'}`);
+        }
+      }
+      return seen;
+    };
+    for (const env of [{ QUOKY_CHAT_PROVIDER: 'ollama' }, { QUOKY_CHAT_PROVIDER: 'claude', OLLAMA_MODEL: 'llama3.1' }]) {
+      for (const claudeReady of [true, false]) {
+        const f = selectionFixture({ env, present: ['codex', 'ollama'] });
+        f.ready.set('claude-cli', claudeReady);
+        const session = await f.openSession();
+        const baseline = await routes(f, session.id);
+        const changes: Array<() => Promise<unknown> | unknown> = [
+          () => f.service.setDefaultChat({ provider: 'ollama' }, OPS),
+          () => f.service.setDefaultChat({ provider: 'codex' }, OPS),
+          () => f.service.setDefaultChat({ provider: 'claude', model: 'opus' }, OPS),
+          () => f.service.setSessionChat(scope(session), { provider: 'ollama', model: 'granite3.3:8b' }, OWNER_CHAT),
+          () => f.service.setSessionChat(scope(session), { provider: 'ollama' }, OWNER_CHAT),
+          () => f.service.setDefaultChat(null, OPS),
+        ];
+        for (const change of changes) {
+          await change();
+          expect(await routes(f, session.id), JSON.stringify({ env, claudeReady })).toEqual(baseline);
+        }
+        // The static install config alone decides the CAP-009 fallback, exactly as on main.
+        const expectedFallback = env.QUOKY_CHAT_PROVIDER === 'ollama' ? 'ollama-cli' : 'none';
+        expect(baseline.find((r) => r.startsWith('CODE_IMPLEMENTATION:'))).toBe(
+          `CODE_IMPLEMENTATION:${claudeReady ? 'claude-cli' : expectedFallback}`,
+        );
+        expect(baseline.find((r) => r.startsWith('CODE_REVIEW:'))).toBe(`CODE_REVIEW:${claudeReady ? 'claude-cli' : 'none'}`);
+      }
+    }
   });
 
   it('embedding and other unpinned capabilities get no preference (legacy priority path)', async () => {
@@ -157,16 +222,16 @@ describe('image understanding: eligibility and the Core locality policy follow t
       env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' },
     });
     const session = await f.openSession();
-    expect(await f.service.imageLocalities({ sessionId: session.id })).toEqual(['LOCAL', 'REMOTE']);
-    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id })).id).toBe('claude-vision-cli');
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL', 'REMOTE']);
+    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id, actorId: ACTOR })).id).toBe('claude-vision-cli');
 
-    await f.service.setSessionImage(session.id, 'ollama', OWNER_CHAT);
-    expect(await f.service.imageLocalities({ sessionId: session.id })).toEqual(['LOCAL']);
-    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id })).id).toBe('ollama-vision-cli');
+    await f.service.setSessionImage(scope(session), 'ollama', OWNER_CHAT);
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL']);
+    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id, actorId: ACTOR })).id).toBe('ollama-vision-cli');
 
-    await f.service.setSessionImage(session.id, 'off', OWNER_CHAT);
-    expect(await f.service.imageLocalities({ sessionId: session.id })).toEqual(['LOCAL']);
-    await expect(f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id })).rejects.toBeInstanceOf(
+    await f.service.setSessionImage(scope(session), 'off', OWNER_CHAT);
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL']);
+    await expect(f.router.select(Capability.IMAGE_UNDERSTANDING, { sessionId: session.id, actorId: ACTOR })).rejects.toBeInstanceOf(
       NoProviderAvailableError,
     );
 
@@ -248,7 +313,7 @@ describe('options and status', () => {
     const a = await f.openSession();
     await f.openSession();
     expect(await f.service.sessionOverrideCount()).toBe(0);
-    await f.service.setSessionImage(a.id, 'off', OWNER_CHAT);
+    await f.service.setSessionImage(scope(a), 'off', OWNER_CHAT);
     expect(await f.service.sessionOverrideCount()).toBe(1);
   });
 });
@@ -257,9 +322,9 @@ describe('audit and fail-safe', () => {
   it('logs every selection change with surface, actor, scope, tier and the label (no content)', async () => {
     const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' }, present: ['codex'] });
     const session = await f.openSession();
-    await f.service.setSessionChat(session.id, { provider: 'codex' }, OWNER_CHAT);
+    await f.service.setSessionChat(scope(session), { provider: 'codex' }, OWNER_CHAT);
     f.service.setDefaultImage('off', OPS);
-    await f.service.resetSession(session.id, 'all', OWNER_CHAT);
+    await f.service.resetSession(scope(session), 'all', OWNER_CHAT);
     const changes = f.logs.filter((l) => l.message === 'provider.selection.changed').map((l) => l.fields);
     expect(changes).toEqual([
       { surface: 'chat', actor: 'actor-owner', scope: 'session', tier: 'chat', selection: 'codex', sessionId: session.id },
@@ -275,9 +340,9 @@ describe('audit and fail-safe', () => {
         throw new Error('db down');
       },
     });
-    expect(await f.service.preferenceFor(Capability.GENERAL_CHAT, { sessionId: 's' })).toEqual({ eligible: ['claude-cli'], order: 'listed' });
-    expect(await f.service.preferenceFor(Capability.IMAGE_UNDERSTANDING, { sessionId: 's' })).toEqual({ eligible: [], order: 'listed' });
-    expect(await f.service.imageLocalities({ sessionId: 's' })).toEqual(['LOCAL']);
+    expect(await f.service.preferenceFor(Capability.GENERAL_CHAT, { sessionId: 's', actorId: ACTOR })).toEqual({ eligible: ['claude-cli'], order: 'listed' });
+    expect(await f.service.preferenceFor(Capability.IMAGE_UNDERSTANDING, { sessionId: 's', actorId: ACTOR })).toEqual({ eligible: [], order: 'listed' });
+    expect(await f.service.imageLocalities({ sessionId: 's', actorId: ACTOR })).toEqual(['LOCAL']);
   });
 });
 

@@ -19,8 +19,8 @@ import type { ImageChoice, SelectionSource } from './selection-choices';
 /**
  * The owner's model-selection chat command (ADR-0092 amendment, runtime switching; OpenClaw `/model` style) as an
  * ADR-0096 `pre-classify` turn handler. Deterministic and owner-only, it never calls a provider (readiness probes and
- * `ollama list` only), creates no Task and changes nothing but THIS conversation's override — never the global
- * default, which the operations UI owns.
+ * `ollama list` only), creates no Task and changes nothing but the CALLER's own override in THIS conversation (keyed by
+ * Session and Actor) — never another Actor's, and never the global default, which the operations UI owns.
  *
  * - `모델 상태` / `/model status`: the effective chat and image selection, its source and readiness.
  * - `모델 목록` / `/model`: a numbered list of the selectable chat-tier models and image options with readiness. The
@@ -176,7 +176,7 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
   readonly stage = 'pre-classify' as const;
   readonly order = MODEL_SELECTION_TURN_HANDLER_ORDER;
   readonly helpLines = MODEL_SELECTION_HELP_LINES;
-  private readonly listings = new Map<Id, Listing>();
+  private readonly listings = new Map<string, Listing>();
 
   constructor(private readonly deps: ModelSelectionTurnHandlerDeps) {}
 
@@ -205,24 +205,25 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
   }
 
   private async run(command: ModelSelectionCommand, ctx: TurnHandlerContext): Promise<string> {
-    const sessionId = ctx.session.id;
+    // The caller's own override only: keyed by (Session, Actor), so a shared channel Session never mixes Actors.
+    const scope = { sessionId: ctx.session.id, actorId: ctx.actor.id };
     const actor = { surface: 'chat' as const, actor: ctx.actor.id };
     const { service } = this.deps;
     switch (command.kind) {
       case 'usage':
         return MODEL_SELECTION_COPY.usage;
       case 'status':
-        return renderModelStatus(await service.status(sessionId));
+        return renderModelStatus(await service.status(scope));
       case 'list': {
-        const options = await service.options(sessionId);
-        this.bind(sessionId, options, Date.parse(ctx.now));
+        const options = await service.options(scope);
+        this.bind(this.listingKey(scope), options, Date.parse(ctx.now));
         return renderModelList(options);
       }
       case 'reset': {
-        const result = await service.resetSession(sessionId, command.tier, actor);
+        const result = await service.resetSession(scope, command.tier, actor);
         if (result.status === 'SESSION_GONE') return MODEL_SELECTION_COPY.sessionGone;
         if (result.status === 'WRITE_FAILED') return MODEL_SELECTION_COPY.failed;
-        const status = await service.status(sessionId);
+        const status = await service.status(scope);
         const defaults = `대화 ${status.chat.label}, 이미지 ${status.image.choice}`;
         const what = command.tier === 'image' ? '이미지 모델 선택' : '모델 선택';
         return result.status === 'UNCHANGED'
@@ -230,20 +231,20 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
           : `이 대화의 ${what}을 지웠어요. 이제 기본값(${defaults})을 써요.`;
       }
       case 'set':
-        return this.set(command.tier, command.choice, sessionId, actor, Date.parse(ctx.now));
+        return this.set(command.tier, command.choice, scope, actor, Date.parse(ctx.now));
     }
   }
 
   private async set(
     tier: 'chat' | 'image',
     choice: ModelSelectionChoice,
-    sessionId: Id,
+    scope: { readonly sessionId: Id; readonly actorId: Id },
     actor: { surface: 'chat'; actor: string },
     nowMs: number,
   ): Promise<string> {
     let target: { tier: 'chat' | 'image'; token: string };
     if (choice.kind === 'number') {
-      const listed = this.resolve(sessionId, choice.number, nowMs);
+      const listed = this.resolve(this.listingKey(scope), choice.number, nowMs);
       if (listed === 'NO_LISTING') return MODEL_SELECTION_COPY.listFirst;
       if (listed === 'NOT_LISTED') return MODEL_SELECTION_COPY.numberNotListed;
       if (tier === 'image' && listed.tier === 'chat') return MODEL_SELECTION_COPY.numberIsChat;
@@ -255,15 +256,15 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
     if (target.tier === 'image') {
       const validated = service.validateImageToken(target.token);
       if (!validated.ok) return REFUSAL_COPY[validated.refusal];
-      const written = await service.setSessionImage(sessionId, validated.choice, actor);
+      const written = await service.setSessionImage(scope, validated.choice, actor);
       return this.written(written.status) ?? renderImageSet(validated.choice);
     }
     const validated = await service.validateChatToken(target.token);
     if (!validated.ok) return REFUSAL_COPY[validated.refusal];
-    const written = await service.setSessionChat(sessionId, validated.choice, actor);
+    const written = await service.setSessionChat(scope, validated.choice, actor);
     const refused = this.written(written.status);
     if (refused !== undefined) return refused;
-    const status = await service.status(sessionId);
+    const status = await service.status(scope);
     return renderChatSet(status.chat.label, status);
   }
 
@@ -273,9 +274,14 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
     return undefined;
   }
 
-  private bind(sessionId: Id, options: readonly SelectionOption[], nowMs: number): void {
-    this.listings.delete(sessionId);
-    this.listings.set(sessionId, { tokens: options.map(({ tier, token }) => ({ tier, token })), boundAtMs: nowMs });
+  /** Listings are per (Session, Actor) too: one Actor's numbers never resolve for another. */
+  private listingKey(scope: { readonly sessionId: Id; readonly actorId: Id }): string {
+    return `${scope.sessionId}\u0000${scope.actorId}`;
+  }
+
+  private bind(key: string, options: readonly SelectionOption[], nowMs: number): void {
+    this.listings.delete(key);
+    this.listings.set(key, { tokens: options.map(({ tier, token }) => ({ tier, token })), boundAtMs: nowMs });
     while (this.listings.size > MODEL_LISTING_MAX_BINDINGS) {
       const oldest = this.listings.keys().next().value;
       if (oldest === undefined) break;
@@ -284,21 +290,20 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
   }
 
   private resolve(
-    sessionId: Id,
+    key: string,
     number: number,
     nowMs: number,
   ): { tier: 'chat' | 'image'; token: string } | 'NO_LISTING' | 'NOT_LISTED' {
-    const listing = this.listings.get(sessionId);
+    const listing = this.listings.get(key);
     if (
       listing === undefined ||
       !Number.isFinite(nowMs) ||
       nowMs < listing.boundAtMs ||
       nowMs - listing.boundAtMs > MODEL_LISTING_TTL_MS
     ) {
-      this.listings.delete(sessionId);
+      this.listings.delete(key);
       return 'NO_LISTING';
     }
     return listing.tokens[number - 1] ?? 'NOT_LISTED';
   }
 }
-

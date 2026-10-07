@@ -12,6 +12,9 @@ import { SESSION_SELECTION_METADATA_KEY } from './provider-selection-service';
 import { TEST_OWNER, replyText, selectionFixture } from './test-support';
 import type { SelectionFixture } from './test-support';
 
+const ACTOR = 'actor-owner';
+const scope = (session: { readonly id: string }) => ({ sessionId: session.id, actorId: ACTOR });
+
 /**
  * The owner's model command (ADR-0092 amendment, runtime switching): every form, list numbering and its 30-minute
  * window, refusals, the owner check, the session-only scope (a new conversation has no override) and field-scoped
@@ -46,7 +49,9 @@ function harness(env: Record<string, string> = { QUOKY_CHAT_PROVIDER: 'claude' }
   return { f, handler, say };
 }
 
-const overrideOf = (f: SelectionFixture, sessionId: string) => f.rows.get(sessionId)?.metadata?.[SESSION_SELECTION_METADATA_KEY];
+/** The calling Actor's own entry (overrides are keyed by Session and Actor). */
+const overrideOf = (f: SelectionFixture, sessionId: string, actorId: string = ACTOR) =>
+  (f.rows.get(sessionId)?.metadata?.[SESSION_SELECTION_METADATA_KEY] as { byActor?: Record<string, unknown> } | undefined)?.byActor?.[actorId];
 
 describe('registration facts', () => {
   it('is a pre-classify handler at order 70 with one bounded help line', () => {
@@ -131,7 +136,7 @@ describe('모델 변경 (session only)', () => {
     expect(overrideOf(f, other.id)).toBeUndefined();
     // The global default never changes from chat.
     expect(f.store.get()).toEqual({});
-    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: other.id })).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: other.id, actorId: ACTOR })).id).toBe('claude-cli');
   });
 
   it('names the egress truthfully', async () => {
@@ -207,9 +212,9 @@ describe('모델 변경 (session only)', () => {
     const { f, say } = harness({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' });
     const session = await f.openSession();
     expect(replyText(await say(session, '이미지 모델 변경: claude'))).toContain('이미지가 Anthropic으로 전송돼요.');
-    expect(await f.service.imageLocalities({ sessionId: session.id })).toEqual(['LOCAL', 'REMOTE']);
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL', 'REMOTE']);
     expect(replyText(await say(session, '/model image ollama'))).toContain('이미지는 이 컴퓨터를 떠나지 않아요.');
-    expect(await f.service.imageLocalities({ sessionId: session.id })).toEqual(['LOCAL']);
+    expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL']);
     expect(replyText(await say(session, '이미지 모델 변경: off'))).toContain('이 대화에서는 이미지를 분석하지 않아요.');
     expect(overrideOf(f, session.id)).toMatchObject({ image: 'off' });
   });
@@ -232,14 +237,40 @@ describe('모델 기본값으로 / reset, new conversation and owner check', () 
     const { f, say } = harness();
     const session = await f.openSession();
     await say(session, '모델 변경: codex');
-    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: session.id })).id).toBe('codex-cli');
+    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: session.id, actorId: ACTOR })).id).toBe('codex-cli');
     await f.sessions.close(f.rows.get(session.id) as Session);
     expect(f.rows.get(session.id)?.status).toBe(SessionStatus.CLOSED);
-    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: session.id })).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: session.id, actorId: ACTOR })).id).toBe('claude-cli');
     const next = await f.openSession();
-    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: next.id })).id).toBe('claude-cli');
+    expect((await f.router.select(Capability.GENERAL_CHAT, { sessionId: next.id, actorId: ACTOR })).id).toBe('claude-cli');
     // A command against the closed session changes nothing.
     expect(replyText(await say(session, '모델 변경: codex'))).toBe(MODEL_SELECTION_COPY.sessionGone);
+  });
+
+  it('in a shared channel Session each owner Actor sees and changes only its own override (both directions)', async () => {
+    const { f, handler } = harness();
+    const shared = await f.openSession();
+    const turn = (actorId: string, text: string) =>
+      handler.handle({
+        message: { id: `m-${actorId}-${text}`, context: shared.context, text, receivedAt: T0 },
+        session: f.rows.get(shared.id) as Session,
+        actor: { id: actorId } as unknown as Actor,
+        now: T0,
+        applyAnchor: null,
+        resolveActiveWorkspace: async () => null,
+      });
+    await turn('actor-a', '모델 변경: codex');
+    expect(replyText(await turn('actor-b', '모델 상태'))).toContain('- 대화: claude:sonnet · 출처: 설정(QUOKY_CHAT_PROVIDER)');
+    await turn('actor-b', '/model claude:opus');
+    expect(overrideOf(f, shared.id, 'actor-a')).toMatchObject({ chat: { provider: 'codex' } });
+    expect(overrideOf(f, shared.id, 'actor-b')).toMatchObject({ chat: { provider: 'claude', model: 'opus' } });
+    expect(replyText(await turn('actor-a', '모델 상태'))).toContain('- 대화: codex · 출처: 이 대화에서 변경');
+    // A's listing numbers never resolve for B, and A's reset never clears B's.
+    await turn('actor-a', '모델 목록');
+    expect(replyText(await turn('actor-b', '모델 변경: 1'))).toBe(MODEL_SELECTION_COPY.listFirst);
+    await turn('actor-a', '모델 기본값으로');
+    expect(overrideOf(f, shared.id, 'actor-a')).toBeUndefined();
+    expect(overrideOf(f, shared.id, 'actor-b')).toMatchObject({ chat: { provider: 'claude', model: 'opus' } });
   });
 
   it('a non-owner changes nothing and sees nothing', async () => {
@@ -259,7 +290,7 @@ describe('모델 기본값으로 / reset, new conversation and owner check', () 
     await say(session, '모델 변경: codex');
     expect(f.rows.get(session.id)).toMatchObject({
       activeTaskId: 'task-9',
-      metadata: { other: true, [SESSION_SELECTION_METADATA_KEY]: { chat: { provider: 'codex' } } },
+      metadata: { other: true, [SESSION_SELECTION_METADATA_KEY]: { byActor: { [ACTOR]: { chat: { provider: 'codex' } } } } },
     });
   });
 

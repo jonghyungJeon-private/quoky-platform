@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, symlinkSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PrivateFileRefusedError, writePrivateFileAtomic } from '../ops/ops-notice';
 import { PROVIDER_SELECTION_FILE_VERSION, ProviderSelectionStore, providerSelectionFileIo, providerSelectionFilePath } from './selection-store';
 
 /**
@@ -89,6 +90,45 @@ describe('ProviderSelectionStore', () => {
     const unreadable = new ProviderSelectionStore({ read: () => { throw new Error('EACCES'); }, write: () => undefined }, logger);
     expect(unreadable.get()).toEqual({});
     expect(warnings.at(-1)).toEqual({ code: 'SELECTION_FILE_UNREADABLE' });
+  });
+
+  it('refuses a symlinked ops directory: nothing is written through it (shared helper, OPS_NOTICE ledger too)', () => {
+    const outside = path.join(dir, 'outside');
+    mkdirSync(outside, { mode: 0o700 });
+    symlinkSync(outside, path.dirname(file));
+    const store = new ProviderSelectionStore(providerSelectionFileIo(file), logger);
+    expect(() => store.save({ image: 'off' })).toThrow(PrivateFileRefusedError);
+    expect(readdir(outside)).toEqual([]);
+    expect(store.get()).toEqual({});
+  });
+
+  it('never follows a symlink at the target: it is replaced by a private regular file, the link target untouched', () => {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    const victim = path.join(dir, 'victim.txt');
+    writeFileSync(victim, 'keep me');
+    symlinkSync(victim, file);
+    // Reading refuses the link (never follows it): the store starts from the configuration.
+    expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({});
+    expect(warnings.at(-1)).toEqual({ code: 'SELECTION_FILE_UNREADABLE' });
+    writePrivateFileAtomic(file, '{"version":1}\n');
+    expect(readFileSync(victim, 'utf8')).toBe('keep me');
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('uses an unpredictable, exclusively created temp name: a planted `.tmp-<pid>` symlink is never written through', () => {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    const victim = path.join(dir, 'victim.txt');
+    writeFileSync(victim, 'keep me');
+    for (const name of [`${file}.tmp-${process.pid}`, path.join(path.dirname(file), `.provider-selection.json.tmp-${process.pid}`)]) {
+      symlinkSync(victim, name);
+    }
+    writePrivateFileAtomic(file, 'one');
+    writePrivateFileAtomic(file, 'two');
+    expect(readFileSync(victim, 'utf8')).toBe('keep me');
+    expect(readFileSync(file, 'utf8')).toBe('two');
+    // Only the target and the two planted links remain: no temp file is left behind.
+    expect(readdir(path.dirname(file)).filter((name) => !name.includes(String(process.pid)))).toEqual(['provider-selection.json']);
   });
 
   it('without a file database the default lives in memory for the process', () => {

@@ -1,4 +1,17 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import {
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
 import path from 'node:path';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, NotificationSink, NotificationSinkOutcome } from '@quoky/core';
@@ -63,26 +76,78 @@ export interface OpsNoticeLedgerStore {
   write(content: string): void;
 }
 
-/** The ledger file: private directory (700), private file (600), replaced atomically. */
+/** A private file path refused because it, or its directory, is not what it must be (a symlink, not a directory). */
+export class PrivateFileRefusedError extends Error {
+  constructor(readonly code: 'PRIVATE_DIR_NOT_A_DIRECTORY' | 'PRIVATE_FILE_IS_SYMLINK') {
+    super(code);
+    this.name = 'PrivateFileRefusedError';
+  }
+}
+
+/** `O_NOFOLLOW` where the platform has it (POSIX); 0 elsewhere. */
+const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+
+/** Create (700) or verify the private directory: a real directory, never a symlink to one. */
+function ensurePrivateDirectory(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(dir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new PrivateFileRefusedError('PRIVATE_DIR_NOT_A_DIRECTORY');
+  chmodSync(dir, 0o700);
+}
+
+/**
+ * Replace `filePath` atomically with `content` as a private (600) file in a private (700) directory: the temp file has
+ * an unpredictable name and is created exclusively without following a symlink (`O_CREAT | O_EXCL | O_NOFOLLOW`, mode
+ * 600), written, fsynced, closed and renamed over the target (rename replaces a symlink at the target, never follows
+ * it). A failure removes the temp file and throws; the previous file stays as it was.
+ */
+export function writePrivateFileAtomic(filePath: string, content: string): void {
+  const dir = path.dirname(filePath);
+  ensurePrivateDirectory(dir);
+  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp-${randomBytes(12).toString('hex')}`);
+  const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW, 0o600);
+  try {
+    try {
+      writeSync(fd, content);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, filePath);
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // already gone
+    }
+    throw error;
+  }
+}
+
+/** Read a private file; `undefined` when absent. A symlink at the path is refused (never followed). */
+export function readPrivateFile(filePath: string): string | undefined {
+  try {
+    if (lstatSync(filePath).isSymbolicLink()) throw new PrivateFileRefusedError('PRIVATE_FILE_IS_SYMLINK');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const fd = openSync(filePath, fsConstants.O_RDONLY | O_NOFOLLOW);
+  try {
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * A small private JSON/text file beside the database (the `OPS_NOTICE` ledger, the runtime model-switch default):
+ * private directory (700, a real directory), private file (600), replaced atomically via {@link writePrivateFileAtomic}.
+ */
 export function fileLedgerStore(ledgerPath: string): OpsNoticeLedgerStore {
   return {
-    read: () => {
-      try {
-        return readFileSync(ledgerPath, 'utf8');
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-        throw error;
-      }
-    },
-    write: (content) => {
-      const dir = path.dirname(ledgerPath);
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-      chmodSync(dir, 0o700);
-      const tmp = `${ledgerPath}.tmp-${process.pid}`;
-      writeFileSync(tmp, content, { mode: 0o600 });
-      chmodSync(tmp, 0o600);
-      renameSync(tmp, ledgerPath);
-    },
+    read: () => readPrivateFile(ledgerPath),
+    write: (content) => writePrivateFileAtomic(ledgerPath, content),
   };
 }
 

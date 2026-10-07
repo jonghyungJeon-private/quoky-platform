@@ -132,4 +132,3 @@ describe('CapabilityRouter with a ProviderSelectionPolicy (ADR-0092 amendment, r
     expect(port).not.toMatch(/claude|codex|ollama|anthropic|openai/iu);
   });
 });
-

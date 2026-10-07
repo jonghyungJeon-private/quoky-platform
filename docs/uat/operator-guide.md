@@ -303,7 +303,8 @@ with the normal error reply and nothing is stored.
 the chat tier (chat, summaries, document analysis, read-only lookups) and image understanding:
 
 - **Precedence**, per tier: session override (chat command, that conversation only) → operations-UI default (persisted
-  in `<db dir>/ops/provider-selection.json`, mode 600, atomic write, survives restarts) → `QUOKY_CHAT_PROVIDER` /
+  in `<db dir>/ops/provider-selection.json`, mode 600, exclusive no-follow temp file + fsync + rename, survives restarts;
+  a symlinked `ops/` directory or file is refused) → `QUOKY_CHAT_PROVIDER` /
   `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` → derived default. A choice this host cannot run is skipped; a corrupt or
   unreadable file is ignored with a value-free warning (`SELECTION_FILE_*`) and the configuration applies.
 - **Registration.** Claude always; Codex when the `codex` CLI is on `PATH` (or it is configured/persisted); Ollama chat
@@ -313,13 +314,14 @@ the chat tier (chat, summaries, document analysis, read-only lookups) and image 
   `ollama-cli:<model>`, at most 12 per process). Readiness probes run only for eligible providers; nothing loads a model.
 - **Routing.** The router asks the `ProviderSelectionPolicy` (Core port) for the eligible provider keys and their order:
   chat tier = the effective choice, then Claude (selection-time fallback); images = the effective image provider only
-  (none for `off`); code, review, planning, project analysis, tests and policy-sensitive chat = Claude (plus the
-  configured Ollama chat model as the existing local code fallback when the global chat default is Ollama). A session
-  override never affects those.
+  (none for `off`), re-checked immediately before the image is sent; code, review, planning, project analysis, tests and
+  policy-sensitive chat are independent of every runtime selection: Claude, plus the configured Ollama chat model as the
+  CAP-009 local code fallback only when `.env.local` itself selects Ollama (unchanged from before).
 - **Chat command** (owner only, provider-free): `모델 상태`, `모델 목록` (numbers valid 30 min in that conversation),
   `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model ollama:<model>`, `이미지 모델 변경: claude|ollama|off`,
-  `모델 기본값으로` / `/model reset`. The override is a field-scoped write of the session's `metadata`
-  (`quoky.providerSelection`) under the shared session write lock; `새 대화` opens a new Session, which has none.
+  `모델 기본값으로` / `/model reset`. The override is keyed by (Session, Actor): a field-scoped write of the session's
+  `metadata` (`quoky.providerSelection.byActor[<actorId>]`) under the shared session write lock, so owners sharing a
+  channel never read or change each other's; `새 대화` opens a new Session, which has none.
 - **Operations UI**: providers panel → `모델 기본값 바꾸기` (`/providers`): one same-origin form per option with the
   session CSRF token and a one-time nonce whose subject is the option; `설정 기본값으로 되돌리기` resets to the
   configuration. A change sends one owner DM (`OPS_DECISION_RESULT`). The cloud image option shows the egress warning.

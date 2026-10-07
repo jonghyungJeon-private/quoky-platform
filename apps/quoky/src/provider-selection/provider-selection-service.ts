@@ -33,9 +33,11 @@ import type { PersistedProviderSelection, ProviderSelectionStore } from './selec
  * selection, its precedence, its persistence, and the Core `ProviderSelectionPolicy` the router consults.
  *
  * **Precedence** (highest first), separately for the chat tier and for image understanding:
- *   1. `session`   — the owner's chat command in this conversation (`모델 변경: …`), stored on the Session row's
- *                    metadata (`quoky.providerSelection`), written field-scoped under the shared session write lock;
- *                    a new conversation (`새 대화`) opens a new Session, so the override ends with its Session.
+ *   1. `session`   — the owner's chat command in this conversation (`모델 변경: …`), keyed by (Session, Actor): stored
+ *                    on the Session row's metadata (`quoky.providerSelection.byActor[<actorId>]`), written field-scoped
+ *                    under the shared session write lock. A channel Session shared by several Actors gives each its
+ *                    own override; one Actor never reads or changes another's. A new conversation (`새 대화`) opens a
+ *                    new Session, so the override ends with its Session.
  *   2. `persisted` — the operations-UI default (`<db dir>/ops/provider-selection.json`), survives restarts.
  *   3. `env`       — `QUOKY_CHAT_PROVIDER` / `QUOKY_IMAGE_UNDERSTANDING_PROVIDER`.
  *   4. `default`   — the derived default (`QUOKY_OLLAMA_ENABLED`; `QUOKY_OLLAMA_VISION_MODEL` presence).
@@ -45,8 +47,10 @@ import type { PersistedProviderSelection, ProviderSelectionStore } from './selec
  * **Policy.** Chat tier: the effective choice's provider first, Claude next (selection-time fallback when the chosen
  * one is not ready). Image understanding: only the effective image provider (none for `off`), and the Core image
  * locality policy allows `REMOTE` only while the effective image choice is `claude`. Code, review, planning, project
- * analysis, tests and policy-sensitive chat: Claude (plus the configured Ollama chat model as the existing local code
- * fallback when the global chat default is Ollama), never a session choice. Every other capability: no preference.
+ * analysis, tests and policy-sensitive chat are INDEPENDENT of every runtime selection (session override and
+ * operations-UI default alike): Claude, plus — exactly as before runtime switching — the configured Ollama chat model as
+ * the CAP-009 local code fallback only when the INSTALLATION configuration selects Ollama (`QUOKY_CHAT_PROVIDER` /
+ * `QUOKY_OLLAMA_ENABLED`). Every other capability: no preference.
  *
  * Readiness probes still decide availability; this service only expresses preference, as data.
  */
@@ -56,6 +60,21 @@ export const SESSION_SELECTION_METADATA_KEY = 'quoky.providerSelection';
 export interface SessionSelection {
   readonly chat?: ChatChoice;
   readonly image?: ImageChoice;
+}
+
+/**
+ * Whose override applies: a session override is keyed by (Session, Actor). Without both ids there is no override, only
+ * the defaults.
+ */
+export interface SelectionScope {
+  readonly sessionId?: Id;
+  readonly actorId?: Id;
+}
+
+/** The scope of a session-override write: both ids are required. */
+export interface SessionOverrideScope {
+  readonly sessionId: Id;
+  readonly actorId: Id;
 }
 
 export interface EffectiveChatSelection {
@@ -154,10 +173,25 @@ export interface ProviderSelectionServiceDeps {
 const CHAT_TIER = new Set<Capability>(CHAT_TIER_CAPABILITIES);
 const PINNED = new Set<Capability>(CLAUDE_PINNED_CAPABILITIES);
 
-/** Parse a session's stored selection; anything malformed is dropped, and a closed session has none. */
-export function sessionSelectionOf(session: Session | null): SessionSelection {
+/**
+ * Parse one Actor's stored override in a session; anything malformed is dropped, a closed session has none, and another
+ * Actor's entry is never read.
+ */
+export function sessionSelectionOf(session: Session | null, actorId: Id): SessionSelection {
   if (session === null || session.status !== SessionStatus.ACTIVE) return {};
-  return selectionFromData(session.metadata?.[SESSION_SELECTION_METADATA_KEY]);
+  return selectionFromData(byActorOf(session.metadata?.[SESSION_SELECTION_METADATA_KEY])[actorId]);
+}
+
+/** Every Actor's override in a session (for the operations-UI count). */
+export function sessionSelectionsOf(session: Session): SessionSelection[] {
+  if (session.status !== SessionStatus.ACTIVE) return [];
+  return Object.values(byActorOf(session.metadata?.[SESSION_SELECTION_METADATA_KEY])).map(selectionFromData);
+}
+
+function byActorOf(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const byActor = (raw as { byActor?: unknown }).byActor;
+  return typeof byActor === 'object' && byActor !== null && !Array.isArray(byActor) ? (byActor as Record<string, unknown>) : {};
 }
 
 function selectionFromData(raw: unknown): SessionSelection {
@@ -181,11 +215,11 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     const claudeKey = this.deps.catalog.claude.id;
     try {
       if (CHAT_TIER.has(capability)) {
-        const chat = await this.effectiveChat(context.sessionId);
+        const chat = await this.effectiveChat(context);
         return { eligible: unique([chat.provider.id, claudeKey]), order: 'listed' };
       }
       if (capability === Capability.IMAGE_UNDERSTANDING) {
-        const image = await this.effectiveImage(context.sessionId);
+        const image = await this.effectiveImage(context);
         return { eligible: image.provider === null ? [] : [image.provider.id], order: 'listed' };
       }
       if (PINNED.has(capability)) return this.pinnedPreference();
@@ -205,33 +239,39 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
    */
   async imageLocalities(context: ProviderSelectionContext): Promise<readonly AiExecutionLocality[]> {
     try {
-      const image = await this.effectiveImage(context.sessionId);
+      const image = await this.effectiveImage(context);
       return image.choice === 'claude' && image.provider !== null ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
     } catch {
       return ['LOCAL'];
     }
   }
 
+  /**
+   * Code, review, planning, project analysis, tests and policy-sensitive chat: independent of every runtime selection.
+   * The eligible set is a function of the INSTALLATION configuration only, and equals what was registered before
+   * runtime switching: Claude, plus the `OLLAMA_MODEL` chat instance (CAP-009 local code fallback at priority 40) only
+   * when `QUOKY_CHAT_PROVIDER` / `QUOKY_OLLAMA_ENABLED` select Ollama.
+   */
   private pinnedPreference(): ProviderPreference {
-    const { catalog } = this.deps;
-    const global = this.chatFromLayers({});
-    const ollama = global.choice.provider === 'ollama' && catalog.ollama !== undefined ? [catalog.ollama.id] : [];
+    const { catalog, envChat } = this.deps;
+    const ollama = envChat.choice.provider === 'ollama' && catalog.ollama !== undefined ? [catalog.ollama.id] : [];
     return { eligible: [catalog.claude.id, ...ollama], order: 'priority' };
   }
 
   // ── Effective selection ────────────────────────────────────────────────────────────────────────────────────────
 
-  async sessionSelection(sessionId: Id | undefined): Promise<SessionSelection> {
-    if (sessionId === undefined) return {};
-    return sessionSelectionOf(await this.deps.sessions().get(sessionId));
+  /** The caller's own override in that session; nothing without both a session and an Actor. */
+  async sessionSelection(scope: SelectionScope = {}): Promise<SessionSelection> {
+    if (scope.sessionId === undefined || scope.actorId === undefined) return {};
+    return sessionSelectionOf(await this.deps.sessions().get(scope.sessionId), scope.actorId);
   }
 
-  async effectiveChat(sessionId?: Id): Promise<EffectiveChatSelection> {
-    return this.chatFromLayers(await this.sessionSelection(sessionId));
+  async effectiveChat(scope: SelectionScope = {}): Promise<EffectiveChatSelection> {
+    return this.chatFromLayers(await this.sessionSelection(scope));
   }
 
-  async effectiveImage(sessionId?: Id): Promise<EffectiveImageSelection> {
-    return this.imageFromLayers(await this.sessionSelection(sessionId));
+  async effectiveImage(scope: SelectionScope = {}): Promise<EffectiveImageSelection> {
+    return this.imageFromLayers(await this.sessionSelection(scope));
   }
 
   /** The selection without any session override (what a new conversation uses). */
@@ -315,44 +355,54 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   // ── Session override (chat command) ───────────────────────────────────────────────────────────────────────────
 
-  async setSessionChat(sessionId: Id, choice: ChatChoice, actor: SelectionActor): Promise<SelectionWriteResult> {
-    const result = await this.writeSession(sessionId, (current) => ({ ...current, chat: choice }));
-    if (result.status === 'SET') this.audit(actor, 'session', 'chat', this.deps.catalog.label(choice), sessionId);
+  /** Set the caller's own chat-tier override in this session (never another Actor's). */
+  async setSessionChat(scope: SessionOverrideScope, choice: ChatChoice, actor: SelectionActor): Promise<SelectionWriteResult> {
+    const result = await this.writeSession(scope, (current) => ({ ...current, chat: choice }));
+    if (result.status === 'SET') this.audit(actor, 'session', 'chat', this.deps.catalog.label(choice), scope.sessionId);
     return result;
   }
 
-  async setSessionImage(sessionId: Id, choice: ImageChoice, actor: SelectionActor): Promise<SelectionWriteResult> {
-    const result = await this.writeSession(sessionId, (current) => ({ ...current, image: choice }));
-    if (result.status === 'SET') this.audit(actor, 'session', 'image', choice, sessionId);
+  /** Set the caller's own image override in this session (never another Actor's). */
+  async setSessionImage(scope: SessionOverrideScope, choice: ImageChoice, actor: SelectionActor): Promise<SelectionWriteResult> {
+    const result = await this.writeSession(scope, (current) => ({ ...current, image: choice }));
+    if (result.status === 'SET') this.audit(actor, 'session', 'image', choice, scope.sessionId);
     return result;
   }
 
-  /** Clear this session's chat and image override (`all`) or the image override only. */
-  async resetSession(sessionId: Id, tier: 'all' | 'image', actor: SelectionActor): Promise<SelectionWriteResult> {
+  /** Clear the caller's own chat and image override (`all`) or its image override only. */
+  async resetSession(scope: SessionOverrideScope, tier: 'all' | 'image', actor: SelectionActor): Promise<SelectionWriteResult> {
     let had = false;
-    const result = await this.writeSession(sessionId, (current) => {
+    const result = await this.writeSession(scope, (current) => {
       had = tier === 'all' ? current.chat !== undefined || current.image !== undefined : current.image !== undefined;
       return tier === 'all' ? {} : { ...(current.chat ? { chat: current.chat } : {}) };
     });
     if (result.status !== 'SET') return result;
     if (!had) return { status: 'UNCHANGED' };
-    this.audit(actor, 'session', tier === 'all' ? 'chat+image' : 'image', 'reset', sessionId);
+    this.audit(actor, 'session', tier === 'all' ? 'chat+image' : 'image', 'reset', scope.sessionId);
     return { status: 'CLEARED' };
   }
 
+  /**
+   * Read-modify-write of ONE Actor's entry under the session write lock (the live row, field-scoped); every other
+   * Actor's entry is carried over untouched.
+   */
   private async writeSession(
-    sessionId: Id,
+    scope: SessionOverrideScope,
     next: (current: SessionSelection) => SessionSelection,
   ): Promise<SelectionWriteResult> {
     try {
-      const saved = await this.deps.updateSessionEntry(sessionId, SESSION_SELECTION_METADATA_KEY, (raw) => {
-        const updated = next(selectionFromData(raw));
-        if (updated.chat === undefined && updated.image === undefined) return undefined;
-        return {
-          ...(updated.chat ? { chat: chatChoiceToData(updated.chat) } : {}),
-          ...(updated.image ? { image: updated.image } : {}),
-          setAt: this.clock(),
-        };
+      const saved = await this.deps.updateSessionEntry(scope.sessionId, SESSION_SELECTION_METADATA_KEY, (raw) => {
+        const byActor = { ...byActorOf(raw) };
+        const updated = next(selectionFromData(byActor[scope.actorId]));
+        if (updated.chat === undefined && updated.image === undefined) delete byActor[scope.actorId];
+        else {
+          byActor[scope.actorId] = {
+            ...(updated.chat ? { chat: chatChoiceToData(updated.chat) } : {}),
+            ...(updated.image ? { image: updated.image } : {}),
+            setAt: this.clock(),
+          };
+        }
+        return Object.keys(byActor).length === 0 ? undefined : { byActor };
       });
       return saved === null ? { status: 'SESSION_GONE' } : { status: 'SET' };
     } catch {
@@ -405,8 +455,8 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   // ── Status and options ────────────────────────────────────────────────────────────────────────────────────────
 
-  async status(sessionId?: Id): Promise<SelectionStatus> {
-    const session = await this.sessionSelection(sessionId);
+  async status(scope: SelectionScope = {}): Promise<SelectionStatus> {
+    const session = await this.sessionSelection(scope);
     const chat = this.chatFromLayers(session);
     const image = this.imageFromLayers(session);
     const { catalog } = this.deps;
@@ -423,12 +473,12 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   /**
    * Every selectable option on this host with its readiness: the Claude aliases, Codex when registered, the local Ollama
-   * models (`ollama list`), then the image options. `current` marks the effective choice for `sessionId` (or the
+   * models (`ollama list`), then the image options. `current` marks the effective choice for the scope (or the
    * default when absent). Probes are the cached readiness probes; no provider is executed and no model is loaded.
    */
-  async options(sessionId?: Id): Promise<SelectionOption[]> {
+  async options(scope: SelectionScope = {}): Promise<SelectionOption[]> {
     const { catalog } = this.deps;
-    const session = await this.sessionSelection(sessionId);
+    const session = await this.sessionSelection(scope);
     const chat = this.chatFromLayers(session);
     const image = this.imageFromLayers(session);
     const options: SelectionOption[] = [];
@@ -478,15 +528,14 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     return this.deps.store.get();
   }
 
-  /** How many open conversations carry their own override (operations UI display; a count only). */
+  /** How many (open conversation, Actor) pairs carry their own override (operations UI display; a count only). */
   async sessionOverrideCount(): Promise<number | undefined> {
     const list = this.deps.sessions().list;
     if (list === undefined) return undefined;
     const sessions = await list.call(this.deps.sessions());
-    return sessions.filter((session) => {
-      const selection = sessionSelectionOf(session);
-      return selection.chat !== undefined || selection.image !== undefined;
-    }).length;
+    return sessions
+      .flatMap((session) => sessionSelectionsOf(session))
+      .filter((selection) => selection.chat !== undefined || selection.image !== undefined).length;
   }
 
   /** Whether a chat choice sends content off this host (Claude and Codex do). */
