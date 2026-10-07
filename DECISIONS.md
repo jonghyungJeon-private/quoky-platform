@@ -14588,7 +14588,12 @@ reconciliation with ADR-0064/ADR-0090 routing.
   timeout stays `TIMEOUT`) and cleans up, temp directories included, so a call can never stay pending. Side effect:
   provider children no longer receive the signals sent to Quoky's own process group (a terminal Ctrl-C, launchd
   stopping the job); an exit hook SIGKILLs every still-running group when the Quoky process exits, but a hard kill of
-  Quoky (SIGKILL) cannot run it, and a child then keeps running until its CLI finishes.
+  Quoky (SIGKILL) cannot run it, and a child then keeps running until its CLI finishes. Accepted residual (Codex
+  re-review P2 on 610da18, orchestrator decision): `signal 0` checks that a process group exists, not that it is still
+  ours, so if every member of a terminated group exits and the OS reuses that PGID for a new group inside the grace
+  window (or between the probe and SIGKILL), the delayed SIGKILL or the exit hook could hit the new group. POSIX offers
+  no ownership check for a bare PGID; the window is one grace period after a timeout, the same exposure as ordinary
+  process supervisors (e.g. `timeout(1)`), and is accepted rather than adding a keeper process to pin the group.
 - **Constitution (owner-approved 2026-10-07).** `ARCHITECTURE.md` §2 principle 1 now says users never pick a model
   per request, while the owner may select which providers are installed for a capability tier through installation
   configuration; the answering provider is recorded for audit only. Principle 2 is unchanged.
