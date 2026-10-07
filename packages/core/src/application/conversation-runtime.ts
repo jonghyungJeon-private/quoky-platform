@@ -194,7 +194,6 @@ import {
   readCodeGenerationContextFiles,
 } from './code-generation-context';
 import {
-  CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
   type CredentialOverrideAnchor,
   type CredentialOverrideDispatchAuthorization,
   type CredentialOverrideFlow,
@@ -1602,6 +1601,7 @@ export class ConversationRuntime {
         get connectorWriteFlow() { return deps.connectorWriteFlow; },
         get composer() { return deps.composer; },
         get memory() { return deps.memory; },
+        get sessions() { return deps.sessions; },
         get logger() { return deps.logger; },
       },
       { clock: this.clock },
@@ -2030,17 +2030,23 @@ export class ConversationRuntime {
     // PENDING approval is recorded denied on this turn. Control phrases take precedence: help/reset still run
     // (with the expiry notice prepended); any other turn gets only the expiry notice.
     const control = detectConversationControl(message.text);
-    const lookup = await this.findPendingApproval(session);
+    let lookup = await this.findPendingApproval(session);
     let expiryNotice: OutboundMessage | null = null;
     if (lookup.pending && this.remainingMs(lookup.pending) <= 0) {
-      await this.expirePendingApproval(session, lookup);
-      expiryNotice = this.deps.composer.composeApprovalExpired(
-        message.context,
-        lookup.pending,
-        PENDING_APPROVAL_TTL_MS,
-      );
-      // ADR-0112: the expired write's anchor handed the pointer back; mirror it on this turn's copy.
-      if (lookup.connectorWrite) session = { ...session, activeTaskId: lookup.connectorWrite.anchor.previousActiveTaskId };
+      if (await this.expirePendingApproval(session, lookup)) {
+        expiryNotice = this.deps.composer.composeApprovalExpired(
+          message.context,
+          lookup.pending,
+          PENDING_APPROVAL_TTL_MS,
+        );
+        // ADR-0112: the expired write's anchor handed the pointer back; mirror it on this turn's copy.
+        if (lookup.connectorWrite) session = { ...session, activeTaskId: lookup.connectorWrite.anchor.previousActiveTaskId };
+      } else {
+        // ADR-0113 D7: another transition (the operations UI) decided it first under the shared lock — this turn's
+        // session and lookup are stale; re-derive both from the live state.
+        session = await this.deps.sessions.openForContext(message.context, actor.id);
+        lookup = await this.findPendingApproval(session);
+      }
     }
     // ADR-0097 D5: a credential-override set that is no longer live released its anchor pointer on the canonical
     // session (invalidated now, or consumed earlier). Mirror the release on this turn's copy so no later save in
@@ -2863,23 +2869,12 @@ export class ConversationRuntime {
     return this.approvalDecisions.findPending(session);
   }
 
-  /** Record an expired PENDING approval as denied (ADR-0093) — the shared decision service's expiry. */
-  private expirePendingApproval(session: Session, lookup: PendingApprovalLookup): Promise<void> {
+  /**
+   * Record an expired PENDING approval as denied (ADR-0093) — the shared decision service's expiry, under the shared
+   * lock. `false` when another transition decided it first (nothing recorded; the lookup is stale).
+   */
+  private expirePendingApproval(session: Session, lookup: PendingApprovalLookup): Promise<boolean> {
     return this.approvalDecisions.expire(session, lookup);
-  }
-
-  /** `override` (ADR-0097): the credential-override set `approval` belongs to, released exactly like turn-start expiry. */
-  private async recordExpiryBeforeApprove(
-    message: InboundMessage,
-    session: Session,
-    approval: ApprovalRequest,
-    applyAnchor: ApplyPreviewAnchor | null,
-    override: CredentialOverrideLookup | null = null,
-  ): Promise<TurnResult> {
-    return this.decisionTurn(
-      session,
-      await this.approvalDecisions.recordExpiryBeforeApprove(message.context, session, approval, applyAnchor, override),
-    );
   }
 
   /**
@@ -2897,28 +2892,22 @@ export class ConversationRuntime {
     expiryNotice: OutboundMessage | null,
   ): Promise<TurnResult> {
     let reply: OutboundMessage;
+    let denied = false;
     if (command === 'help') {
       reply = this.deps.composer.composeHelp(message.context, this.contributedHelpLines);
     } else {
-      // ADR-0097 D5 (OVR-3 contract): invalidate a credential-override set (`reset`, by the owner) through the flow
-      // BEFORE the session closes, so the reset is serialized with an in-flight consume; nothing is sent.
-      await this.deps.credentialOverrideFlow?.invalidate(session, 'reset', actor.id);
-      if (pending) {
-        await this.deps.approvals.decide(pending.id, {
-          approvalId: pending.id,
-          approved: false,
-          decidedBy: actor.id,
-          decidedAt: this.clock(),
-          comment: 'reset',
-        });
-      }
-      await this.deps.sessions.close(session);
-      reply = this.deps.composer.composeConversationReset(message.context, { deniedPendingApproval: Boolean(pending) });
+      // ADR-0097 D5 (OVR-3 contract): the credential-override set is invalidated (`reset`, by the owner) through the
+      // flow BEFORE the session closes, so the reset is serialized with an in-flight consume; nothing is sent.
+      // ADR-0113 D7: the invalidation, the `reset` denial and the close run under the shared approval/session locks,
+      // so a racing operations-UI decision can neither double-decide the approval nor re-anchor the closed session.
+      const reset = await this.approvalDecisions.resetConversation(session, actor, pending);
+      denied = reset.deniedPendingApproval;
+      reply = this.deps.composer.composeConversationReset(message.context, { deniedPendingApproval: denied });
     }
     this.deps.logger.info('conversation control handled', {
       command,
       sessionId: session.id,
-      ...(pending && command === 'reset' ? { deniedApprovalId: pending.id } : {}),
+      ...(pending && denied ? { deniedApprovalId: pending.id } : {}),
     });
     return this.responded(session, expiryNotice ? this.deps.composer.composeWithNotice(expiryNotice, reply) : reply);
   }
@@ -3888,25 +3877,12 @@ export class ConversationRuntime {
     // send
     if (override.state === 'ready') return this.continueCredentialOverride(message, session, actor, override.anchor);
     const approval = override.approval;
-    // The whole set expires with its OLDEST override (ADR-0097 D5): read the earlier grants' requests first, then
-    // check synchronously — no await between the deadline check and `decide`.
-    const earlier: ApprovalRequest[] = [];
-    for (const g of override.anchor.grants) {
-      if (g.approvalRequestId === approval.id) continue;
-      const r = await this.deps.approvals.get(g.approvalRequestId);
-      if (r) earlier.push(r);
-    }
-    if (Math.min(this.remainingMs(approval), ...earlier.map((r) => this.remainingMs(r))) <= 0) {
-      return this.recordExpiryBeforeApprove(message, session, approval, null, override);
-    }
-    await this.deps.approvals.decide(approval.id, {
-      approvalId: approval.id,
-      approved: true,
-      decidedBy: actor.id,
-      decidedAt: this.clock(),
-      comment: CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
-    });
-    const granted = await flow.recordGrant(session, approval.id);
+    // ADR-0113 D7: the send's re-read, the whole-set expiry re-check (the set expires with its OLDEST override,
+    // ADR-0097 D5; synchronous right before `decide`), the decision and the grant run in the shared decision service
+    // under the same locks as the deny and the operations UI's reject — a request decided meanwhile is never approved.
+    const sent = await this.approvalDecisions.approveCredentialOverride(this.chatDecision(message, session, actor), override);
+    if (sent.kind === 'reply') return this.decisionTurn(session, sent.value);
+    const { granted } = sent;
     if (!granted.ok) {
       if (granted.pendingApproval) {
         await this.closeCredentialOverrideApproval(granted.pendingApproval, 'system', `credential-override-${granted.reason}`);
@@ -4043,15 +4019,7 @@ export class ConversationRuntime {
 
   /** Close a still-PENDING override request as rejected (it is never left PENDING); an already-decided one is kept. */
   private async closeCredentialOverrideApproval(approval: ApprovalRequest, decidedBy: string, comment: string): Promise<void> {
-    const current = await this.deps.approvals.get(approval.id);
-    if (current?.status !== ApprovalStatus.PENDING) return;
-    await this.deps.approvals.decide(approval.id, {
-      approvalId: approval.id,
-      approved: false,
-      decidedBy,
-      decidedAt: this.clock(),
-      comment,
-    });
+    await this.approvalDecisions.closeIfPending(approval.id, decidedBy, comment);
   }
 
   /** Optional "the preview / the change" noun before a cancel word ("미리보기 취소", "변경 취소해줘", "cancel the preview"). */

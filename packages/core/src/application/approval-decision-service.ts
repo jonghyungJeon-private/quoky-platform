@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-import { ApprovalStatus } from '../domain';
+import { ApprovalStatus, SessionStatus } from '../domain';
 import type {
   Actor,
   ApprovalDecision,
@@ -17,7 +17,12 @@ import { sha256Canonical } from './canonical-digest';
 import { PENDING_APPROVAL_TTL_MS, pendingApprovalRemainingMs } from './conversation-commands';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
 import type { ConnectorWriteAnchorView, ConnectorWriteStep } from './connector-writes/connector-write-flow';
-import { CREDENTIAL_OVERRIDE_DENY_COMMENT, type CredentialOverrideLookup } from './credential-override';
+import {
+  CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
+  CREDENTIAL_OVERRIDE_DENY_COMMENT,
+  type CredentialOverrideGrantResult,
+  type CredentialOverrideLookup,
+} from './credential-override';
 import type {
   ApplyPreviewAnchor,
   ConversationRuntimeDeps,
@@ -46,10 +51,16 @@ import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrato
  * Built only from collaborators the runtime already holds (ADR-0113 D8: no new `ConversationRuntimeDeps` key, no
  * `app.module.ts` provider); the runtime constructs it and exposes it as `ConversationRuntime.approvalDecisions`.
  *
- * Serialization: decisions on one approval id run one at a time in-process (single instance, ADR-0102 D4), so the
- * `PENDING` check and the save cannot interleave between chat and the UI. The first decision wins; a chat turn that
- * lost the race to the UI gets the existing "nothing to decide" reply, and a UI request that lost to chat gets
- * `ALREADY_DECIDED`.
+ * Serialization: EVERY transition of a pending approval — chat approve/deny/cancel, the UI's approve/reject, the
+ * ADR-0093 expiry (turn start and the re-check before a positive decision), the ADR-0097 credential-override send and
+ * its close of a stray request, and the conversation reset — runs in-process (single instance, ADR-0102 D4) under the
+ * per-approval lock, then the per-session lock of the conversation it changes (always in that order, so two
+ * transitions can never wait on each other). Inside the locks each transition re-reads the approval and acts only
+ * while it is still `PENDING`, so the `PENDING` check, the decision save and the session update it carries (re-anchor,
+ * release, close) cannot interleave with another transition. The first one wins; a chat turn that lost the race gets
+ * the existing "nothing to decide" reply, a UI request that lost gets `ALREADY_DECIDED` (or `NOT_FOUND` when the
+ * conversation was reset meanwhile), and a reset session is never re-anchored: the UI decides only for a conversation
+ * that is still ACTIVE when it holds the session lock.
  */
 
 export type ApprovalDecisionVerdict = 'approve' | 'deny' | 'cancel';
@@ -403,7 +414,11 @@ export type ApprovalDecisionServiceDeps = Pick<
   | 'connectorWriteFlow'
   | 'composer'
   | 'logger'
-> & { readonly memory: Pick<ConversationRuntimeDeps['memory'], 'recordAssistant'> };
+> & {
+  readonly memory: Pick<ConversationRuntimeDeps['memory'], 'recordAssistant'>;
+  /** The reset closes the session under the same locks as the decision it races (ADR-0093). */
+  readonly sessions: Pick<ConversationRuntimeDeps['sessions'], 'close'>;
+};
 
 export interface ApprovalDecisionServiceOptions {
   /** The shared clock (ADR-0093 lifetime, decision timestamps of expiry denials, the reference window). */
@@ -415,11 +430,17 @@ export type PlanApproveResult =
   | { readonly kind: 'reply'; readonly value: ApprovalDecisionReply }
   | { readonly kind: 'resume'; readonly request: ExecutionRequest; readonly prior: ExecutionOutcome };
 
+/** The credential-override send (ADR-0097): a reply (expired, or nothing left to decide), or the grant it recorded. */
+export type CredentialOverrideSendResult =
+  | { readonly kind: 'reply'; readonly value: ApprovalDecisionReply }
+  | { readonly kind: 'granted'; readonly granted: CredentialOverrideGrantResult };
+
 type AnchoredFailureFamily = 'commit' | 'push' | 'pr';
 
 export class ApprovalDecisionService {
   private readonly clock: () => IsoTimestamp;
-  private readonly queues = new Map<Id, Promise<unknown>>();
+  /** Lock queues keyed `approval:<id>` / `session:<id>` (see the serialization note above). */
+  private readonly queues = new Map<string, Promise<unknown>>();
   /** Approval ids decided from the operations UI (a racing chat turn on a stale anchor must not decide again). */
   private readonly settledByOpsUi = new Set<Id>();
   private readonly referenceAttempts = new Map<Id, { window: number; wrong: number }>();
@@ -485,8 +506,23 @@ export class ApprovalDecisionService {
    * `decidedBy: 'system'` (the system-attribution convention), comment `expired`, `decidedAt` from the shared clock.
    * An anchor-scoped approval also moves its anchor back exactly like a denial, so the expired request can never be
    * approved and the earlier state (e.g. WORKSPACE_APPLIED) survives.
+   *
+   * Runs under the approval's and the session's locks and re-reads the approval first: when another transition (a UI
+   * decision, a reset) already moved it off `PENDING`, nothing is recorded and `false` is returned — the caller's
+   * lookup is stale and must be re-derived.
    */
-  async expire(session: Session, lookup: PendingApprovalLookup): Promise<void> {
+  expire(session: Session, lookup: PendingApprovalLookup): Promise<boolean> {
+    const approval = lookup.pending;
+    if (!approval) return Promise.resolve(false);
+    return this.exclusive(approval.id, session.id, async () => {
+      if (this.isSettledByOpsUi(approval.id) || (await this.freshPending(approval.id)) === null) return false;
+      await this.expireUnlocked(session, lookup);
+      return true;
+    });
+  }
+
+  /** The expiry body; callers hold the approval's lock and have checked it is still PENDING. */
+  private async expireUnlocked(session: Session, lookup: PendingApprovalLookup): Promise<void> {
     const approval = lookup.pending;
     if (!approval) return;
     await this.deps.approvals.decide(approval.id, {
@@ -513,16 +549,16 @@ export class ApprovalDecisionService {
   /**
    * The expiry re-check before a positive decision found the approval expired: record the same `system`/`expired`
    * denial (and anchor release) as the turn-start path and answer with the expiry notice. `override` (ADR-0097): the
-   * credential-override set `approval` belongs to, released exactly like turn-start expiry.
+   * credential-override set `approval` belongs to, released exactly like turn-start expiry. Callers hold the lock.
    */
-  async recordExpiryBeforeApprove(
+  private async recordExpiryBeforeApprove(
     context: ConversationContext,
     session: Session,
     approval: ApprovalRequest,
     applyAnchor: ApplyPreviewAnchor | null,
     override: CredentialOverrideLookup | null = null,
   ): Promise<ApprovalDecisionReply> {
-    await this.expire(session, {
+    await this.expireUnlocked(session, {
       planPending: applyAnchor || override ? null : approval,
       pendingScope: null,
       applyAnchor,
@@ -550,17 +586,37 @@ export class ApprovalDecisionService {
 
   // ── serialization ───────────────────────────────────────────────────────────────────────────────────────────────
 
-  /** Run `work` after every earlier decision on the same approval id has finished (in-process, single instance). */
+  /** Run `work` after every earlier transition of the same approval id has finished (in-process, single instance). */
   serialize<T>(approvalId: Id | undefined, work: () => Promise<T>): Promise<T> {
-    if (!approvalId) return work();
-    const previous = this.queues.get(approvalId) ?? Promise.resolve();
+    return this.serializeKey(approvalId === undefined || approvalId === '' ? undefined : `approval:${approvalId}`, work);
+  }
+
+  /** Run `work` after every earlier transition that changes the same session has finished. */
+  private serializeSession<T>(sessionId: Id | undefined, work: () => Promise<T>): Promise<T> {
+    return this.serializeKey(sessionId === undefined || sessionId === '' ? undefined : `session:${sessionId}`, work);
+  }
+
+  /** The approval's lock, then the session's (the one acquisition order every transition uses). */
+  private exclusive<T>(approvalId: Id | undefined, sessionId: Id | undefined, work: () => Promise<T>): Promise<T> {
+    return this.serialize(approvalId, () => this.serializeSession(sessionId, work));
+  }
+
+  private serializeKey<T>(key: string | undefined, work: () => Promise<T>): Promise<T> {
+    if (key === undefined) return work();
+    const previous = this.queues.get(key) ?? Promise.resolve();
     const run = previous.then(work, work);
     const tail = run.catch(() => undefined);
-    this.queues.set(approvalId, tail);
+    this.queues.set(key, tail);
     void tail.then(() => {
-      if (this.queues.get(approvalId) === tail) this.queues.delete(approvalId);
+      if (this.queues.get(key) === tail) this.queues.delete(key);
     });
     return run;
+  }
+
+  /** The approval re-read inside the lock, or null when it is gone or no longer PENDING (never trust a caller's copy). */
+  private async freshPending(approvalId: Id): Promise<ApprovalRequest | null> {
+    const current = await this.deps.approvals.get(approvalId);
+    return current?.status === ApprovalStatus.PENDING ? current : null;
   }
 
   /** Whether the operations UI already decided this approval (a racing chat turn must not decide it again). */
@@ -568,7 +624,10 @@ export class ApprovalDecisionService {
     return approvalId !== undefined && this.settledByOpsUi.has(approvalId);
   }
 
-  /** The chat answer when the UI decided first: the existing "nothing to decide" reply; nothing is decided. */
+  /**
+   * The chat answer when another transition (the UI, an expiry, a reset) decided first: the existing "nothing to
+   * decide" reply; nothing is decided.
+   */
   private async lostToOpsUi(input: ApprovalDecisionInput): Promise<ApprovalDecisionReply> {
     const reply = this.deps.composer.composeNoPendingDecision(input.context);
     await this.deps.memory.recordAssistant(reply.text, input.context, input.session.id);
@@ -602,8 +661,10 @@ export class ApprovalDecisionService {
    * code-generation preview) stays in the runtime: chat only.
    */
   approvePlan(input: ApprovalDecisionInput, pending: ApprovalRequest): Promise<PlanApproveResult> {
-    return this.serialize(pending.id, async (): Promise<PlanApproveResult> => {
-      if (this.isSettledByOpsUi(pending.id)) return { kind: 'reply', value: await this.lostToOpsUi(input) };
+    return this.exclusive(pending.id, input.session.id, async (): Promise<PlanApproveResult> => {
+      if (this.isSettledByOpsUi(pending.id) || (await this.freshPending(pending.id)) === null) {
+        return { kind: 'reply', value: await this.lostToOpsUi(input) };
+      }
       const ctx = await this.deps.approvalFlow.reconstructResume(input.session, pending);
       if (!ctx) {
         // Can't reconstruct — fail safe: re-ask, and do NOT call ApprovalManager.decide.
@@ -619,7 +680,7 @@ export class ApprovalDecisionService {
 
   /** Deny / cancel — record the (rejecting) decision; never resume. */
   rejectPlan(input: ApprovalDecisionInput, pending: ApprovalRequest, verdict: 'deny' | 'cancel'): Promise<ApprovalDecisionReply> {
-    return this.serialize(pending.id, () => this.rejectPlanUnlocked(input, pending, verdict));
+    return this.exclusive(pending.id, input.session.id, () => this.rejectPlanUnlocked(input, pending, verdict));
   }
 
   private async rejectPlanUnlocked(
@@ -627,7 +688,7 @@ export class ApprovalDecisionService {
     pending: ApprovalRequest,
     verdict: 'deny' | 'cancel',
   ): Promise<ApprovalDecisionReply> {
-    if (this.isSettledByOpsUi(pending.id)) return this.lostToOpsUi(input);
+    if (this.isSettledByOpsUi(pending.id) || (await this.freshPending(pending.id)) === null) return this.lostToOpsUi(input);
     await this.deps.approvals.decide(pending.id, this.decisionOf(pending.id, input, false));
     const status: RuntimeTurnStatus = verdict === 'deny' ? 'DENIED' : 'CANCELLED';
     const replyStatus: ExecutionReplyStatus = verdict === 'deny' ? 'DENIED' : 'CANCELLED';
@@ -646,7 +707,7 @@ export class ApprovalDecisionService {
     override: Extract<CredentialOverrideLookup, { state: 'awaiting-decision' | 'ready' }>,
   ): Promise<ApprovalDecisionReply> {
     const approvalId = override.state === 'awaiting-decision' ? override.approval.id : undefined;
-    return this.serialize(approvalId, () => this.rejectCredentialOverrideUnlocked(input, override));
+    return this.exclusive(approvalId, input.session.id, () => this.rejectCredentialOverrideUnlocked(input, override));
   }
 
   private async rejectCredentialOverrideUnlocked(
@@ -657,7 +718,9 @@ export class ApprovalDecisionService {
     const grant = override.state === 'awaiting-decision' ? override.grant : override.anchor.grants.at(-1);
     const path = grant?.path ?? '';
     if (override.state === 'awaiting-decision') {
-      if (this.isSettledByOpsUi(override.approval.id)) return this.lostToOpsUi(input);
+      if (this.isSettledByOpsUi(override.approval.id) || (await this.freshPending(override.approval.id)) === null) {
+        return this.lostToOpsUi(input);
+      }
       await this.deps.approvals.decide(override.approval.id, {
         approvalId: override.approval.id,
         approved: false,
@@ -674,6 +737,85 @@ export class ApprovalDecisionService {
     return this.recorded(input, reply, 'DENIED');
   }
 
+  /**
+   * The send phrase on an awaiting-decision override (ADR-0097 D3), under the same locks as its deny and the UI's
+   * reject: re-read the request (a request another transition decided is never approved), re-check the whole set's
+   * expiry — it expires with its OLDEST override (D5) — synchronously right before `decide`, record the approval and
+   * the grant. The dispatch that follows (the runtime's) runs only on a grant this call recorded.
+   */
+  approveCredentialOverride(
+    input: ApprovalDecisionInput,
+    override: Extract<CredentialOverrideLookup, { state: 'awaiting-decision' }>,
+  ): Promise<CredentialOverrideSendResult> {
+    const approval = override.approval;
+    return this.exclusive(approval.id, input.session.id, async (): Promise<CredentialOverrideSendResult> => {
+      const flow = this.deps.credentialOverrideFlow!; // a lookup exists only when the flow is wired
+      if (this.isSettledByOpsUi(approval.id) || (await this.freshPending(approval.id)) === null) {
+        return { kind: 'reply', value: await this.lostToOpsUi(input) };
+      }
+      const earlier: ApprovalRequest[] = [];
+      for (const g of override.anchor.grants) {
+        if (g.approvalRequestId === approval.id) continue;
+        const r = await this.deps.approvals.get(g.approvalRequestId);
+        if (r) earlier.push(r);
+      }
+      if (Math.min(this.remainingMs(approval), ...earlier.map((r) => this.remainingMs(r))) <= 0) {
+        return {
+          kind: 'reply',
+          value: await this.recordExpiryBeforeApprove(input.context, input.session, approval, null, override),
+        };
+      }
+      await this.deps.approvals.decide(approval.id, {
+        approvalId: approval.id,
+        approved: true,
+        decidedBy: input.actor.id,
+        decidedAt: this.clock(),
+        comment: CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
+      });
+      return { kind: 'granted', granted: await flow.recordGrant(input.session, approval.id) };
+    });
+  }
+
+  /**
+   * Close a still-PENDING request as rejected (a stray override request, ADR-0097 D5), under its lock; one another
+   * transition already decided is kept. Returns whether it closed it.
+   */
+  closeIfPending(approvalId: Id, decidedBy: string, comment: string): Promise<boolean> {
+    return this.serialize(approvalId, async () => {
+      if ((await this.freshPending(approvalId)) === null) return false;
+      await this.deps.approvals.decide(approvalId, { approvalId, approved: false, decidedBy, decidedAt: this.clock(), comment });
+      return true;
+    });
+  }
+
+  // ── (A2d) the conversation reset (ADR-0093) ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Reset: invalidate a credential-override set (`reset`, by the owner — BEFORE the close, ADR-0097 D5), record a
+   * still-PENDING approval rejected (`decidedBy` = the owner, comment `reset`) and close the session — all under the
+   * pending approval's lock and the session's lock, so a UI decision racing it either finished first (the reset then
+   * finds nothing pending and only closes) or runs after it and finds the approval decided and the conversation
+   * closed (it never re-anchors it). Returns whether this reset denied the approval.
+   */
+  resetConversation(session: Session, actor: Actor, pending: ApprovalRequest | null): Promise<{ deniedPendingApproval: boolean }> {
+    return this.exclusive(pending?.id, session.id, async () => {
+      await this.deps.credentialOverrideFlow?.invalidate(session, 'reset', actor.id);
+      let deniedPendingApproval = false;
+      if (pending && !this.isSettledByOpsUi(pending.id) && (await this.freshPending(pending.id)) !== null) {
+        await this.deps.approvals.decide(pending.id, {
+          approvalId: pending.id,
+          approved: false,
+          decidedBy: actor.id,
+          decidedAt: this.clock(),
+          comment: 'reset',
+        });
+        deniedPendingApproval = true;
+      }
+      await this.deps.sessions.close(session);
+      return { deniedPendingApproval };
+    });
+  }
+
   // ── (A2c) the connector write (ADR-0112) ────────────────────────────────────────────────────────────────────────
 
   /**
@@ -685,7 +827,7 @@ export class ApprovalDecisionService {
     view: ConnectorWriteAnchorView,
     verdict: ApprovalDecisionVerdict,
   ): Promise<ApprovalDecisionReply> {
-    return this.serialize(view.approval?.id, () => this.decideConnectorWriteUnlocked(input, view, verdict));
+    return this.exclusive(view.approval?.id, input.session.id, () => this.decideConnectorWriteUnlocked(input, view, verdict));
   }
 
   private async decideConnectorWriteUnlocked(
@@ -697,11 +839,11 @@ export class ApprovalDecisionService {
     const { anchor } = view;
     const approval = view.approval!;
     const history = anchor.family === 'calendar' ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : undefined;
-    if (this.isSettledByOpsUi(approval.id)) return this.lostToOpsUi(input);
+    if (this.isSettledByOpsUi(approval.id) || (await this.freshPending(approval.id)) === null) return this.lostToOpsUi(input);
     if (verdict === 'approve') {
       // ADR-0093 expiry re-check, synchronous, immediately before the positive decision.
       if (this.remainingMs(approval) <= 0) {
-        await this.expire(input.session, {
+        await this.expireUnlocked(input.session, {
           planPending: null,
           pendingScope: null,
           applyAnchor: null,
@@ -839,7 +981,7 @@ export class ApprovalDecisionService {
     anchor: ApplyPreviewAnchor,
     verdict: ApprovalDecisionVerdict,
   ): Promise<ApprovalDecisionReply> {
-    return this.serialize(pendingApprovalIdOf(anchor), () => this.decideAnchoredUnlocked(input, anchor, verdict));
+    return this.exclusive(pendingApprovalIdOf(anchor), input.session.id, () => this.decideAnchoredUnlocked(input, anchor, verdict));
   }
 
   private async decideAnchoredUnlocked(
@@ -873,9 +1015,11 @@ export class ApprovalDecisionService {
     verdict: ApprovalDecisionVerdict,
   ): Promise<ApprovalDecisionReply> {
     const approved = verdict === 'approve';
+    // Re-read inside the lock: an apply approval another transition already decided is never decided again.
+    const request = await this.freshPending(anchor.approvalId!);
+    if (request === null) return this.lostToOpsUi(input);
     if (approved) {
-      const request = await this.deps.approvals.get(anchor.approvalId!);
-      const expired = request ? this.expiredBeforeApprove(input, request, anchor) : null;
+      const expired = this.expiredBeforeApprove(input, request, anchor);
       if (expired) return await expired;
     }
     await this.deps.approvals.decide(anchor.approvalId!, this.decisionOf(anchor.approvalId!, input, approved));
@@ -1219,16 +1363,40 @@ export class ApprovalDecisionService {
    * history. Approve needs the chat preview's confirmation reference; it never executes anything.
    */
   decideFromOpsUi(input: OpsUiDecisionInput): Promise<ApprovalSurfaceDecision> {
-    return this.serialize(input.approvalId, () => this.decideFromOpsUiUnlocked(input));
+    return this.serialize(input.approvalId, async () => {
+      const first = await this.locateForDecision(input);
+      if (first.status === 'REFUSED') return first;
+      // The holder is known only now: take its session lock (approval → session, the order every transition uses),
+      // then re-read both — a reset that closed the conversation meanwhile wins, and nothing is re-anchored.
+      return this.serializeSession(first.found.session.id, async () => {
+        const fresh = await this.locateForDecision(input);
+        if (fresh.status === 'REFUSED') return fresh;
+        if (fresh.found.session.id !== first.found.session.id) return refused('NOT_FOUND');
+        return this.decideFromOpsUiUnlocked(input, fresh.found);
+      });
+    });
   }
 
-  private async decideFromOpsUiUnlocked(input: OpsUiDecisionInput): Promise<ApprovalSurfaceDecision> {
+  /** The fresh approval status and its holder (an ACTIVE conversation of this actor), or why the UI is refused. */
+  private async locateForDecision(
+    input: OpsUiDecisionInput,
+  ): Promise<
+    | { readonly status: 'FOUND'; readonly found: { session: Session; lookup: PendingApprovalLookup; approval: ApprovalRequest } }
+    | { readonly status: 'REFUSED'; readonly refusal: ApprovalSurfaceRefusal }
+  > {
     const current = await this.deps.approvals.get(input.approvalId);
-    if (current === null) return refused('NOT_FOUND');
-    if (current.status !== ApprovalStatus.PENDING) return refused('ALREADY_DECIDED');
+    if (current === null) return { status: 'REFUSED', refusal: 'NOT_FOUND' };
+    if (current.status !== ApprovalStatus.PENDING) return { status: 'REFUSED', refusal: 'ALREADY_DECIDED' };
     const found = await this.locate(input.approvalId, input.sessions);
-    if (found === null) return refused('NOT_FOUND');
-    if (!this.ownedBy(found, input.actor)) return refused('FOREIGN');
+    if (found === null) return { status: 'REFUSED', refusal: 'NOT_FOUND' };
+    if (!this.ownedBy(found, input.actor)) return { status: 'REFUSED', refusal: 'FOREIGN' };
+    return { status: 'FOUND', found };
+  }
+
+  private async decideFromOpsUiUnlocked(
+    input: OpsUiDecisionInput,
+    found: { session: Session; lookup: PendingApprovalLookup; approval: ApprovalRequest },
+  ): Promise<ApprovalSurfaceDecision> {
     const { session, lookup, approval } = found;
     const kind = approvalGateKindOf(lookup)!;
     const decisionInput: ApprovalDecisionInput = { context: session.context, session, actor: input.actor, surface: 'ops-ui' };
@@ -1241,7 +1409,7 @@ export class ApprovalDecisionService {
 
     // ADR-0093: an expired approval is recorded denied exactly as the next chat turn would; it can never be approved.
     if (this.remainingMs(approval) <= 0) {
-      await this.expire(session, lookup);
+      await this.expireUnlocked(session, lookup);
       const reply = this.deps.composer.composeApprovalExpired(session.context, approval, PENDING_APPROVAL_TTL_MS);
       await this.deps.memory.recordAssistant(reply.text, session.context, session.id);
       return decided('EXPIRED', { status: 'DENIED', reply });
@@ -1313,6 +1481,8 @@ export class ApprovalDecisionService {
     sessions: () => Promise<readonly Session[]>,
   ): Promise<{ session: Session; lookup: PendingApprovalLookup; approval: ApprovalRequest } | null> {
     for (const session of await sessions()) {
+      // Only a live conversation holds an approval: a reset (closed) session is never decided for or re-anchored.
+      if (session.status !== SessionStatus.ACTIVE) continue;
       const lookup = await this.findPending(session);
       if (lookup.pending?.id === approvalId && approvalGateKindOf(lookup) !== null) return { session, lookup, approval: lookup.pending };
     }

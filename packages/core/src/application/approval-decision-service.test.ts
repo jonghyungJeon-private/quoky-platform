@@ -27,6 +27,8 @@ import { APPROVAL_REFERENCE_LINE_PREFIX, ResponseComposer } from './response-com
 import { StatelessApplyPreviewFlow } from './stateless-apply-preview-flow';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { StatelessScopeClarificationFlow } from './stateless-scope-clarification-flow';
+import { CREDENTIAL_OVERRIDE_DENY_COMMENT, CREDENTIAL_OVERRIDE_SEND_PHRASE } from './credential-override';
+import type { CredentialOverrideAnchor, CredentialOverrideFlow, CredentialOverrideLookup } from './credential-override';
 
 /**
  * ADR-0113 D7 / OPS-2b acceptance, offline: the operations UI and chat share ONE decision path. One fixture is driven
@@ -106,14 +108,17 @@ interface Fixture {
   history: string[];
   decides: number;
   approvalId: Id;
+  /** The fake credential-override flow's calls (`kind: 'override'` only). */
+  override: { recordGrant: number; invalidate: number; state: 'PENDING' | 'GRANTED' | 'INVALIDATED' };
 }
 
 /** A runtime wired with the real stateless flows over one in-memory store; only the decision-turn collaborators exist. */
-async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 'eligible' } = {}): Promise<Fixture> {
+async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 'eligible' | 'override' } = {}): Promise<Fixture> {
   const store = memoryStore();
   const manager = new ApprovalManager(store as never, {} as ApprovalPolicy);
   const history: string[] = [];
-  const f = { store, manager, history, decides: 0 } as Fixture;
+  const f = { store, manager, history, decides: 0, override: { recordGrant: 0, invalidate: 0, state: 'PENDING' } } as Fixture;
+  let credentialOverrideFlow: CredentialOverrideFlow | undefined;
   const realDecide = manager.decide.bind(manager);
   manager.decide = async (id, decision) => {
     const result = await realDecide(id, decision);
@@ -145,6 +150,34 @@ async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 
     await store.tasks.save({ id: 'task-plan', planId: 'plan-9', status: 'WAITING_APPROVAL' } as unknown as Task);
     await store.sessions.save({ ...session, activeTaskId: 'task-plan' });
     f.approvalId = approval.id;
+  } else if (options.kind === 'override') {
+    // ADR-0097: a CRITICAL override awaiting its decision, held by a minimal fake flow (the set's pointer slot).
+    const approval = await manager.requestForRisk({
+      executionPlanRef: { id: 'plan-ovr', goal: 'g' },
+      riskLevel: RiskLevel.CRITICAL,
+      reason: 'credential override src/a.ts',
+      requestedBy: OWNER_ID,
+    });
+    f.approvalId = approval.id;
+    const grant = { approvalRequestId: approval.id, state: 'PENDING', path: 'src/a.ts', targetIndex: 0 };
+    const anchor = { status: 'PENDING', grants: [grant] } as unknown as CredentialOverrideAnchor;
+    credentialOverrideFlow = {
+      async findPending(): Promise<CredentialOverrideLookup | null> {
+        if (f.override.state !== 'PENDING') return null;
+        const current = (await manager.get(approval.id))!;
+        return { state: 'awaiting-decision', anchor, grant: anchor.grants[0]!, approval: current, remainingMs: 1 };
+      },
+      async recordGrant() {
+        f.override.recordGrant++;
+        f.override.state = 'GRANTED';
+        return { ok: true, anchor };
+      },
+      async invalidate() {
+        f.override.invalidate++;
+        f.override.state = 'INVALIDATED';
+        return { state: 'invalidated', anchor };
+      },
+    } as unknown as CredentialOverrideFlow;
   } else {
     const approval = await manager.requestForRisk({
       executionPlanRef: { id: 'plan-1', goal: 'g' },
@@ -160,7 +193,7 @@ async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 
     sessions: {
       async openForContext() { return (await store.sessions.get(SESSION_ID))!; },
       async touch(s: Session) { return s; },
-      async close(s: Session) { return s; },
+      async close(s: Session) { return store.sessions.save({ ...s, status: SessionStatus.CLOSED }); },
     },
     memory: {
       async recordShortTerm() { return { id: 'mem-1' }; },
@@ -171,6 +204,7 @@ async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 
     approvalFlow: new StatelessApprovalFlow(store),
     scopeClarificationFlow: new StatelessScopeClarificationFlow(store),
     applyPreviewFlow,
+    ...(credentialOverrideFlow ? { credentialOverrideFlow } : {}),
     composer: new ResponseComposer(),
     orchestrator: {
       async resume() { throw new Error('resume must not run in these tests'); },
@@ -439,5 +473,176 @@ describe('the chat confirmation reference line (ADR-0113 D7)', () => {
     f.service.setConfirmationReferenceEnabled(false);
     const off = await f.runtime.handle(message('이게 뭐였지?'));
     expect(off.reply.text).not.toContain(APPROVAL_REFERENCE_LINE_PREFIX);
+  });
+});
+
+/** A promise the test resolves by hand: the point a racing transition is held at. */
+function gate(): { readonly promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => { open = resolve; });
+  return { promise, open };
+}
+
+/** Let every runnable continuation settle (the fakes are in-memory, so a few macrotask turns drain them all). */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Hold the FIRST `ApprovalManager.decide` whose decision matches `when`, either before it writes (`'before'`) or right
+ * after (`'after'`, i.e. between the decision record and the session update it carries). Returns the gate and whether
+ * it is currently holding.
+ */
+function holdDecide(f: Fixture, when: (d: { comment?: string; decidedBy: string; approved: boolean }) => boolean, at: 'before' | 'after') {
+  const g = gate();
+  const state = { held: false };
+  const inner = f.manager.decide;
+  f.manager.decide = async (id, decision) => {
+    const hold = !state.held && when(decision);
+    if (hold) state.held = true;
+    if (hold && at === 'before') await g.promise;
+    const result = await inner(id, decision);
+    if (hold && at === 'after') await g.promise;
+    return result;
+  };
+  return { ...g, state };
+}
+
+const sessionStatus = async (f: Fixture) => (await f.store.sessions.get(SESSION_ID))!.status;
+const anchorTaskStatuses = (f: Fixture) =>
+  [...f.store.raw.tasks.values()].map((t) => (t.metadata?.['conversationApplyPreviewAnchor'] as ApplyPreviewAnchor | undefined)?.status);
+
+describe('every approval transition shares one serialization (ADR-0113 D7, Codex P1)', () => {
+  const composer = new ResponseComposer();
+  const noPending = composer.composeNoPendingDecision(CTX).text;
+
+  it('reset racing a UI approve that decided first: the reset waits, then closes — the closed session is never re-anchored', async () => {
+    const f = await fixture();
+    const reference = await chatReference(f);
+    // The UI has recorded APPROVED and is about to re-anchor COMMIT_APPROVED when the reset arrives.
+    const held = holdDecide(f, (d) => d.comment === OPS_UI_DECISION_SURFACE, 'after');
+    const ui = decideUi(f, 'approve', reference);
+    await settle();
+    expect(held.state.held).toBe(true);
+    const reset = f.runtime.handle(message('새 대화'));
+    await settle();
+    held.open();
+    const [uiResult, resetTurn] = await Promise.all([ui, reset]);
+
+    expect(uiResult).toMatchObject({ status: 'DECIDED', outcome: 'APPROVED' });
+    expect(f.decides).toBe(1);
+    expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.APPROVED);
+    // The reset reported success AND the conversation stays closed (it ran after the re-anchor, not before it).
+    expect(resetTurn.reply.text).toBe(composer.composeConversationReset(CTX, { deniedPendingApproval: false }).text);
+    expect(await sessionStatus(f)).toBe(SessionStatus.CLOSED);
+  });
+
+  it('reset that reached the approval first: the racing UI approve gets ALREADY_DECIDED and revives nothing', async () => {
+    const f = await fixture();
+    const reference = await chatReference(f);
+    const held = holdDecide(f, (d) => d.comment === 'reset', 'before');
+    const reset = f.runtime.handle(message('새 대화'));
+    await settle();
+    expect(held.state.held).toBe(true);
+    const ui = decideUi(f, 'approve', reference);
+    await settle();
+    held.open();
+    const [resetTurn, uiResult] = await Promise.all([reset, ui]);
+
+    expect(f.decides).toBe(1);
+    expect(await f.manager.get(f.approvalId)).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'reset', decidedBy: OWNER_ID });
+    expect(resetTurn.reply.text).toBe(composer.composeConversationReset(CTX, { deniedPendingApproval: true }).text);
+    expect(uiResult).toEqual({ status: 'REFUSED', refusal: 'ALREADY_DECIDED' });
+    expect(await sessionStatus(f)).toBe(SessionStatus.CLOSED);
+    expect(anchorTaskStatuses(f)).not.toContain('COMMIT_APPROVED');
+  });
+
+  it('a UI decision never re-anchors a conversation that is already closed', async () => {
+    const f = await fixture();
+    const reference = await chatReference(f);
+    // A closed session still pointing at the PENDING gate (e.g. a reset whose denial was lost): the UI must not touch it.
+    const live = (await f.store.sessions.get(SESSION_ID))!;
+    await f.store.sessions.save({ ...live, status: SessionStatus.CLOSED });
+    expect(await decideUi(f, 'approve', reference)).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
+    expect(await f.service.locateForOpsUi(f.approvalId, OWNER, sessionsOf(f))).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
+    expect(f.decides).toBe(0);
+    expect(await sessionStatus(f)).toBe(SessionStatus.CLOSED);
+  });
+
+  it('turn-start expiry racing a UI approve: exactly one expiry is recorded, whichever reaches the lock first', async () => {
+    for (const first of ['ui', 'chat'] as const) {
+      vi.setSystemTime(new Date(TS));
+      const f = await fixture();
+      const reference = await chatReference(f);
+      vi.setSystemTime(new Date(Date.parse(TS) + 31 * 60_000));
+      // Hold whichever transition decides first, before it writes; the other one starts while it is held.
+      const held = holdDecide(f, () => true, 'before');
+      const ui = () => decideUi(f, 'approve', reference);
+      const chat = () => f.runtime.handle(message('승인'));
+      const firstRun = first === 'ui' ? ui() : chat();
+      await settle();
+      expect(held.state.held, first).toBe(true);
+      const secondRun = first === 'ui' ? chat() : ui();
+      await settle();
+      held.open();
+      const [a, b] = await Promise.all([firstRun, secondRun]);
+      const uiResult = (first === 'ui' ? a : b) as ApprovalSurfaceDecision;
+      const chatTurn = (first === 'ui' ? b : a) as Awaited<ReturnType<typeof chat>>;
+
+      expect(f.decides, first).toBe(1);
+      expect(await f.manager.get(f.approvalId), first).toMatchObject({ status: ApprovalStatus.REJECTED, decidedBy: 'system', comment: 'expired' });
+      expect((await liveAnchor(f))?.status, first).toBe('WORKSPACE_APPLIED');
+      const expiredNotice = composer.composeApprovalExpired(CTX, (await f.manager.get(f.approvalId))!, 30 * 60_000).text;
+      if (first === 'ui') {
+        expect(uiResult).toMatchObject({ status: 'DECIDED', outcome: 'EXPIRED' });
+        // The chat turn found the approval already expired by the UI: the existing "nothing to decide" reply.
+        expect(chatTurn.reply.text).toBe(noPending);
+      } else {
+        expect(chatTurn.reply.text).toBe(expiredNotice);
+        expect(uiResult).toEqual({ status: 'REFUSED', refusal: 'ALREADY_DECIDED' });
+      }
+    }
+  });
+
+  it('credential-override send racing a UI reject: the send that decided first wins, the reject gets ALREADY_DECIDED', async () => {
+    const f = await fixture({ kind: 'override' });
+    const session = (await f.store.sessions.get(SESSION_ID))!;
+    const lookup = (await f.service.findPending(session)).override as Extract<CredentialOverrideLookup, { state: 'awaiting-decision' }>;
+    const held = holdDecide(f, (d) => d.approved, 'after'); // approved, grant not yet recorded
+    const send = f.service.approveCredentialOverride({ context: CTX, session, actor: OWNER, surface: 'chat' }, lookup);
+    await settle();
+    expect(held.state.held).toBe(true);
+    const ui = decideUi(f, 'reject');
+    await settle();
+    held.open();
+    const [sent, uiResult] = await Promise.all([send, ui]);
+
+    expect(sent).toMatchObject({ kind: 'granted', granted: { ok: true } });
+    expect(uiResult).toEqual({ status: 'REFUSED', refusal: 'ALREADY_DECIDED' });
+    expect(f.decides).toBe(1);
+    expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.APPROVED);
+    expect(f.override).toMatchObject({ recordGrant: 1, invalidate: 0, state: 'GRANTED' });
+  });
+
+  it('a UI reject that reached the override first: the racing chat send phrase approves nothing and sends nothing', async () => {
+    const f = await fixture({ kind: 'override' });
+    const held = holdDecide(f, (d) => d.comment === `${CREDENTIAL_OVERRIDE_DENY_COMMENT};${OPS_UI_DECISION_SURFACE}`, 'before');
+    const ui = decideUi(f, 'reject');
+    await settle();
+    expect(held.state.held).toBe(true);
+    // The chat turn reads the request PENDING at turn start and routes the send phrase; its decision waits for the lock.
+    const send = f.runtime.handle(message(CREDENTIAL_OVERRIDE_SEND_PHRASE));
+    await settle();
+    held.open();
+    const [uiResult, sendTurn] = await Promise.all([ui, send]);
+
+    expect(uiResult).toMatchObject({ status: 'DECIDED', outcome: 'REJECTED', kind: 'CREDENTIAL_OVERRIDE' });
+    expect(sendTurn.reply.text).toBe(noPending);
+    expect(f.decides).toBe(1);
+    expect(await f.manager.get(f.approvalId)).toMatchObject({
+      status: ApprovalStatus.REJECTED,
+      comment: `${CREDENTIAL_OVERRIDE_DENY_COMMENT};${OPS_UI_DECISION_SURFACE}`,
+    });
+    expect(f.override).toMatchObject({ recordGrant: 0, invalidate: 1, state: 'INVALIDATED' });
   });
 });
