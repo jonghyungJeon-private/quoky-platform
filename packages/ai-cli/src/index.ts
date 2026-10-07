@@ -502,6 +502,9 @@ export class CodexCliProvider extends BaseCliAiProvider {
  * output masked. Advertised for code at a LOW priority (below Claude) so a local model is
  * a fallback, not the default, for code — plus its existing chat/summarization roles.
  */
+/** `ollama run` flag that disables the CLI's terminal-width hard wrap (it wraps even when stdout is a pipe). */
+export const OLLAMA_NO_WORD_WRAP = '--nowordwrap';
+
 export class OllamaCliProvider extends BaseCliAiProvider {
   readonly id: string;
   /**
@@ -549,9 +552,13 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       ? null : approvedLoopbackHost(options.validationHost);
   }
 
-  /** `ollama run <model>`. The prompt is supplied via stdin, never as an argv. */
+  /**
+   * `ollama run --nowordwrap <model>`. The prompt is supplied via stdin, never as an argv.
+   * `--nowordwrap` stops the CLI from hard-wrapping output at the terminal width, which it
+   * does even when piped and which split Korean words mid-syllable in chat replies.
+   */
   buildArgs(): string[] {
-    return ['run', this.model];
+    return ['run', OLLAMA_NO_WORD_WRAP, this.model];
   }
 
   /**
@@ -671,7 +678,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
       audit: {
         model,
-        sanitizedCommand: ['ollama', 'run', model],
+        sanitizedCommand: ['ollama', 'run', OLLAMA_NO_WORD_WRAP, model],
         promptSha256,
         captureMode: 'pipe',
         colorDisabled: true,
@@ -807,9 +814,9 @@ export class OllamaCliVisionProvider extends BaseCliAiProvider {
     this.defaultTimeoutMs = options.timeoutMs ?? DEFAULT_OLLAMA_VISION_TIMEOUT_MS;
   }
 
-  /** `ollama run <model> <image path>…`; the prompt is supplied via stdin, never as an argv. */
+  /** `ollama run --nowordwrap <model> <image path>…`; the prompt is supplied via stdin, never as an argv. */
   buildArgs(imagePaths: readonly string[] = []): string[] {
-    return ['run', this.model, ...imagePaths];
+    return ['run', OLLAMA_NO_WORD_WRAP, this.model, ...imagePaths];
   }
 
   /** Real readiness: LOCAL, daemon up, model installed (no implicit pull), and Ollama reports `vision` for it. */
@@ -897,7 +904,7 @@ export class OllamaCliVisionProvider extends BaseCliAiProvider {
       raw: { exitCode: result.code },
       audit: {
         model,
-        sanitizedCommand: ['ollama', 'run', model, ...paths.map(() => '<image>')],
+        sanitizedCommand: ['ollama', 'run', OLLAMA_NO_WORD_WRAP, model, ...paths.map(() => '<image>')],
         promptSha256,
         imageCount: paths.length,
         captureMode: 'pipe',

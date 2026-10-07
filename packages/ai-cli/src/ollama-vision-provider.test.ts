@@ -81,7 +81,7 @@ const imageRequest = (images: AiImageInput[], prompt = '# System\nread it\n\n# T
 /** A runner that answers like `ollama run` after loading every image argument. */
 function visionRunner(answer = 'A bar chart of weekly sales.') {
   return recordingRunner((args) => {
-    const paths = args.slice(2);
+    const paths = args.slice(3);
     return ok(answer, paths.map((p) => `Added image '${p}'\n`).join(''));
   });
 }
@@ -163,13 +163,13 @@ describe('OllamaCliVisionProvider — execute', () => {
     );
     expect(calls).toHaveLength(1);
     expect(calls[0]?.bin).toBe('ollama');
-    expect(calls[0]?.args).toEqual(['run', 'gemma3:4b', png, jpg]);
+    expect(calls[0]?.args).toEqual(['run', '--nowordwrap', 'gemma3:4b', png, jpg]);
     expect(calls[0]?.opts.cwd).toBe(tmpdir());
     expect(calls[0]?.opts.input.endsWith('\n')).toBe(true);
     expect(calls[0]?.opts.input).not.toContain(png);
     expect(calls[0]?.opts.downloadMarkerPolicy).toBe('OLLAMA_PULL_STDERR');
     expect(result.text).toBe('A bar chart of weekly sales.');
-    expect(result.audit).toMatchObject({ imageCount: 2, sanitizedCommand: ['ollama', 'run', 'gemma3:4b', '<image>', '<image>'] });
+    expect(result.audit).toMatchObject({ imageCount: 2, sanitizedCommand: ['ollama', 'run', '--nowordwrap', 'gemma3:4b', '<image>', '<image>'] });
     expect(JSON.stringify([result.audit, result.raw, result.artifacts])).not.toContain(dir);
   });
 
@@ -251,7 +251,7 @@ describe('OllamaCliVisionProvider — execute', () => {
     const failing = recordingRunner((args) => ({
       code: 1,
       stdout: '',
-      stderr: `Added image '${args[2] ?? ''}'\nError: model crashed reading ${args[2] ?? ''}`,
+      stderr: `Added image '${args[3] ?? ''}'\nError: model crashed reading ${args[3] ?? ''}`,
       timedOut: false,
     }));
     const err = await new OllamaCliVisionProvider({ model: 'gemma3:4b', runner: failing.runner })
@@ -275,7 +275,7 @@ describe('OllamaCliVisionProvider — execute', () => {
       ),
     ).rejects.toMatchObject({ kind: AiFailureKind.UNAVAILABLE });
 
-    const empty = recordingRunner((args) => ok('   ', `Added image '${args[2] ?? ''}'`));
+    const empty = recordingRunner((args) => ok('   ', `Added image '${args[3] ?? ''}'`));
     await expect(
       new OllamaCliVisionProvider({ model: 'gemma3:4b', runner: empty.runner }).execute(
         imageRequest([{ path: png, mimeType: 'image/png' }]),

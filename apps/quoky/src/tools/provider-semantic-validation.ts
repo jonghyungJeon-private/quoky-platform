@@ -24,7 +24,7 @@ import {
   TaskStatus,
 } from '@quoky/core';
 import type { AiRequest, ContextBundle, Task } from '@quoky/core';
-import { OllamaCliProvider, maskSecrets } from '@quoky/ai-cli';
+import { OLLAMA_NO_WORD_WRAP, OllamaCliProvider, maskSecrets } from '@quoky/ai-cli';
 import type { CliRunOptions, CliRunResult, CliRunner } from '@quoky/ai-cli';
 
 export const FIXTURE_VERSION = 'stage2a-provider-semantic-a-e-v1';
@@ -2631,7 +2631,7 @@ export class ProviderSemanticHarness {
             const auditValid =
               audit.model === config.model &&
               JSON.stringify(audit.sanitizedCommand) ===
-                JSON.stringify(['ollama', 'run', config.model]) &&
+                JSON.stringify(['ollama', 'run', OLLAMA_NO_WORD_WRAP, config.model]) &&
               audit.promptSha256 === sha256(request.prompt) &&
               audit.captureMode === 'pipe' &&
               audit.colorDisabled === true &&

@@ -33,7 +33,7 @@ describe('provider recall diagnostic', () => {
         return { code: 0, stdout: 'available', stderr: '', timedOut: false };
       }
       generationInputs.push({ args, input: options.input });
-      const output = args[0] === 'run' && args[1] === 'granite3.3:8b'
+      const output = args[0] === 'run' && args.at(-1) === 'granite3.3:8b'
         ? '직전 질문을 기억하지 못해요.'
         : '사용자가 직전에 안녕?이라고 질문했어요.';
       return { code: 0, stdout: output, stderr: '', timedOut: false };
