@@ -22,6 +22,7 @@ import {
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
 } from './image-understanding';
+import { hasOnlyUnreadAttachments, renderAttachmentsNotRead, withAttachedTextFiles } from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
@@ -2257,6 +2258,17 @@ export class ConversationRuntime {
     const images = imageAttachmentsOf(message);
     if (images.length > 0) {
       return this.handleImageUnderstandingTurn(message, session, actor, images);
+    }
+    // (A3c) ADR-0111 D2/D3: every attachment of the message was refused (credential-like, too large, unsupported type,
+    // …) and nothing readable remains. The adapter already named each file and why; no provider runs, so no model
+    // answers as if it had seen a file it never got (live QA: a refused config.yml produced an unrelated chat reply).
+    if (hasOnlyUnreadAttachments(message)) {
+      // Content-free: a count only, never a file name or reason text.
+      this.deps.logger.info('attachment turn answered without a provider', {
+        attachmentCount: message.attachments?.length ?? 0,
+      });
+      const text = renderAttachmentsNotRead(noticeLanguage(undefined, message.text));
+      return this.respondComposed(message, session, { context: message.context, text });
     }
     // (A4) ADR-0096 `post-anchor` turn handlers — every pending approval / scope clarification / `*_PENDING`
     // intercept above has already captured its turn, so a handler can never pre-empt a decision. Runs BEFORE the
@@ -6994,9 +7006,14 @@ export class ConversationRuntime {
         : undefined;
       // ADR-0100 D8 / ADR-0096 D4: a connector work summary is self-contained — no short-term history or durable
       // recall is read for it (PromptComposer also ignores the bundle for an external-work readout).
+      // ADR-0111 D3: the current message's text attachments join the bundle as one bounded, untrusted Resource
+      // (from the InboundMessage only; never persisted). A work summary stays self-contained and carries none.
       const bundle: ContextBundle = isExternalWorkReadout(readout)
         ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
-        : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []);
+        : withAttachedTextFiles(
+            await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []),
+            message,
+          );
 
       // W3-L01 (ADR-0104 D3, ADR-0106): an own-memory recall question ("내가 좋아하는 과일이 뭐였지?") whose assembled
       // context holds nothing relevant — no active durable recall (archived/expired/superseded records never reach the

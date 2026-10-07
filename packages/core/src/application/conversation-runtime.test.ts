@@ -72,6 +72,7 @@ import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { renderInternalActionClaimNotice, renderInternalActionNotDone } from './chat-policy/internal-action-vocabulary';
 import { renderOwnMemoryNotFound } from './chat-policy/own-memory-recall';
 import { renderImageUnderstandingUnavailable } from './image-understanding';
+import { ATTACHED_FILES_SECTION_TITLE, renderAttachmentsNotRead } from './attachment-context';
 import { DefaultMemoryRetriever } from './memory-retriever';
 import { CodeGenerationManager } from './code-generation-manager';
 import { ResponseComposer } from './response-composer';
@@ -11144,6 +11145,106 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     expect(turn.routedRequests[0]?.prompt).not.toContain(EXAMPLE_ANSWER);
     expect(turn.routedRequests[0]?.prompt).not.toContain('OWNER_CURATED_EXAMPLE');
     expect(turn.prompts).toHaveLength(0);
+  });
+});
+
+describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-refused message runs no provider', () => {
+  const LOG = [
+    '2026-10-07 10:12:07.331 WARN  [db] slow query 1840ms: SELECT * FROM order_items WHERE order_id = ?',
+    '2026-10-07 10:12:09.006 ERROR [payment] PaymentGatewayTimeout: upstream did not respond within 5000ms (orderId=1183)',
+    '2026-10-07 10:12:17.900 WARN  [circuit] payment-gateway circuit OPEN after 2 consecutive failures',
+  ].join('\n');
+  const logFile: InboundAttachment = {
+    kind: 'text', name: 'app-error.log', mimeType: 'text/plain', sizeBytes: LOG.length, text: LOG, trust: 'UNTRUSTED',
+  };
+  const refusedFile = (name: string, reason: 'CREDENTIAL_SHAPED' | 'TOO_LARGE'): InboundAttachment => ({
+    kind: 'unsupported', name, mimeType: 'text/plain', sizeBytes: 10, reason,
+  });
+  const withAttachments = (text: string, attachments: InboundAttachment[]): InboundMessage => ({
+    id: 'm-att', context: CTX, text, receivedAt: TS, attachments,
+  });
+
+  function chatTurn() {
+    const { storage, taskSaves, runSaves } = makeTaskStorage();
+    const { deps: base, calls } = makeDeps({ intent: intentOf(Capability.GENERAL_CHAT, IntentType.CHAT, true) });
+    const requests: AiRequest[] = [];
+    const recorded: string[] = [];
+    const deps: ConversationRuntimeDeps = {
+      ...base,
+      tasks: new TaskManager(storage),
+      memory: {
+        ...base.memory,
+        async recordShortTerm(message) { recorded.push(message.text); return { id: 'mem-1' }; },
+        async recordAssistant(reply: string) { recorded.push(reply); return undefined; },
+      },
+      contextBuilder: {
+        async build(task) { return { taskId: task.id, conversationTranscript: [], backgroundResources: [] }; },
+      },
+      promptComposer: new PromptComposer(),
+      promptRenderer: new PromptRenderer(),
+      router: {
+        async select() {
+          return {
+            id: 'chat-under-test',
+            capabilities: [{ capability: Capability.GENERAL_CHAT, priority: 1 }],
+            async isAvailable() { return true; },
+            async execute(request) {
+              requests.push(request);
+              return { text: '결제 게이트웨이 타임아웃이 원인이에요.', artifacts: [] };
+            },
+          };
+        },
+      },
+    };
+    return { runtime: new ConversationRuntime(deps), calls, requests, recorded, taskSaves, runSaves };
+  }
+
+  it('a GENERAL_CHAT turn carries the attached log in section 2C of the provider prompt (live QA 2026-10-07)', async () => {
+    const h = chatTurn();
+    const result = await h.runtime.handle(withAttachments('이 로그에서 문제 원인 요약해줘', [logFile]));
+    expect(result.status).toBe('RESPONDED');
+    expect(h.requests).toHaveLength(1);
+    const prompt = h.requests[0]?.prompt ?? '';
+    expect(prompt).toContain(`## ${ATTACHED_FILES_SECTION_TITLE}`);
+    expect(prompt).toContain(JSON.stringify(`Attached file "app-error.log" (truncated=false):\n${LOG}`));
+    expect(prompt).toContain('The current User message has 1 attached text file');
+    expect(h.requests[0]?.images).toBeUndefined();
+    // The content is never persisted: memory holds only the typed text and the reply; Task/TaskRun records carry none.
+    expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves])).not.toContain('PaymentGatewayTimeout');
+  });
+
+  it('a message whose every attachment was refused gets the deterministic reply; no classifier, no provider', async () => {
+    for (const reason of ['CREDENTIAL_SHAPED', 'TOO_LARGE'] as const) {
+      const h = chatTurn();
+      const result = await h.runtime.handle(withAttachments('이 설정 파일 확인해줘', [refusedFile('config.yml', reason)]));
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toBe(renderAttachmentsNotRead('ko'));
+      expect(h.calls.classify).toBe(0);
+      expect(h.requests).toHaveLength(0);
+      expect(h.taskSaves).toHaveLength(0);
+      expect(h.recorded.at(-1)).toBe(renderAttachmentsNotRead('ko'));
+      expect(h.calls.loggerInfoCalls.find((c) => c.message === 'attachment turn answered without a provider')?.fields)
+        .toEqual({ attachmentCount: 1 });
+    }
+    const en = chatTurn();
+    const enResult = await en.runtime.handle(withAttachments('please check this config', [refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));
+    expect(enResult.reply.text).toBe(renderAttachmentsNotRead('en'));
+  });
+
+  it('a readable file next to a refused one still runs the turn and tells the model what was not read', async () => {
+    const h = chatTurn();
+    await h.runtime.handle(withAttachments('두 파일 비교해줘', [logFile, refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));
+    const prompt = h.requests[0]?.prompt ?? '';
+    expect(prompt).toContain('PaymentGatewayTimeout');
+    expect(prompt).toContain('1 other attachment of the current User message was not read by Core');
+    expect(prompt).not.toContain('config.yml');
+  });
+
+  it('a message without attachments composes exactly as before (no attachment section or fact)', async () => {
+    const h = chatTurn();
+    await h.runtime.handle(messageOf('안녕'));
+    expect(h.requests[0]?.prompt).not.toContain('2C.');
+    expect(h.requests[0]?.prompt).not.toContain('attached text file');
   });
 });
 
