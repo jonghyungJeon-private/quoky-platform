@@ -183,22 +183,52 @@ export function withAttachedTextFiles(bundle: ContextBundle, message: InboundMes
 
 /**
  * A reply to a turn whose prompt carried attachment text is withheld as a whole when the credential guard matches the
- * provider's ORIGINAL reply text or any artifact payload (title, content, uri, metadata). The file itself passed the
- * guard, so a match is model-made. Non-credential quotations of the file stay ordinary transcript (ADR-0111 D3: same
- * egress as the message text); the raw attachment is never stored.
+ * provider's ORIGINAL reply text or anything in its artifacts (every key and value, metadata included). The file
+ * itself passed the guard, so a match is model-made. Non-credential quotations of the file stay ordinary transcript
+ * (ADR-0111 D3: same egress as the message text); the raw attachment is never stored.
+ *
+ * Threat model: credential TEXT in provider output. Provider results are plain data our adapters build from CLI
+ * stdout or JSON, so exotic in-process objects (proxies, accessors, array-likes, class instances) cannot come from a
+ * provider; the guard does not try to interpret them and fails CLOSED instead. The artifact container must be a real,
+ * non-proxy array; any shape it does not read as plain data, and any throw, withholds the reply.
  */
-export function isAttachmentReplyWithheld(
-  reply: string,
-  artifacts: readonly { title?: string; content?: string; uri?: string; metadata?: unknown }[] = [],
-): boolean {
-  if (isCredentialShaped(reply)) return true;
-  for (let i = 0; i < artifacts.length; i += 1) {
-    const artifact = artifacts[i];
-    if (!artifact) continue;
-    for (const part of [artifact.title, artifact.content, artifact.uri]) {
-      if (typeof part === 'string' && isCredentialShaped(part)) return true;
+export function isAttachmentReplyWithheld(reply: unknown, artifacts: unknown = []): boolean {
+  try {
+    if (typeof reply !== 'string' || isCredentialShaped(reply)) return true;
+    if (!isPlainArray(artifacts)) return true;
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(artifacts, 'length');
+    const length: unknown = lengthDescriptor?.value;
+    if (typeof length !== 'number') return true;
+    // The container holds only its elements: any other own key is not plain provider data.
+    if (Reflect.ownKeys(artifacts).some((key) => typeof key !== 'string' || (key !== 'length' && !isArrayIndexKey(key)))) {
+      return true;
     }
-    if (artifact.metadata !== undefined && isCredentialShapedValue(artifact.metadata)) return true;
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(artifacts, String(index));
+      if (descriptor === undefined) continue; // a hole
+      if (!('value' in descriptor) || isArtifactWithheld(descriptor.value)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** Artifact fields Core itself generates (ids, timestamp, kind): not provider text, so not scanned (a UUID can look
+ *  like a card number). Every other field — title, content, uri, mimeType, metadata, anything unknown — is. */
+const ARTIFACT_IDENTITY_FIELDS: ReadonlySet<string> = new Set(['id', 'taskId', 'taskRunId', 'createdAt', 'kind']);
+
+/** One artifact: a plain object read once per property through its descriptor; accessors and symbols withhold. */
+function isArtifactWithheld(artifact: unknown): boolean {
+  if (typeof artifact !== 'object' || artifact === null || isProxy(artifact)) return true;
+  const proto: unknown = Object.getPrototypeOf(artifact);
+  if (proto !== Object.prototype && proto !== null) return true;
+  for (const key of Reflect.ownKeys(artifact)) {
+    if (typeof key === 'symbol') return true;
+    const descriptor = Object.getOwnPropertyDescriptor(artifact, key);
+    if (!descriptor || !('value' in descriptor)) return true; // accessor (e.g. a `metadata` getter): never invoked
+    if (ARTIFACT_IDENTITY_FIELDS.has(key)) continue;
+    if (isCredentialShaped(key) || isCredentialShapedValue(descriptor.value)) return true;
   }
   return false;
 }
@@ -208,6 +238,18 @@ const { isProxy } = types;
 /** How deep and how many nodes a metadata walk reads; anything larger is withheld (fail closed). */
 const METADATA_WALK_MAX_DEPTH = 16;
 const METADATA_WALK_MAX_NODES = 10_000;
+/** A canonical array index key ("0", "1", …, below 2^32 - 1). */
+const ARRAY_INDEX_KEY = /^(?:0|[1-9]\d{0,9})$/u;
+
+/** A real array: not a proxy (checked first, so no trap runs), `Array.isArray`, prototype `Array.prototype`. */
+function isPlainArray(value: unknown): value is readonly unknown[] {
+  if (typeof value !== 'object' || value === null || isProxy(value)) return false;
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
+}
+
+function isArrayIndexKey(key: string): boolean {
+  return ARRAY_INDEX_KEY.test(key) && Number(key) < 4_294_967_295;
+}
 
 /** Whether a `key`/`value` pair reads as a credential assignment (`key=value` or `key: value`, through the view). */
 function isCredentialPair(key: string, value: string | number): boolean {
@@ -215,23 +257,24 @@ function isCredentialPair(key: string, value: string | number): boolean {
 }
 
 /**
- * Whether structured data (artifact metadata) carries credential material, read WITHOUT executing anything of it.
- * Only primitives, plain objects (prototype `Object.prototype` or `null`) and real arrays (prototype
- * `Array.prototype`) are read, and only through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor`: no getter,
- * `toJSON`, iterator or overridable method (`some`, `map`, …) is ever called. Anything else — an accessor property, a
- * symbol key, a boxed primitive, a function, a class instance, a proxy, cyclic, deeper than
- * {@link METADATA_WALK_MAX_DEPTH} or larger than {@link METADATA_WALK_MAX_NODES} — counts as a match (withheld).
- * On what is read, both detectors check every string value and key, and the chat detector checks every
- * `key=value` / `key: value` composite of a string or number value, so a key split by a CR, NUL or zero-width
- * character is caught together with its value. (The strict FILE detector is not run on composites: it would refuse
- * counts such as `tokens: 207`.)
+ * Whether plain data (artifacts, metadata) carries credential material, read WITHOUT executing anything of it. Only
+ * primitives, plain objects (prototype `Object.prototype` or `null`) and real arrays are read, each property exactly
+ * once through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor` (no getter, `toJSON`, iterator or method is ever
+ * called). Anything else — an accessor property, a symbol key, a boxed primitive, a function, a class instance, a
+ * proxy, a cycle on the current path, deeper than {@link METADATA_WALK_MAX_DEPTH}, more than
+ * {@link METADATA_WALK_MAX_NODES} visits — and any throw counts as a match. A value shared by two properties is not a
+ * cycle (only ancestors on the current path are), and the visit limit bounds the total work.
+ * Checks: both detectors on every string value and every key (an object key, or a non-index key of an array), and the
+ * chat detector on every `key=value` / `key: value` composite of a string or number value — all through the detection
+ * view, so a key split by a CR, NUL or zero-width character is caught with its value. (The strict FILE detector is not
+ * run on composites: it would refuse counts such as `tokens: 207`.)
  */
 export function isCredentialShapedValue(value: unknown): boolean {
-  let nodes = 0;
-  const seen = new Set<object>();
+  let visits = 0;
+  const ancestors: object[] = [];
   const walk = (node: unknown, depth: number): boolean => {
-    nodes += 1;
-    if (nodes > METADATA_WALK_MAX_NODES || depth > METADATA_WALK_MAX_DEPTH) return true;
+    visits += 1;
+    if (visits > METADATA_WALK_MAX_NODES || depth > METADATA_WALK_MAX_DEPTH) return true;
     switch (typeof node) {
       case 'string':
         return isCredentialShaped(node);
@@ -247,26 +290,36 @@ export function isCredentialShapedValue(value: unknown): boolean {
     }
     if (node === null) return false;
     if (isProxy(node)) return true;
-    if (seen.has(node)) return true;
-    seen.add(node);
-    const proto: unknown = Object.getPrototypeOf(node);
-    const isArray = Array.isArray(node) && proto === Array.prototype;
-    if (!isArray && proto !== Object.prototype && proto !== null) return true;
-    for (const key of Reflect.ownKeys(node)) {
-      if (typeof key === 'symbol') return true;
-      const descriptor = Object.getOwnPropertyDescriptor(node, key);
-      if (!descriptor || !('value' in descriptor)) return true; // accessor (getter/setter): never invoked
-      if (isArray && key === 'length') continue;
-      const item: unknown = descriptor.value;
-      if (!isArray) {
-        if (isCredentialShaped(key)) return true;
-        if ((typeof item === 'string' || typeof item === 'number') && isCredentialPair(key, item)) return true;
-      }
-      if (walk(item, depth + 1)) return true;
+    if (ancestors.includes(node)) return true; // a cycle on the current path
+    const isArray = isPlainArray(node);
+    if (!isArray) {
+      const proto: unknown = Object.getPrototypeOf(node);
+      if (proto !== Object.prototype && proto !== null) return true;
     }
-    return false;
+    ancestors.push(node);
+    try {
+      for (const key of Reflect.ownKeys(node)) {
+        if (typeof key === 'symbol') return true;
+        const descriptor = Object.getOwnPropertyDescriptor(node, key);
+        if (!descriptor || !('value' in descriptor)) return true; // accessor (getter/setter): never invoked
+        if (isArray && key === 'length') continue;
+        const item: unknown = descriptor.value;
+        if (!isArray || !isArrayIndexKey(key)) {
+          if (isCredentialShaped(key)) return true;
+          if ((typeof item === 'string' || typeof item === 'number') && isCredentialPair(key, item)) return true;
+        }
+        if (walk(item, depth + 1)) return true;
+      }
+      return false;
+    } finally {
+      ancestors.pop();
+    }
   };
-  return walk(value, 0);
+  try {
+    return walk(value, 0);
+  } catch {
+    return true;
+  }
 }
 
 /** Mention tokens of chat platforms (`<@id>`, `<@!id>`, `<@&id>`, `<#id>`, `<#C1|name>`): addressing, not content. */

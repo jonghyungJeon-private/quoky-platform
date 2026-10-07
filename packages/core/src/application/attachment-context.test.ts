@@ -247,6 +247,65 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
       expect(withheld({ fn: () => 'ok' })).toBe(true);
     });
 
+    it('round 5: the artifact container must be a real, non-proxy array; nothing escapes', () => {
+      let traps = 0;
+      const proxyArray = new Proxy([], { get: () => { traps += 1; return 0; }, getPrototypeOf: () => { traps += 1; return Array.prototype; } });
+      expect(isAttachmentReplyWithheld('요약입니다', proxyArray)).toBe(true);
+      const throwing = new Proxy([], { ownKeys: () => { throw new Error('trap ran'); }, get: () => { throw new Error('trap ran'); } });
+      expect(() => isAttachmentReplyWithheld('요약입니다', throwing)).not.toThrow();
+      expect(isAttachmentReplyWithheld('요약입니다', throwing)).toBe(true);
+      expect(traps).toBe(0);
+      expect(isAttachmentReplyWithheld('요약입니다', { 0: { title: 'r', content: 'ok' } })).toBe(true);
+      expect(isAttachmentReplyWithheld('요약입니다', 'not an array')).toBe(true);
+      expect(isAttachmentReplyWithheld(42 as unknown as string, [])).toBe(true);
+      const extraKey = [{ title: 'r' }] as unknown[] & { note?: string };
+      extraKey.note = 'ok';
+      expect(isAttachmentReplyWithheld('요약입니다', extraKey)).toBe(true);
+    });
+
+    it('round 5: a metadata getter that would return a secret first and a benign value second is rejected, never called', () => {
+      let calls = 0;
+      const artifact = { title: 'r', content: 'ok' };
+      Object.defineProperty(artifact, 'metadata', {
+        enumerable: true,
+        get: () => { calls += 1; return calls === 1 ? { note: 'pass' + 'word=' + VALUE } : { note: 'ok' }; },
+      });
+      expect(isAttachmentReplyWithheld('요약입니다', [artifact])).toBe(true);
+      expect(calls).toBe(0);
+    });
+
+    it.each([
+      ['CR', '\r'],
+      ['NUL', '\u0000'],
+      ['ZWSP', '\u200B'],
+    ])('round 5: an array with a non-index key split by %s is withheld', (_label, ch) => {
+      const list = ['ok'] as unknown[] & Record<string, unknown>;
+      list['pass' + ch + 'word'] = VALUE;
+      expect(withheld({ list })).toBe(true);
+      const keyOnly = ['ok'] as unknown[] & Record<string, unknown>;
+      keyOnly['pass' + ch + 'word=' + VALUE] = true;
+      expect(withheld({ list: keyOnly })).toBe(true);
+    });
+
+    it('round 5: a key that itself carries `password=…` is caught on its own', () => {
+      expect(withheld({ ['pass' + 'word=' + VALUE]: true })).toBe(true);
+    });
+
+    it('round 5: shared references are not cycles; a real cycle still is', () => {
+      const shared = { model: 'x', tokens: 3 };
+      expect(withheld({ a: shared, b: shared, list: [shared, shared] })).toBe(false);
+      const cyclic: Record<string, unknown> = { a: shared };
+      cyclic.self = cyclic;
+      expect(withheld(cyclic)).toBe(true);
+    });
+
+    it('round 5: Core-generated identity fields are not scanned (a UUID can look like a card number)', () => {
+      const artifact = { id: '0b7f2c1e-1111-4222-8333-944445555666', kind: 'MARKDOWN_REPORT', title: 'r', content: 'ok', createdAt: '2026-10-07T00:00:00.000Z' };
+      expect(isAttachmentReplyWithheld('요약입니다', [artifact])).toBe(false);
+      expect(isAttachmentReplyWithheld('요약입니다', [{ ...artifact, title: 'pass' + 'word=' + VALUE }])).toBe(true);
+      expect(isAttachmentReplyWithheld('요약입니다', [{ ...artifact, uri: 's' + 'k-' + 'A'.repeat(24) }])).toBe(true);
+    });
+
     it('ordinary plain metadata is not withheld', () => {
       expect(withheld({ tokens: 207, model: 'x' })).toBe(false);
       expect(withheld({ model: 'granite3.3:8b', promptSha256: 'a'.repeat(64), outputSanitized: true, list: [1, 'two', null] })).toBe(false);

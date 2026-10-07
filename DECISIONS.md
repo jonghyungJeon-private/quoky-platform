@@ -16870,12 +16870,20 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   **Accepted residual:** a reply to an attachment turn is ordinary transcript and artifact, under the same egress as
   the message text, so a non-credential quotation of the file is persisted with it. The raw attachment is never
   stored. On an attachment turn, the credential guard runs first, on the provider's original reply text and every
-  artifact payload, before the action-claim guard. Artifact metadata is read without running any of it: only
-  primitives, plain objects and real arrays, through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor`. No
-  getter, `toJSON`, iterator or overridable method is called. Every string value and key, and every
-  `key=value` / `key: value` composite, goes through the detection view, so a key split by CR, NUL or a zero-width
-  character is caught with its value. An accessor, a symbol key, a boxed primitive, a function, a class instance or
-  a proxy counts as a match. So does cyclic data, or data deeper than 16 levels or larger than 10,000 nodes. A match replaces the whole reply with a fixed notice, and no
+  artifact payload, before the action-claim guard. **Threat model of the reply check:** credential text in provider
+  output. Provider results are plain data that our adapters build from CLI stdout or JSON, so exotic in-process
+  objects (proxies, accessors, array-likes, class instances) cannot come from a provider. The check does not try to
+  interpret them; it fails closed. The whole check sits in one try/catch, and any throw withholds the reply. The
+  artifact container must be a real, non-proxy array with no extra keys; `length` is read once and the elements are
+  walked by index. Each artifact must be a plain object, and each property is read once through its descriptor; an
+  accessor (such as a `metadata` getter) withholds the reply without being called. Core-generated identity fields
+  (`id`, `taskId`, `taskRunId`, `createdAt`, `kind`) are not scanned, because a UUID can look like a card number.
+  Everything else is scanned, and metadata is read without running any of it: only primitives, plain objects and
+  real arrays, through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor`. Every string value, every key
+  (including non-index keys of arrays), and every `key=value` / `key: value` composite goes through the detection
+  view, so a key split by CR, NUL or a zero-width character is caught with its value. An accessor, a symbol key, a
+  boxed primitive, a function, a class instance or a proxy counts as a match. So does a cycle on the current path, or
+  data deeper than 16 levels or with more than 10,000 visits. A value shared by two properties is not a cycle. A match replaces the whole reply with a fixed notice, and no
   artifacts are persisted or delivered. Other turns are not checked: on ordinary help answers (`password: <your
   password>` examples, 16-digit numbers) the check would withhold valid replies, and ADR-0097 does not cover masking
   model output. Replies are not otherwise masked.
