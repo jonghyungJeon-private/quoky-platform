@@ -99,7 +99,7 @@ function csrfOf(page: string): string {
 function expectHardened(res: TestResponse): void {
   expect(res.headers['content-security-policy']).toBe(OPS_UI_CSP);
   expect(res.headers['x-content-type-options']).toBe('nosniff');
-  expect(res.headers['referrer-policy']).toBe('no-referrer');
+  expect(res.headers['referrer-policy']).toBe('same-origin');
   expect(res.headers['cache-control']).toBe('no-store');
   for (const name of Object.keys(res.headers)) expect(name.startsWith('access-control-')).toBe(false);
 }
@@ -355,7 +355,7 @@ describe('OPS-1 listener: Origin and CSRF (ADR-0113 D4)', () => {
 });
 
 describe('OPS-1 listener: CSP and inline-free pages (ADR-0113 D4)', () => {
-  it('sends the exact CSP, nosniff, no-referrer and no-store on every response, and no CORS header', async () => {
+  it('sends the exact CSP, nosniff, same-origin and no-store on every response, and no CORS header', async () => {
     const h = await startServer();
     const cookie = await signIn(h);
     const responses = [

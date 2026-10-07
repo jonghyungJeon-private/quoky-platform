@@ -12,7 +12,10 @@ export const OPS_UI_CSP =
 export const OPS_UI_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'Content-Security-Policy': OPS_UI_CSP,
   'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
+  // same-origin, not no-referrer: Chromium serializes the Origin of a form POST as "null" under no-referrer, which the
+  // ADR-0113 D4 Origin check then refuses (live finding: sign-in "허용되지 않은 출처예요"). same-origin still sends no
+  // referrer to any other origin.
+  'Referrer-Policy': 'same-origin',
   'Cache-Control': 'no-store',
 };
 
