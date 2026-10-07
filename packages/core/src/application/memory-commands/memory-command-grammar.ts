@@ -47,8 +47,11 @@ export type MemoryCommand =
 export const MEMORY_CONFIRMATION_CODE_LENGTH = 4;
 /** A longer message is never a command head (an edit's text is measured separately). */
 const MAX_COMMAND_HEAD_CHARS = 60;
-/** Item numbers are 1-based and bounded (a typo like `기억 99999 잊어줘` is still a command; it just finds nothing). */
-const NUMBER = String.raw`#?(\d{1,4})\s?(?:번(?:을|를|은|는)?)?`;
+/**
+ * Item numbers are 1-based and bounded (a typo like `기억 99999 잊어줘` is still a command; it just finds nothing). An
+ * object/topic particle may follow the counter or the bare number (`2번을`, `1을`, `2를`; INT-2 Korean-particle gap).
+ */
+const NUMBER = String.raw`#?(\d{1,4})\s?(?:번)?(?:을|를|은|는)?`;
 const MEMORY_NOUN = String.raw`(?:기억|메모리)`;
 const VIEW_VERB = String.raw`(?:보여\s?줘|보여\s?줘요|보여\s?주세요|보여\s?줄래|보기|볼래)`;
 const FORGET_VERB =
