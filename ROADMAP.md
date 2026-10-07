@@ -130,7 +130,7 @@ record `docs/uat/personal-v3-qa-record.md`. "Live" means recorded there; everyth
 | SUB-3 continuation activation under the Personal trust model (ADR-0103) | DEFERRED (P2, not implemented; continuation stays fail-closed) |
 | DET-1 internal-action claim guard, code-chain status replies, fall-through corpus (ADR-0104) | DONE and live-verified on a sample; residual R5 accepted; to-do/reminder status phrases (D3) and the full edge-case sweep PENDING |
 | LLM-1 chat hygiene and help-intent handler | DONE and live-verified |
-| LLM-2 model choice by measurement (ADR-0105 D1) | DONE offline: helpfulness-aware harness picked `granite3.3:8b`, set on the owner's service 2026-10-07; live re-test on an idle host PENDING (first check confounded by host load) |
+| LLM-2 model choice by measurement (ADR-0105 D1) | DONE offline: helpfulness-aware harness picked `granite3.3:8b`, set on the owner's service 2026-10-07; live re-test W6-M5 partial pass (3 of 4 replies local, invented specifics remain), mid-word wrap fixed in PR #133; 20-prompt Korean daily-chat set PENDING |
 | LLM-3 MLX provider (ADR-0105 D2-D4) | NOT DONE (optional; no benchmark run) |
 | MEM-1 memory commands, archive with restore, history purge (ADR-0106 + amendment) | DONE and live-verified |
 | LRN-1 learning store v14, candidates and trend; LRN-3 offline report (ADR-0107) | DONE; only the empty `피드백 후보` state ran live |

@@ -95,9 +95,10 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
   좋았습니다(관련 내용 9/10, 확인할 수 없는 것을 얼버무리지 않고 밝힘 3/4, 지어낸 구체 정보 없음 4/4, 답변 언어 일치
   96.9%). `gemma3:4b`는 정책 검사는 통과했지만 실제 대화에서 "도움말을 확인해보세요" 같은 답만 해서 쓰지 않습니다.
   소유자 Mac(M3 Pro, 18GB)에서 `granite3.3:8b`는 약 5.7GB, GPU 100%, 초당 15-17 토큰, 처음 불러올 때 약 16초입니다.
-  `OLLAMA_MODEL`의 코드 기본값은 여전히 `llama3.1`이고, 바꾸는 것은 운영자 설정입니다. **한가한 호스트에서의
-  `granite3.3:8b` 실사용 재검증은 아직 하지 않았습니다** (첫 확인은 호스트 부하로 Ollama 준비 확인이 실패해 Claude로
-  대체되었고, granite 답 하나는 여전히 노래·가수 이름을 지어냈습니다). 로컬 모델은 구체적인 사실을 지어낼 수 있습니다.
+  `OLLAMA_MODEL`의 코드 기본값은 여전히 `llama3.1`이고, 바꾸는 것은 운영자 설정입니다. 부하가 내려간 뒤 한
+  재검증(W6-M5)은 **부분 통과**입니다: 4개 중 3개를 granite가 답했고(생성 21-38초), 1개는 동시에 돈 테스트로 부하가
+  다시 올라 Claude로 대체되었습니다. 노래·가수 이름을 지어내는 문제는 남아 있어, 로컬 모델은 구체적인 사실을 지어낼 수
+  있습니다. 한국어 일상 대화 20문항 세트는 아직 하지 않았습니다. 답이 단어 중간에서 끊기던 문제는 고쳤습니다(PR #133).
 - **이미지 (선택):** 이미지 첨부를 분석하려면 로컬 비전 모델을 받고 `QUOKY_OLLAMA_VISION_MODEL`에 그 이름을 적습니다
   (예: `gemma3:4b`처럼 이미지 입력을 지원하는 모델). 비우면 이미지는 분석하지 않고 어디로도 보내지 않았다고 답합니다.
   이름에 `cloud`가 들어간 모델은 거부합니다. 이미지 바이트는 Claude로 보내지 않습니다.
@@ -667,6 +668,6 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 - Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). Jira/Confluence/GitHub
   실제 조회, 알림 채널 전달은 2026-10-06에 실제로 확인했습니다. Slack 읽기 조회와 머지 활성화는 아직 실제 검증 전입니다.
 - Personal v3 Live QA 기록: [`docs/uat/personal-v3-qa-record.md`](../uat/personal-v3-qa-record.md). 운영 화면의 처리/승인,
-  첨부·이미지, 학습 예시, `granite3.3:8b` 재검증 등 아직 실행하지 않은 항목은 기록 끝의 PENDING 목록에 있습니다.
+  첨부·이미지, 학습 예시, 한국어 일상 대화 20문항 세트 등 아직 실행하지 않은 항목은 기록 끝의 PENDING 목록에 있습니다.
 - 운영자 설정 (환경 변수, GitHub App 권한, 커넥터, Ollama/Claude 격리): [`docs/uat/operator-guide.md`](../uat/operator-guide.md)
 - 첫 릴리스 attended Live UAT 절차: [`docs/uat/first-release-uat-packet.md`](../uat/first-release-uat-packet.md)
