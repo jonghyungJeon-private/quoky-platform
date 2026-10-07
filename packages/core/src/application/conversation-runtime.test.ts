@@ -6681,7 +6681,8 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   const MERGE_ON = { gitMergeEnabled: true } as const;
 
   it('PR_CREATED + explicit merge approval / merge phrase → MERGE_APPROVAL_PENDING, CRITICAL, no merge (CA 1/2)', async () => {
-    for (const text of ['머지 승인해줘', 'PR 머지 승인 요청해줘', '이 PR 머지해도 되게 승인 요청해줘', 'approve merge', 'merge this PR', '머지해줘']) {
+    // + live QA 2026-10-07: 'PR 머지해줘' / 'main에 머지해줘' / '병합해줘' / 'merge the PR' (the verb attaches to the merge word).
+    for (const text of ['머지 승인해줘', 'PR 머지 승인 요청해줘', '이 PR 머지해도 되게 승인 요청해줘', 'approve merge', 'merge this PR', '머지해줘', 'PR 머지해줘', 'main에 머지해줘', '병합해줘', 'merge the PR']) {
       const { deps, calls } = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
       const r = await new ConversationRuntime(deps, MERGE_ON).handle(messageOf(text));
       expect(calls.requestForRisk, text).toBe(1);
@@ -6695,7 +6696,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
   it('ADR-0099 D5: merge OFF (default) — every merge phrase at PR_CREATED gets the fixed merge-disabled reply, no approval, no anchor, no hosting call', async () => {
     const composer = new ResponseComposer();
     for (const options of [undefined, { gitMergeEnabled: false }, { gitRemoteEnabled: true, gitMergeEnabled: false }]) {
-      for (const text of ['머지 승인해줘', 'approve merge', 'merge this PR', '머지해줘', '병합해줘']) {
+      for (const text of ['머지 승인해줘', 'approve merge', 'merge this PR', '머지해줘', '병합해줘', 'PR 머지해줘', 'main에 머지해줘', 'merge the PR']) {
         const { deps, calls } = makeDeps({ applyAnchor: PR_CREATED_ANCHOR() });
         const r = await new ConversationRuntime(deps, options).handle(messageOf(text));
         expect(r.status, text).toBe('RESPONDED');
@@ -11363,5 +11364,153 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     await runtime.handle(imageMessage('승인'));
     expect(selected).not.toContain(Capability.IMAGE_UNDERSTANDING);
     expect(calls.decide).toBe(1);
+  });
+});
+
+describe('Live QA 2026-10-07 — git concept questions are chat, never a git-operation request', () => {
+  const composer = new ResponseComposer();
+  const CHAIN = {
+    commitHash: HEAD_SHA,
+    pushedCommitHash: HEAD_SHA,
+    pushedRemote: 'origin',
+    pushedBranch: 'feature/x',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/acme/widgets/pull/42',
+    pullRequestHeadBranch: 'feature/x',
+    repositoryIdentity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+  } as Partial<ApplyPreviewAnchor>;
+  const CONCEPT_QUESTIONS = [
+    'git rebase와 merge 차이를 간단히 설명해줘',
+    'merge conflict 해결법 알려줘',
+    '머지 전략 비교해줘',
+    "what's the difference between rebase and merge",
+    'explain git merge',
+    'merge란?',
+    'git merge는 어떻게 동작해?',
+    '머지가 뭐야?',
+    'rebase와 merge 차이',
+    'git push와 merge 차이가 뭐야?',
+    'PR 만드는 법 알려줘',
+    'git pull과 fetch 차이 설명해줘',
+    '원격 브랜치 삭제와 로컬 브랜치 삭제 차이',
+    '머지 로그 요약해줘',
+  ];
+  const CHAIN_STATES = [
+    'WORKSPACE_APPLIED',
+    'COMMIT_APPROVED',
+    'GIT_COMMITTED',
+    'PUSH_APPROVED',
+    'GIT_PUSHED',
+    'PR_APPROVED',
+    'PR_CREATED',
+    'MERGE_APPROVED',
+    'PR_MERGED',
+    'MAIN_SYNCED',
+    'BRANCH_CLEANED',
+    'REMOTE_BRANCH_CLEANUP_APPROVED',
+    'REMOTE_BRANCH_CLEANED',
+  ] as const;
+
+  it('the live repro at PR_CREATED (merge off) is ordinary chat, not the merge-disabled refusal', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_CREATED' }) });
+    const r = await new ConversationRuntime(deps).handle(messageOf('git rebase와 merge 차이를 간단히 설명해줘'));
+    expect(r.reply.text).not.toBe(composer.composeMergeDisabled(CTX).text);
+    expect(calls.classify).toBe(1);
+    expect(calls.requestForRisk).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(CHAIN_STATES.flatMap((status) => CONCEPT_QUESTIONS.map((text) => [status, text] as const)))(
+    'at %s, %j reaches the classifier with no approval, no anchor change and no git/hosting call',
+    async (status, text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+      for (const options of [undefined, { gitMergeEnabled: true }]) {
+        const before = calls.classify;
+        await new ConversationRuntime(deps, options).handle(messageOf(text));
+        expect(calls.classify - before, `${status} ${text}`).toBe(1);
+      }
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.applyAnchorSet + calls.applyClear).toBe(0);
+      expect(mutationCalls(calls)).toBe(0);
+      expect(calls.hostingGetStatus).toBe(0);
+    },
+  );
+
+  // (merge ON → CRITICAL merge approval for the same phrases is pinned in the Sprint 3f merge-approval test above.)
+  it.each(['PR 머지해줘', '머지해줘', '병합해줘', 'merge the PR', 'main에 머지해줘', '머지 승인해줘', 'approve merge', 'merge this PR'])(
+    'PR_CREATED + real merge request %j (merge off) → still the merge-disabled reply, never chat',
+    async (text) => {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_CREATED' }) });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(r.reply.text).toBe(composer.composeMergeDisabled(CTX).text);
+      expect(calls.classify).toBe(0);
+      expect(mutationCalls(calls)).toBe(0);
+    },
+  );
+
+  it('anchored real requests keep their routes (push / PR create / sync / cleanup / commit)', async () => {
+    const turn = async (status: ApplyPreviewAnchor['status'], text: string) => {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      return { r, calls };
+    };
+    for (const [status, text] of [
+      ['GIT_COMMITTED', '푸시해줘'],
+      ['GIT_PUSHED', 'PR 만들어줘'],
+      ['GIT_PUSHED', '배포해줘'],
+      ['PR_CREATED', '배포해줘'],
+      ['PR_MERGED', 'main 동기화해줘'],
+      ['PR_MERGED', '머지해줘'],
+      ['MAIN_SYNCED', '브랜치 정리해줘'],
+      ['BRANCH_CLEANED', '원격 브랜치 삭제해줘'],
+      ['COMMIT_APPROVED', '커밋하고 푸시해줘'],
+      ['WORKSPACE_APPLIED', '커밋해줘'],
+      ['WORKSPACE_APPLIED', 'rebase 해줘'],
+    ] as const) {
+      expect((await turn(status, text)).calls.classify, `${status} ${text}`).toBe(0);
+    }
+    expect((await turn('MERGE_APPROVED', '머지')).r.reply.text).toBe(composer.composeMergeAlreadyApproved(CTX).text);
+  });
+
+  it('the detectors return null for concept questions and keep real requests', () => {
+    for (const text of CONCEPT_QUESTIONS) {
+      expect(ConversationRuntime.interpretMergeIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretMergeExecutionIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretMergeStatusIntent(text), text).toBe(false);
+      expect(ConversationRuntime.interpretPrIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretPrStatusIntent(text), text).toBe(false);
+      expect(ConversationRuntime.interpretPushIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretPushExecutionIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretCommitIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretCommitExecutionIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretMainSyncIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretRemoteBranchCleanupIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretBranchCleanupIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretGitPreviewIntent(text), text).not.toBe('mutating');
+    }
+    for (const text of ['PR 머지해줘', '머지해줘', '병합해줘', 'merge the PR', 'main에 머지해줘', 'PR 머지 승인 요청해줘', '이 PR 머지해도 되게 승인 요청해줘', 'approve merge']) {
+      expect(ConversationRuntime.interpretMergeIntent(text), text).toBe('merge');
+    }
+    for (const text of ['머지 가능해?', '머지해도 안전해?', '머지', 'merge', '머지 충돌 해결해줘']) {
+      expect(ConversationRuntime.interpretMergeIntent(text), text).toBeNull();
+    }
+    expect(ConversationRuntime.interpretMergeExecutionIntent('머지해줘')).toBe('execute');
+    expect(ConversationRuntime.interpretMergeExecutionIntent('merge the config files now')).toBe('execute');
+    expect(ConversationRuntime.interpretMergeStatusIntent('머지 상태 확인해줘')).toBe(true);
+    expect(ConversationRuntime.interpretPrStatusIntent('PR 상태 봐줘')).toBe(true);
+    expect(ConversationRuntime.interpretPrIntent('PR 만들어줘')).toBe('create');
+    expect(ConversationRuntime.interpretPrIntent('PR 만들고 머지해줘')).toBe('pr-unsupported');
+    expect(ConversationRuntime.interpretPushIntent('푸시해줘')).toBe('push');
+    expect(ConversationRuntime.interpretPushIntent('푸시하고 릴리즈 노트 작성해줘')).toBe('push'); // a topic tail never hides an attached push
+    expect(ConversationRuntime.interpretPushExecutionIntent('푸시 실행해도 돼?')).toBe('execute');
+    expect(ConversationRuntime.interpretCommitIntent('커밋해줘')).toBe('commit');
+    expect(ConversationRuntime.interpretCommitIntent('커밋 메시지 컨벤션 알려줘')).toBeNull();
+    expect(ConversationRuntime.interpretCommitExecutionIntent('커밋 실행해줘')).toBe('execute');
+    expect(ConversationRuntime.interpretCommitExecutionIntent('커밋하고 푸시해줘')).toBe('push-unsupported');
+    expect(ConversationRuntime.interpretMainSyncIntent('main 동기화해줘')).toBe('sync');
+    expect(ConversationRuntime.interpretRemoteBranchCleanupIntent('원격 브랜치 삭제해줘')).toBe('remote');
+    expect(ConversationRuntime.interpretBranchCleanupIntent('브랜치 정리해줘')).toBe('local');
+    expect(ConversationRuntime.interpretGitPreviewIntent('rebase 해줘')).toBe('mutating');
   });
 });
