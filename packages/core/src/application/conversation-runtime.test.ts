@@ -11662,6 +11662,21 @@ describe('Codex re-review of 63ab7a0 — review nouns and verb-first merge forms
     expect(mutationCalls(calls)).toBe(0);
   });
 
+  it.each(
+    (['PR_CREATED', 'MERGE_APPROVED', 'PR_MERGED'] as const).flatMap((status) =>
+      ['Merge failed with conflicts', 'merge failed yesterday', 'merge sort algorithm', 'merge conflict 해결법', 'merge commit이 뭐야'].map(
+        (text) => [status, text] as const,
+      ),
+    ),
+  )('Codex re-review of e61e53a: at %s, topic phrase %j reaches the classifier (no fixed merge reply)', async (status, text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+    await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.classify, `${status} ${text}`).toBe(1);
+    expect(calls.hostingMergePR).toBe(0);
+    expect(calls.hostingGetStatus).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
   it.each(MERGE_FORMS)('P2-2: PR_MERGED + %j → deterministic already-merged reply, never chat, never a merge', async (text) => {
     const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status: 'PR_MERGED' }) });
     const r = await new ConversationRuntime(deps).handle(messageOf(text));
@@ -11671,4 +11686,3 @@ describe('Codex re-review of 63ab7a0 — review nouns and verb-first merge forms
     expect(mutationCalls(calls)).toBe(0);
   });
 });
-

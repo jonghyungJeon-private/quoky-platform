@@ -151,6 +151,12 @@ export function isGitTopicOnlyMention(text: string): boolean {
  */
 const COMPANION_WORD_SRC =
   '(?:자동\\s*머지|auto\\s*-?\\s*merge|배포|릴리즈|릴리스|머지|병합|deploy|release|merge)';
+/** A merge target (English): PR / pull request / #N / PR #N / it / this / that / the PR / the pull request / the branch /
+ *  this PR / my PR. */
+const MERGE_TARGET_EN =
+  '(?:(?:the|this|my)\\s+(?:pr|pull\\s+request)(?:\\s*#\\s*\\d+)?|the\\s+branch|(?:pr|pull\\s+request)(?:\\s*#\\s*\\d+)?|#\\s*\\d+|it|this|that)';
+/** A merge target (Korean): "PR", "이 PR", "PR #42", "#42", "풀 리퀘". */
+const MERGE_TARGET_KO = '(?:(?:이|그|내)\\s*)?(?:(?:pr|풀\\s*리퀘|pull\\s*request)(?:\\s*#\\s*\\d+)?|#\\s*\\d+)';
 const COMPANION_REQUEST_SHAPES: readonly RegExp[] = [
   new RegExp(
     `${COMPANION_WORD_SRC}\\s*(?:을|를|도)?\\s*(?:좀\\s*)?(?:해(?!결)|하자|하고|한\\s*(?:다음|뒤|후)|시켜|진행|실행|켜|걸어|설정)`,
@@ -161,12 +167,17 @@ const COMPANION_REQUEST_SHAPES: readonly RegExp[] = [
   /\b(?:deploy|release)\s+(?:it|this|now|to|the)\b/i,
   /\b(?:add|set|assign|request)\s+(?:a\s+|the\s+)?(?:reviewers?|labels?|assignees?)\b/i,
   /\b(?:enable|turn\s+on)\s+auto[\s-]?merge\b/i,
-  // Verb-first English merge and number-bearing forms (Codex re-review of 63ab7a0): "merge PR #42", "merge the pr",
-  // "merge it", "merge #42", "PR #42 머지", "이 PR 머지". At the merge states they get the deterministic already-approved /
-  // already-merged reply; the exact execution allow-list still decides any execution.
-  /^\s*(?:please\s+)?merge\b(?!\s+(?:is|are|was|vs\.?|versus|and|or|conflicts?|strateg(?:y|ies)|commits?|requests?|queue)\b)/i,
-  /\bmerge\s+(?:this|it|the|now|pr|#\s*\d+)\b/i,
-  /(?:\bpr\b|풀\s*리퀘|#\s*\d+)\s*(?:을|를)?\s*(?:머지|병합)\s*(?:좀)?\s*[.!~]*$/iu,
+  // Verb-first English merge and number-bearing forms (Codex re-reviews of 63ab7a0 / e61e53a): a POSITIVE whole-message
+  // shape — merge + one merge target, then the end (optional "into main/master", "now", "please", punctuation): "merge PR
+  // #42", "merge the pr", "merge it", "merge #42", "please merge this PR into main"; Korean target + merge word at the end:
+  // "PR #42 머지", "이 PR 머지". Anything else after the target ("Merge failed with conflicts", "merge sort algorithm") is
+  // not a request. At the merge states these get the deterministic already-approved / already-merged reply; the exact
+  // execution allow-list still decides any execution.
+  new RegExp(
+    `^\\s*(?:please\\s+)?merge\\s+${MERGE_TARGET_EN}(?:\\s+into\\s+(?:main|master))?(?:\\s+(?:now|please))*\\s*[.!]*$`,
+    'i',
+  ),
+  new RegExp(`^\\s*${MERGE_TARGET_KO}\\s*(?:을|를)?\\s*(?:(?:main|master|메인)\\s*(?:에|으로|로)\\s*)?(?:좀\\s*)?(?:머지|병합)\\s*[.!~]*$`, 'iu'),
   /^\s*(?:자동\s*머지|auto\s*-?\s*merge|배포|릴리즈|릴리스|머지|병합|deploy|release|merge|리뷰어|reviewers?|라벨|labels?|assignees?|담당자)\s*[.!?~]*$/iu,
 ];
 

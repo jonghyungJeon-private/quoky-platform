@@ -123,7 +123,7 @@ describe('Codex review of f45ab9d — word boundaries, clause precedence and sta
 });
 
 describe('isChainCompanionRequest (live QA 2026-10-07, LRN-2 at PR_CREATED)', () => {
-  it.each(['배포해줘', 'release 해줘', '릴리즈 진행해', '리뷰어 추가해줘', '리뷰어 alice 지정해줘', '라벨 붙여줘', '담당자 지정해줘', 'auto merge 켜줘', 'enable auto-merge', 'deploy it', '배포', '머지', 'auto merge', 'PR 만들고 배포하자', 'merge PR #42', 'merge the pr', 'merge it', 'merge #42', 'PR #42 머지', '이 PR 머지'])(
+  it.each(['배포해줘', 'release 해줘', '릴리즈 진행해', '리뷰어 추가해줘', '리뷰어 alice 지정해줘', '라벨 붙여줘', '담당자 지정해줘', 'auto merge 켜줘', 'enable auto-merge', 'deploy it', '배포', '머지', 'auto merge', 'PR 만들고 배포하자', 'merge PR #42', 'merge the pr', 'merge it', 'merge #42', 'PR #42 머지', '이 PR 머지', 'please merge this PR into main', 'merge my PR now', 'merge the pull request.', 'merge the branch', 'merge pull request #7', 'PR main에 머지', '#42 병합'])(
     '%s → a companion request',
     (text) => {
       expect(isChainCompanionRequest(text)).toBe(true);
@@ -140,6 +140,14 @@ describe('isChainCompanionRequest (live QA 2026-10-07, LRN-2 at PR_CREATED)', ()
     '머지 충돌 해결해줘',
     'merge conflicts are annoying',
     'merge strategy for monorepos',
+    'Merge failed with conflicts',
+    'merge failed yesterday',
+    'merge sort algorithm',
+    'merge conflict 해결법',
+    'merge commit이 뭐야',
+    'merge it later after lunch',
+    'merge the PR description into the doc',
+    'PR #42 머지 로그',
     '',
   ])('%j → free text that merely contains a companion noun', (text) => {
     expect(isChainCompanionRequest(text)).toBe(false);
