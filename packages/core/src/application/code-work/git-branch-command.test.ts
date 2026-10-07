@@ -133,6 +133,16 @@ describe('detectGitBranchCommand — unsupported companions', () => {
     expect(detectGitBranchCommand(text)).toEqual({ kind: 'unsupported' });
   });
 
+  it.each([
+    '브랜치 이름 바꾸는 법 알려줘',
+    '브랜치 만들고 머지하는 방법 설명해줘',
+    '브랜치 전환과 rebase 차이가 뭐야',
+    'how to create a branch and merge it',
+    '브랜치 만들고 리베이스하는 전략 비교해줘',
+  ])('%s → a concept question / how-to is never a command (live QA 2026-10-07)', (text) => {
+    expect(detectGitBranchCommand(text)).toBeNull();
+  });
+
   it('a branch name that merely contains a companion word is still just a name', () => {
     expect(detectGitBranchCommand('브랜치 만들어줘 feature/push-notifications')).toEqual(create('feature/push-notifications'));
     expect(detectGitBranchCommand('create branch fix/tag-parser')).toEqual(create('fix/tag-parser'));

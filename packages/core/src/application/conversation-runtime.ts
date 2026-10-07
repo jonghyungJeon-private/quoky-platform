@@ -24,6 +24,10 @@ import {
 } from './image-understanding';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
+import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
+import { parseLearningCommand } from './feedback/learning-commands';
+import { parseMemoryCommand } from './memory-commands/memory-command-grammar';
+import { parseReminderMessage } from './reminders/reminder-grammar';
 import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './execution-command-guard';
 import {
   type ConnectorWriteAnchorView,
@@ -1217,8 +1221,12 @@ const MERGE_WORD = /(머지|병합|\bmerge\b)/i;
 // (Sprint 3f impl review — the "해줘" request verb must not turn an inquiry into an approval).
 const MERGE_QUESTION =
   /(가능|안전|괜찮|되나|되나요|통과|상태|확인|봐줘|봐|알려|체크|\bcheck\b|\bstatus\b|\bmergeable\b|can\s+i|is\s+it|\?)/i;
-// An explicit merge approval/execution REQUEST verb ("머지 승인해줘"/"머지해줘"/"머지해도 되게 승인"/"merge this"/"approve merge").
-const MERGE_REQUEST_VERB = /(승인|approve|approval|요청|받아|해줘|해\s*줘|해도\s*되게|merge\s+this|이\s*pr\s*머지)/i;
+// An explicit merge approval/execution REQUEST ("머지 승인해줘"/"머지해줘"/"머지해도 되게 승인"/"merge this"/"approve merge").
+// (live QA 2026-10-07) the request verb must attach to the merge word itself ("머지해줘", "PR 머지해줘", "main에 머지해줘",
+// "머지 승인해줘", "병합해줘", "merge the PR", "approve merge") — a trailing "설명해줘" elsewhere in the sentence ("git rebase와
+// merge 차이를 간단히 설명해줘") is never a merge request.
+const MERGE_REQUEST_ATTACHED =
+  /((머지|병합)\s*(을|를)?\s*(좀\s*)?(해(?!결)|하자|시켜|진행|실행|승인|요청)|\bmerge\s+(this|it|the|now|pr|approval)\b|\bapprove\s+(the\s+)?(pr\s+)?merge\b|\b(request|create)\s+(a\s+)?merge\s+approval\b)/i;
 // A merge-EXECUTION verb (Sprint 3g, ADR-0057, CA change 1) — only consulted at MERGE_APPROVED/PR_MERGED, AFTER
 // the MERGE_QUESTION status guard. At MERGE_APPROVED the user already passed the CRITICAL merge-approval gate, so
 // a direct merge imperative (해줘/실행/실제/지금/승인된/now/execute/merge this/approved) IS an execution command. A
@@ -1732,7 +1740,8 @@ export class ConversationRuntime {
   static interpretGitPreviewIntent(text: string): 'status' | 'diff' | 'mutating' | null {
     const t = text.trim().toLowerCase();
     // W1-L03: a how-to question about a git mutation ("git commit 어떻게 해?") is chat, not a mutation to reject.
-    if (GIT_MUTATING_WORDS.test(t)) return HOW_TO_QUESTION.test(t) ? null : 'mutating';
+    // Live QA 2026-10-07: a concept question / topic mention ("rebase와 merge 비교해줘", "푸시 로직 검토해줘") is chat too.
+    if (GIT_MUTATING_WORDS.test(t)) return HOW_TO_QUESTION.test(t) || isGitTopicOnlyMention(t) ? null : 'mutating';
     if (GIT_DIFF_WORDS.test(t)) return 'diff';
     if (GIT_STATUS_WORDS.test(t)) return 'status';
     return null;
@@ -1752,7 +1761,7 @@ export class ConversationRuntime {
     // 2w mutating reply). The plain-commit trigger stays conservative via COMMIT_WORDS. Negation-aware
     // (ADR-0062 draft): a NEGATED commit/companion token ("커밋하지 마", "do not commit/push") is NOT a request.
     // W1-L03: a how-to question ("git commit 은 어떻게 하는 거야?") asks about committing — never a commit request.
-    if (HOW_TO_QUESTION.test(text)) return null;
+    if (HOW_TO_QUESTION.test(text) || isGitConceptQuestion(text)) return null; // + "커밋 메시지 컨벤션 알려줘" (live QA 2026-10-07)
     const hasCommitToken = unnegatedMatch(text, [/커밋|\bcommit\b/i]);
     if (hasCommitToken && unnegatedMatch(text, [COMMIT_FORBIDDEN_COMPANION])) return 'commit-with-forbidden';
     if (!unnegatedMatch(text, [COMMIT_WORDS])) return null; // "커밋 전"/push-only/negated/etc. → not a commit request
@@ -1768,6 +1777,9 @@ export class ConversationRuntime {
    *  - `null` → not an execution request (bare 좋아/오케이/확인/진행해/다음 단계 → null).
    */
   static interpretCommitExecutionIntent(text: string): 'execute' | 'push-unsupported' | null {
+    // Live QA 2026-10-07: with no commit-execution phrase, a question / topic mention ("rebase와 merge 차이가 뭐야?") is
+    // never a forbidden companion. An explicit execution phrase is always classified.
+    if (!unnegatedMatch(text, [COMMIT_EXECUTION_WORDS]) && isGitTopicOnlyMention(text)) return null;
     if (unnegatedMatch(text, [COMMIT_EXECUTION_FORBIDDEN])) return 'push-unsupported'; // push/reset/… incl. "commit and push"
     if (unnegatedMatch(text, [COMMIT_EXECUTION_WORDS])) return 'execute';
     return null;
@@ -1782,6 +1794,7 @@ export class ConversationRuntime {
    *  - `'push'` → a plain push request ("푸시해줘"/"git push 해줘"/"원격에 올려줘"/"push this commit"/…).
    */
   static interpretPushIntent(text: string): 'push' | 'push-unsupported' | null {
+    if (isGitTopicOnlyMention(text)) return null; // "git push와 merge 차이가 뭐야?" / "푸시 로직을 검토해줘" → chat (live QA 2026-10-07)
     if (!unnegatedMatch(text, [PUSH_WORDS])) return null; // (CA #2) no (non-negated) push word → not push handling
     if (unnegatedMatch(text, [PUSH_FORBIDDEN_COMPANION])) return 'push-unsupported'; // push + force/PR/deploy/tag/branch/…
     return 'push';
@@ -1811,6 +1824,9 @@ export class ConversationRuntime {
    */
   static interpretPushExecutionIntent(text: string): 'execute' | 'push-unsupported' | null {
     if (!unnegatedMatch(text, [PUSH_EXECUTION_WORDS]) && !unnegatedMatch(text, [PUSH_WORDS])) return null; // no (non-negated) push/exec word
+    // A bare push word in a question / topic mention is chat (live QA 2026-10-07); an execution phrase is always classified
+    // (Codex wave-8 review, P1: "푸시 실행해도 돼?" must never reach a later destructive route).
+    if (!unnegatedMatch(text, [PUSH_EXECUTION_WORDS]) && isGitTopicOnlyMention(text)) return null;
     if (unnegatedMatch(text, [PUSH_FORBIDDEN_COMPANION])) return 'push-unsupported'; // push + force/PR/deploy/tag/branch/…
     if (unnegatedMatch(text, [PUSH_EXECUTION_WORDS])) return 'execute';
     return null; // a bare push word (no exec word) → leave to the 2z already-approved reply at PUSH_APPROVED
@@ -1826,7 +1842,16 @@ export class ConversationRuntime {
    */
   static interpretPrIntent(text: string): 'create' | 'pr-unsupported' | null {
     if (!unnegatedMatch(text, [PR_WORD])) return null; // no (non-negated) PR word → not PR handling
-    if (unnegatedMatch(text, [PR_FORBIDDEN_COMPANION])) return 'pr-unsupported'; // PR + deploy/merge/release/force/…
+    if (isGitTopicOnlyMention(text)) return null; // "PR 만드는 법 알려줘" / "PR과 머지 차이" → chat (live QA 2026-10-07)
+    // PR + deploy/merge/release/force/… → unsupported only when the companion rides along with a PR request: a PR
+    // create verb, a companion request shape, or a short command ("PR 만들고 배포", "PR and merge"). Free text that merely
+    // names both ("PR 설명에 배포 일정 적어줘") is not a bundle (live QA 2026-10-07).
+    if (
+      unnegatedMatch(text, [PR_FORBIDDEN_COMPANION]) &&
+      (unnegatedMatch(text, [PR_CREATION_WORDS]) || isChainCompanionRequest(text) || text.trim().split(/\s+/).length <= 4)
+    ) {
+      return 'pr-unsupported';
+    }
     if (unnegatedMatch(text, [PR_CREATION_WORDS])) return 'create';
     return null; // a bare PR noun without a create/open verb → not PR handling (CA #1)
   }
@@ -1839,7 +1864,7 @@ export class ConversationRuntime {
    */
   static interpretPrStatusIntent(text: string): boolean {
     const t = text.trim().toLowerCase();
-    return PR_STATUS_NOUN.test(t) && PR_STATUS_QUERY.test(t);
+    return PR_STATUS_NOUN.test(t) && PR_STATUS_QUERY.test(t) && !isGitConceptQuestion(t); // "PR 리뷰 어떻게 하는지 알려줘" → chat
   }
 
   /** True for an explicit work-chat lookup/search command (reuses the work-chat grammar; never a to-do mutation). */
@@ -1849,7 +1874,8 @@ export class ConversationRuntime {
 
   /**
    * Explicit merge-APPROVAL intent (Sprint 3f, ADR-0056) — only consulted at PR_CREATED, AFTER the status
-   * intent. Returns `'merge'` only for a merge word + an explicit approval/execution request verb; a merge
+   * intent. Returns `'merge'` only for a merge word + an approval/execution request verb attached to it (live QA
+   * 2026-10-07: a concept question or topic mention such as "git rebase와 merge 차이를 간단히 설명해줘" is null); a merge
    * safety/possibility QUESTION or a bare merge noun returns null (→ falls through to the companion reply). A
    * bare "진행해"/"좋아"/"승인" has no merge word → null (so PR_CREATED + "진행해" never creates a merge approval).
    */
@@ -1857,7 +1883,10 @@ export class ConversationRuntime {
     const t = text.trim().toLowerCase();
     if (!MERGE_WORD.test(t)) return null;
     if (MERGE_QUESTION.test(t)) return null; // "머지 가능해?/안전해?/통과?" → not an approval request
-    if (MERGE_REQUEST_VERB.test(t)) return 'merge';
+    // Live QA 2026-10-07: a concept question / topic mention ("git rebase와 merge 차이를 간단히 설명해줘", "머지 전략 비교해줘",
+    // "explain git merge") is chat, and the request verb must attach to the merge word ("머지해줘", "merge the PR").
+    if (isGitTopicOnlyMention(t)) return null;
+    if (MERGE_REQUEST_ATTACHED.test(t)) return 'merge';
     return null; // bare "머지" noun → companion-unsupported
   }
 
@@ -1872,6 +1901,7 @@ export class ConversationRuntime {
     const t = text.trim().toLowerCase();
     if (!MERGE_WORD.test(t)) return null;
     if (MERGE_QUESTION.test(t)) return null; // status/check/possibility → not execution (read-only path)
+    if (isGitTopicOnlyMention(t)) return null; // concept question / topic mention → chat (live QA 2026-10-07)
     if (MERGE_EXECUTION_FOREIGN.test(t)) return null; // merge + push/deploy/sync/delete/force → never execution (Codex W8)
     if (MERGE_EXECUTION_VERB.test(t) && MERGE_EXECUTION_ATTACHED.test(t)) return 'execute';
     return null; // bare "머지"/"merge" noun → already-approved reply, no execution
@@ -1884,7 +1914,7 @@ export class ConversationRuntime {
    */
   static interpretMergeStatusIntent(text: string): boolean {
     const t = text.trim().toLowerCase();
-    return MERGE_WORD.test(t) && MERGE_QUESTION.test(t);
+    return MERGE_WORD.test(t) && MERGE_QUESTION.test(t) && !isGitConceptQuestion(t); // "merge conflict 해결법 알려줘" → chat
   }
 
   /**
@@ -1896,6 +1926,7 @@ export class ConversationRuntime {
   static interpretMainSyncIntent(text: string): 'sync' | null {
     const t = text.trim().toLowerCase();
     if (!SYNC_WORD.test(t)) return null;
+    if (isGitTopicOnlyMention(t)) return null; // "git pull과 fetch 차이 설명해줘" → chat (live QA 2026-10-07)
     if (SYNC_FOREIGN.test(t)) return null; // sync + push/PR/delete/deploy/force → never a sync command (Codex W8)
     if (MAIN_WORD.test(t) || /update\s+(local\s+)?main/.test(t)) return 'sync';
     return null;
@@ -1913,6 +1944,7 @@ export class ConversationRuntime {
     const t = text.trim().toLowerCase();
     if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/"main·default 삭제" → never
     if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null; // other chain verb / statement (Codex W8)
+    if (isGitTopicOnlyMention(t)) return null; // "원격 브랜치 삭제와 로컬 브랜치 삭제 차이" → chat (live QA 2026-10-07)
     if (CLEANUP_VERB.test(t) && CLEANUP_BRANCH_WORD.test(t) && CLEANUP_REMOTE_WORD.test(t)) return 'remote';
     return null;
   }
@@ -1931,6 +1963,7 @@ export class ConversationRuntime {
     // (Codex wave-8 review, P1) only the step's OWN execution phrases: never a push/merge/PR/sync/… phrase ("execute
     // approved push", "푸시 실행해도 돼?"), never a statement/question, never an execute word with unrelated content.
     if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null;
+    if (isGitTopicOnlyMention(t)) return null; // concept question / topic mention → chat (live QA 2026-10-07)
     if (REMOTE_CLEANUP_BARE_EXECUTE.test(t)) return 'execute'; // "실행해줘" / "proceed" — the approved step's own command
     // Otherwise the step's OWN target is required (Codex wave-8 re-review): a cleanup verb + a branch word + a remote
     // qualifier + an execute verb — "delete the file now" names no remote branch and never executes.
@@ -1956,6 +1989,7 @@ export class ConversationRuntime {
     if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/"main 삭제" → never
     if (CLEANUP_REMOTE_WORD.test(t)) return null; // remote → not local (routed by interpretRemoteBranchCleanupIntent)
     if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null; // other chain verb / statement (Codex W8)
+    if (isGitTopicOnlyMention(t)) return null; // concept question / topic mention → chat (live QA 2026-10-07)
     if (CLEANUP_VERB.test(t) && CLEANUP_BRANCH_WORD.test(t)) return 'local';
     return null;
   }
@@ -2165,6 +2199,21 @@ export class ConversationRuntime {
     // anchored-chain companion/deploy/merge-word replies below; it falls through to the work-chat handler. Pending-approval
     // intercepts and execution allow-list gates above/below are untouched.
     const workLookup = ConversationRuntime.isWorkChatLookupCommand(message.text);
+    // (live QA 2026-10-07) A concept question or topic mention about a git operation ("git rebase와 merge 차이를 간단히
+    // 설명해줘", "머지 전략 비교해줘", "explain git merge") is never captured by the anchored chain's bare-word replies
+    // (already approved / already merged / unsupported companion / execution-phrase hint) either; it reaches chat. The
+    // pending-approval intercepts and the execution allow-list gates are untouched.
+    // (live QA 2026-10-07, LRN-2 "예시 1 수정: … 담당자와 기한을 함께 적어요" at PR_CREATED) An explicit deterministic command
+    // of a registered turn handler — memory / learning / to-do / work-chat / reminder / "기억해:" — is never hijacked by
+    // the chain's word-based detectors: they read an empty text for it, so it reaches its handler. Pending-approval
+    // intercepts above and the exact execution allow-list gates (which read `message.text`) are untouched.
+    const explicitCommand = this.isExplicitTurnHandlerCommand(message.text);
+    const chainText = explicitCommand ? '' : message.text;
+    const bareChainWordsOff = workLookup || explicitCommand || isGitTopicOnlyMention(message.text);
+    // A chain companion reply (deploy / release / merge / reviewer / label / assignee) needs the companion word AND a
+    // request shape attached to it ("배포해줘", "라벨 붙여줘", a bare "배포"); free text that merely contains the noun is chat.
+    const chainCompanionAsk = (words: RegExp): boolean =>
+      !bareChainWordsOff && words.test(chainText) && isChainCompanionRequest(chainText);
     // A real second ApprovalRequest is pending decision — intercepts EVERY turn, exactly like the first
     // approval does, regardless of whether the message is an apply phrase.
     if (applyAnchor?.status === 'AWAITING_APPROVAL') {
@@ -2237,19 +2286,19 @@ export class ConversationRuntime {
       // in execution-command-guard); any other commit-execution mention → the already-approved reply, which quotes
       // the documented phrase. The same rule applies to every approved execution gate below.
       if (isAcceptedExecutionPhrase('commit', message.text)) return this.handleCommitExecutionTurn(message, session, applyAnchor);
-      const execKind = ConversationRuntime.interpretCommitExecutionIntent(message.text);
+      const execKind = ConversationRuntime.interpretCommitExecutionIntent(chainText);
       if (execKind === 'push-unsupported') return this.handleCommitPushUnsupportedTurn(message, session);
       if (execKind === 'execute') return this.handleCommitAlreadyApprovedTurn(message, session);
     }
     if (applyAnchor?.status === 'GIT_COMMITTED') {
       // (Sprint 2z, ADR-0047) push is checked FIRST so "푸시해줘" plans a push approval rather than hitting
       // the 2y commit-push-unsupported reply. A push bundled with force/PR/deploy/… → unsupported companion.
-      const pushKind = ConversationRuntime.interpretPushIntent(message.text);
+      const pushKind = ConversationRuntime.interpretPushIntent(chainText);
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (pushKind === 'push') return this.handlePushApprovalTurn(message, session, actor, applyAnchor);
       // A repeat commit-execution phrase at GIT_COMMITTED → already committed (2y). ("push"-forbidden here is
       // handled above by 2z; the remaining COMMIT_EXECUTION 'push-unsupported' cases have no push word.)
-      const execKind = ConversationRuntime.interpretCommitExecutionIntent(message.text);
+      const execKind = ConversationRuntime.interpretCommitExecutionIntent(chainText);
       if (execKind === 'push-unsupported') return this.handleCommitPushUnsupportedTurn(message, session);
       if (execKind === 'execute') return this.handleCommitAlreadyCommittedTurn(message, session, applyAnchor);
     }
@@ -2258,11 +2307,11 @@ export class ConversationRuntime {
     // word) falls to the 2z already-approved reply. A push+forbidden phrase → unsupported companion.
     if (applyAnchor?.status === 'PUSH_APPROVED') {
       if (isAcceptedExecutionPhrase('push', message.text)) return this.handlePushExecutionTurn(message, session, actor, applyAnchor);
-      const exKind = ConversationRuntime.interpretPushExecutionIntent(message.text);
+      const exKind = ConversationRuntime.interpretPushExecutionIntent(chainText);
       if (exKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (exKind === 'execute') return this.handlePushAlreadyApprovedTurn(message, session); // not an exact phrase (allow-list)
       // (Sprint 2z) a bare push phrase at PUSH_APPROVED → already approved (not pushed).
-      const pushKind = ConversationRuntime.interpretPushIntent(message.text);
+      const pushKind = ConversationRuntime.interpretPushIntent(chainText);
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (pushKind === 'push') return this.handlePushAlreadyApprovedTurn(message, session);
     }
@@ -2271,14 +2320,14 @@ export class ConversationRuntime {
     // explicit PR-creation phrase → CRITICAL PR approval; a PR+forbidden → unsupported companion; a bare
     // deploy-only phrase → deploy-only future-sprint (PR-creation is now supported, so it is no longer bundled).
     if (applyAnchor?.status === 'GIT_PUSHED') {
-      const exKind = ConversationRuntime.interpretPushExecutionIntent(message.text);
+      const exKind = ConversationRuntime.interpretPushExecutionIntent(chainText);
       if (exKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (exKind === 'execute') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
-      const prKind = ConversationRuntime.interpretPrIntent(message.text);
+      const prKind = ConversationRuntime.interpretPrIntent(chainText);
       if (prKind === 'pr-unsupported') return this.handlePrUnsupportedCompanionTurn(message, session);
       if (prKind === 'create') return this.handlePrApprovalTurn(message, session, actor, applyAnchor);
-      if (!workLookup && DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePushPrDeployUnsupportedTurn(message, session);
-      if (ConversationRuntime.interpretPushIntent(message.text) === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
+      if (chainCompanionAsk(DEPLOY_ONLY_WORDS)) return this.handlePushPrDeployUnsupportedTurn(message, session);
+      if (ConversationRuntime.interpretPushIntent(chainText) === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }
     // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
     // to chat (a free-text model reply could fabricate or advise e.g. `git push -f`). A push+forbidden companion
@@ -2291,13 +2340,13 @@ export class ConversationRuntime {
     if (
       applyAnchor &&
       POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status) &&
-      !ConversationRuntime.interpretPrStatusIntent(message.text) &&
-      !ConversationRuntime.interpretMergeStatusIntent(message.text)
+      !ConversationRuntime.interpretPrStatusIntent(chainText) &&
+      !ConversationRuntime.interpretMergeStatusIntent(chainText)
     ) {
-      const execKind = unnegatedMatch(message.text, [PUSH_EXECUTION_WORDS])
-        ? ConversationRuntime.interpretPushExecutionIntent(message.text)
+      const execKind = unnegatedMatch(chainText, [PUSH_EXECUTION_WORDS])
+        ? ConversationRuntime.interpretPushExecutionIntent(chainText)
         : null;
-      const pushKind = execKind === 'execute' ? 'push' : (execKind ?? ConversationRuntime.interpretNoAnchorPushRequest(message.text));
+      const pushKind = execKind === 'execute' ? 'push' : (execKind ?? ConversationRuntime.interpretNoAnchorPushRequest(chainText));
       if (pushKind === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (pushKind === 'push') return this.handlePushAlreadyPushedTurn(message, session, applyAnchor);
     }
@@ -2307,7 +2356,7 @@ export class ConversationRuntime {
       if (isAcceptedExecutionPhrase('prCreate', message.text)) {
         return this.handlePrCreationExecutionTurn(message, session, actor, applyAnchor);
       }
-      const prKind = ConversationRuntime.interpretPrIntent(message.text);
+      const prKind = ConversationRuntime.interpretPrIntent(chainText);
       if (prKind === 'pr-unsupported') return this.handlePrUnsupportedCompanionTurn(message, session);
       // (Sprint 3d-D, ADR-0054) an explicit PR create/open phrase at PR_APPROVED now EXECUTES creation
       // (state-driven trigger — the same grammar requested approval at GIT_PUSHED). Bare noun/승인/진행해 → null.
@@ -2315,18 +2364,18 @@ export class ConversationRuntime {
         // not an exact accepted phrase (allow-list) → already approved; the reply quotes "PR 생성 실행".
         return this.respondComposed(message, session, this.deps.composer.composePrAlreadyApproved(message.context));
       }
-      if (!workLookup && DEPLOY_ONLY_WORDS.test(message.text)) return this.handlePrApprovedDeployUnsupportedTurn(message, session);
+      if (chainCompanionAsk(DEPLOY_ONLY_WORDS)) return this.handlePrApprovedDeployUnsupportedTurn(message, session);
     }
     // (Sprint 3d-D) After a PR was created/connected: a PR create phrase → already created (+ URL, no new call);
     // a deploy/merge/release/companion phrase → unsupported future step. Never re-creates / merges / deploys.
     if (applyAnchor?.status === 'PR_CREATED') {
       // (Sprint 3e) an explicit PR/CI/check/review status phrase → read-only status preview (checked first).
-      if (ConversationRuntime.interpretPrStatusIntent(message.text)) {
+      if (ConversationRuntime.interpretPrStatusIntent(chainText)) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
       // (Sprint 3f, ADR-0056) an explicit merge approval / merge phrase → CRITICAL merge-approval halt (records
       // permission only; NO merge). Checked before create/companion so "머지해줘" plans an approval, not a companion.
-      if (ConversationRuntime.interpretMergeIntent(message.text) === 'merge') {
+      if (ConversationRuntime.interpretMergeIntent(chainText) === 'merge') {
         // ADR-0099 D5: with QUOKY_GIT_MERGE_ENABLED=false the merge chain is off — the fixed reply comes BEFORE any
         // merge ApprovalRequest or MERGE_APPROVAL_PENDING anchor (the hosting guard also refuses the merge call).
         if (!this.gitMergeEnabled) {
@@ -2334,9 +2383,9 @@ export class ConversationRuntime {
         }
         return this.handleMergeApprovalTurn(message, session, actor, applyAnchor);
       }
-      const prKind = ConversationRuntime.interpretPrIntent(message.text);
+      const prKind = ConversationRuntime.interpretPrIntent(chainText);
       if (prKind === 'create') return this.handlePrAlreadyCreatedTurn(message, session, applyAnchor);
-      if (prKind === 'pr-unsupported' || (!workLookup && PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if (prKind === 'pr-unsupported' || (chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handlePrCreatedCompanionUnsupportedTurn(message, session);
       }
     }
@@ -2347,23 +2396,23 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'MERGE_APPROVED') {
       if (isAcceptedExecutionPhrase('merge', message.text)) return this.handleMergeExecutionTurn(message, session, actor, applyAnchor);
       if (
-        ConversationRuntime.interpretPrStatusIntent(message.text) ||
-        ConversationRuntime.interpretMergeStatusIntent(message.text)
+        ConversationRuntime.interpretPrStatusIntent(chainText) ||
+        ConversationRuntime.interpretMergeStatusIntent(chainText)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
       // (Sprint 3g, ADR-0057, CA change 1) "머지해줘"/"이 PR 머지해줘"/"merge this PR"/"실제 머지해줘"/… → EXECUTE.
       // A merge-execution-shaped phrase that is not an exact accepted phrase (allow-list) → already approved.
-      if (ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute') {
+      if (ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute') {
         return this.handleMergeAlreadyApprovedTurn(message, session);
       }
       // A bare "머지"/"merge" mention (merge word, no execution verb, not a status phrase) → already approved,
       // ask to merge explicitly (CA change 4). NO mutation. Checked before the deploy/companion words so a merge
       // noun does not fall into the companion-unsupported reply.
-      if (!workLookup && MERGE_WORD.test(message.text)) {
+      if (chainCompanionAsk(MERGE_WORD)) {
         return this.handleMergeAlreadyApprovedTurn(message, session);
       }
-      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if ((chainCompanionAsk(DEPLOY_ONLY_WORDS) || chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handleMergeApprovedCompanionUnsupportedTurn(message, session);
       }
     }
@@ -2375,21 +2424,21 @@ export class ConversationRuntime {
       // (allow-list) only an exact accepted sync phrase syncs; any other sync mention → a fixed hint naming the phrase.
       if (isAcceptedExecutionPhrase('mainSync', message.text)) return this.handleMainSyncTurn(message, session, actor, applyAnchor);
       if (
-        ConversationRuntime.interpretPrStatusIntent(message.text) ||
-        ConversationRuntime.interpretMergeStatusIntent(message.text)
+        ConversationRuntime.interpretPrStatusIntent(chainText) ||
+        ConversationRuntime.interpretMergeStatusIntent(chainText)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
-      if (MAIN_SYNC_MENTION.test(message.text)) {
+      if (!bareChainWordsOff && MAIN_SYNC_MENTION.test(chainText)) {
         return this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'main-sync'));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        (!workLookup && MERGE_WORD.test(message.text))
+        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if ((chainCompanionAsk(DEPLOY_ONLY_WORDS) || chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2398,32 +2447,32 @@ export class ConversationRuntime {
     // branch delete (Sprint 3i); a sync command → already synced; a status/check phrase → read-only preview; any
     // merge phrase → already merged; deploy/release/companion → unsupported future step.
     if (applyAnchor?.status === 'MAIN_SYNCED') {
-      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
+      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
         return this.handleRemoteBranchCleanupUnsupportedTurn(message, session);
       }
       // (allow-list) only an exact accepted cleanup phrase deletes; any other local-cleanup mention → a fixed hint.
       if (isAcceptedExecutionPhrase('localCleanup', message.text)) {
         return this.handleBranchCleanupTurn(message, session, actor, applyAnchor);
       }
-      if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
+      if (ConversationRuntime.interpretMainSyncIntent(chainText) === 'sync') {
         return this.handleMainAlreadySyncedTurn(message, session, applyAnchor);
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(message.text) ||
-        ConversationRuntime.interpretMergeStatusIntent(message.text)
+        ConversationRuntime.interpretPrStatusIntent(chainText) ||
+        ConversationRuntime.interpretMergeStatusIntent(chainText)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
-      if (CLEANUP_BRANCH_WORD.test(message.text) && CLEANUP_VERB.test(message.text)) {
+      if (!bareChainWordsOff && CLEANUP_BRANCH_WORD.test(chainText) && CLEANUP_VERB.test(chainText)) {
         return this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'local-cleanup'));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        (!workLookup && MERGE_WORD.test(message.text))
+        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if ((chainCompanionAsk(DEPLOY_ONLY_WORDS) || chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2432,28 +2481,28 @@ export class ConversationRuntime {
     // mutation); a sync command → still synced; a status/check phrase → read-only preview; any merge phrase →
     // already merged; deploy/release/companion → unsupported. NEVER deletes/deploys.
     if (applyAnchor?.status === 'BRANCH_CLEANED') {
-      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
+      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
         return this.handleRemoteBranchCleanupApprovalTurn(message, session, actor, applyAnchor);
       }
-      if (ConversationRuntime.interpretBranchCleanupIntent(message.text) === 'local') {
+      if (ConversationRuntime.interpretBranchCleanupIntent(chainText) === 'local') {
         return this.handleBranchAlreadyCleanedTurn(message, session, applyAnchor);
       }
-      if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
+      if (ConversationRuntime.interpretMainSyncIntent(chainText) === 'sync') {
         return this.handleMainAlreadySyncedTurn(message, session, applyAnchor);
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(message.text) ||
-        ConversationRuntime.interpretMergeStatusIntent(message.text)
+        ConversationRuntime.interpretPrStatusIntent(chainText) ||
+        ConversationRuntime.interpretMergeStatusIntent(chainText)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        (!workLookup && MERGE_WORD.test(message.text))
+        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if ((chainCompanionAsk(DEPLOY_ONLY_WORDS) || chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2466,25 +2515,25 @@ export class ConversationRuntime {
         return this.handleRemoteBranchCleanupExecutionTurn(message, session, actor, applyAnchor);
       }
       // An execution-shaped phrase that is not an exact accepted phrase (allow-list) → already approved (quotes the phrase).
-      if (ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(message.text) === 'execute') {
+      if (ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(chainText) === 'execute') {
         return this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session);
       }
-      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote') {
+      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
         return this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session);
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(message.text) ||
-        ConversationRuntime.interpretMergeStatusIntent(message.text)
+        ConversationRuntime.interpretPrStatusIntent(chainText) ||
+        ConversationRuntime.interpretMergeStatusIntent(chainText)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        (!workLookup && MERGE_WORD.test(message.text))
+        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if ((chainCompanionAsk(DEPLOY_ONLY_WORDS) || chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2493,30 +2542,30 @@ export class ConversationRuntime {
     // read-only preview (keeps the state); a merge phrase → already merged; deploy/release/companion → unsupported.
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANED') {
       if (
-        ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(message.text) === 'execute' ||
-        ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) === 'remote'
+        ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(chainText) === 'execute' ||
+        ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote'
       ) {
         return this.handleRemoteBranchAlreadyCleanedTurn(message, session, applyAnchor);
       }
-      if (ConversationRuntime.interpretBranchCleanupIntent(message.text) === 'local') {
+      if (ConversationRuntime.interpretBranchCleanupIntent(chainText) === 'local') {
         return this.handleBranchAlreadyCleanedTurn(message, session, applyAnchor);
       }
-      if (ConversationRuntime.interpretMainSyncIntent(message.text) === 'sync') {
+      if (ConversationRuntime.interpretMainSyncIntent(chainText) === 'sync') {
         return this.handleMainAlreadySyncedTurn(message, session, applyAnchor);
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(message.text) ||
-        ConversationRuntime.interpretMergeStatusIntent(message.text)
+        ConversationRuntime.interpretPrStatusIntent(chainText) ||
+        ConversationRuntime.interpretMergeStatusIntent(chainText)
       ) {
         return this.handlePrStatusPreviewTurn(message, session, applyAnchor);
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(message.text) === 'execute' ||
-        (!workLookup && MERGE_WORD.test(message.text))
+        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.handleMergeAlreadyMergedTurn(message, session, applyAnchor);
       }
-      if (!workLookup && (DEPLOY_ONLY_WORDS.test(message.text) || PR_CREATED_COMPANION_WORDS.test(message.text))) {
+      if ((chainCompanionAsk(DEPLOY_ONLY_WORDS) || chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.handleMergeExecutionUnsupportedCompanionTurn(message, session);
       }
     }
@@ -2527,7 +2576,7 @@ export class ConversationRuntime {
     if (
       applyAnchor?.status !== 'COMMIT_APPROVED' &&
       applyAnchor?.status !== 'GIT_COMMITTED' &&
-      ConversationRuntime.interpretCommitExecutionIntent(message.text) === 'execute'
+      ConversationRuntime.interpretCommitExecutionIntent(chainText) === 'execute'
     ) {
       return this.handleCommitExecutionUnavailableTurn(message, session);
     }
@@ -2544,7 +2593,7 @@ export class ConversationRuntime {
       if (isAcceptedExecutionPhrase('validationTypecheck', message.text)) {
         return this.handlePostApplyValidationTurn(message, session, applyAnchor, 'typecheck');
       }
-      const validationKind = ConversationRuntime.interpretPostApplyValidationIntent(message.text);
+      const validationKind = ConversationRuntime.interpretPostApplyValidationIntent(chainText);
       if (validationKind === 'test' || validationKind === 'typecheck') {
         return this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'validation'));
       }
@@ -2553,7 +2602,7 @@ export class ConversationRuntime {
       }
       // (Sprint 2x) explicit commit request → commit-approval PLANNING (halt, no git mutation). A
       // push/add/reset-only phrase → null → falls to the 2w git-preview mutating reject (unchanged).
-      const commitKind = ConversationRuntime.interpretCommitIntent(message.text);
+      const commitKind = ConversationRuntime.interpretCommitIntent(chainText);
       if (commitKind) {
         return commitKind === 'commit'
           ? this.handleCommitApprovalTurn(message, session, actor, applyAnchor)
@@ -2561,14 +2610,14 @@ export class ConversationRuntime {
       }
       // (Sprint 2w, ADR-0044) Explicit read-only git preview → GitManager.status/diff against the applied
       // workspace. With no WORKSPACE_APPLIED anchor this is never consulted (no general git handling).
-      const gitKind = ConversationRuntime.interpretGitPreviewIntent(message.text);
+      const gitKind = ConversationRuntime.interpretGitPreviewIntent(chainText);
       if (gitKind) {
         return this.handleGitPreviewTurn(message, session, applyAnchor, gitKind);
       }
     }
     // (Sprint 2x, ADR-0045) A commit request outside WORKSPACE_APPLIED: at COMMIT_APPROVED say already-approved
     // (not committed); otherwise a scoped "no applied change to commit" reply (never broad general handling).
-    if (ConversationRuntime.interpretCommitIntent(message.text)) {
+    if (ConversationRuntime.interpretCommitIntent(chainText)) {
       if (applyAnchor?.status === 'COMMIT_APPROVED') {
         return this.handleCommitAlreadyApprovedTurn(message, session);
       }
@@ -2577,7 +2626,7 @@ export class ConversationRuntime {
     // (Sprint 2u, ADR-0042) Explicit final workspace-apply → the first real file mutation. Checked before
     // patch- and apply-intent (FINAL_APPLY_WORDS is non-overlapping with PATCH_WORDS and precedes
     // APPLY_WORDS so "패치 적용해줘" is a file-apply, not a Sprint 2s apply-intent). Only fires on PATCH_READY.
-    if (ConversationRuntime.interpretFinalApplyIntent(message.text)) {
+    if (ConversationRuntime.interpretFinalApplyIntent(chainText)) {
       if (applyAnchor?.status === 'PATCH_READY') {
         // (allow-list) only an exact accepted apply phrase writes files; otherwise the patch-ready (not applied) reply,
         // which quotes "패치 적용해줘".
@@ -2593,7 +2642,7 @@ export class ConversationRuntime {
     // (Sprint 2t, ADR-0041) Explicit patch command → PatchSet representation. Generation only on APPROVED.
     // CA Round 1 #8: at WORKSPACE_APPLIED, route to the workspace-already-applied reply (never a
     // "preview generated" reply that would hide the stronger applied state).
-    if (ConversationRuntime.interpretPatchIntent(message.text)) {
+    if (ConversationRuntime.interpretPatchIntent(chainText)) {
       if (applyAnchor?.status === 'APPROVED') {
         return this.handlePatchGenerationTurn(message, session, applyAnchor);
       }
@@ -2607,7 +2656,7 @@ export class ConversationRuntime {
       // new code-change request, mirroring the apply-unavailable handling.
       return this.handlePatchUnavailableTurn(message, session);
     }
-    if (ConversationRuntime.interpretApplyIntent(message.text)) {
+    if (ConversationRuntime.interpretApplyIntent(chainText)) {
       if (applyAnchor?.status === 'ELIGIBLE') {
         return this.handleApplyIntentTurn(message, session, actor, applyAnchor); // creates approval #2
       }
@@ -2635,7 +2684,7 @@ export class ConversationRuntime {
           POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status))
       )
     ) {
-      const noAnchorPush = ConversationRuntime.interpretNoAnchorPushRequest(message.text);
+      const noAnchorPush = ConversationRuntime.interpretNoAnchorPushRequest(chainText);
       if (noAnchorPush === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (noAnchorPush === 'push') return this.handleNoPushTargetTurn(message, session);
     }
@@ -2825,6 +2874,23 @@ export class ConversationRuntime {
   }
 
   /** Exact, provider-free activation grammar. Pending governance flows have already run before this is called. */
+  /**
+   * An explicit deterministic command of a registered turn handler (live QA 2026-10-07): a memory command, a learning
+   * command (`예시 N 수정: …`, `후보 N 메모: …`, `예시 목록`, …), a work-chat to-do / lookup / connector-write command, a
+   * reminder, or the runtime's own `기억해:` save. Each grammar is whole-message and anchored, so free chat never matches.
+   */
+  private isExplicitTurnHandlerCommand(text: string): boolean {
+    if (parseLearningCommand(text) !== null || parseMemoryCommand(text) !== null) return true;
+    if (ConversationRuntime.explicitDurableMemoryContent(text) !== null) return true;
+    const workChat = detectWorkChatCommand(text);
+    if (workChat !== null && workChat.kind !== 'usage') return true;
+    try {
+      return parseReminderMessage(text, { now: this.clock() }).kind !== 'NOT_REMINDER';
+    } catch {
+      return false;
+    }
+  }
+
   private static explicitDurableMemoryContent(text: string): string | null {
     const match = text.trim().match(/^(?:기억해줘|기억해|remember)\s*:\s*(.*)$/isu);
     return match ? (match[1] ?? '').trim() : null;

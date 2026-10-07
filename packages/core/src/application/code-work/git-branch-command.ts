@@ -1,5 +1,6 @@
 import type { GitBranchResult, GitStatus, RepositoryInfo } from '../../domain';
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import { isGitTopicOnlyMention } from '../git-request-shape';
 import { isNegated, unnegatedMatch } from '../intent-negation';
 import { MAX_OWNER_BRANCH_NAME_LENGTH, isCreatableOwnerBranch, isProtectedBranch } from './branch-name-policy';
 
@@ -155,8 +156,9 @@ export function detectGitBranchCommand(text: string): GitBranchCommand | null {
     return name.startsWith('-') ? { kind: 'unsupported' } : { kind: strict.kind, name };
   }
   // Fallback shapes (missing/extra token, or wording the strict grammar does not cover). A question is never a
-  // command, so these two outcomes are suppressed for it.
-  if (/[?？]/.test(text)) return null;
+  // command, so these two outcomes are suppressed for it — including a concept / how-to question or topic mention
+  // without a "?" ("브랜치 이름 바꾸는 법 알려줘", "브랜치 전략 비교해줘"; live QA 2026-10-07).
+  if (/[?？]/.test(text) || isGitTopicOnlyMention(text)) return null;
   if (unnegatedMatch(n, [UNSUPPORTED_WORDS])) return { kind: 'unsupported' };
   if (strict) return { kind: 'usage', action: strict.kind };
   return null;
