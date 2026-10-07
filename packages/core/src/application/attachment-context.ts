@@ -214,8 +214,9 @@ export function isAttachmentReplyWithheld(reply: unknown, artifacts: unknown = [
   }
 }
 
-/** Artifact fields Core itself generates (ids, timestamp, kind): not provider text, so not scanned (a UUID can look
- *  like a card number). Every other field — title, content, uri, mimeType, metadata, anything unknown — is. */
+/** Artifact fields Core itself generates (ids, timestamp, kind): not provider text, so their content is not scanned (a
+ *  UUID can look like a card number), but each must be a string primitive or undefined. Every other field — title,
+ *  content, uri, mimeType, metadata, anything unknown — is scanned, including its `key=value` / `key: value` pair. */
 const ARTIFACT_IDENTITY_FIELDS: ReadonlySet<string> = new Set(['id', 'taskId', 'taskRunId', 'createdAt', 'kind']);
 
 /** One artifact: a plain object read once per property through its descriptor; accessors and symbols withhold. */
@@ -227,8 +228,15 @@ function isArtifactWithheld(artifact: unknown): boolean {
     if (typeof key === 'symbol') return true;
     const descriptor = Object.getOwnPropertyDescriptor(artifact, key);
     if (!descriptor || !('value' in descriptor)) return true; // accessor (e.g. a `metadata` getter): never invoked
-    if (ARTIFACT_IDENTITY_FIELDS.has(key)) continue;
-    if (isCredentialShaped(key) || isCredentialShapedValue(descriptor.value)) return true;
+    const value: unknown = descriptor.value;
+    if (ARTIFACT_IDENTITY_FIELDS.has(key)) {
+      // Not scanned for credential text, but its shape is still checked: a string primitive or undefined only.
+      if (value !== undefined && typeof value !== 'string') return true;
+      continue;
+    }
+    if (isCredentialShaped(key)) return true;
+    if ((typeof value === 'string' || typeof value === 'number') && isCredentialPair(key, value)) return true;
+    if (isCredentialShapedValue(value)) return true;
   }
   return false;
 }

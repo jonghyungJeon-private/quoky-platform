@@ -16878,7 +16878,8 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   walked by index. Each artifact must be a plain object, and each property is read once through its descriptor; an
   accessor (such as a `metadata` getter) withholds the reply without being called. Core-generated identity fields
   (`id`, `taskId`, `taskRunId`, `createdAt`, `kind`) are not scanned, because a UUID can look like a card number.
-  Everything else is scanned, and metadata is read without running any of it: only primitives, plain objects and
+  Each of them must still be a string primitive or undefined. Every other artifact field is scanned, including its
+  `key=value` / `key: value` pair, and metadata is read without running any of it: only primitives, plain objects and
   real arrays, through `Reflect.ownKeys` and `Object.getOwnPropertyDescriptor`. Every string value, every key
   (including non-index keys of arrays), and every `key=value` / `key: value` composite goes through the detection
   view, so a key split by CR, NUL or a zero-width character is caught with its value. An accessor, a symbol key, a

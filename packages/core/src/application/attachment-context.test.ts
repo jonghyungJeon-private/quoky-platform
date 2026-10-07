@@ -306,6 +306,33 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
       expect(isAttachmentReplyWithheld('요약입니다', [{ ...artifact, uri: 's' + 'k-' + 'A'.repeat(24) }])).toBe(true);
     });
 
+    it('final check: a top-level artifact key/value pair is composite-checked like metadata', () => {
+      expect(isAttachmentReplyWithheld('summary', [{ title: 'r', password: VALUE }])).toBe(true);
+      expect(isAttachmentReplyWithheld('summary', [{ title: 'r', ['pass' + '\r' + 'word']: VALUE }])).toBe(true);
+      expect(isAttachmentReplyWithheld('summary', [{ title: 'r', metadata: { password: VALUE } }])).toBe(true);
+      expect(isAttachmentReplyWithheld('summary', [{ title: 'r', tokens: 207, model: 'x' }])).toBe(false);
+    });
+
+    it.each(['id', 'taskId', 'taskRunId', 'createdAt', 'kind'])(
+      'final check: identity field %s must be a string primitive or undefined',
+      (field) => {
+        const base = { id: 'a1', kind: 'MARKDOWN_REPORT', title: 'r', content: 'ok', createdAt: '2026-10-07T00:00:00.000Z' };
+        expect(isAttachmentReplyWithheld('summary', [{ ...base, [field]: 'plain-string' }])).toBe(false);
+        expect(isAttachmentReplyWithheld('summary', [{ ...base, [field]: undefined }])).toBe(false);
+        let traps = 0;
+        const proxy = new Proxy({}, { get: () => { traps += 1; return 'x'; } });
+        for (const bad of [proxy, () => 'x', new String('x'), 42, { nested: 'x' }, ['x'], null]) {
+          expect(isAttachmentReplyWithheld('summary', [{ ...base, [field]: bad }])).toBe(true);
+        }
+        expect(traps).toBe(0);
+        let calls = 0;
+        const accessor = { ...base };
+        Object.defineProperty(accessor, field, { enumerable: true, get: () => { calls += 1; return 'x'; } });
+        expect(isAttachmentReplyWithheld('summary', [accessor])).toBe(true);
+        expect(calls).toBe(0);
+      },
+    );
+
     it('ordinary plain metadata is not withheld', () => {
       expect(withheld({ tokens: 207, model: 'x' })).toBe(false);
       expect(withheld({ model: 'granite3.3:8b', promptSha256: 'a'.repeat(64), outputSanitized: true, list: [1, 'two', null] })).toBe(false);
