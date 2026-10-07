@@ -481,8 +481,9 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
   /**
    * ADR-0098 D3 reaction feedback. Admission ({@link isAdmittedReaction}: 👍/👎 only, owner reactor, bot-authored
    * target, ADR-0091 location) runs on data already present in the gateway event and cache — BEFORE any fetch or
-   * logging. Nothing is fetched at all: an uncached (partial) target has no known author and is dropped, so
-   * feedback is captured for replies still in the message cache. A dropped reaction is never logged; the handler
+   * logging. Nothing is fetched at all: an uncached (partial) target, e.g. a reply posted before the last restart,
+   * has no known author, so it passes on owner and location only and core verifies bot-posted provenance through its
+   * own record of posted message ids before anything is stored. A dropped reaction is never logged; the handler
    * failure log carries no ids or content. Nothing is ever sent in response.
    */
   private async handleReaction(
