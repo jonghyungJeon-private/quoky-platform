@@ -11389,6 +11389,8 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     beforeCreateTask?: () => Promise<void>;
     /** Runtime switching race tests: what the router answers from the second selection on. */
     reselect?: 'same' | 'other' | 'none';
+    /** Runtime switching race tests: the router's synchronous dispatch-time check. */
+    stillEligible?: () => boolean;
   } = {}) {
     const { storage, taskSaves, runSaves } = makeTaskStorage();
     const { deps: base, calls } = makeDeps();
@@ -11442,6 +11444,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
           if (selected.length > 1 && o.reselect === 'other') return other;
           return provider;
         },
+        ...(o.stillEligible ? { isStillEligible: () => (o.stillEligible as () => boolean)() } : {}),
       },
     };
     const contexts: unknown[] = [];
@@ -11571,6 +11574,29 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
       reason: 'selection-changed',
       imageCount: 1,
     });
+  });
+
+  it('runtime switching race: the synchronous live check runs last; a switch during the re-selection sends nothing', async () => {
+    const live = { eligible: true };
+    let reselections = 0;
+    const h = imageTurn({
+      locality: 'LOCAL',
+      imageLocalities: async () => {
+        reselections += 1;
+        // The second resolution happens inside the dispatch re-check; the owner switches `off` right then.
+        if (reselections === 2) live.eligible = false;
+        return ['LOCAL'];
+      },
+      stillEligible: () => live.eligible,
+    });
+    const result = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+    // Without the switch the same turn is sent once.
+    const ok = imageTurn({ locality: 'LOCAL', stillEligible: () => true });
+    await ok.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(ok.execute).toHaveBeenCalledTimes(1);
   });
 
   it.each([

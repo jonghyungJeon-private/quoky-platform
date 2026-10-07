@@ -43,6 +43,22 @@ export class CapabilityRouter implements ProviderSelector {
     return this.invalidatingOnUnavailable(candidates[0] as AiProvider);
   }
 
+  /**
+   * Dispatch-time check (synchronous): the policy's `isEligible` for this provider's key under the live selection. A
+   * provider that no longer advertises the capability is not eligible; without a policy (or without `isEligible`) the
+   * legacy path has nothing to re-check.
+   */
+  isStillEligible(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean {
+    if (!provider.capabilities.some((c) => c.capability === capability)) return false;
+    const check = this.policy?.isEligible;
+    if (check === undefined) return true;
+    try {
+      return check.call(this.policy, capability, context, selectionKeyOf(provider));
+    } catch {
+      return false;
+    }
+  }
+
   /** Registered providers that advertise the capability and whose key the preference lists (unprobed). */
   private eligible(capability: Capability, preference: ProviderPreference): AiProvider[] {
     return this.manager

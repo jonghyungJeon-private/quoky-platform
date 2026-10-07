@@ -256,6 +256,52 @@ describe('image understanding: eligibility and the Core locality policy follow t
   });
 });
 
+describe('dispatch-time eligibility (synchronous, live selection)', () => {
+  it('ollama → off while the re-selection awaits readiness: the old provider comes back but is no longer eligible', async () => {
+    const f = selectionFixture({ env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'ollama', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' } });
+    const session = await f.openSession();
+    const ctx = scope(session);
+    const vision = f.catalog.ollamaVision;
+    if (vision === undefined) throw new Error('no vision provider');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let probing!: () => void;
+    const probed = new Promise<void>((resolve) => (probing = resolve));
+    Object.assign(vision, {
+      isAvailable: async () => {
+        probing();
+        await gate;
+        return true;
+      },
+    });
+    const selecting = f.router.select(Capability.IMAGE_UNDERSTANDING, ctx);
+    await probed;
+    // The owner switches this conversation's images off while the probe is in flight.
+    expect((await f.service.setSessionImage(ctx, 'off', OWNER_CHAT)).status).toBe('SET');
+    release();
+    const provider = await selecting;
+    expect(provider.id).toBe('ollama-vision-cli'); // eligibility was decided before the await
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL']); // locality alone would still allow it
+    expect(f.router.isStillEligible(Capability.IMAGE_UNDERSTANDING, ctx, provider)).toBe(false);
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'ollama-vision-cli')).toBe(false);
+  });
+
+  it('off rejects every provider; an unchanged selection stays eligible; an unmirrored scope fails closed', async () => {
+    const f = selectionFixture({ env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' } });
+    const session = await f.openSession();
+    const ctx = scope(session);
+    const provider = await f.router.select(Capability.IMAGE_UNDERSTANDING, ctx);
+    expect(f.router.isStillEligible(Capability.IMAGE_UNDERSTANDING, ctx, provider)).toBe(true);
+    f.service.setDefaultImage('off', OPS);
+    for (const key of ['claude-vision-cli', 'ollama-vision-cli', 'claude-cli']) {
+      expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, key), key).toBe(false);
+    }
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, { sessionId: 'never-read', actorId: ACTOR }, 'claude-vision-cli')).toBe(false);
+    // A chat-tier check follows the live selection the same way.
+    expect(f.service.isEligible(Capability.GENERAL_CHAT, ctx, 'claude-cli')).toBe(true);
+  });
+});
+
 describe('validation against this host', () => {
   it('refuses unknown providers, non-allow-listed Claude models, Codex models, absent CLIs and unlisted Ollama models', async () => {
     const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' }, present: ['ollama'] });

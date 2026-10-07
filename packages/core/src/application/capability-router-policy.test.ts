@@ -117,6 +117,30 @@ describe('CapabilityRouter with a ProviderSelectionPolicy (ADR-0092 amendment, r
     expect((await withNull.select(Capability.CODE_IMPLEMENTATION)).id).toBe('p-cloud-a');
   });
 
+  it('isStillEligible delegates to the policy synchronously and fails closed', async () => {
+    const f = fixture();
+    const live = { keys: ['p-cloud-b'] as string[] };
+    const policy: ProviderSelectionPolicy = {
+      preferenceFor: async () => ({ eligible: live.keys, order: 'listed' }),
+      isEligible: (_capability, _context, key) => live.keys.includes(key),
+    };
+    const router = new CapabilityRouter(new AiProviderManager(f.all, { availabilityTtlMs: 0 }), policy);
+    const chosen = await router.select(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' });
+    expect(router.isStillEligible(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' }, chosen)).toBe(true);
+    live.keys = [];
+    expect(router.isStillEligible(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' }, chosen)).toBe(false);
+    // Not advertising the capability is never eligible; a throwing policy is "no"; no check at all is "yes".
+    expect(router.isStillEligible(Capability.CODE_IMPLEMENTATION, {}, chosen)).toBe(false);
+    const throwing = new CapabilityRouter(new AiProviderManager(f.all), {
+      preferenceFor: async () => null,
+      isEligible: () => {
+        throw new Error('x');
+      },
+    });
+    expect(throwing.isStillEligible(Capability.GENERAL_CHAT, {}, f.local)).toBe(false);
+    expect(new CapabilityRouter(new AiProviderManager(f.all)).isStillEligible(Capability.GENERAL_CHAT, {}, f.local)).toBe(true);
+  });
+
   it('source scan: the router names no provider and reads `.id` only through the opaque selection key', () => {
     const source = readFileSync(new URL('./capability-router.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/claude|codex|ollama|anthropic|openai/iu);

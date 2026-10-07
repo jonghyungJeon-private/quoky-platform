@@ -1,4 +1,4 @@
-import { lstatSync, symlinkSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, symlinkSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -61,14 +61,14 @@ describe('ProviderSelectionStore', () => {
     ['an unknown version', JSON.stringify({ version: 9, chat: { provider: 'codex' } }), 'SELECTION_FILE_VERSION'],
     ['not an object', '"codex"', 'SELECTION_FILE_VERSION'],
   ])('%s is ignored with a value-free code (the configuration applies)', (_label, content, code) => {
-    mkdirSync(path.dirname(file), { recursive: true });
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     writeFileSync(file, content);
     expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({});
     expect(warnings).toEqual([{ code }]);
   });
 
   it('an invalid entry is dropped alone; the valid one is kept', () => {
-    mkdirSync(path.dirname(file), { recursive: true });
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     writeFileSync(file, JSON.stringify({ version: 1, chat: { provider: 'claude', model: 'claude-3-opus' }, image: 'claude' }));
     expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({ image: 'claude' });
     expect(warnings).toEqual([{ code: 'SELECTION_FILE_CHAT_INVALID' }]);
@@ -102,6 +102,25 @@ describe('ProviderSelectionStore', () => {
     expect(store.get()).toEqual({});
   });
 
+  it('reads nothing through a symlinked ops directory: a regular file there is ignored and the configuration applies', () => {
+    const outside = path.join(dir, 'outside');
+    mkdirSync(outside, { mode: 0o700 });
+    writeFileSync(path.join(outside, 'provider-selection.json'), JSON.stringify({ version: 1, image: 'claude' }), { mode: 0o600 });
+    symlinkSync(outside, path.dirname(file));
+    expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({});
+    expect(warnings).toEqual([{ code: 'SELECTION_FILE_REFUSED' }]);
+  });
+
+  it('reads nothing from an ops directory that is not private (0700)', () => {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(file, JSON.stringify({ version: 1, image: 'claude' }), { mode: 0o600 });
+    chmodSync(path.dirname(file), 0o755);
+    expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({});
+    expect(warnings).toEqual([{ code: 'SELECTION_FILE_REFUSED' }]);
+    chmodSync(path.dirname(file), 0o700);
+    expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({ image: 'claude' });
+  });
+
   it('never follows a symlink at the target: it is replaced by a private regular file, the link target untouched', () => {
     mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const victim = path.join(dir, 'victim.txt');
@@ -109,7 +128,7 @@ describe('ProviderSelectionStore', () => {
     symlinkSync(victim, file);
     // Reading refuses the link (never follows it): the store starts from the configuration.
     expect(new ProviderSelectionStore(providerSelectionFileIo(file), logger).get()).toEqual({});
-    expect(warnings.at(-1)).toEqual({ code: 'SELECTION_FILE_UNREADABLE' });
+    expect(warnings.at(-1)).toEqual({ code: 'SELECTION_FILE_REFUSED' });
     writePrivateFileAtomic(file, '{"version":1}\n');
     expect(readFileSync(victim, 'utf8')).toBe('keep me');
     expect(lstatSync(file).isSymbolicLink()).toBe(false);

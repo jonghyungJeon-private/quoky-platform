@@ -202,8 +202,17 @@ function selectionFromData(raw: unknown): SessionSelection {
   return { ...(chat ? { chat } : {}), ...(image ? { image } : {}) };
 }
 
+/** At most this many (Session, Actor) overrides are mirrored in memory for the synchronous dispatch-time check. */
+export const MAX_CACHED_OVERRIDES = 512;
+
 export class ProviderSelectionService implements ProviderSelectionPolicy {
   private readonly clock: () => IsoTimestamp;
+  /**
+   * The live (Session, Actor) overrides as last read from or written to the Session row, for the SYNCHRONOUS
+   * {@link isEligible}. Every override write goes through this service and updates the mirror the moment its save
+   * resolves, so the mirror is never behind a committed change made in this process (single instance, ADR-0102 D4).
+   */
+  private readonly overrides = new Map<string, SessionSelection>();
 
   constructor(private readonly deps: ProviderSelectionServiceDeps) {
     this.clock = deps.clock ?? sharedClock;
@@ -214,16 +223,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   async preferenceFor(capability: Capability, context: ProviderSelectionContext): Promise<ProviderPreference | null> {
     const claudeKey = this.deps.catalog.claude.id;
     try {
-      if (CHAT_TIER.has(capability)) {
-        const chat = await this.effectiveChat(context);
-        return { eligible: unique([chat.provider.id, claudeKey]), order: 'listed' };
-      }
-      if (capability === Capability.IMAGE_UNDERSTANDING) {
-        const image = await this.effectiveImage(context);
-        return { eligible: image.provider === null ? [] : [image.provider.id], order: 'listed' };
-      }
-      if (PINNED.has(capability)) return this.pinnedPreference();
-      return null;
+      return this.preferenceFrom(capability, await this.sessionSelection(context));
     } catch {
       // Fail safe: the chat tier and pinned work go to Claude, images go nowhere.
       this.deps.logger.warn('provider selection unavailable; using the safe default', { capability });
@@ -231,6 +231,41 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       if (CHAT_TIER.has(capability) || PINNED.has(capability)) return { eligible: [claudeKey], order: 'listed' };
       return null;
     }
+  }
+
+  /**
+   * The dispatch-time check (synchronous, never throws): is the provider with `providerKey` eligible under the LIVE
+   * selection — the mirrored (Session, Actor) override, the persisted default and the configuration — right now? `off`
+   * makes every image provider ineligible. A scoped request whose override is not mirrored (never read in this process)
+   * is not eligible (fail closed); in practice the request's own selection read populated it.
+   */
+  isEligible(capability: Capability, context: ProviderSelectionContext, providerKey: string): boolean {
+    try {
+      let session: SessionSelection = {};
+      if (context.sessionId !== undefined && context.actorId !== undefined) {
+        const mirrored = this.overrides.get(overrideKey({ sessionId: context.sessionId, actorId: context.actorId }));
+        if (mirrored === undefined) return false;
+        session = mirrored;
+      }
+      const preference = this.preferenceFrom(capability, session);
+      return preference === null || preference.eligible.includes(providerKey);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The policy's answer for a known session selection (synchronous). */
+  private preferenceFrom(capability: Capability, session: SessionSelection): ProviderPreference | null {
+    if (CHAT_TIER.has(capability)) {
+      const chat = this.chatFromLayers(session);
+      return { eligible: unique([chat.provider.id, this.deps.catalog.claude.id]), order: 'listed' };
+    }
+    if (capability === Capability.IMAGE_UNDERSTANDING) {
+      const image = this.imageFromLayers(session);
+      return { eligible: image.provider === null ? [] : [image.provider.id], order: 'listed' };
+    }
+    if (PINNED.has(capability)) return this.pinnedPreference();
+    return null;
   }
 
   /**
@@ -263,7 +298,20 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   /** The caller's own override in that session; nothing without both a session and an Actor. */
   async sessionSelection(scope: SelectionScope = {}): Promise<SessionSelection> {
     if (scope.sessionId === undefined || scope.actorId === undefined) return {};
-    return sessionSelectionOf(await this.deps.sessions().get(scope.sessionId), scope.actorId);
+    const selection = sessionSelectionOf(await this.deps.sessions().get(scope.sessionId), scope.actorId);
+    this.mirror({ sessionId: scope.sessionId, actorId: scope.actorId }, selection);
+    return selection;
+  }
+
+  private mirror(scope: SessionOverrideScope, selection: SessionSelection): void {
+    const key = overrideKey(scope);
+    this.overrides.delete(key);
+    this.overrides.set(key, selection);
+    while (this.overrides.size > MAX_CACHED_OVERRIDES) {
+      const oldest = this.overrides.keys().next().value;
+      if (oldest === undefined) break;
+      this.overrides.delete(oldest);
+    }
   }
 
   async effectiveChat(scope: SelectionScope = {}): Promise<EffectiveChatSelection> {
@@ -391,9 +439,11 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     next: (current: SessionSelection) => SessionSelection,
   ): Promise<SelectionWriteResult> {
     try {
+      let written: SessionSelection = {};
       const saved = await this.deps.updateSessionEntry(scope.sessionId, SESSION_SELECTION_METADATA_KEY, (raw) => {
         const byActor = { ...byActorOf(raw) };
         const updated = next(selectionFromData(byActor[scope.actorId]));
+        written = updated;
         if (updated.chat === undefined && updated.image === undefined) delete byActor[scope.actorId];
         else {
           byActor[scope.actorId] = {
@@ -404,6 +454,9 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         }
         return Object.keys(byActor).length === 0 ? undefined : { byActor };
       });
+      // The committed value is live for the synchronous dispatch-time check from this moment on.
+      if (saved === null) this.overrides.delete(overrideKey(scope));
+      else this.mirror(scope, written);
       return saved === null ? { status: 'SESSION_GONE' } : { status: 'SET' };
     } catch {
       this.deps.logger.warn('provider selection session write failed', { code: 'SESSION_WRITE_FAILED' });
@@ -550,6 +603,10 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       return undefined;
     }
   }
+}
+
+function overrideKey(scope: SessionOverrideScope): string {
+  return `${scope.sessionId}\u0000${scope.actorId}`;
 }
 
 function unique(keys: readonly string[]): string[] {

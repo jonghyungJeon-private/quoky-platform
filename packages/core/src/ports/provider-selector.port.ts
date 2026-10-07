@@ -16,4 +16,9 @@ import type { ProviderSelectionContext } from './provider-selection-policy.port'
  */
 export interface ProviderSelector {
   select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider>;
+  /**
+   * Optional, SYNCHRONOUS dispatch-time check: whether `provider` (one this selector returned) is still eligible under
+   * the live selection. Called immediately before `execute` with nothing awaited in between.
+   */
+  isStillEligible?(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean;
 }

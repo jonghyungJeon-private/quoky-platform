@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { IsoTimestamp, Logger } from '@quoky/core';
-import { fileLedgerStore, type OpsNoticeLedgerStore } from '../ops/ops-notice';
+import { PrivateFileRefusedError, fileLedgerStore, type OpsNoticeLedgerStore } from '../ops/ops-notice';
 import { chatChoiceFromData, chatChoiceToData, imageChoiceFromData } from './selection-choices';
 import type { ChatChoice, ImageChoice } from './selection-choices';
 
@@ -72,8 +72,10 @@ export class ProviderSelectionStore {
     let raw: string | undefined;
     try {
       raw = this.io.read();
-    } catch {
-      this.logger.warn('provider selection default unreadable; using the configuration', { code: 'SELECTION_FILE_UNREADABLE' });
+    } catch (error) {
+      // A symlinked or non-private `ops/` directory, or a symlinked file, is refused: never read through, env applies.
+      const code = error instanceof PrivateFileRefusedError ? 'SELECTION_FILE_REFUSED' : 'SELECTION_FILE_UNREADABLE';
+      this.logger.warn('provider selection default unreadable; using the configuration', { code });
       return {};
     }
     if (raw === undefined) return {};

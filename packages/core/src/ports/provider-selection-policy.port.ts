@@ -44,4 +44,11 @@ export interface ProviderPreference {
  */
 export interface ProviderSelectionPolicy {
   preferenceFor(capability: Capability, context: ProviderSelectionContext): Promise<ProviderPreference | null>;
+  /**
+   * Optional, SYNCHRONOUS: whether the provider with this key is still eligible for the capability under the LIVE
+   * selection right now. Callers run it last, with nothing awaited between it and the provider call, so a selection
+   * change that landed while selection awaited readiness (e.g. image understanding switched `off`) is honoured. It
+   * must not throw; any doubt is `false`. Absent means "no dispatch-time check" (always eligible).
+   */
+  isEligible?(capability: Capability, context: ProviderSelectionContext, providerKey: string): boolean;
 }

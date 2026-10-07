@@ -14658,7 +14658,10 @@ reconciliation with ADR-0064/ADR-0090 routing.
      configuration applies. The private file is written by the shared helper `writePrivateFileAtomic` (also the
      `OPS_NOTICE` ledger's): the directory must be a real directory (lstat, never a symlink; 0700), the temp file has an
      unpredictable name and is created with `O_CREAT | O_EXCL | O_NOFOLLOW` (0600), written, fsynced, closed and renamed;
-     a symlinked file is never read (Codex review P2 on 52effe2). The session override is keyed by (Session, Actor)
+     a symlinked file is never read (Codex review P2 on 52effe2). Reads verify the directory too (Codex re-review P2 on
+     9080114): it must be a real directory (lstat, and its realpath is its parent's realpath plus its own name, so the
+     `ops/` directory itself resolves nowhere else) with mode 0700; otherwise the file is ignored, the configuration
+     applies and the store logs `SELECTION_FILE_REFUSED` (the `OPS_NOTICE` ledger read fails closed the same way). The session override is keyed by (Session, Actor)
      (Codex review P2 on 52effe2: a channel Session is reused for every Actor in that channel or thread): it lives on the
      Session row's existing JSON `metadata` as `quoky.providerSelection.byActor[<actorId>]`, written by
      `SessionManager.updateMetadataEntry` — field-scoped on the live row under the shared `SessionWriteLock` (ADR-0113 D7),
@@ -17209,7 +17212,13 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      52effe2): immediately before `execute` the runtime asks the router again with the same context and resolves the
      policy again; unless the same provider (by opaque key) is still selected and its locality is still allowed, nothing
      is sent, the TaskRun fails with a content-free summary and the reply is the truthful "not analysed, not sent" notice
-     (`reason: selection-changed`). No I/O runs between that check and `execute`.
+     (`reason: selection-changed`). Because the router decides eligibility before it awaits readiness, a switch landing
+     during that await could still return the old provider (Codex re-review P2 on 9080114: `ollama` → `off`); so the LAST
+     step, synchronous and with nothing awaited before `execute`, is `ProviderSelector.isStillEligible` →
+     `ProviderSelectionPolicy.isEligible(capability, context, providerKey)` (optional port members): the composition root
+     answers from the LIVE selection (a write-through in-memory mirror of the (Session, Actor) overrides, updated the
+     moment a write commits, plus the persisted default and the configuration). `off` makes every image provider
+     ineligible; an unmirrored scope is not eligible (fail closed).
   4. **Display (amends A5).** Besides the configured selection, the providers panel shows the effective image default and
      its source; choosing the cloud option on the operations UI shows the egress warning; `모델 상태` shows the effective
      image choice, its source and where images go.

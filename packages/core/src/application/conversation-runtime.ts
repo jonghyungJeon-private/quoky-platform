@@ -804,7 +804,11 @@ export interface ConversationRuntimeDeps {
    * The provider selector. The runtime passes the turn's session as the selection context (ADR-0092 amendment, runtime
    * switching), so the owner's session-scoped choice can apply; a selector may ignore it.
    */
-  readonly router: { select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider> };
+  readonly router: {
+    select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider>;
+    /** Optional synchronous dispatch-time eligibility check (image turns; ADR-0111 amendment, runtime switching). */
+    isStillEligible?(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean;
+  };
   /** Optional Slice 5A seam. Only TaskRun-backed GENERAL_CHAT work turns may use it. */
   readonly runtimeProviderRouting?: RuntimeProviderRouting;
   readonly artifacts: { persistAll(taskId: Id, runId: Id, artifacts: Artifact[]): Promise<Id[]> };
@@ -7329,7 +7333,9 @@ export class ConversationRuntime {
       // its locality policy now; no I/O runs between this check and `execute`, so the provider that receives the image
       // is one the CURRENT selection allows. Otherwise nothing is sent and the reply is the truthful notice.
       const current = await this.imageDispatchStillAllowed(capability, selection, provider);
-      if (!current.allowed) {
+      // Last, synchronously, with nothing awaited before `execute`: the LIVE selection must still make this provider
+      // eligible. A switch that landed while the re-selection above awaited readiness (`ollama` → `off`) is caught here.
+      if (!current.allowed || this.deps.router.isStillEligible?.(capability, selection, provider) === false) {
         await this.deps.tasks.failRun(run, 'image selection changed before dispatch; nothing was sent', { providerId });
         await this.deps.tasks.transition(task, TaskStatus.FAILED);
         return this.respondImageUnderstandingUnavailable(message, session, images.length, 'selection-changed', current.policy);
