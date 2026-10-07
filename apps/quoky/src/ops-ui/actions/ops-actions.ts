@@ -5,6 +5,7 @@ import {
   learningTextHasCredential,
   maskedMemoryText,
   memoryPreview,
+  renderConnectorWriteOpsApprovedNotice,
 } from '@quoky/core';
 import type {
   Actor,
@@ -12,6 +13,7 @@ import type {
   ApprovalGateKind,
   ApprovalSurfaceDecision,
   ApprovalSurfaceRefusal,
+  ConnectorWriteApprovedNotice,
   ConversationContext,
   Id,
   IsoTimestamp,
@@ -169,13 +171,29 @@ const NOTICE_LABEL: Readonly<Record<NotificationSinkOutcome['status'] | 'FAILED'
   FAILED: 'DM 결과 알림은 보내지 못했어요. 채팅에서 확인하세요.',
 };
 
-/** The owner-DM result text (ADR-0113 D7): a fixed header and the reply chat would have shown, bounded and guarded. */
-export function opsDecisionResultText(kind: ApprovalGateKind, outcome: 'APPROVED' | 'REJECTED' | 'EXPIRED', reply: string): string {
+/**
+ * The owner-DM result text (ADR-0113 D7): a fixed header and the reply chat would have shown, bounded and guarded. An
+ * approved connector write (`connectorWrite`) gets the Core notice instead of the chat reply: what was approved, where
+ * its exact phrase must be sent (execution is bound to the approving conversation) and for how long.
+ */
+export function opsDecisionResultText(
+  kind: ApprovalGateKind,
+  outcome: 'APPROVED' | 'REJECTED' | 'EXPIRED',
+  reply: string,
+  connectorWrite?: ConnectorWriteApprovedNotice & { readonly chat: ConversationContext },
+): string {
+  if (outcome === 'APPROVED' && connectorWrite !== undefined) {
+    const notice = `[Quoky 운영 화면] ${renderConnectorWriteOpsApprovedNotice(connectorWrite)}`;
+    if (!learningTextHasCredential(notice)) return bounded(notice);
+  }
   const verb =
     outcome === 'APPROVED' ? '운영 화면에서 승인했어요' : outcome === 'REJECTED' ? '운영 화면에서 거절했어요' : '만료돼서 자동 거절로 기록했어요';
   const header = `[Quoky 운영 화면] ${APPROVAL_KIND_LABEL[kind]} 승인 요청을 ${verb}. 이어지는 단계는 채팅에서 해요.`;
   if (learningTextHasCredential(reply)) return header;
-  const text = `${header}\n${reply}`;
+  return bounded(`${header}\n${reply}`);
+}
+
+function bounded(text: string): string {
   const chars = Array.from(text);
   const max = REMINDER_LIMITS.maxDeliveredTextChars;
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
@@ -349,7 +367,12 @@ export class OpsUiActions implements OpsActions {
         // Owner DM only (ADR-0113 D7): no guild, so no channel routing is possible.
         target: { platform: decided.chat.platform, channelId: '', userId: decided.chat.userId },
         kind: 'OPS_DECISION_RESULT',
-        text: opsDecisionResultText(decided.kind, decided.outcome, decided.reply.text),
+        text: opsDecisionResultText(
+          decided.kind,
+          decided.outcome,
+          decided.reply.text,
+          decided.connectorWrite === undefined ? undefined : { ...decided.connectorWrite, chat: decided.chat },
+        ),
       });
       delivery = sent.status;
     } catch {

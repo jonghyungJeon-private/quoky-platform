@@ -39,7 +39,7 @@ import {
 import { ApprovalManager } from './approval-manager';
 import type { ApprovalPolicy } from './approval-policy';
 import { createCalendarTurnHandler } from './calendar/calendar-turn-handler';
-import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
+import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderNoApprovedConnectorWrite } from './connector-writes/connector-write-copy';
 import {
   StatelessConnectorWriteFlow,
   connectorWriteApprovalReason,
@@ -51,7 +51,7 @@ import { IntentResolver } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import { PromptComposer } from './prompt-composer';
 import { PromptRenderer } from './prompt-renderer';
-import { MAX_CONTRIBUTED_HELP_LINES, ResponseComposer } from './response-composer';
+import { APPROVAL_REFERENCE_LINE_PREFIX, MAX_CONTRIBUTED_HELP_LINES, ResponseComposer } from './response-composer';
 import { SessionManager } from './session-manager';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { WorkManager } from './work-manager';
@@ -186,6 +186,9 @@ function harness(opts: HarnessOptions = {}) {
       async findActiveByContext(channelId: string) {
         return [...sessions.values()].find((s) => s.status === SessionStatus.ACTIVE && s.context.channelId === channelId) ?? null;
       },
+      async list() {
+        return [...sessions.values()];
+      },
     },
     approvals: {
       async save(a: ApprovalRequest) {
@@ -206,6 +209,9 @@ function harness(opts: HarnessOptions = {}) {
       async save(t: Task) {
         tasks.set(t.id, structuredClone(t));
         return t;
+      },
+      async listByContext(channelId: string, threadId?: string) {
+        return [...tasks.values()].filter((t) => t.context.channelId === channelId && t.context.threadId === threadId);
       },
     },
     workItems: {
@@ -442,7 +448,9 @@ function harness(opts: HarnessOptions = {}) {
   };
   const runtime = new ConversationRuntime(deps, { clock: () => new Date().toISOString() });
   let seq = 0;
-  const send = (text: string) => runtime.handle({ id: `msg-${++seq}`, context: CTX, text, receivedAt: T0 } satisfies InboundMessage);
+  const sendIn = (context: ConversationContext, text: string) =>
+    runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0 } satisfies InboundMessage);
+  const send = (text: string) => sendIn(CTX, text);
   const totalWrites = () =>
     writes.addComment.length + writes.transition.length + writes.post.length + writes.createEvent.length +
     writes.updateEvent.length + writes.deleteEvent.length;
@@ -454,7 +462,7 @@ function harness(opts: HarnessOptions = {}) {
     actor = next;
   };
   return {
-    send, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor,
+    send, sendIn, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor,
     applyLookups, live,
   };
 }
@@ -1116,17 +1124,58 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     expect(h.totalWrites()).toBe(0);
   });
 
-  it('a repeated execution phrase after a SENT write says it was already executed, with the link (W5-L02)', async () => {
+  it('a repeated execution phrase after a SENT write in the same conversation says it was already executed, with the link (W5-L02)', async () => {
+    // The write displaced an earlier pointer, so after the send the pointer is restored and the phrase reaches the
+    // stray-phrase path: only THIS conversation's recent receipt answers "already executed".
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+    const again = await h.send('댓글 실행');
+    // When (10:00 KST) and where it went, so it can never be mistaken for another post.
+    expect(again.reply.text).toBe([`이미 보냈어요 (10:00, Jira PROJ-12): <${COMMENT_URL}>`, '다시 보내지 않았어요.'].join('\n'));
+    expect(h.writes.addComment).toHaveLength(1);
+    expect((await h.send('Slack 게시 실행')).reply.text).toContain('승인된 외부 쓰기 요청이 없어요');
+  });
+
+  it('after a reset the earlier conversation’s send is not "already executed" here (cross-session fix; was W5-L02 actor-wide)', async () => {
+    // Previously the latest SENT receipt of the actor answered from ANY conversation. 새 대화 opens a new conversation,
+    // so the phrase there has nothing approved and must say so.
     const h = harness();
     await h.send('PROJ-12에 댓글: 한 번만');
     await h.send('승인');
     await h.send('댓글 실행');
     await h.send('새 대화');
     const again = await h.send('댓글 실행');
-    expect(again.reply.text).toContain('이미 실행했어요 — 다시 보내지 않았어요.');
-    expect(again.reply.text).not.toContain('승인된 외부 쓰기 요청이 없어요');
+    expect(again.reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect(again.reply.text).not.toContain(COMMENT_URL);
     expect(h.writes.addComment).toHaveLength(1);
-    expect((await h.send('Slack 게시 실행')).reply.text).toContain('승인된 외부 쓰기 요청이 없어요');
+  });
+
+  it('a same-conversation SENT older than the approval lifetime is no longer "already executed"', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    advanceMinutes(29);
+    expect((await h.send('댓글 실행')).reply.text).toContain('이미 보냈어요 (10:00, Jira PROJ-12)');
+    advanceMinutes(1);
+    const late = await h.send('댓글 실행');
+    expect(late.reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+
+  it('a later write in the same conversation still lets the earlier recent send answer (pointer moved, same session)', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('거절');
+    const again = await h.send('댓글 실행');
+    expect(again.reply.text).toContain('이미 보냈어요 (10:00, Jira PROJ-12)');
+    expect(h.totalWrites()).toBe(1);
   });
 
   it('another write’s phrase while a grant waits names the right phrase instead of claiming nothing is approved', async () => {
@@ -1198,5 +1247,142 @@ describe('connector writes — long replies are never cut (review fix)', () => {
     expect(choice.reply.text).toContain('조건에 맞는 일정이 10개예요');
     expect(choice.reply.text).toContain('\n10. ');
     expect(choice.reply.text.endsWith('다른 말을 보내면 선택은 취소돼요.')).toBe(true);
+  });
+});
+
+describe('connector writes — an execution phrase in another conversation (live QA 2026-10-07, cross-session)', () => {
+  /** The UAT guild channel (S1) and the owner DM with the bot (S2): the same owner, two conversations. */
+  const GUILD: ConversationContext = { platform: 'test', spaceId: '900000000000000001', channelId: '900000000000000002', userId: 'owner-user' };
+  const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
+  const elsewhereInGuild = (minutes: number) =>
+    [
+      `실행하지 않았어요. 승인된 Slack 게시(#dev)는 다른 대화에서 기다리고 있어요 (약 ${minutes}분 남음).`,
+      '미리보기를 받은 <#900000000000000002>에서 "Slack 게시 실행"이라고 보내 주세요.',
+    ].join('\n');
+
+  /** Preview in `context` with the operations-UI reference line on, and return the approval id and the reference. */
+  async function previewWithReference(h: ReturnType<typeof harness>, context: ConversationContext, text: string) {
+    h.runtime.approvalDecisions.setConfirmationReferenceEnabled(true);
+    const preview = await h.sendIn(context, text);
+    const line = preview.reply.text.split('\n').find((l) => l.startsWith(APPROVAL_REFERENCE_LINE_PREFIX));
+    if (!line) throw new Error('no reference line');
+    const reference = line.slice(APPROVAL_REFERENCE_LINE_PREFIX.length, APPROVAL_REFERENCE_LINE_PREFIX.length + 6);
+    const approval = [...h.approvals.values()].find((a) => a.status === ApprovalStatus.PENDING);
+    return { approvalId: approval!.id, reference };
+  }
+
+  it('the live repro: approved in the ops UI for the guild channel, then "Slack 게시 실행" in the DM runs nothing and says where', async () => {
+    const h = harness();
+    // An unrelated, older Slack post from yet another conversation (the link the bot wrongly returned live).
+    await h.sendIn({ ...DM, channelId: '900000000000000009' }, '#dev에 게시: 어제 게시물');
+    await h.sendIn({ ...DM, channelId: '900000000000000009' }, '승인');
+    await h.sendIn({ ...DM, channelId: '900000000000000009' }, 'Slack 게시 실행');
+    expect(h.writes.post).toHaveLength(1);
+    advanceMinutes(150);
+
+    const { approvalId, reference } = await previewWithReference(h, GUILD, '#dev에 게시: 운영 UI 승인 테스트입니다');
+    const decided = await h.runtime.approvalDecisions.decideFromOpsUi({
+      approvalId,
+      decision: 'approve',
+      actor: OWNER,
+      reference,
+      sessions: async () => [...h.sessions.values()],
+    });
+    expect(decided).toMatchObject({
+      status: 'DECIDED',
+      outcome: 'APPROVED',
+      kind: 'CONNECTOR_WRITE',
+      chat: GUILD,
+      connectorWrite: {
+        operation: 'CHANNEL_POST',
+        target: { kind: 'channel', channelLabel: 'dev', channelId: 'C0DEV' },
+        executionPhrase: 'Slack 게시 실행',
+        remainingMs: 30 * 60_000,
+      },
+    });
+    expect(h.approvals.get(approvalId)?.status).toBe(ApprovalStatus.APPROVED);
+
+    const classifyBefore = h.classify.count;
+    advanceMinutes(4);
+    const reply = await h.sendIn(DM, 'Slack 게시 실행');
+    expect(reply.reply.text).toBe(elsewhereInGuild(26));
+    expect(reply.reply.text).not.toContain('운영 UI 승인 테스트입니다');
+    expect(reply.reply.text).not.toContain('이미 보냈어요');
+    expect(reply.reply.text).not.toContain('https://');
+    expect(h.writes.post).toHaveLength(1); // only the old post: nothing new was sent
+    expect(h.classify.count).toBe(classifyBefore); // deterministic: no classification, no provider (router throws)
+
+    // The binding holds: the grant still runs only where it was approved, exactly once.
+    const sent = await h.sendIn(GUILD, 'Slack 게시 실행');
+    expect(sent.reply.text).toContain('Slack 게시 완료');
+    expect(h.writes.post).toHaveLength(2);
+    expect(h.writes.post[1]).toMatchObject({ channel: 'C0DEV', text: '운영 UI 승인 테스트입니다' });
+  });
+
+  it('an approval waiting in a DM is named as the DM', async () => {
+    const h = harness();
+    await h.sendIn(DM, 'PROJ-12에 댓글: 디엠에서 승인');
+    await h.sendIn(DM, '승인');
+    const reply = await h.sendIn(GUILD, '댓글 실행');
+    expect(reply.reply.text).toBe(
+      [
+        '실행하지 않았어요. 승인된 Jira 댓글(PROJ-12)은 다른 대화에서 기다리고 있어요 (약 30분 남음).',
+        '미리보기를 받은 봇과의 DM에서 "댓글 실행"이라고 보내 주세요.',
+      ].join('\n'),
+    );
+    expect(reply.reply.text).not.toContain('디엠에서 승인');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('a finished post still holding this conversation’s pointer neither hides the grant elsewhere nor reports an old send', async () => {
+    const h = harness();
+    await h.sendIn(DM, '#dev에 게시: 디엠 게시물');
+    await h.sendIn(DM, '승인');
+    await h.sendIn(DM, 'Slack 게시 실행');
+    expect(h.writes.post).toHaveLength(1);
+    // Right after the send the repeat is reported (the original CWR-2 repeat reply).
+    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toContain('이미 실행했어요');
+    advanceMinutes(150);
+    // Hours later it is not "already executed" any more.
+    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    const { approvalId, reference } = await previewWithReference(h, GUILD, '#dev에 게시: 길드 게시물');
+    await h.runtime.approvalDecisions.decideFromOpsUi({
+      approvalId, decision: 'approve', actor: OWNER, reference, sessions: async () => [...h.sessions.values()],
+    });
+    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(elsewhereInGuild(30));
+    expect(h.writes.post).toHaveLength(1);
+  });
+
+  it('an old SENT receipt from another conversation with nothing approved is the no-approved reply, never "already executed"', async () => {
+    const h = harness();
+    await h.sendIn(GUILD, '#dev에 게시: 지난 게시물');
+    await h.sendIn(GUILD, '승인');
+    await h.sendIn(GUILD, 'Slack 게시 실행');
+    expect(h.writes.post).toHaveLength(1);
+    // Recent or old, another conversation's receipt never answers here.
+    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    advanceMinutes(150);
+    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect(h.writes.post).toHaveLength(1);
+  });
+
+  it('never points at a lapsed grant, another actor’s grant, another kind of write or a reset conversation', async () => {
+    const h = harness();
+    await h.sendIn(GUILD, '#dev에 게시: 곧 만료');
+    await h.sendIn(GUILD, '승인');
+    expect((await h.sendIn(DM, '댓글 실행')).reply.text).toBe(renderNoApprovedConnectorWrite()); // another kind
+    h.setActor(OTHER);
+    expect((await h.sendIn({ ...DM, channelId: '900000000000000008' }, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    h.setActor(OWNER);
+    advanceMinutes(30);
+    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite()); // lapsed
+    expect(h.totalWrites()).toBe(0);
+
+    const r = harness();
+    await r.sendIn(GUILD, '#dev에 게시: 리셋');
+    await r.sendIn(GUILD, '승인');
+    await r.sendIn(GUILD, '새 대화');
+    expect((await r.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect(r.totalWrites()).toBe(0);
   });
 });

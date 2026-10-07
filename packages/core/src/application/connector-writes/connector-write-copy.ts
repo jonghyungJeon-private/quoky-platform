@@ -1,3 +1,4 @@
+import type { ConversationContext } from '../../domain';
 import type {
   CalendarEventDraft,
   CalendarEventTime,
@@ -10,11 +11,14 @@ import { toZonedDateTime } from '../reminders/zoned-time';
 import { escapeDiscordText } from '../work-chat/external-work-readout';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
 import type {
+  ConnectorWriteApprovedElsewhere,
   ConnectorWriteCloseReason,
   ConnectorWriteEventSummary,
   ConnectorWritePreview,
   ConnectorWriteRefusal,
+  ConnectorWriteRecentSend,
   ConnectorWriteStep,
+  ConnectorWriteTargetSummary,
 } from './connector-write-flow';
 
 /**
@@ -218,10 +222,114 @@ export function renderConnectorWriteApprovedReminder(operation: ConnectorWriteOp
     : `승인은 기록돼 있어요. 실제로 보내려면 "${executionPhrase}"이라고만 보내 주세요. 아직 아무것도 보내지 않았어요.`;
 }
 
-/** The execution phrase repeated after the same kind of write was already SENT (W5-L02). */
-export function renderConnectorWriteAlreadyExecuted(operation: ConnectorWriteOperation, externalRef?: string, url?: string): string {
-  void operation;
-  return ['이미 실행했어요 — 다시 보내지 않았어요.', ...linkLine(url, externalRef)].join('\n');
+/**
+ * Where a conversation is, for a "send the phrase there" hint: a direct conversation, or a channel (thread) reference
+ * written as `<#id>` — the chat-markup channel reference, rendered only for a plain id token (`reference` is absent
+ * otherwise). Ids only, never names.
+ */
+export type ConnectorWriteConversationPlace = { readonly kind: 'dm' } | { readonly kind: 'channel'; readonly reference?: string };
+
+/** Same safe-id rule as everywhere a raw id reaches chat text: letters, digits, `_` and `-` only. */
+const PLACE_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+
+export function connectorWriteConversationPlace(context: ConversationContext): ConnectorWriteConversationPlace {
+  if (context.spaceId === undefined) return { kind: 'dm' };
+  const id = context.threadId ?? context.channelId;
+  return PLACE_ID.test(id) ? { kind: 'channel', reference: `<#${id}>` } : { kind: 'channel' };
+}
+
+/** The full target ("Slack #dev", "Jira PROJ-12", "내 기본 캘린더"). */
+export function connectorWriteTargetLabel(target: ConnectorWriteTargetSummary): string {
+  switch (target.kind) {
+    case 'issue':
+      return `Jira ${inline(target.issueKey)}`;
+    case 'channel':
+      return `Slack #${inline(target.channelLabel)}`;
+    case 'calendar':
+      return '내 기본 캘린더';
+  }
+}
+
+/** The target after a label that already names the service ("#dev", "PROJ-12", "기본 캘린더"). */
+export function connectorWriteShortTarget(target: ConnectorWriteTargetSummary): string {
+  switch (target.kind) {
+    case 'issue':
+      return inline(target.issueKey);
+    case 'channel':
+      return `#${inline(target.channelLabel)}`;
+    case 'calendar':
+      return '기본 캘린더';
+  }
+}
+
+/** "Slack 게시(#dev)는", "Jira 댓글(PROJ-12)은" — the particle follows the label, not the parenthesis. */
+function labelWithTarget(operation: ConnectorWriteOperation, target: ConnectorWriteTargetSummary): string {
+  const label = connectorWriteLabel(operation);
+  return `${label}(${connectorWriteShortTarget(target)})${hasBatchim(label) ? '은' : '는'}`;
+}
+
+/**
+ * The execution phrase in a conversation with no approved write of that kind while one waits APPROVED in another
+ * conversation: nothing runs here, and the phrase must be sent there (execution is bound to the approving
+ * conversation). Names the kind, the target, the place and the time left only — never the payload.
+ */
+export function renderConnectorWriteApprovedElsewhere(elsewhere: ConnectorWriteApprovedElsewhere): string {
+  const place = connectorWriteConversationPlace(elsewhere.context);
+  const where = place.kind === 'dm' ? '봇과의 DM' : (place.reference ?? '채널');
+  return [
+    `실행하지 않았어요. 승인된 ${labelWithTarget(elsewhere.operation, elsewhere.target)} 다른 대화에서 기다리고 있어요 (약 ${minutesOf(elsewhere.remainingMs)}분 남음).`,
+    `미리보기를 받은 ${where}에서 "${elsewhere.executionPhrase}"이라고 보내 주세요.`,
+  ].join('\n');
+}
+
+/**
+ * The owner-DM notice of a connector write approved on the operations UI: what was approved, where (and with which
+ * exact phrase) it runs, and for how long. The DM itself never runs it unless the approval was asked in the DM.
+ */
+export function renderConnectorWriteOpsApprovedNotice(notice: {
+  readonly operation: ConnectorWriteOperation;
+  readonly target: ConnectorWriteTargetSummary;
+  readonly executionPhrase: string;
+  readonly remainingMs: number;
+  readonly chat: ConversationContext;
+}): string {
+  const label = connectorWriteLabel(notice.operation);
+  const step = label.split(' ').slice(1).join(' ');
+  const place = connectorWriteConversationPlace(notice.chat);
+  const where = place.kind === 'dm' ? '이 DM' : (place.reference ?? '승인을 요청한 채널');
+  const run = `실제 ${step}${hasBatchim(step) ? '은' : '는'} ${where}에서 "${notice.executionPhrase}"이라고 보내면 돼요 (승인은 약 ${minutesOf(notice.remainingMs)}분 유효).`;
+  return [
+    `운영 화면에서 승인했어요: ${label} → ${connectorWriteShortTarget(notice.target)}.`,
+    place.kind === 'dm' ? run : `${run} 이 DM에서는 실행되지 않아요.`,
+  ].join('\n');
+}
+
+/** HH:mm in `timeZone`. */
+function clockLabel(instant: string, timeZone: string): string | undefined {
+  const ms = Date.parse(instant);
+  if (!Number.isFinite(ms)) return undefined;
+  const zoned = toZonedDateTime(ms, timeZone);
+  return `${pad(zoned.hour)}:${pad(zoned.minute)}`;
+}
+
+/**
+ * The execution phrase repeated after a write of that kind approved in THIS conversation was SENT recently (W5-L02):
+ * when and where it went, so it can never be mistaken for another post, and that nothing was sent again.
+ */
+export function renderConnectorWriteAlreadyExecuted(operation: ConnectorWriteOperation, sent: ConnectorWriteRecentSend): string {
+  const calendar = isCalendar(operation);
+  const time = clockLabel(sent.sentAt, sent.timeZone);
+  const head = `${calendar ? '이미 반영했어요' : '이미 보냈어요'} (${time ? `${time}, ` : ''}${connectorWriteTargetLabel(sent.target)})`;
+  const link = linkValue(sent.url, sent.externalRef);
+  return [link ? `${head}: ${link}` : `${head}.`, calendar ? '다시 바꾸지 않았어요.' : '다시 보내지 않았어요.'].join('\n');
+}
+
+function linkValue(url: string | undefined, externalRef: string | undefined): string | undefined {
+  if (url !== undefined && /^https:\/\/[\x21-\x7e]{1,1500}$/u.test(url)) return `<${url}>`;
+  if (externalRef !== undefined && externalRef.length > 0 && externalRef.length <= 200 && !containsCredentialMaterial(externalRef)) {
+    return `참조 ${escapeDiscordText(externalRef)}`;
+  }
+  return undefined;
 }
 
 function linkLine(url: string | undefined, externalRef: string | undefined): string[] {

@@ -385,4 +385,83 @@ describe('OPS_DECISION_RESULT text (ADR-0113 D7)', () => {
     expect(guarded).not.toContain(SECRET_LIKE);
     expect(guarded.startsWith('[Quoky 운영 화면] 커밋 승인 요청을 운영 화면에서 거절했어요.')).toBe(true);
   });
+
+  // Live QA 2026-10-07: execution is bound to the approving conversation, so the DM says what, where and how long.
+  const APPROVED_REPLY = [
+    'Slack 게시 승인을 기록했어요. 아직 실행하지 않았어요.',
+    '실제로 실행하려면 "Slack 게시 실행"이라고 보내 주세요. 승인 후 30분이 지나면 다시 요청해야 해요.',
+  ].join('\n');
+  const POST = {
+    operation: 'CHANNEL_POST',
+    target: { kind: 'channel', channelLabel: 'quoky-test', channelId: 'C0TEST' },
+    executionPhrase: 'Slack 게시 실행',
+    remainingMs: 30 * 60_000,
+  } as const;
+
+  it('an approved connector write names the target, the guild channel, the exact phrase and the lifetime', () => {
+    expect(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', APPROVED_REPLY, { ...POST, chat: CTX })).toBe(
+      [
+        '[Quoky 운영 화면] 운영 화면에서 승인했어요: Slack 게시 → #quoky-test.',
+        `실제 게시는 <#${CTX.channelId}>에서 "Slack 게시 실행"이라고 보내면 돼요 (승인은 약 30분 유효). 이 DM에서는 실행되지 않아요.`,
+      ].join('\n'),
+    );
+  });
+
+  it('an approved connector write asked in the owner DM says "이 DM"; a thread is named by the thread', () => {
+    const dm: ConversationContext = { platform: 'discord', channelId: '423456789012345678', userId: CTX.userId };
+    expect(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', APPROVED_REPLY, { ...POST, chat: dm })).toBe(
+      [
+        '[Quoky 운영 화면] 운영 화면에서 승인했어요: Slack 게시 → #quoky-test.',
+        '실제 게시는 이 DM에서 "Slack 게시 실행"이라고 보내면 돼요 (승인은 약 30분 유효).',
+      ].join('\n'),
+    );
+    const thread: ConversationContext = { ...CTX, threadId: '523456789012345678' };
+    const comment = { operation: 'ISSUE_COMMENT', target: { kind: 'issue', issueKey: 'PROJ-12' }, executionPhrase: '댓글 실행', remainingMs: 30 * 60_000 } as const;
+    expect(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', 'x', { ...comment, chat: thread })).toContain(
+      '운영 화면에서 승인했어요: Jira 댓글 → PROJ-12.\n실제 댓글은 <#523456789012345678>에서 "댓글 실행"이라고 보내면 돼요',
+    );
+  });
+
+  it('the decision DM of an approved connector write is the notice built from the shared decision', async () => {
+    const notices: OwnerNotification[] = [];
+    const actions = new OpsUiActions({
+      owner: async () => ({ status: 'RESOLVED', actorId: OWNER_ID }),
+      clock: () => TS,
+      timeZone: 'Asia/Seoul',
+      approvals: {
+        decisions: {
+          locateForOpsUi: async () => ({ status: 'REFUSED', refusal: 'NOT_FOUND' }),
+          decideFromOpsUi: async () => ({
+            status: 'DECIDED',
+            outcome: 'APPROVED',
+            kind: 'CONNECTOR_WRITE',
+            reply: { context: CTX, text: APPROVED_REPLY },
+            chat: CTX,
+            connectorWrite: POST,
+          }),
+        },
+        actor: async () => OWNER,
+        sessions: async () => [],
+        notify: async (notification) => {
+          notices.push(notification);
+          return { status: 'SENT' };
+        },
+      },
+      logger: silent,
+    });
+    const outcome = await actions.decideApproval('a'.repeat(32), 'approve', 'ABC123');
+    expect(outcome.code).toBe('APPROVED');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.kind).toBe('OPS_DECISION_RESULT');
+    expect(notices[0]?.text).toContain(`실제 게시는 <#${CTX.channelId}>에서 "Slack 게시 실행"이라고 보내면 돼요`);
+  });
+
+  it('a rejection, an expiry or another gate kind keeps the header and the chat reply (no notice)', () => {
+    const next = { ...POST, chat: CTX };
+    expect(opsDecisionResultText('CONNECTOR_WRITE', 'REJECTED', '요청을 거절했어요.', next)).toBe(
+      '[Quoky 운영 화면] 커넥터 쓰기 승인 요청을 운영 화면에서 거절했어요. 이어지는 단계는 채팅에서 해요.\n요청을 거절했어요.',
+    );
+    expect(opsDecisionResultText('CONNECTOR_WRITE', 'EXPIRED', '만료됐어요.', next)).not.toContain('실제 게시는');
+    expect(opsDecisionResultText('PUSH', 'APPROVED', 'x')).not.toContain('실제');
+  });
 });
