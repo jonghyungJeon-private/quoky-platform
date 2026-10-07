@@ -37,6 +37,7 @@ import {
 } from './connector-write-draft';
 import { ConnectorWriteExecutor, ConnectorWriteRequestError } from './connector-write-executor';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
+import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from '../session-write-lock';
 
 /**
  * The chat approval flow for connector writes (ADR-0112 D5/D6, ADR-0110 amendment D3–D5; plan CWR-2).
@@ -331,6 +332,8 @@ export interface ConnectorWriteFlowDeps {
   readonly logger?: Logger;
   /** Bound on the calendar read for a reference (ms). */
   readonly readTimeoutMs?: number;
+  /** The session write lock (ADR-0113 D7). Omitted → the process-wide {@link SESSION_WRITE_LOCK}. */
+  readonly sessionLock?: SessionWriteLock;
 }
 
 /** The runtime-facing surface (`ConversationRuntimeDeps.connectorWriteFlow`, ADR-0112 D5: baseline 34 → 35). */
@@ -339,7 +342,7 @@ export interface ConnectorWriteFlow {
   readonly helpLines: readonly string[];
   /** Whether a writer is bound for the draft's family (false → writes are off for it). */
   supports(draft: ConnectorWriteDraft): boolean;
-  find(session: Session): Promise<ConnectorWriteAnchorView | null>;
+  find(session: Session, held?: SessionLockHold): Promise<ConnectorWriteAnchorView | null>;
   /**
    * The link/reference of this actor's most recent write of `operation`, but only when that write was SENT (a receipt);
    * null when it was not sent or nothing was ever written (W5-L02: a repeated execution phrase after a send).
@@ -354,13 +357,21 @@ export interface ConnectorWriteFlow {
   choose(input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number }): Promise<ConnectorWriteStep>;
   recordApproval(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
   execute(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
-  close(session: Session, view: ConnectorWriteAnchorView, reason: ConnectorWriteCloseReason, now: IsoTimestamp): Promise<void>;
+  close(
+    session: Session,
+    view: ConnectorWriteAnchorView,
+    reason: ConnectorWriteCloseReason,
+    now: IsoTimestamp,
+    held?: SessionLockHold,
+  ): Promise<void>;
 }
 
 export interface FlowInput {
   readonly session: Session;
   readonly actor: Actor;
   readonly now: IsoTimestamp;
+  /** A caller already holding the session write lock passes its hold (ADR-0113 D7); absent → the flow takes it. */
+  readonly held?: SessionLockHold;
 }
 
 /** The execution gate (EXECUTION_PHRASES) of each operation. */
@@ -431,8 +442,10 @@ class ReadTimeout extends Error {}
 export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   readonly helpLines: readonly string[];
   private reconciled: Promise<void> | null = null;
+  private readonly sessionLock: SessionWriteLock;
 
   constructor(private readonly deps: ConnectorWriteFlowDeps) {
+    this.sessionLock = deps.sessionLock ?? SESSION_WRITE_LOCK;
     const lines: string[] = [];
     if (deps.writers.issueComments || deps.writers.issueTransitions) lines.push(CONNECTOR_WRITE_HELP_LINES.issue);
     if (deps.writers.channelMessages) lines.push(CONNECTOR_WRITE_HELP_LINES.channel);
@@ -454,7 +467,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
 
   // ── lookup ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  async find(session: Session): Promise<ConnectorWriteAnchorView | null> {
+  async find(session: Session, held?: SessionLockHold): Promise<ConnectorWriteAnchorView | null> {
     const found = await this.openAnchorOf(session);
     if (!found) return null;
     const { task, anchor } = found;
@@ -463,7 +476,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     if (!approval || approval.status !== ApprovalStatus.PENDING) {
       // Decided outside this flow (or missing): the anchor can no longer be proven to be this request.
       const view = { taskId: task.id, anchor, approval: null };
-      await this.close(session, view, 'inconsistent', anchor.updatedAt);
+      await this.close(session, view, 'inconsistent', anchor.updatedAt, held);
       return null;
     }
     return { taskId: task.id, anchor, approval };
@@ -658,13 +671,13 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     if (anchor.status !== 'APPROVAL_PENDING' || !anchor.operation || !this.bound(input.view, input)) {
       return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
     }
-    await this.saveAnchor(taskId, input.session, {
-      ...anchor,
-      status: 'APPROVED',
-      approvedAt: input.now,
-      approvedBy: input.actor.id,
-      updatedAt: input.now,
-    });
+    await this.saveAnchor(
+      taskId,
+      input.session,
+      { ...anchor, status: 'APPROVED', approvedAt: input.now, approvedBy: input.actor.id, updatedAt: input.now },
+      {},
+      input.held,
+    );
     return {
       kind: 'approved',
       operation: anchor.operation,
@@ -776,10 +789,20 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return { kind: 'outcome', operation, outcome, preview };
   }
 
-  async close(session: Session, view: ConnectorWriteAnchorView, reason: ConnectorWriteCloseReason, now: IsoTimestamp): Promise<void> {
-    await this.saveAnchor(view.taskId, session, { ...view.anchor, status: 'CLOSED', closedReason: reason, updatedAt: now }, {
-      restorePointer: true,
-    });
+  async close(
+    session: Session,
+    view: ConnectorWriteAnchorView,
+    reason: ConnectorWriteCloseReason,
+    now: IsoTimestamp,
+    held?: SessionLockHold,
+  ): Promise<void> {
+    await this.saveAnchor(
+      view.taskId,
+      session,
+      { ...view.anchor, status: 'CLOSED', closedReason: reason, updatedAt: now },
+      { restorePointer: true },
+      held,
+    );
   }
 
   // ── internals ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -931,7 +954,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       updatedAt: input.now,
       ...(previous ? { previousActiveTaskId: previous } : {}),
     };
-    await this.createAnchor(input.session, anchor, input.now);
+    await this.createAnchor(input.session, anchor, input.now, input.held);
     return { kind: 'choice', mode: choice.mode, candidates: choice.candidates, timeZone: this.deps.timeZone };
   }
 
@@ -987,7 +1010,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       ...(previous ? { previousActiveTaskId: previous } : {}),
     };
     try {
-      await this.createAnchor(input.session, anchor, input.now);
+      await this.createAnchor(input.session, anchor, input.now, input.held);
     } catch (error) {
       // Never leave an unreachable PENDING CRITICAL approval behind.
       await this.deps.approvals
@@ -1027,7 +1050,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return anchor.previousActiveTaskId;
   }
 
-  private async createAnchor(session: Session, anchor: ConnectorWriteAnchor, now: IsoTimestamp): Promise<void> {
+  private async createAnchor(session: Session, anchor: ConnectorWriteAnchor, now: IsoTimestamp, held?: SessionLockHold): Promise<void> {
     const task: Task = {
       id: this.deps.newId(),
       title: 'connector write approval',
@@ -1050,8 +1073,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       metadata: { [ANCHOR_KEY]: anchor },
     };
     await this.deps.store.tasks.save(task);
-    const live = (await this.deps.store.sessions.get(session.id)) ?? session;
-    await this.deps.store.sessions.save({ ...live, activeTaskId: task.id, lastActivityAt: now });
+    // Under the session write lock, onto the live row (ADR-0113 D7).
+    await this.sessionLock.saveFields(this.deps.store.sessions, session, { activeTaskId: task.id, lastActivityAt: now }, held);
   }
 
   private async saveAnchor(
@@ -1059,6 +1082,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     session: Session,
     anchor: ConnectorWriteAnchor,
     options: { keepPointer?: boolean; restorePointer?: boolean } = {},
+    held?: SessionLockHold,
   ): Promise<void> {
     const task = await this.deps.store.tasks.get(taskId);
     if (!task) throw new Error('connector write anchor task missing');
@@ -1071,13 +1095,20 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     if (options.keepPointer || !options.restorePointer) return;
     // Terminal: hand the pointer back to what this anchor displaced. With nothing displaced a finished write keeps
     // the pointer (a repeated phrase is then answered from it); a closed one releases it.
-    const live = await this.deps.store.sessions.get(session.id);
-    if (!live || live.activeTaskId !== taskId) return;
-    if (anchor.previousActiveTaskId) {
-      await this.deps.store.sessions.save({ ...live, activeTaskId: anchor.previousActiveTaskId });
-    } else if (anchor.status === 'CLOSED') {
-      await this.deps.store.sessions.save({ ...live, activeTaskId: undefined });
-    }
+    // Compare-and-set on the live row under the session write lock (ADR-0113 D7).
+    await this.sessionLock.run(
+      session.id,
+      async () => {
+        const live = await this.deps.store.sessions.get(session.id);
+        if (!live || live.activeTaskId !== taskId) return;
+        if (anchor.previousActiveTaskId) {
+          await this.deps.store.sessions.save({ ...live, activeTaskId: anchor.previousActiveTaskId });
+        } else if (anchor.status === 'CLOSED') {
+          await this.deps.store.sessions.save({ ...live, activeTaskId: undefined });
+        }
+      },
+      held,
+    );
   }
 
   private log(level: 'info' | 'warn', event: string, fields: LogFields): void {

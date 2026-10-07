@@ -37,6 +37,14 @@ import {
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
+import {
+  ApprovalDecisionService,
+  type ApprovalDecisionInput,
+  type ApprovalDecisionReply,
+  type PendingApprovalLookup,
+  anchorAfterRejection,
+  logAnchoredApprovalFailure,
+} from './approval-decision-service';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
 import {
@@ -185,9 +193,8 @@ import {
   MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
   readCodeGenerationContextFiles,
 } from './code-generation-context';
+import type { SessionLockHold } from './session-write-lock';
 import {
-  CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
-  CREDENTIAL_OVERRIDE_DENY_COMMENT,
   type CredentialOverrideAnchor,
   type CredentialOverrideDispatchAuthorization,
   type CredentialOverrideFlow,
@@ -275,7 +282,7 @@ export interface ApprovalFlow {
    * Anchor an awaiting-approval execution to the session's in-focus Task (existing fields only), so
    * a later turn can find + resume it. Persists what {@link reconstructResume} needs.
    */
-  anchor(session: Session, request: ExecutionRequest, outcome: ExecutionOutcome): Promise<void>;
+  anchor(session: Session, request: ExecutionRequest, outcome: ExecutionOutcome, held?: SessionLockHold): Promise<void>;
   /** Reconstruct the `{request, prior}` needed to resume, from anchored/derived state (null if unavailable). */
   reconstructResume(
     session: Session,
@@ -321,15 +328,15 @@ export interface PendingScopeClarification {
  */
 export interface ScopeClarificationFlow {
   /** Derive the session's pending clarification, if any and still valid (project unchanged). */
-  findPending(session: Session): Promise<PendingScopeClarification | null>;
+  findPending(session: Session, held?: SessionLockHold): Promise<PendingScopeClarification | null>;
   /** Anchor a fresh insufficient-scope request so the next turn can recover it. Callers must only
    *  invoke this after confirming an active project exists, the workspace opened successfully, and
    *  no target validated. */
-  anchor(session: Session, pending: PendingScopeClarification): Promise<void>;
+  anchor(session: Session, pending: PendingScopeClarification, held?: SessionLockHold): Promise<void>;
   /** Consume/clear the anchor — called unconditionally once a pending clarification is checked
    *  (next-turn-only semantics). Safe: a no-op unless `session.activeTaskId` still points at THIS
    *  flow's own anchor Task — it must never clear an approval anchor. */
-  clear(session: Session): Promise<void>;
+  clear(session: Session, held?: SessionLockHold): Promise<void>;
 }
 
 /**
@@ -663,20 +670,20 @@ export interface ApplyPreviewFlow {
   /** Derive the session's apply-preview anchor, if any and still valid (project unchanged). A returned
    *  anchor is not always "pending" anything — it may be `ELIGIBLE` or already `APPROVED`; callers
    *  branch on `.status`. */
-  findAnchor(session: Session): Promise<ApplyPreviewAnchor | null>;
+  findAnchor(session: Session, held?: SessionLockHold): Promise<ApplyPreviewAnchor | null>;
   /** Anchor (or re-anchor, on every status transition) the apply-preview fact set. Always creates a
    *  fresh Task and re-points `session.activeTaskId` — same shape as the other two flows. */
-  anchor(session: Session, anchor: ApplyPreviewAnchor): Promise<void>;
+  anchor(session: Session, anchor: ApplyPreviewAnchor, held?: SessionLockHold): Promise<void>;
   /** Consume/clear the anchor — called only on deny/cancel (approving re-anchors as `APPROVED` instead).
    *  A no-op unless `session.activeTaskId` still points at THIS flow's own anchor Task. */
-  clear(session: Session): Promise<void>;
+  clear(session: Session, held?: SessionLockHold): Promise<void>;
   /**
    * Conditional clear (QA-V2-CL-03 preview discard): re-read the LIVE session from storage (never trust the turn's
    * possibly stale copy) and clear only while its current anchor is still the expected one — same code generation
    * (`codeGenerationRef.id`) and same `status`. Returns whether it cleared. Optional: a flow without it makes the
    * caller fail closed (nothing cleared).
    */
-  clearIfCurrent?(session: Session, expected: ApplyPreviewAnchorIdentity): Promise<boolean>;
+  clearIfCurrent?(session: Session, expected: ApplyPreviewAnchorIdentity, held?: SessionLockHold): Promise<boolean>;
 }
 
 /** Identifies one apply-preview anchor state for {@link ApplyPreviewFlow.clearIfCurrent}. */
@@ -690,9 +697,10 @@ export interface ConversationRuntimeDeps {
   readonly actors: { resolveFromContext(context: ConversationContext): Promise<Actor> };
   readonly sessions: {
     openForContext(context: ConversationContext, actorId: Id): Promise<Session>;
-    touch(session: Session): Promise<Session>;
+    /** `held`: a caller already holding the session write lock passes its hold (ADR-0113 D7). */
+    touch(session: Session, held?: SessionLockHold): Promise<Session>;
     /** Close the session on a reset (ADR-0093) — `SessionManager.close`, saved as `SessionStatus.CLOSED`. */
-    close(session: Session): Promise<Session>;
+    close(session: Session, held?: SessionLockHold): Promise<Session>;
   };
   readonly memory: {
     recordShortTerm(message: InboundMessage, sessionId?: Id): Promise<{ id: Id }>;
@@ -956,31 +964,6 @@ export interface ConversationRuntimeOptions {
    * composition-root `PersonalHostingGuard` / `PersonalGitGuard` remain the enforcement points.
    */
   readonly gitMergeEnabled?: boolean;
-}
-
-/**
- * The approval currently holding a conversation, if any (ADR-0093): the plan-scoped approval derived by
- * `approvalFlow` (ADR-0032), or the PENDING request behind an apply-preview anchor's `*_PENDING` status
- * (ADR-0040…0060). `planPending`/`pendingScope`/`applyAnchor` are the lookups the routing below reuses, so no
- * flow is queried twice in one turn.
- */
-interface PendingApprovalLookup {
-  planPending: ApprovalRequest | null;
-  /** Looked up only when no plan-scoped approval is pending (ADR-0037 ordering is unchanged). */
-  pendingScope: PendingScopeClarification | null;
-  /** Looked up only when neither a plan-scoped approval nor a scope clarification is pending. */
-  applyAnchor: ApplyPreviewAnchor | null;
-  /**
-   * The session's credential-override set (ADR-0097), looked up after the scope clarification and before the
-   * apply-preview anchor (the same session pointer, so at most one of them is ever set).
-   */
-  override: CredentialOverrideLookup | null;
-  /**
-   * The session's connector-write anchor (ADR-0112), looked up after the credential-override set and before the
-   * apply-preview anchor (the same session pointer, so at most one of them is ever set).
-   */
-  connectorWrite?: ConnectorWriteAnchorView | null;
-  pending: ApprovalRequest | null;
 }
 
 /** A code-change preview's refs, targets and prepared (read, classified, grant-checked) context content. */
@@ -1596,6 +1579,11 @@ export class ConversationRuntime {
   private readonly turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
   /** The handlers' contributed help lines in registry order (ADR-0096 D6); bounded by the composer. */
   private readonly contributedHelpLines: readonly string[];
+  /**
+   * ADR-0113 D7 (OPS-2b): the one approval decision path, shared with the local operations UI. Built from collaborators
+   * this runtime already holds (no deps key); the composition root reaches it through the runtime instance.
+   */
+  readonly approvalDecisions: ApprovalDecisionService;
 
   constructor(
     private readonly deps: ConversationRuntimeDeps,
@@ -1604,6 +1592,22 @@ export class ConversationRuntime {
     this.clock = options.clock ?? now;
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
     this.gitMergeEnabled = options.gitMergeEnabled ?? false;
+    this.approvalDecisions = new ApprovalDecisionService(
+      // Read through to the runtime's own deps object (the same collaborators, never a copy).
+      {
+        get approvals() { return deps.approvals; },
+        get approvalFlow() { return deps.approvalFlow; },
+        get scopeClarificationFlow() { return deps.scopeClarificationFlow; },
+        get applyPreviewFlow() { return deps.applyPreviewFlow; },
+        get credentialOverrideFlow() { return deps.credentialOverrideFlow; },
+        get connectorWriteFlow() { return deps.connectorWriteFlow; },
+        get composer() { return deps.composer; },
+        get memory() { return deps.memory; },
+        get sessions() { return deps.sessions; },
+        get logger() { return deps.logger; },
+      },
+      { clock: this.clock },
+    );
     const registry = ConversationRuntime.orderTurnHandlers(deps.turnHandlers ?? []);
     this.turnHandlersByStage = {
       control: registry.filter((h) => h.stage === 'control'),
@@ -2014,7 +2018,9 @@ export class ConversationRuntime {
   private async handleInner(message: InboundMessage): Promise<TurnResult> {
     const actor = await this.deps.actors.resolveFromContext(message.context);
     let session = await this.deps.sessions.openForContext(message.context, actor.id);
-    await this.deps.sessions.touch(session);
+    // ADR-0113 D7: the activity touch runs under the shared session write lock, field-scoped on the live row, so this
+    // turn's snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched copy.
+    session = (await this.deps.sessions.touch(session)) ?? session;
 
     // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
     // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the
@@ -2028,17 +2034,23 @@ export class ConversationRuntime {
     // PENDING approval is recorded denied on this turn. Control phrases take precedence: help/reset still run
     // (with the expiry notice prepended); any other turn gets only the expiry notice.
     const control = detectConversationControl(message.text);
-    const lookup = await this.findPendingApproval(session);
+    let lookup = await this.findPendingApproval(session);
     let expiryNotice: OutboundMessage | null = null;
     if (lookup.pending && this.remainingMs(lookup.pending) <= 0) {
-      await this.expirePendingApproval(session, lookup);
-      expiryNotice = this.deps.composer.composeApprovalExpired(
-        message.context,
-        lookup.pending,
-        PENDING_APPROVAL_TTL_MS,
-      );
-      // ADR-0112: the expired write's anchor handed the pointer back; mirror it on this turn's copy.
-      if (lookup.connectorWrite) session = { ...session, activeTaskId: lookup.connectorWrite.anchor.previousActiveTaskId };
+      if (await this.expirePendingApproval(session, lookup)) {
+        expiryNotice = this.deps.composer.composeApprovalExpired(
+          message.context,
+          lookup.pending,
+          PENDING_APPROVAL_TTL_MS,
+        );
+        // ADR-0112: the expired write's anchor handed the pointer back; mirror it on this turn's copy.
+        if (lookup.connectorWrite) session = { ...session, activeTaskId: lookup.connectorWrite.anchor.previousActiveTaskId };
+      } else {
+        // ADR-0113 D7: another transition (the operations UI) decided it first under the shared lock — this turn's
+        // session and lookup are stale; re-derive both from the live state.
+        session = await this.deps.sessions.openForContext(message.context, actor.id);
+        lookup = await this.findPendingApproval(session);
+      }
     }
     // ADR-0097 D5: a credential-override set that is no longer live released its anchor pointer on the canonical
     // session (invalidated now, or consumed earlier). Mirror the release on this turn's copy so no later save in
@@ -2062,7 +2074,7 @@ export class ConversationRuntime {
         message,
         session,
         actor,
-        expiryNotice && lookup.applyAnchor ? ConversationRuntime.anchorAfterRejection(lookup.applyAnchor) : lookup.applyAnchor,
+        expiryNotice && lookup.applyAnchor ? anchorAfterRejection(lookup.applyAnchor) : lookup.applyAnchor,
       ),
     );
     const controlOutcome = controlDispatch ? await controlDispatch : null;
@@ -2808,7 +2820,7 @@ export class ConversationRuntime {
 
   /** Milliseconds before a pending approval expires (ADR-0093); `<= 0` means expired. */
   private remainingMs(approval: ApprovalRequest): number {
-    return pendingApprovalRemainingMs(approval.createdAt, this.clock());
+    return this.approvalDecisions.remainingMs(approval);
   }
 
   /** The pending-approval reminder (ADR-0093) — what is pending, 승인/거절, remaining time, 새 대화. */
@@ -2817,194 +2829,56 @@ export class ConversationRuntime {
   }
 
   /**
-   * Derive the approval holding this conversation, if any (ADR-0093), with the same lookups and order the
-   * routing below uses: `approvalFlow.findPending` (plan-scoped, ADR-0032), then the scope clarification
-   * (ADR-0037, which holds no approval), then the credential-override set (ADR-0097, whose reconstruction re-reads
-   * every ApprovalRequest of the set), then the apply-preview anchor, whose `*_PENDING` status names the
-   * PENDING request id (re-read through `approvals.get`, never trusted blindly).
+   * The anchored chain's pending reminder; while the operations UI is on it carries the confirmation reference line
+   * (ADR-0113 D7). The history keeps the reminder without it.
    */
-  private async findPendingApproval(session: Session): Promise<PendingApprovalLookup> {
-    const planPending = await this.deps.approvalFlow.findPending(session);
-    if (planPending) return { planPending, pendingScope: null, applyAnchor: null, override: null, pending: planPending };
-    const pendingScope = await this.deps.scopeClarificationFlow.findPending(session);
-    if (pendingScope) return { planPending: null, pendingScope, applyAnchor: null, override: null, pending: null };
-    const override = (await this.deps.credentialOverrideFlow?.findPending(session)) ?? null;
-    if (override) {
-      const pending =
-        override.state === 'awaiting-decision' && override.approval.status === ApprovalStatus.PENDING
-          ? override.approval
-          : null;
-      return { planPending: null, pendingScope: null, applyAnchor: null, override, pending };
-    }
-    const connectorWrite = (await this.deps.connectorWriteFlow?.find(session)) ?? null;
-    if (connectorWrite) {
-      const pending =
-        connectorWrite.anchor.status === 'APPROVAL_PENDING' && connectorWrite.approval?.status === ApprovalStatus.PENDING
-          ? connectorWrite.approval
-          : null;
-      return { planPending: null, pendingScope: null, applyAnchor: null, override: null, connectorWrite, pending };
-    }
-    const applyAnchor = await this.deps.applyPreviewFlow.findAnchor(session);
-    const approvalId = applyAnchor ? ConversationRuntime.pendingApprovalIdOf(applyAnchor) : undefined;
-    if (!approvalId) return { planPending: null, pendingScope: null, applyAnchor, override: null, pending: null };
-    const request = await this.deps.approvals.get(approvalId);
-    return {
-      planPending: null,
-      pendingScope: null,
-      applyAnchor,
-      override: null,
-      pending: request?.status === ApprovalStatus.PENDING ? request : null,
-    };
-  }
-
-  /** The PENDING approval id an apply-preview anchor status carries, if that status is a pending gate. */
-  private static pendingApprovalIdOf(anchor: ApplyPreviewAnchor): Id | undefined {
-    switch (anchor.status) {
-      case 'AWAITING_APPROVAL':
-        return anchor.approvalId;
-      case 'COMMIT_APPROVAL_PENDING':
-        return anchor.commitApprovalId;
-      case 'PUSH_APPROVAL_PENDING':
-        return anchor.pushApprovalId;
-      case 'PR_APPROVAL_PENDING':
-        return anchor.prApprovalId;
-      case 'MERGE_APPROVAL_PENDING':
-        return anchor.mergeApprovalId;
-      case 'REMOTE_BRANCH_CLEANUP_PENDING':
-        return anchor.remoteBranchCleanupApprovalId;
-      default:
-        return undefined;
-    }
-  }
-
-  /**
-   * The anchor after its pending approval was rejected — the same state each decision handler's deny/cancel
-   * branch moves to (null = clear: the apply approval has nothing earlier to preserve). Used for expiry.
-   */
-  private static anchorAfterRejection(anchor: ApplyPreviewAnchor): ApplyPreviewAnchor | null {
-    switch (anchor.status) {
-      case 'COMMIT_APPROVAL_PENDING':
-        return {
-          ...anchor,
-          status: 'WORKSPACE_APPLIED',
-          commitApprovalId: undefined,
-          proposedCommitMessage: undefined,
-          commitCandidateFiles: undefined,
-        };
-      case 'PUSH_APPROVAL_PENDING':
-        return {
-          ...anchor,
-          status: 'GIT_COMMITTED',
-          pushApprovalId: undefined,
-          pushCommitHash: undefined,
-          pushRemote: undefined,
-          pushBranch: undefined,
-          pushUpstreamRef: undefined,
-          pushMode: undefined,
-        };
-      case 'PR_APPROVAL_PENDING':
-        return {
-          ...anchor,
-          status: 'GIT_PUSHED',
-          prApprovalId: undefined,
-          prPushedCommitHash: undefined,
-          prHeadBranch: undefined,
-          prBaseBranch: undefined,
-          prTitle: undefined,
-          prBody: undefined,
-          prContentHash: undefined,
-          repositoryIdentity: undefined,
-        };
-      case 'MERGE_APPROVAL_PENDING':
-        return {
-          ...anchor,
-          status: 'PR_CREATED',
-          mergeApprovalId: undefined,
-          mergeApprovalRequestedAt: undefined,
-          mergeApprovedAt: undefined,
-          mergeApprovalDecisionBy: undefined,
-        };
-      case 'REMOTE_BRANCH_CLEANUP_PENDING':
-        return {
-          ...anchor,
-          status: 'BRANCH_CLEANED',
-          remoteBranchCleanupApprovalId: undefined,
-          remoteBranchCleanupApprovalRequestedAt: undefined,
-          remoteBranchCleanupApprovedAt: undefined,
-          remoteBranchCleanupApprovalDecisionBy: undefined,
-        };
-      default:
-        return null; // AWAITING_APPROVAL (apply)
-    }
-  }
-
-  /**
-   * Record an expired PENDING approval as denied (ADR-0093) through the existing `ApprovalManager.decide`:
-   * `decidedBy: 'system'` (the system-attribution convention), comment `expired`, `decidedAt` from the shared
-   * clock. An anchor-scoped approval also moves its anchor back exactly like a denial, so the expired request
-   * can never be approved and the earlier state (e.g. WORKSPACE_APPLIED) survives.
-   */
-  private async expirePendingApproval(session: Session, lookup: PendingApprovalLookup): Promise<void> {
-    const approval = lookup.pending;
-    if (!approval) return;
-    await this.deps.approvals.decide(approval.id, {
-      approvalId: approval.id,
-      approved: false,
-      decidedBy: 'system',
-      decidedAt: this.clock(),
-      comment: 'expired',
-    });
-    if (lookup.override) {
-      // ADR-0097 D5: an expired override invalidates its whole set (`system`/`expired`); nothing is sent.
-      await this.deps.credentialOverrideFlow?.invalidate(session, 'expired', 'system');
-    } else if (lookup.connectorWrite) {
-      // ADR-0112: an expired connector-write approval closes its anchor; nothing is sent.
-      await this.deps.connectorWriteFlow?.close(session, lookup.connectorWrite, 'expired', this.clock());
-    } else if (!lookup.planPending && lookup.applyAnchor) {
-      const released = ConversationRuntime.anchorAfterRejection(lookup.applyAnchor);
-      if (released) await this.deps.applyPreviewFlow.anchor(session, released);
-      else await this.deps.applyPreviewFlow.clear(session);
-    }
-    this.deps.logger.info('pending approval expired', { approvalId: approval.id, sessionId: session.id });
-  }
-
-  /**
-   * Re-check the 30-minute lifetime (ADR-0093) with the injected clock IMMEDIATELY before a positive decision.
-   * The turn-start check runs before awaited memory capture / resume reconstruction / request re-reads, so an
-   * approval that was live then can be past its deadline by the time it would be approved. Every
-   * `approvals.decide(..., approved: true)` site for a conversational pending approval calls this first: when
-   * expired it records the same `system`/`expired` denial (and anchor release) as the turn-start path and returns
-   * the expiry-notice turn; otherwise `null` and the caller approves. The deadline check is SYNCHRONOUS and
-   * callers must not await it on the live path, so no yield point separates the check from `approvals.decide`.
-   */
-  private expiredBeforeApprove(
+  private async respondAnchoredReminder(
     message: InboundMessage,
     session: Session,
-    approval: ApprovalRequest,
-    applyAnchor: ApplyPreviewAnchor | null,
-  ): Promise<TurnResult> | null {
-    if (this.remainingMs(approval) > 0) return null;
-    return this.recordExpiryBeforeApprove(message, session, approval, applyAnchor);
-  }
-
-  /** `override` (ADR-0097): the credential-override set `approval` belongs to, released exactly like turn-start expiry. */
-  private async recordExpiryBeforeApprove(
-    message: InboundMessage,
-    session: Session,
-    approval: ApprovalRequest,
-    applyAnchor: ApplyPreviewAnchor | null,
-    override: CredentialOverrideLookup | null = null,
+    approvalId: Id,
+    anchor: ApplyPreviewAnchor,
+    unavailable: OutboundMessage,
   ): Promise<TurnResult> {
-    await this.expirePendingApproval(session, {
-      planPending: applyAnchor || override ? null : approval,
-      pendingScope: null,
-      applyAnchor,
-      override,
-      pending: approval,
-    });
-    const reply = this.deps.composer.composeApprovalExpired(message.context, approval, PENDING_APPROVAL_TTL_MS);
+    const fresh = await this.deps.approvals.get(approvalId);
+    const reply = fresh ? this.composePendingReminder(message.context, fresh) : unavailable;
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'DENIED', reply, sessionId: session.id };
+    const shown = fresh
+      ? this.approvalDecisions.withConfirmationReference(reply, fresh, ApprovalDecisionService.anchoredBinding(anchor), session.actorId)
+      : reply;
+    return { status: 'AWAITING_APPROVAL', reply: shown, sessionId: session.id };
+  }
+
+  /** A chat approval preview with the ADR-0113 D7 reference line while the operations UI is on (history unchanged). */
+  private previewWithReference(
+    session: Session,
+    reply: OutboundMessage,
+    approval: ApprovalRequest,
+    anchor: ApplyPreviewAnchor,
+  ): OutboundMessage {
+    return this.approvalDecisions.withConfirmationReference(reply, approval, ApprovalDecisionService.anchoredBinding(anchor), session.actorId);
+  }
+
+  /** The shared decision service's answer as this turn's result. */
+  private decisionTurn(session: Session, value: ApprovalDecisionReply): TurnResult {
+    return { status: value.status, reply: value.reply, sessionId: session.id };
+  }
+
+  /** The chat surface's decision input for this turn (ADR-0113 D7: chat and the UI share one decision path). */
+  private chatDecision(message: InboundMessage, session: Session, actor: Actor): ApprovalDecisionInput {
+    return { context: message.context, session, actor, surface: 'chat' };
+  }
+
+  /** Derive the approval holding this conversation, if any (ADR-0093) — the shared decision service's lookup. */
+  private findPendingApproval(session: Session): Promise<PendingApprovalLookup> {
+    return this.approvalDecisions.findPending(session);
+  }
+
+  /**
+   * Record an expired PENDING approval as denied (ADR-0093) — the shared decision service's expiry, under the shared
+   * lock. `false` when another transition decided it first (nothing recorded; the lookup is stale).
+   */
+  private expirePendingApproval(session: Session, lookup: PendingApprovalLookup): Promise<boolean> {
+    return this.approvalDecisions.expire(session, lookup);
   }
 
   /**
@@ -3022,28 +2896,22 @@ export class ConversationRuntime {
     expiryNotice: OutboundMessage | null,
   ): Promise<TurnResult> {
     let reply: OutboundMessage;
+    let denied = false;
     if (command === 'help') {
       reply = this.deps.composer.composeHelp(message.context, this.contributedHelpLines);
     } else {
-      // ADR-0097 D5 (OVR-3 contract): invalidate a credential-override set (`reset`, by the owner) through the flow
-      // BEFORE the session closes, so the reset is serialized with an in-flight consume; nothing is sent.
-      await this.deps.credentialOverrideFlow?.invalidate(session, 'reset', actor.id);
-      if (pending) {
-        await this.deps.approvals.decide(pending.id, {
-          approvalId: pending.id,
-          approved: false,
-          decidedBy: actor.id,
-          decidedAt: this.clock(),
-          comment: 'reset',
-        });
-      }
-      await this.deps.sessions.close(session);
-      reply = this.deps.composer.composeConversationReset(message.context, { deniedPendingApproval: Boolean(pending) });
+      // ADR-0097 D5 (OVR-3 contract): the credential-override set is invalidated (`reset`, by the owner) through the
+      // flow BEFORE the session closes, so the reset is serialized with an in-flight consume; nothing is sent.
+      // ADR-0113 D7: the invalidation, the `reset` denial and the close run under the shared approval/session locks,
+      // so a racing operations-UI decision can neither double-decide the approval nor re-anchor the closed session.
+      const reset = await this.approvalDecisions.resetConversation(session, actor, pending);
+      denied = reset.deniedPendingApproval;
+      reply = this.deps.composer.composeConversationReset(message.context, { deniedPendingApproval: denied });
     }
     this.deps.logger.info('conversation control handled', {
       command,
       sessionId: session.id,
-      ...(pending && command === 'reset' ? { deniedApprovalId: pending.id } : {}),
+      ...(pending && denied ? { deniedApprovalId: pending.id } : {}),
     });
     return this.responded(session, expiryNotice ? this.deps.composer.composeWithNotice(expiryNotice, reply) : reply);
   }
@@ -3345,29 +3213,23 @@ export class ConversationRuntime {
             this.remainingMs(approval),
             phrase,
           );
-          return this.respondConnectorWrite(message, session, reply, 'AWAITING_APPROVAL', history);
+          const reminded = await this.respondConnectorWrite(message, session, reply, 'AWAITING_APPROVAL', history);
+          // ADR-0113 D7: the reference line rides the reminder only while the operations UI is on (history unchanged).
+          return {
+            ...reminded,
+            reply: this.approvalDecisions.withConfirmationReference(
+              reminded.reply,
+              approval,
+              { kind: 'CONNECTOR_WRITE', operation: anchor.operation },
+              session.actorId,
+            ),
+          };
         }
-        if (decision === 'approve') {
-          // ADR-0093 expiry re-check, synchronous, immediately before the positive decision.
-          if (this.remainingMs(approval) <= 0) {
-            await this.expirePendingApproval(session, {
-              planPending: null,
-              pendingScope: null,
-              applyAnchor: null,
-              override: null,
-              connectorWrite: view,
-              pending: approval,
-            });
-            const reply = this.deps.composer.composeApprovalExpired(message.context, approval, PENDING_APPROVAL_TTL_MS);
-            return this.respondConnectorWrite(message, session, reply, 'DENIED', history);
-          }
-          await this.deps.approvals.decide(approval.id, this.decisionOf(approval.id, actor.id, true));
-          return respond(await flow.recordApproval({ session, actor, view, now: this.clock() }));
-        }
-        await this.deps.approvals.decide(approval.id, this.decisionOf(approval.id, actor.id, false));
-        const reason = decision === 'deny' ? 'denied' : 'cancelled';
-        await flow.close(session, view, reason, this.clock());
-        return respond({ kind: 'closed', reason, family: anchor.family });
+        // ADR-0113 D7: the shared decision path (expiry re-check, decide, record approval or close) — the UI runs it too.
+        return this.decisionTurn(
+          session,
+          await this.approvalDecisions.decideConnectorWrite(this.chatDecision(message, session, actor), view, decision),
+        );
       }
       case 'AWAITING_CHOICE': {
         const index = ConversationRuntime.connectorWriteChoiceIndex(message.text);
@@ -3444,46 +3306,26 @@ export class ConversationRuntime {
     return Number.isInteger(index) && index >= 1 ? index : null;
   }
 
-  private respondConnectorWriteStep(
+  private async respondConnectorWriteStep(
     message: InboundMessage,
     session: Session,
     step: ConnectorWriteStep,
     fallbackText: string,
     history?: string,
   ): Promise<TurnResult> {
-    if (step.kind === 'writes-off') {
-      const text = fallbackText.length > 0 ? fallbackText : this.deps.composer.composeNoApprovedConnectorWrite(message.context).text;
-      return this.respondConnectorWrite(message, session, { context: message.context, text }, 'RESPONDED', history);
-    }
-    const reply = this.deps.composer.composeConnectorWriteStep(message.context, step);
-    const status: RuntimeTurnStatus =
-      step.kind === 'preview'
-        ? 'AWAITING_APPROVAL'
-        : step.kind === 'closed'
-          ? step.reason === 'denied'
-            ? 'DENIED'
-            : 'CANCELLED'
-          : 'RESPONDED';
-    // A calendar step keeps the fixed write note (never event text); the handler's own note covers only its fallback.
-    const calendar = ConversationRuntime.isCalendarWriteStep(step);
-    return this.respondConnectorWrite(message, session, reply, status, calendar ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : history);
-  }
-
-  /** Whether a step concerns the calendar (its history keeps a fixed note, never event text — ADR-0110 D4). */
-  private static isCalendarWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): boolean {
-    switch (step.kind) {
-      case 'usage':
-        return step.topic.startsWith('calendar');
-      case 'refused':
-      case 'closed':
-        return step.family === 'calendar';
-      case 'choice':
-        return true;
-      case 'preview':
-        return step.preview.operation.startsWith('CALENDAR_');
-      default:
-        return step.operation.startsWith('CALENDAR_');
-    }
+    const value = await this.approvalDecisions.connectorWriteStepReply(message.context, session.id, step, fallbackText, history);
+    const result = this.decisionTurn(session, value);
+    if (step.kind !== 'preview') return result;
+    // ADR-0113 D7: the approval preview carries the reference line only while the operations UI is on (history unchanged).
+    return {
+      ...result,
+      reply: this.approvalDecisions.withConfirmationReference(
+        result.reply,
+        step.approval,
+        { kind: 'CONNECTOR_WRITE', operation: step.preview.operation },
+        session.actorId,
+      ),
+    };
   }
 
   private async respondConnectorWrite(
@@ -3493,8 +3335,7 @@ export class ConversationRuntime {
     status: RuntimeTurnStatus,
     history?: string,
   ): Promise<TurnResult> {
-    await this.deps.memory.recordAssistant(history ?? reply.text, message.context, session.id);
-    return { status, reply, sessionId: session.id };
+    return this.decisionTurn(session, await this.approvalDecisions.connectorWriteReply(message.context, session.id, reply, status, history));
   }
 
   /**
@@ -3537,18 +3378,11 @@ export class ConversationRuntime {
     }
 
     if (decision === 'approve') {
-      // Reconstruct FIRST — never record a decision we cannot act on (CA review). Only once the
-      // halted execution is recoverable do we decide + resume.
-      const ctx = await this.deps.approvalFlow.reconstructResume(session, pending);
-      if (!ctx) {
-        // Can't reconstruct — fail safe: re-ask, and do NOT call ApprovalManager.decide.
-        const reply = this.deps.composer.composeApprovalNotice(message.context, pending);
-        await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-        return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
-      }
-      const expired = this.expiredBeforeApprove(message, session, pending, null);
-      if (expired) return await expired;
-      await this.deps.approvals.decide(pending.id, this.decisionOf(pending.id, actor.id, true));
+      // ADR-0113 D7: the shared decision path reconstructs FIRST (never records a decision we cannot act on), then
+      // re-checks expiry and records the approval. The resume itself runs here, in chat only.
+      const approved = await this.approvalDecisions.approvePlan(this.chatDecision(message, session, actor), pending);
+      if (approved.kind === 'reply') return this.decisionTurn(session, approved.value);
+      const ctx = { request: approved.request, prior: approved.prior };
       const outcome = await this.deps.orchestrator.resume(ctx.request, ctx.prior);
       // ADR-0038: a cleanly-resumed planningOnly request now runs an AI CodeGeneration preview
       // (never Patch/WorkspaceWrite/CommandExecution). A resume outcome that did NOT complete cleanly
@@ -3563,12 +3397,7 @@ export class ConversationRuntime {
     }
 
     // deny / cancel — record the (rejecting) decision; never resume.
-    await this.deps.approvals.decide(pending.id, this.decisionOf(pending.id, actor.id, false));
-    const status: RuntimeTurnStatus = decision === 'deny' ? 'DENIED' : 'CANCELLED';
-    const replyStatus: ExecutionReplyStatus = decision === 'deny' ? 'DENIED' : 'CANCELLED';
-    const reply = this.deps.composer.composeExecutionResult(message.context, replyStatus);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status, reply, sessionId: session.id };
+    return this.decisionTurn(session, await this.approvalDecisions.rejectPlan(this.chatDecision(message, session, actor), pending, decision));
   }
 
   /**
@@ -4042,46 +3871,22 @@ export class ConversationRuntime {
     }
 
     if (decision === 'deny') {
-      if (override.state === 'awaiting-decision') {
-        await this.deps.approvals.decide(override.approval.id, {
-          approvalId: override.approval.id,
-          approved: false,
-          decidedBy: actor.id,
-          decidedAt: this.clock(),
-          comment: CREDENTIAL_OVERRIDE_DENY_COMMENT,
-        });
-      }
-      const result = await flow.invalidate(session, 'denied', actor.id);
-      this.deps.logger.info('credential guard override denied', { sessionId: session.id });
-      const reply = result?.state === 'consumed'
-        ? this.deps.composer.composeCredentialOverrideAlreadyUsed(message.context)
-        : this.deps.composer.composeCredentialOverrideDenied(message.context, path);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'DENIED', reply, sessionId: session.id };
+      // ADR-0113 D7: the shared deny path (record the rejection, invalidate the set) — the UI runs it too.
+      return this.decisionTurn(
+        session,
+        await this.approvalDecisions.rejectCredentialOverride(this.chatDecision(message, session, actor), override),
+      );
     }
 
     // send
     if (override.state === 'ready') return this.continueCredentialOverride(message, session, actor, override.anchor);
     const approval = override.approval;
-    // The whole set expires with its OLDEST override (ADR-0097 D5): read the earlier grants' requests first, then
-    // check synchronously — no await between the deadline check and `decide`.
-    const earlier: ApprovalRequest[] = [];
-    for (const g of override.anchor.grants) {
-      if (g.approvalRequestId === approval.id) continue;
-      const r = await this.deps.approvals.get(g.approvalRequestId);
-      if (r) earlier.push(r);
-    }
-    if (Math.min(this.remainingMs(approval), ...earlier.map((r) => this.remainingMs(r))) <= 0) {
-      return this.recordExpiryBeforeApprove(message, session, approval, null, override);
-    }
-    await this.deps.approvals.decide(approval.id, {
-      approvalId: approval.id,
-      approved: true,
-      decidedBy: actor.id,
-      decidedAt: this.clock(),
-      comment: CREDENTIAL_OVERRIDE_APPROVE_COMMENT,
-    });
-    const granted = await flow.recordGrant(session, approval.id);
+    // ADR-0113 D7: the send's re-read, the whole-set expiry re-check (the set expires with its OLDEST override,
+    // ADR-0097 D5; synchronous right before `decide`), the decision and the grant run in the shared decision service
+    // under the same locks as the deny and the operations UI's reject — a request decided meanwhile is never approved.
+    const sent = await this.approvalDecisions.approveCredentialOverride(this.chatDecision(message, session, actor), override);
+    if (sent.kind === 'reply') return this.decisionTurn(session, sent.value);
+    const { granted } = sent;
     if (!granted.ok) {
       if (granted.pendingApproval) {
         await this.closeCredentialOverrideApproval(granted.pendingApproval, 'system', `credential-override-${granted.reason}`);
@@ -4218,15 +4023,7 @@ export class ConversationRuntime {
 
   /** Close a still-PENDING override request as rejected (it is never left PENDING); an already-decided one is kept. */
   private async closeCredentialOverrideApproval(approval: ApprovalRequest, decidedBy: string, comment: string): Promise<void> {
-    const current = await this.deps.approvals.get(approval.id);
-    if (current?.status !== ApprovalStatus.PENDING) return;
-    await this.deps.approvals.decide(approval.id, {
-      approvalId: approval.id,
-      approved: false,
-      decidedBy,
-      decidedAt: this.clock(),
-      comment,
-    });
+    await this.approvalDecisions.closeIfPending(approval.id, decidedBy, comment);
   }
 
   /** Optional "the preview / the change" noun before a cancel word ("미리보기 취소", "변경 취소해줘", "cancel the preview"). */
@@ -4319,10 +4116,11 @@ export class ConversationRuntime {
         `to ${anchor.targetFiles.join(', ')}`,
       requestedBy: actor.id,
     });
-    await this.deps.applyPreviewFlow.anchor(session, { ...anchor, status: 'AWAITING_APPROVAL', approvalId: approval.id });
+    const pendingAnchor: ApplyPreviewAnchor = { ...anchor, status: 'AWAITING_APPROVAL', approvalId: approval.id };
+    await this.deps.applyPreviewFlow.anchor(session, pendingAnchor);
     const reply = this.deps.composer.composeApplyApprovalRequested(message.context, anchor.targetFiles);
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    return { status: 'AWAITING_APPROVAL', reply: this.previewWithReference(session, reply, approval, pendingAnchor), sessionId: session.id };
   }
 
   /**
@@ -4339,38 +4137,19 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     const decision = ConversationRuntime.interpretDecision(message.text);
     if (decision === 'ambiguous') {
-      const fresh = await this.deps.approvals.get(anchor.approvalId!);
-      const reply = fresh
-        ? this.composePendingReminder(message.context, fresh)
-        : this.deps.composer.composeApplyPreviewUnavailable(message.context); // pathological
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+      return this.respondAnchoredReminder(
+        message,
+        session,
+        anchor.approvalId!,
+        anchor,
+        this.deps.composer.composeApplyPreviewUnavailable(message.context), // pathological
+      );
     }
-
-    const approved = decision === 'approve';
-    if (approved) {
-      const request = await this.deps.approvals.get(anchor.approvalId!);
-      const expired = request ? this.expiredBeforeApprove(message, session, request, anchor) : null;
-      if (expired) return await expired;
-    }
-    await this.deps.approvals.decide(anchor.approvalId!, this.decisionOf(anchor.approvalId!, actor.id, approved));
-
-    if (!approved) {
-      // deny / cancel — nothing left to preserve.
-      await this.deps.applyPreviewFlow.clear(session);
-      const replyStatus: ExecutionReplyStatus = decision === 'deny' ? 'DENIED' : 'CANCELLED';
-      const reply = this.deps.composer.composeExecutionResult(message.context, replyStatus);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: decision === 'deny' ? 'DENIED' : 'CANCELLED', reply, sessionId: session.id };
-    }
-
-    // approve — Sprint 2s stops here (no Patch/WorkspaceWrite/CommandExecution/git call), but the
-    // approved context MUST survive for a future Apply sprint. Re-anchor (never clear): every ref this
-    // anchor carries is exactly what that future sprint will need.
-    await this.deps.applyPreviewFlow.anchor(session, { ...anchor, status: 'APPROVED', approvedAt: now() });
-    const reply = this.deps.composer.composeApplyApprovalRecorded(message.context);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'RESPONDED', reply, sessionId: session.id };
+    // ADR-0113 D7: the shared decision path (expiry re-check, decide, re-anchor APPROVED or clear) — the UI runs it too.
+    return this.decisionTurn(
+      session,
+      await this.approvalDecisions.decideAnchored(this.chatDecision(message, session, actor), anchor, decision),
+    );
   }
 
   /**
@@ -4859,13 +4638,14 @@ export class ConversationRuntime {
     });
 
     // 6. Halt at COMMIT_APPROVAL_PENDING, preserving commit context for the decision turn / Sprint 2y.
-    await this.deps.applyPreviewFlow.anchor(session, {
+    const pendingAnchor: ApplyPreviewAnchor = {
       ...anchor,
       status: 'COMMIT_APPROVAL_PENDING',
       commitApprovalId: approval.id,
       proposedCommitMessage: commitMessage,
       commitCandidateFiles: candidateFiles,
-    });
+    };
+    await this.deps.applyPreviewFlow.anchor(session, pendingAnchor);
     const reply = this.deps.composer.composeCommitApprovalRequested(message.context, {
       candidateFiles,
       commitMessage,
@@ -4873,7 +4653,7 @@ export class ConversationRuntime {
       ...(newFiles.length ? { newFiles } : {}),
     });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    return { status: 'AWAITING_APPROVAL', reply: this.previewWithReference(session, reply, approval, pendingAnchor), sessionId: session.id };
   }
 
   /**
@@ -4890,66 +4670,25 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     // (CA #2) strict pending-context integrity guard — a pending commit approval is valid only with COMPLETE
     //  resume context for Sprint 2y. Any missing field → safe failure, NO decide / git / re-anchor.
-    if (
-      anchor.status !== 'COMMIT_APPROVAL_PENDING' ||
-      !anchor.commitApprovalId ||
-      !anchor.proposedCommitMessage ||
-      !anchor.commitCandidateFiles?.length ||
-      !anchor.workspaceRef ||
-      !anchor.workspaceChangeRef ||
-      !anchor.executionPlanRef
-    ) {
-      this.logCommitApprovalFailed(session, anchor, 'pending commit approval context incomplete');
-      return this.failComposed(message, session, this.deps.composer.composeCommitUnavailable(message.context));
-    }
+    const incomplete = this.approvalDecisions.incompleteAnchoredContext(message.context, session, anchor);
+    if (incomplete) return this.decisionTurn(session, await incomplete);
     const decision = ConversationRuntime.interpretDecision(message.text);
     if (decision === 'ambiguous') {
       // (CA #13) preserve pending context: re-prompt only; no decide, no new approval, no re-anchor.
-      const fresh = await this.deps.approvals.get(anchor.commitApprovalId);
-      const reply = fresh
-        ? this.composePendingReminder(message.context, fresh)
-        : this.deps.composer.composeCommitUnavailable(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+      return this.respondAnchoredReminder(
+        message,
+        session,
+        anchor.commitApprovalId!,
+        anchor,
+        this.deps.composer.composeCommitUnavailable(message.context),
+      );
     }
-    // (CA #3) verify the referenced ApprovalRequest before deciding: exists, PENDING, same plan.
-    const request = await this.deps.approvals.get(anchor.commitApprovalId);
-    if (
-      !request ||
-      request.status !== ApprovalStatus.PENDING ||
-      request.executionPlanRef.id !== anchor.executionPlanRef.id
-    ) {
-      this.logCommitApprovalFailed(session, anchor, 'commit approval request missing/mismatched');
-      return this.failComposed(message, session, this.deps.composer.composeCommitUnavailable(message.context));
-    }
-    const approved = decision === 'approve';
-    if (approved) {
-      const expired = this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return await expired;
-    }
-    await this.deps.approvals.decide(anchor.commitApprovalId, this.decisionOf(anchor.commitApprovalId, actor.id, approved));
-    if (!approved) {
-      // (CA #9/#11) deny/cancel: the applied workspace state MUST survive → revert to WORKSPACE_APPLIED,
-      //  clearing ONLY the commit fields; use a COMMIT-SPECIFIC reply (never generic composeExecutionResult).
-      await this.deps.applyPreviewFlow.anchor(session, {
-        ...anchor,
-        status: 'WORKSPACE_APPLIED',
-        commitApprovalId: undefined,
-        proposedCommitMessage: undefined,
-        commitCandidateFiles: undefined,
-      });
-      const reply =
-        decision === 'deny'
-          ? this.deps.composer.composeCommitApprovalDenied(message.context)
-          : this.deps.composer.composeCommitApprovalCancelled(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: decision === 'deny' ? 'DENIED' : 'CANCELLED', reply, sessionId: session.id };
-    }
-    // approve — Sprint 2x records only; actual git commit is a future sprint. Preserve full context.
-    await this.deps.applyPreviewFlow.anchor(session, { ...anchor, status: 'COMMIT_APPROVED' });
-    const reply = this.deps.composer.composeCommitApprovalRecorded(message.context);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'RESPONDED', reply, sessionId: session.id };
+    // ADR-0113 D7: the shared decision path — (CA #3) request re-read, expiry re-check, decide, COMMIT_APPROVED or back
+    // to WORKSPACE_APPLIED. Records only; the git commit runs on the exact execution phrase.
+    return this.decisionTurn(
+      session,
+      await this.approvalDecisions.decideAnchored(this.chatDecision(message, session, actor), anchor, decision),
+    );
   }
 
   /** A commit request while the anchor is COMMIT_APPROVED (Sprint 2x) — already approved; not committed. */
@@ -4977,12 +4716,7 @@ export class ConversationRuntime {
    *  Defensive optional access: this is called from the incomplete-pending-context guard, where a required
    *  field (e.g. `executionPlanRef`) may be missing, so logging must never throw (CA impl review). */
   private logCommitApprovalFailed(session: Session, anchor: ApplyPreviewAnchor, reason: string): void {
-    this.deps.logger.warn('commit approval failed', {
-      reason,
-      sessionId: session.id,
-      executionPlanId: anchor.executionPlanRef?.id,
-      commitApprovalId: anchor.commitApprovalId,
-    }); // deliberately NO diff text / file content
+    logAnchoredApprovalFailure(this.deps.logger, 'commit', session, anchor, reason); // deliberately NO diff text / file content
   }
 
   /**
@@ -5231,7 +4965,7 @@ export class ConversationRuntime {
     });
 
     // 10. Halt at PUSH_APPROVAL_PENDING, preserving distinct push context + all commit context.
-    await this.deps.applyPreviewFlow.anchor(session, {
+    const pendingAnchor: ApplyPreviewAnchor = {
       ...anchor,
       status: 'PUSH_APPROVAL_PENDING',
       pushApprovalId: approval.id,
@@ -5240,7 +4974,8 @@ export class ConversationRuntime {
       pushBranch: target.branch,
       pushUpstreamRef: target.upstreamRef,
       pushMode: target.mode,
-    });
+    };
+    await this.deps.applyPreviewFlow.anchor(session, pendingAnchor);
     const reply = newRemoteBranch
       ? this.deps.composer.composePushApprovalRequested(message.context, {
           commitHash: anchor.commitHash,
@@ -5258,7 +4993,7 @@ export class ConversationRuntime {
           ahead: target.ahead ?? 0,
         });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    return { status: 'AWAITING_APPROVAL', reply: this.previewWithReference(session, reply, approval, pendingAnchor), sessionId: session.id };
   }
 
   /**
@@ -5275,20 +5010,8 @@ export class ConversationRuntime {
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
     // (CA #9) strict pending-context integrity guard — any missing field → safe failure, NO decide/git/re-anchor.
-    if (
-      anchor.status !== 'PUSH_APPROVAL_PENDING' ||
-      !anchor.pushApprovalId ||
-      !anchor.pushCommitHash ||
-      !anchor.pushRemote ||
-      !anchor.pushBranch ||
-      !anchor.pushUpstreamRef ||
-      !anchor.commitHash ||
-      !anchor.workspaceRef ||
-      !anchor.executionPlanRef
-    ) {
-      this.logPushApprovalFailed(session, anchor, 'pending push approval context incomplete');
-      return this.failComposed(message, session, this.deps.composer.composePushApprovalUnavailable(message.context));
-    }
+    const incomplete = this.approvalDecisions.incompleteAnchoredContext(message.context, session, anchor);
+    if (incomplete) return this.decisionTurn(session, await incomplete);
     // (Sprint 3a, ADR-0048) A push-EXECUTION phrase ("승인된 push 실행해줘" — note the "승인" substring) or a
     // push+forbidden phrase is a premature push request while approval is still PENDING, NOT a clean approve
     // of THIS approval. Classify it ambiguous so it re-prompts (matching the 2z push-phrase intent above)
@@ -5300,55 +5023,20 @@ export class ConversationRuntime {
     if (decision === 'ambiguous') {
       // (CA #3) push/force/deploy phrases land here too (not approve/deny/cancel) → re-prompt, preserve
       // context; no decide, no new approval, no re-anchor, no push.
-      const fresh = await this.deps.approvals.get(anchor.pushApprovalId);
-      const reply = fresh
-        ? this.composePendingReminder(message.context, fresh)
-        : this.deps.composer.composePushApprovalUnavailable(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+      return this.respondAnchoredReminder(
+        message,
+        session,
+        anchor.pushApprovalId!,
+        anchor,
+        this.deps.composer.composePushApprovalUnavailable(message.context),
+      );
     }
-    // (CA #9) verify the referenced ApprovalRequest before deciding: exists, PENDING, same plan.
-    const request = await this.deps.approvals.get(anchor.pushApprovalId);
-    if (
-      !request ||
-      request.status !== ApprovalStatus.PENDING ||
-      request.executionPlanRef.id !== anchor.executionPlanRef.id
-    ) {
-      this.logPushApprovalFailed(session, anchor, 'push approval request missing/mismatched');
-      return this.failComposed(message, session, this.deps.composer.composePushApprovalUnavailable(message.context));
-    }
-    const approved = decision === 'approve';
-    if (approved) {
-      const expired = this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return await expired;
-    }
-    await this.deps.approvals.decide(anchor.pushApprovalId, this.decisionOf(anchor.pushApprovalId, actor.id, approved));
-    if (!approved) {
-      // (Constraint 5) deny/cancel: the local commit MUST survive → revert to GIT_COMMITTED, clearing ONLY
-      // the push fields; commit context preserved. NO git push.
-      await this.deps.applyPreviewFlow.anchor(session, {
-        ...anchor,
-        status: 'GIT_COMMITTED',
-        pushApprovalId: undefined,
-        pushCommitHash: undefined,
-        pushRemote: undefined,
-        pushBranch: undefined,
-        pushUpstreamRef: undefined,
-        pushMode: undefined,
-      });
-      const reply =
-        decision === 'deny'
-          ? this.deps.composer.composePushApprovalDenied(message.context)
-          : this.deps.composer.composePushApprovalCancelled(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: decision === 'deny' ? 'DENIED' : 'CANCELLED', reply, sessionId: session.id };
-    }
-    // approve — Sprint 2z records only; actual git push is a future sprint. (CA #8) PRESERVE all push +
-    // commit context (push fields NOT cleared). NO git push.
-    await this.deps.applyPreviewFlow.anchor(session, { ...anchor, status: 'PUSH_APPROVED' });
-    const reply = this.deps.composer.composePushApprovalRecorded(message.context);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'RESPONDED', reply, sessionId: session.id };
+    // ADR-0113 D7: the shared decision path — (CA #9) request re-read, expiry re-check, decide, PUSH_APPROVED or back to
+    // GIT_COMMITTED. Records only; NO git push.
+    return this.decisionTurn(
+      session,
+      await this.approvalDecisions.decideAnchored(this.chatDecision(message, session, actor), anchor, decision),
+    );
   }
 
   /** A push phrase while already PUSH_APPROVED (Sprint 2z) — already approved; not pushed, no new approval. */
@@ -5422,12 +5110,7 @@ export class ConversationRuntime {
   /** Structured, no-content failure log for a push-approval error (Sprint 2z) — never logs diff/file content.
    *  Optional field access so it never throws on incomplete context (Sprint 2x lesson). */
   private logPushApprovalFailed(session: Session, anchor: ApplyPreviewAnchor, reason: string): void {
-    this.deps.logger.warn('push approval failed', {
-      reason,
-      sessionId: session.id,
-      executionPlanId: anchor.executionPlanRef?.id,
-      pushApprovalId: anchor.pushApprovalId,
-    }); // deliberately NO diff text / file content / stderr
+    logAnchoredApprovalFailure(this.deps.logger, 'push', session, anchor, reason); // deliberately NO diff text / file content
   }
 
   /**
@@ -5707,7 +5390,7 @@ export class ConversationRuntime {
     });
     // 6. Halt at PR_APPROVAL_PENDING, preserving ALL pushed/commit/workspace context + distinct PR context +
     //    the approved repository identity (Sprint 3d-D).
-    await this.deps.applyPreviewFlow.anchor(session, {
+    const pendingAnchor: ApplyPreviewAnchor = {
       ...anchor,
       status: 'PR_APPROVAL_PENDING',
       prApprovalId: approval.id,
@@ -5718,7 +5401,8 @@ export class ConversationRuntime {
       prBody: body,
       prContentHash: description.contentHash,
       repositoryIdentity: { provider: identity.provider, owner: identity.owner, repo: identity.repo },
-    });
+    };
+    await this.deps.applyPreviewFlow.anchor(session, pendingAnchor);
     const reply = this.deps.composer.composePrApprovalRequested(message.context, {
       pushedCommitHash: anchor.pushedCommitHash,
       headBranch,
@@ -5727,7 +5411,7 @@ export class ConversationRuntime {
       body,
     });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    return { status: 'AWAITING_APPROVAL', reply: this.previewWithReference(session, reply, approval, pendingAnchor), sessionId: session.id };
   }
 
   /**
@@ -5743,19 +5427,8 @@ export class ConversationRuntime {
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
     // 0. (CA #14) strict pending-context guard — any missing field → safe failure, NO decide/re-anchor.
-    if (
-      anchor.status !== 'PR_APPROVAL_PENDING' ||
-      !anchor.prApprovalId ||
-      !anchor.prPushedCommitHash ||
-      !anchor.prHeadBranch ||
-      !anchor.prBaseBranch ||
-      !anchor.prTitle ||
-      !anchor.workspaceRef ||
-      !anchor.executionPlanRef
-    ) {
-      this.logPrApprovalFailed(session, anchor, 'pending PR approval context incomplete');
-      return this.failComposed(message, session, this.deps.composer.composePrApprovalUnavailable(message.context));
-    }
+    const incomplete = this.approvalDecisions.incompleteAnchoredContext(message.context, session, anchor);
+    if (incomplete) return this.decisionTurn(session, await incomplete);
     // 1. (CA #7) a PR-creation / PR+forbidden phrase — or any deploy-only phrase — is a premature request
     //    while PENDING, NOT a clean approve → classify ambiguous → re-prompt; NO decide, NO PR.
     const decision =
@@ -5763,55 +5436,20 @@ export class ConversationRuntime {
         ? 'ambiguous'
         : ConversationRuntime.interpretDecision(message.text);
     if (decision === 'ambiguous') {
-      const fresh = await this.deps.approvals.get(anchor.prApprovalId);
-      const reply = fresh
-        ? this.composePendingReminder(message.context, fresh)
-        : this.deps.composer.composePrApprovalUnavailable(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+      return this.respondAnchoredReminder(
+        message,
+        session,
+        anchor.prApprovalId!,
+        anchor,
+        this.deps.composer.composePrApprovalUnavailable(message.context),
+      );
     }
-    // 2. (CA #14) verify the referenced ApprovalRequest before deciding: exists, PENDING, same plan.
-    const request = await this.deps.approvals.get(anchor.prApprovalId);
-    if (
-      !request ||
-      request.status !== ApprovalStatus.PENDING ||
-      request.executionPlanRef.id !== anchor.executionPlanRef.id
-    ) {
-      this.logPrApprovalFailed(session, anchor, 'PR approval request missing/mismatched');
-      return this.failComposed(message, session, this.deps.composer.composePrApprovalUnavailable(message.context));
-    }
-    const approved = decision === 'approve';
-    if (approved) {
-      const expired = this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return await expired;
-    }
-    await this.deps.approvals.decide(anchor.prApprovalId, this.decisionOf(anchor.prApprovalId, actor.id, approved));
-    if (!approved) {
-      // (CA #15) deny/cancel: revert to GIT_PUSHED, clear ONLY the PR fields; pushed/commit/workspace preserved.
-      await this.deps.applyPreviewFlow.anchor(session, {
-        ...anchor,
-        status: 'GIT_PUSHED',
-        prApprovalId: undefined,
-        prPushedCommitHash: undefined,
-        prHeadBranch: undefined,
-        prBaseBranch: undefined,
-        prTitle: undefined,
-        prBody: undefined,
-        prContentHash: undefined,
-        repositoryIdentity: undefined,
-      });
-      const reply =
-        decision === 'deny'
-          ? this.deps.composer.composePrApprovalDenied(message.context)
-          : this.deps.composer.composePrApprovalCancelled(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: decision === 'deny' ? 'DENIED' : 'CANCELLED', reply, sessionId: session.id };
-    }
-    // approve — record only; re-anchor PR_APPROVED PRESERVING all context (CA #16). NO PR creation.
-    await this.deps.applyPreviewFlow.anchor(session, { ...anchor, status: 'PR_APPROVED' });
-    const reply = this.deps.composer.composePrApprovalRecorded(message.context);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'RESPONDED', reply, sessionId: session.id };
+    // 2. ADR-0113 D7: the shared decision path — (CA #14) request re-read, expiry re-check, decide, PR_APPROVED or back
+    //    to GIT_PUSHED. Records only; NO PR creation.
+    return this.decisionTurn(
+      session,
+      await this.approvalDecisions.decideAnchored(this.chatDecision(message, session, actor), anchor, decision),
+    );
   }
 
   /**
@@ -6097,12 +5735,13 @@ export class ConversationRuntime {
       }),
       requestedBy: actor.id,
     });
-    await this.deps.applyPreviewFlow.anchor(session, {
+    const pendingAnchor: ApplyPreviewAnchor = {
       ...anchor,
       status: 'MERGE_APPROVAL_PENDING',
       mergeApprovalId: approval.id,
       mergeApprovalRequestedAt: now(),
-    });
+    };
+    await this.deps.applyPreviewFlow.anchor(session, pendingAnchor);
     const reply = this.deps.composer.composeMergeApprovalRequested(message.context, {
       owner: anchor.repositoryIdentity.owner,
       repo: anchor.repositoryIdentity.repo,
@@ -6113,7 +5752,7 @@ export class ConversationRuntime {
       commitHash: anchor.pullRequestCommitHash,
     });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    return { status: 'AWAITING_APPROVAL', reply: this.previewWithReference(session, reply, approval, pendingAnchor), sessionId: session.id };
   }
 
   /**
@@ -6128,10 +5767,8 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    if (anchor.status !== 'MERGE_APPROVAL_PENDING' || !anchor.mergeApprovalId || !anchor.executionPlanRef) {
-      this.logPrApprovalFailed(session, anchor, 'pending merge approval context incomplete');
-      return this.failComposed(message, session, this.deps.composer.composeMergeApprovalUnavailable(message.context));
-    }
+    const incomplete = this.approvalDecisions.incompleteAnchoredContext(message.context, session, anchor);
+    if (incomplete) return this.decisionTurn(session, await incomplete);
     // A merge / status phrase, or any deploy-only phrase, while PENDING → ambiguous re-prompt (no decide).
     const decision =
       ConversationRuntime.interpretMergeIntent(message.text) !== null ||
@@ -6140,56 +5777,20 @@ export class ConversationRuntime {
         ? 'ambiguous'
         : ConversationRuntime.interpretDecision(message.text);
     if (decision === 'ambiguous') {
-      const fresh = await this.deps.approvals.get(anchor.mergeApprovalId);
-      const reply = fresh
-        ? this.composePendingReminder(message.context, fresh)
-        : this.deps.composer.composeMergeApprovalUnavailable(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+      return this.respondAnchoredReminder(
+        message,
+        session,
+        anchor.mergeApprovalId!,
+        anchor,
+        this.deps.composer.composeMergeApprovalUnavailable(message.context),
+      );
     }
-    // Verify the referenced ApprovalRequest via STRUCTURED fields only — never parse reason.
-    const request = await this.deps.approvals.get(anchor.mergeApprovalId);
-    if (
-      !request ||
-      request.status !== ApprovalStatus.PENDING ||
-      request.executionPlanRef.id !== anchor.executionPlanRef.id
-    ) {
-      this.logPrApprovalFailed(session, anchor, 'merge approval request missing/mismatched');
-      return this.failComposed(message, session, this.deps.composer.composeMergeApprovalUnavailable(message.context));
-    }
-    const approved = decision === 'approve';
-    if (approved) {
-      const expired = this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return await expired;
-    }
-    await this.deps.approvals.decide(anchor.mergeApprovalId, this.decisionOf(anchor.mergeApprovalId, actor.id, approved));
-    if (!approved) {
-      // Deny/cancel → back to PR_CREATED, clear ONLY merge fields; PR/push/commit/workspace preserved.
-      await this.deps.applyPreviewFlow.anchor(session, {
-        ...anchor,
-        status: 'PR_CREATED',
-        mergeApprovalId: undefined,
-        mergeApprovalRequestedAt: undefined,
-        mergeApprovedAt: undefined,
-        mergeApprovalDecisionBy: undefined,
-      });
-      const reply =
-        decision === 'deny'
-          ? this.deps.composer.composeMergeApprovalDenied(message.context)
-          : this.deps.composer.composeMergeApprovalCancelled(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: decision === 'deny' ? 'DENIED' : 'CANCELLED', reply, sessionId: session.id };
-    }
-    // approve — record only; re-anchor MERGE_APPROVED preserving all context. NO merge.
-    await this.deps.applyPreviewFlow.anchor(session, {
-      ...anchor,
-      status: 'MERGE_APPROVED',
-      mergeApprovedAt: now(),
-      mergeApprovalDecisionBy: actor.id,
-    });
-    const reply = this.deps.composer.composeMergeApprovalRecorded(message.context);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'RESPONDED', reply, sessionId: session.id };
+    // ADR-0113 D7: the shared decision path — request re-read (structured fields only), expiry re-check, decide,
+    // MERGE_APPROVED or back to PR_CREATED. Records only; NO merge.
+    return this.decisionTurn(
+      session,
+      await this.approvalDecisions.decideAnchored(this.chatDecision(message, session, actor), anchor, decision),
+    );
   }
 
   /** A merge phrase while already MERGE_APPROVED (Sprint 3f) — already approved; actual merge is a future step. No mutation. */
@@ -6554,12 +6155,13 @@ export class ConversationRuntime {
       }),
       requestedBy: actor.id,
     });
-    await this.deps.applyPreviewFlow.anchor(session, {
+    const pendingAnchor: ApplyPreviewAnchor = {
       ...anchor,
       status: 'REMOTE_BRANCH_CLEANUP_PENDING',
       remoteBranchCleanupApprovalId: approval.id,
       remoteBranchCleanupApprovalRequestedAt: now(),
-    });
+    };
+    await this.deps.applyPreviewFlow.anchor(session, pendingAnchor);
     const reply = this.deps.composer.composeRemoteBranchCleanupRequested(message.context, {
       owner: anchor.repositoryIdentity.owner,
       repo: anchor.repositoryIdentity.repo,
@@ -6569,7 +6171,7 @@ export class ConversationRuntime {
       expectedHeadCommit,
     });
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+    return { status: 'AWAITING_APPROVAL', reply: this.previewWithReference(session, reply, approval, pendingAnchor), sessionId: session.id };
   }
 
   /**
@@ -6585,10 +6187,8 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    if (anchor.status !== 'REMOTE_BRANCH_CLEANUP_PENDING' || !anchor.remoteBranchCleanupApprovalId || !anchor.executionPlanRef) {
-      this.logPrApprovalFailed(session, anchor, 'pending remote branch cleanup approval context incomplete');
-      return this.failComposed(message, session, this.deps.composer.composeRemoteBranchCleanupApprovalUnavailable(message.context));
-    }
+    const incomplete = this.approvalDecisions.incompleteAnchoredContext(message.context, session, anchor);
+    if (incomplete) return this.decisionTurn(session, await incomplete);
     // A remote-cleanup / execute / status phrase, or any deploy-only phrase, while PENDING → ambiguous re-prompt.
     const decision =
       ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) !== null ||
@@ -6598,59 +6198,20 @@ export class ConversationRuntime {
         ? 'ambiguous'
         : ConversationRuntime.interpretDecision(message.text);
     if (decision === 'ambiguous') {
-      const fresh = await this.deps.approvals.get(anchor.remoteBranchCleanupApprovalId);
-      const reply = fresh
-        ? this.composePendingReminder(message.context, fresh)
-        : this.deps.composer.composeRemoteBranchCleanupApprovalUnavailable(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: 'AWAITING_APPROVAL', reply, sessionId: session.id };
+      return this.respondAnchoredReminder(
+        message,
+        session,
+        anchor.remoteBranchCleanupApprovalId!,
+        anchor,
+        this.deps.composer.composeRemoteBranchCleanupApprovalUnavailable(message.context),
+      );
     }
-    // Verify the referenced ApprovalRequest via STRUCTURED fields only — never parse reason.
-    const request = await this.deps.approvals.get(anchor.remoteBranchCleanupApprovalId);
-    if (
-      !request ||
-      request.status !== ApprovalStatus.PENDING ||
-      request.executionPlanRef.id !== anchor.executionPlanRef.id
-    ) {
-      this.logPrApprovalFailed(session, anchor, 'remote branch cleanup approval request missing/mismatched');
-      return this.failComposed(message, session, this.deps.composer.composeRemoteBranchCleanupApprovalUnavailable(message.context));
-    }
-    const approved = decision === 'approve';
-    if (approved) {
-      const expired = this.expiredBeforeApprove(message, session, request, anchor);
-      if (expired) return await expired;
-    }
-    await this.deps.approvals.decide(
-      anchor.remoteBranchCleanupApprovalId,
-      this.decisionOf(anchor.remoteBranchCleanupApprovalId, actor.id, approved),
+    // ADR-0113 D7: the shared decision path — request re-read (structured fields only), expiry re-check, decide,
+    // REMOTE_BRANCH_CLEANUP_APPROVED or back to BRANCH_CLEANED. Records only; NO remote deletion.
+    return this.decisionTurn(
+      session,
+      await this.approvalDecisions.decideAnchored(this.chatDecision(message, session, actor), anchor, decision),
     );
-    if (!approved) {
-      // Deny/cancel → back to BRANCH_CLEANED, clearing ONLY the four remote-cleanup approval fields (CA change 7).
-      await this.deps.applyPreviewFlow.anchor(session, {
-        ...anchor,
-        status: 'BRANCH_CLEANED',
-        remoteBranchCleanupApprovalId: undefined,
-        remoteBranchCleanupApprovalRequestedAt: undefined,
-        remoteBranchCleanupApprovedAt: undefined,
-        remoteBranchCleanupApprovalDecisionBy: undefined,
-      });
-      const reply =
-        decision === 'deny'
-          ? this.deps.composer.composeRemoteBranchCleanupDenied(message.context)
-          : this.deps.composer.composeRemoteBranchCleanupCancelled(message.context);
-      await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-      return { status: decision === 'deny' ? 'DENIED' : 'CANCELLED', reply, sessionId: session.id };
-    }
-    // approve — record only; re-anchor REMOTE_BRANCH_CLEANUP_APPROVED preserving all context. NO remote deletion.
-    await this.deps.applyPreviewFlow.anchor(session, {
-      ...anchor,
-      status: 'REMOTE_BRANCH_CLEANUP_APPROVED',
-      remoteBranchCleanupApprovedAt: now(),
-      remoteBranchCleanupApprovalDecisionBy: actor.id,
-    });
-    const reply = this.deps.composer.composeRemoteBranchCleanupRecorded(message.context);
-    await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
-    return { status: 'RESPONDED', reply, sessionId: session.id };
   }
 
   /** A remote cleanup phrase while already REMOTE_BRANCH_CLEANUP_APPROVED (Sprint 3j-A) — already approved; the
@@ -6794,12 +6355,7 @@ export class ConversationRuntime {
   /** Structured, no-content failure log for a PR-approval error (Sprint 3b) — never logs diff/file content.
    *  Optional field access so it never throws on incomplete context (Sprint 2x lesson). */
   private logPrApprovalFailed(session: Session, anchor: ApplyPreviewAnchor, reason: string): void {
-    this.deps.logger.warn('pr approval failed', {
-      reason,
-      sessionId: session.id,
-      executionPlanId: anchor.executionPlanRef?.id,
-      prApprovalId: anchor.prApprovalId,
-    }); // deliberately NO diff text / file content
+    logAnchoredApprovalFailure(this.deps.logger, 'pr', session, anchor, reason); // deliberately NO diff text / file content
   }
 
   /** (C) Resolve the workspace (if the capability needs it), run the execution, and frame the reply. */
@@ -7678,10 +7234,6 @@ export class ConversationRuntime {
     }
     const text = renderInternalActionNotDone(domain, noticeLanguage(undefined, message.text));
     return this.respondComposed(message, session, { context: message.context, text });
-  }
-
-  private decisionOf(approvalId: Id, decidedBy: string, approved: boolean): ApprovalDecision {
-    return { approvalId, approved, decidedBy, decidedAt: now() };
   }
 
   private responded(session: Session, reply: OutboundMessage, workFacts?: TurnWorkFacts): TurnResult {

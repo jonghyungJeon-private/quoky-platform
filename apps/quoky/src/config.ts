@@ -82,6 +82,16 @@ export interface QuokyConfig {
    * memory stays restorable in the archive before the daily maintenance deletes it; `0` deletes at once.
    */
   memory: { archiveDays: number };
+  /**
+   * Local operations UI (ADR-0113 D1–D3). OPS-1 parsed these keys in `ops-ui/ops-ui-config.ts`; OPS-2b folds them here
+   * with the same meaning. New `QUOKY_*` keys with no `CHUNSIK_*` alias:
+   * - `QUOKY_OPS_UI_ENABLED`: exactly `true` or `false`; default `false` (no port is opened).
+   * - `QUOKY_OPS_UI_PORT`: an integer 1024–65535; default `47613`.
+   * There is deliberately no bind-address key (the listener binds `127.0.0.1` only). Unlike the other keys, an invalid
+   * value is NOT a startup error: it disables only the UI (fail closed) and `invalid` carries the code the wiring logs,
+   * never the configured value.
+   */
+  opsUi: OpsUiFlags;
   connectors: {
     jira?: { host: string; email: string; apiToken: string };
     slack?: { token: string };
@@ -249,6 +259,38 @@ const EMBEDDING_MAX_NEW_PER_TURN = 4;
 
 /** ADR-0106 amendment: the memory archive retention (days). Mirrors the core service's bounds. */
 const DEFAULT_MEMORY_ARCHIVE_DAYS = 7;
+
+/** ADR-0113 D2: the operations UI port (loopback only) and its bounds. */
+export const OPS_UI_DEFAULT_PORT = 47613;
+export const OPS_UI_MIN_PORT = 1024;
+export const OPS_UI_MAX_PORT = 65535;
+
+export const OpsUiConfigErrorCode = {
+  OPS_UI_ENABLED_INVALID: 'OPS_UI_ENABLED_INVALID',
+  OPS_UI_PORT_INVALID: 'OPS_UI_PORT_INVALID',
+} as const;
+export type OpsUiConfigErrorCode = (typeof OpsUiConfigErrorCode)[keyof typeof OpsUiConfigErrorCode];
+
+export type OpsUiFlags =
+  | { readonly enabled: false; readonly invalid?: OpsUiConfigErrorCode }
+  | { readonly enabled: true; readonly port: number };
+
+/** `QUOKY_OPS_UI_ENABLED` / `QUOKY_OPS_UI_PORT` (ADR-0113 D1/D2): an invalid value disables only the UI, with a code. */
+export function parseOpsUiFlags(env: NodeJS.ProcessEnv): OpsUiFlags {
+  const rawEnabled = env.QUOKY_OPS_UI_ENABLED;
+  if (rawEnabled === undefined || rawEnabled === '' || rawEnabled === 'false') return { enabled: false };
+  if (rawEnabled !== 'true') return { enabled: false, invalid: OpsUiConfigErrorCode.OPS_UI_ENABLED_INVALID };
+  const rawPort = env.QUOKY_OPS_UI_PORT;
+  let port = OPS_UI_DEFAULT_PORT;
+  if (rawPort !== undefined && rawPort !== '') {
+    if (!/^[0-9]{1,5}$/.test(rawPort)) return { enabled: false, invalid: OpsUiConfigErrorCode.OPS_UI_PORT_INVALID };
+    port = Number(rawPort);
+    if (port < OPS_UI_MIN_PORT || port > OPS_UI_MAX_PORT) {
+      return { enabled: false, invalid: OpsUiConfigErrorCode.OPS_UI_PORT_INVALID };
+    }
+  }
+  return { enabled: true, port };
+}
 const MAX_MEMORY_ARCHIVE_DAYS = 365;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
@@ -331,6 +373,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ),
     },
     memory: { archiveDays: parseMemoryArchiveDays(env.QUOKY_MEMORY_ARCHIVE_DAYS) },
+    opsUi: parseOpsUiFlags(env),
     connectors: {
       jira: resolveJiraConnector(env),
       slack: resolveSlackConnector(env),

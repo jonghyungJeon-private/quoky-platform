@@ -1,6 +1,7 @@
 import { OPS_UI_DEFAULT_REFRESH_SECONDS } from './assets';
 import type {
   OpsActionOutcome,
+  OpsApprovalPreview,
   OpsForgetRequest,
   OpsLink,
   OpsMemoryList,
@@ -250,12 +251,70 @@ export function renderForgetConfirm(
   ]);
 }
 
-/** The outcome of an action: fixed copy and its code only (never a reply body). */
-export function renderActionOutcome(title: string, outcome: OpsActionOutcome, repeated = false): string {
+/** The outcome of an action: fixed copy and its code only (never a reply body). `retry` is a same-origin link back. */
+export function renderActionOutcome(title: string, outcome: OpsActionOutcome, repeated = false, retry?: OpsLink): string {
   return handlingPage(title, [
     `<h2>${escapeHtml(title)}</h2>`,
     `<p class="${outcome.ok ? 'state state-ok' : 'state state-unavailable'}">${escapeHtml(outcome.code)}</p>`,
     `<p>${escapeHtml(outcome.message)}</p>`,
     repeated ? '<p class="empty">이미 처리한 요청이라 다시 실행하지 않았어요.</p>' : '',
+    retry ? `<p>${renderLink(retry)}</p>` : '',
   ]);
+}
+
+/**
+ * A link back to the originating chat conversation (OPS-2b): only a Discord channel URL made of ids, opened in a new
+ * tab without a referrer. Anything else renders nothing.
+ */
+export function isChatLink(href: string): boolean {
+  return /^https:\/\/discord\.com\/channels\/(?:@me|[0-9]{1,20})\/[0-9]{1,20}$/.test(href);
+}
+
+/**
+ * OPS-2b approve/reject confirmation (ADR-0113 D7): metadata only, plus the reference field. Approving needs the 6-character
+ * code that chat shows in the approval preview's reference line (the UI never shows it); rejecting is a single explicit
+ * confirm. Both are same-origin POSTs with the session CSRF token and a one-time nonce.
+ */
+export function renderApprovalConfirm(
+  preview: Extract<OpsApprovalPreview, { status: 'FOUND' }>,
+  csrfToken: string,
+  nonces: { readonly approve?: string; readonly reject: string },
+): string {
+  const chat =
+    preview.chatLink !== undefined && isChatLink(preview.chatLink)
+      ? `<a class="action" href="${escapeHtml(preview.chatLink)}" target="_blank" rel="noopener noreferrer">채팅에서 열기</a>`
+      : '';
+  const parts: string[] = [
+    `<h2>승인 요청 ${escapeHtml(preview.shortId)}</h2>`,
+    '<dl>',
+    `<dt>작업 종류</dt><dd>${escapeHtml(preview.kindLabel)}</dd>`,
+    `<dt>위험도</dt><dd>${escapeHtml(preview.riskLevel)}</dd>`,
+    `<dt>생성</dt><dd>${escapeHtml(preview.createdAt)}</dd>`,
+    `<dt>만료</dt><dd>${escapeHtml(preview.expiresAt)}</dd>`,
+    `<dt>채팅 위치</dt><dd>${escapeHtml(preview.chatPlace)} ${chat}</dd>`,
+    '</dl>',
+    '<p>내용(미리보기, diff, 대상, 본문)은 여기에 표시하지 않아요. 채팅의 승인 미리보기에서 확인하세요.</p>',
+  ];
+  if (preview.approvable && nonces.approve !== undefined) {
+    parts.push(
+      '<p>승인하려면 채팅 미리보기 끝의 "운영 화면 확인 코드" 줄에 있는 6자리 코드를 입력하세요. 승인은 기록만 하고, 실제 실행(커밋, 푸시, PR, 머지, 게시 등)은 지금처럼 채팅의 실행 문구로만 해요.</p>',
+      '<form method="post" action="/actions/approvals/approve" autocomplete="off">',
+      hidden('csrf', csrfToken),
+      hidden('nonce', nonces.approve),
+      '<label for="reference">운영 화면 확인 코드</label>',
+      '<input id="reference" name="reference" type="text" required autocomplete="off" spellcheck="false" maxlength="12">',
+      '<button type="submit">승인</button>',
+      '</form>',
+    );
+  } else {
+    parts.push('<p class="empty">이 승인은 승인하는 순간 작업이 이어서 실행돼서, 승인은 채팅에서만 할 수 있어요. 거절은 여기서도 돼요.</p>');
+  }
+  parts.push(
+    '<form method="post" action="/actions/approvals/reject">',
+    hidden('csrf', csrfToken),
+    hidden('nonce', nonces.reject),
+    '<button type="submit">거절</button>',
+    '</form>',
+  );
+  return handlingPage('승인 처리', parts);
 }

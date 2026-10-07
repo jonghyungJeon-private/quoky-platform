@@ -233,7 +233,8 @@ function harness(options: {
         decisions.push({ approvalId, approved: decision.approved, ...(decision.comment ? { comment: decision.comment } : {}) });
         return undefined;
       },
-      async get() { return null; },
+      // The shared decision service re-reads the request inside its lock (ADR-0113 D7): PENDING until decided.
+      async get(id: string) { return pending?.id === id && !decisions.some((d) => d.approvalId === id) ? pending : null; },
       async requestForRisk() { throw new Error('requestForRisk must not run'); },
     },
     approvalFlow: {

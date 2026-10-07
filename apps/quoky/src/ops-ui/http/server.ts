@@ -7,6 +7,7 @@ import { OPS_UI_CSS, OPS_UI_DEFAULT_REFRESH_SECONDS, OPS_UI_JS, OPS_UI_MIN_REFRE
 import { OPS_MAX_CODE_ATTEMPTS, OpsIntentStore } from './intents';
 import {
   renderActionOutcome,
+  renderApprovalConfirm,
   renderDashboard,
   renderForgetConfirm,
   renderMemoryPage,
@@ -45,8 +46,12 @@ import type { OpsActions, OpsUiEventLog, OpsViewModelSource } from './view-model
  *   CORS header is ever sent.
  * - **Handling (OPS-2, ADR-0113 D7).** Only when `actions` is given: reminder cancel and memory forget, each a
  *   same-origin `POST` with the session CSRF token. Executing posts also carry a one-time action nonce bound to the
- *   session and to the subject shown on the confirmation page (`intents.ts`), so a double submit runs once. There is
- *   no approve or reject route (OPS-2b). Without `actions` the listener is the Phase 1 read-only screen.
+ *   session and to the subject shown on the confirmation page (`intents.ts`), so a double submit runs once. Without
+ *   `actions` the listener is the Phase 1 read-only screen.
+ * - **Approve and reject (OPS-2b, ADR-0113 D7).** Only when `actions` offers them: a metadata-only confirmation page
+ *   (`GET /approvals/decide?id=`), then `POST /actions/approvals/approve` (with the chat preview's confirmation
+ *   reference) or `POST /actions/approvals/reject`, each with the session CSRF token and its one-time nonce whose
+ *   subject is the approval id. The outcome page shows a category only, never the reply.
  */
 
 export const OPS_UI_BIND_HOST = '127.0.0.1';
@@ -261,6 +266,30 @@ export class OpsUiServer {
         this.sendPage(res, 200, renderDashboard(view, session.csrfToken, this.refreshSeconds, this.options.actions !== undefined));
         return;
       }
+      case '/approvals/decide': {
+        const actions = this.options.actions;
+        if (actions?.approvalPreview === undefined || actions.decideApproval === undefined) break;
+        const session = this.currentSession(req);
+        if (session === undefined) return this.redirect(res, '/signin');
+        const approvalId = approvalIdParam(queryParam(req.url, 'id'));
+        if (approvalId === undefined) {
+          this.sendPage(res, 400, renderStatusPage('요청 거부', '승인 ID가 올바르지 않아요.'));
+          return;
+        }
+        const preview = await actions.approvalPreview(approvalId);
+        if (preview.status !== 'FOUND') {
+          this.sendPage(res, 200, renderActionOutcome('승인 처리', preview.outcome));
+          return;
+        }
+        const reject = this.intents.issue(session.id, 'approval-reject', preview.approvalId);
+        const approve = preview.approvable ? this.intents.issue(session.id, 'approval-approve', preview.approvalId) : undefined;
+        this.sendPage(
+          res,
+          200,
+          renderApprovalConfirm(preview, session.csrfToken, approve === undefined ? { reject } : { approve, reject }),
+        );
+        return;
+      }
       case '/actions/reminders/cancel':
       case '/memories': {
         const actions = this.options.actions;
@@ -353,6 +382,26 @@ export class OpsUiServer {
             this.audit('memory.forget.confirm', run.outcome.code, run.status === 'REPEATED');
             this.sendPage(res, 200, renderActionOutcome('기억 잊기', run.outcome, run.status === 'REPEATED'));
           });
+      case '/actions/approvals/approve':
+      case '/actions/approvals/reject': {
+        const decide = actions.decideApproval?.bind(actions);
+        if (decide === undefined || actions.approvalPreview === undefined) return undefined;
+        const decision = path === '/actions/approvals/approve' ? 'approve' : 'reject';
+        return (req, res) =>
+          this.inSession(req, res, async (session, form) => {
+            const intent = this.intents.find(session.id, decision === 'approve' ? 'approval-approve' : 'approval-reject', form.get('nonce') ?? undefined);
+            if (intent === undefined) return this.staleIntent(res);
+            const approvalId = intent.subject;
+            const reference = decision === 'approve' ? (form.get('reference') ?? '').trim().slice(0, 32) : '';
+            const run = await this.intents.runOnce(intent, () => decide(approvalId, decision, reference));
+            this.audit(`approval.${decision}`, run.outcome.code, run.status === 'REPEATED');
+            const retry =
+              decision === 'approve' && (run.outcome.code === 'REFERENCE_MISMATCH' || run.outcome.code === 'REFERENCE_REQUIRED')
+                ? { label: '다시 입력', href: `/approvals/decide?id=${encodeURIComponent(approvalId)}` }
+                : undefined;
+            this.sendPage(res, 200, renderActionOutcome('승인 처리', run.outcome, run.status === 'REPEATED', retry));
+          });
+      }
       default:
         return undefined;
     }
@@ -470,6 +519,12 @@ function queryParam(rawUrl: string | undefined, name: string): string | undefine
   } catch {
     return undefined;
   }
+}
+
+/** An approval id as storage issues it (a UUID-like token); anything else is refused before any lookup. */
+function approvalIdParam(raw: string | undefined): string | undefined {
+  if (raw === undefined || !/^[A-Za-z0-9-]{1,64}$/.test(raw)) return undefined;
+  return raw;
 }
 
 /** A list number as the chat grammar takes it: a positive integer of at most 4 digits. */

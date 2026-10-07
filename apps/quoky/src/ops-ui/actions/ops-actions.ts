@@ -1,29 +1,52 @@
-import { ReminderStatus, isStrictCredentialMemoryText, maskedMemoryText, memoryPreview } from '@quoky/core';
+import {
+  REMINDER_LIMITS,
+  ReminderStatus,
+  isStrictCredentialMemoryText,
+  learningTextHasCredential,
+  maskedMemoryText,
+  memoryPreview,
+} from '@quoky/core';
 import type {
+  Actor,
+  ApprovalDecisionService,
+  ApprovalGateKind,
+  ApprovalSurfaceDecision,
+  ApprovalSurfaceRefusal,
+  ConversationContext,
   Id,
   IsoTimestamp,
   Logger,
   MemoryCommandOutcome,
   MemoryCommandService,
+  NotificationSinkOutcome,
+  OwnerNotification,
   ReminderCancelStatus,
   ReminderConversationService,
   ReminderRepository,
+  Session,
 } from '@quoky/core';
 
 import type {
   OpsActionOutcome,
   OpsActions,
+  OpsApprovalDecision,
+  OpsApprovalPreview,
   OpsForgetRequest,
   OpsMemoryList,
   OpsReminderCancelPreview,
 } from '../http/view-model';
-import { formatOpsTime, reminderLabel } from '../snapshot/build-snapshot';
+import { OPS_APPROVAL_TTL_MS, formatOpsTime, reminderLabel } from '../snapshot/build-snapshot';
 import type { OpsOwnerResolution } from '../snapshot/build-snapshot';
 import { guardText } from '../snapshot/guard';
 
 /**
- * OPS-2 owner handling (ADR-0113 D7): reminder cancel and memory forget only. Approve and reject are OPS-2b (W6),
- * after the approval decision path is extracted from `conversation-runtime.ts`; nothing here can decide an approval.
+ * OPS-2 / OPS-2b owner handling (ADR-0113 D7): reminder cancel and memory forget (OPS-2), approve and reject (OPS-2b).
+ *
+ * - **Approve and reject (OPS-2b).** Through the Core `ApprovalDecisionService` the chat decision turns call (one decision
+ *   implementation, no copy of its semantics here), as the owner Actor with the `ops-ui` marker. Approve needs the chat
+ *   preview's confirmation reference and records the approval only: every execution still needs its exact chat phrase.
+ *   A decision's result goes to the owner DM once as `OPS_DECISION_RESULT` (bounded, never a channel, never resent);
+ *   the UI gets only the outcome category and the delivery category, never the reply text.
  *
  * - **Owner identity.** Every call resolves the owner `Actor` through the ADR-0009 identity mapping (read-only). If the
  *   configured owner ids map to zero or several Actors, every action is refused (`ACTIONS_DISABLED`), fail closed.
@@ -47,6 +70,16 @@ export interface OpsActionsDeps {
   };
   readonly memory?: Pick<MemoryCommandService, 'listable' | 'requestForgetConfirmation' | 'confirmForget'> & {
     readonly archiveDays?: number;
+  };
+  /** OPS-2b approval handling; absent = no approve/reject entry. */
+  readonly approvals?: {
+    readonly decisions: Pick<ApprovalDecisionService, 'locateForOpsUi' | 'decideFromOpsUi'>;
+    /** The owner Actor record (read-only). */
+    readonly actor: (actorId: Id) => Promise<Actor | null>;
+    /** The open conversations to search for the approval's holder (read fresh per request). */
+    readonly sessions: () => Promise<readonly Session[]>;
+    /** The owner notification sink (ADR-0101; `OPS_DECISION_RESULT` per the ADR-0113 D7 amendment). */
+    readonly notify: (notification: OwnerNotification) => Promise<NotificationSinkOutcome>;
   };
   readonly logger: Logger;
 }
@@ -93,6 +126,67 @@ function forgetOutcome(outcome: MemoryCommandOutcome, archiveDays: number | unde
     default:
       return { code: 'UNEXPECTED', message: '예상하지 못한 결과예요. 채팅의 기억 목록으로 확인하세요.', ok: false };
   }
+}
+
+const APPROVAL_KIND_LABEL: Readonly<Record<ApprovalGateKind, string>> = {
+  PLAN: '코드 변경 계획',
+  CREDENTIAL_OVERRIDE: '비밀값 검사 예외 (1회)',
+  CONNECTOR_WRITE: '커넥터 쓰기',
+  APPLY: '파일 적용',
+  COMMIT: '커밋',
+  PUSH: '푸시',
+  PR: 'PR 생성',
+  MERGE: 'PR 머지',
+  REMOTE_BRANCH_CLEANUP: '원격 브랜치 삭제',
+};
+
+const APPROVAL_REFUSALS: Readonly<Record<ApprovalSurfaceRefusal, OpsActionOutcome>> = {
+  NOT_FOUND: { code: 'NOT_FOUND', message: '대기 중인 그 승인 요청을 찾지 못했어요. 이미 처리됐거나 만료됐을 수 있어요.', ok: false },
+  FOREIGN: { code: 'FOREIGN', message: '소유자의 대화가 아닌 승인 요청이라 처리하지 않았어요.', ok: false },
+  ALREADY_DECIDED: { code: 'ALREADY_DECIDED', message: '이미 결정된 승인 요청이에요. 아무것도 바꾸지 않았어요.', ok: false },
+  APPROVE_IN_CHAT: {
+    code: 'APPROVE_IN_CHAT',
+    message: '이 승인은 승인하는 순간 작업이 이어서 실행돼서 채팅에서만 승인할 수 있어요. 거절은 여기서도 돼요.',
+    ok: false,
+  },
+  REFERENCE_REQUIRED: { code: 'REFERENCE_REQUIRED', message: '채팅 미리보기의 운영 화면 확인 코드를 입력하세요.', ok: false },
+  REFERENCE_MISMATCH: {
+    code: 'REFERENCE_MISMATCH',
+    message: '확인 코드가 맞지 않아 승인하지 않았어요. 채팅 미리보기의 가장 최근 코드를 확인하세요.',
+    ok: false,
+  },
+  REFERENCE_LOCKED: {
+    code: 'REFERENCE_LOCKED',
+    message: '확인 코드가 여러 번 틀려서 이 승인 요청은 30분 동안 운영 화면에서 승인할 수 없어요. 채팅에서는 그대로 결정할 수 있어요.',
+    ok: false,
+  },
+};
+
+const NOTICE_LABEL: Readonly<Record<NotificationSinkOutcome['status'] | 'FAILED', string>> = {
+  SENT: 'DM으로 결과를 보냈어요.',
+  NOT_SENT: 'DM 결과 알림은 보내지 못했어요. 채팅에서 확인하세요.',
+  UNCERTAIN: 'DM 결과 알림이 전달됐는지 확인하지 못했어요 (다시 보내지 않아요).',
+  FAILED: 'DM 결과 알림은 보내지 못했어요. 채팅에서 확인하세요.',
+};
+
+/** The owner-DM result text (ADR-0113 D7): a fixed header and the reply chat would have shown, bounded and guarded. */
+export function opsDecisionResultText(kind: ApprovalGateKind, outcome: 'APPROVED' | 'REJECTED' | 'EXPIRED', reply: string): string {
+  const verb =
+    outcome === 'APPROVED' ? '운영 화면에서 승인했어요' : outcome === 'REJECTED' ? '운영 화면에서 거절했어요' : '만료돼서 자동 거절로 기록했어요';
+  const header = `[Quoky 운영 화면] ${APPROVAL_KIND_LABEL[kind]} 승인 요청을 ${verb}. 이어지는 단계는 채팅에서 해요.`;
+  if (learningTextHasCredential(reply)) return header;
+  const text = `${header}\n${reply}`;
+  const chars = Array.from(text);
+  const max = REMINDER_LIMITS.maxDeliveredTextChars;
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
+}
+
+/** A link back to the originating Discord conversation (ids only), or undefined. */
+export function chatLinkOf(chat: ConversationContext): string | undefined {
+  if (chat.platform !== 'discord') return undefined;
+  const target = chat.threadId ?? chat.channelId;
+  if (!/^[0-9]{1,20}$/.test(target) || (chat.spaceId !== undefined && !/^[0-9]{1,20}$/.test(chat.spaceId))) return undefined;
+  return `https://discord.com/channels/${chat.spaceId ?? '@me'}/${target}`;
 }
 
 function guardOutcome(outcome: OpsActionOutcome): OpsActionOutcome {
@@ -181,6 +275,94 @@ export class OpsUiActions implements OpsActions {
       (refused) => refused,
     );
     return this.audited('memory.forget', outcome);
+  }
+
+  async approvalPreview(approvalId: string): Promise<OpsApprovalPreview> {
+    const approvals = this.deps.approvals;
+    if (approvals === undefined) return { status: 'REFUSED', outcome: UNAVAILABLE };
+    return this.asOwner(
+      async (actorId): Promise<OpsApprovalPreview> => {
+        const actor = await approvals.actor(actorId);
+        if (actor === null) return { status: 'REFUSED', outcome: DISABLED };
+        const located = await approvals.decisions.locateForOpsUi(approvalId, actor, approvals.sessions);
+        if (located.status !== 'FOUND') return { status: 'REFUSED', outcome: guardOutcome(APPROVAL_REFUSALS[located.refusal]) };
+        const { view } = located;
+        const expiresMs = Date.parse(view.createdAt) + OPS_APPROVAL_TTL_MS;
+        const chatLink = chatLinkOf(view.chat);
+        return {
+          status: 'FOUND',
+          approvalId: view.approvalId,
+          shortId: guardText(view.approvalId.slice(0, 8)),
+          kindLabel: APPROVAL_KIND_LABEL[view.kind],
+          riskLevel: guardText(view.riskLevel),
+          createdAt: guardText(formatOpsTime(view.createdAt, this.deps.timeZone)),
+          expiresAt: guardText(Number.isFinite(expiresMs) ? formatOpsTime(new Date(expiresMs).toISOString(), this.deps.timeZone) : 'unknown'),
+          approvable: view.approvable,
+          chatPlace: view.chat.spaceId === undefined ? 'DM' : '채널',
+          ...(chatLink === undefined ? {} : { chatLink }),
+        };
+      },
+      (outcome) => ({ status: 'REFUSED', outcome }),
+    );
+  }
+
+  async decideApproval(approvalId: string, decision: OpsApprovalDecision, reference: string): Promise<OpsActionOutcome> {
+    const approvals = this.deps.approvals;
+    const action = `approval.${decision}`;
+    if (approvals === undefined) return this.audited(action, UNAVAILABLE);
+    const outcome = await this.asOwner(
+      async (actorId) => {
+        const actor = await approvals.actor(actorId);
+        if (actor === null) return DISABLED;
+        const decided = await approvals.decisions.decideFromOpsUi({
+          approvalId,
+          decision,
+          actor,
+          ...(decision === 'approve' ? { reference } : {}),
+          sessions: approvals.sessions,
+        });
+        return this.decisionOutcome(approvalId, decided, approvals.notify);
+      },
+      (refused) => refused,
+    );
+    return this.audited(action, outcome);
+  }
+
+  /** Map the shared decision's result to the UI category, delivering the `OPS_DECISION_RESULT` once when it decided. */
+  private async decisionOutcome(
+    approvalId: string,
+    decided: ApprovalSurfaceDecision,
+    notify: (notification: OwnerNotification) => Promise<NotificationSinkOutcome>,
+  ): Promise<OpsActionOutcome> {
+    if (decided.status === 'REFUSED') return APPROVAL_REFUSALS[decided.refusal];
+    if (decided.outcome === 'UNAVAILABLE') {
+      return {
+        code: 'APPROVAL_CONTEXT_UNAVAILABLE',
+        message: '이 승인 요청의 문맥을 확인하지 못해 결정하지 않았어요. 채팅에서 확인하세요.',
+        ok: false,
+      };
+    }
+    let delivery: NotificationSinkOutcome['status'] | 'FAILED';
+    try {
+      const sent = await notify({
+        correlationId: `ops-decision-result-${approvalId.slice(0, 8)}-${Date.parse(this.deps.clock())}`,
+        // Owner DM only (ADR-0113 D7): no guild, so no channel routing is possible.
+        target: { platform: decided.chat.platform, channelId: '', userId: decided.chat.userId },
+        kind: 'OPS_DECISION_RESULT',
+        text: opsDecisionResultText(decided.kind, decided.outcome, decided.reply.text),
+      });
+      delivery = sent.status;
+    } catch {
+      delivery = 'FAILED';
+    }
+    this.log(delivery === 'SENT' ? 'info' : 'warn', 'ops-ui.decision_result_notice', { surface: 'ops-ui', outcome: decided.outcome, delivery });
+    const head =
+      decided.outcome === 'APPROVED'
+        ? `${APPROVAL_KIND_LABEL[decided.kind]} 승인을 기록했어요. 실제 실행은 지금처럼 채팅의 실행 문구로 해요.`
+        : decided.outcome === 'REJECTED'
+          ? `${APPROVAL_KIND_LABEL[decided.kind]} 승인 요청을 거절했어요.`
+          : '승인 요청이 이미 만료돼서 자동 거절로 기록했어요. 필요하면 채팅에서 다시 요청하세요.';
+    return { code: decided.outcome, message: `${head} ${NOTICE_LABEL[delivery]}`, ok: decided.outcome !== 'EXPIRED' };
   }
 
   /** Run `act` as the owner Actor; refused (fail closed) when the owner ids do not map to exactly one Actor. */

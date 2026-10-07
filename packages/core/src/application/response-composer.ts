@@ -238,6 +238,9 @@ function approvalRiskLine(riskLevel: RiskLevel): string {
 
 /** How to decide a pending approval (ADR-0093) — the decision words `interpretApprovalDecision` accepts. */
 const APPROVAL_DECISION_LINE = '진행하려면 "승인", 거절하려면 "거절"이라고 답해 주세요.';
+/** ADR-0113 D7: the confirmation reference line (only while the local operations UI is on). */
+export const APPROVAL_REFERENCE_LINE_PREFIX = '운영 화면 확인 코드: ';
+const APPROVAL_REFERENCE_LINE_SUFFIX = '(운영 화면에서 승인할 때만 입력해요. 채팅에서는 "승인"이면 돼요.)';
 
 /** The next phrase after a commit approval is recorded (QA-021) — "커밋 실행" is a COMMIT_EXECUTION_WORDS phrase
  *  (`interpretCommitExecutionIntent` → 'execute' at COMMIT_APPROVED), the same phrase help names. */
@@ -778,6 +781,15 @@ export class ResponseComposer {
   /** Prepend a notice (e.g. an approval-expiry notice) to another reply, keeping the reply's own fields. */
   composeWithNotice(notice: OutboundMessage, reply: OutboundMessage): OutboundMessage {
     return { ...reply, text: clampToMessageBudget(`${notice.text}\n\n${reply.text}`) };
+  }
+
+  /**
+   * ADR-0113 D7 (OPS-2b): the confirmation reference line appended to a chat approval preview (and its pending
+   * reminder) ONLY while the local operations UI is on. Approving from the UI needs this code, so an approval is never
+   * granted there on metadata alone; chat itself still needs only "승인". The preview text above it is unchanged.
+   */
+  composeApprovalConfirmationReference(reply: OutboundMessage, reference: string): OutboundMessage {
+    return { ...reply, text: `${reply.text}\n${APPROVAL_REFERENCE_LINE_PREFIX}${reference} ${APPROVAL_REFERENCE_LINE_SUFFIX}` };
   }
 
   /**

@@ -191,7 +191,8 @@ async function deliver(n: OwnerNotification, deps: OwnerNotificationDeps): Promi
 
   const timeoutMs = deps.sendTimeoutMs ?? DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS;
 
-  // Opt-in guild-channel target: TEXT only (the brief is always DM-only), originating guild channel/thread only.
+  // Opt-in guild-channel target: TEXT only (the brief and ADR-0113's OPS_DECISION_RESULT are always DM-only),
+  // originating guild channel/thread only.
   if (deps.channelDelivery && n.kind === 'TEXT' && target.spaceId !== undefined) {
     const channelOutcome = await tryChannel(n, ownerId, deps, timeoutMs);
     if (channelOutcome) return channelOutcome;

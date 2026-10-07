@@ -2544,6 +2544,8 @@ describe('New-file add-diff preview + preview-failure branch logging (Sprint 4c-
           if (idx >= 0) approvals[idx] = { ...approvals[idx]!, status: ApprovalStatus.APPROVED };
           return approvals[idx]!;
         },
+        // The shared decision service re-reads the request inside its lock (ADR-0113 D7).
+        async get(id: string) { return approvals.find((a) => a.id === id) ?? null; },
       },
     };
     const runtime = new ConversationRuntime(deps);
@@ -2822,6 +2824,8 @@ describe('Code-change instruction fidelity beyond 200 chars (Sprint 4c-Follow-up
           if (idx >= 0) approvals[idx] = { ...approvals[idx]!, status: ApprovalStatus.APPROVED };
           return approvals[idx]!;
         },
+        // The shared decision service re-reads the request inside its lock (ADR-0113 D7).
+        async get(id: string) { return approvals.find((a) => a.id === id) ?? null; },
       },
     };
     const runtime = new ConversationRuntime(deps);
@@ -2920,6 +2924,8 @@ describe('Code-change instruction fidelity beyond 200 chars (Sprint 4c-Follow-up
           if (idx >= 0) approvals[idx] = { ...approvals[idx]!, status: ApprovalStatus.APPROVED };
           return approvals[idx]!;
         },
+        // The shared decision service re-reads the request inside its lock (ADR-0113 D7).
+        async get(id: string) { return approvals.find((a) => a.id === id) ?? null; },
       },
     };
     const runtime = new ConversationRuntime(deps);
@@ -8101,6 +8107,8 @@ describe('ConversationRuntime + StatelessApprovalFlow (production-like)', () => 
           if (idx >= 0) approvals[idx] = { ...approvals[idx]!, status: ApprovalStatus.APPROVED };
           return approvals[idx]!;
         },
+        // The shared decision service re-reads the request inside its lock (ADR-0113 D7).
+        async get(id: string) { return approvals.find((a) => a.id === id) ?? null; },
       },
     };
     const runtime = new ConversationRuntime(deps);
@@ -8193,6 +8201,8 @@ describe('Follow-up-6 — exact Scenario C final E2E (real classifier + real A2,
           if (idx >= 0) approvals[idx] = { ...approvals[idx]!, status: ApprovalStatus.APPROVED };
           return approvals[idx]!;
         },
+        // The shared decision service re-reads the request inside its lock (ADR-0113 D7).
+        async get(id: string) { return approvals.find((a) => a.id === id) ?? null; },
       },
     };
     const runtime = new ConversationRuntime(deps);
@@ -10499,7 +10509,7 @@ describe('Bounded change sets — runtime (CODE-3, ADR-0099)', () => {
           approvals.set(id, next);
           return next;
         },
-        async get(id) { return approvals.get(id) ?? null; },
+        async get(id) { return approvals.get(id) ?? (pending?.id === id ? pending : null); },
         async requestForRisk(input) {
           const req = await deps.approvals.requestForRisk(input);
           const id = `risk-${approvals.size + 1}`;

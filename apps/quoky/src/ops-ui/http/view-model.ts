@@ -62,7 +62,7 @@ export interface OpsUiEventLog {
 }
 
 /**
- * OPS-2 (ADR-0113 D7): owner handling — reminder cancel and memory forget only (approve and reject are OPS-2b, W6).
+ * OPS-2 / OPS-2b (ADR-0113 D7): owner handling — reminder cancel and memory forget (OPS-2), approve and reject (OPS-2b).
  *
  * `http/*` owns the request side (session, Origin, CSRF, the one-time action nonce, double-submit); the
  * implementation lives outside `http/*` and calls the same Core application services as chat, with the owner Actor,
@@ -108,6 +108,31 @@ export type OpsForgetRequest =
     }
   | { readonly status: 'REFUSED'; readonly outcome: OpsActionOutcome };
 
+/**
+ * OPS-2b: what the approve/reject confirmation page shows for one pending approval — metadata only (ADR-0113 D5): never
+ * the preview, payload, reason, reply text or the confirmation reference.
+ */
+export type OpsApprovalPreview =
+  | {
+      readonly status: 'FOUND';
+      readonly approvalId: string;
+      readonly shortId: string;
+      /** A fixed label for the approval kind (커밋, 푸시, PR, ...). */
+      readonly kindLabel: string;
+      readonly riskLevel: string;
+      readonly createdAt: string;
+      readonly expiresAt: string;
+      /** Whether the UI may approve it (the UI may always reject it). */
+      readonly approvable: boolean;
+      /** Where the chat preview was shown (`DM` or `채널`). */
+      readonly chatPlace: string;
+      /** A link back to the originating chat conversation, when the platform has one (ids only). */
+      readonly chatLink?: string;
+    }
+  | { readonly status: 'REFUSED'; readonly outcome: OpsActionOutcome };
+
+export type OpsApprovalDecision = 'approve' | 'reject';
+
 export interface OpsActions {
   /** Read-only: what a cancel confirmation page shows for `알림 N`. */
   reminderCancelPreview(displayNo: number): Promise<OpsReminderCancelPreview>;
@@ -119,4 +144,11 @@ export interface OpsActions {
   requestForget(number: number): Promise<OpsForgetRequest>;
   /** The chat `기억 확인 <code>` path, restricted to a pending forget code. */
   confirmForget(code: string): Promise<OpsActionOutcome>;
+  /** OPS-2b, read-only: the confirmation page facts for one pending approval. Absent = no approval handling. */
+  approvalPreview?(approvalId: string): Promise<OpsApprovalPreview>;
+  /**
+   * OPS-2b: the shared approval decision path (the same one chat runs), as the owner. Approve needs the chat preview's
+   * confirmation reference; it records the approval only. The outcome is a category and fixed copy, never the reply.
+   */
+  decideApproval?(approvalId: string, decision: OpsApprovalDecision, reference: string): Promise<OpsActionOutcome>;
 }

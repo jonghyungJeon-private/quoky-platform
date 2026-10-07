@@ -269,6 +269,21 @@ describe('deliverOwnerNotification: target policy', () => {
     expect(h.dm.sent).toEqual([{ content: 'brief text', allowedMentions: { parse: [] } }]);
   });
 
+  it('an OPS_DECISION_RESULT (ADR-0113 D7) is DM-only even with channel delivery enabled in an allowlisted channel', async () => {
+    const h = harness({ channelDelivery: true });
+    const out = await deliverOwnerNotification(note({ kind: 'OPS_DECISION_RESULT', text: 'decision result' }), h.deps);
+    expect(out).toEqual({ status: 'SENT', via: 'dm' });
+    expect((h.channels.get(CHANNEL) as FakeChannel).sent).toHaveLength(0);
+    expect(h.dm.sent).toEqual([{ content: 'decision result', allowedMentions: { parse: [] } }]);
+  });
+
+  it('an OPS_DECISION_RESULT over the delivered-text bound is NOT_SENT, never truncated or split', async () => {
+    const h = harness();
+    const out = await deliverOwnerNotification(note({ kind: 'OPS_DECISION_RESULT', text: 'x'.repeat(5000) }), h.deps);
+    expect(out).toMatchObject({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    expect(h.dm.sent).toHaveLength(0);
+  });
+
   it('never lets @everyone or role/user mentions in the body parse into a ping', async () => {
     const h = harness({ channelDelivery: true });
     await deliverOwnerNotification(note({ text: '@everyone <@&123> <@999>' }), h.deps);

@@ -362,8 +362,12 @@ describe('OPS-2 owner identity and audit (ADR-0113 D7)', () => {
     expect(logger.lines.join('\n')).not.toContain(request.code);
   });
 
-  it('offers no approve or reject entry (OPS-2b)', () => {
-    const handling = actions({}) as unknown as Record<string, unknown>;
-    for (const name of ['approve', 'reject', 'decide', 'approveApproval', 'rejectApproval']) expect(handling[name]).toBeUndefined();
+  it('decides no approval when approval handling is not wired (OPS-2b needs the runtime decision service)', async () => {
+    const handling = actions({});
+    expect(await handling.approvalPreview('approval-1')).toEqual({
+      status: 'REFUSED',
+      outcome: { code: 'ACTION_UNAVAILABLE', message: '이 처리는 지금 쓸 수 없어요.', ok: false },
+    });
+    expect(await handling.decideApproval('approval-1', 'approve', 'ABCDEF')).toMatchObject({ code: 'ACTION_UNAVAILABLE', ok: false });
   });
 });

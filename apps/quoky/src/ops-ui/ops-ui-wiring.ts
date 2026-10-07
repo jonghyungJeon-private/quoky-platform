@@ -4,20 +4,26 @@ import path from 'node:path';
 import {
   AiProviderManager,
   CONNECTOR_PROVIDERS,
+  ConversationRuntime,
   FeedbackRecorder,
   MemoryCommandService,
+  NOTIFICATION_SINK,
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
   ReminderConversationService,
   STORAGE_PROVIDER,
+  SessionStatus,
 } from '@quoky/core';
 import type {
+  ApprovalDecisionService,
   ConnectorProvider,
   DurableMemoryQuery,
   Id,
   Logger,
+  NotificationSink,
   PlatformAdapter,
   ReminderRepository,
+  Session,
   StorageProvider,
 } from '@quoky/core';
 import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
@@ -30,7 +36,7 @@ import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
 import { OpsUiActions } from './actions/ops-actions';
 import { OPS_UI_BIND_HOST, OpsUiServer } from './http/server';
 import type { OpsUiEventLog } from './http/view-model';
-import { loadOpsUiConfig } from './ops-ui-config';
+import { loadOpsUiConfig, resolveOpsUiConfig } from './ops-ui-config';
 import { OpsSnapshotBuilder, cachedViewSource } from './snapshot/build-snapshot';
 import type { OpsOwnerResolution, OpsSnapshotSources } from './snapshot/build-snapshot';
 import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
@@ -48,7 +54,12 @@ import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
  * OPS-2 adds owner handling (reminder cancel, memory forget) from the same container: the chat
  * `ReminderConversationService` and `MemoryCommandService` singletons (so a forget code issued in either surface is
  * the same pending code), acting as the owner Actor resolved read-only per request. A missing service disables only
- * its action; approve and reject do not exist before OPS-2b.
+ * its action.
+ *
+ * OPS-2b adds approve and reject through the running `ConversationRuntime`'s own `approvalDecisions` (the one decision
+ * path chat uses, with its per-approval serialization), and the `OPS_DECISION_RESULT` owner DM through the container's
+ * `NotificationSink`. While the listener is up it turns on the chat preview's confirmation reference line, and turns it
+ * off again on stop, so chat replies are byte-identical whenever the UI is off. No `app.module.ts` provider is added.
  *
  * With `QUOKY_OPS_UI_ENABLED` unset or `false` nothing is opened. An invalid flag, a taken port or a token file that
  * cannot be created disables only the UI (logged by code); the rest of Quoky keeps running.
@@ -81,6 +92,8 @@ export interface OpsUiWiringInput {
   readonly app: OpsUiContainer;
   readonly config: Pick<QuokyConfig, 'storage' | 'reminders' | 'host'> & {
     readonly discord: Pick<QuokyConfig['discord'], 'ownerIds'>;
+    /** The OPS flags folded into `config.ts` (OPS-2b); absent → parsed from `env` (offline tests). */
+    readonly opsUi?: QuokyConfig['opsUi'];
   };
   readonly ops: Pick<OpsRuntime, 'backupStatus'>;
   /** ADR-0102 D4: whether `main.ts` took the single-instance lock (a file-backed database). */
@@ -223,8 +236,24 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
     handling: {
       reminderCancel: reminderRepository !== undefined && optional(app, ReminderConversationService) !== undefined,
       memoryForget: optional(app, MemoryCommandService) !== undefined,
+      approvals: approvalHandling(app) !== undefined,
     },
   };
+}
+
+/** OPS-2b: the runtime's shared decision service and the owner sink, or undefined when either is not in the container. */
+function approvalHandling(app: OpsUiContainer): { decisions: ApprovalDecisionService; sink: NotificationSink } | undefined {
+  const runtime = optional<ConversationRuntime>(app, ConversationRuntime);
+  const sink = optional<NotificationSink>(app, NOTIFICATION_SINK);
+  const decisions = runtime?.approvalDecisions;
+  if (decisions === undefined || sink === undefined || typeof sink.deliver !== 'function') return undefined;
+  return { decisions, sink };
+}
+
+/** The conversations that can hold a pending approval: ACTIVE sessions with an in-focus task (read fresh per request). */
+async function openSessionsWithFocus(storage: StorageProvider): Promise<readonly Session[]> {
+  const sessions = await storage.sessions.list();
+  return sessions.filter((session) => session.status === SessionStatus.ACTIVE && session.activeTaskId !== undefined);
 }
 
 /** OPS-2 handling over the chat services in the container (ADR-0113 D7); undefined when neither service is bound. */
@@ -238,13 +267,24 @@ export function opsUiActions(input: OpsUiWiringInput, logger: Logger): OpsUiActi
     reminderRepository !== undefined && reminderService !== undefined
       ? { service: reminderService, repository: reminderRepository }
       : undefined;
-  if (reminders === undefined && memory === undefined) return undefined;
+  const handling = approvalHandling(app);
+  const approvals =
+    handling === undefined
+      ? undefined
+      : {
+          decisions: handling.decisions,
+          actor: (actorId: Id) => storage.actors.get(actorId),
+          sessions: () => openSessionsWithFocus(storage),
+          notify: (notification: Parameters<NotificationSink['deliver']>[0]) => handling.sink.deliver(notification),
+        };
+  if (reminders === undefined && memory === undefined && approvals === undefined) return undefined;
   return new OpsUiActions({
     owner: () => resolveOwner(storage, config.discord.ownerIds),
     clock: () => new Date(input.nowMs?.() ?? Date.now()).toISOString(),
     timeZone: config.reminders.timeZone,
     ...(reminders === undefined ? {} : { reminders }),
     ...(memory === undefined ? {} : { memory }),
+    ...(approvals === undefined ? {} : { approvals }),
     logger,
   });
 }
@@ -252,7 +292,10 @@ export function opsUiActions(input: OpsUiWiringInput, logger: Logger): OpsUiActi
 /** Start the operations UI when enabled; otherwise return a no-op handle without opening any port. */
 export async function startOpsUi(input: OpsUiWiringInput): Promise<OpsUiHandle> {
   const logger = input.logger ?? new ConsoleLogger('ops-ui');
-  const config = loadOpsUiConfig(input.env ?? process.env, input.config.storage.dbPath, input.cwd);
+  const config =
+    input.env === undefined && input.config.opsUi !== undefined
+      ? resolveOpsUiConfig(input.config.opsUi, input.config.storage.dbPath, input.cwd)
+      : loadOpsUiConfig(input.env ?? process.env, input.config.storage.dbPath, input.cwd);
   if (!config.enabled) {
     if (config.invalid !== undefined) logger.warn('ops-ui.disabled', { reason: config.invalid });
     return DISABLED;
@@ -281,5 +324,14 @@ export async function startOpsUi(input: OpsUiWiringInput): Promise<OpsUiHandle> 
   });
   const started = await server.start();
   if (started.status !== 'LISTENING') return DISABLED;
-  return { port: started.port, stop: () => server.stop() };
+  // ADR-0113 D7: the chat approval preview carries the confirmation reference line only while the UI is serving.
+  const decisions = approvalHandling(input.app)?.decisions;
+  decisions?.setConfirmationReferenceEnabled(true);
+  return {
+    port: started.port,
+    stop: async () => {
+      decisions?.setConfirmationReferenceEnabled(false);
+      await server.stop();
+    },
+  };
 }

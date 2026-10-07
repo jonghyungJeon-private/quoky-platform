@@ -2,7 +2,7 @@ import type {
   ConversationContext,
   Id,
   NotificationDeliveryOutcome,
-  ReminderBodyKind,
+  OwnerNotificationKind,
 } from '../domain';
 
 /**
@@ -10,7 +10,8 @@ import type {
  *
  * Domain types only; `PlatformAdapter` and its fakes are unchanged. The adapter owns the owner-only outbound
  * gate (rechecked at delivery time), the delivery target (owner DM by default; the originating allowlisted
- * channel only under the `QUOKY_REMINDERS_CHANNEL_DELIVERY` opt-in; `BRIEF` always DM-only), mention policy and
+ * channel only under the `QUOKY_REMINDERS_CHANNEL_DELIVERY` opt-in, `TEXT` only; `BRIEF` and ADR-0113's
+ * `OPS_DECISION_RESULT` are always DM-only), mention policy and
  * outcome classification. `deliver` never throws for a delivery failure: it classifies it.
  */
 
@@ -19,7 +20,7 @@ export interface OwnerNotification {
   correlationId: Id;
   /** The originating conversation; its `userId` is the owner the notification is addressed to. */
   target: ConversationContext;
-  kind: ReminderBodyKind;
+  kind: OwnerNotificationKind;
   /** Plain, already-composed text (≤ `REMINDER_LIMITS.maxDeliveredTextChars`). */
   text: string;
 }

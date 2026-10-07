@@ -103,7 +103,7 @@ export interface OpsSnapshotSources {
   /** Archived memory records of the owner (ADR-0106 amendment); a count only, never content. */
   readonly archivedMemoryCount?: (actorId: Id) => Promise<{ readonly count: number; readonly capped: boolean }>;
   /** OPS-2 (ADR-0113 D7): which handling actions are wired; their links appear only for a resolved owner. */
-  readonly handling?: { readonly reminderCancel: boolean; readonly memoryForget: boolean };
+  readonly handling?: { readonly reminderCancel: boolean; readonly memoryForget: boolean; readonly approvals?: boolean };
 }
 
 type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes' | 'links'>;
@@ -293,14 +293,24 @@ export class OpsSnapshotBuilder {
         expired ? 'PENDING (만료됨, 다음 대화에서 기록)' : 'PENDING',
       ];
     });
-    const notes = ['내용(미리보기, diff, 대상, 설명)은 표시하지 않아요. 승인과 거절은 채팅에서 해요 (운영 화면 승인/거절은 OPS-2b).'];
+    const decidable = this.sources.handling?.approvals === true;
+    const notes = decidable
+      ? [
+          '내용(미리보기, diff, 대상, 설명)은 표시하지 않아요. 거절은 여기서도 되고, 승인은 채팅 미리보기의 "운영 화면 확인 코드"가 있어야 해요.',
+          '승인은 기록만 해요. 실제 실행(커밋, 푸시, PR, 머지, 게시 등)은 채팅의 실행 문구로만 해요.',
+        ]
+      : ['내용(미리보기, diff, 대상, 설명)은 표시하지 않아요. 승인과 거절은 채팅에서 해요.'];
     if (pending.length > rows.length) notes.push(`외 ${pending.length - rows.length}건은 생략했어요.`);
+    const rowLinks = decidable
+      ? pending.slice(0, OPS_MAX_TABLE_ROWS).map((approval) => ({ label: '처리…', href: `/approvals/decide?id=${encodeURIComponent(approval.id)}` }))
+      : undefined;
     return {
       fields: [],
       table: {
         columns: ['ID', '위험도', '작업 종류', '생성', '만료', '상태'],
         rows,
         emptyText: '대기 중인 승인이 없어요.',
+        ...(rowLinks === undefined ? {} : { rowLinks }),
       },
       notes,
     };
