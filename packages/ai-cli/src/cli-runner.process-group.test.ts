@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createContainedCliRunner } from './cli-runner';
+import { createContainedCliRunner, trackedProcessGroups } from './cli-runner';
+import type { ProcessGroupKill } from './cli-runner';
 
 /**
  * Codex review P2 (timeout escalation): a CLI wrapper whose native child survives SIGKILL of the wrapper and keeps the
@@ -89,7 +90,8 @@ describe('contained runner — process-group termination and bounded settle', ()
     expect(h.spawnOptions?.detached).toBe(true);
     expect(result).toMatchObject({ code: null, timedOut: true });
     // SIGTERM then SIGKILL, each to the group (negative-pid semantics live in the default kill function).
-    expect(h.groupSignals).toEqual([[4242, 'SIGTERM'], [4242, 'SIGKILL']]);
+    // Signal 0 is the existence probe before the group SIGKILL.
+    expect(h.groupSignals).toEqual([[4242, 'SIGTERM'], [4242, 0], [4242, 'SIGKILL']]);
     expect(h.child?.signals).toEqual([]); // the group signal succeeded, so no per-child fallback
     // Settled although `close` never fired: streams destroyed, temp dir removed exactly once.
     expect(h.child?.stdout.destroyed).toBe(true);
@@ -104,7 +106,7 @@ describe('contained runner — process-group termination and bounded settle', ()
     const { h, runner } = harness({ processGroup: true, pid: 4242, groupKillThrows: true });
     const result = await runner('codex', [], { cwd: tmpdir(), input: 'prompt', timeoutMs: 20 });
     expect(result.timedOut).toBe(true);
-    expect(h.groupSignals.map(([, signal]) => signal)).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(h.groupSignals.map(([, signal]) => signal)).toEqual(['SIGTERM', 0, 'SIGKILL']);
     expect(h.child?.signals).toEqual(['SIGTERM', 'SIGKILL']);
     expect(h.removed).toEqual(h.created);
   });
@@ -127,7 +129,7 @@ describe('contained runner — process-group termination and bounded settle', ()
     const result = await pending;
     expect(result).toMatchObject({ code: null, timedOut: false, stdout: '' });
     expect(result.stderr).toBe('Provider process exceeded the stdout capture limit.');
-    expect(h.groupSignals).toEqual([[77, 'SIGTERM'], [77, 'SIGKILL']]);
+    expect(h.groupSignals).toEqual([[77, 'SIGTERM'], [77, 0], [77, 'SIGKILL']]);
     expect(h.removed).toEqual(h.created);
   });
 });
@@ -202,5 +204,62 @@ describe.runIf(posix)('contained runner — real wrapper with a SIGTERM-ignoring
     } finally {
       rmSync(box, { recursive: true, force: true });
     }
+  });
+});
+
+describe.runIf(posix)('contained runner — the wrapper exits on SIGTERM before its group is gone (Codex re-review P2)', () => {
+  // The wrapper does NOT ignore SIGTERM, so it exits at once and `close` arrives (the grandchild has its own stdio).
+  // The grandchild ignores SIGTERM. Group termination must still SIGKILL the group after the grace period.
+  const script = (pidFile: string) =>
+    `(trap '' TERM; exec sleep 30) </dev/null >/dev/null 2>&1 & echo $! > '${pidFile}'; wait`;
+
+  it('SIGKILLs the group after the grace period even though close came first, and tracks it until then', async () => {
+    const box = mkdtempSync(join(realpathSync(tmpdir()), 'quoky-pg-close-'));
+    const pidFile = join(box, 'grandchild.pid');
+    const sent: Array<[number, NodeJS.Signals | 0]> = [];
+    const realGroupKill: ProcessGroupKill = (pid, signal) => {
+      sent.push([pid, signal]);
+      process.kill(-pid, signal);
+    };
+    const graceMs = 300;
+    const runner = createContainedCliRunner({ killGraceMs: graceMs, processGroup: true, killProcessGroup: realGroupKill });
+    try {
+      const resultPromise = runner('/bin/sh', ['-c', script(pidFile)], { cwd: box, input: '', timeoutMs: 300 });
+      expect(await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '', 2_000)).toBe(true);
+      const grandchild = Number(readFileSync(pidFile, 'utf8').trim());
+      strayPids.push(grandchild);
+
+      const result = await resultPromise;
+      const settledAt = Date.now();
+      expect(result).toMatchObject({ code: null, timedOut: true });
+      const groupPid = sent[0]?.[0];
+      expect(sent[0]).toEqual([groupPid, 'SIGTERM']);
+      // Settled at the wrapper's close, inside the grace period: no SIGKILL yet, the grandchild is still alive and the
+      // group is still tracked for the exit hook.
+      expect(sent.some(([, signal]) => signal === 'SIGKILL')).toBe(false);
+      expect(alive(grandchild)).toBe(true);
+      expect(trackedProcessGroups()).toContain(groupPid);
+
+      // After the grace period the group was probed and SIGKILLed, the grandchild is dead and the group untracked.
+      expect(await waitUntil(() => !alive(grandchild), graceMs + 2_000)).toBe(true);
+      expect(Date.now() - settledAt).toBeLessThan(graceMs + 2_000);
+      expect(sent).toContainEqual([groupPid, 0]);
+      expect(sent).toContainEqual([groupPid, 'SIGKILL']);
+      expect(trackedProcessGroups()).not.toContain(groupPid);
+    } finally {
+      rmSync(box, { recursive: true, force: true });
+    }
+  });
+
+  it('a normal exit kills nothing and drops the group from tracking', async () => {
+    const sent: Array<NodeJS.Signals | 0> = [];
+    const runner = createContainedCliRunner({
+      processGroup: true,
+      killProcessGroup: (pid, signal) => { sent.push(signal); process.kill(-pid, signal); },
+    });
+    const result = await runner('/bin/sh', ['-c', 'echo ok'], { cwd: tmpdir(), input: '', timeoutMs: 5_000 });
+    expect(result).toMatchObject({ code: 0, timedOut: false, stdout: 'ok\n' });
+    expect(sent).toEqual([]);
+    expect(trackedProcessGroups()).toEqual([]);
   });
 });

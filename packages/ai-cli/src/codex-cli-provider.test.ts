@@ -437,7 +437,7 @@ describe('CodexCliProvider — failures', () => {
   it('a wrapper whose native child ignores SIGTERM and holds the pipes still settles as TIMEOUT (Codex P2)', async () => {
     const stream = () => Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } });
     let child: (EventEmitter & { pid: number; stdout: ReturnType<typeof stream>; stderr: ReturnType<typeof stream> }) | undefined;
-    const groupSignals: string[] = [];
+    const groupSignals: Array<string | 0> = [];
     let spawnCwd = '';
     const runner = createContainedCliRunner({
       killGraceMs: 20,
@@ -454,7 +454,7 @@ describe('CodexCliProvider — failures', () => {
     await expect(codex.execute({ capability: Capability.GENERAL_CHAT, prompt: PROMPT })).rejects.toMatchObject({
       kind: AiFailureKind.TIMEOUT,
     });
-    expect(groupSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(groupSignals).toEqual(['SIGTERM', 0, 'SIGKILL']); // 0 = the group existence probe
     expect(child?.stdout.destroyed).toBe(true);
     expect(spawnCwd).toContain(CODEX_CWD_PREFIX);
     expect(existsSync(spawnCwd)).toBe(false);

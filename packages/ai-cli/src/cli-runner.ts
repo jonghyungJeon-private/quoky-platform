@@ -212,8 +212,11 @@ export interface ContainmentSnapshot {
   readonly cleanupAttempts: number;
 }
 
-/** Signals a whole process group (`process.kill(-pid, signal)` in production). */
-export type ProcessGroupKill = (pid: number, signal: NodeJS.Signals) => void;
+/**
+ * Signals a whole process group (`process.kill(-pid, signal)` in production). Signal `0` is the existence probe: it
+ * throws an error with code `ESRCH` once no process of the group is left.
+ */
+export type ProcessGroupKill = (pid: number, signal: NodeJS.Signals | 0) => void;
 
 /** Test seams. Production always uses the real defaults; no behaviour branches on them. */
 export interface ContainedRunnerHooks {
@@ -254,6 +257,11 @@ const defaultKillProcessGroup: ProcessGroupKill = (pid, signal) => {
 const liveProcessGroups = new Map<number, ProcessGroupKill>();
 let exitHookInstalled = false;
 
+/** Diagnostics for tests: the process groups currently kept for the exit hook. */
+export function trackedProcessGroups(): readonly number[] {
+  return [...liveProcessGroups.keys()];
+}
+
 function trackProcessGroup(pid: number, kill: ProcessGroupKill): void {
   liveProcessGroups.set(pid, kill);
   if (exitHookInstalled) return;
@@ -285,7 +293,11 @@ function trackProcessGroup(pid: number, kill: ProcessGroupKill): void {
  *    the child is stopped once (SIGTERM → grace → SIGKILL), and the run fails closed.
  *  - **Process-group termination.** Outside Windows the child leads its own process group, and every termination
  *    signal goes to the whole group, so a CLI wrapper's native grandchild (the Codex Node wrapper forwards SIGTERM
- *    but not SIGKILL) cannot outlive the call. A group signal that fails falls back to the child itself.
+ *    but not SIGKILL) cannot outlive the call. A group signal that fails falls back to the child itself. Once
+ *    termination has started, the group is SIGKILLed after the grace period unless a probe confirms it is gone —
+ *    even when the wrapper itself exits on SIGTERM and `close` arrives first — and it stays in exit-hook tracking
+ *    until then. A normal (unterminated) exit kills nothing; a descendant left behind by a CLI that exited normally is
+ *    out of scope.
  *  - **Bounded settle.** If `close` still has not been observed one grace period after SIGKILL (a descendant keeps the
  *    pipes open), the runner destroys the child's stdio streams, settles (a timeout stays `timedOut`) and cleans up,
  *    so a call can never stay pending.
@@ -381,6 +393,9 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
       let abandonTimer: TimerHandle | undefined;
       let child: ChildProcess | undefined;
       let groupPid: number | undefined;
+      /** Group termination started (SIGTERM sent to the group); it then runs to completion via `reapGroup`. */
+      let groupTerminationStarted = false;
+      let groupReaped = false;
 
       /**
        * Any condition that makes this run a containment failure. Once true, no further
@@ -415,7 +430,8 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         if (finalized) return;
         finalized = true;
         clearTimers();
-        if (groupPid !== undefined) liveProcessGroups.delete(groupPid);
+        // A group whose termination started stays tracked until `reapGroup` confirms or forces it gone.
+        if (groupPid !== undefined && !groupTerminationStarted) liveProcessGroups.delete(groupPid);
         child?.stdout?.removeAllListeners();
         child?.stderr?.removeAllListeners();
         child?.stdin?.removeAllListeners();
@@ -488,11 +504,6 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         resolve(result);
       };
 
-      /**
-       * Requests termination at most once: SIGTERM, then SIGKILL after the grace
-       * period. Disarmed the instant `close` is observed, so no signal is ever sent
-       * to an already-exited child (and a late grace callback is a no-op).
-       */
       /** Signal the child's whole process group when it leads one; otherwise (or if that fails) the child itself. */
       const signalChild = (signal: NodeJS.Signals): void => {
         if (groupPid !== undefined) {
@@ -510,16 +521,58 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         }
       };
 
+      /**
+       * Completes a started group termination exactly once, independent of `close` and of the run having settled:
+       * probe the group (`signal 0`); unless it is confirmed gone (`ESRCH`), SIGKILL the whole group (falling back to
+       * the child). Then drop it from exit-hook tracking.
+       */
+      const reapGroup = (): void => {
+        if (groupPid === undefined || groupReaped) return;
+        groupReaped = true;
+        let gone = false;
+        try {
+          killProcessGroup(groupPid, 0);
+        } catch (error) {
+          gone = (error as NodeJS.ErrnoException | undefined)?.code === 'ESRCH';
+        }
+        if (!gone) {
+          try {
+            killProcessGroup(groupPid, 'SIGKILL');
+          } catch {
+            try {
+              child?.kill('SIGKILL');
+            } catch {
+              /* already gone */
+            }
+          }
+        }
+        liveProcessGroups.delete(groupPid);
+      };
+
+      /**
+       * Requests termination at most once: SIGTERM, then SIGKILL after the grace period. Without a process group the
+       * per-child escalation is disarmed the instant `close` is observed, so no signal is sent to an already-exited
+       * child. With a group, the group SIGKILL (`reapGroup`) still runs after the grace period unless the group is
+       * confirmed gone, because descendants can outlive the wrapper's `close`.
+       */
       const requestTermination = (): void => {
         if (killRequested || closeObserved || !child) return;
         killRequested = true;
         terminationRequests += 1;
         signalChild('SIGTERM');
+        if (groupPid !== undefined) {
+          groupTerminationStarted = true;
+          // Its own timer, never cleared by `close` or settling: the wrapper exiting on SIGTERM must not cancel the
+          // group SIGKILL while a descendant that ignores SIGTERM is still alive.
+          const reaper = timers.setTimeout(reapGroup, killGraceMs);
+          reaper.unref?.();
+        }
         forceKillTimer = timers.setTimeout(() => {
           // A late or repeated grace callback must never signal again.
           if (closeObserved || settled || killEscalated) return;
           killEscalated = true;
-          signalChild('SIGKILL');
+          if (groupPid !== undefined) reapGroup();
+          else signalChild('SIGKILL');
           // Bounded settle: a descendant that survived (or ignored) the signals may still hold the inherited pipes, so
           // `close` might never come. One more grace period, then stop waiting for it.
           abandonTimer = timers.setTimeout(() => {

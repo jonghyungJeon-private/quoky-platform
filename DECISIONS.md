@@ -14579,7 +14579,11 @@ reconciliation with ADR-0064/ADR-0090 routing.
 - **Termination (Codex review P2 on d63421c, generic `cli-runner` change for every CLI provider).** Outside Windows the
   runner spawns each provider child as the leader of its own process group and sends SIGTERM, then SIGKILL after the
   grace period, to the whole group, so the native binary behind the `codex` Node wrapper (which forwards SIGTERM but
-  not SIGKILL) is killed with it; a failed group signal falls back to the child. If `close` still has not arrived one
+  not SIGKILL) is killed with it; a failed group signal falls back to the child. Once started, group termination runs
+  to completion: after the grace period the group is SIGKILLed unless a `signal 0` probe confirms it is gone (`ESRCH`),
+  even when the wrapper exited on SIGTERM and `close` came first, and the group stays in exit-hook tracking until then
+  (Codex re-review P2 on 9cea73a). A normal, unterminated exit kills nothing; a descendant a CLI leaves behind after
+  exiting normally is out of scope. If `close` still has not arrived one
   grace period after SIGKILL (a descendant holding the pipes), the runner destroys the stdio streams, settles (a
   timeout stays `TIMEOUT`) and cleans up, temp directories included, so a call can never stay pending. Side effect:
   provider children no longer receive the signals sent to Quoky's own process group (a terminal Ctrl-C, launchd
