@@ -4,7 +4,7 @@ import { ApprovalStatus, Capability, IntentType, RiskLevel, TaskStatus } from '.
 import type { ApprovalRequest, Id, Session, Task } from '../domain';
 import type { ApprovalFlow } from './conversation-runtime';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
-import { saveSessionFields } from './session-live-save';
+import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from './session-write-lock';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ApprovalFlowStore {
@@ -31,7 +31,11 @@ interface ExecutionAnchor {
  * that back to reconstruct a resumable context. No new aggregate/repository/migration.
  */
 export class StatelessApprovalFlow implements ApprovalFlow {
-  constructor(private readonly store: ApprovalFlowStore) {}
+  /** Session pointer writes run under the shared session write lock (ADR-0113 D7). */
+  constructor(
+    private readonly store: ApprovalFlowStore,
+    private readonly sessionLock: SessionWriteLock = SESSION_WRITE_LOCK,
+  ) {}
 
   async findPending(session: Session): Promise<ApprovalRequest | null> {
     if (!session.activeTaskId) return null;
@@ -41,7 +45,7 @@ export class StatelessApprovalFlow implements ApprovalFlow {
     return requests.find((r) => r.status === ApprovalStatus.PENDING) ?? null;
   }
 
-  async anchor(session: Session, request: ExecutionRequest, outcome: ExecutionOutcome): Promise<void> {
+  async anchor(session: Session, request: ExecutionRequest, outcome: ExecutionOutcome, held?: SessionLockHold): Promise<void> {
     const planId = outcome.refs.executionPlanRef?.id;
     if (!planId) return; // nothing to correlate; skip anchoring
     const ts = now();
@@ -70,7 +74,7 @@ export class StatelessApprovalFlow implements ApprovalFlow {
     };
     await this.store.tasks.save(task);
     // `activeTaskId` is a legitimate Session lifecycle pointer — NOT a runtime snapshot (ADR-0032).
-    await saveSessionFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts });
+    await this.sessionLock.saveFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts }, held);
   }
 
   async reconstructResume(

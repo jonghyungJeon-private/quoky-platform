@@ -193,6 +193,7 @@ import {
   MAX_CODEGEN_CONTEXT_TOTAL_BYTES,
   readCodeGenerationContextFiles,
 } from './code-generation-context';
+import type { SessionLockHold } from './session-write-lock';
 import {
   type CredentialOverrideAnchor,
   type CredentialOverrideDispatchAuthorization,
@@ -281,7 +282,7 @@ export interface ApprovalFlow {
    * Anchor an awaiting-approval execution to the session's in-focus Task (existing fields only), so
    * a later turn can find + resume it. Persists what {@link reconstructResume} needs.
    */
-  anchor(session: Session, request: ExecutionRequest, outcome: ExecutionOutcome): Promise<void>;
+  anchor(session: Session, request: ExecutionRequest, outcome: ExecutionOutcome, held?: SessionLockHold): Promise<void>;
   /** Reconstruct the `{request, prior}` needed to resume, from anchored/derived state (null if unavailable). */
   reconstructResume(
     session: Session,
@@ -327,15 +328,15 @@ export interface PendingScopeClarification {
  */
 export interface ScopeClarificationFlow {
   /** Derive the session's pending clarification, if any and still valid (project unchanged). */
-  findPending(session: Session): Promise<PendingScopeClarification | null>;
+  findPending(session: Session, held?: SessionLockHold): Promise<PendingScopeClarification | null>;
   /** Anchor a fresh insufficient-scope request so the next turn can recover it. Callers must only
    *  invoke this after confirming an active project exists, the workspace opened successfully, and
    *  no target validated. */
-  anchor(session: Session, pending: PendingScopeClarification): Promise<void>;
+  anchor(session: Session, pending: PendingScopeClarification, held?: SessionLockHold): Promise<void>;
   /** Consume/clear the anchor — called unconditionally once a pending clarification is checked
    *  (next-turn-only semantics). Safe: a no-op unless `session.activeTaskId` still points at THIS
    *  flow's own anchor Task — it must never clear an approval anchor. */
-  clear(session: Session): Promise<void>;
+  clear(session: Session, held?: SessionLockHold): Promise<void>;
 }
 
 /**
@@ -669,20 +670,20 @@ export interface ApplyPreviewFlow {
   /** Derive the session's apply-preview anchor, if any and still valid (project unchanged). A returned
    *  anchor is not always "pending" anything — it may be `ELIGIBLE` or already `APPROVED`; callers
    *  branch on `.status`. */
-  findAnchor(session: Session): Promise<ApplyPreviewAnchor | null>;
+  findAnchor(session: Session, held?: SessionLockHold): Promise<ApplyPreviewAnchor | null>;
   /** Anchor (or re-anchor, on every status transition) the apply-preview fact set. Always creates a
    *  fresh Task and re-points `session.activeTaskId` — same shape as the other two flows. */
-  anchor(session: Session, anchor: ApplyPreviewAnchor): Promise<void>;
+  anchor(session: Session, anchor: ApplyPreviewAnchor, held?: SessionLockHold): Promise<void>;
   /** Consume/clear the anchor — called only on deny/cancel (approving re-anchors as `APPROVED` instead).
    *  A no-op unless `session.activeTaskId` still points at THIS flow's own anchor Task. */
-  clear(session: Session): Promise<void>;
+  clear(session: Session, held?: SessionLockHold): Promise<void>;
   /**
    * Conditional clear (QA-V2-CL-03 preview discard): re-read the LIVE session from storage (never trust the turn's
    * possibly stale copy) and clear only while its current anchor is still the expected one — same code generation
    * (`codeGenerationRef.id`) and same `status`. Returns whether it cleared. Optional: a flow without it makes the
    * caller fail closed (nothing cleared).
    */
-  clearIfCurrent?(session: Session, expected: ApplyPreviewAnchorIdentity): Promise<boolean>;
+  clearIfCurrent?(session: Session, expected: ApplyPreviewAnchorIdentity, held?: SessionLockHold): Promise<boolean>;
 }
 
 /** Identifies one apply-preview anchor state for {@link ApplyPreviewFlow.clearIfCurrent}. */
@@ -696,9 +697,10 @@ export interface ConversationRuntimeDeps {
   readonly actors: { resolveFromContext(context: ConversationContext): Promise<Actor> };
   readonly sessions: {
     openForContext(context: ConversationContext, actorId: Id): Promise<Session>;
-    touch(session: Session): Promise<Session>;
+    /** `held`: a caller already holding the session write lock passes its hold (ADR-0113 D7). */
+    touch(session: Session, held?: SessionLockHold): Promise<Session>;
     /** Close the session on a reset (ADR-0093) — `SessionManager.close`, saved as `SessionStatus.CLOSED`. */
-    close(session: Session): Promise<Session>;
+    close(session: Session, held?: SessionLockHold): Promise<Session>;
   };
   readonly memory: {
     recordShortTerm(message: InboundMessage, sessionId?: Id): Promise<{ id: Id }>;
@@ -2016,10 +2018,9 @@ export class ConversationRuntime {
   private async handleInner(message: InboundMessage): Promise<TurnResult> {
     const actor = await this.deps.actors.resolveFromContext(message.context);
     let session = await this.deps.sessions.openForContext(message.context, actor.id);
-    // ADR-0113 D7: the activity touch is field-scoped on the live row and runs under the session lock, so this turn's
-    // snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched live copy.
-    const opened = session;
-    session = (await this.approvalDecisions.withSessionLock(opened.id, () => this.deps.sessions.touch(opened))) ?? opened;
+    // ADR-0113 D7: the activity touch runs under the shared session write lock, field-scoped on the live row, so this
+    // turn's snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched copy.
+    session = (await this.deps.sessions.touch(session)) ?? session;
 
     // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
     // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the

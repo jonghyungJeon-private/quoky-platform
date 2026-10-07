@@ -3,7 +3,7 @@ import { now } from '../util/clock';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { Id, Session, Task } from '../domain';
 import type { PendingScopeClarification, ScopeClarificationFlow } from './conversation-runtime';
-import { releaseSessionPointer, saveSessionFields } from './session-live-save';
+import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from './session-write-lock';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ScopeClarificationFlowStore {
@@ -24,7 +24,11 @@ const ANCHOR_DISCRIMINATOR = 'code-scope-clarification' as const;
  * transitioned past `TaskStatus.PENDING`.
  */
 export class StatelessScopeClarificationFlow implements ScopeClarificationFlow {
-  constructor(private readonly store: ScopeClarificationFlowStore) {}
+  /** Session pointer writes run under the shared session write lock (ADR-0113 D7). */
+  constructor(
+    private readonly store: ScopeClarificationFlowStore,
+    private readonly sessionLock: SessionWriteLock = SESSION_WRITE_LOCK,
+  ) {}
 
   /**
    * The anchor Task for this session, ONLY if it is genuinely a scope-clarification anchor — never
@@ -42,19 +46,19 @@ export class StatelessScopeClarificationFlow implements ScopeClarificationFlow {
     return { task, pending };
   }
 
-  async findPending(session: Session): Promise<PendingScopeClarification | null> {
+  async findPending(session: Session, held?: SessionLockHold): Promise<PendingScopeClarification | null> {
     const found = await this.anchorTask(session);
     if (!found) return null;
     // Q5: active project changed since anchor time — the anchor no longer applies to the workspace
     // it was validated against. Safe to auto-clear: anchorTask() already proved this IS our anchor.
     if (found.pending.projectId !== session.activeProjectId) {
-      await this.clear(session);
+      await this.clear(session, held);
       return null;
     }
     return found.pending;
   }
 
-  async anchor(session: Session, pending: PendingScopeClarification): Promise<void> {
+  async anchor(session: Session, pending: PendingScopeClarification, held?: SessionLockHold): Promise<void> {
     const ts = now();
     const task: Task = {
       id: newId(),
@@ -79,15 +83,15 @@ export class StatelessScopeClarificationFlow implements ScopeClarificationFlow {
       metadata: { [ANCHOR_KEY]: pending },
     };
     await this.store.tasks.save(task);
-    await saveSessionFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts });
+    await this.sessionLock.saveFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts }, held);
   }
 
-  async clear(session: Session): Promise<void> {
+  async clear(session: Session, held?: SessionLockHold): Promise<void> {
     // Never clear activeTaskId unless it still points at OUR anchor — an approval anchor (or
     // anything else) sharing the same pointer slot must be left untouched.
     const found = await this.anchorTask(session);
     if (!found) return;
     // Only while the LIVE pointer is still this anchor (ADR-0113 D7): a stale copy never releases a newer pointer.
-    await releaseSessionPointer(this.store.sessions, session, found.task.id, { lastActivityAt: now() });
+    await this.sessionLock.releasePointer(this.store.sessions, session, found.task.id, { lastActivityAt: now() }, held);
   }
 }

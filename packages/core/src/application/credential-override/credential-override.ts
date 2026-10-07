@@ -9,6 +9,7 @@ import {
 } from '../code-generation-context';
 import { PENDING_APPROVAL_TTL_MS, pendingApprovalRemainingMs } from '../conversation-commands';
 import type { ExecutionOutcome, ExecutionRequest } from '../execution-orchestrator';
+import type { SessionLockHold } from '../session-write-lock';
 
 /**
  * Owner one-time, hash-bound CRITICAL override for credential-guard refusals in the code-change preview
@@ -572,6 +573,10 @@ export interface CredentialOverrideDispatchAuthorization {
  * content reads and after the consume save; the TTL is re-checked synchronously right before `dispatch` runs. The
  * flow writes the session pointer only, onto a freshly re-read session, never a caller's stale copy.
  *
+ * `held` (ADR-0113 D7): every method that writes the session takes the shared session write lock BEFORE its own
+ * anchor queue (lock order approval → session → anchor); a caller already holding that lock passes its hold.
+ * `consumeAndDispatch` must never be called while holding it (its dispatch runs outside every lock).
+ *
  * Wiring obligations (OVR-4):
  * - Before anchoring any NEWER request on the session pointer (e.g. `StatelessApprovalFlow.anchor`, which
  *   overwrites `activeTaskId`), call `clear()` so a live older set is written `INVALIDATED{superseded}` (D7
@@ -586,15 +591,16 @@ export interface CredentialOverrideDispatchAuthorization {
  */
 export interface CredentialOverrideFlow {
   /** Reconstruct the session's override anchor (restart-safe; invalidates and releases a no-longer-valid set). */
-  findPending(session: Session): Promise<CredentialOverrideLookup | null>;
+  findPending(session: Session, held?: SessionLockHold): Promise<CredentialOverrideLookup | null>;
   /** Create the CRITICAL ApprovalRequest via `requestForRisk` and anchor (or extend) the request's grant set. */
   requestOverride(
     session: Session,
     input: CredentialOverrideRequestInput,
     approvals: CredentialOverrideApprovalRequester,
+    held?: SessionLockHold,
   ): Promise<CredentialOverrideRequestResult>;
   /** After `ApprovalManager.decide(approved)`: mark the PENDING grant of `approvalId` GRANTED (re-verified). */
-  recordGrant(session: Session, approvalId: Id): Promise<CredentialOverrideGrantResult>;
+  recordGrant(session: Session, approvalId: Id, held?: SessionLockHold): Promise<CredentialOverrideGrantResult>;
   /**
    * Revalidate every grant, consume the whole set in one anchor save, release the session pointer, then run
    * `dispatch` (the single `generate()`) with the consumed grants and their {@link CredentialOverrideDispatchAuthorization},
@@ -617,7 +623,8 @@ export interface CredentialOverrideFlow {
     session: Session,
     reason: CredentialOverrideInvalidationReason,
     invalidatedBy: string,
+    held?: SessionLockHold,
   ): Promise<CredentialOverrideInvalidationResult | null>;
   /** Release the pointer if it is ours; an unconsumed set is invalidated `superseded` first. */
-  clear(session: Session): Promise<void>;
+  clear(session: Session, held?: SessionLockHold): Promise<void>;
 }

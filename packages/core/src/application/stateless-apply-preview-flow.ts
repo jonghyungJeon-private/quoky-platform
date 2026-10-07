@@ -3,7 +3,7 @@ import { now } from '../util/clock';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { Id, Session, Task } from '../domain';
 import type { ApplyPreviewAnchor, ApplyPreviewAnchorIdentity, ApplyPreviewFlow } from './conversation-runtime';
-import { releaseSessionPointer, saveSessionFields } from './session-live-save';
+import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from './session-write-lock';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ApplyPreviewFlowStore {
@@ -25,7 +25,11 @@ const ANCHOR_DISCRIMINATOR = 'code-preview-apply' as const;
  * for the first (preview) one it is actually tracking.
  */
 export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
-  constructor(private readonly store: ApplyPreviewFlowStore) {}
+  /** Session pointer writes run under the shared session write lock (ADR-0113 D7). */
+  constructor(
+    private readonly store: ApplyPreviewFlowStore,
+    private readonly sessionLock: SessionWriteLock = SESSION_WRITE_LOCK,
+  ) {}
 
   /**
    * The anchor Task for this session, ONLY if it is genuinely an apply-preview anchor — never an
@@ -41,19 +45,19 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
     return { task, anchor };
   }
 
-  async findAnchor(session: Session): Promise<ApplyPreviewAnchor | null> {
+  async findAnchor(session: Session, held?: SessionLockHold): Promise<ApplyPreviewAnchor | null> {
     const found = await this.anchorTask(session);
     if (!found) return null;
     // Active project changed since anchor time — none of the three states remain valid against a
     // workspace validated for a different project. Safe to auto-clear.
     if (found.anchor.projectId !== session.activeProjectId) {
-      await this.clear(session);
+      await this.clear(session, held);
       return null;
     }
     return found.anchor;
   }
 
-  async anchor(session: Session, anchor: ApplyPreviewAnchor): Promise<void> {
+  async anchor(session: Session, anchor: ApplyPreviewAnchor, held?: SessionLockHold): Promise<void> {
     const ts = now();
     const task: Task = {
       id: newId(),
@@ -85,8 +89,9 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
       metadata: { [ANCHOR_KEY]: anchor },
     };
     await this.store.tasks.save(task);
-    // Field-scoped on the live row: only the pointer this flow owns (a stale copy never restores a closed session).
-    await saveSessionFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts });
+    // Under the session write lock, field-scoped on the live row: only the pointer this flow owns (a stale copy never
+    // restores a closed session or an older pointer's neighbours).
+    await this.sessionLock.saveFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts }, held);
   }
 
   /**
@@ -95,27 +100,35 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
    * its current anchor is our discriminated anchor for the same code generation, in the same status and the same
    * project. The save is built from the live session, never the stale one. Returns whether it cleared.
    */
-  async clearIfCurrent(session: Session, expected: ApplyPreviewAnchorIdentity): Promise<boolean> {
-    if (!this.store.sessions.get) return false;
-    const live = await this.store.sessions.get(session.id);
-    if (!live) return false;
-    const found = await this.anchorTask(live);
-    if (!found) return false;
-    const { anchor } = found;
-    if (anchor.status !== expected.status) return false;
-    if (anchor.codeGenerationRef?.id !== expected.codeGenerationId) return false;
-    if (anchor.projectId !== live.activeProjectId) return false;
-    await this.store.sessions.save({ ...live, activeTaskId: undefined, lastActivityAt: now() });
-    return true;
+  async clearIfCurrent(session: Session, expected: ApplyPreviewAnchorIdentity, held?: SessionLockHold): Promise<boolean> {
+    const get = this.store.sessions.get?.bind(this.store.sessions);
+    if (!get) return false;
+    // The check and the release run in ONE critical section of the session write lock (ADR-0113 D7).
+    return this.sessionLock.run(
+      session.id,
+      async () => {
+        const live = await get(session.id);
+        if (!live) return false;
+        const found = await this.anchorTask(live);
+        if (!found) return false;
+        const { anchor } = found;
+        if (anchor.status !== expected.status) return false;
+        if (anchor.codeGenerationRef?.id !== expected.codeGenerationId) return false;
+        if (anchor.projectId !== live.activeProjectId) return false;
+        await this.store.sessions.save({ ...live, activeTaskId: undefined, lastActivityAt: now() });
+        return true;
+      },
+      held,
+    );
   }
 
-  async clear(session: Session): Promise<void> {
+  async clear(session: Session, held?: SessionLockHold): Promise<void> {
     // Never clear activeTaskId unless it still points at OUR anchor — an approval anchor (or
     // anything else) sharing the same pointer slot must be left untouched.
     const found = await this.anchorTask(session);
     if (!found) return;
     // Only while the LIVE pointer is still the anchor found: a gate re-anchored meanwhile (e.g. approved from the
     // operations UI onto a fresh anchor Task) is never released by a stale copy.
-    await releaseSessionPointer(this.store.sessions, session, found.task.id, { lastActivityAt: now() });
+    await this.sessionLock.releasePointer(this.store.sessions, session, found.task.id, { lastActivityAt: now() }, held);
   }
 }

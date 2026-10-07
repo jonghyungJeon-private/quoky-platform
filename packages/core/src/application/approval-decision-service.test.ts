@@ -719,3 +719,103 @@ describe('a chat turn\'s stale session snapshot never overwrites a UI decision (
     expect((await manager.touch(stale)).status).toBe(SessionStatus.CLOSED);
   });
 });
+
+describe('every session write goes through the one shared session write lock (ADR-0113 D7, Codex P2 round 3)', () => {
+  /** Hold the store's NEXT `sessions.save` (the in-flight writer has already read the row it is about to save). */
+  function holdNextSessionSave(store: Store) {
+    const g = gate();
+    const state = { held: false };
+    const save = store.sessions.save;
+    store.sessions.save = async (session: Session) => {
+      if (!state.held) {
+        state.held = true;
+        store.sessions.save = save;
+        await g.promise;
+      }
+      return save(session);
+    };
+    return { ...g, state };
+  }
+
+  it('(a) a project re-registration paused at its save cannot restore the PENDING pointer over a UI approval', async () => {
+    const f = await fixture();
+    const reference = await chatReference(f);
+    const stale = (await f.store.sessions.get(SESSION_ID))!; // the registration's snapshot: COMMIT_APPROVAL_PENDING
+    const sessions = new SessionManager(f.store as never);
+    // 1) The re-registration of the same project reads the live row and is held right before its save.
+    const held = holdNextSessionSave(f.store);
+    const registration = sessions.setActiveProject(stale, PROJECT_ID);
+    await settle();
+    expect(held.state.held).toBe(true);
+    // 2) The UI approves meanwhile.
+    const ui = decideUi(f, 'approve', reference);
+    await settle();
+    // 3) The registration resumes.
+    held.open();
+    const [, uiResult] = await Promise.all([registration, ui]);
+
+    expect(uiResult).toMatchObject({ status: 'DECIDED', outcome: 'APPROVED' });
+    expect(f.decides).toBe(1);
+    const live = (await f.store.sessions.get(SESSION_ID))!;
+    expect(live.activeProjectId).toBe(PROJECT_ID);
+    expect(live.activeTaskId).not.toBe(stale.activeTaskId);
+    expect((await liveAnchor(f))?.status).toBe('COMMIT_APPROVED');
+  });
+
+  it('(b) concurrent field saves from one stale snapshot on different fields all survive', async () => {
+    const memory = memoryStore();
+    // A row read that takes a real tick, as a storage round-trip does: every unserialized writer would read the same
+    // snapshot before any of them saves, so all but the last write would be lost.
+    const store = {
+      ...memory,
+      sessions: {
+        ...memory.sessions,
+        async get(id: Id) {
+          const row = await memory.sessions.get(id); // the snapshot is taken now, returned a tick later
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return row;
+        },
+      },
+    };
+    const base: Session = { id: 's-b', actorId: OWNER_ID, context: CTX, status: SessionStatus.ACTIVE, createdAt: TS, lastActivityAt: TS };
+    await store.sessions.save(base);
+    const sessions = new SessionManager(store as never);
+    const applyFlow = new StatelessApplyPreviewFlow(store);
+    vi.setSystemTime(new Date(Date.parse(TS) + 5_000));
+    await Promise.all([
+      applyFlow.anchor(base, { ...commitPendingOf('appr-b'), projectId: PROJECT_ID }),
+      sessions.setActiveProject(base, PROJECT_ID),
+      sessions.touch(base),
+    ]);
+    const live = (await store.sessions.get('s-b'))!;
+    expect(live.activeProjectId).toBe(PROJECT_ID);
+    expect(live.activeTaskId).toBeDefined();
+    expect(live.lastActivityAt).toBe(new Date(Date.parse(TS) + 5_000).toISOString());
+    expect((await applyFlow.findAnchor(live))?.status).toBe('COMMIT_APPROVAL_PENDING');
+  });
+
+  it('(c) a pointer release racing a re-anchor keeps the newer pointer', async () => {
+    const store = memoryStore();
+    const base: Session = {
+      id: 's-c', actorId: OWNER_ID, context: CTX, status: SessionStatus.ACTIVE, activeProjectId: PROJECT_ID, createdAt: TS, lastActivityAt: TS,
+    };
+    await store.sessions.save(base);
+    const applyFlow = new StatelessApplyPreviewFlow(store);
+    await applyFlow.anchor(base, commitPendingOf('appr-old'));
+    const stale = (await store.sessions.get('s-c'))!; // points at the old anchor
+    // The release has re-read the live pointer (still the old anchor) and is held right before its save.
+    const held = holdNextSessionSave(store);
+    const release = applyFlow.clear(stale);
+    await settle();
+    expect(held.state.held).toBe(true);
+    const reanchor = applyFlow.anchor(stale, commitPendingOf('appr-new', { status: 'COMMIT_APPROVED' }));
+    await settle();
+    held.open();
+    await Promise.all([release, reanchor]);
+
+    const live = (await store.sessions.get('s-c'))!;
+    expect(live.activeTaskId).toBeDefined();
+    expect(live.activeTaskId).not.toBe(stale.activeTaskId);
+    expect((await applyFlow.findAnchor(live))).toMatchObject({ status: 'COMMIT_APPROVED', commitApprovalId: 'appr-new' });
+  });
+});

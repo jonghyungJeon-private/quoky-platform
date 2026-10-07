@@ -13,6 +13,7 @@ import type {
 import type { CredentialOverrideGrant } from '../code-generation-context';
 import { classifyCredentialFileContent } from '../credential-guard';
 import { normalizeRelativePath } from '../target-scope';
+import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from '../session-write-lock';
 import {
   CREDENTIAL_OVERRIDE_ANCHOR_KIND,
   MAX_CREDENTIAL_OVERRIDE_GRANTS,
@@ -47,6 +48,8 @@ export interface CredentialOverrideFlowStore {
 export interface StatelessCredentialOverrideFlowOptions {
   /** The shared clock for the ADR-0093 TTL re-checks (ADR-0095 §5). Omitted → `util/clock` `now`. */
   readonly clock?: () => IsoTimestamp;
+  /** The session write lock (ADR-0113 D7). Omitted → the process-wide {@link SESSION_WRITE_LOCK}. */
+  readonly sessionLock?: SessionWriteLock;
 }
 
 /** `Task.metadata` key holding the anchored {@link CredentialOverrideAnchor} (ADR-0097 D5). */
@@ -82,17 +85,18 @@ const sameWorkspace = (a: WorkspaceRef | undefined, b: WorkspaceRef | undefined)
  * of the Session, so it can never revert a project switch or a reset close that landed while it awaited. The
  * dispatch path re-loads the canonical session after its content reads and again after the consume save, and
  * requires it to be ACTIVE and still bound to the grant (owner, session, project — the active workspace is
- * resolved from the active project). Remaining assumption (documented, not enforceable here): the storage port
- * has no compare-and-set, so a session writer OUTSIDE this flow (e.g. `SessionManager.close`/`setActiveProject`
- * from another process, or one that bypasses `invalidate`) can still interleave with the few-microsecond
- * read-to-save window of a pointer write, and between the last session re-load and the provider call. Personal is a
- * single process (ADR-0091); the runtime routes reset/project changes through `invalidate` first (serialized with
- * the consume), so only a bypassing writer is left to the re-load checks.
+ * resolved from the active project). Every mutator runs under the shared session write lock (ADR-0113 D7,
+ * `session-write-lock.ts`) taken BEFORE the anchor queue, and every in-process session writer (SessionManager, the
+ * other flows, the operations-UI decision) takes the same lock — so no in-process writer can interleave with a
+ * pointer write's read-to-save window. Remaining assumption (documented, not enforceable here): the storage port
+ * has no compare-and-set, so a writer in ANOTHER process could; Personal is a single process (ADR-0091). The
+ * re-load checks still cover the window between the last session re-load and the provider call.
  *
  * Holds the LIVE storage seam (ADR-0062): repositories are resolved at call time, never in the constructor.
  */
 export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
   private readonly clock: () => IsoTimestamp;
+  private readonly sessionLock: SessionWriteLock;
   /** Anchor Task ids whose consume/dispatch is in flight in this process, each with its dispatch's claim token. */
   private readonly claims = new Map<Id, object>();
   /** Per-anchor (keyed by the session pointer) tail of the serialized read-and-write queue. */
@@ -103,13 +107,20 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     options: StatelessCredentialOverrideFlowOptions = {},
   ) {
     this.clock = options.clock ?? now;
+    this.sessionLock = options.sessionLock ?? SESSION_WRITE_LOCK;
   }
 
   /**
    * Run `work` alone on the anchor `key` names: it starts only after every earlier serialized call on the same key
    * has settled (fulfilled or rejected). Never refuses, never reorders; the entry is dropped once the queue drains.
    */
-  private async serialized<R>(key: Id, work: () => Promise<R>): Promise<R> {
+  private serialized<R>(sessionId: Id, key: Id, work: () => Promise<R>, held?: SessionLockHold): Promise<R> {
+    // ADR-0113 D7 lock order: the session write lock FIRST, then this anchor's queue. Every session write of this
+    // flow (pointer anchor/release) happens inside such a section, i.e. while holding the session write lock.
+    return this.sessionLock.run(sessionId, () => this.anchorQueue(key, work), held);
+  }
+
+  private async anchorQueue<R>(key: Id, work: () => Promise<R>): Promise<R> {
     const previous = this.queues.get(key) ?? Promise.resolve();
     const run = previous.then(work);
     const tail = run.then(
@@ -164,6 +175,7 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
    * Release the canonical session's `activeTaskId` iff it still points at `taskId` (our anchor). The session is
    * RE-READ and only the pointer field this flow owns is cleared on that fresh copy — a caller's (possibly stale)
    * Session object is never written back, so a project switch or reset close that landed meanwhile is kept.
+   * Callers are inside {@link serialized}, i.e. hold the session write lock (ADR-0113 D7).
    */
   private async releasePointer(sessionId: Id, taskId: Id): Promise<void> {
     const live = await this.store.sessions.get(sessionId);
@@ -189,9 +201,9 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     return anchor.status === 'CONSUMED' ? { state: 'consumed', anchor } : { state: 'invalidated', anchor };
   }
 
-  async findPending(session: Session): Promise<CredentialOverrideLookup | null> {
+  async findPending(session: Session, held?: SessionLockHold): Promise<CredentialOverrideLookup | null> {
     if (!session.activeTaskId) return null;
-    return this.serialized(session.activeTaskId, () => this.lookup(session));
+    return this.serialized(session.id, session.activeTaskId, () => this.lookup(session), held);
   }
 
   /** `findPending` body; callers hold the anchor's serialization. */
@@ -258,6 +270,7 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     session: Session,
     input: CredentialOverrideRequestInput,
     approvals: CredentialOverrideApprovalRequester,
+    held?: SessionLockHold,
   ): Promise<CredentialOverrideRequestResult> {
     const { request, outcome, ownerActorId, refusal } = input;
     const planRef = outcome.refs.executionPlanRef;
@@ -274,7 +287,7 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
       return { ok: false, reason: 'invalid-refusal' };
     }
     const bound = { pointer, planRef, workspaceRef };
-    return this.serialized(pointer, () => this.raise(session, bound, input, approvals));
+    return this.serialized(session.id, pointer, () => this.raise(session, bound, input, approvals), held);
   }
 
   /** `requestOverride` body; callers hold the serialization of the session pointer `bound.pointer`. */
@@ -415,9 +428,9 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     return { ok: true, anchor, approval };
   }
 
-  async recordGrant(session: Session, approvalId: Id): Promise<CredentialOverrideGrantResult> {
+  async recordGrant(session: Session, approvalId: Id, held?: SessionLockHold): Promise<CredentialOverrideGrantResult> {
     if (!session.activeTaskId) return { ok: false, reason: 'not-found' };
-    return this.serialized(session.activeTaskId, () => this.grant(session, approvalId));
+    return this.serialized(session.id, session.activeTaskId, () => this.grant(session, approvalId), held);
   }
 
   /** `recordGrant` body; callers hold the anchor's serialization. */
@@ -475,7 +488,7 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
       // Revalidate and consume under the anchor's serialization (first read through the post-consume session
       // re-load), so no reset/denial/supersession routed through this flow can land between them; the provider call
       // itself runs outside it.
-      const consumed = await this.serialized(claimId, () => this.consume(session, claimId, input));
+      const consumed = await this.serialized(session.id, claimId, () => this.consume(session, claimId, input));
       if (!consumed.ok) return consumed;
       const authorization = this.dispatchAuthorization(session.id, claimId, token, consumed);
       // ADR-0095 §5: the LAST flow-side check runs synchronously with the injected clock, after every persistence
@@ -641,23 +654,34 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     session: Session,
     reason: CredentialOverrideInvalidationReason,
     invalidatedBy: string,
+    held?: SessionLockHold,
   ): Promise<CredentialOverrideInvalidationResult | null> {
     if (!session.activeTaskId) return null;
-    return this.serialized(session.activeTaskId, async () => {
-      const found = await this.anchorTask(session);
-      if (!found) return null;
-      return this.invalidateFound(session, found, reason, invalidatedBy);
-    });
+    return this.serialized(
+      session.id,
+      session.activeTaskId,
+      async () => {
+        const found = await this.anchorTask(session);
+        if (!found) return null;
+        return this.invalidateFound(session, found, reason, invalidatedBy);
+      },
+      held,
+    );
   }
 
-  async clear(session: Session): Promise<void> {
+  async clear(session: Session, held?: SessionLockHold): Promise<void> {
     // Never clear activeTaskId unless it still points at OUR anchor — an approval anchor (or anything else)
     // sharing the same pointer slot must be left untouched.
     if (!session.activeTaskId) return;
-    await this.serialized(session.activeTaskId, async () => {
-      const found = await this.anchorTask(session);
-      if (!found) return;
-      await this.invalidateFound(session, found, 'superseded', SYSTEM);
-    });
+    await this.serialized(
+      session.id,
+      session.activeTaskId,
+      async () => {
+        const found = await this.anchorTask(session);
+        if (!found) return;
+        await this.invalidateFound(session, found, 'superseded', SYSTEM);
+      },
+      held,
+    );
   }
 }

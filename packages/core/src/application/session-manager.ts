@@ -3,7 +3,7 @@ import { now } from '../util/clock';
 import { SessionStatus } from '../domain';
 import type { ConversationContext, Id, Session } from '../domain';
 import type { StorageProvider } from '../ports';
-import { saveSessionFields } from './session-live-save';
+import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from './session-write-lock';
 
 /**
  * Opens and maintains conversation Sessions (ADR-0001 — thin). Reuses the active
@@ -11,7 +11,11 @@ import { saveSessionFields } from './session-live-save';
  * pinned provider.
  */
 export class SessionManager {
-  constructor(private readonly storage: StorageProvider) {}
+  /** Every write of an existing session row runs under the shared session write lock (ADR-0113 D7). */
+  constructor(
+    private readonly storage: StorageProvider,
+    private readonly sessionLock: SessionWriteLock = SESSION_WRITE_LOCK,
+  ) {}
 
   /** Reuse the active session for this context, or open a new one. */
   async openForContext(context: ConversationContext, actorId: Id): Promise<Session> {
@@ -36,10 +40,10 @@ export class SessionManager {
   /**
    * Record activity on a session (updates lastActivityAt) — field-scoped on the LIVE row (ADR-0113 D7): a turn's
    * snapshot taken before an operations-UI decision re-anchored the session (or a reset closed it) must never be
-   * written back over that newer state. Returns the live session as touched.
+   * written back over that newer state. Runs under the shared session write lock. Returns the live session as touched.
    */
-  async touch(session: Session): Promise<Session> {
-    return saveSessionFields(this.storage.sessions, session, { lastActivityAt: now() });
+  async touch(session: Session, held?: SessionLockHold): Promise<Session> {
+    return this.sessionLock.saveFields(this.storage.sessions, session, { lastActivityAt: now() }, held);
   }
 
   /**
@@ -47,14 +51,18 @@ export class SessionManager {
    * `openForContext` for the same channel/thread opens a fresh session. Nothing else is touched: tasks,
    * approvals, artifacts and memory stay as they are.
    */
-  async close(session: Session): Promise<Session> {
-    // Whole-copy by contract (the caller's fields are kept). Race-safe all the same: the reset closes under the
-    // approval and session locks (ADR-0113 D7), and a CLOSED session is never located, decided for or re-anchored.
-    return this.storage.sessions.save({ ...session, status: SessionStatus.CLOSED, lastActivityAt: now() });
+  async close(session: Session, held?: SessionLockHold): Promise<Session> {
+    // Whole-copy by contract (the caller's fields are kept), under the shared session write lock (ADR-0113 D7); the
+    // reset passes the hold it already has. A CLOSED session is never located, decided for or re-anchored.
+    return this.sessionLock.run(
+      session.id,
+      () => this.storage.sessions.save({ ...session, status: SessionStatus.CLOSED, lastActivityAt: now() }),
+      held,
+    );
   }
 
   /** Bind a registered project to the session as its active project (ADR-0018). */
-  async setActiveProject(session: Session, projectId: Id): Promise<Session> {
-    return saveSessionFields(this.storage.sessions, session, { activeProjectId: projectId, lastActivityAt: now() });
+  async setActiveProject(session: Session, projectId: Id, held?: SessionLockHold): Promise<Session> {
+    return this.sessionLock.saveFields(this.storage.sessions, session, { activeProjectId: projectId, lastActivityAt: now() }, held);
   }
 }
