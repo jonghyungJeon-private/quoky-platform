@@ -17218,7 +17218,11 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      `ProviderSelectionPolicy.isEligible(capability, context, providerKey)` (optional port members): the composition root
      answers from the LIVE selection (a write-through in-memory mirror of the (Session, Actor) overrides, updated the
      moment a write commits, plus the persisted default and the configuration). `off` makes every image provider
-     ineligible; an unmirrored scope is not eligible (fail closed).
+     ineligible; an unmirrored scope is not eligible (fail closed). **Write fence** (Codex review P2 on f39006c): an
+     override write marks its (Session, Actor) key "write pending" synchronously before it starts and clears it in
+     `finally`; while pending, `isEligible` is `false`, so a change already committed to storage but not yet returned to
+     its setter can never let a turn dispatch on the old choice. The mirror takes the new value inside the session lock
+     right after the save returns (`SessionManager.updateMetadataEntry` `onCommitted`); a failed write keeps the old value.
   4. **Display (amends A5).** Besides the configured selection, the providers panel shows the effective image default and
      its source; choosing the cloud option on the operations UI shows the egress warning; `모델 상태` shows the effective
      image choice, its source and where images go.

@@ -47,7 +47,8 @@ export function createProviderSelectionProviders(input: ProviderSelectionComposi
           envImage: envImageSelectionOf(config),
           store,
           sessions: () => storage.sessions,
-          updateSessionEntry: (sessionId, key, update) => sessions.updateMetadataEntry({ id: sessionId }, key, update),
+          updateSessionEntry: (sessionId, key, update, onCommitted) =>
+            sessions.updateMetadataEntry({ id: sessionId }, key, update, { onCommitted }),
           readiness: (provider) => manager.isReady(provider),
           ollamaModels: () => listLocalOllamaModels(config.ai.ollamaBin),
           logger: new ConsoleLogger('provider-selection'),

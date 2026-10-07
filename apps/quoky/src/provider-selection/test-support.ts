@@ -34,6 +34,8 @@ export interface SelectionFixture {
   readonly store: ProviderSelectionStore;
   readonly sessions: SessionManager;
   readonly rows: Map<string, Session>;
+  /** The in-memory session repository (tests may wrap `save`, e.g. to pause after the commit). */
+  readonly sessionStore: { save(session: Session): Promise<Session> };
   /** Readiness by provider id (default ready). */
   readonly ready: Map<string, boolean>;
   /** Provider ids whose `execute` ran, in order. */
@@ -107,6 +109,7 @@ export function selectionFixture(options: SelectionFixtureOptions = {}): Selecti
     manager,
     sessions,
     rows,
+    sessionStore: storage.sessions,
     ready,
     executed,
     logs,
@@ -135,7 +138,8 @@ export function selectionFixture(options: SelectionFixtureOptions = {}): Selecti
     envImage: envImageSelectionOf(config),
     store,
     sessions: () => storage.sessions,
-    updateSessionEntry: (sessionId, key, update) => sessions.updateMetadataEntry({ id: sessionId }, key, update),
+    updateSessionEntry: (sessionId, key, update, onCommitted) =>
+            sessions.updateMetadataEntry({ id: sessionId }, key, update, { onCommitted }),
     readiness: (provider) => manager.isReady(provider),
     ollamaModels: async () => fixture.inventory,
     logger,

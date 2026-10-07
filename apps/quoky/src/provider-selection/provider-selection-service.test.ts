@@ -286,6 +286,67 @@ describe('dispatch-time eligibility (synchronous, live selection)', () => {
     expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'ollama-vision-cli')).toBe(false);
   });
 
+  it.each([
+    ['claude', { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' }, 'claude-vision-cli'],
+    ['ollama', { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'ollama', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' }, 'ollama-vision-cli'],
+  ] as const)('write fence (%s): an `off` committed to storage but not yet returned to the setter is never dispatched past', async (_label, env, visionId) => {
+    const f = selectionFixture({ env });
+    const session = await f.openSession();
+    const ctx = scope(session);
+    const provider = await f.router.select(Capability.IMAGE_UNDERSTANDING, ctx);
+    expect(provider.id).toBe(visionId);
+    expect(f.router.isStillEligible(Capability.IMAGE_UNDERSTANDING, ctx, provider)).toBe(true);
+
+    // The save COMMITS (the row holds `off`) and then pauses before it returns to the lock and the setter.
+    const save = f.sessionStore.save.bind(f.sessionStore);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let committed!: () => void;
+    const didCommit = new Promise<void>((resolve) => (committed = resolve));
+    f.sessionStore.save = async (row: Session) => {
+      const result = await save(row);
+      committed();
+      await gate;
+      return result;
+    };
+    const writing = f.service.setSessionImage(ctx, 'off', OWNER_CHAT);
+    await didCommit;
+    // Storage already says off (checked on the raw row: a service read would refresh the mirror itself).
+    expect(f.rows.get(session.id)?.metadata?.[SESSION_SELECTION_METADATA_KEY]).toMatchObject({ byActor: { [ACTOR]: { image: 'off' } } });
+    // The dispatch decision a turn makes right now: not eligible, so nothing is executed.
+    const dispatch = async () => {
+      if (f.router.isStillEligible(Capability.IMAGE_UNDERSTANDING, ctx, provider)) await provider.execute({ capability: Capability.IMAGE_UNDERSTANDING, prompt: 'x' });
+    };
+    await dispatch();
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, visionId)).toBe(false);
+    expect(f.executed).toEqual([]);
+    release();
+    expect((await writing).status).toBe('SET');
+    // After the write: the mirror holds `off`, still not eligible; still nothing executed.
+    await dispatch();
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, visionId)).toBe(false);
+    expect(f.executed).toEqual([]);
+  });
+
+  it('write fence: a failed write keeps the previous value and clears the fence', async () => {
+    const f = selectionFixture({ env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' } });
+    const session = await f.openSession();
+    const ctx = scope(session);
+    await f.service.effectiveImage(ctx); // mirrored: claude
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    f.sessionStore.save = async () => {
+      await gate;
+      throw new Error('disk full');
+    };
+    const writing = f.service.setSessionImage(ctx, 'off', OWNER_CHAT);
+    await Promise.resolve();
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'claude-vision-cli')).toBe(false); // fenced
+    release();
+    expect((await writing).status).toBe('WRITE_FAILED');
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'claude-vision-cli')).toBe(true); // old value, fence cleared
+  });
+
   it('off rejects every provider; an unchanged selection stays eligible; an unmirrored scope fails closed', async () => {
     const f = selectionFixture({ env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' } });
     const session = await f.openSession();

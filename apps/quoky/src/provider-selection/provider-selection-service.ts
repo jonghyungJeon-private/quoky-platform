@@ -161,6 +161,8 @@ export interface ProviderSelectionServiceDeps {
     sessionId: Id,
     key: string,
     update: (current: unknown) => unknown,
+    /** Called synchronously inside the locked section right after the save returns. */
+    onCommitted: (saved: Session) => void,
   ) => Promise<Session | null>;
   /** A cached readiness probe (`AiProviderManager.isReady`). */
   readonly readiness: (provider: AiProvider) => Promise<boolean>;
@@ -213,6 +215,12 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
    * resolves, so the mirror is never behind a committed change made in this process (single instance, ADR-0102 D4).
    */
   private readonly overrides = new Map<string, SessionSelection>();
+  /**
+   * Write fence: (Session, Actor) keys with an override write in flight (count). Marked synchronously BEFORE the write
+   * starts and cleared in `finally`; while marked, {@link isEligible} answers `false` (fail closed), so a change that is
+   * already committed in storage but not yet reflected in the mirror can never let a turn dispatch on the old choice.
+   */
+  private readonly pendingWrites = new Map<string, number>();
 
   constructor(private readonly deps: ProviderSelectionServiceDeps) {
     this.clock = deps.clock ?? sharedClock;
@@ -243,7 +251,9 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     try {
       let session: SessionSelection = {};
       if (context.sessionId !== undefined && context.actorId !== undefined) {
-        const mirrored = this.overrides.get(overrideKey({ sessionId: context.sessionId, actorId: context.actorId }));
+        const key = overrideKey({ sessionId: context.sessionId, actorId: context.actorId });
+        if ((this.pendingWrites.get(key) ?? 0) > 0) return false;
+        const mirrored = this.overrides.get(key);
         if (mirrored === undefined) return false;
         session = mirrored;
       }
@@ -438,6 +448,8 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     scope: SessionOverrideScope,
     next: (current: SessionSelection) => SessionSelection,
   ): Promise<SelectionWriteResult> {
+    const key = overrideKey(scope);
+    this.pendingWrites.set(key, (this.pendingWrites.get(key) ?? 0) + 1);
     try {
       let written: SessionSelection = {};
       const saved = await this.deps.updateSessionEntry(scope.sessionId, SESSION_SELECTION_METADATA_KEY, (raw) => {
@@ -453,14 +465,20 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
           };
         }
         return Object.keys(byActor).length === 0 ? undefined : { byActor };
+      }, () => {
+        // Inside the locked section, right after the save returned: the committed value is the mirror from now on.
+        this.mirror(scope, written);
       });
-      // The committed value is live for the synchronous dispatch-time check from this moment on.
-      if (saved === null) this.overrides.delete(overrideKey(scope));
-      else this.mirror(scope, written);
+      if (saved === null) this.overrides.delete(key);
       return saved === null ? { status: 'SESSION_GONE' } : { status: 'SET' };
     } catch {
+      // The mirror keeps the previous value (a failed save never reached `onCommitted`).
       this.deps.logger.warn('provider selection session write failed', { code: 'SESSION_WRITE_FAILED' });
       return { status: 'WRITE_FAILED' };
+    } finally {
+      const count = (this.pendingWrites.get(key) ?? 1) - 1;
+      if (count > 0) this.pendingWrites.set(key, count);
+      else this.pendingWrites.delete(key);
     }
   }
 
