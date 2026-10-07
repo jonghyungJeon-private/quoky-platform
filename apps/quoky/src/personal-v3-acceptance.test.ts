@@ -855,4 +855,3 @@ describe('Personal v3 acceptance — provider boundary', () => {
     }
   });
 });
-

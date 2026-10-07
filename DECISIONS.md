@@ -16806,8 +16806,9 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
 - **ADR-0105 (model choice, MLX).** D1: the harness ran five Ollama models (QA record, 2026-10-06) and recommended
   gemma3:4b, which gave non-answers live (QA-V3-W2-LM) and was reverted. The harness gained helpfulness checks
   (`answer-quality-checkers-v2`, 20909d1); the 2026-10-07 re-run picked granite3.3:8b, set on the owner's service as an
-  `OLLAMA_MODEL` operator change (no code change; the code default stays `llama3.1`). Its live re-test on an idle host
-  is PENDING (QA record W6-M4/M5). D2-D4 (MLX provider, `MLX_LOCAL` profile): not implemented; no MLX benchmark ran.
+  `OLLAMA_MODEL` operator change (no code change; the code default stays `llama3.1`). Its live re-test after the host
+  load cleared was a partial pass (QA record W6-M4/M5: 3 of 4 replies local, invented specifics remain); `ollama run`
+  now gets `--nowordwrap` (PR #133, W6-M6). D2-D4 (MLX provider, `MLX_LOCAL` profile): not implemented; no MLX benchmark ran.
 - **ADR-0106 (memory commands) and its amendment.** MEM-1 (9abb52d, 5321b6c, 6c0e98d): pre-classify order 50; a one-time
   4-character code bound to the record, actor-scoped, 30 minutes; forget removes the vector and derived learning items
   first. The amendment (5f0cced, da9e219, 3b78d4b; note above) made forget an archive with restore. OPS-2 (d6a279f) added

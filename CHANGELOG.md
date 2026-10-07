@@ -67,7 +67,9 @@ W5-L01..L04 (write-flow copy), W6-L01 (operations UI sign-in Origin).
 Changed default: `QUOKY_REMINDERS_ENABLED` is now `true`. `OLLAMA_MODEL` keeps its code default (`llama3.1`); the owner's
 service was switched to `granite3.3:8b` on 2026-10-07 as an operator change.
 
-**Not live-verified:** granite3.3:8b on an idle host, UI approve/reject and UI cancel/forget, attachments and images,
+**Fixed after closeout review:** local-model replies were hard-wrapped mid-word by `ollama run`; Ollama now runs with `--nowordwrap` (PR #133).
+
+**Not live-verified:** the 20-prompt Korean daily-chat set on granite3.3:8b (W6-M5 partial pass), UI approve/reject and UI cancel/forget, attachments and images,
 learning notes/examples, a mid-send write failure, W5-L01..L04 re-run, reboot/daily backup/restore drill, Slack read
 lookups. Not implemented: SUB-3, CODE-8, CODE-9 (P2, deferred), LLM-3 (MLX), LRN-4. See `CURRENT_STATE.md`.
 

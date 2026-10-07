@@ -150,7 +150,8 @@ marked PENDING has not been run and is not claimed.
 | W6-M2 | Host spec check on the owner's Mac (Apple M3 Pro, 18 GB) | PASS — granite3.3:8b loads at 5.7 GB, 100% GPU; 15–17 tok/s idle and 15.3 tok/s under heavy CPU load; cold load about 16 s. The Ollama default keep-alive (5 min) is kept |
 | W6-M3 | Service model switch (operator change, no code change) | DONE — `OLLAMA_MODEL=granite3.3:8b` on the service (ADR-0105 D1) |
 | W6-M4 | First live check of granite3.3:8b on the service (4 chat prompts) | INCONCLUSIVE — the Ollama readiness probe (5 s) failed at startup while the host load average was about 20 from unrelated Gradle builds, so 3 of 4 replies came from the Claude CLI fallback (77–142 s). The one granite reply (110 s, including a 40 s embedding-recall timeout) still invented song and artist names (same shape as QA-V3-W2-LM) |
-| W6-M5 | granite3.3:8b live re-test on an idle host (daily-chat prompts, latency, invented specifics) | **PENDING** — not run |
+| W6-M5 | granite3.3:8b live re-test after the unrelated Gradle load cleared (load average 3.0 at start; the same 4 chat prompts; provider read from `task_runs.providerId`) | PARTIAL PASS — 3 of 4 replies came from `ollama-cli` granite3.3:8b: lunch 23.5 s generation (31.5 s end to end; generic, Western-style suggestions), Python sort 37.8 s (47.7 s; correct `sort()`/`sorted()` with examples), rainy-day songs 20.9 s (40.9 s; IU "Palette" exists, the other two title/artist pairs could not be confirmed and look invented). The 4th reply fell back to claude-cli (52 s) because a parallel `pnpm test` run raised the load average to about 51 and the readiness probe failed again. Invented specifics remain a known granite weakness (LLM track) |
+| W6-M6 | Replies split mid-word in Discord ("사⏎용", "리⏎스트"), seen during W6-M5 | FIXED — `ollama run` hard-wraps at terminal width even when piped (reproduced: newline + `ESC[K` at about 80 columns). PR #133 runs chat and vision with `--nowordwrap`; after deploy two granite replies (24.2 s and 37.8 s generation) had no mid-word breaks, and `task_runs` records `["ollama","run","--nowordwrap","granite3.3:8b"]` |
 | W6-A1 | OPS-2b (UI approve and reject, PR #132) merged after 4 Codex rounds: round 1 P1 (reset, expiry and override send bypassed the approval lock), round 2 P2 (a stale chat `touch` overwrote a UI-set anchor), round 3 P2 (unlocked, non-atomic field-scoped session saves), round 4 PASS | DONE offline — `pnpm build`, `pnpm typecheck`, `pnpm test` green (314 files, 9600 tests per the PR) |
 | W6-A2 | Live UI approve and reject (confirmation code from the chat preview, `OPS_DECISION_RESULT` DM, chat/UI race) on a DB copy against the sandbox repository | **PENDING** — not run |
 
@@ -159,7 +160,7 @@ inputs is not recorded (**PENDING**).
 
 ### v3 live items still PENDING at closeout (each needs its own session; none is claimed)
 
-- W6-M5 granite3.3:8b on an idle host, and the LLM live QA set (QA-V2-003/008/W7-06 re-run plus a 20-prompt Korean
+- The LLM live QA set (QA-V2-003/008/W7-06 re-run plus a 20-prompt Korean
   daily-chat set, plan LLM track).
 - W6-A2 operations UI approve/reject; OPS-2 reminder cancel and memory forget from the UI; the per-panel check against
   chat output, a foreign-Origin request and token rotation across a restart (ADR-0113 live QA).

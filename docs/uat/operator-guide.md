@@ -143,9 +143,13 @@ comparison (policy checks only) picked `gemma3:4b`, which gave non-answers live 
 helpfulness checks (`answer-quality-checkers-v2`) picked `granite3.3:8b` (relevant tokens 9/10, hedges uncheckable 3/4, no
 invented specifics 4/4, language match 96.9%). On the owner's M3 Pro (18 GB) it uses about 5.7 GB at 100% GPU, 15-17
 tok/s idle and about 15 tok/s under heavy CPU load, with a cold load of about 16 s; the Ollama default keep-alive (5
-minutes) is kept. The service runs it since 2026-10-07. **Its live re-test on an idle host is PENDING**: the first check
-ran while unrelated builds held the host load near 20, the 5 s readiness probe failed at startup and the Claude CLI
-answered 3 of 4 prompts. Keep the previous model tag available for rollback.
+minutes) is kept. The service runs it since 2026-10-07. The first check ran while unrelated builds held the host load
+near 20, the 5 s readiness probe failed at startup and the Claude CLI answered 3 of 4 prompts. The re-test after the
+load cleared (QA record W6-M5) was a partial pass: 3 of 4 replies came from granite (21-38 s generation), one fell back
+to Claude when a parallel test run raised the load again, and invented specifics (song titles) remain. Under heavy host
+load the readiness probe can fail and chat falls back to the Claude CLI; check `task_runs.providerId` when latency looks
+wrong. Ollama runs with `--nowordwrap` (PR #133) so replies are not hard-wrapped mid-word. Keep the previous model tag
+available for rollback.
 
 ### 0.6 Live status and what still needs a session
 
@@ -164,7 +168,7 @@ Still pending, each its own exact-scope Strict session:
 
 1. Slack read lookups (needs a Slack user token).
 2. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`, CODE-9, deferred).
-3. `granite3.3:8b` live re-test on an idle host (0.5).
+3. The 20-prompt Korean daily-chat set on `granite3.3:8b` (0.5; W6-M5 was a partial pass).
 4. Operations UI handling: reminder cancel, memory forget, approve and reject (on a DB copy against the sandbox repo),
    panel checks against chat, a foreign-Origin request, token rotation across a restart.
 5. Attachments and images (needs `QUOKY_OLLAMA_VISION_MODEL`), learning notes/examples with
