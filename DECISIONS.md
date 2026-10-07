@@ -16871,3 +16871,12 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   UI cancel/forget, UI approve/reject (W6-A2), foreign-Origin and token-rotation checks.
 - **Not claimed by this record.** Every PENDING item in the QA record's closeout list; SUB-3, CODE-8, CODE-9, LLM-3 and
   LRN-4 are not implemented.
+
+- **ADR-0098 D3 amendment note (live QA 2026-10-07, reaction on a pre-restart reply).** An owner 👎 on a bot reply posted
+  before the last service restart was dropped silently: after a restart the reacted message is an uncached discord.js
+  partial whose author is unknown without a fetch, and the adapter admission rejected any unknown author. The adapter
+  now admits an uncached partial target on owner and ADR-0091 location only, still with no fetch and no content
+  handling; the bot-authored check moves to core, which records a reaction only when the target id is in its own
+  `turn_platform_messages` record of ids returned by the bot's own sends (exact `(platform, platform_message_id)`
+  lookup) and the reactor is that turn's own user. A known non-bot author, a non-owner, a non-admitted location and the
+  bot's own reaction stay dropped in the adapter.
