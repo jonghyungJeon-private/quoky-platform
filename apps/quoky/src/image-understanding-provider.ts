@@ -1,57 +1,48 @@
-import { OllamaCliVisionProvider, ollamaModelExecutionLocality } from '@quoky/ai-cli';
-import type { AiProvider, Logger } from '@quoky/core';
+import { ClaudeCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
+import type { AiExecutionLocality, AiProvider, Logger } from '@quoky/core';
+import type { ImageUnderstandingConfig } from './config';
 
 /**
- * MM-2 configuration (ADR-0111 D4/D5), parsed here from the process environment and not in `config.ts` (owned by
- * CWR-1 in wave 4; a later `config.ts` owner folds the key into `config.ts`/`.env.example` without changing its
- * meaning). A new `QUOKY_*` key with no `CHUNSIK_*` alias.
+ * ADR-0111 D4/D5 (MM-2) and its 2026-10-07 amendment (A1/A2): the composition of image understanding. The selection
+ * itself (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`, `QUOKY_OLLAMA_VISION_MODEL`, `QUOKY_IMAGE_UNDERSTANDING_MODEL`) is parsed
+ * and validated in `config.ts` (`parseImageUnderstandingConfig`); this module turns it into exactly ONE registered
+ * `IMAGE_UNDERSTANDING` provider (or none) and the matching Core image policy. Core never sees the selection — only
+ * the providers' declared capability and locality, and the allowed localities.
  *
- * - `QUOKY_OLLAMA_VISION_MODEL`: the operator-chosen local Ollama vision model (for example `gemma3:4b`). Unset or
- *   empty means no image provider is registered and image turns get the deterministic "unavailable" reply.
- *
- * The model must be a plain Ollama model name and must run on this host: a cloud-served model (`*cloud*`, ADR-0107
- * D6) is refused, because image bytes go only to a `LOCAL` provider (owner decision 9). An invalid value disables only
- * image understanding (fail closed) with a code the composition logs; it never stops Quoky and is never echoed.
- * The Ollama binary is the one chat uses (`OLLAMA_CLI_BIN`). Registration is independent of `QUOKY_OLLAMA_ENABLED`
- * (that flag registers the chat model only).
+ * - `ollama`: the local Ollama vision provider (`LOCAL`); the Ollama binary is the one chat uses (`OLLAMA_CLI_BIN`).
+ *   Registration is independent of `QUOKY_OLLAMA_ENABLED` (that flag registers the chat model only).
+ * - `claude`: the Claude CLI vision provider (`REMOTE`) on the chat CLI binary (`CLAUDE_CLI_BIN`); the policy then
+ *   also allows `REMOTE` — the owner's explicit cloud opt-in.
+ * - `off`: nothing; the policy stays local-only.
  */
 
-export const ImageUnderstandingConfigErrorCode = {
-  VISION_MODEL_INVALID: 'OLLAMA_VISION_MODEL_INVALID',
-  VISION_MODEL_NOT_LOCAL: 'OLLAMA_VISION_MODEL_NOT_LOCAL',
-} as const;
-export type ImageUnderstandingConfigErrorCode =
-  (typeof ImageUnderstandingConfigErrorCode)[keyof typeof ImageUnderstandingConfigErrorCode];
-
-export type ImageUnderstandingConfig =
-  | { readonly enabled: false; readonly invalid?: ImageUnderstandingConfigErrorCode }
-  | { readonly enabled: true; readonly model: string };
-
-export function loadImageUnderstandingConfig(env: NodeJS.ProcessEnv): ImageUnderstandingConfig {
-  const model = env.QUOKY_OLLAMA_VISION_MODEL?.trim();
-  if (model === undefined || model === '') return { enabled: false };
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u.test(model)) {
-    return { enabled: false, invalid: ImageUnderstandingConfigErrorCode.VISION_MODEL_INVALID };
-  }
-  if (ollamaModelExecutionLocality(model) !== 'LOCAL') {
-    return { enabled: false, invalid: ImageUnderstandingConfigErrorCode.VISION_MODEL_NOT_LOCAL };
-  }
-  return { enabled: true, model };
+/** The localities Core may send image bytes to for this selection (ADR-0111 amendment A2). */
+export function imageUnderstandingLocalitiesFor(config: ImageUnderstandingConfig): readonly AiExecutionLocality[] {
+  return config.provider === 'claude' ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
 }
 
-/**
- * The `IMAGE_UNDERSTANDING` providers for the composition root's `AI_PROVIDERS` list: one local Ollama vision provider
- * when `QUOKY_OLLAMA_VISION_MODEL` is set and valid, otherwise none. Construction spawns nothing; readiness is probed
- * by the provider manager when an image turn selects the capability.
- */
+/** A short, value-free description of the selection for the operations UI and startup logs (never a model name). */
+export function describeImageUnderstandingSelection(config: ImageUnderstandingConfig): {
+  readonly selection: ImageUnderstandingConfig['provider'];
+  readonly locality: AiExecutionLocality | 'NONE';
+} {
+  if (config.provider === 'claude') return { selection: 'claude', locality: 'REMOTE' };
+  if (config.provider === 'ollama') return { selection: 'ollama', locality: 'LOCAL' };
+  return { selection: 'off', locality: 'NONE' };
+}
+
 export function createImageUnderstandingProviders(
-  env: NodeJS.ProcessEnv,
-  options: { ollamaBin: string; logger: Logger },
+  config: ImageUnderstandingConfig,
+  options: { ollamaBin: string; claudeBin: string; logger: Logger },
 ): AiProvider[] {
-  const config = loadImageUnderstandingConfig(env);
-  if (!config.enabled) {
-    if (config.invalid) options.logger.warn('image understanding not registered', { reason: config.invalid });
-    return [];
+  switch (config.provider) {
+    case 'ollama':
+      return [new OllamaCliVisionProvider({ bin: options.ollamaBin, model: config.model })];
+    case 'claude':
+      options.logger.info('image understanding uses a cloud provider', { selection: 'claude', locality: 'REMOTE' });
+      return [new ClaudeCliVisionProvider({ bin: options.claudeBin, model: config.model })];
+    case 'off':
+      if (config.invalid) options.logger.warn('image understanding not registered', { reason: config.invalid });
+      return [];
   }
-  return [new OllamaCliVisionProvider({ bin: options.ollamaBin, model: config.model })];
 }

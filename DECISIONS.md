@@ -16307,7 +16307,8 @@ and images raise an egress question the owner has not answered yet (decision 9).
    are never persisted, embedded or logged.
 5. **Image egress.** In v3, image bytes go only to a provider that advertises `IMAGE_UNDERSTANDING` **and** declares
    `executionLocality: 'LOCAL'` (ADR-0107 D6); the Claude CLI does not advertise the capability *(pending owner
-   decision 9; recommended: local only)*.
+   decision 9; recommended: local only)*. *Amended 2026-10-07: local-only stays the default; a cloud image provider
+   only on the owner's explicit selection — see "ADR-0111 amendment — Selectable image-understanding provider".*
 6. **No deps change.** The runtime reads attachments from `InboundMessage`; no migration.
 
 ### Consequences
@@ -16923,3 +16924,63 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   `turn_platform_messages` record of ids returned by the bot's own sends (exact `(platform, platform_message_id)`
   lookup) and the reactor is that turn's own user. A known non-bot author, a non-owner, a non-admitted location and the
   bot's own reaction stay dropped in the adapter.
+
+## ADR-0111 amendment — Selectable image-understanding provider; cloud image egress only on the owner's explicit selection (2026-10-07)
+
+- **Status:** Ratified by the Product Owner in chat on 2026-10-07. Amends ADR-0111 D4/D5 (images only to a `LOCAL`
+  `IMAGE_UNDERSTANDING` provider; "the Claude CLI does not advertise the capability", pending owner decision 9) and the
+  ADR-0113 D6 display default for one configuration fact. Relates: ADR-0107 D6 (execution locality), ADR-0097 / ADR-0111
+  D3 (credential guard), ADR-0014 (CLI only, no HTTP API).
+- **Context:** The owner now runs general chat on Claude Sonnet (`QUOKY_OLLAMA_ENABLED=false` on the service), accepting
+  cloud processing because comparable assistants (OpenClaw, Buzz, OpenAI Dots) send conversations to Anthropic or
+  OpenAI. For images the owner chose Claude as well, and wants the setup switchable by configuration, like OpenClaw:
+  Claude now, a local Ollama vision model or none later. This answers owner decision 9 for the owner's own setup only;
+  the default stays local-only.
+- **Decision:**
+  1. **One selector (A1).** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `ollama` | `claude` | `off`, exact, parsed in
+     `config.ts`; any other value (including empty) is the startup error `IMAGE_UNDERSTANDING_PROVIDER_INVALID`. Unset
+     keeps the old behaviour: `ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set (an unusable model still only disables
+     images, with a logged code), else `off`. An explicit `ollama` needs a valid local `QUOKY_OLLAMA_VISION_MODEL` or
+     fails startup (`IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING` / `_INVALID` / `_NOT_LOCAL`). `claude` uses
+     `QUOKY_IMAGE_UNDERSTANDING_MODEL`, else `QUOKY_CLAUDE_MODEL`, else `sonnet` (`IMAGE_UNDERSTANDING_MODEL_INVALID` on a
+     malformed value). The composition root registers exactly the selected provider, or none.
+  2. **Locality policy, composition-time (A2).** The hard `LOCAL`-only rule becomes a policy:
+     `ConversationRuntimeOptions.imageUnderstandingLocalities`, default `['LOCAL']`; the composition root passes
+     `['LOCAL', 'REMOTE']` only when the owner selected `claude`. ("Cloud" is the existing `REMOTE` locality of
+     ADR-0107 D6; no new locality value.) Core still selects by `IMAGE_UNDERSTANDING` capability and checks the
+     provider's declared locality (fail closed: undeclared is `REMOTE`), never its id. With the default policy image
+     bytes never reach a `REMOTE` provider. The truthful "no provider" reply says "no local AI" only under the default
+     policy. This is an option, not a deps key: the `ConversationRuntimeDeps` baseline stays 35.
+  3. **Reply credential check on every image turn (A3).** The ADR-0111 D3 attachment-turn withholding (provider's
+     original reply and every artifact, before any other guard) now runs on every image turn, not only when a text file
+     is attached: text a provider reads off an image is attachment content.
+  4. **Caption credential guard (A4).** The image prompt's caption passes the strict credential guard (raw, normalized
+     and the exact quoted line); a match withholds the whole caption from the prompt (never redacts it). Attached text
+     files keep their D3 guard.
+  5. **Display (A5).** The operations UI providers panel shows the configured selection (`ollama` / `claude` / `off`
+     with its locality; never a model name), a configuration fact and not a routing result or provider id; per-capability
+     readiness is unchanged. The startup log names the cloud selection.
+  6. **Claude adapter (A6).** A separate `ClaudeCliVisionProvider` (`packages/ai-cli`) advertises only
+     `IMAGE_UNDERSTANDING` and declares `REMOTE`; the chat `ClaudeCliProvider` still advertises no image capability and
+     refuses images. It runs `claude -p --model <m> --strict-mcp-config --no-session-persistence --setting-sources ""
+     --input-format stream-json --output-format stream-json --verbose --tools ""` in a neutral cwd. Stdin is one
+     stream-json `user` message: the base64 image blocks (`{type:'image', source:{type:'base64', media_type, data}}`) in
+     upload order, then the rendered prompt as a text block. No tool is enabled; the temp-file path and bytes never
+     appear in argv, logs, errors, the result or the audit (counts, total bytes and SHA-256 hashes only). Every failure
+     message is a fixed reason with bounded codes and never carries CLI output, which may echo the stdin payload (Codex
+     P2 on 3322ea2). This no-path-in-argv property is the Claude adapter's only: the local Ollama vision adapter still
+     passes the temp-file paths as `ollama run` arguments (redacted to `<image>` in its audit), unchanged. Limits: PNG /
+     JPEG / WebP by content signature, 8 MiB per image checked on the open descriptor (no symlink), 3 images, 120 s.
+     Readiness is `claude auth status --json` (`loggedIn: true`): CLI present and logged in. Shape verified against
+     Claude Code 2.1.292 with one real call on 2026-10-07 (owner-approved).
+- **Consequences:** + the owner's images are read by the same model as chat, switchable back to local or off by one
+  setting; + the default and every unconfigured install keep the local-only guarantee. − with `claude` selected, image
+  bytes leave the host for Anthropic under the owner's subscription.
+- **Accepted residuals:** with `claude` selected, a secret visible inside an image cannot be detected before sending
+  (image content is not inspected; the reply check catches a credential-shaped transcription afterwards, not the
+  egress). The hosted API may refuse an image under the 8 MiB bound as too large; the turn fails with the normal error
+  reply. Chat provider switching stays as it is: Claude (any model, `QUOKY_CLAUDE_MODEL`) and local Ollama
+  (`QUOKY_OLLAMA_ENABLED` + `OLLAMA_MODEL`); `CodexCliProvider` is an unimplemented stub the composition does not
+  register; other cloud vendors need a new adapter.
+- **Strict gates:** changing the selector on the owner host (`.env.local`) and a restart; a live image session with
+  `claude` selected.

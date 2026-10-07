@@ -57,7 +57,9 @@ export interface AiRequest {
   metadata?: Metadata;
   /**
    * ADR-0111 D1/D5 (optional, additive): images for an `IMAGE_UNDERSTANDING` request. Core sets it only for a provider
-   * that advertises that capability AND declares `executionLocality: 'LOCAL'`; every other request omits it.
+   * that advertises that capability AND whose declared `executionLocality` the composition-time image policy allows —
+   * `'LOCAL'` only by default; `'REMOTE'` too only when the owner selected a cloud image provider (ADR-0111 amendment
+   * A2). Every other request omits it.
    */
   images?: readonly AiImageInput[];
 }

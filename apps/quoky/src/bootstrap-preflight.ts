@@ -91,6 +91,16 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_DISCORD_EXPECTED_BOT_ID must be unset or the bot\'s Discord user id (17-20 digits; Developer Portal -> General Information -> Application ID).',
   [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED]:
     'The launchd service requires QUOKY_DISCORD_EXPECTED_BOT_ID in the host .env.local (the bot\'s user id, 17-20 digits). Set it, then restart the service.',
+  [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_PROVIDER_INVALID]:
+    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", or "off" (lowercase). "claude" sends attached images to Anthropic (cloud).',
+  [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_MODEL_INVALID]:
+    'QUOKY_IMAGE_UNDERSTANDING_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
+  [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING]:
+    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER=ollama requires QUOKY_OLLAMA_VISION_MODEL (a local Ollama vision model such as "gemma3:4b").',
+  [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID]:
+    'QUOKY_OLLAMA_VISION_MODEL must be a plain Ollama model name such as "gemma3:4b" (letters, digits, and . _ : / -; up to 128 characters).',
+  [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL]:
+    'QUOKY_OLLAMA_VISION_MODEL must name a local model; a name or tag containing "cloud" is refused (use QUOKY_IMAGE_UNDERSTANDING_PROVIDER=claude for a cloud image reader).',
   [QuokyConfigErrorCode.LAUNCHER_INVALID]:
     'QUOKY_LAUNCHER and QUOKY_LAUNCHER_RECENT_STARTS are written by ops/launchd/quoky-launch.sh only; remove them from .env.local and the shell.',
 };

@@ -141,6 +141,7 @@ function fixture(overrides: Partial<OpsSnapshotSources> = {}): OpsSnapshotSource
       launcherRecentStarts: 1,
     },
     providers: { all: () => [claude, ollama], available: async () => [claude] },
+    imageUnderstanding: { selection: 'claude', locality: 'REMOTE' },
     owner: async () => ({ status: 'RESOLVED', actorId: OWNER }),
     reminders: {
       enabled: true,
@@ -276,6 +277,18 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(row(Capability.SUMMARIZATION)).toEqual([Capability.SUMMARIZATION, '불가 (unavailable)', '0/1']);
     expect(row(Capability.EMBEDDING)).toEqual([Capability.EMBEDDING, '공급자 없음', '0/0']);
     expect(JSON.stringify(panelOf(view, 'providers'))).not.toContain('provider-id-marker');
+  });
+
+  it('providers: shows the configured image-understanding selection (ADR-0111 amendment A5), never a model name', async () => {
+    const view = await new OpsSnapshotBuilder(fixture()).build();
+    expect(field(view, 'providers', '이미지 이해 공급자 (설정)')).toBe('claude (클라우드: 첨부 이미지가 Anthropic으로 전송돼요)');
+    const local = await new OpsSnapshotBuilder({ ...fixture(), imageUnderstanding: { selection: 'ollama', locality: 'LOCAL' } }).build();
+    expect(field(local, 'providers', '이미지 이해 공급자 (설정)')).toBe('ollama (로컬: 이미지가 이 컴퓨터를 떠나지 않아요)');
+    const off = await new OpsSnapshotBuilder({ ...fixture(), imageUnderstanding: { selection: 'off', locality: 'NONE' } }).build();
+    expect(field(off, 'providers', '이미지 이해 공급자 (설정)')).toBe('off (이미지 분석 사용 안 함)');
+    const { imageUnderstanding: _omitted, ...withoutSelection } = fixture();
+    const unknown = await new OpsSnapshotBuilder(withoutSelection).build();
+    expect(field(unknown, 'providers', '이미지 이해 공급자 (설정)')).toBe(OPS_UNKNOWN);
   });
 
   it('reminders: active ones by number, labels as `알림 목록` shows them, guarded on the full body', async () => {

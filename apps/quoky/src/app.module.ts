@@ -102,7 +102,7 @@ import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
 import { createProductionContextBuilder } from './context-builder-provider';
-import { createImageUnderstandingProviders } from './image-understanding-provider';
+import { createImageUnderstandingProviders, imageUnderstandingLocalitiesFor } from './image-understanding-provider';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
 import { PersonalGitGuard } from './personal-git-guard';
@@ -312,10 +312,12 @@ const infrastructure: Provider[] = [
             }),
           ]
         : []),
-      // ADR-0111 D4/D5 (MM-2): opt-in local vision model (QUOKY_OLLAMA_VISION_MODEL). Advertises only
-      // IMAGE_UNDERSTANDING and declares LOCAL; image bytes never go to any other provider.
-      ...createImageUnderstandingProviders(process.env, {
+      // ADR-0111 D4/D5 (MM-2) + amendment A1: exactly the selected image provider (QUOKY_IMAGE_UNDERSTANDING_PROVIDER;
+      // unset = the local Ollama vision model when QUOKY_OLLAMA_VISION_MODEL is set, else none). It advertises only
+      // IMAGE_UNDERSTANDING; the Claude one declares REMOTE and is reachable only under the matching Core policy below.
+      ...createImageUnderstandingProviders(config.imageUnderstanding, {
         ollamaBin: config.ai.ollamaBin,
+        claudeBin: config.ai.claudeBin,
         logger: new ConsoleLogger('image-understanding'),
       }),
     ],
@@ -691,7 +693,12 @@ const application: Provider[] = [
         // `undefined` when no writer is built (every write request keeps its fixed "writes are off" reply).
         connectorWriteFlow: connectorWriteFlow ?? undefined,
         logger: coreLogger,
-      }, { gitRemoteEnabled: config.git.remoteEnabled, gitMergeEnabled: config.git.mergeEnabled });
+      }, {
+        gitRemoteEnabled: config.git.remoteEnabled,
+        gitMergeEnabled: config.git.mergeEnabled,
+        // ADR-0111 amendment A2: LOCAL only unless the owner selected the cloud (Claude) image provider.
+        imageUnderstandingLocalities: imageUnderstandingLocalitiesFor(config.imageUnderstanding),
+      });
     },
     inject: [
       STORAGE_PROVIDER,

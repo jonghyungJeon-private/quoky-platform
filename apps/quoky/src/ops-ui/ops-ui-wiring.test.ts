@@ -301,6 +301,17 @@ describe('OPS-1 wiring (ADR-0113 D1/D8)', () => {
     expect(await connectable(port)).toBe(false);
   });
 
+  it('passes the configured image-understanding selection to the providers panel (ADR-0111 amendment A5)', () => {
+    const base = input(fakes().container, {});
+    expect(opsSnapshotSources(base, new OpsErrorRing()).imageUnderstanding).toBeUndefined();
+    const claude = input(fakes().container, {}, {
+      config: { ...base.config, imageUnderstanding: { provider: 'claude', model: 'MODEL_NAME_MARKER' } },
+    });
+    const sources = opsSnapshotSources(claude, new OpsErrorRing());
+    expect(sources.imageUnderstanding).toEqual({ selection: 'claude', locality: 'REMOTE' });
+    expect(JSON.stringify(sources.imageUnderstanding)).not.toContain('MODEL_NAME_MARKER');
+  });
+
   it('counts archived memories by their flag, asking the store for the archive', async () => {
     const f = fakes();
     const sources = opsSnapshotSources(input(f.container, {}), new OpsErrorRing());

@@ -564,6 +564,78 @@ describe('loadConfig — Claude model (ADR-0092)', () => {
   );
 });
 
+describe('loadConfig — image understanding provider selection (ADR-0111 amendment A1)', () => {
+  it('unset keeps the pre-selector behaviour: ollama when QUOKY_OLLAMA_VISION_MODEL is set, otherwise off', () => {
+    expect(loadConfig(env({})).imageUnderstanding).toEqual({ provider: 'off' });
+    expect(loadConfig(env({ QUOKY_OLLAMA_VISION_MODEL: '  ' })).imageUnderstanding).toEqual({ provider: 'off' });
+    expect(loadConfig(env({ QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' })).imageUnderstanding).toEqual({
+      provider: 'ollama',
+      model: 'gemma3:4b',
+    });
+    // The implicit path never fails startup on an unusable model (fail closed with a code, as before).
+    expect(loadConfig(env({ QUOKY_OLLAMA_VISION_MODEL: 'x-cloud' })).imageUnderstanding).toEqual({
+      provider: 'off',
+      invalid: 'OLLAMA_VISION_MODEL_NOT_LOCAL',
+    });
+  });
+
+  it('accepts exactly ollama, claude and off', () => {
+    expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'off', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' })).imageUnderstanding)
+      .toEqual({ provider: 'off' });
+    expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'ollama', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' })).imageUnderstanding)
+      .toEqual({ provider: 'ollama', model: 'gemma3:4b' });
+    expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' })).imageUnderstanding)
+      .toEqual({ provider: 'claude', model: 'sonnet' });
+  });
+
+  it('claude uses QUOKY_IMAGE_UNDERSTANDING_MODEL, else QUOKY_CLAUDE_MODEL, else sonnet', () => {
+    expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude', QUOKY_CLAUDE_MODEL: 'opus' })).imageUnderstanding)
+      .toEqual({ provider: 'claude', model: 'opus' });
+    expect(
+      loadConfig(env({
+        QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude',
+        QUOKY_CLAUDE_MODEL: 'opus',
+        QUOKY_IMAGE_UNDERSTANDING_MODEL: 'claude-sonnet-4-5',
+      })).imageUnderstanding,
+    ).toEqual({ provider: 'claude', model: 'claude-sonnet-4-5' });
+    // QUOKY_IMAGE_UNDERSTANDING_MODEL is read only for claude.
+    expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_MODEL: '--bad' })).imageUnderstanding).toEqual({ provider: 'off' });
+  });
+
+  it.each(['', ' ', 'Claude', 'CLAUDE', 'ollama ', 'local', 'cloud', 'openai', 'gemini', 'none', 'false', 'true'])(
+    'rejects a non-exact selector %j at startup',
+    (value) => {
+      expect(() => loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: value }))).toThrow(
+        'IMAGE_UNDERSTANDING_PROVIDER_INVALID',
+      );
+    },
+  );
+
+  it('an explicit ollama selection fails startup on a missing, malformed or cloud-served vision model', () => {
+    const ollama = (model?: string) =>
+      env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'ollama', ...(model !== undefined ? { QUOKY_OLLAMA_VISION_MODEL: model } : {}) });
+    expect(() => loadConfig(ollama())).toThrow('IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING');
+    expect(() => loadConfig(ollama(''))).toThrow('IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING');
+    expect(() => loadConfig(ollama('--help'))).toThrow('IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID');
+    expect(() => loadConfig(ollama('qwen3-vl:235b-cloud'))).toThrow('IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL');
+  });
+
+  it.each(['', '--dangerously-skip-permissions', 'two words', 'a;b'])(
+    'rejects an unsafe QUOKY_IMAGE_UNDERSTANDING_MODEL %j for claude',
+    (value) => {
+      expect(() => loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude', QUOKY_IMAGE_UNDERSTANDING_MODEL: value })))
+        .toThrow('IMAGE_UNDERSTANDING_MODEL_INVALID');
+    },
+  );
+
+  it('the startup error carries the code only, never the configured value', () => {
+    let caught: unknown;
+    try { loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'gpt-4o-SECRETVALUE' })); } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(QuokyConfigError);
+    expect((caught as Error).message).toBe('IMAGE_UNDERSTANDING_PROVIDER_INVALID');
+  });
+});
+
 describe('loadConfig — git remote flag (ADR-0094)', () => {
   it('defaults to false and accepts exact true/false', () => {
     expect(loadConfig(env({})).git.remoteEnabled).toBe(false);

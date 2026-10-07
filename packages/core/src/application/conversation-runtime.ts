@@ -19,8 +19,11 @@ import {
   composeImageUnderstandingPrompt,
   imageAttachmentsOf,
   imageInputsOf,
+  imageProviderAllowed,
+  imageUnderstandingPolicyOf,
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
+  type ImageUnderstandingPolicy,
 } from './image-understanding';
 import {
   hasEffectiveText,
@@ -157,6 +160,7 @@ import type {
 import {
   TURN_HANDLER_STAGES,
   executionLocalityOf,
+  type AiExecutionLocality,
   type AiProvider,
   type AiRequest,
   type Logger,
@@ -977,6 +981,13 @@ export interface ConversationRuntimeOptions {
    * composition-root `PersonalHostingGuard` / `PersonalGitGuard` remain the enforcement points.
    */
   readonly gitMergeEnabled?: boolean;
+  /**
+   * ADR-0111 amendment A2 (2026-10-07): the declared provider localities that may receive image bytes on an image turn.
+   * Absent → `['LOCAL']` (the ADR-0111 D5 default; behaviour unchanged). The composition root passes
+   * `['LOCAL', 'REMOTE']` only when the owner explicitly selected a cloud image provider. A composition-time option,
+   * not a deps key: it is configuration, like `gitRemoteEnabled`, and no collaborator.
+   */
+  readonly imageUnderstandingLocalities?: readonly AiExecutionLocality[];
 }
 
 /** A code-change preview's refs, targets and prepared (read, classified, grant-checked) context content. */
@@ -1592,6 +1603,8 @@ export class ConversationRuntime {
   private readonly clock: () => IsoTimestamp;
   private readonly gitRemoteEnabled: boolean;
   private readonly gitMergeEnabled: boolean;
+  /** ADR-0111 amendment A2: which declared provider localities may receive image bytes (default `LOCAL` only). */
+  private readonly imagePolicy: ImageUnderstandingPolicy;
   /** The registered turn handlers per stage, each in `(order, id)` order (ADR-0096 D2). */
   private readonly turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
   /** The handlers' contributed help lines in registry order (ADR-0096 D6); bounded by the composer. */
@@ -1609,6 +1622,7 @@ export class ConversationRuntime {
     this.clock = options.clock ?? now;
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
     this.gitMergeEnabled = options.gitMergeEnabled ?? false;
+    this.imagePolicy = imageUnderstandingPolicyOf(options.imageUnderstandingLocalities);
     this.approvalDecisions = new ApprovalDecisionService(
       // Read through to the runtime's own deps object (the same collaborators, never a copy).
       {
@@ -7205,8 +7219,9 @@ export class ConversationRuntime {
   }
 
   /**
-   * ADR-0111 D3: on a turn whose prompt carried attachment text, the provider's ORIGINAL reply and every artifact
-   * payload are checked by the credential guard before any other reply guard runs. A match withholds the whole reply:
+   * ADR-0111 D3: on a turn whose prompt carried attachment text — and (amendment A3) on every image turn — the
+   * provider's ORIGINAL reply and every artifact payload are checked by the credential guard before any other reply
+   * guard runs. A match withholds the whole reply:
    * a fixed notice and no artifacts, before anything is persisted or delivered. `null` lets the reply through to the
    * usual guards. Turns without attachment text are not checked here: a general check would withhold ordinary help
    * answers (`password: <your password>` examples, 16-digit numbers) and is not part of ADR-0097's scope.
@@ -7217,8 +7232,9 @@ export class ConversationRuntime {
     text: string,
     artifacts: readonly Artifact[],
     taskId: Id,
+    turn: { readonly imageTurn?: boolean } = {},
   ): { text: string; artifacts: Artifact[] } | null {
-    if ((bundle.currentAttachments?.textFiles.length ?? 0) === 0) return null;
+    if (turn.imageTurn !== true && (bundle.currentAttachments?.textFiles.length ?? 0) === 0) return null;
     if (!isAttachmentReplyWithheld(text, artifacts)) return null;
     // Content-free.
     this.deps.logger.info('attachment turn reply withheld', { taskId });
@@ -7226,10 +7242,11 @@ export class ConversationRuntime {
   }
 
   /**
-   * ADR-0111 D3–D5 (MM-2): one image turn. The provider is selected by capability (`IMAGE_UNDERSTANDING`) and must
-   * declare `executionLocality: 'LOCAL'` (data, never its id; owner decision 9) — a REMOTE selection is treated as no
-   * provider and receives nothing. With no ready LOCAL provider the reply is the truthful deterministic notice and no
-   * Task runs. The request carries the bounded prompt (caption and text attachments as untrusted, JSON-quoted
+   * ADR-0111 D3–D5 (MM-2) and amendment A2/A3: one image turn. The provider is selected by capability
+   * (`IMAGE_UNDERSTANDING`) and its declared `executionLocality` must be in the composition-time image policy (data,
+   * never its id) — `LOCAL` only by default, so a REMOTE selection is treated as no provider and receives nothing; a
+   * REMOTE provider is allowed only when the owner selected a cloud image provider. With no ready allowed provider the
+   * reply is the truthful deterministic notice and no Task runs. The request carries the bounded prompt (caption and text attachments as untrusted, JSON-quoted
    * readout) and the adapter's opaque temp-file references; the provider call is awaited inside the turn, so each
    * reference stays valid until it settles and the adapter deletes it afterwards. Image references are never
    * recorded in memory, Task/TaskRun metadata or logs (counts only).
@@ -7248,8 +7265,8 @@ export class ConversationRuntime {
       if (!(err instanceof NoProviderAvailableError)) throw err;
       return this.respondImageUnderstandingUnavailable(message, session, images.length, 'no-ready-provider');
     }
-    if (executionLocalityOf(provider) !== 'LOCAL') {
-      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'provider-not-local');
+    if (!imageProviderAllowed(provider, this.imagePolicy)) {
+      return this.respondImageUnderstandingUnavailable(message, session, images.length, 'locality-not-allowed');
     }
 
     const intent: Intent = {
@@ -7290,13 +7307,16 @@ export class ConversationRuntime {
       await this.deps.dispatchCommit.commit(run.id, run.id);
       const executed = await provider.execute(request);
       // ADR-0104 D1: the provider-neutral internal-action claim guard also covers an image reply.
-      // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
+      // ADR-0111 D3 + amendment A3: the attachment credential check runs FIRST, on the original reply and every
+      // artifact, on EVERY image turn (the image itself is attachment content, so text the provider read off it — a
+      // password in a screenshot — is withheld like a model-made match on a text-file turn).
       const withheld = this.withheldAttachmentReply(
         withAttachedTextFiles({ taskId: task.id, conversationTranscript: [], backgroundResources: [] }, message),
         message,
         executed.text,
         executed.artifacts ?? [],
         task.id,
+        { imageTurn: true },
       );
       const result = withheld
         ? { ...executed, ...withheld }
@@ -7327,11 +7347,11 @@ export class ConversationRuntime {
     message: InboundMessage,
     session: Session,
     imageCount: number,
-    reason: 'no-ready-provider' | 'provider-not-local',
+    reason: 'no-ready-provider' | 'locality-not-allowed',
   ): Promise<TurnResult> {
     // Content-free: a fixed reason and a count, never a file name, reference or caption.
     this.deps.logger.info('image turn answered without a provider', { reason, imageCount });
-    const text = renderImageUnderstandingUnavailable(noticeLanguage(undefined, message.text));
+    const text = renderImageUnderstandingUnavailable(noticeLanguage(undefined, message.text), this.imagePolicy);
     return this.respondComposed(message, session, { context: message.context, text });
   }
 

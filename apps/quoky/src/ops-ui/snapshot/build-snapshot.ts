@@ -52,6 +52,15 @@ export interface OpsProviderReadinessSource {
   available(): Promise<readonly OpsProviderView[]>;
 }
 
+/**
+ * ADR-0111 amendment A5: the owner's configured image-understanding selection (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`), a
+ * composition-root configuration fact — not a routing result and not a provider id. Never a model name.
+ */
+export interface OpsImageUnderstandingSelection {
+  readonly selection: 'ollama' | 'claude' | 'off';
+  readonly locality: 'LOCAL' | 'REMOTE' | 'NONE';
+}
+
 export interface OpsConnectorView {
   readonly source: string;
   readonly readOnly: boolean;
@@ -86,6 +95,8 @@ export interface OpsSnapshotSources {
   readonly timeZone: string;
   readonly runtime: OpsRuntimeFacts;
   readonly providers: OpsProviderReadinessSource;
+  /** ADR-0111 amendment A5: shown in the providers panel; absent → the field reads `unknown`. */
+  readonly imageUnderstanding?: OpsImageUnderstandingSelection;
   readonly owner: () => Promise<OpsOwnerResolution>;
   readonly reminders: {
     readonly enabled: boolean;
@@ -131,6 +142,14 @@ async function panel(id: string, title: string, build: () => Promise<PanelBody>)
   } catch (err) {
     return { id, title, state: 'UNAVAILABLE', errorCode: errorCodeOf(err), fields: [], notes: [] };
   }
+}
+
+/** The configured image selection as the providers panel shows it (ADR-0111 amendment A5). */
+function imageSelectionLabel(image: OpsImageUnderstandingSelection | undefined): string {
+  if (image === undefined) return OPS_UNKNOWN;
+  if (image.selection === 'claude') return 'claude (클라우드: 첨부 이미지가 Anthropic으로 전송돼요)';
+  if (image.selection === 'ollama') return 'ollama (로컬: 이미지가 이 컴퓨터를 떠나지 않아요)';
+  return 'off (이미지 분석 사용 안 함)';
 }
 
 function yesNo(value: boolean | undefined): string {
@@ -218,9 +237,13 @@ export class OpsSnapshotBuilder {
       rows.push([capability, state, `${ready}/${registered.length}`]);
     }
     return {
-      fields: [],
+      fields: [{ label: '이미지 이해 공급자 (설정)', value: imageSelectionLabel(this.sources.imageUnderstanding) }],
       table: { columns: ['기능', '상태', '준비/등록'], rows, emptyText: '등록된 공급자가 없어요.' },
-      notes: ['공급자 이름은 표시하지 않아요 (ARCHITECTURE.md §5.3/§12, 소유자 결정 14 대기).'],
+      notes: [
+        '공급자 이름은 표시하지 않아요 (ARCHITECTURE.md §5.3/§12, 소유자 결정 14 대기).',
+        '예외: 이미지 이해는 소유자가 설정한 선택값(QUOKY_IMAGE_UNDERSTANDING_PROVIDER)을 보여 줘요 (ADR-0111 개정 A5). ' +
+          '준비 상태는 위 표의 IMAGE_UNDERSTANDING 행이에요.',
+      ],
     };
   }
 
