@@ -14565,10 +14565,29 @@ reconciliation with ADR-0064/ADR-0090 routing.
   prompt still come from `~/.codex` (`CODEX_HOME` cannot be isolated without moving the login). Codex's own
   developer messages (sandbox description, collaboration mode, multi-agent role) stay in its context. The residual
   containment is therefore the `read-only` sandbox with approvals `never` in an empty temp directory, the disabled
-  tools, and the fail-closed check on action items; the read-only sandbox still permits reads elsewhere on disk if a
-  future CLI re-enabled a tool. A SIGKILL after the timeout grace reaches the `codex` Node wrapper, which forwards
-  SIGTERM but not SIGKILL to the native binary. A `--disable` name that a future CLI no longer knows makes the run
-  fail (`EXECUTION_FAILED`) rather than run with the tool enabled.
+  tools, and the fail-closed check on the event stream; the read-only sandbox still permits reads elsewhere on disk if
+  a future CLI re-enabled a tool. A `--disable` name that a future CLI no longer knows makes the run fail
+  (`EXECUTION_FAILED`) rather than run with the tool enabled.
+- **Event stream (fail closed, Codex review P2 on d63421c).** A reply is accepted only from a well-formed stream:
+  every line a JSON event, event types on an allow-list (thread/turn lifecycle, `error`, `item.started/updated/
+  completed`), item types `agent_message`, `reasoning`, the CLI's non-fatal `error` notice or `todo_list`, and exactly
+  one `turn.started` and one `turn.completed`. A malformed line, an unknown event or item type, a missing or repeated
+  turn, or any action item rejects the run; missing telemetry is never read as "no action happened". `todo_list` is
+  accepted as inert: it is the built-in plan tool (`update_plan`), which only records a checklist, cannot be switched
+  off in 0.160.0 (`--disable plan_tool` is an unknown flag), and a multi-step chat request can plausibly trigger it.
+  It is counted in the audit (`planItemCount`) and never shown.
+- **Termination (Codex review P2 on d63421c, generic `cli-runner` change for every CLI provider).** Outside Windows the
+  runner spawns each provider child as the leader of its own process group and sends SIGTERM, then SIGKILL after the
+  grace period, to the whole group, so the native binary behind the `codex` Node wrapper (which forwards SIGTERM but
+  not SIGKILL) is killed with it; a failed group signal falls back to the child. If `close` still has not arrived one
+  grace period after SIGKILL (a descendant holding the pipes), the runner destroys the stdio streams, settles (a
+  timeout stays `TIMEOUT`) and cleans up, temp directories included, so a call can never stay pending. Side effect:
+  provider children no longer receive the signals sent to Quoky's own process group (a terminal Ctrl-C, launchd
+  stopping the job); an exit hook SIGKILLs every still-running group when the Quoky process exits, but a hard kill of
+  Quoky (SIGKILL) cannot run it, and a child then keeps running until its CLI finishes.
+- **Constitution (owner-approved 2026-10-07).** `ARCHITECTURE.md` §2 principle 1 now says users never pick a model
+  per request, while the owner may select which providers are installed for a capability tier through installation
+  configuration; the answering provider is recorded for audit only. Principle 2 is unchanged.
 - **Consequences:** + The chat model is one setting; existing installs are unchanged. + Code and policy-sensitive work
   keeps Claude's tested policy bar. − With `codex`, chat content leaves the host to OpenAI (accepted, D4), counts
   against the owner's ChatGPT plan, and a usage-limit failure is reported as unavailable until the next turn

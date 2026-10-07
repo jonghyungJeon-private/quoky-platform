@@ -241,6 +241,7 @@ describe('CodexCliProvider — output parsing', () => {
       agentMessageCount: 1,
       actionItemCount: 0,
       warningItemCount: 1,
+      planItemCount: 0,
       turnCompletedCount: 1,
       inputTokens: 1200,
       cachedInputTokens: 300,
@@ -321,7 +322,6 @@ describe('CodexCliProvider — output parsing', () => {
       ['a JSON value that is not an event object', `${jsonl(START, reply, DONE)}[]\n`, 'MALFORMED_LINE'],
       ['an event with no type', jsonl(START, { item: {} }, reply, DONE), 'MALFORMED_LINE'],
       ['an unknown tool item', jsonl(START, { type: 'item.completed', item: { id: 't', type: 'patch_apply' } }, reply, DONE), 'UNKNOWN_ITEM_TYPE'],
-      ['an unknown plan item', jsonl(START, { type: 'item.completed', item: { id: 'p', type: 'todo_list', items: [] } }, reply, DONE), 'UNKNOWN_ITEM_TYPE'],
       ['an unknown event type', jsonl(START, { type: 'exec.approval_request', command: 'rm -rf /' }, reply, DONE), 'UNKNOWN_EVENT_TYPE'],
       ['an item event without an item', jsonl(START, { type: 'item.completed' }, reply, DONE), 'MALFORMED_ITEM'],
       ['an agent message without text', jsonl(START, { type: 'item.completed', item: { id: 'a', type: 'agent_message' } }, DONE), 'MALFORMED_ITEM'],
@@ -335,6 +335,22 @@ describe('CodexCliProvider — output parsing', () => {
       expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
       expect(String((err as Error).message)).toContain(violation);
       expect(String((err as Error).message)).not.toContain('looks fine');
+    });
+
+    it('accepts a todo_list (built-in plan tool) as an inert item: counted, never shown', async () => {
+      const stdout = jsonl(
+        START,
+        { type: 'item.started', item: { id: 'p', type: 'todo_list', items: [{ text: 'read the file', completed: false }] } },
+        { type: 'item.updated', item: { id: 'p', type: 'todo_list', items: [{ text: 'read the file', completed: true }] } },
+        { type: 'item.completed', item: { id: 'p', type: 'todo_list', items: [{ text: 'read the file', completed: true }] } },
+        reply,
+        DONE,
+      );
+      expect(parseCodexJsonEvents(stdout)).toMatchObject({ violations: [], planItemCount: 1, actionItemCount: 0 });
+      const result = await exec0(stdout);
+      expect(result.text).toBe('looks fine');
+      expect(result.text).not.toContain('read the file');
+      expect(result.audit).toMatchObject({ planItemCount: 1 });
     });
 
     it('rejects every action-like item, even with a valid reply and a completed turn', async () => {

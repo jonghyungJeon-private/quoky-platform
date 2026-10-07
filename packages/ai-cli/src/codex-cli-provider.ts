@@ -143,11 +143,14 @@ const CODEX_ALLOWED_EVENT_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The only item types accepted inside `item.*` events: the reply, reasoning, and the CLI's non-fatal `error` notice
- * (0.160.0 emits one per run because the disabled `code_mode_host` makes code mode fail closed). Action items are
- * rejected separately; any other item type (a plan, a new tool) is unknown and also rejects the run.
+ * The only item types accepted inside `item.*` events: the reply, reasoning, the CLI's non-fatal `error` notice
+ * (0.160.0 emits one per run because the disabled `code_mode_host` makes code mode fail closed) and `todo_list`.
+ * `todo_list` is the built-in plan tool (`update_plan`): it only records a checklist in the session, has no side
+ * effect, cannot be switched off in 0.160.0 (`--disable plan_tool` is an unknown flag), and a multi-step chat request
+ * can plausibly trigger it, so it is accepted as inert and never shown. Action items are rejected separately; any
+ * other item type (a new tool) is unknown and rejects the run.
  */
-const CODEX_ALLOWED_ITEM_TYPES: ReadonlySet<string> = new Set(['agent_message', 'reasoning', 'error']);
+const CODEX_ALLOWED_ITEM_TYPES: ReadonlySet<string> = new Set(['agent_message', 'reasoning', 'error', 'todo_list']);
 
 const CODEX_AUTH_FAILURE =
   /(not logged in|please (run|log ?in)|codex login|authenticat|unauthori[sz]ed|invalid api key|\b401\b|\b403\b|token (has )?expired|refresh token)/i;
@@ -179,6 +182,8 @@ interface ParsedCodexEvents {
   readonly actionItemCount: number;
   /** Non-fatal `error` items (see {@link CODEX_ALLOWED_ITEM_TYPES}); counted for the audit, never reply text. */
   readonly warningItemCount: number;
+  /** Inert `todo_list` (plan) items, counted once per item id for the audit; never reply text. */
+  readonly planItemCount: number;
   readonly jsonEventCount: number;
   readonly turnStartedCount: number;
   readonly turnCompletedCount: number;
@@ -209,6 +214,7 @@ export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
   let lastAgentMessage: string | undefined;
   let agentMessageCount = 0;
   let warningItemCount = 0;
+  const planItems = new Set<string>();
   let jsonEventCount = 0;
   let turnStartedCount = 0;
   let turnCompletedCount = 0;
@@ -259,6 +265,8 @@ export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
         agentMessageCount += 1;
       } else if (type === 'item.completed' && item.type === 'error') {
         warningItemCount += 1;
+      } else if (item.type === 'todo_list') {
+        planItems.add(typeof item.id === 'string' ? item.id : `#${jsonEventCount}`);
       }
       continue;
     }
@@ -289,6 +297,7 @@ export function parseCodexJsonEvents(stdout: string): ParsedCodexEvents {
     agentMessageCount,
     actionItemCount: actionItems.size,
     warningItemCount,
+    planItemCount: planItems.size,
     jsonEventCount,
     turnStartedCount,
     turnCompletedCount,
@@ -483,6 +492,7 @@ export class CodexCliProvider extends BaseCliAiProvider {
         agentMessageCount: events.agentMessageCount,
         actionItemCount: events.actionItemCount,
         warningItemCount: events.warningItemCount,
+        planItemCount: events.planItemCount,
         turnCompletedCount: events.turnCompletedCount,
         ...events.usage,
         captureMode: 'pipe',
