@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — selectable chat provider: Claude, Codex or Ollama (ADR-0092 amendment, 2026-10-07)
+
+- `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` picks the chat-tier provider registered next to Claude. Unset
+  derives from `QUOKY_OLLAMA_ENABLED` as before; a contradicting pair lets the selector win with the startup warning
+  `CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED`. New startup errors `CHAT_PROVIDER_INVALID`, `CODEX_MODEL_INVALID`.
+- `CodexCliProvider` is real when selected: `GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`
+  only (priority 100, `REMOTE`); code, review and policy-sensitive chat stay on Claude. Isolated, read-only, stdin-only
+  `codex exec --json` in an empty temp cwd; readiness via `codex login status`; optional `QUOKY_CODEX_MODEL`.
+- The ops UI provider panel shows the selector value and its source. Docs: quickstart section 4, operator guide 0.2/0.4a,
+  `.env.example`.
+
 ## Quoky Personal v3 — waves 1-6 — 2026-10-07
 
 Merged through PRs #116-#132 (2026-10-06/07). Wave 6 closes with INT-2 (offline v3 acceptance) and DOC-C (this

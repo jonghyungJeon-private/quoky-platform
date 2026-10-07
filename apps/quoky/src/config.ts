@@ -44,16 +44,21 @@ export interface QuokyConfig {
   vector: { storePath: string };
   workspace: { workspaceRoot: string };
   /**
-   * `claudeModel` is validated at parse (ADR-0092). `ollamaEnabled` controls composition-root registration only
-   * (default on, opt-out) and is never inferred from `OLLAMA_MODEL`.
+   * `claudeModel` is validated at parse (ADR-0092). `ollamaEnabled` is the raw `QUOKY_OLLAMA_ENABLED` flag (default
+   * on, never inferred from `OLLAMA_MODEL`); since the ADR-0092 amendment (2026-10-07) chat registration follows
+   * `chat.provider` only, which derives from that flag when `QUOKY_CHAT_PROVIDER` is unset.
    */
   ai: {
     claudeBin: string;
     claudeModel: string;
     codexBin: string;
+    /** `QUOKY_CODEX_MODEL` (ADR-0092 amendment); undefined means the Codex CLI's default model. */
+    codexModel?: string;
     ollamaBin: string;
     ollamaModel: string;
     ollamaEnabled: boolean;
+    /** The chat-provider selection (ADR-0092 amendment, 2026-10-07); see {@link parseChatProviderSelection}. */
+    chat: ChatProviderSelection;
   };
   /**
    * Image understanding provider selection (ADR-0111 D4/D5 and its 2026-10-07 amendment A1/A2). Exactly one provider is
@@ -212,6 +217,8 @@ export const QuokyConfigErrorCode = {
   DISCORD_CHANNEL_IDS_INVALID: 'DISCORD_CHANNEL_IDS_INVALID',
   OLLAMA_ENABLED_INVALID: 'OLLAMA_ENABLED_INVALID',
   CLAUDE_MODEL_INVALID: 'CLAUDE_MODEL_INVALID',
+  CHAT_PROVIDER_INVALID: 'CHAT_PROVIDER_INVALID',
+  CODEX_MODEL_INVALID: 'CODEX_MODEL_INVALID',
   GIT_REMOTE_ENABLED_INVALID: 'GIT_REMOTE_ENABLED_INVALID',
   GIT_MERGE_ENABLED_INVALID: 'GIT_MERGE_ENABLED_INVALID',
   GIT_MERGE_REQUIRES_REMOTE: 'GIT_MERGE_REQUIRES_REMOTE',
@@ -431,10 +438,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       claudeBin: env.CLAUDE_CLI_BIN ?? 'claude',
       claudeModel,
       codexBin: env.CODEX_CLI_BIN ?? 'codex',
+      ...parseCodexModel(env.QUOKY_CODEX_MODEL),
       ollamaBin: env.OLLAMA_CLI_BIN ?? 'ollama',
       ollamaModel: env.OLLAMA_MODEL ?? 'llama3.1',
       // Registration flag only (ADR-0092): opt-out, exact true/false, never inferred from OLLAMA_MODEL.
       ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
+      chat: parseChatProviderSelection(env),
     },
     imageUnderstanding: parseImageUnderstandingConfig(env, claudeModel),
     git: { remoteEnabled: gitRemoteEnabled, mergeEnabled: gitMergeEnabled },
@@ -554,6 +563,54 @@ function parseClaudeModel(raw: string | undefined): string {
     throw new QuokyConfigError(QuokyConfigErrorCode.CLAUDE_MODEL_INVALID);
   }
   return raw;
+}
+
+/** The chat providers `QUOKY_CHAT_PROVIDER` can select (ADR-0092 amendment, 2026-10-07). */
+export const CHAT_PROVIDERS = ['claude', 'codex', 'ollama'] as const;
+export type ChatProviderName = (typeof CHAT_PROVIDERS)[number];
+
+/** The startup warning code when `QUOKY_CHAT_PROVIDER` overrides a contradicting `QUOKY_OLLAMA_ENABLED`. */
+export const CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED = 'CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED' as const;
+
+export interface ChatProviderSelection {
+  readonly provider: ChatProviderName;
+  /** Where the selection came from: the selector itself, or derived from `QUOKY_OLLAMA_ENABLED` (back-compat). */
+  readonly source: 'QUOKY_CHAT_PROVIDER' | 'QUOKY_OLLAMA_ENABLED';
+  /** Set when both variables are set and disagree; the selector wins and the composition root logs this code. */
+  readonly warning?: typeof CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED;
+}
+
+/**
+ * `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` (exact, lowercase; anything else, including an empty value, is
+ * `CHAT_PROVIDER_INVALID`). Unset derives the selection from `QUOKY_OLLAMA_ENABLED` exactly as before: `true`
+ * (the default) is `ollama`, `false` is `claude`. When both are set and disagree (`ollama` with `false`, or
+ * `claude`/`codex` with `true`) the selector wins and the selection carries a warning code; startup continues, so
+ * an always-on service never crash-loops over a stale flag. The flag itself is still validated by its own parser.
+ */
+export function parseChatProviderSelection(env: NodeJS.ProcessEnv): ChatProviderSelection {
+  const raw = env.QUOKY_CHAT_PROVIDER;
+  const ollamaFlag = env.QUOKY_OLLAMA_ENABLED;
+  if (raw === undefined) {
+    return { provider: ollamaFlag === 'false' ? 'claude' : 'ollama', source: 'QUOKY_OLLAMA_ENABLED' };
+  }
+  if (!(CHAT_PROVIDERS as readonly string[]).includes(raw)) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.CHAT_PROVIDER_INVALID);
+  }
+  const provider = raw as ChatProviderName;
+  const conflicts =
+    (ollamaFlag === 'true' && provider !== 'ollama') || (ollamaFlag === 'false' && provider === 'ollama');
+  return conflicts
+    ? { provider, source: 'QUOKY_CHAT_PROVIDER', warning: CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED }
+    : { provider, source: 'QUOKY_CHAT_PROVIDER' };
+}
+
+/** `QUOKY_CODEX_MODEL`: unset = the CLI default; otherwise the same bounded token shape as `QUOKY_CLAUDE_MODEL`. */
+function parseCodexModel(raw: string | undefined): { codexModel?: string } {
+  if (raw === undefined) return {};
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(raw)) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.CODEX_MODEL_INVALID);
+  }
+  return { codexModel: raw };
 }
 
 /** One lowercase Ollama name/tag segment; bounded so it is a safe fixed argv element. */

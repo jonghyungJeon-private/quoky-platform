@@ -39,7 +39,9 @@ line to use the default.
 |---|---|---|
 | `QUOKY_DISCORD_OWNER_IDS` | none (required) | Missing or malformed fails startup. Only these users are served |
 | `QUOKY_DISCORD_CHANNEL_IDS` | empty = owner DMs only | Owner messages in these channels (and their threads) are turns |
-| `QUOKY_OLLAMA_ENABLED` | `true` | Registers local Ollama (chat, summaries, read-only work). `false` forces Claude for everything |
+| `QUOKY_CHAT_PROVIDER` | unset (derived) | `claude` \| `codex` \| `ollama` (exact; else `CHAT_PROVIDER_INVALID`). Picks the chat-tier provider registered next to Claude (ADR-0092 amendment, see 0.4a). Unset derives from `QUOKY_OLLAMA_ENABLED` (`true` → `ollama`, `false` → `claude`). A contradicting pair: the selector wins and startup logs `CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED` |
+| `QUOKY_CODEX_MODEL` | unset (CLI default) | Passed to `codex exec` as `-m` when `codex` is selected; same token rule as `QUOKY_CLAUDE_MODEL` (`CODEX_MODEL_INVALID`) |
+| `QUOKY_OLLAMA_ENABLED` | `true` | Registers local Ollama (chat, summaries, read-only work) when `QUOKY_CHAT_PROVIDER` is unset. `false` forces Claude for everything. The owner's service has it `false` (Claude Sonnet chat) |
 | `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b`. The owner's service runs `granite3.3:8b` since 2026-10-07 (see 0.5) |
 | `QUOKY_CLAUDE_MODEL` | `sonnet` | Passed to the Claude CLI as `--model` |
 | `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote reads. Needs the GitHub App (0.3) |
@@ -128,6 +130,32 @@ flags on every run: `--strict-mcp-config`, `--setting-sources ""`, `--no-session
 workspace-less requests. This keeps the owner's claude.ai connectors (for example Google Calendar), user/project settings
 and session history out of Quoky runs (QA-V2-002). Needs a CLI version that supports these flags (the quickstart records
 2.1.287). Policy-sensitive chat turns always use Claude, so they count against the subscription.
+
+### 0.4a Codex CLI (`QUOKY_CHAT_PROVIDER=codex`)
+
+ADR-0092 amendment (2026-10-07). With `codex` selected, Quoky registers `CodexCliProvider` next to Claude. Codex serves
+`GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS` and `READONLY_LOOKUP` (priority 100 > Claude); code implementation,
+code review, planning and policy-sensitive chat stay on Claude, which is also the fallback whenever Codex is not ready.
+**All chat-tier content (including connector summaries and text attachments) then goes to OpenAI** through the owner's
+ChatGPT login; the owner accepted this on the same basis as Claude.
+
+- Readiness: `codex login status` must exit 0 with a "Logged in" line (10 s bound, cached about 30 s; no model call).
+  Under launchd, set `CODEX_CLI_BIN` to an absolute path if `codex` is not on the service PATH; the CLI is a Node script,
+  so `node` must be on that PATH too.
+- Invocation: `codex exec --json --color never --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules
+  --sandbox read-only -c approval_policy="never" -c project_doc_max_bytes=0 -c skills.include_instructions=false
+  -c web_search="disabled" -c mcp_servers={} -c history.persistence="none" -c model_reasoning_effort=… --disable <shell
+  and agent features> [-m QUOKY_CODEX_MODEL] -`, prompt on stdin, fresh empty temp cwd removed afterwards. Only the last
+  `agent_message` is used; a stream that shows a command, file change, MCP call or web search is refused whole.
+- Not isolated: auth and Codex's built-in agent prompt come from `~/.codex` and the CLI; there is no "no tools" switch,
+  so the read-only sandbox in an empty directory plus the disabled tools are the containment. The CLI reports one
+  non-fatal "Code Mode is unavailable" item per run because `code_mode_host` is disabled (counted as
+  `warningItemCount` in the audit).
+- Failures map to `TIMEOUT`, `UNAVAILABLE` (CLI missing, not logged in, usage limit), `EXECUTION_FAILED` or
+  `EMPTY_OUTPUT`; no raw CLI text is stored. `task_runs.providerId` shows `codex-cli` for Codex turns.
+- Live check 2026-10-07 (codex-cli 0.160.0, default model, two calls): about 7.5-8 s per short Korean recommendation
+  turn, about 8.2k input tokens (6.9k cached), session and history files unchanged.
+- Switching back: set `QUOKY_CHAT_PROVIDER=claude` (or `ollama`) and restart.
 
 ### 0.5 Ollama
 
@@ -271,8 +299,11 @@ with the normal error reply and nothing is stored.
 
 **Chat providers you can switch today.** Claude, any model via `QUOKY_CLAUDE_MODEL` (the owner's service runs chat on
 Claude with `QUOKY_OLLAMA_ENABLED=false` since 2026-10-07, an accepted cloud egress); local Ollama, any local model via
-`QUOKY_OLLAMA_ENABLED=true` + `OLLAMA_MODEL`. `CodexCliProvider` is an unimplemented stub that the composition does not
-register, so it is never selectable. Other cloud vendors (OpenAI API, Gemini) need a new provider adapter package.
+`QUOKY_OLLAMA_ENABLED=true` + `OLLAMA_MODEL`; and Codex (OpenAI) via `QUOKY_CHAT_PROVIDER=codex` for the chat tier only
+(chat, summaries, document analysis, read-only lookups; see 0.4a). `QUOKY_CHAT_PROVIDER` (`claude` | `codex` | `ollama`)
+is the selector; unset derives from `QUOKY_OLLAMA_ENABLED`. Code, review and policy-sensitive chat always stay on Claude.
+Images are selected separately (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`: `claude` | `ollama` | `off`; no Codex image option
+yet). Other cloud vendors (OpenAI API, Gemini) need a new provider adapter package.
 
 **Not implemented in v3 (do not configure):** `QUOKY_GITHUB_REPOS` (CODE-8, ADR-0109), `QUOKY_PR_DESCRIPTION_MODEL_ENABLED`
 (ADR-0108 D4), an MLX provider (ADR-0105 D2-D4) and continuation activation (ADR-0103). The GitHub App installation

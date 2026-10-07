@@ -25,7 +25,7 @@ export interface AiImageInput {
  *
  * Example v1 priorities (advertised by each concrete provider, NOT by core):
  *   OllamaCliProvider  GENERAL_CHAT=100  SUMMARIZATION=100
- *   CodexCliProvider   CODE_IMPLEMENTATION=100  TEST_EXECUTION=80
+ *   CodexCliProvider   GENERAL_CHAT=100  SUMMARIZATION=100  (chat tier only; registered by selector)
  *   ClaudeCliProvider  ARCHITECTURE_PLANNING=100  CODE_REVIEW=90  + every
  *                      capability at a low priority so it is the universal fallback.
  */

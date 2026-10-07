@@ -14506,6 +14506,78 @@ latency bounded per kind of work.
 `[LATER]` execution-time fallback (Ollama failure → Claude), per-question difficulty-based effort, and any
 reconciliation with ADR-0064/ADR-0090 routing.
 
+## ADR-0092 amendment — Chat-provider selector and Codex as a cloud chat provider for the chat tier (2026-10-07)
+
+- **Status:** Accepted — **Product Owner decision of 2026-10-07**. Amends ADR-0092 on registration only; the ADR-0092
+  text is not edited. Independent Architecture Review of the implementation is required before merge.
+- **Context:** The owner's service runs general chat on Claude Sonnet (`QUOKY_OLLAMA_ENABLED=false`). The owner wants
+  the chat model switchable the way OpenClaw does it: Claude by default, with Codex (OpenAI) or a local Ollama model
+  selectable by configuration. `CodexCliProvider` was a stub that was never available, because the Codex CLI has no
+  suggest-only mode (CAP-008, ADR-0029). Chat preference was a single boolean (register Ollama or not).
+- **Decision:**
+  1. **One selector.** `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama`, exact lowercase values; anything else,
+     including an empty value, is the startup error `CHAT_PROVIDER_INVALID`. Unset derives the selection from
+     `QUOKY_OLLAMA_ENABLED` exactly as before (`true`, the default, → `ollama`; `false` → `claude`), so existing
+     installs behave identically. When both are set and disagree (`ollama` with `false`, or `claude`/`codex` with
+     `true`), **the selector wins** and startup logs the value-free warning code `CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED`;
+     startup does not fail, so the always-on service cannot crash-loop on a stale flag. `QUOKY_OLLAMA_ENABLED` itself is
+     still validated.
+  2. **Registration, not routing policy.** The composition root registers Claude always, plus Ollama (`ollama`) or
+     Codex (`codex`) next to it. Codex wins its capabilities through the router's existing descriptor priorities; Core,
+     `CapabilityRouter` and `AiProvider` are unchanged and nothing branches on a provider id. Claude stays registered
+     for code and policy capabilities and is the selection-time fallback when the selected provider is not ready
+     (ADR-0092 "selection-time fallback" unchanged; no execution-time fallback). Embedding and image providers are
+     composed separately and are not affected. A Codex image option is out of scope here.
+  3. **Codex serves the chat tier only.** `CodexCliProvider` advertises `GENERAL_CHAT`, `SUMMARIZATION`,
+     `DOCUMENT_ANALYSIS` and `READONLY_LOOKUP` at priority 100 (above Claude's 50–60) and declares `REMOTE` (ADR-0107
+     D6). It does **not** advertise `CODE_IMPLEMENTATION`, `CODE_REVIEW`, `TEST_EXECUTION`, `PROJECT_ANALYSIS`,
+     `ARCHITECTURE_PLANNING`, `POLICY_SENSITIVE_CHAT`, `EMBEDDING` or `IMAGE_UNDERSTANDING`: code, review and
+     policy-sensitive work stays on Claude for now, and the CAP-008 deferral of Codex code work is unchanged. The
+     adapter refuses any other capability, any image and any workspace before spawning.
+  4. **Egress accepted by the owner.** With `codex` selected, every chat-tier prompt — system instructions, recalled
+     memory, transcript, connector text for summaries and the ADR-0111 text-attachment section — goes to OpenAI
+     through the owner's logged-in Codex CLI. The owner accepts this on the same basis as Claude. `LOCAL_ONLY` data
+     (ADR-0107 curated examples) still reaches only `LOCAL` providers, and the ADR-0111 attachment credential guards run
+     in Core before egress for every provider.
+  5. **Codex invocation (adapter-owned).** `codex exec --json --color never --skip-git-repo-check --ephemeral
+     --ignore-user-config --ignore-rules --sandbox read-only`, with `-c approval_policy="never"`,
+     `-c project_doc_max_bytes=0`, `-c skills.include_instructions=false`, `-c web_search="disabled"`,
+     `-c mcp_servers={}`, `-c history.persistence="none"`, a capability-derived `model_reasoning_effort` (`low` for
+     chat, summaries and lookups; `medium` for document analysis), `--disable` for the shell tools (`shell_tool`,
+     `unified_exec`) and the agent features a reply never needs (apps, plugins, browser and computer use, image
+     generation, hooks, sub-agents and others), optional `-m <QUOKY_CODEX_MODEL>` (unset = the CLI default), and `-`
+     so the prompt is read from **stdin**, never argv. The cwd is a fresh empty directory under the OS temp directory,
+     removed after the call; the child gets the runner's allow-listed environment only. The prompt is the generic
+     `PromptRenderer` output (the same envelope Claude receives) after a short adapter framing line. Only the last
+     `agent_message` of the JSON event stream becomes the reply, followed by the provider-neutral chat hygiene; a run
+     whose stream shows a command execution, file change, MCP call or web search is refused as a whole
+     (`EXECUTION_FAILED`). Failures: timeout → `TIMEOUT`; the CLI cannot start, login or usage-limit failures →
+     `UNAVAILABLE`; anything else → `EXECUTION_FAILED`; no reply → `EMPTY_OUTPUT`. Raw CLI text is never echoed. The
+     audit carries counts and hashes only. Readiness is `codex login status` (exit 0 and a "Logged in" line, 10 s bound),
+     with no model call.
+  6. **Visibility.** Startup logs the selection (`chat provider selected`) and the ops UI provider panel shows the
+     selector value and its source; provider ids stay out of the panel (owner decision 14 unchanged).
+- **Isolation achieved and not achieved (Codex CLI 0.160.0, verified 2026-10-07).** Achieved: no user
+  `config.toml` (so no MCP servers, profiles, hooks, model or provider overrides from the owner's config), no exec-policy
+  rules, no `AGENTS.md`, no skills catalogue, no web search, no shell tools, no session or history files (counts of
+  `~/.codex/sessions` and the size of `history.jsonl` unchanged across the live calls), an empty cwd, and no inherited
+  environment beyond the runner allowlist (`PATH`, `HOME`, `USER`, locale), so no API key variable reaches the child. **Not achieved:** the CLI is an agent and has no "no tools at all" switch, and auth and the built-in system
+  prompt still come from `~/.codex` (`CODEX_HOME` cannot be isolated without moving the login). Codex's own
+  developer messages (sandbox description, collaboration mode, multi-agent role) stay in its context. The residual
+  containment is therefore the `read-only` sandbox with approvals `never` in an empty temp directory, the disabled
+  tools, and the fail-closed check on action items; the read-only sandbox still permits reads elsewhere on disk if a
+  future CLI re-enabled a tool. A SIGKILL after the timeout grace reaches the `codex` Node wrapper, which forwards
+  SIGTERM but not SIGKILL to the native binary. A `--disable` name that a future CLI no longer knows makes the run
+  fail (`EXECUTION_FAILED`) rather than run with the tool enabled.
+- **Consequences:** + The chat model is one setting; existing installs are unchanged. + Code and policy-sensitive work
+  keeps Claude's tested policy bar. − With `codex`, chat content leaves the host to OpenAI (accepted, D4), counts
+  against the owner's ChatGPT plan, and a usage-limit failure is reported as unavailable until the next turn
+  re-probes (the probe cannot see plan limits). − Codex's built-in agent prompt adds about 8k input tokens per turn
+  (mostly cached).
+- **V1 / V2:** `[NOW]` selector, Codex chat tier, ops/startup visibility. `[LATER]` a Codex image option (after the
+  image-provider selector lands), Codex for code work once a suggest-only contract exists, and execution-time
+  fallback.
+
 ## ADR-0073 amendment — Actor-scoped durable recall retrieval (Quoky Personal v1)
 
 - **Status:** ✅ Accepted (Quoky Personal v1) — **Ratified by the Product Owner on 2026-10-02** (decision D4).
@@ -16981,6 +17053,8 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   egress). The hosted API may refuse an image under the 8 MiB bound as too large; the turn fails with the normal error
   reply. Chat provider switching stays as it is: Claude (any model, `QUOKY_CLAUDE_MODEL`) and local Ollama
   (`QUOKY_OLLAMA_ENABLED` + `OLLAMA_MODEL`); `CodexCliProvider` is an unimplemented stub the composition does not
-  register; other cloud vendors need a new adapter.
+  register; other cloud vendors need a new adapter. *(Superseded for chat by the ADR-0092 amendment of 2026-10-07:
+  `QUOKY_CHAT_PROVIDER` selects `claude`, `codex` or `ollama`, and Codex serves the chat tier when selected. Images
+  have no Codex option.)*
 - **Strict gates:** changing the selector on the owner host (`.env.local`) and a restart; a live image session with
   `claude` selected.

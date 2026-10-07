@@ -50,6 +50,11 @@ export interface OpsProviderView {
 export interface OpsProviderReadinessSource {
   all(): readonly OpsProviderView[];
   available(): Promise<readonly OpsProviderView[]>;
+  /**
+   * The configured chat-provider selector (ADR-0092 amendment, 2026-10-07): the `QUOKY_CHAT_PROVIDER` value and where
+   * it came from. A configuration fact, not a provider id; absent when the composition does not supply it.
+   */
+  readonly chatSelection?: { readonly provider: string; readonly source: string };
 }
 
 /**
@@ -236,13 +241,24 @@ export class OpsSnapshotBuilder {
               : '불가 (unavailable)';
       rows.push([capability, state, `${ready}/${registered.length}`]);
     }
+    const selection = this.sources.providers.chatSelection;
+    const fields: OpsField[] = selection === undefined ? [] : [{
+      label: '대화 공급자 선택 (QUOKY_CHAT_PROVIDER)',
+      value: selection.source === 'QUOKY_CHAT_PROVIDER'
+        ? selection.provider
+        : `${selection.provider} (QUOKY_OLLAMA_ENABLED에서 결정)`,
+    }];
     return {
-      fields: [{ label: '이미지 이해 공급자 (설정)', value: imageSelectionLabel(this.sources.imageUnderstanding) }],
+      fields: [
+        ...fields,
+        { label: '이미지 이해 공급자 (설정)', value: imageSelectionLabel(this.sources.imageUnderstanding) },
+      ],
       table: { columns: ['기능', '상태', '준비/등록'], rows, emptyText: '등록된 공급자가 없어요.' },
       notes: [
         '공급자 이름은 표시하지 않아요 (ARCHITECTURE.md §5.3/§12, 소유자 결정 14 대기).',
         '예외: 이미지 이해는 소유자가 설정한 선택값(QUOKY_IMAGE_UNDERSTANDING_PROVIDER)을 보여 줘요 (ADR-0111 개정 A5). ' +
           '준비 상태는 위 표의 IMAGE_UNDERSTANDING 행이에요.',
+        '예외: 대화는 소유자가 설정한 선택값(QUOKY_CHAT_PROVIDER)과 그 출처를 보여 줘요 (ADR-0092 개정).',
       ],
     };
   }

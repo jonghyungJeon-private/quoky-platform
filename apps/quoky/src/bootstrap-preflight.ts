@@ -53,6 +53,10 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID]: 'QUOKY_OLLAMA_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.CLAUDE_MODEL_INVALID]:
     'QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
+  [QuokyConfigErrorCode.CHAT_PROVIDER_INVALID]:
+    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", or "ollama" (exactly, lowercase).',
+  [QuokyConfigErrorCode.CODEX_MODEL_INVALID]:
+    'QUOKY_CODEX_MODEL must be unset (the Codex CLI default model) or a model name (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID]: 'QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID]: 'QUOKY_GIT_MERGE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE]:
@@ -196,7 +200,7 @@ export async function reportProviderReadiness(
     provider.capabilities.some((c) => c.capability === Capability.GENERAL_CHAT));
   if (!generalChatReady) {
     log.warn(
-      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or Ollama is running with the configured model`,
+      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, or Ollama running with the configured model) is ready`,
     );
   }
   return {

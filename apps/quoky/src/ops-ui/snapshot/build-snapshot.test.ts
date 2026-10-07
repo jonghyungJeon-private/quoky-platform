@@ -291,6 +291,25 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(field(unknown, 'providers', '이미지 이해 공급자 (설정)')).toBe(OPS_UNKNOWN);
   });
 
+  it('providers: shows the configured chat-provider selector (ADR-0092 amendment) next to the image selection', async () => {
+    const base = fixture();
+    const label = '대화 공급자 선택 (QUOKY_CHAT_PROVIDER)';
+    const explicit = await new OpsSnapshotBuilder({
+      ...base,
+      providers: { ...base.providers, chatSelection: { provider: 'codex', source: 'QUOKY_CHAT_PROVIDER' } },
+    }).build();
+    expect(field(explicit, 'providers', label)).toBe('codex');
+    const derived = await new OpsSnapshotBuilder({
+      ...base,
+      providers: { ...base.providers, chatSelection: { provider: 'claude', source: 'QUOKY_OLLAMA_ENABLED' } },
+    }).build();
+    expect(field(derived, 'providers', label)).toBe('claude (QUOKY_OLLAMA_ENABLED에서 결정)');
+    expect(panelOf(explicit, 'providers').fields.map((f) => f.label)).toEqual([label, '이미지 이해 공급자 (설정)']);
+    // Absent selection: no chat field; the image field is still there.
+    const none = await new OpsSnapshotBuilder(base).build();
+    expect(panelOf(none, 'providers').fields.map((f) => f.label)).toEqual(['이미지 이해 공급자 (설정)']);
+  });
+
   it('reminders: active ones by number, labels as `알림 목록` shows them, guarded on the full body', async () => {
     const view = await new OpsSnapshotBuilder(fixture()).build();
     const rows = panelOf(view, 'reminders').table?.rows ?? [];

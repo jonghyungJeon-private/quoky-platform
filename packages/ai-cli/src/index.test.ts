@@ -14,7 +14,6 @@ import {
   IntentType,
   MemoryType,
   NoProviderAvailableError,
-  NotImplementedError,
   POLICY_SENSITIVE_CHAT_UNAVAILABLE_MESSAGE,
   PromptComposer,
   PromptRenderer,
@@ -246,22 +245,28 @@ describe('ClaudeCliProvider', () => {
   });
 });
 
-describe('CodexCliProvider (CAP-008, ADR-0029) — suggest-only contract not yet satisfiable', () => {
-  // The Codex CLI has no deterministic suggest-only / no-tool / no-exec mode, so the
-  // adapter must NOT run an agentic `codex exec` (CAP-008 review, MB-1). execute() stays
-  // NotImplemented and the provider is treated as unavailable — never auto-applying,
-  // never bypassing Workspace via a workspace cwd.
-  it('advertises code capabilities but does NOT implement execute() (no agentic run)', async () => {
+describe('CodexCliProvider (ADR-0092 amendment) — chat tier only, never code work', () => {
+  // CAP-008 still holds: the Codex CLI has no suggest-only mode, so it never advertises or serves code work.
+  // Its chat-tier contract is covered in codex-cli-provider.test.ts.
+  it('advertises no code, review, policy-sensitive, embedding or image capability', () => {
     const codex = new CodexCliProvider('codex');
     expect(codex.id).toBe('codex-cli');
-    expect(codex.capabilities.some((c) => c.capability === Capability.CODE_IMPLEMENTATION)).toBe(true);
-    await expect(
-      codex.execute({ capability: Capability.CODE_IMPLEMENTATION, prompt: PROMPT }),
-    ).rejects.toBeInstanceOf(NotImplementedError);
+    const advertised = codex.capabilities.map((c) => c.capability);
+    for (const capability of [
+      Capability.CODE_IMPLEMENTATION, Capability.CODE_REVIEW, Capability.TEST_EXECUTION,
+      Capability.POLICY_SENSITIVE_CHAT, Capability.EMBEDDING, Capability.IMAGE_UNDERSTANDING,
+    ]) {
+      expect(advertised).not.toContain(capability);
+    }
   });
 
-  it('is treated as unavailable (isAvailable is not implemented → never selected)', async () => {
-    await expect(new CodexCliProvider('codex').isAvailable()).rejects.toBeInstanceOf(NotImplementedError);
+  it('refuses a code request before anything is spawned', async () => {
+    let calls = 0;
+    const codex = new CodexCliProvider('codex', { runner: async () => { calls += 1; return { code: 0, stdout: '', stderr: '', timedOut: false }; } });
+    await expect(
+      codex.execute({ capability: Capability.CODE_IMPLEMENTATION, prompt: PROMPT }),
+    ).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+    expect(calls).toBe(0);
   });
 });
 
@@ -1399,21 +1404,18 @@ describe('Provider regression through the contained runner', () => {
     expect(() => new OllamaCliProvider({ validationHost: 'http://example.com:11434' })).toThrow();
   });
 
-  it('Codex spawns no process at all', async () => {
+  it('Codex spawns no process for a code request', async () => {
     let spawnCalls = 0;
-    // Codex holds no runner by construction; this contained runner exists only to
-    // prove that nothing in the Codex path can reach a spawn.
-    createContainedCliRunner({
+    const runner = createContainedCliRunner({
       spawnFn: () => {
         spawnCalls += 1;
         return new EventEmitter() as unknown as ChildProcess;
       },
     });
-    const codex = new CodexCliProvider('codex');
+    const codex = new CodexCliProvider('codex', { runner });
     await expect(
       codex.execute({ capability: Capability.CODE_IMPLEMENTATION, prompt: PROMPT }),
-    ).rejects.toBeInstanceOf(NotImplementedError);
-    await expect(codex.isAvailable()).rejects.toBeInstanceOf(NotImplementedError);
+    ).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
     expect(spawnCalls).toBe(0);
   });
 

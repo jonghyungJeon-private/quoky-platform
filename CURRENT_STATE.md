@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Chat provider selector — implemented on branch, not merged (2026-10-07)
+
+ADR-0092 amendment (owner decision 2026-10-07): `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` (unset derives
+from `QUOKY_OLLAMA_ENABLED`). With `codex`, `CodexCliProvider` serves the chat tier (`GENERAL_CHAT`, `SUMMARIZATION`,
+`DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`) and Claude keeps code, review and policy-sensitive chat; chat content then goes
+to OpenAI. Live adapter check: two `codex exec` calls, about 7.5-8 s each. The owner's service is unchanged until the
+owner sets the selector (it runs `QUOKY_OLLAMA_ENABLED=false`, i.e. `claude`). Codex image understanding is not part of
+this change.
+
 ### Personal v3 — implemented (waves 1-6), live verification partial (2026-10-07)
 
 **STATUS: IMPLEMENTED. Waves 1-6 are merged to `main` through PRs #116-#132 (`main` at acfffb7). Wave 6 closes with
