@@ -234,4 +234,3 @@ describe('switched-off image understanding (live QA follow-up of the runtime swi
     );
   });
 });
-

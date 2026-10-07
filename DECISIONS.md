@@ -17248,5 +17248,23 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      decides the type handed on, the declared type and the gateway size are hints only. A body with no image signature
      is downloaded once more after 1 s. Redirects stay refused (now `redirect: 'manual'`, any 3xx refused, so it can be
      logged as such). Each refused attachment logs one content-free `attachment refused` line (reason, step, MIME
-     classes, size buckets, CDN host class, HTTP status, signature class, attempts; never a name or URL).
-  4. **Discord outbound.** A simple Markdown table outside code fences is sent as bullet lines (`- 1월: 80`).
+     classes, size buckets, CDN host class, HTTP status, signature class, attempts, image-check code; never a name or
+     URL).
+  4. **Images are validated and canonicalized before any provider (Codex P1 on df66418).** A magic-byte match alone let
+     the PNG signature followed by credential text, or a valid PNG with text appended, reach a vision provider. The
+     adapter now walks the whole file in pure TypeScript (Node built-in zlib only): PNG chunks from the signature to
+     `IEND` with length and CRC checks, no unknown critical chunk, consecutive `IDAT`s, nothing after `IEND`, `IHDR`
+     limits (≤ 12000 × 12000, legal depth/colour type), the inflated scanline size and filter bytes verified and the
+     data re-deflated into one `IDAT`; only `IHDR`, `sRGB`/`gAMA`/`cHRM`/`pHYs`, `PLTE`, `tRNS`, `IDAT`, `IEND` are
+     written (`tEXt`/`zTXt`/`iTXt`/`eXIf`/`iCCP`/others dropped). JPEG segments from `SOI` to `EOI` with exact table
+     lengths, baseline/extended/progressive Huffman frames only, `APP1`–`APP13`/`APP15`/`COM` dropped, `APP0` kept as a
+     thumbnail-free JFIF header and `APP14` only as the 12-byte Adobe marker, nothing after `EOI`. WebP with the RIFF
+     size equal to the file length − 8, `VP8 `/`VP8L` or `VP8X` + optional `ALPH` + one bitstream, animation refused,
+     `ICCP`/`EXIF`/`XMP `/unknown chunks dropped and `VP8X` rebuilt (or omitted). A malformed file is refused
+     (`UNSUPPORTED_TYPE`, logged `INVALID_IMAGE` with a check code). Only the canonical bytes are written to the temp
+     file, so only they reach Claude or Ollama vision. Defense in depth: printable runs (≥ 8 bytes) of the canonical
+     bytes pass the strict credential guard (`CREDENTIAL_SHAPED` otherwise). **Residual:** content inside the pixel data
+     — a screenshot showing a secret, steganography, bytes inside a JPEG/WebP entropy-coded bitstream that the
+     credential guard does not match — cannot be screened structurally (as already documented for cloud images).
+  5. **No outbound rewriting.** A Markdown-table-to-bullets conversion was tried and removed (Codex P1 on df66418): it
+     altered exact-payload connector-write previews; Discord replies are delivered byte-identical.

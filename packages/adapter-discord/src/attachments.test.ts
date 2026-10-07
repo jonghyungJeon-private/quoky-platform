@@ -18,11 +18,13 @@ import {
   TEXT_ATTACHMENT_MAX_BYTES,
 } from './attachments';
 import type { AttachmentSource } from './attachments';
+import { jpegImage, PNG_SIGNATURE, pngChunk, pngChunkTypes, pngImage, riffChunk, riffWebp, vp8lPayload } from './image-test-support';
 
 const CDN = 'https://cdn.discordapp.com/attachments/1/2';
-const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fake-png-body')]);
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('fake-jpeg-body')]);
-const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBPVP8 ')]);
+// Structurally valid images (canonical already, so the written file equals the input).
+const PNG = pngImage();
+const JPEG = jpegImage();
+const WEBP = riffWebp([riffChunk('VP8L', vp8lPayload())]);
 
 /** Offline fetch fake: serves registered bodies by URL, records every call (url + init). */
 function fakeFetch(routes: Record<string, { body: Buffer | Buffer[]; status?: number; headers?: Record<string, string> } | Error>) {
@@ -325,7 +327,7 @@ describe('AttachmentIntake — images become an opaque temp reference with clean
     expect((await fs.stat(tempRoot)).mode & 0o777).toBe(0o700);
     expect((await fs.stat(processDir)).mode & 0o777).toBe(0o700);
     expect(await fs.readFile(images[0]!.imageRef)).toEqual(PNG);
-    expect(JSON.stringify(result.attachments)).not.toContain('fake-png-body');
+    expect(JSON.stringify(result.attachments)).not.toContain('IDAT');
 
     await result.release();
     expect(await filesIn(tempRoot)).toEqual([]);
@@ -515,7 +517,7 @@ describe('AttachmentIntake — private temp root and symlink-safe sweep (Codex P
 describe('live QA: a valid PNG refused as "지원하지 않는 형식" — the bytes decide the image type', () => {
   // The shape of the refused `chart-crop.png`: a 1100x450 PNG whose upload (7577 bytes, with an eXIf chunk) Discord
   // re-encoded, so the CDN serves a smaller, metadata-free PNG (2507 bytes) than the gateway `size` says.
-  const REENCODED = Buffer.concat([PNG, Buffer.alloc(2507 - PNG.length, 0x41)]);
+  const REENCODED = pngImage({ width: 40, height: 20 });
 
   it('a PNG is taken in whatever the platform declared: an alias, a generic type, another image type, or nothing', async () => {
     for (const declared of ['image/png', 'image/x-png', 'image/apng', 'application/octet-stream', 'image/jpeg', 'image/webp', null]) {
@@ -571,6 +573,66 @@ describe('live QA: a valid PNG refused as "지원하지 않는 형식" — the b
     expect(sniffImageMimeType(PNG)).toBe('image/png');
     expect(sniffImageMimeType(WEBP)).toBe('image/webp');
     expect(sniffImageMimeType(Buffer.from('GIF89a'))).toBeUndefined();
+  });
+});
+
+describe('AttachmentIntake — images are validated and canonicalized before any provider sees them (Codex P1 on df66418)', () => {
+  const SECRET = Buffer.from('pass' + 'word=SYNTHETIC_REVIEW_ONLY', 'latin1');
+
+  async function intakeOne(body: Buffer, name: string, declared: string | null) {
+    const fetch = fakeFetch({ [`${CDN}/${name}`]: { body } });
+    const intake = new AttachmentIntake({ fetchImpl: fetch.impl, tempRoot, imageRetryDelayMs: 0 });
+    return intake.intake([source(name, declared, body.length, `${CDN}/${name}`)]);
+  }
+
+  it.each([
+    ['the signature followed by credential text, declared octet-stream', Buffer.concat([PNG_SIGNATURE, SECRET]), 'TRUNCATED'],
+    ['the 8 signature bytes alone', PNG_SIGNATURE, 'TRUNCATED'],
+    ['a valid PNG with credential text appended', Buffer.concat([pngImage(), SECRET]), 'TRAILING_BYTES'],
+  ])('refuses %s as INVALID_IMAGE and writes nothing', async (_label, body, imageCheck) => {
+    const result = await intakeOne(body, 'x.png', 'application/octet-stream');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'INVALID_IMAGE', imageCheck, attempts: 2 });
+    expect(await filesIn(tempRoot)).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain('SYNTHETIC');
+  });
+
+  it('writes only the canonical image: the sips-like sRGB + eXIf PNG is taken in with eXIf and text chunks dropped', async () => {
+    const body = pngImage({
+      width: 11,
+      height: 5,
+      beforeIdat: [pngChunk('sRGB', Buffer.from([0])), pngChunk('eXIf', Buffer.concat([Buffer.from('MM', 'latin1'), SECRET])), pngChunk('tEXt', SECRET)],
+    });
+    const result = await intakeOne(body, 'chart-crop.png', 'image/png');
+    const image = result.attachments[0];
+    expect(image).toMatchObject({ kind: 'image', mimeType: 'image/png' });
+    if (image?.kind !== 'image') throw new Error('not an image');
+    const written = await fs.readFile(image.imageRef);
+    expect(pngChunkTypes(written)).toEqual(['IHDR', 'sRGB', 'IDAT', 'IEND']);
+    expect(written.includes(SECRET)).toBe(false);
+    await result.release();
+  });
+
+  it('refuses credential text that survives canonicalization (inside a JPEG scan) as CREDENTIAL_SHAPED', async () => {
+    const jpeg = jpegImage();
+    const scanEnd = jpeg.length - 2;
+    const body = Buffer.concat([jpeg.subarray(0, scanEnd), Buffer.from([0x00]), SECRET, jpeg.subarray(scanEnd)]);
+    const result = await intakeOne(body, 'p.jpg', 'image/jpeg');
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' });
+    expect(result.diagnostics[0]).toMatchObject({ detail: 'CREDENTIAL_SHAPED' });
+    expect(await filesIn(tempRoot)).toEqual([]);
+  });
+
+  it('JPEG and WebP metadata is dropped from the written file', async () => {
+    const jpeg = await intakeOne(jpegImage(), 'p.jpg', 'image/jpeg');
+    expect(jpeg.attachments[0]).toMatchObject({ kind: 'image', mimeType: 'image/jpeg' });
+    await jpeg.release();
+    const webpBody = riffWebp([riffChunk('VP8X', Buffer.from([0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0])), riffChunk('VP8L', vp8lPayload()), riffChunk('EXIF', SECRET)]);
+    const webp = await intakeOne(webpBody, 'w.webp', 'image/webp');
+    const image = webp.attachments[0];
+    if (image?.kind !== 'image') throw new Error('not an image');
+    expect(await fs.readFile(image.imageRef)).toEqual(riffWebp([riffChunk('VP8L', vp8lPayload())]));
+    await webp.release();
   });
 });
 

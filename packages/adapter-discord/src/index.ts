@@ -1,7 +1,7 @@
 import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'discord.js';
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
-import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD, renderMarkdownTablesForDiscord } from './delivery';
+import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
@@ -14,7 +14,6 @@ export {
   chunkText,
   deliverChunks,
   deliverWithNotice,
-  renderMarkdownTablesForDiscord,
   DISCORD_SAFE_LIMIT,
   FILE_ATTACHMENT_CHUNK_THRESHOLD,
   PARTIAL_FAILURE_NOTICE,
@@ -56,6 +55,8 @@ export {
   sniffImageMimeType,
   TEXT_ATTACHMENT_MAX_BYTES,
 } from './attachments';
+export { canonicalizeImage, MAX_IMAGE_DIMENSION } from './image-canonical';
+export type { CanonicalImage, ImageCheckCode } from './image-canonical';
 export type {
   AttachmentIntakeOptions,
   AttachmentIntakeResult,
@@ -278,8 +279,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     }
 
     const report = await deliverWithNotice(
-      // Discord renders no Markdown tables: a simple table goes out as bullet lines (fenced code is untouched).
-      renderMarkdownTablesForDiscord(message.text),
+      message.text,
       async (chunk) => {
         platformMessageIds.push((await channel.send(chunk)).id);
       },

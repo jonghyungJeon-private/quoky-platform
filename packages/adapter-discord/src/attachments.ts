@@ -4,6 +4,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { containsCredentialFileContent, containsCredentialMaterial } from '@quoky/core';
+import { canonicalizeImage } from './image-canonical';
+import type { ImageCheckCode } from './image-canonical';
 import type {
   InboundAttachment,
   InboundAttachmentUnsupportedReason,
@@ -146,6 +148,8 @@ export interface AttachmentRefusalDiagnostic {
   readonly signature?: 'png' | 'jpeg' | 'webp' | 'gif' | 'empty' | 'other';
   /** Downloads attempted. */
   readonly attempts?: number;
+  /** Why structural image validation refused the bytes (`INVALID_IMAGE`). */
+  readonly imageCheck?: ImageCheckCode;
 }
 
 export type AttachmentRefusalDetail =
@@ -162,6 +166,7 @@ export type AttachmentRefusalDetail =
   | 'SIGNATURE_MISMATCH'
   | 'NOT_UTF8'
   | 'CREDENTIAL_SHAPED'
+  | 'INVALID_IMAGE'
   | 'TEMP_WRITE_FAILED';
 
 export interface AttachmentIntakeResult {
@@ -331,6 +336,33 @@ function isCredentialShaped(text: string): boolean {
   return containsCredentialMaterial(text) || containsCredentialFileContent(text);
 }
 
+/** Printable-ASCII runs of at least this many bytes are screened by the credential guard. */
+const PRINTABLE_RUN_MIN = 8;
+/** At most this much printable text is screened per image (the credential guard's text bound). */
+const PRINTABLE_SCREEN_MAX_CHARS = 256 * 1024;
+
+/** The printable-ASCII runs of `bytes` (like `strings`), newline-joined and bounded. */
+export function printableRuns(bytes: Buffer): string {
+  const runs: string[] = [];
+  let total = 0;
+  let start = -1;
+  for (let i = 0; i <= bytes.length; i++) {
+    const byte = i < bytes.length ? (bytes[i] as number) : 0;
+    const printable = byte >= 0x20 && byte <= 0x7e;
+    if (printable && start < 0) start = i;
+    if (!printable && start >= 0) {
+      if (i - start >= PRINTABLE_RUN_MIN) {
+        const run = bytes.toString('latin1', start, i);
+        runs.push(run);
+        total += run.length + 1;
+        if (total >= PRINTABLE_SCREEN_MAX_CHARS) break;
+      }
+      start = -1;
+    }
+  }
+  return runs.join('\n').slice(0, PRINTABLE_SCREEN_MAX_CHARS);
+}
+
 /** Magic-byte check so a mislabeled upload is never handed on as an image. */
 function matchesImageSignature(bytes: Buffer, mimeType: InboundImageMimeType): boolean {
   switch (mimeType) {
@@ -434,6 +466,7 @@ interface IntakeRefusal extends DownloadFacts {
   readonly detail: AttachmentRefusalDetail;
   readonly downloaded?: Buffer;
   readonly attempts?: number;
+  readonly imageCheck?: ImageCheckCode;
 }
 
 interface IntakeOutcome {
@@ -514,6 +547,7 @@ export class AttachmentIntake {
           ? { downloadedSize: sizeBucket(refusal.downloaded.length), signature: signatureClass(refusal.downloaded) }
           : {}),
         ...(refusal.attempts !== undefined ? { attempts: refusal.attempts } : {}),
+        ...(refusal.imageCheck !== undefined ? { imageCheck: refusal.imageCheck } : {}),
       });
     });
     let released = false;
@@ -551,19 +585,23 @@ export class AttachmentIntake {
       return { attachment: { ...base, kind: 'text', text, trust: 'UNTRUSTED' } };
     }
     // The declared type only made this an image candidate; the bytes decide (a PNG the platform declared or re-encoded
-    // differently is still a PNG). A body with no image signature is downloaded once more after a short delay, in
+    // differently is still a PNG). The bytes must then pass full structural validation and are CANONICALIZED (Codex P1
+    // on df66418): only the rebuilt image — no metadata, text chunks or trailing bytes — is written, and only it can
+    // ever reach a vision provider. A body that is not a valid image is downloaded once more after a short delay, in
     // case the CDN object was not final yet; a second miss is refused.
     let attempts = 0;
     let download: DownloadOutcome;
     let sniffed: InboundImageMimeType | undefined;
+    let canonical: ReturnType<typeof canonicalizeImage> | undefined;
     do {
       if (attempts > 0) await delay(this.imageRetryDelayMs);
       attempts += 1;
       download = await downloadBounded(this.fetchImpl, source.url, IMAGE_ATTACHMENT_MAX_BYTES, this.downloadTimeoutMs);
       if (!download.ok) return refuse(download.reason, { ...downloadFacts(download), detail: download.detail, attempts });
       sniffed = sniffImageMimeType(download.bytes);
-    } while (sniffed === undefined && attempts < 2);
-    if (sniffed === undefined) {
+      canonical = sniffed === undefined ? undefined : canonicalizeImage(download.bytes, sniffed);
+    } while ((canonical === undefined || !canonical.ok) && attempts < 2);
+    if (sniffed === undefined || canonical === undefined) {
       return refuse('UNSUPPORTED_TYPE', {
         ...downloadFacts(download),
         detail: 'SIGNATURE_MISMATCH',
@@ -571,7 +609,21 @@ export class AttachmentIntake {
         attempts,
       });
     }
-    const file = await this.writeTempFile(download.bytes, IMAGE_FILE_EXTENSIONS[sniffed]);
+    if (!canonical.ok) {
+      return refuse('UNSUPPORTED_TYPE', {
+        ...downloadFacts(download),
+        detail: 'INVALID_IMAGE',
+        downloaded: download.bytes,
+        attempts,
+        imageCheck: canonical.code,
+      });
+    }
+    // Defense in depth: credential-shaped text in any printable run of the canonical bytes (e.g. placed inside a
+    // JPEG/WebP bitstream) is refused like a credential-shaped text file. Text drawn in the pixels is the residual.
+    if (isCredentialShaped(printableRuns(canonical.bytes))) {
+      return refuse('CREDENTIAL_SHAPED', { detail: 'CREDENTIAL_SHAPED', attempts });
+    }
+    const file = await this.writeTempFile(canonical.bytes, IMAGE_FILE_EXTENSIONS[sniffed]);
     if (!file) return refuse('DOWNLOAD_FAILED', { detail: 'TEMP_WRITE_FAILED', attempts });
     created.push(file);
     return { attachment: { ...base, kind: 'image', mimeType: sniffed, imageRef: file, trust: 'UNTRUSTED' } };
