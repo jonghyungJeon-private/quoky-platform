@@ -168,12 +168,16 @@ Still pending, each its own exact-scope Strict session:
 
 1. Slack read lookups (needs a Slack user token).
 2. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`, CODE-9, deferred).
-3. The 20-prompt Korean daily-chat set on `granite3.3:8b` (0.5; W6-M5 was a partial pass).
-4. Operations UI handling: reminder cancel, memory forget, approve and reject (on a DB copy against the sandbox repo),
-   panel checks against chat, a foreign-Origin request, token rotation across a restart.
-5. Attachments and images (needs `QUOKY_OLLAMA_VISION_MODEL`), learning notes/examples with
-   `QUOKY_LEARNING_EXAMPLES_ENABLED=true`, a mid-send write failure (`UNCERTAIN`), the W5-L01..L04 re-run.
-6. Reboot start of the service, an observed scheduled daily backup, and a restore drill on a DB copy.
+3. Operations UI handling: reject and the chat/UI race, reminder cancel, memory forget, panel checks against chat, a
+   foreign-Origin request, token rotation across a restart (UI approve ran live, QA record W6-A2).
+4. Attachments of an unsupported type or in a non-allowlisted channel, a mid-send write failure (`UNCERTAIN`), the
+   W5-L01..L04 re-run.
+5. A real host reboot (the launchd bootout/bootstrap proxy, the 04:00 daily backup and a restore drill on a copy ran
+   live, QA record W6-L02..L04).
+
+Known operator follow-ups from live QA session 2: `vectors/` is not in the backup set (after a DB restore, semantic
+recall may be out of step with the restored memories); there is no on-demand backup command while the service runs; a
+local-model runaway generation is stopped only by the 120 s provider timeout.
 
 ### 0.7 Personal v3 operator additions
 

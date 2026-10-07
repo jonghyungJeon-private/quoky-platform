@@ -96,10 +96,14 @@ D4, not wired), and the to-do/reminder status phrases of ADR-0104 D3 (memory sta
   create/move/delete with deny, replay and allowlist refusal (W5); operations UI sign-in after the PR #131 fix.
 - Model: gemma3:4b (the first LLM-2 pick) gave non-answers live and was reverted; the helpfulness re-run picked
   granite3.3:8b, now on the service. Its first live check was confounded by host load (Claude fallback answered 3 of 4).
-- **STILL PENDING (not claimed as done):** the 20-prompt Korean daily-chat LLM set (granite3.3:8b re-test W6-M5 was a partial pass: 3 of 4 replies local, 21-38 s generation, invented song specifics remain; mid-word wrapping fixed in PR #133); live UI approve/reject and UI
-  reminder cancel/forget; attachments and images live; learning notes/examples live; a mid-send network failure on a
-  write; W5-L01..L04 live re-run; reboot start, an observed daily backup and a restore drill; the DET edge-case sweep;
-  Slack read lookups (no user token). The full list is at the end of the QA record.
+- **Live QA session 2 (2026-10-07):** UI approve, reboot-start proxy, observed daily backup, restore drill on a copy,
+  text/image attachments, reactions and learning examples ran live; PRs #135-#138 fixed the defects found (QA record
+  W6-L01..L11). The Korean daily-chat set ran: about 5 of 20 local replies usable as is (W6-L05), owner decision pending
+  on the chat model; `gemma3:4b` image descriptions were wrong (W6-L09).
+- **STILL PENDING (not claimed as done):** UI reject and the chat/UI race, UI reminder cancel/forget and panel checks; a
+  real host reboot; unsupported-type / non-allowlisted-channel attachments; a mid-send network failure on a write;
+  W5-L01..L04 live re-run; the DET edge-case sweep; Slack read lookups (no user token). The full list is at the end of
+  the QA record.
 - Open quality items: local-model helpfulness and invented specifics (QA-V3-W2-LM, W6-M4), local work summaries
   (QA-V2-PC-03), embedding recall timeouts on a cold model swap (QA-V2-CL-04), accepted residuals R5 (claim guard) and
   R6 (calendar write-intent detection).

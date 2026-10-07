@@ -153,23 +153,42 @@ marked PENDING has not been run and is not claimed.
 | W6-M5 | granite3.3:8b live re-test after the unrelated Gradle load cleared (load average 3.0 at start; the same 4 chat prompts; provider read from `task_runs.providerId`) | PARTIAL PASS — 3 of 4 replies came from `ollama-cli` granite3.3:8b: lunch 23.5 s generation (31.5 s end to end; generic, Western-style suggestions), Python sort 37.8 s (47.7 s; correct `sort()`/`sorted()` with examples), rainy-day songs 20.9 s (40.9 s; IU "Palette" exists, the other two title/artist pairs could not be confirmed and look invented). The 4th reply fell back to claude-cli (52 s) because a parallel `pnpm test` run raised the load average to about 51 and the readiness probe failed again. Invented specifics remain a known granite weakness (LLM track) |
 | W6-M6 | Replies split mid-word in Discord ("사⏎용", "리⏎스트"), seen during W6-M5 | FIXED — `ollama run` hard-wraps at terminal width even when piped (reproduced: newline + `ESC[K` at about 80 columns). PR #133 runs chat and vision with `--nowordwrap`; after deploy two granite replies (24.2 s and 37.8 s generation) had no mid-word breaks, and `task_runs` records `["ollama","run","--nowordwrap","granite3.3:8b"]` |
 | W6-A1 | OPS-2b (UI approve and reject, PR #132) merged after 4 Codex rounds: round 1 P1 (reset, expiry and override send bypassed the approval lock), round 2 P2 (a stale chat `touch` overwrote a UI-set anchor), round 3 P2 (unlocked, non-atomic field-scoped session saves), round 4 PASS | DONE offline — `pnpm build`, `pnpm typecheck`, `pnpm test` green (314 files, 9600 tests per the PR) |
-| W6-A2 | Live UI approve and reject (confirmation code from the chat preview, `OPS_DECISION_RESULT` DM, chat/UI race) on a DB copy against the sandbox repository | **PENDING** — not run |
+| W6-A2 | Live UI approve (owner, 2026-10-07): Slack-post preview in the UAT channel → owner signed in to the operations UI and approved with the 6-character code → `OPS_DECISION_RESULT` DM delivered → owner sent `Slack 게시 실행` | PARTIAL PASS — UI approve, DM and the later channel execution worked (post appeared in #quoky-test). Defect W6-L01 below (execution phrase sent in the DM). UI reject, chat/UI race and the panel checks: **PENDING** |
 
 Wave 5 follow-ups: W5-L01..L04 were fixed in PR #130 (cf0e70b, d63860c) and unit-tested; a live re-run of those four
 inputs is not recorded (**PENDING**).
 
+## Live QA session 2 (2026-10-07, owner + orchestrator, service on main after PRs #135–#138)
+
+Model `granite3.3:8b` (service), vision `gemma3:4b` and `QUOKY_LEARNING_EXAMPLES_ENABLED=true` set on the service for this
+session (operator change; previous `.env.local` kept as a dated backup). Provider per reply read from `task_runs.providerId`.
+
+| ID | Check | Result |
+|---|---|---|
+| W6-L01 | `Slack 게시 실행` sent in the owner DM while the approved write waited in the UAT channel session | DEFECT → FIXED (PR #135). The DM replied "이미 실행했어요" with the link of an unrelated post from 2.5 h earlier (actor-wide latest receipt). Now: the DM says the approved write waits in another conversation and names the channel; "already sent" only for the same session within 30 min, with time and target; the UI decision DM names where to send the phrase. Live re-run: all four cases as designed; execution stays session-bound |
+| W6-L02 | Reboot start (proxy) | PASS — `launchctl bootout` then `bootstrap` of `com.quoky.personal` started the service by RunAtLoad without a kickstart; providers ready, identity verified. A real host reboot was not performed |
+| W6-L03 | Scheduled daily backup observed | PASS — the 04:00 local backup ran (2026-10-06T19:00Z, `daily`, verified, user_version 15, mode 600); all four backups pass `integrity_check` |
+| W6-L04 | Restore drill on a DB copy | PASS — the 04:00 backup restored to a scratch copy (SHA matches); integrity ok, user_version 15, schema identical; row counts and content hashes match live rows created before the backup instant. The live swap (Strict) was not run; the copy was deleted |
+| W6-L05 | Korean daily-chat set: QA-V2-003/008/W7-06 re-run + 20 prompts | MIXED — 21 of 23 answered locally (generation 8–28 s, end to end 17–37 s); QA-V2-W7-06 is now a deterministic help reply and no stray non-Korean characters appeared (QA-V2-003). Quality below bar: about 5 of 20 usable as is; invented facts (a fictional 2025 Nobel laureate), wrong facts (4-7-8 breathing, VLOOKUP arguments), non-words, an English-only reply and appended English translations; QA-V2-008 still awkward. One reply (`고마워 …`) ran 120 s and timed out (runaway generation). Owner decision pending on the chat model |
+| W6-L06 | `git rebase와 merge 차이를 간단히 설명해줘` with a code chain parked at `PR_CREATED` | DEFECT → FIXED (PR #137): got the merge-disabled refusal; concept questions now reach chat (live re-run passed) |
+| W6-L07 | Text attachment `app-error.log` + `이 로그에서 문제 원인 요약해줘` | DEFECT → FIXED (PR #138): the log never reached the chat prompt; after the fix the reply names the payment-gateway timeout, failed retry and circuit open (an unrequested English translation is still appended) |
+| W6-L08 | Oversize text (356 KiB) and credential-like `config.yml` | PASS — refused with the reason; after PR #138 an unrelated question sent with a refused file is still answered and an attachment-only message gets a fixed reply |
+| W6-L09 | Image (bar chart PNG) with `gemma3:4b` | PASS (path) / FAIL (quality) — routed to `ollama-vision-cli`, but the description was wrong ("2020년 … 수치"); the same model run directly on a cropped image also failed. Model limitation; owner decision pending on a stronger local vision model |
+| W6-L10 | 👍/👎 reactions | PASS on fresh replies (`EXPLICIT_RATING` rows). DEFECT → FIXED (PR #136): reactions on replies posted before the last restart (uncached partials) were dropped silently |
+| W6-L11 | Learning: `피드백 후보`, `후보 N 메모`, `후보 N 예시로 저장`, `예시 목록`, `예시 N 수정`, example use | PASS — a 👎 answer accepts a note and refuses to become an example (by design); a 👍 answer was saved, filled and used: in a new session a similar question reproduced the example's points. DEFECT → FIXED (PR #137): `예시 1 수정: … 담당자 …` was captured by the PR_CREATED companion check; live re-run passed |
+
+Follow-ups recorded (not fixed in this session): the vector store (`vectors/`) is not in the backup set and the restore
+runbook does not say how to rebuild it; there is no on-demand backup command while the service runs; runaway generation
+on the local model has no token cap (the `ollama run` CLI exposes none); semantic recall times out (3 s) on most turns
+while the chat model is loaded; the local model appends unrequested English translations.
+
 ### v3 live items still PENDING at closeout (each needs its own session; none is claimed)
 
-- The LLM live QA set (QA-V2-003/008/W7-06 re-run plus a 20-prompt Korean
-  daily-chat set, plan LLM track).
-- W6-A2 operations UI approve/reject; OPS-2 reminder cancel and memory forget from the UI; the per-panel check against
+- W6-A2 operations UI reject and the chat/UI race; OPS-2 reminder cancel and memory forget from the UI; the per-panel check against
   chat output, a foreign-Origin request and token rotation across a restart (ADR-0113 live QA).
-- MM: attachments live (text log, screenshot with a local vision model set in `QUOKY_OLLAMA_VISION_MODEL`, oversize,
-  unsupported type, non-allowlisted channel, injection caption).
-- LRN: `후보 N 메모`, `예시로 저장` and example injection with `QUOKY_LEARNING_EXAMPLES_ENABLED=true` (only the empty
-  `피드백 후보` state ran live, M3).
+- MM: unsupported type, non-allowlisted channel and an injection caption (text log, image, oversize and credential-like
+  files ran in session 2).
 - CWR: network failure mid-send (`UNCERTAIN` path); W5-L01..L04 re-run.
-- SUB: reboot start, scheduled daily backup observed on the host, and a restore drill on a DB copy (only the SUB-2
-  pre-migration backup ran live, DP1/D4).
+- SUB: a real host reboot (session 2 used a launchd bootout/bootstrap proxy).
 - DET: the ~40-phrasing edge-case sweep per feature state (wave 1 covered a sample).
 - Slack read lookups (no user token; v2 PC-9 NOT RUN). SUB-3, CODE-8, CODE-9 and LLM-3 were not implemented.
