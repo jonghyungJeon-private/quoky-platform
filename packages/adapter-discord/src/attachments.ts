@@ -61,7 +61,25 @@ const OPEN_DIRECTORY_NOFOLLOW =
   fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0);
 
 const TEXT_EXTENSIONS = new Set(['.log', '.md', '.json']);
-const IMAGE_MIME_TYPES = new Set<InboundImageMimeType>(['image/png', 'image/jpeg', 'image/webp']);
+/**
+ * Declared image MIME types (and common aliases) taken in as an image. The declared type is only a hint: the
+ * downloaded bytes' signature decides the type that is handed on ({@link sniffImageMimeType}).
+ */
+const IMAGE_MIME_ALIASES: Readonly<Record<string, InboundImageMimeType>> = {
+  'image/png': 'image/png',
+  'image/x-png': 'image/png',
+  'image/apng': 'image/png',
+  'image/jpeg': 'image/jpeg',
+  'image/jpg': 'image/jpeg',
+  'image/pjpeg': 'image/jpeg',
+  'image/webp': 'image/webp',
+};
+/** Declared types that say nothing about the content; with an image extension the bytes decide. */
+const GENERIC_BINARY_MIME_TYPES = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
+/** Never an image candidate, whatever the extension (SVG is markup, not a raster image). */
+const NON_RASTER_IMAGE_MIME_TYPES = new Set(['image/svg+xml']);
+/** One re-download when the first body has no image signature (a CDN object still being processed). */
+export const IMAGE_SIGNATURE_RETRY_DELAY_MS = 1_000;
 const IMAGE_EXTENSIONS: Readonly<Record<string, InboundImageMimeType>> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -91,6 +109,8 @@ export type AttachmentClassification =
 export interface AttachmentIntakeOptions {
   /** Test seam; production uses the platform fetch. */
   readonly fetchImpl?: typeof fetch;
+  /** Test seam for the image re-download delay ({@link IMAGE_SIGNATURE_RETRY_DELAY_MS}). */
+  readonly imageRetryDelayMs?: number;
   /** Runner-owned temp directory; defaults to {@link DEFAULT_ATTACHMENT_TEMP_ROOT}. */
   readonly tempRoot?: string;
   readonly downloadTimeoutMs?: number;
@@ -100,8 +120,54 @@ export interface AttachmentIntakeOptions {
   readonly uid?: number;
 }
 
+/**
+ * Why one attachment was refused, for one content-free log line (live QA: a valid PNG was refused and nothing said
+ * why). Classes and buckets only: never a file name, URL, header value or content.
+ */
+export interface AttachmentRefusalDiagnostic {
+  /** Upload position (0-based). */
+  readonly index: number;
+  readonly reason: InboundAttachmentUnsupportedReason;
+  /** The step that refused it. */
+  readonly detail: AttachmentRefusalDetail;
+  /** The platform-declared MIME as a class ({@link mimeClass}). */
+  readonly declaredMime: string;
+  readonly extension: 'image' | 'text' | 'other' | 'none';
+  /** The platform-declared size, bucketed ({@link sizeBucket}). */
+  readonly declaredSize: string;
+  /** Which allowlisted CDN host the URL names (`other` = not allowlisted). */
+  readonly host: 'cdn' | 'media' | 'other';
+  readonly httpStatus?: number;
+  /** The download response's `Content-Type` as a class. */
+  readonly responseMime?: string;
+  /** The downloaded body size, bucketed. */
+  readonly downloadedSize?: string;
+  /** What the downloaded bytes look like. */
+  readonly signature?: 'png' | 'jpeg' | 'webp' | 'gif' | 'empty' | 'other';
+  /** Downloads attempted. */
+  readonly attempts?: number;
+}
+
+export type AttachmentRefusalDetail =
+  | 'COUNT_BOUND'
+  | 'DECLARED_TYPE'
+  | 'DECLARED_SIZE'
+  | 'NOT_CDN_URL'
+  | 'HTTP_STATUS'
+  | 'REDIRECT'
+  | 'TIMEOUT'
+  | 'NETWORK'
+  | 'CONTENT_LENGTH_BOUND'
+  | 'STREAM_BOUND'
+  | 'SIGNATURE_MISMATCH'
+  | 'NOT_UTF8'
+  | 'CREDENTIAL_SHAPED'
+  | 'TEMP_WRITE_FAILED';
+
 export interface AttachmentIntakeResult {
   readonly attachments: readonly InboundAttachment[];
+  /** One entry per refused attachment, in upload order (content-free; for logs only). */
+  readonly diagnostics: readonly AttachmentRefusalDiagnostic[];
   /** Deletes every temp file this intake created. Idempotent; never throws. */
   release(): Promise<void>;
 }
@@ -128,15 +194,22 @@ function baseMimeType(contentType: string | null | undefined): string {
 
 /**
  * Metadata-only classification (ADR-0111 D2): type first, then the size bound for that type. Never downloads.
- * Text: `text/*` or a `.log`/`.md`/`.json` name. Image: png/jpeg/webp by MIME (or by extension when no MIME is given).
+ * Text: `text/*` or a `.log`/`.md`/`.json` name. Image candidate: a png/jpeg/webp MIME (or a common alias such as
+ * `image/x-png`, `image/jpg`), or a `.png`/`.jpg`/`.jpeg`/`.webp` name whose declared MIME is absent, generic
+ * (`application/octet-stream`) or another raster `image/*` type. A candidate is only a candidate: the downloaded
+ * bytes' signature decides whether it is an image and which type it is.
  */
 export function classifyAttachment(source: AttachmentSource): AttachmentClassification {
   const mime = baseMimeType(source.contentType);
   const ext = path.extname(source.name ?? '').toLowerCase();
   const size = Number.isFinite(source.size) && source.size >= 0 ? source.size : 0;
-  let imageMime: InboundImageMimeType | undefined;
-  if (IMAGE_MIME_TYPES.has(mime as InboundImageMimeType)) imageMime = mime as InboundImageMimeType;
-  else if (mime === '') imageMime = IMAGE_EXTENSIONS[ext];
+  let imageMime: InboundImageMimeType | undefined = IMAGE_MIME_ALIASES[mime];
+  if (
+    imageMime === undefined &&
+    (GENERIC_BINARY_MIME_TYPES.has(mime) || (mime.startsWith('image/') && !NON_RASTER_IMAGE_MIME_TYPES.has(mime)))
+  ) {
+    imageMime = IMAGE_EXTENSIONS[ext];
+  }
   if (imageMime) {
     return size > IMAGE_ATTACHMENT_MAX_BYTES
       ? { kind: 'unsupported', reason: 'TOO_LARGE' }
@@ -164,33 +237,59 @@ export function isPlatformCdnUrl(url: string): boolean {
   }
 }
 
-type DownloadOutcome =
-  | { readonly ok: true; readonly bytes: Buffer }
-  | { readonly ok: false; readonly reason: 'TOO_LARGE' | 'DOWNLOAD_FAILED' };
+/** Content-free facts of one download attempt, for {@link AttachmentRefusalDiagnostic}. */
+interface DownloadFacts {
+  readonly httpStatus?: number;
+  readonly responseMime?: string;
+}
 
-/** Streams at most `maxBytes` from the platform CDN; aborts as soon as the bound is passed. */
+type DownloadOutcome =
+  | ({ readonly ok: true; readonly bytes: Buffer } & DownloadFacts)
+  | ({
+      readonly ok: false;
+      readonly reason: 'TOO_LARGE' | 'DOWNLOAD_FAILED';
+      readonly detail: Extract<
+        AttachmentRefusalDetail,
+        'NOT_CDN_URL' | 'HTTP_STATUS' | 'REDIRECT' | 'TIMEOUT' | 'NETWORK' | 'CONTENT_LENGTH_BOUND' | 'STREAM_BOUND'
+      >;
+    } & DownloadFacts);
+
+/**
+ * Streams at most `maxBytes` from the platform CDN; aborts as soon as the bound is passed. A redirect is never
+ * followed (manual mode: any 3xx is refused as `REDIRECT`), so the bytes always come from the allowlisted URL.
+ */
 async function downloadBounded(
   fetchImpl: typeof fetch,
   url: string,
   maxBytes: number,
   timeoutMs: number,
 ): Promise<DownloadOutcome> {
-  if (!isPlatformCdnUrl(url)) return { ok: false, reason: 'DOWNLOAD_FAILED' };
+  if (!isPlatformCdnUrl(url)) return { ok: false, reason: 'DOWNLOAD_FAILED', detail: 'NOT_CDN_URL' };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   timer.unref?.();
+  let facts: DownloadFacts = {};
   try {
-    const response = await fetchImpl(url, { redirect: 'error', signal: controller.signal });
+    const response = await fetchImpl(url, { redirect: 'manual', signal: controller.signal });
+    facts = { httpStatus: response.status, responseMime: mimeClass(response.headers.get('content-type')) };
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      await response.body?.cancel().catch(() => undefined);
+      return { ok: false, reason: 'DOWNLOAD_FAILED', detail: 'REDIRECT', ...facts };
+    }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      return { ok: false, reason: 'DOWNLOAD_FAILED' };
+      return { ok: false, reason: 'DOWNLOAD_FAILED', detail: 'HTTP_STATUS', ...facts };
     }
     const declared = Number(response.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > maxBytes) {
       await response.body?.cancel().catch(() => undefined);
-      return { ok: false, reason: 'TOO_LARGE' };
+      return { ok: false, reason: 'TOO_LARGE', detail: 'CONTENT_LENGTH_BOUND', ...facts };
     }
-    if (!response.body) return { ok: true, bytes: Buffer.alloc(0) };
+    if (!response.body) return { ok: true, bytes: Buffer.alloc(0), ...facts };
     const reader = response.body.getReader();
     const chunks: Buffer[] = [];
     let total = 0;
@@ -201,13 +300,13 @@ async function downloadBounded(
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
         controller.abort();
-        return { ok: false, reason: 'TOO_LARGE' };
+        return { ok: false, reason: 'TOO_LARGE', detail: 'STREAM_BOUND', ...facts };
       }
       chunks.push(Buffer.from(value));
     }
-    return { ok: true, bytes: Buffer.concat(chunks, total) };
+    return { ok: true, bytes: Buffer.concat(chunks, total), ...facts };
   } catch {
-    return { ok: false, reason: 'DOWNLOAD_FAILED' };
+    return { ok: false, reason: 'DOWNLOAD_FAILED', detail: timedOut ? 'TIMEOUT' : 'NETWORK', ...facts };
   } finally {
     clearTimeout(timer);
   }
@@ -245,12 +344,118 @@ function matchesImageSignature(bytes: Buffer, mimeType: InboundImageMimeType): b
 }
 
 /**
+ * The image type the bytes ARE (png/jpeg/webp), whatever the platform declared; `undefined` for anything else. The
+ * declared type is only a hint (a PNG declared as `image/jpeg`, or re-encoded by the platform, is still a PNG).
+ */
+export function sniffImageMimeType(bytes: Buffer): InboundImageMimeType | undefined {
+  return (['image/png', 'image/jpeg', 'image/webp'] as const).find((mime) => matchesImageSignature(bytes, mime));
+}
+
+function signatureClass(bytes: Buffer): NonNullable<AttachmentRefusalDiagnostic['signature']> {
+  if (bytes.length === 0) return 'empty';
+  const sniffed = sniffImageMimeType(bytes);
+  if (sniffed === 'image/png') return 'png';
+  if (sniffed === 'image/jpeg') return 'jpeg';
+  if (sniffed === 'image/webp') return 'webp';
+  return bytes.length >= 6 && bytes.toString('latin1', 0, 4) === 'GIF8' ? 'gif' : 'other';
+}
+
+/** MIME types logged as themselves; anything else is logged as its top-level class (`image/other`, `other`). */
+const LOGGED_MIME_TYPES = new Set([
+  'image/png',
+  'image/x-png',
+  'image/apng',
+  'image/jpeg',
+  'image/jpg',
+  'image/pjpeg',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+  'image/avif',
+  'image/svg+xml',
+  'text/plain',
+  'text/markdown',
+  'text/html',
+  'application/json',
+  'application/octet-stream',
+  'binary/octet-stream',
+]);
+const MIME_TOP_LEVELS = new Set(['image', 'text', 'application', 'audio', 'video']);
+
+/** A declared or response MIME as a bounded class: a known type, `<top>/other`, `other`, or `none`. */
+export function mimeClass(contentType: string | null | undefined): string {
+  const mime = baseMimeType(contentType);
+  if (mime === '') return 'none';
+  if (LOGGED_MIME_TYPES.has(mime)) return mime;
+  const top = mime.split('/')[0] ?? '';
+  return MIME_TOP_LEVELS.has(top) ? `${top}/other` : 'other';
+}
+
+const SIZE_BUCKETS: ReadonlyArray<readonly [number, string]> = [
+  [0, '0'],
+  [1024, '<1KiB'],
+  [4 * 1024, '<4KiB'],
+  [16 * 1024, '<16KiB'],
+  [64 * 1024, '<64KiB'],
+  [TEXT_ATTACHMENT_MAX_BYTES, '<256KiB'],
+  [1024 * 1024, '<1MiB'],
+  [IMAGE_ATTACHMENT_MAX_BYTES, '<8MiB'],
+];
+
+/** A byte count as a coarse bucket (`0`, `<1KiB`, … `<8MiB`, `>=8MiB`). */
+export function sizeBucket(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0';
+  for (const [bound, label] of SIZE_BUCKETS) if (bound > 0 && bytes < bound) return label;
+  return '>=8MiB';
+}
+
+function hostClass(url: string): AttachmentRefusalDiagnostic['host'] {
+  if (!isPlatformCdnUrl(url)) return 'other';
+  return new URL(url).hostname.toLowerCase() === 'media.discordapp.net' ? 'media' : 'cdn';
+}
+
+function extensionClass(name: string | null | undefined): AttachmentRefusalDiagnostic['extension'] {
+  const ext = path.extname(name ?? '').toLowerCase();
+  if (ext === '') return 'none';
+  if (IMAGE_EXTENSIONS[ext] !== undefined) return 'image';
+  return TEXT_EXTENSIONS.has(ext) || ext === '.txt' ? 'text' : 'other';
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+/** Internal: why one attachment was refused (the bytes are inspected for a signature class only, never logged). */
+interface IntakeRefusal extends DownloadFacts {
+  readonly detail: AttachmentRefusalDetail;
+  readonly downloaded?: Buffer;
+  readonly attempts?: number;
+}
+
+interface IntakeOutcome {
+  readonly attachment: InboundAttachment;
+  readonly refusal?: IntakeRefusal;
+}
+
+function downloadFacts(download: DownloadFacts): DownloadFacts {
+  return {
+    ...(download.httpStatus !== undefined ? { httpStatus: download.httpStatus } : {}),
+    ...(download.responseMime !== undefined ? { responseMime: download.responseMime } : {}),
+  };
+}
+
+/**
  * Bounded intake over one runner-owned temporary directory. One instance per adapter; {@link dispose} on stop.
  */
 export class AttachmentIntake {
   readonly tempRoot: string;
   private readonly fetchImpl: typeof fetch;
   private readonly downloadTimeoutMs: number;
+  private readonly imageRetryDelayMs: number;
   private readonly nowMs: () => number;
   private readonly uid: number | undefined;
   /** Temp files created and not yet released (deleted on {@link dispose}). */
@@ -263,6 +468,7 @@ export class AttachmentIntake {
     this.tempRoot = options.tempRoot ?? DEFAULT_ATTACHMENT_TEMP_ROOT;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.downloadTimeoutMs = options.downloadTimeoutMs ?? ATTACHMENT_DOWNLOAD_TIMEOUT_MS;
+    this.imageRetryDelayMs = options.imageRetryDelayMs ?? IMAGE_SIGNATURE_RETRY_DELAY_MS;
     this.nowMs = options.nowMs ?? Date.now;
     this.uid = options.uid ?? currentUid();
   }
@@ -271,9 +477,10 @@ export class AttachmentIntake {
   async intake(sources: readonly AttachmentSource[]): Promise<AttachmentIntakeResult> {
     const created: string[] = [];
     // The (at most ATTACHMENT_MAX_COUNT) downloads run concurrently, so a slow file does not delay the others and the
-    // whole intake is bounded by one download timeout instead of the sum. Results keep upload order.
-    const attachments: InboundAttachment[] = await Promise.all(
-      sources.map((source, index): InboundAttachment | Promise<InboundAttachment> => {
+    // whole intake is bounded by one download timeout instead of the sum (plus one image re-download). Results keep
+    // upload order.
+    const outcomes: IntakeOutcome[] = await Promise.all(
+      sources.map((source, index): IntakeOutcome | Promise<IntakeOutcome> => {
         const name = sanitizeAttachmentName(source.name);
         const mime = baseMimeType(source.contentType);
         const base = {
@@ -281,13 +488,38 @@ export class AttachmentIntake {
           ...(mime ? { mimeType: mime } : {}),
           sizeBytes: Number.isFinite(source.size) && source.size >= 0 ? source.size : 0,
         };
-        if (index >= ATTACHMENT_MAX_COUNT) return { ...base, kind: 'unsupported', reason: 'TOO_MANY' };
+        if (index >= ATTACHMENT_MAX_COUNT) {
+          return { attachment: { ...base, kind: 'unsupported', reason: 'TOO_MANY' }, refusal: { detail: 'COUNT_BOUND' } };
+        }
         return this.intakeOne(source, base, created);
       }),
     );
+    const attachments = outcomes.map((outcome) => outcome.attachment);
+    const diagnostics: AttachmentRefusalDiagnostic[] = [];
+    outcomes.forEach((outcome, index) => {
+      const { attachment, refusal } = outcome;
+      if (attachment.kind !== 'unsupported' || refusal === undefined) return;
+      const source = sources[index] as AttachmentSource;
+      diagnostics.push({
+        index,
+        reason: attachment.reason,
+        detail: refusal.detail,
+        declaredMime: mimeClass(source.contentType),
+        extension: extensionClass(source.name),
+        declaredSize: sizeBucket(attachment.sizeBytes),
+        host: hostClass(source.url),
+        ...(refusal.httpStatus !== undefined ? { httpStatus: refusal.httpStatus } : {}),
+        ...(refusal.responseMime !== undefined ? { responseMime: refusal.responseMime } : {}),
+        ...(refusal.downloaded !== undefined
+          ? { downloadedSize: sizeBucket(refusal.downloaded.length), signature: signatureClass(refusal.downloaded) }
+          : {}),
+        ...(refusal.attempts !== undefined ? { attempts: refusal.attempts } : {}),
+      });
+    });
     let released = false;
     return {
       attachments,
+      diagnostics,
       release: async () => {
         if (released) return;
         released = true;
@@ -300,26 +532,49 @@ export class AttachmentIntake {
     source: AttachmentSource,
     base: { readonly name: string; readonly mimeType?: string; readonly sizeBytes: number },
     created: string[],
-  ): Promise<InboundAttachment> {
+  ): Promise<IntakeOutcome> {
+    const refuse = (
+      reason: InboundAttachmentUnsupportedReason,
+      refusal: IntakeRefusal,
+    ): IntakeOutcome => ({ attachment: { ...base, kind: 'unsupported', reason }, refusal });
     const classification = classifyAttachment(source);
-    if (classification.kind === 'unsupported') return { ...base, kind: 'unsupported', reason: classification.reason };
+    if (classification.kind === 'unsupported') {
+      return refuse(classification.reason, { detail: classification.reason === 'TOO_LARGE' ? 'DECLARED_SIZE' : 'DECLARED_TYPE' });
+    }
     if (classification.kind === 'text') {
       const download = await downloadBounded(this.fetchImpl, source.url, TEXT_ATTACHMENT_MAX_BYTES, this.downloadTimeoutMs);
-      if (!download.ok) return { ...base, kind: 'unsupported', reason: download.reason };
+      if (!download.ok) return refuse(download.reason, { ...downloadFacts(download), detail: download.detail, attempts: 1 });
       const text = decodeUtf8Text(download.bytes);
-      if (text === undefined) return { ...base, kind: 'unsupported', reason: 'NOT_UTF8_TEXT' };
-      if (isCredentialShaped(text)) return { ...base, kind: 'unsupported', reason: 'CREDENTIAL_SHAPED' };
-      return { ...base, kind: 'text', text, trust: 'UNTRUSTED' };
+      if (text === undefined) return refuse('NOT_UTF8_TEXT', { ...downloadFacts(download), detail: 'NOT_UTF8', attempts: 1 });
+      // Content-free: the credential refusal never carries the bytes into the diagnostic.
+      if (isCredentialShaped(text)) return refuse('CREDENTIAL_SHAPED', { detail: 'CREDENTIAL_SHAPED', attempts: 1 });
+      return { attachment: { ...base, kind: 'text', text, trust: 'UNTRUSTED' } };
     }
-    const download = await downloadBounded(this.fetchImpl, source.url, IMAGE_ATTACHMENT_MAX_BYTES, this.downloadTimeoutMs);
-    if (!download.ok) return { ...base, kind: 'unsupported', reason: download.reason };
-    if (!matchesImageSignature(download.bytes, classification.mimeType)) {
-      return { ...base, kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' };
+    // The declared type only made this an image candidate; the bytes decide (a PNG the platform declared or re-encoded
+    // differently is still a PNG). A body with no image signature is downloaded once more after a short delay, in
+    // case the CDN object was not final yet; a second miss is refused.
+    let attempts = 0;
+    let download: DownloadOutcome;
+    let sniffed: InboundImageMimeType | undefined;
+    do {
+      if (attempts > 0) await delay(this.imageRetryDelayMs);
+      attempts += 1;
+      download = await downloadBounded(this.fetchImpl, source.url, IMAGE_ATTACHMENT_MAX_BYTES, this.downloadTimeoutMs);
+      if (!download.ok) return refuse(download.reason, { ...downloadFacts(download), detail: download.detail, attempts });
+      sniffed = sniffImageMimeType(download.bytes);
+    } while (sniffed === undefined && attempts < 2);
+    if (sniffed === undefined) {
+      return refuse('UNSUPPORTED_TYPE', {
+        ...downloadFacts(download),
+        detail: 'SIGNATURE_MISMATCH',
+        downloaded: download.bytes,
+        attempts,
+      });
     }
-    const file = await this.writeTempFile(download.bytes, IMAGE_FILE_EXTENSIONS[classification.mimeType]);
-    if (!file) return { ...base, kind: 'unsupported', reason: 'DOWNLOAD_FAILED' };
+    const file = await this.writeTempFile(download.bytes, IMAGE_FILE_EXTENSIONS[sniffed]);
+    if (!file) return refuse('DOWNLOAD_FAILED', { detail: 'TEMP_WRITE_FAILED', attempts });
     created.push(file);
-    return { ...base, kind: 'image', mimeType: classification.mimeType, imageRef: file, trust: 'UNTRUSTED' };
+    return { attachment: { ...base, kind: 'image', mimeType: sniffed, imageRef: file, trust: 'UNTRUSTED' } };
   }
 
   /**

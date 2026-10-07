@@ -115,7 +115,11 @@ describe('OpsProviderSelectionActions.setDefault', () => {
 
   it('image: choosing claude opens REMOTE at once and says images leave the host; reset restores the configuration', async () => {
     const { ops, f, delivered } = actions();
-    expect(await f.service.imageLocalities({})).toEqual(['LOCAL']);
+    // QUOKY_IMAGE_UNDERSTANDING_PROVIDER=off is an explicit default `off`: no locality at all, with the way back on.
+    expect(await f.service.imageLocalities({})).toEqual({
+      allowedLocalities: [],
+      switchedOff: { scope: 'DEFAULT', choices: ['claude', 'ollama'], resetRestores: false },
+    });
     expect((await ops.setDefault('image:claude')).code).toBe('DEFAULT_SET');
     expect(await f.service.imageLocalities({})).toEqual(['LOCAL', 'REMOTE']);
     expect(delivered.at(-1)?.text).toBe(providerDefaultNoticeText('image', 'claude', false));
@@ -123,7 +127,7 @@ describe('OpsProviderSelectionActions.setDefault', () => {
     const reset = await ops.setDefault('image:reset');
     expect(reset).toMatchObject({ code: 'DEFAULT_RESET', ok: true });
     expect(reset.message).toContain('이미지 모델 기본값을 설정값(off)으로 되돌렸어요.');
-    expect(await f.service.imageLocalities({})).toEqual(['LOCAL']);
+    expect(await f.service.imageLocalities({})).toMatchObject({ allowedLocalities: [] });
     expect(f.store.get().image).toBeUndefined();
   });
 
@@ -145,6 +149,14 @@ describe('OpsProviderSelectionActions.setDefault', () => {
   ])('validates %s again at execution (%s) and changes nothing', async (subject, code) => {
     const { ops, f, delivered } = actions();
     expect(await ops.setDefault(subject)).toMatchObject({ code, ok: false });
+    expect(f.store.get()).toEqual({});
+    expect(delivered).toEqual([]);
+  });
+
+  it('an installed embedding-only Ollama model is refused at execution and changes nothing', async () => {
+    const { ops, f, delivered } = actions();
+    f.inventory = { status: 'OK', models: ['granite3.3:8b'], nonChat: ['nomic-embed-text:latest'] };
+    expect(await ops.setDefault('chat:ollama:nomic-embed-text:latest')).toMatchObject({ code: 'OLLAMA_MODEL_NOT_CHAT', ok: false });
     expect(f.store.get()).toEqual({});
     expect(delivered).toEqual([]);
   });

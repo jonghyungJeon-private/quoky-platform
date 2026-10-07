@@ -68,11 +68,16 @@ export {
 export type { CodexCliProviderOptions } from './codex-cli-provider';
 export {
   MAX_LISTED_OLLAMA_MODELS,
+  OLLAMA_EMBEDDING_NAME_PATTERN,
+  OLLAMA_SHOW_TIMEOUT_MS,
+  OllamaChatModelInventory,
   listLocalOllamaModels,
+  parseOllamaListEntries,
   parseOllamaListModelNames,
+  parseOllamaShowCapabilities,
   sameOllamaModel,
 } from './ollama-models';
-export type { OllamaModelInventory } from './ollama-models';
+export type { OllamaChatModelInventoryOptions, OllamaListEntry, OllamaModelInventory } from './ollama-models';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
 

@@ -157,10 +157,10 @@ Claude(`QUOKY_CLAUDE_MODEL`)가 맡습니다. 요청 하나하나마다 모델�
 |---|---|---|---|
 | `claude` / `claude:sonnet` / `claude:opus` / `claude:haiku` | Claude CLI (별칭만 허용; `QUOKY_CLAUDE_MODEL` 값은 그 이름으로도 고를 수 있음) | 항상 | Anthropic |
 | `codex` | Codex CLI (`QUOKY_CODEX_MODEL` 또는 CLI 기본 모델, 다른 모델은 고를 수 없음) | `codex` CLI가 있을 때(또는 설정·기본값이 codex일 때) | OpenAI (ChatGPT 로그인) |
-| `ollama` / `ollama:<모델>` | 로컬 Ollama (`ollama list`에 있는 로컬 모델만, `cloud` 모델 제외; 고를 때 목록과 대조) | `OLLAMA_MODEL`이 설정되고 `ollama` CLI가 있을 때(다른 모델은 CLI만 있으면) | 이 컴퓨터 안 |
+| `ollama` / `ollama:<모델>` | 로컬 Ollama (`ollama list`에 있는 로컬 모델만, `cloud` 모델 제외; `ollama show`의 기능에 `completion`이 없는 모델(예: 임베딩 전용 `nomic-embed-text`)도 제외. `ollama show`로 확인하지 못하면 이름에 `embed`가 든 모델만 제외; 고를 때 목록과 대조) | `OLLAMA_MODEL`이 설정되고 `ollama` CLI가 있을 때(다른 모델은 CLI만 있으면) | 이 컴퓨터 안 |
 | 이미지 `claude` | Claude CLI 비전 (`QUOKY_IMAGE_UNDERSTANDING_MODEL` 또는 `QUOKY_CLAUDE_MODEL`) | 항상 | **첨부 이미지가 Anthropic으로 전송** |
 | 이미지 `ollama` | 로컬 비전 모델 (`QUOKY_OLLAMA_VISION_MODEL`) | 그 값이 설정되어 있을 때 | 이 컴퓨터 안 |
-| 이미지 `off` | 없음 | 항상 | 어디로도 보내지 않음 |
+| 이미지 `off` | 없음 | 항상 | 어디로도 보내지 않음. 이미지를 보내면 "이미지 분석이 꺼져 있다"는 안내와 다시 켜는 방법(`이미지 모델 변경: claude`, `모델 기본값으로`)을 답함 |
 
 Ollama 모델은 등록만으로는 메모리에 올라가지 않고, 실제로 답할 때만 실행됩니다. 이미지를 Anthropic으로 보내는 것은
 **지금 적용되는 이미지 선택이 `claude`일 때만**이고, `ollama`나 `off`로 바꾸면 다음 이미지부터 바로 보내지 않습니다.

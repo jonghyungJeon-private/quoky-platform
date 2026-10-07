@@ -1,7 +1,7 @@
 import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'discord.js';
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
-import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
+import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD, renderMarkdownTablesForDiscord } from './delivery';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
@@ -14,6 +14,7 @@ export {
   chunkText,
   deliverChunks,
   deliverWithNotice,
+  renderMarkdownTablesForDiscord,
   DISCORD_SAFE_LIMIT,
   FILE_ATTACHMENT_CHUNK_THRESHOLD,
   PARTIAL_FAILURE_NOTICE,
@@ -48,10 +49,20 @@ export {
   classifyAttachment,
   DEFAULT_ATTACHMENT_TEMP_ROOT,
   IMAGE_ATTACHMENT_MAX_BYTES,
+  IMAGE_SIGNATURE_RETRY_DELAY_MS,
+  mimeClass,
   renderAttachmentIntakeNote,
+  sizeBucket,
+  sniffImageMimeType,
   TEXT_ATTACHMENT_MAX_BYTES,
 } from './attachments';
-export type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
+export type {
+  AttachmentIntakeOptions,
+  AttachmentIntakeResult,
+  AttachmentRefusalDetail,
+  AttachmentRefusalDiagnostic,
+  AttachmentSource,
+} from './attachments';
 import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
@@ -267,7 +278,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     }
 
     const report = await deliverWithNotice(
-      message.text,
+      // Discord renders no Markdown tables: a simple table goes out as bullet lines (fenced code is untouched).
+      renderMarkdownTablesForDiscord(message.text),
       async (chunk) => {
         platformMessageIds.push((await channel.send(chunk)).id);
       },
@@ -555,6 +567,10 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
    */
   private async reportAttachmentIntake(message: Message, intake: AttachmentIntakeResult): Promise<void> {
     this.logger.info('attachment intake', { messageId: message.id, ...summarizeAttachmentIntake(intake.attachments) });
+    // One content-free line per refused attachment: reason, step, MIME classes and size buckets — never a name or URL.
+    for (const diagnostic of intake.diagnostics) {
+      this.logger.info('attachment refused', { messageId: message.id, ...diagnostic });
+    }
     const note = renderAttachmentIntakeNote(intake.attachments);
     if (!note) return;
     try {

@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — runtime model switching live QA follow-ups (2026-10-07)
+
+- `모델 목록` and the `/providers` form list only chat-capable Ollama models (`ollama show` capabilities, cached per
+  model and `ID`); an embedding-only model such as `nomic-embed-text` is left out and refused if named
+  (`OLLAMA_MODEL_NOT_CHAT`). Without a readable `ollama show`, only names containing `embed` are left out.
+- With image analysis explicitly `off`, an image reply says image analysis is off (in this conversation or by default)
+  and how to turn it back on; nothing is sent. The derived `off` keeps the "not available" reply.
+- Discord image intake trusts the downloaded signature over the declared MIME (aliases, `application/octet-stream`,
+  another raster type or none with an image extension are candidates), re-downloads once when the body has no image
+  signature, and logs one content-free `attachment refused` line per refused file.
+- Discord replies send simple Markdown tables as bullet lines.
+
 ## Unreleased — runtime model switching: operations-UI default and `/model` per conversation (ADR-0092/ADR-0111 amendments, 2026-10-07)
 
 - Chat tier (chat, summaries, document analysis, read-only lookups) and image understanding switch without a restart.

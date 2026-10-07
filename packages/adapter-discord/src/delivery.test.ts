@@ -7,6 +7,7 @@ import {
   DISCORD_SAFE_LIMIT,
   PARTIAL_FAILURE_NOTICE,
   planPreviewDelivery,
+  renderMarkdownTablesForDiscord,
   wrapDiffPart,
   type PreviewSenders,
 } from './delivery';
@@ -448,3 +449,28 @@ describe('wrapDiffPart (F5-C)', () => {
     expect(wrapDiffPart('+a\n', 2, 3)).toBe('[2/3]\n```diff\n+a\n```');
   });
 });
+
+describe('renderMarkdownTablesForDiscord (live QA: Discord shows Markdown tables as raw pipes)', () => {
+  it('turns a simple two-column table into bullet lines under a bold header, keeping the text around it', () => {
+    const text = ['차트 요약이에요.', '', '| 월 | 가입자 수 |', '|---|---:|', '| 1월 | 80 |', '| 2월 | 95 |', '', '꾸준히 늘었어요.'].join('\n');
+    expect(renderMarkdownTablesForDiscord(text)).toBe(
+      ['차트 요약이에요.', '', '**월 · 가입자 수**', '- 1월: 80', '- 2월: 95', '', '꾸준히 늘었어요.'].join('\n'),
+    );
+  });
+
+  it('a wider table becomes `- first — header: cell, …`; an escaped pipe stays a pipe; empty cells are skipped', () => {
+    const text = ['| 월 | 가입 | 해지 |', '| :-- | :-: | --: |', '| 1월 | 80 | 3 |', '| 2월 | a\\|b |  |'].join('\n');
+    expect(renderMarkdownTablesForDiscord(text)).toBe(['- 1월 — 가입: 80, 해지: 3', '- 2월 — 가입: a|b'].join('\n'));
+  });
+
+  it('leaves fenced tables, pipes without a separator row, and plain text unchanged', () => {
+    const fenced = ['```', '| a | b |', '|---|---|', '| 1 | 2 |', '```'].join('\n');
+    expect(renderMarkdownTablesForDiscord(fenced)).toBe(fenced);
+    const noSeparator = ['| a | b |', '| 1 | 2 |'].join('\n');
+    expect(renderMarkdownTablesForDiscord(noSeparator)).toBe(noSeparator);
+    expect(renderMarkdownTablesForDiscord('a || b')).toBe('a || b');
+    const headerOnly = ['| a | b |', '|---|---|'].join('\n');
+    expect(renderMarkdownTablesForDiscord(headerOnly)).toBe(headerOnly);
+  });
+});
+

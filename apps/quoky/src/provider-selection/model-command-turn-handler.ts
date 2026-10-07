@@ -67,6 +67,7 @@ const REFUSAL_COPY: Readonly<Record<SelectionRefusal, string>> = {
   MODEL_INVALID: '모델 이름이 올바르지 않아요. "모델 목록"에서 고르세요.',
   PROVIDER_NOT_ON_HOST: '그 모델은 이 컴퓨터에서 쓸 수 없어요 (CLI나 모델 설정이 없어요). "모델 목록"에서 고르세요.',
   OLLAMA_MODEL_NOT_FOUND: '로컬 Ollama에 그 모델이 없어요. "모델 목록"에서 고르세요.',
+  OLLAMA_MODEL_NOT_CHAT: '그 Ollama 모델은 대화용이 아니에요 (예: 임베딩 전용). 바꾸지 않았어요. "모델 목록"에서 고르세요.',
   OLLAMA_UNAVAILABLE: 'Ollama가 응답하지 않아 로컬 모델을 확인하지 못했어요. 바꾸지 않았어요.',
   IMAGE_CHOICE_INVALID: '이미지 모델은 claude, ollama, off 중에서 고를 수 있어요.',
   IMAGE_OPTION_UNAVAILABLE: '그 이미지 모델은 이 컴퓨터에 설정되어 있지 않아요 (로컬은 QUOKY_OLLAMA_VISION_MODEL이 필요해요).',

@@ -3,6 +3,7 @@ import type {
   AiExecutionLocality,
   AiProvider,
   Id,
+  ImageUnderstandingResolution,
   IsoTimestamp,
   Logger,
   ProviderPreference,
@@ -126,6 +127,7 @@ export type SelectionRefusal =
   | 'MODEL_INVALID'
   | 'PROVIDER_NOT_ON_HOST'
   | 'OLLAMA_MODEL_NOT_FOUND'
+  | 'OLLAMA_MODEL_NOT_CHAT'
   | 'OLLAMA_UNAVAILABLE'
   | 'IMAGE_CHOICE_INVALID'
   | 'IMAGE_OPTION_UNAVAILABLE'
@@ -166,7 +168,7 @@ export interface ProviderSelectionServiceDeps {
   ) => Promise<Session | null>;
   /** A cached readiness probe (`AiProviderManager.isReady`). */
   readonly readiness: (provider: AiProvider) => Promise<boolean>;
-  /** The local Ollama model inventory (`ollama list`). */
+  /** The local chat-capable Ollama model inventory (`ollama list` + cached `ollama show` capabilities). */
   readonly ollamaModels: () => Promise<OllamaModelInventory>;
   readonly logger: Pick<Logger, 'info' | 'warn'>;
   readonly clock?: () => IsoTimestamp;
@@ -281,10 +283,25 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   /**
    * ADR-0111 amendment (runtime switching): the Core image locality policy for this request. `REMOTE` is allowed only
    * while the EFFECTIVE image choice is `claude`; switching to `ollama` or `off` stops cloud egress on the next turn.
+   * An effective `off` allows no locality at all and carries where it was switched off and how to turn it back on.
    */
-  async imageLocalities(context: ProviderSelectionContext): Promise<readonly AiExecutionLocality[]> {
+  async imageLocalities(
+    context: ProviderSelectionContext,
+  ): Promise<readonly AiExecutionLocality[] | ImageUnderstandingResolution> {
     try {
       const image = await this.effectiveImage(context);
+      if (image.choice === 'off') {
+        // An EXPLICIT `off` (this conversation, the operations UI or QUOKY_IMAGE_UNDERSTANDING_PROVIDER; live QA
+        // follow-up): Core answers "image analysis is off here, turn it on with …" instead of "no reader is ready". A
+        // derived `off` (nothing configured) keeps the ADR-0111 "not available" notice and never suggests a cloud option.
+        if (image.source === 'default') return ['LOCAL'];
+        const choices = (['claude', 'ollama'] as const).filter((choice) => this.deps.catalog.resolveImage(choice) !== undefined);
+        const scope = image.source === 'session' ? 'SESSION' : 'DEFAULT';
+        return {
+          allowedLocalities: [],
+          switchedOff: { scope, choices, resetRestores: scope === 'SESSION' && this.globalImage().choice !== 'off' },
+        };
+      }
       return image.choice === 'claude' && image.provider !== null ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
     } catch {
       return ['LOCAL'];
@@ -396,6 +413,10 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       const inventory = await this.deps.ollamaModels();
       if (inventory.status !== 'OK') return { ok: false, refusal: 'OLLAMA_UNAVAILABLE' };
       const wanted = choice.model ?? catalog.ollamaModel;
+      // Re-validated at selection time: an installed model that cannot chat (embedding-only) is refused as such.
+      if ((inventory.nonChat ?? []).some((model) => sameOllamaModel(model, wanted))) {
+        return { ok: false, refusal: 'OLLAMA_MODEL_NOT_CHAT' };
+      }
       if (!inventory.models.some((model) => sameOllamaModel(model, wanted))) {
         return { ok: false, refusal: 'OLLAMA_MODEL_NOT_FOUND' };
       }
@@ -544,7 +565,8 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   /**
    * Every selectable option on this host with its readiness: the Claude aliases, Codex when registered, the local Ollama
-   * models (`ollama list`), then the image options. `current` marks the effective choice for the scope (or the
+   * chat models (`ollama list`, minus models without the `completion` capability such as embedding-only ones), then
+   * the image options. `current` marks the effective choice for the scope (or the
    * default when absent). Probes are the cached readiness probes; no provider is executed and no model is loaded.
    */
   async options(scope: SelectionScope = {}): Promise<SelectionOption[]> {
@@ -565,7 +587,12 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     if (catalog.ollamaUsable) {
       const inventory = await this.deps.ollamaModels();
       const models = inventory.status === 'OK' ? [...inventory.models] : [];
-      if (catalog.ollama !== undefined && !models.some((model) => sameOllamaModel(model, catalog.ollamaModel))) {
+      const nonChat = inventory.status === 'OK' ? (inventory.nonChat ?? []) : [];
+      if (
+        catalog.ollama !== undefined &&
+        !models.some((model) => sameOllamaModel(model, catalog.ollamaModel)) &&
+        !nonChat.some((model) => sameOllamaModel(model, catalog.ollamaModel))
+      ) {
         models.unshift(catalog.ollamaModel);
       }
       for (const model of models) {

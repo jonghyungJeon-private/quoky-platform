@@ -11,6 +11,7 @@ import {
   imageProviderAllowed,
   imageUnderstandingAllowsRemote,
   imageUnderstandingPolicyOf,
+  imageUnderstandingPolicyFromResolution,
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
 } from './image-understanding';
@@ -188,3 +189,49 @@ describe('image-understanding locality policy (ADR-0111 amendment A2)', () => {
     expect(source).not.toMatch(/\.id\b/u);
   });
 });
+
+describe('switched-off image understanding (live QA follow-up of the runtime switch)', () => {
+  it('a switched-off resolution allows no locality, keeps only bounded well-formed tokens, and resets only a session off', () => {
+    const policy = imageUnderstandingPolicyFromResolution({
+      allowedLocalities: ['LOCAL', 'REMOTE'],
+      switchedOff: { scope: 'DEFAULT', choices: ['claude', 'ollama', 'Bad Token', '$(x)'], resetRestores: true },
+    });
+    expect(policy).toEqual({ allowedLocalities: [], switchedOff: { scope: 'DEFAULT', choices: ['claude', 'ollama'], resetRestores: false } });
+    expect(imageUnderstandingPolicyFromResolution(['LOCAL'])).toEqual({ allowedLocalities: ['LOCAL'] });
+    expect(imageUnderstandingPolicyFromResolution({ allowedLocalities: ['LOCAL', 'REMOTE'] })).toEqual({ allowedLocalities: ['LOCAL', 'REMOTE'] });
+    expect(imageUnderstandingPolicyFromResolution(undefined)).toEqual({ allowedLocalities: ['LOCAL'] });
+  });
+
+  it('says image analysis is off (never "unsupported"), where, and how to turn it back on', () => {
+    const session = imageUnderstandingPolicyFromResolution({
+      allowedLocalities: [],
+      switchedOff: { scope: 'SESSION', choices: ['claude'], resetRestores: true },
+    });
+    const ko = renderImageUnderstandingUnavailable('ko', session);
+    expect(ko).toBe(
+      '이 대화에서는 이미지 분석을 꺼 두어서 첨부한 이미지를 분석하지 않았어요. 이미지는 어디로도 보내지 않았어요. ' +
+        '다시 켜려면 "이미지 모델 변경: claude" 또는 "모델 기본값으로"라고 말해 주세요.',
+    );
+    expect(ko).not.toContain('지원하지 않는');
+    expect(renderImageUnderstandingUnavailable('en', session)).toBe(
+      'Image analysis is turned off in this conversation, so the attached image was not analysed and was not sent ' +
+        'anywhere. To turn it back on, say "/model image claude" or "/model reset".',
+    );
+    const byDefault = imageUnderstandingPolicyFromResolution({
+      allowedLocalities: [],
+      switchedOff: { scope: 'DEFAULT', choices: ['claude', 'ollama'], resetRestores: false },
+    });
+    expect(renderImageUnderstandingUnavailable('ko', byDefault)).toBe(
+      '이미지 분석이 기본 설정에서 꺼져 있어서 첨부한 이미지를 분석하지 않았어요. 이미지는 어디로도 보내지 않았어요. ' +
+        '이 대화에서 켜려면 "이미지 모델 변경: claude" 또는 "이미지 모델 변경: ollama"라고 말해 주세요.',
+    );
+    const noWayBack = imageUnderstandingPolicyFromResolution({
+      allowedLocalities: [],
+      switchedOff: { scope: 'SESSION', choices: [], resetRestores: false },
+    });
+    expect(renderImageUnderstandingUnavailable('ko', noWayBack)).toBe(
+      '이 대화에서는 이미지 분석을 꺼 두어서 첨부한 이미지를 분석하지 않았어요. 이미지는 어디로도 보내지 않았어요.',
+    );
+  });
+});
+

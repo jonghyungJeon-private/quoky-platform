@@ -20,6 +20,7 @@ import {
   imageAttachmentsOf,
   imageInputsOf,
   imageProviderAllowed,
+  imageUnderstandingPolicyFromResolution,
   imageUnderstandingPolicyOf,
   renderImageUnderstandingUnavailable,
   textAttachmentsOf,
@@ -7416,7 +7417,7 @@ export class ConversationRuntime {
     const policy = this.imagePolicy;
     if (typeof policy !== 'function') return policy;
     try {
-      return imageUnderstandingPolicyOf(await policy(selection));
+      return imageUnderstandingPolicyFromResolution(await policy(selection));
     } catch {
       this.deps.logger.warn('image policy resolution failed; local only');
       return LOCAL_ONLY_IMAGE_UNDERSTANDING_POLICY;

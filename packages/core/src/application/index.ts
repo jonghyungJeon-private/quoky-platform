@@ -11,6 +11,7 @@ export * from './planner';
 export * from './context-builder';
 export * from './prompt-composer';
 export * from './attachment-context';
+export type { ImageUnderstandingResolution, ImageUnderstandingSwitchedOff } from './image-understanding';
 export * from './continuation-prompt';
 export * from './prompt-renderer';
 export * from './task-manager';

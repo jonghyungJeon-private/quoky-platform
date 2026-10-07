@@ -26,6 +26,30 @@ import { normalizePromptContextContent } from './prompt-content-normalizer';
  */
 export interface ImageUnderstandingPolicy {
   readonly allowedLocalities: readonly AiExecutionLocality[];
+  /**
+   * Present when the owner's effective image selection is switched OFF (live QA follow-up of the runtime switch): no
+   * locality is allowed and the deterministic reply says image analysis is off, not that no reader is ready.
+   */
+  readonly switchedOff?: ImageUnderstandingSwitchedOff;
+}
+
+/**
+ * The owner switched image understanding off (plain data from the composition root's selection policy). Core never
+ * interprets a choice token: it only quotes it inside the image-model command it already owns.
+ */
+export interface ImageUnderstandingSwitchedOff {
+  /** `SESSION`: this conversation's own override; `DEFAULT`: the operations-UI default or the configuration. */
+  readonly scope: 'SESSION' | 'DEFAULT';
+  /** Opaque image-choice tokens that would turn it back on in this conversation (bounded, may be empty). */
+  readonly choices: readonly string[];
+  /** Whether clearing this conversation's override ("모델 기본값으로") turns image understanding back on. */
+  readonly resetRestores: boolean;
+}
+
+/** What a per-request resolver may answer: the allowed localities, or those plus the switched-off facts. */
+export interface ImageUnderstandingResolution {
+  readonly allowedLocalities: readonly AiExecutionLocality[];
+  readonly switchedOff?: ImageUnderstandingSwitchedOff;
 }
 
 /** The default: image bytes reach only a `LOCAL` provider (ADR-0111 D5, unchanged when nothing is configured). */
@@ -50,7 +74,36 @@ export function imageUnderstandingPolicyOf(
  */
 export type ImageUnderstandingLocalitiesResolver = (
   context: ProviderSelectionContext,
-) => Promise<readonly AiExecutionLocality[]>;
+) => Promise<readonly AiExecutionLocality[] | ImageUnderstandingResolution>;
+
+const SWITCHED_OFF_CHOICE = /^[a-z][a-z0-9._:-]{0,39}$/u;
+const MAX_SWITCHED_OFF_CHOICES = 4;
+
+/**
+ * A resolver's answer as a policy (fail closed): a plain locality list as {@link imageUnderstandingPolicyOf}; a
+ * switched-off answer allows NO locality whatever else it lists, and keeps only well-formed, bounded choice tokens.
+ */
+export function imageUnderstandingPolicyFromResolution(
+  resolution: readonly AiExecutionLocality[] | ImageUnderstandingResolution | undefined,
+): ImageUnderstandingPolicy {
+  if (resolution === undefined || Array.isArray(resolution)) {
+    return imageUnderstandingPolicyOf(resolution as readonly AiExecutionLocality[] | undefined);
+  }
+  const resolved = resolution as ImageUnderstandingResolution;
+  const off = resolved.switchedOff;
+  if (off === undefined) return imageUnderstandingPolicyOf(resolved.allowedLocalities);
+  const choices = off.choices
+    .filter((choice) => typeof choice === 'string' && SWITCHED_OFF_CHOICE.test(choice))
+    .slice(0, MAX_SWITCHED_OFF_CHOICES);
+  return Object.freeze({
+    allowedLocalities: Object.freeze([] as AiExecutionLocality[]),
+    switchedOff: Object.freeze({
+      scope: off.scope === 'SESSION' ? ('SESSION' as const) : ('DEFAULT' as const),
+      choices: Object.freeze(choices),
+      resetRestores: off.scope === 'SESSION' && off.resetRestores === true,
+    }),
+  });
+}
 
 /** Whether `provider` may receive image bytes under `policy` (its declared locality, as data). */
 export function imageProviderAllowed(
@@ -193,6 +246,7 @@ export function renderImageUnderstandingUnavailable(
   language: NoticeLanguage,
   policy: ImageUnderstandingPolicy = LOCAL_ONLY_IMAGE_UNDERSTANDING_POLICY,
 ): string {
+  if (policy.switchedOff !== undefined) return renderImageUnderstandingSwitchedOff(language, policy.switchedOff);
   if (imageUnderstandingAllowsRemote(policy)) {
     if (language === 'en') {
       return (
@@ -214,5 +268,35 @@ export function renderImageUnderstandingUnavailable(
   return (
     '이미지를 볼 수 있는 로컬 AI가 지금 준비되어 있지 않아 첨부한 이미지를 분석하지 않았어요. ' +
     '이미지는 어디로도 보내지 않았어요. 궁금한 내용을 글로 적어 주시면 답해 드릴게요.'
+  );
+}
+
+/**
+ * The truthful reply when the owner switched image understanding off: the image was not looked at and was sent
+ * nowhere, where it was switched off (this conversation or a default), and how to turn it back on with the image-model
+ * command (the composition root's opaque choice tokens; `모델 기본값으로` only when that restores it).
+ */
+export function renderImageUnderstandingSwitchedOff(language: NoticeLanguage, off: ImageUnderstandingSwitchedOff): string {
+  if (language === 'en') {
+    const hints = [
+      ...off.choices.map((choice) => `"/model image ${choice}"`),
+      ...(off.resetRestores ? ['"/model reset"'] : []),
+    ];
+    const where = off.scope === 'SESSION' ? 'in this conversation' : 'by default';
+    return (
+      `Image analysis is turned off ${where}, so the attached image was not analysed and was not sent anywhere.` +
+      (hints.length > 0 ? ` To turn it back on${off.scope === 'SESSION' ? '' : ' here'}, say ${hints.join(' or ')}.` : '')
+    );
+  }
+  const hints = [
+    ...off.choices.map((choice) => `"이미지 모델 변경: ${choice}"`),
+    ...(off.resetRestores ? ['"모델 기본값으로"'] : []),
+  ];
+  const where = off.scope === 'SESSION' ? '이 대화에서는 이미지 분석을 꺼 두어서' : '이미지 분석이 기본 설정에서 꺼져 있어서';
+  return (
+    `${where} 첨부한 이미지를 분석하지 않았어요. 이미지는 어디로도 보내지 않았어요.` +
+    (hints.length > 0
+      ? ` ${off.scope === 'SESSION' ? '다시 켜려면' : '이 대화에서 켜려면'} ${hints.join(' 또는 ')}라고 말해 주세요.`
+      : '')
   );
 }

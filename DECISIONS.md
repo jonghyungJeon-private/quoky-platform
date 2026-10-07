@@ -17230,3 +17230,23 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   the Claude vision provider is registered but never eligible and REMOTE stays closed (tested); the readiness table
   counts it under `IMAGE_UNDERSTANDING`.
 - **Residual:** the Ollama vision model itself is not switchable at runtime (`QUOKY_OLLAMA_VISION_MODEL` only).
+- **Live QA follow-ups (2026-10-07, after PR #142; within this amendment, ADR-0092's runtime amendment and ADR-0111 D2):**
+  1. **Chat-capable Ollama models only.** The `모델 목록` / `/providers` inventory is `ollama list` filtered by each
+     model's `ollama show` capabilities: a model without `completion` (embedding-only, e.g. `nomic-embed-text`) is not a
+     chat choice, and choosing it is refused at selection time (`OLLAMA_MODEL_NOT_CHAT`). A definite answer is cached
+     per model name and `ID`. **Fallback** when `ollama show` fails, times out (3 s) or prints no `Capabilities`
+     section: a name matching `/embed/i` is excluded, any other model stays selectable (uncached, re-checked next
+     time). Chosen over an "unverified" mark because it only ever hides a model and needs no new display state.
+  2. **Explicit image `off` is reported as off.** For an explicit `off` (session override, operations-UI default or
+     `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=off`) the resolver answers `{ allowedLocalities: [], switchedOff: { scope,
+     choices, resetRestores } }`: no locality at all (stricter than `['LOCAL']`), and Core's deterministic reply says
+     image analysis is off (in this conversation or by default) and how to turn it back on, quoting the opaque choice
+     tokens inside its own image-model command (`이미지 모델 변경: <token>`; `모델 기본값으로` only when that restores it).
+     A derived `off` (nothing configured) keeps the "not available" reply. Nothing is sent either way.
+  3. **Image intake: the bytes decide (ADR-0111 D2).** A png/jpeg/webp MIME or alias, or a `.png`/`.jpg`/`.jpeg`/`.webp`
+     name with an absent, generic or other raster `image/*` MIME, is an image candidate; the downloaded signature
+     decides the type handed on, the declared type and the gateway size are hints only. A body with no image signature
+     is downloaded once more after 1 s. Redirects stay refused (now `redirect: 'manual'`, any 3xx refused, so it can be
+     logged as such). Each refused attachment logs one content-free `attachment refused` line (reason, step, MIME
+     classes, size buckets, CDN host class, HTTP status, signature class, attempts; never a name or URL).
+  4. **Discord outbound.** A simple Markdown table outside code fences is sent as bullet lines (`- 1월: 80`).

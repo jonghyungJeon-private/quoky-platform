@@ -941,7 +941,12 @@ describe('Personal v3 acceptance — runtime model switch from chat (ADR-0092 / 
     expect(off.route).toBe('model-selection');
     const blocked = await harness.turn(owner, '이 그래프 설명해줘', [IMAGE]);
     expect(blocked.providerCalls).toBe(0);
-    expect(blocked.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    // Live QA follow-up: the notice says image analysis is OFF in this conversation and how to turn it back on.
+    expect(blocked.text).toContain('이 대화에서는 이미지 분석을 꺼 두어서 첨부한 이미지를 분석하지 않았어요.');
+    expect(blocked.text).toContain('이미지는 어디로도 보내지 않았어요.');
+    expect(blocked.text).toContain('"이미지 모델 변경: claude"');
+    expect(blocked.text).toContain('"모델 기본값으로"');
+    expect(blocked.text).not.toContain('지원하지 않는');
 
     const reset = await harness.turn(owner, '모델 기본값으로');
     expect(reset.text).toContain('이 대화의 모델 선택을 지웠어요.');

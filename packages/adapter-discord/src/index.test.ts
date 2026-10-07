@@ -378,6 +378,16 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     expect(receipt).toEqual({ platformMessageIds: ['sent-1', 'sent-3'] });
   });
 
+  it('sends a simple Markdown table as bullet lines (Discord renders no tables)', async () => {
+    const { adapter } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    await adapter.sendMessage({
+      context: { platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER },
+      text: '| 월 | 가입자 수 |\n|---|---|\n| 1월 | 80 |',
+    });
+    expect(sent).toEqual(['**월 · 가입자 수**\n- 1월: 80']);
+  });
+
   it('returns an empty receipt when the channel is not sendable', async () => {
     const { adapter } = await harness();
     const receipt = await adapter.sendMessage({
@@ -589,6 +599,20 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     expect(seen.every((s) => s.existed && path.dirname(path.dirname(s.ref)) === tempRoot)).toBe(true);
     expect(await filesIn(tempRoot)).toEqual([]);
     expect(logger.lines.some((l) => l.message === 'message handling failed')).toBe(true);
+  });
+
+  it('logs one content-free line per refused attachment (reason, step, classes, buckets; never a name or URL)', async () => {
+    const { deliver, logger, settle } = await intakeHarness();
+    sendableChannel(ALLOWED_CHANNEL);
+    await deliver(withAttachments({}, [att('archive.zip', 'application/zip'), att('huge.log', 'text/plain', 300 * 1024), att('app.log', 'text/plain')]));
+    await settle();
+    const refused = logger.lines.filter((l) => l.message === 'attachment refused').map((l) => l.fields);
+    expect(refused).toEqual([
+      expect.objectContaining({ index: 0, reason: 'UNSUPPORTED_TYPE', detail: 'DECLARED_TYPE', declaredMime: 'application/other', extension: 'other', host: 'cdn' }),
+      expect.objectContaining({ index: 1, reason: 'TOO_LARGE', detail: 'DECLARED_SIZE', declaredMime: 'text/plain', declaredSize: '<1MiB' }),
+    ]);
+    const logs = JSON.stringify(logger.lines);
+    for (const leaked of ['archive', 'huge', 'app.log', 'cdn.discordapp.com']) expect(logs).not.toContain(leaked);
   });
 
   it('posts one truthful note naming refused attachments before the turn, with mentions disabled', async () => {

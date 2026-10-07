@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ImageUnderstandingResolution } from './image-understanding';
 import { LearningTurnHandler, type LearningCommand } from './feedback';
 import {
   AiFailureKind,
@@ -11384,7 +11385,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
      * switching) a per-turn resolver. */
     imageLocalities?:
       | readonly ('LOCAL' | 'REMOTE')[]
-      | ((context: { sessionId?: string }) => Promise<readonly ('LOCAL' | 'REMOTE')[]>);
+      | ((context: { sessionId?: string }) => Promise<readonly ('LOCAL' | 'REMOTE')[] | ImageUnderstandingResolution>);
     /** Runtime switching race tests: a pause gate inside the turn (before the Task is created). */
     beforeCreateTask?: () => Promise<void>;
     /** Runtime switching race tests: what the router answers from the second selection on. */
@@ -11641,6 +11642,29 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     expect(h.requests[0]?.prompt).not.toContain(IMAGE_REF);
     expect(h.completed).toEqual([{ providerId: 'vision-under-test', metadata: { imageCount: 1 } }]);
     expect(persistedAndLogged(h)).not.toContain(IMAGE_REF);
+  });
+
+  it.each([
+    ['the router has no provider', true],
+    ['the router still answers (locality closes it)', false],
+  ])('an explicit session `off` answers "image analysis is off here" with how to turn it on; nothing is sent (%s)', async (_label, noProvider) => {
+    const h = imageTurn({
+      locality: 'REMOTE',
+      noProvider,
+      imageLocalities: async () => ({
+        allowedLocalities: ['LOCAL', 'REMOTE'],
+        switchedOff: { scope: 'SESSION', choices: ['claude'], resetRestores: true },
+      }),
+    });
+    const result = await h.runtime.handle(imageMessage('이 차트 설명해줘'));
+    expect(result.reply.text).toBe(
+      '이 대화에서는 이미지 분석을 꺼 두어서 첨부한 이미지를 분석하지 않았어요. 이미지는 어디로도 보내지 않았어요. ' +
+        '다시 켜려면 "이미지 모델 변경: claude" 또는 "모델 기본값으로"라고 말해 주세요.',
+    );
+    expect(result.reply.text).not.toContain('지원하지 않는');
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+    expect(h.taskSaves).toHaveLength(0);
   });
 
   it('amendment A2: with the cloud opt-in and no ready provider the reply no longer claims local-only', async () => {
