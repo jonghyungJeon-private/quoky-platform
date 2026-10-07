@@ -596,6 +596,15 @@ export class ApprovalDecisionService {
     return this.serializeKey(sessionId === undefined || sessionId === '' ? undefined : `session:${sessionId}`, work);
   }
 
+  /**
+   * Run a chat turn's session-wide write (the activity `touch`) under the session's lock, so it can never land
+   * between an approval transition's re-read of the session and the re-anchor it saves. Takes no approval lock, so it
+   * is safe from any caller that holds none.
+   */
+  withSessionLock<T>(sessionId: Id, work: () => Promise<T>): Promise<T> {
+    return this.serializeSession(sessionId, work);
+  }
+
   /** The approval's lock, then the session's (the one acquisition order every transition uses). */
   private exclusive<T>(approvalId: Id | undefined, sessionId: Id | undefined, work: () => Promise<T>): Promise<T> {
     return this.serialize(approvalId, () => this.serializeSession(sessionId, work));

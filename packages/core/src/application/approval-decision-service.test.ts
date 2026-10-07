@@ -24,6 +24,7 @@ import type { ApprovalSurfaceDecision } from './approval-decision-service';
 import { ConversationRuntime } from './conversation-runtime';
 import type { ApplyPreviewAnchor, ConversationRuntimeDeps } from './conversation-runtime';
 import { APPROVAL_REFERENCE_LINE_PREFIX, ResponseComposer } from './response-composer';
+import { SessionManager } from './session-manager';
 import { StatelessApplyPreviewFlow } from './stateless-apply-preview-flow';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { StatelessScopeClarificationFlow } from './stateless-scope-clarification-flow';
@@ -65,6 +66,11 @@ function memoryStore() {
       async get(id: Id) { return sessions.get(id) ?? null; },
       async save(session: Session) { sessions.set(session.id, session); return session; },
       async list() { return [...sessions.values()]; },
+      async findActiveByContext(channelId: string, threadId?: string) {
+        return [...sessions.values()].find(
+          (x) => x.status === SessionStatus.ACTIVE && x.context.channelId === channelId && x.context.threadId === threadId,
+        ) ?? null;
+      },
     },
     tasks: {
       async get(id: Id) { return tasks.get(id) ?? null; },
@@ -110,6 +116,7 @@ interface Fixture {
   approvalId: Id;
   /** The fake credential-override flow's calls (`kind: 'override'` only). */
   override: { recordGrant: number; invalidate: number; state: 'PENDING' | 'GRANTED' | 'INVALIDATED' };
+  overrideFlow?: CredentialOverrideFlow;
 }
 
 /** A runtime wired with the real stateless flows over one in-memory store; only the decision-turn collaborators exist. */
@@ -178,6 +185,7 @@ async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 
         return { state: 'invalidated', anchor };
       },
     } as unknown as CredentialOverrideFlow;
+    f.overrideFlow = credentialOverrideFlow;
   } else {
     const approval = await manager.requestForRisk({
       executionPlanRef: { id: 'plan-1', goal: 'g' },
@@ -190,11 +198,8 @@ async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 
   }
   const deps = {
     actors: { async resolveFromContext() { return OWNER; } },
-    sessions: {
-      async openForContext() { return (await store.sessions.get(SESSION_ID))!; },
-      async touch(s: Session) { return s; },
-      async close(s: Session) { return store.sessions.save({ ...s, status: SessionStatus.CLOSED }); },
-    },
+    // The REAL SessionManager (openForContext, the activity touch, the reset close) over the same store.
+    sessions: new SessionManager(store as never),
     memory: {
       async recordShortTerm() { return { id: 'mem-1' }; },
       async recordAssistant(text: string) { history.push(text); },
@@ -624,17 +629,28 @@ describe('every approval transition shares one serialization (ADR-0113 D7, Codex
     expect(f.override).toMatchObject({ recordGrant: 1, invalidate: 0, state: 'GRANTED' });
   });
 
-  it('a UI reject that reached the override first: the racing chat send phrase approves nothing and sends nothing', async () => {
+  it('a UI reject that decided after the chat turn read the override: the chat send phrase approves nothing and sends nothing', async () => {
     const f = await fixture({ kind: 'override' });
-    const held = holdDecide(f, (d) => d.comment === `${CREDENTIAL_OVERRIDE_DENY_COMMENT};${OPS_UI_DECISION_SURFACE}`, 'before');
-    const ui = decideUi(f, 'reject');
-    await settle();
-    expect(held.state.held).toBe(true);
-    // The chat turn reads the request PENDING at turn start and routes the send phrase; its decision waits for the lock.
+    // The chat turn derives its lookup (the request still PENDING) and is held right there, before routing the send.
+    const flow = f.overrideFlow!;
+    const findPending = flow.findPending.bind(flow);
+    const g = gate();
+    let held = false;
+    flow.findPending = async (session) => {
+      const lookup = await findPending(session);
+      if (!held) {
+        held = true;
+        await g.promise;
+      }
+      return lookup;
+    };
     const send = f.runtime.handle(message(CREDENTIAL_OVERRIDE_SEND_PHRASE));
     await settle();
-    held.open();
-    const [uiResult, sendTurn] = await Promise.all([ui, send]);
+    expect(held).toBe(true);
+    // The UI rejects in full meanwhile; then the chat turn routes its stale lookup's send phrase.
+    const uiResult = await decideUi(f, 'reject');
+    g.open();
+    const sendTurn = await send;
 
     expect(uiResult).toMatchObject({ status: 'DECIDED', outcome: 'REJECTED', kind: 'CREDENTIAL_OVERRIDE' });
     expect(sendTurn.reply.text).toBe(noPending);
@@ -644,5 +660,62 @@ describe('every approval transition shares one serialization (ADR-0113 D7, Codex
       comment: `${CREDENTIAL_OVERRIDE_DENY_COMMENT};${OPS_UI_DECISION_SURFACE}`,
     });
     expect(f.override).toMatchObject({ recordGrant: 0, invalidate: 1, state: 'INVALIDATED' });
+  });
+});
+
+describe('a chat turn\'s stale session snapshot never overwrites a UI decision (ADR-0113 D7, Codex P2)', () => {
+  it('the activity touch paused on an old snapshot resumes after a UI approve without restoring the PENDING pointer', async () => {
+    const f = await fixture();
+    const reference = await chatReference(f);
+    const before = (await f.store.sessions.get(SESSION_ID))!;
+    // 1) The next chat turn is held right at its first session save — the activity touch of its OLD snapshot.
+    const g = gate();
+    let held = false;
+    const save = f.store.sessions.save;
+    f.store.sessions.save = async (session: Session) => {
+      if (!held) {
+        held = true;
+        await g.promise;
+      }
+      return save(session);
+    };
+    const chat = f.runtime.handle(message('승인'));
+    await settle();
+    expect(held).toBe(true);
+    // 2) The UI approves meanwhile (it waits for the session lock while the touch is in flight).
+    const ui = decideUi(f, 'approve', reference);
+    await settle();
+    // 3) The touch resumes.
+    g.open();
+    const [uiResult] = await Promise.all([ui, chat]);
+    f.store.sessions.save = save;
+
+    expect(uiResult).toMatchObject({ status: 'DECIDED', outcome: 'APPROVED' });
+    expect(f.decides).toBe(1);
+    expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.APPROVED);
+    // The live session keeps the UI's re-anchor (COMMIT_APPROVED on a fresh anchor Task), not the old pointer.
+    const live = (await f.store.sessions.get(SESSION_ID))!;
+    expect(live.status).toBe(SessionStatus.ACTIVE);
+    expect(live.activeTaskId).not.toBe(before.activeTaskId);
+    expect((await liveAnchor(f))?.status).toBe('COMMIT_APPROVED');
+    // 4) So the next chat "승인" is told nothing is pending (the approved gate waits for its execution phrase) —
+    //    never re-asked for an approval that is already decided.
+    const next = await f.runtime.handle(message('승인'));
+    expect(next.reply.text).toBe(new ResponseComposer().composeNoPendingDecision(CTX).text);
+    expect(f.decides).toBe(1);
+  });
+
+  it('SessionManager.touch saves only the activity field onto the live row', async () => {
+    const store = memoryStore();
+    const manager = new SessionManager(store as never);
+    const stale: Session = { id: 's', actorId: OWNER_ID, context: CTX, status: SessionStatus.ACTIVE, activeTaskId: 'old', createdAt: TS, lastActivityAt: TS };
+    await store.sessions.save({ ...stale, activeTaskId: 'new', activeProjectId: PROJECT_ID });
+    vi.setSystemTime(new Date(Date.parse(TS) + 1000));
+    const touched = await manager.touch(stale);
+    expect(touched).toMatchObject({ activeTaskId: 'new', activeProjectId: PROJECT_ID, lastActivityAt: new Date(Date.parse(TS) + 1000).toISOString() });
+    expect(await store.sessions.get('s')).toEqual(touched);
+    // A reset close that landed meanwhile is kept too.
+    await store.sessions.save({ ...touched, status: SessionStatus.CLOSED });
+    expect((await manager.touch(stale)).status).toBe(SessionStatus.CLOSED);
   });
 });

@@ -3,10 +3,12 @@ import { now } from '../util/clock';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { Id, Session, Task } from '../domain';
 import type { PendingScopeClarification, ScopeClarificationFlow } from './conversation-runtime';
+import { releaseSessionPointer, saveSessionFields } from './session-live-save';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ScopeClarificationFlowStore {
-  readonly sessions: { save(session: Session): Promise<Session> };
+  /** `get` (optional) re-reads the live session so pointer saves are field-scoped (ADR-0113 D7). */
+  readonly sessions: { save(session: Session): Promise<Session>; get?(id: Id): Promise<Session | null> };
   readonly tasks: { get(id: Id): Promise<Task | null>; save(task: Task): Promise<Task> };
 }
 
@@ -77,7 +79,7 @@ export class StatelessScopeClarificationFlow implements ScopeClarificationFlow {
       metadata: { [ANCHOR_KEY]: pending },
     };
     await this.store.tasks.save(task);
-    await this.store.sessions.save({ ...session, activeTaskId: task.id, lastActivityAt: ts });
+    await saveSessionFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts });
   }
 
   async clear(session: Session): Promise<void> {
@@ -85,6 +87,7 @@ export class StatelessScopeClarificationFlow implements ScopeClarificationFlow {
     // anything else) sharing the same pointer slot must be left untouched.
     const found = await this.anchorTask(session);
     if (!found) return;
-    await this.store.sessions.save({ ...session, activeTaskId: undefined, lastActivityAt: now() });
+    // Only while the LIVE pointer is still this anchor (ADR-0113 D7): a stale copy never releases a newer pointer.
+    await releaseSessionPointer(this.store.sessions, session, found.task.id, { lastActivityAt: now() });
   }
 }

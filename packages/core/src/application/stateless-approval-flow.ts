@@ -4,10 +4,12 @@ import { ApprovalStatus, Capability, IntentType, RiskLevel, TaskStatus } from '.
 import type { ApprovalRequest, Id, Session, Task } from '../domain';
 import type { ApprovalFlow } from './conversation-runtime';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
+import { saveSessionFields } from './session-live-save';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ApprovalFlowStore {
-  readonly sessions: { save(session: Session): Promise<Session> };
+  /** `get` (optional) re-reads the live session so pointer saves are field-scoped (ADR-0113 D7). */
+  readonly sessions: { save(session: Session): Promise<Session>; get?(id: Id): Promise<Session | null> };
   readonly tasks: { get(id: Id): Promise<Task | null>; save(task: Task): Promise<Task> };
   readonly approvals: { findByExecutionPlan(executionPlanId: Id): Promise<ApprovalRequest[]> };
 }
@@ -68,7 +70,7 @@ export class StatelessApprovalFlow implements ApprovalFlow {
     };
     await this.store.tasks.save(task);
     // `activeTaskId` is a legitimate Session lifecycle pointer — NOT a runtime snapshot (ADR-0032).
-    await this.store.sessions.save({ ...session, activeTaskId: task.id, lastActivityAt: ts });
+    await saveSessionFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts });
   }
 
   async reconstructResume(

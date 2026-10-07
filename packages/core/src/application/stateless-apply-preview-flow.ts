@@ -3,6 +3,7 @@ import { now } from '../util/clock';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { Id, Session, Task } from '../domain';
 import type { ApplyPreviewAnchor, ApplyPreviewAnchorIdentity, ApplyPreviewFlow } from './conversation-runtime';
+import { releaseSessionPointer, saveSessionFields } from './session-live-save';
 
 /** Narrow storage the flow needs — satisfied by the real `StorageProvider` (and by test fakes). */
 export interface ApplyPreviewFlowStore {
@@ -84,7 +85,8 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
       metadata: { [ANCHOR_KEY]: anchor },
     };
     await this.store.tasks.save(task);
-    await this.store.sessions.save({ ...session, activeTaskId: task.id, lastActivityAt: ts });
+    // Field-scoped on the live row: only the pointer this flow owns (a stale copy never restores a closed session).
+    await saveSessionFields(this.store.sessions, session, { activeTaskId: task.id, lastActivityAt: ts });
   }
 
   /**
@@ -112,6 +114,8 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
     // anything else) sharing the same pointer slot must be left untouched.
     const found = await this.anchorTask(session);
     if (!found) return;
-    await this.store.sessions.save({ ...session, activeTaskId: undefined, lastActivityAt: now() });
+    // Only while the LIVE pointer is still the anchor found: a gate re-anchored meanwhile (e.g. approved from the
+    // operations UI onto a fresh anchor Task) is never released by a stale copy.
+    await releaseSessionPointer(this.store.sessions, session, found.task.id, { lastActivityAt: now() });
   }
 }

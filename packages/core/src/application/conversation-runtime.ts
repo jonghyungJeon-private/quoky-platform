@@ -2016,7 +2016,10 @@ export class ConversationRuntime {
   private async handleInner(message: InboundMessage): Promise<TurnResult> {
     const actor = await this.deps.actors.resolveFromContext(message.context);
     let session = await this.deps.sessions.openForContext(message.context, actor.id);
-    await this.deps.sessions.touch(session);
+    // ADR-0113 D7: the activity touch is field-scoped on the live row and runs under the session lock, so this turn's
+    // snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched live copy.
+    const opened = session;
+    session = (await this.approvalDecisions.withSessionLock(opened.id, () => this.deps.sessions.touch(opened))) ?? opened;
 
     // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
     // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the
