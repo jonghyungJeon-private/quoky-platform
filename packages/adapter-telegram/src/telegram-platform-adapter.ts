@@ -353,6 +353,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     try {
       me = await this.api.call('getMe', {}, { timeoutMs, ...(signal ? { signal } : {}) });
     } catch (err) {
+      // Stopped meanwhile: nothing is classified (an abort is never a refusal).
+      if (signal?.aborted || this.stopped) return 'transient';
       if (codeOf(err) === TelegramFailureCode.AUTH) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
       return 'transient';
     }
@@ -372,6 +374,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
         ...(signal ? { signal } : {}),
       });
     } catch (err) {
+      if (signal?.aborted || this.stopped) return 'transient';
       const code = codeOf(err);
       if (code === TelegramFailureCode.CONFLICT) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT);
       if (code === TelegramFailureCode.AUTH) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
