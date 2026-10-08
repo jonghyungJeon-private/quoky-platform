@@ -245,12 +245,15 @@ describe('AiProviderManager readiness after a not-ready start (no restart)', () 
     const manager = new AiProviderManager([provider], { clock: time.clock, logger });
     await manager.available();
     provider.availability = false;
-    manager.invalidate(provider);
+    manager.invalidate(provider); // recorded "not ready" (execution UNAVAILABLE), then the re-probe agrees: streak 2
     expect(await manager.available()).toEqual([]);
     provider.availability = true;
-    time.advance(30_000);
+    time.advance(60_000);
     expect(await manager.available()).toEqual([provider]);
-    expect(lines.map((line) => line.message)).toEqual(['provider became unavailable', 'provider became ready']);
+    expect(lines).toEqual([
+      { message: 'provider became unavailable', fields: { provider: 'ollama', reason: 'EXECUTION_UNAVAILABLE' } },
+      { message: 'provider became ready', fields: { provider: 'ollama' } },
+    ]);
   });
   it('a background refresh that lands after an invalidation never overwrites the newer answer', async () => {
     const time = manualClock();
@@ -414,6 +417,32 @@ describe('AiProviderManager definitive vs indeterminate probes (live QA D16)', (
     expect(provider.probeCount).toBe(2);
     provider.settle(true);
     expect(await inFlight).toEqual([provider]);
+  });
+
+  it('after an execution failed UNAVAILABLE, a timed-out probe keeps "not ready" (never the earlier ready), with backoff', async () => {
+    const time = manualClock();
+    const { logger, lines } = recordingLogger();
+    const provider = new TimingOutProvider('ollama-embed-cli', embedding, true);
+    const manager = new AiProviderManager([provider], { clock: time.clock, logger });
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([provider]);
+
+    manager.invalidate(provider); // the router saw execute() fail UNAVAILABLE
+    provider.timesOut = true;
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([]);
+    expect(await manager.isReady(provider)).toBe(false);
+    expect(provider.probeCount).toBe(2);
+    // The "not ready" answer is backed off like any other (no re-probe before the interval).
+    time.advance(29_999);
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([]);
+    expect(provider.probeCount).toBe(2);
+    // A definitive ready probe brings it back.
+    provider.timesOut = false;
+    time.advance(60_001);
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([provider]);
+    expect(lines).toEqual([
+      { message: 'provider became unavailable', fields: { provider: 'ollama-embed-cli', reason: 'EXECUTION_UNAVAILABLE' } },
+      { message: 'provider became ready', fields: { provider: 'ollama-embed-cli' } },
+    ]);
   });
 
   it('a throwing probe (not indeterminate) is a definitive "not ready" with reason PROBE_FAILED', async () => {

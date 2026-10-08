@@ -197,9 +197,31 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   }
   if (deny.positive && !approve.positive) {
     // "거절 안 해" (I won't reject) / "no problem" are not refusals.
-    return KOREAN_SOFT_NEGATION.test(t) || NO_PROBLEM.test(t) ? 'ambiguous' : 'deny';
+    if (KOREAN_SOFT_NEGATION.test(t) || NO_PROBLEM.test(t)) return 'ambiguous';
+    // Codex P2 on b571e4d: a deny word decides only as the whole message ("아니", "아니요", "거절할게요", "reject it")
+    // or with an explicit stop continuation ("아니 됐어", "no, stop"). "아니 이건 내 친구 얘기야" carries other content:
+    // it is not a rejection, and the approval stays pending.
+    return isBareRejection(t) ? 'deny' : 'ambiguous';
   }
   return 'ambiguous';
+}
+
+/** Words that may stand next to a deny word without adding content ("이 요청 거절", "reject it", "no thanks"). */
+const REJECTION_OBJECT_TOKEN = new RegExp(
+  `${TOKEN_BEFORE}(?:이\\s*요청|요청|이거|그거|그냥|이제|좀|주세요|줘요|줘|해요|해|할게요|할게|합니다|드려요|드립니다|부탁해요|부탁해|부탁드려요|부탁드립니다|감사합니다|고마워요|고마워|네|예|request|this|that|it|thanks|thank\\s+you|please)${TOKEN_AFTER}`,
+  'g',
+);
+
+/** The message is only deny / stop words, polite endings, punctuation and the {@link REJECTION_OBJECT_TOKEN}s. */
+function isBareRejection(t: string): boolean {
+  const remainder = t
+    .replace(DENY.exact, ' ')
+    .replace(CANCEL.exact, ' ')
+    .replace(PENDING_CANCEL.exact, ' ')
+    .replace(/[^가-힣a-z0-9\s]+/g, ' ')
+    .replace(REJECTION_OBJECT_TOKEN, ' ')
+    .replace(/[^가-힣a-z0-9]+/g, ' ');
+  return remainder.trim().length === 0;
 }
 
 /** The explicit decision vocabulary a stand-alone utterance must contain to count as a STRAY decision (QA-018).

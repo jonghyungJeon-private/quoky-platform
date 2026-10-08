@@ -255,3 +255,27 @@ describe('isPendingCancelUtterance (live QA session 4, N2)', () => {
     },
   );
 });
+
+describe('interpretApprovalDecision: a deny word decides only as the whole message (Codex P2 on b571e4d)', () => {
+  it.each([
+    ['아니', 'deny'],
+    ['아니요', 'deny'],
+    ['아니에요.', 'deny'],
+    ['거절할게요', 'deny'],
+    ['이 요청 거절해 주세요', 'deny'],
+    ['no', 'deny'],
+    ['No, thanks', 'deny'],
+    ['reject it', 'deny'],
+    ['아니 됐어', 'deny'],
+    ['아니 취소해', 'cancel'],
+  ] as const)('"%s" → %s', (text, expected) => {
+    expect(interpretApprovalDecision(text)).toBe(expected);
+  });
+
+  it.each(['아니 이건 내 친구 얘기야', '아니 그건 별로야', 'no, I meant the other channel', '거절 사유를 알려줘'])(
+    '"%s" carries other content → ambiguous (the approval stays pending)',
+    (text) => {
+      expect(interpretApprovalDecision(text)).toBe('ambiguous');
+    },
+  );
+});

@@ -230,29 +230,43 @@ const RELATION_EVIDENCE: Readonly<Record<OwnMemoryRelation, RegExp>> = Object.fr
 });
 
 /**
- * Trailing Korean particles and endings peeled off a word before comparing ("과일은" → "과일", "샤인머스캣이야" →
- * "샤인머스캣", "음식이에요" → "음식"). Peeling stops before a stem would shrink below two characters, and both sides go
- * through the same function, so a noun ending in one of these syllables ("고양이", "포도") still compares equal to
- * itself with any particle attached.
+ * The particles and copula endings that may follow a Korean noun ("과일은", "샤인머스캣이야", "회사에서", "고양이랑").
+ * At most ONE is peeled off a word, and only from this list, so a noun's own last syllable is never taken for a
+ * particle ("차고" never becomes "차", "포도" stays "포도" unless it really carries one).
  */
-const KO_TRAILING_ENDING =
-  /(?:입니다|습니다|이에요|예요|에요|이었어|였어|이었지|였지|이었다|였다|이라고|라고|이라서|이랑|에서|에게|한테|께서|으로|하고|처럼|까지|부터|보다|인데|이고|이지|이다|이야|[이가을를은는의에도만요야로와과랑고다지])$/u;
+const KO_NOUN_ENDINGS: readonly string[] = [
+  '이었어요', '이에요', '입니다', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '에서는', '에게는',
+  '이야', '예요', '에요', '였어', '였지', '였다', '라고', '이랑', '에서', '에게', '한테', '께서', '으로', '하고', '까지',
+  '부터', '처럼', '보다', '이고', '이지', '이다', '이나', '이면', '은', '는', '이', '가', '을', '를', '의', '에', '도', '만',
+  '로', '와', '과', '랑', '야', '요',
+].slice().sort((a, b) => b.length - a.length);
 
-function peelEndings(word: string, minLength: number): string {
-  let current = word;
-  for (;;) {
-    const match = KO_TRAILING_ENDING.exec(current);
-    if (match === null) return current;
-    const next = current.slice(0, current.length - match[0].length);
-    if (next.length < minLength) return current;
-    current = next;
+/** `word` without one trailing particle / ending from {@link KO_NOUN_ENDINGS} (at least one syllable remains). */
+function peelOneEnding(word: string): string {
+  for (const ending of KO_NOUN_ENDINGS) {
+    if (word.length > ending.length && word.endsWith(ending)) return word.slice(0, word.length - ending.length);
   }
+  return word;
 }
 
-/** A stem's comparison base: endings peeled (keeping at least two characters), English plural/possessive dropped. */
+const LATIN_WORD = /^[a-z0-9'’-]+$/u;
+
+/** English comparison base: possessive and plural endings dropped. */
+function latinBase(word: string): string {
+  return word.replace(/['’]s$/u, '').replace(/(?<=[a-z]{3})e?s$/u, '');
+}
+
+/** The forms of a Korean word compared for overlap: as written, and with one particle peeled when two syllables remain. */
+function koreanForms(word: string): string[] {
+  const peeled = peelOneEnding(word);
+  return peeled !== word && peeled.length >= 2 ? [word, peeled] : [word];
+}
+
+/** A comparison key for the stop-word / generic-head checks. */
 function baseOf(word: string): string {
-  if (/^[a-z0-9'’-]+$/u.test(word)) return word.replace(/['’]s$/u, '').replace(/(?<=[a-z]{3})e?s$/u, '');
-  return peelEndings(word, 2);
+  if (LATIN_WORD.test(word)) return latinBase(word);
+  const peeled = peelOneEnding(word);
+  return peeled.length >= 2 ? peeled : word;
 }
 
 function wordsOf(content: string): string[] {
@@ -279,19 +293,36 @@ function meaningfulTopics(question: OwnMemoryRecallQuestion): string[] {
 }
 
 /**
- * True when `content` shares a meaningful topic word with the question. A stem of two or more characters matches a
- * content word with the same base or contains it ("과일" in "과일중에"); a one-syllable stem ("차") must be the whole
- * content word up to a particle ("차는", "차를"), never a piece of another word ("자동차", "차가운").
+ * Whether one question topic word and one content word name the same thing.
+ * - A one-syllable topic ("차") matches only that syllable, alone or with exactly one particle ("차가", "차를", "차는");
+ *   never a longer noun that starts with it ("차고", "차가운") or contains it ("자동차").
+ * - A topic of two or more syllables matches when, after peeling at most one particle from either side, one contains
+ *   the other and the shorter is still at least two syllables ("생일날" ⊃ "생일", "고양이랑" ⊃ "고양이", "회사에서" →
+ *   "회사", "과일중에" ⊃ "과일").
+ * - English words compare by equality of their plural / possessive base, or containment ("fruits" ⊃ "fruit").
  */
+function topicWordMatches(stem: string, word: string): boolean {
+  if (LATIN_WORD.test(stem)) {
+    if (!LATIN_WORD.test(word)) return word.includes(stem);
+    return word.includes(stem) || latinBase(word) === latinBase(stem);
+  }
+  if (stem.length < 2) {
+    if (word === stem) return true;
+    return word.startsWith(stem) && KO_NOUN_ENDINGS.includes(word.slice(stem.length));
+  }
+  for (const topic of koreanForms(stem)) {
+    for (const form of koreanForms(word)) {
+      const [shorter, longer] = topic.length <= form.length ? [topic, form] : [form, topic];
+      if (shorter.length >= 2 && longer.includes(shorter)) return true;
+    }
+  }
+  return false;
+}
+
+/** True when `content` shares a meaningful topic word with the question (see {@link topicWordMatches}). */
 function sharesTopicWord(question: OwnMemoryRecallQuestion, content: string): boolean {
   const words = wordsOf(content);
-  return meaningfulTopics(question).some((stem) => {
-    const base = baseOf(stem);
-    if (base.length < 2) {
-      return words.some((word) => word === stem || peelEndings(word, 1) === stem);
-    }
-    return words.some((word) => word.includes(stem) || word.includes(base) || baseOf(word) === base);
-  });
+  return meaningfulTopics(question).some((stem) => words.some((word) => topicWordMatches(stem, word)));
 }
 
 function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {

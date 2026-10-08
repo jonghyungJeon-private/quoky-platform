@@ -14932,7 +14932,9 @@ those details so the settled decisions and the code agree.
    not cached. The callers of a probe discarded by `invalidate()` get the current generation's answer instead of a
    bare "not ready". A ready provider that definitively answers "not ready" logs `provider became unavailable` once
    (`reason` `NOT_READY` or `PROBE_FAILED`). `invalidate()` is still called only for the provider whose execution
-   failed `UNAVAILABLE`; a runtime selection change invalidates nothing (tested).
+   failed `UNAVAILABLE`, and that failure is itself recorded as a definitive "not ready" (`EXECUTION_UNAVAILABLE`,
+   backoff advanced), so a timed-out probe after it never restores the earlier ready answer; a runtime selection
+   change invalidates nothing (tested).
 5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
    every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
    mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is
@@ -17045,8 +17047,10 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   (062aa53, 0d7fd34) did not help: with nomic-embed-text and the service prefixes, unrelated questions scored
   0.74-0.78 against "내가 제일 좋아하는 과일은 샤인머스캣이야" and the true match only 0.79 (local measurement on
   synthetic sentences). A durable entry is now a hit only when it shares a meaningful topic word with the question
-  (Korean particles and endings peeled on both sides, stop-words ignored, a generic head such as 종류/이름 counted only
-  as the sole topic, a one-syllable topic matched only as a whole word) or its raw semantic score is at least 0.9.
+  (at most one listed particle or ending peeled from either side, then containment with the shorter side at least two
+  syllables — 생일날 ⊃ 생일, 회사에서 → 회사; a one-syllable topic matches only itself or itself plus one particle, so
+  차 never matches 차고 or 자동차; stop-words ignored; a generic head such as 종류/이름 counted only as the sole topic)
+  or its raw semantic score is at least 0.9.
   Being recalled is no longer evidence by itself (this replaces the 79f9baa rule), so a paraphrase with no shared word
   ("나는 철수야" for "내 이름이 뭐였지?") gets the truthful not-in-memory reply unless it scores that high. Live:
   list, edit, forget, archive, restore (QA record M1-MF4, A1-A11).
@@ -17135,7 +17139,10 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   Live QA session 4: a post-approval 거절/취소 (the session 3 D12 withdrawal) now logs `approval decided … kind=CONNECTOR_WRITE
   outcome=REVOKED surface=chat` (N1); whole-message stop words (그만, 아니, 됐어, cancel, stop, …) close a pending
   request, an approved unexecuted write or a numbered calendar choice with the fixed reply instead of reaching chat
-  (N2). `그만` never resets a conversation: only `새 대화` / `/reset` do.
+  (N2); while the write is executing they get the "already started" reply and once it finished the deterministic
+  "nothing to decide", like 취소. A deny word now rejects a pending approval only as the whole message (with polite
+  endings, or an explicit stop continuation such as "아니 됐어"); "아니 이건 내 친구 얘기야" leaves it pending.
+  `그만` never resets a conversation: only `새 대화` / `/reset` do.
 - **ADR-0113 (operations UI).** OPS-1 (f499594): `node:http` on `127.0.0.1` only, off by default, per-start 256-bit
   token in `ops-ui.token` (mode 600, database directory, unlinked-then-exclusively-created on every start, removed on
   clean stop), session cookie, CSRF, Host/Origin checks, sign-in rate limit, exact CSP with no inline code; readiness

@@ -3538,11 +3538,17 @@ export class ConversationRuntime {
       case 'UNCERTAIN': {
         // Codex P1 on 55c5a2f: the owner's 거절/취소 while the approved write is already executing cannot withdraw it; say
         // so (the executing turn reports the outcome) — never "nothing was sent".
-        if (anchor.status === 'EXECUTING' && anchor.operation && anchor.actorId === actor.id) {
+        // Codex P2 on b571e4d: the wider stop words ("그만", "아니", "됐어", "stop") take the same late path as 취소/거절 —
+        // "already started" while executing; once finished, the deterministic "nothing to decide" (취소's route) — never chat.
+        if (anchor.actorId === actor.id) {
           const decision = interpretStrayDecisionUtterance(message.text);
-          if (decision === 'deny' || decision === 'cancel') {
+          const stopWord = decision === null && isPendingCancelUtterance(message.text);
+          if (anchor.status === 'EXECUTING' && anchor.operation && (decision === 'deny' || decision === 'cancel' || stopWord)) {
             const reply = this.deps.composer.composeConnectorWriteRevokeTooLate(message.context, anchor.operation);
             return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+          }
+          if (anchor.status !== 'EXECUTING' && stopWord) {
+            return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
           }
         }
         if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {

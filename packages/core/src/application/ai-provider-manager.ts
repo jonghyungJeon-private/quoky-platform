@@ -34,8 +34,11 @@ export interface AiProviderManagerOptions {
   logger?: Logger;
 }
 
-/** Why a definitive probe answered "not ready": the provider said so, or its probe threw. */
-export type ProviderUnavailableReason = 'NOT_READY' | 'PROBE_FAILED';
+/**
+ * Why a provider is definitively not ready: its probe said so, its probe threw, or an execution failed UNAVAILABLE
+ * ({@link AiProviderManager.invalidate}).
+ */
+export type ProviderUnavailableReason = 'NOT_READY' | 'PROBE_FAILED' | 'EXECUTION_UNAVAILABLE';
 
 /** One probe's outcome. An indeterminate probe (timed out) carries no readiness evidence at all. */
 type ProbeAnswer =
@@ -137,11 +140,16 @@ export class AiProviderManager {
    * Forget a provider's cached probe so the next routing decision re-probes it. Called after an execution
    * failed with UNAVAILABLE, so a daemon that stopped after a positive probe is not selected for the rest
    * of the TTL (ADR-0092: no execution-time fallback, selection-time readiness only).
+   *
+   * That failure is definitive evidence (Codex P2 on b571e4d): it is recorded as "not ready" (reason
+   * `EXECUTION_UNAVAILABLE`, backoff streak advanced, the transition logged once), so an indeterminate probe that follows
+   * keeps "not ready" and never restores the earlier ready answer. Only a definitive ready probe makes it ready again.
    */
   invalidate(provider: AiProvider): void {
     this.generations.set(provider, this.generationOf(provider) + 1);
     this.probes.delete(provider);
     this.refreshes.delete(provider);
+    this.record(provider, false, 'EXECUTION_UNAVAILABLE');
   }
 
   private generationOf(p: AiProvider): number {

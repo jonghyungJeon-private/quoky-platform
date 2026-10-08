@@ -2143,3 +2143,75 @@ describe('connector writes — live QA session 4 (N2): stop words at a pending c
     expect(h.sessions.get('sess-1')?.status).toBe(SessionStatus.ACTIVE);
   });
 });
+
+describe('connector writes — Codex P2 on b571e4d: the wider stop words take the late-revocation path in every state', () => {
+  const NOTHING_TO_DECIDE =
+    '지금 승인하거나 거절할 작업이 없어요. 기다리던 승인 요청은 처리됐거나 만료됐을 수 있어요. 새로 요청하려면 원하는 작업을 말해 주세요.';
+
+  it.each(['됐어', '아니', '그만'])('execution wins: "%s" that read APPROVED before the send started gets "already started", never chat', async (word) => {
+    let releaseWriter!: () => void;
+    const writerGate = new Promise<void>((r) => (releaseWriter = r));
+    const h = harness({ commentOutcome: async () => { await writerGate; return connectorWriteSent('10001', COMMENT_URL); } });
+    await h.send('PROJ-12에 댓글: 경쟁 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    const pause = h.pauseTurn(word);
+    const stopTurn = h.send(word);
+    await pause.reached; // the stop turn has read the APPROVED anchor
+    const executeTurn = h.send('댓글 실행');
+    await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1));
+    pause.release();
+    const classifyBefore = h.classify.count;
+    expect((await stopTurn).reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect(h.classify.count).toBe(classifyBefore);
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
+    releaseWriter();
+    expect((await executeTurn).reply.text).toContain('댓글을 달았어요');
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+
+  it.each(['됐어', '아니', '그만', 'stop'])('while the write is EXECUTING, "%s" gets "already started" like 취소', async (word) => {
+    let releaseWriter!: () => void;
+    const writerGate = new Promise<void>((r) => (releaseWriter = r));
+    const h = harness({ commentOutcome: async () => { await writerGate; return connectorWriteSent('10001', COMMENT_URL); } });
+    await h.send('PROJ-12에 댓글: 실행 중');
+    await h.send('승인');
+    const executeTurn = h.send('댓글 실행');
+    await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1)); // the anchor is EXECUTING
+    const classifyBefore = h.classify.count;
+    const reply = await h.send(word);
+    expect(reply.reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect(h.classify.count).toBe(classifyBefore);
+    releaseWriter();
+    await executeTurn;
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+
+  it.each(['취소', '그만', '됐어', '아니'])('after the write finished, "%s" gets the deterministic "nothing to decide", never chat', async (word) => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 끝남');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    const classifyBefore = h.classify.count;
+    expect((await h.send(word)).reply.text).toBe(NOTHING_TO_DECIDE);
+    expect(h.classify.count).toBe(classifyBefore);
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+});
+
+describe('connector writes — a pending request is rejected only by a whole-message deny (Codex P2 on b571e4d)', () => {
+  it('"아니 이건 내 친구 얘기야" leaves the request pending (re-prompted, nothing closed or sent); a bare "아니요" then rejects it', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 친구 얘기');
+    const [approval] = [...h.approvals.values()];
+    const anchorTaskId = h.sessions.get('sess-1')?.activeTaskId as string;
+    const other = await h.send('아니 이건 내 친구 얘기야');
+    expect(other.status).toBe('AWAITING_APPROVAL');
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.PENDING);
+    expect(anchorOf(h.tasks.get(anchorTaskId))?.status).toBe('APPROVAL_PENDING');
+    const denied = await h.send('아니요');
+    expect(denied.status).toBe('DENIED');
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.REJECTED);
+    expect(h.totalWrites()).toBe(0);
+  });
+});

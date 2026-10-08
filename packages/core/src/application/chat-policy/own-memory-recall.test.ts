@@ -288,6 +288,31 @@ describe('hasOwnMemoryRecallHit topic-word overlap (live QA D5, session 4)', () 
     expect(hasOwnMemoryRecallHit(tea, { conversationTranscript: [userTurn('나는 차를 자주 마셔')] })).toBe(true);
   });
 
+  it.each([
+    // Codex P2 (b571e4d): Korean-aware containment — the shorter side keeps at least two syllables
+    ['내 생일날 언제였지?', '내 생일은 3월 5일이야'],
+    ['내 생일이 언제였지?', '생일날은 3월 5일'],
+    ['내가 말한 고양이 기억나?', '고양이랑 같이 살아'],
+    ['내가 말한 회사 기억나?', '회사에서 일해'],
+    ['내가 말한 회사 기억나?', '나는 회사원이야'],
+  ])('%s ↔ %s → hit (containment after one particle)', (text, memory) => {
+    expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(true);
+  });
+
+  it.each([
+    // Codex P2 (b571e4d): a one-syllable topic is that syllable alone or with exactly one particle
+    ['내가 좋아하는 차 종류 기억나?', '차고에 자전거를 뒀어'],
+    ['내가 좋아하는 차 종류 기억나?', '차고 정리했어'],
+    ['내가 좋아하는 차 종류 기억나?', '자동차는 회색'],
+    ['내가 좋아하는 차 종류 기억나?', '차가운 물이 좋아'],
+  ])('%s ↔ %s → no hit (never a longer noun)', (text, memory) => {
+    expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(false);
+  });
+
+  it.each(['나는 차를 좋아해', '차가 좋아', '차는 녹차', '좋아하는 건 차'])('"차" matches "%s" (the syllable plus one particle)', (memory) => {
+    expect(hasOwnMemoryRecallHit(ask('내가 좋아하는 차 종류 기억나?'), durable(memory))).toBe(true);
+  });
+
   it('English topics compare without plural or possessive endings', () => {
     const en = ask('what did I say my favourite fruit was?');
     expect(hasOwnMemoryRecallHit(en, durable('Fruits I love: mango'))).toBe(true);
