@@ -1,6 +1,7 @@
 import { ClaudeCliVisionProvider, CodexCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
 import type { AiExecutionLocality, AiProvider, Logger } from '@quoky/core';
-import type { ImageUnderstandingConfig, ImageUnderstandingOptions } from './config';
+import type { ImageUnderstandingConfig, ImageUnderstandingOptions, OpenAiApiConfig } from './config';
+import { openAiVision } from './openai-provider-composition';
 import { imageChoiceIsCloud } from './provider-selection/selection-choices';
 import type { ImageChoice } from './provider-selection/selection-choices';
 
@@ -20,6 +21,9 @@ import type { ImageChoice } from './provider-selection/selection-choices';
  *   also allows `REMOTE` — the owner's explicit cloud opt-in.
  * - `codex`: the Codex CLI vision provider (`REMOTE`, OpenAI) on the chat Codex binary (`CODEX_CLI_BIN`) with the chat
  *   tier's `QUOKY_CODEX_MODEL`; like `claude`, the policy allows `REMOTE` only while it is the effective selection.
+ * - `openai`: the OpenAI API image instance (`REMOTE`, OpenAI; ADR-0115) on `QUOKY_OPENAI_MODEL`, sending only the #143
+ *   canonical image bytes inline; registered only when the key and model are configured, and like `claude` / `codex`
+ *   the policy allows `REMOTE` only while it is the effective selection.
  * - `off`: nothing; the policy stays local-only.
  */
 
@@ -33,14 +37,23 @@ export function describeImageUnderstandingSelection(config: ImageUnderstandingCo
   readonly selection: ImageUnderstandingConfig['provider'];
   readonly locality: AiExecutionLocality | 'NONE';
 } {
-  if (config.provider === 'claude' || config.provider === 'codex') return { selection: config.provider, locality: 'REMOTE' };
+  if (config.provider === 'claude' || config.provider === 'codex' || config.provider === 'openai') {
+    return { selection: config.provider, locality: 'REMOTE' };
+  }
   if (config.provider === 'ollama') return { selection: 'ollama', locality: 'LOCAL' };
   return { selection: 'off', locality: 'NONE' };
 }
 
 export function createImageUnderstandingProviders(
   config: ImageUnderstandingConfig,
-  options: { ollamaBin: string; claudeBin: string; codexBin?: string; codexModel?: string; logger: Logger },
+  options: {
+    ollamaBin: string;
+    claudeBin: string;
+    codexBin?: string;
+    codexModel?: string;
+    openai?: OpenAiApiConfig;
+    logger: Logger;
+  },
 ): AiProvider[] {
   switch (config.provider) {
     case 'ollama':
@@ -56,6 +69,11 @@ export function createImageUnderstandingProviders(
           ...(options.codexModel !== undefined ? { model: options.codexModel } : {}),
         }),
       ];
+    case 'openai':
+      // `loadConfig` refuses `openai` without the key and model (OPENAI_API_KEY_MISSING); reaching this is a wiring bug.
+      if (options.openai === undefined) throw new TypeError('the OpenAI image option needs the OpenAI API configuration');
+      options.logger.info('image understanding uses a cloud provider', { selection: 'openai', locality: 'REMOTE' });
+      return [openAiVision(options.openai)];
     case 'off':
       if (config.invalid) options.logger.warn('image understanding not registered', { reason: config.invalid });
       return [];
@@ -96,7 +114,7 @@ export function envImageSelectionOf(config: {
 
 /** The composition-time image log lines (the cloud selection and an unusable legacy model), value-free. */
 export function logImageUnderstandingSelection(config: ImageUnderstandingConfig, logger: Pick<Logger, 'info' | 'warn'>): void {
-  if (config.provider === 'claude' || config.provider === 'codex') {
+  if (config.provider === 'claude' || config.provider === 'codex' || config.provider === 'openai') {
     logger.info('image understanding uses a cloud provider', { selection: config.provider, locality: 'REMOTE' });
   } else if (config.provider === 'off' && config.invalid) {
     logger.warn('image understanding not registered', { reason: config.invalid });

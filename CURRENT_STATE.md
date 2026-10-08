@@ -5,6 +5,17 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### PRV-1 OpenAI API provider — implemented on branch, not merged (2026-10-08)
+
+ADR-0115: new `packages/ai-openai-api` (Responses API at the pinned `https://api.openai.com`, `node:fetch`, no tool
+definitions, `store: false`) serves the chat tier (`openai-api`) and image understanding (`openai-vision-api`), both
+`REMOTE`. Off unless `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` (bounded allow-list) are set; eligible only while it
+is the effective chat or image choice (`QUOKY_CHAT_PROVIDER=openai`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=openai`,
+`/providers`, `모델 변경: openai[:<model>]`); a configured but unselected instance is not probed at startup. The key is
+held in a redacting holder and never logged. No migration, no port, no Core logic change (`ConversationRuntimeDeps` 35).
+Offline validation only (fake fetch); Strict gates (the owner's API key, the `.env.local` edit, the first live call)
+not run.
+
 ### LRN-5 learning-example egress — implemented on branch, not merged (2026-10-08)
 
 ADR-0116: with `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` (default `false`) and `QUOKY_LEARNING_EXAMPLES_ENABLED=true`,

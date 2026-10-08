@@ -91,7 +91,8 @@ export function executionLocalityOf(provider: Pick<AiProvider, 'executionLocalit
 
 /**
  * PORT: an AI execution backend. v1 implementations wrap CLIs
- * (ClaudeCliProvider, CodexCliProvider, OllamaCliProvider). NO HTTP API in v1.
+ * (ClaudeCliProvider, CodexCliProvider, OllamaCliProvider); an HTTP API adapter may
+ * serve the chat tier and IMAGE_UNDERSTANDING only (ADR-0115).
  *
  * Boundary rule: the core depends ONLY on this interface. It must never import
  * a concrete provider, branch on `id`, or assume a specific CLI exists.

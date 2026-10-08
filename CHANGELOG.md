@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — PRV-1 OpenAI API provider for the chat tier and images (2026-10-08)
+
+ADR-0115 (PRV-1). No migration, no new port or token, no Core change; `ConversationRuntimeDeps` stays 35. No new
+third-party dependency (`node:fetch` only).
+
+- New `packages/ai-openai-api`: `OpenAiApiProvider` (chat tier: `GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`,
+  `READONLY_LOOKUP`) and `OpenAiApiVisionProvider` (`IMAGE_UNDERSTANDING`), both `REMOTE`. Responses API at the pinned
+  `https://api.openai.com`, no tool definitions, `store: false`, redirects refused, bounded timeout and response size,
+  fail-closed output parsing, typed failures with fixed codes, readiness by one model-get call. The key is never in a
+  log, the audit, an error or the result.
+- Selection: `QUOKY_CHAT_PROVIDER=openai`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=openai`, labels `openai:<model>` with a
+  bounded allow-list, `모델 목록` / `모델 변경: openai[:<model>]` / `이미지 모델 변경: openai`, and the `/providers` options.
+  Registered only when `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` are set; eligible only while it is the effective
+  choice; the image locality policy opens `REMOTE` for it only while it is the effective image choice. A not-ready
+  choice falls back to Claude at selection time. Code, review, planning, tests and policy-sensitive chat keep their
+  eligible sets byte-identical.
+- Startup errors `OPENAI_API_KEY_INVALID`, `OPENAI_MODEL_INVALID`, `OPENAI_API_KEY_MISSING`, `OPENAI_MODEL_MISSING`;
+  `.env.example` documents the two names.
+- Review fixes: the key is held in a redacting holder (config inspection and serialisation show `[REDACTED]`);
+  `incomplete` replies are marked as cut off at the output bound and fail closed otherwise (`INCOMPLETE`); startup
+  readiness no longer probes a `REMOTE` provider outside the effective selection (no OpenAI call unless selected; the
+  chat and image instances share one probe, cleared by an unavailable / rate-limit / auth / timeout execution failure so
+  the next selection re-probes and can fall back to Claude); `sk-` keys are redacted from error diagnostics; context
+  files are refused.
+
 ## Unreleased — LRN-5 learning-example egress realignment (2026-10-08)
 
 ADR-0116 (Ratified 2026-10-08). No migration, no new port or DI token, no deps change; `ConversationRuntimeDeps` stays

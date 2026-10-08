@@ -1,4 +1,5 @@
 import { Capability } from '@quoky/core';
+import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
 
 /**
  * The owner's runtime model switch (ADR-0092 amendment, runtime switching) — the bounded choice vocabulary.
@@ -8,9 +9,10 @@ import { Capability } from '@quoky/core';
  *
  * - **Chat tier** (`GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`): `claude` (optionally one of
  *   the {@link CLAUDE_MODEL_ALIASES}), `codex` (the configured `QUOKY_CODEX_MODEL` or the CLI default; no per-choice
- *   model), or `ollama` (optionally a model from the local `ollama list`).
+ *   model), `ollama` (optionally a model from the local `ollama list`), or `openai` (the OpenAI API, ADR-0115;
+ *   optionally a model from the bounded `OPENAI_MODEL_ALLOW_LIST`, default `QUOKY_OPENAI_MODEL`).
  * - **Image understanding**: `claude` (cloud, Anthropic), `codex` (cloud, OpenAI), `ollama` (the configured local vision
- *   model) or `off`.
+ *   model), `openai` (cloud, OpenAI API with `QUOKY_OPENAI_MODEL`) or `off`.
  * - **Never switched** ({@link CLAUDE_PINNED_CAPABILITIES}): code, review, planning, project analysis, tests and
  *   policy-sensitive chat stay on Claude exactly as the ADR-0092 amendment says.
  */
@@ -35,20 +37,21 @@ export const CLAUDE_PINNED_CAPABILITIES: readonly Capability[] = Object.freeze([
 export const CLAUDE_MODEL_ALIASES = ['sonnet', 'opus', 'haiku'] as const;
 export type ClaudeModelAlias = (typeof CLAUDE_MODEL_ALIASES)[number];
 
-export const CHAT_PROVIDER_NAMES = ['claude', 'codex', 'ollama'] as const;
+export const CHAT_PROVIDER_NAMES = ['claude', 'codex', 'ollama', 'openai'] as const;
 export type ChatProviderName = (typeof CHAT_PROVIDER_NAMES)[number];
 
-export const IMAGE_CHOICES = ['claude', 'codex', 'ollama', 'off'] as const;
+export const IMAGE_CHOICES = ['claude', 'codex', 'ollama', 'openai', 'off'] as const;
 export type ImageChoice = (typeof IMAGE_CHOICES)[number];
 
 /**
  * A chat-tier choice. An absent `model` means the configured default of that provider (`QUOKY_CLAUDE_MODEL`,
- * `OLLAMA_MODEL`); Codex always uses `QUOKY_CODEX_MODEL` or the CLI default.
+ * `OLLAMA_MODEL`, `QUOKY_OPENAI_MODEL`); Codex always uses `QUOKY_CODEX_MODEL` or the CLI default.
  */
 export type ChatChoice =
   | { readonly provider: 'claude'; readonly model?: string }
   | { readonly provider: 'codex' }
-  | { readonly provider: 'ollama'; readonly model?: string };
+  | { readonly provider: 'ollama'; readonly model?: string }
+  | { readonly provider: 'openai'; readonly model?: string };
 
 /** Where an effective selection came from, highest precedence first. */
 export const SELECTION_SOURCES = ['session', 'persisted', 'env', 'default'] as const;
@@ -56,14 +59,18 @@ export type SelectionSource = (typeof SELECTION_SOURCES)[number];
 
 export type ChatChoiceParse =
   | { readonly ok: true; readonly choice: ChatChoice }
-  | { readonly ok: false; readonly reason: 'UNKNOWN_PROVIDER' | 'CLAUDE_MODEL_NOT_ALLOWED' | 'CODEX_MODEL_NOT_ALLOWED' | 'MODEL_INVALID' };
+  | {
+      readonly ok: false;
+      readonly reason: 'UNKNOWN_PROVIDER' | 'CLAUDE_MODEL_NOT_ALLOWED' | 'CODEX_MODEL_NOT_ALLOWED' | 'OPENAI_MODEL_NOT_ALLOWED' | 'MODEL_INVALID';
+    };
 
 /** A bounded Ollama model name (a safe fixed argv element); validated against `ollama list` at selection time. */
 const OLLAMA_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 
 /**
- * `claude`, `claude:<alias>`, `codex`, `ollama`, `ollama:<model>` (provider names case-insensitive; an Ollama model
- * name is kept as typed). Anything else is refused with a reason code; nothing here touches the host.
+ * `claude`, `claude:<alias>`, `codex`, `ollama`, `ollama:<model>`, `openai`, `openai:<model>` (provider names
+ * case-insensitive; an Ollama model name is kept as typed; an OpenAI model must be on the allow-list, compared
+ * lowercase). Anything else is refused with a reason code; nothing here touches the host.
  */
 export function parseChatChoiceToken(raw: string): ChatChoiceParse {
   const token = raw.trim();
@@ -84,6 +91,13 @@ export function parseChatChoiceToken(raw: string): ChatChoiceParse {
     if (model === undefined) return { ok: true, choice: { provider: 'ollama' } };
     if (!OLLAMA_MODEL_SHAPE.test(model) || /cloud/i.test(model)) return { ok: false, reason: 'MODEL_INVALID' };
     return { ok: true, choice: { provider: 'ollama', model } };
+  }
+  if (provider === 'openai') {
+    if (model === undefined) return { ok: true, choice: { provider: 'openai' } };
+    const name = model.toLowerCase();
+    return (OPENAI_MODEL_ALLOW_LIST as readonly string[]).includes(name)
+      ? { ok: true, choice: { provider: 'openai', model: name } }
+      : { ok: false, reason: 'OPENAI_MODEL_NOT_ALLOWED' };
   }
   return { ok: false, reason: 'UNKNOWN_PROVIDER' };
 }
@@ -118,6 +132,7 @@ export const IMAGE_CHOICE_LOCALITY: Readonly<Record<ImageChoice, 'LOCAL' | 'REMO
   claude: 'REMOTE',
   codex: 'REMOTE',
   ollama: 'LOCAL',
+  openai: 'REMOTE',
   off: 'NONE',
 };
 
@@ -126,6 +141,7 @@ export const IMAGE_CHOICE_EGRESS: Readonly<Record<ImageChoice, 'LOCAL' | 'ANTHRO
   claude: 'ANTHROPIC',
   codex: 'OPENAI',
   ollama: 'LOCAL',
+  openai: 'OPENAI',
   off: 'NONE',
 };
 

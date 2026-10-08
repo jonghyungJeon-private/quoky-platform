@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, ollamaModelExecutionLocality } from '@quoky/ai-cli';
+import { OpenAiApiKey, isAllowedOpenAiModel } from '@quoky/ai-openai-api';
+import type { OpenAiModel } from '@quoky/ai-openai-api';
 import { AgentProfileRegistry, RepositoryIdentityResolver, agentProfileId, isAgentProfileId } from '@quoky/core';
 import type { AgentProfile, ContextBuilderConfig, RepositoryIdentity, RepositoryIdentityConfig } from '@quoky/core';
 import { parseProviderRoutingMode } from './provider-routing/provider-routing-activation';
@@ -65,6 +67,11 @@ export interface QuokyConfig {
     ollamaEnabled: boolean;
     /** The chat-provider selection (ADR-0092 amendment, 2026-10-07); see {@link parseChatProviderSelection}. */
     chat: ChatProviderSelection;
+    /**
+     * The OpenAI API provider (ADR-0115 D3/D6): present only when BOTH `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL`
+     * are configured; see {@link parseOpenAiConfig}. The key is a secret: it reaches only the adapter.
+     */
+    openai?: OpenAiApiConfig;
   };
   /**
    * Image understanding provider selection (ADR-0111 D4/D5 and its 2026-10-07 amendment A1/A2). Exactly one provider is
@@ -240,6 +247,10 @@ export const QuokyConfigErrorCode = {
   CLAUDE_MODEL_INVALID: 'CLAUDE_MODEL_INVALID',
   CHAT_PROVIDER_INVALID: 'CHAT_PROVIDER_INVALID',
   CODEX_MODEL_INVALID: 'CODEX_MODEL_INVALID',
+  OPENAI_API_KEY_INVALID: 'OPENAI_API_KEY_INVALID',
+  OPENAI_API_KEY_MISSING: 'OPENAI_API_KEY_MISSING',
+  OPENAI_MODEL_INVALID: 'OPENAI_MODEL_INVALID',
+  OPENAI_MODEL_MISSING: 'OPENAI_MODEL_MISSING',
   GIT_REMOTE_ENABLED_INVALID: 'GIT_REMOTE_ENABLED_INVALID',
   GIT_MERGE_ENABLED_INVALID: 'GIT_MERGE_ENABLED_INVALID',
   GIT_MERGE_REQUIRES_REMOTE: 'GIT_MERGE_REQUIRES_REMOTE',
@@ -337,7 +348,7 @@ export function parseOpsUiFlags(env: NodeJS.ProcessEnv): OpsUiFlags {
 const MAX_MEMORY_ARCHIVE_DAYS = 365;
 
 /** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` values (exact, lowercase). */
-export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'codex', 'off'] as const;
+export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'codex', 'openai', 'off'] as const;
 export type ImageUnderstandingProviderSelection = (typeof IMAGE_UNDERSTANDING_PROVIDERS)[number];
 
 /**
@@ -362,7 +373,12 @@ export type ImageUnderstandingConfig =
    * The Codex CLI (`REMOTE`, OpenAI): the owner's explicit cloud opt-in (ADR-0111 amendment of 2026-10-08). The model is
    * the chat tier's `QUOKY_CODEX_MODEL` (or the CLI default), never a separate image model.
    */
-  | { readonly provider: 'codex' };
+  | { readonly provider: 'codex' }
+  /**
+   * The OpenAI API (`REMOTE`, OpenAI; ADR-0115): the owner's explicit cloud opt-in. The model is `QUOKY_OPENAI_MODEL`
+   * (the chat tier's), never a separate image model; `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` are required.
+   */
+  | { readonly provider: 'openai' };
 
 const OLLAMA_VISION_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
@@ -379,6 +395,8 @@ const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
  *   `QUOKY_CLAUDE_MODEL`, else `sonnet`; a malformed `QUOKY_IMAGE_UNDERSTANDING_MODEL` is
  *   `IMAGE_UNDERSTANDING_MODEL_INVALID`. `QUOKY_IMAGE_UNDERSTANDING_MODEL` is read only for `claude`.
  * - `codex`: the Codex CLI reads images in the cloud (OpenAI) with the chat tier's `QUOKY_CODEX_MODEL` or the CLI default.
+ * - `openai`: the OpenAI API reads images in the cloud with `QUOKY_OPENAI_MODEL` (ADR-0115; the key and model are
+ *   required, see {@link parseOpenAiConfig}).
  * - `off`: no image provider; every image turn gets the truthful "unavailable" reply.
  */
 export function parseImageUnderstandingConfig(
@@ -403,6 +421,7 @@ export function parseImageUnderstandingConfig(
   const selection = raw as ImageUnderstandingProviderSelection;
   if (selection === 'off') return { provider: 'off' };
   if (selection === 'codex') return { provider: 'codex' };
+  if (selection === 'openai') return { provider: 'openai' };
   if (selection === 'ollama') {
     if (visionModel === '') throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING);
     if (!OLLAMA_VISION_MODEL_SHAPE.test(visionModel)) {
@@ -494,6 +513,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const reminders = parseReminderConfig(env);
   const calendar = resolveCalendar(env, reminders.timeZone);
   const claudeModel = parseClaudeModel(env.QUOKY_CLAUDE_MODEL);
+  const chat = parseChatProviderSelection(env);
+  const imageUnderstanding = parseImageUnderstandingConfig(env, claudeModel);
+  const openai = parseOpenAiConfig(env, {
+    chat: chat.provider === 'openai',
+    image: imageUnderstanding.provider === 'openai',
+  });
 
   return {
     discord: {
@@ -517,9 +542,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ollamaModelConfigured: (env.OLLAMA_MODEL ?? '') !== '',
       // Registration flag only (ADR-0092): opt-out, exact true/false, never inferred from OLLAMA_MODEL.
       ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
-      chat: parseChatProviderSelection(env),
+      chat,
+      ...(openai !== undefined ? { openai } : {}),
     },
-    imageUnderstanding: parseImageUnderstandingConfig(env, claudeModel),
+    imageUnderstanding,
     imageUnderstandingOptions: parseImageUnderstandingOptions(env, claudeModel),
     git: { remoteEnabled: gitRemoteEnabled, mergeEnabled: gitMergeEnabled },
     work: {
@@ -670,7 +696,7 @@ function parseClaudeModel(raw: string | undefined): string {
 }
 
 /** The chat providers `QUOKY_CHAT_PROVIDER` can select (ADR-0092 amendment, 2026-10-07). */
-export const CHAT_PROVIDERS = ['claude', 'codex', 'ollama'] as const;
+export const CHAT_PROVIDERS = ['claude', 'codex', 'ollama', 'openai'] as const;
 export type ChatProviderName = (typeof CHAT_PROVIDERS)[number];
 
 /** The startup warning code when `QUOKY_CHAT_PROVIDER` overrides a contradicting `QUOKY_OLLAMA_ENABLED`. */
@@ -685,10 +711,10 @@ export interface ChatProviderSelection {
 }
 
 /**
- * `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` (exact, lowercase; anything else, including an empty value, is
- * `CHAT_PROVIDER_INVALID`). Unset derives the selection from `QUOKY_OLLAMA_ENABLED` exactly as before: `true`
- * (the default) is `ollama`, `false` is `claude`. When both are set and disagree (`ollama` with `false`, or
- * `claude`/`codex` with `true`) the selector wins and the selection carries a warning code; startup continues, so
+ * `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` | `openai` (exact, lowercase; anything else, including an empty
+ * value, is `CHAT_PROVIDER_INVALID`; `openai` since ADR-0115 D3, which also requires {@link parseOpenAiConfig}). Unset
+ * derives the selection from `QUOKY_OLLAMA_ENABLED` exactly as before: `true` (the default) is `ollama`, `false` is
+ * `claude`. When both are set and disagree (`ollama` with `false`, or `claude`/`codex`/`openai` with `true`) the selector wins and the selection carries a warning code; startup continues, so
  * an always-on service never crash-loops over a stale flag. The flag itself is still validated by its own parser.
  */
 export function parseChatProviderSelection(env: NodeJS.ProcessEnv): ChatProviderSelection {
@@ -706,6 +732,39 @@ export function parseChatProviderSelection(env: NodeJS.ProcessEnv): ChatProvider
   return conflicts
     ? { provider, source: 'QUOKY_CHAT_PROVIDER', warning: CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED }
     : { provider, source: 'QUOKY_CHAT_PROVIDER' };
+}
+
+/**
+ * The OpenAI API provider configuration (ADR-0115 D3/D6). `apiKey` is a secret holder: inspecting or serialising the
+ * configuration shows `[REDACTED]`; only the adapter reveals it, for its request header.
+ */
+export interface OpenAiApiConfig {
+  readonly apiKey: OpenAiApiKey;
+  readonly model: OpenAiModel;
+}
+
+/**
+ * ADR-0115 D3/D6: `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` (an empty or blank value counts as unset, like the
+ * other secrets). Off unless configured: with neither set there is no OpenAI provider and nothing changes.
+ * - A set key must be a well-formed OpenAI secret key (`OPENAI_API_KEY_INVALID`); a set model must be on the bounded
+ *   allow-list (`OPENAI_MODEL_INVALID`). The error carries the code only, never the value.
+ * - One without the other is a startup error (`OPENAI_API_KEY_MISSING` / `OPENAI_MODEL_MISSING`), and so is selecting
+ *   `openai` in `QUOKY_CHAT_PROVIDER` or `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` with neither set: an explicit choice fails
+ *   loudly instead of silently answering on Claude.
+ */
+export function parseOpenAiConfig(
+  env: NodeJS.ProcessEnv,
+  selected: { readonly chat: boolean; readonly image: boolean },
+): OpenAiApiConfig | undefined {
+  const rawKey = nonBlank(env.QUOKY_OPENAI_API_KEY);
+  const model = nonBlank(env.QUOKY_OPENAI_MODEL);
+  const apiKey = rawKey === undefined ? undefined : OpenAiApiKey.from(rawKey);
+  if (apiKey === null) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_API_KEY_INVALID);
+  if (model !== undefined && !isAllowedOpenAiModel(model)) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_MODEL_INVALID);
+  if (apiKey === undefined && model === undefined && !selected.chat && !selected.image) return undefined;
+  if (apiKey === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_API_KEY_MISSING);
+  if (model === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_MODEL_MISSING);
+  return { apiKey, model };
 }
 
 /** `QUOKY_CODEX_MODEL`: unset = the CLI default; otherwise the same bounded token shape as `QUOKY_CLAUDE_MODEL`. */

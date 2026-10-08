@@ -28,7 +28,7 @@ import type { SelectionSource } from '../../provider-selection/selection-choices
  * - **Audit and notice.** The service writes the content-free `provider.selection.changed` line (surface `ops-ui`); a
  *   successful change sends one `OPS_DECISION_RESULT` DM to the owner ("운영 화면에서 대화 모델을 codex로 바꿨어요"),
  *   never to a channel and never resent. The UI shows only the outcome code and fixed copy.
- * - **Display.** Labels (`claude:opus`, `codex`, `ollama:<model>`, `claude`/`ollama`/`off`), sources, readiness and the
+ * - **Display.** Labels (`claude:opus`, `codex`, `ollama:<model>`, `openai:<model>`, `claude`/`codex`/`ollama`/`openai`/`off`), sources, readiness and the
  *   egress note; every string passes the strict credential guard again.
  *
  * Option subjects are `chat:<token>`, `chat:reset`, `image:<choice>` and `image:reset`.
@@ -71,6 +71,7 @@ const REFUSALS: Readonly<Record<SelectionRefusal, OpsActionOutcome>> = {
   UNKNOWN_PROVIDER: INVALID,
   CLAUDE_MODEL_NOT_ALLOWED: INVALID,
   CODEX_MODEL_NOT_ALLOWED: INVALID,
+  OPENAI_MODEL_NOT_ALLOWED: INVALID,
   MODEL_INVALID: INVALID,
   IMAGE_CHOICE_INVALID: INVALID,
   PROVIDER_NOT_ON_HOST: { code: 'PROVIDER_NOT_ON_HOST', message: '그 모델은 이 컴퓨터에서 쓸 수 없어요. 바꾸지 않았어요.', ok: false },
@@ -135,7 +136,7 @@ export function providerDefaultNoticeText(tier: 'chat' | 'image', label: string,
   const tail =
     tier === 'image' && label === 'claude'
       ? ' 이제 첨부 이미지가 Anthropic으로 전송돼요.'
-      : tier === 'image' && label === 'codex'
+      : tier === 'image' && (label === 'codex' || label === 'openai')
         ? ' 이제 첨부 이미지가 OpenAI로 전송돼요.'
         : ' 채팅에서 따로 바꾸지 않은 대화에 바로 적용돼요.';
   return `${head}${tail}`;

@@ -37,6 +37,12 @@ import {
 } from './ollama-embedding-provider';
 
 export { BaseCliAiProvider };
+/**
+ * The provider-neutral chat output hygiene (ADR-0098 D2 and amendment D2), exported so the composition root can apply
+ * the same reply hygiene to a non-CLI chat provider (the OpenAI API adapter, ADR-0115) without an adapter-to-adapter
+ * dependency.
+ */
+export { sanitizeGeneralChatText, sanitizeTerminalOutput, stripInternalMetadataEnvelope };
 export { defaultCliRunner, maskSecrets } from './cli-runner';
 export type { CliRunner, CliRunOptions, CliRunResult } from './cli-runner';
 export {

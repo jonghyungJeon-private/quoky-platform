@@ -14,6 +14,7 @@ import type {
 import type { OllamaModelInventory } from '@quoky/ai-cli';
 import { sameOllamaModel } from '@quoky/ai-cli';
 import type { ProviderCatalog } from './provider-catalog';
+import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
 import {
   CHAT_TIER_CAPABILITIES,
   CLAUDE_MODEL_ALIASES,
@@ -49,7 +50,7 @@ import type { PersistedProviderSelection, ProviderSelectionStore } from './selec
  *
  * **Policy.** Chat tier: the effective choice's provider first, Claude next (selection-time fallback when the chosen
  * one is not ready). Image understanding: only the effective image provider (none for `off`), and the Core image
- * locality policy allows `REMOTE` only while the effective image choice is a cloud one (`claude` or `codex`). Code, review, planning, project
+ * locality policy allows `REMOTE` only while the effective image choice is a cloud one (`claude`, `codex` or `openai`). Code, review, planning, project
  * analysis, tests and policy-sensitive chat are INDEPENDENT of every runtime selection (session override and
  * operations-UI default alike): Claude, plus — exactly as before runtime switching — the configured Ollama chat model as
  * the CAP-009 local code fallback only when the INSTALLATION configuration selects Ollama (`QUOKY_CHAT_PROVIDER` /
@@ -99,7 +100,10 @@ export interface EffectiveImageSelection {
 
 export interface SelectionOption {
   readonly tier: 'chat' | 'image';
-  /** The canonical choice token (`claude:opus`, `codex`, `ollama:granite3.3:8b`; image `claude`, `codex`, `ollama`, `off`). */
+  /**
+   * The canonical choice token (`claude:opus`, `codex`, `ollama:granite3.3:8b`, `openai:gpt-4.1-mini`; image `claude`,
+   * `codex`, `ollama`, `openai`, `off`).
+   */
   readonly token: string;
   /** `undefined` when readiness could not be determined. */
   readonly ready: boolean | undefined;
@@ -126,6 +130,7 @@ export type SelectionRefusal =
   | 'UNKNOWN_PROVIDER'
   | 'CLAUDE_MODEL_NOT_ALLOWED'
   | 'CODEX_MODEL_NOT_ALLOWED'
+  | 'OPENAI_MODEL_NOT_ALLOWED'
   | 'MODEL_INVALID'
   | 'PROVIDER_NOT_ON_HOST'
   | 'OLLAMA_MODEL_NOT_FOUND'
@@ -300,7 +305,8 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   /**
    * ADR-0111 amendment (runtime switching): the Core image locality policy for this request. `REMOTE` is allowed only
-   * while the EFFECTIVE image choice is a cloud one (`claude`, or `codex` since the 2026-10-08 amendment); switching to
+   * while the EFFECTIVE image choice is a cloud one (`claude`, `codex` since the 2026-10-08 amendment, or `openai` since
+   * ADR-0115 D5); switching to
    * `ollama` or `off` stops cloud egress on the next turn.
    * An effective `off` allows no locality at all and carries where it was switched off and how to turn it back on.
    */
@@ -628,6 +634,18 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         });
       }
     }
+    // The OpenAI API (ADR-0115): only when configured; the configured model first, then the rest of the allow-list.
+    // The configured model's readiness is its one model-get probe; another allow-listed model was never probed (that
+    // probe would check a different model), so its readiness is shown as unknown rather than borrowed.
+    if (catalog.openai !== undefined && catalog.openaiModel !== undefined) {
+      const openaiReady = await this.ready(catalog.openai);
+      const models = [catalog.openaiModel, ...OPENAI_MODEL_ALLOW_LIST.filter((model) => model !== catalog.openaiModel)];
+      for (const model of models) {
+        const token = catalog.label({ provider: 'openai', model });
+        const ready = model === catalog.openaiModel ? openaiReady : undefined;
+        options.push({ tier: 'chat', token, ready, egress: 'OPENAI', current: chat.label === token });
+      }
+    }
     for (const choice of IMAGE_CHOICES) {
       const provider = catalog.resolveImage(choice);
       if (provider === undefined) continue;
@@ -657,7 +675,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       .filter((selection) => selection.chat !== undefined || selection.image !== undefined).length;
   }
 
-  /** Whether a chat choice sends content off this host (Claude and Codex do). */
+  /** Whether a chat choice sends content off this host (Claude, Codex and the OpenAI API do). */
   isCloud(choice: ChatChoice): boolean {
     return chatChoiceIsCloud(choice);
   }

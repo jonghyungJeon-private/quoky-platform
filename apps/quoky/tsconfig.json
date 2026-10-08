@@ -17,6 +17,7 @@
     { "path": "../../packages/github-app-auth" },
     { "path": "../../packages/command-local" },
     { "path": "../../packages/ai-cli" },
+    { "path": "../../packages/ai-openai-api" },
     { "path": "../../packages/connector-confluence" },
     { "path": "../../packages/connector-github" },
     { "path": "../../packages/tool-mcp" },

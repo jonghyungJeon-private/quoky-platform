@@ -21,6 +21,7 @@
     "@quoky/github-app-auth": "workspace:*",
     "@quoky/command-local": "workspace:*",
     "@quoky/ai-cli": "workspace:*",
+    "@quoky/ai-openai-api": "workspace:*",
     "@quoky/connector-confluence": "workspace:*",
     "@quoky/connector-jira": "workspace:*",
     "@quoky/connector-github": "workspace:*",

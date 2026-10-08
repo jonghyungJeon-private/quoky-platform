@@ -24,6 +24,8 @@ export interface SelectionFixtureOptions {
   readonly persistedChat?: ChatChoice;
   readonly io?: ProviderSelectionFileIo;
   readonly inventory?: OllamaModelInventory;
+  /** Providers left unstubbed (their real probe and execution run; tests give them a fake transport). */
+  readonly unstubbed?: (provider: AiProvider) => boolean;
 }
 
 export interface SelectionFixture {
@@ -74,10 +76,11 @@ export function selectionFixture(options: SelectionFixtureOptions = {}): Selecti
   });
   // Real adapter instances (construction spawns nothing); their probes and execution are replaced here, and every
   // on-demand chat-tier view the catalog adds later is replaced the same way as it is pushed.
-  for (const provider of catalog.providers) stub(provider, ready, executed);
+  const keep = options.unstubbed ?? (() => false);
+  for (const provider of catalog.providers) if (!keep(provider)) stub(provider, ready, executed);
   const originalPush = catalog.providers.push.bind(catalog.providers);
   catalog.providers.push = (...added: AiProvider[]) => {
-    for (const provider of added) stub(provider, ready, executed);
+    for (const provider of added) if (!keep(provider)) stub(provider, ready, executed);
     return originalPush(...added);
   };
 

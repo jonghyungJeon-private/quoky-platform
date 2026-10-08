@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { Capability } from '@quoky/core';
+import { Capability, executionLocalityOf } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
+import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
 import { QuokyConfigErrorCode } from './config';
 import { redactSecrets } from './error-diagnostics';
 import {
@@ -54,9 +55,17 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.CLAUDE_MODEL_INVALID]:
     'QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.CHAT_PROVIDER_INVALID]:
-    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", or "ollama" (exactly, lowercase).',
+    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", "ollama", or "openai" (exactly, lowercase).',
   [QuokyConfigErrorCode.CODEX_MODEL_INVALID]:
     'QUOKY_CODEX_MODEL must be unset (the Codex CLI default model) or a model name (letters, digits, and . _ : / [ ] -; up to 128 characters).',
+  [QuokyConfigErrorCode.OPENAI_API_KEY_INVALID]:
+    'QUOKY_OPENAI_API_KEY must be unset or an OpenAI secret key ("sk-" followed by letters, digits, _ and -; no spaces, quotes or "Bearer").',
+  [QuokyConfigErrorCode.OPENAI_API_KEY_MISSING]:
+    'The OpenAI API provider needs QUOKY_OPENAI_API_KEY (in .env.local, mode 600) when QUOKY_OPENAI_MODEL is set or "openai" is selected in QUOKY_CHAT_PROVIDER / QUOKY_IMAGE_UNDERSTANDING_PROVIDER.',
+  [QuokyConfigErrorCode.OPENAI_MODEL_INVALID]:
+    `QUOKY_OPENAI_MODEL must be unset or one of the allowed OpenAI models (${OPENAI_MODEL_ALLOW_LIST.join(', ')}).`,
+  [QuokyConfigErrorCode.OPENAI_MODEL_MISSING]:
+    'The OpenAI API provider needs QUOKY_OPENAI_MODEL (an allowed model such as "gpt-4.1-mini") when QUOKY_OPENAI_API_KEY is set.',
   [QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID]: 'QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID]: 'QUOKY_GIT_MERGE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE]:
@@ -104,7 +113,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED]:
     'The launchd service requires QUOKY_DISCORD_EXPECTED_BOT_ID in the host .env.local (the bot\'s user id, 17-20 digits). Set it, then restart the service.',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_PROVIDER_INVALID]:
-    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", or "off" (lowercase). "claude" sends attached images to Anthropic and "codex" to OpenAI (cloud).',
+    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", "openai", or "off" (lowercase). "claude" sends attached images to Anthropic, "codex" and "openai" to OpenAI (cloud).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_MODEL_INVALID]:
     'QUOKY_IMAGE_UNDERSTANDING_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING]:
@@ -179,11 +188,26 @@ export function logResolvedDatabasePath(dbPath: string, log: Logger, cwd: string
 export interface ProviderAvailabilitySource {
   all(): readonly AiProvider[];
   available(): Promise<AiProvider[]>;
+  /** Probe only these (cached), in order; used when an eligibility predicate limits the startup probes. */
+  readyAmong?(providers: readonly AiProvider[]): Promise<AiProvider[]>;
+}
+
+export interface ProviderReadinessOptions {
+  /**
+   * Whether `provider` is eligible for `capability` under the effective selection with no conversation (the
+   * `ProviderSelectionPolicy` answer, as data). With it, a `REMOTE` provider that is eligible for none of its
+   * capabilities is NOT probed at startup (ADR-0115 implementation note: a configured but unselected HTTP provider
+   * makes no network call), and `generalChatReady` counts only eligible `GENERAL_CHAT` providers. Absent = every
+   * provider is probed, as before.
+   */
+  readonly eligible?: (capability: Capability, provider: AiProvider) => boolean;
 }
 
 export interface ProviderReadinessReport {
   ready: readonly string[];
   notReady: readonly string[];
+  /** `REMOTE` providers outside the effective selection, not probed (empty without an eligibility predicate). */
+  notProbed: readonly string[];
   generalChatReady: boolean;
 }
 
@@ -191,29 +215,43 @@ export interface ProviderReadinessReport {
 export async function reportProviderReadiness(
   manager: ProviderAvailabilitySource,
   log: Logger,
+  options: ProviderReadinessOptions = {},
 ): Promise<ProviderReadinessReport> {
-  const ready = await manager.available();
+  const { eligible } = options;
+  const selected = (provider: AiProvider): boolean =>
+    eligible === undefined || provider.capabilities.some((c) => eligible(c.capability, provider));
+  const notProbed = manager.all().filter((provider) => executionLocalityOf(provider) === 'REMOTE' && !selected(provider));
+  const probed = manager.all().filter((provider) => !notProbed.includes(provider));
+  const ready =
+    notProbed.length === 0 || manager.readyAmong === undefined ? await manager.available() : await manager.readyAmong(probed);
+  for (const provider of notProbed) {
+    log.info('provider not probed (not the effective selection)', { provider: provider.id });
+  }
   for (const provider of ready) {
     log.info('provider ready', {
       provider: provider.id,
       capabilities: provider.capabilities.map((c) => c.capability).join(','),
     });
   }
-  const notReady = manager.all().filter((provider) => !ready.includes(provider));
+  const notReady = probed.filter((provider) => !ready.includes(provider));
   for (const provider of notReady) {
     log.info('provider not ready', { provider: provider.id });
   }
 
-  const generalChatReady = ready.some((provider) =>
-    provider.capabilities.some((c) => c.capability === Capability.GENERAL_CHAT));
+  const generalChatReady = ready.some(
+    (provider) =>
+      provider.capabilities.some((c) => c.capability === Capability.GENERAL_CHAT) &&
+      (eligible === undefined || eligible(Capability.GENERAL_CHAT, provider)),
+  );
   if (!generalChatReady) {
     log.warn(
-      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, or Ollama running with the configured model) is ready`,
+      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, Ollama running with the configured model, or openai with a valid QUOKY_OPENAI_API_KEY and QUOKY_OPENAI_MODEL) is ready`,
     );
   }
   return {
     ready: ready.map((provider) => provider.id),
     notReady: notReady.map((provider) => provider.id),
+    notProbed: notProbed.map((provider) => provider.id),
     generalChatReady,
   };
 }
