@@ -10,10 +10,12 @@
  *   뭐야?"), questions about the assistant, schedules / to-dos / reminders / code work (their own handlers and the
  *   QUAL-7 path), memory management (the ADR-0106 commands) or credentials.
  * - `hasOwnMemoryRecallHit` decides, from the turn's assembled context (exactly what a provider would see), whether
- *   anything that could answer the question exists. Any active durable recall entry in the built context is a hit
- *   (the retriever's ranking — lexical, or semantic when configured — already chose it, and a lexical re-check would
- *   miss "나는 철수야" for "내 이름이 뭐였지?"); otherwise one of the User's own earlier turns that shares a topic stem
- *   (or, for a preference question, states any preference) is a hit. Uncertain cases keep the provider flow.
+ *   anything that could answer the question exists. A durable recall entry is a hit when it shares a topic stem, when
+ *   semantic recall scored it at or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}, or when it carries no semantic score
+ *   at all (lexical-only recall cannot judge a paraphrase: "나는 철수야" for "내 이름이 뭐였지?"). Semantic recall
+ *   re-ranks but never drops a candidate, so without the floor every stored memory was a "hit" (live QA D5);
+ *   otherwise one of the User's own earlier turns that shares a topic stem (or, for a preference question, states any
+ *   preference) is a hit. Uncertain cases keep the provider flow.
  * - `renderOwnMemoryNotFound` is the fixed KO/EN truthful reply the runtime sends instead of calling a provider when
  *   there is no hit (a local model used to invent a personal fact: "그땐 귤이였어요").
  */
@@ -35,7 +37,26 @@ export interface OwnMemoryRecallContext {
     readonly role?: 'user' | 'assistant' | 'unknown';
     readonly provenance: string;
   }>;
-  readonly durableRecall?: ReadonlyArray<{ readonly content: string }>;
+  /** `retrievalReason` is the retriever's `lexical=…; recency=…[; semantic=…]` line (absent / unparsable = unknown). */
+  readonly durableRecall?: ReadonlyArray<{ readonly content: string; readonly retrievalReason?: string }>;
+}
+
+/**
+ * The cosine floor (scores clamped to [0, 1]) at which a semantically scored durable entry with no shared topic stem
+ * still answers an own-memory question (live QA D5). The retriever's fixtures score a match 1.0 and an unrelated
+ * memory 0.0; with the default local embedding model (nomic-embed-text) a paraphrase of a short personal fact scores
+ * well above 0.6 while unrelated short texts mostly fall below it. A miss only means the fixed "not in memory" reply
+ * instead of a provider call, and any lexical topic match is a hit regardless of the score.
+ */
+export const OWN_MEMORY_SEMANTIC_HIT_FLOOR = 0.6;
+
+/** The semantic score the retriever recorded in `retrievalReason`, or undefined when there is none. */
+export function semanticScoreOfRetrievalReason(reason: string | undefined): number | undefined {
+  if (typeof reason !== 'string') return undefined;
+  const match = /(?:^|;)\s*semantic=([0-9]+(?:\.[0-9]+)?)\s*(?:;|$)/u.exec(reason);
+  if (!match) return undefined;
+  const score = Number(match[1]);
+  return Number.isFinite(score) ? score : undefined;
 }
 
 const MAX_MESSAGE_CHARS = 80;
@@ -202,23 +223,39 @@ const RELATION_EVIDENCE: Readonly<Record<OwnMemoryRelation, RegExp>> = Object.fr
   dislike: /싫어|싫은|별로|hate|dislike/iu,
 });
 
-function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {
+function mentionsTopic(question: OwnMemoryRecallQuestion, content: string): boolean {
   const haystack = content.normalize('NFC').toLocaleLowerCase('und');
-  if (question.topics.some((stem) => haystack.includes(stem))) return true;
+  return question.topics.some((stem) => haystack.includes(stem));
+}
+
+function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {
+  if (mentionsTopic(question, content)) return true;
+  const haystack = content.normalize('NFC').toLocaleLowerCase('und');
   return question.relation !== undefined && RELATION_EVIDENCE[question.relation].test(haystack);
 }
 
+/** A durable entry that could answer the question (see the module note: topic stem, semantic floor, or unscored). */
+function durableEntryAnswers(
+  question: OwnMemoryRecallQuestion,
+  entry: { readonly content: string; readonly retrievalReason?: string },
+): boolean {
+  const semantic = semanticScoreOfRetrievalReason(entry.retrievalReason);
+  if (semantic === undefined) return true;
+  return semantic >= OWN_MEMORY_SEMANTIC_HIT_FLOOR || mentionsTopic(question, entry.content);
+}
+
 /**
- * True when the turn's assembled context could answer the question: ANY active durable recall entry (archived,
- * expired and superseded records never reach it — ADR-0106 amendment; relevance is the retriever's decision, never
- * re-judged lexically here), or one of the User's own earlier turns of this conversation that mentions a topic stem
- * (or, for a preference question, any stated preference). So "not in memory" is replied only when the built context
- * holds no durable recall at all and no such turn.
+ * True when the turn's assembled context could answer the question: an active durable recall entry (archived, expired
+ * and superseded records never reach it — ADR-0106 amendment) that shares a topic stem, that semantic recall scored at
+ * or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}, or that has no semantic score (lexical-only recall: relevance stays
+ * the retriever's decision); or one of the User's own earlier turns of this conversation that mentions a topic stem
+ * (or, for a preference question, any stated preference). So "not in memory" is replied only when no such entry and
+ * no such turn exists.
  * Earlier own-memory questions are not evidence (asking twice must not count as having told). Assistant turns are
  * never evidence: a reply may itself have been an invented fact.
  */
 export function hasOwnMemoryRecallHit(question: OwnMemoryRecallQuestion, context: OwnMemoryRecallContext): boolean {
-  if ((context.durableRecall?.length ?? 0) > 0) return true;
+  if ((context.durableRecall ?? []).some((entry) => durableEntryAnswers(question, entry))) return true;
   for (const entry of context.conversationTranscript ?? []) {
     const fromUser = entry.role === 'user' || (entry.role === undefined && entry.provenance === 'USER');
     if (!fromUser) continue;

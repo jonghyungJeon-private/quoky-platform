@@ -10988,7 +10988,8 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
   });
 
   it('any durable recall in the built context keeps the provider flow; ordinary chat and general knowledge reach the provider', async () => {
-    // The retriever decides relevance; the runtime never re-judges a recalled entry lexically (Codex P2).
+    // Without a semantic score the retriever's choice stands; the runtime never re-judges such an entry lexically
+    // (Codex P2). A semantically scored entry is judged by the floor (live QA D5, the next case).
     const anyRecall = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
     expect((await anyRecall.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
     expect(anyRecall.providerTouches()).toBeGreaterThan(0);
@@ -10996,6 +10997,34 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
       const h = ownMemoryRuntime();
       expect((await h.runtime.handle(messageOf(text))).reply.text, text).toBe('provider answer');
     }
+  });
+
+  it('live QA D5: with semantic recall, unrelated memories scored under the floor are no hit; a scored match is (real ContextBuilder + retriever)', async () => {
+    const memory = (id: string, content: string): MemoryRecord => ({
+      id,
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content,
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: TS,
+      updatedAt: TS,
+    });
+    const records = [memory('grape', '나는 샤인머스캣을 좋아해'), memory('qa', 'QA 테스트용 기억')];
+    const withScores = (scores: Record<string, number>) =>
+      new ContextBuilder(
+        { async recentShortTerm() { return []; } } as unknown as MemoryManager,
+        {},
+        new DefaultMemoryRetriever({ async findDurableCandidates() { return records; } } as never, {
+          semanticScorer: { async score() { return new Map(Object.entries(scores)); } },
+        }),
+      );
+    const color = '내가 좋아하는 색깔이 뭐였지?';
+    const low = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.41, qa: 0.22 }) });
+    expect((await low.runtime.handle(messageOf(color))).reply.text).toBe(NOT_FOUND);
+    expect(low.providerTouches()).toBe(0);
+    const high = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.82, qa: 0.22 }) });
+    expect((await high.runtime.handle(messageOf(color))).reply.text).toBe('provider answer');
+    expect(high.providerTouches()).toBeGreaterThan(0);
   });
 
   it('an archived record counts as no hit through the real ContextBuilder and DefaultMemoryRetriever; restored, it is a hit', async () => {
