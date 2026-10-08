@@ -1,5 +1,5 @@
 import { REMINDER_LIMITS } from '@quoky/core';
-import { DISCORD_PLATFORM, renderNotificationForDiscord } from './rendering';
+import { contentDisagreesWithText, DISCORD_PLATFORM, renderNotificationForDiscord } from './rendering';
 import type {
   Logger,
   NotificationNotSentReason,
@@ -188,6 +188,7 @@ async function deliver(n: OwnerNotification, deps: OwnerNotificationDeps): Promi
   const ownerId = target.userId;
   if (!deps.ownerIds.includes(ownerId)) return notSent('NOT_OWNER', false);
 
+  if (contentDisagreesWithText(n)) deps.logger.warn('owner notification content and text disagree', { kind: n.kind });
   const text = renderNotificationForDiscord(n);
   if ([...text].length > REMINDER_LIMITS.maxDeliveredTextChars) return notSent('TEXT_TOO_LONG', false);
 

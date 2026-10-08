@@ -32,6 +32,8 @@ const FORBIDDEN: ReadonlyArray<{ readonly name: string; readonly pattern: RegExp
   { name: 'angle-bracket link embed suppression', pattern: /<\$\{[^}]*\}>/ },
   // The character class that backslash-escapes Discord Markdown in untrusted text.
   { name: 'Discord Markdown escaping', pattern: /\\\\\*_~`\|>/ },
+  // `{ ...reply, text: … }` keeps a stale `content` (the adapter would render the old body): use withOutboundBody.
+  { name: 'text rewritten by spread on an outbound carrier', pattern: /\.\.\.\s*[\w.]*\b(?:reply|message|outbound|notification|notice|composed)\w*\s*,\s*text\s*:/i },
 ];
 
 describe('Core is platform-neutral in rendering (PLT-0)', () => {
@@ -63,6 +65,7 @@ describe('Core is platform-neutral in rendering (PLT-0)', () => {
       "reference: `<#${id}>`",
       'return `<${url}>`;',
       ".replace(/[\\\\*_~`|>[\\]]/g, '\\\\$&')",
+      'return { ...reply, text: clampToMessageBudget(`${notice.text}\\n\\n${reply.text}`) };',
     ];
     legacy.forEach((line, index) => expect((FORBIDDEN[index] as { pattern: RegExp }).pattern.test(line), line).toBe(true));
   });

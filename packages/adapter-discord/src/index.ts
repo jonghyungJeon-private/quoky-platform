@@ -2,7 +2,7 @@ import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'disco
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
-import { DISCORD_PLATFORM, renderOutboundForDiscord } from './rendering';
+import { contentDisagreesWithText, DISCORD_PLATFORM, renderOutboundForDiscord } from './rendering';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
@@ -291,6 +291,10 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     // Discord renders no Markdown tables. Only a provider-generated reply the runtime flagged `model-reply` is adapted
     // (simple tables become lines, and only when the reply has no fence marker or quote at all); every other message — deterministic replies, previews, approval and
     // connector-write texts, diffs, reminders — is sent byte-identical (Codex P1 on df66418). See `rendering.ts`.
+    if (contentDisagreesWithText(message)) {
+      // Rendering `content` is safe; the warning names no content, only that a producer left the two out of sync.
+      this.logger.warn('outbound content and text disagree', { channelId: target, textLength: message.text.length });
+    }
     const text = renderOutboundForDiscord(message);
     const report = await deliverWithNotice(
       text,

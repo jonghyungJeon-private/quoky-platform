@@ -494,6 +494,17 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     expect(contents).toEqual(['검색: @\u200beveryone \\[x\\](y) <https://e.test/a_b>']);
   });
 
+  it('renders content but warns (content-free) when a producer left text and content out of sync (review P3-1)', async () => {
+    const { adapter, logger } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    const message = outboundMessage(context, messageContent('a ', untrustedText('*b*')));
+    await adapter.sendMessage({ ...message, text: 'stale plain text' });
+    expect(contentsOf(sent)).toEqual(['a \\*b\\*']);
+    expect(JSON.stringify(logger)).toContain('outbound content and text disagree');
+    expect(JSON.stringify(logger)).not.toContain('stale plain text');
+  });
+
   it('returns an empty receipt when the channel is not sendable', async () => {
     const { adapter } = await harness();
     const receipt = await adapter.sendMessage({

@@ -1,4 +1,4 @@
-import { renderMessageContent } from '@quoky/core';
+import { plainTextOf, renderMessageContent } from '@quoky/core';
 import type {
   ConversationRefNode,
   MessageBody,
@@ -84,4 +84,13 @@ export function renderOutboundForDiscord(message: Pick<OutboundMessage, 'text' |
 /** The Discord text of an owner notification (reminder, brief, operations notice). */
 export function renderNotificationForDiscord(notification: Pick<OwnerNotification, 'text' | 'content'>): string {
   return notification.content !== undefined ? renderDiscordContent(notification.content) : notification.text;
+}
+
+/**
+ * Whether a message's `content` and `text` disagree (review P3-1): Core rewrote `text` without `content` (or the
+ * reverse). The adapter still renders `content` — the safe choice — and logs a content-free warning so the producer can
+ * be found.
+ */
+export function contentDisagreesWithText(message: Pick<OutboundMessage, 'text' | 'content'>): boolean {
+  return message.content !== undefined && plainTextOf(message.content) !== message.text;
 }

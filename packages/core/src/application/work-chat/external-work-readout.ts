@@ -253,6 +253,12 @@ export function renderExternalWorkReadoutForPrompt(readout: ExternalWorkReadout)
 }
 
 /**
+ * The footer budget always reserved 8 characters next to the disclosure line. The `출처:` heading (3 characters) is
+ * measured as a head line, so the remaining 5 are counted as base characters.
+ */
+const FOOTER_HEADROOM_CHARS = 5;
+
+/**
  * Deterministic footer: the real source links (at most 10, each only when its URL survived sanitization) and the
  * disclosure line saying how many external items were used. Bounded to 1,000 characters of the delivered text: the
  * titles are untrusted spans the platform escapes, so the budget is evaluated on its rendering (PLT-0).
@@ -274,12 +280,11 @@ export function renderExternalWorkFooter(readout: ExternalWorkReadout): MessageB
     .map((item) => ({
       content: messageContent('- ', untrustedText(Array.from(item.title).slice(0, 50).join('').replace(/\s+/g, ' ')), ' ', messageLink(item.url)),
     }));
-  // "출처:" (3) + 5 = the 8 characters of headroom the footer always reserved next to the disclosure line.
   return messageBody(
     takeLines({
       unit: 'utf16',
       maxChars: EXTERNAL_WORK_FOOTER_MAX_CHARS,
-      baseChars: 5,
+      baseChars: FOOTER_HEADROOM_CHARS,
       head: ['출처:'],
       tail: [disclosureText],
       headOnlyWithLines: true,

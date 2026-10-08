@@ -64,6 +64,11 @@ describe('platform-neutral message content (PLT-0)', () => {
     expect(Object.isFrozen(content)).toBe(true);
     expect(() => `${content}`).toThrow(TypeError);
     expect(() => String(joinMessage(['x', 'y']))).toThrow(TypeError);
+    // Every node too (review P3-2): a node interpolated by mistake throws instead of writing "[object Object]".
+    for (const node of [untrustedText('x'), messageLink('u'), platformNote('command-prefix'), clipMessage('a', 1, 'utf16'), fitLines([], 1), takeLines({ unit: 'utf16', maxChars: 1, baseChars: 0, head: [], tail: [], lines: [] }), conversationRefOf({ platform: 'p', channelId: 'c', userId: 'u' }, { direct: 'd', channel: 'c' })]) {
+      expect(() => `${node}`).toThrow(TypeError);
+      expect(Object.keys(node)).not.toContain('toString');
+    }
     expect(plainTextOf(joinMessage(['x', untrustedText('y'), 'z'], ' | '))).toBe('x | y | z');
   });
 

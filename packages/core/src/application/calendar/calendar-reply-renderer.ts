@@ -174,6 +174,11 @@ function footer(timeZone: string, language: CalendarLanguage, truncatedAt?: numb
     : messageBody(base, `\n캘린더에서 처음 ${truncatedAt}개까지만 읽었어요. 더 있을 수 있어요.`);
 }
 
+/** The two line breaks around the list body (after the header, before the tail). */
+const CALENDAR_LIST_SEPARATOR_CHARS = 2;
+/** Room always reserved for the closing "…외 N개" / "…and N more" line. */
+const CALENDAR_OMITTED_LINE_RESERVE_CHARS = 40;
+
 /** One body line of a list: an event (`- …`, an item) or a day heading. */
 interface ListLine {
   readonly content: MessageBody;
@@ -189,7 +194,7 @@ function bounded(header: string, body: readonly ListLine[], tail: MessageBody, l
     takeLines({
       unit: 'code-points',
       maxChars: CALENDAR_REPLY_MAX_CHARS,
-      baseChars: 2 + 40,
+      baseChars: CALENDAR_LIST_SEPARATOR_CHARS + CALENDAR_OMITTED_LINE_RESERVE_CHARS,
       head: [header],
       tail: [tail],
       lines: body,

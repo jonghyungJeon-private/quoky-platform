@@ -45,6 +45,12 @@ function sealed(nodes: MessageNode[]): MessageContent {
   return Object.freeze(nodes);
 }
 
+/** Freeze one node the same way: interpolating a node (`${untrustedText(x)}`) throws instead of writing `[object Object]`. */
+function sealNode<T extends object>(node: T): T {
+  Object.defineProperty(node, 'toString', { value: refuseStringify, enumerable: false });
+  return Object.freeze(node);
+}
+
 /** What the builders accept: a body, or a single node. */
 export type MessagePart = MessageBody | Exclude<MessageNode, string>;
 
@@ -100,11 +106,11 @@ export function joinBody(parts: readonly MessagePart[], separator = '\n'): Messa
 }
 
 export function untrustedText(text: string, guard: UntrustedTextGuard = 'markup'): UntrustedTextNode {
-  return Object.freeze({ kind: 'untrusted', text, guard });
+  return sealNode({ kind: 'untrusted', text, guard });
 }
 
 export function messageLink(url: string): LinkNode {
-  return Object.freeze({ kind: 'link', url });
+  return sealNode({ kind: 'link', url });
 }
 
 /** The same safe-id rule as everywhere a raw id reaches chat text: letters, digits, `_` and `-` only. */
@@ -126,7 +132,7 @@ export function conversationRefOf(
   const direct = isDirectConversation(context);
   const id = context.threadId ?? context.channelId;
   const referenceable = !direct && REFERENCEABLE_ID.test(id);
-  return Object.freeze({
+  return sealNode({
     kind: 'conversation',
     platform: context.platform,
     direct,
@@ -136,7 +142,7 @@ export function conversationRefOf(
 }
 
 export function platformNote(topic: PlatformNoteTopic): PlatformNoteNode {
-  return Object.freeze({ kind: 'platform-note', topic });
+  return sealNode({ kind: 'platform-note', topic });
 }
 
 function asContent(part: MessagePart): MessageContent {
@@ -149,7 +155,7 @@ export function clipMessage(
   unit: MessageLengthUnit,
   options: { readonly trim?: boolean; readonly after?: MessagePart } = {},
 ): ClipNode {
-  return Object.freeze({
+  return sealNode({
     kind: 'clip',
     content: asContent(content),
     maxChars,
@@ -164,7 +170,7 @@ export function fitLines(
   maxChars: number,
   omittedNote?: string,
 ): FitLinesNode {
-  return Object.freeze({
+  return sealNode({
     kind: 'fit-lines',
     lines: Object.freeze(lines.map((line): FitLine => Object.freeze({ content: asContent(line.content), ...(line.droppable ? { droppable: true } : {}) }))),
     maxChars,
@@ -183,7 +189,7 @@ export function takeLines(spec: {
   readonly dropTrailingHeadings?: boolean;
   readonly omitted?: TakeLinesNode['omitted'];
 }): TakeLinesNode {
-  return Object.freeze({
+  return sealNode({
     kind: 'take-lines',
     unit: spec.unit,
     maxChars: spec.maxChars,

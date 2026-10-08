@@ -5,9 +5,12 @@
  * neutralization, link and conversation-reference syntax. `OutboundMessage.text` stays the PLAIN rendering of the
  * same content (conversation history, logs, adapters that do not read `content`).
  *
- * - A string node is Quoky's own copy, delivered as written. It may use the neutral CommonMark subset Core already
- *   writes (`**strong**`, `` `code` ``, fenced blocks), exactly like a provider's Markdown answer; an adapter for a
- *   platform without Markdown translates it. Text Quoky did not author is never a string node.
+ * - A string node is CommonMark in the neutral subset Core writes (`**strong**`, `` `code` ``, fenced blocks), exactly
+ *   like a provider's Markdown answer. It is Quoky's own copy, except that it MAY carry untrusted text inside a code
+ *   fence (a connector-write payload shown verbatim; the fence is longer than any backtick run inside). Text Quoky did
+ *   not author outside a fence is always an `untrusted` node. An adapter MUST make every string node safe for its own
+ *   parse mode: Markdown platforms deliver it as is (a fence already neutralizes its contents), any other parse mode
+ *   (HTML, plain text) escapes or translates it.
  * - `untrusted`, `link`, `conversation` and `platform-note` are the spans whose presentation is the platform's.
  * - `clip`, `fit-lines` and `take-lines` are length budgets. They are evaluated on the RENDERED text of the platform
  *   the message is delivered on, so a budget keeps exactly the lines that fit there (an escaped title is longer than
