@@ -71,10 +71,22 @@ function isCalendar(operation: ConnectorWriteOperation): boolean {
   return operation.startsWith('CALENDAR_');
 }
 
-/** What "nothing happened" means for an operation. */
+/**
+ * What "nothing happened" means for an operation — scoped to THIS request (Codex P2 on a2b8aed): an earlier write in the
+ * same conversation may still be unconfirmed, so no reply may say that nothing at all was ever sent.
+ */
 function nothingDone(operation: ConnectorWriteOperation | 'calendar' | 'external'): string {
-  if (operation === 'calendar' || (operation !== 'external' && isCalendar(operation))) return '캘린더는 바꾸지 않았어요.';
-  return '아무것도 보내지 않았어요.';
+  return notDoneByThisRequest(operation === 'calendar' || (operation !== 'external' && isCalendar(operation)));
+}
+
+/** "이 요청으로는 아무것도 보내지 않았어요." / "이 요청으로는 캘린더를 바꾸지 않았어요." */
+function notDoneByThisRequest(calendar: boolean, yet = false): string {
+  return `이 요청으로는 ${yet ? '아직 ' : ''}${calendar ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`;
+}
+
+/** "승인된 Jira 댓글(PROJ-12)은" / "승인된 Slack 게시는" — the approved write, named so a reply speaks only about it. */
+function approvedWriteSubject(operation: ConnectorWriteOperation, target?: ConnectorWriteTargetSummary): string {
+  return `승인된 ${target ? labelWithTarget(operation, target) : withTopicParticle(connectorWriteLabel(operation))}`;
 }
 
 /** A fence longer than any backtick run in `text`, so owner text can never break out of its block. */
@@ -181,7 +193,7 @@ function minutesOf(remainingMs: number): number {
 export function renderConnectorWritePreview(preview: ConnectorWritePreview, remainingMs: number, executionPhrase: string): string {
   const operation = preview.operation;
   return [
-    `${connectorWriteLabel(operation)} 미리보기예요. 아직 ${isCalendar(operation) ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`,
+    `${connectorWriteLabel(operation)} 미리보기예요. ${notDoneByThisRequest(isCalendar(operation), true)}`,
     ...previewBody(preview),
     '',
     '위험도: CRITICAL · 이 내용 그대로 한 번만 실행하는 승인이에요. 실패하거나 결과가 불확실해도 자동으로 다시 시도하지 않아요.',
@@ -194,7 +206,7 @@ export function renderConnectorWritePreview(preview: ConnectorWritePreview, rema
 export function renderConnectorWritePending(preview: ConnectorWritePreview, remainingMs: number, executionPhrase: string): string {
   const operation = preview.operation;
   return [
-    `${connectorWriteLabel(operation)} 승인을 기다리고 있어요. 아직 ${isCalendar(operation) ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`,
+    `${connectorWriteLabel(operation)} 승인을 기다리고 있어요. ${notDoneByThisRequest(isCalendar(operation), true)}`,
     ...previewBody(preview),
     '',
     `"승인" 또는 "거절"로 답해 주세요. 승인한 뒤 "${executionPhrase}"이라고 보내야 실행돼요.`,
@@ -215,11 +227,17 @@ export function renderConnectorWriteAlreadyApproved(operation: ConnectorWriteOpe
   return `${withTopicParticle(connectorWriteLabel(operation))} 이미 승인됐고 아직 실행하지 않았어요. 실행하려면 "${executionPhrase}"이라고 보내 주세요.`;
 }
 
-/** A question or negation about the execution step while the write is approved: a non-mutating reminder (W5-L01). */
-export function renderConnectorWriteApprovedReminder(operation: ConnectorWriteOperation, executionPhrase: string): string {
-  return isCalendar(operation)
-    ? `승인은 기록돼 있어요. 실제로 반영하려면 "${executionPhrase}"이라고만 보내 주세요. 아직 캘린더를 바꾸지 않았어요.`
-    : `승인은 기록돼 있어요. 실제로 보내려면 "${executionPhrase}"이라고만 보내 주세요. 아직 아무것도 보내지 않았어요.`;
+/**
+ * A question or negation about the execution step while the write is approved: a non-mutating reminder (W5-L01). It
+ * speaks only about the approved write (Codex P2 on a2b8aed: an earlier write of the conversation may be unconfirmed).
+ */
+export function renderConnectorWriteApprovedReminder(
+  operation: ConnectorWriteOperation,
+  executionPhrase: string,
+  target?: ConnectorWriteTargetSummary,
+): string {
+  const how = isCalendar(operation) ? '반영하려면' : '보내려면';
+  return `${approvedWriteSubject(operation, target)} 아직 실행하지 않았어요. 실제로 ${how} "${executionPhrase}"이라고만 보내 주세요.`;
 }
 
 /**
@@ -227,8 +245,12 @@ export function renderConnectorWriteApprovedReminder(operation: ConnectorWriteOp
  * approved write did not run; the reply quotes its exact phrase (routing exec gaps). It speaks only about the approved
  * write, so it stays true even after an earlier unconfirmed write in the same conversation (Codex P2 on 039d5ff).
  */
-export function renderConnectorWriteBareExecution(operation: ConnectorWriteOperation, executionPhrase: string): string {
-  return `승인된 ${withTopicParticle(connectorWriteLabel(operation))} 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`;
+export function renderConnectorWriteBareExecution(
+  operation: ConnectorWriteOperation,
+  executionPhrase: string,
+  target?: ConnectorWriteTargetSummary,
+): string {
+  return `${approvedWriteSubject(operation, target)} 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`;
 }
 
 /**
@@ -447,7 +469,7 @@ export function renderConnectorWriteChoice(
   timeZone: string,
 ): string {
   return [
-    `조건에 맞는 일정이 ${candidates.length}개예요. 어느 일정을 ${mode === 'update' ? '바꿀지' : '삭제할지'} 번호로 답해 주세요 (예: "1번"). 아직 캘린더를 바꾸지 않았어요.`,
+    `조건에 맞는 일정이 ${candidates.length}개예요. 어느 일정을 ${mode === 'update' ? '바꿀지' : '삭제할지'} 번호로 답해 주세요 (예: "1번"). ${notDoneByThisRequest(true, true)}`,
     ...candidates.map(
       (event, i) =>
         `${i + 1}. ${summaryTime(event, timeZone)} ${inline(event.title || '(제목 없음)')}${event.location !== undefined ? ` (${inline(event.location)})` : ''}`,
@@ -468,7 +490,7 @@ const USAGE_KO: Readonly<Record<ConnectorWriteUsageTopic, string>> = {
 
 export function renderConnectorWriteUsage(topic: ConnectorWriteUsageTopic): string {
   const calendar = topic.startsWith('calendar');
-  return `${USAGE_KO[topic]} ${calendar ? '캘린더는 바꾸지 않았어요.' : '아무것도 보내지 않았어요.'}`;
+  return `${USAGE_KO[topic]} ${notDoneByThisRequest(calendar)}`;
 }
 
 const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
@@ -498,7 +520,7 @@ export function renderConnectorWriteRefusal(
   calendar: boolean,
   availableStatuses: readonly string[] = [],
 ): string {
-  const lines = [`${REFUSAL_KO[reason]} ${calendar ? '캘린더는 바꾸지 않았어요.' : '아무것도 보내지 않았어요.'}`];
+  const lines = [`${REFUSAL_KO[reason]} ${notDoneByThisRequest(calendar)}`];
   if (reason === 'transition-unavailable' && availableStatuses.length > 0) {
     lines.push(`지금 바꿀 수 있는 상태: ${availableStatuses.map(inline).join(', ')}`);
   }
@@ -509,7 +531,7 @@ export function renderConnectorWriteRefusal(
 }
 
 export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, calendar: boolean): string {
-  const done = calendar ? '캘린더는 바꾸지 않았어요.' : '아무것도 보내지 않았어요.';
+  const done = notDoneByThisRequest(calendar);
   switch (reason) {
     case 'denied':
       return `요청을 거절했어요. ${done}`;
@@ -526,7 +548,7 @@ export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, ca
 
 /** An execution phrase with no approved write to run (the QA-018 pattern: no model may claim a write). */
 export function renderNoApprovedConnectorWrite(): string {
-  return '지금 실행할 승인된 외부 쓰기 요청이 없어요. 아무것도 보내거나 바꾸지 않았어요. 먼저 요청하고 미리보기를 승인해 주세요.';
+  return '지금 실행할 승인된 외부 쓰기 요청이 없어요. 이번에는 아무것도 보내거나 바꾸지 않았어요. 먼저 요청하고 미리보기를 승인해 주세요.';
 }
 
 /** What SHORT_TERM history keeps for a calendar write turn (no event text, ADR-0110 D4/amendment D6). */

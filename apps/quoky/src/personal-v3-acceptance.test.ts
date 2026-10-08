@@ -633,7 +633,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     const owner = harness.freshContext();
     const request = 'PROJ-12에 댓글 달아줘: INT-2 배포 **완료**했습니다 @here';
     const preview = await det(owner, request);
-    expect(preview.text).toContain('Jira 댓글 미리보기예요. 아직 아무것도 보내지 않았어요.');
+    expect(preview.text).toContain('Jira 댓글 미리보기예요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
     expect(preview.text).toContain('```\nINT-2 배포 **완료**했습니다 @here\n```');
     expect(preview.text).toContain('"댓글 실행"');
     expect(preview.text).toContain('CRITICAL');
@@ -644,14 +644,14 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect((await det(owner, '승인')).text).toContain('승인을 기록했어요. 아직 실행하지 않았어요.');
     // W5-L01: a question or negation about the step gets the deterministic reminder, never chat and never a send.
     for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
-      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행'));
+      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
     }
     for (const text of ['Slack 게시 실행', '일정 추가 실행', '승인']) await det(owner, text);
     // INT-2 finding, fixed (routing exec gaps): a bare "실행" — the remote-cleanup gate's phrase — or "go" / "run it" while
     // a comment is approved names no write step. It runs nothing and gets the deterministic reply quoting the exact phrase
     // (it fell through to chat before); the grant still waits for "댓글 실행".
     for (const text of ['실행', '실행해', '실행해줘', 'go', 'run it']) {
-      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행'));
+      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
     }
     expect(totalWrites()).toBe(0);
 
@@ -702,7 +702,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
   it('Jira transition: 거절 sends nothing and the phrase afterwards has nothing approved (W5 T4–T5)', async () => {
     const owner = harness.freshContext();
     await det(owner, 'PROJ-7 완료로 바꿔줘');
-    expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 아무것도 보내지 않았어요.');
+    expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
     expect((await det(owner, '상태 변경 실행')).text).toBe(renderNoApprovedConnectorWrite());
     expect(harness.writes.transition).toHaveLength(1);
   });
@@ -783,7 +783,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect(preview.text).toContain('"일정 추가 실행"');
     await det(owner, '승인');
     expect((await det(owner, '일정 추가 실행할까?')).text).toBe(
-      renderConnectorWriteApprovedReminder('CALENDAR_EVENT_CREATE', '일정 추가 실행'),
+      renderConnectorWriteApprovedReminder('CALENDAR_EVENT_CREATE', '일정 추가 실행', { kind: 'calendar' }),
     );
     expect(harness.writes.createEvent).toHaveLength(0);
     await det(owner, '일정 추가 실행');

@@ -489,7 +489,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     const h = harness();
     const preview = await h.send('PROJ-12에 댓글 달아줘: 배포 **완료**했습니다 @here');
     expect(preview.status).toBe('AWAITING_APPROVAL');
-    expect(preview.reply.text).toContain('Jira 댓글 미리보기예요. 아직 아무것도 보내지 않았어요.');
+    expect(preview.reply.text).toContain('Jira 댓글 미리보기예요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
     expect(preview.reply.text).toContain('대상: Jira PROJ-12');
     // The owner's text verbatim inside a fence: no markdown or mention expansion.
     expect(preview.reply.text).toContain('```\n배포 **완료**했습니다 @here\n```');
@@ -548,7 +548,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     await h.send('Jira PROJ-3에 댓글: 확인했어요');
     const denied = await h.send('거절');
     expect(denied.status).toBe('DENIED');
-    expect(denied.reply.text).toBe('요청을 거절했어요. 아무것도 보내지 않았어요.');
+    expect(denied.reply.text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
     expect([...h.approvals.values()][0]?.status).toBe(ApprovalStatus.REJECTED);
     const stray = await h.send('댓글 실행');
     expect(stray.reply.text).toContain('지금 실행할 승인된 외부 쓰기 요청이 없어요');
@@ -591,7 +591,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     await notSent.send('PROJ-12에 댓글: x');
     await notSent.send('승인');
     const failed = await notSent.send('댓글 실행');
-    expect(failed.reply.text).toContain('Jira 댓글을 하지 못했어요: 권한이 없어요. 아무것도 보내지 않았어요.');
+    expect(failed.reply.text).toContain('Jira 댓글을 하지 못했어요: 권한이 없어요. 이 요청으로는 아무것도 보내지 않았어요.');
     expect((await notSent.send('댓글 실행')).reply.text).toContain('이미 실패로 끝났어요');
     expect(notSent.writes.addComment).toHaveLength(1);
   });
@@ -705,7 +705,7 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     const h = harness();
     const preview = await h.send('내일 오후 3시에 회의 잡아줘 제목 주간 회의 장소 3층 회의실');
     expect(preview.status).toBe('AWAITING_APPROVAL');
-    expect(preview.reply.text).toContain('캘린더 일정 추가 미리보기예요. 아직 캘린더를 바꾸지 않았어요.');
+    expect(preview.reply.text).toContain('캘린더 일정 추가 미리보기예요. 이 요청으로는 아직 캘린더를 바꾸지 않았어요.');
     expect(preview.reply.text).toContain('캘린더: 내 기본 캘린더(primary)');
     expect(preview.reply.text).toContain('제목: 주간 회의');
     expect(preview.reply.text).toContain('시간: 2026-10-07(수) 15:00–16:00 (Asia/Seoul)');
@@ -877,7 +877,7 @@ describe('connector writes — immutable target binding (ADR-0112, Codex P1)', (
     const reply = await h.send('일정 변경 실행');
     expect(h.writes.updateEvent[0]?.expected).toEqual({ allDay: false, start: WEEKLY.start, end: WEEKLY.end, version: WEEKLY.version });
     expect(reply.reply.text).toContain(EVENT_CHANGED);
-    expect(reply.reply.text).toContain('캘린더는 바꾸지 않았어요');
+    expect(reply.reply.text).toContain('이 요청으로는 캘린더를 바꾸지 않았어요');
     expect(reply.reply.text).not.toContain('일정을 바꿨어요');
     expect([...h.receipts.rows.values()][0]).toMatchObject({ status: 'NOT_SENT', data: { reason: 'TARGET_CHANGED' } });
   });
@@ -911,7 +911,7 @@ describe('connector writes — immutable target binding (ADR-0112, Codex P1)', (
         const h = harness({ events: [unversioned, LUNCH] });
         const reply = await h.send(text);
         expect(reply.reply.text).toContain('버전 정보가 없어서 바꾸거나 삭제하지 않아요');
-        expect(reply.reply.text).toContain('캘린더는 바꾸지 않았어요');
+        expect(reply.reply.text).toContain('이 요청으로는 캘린더를 바꾸지 않았어요');
         expect(h.approvals.size).toBe(0);
         expect((await h.send('승인')).reply.text).not.toContain('승인을 기록했어요');
         expect(h.totalWrites()).toBe(0);
@@ -1056,7 +1056,7 @@ describe('connector writes — lazy expiry of grants and choices (review fixes)'
     advanceMinutes(31);
     const late = await h.send('1번');
     expect(late.reply.text).toContain('선택이 만료됐어요');
-    expect(late.reply.text).toContain('캘린더는 바꾸지 않았어요');
+    expect(late.reply.text).toContain('이 요청으로는 캘린더를 바꾸지 않았어요');
     expect(late.reply.text).not.toContain('삭제할 일정');
     expect(h.approvals.size).toBe(0);
     expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
@@ -1108,8 +1108,8 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     await h.send('PROJ-12에 댓글: 한 번만');
     await h.send('승인');
     const reply = await h.send('댓글 실행해도 돼?');
-    expect(reply.reply.text).toBe('승인은 기록돼 있어요. 실제로 보내려면 "댓글 실행"이라고만 보내 주세요. 아직 아무것도 보내지 않았어요.');
-    expect((await h.send('댓글 실행하지 마')).reply.text).toContain('아직 아무것도 보내지 않았어요');
+    expect(reply.reply.text).toBe('승인된 Jira 댓글(PROJ-12)은 아직 실행하지 않았어요. 실제로 보내려면 "댓글 실행"이라고만 보내 주세요.');
+    expect((await h.send('댓글 실행하지 마')).reply.text).toBe(reply.reply.text);
     expect(h.totalWrites()).toBe(0);
     expect((await h.send('댓글 실행')).reply.text).toContain('댓글을 달았어요');
 
@@ -1124,9 +1124,9 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     const h = harness();
     await h.send('#dev에 게시: 배포 시작');
     await h.send('승인');
-    expect((await h.send('Jira 댓글 실행 방식 설명해줘')).reply.text).not.toContain('아직 아무것도 보내지 않았어요');
+    expect((await h.send('Jira 댓글 실행 방식 설명해줘')).reply.text).not.toContain('아직 실행하지 않았어요');
     expect((await h.send('댓글 실행해도 돼?')).reply.text).not.toContain('"Slack 게시 실행"이라고만');
-    expect((await h.send('Slack 게시 실행은 어떻게 해?')).reply.text).not.toContain('승인은 기록돼 있어요');
+    expect((await h.send('Slack 게시 실행은 어떻게 해?')).reply.text).not.toContain('아직 실행하지 않았어요');
     expect((await h.send('Slack 게시 실행해도 돼?')).reply.text).toContain('"Slack 게시 실행"이라고만 보내 주세요');
     expect(h.totalWrites()).toBe(0);
   });
@@ -1395,7 +1395,7 @@ describe('connector writes — an execution phrase in another conversation (live
 });
 
 describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', () => {
-  const POST_BARE = '승인된 Slack 게시는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"';
+  const POST_BARE = '승인된 Slack 게시(#dev)는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"';
   const BARE_FORMS = ['실행', '실행해', '실행해줘', '실행 해 주세요', '지금 실행', 'go', 'Go!', 'run it', 'run it now', 'execute'];
   const PHRASES = ['댓글 실행', '상태 변경 실행', 'Slack 게시 실행', '일정 추가 실행', '일정 변경 실행', '일정 삭제 실행'] as const;
   const askedForms = (phrase: string) => [`${phrase}해도 돼?`, `${phrase}할까?`, `${phrase}하지 마`, `${phrase} 안 해도 돼`];
@@ -1424,14 +1424,14 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     const comment = harness();
     await comment.send('PROJ-12에 댓글: 한 번만');
     await comment.send('승인');
-    expect((await comment.send('실행해줘')).reply.text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행'));
+    expect((await comment.send('실행해줘')).reply.text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
     expect(comment.totalWrites()).toBe(0);
 
     const calendar = harness();
     await calendar.send('내일 오후 3시에 회의 잡아줘 제목 주간 회의');
     await calendar.send('승인');
     const reply = await calendar.send('실행');
-    expect(reply.reply.text).toBe('승인된 캘린더 일정 추가는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 추가 실행"');
+    expect(reply.reply.text).toBe('승인된 캘린더 일정 추가(기본 캘린더)는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 추가 실행"');
     expect(calendar.recorded.at(-1)).toBe(CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE);
     expect(calendar.totalWrites()).toBe(0);
   });
@@ -1493,7 +1493,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect((await h.sendIn(GUILD, text)).reply.text, text).toBe(elsewhere);
     }
     // The existing veto on questions stays where the grant is: a reminder, never a send.
-    expect((await h.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행'));
+    expect((await h.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
     expect(h.totalWrites()).toBe(0);
     expect((await h.sendIn(DM, '댓글 실행')).reply.text).toContain('댓글을 달았어요');
     expect(h.writes.addComment).toHaveLength(1);
@@ -1619,15 +1619,74 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect(notSent.writes.addComment).toHaveLength(1);
     });
 
-    it('the unconfirmed warning lapses with the same lifetime as "already sent"; another conversation never sees it', async () => {
+    it('a2b8aed P2-1: the uncertain warning never expires (only "already sent" has the 30-minute window); other conversations never see it', async () => {
       const h = await uncertainComment({ priorActiveTaskId: 'task-prior' });
-      advanceMinutes(29);
-      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteRepeat('ISSUE_COMMENT', 'UNCERTAIN'));
-      advanceMinutes(1);
-      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+      for (const minutes of [29, 1, 120, 24 * 60]) {
+        advanceMinutes(minutes);
+        expect((await h.send('댓글 실행해도 돼?')).reply.text, `+${minutes}m`).toBe(UNCERTAIN_COMMENT);
+        expect((await h.send('실행')).reply.text, `+${minutes}m`).toBe(UNCERTAIN_COMMENT);
+      }
+      expect(h.writes.addComment).toHaveLength(1);
       const other = await uncertainComment();
       const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
       expect((await other.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    });
+
+    it('a2b8aed P2-1: only a LATER SENT write of that kind supersedes it (a later NOT_SENT does not; a stale later SENT is "nothing approved")', async () => {
+      let outcome: ConnectorWriteOutcome = connectorWriteUncertain('TRANSPORT');
+      const h = harness({ priorActiveTaskId: 'task-prior', commentOutcome: async () => outcome });
+      await h.send('PROJ-12에 댓글: 첫 번째');
+      await h.send('승인');
+      await h.send('댓글 실행');
+      advanceMinutes(1);
+      outcome = connectorWriteNotSent('FORBIDDEN');
+      await h.send('PROJ-12에 댓글: 두 번째');
+      await h.send('승인');
+      await h.send('댓글 실행');
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(UNCERTAIN_COMMENT);
+      advanceMinutes(1);
+      outcome = connectorWriteSent('10001', COMMENT_URL);
+      await h.send('PROJ-12에 댓글: 세 번째');
+      await h.send('승인');
+      await h.send('댓글 실행');
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toContain('이미 보냈어요');
+      advanceMinutes(45);
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+      expect(h.writes.addComment).toHaveLength(3);
+    });
+
+    it('a2b8aed P2-2: after an UNCERTAIN comment A, replies about a new comment B speak only about B — never "nothing was sent"', async () => {
+      let outcome: ConnectorWriteOutcome = connectorWriteUncertain('TRANSPORT');
+      const h = harness({ commentOutcome: async () => outcome });
+      await h.send('PROJ-12에 댓글: A');
+      await h.send('승인');
+      await h.send('댓글 실행');
+      outcome = connectorWriteSent('10002', COMMENT_URL);
+      const unscoped = /(?<!이 요청으로는 (?:아직 )?)아무것도 보내지 않았어요|아무것도 보내거나 바꾸지 않았어요/u;
+
+      const preview = await h.send('PROJ-13에 댓글: B');
+      expect(preview.reply.text).toContain('Jira 댓글 미리보기예요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
+      expect(preview.reply.text).not.toMatch(unscoped);
+      const pending = await h.send('댓글 실행해도 돼?');
+      expect(pending.reply.text).toContain('Jira 댓글 승인을 기다리고 있어요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
+      expect(pending.reply.text).not.toMatch(unscoped);
+      await h.send('승인');
+      const reminder = renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-13' });
+      expect(reminder).toBe('승인된 Jira 댓글(PROJ-13)은 아직 실행하지 않았어요. 실제로 보내려면 "댓글 실행"이라고만 보내 주세요.');
+      for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
+        const reply = await h.send(text);
+        expect(reply.reply.text, text).toBe(reminder);
+        expect(reply.reply.text, text).not.toMatch(unscoped);
+      }
+      expect((await h.send('실행')).reply.text).toBe(
+        '승인된 Jira 댓글(PROJ-13)은 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "댓글 실행"',
+      );
+      expect(h.writes.addComment).toHaveLength(1);
+      const denied = await h.send('거절');
+      expect(denied.reply.text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+      // B is closed; A is still the most recent dispatched write of that kind and stays unresolved.
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(UNCERTAIN_COMMENT);
+      expect(h.writes.addComment).toHaveLength(1);
     });
   });
 });

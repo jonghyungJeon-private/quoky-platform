@@ -51,6 +51,7 @@ import {
   type ConnectorWriteRelease,
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
+  connectorWriteTargetOf,
   isAnyConnectorWriteExecutionPhrase,
   connectorWriteOperationsOfPhrase,
   connectorWriteOperationsAskedAbout,
@@ -3431,6 +3432,7 @@ export class ConversationRuntime {
             message.context,
             anchor.operation,
             documentedExecutionPhrase(gate),
+            anchor.preview ? connectorWriteTargetOf(anchor.preview) : undefined,
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
@@ -3443,6 +3445,7 @@ export class ConversationRuntime {
             message.context,
             anchor.operation,
             documentedExecutionPhrase(gate),
+            anchor.preview ? connectorWriteTargetOf(anchor.preview) : undefined,
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
@@ -3489,9 +3492,10 @@ export class ConversationRuntime {
   /**
    * A connector-write step phrase (exact, or a question / negation about it) with no approved write of that kind in this
    * conversation. Runs nothing; the reply is, in order: where the actor's approved write of that kind waits in ANOTHER
-   * conversation (live QA cross-session); else this conversation's most recent write of that kind within the lifetime —
-   * SENT → already sent with its link (W5-L02), dispatched but unconfirmed (UNCERTAIN / still in flight) → the uncertain
-   * warning (it may have been sent; check the target; nothing is resent — Codex P2 on 039d5ff); else "nothing approved".
+   * conversation (live QA cross-session); else this conversation's most recent write of that kind — SENT within the
+   * lifetime → already sent with its link (W5-L02); dispatched but unconfirmed (UNCERTAIN / still in flight), at any age
+   * until a later write of that kind is SENT → the uncertain warning (it may have been sent; check the target; nothing is
+   * resent — Codex P2 on 039d5ff / a2b8aed); else "nothing approved".
    */
   private async respondStrayConnectorWritePhrase(
     message: InboundMessage,
@@ -3539,7 +3543,7 @@ export class ConversationRuntime {
     return newest?.kind === 'unconfirmed' ? this.respondRecentConnectorWrite(message, session, newest) : null;
   }
 
-  /** This conversation's most recent write of `operation` within the lifetime: SENT or dispatched-but-unconfirmed. */
+  /** This conversation's most recent write of `operation`: SENT (within the lifetime) or dispatched-but-unconfirmed (any age). */
   private async recentConnectorWriteInSession(
     flow: ConnectorWriteFlow,
     session: Session,

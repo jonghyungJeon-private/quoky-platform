@@ -395,9 +395,10 @@ export interface ConnectorWriteFlow {
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentSend | null>;
   /**
-   * Codex P2 on 039d5ff: a write of `operation` approved in THIS conversation that was dispatched but never confirmed —
-   * its receipt is UNCERTAIN, or still PREPARED (in flight / interrupted) — within the same lifetime as
-   * {@link recentSentInSession}; the newest, or null. It may have been sent, so no reply may say nothing was sent.
+   * Codex P2 on 039d5ff / a2b8aed: this conversation's most recent write of `operation` that may have been sent — its
+   * receipt is UNCERTAIN, or still PREPARED (in flight / interrupted) — unless a LATER write of that kind in this
+   * conversation is SENT; null otherwise. It never expires (an unresolved outcome stays unresolved; bounded only by the
+   * session and receipt retention), and a later NOT_SENT does not hide it. No reply may then say nothing was sent.
    */
   recentUnconfirmedInSession(
     session: Session,
@@ -671,7 +672,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     operation: ConnectorWriteOperation,
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentSend | null> {
-    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['SENT']);
+    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['SENT'], PENDING_APPROVAL_TTL_MS);
     if (!best) return null;
     const { receipt, preview } = best;
     return {
@@ -689,14 +690,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     operation: ConnectorWriteOperation,
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentUnconfirmed | null> {
-    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['UNCERTAIN', 'PREPARED']);
-    if (!best) return null;
+    // No age bound: only a later SENT write of the same kind supersedes an unresolved one.
+    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['SENT', 'UNCERTAIN', 'PREPARED'], null);
+    if (!best || best.receipt.status === 'SENT') return null;
     return { operation, status: best.receipt.status === 'UNCERTAIN' ? 'UNCERTAIN' : 'EXECUTING', at: best.receipt.updatedAt };
   }
 
   /**
    * The newest receipt in one of `statuses` for a write of `operation` whose approval was anchored in THIS conversation
-   * by `actorId`, changed within the ADR-0093 lifetime (`PENDING_APPROVAL_TTL_MS`, from the receipt). Read-only.
+   * by `actorId`, changed within `maxAgeMs` of `now` (null: any age). Read-only.
    */
   private async newestSessionReceipt(
     session: Session,
@@ -704,6 +706,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     operation: ConnectorWriteOperation,
     now: IsoTimestamp,
     statuses: readonly ConnectorWriteReceipt['status'][],
+    maxAgeMs: number | null,
   ): Promise<{ receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null> {
     // The anchors this conversation created (the session id and the approval id live in the anchor's JSON; the receipt
     // is keyed by the approval id), so no receipt column links a receipt to a conversation.
@@ -718,8 +721,10 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       if (anchor.operation !== operation || !anchor.approvalId || !anchor.consumedAt || !anchor.preview) continue;
       const receipt = await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`);
       if (!receipt || !statuses.includes(receipt.status) || receipt.actorId !== actorId || receipt.operation !== operation) continue;
-      const changedMs = Date.parse(receipt.updatedAt);
-      if (!Number.isFinite(changedMs) || !Number.isFinite(nowMs) || nowMs - changedMs >= PENDING_APPROVAL_TTL_MS) continue;
+      if (maxAgeMs !== null) {
+        const changedMs = Date.parse(receipt.updatedAt);
+        if (!Number.isFinite(changedMs) || !Number.isFinite(nowMs) || nowMs - changedMs >= maxAgeMs) continue;
+      }
       if (!best || receipt.updatedAt > best.receipt.updatedAt) best = { receipt, preview: anchor.preview };
     }
     return best;

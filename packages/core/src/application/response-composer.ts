@@ -46,6 +46,7 @@ import type {
   ConnectorWritePreview,
   ConnectorWriteRecentSend,
   ConnectorWriteStep,
+  ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
 import type { ConnectorWriteOperation } from '../ports';
 import { formatSafeErrorText } from './safe-error';
@@ -1200,8 +1201,9 @@ export class ResponseComposer {
     context: ConversationContext,
     operation: ConnectorWriteOperation,
     executionPhrase: string,
+    target?: ConnectorWriteTargetSummary,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase) };
+    return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase, target) };
   }
 
   /** A bare "실행" / "실행해줘" / "go" / "run it" while the write waits approved: nothing ran; quotes the exact phrase. */
@@ -1209,8 +1211,9 @@ export class ResponseComposer {
     context: ConversationContext,
     operation: ConnectorWriteOperation,
     executionPhrase: string,
+    target?: ConnectorWriteTargetSummary,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteBareExecution(operation, executionPhrase) };
+    return { context, text: renderConnectorWriteBareExecution(operation, executionPhrase, target) };
   }
 
   /** The execution phrase repeated after a write of that kind approved in this conversation was SENT recently (W5-L02). */
