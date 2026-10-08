@@ -211,7 +211,8 @@ function parseSenderHead(head: string, show: boolean): { from: string; today: bo
 export function parseMailQuestion(text: string): MailQuestion | null {
   if (typeof text !== 'string' || text.length > 300) return null;
   const normalized = normalizeMailText(text);
-  if (normalized.length === 0 || /\n/.test(normalized)) return null;
+  // Whitespace runs (line breaks included) are already one space here, so a line break needs no check of its own.
+  if (normalized.length === 0) return null;
   const language = languageOf(normalized);
 
   if (WRITE_KO.some((re) => re.test(normalized)) || WRITE_EN.test(normalized)) {

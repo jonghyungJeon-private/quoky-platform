@@ -163,7 +163,7 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
     );
   });
 
-  it('never claims a long or multi-line message and is total on odd input', () => {
+  it('never claims an over-long message; a line break counts as a space; total on empty and invisible-character input', () => {
     expect(parseMailQuestion(`안 읽은 메일${' '.repeat(400)}`)).toBeNull();
     expect(parseMailQuestion('안 읽은 메일\n보여줘')).not.toBeNull(); // whitespace runs collapse to one space
     expect(parseMailQuestion('')).toBeNull();
