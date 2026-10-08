@@ -12,6 +12,7 @@
   "dependencies": {
     "@quoky/core": "workspace:*",
     "@quoky/adapter-discord": "workspace:*",
+    "@quoky/adapter-telegram": "workspace:*",
     "@quoky/storage-sqlite": "workspace:*",
     "@quoky/queue-local": "workspace:*",
     "@quoky/vector-local": "workspace:*",

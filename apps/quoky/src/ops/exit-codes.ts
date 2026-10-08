@@ -1,3 +1,4 @@
+import { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import type { StartupFailureReport } from '../bootstrap-preflight';
 import { QuokyConfigErrorCode } from '../config';
 import { ContinuationReceiverActivationErrorCode } from '../continuation/continuation-receiver-activation';
@@ -30,6 +31,11 @@ const CONFIGURATION_FAILURES: ReadonlySet<string> = new Set<string>([
   BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED,
   InstanceLockErrorCode.INSTANCE_ALREADY_RUNNING,
   StartupIdentityErrorCode.DISCORD_IDENTITY_MISMATCH,
+  // ADR-0114 D4/D5: a wrong or rejected Telegram bot, or a second poller/webhook, needs the owner; an unverifiable
+  // identity (network) exits FAILURE and is retried.
+  TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH,
+  TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED,
+  TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT,
   ProviderRoutingActivationErrorCode.INVALID_MODE,
   ContinuationReceiverActivationErrorCode.INVALID_MODE,
   ContinuationReceiverActivationErrorCode.CONTAINMENT_UNAVAILABLE,

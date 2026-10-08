@@ -150,3 +150,47 @@ describe('ActorIdentityProvisioner', () => {
     expect(surface.sources.every((source) => source.status !== 'IDENTITY_MISSING')).toBe(true);
   });
 });
+
+describe('ActorIdentityProvisioner — ADR-0114 D3 platform identity links (Telegram owner → Discord owner Actor)', () => {
+  const TELEGRAM = '5550001';
+  const link = (telegramId: string, discordId: string) => ({
+    identity: { platform: 'telegram', externalId: telegramId },
+    owner: { platform: 'discord', externalId: discordId },
+  });
+  const linked = (repository: FakeActorRepository, links: ReturnType<typeof link>[]) =>
+    new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, [], new RecordingLogger(), links);
+
+  it('adds the Telegram identity to the existing Discord owner Actor, so both resolve to one Actor; idempotent', async () => {
+    const repository = new FakeActorRepository([actor('owner-actor', '111'), actor('other-actor', '222')]);
+    await linked(repository, [link(TELEGRAM, '111')]).provision();
+    const viaTelegram = await repository.findByExternalIdentity('telegram', TELEGRAM);
+    const viaDiscord = await repository.findByExternalIdentity('discord', '111');
+    expect(viaTelegram?.id).toBe('owner-actor');
+    expect(viaDiscord?.id).toBe('owner-actor');
+    expect(repository.values.size).toBe(2);
+    const saves = repository.saveCount;
+    await linked(repository, [link(TELEGRAM, '111')]).provision();
+    expect(repository.saveCount).toBe(saves);
+  });
+
+  it('a fresh install creates the one owner Actor with both identities (never a second Telegram Actor)', async () => {
+    const repository = new FakeActorRepository([]);
+    await linked(repository, [link(TELEGRAM, '111')]).provision();
+    expect(repository.values.size).toBe(1);
+    const [owner] = [...repository.values.values()];
+    expect(owner?.identities).toEqual([
+      { platform: 'discord', externalId: '111' },
+      { platform: 'telegram', externalId: TELEGRAM },
+    ]);
+    expect(owner?.displayName).toBe('111');
+  });
+
+  it('a Telegram identity held by ANOTHER Actor is a startup error, never a silent merge (no write)', async () => {
+    const repository = new FakeActorRepository([
+      actor('owner-actor', '111'),
+      { id: 'stray', displayName: 'stray', identities: [{ platform: 'telegram', externalId: TELEGRAM }], createdAt },
+    ]);
+    await expect(linked(repository, [link(TELEGRAM, '111')]).provision()).rejects.toThrow('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram');
+    expect(repository.saveCount).toBe(0);
+  });
+});
