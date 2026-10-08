@@ -215,6 +215,9 @@ const NOT_READ_REASON_TEXT: Readonly<Record<NotReadAttachmentReason, string>> = 
   TOO_MANY: 'it is past the per-message attachment limit',
   CREDENTIAL_SHAPED: 'it looked like it contains a secret, so its content was dropped',
   NOT_UTF8_TEXT: 'it is not valid UTF-8 text',
+  INVALID_IMAGE:
+    'it is a png, jpeg or webp image (a supported type) whose data is corrupt or malformed, so it could not be opened; ' +
+    'its type and size were not the reason, and a valid copy of the same image would be read',
   DOWNLOAD_FAILED: 'it could not be downloaded from the chat platform',
   CORE_RECHECK: "Core's own safety check refused its content",
 };

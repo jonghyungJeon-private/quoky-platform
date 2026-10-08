@@ -110,6 +110,7 @@ export type NotReadAttachmentReason =
   | 'TOO_MANY'
   | 'CREDENTIAL_SHAPED'
   | 'NOT_UTF8_TEXT'
+  | 'INVALID_IMAGE'
   | 'DOWNLOAD_FAILED'
   | 'CORE_RECHECK';
 

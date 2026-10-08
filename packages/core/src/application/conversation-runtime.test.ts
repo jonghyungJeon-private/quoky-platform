@@ -11346,6 +11346,20 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(prompt).toContain('if the User asks why, give exactly this reason and suggest nothing else.');
     expect(prompt).not.toContain('unsupported, too large or credential-like');
     expect(prompt).not.toContain('qa-notes.pdf');
+    // A supported image with corrupt data keeps its own reason: the fact says its type and size were not the cause.
+    const corrupt: InboundAttachment = {
+      kind: 'unsupported', name: 'chart.png', mimeType: 'image/png', sizeBytes: 2048, reason: 'INVALID_IMAGE',
+    };
+    const image = chatTurn('답변입니다.');
+    await image.runtime.handle(withAttachments('이 차트 설명해줘', [corrupt]));
+    const imagePrompt = image.requests[0]?.prompt ?? '';
+    expect(imagePrompt).toContain('a png, jpeg or webp image (a supported type) whose data is corrupt or malformed');
+    expect(imagePrompt).not.toContain('its file type is not supported');
+    const imageOnly = chatTurn();
+    const imageReply = (await imageOnly.runtime.handle(withAttachments('', [corrupt]))).reply.text;
+    expect(imageReply).toBe(renderAttachmentsNotRead('ko', ['INVALID_IMAGE']));
+    expect(imageReply).toContain('손상됐거나 형식이 올바르지 않아');
+    expect(imageOnly.requests).toHaveLength(0);
     // The attachment-only PDF (no text) is the fixed not-read reply with no provider (#138/#143), unchanged.
     const only = chatTurn();
     expect((await only.runtime.handle(withAttachments('', [pdf]))).reply.text).toBe(renderAttachmentsNotRead('ko'));
