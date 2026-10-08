@@ -484,6 +484,28 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(panelOf(view, 'feedback').notes[0]).toContain('일반 대화: 17% (👎 2/12) · 이전 40% (👎 4/10) · 개선');
   });
 
+  it('feedback: every row has its own label, never two "기타" rows (live QA D8)', async () => {
+    const view = await new OpsSnapshotBuilder(
+      fixture({
+        feedback: {
+          summarize: async () => ({
+            ...SUMMARY,
+            byCapability: [
+              { key: null, turns: 4, positive: 0, negative: 0, implicit: 0 },
+              { key: Capability.IMAGE_UNDERSTANDING, turns: 2, positive: 1, negative: 0, implicit: 0 },
+              { key: Capability.DOCUMENT_ANALYSIS, turns: 1, positive: 0, negative: 1, implicit: 0 },
+            ],
+          }),
+        },
+      }),
+    ).build();
+    expect((panelOf(view, 'feedback').table?.rows ?? []).map((row) => row[0])).toEqual([
+      '명령·바로 답한 대화',
+      '이미지 이해',
+      '문서 분석',
+    ]);
+  });
+
   it('backup: the SUB-2 status, file names only', async () => {
     const view = await new OpsSnapshotBuilder(fixture()).build();
     expect(field(view, 'backup', '정기 백업')).toBe('켜짐');

@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { Capability, FeedbackSignalKind, IntentType } from '../../domain';
 import type { FeedbackSummary } from '../../domain';
 import {
+  FEEDBACK_NO_WORK_LABEL,
   FEEDBACK_SUMMARY_EMPTY_TEXT,
   FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS,
   FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS,
   FEEDBACK_SUMMARY_UNAVAILABLE_TEXT,
   composeFeedbackSummaryText,
   feedbackCapabilityLabel,
+  feedbackCapabilityRowLabel,
+  feedbackIntentRowLabel,
   feedbackTrendLines,
   feedbackIntentLabel,
   feedbackRequestExcerpt,
@@ -43,7 +46,7 @@ describe('composeFeedbackSummaryText (ADR-0098 D6)', () => {
     expect(text).toContain('- 기록된 대화 4건 · 👍 2 · 👎 1 · 참고 신호 3');
     expect(text).toContain('기능별:');
     expect(text).toContain('- 일반 대화: 대화 3건 · 👍 2 · 👎 1 · 참고 신호 3');
-    expect(text).toContain('- 기타: 대화 1건');
+    expect(text).toContain(`- ${FEEDBACK_NO_WORK_LABEL}: 대화 1건`);
     expect(text).toContain('요청 유형별:');
     expect(text).not.toMatch(/GENERAL_CHAT|CHAT/u);
     expect(text).toContain('최근 👎 답변:');
@@ -65,6 +68,31 @@ describe('composeFeedbackSummaryText (ADR-0098 D6)', () => {
     expect(feedbackCapabilityLabel('toString')).toBe('기타');
     expect(feedbackIntentLabel(undefined)).toBe('기타');
     expect(feedbackIntentLabel('ollama-local')).toBe('기타');
+  });
+
+  it('every capability has its own label and no two breakdown rows read alike (live QA D8)', () => {
+    const labels = Object.values(Capability).map((key) => feedbackCapabilityLabel(key));
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).not.toContain('기타');
+    expect(labels).not.toContain(FEEDBACK_NO_WORK_LABEL);
+    expect(feedbackCapabilityLabel(Capability.IMAGE_UNDERSTANDING)).toBe('이미지 이해');
+    expect(feedbackCapabilityLabel(Capability.DOCUMENT_ANALYSIS)).toBe('문서 분석');
+    expect(feedbackCapabilityRowLabel(null)).toBe(FEEDBACK_NO_WORK_LABEL);
+    expect(feedbackIntentRowLabel(null)).toBe(FEEDBACK_NO_WORK_LABEL);
+    expect(feedbackIntentRowLabel(IntentType.ANALYZE_DOCUMENT)).toBe('문서 분석');
+    const intents = Object.values(IntentType).map((key) => feedbackIntentLabel(key));
+    expect(intents).not.toContain(FEEDBACK_NO_WORK_LABEL);
+    const text = composeFeedbackSummaryText(
+      summary({
+        byCapability: [
+          { key: null, turns: 3, positive: 0, negative: 0, implicit: 0 },
+          { key: Capability.IMAGE_UNDERSTANDING, turns: 1, positive: 0, negative: 0, implicit: 0 },
+        ],
+      }),
+    );
+    expect(text).toContain(`- ${FEEDBACK_NO_WORK_LABEL}: 대화 3건`);
+    expect(text).toContain('- 이미지 이해: 대화 1건');
+    expect(text).not.toContain('- 기타:');
   });
 
   it('a retraction is neither positive nor negative', () => {
@@ -128,7 +156,7 @@ describe('feedbackTrendLines (ADR-0107 D3 trend line)', () => {
       '👎 비율 추이(최근 30일 · 이전 30일):',
       '- 일반 대화: 10% (👎 2/20) · 이전 20% (👎 2/10) · 개선',
       '- 요약: 50% (👎 2/4) · 이전 25% (👎 1/4) · 악화',
-      '- 기타: 0% (👎 0/3) · 이전 - · 비교 불가',
+      '- 명령·바로 답한 대화: 0% (👎 0/3) · 이전 - · 비교 불가',
       '- 코드 리뷰: - · 이전 50% (👎 1/2) · 비교 불가',
     ]);
   });

@@ -3,7 +3,7 @@ import {
   Capability,
   FeedbackSignalKind,
   ReminderStatus,
-  feedbackCapabilityLabel,
+  feedbackCapabilityRowLabel,
   feedbackTrendLines,
   learningTextHasCredential,
   reminderRepeatLabel,
@@ -493,7 +493,7 @@ export class OpsSnapshotBuilder {
         rows: summary.byCapability
           .slice(0, OPS_MAX_TABLE_ROWS)
           .map((row) => [
-            feedbackCapabilityLabel(row.key),
+            feedbackCapabilityRowLabel(row.key),
             String(row.turns),
             String(row.positive),
             String(row.negative),
