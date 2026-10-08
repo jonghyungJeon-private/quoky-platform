@@ -431,6 +431,17 @@ describe('ApprovalDecisionService — chat and the operations UI share one decis
     expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.REJECTED);
   });
 
+  it('the list resolution names each pending approval with the same kind locate gives (live QA D7)', async () => {
+    const commit = await fixture();
+    const kinds = await commit.service.pendingGateKindsForOpsUi(sessionsOf(commit));
+    expect([...kinds]).toEqual([[commit.approvalId, 'COMMIT']]);
+    const located = await commit.service.locateForOpsUi(commit.approvalId, OWNER, sessionsOf(commit));
+    expect(located.status === 'FOUND' && located.view.kind).toBe(kinds.get(commit.approvalId));
+    const plan = await fixture({ kind: 'plan' });
+    expect([...(await plan.service.pendingGateKindsForOpsUi(sessionsOf(plan)))]).toEqual([[plan.approvalId, 'PLAN']]);
+    expect(commit.decides).toBe(0);
+  });
+
   it('locate shows metadata only and refuses an unknown id', async () => {
     const f = await fixture();
     const located = await f.service.locateForOpsUi(f.approvalId, OWNER, sessionsOf(f));

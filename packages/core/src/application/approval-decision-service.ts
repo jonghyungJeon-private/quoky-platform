@@ -1437,6 +1437,22 @@ export class ApprovalDecisionService {
 
   // ── the operations-UI surface ───────────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * The decision kind of every UI-decidable pending approval an ACTIVE conversation in `sessions` holds, keyed by
+   * approval id — the same resolution {@link locateForOpsUi} uses, so the UI list and its confirmation page name the
+   * same kind (live QA D7). One lookup per conversation; nothing is decided.
+   */
+  async pendingGateKindsForOpsUi(sessions: () => Promise<readonly Session[]>): Promise<ReadonlyMap<Id, ApprovalGateKind>> {
+    const kinds = new Map<Id, ApprovalGateKind>();
+    for (const session of await sessions()) {
+      if (session.status !== SessionStatus.ACTIVE) continue;
+      const lookup = await this.findPending(session);
+      const kind = approvalGateKindOf(lookup);
+      if (lookup.pending && kind !== null) kinds.set(lookup.pending.id, kind);
+    }
+    return kinds;
+  }
+
   /** Read-only: the metadata the UI's confirmation page shows for a pending approval (never a payload or reference). */
   async locateForOpsUi(approvalId: Id, actor: Actor, sessions: () => Promise<readonly Session[]>): Promise<ApprovalSurfaceLocate> {
     const found = await this.locate(approvalId, sessions);

@@ -6,6 +6,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AiProviderManager,
+  CHANNEL_MESSAGE_WRITER,
+  ISSUE_COMMENT_WRITER,
   ApprovalStatus,
   CONNECTOR_PROVIDERS,
   Capability,
@@ -314,6 +316,26 @@ describe('OPS-1 wiring (ADR-0113 D1/D8)', () => {
     const sources = opsSnapshotSources(claude, new OpsErrorRing());
     expect(sources.imageUnderstanding).toEqual({ selection: 'claude', locality: 'REMOTE' });
     expect(JSON.stringify(sources.imageUnderstanding)).not.toContain('MODEL_NAME_MARKER');
+  });
+
+  it('reports the effective connector-write state from the bound writers and the allow-list sizes (live QA D6)', () => {
+    const base = input(fakes().container, {});
+    expect(opsSnapshotSources(base, new OpsErrorRing()).connectorWrites).toBeUndefined();
+    const config = {
+      ...base.config,
+      connectorWrites: { jiraProjects: ['PROJ', 'OPS'], slack: { token: 'unused', channels: [{ id: 'C0DEV', name: 'dev' }] } },
+    };
+    const off = opsSnapshotSources(input(fakes().container, {}, { config }), new OpsErrorRing());
+    expect(off.connectorWrites).toEqual({ jira: { enabled: false }, slack: { enabled: false } });
+    const on = opsSnapshotSources(
+      input(fakes({ extra: [[ISSUE_COMMENT_WRITER, {}], [CHANNEL_MESSAGE_WRITER, {}]] }).container, {}, { config }),
+      new OpsErrorRing(),
+    );
+    expect(on.connectorWrites).toEqual({
+      jira: { enabled: true, allowListCount: 2, allowListUnit: '프로젝트' },
+      slack: { enabled: true, allowListCount: 1, allowListUnit: '채널' },
+    });
+    expect(JSON.stringify(on.connectorWrites)).not.toContain('PROJ');
   });
 
   it('counts archived memories by their flag, asking the store for the archive', async () => {

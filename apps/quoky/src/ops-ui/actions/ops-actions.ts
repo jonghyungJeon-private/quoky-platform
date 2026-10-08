@@ -28,6 +28,7 @@ import type {
   Session,
 } from '@quoky/core';
 
+import { APPROVAL_KIND_LABEL } from '../approval-kind-label';
 import type {
   OpsActionOutcome,
   OpsActions,
@@ -130,17 +131,6 @@ function forgetOutcome(outcome: MemoryCommandOutcome, archiveDays: number | unde
   }
 }
 
-const APPROVAL_KIND_LABEL: Readonly<Record<ApprovalGateKind, string>> = {
-  PLAN: '코드 변경 계획',
-  CREDENTIAL_OVERRIDE: '비밀값 검사 예외 (1회)',
-  CONNECTOR_WRITE: '커넥터 쓰기',
-  APPLY: '파일 적용',
-  COMMIT: '커밋',
-  PUSH: '푸시',
-  PR: 'PR 생성',
-  MERGE: 'PR 머지',
-  REMOTE_BRANCH_CLEANUP: '원격 브랜치 삭제',
-};
 
 const APPROVAL_REFUSALS: Readonly<Record<ApprovalSurfaceRefusal, OpsActionOutcome>> = {
   NOT_FOUND: { code: 'NOT_FOUND', message: '대기 중인 그 승인 요청을 찾지 못했어요. 이미 처리됐거나 만료됐을 수 있어요.', ok: false },
