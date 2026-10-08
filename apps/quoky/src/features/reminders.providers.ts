@@ -1,6 +1,8 @@
 import type { Provider } from '@nestjs/common';
 import type { DiscordConfig } from '@quoky/adapter-discord';
 import {
+  CALENDAR_READER,
+  CONNECTOR_PROVIDERS,
   NOTIFICATION_SINK,
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
@@ -9,6 +11,8 @@ import {
   ReminderDispatchService,
   ReminderReplyComposer,
   ReminderTurnHandler,
+  type CalendarReader,
+  type ConnectorProvider,
   type ConversationTurnHandler,
   type IsoTimestamp,
   type Logger,
@@ -20,6 +24,7 @@ import {
 } from '@quoky/core';
 import { loadConfig } from '../config';
 import { ConsoleLogger } from '../console-logger';
+import { createBriefSources, type BriefActorStorageSeam } from '../reminders/brief-sources';
 import type { ReminderConfig } from '../reminders/reminder-config';
 import { ReminderTickDriver, type ReminderTickTimers } from '../reminders/reminder-tick-driver';
 import { REMINDER_TURN_HANDLERS } from './feature-tokens';
@@ -38,8 +43,10 @@ import { REMINDER_TURN_HANDLERS } from './feature-tokens';
  *   `QUOKY_REMINDERS_ENABLED=false` it still answers a reminder phrase with the fixed disabled reply and the tick
  *   driver never starts.
  *
- * The dispatch service's whole surface is repository + sink + composer + a read-only WorkItem lister + logger:
- * no provider, connector or tool reaches reminders.
+ * The dispatch service's whole surface is repository + sink + composer + a read-only WorkItem lister + logger, and
+ * — for the brief only (ADR-0117, BRF-1) — the read-only `CALENDAR_READER` when the calendar is configured and the
+ * read-only Jira connector only with `QUOKY_BRIEF_JIRA_ENABLED=true` (`reminders/brief-sources.ts`). Both are
+ * optional injections of existing bindings; no new token. No provider or tool reaches reminders.
  */
 
 /**
@@ -148,16 +155,28 @@ export function createRemindersProviders(
     {
       provide: ReminderDispatchService,
       useFactory: (
+        config: ReminderConfig,
         storage: StorageProvider,
         repository: ReminderRepository,
         sink: NotificationSink,
         composer: ReminderReplyComposer,
+        calendar: CalendarReader | undefined,
+        connectors: readonly ConnectorProvider[] | undefined,
       ) => {
         const seam = storage as StorageProvider & ReminderStorageSeam;
+        const briefSources = createBriefSources({
+          calendar,
+          connectors,
+          briefJiraEnabled: config.briefJiraEnabled === true,
+          // The live storage seam: `actors` is dereferenced at call time, after init() (QA-001).
+          storage: storage as StorageProvider & BriefActorStorageSeam,
+          logger,
+        });
         return new ReminderDispatchService({
           repository,
           sink,
           composer,
+          ...(briefSources !== undefined ? { briefSources } : {}),
           // Read-only, call-time WorkItem identities for the local daily brief (QA-001).
           workItems: {
             listByActor: (actorId) => {
@@ -169,7 +188,16 @@ export function createRemindersProviders(
           logger,
         });
       },
-      inject: [STORAGE_PROVIDER, REMINDER_REPOSITORY, NOTIFICATION_SINK, ReminderReplyComposer],
+      inject: [
+        REMINDER_FEATURE_CONFIG,
+        STORAGE_PROVIDER,
+        REMINDER_REPOSITORY,
+        NOTIFICATION_SINK,
+        ReminderReplyComposer,
+        // ADR-0117: bound only when the calendar is configured / always bound in the app, optional for test modules.
+        { token: CALENDAR_READER, optional: true },
+        { token: CONNECTOR_PROVIDERS, optional: true },
+      ],
     },
     {
       provide: ReminderTickDriver,

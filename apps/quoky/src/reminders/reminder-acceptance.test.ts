@@ -2,11 +2,13 @@ import 'reflect-metadata';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Module } from '@nestjs/common';
+import { Module, type Provider } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
   ApprovalStatus,
+  CALENDAR_READER,
+  CONNECTOR_PROVIDERS,
   Capability,
   ContextBuilder,
   ExecutionOutcomeStatus,
@@ -26,6 +28,11 @@ import {
   TaskRunStatus,
   TaskStatus,
   type AiRequest,
+  type CalendarEvent,
+  type CalendarEventQuery,
+  type CalendarReader,
+  type ConnectorProvider,
+  type ConnectorQuery,
   type ApprovalRequest,
   type ConversationContext,
   type ConversationTurnHandler,
@@ -306,14 +313,17 @@ async function compose(
   logger: RecordingLogger,
   config: Partial<ReminderConfig> = {},
   platform: FakePlatform = new FakePlatform(),
+  /** ADR-0117 (BRF-1): the app's existing `CALENDAR_READER` / `CONNECTOR_PROVIDERS` bindings, when a case needs them. */
+  extraProviders: Provider[] = [],
 ): Promise<Composition> {
   const storage = new SqliteStorageProvider({ dbPath });
   const timers = new ManualTimers();
-  const reminderConfig: ReminderConfig = { enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul', ...config };
+  const reminderConfig: ReminderConfig = { enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul', briefJiraEnabled: false, ...config };
   @Module({
     providers: [
       { provide: STORAGE_PROVIDER, useValue: storage },
       { provide: PLATFORM_ADAPTER, useValue: platform },
+      ...extraProviders,
       ...createRemindersProviders(() => reminderConfig, { clock: clock.now, timers, logger }),
     ],
   })
@@ -360,13 +370,17 @@ describe('reminders offline acceptance — composition', () => {
     expect(shutdown.indexOf('reminderDriver.stop()')).toBeLessThan(shutdown.indexOf('storage.close()'));
   });
 
-  it('registers exactly one pre-classify handler (order 200) and wires dispatch without provider/connector/tool deps', async () => {
+  it('registers exactly one pre-classify handler (order 200) and wires dispatch without provider/tool deps', async () => {
     const c = await compose(tempDbPath(), new TestClock(), new RecordingLogger());
     expect(c.handlers.map((h) => [h.id, h.stage, h.order])).toEqual([['reminders', 'pre-classify', 200]]);
     const source = readFileSync(new URL('../features/reminders.providers.ts', import.meta.url), 'utf8');
-    for (const forbidden of ['AI_PROVIDERS', 'CONNECTOR_PROVIDERS', 'TOOL_PROVIDERS', 'AiProviderManager', 'ConnectorManager', 'ConversationRuntime']) {
+    // ADR-0117 (BRF-1) amends ADR-0101 for the brief only: the read-only CALENDAR_READER and CONNECTOR_PROVIDERS
+    // bindings are optional injections that reach the dispatch only through `briefSources` (see the BRF-1 cases).
+    for (const forbidden of ['AI_PROVIDERS', 'TOOL_PROVIDERS', 'AiProviderManager', 'ConnectorManager', 'ConversationRuntime']) {
       expect(source).not.toContain(forbidden);
     }
+    expect(source).toContain('{ token: CALENDAR_READER, optional: true }');
+    expect(source).toContain('{ token: CONNECTOR_PROVIDERS, optional: true }');
   });
 });
 
@@ -669,5 +683,108 @@ describe('reminders offline acceptance — disabled flag', () => {
     await chat.say('타입스크립트 제네릭 설명해줘');
     expect(chat.providerCalls()).toBeGreaterThan(0);
     expect(c.platform.deliveries).toHaveLength(0);
+  });
+});
+
+describe('reminders offline acceptance — morning brief sources (ADR-0117, BRF-1)', () => {
+  class FakeCalendar implements CalendarReader {
+    readonly source = 'calendar';
+    readonly readOnly = true as const;
+    readonly queries: CalendarEventQuery[] = [];
+    constructor(private readonly events: readonly CalendarEvent[] | 'fail') {}
+    async listEvents(query: CalendarEventQuery): Promise<readonly CalendarEvent[]> {
+      this.queries.push(query);
+      if (this.events === 'fail') throw new Error('calendar down');
+      return this.events;
+    }
+  }
+
+  class FakeJira implements ConnectorProvider {
+    readonly source = 'jira';
+    readonly readOnly = true;
+    readonly queries: ConnectorQuery[] = [];
+    async isAvailable(): Promise<boolean> { return true; }
+    async query(query: ConnectorQuery) {
+      this.queries.push(query);
+      return {
+        source: 'jira',
+        items: [
+          { id: 'OPS-7', title: '배포 체크리스트', dueDate: '2026-10-02', updatedAt: '2026-09-20T00:00:00.000Z' },
+          { id: 'OPS-9', title: '지난주 이슈', dueDate: '2026-09-25', updatedAt: '2026-09-25T00:00:00.000Z' },
+        ],
+      };
+    }
+  }
+
+  const standup: CalendarEvent = {
+    id: 'e1', title: '팀 스탠드업', start: '2026-10-02T00:30:00.000Z', end: '2026-10-02T01:00:00.000Z',
+    allDay: false, status: 'confirmed', calendarName: 'primary', location: '3층 회의실',
+  };
+
+  async function briefWith(extraProviders: Provider[], config: Partial<ReminderConfig> = {}) {
+    const clock = new TestClock();
+    const logger = new RecordingLogger();
+    const c = await compose(tempDbPath(), clock, logger, config, new FakePlatform(), extraProviders);
+    const chat = conversationRuntime(c.handlers, clock);
+    await c.driver.start();
+    await chat.say('매일 오후 1시에 오늘 할 일 알려줘');
+    clock.advance(1 * HOUR);
+    await tick(c);
+    expect(c.platform.deliveries).toHaveLength(1);
+    expect(c.platform.deliveries[0]?.kind).toBe('BRIEF');
+    expect(chat.providerCalls()).toBe(0);
+    return { c, logger, text: c.platform.deliveries[0]?.text ?? '' };
+  }
+
+  it('without a calendar and with the Jira flag off, the brief stays local-only and no connector is read', async () => {
+    const jira = new FakeJira();
+    const { text } = await briefWith([{ provide: CONNECTOR_PROVIDERS, useValue: [jira] }]);
+    expect(text).not.toContain('오늘 일정');
+    expect(text).not.toContain('담당 이슈');
+    expect(text.split('\n')[2]).toBe('오늘 남은 알림이 없어요.');
+    expect(jira.queries).toHaveLength(0);
+  });
+
+  it("reads today's window once through CALENDAR_READER and lists titles and times only", async () => {
+    const calendar = new FakeCalendar([standup]);
+    const { text, logger } = await briefWith([{ provide: CALENDAR_READER, useValue: calendar }]);
+    expect(calendar.queries).toEqual([{ from: '2026-10-01T15:00:00.000Z', to: '2026-10-02T15:00:00.000Z', limit: 50 }]);
+    expect(text).toContain('오늘 일정 1건\n- 09:30–10:00 팀 스탠드업');
+    expect(text).not.toContain('3층 회의실');
+    // Logs carry counts and failure classes only, never an event title.
+    expect(logger.lines.join('\n')).not.toContain('팀 스탠드업');
+  });
+
+  it('an unreadable calendar is reported, never shown as an empty day', async () => {
+    const { text } = await briefWith([{ provide: CALENDAR_READER, useValue: new FakeCalendar('fail') }]);
+    expect(text).toContain('오늘 일정: 불러오지 못했어요.');
+    expect(text).not.toContain('오늘 일정이 없어요');
+  });
+
+  it("with QUOKY_BRIEF_JIRA_ENABLED=true, adds the owner's Jira items due or updated today through the named query", async () => {
+    const jira = new FakeJira();
+    const clock = new TestClock();
+    const c = await compose(tempDbPath(), clock, new RecordingLogger(), { briefJiraEnabled: true }, new FakePlatform(), [
+      { provide: CONNECTOR_PROVIDERS, useValue: [jira] },
+    ]);
+    await c.storage.actors.save({
+      id: ACTOR_ID,
+      displayName: 'Owner',
+      identities: [{ platform: 'discord', externalId: OWNER_ID }, { platform: 'jira', externalId: 'owner-jira-account' }],
+      createdAt: clock.now(),
+    });
+    const chat = conversationRuntime(c.handlers, clock);
+    await c.driver.start();
+    await chat.say('매일 오후 1시에 오늘 할 일 알려줘');
+    clock.advance(1 * HOUR);
+    await tick(c);
+    const text = c.platform.deliveries[0]?.text ?? '';
+    expect(text).toContain('오늘 마감·업데이트된 담당 이슈 1건\n- OPS-7 배포 체크리스트');
+    expect(text).not.toContain('OPS-9');
+    expect(text).not.toContain('오늘 일정');
+    expect(jira.queries.map((q) => q.query)).toEqual(['personal-work', 'personal-work']);
+    expect(jira.queries.map((q) => (q.params as { filter: string }).filter).sort()).toEqual(['all', 'due-this-week']);
+    expect(jira.queries.every((q) => (q.params as { actorExternalId: string }).actorExternalId === 'owner-jira-account')).toBe(true);
+    expect(chat.providerCalls()).toBe(0);
   });
 });

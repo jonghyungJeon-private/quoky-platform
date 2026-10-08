@@ -16,6 +16,7 @@ import type { ReminderRepository } from '../../ports/reminder-repository.port';
 import { newId } from '../../util/id';
 import { messageFields } from '../message-rendering';
 import { decideMissedOccurrence, nextOccurrenceAfter } from './reminder-schedule';
+import type { DailyBriefSources } from './daily-brief-sources';
 import type { ReminderReplyComposer } from './reminder-reply-composer';
 
 /**
@@ -29,8 +30,10 @@ import type { ReminderReplyComposer } from './reminder-reply-composer';
  *   minutes, otherwise `SKIPPED_MISSED` (nothing is sent).
  *
  * The constructor deps are the whole reachable surface: a repository, the owner sink, the composer, a read-only
- * WorkItem lister for the local brief, and a logger. There is no provider, connector, tool, Task, WorkItem write
- * or runtime dependency, so none can be called. The only side effects are repository writes and `sink.deliver`.
+ * WorkItem lister for the local brief, a logger and — only when configured — the brief's read-only sources
+ * (ADR-0117: today's calendar and the opt-in assigned work, `DailyBriefSources`, read for a BRIEF only). There is no
+ * provider, tool, Task, WorkItem write or runtime dependency, so none can be called. The only side effects are
+ * repository writes and `sink.deliver`.
  */
 
 export interface ReminderDispatchDeps {
@@ -40,6 +43,11 @@ export interface ReminderDispatchDeps {
   /** Local, read-only WorkItem identities for the daily brief. */
   readonly workItems: { listByActor(actorId: Id): Promise<readonly WorkItem[]> };
   readonly logger: Logger;
+  /**
+   * ADR-0117 (BRF-1): the brief's bounded calendar / assigned-work reads. Absent: no calendar and no opted-in work
+   * source, and the brief is the local-only brief, byte for byte.
+   */
+  readonly briefSources?: Pick<DailyBriefSources, 'read'>;
   /** Firing-attempt id source; defaults to the shared `newId`. */
   readonly idGenerator?: () => Id;
 }
@@ -270,9 +278,13 @@ export class ReminderDispatchService {
         deliveredAt: now,
       });
     }
-    // BRIEF: local reads only. A failed read degrades the brief instead of blocking the owner's reminder.
-    const reminders = await this.readOrNull(() => this.deps.repository.listActiveByActor(reminder.actorId));
-    const workItems = await this.readOrNull(() => this.deps.workItems.listByActor(reminder.actorId));
+    // BRIEF: local reads, plus the configured read-only sources (ADR-0117), concurrently. A failed read degrades the
+    // brief instead of blocking the owner's reminder; the sources bound their own read time and never throw.
+    const [reminders, workItems, sources] = await Promise.all([
+      this.readOrNull(() => this.deps.repository.listActiveByActor(reminder.actorId)),
+      this.readOrNull(() => this.deps.workItems.listByActor(reminder.actorId)),
+      this.deps.briefSources?.read({ actorId: reminder.actorId, now, timeZone: reminder.timeZone }),
+    ]);
     return this.deps.composer.brief({
       now,
       timeZone: reminder.timeZone,
@@ -280,6 +292,7 @@ export class ReminderDispatchService {
       workItems,
       occurrenceAt,
       late,
+      ...(sources ?? {}),
     });
   }
 

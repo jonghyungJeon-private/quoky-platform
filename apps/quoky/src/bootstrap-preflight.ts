@@ -106,6 +106,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_REMINDERS_CHANNEL_DELIVERY must be unset, "true", or "false".',
   [QuokyConfigErrorCode.TIMEZONE_INVALID]:
     'QUOKY_TIMEZONE must be unset or an IANA time zone such as "Asia/Seoul".',
+  [QuokyConfigErrorCode.BRIEF_JIRA_ENABLED_INVALID]: 'QUOKY_BRIEF_JIRA_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID]:
     'QUOKY_CONTEXT_MAX_TOKENS must be unset or a positive integer (at most 200000).',
   [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_INVALID]:

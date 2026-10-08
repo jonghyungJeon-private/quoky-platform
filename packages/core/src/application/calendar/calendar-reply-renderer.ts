@@ -126,9 +126,15 @@ function titleOf(event: CalendarEvent, language: CalendarLanguage): MessagePart 
   return untrusted(event.title, CALENDAR_TITLE_DISPLAY_MAX_CHARS) ?? (language === 'en' ? '(no title)' : '(제목 없음)');
 }
 
-/** One event without the list marker: "09:00–10:00 팀 회의 · 회의실 A (미정)". */
-function eventText(placed: PlacedEvent, day: LocalDate, timeZone: string, language: CalendarLanguage): MessageBody {
-  const location = untrusted(placed.event.location, CALENDAR_LOCATION_DISPLAY_MAX_CHARS);
+/** One event without the list marker: "09:00–10:00 팀 회의 · 회의실 A (미정)" (the brief leaves the location out). */
+function eventText(
+  placed: PlacedEvent,
+  day: LocalDate,
+  timeZone: string,
+  language: CalendarLanguage,
+  withLocation = true,
+): MessageBody {
+  const location = withLocation ? untrusted(placed.event.location, CALENDAR_LOCATION_DISPLAY_MAX_CHARS) : undefined;
   const tentative = placed.event.status === 'tentative' ? (language === 'en' ? ' (tentative)' : ' (미정)') : '';
   return messageBody(`${whenLabel(placed, day, timeZone, language)} `, titleOf(placed.event, language), location ? messageContent(' · ', location) : '', tentative);
 }
@@ -218,8 +224,11 @@ export interface CalendarRenderOptions {
 }
 
 function placedInWindow(window: CalendarWindow, events: readonly CalendarEvent[], timeZone: string): PlacedEvent[] {
-  const first = window.startDate;
-  const last = addLocalDays(first, window.days - 1);
+  return placedOnDates(window.startDate, addLocalDays(window.startDate, window.days - 1), events, timeZone);
+}
+
+/** The events overlapping the local dates `[first, last]`, all-day events first, then timed events by start. */
+function placedOnDates(first: LocalDate, last: LocalDate, events: readonly CalendarEvent[], timeZone: string): PlacedEvent[] {
   return events
     .map((event) => place(event, timeZone))
     .filter((entry): entry is PlacedEvent => entry !== undefined)
@@ -253,6 +262,23 @@ export function calendarListedEventIds(
     ? [nextEventOf(events, options)].filter((entry): entry is PlacedEvent => entry !== undefined)
     : placedInWindow(window, events, options.timeZone).slice(0, CALENDAR_REPLY_MAX_EVENTS);
   return shown.map((entry) => entry.event.id).filter((id) => typeof id === 'string' && id.length > 0);
+}
+
+/**
+ * The events of one local day as list lines, in the calendar list order (all-day first, then timed by start), for the
+ * morning brief (ADR-0117 D1, BRF-1): "- 종일 휴가", "- 09:00–10:00 팀 회의", "- 10월 7일 22:00–02:00 야간 작업" for an
+ * event that started earlier, "- 종일 (10월 7일–10월 9일) 출장" for a multi-day one. Titles and times only (no
+ * location); a title is the same guarded untrusted span as in a schedule reply (credential-shaped → "(제목 숨김)").
+ */
+export function calendarDayEventLines(
+  day: LocalDate,
+  events: readonly CalendarEvent[],
+  timeZone: string,
+  language: CalendarLanguage = 'ko',
+): MessageBody[] {
+  return placedOnDates(day, day, events, timeZone).map((placed) =>
+    messageBody('- ', eventText(placed, day, timeZone, language, false)),
+  );
 }
 
 /** The answer to a day, week or weekend question. */

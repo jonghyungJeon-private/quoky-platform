@@ -9,7 +9,8 @@ import {
   type MessageBody,
 } from '../../domain';
 import { withObjectParticle, withTopicParticle } from '../korean-particle';
-import { composeDailyBrief, formatKoreanClock } from './daily-brief';
+import { composeDailyBrief, formatKoreanClock, type DailyBriefCalendar } from './daily-brief';
+import type { ConnectorItem } from '../../ports/connector-provider.port';
 import type { ReminderClarifyReason } from './reminder-grammar';
 import { toZonedDateTime } from './zoned-time';
 
@@ -132,6 +133,10 @@ export interface ReminderBriefTextInput {
   readonly workItems: readonly WorkItem[] | null;
   readonly occurrenceAt?: IsoTimestamp;
   readonly late?: boolean;
+  /** ADR-0117 D1: omitted = no calendar configured (no section); `null` = could not be read. */
+  readonly calendar?: DailyBriefCalendar | null;
+  /** ADR-0117 D2: omitted = the section is off; `null` = could not be read. */
+  readonly assignedWork?: readonly ConnectorItem[] | null;
 }
 
 export class ReminderReplyComposer {
