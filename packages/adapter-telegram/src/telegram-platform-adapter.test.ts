@@ -319,6 +319,39 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
       },
     },
     {
+      // Codex final delta P2-1: getMe's answer arrives (ignoring the abort) only after stop() was called.
+      name: 'stopped during the startup getMe',
+      reach: async () => {
+        let answer: () => void = () => undefined;
+        const fake = new FakeTelegram().queue('getMe', { until: new Promise((resolve) => (answer = () => resolve(undefined))), reply: okReply({ id: Number(FAKE_BOT_ID), is_bot: true }) });
+        const h = harness(fake, { offsetStore: store() });
+        const starting = h.adapter.start();
+        await until(() => fake.callsTo('getMe').length === 1);
+        const stopping = h.adapter.stop();
+        answer();
+        await stopping;
+        await starting;
+        if (fake.callsTo('getUpdates').length !== 0) throw new Error('a getUpdates call after stop');
+        return h;
+      },
+    },
+    {
+      name: 'stopped during the startup probe',
+      reach: async () => {
+        let answer: () => void = () => undefined;
+        const fake = new FakeTelegram().queue('getUpdates:instant', { until: new Promise((resolve) => (answer = () => resolve(undefined))), reply: okReply([]) });
+        const h = harness(fake, { offsetStore: store() });
+        const starting = h.adapter.start();
+        await until(() => fake.callsTo('getUpdates').length === 1);
+        const stopping = h.adapter.stop();
+        answer();
+        await stopping;
+        await starting;
+        if (fake.callsTo('getUpdates').length !== 1 || h.adapter.status().identityVerified) throw new Error('acted on the probe after stop');
+        return h;
+      },
+    },
+    {
       name: 'after a restart whose new getMe hangs',
       reach: async () => {
         const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(600, 'x')]));
@@ -342,6 +375,27 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
     await flush();
     expect(fake.calls.slice(before).map((call) => call.method)).toEqual([]);
     await adapter.stop();
+  });
+
+  it.each([
+    ['getMe', 'getMe'],
+    ['the probe', 'getUpdates:instant'],
+  ])('Codex final delta P2-1: stop() during the startup %s: no later Bot API call, no polling, start() settles quietly', async (_label, key) => {
+    let answer: () => void = () => undefined;
+    const late = key === 'getMe' ? okReply({ id: Number(FAKE_BOT_ID), is_bot: true }) : okReply([]);
+    const fake = new FakeTelegram().queue(key, { until: new Promise((resolve) => (answer = () => resolve(undefined))), reply: late });
+    const h = harness(fake, { offsetStore: store() });
+    const starting = h.adapter.start();
+    await until(() => fake.calls.length === (key === 'getMe' ? 1 : 2));
+    const callsAtStop = fake.calls.length;
+    const stopping = h.adapter.stop();
+    answer();
+    await stopping;
+    await expect(starting).resolves.toBeUndefined();
+    await flush(20);
+    expect(fake.calls.slice(callsAtStop)).toEqual([]);
+    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false });
+    expect(h.adapter.status().halted).toBeUndefined();
   });
 
   it.each([

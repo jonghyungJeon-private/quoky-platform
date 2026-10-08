@@ -27,7 +27,9 @@ export type Reply =
   | { readonly status?: number; readonly json: unknown }
   | { readonly throws: Error }
   /** Never answers until the request is aborted (a pending long poll). */
-  | { readonly hang: true };
+  | { readonly hang: true }
+  /** Answers with `reply` once `until` resolves, IGNORING any abort (a response already on its way). */
+  | { readonly until: Promise<unknown>; readonly reply: Reply };
 
 export function okReply(result: unknown): Reply {
   return { json: { ok: true, result } };
@@ -66,7 +68,11 @@ export class FakeTelegram {
     this.calls.push({ url, method, params, ...(form ? { form } : {}), init });
     const key = method === 'getUpdates' && params.timeout === 0 ? 'getUpdates:instant' : method;
     const queued = this.queues.get(key)?.shift();
-    const reply = queued ?? this.defaultReply(key);
+    let reply = queued ?? this.defaultReply(key);
+    while ('until' in reply) {
+      await reply.until;
+      reply = reply.reply;
+    }
     if ('throws' in reply) throw reply.throws;
     if ('hang' in reply) {
       return new Promise<Response>((_resolve, reject) => {

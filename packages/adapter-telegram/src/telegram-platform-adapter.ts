@@ -215,6 +215,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private inboundGate?: Promise<boolean>;
 
   private controller?: AbortController;
+  /** The startup identity check while it runs (tracked so stop() aborts and awaits it). */
+  private starting?: Promise<void>;
   private loop?: Promise<void>;
   private stopped = false;
   private polling = false;
@@ -298,6 +300,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
    */
   async start(): Promise<void> {
     if (this.loop !== undefined) return;
+    if (this.starting !== undefined) return this.starting;
     this.stopped = false;
     this.halted = undefined;
     // CA final check / Codex delta P2-2: a restart verifies the identity afresh; nothing is sent until it matches again.
@@ -309,10 +312,23 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
     }
     if (this.offset === undefined) this.offset = this.loadOffset();
-    // Throws the typed startup error for a definitive answer; resolves 'transient' for an outage or a timeout.
-    const first = await this.checkIdentity(undefined, this.startupCallTimeoutMs);
+    // Codex final delta P2-1: the lifecycle controller exists before the first await, the startup calls carry its signal,
+    // and the startup is tracked, so stop() aborts it and waits for it: nothing reaches the Bot API after a stop.
     const controller = new AbortController();
     this.controller = controller;
+    const starting = this.startUp(controller);
+    this.starting = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.starting === starting) this.starting = undefined;
+    }
+  }
+
+  private async startUp(controller: AbortController): Promise<void> {
+    // Throws the typed startup error for a definitive answer; resolves 'transient' for an outage, a timeout or a stop.
+    const first = await this.checkIdentity(controller.signal, this.startupCallTimeoutMs);
+    if (this.stopped || controller.signal.aborted) return;
     // CA re-review P3-2: an unexpected rejection of the background loop must never become an unhandled rejection that
     // takes the process (and Discord) down; it halts the Telegram side only and is logged without content.
     this.loop = this.run(controller.signal, first === 'verified').catch((err: unknown) => {
@@ -336,6 +352,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       if (codeOf(err) === TelegramFailureCode.AUTH) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
       return 'transient';
     }
+    // Stopped while getMe was in flight: its answer is not acted on (no probe, no verification).
+    if (signal?.aborted || this.stopped) return 'transient';
     const id = (me as { id?: unknown } | null)?.id;
     const isBot = (me as { is_bot?: unknown } | null)?.is_bot;
     if (typeof id !== 'number' || String(id) !== this.config.expectedBotId || isBot !== true) {
@@ -355,6 +373,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       if (code === TelegramFailureCode.AUTH) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
       // Anything transient: the poll loop backs off and retries.
     }
+    if (signal?.aborted || this.stopped) return 'transient';
     this.identityVerified = true;
     this.logger.info('telegram startup identity verified', { bot: 'match', owners: this.owners.size });
     return 'verified';
@@ -385,6 +404,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     for (const timer of this.typingTimers.values()) clearInterval(timer);
     this.typingTimers.clear();
     this.controller?.abort();
+    // A startup still in flight is aborted and awaited: it can make no call after this.
+    await this.starting?.catch(() => undefined);
     await this.loop?.catch(() => undefined);
     this.loop = undefined;
     this.controller = undefined;
