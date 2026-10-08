@@ -695,12 +695,22 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     ]);
   });
 
-  it('TG-1: a mention-only attachment message reaches the handler with empty text; a mention-only plain message is unchanged', async () => {
+  it('TG-1 (deliberate change, CA P3-3 / Codex P2): a mention-only message with a USABLE attachment reaches Core with empty text', async () => {
     const { deliver, handled, settle } = await intakeHarness();
+    // Before TG-1 Core received '<@id> ' here and stored it in history, used it as prompt input / image caption.
     await deliver({ ...withAttachments({}, [att('app.log', 'text/plain')]), content: '<@123456789012345678> ' });
+    await settle();
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.attachments?.[0]?.kind).toBe('text');
+    expect(handled[0]!.text).toBe('');
+  });
+
+  it('TG-1: no other Discord path changes — mention plus real text, a mention-only message without attachments', async () => {
+    const { deliver, handled, settle } = await intakeHarness();
+    await deliver({ ...withAttachments({}, [att('app.log', 'text/plain')]), content: '<@123456789012345678> 요약해줘' });
     await deliver({ ...fakeMessage(), content: '<@123456789012345678>' });
     await settle();
-    expect(handled.map((message) => message.text)).toEqual(['', '<@123456789012345678>']);
+    expect(handled.map((message) => message.text)).toEqual(['<@123456789012345678> 요약해줘', '<@123456789012345678>']);
   });
 
   it('an image ref exists during the turn and is deleted after it, even when the handler throws', async () => {
