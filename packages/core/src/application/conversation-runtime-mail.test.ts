@@ -389,6 +389,20 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     expect(JSON.stringify(h.calls.recordAssistant)).not.toContain(summary);
   });
 
+  it('review P2-4: a phishing mail\'s links reach neither the provider nor the reply; the reply is not a model reply', async () => {
+    const h = harness({
+      body: '계정 확인이 필요합니다. [여기를 클릭](https://evil.example/login) 하세요.',
+      summary: '계정 확인을 위해 [여기를 클릭](https://evil.example/login) 하라는 메일이에요.',
+    });
+    await h.send('안 읽은 메일');
+    const result = await h.send('1번 메일 요약해줘');
+    expect(h.allPrompts()).not.toContain('evil.example');
+    expect(result.reply?.text).not.toContain('evil.example');
+    expect(result.reply?.text).toContain('[여기를 클릭]([링크])');
+    expect(result.reply?.format).toBeUndefined();
+    expect(JSON.stringify(result.reply?.content)).toContain('"guard":"markup"');
+  });
+
   it('review P2-3: a third-person summary about the sender is shown as written', async () => {
     const h = harness({ summary: '김철수 님이 회의 자료를 보냈어요.' });
     await h.send('안 읽은 메일');

@@ -1,6 +1,9 @@
 import { clipHeadAndTail } from './attachment-context';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
+import { clipMessage, messageBody, untrustedText } from './message-rendering';
+import type { MessageBody } from '../domain';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
+import { WORK_SUMMARY_REPLY_MAX_CHARS } from './work-chat/work-chat-turn-handler';
 
 /**
  * The bounded, untrusted readout of ONE personal item (a mail message for GML-1; a Drive document for DRV-1) that the
@@ -64,6 +67,22 @@ export type UntrustedDocumentBuildResult =
   | { readonly ok: true; readonly readout: UntrustedDocumentReadout }
   | { readonly ok: false; readonly refusal: UntrustedDocumentRefusal };
 
+/**
+ * Review P2-4: what replaces a link. A hostile mail's links never reach the provider (a phishing target or a bearer
+ * token in a query string), and a credential inside a URL no longer refuses an otherwise ordinary mail.
+ */
+export const UNTRUSTED_DOCUMENT_LINK_PLACEHOLDER = '[링크]';
+/**
+ * A URL or a `www.` host: scheme or `www.` then everything up to whitespace, a quote, an angle bracket or a bracket
+ * (so a Markdown `[text](url)` keeps its closing parenthesis). Linear.
+ */
+const LINK = /\b(?:[a-z][a-z0-9+.-]{1,15}:\/\/|www\.)[^\s<>"'`()[\]]+/giu;
+
+/** Every link replaced by the placeholder. */
+export function withoutLinks(text: string): string {
+  return text.replace(LINK, UNTRUSTED_DOCUMENT_LINK_PLACEHOLDER);
+}
+
 /** Format, default-ignorable and control characters (LF and tab are kept in a body). */
 const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 
@@ -94,7 +113,7 @@ function prepareBody(value: string): string {
 }
 
 function oneLine(value: string, max: number): string {
-  const text = normalizeUntrustedText(value).replace(/\s+/g, ' ').trim();
+  const text = withoutLinks(normalizeUntrustedText(value)).replace(/\s+/g, ' ').trim();
   const points = Array.from(text);
   return points.length <= max ? text : `${points.slice(0, max - 1).join('')}…`;
 }
@@ -109,12 +128,12 @@ function isCredentialShaped(text: string): boolean {
  * withheld, never redacted).
  */
 export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReadoutInput): UntrustedDocumentBuildResult {
-  const body = prepareBody(typeof input.body === 'string' ? input.body : '');
+  const body = withoutLinks(prepareBody(typeof input.body === 'string' ? input.body : ''));
   if (body.length === 0) return { ok: false, refusal: 'EMPTY' };
   // Review P1: the guard runs on the FULL normalized fields before any clip — a clip could cut a credential's key
   // (`password:`) while keeping its value — and again below on the exact clipped payload.
-  const fullTitle = normalizeUntrustedText(typeof input.title === 'string' ? input.title : '');
-  const fullAuthor = normalizeUntrustedText(typeof input.author === 'string' ? input.author : '');
+  const fullTitle = withoutLinks(normalizeUntrustedText(typeof input.title === 'string' ? input.title : ''));
+  const fullAuthor = withoutLinks(normalizeUntrustedText(typeof input.author === 'string' ? input.author : ''));
   if ([body, fullTitle, fullAuthor].some((field) => field.length > 0 && isCredentialShaped(field))) {
     return { ok: false, refusal: 'CREDENTIAL_SHAPED' };
   }
@@ -164,6 +183,7 @@ export function isSummarizableDocumentReadout(value: unknown): value is Untruste
     if (date !== '' && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(date)) return false;
     for (const field of [title, author, body]) {
       if (field.replace(INVISIBLE, '') !== field) return false;
+      if (withoutLinks(field) !== field) return false;
     }
     const rendered = renderUntrustedDocumentForPrompt(value);
     return ![title, author, body, rendered].some((field) => field.length > 0 && isCredentialShaped(field));
@@ -210,6 +230,19 @@ export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSour
   return language === 'en'
     ? '[Quoky summarized one email the User asked about; the summary is not kept in the conversation history.]'
     : '[요청한 메일 1건을 요약해 보여 드림 — 요약 내용은 대화 기록에 남기지 않아요.]';
+}
+
+/**
+ * Review P2-4: the reply body of a document summary. The provider's text is an `untrusted` span with the `markup`
+ * guard — a masked link (`[text](url)`) or any other markup it echoes from a hostile mail is shown as text, never as a
+ * link — after every remaining URL is replaced by the placeholder; then the fixed footer. Never sent as a model reply
+ * (no `format: 'model-reply'`, so no adapter Markdown adaptation applies). Bounded like a work summary.
+ */
+export function documentSummaryReplyBody(summaryText: string, footer: MessageBody): MessageBody {
+  const text = withoutLinks(summaryText).trim();
+  return messageBody(
+    clipMessage(untrustedText(text, 'markup'), WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
+  );
 }
 
 /** The fixed reply when the provider's summary itself is credential-shaped (never shown, never stored). */

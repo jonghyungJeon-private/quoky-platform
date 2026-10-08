@@ -223,6 +223,7 @@ import {
 } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import {
+  documentSummaryReplyBody,
   isSummarizableDocumentReadout,
   isUntrustedDocumentReadout,
   renderUntrustedDocumentHistoryNote,
@@ -3462,7 +3463,8 @@ export class ConversationRuntime {
       return fallback();
     }
     if (result.status !== 'RESPONDED') return fallback();
-    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
+    // Review P2-4: links neutralized, the provider text an untrusted span, the fixed footer appended.
+    return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(result.reply.text, summary.footer)) };
   }
 
   // ── ADR-0112 / ADR-0110 amendment: connector writes behind exact-payload one-time approvals (CWR-2) ──────────
@@ -7793,7 +7795,10 @@ export class ConversationRuntime {
       }
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
       const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
-      const reply = this.asModelReply(composed, executed.text, { withheld: withheld !== null, guarded: guard?.guarded === true });
+      // Review P2-4: a document summary is never a model reply (its body is rebuilt as an untrusted span by the caller).
+      const reply = documentSummary
+        ? composed
+        : this.asModelReply(composed, executed.text, { withheld: withheld !== null, guarded: guard?.guarded === true });
       return this.responded(session, reply, workFacts(providerId));
     } catch (err) {
       const failure = describeAiFailure(err);

@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { Capability, IntentType, RiskLevel, TaskStatus, type Task } from '../domain';
 import { clipHeadAndTail } from './attachment-context';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
+import { PLAIN_TEXT_MARKUP, renderMessageContent } from './message-rendering';
 import { PromptComposer } from './prompt-composer';
 import {
   UNTRUSTED_DOCUMENT_BODY_MAX_CHARS,
   buildUntrustedDocumentReadout,
+  documentSummaryReplyBody,
   isSummarizableDocumentReadout,
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentReadout,
@@ -112,6 +114,25 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
     build(body);
     // Measured 27.5 s for the first input before the fix; linear code takes milliseconds (500 ms leaves CI headroom).
     expect(performance.now() - start).toBeLessThan(500);
+  });
+
+  it('review P2-4: links are replaced before the guard — a phishing link never reaches the provider, a URL token never refuses', () => {
+    const body =
+      '계정이 정지됩니다. [여기를 눌러 확인](https://evil.example/login?session=abc) 하세요.\n' +
+      `자세히: https://evil.example/reset?token=${SECRET} 또는 www.evil.example/help`;
+    const result = build(body);
+    if (!result.ok) throw new Error('expected a readout');
+    expect(result.readout.body).toBe('계정이 정지됩니다. [여기를 눌러 확인]([링크]) 하세요.\n자세히: [링크] 또는 [링크]');
+    expect(result.readout.body).not.toMatch(/https?:|www\./);
+    expect(build('보통 본문', { title: '안내 https://evil.example/x' })).toMatchObject({ ok: true, readout: { title: '안내 [링크]' } });
+    // A readout that still carries a link is rejected by the runtime re-validation.
+    expect(isSummarizableDocumentReadout({ ...result.readout, body: 'see https://evil.example' })).toBe(false);
+  });
+
+  it('review P2-4: the summary reply is an untrusted span with its links replaced, then the fixed footer', () => {
+    const reply = documentSummaryReplyBody('[확인](https://evil.example/login) 하라는 메일이에요. https://evil.example', '(footer)');
+    expect(renderMessageContent(reply, PLAIN_TEXT_MARKUP)).toBe('[확인]([링크]) 하라는 메일이에요. [링크]\n\n(footer)');
+    expect(JSON.stringify(reply)).toContain('"kind":"untrusted","text":"[확인]([링크]) 하라는 메일이에요. [링크]","guard":"markup"');
   });
 
   it('re-validation rejects any readout not shaped exactly as built (extra keys, bounds, invisible characters, secrets)', () => {
