@@ -1,10 +1,16 @@
 import {
   REMINDER_LIMITS,
   ReminderStatus,
+  clipMessage,
   isStrictCredentialMemoryText,
+  joinBody,
   learningTextHasCredential,
   maskedMemoryText,
   memoryPreview,
+  messageBody,
+  messageFields,
+  outboundBody,
+  plainTextOf,
   renderConnectorWriteOpsApprovedNotice,
 } from '@quoky/core';
 import type {
@@ -19,6 +25,7 @@ import type {
   IsoTimestamp,
   Logger,
   MemoryCommandOutcome,
+  MessageBody,
   MemoryCommandService,
   NotificationSinkOutcome,
   OwnerNotification,
@@ -164,29 +171,28 @@ const NOTICE_LABEL: Readonly<Record<NotificationSinkOutcome['status'] | 'FAILED'
 /**
  * The owner-DM result text (ADR-0113 D7): a fixed header and the reply chat would have shown, bounded and guarded. An
  * approved connector write (`connectorWrite`) gets the Core notice instead of the chat reply: what was approved, where
- * its exact phrase must be sent (execution is bound to the approving conversation) and for how long.
+ * its exact phrase must be sent (execution is bound to the approving conversation) and for how long. Neutral content
+ * (PLT-0): the credential guard reads the plain text, and the bound applies to the delivered rendering.
  */
 export function opsDecisionResultText(
   kind: ApprovalGateKind,
   outcome: 'APPROVED' | 'REJECTED' | 'EXPIRED',
-  reply: string,
+  reply: MessageBody,
   connectorWrite?: ConnectorWriteApprovedNotice & { readonly chat: ConversationContext },
-): string {
+): MessageBody {
   if (outcome === 'APPROVED' && connectorWrite !== undefined) {
-    const notice = `[Quoky 운영 화면] ${renderConnectorWriteOpsApprovedNotice(connectorWrite)}`;
-    if (!learningTextHasCredential(notice)) return bounded(notice);
+    const notice = messageBody('[Quoky 운영 화면] ', renderConnectorWriteOpsApprovedNotice(connectorWrite));
+    if (!learningTextHasCredential(plainTextOf(notice))) return bounded(notice);
   }
   const verb =
     outcome === 'APPROVED' ? '운영 화면에서 승인했어요' : outcome === 'REJECTED' ? '운영 화면에서 거절했어요' : '만료돼서 자동 거절로 기록했어요';
   const header = `[Quoky 운영 화면] ${APPROVAL_KIND_LABEL[kind]} 승인 요청을 ${verb}. 이어지는 단계는 채팅에서 해요.`;
-  if (learningTextHasCredential(reply)) return header;
-  return bounded(`${header}\n${reply}`);
+  if (learningTextHasCredential(plainTextOf(reply))) return header;
+  return bounded(joinBody([header, reply]));
 }
 
-function bounded(text: string): string {
-  const chars = Array.from(text);
-  const max = REMINDER_LIMITS.maxDeliveredTextChars;
-  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
+function bounded(body: MessageBody): MessageBody {
+  return messageBody(clipMessage(body, REMINDER_LIMITS.maxDeliveredTextChars, 'code-points'));
 }
 
 /** A link back to the originating Discord conversation (ids only), or undefined. */
@@ -246,7 +252,7 @@ export class OpsUiActions implements OpsActions {
         const rows = records.slice(0, OPS_MEMORY_PAGE_MAX_ROWS).map((record, index) => ({
           number: index + 1,
           // Exactly the `기억 목록` preview (ADR-0106 D3, ADR-0113 D9), then the strict guard again.
-          preview: guardText(isStrictCredentialMemoryText(record.content) ? maskedMemoryText('ko') : memoryPreview(record.content)),
+          preview: guardText(isStrictCredentialMemoryText(record.content) ? maskedMemoryText('ko') : plainTextOf(memoryPreview(record.content))),
         }));
         return { status: 'OK', rows, total: records.length };
       },
@@ -266,7 +272,7 @@ export class OpsUiActions implements OpsActions {
             outcome: guardOutcome({ code: 'NOT_FOUND', message: '그 번호의 기억을 찾지 못했어요.', ok: false }),
           };
         }
-        return { status: 'CONFIRMATION', number: issued.number, preview: guardText(issued.preview), code: issued.code };
+        return { status: 'CONFIRMATION', number: issued.number, preview: guardText(plainTextOf(issued.preview)), code: issued.code };
       },
       (outcome) => ({ status: 'REFUSED', outcome }),
     );
@@ -357,11 +363,13 @@ export class OpsUiActions implements OpsActions {
         // Owner DM only (ADR-0113 D7): no guild, so no channel routing is possible.
         target: { platform: decided.chat.platform, channelId: '', userId: decided.chat.userId },
         kind: 'OPS_DECISION_RESULT',
-        text: opsDecisionResultText(
-          decided.kind,
-          decided.outcome,
-          decided.reply.text,
-          decided.connectorWrite === undefined ? undefined : { ...decided.connectorWrite, chat: decided.chat },
+        ...messageFields(
+          opsDecisionResultText(
+            decided.kind,
+            decided.outcome,
+            outboundBody(decided.reply),
+            decided.connectorWrite === undefined ? undefined : { ...decided.connectorWrite, chat: decided.chat },
+          ),
         ),
       });
       delivery = sent.status;

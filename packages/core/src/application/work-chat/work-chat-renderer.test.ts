@@ -10,28 +10,47 @@ import {
   WORK_CHAT_LOOKUP_HELP_LINES,
   WORK_CHAT_REPLY_MAX_CHARS,
   WORK_CHAT_TODO_HELP_LINES,
-  renderExternalWorkList,
+  renderExternalWorkList as renderExternalWorkListBody,
   renderExternalWriteRefusal,
   renderLookupFailure,
   renderLookupUnsupported,
-  renderMyWork,
+  renderMyWork as renderMyWorkBody,
   renderSearchCredentialRefused,
-  renderTodoAdded,
-  renderTodoAmbiguous,
-  renderTodoCanceled,
-  renderTodoCompleted,
+  renderTodoAdded as renderTodoAddedBody,
+  renderTodoAmbiguous as renderTodoAmbiguousBody,
+  renderTodoCanceled as renderTodoCanceledBody,
+  renderTodoCompleted as renderTodoCompletedBody,
   renderTodoCredentialRefused,
   renderTodoEmptyTitle,
   renderTodoFailure,
   renderTodoListFailure,
-  renderTodoLinked,
+  renderTodoLinked as renderTodoLinkedBody,
   renderTodoNotActive,
-  renderTodoNotFound,
+  renderTodoNotFound as renderTodoNotFoundBody,
   renderTodoTitleTooLong,
   renderTodoTooManyRefs,
   renderWorkChatUsage,
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
+import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
+import type { MessageMarkup } from '../../ports/message-markup.port';
+
+/** A probe markup that makes untrusted and link spans visible (PLT-0: the platform adapter renders them). */
+const PROBE: MessageMarkup = { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»`, link: (url) => `«link:${url}»` };
+
+/** PLT-0: these renderers return neutral content; the tests read its plain text. */
+const plainOf =
+  <A extends unknown[]>(render: (...args: A) => Parameters<typeof plainTextOf>[0]) =>
+  (...args: A): string =>
+    plainTextOf(render(...args));
+const renderExternalWorkList = plainOf(renderExternalWorkListBody);
+const renderMyWork = plainOf(renderMyWorkBody);
+const renderTodoAdded = plainOf(renderTodoAddedBody);
+const renderTodoAmbiguous = plainOf(renderTodoAmbiguousBody);
+const renderTodoCanceled = plainOf(renderTodoCanceledBody);
+const renderTodoCompleted = plainOf(renderTodoCompletedBody);
+const renderTodoLinked = plainOf(renderTodoLinkedBody);
+const renderTodoNotFound = plainOf(renderTodoNotFoundBody);
 
 function todo(title: string | undefined, refs: ResourceRef[] = [], index = 0): WorkItem {
   return {
@@ -59,12 +78,10 @@ describe('to-do replies', () => {
     expect(renderTodoLinked(item, [])).toContain('이미 연결돼 있어요');
   });
 
-  it('escapes mentions and markdown in titles', () => {
-    const text = renderTodoAdded(todo('@everyone **공지** <@123> [x](https://evil.example)'));
-    expect(text).not.toContain('@everyone');
-    expect(text).not.toContain('<@');
-    expect(text).not.toContain('**공지**');
-    expect(text).not.toContain('[x](');
+  it('marks titles as untrusted spans, so the platform neutralizes their mentions and markup', () => {
+    const body = renderTodoAddedBody(todo('@everyone **공지** <@123> [x](https://evil.example)'));
+    expect(renderMessageContent(body, PROBE)).toBe('할 일을 추가했어요: "«markup:@everyone **공지** <@123> [x](https://evil.example)»"');
+    expect(plainTextOf(body)).toBe('할 일을 추가했어요: "@everyone **공지** <@123> [x](https://evil.example)"');
   });
 
   it('says nothing changed for an ambiguous target and lists the numbered candidates', () => {
@@ -130,8 +147,12 @@ describe('combined my-work view', () => {
     expect(text.indexOf('1. 첫째')).toBeGreaterThan(-1);
     expect(text.indexOf('2. 둘째 (연결: jira:PROJ-1)')).toBeGreaterThan(text.indexOf('1. 첫째'));
     expect(text.indexOf('Jira·GitHub 업무')).toBeGreaterThan(text.indexOf('2. 둘째'));
-    expect(text).toContain('- [jira:PROJ-2] Jira task <https://acme.atlassian.net/browse/PROJ-2>');
+    expect(text).toContain('- [jira:PROJ-2] Jira task https://acme.atlassian.net/browse/PROJ-2');
     expect(text).toContain('- [github:o/r#5] PR review');
+    // The identity and title are untrusted spans and the URL a link span the platform renders without an embed.
+    expect(renderMessageContent(renderMyWorkBody([], surface()), PROBE)).toContain(
+      '- [«markup:jira:PROJ-2»] «markup:Jira task» «link:https://acme.atlassian.net/browse/PROJ-2»',
+    );
   });
 
   it('names unavailable sources and never presents a partial result as "no work"', () => {
@@ -209,7 +230,10 @@ describe('lookup copy', () => {
     });
     const text = renderExternalWorkList(readout);
     expect(text).toContain('**Jira 이번 주 마감** (1건)');
-    expect(text).toContain('- [jira:PROJ-1] 배포 점검 (In Progress · 마감 2026-10-03 · PROJ) <https://acme.atlassian.net/browse/PROJ-1>');
+    expect(text).toContain('- [jira:PROJ-1] 배포 점검 (In Progress · 마감 2026-10-03 · PROJ) https://acme.atlassian.net/browse/PROJ-1');
+    expect(renderMessageContent(renderExternalWorkListBody(readout), PROBE)).toContain(
+      '- [«markup:jira:PROJ-1»] «markup:배포 점검» («markup:In Progress» · «markup:마감 2026-10-03» · «markup:PROJ») «link:https://acme.atlassian.net/browse/PROJ-1»',
+    );
     expect(text).toContain('민감정보가 있는 1건은 제외했어요.');
     expect(text).not.toContain('hunter2');
 

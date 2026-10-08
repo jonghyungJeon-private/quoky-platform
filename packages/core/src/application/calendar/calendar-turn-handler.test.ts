@@ -76,6 +76,8 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
       reply: {
         context: ctx('').message.context,
         text: '내일 · 10월 7일(수): 일정 1개\n- 09:00–10:00 팀 회의\n(Asia/Seoul 기준 · 캘린더 읽기 전용)',
+        // PLT-0: the event title and zone are untrusted spans the platform renders (the plain text is above).
+        content: expect.any(Array),
         replyToMessageId: 'm-1',
       },
       status: 'RESPONDED',

@@ -5,6 +5,7 @@ import type { TurnHandlerContext } from '../../ports/conversation-turn-handler.p
 import type { Logger, LogFields } from '../../ports/logger.port';
 import { REMINDER_HELP_LINES } from '../reminders/reminder-turn-handler';
 import { ResponseComposer, renderHelpText } from '../response-composer';
+import { outboundMessage, plainTextOf } from '../message-rendering';
 import { WORK_CHAT_TODO_TURN_HELP_LINES } from '../work-chat/work-chat-turn-handler';
 import {
   HELP_INTENT_HELP_LINES,
@@ -126,11 +127,12 @@ describe('HelpIntentTurnHandler — capability questions (DET-2, live QA session
     const handler = createHelpIntentTurnHandler({ helpLines: () => LINES });
     for (const text of ['뭐 할 수 있어?', '할 수 있는 게 뭐야?', '명령어 알려줘', 'what can you do?']) {
       const reply = await handler.handle(context(text));
-      expect(reply, text).toEqual({ reply: { context: CONTEXT, text: renderHelpText(LINES), replyToMessageId: 'm-1' } });
+      // PLT-0: the help text is neutral content (its last line carries a platform note); `text` is its plain rendering.
+      expect(reply, text).toEqual({ reply: outboundMessage(CONTEXT, renderHelpText(LINES), { replyToMessageId: 'm-1' }) });
     }
-    expect(renderHelpText(LINES)).toBe(new ResponseComposer().composeHelp(CONTEXT, LINES).text);
-    expect(renderHelpText(LINES)).toContain('Quoky로 할 수 있는 일이에요.');
-    expect(renderHelpText(LINES)).toContain(HELP_INTENT_HELP_LINES[0] as string);
+    expect(outboundMessage(CONTEXT, renderHelpText(LINES))).toEqual(new ResponseComposer().composeHelp(CONTEXT, LINES));
+    expect(plainTextOf(renderHelpText(LINES))).toContain('Quoky로 할 수 있는 일이에요.');
+    expect(plainTextOf(renderHelpText(LINES))).toContain(HELP_INTENT_HELP_LINES[0] as string);
   });
 
   it('falls through for a scoped question and keeps topic answers unchanged', async () => {

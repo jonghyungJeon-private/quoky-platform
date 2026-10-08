@@ -12,6 +12,7 @@ import { MAX_CONTRIBUTED_HELP_LINE_CHARS, MAX_CONTRIBUTED_HELP_LINES, ResponseCo
 import type { CodeChangePreview, CodeDiffPreview, PatchSetPreview, TestResultDetail } from './response-composer';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
 import { RoutingFailureCode } from './runtime-response-validation-contracts';
+import { PLAIN_TEXT_MARKUP, outboundBody, renderMessageContent } from './message-rendering';
 
 const CTX: ConversationContext = { platform: 'test', channelId: 'c1', userId: 'u1' };
 const composer = new ResponseComposer();
@@ -47,6 +48,24 @@ describe('ResponseComposer.composeWorkSurface', () => {
     });
     expect(reply.text).toContain('[jira] Ship M3A-1');
     expect(reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
+  });
+
+  it('renders a connector title as an untrusted one-line span and its URL as a link span (review P2-6)', () => {
+    const reply = composer.composeWorkSurface(CTX, {
+      status: 'COMPLETE',
+      items: [
+        { resource: new ResourceRef({ source: 'jira', externalId: 'J-2' }), title: '@everyone [x](y)\n*b*', url: 'https://acme.test/J-2' },
+        { resource: new ResourceRef({ source: 'github', externalId: 'o/r#1' }), title: 'PR', url: 'javascript:alert(1)' },
+      ],
+      sources: [],
+    });
+    expect(reply.text).toContain('- [jira] @everyone [x](y) *b* — https://acme.test/J-2');
+    expect(renderMessageContent(outboundBody(reply), { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»`, link: (url) => `«link:${url}»` })).toContain(
+      '- [jira] «markup:@everyone [x](y) *b*» — «link:https://acme.test/J-2»',
+    );
+    // An unsafe URL is not echoed at all.
+    expect(reply.text.endsWith('- [github] PR')).toBe(true);
+    expect(reply.text).not.toContain('javascript:');
   });
 
   it('never renders a partial empty projection as an authoritative no-work result', () => {
@@ -1651,13 +1670,13 @@ describe('ResponseComposer next-phrase copy (ADR-0093)', () => {
     ],
     [
       'help',
-      () => composer.composeHelp(CTX).text,
+      // PLT-0: the platform adds its own advice on a "/"-prefixed phrase as a platform note (Discord: close the
+      // slash-command picker with Esc, QA-011); the probe markup makes the note visible.
+      () => renderMessageContent(outboundBody(composer.composeHelp(CTX)), { ...PLAIN_TEXT_MARKUP, platformNote: (topic) => `«note:${topic}»` }),
       [
         '- "도움말": 이 안내를 다시 보여줘요.',
         '- "새 대화": 지금 대화를 끝내고 새로 시작해요.',
-        // QA-011: "/help"/"/reset" still work, but Discord opens the slash-command picker — close it with Esc
-        '"/help", "/reset"',
-        'Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
+        '- "/help", "/reset"도 같아요.«note:command-prefix»',
         '승인 요청에는 "승인" 또는 "거절"로 답해 주세요.',
         '"적용해줘"',
         '"패치 만들어줘"',
@@ -2084,6 +2103,10 @@ describe('ResponseComposer — connector writes (ADR-0112, CWR-2)', () => {
   it('a step reply is clamped to the message budget except the bounded preview', () => {
     const repeat = composer.composeConnectorWriteStep(context, { kind: 'repeat', operation: 'ISSUE_COMMENT', status: 'SENT', url: 'https://example.atlassian.net/browse/P-1' });
     expect(repeat.text).toContain('이미 실행했어요');
-    expect(repeat.text).toContain('<https://example.atlassian.net/browse/P-1>');
+    // PLT-0: the URL is a link span (Discord renders `<url>`, no embed); the plain text carries it bare.
+    expect(repeat.text).toContain('링크: https://example.atlassian.net/browse/P-1');
+    expect(renderMessageContent(outboundBody(repeat), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»` })).toContain(
+      '링크: «link:https://example.atlassian.net/browse/P-1»',
+    );
   });
 });

@@ -18162,3 +18162,115 @@ D4 row is closed as "kept by owner decision".
 ADR-0113 D11 is unchanged for v4 (owner decision 23): no remote, LAN, tunnel or mobile access and no separate client.
 Discord mobile and Telegram (ADR-0114) are the mobile surfaces. ADR-0114 D12 adds one content-free Telegram status
 panel inside the existing loopback-only UI. **Re-entry:** the Team/Hosted edition, or an ADR-0113 D11 amendment.
+
+## Personal v4 PLT-0 implementation note — platform-neutral rendering (2026-10-08)
+
+- **Status:** Implementation note under the Personal v4 plan, track PLT-0 (the owner ratified the v4 recommended
+  defaults on 2026-10-08), and the span-type record ADR-0114 D1 asks for. It has no ADR of its own: it restores
+  ARCHITECTURE.md §2.2 ("the Core knows nothing concrete") for rendering. It is a prerequisite for TG-1. Codex review:
+  PASS. Chief Architect review: APPROVE WITH NITS, all of which are addressed below.
+- **Port-level changes (corrected after review P2-2).** There is no new DI token and no dependency change;
+  `ConversationRuntimeDeps` is unchanged. The port surface does change in three ways:
+  1. `OwnerNotification.content?: MessageContent` on the `NotificationSink` port.
+  2. `TurnHandlerSummarizeReply.fallbackText` and `.footer` (`conversation-turn-handler.port.ts`) widen from `string`
+     to `MessageBody`.
+  3. A new adapter obligation, documented on `PlatformAdapter.sendMessage` and `NotificationSink.deliver`. An adapter
+     whose platform parses any markup MUST render `content` whenever it is present, and must send and length-check
+     that rendering. `text` is the plain rendering, with untrusted spans verbatim; it is safe only on a platform that
+     parses no markup. The rendering contract is the port `MessageMarkup` (`ports/message-markup.port.ts`, review
+     P2-3). It has no DI token, because an adapter passes its markup to the evaluator.
+
+  The domain changes are additive: `MessageContent` and its nodes, `OutboundMessage.content?`, and
+  `ConversationContext.direct?` (review P2-4).
+- **Type.** `MessageContent` (`packages/core/src/domain/message-content.ts`) is a list of nodes:
+  - String nodes are CommonMark in the neutral subset Core writes (`**strong**`, inline code, fenced blocks). They are
+    Quoky's copy, except that they may carry untrusted text inside a code fence (a connector-write payload shown
+    verbatim). An adapter must make every string node safe for its own parse mode (review P3-3).
+  - `untrusted` is text Quoky did not author. Its guard is `markup` (formatting, mentions and links), `mentions` (notify
+    syntax only) or `handles` (every `@`).
+  - `link` is a URL shown without an embed. `platform-note` (topic `command-prefix`) lets the platform add its own usage
+    advice.
+  - `conversation` is `{ platform, direct, id?, label }`, built from the `ConversationContext` by `conversationRefOf`.
+    The markup writes native syntax only for its own platform and a referenceable channel id. Otherwise it writes the
+    same-platform `label` ("이 DM", "승인을 요청한 채널"), and for a conversation on another platform a neutral name of
+    that platform's conversation. `direct` comes from the adapter's `ConversationContext.direct`. For contexts recorded
+    earlier it falls back to "no `spaceId`".
+  - `clip`, `fit-lines` and `take-lines` are the length budgets that already existed:
+    - the work-chat 1,800-character list;
+    - the calendar 1,900-character list;
+    - the 1,000-character source footer;
+    - the 1,900-character summary and message clamps;
+    - the help budget and the brief bound.
+
+    They are evaluated on the rendered text of the platform in use, so an escaped title counts at its escaped length
+    exactly as before.
+- **Carriers.** `OutboundMessage.content?` and `OwnerNotification.content?`. When content is present, `text` is its plain
+  rendering and the adapter renders `content`. Content is attached only when a span needs platform rendering, so a
+  reply that is only Quoky copy is unchanged. `application/message-rendering.ts` holds:
+  - the builders;
+  - `PLAIN_TEXT_MARKUP` (untrusted text verbatim, bare URLs, `#id` or the label, no notes);
+  - the evaluator;
+  - helpers that never leave a stale `content` (`outboundMessage`, `withOutboundBody`, `messageFields`).
+
+  Content lists and every node refuse string coercion (review P3-2). The source scan forbids `{ ...reply, text: … }`
+  spreads on outbound carriers, and the Discord adapter warns, content-free, when `plainTextOf(content) !== text`
+  (review P3-1). `format: 'model-reply'` is unchanged and applies after content rendering.
+- **Discord.** `packages/adapter-discord/src/rendering.ts` (`DISCORD_MARKUP`) writes exactly the markup Core used to
+  write:
+  - `markup`: a backslash before each Markdown character (backslash, `*`, `_`, `~`, backtick, `|`, `>`, `[`, `]`), then a
+    zero-width space after every `@` and `<`;
+  - `mentions`: `@everyone`/`@here` (any case) and `<@` only;
+  - `handles`: every `@`;
+  - `link` as `<url>`;
+  - `conversation` as `<#id>` for a Discord channel or thread, and the label for a Discord DM;
+  - the slash-command-picker advice of the help reply.
+
+  `sendMessage` and owner notifications both render through this module; wiring tests pin it (review P2-1). Every reply
+  is also sent with `allowedMentions.parse` empty (review P2-5). No reply relied on a ping; the opted-in channel
+  reminder keeps its owner-only list.
+- **Moved out of Core:**
+  - `escapeDiscordText` (external-work readout, work chat, calendar, connector-write copy);
+  - the memory-command `escapeDiscord`;
+  - the brief's mention neutralization;
+  - the feedback excerpt's `@` neutralization (its backtick-to-quote rewrite is CommonMark protection and stays);
+  - `<#id>` in connector-write place hints and `<url>` links;
+  - the help line that named Discord.
+
+  A source-scan test (`packages/core/src/platform-neutral-rendering.test.ts`) fails on any of these in a non-test Core
+  module:
+  - the platform name;
+  - zero-width mention neutralization;
+  - mention or channel syntax built from data;
+  - `<${url}>`;
+  - the Markdown escape class;
+  - text rewritten by a spread on an outbound carrier.
+
+  The base tree has 64 such lines in 23 modules; the new tree has none.
+- **Plain text where it is not delivered to a chat:**
+  - Conversation history now records the plain text, so the model no longer sees escape backslashes in prior
+    deterministic turns. The memory history-removal cascade still matches turns recorded before PLT-0, by undoing
+    CommonMark backslash escapes and ignoring format characters. A test pins this.
+  - The operations UI memory previews (HTML) show the plain preview instead of the escaped Discord form.
+  - The ops-UI decision DM's credential guard reads the plain text, which is stricter.
+  - The offline learning report keeps its own `@` neutralization, so its output is unchanged.
+- **Evidence.**
+  - **Proof:** the committed golden fixture, `packages/adapter-discord/src/rendering-golden.test.ts`.
+    - It pins 793 Discord texts. 726 were captured from the renderers at base 8607fab before the change: every
+      renderer that carries untrusted spans, links or conversation references, including the DET-2 remaining-calendar
+      and capability-help replies and the UNC-1 duplicate-risk preview.
+    - 67 more come from the same base renderers (review P3-5): mention case variants, astral emoji at clip
+      boundaries, escaped titles crossing the 50/80/120 limits, the purge copy, the learning lists, and the
+      work-surface lookup line.
+    - The corpus uses adversarial markup and list sizes chosen to cross each budget. No fixture value was regenerated
+      after a Core change, except as the final P2-6 commit lists.
+  - **Supporting evidence (review P3-4):** a one-off whole-suite capture recorded the Discord rendering of every
+    reply, notification and renderer output in the test suite, at base 8607fab and after the change. No Discord
+    rendering differs, outside baseline nondeterminism (git SHAs, random codes, temporary paths, wall-clock fixtures)
+    and records moved by renamed or edited tests. The harness is not committed.
+- **Residuals:**
+  - Inbound addressing tokens (`<@id>`, `<#id>`, `<#C1|name>`) are still recognized by Core's `hasEffectiveText`
+    (attachment-only messages). This is inbound parsing, not rendering. TG-1 moves addressing normalization into the
+    adapters.
+  - The neutral CommonMark subset of Quoky copy is for a non-Markdown adapter (Telegram's plain mode) to translate.
+  - The 1,900/1,800-character message budgets stay in Core for now. TG-1 decides whether an adapter reports its own
+    budget.

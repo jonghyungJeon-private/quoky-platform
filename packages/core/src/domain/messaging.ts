@@ -1,22 +1,28 @@
 import type { Id, IsoTimestamp, Metadata } from './common';
 import type { Artifact } from './artifact';
+import type { MessageContent } from './message-content';
 
 /**
  * The conversation surface a message belongs to, expressed in GENERIC terms.
  *
- * IMPORTANT: these are plain strings, never Discord.js objects. This is the
- * boundary that keeps platform specifics (Discord today, Telegram later) out
+ * IMPORTANT: these are plain strings, never platform SDK objects. This is the
+ * boundary that keeps platform specifics (each chat platform's own adapter) out
  * of the core. A PlatformAdapter is responsible for translating its native
  * channel/guild/thread objects into this shape.
  */
 export interface ConversationContext {
-  /** Platform identifier, e.g. "discord". */
+  /** Opaque platform identifier, set by the adapter. */
   platform: string;
-  /** Generic "space" id — a Discord guild today, a Telegram chat later. */
+  /** Generic "space" id — the platform's server or workspace, when it has one. */
   spaceId?: string;
   channelId: string;
   threadId?: string;
   userId: string;
+  /**
+   * Set by the adapter (PLT-0): true for a one-to-one conversation with the owner (a DM / private chat), false for a
+   * channel or group. Absent on contexts recorded earlier; Core then treats a context without a `spaceId` as direct.
+   */
+  direct?: boolean;
 }
 
 /** Legacy, unused placeholder (pre-ADR-0111). Inbound attachments use {@link InboundAttachment}. */
@@ -118,7 +124,7 @@ export interface PreviewFile {
  * A COMPLETE structured code-change preview (Sprint 4c-Follow-up-5, F5-A / CA RC2). Produced in core from
  * the CodeProposal → Workspace diff; a PlatformAdapter chooses a delivery strategy (multipart text vs a
  * complete `.diff` attachment) and owns all platform presentation. `canonicalDiff` is the byte-for-byte
- * source of truth for delivery-equality (CA RC3). Platform-neutral: carries NO Discord specifics.
+ * source of truth for delivery-equality (CA RC3). Platform-neutral: carries NO platform specifics.
  */
 export interface PreviewArtifact {
   /** Stable, secret-safe correlation id for one preview's whole delivery lifecycle (Sprint 4c-Follow-up-5,
@@ -162,4 +168,11 @@ export interface OutboundMessage {
   preview?: PreviewArtifact;
   /** Set ONLY by the runtime on a provider-generated answer it delivers unchanged; see {@link OutboundMessageFormat}. */
   format?: OutboundMessageFormat;
+  /**
+   * PLT-0 (platform-neutral rendering): the reply as neutral content, present when it carries a span a platform renders
+   * its own way (untrusted text, a link, a conversation reference, a platform note). `text` is then its plain rendering
+   * (`plainTextOf`) and a platform adapter renders `content` with its own markup instead of sending `text`. Absent: the
+   * reply is Quoky copy alone and `text` is delivered as given. Build both with `outboundMessage` / `withOutboundBody`.
+   */
+  content?: MessageContent;
 }

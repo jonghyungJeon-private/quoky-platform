@@ -1,4 +1,5 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import { outboundBody, outboundMessage } from '../message-rendering';
 import { parseLearningCommand } from './learning-commands';
 import { LEARNING_FAILURE_TEXT } from './learning-service';
 import type { LearningService } from './learning-service';
@@ -40,7 +41,7 @@ export class LearningTurnHandler implements ConversationTurnHandler {
         channelId: context.channelId,
         ...(context.threadId !== undefined ? { threadId: context.threadId } : {}),
       }, ctx.now);
-      return { reply: { context, text: result.text }, status: result.status };
+      return { reply: outboundMessage(context, outboundBody(result)), status: result.status };
     } catch (err) {
       try {
         // The command kind only; never the message text.

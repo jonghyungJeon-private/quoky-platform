@@ -47,6 +47,7 @@ import {
   type TaskRun,
   type VectorProvider,
 } from '@quoky/core';
+import { renderOutboundForDiscord } from '@quoky/adapter-discord';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import {
   createProductionConversationRuntime,
@@ -520,7 +521,9 @@ describe('work chat offline acceptance — read-only connector lookups', () => {
 
     expect(result.reply.text.startsWith(SUMMARY)).toBe(true);
     expect(result.reply.text).toContain('출처:');
-    expect(result.reply.text).toContain('<https://example.atlassian.net/browse/PROJ-1>');
+    // PLT-0: the plain text carries the bare URL; the Discord text suppresses the embed with `<url>`.
+    expect(result.reply.text).toContain('https://example.atlassian.net/browse/PROJ-1');
+    expect(renderOutboundForDiscord(result.reply)).toContain('<https://example.atlassian.net/browse/PROJ-1>');
     expect(result.reply.text).toMatch(/외부 항목 \d+건을 요약에 사용했어요\./);
     expect(result.reply.text).not.toContain(SECRET);
     expect(result.reply.text).not.toContain('acceptance-fake-provider');

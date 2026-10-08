@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — PLT-0 platform-neutral rendering (2026-10-08)
+
+Personal v4 track PLT-0 (ADR-0114 D1; implementation note in DECISIONS.md). No migration, no new DI token, no
+dependency change; `ConversationRuntimeDeps` is unchanged.
+
+- **Core content model.** `MessageContent` (`domain/message-content.ts`) has:
+  - untrusted text (guards `markup` / `mentions` / `handles`), link, conversation reference
+    (`{ platform, direct, id?, label }`) and platform-note spans;
+  - `clip`, `fit-lines` and `take-lines` budgets.
+
+  `OutboundMessage.content?` and `OwnerNotification.content?` carry it, and `text` is the plain rendering.
+  `ConversationContext.direct?` is set by the adapter. The port `MessageMarkup` (`ports/message-markup.port.ts`) is
+  what each adapter implements; `application/message-rendering.ts` evaluates it.
+- **Port changes.** `TurnHandlerSummarizeReply.fallbackText` and `.footer` are now `MessageBody`. An adapter that
+  parses markup must render `content` (documented on `PlatformAdapter.sendMessage` and `NotificationSink.deliver`).
+- **Discord.** `DISCORD_MARKUP` renders the exact bytes Core used to write. Every reply is sent with
+  `allowedMentions.parse` empty, and a content/text mismatch is logged content-free.
+- **Removed from Core.** `escapeDiscordText`, the memory and brief mention escapes, `<#id>`, `<url>`, and the help
+  line that named Discord. A source scan guards against their return.
+- **Not in Discord chat.** Conversation history keeps plain text, and the memory forget cascade still matches older
+  escaped turns. The operations UI memory previews are plain.
+- **Fix.** The work-surface lookup line ("내 업무" via `composeWorkSurface`) escapes connector titles and suppresses the
+  link embed. Before, a raw Jira/GitHub title could carry markup or a mention. This is the only intended Discord byte
+  change.
+- **Evidence.** A golden fixture of 793 Discord texts, captured from the base renderers.
+
 ## Unreleased — PRV-1 OpenAI API provider for the chat tier and images (2026-10-08)
 
 ADR-0115 (PRV-1). No migration, no new port or token, no Core change; `ConversationRuntimeDeps` stays 35. No new

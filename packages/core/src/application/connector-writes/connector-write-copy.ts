@@ -1,4 +1,4 @@
-import type { ConversationContext } from '../../domain';
+import type { ConversationContext, ConversationRefNode, MessageBody } from '../../domain';
 import type {
   CalendarEventDraft,
   CalendarEventTime,
@@ -8,8 +8,9 @@ import type {
 } from '../../ports/connector-write.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import { endsWithBatchim, withObjectParticle, withTopicParticle } from '../korean-particle';
+import { conversationRefOf, joinBody, joinMessage, messageBody, messageLink, untrustedText } from '../message-rendering';
+import type { MessagePart } from '../message-rendering';
 import { toZonedDateTime } from '../reminders/zoned-time';
-import { escapeDiscordText } from '../work-chat/external-work-readout';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
 import type {
   ConnectorWriteApprovedElsewhere,
@@ -32,7 +33,8 @@ import type {
  * Truthfulness rules: nothing here says a write happened unless the step is a `SENT` outcome (or a repeat of one);
  * `UNCERTAIN` always says it MAY have been written and that nothing is retried; every refusal and every pre-execution
  * reply says nothing was sent or changed. The owner's comment / message text is shown verbatim in a fenced block (no
- * markdown, mention or link expansion); event text read from the calendar is untrusted and escaped.
+ * markdown, mention or link expansion); event text read from the calendar, target labels and references are untrusted
+ * spans the platform neutralizes, and links and conversation references are platform-rendered spans (PLT-0).
  */
 
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'] as const;
@@ -72,8 +74,8 @@ function notDoneByThisRequest(calendar: boolean, yet = false): string {
 }
 
 /** "승인된 Jira 댓글(PROJ-12)은" / "승인된 Slack 게시는" — the approved write, named so a reply speaks only about it. */
-function approvedWriteSubject(operation: ConnectorWriteOperation, target?: ConnectorWriteTargetSummary): string {
-  return `승인된 ${target ? labelWithTarget(operation, target) : withTopicParticle(connectorWriteLabel(operation))}`;
+function approvedWriteSubject(operation: ConnectorWriteOperation, target?: ConnectorWriteTargetSummary): MessageBody {
+  return messageBody('승인된 ', target ? labelWithTarget(operation, target) : withTopicParticle(connectorWriteLabel(operation)));
 }
 
 /** A fence longer than any backtick run in `text`, so owner text can never break out of its block. */
@@ -83,8 +85,9 @@ function fenced(text: string): string {
   return `${fence}\n${text}\n${fence}`;
 }
 
-function inline(value: string): string {
-  return containsCredentialMaterial(value) ? '(숨김)' : escapeDiscordText(value);
+/** Untrusted text on one line (whitespace collapsed), or a placeholder when it looks like credential material. */
+function inline(value: string): MessagePart {
+  return containsCredentialMaterial(value) ? '(숨김)' : untrustedText(value.replace(/\s+/g, ' '));
 }
 
 function pad(value: number): string {
@@ -123,11 +126,11 @@ function summaryTime(event: ConnectorWriteEventSummary, timeZone: string): strin
   );
 }
 
-function eventLines(event: CalendarEventDraft, timeZone: string): string[] {
+function eventLines(event: CalendarEventDraft, timeZone: string): MessageBody[] {
   return [
-    `제목: ${inline(event.title)}`,
+    messageBody('제목: ', inline(event.title)),
     `시간: ${connectorWriteTimeLabel(event.time, timeZone)}`,
-    ...(event.location !== undefined ? [`장소: ${inline(event.location)}`] : []),
+    ...(event.location !== undefined ? [messageBody('장소: ', inline(event.location))] : []),
     ...(event.description !== undefined ? ['설명:', fenced(event.description)] : []),
   ];
 }
@@ -136,37 +139,37 @@ const NO_INVITES = '참석자: 없음 · 초대·변경 메일: 보내지 않음
 const PRIMARY = '캘린더: 내 기본 캘린더(primary)';
 const UNCHANGED_EVENT_ONLY = '실행할 때 이 일정이 미리보기 그대로일 때만 실행해요. 그사이 일정이 바뀌면 실행하지 않아요.';
 
-function previewBody(preview: ConnectorWritePreview): string[] {
+function previewBody(preview: ConnectorWritePreview): MessageBody[] {
   switch (preview.operation) {
     case 'ISSUE_COMMENT':
       return [`대상: Jira ${preview.issueKey}`, '댓글 내용 (이대로 한 번만 보내요):', fenced(preview.text)];
     case 'ISSUE_TRANSITION':
       return [
         `대상: Jira ${preview.issueKey}`,
-        `바꿀 상태: ${inline(preview.toStatus)} (상태 ID ${preview.toStatusId})`,
-        `전환: ${inline(preview.transitionName)} (전환 ID ${preview.transitionId})`,
+        messageBody('바꿀 상태: ', inline(preview.toStatus), ` (상태 ID ${preview.toStatusId})`),
+        messageBody('전환: ', inline(preview.transitionName), ` (전환 ID ${preview.transitionId})`),
         '실행할 때 이 전환이 그대로 이 상태로 이어질 때만 실행해요. 조건이 바뀌면 실행하지 않아요.',
       ];
     case 'CHANNEL_POST':
-      return [`대상: Slack #${inline(preview.channelLabel)} (${preview.channelId})`, '메시지 (이대로 한 번만 보내요):', fenced(preview.text)];
+      return [messageBody('대상: Slack #', inline(preview.channelLabel), ` (${preview.channelId})`), '메시지 (이대로 한 번만 보내요):', fenced(preview.text)];
     case 'CALENDAR_EVENT_CREATE':
       return [PRIMARY, ...eventLines(preview.event, preview.timeZone), NO_INVITES];
     case 'CALENDAR_EVENT_UPDATE':
       return [
         PRIMARY,
-        `바꿀 일정: ${inline(preview.before.title || '(제목 없음)')} · ${summaryTime(preview.before, preview.timeZone)}`,
+        messageBody('바꿀 일정: ', inline(preview.before.title || '(제목 없음)'), ` · ${summaryTime(preview.before, preview.timeZone)}`),
         '변경 후:',
-        `- 제목: ${inline(preview.after.title || '(제목 없음)')}`,
+        messageBody('- 제목: ', inline(preview.after.title || '(제목 없음)')),
         `- 시간: ${connectorWriteTimeLabel(preview.after.time, preview.timeZone)}`,
-        ...(preview.after.location !== undefined ? [`- 장소: ${inline(preview.after.location)}`] : []),
+        ...(preview.after.location !== undefined ? [messageBody('- 장소: ', inline(preview.after.location))] : []),
         UNCHANGED_EVENT_ONLY,
         NO_INVITES,
       ];
     case 'CALENDAR_EVENT_DELETE':
       return [
         PRIMARY,
-        `삭제할 일정: ${inline(preview.before.title || '(제목 없음)')} · ${summaryTime(preview.before, preview.timeZone)}`,
-        ...(preview.before.location !== undefined ? [`장소: ${inline(preview.before.location)}`] : []),
+        messageBody('삭제할 일정: ', inline(preview.before.title || '(제목 없음)'), ` · ${summaryTime(preview.before, preview.timeZone)}`),
+        ...(preview.before.location !== undefined ? [messageBody('장소: ', inline(preview.before.location))] : []),
         UNCHANGED_EVENT_ONLY,
         NO_INVITES,
       ];
@@ -182,9 +185,9 @@ export function renderConnectorWritePreview(
   remainingMs: number,
   executionPhrase: string,
   unconfirmedEarlier?: ConnectorWriteUnconfirmedEarlier,
-): string {
+): MessageBody {
   const operation = preview.operation;
-  return [
+  return joinBody([
     ...(unconfirmedEarlier ? [renderConnectorWriteDuplicateRisk(operation, unconfirmedEarlier), ''] : []),
     `${connectorWriteLabel(operation)} 미리보기예요. ${notDoneByThisRequest(isCalendar(operation), true)}`,
     ...previewBody(preview),
@@ -192,7 +195,7 @@ export function renderConnectorWritePreview(
     '위험도: CRITICAL · 이 내용 그대로 한 번만 실행하는 승인이에요. 실패하거나 결과가 불확실해도 자동으로 다시 시도하지 않아요.',
     `"승인"이라고 답한 뒤 "${executionPhrase}"이라고 보내야 실제로 실행돼요. 그만두려면 "거절"이라고 답해 주세요.`,
     `남은 시간: 약 ${minutesOf(remainingMs)}분 (지나면 자동으로 거절돼요)`,
-  ].join('\n');
+  ]);
 }
 
 /**
@@ -211,16 +214,16 @@ export function renderConnectorWriteDuplicateRisk(operation: ConnectorWriteOpera
 }
 
 /** A non-decision message while the approval is pending (ADR-0093 reminder, with what is pending). */
-export function renderConnectorWritePending(preview: ConnectorWritePreview, remainingMs: number, executionPhrase: string): string {
+export function renderConnectorWritePending(preview: ConnectorWritePreview, remainingMs: number, executionPhrase: string): MessageBody {
   const operation = preview.operation;
-  return [
+  return joinBody([
     `${connectorWriteLabel(operation)} 승인을 기다리고 있어요. ${notDoneByThisRequest(isCalendar(operation), true)}`,
     ...previewBody(preview),
     '',
     `"승인" 또는 "거절"로 답해 주세요. 승인한 뒤 "${executionPhrase}"이라고 보내야 실행돼요.`,
     `남은 시간: 약 ${minutesOf(remainingMs)}분 (지나면 자동으로 거절돼요)`,
     '이 요청을 그만두고 새로 시작하려면 "새 대화"라고 보내 주세요.',
-  ].join('\n');
+  ]);
 }
 
 export function renderConnectorWriteApproved(operation: ConnectorWriteOperation, executionPhrase: string): string {
@@ -243,9 +246,9 @@ export function renderConnectorWriteApprovedReminder(
   operation: ConnectorWriteOperation,
   executionPhrase: string,
   target?: ConnectorWriteTargetSummary,
-): string {
+): MessageBody {
   const how = isCalendar(operation) ? '반영하려면' : '보내려면';
-  return `${approvedWriteSubject(operation, target)} 아직 실행하지 않았어요. 실제로 ${how} "${executionPhrase}"이라고만 보내 주세요.`;
+  return messageBody(approvedWriteSubject(operation, target), ` 아직 실행하지 않았어요. 실제로 ${how} "${executionPhrase}"이라고만 보내 주세요.`);
 }
 
 /**
@@ -257,54 +260,58 @@ export function renderConnectorWriteBareExecution(
   operation: ConnectorWriteOperation,
   executionPhrase: string,
   target?: ConnectorWriteTargetSummary,
-): string {
-  return `${approvedWriteSubject(operation, target)} 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`;
+): MessageBody {
+  return messageBody(approvedWriteSubject(operation, target), ` 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`);
 }
 
 /**
- * Where a conversation is, for a "send the phrase there" hint: a direct conversation, or a channel (thread) reference
- * written as `<#id>` — the chat-markup channel reference, rendered only for a plain id token (`reference` is absent
- * otherwise). Ids only, never names.
+ * Where a conversation is, for a "send the phrase there" hint: whether it is direct (the adapter's
+ * `ConversationContext.direct`), and the conversation-reference span the platform renders (PLT-0). The reference is
+ * written natively (a channel or thread id) only on the conversation's own platform; `labels` are the same-platform
+ * copy otherwise, and a conversation on another platform is named with that platform by the markup. Ids only, never
+ * names.
  */
-export type ConnectorWriteConversationPlace = { readonly kind: 'dm' } | { readonly kind: 'channel'; readonly reference?: string };
+export interface ConnectorWriteConversationPlace {
+  readonly kind: 'dm' | 'channel';
+  readonly reference: ConversationRefNode;
+}
 
-/** Same safe-id rule as everywhere a raw id reaches chat text: letters, digits, `_` and `-` only. */
-const PLACE_ID = /^[A-Za-z0-9_-]{1,64}$/u;
-
-export function connectorWriteConversationPlace(context: ConversationContext): ConnectorWriteConversationPlace {
-  if (context.spaceId === undefined) return { kind: 'dm' };
-  const id = context.threadId ?? context.channelId;
-  return PLACE_ID.test(id) ? { kind: 'channel', reference: `<#${id}>` } : { kind: 'channel' };
+export function connectorWriteConversationPlace(
+  context: ConversationContext,
+  labels: { readonly direct: string; readonly channel: string } = { direct: 'DM', channel: '채널' },
+): ConnectorWriteConversationPlace {
+  const reference = conversationRefOf(context, labels);
+  return { kind: reference.direct ? 'dm' : 'channel', reference };
 }
 
 /** The full target ("Slack #dev", "Jira PROJ-12", "내 기본 캘린더"). */
-export function connectorWriteTargetLabel(target: ConnectorWriteTargetSummary): string {
+export function connectorWriteTargetLabel(target: ConnectorWriteTargetSummary): MessageBody {
   switch (target.kind) {
     case 'issue':
-      return `Jira ${inline(target.issueKey)}`;
+      return messageBody('Jira ', inline(target.issueKey));
     case 'channel':
-      return `Slack #${inline(target.channelLabel)}`;
+      return messageBody('Slack #', inline(target.channelLabel));
     case 'calendar':
       return '내 기본 캘린더';
   }
 }
 
 /** The target after a label that already names the service ("#dev", "PROJ-12", "기본 캘린더"). */
-export function connectorWriteShortTarget(target: ConnectorWriteTargetSummary): string {
+export function connectorWriteShortTarget(target: ConnectorWriteTargetSummary): MessageBody {
   switch (target.kind) {
     case 'issue':
-      return inline(target.issueKey);
+      return messageBody(inline(target.issueKey));
     case 'channel':
-      return `#${inline(target.channelLabel)}`;
+      return messageBody('#', inline(target.channelLabel));
     case 'calendar':
       return '기본 캘린더';
   }
 }
 
 /** "Slack 게시(#dev)는", "Jira 댓글(PROJ-12)은" — the particle follows the label, not the parenthesis. */
-function labelWithTarget(operation: ConnectorWriteOperation, target: ConnectorWriteTargetSummary): string {
+function labelWithTarget(operation: ConnectorWriteOperation, target: ConnectorWriteTargetSummary): MessageBody {
   const label = connectorWriteLabel(operation);
-  return `${label}(${connectorWriteShortTarget(target)})${endsWithBatchim(label) ? '은' : '는'}`;
+  return messageBody(`${label}(`, connectorWriteShortTarget(target), `)${endsWithBatchim(label) ? '은' : '는'}`);
 }
 
 /**
@@ -312,13 +319,16 @@ function labelWithTarget(operation: ConnectorWriteOperation, target: ConnectorWr
  * conversation: nothing runs here, and the phrase must be sent there (execution is bound to the approving
  * conversation). Names the kind, the target, the place and the time left only — never the payload.
  */
-export function renderConnectorWriteApprovedElsewhere(elsewhere: ConnectorWriteApprovedElsewhere): string {
-  const place = connectorWriteConversationPlace(elsewhere.context);
-  const where = place.kind === 'dm' ? '봇과의 DM' : (place.reference ?? '채널');
-  return [
-    `실행하지 않았어요. 승인된 ${labelWithTarget(elsewhere.operation, elsewhere.target)} 다른 대화에서 기다리고 있어요 (약 ${minutesOf(elsewhere.remainingMs)}분 남음).`,
-    `미리보기를 받은 ${where}에서 "${elsewhere.executionPhrase}"이라고 보내 주세요.`,
-  ].join('\n');
+export function renderConnectorWriteApprovedElsewhere(elsewhere: ConnectorWriteApprovedElsewhere): MessageBody {
+  const where = connectorWriteConversationPlace(elsewhere.context, { direct: '봇과의 DM', channel: '채널' }).reference;
+  return joinBody([
+    messageBody(
+      '실행하지 않았어요. 승인된 ',
+      labelWithTarget(elsewhere.operation, elsewhere.target),
+      ` 다른 대화에서 기다리고 있어요 (약 ${minutesOf(elsewhere.remainingMs)}분 남음).`,
+    ),
+    messageBody('미리보기를 받은 ', where, `에서 "${elsewhere.executionPhrase}"이라고 보내 주세요.`),
+  ]);
 }
 
 /**
@@ -331,16 +341,22 @@ export function renderConnectorWriteOpsApprovedNotice(notice: {
   readonly executionPhrase: string;
   readonly remainingMs: number;
   readonly chat: ConversationContext;
-}): string {
+}): MessageBody {
   const label = connectorWriteLabel(notice.operation);
   const step = label.split(' ').slice(1).join(' ');
-  const place = connectorWriteConversationPlace(notice.chat);
-  const where = place.kind === 'dm' ? '이 DM' : (place.reference ?? '승인을 요청한 채널');
-  const run = `실제 ${step}${endsWithBatchim(step) ? '은' : '는'} ${where}에서 "${notice.executionPhrase}"이라고 보내면 돼요 (승인은 약 ${minutesOf(notice.remainingMs)}분 유효).`;
-  return [
-    `운영 화면에서 승인했어요: ${label} → ${connectorWriteShortTarget(notice.target)}.`,
-    place.kind === 'dm' ? run : `${run} 이 DM에서는 실행되지 않아요.`,
-  ].join('\n');
+  // The notice is delivered in the owner's DM. A direct chat is "이 DM" only on the same platform; the markup names a
+  // conversation on another platform with that platform instead (PLT-0 review P2-4).
+  const place = connectorWriteConversationPlace(notice.chat, { direct: '이 DM', channel: '승인을 요청한 채널' });
+  const where = place.reference;
+  const run = messageBody(
+    `실제 ${step}${endsWithBatchim(step) ? '은' : '는'} `,
+    where,
+    `에서 "${notice.executionPhrase}"이라고 보내면 돼요 (승인은 약 ${minutesOf(notice.remainingMs)}분 유효).`,
+  );
+  return joinBody([
+    messageBody(`운영 화면에서 승인했어요: ${label} → `, connectorWriteShortTarget(notice.target), '.'),
+    place.kind === 'dm' ? run : messageBody(run, ' 이 DM에서는 실행되지 않아요.'),
+  ]);
 }
 
 /** "10월 8일 17:01" in `timeZone`. */
@@ -363,26 +379,26 @@ function clockLabel(instant: string, timeZone: string): string | undefined {
  * The execution phrase repeated after a write of that kind approved in THIS conversation was SENT recently (W5-L02):
  * when and where it went, so it can never be mistaken for another post, and that nothing was sent again.
  */
-export function renderConnectorWriteAlreadyExecuted(operation: ConnectorWriteOperation, sent: ConnectorWriteRecentSend): string {
+export function renderConnectorWriteAlreadyExecuted(operation: ConnectorWriteOperation, sent: ConnectorWriteRecentSend): MessageBody {
   const calendar = isCalendar(operation);
   const time = clockLabel(sent.sentAt, sent.timeZone);
-  const head = `${calendar ? '이미 반영했어요' : '이미 보냈어요'} (${time ? `${time}, ` : ''}${connectorWriteTargetLabel(sent.target)})`;
+  const head = messageBody(`${calendar ? '이미 반영했어요' : '이미 보냈어요'} (${time ? `${time}, ` : ''}`, connectorWriteTargetLabel(sent.target), ')');
   const link = linkValue(sent.url, sent.externalRef);
-  return [link ? `${head}: ${link}` : `${head}.`, calendar ? '다시 바꾸지 않았어요.' : '다시 보내지 않았어요.'].join('\n');
+  return joinBody([link ? messageBody(head, ': ', link) : messageBody(head, '.'), calendar ? '다시 바꾸지 않았어요.' : '다시 보내지 않았어요.']);
 }
 
-function linkValue(url: string | undefined, externalRef: string | undefined): string | undefined {
-  if (url !== undefined && /^https:\/\/[\x21-\x7e]{1,1500}$/u.test(url)) return `<${url}>`;
+function linkValue(url: string | undefined, externalRef: string | undefined): MessageBody | undefined {
+  if (url !== undefined && /^https:\/\/[\x21-\x7e]{1,1500}$/u.test(url)) return messageBody(messageLink(url));
   if (externalRef !== undefined && externalRef.length > 0 && externalRef.length <= 200 && !containsCredentialMaterial(externalRef)) {
-    return `참조 ${escapeDiscordText(externalRef)}`;
+    return messageBody('참조 ', untrustedText(externalRef.replace(/\s+/g, ' ')));
   }
   return undefined;
 }
 
-function linkLine(url: string | undefined, externalRef: string | undefined): string[] {
-  if (url !== undefined && /^https:\/\/[\x21-\x7e]{1,1500}$/u.test(url)) return [`링크: <${url}>`];
+function linkLine(url: string | undefined, externalRef: string | undefined): MessageBody[] {
+  if (url !== undefined && /^https:\/\/[\x21-\x7e]{1,1500}$/u.test(url)) return [messageBody('링크: ', messageLink(url))];
   if (externalRef !== undefined && externalRef.length > 0 && externalRef.length <= 200 && !containsCredentialMaterial(externalRef)) {
-    return [`참조: ${escapeDiscordText(externalRef)}`];
+    return [messageBody('참조: ', untrustedText(externalRef.replace(/\s+/g, ' ')))];
   }
   return [];
 }
@@ -403,11 +419,11 @@ const NOT_SENT_REASON_KO: Readonly<Record<ConnectorWriteNotSentReason, string>> 
   UNAVAILABLE: '연결에 실패해서 요청을 보내기 전에 멈췄어요',
 };
 
-export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, outcome: ConnectorWriteOutcome): string {
+export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, outcome: ConnectorWriteOutcome): MessageBody {
   const label = connectorWriteLabel(operation);
   switch (outcome.status) {
     case 'SENT':
-      return [`${label} 완료: ${sentVerb(operation)}`, ...linkLine(outcome.url, outcome.externalRef)].join('\n');
+      return joinBody([`${label} 완료: ${sentVerb(operation)}`, ...linkLine(outcome.url, outcome.externalRef)]);
     case 'NOT_SENT':
       if (outcome.reason === 'TARGET_CHANGED') return targetChangedCopy(operation);
       return [
@@ -473,11 +489,11 @@ export function renderConnectorWriteRepeat(
   status: 'SENT' | 'NOT_SENT' | 'UNCERTAIN' | 'EXECUTING',
   externalRef?: string,
   url?: string,
-): string {
+): MessageBody {
   const label = connectorWriteLabel(operation);
   switch (status) {
     case 'SENT':
-      return [`이 ${withTopicParticle(label)} 이미 실행했어요. 다시 실행하지 않았어요.`, ...linkLine(url, externalRef)].join('\n');
+      return joinBody([`이 ${withTopicParticle(label)} 이미 실행했어요. 다시 실행하지 않았어요.`, ...linkLine(url, externalRef)]);
     case 'NOT_SENT':
       return `이 ${withTopicParticle(label)} 이미 실패로 끝났어요. 다시 실행하지 않아요. 필요하면 새로 요청해 주세요.`;
     default:
@@ -499,11 +515,11 @@ export function renderConnectorWriteRevokeTooLate(operation: ConnectorWriteOpera
   ].join('\n');
 }
 
-export function renderConnectorWriteAlreadySent(operation: ConnectorWriteOperation, externalRef?: string, url?: string): string {
-  return [
+export function renderConnectorWriteAlreadySent(operation: ConnectorWriteOperation, externalRef?: string, url?: string): MessageBody {
+  return joinBody([
     `같은 대상에 같은 내용의 ${withObjectParticle(connectorWriteLabel(operation))} 이미 실행했어요. 이미 보냈어요 — 다시 실행하지 않았어요.`,
     ...linkLine(url, externalRef),
-  ].join('\n');
+  ]);
 }
 
 /** The first line of a numbered choice: why these events (live QA D2: an undated request says where they came from). */
@@ -527,15 +543,18 @@ export function renderConnectorWriteChoice(
   candidates: readonly ConnectorWriteEventSummary[],
   timeZone: string,
   basis?: ConnectorWriteChoiceBasis,
-): string {
-  return [
+): MessageBody {
+  return joinBody([
     choiceHeader(mode, candidates.length, basis),
-    ...candidates.map(
-      (event, i) =>
-        `${i + 1}. ${summaryTime(event, timeZone)} ${inline(event.title || '(제목 없음)')}${event.location !== undefined ? ` (${inline(event.location)})` : ''}`,
+    ...candidates.map((event, i) =>
+      messageBody(
+        `${i + 1}. ${summaryTime(event, timeZone)} `,
+        inline(event.title || '(제목 없음)'),
+        event.location !== undefined ? messageBody(' (', inline(event.location), ')') : '',
+      ),
     ),
     '다른 말을 보내면 선택은 취소돼요.',
-  ].join('\n');
+  ]);
 }
 
 const USAGE_KO: Readonly<Record<ConnectorWriteUsageTopic, string>> = {
@@ -582,15 +601,15 @@ export function renderConnectorWriteRefusal(
   reason: ConnectorWriteRefusal,
   calendar: boolean,
   availableStatuses: readonly string[] = [],
-): string {
-  const lines = [`${REFUSAL_KO[reason]} ${notDoneByThisRequest(calendar)}`];
+): MessageBody {
+  const lines: MessageBody[] = [`${REFUSAL_KO[reason]} ${notDoneByThisRequest(calendar)}`];
   if (reason === 'transition-unavailable' && availableStatuses.length > 0) {
-    lines.push(`지금 바꿀 수 있는 상태: ${availableStatuses.map(inline).join(', ')}`);
+    lines.push(messageBody('지금 바꿀 수 있는 상태: ', joinMessage(availableStatuses.map(inline), ', ')));
   }
   if (reason === 'binding-mismatch' || reason === 'grant-expired' || reason === 'choice-expired' || reason === 'invalid-choice') {
     lines.push('필요하면 처음부터 다시 요청해 주세요.');
   }
-  return lines.join('\n');
+  return joinBody(lines);
 }
 
 export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, calendar: boolean): string {
@@ -626,23 +645,23 @@ const CLOSED_REQUEST_KO: Readonly<Record<ConnectorWriteCloseReason, string>> = {
 export function renderConnectorWriteLatestRequest(
   latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
   olderUnconfirmed: boolean,
-): string {
+): MessageBody {
   const label = connectorWriteLabel(latest.operation);
   const calendar = isCalendar(latest.operation);
-  const head = `가장 최근 ${label} 요청(${connectorWriteShortTarget(latest.target)})은`;
+  const head = messageBody(`가장 최근 ${label} 요청(`, connectorWriteShortTarget(latest.target), ')은');
   const what =
     latest.state.kind === 'closed'
-      ? `${head} ${CLOSED_REQUEST_KO[(latest.state as { reason: ConnectorWriteCloseReason }).reason]} 실행하지 않았어요.`
-      : `${head} 실행했지만 ${calendar ? '캘린더에 반영하지' : '보내지'} 못했어요.`;
-  return [
-    `${what} 그 요청으로는 ${calendar ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`,
+      ? messageBody(head, ` ${CLOSED_REQUEST_KO[(latest.state as { reason: ConnectorWriteCloseReason }).reason]} 실행하지 않았어요.`)
+      : messageBody(head, ` 실행했지만 ${calendar ? '캘린더에 반영하지' : '보내지'} 못했어요.`);
+  return joinBody([
+    messageBody(what, ` 그 요청으로는 ${calendar ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`),
     ...(olderUnconfirmed
       ? [
           `그 전의 ${label} 요청은 결과를 확인하지 못했어요. 이미 ${calendar ? '캘린더가 바뀌었을' : '게시됐을'} 수도 있으니 직접 확인해 주세요. 다시 실행하지 않아요.`,
         ]
       : []),
     '필요하면 새로 요청해 주세요.',
-  ].join('\n');
+  ]);
 }
 
 /** An execution phrase with no approved write to run (the QA-018 pattern: no model may claim a write). */
@@ -654,7 +673,7 @@ export function renderNoApprovedConnectorWrite(): string {
 export const CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE = '[캘린더 쓰기 응답 — 일정 내용은 대화 기록에 남기지 않아요.]';
 
 /** The single entry point the composer uses for every flow step (except `writes-off`, which is the handler's text). */
-export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): string {
+export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): MessageBody {
   switch (step.kind) {
     case 'usage':
       return renderConnectorWriteUsage(step.topic);

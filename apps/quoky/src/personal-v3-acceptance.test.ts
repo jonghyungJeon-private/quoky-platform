@@ -51,6 +51,7 @@ import {
   type TurnHandlerStage,
   type VectorProvider,
 } from '@quoky/core';
+import { renderDiscordContent, renderOutboundForDiscord } from '@quoky/adapter-discord';
 import type { SqliteStorageProvider } from '@quoky/storage-sqlite';
 // Test-only, cross-package source imports (precedent: personal-v2-acceptance.test.ts). The execution allow-list and the
 // migration list are not part of either package's public surface.
@@ -134,6 +135,8 @@ interface TurnObservation {
   readonly providerCalls: number;
   readonly availabilityProbes: number;
   readonly text: string;
+  /** PLT-0: the exact Discord text the adapter sends for this reply (its neutral content rendered with Discord markup). */
+  readonly discord: string;
   /** `model-reply` only on a provider's own answer (ADR-0111 amendment of 2026-10-08); absent on deterministic text. */
   readonly format: string | undefined;
 }
@@ -405,6 +408,7 @@ async function boot(): Promise<Harness> {
         providerCalls: providerCalls - providerBefore,
         availabilityProbes: availabilityProbes - probesBefore,
         text: result.reply.text,
+        discord: renderOutboundForDiscord(result.reply),
         format: result.reply.format,
       };
     },
@@ -644,20 +648,20 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect((await det(owner, '승인')).text).toContain('승인을 기록했어요. 아직 실행하지 않았어요.');
     // W5-L01: a question or negation about the step gets the deterministic reminder, never chat and never a send.
     for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
-      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
+      expect((await det(owner, text)).discord, text).toBe(renderDiscordContent(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' })));
     }
     for (const text of ['Slack 게시 실행', '일정 추가 실행', '승인']) await det(owner, text);
     // INT-2 finding, fixed (routing exec gaps): a bare "실행" — the remote-cleanup gate's phrase — or "go" / "run it" while
     // a comment is approved names no write step. It runs nothing and gets the deterministic reply quoting the exact phrase
     // (it fell through to chat before); the grant still waits for "댓글 실행".
     for (const text of ['실행', '실행해', '실행해줘', 'go', 'run it']) {
-      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
+      expect((await det(owner, text)).discord, text).toBe(renderDiscordContent(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' })));
     }
     expect(totalWrites()).toBe(0);
 
     const sent = await det(owner, '댓글 실행');
     expect(sent.text).toContain('Jira 댓글 완료: 댓글을 달았어요.');
-    expect(sent.text).toContain(`<${COMMENT_URL}>`);
+    expect(sent.discord).toContain(`링크: <${COMMENT_URL}>`);
     expect(harness.writes.addComment).toEqual([{ issueKey: 'PROJ-12', text: 'INT-2 배포 **완료**했습니다 @here' }]);
 
     // W5-L02: the phrase again says it already ran (never "nothing approved"), and the same request matches the receipt.
@@ -766,7 +770,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     }
 
     const elsewhere = await det(dm, 'Slack 게시 실행');
-    expect(elsewhere.text).toBe(
+    expect(elsewhere.discord).toBe(
       [
         `실행하지 않았어요. 승인된 Slack 게시(#${SLACK_CHANNEL_NAME})는 다른 대화에서 기다리고 있어요 (약 30분 남음).`,
         `미리보기를 받은 <#${guild.channelId}>에서 "Slack 게시 실행"이라고 보내 주세요.`,

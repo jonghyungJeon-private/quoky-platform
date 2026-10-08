@@ -4,6 +4,7 @@ import {
   planFiringCompletion,
   type Id,
   type IsoTimestamp,
+  type MessageBody,
   type NotificationDeliveryOutcome,
   type Reminder,
   type ReminderFiringResult,
@@ -13,6 +14,7 @@ import type { Logger } from '../../ports/logger.port';
 import type { NotificationSink } from '../../ports/notification-sink.port';
 import type { ReminderRepository } from '../../ports/reminder-repository.port';
 import { newId } from '../../util/id';
+import { messageFields } from '../message-rendering';
 import { decideMissedOccurrence, nextOccurrenceAfter } from './reminder-schedule';
 import type { ReminderReplyComposer } from './reminder-reply-composer';
 
@@ -237,14 +239,14 @@ export class ReminderDispatchService {
   private async deliverOnce(
     reminder: Reminder,
     occurrenceAt: IsoTimestamp,
-    text: string,
+    text: MessageBody,
   ): Promise<NotificationDeliveryOutcome> {
     try {
       return await this.deps.sink.deliver({
         correlationId: `${reminder.id}:${occurrenceAt}:${reminder.attempt}`,
         target: reminder.origin,
         kind: reminder.kind,
-        text,
+        ...messageFields(text),
       });
     } catch (error) {
       this.logFailure('reminder.dispatch.sink_threw', error);
@@ -257,7 +259,7 @@ export class ReminderDispatchService {
     occurrenceAt: IsoTimestamp,
     late: boolean,
     now: IsoTimestamp,
-  ): Promise<string> {
+  ): Promise<MessageBody> {
     if (reminder.kind === 'TEXT') {
       return this.deps.composer.delivery({
         displayNo: reminder.displayNo,

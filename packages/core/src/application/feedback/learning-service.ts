@@ -9,11 +9,12 @@ import {
   learningLanguageOf,
 } from '../../domain';
 import type {
-  FeedbackRatedTurn, Id, IsoTimestamp, LearningItem, LearningItemData, LearningSourceRating, Task,
+  FeedbackRatedTurn, Id, IsoTimestamp, LearningItem, LearningItemData, LearningSourceRating, MessageBody, MessageContent, Task,
 } from '../../domain';
 import type { FeedbackRepository, LearningRepository, Logger } from '../../ports';
 import { newId } from '../../util/id';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
+import { joinBody, messageBody, messageFields } from '../message-rendering';
 import { FEEDBACK_SUMMARY_WINDOW_MS } from './feedback-recorder';
 import { FEEDBACK_SUPPRESSED_EXCERPT, feedbackCapabilityLabel, feedbackRequestExcerpt } from './feedback-summary-composer';
 import type { LearningCommand } from './learning-commands';
@@ -68,7 +69,9 @@ export interface LearningCommandScope {
 }
 
 export interface LearningCommandResult {
+  /** The reply as plain text; `content` is present when it quotes request excerpts (untrusted spans, PLT-0). */
   text: string;
+  content?: MessageContent;
   status: 'RESPONDED' | 'FAILED';
 }
 
@@ -97,7 +100,7 @@ export function learningTextRefusal(text: string | undefined): LearningTextRefus
  * neutralisation). The chat-only guard of {@link feedbackRequestExcerpt} misses file-content credentials such as
  * `const dbPassword = "…"`, so every learning surface goes through this function (ADR-0107 D1 "again at use").
  */
-export function learningRequestExcerpt(text: string | undefined): string {
+export function learningRequestExcerpt(text: string | undefined): MessageBody {
   if (text !== undefined && learningTextHasCredential(text)) return FEEDBACK_SUPPRESSED_EXCERPT;
   return feedbackRequestExcerpt(text);
 }
@@ -229,17 +232,22 @@ export class LearningService {
     });
     this.bindings.bind(scope, 'candidates', turns.map((turn) => turn.turnId), Date.parse(now));
     if (turns.length === 0) return { text: CANDIDATES_EMPTY, status: 'RESPONDED' };
-    const lines = [`최근 평가한 답변이에요(최근 30일, 최신순 ${turns.length}개). 번호는 30분 동안 쓸 수 있어요.`];
+    const lines: MessageBody[] = [`최근 평가한 답변이에요(최근 30일, 최신순 ${turns.length}개). 번호는 30분 동안 쓸 수 있어요.`];
     for (const [i, turn] of turns.entries()) {
       const request = await this.requestTextOf(turn.taskId);
-      lines.push(`${i + 1}. ${turn.createdAt.slice(0, 10)} · ${RATING_EMOJI[ratingOf(turn)]} · ${feedbackCapabilityLabel(turn.capability)} · ${learningRequestExcerpt(request)}`);
+      lines.push(
+        messageBody(
+          `${i + 1}. ${turn.createdAt.slice(0, 10)} · ${RATING_EMOJI[ratingOf(turn)]} · ${feedbackCapabilityLabel(turn.capability)} · `,
+          learningRequestExcerpt(request),
+        ),
+      );
     }
     lines.push(
       '',
       '👎 답변: "후보 N 메모: 무엇이 잘못됐는지" · 👍 답변: "후보 N 예시로 저장"',
       STORAGE_NOTE,
     );
-    return { text: lines.join('\n'), status: 'RESPONDED' };
+    return { ...messageFields(joinBody(lines)), status: 'RESPONDED' };
   }
 
   private async saveCandidate(
@@ -333,7 +341,7 @@ export class LearningService {
     });
     this.bindings.bind(scope, 'examples', items.map((item) => item.id), Date.parse(now));
     if (items.length === 0) return { text: EXAMPLES_EMPTY, status: 'RESPONDED' };
-    const lines = [`저장된 예시예요(최신순 ${items.length}개). 번호는 30분 동안 쓸 수 있어요.`];
+    const lines: MessageBody[] = [`저장된 예시예요(최신순 ${items.length}개). 번호는 30분 동안 쓸 수 있어요.`];
     for (const [i, item] of items.entries()) {
       const date = item.createdAt.slice(0, 10);
       if (!learningItemUsable(item.data)) {
@@ -341,10 +349,10 @@ export class LearningService {
         continue;
       }
       const answer = item.data.idealAnswer !== undefined ? '답변 있음' : '답변 없음';
-      lines.push(`${i + 1}. ${date} · 요청 ${learningRequestExcerpt(item.data.requestText)} · ${answer}`);
+      lines.push(messageBody(`${i + 1}. ${date} · 요청 `, learningRequestExcerpt(item.data.requestText), ` · ${answer}`));
     }
     lines.push('', '"예시 N 수정: 좋은 답변"으로 답변을 채우거나 고치고, "예시 N 삭제"로 지울 수 있어요.');
-    return { text: lines.join('\n'), status: 'RESPONDED' };
+    return { ...messageFields(joinBody(lines)), status: 'RESPONDED' };
   }
 
   private async editExample(

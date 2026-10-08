@@ -40,6 +40,7 @@ export * from './code-generation-context';
 export * from './connector-manager';
 export * from './work-surface-query';
 export * from './work-manager';
+export * from './message-rendering';
 export * from './response-composer';
 export * from './safe-error';
 export * from './preview-delivery';

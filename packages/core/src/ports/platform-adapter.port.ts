@@ -9,7 +9,7 @@ import type {
 
 /**
  * The inbound side of a platform. Implementations translate native events
- * (Discord today, Telegram later) into normalized domain messages.
+ * (one adapter package per chat platform) into normalized domain messages.
  *
  * Attachments (ADR-0111 D1/D2, additive): an adapter may fill `InboundMessage.attachments`, and only for a message
  * that already passed its admission gate (ADR-0091) — nothing is downloaded for a dropped message. Intake is
@@ -19,8 +19,8 @@ import type {
  * credential guard; an image arrives only as an opaque runner-owned `imageRef` that stays valid until the handler's
  * promise settles (the adapter deletes it after the turn). Core never persists either.
  * Ordering note: an adapter that does intake must not start it (download, temp file, refusal note) before the
- * ADR-0102 D5 startup identity gate opens; the composition root hands the same gate to the adapter (the Discord
- * adapter's adapter-local `gateInbound`), so a message arriving while the identity is unverified waits, and one
+ * ADR-0102 D5 startup identity gate opens; the composition root hands the same gate to the adapter (its
+ * adapter-local `gateInbound`), so a message arriving while the identity is unverified waits, and one
  * arriving for a mismatched identity has no adapter-side effect at all.
  */
 export type InboundMessageHandler = (message: InboundMessage) => Promise<void>;
@@ -58,13 +58,13 @@ export interface PlatformFeedbackSignal {
 export type PlatformFeedbackHandler = (signal: PlatformFeedbackSignal) => Promise<void>;
 
 /**
- * PORT: the user-facing surface. v1 implementation: DiscordPlatformAdapter.
+ * PORT: the user-facing surface. Implemented by one adapter package per chat platform.
  *
- * Boundary rule: NO platform-native type (e.g. Discord.js Message) may appear
+ * Boundary rule: NO platform-native type (e.g. a platform SDK's message object) may appear
  * in this interface. Everything is expressed in domain terms.
  */
 export interface PlatformAdapter {
-  /** Stable platform id, e.g. "discord". */
+  /** Stable, opaque platform id (adapter-defined data; Core never branches on it). */
   readonly platform: string;
 
   /** Connect/login and begin receiving events. */
@@ -86,6 +86,11 @@ export interface PlatformAdapter {
   /**
    * Send a normalized reply; the adapter renders artifacts natively. May return a delivery receipt with the
    * posted platform message ids (ADR-0098 D3); `void` remains valid for adapters that cannot report them.
+   *
+   * PLT-0 obligation: an adapter whose platform parses any markup (mentions, links, formatting) MUST render
+   * `message.content` with its own `MessageMarkup` whenever it is present, and send that — never `message.text`.
+   * `text` is the plain rendering, with untrusted spans verbatim; it is safe to send only on a platform that parses no
+   * markup at all. Length bounds apply to the rendered text.
    */
   sendMessage(message: OutboundMessage): Promise<void | OutboundDeliveryReceipt>;
   /** Optional UX nicety: show a typing/working indicator. */

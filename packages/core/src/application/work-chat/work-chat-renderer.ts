@@ -1,8 +1,9 @@
 import { WorkItemStatus } from '../../domain';
-import type { ResourceRef, WorkItem } from '../../domain';
+import type { MessageBody, ResourceRef, UntrustedTextNode, WorkItem } from '../../domain';
 import type { ConnectorQueryErrorReason } from '../../ports';
+import { fitLines, joinMessage, messageBody, messageContent, messageLink, untrustedText } from '../message-rendering';
+import type { MessagePart } from '../message-rendering';
 import type { WorkSurface, WorkSurfaceSourceStatus } from '../work-surface-query';
-import { escapeDiscordText } from './external-work-readout';
 import type { ExternalWorkReadout } from './external-work-readout';
 import { WORK_CHAT_SEARCH_TEXT_MAX_LENGTH } from './work-chat-command';
 import type {
@@ -14,8 +15,8 @@ import type {
 
 /**
  * Deterministic Korean copy for work-chat replies (ADR-0100). Pure: every function maps data to text, never reads a
- * clock or calls a connector. Item and external text is escaped for Discord (mentions, markdown, masked links) and
- * every reply is bounded to the message budget.
+ * clock or calls a connector. Item and external text is an untrusted span the platform neutralizes (mentions, markup,
+ * masked links; PLT-0), links are link spans, and every reply is bounded to the message budget of its rendering.
  */
 
 /** Below the 1,900-character message budget so a footer or notice can still be appended. */
@@ -57,56 +58,43 @@ function clip(text: string, maxChars: number): string {
   return chars.length <= maxChars ? chars.join('') : `${chars.slice(0, maxChars - 1).join('')}…`;
 }
 
-/** Escaped, single-line display text for an item title. */
-function display(text: string, maxChars = LIST_TITLE_MAX_CHARS): string {
-  return escapeDiscordText(clip(text, maxChars));
+/** Single-line untrusted text (whitespace collapsed), for an identity or a ref. */
+function inline(text: string): UntrustedTextNode {
+  return untrustedText(text.replace(/\s+/g, ' '));
 }
 
-function titleOf(item: WorkItem, maxChars?: number): string {
+/** Clipped, single-line untrusted display text for an item title. */
+function display(text: string, maxChars = LIST_TITLE_MAX_CHARS): UntrustedTextNode {
+  return untrustedText(clip(text, maxChars));
+}
+
+function titleOf(item: WorkItem, maxChars?: number): MessagePart {
   return item.title ? display(item.title, maxChars) : '(제목 없는 항목)';
 }
 
-function refList(refs: readonly ResourceRef[]): string {
-  const shown = refs.slice(0, REFS_SHOWN).map((ref) => escapeDiscordText(ref.identity));
+function refList(refs: readonly ResourceRef[]): MessageBody {
+  const shown = joinMessage(refs.slice(0, REFS_SHOWN).map((ref) => inline(ref.identity)), ', ');
   const more = refs.length > REFS_SHOWN ? ` 외 ${refs.length - REFS_SHOWN}건` : '';
-  return `${shown.join(', ')}${more}`;
+  return messageContent(shown, more);
 }
 
 /**
  * Join lines within the reply budget. Lines marked `droppable` are removed from the end first; a note records that
- * something was cut. The last resort is a hard slice, so the result never exceeds the budget.
+ * something was cut. The last resort is a hard slice, so the result never exceeds the budget. The budget applies to
+ * the delivered (rendered) text of each platform.
  */
-function fit(lines: ReadonlyArray<{ text: string; droppable?: boolean }>, maxChars = WORK_CHAT_REPLY_MAX_CHARS): string {
-  const kept = [...lines];
-  let dropped = false;
-  const render = (): string => {
-    const text = kept.map((line) => line.text).join('\n');
-    return dropped ? `${text}\n${OMITTED_NOTE}` : text;
-  };
-  while (render().length > maxChars) {
-    let index = -1;
-    for (let i = kept.length - 1; i >= 0; i -= 1) {
-      if (kept[i]?.droppable) {
-        index = i;
-        break;
-      }
-    }
-    if (index < 0) break;
-    kept.splice(index, 1);
-    dropped = true;
-  }
-  const text = render();
-  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}…`;
+function fit(lines: ReadonlyArray<{ text: MessagePart; droppable?: boolean }>, maxChars = WORK_CHAT_REPLY_MAX_CHARS): MessageBody {
+  return messageBody(fitLines(lines.map((line) => ({ content: line.text, ...(line.droppable ? { droppable: true } : {}) })), maxChars, OMITTED_NOTE));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // To-do mutations
 // ---------------------------------------------------------------------------------------------------------------------
 
-export function renderTodoAdded(item: WorkItem, reminderShaped = false): string {
-  const refs = item.resourceRefs.length > 0 ? ` (연결: ${refList(item.resourceRefs)})` : '';
+export function renderTodoAdded(item: WorkItem, reminderShaped = false): MessageBody {
+  const refs = item.resourceRefs.length > 0 ? messageContent(' (연결: ', refList(item.resourceRefs), ')') : '';
   return fit([
-    { text: `할 일을 추가했어요: "${titleOf(item, 200)}"${refs}` },
+    { text: messageContent('할 일을 추가했어요: "', titleOf(item, 200), '"', refs) },
     ...(reminderShaped
       ? [{ text: '알림은 설정하지 않았어요. 알림이 필요하면 "내일 9시에 회의 알려줘"처럼 따로 보내 주세요.' }]
       : []),
@@ -114,37 +102,37 @@ export function renderTodoAdded(item: WorkItem, reminderShaped = false): string 
 }
 
 /** Answer to a status question about one to-do (QA-V2-W7-05); `no` is its list number when it is still open. */
-export function renderTodoStatusAnswer(item: WorkItem, no: number): string {
+export function renderTodoStatusAnswer(item: WorkItem, no: number): MessageBody {
   const title = titleOf(item, 120);
-  if (item.status === WorkItemStatus.COMPLETED) return fit([{ text: `"${title}"는 완료 처리된 할 일이에요.` }]);
-  if (item.status === WorkItemStatus.CANCELED) return fit([{ text: `"${title}"는 취소된 할 일이에요.` }]);
-  return fit([{ text: `"${title}"는 아직 열린 할 일이에요 (${no}번). 완료하려면 "완료 처리: ${no}"라고 보내 주세요.` }]);
+  if (item.status === WorkItemStatus.COMPLETED) return fit([{ text: messageContent('"', title, '"는 완료 처리된 할 일이에요.') }]);
+  if (item.status === WorkItemStatus.CANCELED) return fit([{ text: messageContent('"', title, '"는 취소된 할 일이에요.') }]);
+  return fit([{ text: messageContent('"', title, `"는 아직 열린 할 일이에요 (${no}번). 완료하려면 "완료 처리: ${no}"라고 보내 주세요.`) }]);
 }
 
 /** Hint for an unanchored "<title> 완료" statement (QA-V2-W7-03): nothing was changed; the exact command is named. */
-export function renderTodoCompletionHint(action: 'complete' | 'cancel', no: number, item: WorkItem): string {
+export function renderTodoCompletionHint(action: 'complete' | 'cancel', no: number, item: WorkItem): MessageBody {
   const verb = action === 'complete' ? '완료 처리' : '취소';
   const command = action === 'complete' ? `완료 처리: ${no}` : `할 일 취소: ${no}`;
   return fit([
-    { text: `"${titleOf(item, 120)}" 할 일을 ${verb}하려면 "${command}"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.` },
+    { text: messageContent('"', titleOf(item, 120), `" 할 일을 ${verb}하려면 "${command}"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.`) },
   ]);
 }
 
-export function renderTodoCompleted(item: WorkItem): string {
-  return fit([{ text: `할 일을 완료 처리했어요: "${titleOf(item, 200)}"` }]);
+export function renderTodoCompleted(item: WorkItem): MessageBody {
+  return fit([{ text: messageContent('할 일을 완료 처리했어요: "', titleOf(item, 200), '"') }]);
 }
 
-export function renderTodoCanceled(item: WorkItem): string {
-  return fit([{ text: `할 일을 취소했어요: "${titleOf(item, 200)}"` }]);
+export function renderTodoCanceled(item: WorkItem): MessageBody {
+  return fit([{ text: messageContent('할 일을 취소했어요: "', titleOf(item, 200), '"') }]);
 }
 
-export function renderTodoLinked(item: WorkItem, added: readonly ResourceRef[]): string {
+export function renderTodoLinked(item: WorkItem, added: readonly ResourceRef[]): MessageBody {
   if (added.length === 0) {
-    return fit([{ text: `이미 연결돼 있어요: "${titleOf(item, 200)}" (연결: ${refList(item.resourceRefs)})` }]);
+    return fit([{ text: messageContent('이미 연결돼 있어요: "', titleOf(item, 200), '" (연결: ', refList(item.resourceRefs), ')') }]);
   }
   return fit([
-    { text: `할 일에 연결했어요: "${titleOf(item, 200)}"` },
-    { text: `추가된 연결: ${refList(added)}` },
+    { text: messageContent('할 일에 연결했어요: "', titleOf(item, 200), '"') },
+    { text: messageContent('추가된 연결: ', refList(added)) },
     { text: '연결할 때 외부 시스템은 조회하지 않았어요.' },
   ]);
 }
@@ -155,9 +143,9 @@ const ACTION_LABEL = { complete: '완료 처리', cancel: '취소', link: '연�
 export function renderTodoAmbiguous(
   action: keyof typeof ACTION_LABEL,
   candidates: ReadonlyArray<{ no: number; item: WorkItem }>,
-): string {
+): MessageBody {
   const rows = candidates.slice(0, TODO_LIST_MAX_ROWS).map(({ no, item }) => ({
-    text: `${no}. ${titleOf(item)}`,
+    text: messageContent(`${no}. `, titleOf(item)),
     droppable: true,
   }));
   const more = candidates.length > TODO_LIST_MAX_ROWS ? candidates.length - TODO_LIST_MAX_ROWS : 0;
@@ -168,10 +156,10 @@ export function renderTodoAmbiguous(
   ]);
 }
 
-export function renderTodoNotFound(target: WorkChatTarget, activeCount: number): string {
-  const what = 'index' in target ? `${target.index}번 할 일` : `"${display(target.text, 60)}"와 일치하는 할 일`;
+export function renderTodoNotFound(target: WorkChatTarget, activeCount: number): MessageBody {
+  const what = 'index' in target ? `${target.index}번 할 일` : messageContent('"', display(target.text, 60), '"와 일치하는 할 일');
   const hint = activeCount === 0 ? '열린 할 일이 없어요.' : `열린 할 일은 ${activeCount}건이에요. "내 할 일"로 번호를 확인해 주세요.`;
-  return fit([{ text: `${what}을 찾지 못해서 아무것도 바꾸지 않았어요. ${hint}` }]);
+  return fit([{ text: messageContent(what, `을 찾지 못해서 아무것도 바꾸지 않았어요. ${hint}`) }]);
 }
 
 export function renderTodoEmptyTitle(): string {
@@ -239,16 +227,16 @@ const SURFACE_STATUS_LINE: Readonly<Record<Exclude<WorkSurfaceSourceStatus, 'AVA
  * `완료 처리: N` resolves), then Jira/GitHub personal work. Sources that could not be read are named, and a partial
  * result is never presented as "no work". `surface` is null when it could not be read at all.
  */
-export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | null): string {
-  const lines: Array<{ text: string; droppable?: boolean }> = [];
+export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | null): MessageBody {
+  const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
 
   lines.push({ text: `**내 할 일** (${todos.length}건)` });
   if (todos.length === 0) {
     lines.push({ text: '열린 할 일이 없어요. "할 일 추가: 내용"으로 추가할 수 있어요.' });
   } else {
     todos.slice(0, TODO_LIST_MAX_ROWS).forEach((item, index) => {
-      const refs = item.resourceRefs.length > 0 ? ` (연결: ${refList(item.resourceRefs)})` : '';
-      lines.push({ text: `${index + 1}. ${titleOf(item)}${refs}`, droppable: true });
+      const refs = item.resourceRefs.length > 0 ? messageContent(' (연결: ', refList(item.resourceRefs), ')') : '';
+      lines.push({ text: messageContent(`${index + 1}. `, titleOf(item), refs), droppable: true });
     });
     if (todos.length > TODO_LIST_MAX_ROWS) lines.push({ text: `외 ${todos.length - TODO_LIST_MAX_ROWS}건`, droppable: true });
   }
@@ -270,7 +258,7 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
       for (const item of surface.items.slice(0, EXTERNAL_LIST_MAX_ROWS)) {
         const url = safeLinkUrl(item.url);
         lines.push({
-          text: `- [${escapeDiscordText(item.resource.identity)}] ${display(item.title)}${url ? ` <${url}>` : ''}`,
+          text: messageContent('- [', inline(item.resource.identity), '] ', display(item.title), url ? messageContent(' ', messageLink(url)) : ''),
           droppable: true,
         });
       }
@@ -287,7 +275,8 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
   return fit(lines);
 }
 
-function safeLinkUrl(url: string | undefined): string | undefined {
+/** A connector URL safe to show as a link span (http(s), no whitespace or quoting characters, ≤ 300 characters). */
+export function safeLinkUrl(url: string | undefined): string | undefined {
   if (!url || url.length > 300) return undefined;
   return /^https?:\/\/[^\s<>"'`\\]+$/i.test(url) ? url : undefined;
 }
@@ -361,25 +350,30 @@ function dueText(dueDate: string): string {
  * The deterministic list for a lookup (also the fallback text of a `summarize` outcome). An empty result is stated as
  * an empty result of a successful lookup, never as a failure.
  */
-export function renderExternalWorkList(readout: ExternalWorkReadout): string {
+export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBody {
   const { source, query, text } = readout.request;
   const label = sourceLabel(source);
-  const subject = query === 'search' && text ? `${QUERY_LABEL[query]} "${display(text, 60)}"` : QUERY_LABEL[query];
-  const lines: Array<{ text: string; droppable?: boolean }> = [];
+  const subject = query === 'search' && text ? messageContent(`${QUERY_LABEL[query]} "`, display(text, 60), '"') : QUERY_LABEL[query];
+  const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
 
   if (readout.items.length === 0) {
-    lines.push({ text: `${label} ${subject} 결과가 없어요.` });
+    lines.push({ text: messageContent(`${label} `, subject, ' 결과가 없어요.') });
   } else {
-    lines.push({ text: `**${label} ${subject}** (${readout.items.length}건${readout.truncated ? ', 일부만 표시' : ''})` });
+    lines.push({ text: messageContent(`**${label} `, subject, `** (${readout.items.length}건${readout.truncated ? ', 일부만 표시' : ''})`) });
     for (const item of readout.items) {
       const meta = [item.status, item.dueDate ? dueText(item.dueDate) : undefined, item.container]
         .filter((part): part is string => Boolean(part))
         .map((part) => display(part, 60));
       const url = safeLinkUrl(item.url);
       lines.push({
-        text:
-          `- [${escapeDiscordText(item.ref)}] ${display(item.title)}` +
-          `${meta.length > 0 ? ` (${meta.join(' · ')})` : ''}${url ? ` <${url}>` : ''}`,
+        text: messageContent(
+          '- [',
+          inline(item.ref),
+          '] ',
+          display(item.title),
+          meta.length > 0 ? messageContent(' (', joinMessage(meta, ' · '), ')') : '',
+          url ? messageContent(' ', messageLink(url)) : '',
+        ),
         droppable: true,
       });
     }

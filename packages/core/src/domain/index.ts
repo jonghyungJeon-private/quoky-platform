@@ -1,6 +1,8 @@
 export * from './common';
 export * from './enums';
 export * from './messaging';
+// PLT-0: platform-neutral message content (adapters render it to their own markup).
+export * from './message-content';
 export * from './actor';
 export * from './session';
 export * from './planning';

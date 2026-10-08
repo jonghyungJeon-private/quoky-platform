@@ -118,7 +118,7 @@ export const REMINDER_LIMITS = {
   lateLabelAfterMs: 2 * 60_000,
   /** Reminders claimed and delivered per dispatch tick. */
   maxDeliveriesPerTick: 10,
-  /** Delivered text length (one Discord message). */
+  /** Delivered text length (one chat message). */
   maxDeliveredTextChars: 1_800,
 } as const;
 

@@ -1,5 +1,6 @@
 import { Capability, FeedbackSignalKind, IntentType } from '../../domain';
-import type { FeedbackBreakdownRow, FeedbackSummary, Id } from '../../domain';
+import type { FeedbackBreakdownRow, FeedbackSummary, Id, MessageBody } from '../../domain';
+import { joinBody, messageBody, untrustedText } from '../message-rendering';
 import type { FeedbackCapabilityTrend } from './feedback-recorder';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
 
@@ -33,11 +34,12 @@ function countOf(summary: FeedbackSummary, predicate: (kind: FeedbackSignalKind,
 }
 
 /**
- * One request excerpt: whitespace collapsed, at most {@link FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS} code points, mentions
- * neutralised (`@` → `@` + U+200B so a quoted `@everyone` never pings), and fully suppressed when the strict
- * credential guard (chat + file-content detectors) matches the original request.
+ * One request excerpt: whitespace collapsed, at most {@link FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS} code points, backticks
+ * turned into `'` (a quote never becomes code), every `@` handle an untrusted span the platform neutralizes (a quoted
+ * `@everyone` never pings; PLT-0), and fully suppressed when the strict credential guard (chat + file-content
+ * detectors) matches the original request.
  */
-export function feedbackRequestExcerpt(text: string | undefined): string {
+export function feedbackRequestExcerpt(text: string | undefined): MessageBody {
   if (text === undefined) return MISSING_EXCERPT;
   // Strict check (chat + file-content detectors): a 👎 summary must never show `const dbPassword = "…"` verbatim.
   if (containsCredentialMaterial(text) || containsCredentialFileContent(text)) return SUPPRESSED_EXCERPT;
@@ -47,7 +49,7 @@ export function feedbackRequestExcerpt(text: string | undefined): string {
   const cut = chars.length > FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS
     ? `${chars.slice(0, FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS).join('')}…`
     : flat;
-  return `"${cut.replace(/@/gu, '@​').replace(/`/gu, "'")}"`;
+  return messageBody('"', untrustedText(cut.replace(/`/gu, "'"), 'handles'), '"');
 }
 
 const CAPABILITY_LABEL_KO: Readonly<Record<string, string>> = {
@@ -171,7 +173,7 @@ export function composeFeedbackSummaryText(
   summary: FeedbackSummary | null,
   excerpts: FeedbackRequestExcerpts = new Map(),
   trend?: FeedbackCapabilityTrend | null,
-): string {
+): MessageBody {
   if (!summary) return FEEDBACK_SUMMARY_UNAVAILABLE_TEXT;
   if (summary.turnCount === 0) return FEEDBACK_SUMMARY_EMPTY_TEXT;
 
@@ -180,7 +182,7 @@ export function composeFeedbackSummaryText(
   const negative = countOf(summary, (kind, value) => isRating(kind) && value === 'NEGATIVE');
   const implicit = countOf(summary, (kind) => !isRating(kind));
 
-  const lines: string[] = [
+  const lines: MessageBody[] = [
     '최근 30일 피드백 요약이에요.',
     `- 기록된 대화 ${summary.turnCount}건 · 👍 ${positive} · 👎 ${negative} · 참고 신호 ${implicit}`,
   ];
@@ -195,9 +197,9 @@ export function composeFeedbackSummaryText(
     for (const turn of summary.recentNegative) {
       const date = turn.createdAt.slice(0, 10);
       const excerpt = feedbackRequestExcerpt(turn.taskId === undefined ? undefined : excerpts.get(turn.taskId));
-      lines.push(`- ${date} · ${feedbackIntentLabel(turn.intentType)} · ${excerpt}`);
+      lines.push(messageBody(`- ${date} · ${feedbackIntentLabel(turn.intentType)} · `, excerpt));
     }
   }
   lines.push('', FOOTER);
-  return lines.join('\n');
+  return joinBody(lines);
 }

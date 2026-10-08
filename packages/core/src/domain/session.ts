@@ -11,7 +11,7 @@ export interface Session {
   id: Id;
   /** The acting principal (ADR-0009). */
   actorId: Id;
-  /** Where the conversation lives (generic, never a Discord.js type). */
+  /** Where the conversation lives (generic, never a platform SDK type). */
   context: ConversationContext;
   status: SessionStatus;
   projectId?: Id;

@@ -4,8 +4,10 @@ import type {
   TurnHandlerOutcome,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
+import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
+import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf } from '../message-rendering';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
   EXTERNAL_WORK_FIELD_MAX_CHARS,
@@ -65,7 +67,7 @@ export const WORK_CHAT_LOOKUP_TURN_HELP_LINES: readonly string[] = Object.freeze
   '- 업무 조회(읽기 전용): "내 할 일 보여줘", "내 Jira 이슈 보여줘", "GitHub 리뷰 요청 보여줘", "Slack에서 배포 검색"',
 ]);
 
-/** The whole summary reply (model text + footer) stays inside one Discord message. */
+/** The whole summary reply (model text + footer) stays inside one chat message. */
 export const WORK_SUMMARY_REPLY_MAX_CHARS = 1900;
 
 export interface WorkChatTurnHandlerDeps {
@@ -117,10 +119,10 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
       return { reply: { context: ctx.message.context, text: backstopText(command) }, status: 'FAILED' };
     }
     if (outcome.kind === 'none') return null;
-    if (outcome.kind === 'reply') return { reply: { context: ctx.message.context, text: outcome.text } };
+    if (outcome.kind === 'reply') return { reply: outboundMessage(ctx.message.context, outboundBody(outcome)) };
     // Only lookups summarise, and only with summaries enabled; anything else gets the deterministic list.
     if (!this.deps.summaryEnabled || this.deps.mode !== 'lookup') {
-      return { reply: { context: ctx.message.context, text: outcome.fallbackText } };
+      return { reply: outboundMessage(ctx.message.context, outcome.fallbackText) };
     }
     const summarize: TurnHandlerSummarizeReply = {
       kind: 'summarize',
@@ -209,22 +211,15 @@ export function isSummarizableExternalWorkReadout(readout: unknown): readout is 
   return renderExternalWorkReadoutForPrompt(valid).length <= EXTERNAL_WORK_PROMPT_MAX_CHARS;
 }
 
-function clipChars(text: string, maxChars: number): string {
-  const chars = Array.from(text);
-  if (chars.length <= maxChars) return text;
-  return maxChars <= 0 ? '' : `${chars.slice(0, maxChars - 1).join('')}…`;
-}
-
 /**
  * The reply for a successful work summary: the model text, a blank line and the deterministic footer, bounded to
  * `WORK_SUMMARY_REPLY_MAX_CHARS`. The footer is kept whole (it is capped at 1,000 characters) and the summary is
- * shortened instead, so the source links and the "N items used" disclosure always reach the user.
+ * shortened instead, so the source links and the "N items used" disclosure always reach the user. Both bounds apply
+ * to the delivered text (the footer's titles are platform-rendered spans, PLT-0).
  */
-export function appendWorkSummaryFooter(summaryText: string, footer: string): string {
-  const tail = clipChars(footer.trim(), EXTERNAL_WORK_FOOTER_MAX_CHARS);
+export function appendWorkSummaryFooter(summaryText: string, footer: MessageBody): MessageBody {
   const body = summaryText.trim();
-  if (tail.length === 0) return clipChars(body, WORK_SUMMARY_REPLY_MAX_CHARS);
-  const separator = '\n\n';
-  const budget = WORK_SUMMARY_REPLY_MAX_CHARS - Array.from(tail).length - separator.length;
-  return `${clipChars(body, budget)}${separator}${tail}`;
+  if (plainTextOf(footer).trim().length === 0) return messageBody(clipMessage(body, WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points'));
+  const tail = clipMessage(footer, EXTERNAL_WORK_FOOTER_MAX_CHARS, 'code-points', { trim: true });
+  return messageBody(clipMessage(body, WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', tail) }));
 }

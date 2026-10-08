@@ -1,6 +1,7 @@
 import type {
   ConversationContext,
   Id,
+  MessageContent,
   NotificationDeliveryOutcome,
   OwnerNotificationKind,
 } from '../domain';
@@ -23,6 +24,11 @@ export interface OwnerNotification {
   kind: OwnerNotificationKind;
   /** Plain, already-composed text (≤ `REMINDER_LIMITS.maxDeliveredTextChars`). */
   text: string;
+  /**
+   * PLT-0: the same notification as platform-neutral content when it carries a platform-rendered span (an untrusted
+   * title, a conversation reference); `text` is its plain rendering and the adapter renders `content` instead.
+   */
+  content?: MessageContent;
 }
 
 /**
@@ -34,5 +40,10 @@ export interface OwnerNotification {
 export type NotificationSinkOutcome = NotificationDeliveryOutcome;
 
 export interface NotificationSink {
+  /**
+   * PLT-0 obligation: an adapter whose platform parses any markup MUST render `notification.content` with its own
+   * `MessageMarkup` whenever it is present, and deliver (and length-check) that rendering — never `text`, which is the
+   * plain rendering with untrusted spans verbatim and is safe only on a platform that parses no markup at all.
+   */
   deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome>;
 }

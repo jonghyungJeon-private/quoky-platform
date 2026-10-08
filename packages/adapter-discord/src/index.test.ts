@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboundAttachment, InboundMessage, LogFields, Logger, OutboundDeliveryReceipt, PlatformFeedbackSignal } from '@quoky/core';
-import { renderConnectorWritePreview } from '@quoky/core';
+import { messageContent, messageLink, outboundMessage, renderConnectorWritePreview, untrustedText } from '@quoky/core';
 import { pngImage } from './image-test-support';
 
 /** Offline fake of the discord.js gateway client: records construction options and listeners, never connects. */
@@ -374,6 +374,11 @@ function sendableChannel(id: string, failAt?: number) {
   return { channel, sent };
 }
 
+/** The message text of each recorded send (replies are sent as `{ content, allowedMentions }`). */
+function contentsOf(sent: readonly unknown[]): string[] {
+  return sent.map((payload) => (typeof payload === 'string' ? payload : (payload as { content: string }).content));
+}
+
 describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
   it('returns the id of every chunk of a multi-chunk reply, in order', async () => {
     const { adapter } = await harness();
@@ -417,7 +422,7 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     const text = renderConnectorWritePreview({ operation: 'ISSUE_COMMENT', issueKey: 'PROJ-1', text: payload }, 600_000, '댓글 보내줘');
     expect(text).toContain(payload);
     await adapter.sendMessage({ context: { platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER }, text });
-    expect(sent).toEqual([text]);
+    expect(contentsOf(sent)).toEqual([text]);
     // Defense in depth: the preview has no `model-reply` flag, so it is never rendered; and even the renderer leaves it
     // unchanged: its nested fences are not bare and balanced (TBL-1), so the whole text is left as it is.
     expect(renderMarkdownTablesForDiscord(text)).toBe(text);
@@ -425,22 +430,79 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
 
   it('converts simple tables only in a reply flagged model-reply, and only outside balanced fences', async () => {
     const { adapter } = await harness();
-    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const { sent: payloads } = sendableChannel(ALLOWED_CHANNEL);
+    const sent = () => contentsOf(payloads);
     const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
     const plain = ['요약이에요.', '| 월 | 가입자 수 |', '|---|---|', '| 1월 | 80 |', '', '꾸준히 늘었어요.'].join('\n');
     await adapter.sendMessage({ context, text: plain, format: 'model-reply' });
-    expect(sent).toEqual([['요약이에요.', '**월 · 가입자 수**', '- 월: 1월, 가입자 수: 80', '', '꾸준히 늘었어요.'].join('\n')]);
+    expect(sent()).toEqual([['요약이에요.', '**월 · 가입자 수**', '- 월: 1월, 가입자 수: 80', '', '꾸준히 늘었어요.'].join('\n')]);
     // The same text without the flag (any deterministic reply) is sent byte-identical.
     await adapter.sendMessage({ context, text: plain });
-    expect(sent.at(-1)).toBe(plain);
+    expect(sent().at(-1)).toBe(plain);
     // TBL-1: a flagged reply with balanced fences converts only the table outside them (the fence is byte-identical);
     // an unclosed fence leaves the whole reply byte-identical.
     const fenced = [plain, '', '```ts', 'const x = 1;', '```'].join('\n');
     await adapter.sendMessage({ context, text: fenced, format: 'model-reply' });
-    expect(sent.at(-1)).toBe([sent[0], '', '```ts', 'const x = 1;', '```'].join('\n'));
+    expect(sent().at(-1)).toBe([sent()[0], '', '```ts', 'const x = 1;', '```'].join('\n'));
     const unclosed = [plain, '', '```ts', 'const x = 1;'].join('\n');
     await adapter.sendMessage({ context, text: unclosed, format: 'model-reply' });
-    expect(sent.at(-1)).toBe(unclosed);
+    expect(sent().at(-1)).toBe(unclosed);
+  });
+
+  it('never lets a reply ping: every reply chunk and notice is sent with allowedMentions.parse empty (review P2-5)', async () => {
+    const { adapter } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL, 2);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    // Three chunks; the second fails, so delivery stops and the partial-failure notice is sent: chunk 1 + notice.
+    const text = Array.from({ length: 3 }, (_, i) => `${String(i).repeat(1800)}`).join('\n\n');
+    await adapter.sendMessage({ context, text });
+    expect(sent).toHaveLength(2);
+    for (const payload of sent) expect(payload).toMatchObject({ allowedMentions: { parse: [] } });
+    // The bytes are unchanged: the content is exactly the chunk text.
+    expect(contentsOf(sent)[0]?.startsWith(`(1/3) ${'0'.repeat(1800)}`)).toBe(true);
+  });
+
+  it('a structured code preview is sent with allowedMentions.parse empty as well', async () => {
+    const { adapter } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    const canonicalDiff = '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n';
+    await adapter.sendMessage({
+      context,
+      text: 'preview',
+      preview: {
+        previewId: 'p1',
+        header: 'header @everyone',
+        footer: 'footer',
+        files: [{ path: 'a.ts', changeKind: 'update', unifiedDiff: canonicalDiff }],
+        canonicalDiff,
+        attachmentFilename: 'p1.diff',
+      },
+    });
+    expect(sent.length).toBeGreaterThan(0);
+    for (const payload of sent) expect(payload).toMatchObject({ allowedMentions: { parse: [] } });
+  });
+
+  it('PLT-0 wiring: sends the neutral content rendered with the Discord markup, never the plain text', async () => {
+    const { adapter } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    const message = outboundMessage(context, messageContent('검색: ', untrustedText('@everyone [x](y)'), ' ', messageLink('https://e.test/a_b')));
+    expect(message.text).toBe('검색: @everyone [x](y) https://e.test/a_b');
+    await adapter.sendMessage(message);
+    const contents = sent.map((payload) => (typeof payload === 'string' ? payload : (payload as { content: string }).content));
+    expect(contents).toEqual(['검색: @\u200beveryone \\[x\\](y) <https://e.test/a_b>']);
+  });
+
+  it('renders content but warns (content-free) when a producer left text and content out of sync (review P3-1)', async () => {
+    const { adapter, logger } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    const message = outboundMessage(context, messageContent('a ', untrustedText('*b*')));
+    await adapter.sendMessage({ ...message, text: 'stale plain text' });
+    expect(contentsOf(sent)).toEqual(['a \\*b\\*']);
+    expect(JSON.stringify(logger)).toContain('outbound content and text disagree');
+    expect(JSON.stringify(logger)).not.toContain('stale plain text');
   });
 
   it('returns an empty receipt when the channel is not sendable', async () => {

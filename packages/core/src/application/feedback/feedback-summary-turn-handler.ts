@@ -1,5 +1,6 @@
 import type { FeedbackSummary, Id, Task } from '../../domain';
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import { outboundMessage } from '../message-rendering';
 import type { FeedbackCapabilityTrend } from './feedback-recorder';
 import { composeFeedbackSummaryText, FEEDBACK_SUMMARY_UNAVAILABLE_TEXT } from './feedback-summary-composer';
 import { detectFeedbackTurnControl } from './implicit-feedback';
@@ -61,7 +62,7 @@ export class FeedbackSummaryTurnHandler implements ConversationTurnHandler {
       }
       const trend = summary && this.deps.feedback.trend ? await this.deps.feedback.trend(ctx.actor.id) : null;
       const text = composeFeedbackSummaryText(summary, excerpts, trend);
-      return summary ? { reply: { context, text } } : { reply: { context, text }, status: 'FAILED' };
+      return summary ? { reply: outboundMessage(context, text) } : { reply: outboundMessage(context, text), status: 'FAILED' };
     } catch (err) {
       this.logFailure(err);
       return { reply: { context, text: FEEDBACK_SUMMARY_UNAVAILABLE_TEXT }, status: 'FAILED' };

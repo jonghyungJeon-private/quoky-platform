@@ -3,7 +3,7 @@ import { AiFailureKind, Capability } from '../domain';
 
 export interface FailureDescription {
   kind: AiFailureKind;
-  /** Friendly, user-facing message (Discord). Owns no technical detail. */
+  /** Friendly, user-facing chat message. Owns no technical detail. */
   userMessage: string;
   /** Technical summary stored on the TaskRun (already secret-masked upstream). */
   errorSummary: string;

@@ -1,4 +1,5 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import { outboundBody, outboundMessage } from '../message-rendering';
 import { parseMemoryCommand } from './memory-command-grammar';
 import { renderMemoryCommandFailed } from './memory-command-renderer';
 import { memoryCommandHistory, type MemoryCommandService } from './memory-command-service';
@@ -49,7 +50,7 @@ export class MemoryCommandTurnHandler implements ConversationTurnHandler {
         sessionId: ctx.session.id,
       });
       return {
-        reply: { context, text: result.text, replyToMessageId: ctx.message.id },
+        reply: outboundMessage(context, outboundBody(result), { replyToMessageId: ctx.message.id }),
         status: result.status,
         // W2-L01: edit/forget turns keep no memory text in the conversation history.
         ...(result.history === undefined ? {} : { history: result.history }),

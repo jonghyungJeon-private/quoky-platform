@@ -6,6 +6,7 @@ import {
   type ReminderLastOutcome,
   type ReminderSchedule,
   type WorkItem,
+  type MessageBody,
 } from '../../domain';
 import { withObjectParticle, withTopicParticle } from '../korean-particle';
 import { composeDailyBrief, formatKoreanClock } from './daily-brief';
@@ -239,7 +240,7 @@ export class ReminderReplyComposer {
   }
 
   /** The local daily brief template (today's remaining reminders and ACTIVE WorkItem titles). */
-  brief(input: ReminderBriefTextInput): string {
+  brief(input: ReminderBriefTextInput): MessageBody {
     return composeDailyBrief(input);
   }
 }

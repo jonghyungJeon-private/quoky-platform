@@ -13,6 +13,7 @@ import { WORK_CHAT_ANCHORED_TODO_HEADS, detectWorkChatCommand, workChatCommandMo
 import type { WorkChatCommand } from './work-chat-command';
 import { renderLookupFailure, renderTodoFailure, renderTodoListFailure } from './work-chat-renderer';
 import type { WorkChatOutcome } from './work-chat-service';
+import { plainTextOf } from '../message-rendering';
 import {
   WORK_CHAT_LOOKUP_TURN_HANDLER_ID,
   WORK_CHAT_LOOKUP_TURN_HANDLER_ORDER,
@@ -246,14 +247,17 @@ describe('isSummarizableExternalWorkReadout (runtime re-validation, fail closed)
 });
 
 describe('appendWorkSummaryFooter', () => {
-  const footer = renderExternalWorkFooter(READOUT);
+  // PLT-0: the footer is neutral content; these bounds are read on its plain rendering (the Discord rendering is pinned
+  // by the adapter's golden fixtures).
+  const footerBody = renderExternalWorkFooter(READOUT);
+  const footer = plainTextOf(footerBody);
 
   it('appends the footer after a blank line', () => {
-    expect(appendWorkSummaryFooter('  요약이에요.  ', footer)).toBe(`요약이에요.\n\n${footer}`);
+    expect(plainTextOf(appendWorkSummaryFooter('  요약이에요.  ', footerBody))).toBe(`요약이에요.\n\n${footer}`);
   });
 
   it('keeps the footer whole and shortens the summary to the message budget', () => {
-    const text = appendWorkSummaryFooter('가'.repeat(5000), footer);
+    const text = plainTextOf(appendWorkSummaryFooter('가'.repeat(5000), footerBody));
     expect(Array.from(text).length).toBe(WORK_SUMMARY_REPLY_MAX_CHARS);
     expect(text.endsWith(`…\n\n${footer}`)).toBe(true);
   });

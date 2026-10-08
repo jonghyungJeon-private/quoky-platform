@@ -32,6 +32,7 @@ import type {
   Task,
 } from '@quoky/core';
 
+import { renderDiscordContent, renderNotificationForDiscord } from '@quoky/adapter-discord';
 import { cookieFrom, send } from './test-support/http-client';
 import type { TestResponse } from './test-support/http-client';
 import { OpsUiActions, opsDecisionResultText } from './actions/ops-actions';
@@ -399,7 +400,8 @@ describe('OPS_DECISION_RESULT text (ADR-0113 D7)', () => {
   } as const;
 
   it('an approved connector write names the target, the guild channel, the exact phrase and the lifetime', () => {
-    expect(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', APPROVED_REPLY, { ...POST, chat: CTX })).toBe(
+    // PLT-0: the notice is neutral content; this is its exact Discord text (the conversation as `<#id>`).
+    expect(renderDiscordContent(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', APPROVED_REPLY, { ...POST, chat: CTX }))).toBe(
       [
         '[Quoky 운영 화면] 운영 화면에서 승인했어요: Slack 게시 → #quoky-test.',
         `실제 게시는 <#${CTX.channelId}>에서 "Slack 게시 실행"이라고 보내면 돼요 (승인은 약 30분 유효). 이 DM에서는 실행되지 않아요.`,
@@ -409,7 +411,7 @@ describe('OPS_DECISION_RESULT text (ADR-0113 D7)', () => {
 
   it('an approved connector write asked in the owner DM says "이 DM"; a thread is named by the thread', () => {
     const dm: ConversationContext = { platform: 'discord', channelId: '423456789012345678', userId: CTX.userId };
-    expect(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', APPROVED_REPLY, { ...POST, chat: dm })).toBe(
+    expect(renderDiscordContent(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', APPROVED_REPLY, { ...POST, chat: dm }))).toBe(
       [
         '[Quoky 운영 화면] 운영 화면에서 승인했어요: Slack 게시 → #quoky-test.',
         '실제 게시는 이 DM에서 "Slack 게시 실행"이라고 보내면 돼요 (승인은 약 30분 유효).',
@@ -417,7 +419,7 @@ describe('OPS_DECISION_RESULT text (ADR-0113 D7)', () => {
     );
     const thread: ConversationContext = { ...CTX, threadId: '523456789012345678' };
     const comment = { operation: 'ISSUE_COMMENT', target: { kind: 'issue', issueKey: 'PROJ-12' }, executionPhrase: '댓글 실행', remainingMs: 30 * 60_000 } as const;
-    expect(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', 'x', { ...comment, chat: thread })).toContain(
+    expect(renderDiscordContent(opsDecisionResultText('CONNECTOR_WRITE', 'APPROVED', 'x', { ...comment, chat: thread }))).toContain(
       '운영 화면에서 승인했어요: Jira 댓글 → PROJ-12.\n실제 댓글은 <#523456789012345678>에서 "댓글 실행"이라고 보내면 돼요',
     );
   });
@@ -453,7 +455,8 @@ describe('OPS_DECISION_RESULT text (ADR-0113 D7)', () => {
     expect(outcome.code).toBe('APPROVED');
     expect(notices).toHaveLength(1);
     expect(notices[0]?.kind).toBe('OPS_DECISION_RESULT');
-    expect(notices[0]?.text).toContain(`실제 게시는 <#${CTX.channelId}>에서 "Slack 게시 실행"이라고 보내면 돼요`);
+    expect(notices[0]?.text).toContain(`실제 게시는 #${CTX.channelId}에서 "Slack 게시 실행"이라고 보내면 돼요`);
+    expect(renderNotificationForDiscord(notices[0] as OwnerNotification)).toContain(`실제 게시는 <#${CTX.channelId}>에서 "Slack 게시 실행"이라고 보내면 돼요`);
   });
 
   it('a rejection, an expiry or another gate kind keeps the header and the chat reply (no notice)', () => {

@@ -65,6 +65,11 @@ import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { WorkManager } from './work-manager';
 import { WorkChatService } from './work-chat/work-chat-service';
 import { createWorkChatTurnHandlers } from './work-chat/work-chat-turn-handler';
+import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } from './message-rendering';
+
+/** PLT-0: link and conversation-reference spans of a reply made visible (the platform adapter renders them). */
+const probe = (reply: Parameters<typeof outboundBody>[0]): string =>
+  renderMessageContent(outboundBody(reply), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»`, conversation: (ref) => (ref.id !== undefined ? `«conversation:${ref.id}»` : ref.label) });
 
 // CWR-2 (ADR-0112 D5/D6, ADR-0110 amendment D3–D5): the connector-write chat approval flow end to end on a real
 // ConversationRuntime with the real work-chat and calendar handlers, the real StatelessConnectorWriteFlow, the real
@@ -569,7 +574,9 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     const sent = await h.send('댓글 실행');
     expect(h.writes.addComment).toEqual([{ issueKey: 'PROJ-12', text: '배포 **완료**했습니다 @here' }]);
     expect(sent.reply.text).toContain('Jira 댓글 완료: 댓글을 달았어요.');
-    expect(sent.reply.text).toContain(`<${COMMENT_URL}>`);
+    // PLT-0: the URL is a link span of the reply content (Discord renders `<url>`); the plain text carries it bare.
+    expect(sent.reply.text).toContain(`링크: ${COMMENT_URL}`);
+    expect(probe(sent.reply)).toContain(`링크: «link:${COMMENT_URL}»`);
     const receipts = [...h.receipts.rows.values()];
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({ status: 'SENT', operation: 'ISSUE_COMMENT', target: 'PROJ-12', connector: 'jira' });
@@ -1234,7 +1241,7 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
     const again = await h.send('댓글 실행');
     // When (10:00 KST) and where it went, so it can never be mistaken for another post.
-    expect(again.reply.text).toBe([`이미 보냈어요 (10:00, Jira PROJ-12): <${COMMENT_URL}>`, '다시 보내지 않았어요.'].join('\n'));
+    expect(probe(again.reply)).toBe([`이미 보냈어요 (10:00, Jira PROJ-12): «link:${COMMENT_URL}»`, '다시 보내지 않았어요.'].join('\n'));
     expect(h.writes.addComment).toHaveLength(1);
     expect((await h.send('Slack 게시 실행')).reply.text).toContain('승인된 외부 쓰기 요청이 없어요');
   });
@@ -1358,7 +1365,7 @@ describe('connector writes — an execution phrase in another conversation (live
   const elsewhereInGuild = (minutes: number) =>
     [
       `실행하지 않았어요. 승인된 Slack 게시(#dev)는 다른 대화에서 기다리고 있어요 (약 ${minutes}분 남음).`,
-      '미리보기를 받은 <#900000000000000002>에서 "Slack 게시 실행"이라고 보내 주세요.',
+      '미리보기를 받은 «conversation:900000000000000002»에서 "Slack 게시 실행"이라고 보내 주세요.',
     ].join('\n');
 
   /** Preview in `context` with the operations-UI reference line on, and return the approval id and the reference. */
@@ -1406,7 +1413,7 @@ describe('connector writes — an execution phrase in another conversation (live
     const classifyBefore = h.classify.count;
     advanceMinutes(4);
     const reply = await h.sendIn(DM, 'Slack 게시 실행');
-    expect(reply.reply.text).toBe(elsewhereInGuild(26));
+    expect(probe(reply.reply)).toBe(elsewhereInGuild(26));
     expect(reply.reply.text).not.toContain('운영 UI 승인 테스트입니다');
     expect(reply.reply.text).not.toContain('이미 보냈어요');
     expect(reply.reply.text).not.toContain('https://');
@@ -1450,7 +1457,7 @@ describe('connector writes — an execution phrase in another conversation (live
     await h.runtime.approvalDecisions.decideFromOpsUi({
       approvalId, decision: 'approve', actor: OWNER, reference, sessions: async () => [...h.sessions.values()],
     });
-    expect((await h.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(elsewhereInGuild(30));
+    expect(probe((await h.sendIn(DM, 'Slack 게시 실행')).reply)).toBe(elsewhereInGuild(30));
     expect(h.writes.post).toHaveLength(1);
   });
 
@@ -1508,7 +1515,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     expect(h.totalWrites()).toBe(0);
     expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED'); // the grant still waits for its exact phrase
     // Approve words keep their existing reply; the exact phrase still sends exactly once.
-    expect((await h.send('go ahead')).reply.text).toBe(renderConnectorWriteAlreadyApproved('CHANNEL_POST', 'Slack 게시 실행'));
+    expect((await h.send('go ahead')).reply.text).toBe(plainTextOf(renderConnectorWriteAlreadyApproved('CHANNEL_POST', 'Slack 게시 실행')));
     expect(h.totalWrites()).toBe(0);
     expect((await h.send('Slack 게시 실행')).reply.text).toContain('Slack 게시 완료');
     expect(h.writes.post).toHaveLength(1);
@@ -1518,7 +1525,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     const comment = harness();
     await comment.send('PROJ-12에 댓글: 한 번만');
     await comment.send('승인');
-    expect((await comment.send('실행해줘')).reply.text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
+    expect((await comment.send('실행해줘')).reply.text).toBe(plainTextOf(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' })));
     expect(comment.totalWrites()).toBe(0);
 
     const calendar = harness();
@@ -1587,7 +1594,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect((await h.sendIn(GUILD, text)).reply.text, text).toBe(elsewhere);
     }
     // The existing veto on questions stays where the grant is: a reminder, never a send.
-    expect((await h.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
+    expect((await h.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(plainTextOf(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' })));
     expect(h.totalWrites()).toBe(0);
     expect((await h.sendIn(DM, '댓글 실행')).reply.text).toContain('댓글을 달았어요');
     expect(h.writes.addComment).toHaveLength(1);
@@ -1599,7 +1606,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     await h.send('승인');
     for (const text of ['댓글 실행해도 돼?', '일정 삭제 실행하지 마', '상태 변경 실행할까?']) {
       const reply = await h.send(text);
-      expect(reply.reply.text, text).toBe(renderConnectorWriteAlreadyApproved('CHANNEL_POST', 'Slack 게시 실행'));
+      expect(reply.reply.text, text).toBe(plainTextOf(renderConnectorWriteAlreadyApproved('CHANNEL_POST', 'Slack 게시 실행')));
     }
     expect(h.totalWrites()).toBe(0);
     expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
@@ -1611,7 +1618,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     await h.send('승인');
     await h.send('댓글 실행');
     const again = await h.send('댓글 실행해도 돼?');
-    expect(again.reply.text).toBe([`이미 보냈어요 (10:00, Jira PROJ-12): <${COMMENT_URL}>`, '다시 보내지 않았어요.'].join('\n'));
+    expect(probe(again.reply)).toBe([`이미 보냈어요 (10:00, Jira PROJ-12): «link:${COMMENT_URL}»`, '다시 보내지 않았어요.'].join('\n'));
     expect(h.writes.addComment).toHaveLength(1);
   });
 
@@ -1627,7 +1634,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
   });
 
   describe('Codex P2 on 039d5ff: an unconfirmed write is never answered with "nothing was sent"', () => {
-    const UNCERTAIN_COMMENT = renderConnectorWriteRepeat('ISSUE_COMMENT', 'UNCERTAIN');
+    const UNCERTAIN_COMMENT = plainTextOf(renderConnectorWriteRepeat('ISSUE_COMMENT', 'UNCERTAIN'));
     const OLDER_UNCERTAIN = '그 전의 Jira 댓글 요청은 결과를 확인하지 못했어요. 이미 게시됐을 수도 있으니 직접 확인해 주세요. 다시 실행하지 않아요.';
     const LATEST_NOT_SENT_WITH_OLDER_UNCERTAIN = [
       '가장 최근 Jira 댓글 요청(PROJ-12)은 실행했지만 보내지 못했어요. 그 요청으로는 아무것도 보내지 않았어요.',
@@ -1687,8 +1694,8 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     it('a receipt still PREPARED (dispatched, outcome unknown) is treated the same way', async () => {
       const h = await uncertainComment({ priorActiveTaskId: 'task-prior' });
       for (const [id, row] of h.receipts.rows) h.receipts.rows.set(id, { ...row, status: 'PREPARED' });
-      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteRepeat('ISSUE_COMMENT', 'EXECUTING'));
-      expect((await h.send('실행')).reply.text).toBe(renderConnectorWriteRepeat('ISSUE_COMMENT', 'EXECUTING'));
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(plainTextOf(renderConnectorWriteRepeat('ISSUE_COMMENT', 'EXECUTING')));
+      expect((await h.send('실행')).reply.text).toBe(plainTextOf(renderConnectorWriteRepeat('ISSUE_COMMENT', 'EXECUTING')));
       expect(h.writes.addComment).toHaveLength(1);
     });
 
@@ -1776,7 +1783,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect(pending.reply.text).toContain('Jira 댓글 승인을 기다리고 있어요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
       expect(pending.reply.text).not.toMatch(unscoped);
       await h.send('승인');
-      const reminder = renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-13' });
+      const reminder = plainTextOf(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-13' }));
       expect(reminder).toBe('승인된 Jira 댓글(PROJ-13)은 아직 실행하지 않았어요. 실제로 보내려면 "댓글 실행"이라고만 보내 주세요.');
       for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
         const reply = await h.send(text);
@@ -1946,7 +1953,7 @@ describe('connector writes — Codex re-review of 050fa47 + 55c5a2f (P1 execute/
     await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1)); // claimed and dispatched
     cancelPause.release();
     const cancel = await cancelTurn;
-    expect(cancel.reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect(cancel.reply.text).toBe(plainTextOf(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT')));
     expect(cancel.reply.text).not.toContain('보내지 않았어요');
     expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
     releaseWriter();
@@ -2030,7 +2037,7 @@ describe('connector writes — Codex re-review of 050fa47 + 55c5a2f (P1 execute/
     await h.send('승인');
     const executeTurn = h.send('댓글 실행');
     await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1));
-    expect((await h.send('거절')).reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect((await h.send('거절')).reply.text).toBe(plainTextOf(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT')));
     releaseWriter();
     expect((await executeTurn).reply.text).toContain('댓글을 달았어요');
   });
@@ -2224,7 +2231,7 @@ describe('connector writes — Codex P2 on b571e4d: the wider stop words take th
     await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1));
     pause.release();
     const classifyBefore = h.classify.count;
-    expect((await stopTurn).reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect((await stopTurn).reply.text).toBe(plainTextOf(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT')));
     expect(h.classify.count).toBe(classifyBefore);
     expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
     releaseWriter();
@@ -2242,7 +2249,7 @@ describe('connector writes — Codex P2 on b571e4d: the wider stop words take th
     await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1)); // the anchor is EXECUTING
     const classifyBefore = h.classify.count;
     const reply = await h.send(word);
-    expect(reply.reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect(reply.reply.text).toBe(plainTextOf(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT')));
     expect(h.classify.count).toBe(classifyBefore);
     releaseWriter();
     await executeTurn;
@@ -2283,7 +2290,7 @@ describe('connector writes — bare execution questions and prohibitions with a 
     const h = harness();
     await h.send('PROJ-12에 댓글: hello');
     await h.send('승인');
-    const hint = renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' });
+    const hint = plainTextOf(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
     for (const text of ['실행해도 돼?', '실행할까?', '지금 실행해도 될까', '실행 안 해도 돼']) {
       const reply = await h.send(text);
       expect(reply.reply.text, text).toBe(hint);

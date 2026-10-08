@@ -5,6 +5,21 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### PLT-0 platform-neutral rendering — implemented (2026-10-08)
+
+Core no longer writes Discord markup. Replies carry platform-neutral content (`OutboundMessage.content`,
+`OwnerNotification.content`):
+
+- untrusted text spans, links, conversation references and platform notes;
+- the existing length budgets, evaluated on each platform's rendering.
+
+`text` is the plain rendering. The Discord adapter's `DISCORD_MARKUP` renders the exact bytes Core used to write, and
+every Discord reply is sent with no parsed mentions. A source-scan test keeps platform names and markup out of Core.
+Discord output is byte-identical, proven by a 793-case golden fixture captured from the base renderers, except for the
+one intended fix: the work-surface lookup line now escapes connector titles (DECISIONS.md PLT-0 note). Codex review
+PASS; Chief Architect review APPROVE WITH NITS, nits addressed. Prerequisite for TG-1. No migration, no new DI token,
+no dependency change.
+
 ### PRV-1 OpenAI API provider — implemented on branch, not merged (2026-10-08)
 
 ADR-0115: new `packages/ai-openai-api` (Responses API at the pinned `https://api.openai.com`, `node:fetch`, no tool

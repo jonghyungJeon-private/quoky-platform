@@ -2,7 +2,7 @@ import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'disco
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
-import { renderMarkdownTablesForDiscord } from './markdown-tables';
+import { contentDisagreesWithText, DISCORD_PLATFORM, renderOutboundForDiscord } from './rendering';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
@@ -21,6 +21,7 @@ export {
 } from './delivery';
 export type { DeliveryReport, ChunkSender } from './delivery';
 export { MAX_TABLE_COLUMNS, isTableRenderingEligible, renderMarkdownTablesForDiscord } from './markdown-tables';
+export { DISCORD_MARKUP, DISCORD_PLATFORM, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
 export {
   classifyDiscordError,
   deliverOwnerNotification,
@@ -115,6 +116,12 @@ export interface DiscordAdapterOptions {
 /** How often the runner-owned attachment temp directory is swept (ADR-0111 D2: files older than 10 minutes). */
 const ATTACHMENT_SWEEP_INTERVAL_MS = 60_000;
 
+/**
+ * Defence in depth (PLT-0 review P2-5): no reply ever pings. Untrusted text is already neutralized by the markup, and
+ * nothing Quoky sends in a reply relies on a mention; owner notifications set their own (owner-only) list.
+ */
+const NO_MENTIONS = Object.freeze({ parse: [] as never[] });
+
 /** Discord typing indicator lasts ~10s; refresh under that while we work. */
 const TYPING_REFRESH_MS = 8_000;
 /** Safety cap so a typing loop can never leak (≈ covers the 120s CLI timeout). */
@@ -131,7 +138,7 @@ const TYPING_MAX_TICKS = 16;
  * to be enabled for the bot in the Discord Developer Portal.
  */
 export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink {
-  readonly platform = 'discord';
+  readonly platform = DISCORD_PLATFORM;
 
   private client?: Client;
   private messageHandler?: InboundMessageHandler;
@@ -244,18 +251,19 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     if (message.preview) {
       const report = await deliverPreview(message.preview, {
         sendText: async (chunk) => {
-          platformMessageIds.push((await channel.send(chunk)).id);
+          platformMessageIds.push((await channel.send({ content: chunk, allowedMentions: NO_MENTIONS })).id);
         },
         sendAttachment: async (canonicalDiff, filename, caption) => {
           const sent = await channel.send({
             content: caption,
             files: [{ attachment: Buffer.from(canonicalDiff, 'utf8'), name: filename }],
+            allowedMentions: NO_MENTIONS,
           });
           platformMessageIds.push(sent.id);
         },
         notify: async (notice) => {
           try {
-            platformMessageIds.push((await channel.send(notice)).id);
+            platformMessageIds.push((await channel.send({ content: notice, allowedMentions: NO_MENTIONS })).id);
           } catch (err) {
             this.logger.warn('preview notice send failed', {
               channelId: target,
@@ -282,17 +290,21 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
 
     // Discord renders no Markdown tables. Only a provider-generated reply the runtime flagged `model-reply` is adapted
     // (simple tables become lines, and only when the reply has no fence marker or quote at all); every other message — deterministic replies, previews, approval and
-    // connector-write texts, diffs, reminders — is sent byte-identical (Codex P1 on df66418).
-    const text = message.format === 'model-reply' ? renderMarkdownTablesForDiscord(message.text) : message.text;
+    // connector-write texts, diffs, reminders — is sent byte-identical (Codex P1 on df66418). See `rendering.ts`.
+    if (contentDisagreesWithText(message)) {
+      // Rendering `content` is safe; the warning names no content, only that a producer left the two out of sync.
+      this.logger.warn('outbound content and text disagree', { channelId: target, textLength: message.text.length });
+    }
+    const text = renderOutboundForDiscord(message);
     const report = await deliverWithNotice(
       text,
       async (chunk) => {
-        platformMessageIds.push((await channel.send(chunk)).id);
+        platformMessageIds.push((await channel.send({ content: chunk, allowedMentions: NO_MENTIONS })).id);
       },
       async (notice) => {
         // Single best-effort notice; if it also fails, log only (ADR-0016).
         try {
-          platformMessageIds.push((await channel.send(notice)).id);
+          platformMessageIds.push((await channel.send({ content: notice, allowedMentions: NO_MENTIONS })).id);
         } catch (err) {
           this.logger.warn('partial-failure notice send failed', {
             channelId: target,
@@ -582,7 +594,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     try {
       const channel = await this.fetchChannel(message.channelId);
       if (!channel?.isSendable()) return;
-      await channel.send({ content: note, allowedMentions: { parse: [] } });
+      await channel.send({ content: note, allowedMentions: NO_MENTIONS });
     } catch (err) {
       this.logger.warn('attachment intake note send failed', {
         channelId: message.channelId,
@@ -603,6 +615,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       userId: message.author.id,
       ...(message.guildId ? { spaceId: message.guildId } : {}),
       ...(threadId ? { threadId } : {}),
+      // A Discord message outside a guild is a DM with the bot (admission admits only the owner's own DM).
+      direct: !message.guildId,
     };
 
     return {

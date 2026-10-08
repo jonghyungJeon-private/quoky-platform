@@ -65,6 +65,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
+import { outboundMessage, withOutboundBody } from './message-rendering';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
@@ -3349,7 +3350,7 @@ export class ConversationRuntime {
   ): { reply: OutboundMessage; status?: 'RESPONDED' | 'FAILED' } {
     if (outcome.kind !== 'summarize' && outcome.kind !== 'write-draft') return outcome;
     this.deps.logger.warn('control turn handler outcome degraded to its fallback', { messageId: message.id, kind: outcome.kind });
-    return { reply: { context: message.context, text: outcome.fallbackText } };
+    return { reply: outboundMessage(message.context, outcome.fallbackText) };
   }
 
   /**
@@ -3368,7 +3369,7 @@ export class ConversationRuntime {
     summary: TurnHandlerSummarizeReply,
   ): Promise<TurnResult> {
     const fallback = (): Promise<TurnResult> =>
-      this.respondComposed(message, session, { context: message.context, text: summary.fallbackText });
+      this.respondComposed(message, session, outboundMessage(message.context, summary.fallbackText));
     if (!isSummarizableExternalWorkReadout(summary.readout)) {
       this.deps.logger.warn('work summary readout rejected', { messageId: message.id, sessionId: session.id });
       return fallback();
@@ -3403,7 +3404,7 @@ export class ConversationRuntime {
       return fallback();
     }
     if (result.status !== 'RESPONDED') return fallback();
-    return { ...result, reply: { ...result.reply, text: appendWorkSummaryFooter(result.reply.text, summary.footer) } };
+    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
   }
 
   // ── ADR-0112 / ADR-0110 amendment: connector writes behind exact-payload one-time approvals (CWR-2) ──────────
@@ -6945,7 +6946,7 @@ export class ConversationRuntime {
     // instruction (never the ≤200-char display summary). Set ONLY for CODE_IMPLEMENTATION so no other
     // capability's behavior changes. Per the CA input-fidelity amendment, every accepted inbound request
     // is preserved COMPLETELY — no application-level length cap, no silent truncation. The instruction is
-    // bounded only by what the inbound transport (Discord) accepts; a small app cap is explicitly NOT
+    // bounded only by what the inbound chat transport accepts; a small app cap is explicitly NOT
     // imposed here (long-preview delivery is handled losslessly downstream — Sprint 4c-Follow-up-5).
     let authoritativeInstruction: string | undefined;
     if (intent.capability === Capability.CODE_IMPLEMENTATION) {

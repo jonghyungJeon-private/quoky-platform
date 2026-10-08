@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryType, SessionStatus, type Actor, type MemoryRecord, type Session } from '../../domain';
 import { MEMORY_CONFIRM_PREVIEW_MAX_CHARS, memoryBody, memoryPreview, renderForgetConfirmation } from './memory-command-renderer';
+import { plainTextOf } from '../message-rendering';
 import {
   createLearningItemsRemovalCascade,
   createSessionHistoryClearer,
@@ -120,7 +121,7 @@ describe('createShortTermHistoryRemovalCascade (ADR-0106 D5, W2-L01)', () => {
       turn('discord-owner', `기억해: ${text}`),
       // NFD and a line break: the same text after NFC + whitespace collapsing.
       turn('discord-owner', `참고로 내가 제일 좋아하는\n  커피는 아이스 아메리카노야`.normalize('NFD')),
-      turn('discord-owner', renderForgetConfirmation(2, memoryPreview(text, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), 'AB2C', 'ko'), 'assistant'),
+      turn('discord-owner', plainTextOf(renderForgetConfirmation(2, memoryPreview(text, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), 'AB2C', 'ko')), 'assistant'),
     ];
     const h = store([...kept, ...carrying]);
     const cascade = createShortTermHistoryRemovalCascade(h.deps);
@@ -133,13 +134,13 @@ describe('createShortTermHistoryRemovalCascade (ADR-0106 D5, W2-L01)', () => {
     expect(h.rows).toHaveLength(kept.length);
   });
 
-  it('matches the Discord-escaped and clipped renderings a memory-command reply echoed', async () => {
+  it('matches the plain and clipped renderings a memory-command reply echoed', async () => {
     const markdown = '회의 링크는 *중요* @here <비공개> 채널';
     const long = `긴 기억 ${'가나다라마바사 '.repeat(60)}끝`;
     const rows = [
-      turn('discord-owner', `기억 1번:\n${memoryBody(markdown)}`, 'assistant'),
-      turn('discord-owner', `1. ${memoryPreview(long)}\n2. 다른 기억`, 'assistant'),
-      turn('discord-owner', `지금: ${memoryPreview(long, MEMORY_CONFIRM_PREVIEW_MAX_CHARS)}`, 'assistant'),
+      turn('discord-owner', `기억 1번:\n${plainTextOf(memoryBody(markdown))}`, 'assistant'),
+      turn('discord-owner', `1. ${plainTextOf(memoryPreview(long))}\n2. 다른 기억`, 'assistant'),
+      turn('discord-owner', `지금: ${plainTextOf(memoryPreview(long, MEMORY_CONFIRM_PREVIEW_MAX_CHARS))}`, 'assistant'),
     ];
     const h = store(rows);
     await createShortTermHistoryRemovalCascade(h.deps).onMemoriesRemoved(event([markdown, long]));
@@ -147,6 +148,19 @@ describe('createShortTermHistoryRemovalCascade (ADR-0106 D5, W2-L01)', () => {
     // A clipped rendering contributes its kept part, not the ellipsis.
     expect(memoryHistoryNeedles([long]).every((needle) => !needle.endsWith('…'))).toBe(true);
     expect(historyTurnCarriesMemory({ content: '긴 기억 가나다' }, memoryHistoryNeedles([long]))).toBe(false);
+  });
+
+  it('still matches a turn recorded before PLT-0, which kept the reply as delivered (backslash escapes, zero-width spaces)', async () => {
+    const markdown = '회의 링크는 *중요* @here <비공개> \\채널_1';
+    const rows = [
+      // Exactly what the history kept before platform-neutral rendering: the Discord-escaped body.
+      turn('discord-owner', '기억 1번:\n회의 링크는 \\*중요\\* @\u200bhere <\u200b비공개\\> \\\\채널\\_1', 'assistant'),
+      turn('discord-owner', '이 기억을 잊었어요:\n> 회의 링크는 \\*중요\\* @\u200bhere <\u200b비공개\\> \\\\채널\\_1', 'assistant'),
+      turn('discord-owner', '다른 이야기: 회의 링크는 중요해요'),
+    ];
+    const h = store(rows);
+    await createShortTermHistoryRemovalCascade(h.deps).onMemoriesRemoved(event([markdown]));
+    expect(h.rows.map((row) => row.content)).toEqual(['다른 이야기: 회의 링크는 중요해요']);
   });
 
   it('covers every identity of the actor and nobody else; an unknown actor or empty event reads nothing', async () => {

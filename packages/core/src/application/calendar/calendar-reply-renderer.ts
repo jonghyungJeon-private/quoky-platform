@@ -1,8 +1,9 @@
-import type { IsoTimestamp } from '../../domain';
+import type { IsoTimestamp, MessageBody, UntrustedTextNode } from '../../domain';
 import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import type { ConnectorQueryErrorReason } from '../../ports/connector-query';
 import { containsCredentialMaterial } from '../credential-guard';
-import { escapeDiscordText } from '../work-chat/external-work-readout';
+import { joinBody, messageBody, messageContent, takeLines, untrustedText } from '../message-rendering';
+import type { MessagePart } from '../message-rendering';
 import {
   addLocalDays,
   compareLocalDates,
@@ -17,9 +18,10 @@ import type { CalendarLanguage, CalendarWindow } from './calendar-question';
  * Deterministic calendar replies (ADR-0110 D3, CAL-2). Pure: every instant is rendered in the owner's zone
  * (`QUOKY_TIMEZONE`) from the event data and the window; nothing here reads a clock, calls a provider or a reader.
  *
- * Event text (title, location) is untrusted readout (ADR-0100 D8): clipped, escaped for Discord (no mentions, no
- * markdown), and replaced by a placeholder when it looks like credential material. Replies stay inside one Discord
- * message (`CALENDAR_REPLY_MAX_CHARS`) and list at most `CALENDAR_REPLY_MAX_EVENTS` events.
+ * Event text (title, location) is untrusted readout (ADR-0100 D8): clipped, an untrusted span the platform neutralizes
+ * (no mentions, no markup; PLT-0), and replaced by a placeholder when it looks like credential material. Replies stay
+ * inside one chat message (`CALENDAR_REPLY_MAX_CHARS` of the delivered text) and list at most
+ * `CALENDAR_REPLY_MAX_EVENTS` events.
  */
 
 export const CALENDAR_REPLY_MAX_CHARS = 1900;
@@ -109,25 +111,30 @@ function whenLabel(placed: PlacedEvent, day: LocalDate, timeZone: string, langua
   return `${instantLabel(placed.startMs, day, timeZone, language, false)}–${instantLabel(endMs, day, timeZone, language, true)}`;
 }
 
-function untrusted(value: string | undefined, maxChars: number): string | undefined {
+function untrusted(value: string | undefined, maxChars: number): UntrustedTextNode | undefined {
   if (value === undefined) return undefined;
   const text = clip(value, maxChars);
   if (text.length === 0) return undefined;
   if (containsCredentialMaterial(value)) return undefined;
-  return escapeDiscordText(text);
+  return untrustedText(text);
 }
 
-function titleOf(event: CalendarEvent, language: CalendarLanguage): string {
+function titleOf(event: CalendarEvent, language: CalendarLanguage): MessagePart {
   if (event.title.trim().length > 0 && containsCredentialMaterial(event.title)) {
     return language === 'en' ? '(title hidden)' : '(제목 숨김)';
   }
   return untrusted(event.title, CALENDAR_TITLE_DISPLAY_MAX_CHARS) ?? (language === 'en' ? '(no title)' : '(제목 없음)');
 }
 
-function eventLine(placed: PlacedEvent, day: LocalDate, timeZone: string, language: CalendarLanguage): string {
+/** One event without the list marker: "09:00–10:00 팀 회의 · 회의실 A (미정)". */
+function eventText(placed: PlacedEvent, day: LocalDate, timeZone: string, language: CalendarLanguage): MessageBody {
   const location = untrusted(placed.event.location, CALENDAR_LOCATION_DISPLAY_MAX_CHARS);
   const tentative = placed.event.status === 'tentative' ? (language === 'en' ? ' (tentative)' : ' (미정)') : '';
-  return `- ${whenLabel(placed, day, timeZone, language)} ${titleOf(placed.event, language)}${location ? ` · ${location}` : ''}${tentative}`;
+  return messageBody(`${whenLabel(placed, day, timeZone, language)} `, titleOf(placed.event, language), location ? messageContent(' · ', location) : '', tentative);
+}
+
+function eventLine(placed: PlacedEvent, day: LocalDate, timeZone: string, language: CalendarLanguage): MessageBody {
+  return messageBody('- ', eventText(placed, day, timeZone, language));
 }
 
 function relativeDayLabel(offset: number | undefined, language: CalendarLanguage): string | undefined {
@@ -150,41 +157,52 @@ function periodLabel(window: CalendarWindow, language: CalendarLanguage): string
   return name === undefined ? range : `${name} · ${range}`;
 }
 
-function footer(timeZone: string, language: CalendarLanguage, truncatedAt?: number, writesEnabled = false): string {
-  const zone = escapeDiscordText(timeZone);
+function footer(timeZone: string, language: CalendarLanguage, truncatedAt?: number, writesEnabled = false): MessageBody {
+  // The configured zone name is rendered as untrusted text like the event fields (it is not Quoky copy).
+  const zone = untrustedText(timeZone.replace(/\s+/g, ' '));
   const base =
     language === 'en'
       ? writesEnabled
-        ? `(Times in ${zone})`
-        : `(Times in ${zone} · read-only calendar)`
+        ? messageContent('(Times in ', zone, ')')
+        : messageContent('(Times in ', zone, ' · read-only calendar)')
       : writesEnabled
-        ? `(${zone} 기준)`
-        : `(${zone} 기준 · 캘린더 읽기 전용)`;
-  if (truncatedAt === undefined) return base;
+        ? messageContent('(', zone, ' 기준)')
+        : messageContent('(', zone, ' 기준 · 캘린더 읽기 전용)');
+  if (truncatedAt === undefined) return messageBody(base);
   return language === 'en'
-    ? `${base}\nOnly the first ${truncatedAt} events were read; there may be more.`
-    : `${base}\n캘린더에서 처음 ${truncatedAt}개까지만 읽었어요. 더 있을 수 있어요.`;
+    ? messageBody(base, `\nOnly the first ${truncatedAt} events were read; there may be more.`)
+    : messageBody(base, `\n캘린더에서 처음 ${truncatedAt}개까지만 읽었어요. 더 있을 수 있어요.`);
 }
 
-/** Append lines while the reply stays inside the budget; the rest is summarised as "외 N개". */
-function bounded(header: string, body: readonly string[], tail: string, language: CalendarLanguage, hidden: number): string {
-  const lines: string[] = [];
-  let omitted = hidden;
-  const reserve = 40; // room for the "외 N개" line
-  let length = Array.from(header).length + Array.from(tail).length + 2 + reserve;
-  for (const [index, line] of body.entries()) {
-    const size = Array.from(line).length + 1;
-    if (length + size > CALENDAR_REPLY_MAX_CHARS) {
-      omitted += body.slice(index).filter((entry) => entry.startsWith('- ')).length;
-      break;
-    }
-    lines.push(line);
-    length += size;
-  }
-  // Never end on a dangling day heading.
-  while (lines.length > 0 && !(lines[lines.length - 1] as string).startsWith('- ')) lines.pop();
-  if (omitted > 0) lines.push(language === 'en' ? `…and ${omitted} more` : `…외 ${omitted}개`);
-  return [header, ...lines, tail].join('\n');
+/** The two line breaks around the list body (after the header, before the tail). */
+const CALENDAR_LIST_SEPARATOR_CHARS = 2;
+/** Room always reserved for the closing "…외 N개" / "…and N more" line. */
+const CALENDAR_OMITTED_LINE_RESERVE_CHARS = 40;
+
+/** One body line of a list: an event (`- …`, an item) or a day heading. */
+interface ListLine {
+  readonly content: MessageBody;
+  readonly item: boolean;
+}
+
+/**
+ * Append lines while the reply stays inside the budget (of the delivered text); the rest is summarised as "외 N개".
+ * The budget reserves 40 characters for that line plus the two separators around the body.
+ */
+function bounded(header: string, body: readonly ListLine[], tail: MessageBody, language: CalendarLanguage, hidden: number): MessageBody {
+  return messageBody(
+    takeLines({
+      unit: 'code-points',
+      maxChars: CALENDAR_REPLY_MAX_CHARS,
+      baseChars: CALENDAR_LIST_SEPARATOR_CHARS + CALENDAR_OMITTED_LINE_RESERVE_CHARS,
+      head: [header],
+      tail: [tail],
+      lines: body,
+      // Never end on a dangling day heading.
+      dropTrailingHeadings: true,
+      omitted: language === 'en' ? { hidden, before: '…and ', after: ' more' } : { hidden, before: '…외 ', after: '개' },
+    }),
+  );
 }
 
 export interface CalendarRenderOptions {
@@ -242,7 +260,7 @@ export function renderCalendarEvents(
   window: CalendarWindow,
   events: readonly CalendarEvent[],
   options: CalendarRenderOptions,
-): string {
+): MessageBody {
   const { timeZone, language } = options;
   if (window.span.kind === 'next') return renderNextEvent(window, events, options);
   const first = window.startDate;
@@ -255,7 +273,7 @@ export function renderCalendarEvents(
     const none = remaining
       ? language === 'en' ? `${period}: nothing left on your calendar.` : `${period}: 남은 일정이 없어요.`
       : language === 'en' ? `${period}: nothing on your calendar.` : `${period}: 캘린더에 일정이 없어요.`;
-    return `${none}\n${tail}`;
+    return joinBody([none, tail]);
   }
   const header =
     language === 'en'
@@ -264,9 +282,9 @@ export function renderCalendarEvents(
 
   const shown = placed.slice(0, CALENDAR_REPLY_MAX_EVENTS);
   const hidden = placed.length - shown.length;
-  const body: string[] = [];
+  const body: ListLine[] = [];
   if (window.days === 1) {
-    for (const entry of shown) body.push(eventLine(entry, first, timeZone, language));
+    for (const entry of shown) body.push({ content: eventLine(entry, first, timeZone, language), item: true });
   } else {
     // Grouped by the first day of the window the event falls on (an event that started earlier is listed on day one).
     const byDay = new Map<string, { day: LocalDate; entries: PlacedEvent[] }>();
@@ -279,26 +297,28 @@ export function renderCalendarEvents(
     }
     const groups = [...byDay.values()].sort((a, b) => compareLocalDates(a.day, b.day));
     for (const group of groups) {
-      body.push(dateLabel(group.day, language));
-      for (const entry of group.entries) body.push(eventLine(entry, group.day, timeZone, language));
+      body.push({ content: dateLabel(group.day, language), item: false });
+      for (const entry of group.entries) body.push({ content: eventLine(entry, group.day, timeZone, language), item: true });
     }
   }
   return bounded(header, body, tail, language, hidden);
 }
 
 /** "다음 회의 언제야?": the first timed event starting at or after now; else the first all-day event after today. */
-function renderNextEvent(window: CalendarWindow, events: readonly CalendarEvent[], options: CalendarRenderOptions): string {
+function renderNextEvent(window: CalendarWindow, events: readonly CalendarEvent[], options: CalendarRenderOptions): MessageBody {
   const { timeZone, language } = options;
   const next = nextEventOf(events, options);
   const tail = footer(timeZone, language, undefined, options.writesEnabled === true);
   if (next === undefined) {
     return language === 'en'
-      ? `Nothing upcoming on your calendar in the next ${window.days} days.\n${tail}`
-      : `앞으로 ${window.days}일 안에 예정된 일정이 없어요.\n${tail}`;
+      ? joinBody([`Nothing upcoming on your calendar in the next ${window.days} days.`, tail])
+      : joinBody([`앞으로 ${window.days}일 안에 예정된 일정이 없어요.`, tail]);
   }
-  const line = eventLine(next, next.firstDate, timeZone, language).slice(2);
+  const line = eventText(next, next.firstDate, timeZone, language);
   const day = dateLabel(next.firstDate, language);
-  return language === 'en' ? `Next on your calendar: ${day} ${line}\n${tail}` : `다음 일정: ${day} ${line}\n${tail}`;
+  return language === 'en'
+    ? joinBody([messageContent(`Next on your calendar: ${day} `, line), tail])
+    : joinBody([messageContent(`다음 일정: ${day} `, line), tail]);
 }
 
 /** A date the calendar does not have ("2월 30일"). No read was made. */
