@@ -31,6 +31,7 @@ import {
   okReply,
   OWNER_ID,
   photoField,
+  reactionUpdate,
   STRANGER_ID,
   textUpdate,
   until,
@@ -823,3 +824,57 @@ describe('Telegram adapter halts and stops during intake (Codex P1/P2)', () => {
     expect(h.received[0]?.attachments).toEqual([expect.objectContaining({ kind: 'image' })]);
   });
 });
+
+describe('Telegram adapter: a stop from inside a handler ends the batch (Codex delta P2)', () => {
+  it('a stop() from the attachment handler: no later update of the batch is handed over and the offset stays past the last one that was', async () => {
+    const { store, offsetStore } = memoryStore(300);
+    const fake = new FakeTelegram()
+      .queue(
+        'getUpdates',
+        okReply([
+          mediaUpdate(300, documentField('d', 'a.txt', 'text/plain', 2)),
+          textUpdate(301, '다음 질문'),
+          mediaUpdate(302, documentField('e', 'b.txt', 'text/plain', 2)),
+          reactionUpdate(303),
+        ]),
+      )
+      .queue('getFile', fileReply('documents/file_1.txt', 2))
+      .queue('downloadFile', bytesReply(Buffer.from('ok')));
+    const h = harness(fake, { offsetStore });
+    const feedback: unknown[] = [];
+    h.adapter.onFeedback(async (signal) => void feedback.push(signal));
+    let stopping: Promise<void> | undefined;
+    h.adapter.onMessage(async (message) => {
+      h.received.push(message);
+      if ((message.attachments ?? []).length > 0) stopping = h.adapter.stop();
+    });
+    await h.adapter.start();
+    await until(() => stopping !== undefined);
+    await stopping;
+    await flush(10);
+    expect(h.received.map((message) => message.id)).toEqual(['3000']);
+    expect(feedback).toEqual([]);
+    expect(fake.callsTo('getFile').map((call) => call.params.file_id)).toEqual(['d']);
+    expect(store.saves).toEqual([301]);
+    expect(store.value).toBe(301);
+  });
+
+  it('a stop() from a text handler: the next attachment message is not even taken in', async () => {
+    const { store, offsetStore } = memoryStore(310);
+    const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(310, '첫 질문'), mediaUpdate(311, documentField('d', 'a.txt', 'text/plain', 2))]));
+    const h = harness(fake, { offsetStore });
+    let stopping: Promise<void> | undefined;
+    h.adapter.onMessage(async (message) => {
+      h.received.push(message);
+      stopping ??= h.adapter.stop();
+    });
+    await h.adapter.start();
+    await until(() => stopping !== undefined);
+    await stopping;
+    await flush(10);
+    expect(h.received.map((message) => message.id)).toEqual(['3100']);
+    expect(fileCalls(fake)).toEqual([]);
+    expect(store.value).toBe(311);
+  });
+});
+

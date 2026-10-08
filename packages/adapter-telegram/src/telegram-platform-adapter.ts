@@ -762,6 +762,9 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       if (admission.kind === 'admitted' || admission.kind === 'reaction') {
         // ADR-0102 D5: nothing is handed over unless the startup identity gate opened; the offset stays put.
         if (!(await this.inboundGateOpen(signal))) return false;
+        // Codex delta P2: a stop or halt (for example from inside an earlier turn's handler) ends the batch here: nothing
+        // later is handed over, and the offset stays past the last update that was.
+        if (this.handOverClosed(signal)) return false;
         // Hand over, then advance and persist in the same synchronous step (no await in between): a restart resumes
         // after this update, so the turn is never handed over twice. TG-2 (Codex P1): a message with attachments is
         // handed over only after its intake finished; a stop or halt during the intake hands nothing over and leaves the
@@ -897,6 +900,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
    * the offset unmoved.
    */
   private async handOver(message: AdmittedTelegramMessage, signal: AbortSignal): Promise<boolean> {
+    // Every hand-over — text, attachments, album — first re-checks the stop, the halt and the lifecycle signal.
+    if (this.handOverClosed(signal)) return false;
     const handler = this.messageHandler;
     if (!handler) return true;
     this.admittedChats.add(message.chatId);
@@ -913,7 +918,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       return true;
     }
     const intake = await this.attachmentIntake.intake(sources);
-    const abandoned = (): boolean => signal.aborted || !this.connected();
+    const abandoned = (): boolean => this.handOverClosed(signal);
     if (!abandoned()) await this.reportAttachmentIntake(message, intake);
     if (abandoned()) {
       await intake.release();
@@ -929,6 +934,11 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       }
     })().catch(failed);
     return true;
+  }
+
+  /** No hand-over once this run's signal is aborted (stop) or the adapter is stopped, halted or unverified. */
+  private handOverClosed(signal: AbortSignal): boolean {
+    return signal.aborted || !this.connected();
   }
 
   /** Remember an owner message key (bounded, oldest first out). */
