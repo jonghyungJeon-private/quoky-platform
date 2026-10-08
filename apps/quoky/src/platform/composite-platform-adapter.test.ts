@@ -9,7 +9,7 @@ import type {
   PlatformAdapter,
 } from '@quoky/core';
 import { DiscordPlatformAdapter } from '@quoky/adapter-discord';
-import { TelegramBotToken } from '@quoky/adapter-telegram';
+import { TelegramBotToken, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
 import { platformNotificationSink } from '../features/reminders.providers';
 import { applyInboundGate, verifyStartupIdentity } from '../ops/startup-identity-check';
 import { CompositePlatformAdapter } from './composite-platform-adapter';
@@ -103,6 +103,28 @@ describe('CompositePlatformAdapter (ADR-0114 D6): one contract over Discord and 
     log.length = 0;
     await adapter.stop();
     expect(log).toEqual(['stop:telegram', 'stop:discord']);
+  });
+
+  it('CA P2-2: a Telegram outage at startup does not take Discord down (start resolves, nothing is stopped)', async () => {
+    const log: string[] = [];
+    const discord = new FakeDiscord('discord', log);
+    const token = TelegramBotToken.from([['70', '01', '23', '4'].join(''), ['AAH', 'o'.repeat(32)].join('')].join(':'));
+    if (!token) throw new Error('fixture token is not well-formed');
+    let calls = 0;
+    const telegram = new TelegramPlatformAdapter({ token, expectedBotId: token.botId, ownerIds: ['5550001'] }, silent, {
+      fetch: async () => {
+        calls += 1;
+        throw new TypeError('fetch failed');
+      },
+      sleep: (_ms, signal) => new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
+    });
+    const adapter = new CompositePlatformAdapter(discord, [telegram], silent);
+    await expect(adapter.start()).resolves.toBeUndefined();
+    expect(log).toEqual(['start:discord']);
+    expect(calls).toBe(1);
+    expect(telegram.status()).toMatchObject({ identityVerified: false, polling: false });
+    await adapter.stop();
+    expect(log).toEqual(['start:discord', 'stop:discord']);
   });
 
   it('forwards the ADR-0102 D5 gate and identity reader, and the owner sink, to the primary (Discord) path', async () => {

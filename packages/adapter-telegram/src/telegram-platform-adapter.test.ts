@@ -107,15 +107,45 @@ describe('Telegram startup identity check (ADR-0114 D5) and the 409 probe', () =
     expect(h.adapter.status().identityVerified).toBe(false);
   });
 
-  it('a rejected token, an unreachable getMe and a 409 on the probe are typed startup errors', async () => {
+  it('a rejected token and a 409 on the probe (a webhook) are typed startup errors', async () => {
     const auth = harness(new FakeTelegram().queue('getMe', errorReply(401)));
     await expect(auth.adapter.start()).rejects.toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED });
-    const down = harness(new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') }));
-    await expect(down.adapter.start()).rejects.toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE });
     const conflict = harness(new FakeTelegram().queue('getUpdates:instant', errorReply(409)));
     const error = await conflict.adapter.start().catch((err: unknown) => err);
     expect(error).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT, message: 'TELEGRAM_POLL_CONFLICT' });
     expect(conflict.fake.callsTo('getUpdates')).toHaveLength(1);
+  });
+});
+
+describe('Telegram startup under a transient outage (CA P2-2): never fails the start, polls only once verified', () => {
+  it('an unreachable getMe resolves start(); the identity is retried in the background and polling starts after it matches', async () => {
+    const fake = new FakeTelegram()
+      .queue('getMe', { throws: new TypeError('fetch failed') }, errorReply(502), { throws: new TypeError('fetch failed') })
+      .queue('getUpdates', okReply([textUpdate(70, '안녕')]));
+    const h = harness(fake);
+    await expect(h.adapter.start()).resolves.toBeUndefined();
+    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false });
+    await until(() => h.received.length === 1);
+    // Three getMe attempts (start, then two background retries with the poll backoff) before the fourth matched.
+    expect(fake.callsTo('getMe')).toHaveLength(4);
+    expect(h.sleeps.slice(0, 3)).toEqual([1000, 2000, 4000]);
+    expect(h.adapter.status()).toMatchObject({ identityVerified: true, polling: true });
+    expect(h.logs.some((line) => line.fields?.code === TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE)).toBe(true);
+    await h.adapter.stop();
+  });
+
+  it.each([
+    ['another bot', okReply({ id: 999_999_999, is_bot: true }), TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH],
+    ['a rejected token', errorReply(401), TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED],
+  ])('%s found by the background retry halts the Telegram side only: no poll, status.halted, nothing thrown', async (_label, reply, code) => {
+    const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') }, reply);
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false, halted: code });
+    expect(fake.callsTo('getUpdates')).toHaveLength(0);
+    expect(h.logs.some((line) => line.level === 'error' && line.fields?.code === code)).toBe(true);
+    await h.adapter.stop();
   });
 });
 
@@ -320,9 +350,13 @@ describe('Telegram token handling: never in logs, errors, inspect or JSON', () =
     await until(() => h.sleeps.length >= 2);
     await h.adapter.sendMessage({ context: { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID) }, text: 'x' });
     await h.adapter.stop();
-    const startError = await harness(new FakeTelegram().queue('getMe', { throws: leak })).adapter.start().catch((err: unknown) => err);
+    const background = harness(new FakeTelegram().queue('getMe', { throws: leak }, errorReply(401)));
+    await background.adapter.start();
+    await until(() => background.adapter.status().halted !== undefined);
+    const startError = await harness(new FakeTelegram().queue('getMe', errorReply(401))).adapter.start().catch((err: unknown) => err);
     const observable = [
       JSON.stringify(h.logs),
+      JSON.stringify(background.logs),
       inspect(h.adapter, { depth: 6, showHidden: true }),
       JSON.stringify(h.adapter),
       JSON.stringify(h.adapter.status()),
@@ -331,6 +365,6 @@ describe('Telegram token handling: never in logs, errors, inspect or JSON', () =
       String(startError),
     ].join('\n');
     expect(observable).not.toContain(FAKE_TOKEN_SECRET);
-    expect(startError).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE });
+    expect(startError).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED });
   });
 });
