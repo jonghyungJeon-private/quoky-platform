@@ -5,11 +5,10 @@ import {
   CALENDAR_EVENT_TITLE_MAX_LENGTH,
   CALENDAR_WINDOW_MAX_DAYS,
   ConnectorQueryError,
-  classifyConnectorWriteTransportFailure,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
-  installConnectorWriteTransportDiagnostics,
+  failSafeConnectorWriteTransportClassifier,
   isValidConnectorWriteText,
   isValidTimeZone,
   resolveConnectorQueryTimeoutMs,
@@ -22,6 +21,7 @@ import {
   type CalendarEventWriter,
   type ConnectorWriteNotSentReason,
   type ConnectorWriteOutcome,
+  type ConnectorWriteTransportClassifier,
 } from '@quoky/core';
 import { GoogleCalendarScopeError } from './errors';
 import { GOOGLE_CALENDAR_EVENTS_SCOPE, refreshGoogleAccessToken, type GoogleAccessToken } from './oauth';
@@ -68,6 +68,11 @@ export interface GoogleCalendarWriterConfig {
   readonly timeoutMs?: number;
   /** Injectable clock for the access-token expiry. */
   readonly nowMs?: () => number;
+  /**
+   * How a thrown write request is classified (UNC-1; injected by the composition root). Default: fail safe, every
+   * thrown request is UNCERTAIN.
+   */
+  readonly classifyTransportFailure?: ConnectorWriteTransportClassifier;
 }
 
 /** A write step failed before the write request left; carries the NOT_SENT reason. */
@@ -87,6 +92,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly nowMs: () => number;
+  private readonly classifyTransportFailure: ConnectorWriteTransportClassifier;
   private accessToken: GoogleAccessToken | undefined;
   private pendingRefresh: Promise<GoogleAccessToken> | undefined;
 
@@ -97,7 +103,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'google calendar writer');
     this.nowMs = config.nowMs ?? Date.now;
-    installConnectorWriteTransportDiagnostics();
+    this.classifyTransportFailure = config.classifyTransportFailure ?? failSafeConnectorWriteTransportClassifier;
   }
 
   async createEvent(request: CalendarEventCreateRequest): Promise<ConnectorWriteOutcome> {
@@ -202,8 +208,8 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     try {
       response = await this.send(method, url, body, token, ifMatch);
     } catch (error) {
-      // NOT_SENT only when the request provably never reached Google (UNC-1); otherwise UNCERTAIN.
-      return classifyConnectorWriteTransportFailure(error);
+      // NOT_SENT only with connection-stage evidence that it never reached Google (UNC-1); otherwise UNCERTAIN.
+      return this.classifyTransportFailure(error);
     }
     if (!response.ok) {
       await discardBody(response);

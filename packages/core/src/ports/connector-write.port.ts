@@ -87,6 +87,18 @@ export function connectorWriteUncertain(reason: ConnectorWriteUncertainReason): 
   return { status: 'UNCERTAIN', reason };
 }
 
+/**
+ * What a writer does with a write request that THREW (UNC-1). The contract: return `NOT_SENT('UNAVAILABLE')` only when
+ * the request provably never reached the provider (connection-stage evidence), and `UNCERTAIN('TRANSPORT')` for
+ * anything else — a request that may have left is never reported as not sent. The transport-specific evidence lives
+ * outside Core; the composition root injects the classifier into each writer.
+ */
+export type ConnectorWriteTransportClassifier = (error: unknown) => ConnectorWriteOutcome;
+
+/** The fail-safe default: every thrown write request may have left, so it is UNCERTAIN (never retried). */
+export const failSafeConnectorWriteTransportClassifier: ConnectorWriteTransportClassifier = () =>
+  connectorWriteUncertain('TRANSPORT');
+
 /** Neutral operation names recorded on write receipts (ADR-0112 D3). Core never branches on a connector id. */
 export const ConnectorWriteOperation = {
   ISSUE_COMMENT: 'ISSUE_COMMENT',

@@ -119,19 +119,10 @@ describe('JiraIssueCommentWriter (ADR-0112 D2/D4)', () => {
       [json(503, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [new Error(`connect ECONNRESET ${TOKEN}`), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new DOMException('The operation was aborted due to timeout', 'TimeoutError'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
-      // UNC-1: provably never sent (connection set-up, TLS handshake, refused proxy tunnel) → NOT_SENT; else UNCERTAIN.
-      [fetchFailed('ECONNREFUSED'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('ENOTFOUND'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('EAI_AGAIN'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('ENETUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('EHOSTUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('DEPTH_ZERO_SELF_SIGNED_CERT'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [
-        fetchFailed('UND_ERR_ABORTED', 'Proxy response (403) !== 200 when HTTP Tunneling'),
-        { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false },
-      ],
+      // UNC-1: without an injected classifier every thrown request is UNCERTAIN (fail safe), whatever its cause.
+      [fetchFailed('ENOTFOUND'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('ECONNREFUSED'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [fetchFailed('ECONNRESET', 'read ECONNRESET'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
-      [fetchFailed('UND_ERR_SOCKET', 'other side closed'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new Response('not json', { status: 201 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
       [json(201, { id: 42 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
     ];
@@ -284,19 +275,24 @@ describe('JiraIssueTransitionWriter (ADR-0112 D2/D5: the approved transition id 
     }
   });
 
-  it('a transition POST that provably never left is NOT_SENT (UNAVAILABLE), with no retry', async () => {
-    const preSend = [
-      fetchFailed('ECONNREFUSED'),
-      fetchFailed('ENOTFOUND'),
-      fetchFailed('UND_ERR_ABORTED', 'Proxy response (502) !== 200 when HTTP Tunneling'),
-    ];
-    for (const reply of preSend) {
-      const fake = fakeFetch(issue('PROJ-7'), json(200, TRANSITIONS), reply);
-      expect(await new JiraIssueTransitionWriter(config(fake.fetchImpl)).transition(APPROVED)).toEqual({
-        status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false,
-      });
-      expect(fake.calls).toHaveLength(3);
-    }
+  it('UNC-1: a thrown comment / transition POST is classified by the injected classifier, called once with the error', async () => {
+    const thrown = fetchFailed('ENOTFOUND');
+    const seen: unknown[] = [];
+    const classifyTransportFailure = (error: unknown) => {
+      seen.push(error);
+      return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false } as const;
+    };
+    const transition = fakeFetch(issue('PROJ-7'), json(200, TRANSITIONS), thrown);
+    expect(
+      await new JiraIssueTransitionWriter(config(transition.fetchImpl, { classifyTransportFailure })).transition(APPROVED),
+    ).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
+    expect(transition.calls).toHaveLength(3);
+    const comment = fakeFetch(issue('PROJ-1'), thrown);
+    expect(
+      await new JiraIssueCommentWriter(config(comment.fetchImpl, { classifyTransportFailure })).addComment({ issueKey: 'PROJ-1', text: 'hi' }),
+    ).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
+    expect(comment.calls).toHaveLength(2);
+    expect(seen).toEqual([thrown, thrown]);
   });
 
   it('refuses a non-allowlisted issue or malformed bound ids before any network call', async () => {

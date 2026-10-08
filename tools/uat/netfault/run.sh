@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # UNC-1 network-fault UAT driver (Docker / OrbStack). Subcommands:
-#   build                 build the harness image from this worktree (bind-mounted read-only in the build)
+#   build                 build the harness image (allowlist COPY; /.dockerignore drops env files, .git, node_modules)
 #   up                    create the networks and start the fault proxy
 #   preflight             prove the harness container has no direct route out, and only the proxy reaches slack.com
-#   case <case1|case1b|case2|case3> <runId>   run one harness case (writes $UNC1_LOGS/<case>.json and .stderr.log)
+#   case <case1|case1b|case2|case3> <runId> --approved-channel-id <id> [--offline-placeholder]
+#                         run one harness case (writes $UNC1_LOGS/<case>.json and .stderr.log); non-zero on any failure
 #   down                  remove the containers and networks (logs are kept)
 #
 # Required env: UNC1_ENV_FILE (mode-600 file with QUOKY_CONNECTOR_WRITE_SLACK_TOKEN and
@@ -64,17 +65,54 @@ case "$cmd" in
     need_env
     which_case="${2:?case}"
     run_id="${3:?runId}"
+    shift 3
+    approved_channel_id=""
+    extra=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --approved-channel-id) approved_channel_id="${2:-}"; shift 2 ;;
+        --offline-placeholder) extra+=(--offline-placeholder); shift ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+      esac
+    done
+    [[ "$approved_channel_id" =~ ^[CG][A-Z0-9]{8,20}$ ]] || { echo "--approved-channel-id <id> is required" >&2; exit 2; }
     proxy_url="http://$PROXY:3128"
     # case1b: a proxy port nothing listens on, so the connect itself is refused.
-    [ "$which_case" = "case1b" ] && proxy_url="http://$PROXY:3999"
+    if [ "$which_case" = "case1b" ]; then proxy_url="http://$PROXY:3999"; fi
+    out="$UNC1_LOGS/$which_case"
+    rm -f "$out.json" "$out.stdout.log" "$out.stderr.log"
+    status=0
     docker run --rm --name "unc1-harness-$which_case" --network "$NET_INT" \
       --env-file "$UNC1_ENV_FILE" \
       -e HTTPS_PROXY="$proxy_url" -e NODE_USE_ENV_PROXY=1 -e NO_PROXY="$PROXY" \
       -e UNC1_PROXY_CONTROL="http://$PROXY:8081" \
       "$IMAGE" node tools/uat/netfault/harness.mjs "$which_case" "$run_id" \
-      > "$UNC1_LOGS/$which_case.stdout.log" 2> "$UNC1_LOGS/$which_case.stderr.log" || echo "harness exit=$?"
-    sed -n '/===UNC1-RESULT-BEGIN===/,/===UNC1-RESULT-END===/p' "$UNC1_LOGS/$which_case.stdout.log" | sed '1d;$d' > "$UNC1_LOGS/$which_case.json"
-    echo "wrote $UNC1_LOGS/$which_case.json"
+      --approved-channel-id "$approved_channel_id" ${extra[@]+"${extra[@]}"} \
+      > "$out.stdout.log" 2> "$out.stderr.log" || status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "harness $which_case failed (exit $status); see $out.stderr.log" >&2
+      exit "$status"
+    fi
+    sed -n '/===UNC1-RESULT-BEGIN===/,/===UNC1-RESULT-END===/p' "$out.stdout.log" | sed '1d;$d' > "$out.json"
+    # The result must exist and carry every expected field, or the run counts as failed.
+    node -e '
+      const fs = require("node:fs");
+      const [file, expectedCase] = process.argv.slice(1);
+      let d;
+      try { d = JSON.parse(fs.readFileSync(file, "utf8")); } catch { console.error("result JSON missing or unreadable"); process.exit(1); }
+      const problems = [];
+      if (d.case !== expectedCase) problems.push("case");
+      if (d.schemaVersion !== 15) problems.push("schemaVersion");
+      if (typeof d.executeReply !== "string" || d.executeReply.length === 0) problems.push("executeReply");
+      if (!d.targetGuard || (d.targetGuard.verified !== true && d.targetGuard.offlinePlaceholder !== true)) problems.push("targetGuard");
+      for (const key of ["receiptAfterExecute", "receiptsAtEnd", "writerCalls", "steps", "proxyLog"]) {
+        if (!Array.isArray(d[key])) problems.push(key);
+      }
+      if (!Array.isArray(d.receiptAfterExecute) || d.receiptAfterExecute.length !== 1) problems.push("receiptAfterExecute.length");
+      if (!Array.isArray(d.steps) || !d.steps.some((s) => s.label === "execute")) problems.push("steps.execute");
+      if (problems.length > 0) { console.error("result JSON incomplete: " + problems.join(", ")); process.exit(1); }
+    ' "$out.json" "$which_case"
+    echo "wrote $out.json"
     ;;
   down)
     if [ -n "${UNC1_LOGS:-}" ] && docker inspect "$PROXY" >/dev/null 2>&1; then docker logs "$PROXY" > "$UNC1_LOGS/proxy.log" 2>&1 || true; fi

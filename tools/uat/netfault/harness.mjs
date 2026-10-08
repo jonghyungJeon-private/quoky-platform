@@ -9,7 +9,14 @@
 // can be made; none is expected on these deterministic turns), and the Slack writer's `post` is wrapped (not replaced)
 // to count calls. The network goes through the fault proxy (`HTTPS_PROXY` + `NODE_USE_ENV_PROXY=1`).
 //
-// Usage: node tools/uat/netfault/harness.mjs <case1|case1b|case2|case3> <runId>
+// Usage: node tools/uat/netfault/harness.mjs <case1|case1b|case2|case3> <runId> --approved-channel-id <id>
+//          [--offline-placeholder]
+//
+// Target guard (before ANY write, and before the app boots): the configured channel id must equal the explicitly
+// approved id, and Slack `conversations.info` (bot token, read-only) must report that id with the name `quoky-test` and
+// neither `is_im` nor `is_mpim`. Anything else — including an API error such as missing_scope — refuses with a non-zero
+// exit. `--offline-placeholder` skips the lookup ONLY for the refused-proxy cases (case1, case1b) and ONLY when the
+// token is the fixed placeholder below, which Slack can never accept, so no post is possible.
 // Required env: QUOKY_CONNECTOR_WRITE_SLACK_TOKEN, QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS (`quoky-test:<id>`),
 // UNC1_PROXY_CONTROL (e.g. http://unc1-proxy:8081). Output: one JSON document on stdout, secrets redacted.
 
@@ -24,13 +31,19 @@ const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const appRequire = createRequire(join(ROOT, 'apps/quoky/package.json'));
 const storageRequire = createRequire(join(ROOT, 'packages/storage-sqlite/package.json'));
 
-const CASE = process.argv[2];
-const RUN_ID = process.argv[3] ?? String(Date.now());
+const USAGE = 'usage: harness.mjs <case1|case1b|case2|case3> <runId> --approved-channel-id <id> [--offline-placeholder]\n';
+const [CASE, RUN_ID, ...flags] = process.argv.slice(2);
 const CASES = new Set(['case1', 'case1b', 'case2', 'case3']);
-if (!CASES.has(CASE)) {
-  process.stderr.write('usage: harness.mjs <case1|case1b|case2|case3> <runId>\n');
+const approvedIndex = flags.indexOf('--approved-channel-id');
+const APPROVED_CHANNEL_ID = approvedIndex >= 0 ? flags[approvedIndex + 1] : undefined;
+const OFFLINE_PLACEHOLDER = flags.includes('--offline-placeholder');
+const knownFlags = new Set(['--approved-channel-id', '--offline-placeholder', APPROVED_CHANNEL_ID]);
+if (!CASES.has(CASE) || !/^[A-Za-z0-9-]{1,40}$/.test(RUN_ID ?? '') || !/^[CG][A-Z0-9]{8,20}$/.test(APPROVED_CHANNEL_ID ?? '') || flags.some((f) => !knownFlags.has(f))) {
+  process.stderr.write(USAGE);
   process.exit(2);
 }
+/** Built by concatenation so no token-shaped literal appears in the source. Slack rejects it (invalid_auth). */
+const PLACEHOLDER_TOKEN = 'xox' + 'b-unc1-placeholder-not-a-token';
 
 const OWNER_ID = '111111111111111111';
 const CHANNEL_NAME = 'quoky-test';
@@ -43,6 +56,14 @@ if (channelId === undefined) {
   process.exit(2);
 }
 const token = process.env.QUOKY_CONNECTOR_WRITE_SLACK_TOKEN ?? '';
+if (channelId !== APPROVED_CHANNEL_ID) {
+  process.stderr.write('UNC-1: the configured channel id is not the approved channel id; refusing\n');
+  process.exit(2);
+}
+if (OFFLINE_PLACEHOLDER && (token !== PLACEHOLDER_TOKEN || (CASE !== 'case1' && CASE !== 'case1b'))) {
+  process.stderr.write('UNC-1: --offline-placeholder needs the placeholder token and a refused-proxy case (case1, case1b)\n');
+  process.exit(2);
+}
 
 /** Redacts the bot token, any Slack-token-shaped string and the channel id from everything this harness prints. */
 function redact(value) {
@@ -100,7 +121,29 @@ const steps = [];
 const writerCalls = [];
 let providerCalls = 0;
 
+/**
+ * The target guard: Slack must confirm the approved id is the `quoky-test` channel (not a DM / group DM). Read-only
+ * (`conversations.info`), through the same proxy as the write. Throws (→ non-zero exit) on any mismatch or API error.
+ */
+async function verifyTargetChannel() {
+  if (OFFLINE_PLACEHOLDER) return { verified: false, offlinePlaceholder: true };
+  await setMode('pass');
+  const url = new URL('https://slack.com/api/conversations.info');
+  url.searchParams.set('channel', APPROVED_CHANNEL_ID);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+  const payload = await response.json().catch(() => null);
+  if (!payload || payload.ok !== true) {
+    throw new Error(`UNC-1 target guard: conversations.info failed (${payload?.error ?? `HTTP ${response.status}`}); refusing`);
+  }
+  const ch = payload.channel ?? {};
+  if (ch.id !== APPROVED_CHANNEL_ID) throw new Error('UNC-1 target guard: Slack returned another channel id; refusing');
+  if (ch.name !== CHANNEL_NAME) throw new Error('UNC-1 target guard: the channel is not named quoky-test; refusing');
+  if (ch.is_im === true || ch.is_mpim === true) throw new Error('UNC-1 target guard: the target is a DM / group DM; refusing');
+  return { verified: true, name: ch.name, isPrivate: ch.is_private === true };
+}
+
 async function main() {
+  const targetGuard = await verifyTargetChannel();
   appRequire('reflect-metadata');
   const { NestFactory } = appRequire('@nestjs/core');
   const core = appRequire('@quoky/core');
@@ -198,6 +241,7 @@ async function main() {
   const result = {
     case: CASE,
     runId: RUN_ID,
+    targetGuard,
     marker,
     node: process.version,
     nodeUseEnvProxy: process.env.NODE_USE_ENV_PROXY,

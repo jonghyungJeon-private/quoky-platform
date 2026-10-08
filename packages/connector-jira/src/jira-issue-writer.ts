@@ -1,15 +1,15 @@
 import {
   ConnectorQueryError,
-  classifyConnectorWriteTransportFailure,
   connectorQueryErrorReasonForStatus,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
-  installConnectorWriteTransportDiagnostics,
+  failSafeConnectorWriteTransportClassifier,
   isValidConnectorWriteText,
   resolveConnectorQueryTimeoutMs,
   type ConnectorWriteNotSentReason,
   type ConnectorWriteOutcome,
+  type ConnectorWriteTransportClassifier,
   type IssueCommentRequest,
   type IssueCommentWriter,
   type IssueTransitionOption,
@@ -47,6 +47,11 @@ export interface JiraIssueWriterConfig {
   readonly fetchImpl?: typeof fetch;
   /** Per-request timeout in milliseconds (default 10000). */
   readonly timeoutMs?: number;
+  /**
+   * How a thrown write request is classified (UNC-1; injected by the composition root). Default: fail safe, every
+   * thrown request is UNCERTAIN.
+   */
+  readonly classifyTransportFailure?: ConnectorWriteTransportClassifier;
 }
 
 /** The shared transport and allowlist of the two Jira writers. */
@@ -56,6 +61,7 @@ class JiraWriteClient {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly allowedProjects: ReadonlySet<string>;
+  readonly classifyTransportFailure: ConnectorWriteTransportClassifier;
 
   constructor(config: JiraIssueWriterConfig) {
     const host = requireNonEmpty(config?.host, 'host');
@@ -65,7 +71,7 @@ class JiraWriteClient {
     this.authorization = `Basic ${Buffer.from(`${email}:${apiToken}`, 'utf8').toString('base64')}`;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'jira writer');
-    installConnectorWriteTransportDiagnostics();
+    this.classifyTransportFailure = config.classifyTransportFailure ?? failSafeConnectorWriteTransportClassifier;
     const projects = Array.isArray(config.allowedProjects) ? config.allowedProjects : [];
     if (projects.length === 0 || projects.some((key) => typeof key !== 'string' || !PROJECT_KEY.test(key))) {
       throw new Error('jira writer: a non-empty list of valid project keys is required');
@@ -192,8 +198,8 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
         body: plainTextDocument(request.text),
       });
     } catch (error) {
-      // NOT_SENT only when the request provably never reached Jira (UNC-1); otherwise UNCERTAIN.
-      return classifyConnectorWriteTransportFailure(error);
+      // NOT_SENT only with connection-stage evidence that it never reached Jira (UNC-1); otherwise UNCERTAIN.
+      return this.client.classifyTransportFailure(error);
     }
     if (!response.ok) return failedWrite(response);
     let payload: unknown;
@@ -247,8 +253,8 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
         transition: { id: chosen.id },
       });
     } catch (error) {
-      // NOT_SENT only when the request provably never reached Jira (UNC-1); otherwise UNCERTAIN.
-      return classifyConnectorWriteTransportFailure(error);
+      // NOT_SENT only with connection-stage evidence that it never reached Jira (UNC-1); otherwise UNCERTAIN.
+      return this.client.classifyTransportFailure(error);
     }
     if (!response.ok) return failedWrite(response);
     await discardBody(response);

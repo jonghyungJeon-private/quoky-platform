@@ -106,19 +106,10 @@ describe('SlackChannelWriter (ADR-0112 D2/D4)', () => {
       [json(200, { ok: false, error: 'constructor' }), { status: 'UNCERTAIN', reason: 'UNKNOWN' }],
       [json(502, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [new Error(`socket hang up ${BOT_TOKEN}`), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
-      // UNC-1: provably never sent (connection set-up, TLS handshake, refused proxy tunnel) → NOT_SENT; else UNCERTAIN.
-      [fetchFailed('ECONNREFUSED'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('ENOTFOUND'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('EAI_AGAIN'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('ENETUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('EHOSTUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('DEPTH_ZERO_SELF_SIGNED_CERT'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [
-        fetchFailed('UND_ERR_ABORTED', 'Proxy response (403) !== 200 when HTTP Tunneling'),
-        { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false },
-      ],
+      // UNC-1: without an injected classifier every thrown request is UNCERTAIN (fail safe), whatever its cause.
+      [fetchFailed('ENOTFOUND'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('ECONNREFUSED'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [fetchFailed('ECONNRESET', 'read ECONNRESET'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
-      [fetchFailed('UND_ERR_SOCKET', 'other side closed'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new Response('<html>', { status: 200 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
       [json(200, { ok: true }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
     ];
@@ -129,6 +120,21 @@ describe('SlackChannelWriter (ADR-0112 D2/D4)', () => {
       expect(fake.calls).toHaveLength(1);
       expect(JSON.stringify(outcome)).not.toContain(BOT_TOKEN);
     }
+  });
+
+  it('UNC-1: a thrown post is classified by the injected classifier, called once with the error; no retry', async () => {
+    const thrown = fetchFailed('ENOTFOUND');
+    const seen: unknown[] = [];
+    const fake = fakeFetch(thrown);
+    const outcome = await writer(fake.fetchImpl, {
+      classifyTransportFailure: (error) => {
+        seen.push(error);
+        return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
+      },
+    }).post({ channel: CHANNEL, text: 'hi' });
+    expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
+    expect(seen).toEqual([thrown]);
+    expect(fake.calls).toHaveLength(1);
   });
 
   it('requires a bot token and a valid, non-empty channel allowlist (value-free messages)', () => {

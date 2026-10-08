@@ -1,15 +1,15 @@
 import {
-  classifyConnectorWriteTransportFailure,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
-  installConnectorWriteTransportDiagnostics,
+  failSafeConnectorWriteTransportClassifier,
   isValidConnectorWriteText,
   resolveConnectorQueryTimeoutMs,
   type ChannelMessageRequest,
   type ChannelMessageWriter,
   type ConnectorWriteNotSentReason,
   type ConnectorWriteOutcome,
+  type ConnectorWriteTransportClassifier,
 } from '@quoky/core';
 
 /**
@@ -17,8 +17,8 @@ import {
  * posting as the app), separate from the read connector's user token. A separate class from the read-only
  * `SlackConnectorProvider`. The text is posted verbatim: `&`, `<` and `>` are escaped and mention, link and markdown
  * expansion is off, so owner text can never become `@channel` or a hidden link. One request with a timeout and
- * redirects refused; no retry. A thrown request is NOT_SENT only when it provably never left (connect-stage failure,
- * `classifyConnectorWriteTransportFailure`); otherwise UNCERTAIN. Nothing is logged, and no outcome carries the
+ * redirects refused; no retry. A thrown request is classified by the injected
+ * `classifyTransportFailure` (NOT_SENT only with connection-stage evidence; default UNCERTAIN). Nothing is logged, and no outcome carries the
  * token, the payload or a response body.
  */
 
@@ -45,6 +45,11 @@ export interface SlackChannelWriterConfig {
   readonly fetchImpl?: typeof fetch;
   /** Per-request timeout in milliseconds (default 10000). */
   readonly timeoutMs?: number;
+  /**
+   * How a thrown post request is classified (UNC-1; injected by the composition root). Default: fail safe, every
+   * thrown request is UNCERTAIN.
+   */
+  readonly classifyTransportFailure?: ConnectorWriteTransportClassifier;
 }
 
 /** Slack API error codes that certainly mean the message was not posted. Anything unknown is UNCERTAIN. */
@@ -87,6 +92,7 @@ export class SlackChannelWriter implements ChannelMessageWriter {
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly classifyTransportFailure: ConnectorWriteTransportClassifier;
   private readonly ids: ReadonlySet<string>;
   private readonly byName: ReadonlyMap<string, string>;
 
@@ -96,7 +102,7 @@ export class SlackChannelWriter implements ChannelMessageWriter {
       throw new Error('slack writer: a bot token is required');
     }
     this.token = token;
-    installConnectorWriteTransportDiagnostics();
+    this.classifyTransportFailure = config.classifyTransportFailure ?? failSafeConnectorWriteTransportClassifier;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'slack writer');
     const channels = Array.isArray(config.channels) ? config.channels : [];
@@ -158,8 +164,8 @@ export class SlackChannelWriter implements ChannelMessageWriter {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      // NOT_SENT only when the request provably never reached Slack (UNC-1); otherwise UNCERTAIN.
-      return classifyConnectorWriteTransportFailure(error);
+      // NOT_SENT only with connection-stage evidence that it never reached Slack (UNC-1); otherwise UNCERTAIN.
+      return this.classifyTransportFailure(error);
     }
 
     if (response.status === 429) {

@@ -158,19 +158,10 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
       [json(429, {}), { status: 'NOT_SENT', reason: 'RATE_LIMITED', retryable: false }],
       [json(500, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [new Error(`reset ${ACCESS_TOKEN}`), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
-      // UNC-1: provably never sent (connection set-up, TLS handshake, refused proxy tunnel) → NOT_SENT; else UNCERTAIN.
-      [fetchFailed('ECONNREFUSED'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('ENOTFOUND'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('EAI_AGAIN'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('ENETUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('EHOSTUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [fetchFailed('DEPTH_ZERO_SELF_SIGNED_CERT'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
-      [
-        fetchFailed('UND_ERR_ABORTED', 'Proxy response (403) !== 200 when HTTP Tunneling'),
-        { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false },
-      ],
+      // UNC-1: without an injected classifier every thrown request is UNCERTAIN (fail safe), whatever its cause.
+      [fetchFailed('ENOTFOUND'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('ECONNREFUSED'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [fetchFailed('ECONNRESET', 'read ECONNRESET'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
-      [fetchFailed('UND_ERR_SOCKET', 'other side closed'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new Response('nope', { status: 200 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
       [json(200, { summary: 'no id' }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
     ];
@@ -181,6 +172,21 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
       expect(google.calendarCalls).toHaveLength(1);
       assertNoSecrets(outcome);
     }
+  });
+
+  it('UNC-1: a thrown write request is classified by the injected classifier, called once with the error', async () => {
+    const thrown = fetchFailed('ENOTFOUND');
+    const seen: unknown[] = [];
+    const google = fakeGoogle([thrown]);
+    const outcome = await writer(google.fetchImpl, {
+      classifyTransportFailure: (error) => {
+        seen.push(error);
+        return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
+      },
+    }).createEvent({ draft: DRAFT, idempotencyKey: KEY });
+    expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
+    expect(seen).toEqual([thrown]);
+    expect(google.calendarCalls).toHaveLength(1);
   });
 
   it('a token that lacks calendar.events, or holds a broader scope, or fails to refresh is NOT_SENT before the write', async () => {
