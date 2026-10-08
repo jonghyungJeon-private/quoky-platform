@@ -14,6 +14,7 @@ import {
   type StorageProvider,
   type VectorProvider,
 } from '@quoky/core';
+import type { QuokyConfig } from './config';
 
 /**
  * Opt-in semantic recall composition (ADR-0098 D8). Passed only when `QUOKY_EMBEDDING_ENABLED=true`; without it
@@ -49,6 +50,24 @@ export interface ProductionCuratedExampleOptions {
    */
   remoteOwnerSelected?: boolean;
   logger?: Logger;
+}
+
+/**
+ * The curated-example options for {@link createProductionContextBuilder} from the configuration (ADR-0107 D5,
+ * ADR-0116 D1): `undefined` unless `QUOKY_LEARNING_EXAMPLES_ENABLED=true`; then the learning store and
+ * `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`. The one mapping used by the composition root and its acceptance test.
+ */
+export function curatedExampleOptionsOf(
+  config: Pick<QuokyConfig, 'learning'>,
+  learning: Pick<LearningRepository, 'list'>,
+  logger?: Logger,
+): ProductionCuratedExampleOptions | undefined {
+  if (!config.learning.examplesEnabled) return undefined;
+  return {
+    learning,
+    remoteOwnerSelected: config.learning.examplesRemoteEnabled,
+    ...(logger === undefined ? {} : { logger }),
+  };
 }
 
 /**

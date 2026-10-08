@@ -17820,7 +17820,8 @@ its own commit first (D5's precondition for wiring the flag). No migration, no n
   effective chat choice (`session` → `persisted` → `env` → `default`, `ProviderSelectionService.chatFromLayers`). For
   the chat tier, `preferenceFor` now adds one optional, opaque field to its existing answer:
   `ProviderPreference.ownerSelectedKey` = the key of the effective choice's provider when its source is `session`,
-  `persisted` or `env` (`QUOKY_CHAT_PROVIDER` set), and absent for `default` (including `QUOKY_OLLAMA_ENABLED=false`
+  `persisted` or `env` (`QUOKY_CHAT_PROVIDER` set; an allow-list, `OWNER_SELECTION_SOURCES`, so a source added later
+  fails closed until classified), and absent for `default` (including `QUOKY_OLLAMA_ENABLED=false`
   read as `claude`), for pinned capabilities and for the fail-safe answer. `CapabilityRouter` gains
   `resolve(capability, context)`, which returns `{ provider, source }` from the **same** policy answer it ranks with:
   `OWNER_SELECTED` only when the provider it actually resolved carries exactly that key, otherwise

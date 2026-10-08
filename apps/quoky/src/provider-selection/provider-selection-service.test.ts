@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AiProviderManager, Capability, CapabilityRouter, NoProviderAvailableError } from '@quoky/core';
 import type { AiProvider } from '@quoky/core';
 import { selectionFixture } from './test-support';
-import { CHAT_TIER_CAPABILITIES, CLAUDE_PINNED_CAPABILITIES } from './selection-choices';
-import { SESSION_SELECTION_METADATA_KEY } from './provider-selection-service';
+import { CHAT_TIER_CAPABILITIES, CLAUDE_PINNED_CAPABILITIES, SELECTION_SOURCES } from './selection-choices';
+import type { SelectionSource } from './selection-choices';
+import { OWNER_SELECTION_SOURCES, SESSION_SELECTION_METADATA_KEY, isOwnerSelectionSource } from './provider-selection-service';
 import { ProviderSelectionStore, providerSelectionFileIo } from './selection-store';
 
 const ACTOR = 'actor-owner';
@@ -224,6 +225,16 @@ describe('the router applies the selection as data (real CapabilityRouter + Prov
 // ADR-0116 D2/D3: the selection source reaches Core as data with the resolved provider (real router + real policy).
 describe('selection source for the learning-example egress (ADR-0116)', () => {
   const ctx = (session: { readonly id: string }) => ({ sessionId: session.id, actorId: ACTOR });
+
+  it('owner selection is an allow-list: exactly session, persisted and env; a new source fails closed', () => {
+    // Pinned per source: adding a SELECTION_SOURCES entry fails this table until it is classified here.
+    const expected: Record<SelectionSource, boolean> = { session: true, persisted: true, env: true, default: false };
+    expect(Object.fromEntries(SELECTION_SOURCES.map((source) => [source, isOwnerSelectionSource(source)]))).toEqual(expected);
+    expect([...OWNER_SELECTION_SOURCES].sort()).toEqual(['env', 'persisted', 'session']);
+    // An unlisted source (one added later, or malformed data) is never an owner selection.
+    expect(isOwnerSelectionSource('derived' as SelectionSource)).toBe(false);
+    expect(isOwnerSelectionSource('' as SelectionSource)).toBe(false);
+  });
 
   it('the derived default is never an owner selection (QUOKY_OLLAMA_ENABLED=false read as claude)', async () => {
     const f = selectionFixture({ env: { QUOKY_OLLAMA_ENABLED: 'false' } });

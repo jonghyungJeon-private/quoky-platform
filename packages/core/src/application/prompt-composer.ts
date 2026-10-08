@@ -322,7 +322,8 @@ export class PromptComposer {
       ),
     );
 
-    // ADR-0107 D5/D6: owner-curated examples, only for a provider resolved as LOCAL (otherwise none, byte-identical).
+    // ADR-0107 D5/D6, ADR-0116: owner-curated examples, only where `isCuratedExampleEgressAllowed` admits them for the
+    // resolved provider (otherwise none, byte-identical).
     const curatedExamples = curatedExamplesForPrompt(task, context, readout, options).map((example) =>
       PromptComposer.exampleLabel(
         `Example request: ${normalizePromptContextContent(example.requestText)}\n` +

@@ -101,7 +101,7 @@ import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
-import { createProductionContextBuilder } from './context-builder-provider';
+import { createProductionContextBuilder, curatedExampleOptionsOf } from './context-builder-provider';
 import { logImageUnderstandingSelection, visionModelsOf } from './image-understanding-provider';
 import { isCliPresent } from './provider-selection/cli-presence';
 import { ProviderCatalog } from './provider-selection/provider-catalog';
@@ -556,13 +556,7 @@ const application: Provider[] = [
               logger: new ConsoleLogger('recall'),
             }
           : undefined,
-        config.learning.examplesEnabled
-          ? {
-              learning,
-              remoteOwnerSelected: config.learning.examplesRemoteEnabled,
-              logger: new ConsoleLogger('learning-examples'),
-            }
-          : undefined,
+        curatedExampleOptionsOf(config, learning, new ConsoleLogger('learning-examples')),
       ),
     inject: [MemoryManager, STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER, LEARNING_REPOSITORY],
   },

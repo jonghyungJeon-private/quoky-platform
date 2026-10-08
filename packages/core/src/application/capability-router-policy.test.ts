@@ -181,7 +181,7 @@ describe('CapabilityRouter with a ProviderSelectionPolicy (ADR-0092 amendment, r
 
   it('source scan: the router names no provider and reads `.id` only through the opaque selection key', () => {
     const source = readFileSync(new URL('./capability-router.ts', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/claude|codex|ollama|anthropic|openai/iu);
+    expect(source).not.toMatch(/claude|codex|ollama|anthropic|openai|gemini/iu);
     // Exactly one `.id` read, inside `selectionKeyOf`, and no comparison of anything with a string literal.
     expect(source.match(/\.id\b/gu)).toHaveLength(1);
     expect(source).toMatch(/function selectionKeyOf\(provider: AiProvider\): string \{\n\s+return provider\.id;\n\}/u);
@@ -203,6 +203,6 @@ describe('CapabilityRouter with a ProviderSelectionPolicy (ADR-0092 amendment, r
       ]),
     );
     const port = readFileSync(new URL('../ports/provider-selection-policy.port.ts', import.meta.url), 'utf8');
-    expect(port).not.toMatch(/claude|codex|ollama|anthropic|openai/iu);
+    expect(port).not.toMatch(/claude|codex|ollama|anthropic|openai|gemini/iu);
   });
 });

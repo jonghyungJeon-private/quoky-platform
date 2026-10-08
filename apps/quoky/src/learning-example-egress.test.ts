@@ -20,7 +20,7 @@ import {
 } from '@quoky/core';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { loadConfig } from './config';
-import { createProductionContextBuilder } from './context-builder-provider';
+import { createProductionContextBuilder, curatedExampleOptionsOf } from './context-builder-provider';
 import { selectionFixture, TEST_OWNER } from './provider-selection/test-support';
 
 /**
@@ -87,10 +87,8 @@ async function harness(env: Record<string, string>, items: LearningItem[] = []) 
     storage,
     {},
     undefined,
-    // The same mapping as app.module.ts.
-    config.learning.examplesEnabled
-      ? { learning: storage.learning, remoteOwnerSelected: config.learning.examplesRemoteEnabled }
-      : undefined,
+    // The same mapping app.module.ts uses.
+    curatedExampleOptionsOf(config, storage.learning),
   );
   const selection = selectionFixture({ env });
   const composer = new PromptComposer();
@@ -154,6 +152,20 @@ describe('ADR-0116 learning-example egress through the production composition', 
     expect(exampleCount(sessionTurn.spec)).toBe(2);
     // A new conversation without the override falls back to the derived default: none.
     expect(exampleCount((await viaSession.turn(await viaSession.selection.openSession())).spec)).toBe(0);
+  });
+
+  it("the owner's service config (QUOKY_CHAT_PROVIDER=claude + QUOKY_OLLAMA_ENABLED=false): OWNER_SELECTED, 2 examples", async () => {
+    const h = await harness({ ...ON, QUOKY_CHAT_PROVIDER: 'claude', QUOKY_OLLAMA_ENABLED: 'false' }, items);
+    const { resolved, spec } = await h.turn(await h.selection.openSession());
+    expect([resolved.provider.id, resolved.source]).toEqual(['claude-cli', 'OWNER_SELECTED']);
+    expect(exampleCount(spec)).toBe(2);
+    // The same config with the remote flag off: byte-identical, no example layer.
+    const off = await harness(
+      { QUOKY_LEARNING_EXAMPLES_ENABLED: 'true', QUOKY_CHAT_PROVIDER: 'claude', QUOKY_OLLAMA_ENABLED: 'false' },
+      items,
+    );
+    const offTurn = await off.turn(await off.selection.openSession());
+    expect(offTurn.spec).toEqual(offTurn.bare);
   });
 
   it('flag on + Claude reached only as the derived default or as the selection-time fallback: none', async () => {
