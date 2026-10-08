@@ -46,7 +46,7 @@ import { parseReminderMessage } from './reminders/reminder-grammar';
 import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './execution-command-guard';
 import {
   type ConnectorWriteAnchorView,
-  type ConnectorWriteClosedRequest,
+  type ConnectorWriteLatestRequest,
   type ConnectorWriteFlow,
   type ConnectorWriteRecentSend,
   type ConnectorWriteRelease,
@@ -1021,7 +1021,14 @@ export interface ConversationRuntimeOptions {
 /** This conversation's most recent write of one kind (stray-phrase replies; Codex P2 on 039d5ff). */
 type RecentConnectorWrite =
   | { readonly kind: 'sent'; readonly operation: ConnectorWriteOperation; readonly sent: ConnectorWriteRecentSend; readonly at: IsoTimestamp }
-  | { readonly kind: 'closed'; readonly operation: ConnectorWriteOperation; readonly closed: ConnectorWriteClosedRequest; readonly at: IsoTimestamp }
+  | {
+      readonly kind: 'latest';
+      readonly operation: ConnectorWriteOperation;
+      readonly latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } };
+      /** An older request of the kind may have been sent (UNCERTAIN / in flight, no later SENT). */
+      readonly olderUnconfirmed: boolean;
+      readonly at: IsoTimestamp;
+    }
   | {
       readonly kind: 'unconfirmed';
       readonly operation: ConnectorWriteOperation;
@@ -3446,8 +3453,8 @@ export class ConversationRuntime {
         const gate = connectorWriteExecutionGate(anchor.operation);
         if (isAcceptedExecutionPhrase(gate, message.text)) {
           // Not caught here: after the consume save a failure may follow the send, so the `handle` backstop's
-          // "cannot verify" wording is the truthful one.
-          return respond(await flow.execute({ session, actor, view, now: this.clock() }));
+          // "cannot verify" wording is the truthful one. Validation + consume share the revocation's locks (Codex P1).
+          return respond(await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view));
         }
         const decision = interpretStrayDecisionUtterance(message.text);
         // Another write's execution phrase while this one waits approved: it runs nothing, and the reply names the
@@ -3510,6 +3517,15 @@ export class ConversationRuntime {
       case 'SENT':
       case 'NOT_SENT':
       case 'UNCERTAIN': {
+        // Codex P1 on 55c5a2f: the owner's 거절/취소 while the approved write is already executing cannot withdraw it; say
+        // so (the executing turn reports the outcome) — never "nothing was sent".
+        if (anchor.status === 'EXECUTING' && anchor.operation && anchor.actorId === actor.id) {
+          const decision = interpretStrayDecisionUtterance(message.text);
+          if (decision === 'deny' || decision === 'cancel') {
+            const reply = this.deps.composer.composeConnectorWriteRevokeTooLate(message.context, anchor.operation);
+            return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+          }
+        }
         if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {
           return null;
         }
@@ -3523,14 +3539,11 @@ export class ConversationRuntime {
         }
         // An old send is not "already executed" any more: the stray-phrase path answers (nothing approved).
         if (isConnectorWriteSendStale(anchor, now)) return null;
-        // Live QA session 3 (D1): a later request of the same kind in this conversation was closed unsent (e.g. 거절)
-        // after this send — answer about that latest request, never "already sent".
-        if (anchor.status === 'SENT') {
-          const closed = await flow.closedAfterInSession(session, actor.id, anchor.operation, anchor.updatedAt);
-          if (closed) {
-            const reply = this.deps.composer.composeConnectorWriteLatestClosed(message.context, closed);
-            return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
-          }
+        // Live QA session 3 (D1) / Codex P2: when a later request of the same kind exists in this conversation, the reply
+        // describes THAT request (rejected, expired, not sent, …), never this one as "already sent".
+        const latest = await flow.latestRequestInSession(session, actor.id, anchor.operation);
+        if (latest && latest.taskId !== view.taskId) {
+          return this.respondStrayConnectorWritePhrase(message, session, actor, [anchor.operation]);
         }
         return respond(await flow.execute({ session, actor, view, now }));
       }
@@ -3590,7 +3603,8 @@ export class ConversationRuntime {
       const recent = await this.recentConnectorWriteInSession(flow, session, actor, operation, now);
       if (recent && (!newest || recent.at > newest.at)) newest = recent;
     }
-    return newest?.kind === 'unconfirmed' ? this.respondRecentConnectorWrite(message, session, newest) : null;
+    const maySent = newest?.kind === 'unconfirmed' || (newest?.kind === 'latest' && newest.olderUnconfirmed);
+    return newest && maySent ? this.respondRecentConnectorWrite(message, session, newest) : null;
   }
 
   /** This conversation's most recent write of `operation`: SENT (within the lifetime) or dispatched-but-unconfirmed (any age). */
@@ -3601,24 +3615,44 @@ export class ConversationRuntime {
     operation: ConnectorWriteOperation,
     now: IsoTimestamp,
   ): Promise<RecentConnectorWrite | null> {
-    const sent = await flow.recentSentInSession(session, actor.id, operation, now);
-    const unconfirmed = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
-    if (sent && (!unconfirmed || sent.sentAt >= unconfirmed.at)) {
-      // Live QA session 3 (D1): a later request of that kind closed unsent — "already sent" would read as if it went out.
-      const closed = await flow.closedAfterInSession(session, actor.id, operation, sent.sentAt);
-      if (closed) return { kind: 'closed', operation, closed, at: closed.at };
-      return { kind: 'sent', operation, sent, at: sent.sentAt };
+    // Codex P2/P3 on 55c5a2f: describe the single most recent request of that kind, whatever became of it (no dependence
+    // on an older send's lifetime); an older request that may have been sent is still warned about.
+    const latest = await flow.latestRequestInSession(session, actor.id, operation);
+    if (!latest) return null;
+    const state = latest.state;
+    switch (state.kind) {
+      case 'sent': {
+        // W5-L02: "already sent" only within the lifetime; an old send is "nothing approved".
+        const sent = await flow.recentSentInSession(session, actor.id, operation, now);
+        return sent ? { kind: 'sent', operation, sent, at: sent.sentAt } : null;
+      }
+      case 'unconfirmed':
+        return { kind: 'unconfirmed', operation, status: state.status, at: latest.createdAt };
+      case 'closed':
+      case 'not-sent': {
+        const older = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
+        return {
+          kind: 'latest',
+          operation,
+          latest: latest as ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
+          olderUnconfirmed: older !== null,
+          at: latest.createdAt,
+        };
+      }
+      case 'open': {
+        // Not this turn's anchor (that routed above): only an older unresolved write can still be named.
+        const older = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
+        return older ? { kind: 'unconfirmed', operation, status: older.status, at: older.at } : null;
+      }
     }
-    if (unconfirmed) return { kind: 'unconfirmed', operation, status: unconfirmed.status, at: unconfirmed.at };
-    return null;
   }
 
   private respondRecentConnectorWrite(message: InboundMessage, session: Session, recent: RecentConnectorWrite): Promise<TurnResult> {
     const reply =
       recent.kind === 'sent'
         ? this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, recent.operation, recent.sent)
-        : recent.kind === 'closed'
-          ? this.deps.composer.composeConnectorWriteLatestClosed(message.context, recent.closed)
+        : recent.kind === 'latest'
+          ? this.deps.composer.composeConnectorWriteLatestRequest(message.context, recent.latest, recent.olderUnconfirmed)
           : this.deps.composer.composeConnectorWriteStep(message.context, {
             kind: 'repeat',
             operation: recent.operation,

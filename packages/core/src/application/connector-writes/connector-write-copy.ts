@@ -12,7 +12,7 @@ import { escapeDiscordText } from '../work-chat/external-work-readout';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
 import type {
   ConnectorWriteApprovedElsewhere,
-  ConnectorWriteClosedRequest,
+  ConnectorWriteLatestRequest,
   ConnectorWriteCloseReason,
   ConnectorWriteEventSummary,
   ConnectorWritePreview,
@@ -457,6 +457,17 @@ export function renderConnectorWriteRepeat(
   }
 }
 
+/**
+ * A 거절/취소 that arrives after execution of the approved write started (Codex P1 on 55c5a2f): it cannot be withdrawn
+ * any more; the executing turn reports the outcome. Never says nothing was sent.
+ */
+export function renderConnectorWriteRevokeTooLate(operation: ConnectorWriteOperation): string {
+  return [
+    `이 ${withTopicParticle(connectorWriteLabel(operation))} 이미 실행을 시작해서 거절(취소)하지 않았어요.`,
+    '결과는 실행한 요청의 답으로 알려 드려요. 다시 실행하지 않아요.',
+  ].join('\n');
+}
+
 export function renderConnectorWriteAlreadySent(operation: ConnectorWriteOperation, externalRef?: string, url?: string): string {
   return [
     `같은 대상에 같은 내용의 ${withObjectParticle(connectorWriteLabel(operation))} 이미 실행했어요. 이미 보냈어요 — 다시 실행하지 않았어요.`,
@@ -513,6 +524,7 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'invalid-choice': '목록에 있는 번호가 아니에요.',
   'binding-mismatch': '승인한 요청과 지금 요청이 일치하는지 확인할 수 없어요.',
   'grant-expired': '승인한 지 30분이 지나 승인이 만료됐어요.',
+  'grant-revoked': '실행하기 전에 이 요청이 거절(취소)돼서 실행하지 않았어요.',
   'choice-expired': '일정 목록을 보여 드린 지 30분이 지나 선택이 만료됐어요 (그사이 일정이 바뀌었을 수 있어요).',
 };
 
@@ -557,13 +569,28 @@ const CLOSED_REQUEST_KO: Readonly<Record<ConnectorWriteCloseReason, string>> = {
 };
 
 /**
- * Live QA session 3 (D1): the execution phrase after this conversation's latest request of that kind was closed without
- * being sent, while an older one was sent. Speaks about the latest request only; never "already sent".
+ * The execution phrase (or a question about it) when this conversation's LATEST request of that kind ended without a
+ * send — closed unsent (rejected, cancelled, expired, …) or NOT_SENT (Live QA session 3 D1; Codex P2/P3 on 55c5a2f).
+ * Describes exactly that request; an older request of the kind that may have been sent is warned about too.
  */
-export function renderConnectorWriteLatestClosed(closed: ConnectorWriteClosedRequest): string {
-  const label = connectorWriteLabel(closed.operation);
+export function renderConnectorWriteLatestRequest(
+  latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
+  olderUnconfirmed: boolean,
+): string {
+  const label = connectorWriteLabel(latest.operation);
+  const calendar = isCalendar(latest.operation);
+  const head = `가장 최근 ${label} 요청(${connectorWriteShortTarget(latest.target)})은`;
+  const what =
+    latest.state.kind === 'closed'
+      ? `${head} ${CLOSED_REQUEST_KO[(latest.state as { reason: ConnectorWriteCloseReason }).reason]} 실행하지 않았어요.`
+      : `${head} 실행했지만 ${calendar ? '캘린더에 반영하지' : '보내지'} 못했어요.`;
   return [
-    `가장 최근 ${label} 요청(${connectorWriteShortTarget(closed.target)})은 ${CLOSED_REQUEST_KO[closed.reason]} 실행하지 않았어요. 그 요청으로는 ${isCalendar(closed.operation) ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`,
+    `${what} 그 요청으로는 ${calendar ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`,
+    ...(olderUnconfirmed
+      ? [
+          `그 전의 ${label} 요청은 결과를 확인하지 못했어요. 이미 ${calendar ? '캘린더가 바뀌었을' : '게시됐을'} 수도 있으니 직접 확인해 주세요. 다시 실행하지 않아요.`,
+        ]
+      : []),
     '필요하면 새로 요청해 주세요.',
   ].join('\n');
 }

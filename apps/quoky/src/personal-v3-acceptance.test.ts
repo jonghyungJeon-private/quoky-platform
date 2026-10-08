@@ -699,11 +699,13 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     ]);
   });
 
-  it('Jira transition: 거절 sends nothing and the phrase afterwards has nothing approved (W5 T4–T5)', async () => {
+  it('Jira transition: 거절 sends nothing and the phrase afterwards names the rejected request (W5 T4–T5)', async () => {
     const owner = harness.freshContext();
     await det(owner, 'PROJ-7 완료로 바꿔줘');
     expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
-    expect((await det(owner, '상태 변경 실행')).text).toBe(renderNoApprovedConnectorWrite());
+    expect((await det(owner, '상태 변경 실행')).text).toBe(
+      '가장 최근 Jira 상태 변경 요청(PROJ-7)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.',
+    );
     expect(harness.writes.transition).toHaveLength(1);
   });
 
@@ -790,7 +792,9 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
       decision: false,
       comment: 'revoked-before-execution',
     });
-    expect((await det(owner, '댓글 실행')).text).toBe(renderNoApprovedConnectorWrite());
+    expect((await det(owner, '댓글 실행')).text).toBe(
+      '가장 최근 Jira 댓글 요청(PROJ-12)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.',
+    );
     expect(harness.writes.addComment).toHaveLength(before);
   });
 
@@ -846,7 +850,9 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     const remove = await det(other, '내일 3시 회의 취소해줘');
     expect(remove.text).toContain('"일정 삭제 실행"');
     await det(other, '거절');
-    expect((await det(other, '일정 삭제 실행')).text).toBe(renderNoApprovedConnectorWrite());
+    expect((await det(other, '일정 삭제 실행')).text).toBe(
+      '가장 최근 캘린더 일정 삭제 요청(기본 캘린더)은 거절돼서 실행하지 않았어요. 그 요청으로는 캘린더를 바꾸지 않았어요.\n필요하면 새로 요청해 주세요.',
+    );
     expect(harness.writes.deleteEvent).toEqual([]);
     expect(harness.primaryReads.length).toBeGreaterThanOrEqual(2);
   });

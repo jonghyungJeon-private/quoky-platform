@@ -37,14 +37,15 @@ import {
   renderConnectorWriteApprovedElsewhere,
   renderConnectorWriteApprovedReminder,
   renderConnectorWriteBareExecution,
-  renderConnectorWriteLatestClosed,
+  renderConnectorWriteLatestRequest,
   renderConnectorWritePending,
+  renderConnectorWriteRevokeTooLate,
   renderConnectorWriteStep,
   renderNoApprovedConnectorWrite,
 } from './connector-writes/connector-write-copy';
 import type {
   ConnectorWriteApprovedElsewhere,
-  ConnectorWriteClosedRequest,
+  ConnectorWriteLatestRequest,
   ConnectorWritePreview,
   ConnectorWriteRecentSend,
   ConnectorWriteStep,
@@ -1235,9 +1236,18 @@ export class ResponseComposer {
     return { context, text: renderConnectorWriteApprovedElsewhere(elsewhere) };
   }
 
-  /** Live QA session 3 (D1): the latest request of that kind was closed unsent after an older send — never "already sent". */
-  composeConnectorWriteLatestClosed(context: ConversationContext, closed: ConnectorWriteClosedRequest): OutboundMessage {
-    return { context, text: renderConnectorWriteLatestClosed(closed) };
+  /** A 거절/취소 after execution of the approved write started (Codex P1 on 55c5a2f): not withdrawn; never "nothing sent". */
+  composeConnectorWriteRevokeTooLate(context: ConversationContext, operation: ConnectorWriteOperation): OutboundMessage {
+    return { context, text: renderConnectorWriteRevokeTooLate(operation) };
+  }
+
+  /** The latest request of that kind ended without a send (closed unsent / NOT_SENT): describes exactly that request. */
+  composeConnectorWriteLatestRequest(
+    context: ConversationContext,
+    latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
+    olderUnconfirmed: boolean,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteLatestRequest(latest, olderUnconfirmed) };
   }
 
   /**

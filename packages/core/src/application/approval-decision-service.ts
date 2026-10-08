@@ -431,6 +431,14 @@ export interface OpsUiDecisionInput {
   readonly sessions: () => Promise<readonly Session[]>;
 }
 
+/** The link/reference a finished write recorded (for a repeat reply). */
+function outcomeLinkOf(anchor: ConnectorWriteAnchorView['anchor']): { externalRef?: string; url?: string } {
+  return {
+    ...(anchor.outcome?.externalRef ? { externalRef: anchor.outcome.externalRef } : {}),
+    ...(anchor.outcome?.url ? { url: anchor.outcome.url } : {}),
+  };
+}
+
 // ── the service ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export type ApprovalDecisionServiceDeps = Pick<
@@ -892,10 +900,27 @@ export class ApprovalDecisionService {
   }
 
   /**
+   * Run an APPROVED connector write (its exact phrase). The flow validates and consumes the grant inside the SAME
+   * approval → session locks a revocation takes (Codex P1 on 55c5a2f), on the live anchor and approval, then sends
+   * outside them. A withdrawn grant is refused truthfully; a started one is reported, never re-sent.
+   */
+  executeConnectorWrite(input: ApprovalDecisionInput, view: ConnectorWriteAnchorView): Promise<ConnectorWriteStep> {
+    const flow = this.deps.connectorWriteFlow!;
+    return flow.execute({
+      session: input.session,
+      actor: input.actor,
+      view,
+      now: this.clock(),
+      claim: (work) => this.exclusive(view.anchor.approvalId, input.session.id, work),
+    });
+  }
+
+  /**
    * Live QA session 3 (D12): the owner's "거절"/"취소" after a connector write was APPROVED but before it ran. Under the
-   * approval → session locks: re-read the anchor (still this APPROVED, unconsumed grant), record the approval withdrawn
-   * (APPROVED → REJECTED, `ApprovalManager.revoke`) and close the anchor. If the grant moved on meanwhile (executed,
-   * expired, decided elsewhere) nothing is recorded and the existing "nothing to decide" reply answers. Runs nothing.
+   * approval → session locks (the ones execution's claim takes): re-read the anchor; only an APPROVED, unconsumed grant
+   * is withdrawn (approval APPROVED → REJECTED, `ApprovalManager.revoke`) and closed. If execution already started, the
+   * reply says so (the outcome is reported by that turn) — never "nothing was sent"; if it already finished, the
+   * recorded outcome answers; if it was closed meanwhile, the "nothing to decide" reply answers. Runs nothing.
    */
   revokeConnectorWrite(
     input: ApprovalDecisionInput,
@@ -907,13 +932,20 @@ export class ApprovalDecisionService {
       const { anchor } = view;
       const history = anchor.family === 'calendar' ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : undefined;
       const live = await flow.find(input.session, held);
-      if (
-        !live ||
-        live.taskId !== view.taskId ||
-        live.anchor.status !== 'APPROVED' ||
-        live.anchor.consumedAt ||
-        live.anchor.approvalId !== anchor.approvalId
-      ) {
+      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== anchor.approvalId) {
+        return this.lostToOpsUi({ ...input, held });
+      }
+      const operation = live.anchor.operation;
+      if (operation && (live.anchor.consumedAt || live.anchor.status !== 'APPROVED')) {
+        const status = live.anchor.status;
+        if (status === 'EXECUTING') {
+          const reply = this.deps.composer.composeConnectorWriteRevokeTooLate(input.context, operation);
+          return this.connectorWriteReply(input.context, input.session.id, reply, 'RESPONDED', history);
+        }
+        if (status === 'SENT' || status === 'NOT_SENT' || status === 'UNCERTAIN') {
+          const repeat = { kind: 'repeat', operation, status, ...outcomeLinkOf(live.anchor) } as const;
+          return this.connectorWriteStepReply(input.context, input.session.id, repeat, '', history);
+        }
         return this.lostToOpsUi({ ...input, held });
       }
       const approvalId = live.anchor.approvalId;

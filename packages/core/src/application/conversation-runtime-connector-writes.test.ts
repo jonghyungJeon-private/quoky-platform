@@ -45,6 +45,7 @@ import {
   renderConnectorWriteApprovedReminder,
   renderConnectorWriteBareExecution,
   renderConnectorWriteRepeat,
+  renderConnectorWriteRevokeTooLate,
   renderNoApprovedConnectorWrite,
 } from './connector-writes/connector-write-copy';
 import {
@@ -269,6 +270,22 @@ function harness(opts: HarnessOptions = {}) {
   }
 
   const approvalManager = new ApprovalManager(storage as unknown as StorageProvider, {} as ApprovalPolicy);
+  /** Turns paused right after they read the conversation state (keyed by message text). */
+  const turnGates = new Map<string, () => Promise<void>>();
+  const pauseTurn = (text: string) => {
+    let reached!: () => void;
+    let release!: () => void;
+    const reachedP = new Promise<void>((r) => (reached = r));
+    const releaseP = new Promise<void>((r) => (release = r));
+    turnGates.set(text, async () => {
+      turnGates.delete(text);
+      reached();
+      await releaseP;
+    });
+    return { reached: reachedP, release };
+  };
+  /** Hook run inside the revocation (under its locks) before the approval is withdrawn. */
+  const hooks: { beforeRevoke?: () => Promise<void> } = {};
   const receipts = new MemoryReceipts();
   if (opts.receiptFails === 'prepare') receipts.prepare = async () => { throw new Error('disk full'); };
   if (opts.receiptFails === 'complete') receipts.complete = async () => { throw new Error('disk full'); };
@@ -390,7 +407,12 @@ function harness(opts: HarnessOptions = {}) {
     actors: { async resolveFromContext() { return actor; } },
     sessions: new SessionManager(storage as unknown as StorageProvider),
     memory: {
-      async recordShortTerm() { return { id: 'mem-user' }; },
+      async recordShortTerm(message: InboundMessage) {
+        // Pause gates (Codex P1 interleavings): a turn with this text waits here, after it read the anchor.
+        const gate = turnGates.get(message.text);
+        if (gate) await gate();
+        return { id: 'mem-user' };
+      },
       async recordAssistant(text: string) {
         recorded.push(text);
         return undefined;
@@ -427,7 +449,10 @@ function harness(opts: HarnessOptions = {}) {
     orchestrator: { run: bad('orchestrator.run'), resume: bad('orchestrator.resume') },
     approvals: {
       decide: (id, d) => approvalManager.decide(id, d),
-      revoke: (id, d) => approvalManager.revoke(id, d),
+      revoke: async (id, d) => {
+        await hooks.beforeRevoke?.();
+        return approvalManager.revoke(id, d);
+      },
       get: (id) => approvalManager.get(id),
       requestForRisk: bad('runtime approvals.requestForRisk'),
     },
@@ -471,7 +496,7 @@ function harness(opts: HarnessOptions = {}) {
   };
   return {
     send, sendIn, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor,
-    applyLookups, live,
+    applyLookups, live, pauseTurn, hooks,
   };
 }
 
@@ -544,7 +569,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     expect(h.writes.addComment).toHaveLength(1);
   });
 
-  it('a denial sends nothing and the phrase afterwards says there is nothing approved', async () => {
+  it('a denial sends nothing and the phrase afterwards names the rejected request', async () => {
     const h = harness();
     await h.send('Jira PROJ-3에 댓글: 확인했어요');
     const denied = await h.send('거절');
@@ -552,7 +577,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     expect(denied.reply.text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
     expect([...h.approvals.values()][0]?.status).toBe(ApprovalStatus.REJECTED);
     const stray = await h.send('댓글 실행');
-    expect(stray.reply.text).toContain('지금 실행할 승인된 외부 쓰기 요청이 없어요');
+    expect(stray.reply.text).toBe('가장 최근 Jira 댓글 요청(PROJ-3)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.');
     expect(h.totalWrites()).toBe(0);
   });
 
@@ -604,7 +629,7 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     const expired = await h.send('승인');
     expect(expired.status).toBe('DENIED');
     expect([...h.approvals.values()][0]).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'expired' });
-    expect((await h.send('댓글 실행')).reply.text).toContain('지금 실행할 승인된 외부 쓰기 요청이 없어요');
+    expect((await h.send('댓글 실행')).reply.text).toContain('가장 최근 Jira 댓글 요청(PROJ-12)은 승인 시간이 지나 만료돼서 실행하지 않았어요.');
 
     const g = harness();
     await g.send('PROJ-12에 댓글: b');
@@ -637,7 +662,8 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     await h.send('댓글 실행');
     // Replay the stale APPROVED view (as a racing second turn would hold it).
     const replay = await h.flow!.execute({ session, actor: OWNER, view: view!, now: new Date().toISOString() });
-    expect(replay.kind).toBe('outcome');
+    // Codex P1 on 55c5a2f: the claim re-reads the LIVE anchor, so the stale view never reaches the executor again.
+    expect(replay).toMatchObject({ kind: 'repeat', status: 'SENT' });
     expect(h.writes.addComment).toHaveLength(1);
   });
 
@@ -1001,7 +1027,7 @@ describe('connector writes — supersession and outside decisions', () => {
     h.approvals.set(approval!.id, { ...approval!, status: ApprovalStatus.REJECTED });
     const reply = await h.send('승인');
     expect(reply.reply.text).toContain('지금 승인하거나 거절할 작업이 없어요');
-    expect((await h.send('댓글 실행')).reply.text).toContain('지금 실행할 승인된 외부 쓰기 요청이 없어요');
+    expect((await h.send('댓글 실행')).reply.text).toContain('가장 최근 Jira 댓글 요청(PROJ-12)은 확인할 수 없어서 실행하지 않았어요.');
     expect(h.totalWrites()).toBe(0);
   });
 
@@ -1034,7 +1060,7 @@ describe('connector writes — lazy expiry of grants and choices (review fixes)'
     expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
     // The restored chain is looked up on the very turn that released the grant.
     expect(h.applyLookups).toEqual(['task-prior']);
-    expect((await h.send('댓글 실행')).reply.text).toContain('지금 실행할 승인된 외부 쓰기 요청이 없어요');
+    expect((await h.send('댓글 실행')).reply.text).toContain('가장 최근 Jira 댓글 요청(PROJ-12)은 승인 시간이 지나 만료돼서 실행하지 않았어요.');
     expect(h.totalWrites()).toBe(0);
   });
 
@@ -1535,6 +1561,17 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
 
   describe('Codex P2 on 039d5ff: an unconfirmed write is never answered with "nothing was sent"', () => {
     const UNCERTAIN_COMMENT = renderConnectorWriteRepeat('ISSUE_COMMENT', 'UNCERTAIN');
+    const OLDER_UNCERTAIN = '그 전의 Jira 댓글 요청은 결과를 확인하지 못했어요. 이미 게시됐을 수도 있으니 직접 확인해 주세요. 다시 실행하지 않아요.';
+    const LATEST_NOT_SENT_WITH_OLDER_UNCERTAIN = [
+      '가장 최근 Jira 댓글 요청(PROJ-12)은 실행했지만 보내지 못했어요. 그 요청으로는 아무것도 보내지 않았어요.',
+      OLDER_UNCERTAIN,
+      '필요하면 새로 요청해 주세요.',
+    ].join('\n');
+    const LATEST_B_DENIED_WITH_OLDER_UNCERTAIN = [
+      '가장 최근 Jira 댓글 요청(PROJ-13)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.',
+      OLDER_UNCERTAIN,
+      '필요하면 새로 요청해 주세요.',
+    ].join('\n');
 
     async function uncertainComment(opts: HarnessOptions = {}) {
       const h = harness({ ...opts, commentOutcome: async () => connectorWriteUncertain('TRANSPORT') });
@@ -1588,7 +1625,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect(h.writes.addComment).toHaveLength(1);
     });
 
-    it('precedence: approved elsewhere first; then the most recent write here; a definite NOT_SENT stays "nothing approved"', async () => {
+    it('precedence: approved elsewhere first; then the most recent write here; a definite NOT_SENT is named as not sent', async () => {
       const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
       const h = await uncertainComment();
       await h.sendIn(DM, 'PROJ-12에 댓글: 디엠');
@@ -1616,7 +1653,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       await notSent.send('PROJ-12에 댓글: x');
       await notSent.send('승인');
       await notSent.send('댓글 실행');
-      expect((await notSent.send('댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+      expect((await notSent.send('댓글 실행해도 돼?')).reply.text).toBe('가장 최근 Jira 댓글 요청(PROJ-12)은 실행했지만 보내지 못했어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.');
       expect(notSent.writes.addComment).toHaveLength(1);
     });
 
@@ -1633,7 +1670,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect((await other.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
     });
 
-    it('a2b8aed P2-1: only a LATER SENT write of that kind supersedes it (a later NOT_SENT does not; a stale later SENT is "nothing approved")', async () => {
+    it('a2b8aed P2-1: only a LATER SENT write of that kind supersedes it (a later NOT_SENT is named and the older one still warned about)', async () => {
       let outcome: ConnectorWriteOutcome = connectorWriteUncertain('TRANSPORT');
       const h = harness({ priorActiveTaskId: 'task-prior', commentOutcome: async () => outcome });
       await h.send('PROJ-12에 댓글: 첫 번째');
@@ -1644,7 +1681,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       await h.send('PROJ-12에 댓글: 두 번째');
       await h.send('승인');
       await h.send('댓글 실행');
-      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(UNCERTAIN_COMMENT);
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(LATEST_NOT_SENT_WITH_OLDER_UNCERTAIN);
       advanceMinutes(1);
       outcome = connectorWriteSent('10001', COMMENT_URL);
       await h.send('PROJ-12에 댓글: 세 번째');
@@ -1686,7 +1723,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       const denied = await h.send('거절');
       expect(denied.reply.text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
       // B is closed; A is still the most recent dispatched write of that kind and stays unresolved.
-      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(UNCERTAIN_COMMENT);
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(LATEST_B_DENIED_WITH_OLDER_UNCERTAIN);
       expect(h.writes.addComment).toHaveLength(1);
     });
   });
@@ -1784,7 +1821,7 @@ describe('connector writes — live QA session 3 (D1, D12)', () => {
       decidedBy: OWNER.id,
       comment: 'revoked-before-execution',
     });
-    expect((await h.send('댓글 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect((await h.send('댓글 실행')).reply.text).toBe('가장 최근 Jira 댓글 요청(PROJ-12)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.');
     expect(h.totalWrites()).toBe(0);
     const located = await h.runtime.approvalDecisions.locateForOpsUi(approval!.id, OWNER, async () => [...h.sessions.values()]);
     expect(located).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
@@ -1814,5 +1851,156 @@ describe('connector writes — live QA session 3 (D1, D12)', () => {
     await h.send('거절');
     expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
     expect(h.writes.addComment).toHaveLength(1);
+  });
+});
+
+describe('connector writes — Codex re-review of 050fa47 + 55c5a2f (P1 execute/revoke race, P2 latest request, P3 expiry)', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('P1 (execution wins): a 취소 that read APPROVED before the send started cannot withdraw it and never says nothing was sent', async () => {
+    let releaseWriter!: () => void;
+    const writerGate = new Promise<void>((r) => (releaseWriter = r));
+    const h = harness({ commentOutcome: async () => { await writerGate; return connectorWriteSent('10001', COMMENT_URL); } });
+    await h.send('PROJ-12에 댓글: 경쟁 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    const cancelPause = h.pauseTurn('취소');
+    const cancelTurn = h.send('취소');
+    await cancelPause.reached; // the cancel turn has read the APPROVED anchor
+    const executeTurn = h.send('댓글 실행');
+    await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1)); // claimed and dispatched
+    cancelPause.release();
+    const cancel = await cancelTurn;
+    expect(cancel.reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    expect(cancel.reply.text).not.toContain('보내지 않았어요');
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
+    releaseWriter();
+    const executed = await executeTurn;
+    expect(executed.reply.text).toContain('댓글을 달았어요');
+    expect(h.writes.addComment).toHaveLength(1);
+    expect([...h.receipts.rows.values()].map((r) => r.status)).toEqual(['SENT']);
+  });
+
+  it('P1 (revocation wins): an execution that read APPROVED before the 취소 is refused truthfully; the writer is never called', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 경쟁 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    const executePause = h.pauseTurn('댓글 실행');
+    const executeTurn = h.send('댓글 실행');
+    await executePause.reached; // the execution turn has read the APPROVED anchor
+    const cancel = await h.send('취소');
+    expect(cancel.reply.text).toBe('요청을 취소했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(h.approvals.get(approval!.id)).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'revoked-before-execution' });
+    executePause.release();
+    const executed = await executeTurn;
+    expect(executed.reply.text).toBe('실행하기 전에 이 요청이 거절(취소)돼서 실행하지 않았어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(h.writes.addComment).toHaveLength(0);
+    expect(h.receipts.rows.size).toBe(0);
+  });
+
+  it('P1 (lock contention): an execution arriving while the revocation holds the locks waits, then names the cancelled request', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 경쟁 테스트');
+    await h.send('승인');
+    let releaseRevoke!: () => void;
+    let revoking!: () => void;
+    const revokeReached = new Promise<void>((r) => (revoking = r));
+    const revokeGate = new Promise<void>((r) => (releaseRevoke = r));
+    h.hooks.beforeRevoke = async () => { revoking(); await revokeGate; };
+    const cancelTurn = h.send('취소');
+    await revokeReached;
+    const executeTurn = h.send('댓글 실행');
+    await settle();
+    expect(h.writes.addComment).toHaveLength(0);
+    releaseRevoke();
+    expect((await cancelTurn).reply.text).toBe('요청을 취소했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    const executed = await executeTurn;
+    expect(executed.reply.text).toContain('가장 최근 Jira 댓글 요청(PROJ-12)은 취소돼서 실행하지 않았어요.');
+    expect(h.writes.addComment).toHaveLength(0);
+  });
+
+  it('P1 (Codex repro): the revocation pauses inside its locks after reading APPROVED while the execution resumes — the execution waits for the locks and is refused; nothing is sent', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 경쟁 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    const executePause = h.pauseTurn('댓글 실행');
+    const executeTurn = h.send('댓글 실행');
+    await executePause.reached; // past its session reads, holding no lock, anchor seen APPROVED
+    let releaseRevoke!: () => void;
+    let revoking!: () => void;
+    const revokeReached = new Promise<void>((r) => (revoking = r));
+    const revokeGate = new Promise<void>((r) => (releaseRevoke = r));
+    h.hooks.beforeRevoke = async () => { revoking(); await revokeGate; };
+    const cancelTurn = h.send('취소');
+    await revokeReached; // the revocation read the APPROVED, unconsumed grant and holds approval → session locks
+    executePause.release();
+    await settle();
+    await settle();
+    expect(h.writes.addComment).toHaveLength(0); // the claim is blocked behind the revocation
+    releaseRevoke();
+    expect((await cancelTurn).reply.text).toBe('요청을 취소했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect((await executeTurn).reply.text).toBe('실행하기 전에 이 요청이 거절(취소)돼서 실행하지 않았어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.REJECTED);
+    expect(h.writes.addComment).toHaveLength(0);
+    expect(h.receipts.rows.size).toBe(0);
+  });
+
+  it('P1: 거절 while the write is executing (anchor already EXECUTING) says it started; never "nothing sent"', async () => {
+    let releaseWriter!: () => void;
+    const writerGate = new Promise<void>((r) => (releaseWriter = r));
+    const h = harness({ commentOutcome: async () => { await writerGate; return connectorWriteSent('10001', COMMENT_URL); } });
+    await h.send('PROJ-12에 댓글: 실행 중');
+    await h.send('승인');
+    const executeTurn = h.send('댓글 실행');
+    await vi.waitFor(() => expect(h.writes.addComment).toHaveLength(1));
+    expect((await h.send('거절')).reply.text).toBe(renderConnectorWriteRevokeTooLate('ISSUE_COMMENT'));
+    releaseWriter();
+    expect((await executeTurn).reply.text).toContain('댓글을 달았어요');
+  });
+
+  it('P2: X SENT → Y rejected → Z approved and NOT_SENT — the latest request (Z) is described, not Y', async () => {
+    let outcome: ConnectorWriteOutcome = connectorWriteSent('10001', COMMENT_URL);
+    const h = harness({ priorActiveTaskId: 'task-prior', commentOutcome: async () => outcome });
+    await h.send('PROJ-12에 댓글: X');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    advanceMinutes(1);
+    await h.send('PROJ-13에 댓글: Y');
+    await h.send('거절');
+    advanceMinutes(1);
+    outcome = connectorWriteNotSent('FORBIDDEN');
+    await h.send('PROJ-14에 댓글: Z');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    for (const text of ['댓글 실행해도 돼?', '댓글 실행']) {
+      const reply = await h.send(text);
+      expect(reply.reply.text, text).toBe(
+        '가장 최근 Jira 댓글 요청(PROJ-14)은 실행했지만 보내지 못했어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.',
+      );
+      expect(reply.reply.text, text).not.toContain('PROJ-13');
+    }
+    expect(h.writes.addComment).toHaveLength(2);
+  });
+
+  it('P3: X SENT, then Y approved and left to expire past X\'s lifetime — the phrase still names Y as expired', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('#dev에 게시: X');
+    await h.send('승인');
+    await h.send('Slack 게시 실행');
+    advanceMinutes(1);
+    await h.send('#dev에 게시: Y');
+    await h.send('승인');
+    advanceMinutes(31);
+    // The turn that releases the lapsed grant answers its own phrase with the expiry refusal …
+    expect((await h.send('Slack 게시 실행')).reply.text).toContain('승인한 지 30분이 지나 승인이 만료됐어요.');
+    // … and every later phrase names that latest request, though X's send is now older than its lifetime.
+    for (const text of ['Slack 게시 실행', 'Slack 게시 실행해도 돼?']) {
+      expect((await h.send(text)).reply.text, text).toBe(
+        '가장 최근 Slack 게시 요청(#dev)은 승인 시간이 지나 만료돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.',
+      );
+    }
+    expect(h.writes.post).toHaveLength(1);
   });
 });
