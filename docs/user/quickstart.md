@@ -223,8 +223,9 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
 
 - **Ollama 서버가 실행 중**이어야 하고, `OLLAMA_MODEL`로 지정한 모델이 로컬에 있어야 "준비됨"으로 봅니다.
   준비 여부는 요청 시점에 확인하며(`ollama list`, "준비됨" 결과는 약 30초 캐시), 나중에 서버를 켜거나 모델을 받아도
-  재시작 없이 반영됩니다. "준비 안 됨"이면 30초, 60초, 120초(최대) 간격으로 다시 확인하고, 이 확인은 한 턴을 최대
-  0.5초만 기다리게 합니다(Ollama가 꺼져 있을 때 `ollama` CLI는 앱을 띄우려고 약 5초를 기다리기 때문). 다시 준비되면
+  재시작 없이 반영됩니다. "준비 안 됨"이면 바로 다시 확인하지 않고 30초, 60초, 120초(최대)의 대기 시간이 지난 뒤
+  **그 provider가 필요한 다음 요청**에서 다시 확인합니다(주기적으로 따로 확인하지는 않음). 이 확인은 한 턴을 최대
+  0.5초만 기다리게 하고, 그 안에 끝나지 않으면 그 요청은 "준비 안 됨"으로 처리한 뒤 확인 결과를 다음 요청부터 씁니다(Ollama가 꺼져 있을 때 `ollama` CLI는 앱을 띄우려고 약 5초를 기다리기 때문). 다시 준비되면
   로그에 `provider became ready`가 한 번 남습니다.
 - 모델 이름은 태그까지 정확히 맞아야 합니다. 예를 들어 `ollama list`에 `llama3.1:8b`만 있는데
   `OLLAMA_MODEL=llama3.1`(태그 없음)이면 준비되지 않은 것으로 보므로 `OLLAMA_MODEL=llama3.1:8b`처럼 그대로 적으세요.
@@ -360,8 +361,9 @@ pnpm dev
   `restart --apply`로 다시 시작합니다. 그 밖의 비정상 종료(충돌, `kill -9`)는 launchd가 10초 간격으로 다시 띄웁니다.
 - 중지(`SIGTERM`)는 최대 90초를 기다립니다. 알림 전송 마무리 한도(65초)보다 깁니다.
 - **Ollama 앱도 로그인할 때 시작되게** 두세요 (시스템 설정 -> 일반 -> 로그인 항목에 Ollama). Quoky가 Ollama보다
-  먼저 뜨면 시작 로그에 Ollama provider가 `provider not ready`로 남지만, Ollama가 뜬 뒤 최대 약 2분 안에 재시작 없이
-  준비됨으로 바뀝니다(`provider became ready`).
+  먼저 뜨면 시작 로그에 Ollama provider가 `provider not ready`로 남지만, 재시작은 필요 없습니다. Ollama가 뜬 뒤
+  대기 시간(30초/60초/최대 120초)이 지나고 **그 provider가 필요한 다음 요청**(대화, 기억 회상, 이미지)에서 다시
+  확인해 준비됨으로 바뀝니다(`provider became ready`). 아무 요청도 없으면 다시 확인하지 않습니다.
 - 로그는 `~/Library/Logs/Quoky/quoky.log`입니다. 시작할 때 10 MiB를 넘으면 `quoky.log.1`로 돌리고 5개까지
   보관합니다. `launchd.log`는 launcher가 로그 파일을 열기 전 출력용 예비 로그입니다. 비밀 값은 로그에 쓰지 않습니다.
 

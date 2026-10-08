@@ -11,8 +11,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   `warm-up` text, 30 s bound) on its first ready probe, after Ollama comes back, and after a timed-out call. A call cut
   off by the 3 s recall budget cancelled its own model load, so recall could fall back to lexical on every turn
   (`reason=TIMEOUT … latencyMs=3001`). The per-turn budget and per-call timeout are unchanged.
-- Provider readiness: a "not ready" answer is re-probed after 30/60/120 s (cap) and costs a turn at most 0.5 s; a
-  provider that was not ready at boot becomes usable without a restart and logs `provider became ready` once.
+- Provider readiness: a "not ready" answer is re-probed by the next request that needs the provider once 30/60/120 s
+  (cap) have passed (no polling timer), and the re-probe costs a turn at most 0.5 s; a provider that was not ready at
+  boot becomes usable without a restart and logs `provider became ready` once. A probe in flight across an
+  invalidation is discarded (per-provider generation), so it never overwrites a newer answer.
   Selecting one capability probes only providers that advertise it. `timed out waiting for server to start` from the
   Ollama CLI is classified `UNAVAILABLE`.
 

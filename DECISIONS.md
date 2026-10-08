@@ -14920,8 +14920,11 @@ those details so the settled decisions and the code agree.
    *Fix (2026-10-08):* a ready answer is still reused for ~30 s; a "not ready" answer is re-probed after a backed-off
    interval (30 s, doubling, capped at 120 s), and that re-probe waits at most 0.5 s before routing answers with the
    cached "not ready" while the probe finishes in the background. `availableFor(capability)` probes only providers
-   advertising that capability. The first ready answer after "not ready" logs `provider became ready` once. A
-   provider that was not ready at boot (Ollama started after the service) becomes usable without a restart.
+   advertising that capability. The first ready answer after "not ready" logs `provider became ready` once. There is
+   no polling timer: a provider that was not ready at boot (Ollama started after the service) becomes usable without a
+   restart on the next request that needs it, once its backoff window has elapsed and that re-probe has finished.
+   Each probe carries a per-provider generation; `invalidate()` bumps it and clears the single-flight slot, so a
+   probe that was in flight across an invalidation is discarded and never overwrites a newer answer.
 5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
    every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
    mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is

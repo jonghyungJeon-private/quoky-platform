@@ -135,6 +135,12 @@ class SlowProvider implements AiProvider {
   settle(ok: boolean): void {
     for (const resolve of this.pending.splice(0)) resolve(ok);
   }
+  /** Detach the oldest pending probe so it can be settled later, out of order. */
+  takePending(): (ok: boolean) => void {
+    const resolve = this.pending.shift();
+    if (resolve === undefined) throw new Error('no pending probe');
+    return resolve;
+  }
   async execute(): Promise<never> {
     throw new Error('not used');
   }
@@ -240,5 +246,78 @@ describe('AiProviderManager readiness after a not-ready start (no restart)', () 
     time.advance(30_000);
     expect(await manager.available()).toEqual([provider]);
     expect(lines.map((line) => line.message)).toEqual(['provider became ready']);
+  });
+  it('a background refresh that lands after an invalidation never overwrites the newer answer', async () => {
+    const time = manualClock();
+    const { logger, lines } = recordingLogger();
+    const provider = new SlowProvider('ollama', chat);
+    const manager = new AiProviderManager([provider], { clock: time.clock, logger, notReadyReprobeGraceMs: 1 });
+
+    // cache "not ready"
+    const startup = manager.available();
+    provider.settle(false);
+    expect(await startup).toEqual([]);
+
+    // the backoff window elapses: a background refresh starts and stays in flight
+    time.advance(30_000);
+    expect(await manager.available()).toEqual([]);
+    expect(provider.probeCount).toBe(2);
+    const staleRefresh = provider.takePending();
+
+    // an execution failed UNAVAILABLE: invalidate; the next decision starts a fresh probe, which answers "not ready"
+    manager.invalidate(provider);
+    const newer = manager.available();
+    expect(provider.probeCount).toBe(3);
+    provider.settle(false);
+    expect(await newer).toEqual([]);
+
+    // the old refresh finally answers "ready": discarded, nothing is cached as ready and nothing is logged
+    staleRefresh(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(await manager.available()).toEqual([]);
+    expect(provider.probeCount).toBe(3); // the newer "not ready" is still within its backoff window
+    expect(lines).toEqual([]);
+  });
+
+  it('a blocking probe in flight across an invalidation is discarded and reads "not ready"', async () => {
+    const time = manualClock();
+    const provider = new SlowProvider('ollama', chat);
+    const manager = new AiProviderManager([provider], { clock: time.clock });
+
+    const inFlight = manager.available();
+    manager.invalidate(provider);
+    const fresh = manager.available();
+    expect(provider.probeCount).toBe(2);
+    const [stale, current] = [provider.takePending(), provider.takePending()];
+    current(false);
+    expect(await fresh).toEqual([]);
+    stale(true);
+    expect(await inFlight).toEqual([]);
+    expect(await manager.available()).toEqual([]);
+    expect(provider.probeCount).toBe(2);
+  });
+
+  it('never runs overlapping probes for one provider without an invalidation', async () => {
+    const time = manualClock();
+    const provider = new SlowProvider('ollama', chat);
+    const manager = new AiProviderManager([provider], { clock: time.clock, notReadyReprobeGraceMs: 1 });
+
+    // blocking probe: concurrent decisions share it
+    const first = Promise.all([manager.available(), manager.availableFor(Capability.GENERAL_CHAT), manager.isReady(provider)]);
+    expect(provider.probeCount).toBe(1);
+    provider.settle(false);
+    await first;
+
+    // background refresh: decisions during it (even after further time passes) share it
+    time.advance(30_000);
+    await manager.available();
+    time.advance(30_000);
+    await manager.available();
+    await manager.isReady(provider);
+    expect(provider.probeCount).toBe(2);
+    provider.settle(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(await manager.available()).toEqual([provider]);
+    expect(provider.probeCount).toBe(2);
   });
 });

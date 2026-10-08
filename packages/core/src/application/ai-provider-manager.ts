@@ -6,8 +6,9 @@ import { now } from '../util/clock';
 export const DEFAULT_AVAILABILITY_TTL_MS = 30_000;
 /**
  * Upper bound for the re-probe interval of a provider that keeps answering "not ready". The interval starts at the TTL
- * and doubles per consecutive "not ready" answer up to this cap, so a provider whose daemon comes up later (an Ollama
- * app that starts after the service at login) is picked up within this long, without a restart.
+ * and doubles per consecutive "not ready" answer up to this cap. There is no polling timer: a provider whose daemon
+ * comes up later (an Ollama app that starts after the service at login) is picked up, without a restart, by the next
+ * request that needs it once its backoff window has elapsed and that re-probe has finished.
  */
 export const DEFAULT_NOT_READY_BACKOFF_CAP_MS = 120_000;
 /**
@@ -51,7 +52,7 @@ const NO_OP_LOGGER: Logger = { info: () => undefined, warn: () => undefined, err
  * Readiness is re-probed lazily at selection time: a ready answer is reused for the TTL, a "not ready" answer for a
  * backed-off interval (TTL, doubling, capped). The re-probe of a "not ready" provider waits at most a short grace and
  * otherwise finishes in the background, so a daemon that is down costs a turn nothing beyond that grace, and a daemon
- * that comes up later is picked up without a restart.
+ * that comes up later is picked up without a restart by the next request that needs it (no polling timer).
  */
 export class AiProviderManager {
   private readonly ttlMs: number;
@@ -62,6 +63,12 @@ export class AiProviderManager {
   private readonly probes = new Map<AiProvider, ProbeEntry>();
   /** Background re-probes of "not ready" providers (single-flight per provider). */
   private readonly refreshes = new Map<AiProvider, Promise<boolean>>();
+  /**
+   * Per-provider generation. Every probe captures the generation it started under and its answer is applied only while
+   * that generation is current; {@link invalidate} bumps it, so a probe that was in flight can never overwrite a newer
+   * answer (or the absence of one) with a result that no longer has a probe behind it.
+   */
+  private readonly generations = new Map<AiProvider, number>();
   /** Consecutive "not ready" answers per provider; drives the backoff. */
   private readonly notReadyStreak = new Map<AiProvider, number>();
   /** The last settled answer per provider; survives {@link invalidate} so a later transition is still logged once. */
@@ -115,7 +122,13 @@ export class AiProviderManager {
    * of the TTL (ADR-0092: no execution-time fallback, selection-time readiness only).
    */
   invalidate(provider: AiProvider): void {
+    this.generations.set(provider, this.generationOf(provider) + 1);
     this.probes.delete(provider);
+    this.refreshes.delete(provider);
+  }
+
+  private generationOf(p: AiProvider): number {
+    return this.generations.get(p) ?? 0;
   }
 
   private nowMs(): number {
@@ -143,6 +156,7 @@ export class AiProviderManager {
         return this.reprobeNotReady(p);
       }
     }
+    const generation = this.generationOf(p);
     const entry: ProbeEntry = {
       settled: false,
       checkedAtMs: startedAtMs,
@@ -150,6 +164,8 @@ export class AiProviderManager {
         entry.settled = true;
         entry.ready = ok;
         entry.checkedAtMs = this.nowMs();
+        // Invalidated while in flight: the answer is discarded (this entry is no longer cached) and reads "not ready".
+        if (this.generationOf(p) !== generation) return false;
         this.record(p, ok);
         return ok;
       }),
@@ -166,7 +182,10 @@ export class AiProviderManager {
   private reprobeNotReady(p: AiProvider): Promise<boolean> {
     let refresh = this.refreshes.get(p);
     if (refresh === undefined) {
+      const generation = this.generationOf(p);
       const pending = this.safeProbe(p).then((ok) => {
+        // Invalidated while in flight: a newer probe (or none) owns the cache; this answer is discarded.
+        if (this.generationOf(p) !== generation) return false;
         this.probes.set(p, { settled: true, ready: ok, checkedAtMs: this.nowMs(), result: Promise.resolve(ok) });
         this.refreshes.delete(p);
         this.record(p, ok);
