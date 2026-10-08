@@ -96,8 +96,9 @@ export const OPS_NOTICE_LIMITS = {
   telegramHaltQuietMs: 24 * 60 * 60 * 1000,
 } as const;
 
+/** Exactly the Telegram halt reasons of the closed list ({@link telegramHaltNoticeReason}), never a prefix match. */
 function isTelegramHaltReason(reason: string): boolean {
-  return reason.startsWith('TELEGRAM_');
+  return telegramHaltNoticeReason(reason) !== undefined;
 }
 
 /** ADR-0102 D7: "≥3 restarts in 10 minutes", as the launcher counts them (`QUOKY_LAUNCHER_RECENT_STARTS`). */
