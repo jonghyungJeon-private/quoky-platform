@@ -33,6 +33,11 @@ function writer(fetchImpl: typeof fetch, overrides: Partial<SlackChannelWriterCo
   });
 }
 
+/** UNC-1: what the platform fetch throws (`TypeError('fetch failed')` with the transport error as `cause`). */
+function fetchFailed(code: string, message = `${code} test`): TypeError {
+  return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+}
+
 const posted = (): Response => json(200, { ok: true, channel: CHANNEL, ts: '1700000000.000100' });
 const PERMALINK = 'https://example.slack.com/archives/C0123ABCD9/p1700000000000100';
 
@@ -101,6 +106,19 @@ describe('SlackChannelWriter (ADR-0112 D2/D4)', () => {
       [json(200, { ok: false, error: 'constructor' }), { status: 'UNCERTAIN', reason: 'UNKNOWN' }],
       [json(502, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [new Error(`socket hang up ${BOT_TOKEN}`), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      // UNC-1: provably never sent (connection set-up, TLS handshake, refused proxy tunnel) → NOT_SENT; else UNCERTAIN.
+      [fetchFailed('ECONNREFUSED'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('ENOTFOUND'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('EAI_AGAIN'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('ENETUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('EHOSTUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('DEPTH_ZERO_SELF_SIGNED_CERT'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [
+        fetchFailed('UND_ERR_ABORTED', 'Proxy response (403) !== 200 when HTTP Tunneling'),
+        { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false },
+      ],
+      [fetchFailed('ECONNRESET', 'read ECONNRESET'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('UND_ERR_SOCKET', 'other side closed'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new Response('<html>', { status: 200 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
       [json(200, { ok: true }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
     ];

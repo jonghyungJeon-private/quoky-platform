@@ -76,6 +76,12 @@ export interface ConnectorWriteReceiptRepository {
   findByIdempotencyKey(idempotencyKey: string): Promise<ConnectorWriteReceipt | null>;
   /** The newest `SENT` receipt for the same actor, connector, operation, target and payload hash, or null. */
   findLatestSent(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null>;
+  /**
+   * The newest UNRESOLVED receipt (`UNCERTAIN`, or `PREPARED`: dispatched, outcome not recorded) for the same actor,
+   * connector, operation, target and payload hash, or null (UNC-1: a re-request of a write that may already have
+   * happened is previewed with a duplicate warning).
+   */
+  findLatestUnresolved(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null>;
   /** The newest receipt of any status for this actor and operation (any target), or null. */
   findLatestForOperation(actorId: Id, operation: ConnectorWriteOperation): Promise<ConnectorWriteReceipt | null>;
   /**

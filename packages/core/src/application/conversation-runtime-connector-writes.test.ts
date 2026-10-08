@@ -139,6 +139,21 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
         .pop() ?? null
     );
   }
+  async findLatestUnresolved(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null> {
+    return (
+      [...this.rows.values()]
+        .filter(
+          (row) =>
+            (row.status === 'UNCERTAIN' || row.status === 'PREPARED') &&
+            row.actorId === match.actorId &&
+            row.connector === match.connector &&
+            row.operation === match.operation &&
+            row.target === match.target &&
+            row.payloadSha256 === match.payloadSha256,
+        )
+        .pop() ?? null
+    );
+  }
   async findLatestForOperation(actorId: string, operation: string): Promise<ConnectorWriteReceipt | null> {
     return [...this.rows.values()].filter((row) => row.actorId === actorId && row.operation === operation).pop() ?? null;
   }
@@ -622,9 +637,55 @@ describe('connector writes — Jira comment (ADR-0112 D5/D6)', () => {
     await notSent.send('PROJ-12에 댓글: x');
     await notSent.send('승인');
     const failed = await notSent.send('댓글 실행');
-    expect(failed.reply.text).toContain('Jira 댓글을 하지 못했어요: 권한이 없어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(failed.reply.text).toContain('Jira 댓글을 보내지 못했어요: 권한이 없어요. 댓글은 달리지 않았어요.');
     expect((await notSent.send('댓글 실행')).reply.text).toContain('이미 실패로 끝났어요');
     expect(notSent.writes.addComment).toHaveLength(1);
+  });
+
+  it('UNC-1: re-requesting a write whose earlier send is UNCERTAIN previews with a duplicate warning; approval still works', async () => {
+    const outcomes: ConnectorWriteOutcome[] = [connectorWriteUncertain('TRANSPORT'), connectorWriteSent('10002', COMMENT_URL)];
+    const h = harness({ commentOutcome: async () => outcomes.shift() ?? connectorWriteUncertain('UNKNOWN') });
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    expect((await h.send('댓글 실행')).reply.text).toContain('결과를 확인하지 못했어요');
+    advanceMinutes(5);
+
+    const again = await h.send('PROJ-12에 댓글: 한 번만');
+    const lines = again.reply.text.split('\n');
+    expect(lines[0]).toBe(
+      '주의: 같은 내용의 이전 요청은 결과를 확인하지 못했어요(10월 6일 10:00). 이미 게시됐을 수 있으니 대상을 먼저 확인해 주세요. 그래도 보내려면 승인 후 실행하세요.',
+    );
+    expect(again.reply.text).toContain('Jira 댓글 미리보기예요');
+    expect(again.reply.text).not.toContain('이미 보냈어요');
+    // Not blocked: approve and execute send once more (the owner's explicit choice).
+    expect((await h.send('승인')).reply.text).toContain('승인을 기록했어요');
+    expect((await h.send('댓글 실행')).reply.text).toContain('댓글을 달았어요');
+    expect(h.writes.addComment).toHaveLength(2);
+    // Now a SENT receipt exists for the same payload: the existing "이미 보냈어요" guard wins over the warning.
+    const third = await h.send('PROJ-12에 댓글: 한 번만');
+    expect(third.reply.text).toContain('이미 보냈어요');
+    expect(third.reply.text).not.toContain('주의: 같은 내용의 이전 요청');
+    expect(h.writes.addComment).toHaveLength(2);
+  });
+
+  it('UNC-1: the duplicate warning is bound to the same target and payload, and absent after a NOT_SENT', async () => {
+    const h = harness({ commentOutcome: async () => connectorWriteUncertain('TRANSPORT') });
+    await h.send('PROJ-12에 댓글: 원본');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    expect((await h.send('PROJ-12에 댓글: 다른 내용')).reply.text).not.toContain('주의:');
+    await h.send('거절');
+    expect((await h.send('PROJ-13에 댓글: 원본')).reply.text).not.toContain('주의:');
+    await h.send('거절');
+    expect((await h.send('PROJ-12에 댓글: 원본')).reply.text.startsWith('주의: 같은 내용의 이전 요청은 결과를 확인하지 못했어요(')).toBe(true);
+
+    const failed = harness({ commentOutcome: async () => connectorWriteNotSent('UNAVAILABLE') });
+    await failed.send('PROJ-12에 댓글: 원본');
+    await failed.send('승인');
+    expect((await failed.send('댓글 실행')).reply.text).toContain('Jira 댓글을 보내지 못했어요: 연결에 실패해서 요청을 보내기 전에 멈췄어요.');
+    const retry = await failed.send('PROJ-12에 댓글: 원본');
+    expect(retry.reply.text).not.toContain('주의:');
+    expect(retry.reply.text).toContain('Jira 댓글 미리보기예요');
   });
 
   it('expires a pending approval after 30 minutes and an unexecuted grant 30 minutes after approval', async () => {
@@ -1236,7 +1297,8 @@ describe('connector writes — actor binding, other phrases and pre-send failure
     await h.send('승인');
     const reply = await h.send('댓글 실행');
     expect(reply.reply.text).toContain('요청을 보내기 전에 멈췄어요');
-    expect(reply.reply.text).toContain('아무것도 보내지 않았어요');
+    expect(reply.reply.text).toContain('Jira 댓글을 보내지 못했어요');
+    expect(reply.reply.text).toContain('댓글은 달리지 않았어요');
     expect(reply.reply.text).not.toContain('게시됐을 수도');
     expect(h.totalWrites()).toBe(0);
     expect((await h.send('댓글 실행')).reply.text).toContain('이미 실패로 끝났어요');

@@ -62,7 +62,11 @@ describe('connector-write copy (CWR-2)', () => {
       }
       for (const reason of CONNECTOR_WRITE_NOT_SENT_REASONS) {
         const text = renderConnectorWriteOutcome(operation, connectorWriteNotSent(reason));
-        expect(text).toMatch(/이 요청으로는 (?:아무것도 보내지|캘린더를 바꾸지) 않았어요/);
+        // UNC-1: says plainly that nothing was sent / nothing changed (TARGET_CHANGED keeps its own wording).
+        expect(text).toMatch(
+          /이 요청으로는 (?:아무것도 보내지|캘린더를 바꾸지) 않았어요|아무것도 게시되지 않았어요|댓글은 달리지 않았어요|이슈 상태는 바뀌지 않았어요|캘린더는 바뀌지 않았어요/,
+        );
+        expect(text).not.toMatch(/완료:|달았어요|게시했어요|추가했어요|바꿨어요|삭제했어요/);
         expect(text).not.toContain('undefined');
       }
       expect(renderConnectorWriteRepeat(operation, 'EXECUTING')).toContain('다시 실행하지 않아요');
@@ -122,10 +126,21 @@ describe('connector-write copy (CWR-2)', () => {
       ].join('\n');
       expect(all).not.toMatch(/을\(를\)|은\(는\)/u);
     }
-    expect(renderConnectorWriteOutcome('CHANNEL_POST', notSent)).toContain('Slack 게시를 하지 못했어요');
-    expect(renderConnectorWriteOutcome('ISSUE_COMMENT', notSent)).toContain('Jira 댓글을 하지 못했어요');
-    expect(renderConnectorWriteOutcome('ISSUE_TRANSITION', notSent)).toContain('Jira 상태 변경을 하지 못했어요');
-    expect(renderConnectorWriteOutcome('CALENDAR_EVENT_CREATE', notSent)).toContain('캘린더 일정 추가를 하지 못했어요');
+    // UNC-1: a NOT_SENT reply says plainly that nothing was sent (and what therefore did not happen).
+    expect(renderConnectorWriteOutcome('CHANNEL_POST', notSent)).toContain('Slack 게시를 보내지 못했어요');
+    expect(renderConnectorWriteOutcome('CHANNEL_POST', notSent)).toContain('아무것도 게시되지 않았어요.');
+    expect(renderConnectorWriteOutcome('ISSUE_COMMENT', notSent)).toContain('Jira 댓글을 보내지 못했어요');
+    expect(renderConnectorWriteOutcome('ISSUE_COMMENT', notSent)).toContain('댓글은 달리지 않았어요.');
+    expect(renderConnectorWriteOutcome('ISSUE_TRANSITION', notSent)).toContain('Jira 상태 변경을 보내지 못했어요');
+    expect(renderConnectorWriteOutcome('ISSUE_TRANSITION', notSent)).toContain('이슈 상태는 바뀌지 않았어요.');
+    expect(renderConnectorWriteOutcome('CALENDAR_EVENT_CREATE', notSent)).toContain('캘린더 일정 추가를 보내지 못했어요');
+    expect(renderConnectorWriteOutcome('CALENDAR_EVENT_CREATE', notSent)).toContain('캘린더는 바뀌지 않았어요.');
+    expect(renderConnectorWriteOutcome('CHANNEL_POST', { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false })).toBe(
+      [
+        'Slack 게시를 보내지 못했어요: 연결에 실패해서 요청을 보내기 전에 멈췄어요. 아무것도 게시되지 않았어요.',
+        '자동으로 다시 시도하지 않아요. 필요하면 새로 요청해 주세요.',
+      ].join('\n'),
+    );
     expect(renderConnectorWriteRepeat('CHANNEL_POST', 'SENT')).toContain('이 Slack 게시는 이미 실행했어요');
     // W5-L02 (live QA 2026-10-07 wording): when (QUOKY_TIMEZONE) and where, so it can't be mistaken for another post.
     const channel = { kind: 'channel', channelLabel: 'quoky-test', channelId: 'C0TEST' } as const;

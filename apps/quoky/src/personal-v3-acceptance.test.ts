@@ -717,7 +717,8 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
       await det(owner, '승인');
       const failed = await det(owner, 'Slack 게시 실행');
       expect(failed.text).toBe(renderConnectorWriteOutcome('CHANNEL_POST', connectorWriteNotSent('NOT_FOUND')));
-      expect(failed.text).toContain('Slack 게시를 하지 못했어요');
+      expect(failed.text).toContain('Slack 게시를 보내지 못했어요');
+      expect(failed.text).toContain('아무것도 게시되지 않았어요.');
       expect(failed.text).not.toContain('을(를)');
     } finally {
       slackOutcome = () => connectorWriteSent('1700000000.000100');

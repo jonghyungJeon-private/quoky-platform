@@ -291,6 +291,12 @@ export type ConnectorWriteStep =
       readonly approval: ApprovalRequest;
       readonly remainingMs: number;
       readonly executionPhrase: string;
+      /**
+       * UNC-1: an earlier write with the same connector, operation, target and payload hash by this actor is unresolved
+       * (receipt `UNCERTAIN`, or `PREPARED` = `EXECUTING`): it may already have happened, so the preview leads with a
+       * duplicate warning. Approval still works (not blocked).
+       */
+      readonly unconfirmedEarlier?: ConnectorWriteUnconfirmedEarlier;
     }
   | {
       readonly kind: 'choice';
@@ -500,6 +506,15 @@ export interface ConnectorWriteLatestRequest {
   readonly target: ConnectorWriteTargetSummary;
   readonly createdAt: IsoTimestamp;
   readonly state: ConnectorWriteRequestState;
+}
+
+/** An earlier, unresolved write of the very same payload to the same target by this actor (UNC-1 preview warning). */
+export interface ConnectorWriteUnconfirmedEarlier {
+  readonly status: 'UNCERTAIN' | 'EXECUTING';
+  /** When that receipt last changed. */
+  readonly at: IsoTimestamp;
+  /** The flow's display time zone (`QUOKY_TIMEZONE`). */
+  readonly timeZone: string;
 }
 
 /** A dispatched, unconfirmed write approved in this conversation ({@link ConnectorWriteFlow.recentUnconfirmedInSession}). */
@@ -1578,7 +1593,10 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return { kind: 'choice', mode: choice.mode, candidates: choice.candidates, timeZone: this.deps.timeZone, ...(basis ? { basis } : {}) };
   }
 
-  /** Dedup against a SENT receipt, then the CRITICAL approval and the anchor. */
+  /**
+   * Dedup against a SENT receipt ("이미 보냈어요"), then the CRITICAL approval and the anchor. An unresolved receipt
+   * (UNCERTAIN / PREPARED) for the same write does not block: the preview carries a duplicate warning (UNC-1).
+   */
   private async propose(
     input: FlowInput,
     family: ConnectorWriteFamily,
@@ -1605,6 +1623,13 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         ...(sent.data.url ? { url: sent.data.url } : {}),
       };
     }
+    const unresolved = await this.deps.receipts.findLatestUnresolved({
+      actorId: input.actor.id,
+      connector,
+      operation,
+      target,
+      payloadSha256,
+    });
     const previous = inheritedPrevious ?? (await this.displacedPointer(input.session));
     const approval = await this.deps.approvals.requestForRisk({
       executionPlanRef: { id: this.deps.newId(), goal: `connector write: ${operation}` },
@@ -1645,6 +1670,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       approval,
       remainingMs: PENDING_APPROVAL_TTL_MS,
       executionPhrase: documentedExecutionPhrase(connectorWriteExecutionGate(operation)),
+      ...(unresolved
+        ? {
+            unconfirmedEarlier: {
+              status: unresolved.status === 'PREPARED' ? ('EXECUTING' as const) : ('UNCERTAIN' as const),
+              at: unresolved.updatedAt,
+              timeZone: this.deps.timeZone,
+            },
+          }
+        : {}),
     };
   }
 

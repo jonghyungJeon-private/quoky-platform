@@ -87,6 +87,13 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
         .pop() ?? null
     );
   }
+  async findLatestUnresolved(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null> {
+    return (
+      [...this.rows.values()]
+        .filter((row) => (row.status === 'UNCERTAIN' || row.status === 'PREPARED') && row.operation === match.operation && row.target === match.target && row.payloadSha256 === match.payloadSha256)
+        .pop() ?? null
+    );
+  }
   async findLatestForOperation(): Promise<ConnectorWriteReceipt | null> {
     return null;
   }

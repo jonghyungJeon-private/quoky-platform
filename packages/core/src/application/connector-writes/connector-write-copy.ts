@@ -22,6 +22,7 @@ import type {
   ConnectorWriteRecentSend,
   ConnectorWriteStep,
   ConnectorWriteTargetSummary,
+  ConnectorWriteUnconfirmedEarlier,
 } from './connector-write-flow';
 
 /**
@@ -176,9 +177,15 @@ function minutesOf(remainingMs: number): number {
   return Math.max(1, Math.ceil(remainingMs / 60_000));
 }
 
-export function renderConnectorWritePreview(preview: ConnectorWritePreview, remainingMs: number, executionPhrase: string): string {
+export function renderConnectorWritePreview(
+  preview: ConnectorWritePreview,
+  remainingMs: number,
+  executionPhrase: string,
+  unconfirmedEarlier?: ConnectorWriteUnconfirmedEarlier,
+): string {
   const operation = preview.operation;
   return [
+    ...(unconfirmedEarlier ? [renderConnectorWriteDuplicateRisk(operation, unconfirmedEarlier), ''] : []),
     `${connectorWriteLabel(operation)} 미리보기예요. ${notDoneByThisRequest(isCalendar(operation), true)}`,
     ...previewBody(preview),
     '',
@@ -186,6 +193,21 @@ export function renderConnectorWritePreview(preview: ConnectorWritePreview, rema
     `"승인"이라고 답한 뒤 "${executionPhrase}"이라고 보내야 실제로 실행돼요. 그만두려면 "거절"이라고 답해 주세요.`,
     `남은 시간: 약 ${minutesOf(remainingMs)}분 (지나면 자동으로 거절돼요)`,
   ].join('\n');
+}
+
+/**
+ * UNC-1: the same payload to the same target was requested before and its outcome is unresolved (UNCERTAIN / in
+ * flight) — it may already be there. Leads the preview; the approval still works.
+ */
+export function renderConnectorWriteDuplicateRisk(operation: ConnectorWriteOperation, earlier: ConnectorWriteUnconfirmedEarlier): string {
+  const when = dateClockLabel(earlier.at, earlier.timeZone);
+  const calendar = isCalendar(operation);
+  return [
+    `주의: 같은 내용의 이전 요청은 결과를 확인하지 못했어요${when ? `(${when})` : ''}.`,
+    calendar
+      ? '이미 캘린더에 반영됐을 수 있으니 캘린더를 먼저 확인해 주세요. 그래도 실행하려면 승인 후 실행하세요.'
+      : '이미 게시됐을 수 있으니 대상을 먼저 확인해 주세요. 그래도 보내려면 승인 후 실행하세요.',
+  ].join(' ');
 }
 
 /** A non-decision message while the approval is pending (ADR-0093 reminder, with what is pending). */
@@ -321,6 +343,14 @@ export function renderConnectorWriteOpsApprovedNotice(notice: {
   ].join('\n');
 }
 
+/** "10월 8일 17:01" in `timeZone`. */
+function dateClockLabel(instant: string, timeZone: string): string | undefined {
+  const ms = Date.parse(instant);
+  if (!Number.isFinite(ms)) return undefined;
+  const zoned = toZonedDateTime(ms, timeZone);
+  return `${zoned.month}월 ${zoned.day}일 ${pad(zoned.hour)}:${pad(zoned.minute)}`;
+}
+
 /** HH:mm in `timeZone`. */
 function clockLabel(instant: string, timeZone: string): string | undefined {
   const ms = Date.parse(instant);
@@ -381,7 +411,7 @@ export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, 
     case 'NOT_SENT':
       if (outcome.reason === 'TARGET_CHANGED') return targetChangedCopy(operation);
       return [
-        `${withObjectParticle(label)} 하지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. ${nothingDone(operation)}`,
+        `${withObjectParticle(label)} 보내지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. ${nothingHappened(operation)}`,
         '자동으로 다시 시도하지 않아요. 필요하면 새로 요청해 주세요.',
       ].join('\n');
     case 'UNCERTAIN':
@@ -389,6 +419,22 @@ export function renderConnectorWriteOutcome(operation: ConnectorWriteOperation, 
         `${label} 결과를 확인하지 못했어요. 요청이 이미 전달돼 ${isCalendar(operation) ? '캘린더가 바뀌었을' : '게시됐을'} 수도 있어요.`,
         `중복을 막기 위해 자동으로 다시 시도하지 않아요. ${isCalendar(operation) ? '캘린더' : '대상'}에서 직접 확인해 주세요.`,
       ].join('\n');
+  }
+}
+
+/** NOT_SENT: what certainly did not happen (UNC-1: the reply must say plainly that nothing was sent). */
+function nothingHappened(operation: ConnectorWriteOperation): string {
+  switch (operation) {
+    case 'CHANNEL_POST':
+      return '아무것도 게시되지 않았어요.';
+    case 'ISSUE_COMMENT':
+      return '댓글은 달리지 않았어요.';
+    case 'ISSUE_TRANSITION':
+      return '이슈 상태는 바뀌지 않았어요.';
+    case 'CALENDAR_EVENT_CREATE':
+    case 'CALENDAR_EVENT_UPDATE':
+    case 'CALENDAR_EVENT_DELETE':
+      return '캘린더는 바뀌지 않았어요.';
   }
 }
 
@@ -615,7 +661,7 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
     case 'refused':
       return renderConnectorWriteRefusal(step.reason, step.family === 'calendar', step.availableStatuses);
     case 'preview':
-      return renderConnectorWritePreview(step.preview, step.remainingMs, step.executionPhrase);
+      return renderConnectorWritePreview(step.preview, step.remainingMs, step.executionPhrase, step.unconfirmedEarlier);
     case 'choice':
       return renderConnectorWriteChoice(step.mode, step.candidates, step.timeZone, step.basis);
     case 'already-sent':

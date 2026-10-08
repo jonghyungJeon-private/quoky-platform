@@ -31,6 +31,7 @@ export * from './calendar-window';
 // Personal v3 (ADR-0112 D2/D3, ADR-0110 amendment; CWR-1).
 export * from './connector-write.port';
 export * from './connector-write-receipt.port';
+export * from './connector-write-transport';
 
 export * from './continuation-routing-audit';
 export * from './continuation-containment-audit';

@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — UNC-1 connector-write network-fault fixes (2026-10-08)
+
+From the UNC-1 live network-fault UAT (Docker fault proxy, real Slack writer; harness in `tools/uat/netfault/`). No
+migration, no new port or token, no deps change; `ConversationRuntimeDeps` stays 35.
+
+- Pre-send failures are `NOT_SENT('UNAVAILABLE')`, not "may have been posted": a shared core helper
+  (`classifyConnectorWriteTransportFailure`, `packages/core/src/ports/connector-write-transport.ts`) used by the Slack
+  post, Jira comment / transition and Google Calendar writers classifies a thrown write request as NOT_SENT only when it
+  provably never reached the server — an error the platform fetch published on undici's `undici:client:connectError`
+  diagnostics channel (matched by identity: DNS, TCP, proxy tunnel, TLS handshake, a reset during connect), a
+  connection-only code (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`,
+  `UND_ERR_CONNECT_TIMEOUT`, TLS certificate / handshake-timeout codes) or a refused proxy tunnel (non-200 CONNECT).
+  Anything ambiguous (a reset or close after connect, a timeout, an abort) stays UNCERTAIN.
+- NOT_SENT replies say plainly that nothing was sent: "Slack 게시를 보내지 못했어요: …. 아무것도 게시되지 않았어요."
+  (Jira: "댓글은 달리지 않았어요." / "이슈 상태는 바뀌지 않았어요.", calendar: "캘린더는 바뀌지 않았어요.").
+- Duplicate warning after UNCERTAIN: a new preview whose connector, operation, target and payload hash match an
+  unresolved receipt of the same actor (UNCERTAIN, or PREPARED = dispatched) leads with "주의: 같은 내용의 이전 요청은
+  결과를 확인하지 못했어요(<시각>). 이미 게시됐을 수 있으니 …". Approval still works; a matching SENT receipt keeps the
+  "이미 보냈어요" reply. New receipt-repository method `findLatestUnresolved` (SQLite: `status IN ('UNCERTAIN',
+  'PREPARED')`, no schema change).
+
 ## Unreleased — CODE-8 multi-repository allowlist for code work (2026-10-08)
 
 ADR-0109 (Ratified 2026-10-06, all recommended defaults). No migration, no new port, no token change, no deps change;

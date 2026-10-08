@@ -1,7 +1,9 @@
 import {
+  classifyConnectorWriteTransportFailure,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
+  installConnectorWriteTransportDiagnostics,
   isValidConnectorWriteText,
   resolveConnectorQueryTimeoutMs,
   type ChannelMessageRequest,
@@ -15,7 +17,9 @@ import {
  * posting as the app), separate from the read connector's user token. A separate class from the read-only
  * `SlackConnectorProvider`. The text is posted verbatim: `&`, `<` and `>` are escaped and mention, link and markdown
  * expansion is off, so owner text can never become `@channel` or a hidden link. One request with a timeout and
- * redirects refused; no retry. Nothing is logged, and no outcome carries the token, the payload or a response body.
+ * redirects refused; no retry. A thrown request is NOT_SENT only when it provably never left (connect-stage failure,
+ * `classifyConnectorWriteTransportFailure`); otherwise UNCERTAIN. Nothing is logged, and no outcome carries the
+ * token, the payload or a response body.
  */
 
 const SLACK_API_ORIGIN = 'https://slack.com';
@@ -92,6 +96,7 @@ export class SlackChannelWriter implements ChannelMessageWriter {
       throw new Error('slack writer: a bot token is required');
     }
     this.token = token;
+    installConnectorWriteTransportDiagnostics();
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'slack writer');
     const channels = Array.isArray(config.channels) ? config.channels : [];
@@ -152,8 +157,9 @@ export class SlackChannelWriter implements ChannelMessageWriter {
         redirect: 'error',
         signal: AbortSignal.timeout(this.timeoutMs),
       });
-    } catch {
-      return connectorWriteUncertain('TRANSPORT');
+    } catch (error) {
+      // NOT_SENT only when the request provably never reached Slack (UNC-1); otherwise UNCERTAIN.
+      return classifyConnectorWriteTransportFailure(error);
     }
 
     if (response.status === 429) {

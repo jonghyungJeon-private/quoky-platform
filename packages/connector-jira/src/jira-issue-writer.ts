@@ -1,9 +1,11 @@
 import {
   ConnectorQueryError,
+  classifyConnectorWriteTransportFailure,
   connectorQueryErrorReasonForStatus,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
+  installConnectorWriteTransportDiagnostics,
   isValidConnectorWriteText,
   resolveConnectorQueryTimeoutMs,
   type ConnectorWriteNotSentReason,
@@ -63,6 +65,7 @@ class JiraWriteClient {
     this.authorization = `Basic ${Buffer.from(`${email}:${apiToken}`, 'utf8').toString('base64')}`;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'jira writer');
+    installConnectorWriteTransportDiagnostics();
     const projects = Array.isArray(config.allowedProjects) ? config.allowedProjects : [];
     if (projects.length === 0 || projects.some((key) => typeof key !== 'string' || !PROJECT_KEY.test(key))) {
       throw new Error('jira writer: a non-empty list of valid project keys is required');
@@ -188,8 +191,9 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
       response = await this.client.request(this.client.issueUrl(request.issueKey, '/comment'), 'POST', {
         body: plainTextDocument(request.text),
       });
-    } catch {
-      return connectorWriteUncertain('TRANSPORT');
+    } catch (error) {
+      // NOT_SENT only when the request provably never reached Jira (UNC-1); otherwise UNCERTAIN.
+      return classifyConnectorWriteTransportFailure(error);
     }
     if (!response.ok) return failedWrite(response);
     let payload: unknown;
@@ -242,8 +246,9 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
       response = await this.client.request(this.client.issueUrl(request.issueKey, '/transitions'), 'POST', {
         transition: { id: chosen.id },
       });
-    } catch {
-      return connectorWriteUncertain('TRANSPORT');
+    } catch (error) {
+      // NOT_SENT only when the request provably never reached Jira (UNC-1); otherwise UNCERTAIN.
+      return classifyConnectorWriteTransportFailure(error);
     }
     if (!response.ok) return failedWrite(response);
     await discardBody(response);

@@ -5,9 +5,11 @@ import {
   CALENDAR_EVENT_TITLE_MAX_LENGTH,
   CALENDAR_WINDOW_MAX_DAYS,
   ConnectorQueryError,
+  classifyConnectorWriteTransportFailure,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
+  installConnectorWriteTransportDiagnostics,
   isValidConnectorWriteText,
   isValidTimeZone,
   resolveConnectorQueryTimeoutMs,
@@ -95,6 +97,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'google calendar writer');
     this.nowMs = config.nowMs ?? Date.now;
+    installConnectorWriteTransportDiagnostics();
   }
 
   async createEvent(request: CalendarEventCreateRequest): Promise<ConnectorWriteOutcome> {
@@ -198,8 +201,9 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     let response: Response;
     try {
       response = await this.send(method, url, body, token, ifMatch);
-    } catch {
-      return connectorWriteUncertain('TRANSPORT');
+    } catch (error) {
+      // NOT_SENT only when the request provably never reached Google (UNC-1); otherwise UNCERTAIN.
+      return classifyConnectorWriteTransportFailure(error);
     }
     if (!response.ok) {
       await discardBody(response);

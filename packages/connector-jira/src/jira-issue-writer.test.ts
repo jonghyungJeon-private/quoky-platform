@@ -57,6 +57,12 @@ function assertNoSecrets(value: unknown): void {
   expect(text).not.toContain(Buffer.from(`${EMAIL}:${TOKEN}`).toString('base64'));
 }
 
+
+/** UNC-1: what the platform fetch throws (`TypeError('fetch failed')` with the transport error as `cause`). */
+function fetchFailed(code: string, message = `${code} test`): TypeError {
+  return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+}
+
 describe('JiraIssueCommentWriter (ADR-0112 D2/D4)', () => {
   it('posts the owner text verbatim as ADF to the allowlisted issue and returns SENT with the comment link', async () => {
     const fake = fakeFetch(issue('PROJ-7'), json(201, { id: '10042', self: 'https://example.atlassian.net/rest/api/3/issue/1/comment/10042' }));
@@ -113,6 +119,19 @@ describe('JiraIssueCommentWriter (ADR-0112 D2/D4)', () => {
       [json(503, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [new Error(`connect ECONNRESET ${TOKEN}`), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new DOMException('The operation was aborted due to timeout', 'TimeoutError'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      // UNC-1: provably never sent (connection set-up, TLS handshake, refused proxy tunnel) → NOT_SENT; else UNCERTAIN.
+      [fetchFailed('ECONNREFUSED'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('ENOTFOUND'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('EAI_AGAIN'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('ENETUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('EHOSTUNREACH'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [fetchFailed('DEPTH_ZERO_SELF_SIGNED_CERT'), { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }],
+      [
+        fetchFailed('UND_ERR_ABORTED', 'Proxy response (403) !== 200 when HTTP Tunneling'),
+        { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false },
+      ],
+      [fetchFailed('ECONNRESET', 'read ECONNRESET'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('UND_ERR_SOCKET', 'other side closed'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new Response('not json', { status: 201 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
       [json(201, { id: 42 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
     ];
@@ -252,10 +271,29 @@ describe('JiraIssueTransitionWriter (ADR-0112 D2/D5: the approved transition id 
   });
 
   it('a transport failure or 5xx on the transition POST is UNCERTAIN, with no retry', async () => {
-    for (const [reply, reason] of [[new Error('reset'), 'TRANSPORT'], [json(502, {}), 'SERVER_ERROR']] as const) {
+    for (const [reply, reason] of [
+      [new Error('reset'), 'TRANSPORT'],
+      [fetchFailed('ECONNRESET', 'read ECONNRESET'), 'TRANSPORT'],
+      [json(502, {}), 'SERVER_ERROR'],
+    ] as const) {
       const fake = fakeFetch(issue('PROJ-7'), json(200, TRANSITIONS), reply);
       expect(await new JiraIssueTransitionWriter(config(fake.fetchImpl)).transition(APPROVED)).toEqual({
         status: 'UNCERTAIN', reason,
+      });
+      expect(fake.calls).toHaveLength(3);
+    }
+  });
+
+  it('a transition POST that provably never left is NOT_SENT (UNAVAILABLE), with no retry', async () => {
+    const preSend = [
+      fetchFailed('ECONNREFUSED'),
+      fetchFailed('ENOTFOUND'),
+      fetchFailed('UND_ERR_ABORTED', 'Proxy response (502) !== 200 when HTTP Tunneling'),
+    ];
+    for (const reply of preSend) {
+      const fake = fakeFetch(issue('PROJ-7'), json(200, TRANSITIONS), reply);
+      expect(await new JiraIssueTransitionWriter(config(fake.fetchImpl)).transition(APPROVED)).toEqual({
+        status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false,
       });
       expect(fake.calls).toHaveLength(3);
     }
