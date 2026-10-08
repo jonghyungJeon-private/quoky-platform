@@ -222,6 +222,13 @@ import {
   type PromptCompositionOptions,
 } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
+import {
+  isSummarizableDocumentReadout,
+  isUntrustedDocumentReadout,
+  renderUntrustedDocumentHistoryNote,
+  renderUntrustedDocumentReplyWithheld,
+  type UntrustedDocumentReadout,
+} from './untrusted-document-readout';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
   type CodeGenerationContextResult,
@@ -809,13 +816,16 @@ export interface ConversationRuntimeDeps {
    *  user text); it never spawns a shell, calls git, or mutates a file. */
   readonly command: { run(input: RunCommandInput): Promise<CommandExecution> };
   readonly contextBuilder: { build(task: Task, excludeMemoryIds: Id[]): Promise<ContextBundle> };
-  /** ADR-0100 D8: the readout is widened by type only to carry a work summary's external-work readout. */
+  /**
+   * ADR-0100 D8: the readout is widened by type only to carry a work summary's external-work readout; ADR-0118 D7
+   * widens it the same way for the untrusted readout of one personal item the owner asked to summarize.
+   */
   readonly promptComposer: {
     /** ADR-0107 D6: `options` (type-only widening) carries the resolved provider's locality for the example layer. */
     compose(
       task: Task,
       bundle: ContextBundle,
-      readout?: ProjectReadout | ExternalWorkReadout,
+      readout?: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout,
       options?: PromptCompositionOptions,
     ): PromptSpec;
   };
@@ -3370,6 +3380,9 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     const fallback = (): Promise<TurnResult> =>
       this.respondComposed(message, session, outboundMessage(message.context, summary.fallbackText));
+    if (isUntrustedDocumentReadout(summary.readout)) {
+      return this.handleDocumentSummary(message, session, actor, userMemoryId, summary, summary.readout, fallback);
+    }
     if (!isSummarizableExternalWorkReadout(summary.readout)) {
       this.deps.logger.warn('work summary readout rejected', { messageId: message.id, sessionId: session.id });
       return fallback();
@@ -3397,6 +3410,50 @@ export class ConversationRuntime {
       result = await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout);
     } catch (err) {
       this.deps.logger.warn('work summary path threw', {
+        messageId: message.id,
+        sessionId: session.id,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return fallback();
+    }
+    if (result.status !== 'RESPONDED') return fallback();
+    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
+  }
+
+  /**
+   * ADR-0118 D7 (GML-1): the summary of ONE personal item the owner explicitly asked for. The readout is re-validated
+   * (shape, bounds, no invisible characters, the strict credential guard on the rendered prompt text) BEFORE any
+   * provider call, then runs the same SUMMARIZATION work path as a work summary — selection stays capability /
+   * priority / `isAvailable`, so the provider is the effective chat-tier choice — over a self-contained prompt with no
+   * transcript, recall or examples and no tool surface. The handler created no Task, approval or write, and nothing in
+   * this path can (ADR-0096 D4). A rejected readout or any non-RESPONDED result is the handler's fixed `fallbackText`.
+   */
+  private async handleDocumentSummary(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    userMemoryId: Id,
+    summary: TurnHandlerSummarizeReply,
+    readout: UntrustedDocumentReadout,
+    fallback: () => Promise<TurnResult>,
+  ): Promise<TurnResult> {
+    if (!isSummarizableDocumentReadout(readout)) {
+      this.deps.logger.warn('document summary readout rejected', { messageId: message.id, sessionId: session.id });
+      return fallback();
+    }
+    const intent: Intent = {
+      type: IntentType.SUMMARIZE,
+      capability: Capability.SUMMARIZATION,
+      confidence: 1,
+      requiresWork: true,
+      summary: `document summary: ${readout.source}`,
+      raw: { kind: 'document-summary', source: readout.source },
+    };
+    let result: TurnResult;
+    try {
+      result = await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout);
+    } catch (err) {
+      this.deps.logger.warn('document summary path threw', {
         messageId: message.id,
         sessionId: session.id,
         errorName: err instanceof Error ? err.name : typeof err,
@@ -7518,7 +7575,7 @@ export class ConversationRuntime {
     actor: Actor,
     intent: Intent,
     excludeMemoryId: Id,
-    readout: ProjectReadout | ExternalWorkReadout | undefined,
+    readout: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout | undefined,
   ): Promise<TurnResult> {
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
@@ -7554,7 +7611,8 @@ export class ConversationRuntime {
       // recall is read for it (PromptComposer also ignores the bundle for an external-work readout).
       // ADR-0111 D3: the current message's text attachments join the bundle as one bounded, untrusted Resource
       // (from the InboundMessage only; never persisted). A work summary stays self-contained and carries none.
-      const bundle: ContextBundle = isExternalWorkReadout(readout)
+      // ADR-0118 D7: a document summary is self-contained the same way (no transcript, recall or attachments).
+      const bundle: ContextBundle = isExternalWorkReadout(readout) || isUntrustedDocumentReadout(readout)
         ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
         : withAttachedTextFiles(
             await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []),
@@ -7693,8 +7751,15 @@ export class ConversationRuntime {
       const executed = await provider.execute(executionRequest);
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
       // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
-      const withheld = this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
-      const guard = withheld ? null : this.guardChatReply(capability, executed.text, task.description, task.id);
+      // ADR-0118 D7/D8: a document summary gets both — the credential check (its own notice) and the claim guard, so a
+      // summary an injected item steered toward "I added a to-do / set a reminder" is replaced by the not-done notice.
+      const documentSummary = isUntrustedDocumentReadout(readout);
+      const withheld = documentSummary
+        ? this.withheldDocumentSummaryReply(message, executed.text, executed.artifacts ?? [], task.id)
+        : this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
+      const guard = withheld
+        ? null
+        : this.guardChatReply(documentSummary ? Capability.GENERAL_CHAT : capability, executed.text, task.description, task.id);
       const result = withheld ? { ...executed, ...withheld } : { ...executed, text: guard?.text ?? executed.text };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
@@ -7707,7 +7772,13 @@ export class ConversationRuntime {
         ...(providerId ? { providerId } : {}),
         ...(runMetadata ? { metadata: runMetadata } : {}),
       });
-      await this.deps.memory.recordAssistant(result.text, message.context, task.sessionId ?? session.id);
+      // ADR-0118 D7/D8: a document summary is never kept as transcript (a fixed note instead), so neither the item's
+      // text nor anything an injected item steered the model to write reaches a later prompt.
+      await this.deps.memory.recordAssistant(
+        documentSummary ? renderUntrustedDocumentHistoryNote(readout.source, noticeLanguage(undefined, message.text)) : result.text,
+        message.context,
+        task.sessionId ?? session.id,
+      );
       if (capability === Capability.PROJECT_ANALYSIS && task.projectId) {
         await this.deps.memory.recordToolMemory(result.text, {
           projectId: task.projectId,
@@ -7799,6 +7870,22 @@ export class ConversationRuntime {
     // Content-free.
     this.deps.logger.info('attachment turn reply withheld', { taskId });
     return { text: renderAttachmentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
+  }
+
+  /**
+   * ADR-0118 D7: the credential check on a document summary's ORIGINAL reply and every artifact (the item passed the
+   * guard, so a match is model-made). A match withholds the whole reply with a fixed notice, before anything is
+   * persisted or delivered.
+   */
+  private withheldDocumentSummaryReply(
+    message: InboundMessage,
+    text: string,
+    artifacts: readonly Artifact[],
+    taskId: Id,
+  ): { text: string; artifacts: Artifact[] } | null {
+    if (!isAttachmentReplyWithheld(text, artifacts)) return null;
+    this.deps.logger.info('document summary reply withheld', { taskId });
+    return { text: renderUntrustedDocumentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }
 
   /**
