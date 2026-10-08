@@ -1,5 +1,5 @@
 import { REMINDER_LIMITS } from '@quoky/core';
-import { renderNotificationForDiscord } from './rendering';
+import { DISCORD_PLATFORM, renderNotificationForDiscord } from './rendering';
 import type {
   Logger,
   NotificationNotSentReason,
@@ -20,7 +20,7 @@ import type {
  *    unclassified once the send call started). When in doubt: UNCERTAIN. It is never retried or re-routed.
  */
 
-export const DISCORD_NOTIFICATION_PLATFORM = 'discord';
+export const DISCORD_NOTIFICATION_PLATFORM = DISCORD_PLATFORM;
 /** Discord's hard message limit; the mention prefix must still fit under it. */
 const DISCORD_MESSAGE_LIMIT = 2_000;
 /** A hung send must not block the dispatcher tick forever; it is then UNCERTAIN (it may still land). */

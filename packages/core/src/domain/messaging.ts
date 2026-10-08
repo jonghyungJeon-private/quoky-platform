@@ -18,6 +18,11 @@ export interface ConversationContext {
   channelId: string;
   threadId?: string;
   userId: string;
+  /**
+   * Set by the adapter (PLT-0): true for a one-to-one conversation with the owner (a DM / private chat), false for a
+   * channel or group. Absent on contexts recorded earlier; Core then treats a context without a `spaceId` as direct.
+   */
+  direct?: boolean;
 }
 
 /** Legacy, unused placeholder (pre-ADR-0111). Inbound attachments use {@link InboundAttachment}. */

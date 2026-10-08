@@ -12,6 +12,7 @@ import {
   connectorWriteTimeLabel,
   renderConnectorWriteAlreadyExecuted,
   renderConnectorWriteApprovedElsewhere,
+  renderConnectorWriteOpsApprovedNotice,
   renderConnectorWriteAlreadySent,
   renderConnectorWriteOutcome,
   renderConnectorWriteRefusal,
@@ -26,7 +27,7 @@ const PROBE: MessageMarkup = {
   ...PLAIN_TEXT_MARKUP,
   untrusted: (text, guard) => `«${guard}:${text}»`,
   link: (url) => `«link:${url}»`,
-  conversation: (id) => `«conversation:${id}»`,
+  conversation: (ref) => (ref.platform !== 'test' ? `«${ref.platform}:${ref.direct ? 'direct' : 'channel'}»` : ref.id !== undefined ? `«conversation:${ref.id}»` : ref.label),
 };
 const probe = (body: Parameters<typeof plainTextOf>[0]): string => renderMessageContent(body, PROBE);
 import type { ConnectorWritePreview, ConnectorWriteRefusal } from './connector-write-flow';
@@ -190,6 +191,25 @@ describe('connector-write copy — cross-conversation hints (live QA 2026-10-07)
     expect(probe(renderConnectorWriteApprovedElsewhere({ ...base, context: { ...guild, threadId: 't9' } }))).toContain('«conversation:t9»에서');
     expect(plainTextOf(renderConnectorWriteApprovedElsewhere({ ...base, context: { ...guild, channelId: 'c1><@everyone' } }))).toContain('미리보기를 받은 채널에서');
     expect(plainTextOf(renderConnectorWriteApprovedElsewhere({ ...base, context: CTX }))).toContain('미리보기를 받은 봇과의 DM에서');
-    expect(connectorWriteConversationPlace(CTX)).toEqual({ kind: 'dm' });
+    expect(connectorWriteConversationPlace(CTX).kind).toBe('dm');
+  });
+
+  it('names a conversation on another platform with that platform, never "이 DM" or the delivering platform syntax (review P2-4)', () => {
+    // The probe markup is the `test` platform's: its own references are native, any other platform is named.
+    const base = { operation: 'CHANNEL_POST', target: { kind: 'channel', channelLabel: 'dev', channelId: 'C1' }, executionPhrase: 'Slack 게시 실행', remainingMs: 600_000 } as const;
+    const foreignDm = { platform: 'other', channelId: 'o1', userId: 'u', direct: true };
+    const foreignGroup = { platform: 'other', channelId: 'o2', userId: 'u', direct: false };
+    const notice = probe(renderConnectorWriteOpsApprovedNotice({ ...base, chat: foreignDm }));
+    expect(notice).toContain('실제 게시는 «other:direct»에서 "Slack 게시 실행"이라고 보내면 돼요');
+    expect(notice).not.toContain('이 DM에서 "');
+    expect(probe(renderConnectorWriteOpsApprovedNotice({ ...base, chat: foreignGroup }))).toContain('실제 게시는 «other:channel»에서');
+    expect(probe(renderConnectorWriteApprovedElsewhere({ ...base, context: foreignDm }))).toContain('미리보기를 받은 «other:direct»에서');
+    expect(probe(renderConnectorWriteApprovedElsewhere({ ...base, context: foreignDm }))).not.toContain('봇과의 DM');
+    // On its own platform the same contexts read as before: "이 DM" / "봇과의 DM" for a DM, the native reference otherwise.
+    const ownDm = { ...foreignDm, platform: 'test' };
+    expect(probe(renderConnectorWriteOpsApprovedNotice({ ...base, chat: ownDm }))).toContain('실제 게시는 이 DM에서');
+    expect(probe(renderConnectorWriteApprovedElsewhere({ ...base, context: ownDm }))).toContain('미리보기를 받은 봇과의 DM에서');
+    // An adapter flag beats the space heuristic: a group with no space is not a DM.
+    expect(connectorWriteConversationPlace({ platform: 'test', channelId: 'g1', userId: 'u', direct: false }).kind).toBe('channel');
   });
 });

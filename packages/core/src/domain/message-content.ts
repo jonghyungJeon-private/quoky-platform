@@ -36,10 +36,24 @@ export interface LinkNode {
   readonly url: string;
 }
 
-/** A reference to a conversation (channel or thread) of the platform the message is delivered on, by its opaque id. */
+/**
+ * A reference to a conversation, built from its `ConversationContext` (`conversationRefOf`). The markup writes the
+ * platform's native syntax only when `platform` is its own platform and the conversation is a channel with a
+ * referenceable `id`; otherwise it writes a label. `label` is Quoky's copy for the same-platform case without native
+ * syntax (a direct conversation, or a channel whose id cannot be referenced); a conversation on ANOTHER platform is
+ * named by the markup with that platform instead, so a reply delivered on one platform never calls another platform's
+ * conversation "this DM".
+ */
 export interface ConversationRefNode {
   readonly kind: 'conversation';
-  readonly id: string;
+  /** The opaque platform id of the conversation (`ConversationContext.platform`). */
+  readonly platform: string;
+  /** A one-to-one conversation with the owner (a DM / private chat). */
+  readonly direct: boolean;
+  /** The channel or thread id, present only for a non-direct conversation whose id is a safe token. */
+  readonly id?: string;
+  /** Quoky copy for the same-platform case without native syntax ("이 DM", "승인을 요청한 채널"). */
+  readonly label: string;
 }
 
 /** A neutral topic on which a platform may add its own usage advice (or nothing). */

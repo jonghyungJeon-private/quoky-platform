@@ -8,7 +8,7 @@ import type {
 } from '../../ports/connector-write.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import { endsWithBatchim, withObjectParticle, withTopicParticle } from '../korean-particle';
-import { conversationRef, joinBody, joinMessage, messageBody, messageLink, untrustedText } from '../message-rendering';
+import { conversationRefOf, joinBody, joinMessage, messageBody, messageLink, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
 import { toZonedDateTime } from '../reminders/zoned-time';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
@@ -265,21 +265,23 @@ export function renderConnectorWriteBareExecution(
 }
 
 /**
- * Where a conversation is, for a "send the phrase there" hint: a direct conversation, or a channel (thread) reference
- * — a conversation-reference span the platform renders (PLT-0), present only for a plain id token (`reference` is
- * absent otherwise). Ids only, never names.
+ * Where a conversation is, for a "send the phrase there" hint: whether it is direct (the adapter's
+ * `ConversationContext.direct`), and the conversation-reference span the platform renders (PLT-0). The reference is
+ * written natively (a channel or thread id) only on the conversation's own platform; `labels` are the same-platform
+ * copy otherwise, and a conversation on another platform is named with that platform by the markup. Ids only, never
+ * names.
  */
-export type ConnectorWriteConversationPlace =
-  | { readonly kind: 'dm' }
-  | { readonly kind: 'channel'; readonly reference?: ConversationRefNode };
+export interface ConnectorWriteConversationPlace {
+  readonly kind: 'dm' | 'channel';
+  readonly reference: ConversationRefNode;
+}
 
-/** Same safe-id rule as everywhere a raw id reaches chat text: letters, digits, `_` and `-` only. */
-const PLACE_ID = /^[A-Za-z0-9_-]{1,64}$/u;
-
-export function connectorWriteConversationPlace(context: ConversationContext): ConnectorWriteConversationPlace {
-  if (context.spaceId === undefined) return { kind: 'dm' };
-  const id = context.threadId ?? context.channelId;
-  return PLACE_ID.test(id) ? { kind: 'channel', reference: conversationRef(id) } : { kind: 'channel' };
+export function connectorWriteConversationPlace(
+  context: ConversationContext,
+  labels: { readonly direct: string; readonly channel: string } = { direct: 'DM', channel: '채널' },
+): ConnectorWriteConversationPlace {
+  const reference = conversationRefOf(context, labels);
+  return { kind: reference.direct ? 'dm' : 'channel', reference };
 }
 
 /** The full target ("Slack #dev", "Jira PROJ-12", "내 기본 캘린더"). */
@@ -318,8 +320,7 @@ function labelWithTarget(operation: ConnectorWriteOperation, target: ConnectorWr
  * conversation). Names the kind, the target, the place and the time left only — never the payload.
  */
 export function renderConnectorWriteApprovedElsewhere(elsewhere: ConnectorWriteApprovedElsewhere): MessageBody {
-  const place = connectorWriteConversationPlace(elsewhere.context);
-  const where: MessagePart = place.kind === 'dm' ? '봇과의 DM' : (place.reference ?? '채널');
+  const where = connectorWriteConversationPlace(elsewhere.context, { direct: '봇과의 DM', channel: '채널' }).reference;
   return joinBody([
     messageBody(
       '실행하지 않았어요. 승인된 ',
@@ -343,8 +344,10 @@ export function renderConnectorWriteOpsApprovedNotice(notice: {
 }): MessageBody {
   const label = connectorWriteLabel(notice.operation);
   const step = label.split(' ').slice(1).join(' ');
-  const place = connectorWriteConversationPlace(notice.chat);
-  const where: MessagePart = place.kind === 'dm' ? '이 DM' : (place.reference ?? '승인을 요청한 채널');
+  // The notice is delivered in the owner's DM. A direct chat is "이 DM" only on the same platform; the markup names a
+  // conversation on another platform with that platform instead (PLT-0 review P2-4).
+  const place = connectorWriteConversationPlace(notice.chat, { direct: '이 DM', channel: '승인을 요청한 채널' });
+  const where = place.reference;
   const run = messageBody(
     `실제 ${step}${endsWithBatchim(step) ? '은' : '는'} `,
     where,

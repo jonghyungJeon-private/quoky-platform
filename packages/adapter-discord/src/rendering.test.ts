@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { conversationRef, messageContent, messageLink, outboundMessage, platformNote, untrustedText } from '@quoky/core';
+import { conversationRefOf, messageContent, messageLink, outboundMessage, platformNote, untrustedText } from '@quoky/core';
 import { DISCORD_MARKUP, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
 
 const CTX = { platform: 'discord', channelId: 'c', userId: 'u' };
@@ -21,10 +21,20 @@ describe('Discord markup of neutral content (PLT-0)', () => {
 
   it('writes links without embeds, conversation references and the command-prefix note', () => {
     expect(DISCORD_MARKUP.link('https://e.test/a_b')).toBe('<https://e.test/a_b>');
-    expect(DISCORD_MARKUP.conversation('900')).toBe('<#900>');
+    const labels = { direct: '이 DM', channel: '승인을 요청한 채널' };
+    const guild = { platform: 'discord', spaceId: 'g', channelId: '900', userId: 'u' };
+    expect(DISCORD_MARKUP.conversation(conversationRefOf(guild, labels))).toBe('<#900>');
+    expect(DISCORD_MARKUP.conversation(conversationRefOf({ ...guild, threadId: '901' }, labels))).toBe('<#901>');
+    // A Discord DM (by the adapter flag, or an older context without a guild) and an unreferenceable id: the label.
+    expect(DISCORD_MARKUP.conversation(conversationRefOf({ platform: 'discord', channelId: 'd', userId: 'u', direct: true }, labels))).toBe('이 DM');
+    expect(DISCORD_MARKUP.conversation(conversationRefOf({ platform: 'discord', channelId: 'd', userId: 'u' }, labels))).toBe('이 DM');
+    expect(DISCORD_MARKUP.conversation(conversationRefOf({ ...guild, channelId: 'c1><@everyone' }, labels))).toBe('승인을 요청한 채널');
+    // Another platform's conversation is named with that platform: never Discord syntax, never "이 DM".
+    expect(DISCORD_MARKUP.conversation(conversationRefOf({ platform: 'telegram', channelId: '42', userId: 'u', direct: true }, labels))).toBe('Telegram 개인 대화');
+    expect(DISCORD_MARKUP.conversation(conversationRefOf({ platform: 'telegram', spaceId: 's', channelId: '42', userId: 'u' }, labels))).toBe('Telegram 대화방');
     expect(DISCORD_MARKUP.platformNote('command-prefix')).toContain('Discord에서는 "/"로 시작하면 명령 선택 창이 열리니');
     expect(
-      renderDiscordContent(messageContent('see ', untrustedText('*t*'), ' ', messageLink('https://e.test'), ' in ', conversationRef('9'), platformNote('command-prefix'))),
+      renderDiscordContent(messageContent('see ', untrustedText('*t*'), ' ', messageLink('https://e.test'), ' in ', conversationRefOf({ platform: 'discord', spaceId: 'g', channelId: '9', userId: 'u' }, { direct: 'DM', channel: '채널' }), platformNote('command-prefix'))),
     ).toBe(`see \\*t\\* <https://e.test> in <#9>${DISCORD_MARKUP.platformNote('command-prefix')}`);
   });
 

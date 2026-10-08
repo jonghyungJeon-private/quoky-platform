@@ -1,4 +1,4 @@
-import type { PlatformNoteTopic, UntrustedTextGuard } from '../domain';
+import type { ConversationRefNode, PlatformNoteTopic, UntrustedTextGuard } from '../domain';
 
 /**
  * PORT (PLT-0, ARCHITECTURE.md §3): how one chat platform writes the spans of platform-neutral message content
@@ -14,8 +14,12 @@ export interface MessageMarkup {
   untrusted(text: string, guard: UntrustedTextGuard): string;
   /** A URL shown as a plain link, without an embed or preview card. */
   link(url: string): string;
-  /** A reference to a platform conversation, by opaque id. */
-  conversation(id: string): string;
+  /**
+   * A conversation reference. Native syntax only when `ref.platform` is this markup's own platform and `ref.id` is
+   * present; `ref.label` for its own platform otherwise; for a conversation on another platform, a neutral name of
+   * that platform's conversation (never the same-platform label such as "이 DM").
+   */
+  conversation(ref: ConversationRefNode): string;
   /** The platform's own advice on a neutral topic, or `''`. */
   platformNote(topic: PlatformNoteTopic): string;
 }

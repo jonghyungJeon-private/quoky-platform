@@ -3,7 +3,8 @@ import type { MessageMarkup } from '../ports/message-markup.port';
 import {
   PLAIN_TEXT_MARKUP,
   clipMessage,
-  conversationRef,
+  conversationRefOf,
+  isDirectConversation,
   fitLines,
   joinBody,
   joinMessage,
@@ -28,18 +29,33 @@ const CTX = { platform: 'test', channelId: 'c', userId: 'u' };
 const WIDE: MessageMarkup = {
   untrusted: (text, guard) => `{${guard}:${text}}`,
   link: (url) => `<${url}>`,
-  conversation: (id) => `[#${id}]`,
+  conversation: (ref) => `[${ref.platform}:${ref.direct ? 'direct' : ref.id ?? ref.label}]`,
   platformNote: (topic) => ` (note ${topic})`,
 };
 
 describe('platform-neutral message content (PLT-0)', () => {
   it('renders spans with the given markup and plainly for OutboundMessage.text', () => {
-    const body = messageContent('a ', untrustedText('*x*'), ' ', messageLink('https://e.test'), ' ', conversationRef('9'), platformNote('command-prefix'));
-    expect(renderMessageContent(body, WIDE)).toBe('a {markup:*x*} <https://e.test> [#9] (note command-prefix)');
+    const body = messageContent('a ', untrustedText('*x*'), ' ', messageLink('https://e.test'), ' ', conversationRefOf({ platform: 'test', spaceId: 's', channelId: '9', userId: 'u' }, { direct: 'DM', channel: '채널' }), platformNote('command-prefix'));
+    expect(renderMessageContent(body, WIDE)).toBe('a {markup:*x*} <https://e.test> [test:9] (note command-prefix)');
     expect(plainTextOf(body)).toBe('a *x* https://e.test #9');
     expect(renderMessageContent(body, PLAIN_TEXT_MARKUP)).toBe(plainTextOf(body));
     expect(renderMessageContent('plain', WIDE)).toBe('plain');
     expect(renderMessageContent(messageContent(untrustedText('m', 'mentions'), untrustedText('h', 'handles')), WIDE)).toBe('{mentions:m}{handles:h}');
+  });
+
+  it('builds conversation references from the context: direct by the adapter flag, else by the absence of a space', () => {
+    const labels = { direct: 'DM', channel: '채널' };
+    expect(conversationRefOf({ platform: 'p', spaceId: 's', channelId: 'c', threadId: 't', userId: 'u' }, labels)).toEqual({
+      kind: 'conversation', platform: 'p', direct: false, id: 't', label: '채널',
+    });
+    expect(conversationRefOf({ platform: 'p', channelId: 'c', userId: 'u', direct: true }, labels)).toEqual({ kind: 'conversation', platform: 'p', direct: true, label: 'DM' });
+    // A group without a space (e.g. a future platform) is not direct when the adapter says so.
+    expect(isDirectConversation({ platform: 'p', channelId: 'c', userId: 'u', direct: false })).toBe(false);
+    // An older context (no flag) without a space is direct; an unsafe id is never referenced.
+    expect(isDirectConversation({ platform: 'p', channelId: 'c', userId: 'u' })).toBe(true);
+    expect(conversationRefOf({ platform: 'p', spaceId: 's', channelId: 'a b', userId: 'u' }, labels)).toEqual({ kind: 'conversation', platform: 'p', direct: false, label: '채널' });
+    expect(plainTextOf(messageContent(conversationRefOf({ platform: 'p', spaceId: 's', channelId: 'c', userId: 'u' }, labels)))).toBe('#c');
+    expect(plainTextOf(messageContent(conversationRefOf({ platform: 'p', channelId: 'c', userId: 'u' }, labels)))).toBe('DM');
   });
 
   it('merges adjacent strings, flattens bodies and refuses to be stringified', () => {

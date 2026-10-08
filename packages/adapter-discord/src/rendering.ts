@@ -1,5 +1,13 @@
 import { renderMessageContent } from '@quoky/core';
-import type { MessageBody, MessageMarkup, OutboundMessage, OwnerNotification, PlatformNoteTopic, UntrustedTextGuard } from '@quoky/core';
+import type {
+  ConversationRefNode,
+  MessageBody,
+  MessageMarkup,
+  OutboundMessage,
+  OwnerNotification,
+  PlatformNoteTopic,
+  UntrustedTextGuard,
+} from '@quoky/core';
 import { renderMarkdownTablesForDiscord } from './markdown-tables';
 
 /**
@@ -35,12 +43,26 @@ const PLATFORM_NOTES: Readonly<Record<PlatformNoteTopic, string>> = {
   'command-prefix': ' 다만 Discord에서는 "/"로 시작하면 명령 선택 창이 열리니, Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
 };
 
+/** The platform id this adapter puts on every `ConversationContext` it builds. */
+export const DISCORD_PLATFORM = 'discord';
+
+/**
+ * A conversation reference. `<#id>` only for a Discord channel or thread with a referenceable id; Quoky's label for a
+ * Discord DM or an unreferenceable channel; for a conversation on another platform, a neutral name of that platform's
+ * conversation, so a Discord message never calls it "이 DM" or writes Discord syntax for it.
+ */
+function conversation(ref: ConversationRefNode): string {
+  if (ref.platform === DISCORD_PLATFORM) return ref.id !== undefined ? `<#${ref.id}>` : ref.label;
+  const name = `${ref.platform.charAt(0).toUpperCase()}${ref.platform.slice(1)}`;
+  return ref.direct ? `${name} 개인 대화` : `${name} 대화방`;
+}
+
 /** How Discord writes each platform-rendered span of the neutral content. */
 export const DISCORD_MARKUP: MessageMarkup = Object.freeze({
   untrusted: neutralize,
   // Angle brackets suppress Discord's link embed.
   link: (url: string) => `<${url}>`,
-  conversation: (id: string) => `<#${id}>`,
+  conversation,
   platformNote: (topic: PlatformNoteTopic) => PLATFORM_NOTES[topic],
 });
 

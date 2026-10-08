@@ -69,7 +69,7 @@ import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } fr
 
 /** PLT-0: link and conversation-reference spans of a reply made visible (the platform adapter renders them). */
 const probe = (reply: Parameters<typeof outboundBody>[0]): string =>
-  renderMessageContent(outboundBody(reply), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»`, conversation: (id) => `«conversation:${id}»` });
+  renderMessageContent(outboundBody(reply), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»`, conversation: (ref) => (ref.id !== undefined ? `«conversation:${ref.id}»` : ref.label) });
 
 // CWR-2 (ADR-0112 D5/D6, ADR-0110 amendment D3–D5): the connector-write chat approval flow end to end on a real
 // ConversationRuntime with the real work-chat and calendar handlers, the real StatelessConnectorWriteFlow, the real

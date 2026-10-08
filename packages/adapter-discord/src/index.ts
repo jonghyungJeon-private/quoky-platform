@@ -2,7 +2,7 @@ import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'disco
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
-import { renderOutboundForDiscord } from './rendering';
+import { DISCORD_PLATFORM, renderOutboundForDiscord } from './rendering';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
@@ -21,7 +21,7 @@ export {
 } from './delivery';
 export type { DeliveryReport, ChunkSender } from './delivery';
 export { MAX_TABLE_COLUMNS, isTableRenderingEligible, renderMarkdownTablesForDiscord } from './markdown-tables';
-export { DISCORD_MARKUP, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
+export { DISCORD_MARKUP, DISCORD_PLATFORM, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
 export {
   classifyDiscordError,
   deliverOwnerNotification,
@@ -138,7 +138,7 @@ const TYPING_MAX_TICKS = 16;
  * to be enabled for the bot in the Discord Developer Portal.
  */
 export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink {
-  readonly platform = 'discord';
+  readonly platform = DISCORD_PLATFORM;
 
   private client?: Client;
   private messageHandler?: InboundMessageHandler;
@@ -611,6 +611,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       userId: message.author.id,
       ...(message.guildId ? { spaceId: message.guildId } : {}),
       ...(threadId ? { threadId } : {}),
+      // A Discord message outside a guild is a DM with the bot (admission admits only the owner's own DM).
+      direct: !message.guildId,
     };
 
     return {

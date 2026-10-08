@@ -27,11 +27,11 @@ import type { MessageMarkup } from '../ports/message-markup.port';
  * use, so every platform keeps exactly the lines that fit in ITS rendering.
  */
 
-/** The plain rendering behind `OutboundMessage.text`: untrusted text verbatim, bare URLs, `#id`, no platform notes. */
+/** The plain rendering behind `OutboundMessage.text`: untrusted text verbatim, bare URLs, `#id` or the label, no notes. */
 export const PLAIN_TEXT_MARKUP: MessageMarkup = Object.freeze({
   untrusted: (text: string) => text,
   link: (url: string) => url,
-  conversation: (id: string) => `#${id}`,
+  conversation: (ref: ConversationRefNode) => (ref.id !== undefined ? `#${ref.id}` : ref.label),
   platformNote: () => '',
 });
 
@@ -107,8 +107,32 @@ export function messageLink(url: string): LinkNode {
   return Object.freeze({ kind: 'link', url });
 }
 
-export function conversationRef(id: string): ConversationRefNode {
-  return Object.freeze({ kind: 'conversation', id });
+/** The same safe-id rule as everywhere a raw id reaches chat text: letters, digits, `_` and `-` only. */
+const REFERENCEABLE_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+
+/** Whether a context is a one-to-one conversation (the adapter's `direct`; for an older context, no `spaceId`). */
+export function isDirectConversation(context: ConversationContext): boolean {
+  return context.direct ?? context.spaceId === undefined;
+}
+
+/**
+ * A reference to the conversation of `context`: its platform, whether it is direct, and (for a channel or thread with a
+ * safe id) its id. `labels` is Quoky's copy for the same-platform case the markup cannot reference natively.
+ */
+export function conversationRefOf(
+  context: ConversationContext,
+  labels: { readonly direct: string; readonly channel: string },
+): ConversationRefNode {
+  const direct = isDirectConversation(context);
+  const id = context.threadId ?? context.channelId;
+  const referenceable = !direct && REFERENCEABLE_ID.test(id);
+  return Object.freeze({
+    kind: 'conversation',
+    platform: context.platform,
+    direct,
+    ...(referenceable ? { id } : {}),
+    label: direct ? labels.direct : labels.channel,
+  });
 }
 
 export function platformNote(topic: PlatformNoteTopic): PlatformNoteNode {
@@ -252,7 +276,7 @@ function renderNode(node: MessageNode, markup: MessageMarkup): string {
     case 'link':
       return markup.link(node.url);
     case 'conversation':
-      return markup.conversation(node.id);
+      return markup.conversation(node);
     case 'platform-note':
       return markup.platformNote(node.topic);
     case 'clip':
