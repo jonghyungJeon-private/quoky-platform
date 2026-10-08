@@ -755,7 +755,8 @@ describe('Telegram adapter halts and stops during intake (Codex P1/P2)', () => {
     const gate = { release: () => undefined as void, started: false };
     const real = fs.writeFile.bind(fs);
     const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
-      if (!String(args[0]).includes('intake-')) return real(...args);
+      // Only the FIRST intake write is held; later ones (a restarted run's) go straight through.
+      if (!String(args[0]).includes('intake-') || gate.started) return real(...args);
       gate.started = true;
       await new Promise<void>((resolve) => (gate.release = resolve));
       return real(...args);
@@ -804,6 +805,48 @@ describe('Telegram adapter halts and stops during intake (Codex P1/P2)', () => {
       for (let i = 0; i < 200 && (await filesUnder(tempRoot)).length > 0; i += 1) await flush(1);
       await flush(20);
       expect(h.received).toEqual([]);
+      expect(await filesUnder(tempRoot)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('Codex delta P2: an earlier run finishing after a restart never touches the new run (polling, offset, turns)', async () => {
+    const { store, offsetStore } = memoryStore(400);
+    const photo = mediaUpdate(400, photoField({ fileId: 'p', size: PNG.length }));
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply([photo]), okReply([photo, textUpdate(401, '다음')]), okReply([textUpdate(402, '그 다음')]))
+      .queue('getFile', fileReply('photos/a.jpg'), fileReply('photos/a.jpg'))
+      .queue('downloadFile', bytesReply(PNG), bytesReply(PNG));
+    const { gate, spy } = holdNextImageWrite();
+    try {
+      const h = harness(fake, { offsetStore, stopSettleMs: 20 });
+      await h.adapter.start();
+      await until(() => gate.started);
+      // The first run's intake is stuck past the stop bound.
+      await h.adapter.stop();
+      expect(h.adapter.status().polling).toBe(false);
+      expect(store.saves).toEqual([]);
+      // Restart: the new run takes in 400 again (its write is not held) and 401.
+      await h.adapter.start();
+      await until(() => h.received.length === 2 && store.saves.includes(402));
+      expect(h.adapter.status().polling).toBe(true);
+      // Now the first run's stuck write lands and its loop finishes.
+      gate.release();
+      await flush(30);
+      expect(h.adapter.status().polling).toBe(true);
+      // Only the new run saved: strictly increasing (the old run handing 400 over would write 401 again, out of order).
+      expect(store.saves.every((offset, index) => index === 0 || offset > (store.saves[index - 1] as number))).toBe(true);
+      // The old run handed nothing over: 400 arrived once, from the new run. (The harness handler reads an image before
+      // recording it, so arrival order is not asserted.)
+      expect(h.received.filter((message) => message.id === '4000')).toHaveLength(1);
+      expect(h.logs.filter((line) => line.message === 'attachment turn not handed over: telegram stopping')).toHaveLength(1);
+      // The new run keeps working.
+      await until(() => h.received.length === 3);
+      expect(h.received.map((message) => message.id).sort()).toEqual(['4000', '4010', '4020']);
+      await until(() => store.saves.includes(403));
+      expect(store.saves).toEqual([401, 402, 403]);
+      expect(h.adapter.status().polling).toBe(true);
       expect(await filesUnder(tempRoot)).toEqual([]);
     } finally {
       spy.mockRestore();

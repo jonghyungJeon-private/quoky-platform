@@ -441,6 +441,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     // CA re-review P3-2: an unexpected rejection of the background loop must never become an unhandled rejection that
     // takes the process (and Discord) down; it halts the Telegram side only and is logged without content.
     this.loop = this.run(controller.signal, first === 'verified').catch((err: unknown) => {
+      // Codex delta P2: a loop of an earlier run (stopped past the settle bound, then restarted) never touches this run.
+      if (!this.isCurrentRun(controller.signal)) return;
       this.polling = false;
       // A rejection while stopping is the shutdown itself, not a defect: no halt, no notice.
       if (this.stopped) return;
@@ -572,6 +574,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       clearTimeout(timer);
       if (settled === 'timeout') this.logger.warn('telegram stop: attachment intake did not settle in time', { boundMs: this.stopSettleMs });
     }
+    // The run is over even when its loop has not settled: that loop can no longer touch this adapter's state.
+    this.polling = false;
     this.loop = undefined;
     this.controller = undefined;
     // TG-2: an album still being collected is not handed over; its parts stay unconfirmed and come back on restart.
@@ -596,12 +600,23 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 
   private async run(signal: AbortSignal, verified: boolean): Promise<void> {
     if (!verified && !(await this.verifyInBackground(signal))) return;
+    if (!this.isCurrentRun(signal) || signal.aborted) return;
     this.polling = true;
     try {
       await this.poll(signal);
     } finally {
-      this.polling = false;
+      // Codex delta P2: only the current run owns `polling` (an earlier run's loop may finish after a restart).
+      if (this.isCurrentRun(signal)) this.polling = false;
     }
+  }
+
+  /**
+   * Whether `signal` is the current run's lifecycle signal. Every start makes a new controller, so a loop of an earlier
+   * run (one `stop()` stopped waiting for after {@link STOP_INTAKE_SETTLE_MS}) is told apart from the current one: it
+   * changes no loop-owned state (`polling`, the offset, the album, the poll bookkeeping) and saves nothing.
+   */
+  private isCurrentRun(signal: AbortSignal): boolean {
+    return this.controller?.signal === signal;
   }
 
   /** Retry the identity check with the poll backoff until it is verified (`true`), halted or stopped (`false`). */
@@ -611,9 +626,9 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       code: TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE,
       delayMs: delay,
     });
-    while (!this.stopped) {
+    while (!this.stopped && !signal.aborted) {
       await this.sleep(delay, signal);
-      if (this.stopped) return false;
+      if (this.stopped || signal.aborted) return false;
       delay = Math.min(this.backoff.maxMs, delay * 2);
       try {
         if ((await this.checkIdentity(signal)) === 'verified') return true;
@@ -635,7 +650,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     let delay = this.backoff.initialMs;
     this.lastUpdateAtMs = this.nowMs();
     this.logger.info('telegram polling started');
-    while (!this.stopped) {
+    while (!this.stopped && !signal.aborted) {
       let updates: unknown;
       // CA re-review P2: after 24 h without any update, Telegram may have restarted update_id from a LOWER value that
       // the held offset would swallow; nothing older can still be pending, so poll once without an offset.
@@ -663,7 +678,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
         );
         if (!Array.isArray(updates)) throw new TelegramApiError(TelegramFailureCode.MALFORMED_RESPONSE, 'getUpdates');
       } catch (err) {
-        if (this.stopped) break;
+        if (this.stopped || signal.aborted) break;
         // CA P3-5: a token rejected while running stops the Telegram side (a retry cannot help).
         if (codeOf(err) === TelegramFailureCode.AUTH) {
           this.halt(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
@@ -686,6 +701,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
         await this.sleep(wait, signal);
         continue;
       }
+      // A run that was stopped meanwhile (possibly followed by a restart) acts on nothing it received.
+      if (this.stopped || signal.aborted) break;
       delay = this.backoff.initialMs;
       this.pollLimit = POLL_LIMIT;
       if (sentOffset !== undefined) this.confirmedOffset = sentOffset;
@@ -742,6 +759,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     /** Owner drops per owner chat (CA re-review P3-1: each owner is told about their own messages only). */
     const ownerDrops = new Map<string, { stale: number; noText: number }>();
     for (const update of updates) {
+      // Codex delta P2: a stopped run (even one a restart replaced) moves no offset and holds no album.
+      if (signal.aborted) return false;
       const updateId = updateIdOf(update);
       // Already handed over or dropped (a repeated entry): never processed twice.
       if (updateId !== undefined && this.offset !== undefined && updateId < this.offset) continue;
@@ -787,6 +806,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       }
       if (updateId !== undefined) this.offset = updateId + 1;
     }
+    if (signal.aborted) return false;
     // TG-2: the album is complete once a re-poll brought no new part (or after the bounded re-polls).
     const group = this.pendingGroup;
     if (group !== undefined) {
