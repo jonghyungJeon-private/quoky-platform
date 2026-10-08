@@ -2215,3 +2215,65 @@ describe('connector writes — a pending request is rejected only by a whole-mes
     expect(h.totalWrites()).toBe(0);
   });
 });
+
+describe('connector writes — bare execution questions and prohibitions with a grant (Codex P2 on 5594c16)', () => {
+  it('"실행해도 돼?" / "실행할까?" get the exact-phrase hint while the grant waits; nothing runs, the grant stays', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: hello');
+    await h.send('승인');
+    const hint = renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' });
+    for (const text of ['실행해도 돼?', '실행할까?', '지금 실행해도 될까', '실행 안 해도 돼']) {
+      const reply = await h.send(text);
+      expect(reply.reply.text, text).toBe(hint);
+      expect(reply.reply.text, text).not.toContain('승인된 작업이 없어요');
+    }
+    expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
+    expect(h.totalWrites()).toBe(0);
+    expect((await h.send('댓글 실행')).reply.text).toContain('댓글을 달았어요');
+    expect(h.writes.addComment).toEqual([{ issueKey: 'PROJ-12', text: 'hello' }]);
+  });
+
+  it('"실행하지 마" withdraws the grant through the revoke path (a cancel); the phrase afterwards runs nothing', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: hello');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    const anchorTaskId = h.sessions.get('sess-1')?.activeTaskId as string;
+    const withdrawn = await h.send('실행하지 마');
+    expect(withdrawn.reply.text).not.toContain('승인된 작업이 없어요');
+    expect(anchorOf(h.tasks.get(anchorTaskId))).toMatchObject({ status: 'CLOSED', closedReason: 'cancelled' });
+    expect(h.approvals.get(approval!.id)).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'revoked-before-execution' });
+    expect((await h.send('댓글 실행')).reply.text).not.toContain('댓글을 달았어요');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('another actor’s "실행하지 마" cannot withdraw the owner’s grant (hint only)', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('승인');
+    h.setActor(OTHER);
+    const hint = (await h.send('실행하지 마')).reply.text;
+    expect(hint).toContain('아직 실행하지 않았어요');
+    expect(hint).toContain('"Slack 게시 실행"');
+    expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
+    h.setActor(OWNER);
+    expect((await h.send('Slack 게시 실행')).reply.text).toContain('Slack 게시 완료');
+  });
+
+  it('a grant waiting in another conversation is named; only with nothing approved anywhere is it "nothing approved"', async () => {
+    const GUILD: ConversationContext = { platform: 'test', spaceId: '900000000000000001', channelId: '900000000000000002', userId: 'owner-user' };
+    const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
+    const h = harness();
+    await h.sendIn(DM, 'PROJ-12에 댓글: 디엠에서 승인');
+    await h.sendIn(DM, '승인');
+    for (const text of ['실행해도 돼?', '실행하지 마']) {
+      const reply = await h.sendIn(GUILD, text);
+      expect(reply.reply.text, text).toContain('다른 대화에서 기다리고 있어요');
+      expect(reply.reply.text, text).not.toContain('승인된 작업이 없어요');
+    }
+    expect(h.totalWrites()).toBe(0);
+
+    const empty = harness();
+    expect((await empty.send('실행해도 돼?')).reply.text).toContain('이 대화에는 지금 실행할 승인된 작업이 없어요');
+  });
+});

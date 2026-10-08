@@ -669,7 +669,8 @@ describe('natural completion hints (QA-V2-W7-03, hint-only)', () => {
       expect(await say(text), text).toEqual({ kind: 'none' });
     }
     expect(await say('보고서 초안 쓰기 완료', other)).toEqual({ kind: 'none' });
-    expect(work.calls.every((call) => call === 'listActiveByActor')).toBe(true);
+    // Reads only (DET-2: a title with no open match also reads the closed to-dos for the wrong-state reply).
+    expect(work.calls.every((call) => call === 'listActiveByActor' || call === 'listByActor')).toBe(true);
   });
 
   it('live QA session 3 (D11): a substantial partial title of exactly one open to-do gets the hint; a small or shared one does not', async () => {
@@ -684,7 +685,8 @@ describe('natural completion hints (QA-V2-W7-03, hint-only)', () => {
     for (const text of ['QA 완료', '회의 완료', '스윕 완료', '점심 먹고 QA 스윕 정리하고 회의 준비까지 전부 완료']) {
       expect(await say(text), text).toEqual({ kind: 'none' });
     }
-    expect(work.calls.every((call) => call === 'listActiveByActor')).toBe(true);
+    // Reads only (DET-2: a title with no open match also reads the closed to-dos for the wrong-state reply).
+    expect(work.calls.every((call) => call === 'listActiveByActor' || call === 'listByActor')).toBe(true);
     expect(work.ofOwner().every((item) => item.status === WorkItemStatus.ACTIVE)).toBe(true);
 
     const shared = harness();
@@ -793,5 +795,48 @@ describe('read-only to-do status questions (QA-V2-W7-05)', () => {
       throw new Error('offline');
     };
     expect(await say('주간 보고서 쓰기 완료했나?')).toEqual({ kind: 'none' });
+  });
+});
+
+describe('whole-list status questions and the wrong-state hint (ADR-0104 D3, DET-2)', () => {
+  it('"할 일 몇 개야?" / "할 일 추가됐어?" answer with the store-backed list, byte-identical to the list reply, and never mutate', async () => {
+    const { say, service, work } = harness();
+    await say('할 일 추가: 주간 보고서 쓰기');
+    await say('할 일 추가: QA 스윕 정리');
+    const list = textOf(await service.handle({ kind: 'todo.list' }, owner));
+    expect(list).toContain('(2건)');
+    work.calls.length = 0;
+    for (const text of ['할 일 몇 개야?', '할 일 남았어?', '할 일 추가됐어?', 'how many todos do I have?']) {
+      expect(textOf(await say(text)), text).toBe(list);
+    }
+    expect(work.calls.some((call) => call === 'create' || call.startsWith('transition'))).toBe(false);
+  });
+
+  it('a summary that cannot read the store gets the fixed list failure, never chat', async () => {
+    const { service, work } = harness();
+    work.listActiveByActor = async () => {
+      throw new Error('storage down');
+    };
+    expect(textOf(await service.handle({ kind: 'todo.summary' }, owner))).toBe(
+      textOf(await service.handle({ kind: 'todo.list' }, owner)),
+    );
+  });
+
+  it('"<title> 완료" for a to-do that is already completed or canceled says so; still none when nothing or two match', async () => {
+    const { say, work } = harness();
+    await say('할 일 추가: 주간 보고서 쓰기');
+    await say('할 일 추가: 점심 예약');
+    await say('완료 처리: 1');
+    await say('할 일 취소: 1');
+    work.calls.length = 0;
+    expect(textOf(await say('주간 보고서 쓰기 완료'))).toBe('"주간 보고서 쓰기"는 완료 처리된 할 일이에요.');
+    expect(textOf(await say('주간보고서쓰기 완료했어'))).toBe('"주간 보고서 쓰기"는 완료 처리된 할 일이에요.');
+    expect(textOf(await say('점심 예약 완료'))).toBe('"점심 예약"는 취소된 할 일이에요.');
+    expect(await say('저녁 예약 완료')).toEqual({ kind: 'none' });
+    expect(await say('1번 완료했어')).toEqual({ kind: 'none' });
+    expect(work.calls.every((call) => call === 'listActiveByActor' || call === 'listByActor')).toBe(true);
+    // Another actor never sees the owner's closed to-dos.
+    const other: Actor = { ...owner, id: 'someone-else', identities: [] };
+    expect(await say('주간 보고서 쓰기 완료', other)).toEqual({ kind: 'none' });
   });
 });

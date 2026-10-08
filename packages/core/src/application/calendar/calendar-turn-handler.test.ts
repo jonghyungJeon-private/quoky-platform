@@ -183,3 +183,50 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('CalendarTurnHandler — "남은 일정" keeps only events that have not finished (Codex P2 on 5594c16)', () => {
+  /** Tuesday 2026-10-06 15:00 in Asia/Seoul. */
+  const AT_15 = '2026-10-06T06:00:00.000Z';
+  const at15 = (text: string): TurnHandlerContext => ({ ...ctx(text), now: AT_15 });
+  const event = (id: string, title: string, start: string, end: string): CalendarEvent => ({
+    id, title, start, end, allDay: false, status: 'confirmed', calendarName: 'primary',
+  });
+  const MORNING = event('e-am', '아침 스탠드업', '2026-10-06T00:00:00.000Z', '2026-10-06T01:00:00.000Z'); // 09:00–10:00, over
+  const ONGOING = event('e-now', '진행 중 리뷰', '2026-10-06T05:30:00.000Z', '2026-10-06T06:30:00.000Z'); // 14:30–15:30
+  const LATER = event('e-pm', '저녁 회의', '2026-10-06T07:00:00.000Z', '2026-10-06T08:00:00.000Z'); // 16:00–17:00
+  const ENDS_NOW = event('e-edge', '방금 끝난 통화', '2026-10-06T05:00:00.000Z', AT_15); // 14:00–15:00, ends exactly now
+
+  it('at 15:00 KST "오늘 남은 일정" reads from now, drops the 09:00–10:00 event and says "남은 일정 N개"', async () => {
+    // The reader returns the whole day anyway: the handler still drops what already ended.
+    const { reader, calls } = fakeReader(async () => [MORNING, ENDS_NOW, ONGOING, LATER]);
+    const outcome = await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handle(at15('오늘 남은 일정'));
+    expect(calls).toEqual([{ from: AT_15, to: '2026-10-06T15:00:00.000Z', limit: 50 }]);
+    const text = (outcome as { reply: { text: string } }).reply.text;
+    expect(text.split('\n')[0]).toBe('오늘 · 10월 6일(화): 남은 일정 2개');
+    expect(text).toContain('진행 중 리뷰');
+    expect(text).toContain('저녁 회의');
+    expect(text).not.toContain('아침 스탠드업');
+    expect(text).not.toContain('방금 끝난 통화');
+  });
+
+  it('nothing left says so; "오늘 일정" at the same time still lists the whole day', async () => {
+    const empty = await createCalendarTurnHandler({ reader: fakeReader(async () => [MORNING]).reader, timeZone: SEOUL }).handle(
+      at15('오늘 남은 일정 있어?'),
+    );
+    expect((empty as { reply: { text: string } }).reply.text.split('\n')[0]).toBe('오늘 · 10월 6일(화): 남은 일정이 없어요.');
+    const { reader, calls } = fakeReader(async () => [MORNING, LATER]);
+    const whole = await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handle(at15('오늘 일정'));
+    expect(calls[0]?.from).toBe('2026-10-05T15:00:00.000Z');
+    expect((whole as { reply: { text: string } }).reply.text.split('\n')[0]).toBe('오늘 · 10월 6일(화): 일정 2개');
+  });
+
+  it('a future day reads its whole window; a day that is already over reads nothing', async () => {
+    const { reader, calls } = fakeReader(async () => []);
+    const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
+    await handler.handle(at15('내일 남은 일정'));
+    expect(calls).toEqual([{ from: '2026-10-06T15:00:00.000Z', to: '2026-10-07T15:00:00.000Z', limit: 50 }]);
+    const past = await handler.handle(at15('어제 남은 일정'));
+    expect(calls).toHaveLength(1);
+    expect((past as { reply: { text: string } }).reply.text).toContain('남은 일정이 없어요');
+  });
+});

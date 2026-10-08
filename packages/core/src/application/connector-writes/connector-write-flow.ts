@@ -614,6 +614,62 @@ export function connectorWriteOperationsAskedAbout(text: string): ConnectorWrite
   return CONNECTOR_WRITE_OPERATIONS.filter((operation) => mentionsConnectorWriteExecutionStep(text, operation));
 }
 
+/** The step words of each write as a user names it (whole-message grammar below; the allow-list stays the executor). */
+const STEP_WORDS: Readonly<Record<ConnectorWriteOperation, string>> = {
+  ISSUE_COMMENT: String.raw`(?:(?:jira|지라)\s*)?(?:댓글|코멘트)`,
+  ISSUE_TRANSITION: String.raw`(?:(?:jira|지라)\s*)?상태\s*변경`,
+  CHANNEL_POST: String.raw`(?:(?:slack|슬랙)\s*)?게시`,
+  CALENDAR_EVENT_CREATE: String.raw`(?:캘린더\s*)?일정\s*추가`,
+  CALENDAR_EVENT_UPDATE: String.raw`(?:캘린더\s*)?일정\s*변경`,
+  CALENDAR_EVENT_DELETE: String.raw`(?:캘린더\s*)?일정\s*삭제`,
+};
+
+/** Imperative endings of "<step> 실행…" that the allow-list does not accept ("댓글 실행해", "게시 실행하자"). */
+const LOOSE_EXECUTION_TAIL = String.raw`실행\s*(?:해|해요|해라|하자|시켜|시켜\s*줘|시켜\s*주세요|해\s*줄래|해\s*줄래요|해\s*봐|좀\s*해\s*줘|부탁해|부탁해요)`;
+
+/**
+ * "Did it happen?" questions per write (live sweep, DET-2): the user asks whether a comment, post, transition or
+ * calendar change went out. Each needs a question ending or a `?` ({@link connectorWriteOperationsNamedLoosely}).
+ */
+const DONE_QUESTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
+  ISSUE_COMMENT:
+    /^(?:(?:jira|지라)\s*)?(?:댓글|코멘트)\s*(?:은|는|이|가|을|를|도)?\s*(?:잘\s*)?(?:달았|달렸|남겼|보냈|올렸|올라갔|등록됐|등록했|작성했|작성됐|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  ISSUE_TRANSITION:
+    /^(?:(?:jira|지라)\s*)?상태\s*(?:은|는|가|를)?\s*(?:잘\s*)?(?:변경했|변경됐|변경되었|바꿨|바뀌었|전환됐|전환했)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:(?:jira|지라)\s*)?상태\s*변경\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:했|됐|되었|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  CHANNEL_POST:
+    /^(?:slack|슬랙)\s*(?:에|에다|에서)?\s*(?:게시|글|메시지)?\s*(?:은|는|이|가|을|를|도)?\s*(?:잘\s*)?(?:게시했|게시됐|게시되었|올렸|올라갔|보냈|보내졌|전송됐|전송했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$|^게시(?:물|글)?\s*(?:은|는|이|가|을|를|도)?\s*(?:잘\s*)?(?:했|됐|되었|올렸|올라갔|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  CALENDAR_EVENT_CREATE:
+    /^(?:캘린더\s*(?:에)?\s*)?일정\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:추가됐|추가했|추가되었|잡혔|잡았|등록됐|등록했|생겼|만들었|만들어졌|들어갔)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:캘린더\s*)?일정\s*추가\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  CALENDAR_EVENT_UPDATE:
+    /^(?:캘린더\s*)?일정\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:변경됐|변경했|변경되었|바뀌었|바꿨|옮겨졌|옮겼|수정됐|수정했)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:캘린더\s*)?일정\s*변경\s*(?:은|이)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  CALENDAR_EVENT_DELETE:
+    /^(?:캘린더\s*)?일정\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:삭제됐|삭제했|삭제되었|지워졌|지웠|취소됐|취소했|빠졌)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:캘린더\s*)?일정\s*삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+};
+/** A "did it happen?" ending that is a question by itself (no `?` needed). */
+const SELF_QUESTION_ENDING = /(?:나|나요|니|냐|지|죠)$/u;
+
+/**
+ * The writes a short whole message names WITHOUT being an execution command or a question the allow-list vetoes
+ * (DET-2 sweep): a loose imperative of the step ("댓글 실행해", "일정 추가 실행하자") or a "did it happen?" question
+ * ("댓글 달았어?", "Slack 게시했어?", "일정 추가됐어?"). The runtime answers both with the same non-mutating reply as
+ * {@link connectorWriteOperationsAskedAbout} (this conversation's recent send, or "nothing approved"; the approved
+ * write's own reminder while one waits). Never consulted by an execution gate, and never accepted by one (pinned by
+ * test): the exact phrase stays the only executor. Statements ("댓글 달았어") and explanations are not matched.
+ */
+export function connectorWriteOperationsNamedLoosely(text: string): ConnectorWriteOperation[] {
+  if (typeof text !== 'string') return [];
+  const trimmed = text.normalize('NFC').trim().replace(/\s+/gu, ' ');
+  if (trimmed.length === 0 || trimmed.length > 40) return [];
+  const questioned = /[?？]\s*$/u.test(trimmed);
+  const bare = trimmed.toLowerCase().replace(/[\s?？.!~。！]+$/u, '');
+  const loose = CONNECTOR_WRITE_OPERATIONS.filter((operation) =>
+    new RegExp(String.raw`^(?:(?:지금|이제|바로)\s*)?(?:승인된\s*)?${STEP_WORDS[operation]}\s*${LOOSE_EXECUTION_TAIL}$`, 'u').test(bare),
+  );
+  if (loose.length > 0 && !questioned) return loose;
+  if (!questioned && !SELF_QUESTION_ENDING.test(bare)) return [];
+  return CONNECTOR_WRITE_OPERATIONS.filter((operation) => DONE_QUESTIONS[operation].test(bare));
+}
+
 /**
  * Bare execution commands that name no step ("실행", "실행해", "실행해줘", "go", "run it"), after
  * {@link normalizeExecutionPhrase} and one optional leading "지금/이제/바로/now" or trailing "now/please".
@@ -638,6 +694,41 @@ export function isBareExecutionRequest(text: string): boolean {
   return [base, noPrefix, base.replace(BARE_EXECUTION_SUFFIX, ''), noPrefix.replace(BARE_EXECUTION_SUFFIX, '')].some(
     (form) => BARE_EXECUTION_REQUESTS.has(normalizeExecutionPhrase(form)),
   );
+}
+
+/**
+ * A bare execution step asked as a question or negated, naming no step ("실행해도 돼?", "실행할까?", "실행하지 마",
+ * "지금 실행해도 될까"): with nothing approved here the runtime answers it like a bare "실행" (nothing ran), never chat.
+ * Pure; never consulted by an execution gate (every match is a question or a negation, which every gate vetoes).
+ */
+const BARE_EXECUTION_QUESTIONS =
+  /^(?:(?:지금|이제|바로)\s*)?실행\s*(?:해도\s*(?:돼|돼요|될까|될까요|되나요|괜찮아|괜찮을까)|할까|할까요|해\s*볼까|해야\s*(?:해|돼|하나요)|하지\s*(?:마|마요|마세요|말아\s*줘|말아\s*주세요)|안\s*해도\s*(?:돼|돼요)|하면\s*안\s*돼|가능해|가능할까|해\s*줄래|해\s*줄\s*수\s*있어)$/u;
+
+/** The prohibitions among them ("실행하지 마", "실행하면 안 돼", "don't run it"): with an approved grant they withdraw it. */
+const BARE_EXECUTION_PROHIBITION =
+  /^(?:(?:지금|이제|바로)\s*)?실행\s*(?:하지\s*(?:마|마요|마세요|말아\s*줘|말아\s*주세요)|하면\s*안\s*돼)$|^(?:do\s+not|don['’]t)\s+(?:run|execute)\s+it$/u;
+const BARE_EXECUTION_QUESTION_EN = /^(?:should\s+i|can\s+(?:i|you)|may\s+i)\s+(?:run|execute)\s+it$/u;
+
+function bareExecutionForm(text: string): string | null {
+  if (typeof text !== 'string') return null;
+  const bare = text.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase().replace(/[\s?？.!~。！]+$/u, '');
+  return bare.length === 0 || bare.length > 30 ? null : bare;
+}
+
+export function isBareExecutionQuestionOrNegation(text: string): boolean {
+  const bare = bareExecutionForm(text);
+  if (bare === null) return false;
+  return BARE_EXECUTION_QUESTIONS.test(bare) || BARE_EXECUTION_QUESTION_EN.test(bare) || BARE_EXECUTION_PROHIBITION.test(bare);
+}
+
+/**
+ * True for the prohibitions of {@link isBareExecutionQuestionOrNegation} ("실행하지 마", "실행하면 안 돼", "don't run
+ * it"). While a write waits approved, the runtime withdraws that grant through the serialized revoke path (a cancel,
+ * nothing is sent); the questions ("실행해도 돼?", "실행할까?") only get the exact-phrase hint (Codex P2 on 5594c16).
+ */
+export function isBareExecutionProhibition(text: string): boolean {
+  const bare = bareExecutionForm(text);
+  return bare !== null && BARE_EXECUTION_PROHIBITION.test(bare);
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */

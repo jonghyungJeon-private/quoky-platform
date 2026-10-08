@@ -195,6 +195,8 @@ export interface CalendarRenderOptions {
   readonly limit: number;
   /** Calendar writes are bound: the footer then omits the "read-only" note. */
   readonly writesEnabled?: boolean;
+  /** The question asked for the events that have not finished yet ("남은 일정"): the header says so. */
+  readonly remaining?: boolean;
 }
 
 function placedInWindow(window: CalendarWindow, events: readonly CalendarEvent[], timeZone: string): PlacedEvent[] {
@@ -248,14 +250,17 @@ export function renderCalendarEvents(
   const period = periodLabel(window, language);
   const truncatedAt = events.length >= options.limit ? options.limit : undefined;
   const tail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
+  const remaining = options.remaining === true;
   if (placed.length === 0) {
-    const none = language === 'en' ? `${period}: nothing on your calendar.` : `${period}: 캘린더에 일정이 없어요.`;
+    const none = remaining
+      ? language === 'en' ? `${period}: nothing left on your calendar.` : `${period}: 남은 일정이 없어요.`
+      : language === 'en' ? `${period}: nothing on your calendar.` : `${period}: 캘린더에 일정이 없어요.`;
     return `${none}\n${tail}`;
   }
   const header =
     language === 'en'
-      ? `${period}: ${placed.length} event${placed.length === 1 ? '' : 's'}`
-      : `${period}: 일정 ${placed.length}개`;
+      ? `${period}: ${placed.length}${remaining ? ' remaining' : ''} event${placed.length === 1 ? '' : 's'}`
+      : `${period}: ${remaining ? '남은 ' : ''}일정 ${placed.length}개`;
 
   const shown = placed.slice(0, CALENDAR_REPLY_MAX_EVENTS);
   const hidden = placed.length - shown.length;

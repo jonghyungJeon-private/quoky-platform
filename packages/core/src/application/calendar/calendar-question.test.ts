@@ -53,6 +53,20 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
     expect(parseCalendarQuestion(text)).toEqual({ kind: 'events', span, language });
   });
 
+  it.each<[string, CalendarSpan]>([
+    // DET-2 sweep + Codex P2 on 5594c16: the remaining-events noun keeps the "not finished yet" constraint.
+    ['오늘 남은 일정', { kind: 'day', offset: 0 }],
+    ['오늘 남은 일정 있어?', { kind: 'day', offset: 0 }],
+    ['내일 남은 일정 보여줘', { kind: 'day', offset: 1 }],
+    ['이번 주 남은 회의', { kind: 'week', which: 'this' }],
+  ])('claims %s with the remaining flag', (text, span) => {
+    expect(parseCalendarQuestion(text)).toEqual({ kind: 'events', span, language: 'ko', remaining: true });
+  });
+
+  it('a plain schedule question carries no remaining flag', () => {
+    expect(parseCalendarQuestion('오늘 일정')).toEqual({ kind: 'events', span: { kind: 'day', offset: 0 }, language: 'ko' });
+  });
+
   it.each([
     // How-to, advice and code questions.
     '일정 관리 팁 알려줘',

@@ -47,6 +47,22 @@ describe('parseModelSelectionCommand', () => {
     }
   });
 
+  it.each([
+    ['모델 상태 알려줘', { kind: 'status' }],
+    ['지금 모델 뭐야?', { kind: 'status' }],
+    ['현재 쓰는 모델은 뭐야', { kind: 'status' }],
+    ['무슨 모델 써?', { kind: 'status' }],
+    ['지금 어떤 모델 쓰고 있어?', { kind: 'status' }],
+    ['모델 바뀌었어?', { kind: 'status' }],
+    ['모델 변경됐나요?', { kind: 'status' }],
+    ['이미지 모델 상태', { kind: 'status' }],
+    ['model status', { kind: 'status' }],
+    ['모델 바꿔줘', { kind: 'usage' }],
+    ['모델 변경해 줘', { kind: 'usage' }],
+  ])('DET-2: %s → %j (a status question or a change request without a choice; nothing changes)', (text, expected) => {
+    expect(parseModelSelectionCommand(text)).toEqual(expected);
+  });
+
   it('near-misses and ordinary chat about models fall through', () => {
     for (const text of [
       '모델 변경해야 할까?',
@@ -60,6 +76,11 @@ describe('parseModelSelectionCommand', () => {
       '/models',
       '/modeling tips',
       '언어 모델 변경 이력 정리해줘',
+      // DET-2 negatives: opinions, other models, natural-language choices.
+      '어떤 모델 쓰는 게 좋아?',
+      '3D 모델 바꿔줘',
+      '모델 codex로 바꿔줘',
+      '지금 모델 뭐야? 그리고 날씨 알려줘',
       '',
     ]) {
       expect(parseModelSelectionCommand(text), text).toBeNull();

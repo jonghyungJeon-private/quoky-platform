@@ -963,3 +963,35 @@ describe('reminder grammar — a generic 알려줘 information request is not a 
     expect(parse('30분 뒤에 알려줘')).toEqual({ kind: 'CLARIFY', reason: 'EMPTY_BODY' });
   });
 });
+
+describe('reminder grammar — status questions answered with LIST (ADR-0104 D3, DET-2)', () => {
+  it.each([
+    '알림 남았어?', '알림 아직 남았어?', '남은 알림 있어?', '남은 알림 뭐야?', '알림 몇 개야?', '알림 몇 개야', '알림 몇 개 있어?', '알림 몇 개 남았어?',
+    '알림 있어?', '예정된 알림 있어?', '예정된 알림 뭐야?', '알림 설정했어?', '알림 설정됐어?', '알림 설정됐나', '알림 설정돼 있어?',
+    '알림 잘 설정됐어?', '알림 등록됐어?', '알림 예약됐어?', '리마인더 설정됐어?', '리마인더 있어?', '알림 걸어놨어?', '알림 맞춰놨지',
+    '설정된 알림 있어?', 'do I have any reminders?', 'how many reminders do I have?', 'any reminders?', 'did you set the reminder?',
+    'is my reminder set?',
+  ])('%j → LIST', (message) => {
+    expect(parse(message)).toEqual({ kind: 'LIST' });
+  });
+
+  it.each(['알림 보여줘', '알림 보여 주세요', '내 알림 보여줘', '리마인더 보여줘'])('%j → LIST (the list without 목록)', (message) => {
+    expect(parse(message)).toEqual({ kind: 'LIST' });
+  });
+
+  it.each([
+    ['1번 알림 취소', 1],
+    ['3번 알림 취소해줘', 3],
+    ['2 번 리마인더 취소', 2],
+  ])('%j → CANCEL %i (the counter before the noun)', (message, displayNo) => {
+    expect(parse(message)).toEqual({ kind: 'CANCEL', displayNo });
+  });
+
+  it.each([
+    // Another app's notifications, settings and sounds; statements; negations.
+    '아이폰 알림 설정했어?', '푸시 알림 설정됐어?', '카톡 알림 몇 개야?', '알림 소리 설정했어?', '슬랙 알림 있어?', '알림 설정 어떻게 해?',
+    '알림 설정했어', '알림 있어', '알림 남았어', '알림 걸어놨어', '알림 안 남았지?', '알림 설정 안 했어?', '알림 설정하지 마',
+  ])('%j is not a status question', (message) => {
+    expect(parse(message).kind).not.toBe('LIST');
+  });
+});

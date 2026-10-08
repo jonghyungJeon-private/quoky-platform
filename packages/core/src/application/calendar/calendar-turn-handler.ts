@@ -127,9 +127,18 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     const window = placeCalendarSpan(question.span, ctx.now, this.deps.timeZone);
     if (window === undefined) return this.reply(ctx, renderCalendarInvalidDate(language), 'RESPONDED', language);
 
+    // "남은 일정" (Codex P2 on 5594c16): read from now, and drop any timed event that already ended, in case a reader
+    // returns the whole day anyway; a span that is already over reads nothing.
+    const remaining = question.remaining === true;
+    const nowMs = Date.parse(ctx.now);
+    const from = remaining && nowMs > Date.parse(window.from) ? ctx.now : window.from;
     let events: readonly CalendarEvent[];
     try {
-      events = await this.readWithTimeout({ from: window.from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT });
+      events =
+        remaining && nowMs >= Date.parse(window.to)
+          ? []
+          : await this.readWithTimeout({ from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT });
+      if (remaining) events = events.filter((event) => !hasFinished(event, nowMs));
     } catch (error) {
       const failure: CalendarReadFailure =
         error instanceof CalendarReadTimeout ? 'TIMEOUT' : isConnectorQueryError(error) ? error.reason : 'UNAVAILABLE';
@@ -143,6 +152,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       language,
       limit: CALENDAR_EVENTS_MAX_LIMIT,
       writesEnabled: this.deps.writesEnabled === true,
+      ...(remaining ? { remaining: true } : {}),
     };
     const reply = renderCalendarEvents(window, events, renderOptions);
     this.rememberListing(ctx.session.id, ctx.actor.id, {
@@ -222,4 +232,14 @@ function listingKey(sessionId: Id, actorId: Id): string {
 /** Factory for the composition root (ADR-0096 D7). */
 export function createCalendarTurnHandler(deps: CalendarTurnHandlerDeps): CalendarTurnHandler {
   return new CalendarTurnHandler(deps);
+}
+
+/**
+ * Whether a timed event is over at `nowMs` (it ended at or before now). An all-day event the read returned is kept: it
+ * overlaps the window, so it still covers the rest of that day.
+ */
+function hasFinished(event: CalendarEvent, nowMs: number): boolean {
+  if (event.allDay) return false;
+  const endMs = Date.parse(event.end);
+  return Number.isFinite(endMs) && endMs <= nowMs;
 }

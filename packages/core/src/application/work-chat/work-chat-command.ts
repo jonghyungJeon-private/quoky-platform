@@ -73,6 +73,11 @@ export type WorkChatCommand =
    */
   /** Read-only status question (QA-V2-W7-05): "<title> 완료했나?" about one exact to-do; never mutates. */
   | { readonly kind: 'todo.status'; readonly target: WorkChatTarget }
+  /**
+   * Read-only status question about the to-do list as a whole (ADR-0104 D3, DET-2): "할 일 몇 개야?", "할 일 남았어?",
+   * "할 일 추가됐어?". Answered from the store with the combined list; never mutates.
+   */
+  | { readonly kind: 'todo.summary' }
   | { readonly kind: 'todo.hint'; readonly action: 'complete' | 'cancel'; readonly target: WorkChatTarget }
   | {
       readonly kind: 'lookup';
@@ -108,6 +113,7 @@ export function workChatCommandMode(command: WorkChatCommand): WorkChatMode {
     case 'todo.link':
     case 'todo.hint':
     case 'todo.status':
+    case 'todo.summary':
     // ADR-0112 D5: the exact write commands are anchored (a key or `#channel` first), so they run at order 100, before
     // reminders — a comment text that mentions a time ("KEY-1에 댓글: 내일 9시에 배포 알려줘") is never a reminder.
     case 'connector-write':
@@ -323,6 +329,8 @@ const LIST_WITH_VERB = new RegExp(
   `^(?:내|나의|오늘|지금|현재|전체)?\\s*${TODO_NOUN}\\s*(?:을|를|좀)?\\s*${LIST_VERBS}${END}`,
   'i',
 );
+/** DET-2: the bare owner noun "내 할 일" (the help line's "내 할 일 보여줘" without the verb), like "내 알림". */
+const LIST_BARE_OWN = new RegExp(`^(?:내|나의)\\s*${TODO_NOUN}${END}`, 'i');
 /** Verbatim copy of `IntentClassifier.isPersonalWorkSurface` so the detector is a superset of it. */
 const LEGACY_PERSONAL_WORK_SURFACE =
   /(?:내가|제가|나는)?\s*(?:해야\s*할|할)\s*(?:일|작업).*(?:보여|알려)|(?:show|list|what(?:'s| is))\b.*\b(?:my|i need to)\b.*\bwork\b/i;
@@ -346,7 +354,7 @@ function isTodoList(text: string): boolean {
   // newer pattern is skipped for code, file, URL and explain-style messages (`isDevOrExplainMessage`).
   if (LEGACY_PERSONAL_WORK_SURFACE.test(text)) return true;
   if (isDevOrExplainMessage(text)) return false;
-  return [LIST_WITH_NOUN, LIST_WITH_VERB, LIST_MY_WORK_KO, LIST_EN].some((pattern) => pattern.test(text));
+  return [LIST_WITH_NOUN, LIST_WITH_VERB, LIST_BARE_OWN, LIST_MY_WORK_KO, LIST_EN].some((pattern) => pattern.test(text));
 }
 
 // -- N번 complete / cancel / link --------------------------------------------------------------------------------------
@@ -610,6 +618,7 @@ function detectUnanchored(text: string): WorkChatCommand | null {
     detectExternalWrite(text) ??
     detectLookup(text) ??
     (isTodoList(text) ? { kind: 'todo.list' } : null) ??
+    (isTodoSummaryQuestion(text) ? { kind: 'todo.summary' } : null) ??
     detectBareAddUsage(text) ??
     detectCompletionHint(text)
   );
@@ -617,7 +626,8 @@ function detectUnanchored(text: string): WorkChatCommand | null {
 
 // -- hint-only natural completion / cancel statements (QA-V2-W7-03) ---------------------------------------------------
 
-const HINT_COMPLETE_TAIL = '(?:완료(?:했어요|했어|했다|했습니다)?|끝났어요|끝났어|끝났다|다\\s*했어요|다\\s*했어|다했어요|다했어)';
+const HINT_COMPLETE_TAIL =
+  '(?:완료(?:했어요|했어|했다|했습니다|됨|함)?|끝났어요|끝났어|끝났다|끝남|다\\s*했어요|다\\s*했어|다했어요|다했어|다\\s*함)';
 const HINT_CANCEL_TAIL = '(?:취소(?:했어요|했어)?)';
 const HINT_TAIL_END = '\\s*[.!~]*$';
 const HINT_TITLE_COMPLETE = new RegExp(`^(.{1,200}?)\\s*[,:]?\\s*${HINT_COMPLETE_TAIL}${HINT_TAIL_END}`);
@@ -633,8 +643,9 @@ const HINT_NUMBER_CANCEL = HINT_NUMBER(HINT_CANCEL_TAIL, false);
 // -- read-only status questions (QA-V2-W7-05) ---------------------------------------------------------------------------
 
 /** Tails that are questions by themselves (`...나`, `...나요`, `...니`, `...냐`) and tails that need an explicit `?`. */
-const STATUS_SELF_QUESTION = '(?:(?:완료\\s*(?:했|됐|되었)|끝났|다\\s*했|했)(?:나요|나|니|냐))';
-const STATUS_NEEDS_MARK = '(?:(?:완료\\s*(?:했|됐|되었)|끝났|다\\s*했)(?:어요|어))';
+const STATUS_SELF_QUESTION = '(?:(?:완료\\s*(?:했|됐|되었)|끝났|다\\s*했|했|(?:추가|등록)\\s*(?:됐|되었))(?:나요|나|니|냐))';
+// DET-2: "<title> 추가됐어?" / "<title> 등록됐어?" asks whether that exact to-do exists (answered only on an exact match).
+const STATUS_NEEDS_MARK = '(?:(?:완료\\s*(?:했|됐|되었)|끝났|다\\s*했|(?:추가|등록)\\s*(?:됐|되었|했))(?:어요|어))';
 const STATUS_END = '(?:\\s*[?？]+|(?<=나|나요|니|냐)\\s*[?？.!~]*)$';
 const STATUS_TAIL = `(?:${STATUS_SELF_QUESTION}|${STATUS_NEEDS_MARK})`;
 const STATUS_TITLE = new RegExp(`^(.{1,200}?)\\s*[,:]?\\s*${STATUS_TAIL}${STATUS_END}`);
@@ -674,6 +685,49 @@ function detectCompletionHint(text: string): WorkChatCommand | null {
     }
   }
   return null;
+}
+
+// -- read-only status questions about the whole list (ADR-0104 D3, DET-2) -----------------------------------------------
+
+/**
+ * Tails of a whole-list status question after the to-do noun: how many (`몇 개야`), any left (`남았어`, `남은 거 있어`),
+ * all done (`다 했나`), and whether an add went through (`추가됐어`). Each alternative is a question shape; the ones that
+ * are statements without a question mark (`남았어`, `추가했어`) need the `?` (checked by {@link isTodoSummaryQuestion}).
+ */
+const SUMMARY_COUNT = '몇\\s*(?:개|건|가지)\\s*(?:야|예요|에요|이야|이에요|인가요|인지|지|나|냐|니|있어|있어요|있나|있나요|있니|남았어|남았어요|남았나|남았나요|남았니|돼|돼요|되나요)?';
+const SUMMARY_LEFT =
+  '(?:(?:아직|다)\\s*)?(?:남았어|남았어요|남았나|남았나요|남았니|남았냐|남아\\s*있어|남아\\s*있어요|남아\\s*있나|남아\\s*있나요|남은\\s*(?:거|게|것|건)\\s*(?:있어|있어요|있나|있나요|있니|뭐야|뭐예요))';
+const SUMMARY_ALL_DONE =
+  '다\\s*(?:했어|했어요|했나|했나요|했니|했냐|끝났어|끝났어요|끝났나|끝났나요|끝냈어|끝냈나|완료\\s*(?:했어|했어요|했나|했나요|됐어|됐어요|됐나|됐나요)|처리\\s*(?:했어|됐어|했나|됐나))';
+const SUMMARY_ADDED =
+  '(?:잘\\s*)?(?:추가|등록)\\s*(?:됐어|됐어요|됐나|됐나요|됐니|되었어|되었어요|되었나요|됐지|됐죠|했어|했어요|했나|했나요|했니|했지|했죠|된\\s*거\\s*맞아|된\\s*거\\s*맞지)';
+const SUMMARY_KO = new RegExp(
+  `^(?:(?:내|나의|남은|오늘|지금|현재|전체)\\s*)?${TODO_NOUN}\\s*(?:은|는|이|가|을|를|도)?\\s*(${SUMMARY_COUNT}|${SUMMARY_LEFT}|${SUMMARY_ALL_DONE}|${SUMMARY_ADDED})\\s*([?？]*)\\s*[.!~]*$`,
+  'i',
+);
+/** "남은 할 일 있어?" / "남은 할 일 뭐야?" (the remaining-noun form; "할 일 있어?" alone is already the list). */
+const SUMMARY_REMAINING_KO = new RegExp(
+  `^남은\\s*${TODO_NOUN}\\s*(?:이|가|은|는)?\\s*(?:있어|있어요|있나|있나요|있니|뭐야|뭐예요|뭐에요|뭐지|뭐\\s*있어)\\s*[?？]*\\s*[.!~]*$`,
+  'i',
+);
+/** Tails that are questions by themselves (no `?` needed). */
+const SUMMARY_SELF_QUESTION = /(?:나|나요|니|냐|지|죠|맞아|뭐야|뭐예요)$/u;
+const SUMMARY_EN =
+  /^(?:how\s+many\s+(?:to-?dos?|tasks)\s+(?:do\s+i\s+have|are\s+(?:there|left|open))(?:\s+(?:left|open))?|do\s+i\s+have\s+(?:any\s+)?(?:(?:open|pending)\s+)?(?:to-?dos?|tasks)(?:\s+(?:left|open))?|(?:are\s+there\s+)?any\s+(?:to-?dos?|tasks)\s+left|was\s+(?:the|my)\s+(?:to-?do|task)\s+added)\s*\?*$/i;
+
+/**
+ * A whole-message status question about the owner's to-do list (ADR-0104 D3): answered from the store, never by a
+ * model that cannot see it. Negated messages ("할 일 추가 안 됐어?") are never claimed.
+ */
+function isTodoSummaryQuestion(text: string): boolean {
+  if (isNegatedMessage(text)) return false;
+  if (SUMMARY_EN.test(text)) return true;
+  if (SUMMARY_REMAINING_KO.test(text)) return true;
+  const match = SUMMARY_KO.exec(text);
+  if (!match) return false;
+  const tail = (match[1] as string).trim();
+  // A count ("몇 개 …") is always a question; other tails need a question ending or a "?".
+  return (match[2] as string).length > 0 || tail.startsWith('몇') || SUMMARY_SELF_QUESTION.test(tail);
 }
 
 const BARE_ADD = new RegExp(`^(?:${TODO_NOUN}\\s*(?:추가|등록)|(?:add|create)\\s+(?:a\\s+)?to-?do)\\s*(?:해\\s*줘|해\\s*주세요|하기)?${END}`, 'i');

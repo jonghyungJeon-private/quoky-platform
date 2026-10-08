@@ -44,6 +44,24 @@ export const HELP_INTENT_TOPICS: readonly HelpIntentTopic[] = Object.freeze([
   { id: 'memory', keywords: ['기억'], anchors: ['기억'] },
   { id: 'commit', keywords: ['커밋'], anchors: ['커밋'] },
   { id: 'project', keywords: [String.raw`프로젝트\s?등록`], anchors: ['프로젝트 등록'] },
+  // DET-2 (v1 index additions): the calendar ("캘린더 어떻게 써?", which the calendar grammar leaves to this handler),
+  // the model command and the connector writes. Model and write keywords name the command itself ("모델 변경",
+  // "Slack 게시", "Jira 댓글"), never a bare service or "모델", so "슬랙 어떻게 써?" and "모델 만드는 법" stay chat.
+  { id: 'calendar', keywords: ['일정', '캘린더', '달력'], anchors: ['캘린더'] },
+  {
+    id: 'model',
+    keywords: [
+      String.raw`(?:대화\s?|이미지\s?)?모델\s?(?:변경|선택)`,
+      // "모델 바꾸는 법", "모델 어떻게 바꿔?" — the bare noun only right before a change verb ("모델 만드는 법" stays chat).
+      String.raw`(?:대화\s?|이미지\s?)?모델(?=\s(?:바꾸|바꿔|어떻게\s(?:바꿔|바꾸|변경)))`,
+    ],
+    anchors: ['모델 변경'],
+  },
+  {
+    id: 'connector-write',
+    keywords: [String.raw`(?:slack|슬랙)\s?(?:게시|글)`, String.raw`(?:jira|지라)\s?(?:댓글|쓰기|상태\s?변경)`],
+    anchors: ['Slack 게시', 'Jira 쓰기'],
+  },
 ].map((topic) => Object.freeze({ ...topic, keywords: Object.freeze(topic.keywords), anchors: Object.freeze(topic.anchors) })));
 
 export type HelpIntentLanguage = 'ko' | 'en';
@@ -72,7 +90,7 @@ const HELP_PREFIX = /^(?:도움말|사용법|help|\/help)\s*[:：]?\s+/u;
  * advice, not for a command, and stays chat.
  */
 const ACTION_STEM =
-  '추가|등록|설정|취소|삭제|완료|처리|목록|확인|연결|해제|조회|검색|요약|전환|수정|생성|만들|만드|보|지우|지워|끄|켜|쓰|사용|입력|바꾸|변경|남기|잊|저장|표시|보내|받';
+  '추가|등록|설정|취소|삭제|완료|처리|목록|확인|연결|해제|조회|검색|요약|전환|수정|생성|만들|만드|보|지우|지워|끄|켜|쓰|사용|입력|바꾸|변경|남기|잊|저장|표시|보내|받|잡|달|게시|올리';
 const ACTION_ENDING = '하는|하기|하고|하려면|해야|할|하|해|는|기|고|려면|을|를|은';
 const ACTION_TOKEN = new RegExp(`^(?:${ACTION_STEM})(?:${ACTION_ENDING})?$`, 'u');
 /** "추가하는 법", "지우는방법", "사용법", "도움말", "명령어", "안내", with an optional particle. */
@@ -201,6 +219,47 @@ export function detectHelpIntent(
   return isHowToTail(rest.split(' '))
     ? Object.freeze({ topicIds: Object.freeze(topicIds), language: 'ko' as const })
     : null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Capability questions (DET-2, live QA session 3 D11)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Longer messages are never a short "what can you do?" question. */
+export const CAPABILITY_QUESTION_MAX_CHARS = 40;
+
+/** An optional "너" / "넌" / "네가" subject after the address ("Quoky야, 넌 뭘 할 수 있어?"). */
+const CAPABILITY_SUBJECT = /^(?:(?:너|넌|너는|네가|니가|당신은|당신이|(?:quoky|퀴키|쿼키)(?:가|는|이))\s)?(?:(?:여기서|여기선)\s)?/u;
+const CAPABILITY_KO: readonly RegExp[] = [
+  // "뭐 할 수 있어?", "무엇을 할 수 있나요?", "어떤 일을 할 수 있어?", "뭘 도와줄 수 있어?", "뭐 할 줄 알아?"
+  /^(?:뭐|뭘|무엇을|무얼|무엇|어떤\s?(?:거|것|걸|일|일을|기능을?))\s?(?:할\s?수|해\s?줄\s?수|도와\s?줄\s?수)\s?(?:있어|있어요|있니|있나|있나요|있냐|있지|있죠|있습니까|있는데|있는지\s?알려\s?줘)$/u,
+  /^(?:뭐|뭘|무엇을|무얼)\s?할\s?줄\s?(?:알아|알아요|아니|아나요)$/u,
+  // "할 수 있는 게 뭐야?", "할 수 있는 일이 뭐야?", "할 수 있는 거 알려줘", "할 수 있는 기능 뭐 있어?"
+  /^(?:할\s?수|해\s?줄\s?수|도와\s?줄\s?수)\s?있는\s?(?:게|것|거|건|걸|일|기능|것들|일들|기능들)(?:은|는|이|가|을|를|들)?\s?(?:뭐야|뭐예요|뭐에요|뭐지|뭔가요|뭐가\s?있어|뭐가\s?있어요|뭐\s?있어|뭐\s?있어요|뭐뭐\s?있어|뭐뭐야|알려\s?줘|알려\s?주세요|알려줘요|보여\s?줘|있어|있어요)$/u,
+  // "무슨 기능 있어?", "어떤 기능이 있어?", "기능 뭐 있어?", "기능 목록"
+  /^(?:무슨|어떤)\s?기능(?:이|들이|들)?\s?(?:있어|있어요|있나요|있니|있는지\s?알려\s?줘|돼|돼요|되나요)$/u,
+  /^기능(?:은|이)?\s?(?:뭐|뭐뭐|뭐가)\s?(?:있어|있어요|있나요|있니)$/u,
+  /^기능\s?(?:목록|소개)(?:\s?(?:보여\s?줘|알려\s?줘))?$/u,
+  // "명령어 뭐 있어?", "명령어 알려줘", "명령어 목록", "사용법"
+  /^(?:명령어|사용법)(?:\s?(?:목록|뭐\s?있어|뭐\s?있어요|뭐뭐\s?있어|뭐야|알려\s?줘|알려\s?주세요|보여\s?줘))?$/u,
+];
+const CAPABILITY_EN =
+  /^(?:what\s+can\s+(?:you|quoky)\s+(?:do|help\s+(?:me\s+)?with)(?:\s+for\s+me)?|what\s+do\s+you\s+do|what\s+are\s+your\s+(?:features|capabilities|commands)|what\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+i\s+use)|show\s+(?:me\s+)?(?:the\s+|your\s+)?commands)$/u;
+
+/**
+ * A whole-message question about what Quoky can do ("뭐 할 수 있어?", "할 수 있는 게 뭐야?", "무슨 기능 있어?",
+ * "명령어 알려줘", "what can you do?"), or `null`. The quickstart answers it with the help text ("도움말": 할 수 있는
+ * 일과 사용 문구), so the handler replies with exactly that text, provider-free. Anything that names another subject or
+ * scope ("파이썬으로 뭐 할 수 있어?", "주말에 뭐 할 수 있어?", "내가 뭐 할 수 있어?", "what can you do with python?") or adds a
+ * second request falls through to chat. A bare "help" is not one (ADR-0093 has no bare English alias).
+ */
+export function detectCapabilityQuestion(text: string): HelpIntentLanguage | null {
+  if (typeof text !== 'string' || /[\r\n`]|:\/\//u.test(text)) return null;
+  const normalized = normalize(text).replace(TRAILING_PUNCTUATION, '');
+  if (normalized.length === 0 || normalized.length > CAPABILITY_QUESTION_MAX_CHARS) return null;
+  if (CAPABILITY_EN.test(normalized)) return 'en';
+  const addressed = normalized.replace(ADDRESS_PREFIX, '').replace(CAPABILITY_SUBJECT, '');
+  return CAPABILITY_KO.some((pattern) => pattern.test(addressed)) ? 'ko' : null;
 }
 
 const QUOTED = /"([^"\n]*)"|“([^”\n]*)”/gu;

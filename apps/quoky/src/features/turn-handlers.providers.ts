@@ -3,6 +3,7 @@ import {
   CONVERSATION_TURN_HANDLERS,
   TURN_HANDLER_STAGES,
   createHelpIntentTurnHandler,
+  type ConnectorWriteFlow,
   type ConversationTurnHandler,
 } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
@@ -13,6 +14,7 @@ import {
   WORK_CHAT_TURN_HANDLERS,
 } from './feature-tokens';
 import { CALENDAR_TURN_HANDLERS } from './calendar.providers';
+import { CONNECTOR_WRITE_FLOW } from './connector-writes.providers';
 import { MEMORY_TURN_HANDLERS } from './memory.providers';
 import { MODEL_SELECTION_TURN_HANDLERS } from './provider-selection.providers';
 
@@ -41,8 +43,9 @@ function contributedHelpLinesOf(handlers: TurnHandlerList): readonly string[] {
  * ships the module, the composition root registers it). The concatenation order carries no meaning:
  * `ConversationRuntime` rejects duplicate ids and dispatches by `(stage, order, id)` (ADR-0096 D2/D5).
  *
- * The help-intent handler answers from the help lines of the final, fully-registered list (a getter, so it always
- * sees exactly what the full help reply lists); it ignores its own line.
+ * The help-intent handler answers from the help lines of the final, fully-registered list plus the connector-write
+ * flow's lines (a getter, so it always sees exactly what the full help reply lists, in the runtime's order — DET-2:
+ * a capability question is answered with that full text); it ignores its own line for topic answers.
  */
 export const turnHandlersProvider: Provider = {
   provide: CONVERSATION_TURN_HANDLERS,
@@ -54,6 +57,7 @@ export const turnHandlersProvider: Provider = {
     memory: TurnHandlerList,
     calendar: TurnHandlerList,
     modelSelection: TurnHandlerList,
+    connectorWriteFlow: Pick<ConnectorWriteFlow, 'helpLines'> | null | undefined,
   ): TurnHandlerList => {
     const registered: ConversationTurnHandler[] = [
       ...codeWork,
@@ -66,7 +70,7 @@ export const turnHandlersProvider: Provider = {
     ];
     registered.push(
       createHelpIntentTurnHandler({
-        helpLines: () => contributedHelpLinesOf(registered),
+        helpLines: () => [...contributedHelpLinesOf(registered), ...(connectorWriteFlow?.helpLines ?? [])],
         logger: new ConsoleLogger('help-intent'),
       }),
     );
@@ -80,5 +84,7 @@ export const turnHandlersProvider: Provider = {
     MEMORY_TURN_HANDLERS,
     CALENDAR_TURN_HANDLERS,
     MODEL_SELECTION_TURN_HANDLERS,
+    // Optional: a composition without the connector-write providers (feature tests) has no write lines to add.
+    { token: CONNECTOR_WRITE_FLOW, optional: true },
   ],
 };

@@ -68,6 +68,11 @@ const KO_LIST = new RegExp(
   'u',
 );
 const KO_LIST_SHOW = new RegExp(String.raw`^(?:내|저장된)\s?${MEMORY_NOUN}(?:들)?(?:을|를)?\s?${VIEW_VERB}$`, 'u');
+/** DET-2 (ADR-0104 D3): "기억 몇 개야?", "저장된 기억 몇 개 있어?" — a count question answered with the list. */
+const KO_LIST_COUNT = new RegExp(
+  String.raw`^(?:(?:내|저장된)\s?)?${MEMORY_NOUN}(?:은|는|이|가)?\s?몇\s?(?:개|건|가지)\s?(?:야|예요|에요|이야|이에요|인가요|있어|있어요|있나|있나요|있니|돼|돼요|저장돼\s?있어|남았어)?$`,
+  'u',
+);
 const KO_VIEW = new RegExp(String.raw`^${MEMORY_NOUN}\s?${NUMBER}\s?${VIEW_VERB}$`, 'u');
 const KO_FORGET = new RegExp(String.raw`^${MEMORY_NOUN}\s?${NUMBER}\s?${FORGET_VERB}$`, 'u');
 const KO_EDIT_HEAD = new RegExp(String.raw`^${MEMORY_NOUN}\s?${NUMBER}\s?${EDIT_VERB}\s*[:：]`, 'u');
@@ -180,6 +185,7 @@ export function parseMemoryCommand(text: string): MemoryCommand | null {
     return page === null ? null : { kind: 'list', page, language: 'ko' };
   }
   if (KO_LIST_SHOW.test(bare)) return { kind: 'list', page: 1, language: 'ko' };
+  if (KO_LIST_COUNT.test(bare)) return { kind: 'list', page: 1, language: 'ko' };
   if ((match = KO_VIEW.exec(bare)) !== null) {
     const number = positive(match[1]);
     return number === null ? null : { kind: 'view', number, language: 'ko' };

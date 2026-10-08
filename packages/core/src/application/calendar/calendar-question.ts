@@ -45,7 +45,16 @@ export type CalendarSpan =
   | { readonly kind: 'next' };
 
 export type CalendarQuestion =
-  | { readonly kind: 'events'; readonly span: CalendarSpan; readonly language: CalendarLanguage }
+  | {
+      readonly kind: 'events';
+      readonly span: CalendarSpan;
+      readonly language: CalendarLanguage;
+      /**
+       * Only events that have not finished yet ("오늘 남은 일정", "remaining events today"). Present only when true; the
+       * handler reads from now and the reply says "남은 일정 N개" (Codex P2 on 5594c16).
+       */
+      readonly remaining?: true;
+    }
   | { readonly kind: 'write-refused'; readonly language: CalendarLanguage };
 
 /** Longer messages are never schedule questions (a pasted text that mentions "일정" is not a question). */
@@ -59,9 +68,9 @@ const ALWAYS_NOUN_KO = String.raw`(?:일정|스케줄(?!러)|캘린더|달력)`;
 const SPAN_NOUN_KO = String.raw`(?:일정|스케줄(?!러)|캘린더|달력|약속|미팅|회의(?!록|실))`;
 const BARE_TAIL_KO = String.raw`(?:\s*(?:은|는|좀|목록|리스트))?(?:\s*(?:보여\s*줘|보여\s*주세요|보여\s*줄래|알려\s*줘|알려\s*주세요|알려\s*줄래|확인해\s*줘|확인해\s*주세요|뭐야|뭐예요|뭐에요|뭐지|어때|어때요))?\s*[?？.!~]*$`;
 const POSSESSIVE_KO = String.raw`(?:(?:내|제|나의|저의|우리)\s+)?`;
-/** "오늘 일정", "이번 주 일정 보여줘", "내 일정", "캘린더", "10월 7일 일정은?", "금요일 회의 알려줘". */
+/** "오늘 일정", "이번 주 일정 보여줘", "내 일정", "캘린더", "10월 7일 일정은?", "금요일 회의 알려줘", "오늘 남은 일정". */
 const BARE_KO = new RegExp(
-  String.raw`^${POSSESSIVE_KO}(?:${SPAN_KO}\s*(?:의\s*)?${SPAN_NOUN_KO}|${ALWAYS_NOUN_KO}(?:\s+${SPAN_KO})?)${BARE_TAIL_KO}`,
+  String.raw`^${POSSESSIVE_KO}(?:${SPAN_KO}\s*(?:의\s*)?(?:남은\s*)?${SPAN_NOUN_KO}|${ALWAYS_NOUN_KO}(?:\s+${SPAN_KO})?)${BARE_TAIL_KO}`,
   'u',
 );
 const SPAN_EN = String.raw`(?:today|tomorrow|tonight|this\s+week(?:end)?|next\s+week|the\s+week)`;
@@ -159,8 +168,14 @@ export function parseCalendarQuestion(text: string): CalendarQuestion | null {
   const language = languageOf(message);
   if (isCalendarWriteRequest(message)) return { kind: 'write-refused', language };
   if (!(BARE_KO.test(message) || BARE_EN.test(message) || isPersonalScheduleQuestion(message))) return null;
-  return { kind: 'events', span: extractSpan(message), language };
+  const span = extractSpan(message);
+  return REMAINING.test(message) && span.kind !== 'next'
+    ? { kind: 'events', span, language, remaining: true }
+    : { kind: 'events', span, language };
 }
+
+/** "남은 일정", "남은 회의", "remaining events", "rest of the day": only events that have not finished yet. */
+const REMAINING = /남은\s*(?:일정|스케줄|캘린더|약속|미팅|회의)|\bremaining\b|\brest\s+of\s+(?:the|my)\s+day\b|\bleft\s+(?:today|on\s+my\s+calendar)\b/iu;
 
 const KO_WEEKDAY: Readonly<Record<string, number>> = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
 const EN_WEEKDAY: Readonly<Record<string, number>> = {

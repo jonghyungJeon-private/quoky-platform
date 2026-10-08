@@ -57,6 +57,9 @@ import {
   isAnyConnectorWriteExecutionPhrase,
   connectorWriteOperationsOfPhrase,
   connectorWriteOperationsAskedAbout,
+  connectorWriteOperationsNamedLoosely,
+  isBareExecutionProhibition,
+  isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
   isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
@@ -2887,16 +2890,30 @@ export class ConversationRuntime {
     // Routing exec gaps: the same step phrased as a question or a negation ("댓글 실행해도 돼?", "Slack 게시 실행하지 마")
     // gets the same non-mutating replies instead of chat. It never executes: the allow-list's question/negation veto
     // stays, and only the approving conversation's exact phrase runs a write.
+    // DET-2: likewise a loose imperative ("댓글 실행해") or a "did it happen?" question ("댓글 달았어?", "일정 추가됐어?").
     const askedAbout = connectorWriteOperationsAskedAbout(message.text);
-    if (askedAbout.length > 0) {
-      return this.respondStrayConnectorWritePhrase(message, session, actor, askedAbout);
+    const namedWrites = askedAbout.length > 0 ? askedAbout : connectorWriteOperationsNamedLoosely(message.text);
+    if (namedWrites.length > 0) {
+      return this.respondStrayConnectorWritePhrase(message, session, actor, namedWrites);
     }
     const bareAfterUnconfirmed = await this.respondBareExecutionAfterUnconfirmedWrite(message, session, actor);
     if (bareAfterUnconfirmed) return bareAfterUnconfirmed;
     // Live QA session 3 (D11): a bare "실행" / "go" / "run it" with no code chain and no approved write here runs nothing
     // and says so deterministically (a chat model once answered that Quoky cannot execute anything). With a chain anchor
     // the turn routes as before (its own state replies own it).
-    if (!applyAnchor && isBareExecutionRequest(message.text)) {
+    // DET-2: the same bare step asked or negated ("실행해도 돼?", "실행하지 마") gets the same reply — but only with nothing
+    // approved anywhere: a grant waiting in another conversation is named instead (Codex P2 on 5594c16; a grant in THIS
+    // conversation is answered by the connector-write anchor branch above).
+    if (!applyAnchor && isBareExecutionQuestionOrNegation(message.text) && this.deps.connectorWriteFlow) {
+      const now = this.clock();
+      for (const operation of CONNECTOR_WRITE_OPERATIONS) {
+        const elsewhere = await this.deps.connectorWriteFlow.approvedElsewhere(session, actor.id, operation, now);
+        if (elsewhere) {
+          return this.respondComposed(message, session, this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere));
+        }
+      }
+    }
+    if (!applyAnchor && (isBareExecutionRequest(message.text) || isBareExecutionQuestionOrNegation(message.text))) {
       return this.respondComposed(message, session, this.deps.composer.composeNoApprovedExecution(message.context));
     }
     if (interpretStrayDecisionUtterance(message.text)) {
@@ -3529,7 +3546,8 @@ export class ConversationRuntime {
         }
         // W5-L01: a question/negation about the execution step ("댓글 실행해도 돼?") gets the non-mutating reminder, never
         // chat (a model must not claim a send) and never an execution (the exact phrase stays the only executor).
-        if (mentionsConnectorWriteExecutionStep(message.text, anchor.operation)) {
+        const loosely = connectorWriteOperationsNamedLoosely(message.text);
+        if (mentionsConnectorWriteExecutionStep(message.text, anchor.operation) || loosely.includes(anchor.operation)) {
           const reply = this.deps.composer.composeConnectorWriteApprovedReminder(
             message.context,
             anchor.operation,
@@ -3542,7 +3560,16 @@ export class ConversationRuntime {
         // (the exact phrase stays the only executor) and gets a deterministic reply quoting the approved write's phrase,
         // never chat (a model could answer as if it ran). A question / negation about ANOTHER write's step names the
         // phrase that would run here too (the stray "nothing approved" reply would be untrue).
-        if (isBareExecutionRequest(message.text)) {
+        // Codex P2 on 5594c16: a bare prohibition ("실행하지 마") withdraws this grant through the serialized revoke path
+        // (a cancel; nothing is sent), never "nothing approved". Only the actor who asked may withdraw it; anyone else
+        // gets the exact-phrase hint like a bare question ("실행해도 돼?", "실행할까?").
+        if (isBareExecutionProhibition(message.text) && anchor.actorId === actor.id) {
+          return this.decisionTurn(
+            session,
+            await this.approvalDecisions.revokeConnectorWrite(this.chatDecision(message, session, actor), view, 'cancelled'),
+          );
+        }
+        if (isBareExecutionRequest(message.text) || isBareExecutionQuestionOrNegation(message.text)) {
           const reply = this.deps.composer.composeConnectorWriteBareExecution(
             message.context,
             anchor.operation,
@@ -3551,7 +3578,7 @@ export class ConversationRuntime {
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
-        if (connectorWriteOperationsAskedAbout(message.text).length > 0) {
+        if (connectorWriteOperationsAskedAbout(message.text).length > 0 || loosely.length > 0) {
           const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
             message.context,
             anchor.operation,
@@ -3664,7 +3691,7 @@ export class ConversationRuntime {
     actor: Actor,
   ): Promise<TurnResult | null> {
     const flow = this.deps.connectorWriteFlow;
-    if (!flow || !isBareExecutionRequest(message.text)) return null;
+    if (!flow || !(isBareExecutionRequest(message.text) || isBareExecutionQuestionOrNegation(message.text))) return null;
     const now = this.clock();
     let newest: RecentConnectorWrite | null = null;
     for (const operation of CONNECTOR_WRITE_OPERATIONS) {

@@ -235,6 +235,8 @@ export class WorkChatService implements WorkDesk {
         case 'todo.add':
           return reply(await this.addTodo(command.title, command.refs, actor));
         case 'todo.list':
+        // ADR-0104 D3 (DET-2): a status question about the whole list is answered with the same store-backed view.
+        case 'todo.summary':
           return reply(await this.listWork(actor));
         case 'todo.complete':
           return reply(await this.transitionTodo(command.target, WorkItemStatus.COMPLETED, actor));
@@ -253,7 +255,7 @@ export class WorkChatService implements WorkDesk {
           return reply(renderWorkChatUsage(command.topic));
       }
     } catch (error) {
-      if (command.kind === 'todo.list') return reply(renderTodoListFailure());
+      if (command.kind === 'todo.list' || command.kind === 'todo.summary') return reply(renderTodoListFailure());
       return reply(isTodoCommand(command) ? this.todoFailureText(error) : renderLookupFailure(lookupSource(command), 'UNAVAILABLE'));
     }
   }
@@ -283,12 +285,22 @@ export class WorkChatService implements WorkDesk {
     }
   }
 
-  /** Read-only: lists the actor's open to-dos, never transitions, never calls a provider. Any doubt means `none`. */
+  /**
+   * Read-only: lists the actor's open to-dos, never transitions, never calls a provider. Any doubt means `none`.
+   * Wrong state (ADR-0104 D3, DET-2): when no open to-do matches but exactly one closed to-do has exactly that title
+   * ("주간 보고서 쓰기 완료" after "완료 처리: 1"), the reply says it is already completed or canceled.
+   */
   private async completionHint(command: Extract<WorkChatCommand, { kind: 'todo.hint' }>, actor: Actor): Promise<WorkChatOutcome> {
     try {
       const resolved = resolveHintTarget(await this.activeTodos(actor), command.target);
-      if (!resolved) return { kind: 'none' };
-      return reply(renderTodoCompletionHint(command.action, resolved.no, resolved.item));
+      if (resolved) return reply(renderTodoCompletionHint(command.action, resolved.no, resolved.item));
+      if ('index' in command.target) return { kind: 'none' };
+      const wanted = hintKey(command.target.text);
+      if (wanted.length === 0) return { kind: 'none' };
+      const closed = (await this.deps.work.listByActor(actor.id)).filter(
+        (item) => item.status !== WorkItemStatus.ACTIVE && item.title !== undefined && hintKey(item.title) === wanted,
+      );
+      return closed.length === 1 ? reply(renderTodoStatusAnswer(closed[0] as WorkItem, 0)) : { kind: 'none' };
     } catch {
       return { kind: 'none' };
     }

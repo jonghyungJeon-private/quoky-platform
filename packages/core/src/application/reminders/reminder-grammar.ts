@@ -166,13 +166,45 @@ function bodyKindOf(body: string): ReminderBodyKind {
 const LIST_PATTERNS: readonly RegExp[] = [
   /^(?:내\s?)?(?:알림|리마인더)\s?(?:목록|리스트)(?:\s?(?:보여\s?줘|보여\s?주세요))?$/,
   /^내\s?알림$/,
+  // DET-2 sweep: "알림 보여줘" (the list without the 목록 noun).
+  /^(?:내\s?)?(?:알림|리마인더)(?:을|를|들)?\s?(?:보여\s?줘|보여\s?주세요|보여\s?줄래)$/,
   /^(?:list|show)\s+(?:my\s+)?reminders$/i,
   /^my\s+reminders$/i,
 ];
 
+/**
+ * Status questions about the owner's reminders (ADR-0104 D3, DET-2), answered with the store-backed LIST reply: how
+ * many (`알림 몇 개야?`), any left or scheduled (`알림 남았어?`, `예정된 알림 있어?`), and whether one was set
+ * (`알림 설정했어?`, `리마인더 설정됐어?`). Whole message only; the reminder noun comes first (after an optional
+ * `내` / `남은` / `예정된` / `설정된`), so another app's notifications ("아이폰 알림 설정했어?", "알림 소리 설정했어?")
+ * are never claimed. Matched after trailing `?`/`.`/`!` are removed; a statement-shaped tail ("알림 설정했어") counts
+ * only when the original message ended in `?` ({@link matchListOrCancel} passes that in).
+ */
+const STATUS_NOUN = String.raw`(?:(?:내|남은|예정된|설정된|등록된)\s?)?(?:알림|리마인더)(?:은|는|이|가|도|들)?`;
+const STATUS_COUNT = String.raw`몇\s?(?:개|건|가지)\s?(?:야|예요|에요|이야|이에요|인가요|인지|지|나|냐|니|있어|있어요|있나|있나요|있니|남았어|남았어요|남았나|남았나요|남았니|돼|돼요)?`;
+const STATUS_LEFT = String.raw`(?:아직\s?)?(?:남았어|남았어요|남았나|남았나요|남았니|남아\s?있어|남아\s?있어요|남아\s?있나|남아\s?있나요|남은\s?(?:거|게|것|건)\s?(?:있어|있어요|있나|있나요|있니)|있어|있어요|있나|있나요|있니|뭐야|뭐예요|뭐에요|뭐지|뭐\s?있어)`;
+const STATUS_SET = String.raw`(?:잘\s?)?(?:설정|등록|예약)\s?(?:했어|했어요|했나|했나요|했니|했지|했죠|됐어|됐어요|됐나|됐나요|됐니|됐지|됐죠|되었어|되었나요|돼\s?있어|돼\s?있어요|돼\s?있나|되어\s?있어|되어\s?있나요|된\s?거\s?맞아|된\s?거\s?맞지)|(?:걸어|맞춰|해)\s?(?:놨어|놨어요|놨나|놨지|뒀어|뒀어요|뒀나|뒀지|놓았어|두었어)`;
+const STATUS_KO = new RegExp(String.raw`^${STATUS_NOUN}\s?(${STATUS_COUNT}|${STATUS_LEFT}|${STATUS_SET})$`, 'u');
+/** Tails that are questions without a `?`. */
+const STATUS_SELF_QUESTION = /(?:나|나요|니|냐|지|죠|맞아|뭐야|뭐예요|뭐에요|뭐지|인지|인가요)$/u;
+const STATUS_EN =
+  /^(?:do\s+i\s+have\s+(?:any\s+)?(?:upcoming\s+|scheduled\s+)?reminders(?:\s+(?:left|set|scheduled))?|how\s+many\s+reminders\s+(?:do\s+i\s+have|are\s+(?:there|left|set|scheduled))|(?:are\s+there\s+)?any\s+reminders(?:\s+(?:left|set|scheduled))?|did\s+you\s+set\s+(?:the|my|a)\s+reminder|is\s+(?:the|my)\s+reminder\s+set)$/i;
+
+/** Whether the (trailing-punctuation-free) message is a reminder status question; `questioned`: it ended in `?`. */
+function isReminderStatusQuestion(whole: string, questioned: boolean): boolean {
+  if (isNegated(whole, 0, whole.length)) return false;
+  if (STATUS_EN.test(whole)) return true;
+  const match = STATUS_KO.exec(whole);
+  if (match === null) return false;
+  const tail = match[1] as string;
+  return questioned || tail.startsWith('몇') || STATUS_SELF_QUESTION.test(tail);
+}
+
 const CANCEL_PATTERNS: readonly RegExp[] = [
   /^(?:알림|리마인더)\s?#?(\d{1,6})\s?(?:번\s?)?취소(?:\s?해\s?줘요?|\s?해\s?주세요|\s?해)?$/,
   /^#(\d{1,6})\s?(?:알림|리마인더)\s?취소(?:\s?해\s?줘요?|\s?해\s?주세요)?$/,
+  // DET-2 sweep: "1번 알림 취소" (the counter before the noun).
+  /^(\d{1,6})\s?번\s?(?:알림|리마인더)\s?(?:을|를)?\s?취소(?:\s?해\s?줘요?|\s?해\s?주세요|\s?해)?$/,
   /^cancel\s+reminder\s*#?(\d{1,6})$/i,
 ];
 
@@ -189,6 +221,7 @@ const BULK_CANCEL: readonly RegExp[] = [
 function matchListOrCancel(message: string): ReminderCommand | null {
   const whole = message.replace(/[\s.!?。]+$/u, '');
   if (LIST_PATTERNS.some((re) => re.test(whole))) return { kind: 'LIST' };
+  if (isReminderStatusQuestion(whole, /[?？]\s*$/u.test(message))) return { kind: 'LIST' };
   for (const re of CANCEL_PATTERNS) {
     const m = re.exec(whole);
     if (m?.[1] !== undefined) {
