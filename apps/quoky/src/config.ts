@@ -1,13 +1,14 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, ollamaModelExecutionLocality } from '@quoky/ai-cli';
-import { AgentProfileRegistry, agentProfileId, isAgentProfileId } from '@quoky/core';
-import type { AgentProfile, ContextBuilderConfig, RepositoryIdentityConfig } from '@quoky/core';
+import { AgentProfileRegistry, RepositoryIdentityResolver, agentProfileId, isAgentProfileId } from '@quoky/core';
+import type { AgentProfile, ContextBuilderConfig, RepositoryIdentity, RepositoryIdentityConfig } from '@quoky/core';
 import { parseProviderRoutingMode } from './provider-routing/provider-routing-activation';
 import type { ProviderRoutingMode } from './provider-routing/provider-routing-activation';
 import { ContinuationReceiverActivationError, ContinuationReceiverActivationErrorCode, parseContinuationReceiverMode } from './continuation/continuation-receiver-activation';
 import type { ContinuationReceiverMode } from './continuation/continuation-receiver-activation';
 import { parseReminderConfig, ReminderConfigErrorCode } from './reminders/reminder-config';
+import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
 import type { ReminderConfig } from './reminders/reminder-config';
 
 /**
@@ -169,6 +170,14 @@ export interface QuokyConfig {
    */
   repositoryHosting?: RepositoryIdentityConfig;
   /**
+   * The code-work repository allowlist (ADR-0109 D1), validated at startup. From `QUOKY_GITHUB_REPOS` (comma-separated
+   * `owner/repo`, at most 10; a malformed, empty or duplicate entry is a typed startup error), or else the legacy
+   * `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO` pair as an allowlist of one (a legacy pair that does not resolve stays the
+   * lenient "not configured", exactly as before). Setting both forms is a startup error. Empty when neither is set.
+   * When `QUOKY_GITHUB_REPOS` is used, `repositoryHosting` (the legacy raw pair) is undefined.
+   */
+  repositoryAllowlist: readonly RepositoryIdentity[];
+  /**
    * Dev-only PAT for the RepositoryHosting adapter (Sprint 3d-D, ADR-0054; `QUOKY_GITHUB_TOKEN`, with legacy `CHUNSIK_GITHUB_TOKEN` fallback).
    * Adapter-local: never enters `@quoky/core`, `ConversationRuntime`, an anchor, a reason, a response, or a log.
    * Per ADR-0061 (§13), the PAT path is **dev-only** — rejected in a non-dev runtime by the composition root.
@@ -232,6 +241,10 @@ export const QuokyConfigErrorCode = {
   GIT_REMOTE_ENABLED_INVALID: 'GIT_REMOTE_ENABLED_INVALID',
   GIT_MERGE_ENABLED_INVALID: 'GIT_MERGE_ENABLED_INVALID',
   GIT_MERGE_REQUIRES_REMOTE: 'GIT_MERGE_REQUIRES_REMOTE',
+  GITHUB_REPOS_INVALID: 'GITHUB_REPOS_INVALID',
+  GITHUB_REPOS_DUPLICATE: 'GITHUB_REPOS_DUPLICATE',
+  GITHUB_REPOS_TOO_MANY: 'GITHUB_REPOS_TOO_MANY',
+  GITHUB_REPOS_WITH_LEGACY_PAIR: 'GITHUB_REPOS_WITH_LEGACY_PAIR',
   WORK_SUMMARY_ENABLED_INVALID: 'WORK_SUMMARY_ENABLED_INVALID',
   EMBEDDING_ENABLED_INVALID: 'EMBEDDING_ENABLED_INVALID',
   EMBEDDING_MODEL_INVALID: 'EMBEDDING_MODEL_INVALID',
@@ -455,6 +468,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   // Owner/repo prefer the new QUOKY_* env, falling back to legacy CHUNSIK_* (Sprint 4b, ADR-0061 N3/N4).
   const owner = env.QUOKY_GITHUB_OWNER ?? env.CHUNSIK_GITHUB_OWNER;
   const repo = env.QUOKY_GITHUB_REPO ?? env.CHUNSIK_GITHUB_REPO;
+  // ADR-0109 D1: the multi-repository allowlist; the legacy pair is an allowlist of one; both forms → startup error.
+  const githubRepos = parseGithubRepositoryList(env.QUOKY_GITHUB_REPOS);
+  if (githubRepos !== undefined && (owner || repo)) {
+    throw new QuokyConfigError(QuokyConfigErrorCode.GITHUB_REPOS_WITH_LEGACY_PAIR);
+  }
+  const legacyRepositoryHosting: RepositoryIdentityConfig | undefined =
+    owner || repo ? { provider: 'github', owner: owner ?? '', repo: repo ?? '' } : undefined;
+  const legacyResolution = new RepositoryIdentityResolver().resolve(legacyRepositoryHosting);
+  const repositoryAllowlist: readonly RepositoryIdentity[] =
+    githubRepos ?? (legacyResolution.status === 'resolved' ? [legacyResolution.identity] : []);
   // ADR-0091: fail closed before anything else is composed when no owner is configured.
   const ownerIds = parseDiscordIdList(env.QUOKY_DISCORD_OWNER_IDS, QuokyConfigErrorCode.DISCORD_OWNER_IDS_INVALID);
   if (ownerIds.length === 0) throw new QuokyConfigError(QuokyConfigErrorCode.DISCORD_OWNER_IDS_MISSING);
@@ -528,7 +551,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     ...(calendar !== undefined ? { calendar } : {}),
     // Provider fixed to 'github'. Undefined when both owner and repo are absent; a single one present yields a raw
     // config the resolver classifies (invalid-owner / invalid-repo). No provider/token env var is read here.
-    repositoryHosting: owner || repo ? { provider: 'github', owner: owner ?? '', repo: repo ?? '' } : undefined,
+    repositoryHosting: legacyRepositoryHosting,
+    repositoryAllowlist,
     // Sprint 3d-D (legacy): adapter-local dev-only PAT. Undefined when unset.
     githubToken: env.QUOKY_GITHUB_TOKEN ?? env.CHUNSIK_GITHUB_TOKEN,
     // Sprint 4b (ADR-0061): GitHub App auth (adapter-local). Undefined unless BOTH appId and a private key resolve.
@@ -595,6 +619,29 @@ function parseDiscordIdList(raw: string | undefined, error: QuokyConfigErrorCode
   if (entries.length > MAX_DISCORD_ID_ENTRIES) throw new QuokyConfigError(error);
   if (entries.some((entry) => !DISCORD_SNOWFLAKE.test(entry))) throw new QuokyConfigError(error);
   return [...new Set(entries)];
+}
+
+/**
+ * `QUOKY_GITHUB_REPOS` (ADR-0109 D1): comma-separated `owner/repo`, whitespace around entries ignored. Unset or blank
+ * → `undefined` (not configured). At most {@link MAX_GITHUB_REPOSITORIES} entries; every entry must be a safe
+ * `owner/repo` (no URL, no `.git`, nothing token-shaped) and appear once (case-insensitive). Errors carry the code
+ * only, never the configured value.
+ */
+function parseGithubRepositoryList(raw: string | undefined): RepositoryIdentity[] | undefined {
+  if (raw === undefined || raw.trim().length === 0) return undefined;
+  const entries = raw.split(',').map((entry) => entry.trim());
+  if (entries.length > MAX_GITHUB_REPOSITORIES) throw new QuokyConfigError(QuokyConfigErrorCode.GITHUB_REPOS_TOO_MANY);
+  const identities: RepositoryIdentity[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const identity = parseRepositoryEntry(entry);
+    if (!identity) throw new QuokyConfigError(QuokyConfigErrorCode.GITHUB_REPOS_INVALID);
+    const key = `${identity.owner}/${identity.repo}`.toLowerCase();
+    if (seen.has(key)) throw new QuokyConfigError(QuokyConfigErrorCode.GITHUB_REPOS_DUPLICATE);
+    seen.add(key);
+    identities.push(identity);
+  }
+  return identities;
 }
 
 /** Exact `true`/`false` only; unset yields the default. Anything else (including empty) is a startup error. */

@@ -737,3 +737,76 @@ describe('GitHubRepositoryHostingProvider — merge preflight + execution (CAP-0
     });
   });
 });
+
+describe('GitHubRepositoryHostingProvider — per-repository App tokens (ADR-0109 D3)', () => {
+  const GADGETS: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'gadgets' };
+  const PR_REF_GADGETS: PullRequestRef = {
+    provider: 'github',
+    owner: 'acme',
+    repo: 'gadgets',
+    pullRequestNumber: 7,
+    pullRequestUrl: 'https://github.com/acme/gadgets/pull/7',
+  };
+
+  it('every request asks the App token source for exactly the identity the call addresses', async () => {
+    const asked: string[] = [];
+    const tokenSource = async (identity: RepositoryIdentity) => {
+      asked.push(`${identity.owner}/${identity.repo}`);
+      return `scoped-${identity.repo}`;
+    };
+    const { fn, calls } = fakeFetch((url) => {
+      if (url.endsWith('/branches/feature%2Fx')) return { status: 200 };
+      return { status: 404 };
+    });
+    const p = new GitHubRepositoryHostingProvider({ auth: { kind: 'github-app', tokenSource }, fetchImpl: fn });
+    await p.branchExists(IDENTITY, 'feature/x');
+    await p.repositoryExists(GADGETS);
+    await p.getRemoteBranchCommit(GADGETS, 'feature/y');
+    expect(asked).toEqual(['acme/widgets', 'acme/gadgets', 'acme/gadgets']);
+    expect(calls.map((c) => (c.init.headers as Record<string, string>).Authorization)).toEqual([
+      'Bearer scoped-widgets',
+      'Bearer scoped-gadgets',
+      'Bearer scoped-gadgets',
+    ]);
+  });
+
+  it('a token-source refusal (non-allowlisted identity) fails the call before any request', async () => {
+    const { fn, calls } = fakeFetch(() => ({ status: 200 }));
+    const p = new GitHubRepositoryHostingProvider({
+      auth: {
+        kind: 'github-app',
+        tokenSource: async () => {
+          throw new Error('github app: repository is not on the allowlist; no token minted');
+        },
+      },
+      fetchImpl: fn,
+    });
+    await expect(p.createPullRequest({ ...createInput, identity: GADGETS })).rejects.toThrow(/not on the allowlist/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('the status token source is asked for the status call identity', async () => {
+    const asked: RepositoryIdentity[] = [];
+    const source = createPullRequestStatusTokenSource(async (_permissions, identity) => {
+      asked.push(identity);
+      return 'status-read';
+    }, () => false);
+    const { fn } = fakeFetch((url) => {
+      if (url.includes('/check-runs')) return { status: 200, body: { total_count: 0, check_runs: [] } };
+      if (url.endsWith('/reviews?per_page=100')) return { status: 200, body: [] };
+      return { status: 200, body: { state: 'open', merged: false, head: { ref: 'feature/x', sha: 'abc1234' }, base: { ref: 'main' } } };
+    });
+    const p = new GitHubRepositoryHostingProvider({
+      auth: { kind: 'github-app', tokenSource: async () => 'write', statusTokenSource: source },
+      fetchImpl: fn,
+    });
+    await p.getPullRequestStatus({
+      identity: GADGETS,
+      pullRequestRef: PR_REF_GADGETS,
+      expectedHeadBranch: 'feature/x',
+      expectedBaseBranch: 'main',
+      expectedCommitHash: 'abc1234',
+    });
+    expect(asked).toEqual([GADGETS]);
+  });
+});

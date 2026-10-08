@@ -126,6 +126,32 @@ export class GitHubAppAuth {
   }
 
   /**
+   * The account login (user or organization) an installation belongs to, read with the App JWT
+   * (`GET /app/installations/{id}`; no installation token is minted), or `null` when the installation does not exist
+   * (404). Used to verify an explicitly configured installation id against the repository owner before any
+   * repository-scoped token is minted (ADR-0109 review P2). Not cached (cheap; a re-install is picked up).
+   */
+  async getInstallationAccountLogin(installationId: number): Promise<string | null> {
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      throw new AppAuthError('github app: getInstallationAccountLogin requires a valid installation id');
+    }
+    const res = await this.request(
+      'getInstallationAccountLogin',
+      'GET',
+      `/app/installations/${installationId}`,
+      this.signAppJwt(),
+    );
+    if (res.status === 404) return null;
+    if (res.status !== 200) throw this.statusError('getInstallationAccountLogin', res.status);
+    const body = (await this.json(res, 'getInstallationAccountLogin')) as { account?: { login?: unknown } };
+    const login = body?.account?.login;
+    if (typeof login !== 'string' || login.length === 0) {
+      throw new AppAuthError('github app: getInstallationAccountLogin returned an invalid account');
+    }
+    return login;
+  }
+
+  /**
    * Resolve the **numeric** repository id for `owner/repo` (ADR-0061 §8.4 down-scoping), or `null` when the repo is
    * not accessible to the installation (404). An App JWT cannot read repo metadata, so this uses a repository-NAME-
    * scoped installation token to read `GET /repos/{owner}/{repo}` — no installation-wide token is minted. Cached.

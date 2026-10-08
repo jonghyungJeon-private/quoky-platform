@@ -61,6 +61,12 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID]: 'QUOKY_GIT_MERGE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE]:
     'QUOKY_GIT_MERGE_ENABLED=true requires QUOKY_GIT_REMOTE_ENABLED=true; enable the remote first or leave QUOKY_GIT_MERGE_ENABLED unset.',
+  [QuokyConfigErrorCode.GITHUB_REPOS_INVALID]:
+    'QUOKY_GITHUB_REPOS must be a comma-separated list of GitHub "owner/repo" names (no URL, no ".git", no empty entries).',
+  [QuokyConfigErrorCode.GITHUB_REPOS_DUPLICATE]: 'QUOKY_GITHUB_REPOS must list each "owner/repo" once (names are case-insensitive).',
+  [QuokyConfigErrorCode.GITHUB_REPOS_TOO_MANY]: 'QUOKY_GITHUB_REPOS may list at most 10 repositories.',
+  [QuokyConfigErrorCode.GITHUB_REPOS_WITH_LEGACY_PAIR]:
+    'Set either QUOKY_GITHUB_REPOS or the legacy QUOKY_GITHUB_OWNER/QUOKY_GITHUB_REPO pair, not both (move the pair into QUOKY_GITHUB_REPOS as "owner/repo").',
   [QuokyConfigErrorCode.WORK_SUMMARY_ENABLED_INVALID]: 'QUOKY_WORK_SUMMARY_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID]: 'QUOKY_EMBEDDING_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.EMBEDDING_MODEL_INVALID]:

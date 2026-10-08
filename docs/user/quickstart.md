@@ -281,6 +281,7 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `OLLAMA_MODEL` | 선택. 기본 `llama3.1` |
 | `QUOKY_CLAUDE_MODEL` | 선택. 기본 `sonnet` |
 | `QUOKY_GIT_REMOTE_ENABLED` | 선택. 기본 `false`. `true`면 push → PR 흐름 사용 가능 (8절 "push와 PR" 참고). 운영자 설정은 운영자 가이드 참고 |
+| `QUOKY_GITHUB_REPOS` | 선택 (v3, ADR-0109). push/PR을 허용할 GitHub 저장소 목록. 쉼표로 구분한 `owner/repo`, 최대 10개 (예: `my-name/app,my-name/site`). URL, `.git`, 빈 항목, 중복은 시작 실패(`GITHUB_REPOS_INVALID` / `GITHUB_REPOS_DUPLICATE` / `GITHUB_REPOS_TOO_MANY`). 예전 방식 `QUOKY_GITHUB_OWNER` + `QUOKY_GITHUB_REPO`(저장소 1개)도 그대로 동작하지만, 두 방식을 함께 쓰면 `GITHUB_REPOS_WITH_LEGACY_PAIR`로 시작 실패. 등록한 프로젝트가 어느 저장소인지는 그 폴더의 `origin` 주소로 판단합니다 (8절 "push와 PR" 참고) |
 | `QUOKY_CONTEXT_MAX_TOKENS` | 선택. 대화 한 턴에 넣는 기억/문맥의 추정 토큰 예산. 기본 6000, 최대 200000 |
 | `QUOKY_GIT_MERGE_ENABLED` | 선택. 기본 `false`. `true`는 `QUOKY_GIT_REMOTE_ENABLED=true`가 필요 (아니면 `GIT_MERGE_REQUIRES_REMOTE`로 시작 실패). 머지는 별도 승인 단계이며 기본은 꺼짐. `PR 머지해줘`는 꺼져 있으면 "병합은 이 설정에서 꺼져 있어요"로 거절 |
 | `QUOKY_WORK_SUMMARY_ENABLED` | 선택. 기본 `true`. 업무 조회 결과를 모델이 요약(항목이 있을 때). Ollama가 준비되지 않으면 요약이 Claude로 갈 수 있어 사내 커넥터 텍스트가 구독을 통해 이 컴퓨터 밖으로 나갈 수 있음. 정책상 불가하면 `false` |
@@ -704,7 +705,7 @@ QUOKY_OPS_UI_PORT=47613       # 기본 47613. 1024-65535 (범위 밖이면 화�
 
 | 단계 | 보낼 말 (예) | 결과 |
 |---|---|---|
-| 1. 프로젝트 등록 | `이 프로젝트 등록해줘: /절대/경로/my-repo` | 절대 경로(2단계 이상)와 `등록`이 있어야 인식. `../repo`, `~/repo` 같은 상대 경로는 "프로젝트는 절대경로로 등록해 주세요…" 안내만 받고 등록되지 않음 |
+| 1. 프로젝트 등록 | `이 프로젝트 등록해줘: /절대/경로/my-repo` | 절대 경로(2단계 이상)와 `등록`이 있어야 인식. `../repo`, `~/repo` 같은 상대 경로는 "프로젝트는 절대경로로 등록해 주세요…" 안내만 받고 등록되지 않음. 여러 프로젝트를 등록해도 됩니다. push/PR을 쓰려면 그 폴더의 `origin`이 `QUOKY_GITHUB_REPOS`에 있는 저장소의 HTTPS 주소여야 합니다 (아래 "push와 PR") |
 | 2. 변경 요청 | `src/target.ts 파일을 수정해줘: ...` 또는 `/preview src/target.ts ...` | 코드 변경 승인 요청 (파일 경로를 함께 적어야 함, 아래 참고) |
 | 3. 계획 승인 | `승인` | 파일을 바꾸지 않는 **변경 미리보기(diff)** 가 전송됨 |
 | 4. 적용 의사 | `적용해줘` | 적용 전 두 번째 승인 요청. 아직 파일은 그대로 |
@@ -818,6 +819,15 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | 6. PR 생성 | `PR 생성 실행` | PR 생성. "아직 머지/배포/릴리즈는 하지 않았어요" |
 | (선택) 상태 | `PR 상태 알려줘` | PR/리뷰/체크 상태. GitHub App에 Checks 권한이 없으면 "현재 PR 상태를 확인하지 못했어요"라고 솔직히 답함 |
 
+- **여러 저장소 (v3, ADR-0109).** 등록한 프로젝트마다 그 폴더의 `origin` fetch/push 주소로 저장소를 정합니다. 주소는
+  `https://github.com/<owner>/<repo>(.git)` 형태여야 하고 그 저장소가 `QUOKY_GITHUB_REPOS`(또는 예전 OWNER/REPO 한 쌍)에
+  있어야 합니다. 기능 브랜치가 다른 remote를 추적하면 그 remote도 같은 저장소여야 합니다. 목록에 없거나, SSH(`git@github.com:…`)·
+  다른 호스트이거나, fetch와 push 주소가 서로 다른 저장소를 가리키면 push·PR·상태 확인·머지·브랜치 정리 단계마다
+  "…push·PR·상태 확인·merge·브랜치 정리는 하지 않았고 토큰도 발급하지 않았어요"와 운영자 안내 한 줄로 거절됩니다. push는
+  확인한 저장소 주소(`https://github.com/<owner>/<repo>.git`)로만 실행되고, 승인 뒤 원격 저장소가 바뀌면(다른 허용 저장소라도)
+  "승인 이후 이 프로젝트의 원격 저장소가 바뀌었어요 (TARGET_CHANGED)…"로 거절되니 다시 승인받으세요. 두 프로젝트가 같은
+  저장소를 가리키는 것은 괜찮습니다. 확인: 그 폴더에서 `git remote get-url --all origin`과
+  `git remote get-url --push --all origin`.
 - 이미 push했거나 PR을 만든 뒤 `푸시 실행`/`PR 생성 실행`을 다시 보내면 새로 만들지 않고 "이미 …했어요"라고 답합니다.
   `강제 푸시해줘`는 지원하지 않고, `배포해줘`는 "머지/배포/릴리즈는 이후 단계예요"로 거절됩니다.
 - `main`/`master`로의 push(기능 브랜치가 `origin/main`을 추적하는 경우 포함)와 `main`/`master`에서의 커밋은 항상 거절됩니다.
@@ -865,6 +875,8 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | 알림이 DM이 아니라 안 보임 | 알림은 기본으로 소유자 DM으로만 전달. 봇과 DM 창을 한 번 열어 두세요. 채널 전달은 운영자가 `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`로 별도 설정 |
 | `내 할 일 보여줘`에 계정 정보(identity)가 설정되어 있지 않다는 안내 | Jira/GitHub 식별자 매핑(`QUOKY_ACTOR_IDENTITY_MAPPINGS`)과 커넥터 자격 증명이 없음. 로컬 할 일은 그대로 동작. 운영자 가이드 참고 |
 | `PR 상태 알려줘`가 "현재 PR 상태를 확인하지 못했어요" | GitHub App에 Checks: Read 권한이 없을 수 있음 (운영자 가이드). PR 생성/push에는 영향 없음 |
+| push/PR이 "이 프로젝트의 원격 저장소는 허용 목록에 없어요…"로 거절됨 | 그 폴더의 `origin` 저장소를 `QUOKY_GITHUB_REPOS`에 추가하고 재시작. 운영자는 GitHub App 설치의 저장소 목록에도 같은 저장소를 추가 (운영자 가이드). "fetch 주소와 push 주소가 서로 다른 저장소"라면 `remote.origin.pushurl`/`pushInsteadOf` 설정을 지우고, "주소를 확인할 수 없거나 지원하지 않는 형식"이라면 `git remote set-url origin https://github.com/<owner>/<repo>.git` (그리고 그 주소에 걸리는 `insteadOf` 규칙 제거) |
+| push가 "…원격 저장소가 바뀌었어요 (TARGET_CHANGED)"로 거절됨 | 승인 뒤 `origin`(또는 추적 remote)이 다른 저장소로 바뀜. 주소를 되돌리거나 `푸시해줘`부터 다시 승인 |
 | push가 "Repository not found"로 실패 | 이전 버전의 알려진 문제(시스템 git credential helper가 앱 토큰을 가림)는 고쳐졌습니다. 그래도 나면 원격이 HTTPS `github.com`인지, GitHub App이 해당 저장소에 설치됐는지 확인 (운영자 가이드) |
 | 큰 미리보기가 안 보임 | 봇에 **Attach Files** 권한이 없을 수 있음 (2절 4번) |
 | `pnpm install`에서 `better-sqlite3` 빌드 실패 | 네이티브 빌드 도구 설치 (1절) |

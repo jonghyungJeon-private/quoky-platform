@@ -114,6 +114,9 @@ import {
 import { createProviderSelectionProviders } from './features/provider-selection.providers';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
+import { createGitHubAppTokenSources } from './github-app-token-sources';
+import { RepositoryAllowlist } from './repository-allowlist';
+import { WorkspaceRepositoryIdentityResolver } from './workspace-repository-resolver';
 import { PersonalGitGuard } from './personal-git-guard';
 import { PersonalHostingGuard } from './personal-hosting-guard';
 import { createProductionRuntimeProviderRoutingActivation } from './provider-routing/provider-routing-activation';
@@ -181,6 +184,12 @@ const runtimeProviderRouting = createProductionRuntimeProviderRoutingActivation(
 const repositoryIdentityResolution = new RepositoryIdentityResolver().resolve(config.repositoryHosting);
 const repositoryIdentity =
   repositoryIdentityResolution.status === 'resolved' ? repositoryIdentityResolution.identity : undefined;
+// ADR-0109 D1/D2: the validated allowlist (QUOKY_GITHUB_REPOS, or the legacy pair as an allowlist of one). Each
+// registered project's repository is derived from its workspace origin and must be on it; with no allowlist the
+// per-workspace resolver is absent and every hosting path stays "not configured" exactly as before.
+const repositoryAllowlist = new RepositoryAllowlist(config.repositoryAllowlist);
+const workspaceRepositoryResolver =
+  repositoryAllowlist.size > 0 ? new WorkspaceRepositoryIdentityResolver({ allowlist: repositoryAllowlist }) : undefined;
 
 const appConfigured = config.githubApp !== undefined;
 const devPatToken = (config.githubToken ?? '').trim();
@@ -220,54 +229,52 @@ const connectorProviders = [...createConnectorProviders(config.connectors, coreL
 // App-auth decorator only in github-app mode, so git push/clone uses a minted installation token via GIT_ASKPASS.
 let gitProvider: GitProvider = new LocalGitProvider();
 
-if (hostingAuthMode === 'github-app' && repositoryIdentity && config.githubApp) {
-  const identity = repositoryIdentity;
+if (hostingAuthMode === 'github-app' && repositoryAllowlist.size > 0 && config.githubApp) {
   const appAuth = new GitHubAppAuth({ appId: config.githubApp.appId, privateKeyPem: config.githubApp.privateKeyPem });
-  // Lazily resolve + cache the installation id (explicit env id, else the reviewed owner/repo). The token source
-  // mints/caches a short-lived installation token DOWN-SCOPED to the single target repo (numeric repository_ids +
-  // minimal contents/pull_requests write; ADR-0061 §8.4) for REST (CAP-010) and git (CAP-002). The separate
-  // Personal Work connector source requests read-only issues/pull_requests permissions for discovery.
-  // "Not installed" or "repo not accessible" throws → surfaced pre-mutation upstream (Blocked / not-configured);
-  // there is no broad write-token fallback.
-  let cachedInstallationId: number | undefined = config.githubAppInstallationId;
-  const currentInstallationId = async (): Promise<number> => {
-    if (cachedInstallationId === undefined) {
-      const resolved = await appAuth.resolveInstallationId(identity.owner, identity.repo);
-      if (resolved === null) throw new Error('github app: not installed on the configured repository');
-      cachedInstallationId = resolved;
-    }
-    return cachedInstallationId;
-  };
-  const tokenSource = async (): Promise<string> => {
-    return appAuth.tokenForRepository(await currentInstallationId(), identity.owner, identity.repo, {
-      contents: 'write',
-      pull_requests: 'write',
-    });
-  };
-  const readTokenSource = async (): Promise<string> => appAuth.tokenForInstallation(
-    await currentInstallationId(),
-    { permissions: { issues: 'read', pull_requests: 'read' } },
-  );
+  // ADR-0109 D3 (unchanged ADR-0061 §8.4 down-scoping): every repository token is minted by tokenForRepository for
+  // exactly the ONE allowlisted repository the operation resolved (numeric repository_ids + minimal permissions);
+  // a non-allowlisted identity throws before any installation lookup or mint. The installation id is the explicit env
+  // id, else resolved and cached per repository. "Not installed" or "repo not accessible" throws → surfaced
+  // pre-mutation upstream (Blocked / not-configured); there is no broad write-token fallback. The separate Personal
+  // Work connector source requests read-only issues/pull_requests permissions for discovery.
   // PR status preview reads with its OWN read-only, repo-down-scoped token ({pull_requests, checks, contents}: read).
   // If the App lacks the Checks permission the mint is refused (422) and the source re-mints without `checks`, so
-  // the preview is PARTIAL (state + reviews, checks "unavailable") instead of failing. The push/PR-create token above
-  // is unchanged (contents + pull_requests write only). Merge preflight keeps using that token and never reads checks.
-  const statusTokenSource = createPullRequestStatusTokenSource(
-    async (permissions) => appAuth.tokenForRepository(await currentInstallationId(), identity.owner, identity.repo, permissions),
-    isPermissionNotGrantedError,
-  );
+  // the preview is PARTIAL (state + reviews, checks "unavailable") instead of failing. The push/PR-create token is
+  // unchanged (contents + pull_requests write only). Merge preflight keeps using that token and never reads checks.
+  const { tokenSource, statusTokenSource, readTokenSource } = createGitHubAppTokenSources({
+    minter: appAuth,
+    allowlist: repositoryAllowlist,
+    ...(config.githubAppInstallationId !== undefined ? { installationId: config.githubAppInstallationId } : {}),
+    createStatusTokenSource: (mint) => createPullRequestStatusTokenSource(mint, isPermissionNotGrantedError),
+  });
   repositoryHostingManager = new RepositoryHostingManager(
     new GitHubRepositoryHostingProvider({ auth: { kind: 'github-app', tokenSource, statusTokenSource } }),
   );
   connectorProviders.push(new GitHubConnectorProvider({ auth: { kind: 'github-app', tokenSource: readTokenSource } }));
-  gitProvider = new GitHubAppGitProvider({ makeLocalGit: (runner) => new LocalGitProvider(runner), tokenSource });
-} else if (hostingAuthMode === 'pat' && repositoryIdentity) {
+  gitProvider = new GitHubAppGitProvider({
+    makeLocalGit: (runner) => new LocalGitProvider(runner),
+    tokenSource,
+    allowlist: repositoryAllowlist,
+  });
+} else if (hostingAuthMode === 'pat' && repositoryAllowlist.size > 0) {
   repositoryHostingManager = new RepositoryHostingManager(
     new GitHubRepositoryHostingProvider({ auth: { kind: 'pat', token: devPatToken } }),
   );
   connectorProviders.push(new GitHubConnectorProvider({ auth: { kind: 'pat', token: devPatToken } }));
-  // Dev PAT is a REST-only convenience (ADR-0061 §11.3): local git push uses the developer's own git credential,
-  // so GIT_PROVIDER stays the plain LocalGitProvider.
+  // Dev PAT (ADR-0061 §11.3): REST here; git push gets the same PAT through the askpass decorator below (ADR-0109).
+}
+// ADR-0109 review (rounds 2-3): whenever an allowlist is configured, every remote git op — in EVERY auth mode — runs
+// through the same decorator: bound to the APPROVED repository passed by the runtime, against its canonical URL, with
+// isolated git config (no system/global config, no inherited GIT_CONFIG_*, credential helpers reset). Because the
+// owner's credential helpers are isolated away, dev PAT mode supplies its credential like App mode does: the configured
+// PAT through the one-shot askpass. With no hosting credential the git child gets none. With no allowlist the plain
+// LocalGitProvider stays, exactly as before.
+if (!(gitProvider instanceof GitHubAppGitProvider) && repositoryAllowlist.size > 0) {
+  gitProvider = new GitHubAppGitProvider({
+    makeLocalGit: (runner) => new LocalGitProvider(runner),
+    allowlist: repositoryAllowlist,
+    ...(hostingAuthMode === 'pat' ? { tokenSource: async () => devPatToken } : {}),
+  });
 }
 // ADR-0094: Personal-edition git safety, OUTERMOST so a refusal (remote off, commit on main/master) happens
 // before any git process or the GitHub App decorator could mint a token. Wraps both composed branches above.
@@ -283,6 +290,10 @@ gitProvider = new PersonalGitGuard(gitProvider, {
 // PR merge and remote branch delete are refused pre-mutation unless QUOKY_GIT_MERGE_ENABLED=true.
 const repositoryHosting = {
   identity: repositoryIdentity,
+  // ADR-0109 D2: present whenever an allowlist is configured — replaces `identity` for every remote step.
+  ...(workspaceRepositoryResolver
+    ? { resolveIdentity: (rootPath: string) => workspaceRepositoryResolver.resolve(rootPath) }
+    : {}),
   manager:
     config.git.remoteEnabled && repositoryHostingManager
       ? new PersonalHostingGuard(repositoryHostingManager, { mergeEnabled: config.git.mergeEnabled })

@@ -61,6 +61,7 @@ import type {
   WorkspaceChange,
   WorkspaceDiff,
   WorkspaceRef,
+  WorkspaceRepositoryResolution,
 } from '../domain';
 import type { AiExecutionResult, AiProvider, AiRequest, Logger, LogFields, StorageProvider } from '../ports';
 import { newId } from '../util/id';
@@ -141,6 +142,21 @@ const sessionOf = (o: Partial<Session> = {}): Session => ({
 const projectOf = (): Project => ({ id: 'proj-1', name: 'p', rootPath: '/repo', createdAt: TS });
 
 const messageOf = (text: string): InboundMessage => ({ id: 'm1', context: CTX, text, receivedAt: TS });
+/** ADR-0109 D2 fakes for the per-workspace repository resolver (records every root it is asked about). */
+const resolverReturning = (result: WorkspaceRepositoryResolution) => {
+  const roots: string[] = [];
+  const remotes: Array<string | undefined> = [];
+  const resolve = async (rootPath: string, remote?: string): Promise<WorkspaceRepositoryResolution> => {
+    roots.push(rootPath);
+    remotes.push(remote);
+    return result;
+  };
+  return { resolve, roots, remotes };
+};
+const ALLOWLISTED: WorkspaceRepositoryResolution = {
+  status: 'resolved',
+  identity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+};
 
 const intentOf = (
   capability: Capability,
@@ -480,8 +496,8 @@ interface Calls {
   lastGitDiffRoot?: string;
   lastGitCommitInput?: { rootPath: string; files: string[]; message: string; approvalRef: ApprovalRef };
   lastGitInfoRoot?: string;
-  lastGitPushInput?: { rootPath: string; remote: string; branch: string; commitHash: string; approvalRef: ApprovalRef };
-  lastGitSyncMainInput?: { rootPath: string; remote: string; branch: string; expectedRemoteCommit: string };
+  lastGitPushInput?: { rootPath: string; remote: string; branch: string; commitHash: string; approvalRef: ApprovalRef; repository?: RepositoryIdentity };
+  lastGitSyncMainInput?: { rootPath: string; remote: string; branch: string; expectedRemoteCommit: string; repository?: RepositoryIdentity };
   commandExecGet: number;
   loggerWarn: number;
   /** F3-B (Sprint 4c-Follow-up-3): captured `logger.warn` message + fields, for secret-free branch-log assertions. */
@@ -655,11 +671,11 @@ interface Opts {
   /** `git.pushApprovedCommit` result (Sprint 3a) — defaults to a valid `gitPushResultOf` echoing the input;
    *  pass 'throw' to simulate a push failure, 'throw-blocked' → GitPushBlockedError (App-auth pre-mutation;
    *  ADR-0061, Sprint 4b), or a literal GitPushResult to force an integrity mismatch. */
-  gitPush?: GitPushResult | 'throw' | 'throw-blocked' | 'throw-timeout' | 'throw-secret-stderr';
+  gitPush?: GitPushResult | 'throw' | 'throw-blocked' | 'throw-target-changed' | 'throw-timeout' | 'throw-secret-stderr';
   /** `git.syncMain` result (Sprint 3h) — defaults to a valid `gitMainSyncResultOf` echoing the input;
    *  'throw-blocked' → GitMainSyncBlockedError, 'throw-unverified' → GitMainSyncUnverifiedError, 'throw-generic'
    *  → a plain Error, or a literal GitMainSyncResult (e.g. ref-only / already-up-to-date). */
-  gitSyncMain?: GitMainSyncResult | 'throw-blocked' | 'throw-unverified' | 'throw-generic';
+  gitSyncMain?: GitMainSyncResult | 'throw-blocked' | 'throw-target-changed' | 'throw-unverified' | 'throw-generic';
   /** `git.deleteMergedLocalBranch` result (Sprint 3i) — defaults to a valid deleted result; 'throw-blocked' →
    *  BranchCleanupBlockedError, 'throw-unverified' → BranchCleanupUnverifiedError, 'throw-generic' → a plain Error,
    *  or a literal GitBranchCleanupResult (e.g. alreadyAbsent). */
@@ -669,6 +685,8 @@ interface Opts {
   /** Repository Hosting identity (Sprint 3d-D) — defaults to a valid github identity so PR approval works; pass
    *  `null` to simulate "not configured" (no identity). */
   hostingIdentity?: RepositoryIdentity | null;
+  /** ADR-0109 D2: the composition root's per-workspace resolver (absent = the static `hostingIdentity` path). */
+  hostingResolveIdentity?: (rootPath: string) => Promise<WorkspaceRepositoryResolution>;
   /** Repository Hosting manager (Sprint 3d-D) — defaults to a fake that records the call and returns a valid
    *  echoing PullRequestResult; pass `null` to simulate a missing token (no manager), or a custom fake for
    *  reuse/blocked/unverified paths. */
@@ -1072,6 +1090,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.gitPush++;
         calls.lastGitPushInput = input;
         if (opts.gitPush === 'throw-blocked') throw new GitPushBlockedError('push blocked pre-mutation (App-auth)');
+        if (opts.gitPush === 'throw-target-changed') throw new GitPushBlockedError('retargeted', { reason: 'TARGET_CHANGED' });
         if (opts.gitPush === 'throw') throw new Error('git push boom');
         if (opts.gitPush === 'throw-timeout') throw new Error('git push timed out after 60000ms');
         if (opts.gitPush === 'throw-secret-stderr') {
@@ -1083,6 +1102,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.gitSyncMain++;
         calls.lastGitSyncMainInput = input;
         if (opts.gitSyncMain === 'throw-blocked') throw new GitMainSyncBlockedError('sync blocked');
+        if (opts.gitSyncMain === 'throw-target-changed') throw new GitMainSyncBlockedError('retargeted', { reason: 'TARGET_CHANGED' });
         if (opts.gitSyncMain === 'throw-unverified') throw new GitMainSyncUnverifiedError('sync unverified');
         if (opts.gitSyncMain === 'throw-generic') throw new Error('sync boom');
         return opts.gitSyncMain ?? gitMainSyncResultOf(input);
@@ -1103,6 +1123,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         opts.hostingIdentity === null
           ? undefined
           : (opts.hostingIdentity ?? { provider: 'github', owner: 'acme', repo: 'widgets' }),
+      ...(opts.hostingResolveIdentity ? { resolveIdentity: opts.hostingResolveIdentity } : {}),
       manager:
         opts.hostingManager === null
           ? undefined
@@ -5895,6 +5916,126 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
     expect(calls.run).toBe(0);
     expect(calls.resume).toBe(0);
   });
+
+  // ── ADR-0109 D2: the project's origin must resolve to one allowlisted repository before any push ──────────
+  describe('multi-repository allowlist (ADR-0109 D2)', () => {
+    const committed = (): ApplyPreviewAnchor =>
+      pushApprovedAnchor({
+        status: 'GIT_COMMITTED',
+        pushApprovalId: undefined,
+        pushCommitHash: undefined,
+        pushRemote: undefined,
+        pushBranch: undefined,
+        pushUpstreamRef: undefined,
+      });
+
+    it.each(['not-allowlisted', 'ambiguous', 'unsupported-remote'] as const)(
+      'push approval: a %s workspace → fixed refusal, no CRITICAL approval, no anchor change',
+      async (reason) => {
+        const resolver = resolverReturning({ status: 'refused', reason });
+        const { deps, calls } = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolver.resolve });
+        const r = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+        expect(r.status).toBe('FAILED');
+        expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, reason).text);
+        expect(calls.requestForRisk).toBe(0);
+        expect(calls.applyAnchorSet).toBe(0);
+        expect(calls.gitPush).toBe(0);
+        expect(resolver.roots).toEqual([WORKSPACE.rootPath]);
+      },
+    );
+
+    it('push execution: an origin that is no longer allowlisted → refused before git push; stays PUSH_APPROVED', async () => {
+      const resolver = resolverReturning({ status: 'refused', reason: 'not-allowlisted' });
+      const { deps, calls } = execDeps({ hostingResolveIdentity: resolver.resolve });
+      const r = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+      expect(calls.gitPush).toBe(0);
+      expect(calls.applyAnchorSet).toBe(0);
+    });
+
+    it('a resolver that throws fails closed as unsupported-remote (no push)', async () => {
+      const { deps, calls } = execDeps({
+        hostingResolveIdentity: async () => {
+          throw new Error('boom');
+        },
+      });
+      const r = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'unsupported-remote').text);
+      expect(calls.gitPush).toBe(0);
+    });
+
+    const WIDGETS_ID: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'widgets' };
+    const GADGETS_ID: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'gadgets' };
+
+    it('push approval checks the ACTUAL push remote and binds the resolved repository on the anchor and in the reason', async () => {
+      const resolver = resolverReturning(ALLOWLISTED);
+      const ask = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolver.resolve });
+      const legacyAsk = execDeps({ applyAnchor: committed() });
+      const withResolver = await new ConversationRuntime(ask.deps).handle(messageOf('푸시해줘'));
+      const legacy = await new ConversationRuntime(legacyAsk.deps).handle(messageOf('푸시해줘'));
+      expect(withResolver.status).toBe('AWAITING_APPROVAL');
+      expect(resolver.remotes).toEqual([REMOTE]); // the upstream's remote, not just origin
+      expect(ask.calls.lastApplyAnchor?.pushRepositoryIdentity).toEqual(WIDGETS_ID);
+      expect(ask.calls.lastRequestForRiskInput?.reason).toContain('repository: acme/widgets');
+      // without the resolver nothing is bound and the reason has no repository line (legacy unchanged)
+      expect(legacyAsk.calls.lastApplyAnchor?.pushRepositoryIdentity).toBeUndefined();
+      expect(legacyAsk.calls.lastRequestForRiskInput?.reason).not.toContain('repository:');
+      expect(withResolver.reply.text).toBe(legacy.reply.text);
+    });
+
+    it('push execution with the bound repository unchanged → pushes; the push remote is re-checked', async () => {
+      const resolver = resolverReturning(ALLOWLISTED);
+      const exec = execDeps({ applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }), hostingResolveIdentity: resolver.resolve });
+      await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
+      expect(exec.calls.gitPush).toBe(1);
+      expect(exec.calls.lastApplyAnchor?.status).toBe('GIT_PUSHED');
+      expect(resolver.remotes).toEqual([REMOTE]);
+    });
+
+    it('the APPROVED identity is passed to the git provider; a provider-level TARGET_CHANGED gets the fixed reply', async () => {
+      const ok = execDeps({ applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      await new ConversationRuntime(ok.deps).handle(messageOf('푸시 실행'));
+      expect(ok.calls.lastGitPushInput).toMatchObject({ repository: WIDGETS_ID });
+      const legacy = execDeps();
+      await new ConversationRuntime(legacy.deps).handle(messageOf('푸시 실행'));
+      expect(legacy.calls.lastGitPushInput && 'repository' in legacy.calls.lastGitPushInput).toBe(false);
+      const changed = execDeps({
+        applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }),
+        hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve,
+        gitPush: 'throw-target-changed',
+      });
+      const r = await new ConversationRuntime(changed.deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(changed.calls.applyAnchorSet).toBe(0);
+    });
+
+    it('push execution: approved for A, now resolving to B (both allowlisted) → TARGET_CHANGED, no push', async () => {
+      const exec = execDeps({
+        applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: GADGETS_ID }).resolve,
+      });
+      const r = await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(r.reply.text).toContain('TARGET_CHANGED');
+      expect(exec.calls.gitPush).toBe(0);
+      expect(exec.calls.applyAnchorSet).toBe(0);
+    });
+
+    it('push execution of an approval that bound no repository (approved before the resolver) → TARGET_CHANGED', async () => {
+      const exec = execDeps({ hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      const r = await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(exec.calls.gitPush).toBe(0);
+    });
+
+    it('a refusal hint from the composition root is appended to the provider-neutral copy', async () => {
+      const resolver = resolverReturning({ status: 'refused', reason: 'not-allowlisted', hint: '운영자: 설정을 확인해 주세요.' });
+      const { deps } = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolver.resolve });
+      const r = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted', '운영자: 설정을 확인해 주세요.').text);
+      expect(r.reply.text.endsWith('\n운영자: 설정을 확인해 주세요.')).toBe(true);
+    });
+  });
 });
 
 // ── Sprint 3b — Explicit Pull Request Creation Approval (GIT_PUSHED → CRITICAL PR approval, ADR-0049) ──
@@ -8011,6 +8152,136 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     expect(calls.hostingDeleteRemoteBranch).toBe(0);
     expect(calls.applyAnchorSet).toBe(0);
     expect(r.reply.text).toContain('실행할 수 없어요');
+  });
+
+  // ── ADR-0109 D2: every PR-and-later remote step uses the identity resolved from the project's origin ──────────
+  describe('multi-repository allowlist (ADR-0109 D2)', () => {
+    const OTHER: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'gadgets' };
+    const NOT_ALLOWED = (): WorkspaceRepositoryResolution => ({ status: 'refused', reason: 'not-allowlisted' });
+    const hostingCalls = (calls: ReturnType<typeof makeDeps>['calls']) =>
+      calls.hostingCreatePR + calls.hostingGetStatus + calls.hostingMergePR + calls.hostingDeleteRemoteBranch;
+
+    const steps: Array<[string, () => ApplyPreviewAnchor, string, Partial<Opts>, { gitMergeEnabled?: boolean } | undefined]> = [
+      ['PR approval', () => prReadyAnchor(), 'PR 만들어줘', {}, undefined],
+      ['PR creation', () => prApprovedAnchor(), 'PR 생성 실행', { approvalsGetResult: APPROVED_REQ() }, undefined],
+      ['PR status', () => PR_CREATED_ANCHOR(), 'PR 상태 확인해줘', {}, undefined],
+      ['merge approval', () => PR_CREATED_ANCHOR(), '머지 승인해줘', {}, MERGE_ON],
+      ['merge execution', () => MERGE_APPROVED_ANCHOR(), '머지 실행해줘', { approvalsGetResult: APPROVED_MERGE() }, MERGE_ON],
+      ['main sync', () => PR_MERGED_ANCHOR(), 'main 동기화해줘', {}, MERGE_ON],
+      ['local branch cleanup', () => MAIN_SYNCED_ANCHOR(), '로컬 브랜치 정리해줘', {}, MERGE_ON],
+      ['remote cleanup approval', () => BRANCH_CLEANED_ANCHOR(), '원격 브랜치 삭제해줘', {}, MERGE_ON],
+      ['remote cleanup execution', () => REMOTE_CLEANUP_APPROVED_ANCHOR(), '원격 브랜치 삭제 실행해줘', { approvalsGetResult: approvedApprovalOf() }, MERGE_ON],
+    ];
+
+    it.each(steps)('%s: a non-allowlisted origin → fixed refusal before any approval, git or hosting call', async (_label, anchor, text, extra, options) => {
+      const resolver = resolverReturning(NOT_ALLOWED());
+      const { deps, calls } = makeDeps({ applyAnchor: anchor(), hostingResolveIdentity: resolver.resolve, ...extra });
+      const r = await new ConversationRuntime(deps, options).handle(messageOf(text));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+      expect(r.status).toBe('FAILED');
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.applyAnchorSet).toBe(0);
+      expect(hostingCalls(calls)).toBe(0);
+      expect(calls.gitPush + calls.gitSyncMain + calls.gitDeleteBranch).toBe(0);
+      expect(resolver.roots).toEqual([WORKSPACE.rootPath]);
+    });
+
+    it.each(steps)('%s: an allowlisted origin behaves exactly as the static identity', async (_label, anchor, text, extra, options) => {
+      const resolved = makeDeps({ applyAnchor: anchor(), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve, ...extra });
+      const legacy = makeDeps({ applyAnchor: anchor(), ...extra });
+      const a = await new ConversationRuntime(resolved.deps, options).handle(messageOf(text));
+      const b = await new ConversationRuntime(legacy.deps, options).handle(messageOf(text));
+      expect(a.status).toBe(b.status);
+      expect(a.reply.text.replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<ts>')).toBe(b.reply.text.replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<ts>'));
+      expect(hostingCalls(resolved.calls)).toBe(hostingCalls(legacy.calls));
+      expect(resolved.calls.requestForRisk).toBe(legacy.calls.requestForRisk);
+      expect(resolved.calls.gitSyncMain + resolved.calls.gitDeleteBranch).toBe(legacy.calls.gitSyncMain + legacy.calls.gitDeleteBranch);
+      // the step really ran (an approval, a hosting call or a local git step) — the comparison is not vacuous
+      expect(legacy.calls.requestForRisk + hostingCalls(legacy.calls) + legacy.calls.gitSyncMain + legacy.calls.gitDeleteBranch).toBe(1);
+    });
+
+    it('PR approval binds the identity resolved from origin (another allowlisted repository), not the static one', async () => {
+      const { deps, calls } = makeDeps({
+        applyAnchor: prReadyAnchor(),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: OTHER }).resolve,
+      });
+      await new ConversationRuntime(deps).handle(messageOf('PR 만들어줘'));
+      expect(calls.lastApplyAnchor?.repositoryIdentity).toEqual(OTHER);
+      expect(calls.lastRequestForRiskInput?.reason).toContain('acme/gadgets');
+    });
+
+    it('PR creation targets the resolved repository; a project now resolving to a different repository is refused', async () => {
+      const other = makeDeps({
+        applyAnchor: prApprovedAnchor({ repositoryIdentity: OTHER }),
+        approvalsGetResult: APPROVED_REQ(),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: OTHER }).resolve,
+      });
+      await new ConversationRuntime(other.deps).handle(messageOf('PR 생성 실행'));
+      expect(other.calls.lastHostingCreateInput?.identity).toEqual(OTHER);
+
+      const drifted = makeDeps({
+        applyAnchor: prApprovedAnchor(),
+        approvalsGetResult: APPROVED_REQ(),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: OTHER }).resolve,
+      });
+      const r = await new ConversationRuntime(drifted.deps).handle(messageOf('PR 생성 실행'));
+      expect(drifted.calls.hostingCreatePR).toBe(0);
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+    });
+
+    it('merge / remote-cleanup approvals refuse when origin now resolves to a different (allowlisted) repository', async () => {
+      const resolve = resolverReturning({ status: 'resolved', identity: OTHER }).resolve;
+      const merge = makeDeps({ applyAnchor: PR_CREATED_ANCHOR(), hostingResolveIdentity: resolve });
+      const m = await new ConversationRuntime(merge.deps, MERGE_ON).handle(messageOf('머지 승인해줘'));
+      expect(merge.calls.requestForRisk).toBe(0);
+      expect(m.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      const cleanup = makeDeps({ applyAnchor: BRANCH_CLEANED_ANCHOR(), hostingResolveIdentity: resolve });
+      const c = await new ConversationRuntime(cleanup.deps, MERGE_ON).handle(messageOf('원격 브랜치 삭제해줘'));
+      expect(cleanup.calls.requestForRisk).toBe(0);
+      expect(c.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+    });
+
+    it('main sync passes the anchored repository to git; a provider-level TARGET_CHANGED gets the fixed reply', async () => {
+      const ok = makeDeps({ applyAnchor: PR_MERGED_ANCHOR(), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      await new ConversationRuntime(ok.deps, MERGE_ON).handle(messageOf('main 동기화해줘'));
+      expect(ok.calls.lastGitSyncMainInput?.repository).toEqual(PR_IDENTITY);
+      const changed = makeDeps({
+        applyAnchor: PR_MERGED_ANCHOR(),
+        hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve,
+        gitSyncMain: 'throw-target-changed',
+      });
+      const r = await new ConversationRuntime(changed.deps, MERGE_ON).handle(messageOf('main 동기화해줘'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      const legacy = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(legacy.deps).handle(messageOf('main 동기화해줘'));
+      expect(legacy.calls.lastGitSyncMainInput?.repository).toBeUndefined();
+    });
+
+    it('the refusal copy is provider-neutral: no URL, no provider name, no env var, and says nothing ran', () => {
+      for (const reason of ['not-allowlisted', 'ambiguous', 'unsupported-remote'] as const) {
+        const text = composer.composeRepositoryNotAllowed(CTX, reason).text;
+        expect(text).toContain('하지 않았고 토큰도 발급하지 않았어요');
+        expect(text).not.toMatch(/https?:|github|QUOKY_|origin/i);
+      }
+      expect(composer.composeRepositoryTargetChanged(CTX).text).not.toMatch(/github|QUOKY_/i);
+      // a hint is bounded to one line of at most 200 characters
+      const long = composer.composeRepositoryNotAllowed(CTX, 'ambiguous', `a\u0000b\n${'x'.repeat(500)}`).text;
+      expect(long.split('\n')).toHaveLength(2);
+      expect(long.split('\n')[1]!.length).toBeLessThanOrEqual(200);
+      expect(long).not.toContain('\u0000');
+    });
+
+    it('PR approval: the push bound repository A but origin now resolves to B → TARGET_CHANGED; the pushed remote is checked', async () => {
+      const resolver = resolverReturning({ status: 'resolved', identity: OTHER });
+      const { deps, calls } = makeDeps({
+        applyAnchor: prReadyAnchor({ pushRepositoryIdentity: PR_IDENTITY }),
+        hostingResolveIdentity: resolver.resolve,
+      });
+      const r = await new ConversationRuntime(deps).handle(messageOf('PR 만들어줘'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(calls.requestForRisk).toBe(0);
+      expect(resolver.remotes).toEqual([REMOTE]);
+    });
   });
 });
 

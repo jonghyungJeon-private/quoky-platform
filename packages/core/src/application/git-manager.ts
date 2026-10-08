@@ -1,6 +1,6 @@
 import { WorkspaceNotSafeError } from '../errors';
 import { ApprovalStatus } from '../domain';
-import type { ApprovalRef, GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryInfo } from '../domain';
+import type { ApprovalRef, GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryIdentity, RepositoryInfo } from '../domain';
 import type { GitProvider } from '../ports';
 import { isCreatableOwnerBranch } from './code-work/branch-name-policy';
 import { isValidCommitMessage } from './commit-message';
@@ -16,9 +16,13 @@ const SYNC_SHA_SHAPED = /^[0-9a-f]{7,40}$/i;
  * "로컬 main을 동기화하지 않았어요" (CAP-002, ADR-0058, Sprint 3h — mirrors RepositoryHostingBlockedError).
  */
 export class GitMainSyncBlockedError extends Error {
-  constructor(message: string) {
+  /** `TARGET_CHANGED` (ADR-0109): the workspace no longer resolves to the approved repository. A fixed code, never parsed text. */
+  readonly reason?: 'TARGET_CHANGED';
+
+  constructor(message: string, options?: { reason?: 'TARGET_CHANGED' }) {
     super(message);
     this.name = 'GitMainSyncBlockedError';
+    if (options?.reason) this.reason = options.reason;
   }
 }
 
@@ -67,9 +71,13 @@ export class BranchCleanupUnverifiedError extends Error {
  * check the remote" reply (never "not pushed"). Mirrors {@link GitMainSyncBlockedError}.
  */
 export class GitPushBlockedError extends Error {
-  constructor(message: string) {
+  /** `TARGET_CHANGED` (ADR-0109): the workspace no longer resolves to the approved repository. A fixed code, never parsed text. */
+  readonly reason?: 'TARGET_CHANGED';
+
+  constructor(message: string, options?: { reason?: 'TARGET_CHANGED' }) {
     super(message);
     this.name = 'GitPushBlockedError';
+    if (options?.reason) this.reason = options.reason;
   }
 }
 
@@ -237,6 +245,8 @@ export class GitManager {
     branch: string;
     commitHash: string;
     approvalRef: ApprovalRef;
+    /** ADR-0109: the repository the push approval bound; passed to the provider, which pushes to it only. */
+    repository?: RepositoryIdentity;
   }): Promise<GitPushResult> {
     if (input.approvalRef.status !== ApprovalStatus.APPROVED) {
       throw new Error(`git push requires an APPROVED approval (got ${input.approvalRef.status})`);
@@ -245,7 +255,9 @@ export class GitManager {
     if (!isSafePushRemote(input.remote)) throw new Error('git push rejects an unsafe remote');
     if (!isSafePushBranch(input.branch)) throw new Error('git push rejects an unsafe branch');
     if (!/^[0-9a-f]{7,40}$/i.test(input.commitHash)) throw new Error('git push rejects an invalid commitHash');
-    return this.provider.pushApprovedCommit(input.rootPath, input.remote, input.branch, input.commitHash);
+    return input.repository
+      ? this.provider.pushApprovedCommit(input.rootPath, input.remote, input.branch, input.commitHash, input.repository)
+      : this.provider.pushApprovedCommit(input.rootPath, input.remote, input.branch, input.commitHash);
   }
 
   /**
@@ -266,8 +278,10 @@ export class GitManager {
     remote: string;
     branch: string;
     expectedRemoteCommit: string;
+    /** ADR-0109: the anchored repository; the provider's ls-remote and fetch run against it only. */
+    repository?: RepositoryIdentity;
   }): Promise<GitMainSyncResult> {
-    const { rootPath, remote, branch, expectedRemoteCommit } = input;
+    const { rootPath, remote, branch, expectedRemoteCommit, repository } = input;
     // ── 1. Defensive validation BEFORE any git call. All → Blocked (no mutation). ───────────────────────────
     if (!rootPath.trim()) throw new GitMainSyncBlockedError('git main sync requires a rootPath');
     if (!isSafePushRemote(remote)) throw new GitMainSyncBlockedError('git main sync rejects an unsafe remote');
@@ -306,9 +320,15 @@ export class GitManager {
     // ── 4. Observe the remote main tip (read-only) BEFORE any mutation; must equal the expected merge commit. ─
     let remoteTip: { commitHash: string };
     try {
-      remoteTip = await this.provider.getRemoteRefCommit(rootPath, remote, branch);
-    } catch {
-      throw new GitMainSyncBlockedError('git main sync: could not observe remote main; not synchronized');
+      remoteTip = repository
+        ? await this.provider.getRemoteRefCommit(rootPath, remote, branch, repository)
+        : await this.provider.getRemoteRefCommit(rootPath, remote, branch);
+    } catch (err) {
+      const targetChanged = err instanceof GitMainSyncBlockedError && err.reason === 'TARGET_CHANGED';
+      throw new GitMainSyncBlockedError(
+        'git main sync: could not observe remote main; not synchronized',
+        targetChanged ? { reason: 'TARGET_CHANGED' } : undefined,
+      );
     }
     if (remoteTip.commitHash !== expectedRemoteCommit) {
       throw new GitMainSyncBlockedError('git main sync: remote main does not match the expected merge commit; not synchronized');
@@ -317,7 +337,9 @@ export class GitManager {
     // ── 5. SINGLE fast-forward mutation. Phase-aware: provider Blocked → Blocked; Unverified/other → Unverified. ─
     let result: GitMainSyncResult;
     try {
-      result = await this.provider.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, previousMainCommit);
+      result = repository
+        ? await this.provider.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, previousMainCommit, repository)
+        : await this.provider.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, previousMainCommit);
     } catch (err) {
       if (err instanceof GitMainSyncBlockedError) throw err; // pre-ref-update — definitively not synced
       if (err instanceof GitMainSyncUnverifiedError) throw err; // at/after ref update — unknown

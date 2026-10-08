@@ -202,3 +202,17 @@ describe('GitHubAppAuth (Sprint 4b, ADR-0061)', () => {
     });
   });
 });
+
+describe('GitHubAppAuth.getInstallationAccountLogin (ADR-0109 review P2)', () => {
+  it('reads the account login with the App JWT (no token mint); 404 → null; a bad body or 403 throws sanitized', async () => {
+    const ok = fakeFetch(() => ({ status: 200, body: { id: 99, account: { login: 'acme' } } }));
+    await expect(auth(ok.fn).getInstallationAccountLogin(99)).resolves.toBe('acme');
+    expect(ok.calls).toHaveLength(1);
+    expect(ok.calls[0]!.url).toBe('https://api.github.com/app/installations/99');
+    expect(ok.calls[0]!.init.method).toBe('GET');
+    await expect(auth(fakeFetch(() => ({ status: 404 })).fn).getInstallationAccountLogin(99)).resolves.toBeNull();
+    await expect(auth(fakeFetch(() => ({ status: 200, body: {} })).fn).getInstallationAccountLogin(99)).rejects.toThrow(/invalid account/);
+    await expect(auth(fakeFetch(() => ({ status: 403 })).fn).getInstallationAccountLogin(99)).rejects.toThrow(/authorization failed/);
+    await expect(auth(ok.fn).getInstallationAccountLogin(0)).rejects.toThrow(/valid installation id/);
+  });
+});

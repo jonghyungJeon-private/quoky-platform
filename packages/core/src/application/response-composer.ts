@@ -9,6 +9,7 @@ import type {
   PreviewFile,
   PullRequestMergeability,
   PullRequestStatusPreview,
+  WorkspaceRepositoryRefusal,
 } from '../domain';
 import type { AiExecutionResult } from '../ports';
 import { newId } from '../util/id';
@@ -2464,6 +2465,42 @@ export class ResponseComposer {
   }
 
   /** Repository identity or GitHub token is not configured (Sprint 3d-D) — safe not-configured; NO PR attempt. */
+  /**
+   * ADR-0109 D2: a remote step (push, PR, PR status, merge, main sync, branch cleanup) refused because the project's
+   * remote does not resolve to exactly one allowlisted repository. Truthful, fixed and provider-neutral: names the
+   * reason class, says nothing ran and no token was issued. An optional `hint` (a fixed operator hint supplied by the
+   * composition root, e.g. which setting to change) is appended, bounded. Never echoes a URL or configured value.
+   */
+  composeRepositoryNotAllowed(
+    context: ConversationContext,
+    reason: WorkspaceRepositoryRefusal,
+    hint?: string,
+  ): OutboundMessage {
+    const cause =
+      reason === 'not-allowlisted'
+        ? '이 프로젝트의 원격 저장소는 허용 목록에 없어요.'
+        : reason === 'ambiguous'
+          ? '이 프로젝트의 원격 저장소 fetch 주소와 push 주소가 서로 다른 저장소를 가리켜요. 한 프로젝트는 한 저장소만 쓸 수 있어요.'
+          : '이 프로젝트의 원격 저장소 주소를 확인할 수 없거나 지원하지 않는 형식이에요.';
+    const safeHint = typeof hint === 'string' ? boundOperatorHint(hint) : '';
+    return {
+      context,
+      text: `${cause} push·PR·상태 확인·merge·브랜치 정리는 하지 않았고 토큰도 발급하지 않았어요.${safeHint ? `\n${safeHint}` : ''}`,
+    };
+  }
+
+  /**
+   * ADR-0109: the repository a step resolves to is not the one its approval covered (`TARGET_CHANGED`, as for connector
+   * writes) — the project's remote changed after the approval. Nothing ran and no token was issued; a new approval is
+   * needed.
+   */
+  composeRepositoryTargetChanged(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text: '승인 이후 이 프로젝트의 원격 저장소가 바뀌었어요 (TARGET_CHANGED). 아무것도 실행하지 않았고 토큰도 발급하지 않았어요. 다시 승인을 받아 주세요.',
+    };
+  }
+
   composePrCreationNotConfigured(context: ConversationContext): OutboundMessage {
     return {
       context,
@@ -2997,4 +3034,13 @@ export class ResponseComposer {
       text: `원격 브랜치 '${name}'는 이미 정리됐어요.\n이번엔 새로 삭제한 게 없어요. 로컬 브랜치·main은 변경하지 않았어요. 배포/릴리즈/태그도 하지 않았어요.`,
     };
   }
+}
+
+/** A composition-root operator hint, single-line, control characters removed, bounded (ADR-0109). */
+function boundOperatorHint(hint: string): string {
+  return [...hint.replace(/\s+/g, ' ')]
+    .filter((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0x7f)
+    .join('')
+    .trim()
+    .slice(0, 200);
 }

@@ -5,6 +5,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — CODE-8 multi-repository allowlist for code work (2026-10-08)
+
+ADR-0109 (Ratified 2026-10-06, all recommended defaults). No migration, no new port, no token change, no deps change;
+`ConversationRuntimeDeps` stays 35.
+
+- `QUOKY_GITHUB_REPOS`: comma-separated `owner/repo`, at most 10, validated at startup — a malformed, empty, URL-shaped,
+  `.git`-suffixed or token-shaped entry is `GITHUB_REPOS_INVALID`, a case-insensitive duplicate `GITHUB_REPOS_DUPLICATE`,
+  an 11th entry `GITHUB_REPOS_TOO_MANY`. The legacy `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO` pair (and its `CHUNSIK_*`
+  fallback) is an allowlist of one and keeps its lenient "not configured" behaviour; setting both forms is
+  `GITHUB_REPOS_WITH_LEGACY_PAIR`. Errors carry the code only; the bootstrap preflight prints a remediation hint.
+- Per-project repository identity (D2): every remote step — push approval and execution, PR approval and creation, PR
+  status, merge approval and execution, main sync, local and remote branch cleanup — resolves the registered project's
+  identity from its workspace `origin` fetch **and** push URLs (`apps/quoky/src/workspace-repository-resolver.ts`, read
+  under the ADR-0061 sanitized git environment). Only plain `https://github.com/<owner>/<repo>[.git]` URLs that all name
+  the same allowlisted repository pass; otherwise the step is refused before any git remote call, hosting call or token
+  mint with a fixed reply (`composeRepositoryNotAllowed`: not allowlisted / fetch and push name two repositories /
+  not an HTTPS github.com repository) that says nothing ran and no token was issued. Two projects on one repository are
+  allowed. An anchored PR identity must still match the freshly resolved one at merge and cleanup approval.
+- Core: `repositoryHosting.resolveIdentity?(rootPath)` (optional member of the existing dep; absent keeps the static
+  identity path unchanged) and the `WorkspaceRepositoryResolution` domain type.
+- Token scoping (D3): `createGitHubAppTokenSources` mints every repository token with `tokenForRepository` for exactly
+  the identity of the call, after an allowlist check (non-allowlisted → refused before any installation lookup or mint);
+  the installation id is the explicit env id or resolved per repository. The hosting adapter's App token sources now
+  receive the call's identity; the App-auth git decorator derives the identity from the operation's remote URLs (a
+  non-`origin` remote must name `origin`'s repository) and refuses a non-allowlisted, ambiguous or rewritten remote
+  before minting.
+- Guards unchanged (D5): `PersonalGitGuard`, `PersonalHostingGuard`, `QUOKY_GIT_MERGE_ENABLED`, main/master refusal and
+  the per-step CRITICAL approvals apply per repository as before.
+- Docs: quickstart env table, project registration and push/PR notes, troubleshooting row; operator guide 0.3
+  ("Only select repositories" = exactly the allowlist, D4); `.env.example`.
+- Review fixes (Codex CHANGES_REQUIRED): the actual push remote (upstream included) is checked with `origin` before
+  approval and at execution, in every auth mode (dev PAT and no-auth git now run through the same remote-bound
+  decorator in ambient-credential mode, dropping inherited `GIT_CONFIG_*` / `GIT_CONFIG_PARAMETERS`); every remote git
+  command runs against the validated canonical URL after a synchronous re-check right before the spawn, and an
+  `insteadOf`/`pushInsteadOf` rule matching that URL is refused; an explicit `QUOKY_GITHUB_APP_INSTALLATION_ID` is
+  verified (repository installation id and account owner, App-JWT lookups) before any mint; Core's refusal copy is
+  provider-neutral with an app-supplied operator hint; the push approval binds the resolved repository
+  (`pushRepositoryIdentity`) and every later step refuses with `TARGET_CHANGED` when it resolves to another repository.
+- Review round 3: the approved repository is passed explicitly into the git provider's push, ls-remote and fetch
+  (optional `approvedRepository` port parameter); the git layer builds the canonical URL from it alone and refuses with a
+  typed `TARGET_CHANGED` when the workspace re-resolves elsewhere at the final pre-spawn check. Every remote git command
+  runs with isolated config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, no inherited config, helpers reset)
+  and refuses a repository `remote.<canonical URL>.*` section or matching `insteadOf`/`pushInsteadOf`. Dev PAT mode now
+  supplies the PAT through the one-shot askpass (the owner's credential helper is isolated away). Documented residual:
+  a same-user `.git/config` edit between the final check and the spawn is out of scope (owner-only threat model).
+
 ## Unreleased — live QA session 3 defects: calendar context, Slack DM filtering, recall floor, read-only ops-UI lookups, labels (2026-10-08) — PR #148
 
 - Calendar (D2, D10): a change or delete that names no day first uses this session's recent calendar context (the event

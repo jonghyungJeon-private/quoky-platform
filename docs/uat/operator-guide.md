@@ -45,6 +45,7 @@ line to use the default.
 | `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b`. The owner's service was set to `granite3.3:8b` on 2026-10-07 (see 0.5); its chat has run on Claude since the owner decision of the same day |
 | `QUOKY_CLAUDE_MODEL` | `sonnet` | Passed to the Claude CLI as `--model` |
 | `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote reads. Needs the GitHub App (0.3) |
+| `QUOKY_GITHUB_REPOS` | unset | Code-work repository allowlist (ADR-0109): comma-separated `owner/repo`, at most 10. Malformed / duplicate / too many → `GITHUB_REPOS_INVALID` / `GITHUB_REPOS_DUPLICATE` / `GITHUB_REPOS_TOO_MANY`. The legacy `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO` pair is an allowlist of one; setting both forms → `GITHUB_REPOS_WITH_LEGACY_PAIR`. See 0.3 |
 | `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag, else startup error `GIT_MERGE_REQUIRES_REMOTE`. Keep `false`; merge enablement is a separate Strict decision and was never live-tested |
 | `QUOKY_REMINDERS_ENABLED` | `true` | Release default `true` since the SUB-1 always-on runtime is live (ADR-0102 D9, owner decision 8). `false` turns reminders off: a reminder phrase gets a fixed "off" reply and no tick runs |
 | `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the originating channel, so every channel member can read the text. Live PASS 2026-10-06 in the owner's `#reminder` channel (v2 QA record PC-3). The daily brief is DM-only regardless |
@@ -87,10 +88,54 @@ against a new tenant as a read-only probe, one request per connector, under its 
 
 ### 0.3 GitHub App (push to PR chain and GitHub lookups)
 
-Variables: `QUOKY_GITHUB_OWNER` and `QUOKY_GITHUB_REPO` (the single target repository), `QUOKY_GITHUB_APP_ID`, and the
+Variables: `QUOKY_GITHUB_REPOS` (the repository allowlist, comma-separated `owner/repo`, at most 10) **or** the legacy
+pair `QUOKY_GITHUB_OWNER` + `QUOKY_GITHUB_REPO` (an allowlist of one; never both), `QUOKY_GITHUB_APP_ID`, and the
 private key via `QUOKY_GITHUB_APP_PRIVATE_KEY_PATH` (preferred, a PEM outside Git) or `QUOKY_GITHUB_APP_PRIVATE_KEY`;
-optional `QUOKY_GITHUB_APP_INSTALLATION_ID`. Install the App on the one target repository only (a throwaway sandbox for
-UAT). Never commit the key.
+optional `QUOKY_GITHUB_APP_INSTALLATION_ID` (a pin: for each repository Quoky still looks up the repository's
+installation and the installation's account with the App JWT, and refuses before any token mint unless the
+repository's installation **is** this id and its account is the repository owner). Never commit the key.
+
+**Installation access (ADR-0109 D4, owner decision 12).** In the App installation settings choose
+**"Only select repositories"** and select **exactly** the repositories in the allowlist — no more (a throwaway sandbox
+for UAT). "All repositories" is not a supported setting: tokens stay down-scoped per repository either way, but the
+installation itself must not reach repositories Quoky is not allowed to work on. When you add or remove an allowlist
+entry, change the installation's repository selection in the same step, then restart.
+
+**Which repository a project uses (ADR-0109 D2).** Nothing is configured per project. On every remote step (push,
+PR approval and creation, PR status, merge, main sync, local and remote branch cleanup) Quoky reads the registered
+project's `origin` fetch and push URLs — and, for a push, also the URLs of the remote the push will actually use (an
+upstream on another remote) — with credential-free `git remote get-url --all` / `--push --all` reads after git's own
+`insteadOf`/`pushInsteadOf` expansion, under an environment that drops inherited `GIT_CONFIG_PARAMETERS` /
+`GIT_CONFIG_*`, and derives `owner/repo`. The step runs only when every URL is a plain
+`https://github.com/<owner>/<repo>[.git]` and all name the **same** allowlisted repository. Otherwise it is refused
+before any git remote call, hosting call or token mint, with a fixed provider-neutral reply that says nothing ran and
+no token was issued, plus one operator hint line: not allowlisted; fetch and push naming two repositories (for example
+a `pushurl` or `pushInsteadOf` to another repository); or a remote that is SSH, another host, embeds credentials, is
+unreadable or is rewritten (`insteadOf`) to such a URL. Two projects on the same repository are fine.
+
+**Execution is bound to the approved repository, in every auth mode.** The push approval records the resolved
+repository (anchor and approval reason); the PR approval records its own. The runtime passes that **approved**
+repository to the git layer, which builds the canonical URL `https://github.com/<owner>/<repo>.git` from it alone
+(never from a fresh lookup) and runs every remote git command (`push`, `ls-remote`, the main-sync `fetch`) against that
+URL, never the remote name. Before the token and again synchronously right before the git process starts, it
+re-resolves the workspace and refuses with `TARGET_CHANGED` when the workspace no longer resolves to the approved
+repository (even another allowlisted one), and refuses when repository config would redirect the URL: a
+`remote.<that URL>.*` section (git treats a URL argument that names a configured remote as that remote) or an
+`insteadOf`/`pushInsteadOf` rule matching it. The local tracking ref `refs/remotes/<remote>/<branch>` is then moved
+locally when it exists.
+
+**Isolated git config for every remote git command.** The reads and the git child run with `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null` (no system, global or XDG config), inherited `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_*` /
+`GIT_CONFIG` / `GIT_DIR` dropped, and `credential.helper` reset; only the repository's own (and worktree / included)
+config remains, and that is what the check above inspects. **Credentials therefore come only from Quoky's one-shot
+askpass:** the App installation token in App mode, and **the configured `QUOKY_GITHUB_TOKEN` (dev PAT) in PAT mode** —
+your keychain or other credential helper is no longer consulted. With neither App nor PAT configured, git gets no
+credential and an authenticated push fails ("could not complete"); configure the App (production) or the dev PAT.
+
+**Residual (owner-only threat model).** The final check and the git process start are separate steps. A process
+running as the owner that edits `.git/config` (or a file it includes) in that gap is out of scope — the same trust
+boundary as `.env.local` and the backup/operations decisions (a same-user process already has the owner's
+authority). Earlier wording that this check left no time-of-check/time-of-use gap was wrong.
 
 Required App permissions:
 
@@ -102,8 +147,10 @@ Required App permissions:
 | Checks | Read | PR status preview reads the head commit's check runs. **Without it the status reply is partial**: PR state, branch, commit, GitHub-reported mergeability and reviews are shown, and the checks line says "체크 결과는 권한이 없어 확인하지 못했어요"; push and PR creation are unaffected |
 | Issues | Read | GitHub work lookups (the read token requests `issues: read` and `pull_requests: read`) |
 
-Token scopes: push and PR creation use an installation token down-scoped to the single repository with
-`contents: write` and `pull_requests: write`. The PR status preview uses its own read-only token for the same repository
+Token scopes: push and PR creation use an installation token down-scoped (`tokenForRepository`, one numeric
+`repository_ids` entry) to the one repository the operation resolved, with `contents: write` and
+`pull_requests: write`; a token never covers a second repository, and a non-allowlisted identity is refused before
+any installation lookup or mint. The PR status preview uses its own read-only token for the same repository
 with `pull_requests: read`, `checks: read` and `contents: read`. If the App has not been granted Checks, GitHub refuses
 that mint (422); Quoky then mints without `checks` and replies with the partial status above. A 403 on the check-runs
 read gives the same partial reply. Merge preflight does not read checks; it relies on GitHub's mergeability, and
@@ -401,10 +448,10 @@ is the selector; unset derives from `QUOKY_OLLAMA_ENABLED`. Code, review and pol
 Images are selected separately (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`: `claude` | `codex` | `ollama` | `off`; `codex` uses
 the chat tier's `QUOKY_CODEX_MODEL`). Other cloud vendors (OpenAI API, Gemini) need a new provider adapter package.
 
-**Not implemented in v3 (do not configure):** `QUOKY_GITHUB_REPOS` (CODE-8, ADR-0109), `QUOKY_PR_DESCRIPTION_MODEL_ENABLED`
-(ADR-0108 D4), an MLX provider (ADR-0105 D2-D4) and continuation activation (ADR-0103). The GitHub App installation
-stays as recorded in owner decision 12 of the ADR-0102..0112 ratification record ("Only select repositories" is required
-before CODE-8 merges).
+**Not implemented in v3 (do not configure):** `QUOKY_PR_DESCRIPTION_MODEL_ENABLED` (ADR-0108 D4), an MLX provider
+(ADR-0105 D2-D4) and continuation activation (ADR-0103). `QUOKY_GITHUB_REPOS` is implemented (CODE-8, ADR-0109, see
+0.3); per owner decision 12 of the ADR-0102..0112 ratification record the App installation must be switched to "Only
+select repositories" with exactly the allowlisted repositories before CODE-8 merges (a Strict owner action).
 
 ---
 

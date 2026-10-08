@@ -42,12 +42,17 @@ const SHA_SHAPED = /^[0-9a-f]{7,40}$/i;
 export type GitHubHostingAuth =
   | {
       kind: 'github-app';
-      tokenSource: () => Promise<string>;
+      /**
+       * Mint (or return a cached) installation token for exactly `identity` — the repository the call addresses
+       * (ADR-0109 D3: one repository per token; the composition root refuses a non-allowlisted identity before any
+       * mint).
+       */
+      tokenSource: (identity: RepositoryIdentity) => Promise<string>;
       /**
        * Optional READ-ONLY token source for the PR status read path (see `createPullRequestStatusTokenSource`).
        * When absent the status path uses `tokenSource` and assumes check runs are readable.
        */
-      statusTokenSource?: () => Promise<GitHubStatusReadToken>;
+      statusTokenSource?: (identity: RepositoryIdentity) => Promise<GitHubStatusReadToken>;
     }
   | { kind: 'pat'; token: string };
 
@@ -83,16 +88,16 @@ export const PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS: Readonly<Installati
  * push / PR-creation token source is separate and unchanged.
  */
 export function createPullRequestStatusTokenSource(
-  mint: (permissions: InstallationPermissions) => Promise<string>,
+  mint: (permissions: InstallationPermissions, identity: RepositoryIdentity) => Promise<string>,
   isPermissionNotGranted: (error: unknown) => boolean,
-): () => Promise<GitHubStatusReadToken> {
-  return async () => {
+): (identity: RepositoryIdentity) => Promise<GitHubStatusReadToken> {
+  return async (identity) => {
     try {
-      return { token: await mint({ ...PULL_REQUEST_STATUS_PERMISSIONS }), checksReadable: true };
+      return { token: await mint({ ...PULL_REQUEST_STATUS_PERMISSIONS }, identity), checksReadable: true };
     } catch (error) {
       if (!isPermissionNotGranted(error)) throw error;
     }
-    return { token: await mint({ ...PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS }), checksReadable: false };
+    return { token: await mint({ ...PULL_REQUEST_STATUS_PERMISSIONS_WITHOUT_CHECKS }, identity), checksReadable: false };
   };
 }
 
@@ -143,9 +148,9 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
    * from the App token source. The value is used ONLY for the `Authorization` header — never logged, returned, or
    * placed in an error. A mint failure here surfaces during the manager's read-first phase → pre-mutation Blocked.
    */
-  private async currentToken(): Promise<string> {
+  private async currentToken(identity: RepositoryIdentity): Promise<string> {
     if (this.auth.kind === 'pat') return this.auth.token;
-    const token = await this.auth.tokenSource();
+    const token = await this.auth.tokenSource(identity);
     if (typeof token !== 'string' || token.length === 0) {
       throw new Error('github hosting: the app token source returned an empty token');
     }
@@ -156,11 +161,11 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
    * The Bearer value for the read-only PR status path: the App's dedicated status token source when configured,
    * otherwise the regular token (assumed able to read check runs). Same handling rules as `currentToken`.
    */
-  private async statusReadToken(): Promise<GitHubStatusReadToken> {
+  private async statusReadToken(identity: RepositoryIdentity): Promise<GitHubStatusReadToken> {
     if (this.auth.kind === 'pat' || this.auth.statusTokenSource === undefined) {
-      return { token: await this.currentToken(), checksReadable: true };
+      return { token: await this.currentToken(identity), checksReadable: true };
     }
-    const result = await this.auth.statusTokenSource();
+    const result = await this.auth.statusTokenSource(identity);
     if (typeof result?.token !== 'string' || result.token.length === 0) {
       throw new Error('github hosting: the app status token source returned an empty token');
     }
@@ -168,7 +173,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
   }
 
   async repositoryExists(identity: RepositoryIdentity): Promise<boolean> {
-    const res = await this.request('repositoryExists', 'GET', `/repos/${enc(identity.owner)}/${enc(identity.repo)}`);
+    const res = await this.request(identity, 'repositoryExists', 'GET', `/repos/${enc(identity.owner)}/${enc(identity.repo)}`);
     if (res.status === 200) return true;
     if (res.status === 404) return false;
     throw this.statusError('repositoryExists', res.status);
@@ -179,6 +184,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     // only that the branch endpoint returned 200 — it does NOT verify commit reachability, and the branch
     // commit SHA is intentionally not read/exposed here (CA change 8).
     const res = await this.request(
+      identity,
       'branchExists',
       'GET',
       `/repos/${enc(identity.owner)}/${enc(identity.repo)}/branches/${enc(branch)}`,
@@ -197,6 +203,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     const head = `${identity.owner}:${headBranch}`;
     const query = `state=open&head=${encodeURIComponent(head)}&base=${encodeURIComponent(baseBranch)}`;
     const res = await this.request(
+      identity,
       'findOpenPullRequest',
       'GET',
       `/repos/${enc(identity.owner)}/${enc(identity.repo)}/pulls?${query}`,
@@ -214,6 +221,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     // (CA change 12). Raw branch strings go in the JSON body (never URL-concatenated).
     const body = { title: input.title, head: input.headBranch, base: input.baseBranch, body: input.body };
     const res = await this.request(
+      input.identity,
       'createPullRequest',
       'POST',
       `/repos/${enc(input.identity.owner)}/${enc(input.identity.repo)}/pulls`,
@@ -237,10 +245,11 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     const repo = enc(identity.repo);
     const number = pullRequestRef.pullRequestNumber;
     // One read-only token for all three GETs (never the write token when a status source is configured).
-    const read = await this.statusReadToken();
+    const read = await this.statusReadToken(identity);
 
     // 1. GET the pull request.
     const pullRes = await this.request(
+      identity,
       'getPullRequestStatus',
       'GET',
       `/repos/${owner}/${repo}/pulls/${number}`,
@@ -268,11 +277,12 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     //    PARTIAL status: when the token was minted without check access, or GitHub answers 403 (not a rate limit)
     //    for check runs, the checks are reported `unavailable` (zero counts) — never success, never a failure.
     const checks = read.checksReadable
-      ? await this.readCheckRuns(`/repos/${owner}/${repo}/commits/${enc(headSha)}/check-runs?per_page=100`, read.token)
+      ? await this.readCheckRuns(identity, `/repos/${owner}/${repo}/commits/${enc(headSha)}/check-runs?per_page=100`, read.token)
       : UNAVAILABLE_CHECKS;
 
     // 3. GET reviews (latest signal per reviewer).
     const reviewRes = await this.request(
+      identity,
       'getPullRequestStatus',
       'GET',
       `/repos/${owner}/${repo}/pulls/${number}/reviews?per_page=100`,
@@ -317,8 +327,12 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
   }
 
   /** Check-run summary for the status preview; 403 (permission, not a rate limit) → unavailable checks. */
-  private async readCheckRuns(path: string, token: string): Promise<PullRequestStatusPreview['checks']> {
-    const checkRes = await this.request('getPullRequestStatus', 'GET', path, undefined, token);
+  private async readCheckRuns(
+    identity: RepositoryIdentity,
+    path: string,
+    token: string,
+  ): Promise<PullRequestStatusPreview['checks']> {
+    const checkRes = await this.request(identity, 'getPullRequestStatus', 'GET', path, undefined, token);
     if (checkRes.status === 403 && !isRateLimited(checkRes)) return UNAVAILABLE_CHECKS;
     if (checkRes.status !== 200) throw this.statusError('getPullRequestStatus', checkRes.status);
     const checkBody = (await this.json(checkRes, 'getPullRequestStatus')) as {
@@ -354,7 +368,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     const { identity, pullRequestRef } = input;
     const owner = enc(identity.owner);
     const repo = enc(identity.repo);
-    const res = await this.request('getMergePreflight', 'GET', `/repos/${owner}/${repo}/pulls/${pullRequestRef.pullRequestNumber}`);
+    const res = await this.request(identity, 'getMergePreflight', 'GET', `/repos/${owner}/${repo}/pulls/${pullRequestRef.pullRequestNumber}`);
     if (res.status !== 200) throw this.statusError('getMergePreflight', res.status);
     const pull = (await this.json(res, 'getMergePreflight')) as GitHubPull & {
       state?: unknown;
@@ -394,6 +408,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     const owner = enc(identity.owner);
     const repo = enc(identity.repo);
     const res = await this.request(
+      identity,
       'mergePullRequest',
       'PUT',
       `/repos/${owner}/${repo}/pulls/${pullRequestRef.pullRequestNumber}/merge`,
@@ -420,6 +435,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     // READ-ONLY single GET. The ref is addressed as heads/<branch> where <branch> is a PATH (slashes preserved,
     // per-segment encoded — CA change 5); NEVER a single %2F-escaped segment (that would address the wrong ref).
     const res = await this.request(
+      identity,
       'getRemoteBranchCommit',
       'GET',
       `/repos/${enc(identity.owner)}/${enc(identity.repo)}/git/ref/${encRefPath(branch)}`,
@@ -455,6 +471,7 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
     let res: Response;
     try {
       res = await this.request(
+        identity,
         'deleteRemoteBranch',
         'DELETE',
         `/repos/${enc(identity.owner)}/${enc(identity.repo)}/git/refs/${encRefPath(branch)}`,
@@ -508,13 +525,14 @@ export class GitHubRepositoryHostingProvider implements RepositoryHostingProvide
 
   /** Single `fetch` per call (no retry — CA change 13). Sanitized failures (no token/body/headers). */
   private async request(
+    identity: RepositoryIdentity,
     op: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     jsonBody?: unknown,
     readToken?: string,
   ): Promise<Response> {
-    const token = readToken ?? (await this.currentToken());
+    const token = readToken ?? (await this.currentToken(identity));
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
