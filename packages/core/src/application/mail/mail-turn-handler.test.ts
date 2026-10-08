@@ -100,7 +100,7 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     const { reader, searches } = fakeReader();
     const outcome = await createMailTurnHandler({ reader, timeZone: SEOUL }).handle(ctx('안 읽은 메일'));
     expect(searches).toEqual([{ unreadOnly: true, limit: 10 }]);
-    expect(outcome).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko') } });
+    expect(outcome).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko', 'listed') } });
     expect(textOf(outcome)).toBe(
       [
         '안 읽은 메일: 1건',
@@ -201,6 +201,10 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
       }
       expect(searches).toEqual([]);
       expect(gets).toEqual([]);
+      // Review P3-7: the history says truthfully that no mail was read.
+      expect(await handler.handle(ctx('안 읽은 메일', context as ConversationContext))).toMatchObject({
+        history: { assistant: renderMailHistoryNote('ko', 'not-read') },
+      });
     });
 
     it.each([
@@ -230,7 +234,7 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
       });
       const log = logger();
       const outcome = await createMailTurnHandler({ reader, timeZone: SEOUL, logger: log }).handle(ctx('안 읽은 메일'));
-      expect(outcome).toMatchObject({ status: 'FAILED', history: { assistant: renderMailHistoryNote('ko') } });
+      expect(outcome).toMatchObject({ status: 'FAILED', history: { assistant: renderMailHistoryNote('ko', 'not-read') } });
       expect(textOf(outcome)).toContain(fragment);
       expect(textOf(outcome)).toContain('메일을 확인하지 못했어요');
       expect(textOf(outcome)).not.toMatch(/없어요\.$/);
@@ -265,7 +269,9 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
     for (const text of ['김철수에게 메일 보내줘', '3번 메일 삭제해줘', '답장 보내줘']) {
       for (const context of [DISCORD_DM, DISCORD_CHANNEL]) {
-        expect(textOf(await handler.handle(ctx(text, context))), text).toBe(renderMailWriteRefused('ko'));
+        const refused = await handler.handle(ctx(text, context));
+        expect(textOf(refused), text).toBe(renderMailWriteRefused('ko'));
+        expect(refused).toMatchObject({ history: { assistant: renderMailHistoryNote('ko', 'not-read') } });
       }
     }
     expect([searches, gets]).toEqual([[], []]);
@@ -395,7 +401,7 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
     const listing = await handler.handle(ctx('안 읽은 메일'));
     expect(listing).not.toHaveProperty('kind');
-    expect(listing).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko') } });
+    expect(listing).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko', 'listed') } });
     // The hostile text is only ever an untrusted span inside the fixed format (no reply variant other than `reply`).
     expect(JSON.stringify((listing as { reply: { content: unknown } }).reply.content)).toContain('"kind":"untrusted"');
     // An unrelated owner message is not claimed because of anything the mail said.

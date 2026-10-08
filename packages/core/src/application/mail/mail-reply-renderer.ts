@@ -345,12 +345,27 @@ export function renderMailSummaryFooter(language: MailLanguage): string {
     : '(메일 1건의 본문을 대화 모델에 보내 요약했어요 · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요)';
 }
 
+/** What a mail reply did, for its history note (review P3-7): listed mail, read nothing, or read but showed nothing. */
+export type MailHistoryKind = 'listed' | 'not-read' | 'not-summarized';
+
 /**
  * What SHORT_TERM history keeps instead of a mail reply (TurnHandlerReply.history): no sender, subject or snippet, so a
- * later chat turn's context — which may go to a REMOTE provider — never carries mail content (ADR-0118 D7).
+ * later chat turn's context — which may go to a REMOTE provider — never carries mail content (ADR-0118 D7). The note
+ * says truthfully what happened (review P3-7): a DM-only, refusal, usage or failed-read reply read no mail.
  */
-export function renderMailHistoryNote(language: MailLanguage): string {
-  return language === 'en'
-    ? '[Quoky answered a mail question; mail details are not kept in the conversation history.]'
-    : '[메일 조회 응답 — 메일 내용은 대화 기록에 남기지 않아요.]';
+export function renderMailHistoryNote(language: MailLanguage, kind: MailHistoryKind): string {
+  const en = language === 'en';
+  switch (kind) {
+    case 'listed':
+      return en
+        ? '[Quoky listed mail; mail details are not kept in the conversation history.]'
+        : '[메일 목록 응답 — 메일 내용은 대화 기록에 남기지 않아요.]';
+    case 'not-summarized':
+      return en
+        ? '[Quoky did not summarize the requested email; its content is not kept in the conversation history.]'
+        : '[요청한 메일을 요약하지 않음 — 메일 내용은 대화 기록에 남기지 않아요.]';
+    case 'not-read':
+    default:
+      return en ? '[Quoky answered a mail request without reading any mail.]' : '[메일 요청에 안내만 함 — 메일은 읽지 않았어요.]';
+  }
 }

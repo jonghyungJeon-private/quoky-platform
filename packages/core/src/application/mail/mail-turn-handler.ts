@@ -32,6 +32,7 @@ import {
   renderMailSummaryWhich,
   renderMailUsage,
   renderMailWriteRefused,
+  type MailHistoryKind,
   type MailListingFilter,
   type MailReadFailure,
   type MailSourceCopy,
@@ -126,12 +127,12 @@ export class MailTurnHandler implements ConversationTurnHandler {
 
     if (question.kind === 'write-refused') {
       this.log('info', 'mail.turn_handler.write_refused', {});
-      return this.reply(ctx, renderMailWriteRefused(language), 'RESPONDED', language);
+      return this.reply(ctx, renderMailWriteRefused(language), 'RESPONDED', language, 'not-read');
     }
-    if (question.kind === 'usage') return this.reply(ctx, renderMailUsage(language), 'RESPONDED', language);
+    if (question.kind === 'usage') return this.reply(ctx, renderMailUsage(language), 'RESPONDED', language, 'not-read');
     if (!isDirectConversation(ctx.message.context)) {
       this.log('info', 'mail.turn_handler.dm_only', { kind: question.kind });
-      return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language);
+      return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language, 'not-read');
     }
     if (question.kind === 'list') {
       return this.list(ctx, { unread: question.unread, today: question.today, ...(question.from !== undefined ? { from: question.from } : {}) }, language);
@@ -152,7 +153,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'list', reason: failure });
-      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language);
+      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
     }
     const messages = result.messages.slice(0, MAIL_LISTING_MAX_ENTRIES);
     this.log('info', 'mail.turn_handler.listed', { shown: messages.length, matched: result.matched });
@@ -163,7 +164,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
       language,
       ...(this.deps.copy !== undefined ? { copy: this.deps.copy } : {}),
     });
-    return this.reply(ctx, body, 'RESPONDED', language);
+    return this.reply(ctx, body, 'RESPONDED', language, 'listed');
   }
 
   private async summarize(
@@ -173,16 +174,16 @@ export class MailTurnHandler implements ConversationTurnHandler {
   ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply> {
     const listing = this.currentListing(ctx);
     const ids = listing?.messageIds ?? [];
-    if (ids.length === 0) return this.reply(ctx, renderMailSummaryNeedsListing(language), 'RESPONDED', language);
+    if (ids.length === 0) return this.reply(ctx, renderMailSummaryNeedsListing(language), 'RESPONDED', language, 'not-read');
     let index: number;
     if (target.kind === 'this') {
-      if (ids.length !== 1) return this.reply(ctx, renderMailSummaryWhich(ids.length, language), 'RESPONDED', language);
+      if (ids.length !== 1) return this.reply(ctx, renderMailSummaryWhich(ids.length, language), 'RESPONDED', language, 'not-read');
       index = 1;
     } else {
       index = target.index;
     }
     const id = ids[index - 1];
-    if (id === undefined) return this.reply(ctx, renderMailSummaryOutOfRange(index, ids.length, language), 'RESPONDED', language);
+    if (id === undefined) return this.reply(ctx, renderMailSummaryOutOfRange(index, ids.length, language), 'RESPONDED', language, 'not-read');
 
     let message: MailMessage;
     try {
@@ -190,7 +191,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'summarize', reason: failure });
-      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language);
+      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
     }
     const built = buildUntrustedDocumentReadout({
       source: 'mail',
@@ -202,7 +203,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
     });
     if (!built.ok) {
       this.log('info', 'mail.turn_handler.summary_refused', { refusal: built.refusal });
-      return this.reply(ctx, renderMailSummaryRefused(built.refusal, language), 'RESPONDED', language);
+      return this.reply(ctx, renderMailSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized');
     }
     this.log('info', 'mail.turn_handler.summarize', { truncated: built.readout.truncated });
     return {
@@ -242,11 +243,12 @@ export class MailTurnHandler implements ConversationTurnHandler {
     text: MessageBody,
     status: 'RESPONDED' | 'FAILED',
     language: MailLanguage,
+    history: MailHistoryKind,
   ): TurnHandlerReply {
     return {
       reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }),
       status,
-      history: { assistant: renderMailHistoryNote(language) },
+      history: { assistant: renderMailHistoryNote(language, history) },
     };
   }
 

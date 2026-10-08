@@ -225,11 +225,16 @@ export const UNTRUSTED_DOCUMENT_REQUEST_WITHHELD_NOTICE =
  * different provider — never carries text derived from the item, and an instruction smuggled into the summary can
  * never reach a later prompt as transcript (ADR-0118 D7/D8).
  */
+/** What each source's item is called in the history note (review P3-7). */
+const SOURCE_NOUN: Readonly<Record<UntrustedDocumentSource, { readonly ko: string; readonly en: string }>> = {
+  mail: { ko: '메일', en: 'email' },
+};
+
 export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSource, language: 'ko' | 'en'): string {
-  void source;
+  const noun = SOURCE_NOUN[source];
   return language === 'en'
-    ? '[Quoky summarized one email the User asked about; the summary is not kept in the conversation history.]'
-    : '[요청한 메일 1건을 요약해 보여 드림 — 요약 내용은 대화 기록에 남기지 않아요.]';
+    ? `[Quoky summarized one ${noun.en} the User asked about; the summary is not kept in the conversation history.]`
+    : `[요청한 ${noun.ko} 1건을 요약해 보여 드림 — 요약 내용은 대화 기록에 남기지 않아요.]`;
 }
 
 /**

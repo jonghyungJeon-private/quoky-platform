@@ -321,7 +321,7 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     expect(result.reply?.text).toContain(`1. ${SENDER} · ${SUBJECT}`);
     expect(h.mailCalls).toEqual({ search: 1, get: [] });
     expect([h.calls.classify, h.calls.createTask.length, h.prompts.length]).toEqual([0, 0, 0]);
-    expect(h.calls.recordAssistant).toEqual([renderMailHistoryNote('ko')]);
+    expect(h.calls.recordAssistant).toEqual([renderMailHistoryNote('ko', 'listed')]);
   });
 
   it('no mail text leaves the host without an explicit summary request: a later chat turn carries none of it', async () => {
