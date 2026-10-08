@@ -62,6 +62,18 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
   - **P3-6.** The rate-limit wait honours `stop()`.
   - **Offset.** The poll offset is persisted in `ops/telegram-offset.json`, so a restart never replays a handed-over
     turn.
+- **Re-review fixes (CA re-review; Codex delta P2).**
+  - **P2.** The offset file carries `savedAt` and is ignored after 24 h, or when `savedAt` is missing. In memory, the
+    offset is dropped after a silent day, so a restarted lower `update_id` is never swallowed.
+  - **P3-1.** Owner notices are counted per owner chat.
+  - **P3-2.** A poll-loop rejection halts Telegram only.
+  - **P3-3.** A halt sends one `OPS_NOTICE` to the Discord owner.
+  - **P3-4.** The startup texts are aligned with the implementation.
+  - **P3-5.** `start()` no longer blocks on `getMe`.
+  - **P3-6.** An empty notification is `EMPTY_TEXT`, a new additive `NotificationNotSentReason`.
+  - **P3-7.** The quickstart notes that Telegram-created reminders stop when Telegram is off.
+  - **Codex delta P2.** Nothing is sent to Telegram before `getMe` matched or after a halt.
+  - **BRF-1.** A test covers a calendar/Jira BRIEF delivered on Telegram.
 - **Not in TG-1.** Attachments, reactions, the operations-UI panel, CommonMark rendering on Telegram and live QA
   (TG-2/TG-3, Strict).
 

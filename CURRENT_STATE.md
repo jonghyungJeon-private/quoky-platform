@@ -27,8 +27,14 @@ adapter as before.
 - **Discord change.** Inbound mention parsing moved out of Core into the Discord adapter. A mention-only message with a
   usable attachment now reaches Core as `''`; this is deliberate.
 
-No migration, no port or token change (`ConversationRuntimeDeps` 35). Chief Architect review: CHANGES REQUIRED. All
-findings and owner decisions are addressed on the branch, and re-review is pending. Offline validation only (fake
+No migration, no port or token change (`ConversationRuntimeDeps` 35); one additive domain reason (`EMPTY_TEXT`).
+Chief Architect review: CHANGES REQUIRED, then the re-review (one P2 and seven P3s) plus a Codex delta P2. All are
+addressed on the branch:
+
+- a stale offset is ignored after 24 h;
+- `start()` never blocks;
+- a halt sends one Discord `OPS_NOTICE`;
+- nothing is sent before identity is verified. Offline validation only (fake
 `fetch`). Not run yet:
 
 - the Strict gates: BotFather bot creation, the `.env.local` edit, the first live session;
