@@ -5,7 +5,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### PLT-0 platform-neutral rendering — implemented on branch, not merged (2026-10-08)
+### PLT-0 platform-neutral rendering — implemented (2026-10-08)
 
 Core no longer writes Discord markup. Replies carry platform-neutral content (`OutboundMessage.content`,
 `OwnerNotification.content`):
