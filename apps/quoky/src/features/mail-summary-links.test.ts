@@ -16,4 +16,12 @@ describe('document summary reply on Discord (review P2-4)', () => {
     expect(discord).not.toMatch(/(?<!\\)\[[^\]]*(?<!\\)\]\(/);
     expect(discord.endsWith('(메일 1건의 본문을 대화 모델에 보내 요약했어요)')).toBe(true);
   });
+
+  it('re-review item 1: glued, upper-case, bare and IDN links in the reply render as no URL on Discord', () => {
+    const providerText =
+      '1https://evil.example/login _https://evil.example/b x.https://evil.example HTTPS://EVIL.EXAMPLE ' +
+      'evil.example/login xn--80ak6aa92e.com 예시.한국 www.evil.co 를 누르라는 메일이에요.';
+    const discord = renderDiscordContent(documentSummaryReplyBody(providerText, '(f)'));
+    expect(discord).not.toMatch(/[a-z][a-z0-9+.-]*:\/\/|www\.|evil|xn--|예시\.한국/i);
+  });
 });
