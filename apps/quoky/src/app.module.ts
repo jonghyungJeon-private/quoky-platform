@@ -360,7 +360,9 @@ const application: Provider[] = [
   { provide: ResponseComposer, useFactory: () => new ResponseComposer() },
   {
     provide: AiProviderManager,
-    useFactory: (ai: readonly AiProvider[]) => new AiProviderManager(ai),
+    // Readiness is re-probed lazily with a backed-off interval for "not ready" providers, so a daemon that starts after
+    // the service (Ollama at login) becomes usable without a restart; the change is logged once.
+    useFactory: (ai: readonly AiProvider[]) => new AiProviderManager(ai, { logger: new ConsoleLogger('quoky') }),
     inject: [AI_PROVIDERS],
   },
   {
