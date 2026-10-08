@@ -11327,11 +11327,29 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(h.requests).toHaveLength(1);
     const prompt = h.requests[0]?.prompt ?? '';
     expect(prompt).toContain(
-      '1 attachment of the current User message was not read by Core (unsupported, too large or credential-like): ' +
-        'that content is not available, so never guess or describe it.',
+      '1 attachment of the current User message was not read by Core: because it looked like it contains a secret, so ' +
+        'its content was dropped. That content is not available, so never guess or describe it;',
     );
     expect(prompt).not.toContain('## 2C.');
     expect(prompt).not.toContain('config.yml');
+  });
+
+  it('live QA D13: an unsupported PDF next to a question states the actual reason; size is never offered as one', async () => {
+    const h = chatTurn('답변입니다.');
+    const pdf: InboundAttachment = {
+      kind: 'unsupported', name: 'qa-notes.pdf', mimeType: 'application/pdf', sizeBytes: 2048, reason: 'UNSUPPORTED_TYPE',
+    };
+    await h.runtime.handle(withAttachments('이 PDF 요약해줘', [pdf]));
+    const prompt = h.requests[0]?.prompt ?? '';
+    expect(prompt).toContain('1 attachment of the current User message was not read by Core: because its file type is not supported');
+    expect(prompt).toContain('a smaller file of the same type would not be read either');
+    expect(prompt).toContain('if the User asks why, give exactly this reason and suggest nothing else.');
+    expect(prompt).not.toContain('unsupported, too large or credential-like');
+    expect(prompt).not.toContain('qa-notes.pdf');
+    // The attachment-only PDF (no text) is the fixed not-read reply with no provider (#138/#143), unchanged.
+    const only = chatTurn();
+    expect((await only.runtime.handle(withAttachments('', [pdf]))).reply.text).toBe(renderAttachmentsNotRead('ko'));
+    expect(only.requests).toHaveLength(0);
   });
 
   it('a readable file next to a refused one still runs the turn and tells the model what was not read', async () => {

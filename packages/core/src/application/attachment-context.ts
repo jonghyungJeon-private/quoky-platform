@@ -5,6 +5,7 @@ import type {
   InboundAttachment,
   InboundMessage,
   InboundTextAttachment,
+  NotReadAttachmentReason,
 } from '../domain';
 import type { NoticeLanguage } from './chat-policy/internal-action-vocabulary';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
@@ -146,6 +147,20 @@ export function prepareAttachedTextFiles(
   return { files: prepared, droppedCount };
 }
 
+const NOT_READ_REASONS: ReadonlySet<string> = new Set<NotReadAttachmentReason>([
+  'UNSUPPORTED_TYPE',
+  'TOO_LARGE',
+  'TOO_MANY',
+  'CREDENTIAL_SHAPED',
+  'NOT_UTF8_TEXT',
+  'DOWNLOAD_FAILED',
+  'CORE_RECHECK',
+]);
+
+function isNotReadReason(value: unknown): value is NotReadAttachmentReason {
+  return typeof value === 'string' && NOT_READ_REASONS.has(value);
+}
+
 /**
  * The current message's text attachments for a chat/work prompt (images are not part of this; MM-2 routes them).
  * `notReadCount` counts every non-image attachment that is not in `textFiles`: refused by the adapter or dropped by
@@ -161,7 +176,13 @@ export function currentTurnAttachmentsOf(message: InboundMessage): CurrentTurnAt
   const prepared = prepareAttachedTextFiles(texts);
   const notReadCount = refused.length + prepared.droppedCount;
   if (prepared.files.length === 0 && notReadCount === 0) return undefined;
-  return { textFiles: prepared.files, notReadCount };
+  const notReadReasons: NotReadAttachmentReason[] = [
+    ...refused.map((attachment): NotReadAttachmentReason =>
+      attachment.kind === 'unsupported' && isNotReadReason(attachment.reason) ? attachment.reason : 'CORE_RECHECK',
+    ),
+    ...Array.from({ length: prepared.droppedCount }, (): NotReadAttachmentReason => 'CORE_RECHECK'),
+  ];
+  return { textFiles: prepared.files, notReadCount, ...(notReadCount > 0 ? { notReadReasons } : {}) };
 }
 
 /**
