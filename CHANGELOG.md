@@ -5,6 +5,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — TG-2 Telegram attachments, reactions and approvals (2026-10-08)
+
+Personal v4 track TG-2 (ADR-0114 D8–D10; implementation note in DECISIONS.md). No migration, no new port, DI token or
+domain field; `ConversationRuntimeDeps` stays 35. No new dependency. Discord is unchanged (no Discord file is touched).
+
+- **Attachments.** Owner messages with a photo, a document or a caption are no longer dropped. They map to the same
+  Core attachment model Discord uses; a caption is the message text.
+  - Bounds (ADR-0111): at most 3, text ≤256 KiB, png/jpeg/webp ≤8 MiB.
+  - Type and size are checked from the update metadata first, then `getFile`'s `file_size`. Only then comes the
+    download, bounded while streaming.
+  - Text files go through the strict UTF-8 and credential-guard path. Images go through the #143 canonical intake into
+    a private runner-owned temp directory, deleted after the turn.
+  - Stickers, voice notes, audio, video and animations are named as unsupported and never fetched. Forwarded and
+    inline-bot messages stay dropped.
+  - An album (`media_group_id`) is one turn. Its parts are held with the offset unconfirmed, then handed over together.
+  - The owner notice for a message with nothing to read is now "이 형식의 Telegram 메시지는 아직 처리하지 않아요. 텍스트,
+    사진이나 파일로 보내 주세요." (`ATTACHMENT_UNSUPPORTED_NOTICE` is replaced by `UNSUPPORTED_MESSAGE_NOTICE`).
+- **The guarded download.** `getFile` and the file download are on the fixed method list.
+  - Both run only through the adapter's guarded outbound wrappers, so nothing is fetched before verification, after a
+    halt or after a stop.
+  - The token-bearing download URL is built only inside the Bot API client. Every error is a fixed code, and an unsafe
+    `file_path` is refused before a request.
+  - The invariant table and the source scan cover the new paths.
+- **Feedback.** 👍/👎 arrive as `message_reaction` updates, which the poll now asks for explicitly (`allowed_updates`).
+  - Only the owner's own change in their own private chat is admitted. A reaction on the owner's own message is
+    dropped (new drop reason `not-feedback`), and Core links a reaction only to a reply the adapter reported posting.
+  - The spike: the Bot API reference makes the update opt-in and names no private-chat exclusion. Delivery in a private
+    chat is confirmed at the Strict live session; without it `onFeedback` simply never fires.
+- **Message ids.** Telegram receipts now report `<chat id>:<message id>`, because Telegram ids are unique only inside one
+  chat. Reaction targets use the same key.
+- **Approvals.** Nothing new: the existing text phrases. A real-`AppModule` acceptance test covers preview → `승인` →
+  `댓글 실행` on Telegram, and the cross-platform refusal from Discord.
+- **Codex review fixes.** The offset is saved only after an attachment turn (or a whole album) was handed over, so a
+  stop or crash during the intake leaves it to be delivered again. A halt aborts Bot API work already in flight,
+  downloads included. `stop()` waits (bounded) for an intake in flight and leaves no handler call or temp file behind.
+  Every hand-over re-checks stop and halt first, so a `stop()` from inside a handler ends the batch. A loop from an
+  earlier run never touches a restarted run's state. One poll batch spends at most 60 s on attachment intake: after
+  that, its remaining attachment messages are handed over in order with their files not fetched.
+- **Parity.** `adapter-telegram/src/image-canonical.ts` (and its test builders) are byte-identical copies of the Discord
+  ones. A composition-root test pins the copy and runs one 18-case fixture set through both intakes.
+
 ## Unreleased — PRV-2 Gemini API provider for the chat tier and images (2026-10-08)
 
 ADR-0115 D4 (PRV-2; implementation note in DECISIONS.md). No migration, no new port or token, no Core change (the Core

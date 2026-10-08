@@ -10,8 +10,32 @@ export {
   TelegramFailureCode,
 } from './bot-api';
 export type { FetchLike, TelegramCallOptions, TelegramMethod } from './bot-api';
+export { isSafeTelegramFilePath } from './bot-api';
 export { admitTelegramUpdate, MAX_UPDATE_AGE_SECONDS, TELEGRAM_DROP_REASONS, updateIdOf } from './admission';
-export type { AdmittedTelegramMessage, TelegramAdmission, TelegramDropReason } from './admission';
+export type { AdmittedTelegramMessage, AdmittedTelegramReaction, TelegramAdmission, TelegramDropReason } from './admission';
+export {
+  ATTACHMENT_MAX_COUNT,
+  ATTACHMENT_SWEEP_AGE_MS,
+  classifyAttachment,
+  DEFAULT_TELEGRAM_ATTACHMENT_TEMP_ROOT,
+  IMAGE_ATTACHMENT_MAX_BYTES,
+  renderAttachmentIntakeNote,
+  sanitizeAttachmentName,
+  sniffImageMimeType,
+  TelegramAttachmentIntake,
+  TEXT_ATTACHMENT_MAX_BYTES,
+} from './attachments';
+export type {
+  AttachmentIntakeResult,
+  AttachmentRefusalDetail,
+  AttachmentRefusalDiagnostic,
+  TelegramAttachmentIntakeOptions,
+  TelegramAttachmentSource,
+  TelegramFileGateway,
+} from './attachments';
+export { canonicalizeImage, MAX_IMAGE_DIMENSION } from './image-canonical';
+export { feedbackChanges, telegramMessageKey, toRating } from './reactions';
+export type { FeedbackChange } from './reactions';
 export {
   contentDisagreesWithText,
   escapeTelegramHtml,
@@ -35,12 +59,15 @@ export {
 } from './delivery';
 export type { TelegramDeliveryReport, TelegramPreviewPlan, TelegramPreviewReport, TelegramPreviewSenders } from './delivery';
 export {
-  ATTACHMENT_UNSUPPORTED_NOTICE,
+  MEDIA_GROUP_SETTLE_MS,
+  STOP_INTAKE_SETTLE_MS,
+  BATCH_INTAKE_BUDGET_MS,
   notificationOutcomeOf,
   STARTUP_CALL_TIMEOUT_MS,
   staleNotice,
   TelegramPlatformAdapter,
   TelegramStartupError,
   TelegramStartupErrorCode,
+  UNSUPPORTED_MESSAGE_NOTICE,
 } from './telegram-platform-adapter';
 export type { TelegramAdapterConfig, TelegramAdapterOptions, TelegramAdapterStatus, TelegramOffsetStore } from './telegram-platform-adapter';

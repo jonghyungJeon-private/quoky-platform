@@ -17726,7 +17726,7 @@ It is sent only after the identity gate is open and while connected:
 
 Nobody else is ever answered, and no content is echoed.
 
-The poll asks for `allowed_updates: ["message"]`, but admission does not rely on it. Every `sendMessage`, typing call
+The poll asks for `allowed_updates: ["message"]` (TG-2: `["message", "message_reaction"]`), but admission does not rely on it. Every `sendMessage`, typing call
 and notification is rechecked: the target must be a `telegram` context whose chat id is a listed owner id, with no
 thread.
 
@@ -18006,6 +18006,200 @@ Each has a hint and exits 78.
   52-bit integers), but nothing enforces it. A storage ADR should key sessions by `(platform, conversation)`. No code
   change in TG-1.
 - **Live QA (Strict).** The cross-platform approval case, and live QA itself.
+
+### ADR-0114 implementation note — TG-2 Telegram attachments, reactions and approvals (2026-10-08)
+
+Implementation choices for TG-2 where D8–D10 are silent. No ratified text above changes.
+
+Status: implemented on branch `claude/v4-w3-tg2-attachments`, not merged. Offline validation only: a fake `fetch`
+serves the Bot API and the file downloads, and the real Bot API is never called. Strict gates not run: the first live
+session, and with it the live confirmation of the reaction spike below.
+
+- **Port surface: unchanged.** There is no new port, DI token or domain field, and `ConversationRuntimeDeps` stays 35.
+  Telegram fills the existing `InboundMessage.attachments` (ADR-0111 D1) and implements the optional
+  `PlatformAdapter.onFeedback` (ADR-0098 D3). Core has no platform branch.
+- **Package.** The new modules are `attachments.ts`, `reactions.ts` and `image-canonical.ts`; `admission.ts` grows. The
+  package still depends on `@quoky/core` only.
+
+#### Attachments (D8)
+
+- **Admission change.** An owner message is admitted when it carries `text`, a `caption`, a `photo`, a `document`, or
+  another file (sticker, voice, audio, video, video note, animation). The TG-1 rules are unchanged otherwise:
+  private chat, listed owner, own chat, not a bot, at most 10 minutes old.
+  - A caption is the message text. An owner caption is a trusted request (the ADR-0111 note of 2026-10-08), and it
+    keeps the strict credential guard as on Discord.
+  - Forwarded (`forward_origin` and the legacy fields) and `via_bot` messages are still dropped, files included.
+  - Only an owner message with nothing to read (a location, contact, poll, …) is still `no-text`. Its notice is now
+    "이 형식의 Telegram 메시지는 아직 처리하지 않아요. 텍스트, 사진이나 파일로 보내 주세요." (it was "Telegram 첨부는 아직
+    지원하지 않아요."), one per owner chat per poll session as before.
+- **The same Core model as Discord.** Photo, document and caption map to `InboundMessage.text` plus
+  `attachments: InboundAttachment[]`, as `adapter-discord` builds them:
+  - A **photo** is one image candidate, `photo.jpg` / `image/jpeg`. Its size is the largest one within 8 MiB; when every
+    size is over the bound, the smallest is kept and refused from metadata.
+  - A **document** keeps its `file_name`, `mime_type` and `file_size` and is classified by the Discord rules (text:
+    `text/*` or `.log`/`.md`/`.json`; image candidate: png/jpeg/webp MIME or extension; the bytes decide).
+  - The other file kinds are `unsupported` (`UNSUPPORTED_TYPE`) and are never fetched. An `animation` also sets
+    `document` (Bot API backward compatibility), and is one unsupported animation, not a document.
+  - A malformed file field drops the update as `malformed`.
+- **Bounds (ADR-0111, unchanged).** At most 3 per turn; text ≤256 KiB; png/jpeg/webp ≤8 MiB. The order of checks:
+  1. The update metadata: type, then `file_size`. A refusal here makes no Bot API call.
+  2. `getFile`. Its `file_size` is checked again before any byte is fetched, and a missing `file_path` is refused.
+  3. The download, bounded while streaming (`RESPONSE_TOO_LARGE` → `TOO_LARGE`).
+- **Only after admission and the identity gate.** Intake starts in `handOver`, which runs only for an admitted message
+  after the ADR-0102 D5 inbound gate opened. A dropped message, or one waiting on a closed gate, fetches nothing.
+- **The offset moves only after the hand-over (Codex P1, D4).** The poll loop awaits the intake and the intake note,
+  calls the handler, and only then advances and persists the offset, in the same synchronous step (TG-1's rule). The
+  same holds for an album, after the whole group is handed over.
+  - A stop or halt during the intake releases its files, hands nothing over, and stops polling with the offset (in
+    memory and on disk) unmoved. The restart delivers the update or the album again, within the 10-minute bound.
+  - An admission refusal advances at once: nothing would ever be handed over. A bounds rejection is still a turn (it
+    names the refused file) and is handed over before the offset moves.
+  - Consequence: turns with attachments are taken in one after the other, in order, and the poll loop waits for each
+    intake. This is an accepted residual (Codex delta, owner-only bot: a delay only postpones the owner's own later
+    messages, which are processed in order anyway). See "Intake delay" below for the bound.
+  - **Every hand-over re-checks first (Codex delta P2).** Text, attachment, album and reaction hand-overs all check
+    the run's signal, `stopped`, the halt and the identity first. Once that fails, for example after a `stop()`
+    called from inside an earlier turn's handler, the batch ends: nothing later is handed over, and the offset stays
+    past the last update that was.
+- **A halt cuts off work in flight (Codex P1).** A halt-scoped `AbortController`, made per start and aborted by a halt,
+  the background startup refusal and `stop()`, is linked into every `outbound()` call and the download. A halt
+  therefore stops sends, typing, `getFile` and a stream already being read. The cut-off intake hands no turn over and
+  releases its temp files.
+- **`stop()` waits for the intake (Codex P2).** `stop()` aborts the intake's calls, then waits for the poll loop (which
+  holds the intake) to settle, bounded by `STOP_INTAKE_SETTLE_MS` (5 s). It then closes the intake: nothing new is
+  written, and a write still in flight is deleted the moment it lands. The hand-over re-checks the stop, so no handler
+  call follows a stop even past the bound. `start()` reopens the intake.
+- **A run owns its loop state (Codex delta P2).** Each start makes a new lifecycle controller. Only the run whose
+  signal is the current one may change loop-owned state: `polling`, the offset and its saves, the held album, the
+  poll bookkeeping. So a loop that `stop()` stopped waiting for, and that finishes after a restart, changes nothing.
+  - Both loops (polling, the background identity retry) end on their own aborted signal, not only on `stopped`, which
+    a restart resets.
+  - A failure of an old loop is ignored.
+  - `stop()` marks `polling` false itself.
+- **Intake delay (accepted residual, bounded).** Each `getFile` and download is bounded to 20 s, and the intake note
+  send to 15 s.
+  - Without a guard, one attachment message could hold the next poll for up to 20 s × 2 calls per file × 3 files.
+    The files of one message are fetched concurrently, so in practice about 40 s plus the note. That holds per
+    attachment message in the batch.
+  - **The guard.** Once one poll batch has spent `BATCH_INTAKE_BUDGET_MS` (60 s), its remaining attachment messages
+    are still handed over, in order and under the same offset rules, but their files are not fetched. The metadata
+    checks still name a too-large or unsupported file; every other file is `DOWNLOAD_FAILED` (`BATCH_BUDGET`) and is
+    named in the intake note.
+  - So a batch delays the next poll by at most about 60 s plus one message's intake.
+- **Albums.** Telegram sends each album part as its own message with one `media_group_id`. Handled one by one, an album
+  of 10 photos would be 10 image turns, and the caption would reach only the first. So the parts are taken in as ONE
+  turn, and the count bound applies to the album:
+  - The parts are held, and the poll offset stays at the first part, so nothing is confirmed.
+  - The album is re-polled after 800 ms. It is complete when a re-poll brings no new part, after 3 re-polls, when
+    anything else arrives, or at 10 parts (Telegram's own bound).
+  - It is then handed over as one message: the first part's id, the non-empty captions joined, and the attachments of
+    every part in order. The 4th and later attachments are `TOO_MANY` and never fetched. The offset moves past the
+    parts in the same synchronous step, so the D4 hand-over-then-advance rule holds.
+  - A stop (or a closed gate) while an album is held hands nothing over and confirms nothing. Its parts come back after
+    a restart, within the 10-minute bound.
+- **The download path and the TG-1 invariant.** `getFile` is a new method on the fixed list. The file download is
+  `downloadFile`, a GET on `/file/bot<token>/<file_path>` of the same pinned host, made only by
+  `TelegramBotApi.download`. It is on `TELEGRAM_METHODS` too, so the invariant table needs a row for it.
+  - `call()` refuses `downloadFile`.
+  - The intake reaches the Bot API only through the adapter's `files` gateway. `getFile` goes through the existing
+    `outbound()` wrapper. The download goes through `outboundDownload()`, which has the same guard line
+    (`if (!this.connected()) throw new OutboundRefused('downloadFile');`) and carries the lifecycle abort signal.
+  - **Effect:** no `getFile`, no download and no intake note before verification, after a halt or after a stop. A
+    stop aborts a download in flight.
+  - **Tests:** the table now has rows for `getFile`, the download and the intake note, across all six TG-1 states. The
+    source scan pins one `api.download` call site inside `outboundDownload`, and `attachments.ts` never touches the
+    client, `fetch` or the token.
+- **The file-path token risk (D5).** The download URL contains the bot token, so it is built inside the Bot API client
+  only, used once, and never returned, logged or put into an error:
+  - A transport error is a fixed `telegram downloadFile: <CODE>[ (HTTP n)]`, never wrapped or chained.
+  - Redirects and another origin are refused.
+  - The `file_path` must be relative, built from `[A-Za-z0-9_.-]` segments, with no empty, `.` or `..` segment and at
+    most 256 characters. Anything else is refused before a request.
+  - The intake's diagnostics are classes and buckets only: no URL, `file_path`, file id, name or content. A test feeds
+    a transport error that quotes the full token URL and checks the logs, the note and the message.
+- **Text files** take the ADR-0111 D3 path. Strict UTF-8 (a NUL byte is binary), the ADR-0097 credential guard, and
+  UNTRUSTED in-memory text. A credential-shaped file is refused and named, and its content never reaches a log, the
+  result or the note.
+- **Images** take the #143 canonical intake:
+  - The bytes decide the type.
+  - `canonicalizeImage` validates and rebuilds the image.
+  - Every printable run of the canonical bytes is screened by the credential guard.
+  - Only the canonical bytes are written: 0600, under a random intake name, in a private per-process subdirectory of a
+    0700 runner-owned root (`quoky-telegram-attachments-<uid>` under the OS temp directory).
+  - The file is deleted after the turn, swept after 10 minutes, and removed on stop.
+  - A Telegram file is final when `getFile` answers, so there is no Discord-style re-download.
+- **One canonical intake, two packages.** Adapters share no code across packages (the `ai-openai-api` image-input
+  precedent). So `adapter-telegram/src/image-canonical.ts` and its test builders are byte-identical copies of the
+  Discord ones. The composition root's parity test (`apps/quoky/src/telegram/telegram-attachment-parity.test.ts`)
+  pins this in two ways:
+  - Both files are compared byte for byte, so a fix to one fails the test until the other has it too.
+  - ONE fixture set (18 cases plus the count bound) goes through both intakes and must give the same kinds, reasons,
+    text and canonical image bytes, and the same refusal copy. This is the ADR-0114 acceptance criterion "attachment
+    bounds and the credential guard behave as on Discord on one shared fixture set".
+- **The intake note.** It reuses the Discord copy (ADR-0111 D2) as plain text, with the name in double quotes instead of
+  a code span. It is sent once to the owner's own chat through the guarded path. Logs carry content-free counts and one
+  diagnostic line per refusal.
+- **Message ids are scoped by chat.** Telegram message ids are unique only inside one chat, and
+  `turn_platform_messages` is keyed `(platform, platform_message_id)`. So the Telegram receipt now reports
+  `<chat id>:<message id>` (it was the bare message id in TG-1), and a reaction's target uses the same key. Nothing
+  live was recorded with the old form; no storage change.
+
+#### Feedback (D9) — the spike
+
+What the Bot API reference says (`Update.message_reaction`, `getUpdates.allowed_updates`, `MessageReactionUpdated`):
+
+- Reaction changes arrive as `message_reaction` updates. Each carries `chat`, `message_id`, an optional `user` (absent
+  when anonymous), an optional `actor_chat`, `date`, `old_reaction` and `new_reaction`.
+- They are NOT in Telegram's default update set: "Specify an empty list to receive all update types except
+  chat_member, message_reaction, and message_reaction_count". The bot must list `message_reaction` in
+  `allowed_updates` explicitly.
+- They are never sent for reactions set by bots.
+- The reference also says "The bot must be an administrator in the chat". A private chat has no administrators, and
+  the reference names no private-chat exclusion. Bot API 7.0, where the update was introduced, says nothing about
+  private chats either.
+
+Result: the update is documented as opt-in and nothing documented excludes the owner's private chat, so TG-2 implements
+`onFeedback`. Delivery in a private chat cannot be confirmed offline. It is a check of the Strict first live session. If
+Telegram does not deliver it there, no update arrives and `onFeedback` never fires; nothing else changes, which is the
+port's clean degradation.
+
+- **The poll** now asks for `allowed_updates: ["message", "message_reaction"]`. Admission still does not rely on it.
+- **Reaction admission** (pure, in `admission.ts`). Admitted only when all of these hold:
+  - It is exactly a `message_reaction` update.
+  - The chat is `private` and it is the owner's own chat.
+  - It names a non-bot owner `user`, with no `actor_chat`.
+  - It is at most 10 minutes old.
+  - A 👍 or 👎 changed (`ReactionTypeEmoji` only; skin tones ignored; custom and paid reactions never count).
+
+  One update becomes per-rating `ADDED` / `REMOVED` changes (switching 👍 to 👎 is a removal and an addition).
+  Everything else is dropped silently with a counter: `not-owner`, `not-private`, `stale`, `malformed`, or the new
+  `not-feedback`. There is no owner notice for reactions.
+- **The bot-authored rule.** A reaction on a message the owner wrote is dropped as `not-feedback`. The adapter
+  remembers the keys of the last 512 admitted owner messages. Beyond that, Core links a reaction only to a reply whose
+  key the adapter reported in a delivery receipt (`turn_platform_messages`), the same provenance check Discord relies on
+  for an uncached message. So a reaction on any non-bot message records nothing.
+- **Order and gate.** A reaction is handed to the feedback handler under the D4 rule (hand over, then advance the
+  offset) and waits for the ADR-0102 D5 inbound gate. Nothing is ever sent in response.
+
+#### Approvals (D10)
+
+Nothing was built: approvals are the existing text phrases on Telegram. An acceptance test in the real `AppModule`
+(`telegram-attachments-acceptance.test.ts`) runs a Jira comment through the started composite and the scripted Bot API:
+the preview, then `댓글 실행` (waiting for approval), `승인`, `댓글 실행` (sent exactly once), and a repeat (not resent).
+It also shows the #135 rule across platforms (D10, AC "an approval granted in one conversation cannot be executed from
+another, across platforms"): `댓글 실행` from the owner's Discord DM runs nothing and points to the conversation that
+holds the approval.
+
+#### Residuals
+
+- **Live (Strict).** Whether `message_reaction` is delivered in a private bot chat; a real photo, document and album
+  from Telegram clients; the oversize and unsupported notes.
+- **TG-3.** The operations-UI panel can show the new `not-feedback` counter (`status().droppedUpdates`), and the
+  Telegram copy decisions (CommonMark on Telegram).
+- **Accepted.** The vendored `image-canonical.ts` is a second copy by design; the parity test is the drift guard. An
+  album's later parts that arrive after its turn was handed over (more than about 2.4 s later) become their own turn.
+  A process that dies between the intake note and the hand-over sends the note again after the restart (the turn itself
+  is handed over once).
 
 ## ADR-0115 — HTTP API providers for the chat and image tiers only: opt-in OpenAI API then Gemini API adapters, no tool definitions, code, review and policy capabilities stay on the Claude CLI, and a usage ledger with a monthly DM notice. Amends the constitution (ARCHITECTURE.md §5.5) and AGENTS.md; amends ADR-0014, the ADR-0092 amendments and the ADR-0111 amendments.
 
