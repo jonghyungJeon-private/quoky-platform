@@ -141,10 +141,15 @@ describe('CompositePlatformAdapter (ADR-0114 D6): one contract over Discord and 
     for (const [reply, code] of [
       [{ json: { ok: true, result: { id: 999_999_999, is_bot: true } } }, 'TELEGRAM_IDENTITY_MISMATCH'],
       [{ status: 401, json: { ok: false, error_code: 401 } }, 'TELEGRAM_AUTH_REJECTED'],
+      // The webhook 409 on the startup probe (getMe matches; the instant getUpdates answers 409).
+      [{ status: 409, json: { ok: false, error_code: 409 } }, 'TELEGRAM_POLL_CONFLICT'],
     ] as const) {
       const log: string[] = [];
       const discord = new FakeDiscord('discord', log);
-      const fake = new FakeTelegram().queue('getMe', reply as never);
+      const fake =
+        code === 'TELEGRAM_POLL_CONFLICT'
+          ? new FakeTelegram().queue('getUpdates:instant', reply as never)
+          : new FakeTelegram().queue('getMe', reply as never);
       const telegram = new TelegramPlatformAdapter({ token, expectedBotId: token.botId, ownerIds: ['5550001'] }, silent, { fetch: fake.fetch });
       const error = await new CompositePlatformAdapter(discord, [telegram], silent).start().catch((err: unknown) => err);
       expect(error).toMatchObject({ code });
