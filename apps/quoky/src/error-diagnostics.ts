@@ -25,9 +25,12 @@ const REDACTIONS: ReadonlyArray<readonly [RegExp, string]> = [
   // Authorization headers: `Authorization: Bearer <v>` / `token <v>` / `Basic <v>` (JSON or header form).
   [/\b(authorization\s*[:=]\s*"?)(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1$2 [REDACTED]'],
   // Named secret env/keys carrying a value: GIT_APP_TOKEN=..., QUOKY_GITHUB_APP_PRIVATE_KEY=..., x-access-token:...
-  [/\b(GIT_APP_TOKEN|QUOKY_GITHUB_APP_PRIVATE_KEY|QUOKY_OPENAI_API_KEY|QUOKY_TELEGRAM_BOT_TOKEN|x-access-token)\s*[:=]\s*\S+/gi, '$1=[REDACTED]'],
+  [/\b(GIT_APP_TOKEN|QUOKY_GITHUB_APP_PRIVATE_KEY|QUOKY_OPENAI_API_KEY|QUOKY_GEMINI_API_KEY|QUOKY_TELEGRAM_BOT_TOKEN|x-access-token)\s*[:=]\s*\S+/gi, '$1=[REDACTED]'],
   // OpenAI secret keys (user, project, service-account and admin keys; ADR-0115 D6).
   [/\bsk-[A-Za-z0-9_-]{20,}/g, '[REDACTED_TOKEN]'],
+  // Google API keys (`AIza` + 35 URL-safe characters), e.g. a Gemini API key (ADR-0115 D6, PRV-2); a longer run is
+  // redacted whole.
+  [/\bAIza[0-9A-Za-z_-]{35,}/g, '[REDACTED_TOKEN]'],
   // Telegram bot tokens (ADR-0114 D5): `<bot id>:<secret>`, bare or in a Bot API `/bot<token>/` request path.
   [/(\/bot|\b)[0-9]{5,16}:[A-Za-z0-9_-]{30,}/g, '$1[REDACTED_TOKEN]'],
 ];

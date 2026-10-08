@@ -10,6 +10,7 @@ import { AiFailureKind, AiProviderError } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
 import { composeChatProviders } from '../chat-provider-composition';
 import type { QuokyConfig } from '../config';
+import { geminiChatVariant, geminiVision } from '../gemini-provider-composition';
 import { openAiChatVariant, openAiVision } from '../openai-provider-composition';
 import { CHAT_TIER_CAPABILITIES } from './selection-choices';
 import type { ChatChoice, ChatProviderName, ImageChoice } from './selection-choices';
@@ -32,9 +33,11 @@ import type { ChatChoice, ChatProviderName, ImageChoice } from './selection-choi
  *   registered only when `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` are configured. A choice of another allow-listed
  *   OpenAI model adds one bounded chat-tier instance (`openai-api:<model>`), like a Claude alias. Each is eligible only
  *   while it is the effective chat or image choice; construction makes no network call.
+ * - Gemini API (ADR-0115 D4, PRV-2): the same with `gemini-api`, `gemini-vision-api` and on-demand `gemini-api:<model>`,
+ *   registered only when `QUOKY_GEMINI_API_KEY` and `QUOKY_GEMINI_MODEL` are configured.
  */
 
-/** At most this many on-demand instances (Claude aliases, extra Ollama models, extra OpenAI models) are ever added. */
+/** At most this many on-demand instances (Claude aliases, extra Ollama, OpenAI and Gemini models) are ever added. */
 export const MAX_ON_DEMAND_PROVIDERS = 12;
 
 export interface ProviderFactories {
@@ -48,6 +51,10 @@ export interface ProviderFactories {
   openaiVariant(model: string): AiProvider;
   /** The OpenAI API image instance on `QUOKY_OPENAI_MODEL`. */
   openaiVision(): AiProvider;
+  /** A chat-tier Gemini API instance on an allow-listed model other than `QUOKY_GEMINI_MODEL`. */
+  geminiVariant(model: string): AiProvider;
+  /** The Gemini API image instance on `QUOKY_GEMINI_MODEL`. */
+  geminiVision(): AiProvider;
 }
 
 export interface ProviderCatalogInput {
@@ -100,12 +107,16 @@ export class ProviderCatalog {
   /** The `QUOKY_OPENAI_MODEL` chat instance (absent unless the OpenAI API is configured). */
   readonly openai: AiProvider | undefined;
   readonly openaiVision: AiProvider | undefined;
+  /** The `QUOKY_GEMINI_MODEL` chat instance (absent unless the Gemini API is configured). */
+  readonly gemini: AiProvider | undefined;
+  readonly geminiVision: AiProvider | undefined;
   /** Whether an Ollama model other than `OLLAMA_MODEL` may be added (the CLI is present or Ollama is registered). */
   readonly ollamaUsable: boolean;
   readonly claudeModel: string;
   readonly ollamaModel: string;
   readonly codexModel: string | undefined;
   readonly openaiModel: string | undefined;
+  readonly geminiModel: string | undefined;
   private readonly onDemand = new Map<string, AiProvider>();
   private readonly factories: ProviderFactories;
 
@@ -130,6 +141,8 @@ export class ProviderCatalog {
       // Only reached when `ai.openai` is configured (see `canChoose` / the registration below).
       openaiVariant: (model) => openAiChatVariant(requireOpenAi(ai), model),
       openaiVision: () => openAiVision(requireOpenAi(ai)),
+      geminiVariant: (model) => geminiChatVariant(requireGemini(ai), model),
+      geminiVision: () => geminiVision(requireGemini(ai)),
       ...input.factories,
     };
     this.claude = chat.claude;
@@ -140,6 +153,8 @@ export class ProviderCatalog {
     this.codexModel = ai.codexModel;
     this.openai = chat.openai;
     this.openaiModel = ai.openai?.model;
+    this.gemini = chat.gemini;
+    this.geminiModel = ai.gemini?.model;
     this.ollamaUsable = chat.ollama !== undefined || input.cliPresent(ai.ollamaBin);
     this.claudeVision = input.vision.claudeModel !== undefined ? this.factories.claudeVision(input.vision.claudeModel) : undefined;
     this.ollamaVision = input.vision.ollamaModel !== undefined ? this.factories.ollamaVision(input.vision.ollamaModel) : undefined;
@@ -149,6 +164,7 @@ export class ProviderCatalog {
       input.vision.codexSelected === true || input.persistedImage === 'codex' || input.cliPresent(ai.codexBin);
     this.codexVision = wantsCodexVision ? this.factories.codexVision(ai.codexModel) : undefined;
     this.openaiVision = ai.openai !== undefined ? this.factories.openaiVision() : undefined;
+    this.geminiVision = ai.gemini !== undefined ? this.factories.geminiVision() : undefined;
     this.providers = [
       ...chat.providers,
       ...(input.extra ?? []),
@@ -156,14 +172,16 @@ export class ProviderCatalog {
       ...(this.claudeVision ? [this.claudeVision] : []),
       ...(this.codexVision ? [this.codexVision] : []),
       ...(this.openaiVision ? [this.openaiVision] : []),
+      ...(this.geminiVision ? [this.geminiVision] : []),
     ];
   }
 
-  /** Whether a chat provider can be chosen on this host at all (Claude always; Codex/Ollama/OpenAI when registrable). */
+  /** Whether a chat provider can be chosen on this host at all (Claude always; the others when registrable). */
   canChoose(provider: ChatProviderName): boolean {
     if (provider === 'claude') return true;
     if (provider === 'codex') return this.codex !== undefined;
     if (provider === 'openai') return this.openai !== undefined;
+    if (provider === 'gemini') return this.gemini !== undefined;
     return this.ollamaUsable;
   }
 
@@ -184,15 +202,19 @@ export class ProviderCatalog {
     if (choice.provider === 'openai' && choice.model !== undefined && choice.model === this.openaiModel) {
       return { provider: 'openai' };
     }
+    if (choice.provider === 'gemini' && choice.model !== undefined && choice.model === this.geminiModel) {
+      return { provider: 'gemini' };
+    }
     return choice;
   }
 
-  /** The owner-facing label: `claude:sonnet`, `codex`, `ollama:llama3.1`, `openai:gpt-4.1-mini`. */
+  /** The owner-facing label: `claude:sonnet`, `codex`, `ollama:llama3.1`, `openai:gpt-4.1-mini`, `gemini:<model>`. */
   label(choice: ChatChoice): string {
     const normalized = this.normalize(choice);
     if (normalized.provider === 'codex') return 'codex';
     if (normalized.provider === 'claude') return `claude:${normalized.model ?? this.claudeModel}`;
     if (normalized.provider === 'openai') return `openai:${normalized.model ?? this.openaiModel ?? 'default'}`;
+    if (normalized.provider === 'gemini') return `gemini:${normalized.model ?? this.geminiModel ?? 'default'}`;
     return `ollama:${normalized.model ?? this.ollamaModel}`;
   }
 
@@ -207,6 +229,12 @@ export class ProviderCatalog {
       if (this.openai === undefined) return undefined;
       return normalized.model === undefined ? this.openai : this.onDemandInstance(`openai:${normalized.model}`, () =>
         chatTierView(this.factories.openaiVariant(normalized.model as string), `openai-api:${normalized.model}`),
+      );
+    }
+    if (normalized.provider === 'gemini') {
+      if (this.gemini === undefined) return undefined;
+      return normalized.model === undefined ? this.gemini : this.onDemandInstance(`gemini:${normalized.model}`, () =>
+        chatTierView(this.factories.geminiVariant(normalized.model as string), `gemini-api:${normalized.model}`),
       );
     }
     if (normalized.provider === 'claude') {
@@ -234,6 +262,8 @@ export class ProviderCatalog {
         return this.ollamaVision;
       case 'openai':
         return this.openaiVision;
+      case 'gemini':
+        return this.geminiVision;
     }
   }
 
@@ -251,4 +281,9 @@ export class ProviderCatalog {
 function requireOpenAi(ai: QuokyConfig['ai']): NonNullable<QuokyConfig['ai']['openai']> {
   if (ai.openai === undefined) throw new Error('the OpenAI API is not configured');
   return ai.openai;
+}
+
+function requireGemini(ai: QuokyConfig['ai']): NonNullable<QuokyConfig['ai']['gemini']> {
+  if (ai.gemini === undefined) throw new Error('the Gemini API is not configured');
+  return ai.gemini;
 }

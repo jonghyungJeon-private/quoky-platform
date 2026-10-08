@@ -2,6 +2,7 @@ import path from 'node:path';
 import { Capability, executionLocalityOf } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
 import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
+import { GEMINI_MODEL_ALLOW_LIST } from '@quoky/ai-gemini-api';
 import { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import { QuokyConfigErrorCode } from './config';
 import { redactSecrets } from './error-diagnostics';
@@ -56,7 +57,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.CLAUDE_MODEL_INVALID]:
     'QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.CHAT_PROVIDER_INVALID]:
-    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", "ollama", or "openai" (exactly, lowercase).',
+    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", "ollama", "openai", or "gemini" (exactly, lowercase).',
   [QuokyConfigErrorCode.CODEX_MODEL_INVALID]:
     'QUOKY_CODEX_MODEL must be unset (the Codex CLI default model) or a model name (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.OPENAI_API_KEY_INVALID]:
@@ -67,6 +68,14 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     `QUOKY_OPENAI_MODEL must be unset or one of the allowed OpenAI models (${OPENAI_MODEL_ALLOW_LIST.join(', ')}).`,
   [QuokyConfigErrorCode.OPENAI_MODEL_MISSING]:
     'The OpenAI API provider needs QUOKY_OPENAI_MODEL (an allowed model such as "gpt-4.1-mini") when QUOKY_OPENAI_API_KEY is set.',
+  [QuokyConfigErrorCode.GEMINI_API_KEY_INVALID]:
+    'QUOKY_GEMINI_API_KEY must be unset or a Google API key ("AIza" followed by 35 letters, digits, _ and -; no spaces, quotes or "key=").',
+  [QuokyConfigErrorCode.GEMINI_API_KEY_MISSING]:
+    'The Gemini API provider needs QUOKY_GEMINI_API_KEY (in .env.local, mode 600) when QUOKY_GEMINI_MODEL is set or "gemini" is selected in QUOKY_CHAT_PROVIDER / QUOKY_IMAGE_UNDERSTANDING_PROVIDER.',
+  [QuokyConfigErrorCode.GEMINI_MODEL_INVALID]:
+    `QUOKY_GEMINI_MODEL must be unset or one of the allowed Gemini models (${GEMINI_MODEL_ALLOW_LIST.join(', ')}).`,
+  [QuokyConfigErrorCode.GEMINI_MODEL_MISSING]:
+    'The Gemini API provider needs QUOKY_GEMINI_MODEL (an allowed model such as "gemini-3.5-flash-lite") when QUOKY_GEMINI_API_KEY is set.',
   [QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID]: 'QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID]: 'QUOKY_GIT_MERGE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE]:
@@ -115,7 +124,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED]:
     'The launchd service requires QUOKY_DISCORD_EXPECTED_BOT_ID in the host .env.local (the bot\'s user id, 17-20 digits). Set it, then restart the service.',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_PROVIDER_INVALID]:
-    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", "openai", or "off" (lowercase). "claude" sends attached images to Anthropic, "codex" and "openai" to OpenAI (cloud).',
+    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", "openai", "gemini", or "off" (lowercase). "claude" sends attached images to Anthropic, "codex" and "openai" to OpenAI, "gemini" to Google (cloud).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_MODEL_INVALID]:
     'QUOKY_IMAGE_UNDERSTANDING_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING]:
@@ -305,7 +314,7 @@ export async function reportProviderReadiness(
   );
   if (!generalChatReady) {
     log.warn(
-      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, Ollama running with the configured model, or openai with a valid QUOKY_OPENAI_API_KEY and QUOKY_OPENAI_MODEL) is ready`,
+      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, Ollama running with the configured model, openai with a valid QUOKY_OPENAI_API_KEY and QUOKY_OPENAI_MODEL, or gemini with a valid QUOKY_GEMINI_API_KEY and QUOKY_GEMINI_MODEL) is ready`,
     );
   }
   return {

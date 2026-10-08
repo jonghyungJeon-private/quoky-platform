@@ -3,6 +3,8 @@ import path from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, ollamaModelExecutionLocality } from '@quoky/ai-cli';
 import { OpenAiApiKey, isAllowedOpenAiModel } from '@quoky/ai-openai-api';
 import type { OpenAiModel } from '@quoky/ai-openai-api';
+import { GeminiApiKey, isAllowedGeminiModel } from '@quoky/ai-gemini-api';
+import type { GeminiModel } from '@quoky/ai-gemini-api';
 import { AgentProfileRegistry, RepositoryIdentityResolver, agentProfileId, isAgentProfileId } from '@quoky/core';
 import type { AgentProfile, ContextBuilderConfig, RepositoryIdentity, RepositoryIdentityConfig } from '@quoky/core';
 import { parseProviderRoutingMode } from './provider-routing/provider-routing-activation';
@@ -79,6 +81,8 @@ export interface QuokyConfig {
      * are configured; see {@link parseOpenAiConfig}. The key is a secret: it reaches only the adapter.
      */
     openai?: OpenAiApiConfig;
+    /** The Gemini API provider (ADR-0115 D3/D4/D6, PRV-2); see {@link parseGeminiConfig}. Same rules as `openai`. */
+    gemini?: GeminiApiConfig;
   };
   /**
    * Image understanding provider selection (ADR-0111 D4/D5 and its 2026-10-07 amendment A1/A2). Exactly one provider is
@@ -258,6 +262,10 @@ export const QuokyConfigErrorCode = {
   OPENAI_API_KEY_MISSING: 'OPENAI_API_KEY_MISSING',
   OPENAI_MODEL_INVALID: 'OPENAI_MODEL_INVALID',
   OPENAI_MODEL_MISSING: 'OPENAI_MODEL_MISSING',
+  GEMINI_API_KEY_INVALID: 'GEMINI_API_KEY_INVALID',
+  GEMINI_API_KEY_MISSING: 'GEMINI_API_KEY_MISSING',
+  GEMINI_MODEL_INVALID: 'GEMINI_MODEL_INVALID',
+  GEMINI_MODEL_MISSING: 'GEMINI_MODEL_MISSING',
   GIT_REMOTE_ENABLED_INVALID: 'GIT_REMOTE_ENABLED_INVALID',
   GIT_MERGE_ENABLED_INVALID: 'GIT_MERGE_ENABLED_INVALID',
   GIT_MERGE_REQUIRES_REMOTE: 'GIT_MERGE_REQUIRES_REMOTE',
@@ -356,7 +364,7 @@ export function parseOpsUiFlags(env: NodeJS.ProcessEnv): OpsUiFlags {
 const MAX_MEMORY_ARCHIVE_DAYS = 365;
 
 /** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` values (exact, lowercase). */
-export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'codex', 'openai', 'off'] as const;
+export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'codex', 'openai', 'gemini', 'off'] as const;
 export type ImageUnderstandingProviderSelection = (typeof IMAGE_UNDERSTANDING_PROVIDERS)[number];
 
 /**
@@ -386,7 +394,9 @@ export type ImageUnderstandingConfig =
    * The OpenAI API (`REMOTE`, OpenAI; ADR-0115): the owner's explicit cloud opt-in. The model is `QUOKY_OPENAI_MODEL`
    * (the chat tier's), never a separate image model; `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` are required.
    */
-  | { readonly provider: 'openai' };
+  | { readonly provider: 'openai' }
+  /** The Gemini API (`REMOTE`, Google; ADR-0115 D4): the same rules as `openai`, with `QUOKY_GEMINI_*`. */
+  | { readonly provider: 'gemini' };
 
 const OLLAMA_VISION_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
@@ -405,6 +415,8 @@ const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
  * - `codex`: the Codex CLI reads images in the cloud (OpenAI) with the chat tier's `QUOKY_CODEX_MODEL` or the CLI default.
  * - `openai`: the OpenAI API reads images in the cloud with `QUOKY_OPENAI_MODEL` (ADR-0115; the key and model are
  *   required, see {@link parseOpenAiConfig}).
+ * - `gemini`: the Gemini API reads images in the cloud (Google) with `QUOKY_GEMINI_MODEL` (ADR-0115 D4; see
+ *   {@link parseGeminiConfig}).
  * - `off`: no image provider; every image turn gets the truthful "unavailable" reply.
  */
 export function parseImageUnderstandingConfig(
@@ -430,6 +442,7 @@ export function parseImageUnderstandingConfig(
   if (selection === 'off') return { provider: 'off' };
   if (selection === 'codex') return { provider: 'codex' };
   if (selection === 'openai') return { provider: 'openai' };
+  if (selection === 'gemini') return { provider: 'gemini' };
   if (selection === 'ollama') {
     if (visionModel === '') throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING);
     if (!OLLAMA_VISION_MODEL_SHAPE.test(visionModel)) {
@@ -527,6 +540,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     chat: chat.provider === 'openai',
     image: imageUnderstanding.provider === 'openai',
   });
+  const gemini = parseGeminiConfig(env, { chat: chat.provider === 'gemini', image: imageUnderstanding.provider === 'gemini' });
   // ADR-0114 D13: off unless QUOKY_TELEGRAM_ENABLED=true; every owner must map to a Discord owner (D3).
   const telegram = parseTelegramConfig(env, ownerIds);
 
@@ -555,6 +569,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ollamaEnabled: parseExactBoolean(env.QUOKY_OLLAMA_ENABLED, true, QuokyConfigErrorCode.OLLAMA_ENABLED_INVALID),
       chat,
       ...(openai !== undefined ? { openai } : {}),
+      ...(gemini !== undefined ? { gemini } : {}),
     },
     imageUnderstanding,
     imageUnderstandingOptions: parseImageUnderstandingOptions(env, claudeModel),
@@ -707,7 +722,7 @@ function parseClaudeModel(raw: string | undefined): string {
 }
 
 /** The chat providers `QUOKY_CHAT_PROVIDER` can select (ADR-0092 amendment, 2026-10-07). */
-export const CHAT_PROVIDERS = ['claude', 'codex', 'ollama', 'openai'] as const;
+export const CHAT_PROVIDERS = ['claude', 'codex', 'ollama', 'openai', 'gemini'] as const;
 export type ChatProviderName = (typeof CHAT_PROVIDERS)[number];
 
 /** The startup warning code when `QUOKY_CHAT_PROVIDER` overrides a contradicting `QUOKY_OLLAMA_ENABLED`. */
@@ -722,8 +737,9 @@ export interface ChatProviderSelection {
 }
 
 /**
- * `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` | `openai` (exact, lowercase; anything else, including an empty
- * value, is `CHAT_PROVIDER_INVALID`; `openai` since ADR-0115 D3, which also requires {@link parseOpenAiConfig}). Unset
+ * `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` | `openai` | `gemini` (exact, lowercase; anything else, including
+ * an empty value, is `CHAT_PROVIDER_INVALID`; `openai` and `gemini` since ADR-0115 D3, which also require
+ * {@link parseOpenAiConfig} / {@link parseGeminiConfig}). Unset
  * derives the selection from `QUOKY_OLLAMA_ENABLED` exactly as before: `true` (the default) is `ollama`, `false` is
  * `claude`. When both are set and disagree (`ollama` with `false`, or `claude`/`codex`/`openai` with `true`) the selector wins and the selection carries a warning code; startup continues, so
  * an always-on service never crash-loops over a stale flag. The flag itself is still validated by its own parser.
@@ -775,6 +791,33 @@ export function parseOpenAiConfig(
   if (apiKey === undefined && model === undefined && !selected.chat && !selected.image) return undefined;
   if (apiKey === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_API_KEY_MISSING);
   if (model === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_MODEL_MISSING);
+  return { apiKey, model };
+}
+
+/** The Gemini API provider configuration (ADR-0115 D4/D6, PRV-2); `apiKey` is a redacting secret holder. */
+export interface GeminiApiConfig {
+  readonly apiKey: GeminiApiKey;
+  readonly model: GeminiModel;
+}
+
+/**
+ * ADR-0115 D3/D4/D6: `QUOKY_GEMINI_API_KEY` (a Google API key, `AIza…`) and `QUOKY_GEMINI_MODEL` (the bounded
+ * allow-list), with exactly the {@link parseOpenAiConfig} rules: blank is unset; off unless configured; a malformed key
+ * or a model off the list is `GEMINI_API_KEY_INVALID` / `GEMINI_MODEL_INVALID`; one without the other, or `gemini`
+ * selected with neither set, is `GEMINI_API_KEY_MISSING` / `GEMINI_MODEL_MISSING`. Codes only, never a value.
+ */
+export function parseGeminiConfig(
+  env: NodeJS.ProcessEnv,
+  selected: { readonly chat: boolean; readonly image: boolean },
+): GeminiApiConfig | undefined {
+  const rawKey = nonBlank(env.QUOKY_GEMINI_API_KEY);
+  const model = nonBlank(env.QUOKY_GEMINI_MODEL);
+  const apiKey = rawKey === undefined ? undefined : GeminiApiKey.from(rawKey);
+  if (apiKey === null) throw new QuokyConfigError(QuokyConfigErrorCode.GEMINI_API_KEY_INVALID);
+  if (model !== undefined && !isAllowedGeminiModel(model)) throw new QuokyConfigError(QuokyConfigErrorCode.GEMINI_MODEL_INVALID);
+  if (apiKey === undefined && model === undefined && !selected.chat && !selected.image) return undefined;
+  if (apiKey === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.GEMINI_API_KEY_MISSING);
+  if (model === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.GEMINI_MODEL_MISSING);
   return { apiKey, model };
 }
 

@@ -1,6 +1,7 @@
 import { ClaudeCliVisionProvider, CodexCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
 import type { AiExecutionLocality, AiProvider, Logger } from '@quoky/core';
-import type { ImageUnderstandingConfig, ImageUnderstandingOptions, OpenAiApiConfig } from './config';
+import type { GeminiApiConfig, ImageUnderstandingConfig, ImageUnderstandingOptions, OpenAiApiConfig } from './config';
+import { geminiVision } from './gemini-provider-composition';
 import { openAiVision } from './openai-provider-composition';
 import { imageChoiceIsCloud } from './provider-selection/selection-choices';
 import type { ImageChoice } from './provider-selection/selection-choices';
@@ -24,6 +25,8 @@ import type { ImageChoice } from './provider-selection/selection-choices';
  * - `openai`: the OpenAI API image instance (`REMOTE`, OpenAI; ADR-0115) on `QUOKY_OPENAI_MODEL`, sending only the #143
  *   canonical image bytes inline; registered only when the key and model are configured, and like `claude` / `codex`
  *   the policy allows `REMOTE` only while it is the effective selection.
+ * - `gemini`: the Gemini API image instance (`REMOTE`, Google; ADR-0115 D4) on `QUOKY_GEMINI_MODEL`, under exactly the
+ *   `openai` rules.
  * - `off`: nothing; the policy stays local-only.
  */
 
@@ -37,7 +40,7 @@ export function describeImageUnderstandingSelection(config: ImageUnderstandingCo
   readonly selection: ImageUnderstandingConfig['provider'];
   readonly locality: AiExecutionLocality | 'NONE';
 } {
-  if (config.provider === 'claude' || config.provider === 'codex' || config.provider === 'openai') {
+  if (config.provider === 'claude' || config.provider === 'codex' || config.provider === 'openai' || config.provider === 'gemini') {
     return { selection: config.provider, locality: 'REMOTE' };
   }
   if (config.provider === 'ollama') return { selection: 'ollama', locality: 'LOCAL' };
@@ -52,6 +55,7 @@ export function createImageUnderstandingProviders(
     codexBin?: string;
     codexModel?: string;
     openai?: OpenAiApiConfig;
+    gemini?: GeminiApiConfig;
     logger: Logger;
   },
 ): AiProvider[] {
@@ -74,6 +78,11 @@ export function createImageUnderstandingProviders(
       if (options.openai === undefined) throw new TypeError('the OpenAI image option needs the OpenAI API configuration');
       options.logger.info('image understanding uses a cloud provider', { selection: 'openai', locality: 'REMOTE' });
       return [openAiVision(options.openai)];
+    case 'gemini':
+      // `loadConfig` refuses `gemini` without the key and model (GEMINI_API_KEY_MISSING); reaching this is a wiring bug.
+      if (options.gemini === undefined) throw new TypeError('the Gemini image option needs the Gemini API configuration');
+      options.logger.info('image understanding uses a cloud provider', { selection: 'gemini', locality: 'REMOTE' });
+      return [geminiVision(options.gemini)];
     case 'off':
       if (config.invalid) options.logger.warn('image understanding not registered', { reason: config.invalid });
       return [];
@@ -114,7 +123,7 @@ export function envImageSelectionOf(config: {
 
 /** The composition-time image log lines (the cloud selection and an unusable legacy model), value-free. */
 export function logImageUnderstandingSelection(config: ImageUnderstandingConfig, logger: Pick<Logger, 'info' | 'warn'>): void {
-  if (config.provider === 'claude' || config.provider === 'codex' || config.provider === 'openai') {
+  if (config.provider === 'claude' || config.provider === 'codex' || config.provider === 'openai' || config.provider === 'gemini') {
     logger.info('image understanding uses a cloud provider', { selection: config.provider, locality: 'REMOTE' });
   } else if (config.provider === 'off' && config.invalid) {
     logger.warn('image understanding not registered', { reason: config.invalid });
