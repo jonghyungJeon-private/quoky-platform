@@ -1,42 +1,36 @@
+import type { MessageBody } from '../../domain';
+import { joinBody, messageBody, untrustedText } from '../message-rendering';
 import type { MemoryCommandLanguage } from './memory-command-grammar';
 
 /**
  * Deterministic KO/EN copy for the memory commands (ADR-0106). Pure: maps data to text, never reads a clock or a
  * store. Memory text reaches a reply only through {@link memoryPreview} / {@link memoryBody}, which have already
- * passed the credential guard (the service masks credential-like records before rendering) and are escaped here
- * for Discord (mentions, markdown) and bounded.
+ * passed the credential guard (the service masks credential-like records before rendering), are bounded here, and
+ * are untrusted spans the platform neutralizes (mentions, markup; PLT-0).
  */
 
 /** ADR-0106 D3: a listed preview is at most this many characters. */
 export const MEMORY_PREVIEW_MAX_CHARS = 120;
-/** One memory shown in full (`기억 N 보여줘`) is bounded so the reply fits one Discord message. */
+/** One memory shown in full (`기억 N 보여줘`) is bounded so the reply fits one chat message. */
 export const MEMORY_VIEW_MAX_CHARS = 1_500;
 /** The preview a confirmation prompt shows for the current and the proposed text. */
 export const MEMORY_CONFIRM_PREVIEW_MAX_CHARS = 300;
 /** ADR-0106 D3: 10 memories per listed page. */
 export const MEMORY_LIST_PAGE_SIZE = 10;
 
-/** Discord mention / markdown neutralization for owner text echoed back into a reply. */
-function escapeDiscord(text: string): string {
-  return text
-    .replace(/[\\*_~`|>[\]]/g, '\\$&')
-    .replace(/@/g, '@​')
-    .replace(/</g, '<​');
-}
-
 function clip(text: string, maxChars: number): string {
   const chars = Array.from(text);
   return chars.length <= maxChars ? text : `${chars.slice(0, maxChars - 1).join('')}…`;
 }
 
-/** Single-line, bounded, escaped preview. */
-export function memoryPreview(content: string, maxChars = MEMORY_PREVIEW_MAX_CHARS): string {
-  return escapeDiscord(clip(content.replace(/\s+/gu, ' ').trim(), maxChars));
+/** Single-line, bounded preview (owner text echoed back: an untrusted span). */
+export function memoryPreview(content: string, maxChars = MEMORY_PREVIEW_MAX_CHARS): MessageBody {
+  return messageBody(untrustedText(clip(content.replace(/\s+/gu, ' ').trim(), maxChars)));
 }
 
-/** Multi-line, bounded, escaped body (line breaks kept). */
-export function memoryBody(content: string, maxChars = MEMORY_VIEW_MAX_CHARS): string {
-  return escapeDiscord(clip(content.trim(), maxChars));
+/** Multi-line, bounded body (line breaks kept; owner text echoed back: an untrusted span). */
+export function memoryBody(content: string, maxChars = MEMORY_VIEW_MAX_CHARS): MessageBody {
+  return messageBody(untrustedText(clip(content.trim(), maxChars)));
 }
 
 /** What a credential-like record shows instead of its text (it is still listed, so it can be forgotten). */
@@ -49,7 +43,7 @@ export function maskedMemoryText(language: MemoryCommandLanguage): string {
 export interface MemoryListRow {
   readonly number: number;
   /** Already masked or previewed. */
-  readonly preview: string;
+  readonly preview: MessageBody;
 }
 
 export interface MemoryListPage {
@@ -68,24 +62,24 @@ export function renderMemoryListEmpty(language: MemoryCommandLanguage): string {
     : '저장된 기억이 없어요. "기억해: 내용"이라고 보내면 저장해 둬요.';
 }
 
-export function renderMemoryList(page: MemoryListPage, language: MemoryCommandLanguage): string {
+export function renderMemoryList(page: MemoryListPage, language: MemoryCommandLanguage): MessageBody {
   const first = page.rows[0]?.number ?? 0;
   const last = page.rows.at(-1)?.number ?? 0;
-  const rows = page.rows.map((row) => `${row.number}. ${row.preview}`);
+  const rows = page.rows.map((row) => messageBody(`${row.number}. `, row.preview));
   if (language === 'en') {
-    return [
+    return joinBody([
       `Saved memories ${first}–${last} of ${page.total} (page ${page.page}/${page.pages}):`,
       ...rows,
       ...(page.page < page.pages ? [`Next page: "list memories ${page.page + 1}"`] : []),
       MANAGE_HINT_EN,
-    ].join('\n');
+    ]);
   }
-  return [
+  return joinBody([
     `저장된 기억 ${page.total}개 중 ${first}–${last}번이에요 (${page.page}/${page.pages}쪽).`,
     ...rows,
     ...(page.page < page.pages ? [`다음 쪽: "기억 목록 ${page.page + 1}"`] : []),
     MANAGE_HINT_KO,
-  ].join('\n');
+  ]);
 }
 
 export function renderMemoryPageOutOfRange(pages: number, language: MemoryCommandLanguage): string {
@@ -101,49 +95,49 @@ export function renderMemoryNotFound(number: number, total: number, language: Me
     : `기억 ${number}번은 없어요. 지금 저장된 기억은 ${total}개예요. "기억 목록"으로 번호를 확인해 주세요.`;
 }
 
-export function renderMemoryView(number: number, body: string, language: MemoryCommandLanguage): string {
-  return language === 'en' ? `Memory ${number}:\n${body}` : `기억 ${number}번:\n${body}`;
+export function renderMemoryView(number: number, body: MessageBody, language: MemoryCommandLanguage): MessageBody {
+  return language === 'en' ? messageBody(`Memory ${number}:\n`, body) : messageBody(`기억 ${number}번:\n`, body);
 }
 
 export function renderForgetConfirmation(
   number: number,
-  preview: string,
+  preview: MessageBody,
   code: string,
   language: MemoryCommandLanguage,
-): string {
+): MessageBody {
   return language === 'en'
-    ? [
+    ? joinBody([
         `Forget memory ${number}?`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         `To confirm, send "confirm memory ${code}" within 30 minutes. Anything else forgets nothing.`,
-      ].join('\n')
-    : [
+      ])
+    : joinBody([
         `기억 ${number}번을 잊을까요?`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         `맞으면 30분 안에 "기억 확인 ${code}"라고 보내 주세요. 다른 말을 하면 아무것도 지우지 않아요.`,
-      ].join('\n');
+      ]);
 }
 
 export function renderEditConfirmation(
   number: number,
-  currentPreview: string,
-  nextPreview: string,
+  currentPreview: MessageBody,
+  nextPreview: MessageBody,
   code: string,
   language: MemoryCommandLanguage,
-): string {
+): MessageBody {
   return language === 'en'
-    ? [
+    ? joinBody([
         `Change memory ${number}?`,
-        `Now: ${currentPreview}`,
-        `New: ${nextPreview}`,
+        messageBody('Now: ', currentPreview),
+        messageBody('New: ', nextPreview),
         `To confirm, send "confirm memory ${code}" within 30 minutes. Anything else changes nothing.`,
-      ].join('\n')
-    : [
+      ])
+    : joinBody([
         `기억 ${number}번을 이렇게 바꿀까요?`,
-        `지금: ${currentPreview}`,
-        `새 내용: ${nextPreview}`,
+        messageBody('지금: ', currentPreview),
+        messageBody('새 내용: ', nextPreview),
         `맞으면 30분 안에 "기억 확인 ${code}"라고 보내 주세요. 다른 말을 하면 아무것도 바꾸지 않아요.`,
-      ].join('\n');
+      ]);
 }
 
 export function renderEditUnchanged(language: MemoryCommandLanguage): string {
@@ -212,16 +206,16 @@ export function renderSessionHistoryCleared(language: MemoryCommandLanguage): st
 }
 
 export function renderForgotten(
-  preview: string,
+  preview: MessageBody,
   earlierVersions: number,
   language: MemoryCommandLanguage,
   options: ForgottenReplyOptions = {},
-): string {
+): MessageBody {
   const mode = options.mode ?? 'deleted';
   const days = options.archiveDays ?? 0;
-  const lines: string[] = [];
+  const lines: MessageBody[] = [];
   if (language === 'en') {
-    lines.push('Forgot this memory:', `> ${preview}`);
+    lines.push('Forgot this memory:', messageBody('> ', preview));
     if (earlierVersions > 0) {
       const verb = mode === 'archived' ? 'moved to the archive' : 'removed';
       lines.push(`Its ${earlierVersions} earlier version${earlierVersions === 1 ? ' was' : 's were'} ${verb} too.`);
@@ -235,7 +229,7 @@ export function renderForgotten(
       lines.push('It looked like a secret or credential, so it was deleted for good at once instead of being archived.');
     }
   } else {
-    lines.push('이 기억을 잊었어요:', `> ${preview}`);
+    lines.push('이 기억을 잊었어요:', messageBody('> ', preview));
     if (earlierVersions > 0) {
       lines.push(
         mode === 'archived'
@@ -253,7 +247,7 @@ export function renderForgotten(
     }
   }
   if (options.sessionCleared === true) lines.push(renderSessionHistoryCleared(language));
-  return lines.join('\n');
+  return joinBody(lines);
 }
 
 /**
@@ -288,20 +282,20 @@ export function renderForgetIncomplete(
 }
 
 export function renderEdited(
-  preview: string,
+  preview: MessageBody,
   language: MemoryCommandLanguage,
   cleanupPending = false,
   sessionCleared = false,
-): string {
+): MessageBody {
   const base =
     language === 'en'
-      ? `Updated the memory:\n> ${preview}\nAn edited memory moves to the end of the list.`
-      : `기억을 바꿨어요:\n> ${preview}\n바꾼 기억은 목록 맨 뒤로 옮겨져요.`;
+      ? messageBody('Updated the memory:\n> ', preview, '\nAn edited memory moves to the end of the list.')
+      : messageBody('기억을 바꿨어요:\n> ', preview, '\n바꾼 기억은 목록 맨 뒤로 옮겨져요.');
   const cleared = sessionCleared ? `\n${renderSessionHistoryCleared(language)}` : '';
-  if (!cleanupPending) return `${base}${cleared}`;
+  if (!cleanupPending) return messageBody(base, cleared);
   return language === 'en'
-    ? `${base}\nSome data derived from the old text could not be cleaned up yet.${cleared}`
-    : `${base}\n다만 이전 내용에서 파생된 데이터 일부는 아직 정리하지 못했어요.${cleared}`;
+    ? messageBody(base, `\nSome data derived from the old text could not be cleaned up yet.${cleared}`)
+    : messageBody(base, `\n다만 이전 내용에서 파생된 데이터 일부는 아직 정리하지 못했어요.${cleared}`);
 }
 
 export function renderEditDuplicate(language: MemoryCommandLanguage): string {
@@ -399,18 +393,18 @@ export function renderBulkForgetRefused(language: MemoryCommandLanguage): string
     : '기억을 한꺼번에 지우지는 않아요. "기억 목록"으로 번호를 확인한 뒤 "기억 N 잊어줘"로 하나씩 지워 주세요.';
 }
 
-export function renderMemoryStatusLatest(preview: string, total: number, language: MemoryCommandLanguage): string {
+export function renderMemoryStatusLatest(preview: MessageBody, total: number, language: MemoryCommandLanguage): MessageBody {
   return language === 'en'
-    ? [
+    ? joinBody([
         `The most recent saved memory (${total} in total) is:`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         'Send "list memories" to see them all, or "remember: <text>" to save something new.',
-      ].join('\n')
-    : [
+      ])
+    : joinBody([
         `가장 최근에 저장된 기억이에요 (모두 ${total}개):`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         '전체는 "기억 목록"으로 볼 수 있고, 새로 저장하려면 "기억해: 내용"이라고 보내 주세요.',
-      ].join('\n');
+      ]);
 }
 
 export function renderMemoryStatusNone(language: MemoryCommandLanguage): string {
@@ -425,7 +419,7 @@ export function renderMemoryStatusNone(language: MemoryCommandLanguage): string 
 export interface MemoryArchiveRow {
   readonly number: number;
   /** Already masked or previewed. */
-  readonly preview: string;
+  readonly preview: MessageBody;
   /** Whole days until the daily maintenance deletes it (at least 1 while it is listed). */
   readonly daysLeft: number;
 }
@@ -448,21 +442,21 @@ export function renderMemoryArchiveEmpty(archiveDays: number, language: MemoryCo
     : `보관함이 비어 있어요. 잊은 기억은 여기에 ${archiveDays}일 동안 보관했다가 완전히 지워요.`;
 }
 
-export function renderMemoryArchive(page: MemoryArchivePage, language: MemoryCommandLanguage): string {
+export function renderMemoryArchive(page: MemoryArchivePage, language: MemoryCommandLanguage): MessageBody {
   if (language === 'en') {
-    return [
+    return joinBody([
       `Memory archive: ${page.total} forgotten ${page.total === 1 ? 'memory' : 'memories'} (page ${page.page}/${page.pages}). Archive numbers are separate from the "list memories" numbers.`,
-      ...page.rows.map((row) => `${row.number}. ${row.preview} (${row.daysLeft} day${row.daysLeft === 1 ? '' : 's'} left)`),
+      ...page.rows.map((row) => messageBody(`${row.number}. `, row.preview, ` (${row.daysLeft} day${row.daysLeft === 1 ? '' : 's'} left)`)),
       ...(page.page < page.pages ? [`Next page: "memory archive ${page.page + 1}"`] : []),
       'Send "restore memory N" to bring one back or "permanently delete memory N" to delete it now (each asks for a confirmation code).',
-    ].join('\n');
+    ]);
   }
-  return [
+  return joinBody([
     `보관함에 잊은 기억 ${page.total}개가 있어요 (${page.page}/${page.pages}쪽). 보관함 번호는 "기억 목록" 번호와 따로 매겨져요.`,
-    ...page.rows.map((row) => `${row.number}. ${row.preview} (${row.daysLeft}일 남음)`),
+    ...page.rows.map((row) => messageBody(`${row.number}. `, row.preview, ` (${row.daysLeft}일 남음)`)),
     ...(page.page < page.pages ? [`다음 쪽: "보관함 ${page.page + 1}"`] : []),
     '"기억 복원 N"으로 되돌리거나 "기억 완전 삭제 N"으로 바로 지울 수 있어요 (확인 코드로 한 번 더 확인해요).',
-  ].join('\n');
+  ]);
 }
 
 export function renderMemoryArchivePageOutOfRange(pages: number, language: MemoryCommandLanguage): string {
@@ -485,46 +479,46 @@ export function renderArchivedMemoryNotFound(
 
 export function renderRestoreConfirmation(
   number: number,
-  preview: string,
+  preview: MessageBody,
   code: string,
   language: MemoryCommandLanguage,
-): string {
+): MessageBody {
   return language === 'en'
-    ? [
+    ? joinBody([
         `Restore archived memory ${number}?`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         `To confirm, send "confirm memory ${code}" within 30 minutes. Anything else changes nothing.`,
-      ].join('\n')
-    : [
+      ])
+    : joinBody([
         `보관함 ${number}번 기억을 복원할까요?`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         `맞으면 30분 안에 "기억 확인 ${code}"라고 보내 주세요. 다른 말을 하면 아무것도 바꾸지 않아요.`,
-      ].join('\n');
+      ]);
 }
 
 export function renderPurgeConfirmation(
   number: number,
-  preview: string,
+  preview: MessageBody,
   code: string,
   language: MemoryCommandLanguage,
-): string {
+): MessageBody {
   return language === 'en'
-    ? [
+    ? joinBody([
         `Permanently delete archived memory ${number}? This cannot be undone.`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         `To confirm, send "confirm memory ${code}" within 30 minutes. Anything else deletes nothing.`,
-      ].join('\n')
-    : [
+      ])
+    : joinBody([
         `보관함 ${number}번 기억을 완전히 지울까요? 지우면 되돌릴 수 없어요.`,
-        `> ${preview}`,
+        messageBody('> ', preview),
         `맞으면 30분 안에 "기억 확인 ${code}"라고 보내 주세요. 다른 말을 하면 아무것도 지우지 않아요.`,
-      ].join('\n');
+      ]);
 }
 
-export function renderRestored(preview: string, language: MemoryCommandLanguage): string {
+export function renderRestored(preview: MessageBody, language: MemoryCommandLanguage): MessageBody {
   return language === 'en'
-    ? `Restored this memory from the archive:\n> ${preview}\nIt is used again; send "list memories" to see it.`
-    : `기억을 복원했어요:\n> ${preview}\n다시 대화에 쓰여요. "기억 목록"에서 확인할 수 있어요.`;
+    ? messageBody('Restored this memory from the archive:\n> ', preview, '\nIt is used again; send "list memories" to see it.')
+    : messageBody('기억을 복원했어요:\n> ', preview, '\n다시 대화에 쓰여요. "기억 목록"에서 확인할 수 있어요.');
 }
 
 export function renderRestoreIncomplete(language: MemoryCommandLanguage): string {
@@ -533,14 +527,14 @@ export function renderRestoreIncomplete(language: MemoryCommandLanguage): string
     : '기억을 끝까지 복원하지 못했어요. 그 기억은 아직 보관함에 있어요. "보관함"에서 번호를 확인한 뒤 다시 시도해 주세요.';
 }
 
-export function renderPurged(preview: string, earlierVersions: number, language: MemoryCommandLanguage): string {
+export function renderPurged(preview: MessageBody, earlierVersions: number, language: MemoryCommandLanguage): MessageBody {
   if (language === 'en') {
     const versions =
       earlierVersions > 0 ? `\nIts ${earlierVersions} earlier version${earlierVersions === 1 ? ' was' : 's were'} deleted too.` : '';
-    return `Permanently deleted this archived memory:\n> ${preview}${versions}\nIt cannot be restored.`;
+    return messageBody('Permanently deleted this archived memory:\n> ', preview, `${versions}\nIt cannot be restored.`);
   }
   const versions = earlierVersions > 0 ? `\n이전에 고쳐 쓰기 전 버전 ${earlierVersions}개도 함께 지웠어요.` : '';
-  return `보관함의 기억을 완전히 지웠어요:\n> ${preview}${versions}\n이제 되돌릴 수 없어요.`;
+  return messageBody('보관함의 기억을 완전히 지웠어요:\n> ', preview, `${versions}\n이제 되돌릴 수 없어요.`);
 }
 
 export function renderPurgeIncomplete(language: MemoryCommandLanguage): string {

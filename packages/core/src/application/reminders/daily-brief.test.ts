@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { REMINDER_LIMITS, ReminderStatus, WorkItemStatus, type Reminder, type WorkItem } from '../../domain';
-import { DAILY_BRIEF_MAX_ENTRIES, composeDailyBrief, formatKoreanClock, formatShortDateTime } from './daily-brief';
+import { DAILY_BRIEF_MAX_ENTRIES, composeDailyBrief as composeDailyBriefBody, formatKoreanClock, formatShortDateTime } from './daily-brief';
+import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
+
+/** PLT-0: these renderers return neutral content; the tests read its plain text. */
+const plainOf =
+  <A extends unknown[]>(render: (...args: A) => Parameters<typeof plainTextOf>[0]) =>
+  (...args: A): string =>
+    plainTextOf(render(...args));
+const composeDailyBrief = plainOf(composeDailyBriefBody);
 
 const ZONE = 'Asia/Seoul';
 // 2026-10-02 08:00 KST (Friday).
@@ -109,17 +117,17 @@ describe('composeDailyBrief', () => {
     expect(text).toContain('- 외 3건');
   });
 
-  it('neutralizes @everyone, @here and raw mentions in WorkItem titles', () => {
-    const text = composeDailyBrief({
+  it('marks WorkItem titles as untrusted mention spans (the platform keeps @everyone, @here and raw mentions from pinging)', () => {
+    const body = composeDailyBriefBody({
       now: NOW,
       timeZone: ZONE,
       reminders: [],
       workItems: [item('w1', { title: '@everyone @here <@123> 공지' })],
     });
-    expect(text).not.toContain('@everyone');
-    expect(text).not.toContain('@here');
-    expect(text).not.toContain('<@');
-    expect(text.replace(/​/g, '')).toContain('@everyone @here <@123> 공지');
+    expect(plainTextOf(body)).toContain('- @everyone @here <@123> 공지');
+    expect(renderMessageContent(body, { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»` })).toContain(
+      '- «mentions:@everyone @here <@123> 공지»',
+    );
   });
 
   it('marks a late brief in the header and never exceeds one delivered message', () => {

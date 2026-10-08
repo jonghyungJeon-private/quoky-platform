@@ -3,9 +3,12 @@ import {
   ReminderStatus,
   WorkItemStatus,
   type IsoTimestamp,
+  type MessageBody,
   type Reminder,
   type WorkItem,
 } from '../../domain';
+import { clipMessage, joinBody, messageBody, untrustedText } from '../message-rendering';
+import type { MessagePart } from '../message-rendering';
 import { localDateOf, toZonedDateTime } from './zoned-time';
 
 /**
@@ -47,20 +50,14 @@ export function formatShortDateTime(instant: IsoTimestamp, timeZone: string): st
   return `${z.month}/${z.day} ${String(z.hour).padStart(2, '0')}:${String(z.minute).padStart(2, '0')}`;
 }
 
-/** Keep `@everyone`, `@here` and raw mention syntax from pinging when a title is echoed into a message. */
-function neutralizeMentions(text: string): string {
-  return text.replace(/@(?=everyone|here)/gi, '@​').replace(/<@/g, '<​@');
-}
-
 function truncate(text: string, max: number): string {
   const chars = Array.from(text);
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
 }
 
-function clampText(text: string): string {
-  const chars = Array.from(text);
-  const max = REMINDER_LIMITS.maxDeliveredTextChars;
-  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
+/** The brief stays inside one delivered message (the bound applies to the platform's rendering). */
+function clampText(body: MessageBody): MessageBody {
+  return messageBody(clipMessage(body, REMINDER_LIMITS.maxDeliveredTextChars, 'code-points'));
 }
 
 function todaysPendingReminders(input: DailyBriefInput): Reminder[] {
@@ -86,21 +83,22 @@ function activeWorkItems(input: DailyBriefInput): WorkItem[] {
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id));
 }
 
-function workItemLabel(item: WorkItem): string {
+/** A WorkItem title echoed into the brief: an untrusted span whose mentions the platform keeps from pinging. */
+function workItemLabel(item: WorkItem): MessagePart {
   const title = item.title?.trim();
   return title !== undefined && title.length > 0
-    ? neutralizeMentions(truncate(title, 80))
+    ? untrustedText(truncate(title, 80), 'mentions')
     : `제목 없는 작업 (${item.id.slice(0, 8)})`;
 }
 
 /** Compose the brief text (Korean, no emoji, at most one delivered message). */
-export function composeDailyBrief(input: DailyBriefInput): string {
+export function composeDailyBrief(input: DailyBriefInput): MessageBody {
   const today = toZonedDateTime(input.now, input.timeZone);
   let header = `오늘의 브리핑 · ${today.month}월 ${today.day}일(${WEEKDAY_KO[today.weekday]})`;
   if (input.late === true && input.occurrenceAt !== undefined) {
     header += ` (예정 ${formatShortDateTime(input.occurrenceAt, input.timeZone)}, 늦게 전달)`;
   }
-  const lines: string[] = [header, ''];
+  const lines: MessageBody[] = [header, ''];
 
   if (input.reminders === null) {
     lines.push('남은 알림: 불러오지 못했어요.');
@@ -129,9 +127,9 @@ export function composeDailyBrief(input: DailyBriefInput): string {
       lines.push('진행 중인 작업이 없어요.');
     } else {
       lines.push(`진행 중인 작업 ${active.length}건`);
-      for (const item of active.slice(0, DAILY_BRIEF_MAX_ENTRIES)) lines.push(`- ${workItemLabel(item)}`);
+      for (const item of active.slice(0, DAILY_BRIEF_MAX_ENTRIES)) lines.push(messageBody('- ', workItemLabel(item)));
       if (active.length > DAILY_BRIEF_MAX_ENTRIES) lines.push(`- 외 ${active.length - DAILY_BRIEF_MAX_ENTRIES}건`);
     }
   }
-  return clampText(lines.join('\n'));
+  return clampText(joinBody(lines));
 }

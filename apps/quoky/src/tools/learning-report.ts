@@ -20,8 +20,10 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   CURATED_EXAMPLE_MIN_LEXICAL_SCORE, CURATED_EXAMPLE_MIN_SEMANTIC_SCORE, Capability, LEARNING_EGRESS_LOCAL_ONLY,
-  LEARNING_MAX_ITEMS_PER_ACTOR, LearningItemKind, learningItemUsable, learningRequestExcerpt,
+  LEARNING_MAX_ITEMS_PER_ACTOR, LearningItemKind, PLAIN_TEXT_MARKUP, learningItemUsable, learningRequestExcerpt,
+  renderMessageContent,
 } from '@quoky/core';
+import type { MessageMarkup } from '@quoky/core';
 import { openLearningReportReader } from '@quoky/storage-sqlite';
 import type { LearningReportItem, LearningReportTurn } from '@quoky/storage-sqlite';
 
@@ -305,6 +307,12 @@ function itemsReport(items: readonly LearningReportItem[], nowMs: number): Learn
   };
 }
 
+/**
+ * How the report writes the excerpt's untrusted text (PLT-0 content): a zero-width space after every `@`, so an
+ * excerpt pasted into a Markdown review never mentions anyone. Everything else is plain.
+ */
+const REPORT_MARKUP: MessageMarkup = { ...PLAIN_TEXT_MARKUP, untrusted: (text) => text.replace(/@/gu, '@\u200b') };
+
 /** The approved item for a turn: owner consent is per item, so only unexpired `LOCAL_ONLY` items that pass the guard. */
 function approvedItemFor(turnId: string, items: readonly LearningReportItem[]): ApprovedItemExcerpt | undefined {
   const found = items
@@ -318,8 +326,8 @@ function approvedItemFor(turnId: string, items: readonly LearningReportItem[]): 
   return {
     itemId: item.id,
     kind: item.kind,
-    requestExcerpt: learningRequestExcerpt(item.data.requestText),
-    ...(item.data.note !== undefined ? { noteExcerpt: learningRequestExcerpt(item.data.note) } : {}),
+    requestExcerpt: renderMessageContent(learningRequestExcerpt(item.data.requestText), REPORT_MARKUP),
+    ...(item.data.note !== undefined ? { noteExcerpt: renderMessageContent(learningRequestExcerpt(item.data.note), REPORT_MARKUP) } : {}),
   };
 }
 

@@ -25,6 +25,7 @@ import type {
 } from '../../ports/reminder-repository.port';
 import { ReminderDispatchService } from './reminder-dispatch-service';
 import { ReminderReplyComposer } from './reminder-reply-composer';
+import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
 
 const ZONE = 'Asia/Seoul';
 const ACTOR = 'actor-1';
@@ -511,7 +512,10 @@ describe('ReminderDispatchService BRIEF', () => {
     expect(delivered.text).toContain('분기 보고서 작성');
     expect(delivered.text).not.toContain('끝난 일');
     expect(delivered.text).not.toContain('취소된 일');
-    expect(delivered.text).not.toContain('@everyone');
+    // PLT-0: a title is an untrusted span of the notification content; the adapter keeps its mentions from pinging.
+    expect(renderMessageContent(delivered.content ?? delivered.text, { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»` })).toContain(
+      '- «mentions:@everyone 공지»',
+    );
     expect(listCalls).toEqual([ACTOR]);
     const next = repository.get(brief.id);
     expect(next.status).toBe(ReminderStatus.SCHEDULED);

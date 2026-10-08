@@ -19,6 +19,7 @@ import {
   type MemoryRemovalEvent,
   type SessionHistoryClearer,
 } from './memory-removal-cascade';
+import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
 
 const OWNER = 'actor-owner';
 const OTHER = 'actor-other';
@@ -209,7 +210,7 @@ describe('MemoryCommandService — list and view (ADR-0106 D3)', () => {
     expect((await h.run('기억 목록 4')).outcome).toBe('page-out-of-range');
   });
 
-  it('bounds previews to 120 characters, escapes mentions and never shows credential-like text', async () => {
+  it('bounds previews to 120 characters, marks owner text untrusted (the platform escapes mentions) and never shows credential-like text', async () => {
     const h = harness([
       memory(`긴 내용 ${'가'.repeat(300)}`),
       memory('@everyone 회의는 <@123> 담당'),
@@ -219,7 +220,10 @@ describe('MemoryCommandService — list and view (ADR-0106 D3)', () => {
     const first = listed.text.split('\n').find((line) => line.startsWith('1. ')) ?? '';
     expect(Array.from(first.slice(3))).toHaveLength(120);
     expect(first.endsWith('…')).toBe(true);
-    expect(listed.text).toContain('2. @​everyone 회의는 <​@​123\\> 담당');
+    expect(listed.text).toContain('2. @everyone 회의는 <@123> 담당');
+    expect(renderMessageContent(listed.content ?? listed.text, { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»` })).toContain(
+      '2. «markup:@everyone 회의는 <@123> 담당»',
+    );
     expect(listed.text).toContain('3. (비밀번호·토큰처럼 보여서 내용을 표시하지 않아요)');
     expect(listed.text).not.toContain('ghp_');
     const view = await h.run('기억 3 보여줘');
@@ -341,6 +345,8 @@ describe('MemoryCommandService — forget (ADR-0106 D5)', () => {
       outcome: 'forgotten',
       status: 'RESPONDED',
       text: '이 기억을 잊었어요:\n> 커피는 아메리카노',
+      // PLT-0: the echoed memory text is an untrusted span of the neutral content.
+      content: expect.any(Array),
       // W2-L01: the conversation history keeps a content-free note instead of the reply's preview.
       history: { assistant: '(요청한 기억을 잊었어요. 그 내용은 더 이상 쓰지 않아요.)' },
     });
@@ -645,6 +651,7 @@ describe('MemoryCommandService — archive with restore (ADR-0106 amendment)', (
     expect(done).toEqual({
       outcome: 'forgotten',
       status: 'RESPONDED',
+      content: expect.any(Array),
       text:
         '이 기억을 잊었어요:\n> 커피는 아메리카노\n' +
         '이제 대화에 쓰지 않아요. 보관함에 7일 동안 두었다가 완전히 지워요. ' +
@@ -1056,7 +1063,8 @@ describe('MemoryCommandService — typed forget entries (OPS-2, ADR-0113 D7)', (
     const h = harness([memory('커피는 아메리카노'), memory('홍차도 좋아')], { archiveDays: 7 });
     const chat = await h.run('기억 2 잊어줘');
     const typed = await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 2);
-    expect(typed).toEqual({ status: 'CONFIRMATION', number: 2, preview: '홍차도 좋아', code: codeOf(chat) });
+    expect(typed).toEqual({ status: 'CONFIRMATION', number: 2, preview: expect.any(Array), code: codeOf(chat) });
+    expect(typed.status === 'CONFIRMATION' ? plainTextOf(typed.preview) : '').toBe('홍차도 좋아');
     expect(await h.service.requestForgetConfirmation({ actorId: OWNER, now: NOW }, 9)).toEqual({
       status: 'NOT_FOUND',
       number: 9,

@@ -6,10 +6,13 @@ import type {
   Id,
   IsoTimestamp,
   MemoryRecord,
+  MessageBody,
+  MessageContent,
 } from '../../domain';
 import { isArchivedMemory, MEMORY_ARCHIVE_EXPIRES_AT_KEY, MEMORY_ARCHIVED_AT_KEY, MemoryType } from '../../domain';
 import type { DurableMemoryQuery, Logger } from '../../ports';
 import { containsCredentialFileContent, CREDENTIAL_REJECTION_REASON } from '../credential-guard';
+import { messageFields } from '../message-rendering';
 import {
   durableScopeOfRecord,
   isCredentialLikeMemoryText,
@@ -156,7 +159,9 @@ export type MemoryCommandOutcome =
 
 export interface MemoryCommandResult {
   readonly outcome: MemoryCommandOutcome;
+  /** The reply as plain text; `content` is present when it echoes memory text (an untrusted span, PLT-0). */
   readonly text: string;
+  readonly content?: MessageContent;
   readonly status: 'RESPONDED' | 'FAILED';
   /**
    * W2-L01: what the SHORT_TERM conversation history keeps for this turn instead of the verbatim texts — set for edit
@@ -170,8 +175,8 @@ export type MemoryForgetConfirmationRequest =
   | {
       readonly status: 'CONFIRMATION';
       readonly number: number;
-      /** The confirmation preview chat shows (bounded, Discord-escaped, masked when credential-like). */
-      readonly preview: string;
+      /** The confirmation preview chat shows (bounded, an untrusted span, masked when credential-like). */
+      readonly preview: MessageBody;
       /** The ADR-0106 D4 one-time code `기억 확인 <code>` accepts. */
       readonly code: string;
     }
@@ -1101,12 +1106,12 @@ export class MemoryCommandService {
     }
   }
 
-  private previewOf(content: string, language: MemoryCommandLanguage, maxChars?: number): string {
+  private previewOf(content: string, language: MemoryCommandLanguage, maxChars?: number): MessageBody {
     return isStrictCredentialMemoryText(content) ? maskedMemoryText(language) : memoryPreview(content, maxChars);
   }
 
-  private reply(outcome: MemoryCommandOutcome, text: string): MemoryCommandResult {
-    return { outcome, text, status: 'RESPONDED' };
+  private reply(outcome: MemoryCommandOutcome, body: MessageBody): MemoryCommandResult {
+    return { outcome, ...messageFields(body), status: 'RESPONDED' };
   }
 
   private log(level: 'info' | 'warn', event: string, fields: Record<string, string | number>): void {

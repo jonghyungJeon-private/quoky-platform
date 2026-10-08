@@ -1,6 +1,7 @@
 import type { Actor, ExternalIdentity, Id, MemoryRecord, Session } from '../../domain';
 import { MemoryType } from '../../domain';
 import type { LearningMemoryForgetCascade, MemoryRepository, VectorProvider } from '../../ports';
+import { plainTextOf } from '../message-rendering';
 import { DURABLE_MEMORY_VECTOR_COLLECTION } from '../recall/semantic-recall-scorer';
 import {
   MEMORY_CONFIRM_PREVIEW_MAX_CHARS,
@@ -84,8 +85,9 @@ export function normalizeForHistoryMatch(text: string): string {
 
 /**
  * The fragments whose presence marks a history turn as carrying a removed memory's text (W2-L01): the text itself,
- * and the forms a memory-command reply echoed it in — the Discord-escaped body (`기억 N 보여줘`) and previews (list,
- * confirmation, result). A clipped rendering contributes its kept part (the trailing `…` dropped).
+ * and the forms a memory-command reply echoed it in — the body (`기억 N 보여줘`) and previews (list, confirmation,
+ * result), as the history records them (plain text). A clipped rendering contributes its kept part (the trailing `…`
+ * dropped).
  */
 export function memoryHistoryNeedles(contents: readonly string[]): string[] {
   const needles = new Set<string>();
@@ -95,17 +97,36 @@ export function memoryHistoryNeedles(contents: readonly string[]): string[] {
   };
   for (const content of contents) {
     add(content);
-    add(memoryBody(content, MEMORY_VIEW_MAX_CHARS));
-    add(memoryPreview(content, MEMORY_PREVIEW_MAX_CHARS));
-    add(memoryPreview(content, MEMORY_CONFIRM_PREVIEW_MAX_CHARS));
+    add(plainTextOf(memoryBody(content, MEMORY_VIEW_MAX_CHARS)));
+    add(plainTextOf(memoryPreview(content, MEMORY_PREVIEW_MAX_CHARS)));
+    add(plainTextOf(memoryPreview(content, MEMORY_CONFIRM_PREVIEW_MAX_CHARS)));
   }
   return [...needles];
+}
+
+/** Invisible format characters (zero-width spaces, joiners, marks): never content of a match. */
+const FORMAT_CHARACTERS = /\p{Cf}/gu;
+/** A backslash escape of ASCII punctuation (CommonMark); a backslash before any other character is kept. */
+const PUNCTUATION_ESCAPE = /\\([!-/:-@[-`{-~])/gu;
+
+/**
+ * PLT-0: turns recorded before platform-neutral rendering kept a reply as it was delivered, so echoed memory text in
+ * them carries backslash escapes before punctuation and invisible format characters. Undoing exactly those (and
+ * ignoring format characters on both sides) lets such an older turn still match the plain text.
+ */
+function historyMatchWithoutDeliveryEscapes(text: string): string {
+  return normalizeForHistoryMatch(text.replace(PUNCTUATION_ESCAPE, '$1').replace(FORMAT_CHARACTERS, ''));
 }
 
 /** Whether one SHORT_TERM turn carries any of `needles` (from {@link memoryHistoryNeedles}). */
 export function historyTurnCarriesMemory(record: Pick<MemoryRecord, 'content'>, needles: readonly string[]): boolean {
   const haystack = normalizeForHistoryMatch(record.content);
-  return needles.some((needle) => haystack.includes(needle));
+  if (needles.some((needle) => haystack.includes(needle))) return true;
+  const delivered = historyMatchWithoutDeliveryEscapes(record.content);
+  return needles.some((needle) => {
+    const plain = needle.replace(FORMAT_CHARACTERS, '');
+    return plain.length > 0 && delivered.includes(plain);
+  });
 }
 
 /** Session lookup for a history turn recorded before turns carried their platform (`metadata.platform`). */

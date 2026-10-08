@@ -7,14 +7,23 @@ import {
   FEEDBACK_SUMMARY_EXCERPT_MAX_CHARS,
   FEEDBACK_SUMMARY_MAX_BREAKDOWN_ROWS,
   FEEDBACK_SUMMARY_UNAVAILABLE_TEXT,
-  composeFeedbackSummaryText,
+  composeFeedbackSummaryText as composeFeedbackSummaryTextBody,
   feedbackCapabilityLabel,
   feedbackCapabilityRowLabel,
   feedbackIntentRowLabel,
   feedbackTrendLines,
   feedbackIntentLabel,
-  feedbackRequestExcerpt,
+  feedbackRequestExcerpt as feedbackRequestExcerptBody,
 } from './feedback-summary-composer';
+import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
+
+/** PLT-0: these renderers return neutral content; the tests read its plain text. */
+const plainOf =
+  <A extends unknown[]>(render: (...args: A) => Parameters<typeof plainTextOf>[0]) =>
+  (...args: A): string =>
+    plainTextOf(render(...args));
+const composeFeedbackSummaryText = plainOf(composeFeedbackSummaryTextBody);
+const feedbackRequestExcerpt = plainOf(feedbackRequestExcerptBody);
 
 function summary(over: Partial<FeedbackSummary> = {}): FeedbackSummary {
   return {
@@ -137,10 +146,12 @@ describe('feedbackRequestExcerpt', () => {
     expect(excerpt).not.toContain('ghp_');
   });
 
-  it('neutralises mentions and code fences', () => {
-    const excerpt = feedbackRequestExcerpt('@everyone `rm` 해줘');
-    expect(excerpt).not.toContain('@everyone');
-    expect(excerpt).not.toContain('`');
+  it('turns backticks into quotes and marks the text as untrusted handles (the platform neutralises mentions)', () => {
+    const body = feedbackRequestExcerptBody('@everyone `rm` 해줘');
+    expect(feedbackRequestExcerpt('@everyone `rm` 해줘')).toBe('"@everyone \'rm\' 해줘"');
+    expect(renderMessageContent(body, { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»` })).toBe(
+      '"«handles:@everyone \'rm\' 해줘»"',
+    );
   });
 });
 
