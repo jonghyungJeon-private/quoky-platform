@@ -1,10 +1,11 @@
 /**
  * Offline tests for the ADR-0102 launchd scripts (SUB-1): `ops/launchd/quoky-launch.sh` (run/print-env) and
- * `ops/launchd/quokyctl.sh` (install/uninstall/restart in --dry-run only, status, render).
+ * `ops/launchd/quokyctl.sh` (install/uninstall/restart in --dry-run only, status, render, backup).
  *
  * Safety: every script runs with a temp HOME, a stub `launchctl` (QUOKY_LAUNCHCTL) that records its arguments and
- * changes nothing, and a fake `node` that records its environment. quokyctl is never run with --apply here, so the
- * owner's login session is never touched; the dry-run plan is the same code path --apply executes step by step.
+ * changes nothing, and a fake `node` that records its environment. quokyctl install/uninstall/restart are never run
+ * with --apply here, so the owner's login session is never touched; the dry-run plan is the same code path --apply
+ * executes step by step. `backup --apply` touches no launchd state: it runs against a temp HOME's data directory only.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -22,6 +23,8 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SqliteStorageProvider } from '@quoky/storage-sqlite';
+import { LocalVectorProvider } from '@quoky/vector-local';
 import { REMINDER_TICK_STOP_TIMEOUT_MS } from '../reminders/reminder-tick-driver';
 import { QuokyExitCode } from './exit-codes';
 
@@ -582,4 +585,122 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh uninstall/restart --
     expect(readFileSync(box.launchctlLog, 'utf8').trim().split('\n').every((c) => c.startsWith('print '))).toBe(true);
     expect(runCtl(box, ['status', '--apply']).status).not.toBe(0);
   });
+});
+
+describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, while the service runs)', () => {
+  const BACKUP_ENV_NAMES = ['HOME', 'PATH', 'LANG', 'QUOKY_ENV_FILE', 'QUOKY_DB_PATH', 'QUOKY_VECTOR_PATH', 'QUOKY_LAUNCHER'];
+
+  function tools(box: Sandbox, name = ''): string {
+    return path.join(box.repo, 'apps', 'quoky', 'dist', 'tools', name);
+  }
+
+  /** A sandbox with the built-looking backup tool and a service database. */
+  function backupSandbox(options: { loaded?: boolean } = {}): Sandbox {
+    const box = sandbox(options);
+    mkdirSync(tools(box), { recursive: true });
+    writeFileSync(tools(box, 'backup-now.js'), '');
+    mkdirSync(box.dataDir, { recursive: true });
+    writeFileSync(path.join(box.dataDir, 'quoky.db'), '');
+    return box;
+  }
+
+  function toolEnv(box: Sandbox): Map<string, string> {
+    const entries = readFileSync(tools(box, 'child-env.txt'), 'utf8')
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)] as const);
+    return new Map(entries.filter(([name]) => !['PWD', 'SHLVL', '_', 'OLDPWD'].includes(name)));
+  }
+
+  const toolArgv = (box: Sandbox): string => readFileSync(tools(box, 'child-argv.txt'), 'utf8').trim();
+
+  it('defaults to a dry-run: runs the tool read-only in the fixed environment, nothing inherited, no launchd change', () => {
+    const box = backupSandbox({ loaded: true });
+    const result = runCtl(box, ['backup'], INHERITED);
+    expect(result.status).toBe(0);
+    expect(toolArgv(box)).toBe(`${tools(box, 'backup-now.js')} --dry-run`);
+    const env = toolEnv(box);
+    expect([...env.keys()].sort()).toEqual([...BACKUP_ENV_NAMES].sort());
+    expect(env.get('QUOKY_DB_PATH')).toBe(path.join(box.dataDir, 'quoky.db'));
+    expect(env.get('QUOKY_VECTOR_PATH')).toBe(path.join(box.dataDir, 'vectors'));
+    expect(env.get('QUOKY_ENV_FILE')).toBe(box.envFile);
+    expect(env.get('QUOKY_LAUNCHER')).toBe('launchd');
+    expect(result.stdout).toContain('(loaded); no restart: the copy only reads the database and the vector store');
+    expect(result.stdout).toContain("dry-run: nothing was changed (run 'quokyctl.sh backup --apply' to take the copy)");
+    expect(`${result.stdout}${result.stderr}`).not.toContain('secret-token-value');
+    expect(readFileSync(box.launchctlLog, 'utf8').trim().split('\n').every((c) => c.startsWith('print '))).toBe(true);
+    expect(runCtl(box, ['backup', '--dry-run']).status).toBe(0);
+  });
+
+  it('--apply runs the tool with --apply and reports a partial set (vector snapshot failed) as a failure', () => {
+    const box = backupSandbox();
+    const ok = runCtl(box, ['backup', '--apply']);
+    expect(ok.status).toBe(0);
+    expect(toolArgv(box)).toBe(`${tools(box, 'backup-now.js')} --apply`);
+    expect(ok.stdout).toContain('apply: take a manual backup (verified DB copy + vector snapshot)');
+    expect(ok.stdout).toContain('backed up: see backups/backup-status.json (lastManual)');
+    expect(existsSync(box.launchctlLog) ? readFileSync(box.launchctlLog, 'utf8') : '').not.toMatch(/bootstrap|bootout|kickstart/);
+
+    writeFileSync(tools(box, 'exit-code'), '4');
+    const partial = runCtl(box, ['backup', '--apply']);
+    expect(partial.status).not.toBe(0);
+    expect(partial.stderr).toContain('backup did not fully verify (exit 4, see above); the service was not touched');
+  });
+
+  it('--verify NAME is read-only and takes only a copy name', () => {
+    const box = backupSandbox();
+    const name = 'quoky-20261007T190000Z-daily.db';
+    expect(runCtl(box, ['backup', '--verify', name]).status).toBe(0);
+    expect(toolArgv(box)).toBe(`${tools(box, 'backup-now.js')} --verify ${name}`);
+    for (const bad of ['../quoky.db', 'quoky.db', 'quoky-20261007T190000Z-weekly.db']) {
+      const result = runCtl(box, ['backup', '--verify', bad]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('--verify takes a copy name');
+    }
+    expect(runCtl(box, ['backup', '--verify', name, '--apply']).stderr).toContain('backup --verify is read-only');
+    expect(runCtl(box, ['status', '--verify', name]).stderr).toContain('--verify belongs to the backup command');
+  });
+
+  it.each([
+    ['an unbuilt tool', (box: Sandbox) => rmSync(tools(box, 'backup-now.js')), 'the app is not built'],
+    ['a world-readable env file', (box: Sandbox) => chmodSync(box.envFile, 0o644), 'ENV_FILE_INSECURE'],
+    ['no service database', (box: Sandbox) => rmSync(path.join(box.dataDir, 'quoky.db')), 'no service database'],
+  ])('refuses with %s before running anything', (_name, breakIt, reason) => {
+    const box = backupSandbox();
+    breakIt(box);
+    const result = runCtl(box, ['backup', '--apply']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('backup refused');
+    expect(result.stderr).toContain(reason);
+    expect(existsSync(tools(box, 'child-argv.txt'))).toBe(false);
+  });
+
+  const BUILT_TOOL = path.join(REPO_ROOT, 'apps', 'quoky', 'dist', 'tools', 'backup-now.js');
+  it.skipIf(!existsSync(BUILT_TOOL))('end to end with the built tool: a verified manual set in a temp HOME, then --verify', async () => {
+    const box = sandbox();
+    mkdirSync(box.dataDir, { recursive: true });
+    const storage = new SqliteStorageProvider({ dbPath: path.join(box.dataDir, 'quoky.db') });
+    await storage.init();
+    await storage.close();
+    await new LocalVectorProvider(path.join(box.dataDir, 'vectors')).upsert('durable-memory-v1', [
+      { id: 'memory-1', vector: [0.5, 0.5], metadata: { contentHash: 'a' } },
+    ]);
+    const run = (args: string[]) =>
+      spawnSync('/bin/bash', [CTL, 'backup', ...args, '--repo', REPO_ROOT, '--env-file', box.envFile, '--node', process.execPath], {
+        env: baseEnv(box),
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+    const applied = run(['--apply']);
+    expect(applied.status).toBe(0);
+    const backups = path.join(box.dataDir, 'backups');
+    const copy = readdirSync(backups).find((n) => /^quoky-\d{8}T\d{6}Z-manual\.db$/.test(n)) as string;
+    expect(readdirSync(backups).sort()).toEqual(['backup-status.json', copy, copy.replace(/\.db$/, '.vectors')].sort());
+    expect(applied.stdout).toContain('(1 collection(s), 1 record(s))');
+    expect(`${applied.stdout}${applied.stderr}`).not.toContain('secret-token-value');
+
+    const verified = run(['--verify', copy]);
+    expect(verified.status).toBe(0);
+    expect(verified.stdout).toContain('this copy and its vector snapshot are a matching set');
+  }, 60_000);
 });

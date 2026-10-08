@@ -72,6 +72,31 @@ export function readSqliteUserVersion(dbPath: string): number | undefined {
 }
 
 /**
+ * Verify an existing backup copy read-only (the restore drill, `backup-now --verify`): `PRAGMA integrity_check` must be
+ * exactly `ok`. Returns the copy's `user_version`. A `VACUUM INTO` copy is in rollback-journal mode, so a read-only
+ * open creates no `-wal`/`-shm` file next to it. Synchronous (a short-lived tool, never the service). Never throws.
+ */
+export function verifySqliteBackupFile(copyPath: string): SqliteBackupResult {
+  if (!existsSync(copyPath)) return { ok: false, failure: 'SOURCE_UNREADABLE' };
+  let copy: Database.Database | undefined;
+  try {
+    copy = new Database(copyPath, { readonly: true, fileMustExist: true, timeout: DEFAULT_BACKUP_BUSY_TIMEOUT_MS });
+    const rows = copy.pragma('integrity_check') as Array<{ integrity_check?: unknown }>;
+    const ok = Array.isArray(rows) && rows.length === 1 && rows[0]?.integrity_check === 'ok';
+    if (!ok) return { ok: false, failure: 'INTEGRITY_FAILED' };
+    return { ok: true, userVersion: Number(copy.pragma('user_version', { simple: true })) || 0 };
+  } catch {
+    return { ok: false, failure: 'INTEGRITY_FAILED' };
+  } finally {
+    try {
+      copy?.close();
+    } catch {
+      // closing a read-only handle cannot lose data
+    }
+  }
+}
+
+/**
  * Worker body (CommonJS, evaluated): copy, then verify. It posts exactly one `{ ok, ... }` message. The driver is
  * resolved by the parent from this package's own dependency, so the worker loads the same native module.
  */

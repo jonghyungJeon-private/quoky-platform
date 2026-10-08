@@ -11,6 +11,7 @@ import { BootstrapPreflightError } from '../bootstrap-preflight';
  *   up.
  * - `QUOKY_BACKUP_DIR`: an absolute directory; default `<database directory>/backups` (on the host:
  *   `~/Library/Application Support/Quoky/backups`). The job creates it mode 700.
+ * - The vector store (`QUOKY_VECTOR_PATH`, passed in as `vectorPath`) is snapshotted next to each DB copy.
  *
  * The `OPS_NOTICE` rate-limit ledger lives beside the database (`<database directory>/ops/notice-ledger.json`).
  */
@@ -21,6 +22,8 @@ export interface OpsConfig {
     readonly dbPath: string;
     /** Absolute backup directory. */
     readonly dir: string;
+    /** Absolute vector store directory snapshotted with each copy; absent = DB-only backups. */
+    readonly vectorPath?: string;
   };
   /** Absolute path of the persisted `OPS_NOTICE` ledger (the 3-per-day bound survives restarts). */
   readonly noticeLedgerPath: string;
@@ -46,6 +49,8 @@ export interface OpsConfigBase {
   readonly dbPath: string;
   /** `config.host.launcher`. */
   readonly launcher?: 'launchd';
+  /** `config.vector.storePath` (relative paths resolve from `cwd`, like `dbPath`). */
+  readonly vectorPath?: string;
 }
 
 export function loadOpsConfig(env: NodeJS.ProcessEnv, base: OpsConfigBase, cwd: string = process.cwd()): OpsConfig {
@@ -66,8 +71,11 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv, base: OpsConfigBase, cwd: 
   else if (!path.isAbsolute(rawDir) || /[\0\n\r]/.test(rawDir)) throw opsConfigError(OpsConfigErrorCode.BACKUP_DIR_INVALID);
   else dir = path.resolve(rawDir);
 
+  const vectorPath =
+    base.vectorPath === undefined || base.vectorPath === '' ? undefined : path.resolve(cwd, base.vectorPath);
+
   return {
-    backup: { enabled: enabled && fileBacked, dbPath, dir },
+    backup: { enabled: enabled && fileBacked, dbPath, dir, ...(vectorPath !== undefined ? { vectorPath } : {}) },
     noticeLedgerPath: path.join(dataDir, 'ops', 'notice-ledger.json'),
   };
 }

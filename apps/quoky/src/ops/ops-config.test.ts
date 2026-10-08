@@ -40,6 +40,15 @@ describe('SUB-2 ops configuration (ADR-0102 D6)', () => {
     );
   });
 
+  it('carries the vector store path for the backup set (relative from cwd), and none when unset or empty', () => {
+    expect(loadOpsConfig({}, { dbPath: HOST_DB, vectorPath: '/Users/owner/Library/Application Support/Quoky/vectors' }).backup.vectorPath).toBe(
+      '/Users/owner/Library/Application Support/Quoky/vectors',
+    );
+    expect(loadOpsConfig({}, { dbPath: './data/chunsik.db', vectorPath: './data/vectors' }, '/repo').backup.vectorPath).toBe('/repo/data/vectors');
+    expect(loadOpsConfig({}, { dbPath: HOST_DB }).backup.vectorPath).toBeUndefined();
+    expect(loadOpsConfig({}, { dbPath: HOST_DB, vectorPath: '' }).backup.vectorPath).toBeUndefined();
+  });
+
   it('never backs up an in-memory database', () => {
     expect(loadOpsConfig({ QUOKY_BACKUP_ENABLED: 'true' }, { dbPath: ':memory:', launcher: 'launchd' }).backup.enabled).toBe(
       false,

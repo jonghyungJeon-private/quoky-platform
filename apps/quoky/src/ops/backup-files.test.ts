@@ -3,11 +3,15 @@ import {
   BACKUP_RETENTION,
   backupFileName,
   isPartialBackupFileName,
+  isPartialVectorSnapshotName,
   listBackupFiles,
   nextDailyBackupAt,
   parseBackupFileName,
+  partialBackupKind,
   partialFileName,
   selectBackupsToKeep,
+  vectorSnapshotDbName,
+  vectorSnapshotName,
 } from './backup-files';
 
 const SEOUL = 'Asia/Seoul';
@@ -39,6 +43,42 @@ describe('backup file names (ADR-0102 D6)', () => {
     expect(isPartialBackupFileName(`${partial}-journal`)).toBe(true);
     expect(isPartialBackupFileName('quoky-20261006T190005Z-daily.db')).toBe(false);
     expect(isPartialBackupFileName('.other.partial')).toBe(false);
+  });
+});
+
+describe('manual copies and vector snapshot names', () => {
+  it('names a manual copy and pairs every copy with a .vectors snapshot of the same stem', () => {
+    const at = Date.parse('2026-10-07T03:04:05Z');
+    const manual = backupFileName('manual', at);
+    expect(manual).toBe('quoky-20261007T030405Z-manual.db');
+    expect(parseBackupFileName(manual)).toEqual({ name: manual, kind: 'manual', takenAtMs: at });
+    for (const kind of ['daily', 'pre-migration', 'manual'] as const) {
+      const db = backupFileName(kind, at);
+      const vectors = vectorSnapshotName(db);
+      expect(vectors).toBe(db.replace(/\.db$/, '.vectors'));
+      expect(vectorSnapshotDbName(vectors)).toBe(db);
+      expect(isPartialVectorSnapshotName(partialFileName(vectors))).toBe(true);
+      expect(partialBackupKind(partialFileName(vectors))).toBe(kind);
+      expect(partialBackupKind(partialFileName(db))).toBe(kind);
+      expect(partialBackupKind(`${partialFileName(db)}-wal`)).toBe(kind);
+    }
+    for (const foreign of ['vectors', 'quoky-20261007T030405Z-weekly.vectors', 'quoky-20261307T030405Z-daily.vectors', 'x.vectors']) {
+      expect(vectorSnapshotDbName(foreign)).toBeUndefined();
+    }
+    expect(partialBackupKind('quoky-20261007T030405Z-daily.db')).toBeUndefined();
+    expect(partialBackupKind('.other.partial')).toBeUndefined();
+  });
+
+  it('keeps the 5 newest manual copies, independently of the daily and pre-migration ones', () => {
+    const manual = Array.from({ length: 7 }, (_, i) => backupFileName('manual', Date.parse('2026-10-07T00:00:00Z') - i * 3_600_000));
+    const daily = [backupFileName('daily', Date.parse('2026-10-05T19:00:00Z'))];
+    const pre = [backupFileName('pre-migration', Date.parse('2026-10-01T10:00:00Z'))];
+    const keep = selectBackupsToKeep(listBackupFiles([...manual, ...daily, ...pre]), SEOUL);
+    expect(BACKUP_RETENTION.manual).toBe(5);
+    expect(manual.filter((name) => keep.has(name))).toEqual(manual.slice(0, 5));
+    for (const name of [...daily, ...pre]) expect(keep.has(name)).toBe(true);
+    // Manual copies never count as a day's or week's copy: the one daily copy is still kept.
+    expect(keep.size).toBe(7);
   });
 });
 

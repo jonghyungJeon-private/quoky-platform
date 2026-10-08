@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LATEST_SCHEMA_VERSION, readSqliteUserVersion, writeVerifiedSqliteCopy } from './backup';
+import { LATEST_SCHEMA_VERSION, readSqliteUserVersion, verifySqliteBackupFile, writeVerifiedSqliteCopy } from './backup';
 import { SqliteStorageProvider } from './index';
 
 describe('SQLite backup primitives (ADR-0102 D6)', () => {
@@ -45,6 +45,21 @@ describe('SQLite backup primitives (ADR-0102 D6)', () => {
     writer.prepare(`INSERT INTO backup_probe (v) VALUES (?)`).run('row-2');
     writer.close();
     await storage.close();
+  });
+
+  it('verifySqliteBackupFile re-checks a copy read-only and leaves no -wal/-shm beside it', async () => {
+    const dbPath = join(dir, 'quoky.db');
+    const storage = new SqliteStorageProvider({ dbPath });
+    await storage.init();
+    const copyDir = mkdtempSync(join(dir, 'copies-'));
+    const copyPath = join(copyDir, 'copy.db');
+    expect((await writeVerifiedSqliteCopy({ sourcePath: dbPath, targetPath: copyPath, timeoutMs: 30_000 })).ok).toBe(true);
+    await storage.close();
+    expect(verifySqliteBackupFile(copyPath)).toEqual({ ok: true, userVersion: LATEST_SCHEMA_VERSION });
+    expect(readdirSync(copyDir)).toEqual(['copy.db']);
+    expect(verifySqliteBackupFile(join(copyDir, 'absent.db'))).toEqual({ ok: false, failure: 'SOURCE_UNREADABLE' });
+    writeFileSync(join(copyDir, 'junk.db'), 'not a database'.repeat(500));
+    expect(verifySqliteBackupFile(join(copyDir, 'junk.db'))).toEqual({ ok: false, failure: 'INTEGRITY_FAILED' });
   });
 
   it('a cleanly closed WAL database (no -wal/-shm) is copied too', async () => {

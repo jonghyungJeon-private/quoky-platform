@@ -61,7 +61,7 @@ line to use the default.
 | `QUOKY_IMAGE_UNDERSTANDING_MODEL` | unset | Read only for `claude`: the image model, else `QUOKY_CLAUDE_MODEL`, else `sonnet`. Malformed fails startup (`IMAGE_UNDERSTANDING_MODEL_INVALID`) |
 | `QUOKY_OLLAMA_VISION_MODEL` | unset | v3 (ADR-0111). Local Ollama vision model for image attachments; pull it yourself. With the selector unset, an invalid or cloud-served (`*cloud*`) value disables only image understanding (log code `OLLAMA_VISION_MODEL_INVALID` / `OLLAMA_VISION_MODEL_NOT_LOCAL`) and startup continues. With `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=ollama` it is required, and missing, malformed or cloud-served fails startup (`IMAGE_UNDERSTANDING_OLLAMA_MODEL_*`) |
 | `QUOKY_DISCORD_EXPECTED_BOT_ID` | unset | v3 (ADR-0102 D5). Required under the launchd launcher; startup compares bot, guild and channels and exits 78 on a mismatch |
-| `QUOKY_BACKUP_ENABLED`, `QUOKY_BACKUP_DIR` | on under launchd, else off; `<db dir>/backups` | v3 (ADR-0102 D6). Daily verified backup at 04:00 `QUOKY_TIMEZONE`; absolute directory only |
+| `QUOKY_BACKUP_ENABLED`, `QUOKY_BACKUP_DIR` | on under launchd, else off; `<db dir>/backups` | v3 (ADR-0102 D6). Daily verified backup (DB copy + vector snapshot) at 04:00 `QUOKY_TIMEZONE`; absolute directory only. `false` stops scheduled copies only; `quokyctl.sh backup --apply` still runs |
 
 Personal v3 connector writes, calendar and operations UI flags are in 0.7.
 
@@ -205,9 +205,9 @@ Still pending, each its own exact-scope Strict session:
 5. A real host reboot (the launchd bootout/bootstrap proxy, the 04:00 daily backup and a restore drill on a copy ran
    live, QA record W6-L02..L04).
 
-Known operator follow-ups from live QA session 2: `vectors/` is not in the backup set (after a DB restore, semantic
-recall may be out of step with the restored memories); there is no on-demand backup command while the service runs; a
-local-model runaway generation is stopped only by the 120 s provider timeout.
+Known operator follow-up from live QA session 2: a local-model runaway generation is stopped only by the 120 s provider
+timeout. (Resolved since: `vectors/` is now snapshotted with every backup and restored with its DB copy, and
+`quokyctl.sh backup --apply` takes an on-demand backup while the service runs; see 0.7.)
 
 ### 0.7 Personal v3 operator additions
 
@@ -219,6 +219,27 @@ Every variable here was checked against `apps/quoky/src/config.ts`, `apps/quoky/
 (`--dry-run` first, `--apply` is Strict). The service uses `~/Library/Application Support/Quoky/` for the DB, vectors,
 backups and the operations UI token, and `~/Library/Logs/Quoky/quoky.log`. Details and the restore runbook are in
 `docs/user/quickstart.md` section 7. Do not run `pnpm dev` with the same bot token while the service runs.
+
+**Backup set and on-demand backup.** Every backup (daily, weekly, pre-migration, manual) is a verified DB copy
+`quoky-<UTC>-<kind>.db` plus a verified vector-store snapshot `quoky-<UTC>-<kind>.vectors/` (dir 700, files 600; the
+collection JSON files and a `.snapshot.json` manifest with sizes, SHA-256 and record counts). The DB copy is
+authoritative: a failed snapshot is recorded as `vectors.outcome: FAILED` in `backups/backup-status.json` and
+`backup.vectors.failed` in the log, keeps the DB copy, sends no notice and never blocks a start.
+
+| Command | Effect |
+|---|---|
+| `quokyctl.sh backup` (or `--dry-run`) | Read-only: the copy name, vector record counts and what retention would prune |
+| `quokyctl.sh backup --apply` | A `manual` copy + snapshot now, while the service runs (no restart); the 5 newest manual copies are kept |
+| `quokyctl.sh backup --verify <copy>.db` | Read-only restore drill: `integrity_check`/`user_version` of the copy and its snapshot, or the rebuild guidance when it has none |
+
+The on-demand copy is a separate short-lived process (`apps/quoky/dist/tools/backup-now.js`): `VACUUM INTO` from a
+read-only connection, which in WAL mode neither blocks nor is blocked by the service's writer. It reads only the backup
+names from `.env.local`. Exit codes: 0 ok, 1 DB copy failed, 3 blocked, 4 DB copy kept but its snapshot failed.
+
+Restore = DB copy and the same-named snapshot together (quickstart section 7). A copy without a snapshot (older
+backups, or a failed one): restore the DB alone and leave `vectors/` moved aside; semantic recall rebuilds lazily (at
+most 4 embeddings per turn, lexical ranking until then) and never serves a vector whose memory id and content hash do
+not match.
 
 **Calendar (ADR-0110 and its amendment).**
 

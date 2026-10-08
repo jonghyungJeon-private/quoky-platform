@@ -1,4 +1,5 @@
 import { LATEST_SCHEMA_VERSION, readSqliteUserVersion, writeVerifiedSqliteCopy } from '@quoky/storage-sqlite';
+import { writeVerifiedVectorSnapshot } from '@quoky/vector-local';
 import type { IsoTimestamp, Logger, MemoryArchivePurgeResult, NotificationSink } from '@quoky/core';
 import type { QuokyConfig } from '../config';
 import { BackupJob, type BackupJobTimers, type BackupStatus } from './backup-job';
@@ -34,6 +35,8 @@ export interface OpsRuntimeInput {
   readonly env: NodeJS.ProcessEnv;
   readonly config: Pick<QuokyConfig, 'storage' | 'host' | 'reminders'> & {
     readonly discord: Pick<QuokyConfig['discord'], 'ownerIds'>;
+    /** The vector store snapshotted with each DB copy; absent or empty = DB-only backups. */
+    readonly vector?: QuokyConfig['vector'];
   };
   readonly sink: NotificationSink;
   /** The sink's platform name (`DISCORD_NOTIFICATION_PLATFORM`). */
@@ -52,7 +55,11 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
   const { config, logger } = input;
   const ops = loadOpsConfig(
     input.env,
-    { dbPath: config.storage.dbPath, ...(config.host.launcher ? { launcher: config.host.launcher } : {}) },
+    {
+      dbPath: config.storage.dbPath,
+      ...(config.vector?.storePath ? { vectorPath: config.vector.storePath } : {}),
+      ...(config.host.launcher ? { launcher: config.host.launcher } : {}),
+    },
     input.cwd,
   );
   const notices = new OpsNoticeService({
@@ -71,6 +78,9 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     copy: writeVerifiedSqliteCopy,
     readUserVersion: readSqliteUserVersion,
     latestSchemaVersion: LATEST_SCHEMA_VERSION,
+    ...(ops.backup.vectorPath !== undefined
+      ? { vectorPath: ops.backup.vectorPath, snapshotVectors: writeVerifiedVectorSnapshot }
+      : {}),
     onFailure: () => void notices.notify('BACKUP_FAILED'),
     logger,
     ...(input.clock ? { clock: input.clock } : {}),

@@ -3,14 +3,35 @@ import { promises as fsPromises } from 'node:fs';
 import { join } from 'node:path';
 import { cosineSimilarity, isEmbeddingVector } from '@quoky/core';
 import type { Id, Metadata, VectorProvider, VectorQueryResult, VectorRecord } from '@quoky/core';
+import {
+  COLLECTION_NAME_PATTERN,
+  STORE_FORMAT_VERSION,
+  decodeEntry,
+  encodeVector,
+  isPlainMetadata,
+  isValidId,
+  parseCollectionEntries,
+  type PersistedRecord,
+} from './format';
+
+export {
+  VECTOR_SNAPSHOT_MANIFEST,
+  VECTOR_SNAPSHOT_SCHEMA,
+  inspectVectorStore,
+  isVectorSnapshotEntryName,
+  verifyVectorSnapshot,
+  writeVerifiedVectorSnapshot,
+} from './snapshot';
+export type {
+  VectorSnapshotFailure,
+  VectorSnapshotRequest,
+  VectorSnapshotResult,
+  VectorSnapshotSummary,
+  VectorStoreInspection,
+} from './snapshot';
 
 /** ADR-0098 D8: at most this many records per collection; the oldest-written are evicted beyond it. */
 export const DEFAULT_MAX_RECORDS_PER_COLLECTION = 20_000;
-
-/** One JSON file per collection, so the name must be a safe file stem. */
-const COLLECTION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const MAX_RECORD_ID_LENGTH = 200;
-const STORE_FORMAT_VERSION = 1;
 
 /** Minimal filesystem surface. Production uses node:fs; tests inject failures to prove atomic writes. */
 export interface VectorStoreIo {
@@ -42,36 +63,8 @@ interface StoredRecord {
   readonly metadata?: Metadata;
 }
 
-interface PersistedRecord {
-  id: string;
-  /** Little-endian Float32 vector, base64 (about a quarter of a decimal JSON array). */
-  v: string;
-  m?: Metadata;
-}
-
 function assertCollection(collection: string): void {
   if (!COLLECTION_NAME_PATTERN.test(collection)) throw new TypeError('Invalid vector collection name');
-}
-
-function isValidId(id: unknown): id is string {
-  return typeof id === 'string' && id.length >= 1 && id.length <= MAX_RECORD_ID_LENGTH;
-}
-
-function isPlainMetadata(value: unknown): value is Metadata {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function encodeVector(vector: readonly number[]): string {
-  const floats = Float32Array.from(vector);
-  return Buffer.from(floats.buffer, floats.byteOffset, floats.byteLength).toString('base64');
-}
-
-function decodeVector(encoded: string): number[] | null {
-  const bytes = Buffer.from(encoded, 'base64');
-  if (bytes.length === 0 || bytes.length % 4 !== 0) return null;
-  const vector: number[] = [];
-  for (let offset = 0; offset < bytes.length; offset += 4) vector.push(bytes.readFloatLE(offset));
-  return isEmbeddingVector(vector) ? vector : null;
 }
 
 function copyMetadata(metadata: Metadata | undefined): Metadata | undefined {
@@ -197,24 +190,13 @@ export class LocalVectorProvider implements VectorProvider {
       // A missing or unreadable cache starts empty; the next write replaces it.
       return records;
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return records;
-    }
-    if (typeof parsed !== 'object' || parsed === null) return records;
-    const { version, records: persisted } = parsed as { version?: unknown; records?: unknown };
-    if (version !== STORE_FORMAT_VERSION || !Array.isArray(persisted)) return records;
-    for (const entry of persisted as unknown[]) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const { id, v, m } = entry as { id?: unknown; v?: unknown; m?: unknown };
-      if (!isValidId(id) || typeof v !== 'string') continue;
-      if (m !== undefined && !isPlainMetadata(m)) continue;
-      const vector = decodeVector(v);
-      if (vector === null) continue;
-      records.delete(id);
-      records.set(id, { vector, ...(m === undefined ? {} : { metadata: m }) });
+    const persisted = parseCollectionEntries(raw);
+    if (persisted === null) return records;
+    for (const entry of persisted) {
+      const decoded = decodeEntry(entry);
+      if (decoded === null) continue;
+      records.delete(decoded.id);
+      records.set(decoded.id, { vector: decoded.vector, ...(decoded.metadata === undefined ? {} : { metadata: decoded.metadata }) });
     }
     while (records.size > this.maxRecords) {
       const oldest = records.keys().next();

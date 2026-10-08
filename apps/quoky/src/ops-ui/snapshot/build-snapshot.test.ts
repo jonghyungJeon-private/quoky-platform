@@ -102,9 +102,17 @@ const BACKUP: BackupStatus = {
     file: 'quoky-20261006T040000-daily.db',
     userVersion: 14,
   },
-  lastVerified: { at: '2026-10-05T19:00:03.000Z', kind: 'daily', file: 'quoky-20261006T040000-daily.db', userVersion: 14 },
+  lastManual: null,
+  lastVerified: {
+    at: '2026-10-05T19:00:03.000Z',
+    kind: 'daily',
+    file: 'quoky-20261006T040000-daily.db',
+    userVersion: 14,
+    vectors: 'quoky-20261006T040000-daily.vectors',
+  },
   retainedCount: 2,
   retained: ['quoky-20261006T040000-daily.db', 'quoky-20261005T040000-daily.db'],
+  retainedVectors: ['quoky-20261006T040000-daily.vectors'],
   nextScheduledAt: '2026-10-06T19:00:00.000Z',
 };
 
@@ -436,6 +444,19 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(field(view, 'backup', '정기 백업')).toBe('켜짐');
     expect(field(view, 'backup', '검증 (integrity_check, user_version)')).toBe('예 (user_version 14)');
     expect(field(view, 'backup', '보관 사본 수')).toBe('2');
+    expect(field(view, 'backup', '벡터 스냅샷 (마지막 검증 사본)')).toBe('있음 · quoky-20261006T040000-daily.vectors');
+    expect(field(view, 'backup', '마지막 수동 백업')).toBe('없음');
+    const manual = await new OpsSnapshotBuilder(
+      fixture({
+        backup: () => ({
+          ...BACKUP,
+          lastManual: { kind: 'manual', startedAt: NOW, finishedAt: NOW, outcome: 'VERIFIED', file: 'quoky-20261006T010000Z-manual.db' },
+          lastVerified: { at: NOW, kind: 'manual', file: 'quoky-20261006T010000Z-manual.db' },
+        }),
+      }),
+    ).build();
+    expect(field(manual, 'backup', '마지막 수동 백업')).toMatch(/ · VERIFIED$/);
+    expect(field(manual, 'backup', '벡터 스냅샷 (마지막 검증 사본)')).toBe('없음 (복구하면 의미 검색 색인을 다시 만듦)');
     expect(field(view, 'backup', '다음 예정')).toBe('2026-10-07 04:00:00');
     expect(panelOf(view, 'backup').table?.rows).toEqual([['quoky-20261006T040000-daily.db'], ['quoky-20261005T040000-daily.db']]);
   });

@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — backup set includes the vector store; on-demand backup (2026-10-08)
+
+Live-QA follow-ups from the 2026-10-07 restore drill.
+
+- Every backup (daily, weekly, pre-migration, and the new manual kind) also snapshots the vector store
+  (`QUOKY_VECTOR_PATH`) next to the DB copy as `quoky-<UTC>-<kind>.vectors/` (dir 700, files 600), with the same
+  naming and retention. The snapshot copies each regular `<collection>.json` (atomically replaced by the provider, so
+  each read is one complete version) and verifies the copy against a `.snapshot.json` manifest (file list, sizes,
+  SHA-256, usable record counts). An absent store is an empty snapshot. A failed snapshot keeps the verified DB copy, is
+  recorded as `vectors.outcome: FAILED` and logged (`backup.vectors.failed`), sends no notice and never refuses a start.
+- `backup-status.json` gains `lastManual`, `retainedVectors`, a `vectors` record per run (outcome, counts) and
+  `lastVerified.vectors`; the service and the manual process each keep the other's fields. The OPS-1 backup panel shows
+  the vector snapshot of the last verified copy and the last manual backup.
+- `ops/launchd/quokyctl.sh backup` (dry-run by default) / `backup --apply` / `backup --verify <copy>.db`: an on-demand,
+  verified `manual` copy + vector snapshot while the service runs (no restart), and a read-only restore drill. A
+  separate short-lived process (`apps/quoky/dist/tools/backup-now.js`) runs `VACUUM INTO` from a read-only connection
+  (WAL: never blocks the service's writer) with the same partial → verify → rename flow; it reads only the backup names
+  from `.env.local`. The 5 newest manual copies are kept.
+- Partial names are claimed exclusively (mode 600 from creation), and a partial of another process's kind is pruned only
+  once it is stale (15 minutes), so the service and the manual process never remove each other's copy in progress.
+- Restore runbook (quickstart section 7, operator guide): restore the DB copy and its same-named vector snapshot
+  together; for a copy without one, move `vectors/` aside and let semantic recall rebuild lazily (lexical ranking until
+  re-embedded, at most 4 per turn; a vector is used only when its memory id and content hash match).
+- `@quoky/vector-local`: `writeVerifiedVectorSnapshot`, `verifyVectorSnapshot`, `inspectVectorStore` (format helpers
+  shared with the provider); `@quoky/storage-sqlite`: `verifySqliteBackupFile` (read-only re-check of a copy).
+
 ## Unreleased — Discord table rendering for model replies only (ADR-0111 amendment, 2026-10-08)
 
 - Core: `OutboundMessage.format?: 'model-reply'`, set by the runtime only on a provider's own answer (chat, summaries,

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LogFields, Logger, NotificationSink, NotificationSinkOutcome, OwnerNotification } from '@quoky/core';
+import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import type { BackupJobTimers } from './backup-job';
 import { OPS_NOTICE_TEXT, type OpsNoticeLedgerStore } from './ops-notice';
 import { createOpsRuntime, type OpsRuntimeInput } from './ops-runtime';
@@ -156,6 +157,41 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     expect(ops.backupStatus().lastRun).toMatchObject({ outcome: 'FAILED' });
     await settle();
     expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.BACKUP_FAILED]);
+    await ops.stop();
+  });
+
+  it('the scheduled copy includes the configured vector store (config.vector.storePath)', async () => {
+    const storage = new SqliteStorageProvider({ dbPath: path.join(root, 'quoky.db') });
+    await storage.init();
+    await storage.close();
+    const ops = createOpsRuntime({
+      env: {},
+      config: {
+        storage: { dbPath: path.join(root, 'quoky.db') },
+        vector: { storePath: path.join(root, 'vectors') },
+        host: { launcher: 'launchd', recentStarts: 0 },
+        reminders: { enabled: true, channelDelivery: true, timeZone: 'Asia/Seoul' },
+        discord: { ownerIds: [OWNER] },
+      },
+      sink,
+      platform: 'discord',
+      logger: new QuietLogger(),
+      clock: timers.now,
+      timers,
+      ledger,
+    });
+    ops.start();
+    timers.clockMs = T0 + 10 * 60 * 1000;
+    timers.fireNext();
+    for (let waited = 0; waited < 10_000 && ops.backupStatus().lastRun === null; waited += 20) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    // No vector store yet (semantic recall never wrote): an empty, verified snapshot.
+    expect(ops.backupStatus().lastRun).toMatchObject({
+      outcome: 'VERIFIED',
+      vectors: { outcome: 'VERIFIED', storePresent: false, collections: 0, records: 0 },
+    });
+    expect(ops.backupStatus().retainedVectors).toHaveLength(1);
     await ops.stop();
   });
 });
