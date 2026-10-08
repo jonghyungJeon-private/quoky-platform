@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
@@ -251,6 +251,48 @@ describe('TG-1 acceptance — the same owner Actor across platforms (ADR-0114 D3
     const todos = await turn(stranger, '할 일 목록');
     expect(renderOutboundForTelegram(memories.reply)).not.toContain('내 배포 창은 화요일이야');
     expect(renderOutboundForTelegram(todos.reply)).not.toContain('보고서 초안 쓰기');
+  });
+});
+
+describe('TG-1 acceptance — end to end through the started composite (CA P2-4)', () => {
+  it('the real adapter verified the bot and is polling; nothing else reached the network', () => {
+    expect(botApi.calls.filter((call) => call.method === 'getMe')).toHaveLength(1);
+    expect((platform.adapterFor('telegram') as TelegramPlatformAdapter).status()).toMatchObject({ identityVerified: true, polling: true });
+    expect(networkAttempts).toBe(0);
+  });
+
+  it('a non-owner update causes zero sends and no turn', async () => {
+    const sendsBefore = botApi.sends().length;
+    const actionsBefore = botApi.calls.filter((call) => call.method === 'sendChatAction').length;
+    await deliverUpdate('할 일 목록', 5_550_999);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(botApi.sends()).toHaveLength(sendsBefore);
+    expect(botApi.calls.filter((call) => call.method === 'sendChatAction')).toHaveLength(actionsBefore);
+  });
+
+  it("an owner update is one turn answered by exactly one sendMessage to the owner's chat", async () => {
+    await runtime.handle({ id: 'seed-todo', context: discordDm, text: '할 일 추가: 회의록 정리', receivedAt: new Date().toISOString() });
+    const sendsBefore = botApi.sends().length;
+    await deliverUpdate('할 일 목록');
+    await until(() => botApi.sends().length > sendsBefore);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sends = botApi.sends().slice(sendsBefore);
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toMatchObject({ chat_id: TELEGRAM_OWNER, link_preview_options: { is_disabled: true } });
+    expect(sends[0]?.parse_mode).toBeUndefined();
+    expect(String(sends[0]?.text)).toContain('회의록 정리');
+    // The handed-over offset is persisted beside the database (private ops file; bot id and offset only).
+    const stored = JSON.parse(readFileSync(join(tempDir, 'ops', 'telegram-offset.json'), 'utf8')) as Record<string, unknown>;
+    expect(stored).toEqual({ version: 1, botId: BOT_ID, offset: updateSeq + 1 });
+  });
+
+  it('a reply for a Discord conversation goes to the Discord child and never reaches the Telegram fetch', async () => {
+    const telegramCalls = botApi.calls.length;
+    const discordBefore = discordSent.length;
+    await platform.sendMessage({ context: discordDm, text: 'Discord only' });
+    await platform.sendTyping(discordDm);
+    expect(discordSent.slice(discordBefore).map((message) => message.text)).toEqual(['Discord only']);
+    expect(botApi.calls.slice(telegramCalls).filter((call) => call.method !== 'getUpdates')).toEqual([]);
   });
 });
 
