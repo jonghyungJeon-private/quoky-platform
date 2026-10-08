@@ -1,25 +1,23 @@
-import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
-  constants as fsConstants,
   existsSync,
-  fstatSync,
-  fsyncSync,
-  linkSync,
   lstatSync,
   openSync,
-  readFileSync,
   readdirSync,
   renameSync,
   rmdirSync,
   unlinkSync,
-  writeSync,
 } from 'node:fs';
 import path from 'node:path';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger } from '@quoky/core';
-import type { SqliteBackupFailure, SqliteBackupResult, SqliteCopyRequest } from '@quoky/storage-sqlite';
+import type {
+  ExclusiveLockResult,
+  SqliteBackupFailure,
+  SqliteBackupResult,
+  SqliteCopyRequest,
+} from '@quoky/storage-sqlite';
 import { isVectorSnapshotEntryName } from '@quoky/vector-local';
 import type {
   VectorSnapshotFailure,
@@ -61,8 +59,11 @@ import { ensurePrivateDirectory, readPrivateFile, verifyRealDirectory, writePriv
  *   short-lived process (`tools/backup-now.ts`) while the service keeps running. `VACUUM INTO` reads one consistent
  *   snapshot through a read-only connection; in WAL mode the service's ordinary commits keep going while it reads
  *   (a checkpoint cannot pass the reader's snapshot, so checkpoints may be delayed and the WAL may grow until the copy
- *   ends; the copy's own connection waits up to 5 s on a lock), so no restart, signal or IPC is needed. Manual runs are
- *   serialized across processes by an exclusive lock file (`MANUAL_LOCK_FILE`, stale-lock recovery).
+ *   ends; the copy's own connection waits up to 5 s on a lock), so no restart, signal or IPC is needed.
+ * - **One run at a time**: every run (scheduled, pre-migration, manual) holds the backup lock (`BACKUP_LOCK_FILE`, an
+ *   OS-held SQLite exclusive lock the kernel releases when its process dies) for its whole copy. A run that finds it
+ *   held returns `BACKUP_IN_PROGRESS` and touches nothing; the daily chain retries at the next poll (no notice) and the
+ *   pre-migration copy waits up to `PRE_MIGRATION_LOCK_WAIT_MS`.
  * - **Never during a migration**: migrations run only inside `storage.init()` (synchronously), the daily chain is
  *   armed only after it returns, and the ADR-0102 D4 lock rules out a second service process.
  * - **Copy + verify**: claim a temporary `.partial` name exclusively (mode 600), `VACUUM INTO` it, verify read-only
@@ -105,26 +106,20 @@ export type BackupRunFailure =
   | 'DIRECTORY_UNAVAILABLE'
   | 'TARGET_EXISTS'
   | 'FINALIZE_FAILED'
-  /** Another manual backup holds the manual lock (`MANUAL_LOCK_FILE`). */
-  | 'BACKUP_IN_PROGRESS';
+  /** Another backup run (this or another process) holds the backup lock (`BACKUP_LOCK_FILE`). */
+  | 'BACKUP_IN_PROGRESS'
+  /** The backup lock file could not be created or opened. */
+  | 'LOCK_UNAVAILABLE';
 
-/** Serializes manual runs across processes: created `O_CREAT | O_EXCL | O_NOFOLLOW` (600) holding `{ pid, startedAt }`. */
-export const MANUAL_LOCK_FILE = '.manual-backup.lock';
-/** A manual lock this old is stale even when its pid looks alive (pid reuse): a run takes at most 2 x BACKUP_TIMEOUT_MS. */
-export const MANUAL_LOCK_STALE_MS = PARTIAL_STALE_MS;
-/** A lock whose content cannot be read (a crash between create and write) is stale after this. */
-const MANUAL_LOCK_UNREADABLE_STALE_MS = 60 * 1000;
-/** `O_NOFOLLOW` where the platform has it (POSIX); 0 elsewhere (`O_EXCL` still refuses an existing path). */
-const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
+/**
+ * Serializes every backup run (scheduled, pre-migration, manual) across processes: an OS-held SQLite exclusive lock on
+ * this dedicated database in the backup directory (`tryAcquireExclusiveLock`), released by the kernel when the holder
+ * dies. No pid, age or takeover rule exists.
+ */
+export const BACKUP_LOCK_FILE = '.backup-lock.db';
+/** The pre-migration copy waits this long for a running manual backup to finish before it refuses the start. */
+export const PRE_MIGRATION_LOCK_WAIT_MS = 2 * BACKUP_TIMEOUT_MS;
+const PRE_MIGRATION_LOCK_POLL_MS = 1_000;
 
 /** Why a run's vector snapshot did not verify. */
 export type VectorBackupFailure = VectorSnapshotFailure | 'TIMEOUT' | 'FINALIZE_FAILED' | 'WORKER_FAILED';
@@ -218,6 +213,8 @@ export interface BackupJobDeps {
   readonly vectorPath?: string;
   /** The vector adapter's snapshot + verify (`writeVerifiedVectorSnapshot`); required with `vectorPath`. */
   readonly snapshotVectors?: (request: VectorSnapshotRequest) => Promise<VectorSnapshotResult>;
+  /** The adapter's OS-held exclusive lock (`tryAcquireExclusiveLock`); absent = runs are not serialized (tests). */
+  readonly tryLock?: (lockPath: string) => ExclusiveLockResult;
   /** Called once per failed or unverifiable scheduled copy (the `OPS_NOTICE`). Must not throw. */
   readonly onFailure?: (record: BackupRunRecord) => void;
   readonly logger: Logger;
@@ -236,8 +233,8 @@ const PRE_MIGRATION_HINT =
   'then restart.';
 
 const SERVICE_KINDS: ReadonlySet<BackupKind> = new Set<BackupKind>(['daily', 'pre-migration']);
-// Manual runs own no kind for pruning: another manual run's partial (in a second process, if the lock was taken over)
-// is removed only once it is stale. A run always removes its own partials itself when it fails.
+// Manual runs own no kind for pruning: a partial left by another process is removed only once it is stale (runs are
+// serialized by the backup lock, so no other run is live while one prunes; the age rule covers an older build).
 const MANUAL_KINDS: ReadonlySet<BackupKind> = new Set<BackupKind>();
 const JOB_STATES: ReadonlySet<string> = new Set<BackupJobState>(['IDLE', 'DISABLED', 'RUNNING', 'STOPPED']);
 
@@ -389,7 +386,13 @@ export class BackupJob {
     if (version === undefined) return 'NO_DATABASE';
     if (version >= this.deps.latestSchemaVersion) return 'NOT_NEEDED';
     this.deps.logger.info('backup.pre_migration.started', { from: version, to: this.deps.latestSchemaVersion });
-    const record = await this.run('pre-migration');
+    let record = await this.run('pre-migration');
+    // A manual backup holding the lock finishes within its own bound: wait for it instead of refusing the start.
+    for (let waited = 0; record.failure === 'BACKUP_IN_PROGRESS' && waited < PRE_MIGRATION_LOCK_WAIT_MS; ) {
+      await new Promise((resolve) => setTimeout(resolve, PRE_MIGRATION_LOCK_POLL_MS));
+      waited += PRE_MIGRATION_LOCK_POLL_MS;
+      record = await this.run('pre-migration');
+    }
     if (record.outcome !== 'VERIFIED') {
       throw new BootstrapPreflightError(BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED, PRE_MIGRATION_HINT);
     }
@@ -397,114 +400,13 @@ export class BackupJob {
   }
 
   /**
-   * The on-demand copy (`role: 'manual'` only): one verified DB copy + vector snapshot, pruned and recorded. Manual
-   * runs are serialized across processes by `MANUAL_LOCK_FILE`; a second run while one is live returns
-   * `BACKUP_IN_PROGRESS` and touches nothing (not even the status file).
+   * The on-demand copy (`role: 'manual'` only): one verified DB copy + vector snapshot, pruned and recorded. While another
+   * run holds the backup lock it returns `BACKUP_IN_PROGRESS` and touches nothing (not even the status file).
    */
   async runManual(): Promise<BackupRunRecord> {
     if (this.role !== 'manual') throw new Error('runManual needs role "manual"');
-    const startedAt = this.clock();
-    try {
-      this.ensureDirectory();
-    } catch {
-      return this.record({ kind: 'manual', startedAt, outcome: 'FAILED', failure: 'DIRECTORY_UNAVAILABLE' });
-    }
-    const release = this.acquireManualLock();
-    if (release === null) {
-      this.deps.logger.warn('backup.manual.in_progress');
-      return { kind: 'manual', startedAt, finishedAt: this.clock(), outcome: 'FAILED', failure: 'BACKUP_IN_PROGRESS' };
-    }
-    try {
-      this.refreshLastVerified();
-      return await this.run('manual');
-    } finally {
-      release();
-    }
-  }
-
-  /** Take the manual lock (one stale-lock takeover allowed); `null` while another live run holds it. */
-  private acquireManualLock(): (() => void) | null {
-    const lockPath = path.join(this.deps.dir, MANUAL_LOCK_FILE);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      let fd: number;
-      try {
-        fd = openSync(lockPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW, 0o600);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0 || !this.takeOverStaleLock(lockPath)) return null;
-        continue;
-      }
-      let ino: number;
-      try {
-        writeSync(fd, `${JSON.stringify({ pid: process.pid, startedAt: this.clock() })}\n`);
-        fsyncSync(fd);
-        ino = fstatSync(fd).ino;
-      } finally {
-        closeSync(fd);
-      }
-      return () => {
-        try {
-          // Remove only our own lock (a takeover after a very long run may have replaced it).
-          if (lstatSync(lockPath).ino === ino) unlinkSync(lockPath);
-        } catch {
-          // already gone
-        }
-      };
-    }
-    return null;
-  }
-
-  /**
-   * Remove a stale manual lock: its pid is gone, or it is older than `MANUAL_LOCK_STALE_MS` (pid reuse), or its content
-   * is unreadable and it is older than a minute. The lock is renamed aside first and checked to be the same file, so a
-   * lock that another process re-created in between is put back, never deleted. A non-regular lock is never touched.
-   */
-  private takeOverStaleLock(lockPath: string): boolean {
-    let stat;
-    try {
-      stat = lstatSync(lockPath);
-    } catch {
-      return true; // released meanwhile: retry
-    }
-    if (!stat.isFile()) return false;
-    const ageMs = Date.parse(this.clock()) - stat.mtimeMs;
-    let pid: number | undefined;
-    try {
-      const fd = openSync(lockPath, fsConstants.O_RDONLY | O_NOFOLLOW);
-      try {
-        const value = JSON.parse(readFileSync(fd, 'utf8')) as { pid?: unknown };
-        if (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0) pid = value.pid;
-      } finally {
-        closeSync(fd);
-      }
-    } catch {
-      // unreadable: judged by age only
-    }
-    const stale =
-      pid === undefined ? ageMs > MANUAL_LOCK_UNREADABLE_STALE_MS : !isProcessAlive(pid) || ageMs > MANUAL_LOCK_STALE_MS;
-    if (!stale) return false;
-    const aside = `${lockPath}.stale-${randomBytes(8).toString('hex')}`;
-    try {
-      renameSync(lockPath, aside);
-    } catch {
-      return false;
-    }
-    try {
-      if (lstatSync(aside).ino !== stat.ino) {
-        // Another process took over and re-created the lock between our check and the rename: give it back.
-        try {
-          linkSync(aside, lockPath);
-        } catch {
-          // a third lock exists: leave it
-        }
-        unlinkSync(aside);
-        return false;
-      }
-      unlinkSync(aside);
-    } catch {
-      return false;
-    }
-    this.deps.logger.warn('backup.manual.stale_lock_recovered');
-    return true;
+    this.refreshLastVerified();
+    return this.run('manual');
   }
 
   /**
@@ -562,8 +464,14 @@ export class BackupJob {
     }
     void this.run('daily').then((record) => {
       if (this.stateValue !== 'RUNNING') return;
-      if (record.outcome !== 'VERIFIED') this.reportFailure(record);
       const after = Date.parse(this.clock());
+      if (record.failure === 'BACKUP_IN_PROGRESS') {
+        // A manual backup holds the lock: try again at the next poll, without a notice.
+        this.dueMs = after + BACKUP_POLL_MS;
+        this.arm(after);
+        return;
+      }
+      if (record.outcome !== 'VERIFIED') this.reportFailure(record);
       this.dueMs = nextDailyBackupAt(after, this.deps.timeZone);
       this.writeStatus();
       this.arm(after);
@@ -597,6 +505,24 @@ export class BackupJob {
     } catch {
       return fail('DIRECTORY_UNAVAILABLE');
     }
+    const lock = this.deps.tryLock?.(path.join(this.deps.dir, BACKUP_LOCK_FILE)) ?? { ok: true as const, release: () => undefined };
+    if (!lock.ok) {
+      if (lock.failure === 'UNAVAILABLE') return fail('LOCK_UNAVAILABLE');
+      this.deps.logger.warn('backup.lock_busy', { kind });
+      return { kind, startedAt, finishedAt: this.clock(), outcome: 'FAILED', failure: 'BACKUP_IN_PROGRESS' };
+    }
+    try {
+      return await this.copyLocked(kind, startedAt, fail);
+    } finally {
+      lock.release();
+    }
+  }
+
+  private async copyLocked(
+    kind: BackupKind,
+    startedAt: IsoTimestamp,
+    fail: (failure: BackupRunFailure) => BackupRunRecord,
+  ): Promise<BackupRunRecord> {
     const finalName = backupFileName(kind, Date.parse(startedAt));
     const finalPath = path.join(this.deps.dir, finalName);
     const partialPath = path.join(this.deps.dir, partialFileName(finalName));

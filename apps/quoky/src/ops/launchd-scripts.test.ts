@@ -588,7 +588,7 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh uninstall/restart --
 });
 
 describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, while the service runs)', () => {
-  const BACKUP_ENV_NAMES = ['HOME', 'PATH', 'LANG', 'QUOKY_ENV_FILE', 'QUOKY_DB_PATH', 'QUOKY_VECTOR_PATH', 'QUOKY_LAUNCHER'];
+  const BACKUP_ENV_NAMES = ['HOME', 'PATH', 'LANG', 'QUOKY_DB_PATH', 'QUOKY_VECTOR_PATH', 'QUOKY_LAUNCHER'];
 
   function tools(box: Sandbox, name = ''): string {
     return path.join(box.repo, 'apps', 'quoky', 'dist', 'tools', name);
@@ -623,13 +623,69 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, w
     expect([...env.keys()].sort()).toEqual([...BACKUP_ENV_NAMES].sort());
     expect(env.get('QUOKY_DB_PATH')).toBe(path.join(box.dataDir, 'quoky.db'));
     expect(env.get('QUOKY_VECTOR_PATH')).toBe(path.join(box.dataDir, 'vectors'));
-    expect(env.get('QUOKY_ENV_FILE')).toBe(box.envFile);
+    // The tool gets no env-file path at all: it never reads the env file.
+    expect(env.has('QUOKY_ENV_FILE')).toBe(false);
     expect(env.get('QUOKY_LAUNCHER')).toBe('launchd');
     expect(result.stdout).toContain('(loaded); no restart: the copy only reads the database and the vector store');
     expect(result.stdout).toContain("dry-run: nothing was changed (run 'quokyctl.sh backup --apply' to take the copy)");
     expect(`${result.stdout}${result.stderr}`).not.toContain('secret-token-value');
     expect(readFileSync(box.launchctlLog, 'utf8').trim().split('\n').every((c) => c.startsWith('print '))).toBe(true);
     expect(runCtl(box, ['backup', '--dry-run']).status).toBe(0);
+  });
+
+  it('passes the same DB and vector paths the launcher gives the service', () => {
+    const box = backupSandbox();
+    expect(runCtl(box, ['backup']).status).toBe(0);
+    const service = spawnSync('/bin/bash', launcherArgs(box, 'print-env'), { env: baseEnv(box), encoding: 'utf8' });
+    const serviceEnv = new Map(
+      service.stdout.trim().split('\n').map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)] as const),
+    );
+    const env = toolEnv(box);
+    expect(env.get('QUOKY_DB_PATH')).toBe(serviceEnv.get('QUOKY_DB_PATH'));
+    expect(env.get('QUOKY_VECTOR_PATH')).toBe(serviceEnv.get('QUOKY_VECTOR_PATH'));
+  });
+
+  it('forwards only the backup keys from the env file, verbatim from plain NAME=value lines; no other line is passed', () => {
+    const box = backupSandbox();
+    writeFileSync(
+      box.envFile,
+      [
+        SECRET_MARKER,
+        '# QUOKY_BACKUP_DIR=/commented/out',
+        'QUOKY_BACKUP_DIR=/Volumes/Old Backup/quoky',
+        'QUOKY_BACKUP_DIR=/Volumes/Backup/quoky',
+        'QUOKY_TIMEZONE=Asia/Seoul',
+        'QUOKY_BACKUP_DIRS=/not/this/key',
+        'ANTHROPIC_API_KEY=secret-token-value-never-printed-2',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(box.envFile, 0o600);
+    expect(runCtl(box, ['backup']).status).toBe(0);
+    const env = toolEnv(box);
+    expect(env.get('QUOKY_BACKUP_DIR')).toBe('/Volumes/Backup/quoky');
+    expect(env.get('QUOKY_TIMEZONE')).toBe('Asia/Seoul');
+    expect(env.has('QUOKY_BACKUP_ENABLED')).toBe(false);
+    expect([...env.keys()].sort()).toEqual([...BACKUP_ENV_NAMES, 'QUOKY_BACKUP_DIR', 'QUOKY_TIMEZONE'].sort());
+    expect([...env.values()].join('\n')).not.toContain('secret-token-value');
+  });
+
+  it.each([
+    ['export QUOKY_BACKUP_DIR=/x'],
+    ['QUOKY_BACKUP_DIR="/x"'],
+    ["QUOKY_TIMEZONE='Asia/Seoul'"],
+    ['QUOKY_BACKUP_ENABLED=true # on'],
+    ['  QUOKY_BACKUP_DIR=/x'],
+    ['QUOKY_BACKUP_DIR =/x'],
+  ])('refuses a backup key the service would read differently: %s', (line) => {
+    const box = backupSandbox();
+    writeFileSync(box.envFile, `${SECRET_MARKER}\n${line}\n`);
+    chmodSync(box.envFile, 0o600);
+    const result = runCtl(box, ['backup']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("must be one plain line");
+    expect(existsSync(tools(box, 'child-argv.txt'))).toBe(false);
+    expect(`${result.stdout}${result.stderr}`).not.toContain('secret-token-value');
   });
 
   it('--apply runs the tool with --apply and reports a partial set (vector snapshot failed) as a failure', () => {
@@ -701,7 +757,9 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, w
     expect(applied.status).toBe(0);
     const backups = path.join(box.dataDir, 'backups');
     const copy = readdirSync(backups).find((n) => /^quoky-\d{8}T\d{6}Z-manual\.db$/.test(n)) as string;
-    expect(readdirSync(backups).sort()).toEqual(['backup-status.json', copy, copy.replace(/\.db$/, '.vectors')].sort());
+    expect(readdirSync(backups).filter((n) => n !== '.backup-lock.db').sort()).toEqual(
+      ['backup-status.json', copy, copy.replace(/\.db$/, '.vectors')].sort(),
+    );
     expect(applied.stdout).toContain('(1 collection(s), 1 record(s))');
     expect(`${applied.stdout}${applied.stderr}`).not.toContain('secret-token-value');
 

@@ -10,7 +10,6 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -18,6 +17,7 @@ import {
   LATEST_SCHEMA_VERSION,
   SqliteStorageProvider,
   readSqliteUserVersion,
+  tryAcquireExclusiveLock,
   writeVerifiedSqliteCopy,
 } from '@quoky/storage-sqlite';
 import type { SqliteBackupResult, SqliteCopyRequest } from '@quoky/storage-sqlite';
@@ -32,7 +32,7 @@ import {
   BACKUP_STATUS_FILE,
   BackupErrorCode,
   BackupJob,
-  MANUAL_LOCK_FILE,
+  BACKUP_LOCK_FILE,
   type BackupJobDeps,
   type BackupJobTimers,
   type BackupRunRecord,
@@ -549,10 +549,10 @@ describe('BackupJob (ADR-0102 D6)', () => {
     });
   });
 
-  describe('manual lock (overlapping manual runs)', () => {
-    const lockPath = (): string => path.join(dir, MANUAL_LOCK_FILE);
+  describe('backup lock (one run at a time, across processes)', () => {
+    const lockPath = (): string => path.join(dir, BACKUP_LOCK_FILE);
 
-    it('two overlapping manual runs: the second refuses BACKUP_IN_PROGRESS and never touches the first one\'s partial', async () => {
+    it('two concurrent manual runs: one wins, the other returns BACKUP_IN_PROGRESS and touches nothing', async () => {
       let open: () => void = () => undefined;
       const gate = new Promise<void>((resolve) => (open = resolve));
       let seenTarget = '';
@@ -561,58 +561,60 @@ describe('BackupJob (ADR-0102 D6)', () => {
         await gate;
         return writeVerifiedSqliteCopy({ ...request, timeoutMs: 30_000 });
       };
-      const first = job({ role: 'manual', copy: slowCopy });
+      const first = job({ role: 'manual', copy: slowCopy, tryLock: tryAcquireExclusiveLock });
       const running = first.runManual();
       await new Promise((r) => setImmediate(r));
-      expect(existsSync(lockPath())).toBe(true);
-      expect(JSON.parse(readFileSync(lockPath(), 'utf8'))).toMatchObject({ pid: process.pid });
-      expect(mode(lockPath())).toBe(0o600);
       expect(existsSync(seenTarget)).toBe(true);
+      expect(mode(lockPath())).toBe(0o600);
 
-      // A second run (same clock second, so the very same partial name) while the first is live.
-      const second = await job({ role: 'manual' }).runManual();
+      // The second run (same second, so the very same partial name) while the first holds the lock.
+      const second = await job({ role: 'manual', tryLock: tryAcquireExclusiveLock }).runManual();
       expect(second).toMatchObject({ outcome: 'FAILED', failure: 'BACKUP_IN_PROGRESS' });
       expect(existsSync(seenTarget)).toBe(true);
       expect(existsSync(path.join(dir, BACKUP_STATUS_FILE))).toBe(false);
 
       open();
       expect(await running).toMatchObject({ outcome: 'VERIFIED', file: backupFileName('manual', T0) });
-      expect(existsSync(lockPath())).toBe(false);
-      // Now a manual run proceeds again.
       timers.clockMs = T0 + 60_000;
-      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
+      expect((await job({ role: 'manual', tryLock: tryAcquireExclusiveLock }).runManual()).outcome).toBe('VERIFIED');
     });
 
-    it('recovers a stale lock: its pid is gone, or it is older than the bound even with a live pid', async () => {
+    it('the scheduled copy waits for a manual run: no notice, retried at the next poll', async () => {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const deadPid = spawnSync(process.execPath, ['-e', '0']).pid as number;
-      writeFileSync(lockPath(), JSON.stringify({ pid: deadPid, startedAt: new Date(T0).toISOString() }), { mode: 0o600 });
-      utimesSync(lockPath(), new Date(T0), new Date(T0));
-      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
-      expect(existsSync(lockPath())).toBe(false);
-      expect(logger.messages()).toContain('backup.manual.stale_lock_recovered');
-
-      timers.clockMs = T0 + 60_000;
-      writeFileSync(lockPath(), JSON.stringify({ pid: process.pid }), { mode: 0o600 });
-      utimesSync(lockPath(), new Date(T0 - 3_600_000), new Date(T0 - 3_600_000));
-      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
-      expect(readdirSync(dir).filter((n) => n.includes('.lock'))).toEqual([]);
+      const held = tryAcquireExclusiveLock(lockPath());
+      expect(held.ok).toBe(true);
+      const backup = job({ tryLock: tryAcquireExclusiveLock });
+      backup.start();
+      timers.clockMs = T0 + BACKUP_CATCH_UP_DELAY_MS;
+      timers.fireNext();
+      await backup.idle();
+      await new Promise((r) => setImmediate(r));
+      expect(failures).toEqual([]);
+      expect(backup.status().lastRun).toBeNull();
+      expect(backup.status().nextScheduledAt).toBe(new Date(T0 + BACKUP_CATCH_UP_DELAY_MS + BACKUP_POLL_MS).toISOString());
+      if (held.ok) held.release();
+      await fireUntilRun(backup);
+      expect(backup.status().lastRun).toMatchObject({ kind: 'daily', outcome: 'VERIFIED' });
+      await backup.stop();
     });
 
-    it('a fresh lock of a live pid blocks; a symlinked lock is never followed or removed', async () => {
+    it('the pre-migration copy waits for a running manual backup instead of refusing the start', async () => {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      writeFileSync(lockPath(), JSON.stringify({ pid: process.pid }), { mode: 0o600 });
-      utimesSync(lockPath(), new Date(T0), new Date(T0));
-      expect(await job({ role: 'manual' }).runManual()).toMatchObject({ failure: 'BACKUP_IN_PROGRESS' });
-      expect(readdirSync(dir)).toEqual([MANUAL_LOCK_FILE]);
+      const held = tryAcquireExclusiveLock(lockPath());
+      expect(held.ok).toBe(true);
+      setTimeout(() => held.ok && held.release(), 1_200);
+      const backup = job({ latestSchemaVersion: LATEST_SCHEMA_VERSION + 1, tryLock: tryAcquireExclusiveLock });
+      expect(await backup.ensurePreMigrationBackup()).toBe('VERIFIED');
+    });
 
-      rmSync(lockPath());
-      const outside = path.join(root, 'outside-lock');
-      writeFileSync(outside, 'not yours');
-      utimesSync(outside, new Date(T0 - 3_600_000), new Date(T0 - 3_600_000));
+    it('a lock path that is not a regular file is LOCK_UNAVAILABLE, never followed', async () => {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const outside = path.join(root, 'outside.db');
+      writeFileSync(outside, '');
       symlinkSync(outside, lockPath());
-      expect(await job({ role: 'manual' }).runManual()).toMatchObject({ failure: 'BACKUP_IN_PROGRESS' });
-      expect(readFileSync(outside, 'utf8')).toBe('not yours');
+      const record = await job({ role: 'manual', tryLock: tryAcquireExclusiveLock }).runManual();
+      expect(record).toMatchObject({ outcome: 'FAILED', failure: 'LOCK_UNAVAILABLE' });
+      expect(readFileSync(outside, 'utf8')).toBe('');
     });
 
     it('a manual run leaves another run\'s fresh manual partial alone and removes only stale ones', async () => {

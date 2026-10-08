@@ -3,7 +3,15 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LATEST_SCHEMA_VERSION, readSqliteUserVersion, verifySqliteBackupFile, writeVerifiedSqliteCopy } from './backup';
+import { spawn } from 'node:child_process';
+import { statSync, symlinkSync, utimesSync } from 'node:fs';
+import {
+  LATEST_SCHEMA_VERSION,
+  readSqliteUserVersion,
+  tryAcquireExclusiveLock,
+  verifySqliteBackupFile,
+  writeVerifiedSqliteCopy,
+} from './backup';
 import { SqliteStorageProvider } from './index';
 
 describe('SQLite backup primitives (ADR-0102 D6)', () => {
@@ -118,5 +126,67 @@ describe('SQLite backup primitives (ADR-0102 D6)', () => {
     });
     expect(result).toEqual({ ok: false, failure: 'ABORTED' });
     expect(existsSync(targetPath)).toBe(false);
+  });
+
+  describe('tryAcquireExclusiveLock: an OS-held lock the kernel releases', () => {
+    const DIST = join(__dirname, '..', 'dist', 'backup.js');
+
+    /** A child process that takes the lock and then waits forever (until killed). */
+    function lockingChild(lockPath: string): Promise<{ child: ReturnType<typeof spawn> }> {
+      const child = spawn(
+        process.execPath,
+        [
+          '-e',
+          `const r = require(process.argv[1]).tryAcquireExclusiveLock(process.argv[2]);
+           process.stdout.write(r.ok ? 'locked\\n' : 'busy\\n');
+           setInterval(() => {}, 1000);`,
+          DIST,
+          lockPath,
+        ],
+        { stdio: ['ignore', 'pipe', 'inherit'] },
+      );
+      return new Promise((resolve, reject) => {
+        child.stdout?.on('data', (chunk: Buffer) => {
+          if (chunk.toString().includes('locked')) resolve({ child });
+          else reject(new Error('child could not lock'));
+        });
+      });
+    }
+
+    it('one holder at a time (same process too); release lets the next one in; the file is 600', () => {
+      const lockPath = join(dir, '.backup-lock.db');
+      const first = tryAcquireExclusiveLock(lockPath);
+      expect(first.ok).toBe(true);
+      expect(statSync(lockPath).mode & 0o777).toBe(0o600);
+      expect(tryAcquireExclusiveLock(lockPath)).toEqual({ ok: false, failure: 'BUSY' });
+      if (first.ok) first.release();
+      const second = tryAcquireExclusiveLock(lockPath);
+      expect(second.ok).toBe(true);
+      if (second.ok) second.release();
+    });
+
+    it.skipIf(!existsSync(DIST))('a SIGKILLed holder releases the lock; a live holder is never taken over, however old', async () => {
+      const lockPath = join(dir, '.backup-lock.db');
+      const { child } = await lockingChild(lockPath);
+      expect(tryAcquireExclusiveLock(lockPath)).toEqual({ ok: false, failure: 'BUSY' });
+      // No age rule: an ancient-looking lock file of a live holder stays held.
+      utimesSync(lockPath, new Date('2000-01-01T00:00:00Z'), new Date('2000-01-01T00:00:00Z'));
+      expect(tryAcquireExclusiveLock(lockPath)).toEqual({ ok: false, failure: 'BUSY' });
+
+      const exited = new Promise((resolve) => child.on('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+      const after = tryAcquireExclusiveLock(lockPath);
+      expect(after.ok).toBe(true);
+      if (after.ok) after.release();
+    }, 20_000);
+
+    it('refuses a lock path that is a symlink or a directory (UNAVAILABLE)', () => {
+      const target = join(dir, 'target.db');
+      writeFileSync(target, '');
+      symlinkSync(target, join(dir, 'link.db'));
+      expect(tryAcquireExclusiveLock(join(dir, 'link.db'))).toEqual({ ok: false, failure: 'UNAVAILABLE' });
+      expect(tryAcquireExclusiveLock(dir)).toEqual({ ok: false, failure: 'UNAVAILABLE' });
+    });
   });
 });

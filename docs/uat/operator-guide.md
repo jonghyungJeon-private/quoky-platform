@@ -234,11 +234,15 @@ authoritative: a failed snapshot is recorded as `vectors.outcome: FAILED` in `ba
 
 The on-demand copy is a separate short-lived process (`apps/quoky/dist/tools/backup-now.js`): `VACUUM INTO` from a
 read-only connection. In WAL mode the service's ordinary commits keep going during the copy, but checkpoints may be
-delayed (the WAL can grow) until it ends, and the copy's connection waits up to 5 s on a lock. Manual runs are
-serialized by `backups/.manual-backup.lock` (O_EXCL, pid; a lock whose pid is gone, or older than 15 minutes, is taken
-over). The tool scans `.env.local` line by line and parses only the backup names; other lines are skipped unparsed.
+delayed (the WAL can grow) until it ends, and the copy's connection waits up to 5 s on a lock. Every backup run
+(scheduled, pre-migration, manual) holds `backups/.backup-lock.db`, an OS-held SQLite exclusive lock the kernel releases
+when the holder dies (no pid, age or takeover rule): a manual run that finds it held exits 3, the daily copy retries at
+the next 15-minute poll without a notice, and the pre-migration copy waits up to 10 minutes. The tool never reads
+`.env.local`: `quokyctl.sh` passes the service's DB and vector paths (the launcher's own helpers) and extracts only
+`QUOKY_BACKUP_DIR`, `QUOKY_BACKUP_ENABLED`, `QUOKY_TIMEZONE` with a line-anchored `grep '^NAME='`. Those three must be
+plain single-line `NAME=value` lines (no `export`, quotes, `#` or indent), otherwise the backup is refused.
 `--verify` works with no live DB (disaster-recovery drill) and refuses symlinked copies, snapshot directories and backup
-directories. Exit codes: 0 ok, 1 DB copy or verify failed, 3 blocked (incl. another manual run), 4 DB copy kept but its
+directories. Exit codes: 0 ok, 1 DB copy or verify failed, 3 blocked (incl. another run holding the lock), 4 DB copy kept but its
 snapshot failed. `backup-status.json` is best-effort, advisory telemetry (written through the private-file writer);
 concurrent merges of the service and the manual process can lose a field until the next write.
 

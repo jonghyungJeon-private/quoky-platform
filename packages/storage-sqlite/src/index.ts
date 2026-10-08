@@ -1214,7 +1214,8 @@ export class SqliteStorageProvider implements StorageProvider {
 export {
   LATEST_SCHEMA_VERSION,
   readSqliteUserVersion,
+  tryAcquireExclusiveLock,
   verifySqliteBackupFile,
   writeVerifiedSqliteCopy,
 } from './backup';
-export type { SqliteBackupFailure, SqliteBackupResult, SqliteCopyRequest } from './backup';
+export type { ExclusiveLockResult, SqliteBackupFailure, SqliteBackupResult, SqliteCopyRequest } from './backup';

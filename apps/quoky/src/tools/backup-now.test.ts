@@ -14,9 +14,14 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LATEST_SCHEMA_VERSION, SqliteStorageProvider, verifySqliteBackupFile } from '@quoky/storage-sqlite';
+import {
+  LATEST_SCHEMA_VERSION,
+  SqliteStorageProvider,
+  tryAcquireExclusiveLock,
+  verifySqliteBackupFile,
+} from '@quoky/storage-sqlite';
 import { LocalVectorProvider } from '@quoky/vector-local';
-import { BACKUP_STATUS_FILE, MANUAL_LOCK_FILE } from '../ops/backup-job';
+import { BACKUP_LOCK_FILE, BACKUP_STATUS_FILE } from '../ops/backup-job';
 import { backupFileName, vectorSnapshotName } from '../ops/backup-files';
 import {
   EXIT_BLOCKED,
@@ -25,9 +30,6 @@ import {
   EXIT_USAGE,
   EXIT_VECTORS_FAILED,
   MISSING_VECTOR_SNAPSHOT_GUIDANCE,
-  parseEnvValue,
-  readAllowListedEnv,
-  resolveBackupEnv,
   runCli,
   type BackupNowDeps,
 } from './backup-now';
@@ -51,7 +53,7 @@ describe('backup-now: the on-demand backup tool', () => {
     vectorPath = path.join(root, 'vectors');
     backups = path.join(root, 'backups');
     envFile = path.join(root, '.env.local');
-    writeFileSync(envFile, `${SECRET_LINE}\nQUOKY_TIMEZONE=Asia/Seoul\nQUOKY_BACKUP_DIR=${backups}\n`, { mode: 0o600 });
+    writeFileSync(envFile, `${SECRET_LINE}\n`, { mode: 0o600 });
     out = [];
     err = [];
     const storage = new SqliteStorageProvider({ dbPath });
@@ -67,7 +69,13 @@ describe('backup-now: the on-demand backup tool', () => {
 
   function deps(overrides: Partial<BackupNowDeps> = {}): BackupNowDeps {
     return {
-      env: { QUOKY_ENV_FILE: envFile, QUOKY_DB_PATH: dbPath, QUOKY_VECTOR_PATH: vectorPath, QUOKY_LAUNCHER: 'launchd' },
+      env: {
+        QUOKY_DB_PATH: dbPath,
+        QUOKY_VECTOR_PATH: vectorPath,
+        QUOKY_BACKUP_DIR: backups,
+        QUOKY_TIMEZONE: 'Asia/Seoul',
+        QUOKY_LAUNCHER: 'launchd',
+      },
       stdout: (line) => out.push(line),
       stderr: (line) => err.push(line),
       clock: () => NOW,
@@ -77,54 +85,19 @@ describe('backup-now: the on-demand backup tool', () => {
 
   const manualName = backupFileName('manual', Date.parse(NOW));
   const printed = (): string => [...out, ...err].join('\n');
+  /** The backup directory without the persistent lock database (`BACKUP_LOCK_FILE`, held only during a run). */
+  const listed = (): string[] => readdirSync(backups).filter((n) => n !== BACKUP_LOCK_FILE);
 
-  it('takes only the backup names from the env file; the process environment wins; secrets never load', () => {
-    const env = resolveBackupEnv({ QUOKY_ENV_FILE: envFile, QUOKY_TIMEZONE: 'Europe/Berlin' });
-    expect(env.QUOKY_TIMEZONE).toBe('Europe/Berlin');
-    expect(env.QUOKY_BACKUP_DIR).toBe(backups);
-    expect(env.DISCORD_BOT_TOKEN).toBeUndefined();
-    expect(JSON.stringify(env)).not.toContain('secret-token-value');
-  });
-
-  it('scans the env file line by line: only allow-listed values are ever parsed (instrumented parser)', () => {
-    const content = [
-      '# comment with QUOKY_BACKUP_DIR=/not/this',
-      SECRET_LINE,
-      'export QUOKY_TIMEZONE="Asia/Seoul"',
-      'PRIVATE_KEY="-----BEGIN KEY-----',
-      'QUOKY_BACKUP_DIR=/inside/a/secret/value',
-      'secret-key-body-line',
-      '-----END KEY-----"',
-      `  QUOKY_BACKUP_DIR = '${backups}'   `,
-      'QUOKY_BACKUP_ENABLED=true # inline comment',
-      'ANTHROPIC_API_KEY=another-secret-value',
-      'QUOKY_DB_PATH=/first',
-      'QUOKY_DB_PATH=/second',
-      '',
-    ].join('\n');
-    const parsed: string[] = [];
-    const spy = (raw: string): string => {
-      parsed.push(raw);
-      return parseEnvValue(raw);
-    };
-    const names = new Set(['QUOKY_TIMEZONE', 'QUOKY_BACKUP_DIR', 'QUOKY_BACKUP_ENABLED', 'QUOKY_DB_PATH']);
-    expect(readAllowListedEnv(content, names, spy)).toEqual({
-      QUOKY_TIMEZONE: 'Asia/Seoul',
-      QUOKY_BACKUP_DIR: backups,
-      QUOKY_BACKUP_ENABLED: 'true',
-      QUOKY_DB_PATH: '/second',
-    });
-    expect(parsed).toHaveLength(5);
-    for (const raw of parsed) {
-      expect(raw).not.toMatch(/secret|BEGIN|another|inside/);
-    }
-    // Through resolveBackupEnv as well: the instrumented parser never sees a non-allow-listed value.
-    const seen: string[] = [];
-    resolveBackupEnv({ QUOKY_ENV_FILE: envFile }, () => content, (raw) => {
-      seen.push(raw);
-      return parseEnvValue(raw);
-    });
-    expect(seen.join('\n')).not.toMatch(/secret|BEGIN|another/);
+  it('never reads an env file: configuration comes from the process environment only', async () => {
+    // An env file the tool would trip over if it read it (unreadable, and naming another backup directory).
+    writeFileSync(envFile, `${SECRET_LINE}\nQUOKY_BACKUP_DIR=${path.join(root, 'elsewhere')}\n`, { mode: 0o000 });
+    const code = await runCli(['--apply'], deps({ env: { QUOKY_ENV_FILE: envFile, QUOKY_DB_PATH: dbPath, QUOKY_VECTOR_PATH: vectorPath } }));
+    expect(code).toBe(EXIT_OK);
+    // The service's default: <db dir>/backups (loadOpsConfig), not the env file's value.
+    expect(readdirSync(backups)).toContain(manualName);
+    expect(existsSync(path.join(root, 'elsewhere'))).toBe(false);
+    const source = readFileSync(path.join(__dirname, 'backup-now.ts'), 'utf8');
+    for (const forbidden of ['QUOKY_ENV_FILE', 'dotenv', 'readFileSync', '.env.local\'']) expect(source).not.toContain(forbidden);
   });
 
   it('--dry-run reports the set it would write and what retention would prune, and writes nothing', async () => {
@@ -151,7 +124,8 @@ describe('backup-now: the on-demand backup tool', () => {
   it('--apply writes a verified manual set (DB copy + vector snapshot), 700/600, and records lastManual', async () => {
     expect(await runCli(['--apply'], deps())).toBe(EXIT_OK);
     const vectors = vectorSnapshotName(manualName);
-    expect(readdirSync(backups).sort()).toEqual([BACKUP_STATUS_FILE, manualName, vectors].sort());
+    expect(listed().sort()).toEqual([BACKUP_STATUS_FILE, manualName, vectors].sort());
+    expect(statSync(path.join(backups, BACKUP_LOCK_FILE)).mode & 0o777).toBe(0o600);
     expect(statSync(backups).mode & 0o777).toBe(0o700);
     expect(statSync(path.join(backups, manualName)).mode & 0o777).toBe(0o600);
     expect(statSync(path.join(backups, vectors)).mode & 0o777).toBe(0o700);
@@ -172,13 +146,13 @@ describe('backup-now: the on-demand backup tool', () => {
   it('a vector snapshot failure keeps the verified DB copy and exits 4; a DB copy failure keeps nothing and exits 1', async () => {
     const vectorsFail = deps({ snapshotVectors: async () => ({ ok: false, failure: 'SOURCE_UNREADABLE' }) });
     expect(await runCli(['--apply'], vectorsFail)).toBe(EXIT_VECTORS_FAILED);
-    expect(readdirSync(backups).sort()).toEqual([BACKUP_STATUS_FILE, manualName].sort());
+    expect(listed().sort()).toEqual([BACKUP_STATUS_FILE, manualName].sort());
     expect(out).toContain('vectors: FAILED (SOURCE_UNREADABLE)');
 
     rmSync(backups, { recursive: true });
     const dbFail = deps({ copy: async () => ({ ok: false, failure: 'COPY_FAILED' }) });
     expect(await runCli(['--apply'], dbFail)).toBe(EXIT_FAILED);
-    expect(readdirSync(backups)).toEqual([BACKUP_STATUS_FILE]);
+    expect(listed()).toEqual([BACKUP_STATUS_FILE]);
     expect(err).toContain('FAILED: the manual copy did not verify (COPY_FAILED); nothing was kept');
   });
 
@@ -197,12 +171,18 @@ describe('backup-now: the on-demand backup tool', () => {
     expect(printed()).not.toContain('secret-token-value');
   });
 
-  it('a second manual backup while one holds the lock is blocked and writes nothing', async () => {
+  it('while another run holds the backup lock, --apply is blocked (exit 3) and writes nothing', async () => {
     mkdirSync(backups, { mode: 0o700 });
-    writeFileSync(path.join(backups, MANUAL_LOCK_FILE), JSON.stringify({ pid: process.pid }), { mode: 0o600 });
-    expect(await runCli(['--apply'], deps({ clock: () => new Date().toISOString() }))).toBe(EXIT_BLOCKED);
-    expect(err).toContain('BLOCKED: another manual backup is running (its lock is held); nothing was written');
-    expect(readdirSync(backups)).toEqual([MANUAL_LOCK_FILE]);
+    const held = tryAcquireExclusiveLock(path.join(backups, BACKUP_LOCK_FILE));
+    expect(held.ok).toBe(true);
+    try {
+      expect(await runCli(['--apply'], deps())).toBe(EXIT_BLOCKED);
+      expect(err).toContain('BLOCKED: another backup run (manual or scheduled) holds the backup lock; nothing was written');
+      expect(readdirSync(backups).filter((n) => n.startsWith('quoky-') || n === BACKUP_STATUS_FILE)).toEqual([]);
+    } finally {
+      if (held.ok) held.release();
+    }
+    expect(await runCli(['--apply'], deps())).toBe(EXIT_OK);
   });
 
   describe('--verify: the restore drill', () => {

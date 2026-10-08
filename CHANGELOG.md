@@ -22,9 +22,13 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
   verified `manual` copy + vector snapshot while the service runs (no restart), and a read-only restore drill. A
   separate short-lived process (`apps/quoky/dist/tools/backup-now.js`) runs `VACUUM INTO` from a read-only connection
   (WAL: the service's ordinary commits continue; checkpoints may be delayed until the copy ends) with the same partial →
-  verify → rename flow. It scans `.env.local` line by line and parses only the backup names (other lines are skipped
-  unparsed). Manual runs are serialized by an `O_EXCL` lock file holding the pid, with stale-lock recovery. The 5 newest
-  manual copies are kept. `--verify` works with no live DB.
+  verify → rename flow. The tool never reads `.env.local`: `quokyctl.sh` passes the service's DB/vector paths (shared
+  launcher helpers) and only `QUOKY_BACKUP_DIR`, `QUOKY_BACKUP_ENABLED`, `QUOKY_TIMEZONE`, extracted with a line-anchored
+  `grep '^NAME='` (plain single-line values only; other forms are refused). Every backup run (scheduled, pre-migration,
+  manual) holds `backups/.backup-lock.db`, an OS-held SQLite exclusive lock (`locking_mode=EXCLUSIVE`, `BEGIN EXCLUSIVE`,
+  `busy_timeout=0`) that the kernel releases when the holder dies; a held lock means `BACKUP_IN_PROGRESS` (manual: exit
+  3; daily: retried at the next poll; pre-migration: waits up to 10 minutes). The 5 newest manual copies are kept.
+  `--verify` works with no live DB.
 - Partial names are claimed exclusively (mode 600 from creation). Only the service prunes its own kinds' partials at any
   age; every other partial (including another manual run's) is pruned only once it is stale (15 minutes).
 - `backup-status.json` (best-effort, advisory telemetry) is now written through the private-file writer (real 700

@@ -1,4 +1,9 @@
-import { LATEST_SCHEMA_VERSION, readSqliteUserVersion, writeVerifiedSqliteCopy } from '@quoky/storage-sqlite';
+import {
+  LATEST_SCHEMA_VERSION,
+  readSqliteUserVersion,
+  tryAcquireExclusiveLock,
+  writeVerifiedSqliteCopy,
+} from '@quoky/storage-sqlite';
 import { writeVerifiedVectorSnapshot } from '@quoky/vector-local';
 import type { IsoTimestamp, Logger, MemoryArchivePurgeResult, NotificationSink } from '@quoky/core';
 import type { QuokyConfig } from '../config';
@@ -78,6 +83,7 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     copy: writeVerifiedSqliteCopy,
     readUserVersion: readSqliteUserVersion,
     latestSchemaVersion: LATEST_SCHEMA_VERSION,
+    tryLock: tryAcquireExclusiveLock,
     ...(ops.backup.vectorPath !== undefined
       ? { vectorPath: ops.backup.vectorPath, snapshotVectors: writeVerifiedVectorSnapshot }
       : {}),

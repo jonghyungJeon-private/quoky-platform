@@ -15,23 +15,25 @@
  * (dir 700, files 600) and status file as the scheduled job (`ops/backup-job.ts`, `role: 'manual'`), kind `manual`
  * (the 5 newest are kept).
  *
- * Configuration is resolved like the service's: the process environment wins (`quokyctl.sh` passes the launcher's
- * `QUOKY_DB_PATH`, `QUOKY_VECTOR_PATH` and `QUOKY_ENV_FILE`), then only these names are taken from the env file:
- * `QUOKY_BACKUP_ENABLED`, `QUOKY_BACKUP_DIR`, `QUOKY_TIMEZONE`, `QUOKY_DB_PATH`, `QUOKY_VECTOR_PATH` (and the legacy
- * `CHUNSIK_*` paths). The file is scanned line by line (`readAllowListedEnv`): every other line is skipped without
- * parsing or retaining its value, and nothing of the file is printed. Manual runs are serialized by a lock file.
+ * Configuration comes from the process environment only; the tool never reads `.env.local` (or any env file).
+ * `quokyctl.sh backup` passes exactly what the service resolves: `QUOKY_DB_PATH` and `QUOKY_VECTOR_PATH` from the same
+ * shell helpers the launcher uses, and `QUOKY_BACKUP_DIR`, `QUOKY_BACKUP_ENABLED`, `QUOKY_TIMEZONE` extracted by a
+ * line-anchored `grep '^NAME='` for those names only (simple single-line values). Run directly, unset names take the
+ * service's defaults (`resolveDataPaths`, `loadOpsConfig`, `parseReminderConfig`). Every run holds the backup lock
+ * (an OS-held SQLite exclusive lock, released by the kernel if the process dies), shared with the service's runs.
  *
  * Exit codes: 0 ok; 1 the DB copy failed (nothing kept), or `--verify` failed; 2 usage; 3 blocked (no database,
- * invalid configuration, not a retained copy, another manual backup running); 4 the DB copy verified but its vector
+ * invalid configuration, not a retained copy, another backup run holds the lock); 4 the DB copy verified but its vector
  * snapshot did not (the DB copy is kept).
  */
-import { existsSync, readFileSync, readdirSync, lstatSync } from 'node:fs';
+import { existsSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, LogFields, Logger } from '@quoky/core';
 import {
   LATEST_SCHEMA_VERSION,
   readSqliteUserVersion,
+  tryAcquireExclusiveLock,
   verifySqliteBackupFile,
   writeVerifiedSqliteCopy,
 } from '@quoky/storage-sqlite';
@@ -62,19 +64,6 @@ export const EXIT_USAGE = 2;
 export const EXIT_BLOCKED = 3;
 export const EXIT_VECTORS_FAILED = 4;
 
-/** The only env-file names this tool reads; everything else in the file (tokens, secrets) is never loaded. */
-export const BACKUP_ENV_NAMES = [
-  'QUOKY_BACKUP_ENABLED',
-  'QUOKY_BACKUP_DIR',
-  'QUOKY_TIMEZONE',
-  'QUOKY_DB_PATH',
-  'QUOKY_VECTOR_PATH',
-  'CHUNSIK_DB_PATH',
-  'CHUNSIK_VECTOR_PATH',
-] as const;
-
-const DEFAULT_ENV_FILE = path.resolve(__dirname, '../../../../.env.local');
-
 const HELP = [
   'usage: backup-now (--dry-run | --apply | --verify <quoky-<UTC stamp>-<kind>.db>)',
   '  --dry-run   show the copy and the vector snapshot it would write and what retention would prune (read-only)',
@@ -86,98 +75,10 @@ export interface BackupNowDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
-  /** The env file's content, or `undefined` when it does not exist. */
-  readonly readEnvFile?: (file: string) => string | undefined;
   readonly clock?: () => IsoTimestamp;
   /** Fault-injection seams; production passes none. */
   readonly copy?: (request: SqliteCopyRequest) => Promise<SqliteBackupResult>;
   readonly snapshotVectors?: (request: VectorSnapshotRequest) => Promise<VectorSnapshotResult>;
-}
-
-function readEnvFileDefault(file: string): string | undefined {
-  try {
-    return readFileSync(file, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-}
-
-/** Parses one allow-listed raw value (from just after `=` to the end of its line, or past its closing quote). */
-export function parseEnvValue(raw: string): string {
-  const value = raw.trim();
-  const quote = value.charAt(0);
-  if (quote === '"' || quote === "'" || quote === '`') {
-    const end = value.indexOf(quote, 1);
-    if (end > 0) {
-      const inner = value.slice(1, end);
-      return quote === '"' ? inner.replace(/\\n/g, '\n').replace(/\\r/g, '\r') : inner;
-    }
-  }
-  const comment = value.search(/\s#/);
-  return (comment >= 0 ? value.slice(0, comment) : value).trim();
-}
-
-const ENV_KEY = /[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*=/y;
-
-/**
- * The allow-listed names of an env file, scanned line by line. Only the key at the start of a line is matched; for any
- * other key the line is skipped by index (and a quoted multi-line value is skipped to its closing quote) without
- * slicing, parsing or retaining its value. `parseValue` is called for allow-listed keys only.
- */
-export function readAllowListedEnv(
-  content: string,
-  allowed: ReadonlySet<string>,
-  parseValue: (raw: string) => string = parseEnvValue,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  let position = 0;
-  while (position < content.length) {
-    let lineEnd = content.indexOf('\n', position);
-    if (lineEnd < 0) lineEnd = content.length;
-    ENV_KEY.lastIndex = position;
-    const match = ENV_KEY.exec(content);
-    if (match === null || ENV_KEY.lastIndex > lineEnd) {
-      position = lineEnd + 1;
-      continue;
-    }
-    const key = match[1] as string;
-    let valueStart = ENV_KEY.lastIndex;
-    while (valueStart < lineEnd && (content.charAt(valueStart) === ' ' || content.charAt(valueStart) === '\t')) valueStart += 1;
-    const quote = content.charAt(valueStart);
-    let valueEnd = lineEnd;
-    if (quote === '"' || quote === "'" || quote === '`') {
-      // A quoted value may span lines: it ends at the closing quote, then at the end of that line.
-      const close = content.indexOf(quote, valueStart + 1);
-      if (close >= 0) {
-        const closeLineEnd = content.indexOf('\n', close);
-        valueEnd = closeLineEnd < 0 ? content.length : closeLineEnd;
-      }
-    }
-    // Like dotenv (which the service uses), a later assignment of the same name wins.
-    if (allowed.has(key)) result[key] = parseValue(content.slice(valueStart, valueEnd));
-    position = valueEnd + 1;
-  }
-  return result;
-}
-
-const BACKUP_ENV_NAME_SET: ReadonlySet<string> = new Set(BACKUP_ENV_NAMES);
-
-/** The process environment plus the allowed names from the env file (the process environment wins). */
-export function resolveBackupEnv(
-  processEnv: NodeJS.ProcessEnv,
-  readEnvFile: (file: string) => string | undefined = readEnvFileDefault,
-  parseValue: (raw: string) => string = parseEnvValue,
-): NodeJS.ProcessEnv {
-  const envFile = processEnv.QUOKY_ENV_FILE?.trim() ? (processEnv.QUOKY_ENV_FILE as string) : DEFAULT_ENV_FILE;
-  const content = readEnvFile(envFile);
-  const fromFile = content === undefined ? {} : readAllowListedEnv(content, BACKUP_ENV_NAME_SET, parseValue);
-  const env: NodeJS.ProcessEnv = { ...processEnv };
-  for (const name of BACKUP_ENV_NAMES) {
-    const value = fromFile[name];
-    if (env[name] === undefined && value !== undefined) env[name] = value;
-  }
-  return env;
 }
 
 const silentLogger: Logger = {
@@ -275,7 +176,7 @@ export async function runCli(argv: readonly string[], deps: BackupNowDeps): Prom
 
   let resolved: Resolved;
   try {
-    resolved = resolveConfig(resolveBackupEnv(deps.env, deps.readEnvFile));
+    resolved = resolveConfig(deps.env);
   } catch (error) {
     const code = error instanceof BootstrapPreflightError ? error.code : (error as { code?: unknown }).code;
     const hint = error instanceof BootstrapPreflightError ? `: ${error.hint}` : '';
@@ -332,6 +233,7 @@ export async function runCli(argv: readonly string[], deps: BackupNowDeps): Prom
     copy: deps.copy ?? writeVerifiedSqliteCopy,
     readUserVersion: readSqliteUserVersion,
     latestSchemaVersion: LATEST_SCHEMA_VERSION,
+    tryLock: tryAcquireExclusiveLock,
     ...(vectorPath !== undefined
       ? { vectorPath, snapshotVectors: deps.snapshotVectors ?? writeVerifiedVectorSnapshot }
       : {}),
@@ -340,7 +242,7 @@ export async function runCli(argv: readonly string[], deps: BackupNowDeps): Prom
   });
   const record = await job.runManual();
   if (record.failure === 'BACKUP_IN_PROGRESS') {
-    deps.stderr('BLOCKED: another manual backup is running (its lock is held); nothing was written');
+    deps.stderr('BLOCKED: another backup run (manual or scheduled) holds the backup lock; nothing was written');
     return EXIT_BLOCKED;
   }
   if (record.outcome !== 'VERIFIED') {

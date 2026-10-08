@@ -1,4 +1,4 @@
-import { existsSync, lstatSync } from 'node:fs';
+import { closeSync, constants as fsConstants, existsSync, fchmodSync, fstatSync, lstatSync, openSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import Database from 'better-sqlite3';
@@ -99,6 +99,71 @@ export function verifySqliteBackupFile(copyPath: string): SqliteBackupResult {
       // closing a read-only handle cannot lose data
     }
   }
+}
+
+export type ExclusiveLockResult =
+  | { readonly ok: true; readonly release: () => void }
+  /** `BUSY`: another connection (this or another process) holds the lock. `UNAVAILABLE`: the lock file is unusable. */
+  | { readonly ok: false; readonly failure: 'BUSY' | 'UNAVAILABLE' };
+
+const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+
+/**
+ * An OS-held exclusive lock on a dedicated lock database (serializes backup runs across processes). The file is created
+ * mode 600 without following a symlink (it must be a regular file), then a connection with `busy_timeout = 0` runs
+ * `PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE` and is held until `release()`. SQLite's lock is an fcntl lock,
+ * which the kernel drops when the process dies, so a crashed holder never leaves a stale lock: there is no pid, age or
+ * takeover rule. Connections in the same process conflict too (SQLite tracks locks per inode). Never throws.
+ */
+export function tryAcquireExclusiveLock(lockPath: string): ExclusiveLockResult {
+  try {
+    const fd = openSync(lockPath, fsConstants.O_RDWR | fsConstants.O_CREAT | O_NOFOLLOW, 0o600);
+    try {
+      if (!fstatSync(fd).isFile()) return { ok: false, failure: 'UNAVAILABLE' };
+      fchmodSync(fd, 0o600);
+    } finally {
+      closeSync(fd);
+    }
+    if (!lstatSync(lockPath).isFile()) return { ok: false, failure: 'UNAVAILABLE' };
+  } catch {
+    return { ok: false, failure: 'UNAVAILABLE' };
+  }
+  let db: Database.Database;
+  try {
+    db = new Database(lockPath, { fileMustExist: true, timeout: 0 });
+  } catch {
+    return { ok: false, failure: 'UNAVAILABLE' };
+  }
+  try {
+    db.pragma('locking_mode = EXCLUSIVE');
+    db.exec('BEGIN EXCLUSIVE');
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // nothing held
+    }
+    const code = (error as { code?: unknown }).code;
+    return { ok: false, failure: typeof code === 'string' && code.startsWith('SQLITE_BUSY') ? 'BUSY' : 'UNAVAILABLE' };
+  }
+  let released = false;
+  return {
+    ok: true,
+    release: () => {
+      if (released) return;
+      released = true;
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // closing releases the lock anyway
+      }
+      try {
+        db.close();
+      } catch {
+        // the process exit releases it at the latest
+      }
+    },
+  };
 }
 
 /**

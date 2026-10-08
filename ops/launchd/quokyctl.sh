@@ -15,7 +15,8 @@
 # install, uninstall and restart change the owner's login session (launchctl bootstrap/bootout/kickstart in
 # gui/<uid>): they are Strict owner-host actions. --dry-run prints the exact plan and changes nothing; --apply runs
 # the same plan. There is no default mode for them. backup defaults to --dry-run; --apply writes only into the backup
-# directory and runs while the service keeps running (no restart). Never prints the env file's content.
+# directory and runs while the service keeps running (no restart). Never prints the env file's content; backup reads
+# only the QUOKY_BACKUP_DIR/QUOKY_BACKUP_ENABLED/QUOKY_TIMEZONE lines from it (line-anchored grep).
 
 set -u
 set -o pipefail
@@ -31,7 +32,7 @@ LAUNCHER="$CTL_DIR/quoky-launch.sh"
 SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
-  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2
 }
 
 fail() {
@@ -341,18 +342,29 @@ cmd_status() {
   echo "logs:    $LOG_DIR/quoky.log"
 }
 
-# The on-demand backup tool, in the service's own environment shape: built from nothing (env -i), the launcher's DB and
-# vector paths, and only the env file's path (the tool reads just the backup-related names from it).
+# The on-demand backup tool, in the service's own environment shape: built from nothing (env -i), the service's DB and
+# vector paths (the launcher's own helpers), and only the backup keys extracted from the env file (BACKUP_ENV, built
+# by collect_backup_env). The tool itself never reads the env file.
 run_backup_tool() {
   /usr/bin/env -i \
     "HOME=$HOME" \
     "PATH=$SYSTEM_PATH" \
     "LANG=en_US.UTF-8" \
-    "QUOKY_ENV_FILE=$ENV_FILE" \
-    "QUOKY_DB_PATH=$DATA_DIR/quoky.db" \
-    "QUOKY_VECTOR_PATH=$DATA_DIR/vectors" \
+    "QUOKY_DB_PATH=$(quoky_service_db_path "$DATA_DIR")" \
+    "QUOKY_VECTOR_PATH=$(quoky_service_vector_path "$DATA_DIR")" \
     "QUOKY_LAUNCHER=launchd" \
+    ${BACKUP_ENV[@]+"${BACKUP_ENV[@]}"} \
     "$NODE_BIN" "$BACKUP_TOOL" "$@"
+}
+
+BACKUP_ENV=()
+collect_backup_env() {
+  local name value
+  for name in $QUOKY_BACKUP_ENV_KEYS; do
+    value=$(quoky_env_simple_value "$ENV_FILE" "$name") ||
+      fail "backup refused: $name in the env file must be one plain line '$name=value' (no export, quotes, # or indent)"
+    [ -z "$value" ] || BACKUP_ENV+=("$name=$value")
+  done
 }
 
 cmd_backup() {
@@ -362,6 +374,7 @@ cmd_backup() {
   if ! reason=$(quoky_check_private_env_file "$ENV_FILE"); then
     fail "backup refused: $reason: $(quoky_env_file_hint "$reason")"
   fi
+  collect_backup_env
   if [ -n "$VERIFY" ]; then
     # A restore drill must work with no live database (disaster recovery): no source-DB check on this branch.
     case "$VERIFY" in
@@ -371,7 +384,8 @@ cmd_backup() {
     run_backup_tool --verify "$VERIFY"
     exit $?
   fi
-  [ -f "$DATA_DIR/quoky.db" ] || fail "backup refused: no service database at $DATA_DIR/quoky.db; nothing to back up"
+  [ -f "$(quoky_service_db_path "$DATA_DIR")" ] ||
+    fail "backup refused: no service database at $(quoky_service_db_path "$DATA_DIR"); nothing to back up"
   is_loaded && state="loaded"
   echo "service: $SERVICE ($state); no restart: the copy only reads the database and the vector store"
   if [ "$MODE" = apply ]; then
