@@ -130,7 +130,12 @@ fixed; the implementations are not.
 4. **Provider-specific prompt shaping happens in the adapter.** Core emits a
    provider-agnostic `PromptSpec`; the adapter renders it to CLI args + context
    files (`CLAUDE.md`, `AGENTS.md`, …).
-5. v1 is **CLI-only**; no AI HTTP API. New engines are new adapters, not Core
+5. Providers are **CLI-based**, with one exception: a narrowly scoped **HTTP API
+   adapter** may serve the chat tier (`GENERAL_CHAT`, `SUMMARIZATION`,
+   `DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`) and `IMAGE_UNDERSTANDING` only
+   (ADR-0115). Each such provider is off unless the owner selects it and sends no
+   tool definitions. Code, review, planning, test, embedding and policy-sensitive
+   capabilities stay on the Claude CLI. New engines are new adapters, not Core
    changes.
 6. Transports (queue, event bus, vector store, storage) follow the same rule:
    abstraction in Core, transport in a provider (in-process now, distributed in

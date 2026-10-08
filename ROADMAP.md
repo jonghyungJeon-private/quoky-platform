@@ -6,7 +6,8 @@ Lightweight, living roadmap: **direction and sequence only.** Rules live in
 
 ## Edition evolution
 
-- **Personal Edition (now)** — local-first, single actor, Discord, CLI providers, SQLite.
+- **Personal Edition (now)** — local-first, single actor, Discord, CLI providers (plus opt-in chat- and image-tier HTTP
+  API adapters, ADR-0115), SQLite.
 - **Team Edition** — multi-actor; storage / queue / event transport swapped to networked implementations.
 - **Hosted / SaaS Edition** — multi-tenant. Tenancy is a **v3** scope dimension layered onto Actor/Session; **not built now** and no multi-tenant abstractions are introduced early (YAGNI).
 
@@ -62,8 +63,8 @@ does not claim Production Runtime readiness.
 | **Personal v1** | First product release ("Quoky Personal v1") | Scope ratified by the Product Owner 2026-10-02; ADR-0091/0092/0093/0094 + ADR-0073 amendment; see "First product release" below; IMPLEMENTED LOCALLY on the integration branch with offline acceptance PASS; Live UAT (criterion 9) NOT EXECUTED |
 | **Personal v2** | Personal v2 (owner reminders, work chat, answer quality, code-work expansion, credential override) | IMPLEMENTED (waves 1-8). ADR-0096..0101 + ADR-0098 amendment Ratified; plan `docs/plans/personal-v2-execution-plan.md`; waves 1-7 MERGED (PRs #105-#111); wave 8 = INT-1 offline acceptance + DOC-B docs (wave-8 PR); owner-attended live QA for waves 1-7 recorded in `docs/uat/personal-v2-qa-record.md`; Live UAT of connectors (real tenants), reminders channel delivery, the reminders release default and merge enablement NOT EXECUTED |
 | **Personal v3** | Personal v3 (always-on runtime, deterministic answers, memory commands, owner-curated learning, calendar, files and images, connector writes, local operations UI) | IMPLEMENTED (waves 1-6). ADR-0102..0113 Ratified 2026-10-06 (+ ADR-0106 and ADR-0110 amendments); plan `docs/plans/personal-v3-plan.md`; waves 1-6 MERGED (PRs #116-#132); INT-2 + DOC-C close wave 6; follow-ups MERGED (PRs #133-#148: selectable chat and image providers incl. Codex, runtime switching, vector-store backups, live QA fixes); live QA (sessions 2-4, host reboot) in `docs/uat/personal-v3-qa-record.md`; chat and images on Claude by owner decision 2026-10-07; SUB-3, CODE-8, CODE-9 DEFERRED (P2); mid-send `UNCERTAIN`, Stage 2A re-validation, CODE-8 live and D13 live NOT EXECUTED; D5-R and D16 open |
-| **Personal v4** | Post-v3 plan (Telegram adapter, more chat/image providers, morning brief with calendar, Gmail/Drive read, v3 carry-over) | **PROPOSED** — plan `docs/plans/personal-v4-plan.md`; no ADR ratified, owner decisions 1-25 open |
-| **Future** | Memory improvements · additional connectors | per ADR sequence (Codex chat and images delivered in the v3 follow-ups) |
+| **Personal v4** | Post-v3 plan (Telegram adapter, more chat/image providers, morning brief with calendar, Gmail/Drive read, v3 carry-over) | **RATIFIED (2026-10-08)** — plan `docs/plans/personal-v4-plan.md`; owner decisions 1-25 answered with the recommended defaults (Notion undecided: an unscheduled P3 candidate, revisited on request); ADR-0114 (Telegram), ADR-0115 (chat/image-tier HTTP API providers, constitution §5.5 amended), ADR-0116 (learning-example egress), ADR-0117 (brief calendar, pre-meeting reminders), ADR-0118 (Gmail/Drive read) Ratified, plus the ADR-0109 amendment (`approvedRepository`) and closure notes on ADR-0103/0105/0107/0108/0111/0113; SUB-3 and Stage 2A re-validation parked; network-failure test to run in a scratch Docker (OrbStack) runtime, never on the service; implementation tracks start in wave 1 (CODE-8 in progress on its own branch) |
+| **Future** | Memory improvements · additional connectors (Notion undecided, on request) | per ADR sequence (Codex chat and images delivered in the v3 follow-ups) |
 
 ## First product release — Quoky Personal v1
 
@@ -132,16 +133,16 @@ recorded there; everything else is offline-tested only.
 | Item | Status |
 |---|---|
 | SUB-1/2 always-on launchd service, single instance, identity check, verified backups, `OPS_NOTICE` (ADR-0102) | DONE and live-verified on the owner's Mac: restart, reminder across restart, pre-migration backups, the scheduled 04:00 backup, a restore drill on a copy, a real host reboot (2026-10-08) and an on-demand `quokyctl.sh backup --apply` with the vector snapshot (#146) |
-| SUB-3 continuation activation under the Personal trust model (ADR-0103) | DEFERRED (P2, not implemented; continuation stays fail-closed) |
+| SUB-3 continuation activation under the Personal trust model (ADR-0103) | DEFERRED (P2, not implemented; continuation stays fail-closed); parked at P3 for v4 with the Stage 2A re-validation (ADR-0103 note, 2026-10-08) |
 | DET-1 internal-action claim guard, code-chain status replies, fall-through corpus (ADR-0104) | DONE and live-verified; a 44-phrasing edge-case sweep ran in live QA session 3 (34 as expected; the deviations were fixed in #147/#148 and verified in session 4, except D5, which is open as D5-R); residual R5 accepted; to-do/reminder status phrases (D3) not complete (v4 DET-2) |
 | LLM-1 chat hygiene and help-intent handler | DONE and live-verified |
 | LLM-2 model choice by measurement (ADR-0105 D1) | DONE offline: helpfulness-aware harness picked `granite3.3:8b`, set on the owner's service 2026-10-07; live re-test W6-M5 partial pass; the 20-prompt Korean daily-chat set ran (W6-L05, about 5 of 20 usable). **Chat moved to Claude by owner decision (2026-10-07)**; Ollama stays selectable and serves embeddings |
-| LLM-3 MLX provider (ADR-0105 D2-D4) | NOT DONE (optional; no benchmark run) |
+| LLM-3 MLX provider (ADR-0105 D2-D4) | NOT DONE (optional; no benchmark run); closed for v4 (ADR-0105 note, 2026-10-08) |
 | MEM-1 memory commands, archive with restore, history purge (ADR-0106 + amendment) | DONE and live-verified |
 | LRN-1 learning store v14, candidates and trend; LRN-3 offline report (ADR-0107) | DONE and live-verified (candidates, notes and the 👍-only example rule, live QA session 2 W6-L11) |
 | LRN-2 curated examples for `LOCAL` providers only | DONE; an example was saved and used live (session 2 W6-L11, flag on for that session). Examples reach `LOCAL` providers only, so they do not reach the owner's Claude chat (v4 owner decision 11) |
-| LRN-4 local fine-tuning | DEFERRED (needs ≥300 approved examples and a measured LRN-2 gain) |
-| CODE-6 read-only PR status token; CODE-7 PR title/body bound by hash (ADR-0108) | DONE and live-verified on the sandbox repo; optional model-proposed title/body (D4) not wired |
+| LRN-4 local fine-tuning | DEFERRED (needs ≥300 approved examples and a measured LRN-2 gain); closed for v4 (ADR-0107 note, 2026-10-08) |
+| CODE-6 read-only PR status token; CODE-7 PR title/body bound by hash (ADR-0108) | DONE and live-verified on the sandbox repo; optional model-proposed title/body (D4) not wired, and left unwired in v4 (ADR-0108 note, 2026-10-08) |
 | CODE-8 multi-repository allowlist (ADR-0109) | DEFERRED (P2, not implemented on `main`; being implemented on another branch) |
 | CODE-9 merge enablement | DEFERRED (P2; release default `QUOKY_GIT_MERGE_ENABLED=false`) |
 | CAL-1/2 calendar read; calendar writes (ADR-0110 + amendment) | DONE and live-verified on the owner's company calendar (reads, create, move, delete) |
@@ -163,7 +164,8 @@ mobile/desktop client (Team/Hosted, ADR-0113 D11).
   - Rendering must become platform-neutral before a second platform is added: Core emits neutral text, and each
     platform adapter applies its own escaping and markup.
   - A new ADR is needed at that time for per-platform owner admission (ADR-0091 is Discord-shaped: owner ids, channel
-    allowlist, DMs) and for identity mapping of a Telegram user to the owner `Actor` (ADR-0009 seam).
+    allowlist, DMs) and for identity mapping of a Telegram user to the owner `Actor` (ADR-0009 seam). Ratified as
+    ADR-0114 on 2026-10-08 (Personal v4).
 
 ## Deferred capabilities (YAGNI)
 
@@ -184,5 +186,6 @@ Reserve a seam **only when expensive to retrofit.** Most of these already map on
 ## Non-goals (v1)
 
 - Not a Discord bot framework — Discord is one adapter.
-- No AI HTTP API (CLI only). No Postgres/Redis. No multi-tenancy.
+- No AI HTTP API beyond the opt-in chat- and image-tier adapters of ADR-0115 (CLI otherwise). No Postgres/Redis. No
+  multi-tenancy.
 - No slash-command UX. No autonomous agent loops, no dynamic plugin loading, no Workflow engine.
