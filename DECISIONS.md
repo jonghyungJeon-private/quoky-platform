@@ -17794,13 +17794,20 @@ While polling:
   Discord owner DM via `DISCORD_NOTIFICATION_PLATFORM`. The text is "[Quoky 운영 알림] Telegram 연결을 멈췄어요: <코드>.",
   then a reason line and "Discord는 계속 동작합니다." It carries no content and no token, and the `OPS_NOTICE` ledger
   bound (3 per 24 h) applies.
-  - **Held until Discord is ready (CA final check #3).** A halt can fire before Discord is READY, which would give
-    `NOT_SENT NOT_CONNECTED` after the ledger already took a slot. So `main.ts` holds halt codes (`haltNoticeBuffer`)
-    until the startup identity block and `ops.start()` are done, then sends them. The ledger's record-before-send rule
-    (ADR-0102 D7) is unchanged.
-  - **Repeat suppression (CA final check #4).** The same Telegram halt reason is sent at most once per 24 h
-    (`telegramHaltQuietMs`), so restarts with a broken token cannot use up the budget and suppress `BACKUP_FAILED` or
-    `CRASH_LOOP`.
+  - **Held until Discord is READY (CA final check #3, Codex final delta P2-2).** A halt can fire before Discord is
+    READY, which would give `NOT_SENT NOT_CONNECTED` after the ledger already took a slot. So `main.ts` holds halt codes
+    (`haltNoticeBuffer`) and releases them through `releaseWhenPlatformReady` after `ops.start()`.
+    - Release waits for the identity check's own readiness signal: `readConnectedIdentity`, read-only, each attempt
+      bounded by `DEFAULT_IDENTITY_READY_TIMEOUT_MS`.
+    - It does not depend on whether `QUOKY_DISCORD_EXPECTED_BOT_ID` made startup wait.
+    - Until READY the codes stay held, with no ledger slot and no suppression, and they go out on the first READY.
+    - The wait is cancelled at shutdown. With Telegram off nothing is wired.
+    - The ledger's record-before-send rule (ADR-0102 D7) is unchanged.
+  - **Repeat suppression (CA final check #4, Codex final delta P2-2).** The same Telegram halt reason is sent at most
+    once per 24 h after it was DELIVERED (`telegramHaltQuietMs`), so restarts with a broken token cannot use up the
+    budget and suppress `BACKUP_FAILED` or `CRASH_LOOP`. The record of delivered halt notices is separate from the D7
+    ledger (`ops/telegram-halt-notices.json`, written only on `SENT`), so an undelivered notice never suppresses the
+    next one.
 - **Outbound needs a verified identity (Codex delta P2).** `sendMessage`, `sendTyping` and its refresh, `deliver` and
   the owner notices make no Bot API call before `getMe` matched, or once the Telegram side halted or stopped.
   - `sendMessage` logs "send skipped: telegram not connected" and returns an empty receipt, as the Discord adapter
@@ -17812,10 +17819,15 @@ While polling:
   - **A restart resets it (P2-2).** `start()` resets `identityVerified` together with `halted`.
   - **`stop()` too (CA final check, Critical).** `stop()` confirms the offset to Telegram only for a verified,
     un-halted session.
+  - **The startup check is part of the lifecycle (Codex final delta P2-1).** `start()` creates the lifecycle
+    `AbortController` before its first await, and passes its signal to the startup `getMe` and probe. The startup
+    promise is tracked, and `stop()` aborts it and awaits it. An answer that arrives after `stop()` is not acted on: no
+    probe, no verification, no poll.
   - **The loop's catch.** It does not halt or notify while stopping.
   - **Invariant test.** A table-driven test runs every method of the fixed Bot API list (`TELEGRAM_METHODS`; a row is
-    required per method, with a positive control). It covers four states: before verification, after a halt, after a
-    stop, and after a restart with a hanging `getMe`.
+    required per method, with a positive control). It covers six states: before verification, after a halt, after a
+    stop, stopped during the startup `getMe`, stopped during the startup probe, and after a restart with a hanging
+    `getMe`.
 - The ADR-0102 lock still prevents a second process on one host.
 
 #### Polling and the offset (D4)

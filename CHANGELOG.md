@@ -86,6 +86,10 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
   - **Restart and retry.** `start()` resets the verified identity, and the 429 retry re-checks halt/stop.
   - **Shutdown.** The loop's catch is silent while stopping.
   - **Test.** A table-driven outbound invariant test covers every Bot API method.
+  - **Codex final delta P2-1.** The startup identity check carries the lifecycle abort signal, and `stop()` aborts and
+    awaits it.
+  - **Codex final delta P2-2.** Halt notices are released only on Discord READY, bounded and read-only. The 24 h
+    suppression starts only on a delivered notice.
 - **Not in TG-1.** Attachments, reactions, the operations-UI panel, CommonMark rendering on Telegram and live QA
   (TG-2/TG-3, Strict).
 
