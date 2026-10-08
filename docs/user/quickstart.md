@@ -133,6 +133,7 @@ QUOKY_CHAT_PROVIDER=codex
   내 `~/.codex/config.toml` 설정(MCP 서버 등)은 읽지 않지만, 로그인 정보와 Codex 자체 기본 지시문은 `~/.codex`와
   CLI에서 옵니다.
 - 실측(2026-10-07, 기본 모델): 짧은 한국어 추천 질문 한 번에 약 7.5-8초, 준비 확인(`codex login status`)은 0.2초 이하.
+  상시 서비스에서도 Codex 대화가 실제로 답했습니다(약 9.5초, v3 QA 기록 OD3).
 
 ### 실행 중에 모델 바꾸기 (채팅 명령과 운영 화면, ADR-0092/ADR-0111 개정)
 
@@ -207,7 +208,9 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
   `OLLAMA_MODEL`의 코드 기본값은 여전히 `llama3.1`이고, 바꾸는 것은 운영자 설정입니다. 부하가 내려간 뒤 한
   재검증(W6-M5)은 **부분 통과**입니다: 4개 중 3개를 granite가 답했고(생성 21-38초), 1개는 동시에 돈 테스트로 부하가
   다시 올라 Claude로 대체되었습니다. 노래·가수 이름을 지어내는 문제는 남아 있어, 로컬 모델은 구체적인 사실을 지어낼 수
-  있습니다. 한국어 일상 대화 20문항 세트는 아직 하지 않았습니다. 답이 단어 중간에서 끊기던 문제는 고쳤습니다(PR #133).
+  있습니다. 한국어 일상 대화 20문항 세트(W6-L05)에서는 20개 중 약 5개만 그대로 쓸 만해서, 소유자는 2026-10-07에 대화를
+  Claude로 옮겼습니다(`QUOKY_CHAT_PROVIDER=claude`). Ollama는 계속 고를 수 있고 임베딩에 쓰입니다. 답이 단어 중간에서
+  끊기던 문제는 고쳤습니다(PR #133).
 - **이미지 (선택):** 이미지를 읽는 provider는 `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` 하나로 고릅니다 (ADR-0111 개정, 2026-10-07).
   - `ollama` — 로컬 비전 모델. 모델을 받고 `QUOKY_OLLAMA_VISION_MODEL`에 이름을 적습니다 (예: `gemma3:4b`처럼 이미지 입력을
     지원하는 모델). 이미지는 이 컴퓨터를 떠나지 않습니다. 이름에 `cloud`가 들어간 모델은 거부합니다.
@@ -761,7 +764,7 @@ Quoky는 그런 외부 작업을 할 수 없다고 정직하게 답합니다. �
 | 사용법 질문 | `완료 처리 어떻게 해?`, `알림 어떻게 지워?` | - | 그 기능의 도움말 줄만 보여 줌. AI 호출 없음 |
 | 모델 바꾸기 | `모델 상태`, `모델 목록`, `모델 변경: codex`, `/model claude:opus`, `이미지 모델 변경: off`, `모델 기본값으로` | 소유자 | 이 대화에서만 대화/이미지 모델을 바꿈 (4절 "실행 중에 모델 바꾸기"). AI 호출 없음 |
 | 기억 관리 | `기억 목록`, `기억 2 보여줘`, `기억 2 수정: …`, `기억 2 잊어줘`, `보관함`, `기억 복원 1`, `기억 완전 삭제 1` | - | 위 "기억" 절. 수정/잊기/복원/완전 삭제는 `기억 확인 <코드>`로 한 번 더 확인 |
-| 기억에 없는 질문 | `내가 좋아하는 과일이 뭐였지?` (저장된 기억 없음) | - | "그 내용은 기억에 없어요. 알려 주시면 "기억해: …"로 저장해 둘게요." (지어내지 않음) |
+| 기억에 없는 질문 | `내가 좋아하는 과일이 뭐였지?` (저장된 기억 없음) | - | "그 내용은 기억에 없어요. 알려 주시면 "기억해: …"로 저장해 둘게요." (지어내지 않음). 다른 기억이 저장되어 있으면 지금은 이 고정 답 대신 모델이 답할 수 있음(v3 QA 기록 D5-R, 수정 중) |
 | 했다고 착각하는 답 막기 | (예: 모델이 "커밋했어요", "할 일에 넣었어요"라고 답하려 할 때) | - | 실제로 하지 않은 Quoky 작업을 했다고 말하는 답은 "하지 않았다"는 안내와 쓸 명령으로 바뀜. 문장 패턴 기반 best-effort |
 | 학습 후보 | `피드백 후보`, `후보 1 메모: 더 짧게`, `후보 1 예시로 저장`, `예시 목록`, `예시 1 수정: …`, `예시 1 삭제` | - | 👎/👍 받은 답을 하나씩 골라 이 컴퓨터에만 저장(365일, 비밀값처럼 보이면 거절). 예시를 실제 프롬프트에 쓰려면 `QUOKY_LEARNING_EXAMPLES_ENABLED=true` (로컬 모델에만) |
 | 캘린더 보기 | `오늘 일정`, `내일 일정 뭐야?`, `이번 주 일정`, `다음 회의 언제야?`, `내일 바빠?` | 캘린더 설정 (아래) | `QUOKY_TIMEZONE` 기준 일정 목록. AI 호출 없음. 일정 내용은 Claude로 보내지 않음 |
@@ -770,7 +773,7 @@ Quoky는 그런 외부 작업을 할 수 없다고 정직하게 답합니다. �
 | Jira 상태 변경 | `ABC-1 진행 중으로 바꿔줘` → `승인` → `상태 변경 실행` | 위와 같음 | 미리보기에 나온 전환(transition)과 대상 상태만 실행. 그 사이 이슈가 바뀌면 실행하지 않음 |
 | Slack 게시 | `#dev-test에 게시: 배포 끝났어요` 또는 `#dev-test에 배포 끝났어요라고 올려줘` → `승인` → `Slack 게시 실행` | 쓰기 스위치 + Slack 봇 토큰 + 채널 허용 목록 | 허용된 채널에만. 봇을 채널에 초대하지 않았으면 "대상을 찾지 못했어요. 이 요청으로는 아무것도 보내지 않았어요." |
 | 첨부 파일 | 메시지에 텍스트 파일(`.txt`·`.log`·`.md`·`.json` 등, 256KiB까지) 첨부 | - | 내용을 대화 문맥으로 씀(신뢰하지 않는 입력, 비밀값처럼 보이면 거절). 한 메시지에 3개까지. 긴 파일은 앞뒤 일부만(모두 합쳐 약 2,000자, 이미지와 함께 보내도 같음). 파일 이름이 비밀값처럼 보이면 `attachment-1.log`처럼 바꿔 씀. 읽을 수 있는 첨부가 하나도 없을 때 메시지 글이 비어 있으면(멘션이나 보이지 않는 문자만 있어도 빈 것으로 봄) 모델에 묻지 않고 안내만 함. 글이 있으면 "첨부를 읽지 못함(내용 추측 금지)"을 알린 채 평소처럼 답함. 작업 폴더에 저장하지 않음 |
-| 이미지 | PNG·JPEG·WebP 첨부 (8MiB까지, 한 메시지에 3개까지) | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (`ollama`/`claude`/`off`, 5절) | 고른 provider 하나만 분석. 기본(미설정)은 로컬 비전 모델만(`QUOKY_OLLAMA_VISION_MODEL`). `claude`를 고르면 이미지가 Anthropic으로 전송됨(소유자가 명시적으로 고를 때만). 준비된 provider가 없으면 "분석하지 않았어요 … 어디로도 보내지 않았어요". 이미지 속 비밀값은 미리 찾을 수 없고, 답에 비밀값처럼 보이는 내용이 있으면 보여 주지도 저장하지도 않음. 분석하는 동안만 비공개 임시 파일에 두고, 처리가 끝나면 지움(남은 임시 파일은 시작할 때와 주기적으로 정리) |
+| 이미지 | PNG·JPEG·WebP 첨부 (8MiB까지, 한 메시지에 3개까지) | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (`ollama`/`claude`/`codex`/`off`, 5절) | 고른 provider 하나만 분석. 기본(미설정)은 로컬 비전 모델만(`QUOKY_OLLAMA_VISION_MODEL`). `claude`를 고르면 이미지가 Anthropic으로, `codex`를 고르면 OpenAI로 전송됨(소유자가 명시적으로 고를 때만). 준비된 provider가 없으면 "분석하지 않았어요 … 어디로도 보내지 않았어요". 이미지 속 비밀값은 미리 찾을 수 없고, 답에 비밀값처럼 보이는 내용이 있으면 보여 주지도 저장하지도 않음. 분석하는 동안만 비공개 임시 파일에 두고, 처리가 끝나면 지움(남은 임시 파일은 시작할 때와 주기적으로 정리) |
 
 쓰기 실행 규칙 (Jira/Slack/캘린더 공통):
 
@@ -882,8 +885,8 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | Jira/Slack 쓰기 요청에 "쓰기가 허용된 대상이 아니에요" | 프로젝트 키나 채널이 허용 목록에 없음. 아무것도 보내지 않았음 |
 | 운영 화면 로그인에서 "허용되지 않은 출처예요" | 예전 빌드의 알려진 문제(PR #131에서 고침). 최신 빌드로 다시 시작. 주소는 `127.0.0.1` 또는 `localhost`와 설정한 포트만 |
 | 운영 화면이 열리지 않음 | `QUOKY_OPS_UI_ENABLED=true`인지, `quoky.log`의 `ops-ui.unavailable reason=...`(포트 사용 중 등) 확인 |
-| 이미지에 "분석하지 않았어요" | `ollama`: `QUOKY_OLLAMA_VISION_MODEL`이 비었거나 잘못됐거나, 그 모델이 Ollama에 없음. `claude`: Claude CLI가 없거나 로그인되지 않음(`claude auth status`). 운영 화면 "AI 공급자 준비 상태"의 `IMAGE_UNDERSTANDING` 행과 "이미지 이해 공급자 (설정)" 확인 |
-| `IMAGE_UNDERSTANDING_PROVIDER_INVALID` — "QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", or "off" (lowercase). "claude" sends attached images to Anthropic (cloud)." | 소문자 세 값만 허용. 빈 값도 불가 |
+| 이미지에 "분석하지 않았어요" | `ollama`: `QUOKY_OLLAMA_VISION_MODEL`이 비었거나 잘못됐거나, 그 모델이 Ollama에 없음. `claude`: Claude CLI가 없거나 로그인되지 않음(`claude auth status`). `codex`: Codex CLI가 없거나 로그인되지 않음(`codex login status`). 운영 화면 "AI 공급자 준비 상태"의 `IMAGE_UNDERSTANDING` 행과 "이미지 이해 공급자 (설정)" 확인 |
+| `IMAGE_UNDERSTANDING_PROVIDER_INVALID` — "QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", or "off" (lowercase). "claude" sends attached images to Anthropic and "codex" to OpenAI (cloud)." | 소문자 네 값만 허용. 빈 값도 불가 |
 | `IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING` / `IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID` / `IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL` | `ollama`를 골랐는데 `QUOKY_OLLAMA_VISION_MODEL`이 없거나 형식이 틀리거나 `cloud` 모델 |
 | `IMAGE_UNDERSTANDING_MODEL_INVALID` | `QUOKY_IMAGE_UNDERSTANDING_MODEL` 형식 오류 (`QUOKY_CLAUDE_MODEL`과 같은 규칙) |
 | 로그에 `not starting: 3 consecutive configuration exits` | 설정 오류로 3번 연속 멈춰 서비스가 재시작을 멈춤. `quoky.log`에서 원인을 고친 뒤 `ops/launchd/quokyctl.sh restart --apply` |
@@ -896,8 +899,10 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
   ADR-0106 (기억 관리), ADR-0107 (학습), ADR-0110 (캘린더), ADR-0111 (첨부/이미지), ADR-0112 (커넥터 쓰기),
   ADR-0113 (운영 화면)
 - Personal v2 Live QA 기록: [`docs/uat/personal-v2-qa-record.md`](../uat/personal-v2-qa-record.md). Jira/Confluence/GitHub
-  실제 조회, 알림 채널 전달은 2026-10-06에 실제로 확인했습니다. Slack 읽기 조회와 머지 활성화는 아직 실제 검증 전입니다.
+  실제 조회, 알림 채널 전달은 2026-10-06에 실제로 확인했습니다. Slack 읽기 조회는 2026-10-08에 사용자 토큰으로 실제로
+  확인했습니다(v3 QA 기록 세션 3·4). 머지 활성화는 아직 실제 검증 전입니다.
 - Personal v3 Live QA 기록: [`docs/uat/personal-v3-qa-record.md`](../uat/personal-v3-qa-record.md). 운영 화면의 처리/승인,
-  첨부·이미지, 학습 예시, 한국어 일상 대화 20문항 세트 등 아직 실행하지 않은 항목은 기록 끝의 PENDING 목록에 있습니다.
+  첨부·이미지, 학습 예시, 한국어 일상 대화 20문항 세트, 실제 재부팅은 세션 2-4에서 실행했습니다. 아직 실행하지 않은
+  항목(쓰기 도중 네트워크 실패 등)은 기록 끝의 PENDING 목록에 있습니다.
 - 운영자 설정 (환경 변수, GitHub App 권한, 커넥터, Ollama/Claude 격리): [`docs/uat/operator-guide.md`](../uat/operator-guide.md)
 - 첫 릴리스 attended Live UAT 절차: [`docs/uat/first-release-uat-packet.md`](../uat/first-release-uat-packet.md)

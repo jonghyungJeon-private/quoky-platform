@@ -42,7 +42,7 @@ line to use the default.
 | `QUOKY_CHAT_PROVIDER` | unset (derived) | `claude` \| `codex` \| `ollama` (exact; else `CHAT_PROVIDER_INVALID`). Picks the chat-tier provider registered next to Claude (ADR-0092 amendment, see 0.4a). Unset derives from `QUOKY_OLLAMA_ENABLED` (`true` → `ollama`, `false` → `claude`). A contradicting pair: the selector wins and startup logs `CHAT_PROVIDER_OVERRIDES_OLLAMA_ENABLED` |
 | `QUOKY_CODEX_MODEL` | unset (CLI default) | Passed to `codex exec` as `-m` when `codex` is selected; same token rule as `QUOKY_CLAUDE_MODEL` (`CODEX_MODEL_INVALID`) |
 | `QUOKY_OLLAMA_ENABLED` | `true` | Registers local Ollama (chat, summaries, read-only work) when `QUOKY_CHAT_PROVIDER` is unset. `false` forces Claude for everything. The owner's service has it `false` (Claude Sonnet chat) |
-| `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b`. The owner's service runs `granite3.3:8b` since 2026-10-07 (see 0.5) |
+| `OLLAMA_MODEL` | `llama3.1` | Must match an installed tag exactly (`ollama list`), e.g. `llama3.1:8b`. The owner's service was set to `granite3.3:8b` on 2026-10-07 (see 0.5); its chat has run on Claude since the owner decision of the same day |
 | `QUOKY_CLAUDE_MODEL` | `sonnet` | Passed to the Claude CLI as `--model` |
 | `QUOKY_GIT_REMOTE_ENABLED` | `false` | Enables the push to PR chain and remote reads. Needs the GitHub App (0.3) |
 | `QUOKY_GIT_MERGE_ENABLED` | `false` | Needs the remote flag, else startup error `GIT_MERGE_REQUIRES_REMOTE`. Keep `false`; merge enablement is a separate Strict decision and was never live-tested |
@@ -70,9 +70,9 @@ aliases are accepted, `QUOKY_*` wins):
 
 | Connector | Variables | Notes |
 |---|---|---|
-| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Basic auth `email:token`. `BASE_URL` is the site origin only (`https://<site>.atlassian.net`). Live behaviour of the Jira search endpoint is unverified |
-| Slack | `QUOKY_SLACK_TOKEN` | Must be a Slack **user** token (`xoxp-`): `search.messages` refuses bot tokens. Scopes: `search:read` (search), `channels:read` (channel list, public channels only), `channels:history` (public channel messages and threads); add `groups:history` only to read a private channel by id. `groups:read` is not needed (the list does not request private channels). Read lookups still unverified live (no user token yet, v2 PC-9). Slack **writes** use a separate bot token (0.7) |
-| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN`, optional `QUOKY_CONFLUENCE_EMAIL` | `BASE_URL` may be the site root or end in `/wiki` (requests go to `/wiki/...` exactly once). With an email the connector sends Basic `email:token` (Atlassian Cloud API token); without one it sends `Bearer` (Data Center PAT only; Cloud rejects Bearer for API tokens). If `QUOKY_CONFLUENCE_EMAIL` is unset and the Jira base URL has the same host, the Jira email is reused; set it to an empty value to force Bearer. Unverified live |
+| Jira | `QUOKY_JIRA_BASE_URL`, `QUOKY_JIRA_EMAIL`, `QUOKY_JIRA_TOKEN` | Read-only lookups. Basic auth `email:token`. `BASE_URL` is the site origin only (`https://<site>.atlassian.net`). Ran live on the real tenant 2026-10-06 (see below) |
+| Slack | `QUOKY_SLACK_TOKEN` | Must be a Slack **user** token (`xoxp-`): `search.messages` refuses bot tokens. Scopes: `search:read` (search), `channels:read` (channel list, public channels only), `channels:history` (public channel messages and threads); add `groups:history` only to read a private channel by id. `groups:read` is not needed (the list does not request private channels). Read lookups ran live on 2026-10-08 with a user token (v3 QA record, sessions 3 B7 and 4 D3/D15); DMs and group DMs are left out of search results and results are labelled `#channel-name` (#148). Slack **writes** use a separate bot token (0.7) |
+| Confluence | `QUOKY_CONFLUENCE_BASE_URL`, `QUOKY_CONFLUENCE_TOKEN`, optional `QUOKY_CONFLUENCE_EMAIL` | `BASE_URL` may be the site root or end in `/wiki` (requests go to `/wiki/...` exactly once). With an email the connector sends Basic `email:token` (Atlassian Cloud API token); without one it sends `Bearer` (Data Center PAT only; Cloud rejects Bearer for API tokens). If `QUOKY_CONFLUENCE_EMAIL` is unset and the Jira base URL has the same host, the Jira email is reused; set it to an empty value to force Bearer. Ran live on the real tenant 2026-10-06 with Basic auth (see below) |
 
 On Atlassian Cloud, Jira and Confluence on one site share **one** Atlassian API token: create it for your account at
 <https://id.atlassian.com/manage-profile/security/api-tokens> and put the same value in `QUOKY_JIRA_TOKEN` and
@@ -81,7 +81,8 @@ needed. The email and tokens are never logged.
 | GitHub (work lookups) | the GitHub App below | Read token requests Issues: Read and Pull requests: Read |
 
 Connector lookups on the real Jira, Confluence and GitHub tenants ran live on 2026-10-06 (`docs/uat/personal-v2-qa-record.md`
-PC-4..PC-8; Confluence was fixed to Basic auth). Slack read lookups have **not** run (no user token). Treat a first run
+PC-4..PC-8; Confluence was fixed to Basic auth). Slack read lookups ran live on 2026-10-08 (v3 QA record, live QA
+sessions 3 and 4). Treat a first run
 against a new tenant as a read-only probe, one request per connector, under its own approval.
 
 ### 0.3 GitHub App (push to PR chain and GitHub lookups)
@@ -154,8 +155,11 @@ ChatGPT login; the owner accepted this on the same basis as Claude.
 - Failures map to `TIMEOUT`, `UNAVAILABLE` (CLI missing, not logged in, usage limit), `EXECUTION_FAILED` or
   `EMPTY_OUTPUT`; no raw CLI text is stored. `task_runs.providerId` shows `codex-cli` for Codex turns.
 - Live check 2026-10-07 (codex-cli 0.160.0, default model, two calls): about 7.5-8 s per short Korean recommendation
-  turn, about 8.2k input tokens (6.9k cached), session and history files unchanged.
-- Switching back: set `QUOKY_CHAT_PROVIDER=claude` (or `ollama`) and restart.
+  turn, about 8.2k input tokens (6.9k cached), session and history files unchanged. On the service, a Codex chat turn
+  answered in about 9.5 s, and an operations-UI switch to `codex` was answered by `codex-cli` (v3 QA record OD3, session 3
+  A2).
+- Switching back: set `QUOKY_CHAT_PROVIDER=claude` (or `ollama`) and restart, or switch at runtime without a restart
+  (operations UI `/providers` or `모델 변경: …`, see 0.7 "Runtime model switch").
 
 ### 0.5 Ollama
 
@@ -173,7 +177,9 @@ comparison (policy checks only) picked `gemma3:4b`, which gave non-answers live 
 helpfulness checks (`answer-quality-checkers-v2`) picked `granite3.3:8b` (relevant tokens 9/10, hedges uncheckable 3/4, no
 invented specifics 4/4, language match 96.9%). On the owner's M3 Pro (18 GB) it uses about 5.7 GB at 100% GPU, 15-17
 tok/s idle and about 15 tok/s under heavy CPU load, with a cold load of about 16 s; the Ollama default keep-alive (5
-minutes) is kept. The service runs it since 2026-10-07. The first check ran while unrelated builds held the host load
+minutes) is kept. The service ran it from 2026-10-07 until the owner moved chat to Claude the same day
+(`QUOKY_CHAT_PROVIDER=claude`) after the Korean daily-chat set (QA record W6-L05: about 5 of 20 replies usable as is);
+Ollama stays selectable and serves embeddings. The first check ran while unrelated builds held the host load
 near 20, the 5 s readiness probe failed at startup and the Claude CLI answered 3 of 4 prompts. The re-test after the
 load cleared (QA record W6-M5) was a partial pass: 3 of 4 replies came from granite (21-38 s generation), one fell back
 to Claude when a parallel test run raised the load again, and invented specifics (song titles) remain. Under heavy host
@@ -192,22 +198,27 @@ Done for v3 (see `docs/uat/personal-v3-qa-record.md`): the launchd install on th
 a reminder across the restart; migrations v13 to v14 and v14 to v15 on the service DB with verified pre-migration
 backups; memory commands and the archive; the code chain to a PR with the v3 title/body; calendar reads and
 create/move/delete on the owner's calendar; Jira comment and transition and a Slack post on allowlisted test targets;
-operations UI sign-in.
+operations UI sign-in. Since then (sessions 2-4 and the host reboot, 2026-10-07/08): the 04:00 daily backup, a restore
+drill on a copy, a real host reboot (the service started itself at login), `quokyctl.sh backup --apply` with the vector
+snapshot; operations UI panels, approve/reject, the chat/UI race, reminder cancel, memory forget, foreign-Origin
+refusal and token rotation across a restart; attachments (text, oversize, credential-like, images, unsupported type,
+non-allowlisted channel, injection caption); the W5-L01..L04 re-run; a 44-phrasing DET sweep; Slack read lookups;
+Codex chat, runtime model switching and the Codex image option.
 
 Still pending, each its own exact-scope Strict session:
 
-1. Slack read lookups (needs a Slack user token).
+1. A mid-send write failure (`UNCERTAIN`).
 2. Any merge-flag enablement (`QUOKY_GIT_MERGE_ENABLED=true`, CODE-9, deferred).
-3. Operations UI handling: reject and the chat/UI race, reminder cancel, memory forget, panel checks against chat, a
-   foreign-Origin request, token rotation across a restart (UI approve ran live, QA record W6-A2).
-4. Attachments of an unsupported type or in a non-allowlisted channel, a mid-send write failure (`UNCERTAIN`), the
-   W5-L01..L04 re-run.
-5. A real host reboot (the launchd bootout/bootstrap proxy, the 04:00 daily backup and a restore drill on a copy ran
-   live, QA record W6-L02..L04).
+3. The live check of D13 (attachment "not read" reasons; blocked by the Discord web client freezing on a corrupt
+   image).
+4. The Stage 2A provider-path re-validation and a CODE-8 live check (CODE-8 is being implemented on another branch).
 
-Known operator follow-up from live QA session 2: a local-model runaway generation is stopped only by the 120 s provider
-timeout. (Resolved since: `vectors/` is now snapshotted with every backup and restored with its DB copy, and
-`quokyctl.sh backup --apply` takes an on-demand backup while the service runs; see 0.7.)
+Open defects from live QA session 4, being fixed: D5-R (the own-memory similarity floor does not separate unrelated
+Korean questions, so the deterministic "기억에 없어요" does not fire) and D16 (the embedding provider went not-ready for
+about 5 minutes without a log line; recall fell back to lexical). Known operator follow-up from live QA session 2: a
+local-model runaway generation is stopped only by the 120 s provider timeout. (Resolved since: `vectors/` is now
+snapshotted with every backup and restored with its DB copy, and `quokyctl.sh backup --apply` takes an on-demand backup
+while the service runs; see 0.7.)
 
 ### 0.7 Personal v3 operator additions
 
