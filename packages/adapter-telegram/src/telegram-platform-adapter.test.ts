@@ -106,22 +106,45 @@ describe('Telegram startup identity check (ADR-0114 D5) and the 409 probe', () =
     ['another bot id', { id: 999_999_999, is_bot: true }],
     ['a user account', { id: Number(FAKE_BOT_ID), is_bot: false }],
     ['a malformed answer', 'nope'],
-  ])('getMe returning %s fails closed before polling', async (_label, me) => {
+  ])('getMe returning %s halts the Telegram side before polling (start() itself resolves)', async (_label, me) => {
     const h = harness(new FakeTelegram().queue('getMe', okReply(me)));
-    const error = await h.adapter.start().catch((err: unknown) => err);
-    expect(error).toBeInstanceOf(TelegramStartupError);
-    expect((error as TelegramStartupError).code).toBe(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
+    await expect(h.adapter.start()).resolves.toBeUndefined();
+    await until(() => h.adapter.status().halted !== undefined);
+    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false, halted: TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH });
     expect(h.fake.callsTo('getUpdates')).toHaveLength(0);
-    expect(h.adapter.status().identityVerified).toBe(false);
+    await h.adapter.stop();
   });
 
-  it('a rejected token and a 409 on the probe (a webhook) are typed startup errors', async () => {
+  it('a rejected token and a 409 on the probe (a webhook) halt the Telegram side; nothing is polled', async () => {
     const auth = harness(new FakeTelegram().queue('getMe', errorReply(401)));
-    await expect(auth.adapter.start()).rejects.toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED });
+    await auth.adapter.start();
+    await until(() => auth.adapter.status().halted !== undefined);
+    expect(auth.adapter.status().halted).toBe(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
+    expect(auth.fake.callsTo('getUpdates')).toHaveLength(0);
     const conflict = harness(new FakeTelegram().queue('getUpdates:instant', errorReply(409)));
-    const error = await conflict.adapter.start().catch((err: unknown) => err);
-    expect(error).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT, message: 'TELEGRAM_POLL_CONFLICT' });
+    await conflict.adapter.start();
+    await until(() => conflict.adapter.status().halted !== undefined);
+    expect(conflict.adapter.status().halted).toBe(TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT);
     expect(conflict.fake.callsTo('getUpdates')).toHaveLength(1);
+    await auth.adapter.stop();
+    await conflict.adapter.stop();
+  });
+
+  it('CA re-review P3-5: start() resolves without waiting for getMe (a hanging Telegram never delays Discord)', async () => {
+    const h = harness(new FakeTelegram().queue('getMe', { hang: true }));
+    let resolved = false;
+    const starting = h.adapter.start().then(() => {
+      resolved = true;
+    });
+    await flush(2);
+    expect(resolved).toBe(true);
+    await starting;
+    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false });
+    expect(h.fake.callsTo('getMe')).toHaveLength(1);
+    // stop() aborts the pending getMe; nothing is halted and nothing is polled.
+    await h.adapter.stop();
+    expect(h.adapter.status().halted).toBeUndefined();
+    expect(h.fake.callsTo('getUpdates')).toHaveLength(0);
   });
 });
 
@@ -659,6 +682,7 @@ describe('Telegram owner notification sink (ADR-0101 D4, ADR-0114 D11; CA P1-1)'
   async function started(fake = new FakeTelegram()) {
     const h = harness(fake);
     await h.adapter.start();
+    await until(() => h.adapter.status().identityVerified);
     return h;
   }
 
@@ -743,7 +767,13 @@ describe('Telegram token handling: never in logs, errors, inspect or JSON', () =
     const background = harness(new FakeTelegram().queue('getMe', { throws: leak }, errorReply(401)));
     await background.adapter.start();
     await until(() => background.adapter.status().halted !== undefined);
-    const startError = await harness(new FakeTelegram().queue('getMe', errorReply(401))).adapter.start().catch((err: unknown) => err);
+    const startError = await new TelegramPlatformAdapter(
+      { token: holder(OTHER_TOKEN), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger([]),
+      { fetch: new FakeTelegram().fetch },
+    )
+      .start()
+      .catch((err: unknown) => err);
     const observable = [
       JSON.stringify(h.logs),
       JSON.stringify(background.logs),
@@ -755,6 +785,6 @@ describe('Telegram token handling: never in logs, errors, inspect or JSON', () =
       String(startError),
     ].join('\n');
     expect(observable).not.toContain(FAKE_TOKEN_SECRET);
-    expect(startError).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED });
+    expect(startError).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH });
   });
 });

@@ -267,16 +267,15 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   }
 
   /**
-   * Identity check, conflict probe, then polling (in the background).
+   * Starts the background identity check, conflict probe and polling, and returns at once (CA re-review P3-5): a hanging
+   * Telegram never delays Discord's startup. The only synchronous refusal is a token that names another bot than
+   * `QUOKY_TELEGRAM_EXPECTED_BOT_ID` (no network; `config.ts` already refuses it as `TELEGRAM_TOKEN_BOT_ID_MISMATCH`).
    *
-   * Fail-closed (throws {@link TelegramStartupError}, reads no update): the token names another bot, `getMe` returns
-   * another bot (`TELEGRAM_IDENTITY_MISMATCH`), the token is rejected (`TELEGRAM_AUTH_REJECTED`), or the probe gets
-   * HTTP 409 (`TELEGRAM_POLL_CONFLICT`, in practice a webhook).
-   *
-   * A transient failure (network, timeout, 5xx) does NOT fail the start (CA P2-2): a Telegram outage must not take
-   * Discord down. `start()` resolves, the identity is retried in the background with the poll backoff, and polling
-   * starts only once `getMe` matches; until then `status().identityVerified` is false. A mismatch or a rejected token
-   * found by that retry halts the Telegram side only (logged, `status().halted`), never the process.
+   * In the background, nothing is read before `getMe` matches (`status().identityVerified`):
+   * - `getMe` returns another bot (`TELEGRAM_IDENTITY_MISMATCH`), the token is rejected (`TELEGRAM_AUTH_REJECTED`), or
+   *   the probe gets HTTP 409 (`TELEGRAM_POLL_CONFLICT`, in practice a webhook): the Telegram side halts
+   *   (`status().halted`, logged, one owner operations notice through `onHalt`); Discord runs on.
+   * - A transient failure (network, timeout, 5xx; CA P2-2) is retried with the poll backoff until it matches.
    */
   async start(): Promise<void> {
     if (this.loop !== undefined) return;
@@ -289,12 +288,11 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
     }
     if (this.offset === undefined) this.offset = this.loadOffset();
-    const first = await this.checkIdentity();
     const controller = new AbortController();
     this.controller = controller;
     // CA re-review P3-2: an unexpected rejection of the background loop must never become an unhandled rejection that
     // takes the process (and Discord) down; it halts the Telegram side only and is logged without content.
-    this.loop = this.run(controller.signal, first === 'verified').catch((err: unknown) => {
+    this.loop = this.run(controller.signal).catch((err: unknown) => {
       this.polling = false;
       this.logger.error('telegram poll loop failed', { errorName: err instanceof Error ? err.name : typeof err });
       this.halt(TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED);
@@ -365,7 +363,16 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     }
   }
 
-  private async run(signal: AbortSignal, verified: boolean): Promise<void> {
+  private async run(signal: AbortSignal): Promise<void> {
+    let verified: boolean;
+    try {
+      verified = (await this.checkIdentity(signal)) === 'verified';
+    } catch (err) {
+      if (!(err instanceof TelegramStartupError)) throw err;
+      if (!this.stopped) this.halt(err.code);
+      return;
+    }
+    if (this.stopped) return;
     if (!verified && !(await this.verifyInBackground(signal))) return;
     this.polling = true;
     try {
