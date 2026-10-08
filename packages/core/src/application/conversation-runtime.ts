@@ -62,7 +62,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
   type ApprovalDecisionInput,
@@ -3414,7 +3414,11 @@ export class ConversationRuntime {
         if (!approval || !anchor.operation || !anchor.preview) return null;
         const phrase = documentedExecutionPhrase(connectorWriteExecutionGate(anchor.operation));
         // Only the actor who asked may decide (the anchor binds actor and session); anyone else is re-prompted.
-        const decision = anchor.actorId === actor.id ? ConversationRuntime.interpretDecision(message.text) : 'ambiguous';
+        // Live QA session 4 (N2): a whole-message "됐어" / "never mind" cancels too (closing sends nothing).
+        const interpreted = anchor.actorId === actor.id ? ConversationRuntime.interpretDecision(message.text) : 'ambiguous';
+        const decision = interpreted === 'ambiguous' && anchor.actorId === actor.id && isPendingCancelUtterance(message.text)
+          ? 'cancel'
+          : interpreted;
         this.deps.logger.info('approval decision interpreted', { approvalId: approval.id, decision });
         if (decision === 'ambiguous') {
           const reply = this.deps.composer.composeConnectorWritePending(
@@ -3454,7 +3458,11 @@ export class ConversationRuntime {
         }
         const decision = interpretStrayDecisionUtterance(message.text);
         await flow.close(session, view, 'abandoned', this.clock());
-        if (decision === 'deny' || decision === 'cancel') return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
+        // Live QA session 4 (N2): "그만" / "아니" / "됐어" / "stop" close the choice with the fixed reply too — never chat,
+        // which could not tell what had (not) happened.
+        if (decision === 'deny' || decision === 'cancel' || isPendingCancelUtterance(message.text)) {
+          return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
+        }
         return 'released'; // next-turn-only: any other message is a new turn
       }
       case 'APPROVED': {
@@ -3510,7 +3518,9 @@ export class ConversationRuntime {
         }
         // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here. D12: the approval is
         // recorded withdrawn (REJECTED) together with the close, under the approval → session locks (#132 rules).
-        if ((decision === 'deny' || decision === 'cancel') && anchor.actorId === actor.id) {
+        // Live QA session 4 (N2): "그만" / "됐어" / "stop" withdraw it like "취소" (nothing is sent either way).
+        const withdraws = decision === 'deny' || decision === 'cancel' || (decision === null && isPendingCancelUtterance(message.text));
+        if (withdraws && anchor.actorId === actor.id) {
           return this.decisionTurn(
             session,
             await this.approvalDecisions.revokeConnectorWrite(

@@ -956,6 +956,13 @@ export class ApprovalDecisionService {
             ...this.decisionOf(approvalId, input, false),
             comment: APPROVAL_REVOKED_COMMENT,
           });
+          // Live QA session 4 (N1): the withdrawal is audited in the log like every other decision (content-free).
+          this.deps.logger.info('approval decided', {
+            approvalId,
+            surface: input.surface,
+            kind: 'CONNECTOR_WRITE',
+            outcome: 'REVOKED',
+          });
         }
       }
       await flow.close(input.session, live, reason, this.clock(), held);

@@ -238,3 +238,27 @@ export function interpretStrayDecisionUtterance(text: string): Exclude<ApprovalD
     .replace(APPROVE_FILLER_TOKEN, ' ');
   return remainder.trim().length === 0 ? decision : null;
 }
+
+/**
+ * Live QA session 4 (N2): whole-message "stop / never mind" words that close a pending connector-write request or a
+ * pending numbered calendar choice ("그만", "취소", "아니", "됐어", "cancel", "stop"). Wider than the stray-decision
+ * vocabulary on purpose: it is consulted ONLY while such a request or choice is pending, where these words can only
+ * mean "drop it" — closing is non-mutating (nothing is sent or changed). With nothing pending they stay ordinary chat.
+ * A negated form ("그만하지 마") or anything else in the message ("그만 다른 거 보여줘") is not a cancel.
+ */
+const PENDING_CANCEL = matchersFor([
+  '그만', '그만해', '그만할게', '그만둘게', '그만두자', '취소', '아니', '아뇨', '됐어', '됐다', '괜찮아',
+  'cancel', 'stop', 'no', 'nope', 'never mind', 'nevermind', 'forget it',
+]);
+const PENDING_CANCEL_FILLER = new RegExp(`${TOKEN_BEFORE}(?:이제|그냥|좀|일단|그거|please|just)${TOKEN_AFTER}`, 'g');
+
+export function isPendingCancelUtterance(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length === 0 || t.length > MAX_STRAY_DECISION_LENGTH || QUESTION.test(t)) return false;
+  if (t.search(PENDING_CANCEL.exact) < 0) return false;
+  const remainder = t
+    .replace(PENDING_CANCEL.exact, ' ')
+    .replace(/[^가-힣a-z0-9]+/g, ' ')
+    .replace(PENDING_CANCEL_FILLER, ' ');
+  return remainder.trim().length === 0;
+}

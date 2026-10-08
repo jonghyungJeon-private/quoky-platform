@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { interpretApprovalDecision, interpretStrayDecisionUtterance, type ApprovalDecisionResult } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance, type ApprovalDecisionResult } from './approval-decision';
 import type { ApprovalDecisionKind } from './conversation-runtime';
 
 describe('interpretApprovalDecision', () => {
@@ -238,4 +238,20 @@ describe('interpretStrayDecisionUtterance (QA-018)', () => {
   ])('"%s" is not a stray decision', (text) => {
     expect(interpretStrayDecisionUtterance(text)).toBeNull();
   });
+});
+
+describe('isPendingCancelUtterance (live QA session 4, N2)', () => {
+  it.each(['그만', '그만해', '그만할게', '취소', '취소해줘', '아니', '아니요', '아뇨', '됐어', '됐어요', '이제 그만', '그냥 됐어', 'cancel', 'Stop', 'stop.', 'never mind', 'no'])(
+    '"%s" is a stop word',
+    (text) => {
+      expect(isPendingCancelUtterance(text)).toBe(true);
+    },
+  );
+
+  it.each(['그만하지 마', '그만 다른 일정 보여줘', '아니 3시 말고 4시', '됐어?', '아니 뭐라고?', 'stop the build', '1번', '승인', '', `${'그만 '.repeat(20)}`])(
+    '"%s" is not',
+    (text) => {
+      expect(isPendingCancelUtterance(text)).toBe(false);
+    },
+  );
 });

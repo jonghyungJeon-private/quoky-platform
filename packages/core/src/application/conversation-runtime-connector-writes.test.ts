@@ -391,7 +391,12 @@ function harness(opts: HarnessOptions = {}) {
         newId: () => `id-${String(++idSeq).padStart(4, '0')}-cwr`,
       });
 
-  const logger: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+  const logLines: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+  const logger: Logger = {
+    info: (message, fields) => { logLines.push({ message, ...(fields ? { fields: { ...fields } } : {}) }); },
+    warn: () => undefined,
+    error: () => undefined,
+  };
   const surface = { status: 'COMPLETE' as const, items: [], sources: [] };
   const desk = new WorkChatService(
     { workSurface: { forActor: async () => surface }, connectors: { list: () => [] }, work: new WorkManager(storage as unknown as StorageProvider) },
@@ -495,7 +500,7 @@ function harness(opts: HarnessOptions = {}) {
     actor = next;
   };
   return {
-    send, sendIn, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor,
+    send, sendIn, writes, totalWrites, receipts, approvals, tasks, sessions, recorded, classify, runtime, flow, anchorTask, setActor, logLines,
     applyLookups, live, pauseTurn, hooks,
   };
 }
@@ -1825,6 +1830,13 @@ describe('connector writes — live QA session 3 (D1, D12)', () => {
     expect(h.totalWrites()).toBe(0);
     const located = await h.runtime.approvalDecisions.locateForOpsUi(approval!.id, OWNER, async () => [...h.sessions.values()]);
     expect(located).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
+    // Live QA session 4 (N1): the withdrawal is logged once, like the approve decision before it.
+    expect(h.logLines.filter((line) => line.message === 'approval decided')).toEqual([
+      {
+        message: 'approval decided',
+        fields: { approvalId: approval!.id, surface: 'chat', kind: 'CONNECTOR_WRITE', outcome: 'REVOKED' },
+      },
+    ]);
   });
 
   it('D12: 취소 withdraws it the same way; another actor\'s 거절 changes neither the anchor nor the approval', async () => {
@@ -1851,6 +1863,7 @@ describe('connector writes — live QA session 3 (D1, D12)', () => {
     await h.send('거절');
     expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
     expect(h.writes.addComment).toHaveLength(1);
+    expect(h.logLines.some((line) => line.fields?.outcome === 'REVOKED')).toBe(false);
   });
 });
 
@@ -2058,5 +2071,75 @@ describe('connector writes — the operations-UI lookups are read-only (Codex P1
       view: { kind: 'CONNECTOR_WRITE', approvable: true },
     });
     expect(JSON.stringify([...h.tasks.values()]) + JSON.stringify([...h.sessions.values()])).toBe(before);
+  });
+});
+
+describe('connector writes — live QA session 4 (N2): stop words at a pending choice or request', () => {
+  const CHOICE_CLOSED = '일정 선택을 취소했어요. 이 요청으로는 캘린더를 바꾸지 않았어요.';
+
+  it.each(['그만', '그만해', '아니', '아니요', '됐어', '됐어요', '취소', 'cancel', 'stop', '이제 그만', 'never mind'])(
+    'at a numbered calendar choice "%s" closes it deterministically: fixed reply, no chat, no reset, nothing written',
+    async (text) => {
+      const h = harness({ events: [WEEKLY, ONE_ON_ONE], priorActiveTaskId: 'task-prior' });
+      await h.send('내일 3시 회의 취소해줘');
+      const choiceTaskId = h.sessions.get('sess-1')?.activeTaskId as string;
+      expect(anchorOf(h.tasks.get(choiceTaskId))?.status).toBe('AWAITING_CHOICE');
+      const classifyBefore = h.classify.count;
+      const result = await h.send(text);
+      expect(result.reply.text).toBe(CHOICE_CLOSED);
+      expect(h.classify.count).toBe(classifyBefore); // never a chat turn
+      expect(anchorOf(h.tasks.get(choiceTaskId))).toMatchObject({ status: 'CLOSED', closedReason: 'abandoned' });
+      // The conversation goes on: the session is not reset and the earlier chain is restored.
+      expect(h.sessions.get('sess-1')?.status).toBe(SessionStatus.ACTIVE);
+      expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+      expect(result.reply.text).not.toContain('새 대화');
+      expect(h.approvals.size).toBe(0);
+      expect(h.totalWrites()).toBe(0);
+    },
+  );
+
+  it.each(['그만하지 마', '그만 다른 일정 보여줘', '아니 3시 말고 4시', '됐어?'])(
+    'at a choice "%s" is not a stop word: the choice is abandoned and the message is an ordinary turn',
+    async (text) => {
+      const h = harness({ events: [WEEKLY, ONE_ON_ONE] });
+      await h.send('내일 3시 회의 취소해줘');
+      const result = await h.send(text);
+      expect(result.reply.text).not.toBe(CHOICE_CLOSED);
+      expect(h.totalWrites()).toBe(0);
+    },
+  );
+
+  it('a pending connector-write request: "됐어" cancels it like "취소" (nothing sent, no chat)', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 됐어 테스트');
+    const [approval] = [...h.approvals.values()];
+    const classifyBefore = h.classify.count;
+    const result = await h.send('됐어');
+    expect(result.status).toBe('CANCELLED');
+    expect(result.reply.text).toBe('요청을 취소했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(h.classify.count).toBe(classifyBefore);
+    expect(h.approvals.get(approval!.id)?.status).not.toBe(ApprovalStatus.APPROVED);
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('an approved, unexecuted write: "그만" withdraws it (approval REJECTED, logged REVOKED); the exact phrase then runs nothing', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 그만 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    const result = await h.send('그만');
+    expect(result.status).toBe('CANCELLED');
+    expect(h.approvals.get(approval!.id)).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'revoked-before-execution' });
+    expect(h.logLines.filter((line) => line.fields?.outcome === 'REVOKED')).toHaveLength(1);
+    await h.send('Slack 게시 실행');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('with nothing pending "그만" stays ordinary chat (and never resets the conversation)', async () => {
+    const h = harness();
+    const classifyBefore = h.classify.count;
+    await h.send('그만');
+    expect(h.classify.count).toBe(classifyBefore + 1);
+    expect(h.sessions.get('sess-1')?.status).toBe(SessionStatus.ACTIVE);
   });
 });

@@ -17132,6 +17132,10 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   the approved operation's execution step gets a deterministic reminder, a repeated phrase after SENT reports it with
   the link, Korean particles fixed. Live: Jira comment and transition, Slack post, deny, replay, allowlist refusal and
   a truthful NOT_SENT (W5). Not run live: a mid-send network failure (`UNCERTAIN`), the W5-L01..L04 re-run.
+  Live QA session 4: a post-approval 거절/취소 (the session 3 D12 withdrawal) now logs `approval decided … kind=CONNECTOR_WRITE
+  outcome=REVOKED surface=chat` (N1); whole-message stop words (그만, 아니, 됐어, cancel, stop, …) close a pending
+  request, an approved unexecuted write or a numbered calendar choice with the fixed reply instead of reaching chat
+  (N2). `그만` never resets a conversation: only `새 대화` / `/reset` do.
 - **ADR-0113 (operations UI).** OPS-1 (f499594): `node:http` on `127.0.0.1` only, off by default, per-start 256-bit
   token in `ops-ui.token` (mode 600, database directory, unlinked-then-exclusively-created on every start, removed on
   clean stop), session cookie, CSRF, Host/Origin checks, sign-in rate limit, exact CSP with no inline code; readiness
