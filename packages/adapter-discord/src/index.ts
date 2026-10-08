@@ -20,7 +20,7 @@ export {
   PARTIAL_FAILURE_NOTICE,
 } from './delivery';
 export type { DeliveryReport, ChunkSender } from './delivery';
-export { MAX_TABLE_COLUMNS, renderMarkdownTablesForDiscord } from './markdown-tables';
+export { MAX_TABLE_COLUMNS, isTableRenderingEligible, renderMarkdownTablesForDiscord } from './markdown-tables';
 export {
   classifyDiscordError,
   deliverOwnerNotification,
@@ -281,7 +281,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     }
 
     // Discord renders no Markdown tables. Only a provider-generated reply the runtime flagged `model-reply` is adapted
-    // (simple tables outside code become lines); every other message — deterministic replies, previews, approval and
+    // (simple tables become lines, and only when the reply has no fence marker or quote at all); every other message — deterministic replies, previews, approval and
     // connector-write texts, diffs, reminders — is sent byte-identical (Codex P1 on df66418).
     const text = message.format === 'model-reply' ? renderMarkdownTablesForDiscord(message.text) : message.text;
     const report = await deliverWithNotice(

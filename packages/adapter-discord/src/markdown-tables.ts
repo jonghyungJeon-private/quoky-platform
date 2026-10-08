@@ -4,17 +4,14 @@
  * `OutboundMessage` the runtime flagged `format: 'model-reply'`; every other message (deterministic replies, previews,
  * approval texts, connector-write previews, diffs, reminders) is delivered byte-identical.
  *
- * When in doubt it does not convert (Codex review P2 on 08454fb). Line by line:
- * - **Protected code.** A line whose content — after any indentation, `>` quote markers and list markers (`-`, `*`, `+`,
- *   `1.`, `1)`) — starts with 3+ backticks or 3+ tildes opens a protected region (a fence nested in a list item or a
- *   quote counts, and so does a 4-space-indented one). It ends only at a line whose content, after the same prefixes, is
- *   a fence of the SAME character and AT LEAST the opening length with nothing but whitespace after it; an unclosed
- *   region runs to the end of the text. Nothing inside is converted.
- * - **Quotes.** A Discord `>>>` multi-line quote quotes everything after it: nothing from there on is converted. A `>`
- *   quote line, and any line that lazily continues it, never starts a table.
- * - **Lists.** A list item line, its continuation lines (lazy or indented), and indented lines after a blank line inside
- *   a list never start a table; a list ends only at a blank line followed by an unindented non-list line.
- * - **Tables** start only at column 0, at the start of the text or after a blank line or a plain paragraph line.
+ * The rule is deliberately the simplest provably safe one (Codex re-review P2 on 2be8ccc: tracking fences nested in
+ * lists and quotes was not reliable). Rendering is cosmetic, so:
+ * - **Whole-reply eligibility.** A reply in which ANY line contains ``` or ~~~ anywhere, or ANY line starts (after
+ *   optional spaces or tabs) with `>` — a quote, including Discord's `>>>` — is returned unchanged in its entirety. No
+ *   code fence is ever parsed, so nothing inside code can be converted.
+ * - **Lists.** A list item line (`-`, `*`, `+`, `1.`, `1)`), its lazy continuation lines and any indented line never
+ *   start a table; a list ends only at a blank line followed by an unindented non-list line.
+ * - **Tables** start only at column 0, at the start of the reply or after a blank line or a plain paragraph line.
  *
  * A simple table is a header row and a delimiter row with the same number of cells (1 to {@link MAX_TABLE_COLUMNS}),
  * followed by at least one data row with exactly that many cells; every row starts at column 0 and starts and ends with
@@ -28,54 +25,16 @@
 /** Tables wider than this are left as they are (not "simple"). */
 export const MAX_TABLE_COLUMNS = 8;
 
-interface Fence {
-  readonly char: '`' | '~';
-  readonly length: number;
-}
-
 /** What the previous line leaves open: whether a table may start on the next line. */
-type Context = 'start' | 'blank' | 'plain' | 'list' | 'quote';
+type Context = 'start' | 'blank' | 'plain' | 'list';
 
-const FENCE_OPEN = /^(`{3,}|~{3,})/u;
-const FENCE_CLOSE = /^(`{3,}|~{3,})[ \t]*$/u;
-const LIST_MARKER = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$)/u;
+/** A fence marker anywhere in the reply makes the whole reply ineligible. */
+const FENCE_MARKER = /```|~~~/u;
+/** A quote line (`>`, `>>>`) anywhere in the reply makes the whole reply ineligible. */
+const QUOTE_LINE = /^[ \t]*>/mu;
 const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/u;
-const QUOTE_LINE = /^[ \t]*>/u;
-const MULTILINE_QUOTE = /^[ \t]*>>>/u;
 const TABLE_ROW = /^\|.*\|[ \t]*$/u;
 const DELIMITER_ROW = /^\|(?:[ \t]*:?-+:?[ \t]*\|)+[ \t]*$/u;
-
-/** The line's content after any indentation, `>` quote markers and list markers (in any nesting order). */
-function containerContent(line: string): string {
-  let rest = line;
-  for (;;) {
-    const trimmed = rest.replace(/^[ \t]+/u, '');
-    if (trimmed.startsWith('>')) {
-      rest = trimmed.slice(1);
-      continue;
-    }
-    const marker = LIST_MARKER.exec(trimmed);
-    if (marker !== null) {
-      rest = trimmed.slice(marker[0].length);
-      continue;
-    }
-    return trimmed;
-  }
-}
-
-function openingFence(line: string): Fence | null {
-  const match = FENCE_OPEN.exec(containerContent(line));
-  if (match === null) return null;
-  const marker = match[1] as string;
-  return { char: marker[0] as '`' | '~', length: marker.length };
-}
-
-function closesFence(line: string, fence: Fence): boolean {
-  const match = FENCE_CLOSE.exec(containerContent(line));
-  if (match === null) return false;
-  const marker = match[1] as string;
-  return marker[0] === fence.char && marker.length >= fence.length;
-}
 
 const isBlank = (line: string): boolean => line.trim() === '';
 const isIndented = (line: string): boolean => /^[ \t]/u.test(line);
@@ -85,6 +44,11 @@ function isTableRow(line: string): boolean {
   // The closing pipe must not be escaped (`| a \|` is text, not a row).
   const trimmed = line.trimEnd();
   return trimmed.length >= 2 && trimmed[trimmed.length - 2] !== '\\';
+}
+
+/** Whether the reply may be converted at all: no fence marker anywhere and no quote line. */
+export function isTableRenderingEligible(text: string): boolean {
+  return !FENCE_MARKER.test(text) && !QUOTE_LINE.test(text);
 }
 
 /** The cells of a row: outer pipes removed, split on unescaped pipes, `\|` unescaped, each cell trimmed. */
@@ -114,68 +78,35 @@ function renderTable(header: readonly string[], rows: readonly (readonly string[
 }
 
 /**
- * Render the simple Markdown tables of a provider-generated reply as Discord-friendly lines; everything else — every
- * protected code region, quote, list, malformed table and other line — is returned unchanged. See the module comment.
+ * Render the simple Markdown tables of an ELIGIBLE provider-generated reply as Discord-friendly lines; an ineligible
+ * reply (any fence marker or quote line) and every list, malformed table and other line are returned unchanged.
  */
 export function renderMarkdownTablesForDiscord(text: string): string {
-  if (!text.includes('|')) return text;
+  if (!text.includes('|') || !isTableRenderingEligible(text)) return text;
   const raw = text.split('\n');
   // Analyse each line without a trailing CR; unconverted lines are emitted verbatim (CR included).
   const lines = raw.map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
   const out: string[] = [];
-  let fence: { readonly open: Fence; readonly context: Context } | null = null;
   let context: Context = 'start';
   /** A list item was seen and no blank line followed by an unindented non-list line has ended the list yet. */
   let listOpen = false;
   let i = 0;
   while (i < lines.length) {
     const line = lines[i] as string;
-    if (fence !== null) {
-      if (closesFence(line, fence.open)) {
-        // Back in whatever held the fence (a list item or a quote keeps tables off until a blank line).
-        context = fence.context === 'list' || fence.context === 'quote' ? fence.context : 'plain';
-        fence = null;
-      }
-      out.push(raw[i] as string);
-      i += 1;
-      continue;
-    }
-    if (MULTILINE_QUOTE.test(line)) {
-      // Discord `>>>`: everything from here to the end is one quote.
-      out.push(...raw.slice(i));
-      break;
-    }
-    const opened = openingFence(line);
-    if (opened !== null) {
-      const holder: Context =
-        QUOTE_LINE.test(line) || context === 'quote' ? 'quote' : LIST_ITEM.test(line) || listOpen ? 'list' : 'plain';
-      if (holder === 'list') listOpen = true;
-      fence = { open: opened, context: holder };
-      out.push(raw[i] as string);
-      i += 1;
-      continue;
-    }
     if (isBlank(line)) {
       context = 'blank';
-      out.push(raw[i] as string);
-      i += 1;
-      continue;
-    }
-    if (QUOTE_LINE.test(line)) {
-      context = 'quote';
     } else if (LIST_ITEM.test(line)) {
       context = 'list';
       listOpen = true;
-    } else if (context === 'list' || context === 'quote') {
-      // A lazy continuation of the list item or quote above (no blank line in between).
+    } else if (context === 'list') {
+      // A lazy continuation of the list item above (no blank line in between).
     } else if (isIndented(line)) {
-      // Indented after a blank line: list continuation (or indented code); never a table.
+      // Indented: a list continuation after a blank line, or indented code; never a table.
       context = listOpen ? 'list' : 'plain';
     } else {
       if (context === 'blank') listOpen = false;
       const delimiter = lines[i + 1];
-      const canStart = context === 'start' || context === 'blank' || context === 'plain';
-      if (canStart && isTableRow(line) && delimiter !== undefined && isTableRow(delimiter) && DELIMITER_ROW.test(delimiter)) {
+      if (isTableRow(line) && delimiter !== undefined && isTableRow(delimiter) && DELIMITER_ROW.test(delimiter)) {
         const header = cellsOf(line);
         const width = header.length;
         // The rows of this table candidate: every following column-0 table row (anything else ends it).

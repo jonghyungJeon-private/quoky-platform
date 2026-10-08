@@ -9,9 +9,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - Core: `OutboundMessage.format?: 'model-reply'`, set by the runtime only on a provider's own answer (chat, summaries,
   analyses, image readings); withheld or guard-replaced notices and every deterministic reply stay unflagged.
-- Discord: a flagged reply's simple Markdown tables become a bold header line plus `- col: value, …` lines; fenced code
-  (backticks or tildes, any length, matching close), indented code and malformed tables are untouched. Unflagged text —
-  previews, approvals, connector-write previews, diffs, reminders — is delivered byte-identical.
+- Discord: a flagged reply's simple Markdown tables become a bold header line plus `- col: value, …` lines, only when the
+  reply contains no ``` / ~~~ anywhere and no `>` quote line (otherwise the whole reply is untouched); list items,
+  indented lines and malformed tables are never converted. Unflagged text — previews, approvals, connector-write
+  previews, diffs, reminders — is delivered byte-identical.
 
 ## Unreleased — Codex as an image-understanding option (ADR-0111 amendment, 2026-10-08)
 

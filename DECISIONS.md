@@ -17402,15 +17402,13 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   2. **Discord rendering (adapter-owned).** `DiscordPlatformAdapter.sendMessage` applies `renderMarkdownTablesForDiscord`
      only when `format === 'model-reply'`; preview delivery and owner notifications are separate paths and untouched.
      Other adapters ignore the flag.
-  3. **When in doubt, no conversion** (tightened after Codex review P2 on 08454fb, where fences nested in list items, tilde
-     variants and Discord `>>>` quotes still had their tables converted). Protected code: any line whose content — after
-     indentation, `>` quote markers and list markers (`-` `*` `+` `1.` `1)`, any nesting) — starts with 3+ backticks or
-     3+ tildes opens a protected region (indented and backtick-info fences included), closed only by a line whose content
-     after the same prefixes is a fence of the SAME character with AT LEAST the opening length and nothing but
-     whitespace; an unclosed region runs to the end. Quotes: a `>>>` line quotes the rest of the message (nothing after it
-     converts); a `>` line and its lazy continuation never start a table. Lists: a list item, its lazy or indented
-     continuations and indented lines after a blank line inside a list never start a table; the list ends only at a blank
-     line followed by an unindented non-list line, and a fence closed inside a list item keeps that context.
+  3. **Whole-reply eligibility — no fence or quote at all** (the simplest provably safe rule, adopted after the Codex
+     re-review P2 on 2be8ccc: tracking fences nested in list items and quotes still let prefixed fence-like lines such as
+     `- ```` or `> ```` inside an ordinary block falsely close it). A reply in which ANY line contains ``` or ~~~ anywhere,
+     or ANY line starts (after optional spaces or tabs) with `>` — including Discord's `>>>` — is delivered unchanged in
+     its entirety. No fence is parsed, so content inside code can never be converted. Within an eligible reply, a list
+     item line, its lazy continuations and any indented line never start a table; a list ends only at a blank line
+     followed by an unindented non-list line.
   4. **Simple tables only.** At column 0, at the start of the text or after a blank or plain paragraph line: a header row
      and a delimiter row (`|:-:|`) with the same cell count (1–8), then ≥ 1 data row with exactly that count; every row at
      column 0, starting and ending with an unescaped `|`; `\|` is a literal pipe. Output: a bold header line
@@ -17419,10 +17417,11 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      data row, no delimiter, rows without outer pipes, a pipe inside inline code, wider tables — is left exactly as is.
 - **Tests:** the earlier Codex P1 repro (a connector-write preview whose payload holds backtick, tilde and indented
   fences and tables) is delivered byte-identical without the flag, and the renderer would leave it unchanged too (the
-  preview's longer fence is tracked); a flagged reply with tables inside and outside fences; fences of different
-  lengths; tilde fences; indented code; fences inside list items and quotes; `>>>` and `>` quotes; list continuations;
-  malformed tables; CRLF; the runtime flags only provider-own, unguarded replies (including a provider that returns the
+  reply contains fence markers); every Codex review repro (nested, tilde, list-item, quote and `>>>` fences; prefixed
+  fence-like lines inside an ordinary block; a 4-space-indented fence) is unchanged; a plain reply with a table is
+  converted; a reply with a fence anywhere, before or after a table, or any quote line is untouched; list continuations;
+  indented tables; malformed tables; CRLF; the runtime flags only provider-own, unguarded replies (including a provider that returns the
   exact withholding notice with a credential artifact).
-- **Residuals:** GFM tables without outer pipes, with ragged rows, indented, inside quotes or list items, or directly
-  after a list or quote line stay raw (fail safe); HTML blocks are not parsed; a model reply that opens a fence and never
-  closes it keeps everything after it raw.
+- **Residuals:** any reply with a code fence, a `~~~`/```` ``` ```` run or a quote keeps all its tables raw (cosmetic,
+  fail safe); GFM tables without outer pipes, with ragged rows, indented, inside list items or directly after a list line
+  stay raw; HTML blocks are not parsed.
