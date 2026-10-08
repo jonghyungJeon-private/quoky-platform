@@ -220,6 +220,9 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
         createRetrievedMemory({
           memory: candidate.memory,
           relevanceScore: candidate.relevanceScore,
+          ...(candidate.semanticScore === undefined
+            ? { retrievalMode: 'lexical' as const }
+            : { retrievalMode: 'semantic' as const, semanticScore: candidate.semanticScore }),
           retrievalReason:
             `lexical=${candidate.lexicalScore.toFixed(4)}; recency=${candidate.recencyScore.toFixed(4)}` +
             (candidate.semanticScore === undefined ? '' : `; semantic=${candidate.semanticScore.toFixed(4)}`),

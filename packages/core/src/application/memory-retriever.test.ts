@@ -16,7 +16,6 @@ import type {
   VectorQueryResult,
   VectorRecord,
 } from '../ports';
-import { semanticScoreOfRetrievalReason } from './chat-policy/own-memory-recall';
 import { DefaultMemoryRetriever } from './memory-retriever';
 import { cosineSimilarity, formatEmbeddingEnvelope } from './recall/embedding-envelope';
 import { SemanticRecallScorer } from './recall/semantic-recall-scorer';
@@ -434,7 +433,7 @@ describe('DefaultMemoryRetriever semantic re-ranking (ADR-0098 D8)', () => {
     expect(results[1]!.retrievalReason).toContain('semantic=0.0000');
   });
 
-  it('its reason line carries the semantic score the own-memory hit check reads (live QA D5 coupling)', async () => {
+  it('records the retrieval mode and the raw semantic score as structured fields (live QA D5, Codex P3)', async () => {
     const records = [record('a', 'blue sky preference'), record('b', 'blue ocean')];
     const scorer: SemanticRecallScoring = {
       async score() {
@@ -445,9 +444,12 @@ describe('DefaultMemoryRetriever semantic re-ranking (ADR-0098 D8)', () => {
       },
     };
     const results = await retriever(records, { semanticScorer: scorer }).retrieve(request());
-    expect(results.map((result) => semanticScoreOfRetrievalReason(result.retrievalReason))).toEqual([0.8123, 0.25]);
+    expect(results.map((result) => [result.retrievalMode, result.semanticScore])).toEqual([
+      ['semantic', 0.8123],
+      ['semantic', 0.25],
+    ]);
     const lexical = await retriever(records).retrieve(request());
-    expect(lexical.every((result) => semanticScoreOfRetrievalReason(result.retrievalReason) === undefined)).toBe(true);
+    expect(lexical.every((result) => result.retrievalMode === 'lexical' && result.semanticScore === undefined)).toBe(true);
   });
 
   it('rejects an out-of-range semantic weight', () => {

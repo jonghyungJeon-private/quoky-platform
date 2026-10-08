@@ -37,8 +37,15 @@ export interface OwnMemoryRecallContext {
     readonly role?: 'user' | 'assistant' | 'unknown';
     readonly provenance: string;
   }>;
-  /** `retrievalReason` is the retriever's `lexical=…; recency=…[; semantic=…]` line (absent / unparsable = unknown). */
-  readonly durableRecall?: ReadonlyArray<{ readonly content: string; readonly retrievalReason?: string }>;
+  /**
+   * The retriever's structured ranking facts (ADR-0098 D8): `semanticScore` is the raw score when `retrievalMode` is
+   * `semantic`. Diagnostic text such as `retrievalReason` is never parsed.
+   */
+  readonly durableRecall?: ReadonlyArray<{
+    readonly content: string;
+    readonly retrievalMode?: 'lexical' | 'semantic';
+    readonly semanticScore?: number;
+  }>;
 }
 
 /**
@@ -46,18 +53,10 @@ export interface OwnMemoryRecallContext {
  * still answers an own-memory question (live QA D5). The retriever's fixtures score a match 1.0 and an unrelated
  * memory 0.0; with the default local embedding model (nomic-embed-text) a paraphrase of a short personal fact scores
  * well above 0.6 while unrelated short texts mostly fall below it. A miss only means the fixed "not in memory" reply
- * instead of a provider call, and any lexical topic match is a hit regardless of the score.
+ * instead of a provider call, and any lexical topic match is a hit regardless of the score. Compared on the raw number.
  */
 export const OWN_MEMORY_SEMANTIC_HIT_FLOOR = 0.6;
 
-/** The semantic score the retriever recorded in `retrievalReason`, or undefined when there is none. */
-export function semanticScoreOfRetrievalReason(reason: string | undefined): number | undefined {
-  if (typeof reason !== 'string') return undefined;
-  const match = /(?:^|;)\s*semantic=([0-9]+(?:\.[0-9]+)?)\s*(?:;|$)/u.exec(reason);
-  if (!match) return undefined;
-  const score = Number(match[1]);
-  return Number.isFinite(score) ? score : undefined;
-}
 
 const MAX_MESSAGE_CHARS = 80;
 const END = String.raw`[\s?？!.~]*$`;
@@ -237,11 +236,15 @@ function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {
 /** A durable entry that could answer the question (see the module note: topic stem, semantic floor, or unscored). */
 function durableEntryAnswers(
   question: OwnMemoryRecallQuestion,
-  entry: { readonly content: string; readonly retrievalReason?: string },
+  entry: { readonly content: string; readonly retrievalMode?: 'lexical' | 'semantic'; readonly semanticScore?: number },
 ): boolean {
-  const semantic = semanticScoreOfRetrievalReason(entry.retrievalReason);
-  if (semantic === undefined) return true;
-  return semantic >= OWN_MEMORY_SEMANTIC_HIT_FLOOR || mentionsTopic(question, entry.content);
+  if (mentionsTopic(question, entry.content)) return true;
+  // Not semantically scored this turn (lexical-only recall, or no score): the retriever's choice stands.
+  if (entry.retrievalMode !== 'semantic') return true;
+  const score = entry.semanticScore;
+  // A semantic entry without a usable score is no evidence (never a hit by default).
+  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1) return false;
+  return score >= OWN_MEMORY_SEMANTIC_HIT_FLOOR;
 }
 
 /**

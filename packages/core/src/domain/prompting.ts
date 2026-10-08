@@ -51,6 +51,10 @@ export interface DurableRecallEntry {
   epistemicStatus: 'NON_AUTHORITATIVE_BACKGROUND';
   relevanceScore: number;
   retrievalReason: string;
+  /** How the retriever ranked it this turn (ADR-0098 D8); absent = unknown. Never rendered into a prompt. */
+  retrievalMode?: 'lexical' | 'semantic';
+  /** The raw semantic score in [0, 1] when `retrievalMode` is `semantic`. Never rendered into a prompt. */
+  semanticScore?: number;
   source: {
     memoryId: Id;
     kind: DurableMemoryKind;

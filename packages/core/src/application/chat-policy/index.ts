@@ -52,6 +52,5 @@ export {
   detectOwnMemoryRecallQuestion,
   hasOwnMemoryRecallHit,
   renderOwnMemoryNotFound,
-  semanticScoreOfRetrievalReason,
 } from './own-memory-recall';
 export type { OwnMemoryRecallContext, OwnMemoryRecallQuestion, OwnMemoryRelation } from './own-memory-recall';
