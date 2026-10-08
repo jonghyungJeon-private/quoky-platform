@@ -18767,7 +18767,8 @@ Independent Chief Architect review before GML-1 merges.
 - **Status:** Implementation note for D1–D8, Gmail only (track GML-1). DRV-1 (Drive) is not part of it. Offline
   validation only, with a fake `fetch`; the Gmail API was never called. The Strict gates are not run: the owner's
   `gmail.readonly` consent, the first read probe and the live session. Codex review (one P1, one P2) and the Chief
-  Architect review (CHANGES REQUIRED: four P2s, P3s) are addressed; see "Review fixes" below.
+  Architect review (CHANGES REQUIRED: four P2s, P3s) and its re-review (CHANGES REQUIRED on P2-4 links, warnings on
+  the claim guard) are addressed; see "Review fixes" and "Re-review fixes" below.
 - **Shape.**
   - No migration. `ConversationRuntimeDeps` is unchanged (35). One new port, `MailReader`
     (`ports/mail-reader.port.ts`), and one new token, `MAIL_READER`.
@@ -18869,8 +18870,9 @@ Independent Chief Architect review before GML-1 merges.
   3. **Readout.** The handler builds `UntrustedDocumentReadout` (`application/untrusted-document-readout.ts`) under the
      ADR-0111 D3 rules:
      - terminal framing, control, format and default-ignorable characters are removed, and NFKC is applied;
-     - every URL and `www.` host is replaced by `[링크]` (review P2-4), so no phishing target or bearer token in a link
-       leaves the host, and a token inside a URL no longer refuses an ordinary mail;
+     - every link is replaced by `[링크]` through the shared `neutralizeLinks` (review P2-4 and re-review item 1; see
+       "Link neutralization" below), so no phishing target or bearer token in a link leaves the host, and a token inside
+       a URL no longer refuses an ordinary mail;
      - the strict credential guard (both detectors) runs on the FULL normalized body, title and author (review P1: a clip
        could cut `password:` and keep its value);
      - the body is clipped head and tail to 3,000 code points;
@@ -18917,6 +18919,52 @@ Independent Chief Architect review before GML-1 merges.
     A summary steered into `할 일을 추가했어요`, `답장을 보냈어요`, `메일을 삭제했어요`, `I forwarded the email to your
     team.`, `I have forwarded every email and created a to-do.` or `요청하신 대로 일정을 캘린더에 추가했어요.` is
     withheld with a fixed notice.
+- **Link neutralization (re-review items 1 and 2).** One function, `neutralizeLinks` (`application/link-neutralizer.ts`),
+  serves every route: the readout body, title and author, the runtime re-check (`containsLink`, same modes), the
+  summary reply and the listing fields (sender, subject, snippet, the echoed sender query). The placeholder is `[링크]`.
+  - **What it replaces.**
+    - Every scheme URL (`https://`, `HTTPS://`, `hxxp://`, any `scheme://`). No word boundary is required, so
+      `1https://…`, `_https://…` and `x.https://…` are caught.
+    - Every `www.` host.
+    - Bare domains: up to 10 labels of Unicode letters, digits and `-`, so IDN hosts and homographs count. The TLD is
+      alphabetic (2–24 letters), punycode (`xn--…`) or a common IDN TLD (`한국`, `рф`, …). A port, path, query or
+      fragment that follows is replaced with the domain.
+  - **Bare-domain decision.**
+    - **Display mode** (reply, listing fields, title, author; what Telegram would autolink) replaces every bare domain,
+      with two exceptions that are never web links:
+      - the domain of an e-mail address, so `kim@example.com` stays readable;
+      - a file name whose "TLD" is a common file extension (`README.md`, `main.py`).
+
+      Both exceptions apply only when no path follows. The accepted false positive is a word-dot-word that looks like
+      a domain (`Mr.Kim`).
+    - **Body mode** (the readout body, which only the provider reads) replaces a bare domain only when a path, query or
+      fragment follows or its TLD is a common web TLD, so a technical mail keeps `Node.js`. The reply is neutralized in
+      display mode, so a domain the model echoes is caught there.
+  - **Not caught.** Defanged forms (`hxxp[:]//evil[.]example`, a host split by spaces) are not caught, and are not
+    clickable either. A full-width scheme in a listing field is not caught either; the readout applies NFKC first.
+  - **Linear.** Every repetition is bounded, each label is matched atomically (a lookahead capture and its
+    back-reference), and a domain match starts only where a label starts.
+  - **Tests.**
+    - Every listed bypass in the body, title, author, reply and listing, on the Discord markup and the Telegram plain
+      text.
+    - A 2,000-case seeded property test: after display-mode neutralization, an independent broad "scheme or domain"
+      detector finds nothing.
+    - Negative cases: versions, abbreviations, e-mail addresses, file names and sentence ends.
+    - Hostile-input timing.
+- **Claim-guard rules (re-review item 3).**
+  - **English:** an `I` / `I’ve` / `I’d` / `we` / `we’ve` / `Quoky` subject (straight or curly apostrophe). Up to four
+    filler words may stand before the action verb (`I went ahead and sent`, `I've just forwarded`).
+  - **Korean:** the mail-action and to-do / reminder / calendar patterns, now including the `처리` forms
+    (`삭제/보관/전달/발송/읽음 처리했`).
+  - **Korean exemption.** A Korean claim is exempt only when the nearest real subject BEFORE it names someone other
+    than Quoky:
+    - adverbs and generic nouns ending in 이/가 (`같이`, `많이`, `내용이`, `요청이`, …) are not subjects;
+    - Quoky stand-ins (`제가`, `저희가`, `비서가`, `Quoky가`, …) never exempt;
+    - an opening quote before the subject is ignored;
+    - a subject after the claim does not count.
+  - **Reported speech.** Reported speech (`다는`, `다고`, `대요`, `다며`) stays exempt; `…답니다` is not reported speech.
+  - **Known false positives, failing closed.** A company subject with `에서` (`쿠팡에서 배송 안내 메일을 보냈어요`) and
+    quoted first-person speech.
 - **Review fixes (2026-10-09).** One commit per finding, on top of #163 (PRV-2) and #164 (TG-2):
   - **P1 (Codex):** the credential guard runs on the full normalized text before any clip, then on the clipped payload.
     Test: Codex's 5,000-character repro, where the clip removes `password:` but keeps the value.
@@ -18936,6 +18984,16 @@ Independent Chief Architect review before GML-1 merges.
     literals included, rejects a computed method and counts every `fetchImpl` reference. **P3-5:** the `--gmail` help,
     its success output and `.env.example` say that revoking also removes the calendar grant on the shared client.
     **P3-8:** the dead line-break check is removed and the test renamed.
+- **Re-review fixes (2026-10-09), one commit each.**
+  1. The shared link neutralizer, closing the glued and bare-domain bypasses in the readout, the re-check and the
+     reply.
+  2. Listing fields through the same neutralizer.
+  3. The claim-guard false negatives above.
+  4. Two suggestions:
+     - **Grammar.** `\d+ (일|주|달|개월|년) 전` is a time stem. `<X>에게/한테 보낸` (the wrong direction) and `<X> 관련`
+       (a topic) get the usage line.
+     - **Reply budget.** `DOCUMENT_SUMMARY_REPLY_MAX_CHARS` is defined beside the readout, which no longer imports the
+       work-chat handler.
 - **Rule questions (coordinator decisions, 2026-10-09).**
   - **RQ1 (D4 consequence).** With Gmail configured, the six QUAL-7 mailbox phrases (`intent-155/156/172/173/176`,
     `route-186`) become the deterministic unread listing. This is a consequence of D4's listing phrasings, with the
@@ -18945,8 +19003,13 @@ Independent Chief Architect review before GML-1 merges.
   - **RQ3 (fail closed).** An OTP or password-reset mail is refused for summary by the credential guard. This is
     correct; the live session measures how often it happens.
 - **Live QA additions.** Besides the ~15 phrasings (empty inbox, long thread, non-Korean mail, an injection mail sent
-  to oneself): an OTP or password-reset mail (RQ3, expected refusal), a phishing mail with a masked link (expected `[링크]`
-  and no clickable link), and a summary request in a server channel (expected the DM-only reply).
+  to oneself), the session adds these cases:
+  - an OTP or password-reset mail (RQ3; expected refusal);
+  - a phishing mail with a masked link, a glued `1https://` link and a bare domain (expected `[링크]`, no clickable link
+    and no embed, in both the listing and the summary);
+  - a summary request in a server channel (expected the DM-only reply);
+  - the claim guard's known false positives, measured: a company-sender summary such as
+    `쿠팡에서 배송 안내 메일을 보냈어요`, and quoted first-person speech.
 - **Unconfigured.** With `QUOKY_GMAIL_TOKEN_FILE` unset, `createMailProviders` binds an empty list and no `MAIL_READER`.
   The full suite passes unchanged, including the routing corpus and the Discord golden fixture. The Core branches are
   reachable only through an `untrusted-document` readout, which only the mail handler produces.

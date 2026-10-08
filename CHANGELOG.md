@@ -55,6 +55,15 @@ is unchanged.
   - Links become `[링크]` before egress, and summary replies render as inert untrusted text.
   - No summary artifacts are stored; history notes are accurate; Core copy is source-neutral; the source scan is
     stricter; the shared-client revoke warning is added.
+- **Re-review fixes.**
+  - One shared `neutralizeLinks` covers the readout body, title and author, the re-check, the summary reply and the
+    listing fields. It catches glued schemes (`1https://`), upper-case schemes, `www.`, bare domains, and punycode or IDN
+    hosts. Display mode is strict; body mode leaves word-like names such as `Node.js` intact. A seeded property test
+    checks the result.
+  - The claim guard now catches curly apostrophes, filler words and the `처리` forms. It exempts a claim only when the
+    nearest real subject before it is someone other than Quoky.
+  - The grammar refuses relative times, recipients and topics as senders.
+  - The reply budget is now the readout's own constant.
 - **Validation.** Offline only, with a fake `fetch`; the Gmail API was never called. Not run yet: the Strict gates
   (owner consent, the first read probe and the live session of about 15 phrasings), and the Chief Architect re-review.
 
