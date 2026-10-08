@@ -695,6 +695,14 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     ]);
   });
 
+  it('TG-1: a mention-only attachment message reaches the handler with empty text; a mention-only plain message is unchanged', async () => {
+    const { deliver, handled, settle } = await intakeHarness();
+    await deliver({ ...withAttachments({}, [att('app.log', 'text/plain')]), content: '<@123456789012345678> ' });
+    await deliver({ ...fakeMessage(), content: '<@123456789012345678>' });
+    await settle();
+    expect(handled.map((message) => message.text)).toEqual(['', '<@123456789012345678>']);
+  });
+
   it('an image ref exists during the turn and is deleted after it, even when the handler throws', async () => {
     const { adapter, deliver, tempRoot, settle, logger } = await intakeHarness();
     const seen: Array<{ ref: string; existed: boolean }> = [];

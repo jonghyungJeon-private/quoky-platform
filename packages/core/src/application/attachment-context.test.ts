@@ -356,13 +356,19 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
     });
   });
 
-  it('re-review P3: mention tokens, whitespace and invisible characters are not effective text', () => {
-    for (const text of ['', '   ', '<@123456789012345678>', '<@!123456789012345678>', '<@&42> <#99>', '\u200B', '\uFEFF \u200C\n', '<@1>\u200B ']) {
+  it('re-review P3: whitespace and invisible characters are not effective text', () => {
+    for (const text of ['', '   ', '\u200B', '\uFEFF \u200C\n', '\u200B ']) {
       expect(hasEffectiveText(text), JSON.stringify(text)).toBe(false);
     }
     for (const text of ['<@1> 요약해줘', 'What is 2 + 2?', '?', 'ok']) {
       expect(hasEffectiveText(text), text).toBe(true);
     }
+  });
+
+  it('TG-1: Core knows no platform mention syntax (addressing is normalized by the platform adapter)', () => {
+    // The Discord adapter turns an addressing-only attachment message into '' before it reaches Core
+    // (`adapter-discord/src/addressing.ts`); Core treats any visible character as text.
+    for (const text of ['<@123456789012345678>', '<@&42> <#99>', '@quoky_bot']) expect(hasEffectiveText(text), text).toBe(true);
   });
 
   it('P2-6: a credential-shaped reply or artifact is withheld; an ordinary log summary is not', () => {

@@ -352,17 +352,16 @@ export function isCredentialShapedValue(value: unknown): boolean {
   }
 }
 
-/** Mention tokens of chat platforms (`<@id>`, `<@!id>`, `<@&id>`, `<#id>`, `<#C1|name>`): addressing, not content. */
-const MENTION_TOKEN = /<[@#][!&]?[A-Za-z0-9]+(?:\|[^<>\n]*)?>/gu;
 /** Whitespace, format, default-ignorable and control characters. */
 const NON_CONTENT = /[\s\p{Cf}\p{Default_Ignorable_Code_Point}\p{Cc}]/gu;
 
 /**
- * Whether a message text says anything beyond addressing (P3): mention tokens, whitespace and invisible characters
- * removed. A message with no effective content is treated as empty.
+ * Whether a message text says anything (P3): whitespace and invisible characters removed. A message with no effective
+ * content is treated as empty. Platform addressing (a mention of the bot) is normalized by the platform adapter before
+ * the message reaches Core (ADR-0114 TG-1): Core knows no platform's mention syntax.
  */
 export function hasEffectiveText(text: string): boolean {
-  return text.replace(MENTION_TOKEN, '').replace(NON_CONTENT, '').length > 0;
+  return text.replace(NON_CONTENT, '').length > 0;
 }
 
 /** The fixed reply that replaces a withheld attachment-turn reply (never persisted with the original text). */
