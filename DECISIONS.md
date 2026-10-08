@@ -17073,7 +17073,8 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   a timed-out push is reported as unverified, never as "not pushed".
 - **ADR-0109 (multi-repo allowlist).** Not implemented (CODE-8, P2, deferred). `QUOKY_GITHUB_REPOS` is not parsed; the
   single `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO` target remains. Owner decision 12 still requires "Only select
-  repositories" before CODE-8 merges.
+  repositories" before CODE-8 merges. *(2026-10-08: implemented by CODE-8 on a branch; see the ADR-0109 implementation note at the end
+  of this file.)*
 - **ADR-0110 (calendar) and its amendment.** CAL-1 (260d089): `CalendarReader` port, `packages/connector-calendar-google`,
   and `apps/quoky/src/tools/calendar-auth.ts` (PKCE loopback consent, token file mode 600, refuses scopes beyond
   `calendar.readonly` plus optional `calendar.events`, never prints a token). CAL-2 (413900c): pre-classify order 150,
@@ -17459,3 +17460,50 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
 - **Residuals:** any reply with a code fence, a `~~~`/```` ``` ```` run or a quote keeps all its tables raw (cosmetic,
   fail safe); GFM tables without outer pipes, with ragged rows, indented, inside list items or directly after a list line
   stay raw; HTML blocks are not parsed.
+
+### ADR-0109 implementation note — CODE-8 multi-repository allowlist (2026-10-08)
+
+Implements D1–D5 as ratified; no ADR text is changed. No migration, no new port, no token or deps change
+(`ConversationRuntimeDeps` stays 35; the ratchet test is untouched).
+
+- **D1 (config, `apps/quoky/src/config.ts`).** `QUOKY_GITHUB_REPOS` is parsed into `repositoryAllowlist`: trimmed
+  comma-separated entries, each `owner/repo` with the existing `isSafeRepoOwner`/`isSafeRepoName` rules (so a URL, a
+  `.git` suffix, an empty entry or a token-shaped name is refused), case-insensitive duplicates refused, at most 10.
+  Typed codes `GITHUB_REPOS_INVALID`, `GITHUB_REPOS_DUPLICATE`, `GITHUB_REPOS_TOO_MANY`, `GITHUB_REPOS_WITH_LEGACY_PAIR`
+  (both forms, including any part of the legacy pair or its `CHUNSIK_*` fallback). A blank `QUOKY_GITHUB_REPOS` is
+  unset. The legacy pair stays the raw `repositoryHosting` value and, when it resolves, the allowlist of one; an
+  unresolvable legacy pair stays the lenient "not configured" (byte-identical to before).
+- **D2 (identity).** The composition root's `WorkspaceRepositoryIdentityResolver` reads `origin` with the existing
+  credential-free `git remote get-url --all` + `--push --all` read under the same sanitized git environment as the
+  App-token push (`sanitizedGitConfigEnv`, now exported), and `resolveRepositoryFromRemoteUrls` accepts only plain
+  `https://github.com/<owner>/<repo>[.git][/]` URLs that round-trip through the URL parser (no userinfo, port, query,
+  fragment, percent-encoding or dot segments). All URLs must name one repository (`ambiguous` otherwise) that is
+  allowlisted (`not-allowlisted`); anything else is `unsupported-remote`. Core receives it as the optional
+  `repositoryHosting.resolveIdentity(rootPath)` member of the existing dep and the `WorkspaceRepositoryResolution`
+  domain type (a fixed reason enum, never a URL). With the member present, the runtime resolves the identity on every
+  remote step: push approval and execution (a new gate before the approval and before the push), PR approval, PR
+  creation, PR status, merge approval (new gate) and execution, main sync, local branch cleanup, remote cleanup approval
+  (new gate) and execution. A refusal (or a resolver throw, failing closed) returns `composeRepositoryNotAllowed` before
+  any approval, git remote call, hosting call or token mint; an anchored identity that differs from the resolved one
+  keeps the step's existing "unavailable" reply. Without the member (no allowlist configured, or a test without it) the
+  static identity path is unchanged.
+- **D3 (tokens).** `apps/quoky/src/github-app-token-sources.ts` builds the write, status and connector-read sources;
+  every repository token goes through `tokenForRepository` for exactly the identity the call names, after an allowlist
+  check that throws before any installation lookup or mint. The installation id is the explicit
+  `QUOKY_GITHUB_APP_INSTALLATION_ID` for every repository, else resolved and cached per repository. The hosting
+  adapter's `tokenSource`/`statusTokenSource` now take the call's identity (adapter-local config, not a port). The
+  App-auth git decorator derives the identity from the operation's remote URLs (a non-`origin` remote must name
+  `origin`'s repository), requires it to be allowlisted and mints for it only.
+- **D4.** Documented in the operator guide 0.3 and `.env.example`; switching the installation is the owner's Strict step.
+- **D5.** `PersonalGitGuard`, `PersonalHostingGuard`, the merge flag, main/master refusal and per-step CRITICAL
+  approvals are untouched and apply per repository.
+- **Accepted residuals.** (1) The Personal Work GitHub connector's read token (`issues`/`pull_requests: read`) is still the
+  ADR-0061 installation-scoped token, now taken from the first allowlisted repository's installation; it is bounded by
+  the installation's repository selection (D4), not by `tokenForRepository`. (2) HTTPS `github.com` is now required for
+  every remote step whenever an allowlist is configured, including the dev-only PAT mode, where an SSH `origin` used to
+  push with ambient credentials; such a workspace is now refused (`unsupported-remote`). The App mode, the production
+  path, already refused SSH. Likewise, with the legacy pair a project whose `origin` is not that repository is now
+  refused up front (it used to fail later at GitHub); for a project whose `origin` is the configured repository the
+  replies, approvals and minted token are unchanged. (3) Repository names are compared case-insensitively and the allowlist spelling is bound,
+  so a GitHub rename between approval and execution is not followed. (4) The push approval does not bind the repository
+  identity on its anchor (no new anchor field); push execution re-resolves and re-checks the allowlist instead.

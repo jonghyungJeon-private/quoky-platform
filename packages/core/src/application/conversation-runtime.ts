@@ -166,6 +166,8 @@ import type {
   WorkspaceChangeRef,
   WorkspaceDiff,
   WorkspaceRef,
+  WorkspaceRepositoryRefusal,
+  WorkspaceRepositoryResolution,
 } from '../domain';
 import {
   CONNECTOR_WRITE_OPERATIONS,
@@ -928,6 +930,14 @@ export interface ConversationRuntimeDeps {
    */
   readonly repositoryHosting?: {
     identity?: RepositoryIdentity;
+    /**
+     * ADR-0109 D2 (multi-repository allowlist): resolves a registered project's repository identity from its workspace
+     * `origin` (composition root: the ADR-0061 sanitized git read, HTTPS github.com only, checked against the
+     * allowlist). OPTIONAL: absent keeps the static `identity` above exactly as before. When present it REPLACES
+     * `identity` for every remote step (push, PR, status, merge, main sync, cleanup): a `refused` result stops the
+     * step before any git remote call, hosting call or token mint, with a truthful reply. Never a URL or token.
+     */
+    resolveIdentity?(rootPath: string): Promise<WorkspaceRepositoryResolution>;
     manager?: {
       createPullRequest(input: {
         identity: RepositoryIdentity;
@@ -1449,6 +1459,11 @@ function buildCommitApprovalReason(
  *  caps length. Never lets a raw/unbounded/control-char branch string reach a reason or reply. */
 function boundGitRef(ref: string): string {
   return [...ref.trim()].filter((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0x7f).join('').slice(0, MAX_GIT_REF_DISPLAY);
+}
+
+/** Exact provider/owner/repo equality of two repository identities (ADR-0109: anchored vs freshly resolved). */
+function sameRepositoryIdentity(a: RepositoryIdentity, b: RepositoryIdentity): boolean {
+  return a.provider === b.provider && a.owner === b.owner && a.repo === b.repo;
 }
 
 /**
@@ -5333,6 +5348,11 @@ export class ConversationRuntime {
     }
     const target = resolution.target;
     const newRemoteBranch = target.mode === 'new-remote-branch';
+    // 8b. (ADR-0109 D2) the project's origin must resolve to one allowlisted repository — otherwise no approval.
+    const pushApprovalGate = await this.remoteRepositoryGate(message, session, anchor.workspaceRef.rootPath, undefined, () =>
+      this.failComposed(message, session, this.deps.composer.composePushApprovalUnavailable(message.context)),
+    );
+    if (pushApprovalGate) return pushApprovalGate;
 
     // 9. Create the CRITICAL push ApprovalRequest (Constraint 4). Reason = bounded op/commit/mode/remote/branch/
     //    upstream/ahead + no-push + permission-only + future-step + point-in-time (CA #4/#6/#7).
@@ -5599,6 +5619,11 @@ export class ConversationRuntime {
     if (!verified.ok) {
       return this.respondPushTargetRefusal(message, session, anchor, verified.reason, 'execution');
     }
+    // 9b. (ADR-0109 D2) re-resolve the project's repository right before the push: refused → no push, no token.
+    const pushExecutionGate = await this.remoteRepositoryGate(message, session, anchor.workspaceRef.rootPath, undefined, () =>
+      this.failComposed(message, session, this.deps.composer.composePushExecutionUnavailable(message.context)),
+    );
+    if (pushExecutionGate) return pushExecutionGate;
 
     // 10. (first REMOTE mutation) push the exact approved target through the Ref-gated capability. A throw →
     //     composePushExecutionFailed (could-not-complete / check remote / NO rollback; never "remote
@@ -5716,10 +5741,13 @@ export class ConversationRuntime {
     // 0. (Sprint 3d-D, CA change 9) PR approval now binds the target repository identity — approving a PR
     //    without a configured target repo is no longer meaningful. If identity is missing/invalid, do NOT
     //    create PR_APPROVAL_PENDING or an ApprovalRequest — respond "not configured". (Token NOT needed here.)
-    const identity = this.deps.repositoryHosting?.identity;
-    if (!identity) {
+    //    ADR-0109 D2: with the per-workspace resolver the identity is the project's allowlisted origin repository.
+    const prIdentity = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
+    if (!prIdentity.ok) {
+      if (prIdentity.refusal) return this.respondRepositoryRefused(message, session, prIdentity.refusal);
       return this.respondComposed(message, session, this.deps.composer.composePrCreationNotConfigured(message.context));
     }
+    const identity = prIdentity.identity;
     // 1. (Constraint 9/CA #14) complete + safe pushed context, else composePrApprovalUnavailable (no approval).
     //    Log never throws (2x lesson — optional field access).
     const parsed = anchor.pushedUpstreamRef ? parsePushUpstream(anchor.pushedUpstreamRef) : null;
@@ -5855,12 +5883,17 @@ export class ConversationRuntime {
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
     void actor;
-    const identity = this.deps.repositoryHosting?.identity;
     const manager = this.deps.repositoryHosting?.manager;
     // Not configured: no resolved identity OR no manager (missing GitHub token) — safe not-configured, no call.
-    if (!identity || !manager) {
+    if (!manager) {
       return this.respondComposed(message, session, this.deps.composer.composePrCreationNotConfigured(message.context));
     }
+    const lookup = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
+    if (!lookup.ok) {
+      if (lookup.refusal) return this.respondRepositoryRefused(message, session, lookup.refusal);
+      return this.respondComposed(message, session, this.deps.composer.composePrCreationNotConfigured(message.context));
+    }
+    const identity = lookup.identity;
     // Complete PR_APPROVED context, incl. the approved repositoryIdentity (CA change 1). Missing → safe failure.
     if (
       anchor.status !== 'PR_APPROVED' ||
@@ -6015,11 +6048,16 @@ export class ConversationRuntime {
     session: Session,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    const identity = this.deps.repositoryHosting?.identity;
     const manager = this.deps.repositoryHosting?.manager;
-    if (!identity || !manager) {
+    if (!manager) {
       return this.respondComposed(message, session, this.deps.composer.composePrStatusNotConfigured(message.context));
     }
+    const lookup = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
+    if (!lookup.ok) {
+      if (lookup.refusal) return this.respondRepositoryRefused(message, session, lookup.refusal);
+      return this.respondComposed(message, session, this.deps.composer.composePrStatusNotConfigured(message.context));
+    }
+    const identity = lookup.identity;
     // Complete PR_CREATED context, incl. the approved identity + durable PullRequestRef (the ONLY query source).
     // (Sprint 3f/3g) also reachable from MERGE_APPROVED and PR_MERGED — read-only, and it never re-anchors so the
     // caller's state (PR_CREATED / MERGE_APPROVED / PR_MERGED) is preserved.
@@ -6108,6 +6146,11 @@ export class ConversationRuntime {
       this.logPrApprovalFailed(session, anchor, 'merge approval context incomplete');
       return this.failComposed(message, session, this.deps.composer.composeMergeApprovalUnavailable(message.context));
     }
+    // ADR-0109 D2: the project's origin must still be the anchored, allowlisted repository — otherwise no approval.
+    const mergeApprovalGate = await this.remoteRepositoryGate(message, session, anchor.workspaceRef?.rootPath, anchor.repositoryIdentity, () =>
+      this.failComposed(message, session, this.deps.composer.composeMergeApprovalUnavailable(message.context)),
+    );
+    if (mergeApprovalGate) return mergeApprovalGate;
     const approval = await this.deps.approvals.requestForRisk({
       executionPlanRef: anchor.executionPlanRef,
       riskLevel: RiskLevel.CRITICAL,
@@ -6207,12 +6250,17 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    const identity = this.deps.repositoryHosting?.identity;
     const manager = this.deps.repositoryHosting?.manager;
     // Not configured: no resolved identity OR no manager (missing GitHub token) — safe not-configured, no call.
-    if (!identity || !manager) {
+    if (!manager) {
       return this.respondComposed(message, session, this.deps.composer.composeMergeExecutionUnavailable(message.context));
     }
+    const lookup = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
+    if (!lookup.ok) {
+      if (lookup.refusal) return this.respondRepositoryRefused(message, session, lookup.refusal);
+      return this.respondComposed(message, session, this.deps.composer.composeMergeExecutionUnavailable(message.context));
+    }
+    const identity = lookup.identity;
     const ref = anchor.pullRequestRef;
     // Anchor/context preflight (checks 1–8). Any missing → Blocked (definitively no merge).
     if (
@@ -6333,11 +6381,13 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    const identity = this.deps.repositoryHosting?.identity;
+    const lookup = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
     // Not configured: no resolved identity → cannot verify we are syncing the right repository. Safe not-configured.
-    if (!identity) {
+    if (!lookup.ok) {
+      if (lookup.refusal) return this.respondRepositoryRefused(message, session, lookup.refusal);
       return this.respondComposed(message, session, this.deps.composer.composeMainSyncUnavailable(message.context));
     }
+    const identity = lookup.identity;
     // Anchor/context preflight (checks 1–5, 10). Any missing/mismatch → Blocked (definitively not synced).
     if (
       anchor.status !== 'PR_MERGED' ||
@@ -6422,10 +6472,12 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    const identity = this.deps.repositoryHosting?.identity;
-    if (!identity) {
+    const lookup = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
+    if (!lookup.ok) {
+      if (lookup.refusal) return this.respondRepositoryRefused(message, session, lookup.refusal);
       return this.respondComposed(message, session, this.deps.composer.composeBranchCleanupUnavailable(message.context));
     }
+    const identity = lookup.identity;
     const target = anchor.pullRequestHeadBranch;
     // Anchor/target preflight (checks 1–8). Any missing/mismatch/unsafe → Blocked (definitely not deleted).
     if (
@@ -6530,6 +6582,15 @@ export class ConversationRuntime {
       this.logPrApprovalFailed(session, anchor, 'remote branch cleanup approval context incomplete');
       return this.failComposed(message, session, this.deps.composer.composeRemoteBranchCleanupApprovalUnavailable(message.context));
     }
+    // ADR-0109 D2: the project's origin must still be the anchored, allowlisted repository — otherwise no approval.
+    const remoteCleanupApprovalGate = await this.remoteRepositoryGate(
+      message,
+      session,
+      anchor.workspaceRef?.rootPath,
+      anchor.repositoryIdentity,
+      () => this.failComposed(message, session, this.deps.composer.composeRemoteBranchCleanupApprovalUnavailable(message.context)),
+    );
+    if (remoteCleanupApprovalGate) return remoteCleanupApprovalGate;
     const approval = await this.deps.approvals.requestForRisk({
       executionPlanRef: anchor.executionPlanRef,
       riskLevel: RiskLevel.CRITICAL,
@@ -6623,12 +6684,17 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    const identity = this.deps.repositoryHosting?.identity;
     const manager = this.deps.repositoryHosting?.manager;
     // Check 1 — not configured (no identity / no manager / no token): safe not-configured, no call, anchor unchanged.
-    if (!identity || !manager) {
+    if (!manager) {
       return this.respondComposed(message, session, this.deps.composer.composeRemoteBranchCleanupExecutionUnavailable(message.context));
     }
+    const lookup = await this.hostingIdentityFor(anchor.workspaceRef?.rootPath);
+    if (!lookup.ok) {
+      if (lookup.refusal) return this.respondRepositoryRefused(message, session, lookup.refusal);
+      return this.respondComposed(message, session, this.deps.composer.composeRemoteBranchCleanupExecutionUnavailable(message.context));
+    }
+    const identity = lookup.identity;
     const ref = anchor.pullRequestRef;
     const target = anchor.pullRequestHeadBranch;
     const expectedHeadCommit = anchor.mergedHeadSha; // CA change 2 — NO fallback to pullRequestCommitHash
@@ -7224,6 +7290,62 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
     return { status: 'FAILED', reply, sessionId: session.id, ...(outcome ? { executionOutcome: outcome } : {}) };
+  }
+
+  /**
+   * The repository identity a remote step targets (ADR-0109 D2). Without the per-workspace resolver: the static
+   * configured identity, unchanged (`not configured` when absent). With it: the identity resolved from the
+   * workspace `origin` right now — a missing workspace root is `not configured`, and a refusal or a resolver throw is
+   * returned as a refusal (fail closed). Never reads a URL or token itself.
+   */
+  private async hostingIdentityFor(
+    rootPath: string | undefined,
+  ): Promise<{ ok: true; identity: RepositoryIdentity } | { ok: false; refusal?: WorkspaceRepositoryRefusal }> {
+    const hosting = this.deps.repositoryHosting;
+    if (!hosting?.resolveIdentity) return hosting?.identity ? { ok: true, identity: hosting.identity } : { ok: false };
+    if (!rootPath) return { ok: false };
+    let resolution: WorkspaceRepositoryResolution;
+    try {
+      resolution = await hosting.resolveIdentity(rootPath);
+    } catch {
+      return { ok: false, refusal: 'unsupported-remote' };
+    }
+    if (resolution?.status === 'resolved' && resolution.identity) return { ok: true, identity: resolution.identity };
+    return { ok: false, refusal: resolution?.status === 'refused' ? resolution.reason : 'unsupported-remote' };
+  }
+
+  /** The fixed "this project's repository is not usable for remote work" reply (ADR-0109 D2). Nothing ran. */
+  private respondRepositoryRefused(
+    message: InboundMessage,
+    session: Session,
+    refusal: WorkspaceRepositoryRefusal,
+  ): Promise<TurnResult> {
+    this.deps.logger.warn('remote step refused: workspace repository not allowlisted/resolvable', {
+      reason: refusal,
+      sessionId: session.id,
+    });
+    return this.failComposed(message, session, this.deps.composer.composeRepositoryNotAllowed(message.context, refusal));
+  }
+
+  /**
+   * ADR-0109 D2 gate for a remote step that has no hosting identity check of its own (push approval/execution, merge
+   * and remote-cleanup approval). A no-op unless the per-workspace resolver is configured, so a deployment without it
+   * behaves exactly as before. With it: the workspace must resolve to an allowlisted repository and, when the anchor
+   * already carries an approved identity, to that same identity (`mismatch` → the caller's own unavailable reply).
+   * Returns `null` when the step may continue, otherwise the reply to send.
+   */
+  private async remoteRepositoryGate(
+    message: InboundMessage,
+    session: Session,
+    rootPath: string | undefined,
+    anchoredIdentity: RepositoryIdentity | undefined,
+    mismatch: () => Promise<TurnResult>,
+  ): Promise<TurnResult | null> {
+    if (!this.deps.repositoryHosting?.resolveIdentity) return null;
+    const lookup = await this.hostingIdentityFor(rootPath);
+    if (!lookup.ok) return lookup.refusal ? this.respondRepositoryRefused(message, session, lookup.refusal) : mismatch();
+    if (anchoredIdentity && !sameRepositoryIdentity(anchoredIdentity, lookup.identity)) return mismatch();
+    return null;
   }
 
   /** Map an ExecutionOutcome to a TurnResult + recorded reply. */

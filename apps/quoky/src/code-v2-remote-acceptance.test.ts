@@ -12,6 +12,7 @@ import {
   GitManager,
   IntentResolver,
   PatchManager,
+  RepositoryHostingManager,
   ResponseComposer,
   RiskLevel,
   RiskPolicy,
@@ -40,11 +41,17 @@ import type {
   Task,
   WorkspaceChange,
   WorkspaceRef,
+  WorkspaceRepositoryResolution,
 } from '@quoky/core';
 import { LocalGitProvider } from '@quoky/git-local';
 import type { GitRunner } from '@quoky/git-local';
 import { LocalCloneWorkspaceProvider, LocalWorkspaceWriter } from '@quoky/workspace-local';
+import { GitHubRepositoryHostingProvider, createPullRequestStatusTokenSource } from '@quoky/repository-hosting-github';
 import { codeWorkProviders } from './features/code-work.providers';
+import { createGitHubAppTokenSources } from './github-app-token-sources';
+import type { GitHubAppTokenMinter } from './github-app-token-sources';
+import { RepositoryAllowlist } from './repository-allowlist';
+import { WorkspaceRepositoryIdentityResolver } from './workspace-repository-resolver';
 import { CODE_WORK_TURN_HANDLERS } from './features/feature-tokens';
 import { PersonalGitGuard } from './personal-git-guard';
 import { PersonalHostingGuard } from './personal-hosting-guard';
@@ -162,6 +169,10 @@ interface HarnessOptions {
   remoteEnabled: boolean;
   /** Register the composition root's code-work handlers (default true). */
   withBranchHandler?: boolean;
+  /** ADR-0109 D2: the composition root's per-workspace repository resolver (absent = the static identity). */
+  resolveIdentity?: (rootPath: string) => Promise<WorkspaceRepositoryResolution>;
+  /** Replace the fake hosting manager (still wrapped in the REAL PersonalHostingGuard). */
+  hostingManager?: RepositoryHostingSurface;
 }
 
 function harness(fx: Fixture, opts: HarnessOptions) {
@@ -272,8 +283,12 @@ function harness(fx: Fixture, opts: HarnessOptions) {
     async mergePullRequest() { hosting.merge++; throw new Error('merge must not reach the manager'); },
     async deleteRemoteBranch() { hosting.deleteRemote++; throw new Error('delete must not reach the manager'); },
   };
-  const hostingGuard = new PersonalHostingGuard(fakeHostingManager, { mergeEnabled: false });
-  const repositoryHosting = { identity: IDENTITY, manager: opts.remoteEnabled ? hostingGuard : undefined };
+  const hostingGuard = new PersonalHostingGuard(opts.hostingManager ?? fakeHostingManager, { mergeEnabled: false });
+  const repositoryHosting = {
+    identity: IDENTITY,
+    ...(opts.resolveIdentity ? { resolveIdentity: opts.resolveIdentity } : {}),
+    manager: opts.remoteEnabled ? hostingGuard : undefined,
+  };
 
   const codeWork = codeWorkProviders.find(
     (p): p is { provide: symbol; useFactory: (g: GitManager) => readonly ConversationTurnHandler[]; inject: unknown[] } =>
@@ -533,4 +548,132 @@ describe('CODE-5 offline acceptance — opt-in push → PR chain (ADR-0099 D5, n
     expect(created.reply.text).toContain('새 브랜치를 만들고 전환했어요');
     expect(registered.gitCalls.filter((c) => c === 'switch')).toHaveLength(1);
   });
+});
+
+describe('CODE-8 offline acceptance — multi-repository allowlist (ADR-0109, no network)', () => {
+  const OTHER: RepositoryIdentity = { provider: 'github', owner: 'jonghyungJeon-private', repo: 'quoky-uat-second' };
+
+  /** The REAL resolver over the REAL allowlist; only the credential-free `origin` read is replaced by a mutable value. */
+  function resolverWithOrigin(allowlist: readonly RepositoryIdentity[], initial: string) {
+    let originUrl = initial;
+    const reads: string[] = [];
+    const resolver = new WorkspaceRepositoryIdentityResolver({
+      allowlist: new RepositoryAllowlist(allowlist),
+      readRemoteUrl: (rootPath, remote) => {
+        reads.push(`${rootPath}:${remote}`);
+        return [originUrl, originUrl];
+      },
+    });
+    return {
+      resolveIdentity: (rootPath: string) => resolver.resolve(rootPath),
+      setOrigin: (url: string) => { originUrl = url; },
+      reads,
+    };
+  }
+
+  /** The REAL GitHub hosting adapter + manager with the REAL token sources over a counting FAKE App minter and fetch. */
+  function realHostingWithFakeMinter(allowlist: readonly RepositoryIdentity[]) {
+    const mints: string[] = [];
+    const fetches: string[] = [];
+    const minter: GitHubAppTokenMinter = {
+      async resolveInstallationId(owner, repo) { mints.push(`installation:${owner}/${repo}`); return 7; },
+      async tokenForRepository(_id, owner, repo) { mints.push(`repo:${owner}/${repo}`); return 'minted-test-value'; },
+      async tokenForInstallation() { mints.push('installation-token'); return 'minted-test-value'; },
+    };
+    const sources = createGitHubAppTokenSources({
+      minter,
+      allowlist: new RepositoryAllowlist(allowlist),
+      createStatusTokenSource: (mint) => createPullRequestStatusTokenSource(mint, () => false),
+    });
+    const fetchImpl = (async (url: string) => {
+      fetches.push(String(url));
+      throw new Error('no network in this test');
+    }) as unknown as typeof fetch;
+    const manager = new RepositoryHostingManager(
+      new GitHubRepositoryHostingProvider({
+        auth: { kind: 'github-app', tokenSource: sources.tokenSource, statusTokenSource: sources.statusTokenSource },
+        fetchImpl,
+      }),
+    );
+    return { manager, mints, fetches };
+  }
+
+  it('an allowlisted origin: the chain runs to PR_CREATED and the PR targets the repository resolved from origin', async () => {
+    const fx = makeFixture();
+    const origin = resolverWithOrigin([OTHER, IDENTITY], `https://github.com/${IDENTITY.owner}/${IDENTITY.repo}.git`);
+    const h = harness(fx, { remoteEnabled: true, resolveIdentity: origin.resolveIdentity });
+    const commitHash = await commitOnNewBranch(fx, h);
+    expect((await h.send('푸시해줘')).status).toBe('AWAITING_APPROVAL');
+    await h.send('승인');
+    expect((await h.send('푸시 실행')).status).toBe('RESPONDED');
+    expect(remoteHead(fx, BRANCH)).toBe(commitHash);
+    expect((await h.send('PR 만들어줘')).status).toBe('AWAITING_APPROVAL');
+    expect(h.anchor()?.repositoryIdentity).toEqual(IDENTITY);
+    await h.send('승인');
+    expect((await h.send('PR 생성 실행')).status).toBe('RESPONDED');
+    expect(h.hosting.create).toHaveLength(1);
+    expect(h.hosting.create[0]).toMatchObject({ identity: IDENTITY, headBranch: BRANCH });
+    expect(origin.reads.every((r) => r === `${fx.root}:origin`)).toBe(true);
+  }, 60_000);
+
+  it('a non-allowlisted origin: push is refused before any approval, git push, hosting call or token mint', async () => {
+    const fx = makeFixture();
+    const origin = resolverWithOrigin([IDENTITY], 'https://github.com/someone/unlisted.git');
+    const real = realHostingWithFakeMinter([IDENTITY]);
+    const h = harness(fx, { remoteEnabled: true, resolveIdentity: origin.resolveIdentity, hostingManager: real.manager });
+    await commitOnNewBranch(fx, h);
+
+    const pushAsk = await h.send('푸시해줘');
+    expect(pushAsk.status).toBe('FAILED');
+    expect(pushAsk.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+    expect(pushAsk.reply.text).toContain('GitHub 토큰도 발급하지 않았어요');
+    expect(h.anchor()?.status).toBe('GIT_COMMITTED');
+    expect(h.criticals()).toHaveLength(0);
+    expect(h.gitCalls).not.toContain('push');
+    expect(remoteHead(fx, BRANCH)).toBe('');
+    expect(real.mints).toEqual([]);
+    expect(real.fetches).toEqual([]);
+  }, 60_000);
+
+  it('origin changed to a non-allowlisted repository after PR approval: PR creation is refused before any mint', async () => {
+    const fx = makeFixture();
+    const origin = resolverWithOrigin([IDENTITY], `https://github.com/${IDENTITY.owner}/${IDENTITY.repo}`);
+    const real = realHostingWithFakeMinter([IDENTITY]);
+    const h = harness(fx, { remoteEnabled: true, resolveIdentity: origin.resolveIdentity, hostingManager: real.manager });
+    await commitOnNewBranch(fx, h);
+    await h.send('푸시해줘');
+    await h.send('승인');
+    await h.send('푸시 실행');
+    await h.send('PR 만들어줘');
+    await h.send('승인');
+    expect(h.anchor()?.status).toBe('PR_APPROVED');
+
+    origin.setOrigin('https://github.com/someone/unlisted.git');
+    const refused = await h.send('PR 생성 실행');
+    expect(refused.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+    expect(h.anchor()?.status).toBe('PR_APPROVED');
+    expect(real.mints).toEqual([]);
+    expect(real.fetches).toEqual([]);
+
+    // an SSH origin or a fetch/push pair naming two repositories is refused the same way, still with no mint
+    origin.setOrigin(`git@github.com:${IDENTITY.owner}/${IDENTITY.repo}.git`);
+    expect((await h.send('PR 생성 실행')).reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'unsupported-remote').text);
+    expect(real.mints).toEqual([]);
+    expect(real.fetches).toEqual([]);
+  }, 60_000);
+
+  it('legacy single repository without a resolver: byte-identical push approval reply (static identity path)', async () => {
+    const fxA = makeFixture();
+    const legacy = harness(fxA, { remoteEnabled: true });
+    await commitOnNewBranch(fxA, legacy);
+    const legacyReply = (await legacy.send('푸시해줘')).reply.text;
+
+    const fxB = makeFixture();
+    const origin = resolverWithOrigin([IDENTITY], `https://github.com/${IDENTITY.owner}/${IDENTITY.repo}.git`);
+    const allowlisted = harness(fxB, { remoteEnabled: true, resolveIdentity: origin.resolveIdentity });
+    await commitOnNewBranch(fxB, allowlisted);
+    const allowlistedReply = (await allowlisted.send('푸시해줘')).reply.text;
+    const strip = (t: string) => t.replace(/[0-9a-f]{7,40}/g, '<sha>');
+    expect(strip(allowlistedReply)).toBe(strip(legacyReply));
+  }, 60_000);
 });

@@ -909,3 +909,92 @@ describe('loadConfig — local operations UI flags (ADR-0113 D1/D2, folded by OP
     expect(JSON.stringify(loadConfig(env({ QUOKY_OPS_UI_ENABLED: 'SECRETVALUE' })).opsUi)).not.toContain('SECRETVALUE');
   });
 });
+
+describe('loadConfig — QUOKY_GITHUB_REPOS multi-repository allowlist (ADR-0109 D1)', () => {
+  const codeOf = (raw: Record<string, string>): string | undefined => {
+    try {
+      loadConfig(env(raw));
+      return undefined;
+    } catch (error) {
+      expect(error).toBeInstanceOf(QuokyConfigError);
+      return (error as QuokyConfigError).code;
+    }
+  };
+  const repos = (n: number) => Array.from({ length: n }, (_, i) => `acme/repo-${i + 1}`).join(',');
+
+  it('parses comma-separated owner/repo entries (whitespace ignored) in order; the legacy raw pair stays undefined', () => {
+    const cfg = loadConfig(env({ QUOKY_GITHUB_REPOS: ' acme/widgets , my-org/gadgets.js ' }));
+    expect(cfg.repositoryAllowlist).toEqual([
+      { provider: 'github', owner: 'acme', repo: 'widgets' },
+      { provider: 'github', owner: 'my-org', repo: 'gadgets.js' },
+    ]);
+    expect(cfg.repositoryHosting).toBeUndefined();
+  });
+
+  it('accepts exactly 10 entries and refuses 11 with a typed startup error', () => {
+    expect(loadConfig(env({ QUOKY_GITHUB_REPOS: repos(10) })).repositoryAllowlist).toHaveLength(10);
+    expect(codeOf({ QUOKY_GITHUB_REPOS: repos(11) })).toBe('GITHUB_REPOS_TOO_MANY');
+  });
+
+  it.each([
+    ['a missing slash', 'acme'],
+    ['an extra segment', 'acme/widgets/x'],
+    ['an empty entry', 'acme/widgets,'],
+    ['an empty middle entry', 'acme/widgets,,acme/gadgets'],
+    ['a URL', 'https://github.com/acme/widgets'],
+    ['an SSH remote', 'git@github.com:acme/widgets.git'],
+    ['a .git suffix', 'acme/widgets.git'],
+    ['a space inside', 'ac me/widgets'],
+    ['a token-shaped name', 'acme/token-store'],
+  ])('a malformed entry (%s) is GITHUB_REPOS_INVALID', (_label, value) => {
+    expect(codeOf({ QUOKY_GITHUB_REPOS: value })).toBe('GITHUB_REPOS_INVALID');
+  });
+
+  it('a duplicate entry (case-insensitive) is GITHUB_REPOS_DUPLICATE', () => {
+    expect(codeOf({ QUOKY_GITHUB_REPOS: 'acme/widgets,ACME/Widgets' })).toBe('GITHUB_REPOS_DUPLICATE');
+  });
+
+  it('the error carries the code only, never the configured value', () => {
+    try {
+      loadConfig(env({ QUOKY_GITHUB_REPOS: 'acme/widgets,https://github.com/leak-me/value' }));
+      expect.unreachable();
+    } catch (error) {
+      expect(String((error as Error).message)).toBe('GITHUB_REPOS_INVALID');
+      expect(String(error)).not.toContain('leak-me');
+    }
+  });
+
+  it('setting both QUOKY_GITHUB_REPOS and any part of the legacy pair is a startup error', () => {
+    for (const legacy of [
+      { QUOKY_GITHUB_OWNER: 'acme', QUOKY_GITHUB_REPO: 'widgets' },
+      { QUOKY_GITHUB_OWNER: 'acme' },
+      { QUOKY_GITHUB_REPO: 'widgets' },
+      { CHUNSIK_GITHUB_OWNER: 'acme', CHUNSIK_GITHUB_REPO: 'widgets' },
+    ]) {
+      expect(codeOf({ QUOKY_GITHUB_REPOS: 'acme/widgets', ...legacy })).toBe('GITHUB_REPOS_WITH_LEGACY_PAIR');
+    }
+  });
+
+  it('a blank QUOKY_GITHUB_REPOS is unset: the legacy pair is used, and no conflict is raised', () => {
+    const cfg = loadConfig(env({ QUOKY_GITHUB_REPOS: '  ', QUOKY_GITHUB_OWNER: 'acme', QUOKY_GITHUB_REPO: 'widgets' }));
+    expect(cfg.repositoryAllowlist).toEqual([{ provider: 'github', owner: 'acme', repo: 'widgets' }]);
+  });
+
+  it('the legacy pair is an allowlist of one and keeps its raw repositoryHosting value unchanged', () => {
+    const cfg = loadConfig(env({ QUOKY_GITHUB_OWNER: 'acme', QUOKY_GITHUB_REPO: 'widgets' }));
+    expect(cfg.repositoryAllowlist).toEqual([{ provider: 'github', owner: 'acme', repo: 'widgets' }]);
+    expect(cfg.repositoryHosting).toEqual({ provider: 'github', owner: 'acme', repo: 'widgets' });
+    const chunsik = loadConfig(env({ CHUNSIK_GITHUB_OWNER: 'c', CHUNSIK_GITHUB_REPO: 'd' }));
+    expect(chunsik.repositoryAllowlist).toEqual([{ provider: 'github', owner: 'c', repo: 'd' }]);
+  });
+
+  it('an unresolvable legacy pair stays lenient (not configured, empty allowlist) exactly as before', () => {
+    const cfg = loadConfig(env({ QUOKY_GITHUB_OWNER: 'acme' }));
+    expect(cfg.repositoryHosting).toEqual({ provider: 'github', owner: 'acme', repo: '' });
+    expect(cfg.repositoryAllowlist).toEqual([]);
+  });
+
+  it('neither form → an empty allowlist', () => {
+    expect(loadConfig(env({})).repositoryAllowlist).toEqual([]);
+  });
+});

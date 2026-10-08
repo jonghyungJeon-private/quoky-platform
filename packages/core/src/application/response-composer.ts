@@ -9,6 +9,7 @@ import type {
   PreviewFile,
   PullRequestMergeability,
   PullRequestStatusPreview,
+  WorkspaceRepositoryRefusal,
 } from '../domain';
 import type { AiExecutionResult } from '../ports';
 import { newId } from '../util/id';
@@ -2464,6 +2465,24 @@ export class ResponseComposer {
   }
 
   /** Repository identity or GitHub token is not configured (Sprint 3d-D) — safe not-configured; NO PR attempt. */
+  /**
+   * ADR-0109 D2: a remote step (push, PR, PR status, merge, main sync, branch cleanup) refused because the project's
+   * `origin` does not resolve to exactly one allowlisted HTTPS github.com repository. Truthful and fixed: names the
+   * reason class, says nothing ran and no GitHub token was issued. Never echoes a URL or any configured value.
+   */
+  composeRepositoryNotAllowed(context: ConversationContext, reason: WorkspaceRepositoryRefusal): OutboundMessage {
+    const cause =
+      reason === 'not-allowlisted'
+        ? '이 프로젝트의 origin 저장소가 허용된 GitHub 저장소 목록(QUOKY_GITHUB_REPOS)에 없어요.'
+        : reason === 'ambiguous'
+          ? '이 프로젝트의 origin fetch URL과 push URL이 서로 다른 저장소를 가리켜요. 한 프로젝트는 한 저장소만 쓸 수 있어요.'
+          : '이 프로젝트의 origin을 HTTPS github.com 저장소로 확인할 수 없어요 (SSH·다른 호스트·URL 재작성·읽기 실패).';
+    return {
+      context,
+      text: `${cause} push·PR·상태 확인·merge·브랜치 정리는 하지 않았고 GitHub 토큰도 발급하지 않았어요.`,
+    };
+  }
+
   composePrCreationNotConfigured(context: ConversationContext): OutboundMessage {
     return {
       context,

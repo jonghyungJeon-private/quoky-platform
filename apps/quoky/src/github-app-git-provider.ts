@@ -12,9 +12,12 @@ import type {
   GitProvider,
   GitPushResult,
   GitStatus,
+  RepositoryIdentity,
   RepositoryInfo,
 } from '@quoky/core';
 import type { GitRunResult, GitRunner } from '@quoky/git-local';
+import { resolveRepositoryFromRemoteUrls } from './repository-allowlist';
+import type { RepositoryAllowlist } from './repository-allowlist';
 
 /**
  * One-shot `GIT_ASKPASS` script (ADR-0061 Q3 / RC1). git invokes it when it needs HTTPS credentials: it returns the
@@ -48,8 +51,16 @@ export interface GitHubAppGitProviderDeps {
    * package's class and stays unit-testable.
    */
   makeLocalGit: (runner?: GitRunner) => GitProvider;
-  /** Mint (or return a cached) short-lived installation token for the target repo. Adapter-local; never stored here. */
-  tokenSource: () => Promise<string>;
+  /**
+   * Mint (or return a cached) short-lived installation token for exactly `identity` — the one repository the
+   * operation's remote URLs resolved to (ADR-0109 D3). Adapter-local; never stored here.
+   */
+  tokenSource: (identity: RepositoryIdentity) => Promise<string>;
+  /**
+   * The validated repository allowlist (ADR-0109 D1/D2). Every URL an operation uses must name the same allowlisted
+   * repository — and, for a remote other than `origin`, the same repository as `origin` — before any token is minted.
+   */
+  allowlist: RepositoryAllowlist;
   /**
    * Read the configured remote URL(s) for the HTTPS-github.com preflight (RC1). Injectable for tests; the default
    * runs credential-free local `git remote get-url --all` and `--push --all` reads (no network, no askpass) under
@@ -220,17 +231,17 @@ export class GitHubAppGitProvider implements GitProvider {
       // credential helper (system/global/repo, e.g. macOS `osxkeychain`) is reset. An ambient helper is consulted
       // BEFORE GIT_ASKPASS, so it would shadow the App token with another identity's credential, and on success git
       // would `approve` (persist) the App token into that helper. An empty value clears the helper list.
-      const gitConfigEnv: NodeJS.ProcessEnv = {
-        ...withoutInheritedGitConfigEnv(process.env),
-        GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'credential.helper',
-        GIT_CONFIG_VALUE_0: '',
-      };
+      const gitConfigEnv = sanitizedGitConfigEnv(process.env);
       const remoteUrls = this.readRemoteUrl(rootPath, remote, gitConfigEnv, direction); // unreadable → throws
       const urls = typeof remoteUrls === 'string' ? [remoteUrls] : remoteUrls;
       if (urls.length === 0) throw new Error('git remote url could not be read');
       for (const url of urls) assertHttpsGithubRemote(url); // ssh / non-github / embedded-credential → throws
-      const token = await this.deps.tokenSource(); // mint failure → throws
+      // ADR-0109 D2: the URLs must name ONE allowlisted repository (a non-origin remote: origin's repository too).
+      const originUrls =
+        remote === 'origin' ? [] : toUrlList(this.readRemoteUrl(rootPath, 'origin', gitConfigEnv, 'fetch'));
+      const resolution = resolveRepositoryFromRemoteUrls([...urls, ...originUrls], this.deps.allowlist);
+      if (resolution.status !== 'resolved') throw new Error(repositoryRefusalMessage(resolution.reason));
+      const token = await this.deps.tokenSource(resolution.identity); // mint failure → throws
       dir = mkdtempSync(join(tmpdir(), 'quoky-askpass-'));
       const askpassPath = join(dir, 'askpass.sh');
       writeFileSync(askpassPath, ASKPASS_SCRIPT, { mode: 0o700 });
@@ -283,6 +294,32 @@ export function assertHttpsGithubRemote(url: string): void {
   }
 }
 
+function toUrlList(urls: string | readonly string[]): readonly string[] {
+  return typeof urls === 'string' ? [urls] : urls;
+}
+
+/** Fixed pre-mutation refusal text per ADR-0109 reason — never a URL. */
+function repositoryRefusalMessage(reason: 'not-allowlisted' | 'ambiguous' | 'unsupported-remote'): string {
+  if (reason === 'not-allowlisted') return 'the remote repository is not on the allowlist (QUOKY_GITHUB_REPOS); no token minted';
+  if (reason === 'ambiguous') return 'the remote URLs name more than one repository; no token minted';
+  return 'the remote is not a plain HTTPS github.com repository URL; no token minted';
+}
+
+/**
+ * The ONE sanitized git-config environment every credential-free remote read and every credentialed child runs with
+ * (ADR-0061): inherited env-injected config is dropped and every credential helper is reset (an empty value clears
+ * the helper list). Exported so the workspace repository resolver (ADR-0109 D2) reads `origin` exactly as the push
+ * would see it.
+ */
+export function sanitizedGitConfigEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...withoutInheritedGitConfigEnv(env),
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'credential.helper',
+    GIT_CONFIG_VALUE_0: '',
+  };
+}
+
 /** Sanitized pre-mutation message. The pre-mutation errors (remote preflight / AppAuthError) never carry a token. */
 function preMutationMessage(op: string, err: unknown): string {
   const detail = err instanceof Error && err.message ? err.message : 'credential/remote preflight failed';
@@ -319,7 +356,7 @@ function safeRemove(dir: string | undefined): void {
  * `git remote get-url --push --all <remote>` (no network), so every URL the operation can use (incl. a `pushurl`
  * and `insteadOf`/`pushInsteadOf` rewrites, as resolved under `env`) is checked.
  */
-function defaultReadRemoteUrl(
+export function defaultReadRemoteUrl(
   rootPath: string,
   remote: string,
   env: NodeJS.ProcessEnv,

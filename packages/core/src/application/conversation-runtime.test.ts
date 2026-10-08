@@ -61,6 +61,7 @@ import type {
   WorkspaceChange,
   WorkspaceDiff,
   WorkspaceRef,
+  WorkspaceRepositoryResolution,
 } from '../domain';
 import type { AiExecutionResult, AiProvider, AiRequest, Logger, LogFields, StorageProvider } from '../ports';
 import { newId } from '../util/id';
@@ -141,6 +142,19 @@ const sessionOf = (o: Partial<Session> = {}): Session => ({
 const projectOf = (): Project => ({ id: 'proj-1', name: 'p', rootPath: '/repo', createdAt: TS });
 
 const messageOf = (text: string): InboundMessage => ({ id: 'm1', context: CTX, text, receivedAt: TS });
+/** ADR-0109 D2 fakes for the per-workspace repository resolver (records every root it is asked about). */
+const resolverReturning = (result: WorkspaceRepositoryResolution) => {
+  const roots: string[] = [];
+  const resolve = async (rootPath: string): Promise<WorkspaceRepositoryResolution> => {
+    roots.push(rootPath);
+    return result;
+  };
+  return { resolve, roots };
+};
+const ALLOWLISTED: WorkspaceRepositoryResolution = {
+  status: 'resolved',
+  identity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+};
 
 const intentOf = (
   capability: Capability,
@@ -669,6 +683,8 @@ interface Opts {
   /** Repository Hosting identity (Sprint 3d-D) — defaults to a valid github identity so PR approval works; pass
    *  `null` to simulate "not configured" (no identity). */
   hostingIdentity?: RepositoryIdentity | null;
+  /** ADR-0109 D2: the composition root's per-workspace resolver (absent = the static `hostingIdentity` path). */
+  hostingResolveIdentity?: (rootPath: string) => Promise<WorkspaceRepositoryResolution>;
   /** Repository Hosting manager (Sprint 3d-D) — defaults to a fake that records the call and returns a valid
    *  echoing PullRequestResult; pass `null` to simulate a missing token (no manager), or a custom fake for
    *  reuse/blocked/unverified paths. */
@@ -1103,6 +1119,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         opts.hostingIdentity === null
           ? undefined
           : (opts.hostingIdentity ?? { provider: 'github', owner: 'acme', repo: 'widgets' }),
+      ...(opts.hostingResolveIdentity ? { resolveIdentity: opts.hostingResolveIdentity } : {}),
       manager:
         opts.hostingManager === null
           ? undefined
@@ -5895,6 +5912,67 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
     expect(calls.run).toBe(0);
     expect(calls.resume).toBe(0);
   });
+
+  // ── ADR-0109 D2: the project's origin must resolve to one allowlisted repository before any push ──────────
+  describe('multi-repository allowlist (ADR-0109 D2)', () => {
+    const committed = (): ApplyPreviewAnchor =>
+      pushApprovedAnchor({
+        status: 'GIT_COMMITTED',
+        pushApprovalId: undefined,
+        pushCommitHash: undefined,
+        pushRemote: undefined,
+        pushBranch: undefined,
+        pushUpstreamRef: undefined,
+      });
+
+    it.each(['not-allowlisted', 'ambiguous', 'unsupported-remote'] as const)(
+      'push approval: a %s workspace → fixed refusal, no CRITICAL approval, no anchor change',
+      async (reason) => {
+        const resolver = resolverReturning({ status: 'refused', reason });
+        const { deps, calls } = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolver.resolve });
+        const r = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+        expect(r.status).toBe('FAILED');
+        expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, reason).text);
+        expect(calls.requestForRisk).toBe(0);
+        expect(calls.applyAnchorSet).toBe(0);
+        expect(calls.gitPush).toBe(0);
+        expect(resolver.roots).toEqual([WORKSPACE.rootPath]);
+      },
+    );
+
+    it('push execution: an origin that is no longer allowlisted → refused before git push; stays PUSH_APPROVED', async () => {
+      const resolver = resolverReturning({ status: 'refused', reason: 'not-allowlisted' });
+      const { deps, calls } = execDeps({ hostingResolveIdentity: resolver.resolve });
+      const r = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+      expect(calls.gitPush).toBe(0);
+      expect(calls.applyAnchorSet).toBe(0);
+    });
+
+    it('a resolver that throws fails closed as unsupported-remote (no push)', async () => {
+      const { deps, calls } = execDeps({
+        hostingResolveIdentity: async () => {
+          throw new Error('boom');
+        },
+      });
+      const r = await new ConversationRuntime(deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'unsupported-remote').text);
+      expect(calls.gitPush).toBe(0);
+    });
+
+    it('an allowlisted origin: approval and push proceed exactly as without the resolver', async () => {
+      const ask = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      const legacyAsk = execDeps({ applyAnchor: committed() });
+      const withResolver = await new ConversationRuntime(ask.deps).handle(messageOf('푸시해줘'));
+      const legacy = await new ConversationRuntime(legacyAsk.deps).handle(messageOf('푸시해줘'));
+      expect(withResolver.status).toBe('AWAITING_APPROVAL');
+      expect(withResolver.reply.text).toBe(legacy.reply.text);
+      const exec = execDeps({ hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
+      expect(exec.calls.gitPush).toBe(1);
+      expect(exec.calls.lastApplyAnchor?.status).toBe('GIT_PUSHED');
+    });
+  });
 });
 
 // ── Sprint 3b — Explicit Pull Request Creation Approval (GIT_PUSHED → CRITICAL PR approval, ADR-0049) ──
@@ -8011,6 +8089,102 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
     expect(calls.hostingDeleteRemoteBranch).toBe(0);
     expect(calls.applyAnchorSet).toBe(0);
     expect(r.reply.text).toContain('실행할 수 없어요');
+  });
+
+  // ── ADR-0109 D2: every PR-and-later remote step uses the identity resolved from the project's origin ──────────
+  describe('multi-repository allowlist (ADR-0109 D2)', () => {
+    const OTHER: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'gadgets' };
+    const NOT_ALLOWED = (): WorkspaceRepositoryResolution => ({ status: 'refused', reason: 'not-allowlisted' });
+    const hostingCalls = (calls: ReturnType<typeof makeDeps>['calls']) =>
+      calls.hostingCreatePR + calls.hostingGetStatus + calls.hostingMergePR + calls.hostingDeleteRemoteBranch;
+
+    const steps: Array<[string, () => ApplyPreviewAnchor, string, Partial<Opts>, { gitMergeEnabled?: boolean } | undefined]> = [
+      ['PR approval', () => prReadyAnchor(), 'PR 만들어줘', {}, undefined],
+      ['PR creation', () => prApprovedAnchor(), 'PR 생성 실행', { approvalsGetResult: APPROVED_REQ() }, undefined],
+      ['PR status', () => PR_CREATED_ANCHOR(), 'PR 상태 확인해줘', {}, undefined],
+      ['merge approval', () => PR_CREATED_ANCHOR(), '머지 승인해줘', {}, MERGE_ON],
+      ['merge execution', () => MERGE_APPROVED_ANCHOR(), '머지 실행해줘', { approvalsGetResult: APPROVED_MERGE() }, MERGE_ON],
+      ['main sync', () => PR_MERGED_ANCHOR(), 'main 동기화해줘', {}, MERGE_ON],
+      ['local branch cleanup', () => MAIN_SYNCED_ANCHOR(), '로컬 브랜치 정리해줘', {}, MERGE_ON],
+      ['remote cleanup approval', () => BRANCH_CLEANED_ANCHOR(), '원격 브랜치 삭제해줘', {}, MERGE_ON],
+      ['remote cleanup execution', () => REMOTE_CLEANUP_APPROVED_ANCHOR(), '원격 브랜치 삭제 실행해줘', { approvalsGetResult: approvedApprovalOf() }, MERGE_ON],
+    ];
+
+    it.each(steps)('%s: a non-allowlisted origin → fixed refusal before any approval, git or hosting call', async (_label, anchor, text, extra, options) => {
+      const resolver = resolverReturning(NOT_ALLOWED());
+      const { deps, calls } = makeDeps({ applyAnchor: anchor(), hostingResolveIdentity: resolver.resolve, ...extra });
+      const r = await new ConversationRuntime(deps, options).handle(messageOf(text));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+      expect(r.status).toBe('FAILED');
+      expect(calls.requestForRisk).toBe(0);
+      expect(calls.applyAnchorSet).toBe(0);
+      expect(hostingCalls(calls)).toBe(0);
+      expect(calls.gitPush + calls.gitSyncMain + calls.gitDeleteBranch).toBe(0);
+      expect(resolver.roots).toEqual([WORKSPACE.rootPath]);
+    });
+
+    it.each(steps)('%s: an allowlisted origin behaves exactly as the static identity', async (_label, anchor, text, extra, options) => {
+      const resolved = makeDeps({ applyAnchor: anchor(), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve, ...extra });
+      const legacy = makeDeps({ applyAnchor: anchor(), ...extra });
+      const a = await new ConversationRuntime(resolved.deps, options).handle(messageOf(text));
+      const b = await new ConversationRuntime(legacy.deps, options).handle(messageOf(text));
+      expect(a.status).toBe(b.status);
+      expect(a.reply.text.replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<ts>')).toBe(b.reply.text.replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<ts>'));
+      expect(hostingCalls(resolved.calls)).toBe(hostingCalls(legacy.calls));
+      expect(resolved.calls.requestForRisk).toBe(legacy.calls.requestForRisk);
+      expect(resolved.calls.gitSyncMain + resolved.calls.gitDeleteBranch).toBe(legacy.calls.gitSyncMain + legacy.calls.gitDeleteBranch);
+      // the step really ran (an approval, a hosting call or a local git step) — the comparison is not vacuous
+      expect(legacy.calls.requestForRisk + hostingCalls(legacy.calls) + legacy.calls.gitSyncMain + legacy.calls.gitDeleteBranch).toBe(1);
+    });
+
+    it('PR approval binds the identity resolved from origin (another allowlisted repository), not the static one', async () => {
+      const { deps, calls } = makeDeps({
+        applyAnchor: prReadyAnchor(),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: OTHER }).resolve,
+      });
+      await new ConversationRuntime(deps).handle(messageOf('PR 만들어줘'));
+      expect(calls.lastApplyAnchor?.repositoryIdentity).toEqual(OTHER);
+      expect(calls.lastRequestForRiskInput?.reason).toContain('acme/gadgets');
+    });
+
+    it('PR creation targets the resolved repository; a project now resolving to a different repository is refused', async () => {
+      const other = makeDeps({
+        applyAnchor: prApprovedAnchor({ repositoryIdentity: OTHER }),
+        approvalsGetResult: APPROVED_REQ(),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: OTHER }).resolve,
+      });
+      await new ConversationRuntime(other.deps).handle(messageOf('PR 생성 실행'));
+      expect(other.calls.lastHostingCreateInput?.identity).toEqual(OTHER);
+
+      const drifted = makeDeps({
+        applyAnchor: prApprovedAnchor(),
+        approvalsGetResult: APPROVED_REQ(),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: OTHER }).resolve,
+      });
+      const r = await new ConversationRuntime(drifted.deps).handle(messageOf('PR 생성 실행'));
+      expect(drifted.calls.hostingCreatePR).toBe(0);
+      expect(r.reply.text).toBe(composer.composePrCreationUnavailable(CTX).text);
+    });
+
+    it('merge / remote-cleanup approvals refuse when origin now resolves to a different (allowlisted) repository', async () => {
+      const resolve = resolverReturning({ status: 'resolved', identity: OTHER }).resolve;
+      const merge = makeDeps({ applyAnchor: PR_CREATED_ANCHOR(), hostingResolveIdentity: resolve });
+      const m = await new ConversationRuntime(merge.deps, MERGE_ON).handle(messageOf('머지 승인해줘'));
+      expect(merge.calls.requestForRisk).toBe(0);
+      expect(m.reply.text).toBe(composer.composeMergeApprovalUnavailable(CTX).text);
+      const cleanup = makeDeps({ applyAnchor: BRANCH_CLEANED_ANCHOR(), hostingResolveIdentity: resolve });
+      const c = await new ConversationRuntime(cleanup.deps, MERGE_ON).handle(messageOf('원격 브랜치 삭제해줘'));
+      expect(cleanup.calls.requestForRisk).toBe(0);
+      expect(c.reply.text).toBe(composer.composeRemoteBranchCleanupApprovalUnavailable(CTX).text);
+    });
+
+    it('the refusal reply names no URL, no token and nothing configured, and says nothing ran', () => {
+      for (const reason of ['not-allowlisted', 'ambiguous', 'unsupported-remote'] as const) {
+        const text = composer.composeRepositoryNotAllowed(CTX, reason).text;
+        expect(text).toContain('하지 않았고 GitHub 토큰도 발급하지 않았어요');
+        expect(text).not.toMatch(/https?:|github\.com\/|ghs_|ghp_/);
+      }
+    });
   });
 });
 

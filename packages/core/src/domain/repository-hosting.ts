@@ -39,6 +39,24 @@ export interface RepositoryIdentityConfig {
   repo: string;
 }
 
+/**
+ * Why a registered project's workspace did not resolve to an allowlisted repository (ADR-0109 D2). A fixed enum —
+ * never a remote URL or any other raw value, so a refusal cannot carry a credential:
+ * - `not-allowlisted` — `origin` names one HTTPS github.com repository that is not on the configured allowlist;
+ * - `ambiguous` — the `origin` fetch and push URLs name different repositories (one project, two repositories);
+ * - `unsupported-remote` — no readable `origin`, or a URL that is not a plain HTTPS github.com `owner/repo` (SSH,
+ *   another host, embedded credentials, or an `insteadOf`/`pushurl` rewrite to such a URL).
+ */
+export type WorkspaceRepositoryRefusal = 'not-allowlisted' | 'ambiguous' | 'unsupported-remote';
+
+/**
+ * The repository identity of one workspace, resolved by the composition root from the workspace `origin` (ADR-0109
+ * D2). Derived on every use and never stored. Core only consumes it; the git read and the allowlist live outside.
+ */
+export type WorkspaceRepositoryResolution =
+  | { status: 'resolved'; identity: RepositoryIdentity }
+  | { status: 'refused'; reason: WorkspaceRepositoryRefusal };
+
 /** True when `p` is a supported hosting provider (`github` only for 3d-A; GHE deferred). */
 export function isSupportedHostingProvider(p: unknown): p is RepositoryHostingProviderKind {
   return p === 'github';
