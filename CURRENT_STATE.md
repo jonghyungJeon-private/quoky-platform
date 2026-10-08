@@ -5,6 +5,28 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### TG-2 Telegram attachments, reactions and approvals — implemented on branch, not merged (2026-10-08)
+
+ADR-0114 D8–D10 on top of TG-1 (#161):
+
+- **Attachments.** Photos, documents and captions from the owner's private chat become the same Core attachment model
+  as Discord's.
+  - Bounds: at most 3 (an album is one turn); text 256 KiB; png/jpeg/webp 8 MiB. Metadata is checked before
+    `getFile`, and `getFile`'s size before the download.
+  - Text goes through the credential guard; images through the #143 canonical intake.
+  - Downloads go only through the guarded outbound path, and the token-bearing URL never leaves the Bot API client.
+- **Feedback.** 👍/👎 through `message_reaction` (asked for explicitly), from the owner on Quoky's replies only.
+  Private-chat delivery is confirmed at the live session.
+- **Approvals.** The existing text phrases. The acceptance test also shows an approval cannot be run from the other
+  platform.
+
+No migration, port or token change (`ConversationRuntimeDeps` 35), and no Discord change: the canonical image module is a
+byte-identical copy, pinned by a parity test over one shared fixture set. Offline validation only. Not run yet: the
+Strict first live session (including the reaction check), the Chief Architect review, and TG-3 (the ops panel,
+`quokyctl`, CommonMark on Telegram).
+
+### TG-1 Telegram text conversations — merged (#161) (2026-10-08)
+
 ### PRV-2 Gemini API provider — implemented on branch, not merged (2026-10-08)
 
 ADR-0115 D4: the new `packages/ai-gemini-api` serves the chat tier (`gemini-api`) and image understanding
@@ -58,7 +80,7 @@ addressed on the branch:
 `fetch`). Not run yet:
 
 - the Strict gates: BotFather bot creation, the `.env.local` edit, the first live session;
-- TG-2 (attachments, reactions) and TG-3 (the ops panel, CommonMark on Telegram).
+- TG-2 (attachments, reactions; now on its own branch, above) and TG-3 (the ops panel, CommonMark on Telegram).
 
 ### BRF-1 morning brief with today's calendar — implemented on branch, not merged (2026-10-08)
 
