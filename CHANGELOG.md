@@ -40,10 +40,29 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
   `QUOKY_TELEGRAM_OWNER_IDS` and `QUOKY_TELEGRAM_OWNER_ACTOR_MAP`, with eleven `TELEGRAM_*` startup error codes (exit
   78). `.env.example` and a quickstart section are updated.
 - **PLT-0 residual.** Inbound mention-token parsing moved from Core's `hasEffectiveText` into the Discord adapter
-  (`addressing.ts`). An attachment message whose text is only addressing reaches Core as `''`; every other Discord text
-  is unchanged.
-- **Not in TG-1.** Attachments, reactions, Telegram reminder delivery, the operations-UI panel and live QA (TG-2/TG-3,
-  Strict).
+  (`addressing.ts`). This is a deliberate Discord change on one path. An attachment message whose text is only
+  addressing reaches Core as `''`, so history, prompt input and image caption no longer carry `<@id>`. Every other
+  Discord text is unchanged.
+- **Review fixes (Chief Architect CHANGES REQUIRED; Codex P2 = CA P3-3).**
+  - **P1-1.** Reminders and the brief created on Telegram are delivered on Telegram.
+    - `TelegramPlatformAdapter.deliver` sends one `sendMessage` at most, never retried.
+    - The composite routes `TEXT` and `BRIEF` by `target.platform` and `OPS_DECISION_RESULT` to Discord.
+  - **P2-1.** Forwarded and inline-bot messages are dropped (`forwarded`).
+  - **P2-2.** A transient Telegram outage at startup no longer stops the process. The identity is verified in the
+    background, and a later mismatch or auth failure halts the Telegram side only.
+  - **P2-3.** Three 409s within five minutes stop polling (`TELEGRAM_POLL_CONFLICT`). The startup probe claims only a
+    webhook.
+  - **P2-4.** An end-to-end acceptance test runs the started composite against a scripted Bot API.
+  - **P3-1.** An oversized batch is halved down to 1, then that update is skipped.
+  - **P3-2.** Identity links are preflighted with the mappings. The link conflict exits 78 and documents an unlink.
+  - **P3-3.** The mention-only + usable-attachment Discord change is documented as deliberate and pinned by a test.
+  - **P3-4.** The owner gets one notice per kind for stale or text-less messages.
+  - **P3-5.** A runtime auth failure stops polling.
+  - **P3-6.** The rate-limit wait honours `stop()`.
+  - **Offset.** The poll offset is persisted in `ops/telegram-offset.json`, so a restart never replays a handed-over
+    turn.
+- **Not in TG-1.** Attachments, reactions, the operations-UI panel, CommonMark rendering on Telegram and live QA
+  (TG-2/TG-3, Strict).
 
 ## Unreleased — BRF-1 morning brief with today's calendar (2026-10-08)
 

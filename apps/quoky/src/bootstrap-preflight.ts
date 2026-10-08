@@ -159,7 +159,7 @@ const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>>
   [TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED]:
     'Telegram rejected QUOKY_TELEGRAM_BOT_TOKEN. Get the current token from BotFather (/token or /revoke), update .env.local, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT]:
-    'Another process polls this Telegram bot, or a webhook is set on it (HTTP 409). Stop the other instance, or remove the webhook with the Bot API deleteWebhook method, then restart.',
+    'HTTP 409 at startup: in practice a webhook is set on this Telegram bot; remove it with the Bot API deleteWebhook method, then restart. (A second instance polling the same bot is detected while running and stops Telegram polling only.)',
 };
 
 /**

@@ -5,26 +5,34 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### TG-1 Telegram text conversations — implemented on branch, not merged (2026-10-08)
+### TG-1 Telegram text conversations — implemented on branch, review fixes applied, not merged (2026-10-08)
 
 ADR-0114: the new `packages/adapter-telegram` lets the owner chat with Quoky in a Telegram private chat as the same
 owner Actor as on Discord. It is off unless `QUOKY_TELEGRAM_ENABLED=true`; with it off, `PLATFORM_ADAPTER` is the Discord
-adapter exactly as before.
+adapter as before.
 
-- Long polling only, with no inbound port. The startup identity check (token bot id and `getMe`) and the 409 probe run
-  before polling starts.
-- Owner-only private-chat admission; everything else is dropped silently and counted only.
-- The bot token sits in a redacting holder and appears only in the request path.
-- Plain-text replies with lossless 4096 chunking; `<pre>` HTML only for diff previews.
-- A composite adapter over Discord and Telegram behind the single `PLATFORM_ADAPTER`.
-- Inbound mention parsing moved out of Core into the Discord adapter.
+- **Admission and polling**
+  - Long polling only, with no inbound port.
+  - The identity check (token bot id and `getMe`) runs before polling. A transient outage is retried in the background
+    and never stops Discord.
+  - Owner-only private-chat admission; forwarded and inline-bot messages are dropped.
+  - The owner gets one notice per kind for stale or text-less messages.
+  - Three 409s within five minutes stop polling, and so does a rejected token.
+  - The poll offset is persisted beside the database, so a restart does not hand a turn over twice.
+- **Security.** The bot token sits in a redacting holder and appears only in the request path.
+- **Delivery**
+  - Plain-text replies with lossless 4096 chunking; `<pre>` HTML only for diff previews.
+  - A composite adapter over Discord and Telegram behind the single `PLATFORM_ADAPTER`.
+  - Reminders and the brief are delivered on the platform where they were created; `OPS_*` notices go to Discord.
+- **Discord change.** Inbound mention parsing moved out of Core into the Discord adapter. A mention-only message with a
+  usable attachment now reaches Core as `''`; this is deliberate.
 
-No migration, no port or token change (`ConversationRuntimeDeps` 35). Offline validation only (fake `fetch`). Not yet
-done:
+No migration, no port or token change (`ConversationRuntimeDeps` 35). Chief Architect review: CHANGES REQUIRED. All
+findings and owner decisions are addressed on the branch, and re-review is pending. Offline validation only (fake
+`fetch`). Not run yet:
 
-- the Chief Architect review;
 - the Strict gates: BotFather bot creation, the `.env.local` edit, the first live session;
-- TG-2 (attachments, reactions) and TG-3 (Telegram reminder delivery, the ops panel).
+- TG-2 (attachments, reactions) and TG-3 (the ops panel, CommonMark on Telegram).
 
 ### BRF-1 morning brief with today's calendar — implemented on branch, not merged (2026-10-08)
 
