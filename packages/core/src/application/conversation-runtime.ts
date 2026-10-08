@@ -7768,7 +7768,10 @@ export class ConversationRuntime {
         documentSummary && !withheld && chatGuard?.guarded !== true && containsDocumentActionClaim(executed.text)
           ? this.documentActionClaimWithheld(message, task.id)
           : chatGuard;
-      const result = withheld ? { ...executed, ...withheld } : { ...executed, text: guard?.text ?? executed.text };
+      // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).
+      const result = withheld
+        ? { ...executed, ...withheld }
+        : { ...executed, text: guard?.text ?? executed.text, ...(documentSummary ? { artifacts: [] } : {}) };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       // ADR-0107 measurement hook: the run records how many curated examples it carried (a count, never text or ids),

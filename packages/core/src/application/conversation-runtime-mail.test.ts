@@ -75,7 +75,13 @@ function harness(opts: HarnessOptions = {}) {
   const workItems = new Map<string, WorkItem>();
   const prompts: Array<{ capability: Capability; prompt: string }> = [];
   const mailCalls = { search: 0, get: [] as string[] };
-  const calls = { classify: 0, routerSelect: [] as Capability[], createTask: [] as Intent[], recordAssistant: [] as string[] };
+  const calls = {
+    classify: 0,
+    routerSelect: [] as Capability[],
+    createTask: [] as Intent[],
+    recordAssistant: [] as string[],
+    persisted: [] as unknown[][],
+  };
 
   const storage = {
     sessions: {
@@ -176,7 +182,10 @@ function harness(opts: HarnessOptions = {}) {
       if (request.capability !== Capability.SUMMARIZATION) return { text: '천만에요!', artifacts: [] };
       if (opts.provider === 'secret') return { text: `요약: 새 토큰은 ${SECRET} 입니다`, artifacts: [] };
       if (opts.provider === 'claim') return { text: '할 일 "송금하기"를 추가했어요.', artifacts: [] };
-      return { text: opts.summary ?? SUMMARY, artifacts: [] };
+      return {
+        text: opts.summary ?? SUMMARY,
+        artifacts: [{ id: 'a1', taskId: 't', taskRunId: 'r', kind: 'TEXT', title: 'echo', content: BODY_MARKER, createdAt: T0 } as never],
+      };
     },
   };
 
@@ -261,7 +270,12 @@ function harness(opts: HarnessOptions = {}) {
         return provider;
       },
     },
-    artifacts: { async persistAll() { return []; } },
+    artifacts: {
+      async persistAll(_taskId: string, _runId: string, artifacts: readonly unknown[]) {
+        calls.persisted.push([...artifacts]);
+        return [];
+      },
+    },
     composer: new ResponseComposer(),
     workSurface: { forActor: bad('workSurface.forActor') },
     intentResolver: new IntentResolver(),
@@ -343,6 +357,8 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     expect(result.reply?.text).toBe(`${SUMMARY}\n\n${renderMailSummaryFooter('ko')}`);
     // The summary itself is never kept as transcript.
     expect(h.calls.recordAssistant.at(-1)).toBe(renderUntrustedDocumentHistoryNote('mail', 'ko'));
+    // Review P3-1: the provider's artifacts (here an echo of the body) are not stored for a document summary.
+    expect(h.calls.persisted).toEqual([[]]);
     expect(h.shortTerm.some((record) => record.content.includes(SUMMARY))).toBe(false);
   });
 
