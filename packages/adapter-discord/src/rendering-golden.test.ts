@@ -9,6 +9,9 @@ import {
   FeedbackSignalKind,
   IntentType,
   MEMORY_CONFIRM_PREVIEW_MAX_CHARS,
+  LEARNING_EGRESS_LOCAL_ONLY,
+  LearningItemKind,
+  LearningService,
   ReminderStatus,
   ResourceRef,
   HELP_INTENT_HELP_LINES,
@@ -36,6 +39,8 @@ import {
   renderForgetConfirmation,
   renderForgotten,
   renderMemoryArchive,
+  renderPurgeConfirmation,
+  renderPurged,
   renderMemoryList,
   renderMemoryStatusLatest,
   renderMemoryView,
@@ -60,7 +65,9 @@ import type {
   ConnectorWriteTargetSummary,
   ConversationContext,
   ExternalWorkReadout,
+  FeedbackRatedTurn,
   FeedbackSummary,
+  LearningItem,
   MessageBody,
   OutboundMessage,
   Reminder,
@@ -235,6 +242,119 @@ const TARGETS: readonly ConnectorWriteTargetSummary[] = [
 ];
 
 const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found'];
+
+// --- review P3-5: mention case variants, astral clip boundaries, escape-limit crossings, purge copy, learning lists --
+const MENTION_CASES = ['@EVERYONE 공지', '@Here 확인', '@eVeRyOnE <@!1> @HERE', 'mail@Everyone.test <@&9>'];
+const EMOJI = '\u{1F600}';
+/** Titles whose escaped form crosses a limit exactly at the boundary: `limit` characters of markup, one either side. */
+function crossing(limit: number): string[] {
+  return ['*'.repeat(limit), `${'x'.repeat(limit - 1)}*_`, `${'x'.repeat(limit)}_`, `${'_'.repeat(limit - 1)}${EMOJI}`, `${'x'.repeat(limit - 2)}${EMOJI}${EMOJI}`];
+}
+
+class GoldenLearningStore {
+  constructor(private readonly items: readonly LearningItem[]) {}
+  async list(query: { actorId: string; kind: LearningItemKind; now: string; limit: number }) {
+    return this.items.filter((i) => i.actorId === query.actorId && i.kind === query.kind && i.expiresAt > query.now).slice(0, query.limit);
+  }
+  insertWithinCap(): never { throw new Error('unused'); }
+  findBySourceTurn(): never { throw new Error('unused'); }
+  get(): never { throw new Error('unused'); }
+  updateData(): never { throw new Error('unused'); }
+  delete(): never { throw new Error('unused'); }
+  deleteBySourceMemory(): never { throw new Error('unused'); }
+  pruneExpired(): never { throw new Error('unused'); }
+}
+
+async function extraCases(add: (id: string, value: never) => void): Promise<void> {
+  const put = (id: string, value: unknown) => add(id, value as never);
+  MENTION_CASES.forEach((title, m) => {
+    put(`p35.mention.todo.${m}`, renderTodoAdded(todo(title, m)));
+    put(`p35.mention.memory.${m}`, renderMemoryView(m + 1, memoryBody(title), 'ko'));
+    put(`p35.mention.excerpt.${m}`, feedbackRequestExcerpt(title));
+    put(`p35.mention.calendar.${m}`, calendar({ kind: 'day', offset: 0 }, [calendarEvent(1, title, title)]));
+  });
+  put(
+    'p35.mention.brief',
+    composeDailyBrief({ now: '2026-10-01T23:00:00.000Z', timeZone: 'Asia/Seoul', reminders: MENTION_CASES.map((t, i) => reminder(i + 1, t)), workItems: MENTION_CASES.map((t, i) => todo(t, i)) }),
+  );
+
+  // Astral emoji exactly at code-point and UTF-16 clip boundaries.
+  put('p35.emoji.todo.80', renderMyWork([todo(`${'a'.repeat(78)}${EMOJI.repeat(3)}`, 0)], null));
+  put('p35.emoji.memory.120', renderMemoryList({ page: 1, pages: 1, total: 1, rows: [{ number: 1, preview: memoryPreview(`${'b'.repeat(118)}${EMOJI.repeat(2)}`) }] }, 'ko'));
+  put('p35.emoji.calendar.80', calendar({ kind: 'day', offset: 0 }, [calendarEvent(1, `${'c'.repeat(79)}${EMOJI}${EMOJI}`)]));
+  const emojiFooter = renderExternalWorkFooter(readout([{ ref: 'jira:E-1', title: `${'d'.repeat(49)}${EMOJI}${EMOJI}`, url: 'https://e.test/1' }]));
+  put('p35.emoji.footer.50', emojiFooter);
+  put('p35.emoji.summary', appendWorkSummaryFooter(`${'요'.repeat(1)}${EMOJI.repeat(2000)}`, emojiFooter));
+  put('p35.emoji.mywork.fit', renderMyWork(Array.from({ length: 15 }, (_, i) => todo(`${EMOJI.repeat(79)}*`, i)), null));
+  const emojiChoice = composer.composeConnectorWriteStep(DM, {
+    kind: 'choice',
+    mode: 'delete',
+    candidates: Array.from({ length: 30 }, (_, i) => ({ id: `e${i}`, title: `${EMOJI.repeat(40)}_`, start: '2026-10-06T01:00:00.000Z', end: '2026-10-06T02:00:00.000Z', allDay: false })),
+    timeZone: 'Asia/Seoul',
+  });
+  put('p35.emoji.notice.clamp', composer.composeWithNotice(composer.composeConnectorWriteStep(DM, { kind: 'closed', reason: 'expired', family: 'issue' }), emojiChoice));
+
+  // Escaped titles crossing the 50 (footer), 80 (list title) and 120 (status answer, memory preview) limits.
+  crossing(50).forEach((title, c) => put(`p35.limit.footer.50.${c}`, renderExternalWorkFooter(readout([{ ref: 'jira:L-1', title, url: 'https://e.test/l' }]))));
+  crossing(80).forEach((title, c) => {
+    put(`p35.limit.list.80.${c}`, renderTodoAmbiguous('complete', [{ no: 1, item: todo(title, 1) }, { no: 2, item: todo(title, 2) }]));
+    put(`p35.limit.calendar.80.${c}`, calendar({ kind: 'day', offset: 0 }, [calendarEvent(1, title)]));
+  });
+  crossing(120).forEach((title, c) => {
+    put(`p35.limit.status.120.${c}`, renderTodoStatusAnswer(todo(title, 1), 1));
+    put(`p35.limit.memory.120.${c}`, renderMemoryStatusLatest(memoryPreview(title), 1, 'ko'));
+  });
+
+  // The read-only Personal Work Surface lookup line (composeWorkSurface), with connector titles and URLs.
+  const surfaceItems = [...TITLES, ...MENTION_CASES].map((title, i) => ({
+    resource: i % 2 ? github(`o/r#${i}`) : jira(`PROJ-${i}`),
+    title,
+    ...(i % 3 === 2 ? {} : { url: `https://example.test/w/${i}_x` }),
+  }));
+  put('p35.worksurface.items', composer.composeWorkSurface(DM, { status: 'COMPLETE', items: surfaceItems, sources: [] }));
+  put('p35.worksurface.many', composer.composeWorkSurface(DM, { status: 'PARTIAL', items: [...surfaceItems, ...surfaceItems, ...surfaceItems], sources: [{ source: 'github', status: 'IDENTITY_MISSING', message: '' }] }));
+  put('p35.worksurface.empty', composer.composeWorkSurface(DM, { status: 'COMPLETE', items: [], sources: [] }));
+  put('p35.worksurface.unavailable', composer.composeWorkSurface(DM, { status: 'UNAVAILABLE', items: [], sources: [{ source: 'jira', status: 'UNAVAILABLE', message: '' }] }));
+
+  // Permanent delete of an archived memory.
+  for (const language of ['ko', 'en'] as const) {
+    TITLES.slice(0, 3).forEach((title, t) => {
+      put(`p35.purge.confirm.${language}.${t}`, renderPurgeConfirmation(t + 1, memoryPreview(title, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), 'PQ7Z', language));
+      put(`p35.purged.${language}.${t}`, renderPurged(memoryPreview(title, MEMORY_CONFIRM_PREVIEW_MAX_CHARS), t, language));
+    });
+  }
+
+  // Learning candidate and example lists (request excerpts are untrusted handles).
+  const requests = [...TITLES, ...MENTION_CASES, `${'긴 요청 '.repeat(20)}@x`];
+  const turns: FeedbackRatedTurn[] = requests.map((_, i) => ({
+    turnId: `turn-${i}`,
+    createdAt: `2026-10-0${(i % 5) + 1}T09:00:00.000Z`,
+    taskId: `task-${i}`,
+    intentType: IntentType.CHAT,
+    capability: Capability.GENERAL_CHAT,
+    positive: i % 2,
+    negative: (i + 1) % 2,
+  }));
+  const items: LearningItem[] = requests.map((requestText, i) => ({
+    id: `item-${i}`,
+    actorId: 'actor-1',
+    kind: LearningItemKind.EXAMPLE,
+    capability: Capability.GENERAL_CHAT,
+    language: 'ko',
+    egress: LEARNING_EGRESS_LOCAL_ONLY,
+    createdAt: `2026-10-0${(i % 5) + 1}T10:00:00.000Z`,
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    data: { requestText, ...(i % 2 ? { idealAnswer: '좋은 답' } : {}), sourceRating: 'POSITIVE' },
+  }));
+  const learning = new LearningService({
+    feedback: { listRatedTurns: async () => turns },
+    learning: new GoldenLearningStore(items) as never,
+    tasks: { get: async (id: string) => ({ description: requests[Number(id.slice(5))] ?? '' }) },
+  });
+  const scope = { actorId: 'actor-1', platform: 'discord', channelId: 'c1' };
+  put('p35.learning.candidates', await learning.execute({ kind: 'list-candidates' }, scope, '2026-10-06T12:00:00.000Z'));
+  put('p35.learning.examples', await learning.execute({ kind: 'list-examples' }, scope, '2026-10-06T12:00:00.000Z'));
+}
 
 /** Build the whole corpus: case id -> the Discord text. */
 async function corpus(): Promise<Record<string, string>> {
@@ -450,6 +570,7 @@ async function corpus(): Promise<Record<string, string>> {
   add('notice.long', composer.composeWithNotice(notice, composer.composeConnectorWriteStep(DM, { kind: 'choice', mode: 'delete', candidates: [...CANDIDATES, ...CANDIDATES, ...CANDIDATES], timeZone: 'Asia/Seoul' })));
   add('approval.reference', composer.composeApprovalConfirmationReference(preview, 'K7Q2'));
   add('model-reply.table', { context: DM, text: '| a | b |\n|---|---|\n| 1 | 2 |', format: 'model-reply' });
+  await extraCases(add as never);
   return out;
 }
 
