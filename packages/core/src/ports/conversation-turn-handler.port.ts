@@ -11,6 +11,9 @@ import type {
 // Type-only: the summarize payload is the bounded, untrusted readout WORK-T3 defines next to the work grammar
 // (ADR-0100 D8). Erased at compile time, so the port module has no runtime dependency on the application layer.
 import type { ExternalWorkReadout } from '../application/work-chat/external-work-readout';
+// Type-only, like the readout above: the bounded untrusted readout of one personal item the owner asked to summarize
+// (ADR-0118 D7, GML-1), plain data.
+import type { UntrustedDocumentReadout } from '../application/untrusted-document-readout';
 // Type-only, like the readout above: the parsed connector-write request (ADR-0112 D5), plain data.
 import type { ConnectorWriteDraft } from '../application/connector-writes/connector-write-draft';
 
@@ -75,8 +78,12 @@ export interface TurnHandlerReply {
  */
 export interface TurnHandlerSummarizeReply {
   readonly kind: 'summarize';
-  /** Untrusted external data; rendered for the prompt as NON_AUTHORITATIVE_BACKGROUND only. */
-  readonly readout: ExternalWorkReadout;
+  /**
+   * Untrusted external data; rendered for the prompt as NON_AUTHORITATIVE_BACKGROUND only. An external-work readout
+   * (ADR-0100 D8) or, widened by type only (ADR-0118 D7), the readout of one personal item the owner explicitly asked
+   * to summarize — its summary turn is self-contained and SHORT_TERM history keeps a fixed note instead of the summary.
+   */
+  readonly readout: ExternalWorkReadout | UntrustedDocumentReadout;
   /** The deterministic list, used whenever summarization does not produce a reply (neutral content, PLT-0). */
   readonly fallbackText: MessageBody;
   /** Deterministic source links and the disclosure line, appended to a successful summary (neutral content, PLT-0). */

@@ -29,6 +29,7 @@
     "@quoky/connector-github": "workspace:*",
     "@quoky/connector-slack": "workspace:*",
     "@quoky/connector-calendar-google": "workspace:*",
+    "@quoky/connector-gmail": "workspace:*",
     "@quoky/tool-mcp": "workspace:*",
     "@nestjs/common": "^10.4.4",
     "@nestjs/core": "^10.4.4",

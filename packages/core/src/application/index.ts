@@ -180,3 +180,8 @@ export * from './memory-commands';
 export * from './connector-writes';
 // ADR-0110 calendar schedule questions (CAL-2).
 export * from './calendar';
+// ADR-0118 mail read (GML-1): the untrusted single-item summary readout and the mail sub-barrel.
+export * from './link-neutralizer';
+export * from './untrusted-document-readout';
+export * from './document-summary-claim-guard';
+export * from './mail';

@@ -5,6 +5,31 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### GML-1 Gmail read connector — implemented on branch, not merged (2026-10-08)
+
+ADR-0118 D1–D8, Gmail only (DRV-1 is next). New pieces:
+
+- `packages/connector-gmail`: `gmail.readonly` only, pinned GET endpoints, size, count and time bounds, and a source
+  scan that proves the client cannot write;
+- the Core `MailReader` port and `MAIL_READER` token;
+- a `pre-classify` order-140 mail handler, ahead of the calendar.
+
+Gmail is off unless `QUOKY_GMAIL_TOKEN_FILE` is set. With it off, every reply is unchanged, including the routing corpus
+and the Discord golden fixture.
+
+- **Listings.** `안 읽은 메일`, `오늘 온 메일` and `<보낸 사람> 메일 찾아줘` are answered with no model, at most 10 entries
+  plus `…외 N건`, in DMs only. A failed read says it could not check; it never says "no mail".
+- **Summaries.** `N번 메일 요약해줘` sends that one mail's guarded, head-and-tail-clipped body to the effective chat-tier
+  provider. The prompt is self-contained and has no tools. Nothing of the mail or the summary is kept as transcript.
+- **Unchanged.** No migration; `ConversationRuntimeDeps` stays 35. The only port change is a type-only widening of the
+  `summarize` readout.
+- **Reviews.** Codex (one P1, one P2) and the Chief Architect (CHANGES REQUIRED: four P2s, P3s) are addressed on the
+  branch, one commit per finding (see the ADR-0118 implementation note).
+- **Validation.** Offline only, with a fake `fetch`. Not run yet:
+  - the Strict gates: owner consent with `calendar-auth --gmail`, the first read probe and about 15 live phrasings
+    (empty inbox, long thread, non-Korean mail, an injection test mail, an OTP mail, a phishing mail);
+  - the Chief Architect re-review.
+
 ### TG-2 Telegram attachments, reactions and approvals — implemented on branch, not merged (2026-10-08)
 
 ADR-0114 D8–D10 on top of TG-1 (#161):
