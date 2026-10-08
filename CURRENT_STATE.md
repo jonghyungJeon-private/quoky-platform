@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### BRF-1 morning brief with today's calendar — implemented on branch, not merged (2026-10-08)
+
+ADR-0117 D1–D4: with a calendar configured, the daily brief (`매일 오전 8시에 브리핑 알려줘`) starts with `오늘 일정`, read
+through the existing `CALENDAR_READER`. It lists at most 10 events with `외 N건` and shows titles and times only. A
+failure shows "불러오지 못했어요" and is never shown as an empty day; with no calendar the section is omitted.
+`QUOKY_BRIEF_JIRA_ENABLED=true` (default `false`) adds at most 5 assigned Jira items due or updated today. No model, still
+DM-only. No migration, no new DI token, no port change (`ConversationRuntimeDeps` 35). Offline validation only; the
+Strict gate (one live brief on the owner's service) is not run.
+
 ### PLT-0 platform-neutral rendering — implemented (2026-10-08)
 
 Core no longer writes Discord markup. Replies carry platform-neutral content (`OutboundMessage.content`,

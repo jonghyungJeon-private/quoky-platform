@@ -15,8 +15,8 @@ function codeOf(run: () => unknown): string | undefined {
 }
 
 describe('parseReminderConfig', () => {
-  it('defaults to enabled (ADR-0102 D9, owner decision 8), DM-only delivery and Asia/Seoul', () => {
-    expect(parseReminderConfig(env({}))).toEqual({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' });
+  it('defaults to enabled (ADR-0102 D9, owner decision 8), DM-only delivery, Asia/Seoul and no brief Jira section', () => {
+    expect(parseReminderConfig(env({}))).toEqual({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul', briefJiraEnabled: false });
   });
 
   it('accepts exact true/false and an IANA zone', () => {
@@ -24,7 +24,9 @@ describe('parseReminderConfig', () => {
       parseReminderConfig(
         env({ QUOKY_REMINDERS_ENABLED: 'true', QUOKY_REMINDERS_CHANNEL_DELIVERY: 'true', QUOKY_TIMEZONE: 'Europe/Berlin' }),
       ),
-    ).toEqual({ enabled: true, channelDelivery: true, timeZone: 'Europe/Berlin' });
+    ).toEqual({ enabled: true, channelDelivery: true, timeZone: 'Europe/Berlin', briefJiraEnabled: false });
+    expect(parseReminderConfig(env({ QUOKY_BRIEF_JIRA_ENABLED: 'true' })).briefJiraEnabled).toBe(true);
+    expect(parseReminderConfig(env({ QUOKY_BRIEF_JIRA_ENABLED: 'false' })).briefJiraEnabled).toBe(false);
     expect(parseReminderConfig(env({ QUOKY_REMINDERS_ENABLED: 'false', QUOKY_REMINDERS_CHANNEL_DELIVERY: 'false' }))).toMatchObject({
       enabled: false,
       channelDelivery: false,
@@ -41,6 +43,9 @@ describe('parseReminderConfig', () => {
     );
     expect(codeOf(() => parseReminderConfig(env({ QUOKY_REMINDERS_CHANNEL_DELIVERY: value })))).toBe(
       ReminderConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID,
+    );
+    expect(codeOf(() => parseReminderConfig(env({ QUOKY_BRIEF_JIRA_ENABLED: value })))).toBe(
+      ReminderConfigErrorCode.BRIEF_JIRA_ENABLED_INVALID,
     );
   });
 

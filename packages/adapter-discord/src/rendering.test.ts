@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { conversationRefOf, messageContent, messageLink, outboundMessage, platformNote, untrustedText } from '@quoky/core';
+import {
+  composeDailyBrief,
+  conversationRefOf,
+  messageContent,
+  messageLink,
+  outboundMessage,
+  placeCalendarSpan,
+  platformNote,
+  renderCalendarEvents,
+  untrustedText,
+  WorkItemStatus,
+} from '@quoky/core';
 import { DISCORD_MARKUP, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
 
 const CTX = { platform: 'discord', channelId: 'c', userId: 'u' };
@@ -47,5 +58,48 @@ describe('Discord markup of neutral content (PLT-0)', () => {
     expect(renderOutboundForDiscord({ text: 'plain <#1>' })).toBe('plain <#1>');
     expect(renderNotificationForDiscord({ text: message.text, content: body })).toBe('| a |\n|---|\n| @​x |');
     expect(renderNotificationForDiscord({ text: 'only text' })).toBe('only text');
+  });
+});
+
+describe('Discord markup of the morning brief calendar section (ADR-0117 D1, BRF-1)', () => {
+  const event = { id: 'e', start: '2026-10-02T00:00:00.000Z', end: '2026-10-02T01:00:00.000Z', allDay: false, status: 'confirmed' as const, calendarName: 'primary' };
+  const title = '@everyone *회의* <@123>';
+  const brief = (calendar: Parameters<typeof composeDailyBrief>[0]['calendar']) =>
+    renderDiscordContent(composeDailyBrief({ now: '2026-10-01T23:00:00.000Z', timeZone: 'Asia/Seoul', reminders: [], workItems: [], ...(calendar === undefined ? {} : { calendar }) }));
+
+  it('renders an event title exactly as the schedule reply does (the same guarded line)', () => {
+    const text = brief({ events: [{ ...event, title }], limit: 50 });
+    const window = placeCalendarSpan({ kind: 'day', offset: 0 }, '2026-10-01T23:00:00.000Z', 'Asia/Seoul');
+    if (window === undefined) throw new Error('no window');
+    const reply = renderDiscordContent(renderCalendarEvents(window, [{ ...event, title }], { timeZone: 'Asia/Seoul', now: '2026-10-01T23:00:00.000Z', language: 'ko', limit: 50 }));
+    const line = text.split('\n').find((candidate) => candidate.startsWith('- 09:00'));
+    expect(line).toBe(`- 09:00–10:00 ${DISCORD_MARKUP.untrusted(title, 'markup')}`);
+    expect(reply.split('\n')).toContain(line);
+    expect(text).not.toContain('@everyone');
+  });
+
+  it('keeps a Jira timeout note inside the 1,800-character Discord message with every section full (review P2)', () => {
+    const at = (h: number) => `2026-10-02T0${h}:00:00.000Z`;
+    const text = renderDiscordContent(
+      composeDailyBrief({
+        now: '2026-10-01T23:00:00.000Z',
+        timeZone: 'Asia/Seoul',
+        reminders: [],
+        workItems: Array.from({ length: 10 }, (_, i) => ({
+          id: `w${i}`, actorId: 'a', title: `${'*_'.repeat(39)}${i}`, resourceRefs: [], status: WorkItemStatus.ACTIVE,
+          origin: 'conversation' as const, createdAt: at(i), updatedAt: at(i),
+        })),
+        calendar: { events: Array.from({ length: 10 }, (_, i) => ({ ...event, id: `e${i}`, title: `${'[@'.repeat(39)}${i}`, start: at(i), end: `2026-10-02T0${i}:30:00.000Z` })), limit: 50 },
+        assignedWork: null,
+      }),
+    );
+    expect(Array.from(text).length).toBeLessThanOrEqual(1800);
+    expect(text.endsWith('\n\n담당 이슈: 불러오지 못했어요.')).toBe(true);
+    expect(text).toContain('오늘 일정 10건');
+    expect(text).toContain('진행 중인 작업 10건');
+  });
+
+  it('without a calendar the Discord text has no calendar section', () => {
+    expect(brief(undefined)).not.toContain('오늘 일정');
   });
 });

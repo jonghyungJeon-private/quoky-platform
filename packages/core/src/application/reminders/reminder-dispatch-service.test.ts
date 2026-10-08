@@ -23,6 +23,7 @@ import type {
   CreateReminderResult,
   ReminderRepository,
 } from '../../ports/reminder-repository.port';
+import { DailyBriefSources } from './daily-brief-sources';
 import { ReminderDispatchService } from './reminder-dispatch-service';
 import { ReminderReplyComposer } from './reminder-reply-composer';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
@@ -543,6 +544,80 @@ describe('ReminderDispatchService BRIEF', () => {
     await service.dispatchDue(NOW);
     expect(sink.delivered[0]?.text).toContain('불러오지 못했어요');
     expect(repository.get(r.id).status).toBe(ReminderStatus.COMPLETED);
+  });
+});
+
+describe('ReminderDispatchService BRIEF with sources (ADR-0117, BRF-1)', () => {
+  function withSources(briefSources: ConstructorParameters<typeof ReminderDispatchService>[0]['briefSources']) {
+    const repository = new FakeReminderRepository();
+    const sink = new ScriptedSink();
+    const service = new ReminderDispatchService({
+      repository,
+      sink,
+      composer: new ReminderReplyComposer(),
+      workItems: { listByActor: async () => [] },
+      logger: new RecordingLogger(),
+      ...(briefSources !== undefined ? { briefSources } : {}),
+      idGenerator: () => 'attempt',
+    });
+    return { repository, sink, service };
+  }
+  const occurrence = '2026-10-01T23:00:00.000Z'; // 08:00 KST Oct 2
+
+  it("adds today's calendar read through the sources with the brief's actor, instant and zone", async () => {
+    const requests: unknown[] = [];
+    const { repository, sink, service } = withSources({
+      async read(request) {
+        requests.push(request);
+        return {
+          calendar: {
+            events: [{ id: 'e', title: '팀 회의', start: '2026-10-02T01:00:00.000Z', end: '2026-10-02T02:00:00.000Z', allDay: false, status: 'confirmed', calendarName: 'primary' }],
+            limit: 50,
+          },
+        };
+      },
+    });
+    repository.seed({ kind: 'BRIEF', body: '브리핑', schedule: DAILY_8, occurrenceAt: occurrence });
+    await service.dispatchDue(occurrence);
+    expect(requests).toEqual([{ actorId: ACTOR, now: occurrence, timeZone: ZONE }]);
+    expect(sink.delivered[0]?.text).toContain('오늘 일정 1건\n- 10:00–11:00 팀 회의');
+    expect(sink.delivered[0]?.kind).toBe('BRIEF');
+  });
+
+  it('an unreadable calendar is delivered as the could-not-read note and the brief completes', async () => {
+    const { repository, sink, service } = withSources(
+      new DailyBriefSources({ calendar: { source: 'calendar', readOnly: true, listEvents: async () => { throw new Error('down'); } } }),
+    );
+    const brief = repository.seed({ kind: 'BRIEF', body: '브리핑', schedule: DAILY_8, occurrenceAt: occurrence });
+    await service.dispatchDue(occurrence);
+    expect(sink.delivered[0]?.text).toContain('오늘 일정: 불러오지 못했어요.');
+    expect(repository.get(brief.id).lastOutcome).toMatchObject({ outcome: 'SENT' });
+  });
+
+  it('a TEXT reminder never reads the brief sources', async () => {
+    let reads = 0;
+    const { repository, sink, service } = withSources({ async read() { reads += 1; return {}; } });
+    repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    await service.dispatchDue(NOW);
+    expect(sink.delivered).toHaveLength(1);
+    expect(reads).toBe(0);
+  });
+
+  it('without sources the brief text is the local-only brief', async () => {
+    const a = withSources(undefined);
+    const b = withSources({ async read() { return {}; } });
+    for (const { repository, service } of [a, b]) {
+      repository.seed({ kind: 'BRIEF', body: '브리핑', schedule: DAILY_8, occurrenceAt: occurrence });
+      await service.dispatchDue(occurrence);
+    }
+    expect(a.sink.delivered[0]?.text).toBe(b.sink.delivered[0]?.text);
+    expect(a.sink.delivered[0]?.text).not.toContain('오늘 일정');
+  });
+
+  it('accepts briefSources as the one additional documented dependency key', () => {
+    const { service } = withSources({ async read() { return {}; } });
+    const deps = (service as unknown as { deps: Record<string, unknown> }).deps;
+    expect(Object.keys(deps).sort()).toEqual(['briefSources', 'composer', 'idGenerator', 'logger', 'repository', 'sink', 'workItems']);
   });
 });
 
