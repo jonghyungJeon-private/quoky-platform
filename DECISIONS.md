@@ -18165,17 +18165,23 @@ apply unchanged unless stated here.
 - **Key transport.** The key is sent only in the `x-goog-api-key` header, never as the `?key=` query parameter the
   Gemini examples use, so it cannot leak through a URL. The HTTP layer refuses any path with a query or fragment.
 - **Response parsing (fail closed).** Exactly one candidate.
-  - Parts are accepted only as `text`; `thought: true` parts are counted and dropped.
+  - **Strict part allow-list (Codex P2).** A part may carry only `text` (a string), `thought` (a boolean) and
+    `thoughtSignature` (a string). `thoughtSignature` is opaque metadata the API attaches on thinking models and is
+    ignored. A `thought: true` part is a thought summary: it is counted (`thoughtPartCount`) and never included in the
+    reply. Any other key on a part — even beside a `text` — refuses the whole response.
   - `functionCall`, `functionResponse`, `executableCode`, `codeExecutionResult`, `toolCall`, `toolResponse`, or a
     non-empty `groundingMetadata` / `urlContextMetadata` / `groundingAttributions` refuse the whole response
     (`TOOL_CALL_REFUSED`).
-  - Any other part (inline or file data, unknown) is `MALFORMED_RESPONSE`.
+  - Any other part key (`inlineData`, `fileData`, `videoMetadata`, unknown) is `MALFORMED_RESPONSE`.
 - **Finish reasons and safety blocks.**
   - `STOP` is a reply.
   - `MAX_TOKENS` is the text with the PRV-1 suffix "(답변이 길이 제한으로 잘렸어요.)" appended after hygiene; with no text
     it is `EMPTY_OUTPUT`.
   - `promptFeedback.blockReason` (any value), or `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` and
     the `IMAGE_*` content reasons, are `SAFETY_BLOCKED`.
+  - **Explicit rating blocks (Codex P2).** Any candidate or `promptFeedback` safety rating with `blocked: true` is
+    `SAFETY_BLOCKED`, whatever the finish reason, even with text and `STOP` or `MAX_TOKENS`. A `safetyRatings` value
+    that is not an array of objects is `MALFORMED_RESPONSE`.
   - `MALFORMED_FUNCTION_CALL`, `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `MISSING_THOUGHT_SIGNATURE` are
     `TOOL_CALL_REFUSED`.
   - Anything else (`LANGUAGE`, `OTHER`, unspecified, unknown, absent) is `INCOMPLETE`.

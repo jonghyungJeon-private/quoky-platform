@@ -18,7 +18,10 @@ credential guard already knew the `AIza…` key shape); `ConversationRuntimeDeps
   - The key goes only in the `x-goog-api-key` header (never in a URL), held in a redacting `GeminiApiKey`.
   - Redirects refused; one timer over headers and body; a 2 MiB response bound; error bodies never read.
   - A response with a function call, executable code, a code-execution result, a tool call or grounding metadata is
-    refused (`TOOL_CALL_REFUSED`).
+    refused (`TOOL_CALL_REFUSED`). A reply part may carry only `text`, `thought` and `thoughtSignature`; any other key,
+    even beside a `text`, is refused, and thought parts are never part of the reply.
+  - A safety rating with `blocked: true` (candidate or prompt feedback) fails closed as `SAFETY_BLOCKED`, whatever the
+    finish reason.
   - `MAX_TOKENS` returns the text marked as cut off. A blocked prompt and the safety, recitation, blocklist,
     prohibited-content and personal-data finish reasons fail closed (`SAFETY_BLOCKED`); other reasons are
     `INCOMPLETE`.

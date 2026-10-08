@@ -391,6 +391,76 @@ describe('reply handling', () => {
     expect(traces(err)).not.toContain('blocked partial text');
   });
 
+  it.each([
+    ['STOP', 'candidate'],
+    ['MAX_TOKENS', 'candidate'],
+    ['STOP', 'promptFeedback'],
+    ['MAX_TOKENS', 'promptFeedback'],
+  ])('text + %s + one blocked safety rating (%s) fails closed as SAFETY_BLOCKED (Codex P2)', async (finishReason, where) => {
+    const ratings = [
+      { category: 'HARM_CATEGORY_HARASSMENT', probability: 'NEGLIGIBLE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true },
+    ];
+    const respond = () =>
+      where === 'candidate'
+        ? candidate([{ text: 'blocked partial text' }], finishReason, { safetyRatings: ratings })
+        : json({
+            promptFeedback: { safetyRatings: ratings },
+            candidates: [{ content: { role: 'model', parts: [{ text: 'blocked partial text' }] }, finishReason }],
+          });
+    const err = await failureOf(chat(fakeFetch(respond).fetch).execute(CHAT_REQUEST));
+    expect((err as GeminiApiError).code).toBe(GeminiFailureCode.SAFETY_BLOCKED);
+    expect(err.kind).toBe(AiFailureKind.EXECUTION_FAILED);
+    expect(traces(err)).not.toContain('blocked partial text');
+  });
+
+  it('ratings without a block (or blocked: false) do not block; malformed ratings are refused', async () => {
+    const ok = await chat(
+      fakeFetch(() =>
+        candidate([{ text: 'fine' }], 'STOP', {
+          safetyRatings: [{ category: 'HARM_CATEGORY_HARASSMENT', probability: 'LOW', blocked: false }, { category: 'X', probability: 'NEGLIGIBLE' }],
+        }),
+      ).fetch,
+    ).execute(CHAT_REQUEST);
+    expect(ok.text).toBe('fine');
+    for (const safetyRatings of [{ blocked: true }, ['blocked']]) {
+      const err = await failureOf(chat(fakeFetch(() => candidate([{ text: 'x' }], 'STOP', { safetyRatings })).fetch).execute(CHAT_REQUEST));
+      expect((err as GeminiApiError).code).toBe(GeminiFailureCode.MALFORMED_RESPONSE);
+    }
+  });
+
+  it.each([
+    ['inlineData beside text', { text: 'smuggled', inlineData: { mimeType: 'image/png', data: 'AAAA' } }, GeminiFailureCode.MALFORMED_RESPONSE],
+    ['fileData beside text', { text: 'smuggled', fileData: { mimeType: 'text/plain', fileUri: 'https://example.invalid/f' } }, GeminiFailureCode.MALFORMED_RESPONSE],
+    ['an unknown key beside text', { text: 'smuggled', somethingNew: 1 }, GeminiFailureCode.MALFORMED_RESPONSE],
+    ['videoMetadata beside text', { text: 'smuggled', videoMetadata: {} }, GeminiFailureCode.MALFORMED_RESPONSE],
+    ['functionCall beside text', { text: 'smuggled', functionCall: { name: 'x' } }, GeminiFailureCode.TOOL_CALL_REFUSED],
+    ['executableCode beside text', { text: 'smuggled', executableCode: { language: 'PYTHON', code: 'x' } }, GeminiFailureCode.TOOL_CALL_REFUSED],
+    ['a null functionCall', { text: 'smuggled', functionCall: null }, GeminiFailureCode.TOOL_CALL_REFUSED],
+    ['a non-boolean thought', { text: 'smuggled', thought: 'yes' }, GeminiFailureCode.MALFORMED_RESPONSE],
+    ['a non-string thoughtSignature', { text: 'smuggled', thoughtSignature: 7 }, GeminiFailureCode.MALFORMED_RESPONSE],
+  ])('a part with %s refuses the whole response (strict part allow-list, Codex P2)', async (_name, part, code) => {
+    const err = await failureOf(chat(fakeFetch(() => candidate([{ text: 'ok ' }, part])).fetch).execute(CHAT_REQUEST));
+    expect((err as GeminiApiError).code).toBe(code);
+    expect(err.kind).toBe(AiFailureKind.EXECUTION_FAILED);
+    expect(traces(err)).not.toContain('smuggled');
+  });
+
+  it('allowed text-part metadata: a thoughtSignature is ignored; a thought part (with or without one) is excluded', async () => {
+    const fake = fakeFetch(() =>
+      candidate([
+        { text: 'internal reasoning', thought: true, thoughtSignature: 'opaque-signature' },
+        { text: 'The answer', thoughtSignature: 'opaque-signature' },
+        { text: '.', thought: false },
+      ]),
+    );
+    const result = await chat(fake.fetch).execute(CHAT_REQUEST);
+    expect(result.text).toBe('The answer.');
+    expect(result.audit).toMatchObject({ partCount: 3, textPartCount: 2, thoughtPartCount: 1 });
+    expect(JSON.stringify(result)).not.toContain('internal reasoning');
+    expect(JSON.stringify(result)).not.toContain('opaque-signature');
+  });
+
   it('a blocked prompt (promptFeedback.blockReason) fails closed whatever else the body holds', async () => {
     for (const blockReason of ['SAFETY', 'OTHER', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'IMAGE_SAFETY', 'BLOCK_REASON_UNSPECIFIED']) {
       const err = await failureOf(

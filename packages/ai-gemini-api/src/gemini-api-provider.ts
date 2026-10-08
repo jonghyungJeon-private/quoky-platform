@@ -190,6 +190,13 @@ export type GeminiAcceptedFinishReason = 'STOP' | 'MAX_TOKENS';
 
 /** Part keys that mean the model acted instead of answering (never requested, so never accepted). */
 const ACTION_PART_KEYS = ['functionCall', 'functionResponse', 'executableCode', 'codeExecutionResult', 'toolCall', 'toolResponse'] as const;
+/**
+ * The ONLY keys a reply part may carry (a strict allow-list, Codex P2): `text`, plus the two pieces of text-part
+ * metadata the API attaches to thinking models' output — `thought` (a boolean; a `true` part is a thought summary and is
+ * never part of the reply) and `thoughtSignature` (an opaque string, ignored). A part with any other key — `inlineData`,
+ * `fileData`, an action key, or anything unknown, even next to a `text` — refuses the whole response.
+ */
+const TEXT_PART_KEYS: ReadonlySet<string> = new Set(['text', 'thought', 'thoughtSignature']);
 /** Finish reasons that mean the model tried to call a tool (none is declared). */
 const TOOL_FINISH_REASONS: ReadonlySet<string> = new Set([
   'MALFORMED_FUNCTION_CALL',
@@ -233,6 +240,20 @@ function count(value: unknown): number | undefined {
 }
 
 /** Present and not empty (an object with a key, or an array with an item). */
+/**
+ * Whether a `safetyRatings` value holds a rating the API marked `blocked: true` (Codex P2: an explicit block fails
+ * closed whatever the finish reason). Absent is no block; anything but an array of objects is malformed.
+ */
+function hasBlockedRating(value: unknown, fail: (code: GeminiFailureCode) => GeminiApiError): boolean {
+  if (value === undefined || value === null) return false;
+  if (!Array.isArray(value)) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
+  return value.some((raw) => {
+    const rating = asRecord(raw);
+    if (rating === undefined) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
+    return rating.blocked === true;
+  });
+}
+
 function nonEmpty(value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0;
   const record = asRecord(value);
@@ -240,16 +261,19 @@ function nonEmpty(value: unknown): boolean {
 }
 
 /**
- * Parse a `generateContent` body, failing closed: exactly one candidate whose content parts are plain `text` (thought
- * parts are counted and dropped); any action part, any grounding metadata, any other part (inline data, file data,
- * unknown) or a finish reason other than `STOP` / `MAX_TOKENS` refuses the whole response.
+ * Parse a `generateContent` body, failing closed: exactly one candidate whose content parts carry only the
+ * {@link TEXT_PART_KEYS} (thought parts are counted and dropped); a blocked prompt or any `blocked: true` safety rating,
+ * any action part, any grounding metadata, any other part key (inline data, file data, unknown — even beside a `text`)
+ * or a finish reason other than `STOP` / `MAX_TOKENS` refuses the whole response.
  */
 export function parseGenerateContentBody(json: unknown, label: string): ParsedResponse {
   const fail = (code: GeminiFailureCode): GeminiApiError => new GeminiApiError(code, label);
   const body = asRecord(json);
   if (body === undefined) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
-  const blockReason = asRecord(body.promptFeedback)?.blockReason;
+  const promptFeedback = asRecord(body.promptFeedback);
+  const blockReason = promptFeedback?.blockReason;
   if (blockReason !== undefined && blockReason !== null) throw fail(GeminiFailureCode.SAFETY_BLOCKED);
+  if (hasBlockedRating(promptFeedback?.safetyRatings, fail)) throw fail(GeminiFailureCode.SAFETY_BLOCKED);
   const candidates = body.candidates;
   if (candidates === undefined || (Array.isArray(candidates) && candidates.length === 0)) {
     throw fail(GeminiFailureCode.EMPTY_OUTPUT);
@@ -257,6 +281,8 @@ export function parseGenerateContentBody(json: unknown, label: string): ParsedRe
   if (!Array.isArray(candidates) || candidates.length !== 1) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
   const candidate = asRecord(candidates[0]);
   if (candidate === undefined) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
+  // An explicit safety block fails closed before anything else is read, even with text and STOP or MAX_TOKENS.
+  if (hasBlockedRating(candidate.safetyRatings, fail)) throw fail(GeminiFailureCode.SAFETY_BLOCKED);
   // Grounding (Google Search, URL context) is a tool the request never declares.
   if (nonEmpty(candidate.groundingMetadata) || nonEmpty(candidate.urlContextMetadata) || nonEmpty(candidate.groundingAttributions)) {
     throw fail(GeminiFailureCode.TOOL_CALL_REFUSED);
@@ -277,8 +303,13 @@ export function parseGenerateContentBody(json: unknown, label: string): ParsedRe
   for (const raw of parts) {
     const part = asRecord(raw);
     if (part === undefined) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
-    if (ACTION_PART_KEYS.some((key) => part[key] !== undefined)) throw fail(GeminiFailureCode.TOOL_CALL_REFUSED);
+    if (ACTION_PART_KEYS.some((key) => key in part)) throw fail(GeminiFailureCode.TOOL_CALL_REFUSED);
+    if (Object.keys(part).some((key) => !TEXT_PART_KEYS.has(key))) throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
     if (typeof part.text !== 'string') throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
+    if (part.thought !== undefined && typeof part.thought !== 'boolean') throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
+    if (part.thoughtSignature !== undefined && typeof part.thoughtSignature !== 'string') {
+      throw fail(GeminiFailureCode.MALFORMED_RESPONSE);
+    }
     if (part.thought === true) {
       // A thought summary is never part of the answer (and is not requested).
       thoughtPartCount += 1;
