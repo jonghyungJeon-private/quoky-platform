@@ -287,6 +287,13 @@ describe('interpretApprovalDecision: explicit deny verbs and bare deny words (Co
     ['아니 승인해', 'ambiguous'],
     ['승인하되 커밋은 하지 마', 'ambiguous'],
     ['거절 말고 승인', 'ambiguous'],
+    // Codex P2 on b21e877: 안 inside a noun (안내, 안건, 안전, 안심) is not a negation — a clarification request
+    ['승인 안내를 다시 보여줘', 'ambiguous'],
+    ['승인 안건을 다시 보여줘', 'ambiguous'],
+    ['진행 안내를 보여줘', 'ambiguous'],
+    ['승인 안전 점검 결과 보여줘', 'ambiguous'],
+    ['진행 안심 문구 보여줘', 'ambiguous'],
+    ['승인 안 돼요', 'deny'],
     // negated deny verbs are not deny verbs
     ['거절 안 해', 'ambiguous'],
     ['거절하지 마', 'ambiguous'],

@@ -219,10 +219,11 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
 const DENY_VERB_STEM =
   /(?<![가-힣a-z0-9])(?:거절|거부|취소)(?:(?:해|하|합|할|했|함|시켜|시킬)[가-힣]*|요|이요)?(?=$|[^가-힣a-z0-9])(?!\s*(?:사유|이유|내역|기록|방법|절차|버튼|여부))|\b(?:reject(?:ed|s)?|deny|denied|denies|refuse[ds]?|cancel(?:l?ed|s)?)\b/g;
 const NEGATED_APPROVE_VERB =
-  /(?:승인|진행|실행)\s*(?:안|않|못)|(?:승인|진행|실행)(?:하|시키)?지\s*(?:마|말|않)|\b(?:don['’]?t|do\s+not|never|won['’]?t)\s+(?:approve|proceed|go\s+ahead)\b|\bnot\s+approve\b/g;
+  /(?:승인|진행|실행)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할|돼|됨))|(?:승인|진행|실행)(?:하|시키)?지\s*(?:마|말|않)|\b(?:don['’]?t|do\s+not|never|won['’]?t)\s+(?:approve|proceed|go\s+ahead)\b|\bnot\s+approve\b/g;
 const GENERIC_DENY_VERB = /(?:하지\s*마|하지마)(?:요|라|세요)?(?![가-힣])|(?<![가-힣])(?:안\s*해|안해)(?:요|라)?(?![가-힣])/;
 /** A negated deny ("거절하지 마", "거절 안 해", "취소 안 할래"): the "하지 마" / "안 해" negates the refusal itself. */
-const NEGATED_DENY = /(?:거절|거부|취소)(?:하|시키)?지\s*(?:마|말|않)|(?:거절|거부|취소)\s*(?:안|않|못)/;
+const NEGATED_DENY =
+  /(?:거절|거부|취소)(?:하|시키)?지\s*(?:마|말|않)|(?:거절|거부|취소)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할))/;
 
 function hasExplicitDenyVerb(t: string): boolean {
   if (t.search(NEGATED_APPROVE_VERB) >= 0) return true;

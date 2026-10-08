@@ -322,6 +322,31 @@ describe('hasOwnMemoryRecallHit topic-word overlap (live QA D5, session 4)', () 
     expect(hasOwnMemoryRecallHit(ask('내가 좋아하는 차 종류 기억나?'), durable(memory))).toBe(true);
   });
 
+  it.each([
+    // Codex P2 on b21e877: the question keeps the whole noun (the shape's particle may belong to it)
+    ['내가 말한 고양이 기억나?', '우리 고양이는 나비야'],
+    ['내가 말한 고양이 기억나?', '고양이를 키워'],
+    ['내가 말한 아이 기억나?', '우리 아이는 다섯 살이야'],
+    ['내가 말한 오이 기억나?', '오이를 싫어해'],
+    ['내가 말한 거북이 기억나?', '거북이를 키워'],
+    ['내가 말한 거북이 기억나?', '거북은 오래 살아'],
+    ['내가 말한 다람쥐 기억나?', '다람쥐가 귀여워'],
+    // Codex P3 on b21e877: copula forms follow a vowel-final noun too
+    ['내 고양이 이름이 뭐였지?', '우리 반려동물은 고양이이고 이름은 나비야'],
+  ])('%s ↔ %s → hit (whole noun kept; copula after a vowel)', (text, memory) => {
+    expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(true);
+  });
+
+  it('a particle that cannot follow the syllable before it is part of the noun; one that can leaves both readings', () => {
+    expect(ask('내가 말한 아이 기억나?').topics).toEqual(['아이']);
+    expect(ask('내가 말한 오이 기억나?').topics).toEqual(['오이']);
+    expect(ask('내가 말한 다람쥐 기억나?').topics).toEqual(['다람쥐']);
+    const cat = ask('내가 말한 고양이 기억나?');
+    expect([...cat.topics, ...(cat.alternates ?? [])]).toEqual(['고양', '고양이']);
+    // an unrelated memory is still no hit through either reading
+    expect(hasOwnMemoryRecallHit(cat, durable('고양시에 살아', '고양이과 동물 다큐'))).toBe(false);
+  });
+
   it('English topics compare without plural or possessive endings', () => {
     const en = ask('what did I say my favourite fruit was?');
     expect(hasOwnMemoryRecallHit(en, durable('Fruits I love: mango'))).toBe(true);

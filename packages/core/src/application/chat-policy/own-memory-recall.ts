@@ -31,6 +31,11 @@ export interface OwnMemoryRecallQuestion {
   readonly topics: readonly string[];
   /** Present for a preference question ("좋아하는", "favourite", "싫어하는"). */
   readonly relation?: OwnMemoryRelation;
+  /**
+   * Fuller readings of the last topic word when the particle the question shape took off may belong to the noun
+   * ("내가 말한 고양이 기억나?" parses as 고양 + 이, but the noun is 고양이). Compared like `topics`; never empty when set.
+   */
+  readonly alternates?: readonly string[];
 }
 
 /** The structural slice of a `ContextBundle` the hit check reads (kept local so this folder imports no domain type). */
@@ -76,7 +81,8 @@ const KO_ADVERB = String.raw`(?:(?:제일|가장|젤|특히|진짜|정말)\s*)?`
 const KO_RELATIVE = String.raw`(?:좋아하는|좋아했던|좋아한다고\s*(?:한|했던)|싫어하는|싫어했던|싫어한다고\s*(?:한|했던)|말한|말했던|말해\s*준|말해\s*줬던|얘기한|얘기했던|이야기한|이야기했던|알려\s*준|알려\s*줬던|말씀드린|알려\s*드린|저장한|기억하라고\s*한)`;
 /** A bounded topic (1–30 characters, letters/digits/spaces), matched lazily so the particle and ending stay outside. */
 const KO_TOPIC = String.raw`([\p{L}\p{N}][\p{L}\p{N}\s'’-]{0,29}?)`;
-const KO_PARTICLE = String.raw`(?:\s*(?:이|가|은|는|을|를))?\s*`;
+/** Groups 2 / 3: the whitespace before the particle and the particle (both absent when there is none). */
+const KO_PARTICLE = String.raw`(?:(\s*)(이|가|은|는|을|를))?\s*`;
 /** Past / recall-shaped endings ("뭐였지", "언제였더라", "뭐라고 했지", "기억나?"). "기억해?" is excluded: it is also an imperative. */
 const KO_RECALL_END = String.raw`(?:뭐였지|뭐였더라|뭐더라|뭐였어|뭐였죠|뭐였나요|뭐였었지|뭐였었더라|무엇이었지|뭐라고\s*했지|뭐라고\s*했더라|뭐라고\s*했었지|뭐라고\s*했어|뭐라고\s*했죠|뭐라고\s*했었죠|뭐라고\s*했나요|뭐였는지\s*(?:기억나|알아)|뭔지\s*(?:기억나|기억하|알아)|언제였지|언제였더라|언제라고\s*했지|어디였지|어디였더라|어디라고\s*했지|누구였지|누구였더라|누구라고\s*했지|기억\s*나|기억하니|기억하나|기억하세|기억하시나|기억하고\s*있)`;
 /** Present-tense endings, accepted only after a preference / "told you" relative clause ("내가 좋아하는 과일이 뭐야?"). */
@@ -194,11 +200,14 @@ export function detectOwnMemoryRecallQuestion(text: string): OwnMemoryRecallQues
 
   let topic: string | undefined;
   let language: 'ko' | 'en' | undefined;
+  /** The particle the Korean shape took directly off the topic ("고양" + "이"), if any. */
+  let attached: string | undefined;
   for (const shape of [KO_RELATIVE_SHAPE, KO_POSSESSIVE_SHAPE, KO_SAID_SHAPE]) {
     const match = shape.exec(message);
     if (match?.[1] !== undefined) {
       topic = match[1];
       language = 'ko';
+      if (match[3] !== undefined && match[2] === '') attached = match[3];
       break;
     }
   }
@@ -213,14 +222,24 @@ export function detectOwnMemoryRecallQuestion(text: string): OwnMemoryRecallQues
     }
   }
   if (topic === undefined || language === undefined) return null;
-  if (EXCLUDED_TOPIC.test(topic)) return null;
+  // Keep the whole noun (Codex P2 on b21e877): a particle that cannot follow the syllable before it was part of the
+  // noun ("아이", "오이": 이 never follows a vowel-final syllable); one that can ("고양이" = 고양 + 이?) leaves both readings.
+  let fuller: string | undefined;
+  if (attached !== undefined) {
+    if (endingFits(topic, attached)) fuller = topic + attached;
+    else topic = topic + attached;
+  }
+  if (EXCLUDED_TOPIC.test(topic) || (fuller !== undefined && EXCLUDED_TOPIC.test(fuller))) return null;
   const topics = topicStems(topic, language);
   if (topics === null || topics.length === 0) return null;
+  const fullerStems = fuller === undefined ? null : topicStems(fuller, language);
+  const alternates = (fullerStems ?? []).filter((stem) => !topics.includes(stem));
   const relation = relationOf(message);
   return Object.freeze({
     language,
     topics: Object.freeze(topics),
     ...(relation === undefined ? {} : { relation }),
+    ...(alternates.length === 0 ? {} : { alternates: Object.freeze(alternates) }),
   });
 }
 
@@ -243,9 +262,10 @@ const KO_NOUN_ENDINGS: readonly string[] = [
 
 /** Endings that attach only after a final consonant (batchim) / only after a vowel; the rest attach after either. */
 const KO_AFTER_CONSONANT = new Set([
-  '이었어요', '이에요', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '이야', '이랑', '으로', '이고', '이지',
-  '이다', '이나', '이면', '은', '이', '을', '과',
+  '이었어요', '이에요', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '이야', '이랑', '으로', '이나', '은', '이',
+  '을', '과',
 ]);
+// The copula forms 이고 / 이다 / 이지 / 이면 follow either kind of syllable ("고양이이고", "학생이고"): not listed above.
 const KO_AFTER_VOWEL = new Set(['예요', '였어', '였지', '였다', '라고', '는', '가', '를', '와', '랑', '야']);
 
 /** Whether a Hangul syllable ends in a final consonant (batchim). */
@@ -320,7 +340,9 @@ const GENERIC_HEAD = new Set(['종류', '이름', '타입', '스타일', '쪽', 
 
 /** The question topics that can carry a match: stop-words dropped, generic heads only when nothing else remains. */
 function meaningfulTopics(question: OwnMemoryRecallQuestion): string[] {
-  const topics = question.topics.filter((stem) => !FILLER.has(stem) && !FILLER.has(baseOf(stem)));
+  const topics = [...question.topics, ...(question.alternates ?? [])].filter(
+    (stem) => !FILLER.has(stem) && !FILLER.has(baseOf(stem)),
+  );
   const specific = topics.filter((stem) => !GENERIC_HEAD.has(stem) && !GENERIC_HEAD.has(baseOf(stem)));
   return specific.length > 0 ? specific : topics;
 }

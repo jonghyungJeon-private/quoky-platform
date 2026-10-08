@@ -17051,7 +17051,9 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   고양이랑 → 고양이, but 고양이과 stays whole — or the longer word is the shorter plus one of 날/들/님/씨/쯤, so 생일날
   answers 생일 while 사과문, 부산물 and 회사원 do not; a one-syllable topic matches only itself or itself plus one
   agreeing particle, so 차 never matches 차고, 차이 or 자동차; stop-words ignored; a generic head such as 종류/이름
-  counted only as the sole topic)
+  counted only as the sole topic; copula forms such as 이고/이다 follow either kind of syllable; the question keeps the
+  whole noun when the shape's particle may belong to it, so 고양이 is compared as both 고양 and 고양이 and 아이/오이 stay
+  whole)
   or its raw semantic score is at least 0.9.
   Being recalled is no longer evidence by itself (this replaces the 79f9baa rule), so a paraphrase with no shared word
   ("나는 철수야" for "내 이름이 뭐였지?") gets the truthful not-in-memory reply unless it scores that high. Live:
@@ -17143,7 +17145,8 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   request, an approved unexecuted write or a numbered calendar choice with the fixed reply instead of reaching chat
   (N2); while the write is executing they get the "already started" reply and once it finished the deterministic
   "nothing to decide", like 취소. Approval interpretation (all approval kinds): an explicit deny verb (거절/거부/취소 as
-  a verb, 하지 마, 안 해, 승인 안/승인하지 않, won't approve, reject/deny/cancel) with no approve verb is a deny, with one
+  a verb, 하지 마, 안 해, 승인 안/승인하지 않 with 안 as a standalone negation — never 안내/안건 —, won't approve,
+  reject/deny/cancel) with no approve verb is a deny, with one
   it is ambiguous; a bare deny word (아니/아니요/no/nope, optionally plus a stop word such as "아니 됐어") is a deny; 아니/no
   with other content and no deny verb ("아니 이건 내 친구 얘기야") is ambiguous and leaves the approval pending.
   `그만` never resets a conversation: only `새 대화` / `/reset` do.
