@@ -165,6 +165,28 @@ describe('createConnectorWriters (ADR-0112 D2/D4, ADR-0110 amendment; registrati
     expect(noNetwork).not.toHaveBeenCalled();
   });
 
+  it('UNC-1: the built writers classify a thrown write with the platform-fetch classifier (NOT_SENT only with evidence)', async () => {
+    const { logger } = testLogger();
+    const config = loadConfig(env({
+      ...JIRA_ENV,
+      QUOKY_CONNECTOR_WRITES_ENABLED: 'true',
+      QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS: 'PROJ',
+      QUOKY_CONNECTOR_WRITE_SLACK_TOKEN: BOT_TOKEN,
+      QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS: 'dev-test:C0123ABCD9',
+    }));
+    const failing = (code: string, message: string) =>
+      (async () => {
+        throw new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+      }) as unknown as typeof fetch;
+    const dns = createConnectorWriters(config, logger, { fetchImpl: failing('ENOTFOUND', 'getaddrinfo ENOTFOUND slack.com') });
+    expect(await dns.channelMessages?.post({ channel: '#dev-test', text: 'hi' })).toEqual({
+      status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false,
+    });
+    // Without connection-stage evidence an unreachable-host error may come after the request was written.
+    const unreachable = createConnectorWriters(config, logger, { fetchImpl: failing('EHOSTUNREACH', 'read EHOSTUNREACH') });
+    expect(await unreachable.channelMessages?.post({ channel: '#dev-test', text: 'hi' })).toEqual({ status: 'UNCERTAIN', reason: 'TRANSPORT' });
+  });
+
   it('a non-allowlisted target is refused by the built writer before any network call', async () => {
     const { logger } = testLogger();
     const config = loadConfig(env({

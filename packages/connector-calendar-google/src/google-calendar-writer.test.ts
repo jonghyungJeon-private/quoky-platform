@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ConnectorWriteTransportGuard } from '@quoky/core';
 import type { CalendarEventDraft, CalendarEventExpectation } from '@quoky/core';
 import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_READ_WRITE_SCOPE, GOOGLE_OAUTH_TOKEN_URL } from './oauth';
 import { GoogleCalendarWriter, googleCalendarEventIdFor, type GoogleCalendarWriterConfig } from './google-calendar-writer';
@@ -66,6 +67,33 @@ function bodyOf(call: Call): Record<string, unknown> {
 function assertNoSecrets(value: unknown): void {
   const text = JSON.stringify(value);
   for (const secret of [ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET]) expect(text).not.toContain(secret);
+}
+
+
+/** UNC-1: what the platform fetch throws (`TypeError('fetch failed')` with the transport error as `cause`). */
+function fetchFailed(code: string, message = `${code} test`): TypeError {
+  return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+}
+
+
+/** UNC-1: a recording transport guard (what the composition root injects) that answers NOT_SENT for a thrown request. */
+function recordingGuard(): { guard: ConnectorWriteTransportGuard; begun: string[]; classified: unknown[]; ended: number } {
+  const log = { begun: [] as string[], classified: [] as unknown[], ended: 0 };
+  const guard: ConnectorWriteTransportGuard = {
+    begin(target) {
+      log.begun.push(target.toString());
+      return {
+        classifyFailure(error) {
+          log.classified.push(error);
+          return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
+        },
+        end() {
+          log.ended += 1;
+        },
+      };
+    },
+  };
+  return Object.assign(log, { guard });
 }
 
 describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
@@ -152,6 +180,10 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
       [json(429, {}), { status: 'NOT_SENT', reason: 'RATE_LIMITED', retryable: false }],
       [json(500, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [new Error(`reset ${ACCESS_TOKEN}`), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      // UNC-1: without an injected classifier every thrown request is UNCERTAIN (fail safe), whatever its cause.
+      [fetchFailed('ENOTFOUND'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('ECONNREFUSED'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
+      [fetchFailed('ECONNRESET', 'read ECONNRESET'), { status: 'UNCERTAIN', reason: 'TRANSPORT' }],
       [new Response('nope', { status: 200 }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
       [json(200, { summary: 'no id' }), { status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' }],
     ];
@@ -162,6 +194,19 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
       expect(google.calendarCalls).toHaveLength(1);
       assertNoSecrets(outcome);
     }
+  });
+
+  it('UNC-1: only the write request runs inside a transport-guard window (not the token refresh)', async () => {
+    const thrown = fetchFailed('ENOTFOUND');
+    const rec = recordingGuard();
+    const google = fakeGoogle([thrown]);
+    const outcome = await writer(google.fetchImpl, { transportGuard: rec.guard }).createEvent({ draft: DRAFT, idempotencyKey: KEY });
+    expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
+    expect(rec.begun).toHaveLength(1);
+    expect(new URL(rec.begun[0] ?? '').pathname).toBe('/calendar/v3/calendars/primary/events');
+    expect(rec.classified).toEqual([thrown]);
+    expect(rec.ended).toBe(1);
+    expect(google.calendarCalls).toHaveLength(1);
   });
 
   it('a token that lacks calendar.events, or holds a broader scope, or fails to refresh is NOT_SENT before the write', async () => {

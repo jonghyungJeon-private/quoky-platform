@@ -1,0 +1,18 @@
+# Docker build context filter (UNC-1 harness image, tools/uat/netfault/Dockerfile). Credentials never enter a layer:
+# every env-style file is excluded, and the Dockerfile copies an explicit allowlist only.
+**/*.env
+**/.env*
+**/uat.env
+.git
+**/.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+scratchpad
+**/scratchpad
+.uat
+.chunsik
+.chunsik-tmp
+.discord_tmp
+data
+docs

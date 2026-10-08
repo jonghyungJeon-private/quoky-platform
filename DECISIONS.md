@@ -16617,6 +16617,20 @@ Each write target as a new external target (a Jira test project issue and a Slac
 (comment, transition, post, deny, replay, network failure mid-send); v15 apply outside the delegated dev DB.
 Independent Chief Architect review before CWR-2 merges.
 
+### Note — UNC-1 network-fault UAT (2026-10-08): what NOT_SENT means after a thrown write request
+
+A clarification of D2 / D6 (no decision changes; Core still never branches on a connector). When a write request
+THROWS, `NOT_SENT` means: **no request bytes were observed on any connection to the target during this write**
+(fetch's own re-dispatches included — a POST is retried on a new connection after HTTP 421), **and** the failure
+carries connection-stage evidence (a connect error the HTTP client reported for that very error, a name-resolution
+failure, or a refused proxy tunnel). Anything else — a reset or close after connect, a timeout, an abort, or any
+request-bytes event for the target's origin while the write was in flight, including a concurrent request to the same
+origin — is `UNCERTAIN`, which is never retried. Core holds only the neutral contract (`ConnectorWriteTransportGuard`,
+fail-safe default UNCERTAIN); the composition root injects the platform-fetch guard
+(`apps/quoky/src/connector-write-transport.ts`) into every writer, so adapters still depend only on `@quoky/core`.
+A re-request whose payload hash matches an unresolved (UNCERTAIN / PREPARED) receipt is previewed with a duplicate
+warning; a matching SENT receipt keeps "이미 보냈어요".
+
 ## ADR-0102..0112 ratification record — Quoky Personal v3 (2026-10-06)
 
 - **Ratified by:** the Product Owner, in chat on 2026-10-06 ("우선은 모두 권장 값으로 ratify 진행해"), after GOV-3 drafted

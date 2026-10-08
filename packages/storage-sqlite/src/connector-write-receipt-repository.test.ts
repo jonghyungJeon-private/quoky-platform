@@ -112,6 +112,26 @@ describe('SqliteConnectorWriteReceiptRepository (ADR-0112 D3, schema v15)', () =
     db.close();
   });
 
+  it('finds the newest UNRESOLVED (UNCERTAIN or PREPARED) receipt for the same write only (UNC-1)', async () => {
+    const { repo, db } = setup();
+    const match = { actorId: 'actor-1', connector: 'jira', operation: 'ISSUE_COMMENT' as const, target: 'PROJ-1', payloadSha256: HASH };
+    await repo.prepare(receipt({ id: 'a', idempotencyKey: 'approval:aaaa-0001' }));
+    await repo.complete('a', connectorWriteSent('sent'), '2026-10-06T01:00:00.000Z');
+    await repo.prepare(receipt({ id: 'b', idempotencyKey: 'approval:bbbb-0002' }));
+    await repo.complete('b', { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false }, '2026-10-06T02:00:00.000Z');
+    expect(await repo.findLatestUnresolved(match)).toBeNull();
+    await repo.prepare(receipt({ id: 'c', idempotencyKey: 'approval:cccc-0003', updatedAt: '2026-10-06T03:00:00.000Z' }));
+    expect((await repo.findLatestUnresolved(match))?.status).toBe('PREPARED');
+    await repo.complete('c', { status: 'UNCERTAIN', reason: 'TRANSPORT' }, '2026-10-06T04:00:00.000Z');
+    expect(await repo.findLatestUnresolved(match)).toMatchObject({ id: 'c', status: 'UNCERTAIN', updatedAt: '2026-10-06T04:00:00.000Z' });
+    expect(await repo.findLatestUnresolved({ ...match, actorId: 'actor-2' })).toBeNull();
+    expect(await repo.findLatestUnresolved({ ...match, connector: 'slack' })).toBeNull();
+    expect(await repo.findLatestUnresolved({ ...match, target: 'PROJ-2' })).toBeNull();
+    expect(await repo.findLatestUnresolved({ ...match, payloadSha256: '0'.repeat(64) })).toBeNull();
+    expect(await repo.findLatestUnresolved({ ...match, operation: 'ISSUE_TRANSITION' })).toBeNull();
+    db.close();
+  });
+
   it('turns every PREPARED receipt into UNCERTAIN (INTERRUPTED) at startup and leaves terminal receipts alone', async () => {
     const { repo, db } = setup();
     await repo.prepare(receipt({ id: 'p', idempotencyKey: 'approval:pppp-0001' }));

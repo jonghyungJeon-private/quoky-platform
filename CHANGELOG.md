@@ -5,6 +5,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — UNC-1 connector-write network-fault fixes (2026-10-08)
+
+From the UNC-1 live network-fault UAT (Docker fault proxy, real Slack writer; harness in `tools/uat/netfault/`). No
+migration, no new port or token, no deps change; `ConversationRuntimeDeps` stays 35. The harness refuses to run unless
+Slack `conversations.info` — run in a separate short-lived process — confirms the explicitly approved channel id is
+`#quoky-test` (not a DM); the fault proxy closes every tunnel on each mode change; its image copies an allowlist only
+(`/.dockerignore` drops every env-style file); `run.sh` validates its arguments before touching the filesystem and
+accepts a run only with the case-specific outcome and tunnel pattern (`validate-result.mjs`).
+
+- Pre-send failures are `NOT_SENT('UNAVAILABLE')`, not "may have been posted". Core gains only the neutral contract
+  (`ConnectorWriteTransportGuard` / `ConnectorWriteTransportAttempt`, fail-safe default
+  `failSafeConnectorWriteTransportGuard` = UNCERTAIN); the Slack post, Jira comment / transition and Google Calendar
+  writers open one guard window around each write request (not around pre-reads or token refreshes). The composition
+  root injects the platform-fetch guard (`apps/quoky/src/connector-write-transport.ts`). NOT_SENT needs BOTH
+  invocation-wide no-send evidence — no `undici:client:sendHeaders` / `undici:request:bodySent` event for the target
+  origin while the window was open (fetch re-dispatches a POST after HTTP 421; concurrent requests to the same origin
+  poison each other, failing safe; a proxy CONNECT has the proxy's origin) — AND connection-stage evidence on the error
+  (the object undici published on `undici:client:connectError`, `ENOTFOUND` / `EAI_AGAIN`, or a refused proxy tunnel).
+  Everything else is UNCERTAIN. ADR-0112 gains a note: NOT_SENT means no request bytes were observed on any connection
+  during the write. A source scan keeps Core free of `diagnostics_channel` and the HTTP client.
+- NOT_SENT replies say plainly that nothing was sent: "Slack 게시를 보내지 못했어요: …. 아무것도 게시되지 않았어요."
+  (Jira: "댓글은 달리지 않았어요." / "이슈 상태는 바뀌지 않았어요.", calendar: "캘린더는 바뀌지 않았어요.").
+- Duplicate warning after UNCERTAIN: a new preview whose connector, operation, target and payload hash match an
+  unresolved receipt of the same actor (UNCERTAIN, or PREPARED = dispatched) leads with "주의: 같은 내용의 이전 요청은
+  결과를 확인하지 못했어요(<시각>). 이미 게시됐을 수 있으니 …". Approval still works; a matching SENT receipt keeps the
+  "이미 보냈어요" reply. New receipt-repository method `findLatestUnresolved` (SQLite: `status IN ('UNCERTAIN',
+  'PREPARED')`, no schema change).
+
 ## Unreleased — CODE-8 multi-repository allowlist for code work (2026-10-08)
 
 ADR-0109 (Ratified 2026-10-06, all recommended defaults). No migration, no new port, no token change, no deps change;
