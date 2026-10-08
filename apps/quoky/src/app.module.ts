@@ -129,6 +129,7 @@ import { codeWorkProviders } from './features/code-work.providers';
 import { createFeedbackProviders } from './features/feedback.providers';
 import { createCalendarProviders } from './features/calendar.providers';
 import { CONNECTOR_WRITE_FLOW, createConnectorWriteComposition } from './features/connector-writes.providers';
+import { createMailProviders } from './features/mail.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
@@ -805,6 +806,8 @@ const features: Provider[] = [
     timeZone: config.reminders.timeZone,
     writesEnabled: connectorWrites.calendarWritesEnabled,
   }),
+  // ADR-0118 (GML-1): read-only Gmail (pre-classify order 140), bound only when Gmail is configured.
+  ...createMailProviders({ gmail: config.gmail, timeZone: config.reminders.timeZone }),
   // ADR-0112 (CWR-2): connector-write writers, receipts view and the optional runtime write flow.
   ...connectorWrites.providers,
   // ADR-0092 amendment (runtime switching): the effective selection service and the owner's model command (pre-classify 70).

@@ -1,0 +1,22 @@
+{
+  "name": "@quoky/connector-gmail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gmail adapter for the read-only MailReader port (gmail.readonly only; no send, draft, label, modify or delete).",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@quoky/core": "workspace:*"
+  }
+}

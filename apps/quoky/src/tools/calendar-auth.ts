@@ -16,6 +16,10 @@
  * `--with-events` (ADR-0110 amendment D1) requests `calendar.readonly` + `calendar.events` instead, for calendar writes
  * on the primary calendar (`QUOKY_CALENDAR_WRITE_ENABLED`); the grant must contain both and nothing else, and the token
  * file records that scope. Without the flag the helper is unchanged (read-only).
+ *
+ * `--gmail` (ADR-0118 D3, GML-1) is a separate grant set on the same OAuth client: it requests `gmail.readonly` ONLY
+ * (no incremental grant, so the calendar scopes are never merged in), refuses any other granted scope, and writes a
+ * separate NEW mode-600 Gmail token file for `QUOKY_GMAIL_TOKEN_FILE`. It cannot be combined with `--with-events`.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
@@ -34,6 +38,15 @@ import {
   grantIncludesCalendarEvents,
   writeGoogleCalendarTokenFile,
 } from '@quoky/connector-calendar-google';
+import {
+  GmailNoRefreshTokenError,
+  GmailScopeError,
+  GmailTokenFileError,
+  assertGmailReadonlyScope,
+  buildGmailConsentUrl,
+  exchangeGmailAuthorizationCode,
+  writeGmailTokenFile,
+} from '@quoky/connector-gmail';
 import { isConnectorQueryError } from '@quoky/core';
 import { resolveEnvFilePath, resolveGoogleCalendarOAuthClient } from '../config';
 import { loadLocalEnvironment } from '../env-loader';
@@ -66,32 +79,43 @@ export interface CalendarAuthDeps {
   readonly fileExists: (path: string) => boolean;
   /** Writes the refresh token and the normalized granted scopes to a NEW mode-600 file. */
   readonly writeTokenFile: (path: string, refreshToken: string, scope: string) => void;
+  /** `--gmail`: writes the `gmail.readonly` refresh token to a NEW mode-600 Gmail token file (default: the adapter's). */
+  readonly writeGmailTokenFile?: (path: string, refreshToken: string, scope: string) => void;
   readonly listen: (handler: CallbackHandler) => Promise<CallbackListener>;
   readonly waitMs: number;
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
 }
 
-const HELP = `Google Calendar consent helper (ADR-0110 D2) — calendar.readonly, plus calendar.events with --with-events
+const HELP = `Google consent helper (ADR-0110 D2, ADR-0118 D3) — calendar.readonly, plus calendar.events with --with-events;
+or gmail.readonly only with --gmail (a separate token file)
 
   node apps/quoky/dist/tools/calendar-auth.js --out <new token file> [--with-events]
+  node apps/quoky/dist/tools/calendar-auth.js --out <new gmail token file> --gmail
 
 Needs QUOKY_CALENDAR_GOOGLE_CLIENT_ID and QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET (a Google OAuth "Desktop app" client).
 Open the printed URL in your browser on this machine and approve read-only calendar access. The refresh token is
 written to the new file with mode 600 and is never printed. Then set QUOKY_CALENDAR_GOOGLE_TOKEN_FILE to that path.
 --with-events also requests calendar.events (create, move and delete events on your primary calendar; Quoky never
 invites anyone). Writes stay off until QUOKY_CALENDAR_WRITE_ENABLED=true.
+--gmail requests read-only Gmail access (gmail.readonly) and nothing else; set QUOKY_GMAIL_TOKEN_FILE to the new file.
+Quoky never sends, deletes or changes mail. Revoke at https://myaccount.google.com/permissions and delete the file.
 `;
 
 const PAGE_RECEIVED = 'Quoky: approval received. Return to the terminal to confirm the token was saved. You can close this tab.';
-const PAGE_FAILED = 'Quoky: calendar access was not saved. Return to the terminal for the reason. You can close this tab.';
+const PAGE_FAILED = 'Quoky: Google access was not saved. Return to the terminal for the reason. You can close this tab.';
 
-function parseArgs(argv: readonly string[]): { out: string; withEvents: boolean } | null {
+function parseArgs(argv: readonly string[]): { out: string; withEvents: boolean; gmail: boolean } | null {
+  const flags = ['--with-events', '--gmail'];
   const withEvents = argv.includes('--with-events');
-  const rest = argv.filter((arg) => arg !== '--with-events');
-  if (rest.length !== 2 || rest[0] !== '--out' || argv.filter((arg) => arg === '--with-events').length > 1) return null;
+  const gmail = argv.includes('--gmail');
+  const rest = argv.filter((arg) => !flags.includes(arg));
+  if (rest.length !== 2 || rest[0] !== '--out') return null;
+  if (flags.some((flag) => argv.filter((arg) => arg === flag).length > 1)) return null;
+  // Separate grant sets: a Gmail grant never carries a calendar scope, and the reverse.
+  if (withEvents && gmail) return null;
   const out = rest[1];
-  return out === undefined || out.length === 0 || out.startsWith('--') ? null : { out, withEvents };
+  return out === undefined || out.length === 0 || out.startsWith('--') ? null : { out, withEvents, gmail };
 }
 
 type CallbackOutcome = { kind: 'code'; code: string } | { kind: 'denied' } | { kind: 'state-mismatch' } | { kind: 'invalid' };
@@ -162,17 +186,23 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
   try {
     const redirectUri = `http://127.0.0.1:${listener.port}${CALENDAR_AUTH_CALLBACK_PATH}`;
     deps.stdout(
-      options.withEvents
-        ? 'Open this URL in a browser on this machine and approve calendar READ and EVENT access (create, move, delete):'
-        : 'Open this URL in a browser on this machine and approve READ-ONLY calendar access:',
+      options.gmail
+        ? 'Open this URL in a browser on this machine and approve READ-ONLY Gmail access (gmail.readonly):'
+        : options.withEvents
+          ? 'Open this URL in a browser on this machine and approve calendar READ and EVENT access (create, move, delete):'
+          : 'Open this URL in a browser on this machine and approve READ-ONLY calendar access:',
     );
-    deps.stdout(buildGoogleConsentUrl({
-      clientId: client.clientId,
-      redirectUri,
-      state,
-      codeChallenge: pkce.challenge,
-      includeEventsScope: options.withEvents,
-    }));
+    deps.stdout(
+      options.gmail
+        ? buildGmailConsentUrl({ clientId: client.clientId, redirectUri, state, codeChallenge: pkce.challenge })
+        : buildGoogleConsentUrl({
+            clientId: client.clientId,
+            redirectUri,
+            state,
+            codeChallenge: pkce.challenge,
+            includeEventsScope: options.withEvents,
+          }),
+    );
     deps.stdout(`Waiting up to ${Math.round(deps.waitMs / 60_000)} minutes for the browser redirect to ${redirectUri} …`);
 
     const timeout = new Promise<'timeout'>((resolveTimeout) => {
@@ -194,6 +224,19 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
       return EXIT_FAILED;
     }
 
+    if (options.gmail) {
+      const gmailGrant = await exchangeGmailAuthorizationCode(
+        client,
+        { code: result.code, codeVerifier: pkce.verifier, redirectUri },
+        { fetchImpl: deps.fetchImpl, timeoutMs: TOKEN_REQUEST_TIMEOUT_MS },
+      );
+      // Defence in depth over the adapter's own check: never persist a grant other than exactly gmail.readonly.
+      const scope = assertGmailReadonlyScope(gmailGrant.scope);
+      (deps.writeGmailTokenFile ?? writeGmailTokenFile)(outPath, gmailGrant.refreshToken, scope);
+      deps.stdout(`Saved a gmail.readonly refresh token (mode 600) to ${outPath}`);
+      deps.stdout(`Next: set QUOKY_GMAIL_TOKEN_FILE=${outPath} in .env.local and restart Quoky.`);
+      return EXIT_OK;
+    }
     const granted = await exchangeGoogleAuthorizationCode(
       client,
       { code: result.code, codeVerifier: pkce.verifier, redirectUri },
@@ -222,6 +265,15 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
 /** Fixed, value-free failure text. */
 function describeFailure(error: unknown): string {
   if (error instanceof GoogleCalendarTokenFileError) return error.code;
+  if (error instanceof GmailTokenFileError) return error.code;
+  if (error instanceof GmailScopeError) {
+    return error.kind === 'TOO_BROAD'
+      ? 'Google granted more than gmail.readonly (refused)'
+      : 'Google did not grant gmail.readonly (tick the Gmail read permission on the consent screen)';
+  }
+  if (error instanceof GmailNoRefreshTokenError) {
+    return 'Google returned no refresh token (remove Quoky at https://myaccount.google.com/permissions and run again)';
+  }
   if (error instanceof GoogleCalendarScopeError) {
     return error.kind === 'TOO_BROAD'
       ? 'Google granted more than calendar.readonly and calendar.events (refused)'

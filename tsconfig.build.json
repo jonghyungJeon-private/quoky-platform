@@ -21,6 +21,7 @@
     { "path": "packages/connector-confluence" },
     { "path": "packages/connector-github" },
     { "path": "packages/connector-calendar-google" },
+    { "path": "packages/connector-gmail" },
     { "path": "packages/tool-mcp" },
     { "path": "apps/quoky" }
   ]

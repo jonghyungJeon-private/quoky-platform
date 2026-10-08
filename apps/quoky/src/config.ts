@@ -183,6 +183,13 @@ export interface QuokyConfig {
     timeZone: string;
   };
   /**
+   * Read-only Gmail (ADR-0118 D2/D3, GML-1). `undefined` — Gmail off, every reply unchanged — unless the Google OAuth
+   * client (the calendar's `QUOKY_CALENDAR_GOOGLE_CLIENT_ID` / `_SECRET`: the same Internal "Desktop app" client) and
+   * `QUOKY_GMAIL_TOKEN_FILE` (the mode-600 `gmail.readonly` token file the consent helper wrote with `--gmail`; never
+   * the calendar token) are both set. `timeZone` is `QUOKY_TIMEZONE`. Never logged.
+   */
+  gmail?: { google: { clientId: string; clientSecret: string; tokenFile: string }; timeZone: string };
+  /**
    * Repository identity for hosting operations (Sprint 3d-A, ADR-0051). RAW/unvalidated here; validated by
    * `RepositoryIdentityResolver` at the composition root. `undefined` when unset (the safe missing path).
    * `provider` is FIXED to `'github'`. Owner/repo prefer the NEW `QUOKY_GITHUB_OWNER`/`QUOKY_GITHUB_REPO`
@@ -533,6 +540,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
 
   const reminders = parseReminderConfig(env);
   const calendar = resolveCalendar(env, reminders.timeZone);
+  const gmail = resolveGmail(env, reminders.timeZone);
   const claudeModel = parseClaudeModel(env.QUOKY_CLAUDE_MODEL);
   const chat = parseChatProviderSelection(env);
   const imageUnderstanding = parseImageUnderstandingConfig(env, claudeModel);
@@ -609,6 +617,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     },
     connectorWrites: parseConnectorWrites(env),
     ...(calendar !== undefined ? { calendar } : {}),
+    ...(gmail !== undefined ? { gmail } : {}),
     // Provider fixed to 'github'. Undefined when both owner and repo are absent; a single one present yields a raw
     // config the resolver classifies (invalid-owner / invalid-repo). No provider/token env var is read here.
     repositoryHosting: legacyRepositoryHosting,
@@ -1159,6 +1168,13 @@ function resolveCalendar(env: NodeJS.ProcessEnv, timeZone: string): QuokyConfig[
     },
     timeZone,
   };
+}
+
+/** See `QuokyConfig.gmail`. No inline-token form: the Gmail grant lives only in its own mode-600 token file. */
+function resolveGmail(env: NodeJS.ProcessEnv, timeZone: string): QuokyConfig['gmail'] {
+  const client = resolveGoogleCalendarOAuthClient(env);
+  const tokenFile = nonBlank(env.QUOKY_GMAIL_TOKEN_FILE);
+  return client && tokenFile ? { google: { ...client, tokenFile: resolveDataPath(tokenFile) }, timeZone } : undefined;
 }
 
 /**

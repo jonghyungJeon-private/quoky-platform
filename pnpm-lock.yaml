@@ -53,6 +53,9 @@ importers:
       '@quoky/connector-github':
         specifier: workspace:*
         version: link:../../packages/connector-github
+      '@quoky/connector-gmail':
+        specifier: workspace:*
+        version: link:../../packages/connector-gmail
       '@quoky/connector-jira':
         specifier: workspace:*
         version: link:../../packages/connector-jira
@@ -148,6 +151,12 @@ importers:
         version: link:../core
 
   packages/connector-github:
+    dependencies:
+      '@quoky/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/connector-gmail:
     dependencies:
       '@quoky/core':
         specifier: workspace:*
