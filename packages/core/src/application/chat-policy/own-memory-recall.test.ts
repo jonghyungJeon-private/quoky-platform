@@ -112,16 +112,17 @@ describe('hasOwnMemoryRecallHit', () => {
     expect(hasOwnMemoryRecallHit(cat, durable('우리 고양이는 나비야'))).toBe(true);
   });
 
-  it('for a preference question any stated preference is a hit (generous: the provider flow stays)', () => {
-    expect(hasOwnMemoryRecallHit(fruit, durable('나는 귤을 좋아해'))).toBe(true);
+  it('a stated preference about something else is no durable evidence (live QA D5: recall returns every memory)', () => {
+    expect(hasOwnMemoryRecallHit(fruit, durable('나는 귤을 좋아해'))).toBe(false);
   });
 
-  it('ANY durable recall entry in the built context is a hit, even with no shared word (the retriever chose it)', () => {
-    // Codex P2 regression: a semantic match with no lexical overlap must never get "not in memory".
+  it('being recalled is no evidence: a durable entry with no shared topic word is no hit (live QA D5, session 4)', () => {
+    // Lexical and semantic recall both rank every eligible memory and never drop one, so "it was recalled" says
+    // nothing. The Codex P2 paraphrase ("나는 철수야" for "내 이름이 뭐였지?") now needs a very high semantic score.
     const name = detectOwnMemoryRecallQuestion('내 이름이 뭐였지?')!;
-    expect(hasOwnMemoryRecallHit(name, durable('나는 철수야'))).toBe(true);
-    expect(hasOwnMemoryRecallHit(fruit, durable('커피는 아메리카노', '주간 회의는 화요일'))).toBe(true);
-    expect(hasOwnMemoryRecallHit(cat, durable('커피는 아메리카노'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, durable('나는 철수야'))).toBe(false);
+    expect(hasOwnMemoryRecallHit(fruit, durable('커피는 아메리카노', '주간 회의는 화요일'))).toBe(false);
+    expect(hasOwnMemoryRecallHit(cat, durable('커피는 아메리카노'))).toBe(false);
     expect(hasOwnMemoryRecallHit(cat, { conversationTranscript: [], durableRecall: [] })).toBe(false);
   });
 
@@ -160,9 +161,22 @@ describe('hasOwnMemoryRecallHit with semantic recall scores (live QA D5)', () =>
     expect(hasOwnMemoryRecallHit(color, scored(['나는 샤인머스캣을 좋아해', 0.41], ['QA 테스트용 기억', 0.22]))).toBe(false);
   });
 
-  it('a semantic score at or above the floor is a hit even with no shared word (Codex P2 kept)', () => {
+  it('session 4 repro: nomic-embed-text scores an unrelated question like the true match, so the score alone is no hit', () => {
+    // Measured locally (nomic-embed-text, service prefixes, synthetic sentences): 0.760 / 0.706 for the tea question.
+    const tea = detectOwnMemoryRecallQuestion('내가 좋아하는 차 종류 기억나?')!;
+    expect(tea.topics).toEqual(['차', '종류']);
+    const memories = scored(['내가 제일 좋아하는 과일은 샤인머스캣이야', 0.76], ['우리 고양이 이름은 나비야', 0.706]);
+    expect(hasOwnMemoryRecallHit(tea, memories)).toBe(false);
+    // The true match scored only 0.794, below the floor: it is a hit through the shared word "과일".
+    expect(hasOwnMemoryRecallHit(detectOwnMemoryRecallQuestion('내가 좋아하는 과일 뭐였지?')!, memories)).toBe(true);
+    expect(hasOwnMemoryRecallHit(detectOwnMemoryRecallQuestion('내가 말한 샤인머스캣 기억나?')!, memories)).toBe(true);
+    expect(OWN_MEMORY_SEMANTIC_HIT_FLOOR).toBeGreaterThan(0.794);
+  });
+
+  it('a semantic score at or above the (very high) floor is a hit even with no shared word (Codex P2 kept for it)', () => {
     expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', OWN_MEMORY_SEMANTIC_HIT_FLOOR]))).toBe(true);
-    expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', 0.83]))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', 0.97]))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', 0.83]))).toBe(false);
     expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', OWN_MEMORY_SEMANTIC_HIT_FLOOR - 0.0001]))).toBe(false);
   });
 
@@ -176,20 +190,21 @@ describe('hasOwnMemoryRecallHit with semantic recall scores (live QA D5)', () =>
   });
 
   it('one entry above the floor among low ones is a hit', () => {
-    expect(hasOwnMemoryRecallHit(name, scored(['커피는 아메리카노', 0.2], ['나는 철수야', 0.71]))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, scored(['커피는 아메리카노', 0.2], ['나는 철수야', 0.93]))).toBe(true);
   });
 
-  it('an entry without a semantic score (lexical-only recall, or not scored this turn) stays a hit', () => {
-    const lexicalOnly: OwnMemoryRecallContext = {
+  it('an entry without a semantic score (lexical-only recall) is a hit only through a shared topic word', () => {
+    const lexical = (...contents: string[]): OwnMemoryRecallContext => ({
       conversationTranscript: [],
-      durableRecall: [{ content: '나는 철수야', retrievalMode: 'lexical' }],
-    };
-    expect(hasOwnMemoryRecallHit(name, lexicalOnly)).toBe(true);
+      durableRecall: contents.map((content) => ({ content, retrievalMode: 'lexical' as const })),
+    });
+    expect(hasOwnMemoryRecallHit(name, lexical('나는 철수야'))).toBe(false);
+    expect(hasOwnMemoryRecallHit(name, lexical('내 이름은 철수야'))).toBe(true);
     const mixed: OwnMemoryRecallContext = {
       conversationTranscript: [],
       durableRecall: [
         { content: '커피는 아메리카노', retrievalMode: 'semantic', semanticScore: 0.1 },
-        { content: '나는 철수야', retrievalMode: 'lexical' },
+        { content: '내 이름은 철수야', retrievalMode: 'lexical' },
       ],
     };
     expect(hasOwnMemoryRecallHit(name, mixed)).toBe(true);
@@ -200,8 +215,8 @@ describe('hasOwnMemoryRecallHit with semantic recall scores (live QA D5)', () =>
       conversationTranscript: [],
       durableRecall: [{ content: '나는 철수야', retrievalMode: 'semantic', ...(semanticScore === undefined ? {} : { semanticScore }) }],
     });
-    expect(hasOwnMemoryRecallHit(name, one(0.59996))).toBe(false); // would have printed as 0.6000
-    expect(hasOwnMemoryRecallHit(name, one(0.6))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, one(0.89996))).toBe(false); // would have printed as 0.9000
+    expect(hasOwnMemoryRecallHit(name, one(0.9))).toBe(true);
     expect(hasOwnMemoryRecallHit(name, one(0.1))).toBe(false); // "1e-1" as a number is just 0.1
     expect(hasOwnMemoryRecallHit(name, one(Number.NaN))).toBe(false);
     expect(hasOwnMemoryRecallHit(name, one(Number.POSITIVE_INFINITY))).toBe(false);
@@ -213,6 +228,129 @@ describe('hasOwnMemoryRecallHit with semantic recall scores (live QA D5)', () =>
       durableRecall: [{ content: '나는 철수야', retrievalMode: 'semantic' as const, semanticScore: 0.2, retrievalReason: 'semantic=0.9900' }],
     };
     expect(hasOwnMemoryRecallHit(name, textOnly)).toBe(false);
+  });
+});
+
+describe('hasOwnMemoryRecallHit topic-word overlap (live QA D5, session 4)', () => {
+  const MEMORIES = durable('내가 제일 좋아하는 과일은 샤인머스캣이야', '우리 고양이 이름은 나비야');
+  const ask = (text: string) => {
+    const question = detectOwnMemoryRecallQuestion(text);
+    expect(question, text).not.toBeNull();
+    return question!;
+  };
+
+  it.each([
+    // "과일" overlaps ("과일은" with its particle peeled)
+    '내가 좋아하는 과일 뭐였지?',
+    '내가 제일 좋아하는 과일이 뭐였더라',
+    // the fact itself ("샤인머스캣이야" with its ending peeled)
+    '내가 말한 샤인머스캣 기억나?',
+    // "고양이" overlaps; a particle on either side is peeled ("고양이의")
+    '내 고양이의 이름이 뭐였지?',
+    '내가 말한 고양이 기억나?',
+  ])('%s → hit (a shared topic word)', (text) => {
+    expect(hasOwnMemoryRecallHit(ask(text), MEMORIES)).toBe(true);
+  });
+
+  it.each([
+    // the live repro: "차" and the generic head "종류" are in no memory
+    '내가 좋아하는 차 종류 기억나?',
+    // only stop-words / the relation are shared ("내가", "좋아하는", "제일", "기억나", "뭐였지")
+    '내가 좋아하는 색깔이 뭐였지?',
+    '내가 제일 좋아하는 음식이 뭐였지?',
+    '내가 좋아하는 영화 기억나?',
+    '내가 싫어하는 운동이 뭐였지?',
+    '내 생일이 언제였지?',
+    // "이름" is generic: it counts only as a sole topic, so another pet's name is no hit
+    '내 강아지 이름 기억나?',
+    // a one-syllable stem never matches inside another word ("자동차", "차가운")
+    '내가 말한 차 기억나?',
+  ])('%s → no hit (only stop-words, a generic head or nothing shared)', (text) => {
+    expect(hasOwnMemoryRecallHit(ask(text), MEMORIES)).toBe(false);
+  });
+
+  it('a one-syllable topic matches the whole word up to a particle, never a piece of another word', () => {
+    const tea = ask('내가 좋아하는 차 종류 기억나?');
+    expect(hasOwnMemoryRecallHit(tea, durable('자동차는 회색이 좋아', '차가운 물이 좋아'))).toBe(false);
+    expect(hasOwnMemoryRecallHit(tea, durable('나는 차는 녹차를 좋아해'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(tea, durable('차: 보이차'))).toBe(true);
+  });
+
+  it('a generic head counts when it is the only topic; Korean endings are peeled on the memory side', () => {
+    expect(hasOwnMemoryRecallHit(ask('내 이름이 뭐였지?'), durable('내 이름은 철수입니다'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(ask('내가 좋아하는 음식이 뭐였지?'), durable('제일 좋아하는 음식이에요: 김치찌개'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(ask('내가 좋아하는 차 종류 기억나?'), durable('좋아하는 과일 종류는 샤인머스캣'))).toBe(false);
+  });
+
+  it('the same overlap rule applies to the User\'s own earlier turns (the preference fallback stays for them)', () => {
+    const tea = ask('내가 좋아하는 차 종류 기억나?');
+    expect(hasOwnMemoryRecallHit(tea, { conversationTranscript: [userTurn('우리 고양이 이름은 나비야')] })).toBe(false);
+    expect(hasOwnMemoryRecallHit(tea, { conversationTranscript: [userTurn('나는 차를 자주 마셔')] })).toBe(true);
+  });
+
+  it.each([
+    // Codex P2 (b571e4d): Korean-aware containment — the shorter side keeps at least two syllables
+    ['내 생일날 언제였지?', '내 생일은 3월 5일이야'],
+    ['내 생일이 언제였지?', '생일날은 3월 5일'],
+    ['내가 말한 고양이 기억나?', '고양이랑 같이 살아'],
+    ['내가 말한 회사 기억나?', '회사에서 일해'],
+    ['내 고양이 이름이 뭐였지?', '고양이와 강아지를 키워'],
+    ['내 고양이 이름이 뭐였지?', '고양이랑 같이 살아'],
+    ['내 친구 이름이 뭐였지?', '친구들이랑 등산 가'],
+  ])('%s ↔ %s → hit (equal after one particle, or + 날/들/님/씨/쯤)', (text, memory) => {
+    expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(true);
+  });
+
+  it.each([
+    // Codex P2 (b571e4d): a one-syllable topic is that syllable alone or with exactly one particle
+    ['내가 좋아하는 차 종류 기억나?', '차고에 자전거를 뒀어'],
+    ['내가 좋아하는 차 종류 기억나?', '차고 정리했어'],
+    ['내가 좋아하는 차 종류 기억나?', '자동차는 회색'],
+    ['내가 좋아하는 차 종류 기억나?', '차가운 물이 좋아'],
+    // Codex P2 on cad729e: no open-ended containment — a longer noun is a different noun
+    ['내가 좋아하는 과일 사과 기억나?', '사과문을 썼어'],
+    ['내가 말한 부산 기억나?', '부산물 처리했어'],
+    ['내가 말한 회사 기억나?', '나는 회사원이야'],
+    ['내가 말한 고양이 기억나?', '고양이과 동물이 좋아'],
+    ['내 고양이 이름이 뭐였지?', '고양이과 동물이 좋아'],
+    ['내가 좋아하는 차 종류 기억나?', '둘은 차이가 커'],
+  ])('%s ↔ %s → no hit (never a longer noun)', (text, memory) => {
+    expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(false);
+  });
+
+  it.each(['나는 차를 좋아해', '차가 좋아', '차는 녹차', '좋아하는 건 차'])('"차" matches "%s" (the syllable plus one particle)', (memory) => {
+    expect(hasOwnMemoryRecallHit(ask('내가 좋아하는 차 종류 기억나?'), durable(memory))).toBe(true);
+  });
+
+  it.each([
+    // Codex P2 on b21e877: the question keeps the whole noun (the shape's particle may belong to it)
+    ['내가 말한 고양이 기억나?', '우리 고양이는 나비야'],
+    ['내가 말한 고양이 기억나?', '고양이를 키워'],
+    ['내가 말한 아이 기억나?', '우리 아이는 다섯 살이야'],
+    ['내가 말한 오이 기억나?', '오이를 싫어해'],
+    ['내가 말한 거북이 기억나?', '거북이를 키워'],
+    ['내가 말한 거북이 기억나?', '거북은 오래 살아'],
+    ['내가 말한 다람쥐 기억나?', '다람쥐가 귀여워'],
+    // Codex P3 on b21e877: copula forms follow a vowel-final noun too
+    ['내 고양이 이름이 뭐였지?', '우리 반려동물은 고양이이고 이름은 나비야'],
+  ])('%s ↔ %s → hit (whole noun kept; copula after a vowel)', (text, memory) => {
+    expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(true);
+  });
+
+  it('a particle that cannot follow the syllable before it is part of the noun; one that can leaves both readings', () => {
+    expect(ask('내가 말한 아이 기억나?').topics).toEqual(['아이']);
+    expect(ask('내가 말한 오이 기억나?').topics).toEqual(['오이']);
+    expect(ask('내가 말한 다람쥐 기억나?').topics).toEqual(['다람쥐']);
+    const cat = ask('내가 말한 고양이 기억나?');
+    expect([...cat.topics, ...(cat.alternates ?? [])]).toEqual(['고양', '고양이']);
+    // an unrelated memory is still no hit through either reading
+    expect(hasOwnMemoryRecallHit(cat, durable('고양시에 살아', '고양이과 동물 다큐'))).toBe(false);
+  });
+
+  it('English topics compare without plural or possessive endings', () => {
+    const en = ask('what did I say my favourite fruit was?');
+    expect(hasOwnMemoryRecallHit(en, durable('Fruits I love: mango'))).toBe(true);
+    expect(hasOwnMemoryRecallHit(en, durable('my favourite movie is Up'))).toBe(false);
   });
 });
 

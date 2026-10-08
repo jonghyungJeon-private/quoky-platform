@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { AiFailureKind, AiProviderError, ArtifactKind, newId, now } from '@quoky/core';
+import { AiFailureKind, AiProviderError, ArtifactKind, newId, now, ProviderProbeIndeterminateError } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
@@ -183,13 +183,20 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
    * call (no model request); only its `loggedIn` boolean is read — the account fields are never kept or logged.
    */
   override async isAvailable(): Promise<boolean> {
+    let r;
     try {
-      const r = await this.runner(this.bin, ['auth', 'status', '--json'], {
+      r = await this.runner(this.bin, ['auth', 'status', '--json'], {
         cwd: tmpdir(),
         input: '',
         timeoutMs: CLAUDE_VISION_PROBE_TIMEOUT_MS,
       });
-      if (r.code !== 0 || r.timedOut) return false;
+    } catch {
+      return false;
+    }
+    // A timed-out probe is no answer (live QA D16): the previous readiness is kept.
+    if (r.timedOut) throw new ProviderProbeIndeterminateError('claude auth status timed out');
+    try {
+      if (r.code !== 0) return false;
       const status = JSON.parse(r.stdout) as { loggedIn?: unknown };
       return typeof status === 'object' && status !== null && status.loggedIn === true;
     } catch {

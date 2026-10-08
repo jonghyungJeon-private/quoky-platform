@@ -12,6 +12,7 @@ import {
   detectExternalActionRequest,
   executionLocalityOf,
   generalChatReplyPolicyMetadata,
+  ProviderProbeIndeterminateError,
 } from '@quoky/core';
 import type { AiProvider } from '@quoky/core';
 import {
@@ -493,10 +494,16 @@ describe('CodexCliProvider — readiness probe', () => {
   it.each<[string, CliRunResult]>([
     ['not logged in', { code: 1, stdout: '', stderr: 'Not logged in\n', timedOut: false }],
     ['exit 0 but no login line', { code: 0, stdout: 'something else', stderr: '', timedOut: false }],
-    ['timed out', { code: null, stdout: '', stderr: 'Logged in using ChatGPT', timedOut: true }],
     ['missing CLI', { code: null, stdout: '', stderr: 'spawn codex ENOENT', timedOut: false }],
   ])('not ready when %s', async (_label, result) => {
     expect(await new CodexCliProvider('codex', { runner: async () => result }).isAvailable()).toBe(false);
+  });
+
+  it('a timed-out probe is indeterminate, never "not ready" (live QA D16)', async () => {
+    const result: CliRunResult = { code: null, stdout: '', stderr: 'Logged in using ChatGPT', timedOut: true };
+    await expect(new CodexCliProvider('codex', { runner: async () => result }).isAvailable()).rejects.toBeInstanceOf(
+      ProviderProbeIndeterminateError,
+    );
   });
 
   it('a throwing runner is not ready', async () => {

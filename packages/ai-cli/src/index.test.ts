@@ -24,6 +24,7 @@ import {
   detectExternalActionRequest,
   executionLocalityOf,
   generalChatReplyPolicyMetadata,
+  ProviderProbeIndeterminateError,
 } from '@quoky/core';
 import type { AiRequest, MemoryManager, MemoryRecord, Task } from '@quoky/core';
 import {
@@ -983,10 +984,13 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       expect(await new OllamaCliProvider({ runner: down.runner }).isAvailable()).toBe(false);
       const cannotRun = probeWith({ code: null, stdout: '', stderr: 'ENOENT', timedOut: false });
       expect(await new OllamaCliProvider({ runner: cannotRun.runner }).isAvailable()).toBe(false);
+      // A timed-out probe is no answer (live QA D16): indeterminate, never "not ready".
       const timedOut = probeWith({
         code: 0, stdout: `${LIST_HEADER}\nllama3.1:latest  x  1 GB  now`, stderr: '', timedOut: true,
       });
-      expect(await new OllamaCliProvider({ runner: timedOut.runner }).isAvailable()).toBe(false);
+      await expect(new OllamaCliProvider({ runner: timedOut.runner }).isAvailable()).rejects.toBeInstanceOf(
+        ProviderProbeIndeterminateError,
+      );
       const throws = probeWith(new Error('spawn failed'));
       expect(await new OllamaCliProvider({ runner: throws.runner }).isAvailable()).toBe(false);
     });

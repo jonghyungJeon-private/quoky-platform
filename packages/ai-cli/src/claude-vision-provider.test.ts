@@ -10,6 +10,7 @@ import {
   CapabilityRouter,
   describeAiFailure,
   executionLocalityOf,
+  ProviderProbeIndeterminateError,
 } from '@quoky/core';
 import type { AiImageInput, AiRequest } from '@quoky/core';
 import {
@@ -124,10 +125,16 @@ describe('ClaudeCliVisionProvider — readiness (CLI present AND logged in)', ()
     ['non-JSON output', ok('Not logged in · Please run /login')],
     ['non-zero exit', { code: 1, stdout: '', stderr: 'error', timedOut: false }],
     ['CLI missing (spawn failed)', { code: null, stdout: '', stderr: 'spawn claude ENOENT', timedOut: false }],
-    ['probe timed out', { code: null, stdout: '', stderr: '', timedOut: true }],
   ])('not ready when %s', async (_label, result) => {
     const { runner } = recordingRunner(() => result as CliRunResult);
     expect(await new ClaudeCliVisionProvider({ model: 'sonnet', runner }).isAvailable()).toBe(false);
+  });
+
+  it('a timed-out probe is indeterminate, never "not ready" (live QA D16)', async () => {
+    const { runner } = recordingRunner(() => ({ code: null, stdout: '', stderr: '', timedOut: true }) as CliRunResult);
+    await expect(new ClaudeCliVisionProvider({ model: 'sonnet', runner }).isAvailable()).rejects.toBeInstanceOf(
+      ProviderProbeIndeterminateError,
+    );
   });
 
   it('a throwing runner is not ready', async () => {

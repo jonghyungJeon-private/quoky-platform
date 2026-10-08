@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AiFailureKind, AiProviderManager, Capability, CapabilityRouter, describeAiFailure, executionLocalityOf } from '@quoky/core';
+import { AiFailureKind, AiProviderManager, Capability, CapabilityRouter, describeAiFailure, executionLocalityOf, ProviderProbeIndeterminateError } from '@quoky/core';
 import type { AiImageInput, AiRequest } from '@quoky/core';
 import {
   CODEX_CONFIG_OVERRIDES,
@@ -140,11 +140,15 @@ describe('CodexCliVisionProvider — readiness', () => {
     for (const outcome of [
       { code: 1, stdout: '', stderr: 'Not logged in', timedOut: false },
       ok('', 'Not logged in\n'),
-      { code: null, stdout: '', stderr: '', timedOut: true },
     ]) {
       const probe = recordingRunner(() => outcome);
       expect(await new CodexCliVisionProvider({ runner: probe.runner }).isAvailable()).toBe(false);
     }
+    // A timed-out probe is no answer (live QA D16): indeterminate, never "not ready".
+    const timedOut = recordingRunner(() => ({ code: null, stdout: '', stderr: '', timedOut: true }));
+    await expect(new CodexCliVisionProvider({ runner: timedOut.runner }).isAvailable()).rejects.toBeInstanceOf(
+      ProviderProbeIndeterminateError,
+    );
   });
 });
 

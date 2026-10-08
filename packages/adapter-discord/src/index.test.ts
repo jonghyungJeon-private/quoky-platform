@@ -116,6 +116,29 @@ const forbiddenFetch = (async () => {
   throw new Error('network must not be used');
 }) as typeof fetch;
 
+/**
+ * Records every promise the adapter's gateway listeners start (`void this.handleMessageCreate(...)` /
+ * `void this.handleReaction(...)`), so a test awaits the real completion of a delivery — intake, temp writes, the
+ * refusal note, the turn and the temp release — instead of counting event-loop ticks, which a loaded run outlasts.
+ * The listeners call the methods through `this`, so wrapping the instance methods sees every call.
+ */
+function trackInbound(adapter: DiscordPlatformAdapter): () => Promise<void> {
+  const inflight: Array<Promise<unknown>> = [];
+  const target = adapter as unknown as Record<'handleMessageCreate' | 'handleReaction', (...args: unknown[]) => Promise<unknown>>;
+  for (const method of ['handleMessageCreate', 'handleReaction'] as const) {
+    const original = target[method].bind(adapter);
+    target[method] = (...args: unknown[]) => {
+      const run = original(...args);
+      inflight.push(run);
+      return run;
+    };
+  }
+  /** Resolves once every delivery started so far (and any it started) has fully finished. */
+  return async () => {
+    while (inflight.length > 0) await Promise.all(inflight.splice(0));
+  };
+}
+
 /** Builds an adapter, drives a message through the REAL registered MessageCreate listener. */
 async function harness(config: Partial<DiscordConfig> = {}, options?: DiscordAdapterOptions) {
   const logger = new RecordingLogger();
@@ -126,15 +149,20 @@ async function harness(config: Partial<DiscordConfig> = {}, options?: DiscordAda
   );
   const handled: InboundMessage[] = [];
   adapter.onMessage(async (message) => { handled.push(message); });
+  const settle = trackInbound(adapter);
   await adapter.start();
   const client = fakeClients.at(-1)!;
   const listener = client.listeners.get(Events.MessageCreate)!;
+  /** Delivers through the real listener and waits for the whole handling (use `send` when a test blocks the turn). */
   const deliver = async (message: ReturnType<typeof fakeMessage>): Promise<void> => {
     listener(message);
-    // handleMessageCreate is async; let its microtasks settle.
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
   };
-  return { adapter, handled, deliver, logger, client };
+  /** Delivers without waiting for the handling to finish (a blocked turn, a pending identity gate). */
+  const send = (message: ReturnType<typeof fakeMessage>): void => {
+    listener(message);
+  };
+  return { adapter, handled, deliver, send, settle, logger, client };
 }
 
 beforeEach(() => {
@@ -213,7 +241,7 @@ async function reactionHarness(config: Partial<DiscordConfig> = {}) {
   const fire = async (event: 'add' | 'remove', init: FakeReactionInit = {}, fetches: string[] = []) => {
     const { reaction, user } = fakeReaction(init, fetches);
     base.client.listeners.get(event === 'add' ? Events.MessageReactionAdd : Events.MessageReactionRemove)!(reaction, user);
-    await new Promise((resolve) => setImmediate(resolve));
+    await base.settle();
   };
   return { ...base, signals, fire };
 }
@@ -310,7 +338,7 @@ describe('DiscordPlatformAdapter — reaction feedback (ADR-0098 D3)', () => {
     base.adapter.onFeedback(async () => { throw new Error('store down 111111111111111111'); });
     const { reaction, user } = fakeReaction();
     base.client.listeners.get(Events.MessageReactionAdd)!(reaction, user);
-    await new Promise((resolve) => setImmediate(resolve));
+    await base.settle();
     expect(base.logger.lines).toHaveLength(1);
     const serialized = JSON.stringify(base.logger.lines);
     expect(serialized).not.toContain(OWNER);
@@ -319,10 +347,10 @@ describe('DiscordPlatformAdapter — reaction feedback (ADR-0098 D3)', () => {
   });
 
   it('with no feedback handler registered, an admitted reaction is a no-op', async () => {
-    const { client, logger } = await harness();
+    const { client, logger, settle } = await harness();
     const { reaction, user } = fakeReaction();
     client.listeners.get(Events.MessageReactionAdd)!(reaction, user);
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
     expect(logger.lines).toEqual([]);
   });
 });
@@ -553,7 +581,7 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     return { ...fakeMessage(init), attachments: new Map(attachments.map((a, i) => [`a${i}`, a])) };
   }
 
-  /** Harness with a recording offline fetch and an isolated temp root; `waitHandled` polls until a turn arrives. */
+  /** Harness with a recording offline fetch and an isolated temp root; `settle` awaits every started delivery. */
   async function intakeHarness(config: Partial<DiscordConfig> = {}) {
     const fetched: string[] = [];
     const fetchImpl = (async (input: string | URL | Request) => {
@@ -565,10 +593,7 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
     }) as typeof fetch;
     const tempRoot = await fs.mkdtemp(path.join(scratchRoot, 'intake-'));
     const base = await harness(config, { attachments: { fetchImpl, tempRoot } });
-    const settle = async () => {
-      for (let i = 0; i < 50; i++) await new Promise((resolve) => setImmediate(resolve));
-    };
-    return { ...base, fetched, tempRoot, settle };
+    return { ...base, fetched, tempRoot };
   }
 
   it('admission runs before any download: a non-owner or non-allowlisted message fetches nothing', async () => {
@@ -704,18 +729,23 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
   });
 
   it('stop() deletes any temp file still held', async () => {
-    const { adapter, deliver, tempRoot } = await intakeHarness();
+    const { adapter, send, settle, tempRoot } = await intakeHarness();
     let release: () => void = () => undefined;
     const blocked = new Promise<void>((resolve) => (release = resolve));
-    adapter.onMessage(async () => blocked);
-    await deliver(withAttachments({}, [att('shot.png', 'image/png')]));
-    for (let i = 0; i < 50 && (await filesIn(tempRoot)).length === 0; i++) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    let turnStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => (turnStarted = resolve));
+    // The turn starts only after intake wrote the temp file; it then stays blocked until released.
+    adapter.onMessage(async () => {
+      turnStarted();
+      return blocked;
+    });
+    send(withAttachments({}, [att('shot.png', 'image/png')]));
+    await started;
     expect(await filesIn(tempRoot)).toHaveLength(1);
     await adapter.stop();
     expect(await fs.readdir(tempRoot)).toEqual([]);
     release();
+    await settle();
   });
 
   describe('ADR-0102 D5 identity gate (Codex P2): no attachment effect before the identity is verified', () => {
@@ -723,18 +753,21 @@ describe('DiscordPlatformAdapter — attachment intake (ADR-0111)', () => {
       withAttachments({}, [att('archive.zip', 'application/zip'), att('app.log', 'text/plain'), att('shot.png', 'image/png')]);
 
     it('while the gate is pending: no download, no temp write, no note, no turn — then all of it once it opens', async () => {
-      const { adapter, deliver, handled, fetched, tempRoot, settle } = await intakeHarness();
+      const { adapter, send, handled, fetched, tempRoot, settle, logger } = await intakeHarness();
       const { sent } = sendableChannel(ALLOWED_CHANNEL);
       let open: (verified: boolean) => void = () => undefined;
       adapter.gateInbound(new Promise<boolean>((resolve) => (open = resolve)));
-      await deliver(refusedAndImage());
-      await settle();
+      send(refusedAndImage());
+      // The admission log is written synchronously right before the gate is awaited: the delivery is parked there.
+      expect(logger.lines.map((l) => l.message)).toEqual(['message received']);
+      // Give a (wrongly) ungated path every chance to run: drain the event loop several times.
+      for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
       expect(fetched).toEqual([]);
       expect(sent).toEqual([]);
       expect(handled).toEqual([]);
       expect(await fs.readdir(tempRoot)).toEqual([]);
       open(true);
-      await settle();
+      await settle(); // the delivery's own promise: intake, note, turn and temp release have all finished
       expect(fetched).toEqual([`${CDN}/app.log`, `${CDN}/shot.png`]);
       expect(sent).toHaveLength(1);
       expect(handled).toHaveLength(1);

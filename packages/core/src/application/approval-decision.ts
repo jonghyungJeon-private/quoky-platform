@@ -177,6 +177,10 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   const approve = scan(t, APPROVE);
   const deny = scan(t, DENY);
 
+  // Codex P2 (round 3 on cad729e): an explicit deny verb decides; an approve verb next to it makes it ambiguous.
+  const denyVerb = hasExplicitDenyVerb(t);
+  if (denyVerb) return hasApproveVerb(t) ? 'ambiguous' : 'deny';
+
   if (approve.negated) {
     // "취소하지 말고 진행해" / "거절하지 말고 승인해": the negation targets the deny/cancel word, so the user
     // did not say "don't approve" — re-prompt instead of a terminal deny.
@@ -197,9 +201,71 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
   }
   if (deny.positive && !approve.positive) {
     // "거절 안 해" (I won't reject) / "no problem" are not refusals.
-    return KOREAN_SOFT_NEGATION.test(t) || NO_PROBLEM.test(t) ? 'ambiguous' : 'deny';
+    if (KOREAN_SOFT_NEGATION.test(t) || NO_PROBLEM.test(t)) return 'ambiguous';
+    // No deny verb here (that returned above): a bare deny word ("아니", "아니요", "no") decides, alone or followed only
+    // by a stop word ("아니 됐어", "no, stop"); "아니 이건 내 친구 얘기야" carries other content and re-prompts.
+    return isBareDenyWord(t) ? 'deny' : 'ambiguous';
   }
-  return 'ambiguous';
+  // A bare deny word outside the deny phrase list ("nope", "아뇨") decides the same way (rule b).
+  return !approve.positive && isBareDenyWord(t) ? 'deny' : 'ambiguous';
+}
+
+/**
+ * Explicit deny verbs (round-3 rule a): 거절 / 거부 / 취소 in any verb form, "하지 마", "안 해", "승인 안 / 승인하지 않",
+ * reject / deny / cancel. A deny verb that is itself negated ("거절하지 마", "거절 안 해", "취소하지 말고") is not one.
+ */
+/**
+ * 거절 / 거부 / 취소 as a deny verb — exact forms only (Codex round 5 on 15c2e71), never a stem prefix:
+ * - conjugated: the noun followed directly or after one space by a 하다 / 되다 form ("거절해", "거절 할게", "거부합니다",
+ *   "취소해 주세요", "거절됐어");
+ * - bare: the whole message, optionally with 요, punctuation, or "이 요청" / "그 요청" in front ("거절", "이 요청 거절").
+ * A noun use ("거절 안내", "거절 사유", "취소 버튼") — anything else — is not a deny verb. English verbs are unchanged.
+ */
+const KO_DENY_CONJUGATION = String.raw`(?:해\s*(?:주세요|줘요|줘)|해요|해|할게요|할게|할래요|할래|합니다|하겠습니다|했어요|했어|하자|하세요|하고|됐어요|됐어|됐|돼요|돼|됨)`;
+const KO_DENY_VERB = new RegExp(
+  String.raw`(?<![가-힣A-Za-z0-9_])(?:거절|거부|취소)\s?${KO_DENY_CONJUGATION}(?![가-힣A-Za-z0-9_])`,
+  'g',
+);
+const KO_BARE_DENY = /^(?:(?:이|그)\s*요청(?:은|을)?\s*)?(?:거절|거부|취소)(?:요|이요)?[\s.!~]*$/;
+const EN_DENY_VERB = /\b(?:reject(?:ed|s)?|deny|denied|denies|refuse[ds]?|cancel(?:l?ed|s)?)\b/g;
+const NEGATED_APPROVE_VERB =
+  /(?:승인|진행|실행)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할|돼|됨))|(?:승인|진행|실행)(?:하|시키)?지\s*(?:마|말|않)|\b(?:don['’]?t|do\s+not|never|won['’]?t)\s+(?:approve|proceed|go\s+ahead)\b|\bnot\s+approve\b/g;
+const GENERIC_DENY_VERB = /(?:하지\s*마|하지마)(?:요|라|세요)?(?![가-힣A-Za-z0-9_])|(?<![가-힣A-Za-z0-9_])(?:안\s*해|안해)(?:요|라)?(?![가-힣A-Za-z0-9_])/;
+/** A negated deny ("거절하지 마", "거절 안 해", "취소 안 할래"): the "하지 마" / "안 해" negates the refusal itself. */
+const NEGATED_DENY =
+  /(?:거절|거부|취소)(?:하|시키)?지\s*(?:마|말|않)|(?:거절|거부|취소)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할))/;
+
+function hasExplicitDenyVerb(t: string): boolean {
+  if (t.search(NEGATED_APPROVE_VERB) >= 0) return true;
+  if (KO_BARE_DENY.test(t)) return true;
+  for (const verbs of [KO_DENY_VERB, EN_DENY_VERB]) {
+    for (const m of t.matchAll(verbs)) {
+      if (!isNegated(t, m.index, m[0].length) && !NEGATED_DENY.test(t.slice(m.index))) return true;
+    }
+  }
+  return GENERIC_DENY_VERB.test(t) && !NEGATED_DENY.test(t);
+}
+
+/** An approve verb (round-3 rule d) that is not part of a negated approve ("승인 안 해" is a deny verb only). */
+function hasApproveVerb(t: string): boolean {
+  const rest = t.replace(NEGATED_APPROVE_VERB, ' ');
+  // Loose stems on purpose: a conditional approval next to a deny verb ("승인하되 커밋은 하지 마") is ambiguous, never deny.
+  return rest.search(APPROVE.loose) >= 0 || /(?<![가-힣])실행(?:해|하자|할게|시켜)/.test(rest);
+}
+
+/** Round-3 rule b: the whole message is a bare deny word (with punctuation or a polite ending), optionally followed by
+ *  stop words only ("아니 됐어", "no, stop"). */
+const BARE_DENY_WORD = /^(?:아니(?:요|에요|오|야)?|아뇨|노|no|nope|nah)(?=$|[^가-힣a-z0-9])/;
+
+function isBareDenyWord(t: string): boolean {
+  const match = BARE_DENY_WORD.exec(t);
+  if (match === null) return false;
+  const rest = t
+    .slice(match[0].length)
+    .replace(/(?<![가-힣a-z])(?:thanks|thank\s+you|감사합니다|고마워요|고마워)(?![가-힣a-z])/g, ' ')
+    .replace(/[^가-힣a-z0-9]+/g, ' ')
+    .trim();
+  return rest.length === 0 || isPendingCancelUtterance(rest);
 }
 
 /** The explicit decision vocabulary a stand-alone utterance must contain to count as a STRAY decision (QA-018).
@@ -237,4 +303,28 @@ export function interpretStrayDecisionUtterance(text: string): Exclude<ApprovalD
     .replace(APPROVE_FILLER_TOKEN, ' ')
     .replace(APPROVE_FILLER_TOKEN, ' ');
   return remainder.trim().length === 0 ? decision : null;
+}
+
+/**
+ * Live QA session 4 (N2): whole-message "stop / never mind" words that close a pending connector-write request or a
+ * pending numbered calendar choice ("그만", "취소", "아니", "됐어", "cancel", "stop"). Wider than the stray-decision
+ * vocabulary on purpose: it is consulted ONLY while such a request or choice is pending, where these words can only
+ * mean "drop it" — closing is non-mutating (nothing is sent or changed). With nothing pending they stay ordinary chat.
+ * A negated form ("그만하지 마") or anything else in the message ("그만 다른 거 보여줘") is not a cancel.
+ */
+const PENDING_CANCEL = matchersFor([
+  '그만', '그만해', '그만할게', '그만둘게', '그만두자', '취소', '아니', '아뇨', '됐어', '됐다', '괜찮아',
+  'cancel', 'stop', 'no', 'nope', 'never mind', 'nevermind', 'forget it',
+]);
+const PENDING_CANCEL_FILLER = new RegExp(`${TOKEN_BEFORE}(?:이제|그냥|좀|일단|그거|please|just)${TOKEN_AFTER}`, 'g');
+
+export function isPendingCancelUtterance(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length === 0 || t.length > MAX_STRAY_DECISION_LENGTH || QUESTION.test(t)) return false;
+  if (t.search(PENDING_CANCEL.exact) < 0) return false;
+  const remainder = t
+    .replace(PENDING_CANCEL.exact, ' ')
+    .replace(/[^가-힣a-z0-9]+/g, ' ')
+    .replace(PENDING_CANCEL_FILLER, ' ');
+  return remainder.trim().length === 0;
 }

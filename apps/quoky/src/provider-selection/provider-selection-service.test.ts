@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Capability, NoProviderAvailableError } from '@quoky/core';
+import { AiProviderManager, Capability, CapabilityRouter, NoProviderAvailableError } from '@quoky/core';
+import type { AiProvider } from '@quoky/core';
 import { selectionFixture } from './test-support';
 import { CHAT_TIER_CAPABILITIES, CLAUDE_PINNED_CAPABILITIES } from './selection-choices';
 import { SESSION_SELECTION_METADATA_KEY } from './provider-selection-service';
@@ -555,5 +556,44 @@ describe('persistence round trip (private file beside the DB)', () => {
     const second = selectionFixture({ env, present: ['codex'], io: providerSelectionFileIo(file), ...(persisted.chat ? { persistedChat: persisted.chat } : {}) });
     expect(await second.service.effectiveChat()).toMatchObject({ label: 'codex', source: 'persisted' });
     expect(await second.service.effectiveImage()).toMatchObject({ choice: 'off', source: 'persisted' });
+  });
+});
+
+describe('a runtime selection change leaves unrelated providers alone (live QA D16)', () => {
+  it('switching the image model never re-probes or drops the embedding provider\'s cached readiness', async () => {
+    const f = selectionFixture({
+      env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' },
+      present: ['codex'],
+    });
+    let embedReady = true;
+    let embedProbes = 0;
+    const embed: AiProvider = {
+      id: 'ollama-embed-cli',
+      capabilities: [{ capability: Capability.EMBEDDING, priority: 100 }],
+      executionLocality: 'LOCAL',
+      isAvailable: async () => {
+        embedProbes += 1;
+        return embedReady;
+      },
+      execute: async () => ({ text: '[]', artifacts: [] }),
+    };
+    // The production manager caches readiness (the fixture's own manager does not).
+    const manager = new AiProviderManager([...f.catalog.providers, embed], { availabilityTtlMs: 30_000 });
+    const router = new CapabilityRouter(manager, f.service);
+    const session = await f.openSession();
+    const ctx = scope(session);
+
+    expect((await router.select(Capability.EMBEDDING, ctx)).id).toBe('ollama-embed-cli');
+    expect((await router.select(Capability.IMAGE_UNDERSTANDING, ctx)).id).toBe('claude-vision-cli');
+    await f.service.setSessionImage(ctx, 'codex', OWNER_CHAT);
+    expect((await router.select(Capability.IMAGE_UNDERSTANDING, ctx)).id).toBe('codex-vision-cli');
+    f.service.setDefaultImage('ollama', OPS);
+    await f.service.setSessionChat(ctx, { provider: 'ollama' }, OWNER_CHAT);
+    await router.select(Capability.GENERAL_CHAT, ctx);
+
+    // Had any of those changes invalidated it, this re-probe would read "not ready" and recall would fall back.
+    embedReady = false;
+    expect((await router.select(Capability.EMBEDDING, ctx)).id).toBe('ollama-embed-cli');
+    expect(embedProbes).toBe(1);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { interpretApprovalDecision, interpretStrayDecisionUtterance, type ApprovalDecisionResult } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance, type ApprovalDecisionResult } from './approval-decision';
 import type { ApprovalDecisionKind } from './conversation-runtime';
 
 describe('interpretApprovalDecision', () => {
@@ -45,15 +45,16 @@ describe('interpretApprovalDecision', () => {
     ['do not approve', 'deny'],
     ["don't go ahead", 'deny'],
     ['never approve this', 'deny'],
-    ['승인 안 할래', 'ambiguous'],
-    ['승인 안해', 'ambiguous'],
-    ['진행 안해', 'ambiguous'],
-    ['승인 안할래', 'ambiguous'],
-    ['진행 못해', 'ambiguous'],
+    // Codex round 3 (rule a): "승인 안 / 진행 안 / won't approve" are explicit deny verbs (deny is non-mutating)
+    ['승인 안 할래', 'deny'],
+    ['승인 안해', 'deny'],
+    ['진행 안해', 'deny'],
+    ['승인 안할래', 'deny'],
+    ['진행 못해', 'deny'],
     ["can't approve", 'ambiguous'],
     ['cannot approve', 'ambiguous'],
-    ["won't approve", 'ambiguous'],
-    ["I won't go ahead", 'ambiguous'],
+    ["won't approve", 'deny'],
+    ["I won't go ahead", 'deny'],
     // positives that must keep approving
     ['승인해 주세요', 'approve'],
     ['안녕, 승인', 'approve'],
@@ -139,8 +140,8 @@ describe('interpretApprovalDecision', () => {
     ['승인 노', 'ambiguous'],
     ['승인 절대 안됨', 'ambiguous'],
     ['진행 하면 안됨', 'ambiguous'],
-    ['승인 안됨', 'ambiguous'],
-    ['승인 안돼요', 'ambiguous'],
+    ['승인 안됨', 'deny'],
+    ['승인 안돼요', 'deny'],
     // conditional / extended approvals cannot be honored: re-prompt instead of approving the whole request
     ['ok but only change src/a.ts', 'ambiguous'],
     ['승인. 단 package.json은 제외', 'ambiguous'],
@@ -237,5 +238,90 @@ describe('interpretStrayDecisionUtterance (QA-018)', () => {
     '승인 승인 승인 승인 승인 승인 승인 승인 승인 승인 승인 승인', // over the 30-char whole-message bound
   ])('"%s" is not a stray decision', (text) => {
     expect(interpretStrayDecisionUtterance(text)).toBeNull();
+  });
+});
+
+describe('isPendingCancelUtterance (live QA session 4, N2)', () => {
+  it.each(['그만', '그만해', '그만할게', '취소', '취소해줘', '아니', '아니요', '아뇨', '됐어', '됐어요', '이제 그만', '그냥 됐어', 'cancel', 'Stop', 'stop.', 'never mind', 'no'])(
+    '"%s" is a stop word',
+    (text) => {
+      expect(isPendingCancelUtterance(text)).toBe(true);
+    },
+  );
+
+  it.each(['그만하지 마', '그만 다른 일정 보여줘', '아니 3시 말고 4시', '됐어?', '아니 뭐라고?', 'stop the build', '1번', '승인', '', `${'그만 '.repeat(20)}`])(
+    '"%s" is not',
+    (text) => {
+      expect(isPendingCancelUtterance(text)).toBe(false);
+    },
+  );
+});
+
+describe('interpretApprovalDecision: explicit deny verbs and bare deny words (Codex round 3 on cad729e)', () => {
+  it.each([
+    // (a) an explicit deny verb and no approve verb
+    ['아니요, 이 요청은 거절합니다', 'deny'],
+    ['그 요청 거절해 주세요', 'deny'],
+    ['아니요 승인 안 해', 'deny'],
+    ['거절', 'deny'],
+    ['거절할게요', 'deny'],
+    ['이 요청 거절해 주세요', 'deny'],
+    ['reject it', 'deny'],
+    ['진행하지 마', 'deny'],
+    ['취소해', 'cancel'],
+    ['아니 취소해', 'cancel'],
+    // (b) a bare deny word, with punctuation / a polite ending, or followed only by a stop word
+    ['아니', 'deny'],
+    ['아니요', 'deny'],
+    ['아니에요.', 'deny'],
+    ['no', 'deny'],
+    ['nope', 'deny'],
+    ['No, thanks', 'deny'],
+    ['아니 됐어', 'deny'],
+    // (c) 아니 / no with other content and no deny verb
+    ['아니 이건 내 친구 얘기야', 'ambiguous'],
+    ['아니 그건 별로야', 'ambiguous'],
+    ['no, I meant the other channel', 'ambiguous'],
+    ['거절 사유를 알려줘', 'ambiguous'],
+    // (d) both an approve and a deny verb
+    ['아니 승인해', 'ambiguous'],
+    ['승인하되 커밋은 하지 마', 'ambiguous'],
+    ['거절 말고 승인', 'ambiguous'],
+    // Codex P2 on b21e877: 안 inside a noun (안내, 안건, 안전, 안심) is not a negation — a clarification request
+    ['승인 안내를 다시 보여줘', 'ambiguous'],
+    ['승인 안건을 다시 보여줘', 'ambiguous'],
+    ['진행 안내를 보여줘', 'ambiguous'],
+    ['승인 안전 점검 결과 보여줘', 'ambiguous'],
+    ['진행 안심 문구 보여줘', 'ambiguous'],
+    ['승인 안 돼요', 'deny'],
+    // Codex round 5 on 15c2e71: exact verb forms only — a noun use of 거절/거부/취소 never rejects
+    ['거절 안내를 다시 보여줘', 'ambiguous'],
+    ['거절 안건을 다시 보여줘', 'ambiguous'],
+    ['거부 안내를 보여줘', 'ambiguous'],
+    ['취소 버튼 어디 있어?', 'ambiguous'],
+    ['거절 사유 알려줘', 'ambiguous'],
+    // Codex round 6 on 61c96c1: a conjugation glued to Latin letters or digits is not a whole word
+    ['거절해2 로그를 보여줘', 'ambiguous'],
+    ['거부해abc 안내를 다시 보여줘', 'ambiguous'],
+    ['하지마2 버튼 보여줘', 'ambiguous'],
+    ['거절해 2번 로그', 'deny'],
+    ['거절해', 'deny'],
+    ['거절할게', 'deny'],
+    ['이 요청 거절', 'deny'],
+    ['거부합니다', 'deny'],
+    ['거절 할게요', 'deny'],
+    ['거절됐어', 'deny'],
+    // negated deny verbs are not deny verbs
+    ['거절 안 해', 'ambiguous'],
+    ['거절하지 마', 'ambiguous'],
+  ] as const)('"%s" → %s', (text, expected) => {
+    expect(interpretApprovalDecision(text)).toBe(expected);
+  });
+});
+
+describe('"취소해 주세요" rejects the pending approval (Codex round 5)', () => {
+  it('is a cancel (the non-mutating rejection the runtime closes the request with), never ambiguous or approve', () => {
+    // 취소 is matched by the cancel vocabulary first; for the approval it is a rejection exactly like deny.
+    expect(interpretApprovalDecision('취소해 주세요')).toBe('cancel');
   });
 });

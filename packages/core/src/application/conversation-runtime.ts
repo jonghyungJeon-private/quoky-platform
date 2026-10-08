@@ -62,7 +62,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { interpretApprovalDecision, interpretStrayDecisionUtterance } from './approval-decision';
+import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
   type ApprovalDecisionInput,
@@ -3414,7 +3414,11 @@ export class ConversationRuntime {
         if (!approval || !anchor.operation || !anchor.preview) return null;
         const phrase = documentedExecutionPhrase(connectorWriteExecutionGate(anchor.operation));
         // Only the actor who asked may decide (the anchor binds actor and session); anyone else is re-prompted.
-        const decision = anchor.actorId === actor.id ? ConversationRuntime.interpretDecision(message.text) : 'ambiguous';
+        // Live QA session 4 (N2): a whole-message "됐어" / "never mind" cancels too (closing sends nothing).
+        const interpreted = anchor.actorId === actor.id ? ConversationRuntime.interpretDecision(message.text) : 'ambiguous';
+        const decision = interpreted === 'ambiguous' && anchor.actorId === actor.id && isPendingCancelUtterance(message.text)
+          ? 'cancel'
+          : interpreted;
         this.deps.logger.info('approval decision interpreted', { approvalId: approval.id, decision });
         if (decision === 'ambiguous') {
           const reply = this.deps.composer.composeConnectorWritePending(
@@ -3454,7 +3458,11 @@ export class ConversationRuntime {
         }
         const decision = interpretStrayDecisionUtterance(message.text);
         await flow.close(session, view, 'abandoned', this.clock());
-        if (decision === 'deny' || decision === 'cancel') return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
+        // Live QA session 4 (N2): "그만" / "아니" / "됐어" / "stop" close the choice with the fixed reply too — never chat,
+        // which could not tell what had (not) happened.
+        if (decision === 'deny' || decision === 'cancel' || isPendingCancelUtterance(message.text)) {
+          return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
+        }
         return 'released'; // next-turn-only: any other message is a new turn
       }
       case 'APPROVED': {
@@ -3510,7 +3518,9 @@ export class ConversationRuntime {
         }
         // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here. D12: the approval is
         // recorded withdrawn (REJECTED) together with the close, under the approval → session locks (#132 rules).
-        if ((decision === 'deny' || decision === 'cancel') && anchor.actorId === actor.id) {
+        // Live QA session 4 (N2): "그만" / "됐어" / "stop" withdraw it like "취소" (nothing is sent either way).
+        const withdraws = decision === 'deny' || decision === 'cancel' || (decision === null && isPendingCancelUtterance(message.text));
+        if (withdraws && anchor.actorId === actor.id) {
           return this.decisionTurn(
             session,
             await this.approvalDecisions.revokeConnectorWrite(
@@ -3528,11 +3538,17 @@ export class ConversationRuntime {
       case 'UNCERTAIN': {
         // Codex P1 on 55c5a2f: the owner's 거절/취소 while the approved write is already executing cannot withdraw it; say
         // so (the executing turn reports the outcome) — never "nothing was sent".
-        if (anchor.status === 'EXECUTING' && anchor.operation && anchor.actorId === actor.id) {
+        // Codex P2 on b571e4d: the wider stop words ("그만", "아니", "됐어", "stop") take the same late path as 취소/거절 —
+        // "already started" while executing; once finished, the deterministic "nothing to decide" (취소's route) — never chat.
+        if (anchor.actorId === actor.id) {
           const decision = interpretStrayDecisionUtterance(message.text);
-          if (decision === 'deny' || decision === 'cancel') {
+          const stopWord = decision === null && isPendingCancelUtterance(message.text);
+          if (anchor.status === 'EXECUTING' && anchor.operation && (decision === 'deny' || decision === 'cancel' || stopWord)) {
             const reply = this.deps.composer.composeConnectorWriteRevokeTooLate(message.context, anchor.operation);
             return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+          }
+          if (anchor.status !== 'EXECUTING' && stopWord) {
+            return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
           }
         }
         if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {
@@ -7288,9 +7304,10 @@ export class ConversationRuntime {
           );
 
       // W3-L01 (ADR-0104 D3, ADR-0106): an own-memory recall question ("내가 좋아하는 과일이 뭐였지?") whose assembled
-      // context holds nothing relevant — no active durable recall (archived/expired/superseded records never reach the
-      // bundle) and no earlier User turn of this conversation mentioning it — is answered truthfully without a
-      // provider, which used to invent a personal fact. A hit keeps the provider flow below unchanged.
+      // context holds nothing relevant — no active durable recall sharing a topic word or scored very high
+      // semantically (archived/expired/superseded records never reach the bundle; live QA D5) and no earlier User turn
+      // of this conversation mentioning it — is answered truthfully without a provider, which used to invent a
+      // personal fact. A hit keeps the provider flow below unchanged.
       if (
         (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT) &&
         !isExternalWorkReadout(readout)

@@ -166,12 +166,24 @@ async function waitUntil(condition: () => boolean, ms: number): Promise<boolean>
   return condition();
 }
 
+/**
+ * Real-process timing under a loaded machine (full suite, a parallel build): the shell must install its TERM trap
+ * before the runner's timeout fires, or SIGTERM simply kills it and the scenario never happens. The timeout therefore
+ * leaves the shell ample start-up time, readiness is polled with a generous bound (it returns as soon as the pid file
+ * appears), and "promptly" is judged against what the bug would cost: without the bounded settle the call stays
+ * pending until the 30 s grandchild exits.
+ */
+const REAL_TIMEOUT_MS = 1_500;
+const READY_WITHIN_MS = 10_000;
+const GRANDCHILD_LIFETIME_MS = 30_000;
+const PROMPT_SETTLE_MS = 10_000;
+
 describe.runIf(posix)('contained runner — real wrapper with a SIGTERM-ignoring grandchild', () => {
   // The wrapper ignores SIGTERM too (like a wrapper that only forwards it); the grandchild inherits stdout/stderr.
   const script = (pidFile: string) =>
-    `trap '' TERM; (trap '' TERM; exec sleep 30) & echo $! > '${pidFile}'; wait`;
+    `trap '' TERM; (trap '' TERM; exec sleep ${GRANDCHILD_LIFETIME_MS / 1_000}) & echo $! > '${pidFile}'; wait`;
 
-  it.each([true, false])('settles promptly and removes its temp dir (processGroup=%s)', async (processGroup) => {
+  it.each([true, false])('settles promptly and removes its temp dir (processGroup=%s)', { timeout: 30_000 }, async (processGroup) => {
     const box = mkdtempSync(join(realpathSync(tmpdir()), 'quoky-pg-real-'));
     const pidFile = join(box, 'grandchild.pid');
     let runnerTemp = '';
@@ -185,18 +197,22 @@ describe.runIf(posix)('contained runner — real wrapper with a SIGTERM-ignoring
     });
     try {
       const started = Date.now();
-      const resultPromise = runner('/bin/sh', ['-c', script(pidFile)], { cwd: box, input: '', timeoutMs: 300 });
-      expect(await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '', 2_000)).toBe(true);
+      const resultPromise = runner('/bin/sh', ['-c', script(pidFile)], { cwd: box, input: '', timeoutMs: REAL_TIMEOUT_MS });
+      expect(
+        await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '', READY_WITHIN_MS),
+      ).toBe(true);
       const grandchild = Number(readFileSync(pidFile, 'utf8').trim());
       strayPids.push(grandchild);
 
       const result = await resultPromise;
       expect(result).toMatchObject({ code: null, timedOut: true });
-      expect(Date.now() - started).toBeLessThan(3_000);
+      // Far below the grandchild's lifetime: the call did not wait for the pipes to close.
+      expect(Date.now() - started).toBeLessThan(REAL_TIMEOUT_MS + PROMPT_SETTLE_MS);
+      expect(REAL_TIMEOUT_MS + PROMPT_SETTLE_MS).toBeLessThan(GRANDCHILD_LIFETIME_MS);
       expect(existsSync(runnerTemp)).toBe(false);
       if (processGroup) {
         // The group SIGKILL reached the grandchild too.
-        expect(await waitUntil(() => !alive(grandchild), 2_000)).toBe(true);
+        expect(await waitUntil(() => !alive(grandchild), READY_WITHIN_MS)).toBe(true);
       } else {
         // Without a group the grandchild survives the wrapper's SIGKILL — the bounded settle still returned.
         expect(alive(grandchild)).toBe(true);
@@ -213,7 +229,7 @@ describe.runIf(posix)('contained runner — the wrapper exits on SIGTERM before 
   const script = (pidFile: string) =>
     `(trap '' TERM; exec sleep 30) </dev/null >/dev/null 2>&1 & echo $! > '${pidFile}'; wait`;
 
-  it('SIGKILLs the group after the grace period even though close came first, and tracks it until then', async () => {
+  it('SIGKILLs the group after the grace period even though close came first, and tracks it until then', { timeout: 30_000 }, async () => {
     const box = mkdtempSync(join(realpathSync(tmpdir()), 'quoky-pg-close-'));
     const pidFile = join(box, 'grandchild.pid');
     const sent: Array<[number, NodeJS.Signals | 0]> = [];
@@ -221,11 +237,15 @@ describe.runIf(posix)('contained runner — the wrapper exits on SIGTERM before 
       sent.push([pid, signal]);
       process.kill(-pid, signal);
     };
-    const graceMs = 300;
+    // The grace period must outlast the wrapper's `close` delivery even on a loaded host: the assertions below run
+    // inside it (no SIGKILL yet), so a short grace would race the event loop.
+    const graceMs = 2_000;
     const runner = createContainedCliRunner({ killGraceMs: graceMs, processGroup: true, killProcessGroup: realGroupKill });
     try {
-      const resultPromise = runner('/bin/sh', ['-c', script(pidFile)], { cwd: box, input: '', timeoutMs: 300 });
-      expect(await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '', 2_000)).toBe(true);
+      const resultPromise = runner('/bin/sh', ['-c', script(pidFile)], { cwd: box, input: '', timeoutMs: REAL_TIMEOUT_MS });
+      expect(
+        await waitUntil(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '', READY_WITHIN_MS),
+      ).toBe(true);
       const grandchild = Number(readFileSync(pidFile, 'utf8').trim());
       strayPids.push(grandchild);
 
@@ -241,8 +261,8 @@ describe.runIf(posix)('contained runner — the wrapper exits on SIGTERM before 
       expect(trackedProcessGroups()).toContain(groupPid);
 
       // After the grace period the group was probed and SIGKILLed, the grandchild is dead and the group untracked.
-      expect(await waitUntil(() => !alive(grandchild), graceMs + 2_000)).toBe(true);
-      expect(Date.now() - settledAt).toBeLessThan(graceMs + 2_000);
+      expect(await waitUntil(() => !alive(grandchild), graceMs + READY_WITHIN_MS)).toBe(true);
+      expect(Date.now() - settledAt).toBeLessThan(graceMs + READY_WITHIN_MS);
       expect(sent).toContainEqual([groupPid, 0]);
       expect(sent).toContainEqual([groupPid, 'SIGKILL']);
       expect(trackedProcessGroups()).not.toContain(groupPid);

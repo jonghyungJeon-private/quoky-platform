@@ -6,6 +6,7 @@ import {
   formatEmbeddingEnvelope,
   isEmbeddingVector,
   now,
+  ProviderProbeIndeterminateError,
   readEmbeddingRole,
 } from '@quoky/core';
 import type {
@@ -216,20 +217,23 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
 
   /** Ready means the daemon answers AND the embedding model is installed (an unlisted model would be pulled). */
   override async isAvailable(): Promise<boolean> {
+    let r;
     try {
-      const r = await this.runner(this.bin, ['list'], {
+      r = await this.runner(this.bin, ['list'], {
         cwd: tmpdir(),
         input: '',
         timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
         env: OLLAMA_COLOR_ENV,
       });
-      const ready = r.code === 0 && !r.timedOut && ollamaListIncludesModel(r.stdout, this.model);
-      this.noteReadiness(ready);
-      return ready;
     } catch {
       this.noteReadiness(false);
       return false;
     }
+    // A timed-out probe is no answer (live QA D16): the previous readiness (and the warm-up state) is kept.
+    if (r.timedOut) throw new ProviderProbeIndeterminateError('ollama list timed out');
+    const ready = r.code === 0 && ollamaListIncludesModel(r.stdout, this.model);
+    this.noteReadiness(ready);
+    return ready;
   }
 
   /** Startup or a not-ready -> ready change: load the model now, outside any turn, so the next call finds it warm. */

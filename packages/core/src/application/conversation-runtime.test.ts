@@ -10987,19 +10987,18 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
     expect((await h.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
   });
 
-  it('any durable recall in the built context keeps the provider flow; ordinary chat and general knowledge reach the provider', async () => {
-    // Without a semantic score the retriever's choice stands; the runtime never re-judges such an entry lexically
-    // (Codex P2). A semantically scored entry is judged by the floor (live QA D5, the next case).
-    const anyRecall = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
-    expect((await anyRecall.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
-    expect(anyRecall.providerTouches()).toBeGreaterThan(0);
+  it('a recalled memory sharing no topic word is no hit; ordinary chat and general knowledge reach the provider', async () => {
+    // Recall ranks every eligible memory and never drops one, so being recalled is no evidence (live QA D5, session 4).
+    const unrelated = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
+    expect((await unrelated.runtime.handle(messageOf(QUESTION))).reply.text).toBe(NOT_FOUND);
+    expect(unrelated.providerTouches()).toBe(0);
     for (const text of ['사과의 효능이 뭐야?', '너가 좋아하는 과일이 뭐야?', '내 생일 기억해?', '내가 방금 뭐라고 했지?']) {
       const h = ownMemoryRuntime();
       expect((await h.runtime.handle(messageOf(text))).reply.text, text).toBe('provider answer');
     }
   });
 
-  it('live QA D5: with semantic recall, unrelated memories scored under the floor are no hit; a scored match is (real ContextBuilder + retriever)', async () => {
+  it('live QA D5: with semantic recall, unrelated memories are no hit at ordinary scores; a shared word or a very high score is (real ContextBuilder + retriever)', async () => {
     const memory = (id: string, content: string): MemoryRecord => ({
       id,
       type: MemoryType.LONG_TERM,
@@ -11022,9 +11021,41 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
     const low = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.41, qa: 0.22 }) });
     expect((await low.runtime.handle(messageOf(color))).reply.text).toBe(NOT_FOUND);
     expect(low.providerTouches()).toBe(0);
-    const high = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.82, qa: 0.22 }) });
+    // 0.82 cleared the old 0.6 floor; nomic-embed-text gives unrelated short facts that much, so it is no hit now.
+    const ordinary = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.82, qa: 0.22 }) });
+    expect((await ordinary.runtime.handle(messageOf(color))).reply.text).toBe(NOT_FOUND);
+    expect(ordinary.providerTouches()).toBe(0);
+    const high = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.95, qa: 0.22 }) });
     expect((await high.runtime.handle(messageOf(color))).reply.text).toBe('provider answer');
     expect(high.providerTouches()).toBeGreaterThan(0);
+  });
+
+  it('live QA D5 session 4 repro: two stored memories, "내가 좋아하는 차 종류 기억나?" gets the fixed reply; the fruit question reaches the provider', async () => {
+    const memory = (id: string, content: string): MemoryRecord => ({
+      id,
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content,
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: TS,
+      updatedAt: TS,
+    });
+    const records = [memory('fruit', '내가 제일 좋아하는 과일은 샤인머스캣이야'), memory('cat', '우리 고양이 이름은 나비야')];
+    // The locally measured nomic-embed-text scores (synthetic sentences): the unrelated question scores like the match.
+    const contextBuilder = (scores: Record<string, number>) =>
+      new ContextBuilder(
+        { async recentShortTerm() { return []; } } as unknown as MemoryManager,
+        {},
+        new DefaultMemoryRetriever({ async findDurableCandidates() { return records; } } as never, {
+          semanticScorer: { async score() { return new Map(Object.entries(scores)); } },
+        }),
+      );
+    const tea = ownMemoryRuntime({ contextBuilder: contextBuilder({ fruit: 0.76, cat: 0.706 }) });
+    expect((await tea.runtime.handle(messageOf('내가 좋아하는 차 종류 기억나?'))).reply.text).toBe(NOT_FOUND);
+    expect(tea.providerTouches()).toBe(0);
+    const fruit = ownMemoryRuntime({ contextBuilder: contextBuilder({ fruit: 0.794, cat: 0.71 }) });
+    expect((await fruit.runtime.handle(messageOf('내가 좋아하는 과일 뭐였지?'))).reply.text).toBe('provider answer');
+    expect(fruit.providerTouches()).toBeGreaterThan(0);
   });
 
   it('an archived record counts as no hit through the real ContextBuilder and DefaultMemoryRetriever; restored, it is a hit', async () => {
@@ -11057,7 +11088,7 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
     expect(active.providerTouches()).toBeGreaterThan(0);
   });
 
-  it('Codex P2 regression: a semantically recalled memory with no shared word ("나는 철수야" for "내 이름이 뭐였지?") is a hit', async () => {
+  it('Codex P2 regression: a semantically recalled memory with no shared word ("나는 철수야" for "내 이름이 뭐였지?") is a hit at a very high score', async () => {
     const record: MemoryRecord = {
       id: 'durable-name',
       type: MemoryType.LONG_TERM,

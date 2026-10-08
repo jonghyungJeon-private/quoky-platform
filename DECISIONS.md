@@ -14925,6 +14925,16 @@ those details so the settled decisions and the code agree.
    restart on the next request that needs it, once its backoff window has elapsed and that re-probe has finished.
    Each probe carries a per-provider generation; `invalidate()` bumps it and clears the single-flight slot, so a
    probe that was in flight across an invalidation is discarded and never overwrites a newer answer.
+   *Fix (live QA session 4, D16):* only a definitive probe answer changes readiness. A probe that times out throws
+   `ProviderProbeIndeterminateError` (the CLI providers do this for `ollama list`/`show`, `claude --version`,
+   `claude auth status` and `codex login status`); the manager then keeps the previous ready / not-ready answer
+   (a ready one for another TTL, a not-ready one without growing the backoff), and a first probe that times out is
+   not cached. The callers of a probe discarded by `invalidate()` get the current generation's answer instead of a
+   bare "not ready". A ready provider that definitively answers "not ready" logs `provider became unavailable` once
+   (`reason` `NOT_READY` or `PROBE_FAILED`). `invalidate()` is still called only for the provider whose execution
+   failed `UNAVAILABLE`, and that failure is itself recorded as a definitive "not ready" (`EXECUTION_UNAVAILABLE`,
+   backoff advanced), so a timed-out probe after it never restores the earlier ready answer; a runtime selection
+   change invalidates nothing (tested).
 5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
    every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
    mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is
@@ -17032,7 +17042,21 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   4-character code bound to the record, actor-scoped, 30 minutes; forget removes the vector and derived learning items
   first. The amendment (5f0cced, da9e219, 3b78d4b; note above) made forget an archive with restore. OPS-2 (d6a279f) added
   typed forget entries (`requestForgetConfirmation`, `confirmForget`) shared by chat and the operations UI, with chat
-  replies unchanged. W3-L01 (0996abd, 79f9baa) answers an own-memory question with no recall hit deterministically. Live:
+  replies unchanged. W3-L01 (0996abd, 79f9baa) answers an own-memory question with no recall hit deterministically.
+  Live QA D5: recall (lexical or semantic) ranks every eligible memory and never drops one, and a 0.6 semantic floor
+  (062aa53, 0d7fd34) did not help: with nomic-embed-text and the service prefixes, unrelated questions scored
+  0.74-0.78 against "내가 제일 좋아하는 과일은 샤인머스캣이야" and the true match only 0.79 (local measurement on
+  synthetic sentences). A durable entry is now a hit only when it shares a meaningful topic word with the question
+  (equal after peeling at most one listed particle or ending that agrees with the syllable before it — 회사에서 → 회사,
+  고양이랑 → 고양이, but 고양이과 stays whole — or the longer word is the shorter plus one of 날/들/님/씨/쯤, so 생일날
+  answers 생일 while 사과문, 부산물 and 회사원 do not; a one-syllable topic matches only itself or itself plus one
+  agreeing particle, so 차 never matches 차고, 차이 or 자동차; stop-words ignored; a generic head such as 종류/이름
+  counted only as the sole topic; copula forms such as 이고/이다 follow either kind of syllable; the question keeps the
+  whole noun when the shape's particle may belong to it, so 고양이 is compared as both 고양 and 고양이 and 아이/오이 stay
+  whole)
+  or its raw semantic score is at least 0.9.
+  Being recalled is no longer evidence by itself (this replaces the 79f9baa rule), so a paraphrase with no shared word
+  ("나는 철수야" for "내 이름이 뭐였지?") gets the truthful not-in-memory reply unless it scores that high. Live:
   list, edit, forget, archive, restore (QA record M1-MF4, A1-A11).
 - **ADR-0107 (learning).** LRN-1 (e92bae2): v14 `learning_items`, candidate/example commands, the 👎 trend line and
   `apps/quoky/src/tools/learning-export.ts`; the strict credential guard runs on every learning and feedback excerpt
@@ -17116,6 +17140,16 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   the approved operation's execution step gets a deterministic reminder, a repeated phrase after SENT reports it with
   the link, Korean particles fixed. Live: Jira comment and transition, Slack post, deny, replay, allowlist refusal and
   a truthful NOT_SENT (W5). Not run live: a mid-send network failure (`UNCERTAIN`), the W5-L01..L04 re-run.
+  Live QA session 4: a post-approval 거절/취소 (the session 3 D12 withdrawal) now logs `approval decided … kind=CONNECTOR_WRITE
+  outcome=REVOKED surface=chat` (N1); whole-message stop words (그만, 아니, 됐어, cancel, stop, …) close a pending
+  request, an approved unexecuted write or a numbered calendar choice with the fixed reply instead of reaching chat
+  (N2); while the write is executing they get the "already started" reply and once it finished the deterministic
+  "nothing to decide", like 취소. Approval interpretation (all approval kinds): an explicit deny verb (거절/거부/취소 as
+  an exact 하다/되다 form or the bare word, never a noun use such as 거절 안내 / 취소 버튼, 하지 마, 안 해, 승인 안/승인하지 않 with 안 as a standalone negation — never 안내/안건 —, won't approve,
+  reject/deny/cancel) with no approve verb is a deny, with one
+  it is ambiguous; a bare deny word (아니/아니요/no/nope, optionally plus a stop word such as "아니 됐어") is a deny; 아니/no
+  with other content and no deny verb ("아니 이건 내 친구 얘기야") is ambiguous and leaves the approval pending.
+  `그만` never resets a conversation: only `새 대화` / `/reset` do.
 - **ADR-0113 (operations UI).** OPS-1 (f499594): `node:http` on `127.0.0.1` only, off by default, per-start 256-bit
   token in `ops-ui.token` (mode 600, database directory, unlinked-then-exclusively-created on every start, removed on
   clean stop), session cookie, CSRF, Host/Origin checks, sign-in rate limit, exact CSP with no inline code; readiness

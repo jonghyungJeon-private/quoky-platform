@@ -10,12 +10,15 @@
  *   뭐야?"), questions about the assistant, schedules / to-dos / reminders / code work (their own handlers and the
  *   QUAL-7 path), memory management (the ADR-0106 commands) or credentials.
  * - `hasOwnMemoryRecallHit` decides, from the turn's assembled context (exactly what a provider would see), whether
- *   anything that could answer the question exists. A durable recall entry is a hit when it shares a topic stem, when
- *   semantic recall scored it at or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}, or when it carries no semantic score
- *   at all (lexical-only recall cannot judge a paraphrase: "나는 철수야" for "내 이름이 뭐였지?"). Semantic recall
- *   re-ranks but never drops a candidate, so without the floor every stored memory was a "hit" (live QA D5);
- *   otherwise one of the User's own earlier turns that shares a topic stem (or, for a preference question, states any
- *   preference) is a hit. Uncertain cases keep the provider flow.
+ *   anything that could answer the question exists. A durable recall entry is a hit only when it shares a meaningful
+ *   topic word with the question (Korean particles and endings stripped on both sides, stop-words ignored, a generic
+ *   head noun such as "종류" / "이름" counted only when it is the sole topic), or when semantic recall scored it at or
+ *   above the very high {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}. Recall re-ranks but never drops a candidate (lexical or
+ *   semantic), and the default local embedding model scores unrelated short Korean facts as high as the true match
+ *   (live QA D5, session 4), so neither the presence of an entry nor an ordinary semantic score is evidence. Otherwise
+ *   one of the User's own earlier turns that shares a topic word (or, for a preference question, states any
+ *   preference) is a hit. A paraphrase with no shared word ("나는 철수야" for "내 이름이 뭐였지?") now gets the fixed
+ *   reply unless its semantic score clears the floor; that miss costs a truthful "not in memory", never an invented fact.
  * - `renderOwnMemoryNotFound` is the fixed KO/EN truthful reply the runtime sends instead of calling a provider when
  *   there is no hit (a local model used to invent a personal fact: "그땐 귤이였어요").
  */
@@ -28,6 +31,11 @@ export interface OwnMemoryRecallQuestion {
   readonly topics: readonly string[];
   /** Present for a preference question ("좋아하는", "favourite", "싫어하는"). */
   readonly relation?: OwnMemoryRelation;
+  /**
+   * Fuller readings of the last topic word when the particle the question shape took off may belong to the noun
+   * ("내가 말한 고양이 기억나?" parses as 고양 + 이, but the noun is 고양이). Compared like `topics`; never empty when set.
+   */
+  readonly alternates?: readonly string[];
 }
 
 /** The structural slice of a `ContextBundle` the hit check reads (kept local so this folder imports no domain type). */
@@ -49,13 +57,15 @@ export interface OwnMemoryRecallContext {
 }
 
 /**
- * The cosine floor (scores clamped to [0, 1]) at which a semantically scored durable entry with no shared topic stem
- * still answers an own-memory question (live QA D5). The retriever's fixtures score a match 1.0 and an unrelated
- * memory 0.0; with the default local embedding model (nomic-embed-text) a paraphrase of a short personal fact scores
- * well above 0.6 while unrelated short texts mostly fall below it. A miss only means the fixed "not in memory" reply
- * instead of a provider call, and any lexical topic match is a hit regardless of the score. Compared on the raw number.
+ * The raw semantic score (cosine clamped to [0, 1]) at which a durable entry that shares no topic word with the
+ * question still answers it. Measured with nomic-embed-text and the service's `search_query: ` / `search_document: `
+ * prefixes on synthetic sentences (live QA D5, session 4): against "내가 제일 좋아하는 과일은 샤인머스캣이야" the true
+ * match "내가 좋아하는 과일 뭐였지?" scored 0.794 while unrelated questions ("내가 좋아하는 차 종류 기억나?",
+ * "...영화가 뭐였지?", "내 생일이 언제였지?") scored 0.744–0.781, so the old 0.6 floor made every memory a hit. A score
+ * alone counts only when it is far above anything that model produced for a short fact; any shared topic word is a
+ * hit regardless of the score. Compared on the raw number.
  */
-export const OWN_MEMORY_SEMANTIC_HIT_FLOOR = 0.6;
+export const OWN_MEMORY_SEMANTIC_HIT_FLOOR = 0.9;
 
 
 const MAX_MESSAGE_CHARS = 80;
@@ -71,7 +81,8 @@ const KO_ADVERB = String.raw`(?:(?:제일|가장|젤|특히|진짜|정말)\s*)?`
 const KO_RELATIVE = String.raw`(?:좋아하는|좋아했던|좋아한다고\s*(?:한|했던)|싫어하는|싫어했던|싫어한다고\s*(?:한|했던)|말한|말했던|말해\s*준|말해\s*줬던|얘기한|얘기했던|이야기한|이야기했던|알려\s*준|알려\s*줬던|말씀드린|알려\s*드린|저장한|기억하라고\s*한)`;
 /** A bounded topic (1–30 characters, letters/digits/spaces), matched lazily so the particle and ending stay outside. */
 const KO_TOPIC = String.raw`([\p{L}\p{N}][\p{L}\p{N}\s'’-]{0,29}?)`;
-const KO_PARTICLE = String.raw`(?:\s*(?:이|가|은|는|을|를))?\s*`;
+/** Groups 2 / 3: the whitespace before the particle and the particle (both absent when there is none). */
+const KO_PARTICLE = String.raw`(?:(\s*)(이|가|은|는|을|를))?\s*`;
 /** Past / recall-shaped endings ("뭐였지", "언제였더라", "뭐라고 했지", "기억나?"). "기억해?" is excluded: it is also an imperative. */
 const KO_RECALL_END = String.raw`(?:뭐였지|뭐였더라|뭐더라|뭐였어|뭐였죠|뭐였나요|뭐였었지|뭐였었더라|무엇이었지|뭐라고\s*했지|뭐라고\s*했더라|뭐라고\s*했었지|뭐라고\s*했어|뭐라고\s*했죠|뭐라고\s*했었죠|뭐라고\s*했나요|뭐였는지\s*(?:기억나|알아)|뭔지\s*(?:기억나|기억하|알아)|언제였지|언제였더라|언제라고\s*했지|어디였지|어디였더라|어디라고\s*했지|누구였지|누구였더라|누구라고\s*했지|기억\s*나|기억하니|기억하나|기억하세|기억하시나|기억하고\s*있)`;
 /** Present-tense endings, accepted only after a preference / "told you" relative clause ("내가 좋아하는 과일이 뭐야?"). */
@@ -129,6 +140,8 @@ const FILLER = new Set([
   // Korean
   '거', '것', '게', '건', '내용', '얘기', '이야기', '말', '그', '그거', '혹시', '요즘',
   '제일', '가장', '젤', '특히', '진짜', '정말', '좋아하는', '싫어하는', '내', '제', '나', '저', '뭐', '무엇',
+  '내가', '제가', '나는', '저는', '나의', '저의', '우리', '기억', '기억나', '좋아해', '좋아한', '좋아했던', '싫어해',
+  '싫어한', '싫어했던', '말한', '말했던', '했던', '뭐였지', '뭐야', '뭔지', '언제', '어디', '누구',
   // English
   'the', 'a', 'an', 'my', 'of', 'to', 'about', 'that', 'this', 'it', 'was', 'is', 'again', 'favourite', 'favorite',
   'thing', 'things', 'stuff', 'what', 'i',
@@ -187,11 +200,14 @@ export function detectOwnMemoryRecallQuestion(text: string): OwnMemoryRecallQues
 
   let topic: string | undefined;
   let language: 'ko' | 'en' | undefined;
+  /** The particle the Korean shape took directly off the topic ("고양" + "이"), if any. */
+  let attached: string | undefined;
   for (const shape of [KO_RELATIVE_SHAPE, KO_POSSESSIVE_SHAPE, KO_SAID_SHAPE]) {
     const match = shape.exec(message);
     if (match?.[1] !== undefined) {
       topic = match[1];
       language = 'ko';
+      if (match[3] !== undefined && match[2] === '') attached = match[3];
       break;
     }
   }
@@ -206,14 +222,24 @@ export function detectOwnMemoryRecallQuestion(text: string): OwnMemoryRecallQues
     }
   }
   if (topic === undefined || language === undefined) return null;
-  if (EXCLUDED_TOPIC.test(topic)) return null;
+  // Keep the whole noun (Codex P2 on b21e877): a particle that cannot follow the syllable before it was part of the
+  // noun ("아이", "오이": 이 never follows a vowel-final syllable); one that can ("고양이" = 고양 + 이?) leaves both readings.
+  let fuller: string | undefined;
+  if (attached !== undefined) {
+    if (endingFits(topic, attached)) fuller = topic + attached;
+    else topic = topic + attached;
+  }
+  if (EXCLUDED_TOPIC.test(topic) || (fuller !== undefined && EXCLUDED_TOPIC.test(fuller))) return null;
   const topics = topicStems(topic, language);
   if (topics === null || topics.length === 0) return null;
+  const fullerStems = fuller === undefined ? null : topicStems(fuller, language);
+  const alternates = (fullerStems ?? []).filter((stem) => !topics.includes(stem));
   const relation = relationOf(message);
   return Object.freeze({
     language,
     topics: Object.freeze(topics),
     ...(relation === undefined ? {} : { relation }),
+    ...(alternates.length === 0 ? {} : { alternates: Object.freeze(alternates) }),
   });
 }
 
@@ -222,38 +248,177 @@ const RELATION_EVIDENCE: Readonly<Record<OwnMemoryRelation, RegExp>> = Object.fr
   dislike: /싫어|싫은|별로|hate|dislike/iu,
 });
 
-function mentionsTopic(question: OwnMemoryRecallQuestion, content: string): boolean {
-  const haystack = content.normalize('NFC').toLocaleLowerCase('und');
-  return question.topics.some((stem) => haystack.includes(stem));
+/**
+ * The particles and copula endings that may follow a Korean noun ("과일은", "샤인머스캣이야", "회사에서", "고양이랑").
+ * At most ONE is peeled off a word, only from this list and only when its form agrees with the syllable before it, so
+ * a noun's own last syllable is never taken for a particle ("차고" never becomes "차", "고양이과" stays whole).
+ */
+const KO_NOUN_ENDINGS: readonly string[] = [
+  '이었어요', '이에요', '입니다', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '에서는', '에게는',
+  '이야', '예요', '에요', '였어', '였지', '였다', '라고', '이랑', '에서', '에게', '한테', '께서', '으로', '하고', '까지',
+  '부터', '처럼', '보다', '이고', '이지', '이다', '이나', '이면', '은', '는', '이', '가', '을', '를', '의', '에', '도', '만',
+  '로', '와', '과', '랑', '야', '요',
+].slice().sort((a, b) => b.length - a.length);
+
+/** Endings that attach only after a final consonant (batchim) / only after a vowel; the rest attach after either. */
+const KO_AFTER_CONSONANT = new Set([
+  '이었어요', '이에요', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '이야', '이랑', '으로', '이나', '은', '이',
+  '을', '과',
+]);
+// The copula forms 이고 / 이다 / 이지 / 이면 follow either kind of syllable ("고양이이고", "학생이고"): not listed above.
+const KO_AFTER_VOWEL = new Set(['예요', '였어', '였지', '였다', '라고', '는', '가', '를', '와', '랑', '야']);
+
+/** Whether a Hangul syllable ends in a final consonant (batchim). */
+function hasFinalConsonant(syllable: string): boolean {
+  const code = syllable.charCodeAt(0) - 0xac00;
+  return code >= 0 && code < 11_172 && code % 28 !== 0;
+}
+
+/**
+ * Whether `ending` may follow `stem` as a particle: its form must agree with the stem's last syllable ("고양이는",
+ * "고양이와", but never "고양이과" — there "과" is part of another noun, 고양이과 "the cat family").
+ */
+function endingFits(stem: string, ending: string): boolean {
+  if (!KO_NOUN_ENDINGS.includes(ending)) return false;
+  const last = stem.slice(-1);
+  if (KO_AFTER_CONSONANT.has(ending)) return hasFinalConsonant(last);
+  // 로 also follows a ㄹ batchim ("서울로").
+  if (ending === '로') return !hasFinalConsonant(last) || (last.charCodeAt(0) - 0xac00) % 28 === 8;
+  if (KO_AFTER_VOWEL.has(ending)) return !hasFinalConsonant(last);
+  return true;
+}
+
+/**
+ * `word` without one trailing particle / ending from {@link KO_NOUN_ENDINGS} that agrees with the syllable before it
+ * (at least one syllable remains).
+ */
+function peelOneEnding(word: string): string {
+  for (const ending of KO_NOUN_ENDINGS) {
+    if (word.length > ending.length && word.endsWith(ending)) {
+      const stem = word.slice(0, word.length - ending.length);
+      if (endingFits(stem, ending)) return stem;
+    }
+  }
+  return word;
+}
+
+const LATIN_WORD = /^[a-z0-9'’-]+$/u;
+
+/** English comparison base: possessive and plural endings dropped. */
+function latinBase(word: string): string {
+  return word.replace(/['’]s$/u, '').replace(/(?<=[a-z]{3})e?s$/u, '');
+}
+
+/** The forms of a Korean word compared for overlap: as written, and with one particle peeled when two syllables remain. */
+function koreanForms(word: string): string[] {
+  const peeled = peelOneEnding(word);
+  return peeled !== word && peeled.length >= 2 ? [word, peeled] : [word];
+}
+
+/** A comparison key for the stop-word / generic-head checks. */
+function baseOf(word: string): string {
+  if (LATIN_WORD.test(word)) return latinBase(word);
+  const peeled = peelOneEnding(word);
+  return peeled.length >= 2 ? peeled : word;
+}
+
+function wordsOf(content: string): string[] {
+  return content
+    .normalize('NFC')
+    .toLocaleLowerCase('und')
+    .split(/[^\p{L}\p{N}'’-]+/u)
+    .map((word) => word.replace(/^['’-]+|['’-]+$/gu, ''))
+    .filter((word) => word.length > 0);
+}
+
+/**
+ * Head nouns that only qualify another topic ("차 종류", "고양이 이름", "dog's name"): they count only when they are the
+ * question's sole topic ("내 이름이 뭐였지?"), so "좋아하는 과일 종류는 샤인머스캣" never answers "내가 좋아하는 차 종류
+ * 기억나?" through "종류".
+ */
+const GENERIC_HEAD = new Set(['종류', '이름', '타입', '스타일', '쪽', 'kind', 'type', 'sort', 'name']);
+
+/** The question topics that can carry a match: stop-words dropped, generic heads only when nothing else remains. */
+function meaningfulTopics(question: OwnMemoryRecallQuestion): string[] {
+  const topics = [...question.topics, ...(question.alternates ?? [])].filter(
+    (stem) => !FILLER.has(stem) && !FILLER.has(baseOf(stem)),
+  );
+  const specific = topics.filter((stem) => !GENERIC_HEAD.has(stem) && !GENERIC_HEAD.has(baseOf(stem)));
+  return specific.length > 0 ? specific : topics;
+}
+
+/**
+ * The only derivational suffixes that keep a Korean noun's meaning ("생일날", "친구들", "선생님", "철수씨", "3시쯤").
+ * A closed list on purpose: open-ended containment made "사과문" answer "사과" and "부산물" answer "부산".
+ */
+const KO_DERIVATIONAL_SUFFIXES: readonly string[] = ['날', '들', '님', '씨', '쯤'];
+
+/**
+ * Whether one question topic word and one content word name the same thing.
+ * - A one-syllable topic ("차") matches only that syllable, alone or with exactly one particle ("차가", "차를", "차는");
+ *   never a longer noun that starts with it ("차고", "차가운") or contains it ("자동차").
+ * - A topic of two or more syllables matches when, after peeling at most one listed particle or ending from either
+ *   side, both are equal ("회사에서" → "회사", "고양이랑" ↔ "고양이"), or the longer one is the shorter one plus one
+ *   {@link KO_DERIVATIONAL_SUFFIXES} entry ("생일날" = "생일" + "날"). Nothing else: "사과문", "부산물", "회사원" and
+ *   "고양이과" are different nouns.
+ * - English words compare by their plural / possessive base ("fruits" = "fruit").
+ */
+function topicWordMatches(stem: string, word: string): boolean {
+  if (LATIN_WORD.test(stem)) return LATIN_WORD.test(word) && latinBase(word) === latinBase(stem);
+  if (stem.length < 2) {
+    if (word === stem) return true;
+    return word.startsWith(stem) && endingFits(stem, word.slice(stem.length));
+  }
+  for (const topic of koreanForms(stem)) {
+    for (const form of koreanForms(word)) {
+      if (topic === form) return true;
+      const [shorter, longer] = topic.length <= form.length ? [topic, form] : [form, topic];
+      if (
+        shorter.length >= 2 &&
+        longer.startsWith(shorter) &&
+        KO_DERIVATIONAL_SUFFIXES.includes(longer.slice(shorter.length))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** True when `content` shares a meaningful topic word with the question (see {@link topicWordMatches}). */
+function sharesTopicWord(question: OwnMemoryRecallQuestion, content: string): boolean {
+  const words = wordsOf(content);
+  return meaningfulTopics(question).some((stem) => words.some((word) => topicWordMatches(stem, word)));
 }
 
 function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {
-  if (mentionsTopic(question, content)) return true;
+  if (sharesTopicWord(question, content)) return true;
   const haystack = content.normalize('NFC').toLocaleLowerCase('und');
   return question.relation !== undefined && RELATION_EVIDENCE[question.relation].test(haystack);
 }
 
-/** A durable entry that could answer the question (see the module note: topic stem, semantic floor, or unscored). */
+/**
+ * A durable entry that could answer the question: it shares a meaningful topic word, or semantic recall scored it at or
+ * above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}. Being recalled at all is no evidence (recall never drops a candidate).
+ */
 function durableEntryAnswers(
   question: OwnMemoryRecallQuestion,
   entry: { readonly content: string; readonly retrievalMode?: 'lexical' | 'semantic'; readonly semanticScore?: number },
 ): boolean {
-  if (mentionsTopic(question, entry.content)) return true;
-  // Not semantically scored this turn (lexical-only recall, or no score): the retriever's choice stands.
-  if (entry.retrievalMode !== 'semantic') return true;
+  if (sharesTopicWord(question, entry.content)) return true;
+  if (entry.retrievalMode !== 'semantic') return false;
   const score = entry.semanticScore;
-  // A semantic entry without a usable score is no evidence (never a hit by default).
+  // A semantic entry without a usable score is no evidence.
   if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1) return false;
   return score >= OWN_MEMORY_SEMANTIC_HIT_FLOOR;
 }
 
 /**
  * True when the turn's assembled context could answer the question: an active durable recall entry (archived, expired
- * and superseded records never reach it — ADR-0106 amendment) that shares a topic stem, that semantic recall scored at
- * or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}, or that has no semantic score (lexical-only recall: relevance stays
- * the retriever's decision); or one of the User's own earlier turns of this conversation that mentions a topic stem
- * (or, for a preference question, any stated preference). So "not in memory" is replied only when no such entry and
- * no such turn exists.
+ * and superseded records never reach it — ADR-0106 amendment) that shares a meaningful topic word or that semantic
+ * recall scored at or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}; or one of the User's own earlier turns of this
+ * conversation that shares a topic word (or, for a preference question, states any preference). So "not in memory" is
+ * replied only when no such entry and no such turn exists.
  * Earlier own-memory questions are not evidence (asking twice must not count as having told). Assistant turns are
  * never evidence: a reply may itself have been an invented fact.
  */
