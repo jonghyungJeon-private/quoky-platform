@@ -5,6 +5,25 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### PRV-2 Gemini API provider — implemented on branch, not merged (2026-10-08)
+
+ADR-0115 D4: the new `packages/ai-gemini-api` serves the chat tier (`gemini-api`) and image understanding
+(`gemini-vision-api`), both `REMOTE`. It calls `generateContent` at the pinned `https://generativelanguage.googleapis.com`
+over `node:fetch`, sends no tools, function declarations or code execution, and puts the key only in the
+`x-goog-api-key` header.
+
+- **Off unless configured.** It needs `QUOKY_GEMINI_API_KEY` and `QUOKY_GEMINI_MODEL` (a bounded allow-list).
+- **Eligible only when chosen.** It answers only while it is the effective chat or image choice
+  (`QUOKY_CHAT_PROVIDER=gemini`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=gemini`, `/providers`, `모델 변경: gemini[:<model>]`).
+  A configured but unselected instance is not probed at startup.
+- **Fails closed.** Safety blocks and non-`STOP` finish reasons fail closed; `MAX_TOKENS` is marked as cut off.
+
+No migration, no port, no Core change (the credential guard already had the `AIza` shape); `ConversationRuntimeDeps` stays
+35. Offline validation only (fake fetch).
+
+Not run yet: the Strict gates (the owner's Gemini API key, the `.env.local` edit, the first live call). Chief Architect
+review is pending.
+
 ### TG-1 Telegram text conversations — implemented on branch, review fixes applied, not merged (2026-10-08)
 
 ADR-0114: the new `packages/adapter-telegram` lets the owner chat with Quoky in a Telegram private chat as the same

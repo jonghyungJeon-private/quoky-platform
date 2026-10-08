@@ -5,6 +5,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — PRV-2 Gemini API provider for the chat tier and images (2026-10-08)
+
+ADR-0115 D4 (PRV-2; implementation note in DECISIONS.md). No migration, no new port or token, no Core change (the Core
+credential guard already knew the `AIza…` key shape); `ConversationRuntimeDeps` stays 35. No new third-party dependency
+(`node:fetch` only).
+
+- New `packages/ai-gemini-api`, following the PRV-1 pattern.
+  - `GeminiApiProvider` (chat tier) and `GeminiApiVisionProvider` (`IMAGE_UNDERSTANDING`), both `REMOTE`.
+  - One `generateContent` call to the pinned `https://generativelanguage.googleapis.com/v1beta`, with no tools,
+    function declarations, code execution or grounding.
+  - The key goes only in the `x-goog-api-key` header (never in a URL), held in a redacting `GeminiApiKey`.
+  - Redirects refused; one timer over headers and body; a 2 MiB response bound; error bodies never read.
+  - A response with a function call, executable code, a code-execution result, a tool call or grounding metadata is
+    refused (`TOOL_CALL_REFUSED`).
+  - `MAX_TOKENS` returns the text marked as cut off. A blocked prompt and the safety, recitation, blocklist,
+    prohibited-content and personal-data finish reasons fail closed (`SAFETY_BLOCKED`); other reasons are
+    `INCOMPLETE`.
+  - Readiness is one bounded model-get, shared by the chat and image instances and cleared by an
+    unavailable / rate-limit / auth / timeout / 400 execution failure.
+  - Images are the #143 canonical bytes, inline; a request over 20 MB is refused before sending.
+  - Context files are refused.
+- Selection.
+  - `QUOKY_CHAT_PROVIDER=gemini` and `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=gemini`.
+  - Labels `gemini:<model>` on a bounded allow-list (the current stable Gemini 3.x Flash models and
+    `gemini-3.1-pro-preview`).
+  - `모델 목록` / `모델 변경: gemini[:<model>]` / `이미지 모델 변경: gemini`, and the `/providers` options with a Google
+    egress note and image warning.
+  - Registered only when `QUOKY_GEMINI_API_KEY` and `QUOKY_GEMINI_MODEL` are set, and eligible only while it is the
+    effective choice. An unselected instance is not probed at startup.
+  - The image locality policy opens `REMOTE` for it only while it is the effective image choice.
+  - Code, review, planning, tests and policy-sensitive chat keep byte-identical eligible sets. LRN-5 example egress
+    reaches Gemini only when it is explicitly selected and the remote flag is on.
+- Startup errors `GEMINI_API_KEY_INVALID`, `GEMINI_MODEL_INVALID`, `GEMINI_API_KEY_MISSING`, `GEMINI_MODEL_MISSING`.
+  `error-diagnostics` redacts `AIza…` keys and `QUOKY_GEMINI_API_KEY=…`. `.env.example` and the quickstart document the
+  two names.
+
 ## Unreleased — TG-1 Telegram text conversations (2026-10-08)
 
 Personal v4 track TG-1 (ADR-0114 D2–D7, D13; implementation note in DECISIONS.md). No migration, no new port, DI token
