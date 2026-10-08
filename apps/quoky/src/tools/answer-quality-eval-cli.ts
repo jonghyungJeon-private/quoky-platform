@@ -196,7 +196,8 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
           return EXIT_BLOCKED;
         }
         const provider = deps.createProvider(plan.target, plan.model);
-        if (!(await provider.isAvailable())) {
+        // A probe that throws (including an indeterminate, timed-out one) counts as not available here.
+        if (!(await provider.isAvailable().catch(() => false))) {
           deps.stderr(`BLOCKED: ${plan.providerKind} is not available; nothing was executed`);
           return EXIT_BLOCKED;
         }

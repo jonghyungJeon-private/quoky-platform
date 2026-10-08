@@ -14925,6 +14925,14 @@ those details so the settled decisions and the code agree.
    restart on the next request that needs it, once its backoff window has elapsed and that re-probe has finished.
    Each probe carries a per-provider generation; `invalidate()` bumps it and clears the single-flight slot, so a
    probe that was in flight across an invalidation is discarded and never overwrites a newer answer.
+   *Fix (live QA session 4, D16):* only a definitive probe answer changes readiness. A probe that times out throws
+   `ProviderProbeIndeterminateError` (the CLI providers do this for `ollama list`/`show`, `claude --version`,
+   `claude auth status` and `codex login status`); the manager then keeps the previous ready / not-ready answer
+   (a ready one for another TTL, a not-ready one without growing the backoff), and a first probe that times out is
+   not cached. The callers of a probe discarded by `invalidate()` get the current generation's answer instead of a
+   bare "not ready". A ready provider that definitively answers "not ready" logs `provider became unavailable` once
+   (`reason` `NOT_READY` or `PROBE_FAILED`). `invalidate()` is still called only for the provider whose execution
+   failed `UNAVAILABLE`; a runtime selection change invalidates nothing (tested).
 5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
    every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
    mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is

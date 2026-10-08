@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Capability } from '../domain';
+import { ProviderProbeIndeterminateError } from '../errors';
 import type { AiProvider, LogFields, Logger } from '../ports';
 import { AiProviderManager, DEFAULT_NOT_READY_BACKOFF_CAP_MS } from './ai-provider-manager';
 
@@ -190,7 +191,11 @@ describe('AiProviderManager readiness after a not-ready start (no restart)', () 
     provider.availability = true;
     time.advance(30_000);
     expect(await manager.available()).toEqual([provider]);
-    expect(lines.map((line) => line.message)).toEqual(['provider became ready', 'provider became ready']);
+    expect(lines).toEqual([
+      { message: 'provider became ready', fields: { provider: 'ollama-embed' } },
+      { message: 'provider became unavailable', fields: { provider: 'ollama-embed', reason: 'NOT_READY' } },
+      { message: 'provider became ready', fields: { provider: 'ollama-embed' } },
+    ]);
   });
 
   it('does not log a provider that is ready from the start', async () => {
@@ -245,7 +250,7 @@ describe('AiProviderManager readiness after a not-ready start (no restart)', () 
     provider.availability = true;
     time.advance(30_000);
     expect(await manager.available()).toEqual([provider]);
-    expect(lines.map((line) => line.message)).toEqual(['provider became ready']);
+    expect(lines.map((line) => line.message)).toEqual(['provider became unavailable', 'provider became ready']);
   });
   it('a background refresh that lands after an invalidation never overwrites the newer answer', async () => {
     const time = manualClock();
@@ -279,7 +284,7 @@ describe('AiProviderManager readiness after a not-ready start (no restart)', () 
     expect(lines).toEqual([]);
   });
 
-  it('a blocking probe in flight across an invalidation is discarded and reads "not ready"', async () => {
+  it('a blocking probe in flight across an invalidation is discarded; its callers read the current answer', async () => {
     const time = manualClock();
     const provider = new SlowProvider('ollama', chat);
     const manager = new AiProviderManager([provider], { clock: time.clock });
@@ -319,5 +324,122 @@ describe('AiProviderManager readiness after a not-ready start (no restart)', () 
     await new Promise((resolve) => setImmediate(resolve));
     expect(await manager.available()).toEqual([provider]);
     expect(provider.probeCount).toBe(2);
+  });
+});
+
+describe('AiProviderManager definitive vs indeterminate probes (live QA D16)', () => {
+  /** A provider whose probe can be made to time out (indeterminate) instead of answering. */
+  class TimingOutProvider extends FakeProvider {
+    timesOut = false;
+    override async isAvailable(): Promise<boolean> {
+      if (this.timesOut) {
+        this.probeCount += 1;
+        throw new ProviderProbeIndeterminateError('probe timed out');
+      }
+      return super.isAvailable();
+    }
+  }
+  const embedding = [{ capability: Capability.EMBEDDING, priority: 100 }] as const;
+
+  it('a timed-out probe of a ready provider keeps it ready: no "not ready", no log, no backoff', async () => {
+    const time = manualClock();
+    const { logger, lines } = recordingLogger();
+    const provider = new TimingOutProvider('ollama-embed-cli', embedding, true);
+    const manager = new AiProviderManager([provider], { clock: time.clock, logger });
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([provider]);
+
+    provider.timesOut = true; // a loaded host: `ollama list` exceeds its bound
+    time.advance(30_000);
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([provider]);
+    expect(await manager.isReady(provider)).toBe(true);
+    expect(provider.probeCount).toBe(2);
+    // The kept answer is re-checked after the normal TTL, not after a not-ready backoff.
+    time.advance(29_999);
+    await manager.availableFor(Capability.EMBEDDING);
+    expect(provider.probeCount).toBe(2);
+    time.advance(1);
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([provider]);
+    expect(provider.probeCount).toBe(3);
+    expect(lines).toEqual([]);
+
+    // The first definitive "not ready" is logged once, with its reason.
+    provider.timesOut = false;
+    provider.availability = false;
+    time.advance(30_000);
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([]);
+    expect(lines).toEqual([
+      { message: 'provider became unavailable', fields: { provider: 'ollama-embed-cli', reason: 'NOT_READY' } },
+    ]);
+  });
+
+  it('a timed-out re-probe of a not-ready provider keeps it not ready without growing the backoff', async () => {
+    const time = manualClock();
+    const { logger, lines } = recordingLogger();
+    const provider = new TimingOutProvider('ollama', chat, false);
+    const manager = new AiProviderManager([provider], { clock: time.clock, logger });
+    await manager.available(); // definitive "not ready", streak 1 -> next after 30 s
+    provider.timesOut = true;
+    time.advance(30_000);
+    expect(await manager.available()).toEqual([]);
+    expect(provider.probeCount).toBe(2);
+    // Still streak 1: the next re-probe is 30 s later (a recorded "not ready" would have doubled it to 60 s).
+    provider.timesOut = false;
+    provider.availability = true;
+    time.advance(30_000);
+    expect(await manager.available()).toEqual([provider]);
+    expect(provider.probeCount).toBe(3);
+    expect(lines.map((line) => line.message)).toEqual(['provider became ready']);
+  });
+
+  it('a timed-out first probe reads "not ready" for that decision but is not cached', async () => {
+    const time = manualClock();
+    const provider = new TimingOutProvider('ollama', chat, true);
+    provider.timesOut = true;
+    const manager = new AiProviderManager([provider], { clock: time.clock });
+    expect(await manager.available()).toEqual([]);
+    provider.timesOut = false;
+    expect(await manager.available()).toEqual([provider]); // probed again at once: nothing was cached
+    expect(provider.probeCount).toBe(2);
+  });
+
+  it('a probe in flight across an invalidation hands its callers the fresh answer, not a "not ready"', async () => {
+    const time = manualClock();
+    const provider = new SlowProvider('ollama-embed-cli', embedding);
+    const manager = new AiProviderManager([provider], { clock: time.clock });
+    const inFlight = manager.availableFor(Capability.EMBEDDING);
+    manager.invalidate(provider);
+    const [stale] = [provider.takePending()];
+    stale(true); // discarded: the caller follows the current generation's probe
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(provider.probeCount).toBe(2);
+    provider.settle(true);
+    expect(await inFlight).toEqual([provider]);
+  });
+
+  it('a throwing probe (not indeterminate) is a definitive "not ready" with reason PROBE_FAILED', async () => {
+    const time = manualClock();
+    const { logger, lines } = recordingLogger();
+    const provider = new FakeProvider('codex', chat, true);
+    const manager = new AiProviderManager([provider], { clock: time.clock, logger });
+    await manager.available();
+    provider.availability = new Error('spawn ENOENT');
+    time.advance(30_000);
+    expect(await manager.available()).toEqual([]);
+    expect(lines).toEqual([{ message: 'provider became unavailable', fields: { provider: 'codex', reason: 'PROBE_FAILED' } }]);
+  });
+
+  it('invalidating one provider never touches another provider\'s cached answer', async () => {
+    const time = manualClock();
+    const chatProvider = new FakeProvider('codex', chat, true);
+    const embed = new FakeProvider('ollama-embed-cli', embedding, true);
+    const manager = new AiProviderManager([chatProvider, embed], { clock: time.clock });
+    await manager.available();
+    manager.invalidate(chatProvider);
+    embed.availability = false; // would read "not ready" if it were re-probed
+    expect(await manager.availableFor(Capability.EMBEDDING)).toEqual([embed]);
+    expect(embed.probeCount).toBe(1);
+    expect(chatProvider.probeCount).toBe(1);
+    await manager.availableFor(Capability.GENERAL_CHAT);
+    expect(chatProvider.probeCount).toBe(2);
   });
 });

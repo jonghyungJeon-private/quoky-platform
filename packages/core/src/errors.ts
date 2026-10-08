@@ -17,6 +17,19 @@ export class NoProviderAvailableError extends Error {
 }
 
 /**
+ * A readiness probe (`AiProvider.isAvailable()`) that could not reach a definitive answer: it timed out or was cut off,
+ * typically on a loaded host. It is no evidence that the provider is not ready (live QA D16): `AiProviderManager` keeps
+ * the provider's previous ready / not-ready state until a definitive answer arrives. A caller that has no previous
+ * answer to keep treats it like any other throwing probe (not ready for this decision).
+ */
+export class ProviderProbeIndeterminateError extends Error {
+  constructor(detail: string) {
+    super(`readiness probe indeterminate: ${detail}`);
+    this.name = 'ProviderProbeIndeterminateError';
+  }
+}
+
+/**
  * A classified AI execution failure (ADR-0015). The provider sets `kind` and a
  * technical `message` (already secret-masked); the core maps the kind to a
  * user-facing message and stores a summary on the TaskRun.

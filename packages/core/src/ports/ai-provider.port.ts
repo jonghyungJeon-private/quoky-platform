@@ -107,7 +107,11 @@ export interface AiProvider {
    */
   readonly executionLocality?: AiExecutionLocality;
 
-  /** Health/auth probe. Ollama may be down; Claude/Codex may be unauthed. */
+  /**
+   * Health/auth probe. Ollama may be down; Claude/Codex may be unauthed. A probe that cannot reach a definitive answer
+   * (it timed out) should throw `ProviderProbeIndeterminateError` rather than answer `false`, so a loaded host does
+   * not read as a provider outage (live QA D16); any other throw counts as not ready.
+   */
   isAvailable(): Promise<boolean>;
 
   execute(request: AiRequest): Promise<AiExecutionResult>;

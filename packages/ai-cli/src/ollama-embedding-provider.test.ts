@@ -6,6 +6,7 @@ import {
   Capability,
   embeddingRequestMetadata,
   parseEmbeddingEnvelope,
+  ProviderProbeIndeterminateError,
 } from '@quoky/core';
 import type { AiRequest } from '@quoky/core';
 import type { CliRunOptions, CliRunResult, CliRunner } from './cli-runner';
@@ -204,7 +205,10 @@ describe('OllamaCliEmbeddingProvider (ADR-0098 D8)', () => {
         false,
       );
       expect(await provider({ code: 1, stdout: '' }).embedder.isAvailable()).toBe(false);
-      expect(await provider({ stdout: LIST, timedOut: true }).embedder.isAvailable()).toBe(false);
+      // A timed-out probe is no answer (live QA D16): indeterminate, never "not ready".
+      await expect(provider({ stdout: LIST, timedOut: true }).embedder.isAvailable()).rejects.toBeInstanceOf(
+        ProviderProbeIndeterminateError,
+      );
       const throwing = new OllamaCliEmbeddingProvider({
         runner: async () => {
           throw new Error('spawn failed');
@@ -249,6 +253,24 @@ describe('OllamaCliEmbeddingProvider (ADR-0098 D8)', () => {
     }
 
     const runs = (calls: readonly Call[]) => calls.filter((call) => call.args[0] === 'run');
+
+    it('a timed-out probe keeps the readiness state: no fresh warm-up when the next probe is ready again (live QA D16)', async () => {
+      const { daemon, calls, runner } = daemonRunner();
+      let listTimesOut = false;
+      const wrapped: CliRunner = async (bin, args, options) =>
+        args[0] === 'list' && listTimesOut ? { code: null, stdout: '', stderr: '', timedOut: true } : runner(bin, args, options);
+      const embedder = new OllamaCliEmbeddingProvider({ runner: wrapped });
+      expect(await embedder.isAvailable()).toBe(true);
+      await embedder.warmUpSettled();
+      expect(runs(calls)).toHaveLength(1);
+      listTimesOut = true;
+      await expect(embedder.isAvailable()).rejects.toBeInstanceOf(ProviderProbeIndeterminateError);
+      listTimesOut = false;
+      expect(daemon.up).toBe(true);
+      expect(await embedder.isAvailable()).toBe(true);
+      await embedder.warmUpSettled();
+      expect(runs(calls)).toHaveLength(1); // still the startup warm-up only: it never read as not-ready -> ready
+    });
 
     it('loads the model once with the fixed warm-up text when the first probe is ready', async () => {
       const { calls, runner } = daemonRunner();

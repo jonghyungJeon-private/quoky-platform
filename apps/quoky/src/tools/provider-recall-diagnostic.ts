@@ -572,7 +572,8 @@ export async function runComparison(
   const normalizedInputControl: ProviderRecallComparisonResult[] = [];
 
   for (const target of targets) {
-    if (target.includeWhenAvailable && !(await target.provider.isAvailable())) continue;
+    // A probe that throws (including an indeterminate, timed-out one) counts as not available here.
+    if (target.includeWhenAvailable && !(await target.provider.isAvailable().catch(() => false))) continue;
 
     const startedAt = now();
     let responseText = '';

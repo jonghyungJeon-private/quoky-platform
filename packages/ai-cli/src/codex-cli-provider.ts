@@ -8,6 +8,7 @@ import {
   ArtifactKind,
   newId,
   now,
+  ProviderProbeIndeterminateError,
   readGeneralChatReplyPolicy,
 } from '@quoky/core';
 import type {
@@ -416,19 +417,22 @@ export function buildCodexExecArgs(options: {
 
 /** Ready means the CLI runs and reports a login (`codex login status`). No model call is made. */
 export async function probeCodexLogin(runner: CliRunner, bin: string): Promise<boolean> {
+  let result;
   try {
-    const result = await runner(bin, ['login', 'status'], {
+    result = await runner(bin, ['login', 'status'], {
       cwd: tmpdir(),
       input: '',
       timeoutMs: CODEX_PROBE_TIMEOUT_MS,
     });
-    if (result.code !== 0 || result.timedOut) return false;
-    // The CLI prints the status on stderr ("Logged in using ChatGPT"); accept either stream.
-    const status = sanitizeTerminalOutput(`${result.stdout}\n${result.stderr}`);
-    return /^\s*logged in\b/im.test(status) && !/not logged in/i.test(status);
   } catch {
     return false;
   }
+  // A timed-out probe is no answer (live QA D16): the previous readiness is kept.
+  if (result.timedOut) throw new ProviderProbeIndeterminateError('codex login status timed out');
+  if (result.code !== 0) return false;
+  // The CLI prints the status on stderr ("Logged in using ChatGPT"); accept either stream.
+  const status = sanitizeTerminalOutput(`${result.stdout}\n${result.stderr}`);
+  return /^\s*logged in\b/im.test(status) && !/not logged in/i.test(status);
 }
 
 /**

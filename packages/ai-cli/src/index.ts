@@ -7,6 +7,7 @@ import {
   ArtifactKind,
   newId,
   now,
+  ProviderProbeIndeterminateError,
   readGeneralChatReplyPolicy,
 } from '@quoky/core';
 import type {
@@ -429,16 +430,19 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   }
 
   override async isAvailable(): Promise<boolean> {
+    let r;
     try {
-      const r = await this.runner(this.bin, ['--version'], {
+      r = await this.runner(this.bin, ['--version'], {
         cwd: tmpdir(),
         input: '',
         timeoutMs: 10_000,
       });
-      return r.code === 0;
     } catch {
       return false;
     }
+    // A timed-out probe is no answer (live QA D16): the previous readiness is kept.
+    if (r.timedOut) throw new ProviderProbeIndeterminateError('claude --version timed out');
+    return r.code === 0;
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
@@ -575,8 +579,9 @@ export class OllamaCliProvider extends BaseCliAiProvider {
    * `ollama run` start an implicit pull, so it is reported unavailable instead.
    */
   override async isAvailable(): Promise<boolean> {
+    let r;
     try {
-      const r = await this.runner(this.bin, ['list'], {
+      r = await this.runner(this.bin, ['list'], {
         cwd: tmpdir(),
         input: '',
         timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
@@ -589,10 +594,12 @@ export class OllamaCliProvider extends BaseCliAiProvider {
           environmentProfile: 'ISOLATED_OLLAMA_VALIDATION' as const,
         }),
       });
-      return r.code === 0 && !r.timedOut && ollamaListIncludesModel(r.stdout, this.model);
     } catch {
       return false;
     }
+    // A timed-out probe is no answer (live QA D16): the previous readiness is kept.
+    if (r.timedOut) throw new ProviderProbeIndeterminateError('ollama list timed out');
+    return r.code === 0 && ollamaListIncludesModel(r.stdout, this.model);
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
@@ -829,15 +836,23 @@ export class OllamaCliVisionProvider extends BaseCliAiProvider {
   /** Real readiness: LOCAL, daemon up, model installed (no implicit pull), and Ollama reports `vision` for it. */
   override async isAvailable(): Promise<boolean> {
     if (this.executionLocality !== 'LOCAL') return false;
-    try {
-      const probe = { cwd: tmpdir(), input: '', timeoutMs: OLLAMA_PROBE_TIMEOUT_MS, env: OLLAMA_COLOR_ENV };
-      const list = await this.runner(this.bin, ['list'], probe);
-      if (list.code !== 0 || list.timedOut || !ollamaListIncludesModel(list.stdout, this.model)) return false;
-      const show = await this.runner(this.bin, ['show', this.model], probe);
-      return show.code === 0 && !show.timedOut && ollamaShowAdvertisesVision(show.stdout);
-    } catch {
-      return false;
-    }
+    const probe = { cwd: tmpdir(), input: '', timeoutMs: OLLAMA_PROBE_TIMEOUT_MS, env: OLLAMA_COLOR_ENV };
+    const run = async (args: string[]) => {
+      try {
+        return await this.runner(this.bin, args, probe);
+      } catch {
+        return null;
+      }
+    };
+    const list = await run(['list']);
+    if (list === null) return false;
+    // A timed-out probe is no answer (live QA D16): the previous readiness is kept.
+    if (list.timedOut) throw new ProviderProbeIndeterminateError('ollama list timed out');
+    if (list.code !== 0 || !ollamaListIncludesModel(list.stdout, this.model)) return false;
+    const show = await run(['show', this.model]);
+    if (show === null) return false;
+    if (show.timedOut) throw new ProviderProbeIndeterminateError('ollama show timed out');
+    return show.code === 0 && ollamaShowAdvertisesVision(show.stdout);
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {

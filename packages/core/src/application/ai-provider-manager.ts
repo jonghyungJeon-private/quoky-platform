@@ -1,4 +1,5 @@
 import type { Capability, IsoTimestamp } from '../domain';
+import { ProviderProbeIndeterminateError } from '../errors';
 import type { AiProvider, Logger } from '../ports';
 import { now } from '../util/clock';
 
@@ -26,9 +27,20 @@ export interface AiProviderManagerOptions {
   /** How long a routing decision waits for a "not ready" provider's re-probe (see the default). */
   notReadyReprobeGraceMs?: number;
   clock?: () => IsoTimestamp;
-  /** Receives one `provider became ready` line when a provider that answered "not ready" answers ready. */
+  /**
+   * Receives one `provider became ready` line when a provider that answered "not ready" answers ready, and one
+   * `provider became unavailable` line (with a reason) when a ready provider definitively answers "not ready".
+   */
   logger?: Logger;
 }
+
+/** Why a definitive probe answered "not ready": the provider said so, or its probe threw. */
+export type ProviderUnavailableReason = 'NOT_READY' | 'PROBE_FAILED';
+
+/** One probe's outcome. An indeterminate probe (timed out) carries no readiness evidence at all. */
+type ProbeAnswer =
+  | { readonly definitive: true; readonly ready: boolean; readonly reason?: ProviderUnavailableReason }
+  | { readonly definitive: false };
 
 interface ProbeEntry {
   settled: boolean;
@@ -53,6 +65,11 @@ const NO_OP_LOGGER: Logger = { info: () => undefined, warn: () => undefined, err
  * backed-off interval (TTL, doubling, capped). The re-probe of a "not ready" provider waits at most a short grace and
  * otherwise finishes in the background, so a daemon that is down costs a turn nothing beyond that grace, and a daemon
  * that comes up later is picked up without a restart by the next request that needs it (no polling timer).
+ *
+ * Only a definitive probe answer changes a provider's state (live QA D16): a probe that throws
+ * `ProviderProbeIndeterminateError` (it timed out on a loaded host) keeps the previous ready / not-ready answer until a
+ * definitive one arrives, and a probe discarded by {@link invalidate} hands its callers the current generation's answer
+ * instead of a "not ready" no probe stands behind. Both transitions are logged once.
  */
 export class AiProviderManager {
   private readonly ttlMs: number;
@@ -160,14 +177,17 @@ export class AiProviderManager {
     const entry: ProbeEntry = {
       settled: false,
       checkedAtMs: startedAtMs,
-      result: this.safeProbe(p).then((ok) => {
+      result: this.safeProbe(p).then((answer) => {
+        // Invalidated while in flight: this answer is discarded (the entry is no longer cached). Its callers get the
+        // current generation's answer — a fresh probe, or the one already running — never a "not ready" nothing backs.
+        if (this.generationOf(p) !== generation) return this.cachedProbe(p);
+        const ready = this.settle(p, answer);
         entry.settled = true;
-        entry.ready = ok;
+        entry.ready = ready;
         entry.checkedAtMs = this.nowMs();
-        // Invalidated while in flight: the answer is discarded (this entry is no longer cached) and reads "not ready".
-        if (this.generationOf(p) !== generation) return false;
-        this.record(p, ok);
-        return ok;
+        // An indeterminate first probe has no previous answer to keep: it is not cached, so the next decision probes.
+        if (!answer.definitive && !this.lastKnown.has(p) && this.probes.get(p) === entry) this.probes.delete(p);
+        return ready;
       }),
     };
     this.probes.set(p, entry);
@@ -183,13 +203,13 @@ export class AiProviderManager {
     let refresh = this.refreshes.get(p);
     if (refresh === undefined) {
       const generation = this.generationOf(p);
-      const pending = this.safeProbe(p).then((ok) => {
+      const pending = this.safeProbe(p).then((answer) => {
         // Invalidated while in flight: a newer probe (or none) owns the cache; this answer is discarded.
-        if (this.generationOf(p) !== generation) return false;
-        this.probes.set(p, { settled: true, ready: ok, checkedAtMs: this.nowMs(), result: Promise.resolve(ok) });
+        if (this.generationOf(p) !== generation) return this.cachedProbe(p);
+        const ready = this.settle(p, answer);
+        this.probes.set(p, { settled: true, ready, checkedAtMs: this.nowMs(), result: Promise.resolve(ready) });
         this.refreshes.delete(p);
-        this.record(p, ok);
-        return ok;
+        return ready;
       });
       this.refreshes.set(p, pending);
       refresh = pending;
@@ -205,21 +225,35 @@ export class AiProviderManager {
     });
   }
 
-  private record(p: AiProvider, ok: boolean): void {
+  /**
+   * The readiness a probe answer stands for. A definitive answer is recorded (backoff streak, transition logs); an
+   * indeterminate one changes nothing and stands for the previous definitive answer ("not ready" when there is none).
+   */
+  private settle(p: AiProvider, answer: ProbeAnswer): boolean {
+    if (!answer.definitive) return this.lastKnown.get(p) ?? false;
+    this.record(p, answer.ready, answer.reason);
+    return answer.ready;
+  }
+
+  private record(p: AiProvider, ok: boolean, reason: ProviderUnavailableReason | undefined): void {
     const previous = this.lastKnown.get(p);
     this.lastKnown.set(p, ok);
     this.notReadyStreak.set(p, ok ? 0 : (this.notReadyStreak.get(p) ?? 0) + 1);
     if (ok && previous === false) {
       this.logger.info('provider became ready', { provider: p.id });
+    } else if (!ok && previous === true) {
+      this.logger.info('provider became unavailable', { provider: p.id, reason: reason ?? 'NOT_READY' });
     }
   }
 
-  private async safeProbe(p: AiProvider): Promise<boolean> {
+  private async safeProbe(p: AiProvider): Promise<ProbeAnswer> {
     try {
-      return await p.isAvailable();
-    } catch {
-      // A throwing probe is treated as unavailable rather than crashing routing.
-      return false;
+      const ready = (await p.isAvailable()) === true;
+      return ready ? { definitive: true, ready } : { definitive: true, ready, reason: 'NOT_READY' };
+    } catch (error) {
+      if (error instanceof ProviderProbeIndeterminateError) return { definitive: false };
+      // Any other throwing probe is treated as unavailable rather than crashing routing.
+      return { definitive: true, ready: false, reason: 'PROBE_FAILED' };
     }
   }
 }
