@@ -7,20 +7,23 @@ import { MAIL_LISTING_MAX_ENTRIES, MAIL_SENDER_QUERY_MAX_LENGTH } from '../../po
  * here ever sees mail content.
  *
  * Listings (KO): `안 읽은 메일`, `읽지 않은 메일`, `새 메일`, `메일 왔어?`, `메일 확인해줘`, `내 메일함에 뭐 왔어?`,
- * `오늘 온 메일`, `오늘 받은 메일`, `오늘 메일 뭐 왔어?`,
- * `오늘 안 읽은 메일`, `<보낸 사람> 메일 찾아줘` (also `<보낸 사람>한테서 온 메일`, `<보낸 사람>가 보낸 메일`,
- * `<보낸 사람>에서 온 메일 검색해줘`, with an optional `오늘` / `안 읽은` qualifier), each with an optional tail such as
+ * `오늘 온 메일`, `오늘 받은 메일`, `오늘 메일 뭐 왔어?`, `오늘 안 읽은 메일`, each with an optional tail such as
  * `보여줘`, `알려줘`, `확인해줘`, `있어?`, `뭐 있어?`, `몇 개야?`. (EN): `unread emails`, `emails today`,
  * `today's emails`, `find emails from <sender>`.
  *
+ * Sender searches (review P2-2): `<X> 메일 찾아줘` / `검색해줘` / `찾아봐` for any sender text; with `보여줘` / `알려줘` only
+ * when the head names a sender explicitly (`김철수가 보낸`, `김철수한테서 온`, `GitHub에서 온`, `김철수님`), since
+ * `사과 메일 알려줘` asks Quoky to write one. Optional `오늘` / `안 읽은` qualifiers.
+
  * Summaries: `이 메일 요약해줘`, `3번 메일 요약해줘`, `메일 3번 요약`, `두 번째 메일 요약해줘`, `summarize this email`,
  * `summarize email 3`. A summary refers to the session's last listing; the number is 1..10.
  *
  * Write requests (refused with fixed copy, ADR-0118 D6): `메일 보내줘`, `<사람>에게 메일 보내줘`, `3번 메일 삭제해줘`,
  * `이 메일 보관해줘`, `메일 전달해줘`, `읽음으로 표시해줘`, `답장 보내줘`, `send/forward/delete/archive … email`.
  *
- * A sender form whose sender is a pronoun or a time word (`이`, `내`, `어제`, `이번 주`, `모든`, …) is answered with the
- * usage line instead of a search.
+ * A sender form whose sender is a pronoun or a time word (`이`, `내`, `어제`, `모든`, …) is answered with the usage line
+ * instead of a search. A time word with a particle (`지난 주에 온`, `작년에 받은`), a second-person word (`네`, `너`) or
+ * `find emails from me…` is not a mail command at all and falls through to chat.
  */
 
 export type MailLanguage = 'ko' | 'en';
@@ -66,11 +69,24 @@ const INBOX_KO = new RegExp(
   'iu',
 );
 
-/** `<head> 메일 찾아줘`: the head carries the sender plus optional qualifiers and linking words. */
+/** A search verb: `<X> 메일 찾아줘` is a sender search even without a link word. */
+const SEARCH_VERB = '(?:찾아 ?줘|찾아 ?주세요|찾아 ?줄래|찾아 ?봐 ?줘|찾아 ?봐|검색해 ?줘|검색해 ?주세요|검색)';
+/**
+ * A show verb. `사과 메일 알려줘` or `정중한 거절 메일 보여줘` asks Quoky to WRITE or EXPLAIN a mail (review P2-2), so
+ * with `보여줘`/`알려줘` the head must name a sender explicitly ({@link EXPLICIT_SENDER_LINK}).
+ */
+const SHOW_VERB = '(?:보여 ?줘|보여 ?주세요|알려 ?줘)';
+/** `<head> 메일 <verb>`: the head carries the sender plus optional qualifiers and linking words. */
 const FROM_KO = new RegExp(
-  `^(?<head>.+?) ?${MAIL}(?:을|를|들)? ?(?:좀 ?)?(?:찾아 ?줘|찾아 ?주세요|찾아 ?줄래|찾아 ?봐 ?줘|찾아 ?봐|검색해 ?줘|검색해 ?주세요|검색|보여 ?줘|보여 ?주세요|알려 ?줘)$`,
+  `^(?<head>.+?) ?${MAIL}(?:을|를|들)? ?(?:좀 ?)?(?:(?<search>${SEARCH_VERB})|(?<show>${SHOW_VERB}))$`,
   'iu',
 );
+/** The link words that make a head an explicit sender: `가 보낸`, `한테서 온`, `에서 온`, `님`. */
+const EXPLICIT_SENDER_LINK = /(?:(?:이|가) ?보낸|(?:에게서|한테서|으로부터|로부터|에서) ?(?:온|받은)|님)$/u;
+/** A particle after a time word or pronoun (`지난 주에`, `작년에`, `어제부터`): the head is a time, never a sender. */
+const TIME_PARTICLE = /(?:에서|에|부터|까지)$/u;
+/** Second-person words: `네 메일 보여줘` is not a sender search. */
+const SECOND_PERSON = new Set(['네', '너', '니', '너의', '당신']);
 /** Linking words after a sender: `가 보낸`, `한테서 온`, `에서 온`, `의`, `님`. Stripped from the end, repeatedly. */
 const SENDER_LINK =
   /(?: ?(?:이|가)? ?보낸| ?(?:에게서|한테서|으로부터|로부터|에서|한테|께서|께) ?(?:온|받은|보낸)?| (?:온|받은)| ?의| ?님)$/u;
@@ -161,8 +177,9 @@ function indexTarget(raw: string | undefined): MailSummaryTarget | null {
  * The sender and qualifiers of a `<head> 메일 찾아줘` head; `'usage'` when no usable sender is left; `null` when the head
  * is another command (an anchored prefix such as `할 일 추가:`), which then falls through.
  */
-function parseSenderHead(head: string): { from: string; today: boolean; unread: boolean } | 'usage' | null {
+function parseSenderHead(head: string, show: boolean): { from: string; today: boolean; unread: boolean } | 'usage' | null {
   if (/[:：]/u.test(head)) return null;
+  if (show && !EXPLICIT_SENDER_LINK.test(head.trim().replace(new RegExp(` ${UNREAD_WORD}$`, 'u'), ''))) return null;
   let rest = head.trim();
   let today = false;
   let unread = false;
@@ -180,6 +197,9 @@ function parseSenderHead(head: string): { from: string; today: boolean; unread: 
     if (rest === before) break;
   }
   const from = rest.replace(/^["'“”‘’`]+|["'“”‘’`]+$/gu, '').trim();
+  if (SECOND_PERSON.has(from)) return null;
+  const stem = from.replace(TIME_PARTICLE, '').trim();
+  if (stem !== from && (NOT_A_SENDER.has(stem) || /^(?:지난|이번|다음|올|작|재작) ?(?:주|달|해|년)$/u.test(stem))) return null;
   if (from.length === 0 || NOT_A_SENDER.has(from) || Array.from(from).length > MAIL_SENDER_QUERY_MAX_LENGTH) return 'usage';
   return { from, today, unread };
 }
@@ -224,7 +244,7 @@ export function parseMailQuestion(text: string): MailQuestion | null {
 
   const fromKo = FROM_KO.exec(normalized);
   if (fromKo) {
-    const parsed = parseSenderHead(fromKo.groups?.head ?? '');
+    const parsed = parseSenderHead(fromKo.groups?.head ?? '', fromKo.groups?.show !== undefined);
     if (parsed === null) return null;
     if (parsed === 'usage') return { kind: 'usage', language };
     return { kind: 'list', unread: parsed.unread, today: parsed.today, from: parsed.from, language };
@@ -232,6 +252,8 @@ export function parseMailQuestion(text: string): MailQuestion | null {
   const fromEn = FROM_EN.exec(normalized);
   if (fromEn) {
     const sender = (fromEn.groups?.sender ?? '').replace(/^["'“”‘’`]+|["'“”‘’`]+$/gu, '').trim();
+    // `find emails from me please` is about the owner's own mail, never a sender called "me" (review P2-2).
+    if (/^(?:me|myself|my)\b/i.test(sender)) return null;
     if (sender.length === 0 || Array.from(sender).length > MAIL_SENDER_QUERY_MAX_LENGTH || /^(?:me|today|yesterday)$/i.test(sender)) {
       return { kind: 'usage', language };
     }

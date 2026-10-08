@@ -393,6 +393,14 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     }
   });
 
+  it('review P2-2: writing, explaining and time-word requests fall through to normal chat with no mail read', async () => {
+    const h = harness();
+    const phrases = ['사과 메일 알려줘', '정중한 거절 메일 보여줘', '회의 요청 메일 보여줘', '지난 주에 온 메일 찾아줘', '네 메일 보여줘', 'find emails from me please'];
+    for (const text of phrases) expect((await h.send(text)).reply?.text, text).toBe('천만에요!');
+    expect(h.calls.classify).toBe(phrases.length);
+    expect(h.mailCalls).toEqual({ search: 0, get: [] });
+  });
+
   it('in a channel nothing is read and nothing reaches a provider', async () => {
     const h = harness();
     expect((await h.send('안 읽은 메일', CHANNEL)).reply?.text).toBe(renderMailDmOnly('ko'));

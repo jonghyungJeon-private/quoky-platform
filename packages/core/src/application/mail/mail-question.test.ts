@@ -40,6 +40,10 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
     ['김철수한테서 온 메일 찾아줘', '김철수', false, false],
     ['인사팀에서 온 메일 검색해줘', '인사팀', false, false],
     ['GitHub에서 온 메일 보여줘', 'GitHub', false, false],
+    ['김철수가 보낸 메일 보여줘', '김철수', false, false],
+    ['김철수님 메일 알려줘', '김철수', false, false],
+    ['김철수한테서 온 메일 보여줘', '김철수', false, false],
+    ['사과 메일 찾아줘', '사과', false, false],
     ['kim@example.com 메일 찾아줘', 'kim@example.com', false, false],
     ['"Acme Billing" 메일 찾아줘', 'Acme Billing', false, false],
     ['오늘 김철수가 보낸 메일 찾아줘', '김철수', true, false],
@@ -50,7 +54,7 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
     expect(parseMailQuestion(text)).toEqual({ kind: 'list', from, today, unread, language: /[가-힣]/.test(text) ? 'ko' : 'en' });
   });
 
-  it.each(['이 메일 찾아줘', '내 메일 찾아줘', '어제 메일 찾아줘', '모든 메일 찾아줘', '중요한 메일 찾아줘', 'find emails from me'])(
+  it.each(['이 메일 찾아줘', '내 메일 찾아줘', '어제 메일 찾아줘', '모든 메일 찾아줘', '중요한 메일 찾아줘'])(
     'a pronoun or time word is not a sender: %s → usage',
     (text) => {
       expect(parseMailQuestion(text)?.kind).toBe('usage');
@@ -98,6 +102,19 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
   });
 
   it.each([
+    // Review P2-2: writing or explaining requests, time words with particles, second person, "from me".
+    '사과 메일 알려줘',
+    '정중한 거절 메일 보여줘',
+    '비즈니스 메일 알려줘',
+    '회의 요청 메일 보여줘',
+    '영어 메일 좀 보여줘',
+    '첨부파일 있는 메일 보여줘',
+    '지난 주에 온 메일 찾아줘',
+    '이번주에 온 메일 보여줘',
+    '작년에 받은 메일 찾아줘',
+    '네 메일 보여줘',
+    'find emails from me please',
+    'find emails from me',
     '메일 쓰는 법 알려줘',
     '메일 초안 써줘',
     '이 메일 확인해줘',

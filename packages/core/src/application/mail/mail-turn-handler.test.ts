@@ -271,7 +271,24 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
   it('never claims a reminder, a to-do or ordinary chat', async () => {
     const { reader, searches } = fakeReader();
     const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
-    for (const text of ['내일 9시에 메일 확인하라고 알려줘', '30분 뒤에 안 읽은 메일 확인 알려줘', '할 일 추가: 김철수 메일 찾아줘', '메일 쓰는 법 알려줘']) {
+    for (const text of [
+      '내일 9시에 메일 확인하라고 알려줘',
+      '30분 뒤에 안 읽은 메일 확인 알려줘',
+      '할 일 추가: 김철수 메일 찾아줘',
+      '메일 쓰는 법 알려줘',
+      // Review P2-2: writing or explaining requests and time/second-person heads fall through to normal chat.
+      '사과 메일 알려줘',
+      '정중한 거절 메일 보여줘',
+      '비즈니스 메일 알려줘',
+      '회의 요청 메일 보여줘',
+      '영어 메일 좀 보여줘',
+      '첨부파일 있는 메일 보여줘',
+      '지난 주에 온 메일 찾아줘',
+      '이번주에 온 메일 보여줘',
+      '작년에 받은 메일 찾아줘',
+      '네 메일 보여줘',
+      'find emails from me please',
+    ]) {
       expect(await handler.handle(ctx(text)), text).toBeNull();
     }
     expect(searches).toEqual([]);
