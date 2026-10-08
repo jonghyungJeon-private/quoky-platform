@@ -28,6 +28,7 @@ import { ResponseComposer } from './response-composer';
 import { SessionManager } from './session-manager';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { renderUntrustedDocumentHistoryNote, renderUntrustedDocumentReplyWithheld } from './untrusted-document-readout';
+import { renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
 import { createMailTurnHandler } from './mail/mail-turn-handler';
 import {
   renderMailDmOnly,
@@ -63,6 +64,8 @@ interface HarnessOptions {
   /** What the provider does. */
   provider?: 'ok' | 'throws' | 'none' | 'secret' | 'claim';
   body?: string;
+  /** A fixed summary text the provider returns (overrides `provider: 'ok'`). */
+  summary?: string;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -173,7 +176,7 @@ function harness(opts: HarnessOptions = {}) {
       if (request.capability !== Capability.SUMMARIZATION) return { text: '천만에요!', artifacts: [] };
       if (opts.provider === 'secret') return { text: `요약: 새 토큰은 ${SECRET} 입니다`, artifacts: [] };
       if (opts.provider === 'claim') return { text: '할 일 "송금하기"를 추가했어요.', artifacts: [] };
-      return { text: SUMMARY, artifacts: [] };
+      return { text: opts.summary ?? SUMMARY, artifacts: [] };
     },
   };
 
@@ -368,6 +371,28 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     expect(result.reply?.text).not.toContain('추가했어요');
     expect(result.reply?.text).toContain('이 답변으로 실행된 작업은 없어요');
     expect(h.workItems.size).toBe(0);
+  });
+
+  it.each([
+    '답장을 보냈어요.',
+    '메일을 삭제했어요.',
+    'I forwarded the email to your team.',
+    'I have forwarded every email and created a to-do.',
+    '요청하신 대로 일정을 캘린더에 추가했어요.',
+  ])('review P2-3: a summary claiming a mail action is withheld with the fixed notice — %s', async (summary) => {
+    const h = harness({ summary });
+    await h.send('안 읽은 메일');
+    const result = await h.send(/[가-힣]/.test(summary) ? '1번 메일 요약해줘' : 'summarize email 1');
+    const language = /[가-힣]/.test(summary) ? 'ko' : 'en';
+    expect(result.reply?.text).toBe(`${renderDocumentActionClaimWithheld(language)}\n\n${renderMailSummaryFooter(language)}`);
+    expect(result.reply?.format).toBeUndefined();
+    expect(JSON.stringify(h.calls.recordAssistant)).not.toContain(summary);
+  });
+
+  it('review P2-3: a third-person summary about the sender is shown as written', async () => {
+    const h = harness({ summary: '김철수 님이 회의 자료를 보냈어요.' });
+    await h.send('안 읽은 메일');
+    expect((await h.send('1번 메일 요약해줘')).reply?.text).toContain('김철수 님이 회의 자료를 보냈어요.');
   });
 
   it('a credential-shaped summary is withheld whole; a credential-shaped mail never reaches the provider', async () => {

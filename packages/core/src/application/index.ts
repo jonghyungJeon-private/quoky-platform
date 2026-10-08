@@ -182,4 +182,5 @@ export * from './connector-writes';
 export * from './calendar';
 // ADR-0118 mail read (GML-1): the untrusted single-item summary readout and the mail sub-barrel.
 export * from './untrusted-document-readout';
+export * from './document-summary-claim-guard';
 export * from './mail';

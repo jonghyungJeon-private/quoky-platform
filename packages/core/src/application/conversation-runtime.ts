@@ -229,6 +229,7 @@ import {
   renderUntrustedDocumentReplyWithheld,
   type UntrustedDocumentReadout,
 } from './untrusted-document-readout';
+import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
   type CodeGenerationContextResult,
@@ -7757,9 +7758,14 @@ export class ConversationRuntime {
       const withheld = documentSummary
         ? this.withheldDocumentSummaryReply(message, executed.text, executed.artifacts ?? [], task.id)
         : this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
-      const guard = withheld
+      const chatGuard = withheld
         ? null
         : this.guardChatReply(documentSummary ? Capability.GENERAL_CHAT : capability, executed.text, task.description, task.id);
+      // Review P2-3: a document summary also gets the mail-action post-guard ("답장을 보냈어요", "I forwarded the email").
+      const guard =
+        documentSummary && !withheld && chatGuard?.guarded !== true && containsDocumentActionClaim(executed.text)
+          ? this.documentActionClaimWithheld(message, task.id)
+          : chatGuard;
       const result = withheld ? { ...executed, ...withheld } : { ...executed, text: guard?.text ?? executed.text };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
@@ -7870,6 +7876,12 @@ export class ConversationRuntime {
     // Content-free.
     this.deps.logger.info('attachment turn reply withheld', { taskId });
     return { text: renderAttachmentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
+  }
+
+  /** Review P2-3: the fixed notice replacing a summary that claims a mail or Quoky action (content-free log). */
+  private documentActionClaimWithheld(message: InboundMessage, taskId: Id): { readonly text: string; readonly guarded: boolean } {
+    this.deps.logger.info('document summary action claim replaced', { taskId });
+    return { text: renderDocumentActionClaimWithheld(noticeLanguage(undefined, message.text)), guarded: true };
   }
 
   /**
