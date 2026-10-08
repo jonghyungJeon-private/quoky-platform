@@ -93,10 +93,16 @@ export class SlackConnectorStateError extends ConnectorQueryError {
   }
 }
 
-/** What a `conversations.info` lookup said about a channel; `undefined` name = not readable (label "Slack"). */
+/**
+ * What is known about a conversation's type: a public or private `channel`, a `direct` message / group DM, or
+ * `unknown` (no flag and no id prefix settles it). Only a `channel` is ever shown (fail closed).
+ */
+type SlackConversationKind = 'channel' | 'direct' | 'unknown';
+
+/** What a `conversations.info` lookup established (cached only when the lookup succeeded). */
 interface SlackChannelFacts {
+  readonly kind: SlackConversationKind;
   readonly name?: string;
-  readonly direct: boolean;
 }
 
 interface SlackPage {
@@ -191,9 +197,10 @@ export class SlackConnectorProvider implements ConnectorProvider {
    * Named `search` query: GET search.messages. Needs a user token with search:read (a bot token gets INSUFFICIENT_SCOPE).
    *
    * Live QA D3: the user token also sees the owner's direct messages, and a lookup answer is posted into a (possibly
-   * shared) Discord channel. Direct messages and group DMs (`D…` ids, `is_im`, `is_mpim`, `mpdm-` names) are dropped;
-   * only public and private channel results are shown. Each result is labelled `#name`: the name from the match, or —
-   * when the match carries only an id — from a cached `conversations.info` lookup, else the neutral "Slack".
+   * shared) Discord channel. Only results from a conversation established as a public or private channel are shown:
+   * direct messages and group DMs are dropped, and so is any conversation whose type neither the match nor a
+   * `conversations.info` lookup settles (fail closed). Each result is labelled `#name`: the name from the match, or
+   * from the cached lookup, else the neutral "Slack".
    */
   private async search(input: ConnectorQuery): Promise<ConnectorResult> {
     this.assertConnected();
@@ -206,48 +213,61 @@ export class SlackConnectorProvider implements ConnectorProvider {
     const payload = await readSlackPayload(await this.request(url));
     const messages = isRecord(payload.messages) ? payload.messages : undefined;
     if (!messages || !Array.isArray(messages.matches)) throw new SlackConnectorResponseError();
-    const matches = messages.matches.slice(0, limit).filter((match) => !isDirectConversation(channelOf(match)));
-    const unnamed = new Set<string>();
+    const matches = messages.matches.slice(0, limit).filter((match) => conversationKindOf(channelOf(match)) !== 'direct');
+    // An id-only or otherwise unsettled conversation is looked up; whatever stays unknown is omitted (Codex P2).
+    const lookups = new Set<string>();
     for (const match of matches) {
       const channel = channelOf(match);
       const hasTs = isRecord(match) && typeof match.ts === 'string' && match.ts.trim().length > 0;
-      if (channel && hasTs && channelNameOf(channel, this.token) === undefined) unnamed.add(channel.id);
+      if (!channel || !hasTs) continue;
+      if (conversationKindOf(channel) === 'unknown' || channelNameOf(channel, this.token) === undefined) lookups.add(channel.id);
     }
-    await Promise.all([...unnamed].map((channelId) => this.lookupChannel(channelId)));
+    const looked = new Map<string, SlackChannelFacts | undefined>();
+    await Promise.all([...lookups].map(async (channelId) => looked.set(channelId, await this.lookupChannel(channelId))));
     const items = matches
-      .filter((match) => this.channelFacts.get(channelOf(match)?.id ?? '')?.direct !== true)
       .map((match) => {
         const channel = channelOf(match);
-        const name = channel ? (channelNameOf(channel, this.token) ?? this.channelFacts.get(channel.id)?.name) : undefined;
+        if (!channel) return undefined;
+        const facts = looked.get(channel.id);
+        const own = conversationKindOf(channel);
+        const kind = own !== 'unknown' ? own : (facts?.kind ?? 'unknown');
+        if (kind !== 'channel' || facts?.kind === 'direct') return undefined;
+        const name = channelNameOf(channel, this.token) ?? facts?.name;
         return mapSearchMatch(match, this.token, name !== undefined ? `#${name}` : FALLBACK_CONTAINER);
       })
       .filter(isConnectorItem);
     return { source: this.source, items };
   }
 
-  /** `conversations.info` for one channel id, cached; any failure leaves the channel unnamed (never thrown). */
-  private async lookupChannel(channelId: string): Promise<void> {
-    if (this.channelFacts.has(channelId)) return;
-    let facts: SlackChannelFacts = { direct: false };
+  /**
+   * `conversations.info` for one channel id (needs `channels:read` / `groups:read`). A successful answer is cached; a
+   * failure (no scope, Slack unavailable) returns undefined and is retried on a later search — never thrown, never
+   * guessed: the caller then omits a conversation whose type it cannot establish.
+   */
+  private async lookupChannel(channelId: string): Promise<SlackChannelFacts | undefined> {
+    const cached = this.channelFacts.get(channelId);
+    if (cached) return cached;
+    let facts: SlackChannelFacts;
     try {
       const url = new URL('/api/conversations.info', SLACK_API_ORIGIN);
       url.searchParams.set('channel', channelId);
       const payload = await readSlackPayload(await this.request(url));
       const channel = isRecord(payload.channel) ? payload.channel : undefined;
-      if (channel) {
-        const name = typeof channel.name === 'string' ? redactToken(channel.name.trim(), this.token) : '';
-        const direct = isDirectConversation({ ...channel, id: channelId });
-        facts = { direct, ...(name.length > 0 && !SLACK_ID_SHAPE.test(name) && !direct ? { name } : {}) };
-      }
+      if (!channel) return undefined;
+      const kind = conversationKindOf({ ...channel, id: channelId });
+      const name = kind === 'channel' ? channelNameOf(channel, this.token) : undefined;
+      facts = { kind, ...(name !== undefined ? { name } : {}) };
     } catch {
-      // No channels:read / groups:read, or Slack is unavailable: label it "Slack".
+      return undefined;
     }
+    if (facts.kind === 'unknown') return facts;
     this.channelFacts.set(channelId, facts);
     while (this.channelFacts.size > CHANNEL_CACHE_MAX) {
       const oldest = this.channelFacts.keys().next().value;
       if (oldest === undefined) break;
       this.channelFacts.delete(oldest);
     }
+    return facts;
   }
 
   async getItem(input: SlackGetItemInput): Promise<ConnectorItem | undefined> {
@@ -359,11 +379,18 @@ function channelOf(match: unknown): (Record<string, unknown> & { id: string }) |
   return { ...match.channel, id: id.trim() };
 }
 
-/** A direct message or group DM (never shown in a lookup answer). Public and private channels are not. */
-function isDirectConversation(channel: (Record<string, unknown> & { id: string }) | undefined): boolean {
-  if (!channel) return false;
-  if (channel.id.startsWith('D') || channel.is_im === true || channel.is_mpim === true) return true;
-  return typeof channel.name === 'string' && channel.name.startsWith('mpdm-');
+/**
+ * The conversation type a Slack channel object settles: `direct` for a DM or group DM (`D…` id, `is_im`, `is_mpim`,
+ * an `mpdm-` name); `channel` for a `C…` id (public or private channels only) or explicit `is_im: false` and
+ * `is_mpim: false`; otherwise `unknown` (e.g. an id-only `G…`, which may be a legacy private channel or a group DM).
+ */
+function conversationKindOf(channel: (Record<string, unknown> & { id: string }) | undefined): SlackConversationKind {
+  if (!channel) return 'unknown';
+  if (channel.id.startsWith('D') || channel.is_im === true || channel.is_mpim === true) return 'direct';
+  if (typeof channel.name === 'string' && channel.name.startsWith('mpdm-')) return 'direct';
+  if (channel.id.startsWith('C')) return 'channel';
+  if (channel.is_im === false && channel.is_mpim === false) return 'channel';
+  return 'unknown';
 }
 
 /** The channel's own readable name from the match (undefined when absent or only an id, e.g. a DM's user id). */
