@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — LRN-5 learning-example egress realignment (2026-10-08)
+
+ADR-0116 (Ratified 2026-10-08). No migration, no new port or DI token, no deps change; `ConversationRuntimeDeps` stays
+35. ARCHITECTURE.md §5 rule 14 gains the ratified ADR-0116 D5 sentence (separate commit).
+
+- New flag `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED` (exact `true`/`false`, default `false`; effective only with
+  `QUOKY_LEARNING_EXAMPLES_ENABLED=true`). Off: prompts are byte-identical to before. On: curated examples may also be
+  composed for a `REMOTE` chat provider that is the owner's explicit selection (`모델 변경` in the conversation, the
+  operations-UI default, or an explicitly set `QUOKY_CHAT_PROVIDER`), at most 2 per turn. The derived default
+  (`QUOKY_CHAT_PROVIDER` unset, including `QUOKY_OLLAMA_ENABLED=false`) and Claude reached as the selection-time
+  fallback get none. `LOCAL` providers are unchanged.
+- Core: `ProviderPreference.ownerSelectedKey` (optional, opaque) and the optional `ProviderSelector.resolve`, which
+  `CapabilityRouter` implements to return the provider with `OWNER_SELECTED` / `NOT_OWNER_SELECTED` from the same policy
+  answer. The egress rule is one data-driven function, `isCuratedExampleEgressAllowed`
+  (`core/application/feedback/curated-example-egress-policy.ts`), reading the declared locality and that source, never
+  a provider id. Stored learning items stay `LOCAL_ONLY`; the credential guard at capture and at use, the forget
+  cascade and the Stage 2B "no examples" rule are unchanged.
+- Strict gates not run: the `.env.local` flag change on the owner host and the live round trip.
+
 ## Unreleased — UNC-1 connector-write network-fault fixes (2026-10-08)
 
 From the UNC-1 live network-fault UAT (Docker fault proxy, real Slack writer; harness in `tools/uat/netfault/`). No

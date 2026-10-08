@@ -1,11 +1,13 @@
 import { Capability, LEARNING_EGRESS_LOCAL_ONLY, LearningItemKind } from '../../domain';
-import type { CuratedExampleEntry, Id, IsoTimestamp, LearningItem, Task } from '../../domain';
+import type { CuratedExampleEgress, CuratedExampleEntry, Id, IsoTimestamp, LearningItem, Task } from '../../domain';
 import { NoProviderAvailableError } from '../../errors';
 import { executionLocalityOf } from '../../ports';
 import type { LearningRepository, Logger, ProviderSelector } from '../../ports';
 import { now } from '../../util/clock';
 import type { SemanticRecallScoring } from '../recall/semantic-recall-scorer';
 import { scoreSemanticRelevance } from '../semantic-relevance';
+import { LOCAL_ONLY_CURATED_EXAMPLE_EGRESS_POLICY, curatedExampleEgressOf } from './curated-example-egress-policy';
+import type { CuratedExampleEgressPolicy } from './curated-example-egress-policy';
 import { learningItemUsable } from './learning-service';
 
 /**
@@ -17,7 +19,10 @@ import { learningItemUsable } from './learning-service';
  * 2,000-character bound at use (ADR-0107 D1 "again at use"). At most {@link CURATED_EXAMPLE_MAX_PER_TURN} relevant
  * examples are chosen under a fixed {@link CURATED_EXAMPLE_BUDGET_CHARS} budget; an example that does not fit is
  * skipped, never truncated. Selection is not consent to egress: `PromptComposer` layers the result only for a
- * provider that declares `LOCAL` execution (ADR-0107 D6). Every failure degrades to "no examples".
+ * provider that declares `LOCAL` execution (ADR-0107 D6) or, when the composition root's
+ * {@link CuratedExampleEgressPolicy} enables it, a `REMOTE` chat provider that is the owner's explicit selection
+ * (ADR-0116). The policy only sets the entries' use-time egress class; it never widens which items qualify. Every
+ * failure degrades to "no examples".
  */
 
 /** ADR-0107 D5: at most this many examples per turn. */
@@ -46,6 +51,8 @@ export interface CuratedExampleSelectorDeps {
   learning: Pick<LearningRepository, 'list'>;
   /** Optional local semantic scorer (composed only when `QUOKY_EMBEDDING_ENABLED=true`); lexical otherwise. */
   semanticScorer?: SemanticRecallScoring;
+  /** ADR-0116: the egress policy (`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`); absent → `LOCAL_ONLY`, as before. */
+  egressPolicy?: CuratedExampleEgressPolicy;
   logger?: Logger;
   clock?: () => IsoTimestamp;
 }
@@ -81,10 +88,12 @@ const NO_OP_LOGGER: Logger = { info: () => undefined, warn: () => undefined, err
 export class CuratedExampleSelector implements CuratedExampleSource {
   private readonly logger: Logger;
   private readonly clock: () => IsoTimestamp;
+  private readonly egress: CuratedExampleEgress;
 
   constructor(private readonly deps: CuratedExampleSelectorDeps) {
     this.logger = deps.logger ?? NO_OP_LOGGER;
     this.clock = deps.clock ?? now;
+    this.egress = curatedExampleEgressOf(deps.egressPolicy ?? LOCAL_ONLY_CURATED_EXAMPLE_EGRESS_POLICY);
   }
 
   async select(task: Task): Promise<CuratedExampleEntry[]> {
@@ -106,7 +115,7 @@ export class CuratedExampleSelector implements CuratedExampleSource {
     if (!Array.isArray(items)) return [];
 
     const eligible = items.flatMap((item) => {
-      const entry = CuratedExampleSelector.entryOf(item, actorId, at);
+      const entry = CuratedExampleSelector.entryOf(item, actorId, at, this.egress);
       return entry === null ? [] : [{ item, entry }];
     });
     if (eligible.length === 0) return [];
@@ -173,7 +182,12 @@ export class CuratedExampleSelector implements CuratedExampleSource {
   }
 
   /** The prompt entry for `item`, or null when it may not be used for this actor now (ADR-0107 D1/D2/D5). */
-  private static entryOf(item: LearningItem, actorId: Id, at: IsoTimestamp): CuratedExampleEntry | null {
+  private static entryOf(
+    item: LearningItem,
+    actorId: Id,
+    at: IsoTimestamp,
+    egress: CuratedExampleEgress,
+  ): CuratedExampleEntry | null {
     if (typeof item !== 'object' || item === null) return null;
     if (item.kind !== LearningItemKind.EXAMPLE || item.actorId !== actorId) return null;
     if (item.egress !== LEARNING_EGRESS_LOCAL_ONLY) return null;
@@ -187,7 +201,8 @@ export class CuratedExampleSelector implements CuratedExampleSource {
     const entry: CuratedExampleEntry = {
       requestText: data.requestText,
       idealAnswer: data.idealAnswer,
-      egress: LEARNING_EGRESS_LOCAL_ONLY,
+      // Only a stored LOCAL_ONLY item reaches here (checked above); the policy sets the use-time class (ADR-0116).
+      egress,
       provenance: 'OWNER_CURATED_EXAMPLE',
       epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
       learningItemId: item.id,

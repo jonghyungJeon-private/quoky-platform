@@ -1,4 +1,5 @@
 import type { Id, IsoTimestamp, Metadata } from './common';
+import type { CuratedExampleEgress } from './learning';
 import type {
   DurableMemoryAuthorityLevel,
   DurableMemoryKind,
@@ -76,8 +77,11 @@ export interface CuratedExampleEntry {
   requestText: string;
   /** The owner-approved ideal answer. */
   idealAnswer: string;
-  /** ADR-0107 D2: the only egress value in v3. */
-  egress: 'LOCAL_ONLY';
+  /**
+   * ADR-0107 D2 `LOCAL_ONLY`, or — only when the composition root enables ADR-0116 — the use-time class
+   * `LOCAL_OR_OWNER_SELECTED_REMOTE`.
+   */
+  egress: CuratedExampleEgress;
   provenance: 'OWNER_CURATED_EXAMPLE';
   epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE';
   /** The `learning_items` id (audit and tests only; never rendered into a prompt). */

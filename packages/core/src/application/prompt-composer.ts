@@ -1,4 +1,4 @@
-import { Capability, isLearningEgressAllowed } from '../domain';
+import { Capability } from '../domain';
 import type {
   AttachedTextFileEntry,
   ContextBundle,
@@ -10,7 +10,7 @@ import type {
   PromptSpec,
   Task,
 } from '../domain';
-import type { AiExecutionLocality, ProjectReadout } from '../ports';
+import type { AiExecutionLocality, ProjectReadout, ProviderSelectionSource } from '../ports';
 import {
   CHAT_CAPABILITY_HONESTY_RULE,
   CHAT_FORMATTING_RULE,
@@ -24,6 +24,7 @@ import {
   CURATED_EXAMPLE_MAX_PER_TURN,
   curatedExampleChars,
 } from './feedback/curated-example-selector';
+import { isCuratedExampleEgressAllowed } from './feedback/curated-example-egress-policy';
 import { learningTextRefusal } from './feedback/learning-service';
 import {
   EXTERNAL_WORK_READOUT_KIND,
@@ -131,12 +132,15 @@ export function isExternalWorkReadout(readout: ProjectReadout | ExternalWorkRead
 }
 
 /**
- * What the composer knows about the provider resolved for this execution (ADR-0107 D6). Omitted (or a locality other
- * than `LOCAL`) means the `LOCAL_ONLY` example layer is never composed — the prompt is byte-identical to v2.
+ * What the composer knows about the provider resolved for this execution (ADR-0107 D6, ADR-0116 D3). Omitted (or a
+ * locality other than `LOCAL` without an owner selection) means the example layer is never composed — the prompt is
+ * byte-identical to v2. The egress decision itself is `isCuratedExampleEgressAllowed` (feedback policy).
  */
 export interface PromptCompositionOptions {
   /** The resolved provider's declared execution locality (`executionLocalityOf(provider)`); absent → `REMOTE`. */
   executionLocality?: AiExecutionLocality;
+  /** ADR-0116 D3: whether that provider is the owner's explicit selection (`ProviderSelector.resolve`); absent → not. */
+  selectionSource?: ProviderSelectionSource;
 }
 
 /** ADR-0107 D5: heading of the curated-example layer (only present for a `LOCAL` provider with examples). */
@@ -150,10 +154,11 @@ export const CURATED_EXAMPLES_GUIDANCE =
   'state and not part of this conversation; never repeat their content as the answer to the current User message.';
 
 /**
- * The curated examples `PromptComposer.compose` layers for this execution (ADR-0107 D5/D6), in bundle order. Empty
- * unless the resolved provider declares `LOCAL`, the turn is GENERAL_CHAT (never POLICY_SENSITIVE_CHAT, a work summary
- * or another capability) and the bundle carries examples. Each example is re-checked here — `LOCAL_ONLY` egress for
- * this locality, the strict credential guard and bound (ADR-0107 D1 "again at use"), at most
+ * The curated examples `PromptComposer.compose` layers for this execution (ADR-0107 D5/D6, ADR-0116), in bundle order.
+ * Empty unless the turn is GENERAL_CHAT (never POLICY_SENSITIVE_CHAT, a work summary or another capability), the
+ * bundle carries examples and the egress policy admits them for the resolved provider (`LOCAL`, or — for an entry the
+ * ADR-0116 flag marked — a `REMOTE` provider that is the owner's explicit selection). Each example is re-checked here —
+ * its egress class for this target, the strict credential guard and bound (ADR-0107 D1 "again at use"), at most
  * {@link CURATED_EXAMPLE_MAX_PER_TURN} within {@link CURATED_EXAMPLE_BUDGET_CHARS} — so a failing one is dropped,
  * never redacted.
  */
@@ -163,8 +168,7 @@ export function curatedExamplesForPrompt(
   readout?: ProjectReadout | ExternalWorkReadout,
   options?: PromptCompositionOptions,
 ): CuratedExampleEntry[] {
-  const locality = options?.executionLocality;
-  if (locality !== 'LOCAL') return [];
+  const target: PromptCompositionOptions = options ?? {};
   if (readout !== undefined || task.intent.capability !== Capability.GENERAL_CHAT) return [];
   const candidates = context.curatedExamples;
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
@@ -173,7 +177,7 @@ export function curatedExamplesForPrompt(
   for (const example of candidates) {
     if (selected.length >= CURATED_EXAMPLE_MAX_PER_TURN) break;
     if (typeof example !== 'object' || example === null) continue;
-    if (!isLearningEgressAllowed(example.egress, locality)) continue;
+    if (!isCuratedExampleEgressAllowed(example.egress, target)) continue;
     if (example.provenance !== 'OWNER_CURATED_EXAMPLE' || example.epistemicStatus !== 'NON_AUTHORITATIVE_EXAMPLE') {
       continue;
     }
@@ -318,7 +322,8 @@ export class PromptComposer {
       ),
     );
 
-    // ADR-0107 D5/D6: owner-curated examples, only for a provider resolved as LOCAL (otherwise none, byte-identical).
+    // ADR-0107 D5/D6, ADR-0116: owner-curated examples, only where `isCuratedExampleEgressAllowed` admits them for the
+    // resolved provider (otherwise none, byte-identical).
     const curatedExamples = curatedExamplesForPrompt(task, context, readout, options).map((example) =>
       PromptComposer.exampleLabel(
         `Example request: ${normalizePromptContextContent(example.requestText)}\n` +

@@ -23,6 +23,15 @@ export enum LearningItemKind {
 export const LEARNING_EGRESS_LOCAL_ONLY = 'LOCAL_ONLY' as const;
 export type LearningEgress = typeof LEARNING_EGRESS_LOCAL_ONLY;
 
+/**
+ * ADR-0116: the USE-TIME egress class of a curated example entry when `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true`:
+ * a `LOCAL` provider, or a `REMOTE` chat-tier provider that is the owner's explicit selection. It exists only on the
+ * prompt-bound entry (never stored: a stored item stays {@link LEARNING_EGRESS_LOCAL_ONLY}, no migration).
+ */
+export const LEARNING_EXAMPLE_EGRESS_OWNER_SELECTED_REMOTE = 'LOCAL_OR_OWNER_SELECTED_REMOTE' as const;
+/** The egress class a curated example entry carries into composition (ADR-0107 D5, ADR-0116). */
+export type CuratedExampleEgress = LearningEgress | typeof LEARNING_EXAMPLE_EGRESS_OWNER_SELECTED_REMOTE;
+
 /** Where a provider executes (ADR-0107 D6). Absent means `REMOTE` (fail closed). */
 export type LearningExecutionLocality = 'LOCAL' | 'REMOTE';
 

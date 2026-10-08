@@ -11408,6 +11408,11 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     locality?: 'LOCAL' | 'REMOTE' | 'absent';
     capability?: Capability;
     routed?: boolean;
+    /** ADR-0116: the entries' use-time egress class (the flag), and how many the source offers. */
+    egress?: CuratedExampleEntry['egress'];
+    examples?: number;
+    /** ADR-0116 D3: when set, the router also implements `resolve` and reports this selection source. */
+    source?: 'OWNER_SELECTED' | 'NOT_OWNER_SELECTED';
   }) {
     const { storage, runSaves } = makeTaskStorage();
     const capability = opts.capability ?? Capability.GENERAL_CHAT;
@@ -11421,9 +11426,30 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
       } as unknown as MemoryManager,
       {},
       undefined,
-      { async select(task) { sourceCalls.push(task); return [example]; } },
+      {
+        async select(task) {
+          sourceCalls.push(task);
+          const count = opts.examples ?? 1;
+          return Array.from({ length: count }, (_, i) => ({
+            ...example,
+            ...(i === 0 ? {} : { requestText: `${EXAMPLE_REQUEST} ${i + 1}`, idealAnswer: `${EXAMPLE_ANSWER} ${i + 1}` }),
+            learningItemId: `learning-item-${i + 1}`,
+            ...(opts.egress === undefined ? {} : { egress: opts.egress }),
+          }));
+        },
+      },
     );
     const routedRequests: AiRequest[] = [];
+    const provider: AiProvider = {
+      id: 'locality-test-provider',
+      capabilities: [{ capability, priority: 1 }],
+      ...(opts.locality === undefined || opts.locality === 'absent' ? {} : { executionLocality: opts.locality }),
+      async isAvailable() { return true; },
+      async execute(request: AiRequest) {
+        prompts.push(request.prompt);
+        return { text: '요약 형식은 이렇게 해요', artifacts: [], audit: { providerAuditFact: 'kept' } };
+      },
+    };
     const deps: ConversationRuntimeDeps = {
       ...base,
       tasks: new TaskManager(storage),
@@ -11431,20 +11457,10 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
       promptComposer: new PromptComposer(),
       promptRenderer: new PromptRenderer(),
       router: {
-        async select() {
-          return {
-            id: 'locality-test-provider',
-            capabilities: [{ capability, priority: 1 }],
-            ...(opts.locality === undefined || opts.locality === 'absent'
-              ? {}
-              : { executionLocality: opts.locality }),
-            async isAvailable() { return true; },
-            async execute(request: AiRequest) {
-              prompts.push(request.prompt);
-              return { text: '요약 형식은 이렇게 해요', artifacts: [], audit: { providerAuditFact: 'kept' } };
-            },
-          };
-        },
+        async select() { return provider; },
+        ...(opts.source === undefined
+          ? {}
+          : { async resolve() { return { provider, source: opts.source as 'OWNER_SELECTED' | 'NOT_OWNER_SELECTED' }; } }),
       },
       ...(opts.routed
         ? {
@@ -11507,6 +11523,78 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     expect(turn.sourceCalls).toHaveLength(0);
     expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
     expect(turn.prompts[0]).not.toContain('OWNER_CURATED_EXAMPLE');
+  });
+
+  // ADR-0116 (LRN-5): the selection source travels from the router to the composer with the resolved provider.
+  const OWNER_REMOTE = 'LOCAL_OR_OWNER_SELECTED_REMOTE' as const;
+  const withoutTaskIds = (prompt: string | undefined) => (prompt ?? '').replace(/[0-9a-f-]{36}/g, '<id>');
+  const bareTurnPrompt = async (opts: Parameters<typeof exampleTurn>[0]) => {
+    const bare = exampleTurn(opts);
+    bare.deps.contextBuilder = new ContextBuilder(
+      {
+        async recentShortTerm() { return []; },
+        async projectMemory() { return undefined; },
+      } as unknown as MemoryManager,
+    );
+    await new ConversationRuntime(bare.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    return bare.prompts[0];
+  };
+
+  it('ADR-0116 flag on + an explicitly selected REMOTE provider: at most two examples, the count recorded', async () => {
+    const turn = exampleTurn({ locality: 'REMOTE', egress: OWNER_REMOTE, examples: 3, source: 'OWNER_SELECTED' });
+    const result = await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(result.status).toBe('RESPONDED');
+    expect(turn.prompts).toHaveLength(1);
+    expect(turn.prompts[0]).toContain(`## ${CURATED_EXAMPLES_SECTION_TITLE}`);
+    expect(turn.prompts[0]).toContain(EXAMPLE_ANSWER);
+    expect(turn.prompts[0]).toContain(`${EXAMPLE_ANSWER} 2`);
+    expect(turn.prompts[0]).not.toContain(`${EXAMPLE_ANSWER} 3`);
+    expect(turn.prompts[0]?.split('Example request:')).toHaveLength(3);
+    expect(turn.prompts[0]).not.toContain(OWNER_REMOTE);
+    expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept', curatedExampleCount: 2 }]);
+    expect(JSON.stringify(turn.runSaves)).not.toContain(EXAMPLE_ANSWER);
+  });
+
+  it.each([
+    ['the fallback / derived default (NOT_OWNER_SELECTED)', 'NOT_OWNER_SELECTED'],
+    ['a selector without resolve (no source)', undefined],
+  ] as const)(
+    'ADR-0116 flag on + a REMOTE provider reached as %s: no example, request byte-identical to one without examples',
+    async (_label, source) => {
+      const opts = { locality: 'REMOTE', egress: OWNER_REMOTE, examples: 2, ...(source ? { source } : {}) } as const;
+      const turn = exampleTurn(opts);
+      await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+      expect(turn.sourceCalls).toHaveLength(1);
+      expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
+      expect(turn.prompts[0]).not.toContain(CURATED_EXAMPLES_SECTION_TITLE);
+      expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept' }]);
+      expect(withoutTaskIds(turn.prompts[0])).toBe(withoutTaskIds(await bareTurnPrompt(opts)));
+    },
+  );
+
+  it('ADR-0116 flag off (LOCAL_ONLY entries): an OWNER_SELECTED REMOTE provider still gets a byte-identical request', async () => {
+    const opts = { locality: 'REMOTE', examples: 2, source: 'OWNER_SELECTED' } as const;
+    const turn = exampleTurn(opts);
+    await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
+    expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept' }]);
+    expect(withoutTaskIds(turn.prompts[0])).toBe(withoutTaskIds(await bareTurnPrompt(opts)));
+  });
+
+  it('ADR-0116 flag on: a LOCAL provider keeps the ADR-0107 behaviour whatever the source', async () => {
+    for (const source of ['OWNER_SELECTED', 'NOT_OWNER_SELECTED', undefined] as const) {
+      const turn = exampleTurn({ locality: 'LOCAL', egress: OWNER_REMOTE, ...(source ? { source } : {}) });
+      await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+      expect(turn.prompts[0], String(source)).toContain(EXAMPLE_ANSWER);
+    }
+  });
+
+  it('ADR-0116 flag on: the Stage 2B routed seam still gets no examples', async () => {
+    const turn = exampleTurn({ locality: 'REMOTE', egress: OWNER_REMOTE, source: 'OWNER_SELECTED', routed: true });
+    await new ConversationRuntime(turn.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(turn.routedRequests).toHaveLength(1);
+    expect(turn.routedRequests[0]?.prompt).not.toContain(EXAMPLE_ANSWER);
+    expect(turn.prompts).toHaveLength(0);
   });
 
   it('the Stage 2B routed seam gets no examples in v3', async () => {

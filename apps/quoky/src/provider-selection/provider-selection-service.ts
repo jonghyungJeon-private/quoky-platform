@@ -177,6 +177,18 @@ export interface ProviderSelectionServiceDeps {
 }
 
 const CHAT_TIER = new Set<Capability>(CHAT_TIER_CAPABILITIES);
+
+/**
+ * ADR-0116 D2: the selection sources that are the owner's EXPLICIT choice — the session override (`모델 변경`), the
+ * operations-UI default and an explicitly set `QUOKY_CHAT_PROVIDER`. An allow-list: the derived default and any source
+ * added later are not owner selections until they are listed here (fail closed).
+ */
+export const OWNER_SELECTION_SOURCES: ReadonlySet<SelectionSource> = new Set<SelectionSource>(['session', 'persisted', 'env']);
+
+/** Whether an effective selection from `source` is the owner's explicit choice (ADR-0116 D2). */
+export function isOwnerSelectionSource(source: SelectionSource): boolean {
+  return OWNER_SELECTION_SOURCES.has(source);
+}
 const PINNED = new Set<Capability>(CLAUDE_PINNED_CAPABILITIES);
 
 /**
@@ -272,7 +284,11 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   private preferenceFrom(capability: Capability, session: SessionSelection): ProviderPreference | null {
     if (CHAT_TIER.has(capability)) {
       const chat = this.chatFromLayers(session);
-      return { eligible: unique([chat.provider.id, this.deps.catalog.claude.id]), order: 'listed' };
+      // ADR-0116 D2/D3: only an allow-listed source (OWNER_SELECTION_SOURCES) names the owner-selected key. The Claude
+      // fallback entry is never named here, so reaching it only as the selection-time fallback is not an owner
+      // selection either.
+      const owner = isOwnerSelectionSource(chat.source) ? { ownerSelectedKey: chat.provider.id } : {};
+      return { eligible: unique([chat.provider.id, this.deps.catalog.claude.id]), order: 'listed', ...owner };
     }
     if (capability === Capability.IMAGE_UNDERSTANDING) {
       const image = this.imageFromLayers(session);

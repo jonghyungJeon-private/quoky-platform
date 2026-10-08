@@ -95,9 +95,11 @@ export interface QuokyConfig {
    * Owner-curated learning (ADR-0107). `examplesEnabled` (`QUOKY_LEARNING_EXAMPLES_ENABLED`, exact true/false,
    * default false — owner decision 5) gates the LRN-2 curated-example layer only; LRN-1 parses it and no consumer
    * reads it yet. The learning commands themselves are always available: they store text only on an explicit owner
-   * command per item, `LOCAL_ONLY`.
+   * command per item, `LOCAL_ONLY`. `examplesRemoteEnabled` (`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`, exact
+   * true/false, default false — ADR-0116 D1) lets the layer also reach a `REMOTE` chat provider that is the owner's
+   * explicit selection; it has an effect only with `examplesEnabled`.
    */
-  learning: { examplesEnabled: boolean };
+  learning: { examplesEnabled: boolean; examplesRemoteEnabled: boolean };
   /**
    * ADR-0106 amendment: `archiveDays` (`QUOKY_MEMORY_ARCHIVE_DAYS`, integer 0–365, default 7) is how long a forgotten
    * memory stays restorable in the archive before the daily maintenance deletes it; `0` deletes at once.
@@ -251,6 +253,7 @@ export const QuokyConfigErrorCode = {
   EMBEDDING_MODEL_CLOUD_REFUSED: 'EMBEDDING_MODEL_CLOUD_REFUSED',
   EMBEDDING_TIMEOUT_INVALID: 'EMBEDDING_TIMEOUT_INVALID',
   LEARNING_EXAMPLES_ENABLED_INVALID: 'LEARNING_EXAMPLES_ENABLED_INVALID',
+  LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID: 'LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID',
   MEMORY_ARCHIVE_DAYS_INVALID: 'MEMORY_ARCHIVE_DAYS_INVALID',
   ...ReminderConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
@@ -538,6 +541,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
         env.QUOKY_LEARNING_EXAMPLES_ENABLED,
         false,
         QuokyConfigErrorCode.LEARNING_EXAMPLES_ENABLED_INVALID,
+      ),
+      examplesRemoteEnabled: parseExactBoolean(
+        env.QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED,
+        false,
+        QuokyConfigErrorCode.LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID,
       ),
     },
     memory: { archiveDays: parseMemoryArchiveDays(env.QUOKY_MEMORY_ARCHIVE_DAYS) },

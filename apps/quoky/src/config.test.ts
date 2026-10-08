@@ -785,7 +785,8 @@ describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
     expect(cfg.reminders).toEqual({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul' });
     expect(cfg.embedding).toEqual({ enabled: false, model: 'nomic-embed-text', timeoutMs: 3000, maxNewPerTurn: 4 });
     // ADR-0107 D5 / owner decision 5: curated examples stay off until LRN-2 is measured.
-    expect(cfg.learning).toEqual({ examplesEnabled: false });
+    // ADR-0116 D1: the owner-selected REMOTE egress of examples is off by default too.
+    expect(cfg.learning).toEqual({ examplesEnabled: false, examplesRemoteEnabled: false });
   });
 
   it('accepts exact true/false for every new flag', () => {
@@ -798,9 +799,11 @@ describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
         QUOKY_GIT_REMOTE_ENABLED: 'true',
         QUOKY_GIT_MERGE_ENABLED: 'true',
         QUOKY_LEARNING_EXAMPLES_ENABLED: 'true',
+        QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED: 'true',
       }),
     );
     expect(cfg.learning.examplesEnabled).toBe(true);
+    expect(cfg.learning.examplesRemoteEnabled).toBe(true);
     expect(cfg.work.summaryEnabled).toBe(false);
     expect(cfg.reminders.enabled).toBe(true);
     expect(cfg.reminders.channelDelivery).toBe(true);
@@ -815,6 +818,7 @@ describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
     ['QUOKY_EMBEDDING_ENABLED', 'EMBEDDING_ENABLED_INVALID'],
     ['QUOKY_GIT_MERGE_ENABLED', 'GIT_MERGE_ENABLED_INVALID'],
     ['QUOKY_LEARNING_EXAMPLES_ENABLED', 'LEARNING_EXAMPLES_ENABLED_INVALID'],
+    ['QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED', 'LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID'],
   ])('%s rejects non-exact booleans with %s and never echoes the value', (variable, code) => {
     for (const value of ['', 'TRUE', '1', 'yes', ' false', 'SECRETVALUE']) {
       let caught: unknown;

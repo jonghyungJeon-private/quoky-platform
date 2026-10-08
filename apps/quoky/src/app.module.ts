@@ -101,7 +101,7 @@ import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
-import { createProductionContextBuilder } from './context-builder-provider';
+import { createProductionContextBuilder, curatedExampleOptionsOf } from './context-builder-provider';
 import { logImageUnderstandingSelection, visionModelsOf } from './image-understanding-provider';
 import { isCliPresent } from './provider-selection/cli-presence';
 import { ProviderCatalog } from './provider-selection/provider-catalog';
@@ -534,7 +534,8 @@ const application: Provider[] = [
     provide: ContextBuilder,
     // ADR-0098 D8: semantic recall is composed only when embeddings are enabled; otherwise recall stays lexical.
     // ADR-0107 D5 (LRN-2): the curated-example layer is composed only when QUOKY_LEARNING_EXAMPLES_ENABLED=true
-    // (default false); PromptComposer still layers examples only for a provider that declares LOCAL execution.
+    // (default false); PromptComposer still layers examples only for a provider that declares LOCAL execution, or —
+    // ADR-0116, QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true (default false) — a REMOTE one the owner explicitly selected.
     useFactory: (
       memory: MemoryManager,
       storage: StorageProvider,
@@ -555,7 +556,7 @@ const application: Provider[] = [
               logger: new ConsoleLogger('recall'),
             }
           : undefined,
-        config.learning.examplesEnabled ? { learning, logger: new ConsoleLogger('learning-examples') } : undefined,
+        curatedExampleOptionsOf(config, learning, new ConsoleLogger('learning-examples')),
       ),
     inject: [MemoryManager, STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER, LEARNING_REPOSITORY],
   },

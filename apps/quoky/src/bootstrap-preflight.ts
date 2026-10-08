@@ -77,6 +77,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_EMBEDDING_TIMEOUT_MS must be unset or an integer from 100 to 30000.',
   [QuokyConfigErrorCode.LEARNING_EXAMPLES_ENABLED_INVALID]:
     'QUOKY_LEARNING_EXAMPLES_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID]:
+    'QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.CONNECTOR_WRITES_ENABLED_INVALID]:
     'QUOKY_CONNECTOR_WRITES_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.CALENDAR_WRITE_ENABLED_INVALID]: 'QUOKY_CALENDAR_WRITE_ENABLED must be unset, "true", or "false".',

@@ -1604,6 +1604,90 @@ describe('PromptComposer — curated examples (ADR-0107 D5/D6)', () => {
       CURATED_EXAMPLE_BUDGET_CHARS,
     );
   });
+
+  // ADR-0116 (LRN-5): examples may reach a REMOTE chat provider only when the entry carries the flag-gated class AND
+  // the resolved provider is the owner's explicit selection.
+  describe('owner-selected REMOTE egress (ADR-0116)', () => {
+    const OWNER_REMOTE = 'LOCAL_OR_OWNER_SELECTED_REMOTE' as const;
+    const remoteExample = (n: number, over: Partial<CuratedExampleEntry> = {}) => example(n, { egress: OWNER_REMOTE, ...over });
+    const ownerRemote = { executionLocality: 'REMOTE', selectionSource: 'OWNER_SELECTED' } as const;
+
+    it('flag off (LOCAL_ONLY entries): a REMOTE prompt is byte-identical to today for every selection source', () => {
+      const v2 = composer.compose(chat(), emptyBundle());
+      const bundle = withExamples(example(1), example(2));
+      for (const selectionSource of ['OWNER_SELECTED', 'NOT_OWNER_SELECTED', undefined] as const) {
+        for (const executionLocality of ['REMOTE', undefined] as const) {
+          const options = {
+            ...(executionLocality === undefined ? {} : { executionLocality }),
+            ...(selectionSource === undefined ? {} : { selectionSource }),
+          };
+          expect(composer.compose(chat(), bundle, undefined, options)).toEqual(v2);
+          expect(curatedExamplesForPrompt(chat(), bundle, undefined, options)).toEqual([]);
+        }
+      }
+      // LOCAL keeps the ADR-0107 behaviour whatever the source.
+      const local = composer.compose(chat(), bundle, undefined, { executionLocality: 'LOCAL' });
+      expect(composer.compose(chat(), bundle, undefined, { executionLocality: 'LOCAL', selectionSource: 'OWNER_SELECTED' }))
+        .toEqual(local);
+    });
+
+    it('flag on + an explicitly selected REMOTE provider: at most two examples, framed exactly as for LOCAL', () => {
+      const bundle = withExamples(remoteExample(1), remoteExample(2), remoteExample(3));
+      const spec = composer.compose(chat(), bundle, undefined, ownerRemote);
+      expect(curatedExamplesForPrompt(chat(), bundle, undefined, ownerRemote)).toHaveLength(2);
+      expect(sectionBody(spec.context, CURATED_EXAMPLES_SECTION_TITLE)).toBe(
+        [CURATED_EXAMPLES_GUIDANCE, exampleEnvelope(remoteExample(1)), exampleEnvelope(remoteExample(2))].join('\n'),
+      );
+      expect(spec.context).not.toContain('회의록 요약해줘 3');
+      // Same layer, same place, same text as the LOCAL composition of the same examples.
+      const localSpec = composer.compose(chat(), withExamples(example(1), example(2), example(3)), undefined, {
+        executionLocality: 'LOCAL',
+      });
+      expect(spec).toEqual(localSpec);
+      // The egress class and the item id are never rendered.
+      expect(JSON.stringify(spec)).not.toContain(OWNER_REMOTE);
+      expect(JSON.stringify(spec)).not.toContain('item-1');
+    });
+
+    it('flag on + Claude reached only as the fallback or as the derived default (NOT_OWNER_SELECTED / absent): none', () => {
+      const v2 = composer.compose(chat(), emptyBundle());
+      const bundle = withExamples(remoteExample(1), remoteExample(2));
+      for (const options of [
+        { executionLocality: 'REMOTE', selectionSource: 'NOT_OWNER_SELECTED' },
+        { executionLocality: 'REMOTE' },
+        {},
+      ] as const) {
+        expect(composer.compose(chat(), bundle, undefined, options)).toEqual(v2);
+      }
+      // LOCAL still receives them: the flag never narrows the ADR-0107 rule.
+      expect(curatedExamplesForPrompt(chat(), bundle, undefined, { executionLocality: 'LOCAL' })).toHaveLength(2);
+    });
+
+    it('flag on: the capability gate, the credential guard at use and the budget still apply on REMOTE', () => {
+      const token = ['ghp', '_', 'A'.repeat(36)].join('');
+      expect(learningTextHasCredential(token)).toBe(true);
+      const bundle = withExamples(
+        remoteExample(1, { requestText: `토큰 ${token} 확인해줘` }),
+        remoteExample(2, { idealAnswer: FILE_SECRET }),
+        remoteExample(3, { egress: 'ANYWHERE' as unknown as typeof OWNER_REMOTE }),
+        remoteExample(4),
+      );
+      const spec = composer.compose(chat(), bundle, undefined, ownerRemote);
+      const text = JSON.stringify(spec);
+      expect(text).not.toContain(token);
+      expect(text).not.toContain('Sup3rS3cret');
+      expect(text).not.toContain('[REDACTED');
+      expect(sectionBody(spec.context, CURATED_EXAMPLES_SECTION_TITLE)).toBe(
+        [CURATED_EXAMPLES_GUIDANCE, exampleEnvelope(remoteExample(4))].join('\n'),
+      );
+      for (const capability of [Capability.POLICY_SENSITIVE_CHAT, Capability.SUMMARIZATION, Capability.CODE_IMPLEMENTATION]) {
+        const task = mkTask(capability);
+        expect(composer.compose(task, withExamples(remoteExample(4)), undefined, ownerRemote)).toEqual(
+          composer.compose(task, emptyBundle()),
+        );
+      }
+    });
+  });
 });
 
 describe('PromptComposer — files attached to the current User message (ADR-0111 D3)', () => {
