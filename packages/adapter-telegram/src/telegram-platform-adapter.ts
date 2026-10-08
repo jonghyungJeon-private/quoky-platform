@@ -205,7 +205,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   /** Why the Telegram side stopped on its own (identity, token or conflict found while running); Discord runs on. */
   private halted?: TelegramStartupErrorCode;
   /** CA P3-4: the owner notices already sent in this poll session (at most one per kind). */
-  private readonly noticesSent = new Set<'stale' | 'no-text'>();
+  private readonly noticesSent = new Set<`${string}:${'stale' | 'no-text'}`>();
   /** When the last non-empty batch arrived (or polling started), for the 24 h silence reset. */
   private lastUpdateAtMs = 0;
   /** The current `getUpdates` batch size (halved after an oversized response, reset after a success). */
@@ -498,7 +498,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 
   /** Admit, hand over or count each update in order; `false` stops polling (the identity gate closed). */
   private async handleBatch(updates: readonly unknown[], signal: AbortSignal): Promise<boolean> {
-    const ownerDrops: { stale: number; noText: number; chatId?: string } = { stale: 0, noText: 0 };
+    /** Owner drops per owner chat (CA re-review P3-1: each owner is told about their own messages only). */
+    const ownerDrops = new Map<string, { stale: number; noText: number }>();
     for (const update of updates) {
       const updateId = updateIdOf(update);
       // Already handed over or dropped (a repeated entry): never processed twice.
@@ -516,31 +517,32 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       }
       this.dropped[admission.reason] += 1;
       if (admission.ownerChatId !== undefined) {
-        ownerDrops.chatId ??= admission.ownerChatId;
-        if (admission.reason === 'stale') ownerDrops.stale += 1;
-        if (admission.reason === 'no-text') ownerDrops.noText += 1;
+        const drops = ownerDrops.get(admission.ownerChatId) ?? { stale: 0, noText: 0 };
+        ownerDrops.set(admission.ownerChatId, drops);
+        if (admission.reason === 'stale') drops.stale += 1;
+        if (admission.reason === 'no-text') drops.noText += 1;
       }
       if (updateId !== undefined) this.offset = updateId + 1;
     }
     this.persistOffset();
-    if (ownerDrops.chatId !== undefined) this.noticeOwnerDrops(ownerDrops.chatId, ownerDrops, signal);
+    for (const [chatId, drops] of ownerDrops) this.noticeOwnerDrops(chatId, drops, signal);
     return true;
   }
 
   /**
-   * CA P3-4: one fixed notice per kind per poll session to the OWNER's own private chat when their messages were not
+   * CA P3-4: one fixed notice per (owner chat, kind) per poll session to that OWNER's own private chat when their messages were not
    * processed (old messages after downtime; messages with no text). Nothing for anyone else; no content echoed.
    */
   private noticeOwnerDrops(chatId: string, drops: { readonly stale: number; readonly noText: number }, signal: AbortSignal): void {
     const notices: Array<{ kind: 'stale' | 'no-text'; text: string }> = [];
-    if (drops.stale > 0 && !this.noticesSent.has('stale')) {
+    if (drops.stale > 0 && !this.noticesSent.has(`${chatId}:stale`)) {
       notices.push({ kind: 'stale', text: staleNotice(drops.stale) });
     }
-    if (drops.noText > 0 && !this.noticesSent.has('no-text')) {
+    if (drops.noText > 0 && !this.noticesSent.has(`${chatId}:no-text`)) {
       notices.push({ kind: 'no-text', text: ATTACHMENT_UNSUPPORTED_NOTICE });
     }
     for (const notice of notices) {
-      this.noticesSent.add(notice.kind);
+      this.noticesSent.add(`${chatId}:${notice.kind}`);
       void (async () => {
         // ADR-0102 D5: no adapter-side effect before the startup identity gate opens.
         if (!(await this.inboundGateOpen(signal)) || this.ownerChatOf({ platform: TELEGRAM_PLATFORM, channelId: chatId, userId: chatId }) === undefined) return;

@@ -233,6 +233,32 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     await h.adapter.stop();
   });
 
+  it('CA re-review P3-1: with two owners, each is told only about their own messages, once per kind', async () => {
+    const SECOND = 5_550_002;
+    const old = Math.floor(Date.now() / 1000) - 3600;
+    const fake = new FakeTelegram().queue(
+      'getUpdates',
+      okReply([
+        textUpdate(110, 'a', { date: old }),
+        textUpdate(111, 'b', { date: old }),
+        textUpdate(112, 'c', { from: SECOND, date: old }),
+      ]),
+      okReply([textUpdate(113, 'd', { date: old }), textUpdate(114, 'e', { from: SECOND, date: old })]),
+    );
+    const h = harness(fake, { ownerIds: [String(OWNER_ID), String(SECOND)] });
+    await h.adapter.start();
+    await until(() => getUpdatesOffsets(fake).includes(115));
+    await flush();
+    const sends = fake.callsTo('sendMessage').map((call) => `${String(call.params.chat_id)}|${String(call.params.text)}`);
+    expect(sends.sort()).toEqual(
+      [
+        `${OWNER_ID}|꺼져 있던 동안 받은 메시지 2개는 처리하지 않았어요. 필요하면 다시 보내 주세요.`,
+        `${SECOND}|꺼져 있던 동안 받은 메시지 1개는 처리하지 않았어요. 필요하면 다시 보내 주세요.`,
+      ].sort(),
+    );
+    await h.adapter.stop();
+  });
+
   it('CA P3-4: no notice is sent while the identity gate is closed', async () => {
     const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(98, 'old', { date: Math.floor(Date.now() / 1000) - 3600 })]));
     const h = harness(fake);
