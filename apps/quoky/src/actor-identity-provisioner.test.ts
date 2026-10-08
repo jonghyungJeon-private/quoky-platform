@@ -193,4 +193,36 @@ describe('ActorIdentityProvisioner — ADR-0114 D3 platform identity links (Tele
     await expect(linked(repository, [link(TELEGRAM, '111')]).provision()).rejects.toThrow('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram');
     expect(repository.saveCount).toBe(0);
   });
+
+  it('CA P3-2: links and mappings are preflighted together; a later mapping conflict writes nothing (no partial apply)', async () => {
+    const repository = new FakeActorRepository([
+      actor('owner-actor', '111'),
+      actor('other-actor', '222', [{ platform: 'jira', externalId: 'jira-owner' }]),
+    ]);
+    const conflicting = new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, [mapping('111', { jira: 'jira-owner' })], new RecordingLogger(), [link(TELEGRAM, '111')]);
+    await expect(conflicting.provision()).rejects.toThrow('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT');
+    expect(repository.saveCount).toBe(0);
+    expect(await repository.findByExternalIdentity('telegram', TELEGRAM)).toBeNull();
+  });
+
+  it('CA P3-2: on a fresh install a mapping for the linked Discord owner applies on the same start, in one write', async () => {
+    const repository = new FakeActorRepository([]);
+    await new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, [mapping('111', { jira: 'jira-owner' })], new RecordingLogger(), [link(TELEGRAM, '111')]).provision();
+    expect(repository.saveCount).toBe(1);
+    const [owner] = [...repository.values.values()];
+    expect(owner?.identities).toEqual([
+      { platform: 'discord', externalId: '111' },
+      { platform: 'telegram', externalId: TELEGRAM },
+      { platform: 'jira', externalId: 'jira-owner' },
+    ]);
+  });
+
+  it('CA P3-2: the Telegram identity conflict is a configuration failure (exit 78) with an unlink hint', async () => {
+    const { describeStartupFailure } = await import('./bootstrap-preflight');
+    const { startupExitCode, QuokyExitCode } = await import('./ops/exit-codes');
+    const failure = describeStartupFailure(new Error('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram'));
+    expect(failure.message).toBe('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram');
+    expect(failure.hint).toContain('QUOKY_TELEGRAM_OWNER_ACTOR_MAP');
+    expect(startupExitCode(failure)).toBe(QuokyExitCode.CONFIGURATION);
+  });
 });

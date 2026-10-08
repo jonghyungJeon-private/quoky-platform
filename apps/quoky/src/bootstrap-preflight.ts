@@ -162,6 +162,15 @@ const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>>
     'Another process polls this Telegram bot, or a webhook is set on it (HTTP 409). Stop the other instance, or remove the webhook with the Bot API deleteWebhook method, then restart.',
 };
 
+/**
+ * ADR-0114 D3 (CA P3-2): the Telegram owner id is already linked to ANOTHER Actor than the mapped Discord owner's. A
+ * configuration conflict: relaunching cannot help. The unlink procedure is in DECISIONS.md (ADR-0114 implementation
+ * note) and is a Strict, backed-up DB edit.
+ */
+export const TELEGRAM_IDENTITY_CONFLICT = 'ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram';
+const TELEGRAM_IDENTITY_CONFLICT_HINT =
+  'The Telegram owner id in QUOKY_TELEGRAM_OWNER_ACTOR_MAP is already linked to another Quoky owner (Actor) than the Discord owner it maps to. Point the map back at that Discord owner, or unlink the Telegram identity from the other Actor (a Strict, owner-approved database edit after a verified backup; see the ADR-0114 implementation note in DECISIONS.md), then restart.';
+
 function telegramStartupCode(err: unknown, message: string): TelegramStartupErrorCode | undefined {
   const code = errorCode(err);
   return Object.values(TelegramStartupErrorCode).find((known) => known === code || known === message);
@@ -192,6 +201,7 @@ export function describeStartupFailure(err: unknown): StartupFailureReport {
 
   const configCode = configErrorCode(err, message);
   if (configCode !== undefined) return { message: configCode, hint: CONFIG_ERROR_HINTS[configCode] };
+  if (message === TELEGRAM_IDENTITY_CONFLICT) return { message, hint: TELEGRAM_IDENTITY_CONFLICT_HINT };
   const telegramCode = telegramStartupCode(err, message);
   if (telegramCode !== undefined) return { message: telegramCode, hint: TELEGRAM_STARTUP_HINTS[telegramCode] };
 

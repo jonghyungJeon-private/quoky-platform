@@ -1,5 +1,5 @@
 import { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
-import type { StartupFailureReport } from '../bootstrap-preflight';
+import { TELEGRAM_IDENTITY_CONFLICT, type StartupFailureReport } from '../bootstrap-preflight';
 import { QuokyConfigErrorCode } from '../config';
 import { ContinuationReceiverActivationErrorCode } from '../continuation/continuation-receiver-activation';
 import { ProviderRoutingActivationErrorCode } from '../provider-routing/provider-routing-activation';
@@ -36,6 +36,8 @@ const CONFIGURATION_FAILURES: ReadonlySet<string> = new Set<string>([
   TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH,
   TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED,
   TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT,
+  // ADR-0114 D3 (CA P3-2): the Telegram owner id is linked to another Actor; the owner must fix the map or unlink it.
+  TELEGRAM_IDENTITY_CONFLICT,
   ProviderRoutingActivationErrorCode.INVALID_MODE,
   ContinuationReceiverActivationErrorCode.INVALID_MODE,
   ContinuationReceiverActivationErrorCode.CONTAINMENT_UNAVAILABLE,
