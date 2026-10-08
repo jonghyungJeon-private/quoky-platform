@@ -169,6 +169,10 @@ async function fixture(options: { sessionActor?: Id; kind?: 'commit' | 'plan' | 
     const grant = { approvalRequestId: approval.id, state: 'PENDING', path: 'src/a.ts', targetIndex: 0 };
     const anchor = { status: 'PENDING', grants: [grant] } as unknown as CredentialOverrideAnchor;
     credentialOverrideFlow = {
+      async peekPending() {
+        if (f.override.state !== 'PENDING') return null;
+        return manager.get(approval.id);
+      },
       async findPending(): Promise<CredentialOverrideLookup | null> {
         if (f.override.state !== 'PENDING') return null;
         const current = (await manager.get(approval.id))!;
@@ -429,6 +433,30 @@ describe('ApprovalDecisionService — chat and the operations UI share one decis
     expect(rejected).toMatchObject({ status: 'DECIDED', outcome: 'REJECTED', kind: 'PLAN' });
     if (rejected.status === 'DECIDED') expect(rejected.reply.text).toBe(chatTurn.reply.text);
     expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.REJECTED);
+  });
+
+  it('the list resolution names each pending approval with the same kind locate gives (live QA D7)', async () => {
+    const commit = await fixture();
+    const kinds = await commit.service.pendingGateKindsForOpsUi(sessionsOf(commit));
+    expect([...kinds]).toEqual([[commit.approvalId, 'COMMIT']]);
+    const located = await commit.service.locateForOpsUi(commit.approvalId, OWNER, sessionsOf(commit));
+    expect(located.status === 'FOUND' && located.view.kind).toBe(kinds.get(commit.approvalId));
+    const plan = await fixture({ kind: 'plan' });
+    expect([...(await plan.service.pendingGateKindsForOpsUi(sessionsOf(plan)))]).toEqual([[plan.approvalId, 'PLAN']]);
+    expect(commit.decides).toBe(0);
+  });
+
+  it('the list and page lookups never reconcile: a drifted anchor reads as nothing pending and stays put (ADR-0113 D4)', async () => {
+    const f = await fixture();
+    const live = (await f.store.sessions.get(SESSION_ID))!;
+    await f.store.sessions.save({ ...live, activeProjectId: 'another-project' });
+    const pointer = (await f.store.sessions.get(SESSION_ID))!.activeTaskId;
+    expect((await f.service.pendingGateKindsForOpsUi(sessionsOf(f))).size).toBe(0);
+    expect(await f.service.locateForOpsUi(f.approvalId, OWNER, sessionsOf(f))).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
+    // findAnchor would have cleared the stale anchor; the read-only lookups left the pointer where it was.
+    expect((await f.store.sessions.get(SESSION_ID))!.activeTaskId).toBe(pointer);
+    expect(pointer).toBeDefined();
+    expect(f.decides).toBe(0);
   });
 
   it('locate shows metadata only and refuses an unknown id', async () => {

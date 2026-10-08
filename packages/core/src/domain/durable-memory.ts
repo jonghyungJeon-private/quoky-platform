@@ -95,10 +95,18 @@ export interface MemoryRetrievalRequest {
   readonly excludeIds: readonly Id[];
 }
 
+/** How a recalled memory was ranked this turn (ADR-0098 D8): by the semantic scorer, or lexically only. */
+export type MemoryRetrievalMode = 'lexical' | 'semantic';
+
 export interface RetrievedMemoryInput {
   memory: DurableMemory;
   relevanceScore: number;
+  /** Human-readable diagnostics only; never parsed (decisions read the structured fields below). */
   retrievalReason: string;
+  /** Absent on records retrieved before the field existed (treated as unknown). */
+  retrievalMode?: MemoryRetrievalMode;
+  /** The raw semantic score in [0, 1]; present exactly when `retrievalMode` is `semantic`. */
+  semanticScore?: number;
 }
 
 export interface RetrievedMemory extends RetrievedMemoryInput {}
@@ -301,5 +309,13 @@ export function createRetrievedMemory(input: RetrievedMemoryInput): RetrievedMem
     throw new DurableMemoryValidationError('relevanceScore must be between 0 and 1');
   }
   requireText(input.retrievalReason, 'retrievalReason');
+  if (input.semanticScore !== undefined) {
+    if (input.retrievalMode !== 'semantic') {
+      throw new DurableMemoryValidationError('semanticScore requires retrievalMode semantic');
+    }
+    if (!Number.isFinite(input.semanticScore) || input.semanticScore < 0 || input.semanticScore > 1) {
+      throw new DurableMemoryValidationError('semanticScore must be between 0 and 1');
+    }
+  }
   return Object.freeze({ ...input });
 }

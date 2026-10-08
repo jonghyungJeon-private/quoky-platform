@@ -5,6 +5,7 @@ import type {
   InboundAttachment,
   InboundMessage,
   InboundTextAttachment,
+  NotReadAttachmentReason,
 } from '../domain';
 import type { NoticeLanguage } from './chat-policy/internal-action-vocabulary';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
@@ -146,6 +147,21 @@ export function prepareAttachedTextFiles(
   return { files: prepared, droppedCount };
 }
 
+const NOT_READ_REASONS: ReadonlySet<string> = new Set<NotReadAttachmentReason>([
+  'UNSUPPORTED_TYPE',
+  'TOO_LARGE',
+  'TOO_MANY',
+  'CREDENTIAL_SHAPED',
+  'NOT_UTF8_TEXT',
+  'INVALID_IMAGE',
+  'DOWNLOAD_FAILED',
+  'CORE_RECHECK',
+]);
+
+function isNotReadReason(value: unknown): value is NotReadAttachmentReason {
+  return typeof value === 'string' && NOT_READ_REASONS.has(value);
+}
+
 /**
  * The current message's text attachments for a chat/work prompt (images are not part of this; MM-2 routes them).
  * `notReadCount` counts every non-image attachment that is not in `textFiles`: refused by the adapter or dropped by
@@ -161,7 +177,13 @@ export function currentTurnAttachmentsOf(message: InboundMessage): CurrentTurnAt
   const prepared = prepareAttachedTextFiles(texts);
   const notReadCount = refused.length + prepared.droppedCount;
   if (prepared.files.length === 0 && notReadCount === 0) return undefined;
-  return { textFiles: prepared.files, notReadCount };
+  const notReadReasons: NotReadAttachmentReason[] = [
+    ...refused.map((attachment): NotReadAttachmentReason =>
+      attachment.kind === 'unsupported' && isNotReadReason(attachment.reason) ? attachment.reason : 'CORE_RECHECK',
+    ),
+    ...Array.from({ length: prepared.droppedCount }, (): NotReadAttachmentReason => 'CORE_RECHECK'),
+  ];
+  return { textFiles: prepared.files, notReadCount, ...(notReadCount > 0 ? { notReadReasons } : {}) };
 }
 
 /**
@@ -356,7 +378,15 @@ export function renderAttachmentReplyWithheld(language: NoticeLanguage): string 
  * (ADR-0111 D2/D3): the adapter already named each refused file and why; no provider runs, so no model answers as if
  * it had seen a file it never got. A message WITH text runs normally, and its prompt says the attachment was not read.
  */
-export function renderAttachmentsNotRead(language: NoticeLanguage): string {
+export function renderAttachmentsNotRead(language: NoticeLanguage, reasons?: readonly NotReadAttachmentReason[]): string {
+  // Every refused file was a supported image with corrupt data: say so, instead of pointing at text files.
+  if (reasons !== undefined && reasons.length > 0 && reasons.every((reason) => reason === 'INVALID_IMAGE')) {
+    return language === 'en'
+      ? 'I could not open the attached image: its data is corrupt or malformed, so I cannot answer about it. It was ' +
+          'not sent anywhere. PNG, JPEG and WebP images are supported; please send a valid copy.'
+      : '첨부한 이미지가 손상됐거나 형식이 올바르지 않아 열지 못했기 때문에 그 내용에 대해서는 답할 수 없어요. ' +
+          '파일은 어디로도 보내지 않았어요. PNG·JPEG·WebP 이미지는 지원하니 정상적인 파일로 다시 보내 주세요.';
+  }
   if (language === 'en') {
     return (
       'I did not read the attached file, so I cannot answer about its content. It was not sent anywhere. ' +

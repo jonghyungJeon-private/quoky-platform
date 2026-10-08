@@ -31,7 +31,8 @@ import {
   normalizeExecutionPhrase,
   type ExecutionGate,
 } from '../execution-command-guard';
-import { toZonedDateTime, zonedToUtc } from '../reminders/zoned-time';
+import { calendarWindowForDays } from '../../ports/calendar-window';
+import { localDateOf, toZonedDateTime, zonedToUtc, type LocalDate } from '../reminders/zoned-time';
 import {
   CONNECTOR_WRITE_ISSUE_KEY,
   connectorWriteFamilyOf,
@@ -164,6 +165,12 @@ export type ConnectorWritePreview =
     }
   | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly before: ConnectorWriteEventSummary; readonly timeZone: string };
 
+/** Where an undated reference's candidates came from ({@link ConnectorWriteStep} `choice.basis`). */
+export type ConnectorWriteChoiceBasis = 'listed' | 'written' | 'nearby';
+
+/** How many days the no-context choice of an undated reference covers (today and tomorrow). */
+export const CONNECTOR_WRITE_NEARBY_DAYS = 2;
+
 /** The pending numbered choice of an update or delete (next turn only). */
 export interface ConnectorWriteChoice {
   readonly mode: 'update' | 'delete';
@@ -251,6 +258,8 @@ export type ConnectorWriteRefusal =
   | 'transition-unavailable'
   | 'transition-lookup-failed'
   | 'event-not-found'
+  /** An undated reference with no recent calendar context and nothing on the calendar today or tomorrow. */
+  | 'no-nearby-events'
   | 'event-unversioned'
   | 'too-many-events'
   | 'calendar-read-failed'
@@ -288,6 +297,12 @@ export type ConnectorWriteStep =
       readonly mode: 'update' | 'delete';
       readonly candidates: readonly ConnectorWriteEventSummary[];
       readonly timeZone: string;
+      /**
+       * Why these candidates, when the owner named no day (live QA D2): `listed` = from the list this session last
+       * showed, `written` = the event this session just created or changed, `nearby` = no such context, so today's and
+       * tomorrow's events. Absent = the events of the day the owner named.
+       */
+      readonly basis?: ConnectorWriteChoiceBasis;
     }
   | {
       readonly kind: 'already-sent';
@@ -374,6 +389,12 @@ export interface ConnectorWriteFlow {
   /** Whether a writer is bound for the draft's family (false → writes are off for it). */
   supports(draft: ConnectorWriteDraft): boolean;
   find(session: Session, held?: SessionLockHold): Promise<ConnectorWriteAnchorView | null>;
+  /**
+   * Strictly read-only `find` (ADR-0113 D4): the open anchor and, behind `APPROVAL_PENDING`, its approval while it is
+   * still PENDING (else null). Unlike `find` it never closes an anchor whose approval was decided elsewhere — that
+   * state is legitimate mid-transition (approved, `recordApproval` not yet run). For the operations UI.
+   */
+  peek?(session: Session): Promise<ConnectorWriteAnchorView | null>;
   /**
    * An execution phrase in a conversation with no approved write of `operation`: this actor's APPROVED, unexecuted,
    * unlapsed write of that kind waiting in ANOTHER active conversation (the newest), or null. Read-only and only a
@@ -674,6 +695,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return { taskId: task.id, anchor, approval };
   }
 
+  async peek(session: Session): Promise<ConnectorWriteAnchorView | null> {
+    const found = await this.openAnchorOf(session);
+    if (!found) return null;
+    const { task, anchor } = found;
+    const approval =
+      anchor.status === 'APPROVAL_PENDING' && anchor.approvalId ? await this.deps.approvals.get(anchor.approvalId) : null;
+    return { taskId: task.id, anchor, approval: approval?.status === ApprovalStatus.PENDING ? approval : null };
+  }
+
   async approvedElsewhere(
     session: Session,
     actorId: Id,
@@ -942,6 +972,36 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         if (changes && changes.moveTo === undefined && changes.title === undefined && changes.location === undefined) {
           return refused('no-change');
         }
+        const mode = draft.kind === 'calendar-update' ? 'update' : 'delete';
+        const vagueRef = draft.ref.startTime === undefined && draft.ref.titleWords.length === 0;
+        if (draft.ref.inferredDay === true) {
+          // No day named (live QA D2): the session's most recent calendar context, never today's events by default.
+          // Whatever it yields is always a numbered choice — an event the owner did not reference is never targeted.
+          let contextual: { basis: ConnectorWriteChoiceBasis; candidates: ConnectorWriteEventSummary[] } | null;
+          try {
+            contextual = await this.contextualCandidates(input, draft.ref);
+          } catch {
+            return refused('calendar-read-failed');
+          }
+          if (contextual && contextual.candidates.length > CONNECTOR_WRITE_MAX_CHOICES) return refused('too-many-events');
+          if (contextual) {
+            return this.offerChoice(
+              input,
+              { mode, reference: draft.ref, candidates: contextual.candidates, ...(changes ? { changes } : {}) },
+              contextual.basis,
+            );
+          }
+          // No context: today and tomorrow, filtered by the time of day and title words the owner gave (Codex P2:
+          // "9시 회의 취소해줘" finds tomorrow's 09:00 meeting too), still as a numbered choice.
+          let nearby: ConnectorWriteEventSummary[];
+          try {
+            nearby = await this.nearbyCandidates(input.now, draft.ref);
+          } catch {
+            return refused('calendar-read-failed');
+          }
+          if (nearby.length === 0) return refused(vagueRef ? 'no-nearby-events' : 'event-not-found');
+          return this.offerChoice(input, { mode, reference: draft.ref, candidates: nearby, ...(changes ? { changes } : {}) }, 'nearby');
+        }
         let events: readonly CalendarEvent[];
         try {
           events = await this.readDay(draft.ref);
@@ -951,11 +1011,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         const candidates = matchReference(events, draft.ref, this.deps.timeZone).map(summaryOf);
         if (candidates.length === 0) return refused('event-not-found');
         if (candidates.length > CONNECTOR_WRITE_MAX_CHOICES) return refused('too-many-events');
-        const mode = draft.kind === 'calendar-update' ? 'update' : 'delete';
-        // Never guess: several matches, or a reference with neither a start time nor a title (a whole day), is a
-        // numbered choice even with one candidate.
-        const vague = draft.ref.startTime === undefined && draft.ref.titleWords.length === 0;
-        if (candidates.length > 1 || vague) {
+        // Never guess: several matches, a reference with neither a start time nor a title (a whole day), or a day the
+        // owner did not name, is a numbered choice even with one candidate.
+        if (candidates.length > 1 || vagueRef || draft.ref.inferredDay === true) {
           return this.offerChoice(input, {
             mode,
             reference: draft.ref,
@@ -1270,7 +1328,94 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return this.reconciled;
   }
 
-  private async readDay(ref: CalendarEventReference): Promise<readonly CalendarEvent[]> {
+  private readDay(ref: CalendarEventReference): Promise<readonly CalendarEvent[]> {
+    return this.readWindow(ref.window);
+  }
+
+  /**
+   * The candidates of an undated reference from the session's most recent calendar context (live QA D2): the event
+   * this session just created or changed (its SENT anchor, within the ADR-0093 lifetime) or the list the calendar
+   * handler last showed here (`ref.recentListing`, likewise bounded), whichever is newer; an older context is tried
+   * when the newer one has no event left. Each is re-read live and filtered by the reference's time of day and title
+   * words. Null when no context yields an event.
+   */
+  private async contextualCandidates(
+    input: FlowInput,
+    ref: CalendarEventReference,
+  ): Promise<{ basis: ConnectorWriteChoiceBasis; candidates: ConnectorWriteEventSummary[] } | null> {
+    const nowMs = Date.parse(input.now);
+    const fresh = (at: string): boolean => {
+      const ms = Date.parse(at);
+      return Number.isFinite(ms) && Number.isFinite(nowMs) && nowMs - ms >= 0 && nowMs - ms < PENDING_APPROVAL_TTL_MS;
+    };
+    const contexts: Array<{ basis: ConnectorWriteChoiceBasis; at: string; window: { from: IsoTimestamp; to: IsoTimestamp }; ids: readonly string[] }> = [];
+    const listing = ref.recentListing;
+    if (listing && listing.eventIds.length > 0 && fresh(listing.at)) {
+      contexts.push({ basis: 'listed', at: listing.at, window: listing.window, ids: listing.eventIds });
+    }
+    const written = await this.recentCalendarWrite(input);
+    if (written && fresh(written.at)) contexts.push({ basis: 'written', ...written, ids: [written.eventId] });
+    contexts.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    for (const context of contexts) {
+      const events = await this.readWindow(context.window);
+      const byId = new Map(events.map((event) => [event.id, event]));
+      const candidates = context.ids
+        .map((id) => byId.get(id))
+        .filter((event): event is CalendarEvent => event !== undefined)
+        .filter((event) => matchesTimeAndTitle(event, ref, this.deps.timeZone))
+        .map(summaryOf);
+      if (candidates.length > 0) return { basis: context.basis, candidates };
+    }
+    return null;
+  }
+
+  /** The event this session's newest SENT create / update anchor wrote, and the day window it is on. */
+  private async recentCalendarWrite(
+    input: FlowInput,
+  ): Promise<{ at: string; eventId: string; window: { from: IsoTimestamp; to: IsoTimestamp } } | null> {
+    const tasks = await this.deps.store.tasks.listByContext(input.session.context.channelId, input.session.context.threadId);
+    let best: { at: string; eventId: string; window: { from: IsoTimestamp; to: IsoTimestamp } } | null = null;
+    for (const task of tasks) {
+      if (task.planId) continue;
+      const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+      if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== input.session.id || anchor.actorId !== input.actor.id) continue;
+      if (anchor.status !== 'SENT' || anchor.outcome?.status !== 'SENT' || !anchor.preview) continue;
+      let eventId: string | undefined;
+      let time: CalendarEventTime | undefined;
+      if (anchor.preview.operation === 'CALENDAR_EVENT_CREATE') {
+        eventId = anchor.outcome.externalRef;
+        time = anchor.preview.event.time;
+      } else if (anchor.preview.operation === 'CALENDAR_EVENT_UPDATE' && anchor.payload?.operation === 'CALENDAR_EVENT_UPDATE') {
+        eventId = anchor.payload.eventId;
+        time = anchor.preview.after.time;
+      }
+      if (!eventId || !time) continue;
+      const day = localDayOf(time, this.deps.timeZone);
+      if (!day) continue;
+      if (best && anchor.updatedAt <= best.at) continue;
+      const window = calendarWindowForDays(day, 1, this.deps.timeZone);
+      best = { at: anchor.updatedAt, eventId, window: { from: window.from, to: window.to } };
+    }
+    return best;
+  }
+
+  /**
+   * Today's and tomorrow's events matching the reference's time of day and title words (start order, at most
+   * {@link CONNECTOR_WRITE_MAX_CHOICES}) for an undated choice.
+   */
+  private async nearbyCandidates(now: IsoTimestamp, ref: CalendarEventReference): Promise<ConnectorWriteEventSummary[]> {
+    const today = localDateOf(Date.parse(now), this.deps.timeZone);
+    const window = calendarWindowForDays(today, CONNECTOR_WRITE_NEARBY_DAYS, this.deps.timeZone);
+    const events = await this.readWindow({ from: window.from, to: window.to });
+    return events
+      .filter((event) => matchesTimeAndTitle(event, ref, this.deps.timeZone))
+      .map((event) => ({ event, startMs: eventStartMs(event, this.deps.timeZone) }))
+      .sort((a, b) => a.startMs - b.startMs)
+      .slice(0, CONNECTOR_WRITE_MAX_CHOICES)
+      .map(({ event }) => summaryOf(event));
+  }
+
+  private async readWindow(window: { readonly from: IsoTimestamp; readonly to: IsoTimestamp }): Promise<readonly CalendarEvent[]> {
     const reader = this.deps.calendarReader;
     if (!reader) throw new Error('no calendar reader');
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1279,7 +1424,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     });
     try {
       return await Promise.race([
-        reader.listEvents({ from: ref.window.from, to: ref.window.to, limit: CALENDAR_EVENTS_MAX_LIMIT }),
+        reader.listEvents({ from: window.from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT }),
         timeout,
       ]);
     } finally {
@@ -1325,7 +1470,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     );
   }
 
-  private async offerChoice(input: FlowInput, choice: ConnectorWriteChoice): Promise<ConnectorWriteStep> {
+  private async offerChoice(input: FlowInput, choice: ConnectorWriteChoice, basis?: ConnectorWriteChoiceBasis): Promise<ConnectorWriteStep> {
     const previous = await this.displacedPointer(input.session);
     const anchor: ConnectorWriteAnchor = {
       kind: CONNECTOR_WRITE_ANCHOR_KIND,
@@ -1339,7 +1484,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       ...(previous ? { previousActiveTaskId: previous } : {}),
     };
     await this.createAnchor(input.session, anchor, input.now, input.held);
-    return { kind: 'choice', mode: choice.mode, candidates: choice.candidates, timeZone: this.deps.timeZone };
+    return { kind: 'choice', mode: choice.mode, candidates: choice.candidates, timeZone: this.deps.timeZone, ...(basis ? { basis } : {}) };
   }
 
   /** Dedup against a SENT receipt, then the CRITICAL approval and the anchor. */
@@ -1661,6 +1806,41 @@ function matchReference(events: readonly CalendarEvent[], ref: CalendarEventRefe
     const title = event.title.toLowerCase();
     return ref.titleWords.every((word) => title.includes(word));
   });
+}
+
+/** An undated reference's time of day (any date) and every title word; no time and no words match any event. */
+function matchesTimeAndTitle(event: CalendarEvent, ref: CalendarEventReference, timeZone: string): boolean {
+  if (typeof event.id !== 'string' || event.id.length === 0) return false;
+  if (ref.startTime !== undefined) {
+    if (event.allDay) return false;
+    const start = Date.parse(event.start);
+    if (!Number.isFinite(start)) return false;
+    const local = toZonedDateTime(start, timeZone);
+    if (local.hour !== ref.startTime.hour || local.minute !== ref.startTime.minute) return false;
+  }
+  const title = event.title.toLowerCase();
+  return ref.titleWords.every((word) => title.includes(word));
+}
+
+/** The local day an event time starts on, or undefined when unreadable. */
+function localDayOf(time: CalendarEventTime, timeZone: string): LocalDate | undefined {
+  if (time.allDay) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(time.startDate);
+    return match ? { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) } : undefined;
+  }
+  const start = Date.parse(time.start);
+  return Number.isFinite(start) ? localDateOf(start, time.timeZone || timeZone) : undefined;
+}
+
+/** Sort key: the start instant (local midnight of the start date for an all-day event). */
+function eventStartMs(event: CalendarEvent, timeZone: string): number {
+  if (event.allDay) {
+    const day = localDayOf({ allDay: true, startDate: event.start, endDate: event.end }, timeZone);
+    if (!day) return Number.MAX_SAFE_INTEGER;
+    return zonedToUtc({ ...day, hour: 0, minute: 0 }, timeZone).epochMs;
+  }
+  const ms = Date.parse(event.start);
+  return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
 }
 
 /** The exact `CalendarEventChanges` for an update and the "after" view, or a refusal. */

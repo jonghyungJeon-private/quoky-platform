@@ -65,6 +65,34 @@ describe('calendar write grammar (ADR-0110 amendment D3, CWR-2)', () => {
     }
   });
 
+  it.each([
+    ['금요일 오후 3시에 QA 스윕 회의 잡아줘', 'QA 스윕 회의'],
+    ['내일 오후 2시에 주간 플랫폼 회의 넣어줘', '주간 플랫폼 회의'],
+    ['내일 3시에 고객사 미팅을 잡아줘', '고객사 미팅'],
+    ['내일 오전 10시에 팀 회의 일정 추가해줘', '팀 회의'],
+    ['내일 3시에 2시간짜리 설계 리뷰 회의 잡아줘', '설계 리뷰 회의'],
+    ['내일 3시에 회의 좀 잡아줘', '회의'],
+    // The time phrase after the noun: no phrase between time and verb → the meeting noun, as before.
+    ['QA 회의 내일 3시에 잡아줘', '회의'],
+    // A quoted title and an explicit 제목 field still win over the phrase.
+    ['내일 3시에 "설계 리뷰" 회의 잡아줘', '설계 리뷰'],
+    ['내일 3시에 QA 회의 잡아줘 제목 주간 회의', '주간 회의'],
+  ])('create title (live QA D10): "%s" → "%s"', (text, title) => {
+    expect(parse(text)).toMatchObject({ kind: 'calendar-create', event: { title } });
+  });
+
+  it('a change or delete that names no day is marked inferredDay (live QA D2); a named day is not', () => {
+    expect(parse('일정 취소해줘')).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: [] } });
+    expect(parse('회의 취소해줘')).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true } });
+    expect(parse('5시 일정 삭제해줘')).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, startTime: { hour: 17, minute: 0 } } });
+    expect(parse('회의 4시로 옮겨줘')).toMatchObject({ kind: 'calendar-update', ref: { inferredDay: true } });
+    for (const text of ['오늘 회의 취소해줘', '내일 일정 취소해줘', '금요일 3시 회의 삭제해줘', '10월 9일 회의 취소해줘']) {
+      const draft = parse(text);
+      expect(draft.kind, text).toBe('calendar-delete');
+      expect(draft.kind === 'calendar-delete' && draft.ref.inferredDay, text).toBeUndefined();
+    }
+  });
+
   it('never throws', () => {
     for (const text of ['', '   ', '내일', '\u0000', '가'.repeat(5000)]) expect(() => parse(text)).not.toThrow();
   });

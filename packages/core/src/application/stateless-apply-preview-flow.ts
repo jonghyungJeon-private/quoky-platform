@@ -45,6 +45,12 @@ export class StatelessApplyPreviewFlow implements ApplyPreviewFlow {
     return { task, anchor };
   }
 
+  async peekAnchor(session: Session): Promise<ApplyPreviewAnchor | null> {
+    const found = await this.anchorTask(session);
+    if (!found || found.anchor.projectId !== session.activeProjectId) return null;
+    return found.anchor;
+  }
+
   async findAnchor(session: Session, held?: SessionLockHold): Promise<ApplyPreviewAnchor | null> {
     const found = await this.anchorTask(session);
     if (!found) return null;

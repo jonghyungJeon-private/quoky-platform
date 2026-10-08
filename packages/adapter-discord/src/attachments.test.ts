@@ -591,10 +591,14 @@ describe('AttachmentIntake — images are validated and canonicalized before any
     ['a valid PNG with credential text appended', Buffer.concat([pngImage(), SECRET]), 'TRAILING_BYTES'],
   ])('refuses %s as INVALID_IMAGE and writes nothing', async (_label, body, imageCheck) => {
     const result = await intakeOne(body, 'x.png', 'application/octet-stream');
-    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' });
+    // A supported type with corrupt bytes keeps its own reason end to end (Codex P3 on the QA3 fixes).
+    expect(result.attachments[0]).toMatchObject({ kind: 'unsupported', reason: 'INVALID_IMAGE' });
     expect(result.diagnostics[0]).toMatchObject({ detail: 'INVALID_IMAGE', imageCheck, attempts: 2 });
     expect(await filesIn(tempRoot)).toEqual([]);
     expect(JSON.stringify(result)).not.toContain('SYNTHETIC');
+    const note = renderAttachmentIntakeNote(result.attachments) ?? '';
+    expect(note).toContain('손상됐거나 형식이 올바르지 않아');
+    expect(note).not.toContain('지원하지 않는 형식이에요');
   });
 
   it('writes only the canonical image: the sips-like sRGB + eXIf PNG is taken in with eXIf and text chunks dropped', async () => {

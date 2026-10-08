@@ -3,7 +3,10 @@ import path from 'node:path';
 
 import {
   AiProviderManager,
+  CHANNEL_MESSAGE_WRITER,
   CONNECTOR_PROVIDERS,
+  ISSUE_COMMENT_WRITER,
+  ISSUE_TRANSITION_WRITER,
   ConversationRuntime,
   FeedbackRecorder,
   MemoryCommandService,
@@ -35,6 +38,7 @@ import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
 import { OpsUiActions } from './actions/ops-actions';
+import { APPROVAL_KIND_LABEL } from './approval-kind-label';
 import { OpsProviderSelectionActions } from './actions/provider-selection-actions';
 import { ProviderSelectionService } from '../provider-selection/provider-selection-service';
 import type { SelectionSource } from '../provider-selection/selection-choices';
@@ -102,6 +106,8 @@ export interface OpsUiWiringInput {
     readonly imageUnderstanding?: QuokyConfig['imageUnderstanding'];
     /** The chat-provider selection (ADR-0092 amendment) shown on the provider panel; absent in offline tests. */
     readonly ai?: { readonly chat: Pick<QuokyConfig['ai']['chat'], 'provider' | 'source'> };
+    /** The connector-write allow-lists (counts only) for the connectors panel's 쓰기 column; absent in offline tests. */
+    readonly connectorWrites?: Pick<QuokyConfig['connectorWrites'], 'jiraProjects' | 'slack'>;
   };
   readonly ops: Pick<OpsRuntime, 'backupStatus'>;
   /** ADR-0102 D4: whether `main.ts` took the single-instance lock (a file-backed database). */
@@ -222,6 +228,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
   const connectors = optional<readonly ConnectorProvider[]>(app, CONNECTOR_PROVIDERS) ?? [];
   const feedback = app.get<FeedbackRecorder>(FeedbackRecorder);
   const selection = optional<ProviderSelectionService>(app, ProviderSelectionService);
+  const approvalDecisions = approvalHandling(app)?.decisions;
   const cwd = input.cwd ?? process.cwd();
   const dbPath = config.storage.dbPath;
   const fileBacked = dbPath !== '' && dbPath !== ':memory:';
@@ -265,8 +272,19 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
         return reminderRepository.listActiveByActor(actorId);
       },
     },
-    approvals: { list: () => storage.approvals.list() },
+    approvals: {
+      list: () => storage.approvals.list(),
+      ...(approvalDecisions === undefined
+        ? {}
+        : {
+            kindLabels: async () => {
+              const kinds = await approvalDecisions.pendingGateKindsForOpsUi(() => openSessionsWithFocus(storage));
+              return new Map([...kinds].map(([id, kind]) => [id, APPROVAL_KIND_LABEL[kind]]));
+            },
+          }),
+    },
     connectors,
+    ...(config.connectorWrites === undefined ? {} : { connectorWrites: connectorWriteStates(app, config.connectorWrites) }),
     errors: errorRing,
     feedback: { summarize: (actorId) => feedback.summarize(actorId), trend: (actorId) => feedback.trend(actorId) },
     backup: () => input.ops.backupStatus(),
@@ -277,6 +295,23 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       approvals: approvalHandling(app) !== undefined,
       providerSelection: selection !== undefined,
     },
+  };
+}
+
+/**
+ * Live QA D6: the effective v3 write state of the Jira and Slack connectors — a writer bound in the container (built
+ * only with the switch on, a non-empty allow-list and complete credentials) and its allow-list size (a count only).
+ */
+function connectorWriteStates(
+  app: OpsUiContainer,
+  writes: Pick<QuokyConfig['connectorWrites'], 'jiraProjects' | 'slack'>,
+): NonNullable<OpsSnapshotSources['connectorWrites']> {
+  const jiraBound =
+    optional(app, ISSUE_COMMENT_WRITER) !== undefined || optional(app, ISSUE_TRANSITION_WRITER) !== undefined;
+  const slackBound = optional(app, CHANNEL_MESSAGE_WRITER) !== undefined;
+  return {
+    jira: jiraBound ? { enabled: true, allowListCount: writes.jiraProjects.length, allowListUnit: '프로젝트' } : { enabled: false },
+    slack: slackBound ? { enabled: true, allowListCount: writes.slack?.channels.length ?? 0, allowListUnit: '채널' } : { enabled: false },
   };
 }
 

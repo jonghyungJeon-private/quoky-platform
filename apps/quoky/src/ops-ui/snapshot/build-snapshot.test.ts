@@ -394,6 +394,26 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(operationKind({ executionPlanRef: { id: 'p', goal: 'g', integrity: { kind: 'Free text kind!', contractVersion: '1', digest: 'd' } } })).toBe('미지정');
   });
 
+  it('approvals: the kind column uses the same kind label as the confirmation page when supplied (live QA D7)', async () => {
+    const base = fixture();
+    const view = await new OpsSnapshotBuilder({
+      ...base,
+      approvals: {
+        list: base.approvals.list,
+        kindLabels: async () => new Map([['appr-aaaaaaaa-1111', '커넥터 쓰기']]),
+      },
+    }).build();
+    const rows = panelOf(view, 'approvals').table?.rows ?? [];
+    expect(rows.find((row) => row[0] === 'appr-aaa')?.[2]).toBe('커넥터 쓰기');
+    // An approval the resolution does not know keeps the integrity kind fallback.
+    expect(rows.find((row) => row[0] === 'appr-ddd')?.[2]).toBe('profile-application');
+    const failing = await new OpsSnapshotBuilder({
+      ...base,
+      approvals: { list: base.approvals.list, kindLabels: async () => { throw new Error('lookup failed'); } },
+    }).build();
+    expect(panelOf(failing, 'approvals').state).toBe('OK');
+  });
+
   it('connectors: configured flags and a probe outcome, unconfigured known sources listed', async () => {
     const view = await new OpsSnapshotBuilder(
       fixture({
@@ -420,6 +440,31 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(JSON.stringify(rows)).not.toContain('atlassian');
   });
 
+  it('connectors: the 쓰기 column shows the effective v3 write switch with its allow-list size (live QA D6)', async () => {
+    const view = await new OpsSnapshotBuilder(
+      fixture({
+        connectors: [
+          { source: 'jira', readOnly: true, isAvailable: async () => true },
+          { source: 'slack', readOnly: true, isAvailable: async () => true },
+          { source: 'confluence', readOnly: true, isAvailable: async () => true },
+        ],
+        connectorWrites: {
+          jira: { enabled: true, allowListCount: 2, allowListUnit: '프로젝트' },
+          slack: { enabled: true, allowListCount: 1, allowListUnit: '채널' },
+          github: { enabled: false },
+        },
+      }),
+    ).build();
+    const panel = panelOf(view, 'connectors');
+    expect((panel.table?.rows ?? []).map((r) => [r[0], r[3]])).toEqual([
+      ['jira', '예 (승인 후 · 허용 프로젝트 2개)'],
+      ['slack', '예 (승인 후 · 허용 채널 1개)'],
+      ['confluence', '아니요'],
+      ['github', '아니요'],
+    ]);
+    expect(panel.notes.join(' ')).toContain('QUOKY_CONNECTOR_WRITES_ENABLED');
+  });
+
   it('recent errors: codes and categories only, newest first', async () => {
     const view = await new OpsSnapshotBuilder(fixture()).build();
     const rows = panelOf(view, 'errors').table?.rows ?? [];
@@ -437,6 +482,28 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(field(view, 'feedback', '참고 신호')).toBe('3');
     expect(panelOf(view, 'feedback').table?.rows).toEqual([['일반 대화', '12', '5', '2', '3']]);
     expect(panelOf(view, 'feedback').notes[0]).toContain('일반 대화: 17% (👎 2/12) · 이전 40% (👎 4/10) · 개선');
+  });
+
+  it('feedback: every row has its own label, never two "기타" rows (live QA D8)', async () => {
+    const view = await new OpsSnapshotBuilder(
+      fixture({
+        feedback: {
+          summarize: async () => ({
+            ...SUMMARY,
+            byCapability: [
+              { key: null, turns: 4, positive: 0, negative: 0, implicit: 0 },
+              { key: Capability.IMAGE_UNDERSTANDING, turns: 2, positive: 1, negative: 0, implicit: 0 },
+              { key: Capability.DOCUMENT_ANALYSIS, turns: 1, positive: 0, negative: 1, implicit: 0 },
+            ],
+          }),
+        },
+      }),
+    ).build();
+    expect((panelOf(view, 'feedback').table?.rows ?? []).map((row) => row[0])).toEqual([
+      '명령·바로 답한 대화',
+      '이미지 이해',
+      '문서 분석',
+    ]);
   });
 
   it('backup: the SUB-2 status, file names only', async () => {

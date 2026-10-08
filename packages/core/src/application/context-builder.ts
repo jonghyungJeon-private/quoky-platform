@@ -265,6 +265,8 @@ export class ContextBuilder {
               memory,
               relevanceScore: candidate.relevanceScore,
               retrievalReason: candidate.retrievalReason,
+              ...(candidate.retrievalMode !== undefined ? { retrievalMode: candidate.retrievalMode } : {}),
+              ...(candidate.semanticScore !== undefined ? { semanticScore: candidate.semanticScore } : {}),
             }),
           ];
         } catch {
@@ -344,6 +346,8 @@ export class ContextBuilder {
       epistemicStatus: 'NON_AUTHORITATIVE_BACKGROUND',
       relevanceScore: candidate.relevanceScore,
       retrievalReason: candidate.retrievalReason,
+      ...(candidate.retrievalMode !== undefined ? { retrievalMode: candidate.retrievalMode } : {}),
+      ...(candidate.semanticScore !== undefined ? { semanticScore: candidate.semanticScore } : {}),
       source: {
         memoryId: candidate.memory.id,
         kind: candidate.memory.kind,

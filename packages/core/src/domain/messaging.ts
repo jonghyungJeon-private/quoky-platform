@@ -45,6 +45,8 @@ export type InboundAttachmentUnsupportedReason =
   | 'CREDENTIAL_SHAPED'
   /** Declared as text but not valid UTF-8 text. */
   | 'NOT_UTF8_TEXT'
+  /** A png/jpeg/webp image (a supported type) whose bytes failed structural validation: corrupt or malformed. */
+  | 'INVALID_IMAGE'
   /** Not fetched from the platform's own CDN, or the transfer failed. */
   | 'DOWNLOAD_FAILED';
 

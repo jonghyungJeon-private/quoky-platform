@@ -38,6 +38,24 @@ export interface CalendarEventReference {
   readonly startTime?: ConnectorWriteClockTime;
   /** Lower-cased words that must all appear in the event title (empty = any title). */
   readonly titleWords: readonly string[];
+  /**
+   * The owner named no day: `date` / `window` are today only because the grammar defaults to it (live QA D2). The flow
+   * then resolves the reference against the session's most recent calendar context (the event just created or changed,
+   * or the last list shown) and, with none, asks which event over today and tomorrow — never today's events alone.
+   */
+  readonly inferredDay?: true;
+  /** The calendar list this session last showed (attached by the calendar handler only when `inferredDay`). */
+  readonly recentListing?: CalendarRecentListing;
+}
+
+/**
+ * A calendar list the calendar handler showed in this session (event ids in list order, the `[from, to)` it read),
+ * kept for at most the ADR-0093 lifetime. Plain data: the flow re-reads the window and keeps only events still there.
+ */
+export interface CalendarRecentListing {
+  readonly at: IsoTimestamp;
+  readonly window: { readonly from: IsoTimestamp; readonly to: IsoTimestamp };
+  readonly eventIds: readonly string[];
 }
 
 /** What a calendar update changes. A time move keeps the event's duration; `date` absent = the same day. */

@@ -625,7 +625,8 @@ export class AttachmentIntake {
       });
     }
     if (!canonical.ok) {
-      return refuse('UNSUPPORTED_TYPE', {
+      // A supported type whose bytes are corrupt or malformed: its own reason, end to end (Codex P3 on the QA3 fixes).
+      return refuse('INVALID_IMAGE', {
         ...downloadFacts(download),
         detail: 'INVALID_IMAGE',
         downloaded: download.bytes,
@@ -829,6 +830,7 @@ const REASON_COPY: Readonly<Record<InboundAttachmentUnsupportedReason, string>> 
   TOO_MANY: '한 메시지의 첨부는 3개까지만 읽어요.',
   CREDENTIAL_SHAPED: '비밀번호·토큰 같은 자격 증명으로 보이는 내용이 있어 읽지 않고 버렸어요.',
   NOT_UTF8_TEXT: 'UTF-8 텍스트로 읽을 수 없는 파일이에요.',
+  INVALID_IMAGE: '이미지 파일이 손상됐거나 형식이 올바르지 않아 열 수 없었어요. PNG·JPEG·WebP는 지원하니 정상적인 파일로 다시 보내 주세요.',
   DOWNLOAD_FAILED: '파일을 내려받지 못했어요.',
 };
 

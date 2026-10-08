@@ -592,6 +592,11 @@ export interface CredentialOverrideDispatchAuthorization {
 export interface CredentialOverrideFlow {
   /** Reconstruct the session's override anchor (restart-safe; invalidates and releases a no-longer-valid set). */
   findPending(session: Session, held?: SessionLockHold): Promise<CredentialOverrideLookup | null>;
+  /**
+   * Strictly read-only (ADR-0113 D4): the PENDING approval the session's override set awaits, or null. Never
+   * invalidates, saves or releases anything (an invalid or drifted set is simply none). For the operations UI.
+   */
+  peekPending?(session: Session): Promise<ApprovalRequest | null>;
   /** Create the CRITICAL ApprovalRequest via `requestForRisk` and anchor (or extend) the request's grant set. */
   requestOverride(
     session: Session,

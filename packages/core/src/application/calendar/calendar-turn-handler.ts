@@ -7,10 +7,14 @@ import type {
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { CALENDAR_EVENTS_MAX_LIMIT, type CalendarEvent, type CalendarReader } from '../../ports/calendar-reader.port';
 import { isConnectorQueryError } from '../../ports/connector-query';
+import type { Id } from '../../domain';
+import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
+import type { CalendarRecentListing, ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage } from './calendar-question';
 import { parseCalendarWriteRequest } from './calendar-write-request';
 import {
+  calendarListedEventIds,
   renderCalendarEvents,
   renderCalendarHistoryNote,
   renderCalendarInvalidDate,
@@ -27,6 +31,8 @@ export const CALENDAR_TURN_HANDLER_ID = 'calendar';
 export const CALENDAR_TURN_HANDLER_ORDER = 150;
 /** The whole read (every configured calendar and page) must finish within this bound. */
 export const CALENDAR_READ_TIMEOUT_MS = 30_000;
+/** At most this many sessions' last calendar list are kept in memory (the oldest is dropped first). */
+export const CALENDAR_RECENT_LISTINGS_MAX = 256;
 
 /** The contributed help line (ADR-0096 D6; one line under the composer's 120-character bound, quoted phrases route here). */
 export const CALENDAR_HELP_LINES: readonly string[] = Object.freeze([
@@ -73,6 +79,10 @@ class CalendarReadTimeout extends Error {
  * - A failed read is answered truthfully with fixed copy (never "no events"), status `FAILED`.
  * - The conversation history keeps a fixed note instead of the reply, so event text never reaches a later prompt.
  *
+ * - The ids of the events a list showed (never their text) are kept in memory per session for the ADR-0093 lifetime
+ *   (live QA D2): an update / delete that names no day carries them to the write flow as the session's recent calendar
+ *   context. Lost on restart, where the flow asks which event instead.
+ *
  * Creates no Task, TaskRun or ApprovalRequest; logs no message or event text.
  */
 export class CalendarTurnHandler implements ConversationTurnHandler {
@@ -80,6 +90,11 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
   readonly stage = 'pre-classify' as const;
   readonly order = CALENDAR_TURN_HANDLER_ORDER;
   readonly helpLines: readonly string[];
+  /**
+   * Per (session, actor): the calendar list this handler last showed that actor (ids only), insertion order = age. A
+   * shared conversation never hands one actor's list to another (the recent-write anchors bind the actor too).
+   */
+  private readonly recentListings = new Map<string, CalendarRecentListing & { readonly sessionId: Id; readonly actorId: Id }>();
 
   constructor(private readonly deps: CalendarTurnHandlerDeps) {
     this.helpLines = deps.writesEnabled === true ? CALENDAR_WRITE_HELP_LINES : CALENDAR_HELP_LINES;
@@ -103,7 +118,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       this.log('info', 'calendar.turn_handler.write_draft', {});
       return {
         kind: 'write-draft',
-        draft: parseCalendarWriteRequest(text, { now: ctx.now, timeZone: this.deps.timeZone }),
+        draft: this.withRecentListing(parseCalendarWriteRequest(text, { now: ctx.now, timeZone: this.deps.timeZone }), ctx),
         fallbackText: renderCalendarWriteRefused(language),
         history: { assistant: renderCalendarHistoryNote(language) },
       };
@@ -122,14 +137,47 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       return this.reply(ctx, renderCalendarReadFailure(failure, language), 'FAILED', language);
     }
     this.log('info', 'calendar.turn_handler.answered', { span: question.span.kind, events: events.length });
-    const reply = renderCalendarEvents(window, events, {
+    const renderOptions = {
       timeZone: this.deps.timeZone,
       now: ctx.now,
       language,
       limit: CALENDAR_EVENTS_MAX_LIMIT,
       writesEnabled: this.deps.writesEnabled === true,
+    };
+    const reply = renderCalendarEvents(window, events, renderOptions);
+    this.rememberListing(ctx.session.id, ctx.actor.id, {
+      at: ctx.now,
+      window: { from: window.from, to: window.to },
+      eventIds: calendarListedEventIds(window, events, renderOptions),
     });
     return this.reply(ctx, reply, 'RESPONDED', language);
+  }
+
+  /** An empty list replaces an older one too: "the last list shown" had nothing to pick. */
+  private rememberListing(sessionId: Id, actorId: Id, listing: CalendarRecentListing): void {
+    const key = listingKey(sessionId, actorId);
+    this.recentListings.delete(key);
+    this.recentListings.set(key, { ...listing, sessionId, actorId });
+    while (this.recentListings.size > CALENDAR_RECENT_LISTINGS_MAX) {
+      const oldest = this.recentListings.keys().next().value;
+      if (oldest === undefined) break;
+      this.recentListings.delete(oldest);
+    }
+  }
+
+  /** An undated update / delete carries this session's last list (within the ADR-0093 lifetime) to the flow. */
+  private withRecentListing(draft: ConnectorWriteDraft, ctx: TurnHandlerContext): ConnectorWriteDraft {
+    if ((draft.kind !== 'calendar-update' && draft.kind !== 'calendar-delete') || draft.ref.inferredDay !== true) return draft;
+    const key = listingKey(ctx.session.id, ctx.actor.id);
+    const listing = this.recentListings.get(key);
+    if (!listing || listing.sessionId !== ctx.session.id || listing.actorId !== ctx.actor.id) return draft;
+    const age = Date.parse(ctx.now) - Date.parse(listing.at);
+    if (!Number.isFinite(age) || age < 0 || age >= PENDING_APPROVAL_TTL_MS) {
+      this.recentListings.delete(key);
+      return draft;
+    }
+    const ref = { ...draft.ref, recentListing: { at: listing.at, window: listing.window, eventIds: [...listing.eventIds] } };
+    return { ...draft, ref };
   }
 
   private reply(
@@ -164,6 +212,11 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       // best-effort
     }
   }
+}
+
+/** The cache key of one actor's last list in one conversation. */
+function listingKey(sessionId: Id, actorId: Id): string {
+  return JSON.stringify([sessionId, actorId]);
 }
 
 /** Factory for the composition root (ADR-0096 D7). */

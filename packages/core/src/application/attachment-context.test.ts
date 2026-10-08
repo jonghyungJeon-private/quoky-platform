@@ -135,8 +135,23 @@ describe('attachment-context (ADR-0111 D3, MM-1)', () => {
   it('P2-4: a text file Core drops at its final re-check counts as unusable, like an adapter refusal', () => {
     const escaped = 'pass' + '\u001b[31m' + 'word=demo-review-value';
     const message = messageWith([txt('notes.txt', escaped)]);
-    expect(currentTurnAttachmentsOf(message)).toEqual({ textFiles: [], notReadCount: 1 });
+    expect(currentTurnAttachmentsOf(message)).toEqual({ textFiles: [], notReadCount: 1, notReadReasons: ['CORE_RECHECK'] });
     expect(hasNoUsableAttachment(message)).toBe(true);
+  });
+
+  it('carries the intake reason of each refused attachment (live QA D13)', () => {
+    const message: InboundMessage = {
+      ...messageWith([txt('ok.txt', 'hello')]),
+      attachments: [
+        { kind: 'unsupported', name: 'qa-notes.pdf', mimeType: 'application/pdf', sizeBytes: 2048, reason: 'UNSUPPORTED_TYPE' },
+        { kind: 'unsupported', name: 'big.log', mimeType: 'text/plain', sizeBytes: 9_000_000, reason: 'TOO_LARGE' },
+      ],
+    };
+    expect(currentTurnAttachmentsOf(message)).toEqual({
+      textFiles: [],
+      notReadCount: 2,
+      notReadReasons: ['UNSUPPORTED_TYPE', 'TOO_LARGE'],
+    });
   });
 
   it('P1-1: the guard runs on the normalized, clipped text exactly as sent (an escape cannot split a secret)', () => {

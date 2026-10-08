@@ -433,6 +433,25 @@ describe('DefaultMemoryRetriever semantic re-ranking (ADR-0098 D8)', () => {
     expect(results[1]!.retrievalReason).toContain('semantic=0.0000');
   });
 
+  it('records the retrieval mode and the raw semantic score as structured fields (live QA D5, Codex P3)', async () => {
+    const records = [record('a', 'blue sky preference'), record('b', 'blue ocean')];
+    const scorer: SemanticRecallScoring = {
+      async score() {
+        return new Map([
+          ['a', 0.8123],
+          ['b', 0.25],
+        ]);
+      },
+    };
+    const results = await retriever(records, { semanticScorer: scorer }).retrieve(request());
+    expect(results.map((result) => [result.retrievalMode, result.semanticScore])).toEqual([
+      ['semantic', 0.8123],
+      ['semantic', 0.25],
+    ]);
+    const lexical = await retriever(records).retrieve(request());
+    expect(lexical.every((result) => result.retrievalMode === 'lexical' && result.semanticScore === undefined)).toBe(true);
+  });
+
   it('rejects an out-of-range semantic weight', () => {
     expect(() => retriever([], { semanticWeight: 1.5 })).toThrow(RangeError);
   });

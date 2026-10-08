@@ -248,6 +248,103 @@ describe('SlackConnectorProvider', () => {
       expect(result.items[0]).not.toHaveProperty('url');
     });
 
+    it('drops direct messages and group DMs; keeps public and private channels (live QA D3)', async () => {
+      const fake = fakeFetch({
+        status: 200,
+        body: {
+          ok: true,
+          messages: {
+            matches: [
+              { ...match, ts: '1.1', channel: { id: 'D07H8C5VB36', name: 'U07H8C5VB36', is_im: true }, text: 'dm secret' },
+              { ...match, ts: '1.2', channel: { id: 'G0MPIM', name: 'mpdm-a--b-1', is_mpim: true }, text: 'group dm' },
+              { ...match, ts: '1.3', channel: { id: 'C0ODDIM', name: 'odd', is_im: true }, text: 'flagged im' },
+              { ...match, ts: '1.4', channel: { id: 'G0PRIV', name: 'quoky-test', is_private: true, is_im: false, is_mpim: false }, text: 'private ok' },
+              { ...match, ts: '1.5', channel: { id: 'C123', name: 'eng', is_channel: true }, text: 'public ok' },
+            ],
+          },
+        },
+      });
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'ok' } });
+      expect(result.items.map((item) => [item.title, item.container])).toEqual([
+        ['private ok', '#quoky-test'],
+        ['public ok', '#eng'],
+      ]);
+      expect(JSON.stringify(result)).not.toContain('dm secret');
+      expect(JSON.stringify(result)).not.toContain('U07H8C5VB36');
+      expect(fake.calls).toHaveLength(1);
+    });
+
+    it('labels an id-only channel by its conversations.info name, cached across searches (live QA D3)', async () => {
+      const idOnly = { ...match, channel: { id: 'C0NONAME' } };
+      const fake = fakeFetch(
+        { status: 200, body: { ok: true, messages: { matches: [idOnly] } } },
+        { status: 200, body: { ok: true, channel: { id: 'C0NONAME', name: 'release', is_channel: true } } },
+        { status: 200, body: { ok: true, messages: { matches: [idOnly] } } },
+      );
+      const slack = provider(fake.fetchImpl);
+      const first = await slack.query({ query: 'search', params: { text: 'deploy' } });
+      expect(first.items[0]!.container).toBe('#release');
+      const info = new URL(fake.calls[1]!.url);
+      expect(info.pathname).toBe('/api/conversations.info');
+      expect(info.searchParams.get('channel')).toBe('C0NONAME');
+      const second = await slack.query({ query: 'search', params: { text: 'deploy' } });
+      expect(second.items[0]!.container).toBe('#release');
+      expect(fake.calls).toHaveLength(3);
+    });
+
+    it('drops an id-only conversation that conversations.info says is a DM', async () => {
+      const fake = fakeFetch(
+        { status: 200, body: { ok: true, messages: { matches: [{ ...match, channel: { id: 'C0HIDDEN' } }] } } },
+        { status: 200, body: { ok: true, channel: { id: 'C0HIDDEN', is_mpim: true, name: 'mpdm-x' } } },
+      );
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } });
+      expect(result.items).toEqual([]);
+    });
+
+    it('labels a channel "Slack" (never its id) when the name cannot be read (no channels:read)', async () => {
+      const fake = fakeFetch(
+        { status: 200, body: { ok: true, messages: { matches: [{ ...match, channel: { id: 'C0NOSCOPE', name: 'C0NOSCOPE' } }] } } },
+        { status: 200, body: { ok: false, error: 'missing_scope' } },
+      );
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } });
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]!.container).toBe('Slack');
+      expect(JSON.stringify(result.items[0]!.container)).not.toContain('C0NOSCOPE');
+    });
+
+    it('fails closed: an id-only G… conversation whose type cannot be established is omitted (Codex P2)', async () => {
+      const groupOnly = { ...match, channel: { id: 'G0AMBIGUOUS' }, text: 'maybe a group DM' };
+      const fake = fakeFetch(
+        { status: 200, body: { ok: true, messages: { matches: [groupOnly, { ...match, text: 'public ok' }] } } },
+        { status: 200, body: { ok: false, error: 'missing_scope' } },
+      );
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'x' } });
+      expect(result.items.map((item) => item.title)).toEqual(['public ok']);
+      expect(JSON.stringify(result)).not.toContain('maybe a group DM');
+      // A failed lookup is not cached: a later search asks again, and a settled answer shows the private channel.
+      const later = fakeFetch(
+        { status: 200, body: { ok: true, messages: { matches: [groupOnly] } } },
+        { status: 200, body: { ok: true, channel: { id: 'G0AMBIGUOUS', name: 'ops', is_im: false, is_mpim: false, is_private: true } } },
+      );
+      const slack = provider(later.fetchImpl);
+      expect((await slack.query({ query: 'search', params: { text: 'x' } })).items.map((item) => item.container)).toEqual(['#ops']);
+    });
+
+    it('an info answer without im/mpim flags for a G… conversation stays unknown and is omitted', async () => {
+      const fake = fakeFetch(
+        { status: 200, body: { ok: true, messages: { matches: [{ ...match, channel: { id: 'G0NOFLAGS' } }] } } },
+        { status: 200, body: { ok: true, channel: { id: 'G0NOFLAGS', name: 'unclear' } } },
+      );
+      expect((await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'x' } })).items).toEqual([]);
+    });
+
+    it('a match without text gets the neutral "(내용 없음)" title, never "Slack message <ts>" (live QA D15)', async () => {
+      const fake = fakeFetch({ status: 200, body: { ok: true, messages: { matches: [{ ...match, text: '' }] } } });
+      const result = await provider(fake.fetchImpl).query({ query: 'search', params: { text: 'deploy' } });
+      expect(result.items[0]!.title).toBe('(내용 없음)');
+      expect(result.items[0]).not.toHaveProperty('summary');
+    });
+
     it.each([
       [undefined],
       [''],

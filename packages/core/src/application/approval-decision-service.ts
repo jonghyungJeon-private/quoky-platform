@@ -1437,24 +1437,86 @@ export class ApprovalDecisionService {
 
   // ── the operations-UI surface ───────────────────────────────────────────────────────────────────────────────────
 
-  /** Read-only: the metadata the UI's confirmation page shows for a pending approval (never a payload or reference). */
+  /**
+   * Strictly read-only (ADR-0113 D4): the UI-decidable PENDING approval a conversation holds and its decision kind, or
+   * null — derived from the flows' read-only peeks, never their `find*` lookups, so nothing is closed, invalidated,
+   * cleared or released. A state that looks inconsistent (e.g. approved, `recordApproval` not yet run) is legitimate
+   * mid-transition and reads as "nothing pending" here; only the serialized decision transitions reconcile it. A flow
+   * without a peek reports nothing (the kind is unknown, never guessed).
+   */
+  async peekPending(
+    session: Session,
+  ): Promise<{ readonly approval: ApprovalRequest; readonly kind: ApprovalGateKind; readonly writeActorId?: Id } | null> {
+    if (session.status !== SessionStatus.ACTIVE) return null;
+    const plan = await this.deps.approvalFlow.findPending(session); // read-only by construction (no anchor writes)
+    if (plan) return { approval: plan, kind: 'PLAN' };
+    const override = await this.deps.credentialOverrideFlow?.peekPending?.(session);
+    if (override && override.status === ApprovalStatus.PENDING) return { approval: override, kind: 'CREDENTIAL_OVERRIDE' };
+    const write = await this.deps.connectorWriteFlow?.peek?.(session);
+    if (write) {
+      if (write.anchor.status !== 'APPROVAL_PENDING' || !write.anchor.operation || !write.approval) return null;
+      return { approval: write.approval, kind: 'CONNECTOR_WRITE', writeActorId: write.anchor.actorId };
+    }
+    const anchor = await this.deps.applyPreviewFlow.peekAnchor?.(session);
+    const approvalId = anchor ? pendingApprovalIdOf(anchor) : undefined;
+    const kind = anchor ? ANCHORED_KIND[anchor.status] : undefined;
+    if (!approvalId || !kind) return null;
+    const request = await this.deps.approvals.get(approvalId);
+    return request?.status === ApprovalStatus.PENDING ? { approval: request, kind } : null;
+  }
+
+  /**
+   * The decision kind of every UI-decidable pending approval an ACTIVE conversation in `sessions` holds, keyed by
+   * approval id — the same read-only resolution {@link locateForOpsUi} uses, so the UI list and its confirmation page
+   * name the same kind (live QA D7). Side-effect free (ADR-0113 D4: a dashboard GET never mutates).
+   */
+  async pendingGateKindsForOpsUi(sessions: () => Promise<readonly Session[]>): Promise<ReadonlyMap<Id, ApprovalGateKind>> {
+    const kinds = new Map<Id, ApprovalGateKind>();
+    for (const session of await sessions()) {
+      const peeked = await this.peekPending(session);
+      if (peeked) kinds.set(peeked.approval.id, peeked.kind);
+    }
+    return kinds;
+  }
+
+  /**
+   * Strictly read-only: the metadata the UI's confirmation page shows for a pending approval (never a payload or
+   * reference). Uses {@link peekPending}, so a confirmation page GET never mutates (ADR-0113 D4).
+   */
   async locateForOpsUi(approvalId: Id, actor: Actor, sessions: () => Promise<readonly Session[]>): Promise<ApprovalSurfaceLocate> {
-    const found = await this.locate(approvalId, sessions);
+    const found = await this.peekLocate(approvalId, sessions);
     if (found === null) return { status: 'REFUSED', refusal: 'NOT_FOUND' };
-    if (!this.ownedBy(found, actor)) return { status: 'REFUSED', refusal: 'FOREIGN' };
-    const kind = approvalGateKindOf(found.lookup)!;
+    if (!this.peekOwnedBy(found, actor)) return { status: 'REFUSED', refusal: 'FOREIGN' };
+    const { kind, approval } = found;
     return {
       status: 'FOUND',
       view: {
         approvalId,
         kind,
-        riskLevel: found.approval.riskLevel,
-        createdAt: found.approval.createdAt,
-        remainingMs: this.remainingMs(found.approval),
+        riskLevel: approval.riskLevel,
+        createdAt: approval.createdAt,
+        remainingMs: this.remainingMs(approval),
         approvable: UI_APPROVABLE_KINDS.has(kind),
         chat: found.session.context,
       },
     };
+  }
+
+  /** The read-only holder of `approvalId` among `sessions`, or null. */
+  private async peekLocate(
+    approvalId: Id,
+    sessions: () => Promise<readonly Session[]>,
+  ): Promise<{ session: Session; approval: ApprovalRequest; kind: ApprovalGateKind; writeActorId?: Id } | null> {
+    for (const session of await sessions()) {
+      const peeked = await this.peekPending(session);
+      if (peeked?.approval.id === approvalId) return { session, ...peeked };
+    }
+    return null;
+  }
+
+  private peekOwnedBy(found: { session: Session; writeActorId?: Id }, actor: Actor): boolean {
+    if (found.session.actorId !== actor.id) return false;
+    return found.writeActorId === undefined || found.writeActorId === actor.id;
   }
 
   /**
@@ -1465,12 +1527,17 @@ export class ApprovalDecisionService {
    */
   decideFromOpsUi(input: OpsUiDecisionInput): Promise<ApprovalSurfaceDecision> {
     return this.serialize(input.approvalId, async () => {
-      const first = await this.locateForDecision(input);
-      if (first.status === 'REFUSED') return first;
+      // Find the holder read-only (ADR-0113 D4): outside the holder's session write lock nothing may be reconciled.
+      const current = await this.deps.approvals.get(input.approvalId);
+      if (current === null) return refused('NOT_FOUND');
+      if (current.status !== ApprovalStatus.PENDING) return refused('ALREADY_DECIDED');
+      const first = await this.peekLocate(input.approvalId, input.sessions);
+      if (first === null) return refused('NOT_FOUND');
+      if (!this.peekOwnedBy(first, input.actor)) return refused('FOREIGN');
       // The holder is known only now: take its session write lock (approval → session, the order every path uses),
       // then re-read both for THAT session only (never another session's lock while holding this one) — a reset or
       // any other session write that landed meanwhile wins, and nothing stale is re-anchored.
-      const holderId = first.found.session.id;
+      const holderId = first.session.id;
       return this.sessionLock.run(holderId, async (held) => {
         const fresh = await this.locateForDecision(input, { sessionId: holderId, held });
         if (fresh.status === 'REFUSED') return fresh;

@@ -62,7 +62,14 @@ const CAPABILITY_LABEL_KO: Readonly<Record<string, string>> = {
   [Capability.READONLY_LOOKUP]: '조회',
   [Capability.PROJECT_ANALYSIS]: '프로젝트 분석',
   [Capability.EMBEDDING]: '임베딩',
+  [Capability.IMAGE_UNDERSTANDING]: '이미지 이해',
 };
+
+/**
+ * A breakdown row whose turn recorded no capability / intent: a command or another deterministic reply that ran no
+ * work task (live QA D8: it shared the "기타" label with an unlabelled capability, so two rows read "기타").
+ */
+export const FEEDBACK_NO_WORK_LABEL = '명령·바로 답한 대화';
 
 const INTENT_LABEL_KO: Readonly<Record<string, string>> = {
   [IntentType.CHAT]: '일반 대화',
@@ -86,6 +93,19 @@ export function feedbackCapabilityLabel(key: string | null | undefined): string 
 /** Korean label for an intent key; unknown or missing keys fall back to `기타`. */
 export function feedbackIntentLabel(key: string | null | undefined): string {
   return (key != null && Object.hasOwn(INTENT_LABEL_KO, key) ? INTENT_LABEL_KO[key] : undefined) ?? '기타';
+}
+
+/**
+ * The label of a per-capability breakdown row (the chat summary, the trend lines and the operations UI table): every
+ * Capability its own, a row with no capability {@link FEEDBACK_NO_WORK_LABEL} (live QA D8: both used to read "기타").
+ */
+export function feedbackCapabilityRowLabel(key: string | null | undefined): string {
+  return key == null ? FEEDBACK_NO_WORK_LABEL : feedbackCapabilityLabel(key);
+}
+
+/** The label of a per-intent breakdown row; a row with no intent is {@link FEEDBACK_NO_WORK_LABEL}. */
+export function feedbackIntentRowLabel(key: string | null | undefined): string {
+  return key == null ? FEEDBACK_NO_WORK_LABEL : feedbackIntentLabel(key);
 }
 
 function breakdownLines(
@@ -137,7 +157,7 @@ export function feedbackTrendLines(trend: FeedbackCapabilityTrend | null | undef
   for (const key of shown) {
     const current = find(trend.current, key);
     const previous = find(trend.previous, key);
-    lines.push(`- ${feedbackCapabilityLabel(key)}: ${negativeRate(current)} · 이전 ${negativeRate(previous)} · ${trendWord(current, previous)}`);
+    lines.push(`- ${feedbackCapabilityRowLabel(key)}: ${negativeRate(current)} · 이전 ${negativeRate(previous)} · ${trendWord(current, previous)}`);
   }
   if (keys.length > shown.length) lines.push(`- 외 ${keys.length - shown.length}개`);
   return lines;
@@ -164,11 +184,11 @@ export function composeFeedbackSummaryText(
     '최근 30일 피드백 요약이에요.',
     `- 기록된 대화 ${summary.turnCount}건 · 👍 ${positive} · 👎 ${negative} · 참고 신호 ${implicit}`,
   ];
-  const byCapability = breakdownLines('기능별:', summary.byCapability, feedbackCapabilityLabel);
+  const byCapability = breakdownLines('기능별:', summary.byCapability, feedbackCapabilityRowLabel);
   if (byCapability.length > 0) lines.push('', ...byCapability);
   const trendLines = feedbackTrendLines(trend);
   if (trendLines.length > 0) lines.push('', ...trendLines);
-  const byIntent = breakdownLines('요청 유형별:', summary.byIntent, feedbackIntentLabel);
+  const byIntent = breakdownLines('요청 유형별:', summary.byIntent, feedbackIntentRowLabel);
   if (byIntent.length > 0) lines.push('', ...byIntent);
   if (summary.recentNegative.length > 0) {
     lines.push('', '최근 👎 답변:');

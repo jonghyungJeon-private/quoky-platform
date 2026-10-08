@@ -197,6 +197,44 @@ export interface CalendarRenderOptions {
   readonly writesEnabled?: boolean;
 }
 
+function placedInWindow(window: CalendarWindow, events: readonly CalendarEvent[], timeZone: string): PlacedEvent[] {
+  const first = window.startDate;
+  const last = addLocalDays(first, window.days - 1);
+  return events
+    .map((event) => place(event, timeZone))
+    .filter((entry): entry is PlacedEvent => entry !== undefined)
+    .filter((entry) => compareLocalDates(entry.lastDate, first) >= 0 && compareLocalDates(entry.firstDate, last) <= 0)
+    .sort((a, b) => Number(b.event.allDay) - Number(a.event.allDay) || a.startMs - b.startMs);
+}
+
+function nextEventOf(events: readonly CalendarEvent[], options: CalendarRenderOptions): PlacedEvent | undefined {
+  const nowMs = Date.parse(options.now);
+  const today = localDateOf(nowMs, options.timeZone);
+  const placed = events
+    .map((event) => place(event, options.timeZone))
+    .filter((entry): entry is PlacedEvent => entry !== undefined)
+    .sort((a, b) => a.startMs - b.startMs);
+  return (
+    placed.find((entry) => !entry.event.allDay && entry.startMs >= nowMs) ??
+    placed.find((entry) => entry.event.allDay && compareLocalDates(entry.firstDate, today) > 0)
+  );
+}
+
+/**
+ * The ids of the events {@link renderCalendarEvents} lists for this window, in list order (the "next" answer's one
+ * event). The calendar handler keeps them as the session's recent calendar context (live QA D2).
+ */
+export function calendarListedEventIds(
+  window: CalendarWindow,
+  events: readonly CalendarEvent[],
+  options: CalendarRenderOptions,
+): string[] {
+  const shown = window.span.kind === 'next'
+    ? [nextEventOf(events, options)].filter((entry): entry is PlacedEvent => entry !== undefined)
+    : placedInWindow(window, events, options.timeZone).slice(0, CALENDAR_REPLY_MAX_EVENTS);
+  return shown.map((entry) => entry.event.id).filter((id) => typeof id === 'string' && id.length > 0);
+}
+
 /** The answer to a day, week or weekend question. */
 export function renderCalendarEvents(
   window: CalendarWindow,
@@ -206,12 +244,7 @@ export function renderCalendarEvents(
   const { timeZone, language } = options;
   if (window.span.kind === 'next') return renderNextEvent(window, events, options);
   const first = window.startDate;
-  const last = addLocalDays(first, window.days - 1);
-  const placed = events
-    .map((event) => place(event, timeZone))
-    .filter((entry): entry is PlacedEvent => entry !== undefined)
-    .filter((entry) => compareLocalDates(entry.lastDate, first) >= 0 && compareLocalDates(entry.firstDate, last) <= 0)
-    .sort((a, b) => Number(b.event.allDay) - Number(a.event.allDay) || a.startMs - b.startMs);
+  const placed = placedInWindow(window, events, timeZone);
   const period = periodLabel(window, language);
   const truncatedAt = events.length >= options.limit ? options.limit : undefined;
   const tail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
@@ -251,15 +284,7 @@ export function renderCalendarEvents(
 /** "다음 회의 언제야?": the first timed event starting at or after now; else the first all-day event after today. */
 function renderNextEvent(window: CalendarWindow, events: readonly CalendarEvent[], options: CalendarRenderOptions): string {
   const { timeZone, language } = options;
-  const nowMs = Date.parse(options.now);
-  const today = localDateOf(nowMs, timeZone);
-  const placed = events
-    .map((event) => place(event, timeZone))
-    .filter((entry): entry is PlacedEvent => entry !== undefined)
-    .sort((a, b) => a.startMs - b.startMs);
-  const next =
-    placed.find((entry) => !entry.event.allDay && entry.startMs >= nowMs) ??
-    placed.find((entry) => entry.event.allDay && compareLocalDates(entry.firstDate, today) > 0);
+  const next = nextEventOf(events, options);
   const tail = footer(timeZone, language, undefined, options.writesEnabled === true);
   if (next === undefined) {
     return language === 'en'

@@ -7,6 +7,7 @@ import {
   type ReminderSchedule,
   type WorkItem,
 } from '../../domain';
+import { withObjectParticle, withTopicParticle } from '../korean-particle';
 import { composeDailyBrief, formatKoreanClock } from './daily-brief';
 import type { ReminderClarifyReason } from './reminder-grammar';
 import { toZonedDateTime } from './zoned-time';
@@ -185,26 +186,26 @@ export class ReminderReplyComposer {
   }
 
   cancelNotFound(displayNo: number): string {
-    return `알림 #${displayNo}을(를) 찾지 못했어요. "알림 목록"에서 번호를 확인해 주세요.`;
+    return `${withObjectParticle(`알림 #${displayNo}`)} 찾지 못했어요. "알림 목록"에서 번호를 확인해 주세요.`;
   }
 
   cancelAlreadyFinal(reminder: Reminder): string {
     switch (reminder.status) {
       case ReminderStatus.COMPLETED:
-        return `알림 #${reminder.displayNo}은(는) 이미 전달됐어요.`;
+        return `${withTopicParticle(`알림 #${reminder.displayNo}`)} 이미 전달됐어요.`;
       case ReminderStatus.CANCELED:
-        return `알림 #${reminder.displayNo}은(는) 이미 취소됐어요.`;
+        return `${withTopicParticle(`알림 #${reminder.displayNo}`)} 이미 취소됐어요.`;
       case ReminderStatus.FAILED:
-        return `알림 #${reminder.displayNo}은(는) 전달에 실패해서 이미 종료됐어요.`;
+        return `${withTopicParticle(`알림 #${reminder.displayNo}`)} 전달에 실패해서 이미 종료됐어요.`;
       case ReminderStatus.DELIVERY_UNCERTAIN:
-        return `알림 #${reminder.displayNo}은(는) 전달 여부를 확인할 수 없어 종료됐어요. 다시 보내지 않아요.`;
+        return `${withTopicParticle(`알림 #${reminder.displayNo}`)} 전달 여부를 확인할 수 없어 종료됐어요. 다시 보내지 않아요.`;
       default:
-        return `알림 #${reminder.displayNo}은(는) 이미 종료됐어요.`;
+        return `${withTopicParticle(`알림 #${reminder.displayNo}`)} 이미 종료됐어요.`;
     }
   }
 
   cancelInFlight(displayNo: number): string {
-    return `알림 #${displayNo}은(는) 지금 전달 중이라 취소할 수 없어요.`;
+    return `${withTopicParticle(`알림 #${displayNo}`)} 지금 전달 중이라 취소할 수 없어요.`;
   }
 
   limitReached(activeCount: number): string {

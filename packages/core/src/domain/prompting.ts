@@ -51,6 +51,10 @@ export interface DurableRecallEntry {
   epistemicStatus: 'NON_AUTHORITATIVE_BACKGROUND';
   relevanceScore: number;
   retrievalReason: string;
+  /** How the retriever ranked it this turn (ADR-0098 D8); absent = unknown. Never rendered into a prompt. */
+  retrievalMode?: 'lexical' | 'semantic';
+  /** The raw semantic score in [0, 1] when `retrievalMode` is `semantic`. Never rendered into a prompt. */
+  semanticScore?: number;
   source: {
     memoryId: Id;
     kind: DurableMemoryKind;
@@ -95,12 +99,32 @@ export interface AttachedTextFileEntry {
   epistemicStatus: 'UNTRUSTED_ATTACHED_DATA';
 }
 
+/**
+ * Why an attachment of the current message was not read: the intake's refusal reason, or `CORE_RECHECK` when Core's own
+ * re-check of a text file dropped it. Mirrors `InboundAttachmentUnsupportedReason` (kept as a literal union here so the
+ * prompting types import nothing from messaging).
+ */
+export type NotReadAttachmentReason =
+  | 'UNSUPPORTED_TYPE'
+  | 'TOO_LARGE'
+  | 'TOO_MANY'
+  | 'CREDENTIAL_SHAPED'
+  | 'NOT_UTF8_TEXT'
+  | 'INVALID_IMAGE'
+  | 'DOWNLOAD_FAILED'
+  | 'CORE_RECHECK';
+
 /** The current User message's attachments as the prompt sees them (ADR-0111 D3). */
 export interface CurrentTurnAttachments {
   /** Readable text files, in upload order. */
   textFiles: AttachedTextFileEntry[];
   /** Attachments of the same message that were NOT read (refused by intake or by Core's re-check); no content. */
   notReadCount: number;
+  /**
+   * One reason per not-read attachment when every reason is known (live QA D13: the prompt then states the actual
+   * reason instead of "unsupported, too large or credential-like", so a model does not suggest a smaller file).
+   */
+  notReadReasons?: NotReadAttachmentReason[];
 }
 
 /**

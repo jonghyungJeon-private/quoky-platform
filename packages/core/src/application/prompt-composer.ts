@@ -6,6 +6,7 @@ import type {
   CuratedExampleEntry,
   ContextProvenance,
   EpistemicStatus,
+  NotReadAttachmentReason,
   PromptSpec,
   Task,
 } from '../domain';
@@ -199,6 +200,36 @@ export interface CodeGenerationPromptInput {
  * PromptSpec; rendering to a concrete CLI form is the provider's job. v1
  * (Sprint 1b-1) is minimal but already layered (system/developer/context/task).
  */
+interface SendableAttachments {
+  textFiles: AttachedTextFileEntry[];
+  notReadCount: number;
+  notReadReasons?: NotReadAttachmentReason[];
+}
+
+/** Why an attachment was not read, as the prompt states it (live QA D13). */
+const NOT_READ_REASON_TEXT: Readonly<Record<NotReadAttachmentReason, string>> = {
+  UNSUPPORTED_TYPE:
+    'its file type is not supported (only UTF-8 text files such as .txt, .md, .log or .json and png, jpeg or webp ' +
+    'images are read; its size was not the reason, and a smaller file of the same type would not be read either)',
+  TOO_LARGE: 'it is over the attachment size limit',
+  TOO_MANY: 'it is past the per-message attachment limit',
+  CREDENTIAL_SHAPED: 'it looked like it contains a secret, so its content was dropped',
+  NOT_UTF8_TEXT: 'it is not valid UTF-8 text',
+  INVALID_IMAGE:
+    'it is a png, jpeg or webp image (a supported type) whose data is corrupt or malformed, so it could not be opened; ' +
+    'its type and size were not the reason, and a valid copy of the same image would be read',
+  DOWNLOAD_FAILED: 'it could not be downloaded from the chat platform',
+  CORE_RECHECK: "Core's own safety check refused its content",
+};
+
+/** "because its file type is not supported (…)" or "1 because …; 1 because …" for mixed reasons. */
+function notReadReasonClause(reasons: readonly NotReadAttachmentReason[]): string {
+  const counts = new Map<NotReadAttachmentReason, number>();
+  for (const reason of reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  if (counts.size === 1) return `because ${NOT_READ_REASON_TEXT[reasons[0] as NotReadAttachmentReason]}`;
+  return [...counts].map(([reason, count]) => `${count} because ${NOT_READ_REASON_TEXT[reason]}`).join('; ');
+}
+
 export class PromptComposer {
   /**
    * `readout` is either the read-only project readout (ADR-0019, PROJECT_ANALYSIS) or the bounded, untrusted
@@ -595,11 +626,16 @@ export class PromptComposer {
    * ADR-0111 D3 (P1-1): the bundle's attachment files re-normalized and re-guarded exactly as rendered — defense in
    * depth for a bundle not built by `prepareAttachedTextFiles`. A file that fails is dropped and counted as not read.
    */
-  private static sendableAttachments(context: ContextBundle): { textFiles: AttachedTextFileEntry[]; notReadCount: number } {
+  private static sendableAttachments(context: ContextBundle): SendableAttachments {
     const current = context.currentAttachments;
     if (!current) return { textFiles: [], notReadCount: 0 };
     const textFiles: AttachedTextFileEntry[] = [];
     let notReadCount = current.notReadCount;
+    // Reasons are used only when there is exactly one per not-read attachment (otherwise the generic fact).
+    const reasons =
+      Array.isArray(current.notReadReasons) && current.notReadReasons.length === current.notReadCount
+        ? [...current.notReadReasons]
+        : undefined;
     current.textFiles.forEach((file, index) => {
       const entry: AttachedTextFileEntry = {
         ...file,
@@ -607,16 +643,19 @@ export class PromptComposer {
         content: normalizePromptContextContent(file.content),
       };
       if (isSendableAttachedFile(entry)) textFiles.push(entry);
-      else notReadCount += 1;
+      else {
+        notReadCount += 1;
+        reasons?.push('CORE_RECHECK');
+      }
     });
-    return { textFiles, notReadCount };
+    return { textFiles, notReadCount, ...(reasons ? { notReadReasons: reasons } : {}) };
   }
 
   /**
    * ADR-0111 D3: authoritative facts about the current message's attachments — how many readable text files the
    * prompt carries (section 2C) and how many attachments Core did not read. Empty without attachments.
    */
-  private static attachmentFacts(attachments: { textFiles: AttachedTextFileEntry[]; notReadCount: number }): string[] {
+  private static attachmentFacts(attachments: SendableAttachments): string[] {
     const facts: string[] = [];
     const readable = attachments.textFiles.length;
     if (readable > 0) {
@@ -627,10 +666,15 @@ export class PromptComposer {
     }
     if (attachments.notReadCount > 0) {
       const n = attachments.notReadCount;
+      const subject = `${n} ${readable > 0 ? 'other ' : ''}attachment${n === 1 ? '' : 's'} of the current User message ${n === 1 ? 'was' : 'were'} not read by Core`;
+      const reasons = attachments.notReadReasons;
       facts.push(
-        `${n} ${readable > 0 ? 'other ' : ''}attachment${n === 1 ? '' : 's'} of the current User message ${n === 1 ? 'was' : 'were'} ` +
-          'not read by Core (unsupported, too large or credential-like): that content is not available, so never ' +
-          'guess or describe it.',
+        reasons !== undefined && reasons.length === n
+          ? // Live QA D13: the actual reason, so the model neither hedges nor suggests a fix that would not work.
+            `${subject}: ${notReadReasonClause(reasons)}. That content is not available, so never guess or describe it; ` +
+              'if the User asks why, give exactly this reason and suggest nothing else.'
+          : `${subject} (unsupported, too large or credential-like): that content is not available, so never ` +
+              'guess or describe it.',
       );
     }
     return facts.map((fact) => PromptComposer.label('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', fact));

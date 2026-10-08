@@ -3,7 +3,7 @@ import {
   Capability,
   FeedbackSignalKind,
   ReminderStatus,
-  feedbackCapabilityLabel,
+  feedbackCapabilityRowLabel,
   feedbackTrendLines,
   learningTextHasCredential,
   reminderRepeatLabel,
@@ -83,6 +83,18 @@ export interface OpsConnectorView {
   isAvailable(): Promise<boolean>;
 }
 
+/**
+ * The v3 connector-write switch for one connector (ADR-0112; live QA D6): whether a write adapter is bound (the
+ * `QUOKY_CONNECTOR_WRITES_ENABLED` switch on, the allow-list non-empty and the credentials complete) and how many targets
+ * its allow-list holds (projects / channels; a count only, never a name).
+ */
+export interface OpsConnectorWriteState {
+  readonly enabled: boolean;
+  readonly allowListCount?: number;
+  /** What the allow-list holds ("프로젝트", "채널"). */
+  readonly allowListUnit?: string;
+}
+
 export type OpsOwnerResolution =
   | { readonly status: 'RESOLVED'; readonly actorId: Id }
   | { readonly status: 'NONE' | 'AMBIGUOUS' };
@@ -121,8 +133,20 @@ export interface OpsSnapshotSources {
     readonly channelDelivery: boolean;
     listActiveByActor(actorId: Id): Promise<readonly Reminder[]>;
   };
-  readonly approvals: { list(): Promise<readonly ApprovalRequest[]> };
+  readonly approvals: {
+    list(): Promise<readonly ApprovalRequest[]>;
+    /**
+     * The kind label of each pending approval a conversation holds, keyed by approval id — the same kind resolution
+     * and label the confirmation page uses (live QA D7). Absent or failing → the plan integrity kind / "미지정".
+     */
+    kindLabels?(): Promise<ReadonlyMap<Id, string>>;
+  };
   readonly connectors: readonly OpsConnectorView[];
+  /**
+   * The effective write state per connector source (live QA D6). The read connectors are read-only by design, so the
+   * 쓰기 column shows this instead whenever it is supplied for the source.
+   */
+  readonly connectorWrites?: Readonly<Record<string, OpsConnectorWriteState>>;
   readonly errors: OpsErrorRing;
   readonly feedback: {
     summarize(actorId: Id): Promise<FeedbackSummary | null>;
@@ -175,6 +199,14 @@ function imageSelectionLabel(image: OpsImageUnderstandingSelection | undefined):
   if (image.selection === 'codex') return 'codex (클라우드: 첨부 이미지가 OpenAI로 전송돼요)';
   if (image.selection === 'ollama') return 'ollama (로컬: 이미지가 이 컴퓨터를 떠나지 않아요)';
   return 'off (이미지 분석 사용 안 함)';
+}
+
+/** The 쓰기 cell for a connector with a known write state, or undefined to fall back to the read connector's flag. */
+function writeLabel(state: OpsConnectorWriteState | undefined): string | undefined {
+  if (state === undefined) return undefined;
+  if (!state.enabled) return '아니요';
+  if (state.allowListCount === undefined) return '예 (승인 후)';
+  return `예 (승인 후 · 허용 ${state.allowListUnit ?? '대상'} ${state.allowListCount}개)`;
 }
 
 function yesNo(value: boolean | undefined): string {
@@ -354,6 +386,8 @@ export class OpsSnapshotBuilder {
     const pending = [...(await this.sources.approvals.list())]
       .filter((approval) => approval.status === ApprovalStatus.PENDING)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+    const kindLabels =
+      pending.length === 0 ? undefined : await this.sources.approvals.kindLabels?.().catch(() => undefined);
     const rows = pending.slice(0, OPS_MAX_TABLE_ROWS).map((approval) => {
       const createdMs = Date.parse(approval.createdAt);
       const expiresMs = Number.isFinite(createdMs) ? createdMs + OPS_APPROVAL_TTL_MS : Number.NaN;
@@ -361,7 +395,7 @@ export class OpsSnapshotBuilder {
       return [
         approval.id.slice(0, 8),
         approval.riskLevel,
-        operationKind(approval),
+        kindLabels?.get(approval.id) ?? operationKind(approval),
         this.time(approval.createdAt),
         Number.isFinite(expiresMs) ? this.time(new Date(expiresMs).toISOString()) : OPS_UNKNOWN,
         expired ? 'PENDING (만료됨, 다음 대화에서 기록)' : 'PENDING',
@@ -397,10 +431,11 @@ export class OpsSnapshotBuilder {
     const rows = await Promise.all(
       sources.map(async (source) => {
         const connector = registered.find((c) => c.source === source);
-        if (connector === undefined) return [source, '아니요', '아니요', '아니요', '-', '-'];
+        const write = writeLabel(this.sources.connectorWrites?.[source]);
+        if (connector === undefined) return [source, '아니요', '아니요', write ?? '아니요', '-', '-'];
         const probedAt = this.time(this.sources.clock());
         const probe = await probeConnector(connector);
-        return [source, '예', '예', connector.readOnly ? '아니요' : '예', probe, probedAt];
+        return [source, '예', '예', write ?? (connector.readOnly ? '아니요' : '예'), probe, probedAt];
       }),
     );
     return {
@@ -410,7 +445,12 @@ export class OpsSnapshotBuilder {
         rows,
         emptyText: '커넥터가 없어요.',
       },
-      notes: ['주소, 토큰, 계정 ID, 검색어는 표시하지 않아요.'],
+      notes: [
+        '주소, 토큰, 계정 ID, 검색어는 표시하지 않아요.',
+        ...(this.sources.connectorWrites === undefined
+          ? []
+          : ['쓰기는 v3 커넥터 쓰기 스위치(QUOKY_CONNECTOR_WRITES_ENABLED)와 허용 목록 기준이에요. 모든 쓰기는 채팅 승인 후에만 실행돼요.']),
+      ],
     };
   }
 
@@ -453,7 +493,7 @@ export class OpsSnapshotBuilder {
         rows: summary.byCapability
           .slice(0, OPS_MAX_TABLE_ROWS)
           .map((row) => [
-            feedbackCapabilityLabel(row.key),
+            feedbackCapabilityRowLabel(row.key),
             String(row.turns),
             String(row.positive),
             String(row.negative),

@@ -337,6 +337,9 @@
     {"id": "route-332", "text": "실행해줘", "expected": {"route": "runtime", "reply": "no-approved-execution", "providerCalls": 0}, "source": "live QA session 3 (D11): a bare \"실행해줘\" with nothing approved is the fixed reply", "mustPass": true},
     {"id": "route-333", "text": "run it", "expected": {"route": "runtime", "reply": "no-approved-execution", "providerCalls": 0}, "source": "live QA session 3 (D11): an English bare execution command with nothing approved is the fixed reply", "mustPass": true},
     {"id": "route-334", "text": "QA 스윕 정리 완료", "ctx": {"openTodos": ["내일 9시에 QA 스윕 정리"]}, "expected": {"route": "work-chat.todo", "kind": "todo.hint", "providerCalls": 0}, "source": "live QA session 3 (D11): \"<item> 완료\" naming one open to-do by a substantial part of its title gets the 완료 처리: N hint (quickstart §8)", "mustPass": true},
-    {"id": "route-335", "text": "회의 완료", "ctx": {"openTodos": ["주간 회의 준비"]}, "expected": {"route": "classifier"}, "source": "live QA session 3 (D11) near-miss: a small word shared with a to-do title is not a completion hint", "mustPass": true}
+    {"id": "route-335", "text": "회의 완료", "ctx": {"openTodos": ["주간 회의 준비"]}, "expected": {"route": "classifier"}, "source": "live QA session 3 (D11) near-miss: a small word shared with a to-do title is not a completion hint", "mustPass": true},
+    {"id": "route-336", "text": "일정 취소해줘", "expected": {"route": "calendar", "providerCalls": 0}, "source": "v3 live QA session 3 D2: an undated delete is a calendar write draft (the flow resolves it from the session's recent calendar context or asks over today and tomorrow); writes off here, so the fixed nothing-changed reply", "mustPass": true},
+    {"id": "route-337", "text": "일정 삭제해줘", "expected": {"route": "calendar", "providerCalls": 0}, "source": "v3 live QA session 3 D2 sibling: undated delete with 삭제", "mustPass": true},
+    {"id": "route-338", "text": "금요일 오후 3시에 QA 스윕 회의 잡아줘", "expected": {"route": "calendar", "providerCalls": 0}, "source": "v3 live QA session 3 D10: a booking whose title is a multi-word noun phrase stays the calendar handler's (title kept whole: \"QA 스윕 회의\")", "mustPass": true}
   ]
 }

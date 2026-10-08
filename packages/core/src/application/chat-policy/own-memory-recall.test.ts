@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OWN_MEMORY_SEMANTIC_HIT_FLOOR,
   detectOwnMemoryRecallQuestion,
   hasOwnMemoryRecallHit,
   renderOwnMemoryNotFound,
@@ -144,6 +145,74 @@ describe('hasOwnMemoryRecallHit', () => {
     const en = detectOwnMemoryRecallQuestion('what did I say my favourite fruit was?')!;
     expect(hasOwnMemoryRecallHit(en, durable('My favourite Fruit is mango'))).toBe(true);
     expect(hasOwnMemoryRecallHit(en, { conversationTranscript: [userTurn('coffee: americano')] })).toBe(false);
+  });
+});
+
+describe('hasOwnMemoryRecallHit with semantic recall scores (live QA D5)', () => {
+  const color = detectOwnMemoryRecallQuestion('내가 좋아하는 색깔이 뭐였지?')!;
+  const name = detectOwnMemoryRecallQuestion('내 이름이 뭐였지?')!;
+  const scored = (...entries: Array<[string, number]>): OwnMemoryRecallContext => ({
+    conversationTranscript: [],
+    durableRecall: entries.map(([content, semanticScore]) => ({ content, retrievalMode: 'semantic' as const, semanticScore })),
+  });
+
+  it('the QA repro: every stored memory came back scored low and none mentions the topic → no hit', () => {
+    expect(hasOwnMemoryRecallHit(color, scored(['나는 샤인머스캣을 좋아해', 0.41], ['QA 테스트용 기억', 0.22]))).toBe(false);
+  });
+
+  it('a semantic score at or above the floor is a hit even with no shared word (Codex P2 kept)', () => {
+    expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', OWN_MEMORY_SEMANTIC_HIT_FLOOR]))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', 0.83]))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, scored(['나는 철수야', OWN_MEMORY_SEMANTIC_HIT_FLOOR - 0.0001]))).toBe(false);
+  });
+
+  it('a topic stem in the memory is a hit whatever its semantic score', () => {
+    expect(hasOwnMemoryRecallHit(color, scored(['좋아하는 색깔은 파랑', 0.1]))).toBe(true);
+  });
+
+  it('a stated preference about something else is not evidence for a durable entry (only for the User\'s own turns)', () => {
+    expect(hasOwnMemoryRecallHit(color, scored(['나는 귤을 좋아해', 0.3]))).toBe(false);
+    expect(hasOwnMemoryRecallHit(color, { conversationTranscript: [userTurn('나는 귤을 좋아해')] })).toBe(true);
+  });
+
+  it('one entry above the floor among low ones is a hit', () => {
+    expect(hasOwnMemoryRecallHit(name, scored(['커피는 아메리카노', 0.2], ['나는 철수야', 0.71]))).toBe(true);
+  });
+
+  it('an entry without a semantic score (lexical-only recall, or not scored this turn) stays a hit', () => {
+    const lexicalOnly: OwnMemoryRecallContext = {
+      conversationTranscript: [],
+      durableRecall: [{ content: '나는 철수야', retrievalMode: 'lexical' }],
+    };
+    expect(hasOwnMemoryRecallHit(name, lexicalOnly)).toBe(true);
+    const mixed: OwnMemoryRecallContext = {
+      conversationTranscript: [],
+      durableRecall: [
+        { content: '커피는 아메리카노', retrievalMode: 'semantic', semanticScore: 0.1 },
+        { content: '나는 철수야', retrievalMode: 'lexical' },
+      ],
+    };
+    expect(hasOwnMemoryRecallHit(name, mixed)).toBe(true);
+  });
+
+  it('compares the raw structured score; edge values never pass by rounding or parsing (Codex P3)', () => {
+    const one = (semanticScore: number | undefined): OwnMemoryRecallContext => ({
+      conversationTranscript: [],
+      durableRecall: [{ content: '나는 철수야', retrievalMode: 'semantic', ...(semanticScore === undefined ? {} : { semanticScore }) }],
+    });
+    expect(hasOwnMemoryRecallHit(name, one(0.59996))).toBe(false); // would have printed as 0.6000
+    expect(hasOwnMemoryRecallHit(name, one(0.6))).toBe(true);
+    expect(hasOwnMemoryRecallHit(name, one(0.1))).toBe(false); // "1e-1" as a number is just 0.1
+    expect(hasOwnMemoryRecallHit(name, one(Number.NaN))).toBe(false);
+    expect(hasOwnMemoryRecallHit(name, one(Number.POSITIVE_INFINITY))).toBe(false);
+    expect(hasOwnMemoryRecallHit(name, one(1.5))).toBe(false);
+    expect(hasOwnMemoryRecallHit(name, one(undefined))).toBe(false); // semantic mode without a score is no evidence
+    // Diagnostic text is never read: a reason line claiming a high score changes nothing.
+    const textOnly = {
+      conversationTranscript: [],
+      durableRecall: [{ content: '나는 철수야', retrievalMode: 'semantic' as const, semanticScore: 0.2, retrievalReason: 'semantic=0.9900' }],
+    };
+    expect(hasOwnMemoryRecallHit(name, textOnly)).toBe(false);
   });
 });
 

@@ -2004,3 +2004,59 @@ describe('connector writes — Codex re-review of 050fa47 + 55c5a2f (P1 execute/
     expect(h.writes.post).toHaveLength(1);
   });
 });
+
+describe('connector writes — the operations-UI lookups are read-only (Codex P1 on the QA3 fixes, ADR-0113 D4)', () => {
+  it('a snapshot / confirmation-page lookup paused between the approval decision and recordApproval changes nothing', async () => {
+    const h = harness();
+    await h.send('#dev에 "오늘 배포는 18시"라고 올려줘');
+    const anchorId = h.sessions.get('sess-1')?.activeTaskId;
+    const [approval] = [...h.approvals.values()];
+    const sessions = async () => [...h.sessions.values()];
+
+    // Pause the chat "승인" right after the approval became APPROVED and before the anchor records it.
+    const recordApproval = h.flow.recordApproval.bind(h.flow);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let paused = false;
+    h.flow.recordApproval = async (input) => {
+      paused = true;
+      await gate;
+      return recordApproval(input);
+    };
+    const approving = h.send('승인');
+    await vi.waitFor(() => expect(paused).toBe(true));
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
+
+    // The dashboard list and the confirmation page look the conversation up meanwhile.
+    const kinds = await h.runtime.approvalDecisions.pendingGateKindsForOpsUi(sessions);
+    expect(kinds.size).toBe(0); // approved mid-transition: nothing pending, and nothing reconciled
+    const located = await h.runtime.approvalDecisions.locateForOpsUi(approval!.id, OWNER, sessions);
+    expect(located).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
+    // Nothing was closed or released.
+    expect(h.sessions.get('sess-1')?.activeTaskId).toBe(anchorId);
+    expect((h.tasks.get(anchorId!)?.metadata?.connectorWriteAnchor as { status: string }).status).toBe('APPROVAL_PENDING');
+
+    release();
+    const approved = await approving;
+    expect(approved.reply.text).toContain('"Slack 게시 실행"');
+    const sent = await h.send('Slack 게시 실행');
+    expect(h.writes.post).toEqual([{ channel: 'C0DEV', text: '오늘 배포는 18시' }]);
+    expect(sent.reply.text).toContain('메시지를 게시했어요');
+  });
+
+  it('a pending connector write is listed and located with its kind, read-only', async () => {
+    const h = harness();
+    await h.send('#dev에 "오늘 배포는 18시"라고 올려줘');
+    const [approval] = [...h.approvals.values()];
+    const sessions = async () => [...h.sessions.values()];
+    const before = JSON.stringify([...h.tasks.values()]) + JSON.stringify([...h.sessions.values()]);
+    expect([...(await h.runtime.approvalDecisions.pendingGateKindsForOpsUi(sessions))]).toEqual([[approval!.id, 'CONNECTOR_WRITE']]);
+    expect(await h.runtime.approvalDecisions.locateForOpsUi(approval!.id, OWNER, sessions)).toMatchObject({
+      status: 'FOUND',
+      view: { kind: 'CONNECTOR_WRITE', approvable: true },
+    });
+    expect(JSON.stringify([...h.tasks.values()]) + JSON.stringify([...h.sessions.values()])).toBe(before);
+  });
+});

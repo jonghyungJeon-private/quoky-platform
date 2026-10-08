@@ -137,6 +137,19 @@ describe('ReminderReplyComposer cancel and refusal copy', () => {
     expect(composer.cancelAlreadyFinal(reminder({ status: ReminderStatus.DELIVERY_UNCERTAIN }))).toContain('다시 보내지 않아요');
   });
 
+  it('picks the particle by how the number is read, never the "을(를)" fallback (live QA D9)', () => {
+    expect(composer.cancelNotFound(99)).toBe('알림 #99를 찾지 못했어요. "알림 목록"에서 번호를 확인해 주세요.');
+    expect(composer.cancelNotFound(3)).toMatch(/^알림 #3을 /u);
+    expect(composer.cancelNotFound(10)).toMatch(/^알림 #10을 /u);
+    expect(composer.cancelNotFound(2)).toMatch(/^알림 #2를 /u);
+    expect(composer.cancelInFlight(4)).toMatch(/^알림 #4는 /u);
+    expect(composer.cancelInFlight(7)).toMatch(/^알림 #7은 /u);
+    expect(composer.cancelAlreadyFinal(reminder({ status: ReminderStatus.CANCELED }))).toBe('알림 #4는 이미 취소됐어요.');
+    for (const text of [composer.cancelNotFound(99), composer.cancelInFlight(1), composer.cancelAlreadyFinal(reminder({ status: ReminderStatus.COMPLETED }))]) {
+      expect(text).not.toMatch(/\((?:를|는)\)/u);
+    }
+  });
+
   it('states the limit and the fixed refusals', () => {
     expect(composer.limitReached(50)).toContain('50건');
     expect(composer.disabled()).toContain('알림 기능이 꺼져 있어요');

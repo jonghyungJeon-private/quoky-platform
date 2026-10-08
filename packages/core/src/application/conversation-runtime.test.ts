@@ -10988,7 +10988,8 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
   });
 
   it('any durable recall in the built context keeps the provider flow; ordinary chat and general knowledge reach the provider', async () => {
-    // The retriever decides relevance; the runtime never re-judges a recalled entry lexically (Codex P2).
+    // Without a semantic score the retriever's choice stands; the runtime never re-judges such an entry lexically
+    // (Codex P2). A semantically scored entry is judged by the floor (live QA D5, the next case).
     const anyRecall = ownMemoryRuntime({ bundle: { durableRecall: [durableEntry('커피는 아메리카노')] } });
     expect((await anyRecall.runtime.handle(messageOf(QUESTION))).reply.text).toBe('provider answer');
     expect(anyRecall.providerTouches()).toBeGreaterThan(0);
@@ -10996,6 +10997,34 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
       const h = ownMemoryRuntime();
       expect((await h.runtime.handle(messageOf(text))).reply.text, text).toBe('provider answer');
     }
+  });
+
+  it('live QA D5: with semantic recall, unrelated memories scored under the floor are no hit; a scored match is (real ContextBuilder + retriever)', async () => {
+    const memory = (id: string, content: string): MemoryRecord => ({
+      id,
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content,
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: TS,
+      updatedAt: TS,
+    });
+    const records = [memory('grape', '나는 샤인머스캣을 좋아해'), memory('qa', 'QA 테스트용 기억')];
+    const withScores = (scores: Record<string, number>) =>
+      new ContextBuilder(
+        { async recentShortTerm() { return []; } } as unknown as MemoryManager,
+        {},
+        new DefaultMemoryRetriever({ async findDurableCandidates() { return records; } } as never, {
+          semanticScorer: { async score() { return new Map(Object.entries(scores)); } },
+        }),
+      );
+    const color = '내가 좋아하는 색깔이 뭐였지?';
+    const low = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.41, qa: 0.22 }) });
+    expect((await low.runtime.handle(messageOf(color))).reply.text).toBe(NOT_FOUND);
+    expect(low.providerTouches()).toBe(0);
+    const high = ownMemoryRuntime({ contextBuilder: withScores({ grape: 0.82, qa: 0.22 }) });
+    expect((await high.runtime.handle(messageOf(color))).reply.text).toBe('provider answer');
+    expect(high.providerTouches()).toBeGreaterThan(0);
   });
 
   it('an archived record counts as no hit through the real ContextBuilder and DefaultMemoryRetriever; restored, it is a hit', async () => {
@@ -11298,11 +11327,43 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(h.requests).toHaveLength(1);
     const prompt = h.requests[0]?.prompt ?? '';
     expect(prompt).toContain(
-      '1 attachment of the current User message was not read by Core (unsupported, too large or credential-like): ' +
-        'that content is not available, so never guess or describe it.',
+      '1 attachment of the current User message was not read by Core: because it looked like it contains a secret, so ' +
+        'its content was dropped. That content is not available, so never guess or describe it;',
     );
     expect(prompt).not.toContain('## 2C.');
     expect(prompt).not.toContain('config.yml');
+  });
+
+  it('live QA D13: an unsupported PDF next to a question states the actual reason; size is never offered as one', async () => {
+    const h = chatTurn('답변입니다.');
+    const pdf: InboundAttachment = {
+      kind: 'unsupported', name: 'qa-notes.pdf', mimeType: 'application/pdf', sizeBytes: 2048, reason: 'UNSUPPORTED_TYPE',
+    };
+    await h.runtime.handle(withAttachments('이 PDF 요약해줘', [pdf]));
+    const prompt = h.requests[0]?.prompt ?? '';
+    expect(prompt).toContain('1 attachment of the current User message was not read by Core: because its file type is not supported');
+    expect(prompt).toContain('a smaller file of the same type would not be read either');
+    expect(prompt).toContain('if the User asks why, give exactly this reason and suggest nothing else.');
+    expect(prompt).not.toContain('unsupported, too large or credential-like');
+    expect(prompt).not.toContain('qa-notes.pdf');
+    // A supported image with corrupt data keeps its own reason: the fact says its type and size were not the cause.
+    const corrupt: InboundAttachment = {
+      kind: 'unsupported', name: 'chart.png', mimeType: 'image/png', sizeBytes: 2048, reason: 'INVALID_IMAGE',
+    };
+    const image = chatTurn('답변입니다.');
+    await image.runtime.handle(withAttachments('이 차트 설명해줘', [corrupt]));
+    const imagePrompt = image.requests[0]?.prompt ?? '';
+    expect(imagePrompt).toContain('a png, jpeg or webp image (a supported type) whose data is corrupt or malformed');
+    expect(imagePrompt).not.toContain('its file type is not supported');
+    const imageOnly = chatTurn();
+    const imageReply = (await imageOnly.runtime.handle(withAttachments('', [corrupt]))).reply.text;
+    expect(imageReply).toBe(renderAttachmentsNotRead('ko', ['INVALID_IMAGE']));
+    expect(imageReply).toContain('손상됐거나 형식이 올바르지 않아');
+    expect(imageOnly.requests).toHaveLength(0);
+    // The attachment-only PDF (no text) is the fixed not-read reply with no provider (#138/#143), unchanged.
+    const only = chatTurn();
+    expect((await only.runtime.handle(withAttachments('', [pdf]))).reply.text).toBe(renderAttachmentsNotRead('ko'));
+    expect(only.requests).toHaveLength(0);
   });
 
   it('a readable file next to a refused one still runs the turn and tells the model what was not read', async () => {
