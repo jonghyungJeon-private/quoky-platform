@@ -500,7 +500,7 @@ describe('Telegram adapter attachments (TG-2): admission before any file call, t
     },
   );
 
-  it('a stop during the download aborts it, and nothing more is fetched or sent', async () => {
+  it('a stop during the download aborts it: no turn, no note, nothing more fetched or sent', async () => {
     const fake = new FakeTelegram()
       .queue('getUpdates', okReply([mediaUpdate(90, documentField('d', 'a.txt', 'text/plain', 5))]))
       .queue('getFile', fileReply('documents/file_1.txt', 5))
@@ -509,11 +509,109 @@ describe('Telegram adapter attachments (TG-2): admission before any file call, t
     await h.adapter.start();
     await until(() => fake.callsTo('downloadFile').length === 1);
     await h.adapter.stop();
-    await until(() => h.received.length === 1);
     await flush(10);
-    expect(h.received[0]?.attachments).toEqual([expect.objectContaining({ reason: 'DOWNLOAD_FAILED' })]);
-    // The note was refused by the stopped adapter: no sendMessage at all.
+    expect(h.received).toEqual([]);
     expect(fake.callsTo('sendMessage')).toEqual([]);
+  });
+});
+
+/** An offset store that survives "restarts" (one value, every save recorded). */
+function memoryStore(initial: number) {
+  const store = { value: initial, saves: [] as number[] };
+  return {
+    store,
+    offsetStore: {
+      load: () => store.value,
+      save: (offset: number) => {
+        store.value = offset;
+        store.saves.push(offset);
+      },
+    },
+  };
+}
+
+describe('Telegram adapter offsets with attachments (Codex P1): saved only after the turn was handed over', () => {
+  it('the handler is called BEFORE the offset moves past the update; after it, the offset is saved', async () => {
+    const { store, offsetStore } = memoryStore(150);
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply([mediaUpdate(150, documentField('d', 'a.txt', 'text/plain', 2))]))
+      .queue('getFile', fileReply('documents/file_1.txt', 2))
+      .queue('downloadFile', bytesReply(Buffer.from('ok')));
+    const savedAtHandover: number[][] = [];
+    const h = harness(fake, { offsetStore });
+    h.adapter.onMessage(async () => void savedAtHandover.push([...store.saves]));
+    await h.adapter.start();
+    await until(() => store.saves.includes(151));
+    expect(savedAtHandover).toEqual([[]]);
+  });
+
+  it('a stop during the intake leaves the saved offset where it was; the restart delivers the update again, once', async () => {
+    const { store, offsetStore } = memoryStore(160);
+    const update = mediaUpdate(160, documentField('d', 'a.txt', 'text/plain', 2));
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply([update]), okReply([update]))
+      .queue('getFile', fileReply('documents/file_1.txt', 2), fileReply('documents/file_1.txt', 2))
+      .queue('downloadFile', { hang: true }, bytesReply(Buffer.from('ok')));
+    const first = harness(fake, { offsetStore });
+    await first.adapter.start();
+    await until(() => fake.callsTo('downloadFile').length === 1);
+    await first.adapter.stop();
+    expect(first.received).toEqual([]);
+    expect(store.saves).toEqual([]);
+    expect(store.value).toBe(160);
+    // The "restart": a new adapter over the same store sees the update again and hands it over exactly once.
+    const second = harness(fake, { offsetStore });
+    await second.adapter.start();
+    await until(() => second.received.length === 1 && store.saves.includes(161));
+    expect(second.received[0]?.attachments).toEqual([expect.objectContaining({ kind: 'text', text: 'ok' })]);
+  });
+
+  it('the same for an album: a stop during its intake confirms none of its parts, and the restart hands it over as one turn', async () => {
+    const { store, offsetStore } = memoryStore(170);
+    const album = [170, 171].map((id, index) =>
+      mediaUpdate(id, { ...photoField({ fileId: `p${index}`, size: PNG.length }), media_group_id: 'g', ...(index === 0 ? { caption: '둘 다' } : {}) }),
+    );
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply(album), okReply(album), okReply(album), okReply(album))
+      .queue('getFile', fileReply('photos/a.jpg'), fileReply('photos/b.jpg'), fileReply('photos/a.jpg'), fileReply('photos/b.jpg'))
+      .queue('downloadFile', { hang: true }, { hang: true }, bytesReply(PNG), bytesReply(PNG));
+    const first = harness(fake, { offsetStore });
+    await first.adapter.start();
+    await until(() => fake.callsTo('downloadFile').length === 2);
+    await first.adapter.stop();
+    expect(first.received).toEqual([]);
+    expect(store.saves).toEqual([]);
+    const second = harness(fake, { offsetStore });
+    await second.adapter.start();
+    await until(() => second.received.length === 1 && store.saves.includes(172));
+    expect(second.received[0]).toMatchObject({ text: '둘 다' });
+    expect(second.received[0]?.attachments?.map((a) => a.kind)).toEqual(['image', 'image']);
+  });
+
+  it('an admission refusal hands nothing over, so its offset may advance at once (nothing would ever be handed over)', async () => {
+    const { store, offsetStore } = memoryStore(180);
+    const fake = new FakeTelegram().queue('getUpdates', okReply([mediaUpdate(180, photoField({ fileId: 'p', size: 10 }), { from: STRANGER_ID })]));
+    const h = harness(fake, { offsetStore });
+    await h.adapter.start();
+    await until(() => store.saves.includes(181));
+    expect(h.received).toEqual([]);
+    expect(fileCalls(fake)).toEqual([]);
+  });
+
+  it('a bounds rejection still hands the turn over (with the refused attachment named) before the offset moves', async () => {
+    const { store, offsetStore } = memoryStore(190);
+    const fake = new FakeTelegram().queue('getUpdates', okReply([mediaUpdate(190, documentField('d', 'big.png', 'image/png', IMAGE_ATTACHMENT_MAX_BYTES + 1))]));
+    const savedAtHandover: number[][] = [];
+    const h = harness(fake, { offsetStore });
+    h.adapter.onMessage(async (message) => {
+      savedAtHandover.push([...store.saves]);
+      h.received.push(message);
+    });
+    await h.adapter.start();
+    await until(() => store.saves.includes(191));
+    expect(savedAtHandover).toEqual([[]]);
+    expect(h.received[0]?.attachments).toEqual([expect.objectContaining({ reason: 'TOO_LARGE' })]);
+    expect(fileCalls(fake)).toEqual([]);
   });
 });
 

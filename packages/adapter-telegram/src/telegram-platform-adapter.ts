@@ -729,9 +729,14 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
         // ADR-0102 D5: nothing is handed over unless the startup identity gate opened; the offset stays put.
         if (!(await this.inboundGateOpen(signal))) return false;
         // Hand over, then advance and persist in the same synchronous step (no await in between): a restart resumes
-        // after this update, so the turn is never handed over twice.
-        if (admission.kind === 'admitted') this.dispatch(admission.message);
-        else this.dispatchFeedback(admission.reaction);
+        // after this update, so the turn is never handed over twice. TG-2 (Codex P1): a message with attachments is
+        // handed over only after its intake finished; a stop or halt during the intake hands nothing over and leaves the
+        // offset (in memory and on disk) where it was, so a restart delivers the update again.
+        if (admission.kind === 'admitted') {
+          if (!(await this.handOver(admission.message, signal))) return false;
+        } else {
+          this.dispatchFeedback(admission.reaction);
+        }
         if (updateId !== undefined) this.offset = updateId + 1;
         this.persistOffset();
         continue;
@@ -775,8 +780,9 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   }
 
   /**
-   * Hand the collected album over as ONE turn and move the offset past its parts in the same synchronous step. `false`
-   * when the identity gate is closed: nothing is handed over and the offset stays at the album's first part.
+   * Hand the collected album over as ONE turn and move the offset past its parts in the same synchronous step, after the
+   * album's intake finished. `false` when the identity gate is closed or the adapter stopped or halted meanwhile: nothing
+   * is handed over and the offset stays at the album's first part.
    */
   private async flushPendingGroup(signal: AbortSignal): Promise<boolean> {
     const group = this.pendingGroup;
@@ -788,7 +794,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     // Stopped while waiting for the gate: nothing is handed over.
     if (this.pendingGroup !== group) return false;
     this.pendingGroup = undefined;
-    this.dispatch(mergeAlbum(group.parts));
+    if (!(await this.handOver(mergeAlbum(group.parts), signal))) return false;
     this.offset = group.lastUpdateId + 1;
     this.persistOffset();
     return true;
@@ -847,13 +853,18 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   }
 
   /**
-   * Hand one admitted message to the runtime. The turn runs on; polling does not wait for it. A message with attachments
-   * first goes through the bounded intake (TG-2): it runs only now, after admission and the identity gate, and its temp
-   * files live only for the turn.
+   * Hand one admitted message to the runtime; the turn runs on, polling does not wait for it. Resolves `true` once the
+   * handler WAS CALLED (or there is no handler), so the caller then advances the offset in the same synchronous step.
+   *
+   * A message with attachments first goes through the bounded intake (TG-2), which the poll loop awaits: it runs only
+   * after admission and the identity gate, its temp files live only for the turn, and the handler is called only after
+   * it finished (Codex P1: the offset is never saved past an update whose turn has not started). When the adapter
+   * stopped or halted meanwhile, the intake's files are released, nothing is handed over, and `false` stops polling with
+   * the offset unmoved.
    */
-  private dispatch(message: AdmittedTelegramMessage): void {
+  private async handOver(message: AdmittedTelegramMessage, signal: AbortSignal): Promise<boolean> {
     const handler = this.messageHandler;
-    if (!handler) return;
+    if (!handler) return true;
     this.admittedChats.add(message.chatId);
     const sources = message.attachments ?? [];
     this.logger.info('message received', {
@@ -865,17 +876,25 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       this.logger.error('message handling failed', { errorName: err instanceof Error ? err.name : typeof err });
     if (sources.length === 0) {
       void handler(this.toInbound(message)).catch(failed);
-      return;
+      return true;
     }
+    const intake = await this.attachmentIntake.intake(sources);
+    const abandoned = (): boolean => signal.aborted || !this.connected();
+    if (!abandoned()) await this.reportAttachmentIntake(message, intake);
+    if (abandoned()) {
+      await intake.release();
+      this.logger.info('attachment turn not handed over: telegram stopping', { platform: TELEGRAM_PLATFORM, messageId: message.messageId });
+      return false;
+    }
+    // The handler is called synchronously here (before this method returns), then the files go after the turn.
     void (async () => {
-      const intake = await this.attachmentIntake.intake(sources);
       try {
-        await this.reportAttachmentIntake(message, intake);
         await handler(this.toInbound(message, intake.attachments));
       } finally {
         await intake.release();
       }
     })().catch(failed);
+    return true;
   }
 
   /** Remember an owner message key (bounded, oldest first out). */
