@@ -214,10 +214,20 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
  * Explicit deny verbs (round-3 rule a): 거절 / 거부 / 취소 in any verb form, "하지 마", "안 해", "승인 안 / 승인하지 않",
  * reject / deny / cancel. A deny verb that is itself negated ("거절하지 마", "거절 안 해", "취소하지 말고") is not one.
  */
-/** 거절 / 거부 / 취소 as a verb ("거절해 주세요", "거절합니다", "취소할게") or standing alone ("거절", "거절요") — never a
- *  noun compound ("거절 사유", "거절사유"). */
-const DENY_VERB_STEM =
-  /(?<![가-힣a-z0-9])(?:거절|거부|취소)(?:(?:해|하|합|할|했|함|시켜|시킬)[가-힣]*|요|이요)?(?=$|[^가-힣a-z0-9])(?!\s*(?:사유|이유|내역|기록|방법|절차|버튼|여부))|\b(?:reject(?:ed|s)?|deny|denied|denies|refuse[ds]?|cancel(?:l?ed|s)?)\b/g;
+/**
+ * 거절 / 거부 / 취소 as a deny verb — exact forms only (Codex round 5 on 15c2e71), never a stem prefix:
+ * - conjugated: the noun followed directly or after one space by a 하다 / 되다 form ("거절해", "거절 할게", "거부합니다",
+ *   "취소해 주세요", "거절됐어");
+ * - bare: the whole message, optionally with 요, punctuation, or "이 요청" / "그 요청" in front ("거절", "이 요청 거절").
+ * A noun use ("거절 안내", "거절 사유", "취소 버튼") — anything else — is not a deny verb. English verbs are unchanged.
+ */
+const KO_DENY_CONJUGATION = String.raw`(?:해\s*(?:주세요|줘요|줘)|해요|해|할게요|할게|할래요|할래|합니다|하겠습니다|했어요|했어|하자|하세요|하고|됐어요|됐어|됐|돼요|돼|됨)`;
+const KO_DENY_VERB = new RegExp(
+  String.raw`(?<![가-힣a-z0-9])(?:거절|거부|취소)\s?${KO_DENY_CONJUGATION}(?![가-힣])`,
+  'g',
+);
+const KO_BARE_DENY = /^(?:(?:이|그)\s*요청(?:은|을)?\s*)?(?:거절|거부|취소)(?:요|이요)?[\s.!~]*$/;
+const EN_DENY_VERB = /\b(?:reject(?:ed|s)?|deny|denied|denies|refuse[ds]?|cancel(?:l?ed|s)?)\b/g;
 const NEGATED_APPROVE_VERB =
   /(?:승인|진행|실행)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할|돼|됨))|(?:승인|진행|실행)(?:하|시키)?지\s*(?:마|말|않)|\b(?:don['’]?t|do\s+not|never|won['’]?t)\s+(?:approve|proceed|go\s+ahead)\b|\bnot\s+approve\b/g;
 const GENERIC_DENY_VERB = /(?:하지\s*마|하지마)(?:요|라|세요)?(?![가-힣])|(?<![가-힣])(?:안\s*해|안해)(?:요|라)?(?![가-힣])/;
@@ -227,8 +237,11 @@ const NEGATED_DENY =
 
 function hasExplicitDenyVerb(t: string): boolean {
   if (t.search(NEGATED_APPROVE_VERB) >= 0) return true;
-  for (const m of t.matchAll(DENY_VERB_STEM)) {
-    if (!isNegated(t, m.index, m[0].length) && !NEGATED_DENY.test(t.slice(m.index))) return true;
+  if (KO_BARE_DENY.test(t)) return true;
+  for (const verbs of [KO_DENY_VERB, EN_DENY_VERB]) {
+    for (const m of t.matchAll(verbs)) {
+      if (!isNegated(t, m.index, m[0].length) && !NEGATED_DENY.test(t.slice(m.index))) return true;
+    }
   }
   return GENERIC_DENY_VERB.test(t) && !NEGATED_DENY.test(t);
 }

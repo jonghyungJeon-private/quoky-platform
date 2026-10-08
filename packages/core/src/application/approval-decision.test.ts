@@ -294,10 +294,29 @@ describe('interpretApprovalDecision: explicit deny verbs and bare deny words (Co
     ['승인 안전 점검 결과 보여줘', 'ambiguous'],
     ['진행 안심 문구 보여줘', 'ambiguous'],
     ['승인 안 돼요', 'deny'],
+    // Codex round 5 on 15c2e71: exact verb forms only — a noun use of 거절/거부/취소 never rejects
+    ['거절 안내를 다시 보여줘', 'ambiguous'],
+    ['거절 안건을 다시 보여줘', 'ambiguous'],
+    ['거부 안내를 보여줘', 'ambiguous'],
+    ['취소 버튼 어디 있어?', 'ambiguous'],
+    ['거절 사유 알려줘', 'ambiguous'],
+    ['거절해', 'deny'],
+    ['거절할게', 'deny'],
+    ['이 요청 거절', 'deny'],
+    ['거부합니다', 'deny'],
+    ['거절 할게요', 'deny'],
+    ['거절됐어', 'deny'],
     // negated deny verbs are not deny verbs
     ['거절 안 해', 'ambiguous'],
     ['거절하지 마', 'ambiguous'],
   ] as const)('"%s" → %s', (text, expected) => {
     expect(interpretApprovalDecision(text)).toBe(expected);
+  });
+});
+
+describe('"취소해 주세요" rejects the pending approval (Codex round 5)', () => {
+  it('is a cancel (the non-mutating rejection the runtime closes the request with), never ambiguous or approve', () => {
+    // 취소 is matched by the cancel vocabulary first; for the approval it is a rejection exactly like deny.
+    expect(interpretApprovalDecision('취소해 주세요')).toBe('cancel');
   });
 });

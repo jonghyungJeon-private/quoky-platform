@@ -17145,7 +17145,7 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   request, an approved unexecuted write or a numbered calendar choice with the fixed reply instead of reaching chat
   (N2); while the write is executing they get the "already started" reply and once it finished the deterministic
   "nothing to decide", like 취소. Approval interpretation (all approval kinds): an explicit deny verb (거절/거부/취소 as
-  a verb, 하지 마, 안 해, 승인 안/승인하지 않 with 안 as a standalone negation — never 안내/안건 —, won't approve,
+  an exact 하다/되다 form or the bare word, never a noun use such as 거절 안내 / 취소 버튼, 하지 마, 안 해, 승인 안/승인하지 않 with 안 as a standalone negation — never 안내/안건 —, won't approve,
   reject/deny/cancel) with no approve verb is a deny, with one
   it is ambiguous; a bare deny word (아니/아니요/no/nope, optionally plus a stop word such as "아니 됐어") is a deny; 아니/no
   with other content and no deny verb ("아니 이건 내 친구 얘기야") is ambiguous and leaves the approval pending.
