@@ -12,12 +12,13 @@
  *   of letters, digits and `-` (Unicode letters included, so IDN hosts count) ending in an alphabetic TLD of 2–24
  *   letters, a punycode TLD (`xn--…`) or a common IDN TLD — with its port, path, query and fragment. Two exceptions
  *   keep ordinary text readable, and neither is ever autolinked as a web link: the domain of an e-mail address
- *   (`kim@example.com`) and a file name whose "TLD" is a common file extension (`README.md`, `main.py`), each only
- *   when no path follows.
+ *   (`kim@example.com`) and a file name whose "TLD" is a file extension that is NOT a delegated TLD (`report.pdf`,
+ *   `index.ts`, `app.js`), each only when no path follows. An extension that is also a country TLD (`.md`, `.sh`,
+ *   `.rs`, `.py`) is a link: `README.md` becomes `[링크]`, by design (sign-off item 1).
  * - `body` (the readout body, which only the provider reads, never a chat platform): scheme URLs and `www.` hosts as
- *   above, and a bare domain only when a path, query or fragment follows it or its TLD is a common web TLD. Plain words
- *   such as `Node.js` or `v1.2.3` stay intact in a summary of a technical mail; the reply is neutralized in `display`
- *   mode anyway, so a domain the model echoes is caught there.
+ *   above, and a bare domain when a path, query or fragment follows it, its TLD is a common web TLD, a two-letter
+ *   country TLD, punycode or IDN. Plain words such as `Node.js` or `v1.2.3` stay intact in a summary of a technical
+ *   mail; the reply is neutralized in `display` mode anyway, so a domain the model echoes is caught there.
  *
  * Not caught (and not clickable either): defanged forms such as `hxxp[:]//evil[.]example`, `evil[.]example`, or a host
  * split by spaces; a full-width scheme in listing fields (the readout applies NFKC first).
@@ -46,9 +47,13 @@ const BARE_DOMAIN = new RegExp(
   'giu',
 );
 
-/** "TLDs" that are really file extensions; a file name is kept in `display` mode unless a path follows. */
+/**
+ * File extensions that are NOT delegated top-level domains (checked against the IANA root zone list; `md`, `sh`,
+ * `rs`, `py` and `java` are delegated and therefore absent). A file name ending in one of these is kept unless a path
+ * follows; in `body` mode a two-letter one is not treated as a country TLD.
+ */
 const FILE_EXTENSIONS = new Set([
-  'md', 'js', 'ts', 'tsx', 'jsx', 'py', 'rb', 'sh', 'go', 'rs', 'java', 'kt', 'cs', 'cpp', 'txt', 'log', 'csv', 'json',
+  'js', 'ts', 'tsx', 'jsx', 'rb', 'go', 'kt', 'cs', 'cpp', 'txt', 'log', 'csv', 'json',
   'yml', 'yaml', 'xml', 'html', 'htm', 'css', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'hwp', 'hwpx', 'png',
   'jpg', 'jpeg', 'gif', 'svg', 'webp', 'mp3', 'mp4', 'wav', 'tar', 'gz', 'tgz', 'dmg', 'exe', 'msi', 'apk', 'ipa',
 ]);
@@ -66,7 +71,8 @@ function replaceBareDomains(text: string, mode: LinkNeutralizationMode): string 
     const tldLower = tld.toLowerCase();
     const hasPath = tail.length > 0;
     if (mode === 'body') {
-      return hasPath || WEB_TLDS.has(tldLower) || tldLower.startsWith('xn--') || /[^a-z]/.test(tldLower)
+      const countryTld = tldLower.length === 2 && !FILE_EXTENSIONS.has(tldLower);
+      return hasPath || WEB_TLDS.has(tldLower) || countryTld || tldLower.startsWith('xn--') || /[^a-z]/.test(tldLower)
         ? LINK_PLACEHOLDER
         : match;
     }

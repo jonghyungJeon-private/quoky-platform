@@ -23,6 +23,11 @@ const BYPASSES = [
   '예시.한국/로그인',
   'аpple.com',
   '한글도메인.com',
+  // Sign-off item 1: file-extension-looking country TLDs are links in both modes.
+  'evil.sh',
+  'login-verify.md',
+  'evil.rs',
+  'paypal.com.py',
 ];
 
 /** A broad "scheme or domain" detector, independent of the neutralizer's own patterns. */
@@ -42,6 +47,11 @@ describe('neutralizeLinks (GML-1 re-review item 1)', () => {
       expect(neutralizeLinks(`see ${link} now`, 'body'), link).toContain(LINK_PLACEHOLDER);
     }
     expect(neutralizeLinks('see example.org or evil.zip', 'body')).toBe(`see ${LINK_PLACEHOLDER} or ${LINK_PLACEHOLDER}`);
+    // Sign-off item 1: a country TLD that looks like a file extension is a link in body mode too; README.md included.
+    for (const link of ['evil.sh', 'login-verify.md', 'evil.rs', 'paypal.com.py', 'README.md']) {
+      expect(neutralizeLinks(`see ${link} now`, 'body'), link).toBe(`see ${LINK_PLACEHOLDER} now`);
+      expect(neutralizeLinks(`see ${link} now`), link).toBe(`see ${LINK_PLACEHOLDER} now`);
+    }
   });
 
   it('keeps ordinary text: versions, abbreviations, e-mail addresses, file names and sentence ends', () => {
@@ -51,7 +61,7 @@ describe('neutralizeLinks (GML-1 re-review item 1)', () => {
       'e.g. this, i.e. that',
       'U.S. office',
       'kim@example.com',
-      'README.md 와 main.py 를 보세요',
+      'report.pdf 와 index.ts 를 보세요',
       '보고서.pdf 첨부',
       '확인했습니다. 다음 주에 뵙겠습니다.',
       '3.5배 증가',
