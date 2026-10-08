@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ConnectorWriteTransportGuard } from '@quoky/core';
 import { ConnectorQueryError } from '@quoky/core';
 import {
   JiraIssueCommentWriter,
@@ -61,6 +62,27 @@ function assertNoSecrets(value: unknown): void {
 /** UNC-1: what the platform fetch throws (`TypeError('fetch failed')` with the transport error as `cause`). */
 function fetchFailed(code: string, message = `${code} test`): TypeError {
   return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+}
+
+
+/** UNC-1: a recording transport guard (what the composition root injects) that answers NOT_SENT for a thrown request. */
+function recordingGuard(): { guard: ConnectorWriteTransportGuard; begun: string[]; classified: unknown[]; ended: number } {
+  const log = { begun: [] as string[], classified: [] as unknown[], ended: 0 };
+  const guard: ConnectorWriteTransportGuard = {
+    begin(target) {
+      log.begun.push(target.toString());
+      return {
+        classifyFailure(error) {
+          log.classified.push(error);
+          return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
+        },
+        end() {
+          log.ended += 1;
+        },
+      };
+    },
+  };
+  return Object.assign(log, { guard });
 }
 
 describe('JiraIssueCommentWriter (ADR-0112 D2/D4)', () => {
@@ -275,24 +297,25 @@ describe('JiraIssueTransitionWriter (ADR-0112 D2/D5: the approved transition id 
     }
   });
 
-  it('UNC-1: a thrown comment / transition POST is classified by the injected classifier, called once with the error', async () => {
+  it('UNC-1: only the comment / transition POST runs inside a transport-guard window (not the pre-reads)', async () => {
     const thrown = fetchFailed('ENOTFOUND');
-    const seen: unknown[] = [];
-    const classifyTransportFailure = (error: unknown) => {
-      seen.push(error);
-      return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false } as const;
-    };
+    const rec = recordingGuard();
     const transition = fakeFetch(issue('PROJ-7'), json(200, TRANSITIONS), thrown);
     expect(
-      await new JiraIssueTransitionWriter(config(transition.fetchImpl, { classifyTransportFailure })).transition(APPROVED),
+      await new JiraIssueTransitionWriter(config(transition.fetchImpl, { transportGuard: rec.guard })).transition(APPROVED),
     ).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
     expect(transition.calls).toHaveLength(3);
     const comment = fakeFetch(issue('PROJ-1'), thrown);
     expect(
-      await new JiraIssueCommentWriter(config(comment.fetchImpl, { classifyTransportFailure })).addComment({ issueKey: 'PROJ-1', text: 'hi' }),
+      await new JiraIssueCommentWriter(config(comment.fetchImpl, { transportGuard: rec.guard })).addComment({ issueKey: 'PROJ-1', text: 'hi' }),
     ).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
     expect(comment.calls).toHaveLength(2);
-    expect(seen).toEqual([thrown, thrown]);
+    expect(rec.begun).toEqual([
+      'https://example.atlassian.net/rest/api/3/issue/PROJ-7/transitions',
+      'https://example.atlassian.net/rest/api/3/issue/PROJ-1/comment',
+    ]);
+    expect(rec.classified).toEqual([thrown, thrown]);
+    expect(rec.ended).toBe(2);
   });
 
   it('refuses a non-allowlisted issue or malformed bound ids before any network call', async () => {

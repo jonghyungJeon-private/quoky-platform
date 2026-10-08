@@ -4,12 +4,12 @@ import {
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
-  failSafeConnectorWriteTransportClassifier,
+  failSafeConnectorWriteTransportGuard,
   isValidConnectorWriteText,
   resolveConnectorQueryTimeoutMs,
   type ConnectorWriteNotSentReason,
   type ConnectorWriteOutcome,
-  type ConnectorWriteTransportClassifier,
+  type ConnectorWriteTransportGuard,
   type IssueCommentRequest,
   type IssueCommentWriter,
   type IssueTransitionOption,
@@ -48,10 +48,10 @@ export interface JiraIssueWriterConfig {
   /** Per-request timeout in milliseconds (default 10000). */
   readonly timeoutMs?: number;
   /**
-   * How a thrown write request is classified (UNC-1; injected by the composition root). Default: fail safe, every
-   * thrown request is UNCERTAIN.
+   * Observes each write request's transport and classifies a thrown request (UNC-1; injected by the composition
+   * root). Default: fail safe, every thrown request is UNCERTAIN.
    */
-  readonly classifyTransportFailure?: ConnectorWriteTransportClassifier;
+  readonly transportGuard?: ConnectorWriteTransportGuard;
 }
 
 /** The shared transport and allowlist of the two Jira writers. */
@@ -61,7 +61,7 @@ class JiraWriteClient {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly allowedProjects: ReadonlySet<string>;
-  readonly classifyTransportFailure: ConnectorWriteTransportClassifier;
+  private readonly transportGuard: ConnectorWriteTransportGuard;
 
   constructor(config: JiraIssueWriterConfig) {
     const host = requireNonEmpty(config?.host, 'host');
@@ -71,7 +71,7 @@ class JiraWriteClient {
     this.authorization = `Basic ${Buffer.from(`${email}:${apiToken}`, 'utf8').toString('base64')}`;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'jira writer');
-    this.classifyTransportFailure = config.classifyTransportFailure ?? failSafeConnectorWriteTransportClassifier;
+    this.transportGuard = config.transportGuard ?? failSafeConnectorWriteTransportGuard;
     const projects = Array.isArray(config.allowedProjects) ? config.allowedProjects : [];
     if (projects.length === 0 || projects.some((key) => typeof key !== 'string' || !PROJECT_KEY.test(key))) {
       throw new Error('jira writer: a non-empty list of valid project keys is required');
@@ -91,6 +91,21 @@ class JiraWriteClient {
 
   browseUrl(issueKey: string): string {
     return `${this.baseUrl}/browse/${encodeURIComponent(issueKey)}`;
+  }
+
+  /**
+   * One WRITE request inside a transport window (UNC-1): a thrown request becomes the guard's outcome (NOT_SENT only
+   * when provably no request bytes reached Jira; otherwise UNCERTAIN).
+   */
+  async write(url: URL, body: unknown): Promise<{ readonly response: Response } | { readonly failed: ConnectorWriteOutcome }> {
+    const attempt = this.transportGuard.begin(url);
+    try {
+      return { response: await this.request(url, 'POST', body) };
+    } catch (error) {
+      return { failed: attempt.classifyFailure(error) };
+    } finally {
+      attempt.end();
+    }
   }
 
   /** One request. Throws only for a transport failure (the caller decides what that means). */
@@ -192,15 +207,11 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
     const drifted = await this.client.confirmIssueKey(request.issueKey);
     if (drifted !== undefined) return drifted;
 
-    let response: Response;
-    try {
-      response = await this.client.request(this.client.issueUrl(request.issueKey, '/comment'), 'POST', {
-        body: plainTextDocument(request.text),
-      });
-    } catch (error) {
-      // NOT_SENT only with connection-stage evidence that it never reached Jira (UNC-1); otherwise UNCERTAIN.
-      return this.client.classifyTransportFailure(error);
-    }
+    const sent = await this.client.write(this.client.issueUrl(request.issueKey, '/comment'), {
+      body: plainTextDocument(request.text),
+    });
+    if ('failed' in sent) return sent.failed;
+    const response = sent.response;
     if (!response.ok) return failedWrite(response);
     let payload: unknown;
     try {
@@ -247,15 +258,11 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
     const chosen = findApprovedTransition(options, request.transitionId, request.toStatusId);
     if (chosen === undefined) return connectorWriteNotSent('TARGET_CHANGED');
 
-    let response: Response;
-    try {
-      response = await this.client.request(this.client.issueUrl(request.issueKey, '/transitions'), 'POST', {
-        transition: { id: chosen.id },
-      });
-    } catch (error) {
-      // NOT_SENT only with connection-stage evidence that it never reached Jira (UNC-1); otherwise UNCERTAIN.
-      return this.client.classifyTransportFailure(error);
-    }
+    const sent = await this.client.write(this.client.issueUrl(request.issueKey, '/transitions'), {
+      transition: { id: chosen.id },
+    });
+    if ('failed' in sent) return sent.failed;
+    const response = sent.response;
     if (!response.ok) return failedWrite(response);
     await discardBody(response);
     return connectorWriteSent(`${request.issueKey}:${chosen.id}`, this.client.browseUrl(request.issueKey));

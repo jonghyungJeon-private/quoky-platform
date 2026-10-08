@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ConnectorWriteTransportGuard } from '@quoky/core';
 import type { CalendarEventDraft, CalendarEventExpectation } from '@quoky/core';
 import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_CALENDAR_READ_WRITE_SCOPE, GOOGLE_OAUTH_TOKEN_URL } from './oauth';
 import { GoogleCalendarWriter, googleCalendarEventIdFor, type GoogleCalendarWriterConfig } from './google-calendar-writer';
@@ -72,6 +73,27 @@ function assertNoSecrets(value: unknown): void {
 /** UNC-1: what the platform fetch throws (`TypeError('fetch failed')` with the transport error as `cause`). */
 function fetchFailed(code: string, message = `${code} test`): TypeError {
   return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+}
+
+
+/** UNC-1: a recording transport guard (what the composition root injects) that answers NOT_SENT for a thrown request. */
+function recordingGuard(): { guard: ConnectorWriteTransportGuard; begun: string[]; classified: unknown[]; ended: number } {
+  const log = { begun: [] as string[], classified: [] as unknown[], ended: 0 };
+  const guard: ConnectorWriteTransportGuard = {
+    begin(target) {
+      log.begun.push(target.toString());
+      return {
+        classifyFailure(error) {
+          log.classified.push(error);
+          return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
+        },
+        end() {
+          log.ended += 1;
+        },
+      };
+    },
+  };
+  return Object.assign(log, { guard });
 }
 
 describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
@@ -174,18 +196,16 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
     }
   });
 
-  it('UNC-1: a thrown write request is classified by the injected classifier, called once with the error', async () => {
+  it('UNC-1: only the write request runs inside a transport-guard window (not the token refresh)', async () => {
     const thrown = fetchFailed('ENOTFOUND');
-    const seen: unknown[] = [];
+    const rec = recordingGuard();
     const google = fakeGoogle([thrown]);
-    const outcome = await writer(google.fetchImpl, {
-      classifyTransportFailure: (error) => {
-        seen.push(error);
-        return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
-      },
-    }).createEvent({ draft: DRAFT, idempotencyKey: KEY });
+    const outcome = await writer(google.fetchImpl, { transportGuard: rec.guard }).createEvent({ draft: DRAFT, idempotencyKey: KEY });
     expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
-    expect(seen).toEqual([thrown]);
+    expect(rec.begun).toHaveLength(1);
+    expect(new URL(rec.begun[0] ?? '').pathname).toBe('/calendar/v3/calendars/primary/events');
+    expect(rec.classified).toEqual([thrown]);
+    expect(rec.ended).toBe(1);
     expect(google.calendarCalls).toHaveLength(1);
   });
 

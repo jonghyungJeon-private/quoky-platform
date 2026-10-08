@@ -3,31 +3,36 @@ import {
   connectorWriteNotSent,
   connectorWriteUncertain,
   type ConnectorWriteOutcome,
-  type ConnectorWriteTransportClassifier,
+  type ConnectorWriteTransportAttempt,
+  type ConnectorWriteTransportGuard,
 } from '@quoky/core';
 
 /**
- * The platform-fetch transport classifier for connector WRITE requests (UNC-1 live network-fault UAT, 2026-10-08). It
- * implements Core's `ConnectorWriteTransportClassifier` contract and is injected by the composition root into the
- * Slack, Jira and Google Calendar writers (adapters depend only on `@quoky/core`, ARCHITECTURE.md §11.3; Core stays free
- * of transport specifics).
+ * The platform-fetch transport guard for connector WRITE requests (UNC-1 live network-fault UAT and its reviews,
+ * 2026-10-08). It implements Core's `ConnectorWriteTransportGuard` contract and is injected by the composition root into
+ * the Slack, Jira and Google Calendar writers (adapters depend only on `@quoky/core`, ARCHITECTURE.md §11.3; Core stays
+ * free of transport specifics).
  *
- * ONE rule: `NOT_SENT('UNAVAILABLE')` only with connection-stage evidence, otherwise `UNCERTAIN('TRANSPORT')`.
- * Connection-stage evidence is exactly:
- * - the error (anywhere in the `cause` chain) is the very object the platform fetch (undici) published on its
- *   `undici:client:connectError` diagnostics channel — the connection (DNS, TCP, proxy tunnel or TLS handshake) was
- *   never established, so no request byte was written. Matched by IDENTITY, never by shape or timing, so concurrent
- *   requests cannot be confused;
- * - `ENOTFOUND` / `EAI_AGAIN`: a name-resolution failure cannot happen after the request was sent;
- * - a refused proxy tunnel: undici's "Proxy response (NNN) !== 200 when HTTP Tunneling", raised before the tunnel exists.
+ * `NOT_SENT('UNAVAILABLE')` needs BOTH:
  *
- * Every other code — `ECONNREFUSED`, `ENETUNREACH`, `EHOSTUNREACH`, `ECONNRESET`, `UND_ERR_CONNECT_TIMEOUT`,
- * `ERR_TLS_HANDSHAKE_TIMEOUT`, TLS certificate codes — is NOT_SENT only together with the connect-error evidence (they
- * can also surface on an established connection, e.g. `read EHOSTUNREACH` after the request bytes were written).
- * Timeouts, aborts and anything unrecognised stay UNCERTAIN.
+ * 1. **Invocation-wide no-send evidence.** Each write request opens a window for its target origin. While it is open,
+ *    any request-bytes event the platform fetch (undici) publishes for that origin — `undici:client:sendHeaders`
+ *    (headers written to a socket) or `undici:request:bodySent` — poisons the window, whatever happens next. This
+ *    covers fetch's own re-dispatches (a POST is retried on a new connection after HTTP 421 even with
+ *    `redirect: 'error'`): bytes on the first connection make the final error irrelevant. A proxy CONNECT has the
+ *    proxy's origin and is not a request to the target. An event whose origin cannot be read poisons every open
+ *    window. Concurrent requests to the same origin poison each other (accepted: it fails safe).
+ * 2. **Connection-stage evidence** on the thrown error: the very object undici published on
+ *    `undici:client:connectError` (matched by identity), a name-resolution code (`ENOTFOUND`, `EAI_AGAIN`), or a refused
+ *    proxy tunnel ("Proxy response (NNN) !== 200 when HTTP Tunneling").
+ *
+ * Everything else is `UNCERTAIN('TRANSPORT')`. NOT_SENT therefore means: no request bytes were observed on any
+ * connection to the target during this write, and the failure happened while connecting.
  */
 
 const CONNECT_ERROR_CHANNEL = 'undici:client:connectError';
+/** Published when a request's headers / body are written to a socket (present on Node 18.20 and Node 22). */
+const SEND_CHANNELS = ['undici:client:sendHeaders', 'undici:request:bodySent'] as const;
 /** Name resolution happens only before a connection exists. */
 const NAME_RESOLUTION_CODES: ReadonlySet<string> = new Set(['ENOTFOUND', 'EAI_AGAIN']);
 /** undici's refused-tunnel message (`ProxyAgent` / `EnvHttpProxyAgent`): the CONNECT was answered with a non-200. */
@@ -35,25 +40,38 @@ const PROXY_TUNNEL_REFUSED = /^Proxy response (?:\(\d{3}\) )?!== 200 when HTTP T
 /** How deep the `cause` chain is followed (fetch wraps the transport error once or twice). */
 const MAX_CAUSE_DEPTH = 5;
 
+interface InvocationWindow {
+  readonly origin: string;
+  poisoned: boolean;
+}
+
 /** Errors undici published as connect-stage failures (weakly held: they vanish with the error). */
 const connectStageErrors = new WeakSet<object>();
-/** Held strongly so the subscription can never be collected. */
-let connectErrorChannel: ReturnType<typeof channel> | undefined;
+/** The open write windows. */
+const openWindows = new Set<InvocationWindow>();
+/** Held strongly so the subscriptions can never be collected. */
+const subscribedChannels: Array<ReturnType<typeof channel>> = [];
 
 /**
- * Subscribes (once per process) to undici's connect-error diagnostics channel. The composition root calls it before it
- * builds any writer, so the subscription exists before the first write request. Idempotent.
+ * Subscribes (once per process) to undici's connect-error and request-bytes diagnostics channels. The composition root
+ * calls it before it builds any writer; {@link platformFetchTransportGuard} also calls it. Idempotent.
  */
 export function installConnectorWriteTransportDiagnostics(): void {
-  if (connectErrorChannel !== undefined) return;
-  connectErrorChannel = channel(CONNECT_ERROR_CHANNEL);
-  connectErrorChannel.subscribe((message: unknown) => {
+  if (subscribedChannels.length > 0) return;
+  const connectError = channel(CONNECT_ERROR_CHANNEL);
+  connectError.subscribe((message: unknown) => {
     const error = isObject(message) ? message.error : undefined;
     if (isObject(error)) connectStageErrors.add(error);
   });
+  subscribedChannels.push(connectError);
+  for (const name of SEND_CHANNELS) {
+    const send = channel(name);
+    send.subscribe((message: unknown) => poisonWindowsFor(originOfRequestMessage(message)));
+    subscribedChannels.push(send);
+  }
 }
 
-/** True only with connection-stage evidence that `error` failed before the request was written. */
+/** True only with connection-stage evidence that `error` failed while connecting (see the module comment, part 2). */
 export function hasConnectionStageEvidence(error: unknown): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && isObject(current); depth += 1) {
@@ -67,11 +85,47 @@ export function hasConnectionStageEvidence(error: unknown): boolean {
   return false;
 }
 
-/** {@link ConnectorWriteTransportClassifier}: NOT_SENT only with connection-stage evidence, else UNCERTAIN. */
-export const classifyConnectorWriteTransportFailure: ConnectorWriteTransportClassifier = (
-  error: unknown,
-): ConnectorWriteOutcome =>
-  hasConnectionStageEvidence(error) ? connectorWriteNotSent('UNAVAILABLE') : connectorWriteUncertain('TRANSPORT');
+/** The guard the composition root injects into every connector writer. */
+export const platformFetchTransportGuard: ConnectorWriteTransportGuard = {
+  begin(target: URL): ConnectorWriteTransportAttempt {
+    installConnectorWriteTransportDiagnostics();
+    const window: InvocationWindow = { origin: originOf(target) ?? '', poisoned: false };
+    // A target without a readable origin can never prove anything: start poisoned.
+    if (window.origin === '') window.poisoned = true;
+    openWindows.add(window);
+    return {
+      classifyFailure(error: unknown): ConnectorWriteOutcome {
+        return !window.poisoned && hasConnectionStageEvidence(error)
+          ? connectorWriteNotSent('UNAVAILABLE')
+          : connectorWriteUncertain('TRANSPORT');
+      },
+      end(): void {
+        openWindows.delete(window);
+      },
+    };
+  },
+};
+
+function poisonWindowsFor(origin: string | undefined): void {
+  for (const window of openWindows) {
+    if (origin === undefined || window.origin === origin) window.poisoned = true;
+  }
+}
+
+function originOfRequestMessage(message: unknown): string | undefined {
+  const request = isObject(message) ? message.request : undefined;
+  const origin = isObject(request) ? request.origin : undefined;
+  return origin === undefined ? undefined : originOf(origin);
+}
+
+function originOf(value: unknown): string | undefined {
+  try {
+    const origin = new URL(String(value)).origin;
+    return origin === 'null' ? undefined : origin;
+  } catch {
+    return undefined;
+  }
+}
 
 function isObject(value: unknown): value is Record<string, unknown> & object {
   return typeof value === 'object' && value !== null;

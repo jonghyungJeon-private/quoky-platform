@@ -88,16 +88,34 @@ export function connectorWriteUncertain(reason: ConnectorWriteUncertainReason): 
 }
 
 /**
- * What a writer does with a write request that THREW (UNC-1). The contract: return `NOT_SENT('UNAVAILABLE')` only when
- * the request provably never reached the provider (connection-stage evidence), and `UNCERTAIN('TRANSPORT')` for
- * anything else — a request that may have left is never reported as not sent. The transport-specific evidence lives
- * outside Core; the composition root injects the classifier into each writer.
+ * One write request's transport window (UNC-1). A writer opens it immediately before the write request and ends it
+ * when the request settles, success or failure.
  */
-export type ConnectorWriteTransportClassifier = (error: unknown) => ConnectorWriteOutcome;
+export interface ConnectorWriteTransportAttempt {
+  /**
+   * The outcome for a write request that THREW. Contract: `NOT_SENT('UNAVAILABLE')` only when no request bytes were
+   * observed on ANY connection to the target during this attempt (automatic re-dispatches included) AND the failure
+   * carries connection-stage evidence; `UNCERTAIN('TRANSPORT')` otherwise — a request that may have left is never
+   * reported as not sent.
+   */
+  classifyFailure(error: unknown): ConnectorWriteOutcome;
+  /** Closes the window. Idempotent. */
+  end(): void;
+}
 
-/** The fail-safe default: every thrown write request may have left, so it is UNCERTAIN (never retried). */
-export const failSafeConnectorWriteTransportClassifier: ConnectorWriteTransportClassifier = () =>
-  connectorWriteUncertain('TRANSPORT');
+/**
+ * Observes the transport of connector WRITE requests (UNC-1). The transport-specific evidence lives outside Core; the
+ * composition root injects an implementation into each writer.
+ */
+export interface ConnectorWriteTransportGuard {
+  /** Opens the window for ONE write request to `target` (its origin) before the request starts. */
+  begin(target: URL): ConnectorWriteTransportAttempt;
+}
+
+/** The fail-safe default: no transport evidence, so every thrown write request is UNCERTAIN (never retried). */
+export const failSafeConnectorWriteTransportGuard: ConnectorWriteTransportGuard = {
+  begin: () => ({ classifyFailure: () => connectorWriteUncertain('TRANSPORT'), end: () => undefined }),
+};
 
 /** Neutral operation names recorded on write receipts (ADR-0112 D3). Core never branches on a connector id. */
 export const ConnectorWriteOperation = {

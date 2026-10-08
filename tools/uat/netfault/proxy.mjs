@@ -31,6 +31,8 @@ const MODES = new Set(['pass', 'refuse', 'cut-after-request', 'stall-after-reque
 
 let mode = process.env.INITIAL_MODE ?? 'pass';
 let tunnelSeq = 0;
+/** Open tunnels (id → sockets and the mode they were opened in); all are closed on every mode change. */
+const openTunnels = new Map();
 const events = [];
 const t0 = Date.now();
 
@@ -106,6 +108,7 @@ function handleTunnel(client, head) {
   }
 
   const upstream = net.connect(port, host);
+  openTunnels.set(id, { client, upstream, mode: tunnelMode });
   const up = tlsRecordCounter();
   const down = tlsRecordCounter();
   let upBytes = 0;
@@ -117,6 +120,7 @@ function handleTunnel(client, head) {
   const faulty = tunnelMode === 'cut-after-request' || tunnelMode === 'stall-after-request';
 
   const summary = (why) => {
+    openTunnels.delete(id);
     if (closed) return;
     closed = true;
     log({
@@ -230,8 +234,16 @@ const control = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/mode') {
     const next = url.searchParams.get('m') ?? '';
     if (!MODES.has(next)) return reply(400, { error: 'unknown mode' });
+    const previous = mode;
     mode = next;
-    log({ event: 'mode', mode });
+    log({ event: 'mode', mode, previous });
+    // No tunnel outlives a mode change: a keep-alive tunnel from the previous mode can never carry a later request.
+    for (const [tunnel, open] of openTunnels) {
+      openTunnels.delete(tunnel);
+      log({ tunnel, event: 'closed-on-mode-change', mode: open.mode, newMode: next });
+      open.client.destroy();
+      open.upstream.destroy();
+    }
     return reply(200, { mode });
   }
   if (req.method === 'GET' && url.pathname === '/mode') return reply(200, { mode });

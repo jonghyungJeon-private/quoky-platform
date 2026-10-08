@@ -9,19 +9,22 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 From the UNC-1 live network-fault UAT (Docker fault proxy, real Slack writer; harness in `tools/uat/netfault/`). No
 migration, no new port or token, no deps change; `ConversationRuntimeDeps` stays 35. The harness refuses to run unless
-Slack `conversations.info` confirms the explicitly approved channel id is `#quoky-test` (not a DM); its image copies an
-allowlist only (`/.dockerignore` drops every env-style file), and `run.sh` fails on any harness or result error.
+Slack `conversations.info` — run in a separate short-lived process — confirms the explicitly approved channel id is
+`#quoky-test` (not a DM); the fault proxy closes every tunnel on each mode change; its image copies an allowlist only
+(`/.dockerignore` drops every env-style file); `run.sh` validates its arguments before touching the filesystem and
+accepts a run only with the case-specific outcome and tunnel pattern (`validate-result.mjs`).
 
 - Pre-send failures are `NOT_SENT('UNAVAILABLE')`, not "may have been posted". Core gains only the neutral contract
-  (`ConnectorWriteTransportClassifier`, fail-safe default `failSafeConnectorWriteTransportClassifier` = UNCERTAIN); the
-  Slack post, Jira comment / transition and Google Calendar writers take an injected `classifyTransportFailure`. The
-  composition root injects the platform-fetch classifier (`apps/quoky/src/connector-write-transport.ts`), which returns
-  NOT_SENT **only with connection-stage evidence**: the error is the very object undici published on its
-  `undici:client:connectError` diagnostics channel (matched by identity — DNS, TCP, proxy tunnel, TLS handshake), a
-  name-resolution code (`ENOTFOUND`, `EAI_AGAIN`), or a refused proxy tunnel (non-200 CONNECT). `ECONNREFUSED`,
-  `ENETUNREACH`, `EHOSTUNREACH`, `ECONNRESET`, connect / handshake timeouts and TLS certificate codes are NOT_SENT only
-  together with that evidence (`read EHOSTUNREACH` after the request bytes were written stays UNCERTAIN); timeouts,
-  aborts and anything else stay UNCERTAIN. A source scan keeps Core free of `diagnostics_channel` and the HTTP client.
+  (`ConnectorWriteTransportGuard` / `ConnectorWriteTransportAttempt`, fail-safe default
+  `failSafeConnectorWriteTransportGuard` = UNCERTAIN); the Slack post, Jira comment / transition and Google Calendar
+  writers open one guard window around each write request (not around pre-reads or token refreshes). The composition
+  root injects the platform-fetch guard (`apps/quoky/src/connector-write-transport.ts`). NOT_SENT needs BOTH
+  invocation-wide no-send evidence — no `undici:client:sendHeaders` / `undici:request:bodySent` event for the target
+  origin while the window was open (fetch re-dispatches a POST after HTTP 421; concurrent requests to the same origin
+  poison each other, failing safe; a proxy CONNECT has the proxy's origin) — AND connection-stage evidence on the error
+  (the object undici published on `undici:client:connectError`, `ENOTFOUND` / `EAI_AGAIN`, or a refused proxy tunnel).
+  Everything else is UNCERTAIN. ADR-0112 gains a note: NOT_SENT means no request bytes were observed on any connection
+  during the write. A source scan keeps Core free of `diagnostics_channel` and the HTTP client.
 - NOT_SENT replies say plainly that nothing was sent: "Slack 게시를 보내지 못했어요: …. 아무것도 게시되지 않았어요."
   (Jira: "댓글은 달리지 않았어요." / "이슈 상태는 바뀌지 않았어요.", calendar: "캘린더는 바뀌지 않았어요.").
 - Duplicate warning after UNCERTAIN: a new preview whose connector, operation, target and payload hash match an

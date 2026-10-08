@@ -15,7 +15,7 @@ import type {
 } from '@quoky/core';
 
 import type { QuokyConfig } from './config';
-import { classifyConnectorWriteTransportFailure, installConnectorWriteTransportDiagnostics } from './connector-write-transport';
+import { installConnectorWriteTransportDiagnostics, platformFetchTransportGuard } from './connector-write-transport';
 
 /** Fixed, value-free reasons logged when a write adapter is not registered. */
 export const ConnectorWriterNotRegisteredReason = {
@@ -63,12 +63,12 @@ export function createConnectorWriters(
   options: ConnectorWritersFactoryOptions = {},
 ): ConnectorWriters {
   const writes = config.connectorWrites;
-  // UNC-1: every writer classifies a thrown write request with the platform-fetch classifier (NOT_SENT only with
-  // connection-stage evidence); the diagnostics subscription exists before the first write request.
+  // UNC-1: every writer observes its write requests through the platform-fetch transport guard (NOT_SENT only when no
+  // request bytes left on any connection AND the failure was connection-stage); subscribed before the first request.
   installConnectorWriteTransportDiagnostics();
   const fetchOption = {
     ...(options.fetchImpl !== undefined ? { fetchImpl: options.fetchImpl } : {}),
-    classifyTransportFailure: classifyConnectorWriteTransportFailure,
+    transportGuard: platformFetchTransportGuard,
   };
   const writers: {
     issueComments?: IssueCommentWriter;
@@ -148,7 +148,7 @@ function createCalendarEventWriter(
     clientSecret: google.clientSecret,
     refreshToken: token,
     ...(options.fetchImpl !== undefined ? { fetchImpl: options.fetchImpl } : {}),
-    classifyTransportFailure: classifyConnectorWriteTransportFailure,
+    transportGuard: platformFetchTransportGuard,
   }), logger);
 }
 

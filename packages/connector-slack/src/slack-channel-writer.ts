@@ -2,14 +2,14 @@ import {
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
-  failSafeConnectorWriteTransportClassifier,
+  failSafeConnectorWriteTransportGuard,
   isValidConnectorWriteText,
   resolveConnectorQueryTimeoutMs,
   type ChannelMessageRequest,
   type ChannelMessageWriter,
   type ConnectorWriteNotSentReason,
   type ConnectorWriteOutcome,
-  type ConnectorWriteTransportClassifier,
+  type ConnectorWriteTransportGuard,
 } from '@quoky/core';
 
 /**
@@ -18,7 +18,7 @@ import {
  * `SlackConnectorProvider`. The text is posted verbatim: `&`, `<` and `>` are escaped and mention, link and markdown
  * expansion is off, so owner text can never become `@channel` or a hidden link. One request with a timeout and
  * redirects refused; no retry. A thrown request is classified by the injected
- * `classifyTransportFailure` (NOT_SENT only with connection-stage evidence; default UNCERTAIN). Nothing is logged, and no outcome carries the
+ * `transportGuard` (NOT_SENT only when provably no request bytes left; default UNCERTAIN). Nothing is logged, and no outcome carries the
  * token, the payload or a response body.
  */
 
@@ -46,10 +46,10 @@ export interface SlackChannelWriterConfig {
   /** Per-request timeout in milliseconds (default 10000). */
   readonly timeoutMs?: number;
   /**
-   * How a thrown post request is classified (UNC-1; injected by the composition root). Default: fail safe, every
-   * thrown request is UNCERTAIN.
+   * Observes the post request's transport and classifies a thrown request (UNC-1; injected by the composition root).
+   * Default: fail safe, every thrown request is UNCERTAIN.
    */
-  readonly classifyTransportFailure?: ConnectorWriteTransportClassifier;
+  readonly transportGuard?: ConnectorWriteTransportGuard;
 }
 
 /** Slack API error codes that certainly mean the message was not posted. Anything unknown is UNCERTAIN. */
@@ -92,7 +92,7 @@ export class SlackChannelWriter implements ChannelMessageWriter {
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
-  private readonly classifyTransportFailure: ConnectorWriteTransportClassifier;
+  private readonly transportGuard: ConnectorWriteTransportGuard;
   private readonly ids: ReadonlySet<string>;
   private readonly byName: ReadonlyMap<string, string>;
 
@@ -102,7 +102,7 @@ export class SlackChannelWriter implements ChannelMessageWriter {
       throw new Error('slack writer: a bot token is required');
     }
     this.token = token;
-    this.classifyTransportFailure = config.classifyTransportFailure ?? failSafeConnectorWriteTransportClassifier;
+    this.transportGuard = config.transportGuard ?? failSafeConnectorWriteTransportGuard;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'slack writer');
     const channels = Array.isArray(config.channels) ? config.channels : [];
@@ -143,8 +143,10 @@ export class SlackChannelWriter implements ChannelMessageWriter {
     if (!isValidConnectorWriteText(request.text)) return connectorWriteNotSent('INVALID_REQUEST');
 
     let response: Response;
+    const postUrl = new URL('/api/chat.postMessage', SLACK_API_ORIGIN);
+    const attempt = this.transportGuard.begin(postUrl);
     try {
-      response = await this.fetchImpl(new URL('/api/chat.postMessage', SLACK_API_ORIGIN), {
+      response = await this.fetchImpl(postUrl, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -164,8 +166,10 @@ export class SlackChannelWriter implements ChannelMessageWriter {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      // NOT_SENT only with connection-stage evidence that it never reached Slack (UNC-1); otherwise UNCERTAIN.
-      return this.classifyTransportFailure(error);
+      // NOT_SENT only when no request bytes reached Slack on any connection of this attempt (UNC-1); else UNCERTAIN.
+      return attempt.classifyFailure(error);
+    } finally {
+      attempt.end();
     }
 
     if (response.status === 429) {

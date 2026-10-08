@@ -14,12 +14,15 @@
 //
 // Target guard (before ANY write, and before the app boots): the configured channel id must equal the explicitly
 // approved id, and Slack `conversations.info` (bot token, read-only) must report that id with the name `quoky-test` and
-// neither `is_im` nor `is_mpim`. Anything else — including an API error such as missing_scope — refuses with a non-zero
+// neither `is_im` nor `is_mpim`. The lookup runs in a SEPARATE short-lived process (`channel-guard.mjs`), so its
+// keep-alive connection / proxy tunnel can never carry a later write; the proxy also closes every tunnel on each mode
+// change. Anything else — including an API error such as missing_scope — refuses with a non-zero
 // exit. `--offline-placeholder` skips the lookup ONLY for the refused-proxy cases (case1, case1b) and ONLY when the
 // token is the fixed placeholder below, which Slack can never accept, so no post is possible.
 // Required env: QUOKY_CONNECTOR_WRITE_SLACK_TOKEN, QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS (`quoky-test:<id>`),
 // UNC1_PROXY_CONTROL (e.g. http://unc1-proxy:8081). Output: one JSON document on stdout, secrets redacted.
 
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import http from 'node:http';
@@ -38,7 +41,7 @@ const approvedIndex = flags.indexOf('--approved-channel-id');
 const APPROVED_CHANNEL_ID = approvedIndex >= 0 ? flags[approvedIndex + 1] : undefined;
 const OFFLINE_PLACEHOLDER = flags.includes('--offline-placeholder');
 const knownFlags = new Set(['--approved-channel-id', '--offline-placeholder', APPROVED_CHANNEL_ID]);
-if (!CASES.has(CASE) || !/^[A-Za-z0-9-]{1,40}$/.test(RUN_ID ?? '') || !/^[CG][A-Z0-9]{8,20}$/.test(APPROVED_CHANNEL_ID ?? '') || flags.some((f) => !knownFlags.has(f))) {
+if (!CASES.has(CASE) || !/^[a-z0-9-]{1,32}$/.test(RUN_ID ?? '') || !/^[CG][A-Z0-9]{8,20}$/.test(APPROVED_CHANNEL_ID ?? '') || flags.some((f) => !knownFlags.has(f))) {
   process.stderr.write(USAGE);
   process.exit(2);
 }
@@ -128,18 +131,24 @@ let providerCalls = 0;
 async function verifyTargetChannel() {
   if (OFFLINE_PLACEHOLDER) return { verified: false, offlinePlaceholder: true };
   await setMode('pass');
-  const url = new URL('https://slack.com/api/conversations.info');
-  url.searchParams.set('channel', APPROVED_CHANNEL_ID);
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
-  const payload = await response.json().catch(() => null);
-  if (!payload || payload.ok !== true) {
-    throw new Error(`UNC-1 target guard: conversations.info failed (${payload?.error ?? `HTTP ${response.status}`}); refusing`);
+  const guard = spawnSync(process.execPath, [fileURLToPath(new URL('./channel-guard.mjs', import.meta.url)), APPROVED_CHANNEL_ID], {
+    // Always the working proxy port (case1b points HTTPS_PROXY at a dead port on purpose).
+    env: { ...process.env, HTTPS_PROXY: process.env.UNC1_GUARD_PROXY ?? process.env.HTTPS_PROXY },
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  let verdict = null;
+  try {
+    verdict = JSON.parse((guard.stdout ?? '').trim().split('\n').pop() ?? '');
+  } catch {
+    verdict = null;
   }
-  const ch = payload.channel ?? {};
-  if (ch.id !== APPROVED_CHANNEL_ID) throw new Error('UNC-1 target guard: Slack returned another channel id; refusing');
-  if (ch.name !== CHANNEL_NAME) throw new Error('UNC-1 target guard: the channel is not named quoky-test; refusing');
-  if (ch.is_im === true || ch.is_mpim === true) throw new Error('UNC-1 target guard: the target is a DM / group DM; refusing');
-  return { verified: true, name: ch.name, isPrivate: ch.is_private === true };
+  // Every tunnel the guard process opened is closed by the proxy on the next mode change (and with the process).
+  await setMode('refuse');
+  if (guard.status !== 0 || verdict?.verified !== true) {
+    throw new Error(`UNC-1 target guard: refused (${verdict?.error ?? `guard exit ${guard.status}`})`);
+  }
+  return { verified: true, name: verdict.name, isPrivate: verdict.isPrivate === true, separateProcess: true };
 }
 
 async function main() {
@@ -201,7 +210,7 @@ async function main() {
   let seq = 0;
   async function turn(label, text) {
     seq += 1;
-    const tunnelsBefore = (await slackTunnels()).length;
+    const tunnelsBefore = (await slackTunnels()).map((e) => e.tunnel);
     const callsBefore = writerCalls.length;
     const result = await runtime.handle({ id: `unc1-${RUN_ID}-${seq}`, context, text, receivedAt: new Date().toISOString() });
     const step = {
@@ -209,7 +218,7 @@ async function main() {
       sent: text,
       reply: result.reply.text,
       writerCalls: writerCalls.length - callsBefore,
-      slackTunnels: (await slackTunnels()).length - tunnelsBefore,
+      tunnels: (await slackTunnels()).filter((e) => !tunnelsBefore.includes(e.tunnel)).map((e) => ({ tunnel: e.tunnel, mode: e.mode })),
       receipts: receipts().map((r) => ({ status: r.status, reason: r.data?.reason, operation: r.operation })),
     };
     steps.push(step);

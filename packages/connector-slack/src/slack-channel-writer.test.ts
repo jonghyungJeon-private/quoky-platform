@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ConnectorWriteTransportGuard } from '@quoky/core';
 import { SlackChannelWriter, escapeSlackText, type SlackChannelWriterConfig } from './slack-channel-writer';
 
 // Token-shaped fixtures are built by concatenation (never a literal bot-token pattern in the source).
@@ -36,6 +37,26 @@ function writer(fetchImpl: typeof fetch, overrides: Partial<SlackChannelWriterCo
 /** UNC-1: what the platform fetch throws (`TypeError('fetch failed')` with the transport error as `cause`). */
 function fetchFailed(code: string, message = `${code} test`): TypeError {
   return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+}
+
+/** UNC-1: a recording transport guard (what the composition root injects) that answers NOT_SENT for a thrown request. */
+function recordingGuard(): { guard: ConnectorWriteTransportGuard; begun: string[]; classified: unknown[]; ended: number } {
+  const log = { begun: [] as string[], classified: [] as unknown[], ended: 0 };
+  const guard: ConnectorWriteTransportGuard = {
+    begin(target) {
+      log.begun.push(target.toString());
+      return {
+        classifyFailure(error) {
+          log.classified.push(error);
+          return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
+        },
+        end() {
+          log.ended += 1;
+        },
+      };
+    },
+  };
+  return Object.assign(log, { guard });
 }
 
 const posted = (): Response => json(200, { ok: true, channel: CHANNEL, ts: '1700000000.000100' });
@@ -122,19 +143,22 @@ describe('SlackChannelWriter (ADR-0112 D2/D4)', () => {
     }
   });
 
-  it('UNC-1: a thrown post is classified by the injected classifier, called once with the error; no retry', async () => {
+  it('UNC-1: the post request runs inside one transport-guard window; a thrown post is classified by it; no retry', async () => {
     const thrown = fetchFailed('ENOTFOUND');
-    const seen: unknown[] = [];
+    const rec = recordingGuard();
     const fake = fakeFetch(thrown);
-    const outcome = await writer(fake.fetchImpl, {
-      classifyTransportFailure: (error) => {
-        seen.push(error);
-        return { status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false };
-      },
-    }).post({ channel: CHANNEL, text: 'hi' });
+    const outcome = await writer(fake.fetchImpl, { transportGuard: rec.guard }).post({ channel: CHANNEL, text: 'hi' });
     expect(outcome).toEqual({ status: 'NOT_SENT', reason: 'UNAVAILABLE', retryable: false });
-    expect(seen).toEqual([thrown]);
+    expect(rec.begun).toEqual(['https://slack.com/api/chat.postMessage']);
+    expect(rec.classified).toEqual([thrown]);
+    expect(rec.ended).toBe(1);
     expect(fake.calls).toHaveLength(1);
+    // A successful post also closes its window (and the best-effort permalink read opens none).
+    const ok = recordingGuard();
+    await writer(fakeFetch(posted(), json(200, { ok: true, permalink: PERMALINK })).fetchImpl, { transportGuard: ok.guard }).post({ channel: CHANNEL, text: 'hi' });
+    expect(ok.begun).toHaveLength(1);
+    expect(ok.classified).toHaveLength(0);
+    expect(ok.ended).toBe(1);
   });
 
   it('requires a bot token and a valid, non-empty channel allowlist (value-free messages)', () => {
