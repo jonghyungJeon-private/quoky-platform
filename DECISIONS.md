@@ -18054,8 +18054,13 @@ session, and with it the live confirmation of the reaction spike below.
     memory and on disk) unmoved. The restart delivers the update or the album again, within the 10-minute bound.
   - An admission refusal advances at once: nothing would ever be handed over. A bounds rejection is still a turn (it
     names the refused file) and is handed over before the offset moves.
-  - Consequence: turns with attachments are taken in one after the other, in order. Each intake is bounded by the
-    per-call timeouts (20 s for `getFile` and for the download, all attachments of a turn concurrently).
+  - Consequence: turns with attachments are taken in one after the other, in order, and the poll loop waits for each
+    intake. This is an accepted residual (Codex delta, owner-only bot: a delay only postpones the owner's own later
+    messages, which are processed in order anyway). See "Intake delay" below for the bound.
+  - **Every hand-over re-checks first (Codex delta P2).** Text, attachment, album and reaction hand-overs all check
+    the run's signal, `stopped`, the halt and the identity first. Once that fails, for example after a `stop()`
+    called from inside an earlier turn's handler, the batch ends: nothing later is handed over, and the offset stays
+    past the last update that was.
 - **A halt cuts off work in flight (Codex P1).** A halt-scoped `AbortController`, made per start and aborted by a halt,
   the background startup refusal and `stop()`, is linked into every `outbound()` call and the download. A halt
   therefore stops sends, typing, `getFile` and a stream already being read. The cut-off intake hands no turn over and
@@ -18064,6 +18069,23 @@ session, and with it the live confirmation of the reaction spike below.
   holds the intake) to settle, bounded by `STOP_INTAKE_SETTLE_MS` (5 s). It then closes the intake: nothing new is
   written, and a write still in flight is deleted the moment it lands. The hand-over re-checks the stop, so no handler
   call follows a stop even past the bound. `start()` reopens the intake.
+- **A run owns its loop state (Codex delta P2).** Each start makes a new lifecycle controller. Only the run whose
+  signal is the current one may change loop-owned state: `polling`, the offset and its saves, the held album, the
+  poll bookkeeping. So a loop that `stop()` stopped waiting for, and that finishes after a restart, changes nothing.
+  - Both loops (polling, the background identity retry) end on their own aborted signal, not only on `stopped`, which
+    a restart resets.
+  - A failure of an old loop is ignored.
+  - `stop()` marks `polling` false itself.
+- **Intake delay (accepted residual, bounded).** Each `getFile` and download is bounded to 20 s, and the intake note
+  send to 15 s.
+  - Without a guard, one attachment message could hold the next poll for up to 20 s × 2 calls per file × 3 files.
+    The files of one message are fetched concurrently, so in practice about 40 s plus the note. That holds per
+    attachment message in the batch.
+  - **The guard.** Once one poll batch has spent `BATCH_INTAKE_BUDGET_MS` (60 s), its remaining attachment messages
+    are still handed over, in order and under the same offset rules, but their files are not fetched. The metadata
+    checks still name a too-large or unsupported file; every other file is `DOWNLOAD_FAILED` (`BATCH_BUDGET`) and is
+    named in the intake note.
+  - So a batch delays the next poll by at most about 60 s plus one message's intake.
 - **Albums.** Telegram sends each album part as its own message with one `media_group_id`. Handled one by one, an album
   of 10 photos would be 10 image turns, and the caption would reach only the first. So the parts are taken in as ONE
   turn, and the count bound applies to the album:

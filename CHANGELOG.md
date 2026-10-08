@@ -40,6 +40,9 @@ domain field; `ConversationRuntimeDeps` stays 35. No new dependency. Discord is 
 - **Codex review fixes.** The offset is saved only after an attachment turn (or a whole album) was handed over, so a
   stop or crash during the intake leaves it to be delivered again. A halt aborts Bot API work already in flight,
   downloads included. `stop()` waits (bounded) for an intake in flight and leaves no handler call or temp file behind.
+  Every hand-over re-checks stop and halt first, so a `stop()` from inside a handler ends the batch. A loop from an
+  earlier run never touches a restarted run's state. One poll batch spends at most 60 s on attachment intake: after
+  that, its remaining attachment messages are handed over in order with their files not fetched.
 - **Parity.** `adapter-telegram/src/image-canonical.ts` (and its test builders) are byte-identical copies of the Discord
   ones. A composition-root test pins the copy and runs one 18-case fixture set through both intakes.
 
