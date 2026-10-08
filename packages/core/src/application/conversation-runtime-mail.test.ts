@@ -45,8 +45,8 @@ const CHANNEL: ConversationContext = { platform: 'test', spaceId: 'g-1', channel
 const OWNER: Actor = { id: 'owner-actor', displayName: 'Owner', identities: [], createdAt: '2026-10-01T00:00:00.000Z' };
 const T0 = '2026-10-08T01:00:00.000Z';
 /** Distinct markers so any leak of a mail field into a prompt is visible. */
-const SENDER = 'Mallory Sender-Marker';
-const SUBJECT = 'Subject-Marker 분기 결산';
+const SENDER = 'Mallory-SM';
+const SUBJECT = 'Subj-Mkr 결산';
 const SNIPPET = 'Snippet-Marker 미리보기';
 const BODY_MARKER = 'Body-Marker 본문';
 const INJECTION =

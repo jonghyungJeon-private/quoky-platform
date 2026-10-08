@@ -170,7 +170,7 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     const text = textOf(await createMailTurnHandler({ reader, timeZone: SEOUL }).handle(ctx('unread emails')));
     expect(text).toContain('Unread mail: 2 messages');
     expect(text).toContain('1. 山田太郎 · 会議の資料について · today 09:12');
-    expect(text).toContain('2. billing@example.com · Your invoice is ready · today 09:12');
+    expect(text).toContain('2. billing@examp… · Your invoice is ready · today 09:12');
   });
 
   it('credential-shaped senders, subjects and snippets are replaced by fixed placeholders, never shown', async () => {

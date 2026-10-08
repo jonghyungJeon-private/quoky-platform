@@ -20,9 +20,19 @@ import type { MailLanguage } from './mail-question';
 
 export const MAIL_REPLY_MAX_CHARS = 1900;
 export const MAIL_REPLY_MAX_ENTRIES = 10;
-export const MAIL_SENDER_DISPLAY_MAX_CHARS = 30;
-export const MAIL_SUBJECT_DISPLAY_MAX_CHARS = 60;
-export const MAIL_SNIPPET_DISPLAY_MAX_CHARS = 50;
+/**
+ * Review P2 (Codex) / P3-2: a listing number must always name an entry the owner saw. Core cannot know which entries a
+ * platform's budget would drop, so the display caps are sized so that {@link MAIL_REPLY_MAX_ENTRIES} entries ALWAYS fit
+ * in {@link MAIL_REPLY_MAX_CHARS} even when every untrusted character renders as two (an escape before each character,
+ * the worst case of the platform markups in use). The `take-lines` budget below is then a safety net that never drops
+ * an entry; `mail-reply-renderer.test.ts` (a doubling markup) and the app test `mail-listing-fit.test.ts` (the real
+ * platform markups) pin it, so the handler's number → message mapping is exactly the displayed list.
+ */
+export const MAIL_SENDER_DISPLAY_MAX_CHARS = 14;
+export const MAIL_SUBJECT_DISPLAY_MAX_CHARS = 30;
+export const MAIL_SNIPPET_DISPLAY_MAX_CHARS = 18;
+/** The owner-typed sender echoed in a listing header. */
+export const MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS = 20;
 
 /** Why a mail read produced no answer: the ADR-0100 reasons plus the handler's own timeout. */
 export type MailReadFailure = ConnectorQueryErrorReason | 'TIMEOUT';
@@ -107,7 +117,7 @@ function entryLine(index: number, message: MailMessageSummary, filter: MailListi
 
 /** The quoted owner-typed sender of a `from` listing (still an untrusted span: it is echoed into chat). */
 function senderQuery(from: string): MessagePart {
-  return untrustedText(clip(from, MAIL_SENDER_DISPLAY_MAX_CHARS));
+  return untrustedText(clip(from, MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS));
 }
 
 function countText(result: MailSearchResult, language: MailLanguage): string {
@@ -264,11 +274,15 @@ export function renderMailSummaryWhich(count: number, language: MailLanguage): s
     : `방금 목록에 메일이 ${count}건 있어요. 몇 번 메일을 요약할까요? 예: "1번 메일 요약해줘"`;
 }
 
+/**
+ * A number the last displayed list did not show (review P2): nothing is read; the reply names the shown range and the
+ * usage line.
+ */
 export function renderMailSummaryOutOfRange(index: number, count: number, language: MailLanguage): string {
   if (count === 0) return renderMailSummaryNeedsListing(language);
   return language === 'en'
-    ? `The last list has no email ${index} (1–${count}). Check the number.`
-    : `방금 목록에 ${index}번 메일이 없어요 (1–${count}번). 번호를 확인해 주세요.`;
+    ? `The last list showed no email ${index} (1–${count}). ${renderMailUsage(language)}`
+    : `방금 보여 드린 목록에 ${index}번 메일이 없어요 (1–${count}번). ${renderMailUsage(language)}`;
 }
 
 /** Nothing was sent: the mail is credential-shaped (withheld, never redacted) or has no body. */
