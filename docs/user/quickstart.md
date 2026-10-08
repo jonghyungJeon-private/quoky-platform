@@ -666,10 +666,11 @@ Discord와 같은 소유자로 Telegram 개인 대화에서도 Quoky와 이야�
    - 봇이 다르거나(`TELEGRAM_IDENTITY_MISMATCH`), 토큰이 거부되거나(`TELEGRAM_AUTH_REJECTED`), 봇에 웹훅이 걸려 있으면
      (`TELEGRAM_POLL_CONFLICT`) **시작하지 않고 멈춥니다**(종료 코드 78). 원인을 고친 뒤 재시작하세요.
    - Telegram 서버에 잠시 닿지 않거나 응답이 늦으면 Discord는 그대로 시작하고, Telegram 쪽은 뒤에서 다시 확인한 뒤
-     받고 보내기 시작합니다.
-   - 실행 중에(또는 뒤늦은 확인에서) 문제가 생기면, 예를 들어 토큰이 거부되거나 **같은 봇을 받는 다른 Quoky가 켜져** HTTP
+     받고 보내기 시작합니다. 이 뒤늦은 첫 확인에서 봇이 다르거나, 토큰이 거부되거나, 웹훅이 걸려 있으면 시작할 때와
+     똑같이 **Quoky 전체를 정상 종료합니다**(종료 코드 78).
+   - 한 번 확인된 뒤 실행 중에 문제가 생기면, 예를 들어 토큰이 거부되거나 **같은 봇을 받는 다른 Quoky가 켜져** HTTP
      409가 5분 안에 3번 나오면, **Telegram 쪽만 멈추고** Discord로 운영 알림을 한 번 보냅니다("[Quoky 운영 알림]
-     Telegram 연결을 멈췄어요: …"). 같은 사유의 알림은 24시간에 한 번만 갑니다. Discord는 계속 동작합니다.
+     Telegram 연결을 멈췄어요: …"). 같은 사유의 알림은 전달된 뒤 24시간에 한 번만 갑니다. Discord는 계속 동작합니다.
    - 같은 소유자 연결이 다른 사용자(Actor)에 이미 묶여 있으면 `ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram`으로
      멈춥니다. `QUOKY_TELEGRAM_OWNER_ACTOR_MAP`을 원래 Discord ID로 되돌리거나, 연결 해제(백업 뒤 소유자 승인 DB 수정,
      DECISIONS.md ADR-0114 구현 노트)를 하세요.

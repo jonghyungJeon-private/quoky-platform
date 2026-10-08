@@ -17771,12 +17771,26 @@ Outcomes:
 - **A transient or timed-out answer resolves `start()`** (CA P2-2): network, a 5 s timeout or a 5xx. The check is then
   retried in the background with the poll backoff, and nothing is read or sent until `getMe` matches.
   `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code only. Discord is held at most about 2 × 5 s.
-- **A definitive answer found later halts the Telegram side only.** That covers the background retry after an outage,
-  and runtime while polling (a 401, three 409s, a loop defect). It is logged, shown in `status().halted`, and sent ONCE
-  to the Discord owner as an `OPS_NOTICE` (below).
-  - **Why not exit 78 here.** The ADRs fix what happens at startup and say nothing about detection after it. By then
-    the process already serves Discord, so stopping it would take a working Discord down for a Telegram fault. The
-    halt keeps Telegram fail-closed (nothing read or sent) and tells the owner.
+- **A definitive answer from the background retry, before the first successful verification, also exits 78.** That
+  is still the startup identity check: another bot or a 401/404 from `getMe`, or a webhook 409 from the probe (CA final
+  check, rule question 1).
+  - The adapter fails closed (`status().halted`, nothing read or sent) and hands the typed error to `onFatal`.
+  - `main.ts` wires that (`onTelegramFatal` → `exitForTelegramFatal`) to the same report and exit code as a startup
+    error, after the graceful `shutdown`: reminders, ops UI, ops, the platform (Discord), queue, storage, then exit
+    78.
+  - A refusal found before the wiring is registered is delivered on registration.
+- **Only detection AFTER the first verification halts the Telegram side only.** That is a 401, three 409s or a loop
+  defect while polling. It is logged, shown in `status().halted`, and sent ONCE to the Discord owner as an
+  `OPS_NOTICE` (below).
+  - **Why not exit 78 here.** ADR-0102 D5 and ADR-0114 D4 fix the startup identity check, and the background retry
+    before the first verification belongs to it. They say nothing about a token revoked, or a second instance
+    started, after the identity was verified and the process is serving. Stopping the process then would take a
+    working Discord down for a Telegram fault. The halt keeps Telegram fail-closed (nothing read or sent) and tells
+    the owner.
+- **The Discord/Telegram asymmetry (an implementation choice within ADR-0114 D5).** An unreadable identity is fatal on
+  Discord: ADR-0102 D5 `DISCORD_IDENTITY_UNVERIFIABLE` stops the process. On Telegram it is retried in the
+  background, and nothing is read or sent meanwhile. ADR-0114 D5 asks only that a mismatch "fails closed before
+  polling starts", which holds. Retrying keeps a Telegram outage from taking a verified Discord down (CA P2-2).
 
 The probe reliably catches only a webhook (CA P2-3). Telegram answers 409 to whichever `getUpdates` is not the newest,
 so a second long-poller started later is not detected by it. The runtime policy below handles that.

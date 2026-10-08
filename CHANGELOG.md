@@ -19,7 +19,10 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
     - A definitive answer is a typed startup error and exits 78: `TELEGRAM_IDENTITY_MISMATCH`,
       `TELEGRAM_AUTH_REJECTED` or `TELEGRAM_POLL_CONFLICT`.
     - A transient or timed-out answer lets the start continue and is retried in the background.
-    - A definitive answer found later halts the Telegram side only, with one Discord `OPS_NOTICE`.
+    - A definitive answer from that background retry (before the first verification) also exits 78, through a fatal
+      callback and the graceful shutdown.
+    - Only detection after the first verification (a 401, three 409s, a loop defect while polling) halts the
+      Telegram side only, with one Discord `OPS_NOTICE`.
     - `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code.
 - **Admission.** Only an owner's (`QUOKY_TELEGRAM_OWNER_IDS`) own private chat with text, at most 10 minutes old.
   Everything else gets no reply, no download and no content log; only a value-free counter per reason is kept. Every
@@ -90,6 +93,13 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
     awaits it.
   - **Codex final delta P2-2.** Halt notices are released only on Discord READY, bounded and read-only. The 24 h
     suppression starts only on a delivered notice.
+  - **CA final check (APPROVE WITH NITS).**
+    - A definitive answer from the background startup retry exits 78 (ADR-0102 D5).
+    - The restart-after-startup-stop test.
+    - An abort is never classified as a refusal.
+    - The webhook-409 exit-78 test row.
+    - Halt reasons come from a closed list.
+    - One guarded outbound wrapper, pinned by a source-scan test.
 - **Not in TG-1.** Attachments, reactions, the operations-UI panel, CommonMark rendering on Telegram and live QA
   (TG-2/TG-3, Strict).
 
