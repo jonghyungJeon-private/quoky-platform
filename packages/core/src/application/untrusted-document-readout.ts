@@ -78,11 +78,16 @@ export function normalizeUntrustedText(value: string): string {
   return text.replace(INVISIBLE, '');
 }
 
-/** Body text: normalized, trailing spaces trimmed per line, runs of three or more blank lines folded to one. */
+/**
+ * Body text: normalized, trailing whitespace trimmed per line, runs of three or more blank lines folded to one. Linear
+ * in the input (review P2-1: the former per-line `[ \t]+$` regex was quadratic on a long run of spaces). The whole
+ * body is normalized once because the credential guard must read the full text (review P1); every step is linear and
+ * the adapter bounds the input (256 KiB).
+ */
 function prepareBody(value: string): string {
   return normalizeUntrustedText(value)
     .split('\n')
-    .map((line) => line.replace(/[ \t]+$/u, ''))
+    .map((line) => line.trimEnd())
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

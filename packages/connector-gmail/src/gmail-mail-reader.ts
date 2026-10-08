@@ -25,7 +25,15 @@ import {
   GmailResponseError,
   GmailResponseTooLargeError,
 } from './errors';
-import { decodeHtmlEntities, decodeMimeHeader, extractBodyText, headerValue, parseSender, truncateUtf8 } from './mime';
+import {
+  MAX_HEADER_CHARS,
+  decodeHtmlEntities,
+  decodeMimeHeader,
+  extractBodyText,
+  headerValue,
+  parseSender,
+  truncateUtf8,
+} from './mime';
 import { refreshGmailAccessToken, type GmailAccessToken } from './oauth';
 
 /**
@@ -158,8 +166,9 @@ export class GmailMailReader implements MailReader {
     url.searchParams.set('fields', GMAIL_FULL_FIELDS);
     const payload = await this.getJson(url, GMAIL_FULL_MAX_BYTES);
     const summary = mapSummary(payload, id);
-    const body = truncateUtf8(extractBodyText(payload.payload), MAIL_BODY_MAX_BYTES);
-    return { ...summary, bodyText: body.text, bodyTruncated: body.truncated };
+    const extracted = extractBodyText(payload.payload);
+    const body = truncateUtf8(extracted.text, MAIL_BODY_MAX_BYTES);
+    return { ...summary, bodyText: body.text, bodyTruncated: body.truncated || extracted.truncated };
   }
 
   /** Metadata for one listed id; a message deleted since the search (404) is skipped. */
@@ -248,7 +257,10 @@ function mapSummary(payload: Record<string, unknown>, expectedId: string): MailM
     },
     subject: boundMailLine(decodeMimeHeader(headerValue(headers, 'Subject') ?? ''), MAIL_SUBJECT_MAX_LENGTH),
     receivedAt: new Date(internalDate).toISOString(),
-    snippet: boundMailLine(decodeHtmlEntities(typeof payload.snippet === 'string' ? payload.snippet : ''), MAIL_SNIPPET_MAX_LENGTH),
+    snippet: boundMailLine(
+      decodeHtmlEntities(typeof payload.snippet === 'string' ? payload.snippet.slice(0, MAX_HEADER_CHARS) : ''),
+      MAIL_SNIPPET_MAX_LENGTH,
+    ),
     unread: labels.includes('UNREAD'),
   };
 }

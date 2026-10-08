@@ -101,6 +101,19 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
     expect(build('평범한 본문', { title: `${'제목 '.repeat(120)} token=${SECRET}` })).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
   });
 
+  it.each([
+    ['250k spaces inside one line', `a${' '.repeat(250_000)}b`],
+    ['256 KiB of spaces and tabs ending in text', `${' \t'.repeat(130_000)}x`],
+    ['256 KiB of blank lines with trailing spaces', ' \n'.repeat(130_000)],
+    ['256 KiB of escape-sequence starts', '\u001b '.repeat(120_000)],
+    ['256 KiB of zero-width characters', '\u200b'.repeat(260_000)],
+  ])('review P2-1: building a readout is linear on hostile input — %s', (_label, body) => {
+    const start = performance.now();
+    build(body);
+    // Measured 27.5 s for the first input before the fix; linear code takes milliseconds (500 ms leaves CI headroom).
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
   it('re-validation rejects any readout not shaped exactly as built (extra keys, bounds, invisible characters, secrets)', () => {
     const result = build('본문');
     if (!result.ok) throw new Error('expected a readout');
