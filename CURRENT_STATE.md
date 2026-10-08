@@ -5,6 +5,27 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### TG-1 Telegram text conversations — implemented on branch, not merged (2026-10-08)
+
+ADR-0114: the new `packages/adapter-telegram` lets the owner chat with Quoky in a Telegram private chat as the same
+owner Actor as on Discord. It is off unless `QUOKY_TELEGRAM_ENABLED=true`; with it off, `PLATFORM_ADAPTER` is the Discord
+adapter exactly as before.
+
+- Long polling only, with no inbound port. The startup identity check (token bot id and `getMe`) and the 409 probe run
+  before polling starts.
+- Owner-only private-chat admission; everything else is dropped silently and counted only.
+- The bot token sits in a redacting holder and appears only in the request path.
+- Plain-text replies with lossless 4096 chunking; `<pre>` HTML only for diff previews.
+- A composite adapter over Discord and Telegram behind the single `PLATFORM_ADAPTER`.
+- Inbound mention parsing moved out of Core into the Discord adapter.
+
+No migration, no port or token change (`ConversationRuntimeDeps` 35). Offline validation only (fake `fetch`). Not yet
+done:
+
+- the Chief Architect review;
+- the Strict gates: BotFather bot creation, the `.env.local` edit, the first live session;
+- TG-2 (attachments, reactions) and TG-3 (Telegram reminder delivery, the ops panel).
+
 ### BRF-1 morning brief with today's calendar — implemented on branch, not merged (2026-10-08)
 
 ADR-0117 D1–D4: with a calendar configured, the daily brief (`매일 오전 8시에 브리핑 알려줘`) starts with `오늘 일정`, read

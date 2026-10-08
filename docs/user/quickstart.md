@@ -635,6 +635,47 @@ QUOKY_OPS_UI_PORT=47613       # 기본 47613. 1024-65535 (범위 밖이면 화�
 > 실제 Mac에서 확인한 것은 로그인까지입니다(Chromium에서 출처 검사로 로그인이 거부되던 문제는 PR #131에서 고침).
 > 화면에서의 알림 취소, 기억 잊기, 승인/거절은 오프라인 테스트만 통과했고 실제 환경 검증은 아직입니다.
 
+### Telegram에서도 대화하기 (선택, ADR-0114 TG-1)
+
+Discord와 같은 소유자로 Telegram 개인 대화에서도 Quoky와 이야기할 수 있습니다. 기본은 꺼져 있습니다. 봇 만들기와
+`.env.local` 수정은 소유자가 직접 하는 작업(Strict)입니다.
+
+1. **봇 만들기.** Telegram에서 `@BotFather`에게 `/newbot`을 보내고 이름과 사용자 이름(`…bot`으로 끝남)을 정합니다.
+   BotFather가 준 토큰(`<숫자>:<문자열>`)이 `QUOKY_TELEGRAM_BOT_TOKEN`이고, `:` 앞의 숫자가 봇 ID
+   (`QUOKY_TELEGRAM_EXPECTED_BOT_ID`)입니다. 토큰은 비밀번호처럼 다루세요(채팅·스크린샷·커밋 금지). 새어 나갔으면
+   BotFather의 `/revoke`로 바꿉니다.
+2. **내 Telegram 사용자 ID 찾기.** `QUOKY_TELEGRAM_OWNER_IDS`에는 사용자 이름(`@…`)이 아니라 **숫자 ID**를 넣습니다.
+   Telegram Desktop에서 설정 → 고급 → 실험적 설정 → "Show Peer IDs in Profile"을 켜면 내 프로필에 숫자 ID가
+   보입니다. ID를 알려 주는 공개 봇(예: `@userinfobot`)도 있지만 제3자 봇이라는 점을 감안하세요. 토큰이 들어간
+   주소(`…/bot<토큰>/getUpdates`)를 브라우저나 명령줄에 넣는 방법은 토큰이 기록에 남으니 쓰지 마세요.
+3. **`.env.local`에 추가** (mode 600 유지):
+
+   ```text
+   QUOKY_TELEGRAM_ENABLED=true
+   QUOKY_TELEGRAM_BOT_TOKEN=<BotFather 토큰>
+   QUOKY_TELEGRAM_EXPECTED_BOT_ID=<토큰의 : 앞 숫자>
+   QUOKY_TELEGRAM_OWNER_IDS=<내 Telegram 숫자 ID>
+   QUOKY_TELEGRAM_OWNER_ACTOR_MAP=<내 Telegram 숫자 ID>=<QUOKY_DISCORD_OWNER_IDS의 내 Discord ID>
+   ```
+
+   `QUOKY_TELEGRAM_OWNER_ACTOR_MAP`이 Telegram의 나와 Discord의 나를 같은 소유자로 묶습니다. 그래서 Discord에서
+   저장한 기억과 할 일을 Telegram에서도 봅니다(대화 기록은 플랫폼 대화마다 따로입니다).
+4. **재시작.** 시작할 때 토큰의 봇 ID와 `getMe`가 `QUOKY_TELEGRAM_EXPECTED_BOT_ID`와 같은지 확인한 다음에야 메시지를
+   받기 시작합니다. 다르면 시작하지 않습니다(`TELEGRAM_IDENTITY_MISMATCH`). 토큰이 거부되면 `TELEGRAM_AUTH_REJECTED`,
+   다른 프로세스가 같은 봇을 받고 있거나 웹훅이 걸려 있으면 `TELEGRAM_POLL_CONFLICT`로 멈춥니다. 설정 값이 빠졌거나
+   형식이 틀리면 `TELEGRAM_…` 설정 오류 코드와 고칠 방법이 로그에 나옵니다. 값 자체는 로그에 나오지 않습니다.
+
+동작 방식:
+
+- 웹훅이 아닌 long polling(`getUpdates`)만 씁니다. Quoky는 Telegram용으로 어떤 포트도 열지 않습니다.
+- **목록에 있는 소유자의 개인 대화만** 받습니다. 그룹, 채널, 다른 사람, 수정된 메시지, 버튼/인라인 질의 등은 답장 없이
+  버리고 내용은 로그에 남기지 않습니다. 10분보다 오래된 메시지(오래 꺼져 있던 동안 쌓인 것)도 처리하지 않습니다.
+- 답장은 일반 텍스트로 보내며(서식 없음, 링크 미리보기 없음), 4096자보다 길면 `(1/3)`처럼 번호를 붙여 나눠 보냅니다.
+  코드 변경 미리보기의 diff만 고정폭 블록으로 보냅니다.
+- 아직 안 되는 것(TG-2/TG-3): 첨부 파일과 사진(텍스트 없는 메시지는 무시됨), 👍/👎 반응, **Telegram에서 만든 알림의
+  전달**(만들 수는 있지만 아직 Telegram으로 전달되지 않습니다. 알림은 Discord에서 만드세요), 운영 화면의 Telegram 상태.
+  승인은 두 플랫폼 모두 `승인`/`거절` 같은 문구로 합니다.
+
 ## 8. 처음 사용하기
 
 봇에게 DM을 보내거나 `QUOKY_DISCORD_CHANNEL_IDS`에 넣은 채널에 메시지를 보냅니다 (@멘션 불필요).

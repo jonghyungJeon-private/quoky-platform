@@ -5,6 +5,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — TG-1 Telegram text conversations (2026-10-08)
+
+Personal v4 track TG-1 (ADR-0114 D2–D7, D13; implementation note in DECISIONS.md). No migration, no new port, DI token
+or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependency (`node:fetch` only).
+
+- **New `packages/adapter-telegram`.** `TelegramPlatformAdapter` uses Bot API long polling (`getUpdates`) to the pinned
+  `https://api.telegram.org`. There is no webhook and no inbound port.
+  - Offset: advanced only after an update is handed over or dropped, and confirmed on stop.
+  - Backoff: 1 s doubling to 60 s; a 429 honours `retry_after`; a 409 is a typed startup error
+    (`TELEGRAM_POLL_CONFLICT`).
+  - Startup identity check: the token's bot id and `getMe` must equal `QUOKY_TELEGRAM_EXPECTED_BOT_ID`
+    (`TELEGRAM_IDENTITY_MISMATCH`, `TELEGRAM_AUTH_REJECTED`, `TELEGRAM_IDENTITY_UNVERIFIABLE`).
+- **Admission.** Only an owner's (`QUOKY_TELEGRAM_OWNER_IDS`) own private chat with text, at most 10 minutes old.
+  Everything else gets no reply, no download and no content log; only a value-free counter per reason is kept. Every
+  send and typing call is rechecked against the owner's private chat.
+- **Token.** A `TelegramBotToken` holder (`[REDACTED]` in JSON, inspect and string form). The token appears only in
+  the request path. Errors carry a fixed code and never the URL or a `cause`. `error-diagnostics` redacts the token
+  shape and `QUOKY_TELEGRAM_BOT_TOKEN=…`.
+- **Delivery.**
+  - Plain text with no parse mode, so every content node is delivered verbatim. A foreign conversation reference is
+    shown as a neutral name ("Discord 대화방").
+  - Link previews are off.
+  - A lossless 4096 chunker: it never splits a surrogate pair or a backtick run.
+  - Code-change previews use `<pre>` parts with escaped content, falling back to a `.diff` document.
+  - Typing is `sendChatAction`.
+  - Core's budgets are unchanged.
+- **Composition.** With `QUOKY_TELEGRAM_ENABLED` off (the default), `PLATFORM_ADAPTER` is the Discord adapter itself
+  and nothing Telegram-related is constructed. With it on, it is a `CompositePlatformAdapter` over Discord (primary)
+  and Telegram that routes by `context.platform`.
+- **Identity.** `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` links each Telegram owner to the Discord owner's Actor at startup
+  (ADR-0009 seam), so memories and to-dos follow the owner. Sessions stay per conversation.
+- **Configuration.** New keys `QUOKY_TELEGRAM_ENABLED`, `QUOKY_TELEGRAM_BOT_TOKEN`, `QUOKY_TELEGRAM_EXPECTED_BOT_ID`,
+  `QUOKY_TELEGRAM_OWNER_IDS` and `QUOKY_TELEGRAM_OWNER_ACTOR_MAP`, with eleven `TELEGRAM_*` startup error codes (exit
+  78). `.env.example` and a quickstart section are updated.
+- **PLT-0 residual.** Inbound mention-token parsing moved from Core's `hasEffectiveText` into the Discord adapter
+  (`addressing.ts`). An attachment message whose text is only addressing reaches Core as `''`; every other Discord text
+  is unchanged.
+- **Not in TG-1.** Attachments, reactions, Telegram reminder delivery, the operations-UI panel and live QA (TG-2/TG-3,
+  Strict).
+
 ## Unreleased — BRF-1 morning brief with today's calendar (2026-10-08)
 
 ADR-0117 D1–D4 (implementation note in DECISIONS.md). No migration, no new DI token, no port change;
