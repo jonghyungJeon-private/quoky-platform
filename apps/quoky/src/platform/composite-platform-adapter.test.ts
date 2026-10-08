@@ -157,7 +157,7 @@ describe('composePlatformAdapter (ADR-0114 D13): Telegram off leaves Discord exa
   const discord = new DiscordPlatformAdapter({ token: 'unused', ownerIds: ['111111111111111111'] }, silent);
 
   it('with no Telegram config the bound adapter IS the Discord adapter (no composite, nothing Telegram constructed)', () => {
-    expect(composePlatformAdapter(discord, undefined, { logger: () => silent })).toBe(discord);
+    expect(composePlatformAdapter(discord, undefined, { logger: () => silent, dbPath: ':memory:' })).toBe(discord);
     expect(telegramOwnerIdentityLinks(undefined)).toEqual([]);
   });
 
@@ -170,7 +170,7 @@ describe('composePlatformAdapter (ADR-0114 D13): Telegram off leaves Discord exa
       ownerIds: ['5550001'],
       ownerActorMap: [{ telegramId: '5550001', discordOwnerId: '111111111111111111' }],
     };
-    const bound = composePlatformAdapter(discord, telegram, { logger: () => silent });
+    const bound = composePlatformAdapter(discord, telegram, { logger: () => silent, dbPath: ':memory:' });
     expect(bound).toBeInstanceOf(CompositePlatformAdapter);
     expect((bound as CompositePlatformAdapter).platforms).toEqual(['discord', 'telegram']);
     expect(bound.platform).toBe('discord+telegram');

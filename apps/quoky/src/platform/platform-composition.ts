@@ -3,6 +3,7 @@ import type { TelegramAdapterOptions } from '@quoky/adapter-telegram';
 import type { Logger, PlatformAdapter } from '@quoky/core';
 import type { PlatformIdentityLink } from '../actor-identity-provisioner';
 import type { TelegramConfig } from '../telegram/telegram-config';
+import { telegramOffsetStoreFor } from '../telegram/telegram-offset-store';
 import { CompositePlatformAdapter } from './composite-platform-adapter';
 
 /**
@@ -13,13 +14,18 @@ import { CompositePlatformAdapter } from './composite-platform-adapter';
 export function composePlatformAdapter(
   discord: PlatformAdapter,
   telegram: TelegramConfig | undefined,
-  deps: { readonly logger: (scope: string) => Logger; readonly telegramOptions?: TelegramAdapterOptions },
+  deps: {
+    readonly logger: (scope: string) => Logger;
+    /** The database path: the poll offset is persisted beside it (`ops/telegram-offset.json`). */
+    readonly dbPath: string;
+    readonly telegramOptions?: TelegramAdapterOptions;
+  },
 ): PlatformAdapter {
   if (telegram === undefined) return discord;
   const adapter = new TelegramPlatformAdapter(
     { token: telegram.token, expectedBotId: telegram.expectedBotId, ownerIds: telegram.ownerIds },
     deps.logger('telegram'),
-    deps.telegramOptions,
+    { offsetStore: telegramOffsetStoreFor(deps.dbPath, telegram.expectedBotId), ...deps.telegramOptions },
   );
   return new CompositePlatformAdapter(discord, [adapter], deps.logger('platform'));
 }

@@ -332,6 +332,104 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
   });
 });
 
+/**
+ * Telegram's own getUpdates semantics: an offset confirms (deletes) every update below it; the rest are returned until
+ * confirmed. `confirmFails` makes every confirming call fail (a process killed before it could confirm).
+ */
+class TelegramServer {
+  pending: Array<Record<string, unknown>> = [];
+  confirmFails = false;
+
+  fetch(fallback: FakeTelegram): FakeTelegram['fetch'] {
+    return async (input, init) => {
+      const method = String(input).slice(String(input).lastIndexOf('/') + 1);
+      const params = JSON.parse(String(init.body ?? '{}')) as { offset?: number; timeout?: number; limit?: number };
+      if (method !== 'getUpdates' || params.timeout === 0 && params.limit === 1 && params.offset === undefined) return fallback.fetch(input, init);
+      fallback.calls.push({ url: String(input), method, params: params as Record<string, unknown>, init });
+      if (params.offset !== undefined) {
+        if (this.confirmFails) throw new TypeError('fetch failed');
+        this.pending = this.pending.filter((update) => (update.update_id as number) >= (params.offset as number));
+      }
+      if (this.pending.length === 0 && params.timeout !== 0) {
+        return new Promise<Response>((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true }),
+        );
+      }
+      return new Response(JSON.stringify({ ok: true, result: this.pending.slice(0, params.limit ?? 100) }), { status: 200 });
+    };
+  }
+}
+
+describe('Telegram offset persistence (TG-1 review decision 2): a restart never hands a turn over twice', () => {
+  function memoryStore() {
+    const writes: number[] = [];
+    return { writes, store: { load: () => writes.at(-1), save: (offset: number) => void writes.push(offset) } };
+  }
+
+  function adapterOn(server: TelegramServer, fake: FakeTelegram, store?: { load(): number | undefined; save(offset: number): void }) {
+    const received: InboundMessage[] = [];
+    const adapter = new TelegramPlatformAdapter(
+      { token: holder(), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger([]),
+      { fetch: server.fetch(fake), sleep: untilAborted, ...(store ? { offsetStore: store } : {}) },
+    );
+    adapter.onMessage(async (message) => void received.push(message));
+    return { adapter, received };
+  }
+
+  it('the persisted offset survives a crash before Telegram confirmed: the restart resumes after the handed-over turns', async () => {
+    const server = new TelegramServer();
+    server.pending = [textUpdate(41, '첫 번째'), textUpdate(42, '두 번째')];
+    // The process dies before Telegram hears offset 43: every confirming call fails, the updates stay pending there.
+    server.confirmFails = true;
+    const { writes, store } = memoryStore();
+    const first = adapterOn(server, new FakeTelegram(), store);
+    await first.adapter.start();
+    await until(() => first.received.length === 2);
+    expect(writes.at(-1)).toBe(43);
+    await first.adapter.stop();
+    expect(server.pending.map((update) => update.update_id)).toEqual([41, 42]);
+    server.confirmFails = false;
+    server.pending.push(textUpdate(43, '세 번째'));
+
+    const second = adapterOn(server, new FakeTelegram(), store);
+    await second.adapter.start();
+    await until(() => second.received.length === 1);
+    await flush();
+    expect(second.received.map((message) => message.text)).toEqual(['세 번째']);
+    await second.adapter.stop();
+    expect(writes.at(-1)).toBe(44);
+  });
+
+  it('control: without the store the same crash replays both turns', async () => {
+    const server = new TelegramServer();
+    server.pending = [textUpdate(41, '첫 번째'), textUpdate(42, '두 번째')];
+    server.confirmFails = true;
+    const first = adapterOn(server, new FakeTelegram());
+    await first.adapter.start();
+    await until(() => first.received.length === 2);
+    await first.adapter.stop();
+    server.confirmFails = false;
+    const second = adapterOn(server, new FakeTelegram());
+    await second.adapter.start();
+    await until(() => second.received.length === 2);
+    expect(second.received.map((message) => message.text)).toEqual(['첫 번째', '두 번째']);
+    await second.adapter.stop();
+  });
+
+  it('an unreadable or invalid stored offset is ignored (logged), never a crash', async () => {
+    const server = new TelegramServer();
+    server.pending = [textUpdate(5, 'x')];
+    const broken = adapterOn(server, new FakeTelegram(), { load: () => { throw new Error('corrupt'); }, save: () => undefined });
+    await broken.adapter.start();
+    await until(() => broken.received.length === 1);
+    await broken.adapter.stop();
+    const negative = adapterOn(server, new FakeTelegram(), { load: () => -3, save: () => undefined });
+    await negative.adapter.start();
+    await negative.adapter.stop();
+  });
+});
+
 describe('Telegram delivery: owner private chats only, plain text, lossless chunks, typing', () => {
   const ctx = { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID), direct: true };
 

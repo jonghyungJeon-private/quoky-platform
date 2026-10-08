@@ -41,8 +41,19 @@ export interface TelegramAdapterConfig {
   readonly ownerIds: readonly string[];
 }
 
-/** Test seams and bounds; production passes none. */
+/**
+ * Where the poll offset survives a restart (decision 2 of the TG-1 review). `load` returns the offset to resume from (or
+ * `undefined`); `save` must be atomic. The composition root keeps it in a private file beside the database.
+ */
+export interface TelegramOffsetStore {
+  load(): number | undefined;
+  save(offset: number): void;
+}
+
+/** Test seams and bounds; production passes none except the offset store. */
 export interface TelegramAdapterOptions {
+  /** Persisted poll offset; absent = in memory only (a restart then relies on Telegram's own confirmation). */
+  readonly offsetStore?: TelegramOffsetStore;
   readonly fetch?: FetchLike;
   /** An abortable sleep (backoff, typing refresh is timer-driven). */
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -140,6 +151,9 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
   private readonly nowMs: () => number;
   private readonly pollTimeoutSeconds: number;
   private readonly backoff: { readonly initialMs: number; readonly maxMs: number };
+  private readonly offsetStore?: TelegramOffsetStore;
+  /** The offset last written to the store. */
+  private savedOffset?: number;
 
   private messageHandler?: InboundMessageHandler;
   private approvalHandler?: ApprovalDecisionHandler;
@@ -179,6 +193,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     this.nowMs = options.nowMs ?? (() => Date.now());
     this.pollTimeoutSeconds = options.pollTimeoutSeconds ?? DEFAULT_POLL_TIMEOUT_SECONDS;
     this.backoff = options.backoff ?? DEFAULT_BACKOFF;
+    this.offsetStore = options.offsetStore;
   }
 
   onMessage(handler: InboundMessageHandler): void {
@@ -228,6 +243,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     if (this.config.token.botId !== this.config.expectedBotId) {
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
     }
+    if (this.offset === undefined) this.offset = this.loadOffset();
     const first = await this.checkIdentity();
     const controller = new AbortController();
     this.controller = controller;
@@ -405,6 +421,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     }
     if (this.offset === undefined) return false;
     this.offset += 1;
+    this.persistOffset();
     this.dropped.malformed += 1;
     this.logger.warn('telegram update over the size bound skipped', { reason: 'malformed' });
     return true;
@@ -437,13 +454,42 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
       if (admission.kind === 'admitted') {
         // ADR-0102 D5: nothing is handed over unless the startup identity gate opened; the offset stays put.
         if (!(await this.inboundGateOpen(signal))) return false;
+        // Hand over, then advance and persist in the same synchronous step (no await in between): a restart resumes
+        // after this update, so the turn is never handed over twice.
         this.dispatch(admission.message);
-      } else {
-        this.dropped[admission.reason] += 1;
+        if (updateId !== undefined) this.offset = updateId + 1;
+        this.persistOffset();
+        continue;
       }
+      this.dropped[admission.reason] += 1;
       if (updateId !== undefined) this.offset = updateId + 1;
     }
+    this.persistOffset();
     return true;
+  }
+
+  private loadOffset(): number | undefined {
+    try {
+      const offset = this.offsetStore?.load();
+      if (offset === undefined) return undefined;
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new RangeError('invalid offset');
+      this.savedOffset = offset;
+      return offset;
+    } catch {
+      this.logger.warn('telegram offset store unreadable; resuming from Telegram confirmation', { code: 'TELEGRAM_OFFSET_UNREADABLE' });
+      return undefined;
+    }
+  }
+
+  /** Write the offset when it moved (atomic in the store). A failure is logged; polling goes on. */
+  private persistOffset(): void {
+    if (this.offsetStore === undefined || this.offset === undefined || this.offset === this.savedOffset) return;
+    try {
+      this.offsetStore.save(this.offset);
+      this.savedOffset = this.offset;
+    } catch {
+      this.logger.warn('telegram offset could not be saved', { code: 'TELEGRAM_OFFSET_SAVE_FAILED' });
+    }
   }
 
   /** Hand one admitted message to the runtime. The turn runs on; polling does not wait for it. */

@@ -339,7 +339,7 @@ const infrastructure: Provider[] = [
       composePlatformAdapter(
         new DiscordPlatformAdapter(withReminderChannelDelivery(config.discord, config.reminders), new ConsoleLogger('discord')),
         config.telegram,
-        { logger: (scope) => new ConsoleLogger(scope) },
+        { logger: (scope) => new ConsoleLogger(scope), dbPath: config.storage.dbPath },
       ),
   },
   {
