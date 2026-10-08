@@ -36,6 +36,7 @@ import {
   renderConnectorWriteAlreadyExecuted,
   renderConnectorWriteApprovedElsewhere,
   renderConnectorWriteApprovedReminder,
+  renderConnectorWriteBareExecution,
   renderConnectorWritePending,
   renderConnectorWriteStep,
   renderNoApprovedConnectorWrite,
@@ -1201,6 +1202,15 @@ export class ResponseComposer {
     executionPhrase: string,
   ): OutboundMessage {
     return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase) };
+  }
+
+  /** A bare "실행" / "실행해줘" / "go" / "run it" while the write waits approved: nothing ran; quotes the exact phrase. */
+  composeConnectorWriteBareExecution(
+    context: ConversationContext,
+    operation: ConnectorWriteOperation,
+    executionPhrase: string,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteBareExecution(operation, executionPhrase) };
   }
 
   /** The execution phrase repeated after a write of that kind approved in this conversation was SENT recently (W5-L02). */

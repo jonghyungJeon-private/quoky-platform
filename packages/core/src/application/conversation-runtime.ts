@@ -38,7 +38,7 @@ import {
 } from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
+import { KO_END, KO_START, isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention, koNoun } from './git-request-shape';
 import { parseLearningCommand } from './feedback/learning-commands';
 import { parseMemoryCommand } from './memory-commands/memory-command-grammar';
 import { parseModelSelectionCommand } from './model-selection/model-selection-command';
@@ -52,6 +52,8 @@ import {
   connectorWriteExecutionGate,
   isAnyConnectorWriteExecutionPhrase,
   connectorWriteOperationsOfPhrase,
+  connectorWriteOperationsAskedAbout,
+  isBareExecutionRequest,
   isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
@@ -168,6 +170,7 @@ import {
   type ProviderSelectionContext,
   type AiProvider,
   type AiRequest,
+  type ConnectorWriteOperation,
   type Logger,
   type LogFields,
   type ProjectReadout,
@@ -1182,18 +1185,40 @@ const PUSH_REQUEST_SHAPES: readonly RegExp[] = [
   // A typed git push command with any options / remote / refspec: "git push", "git push -f origin main"
   /^\s*git\s+push(\s+[\w./:@+=~^-]+)*\s*[.!]*$/i,
 ];
-/** Questions / how-to / notification topics that merely mention push are ordinary chat. */
 /**
  * A how-to / explanation question (live QA W1-L01, W1-L03): "git commit 은 어떻게 하는 거야?", "커밋해 주는 방법",
  * "완료 처리 어떻게 해?", "what is git commit?". It asks how something works and never requests the action, so it is
  * never a commit request, a git-mutation reject or the reply to a pending scope clarification; it reaches the
  * `pre-classify` help-intent handler or ordinary chat. No execution gate consults it (those stay exact allow-lists).
+ * "차이" matches as a whole word with an optional particle ("차이", "차이를", "차이점이"), never inside another word:
+ * "차이나 서버 변경 커밋해줘" is a commit request, not a how-to question (the git-request-shape boundary rule).
  */
-const HOW_TO_QUESTION =
-  /어떻게|방법|하는\s*법|사용법|뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻이|차이|설명해|\bhow\s+(?:do|does|can|should|would|to)\b|\bwhat\s+(?:is|does|are)\b|\bexplain\b/i;
+const HOW_TO_QUESTION = new RegExp(
+  `어떻게|방법|하는\\s*법|사용법|뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻이|${koNoun('차이')}|설명해|` +
+    '\\bhow\\s+(?:do|does|can|should|would|to)\\b|\\bwhat\\s+(?:is|does|are)\\b|\\bexplain\\b',
+  'iu',
+);
 
-const PUSH_CHAT_TOPIC =
-  /[?？]|뭐|무엇|뭔|어떻게|어떤|왜|방법|알려|설명|차이|알림|notification|설정|구현|\bhow\b|\bwhat\b|\bwhy\b|\bexplain\b|\bdifference\b|\bwhen\b/i;
+/**
+ * Questions / how-to / notification topics that merely mention push are ordinary chat (QA-V2-W8). Korean topic words
+ * match whole words only, with the git-request-shape boundary + particle rule (routing exec gaps): "차이", "차이를",
+ * "방법이", "푸시 알림", "설명해줘", "알려줘", "뭐야", "왜" are topics; "차이나", "설명서", "알려진", "왜곡", "뭐든" are not,
+ * so "차이나 서버 변경을 푸시해줘" stays a push request. Only consulted on the non-executing push replies (already pushed /
+ * no push target / unsupported companion) — never by an execution gate.
+ */
+const PUSH_CHAT_TOPIC = new RegExp(
+  [
+    '[?？]',
+    // Interrogatives start their word: "뭐야", "무엇을", "뭔데", "어떻게", "어떤", "왜(요)" — not "뭐든", "왜곡".
+    `${KO_START}(?:뭐(?!든|라도)|무엇|뭔|어떻게|어떤|왜(?:요|죠)?${KO_END})`,
+    // Topic nouns as whole words with an optional particle: "차이를", "해결방법", "알림", "설정은", "구현", "설명이".
+    koNoun('차이|(?:해결|사용|설정)?방법|알림|설정|구현|설명'),
+    // The same words as a request verb: "설명해줘", "설정하는", "구현해", "알려줘", "알려 주세요".
+    `${KO_START}(?:(?:설명|설정|구현)\\s*(?:해|하|할|좀|부탁)|알려\\s*(?:줘|주|줄|달))`,
+    '\\bnotifications?\\b|\\bhow\\b|\\bwhat\\b|\\bwhy\\b|\\bexplain\\b|\\bdifference\\b|\\bwhen\\b',
+  ].join('|'),
+  'iu',
+);
 
 /** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
 const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
@@ -2756,32 +2781,14 @@ export class ConversationRuntime {
     // ADR-0112 (CWR-2): a connector-write execution phrase with no approved write of that kind runs nothing and says so
     // (with or without the flow) — a chat model must never claim a comment, post or calendar change happened.
     if (isAnyConnectorWriteExecutionPhrase(message.text)) {
-      const flow = this.deps.connectorWriteFlow;
-      if (flow) {
-        const operations = connectorWriteOperationsOfPhrase(message.text);
-        const now = this.clock();
-        // Live QA (cross-session): the actor's approved write of that kind waits in ANOTHER conversation — run nothing
-        // here (execution stays bound to the approving conversation) and say where to send the phrase.
-        for (const operation of operations) {
-          const elsewhere = await flow.approvedElsewhere(session, actor.id, operation, now);
-          if (elsewhere) {
-            return this.respondComposed(message, session, this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere));
-          }
-        }
-        // W5-L02: a write of that kind approved in THIS conversation was SENT recently — say so (with the link) instead
-        // of "nothing approved". Never another conversation's receipt, never an old one.
-        for (const operation of operations) {
-          const sent = await flow.recentSentInSession(session, actor.id, operation, now);
-          if (sent) {
-            return this.respondComposed(
-              message,
-              session,
-              this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent),
-            );
-          }
-        }
-      }
-      return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
+      return this.respondStrayConnectorWritePhrase(message, session, actor, connectorWriteOperationsOfPhrase(message.text));
+    }
+    // Routing exec gaps: the same step phrased as a question or a negation ("댓글 실행해도 돼?", "Slack 게시 실행하지 마")
+    // gets the same non-mutating replies instead of chat. It never executes: the allow-list's question/negation veto
+    // stays, and only the approving conversation's exact phrase runs a write.
+    const askedAbout = connectorWriteOperationsAskedAbout(message.text);
+    if (askedAbout.length > 0) {
+      return this.respondStrayConnectorWritePhrase(message, session, actor, askedAbout);
     }
     if (interpretStrayDecisionUtterance(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
@@ -3413,6 +3420,26 @@ export class ConversationRuntime {
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
+        // Routing exec gaps (INT-2 finding): a bare "실행" / "실행해줘" / "go" / "run it" names no step. It runs nothing
+        // (the exact phrase stays the only executor) and gets a deterministic reply quoting the approved write's phrase,
+        // never chat (a model could answer as if it ran). A question / negation about ANOTHER write's step names the
+        // phrase that would run here too (the stray "nothing approved" reply would be untrue).
+        if (isBareExecutionRequest(message.text)) {
+          const reply = this.deps.composer.composeConnectorWriteBareExecution(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        if (connectorWriteOperationsAskedAbout(message.text).length > 0) {
+          const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
         // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here.
         if ((decision === 'deny' || decision === 'cancel') && anchor.actorId === actor.id) {
           const reason = decision === 'deny' ? 'denied' : 'cancelled';
@@ -3443,6 +3470,42 @@ export class ConversationRuntime {
       default:
         return null;
     }
+  }
+
+  /**
+   * A connector-write step phrase (exact, or a question / negation about it) with no approved write of that kind in this
+   * conversation. Runs nothing; the reply is, in order: where the actor's approved write of that kind waits in ANOTHER
+   * conversation (live QA cross-session), this conversation's recent send of that kind (W5-L02), or "nothing approved".
+   */
+  private async respondStrayConnectorWritePhrase(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    operations: readonly ConnectorWriteOperation[],
+  ): Promise<TurnResult> {
+    const flow = this.deps.connectorWriteFlow;
+    if (flow) {
+      const now = this.clock();
+      // Execution stays bound to the approving conversation: say where to send the phrase.
+      for (const operation of operations) {
+        const elsewhere = await flow.approvedElsewhere(session, actor.id, operation, now);
+        if (elsewhere) {
+          return this.respondComposed(message, session, this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere));
+        }
+      }
+      // Never another conversation's receipt, never an old one.
+      for (const operation of operations) {
+        const sent = await flow.recentSentInSession(session, actor.id, operation, now);
+        if (sent) {
+          return this.respondComposed(
+            message,
+            session,
+            this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent),
+          );
+        }
+      }
+    }
+    return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
   }
 
   /** "1", "2번", "1번이요", "2번으로" — a choice number, or null. */

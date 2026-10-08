@@ -18,15 +18,15 @@
  * consulted by an execution gate: the approved-execution allow-list (`EXECUTION_PHRASES`) stays exact.
  */
 
-/** Not preceded by a Hangul syllable (the marker starts a word). */
-const KO_START = '(?<![가-힣])';
+/** Not preceded by a Hangul syllable (the marker starts a word). Shared with the runtime's push topic guard. */
+export const KO_START = '(?<![가-힣])';
 /** Not followed by a Hangul syllable (the marker ends its word, after an optional particle). */
-const KO_END = '(?![가-힣])';
+export const KO_END = '(?![가-힣])';
 /** Particles and copulas a Korean marker noun may carry. */
-const KO_PARTICLE =
+export const KO_PARTICLE =
   '(?:이|가|을|를|은|는|의|도|만|에|에서|와|과|랑|이랑|로|으로|이란|란|이야|야|예요|이에요|입니다|점|점이|점을|점은|점도)?';
 /** A whole Korean marker noun (with an optional particle): "차이", "차이를", "차이점이" — never "차이나". */
-const koNoun = (words: string): string => `${KO_START}(?:${words})${KO_PARTICLE}${KO_END}`;
+export const koNoun = (words: string): string => `${KO_START}(?:${words})${KO_PARTICLE}${KO_END}`;
 
 /** Clause boundaries (sentence punctuation, commas, connectives, and a Korean "-고" chain), like calendar-question. */
 const CLAUSE_SPLIT = /[.!?。！？]\s+|[.!?。！？]$|[,;]\s*|\s+(?:but|then)\s+|\s*(?:그리고|하지만|근데|그런데)\s+|(?<=[가-힣]고)\s+/iu;

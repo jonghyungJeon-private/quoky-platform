@@ -12065,6 +12065,74 @@ describe('Codex review of f45ab9d + live QA 2026-10-07 (LRN-2 at PR_CREATED) —
   });
 });
 
+describe('routing exec gaps — push topic words match whole Korean words only (git-request-shape boundary rule)', () => {
+  const composer = new ResponseComposer();
+  const CHAIN = {
+    commitHash: HEAD_SHA,
+    pushedCommitHash: HEAD_SHA,
+    pushedRemote: 'origin',
+    pushedBranch: 'feature/x',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/acme/widgets/pull/42',
+    pullRequestHeadBranch: 'feature/x',
+    repositoryIdentity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+    pullRequestRef: { provider: 'github', owner: 'acme', repo: 'widgets', pullRequestNumber: 42, pullRequestUrl: 'https://github.com/acme/widgets/pull/42' },
+    pullRequestCommitHash: HEAD_SHA,
+    mergeCommitHash: 'facefeed1234567890facefeed1234567890face',
+  } as Partial<ApplyPreviewAnchor>;
+  const POST_PUSH = [
+    'PR_APPROVED', 'PR_CREATED', 'MERGE_APPROVED', 'PR_MERGED', 'MAIN_SYNCED', 'BRANCH_CLEANED', 'REMOTE_BRANCH_CLEANUP_APPROVED',
+    'REMOTE_BRANCH_CLEANED',
+  ] as const;
+  /** A topic word only as the start of another word: "차이나", "설명서", "알려진", "왜곡", "방법론", "알림톡". */
+  const EMBEDDED = ['차이나 서버 변경을 푸시해줘', '설명서 업데이트 푸시해줘', '알려진 버그 수정 푸시해줘', '왜곡 보정 변경 푸시해줘', '방법론 문서 푸시해줘', '알림톡 템플릿 푸시해줘'];
+  /** Whole topic words (with or without a particle) and questions stay chat. */
+  const TOPICS = [
+    'git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'push notification 구현 방법', 'git push와 pull의 차이', '어떻게 푸시해', '왜 푸시해',
+    '알림 설정 바꾸고 푸시해', '푸시 해도 돼?',
+  ];
+
+  it('the no-anchor push shape: an embedded topic syllable no longer hides the push request; whole topic words still do', () => {
+    for (const text of EMBEDDED) expect(ConversationRuntime.interpretNoAnchorPushRequest(text), text).toBe('push');
+    for (const text of TOPICS) expect(ConversationRuntime.interpretNoAnchorPushRequest(text), text).toBeNull();
+  });
+
+  it.each(POST_PUSH)('at %s, "차이나 서버 변경을 푸시해줘" is the deterministic already-pushed reply — never chat, never a push', async (status) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+    const r = await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경을 푸시해줘'));
+    expect(r.reply.text).toBe(composer.composePushAlreadyPushed(CTX, { commitHash: HEAD_SHA, remote: 'origin', branch: 'feature/x' }).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.gitPush).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(['PR_CREATED', 'MAIN_SYNCED'] as const)('at %s, a whole-word push topic question still reaches chat', async (status) => {
+    for (const text of ['git push와 pull의 차이를 알려줘', '푸시 알림 설정 방법']) {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.classify, `${status} ${text}`).toBe(1);
+      expect(mutationCalls(calls)).toBe(0);
+    }
+  });
+
+  it('with no chain, "차이나 서버 변경을 푸시해줘" is the no-push-target reply (no git call)', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경을 푸시해줘'));
+    expect(r.reply.text).toBe(composer.composeNoPushTarget(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.gitPush).toBe(0);
+  });
+
+  it('audit: the how-to guard reads "차이" as a whole word too ("차이나 … 커밋해줘" is a commit request, "차이를 알려줘" is not)', () => {
+    expect(ConversationRuntime.interpretCommitIntent('차이나 서버 변경 커밋해줘')).toBe('commit');
+    expect(ConversationRuntime.interpretGitPreviewIntent('차이나 서버 변경을 푸시해줘')).toBe('mutating');
+    for (const text of ['git commit과 amend 차이', '커밋과 스태시의 차이를 알려줘', '커밋 차이점이 뭐야']) {
+      expect(ConversationRuntime.interpretCommitIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretGitPreviewIntent(text), text).not.toBe('mutating');
+    }
+  });
+});
+
 describe('Codex re-review of 63ab7a0 — review nouns and verb-first merge forms', () => {
   const composer = new ResponseComposer();
   const CHAIN = {

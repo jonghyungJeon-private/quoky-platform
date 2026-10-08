@@ -223,6 +223,15 @@ export function renderConnectorWriteApprovedReminder(operation: ConnectorWriteOp
 }
 
 /**
+ * A bare execution command ("실행", "실행해줘", "go", "run it") while the write is approved: it names no step, so nothing
+ * ran; the reply quotes the exact phrase of the write approved in this conversation (routing exec gaps).
+ */
+export function renderConnectorWriteBareExecution(operation: ConnectorWriteOperation, executionPhrase: string): string {
+  const notYet = isCalendar(operation) ? '아직 캘린더를 바꾸지 않았어요.' : '아직 아무것도 보내지 않았어요.';
+  return `${notYet} 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`;
+}
+
+/**
  * Where a conversation is, for a "send the phrase there" hint: a direct conversation, or a channel (thread) reference
  * written as `<#id>` — the chat-markup channel reference, rendered only for a plain id token (`reference` is absent
  * otherwise). Ids only, never names.

@@ -39,7 +39,13 @@ import {
 import { ApprovalManager } from './approval-manager';
 import type { ApprovalPolicy } from './approval-policy';
 import { createCalendarTurnHandler } from './calendar/calendar-turn-handler';
-import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderNoApprovedConnectorWrite } from './connector-writes/connector-write-copy';
+import {
+  CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE,
+  renderConnectorWriteAlreadyApproved,
+  renderConnectorWriteApprovedReminder,
+  renderConnectorWriteBareExecution,
+  renderNoApprovedConnectorWrite,
+} from './connector-writes/connector-write-copy';
 import {
   StatelessConnectorWriteFlow,
   connectorWriteApprovalReason,
@@ -1384,5 +1390,144 @@ describe('connector writes — an execution phrase in another conversation (live
     await r.sendIn(GUILD, '새 대화');
     expect((await r.sendIn(DM, 'Slack 게시 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
     expect(r.totalWrites()).toBe(0);
+  });
+});
+
+describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', () => {
+  const POST_BARE = '아직 아무것도 보내지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"';
+  const BARE_FORMS = ['실행', '실행해', '실행해줘', '실행 해 주세요', '지금 실행', 'go', 'Go!', 'run it', 'run it now', 'execute'];
+  const PHRASES = ['댓글 실행', '상태 변경 실행', 'Slack 게시 실행', '일정 추가 실행', '일정 변경 실행', '일정 삭제 실행'] as const;
+  const askedForms = (phrase: string) => [`${phrase}해도 돼?`, `${phrase}할까?`, `${phrase}하지 마`, `${phrase} 안 해도 돼`];
+
+  it('gap 1: a bare "실행" / "go" / "run it" while a post waits approved runs nothing and quotes the exact phrase — no provider', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('승인');
+    const classifyBefore = h.classify.count;
+    for (const text of BARE_FORMS) {
+      const reply = await h.send(text);
+      expect(reply.reply.text, text).toBe(POST_BARE);
+      expect(reply.status, text).toBe('RESPONDED');
+    }
+    expect(h.classify.count).toBe(classifyBefore); // deterministic: never classified, never a provider (router throws)
+    expect(h.totalWrites()).toBe(0);
+    expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED'); // the grant still waits for its exact phrase
+    // Approve words keep their existing reply; the exact phrase still sends exactly once.
+    expect((await h.send('go ahead')).reply.text).toBe(renderConnectorWriteAlreadyApproved('CHANNEL_POST', 'Slack 게시 실행'));
+    expect(h.totalWrites()).toBe(0);
+    expect((await h.send('Slack 게시 실행')).reply.text).toContain('Slack 게시 완료');
+    expect(h.writes.post).toHaveLength(1);
+  });
+
+  it('gap 1: each approved write quotes its own phrase; a calendar grant says the calendar is unchanged', async () => {
+    const comment = harness();
+    await comment.send('PROJ-12에 댓글: 한 번만');
+    await comment.send('승인');
+    expect((await comment.send('실행해줘')).reply.text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행'));
+    expect(comment.totalWrites()).toBe(0);
+
+    const calendar = harness();
+    await calendar.send('내일 오후 3시에 회의 잡아줘 제목 주간 회의');
+    await calendar.send('승인');
+    const reply = await calendar.send('실행');
+    expect(reply.reply.text).toBe('아직 캘린더를 바꾸지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 추가 실행"');
+    expect(calendar.recorded.at(-1)).toBe(CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE);
+    expect(calendar.totalWrites()).toBe(0);
+  });
+
+  it('gap 1: another actor’s bare "실행" runs nothing either; a sentence around 실행 is not a bare command', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('승인');
+    h.setActor(OTHER);
+    expect((await h.send('실행')).reply.text).toBe(POST_BARE);
+    h.setActor(OWNER);
+    const classifyBefore = h.classify.count;
+    const sentence = await h.send('실행 결과 정리해서 알려줘');
+    expect(sentence.reply.text).not.toBe(POST_BARE);
+    expect(h.classify.count).toBe(classifyBefore + 1); // ordinary routing
+    expect(h.totalWrites()).toBe(0);
+    expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
+  });
+
+  it('gap 1: with nothing approved a bare "실행" is not given the connector-write reply', async () => {
+    const h = harness();
+    const reply = await h.send('실행');
+    expect(reply.reply.text).not.toContain('실행할 작업을 정확히 말해 주세요');
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('gap 2: every write step asked as a question or negation with nothing approved gets the no-approved reply, provider-free', async () => {
+    const h = harness();
+    const classifyBefore = h.classify.count;
+    for (const phrase of PHRASES) {
+      for (const text of askedForms(phrase)) {
+        const reply = await h.send(text);
+        expect(reply.reply.text, text).toBe(renderNoApprovedConnectorWrite());
+      }
+    }
+    expect(h.classify.count).toBe(classifyBefore);
+    expect(h.totalWrites()).toBe(0);
+    expect(h.approvals.size).toBe(0);
+  });
+
+  it('gap 2: with writes off the question still gets the fixed no-approved reply', async () => {
+    const h = harness({ noFlow: true });
+    expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect((await h.send('Slack 게시 실행하지 마')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('gap 2: a question in another conversation names where the approved write waits; it never executes there or here', async () => {
+    const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
+    const GUILD: ConversationContext = { platform: 'test', spaceId: '900000000000000001', channelId: '900000000000000002', userId: 'owner-user' };
+    const h = harness();
+    await h.sendIn(DM, 'PROJ-12에 댓글: 디엠에서 승인');
+    await h.sendIn(DM, '승인');
+    const elsewhere = [
+      '실행하지 않았어요. 승인된 Jira 댓글(PROJ-12)은 다른 대화에서 기다리고 있어요 (약 30분 남음).',
+      '미리보기를 받은 봇과의 DM에서 "댓글 실행"이라고 보내 주세요.',
+    ].join('\n');
+    for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
+      expect((await h.sendIn(GUILD, text)).reply.text, text).toBe(elsewhere);
+    }
+    // The existing veto on questions stays where the grant is: a reminder, never a send.
+    expect((await h.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행'));
+    expect(h.totalWrites()).toBe(0);
+    expect((await h.sendIn(DM, '댓글 실행')).reply.text).toContain('댓글을 달았어요');
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+
+  it('gap 2: a question about ANOTHER write while one waits approved names the approved phrase (never "nothing approved")', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 배포 시작');
+    await h.send('승인');
+    for (const text of ['댓글 실행해도 돼?', '일정 삭제 실행하지 마', '상태 변경 실행할까?']) {
+      const reply = await h.send(text);
+      expect(reply.reply.text, text).toBe(renderConnectorWriteAlreadyApproved('CHANNEL_POST', 'Slack 게시 실행'));
+    }
+    expect(h.totalWrites()).toBe(0);
+    expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
+  });
+
+  it('gap 2: after a recent send in this conversation the question reports the send and never resends', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    const again = await h.send('댓글 실행해도 돼?');
+    expect(again.reply.text).toBe([`이미 보냈어요 (10:00, Jira PROJ-12): <${COMMENT_URL}>`, '다시 보내지 않았어요.'].join('\n'));
+    expect(h.writes.addComment).toHaveLength(1);
+  });
+
+  it('gap 2: explanations, concept questions and statements about a step stay ordinary chat', async () => {
+    const h = harness();
+    for (const text of ['댓글 실행 방법 알려줘', 'Slack 게시 실행은 어떻게 해?', '일정 추가 실행이 뭐야?', '댓글 실행했어']) {
+      const before = h.classify.count;
+      const reply = await h.send(text);
+      expect(reply.reply.text, text).not.toBe(renderNoApprovedConnectorWrite());
+      expect(h.classify.count, text).toBe(before + 1);
+    }
+    expect(h.totalWrites()).toBe(0);
   });
 });

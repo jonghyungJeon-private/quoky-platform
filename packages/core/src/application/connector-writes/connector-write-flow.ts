@@ -24,7 +24,13 @@ import type { ConnectorWriteReceipt, ConnectorWriteReceiptRepository } from '../
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import { containsCredentialMaterial } from '../credential-guard';
-import { documentedExecutionPhrase, isAcceptedExecutionPhrase, type ExecutionGate } from '../execution-command-guard';
+import {
+  documentedExecutionPhrase,
+  executionCommandRejection,
+  isAcceptedExecutionPhrase,
+  normalizeExecutionPhrase,
+  type ExecutionGate,
+} from '../execution-command-guard';
 import { toZonedDateTime, zonedToUtc } from '../reminders/zoned-time';
 import {
   CONNECTOR_WRITE_ISSUE_KEY,
@@ -507,6 +513,50 @@ export function mentionsConnectorWriteExecutionStep(text: string, operation: Con
   const lowered = text.toLowerCase();
   if (EXPLANATION_REQUEST.test(lowered)) return false;
   return EXECUTION_STEP_MENTIONS[operation].test(lowered.replace(/\s+/gu, ''));
+}
+
+/** A concept question about a step ("댓글 실행이 뭐야?", "what is execute post?") is ordinary chat, never a stray phrase. */
+const CONCEPT_QUESTION = /뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻|의미|\bwhat(?:'s|\s+is|\s+are|\s+does)\b|\bmean(?:s|ing)?\b/u;
+
+/**
+ * The operations whose execution step a short QUESTION or NEGATION names ("댓글 실행해도 돼?", "Slack 게시 실행하지 마",
+ * "일정 삭제 실행할까?", "execute post now?") — the shape {@link isAcceptedExecutionPhrase} vetoes, so it never executes.
+ * Explanation / concept requests ("댓글 실행 방법 알려줘", "게시 실행이 뭐야?") and statements are not matched (chat).
+ * Used only to pick a non-mutating reply when nothing of that kind is approved here (routing exec gaps) — never to
+ * execute, and never consulted by an execution gate.
+ */
+export function connectorWriteOperationsAskedAbout(text: string): ConnectorWriteOperation[] {
+  if (typeof text !== 'string') return [];
+  const rejection = executionCommandRejection(text);
+  if (rejection !== 'question' && rejection !== 'negation') return [];
+  if (CONCEPT_QUESTION.test(text.toLowerCase())) return [];
+  return CONNECTOR_WRITE_OPERATIONS.filter((operation) => mentionsConnectorWriteExecutionStep(text, operation));
+}
+
+/**
+ * Bare execution commands that name no step ("실행", "실행해", "실행해줘", "go", "run it"), after
+ * {@link normalizeExecutionPhrase} and one optional leading "지금/이제/바로/now" or trailing "now/please".
+ */
+const BARE_EXECUTION_REQUESTS: ReadonlySet<string> = new Set(
+  [
+    '실행', '실행해', '실행해줘', '실행하자', '실행시켜', '실행시켜줘', 'go', 'go go', 'run', 'run it', 'execute', 'execute it', 'do it',
+  ].map(normalizeExecutionPhrase),
+);
+const BARE_EXECUTION_PREFIX = /^(?:지금|이제|바로|now)\s+/u;
+const BARE_EXECUTION_SUFFIX = /\s+(?:now|please)$/u;
+
+/**
+ * True when the whole message is a bare execution command that names no step ("실행", "실행해줘", "go", "run it").
+ * While a connector write waits APPROVED it runs nothing and gets the exact-phrase reply (routing exec gaps) — the
+ * write's own phrase stays the only executor. Pure; never consulted by an execution gate.
+ */
+export function isBareExecutionRequest(text: string): boolean {
+  if (typeof text !== 'string') return false;
+  const base = normalizeExecutionPhrase(text);
+  const noPrefix = base.replace(BARE_EXECUTION_PREFIX, '');
+  return [base, noPrefix, base.replace(BARE_EXECUTION_SUFFIX, ''), noPrefix.replace(BARE_EXECUTION_SUFFIX, '')].some(
+    (form) => BARE_EXECUTION_REQUESTS.has(normalizeExecutionPhrase(form)),
+  );
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */

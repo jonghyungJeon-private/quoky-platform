@@ -27,6 +27,7 @@ import {
   connectorWriteSent,
   isArchivedMemory,
   renderConnectorWriteApprovedReminder,
+  renderConnectorWriteBareExecution,
   renderConnectorWriteOutcome,
   renderNoApprovedConnectorWrite,
   type AiProvider,
@@ -614,6 +615,17 @@ describe('Personal v3 acceptance — connector-write execution allow-list (ADR-0
     }
     expect(totalWrites()).toBe(0);
   });
+
+  it('routing exec gaps: every write step asked as a question or negation with nothing approved gets the same fixed reply', async () => {
+    for (const [, phrase] of CONNECTOR_WRITE_GATES) {
+      for (const text of [`${phrase}해도 돼?`, `${phrase}할까?`, `${phrase}하지 마`]) {
+        const seen = await det(harness.freshContext(), text);
+        expect(seen.route, text).toBe('runtime');
+        expect(seen.text, text).toBe(renderNoApprovedConnectorWrite());
+      }
+    }
+    expect(totalWrites()).toBe(0);
+  });
 });
 
 describe('Personal v3 acceptance — connector-write approvals end to end, provider-free (ADR-0112 D5/D6, live QA W5)', () => {
@@ -635,10 +647,12 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
       expect((await det(owner, text)).text, text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행'));
     }
     for (const text of ['Slack 게시 실행', '일정 추가 실행', '승인']) await det(owner, text);
-    // INT-2 finding (not a send, but not deterministic either): a bare "실행" — the remote-cleanup gate's phrase — while a
-    // comment is approved names no write step, so it falls through to chat (W5-L01 covers only phrases naming the step).
-    // The safety property holds: nothing is sent and the grant still waits for its exact phrase.
-    await harness.turn(owner, '실행');
+    // INT-2 finding, fixed (routing exec gaps): a bare "실행" — the remote-cleanup gate's phrase — or "go" / "run it" while
+    // a comment is approved names no write step. It runs nothing and gets the deterministic reply quoting the exact phrase
+    // (it fell through to chat before); the grant still waits for "댓글 실행".
+    for (const text of ['실행', '실행해', '실행해줘', 'go', 'run it']) {
+      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행'));
+    }
     expect(totalWrites()).toBe(0);
 
     const sent = await det(owner, '댓글 실행');
