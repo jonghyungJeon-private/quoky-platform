@@ -23,6 +23,11 @@ third-party dependency (`node:fetch` only).
   eligible sets byte-identical.
 - Startup errors `OPENAI_API_KEY_INVALID`, `OPENAI_MODEL_INVALID`, `OPENAI_API_KEY_MISSING`, `OPENAI_MODEL_MISSING`;
   `.env.example` documents the two names.
+- Review fixes: the key is held in a redacting holder (config inspection and serialisation show `[REDACTED]`);
+  `incomplete` replies are marked as cut off at the output bound and fail closed otherwise (`INCOMPLETE`); startup
+  readiness no longer probes a `REMOTE` provider outside the effective selection (no OpenAI call unless selected; the
+  chat and image instances share one probe); `sk-` keys are redacted from error diagnostics; context files are refused.
+
 ## Unreleased — LRN-5 learning-example egress realignment (2026-10-08)
 
 ADR-0116 (Ratified 2026-10-08). No migration, no new port or DI token, no deps change; `ConversationRuntimeDeps` stays

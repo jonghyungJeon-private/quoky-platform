@@ -17788,6 +17788,26 @@ Implementation choices where D1–D8 are silent; no ratified text above changes.
   4xx, oversize, malformed or action items → `EXECUTION_FAILED`. The message is `openai API: <CODE>[ (HTTP nnn)]`.
 - **Usage seam.** The audit carries `inputTokens`, `cachedInputTokens`, `outputTokens`, `reasoningTokens`,
   `totalTokens` (Codex's names) for PRV-3; nothing reads them yet.
+- **Review fixes (Codex P2, Chief Architect APPROVE WITH NITS, 2026-10-08).**
+  - *Key holder.* `config.ai.openai.apiKey` is an `OpenAiApiKey` holder (true private field; `toJSON`, `toString` and
+    `util.inspect` show `[REDACTED]`), so inspecting or serialising the whole configuration never shows the key; only
+    the adapter reveals it for the `Authorization` header. `error-diagnostics` also redacts `sk-…` keys and
+    `QUOKY_OPENAI_API_KEY=…`.
+  - *`incomplete` responses.* `incomplete_details.reason` is read into `max_output_tokens | content_filter | other`
+    (audit `incompleteReason`). At the output bound the text is returned with the fixed suffix
+    "(답변이 길이 제한으로 잘렸어요.)" appended after hygiene; any other reason fails closed (`INCOMPLETE` →
+    `EXECUTION_FAILED`).
+  - *Startup probes (owner/orchestrator decision, option a).* The startup readiness report does not probe a provider
+    that declares `REMOTE` and is eligible for none of its capabilities under the effective selection with no
+    conversation (`ProviderSelectionPolicy.isEligible`, data only, no id branching). A configured but unselected HTTP
+    provider therefore makes no network call at startup; the same rule also skips other unselected `REMOTE` providers
+    (an unselected Codex CLI or Claude vision provider is reported "not probed" instead of probed). Owner-opened views
+    (`모델 목록`, `/providers`, the operations providers panel) still probe. `generalChatReady` counts only eligible
+    chat providers. The chat and image instances on the configured model share one probe (one model-get answers both;
+    30 s reuse, an indeterminate probe is not cached).
+  - *Smaller fixes.* A non-empty `contextFiles` on the chat instance is refused before sending; in `모델 목록` an
+    allow-listed model other than `QUOKY_OPENAI_MODEL` shows unknown readiness (it was never probed); the
+    `AiProvider` port comment names the ADR-0115 exception (comment only).
 
 ## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
 
