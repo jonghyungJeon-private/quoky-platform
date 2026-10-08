@@ -21,7 +21,8 @@ Repository 문서가 source of truth이며 prompt나 이전 Agent의 self-report
 - Core는 `AiProvider`에만 의존하며 provider `id`로 분기하거나 특정 CLI를 가정하지 않는다.
 - Provider 선택은 `capabilities`, `priority`, `isAvailable()` 데이터로 결정한다.
 - 선택된 provider는 `TaskRun.providerId`의 audit 정보이며 사용자에게 기본 노출하지 않는다.
-- Provider별 prompt shaping과 CLI rendering은 adapter가 담당한다. v1에 AI HTTP API를 추가하지 않는다.
+- Provider별 prompt shaping과 CLI rendering은 adapter가 담당한다. AI HTTP API adapter는 chat tier와 image understanding에만 허용한다(ADR-0115).
+  Owner가 선택할 때만 켜지고 tool definition을 보내지 않으며, code/review/planning/test/embedding/policy capability는 Claude CLI에 남는다.
 - Quoky Memory가 source of truth이며 stateless CLI에는 generated context file로만 전달한다.
 - `MemoryManager`는 CRUD/scope, `ContextBuilder`는 retrieve/rank/compress/budget,
   `PromptComposer`는 prompt layering, workspace는 context-file materialization을 소유한다.

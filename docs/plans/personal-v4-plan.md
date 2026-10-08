@@ -1,8 +1,10 @@
 # Quoky Personal v4 — Plan (post-v3)
 
-- **Status:** **PROPOSED.** Planning only. Nothing here ratifies an ADR, answers an owner decision or authorizes a
-  Strict action. Every owner decision is listed in section 7 as an open question with a recommended default. A track's
-  first code merge waits for its ADR to be ratified, as in v3.
+- **Status:** **RATIFIED (2026-10-08).** The Product Owner answered section 7 in chat on 2026-10-08 ("v4 권장안대로
+  진행하고"): every question takes its recommended default, except decision 20 (Notion), which is recorded as undecided.
+  The answers are in section 7 and in the ADR-0114..0118 ratification record in `DECISIONS.md`. ADR-0114..0118 and the
+  ADR-0109 amendment are Ratified. Ratification authorizes no Strict action by itself: each Strict target in section 5
+  still needs its own owner confirmation.
 - **Date:** 2026-10-08
 - **Base:** `main` at `f14e97d` (PR #148 merged). SQLite schema v15. `ConversationRuntimeDeps` baseline 35. 10
   registered turn handlers. Golden ratchet `turn-handler-routing` minTotal 338 and `action-shaped-fallthrough` 121
@@ -12,8 +14,9 @@
   `docs/uat/personal-v3-qa-record.md`, the `CHANGELOG.md` "Unreleased" entries, and the commit messages of PRs
   #135-#148.
 - **Structure:** mirrors `docs/plans/personal-v3-plan.md`. Where this plan and a ratified ADR disagree, the ADR wins and
-  this plan is corrected. ADR numbers are placeholders (`TBD-ADR-A`..`E`) until GOV-5 appends them, because CODE-8 is
-  being implemented on another branch and the next free number is not fixed yet.
+  this plan is corrected. GOV-5 assigned the ADR numbers on 2026-10-08: ADR-0114 (Telegram), ADR-0115 (HTTP API providers
+  and the constitution amendment), ADR-0116 (learning-example egress), ADR-0117 (brief and pre-meeting reminders) and
+  ADR-0118 (Google read connectors).
 
 ## 1. Goal and scope
 
@@ -91,13 +94,13 @@ real user to use the service?". For the owner, v4 is done when:
 - The owner can use Quoky from a second messenger (Telegram) as the same person: same memory, reminders and to-dos,
   same gates.
 - The owner can choose among more providers for chat and images, under the same selection rules: Claude, Codex,
-  Ollama, plus an OpenAI API adapter and a Gemini adapter (subject to owner decisions 8-10).
+  Ollama, plus an OpenAI API adapter and a Gemini API adapter (ADR-0115).
 - A morning brief arrives by DM with today's calendar next to reminders and to-dos, and Quoky can remind the owner
   before a meeting.
 - The owner can ask about their own mail and Drive files read-only, under the same guards as the other connectors
-  (subject to owner decision 19).
+  (ADR-0118).
 - The v3 live items that are still PENDING are run or explicitly accepted. The docs match `main`.
-- Every learned or curated improvement reaches the provider that actually answers (subject to owner decision 11).
+- Every learned or curated improvement reaches the provider that actually answers (ADR-0116).
 
 **Left out on purpose (the remaining ~10%):** the multi-agent runtime, Team/Hosted tenancy, remote access to the
 operations UI and a separate client (ADR-0113 D11), deploy/release automation, Confluence and GitHub-issue writes, and
@@ -110,11 +113,11 @@ means closed or parked: it is not planned in v4, but its ADR stays as ratified.
 
 | Tier | Items |
 |---|---|
-| P0 | LIVE-1 carry-over live sessions, DOC-D docs drift, PLT-0 platform-neutral rendering (Telegram prerequisite), DET-2 deterministic coverage completion, LRN-5 learning egress realignment (if decision 11 is yes) |
+| P0 | LIVE-1 carry-over live sessions, DOC-D docs drift, PLT-0 platform-neutral rendering (Telegram prerequisite), DET-2 deterministic coverage completion, LRN-5 learning egress realignment (ADR-0116) |
 | P1 | TG-1/2/3 Telegram adapter, PRV-1/2 additional providers, BRF-1 calendar in the morning brief, GML-1 Gmail read, TBL-1 Discord table limits |
 | P2 | BRF-2 pre-meeting reminders, DRV-1 Google Drive read, PRV-3 usage ledger, CODE-9 merge-enablement UAT, UNC-1 network-failure live test |
-| P3 (closed or parked) | SUB-3 continuation activation, S2A-1 Stage 2A re-validation, LLM-3 MLX provider, LRN-4 local fine-tuning, a model-proposed PR title/body (ADR-0108 D4), a mobile or remote operations UI, a Notion connector (unless decision 20 says the owner uses Notion) |
-| Out | Multi-agent runtime, Team/Hosted tenancy, remote ops-UI access, deploy automation, Confluence/GitHub-issue writes, mail send, Telegram groups (unless decision 3 says otherwise) |
+| P3 (closed or parked) | SUB-3 continuation activation, S2A-1 Stage 2A re-validation, LLM-3 MLX provider, LRN-4 local fine-tuning, a model-proposed PR title/body (ADR-0108 D4), a mobile or remote operations UI, a Notion connector (decision 20 undecided: an unscheduled candidate, revisited on the owner's request) |
+| Out | Multi-agent runtime, Team/Hosted tenancy, remote ops-UI access, deploy automation, Confluence/GitHub-issue writes, mail send, Telegram groups (decision 3: private chat only) |
 
 ## 2. Carry-over from v3 (not yet live, or accepted residuals)
 
@@ -125,7 +128,7 @@ None of these items is claimed as done. Sources: the end of the QA record and `C
 | C1 | Operations UI: UI reject, the chat/UI race, UI reminder cancel and memory forget, per-panel check against chat, a foreign-Origin request, token rotation across a restart (ADR-0113 live QA) | UI approve PARTIAL PASS (W6-A2); the rest PENDING | **LIVE-1**, on a DB copy for cancel/forget, against the Slack test channel for approve/reject |
 | C2 | Attachments: unsupported type, non-allowlisted channel (dropped), injection caption | PENDING (text log, image, oversize and credential-like files ran in session 2) | **LIVE-1** |
 | C3 | CWR: W5-L01..L04 re-run | PENDING (fixed in #130, unit-tested). #147 rewrote much of that copy | **LIVE-1**, re-run against the #147 replies |
-| C4 | CWR: mid-send network failure (`UNCERTAIN`) | PENDING owner approval (Strict) | **UNC-1** (P2, owner decision 18) |
+| C4 | CWR: mid-send network failure (`UNCERTAIN`) | PENDING; the owner approved running it on 2026-10-08 (Strict, scratch Docker runtime, never the service) | **UNC-1** (P2, owner decision 18) |
 | C5 | SUB: a real host reboot | PENDING (session 2 used a `launchctl bootout`/`bootstrap` proxy) | **LIVE-1**, at an owner-chosen time |
 | C6 | DET: the ~40-phrasing edge-case sweep per feature state; ADR-0104 D3 to-do/reminder status phrases | Sweep PENDING (wave 1 covered a sample); D3 not complete (memory phrases delivered by MEM-1) | **DET-2** |
 | C7 | Slack read lookups | QA record says NOT RUN; the #148 commit messages show session 3 ran Slack search with a user token (D3/D15) | **DOC-D** records session 3 faithfully; **LIVE-1** re-checks DM filtering and channel labels after #148 |
@@ -149,8 +152,9 @@ QA. Constraints common to all tracks:
 - New ports and their tokens go in `packages/core/src/ports`.
 - A new feature arrives as an ADR-0096 turn handler plus an `app/features/*.providers.ts` composition. The deps baseline
   stays at 35 unless a track's ADR says otherwise.
-- **No AI HTTP API**, unless owner decision 8 ratifies the constitution amendment in PRV-1. Until then, providers stay
-  CLI-based (ARCHITECTURE.md §5.5, AGENTS.md "Provider, Prompt, Context").
+- **AI HTTP APIs only for the chat and image tiers.** Owner decision 8 ratified the constitution amendment (ADR-0115;
+  ARCHITECTURE.md §5.5 and AGENTS.md "Provider, Prompt, Context" amended on 2026-10-08). Every other capability stays
+  on the CLI providers.
 
 **Estimate scale.** Implementation effort by one agent plus review: S ≤ 1 day, M 2-4 days, L 5-8 days. Attended live QA
 is extra and depends on owner availability. These are estimates.
@@ -221,7 +225,7 @@ The owner decided on 2026-10-06 that Telegram is a post-v3 extension. ARCHITECTU
       It shows no content.
     - `quokyctl` and the quickstart get a Telegram section. The bot is created through BotFather by the owner
       (Strict).
-- **ADR.** **TBD-ADR-A, Telegram platform adapter.** It covers per-platform owner admission (amends ADR-0091),
+- **ADR.** **ADR-0114, Telegram platform adapter.** It covers per-platform owner admission (amends ADR-0091),
   identity mapping (ADR-0009), the composition of several platform adapters, the startup identity check (amends
   ADR-0102 D5), delivery and chunking (relates ADR-0016), attachment intake (amends ADR-0111 D1/D2 for the second
   platform), feedback (ADR-0098 D3), notification routing (amends ADR-0101 D8 and ADR-0113 for `OPS_*` targets), the
@@ -237,7 +241,7 @@ The owner decided on 2026-10-06 that Telegram is a post-v3 extension. ARCHITECTU
   - Two pollers on one token conflict (HTTP 409): the ADR-0102 single-instance lock already prevents this; a 409 is a
     typed startup error.
 - **Estimate.** PLT-0 M. TG-1 L. TG-2 M. TG-3 M.
-- **Dependencies.** PLT-0 before TG-1. TBD-ADR-A ratified before TG-1 merges. The owner creates the bot (Strict) before
+- **Dependencies.** PLT-0 before TG-1. ADR-0114 ratified before TG-1 merges. The owner creates the bot (Strict) before
   any live QA.
 - **AC.**
   - Discord output is byte-identical after PLT-0, and no Core module names a platform's markup.
@@ -265,9 +269,9 @@ entries and containment, not routing.
 - **Scope.**
   - **PRV-1, constitution amendment and the OpenAI API adapter.**
     - ARCHITECTURE.md §5.5 ("v1 is CLI-only; no AI HTTP API"), the `ROADMAP.md` non-goal and the AGENTS.md line
-      ("v1에 AI HTTP API를 추가하지 않는다") forbid HTTP providers today. An HTTP adapter needs a constitution amendment
-      ratified by the owner first (decision 8). This plan does not assume the answer.
-    - If ratified: a new `packages/ai-openai-api` (one provider concern per package; `node:fetch`, no SDK unless the
+      ("v1에 AI HTTP API를 추가하지 않는다") forbade HTTP providers. The owner ratified the constitution amendment on
+      2026-10-08 (decision 8, ADR-0115 D1), and the three texts are amended.
+    - A new `packages/ai-openai-api` (one provider concern per package; `node:fetch`, no SDK unless the
       ADR allows one). It implements the unchanged `AiProvider`, advertises the chat tier (`GENERAL_CHAT`,
       `SUMMARIZATION`, `DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`) and optionally `IMAGE_UNDERSTANDING`, and declares
       `REMOTE`.
@@ -277,11 +281,8 @@ entries and containment, not routing.
       host.
     - Readiness is a bounded models-list call with no generation. Typed failure mapping as in the ADR-0092 amendment
       D5 (timeout, unavailable, rate limit, empty output).
-  - **PRV-2, Gemini.** The transport depends on decisions 8 and 9:
-    - with HTTP approved: `packages/ai-gemini-api`, following the PRV-1 pattern;
-    - otherwise: `GeminiCliProvider` inside `packages/ai-cli`, next to Claude, Codex and Ollama (the ADR-0105 D2
-      placement rule). It needs a containment spike modelled on the Codex one: no user config, no tools, prompt on
-      stdin, empty temp cwd, fail-closed output check, process-group termination.
+  - **PRV-2, Gemini.** Through the Gemini API (decisions 8 and 9, ADR-0115 D4): `packages/ai-gemini-api`, following
+    the PRV-1 pattern. The Gemini CLI route is not taken.
     - Chat tier first, image understanding second. The canonical image bytes of #143 only.
   - **Shared for PRV-1/2.**
     - Catalog entries and selection labels (for example `openai:<model>`, `gemini:<model>`), with a bounded model
@@ -296,23 +297,21 @@ entries and containment, not routing.
     (decision 10). There is no automatic provider switch. If storing usage needs a column, migration v16 is decided in
     the ADR.
 - **ADR.**
-  - **TBD-ADR-B, AI HTTP providers.** It amends the constitution (ARCHITECTURE.md §5.5 and the matching AGENTS.md and
+  - **ADR-0115, AI HTTP providers.** It amends the constitution (ARCHITECTURE.md §5.5 and the matching AGENTS.md and
     `ROADMAP.md` lines), scoped to the chat tier and image understanding. It also covers the adapter packages, key
     handling, endpoint pinning, failure taxonomy and readiness, and amends ADR-0092/ADR-0111 for registration and
     image locality.
-  - If decision 8 is no, a narrower **ADR-0092 amendment for the Gemini CLI** (containment as for Codex) replaces it.
-  - PRV-3 is a section of TBD-ADR-B, or its own amendment if a migration is needed.
+  - The Gemini CLI alternative (a narrower ADR-0092 amendment) is not needed: decision 8 is yes.
+  - PRV-3 is ADR-0115 D8, with its own amendment if a migration is needed.
 - **Risks.**
   - Per-token billing replaces subscription plans. PRV-3 shows the cost, and a threshold notice warns the owner.
   - Key leakage: `.env.local` at 0600; the key is never in argv, logs or audit; an endpoint allow-list.
   - Content egress to two more vendors: only on explicit selection; the selection-time Claude fallback is unchanged;
     `LOCAL_ONLY` data stays local unless LRN-5 changes the rule for owner-selected providers.
-  - Gemini CLI containment may not reach the Codex bar. The spike decides; if it does not, PRV-2 waits for the HTTP
-    route.
   - Weakening the CLI-only principle by accident: the amendment is limited to two capability tiers and lists the
     capabilities that stay on Claude.
-- **Estimate.** TBD-ADR-B M (docs). PRV-1 M. PRV-2 M (HTTP) or M-L (CLI plus spike). PRV-3 M.
-- **Dependencies.** Decision 8 before PRV-1. PRV-1 before PRV-2 when HTTP is chosen (shared patterns). PRV-3 after
+- **Estimate.** ADR-0115 M (docs). PRV-1 M. PRV-2 M. PRV-3 M.
+- **Dependencies.** ADR-0115 (ratified) before PRV-1. PRV-1 before PRV-2 (shared patterns). PRV-3 after
   PRV-1.
 - **AC.**
   - Selecting a new provider changes only the chat tier (and images, if selected). The code, review and
@@ -324,7 +323,7 @@ entries and containment, not routing.
 - **Live QA.** Owner-confirmed new external targets (Strict, one per vendor): a short chat set, a summary, one image,
   a session `/model` switch and reset, an operations-UI default change, and an invalid-key startup.
 
-### LRN — Learning egress realignment (P0 if decision 11 is yes; LRN-4 closed)
+### LRN — Learning egress realignment (P0, decision 11 yes; LRN-4 closed)
 
 - **Goal.** Make the owner-curated loop take effect on the provider that actually answers.
 - **Scope.**
@@ -336,12 +335,12 @@ entries and containment, not routing.
   - The rule stays data-driven: it reads the provider's declared locality and the selection source, never a provider
     id.
   - **LRN-4 (local fine-tuning): closed for v4.** It would train a local model that no longer serves chat.
-- **ADR.** TBD-ADR-C, an ADR-0107 amendment that also amends ARCHITECTURE.md §5.14 for the owner-selected `REMOTE`
-  case.
+- **ADR.** ADR-0116, which amends ADR-0107 D5/D6 and, before LRN-5 merges, ARCHITECTURE.md §5.14 for the
+  owner-selected `REMOTE` case.
 - **Risks.** Personal text leaving the host: explicit selection only, the flag off by default, per-item consent
   unchanged, forget cascade unchanged.
 - **Estimate.** S-M.
-- **Dependencies.** Decision 11. No other track.
+- **Dependencies.** ADR-0116 (ratified). No other track.
 - **AC.**
   - With the flag off, prompts are byte-identical to today.
   - With the flag on and Claude selected explicitly, at most 2 examples are injected.
@@ -364,12 +363,13 @@ ADR-0101 D7 states that "an LLM- or connector-backed brief needs a new ADR". The
   - **BRF-1.** The `BRIEF` composer gains a "today's schedule" section read through the existing `CalendarReader`
     port. It is deterministic, has no model, keeps the source-unavailable note ("could not read" is never shown as
     empty) and stays DM-only.
-  - Optional second section (decision 21): Jira items assigned to the owner that are due or updated today, through the
-    existing named query of ADR-0100. Read-only, with bounded counts.
+  - Optional second section (decision 21, opt-in, off by default: `QUOKY_BRIEF_JIRA_ENABLED`): Jira items assigned to
+    the owner that are due or updated today, through the existing named query of ADR-0100. Read-only, with bounded
+    counts.
   - **BRF-2.** `회의 10분 전에 알려줘` creates a reminder relative to a specific calendar event. Its due time comes from
     the event's start, and it is re-checked at fire time: a moved event moves the reminder, a deleted event cancels it
     with a note. Opt-in per command; nothing is created automatically for every event (decision 22).
-- **ADR.** TBD-ADR-D: an ADR-0101 D7 amendment (a connector-backed brief) and an ADR-0101/ADR-0110 amendment for
+- **ADR.** ADR-0117: an ADR-0101 D7 amendment (a connector-backed brief) and an ADR-0101/ADR-0110 amendment for
   event-relative reminders. No migration is expected, because the event id is stored as the reminder's bounded
   reference. If a column is needed, v16 is shared with PRV-3 under the migration lane rules.
 - **Risks.**
@@ -403,8 +403,9 @@ consent helper.
   - **DRV-1.** A `packages/connector-gdrive`, scope `drive.readonly`. Search by name and recent files. Text export of
     Google Docs/Sheets within the ADR-0111 text bound, used as an untrusted Resource for summaries. No write and no
     sharing change.
-  - **Notion.** Not planned unless decision 20 says the owner uses it for work.
-- **ADR.** TBD-ADR-E: mail and Drive read ports, scopes, the egress of mail and document text, bounds, and the
+  - **Notion.** Not planned. Decision 20 is undecided ("Notion 은 사용할 수도 있고 사용하지 않을 수 도 있어"): Notion
+    stays an unscheduled P3 candidate, revisited on the owner's request.
+- **ADR.** ADR-0118: mail and Drive read ports, scopes, the egress of mail and document text, bounds, and the
   injection rules (mail is the most hostile inbound text). It amends ADR-0100 and relates to ADR-0110/0111.
 - **Risks.**
   - Prompt injection in mail bodies: untrusted readout framing, no tool surface, no write path from a mail turn,
@@ -415,7 +416,7 @@ consent helper.
     it.
   - Token handling: the calendar token-file pattern (mode 600), one token per grant set.
 - **Estimate.** GML-1 L. DRV-1 M-L.
-- **Dependencies.** Decision 19. TBD-ADR-E ratified. The owner's consent with the new scope (Strict).
+- **Dependencies.** ADR-0118 (ratified). The owner's consent with the new scope (Strict).
 - **AC.**
   - Fixture adapters answer the listed phrasings deterministically.
   - A mail with an injection payload produces no action and no altered routing.
@@ -448,15 +449,17 @@ consent helper.
   - ADR: a short ADR-0111 amendment, because the conversion rule changes.
   - Estimate S-M. AC: unflagged text stays byte-identical; a reply with a code block and a table converts only the
     table; a 40-row table stays a fenced block.
-- **UNC-1, mid-send network failure live test (P2, Strict, owner decision 18).**
+- **UNC-1, mid-send network failure live test (P2, Strict, owner decision 18: run it).**
   - Prove the `UNCERTAIN` path end to end once: the receipt is `UNCERTAIN`, there is no retry, the next phrase gets
     the uncertain warning (#147 wording), and the operations UI shows it.
-  - Runs in a scratch runtime on a DB copy against the Slack test channel, never on the service. The fault method is
-    agreed before the session (for example a packet-filter rule raised after the request is written).
+  - Runs in a scratch Docker (OrbStack) runtime on a DB copy against the Slack test channel, never on the service
+    (owner, 2026-10-08). The fault method is agreed before the session (for example a packet-filter rule raised after
+    the request is written). The container is a test harness only; ADR-0105 D5 (no Docker for the model runtime) is
+    unchanged.
   - If no deterministic method exists, the owner may accept the offline coverage as the residual.
   - Estimate S (plus one attended session).
-- **S2A-1, Stage 2A provider-path re-validation (P3, Strict, owner decision 16).**
-  - Parked with SUB-3. The bindings gate only the disabled Stage 2B routed seam (section 1.2).
+- **S2A-1, Stage 2A provider-path re-validation (P3, Strict, owner decision 16: park).**
+  - Parked with SUB-3 ("응 일단 이건 보류하자"; ADR-0103 note of 2026-10-08). The bindings gate only the disabled Stage 2B routed seam (section 1.2).
   - Re-entry: SUB-3 is resumed, or any Stage 2B seam is enabled.
 
 ### CODE — Multi-repository and merge (CODE-8 in progress; P2 for CODE-9)
@@ -464,7 +467,10 @@ consent helper.
 - **CODE-8** (ADR-0109) is being implemented on another branch and is not owned here. v4 waves keep its files free
   (`push-target-resolution.ts`, `personal-hosting-guard.ts`, `config.ts`) until it merges.
   - Live QA after merge: a second allowlisted sandbox repository, and the App installation switched to "Only select
-    repositories" (ADR-0109 D4, Strict).
+    repositories" (ADR-0109 D4, Strict). The owner approved the switch on 2026-10-08; the orchestrator makes it through
+    the browser, for the repositories currently used for testing (ADR-0109 amendment of 2026-10-08).
+  - The additive optional `approvedRepository` parameter that CODE-8 adds to the `GitProvider` port (review item C-2)
+    is ratified as the ADR-0109 amendment of 2026-10-08.
 - **CODE-9 merge enablement (P2, owner decision 17).**
   - No code is expected. It is a sandbox UAT of operator guide Scenarios B/C with `QUOKY_GIT_MERGE_ENABLED=true`, run
     on a scratch runtime after CODE-8 merges.
@@ -475,15 +481,15 @@ consent helper.
 
 ### Closed or parked (P3)
 
-| Item | Decision needed | Recommendation | Re-entry condition |
+| Item | Decision | Owner answer (2026-10-08) | Re-entry condition |
 |---|---|---|---|
-| SUB-3 continuation activation (ADR-0103, Ratified) | 15 | Park | A concrete background-job use case the brief/reminder path cannot serve, **and** a ratified decision on the routed seam's provider set (a cloud candidate widens the Stage 2B scope that ARCHITECTURE.md §5.9 limits to the Ollama candidates) |
-| S2A-1 Stage 2A re-validation | 16 | Park with SUB-3 | Same as SUB-3 |
-| LLM-3 MLX provider (ADR-0105 D2-D4, Ratified) | 13 | Close for v4 | Owner switches chat back to a local model **and** a benchmark shows ≥1.5× tokens/s at equal harness score |
-| LRN-4 local fine-tuning | 12 | Close for v4 | Same as LLM-3, plus ≥300 approved examples |
-| Local chat quality work (granite, runaway generation, appended translations) | 14 | Stop new work; keep Ollama for embeddings and as an optional choice | Owner selects a local chat model again |
-| Mobile or remote operations UI | 23 | Not in v4: ADR-0113 D11 keeps remote access out of the Personal edition. Discord mobile and Telegram are the mobile surfaces. The page already sets a responsive viewport | Team/Hosted edition, or an ADR-0113 D11 amendment |
-| ADR-0108 D4 model-proposed PR text | 24 | Park | Owner asks for it |
+| SUB-3 continuation activation (ADR-0103, Ratified) | 15 | Parked (ADR-0103 note) | A concrete background-job use case the brief/reminder path cannot serve, **and** a ratified decision on the routed seam's provider set (a cloud candidate widens the Stage 2B scope that ARCHITECTURE.md §5.9 limits to the Ollama candidates) |
+| S2A-1 Stage 2A re-validation | 16 | Parked with SUB-3 (ADR-0103 note) | Same as SUB-3 |
+| LLM-3 MLX provider (ADR-0105 D2-D4, Ratified) | 13 | Closed for v4 (ADR-0105 note) | Owner switches chat back to a local model **and** a benchmark shows ≥1.5× tokens/s at equal harness score |
+| LRN-4 local fine-tuning | 12 | Closed for v4 (ADR-0107 note) | Same as LLM-3, plus ≥300 approved examples |
+| Local chat quality work (granite, runaway generation, appended translations) | 14 | New work stopped; Ollama kept for embeddings and as an optional choice | Owner selects a local chat model again |
+| Mobile or remote operations UI | 23 | Not in v4 (ADR-0113 note): ADR-0113 D11 keeps remote access out of the Personal edition. Discord mobile and Telegram are the mobile surfaces. The page already sets a responsive viewport | Team/Hosted edition, or an ADR-0113 D11 amendment |
+| ADR-0108 D4 model-proposed PR text | 24 | Parked, left unwired (ADR-0108 note) | Owner asks for it |
 
 ## 4. Waves
 
@@ -495,22 +501,22 @@ assume the owner has answered section 7. A "no" answer drops the dependent task 
 | 0 | DOC-D | CARRY | `CURRENT_STATE.md`, `docs/uat/personal-v3-qa-record.md` (session 3), `ROADMAP.md` | — |
 | 0 | LIVE-1 | CARRY | No code. Strict attended sessions C1, C2, C3, C5, C7, C9; fixes as follow-up PRs in the owning package | DOC-D |
 | 0 | CODE-8 | CODE | (other branch) `push-target-resolution.ts`, `personal-hosting-guard.ts`, `config.ts` | ADR-0109 |
-| 1 | GOV-5 | GOV | `DECISIONS.md` (TBD-ADR-A..E appended as Proposed; constitution amendment text for decision 8), this plan | Owner answers |
+| 1 | GOV-5 | GOV | `DECISIONS.md` (ADR-0114..0118, the ADR-0109 amendment and the closure notes appended as Ratified), `ARCHITECTURE.md` §5.5, `AGENTS.md` (constitution amendment, decision 8), `ROADMAP.md`, this plan | Owner answers (2026-10-08) |
 | 1 | PLT-0 | PLT | `core/application/work-chat/external-work-readout.ts`, `work-chat-renderer.ts`, `calendar/calendar-reply-renderer.ts`, `connector-writes/connector-write-copy.ts`, `core/domain/messaging.ts` (span type), `adapter-discord/src/index.ts`, `adapter-discord/src/delivery.ts` (+tests, golden before/after fixtures) | — |
 | 1 | DET-2 | QUAL | `core/application/reminders/reminder-turn-handler.ts`, the `work-chat.todo` handler (`core/application/work-chat/*`), `core/application/chat-policy/*`, golden corpora, `baseline.v1.json` | — |
 | 1 | TBL-1 | QUAL | `adapter-discord/src/markdown-tables.ts` (+test) only (no `index.ts` hunk; PLT-0 owns it in W1) | ADR-0111 amendment |
-| 2 | TG-1 | PLT | new `packages/adapter-telegram/*`, `core/ports/platform-adapter.port.ts` (only if the ADR needs an additive field), `app/app.module.ts` (composition), `app/config.ts`, `.env.example`, `app/main.ts` (identity check) | PLT-0, TBD-ADR-A, CODE-8 merged (`config.ts`) |
-| 2 | PRV-1 | PRV | new `packages/ai-openai-api/*`, `app/provider-selection/provider-catalog.ts`, `selection-choices.ts`, `app/chat-provider-composition.ts`, `app/image-understanding-provider.ts` | TBD-ADR-B (decision 8) |
-| 2 | BRF-1 | BRF | `core/application/reminders/daily-brief.ts` (+test), `reminder-dispatch-service.ts` (brief input), `app/reminders/*` (calendar reader injection) | TBD-ADR-D |
-| 2 | LRN-5 | LRN | `core/application/prompt-composer.ts` (+test), the example-egress policy in `core/application/feedback/*`, `app/context-builder-provider.ts` | TBD-ADR-C (decision 11) |
+| 2 | TG-1 | PLT | new `packages/adapter-telegram/*`, `core/ports/platform-adapter.port.ts` (only if the ADR needs an additive field), `app/app.module.ts` (composition), `app/config.ts`, `.env.example`, `app/main.ts` (identity check) | PLT-0, ADR-0114, CODE-8 merged (`config.ts`) |
+| 2 | PRV-1 | PRV | new `packages/ai-openai-api/*`, `app/provider-selection/provider-catalog.ts`, `selection-choices.ts`, `app/chat-provider-composition.ts`, `app/image-understanding-provider.ts` | ADR-0115 (decision 8) |
+| 2 | BRF-1 | BRF | `core/application/reminders/daily-brief.ts` (+test), `reminder-dispatch-service.ts` (brief input), `app/reminders/*` (calendar reader injection) | ADR-0117 |
+| 2 | LRN-5 | LRN | `core/application/prompt-composer.ts` (+test), the example-egress policy in `core/application/feedback/*`, `app/context-builder-provider.ts` | ADR-0116 (decision 11) |
 | 3 | TG-2 | PLT | `packages/adapter-telegram/src/attachments.ts`, `reactions.ts` (+tests) | TG-1 |
 | 3 | PRV-2 | PRV | new `packages/ai-gemini-api/*` (or `packages/ai-cli/src/gemini-cli-provider.ts`; no `ai-cli/src/index.ts` hunk until W4), catalog entries | PRV-1 or the Gemini CLI amendment |
-| 3 | GML-1 | CON | new `packages/connector-gmail/*`, mail port in `core/ports`, mail turn handler, `app/features/mail.providers.ts`, `turn-handlers.providers.ts`, `app.module.ts`, `config.ts`, `.env.example` | TBD-ADR-E (decision 19) |
+| 3 | GML-1 | CON | new `packages/connector-gmail/*`, mail port in `core/ports`, mail turn handler, `app/features/mail.providers.ts`, `turn-handlers.providers.ts`, `app.module.ts`, `config.ts`, `.env.example` | ADR-0118 (decision 19) |
 | 3 | UNC-1 | QUAL | No code. Strict session on a scratch runtime | Decision 18 |
 | 3 | CODE-9 | CODE | No code. Strict sandbox merge UAT | CODE-8 merged, decision 17 |
 | 4 | TG-3 | PLT | `adapter-telegram/src/notification.ts`, the composite `NotificationSink` wiring in `app/`, `app/ops-ui/*` (Telegram panel), `ops/launchd/*` docs, quickstart Telegram section | TG-2 |
-| 4 | BRF-2 | BRF | `core/application/reminders/*` (event-relative schedule), calendar handler hook, `chat-policy/*` | BRF-1, TBD-ADR-D |
-| 4 | DRV-1 | CON | new `packages/connector-gdrive/*`, Drive handler, `app/features/drive.providers.ts`, `turn-handlers.providers.ts`, `app.module.ts`, `config.ts` | GML-1 (shared OAuth helper), TBD-ADR-E |
+| 4 | BRF-2 | BRF | `core/application/reminders/*` (event-relative schedule), calendar handler hook, `chat-policy/*` | BRF-1, ADR-0117 |
+| 4 | DRV-1 | CON | new `packages/connector-gdrive/*`, Drive handler, `app/features/drive.providers.ts`, `turn-handlers.providers.ts`, `app.module.ts`, `config.ts` | GML-1 (shared OAuth helper), ADR-0118 |
 | 4 | PRV-3 | PRV | `core/domain/task.ts` (usage), `core/ports/ai-provider.port.ts` (additive usage on the result), HTTP adapters, `app/ops-ui/*` usage panel, `migrations.ts` only if v16 is ratified | PRV-1 |
 | 4 | INT-3 | INT | `app/personal-v4-acceptance.test.ts`, golden additions, `baseline` | all merged tracks |
 | 4 | DOC-E | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation records), `ROADMAP.md`, quickstart, operator guide | all merged tracks |
@@ -551,12 +557,12 @@ that needs a key must say so in its ADR before it merges.
 
 This mirrors v3.
 
-- **ADR gate.** A track's first code merge waits for the owner to ratify its ADR (Proposed → Ratified). GOV-5 drafts
-  TBD-ADR-A..E after the owner answers section 7, so the drafts reflect the answers. A stalled ADR stalls only its own
+- **ADR gate.** A track's first code merge waits for the owner to ratify its ADR (Proposed → Ratified). GOV-5 appended
+  ADR-0114..0118 after the owner answered section 7, and the owner ratified them on 2026-10-08. A stalled ADR stalls only its own
   track. PLT-0, DET-2 and the docs tasks need no new ADR. TBL-1 needs a short ADR-0111 amendment.
-- **Constitution.** TBD-ADR-B changes ARCHITECTURE.md §5.5 (and the matching AGENTS.md and ROADMAP lines). It needs the
-  owner's explicit approval of the amended text, as the §2 principle 1 change of 2026-10-07 did. Without that approval
-  no HTTP provider code is written. A request that conflicts with ARCHITECTURE.md stops and is reported (CLAUDE.md).
+- **Constitution.** ADR-0115 changes ARCHITECTURE.md §5.5 (and the matching AGENTS.md and ROADMAP lines). The owner
+  approved the amended text on 2026-10-08 (decision 8), as the §2 principle 1 change of 2026-10-07 was approved, and
+  GOV-5 applied it. HTTP provider code stays limited to the chat and image tiers. A request that conflicts with ARCHITECTURE.md stops and is reported (CLAUDE.md).
 - **Per wave:**
   1. Implementation in separate worktrees.
   2. Offline validation: `pnpm typecheck` plus focused tests. A task on a hot file runs the full `pnpm test`. INT-3
@@ -591,7 +597,7 @@ This mirrors v3.
 |---|---|
 | A second messaging platform doubles the inbound attack surface | Exact numeric owner ids, private chats only, drop by default, nothing fetched before admission, startup identity check, one shared fixture suite for both adapters |
 | PLT-0 regresses Discord output across many renderers | Golden before/after fixtures, byte-identical assertion, full `pnpm test`, Chief Architect review |
-| The CLI-only principle erodes beyond the chat tier | TBD-ADR-B is limited to the chat tier and image understanding, lists the Claude-only capabilities, and the ADR-0092 amendment D4 test is extended to every new provider |
+| The CLI-only principle erodes beyond the chat tier | ADR-0115 is limited to the chat tier and image understanding, lists the Claude-only capabilities, and the ADR-0092 amendment D4 test is extended to every new provider |
 | Per-token billing surprises | PRV-3 usage ledger, monthly totals on the operations UI, threshold DM notice; HTTP providers off unless selected |
 | Personal text reaches more cloud vendors | Only on explicit owner selection; `LOCAL_ONLY` data stays local unless LRN-5 is ratified; credential guards in Core before egress for every provider |
 | Mail bodies carry prompt injection | Untrusted readout framing, no tool surface, no write path from mail turns, summaries only on request, DM-only listings |
@@ -599,35 +605,45 @@ This mirrors v3.
 | Attended time limits live QA | LIVE-1 first, ordered by impact; P2 sessions droppable |
 | Stale docs mislead later agents | DOC-D in W0, DOC-E at the end, the honesty rule |
 
-## 7. Owner decisions needed
+## 7. Owner decisions (answered 2026-10-08)
 
-Each question has a recommended default and the reason for it. **None is decided by this plan.** The answers feed
-GOV-5, which drafts the ADRs to match.
+The Product Owner answered in chat on 2026-10-08: "v4 권장안대로 진행하고". Every question takes its recommended default,
+except where the last column says otherwise. The answers are recorded in the ADR-0114..0118 ratification record in
+`DECISIONS.md`.
 
-| # | Question | Recommended default | Reason |
-|---|---|---|---|
-| 1 | Renew the standing approval for v4 waves: automatic Push/PR/Merge after offline validation, independent review and Codex review pass, with Live UAT of new external targets still confirmed per target? | **Renew**, on the same terms as v3 | It worked across v3 and the post-v3 PRs (#116-#148), and the per-target Strict gates stay |
-| 2 | Is Telegram the headline track of v4, starting with the PLT-0 prerequisite in wave 1? | **Yes**, P1 after PLT-0 (P0) | It is the one extension already decided (2026-10-06). PLT-0 also removes Discord markup from Core, which the constitution already requires |
-| 3 | Telegram scope in v4: private chat with the owner only, no groups or channels? | **Private chat only** | Matches the owner-DM model. Group admission needs member and admin rules that the Personal edition does not have |
-| 4 | Should the Telegram owner be the **same** owner `Actor` as on Discord (shared memory, reminders, to-dos, learning items)? | **Same Actor**, mapped explicitly in configuration | One person. Actor-scoped recall (ADR-0073 amendment) then works across platforms, and the Team edition seam (ADR-0009) stays intact |
-| 5 | Telegram transport: long polling (`getUpdates`) rather than a webhook? | **Long polling** | Polling needs no inbound listener or public endpoint, consistent with ADR-0113 D11 (no remote access) and the loopback-only design |
-| 6 | Notification routing with two platforms: reminders on the platform where they were created; `OPS_NOTICE` and `OPS_DECISION_RESULT` on a primary platform. Which platform is primary? | **Discord is primary**; reminders go where created; `BRIEF` stays DM-only on the platform where it was created | Keeps the existing, live-verified operations path unchanged, and lets Telegram add without moving it |
-| 7 | Telegram approvals: the existing text phrases only in v4, with inline buttons later? | **Text phrases only** | One approval grammar on both platforms. Buttons add a second decision surface that needs its own review |
-| 8 | Amend the constitution (ARCHITECTURE.md §5.5 "CLI-only; no AI HTTP API", plus the AGENTS.md and ROADMAP lines) so that HTTP API providers may serve the **chat tier and image understanding only**? | **Yes, narrowly**: chat tier and images only, each provider off unless selected; code, review, planning, tests and policy-sensitive chat stay on the Claude CLI | Needed for the "beyond the CLIs" goal. An HTTP call with no tool definitions is better contained than an agent CLI (Codex residual R7) and avoids the ~8k-token Codex agent prompt per turn. Narrow scoping keeps the code chain on the tested path |
-| 9 | Gemini transport: the Gemini API (if 8 is yes) or the Gemini CLI? | **API if decision 8 is yes; otherwise the CLI**, after a containment spike | One pattern for both new vendors. The CLI route needs a Codex-style containment proof that may not reach the same bar |
-| 10 | Order of new vendors and cost guard: OpenAI API first, then Gemini; record token usage and send a DM notice at a monthly threshold? | **OpenAI API first; usage ledger with a threshold notice, no automatic switch** | The owner already uses OpenAI through Codex and can compare directly. Per-token billing is new, so it needs visibility, but an automatic switch would override the owner's selection |
-| 11 | Allow owner-curated learning examples to reach a **cloud** chat provider when the owner has explicitly selected it (new flag, default off)? | **Yes, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`**; explicit selection only, never on the fallback | Today the examples are `LOCAL_ONLY`, so the curated loop does nothing on the owner's Claude chat, while memory and transcripts already go to the cloud by the 2026-10-07 decision |
-| 12 | Close LRN-4 (local fine-tuning) for v4? | **Close**; re-open only if chat moves back to a local model | It would train a model that no longer answers the owner's chat |
-| 13 | Close LLM-3 (MLX provider) for v4? | **Close**; ADR-0105 D2-D4 stay ratified but dormant | Ollama now serves only embeddings, and an MLX speed-up has no user-visible effect on the cloud chat path |
-| 14 | Stop new local-chat quality work (granite invented facts, runaway generation, appended translations) and keep Ollama for embeddings and as an optional choice? | **Yes** | The owner's chat runs on Claude. Effort goes to features. Ollama stays useful for recall and offline fallback |
-| 15 | SUB-3 continuation activation (ADR-0103, Ratified, P2): park it? | **Park (P3)** until there is a concrete background-job need and a decision on the routed seam's provider set | The receiver runs on the Stage 2B seam, which binds only llama3.1/granite. Adding a cloud candidate widens the Stage 2B scope that ARCHITECTURE.md §5.9 limits to the Ollama candidates, which needs its own ADR. The morning brief and reminders cover "report back later" |
-| 16 | Stage 2A provider-path re-validation (Strict): run it now or park it with SUB-3? | **Park with SUB-3** | It guards only the disabled routed seam. Running it now costs a Strict session for no user-visible effect |
-| 17 | CODE-9 merge enablement: run the sandbox merge UAT (Scenarios B/C) after CODE-8 merges, keeping the release default `QUOKY_GIT_MERGE_ENABLED=false`? Do you want merge from chat on your own service? | **Run the sandbox UAT once; keep the default `false`; enable on the service only if you want merge from chat** | The merge path has never run live. One sandbox run turns "untested" into "known" without changing the default |
-| 18 | Network-failure (`UNCERTAIN`) live test: run it once in a scratch runtime against the Slack test channel, or accept the offline coverage? | **Run once if a deterministic fault method is agreed before the session; otherwise accept the offline coverage as a recorded residual** | It is the last unverified branch of the write state machine. It must never run on the owner's service |
-| 19 | Google read connectors: add Gmail (`gmail.readonly`) and then Drive (`drive.readonly`) on the existing Internal OAuth client? May mail and document text go to the selected chat-tier provider when you ask for a summary? | **Yes, Gmail first, Drive second. Listings deterministic and DM-only; text to the chat-tier provider only on an explicit summary request**; no send, draft or delete | Mail and documents are the most frequent personal-data questions after the calendar. The Google project and consent flow already exist. Summaries on request match the 2026-10-07 cloud decision without making every listing an egress |
-| 20 | Do you use Notion for work? | **Not planned unless yes** | No QA record or configuration shows Notion use. A connector nobody uses adds credentials and attack surface |
-| 21 | Morning brief: add today's calendar to the existing `BRIEF` reminder; also add Jira items assigned to you that are due or updated today? | **Calendar yes; Jira optional (on, if you use Jira daily)**; deterministic, no model, DM-only | The brief exists but omits the calendar, the most-asked personal data. A model-written brief adds latency and egress for little gain |
-| 22 | Pre-meeting reminders (`회의 10분 전에 알려줘`): opt-in per command only, or automatic for every event? | **Opt-in per command** | Automatic reminders for every event would be noisy, and they are a scheduler, which ADR-0101 D1 rules out |
-| 23 | Keep the operations UI local-only (no remote or mobile access) in v4? | **Yes** (ADR-0113 D11 unchanged) | Remote access needs multi-actor authentication (Team/Hosted). Discord mobile and Telegram already cover mobile use |
-| 24 | Leave the model-proposed PR title/body (ADR-0108 D4) unwired? | **Yes, park** | The deterministic title and body passed live, and the model path adds egress and a guard surface |
-| 25 | Accepted residuals R1-R8 (section 2): keep them as documented? | **Keep all** | None of their triggers is hit by v4: Telegram runs in the same process, so R1's second-writer trigger does not apply |
+| # | Question | Recommended default | Reason | Owner answer (2026-10-08) |
+|---|---|---|---|---|
+| 1 | Renew the standing approval for v4 waves: automatic Push/PR/Merge after offline validation, independent review and Codex review pass, with Live UAT of new external targets still confirmed per target? | **Renew**, on the same terms as v3 | It worked across v3 and the post-v3 PRs (#116-#148), and the per-target Strict gates stay | **Renewed**, on the v3 terms (recommended default) |
+| 2 | Is Telegram the headline track of v4, starting with the PLT-0 prerequisite in wave 1? | **Yes**, P1 after PLT-0 (P0) | It is the one extension already decided (2026-10-06). PLT-0 also removes Discord markup from Core, which the constitution already requires | **Yes** (recommended default; ADR-0114) |
+| 3 | Telegram scope in v4: private chat with the owner only, no groups or channels? | **Private chat only** | Matches the owner-DM model. Group admission needs member and admin rules that the Personal edition does not have | **Private chat only** (ADR-0114 D2) |
+| 4 | Should the Telegram owner be the **same** owner `Actor` as on Discord (shared memory, reminders, to-dos, learning items)? | **Same Actor**, mapped explicitly in configuration | One person. Actor-scoped recall (ADR-0073 amendment) then works across platforms, and the Team edition seam (ADR-0009) stays intact | **Same Actor**, mapped in configuration (ADR-0114 D3) |
+| 5 | Telegram transport: long polling (`getUpdates`) rather than a webhook? | **Long polling** | Polling needs no inbound listener or public endpoint, consistent with ADR-0113 D11 (no remote access) and the loopback-only design | **Long polling**, no inbound port (ADR-0114 D4) |
+| 6 | Notification routing with two platforms: reminders on the platform where they were created; `OPS_NOTICE` and `OPS_DECISION_RESULT` on a primary platform. Which platform is primary? | **Discord is primary**; reminders go where created; `BRIEF` stays DM-only on the platform where it was created | Keeps the existing, live-verified operations path unchanged, and lets Telegram add without moving it | **Discord primary**; reminders return to the origin platform; `BRIEF` DM-only (ADR-0114 D11) |
+| 7 | Telegram approvals: the existing text phrases only in v4, with inline buttons later? | **Text phrases only** | One approval grammar on both platforms. Buttons add a second decision surface that needs its own review | **Text phrases only** (ADR-0114 D10) |
+| 8 | Amend the constitution (ARCHITECTURE.md §5.5 "CLI-only; no AI HTTP API", plus the AGENTS.md and ROADMAP lines) so that HTTP API providers may serve the **chat tier and image understanding only**? | **Yes, narrowly**: chat tier and images only, each provider off unless selected; code, review, planning, tests and policy-sensitive chat stay on the Claude CLI | Needed for the "beyond the CLIs" goal. An HTTP call with no tool definitions is better contained than an agent CLI (Codex residual R7) and avoids the ~8k-token Codex agent prompt per turn. Narrow scoping keeps the code chain on the tested path | **Yes, narrowly** (ADR-0115 D1; ARCHITECTURE.md §5.5 and AGENTS.md amended) |
+| 9 | Gemini transport: the Gemini API (if 8 is yes) or the Gemini CLI? | **API if decision 8 is yes; otherwise the CLI**, after a containment spike | One pattern for both new vendors. The CLI route needs a Codex-style containment proof that may not reach the same bar | **Gemini API** (ADR-0115 D4) |
+| 10 | Order of new vendors and cost guard: OpenAI API first, then Gemini; record token usage and send a DM notice at a monthly threshold? | **OpenAI API first; usage ledger with a threshold notice, no automatic switch** | The owner already uses OpenAI through Codex and can compare directly. Per-token billing is new, so it needs visibility, but an automatic switch would override the owner's selection | **OpenAI API first, then Gemini; usage ledger with a monthly DM notice, no automatic switch** (ADR-0115 D4/D8) |
+| 11 | Allow owner-curated learning examples to reach a **cloud** chat provider when the owner has explicitly selected it (new flag, default off)? | **Yes, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`**; explicit selection only, never on the fallback | Today the examples are `LOCAL_ONLY`, so the curated loop does nothing on the owner's Claude chat, while memory and transcripts already go to the cloud by the 2026-10-07 decision | **Yes**, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false` (ADR-0116) |
+| 12 | Close LRN-4 (local fine-tuning) for v4? | **Close**; re-open only if chat moves back to a local model | It would train a model that no longer answers the owner's chat | **Closed** (ADR-0107 note) |
+| 13 | Close LLM-3 (MLX provider) for v4? | **Close**; ADR-0105 D2-D4 stay ratified but dormant | Ollama now serves only embeddings, and an MLX speed-up has no user-visible effect on the cloud chat path | **Closed** (ADR-0105 note) |
+| 14 | Stop new local-chat quality work (granite invented facts, runaway generation, appended translations) and keep Ollama for embeddings and as an optional choice? | **Yes** | The owner's chat runs on Claude. Effort goes to features. Ollama stays useful for recall and offline fallback | **Yes** (recommended default) |
+| 15 | SUB-3 continuation activation (ADR-0103, Ratified, P2): park it? | **Park (P3)** until there is a concrete background-job need and a decision on the routed seam's provider set | The receiver runs on the Stage 2B seam, which binds only llama3.1/granite. Adding a cloud candidate widens the Stage 2B scope that ARCHITECTURE.md §5.9 limits to the Ollama candidates, which needs its own ADR. The morning brief and reminders cover "report back later" | **Parked (P3)** (ADR-0103 note) |
+| 16 | Stage 2A provider-path re-validation (Strict): run it now or park it with SUB-3? | **Park with SUB-3** | It guards only the disabled routed seam. Running it now costs a Strict session for no user-visible effect | **Parked with SUB-3**: "응 일단 이건 보류하자" (ADR-0103 note) |
+| 17 | CODE-9 merge enablement: run the sandbox merge UAT (Scenarios B/C) after CODE-8 merges, keeping the release default `QUOKY_GIT_MERGE_ENABLED=false`? Do you want merge from chat on your own service? | **Run the sandbox UAT once; keep the default `false`; enable on the service only if you want merge from chat** | The merge path has never run live. One sandbox run turns "untested" into "known" without changing the default | **Sandbox UAT once after CODE-8 merges; default stays `false`** (recommended default) |
+| 18 | Network-failure (`UNCERTAIN`) live test: run it once in a scratch runtime against the Slack test channel, or accept the offline coverage? | **Run once if a deterministic fault method is agreed before the session; otherwise accept the offline coverage as a recorded residual** | It is the last unverified branch of the write state machine. It must never run on the owner's service | **Run it**: "네트워크 장애 테스트도 진행해", in a scratch Docker (OrbStack) runtime on a DB copy, never on the service. Another agent runs UNC-1 |
+| 19 | Google read connectors: add Gmail (`gmail.readonly`) and then Drive (`drive.readonly`) on the existing Internal OAuth client? May mail and document text go to the selected chat-tier provider when you ask for a summary? | **Yes, Gmail first, Drive second. Listings deterministic and DM-only; text to the chat-tier provider only on an explicit summary request**; no send, draft or delete | Mail and documents are the most frequent personal-data questions after the calendar. The Google project and consent flow already exist. Summaries on request match the 2026-10-07 cloud decision without making every listing an egress | **Yes: Gmail first, Drive second**, as recommended (ADR-0118) |
+| 20 | Do you use Notion for work? | **Not planned unless yes** | No QA record or configuration shows Notion use. A connector nobody uses adds credentials and attack surface | **Undecided**: "Notion 은 사용할 수도 있고 사용하지 않을 수 도 있어". Notion stays an unscheduled P3 candidate, revisited on request |
+| 21 | Morning brief: add today's calendar to the existing `BRIEF` reminder; also add Jira items assigned to you that are due or updated today? | **Calendar yes; Jira optional (on, if you use Jira daily)**; deterministic, no model, DM-only | The brief exists but omits the calendar, the most-asked personal data. A model-written brief adds latency and egress for little gain | **Calendar yes; Jira opt-in, off by default** (ADR-0117 D1/D2) |
+| 22 | Pre-meeting reminders (`회의 10분 전에 알려줘`): opt-in per command only, or automatic for every event? | **Opt-in per command** | Automatic reminders for every event would be noisy, and they are a scheduler, which ADR-0101 D1 rules out | **Opt-in per command** (ADR-0117 D5) |
+| 23 | Keep the operations UI local-only (no remote or mobile access) in v4? | **Yes** (ADR-0113 D11 unchanged) | Remote access needs multi-actor authentication (Team/Hosted). Discord mobile and Telegram already cover mobile use | **Yes**, local-only (ADR-0113 note) |
+| 24 | Leave the model-proposed PR title/body (ADR-0108 D4) unwired? | **Yes, park** | The deterministic title and body passed live, and the model path adds egress and a guard surface | **Yes, parked** (ADR-0108 note) |
+| 25 | Accepted residuals R1-R8 (section 2): keep them as documented? | **Keep all** | None of their triggers is hit by v4: Telegram runs in the same process, so R1's second-writer trigger does not apply | **Keep all** (recommended default) |
+
+**Further owner answers (2026-10-08):**
+
+- **Design question D4** (an owner caption is treated as a trusted request; v3 QA record session 3 B3): kept ("응 유지 해").
+  Recorded as an owner-confirmed design decision in the ADR-0111 note of 2026-10-08.
+- **CODE-8 GitHub App narrowing** (ADR-0109 D4): approved. The orchestrator switches the installation to "Only select
+  repositories" through the browser; the repository list is the repositories currently used for testing.
+- **C-2** (CODE-8 review): the additive optional `approvedRepository` parameter on the `GitProvider` port is ratified as
+  the ADR-0109 amendment of 2026-10-08.

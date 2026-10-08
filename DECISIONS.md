@@ -17560,3 +17560,471 @@ Implements D1–D5 as ratified; no ADR text is changed. No migration, no new por
      interleave was wrong. The final check and the spawn are separate steps; a same-user process editing `.git/config`
      (or an included file) between them is out of scope under the owner-only threat model, as for the operations-UI
      token file and the backup decisions (a same-user process already has the owner's authority).
+
+## ADR-0114 — Telegram platform adapter: private chat with the owner only, the same owner Actor as on Discord, long polling with no inbound port, text-phrase approvals, origin-platform reminders, Discord as the operations-notice primary, a DM-only brief. Amends ADR-0091, ADR-0101 D8, ADR-0102 D5, ADR-0111 D1/D2 and ADR-0113 (`OPS_*` targets, one status panel); relates ADR-0009 and ADR-0016.
+
+- **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
+- **Date:** 2026-10-08
+- **Amends:** ADR-0091 (owner admission becomes per platform), ADR-0101 D8 (the owner-only delivery target is chosen
+  per platform), ADR-0102 D5 (a second startup identity check), ADR-0111 D1/D2 (intake on a second platform, same
+  bounds) and ADR-0113 (where `OPS_NOTICE` / `OPS_DECISION_RESULT` go; one Telegram status panel). **Relates:** ADR-0009
+  (Actor / Principal seam), ADR-0016 (delivery policy), ADR-0098 D3 (feedback), the cross-session execution guidance of
+  PR #135. Plan tracks PLT-0, TG-1, TG-2, TG-3 (`docs/plans/personal-v4-plan.md`); owner decisions 2-7.
+
+### Context
+
+The owner decided on 2026-10-06 that Telegram is a post-v3 extension; ARCHITECTURE.md §13 already lists it as a
+`PlatformAdapter` evolution. ADR-0091 admission, the ADR-0101 delivery target and the ADR-0102 identity check are
+Discord-shaped, and Core still escapes Discord markup in four renderers (`external-work-readout.ts`
+`escapeDiscordText` and its use in `work-chat-renderer.ts`, `calendar-reply-renderer.ts`, `connector-write-copy.ts`).
+A bot is reachable by anyone who finds its handle, so it is a second untrusted inbound surface.
+
+### Decision
+
+1. **PLT-0 prerequisite: platform-neutral rendering.** Before any Telegram code merges, Core emits neutral text. Spans
+   that carry untrusted text (connector readouts, calendar titles, connector-write payloads) are marked with a
+   domain-level type on `OutboundMessage`, following the `format: 'model-reply'` precedent (ADR-0111 amendment of
+   2026-10-08). Each platform adapter applies its own escaping. Discord output stays byte-identical, proven by golden
+   before/after fixtures over every existing renderer test. This restores ARCHITECTURE.md §2 principle 2 for rendering;
+   an implementation note in this file records the span type when PLT-0 merges.
+2. **Private chat with the owner only.** `QUOKY_TELEGRAM_OWNER_IDS` lists exact numeric Telegram user ids (`from.id`).
+   Only `chat.type = 'private'` updates from a listed id are admitted. Groups, supergroups, channels, inline queries,
+   other users and every other update type are dropped with no reply, no download and no content in the log (a
+   value-free counter only). Unset or empty owner ids with Telegram enabled is a startup error.
+3. **The same owner identity as Discord, mapped in configuration.** `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` maps each Telegram
+   owner id to one configured Discord owner id (`<telegram id>=<discord owner id>`). The Telegram identity resolves to
+   that existing owner `Actor` through the ADR-0009 seam; no new Actor is created. An unmapped Telegram owner id, or a
+   mapping to an id that is not in `QUOKY_DISCORD_OWNER_IDS`, is a startup error. Actor-scoped recall, reminders,
+   to-dos, learning items and memory commands therefore follow the owner across platforms. Sessions stay per platform
+   conversation; `platform` stays opaque data that Core never branches on.
+4. **Long polling, no inbound port.** A new `packages/adapter-telegram` (depends on `@quoky/core` only) calls the Bot API
+   over HTTPS with `node:fetch` and `getUpdates` long polling. No webhook and no listener of any kind: the process
+   opens no inbound port for Telegram (consistent with ADR-0113 D11 and the loopback-only design). The update offset is
+   advanced only after a turn is handed to the runtime, so a restart resumes without a duplicate turn. Two pollers on
+   one token (HTTP 409) are prevented by the ADR-0102 single-instance lock; a 409 is a typed startup error.
+5. **Startup identity check (amends ADR-0102 D5).** `getMe` must return `QUOKY_TELEGRAM_EXPECTED_BOT_ID`; a mismatch
+   fails closed before polling starts. The bot token lives in `.env.local` (mode 600), is never logged, never put in
+   argv, and never appears in an error or audit field.
+6. **Composition.** The composition root builds one composite `PlatformAdapter` over the Discord and Telegram adapters:
+   inbound turns from both reach the runtime through the unchanged contract, and outbound messages are routed by the
+   conversation's platform. Core keeps its single `PLATFORM_ADAPTER` token; no `ConversationRuntimeDeps` key is added
+   (baseline 35). A port change, if TG-1 needs one, is additive and recorded here before it merges.
+7. **Delivery (relates ADR-0016).** An adapter-owned chunker for Telegram's 4096-character limit with the same lossless
+   preview chunking that `adapter-discord/src/delivery.ts` gives Discord. Plain text by default. Code and diff previews
+   use a fixed HTML subset (`<pre>` / `<code>` only, every other character HTML-escaped by the adapter). The typing
+   indicator is `sendChatAction`.
+8. **Attachments (amends ADR-0111 D1/D2 for the second platform).** The ADR-0111 bounds and the #143 canonical image
+   intake apply unchanged: at most 3 attachments, text ≤256 KiB, png/jpeg/webp ≤8 MiB. Files are fetched with
+   `getFile` only after admission, with sizes checked from metadata before download.
+9. **Feedback.** 👍/👎 arrive through `message_reaction` updates if the Bot API delivers them in private bot chats (a TG-2
+   spike verifies this). `onFeedback` is optional in the port, so a missing surface degrades cleanly.
+10. **Approvals: text phrases only.** The existing approval grammar (`승인`, `거절`, `… 실행`) on both platforms. No inline
+    keyboard buttons in v4; they would be a second decision surface needing their own review. An approval is bound to
+    the conversation that created it; the #135 cross-session guidance applies across platforms, so an approval created
+    on one platform cannot be executed from a conversation on the other.
+11. **Notification routing (amends ADR-0101 D8 and ADR-0113).** `NotificationSink` routes by `target.platform`: a
+    reminder is delivered on the platform where it was created. `OPS_NOTICE` and `OPS_DECISION_RESULT` go to Discord,
+    the primary platform, so the live-verified operations path is unchanged. `BRIEF` stays DM-only, in the owner's DM on
+    the platform where it was created.
+12. **Operations UI.** One Telegram status panel: enabled, identity verified, last successful poll time and the number
+    of admitted private chats. No content, ids or token are shown (ADR-0113 D5).
+13. **Configuration.** `QUOKY_TELEGRAM_ENABLED` (default `false`), `QUOKY_TELEGRAM_BOT_TOKEN`,
+    `QUOKY_TELEGRAM_EXPECTED_BOT_ID`, `QUOKY_TELEGRAM_OWNER_IDS`, `QUOKY_TELEGRAM_OWNER_ACTOR_MAP`, parsed and validated
+    in `config.ts` with typed startup errors. With the flag off nothing Telegram-related is constructed.
+
+### Consequences
+
+- **+** The owner reaches Quoky from a second messenger as the same person, with the same gates.
+- **+** PLT-0 removes Discord markup from Core.
+- **−** A second untrusted inbound surface and a second bot token to protect.
+- **−** Telegram's servers see the conversation content, as Discord's do; accepted on the same basis as Discord.
+- R1 (storage CAS) is not triggered: Telegram runs in the same process as Discord.
+
+### Acceptance criteria
+
+- Discord output is byte-identical after PLT-0, and no Core module names a platform's markup.
+- A non-owner, group or channel message on Telegram is dropped with no reply, download or content log.
+- The owner's Telegram turn recalls a memory saved on Discord (same Actor).
+- A reminder created on Telegram is delivered on Telegram; `OPS_*` notices still arrive on Discord.
+- An approval granted in one conversation cannot be executed from another, across platforms.
+- Attachment bounds and the credential guard behave as on Discord on one shared fixture set.
+- An identity mismatch at startup fails closed; a restart resumes polling with no duplicate turn.
+
+### Strict gates
+
+Bot creation through BotFather by the owner; the `.env.local` edit; the first live session on one bot and one private
+chat. Independent Chief Architect review before PLT-0 and TG-1 merge.
+
+## ADR-0115 — HTTP API providers for the chat and image tiers only: opt-in OpenAI API then Gemini API adapters, no tool definitions, code, review and policy capabilities stay on the Claude CLI, and a usage ledger with a monthly DM notice. Amends the constitution (ARCHITECTURE.md §5.5) and AGENTS.md; amends ADR-0014, the ADR-0092 amendments and the ADR-0111 amendments.
+
+- **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below).
+  The amended constitution text below was applied to `ARCHITECTURE.md` §5.5 and `AGENTS.md` in the same commit.
+- **Date:** 2026-10-08
+- **Amends:** ARCHITECTURE.md §5.5 ("v1 is CLI-only; no AI HTTP API"), the AGENTS.md line "v1에 AI HTTP API를 추가하지
+  않는다" and the `ROADMAP.md` non-goal; ADR-0014 (CLI-only provider execution); the ADR-0092 amendments of 2026-10-07
+  (chat selector values, registration) and the ADR-0111 amendments (image selector values, the `REMOTE` image locality
+  rule). **Relates:** ADR-0010 (usage on `TaskRun`), ADR-0101/ADR-0102 D7 (owner notices), ADR-0107 D6 (execution
+  locality). Plan tracks PRV-1, PRV-2, PRV-3; owner decisions 8, 9, 10.
+
+### Context
+
+The owner wants more providers than the CLIs (Claude, Codex, Ollama), switchable OpenClaw-style. The selector, the
+operations-UI default, the session `/model` command and the `ProviderSelectionPolicy` port already take new providers
+as opaque data. The constitution forbids AI HTTP APIs. An HTTP call with no tool definitions is better contained than an
+agent CLI (Codex residual R7) and avoids the ~8k-token Codex agent prompt per turn. Per-token billing is new.
+
+### Decision
+
+1. **Constitution amendment (ARCHITECTURE.md §5.5).** Replaced text:
+
+   > 5. Providers are **CLI-based**, with one exception: a narrowly scoped **HTTP API adapter** may serve the chat tier
+   >    (`GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`) and `IMAGE_UNDERSTANDING` only
+   >    (ADR-0115). Each such provider is off unless the owner selects it and sends no tool definitions. Code, review,
+   >    planning, test, embedding and policy-sensitive capabilities stay on the Claude CLI. New engines are new
+   >    adapters, not Core changes.
+
+   AGENTS.md "Provider, Prompt, Context" replaces "v1에 AI HTTP API를 추가하지 않는다." with the matching sentence (see the
+   ratification record). `ROADMAP.md` "Non-goals (v1)" is aligned.
+2. **Capability scope.** An HTTP provider may advertise only `GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`,
+   `READONLY_LOOKUP`, and — as a separate provider instance, as for Claude and Codex vision — `IMAGE_UNDERSTANDING`. It
+   never advertises `CODE_IMPLEMENTATION`, `CODE_REVIEW`, `TEST_EXECUTION`, `PROJECT_ANALYSIS`,
+   `ARCHITECTURE_PLANNING`, `POLICY_SENSITIVE_CHAT` or `EMBEDDING`, and the adapter refuses any other capability, any
+   workspace, and (for the chat instance) any image before sending a request.
+3. **Off unless selected.** A provider is registered only when its key and model are configured, and it is eligible only
+   while it is the effective chat or image choice (session override → operations-UI default → selector → derived
+   default, as today). `QUOKY_CHAT_PROVIDER` and `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` gain `openai` and `gemini`.
+   Selection labels are `openai:<model>` and `gemini:<model>`, with a bounded model allow-list per provider. With nothing
+   selected, routing is byte-identical to today. The selection-time Claude fallback is unchanged; there is no
+   execution-time fallback.
+4. **Order of vendors.** OpenAI API first (`packages/ai-openai-api`, PRV-1), then Gemini through its API
+   (`packages/ai-gemini-api`, PRV-2). The Gemini CLI route (decision 9's alternative) is not taken. One provider concern
+   per package; `node:fetch` only, no vendor SDK.
+5. **Containment.** No tool or function definitions, no web search or grounding, no file-upload or retrieval API, no
+   server-side conversation state (OpenAI `store: false`); the request carries the rendered prompt and, for the image
+   instance, only the #143 canonical image bytes inline. Endpoints are pinned per adapter (`api.openai.com`,
+   `generativelanguage.googleapis.com`), HTTPS only, redirects refused, no configurable base URL in v4. Both declare
+   `executionLocality: 'REMOTE'` (ADR-0107 D6). The image locality policy opens `REMOTE` for these options exactly as
+   for `claude` / `codex`: only while the option is the effective image choice; the dispatch-time re-check, the
+   synchronous `isEligible` check and the write fence of the ADR-0111 runtime-switching amendment apply unchanged.
+6. **Keys.** `QUOKY_OPENAI_API_KEY` and `QUOKY_GEMINI_API_KEY` in `.env.local` (mode 600). A key is sent only to its
+   pinned host and never appears in argv, logs, audit, errors or the operations UI. A malformed key or model is a typed
+   startup error.
+7. **Readiness and failures.** Readiness is one bounded models-list (or model-get) call with no generation. Failures map
+   to fixed reasons with bounded codes (timeout, unavailable, rate limit, auth, empty output), as in the ADR-0092
+   amendment D5; a failure message never carries a response body.
+8. **Usage ledger (PRV-3) and the monthly DM notice.** Per-call token counts reported by the HTTP adapters (and by the
+   CLIs where their output exposes them) are recorded for audit on the `TaskRun` usage seam (ADR-0010,
+   ARCHITECTURE.md §4 `Usage` `[RESERVE]`). The operations UI shows monthly totals per selection label. Once per calendar
+   month (`QUOKY_TIMEZONE`) the owner gets one DM with the previous month's totals per label, and one DM when an
+   optional monthly threshold (`QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD`, unset = none) is first crossed. Both go
+   through the existing owner-only `NotificationSink` to the primary platform's DM (ADR-0114 D11) and carry totals
+   only. **The ledger never switches, disables or re-ranks a provider automatically.** If storing usage needs a column,
+   migration v16 is decided in an amendment before PRV-3 merges (plan migration lane).
+
+### Consequences
+
+- **+** The owner can choose OpenAI and Gemini models for chat and images next to Claude, Codex and Ollama.
+- **+** A stronger containment option than the Codex CLI for OpenAI (no tool surface at all).
+- **−** Per-token billing, made visible by the ledger and the monthly notice.
+- **−** Content egress to two more vendors, but only on explicit selection; `LOCAL_ONLY` data stays local unless
+  ADR-0116 applies.
+
+### Acceptance criteria
+
+- Selecting a new provider changes only the chat tier (and images, if selected). The code, review and policy-sensitive
+  capabilities keep their eligible sets byte-identical (the ADR-0092 amendment D4 test extended to every new provider).
+- No tool definitions are sent; the key never appears in logs, audit or errors.
+- A not-ready provider falls back to Claude at selection time.
+- No image bytes go to a provider that is not the effective image choice.
+- The routing corpus is unchanged with nothing selected; the ledger never changes a selection.
+
+### Strict gates
+
+Each new vendor and its API key (one per vendor); the `.env.local` edit; the first live call per vendor; a migration on
+the service DB if v16 is needed. Independent Chief Architect review before PRV-1 and PRV-3 merge.
+
+## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
+
+- **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
+- **Date:** 2026-10-08
+- **Amends:** ADR-0107 D5 (curated examples are `LOCAL_ONLY`) and D6 (examples composed only for a `LOCAL` provider), and
+  ARCHITECTURE.md §5.14 for the owner-selected `REMOTE` case. **Relates:** the ADR-0092 amendment D4 (memory and
+  transcripts already go to the selected cloud provider), ADR-0106 (forget cascade), ADR-0097 (credential guard), ADR-0115.
+  Plan track LRN-5; owner decision 11.
+
+### Context
+
+The owner's chat runs on Claude (2026-10-07). Curated examples are `LOCAL_ONLY`, so the owner-curated loop does nothing
+on the owner's setup, while recalled memory, transcripts and attachments already go to the selected cloud provider.
+
+### Decision
+
+1. **New flag.** `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`, default `false`; it has an effect only when
+   `QUOKY_LEARNING_EXAMPLES_ENABLED=true`. With it off, prompts are byte-identical to today.
+2. **Egress rule.** With the flag on, curated examples may be composed into a `GENERAL_CHAT` request whose resolved
+   provider declares `REMOTE` **only when that provider is the owner's explicit selection** for the chat tier on that
+   turn: a session override, the operations-UI default, or an explicitly set `QUOKY_CHAT_PROVIDER`. The derived default
+   (an unset selector, including `QUOKY_OLLAMA_ENABLED=false` read as `claude`) and the selection-time Claude fallback
+   are not owner selections, so **examples are never sent when Claude is reached only as the fallback**. `LOCAL`
+   providers keep the ADR-0107 behaviour.
+3. **Data-driven.** Core decides from the provider's declared locality and a selection-source value supplied with the
+   resolved selection (`ProviderSelectionPolicy` data), never from a provider id. A missing source counts as "not an
+   owner selection" (fail closed). The decision is taken after the provider is resolved; there is no re-execution on
+   another provider (ADR-0092).
+4. **Unchanged bounds.** At most 2 examples per request; per-item consent, the 365-day retention, the credential guard at
+   capture and at use, and the ADR-0106 forget cascade are unchanged. The Stage 2B routed seam still gets no examples.
+5. **ARCHITECTURE.md §5.14 follow-up.** Before LRN-5 merges, §5.14 gains, after "…declares `LOCAL`;", the sentence:
+   "with `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` it is also composed for a `REMOTE` chat-tier provider that is the
+   owner's explicit selection, never for a derived default or a selection-time fallback (ADR-0116);". Until then the
+   flag must not be wired (as ADR-0107 did for §5).
+
+### Consequences
+
+- **+** The curated loop takes effect on the provider that actually answers the owner.
+- **−** Owner-approved example text leaves the host for the selected vendor when the flag is on.
+- **−** On the owner's service, where the selection is derived from `QUOKY_OLLAMA_ENABLED=false`, the owner must set
+  `QUOKY_CHAT_PROVIDER=claude` explicitly (or choose Claude in the operations UI) for examples to reach Claude.
+
+### Acceptance criteria
+
+With the flag off, prompts are byte-identical; with the flag on and Claude selected explicitly, at most 2 examples are
+injected; with Claude reached only as the fallback or as the derived default, none are injected; a forgotten example is
+never injected; no provider id appears in the policy source.
+
+### Strict gates
+
+The `.env.local` flag change on the owner host; the live round trip (👍 → `예시로 저장`, then the same question in a new
+session). Independent Chief Architect review before LRN-5 merges.
+
+## ADR-0117 — Morning brief with today's calendar and opt-in pre-meeting reminders: deterministic, no model, DM-only; a Jira section only when opted in. Amends ADR-0101 D7 (a connector-backed brief) and ADR-0101/ADR-0110 (event-relative reminders).
+
+- **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
+- **Date:** 2026-10-08
+- **Amends:** ADR-0101 D7 ("an LLM- or connector-backed brief needs a new ADR": this is the connector-backed brief, still
+  with no model), ADR-0101 D5/D6 (a reminder may be relative to a calendar event) and ADR-0110 (the brief and the reminder
+  dispatcher become `CalendarReader` consumers). **Relates:** ADR-0100 (the Jira named query), ADR-0101 D1 (not a general
+  scheduler), ADR-0114 D11 (origin-platform delivery). Plan tracks BRF-1, BRF-2; owner decisions 21, 22.
+
+### Context
+
+The `BRIEF` reminder kind lists today's pending reminders and ACTIVE to-dos, DM-only, but omits the calendar, the most
+asked personal data. There is no way to be reminded before a meeting.
+
+### Decision
+
+1. **Calendar section (BRF-1).** When a calendar is configured, the brief gains a "오늘 일정" section read through the
+   existing `CalendarReader` port: today in `QUOKY_TIMEZONE`, all-day events first, then timed events by start, at most
+   10, titles and times only, titles credential-guarded. A read failure shows the existing "could not read" note and is
+   never shown as an empty day. With no calendar configured the section is omitted.
+2. **Jira section: opt-in.** `QUOKY_BRIEF_JIRA_ENABLED`, default `false`. When on, the brief adds Jira items assigned to
+   the owner that are due or updated today, through the existing ADR-0100 named query: read-only, at most 5 items, key
+   and title only, with the same unavailable note. The owner turns it on only if Jira is used daily.
+3. **No model.** The brief is composed deterministically; no provider is called and nothing beyond the connector reads
+   leaves the host.
+4. **DM-only.** The brief is delivered only to the owner's DM, on the platform where it was created (ADR-0114 D11).
+5. **Pre-meeting reminders, opt-in per command (BRF-2).** `회의 10분 전에 알려줘` (or `<제목> 회의 30분 전에 알려줘`)
+   creates one reminder relative to one calendar event, resolved deterministically through `CalendarReader` (the next
+   event, or the named one; an ambiguous match asks the owner to pick, as the calendar handler does). The offset is
+   bounded (1-120 minutes). The event id is stored as the reminder's bounded reference; no migration is expected (if a
+   column is needed, v16 follows the plan's migration lane). Nothing is created automatically for every event: that would
+   be a scheduler, which ADR-0101 D1 rules out.
+6. **Fire-time re-check.** At due time the dispatcher re-reads the event: a moved event moves the reminder (once per
+   move), a deleted or cancelled event cancels it with a note, and an unreadable calendar delivers the reminder with a
+   "could not re-check the event" note. Delivery follows the origin platform (ADR-0114 D11).
+
+### Consequences
+
+- **+** One morning DM covers the owner's day; meetings can be reminded on request.
+- **−** The 08:00 brief depends on the calendar (and optionally Jira) being readable; the note covers failures.
+
+### Acceptance criteria
+
+A fixture day with events, an all-day event and an unreadable calendar renders correctly in `QUOKY_TIMEZONE`; the Jira
+section appears only with the flag on; event-relative reminders follow a moved event and cancel on a deleted one; no
+provider call is made by the brief or the reminder.
+
+### Strict gates
+
+The live brief on the owner's service; one pre-meeting reminder on a test event; a migration on the service DB if one is
+needed.
+
+## ADR-0118 — Google read connectors, Gmail then Drive: `gmail.readonly` and `drive.readonly` on the existing Internal OAuth client, fixed-format DM-only listings, no send, draft or delete, and text to the chat-tier provider only on an explicit summary request. Amends ADR-0100 and ADR-0096 D5; relates ADR-0110 and ADR-0111.
+
+- **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
+- **Date:** 2026-10-08
+- **Amends:** ADR-0100 (two personal read sources outside the `ConnectorProvider` lookup path) and ADR-0096 D5 (two
+  pre-classify handlers; their orders are fixed in the ADR-0096 precedence when each merges). **Relates:** ADR-0110 (the
+  narrow read-port and token-file pattern), ADR-0111 D3 (untrusted bounded text), ADR-0097 (credential guard). Plan
+  tracks GML-1, DRV-1; owner decisions 19, 20.
+
+### Context
+
+Mail and documents are the most frequent personal-data questions after the calendar. The Google Cloud project
+`quoky-personal-510806` already has an Internal consent screen and a Desktop client. Mail is the most hostile inbound text
+Quoky would read.
+
+### Decision
+
+1. **Order.** Gmail first (GML-1), Drive second (DRV-1), reusing the existing OAuth client and consent helper.
+2. **Narrow read ports.** `MailReader` (search with a bounded query, get one message with bounded fields) and
+   `DriveReader` (search by name, recent files, bounded text export of Google Docs / Sheets) in `packages/core/src/ports`,
+   following the `CalendarReader` precedent. Adapters `packages/connector-gmail` and `packages/connector-gdrive`. No write
+   port exists.
+3. **Readonly scopes only.** `gmail.readonly` and `drive.readonly`; no other scope is ever requested. One token file per
+   grant set, mode 600, as for the calendar.
+4. **Fixed-format listings.** Deterministic pre-classify handlers answer `안 읽은 메일`, `오늘 온 메일`,
+   `<보낸 사람> 메일 찾아줘`, Drive name searches and `최근 파일` with a fixed format: mail as sender display name, subject,
+   date and a short credential-guarded snippet; Drive as name, type and modified time. At most 10 entries. No model is
+   called for a listing.
+5. **DM-only.** Listings and readouts are answered only in the owner's DM. In a channel the reply says these answers are
+   DM-only, and nothing is read.
+6. **No send, draft or delete.** No send, reply, draft, label, archive, delete, share or permission change, on either
+   service.
+7. **Summary egress only on request.** Body or document text goes to the effective chat-tier provider only when the owner
+   explicitly asks for a summary of a specific item (`이 메일 요약해줘`, `이 문서 요약해줘`). It is framed as untrusted
+   bounded readout under the ADR-0111 D3 rules (≤256 KiB, a credential-shaped text is withheld, never redacted), the turn
+   has no tool surface, and a mail or Drive turn can never create an approval or a write. Without a summary request no
+   mail or document text leaves the host.
+8. **Injection.** Handler decisions are taken from the owner's text only; mail or document content never changes routing
+   or starts an action.
+9. **Notion is not covered.** Owner decision 20 is undecided; Notion stays an unscheduled P3 candidate, revisited on
+   request.
+
+### Consequences
+
+- **+** The owner can ask about their own mail and Drive files under the same guards as the other connectors.
+- **−** Restricted Google scopes; the Internal consent avoids app verification, and the owner confirms the Workspace admin
+  allows them.
+- **−** A summary sends one item's text to the selected chat-tier provider.
+
+### Acceptance criteria
+
+Fixture adapters answer the listed phrasings deterministically; a mail with an injection payload produces no action and
+no altered routing; channel listings are refused with the DM-only reply; no body text leaves the host without an explicit
+summary request; no write call exists in either adapter.
+
+### Strict gates
+
+The owner's consent with each new scope; the first live read probe per service; the live session (about 15 phrasings,
+including an empty inbox, a long thread, a non-Korean mail and an injection test mail the owner sends to themselves).
+Independent Chief Architect review before GML-1 merges.
+
+## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
+
+- **Status:** Ratified by the Product Owner on 2026-10-08 (C-2, recommended default). Amends ADR-0109's "no port, token
+  or deps change" sentence for the port only, and records the owner's answer to ADR-0109 D4.
+- **Context:** ADR-0109 validates a project's repository against the allowlist when the push target is resolved. The
+  CODE-8 review (branch `claude/v3-code8-multi-repo`, commits `eec7c33` and `72a0ed2`) found that git then pushed to
+  whatever the workspace `origin` resolved to at execution time: a remote rewritten between the approval and the push
+  could send the approved commit to another repository. The approved repository has to be bound to execution.
+- **Decision:**
+  1. **Port change, additive and optional.** `GitProvider.pushApprovedCommit`, `getRemoteRefCommit` and
+     `syncMainFastForward` gain a trailing optional `approvedRepository?: RepositoryIdentity` (the existing domain type).
+     Core passes the identity the approval bound, never a URL.
+  2. **Semantics.** A provider that resolves remotes to repositories must operate on exactly that repository and refuse
+     (Blocked, `TARGET_CHANGED`) when the workspace now resolves elsewhere. A provider without that notion ignores the
+     parameter.
+  3. **Unchanged.** Existing callers and fakes compile unchanged; no token, migration or `ConversationRuntimeDeps`
+     change (baseline 35). Per-operation token down-scoping (D3) and the guards (D5) are unchanged.
+  4. **App installation (D4).** The owner approved switching the GitHub App installation from "All repositories" to
+     "Only select repositories". The orchestrator makes the change through the browser; the repository list is the
+     repositories currently used for testing. This answers the D4 owner decision and the ratification record item 12 of
+     2026-10-06.
+- **Consequences:** + an approved push cannot be redirected by a remote rewritten after approval. − One more optional
+  argument on three port methods.
+- **Acceptance criteria:** a workspace whose remote resolves to a different repository after approval is refused with
+  `TARGET_CHANGED` before any network call; the single-repository configuration behaves byte-identically.
+- **Strict gates:** the App installation change (approved by the owner on 2026-10-08 for the test repositories).
+
+## ADR-0114..0118 ratification record — Quoky Personal v4 (2026-10-08)
+
+- **Ratified by:** the Product Owner, in chat on 2026-10-08 ("v4 권장안대로 진행하고"), after GOV-5 drafted ADR-0114..0118
+  from `docs/plans/personal-v4-plan.md`.
+- **Owner decisions** (plan §7; every question takes its recommended default unless stated otherwise):
+  1. Standing approval renewed for v4 waves on the v3 terms: Push → PR → Merge after offline validation, independent
+     review and Codex review pass; Live UAT of each new external target still confirmed per target.
+  2. Telegram is the headline track, starting with PLT-0 in wave 1 (ADR-0114).
+  3. Telegram: private chat with the owner only (ADR-0114 D2).
+  4. The same owner `Actor` as on Discord, mapped in configuration (ADR-0114 D3).
+  5. Long polling, no inbound port (ADR-0114 D4).
+  6. Discord is the operations-notice primary; reminders return to the origin platform; the brief is DM-only
+     (ADR-0114 D11).
+  7. Text-phrase approvals only (ADR-0114 D10).
+  8. Constitution amended: HTTP API providers for the chat and image tiers only (ADR-0115 D1).
+  9. Gemini through its API (ADR-0115 D4).
+  10. OpenAI API first, then Gemini; a usage ledger with a monthly DM notice and no automatic switch (ADR-0115 D4/D8).
+  11. Learning examples may reach an explicitly selected cloud chat provider behind
+      `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false` (ADR-0116).
+  12. LRN-4 closed for v4 (ADR-0107 note below).
+  13. LLM-3 closed for v4 (ADR-0105 note below).
+  14. No new local-chat quality work; Ollama stays for embeddings and as an optional choice.
+  15. SUB-3 parked (ADR-0103 note below).
+  16. Stage 2A re-validation parked with SUB-3 ("응 일단 이건 보류하자"; ADR-0103 note below).
+  17. CODE-9: one sandbox merge UAT after CODE-8 merges; release default `QUOKY_GIT_MERGE_ENABLED=false` kept.
+  18. Network-failure (`UNCERTAIN`) live test: run it ("네트워크 장애 테스트도 진행해") in a scratch Docker (OrbStack)
+      runtime on a DB copy against the Slack test channel, never on the service. The scratch container is a test harness
+      only; it does not change ADR-0105 D5 (no Docker for the model runtime) or the ADR-0102 service substrate.
+  19. Gmail then Drive, readonly, summaries only on request (ADR-0118).
+  20. Notion: **undecided** ("Notion 은 사용할 수도 있고 사용하지 않을 수 도 있어"). Notion stays an unscheduled P3
+      candidate, revisited on the owner's request; no ADR is drafted.
+  21. Brief: calendar yes; Jira opt-in, off by default (ADR-0117 D2).
+  22. Pre-meeting reminders opt-in per command (ADR-0117 D5).
+  23. Operations UI stays local-only (ADR-0113 note below).
+  24. Model-proposed PR title/body left unwired (ADR-0108 note below).
+  25. Accepted residuals R1-R8 kept as documented.
+- **Further owner answers of 2026-10-08:**
+  - Design question D4 (an owner caption is a trusted request): kept ("응 유지 해"); ADR-0111 note below.
+  - CODE-8 GitHub App narrowing: approved; the orchestrator does it via the browser, for the repositories currently used
+    for testing (ADR-0109 amendment D4).
+  - C-2: the additive optional `approvedRepository` parameter on the `GitProvider` port is ratified as the ADR-0109
+    amendment above.
+- **Constitution edits applied with this record (ADR-0115 D1):**
+  - `ARCHITECTURE.md` §5.5: "v1 is **CLI-only**; no AI HTTP API. New engines are new adapters, not Core changes." is
+    replaced by the ADR-0115 D1 text.
+  - `AGENTS.md` "Provider, Prompt, Context": "v1에 AI HTTP API를 추가하지 않는다." is replaced by "AI HTTP API adapter는
+    chat tier와 image understanding에만 허용한다(ADR-0115). Owner가 선택할 때만 켜지고 tool definition을 보내지 않으며,
+    code/review/planning/test/embedding/policy capability는 Claude CLI에 남는다."
+- **Follow-up required by the ratified text:** ARCHITECTURE.md §5.14 gains the ADR-0116 D5 sentence before LRN-5 merges.
+
+### ADR-0103 note — SUB-3 continuation activation and Stage 2A re-validation parked (2026-10-08)
+
+ADR-0103 stays Ratified but is parked at P3 for v4 (owner decisions 15 and 16). The `general-chat-v1` receiver runs on the
+Stage 2B routed seam, whose production configuration binds only the ratified Ollama candidates (ARCHITECTURE.md §5.9);
+the owner's chat now runs on Claude. The Stage 2A provider-path re-validation (Strict) guards only that disabled seam and
+is parked with it. Continuation stays fail-closed. **Re-entry:** a concrete background-job use case the brief and
+reminder paths cannot serve, **and** a ratified decision on the routed seam's provider set; or any Stage 2B seam being
+enabled.
+
+### ADR-0105 note — LLM-3 MLX provider closed for v4 (2026-10-08)
+
+ADR-0105 D2-D4 stay Ratified but dormant (owner decision 13): Ollama now serves only embeddings and optional choices, and
+an MLX speed-up has no user-visible effect on the cloud chat path. D5 (no Docker for the model runtime on macOS) is
+unchanged. **Re-entry:** the owner moves chat back to a local model **and** a benchmark shows ≥1.5× tokens/s at an equal
+harness score.
+
+### ADR-0107 note — LRN-4 local fine-tuning closed for v4 (2026-10-08)
+
+ADR-0107 D9 (LRN-4 deferred) becomes closed for v4 (owner decision 12): it would train a local model that no longer
+answers the owner's chat. **Re-entry:** the LLM-3 condition above plus ≥300 approved examples. The v4 learning work is
+ADR-0116.
+
+### ADR-0108 note — model-proposed PR title/body left unwired (2026-10-08)
+
+ADR-0108 D4 stays ratified text but is not wired in v4 (owner decision 24): the deterministic title and body passed live
+(P15-P17), and the model path adds egress and a guard surface for little gain. `QUOKY_PR_DESCRIPTION_MODEL_ENABLED`
+stays unimplemented. **Re-entry:** the owner asks for it.
+
+### ADR-0111 note — an owner caption is a trusted request (owner-confirmed design decision, 2026-10-08)
+
+Live QA session 3 (B3, design question D4) showed that an image caption telling the model to ignore earlier instructions
+is obeyed, while the same instruction drawn inside the image is resisted (B3b PASS). The owner confirmed the behaviour as
+designed ("응 유지 해"): a caption is text the admitted owner typed (ADR-0091 admission), so it is the trusted user
+request, exactly like the message text; only attachment content (text files and what a provider reads off an image) is
+untrusted readout (ADR-0111 D3, A3). The caption keeps the strict credential guard (A4). No code change; the QA record's
+D4 row is closed as "kept by owner decision".
+
+### ADR-0113 note — the operations UI stays local-only in v4 (2026-10-08)
+
+ADR-0113 D11 is unchanged for v4 (owner decision 23): no remote, LAN, tunnel or mobile access and no separate client.
+Discord mobile and Telegram (ADR-0114) are the mobile surfaces. ADR-0114 D12 adds one content-free Telegram status
+panel inside the existing loopback-only UI. **Re-entry:** the Team/Hosted edition, or an ADR-0113 D11 amendment.
