@@ -9,6 +9,7 @@ import {
   platformNote,
   renderCalendarEvents,
   untrustedText,
+  WorkItemStatus,
 } from '@quoky/core';
 import { DISCORD_MARKUP, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
 
@@ -75,6 +76,27 @@ describe('Discord markup of the morning brief calendar section (ADR-0117 D1, BRF
     expect(line).toBe(`- 09:00–10:00 ${DISCORD_MARKUP.untrusted(title, 'markup')}`);
     expect(reply.split('\n')).toContain(line);
     expect(text).not.toContain('@everyone');
+  });
+
+  it('keeps a Jira timeout note inside the 1,800-character Discord message with every section full (review P2)', () => {
+    const at = (h: number) => `2026-10-02T0${h}:00:00.000Z`;
+    const text = renderDiscordContent(
+      composeDailyBrief({
+        now: '2026-10-01T23:00:00.000Z',
+        timeZone: 'Asia/Seoul',
+        reminders: [],
+        workItems: Array.from({ length: 10 }, (_, i) => ({
+          id: `w${i}`, actorId: 'a', title: `${'*_'.repeat(39)}${i}`, resourceRefs: [], status: WorkItemStatus.ACTIVE,
+          origin: 'conversation' as const, createdAt: at(i), updatedAt: at(i),
+        })),
+        calendar: { events: Array.from({ length: 10 }, (_, i) => ({ ...event, id: `e${i}`, title: `${'[@'.repeat(39)}${i}`, start: at(i), end: `2026-10-02T0${i}:30:00.000Z` })), limit: 50 },
+        assignedWork: null,
+      }),
+    );
+    expect(Array.from(text).length).toBeLessThanOrEqual(1800);
+    expect(text.endsWith('\n\n담당 이슈: 불러오지 못했어요.')).toBe(true);
+    expect(text).toContain('오늘 일정 10건');
+    expect(text).toContain('진행 중인 작업 10건');
   });
 
   it('without a calendar the Discord text has no calendar section', () => {

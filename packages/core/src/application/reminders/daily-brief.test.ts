@@ -346,3 +346,56 @@ describe('composeDailyBrief — assigned work section (ADR-0117 D2, opt-in)', ()
     expect(dailyBriefWorkForToday([work('', { dueDate: '2026-10-02' }), work('A-1', { dueDate: '2026-10-02' })], NOW, ZONE).map((i) => i.id)).toEqual(['A-1']);
   });
 });
+
+describe('composeDailyBrief — the message budget keeps every header and notice (BRF-1 review P2)', () => {
+  const full = {
+    now: NOW,
+    timeZone: ZONE,
+    reminders: Array.from({ length: 10 }, (_, i) => reminder({ displayNo: i + 1, body: '가'.repeat(60) })),
+    workItems: Array.from({ length: 10 }, (_, i) => item(`w${i}`, { title: '나'.repeat(80) })),
+    calendar: {
+      events: Array.from({ length: 10 }, (_, i) => event({ id: `e${i}`, title: '다'.repeat(80), start: `2026-10-02T0${i}:00:00.000Z`, end: `2026-10-02T0${i}:30:00.000Z` })),
+      limit: 50,
+    },
+  };
+  /** A markup that doubles every untrusted character: a platform whose escaping is far heavier than Discord's. */
+  const HEAVY = { ...PLAIN_TEXT_MARKUP, untrusted: (text: string) => Array.from(text).map((c) => `\\${c}`).join('') };
+  const length = (text: string): number => Array.from(text).length;
+
+  it.each([
+    ['plain', (body: Parameters<typeof plainTextOf>[0]) => plainTextOf(body)],
+    ['heavy escaping', (body: Parameters<typeof plainTextOf>[0]) => renderMessageContent(body, HEAVY)],
+  ])('a Jira timeout note survives full sections (%s rendering)', (_name, render) => {
+    const text = render(composeDailyBriefBody({ ...full, assignedWork: null }));
+    expect(length(text)).toBeLessThanOrEqual(REMINDER_LIMITS.maxDeliveredTextChars);
+    expect(text.endsWith('\n\n담당 이슈: 불러오지 못했어요.')).toBe(true);
+    for (const header of ['오늘 일정 10건', '오늘 남은 알림 10건', '진행 중인 작업 10건']) expect(text).toContain(header);
+  });
+
+  it.each([
+    ['plain', (body: Parameters<typeof plainTextOf>[0]) => plainTextOf(body)],
+    ['heavy escaping', (body: Parameters<typeof plainTextOf>[0]) => renderMessageContent(body, HEAVY)],
+  ])('an unreadable calendar note and every later header survive full sections (%s rendering)', (_name, render) => {
+    const assignedWork = Array.from({ length: 7 }, (_, i) => ({ id: `P-${i}`, title: '라'.repeat(80), dueDate: '2026-10-02' }));
+    const text = render(composeDailyBriefBody({ ...full, calendar: null, assignedWork }));
+    expect(length(text)).toBeLessThanOrEqual(REMINDER_LIMITS.maxDeliveredTextChars);
+    expect(text.split('\n')[2]).toBe('오늘 일정: 불러오지 못했어요.');
+    for (const header of ['오늘 남은 알림 10건', '진행 중인 작업 10건', '오늘 마감·업데이트된 담당 이슈 7건']) expect(text).toContain(header);
+  });
+
+  it('lists shrink instead: each section closes with an "외 N건" line that counts every entry not shown', () => {
+    const text = renderMessageContent(composeDailyBriefBody({ ...full, assignedWork: null }), HEAVY);
+    const blocks = text.split('\n\n');
+    expect(blocks).toHaveLength(5);
+    for (const block of blocks.slice(1, 4)) {
+      const lines = block.split('\n');
+      const total = Number(/ (\d+)건$/.exec(lines[0] as string)?.[1]);
+      const listed = lines.slice(1).filter((line) => !line.startsWith('- 외 ')).length;
+      const omitted = Number(/^- 외 (\d+)건$/.exec(lines[lines.length - 1] as string)?.[1] ?? 0);
+      expect(listed + omitted).toBe(total);
+    }
+    // Earlier sections keep their entries first; a later one shrinks.
+    expect(blocks[1]?.split('\n')).toHaveLength(11);
+    expect(blocks[3]).toMatch(/\n- 외 \d+건$/);
+  });
+});

@@ -11,7 +11,7 @@ import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import type { ConnectorItem } from '../../ports/connector-provider.port';
 import { calendarDayEventLines } from '../calendar/calendar-reply-renderer';
 import { containsCredentialMaterial } from '../credential-guard';
-import { clipMessage, joinBody, messageBody, untrustedText } from '../message-rendering';
+import { clipMessage, messageBody, takeLines, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
 import { localDateOf, toZonedDateTime, type LocalDate } from './zoned-time';
 
@@ -79,11 +79,6 @@ export function formatShortDateTime(instant: IsoTimestamp, timeZone: string): st
 function truncate(text: string, max: number): string {
   const chars = Array.from(text);
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
-}
-
-/** The brief stays inside one delivered message (the bound applies to the platform's rendering). */
-function clampText(body: MessageBody): MessageBody {
-  return messageBody(clipMessage(body, REMINDER_LIMITS.maxDeliveredTextChars, 'code-points'));
 }
 
 function todaysPendingReminders(input: DailyBriefInput): Reminder[] {
@@ -175,27 +170,102 @@ function workLine(item: ConnectorItem): MessageBody {
   return messageBody('- ', key, ' ', titlePart);
 }
 
+/**
+ * One brief section: `head` is never dropped (the section header with its count, or the empty / could-not-read
+ * notice); `items` are the listed entries (already capped per section), and `hidden` counts the entries past the cap.
+ * Under the message budget the items shrink, and one "- 외 N건" line counts every entry not shown.
+ */
+interface BriefSection {
+  readonly head: readonly string[];
+  readonly items: readonly MessageBody[];
+  readonly hidden: number;
+}
+
+/** Room for a section's closing "- 외 N건" line and its line break. */
+const OMITTED_LINE_RESERVE_CHARS = 12;
+
+function listSection(header: string, entries: readonly MessageBody[], max: number): BriefSection {
+  return { head: [header], items: entries.slice(0, max), hidden: Math.max(0, entries.length - max) };
+}
+
+function noticeSection(notice: string): BriefSection {
+  return { head: [notice], items: [], hidden: 0 };
+}
+
 /** ADR-0117 D1: "오늘 일정 N건" and the day's events (all-day first), or the empty / unreadable note. */
-function calendarSection(calendar: DailyBriefCalendar | null, input: DailyBriefInput): MessageBody[] {
-  if (calendar === null) return ['오늘 일정: 불러오지 못했어요.'];
+function calendarSection(calendar: DailyBriefCalendar | null, input: DailyBriefInput): BriefSection {
+  if (calendar === null) return noticeSection('오늘 일정: 불러오지 못했어요.');
   const lines = calendarDayEventLines(localDateOf(input.now, input.timeZone), calendar.events, input.timeZone);
   const partial = calendar.events.length >= calendar.limit;
-  if (lines.length === 0) return [partial ? '오늘 일정: 일부만 읽었어요.' : '오늘 일정이 없어요.'];
-  const section: MessageBody[] = [`오늘 일정 ${lines.length}건${partial ? ' 이상' : ''}`];
-  section.push(...lines.slice(0, DAILY_BRIEF_MAX_ENTRIES));
-  if (lines.length > DAILY_BRIEF_MAX_ENTRIES) section.push(`- 외 ${lines.length - DAILY_BRIEF_MAX_ENTRIES}건`);
-  return section;
+  if (lines.length === 0) return noticeSection(partial ? '오늘 일정: 일부만 읽었어요.' : '오늘 일정이 없어요.');
+  return listSection(`오늘 일정 ${lines.length}건${partial ? ' 이상' : ''}`, lines, DAILY_BRIEF_MAX_ENTRIES);
+}
+
+function remindersSection(input: DailyBriefInput): BriefSection {
+  if (input.reminders === null) return noticeSection('남은 알림: 불러오지 못했어요.');
+  const pending = todaysPendingReminders(input);
+  if (pending.length === 0) return noticeSection('오늘 남은 알림이 없어요.');
+  const lines = pending.map((reminder): MessageBody => {
+    const at = toZonedDateTime(reminder.nextFireAt ?? input.now, input.timeZone);
+    return `- ${formatKoreanClock(at.hour, at.minute)} ${truncate(reminder.body, 60)} (#${reminder.displayNo})`;
+  });
+  return listSection(`오늘 남은 알림 ${pending.length}건`, lines, DAILY_BRIEF_MAX_ENTRIES);
+}
+
+function workItemsSection(input: DailyBriefInput): BriefSection {
+  if (input.workItems === null) return noticeSection('진행 중인 작업: 불러오지 못했어요.');
+  const active = activeWorkItems(input);
+  if (active.length === 0) return noticeSection('진행 중인 작업이 없어요.');
+  const lines = active.map((item) => messageBody('- ', workItemLabel(item)));
+  return listSection(`진행 중인 작업 ${active.length}건`, lines, DAILY_BRIEF_MAX_ENTRIES);
 }
 
 /** ADR-0117 D2: the owner's assigned items due or updated today, or the empty / unreadable note. */
-function assignedWorkSection(items: readonly ConnectorItem[] | null, input: DailyBriefInput): MessageBody[] {
-  if (items === null) return ['담당 이슈: 불러오지 못했어요.'];
+function assignedWorkSection(items: readonly ConnectorItem[] | null, input: DailyBriefInput): BriefSection {
+  if (items === null) return noticeSection('담당 이슈: 불러오지 못했어요.');
   const today = dailyBriefWorkForToday(items, input.now, input.timeZone);
-  if (today.length === 0) return ['오늘 마감·업데이트된 담당 이슈가 없어요.'];
-  const section: MessageBody[] = [`오늘 마감·업데이트된 담당 이슈 ${today.length}건`];
-  for (const item of today.slice(0, DAILY_BRIEF_MAX_WORK_ENTRIES)) section.push(workLine(item));
-  if (today.length > DAILY_BRIEF_MAX_WORK_ENTRIES) section.push(`- 외 ${today.length - DAILY_BRIEF_MAX_WORK_ENTRIES}건`);
-  return section;
+  if (today.length === 0) return noticeSection('오늘 마감·업데이트된 담당 이슈가 없어요.');
+  return listSection(`오늘 마감·업데이트된 담당 이슈 ${today.length}건`, today.map(workLine), DAILY_BRIEF_MAX_WORK_ENTRIES);
+}
+
+function codePoints(text: string): number {
+  return Array.from(text).length;
+}
+
+/** What a section needs even when every one of its items is dropped: its blank separator, head and "외 N건" line. */
+function mandatoryChars(section: BriefSection): number {
+  const head = section.head.reduce((sum, line) => sum + 1 + codePoints(line), 0);
+  const listed = section.items.length > 0 || section.hidden > 0;
+  return 1 + head + (listed ? OMITTED_LINE_RESERVE_CHARS : 0);
+}
+
+/**
+ * The sections inside one delivered message (REMINDER_LIMITS.maxDeliveredTextChars of the platform's rendering).
+ * Each section is a `take-lines` node whose head holds everything before it, so earlier sections keep their items
+ * first. Every layer reserves the mandatory lines of the sections after it, so a header, an empty-day notice or a
+ * could-not-read note is never dropped: only list items shrink, each section closing with "- 외 N건".
+ */
+function boundedBrief(header: string, sections: readonly BriefSection[]): MessageBody {
+  const maxChars = REMINDER_LIMITS.maxDeliveredTextChars;
+  const later = sections.map((_, index) =>
+    sections.slice(index + 1).reduce((sum, section) => sum + mandatoryChars(section), 0),
+  );
+  let body: MessagePart = header;
+  sections.forEach((section, index) => {
+    const head: MessagePart[] = [body, '', ...section.head];
+    body = takeLines({
+      unit: 'code-points',
+      maxChars,
+      // The line breaks between the head lines, the "외 N건" line, and every later section's mandatory lines.
+      baseChars: head.length - 1 + OMITTED_LINE_RESERVE_CHARS + (later[index] ?? 0),
+      head,
+      tail: [],
+      lines: section.items.map((content) => ({ content, item: true })),
+      omitted: { hidden: section.hidden, before: '- 외 ', after: '건' },
+    });
+  });
+  // A last guard only: the layers above already keep the rendering inside the bound.
+  return messageBody(clipMessage(body, maxChars, 'code-points'));
 }
 
 /** Compose the brief text (Korean, no emoji, at most one delivered message). */
@@ -205,41 +275,9 @@ export function composeDailyBrief(input: DailyBriefInput): MessageBody {
   if (input.late === true && input.occurrenceAt !== undefined) {
     header += ` (예정 ${formatShortDateTime(input.occurrenceAt, input.timeZone)}, 늦게 전달)`;
   }
-  const lines: MessageBody[] = [header, ''];
-
-  if (input.calendar !== undefined) lines.push(...calendarSection(input.calendar, input), '');
-
-  if (input.reminders === null) {
-    lines.push('남은 알림: 불러오지 못했어요.');
-  } else {
-    const pending = todaysPendingReminders(input);
-    if (pending.length === 0) {
-      lines.push('오늘 남은 알림이 없어요.');
-    } else {
-      lines.push(`오늘 남은 알림 ${pending.length}건`);
-      for (const reminder of pending.slice(0, DAILY_BRIEF_MAX_ENTRIES)) {
-        const at = toZonedDateTime(reminder.nextFireAt ?? input.now, input.timeZone);
-        lines.push(`- ${formatKoreanClock(at.hour, at.minute)} ${truncate(reminder.body, 60)} (#${reminder.displayNo})`);
-      }
-      if (pending.length > DAILY_BRIEF_MAX_ENTRIES) {
-        lines.push(`- 외 ${pending.length - DAILY_BRIEF_MAX_ENTRIES}건`);
-      }
-    }
-  }
-
-  lines.push('');
-  if (input.workItems === null) {
-    lines.push('진행 중인 작업: 불러오지 못했어요.');
-  } else {
-    const active = activeWorkItems(input);
-    if (active.length === 0) {
-      lines.push('진행 중인 작업이 없어요.');
-    } else {
-      lines.push(`진행 중인 작업 ${active.length}건`);
-      for (const item of active.slice(0, DAILY_BRIEF_MAX_ENTRIES)) lines.push(messageBody('- ', workItemLabel(item)));
-      if (active.length > DAILY_BRIEF_MAX_ENTRIES) lines.push(`- 외 ${active.length - DAILY_BRIEF_MAX_ENTRIES}건`);
-    }
-  }
-  if (input.assignedWork !== undefined) lines.push('', ...assignedWorkSection(input.assignedWork, input));
-  return clampText(joinBody(lines));
+  const sections: BriefSection[] = [];
+  if (input.calendar !== undefined) sections.push(calendarSection(input.calendar, input));
+  sections.push(remindersSection(input), workItemsSection(input));
+  if (input.assignedWork !== undefined) sections.push(assignedWorkSection(input.assignedWork, input));
+  return boundedBrief(header, sections);
 }

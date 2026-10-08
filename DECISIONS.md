@@ -18009,8 +18009,17 @@ needed.
   - At most 10 lines, then `- 외 N건`. A read that returned a full page says `N건 이상`.
   - Copy: `오늘 일정 N건`, `오늘 일정이 없어요.`, and for any failure or timeout `오늘 일정: 불러오지 못했어요.` (never an
     empty day). With no calendar configured the section is omitted, as D1 says.
-  - The section comes first, after the header; the reminders, to-dos and the optional Jira section follow. The whole
-    brief keeps the 1,800-code-point bound.
+  - The section comes first, after the header; the reminders, to-dos and the optional Jira section follow.
+- **Message budget (Codex review P2).** The brief stays within 1,800 code points of the platform's rendering, and no
+  header, empty-day notice or could-not-read note is ever cut. Before this fix, the whole brief was clipped at its end,
+  so a Jira timeout note after full sections disappeared.
+  - Each section is now a `take-lines` node whose head holds the sections before it, so earlier sections keep their
+    entries first.
+  - Each layer reserves the mandatory lines of every later section (separator, header or notice, and the "외 N건"
+    line). Only list entries shrink, and each section's "- 외 N건" line counts every entry not shown: the ones past the
+    cap and the ones dropped for the budget.
+  - The final clip remains as a last guard only.
+  - When everything fits, the output is byte-identical: the golden fixture and the existing brief tests are unchanged.
 - **Jira (D2).** D2 is concrete enough (flag, ≤5, key and title, named query), so it is implemented.
   - `QUOKY_BRIEF_JIRA_ENABLED` (exact `true`/`false`, default `false`, `BRIEF_JIRA_ENABLED_INVALID` with a preflight
     hint). Inert unless the read-only Jira connector is registered; the composition root picks it by its source label,
