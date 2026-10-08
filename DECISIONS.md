@@ -17982,6 +17982,77 @@ provider call is made by the brief or the reminder.
 The live brief on the owner's service; one pre-meeting reminder on a test event; a migration on the service DB if one is
 needed.
 
+### ADR-0117 implementation note — BRF-1 morning brief calendar section and opt-in Jira section (2026-10-08)
+
+- **Status:** Implementation note for D1–D4 (track BRF-1). BRF-2 (D5/D6, event-relative reminders) is not part of it.
+  Offline validation only; the Strict gate (the live brief on the owner's service) is not run.
+- **Shape.** No migration, no new DI token, no port change; `ConversationRuntimeDeps` is unchanged (35).
+  - Core `DailyBriefSources` (`application/reminders/daily-brief-sources.ts`) holds the brief's two read-only reads. The
+    dispatch service gains one optional dependency, `briefSources`, read for a `BRIEF` only, concurrently with the two
+    local reads. Without it the brief is the local-only brief, byte for byte.
+  - The composition root (`apps/quoky/src/reminders/brief-sources.ts`, called from `features/reminders.providers.ts`)
+    builds it from optional injections of the existing `CALENDAR_READER` and `CONNECTOR_PROVIDERS` bindings
+    (`{ token, optional: true }`, the `turn-handlers.providers.ts` pattern). `app.module.ts` and `config.ts` are not
+    edited: the flag is parsed in `reminders/reminder-config.ts`, whose error codes `config.ts` already spreads.
+- **Calendar (D1).**
+  - The reader is the `CALENDAR_READER` binding, so the brief reads the same calendars as `오늘 일정`
+    (`QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS`, default and on the owner's host `primary`).
+  - One `listEvents` for today in the brief's zone (`resolveCalendarWindow('today')`, `QUOKY_TIMEZONE`), limit 50,
+    bounded by the schedule handler's `CALENDAR_READ_TIMEOUT_MS` (30 s). The adapter's 10 s per-request timeout still
+    applies inside it.
+  - Lines come from the schedule reply renderer (`calendarDayEventLines`, newly exported, same placement and order:
+    all-day first, then timed by start). An event that started earlier shows its dated start
+    (`10월 1일 22:00–02:30`), a multi-day all-day event its range (`종일 (10월 1일–10월 3일)`), an event ending
+    tomorrow its dated end. Titles and times only: the location is left out; the `(미정)` status marker stays.
+  - Titles are the same `untrusted` spans with the `markup` guard as in a schedule reply; a credential-shaped title is
+    `(제목 숨김)`, an empty one `(제목 없음)`.
+  - At most 10 lines, then `- 외 N건`. A read that returned a full page says `N건 이상`.
+  - Copy: `오늘 일정 N건`, `오늘 일정이 없어요.`, and for any failure or timeout `오늘 일정: 불러오지 못했어요.` (never an
+    empty day). With no calendar configured the section is omitted, as D1 says.
+  - The section comes first, after the header; the reminders, to-dos and the optional Jira section follow. The whole
+    brief keeps the 1,800-code-point bound.
+- **Jira (D2).** D2 is concrete enough (flag, ≤5, key and title, named query), so it is implemented.
+  - `QUOKY_BRIEF_JIRA_ENABLED` (exact `true`/`false`, default `false`, `BRIEF_JIRA_ENABLED_INVALID` with a preflight
+    hint). Inert unless the read-only Jira connector is registered; the composition root picks it by its source label,
+    and Core never branches on it.
+  - The query identity is the owner Actor's identity whose platform equals the connector's source, as work chat does.
+    The reads are the ADR-0100 `personal-work` named query with `all` and `due-this-week` (20 items each), concurrently,
+    after `isAvailable()`, within the work-lookup deadline (15 s).
+  - The composer keeps the items due today or updated today in the zone, de-duplicated by key, due first, then most
+    recently updated. At most 5 lines (`- KEY 제목`, both untrusted spans), then `- 외 N건`. Copy:
+    `오늘 마감·업데이트된 담당 이슈 N건`, `오늘 마감·업데이트된 담당 이슈가 없어요.`, and `담당 이슈: 불러오지 못했어요.`
+    for a missing identity, an unavailable connector, a failure or a timeout.
+- **No model, DM-only (D3/D4).** No provider is reachable from the dispatch or the sources; the reads are the only
+  egress. The brief is still a `BRIEF` notification on the existing owner sink, so delivery and the DM-only rule are
+  unchanged. Logs carry counts and failure classes only.
+- **Boundary tests amended.** The ADR-0101 composition test no longer forbids `CONNECTOR_PROVIDERS` in
+  `reminders.providers.ts`; it now requires both bindings to be optional injections, and still forbids AI and tool
+  bindings, the managers and the runtime. The dispatch service's own import scan is unchanged (no connector import). A
+  new scan keeps `daily-brief-sources.ts` free of provider, tool, write and runtime imports.
+- **Evidence (offline).**
+  - `daily-brief.test.ts`: the fixture day; the same events in another zone; the cap and `외 N건`; the full page; an
+    empty and an unreadable calendar; the omitted section byte-identical; title guards; the bound with every section
+    full; both Jira flag states, with the due/updated-today filter, de-duplication, the cap, the hidden title and the
+    unreadable note.
+  - `daily-brief-sources.test.ts`: the window and limit; no reader means no key; failure and timeout are `null`; the
+    named-query parameters and identity; each work failure class; both sources bounded concurrently; the import scan.
+  - `reminder-dispatch-service.test.ts`: sources are read only for a `BRIEF`, with the brief's actor, instant and zone;
+    the unreadable note is delivered; the deps keys.
+  - `brief-sources.test.ts` (composition) and `reminder-acceptance.test.ts`: production composition over SQLite. Flag
+    off with Jira bound reads nothing; the calendar read happens once; the unreadable calendar; flag on lists the item
+    through two `personal-work` queries; no provider call.
+  - `adapter-discord` `rendering.test.ts`: a brief event line renders on Discord exactly as the schedule reply's line.
+    The golden fixture is unchanged, and its two brief cases (no calendar) still pass byte-identically.
+- **Residuals.**
+  - (R1) The tick driver's stop bound does not include the brief's 30 s read. A stop during a slow read is a forced
+    stop, and the next startup records that brief `DELIVERY_UNCERTAIN`: at-most-once, never resent.
+  - (R2) At 08:00, "updated today" covers only the hours since midnight, as D2 reads.
+  - (R3) An item outside both the 20 most recently updated and the 20 earliest-due open items is not seen.
+  - (R4) `.env.example` and the operator docs do not list `QUOKY_BRIEF_JIRA_ENABLED` yet: TG-1 owns `.env.example` in
+    W2; DOC-E picks it up.
+  - (R5) The window uses the zone stored on the brief reminder at creation (`QUOKY_TIMEZONE` then), as the rest of the
+    brief does.
+
 ## ADR-0118 — Google read connectors, Gmail then Drive: `gmail.readonly` and `drive.readonly` on the existing Internal OAuth client, fixed-format DM-only listings, no send, draft or delete, and text to the chat-tier provider only on an explicit summary request. Amends ADR-0100 and ADR-0096 D5; relates ADR-0110 and ADR-0111.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)

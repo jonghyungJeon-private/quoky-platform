@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — BRF-1 morning brief with today's calendar (2026-10-08)
+
+ADR-0117 D1–D4 (implementation note in DECISIONS.md). No migration, no new DI token, no port change;
+`ConversationRuntimeDeps` stays 35.
+
+- **Calendar section.** When a calendar is configured, the `BRIEF` reminder lists `오늘 일정` read through the existing
+  `CALENDAR_READER`: today in `QUOKY_TIMEZONE`, all-day first, then timed by start, at most 10 with `- 외 N건`, titles
+  and times only, in the schedule reply's line format and title guard. An unreadable or slow calendar (30 s bound)
+  shows `오늘 일정: 불러오지 못했어요.`. With no calendar the section is omitted and the brief is unchanged.
+- **Opt-in Jira section.** `QUOKY_BRIEF_JIRA_ENABLED` (default `false`) adds the owner's Jira items due or updated
+  today, through the ADR-0100 `personal-work` named query: read-only, at most 5, key and title.
+- **Wiring.** Core `DailyBriefSources` is the dispatch service's one optional `briefSources` dependency. The
+  composition root builds it from optional injections of the existing `CALENDAR_READER` and `CONNECTOR_PROVIDERS`.
+- No model call; the brief stays DM-only. The Discord golden fixture is unchanged.
+
 ## Unreleased — LRN-5 consent copy (2026-10-08)
 
 ADR-0116 residual R4. No migration, no new DI token or port, no dependency change.
