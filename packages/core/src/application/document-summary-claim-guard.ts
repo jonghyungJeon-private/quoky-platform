@@ -17,7 +17,7 @@
  * it is the first person or a word the model may use for itself.
  */
 const KO_STAND_INS = new Set([
-  '제', '저', '내', '나', '저희', '우리', 'quoky', '쿼키', '비서', '어시스턴트', '봇', '챗봇', 'ai', '에이아이', '시스템',
+  '제', '저', '내', '나', '저희', '우리', 'quoky', '쿼키', '비서', '어시스턴트', '봇', '챗봇', 'ai', '에이아이', '시스템', 'i', 'we',
 ]);
 
 /**
@@ -66,7 +66,10 @@ function clauses(text: string): string[] {
 
 /**
  * Whether the claim at `claimAt` is exempt: the NEAREST real subject BEFORE it names someone other than Quoky
- * (`김철수가 메일을 보냈어요`). A subject after the claim, an adverb or generic noun, or a Quoky stand-in never exempts.
+ * (`김철수가 메일을 보냈어요`). Fail closed (sign-off item 3): if ANY Quoky stand-in is a subject before the claim in the
+ * same clause, the claim is never exempt — a relative clause (`제가 김철수가 요청한 답장을 보냈어요`) puts a third-person
+ * subject nearest the verb while Quoky is still the actor. A subject after the claim, an adverb or a generic noun never
+ * exempts.
  */
 function exemptBySubject(clause: string, claimAt: number): boolean {
   let nearest: string | undefined;
@@ -74,9 +77,10 @@ function exemptBySubject(clause: string, claimAt: number): boolean {
     // An opening quote or bracket is not part of the subject (`"제가 …"` is still the first person).
     const word = (match[1] ?? '').replace(/^["'“”‘’「『(\[<]+/u, '').toLowerCase();
     if (word.length === 0 || KO_NOT_A_SUBJECT.has(word)) continue;
+    if (KO_STAND_INS.has(word)) return false;
     nearest = word;
   }
-  return nearest !== undefined && !KO_STAND_INS.has(nearest);
+  return nearest !== undefined;
 }
 
 /**

@@ -44,6 +44,11 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     'Quoky가 메일을 삭제했어요.',
     '답장을 보냈어요, 김철수가 요청해서요.',
     '답장을 보냈답니다.',
+    // Sign-off item 3: a Quoky stand-in anywhere before the claim blocks the exemption (relative clauses).
+    '제가 김철수가 요청한 답장을 보냈어요.',
+    '제가 고객님이 요청하신 회신을 보냈습니다.',
+    '저희가 팀장님이 말한 메일을 삭제했어요.',
+    'I가 김철수가 요청한 답장을 보냈어요.',
     // Known false positives that fail closed (recorded in the live-QA list).
     '쿠팡에서 배송 안내 메일을 보냈어요.',
     '김철수 님은 "제가 메일을 보냈어요"라고 썼어요.',
