@@ -50,6 +50,24 @@ describe('ResponseComposer.composeWorkSurface', () => {
     expect(reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
   });
 
+  it('renders a connector title as an untrusted one-line span and its URL as a link span (review P2-6)', () => {
+    const reply = composer.composeWorkSurface(CTX, {
+      status: 'COMPLETE',
+      items: [
+        { resource: new ResourceRef({ source: 'jira', externalId: 'J-2' }), title: '@everyone [x](y)\n*b*', url: 'https://acme.test/J-2' },
+        { resource: new ResourceRef({ source: 'github', externalId: 'o/r#1' }), title: 'PR', url: 'javascript:alert(1)' },
+      ],
+      sources: [],
+    });
+    expect(reply.text).toContain('- [jira] @everyone [x](y) *b* — https://acme.test/J-2');
+    expect(renderMessageContent(outboundBody(reply), { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»`, link: (url) => `«link:${url}»` })).toContain(
+      '- [jira] «markup:@everyone [x](y) *b*» — «link:https://acme.test/J-2»',
+    );
+    // An unsafe URL is not echoed at all.
+    expect(reply.text.endsWith('- [github] PR')).toBe(true);
+    expect(reply.text).not.toContain('javascript:');
+  });
+
   it('never renders a partial empty projection as an authoritative no-work result', () => {
     const reply = composer.composeWorkSurface(CTX, {
       status: 'PARTIAL',

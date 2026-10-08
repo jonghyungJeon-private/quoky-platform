@@ -54,7 +54,20 @@ import type {
   ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
 import type { ConnectorWriteOperation } from '../ports';
-import { clipMessage, fitLines, messageBody, messageContent, outboundBody, outboundMessage, platformNote, withOutboundBody } from './message-rendering';
+import {
+  clipMessage,
+  fitLines,
+  joinBody,
+  messageBody,
+  messageContent,
+  messageLink,
+  outboundBody,
+  outboundMessage,
+  platformNote,
+  untrustedText,
+  withOutboundBody,
+} from './message-rendering';
+import { safeLinkUrl } from './work-chat/work-chat-renderer';
 import type { MessagePart } from './message-rendering';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
@@ -674,7 +687,7 @@ function renderDiffBlock(diff: GitDiff, maxChars: number): string {
 export class ResponseComposer {
   /** Read-only Personal Work Surface. Availability is always explicit when the projection is incomplete. */
   composeWorkSurface(context: ConversationContext, surface: WorkSurface): OutboundMessage {
-    const lines: string[] = [];
+    const lines: MessageBody[] = [];
     if (surface.status === 'UNAVAILABLE') {
       lines.push('지금은 개인 작업 목록을 불러올 수 없어요.');
     } else if (surface.items.length === 0) {
@@ -682,8 +695,16 @@ export class ResponseComposer {
     } else {
       lines.push('지금 확인할 작업이에요:');
       for (const item of surface.items.slice(0, 20)) {
-        const link = item.url ? ` — ${item.url}` : '';
-        lines.push(`- [${item.resource.source}] ${item.title}${link}`);
+        // A connector title is untrusted readout (one line; the platform neutralizes its markup and mentions) and the
+        // URL a link span, as in the work-chat lists (PLT-0 review P2-6). An unsafe URL is not echoed.
+        const url = safeLinkUrl(item.url);
+        lines.push(
+          messageBody(
+            `- [${item.resource.source}] `,
+            untrustedText(item.title.replace(/\s+/g, ' ')),
+            url ? messageContent(' — ', messageLink(url)) : '',
+          ),
+        );
       }
       if (surface.items.length > 20) lines.push(`- 외 ${surface.items.length - 20}개`);
     }
@@ -700,7 +721,7 @@ export class ResponseComposer {
         lines.push(`- ${source.source}: ${action}`);
       }
     }
-    return { context, text: clampToMessageBudget(lines.join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   composeMemoryStored(context: ConversationContext): OutboundMessage {

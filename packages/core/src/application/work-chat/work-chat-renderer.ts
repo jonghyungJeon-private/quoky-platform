@@ -275,7 +275,8 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
   return fit(lines);
 }
 
-function safeLinkUrl(url: string | undefined): string | undefined {
+/** A connector URL safe to show as a link span (http(s), no whitespace or quoting characters, ≤ 300 characters). */
+export function safeLinkUrl(url: string | undefined): string | undefined {
   if (!url || url.length > 300) return undefined;
   return /^https?:\/\/[^\s<>"'`\\]+$/i.test(url) ? url : undefined;
 }
