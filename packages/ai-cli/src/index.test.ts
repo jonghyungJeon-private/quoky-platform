@@ -1050,6 +1050,34 @@ describe('EMBEDDING routing (ADR-0098 D8)', () => {
     expect((await router.select(Capability.GENERAL_CHAT)).id).toBe('ollama-cli');
     expect((await router.select(Capability.SUMMARIZATION)).id).toBe('ollama-cli');
   });
+
+  it('an embedding provider that was not ready at boot becomes selectable once the daemon is up, without a restart', async () => {
+    let up = false;
+    const calls: string[][] = [];
+    const daemon: CliRunner = async (_bin, args) => {
+      calls.push(args);
+      if (!up) return { code: 1, stdout: '', stderr: 'Error: timed out waiting for server to start', timedOut: false };
+      return args[0] === 'list'
+        ? { code: 0, stdout: LIST, stderr: '', timedOut: false }
+        : { code: 0, stdout: '[0.1, 0.2]', stderr: '', timedOut: false };
+    };
+    let ms = Date.parse('2026-10-08T00:00:00.000Z');
+    const embedder = new OllamaCliEmbeddingProvider({ runner: daemon });
+    const manager = new AiProviderManager([embedder], { clock: () => new Date(ms).toISOString() });
+    const router = new CapabilityRouter(manager);
+
+    // Boot: the Ollama app is not up yet.
+    expect(await manager.available()).toEqual([]);
+    await expect(router.select(Capability.EMBEDDING)).rejects.toBeInstanceOf(NoProviderAvailableError);
+
+    up = true;
+    ms += 30_000;
+    const selected = await router.select(Capability.EMBEDDING);
+    expect(selected.id).toBe('ollama-embed-cli');
+    await embedder.warmUpSettled();
+    // The not-ready -> ready change loaded the model in the background with the keep-alive.
+    expect(calls.filter((args) => args[0] === 'run')).toEqual([['run', '--keepalive', '30m', 'nomic-embed-text']]);
+  });
 });
 
 describe('POLICY_SENSITIVE_CHAT routing and the action-claim guard (ADR-0098 amendment)', () => {
