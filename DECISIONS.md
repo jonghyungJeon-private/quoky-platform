@@ -17757,6 +17757,38 @@ agent CLI (Codex residual R7) and avoids the ~8k-token Codex agent prompt per tu
 Each new vendor and its API key (one per vendor); the `.env.local` edit; the first live call per vendor; a migration on
 the service DB if v16 is needed. Independent Chief Architect review before PRV-1 and PRV-3 merge.
 
+### ADR-0115 implementation note — PRV-1 OpenAI API adapter (2026-10-08)
+
+Implementation choices where D1–D8 are silent; no ratified text above changes.
+
+- **API: the Responses API** (`POST https://api.openai.com/v1/responses`). One user `input` message (`input_text`, plus
+  `input_image` data URLs of the #143 canonical bytes for the image instance), `store: false`, `max_output_tokens: 8192`.
+  Nothing else is sent: no `tools`, `functions`, `tool_choice`, `previous_response_id`, `conversation`, `include` or
+  `background`. The response is accepted only as `message` (assistant `output_text` / `refusal`) and `reasoning` items;
+  any action item (`*_call`, MCP, …) refuses the whole response (`TOOL_CALL_REFUSED`), an unknown item or part is
+  `MALFORMED_RESPONSE`. Chat Completions was not used because D5 names `store: false` and the Responses API is the one
+  with a defined server-side-state switch.
+- **Package and boundaries.** `packages/ai-openai-api` depends on `@quoky/core` only and calls the platform `fetch`
+  (`redirect: 'error'`, one timer over headers and body, a 2 MiB response bound, a non-2xx body never read). The key
+  lives in a true private field. The provider-neutral chat reply hygiene (ADR-0098 D2) is injected by the composition
+  root (`apps/quoky/src/openai-provider-composition.ts`), which needed one additive export in `@quoky/ai-cli`'s index;
+  no adapter imports another adapter. Core, `AiProvider`, the router and `ConversationRuntimeDeps` are unchanged.
+- **Configuration.** `QUOKY_OPENAI_API_KEY` (shape `sk-` + 20–512 URL-safe characters) and `QUOKY_OPENAI_MODEL` (on the
+  allow-list `gpt-5.1`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-4o`,
+  `gpt-4o-mini`; every entry takes image input, so the image instance uses the same model and there is no separate
+  image-model variable). Blank counts as unset. Startup errors (code only, never a value): `OPENAI_API_KEY_INVALID`,
+  `OPENAI_MODEL_INVALID`, `OPENAI_API_KEY_MISSING`, `OPENAI_MODEL_MISSING` (one of the two without the other, or
+  `openai` named by `QUOKY_CHAT_PROVIDER` / `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` with neither set).
+- **Selection.** Ids `openai-api` (chat, priority 100 on the chat tier), `openai-vision-api` (image) and on-demand
+  `openai-api:<model>` (chat-tier-only view, counted in the existing bound of 12). Labels `openai:<model>`; the image
+  choice token is `openai`. Readiness of every OpenAI option in `모델 목록` / `/providers` is the configured instance's
+  one model-get probe (as Claude's aliases share one probe); a timed-out probe is indeterminate.
+- **Failure mapping.** 401/403 → `AUTH_REQUIRED` (`AUTH`); 429 → `UNAVAILABLE` (`RATE_LIMITED`); network error, 404,
+  408, 409, 5xx, `status: failed`, a redirect → `UNAVAILABLE`; timeout → `TIMEOUT`; no reply text → `EMPTY_OUTPUT`; other
+  4xx, oversize, malformed or action items → `EXECUTION_FAILED`. The message is `openai API: <CODE>[ (HTTP nnn)]`.
+- **Usage seam.** The audit carries `inputTokens`, `cachedInputTokens`, `outputTokens`, `reasoningTokens`,
+  `totalTokens` (Codex's names) for PRV-3; nothing reads them yet.
+
 ## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
