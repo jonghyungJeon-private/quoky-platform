@@ -81,6 +81,45 @@ describe('renderMarkdownTablesForDiscord — a quote anywhere, or fences that ar
   });
 });
 
+describe('renderMarkdownTablesForDiscord — TBL-1: only ASCII may follow a fence run (Codex P2 on b71196d)', () => {
+  const OTHER_SPACES: ReadonlyArray<readonly [string, string]> = [
+    ['NBSP U+00A0', '\u00a0'],
+    ['EM SPACE U+2003', '\u2003'],
+    ['VT U+000B', '\u000b'],
+    ['FF U+000C', '\u000c'],
+    ['BOM U+FEFF', '\ufeff'],
+    ['IDEOGRAPHIC SPACE U+3000', '\u3000'],
+  ];
+
+  it.each(OTHER_SPACES)('a closer followed by %s leaves the whole reply untouched', (_label, ch) => {
+    for (const run of ['```', '~~~']) {
+      const text = lines(run, 'code', `${run}${ch}`, '', ...TABLE);
+      expect(isTableRenderingEligible(text), `${run} closer`).toBe(false);
+      expect(render(text), `${run} closer`).toBe(text);
+    }
+  });
+
+  it.each(OTHER_SPACES)('an opener whose info string holds %s leaves the whole reply untouched', (_label, ch) => {
+    for (const run of ['```', '~~~']) {
+      for (const opener of [`${run}${ch}`, `${run}ts${ch}`, `${run}${ch}ts`]) {
+        const text = lines(opener, 'code', run, '', ...TABLE);
+        expect(isTableRenderingEligible(text), JSON.stringify(opener)).toBe(false);
+        expect(render(text), JSON.stringify(opener)).toBe(text);
+      }
+    }
+  });
+
+  it('a non-ASCII info string or a tab in it is refused; printable ASCII info strings and trailing ASCII spaces or tabs on a closer are accepted', () => {
+    for (const opener of ['```파이썬', '```ts\t', '```é']) {
+      const text = lines(opener, 'code', '```', '', ...TABLE);
+      expect(render(text), opener).toBe(text);
+    }
+    for (const [opener, closer] of [['```ts', '``` \t '], ['```python title="a.py" {1-3}', '```\t'], ['~~~ text', '~~~  ']] as const) {
+      expect(render(lines(opener, 'code', closer, '', ...TABLE)), opener).toBe(lines(opener, 'code', closer, '', ...RENDERED));
+    }
+  });
+});
+
 describe('renderMarkdownTablesForDiscord — TBL-1: in a balanced reply only paragraphs outside every fence convert', () => {
   // These four inputs were "a fence marker anywhere leaves the whole reply untouched" under #145; TBL-1 converts the
   // table and keeps every fence byte-identical.

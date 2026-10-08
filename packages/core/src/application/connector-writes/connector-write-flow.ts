@@ -704,11 +704,31 @@ export function isBareExecutionRequest(text: string): boolean {
 const BARE_EXECUTION_QUESTIONS =
   /^(?:(?:지금|이제|바로)\s*)?실행\s*(?:해도\s*(?:돼|돼요|될까|될까요|되나요|괜찮아|괜찮을까)|할까|할까요|해\s*볼까|해야\s*(?:해|돼|하나요)|하지\s*(?:마|마요|마세요|말아\s*줘|말아\s*주세요)|안\s*해도\s*(?:돼|돼요)|하면\s*안\s*돼|가능해|가능할까|해\s*줄래|해\s*줄\s*수\s*있어)$/u;
 
-export function isBareExecutionQuestionOrNegation(text: string): boolean {
-  if (typeof text !== 'string') return false;
+/** The prohibitions among them ("실행하지 마", "실행하면 안 돼", "don't run it"): with an approved grant they withdraw it. */
+const BARE_EXECUTION_PROHIBITION =
+  /^(?:(?:지금|이제|바로)\s*)?실행\s*(?:하지\s*(?:마|마요|마세요|말아\s*줘|말아\s*주세요)|하면\s*안\s*돼)$|^(?:do\s+not|don['’]t)\s+(?:run|execute)\s+it$/u;
+const BARE_EXECUTION_QUESTION_EN = /^(?:should\s+i|can\s+(?:i|you)|may\s+i)\s+(?:run|execute)\s+it$/u;
+
+function bareExecutionForm(text: string): string | null {
+  if (typeof text !== 'string') return null;
   const bare = text.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase().replace(/[\s?？.!~。！]+$/u, '');
-  if (bare.length === 0 || bare.length > 30) return false;
-  return BARE_EXECUTION_QUESTIONS.test(bare) || /^(?:should\s+i|can\s+(?:i|you)|may\s+i)\s+(?:run|execute)\s+it$|^(?:do\s+not|don['’]t)\s+(?:run|execute)\s+it$/u.test(bare);
+  return bare.length === 0 || bare.length > 30 ? null : bare;
+}
+
+export function isBareExecutionQuestionOrNegation(text: string): boolean {
+  const bare = bareExecutionForm(text);
+  if (bare === null) return false;
+  return BARE_EXECUTION_QUESTIONS.test(bare) || BARE_EXECUTION_QUESTION_EN.test(bare) || BARE_EXECUTION_PROHIBITION.test(bare);
+}
+
+/**
+ * True for the prohibitions of {@link isBareExecutionQuestionOrNegation} ("실행하지 마", "실행하면 안 돼", "don't run
+ * it"). While a write waits approved, the runtime withdraws that grant through the serialized revoke path (a cancel,
+ * nothing is sent); the questions ("실행해도 돼?", "실행할까?") only get the exact-phrase hint (Codex P2 on 5594c16).
+ */
+export function isBareExecutionProhibition(text: string): boolean {
+  const bare = bareExecutionForm(text);
+  return bare !== null && BARE_EXECUTION_PROHIBITION.test(bare);
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */

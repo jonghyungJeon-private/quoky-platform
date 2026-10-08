@@ -8,9 +8,9 @@
  * - **Quotes: whole reply.** A reply in which ANY line starts (after optional spaces or tabs) with `>` — a quote,
  *   including Discord's `>>>` — is returned unchanged in its entirety.
  * - **Fences: balanced or nothing (TBL-1).** Every line that contains ``` or ~~~ anywhere must be a bare fence line:
- *   at column 0, a run of three or more backticks or tildes, and no other backtick or tilde on the line. Scanning from
- *   the top, such a line opens a fence; the next marker line must be its exact closer (the same run, nothing after
- *   it but spaces) with at least one non-blank line in between. Anything else — an unclosed fence, an indented or
+ *   at column 0, a run of three or more backticks or tildes; an opener may carry an info string of printable ASCII
+ *   only, with no backtick or tilde. Scanning from the top, such a line opens a fence; the next marker line must be
+ *   its exact closer (the same run, then only ASCII spaces or tabs) with at least one non-blank line in between. Anything else — an unclosed fence, an indented or
  *   prefixed fence (`- ````, `    ````), a marker inside a line, a different marker inside an open fence, an empty
  *   fence — leaves the WHOLE reply unchanged. No parser has to agree with CommonMark or Discord on a nested case,
  *   because no nested case is converted.
@@ -41,8 +41,14 @@ type Context = 'start' | 'blank' | 'plain' | 'list';
 
 /** A fence marker anywhere in a line. */
 const FENCE_MARKER = /```|~~~/u;
-/** The only accepted fence line: column 0, a backtick or tilde run, and no other backtick or tilde on the line. */
-const BARE_FENCE_LINE = /^(`{3,}|~{3,})([^`~]*)$/u;
+/**
+ * The only accepted opener: column 0, a backtick or tilde run, then an info string of printable ASCII only (space to
+ * `~`) with no backtick or tilde. Any other character after the run (NBSP, EM SPACE, VT, FF, BOM, any non-ASCII text)
+ * makes the reply's fences unbalanced (Codex P2 on b71196d).
+ */
+const OPENER_LINE = /^(`{3,}|~{3,})([\x20-\x5f\x61-\x7d]*)$/u;
+/** The only accepted closer: the run alone, optionally followed by ASCII spaces or tabs. */
+const CLOSER_LINE = /^(`{3,}|~{3,})[ \t]*$/u;
 /** A quote line (`>`, `>>>`) anywhere in the reply makes the whole reply ineligible. */
 const QUOTE_LINE = /^[ \t]*>/mu;
 /** A line break other than `\n` / `\r\n` (a lone CR, NEL, LS, PS): a fenced reply holding one is never converted. */
@@ -78,13 +84,13 @@ function fencedLines(lines: readonly string[]): boolean[] | null {
         continue;
       }
       // Inside a fence the only marker line accepted is its exact closer.
-      const closer = BARE_FENCE_LINE.exec(line);
-      if (closer === null || closer[1] !== open.run || (closer[2] as string).trim() !== '' || !open.hasContent) return null;
+      const closer = CLOSER_LINE.exec(line);
+      if (closer === null || closer[1] !== open.run || !open.hasContent) return null;
       open = null;
       continue;
     }
     if (!marker) continue;
-    const opener = BARE_FENCE_LINE.exec(line);
+    const opener = OPENER_LINE.exec(line);
     if (opener === null) return null;
     open = { run: opener[1] as string, hasContent: false };
     fenced[i] = true;

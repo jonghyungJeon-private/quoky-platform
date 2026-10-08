@@ -49,11 +49,22 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
     ['Am I free tomorrow?', { kind: 'day', offset: 1 }, 'en'],
     ['what are my plans this weekend?', { kind: 'weekend', which: 'this' }, 'en'],
     ['When is my upcoming appointment?', { kind: 'next' }, 'en'],
-    // DET-2 sweep: the remaining-events noun ("오늘 남은 일정 있어?" was already claimed; the bare form was chat).
-    ['오늘 남은 일정', { kind: 'day', offset: 0 }, 'ko'],
-    ['내일 남은 일정 보여줘', { kind: 'day', offset: 1 }, 'ko'],
   ])('claims %s', (text, span, language) => {
     expect(parseCalendarQuestion(text)).toEqual({ kind: 'events', span, language });
+  });
+
+  it.each<[string, CalendarSpan]>([
+    // DET-2 sweep + Codex P2 on 5594c16: the remaining-events noun keeps the "not finished yet" constraint.
+    ['오늘 남은 일정', { kind: 'day', offset: 0 }],
+    ['오늘 남은 일정 있어?', { kind: 'day', offset: 0 }],
+    ['내일 남은 일정 보여줘', { kind: 'day', offset: 1 }],
+    ['이번 주 남은 회의', { kind: 'week', which: 'this' }],
+  ])('claims %s with the remaining flag', (text, span) => {
+    expect(parseCalendarQuestion(text)).toEqual({ kind: 'events', span, language: 'ko', remaining: true });
+  });
+
+  it('a plain schedule question carries no remaining flag', () => {
+    expect(parseCalendarQuestion('오늘 일정')).toEqual({ kind: 'events', span: { kind: 'day', offset: 0 }, language: 'ko' });
   });
 
   it.each([

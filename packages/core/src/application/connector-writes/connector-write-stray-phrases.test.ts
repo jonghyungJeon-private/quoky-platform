@@ -6,6 +6,7 @@ import {
   connectorWriteExecutionGate,
   connectorWriteOperationsAskedAbout,
   connectorWriteOperationsNamedLoosely,
+  isBareExecutionProhibition,
   isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
 } from './connector-write-flow';
@@ -159,4 +160,16 @@ describe('isBareExecutionQuestionOrNegation (DET-2 sweep)', () => {
       expect(isBareExecutionQuestionOrNegation(text)).toBe(false);
     },
   );
+});
+
+describe('isBareExecutionProhibition (Codex P2 on 5594c16)', () => {
+  it('only the prohibitions withdraw; questions and "no need" forms only get the hint', () => {
+    for (const text of ['실행하지 마', '실행하지 마세요', '지금 실행하지 말아 줘', '실행하면 안 돼', "don't run it", 'do not execute it']) {
+      expect(isBareExecutionProhibition(text), text).toBe(true);
+      expect(isBareExecutionQuestionOrNegation(text), text).toBe(true);
+    }
+    for (const text of ['실행해도 돼?', '실행할까?', '실행 안 해도 돼', '실행', '댓글 실행하지 마', '테스트 실행하지 마', '']) {
+      expect(isBareExecutionProhibition(text), text).toBe(false);
+    }
+  });
 });

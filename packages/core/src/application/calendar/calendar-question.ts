@@ -45,7 +45,16 @@ export type CalendarSpan =
   | { readonly kind: 'next' };
 
 export type CalendarQuestion =
-  | { readonly kind: 'events'; readonly span: CalendarSpan; readonly language: CalendarLanguage }
+  | {
+      readonly kind: 'events';
+      readonly span: CalendarSpan;
+      readonly language: CalendarLanguage;
+      /**
+       * Only events that have not finished yet ("오늘 남은 일정", "remaining events today"). Present only when true; the
+       * handler reads from now and the reply says "남은 일정 N개" (Codex P2 on 5594c16).
+       */
+      readonly remaining?: true;
+    }
   | { readonly kind: 'write-refused'; readonly language: CalendarLanguage };
 
 /** Longer messages are never schedule questions (a pasted text that mentions "일정" is not a question). */
@@ -159,8 +168,14 @@ export function parseCalendarQuestion(text: string): CalendarQuestion | null {
   const language = languageOf(message);
   if (isCalendarWriteRequest(message)) return { kind: 'write-refused', language };
   if (!(BARE_KO.test(message) || BARE_EN.test(message) || isPersonalScheduleQuestion(message))) return null;
-  return { kind: 'events', span: extractSpan(message), language };
+  const span = extractSpan(message);
+  return REMAINING.test(message) && span.kind !== 'next'
+    ? { kind: 'events', span, language, remaining: true }
+    : { kind: 'events', span, language };
 }
+
+/** "남은 일정", "남은 회의", "remaining events", "rest of the day": only events that have not finished yet. */
+const REMAINING = /남은\s*(?:일정|스케줄|캘린더|약속|미팅|회의)|\bremaining\b|\brest\s+of\s+(?:the|my)\s+day\b|\bleft\s+(?:today|on\s+my\s+calendar)\b/iu;
 
 const KO_WEEKDAY: Readonly<Record<string, number>> = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
 const EN_WEEKDAY: Readonly<Record<string, number>> = {
