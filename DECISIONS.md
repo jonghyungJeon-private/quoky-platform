@@ -17032,7 +17032,15 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   4-character code bound to the record, actor-scoped, 30 minutes; forget removes the vector and derived learning items
   first. The amendment (5f0cced, da9e219, 3b78d4b; note above) made forget an archive with restore. OPS-2 (d6a279f) added
   typed forget entries (`requestForgetConfirmation`, `confirmForget`) shared by chat and the operations UI, with chat
-  replies unchanged. W3-L01 (0996abd, 79f9baa) answers an own-memory question with no recall hit deterministically. Live:
+  replies unchanged. W3-L01 (0996abd, 79f9baa) answers an own-memory question with no recall hit deterministically.
+  Live QA D5: recall (lexical or semantic) ranks every eligible memory and never drops one, and a 0.6 semantic floor
+  (062aa53, 0d7fd34) did not help: with nomic-embed-text and the service prefixes, unrelated questions scored
+  0.74-0.78 against "내가 제일 좋아하는 과일은 샤인머스캣이야" and the true match only 0.79 (local measurement on
+  synthetic sentences). A durable entry is now a hit only when it shares a meaningful topic word with the question
+  (Korean particles and endings peeled on both sides, stop-words ignored, a generic head such as 종류/이름 counted only
+  as the sole topic, a one-syllable topic matched only as a whole word) or its raw semantic score is at least 0.9.
+  Being recalled is no longer evidence by itself (this replaces the 79f9baa rule), so a paraphrase with no shared word
+  ("나는 철수야" for "내 이름이 뭐였지?") gets the truthful not-in-memory reply unless it scores that high. Live:
   list, edit, forget, archive, restore (QA record M1-MF4, A1-A11).
 - **ADR-0107 (learning).** LRN-1 (e92bae2): v14 `learning_items`, candidate/example commands, the 👎 trend line and
   `apps/quoky/src/tools/learning-export.ts`; the strict credential guard runs on every learning and feedback excerpt

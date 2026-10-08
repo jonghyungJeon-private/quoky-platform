@@ -10,12 +10,15 @@
  *   뭐야?"), questions about the assistant, schedules / to-dos / reminders / code work (their own handlers and the
  *   QUAL-7 path), memory management (the ADR-0106 commands) or credentials.
  * - `hasOwnMemoryRecallHit` decides, from the turn's assembled context (exactly what a provider would see), whether
- *   anything that could answer the question exists. A durable recall entry is a hit when it shares a topic stem, when
- *   semantic recall scored it at or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}, or when it carries no semantic score
- *   at all (lexical-only recall cannot judge a paraphrase: "나는 철수야" for "내 이름이 뭐였지?"). Semantic recall
- *   re-ranks but never drops a candidate, so without the floor every stored memory was a "hit" (live QA D5);
- *   otherwise one of the User's own earlier turns that shares a topic stem (or, for a preference question, states any
- *   preference) is a hit. Uncertain cases keep the provider flow.
+ *   anything that could answer the question exists. A durable recall entry is a hit only when it shares a meaningful
+ *   topic word with the question (Korean particles and endings stripped on both sides, stop-words ignored, a generic
+ *   head noun such as "종류" / "이름" counted only when it is the sole topic), or when semantic recall scored it at or
+ *   above the very high {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}. Recall re-ranks but never drops a candidate (lexical or
+ *   semantic), and the default local embedding model scores unrelated short Korean facts as high as the true match
+ *   (live QA D5, session 4), so neither the presence of an entry nor an ordinary semantic score is evidence. Otherwise
+ *   one of the User's own earlier turns that shares a topic word (or, for a preference question, states any
+ *   preference) is a hit. A paraphrase with no shared word ("나는 철수야" for "내 이름이 뭐였지?") now gets the fixed
+ *   reply unless its semantic score clears the floor; that miss costs a truthful "not in memory", never an invented fact.
  * - `renderOwnMemoryNotFound` is the fixed KO/EN truthful reply the runtime sends instead of calling a provider when
  *   there is no hit (a local model used to invent a personal fact: "그땐 귤이였어요").
  */
@@ -49,13 +52,15 @@ export interface OwnMemoryRecallContext {
 }
 
 /**
- * The cosine floor (scores clamped to [0, 1]) at which a semantically scored durable entry with no shared topic stem
- * still answers an own-memory question (live QA D5). The retriever's fixtures score a match 1.0 and an unrelated
- * memory 0.0; with the default local embedding model (nomic-embed-text) a paraphrase of a short personal fact scores
- * well above 0.6 while unrelated short texts mostly fall below it. A miss only means the fixed "not in memory" reply
- * instead of a provider call, and any lexical topic match is a hit regardless of the score. Compared on the raw number.
+ * The raw semantic score (cosine clamped to [0, 1]) at which a durable entry that shares no topic word with the
+ * question still answers it. Measured with nomic-embed-text and the service's `search_query: ` / `search_document: `
+ * prefixes on synthetic sentences (live QA D5, session 4): against "내가 제일 좋아하는 과일은 샤인머스캣이야" the true
+ * match "내가 좋아하는 과일 뭐였지?" scored 0.794 while unrelated questions ("내가 좋아하는 차 종류 기억나?",
+ * "...영화가 뭐였지?", "내 생일이 언제였지?") scored 0.744–0.781, so the old 0.6 floor made every memory a hit. A score
+ * alone counts only when it is far above anything that model produced for a short fact; any shared topic word is a
+ * hit regardless of the score. Compared on the raw number.
  */
-export const OWN_MEMORY_SEMANTIC_HIT_FLOOR = 0.6;
+export const OWN_MEMORY_SEMANTIC_HIT_FLOOR = 0.9;
 
 
 const MAX_MESSAGE_CHARS = 80;
@@ -129,6 +134,8 @@ const FILLER = new Set([
   // Korean
   '거', '것', '게', '건', '내용', '얘기', '이야기', '말', '그', '그거', '혹시', '요즘',
   '제일', '가장', '젤', '특히', '진짜', '정말', '좋아하는', '싫어하는', '내', '제', '나', '저', '뭐', '무엇',
+  '내가', '제가', '나는', '저는', '나의', '저의', '우리', '기억', '기억나', '좋아해', '좋아한', '좋아했던', '싫어해',
+  '싫어한', '싫어했던', '말한', '말했던', '했던', '뭐였지', '뭐야', '뭔지', '언제', '어디', '누구',
   // English
   'the', 'a', 'an', 'my', 'of', 'to', 'about', 'that', 'this', 'it', 'was', 'is', 'again', 'favourite', 'favorite',
   'thing', 'things', 'stuff', 'what', 'i',
@@ -222,38 +229,99 @@ const RELATION_EVIDENCE: Readonly<Record<OwnMemoryRelation, RegExp>> = Object.fr
   dislike: /싫어|싫은|별로|hate|dislike/iu,
 });
 
-function mentionsTopic(question: OwnMemoryRecallQuestion, content: string): boolean {
-  const haystack = content.normalize('NFC').toLocaleLowerCase('und');
-  return question.topics.some((stem) => haystack.includes(stem));
+/**
+ * Trailing Korean particles and endings peeled off a word before comparing ("과일은" → "과일", "샤인머스캣이야" →
+ * "샤인머스캣", "음식이에요" → "음식"). Peeling stops before a stem would shrink below two characters, and both sides go
+ * through the same function, so a noun ending in one of these syllables ("고양이", "포도") still compares equal to
+ * itself with any particle attached.
+ */
+const KO_TRAILING_ENDING =
+  /(?:입니다|습니다|이에요|예요|에요|이었어|였어|이었지|였지|이었다|였다|이라고|라고|이라서|이랑|에서|에게|한테|께서|으로|하고|처럼|까지|부터|보다|인데|이고|이지|이다|이야|[이가을를은는의에도만요야로와과랑고다지])$/u;
+
+function peelEndings(word: string, minLength: number): string {
+  let current = word;
+  for (;;) {
+    const match = KO_TRAILING_ENDING.exec(current);
+    if (match === null) return current;
+    const next = current.slice(0, current.length - match[0].length);
+    if (next.length < minLength) return current;
+    current = next;
+  }
+}
+
+/** A stem's comparison base: endings peeled (keeping at least two characters), English plural/possessive dropped. */
+function baseOf(word: string): string {
+  if (/^[a-z0-9'’-]+$/u.test(word)) return word.replace(/['’]s$/u, '').replace(/(?<=[a-z]{3})e?s$/u, '');
+  return peelEndings(word, 2);
+}
+
+function wordsOf(content: string): string[] {
+  return content
+    .normalize('NFC')
+    .toLocaleLowerCase('und')
+    .split(/[^\p{L}\p{N}'’-]+/u)
+    .map((word) => word.replace(/^['’-]+|['’-]+$/gu, ''))
+    .filter((word) => word.length > 0);
+}
+
+/**
+ * Head nouns that only qualify another topic ("차 종류", "고양이 이름", "dog's name"): they count only when they are the
+ * question's sole topic ("내 이름이 뭐였지?"), so "좋아하는 과일 종류는 샤인머스캣" never answers "내가 좋아하는 차 종류
+ * 기억나?" through "종류".
+ */
+const GENERIC_HEAD = new Set(['종류', '이름', '타입', '스타일', '쪽', 'kind', 'type', 'sort', 'name']);
+
+/** The question topics that can carry a match: stop-words dropped, generic heads only when nothing else remains. */
+function meaningfulTopics(question: OwnMemoryRecallQuestion): string[] {
+  const topics = question.topics.filter((stem) => !FILLER.has(stem) && !FILLER.has(baseOf(stem)));
+  const specific = topics.filter((stem) => !GENERIC_HEAD.has(stem) && !GENERIC_HEAD.has(baseOf(stem)));
+  return specific.length > 0 ? specific : topics;
+}
+
+/**
+ * True when `content` shares a meaningful topic word with the question. A stem of two or more characters matches a
+ * content word with the same base or contains it ("과일" in "과일중에"); a one-syllable stem ("차") must be the whole
+ * content word up to a particle ("차는", "차를"), never a piece of another word ("자동차", "차가운").
+ */
+function sharesTopicWord(question: OwnMemoryRecallQuestion, content: string): boolean {
+  const words = wordsOf(content);
+  return meaningfulTopics(question).some((stem) => {
+    const base = baseOf(stem);
+    if (base.length < 2) {
+      return words.some((word) => word === stem || peelEndings(word, 1) === stem);
+    }
+    return words.some((word) => word.includes(stem) || word.includes(base) || baseOf(word) === base);
+  });
 }
 
 function mentions(question: OwnMemoryRecallQuestion, content: string): boolean {
-  if (mentionsTopic(question, content)) return true;
+  if (sharesTopicWord(question, content)) return true;
   const haystack = content.normalize('NFC').toLocaleLowerCase('und');
   return question.relation !== undefined && RELATION_EVIDENCE[question.relation].test(haystack);
 }
 
-/** A durable entry that could answer the question (see the module note: topic stem, semantic floor, or unscored). */
+/**
+ * A durable entry that could answer the question: it shares a meaningful topic word, or semantic recall scored it at or
+ * above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}. Being recalled at all is no evidence (recall never drops a candidate).
+ */
 function durableEntryAnswers(
   question: OwnMemoryRecallQuestion,
   entry: { readonly content: string; readonly retrievalMode?: 'lexical' | 'semantic'; readonly semanticScore?: number },
 ): boolean {
-  if (mentionsTopic(question, entry.content)) return true;
-  // Not semantically scored this turn (lexical-only recall, or no score): the retriever's choice stands.
-  if (entry.retrievalMode !== 'semantic') return true;
+  if (sharesTopicWord(question, entry.content)) return true;
+  if (entry.retrievalMode !== 'semantic') return false;
   const score = entry.semanticScore;
-  // A semantic entry without a usable score is no evidence (never a hit by default).
+  // A semantic entry without a usable score is no evidence.
   if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1) return false;
   return score >= OWN_MEMORY_SEMANTIC_HIT_FLOOR;
 }
 
 /**
  * True when the turn's assembled context could answer the question: an active durable recall entry (archived, expired
- * and superseded records never reach it — ADR-0106 amendment) that shares a topic stem, that semantic recall scored at
- * or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}, or that has no semantic score (lexical-only recall: relevance stays
- * the retriever's decision); or one of the User's own earlier turns of this conversation that mentions a topic stem
- * (or, for a preference question, any stated preference). So "not in memory" is replied only when no such entry and
- * no such turn exists.
+ * and superseded records never reach it — ADR-0106 amendment) that shares a meaningful topic word or that semantic
+ * recall scored at or above {@link OWN_MEMORY_SEMANTIC_HIT_FLOOR}; or one of the User's own earlier turns of this
+ * conversation that shares a topic word (or, for a preference question, states any preference). So "not in memory" is
+ * replied only when no such entry and no such turn exists.
  * Earlier own-memory questions are not evidence (asking twice must not count as having told). Assistant turns are
  * never evidence: a reply may itself have been an invented fact.
  */

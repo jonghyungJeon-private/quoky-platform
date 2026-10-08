@@ -7288,9 +7288,10 @@ export class ConversationRuntime {
           );
 
       // W3-L01 (ADR-0104 D3, ADR-0106): an own-memory recall question ("내가 좋아하는 과일이 뭐였지?") whose assembled
-      // context holds nothing relevant — no active durable recall (archived/expired/superseded records never reach the
-      // bundle) and no earlier User turn of this conversation mentioning it — is answered truthfully without a
-      // provider, which used to invent a personal fact. A hit keeps the provider flow below unchanged.
+      // context holds nothing relevant — no active durable recall sharing a topic word or scored very high
+      // semantically (archived/expired/superseded records never reach the bundle; live QA D5) and no earlier User turn
+      // of this conversation mentioning it — is answered truthfully without a provider, which used to invent a
+      // personal fact. A hit keeps the provider flow below unchanged.
       if (
         (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT) &&
         !isExternalWorkReadout(readout)
