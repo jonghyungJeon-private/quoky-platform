@@ -13,10 +13,11 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
 - **New `packages/adapter-telegram`.** `TelegramPlatformAdapter` uses Bot API long polling (`getUpdates`) to the pinned
   `https://api.telegram.org`. There is no webhook and no inbound port.
   - Offset: advanced only after an update is handed over or dropped, and confirmed on stop.
-  - Backoff: 1 s doubling to 60 s; a 429 honours `retry_after`; a 409 is a typed startup error
-    (`TELEGRAM_POLL_CONFLICT`).
-  - Startup identity check: the token's bot id and `getMe` must equal `QUOKY_TELEGRAM_EXPECTED_BOT_ID`
-    (`TELEGRAM_IDENTITY_MISMATCH`, `TELEGRAM_AUTH_REJECTED`, `TELEGRAM_IDENTITY_UNVERIFIABLE`).
+  - Backoff: 1 s doubling to 60 s; a 429 honours `retry_after`.
+  - Identity: `start()` refuses only a token that names another bot (also refused at config time) and returns at once.
+    In the background, `getMe` must equal `QUOKY_TELEGRAM_EXPECTED_BOT_ID` before anything is read or sent. A
+    mismatch, a rejected token or a 409 on the first probe (in practice a webhook) halts the Telegram side only, with
+    one Discord `OPS_NOTICE`. A transient failure is retried; `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code.
 - **Admission.** Only an owner's (`QUOKY_TELEGRAM_OWNER_IDS`) own private chat with text, at most 10 minutes old.
   Everything else gets no reply, no download and no content log; only a value-free counter per reason is kept. Every
   send and typing call is rechecked against the owner's private chat.

@@ -150,18 +150,23 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'Every QUOKY_TELEGRAM_OWNER_ACTOR_MAP target must be an id listed in QUOKY_DISCORD_OWNER_IDS (the Telegram owner is the same owner Actor as on Discord).',
 };
 
-/** ADR-0114 D4/D5: the Telegram adapter's typed startup refusals and their remediation. */
+/**
+ * ADR-0114 D4/D5: the Telegram adapter's codes and their remediation. Only `TELEGRAM_IDENTITY_MISMATCH` can still stop
+ * the start (a token that names another bot; `config.ts` refuses it first). Since the TG-1 review, `getMe`, the probe
+ * and polling run in the background: a mismatch, a rejected token, a conflict or a loop failure found there halts the
+ * Telegram side only (logged, one Discord OPS_NOTICE), and `TELEGRAM_IDENTITY_UNVERIFIABLE` is a retry log code.
+ */
 const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>> = {
   [TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED]:
     'The Telegram poll loop failed unexpectedly and stopped (Discord kept running). Report the log line, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH]:
-    'The Telegram bot (getMe) is not QUOKY_TELEGRAM_EXPECTED_BOT_ID. Check that QUOKY_TELEGRAM_BOT_TOKEN belongs to the expected bot, then restart.',
+    'QUOKY_TELEGRAM_BOT_TOKEN names, or getMe returned, another bot than QUOKY_TELEGRAM_EXPECTED_BOT_ID. Check that the token belongs to the expected bot, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE]:
-    'The Telegram bot identity could not be read (network or Bot API unavailable). The process stopped without serving; it is retried on the next start.',
+    'The Telegram bot identity could not be read yet (network or Bot API unavailable). Not a startup failure: Discord runs, and the identity is retried in the background; Telegram polling starts once getMe matches.',
   [TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED]:
-    'Telegram rejected QUOKY_TELEGRAM_BOT_TOKEN. Get the current token from BotFather (/token or /revoke), update .env.local, then restart.',
+    'Telegram rejected QUOKY_TELEGRAM_BOT_TOKEN (Telegram stopped; Discord runs on). Get the current token from BotFather (/token or /revoke), update .env.local, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT]:
-    'HTTP 409 at startup: in practice a webhook is set on this Telegram bot; remove it with the Bot API deleteWebhook method, then restart. (A second instance polling the same bot is detected while running and stops Telegram polling only.)',
+    'HTTP 409: on the first probe in practice a webhook is set on this Telegram bot (remove it with the Bot API deleteWebhook method); while polling, three 409s in five minutes mean another instance polls the same bot. Telegram stopped; Discord runs on. Fix the cause, then restart.',
 };
 
 /**

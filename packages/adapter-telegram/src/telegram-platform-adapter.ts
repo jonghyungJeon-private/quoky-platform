@@ -27,13 +27,16 @@ import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramCont
  * cross into Core.
  *
  * - **No inbound port** (D4): long polling with `getUpdates` only; no webhook, no listener.
- * - **Identity first** (D5): `start()` checks the token's bot id and `getMe` against the expected bot id, then probes
- *   for a second poller (HTTP 409), and only then starts polling. A mismatch fails closed before any update is read.
+ * - **Identity first** (D5): `start()` refuses a token that names another bot and returns at once. In the background,
+ *   `getMe` must match the expected bot id and a non-confirming probe must not get HTTP 409 (in practice a webhook)
+ *   before polling starts; a mismatch, a rejected token or a 409 there halts the Telegram side only (`onHalt`), and a
+ *   transient failure is retried. Nothing is read, and nothing is sent, before `getMe` matched.
  * - **Admission** (D2): `admission.ts`. A dropped update is only counted; it gets no reply, no download, no log line.
  * - **Offset** (D4): advanced past an update only after it was handed to the runtime (or dropped), so nothing is
  *   reprocessed and nothing is skipped; `stop()` confirms the last offset so a restart does not see it again.
+ * - **Conflicts** (D4): three 409s within five minutes while polling (a second instance) halt the Telegram side.
  * - **Delivery** (D7): plain text, lossless 4096 chunks, typing through `sendChatAction`, sends only to an owner's
- *   private chat.
+ *   private chat, and only while verified and not halted.
  */
 
 export interface TelegramAdapterConfig {
@@ -69,13 +72,16 @@ export interface TelegramAdapterOptions {
 }
 
 export const TelegramStartupErrorCode = {
-  /** The token's bot id or `getMe` is not `QUOKY_TELEGRAM_EXPECTED_BOT_ID` (or `getMe` is not a bot). */
+  /**
+   * The token's bot id (thrown by `start()`) or `getMe` (a background halt) is not `QUOKY_TELEGRAM_EXPECTED_BOT_ID`, or
+   * `getMe` is not a bot.
+   */
   TELEGRAM_IDENTITY_MISMATCH: 'TELEGRAM_IDENTITY_MISMATCH',
-  /** `getMe` could not be completed (network, timeout, malformed answer): retried in the background, never thrown. */
+  /** `getMe` could not be completed (network, timeout, malformed answer): a log code; retried, never thrown or halted. */
   TELEGRAM_IDENTITY_UNVERIFIABLE: 'TELEGRAM_IDENTITY_UNVERIFIABLE',
-  /** Telegram rejected the token (HTTP 401/404). */
+  /** Telegram rejected the token (HTTP 401/404), at the identity check or while polling: a halt. */
   TELEGRAM_AUTH_REJECTED: 'TELEGRAM_AUTH_REJECTED',
-  /** HTTP 409 on the startup probe: another poller or a webhook holds this bot. */
+  /** HTTP 409 on the identity probe (in practice a webhook), or three 409s in five minutes while polling: a halt. */
   TELEGRAM_POLL_CONFLICT: 'TELEGRAM_POLL_CONFLICT',
   /** The poll loop failed unexpectedly (a defect): the Telegram side stopped, never the process (halt code only). */
   TELEGRAM_POLL_LOOP_FAILED: 'TELEGRAM_POLL_LOOP_FAILED',

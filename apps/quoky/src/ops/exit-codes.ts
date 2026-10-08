@@ -31,8 +31,11 @@ const CONFIGURATION_FAILURES: ReadonlySet<string> = new Set<string>([
   BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED,
   InstanceLockErrorCode.INSTANCE_ALREADY_RUNNING,
   StartupIdentityErrorCode.DISCORD_IDENTITY_MISMATCH,
-  // ADR-0114 D4/D5: a wrong or rejected Telegram bot, or a second poller/webhook, needs the owner; an unverifiable
-  // identity (network) exits FAILURE and is retried.
+  // ADR-0114 D4/D5: only TELEGRAM_IDENTITY_MISMATCH (a token naming another bot) can still stop the start. getMe, the
+  // probe and polling run in the background since the TG-1 review: a mismatch, a rejected token or a conflict found
+  // there halts the Telegram side only (one OPS_NOTICE) and never reaches this exit path. The codes stay listed as
+  // configuration failures should one ever surface here. TELEGRAM_IDENTITY_UNVERIFIABLE is a retry log code, not a
+  // startup failure.
   TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH,
   TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED,
   TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT,
