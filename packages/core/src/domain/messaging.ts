@@ -138,6 +138,14 @@ export interface PreviewArtifact {
   attachmentFilename: string;
 }
 
+/**
+ * How an adapter may present `OutboundMessage.text` (opt-in, ADR-0111 amendment of 2026-10-08). `model-reply`: the text
+ * is a provider-generated answer (chat, summary, analysis, image reading), so an adapter MAY adapt its Markdown to the
+ * platform (e.g. tables a platform cannot render). Absent: the text is delivered exactly as given — every
+ * deterministic reply, preview, approval text, connector-write preview, diff and reminder.
+ */
+export type OutboundMessageFormat = 'model-reply';
+
 /** A normalized outbound message the PlatformAdapter renders natively. */
 export interface OutboundMessage {
   context: ConversationContext;
@@ -150,4 +158,6 @@ export interface OutboundMessage {
    *  preview-aware adapter delivers the FULL diff losslessly (multipart or attachment) instead of the
    *  bounded `text`. Preview-unaware adapters fall back to `text`. */
   preview?: PreviewArtifact;
+  /** Set ONLY by the runtime on a provider-generated answer it delivers unchanged; see {@link OutboundMessageFormat}. */
+  format?: OutboundMessageFormat;
 }

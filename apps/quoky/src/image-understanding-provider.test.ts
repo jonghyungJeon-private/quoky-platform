@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ClaudeCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
+import { ClaudeCliVisionProvider, CodexCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
 import { Capability, executionLocalityOf } from '@quoky/core';
 import type { LogFields, Logger } from '@quoky/core';
 import { ImageUnderstandingConfigErrorCode, parseImageUnderstandingConfig } from './config';
@@ -66,6 +66,23 @@ describe('image understanding composition (ADR-0111 D4/D5 + amendment A1/A2)', (
     expect(describeImageUnderstandingSelection(config)).toEqual({ selection: 'claude', locality: 'REMOTE' });
     expect(infos).toEqual([
       { message: 'image understanding uses a cloud provider', fields: { selection: 'claude', locality: 'REMOTE' } },
+    ]);
+  });
+
+  it('codex registers exactly one REMOTE Codex vision provider (QUOKY_CODEX_MODEL) and opens the policy to REMOTE', () => {
+    const config = parseImageUnderstandingConfig({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'codex' });
+    expect(config).toEqual({ provider: 'codex' });
+    const { logger, infos } = recordingLogger();
+    const providers = createImageUnderstandingProviders(config, { ...BINS, codexBin: '/usr/local/bin/codex', codexModel: 'gpt-5.5', logger });
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toBeInstanceOf(CodexCliVisionProvider);
+    expect(providers[0]?.capabilities.map((c) => c.capability)).toEqual([Capability.IMAGE_UNDERSTANDING]);
+    expect(executionLocalityOf(providers[0]!)).toBe('REMOTE');
+    expect((providers[0] as CodexCliVisionProvider).buildArgs()).toEqual(expect.arrayContaining(['-m', 'gpt-5.5']));
+    expect(imageUnderstandingLocalitiesFor(config)).toEqual(['LOCAL', 'REMOTE']);
+    expect(describeImageUnderstandingSelection(config)).toEqual({ selection: 'codex', locality: 'REMOTE' });
+    expect(infos).toEqual([
+      { message: 'image understanding uses a cloud provider', fields: { selection: 'codex', locality: 'REMOTE' } },
     ]);
   });
 

@@ -98,6 +98,16 @@ const SOURCE_TEXT: Readonly<Record<'chat' | 'image', Readonly<Record<SelectionSo
 
 /** The one-line warning shown with the cloud image option (ADR-0111 amendment: images leave the host). */
 export const OPS_CLOUD_IMAGE_WARNING = '이 선택은 첨부 이미지를 이 컴퓨터 밖(Anthropic)으로 보내요.';
+/** The same warning for the Codex image option (ADR-0111 amendment of 2026-10-08: images go to OpenAI). */
+export const OPS_CODEX_IMAGE_WARNING = '이 선택은 첨부 이미지를 이 컴퓨터 밖(OpenAI)으로 보내요.';
+
+/** The egress warning for a cloud image option, by where its bytes go; none for a local or `off` option. */
+function cloudImageWarning(option: Pick<SelectionOption, 'tier' | 'egress'>): string | undefined {
+  if (option.tier !== 'image') return undefined;
+  if (option.egress === 'ANTHROPIC') return OPS_CLOUD_IMAGE_WARNING;
+  if (option.egress === 'OPENAI') return OPS_CODEX_IMAGE_WARNING;
+  return undefined;
+}
 
 function readinessText(ready: boolean | undefined): string {
   return ready === true ? '준비됨' : ready === false ? '준비 안 됨' : '';
@@ -125,7 +135,9 @@ export function providerDefaultNoticeText(tier: 'chat' | 'image', label: string,
   const tail =
     tier === 'image' && label === 'claude'
       ? ' 이제 첨부 이미지가 Anthropic으로 전송돼요.'
-      : ' 채팅에서 따로 바꾸지 않은 대화에 바로 적용돼요.';
+      : tier === 'image' && label === 'codex'
+        ? ' 이제 첨부 이미지가 OpenAI로 전송돼요.'
+        : ' 채팅에서 따로 바꾸지 않은 대화에 바로 적용돼요.';
   return `${head}${tail}`;
 }
 
@@ -143,14 +155,17 @@ export class OpsProviderSelectionActions {
         service.sessionOverrideCount().catch(() => undefined),
       ]);
       const persisted = service.persistedDefault();
-      const view = (option: SelectionOption): OpsProviderOptionView => ({
-        subject: `${option.tier}:${option.token}`,
-        label: guardText(option.token),
-        readiness: readinessText(option.ready),
-        egress: egressText(option),
-        current: option.current,
-        ...(option.tier === 'image' && option.token === 'claude' ? { warning: OPS_CLOUD_IMAGE_WARNING } : {}),
-      });
+      const view = (option: SelectionOption): OpsProviderOptionView => {
+        const warning = cloudImageWarning(option);
+        return {
+          subject: `${option.tier}:${option.token}`,
+          label: guardText(option.token),
+          readiness: readinessText(option.ready),
+          egress: egressText(option),
+          current: option.current,
+          ...(warning !== undefined ? { warning } : {}),
+        };
+      };
       const chat: OpsProviderTierView = {
         effective: guardText(status.defaults.chat.label),
         source: SOURCE_TEXT.chat[status.defaults.chat.source],

@@ -62,7 +62,7 @@ export interface OpsProviderReadinessSource {
  * composition-root configuration fact — not a routing result and not a provider id. Never a model name.
  */
 export interface OpsImageUnderstandingSelection {
-  readonly selection: 'ollama' | 'claude' | 'off';
+  readonly selection: 'ollama' | 'claude' | 'codex' | 'off';
   readonly locality: 'LOCAL' | 'REMOTE' | 'NONE';
 }
 
@@ -172,6 +172,7 @@ async function panel(id: string, title: string, build: () => Promise<PanelBody>)
 function imageSelectionLabel(image: OpsImageUnderstandingSelection | undefined): string {
   if (image === undefined) return OPS_UNKNOWN;
   if (image.selection === 'claude') return 'claude (클라우드: 첨부 이미지가 Anthropic으로 전송돼요)';
+  if (image.selection === 'codex') return 'codex (클라우드: 첨부 이미지가 OpenAI로 전송돼요)';
   if (image.selection === 'ollama') return 'ollama (로컬: 이미지가 이 컴퓨터를 떠나지 않아요)';
   return 'off (이미지 분석 사용 안 함)';
 }

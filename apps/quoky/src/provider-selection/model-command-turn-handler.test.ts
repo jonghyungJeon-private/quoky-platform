@@ -110,7 +110,8 @@ describe('모델 상태 / 모델 목록', () => {
       '6. ollama:granite3.3:8b · 준비됨 · 로컬',
       '이미지:',
       '7. 이미지 claude · 준비됨 · 클라우드(Anthropic) · 현재',
-      '8. 이미지 off · 사용 안 함',
+      '8. 이미지 codex · 준비됨 · 클라우드(OpenAI)',
+      '9. 이미지 off · 사용 안 함',
       '바꾸려면 "모델 변경: 2" 또는 "/model codex"처럼 보내 주세요. 이 대화에서만 적용돼요 (기본값은 운영 화면에서).',
     ]);
     expect(replyText(await say(session, '/model'))).toBe(reply);
@@ -165,7 +166,10 @@ describe('모델 변경 (session only)', () => {
     const session = await f.openSession();
     await say(session, '모델 목록');
     expect(replyText(await say(session, '이미지 모델 변경: 2'))).toBe(MODEL_SELECTION_COPY.numberIsChat);
-    expect(replyText(await say(session, '모델 변경: 8'))).toContain('이 대화의 이미지 모델을 off로 바꿨어요.');
+    expect(replyText(await say(session, '모델 변경: 9'))).toContain('이 대화의 이미지 모델을 off로 바꿨어요.');
+    expect(replyText(await say(session, '모델 변경: 8'))).toContain('이 대화의 이미지 모델을 codex로 바꿨어요.');
+    expect(overrideOf(f, session.id)).toMatchObject({ image: 'codex' });
+    await say(session, '이미지 모델 변경: off');
     expect(overrideOf(f, session.id)).toMatchObject({ image: 'off' });
   });
 
@@ -185,7 +189,8 @@ describe('모델 변경 (session only)', () => {
     ['/model ollama:mistral', '로컬 Ollama에 그 모델이 없어요.'],
     ['모델 변경: claude opus', '모델 명령은 이렇게 써요'],
     ['/model a b c', '모델 명령은 이렇게 써요'],
-    ['이미지 모델 변경: gpt', '이미지 모델은 claude, ollama, off 중에서'],
+    ['이미지 모델 변경: gpt', '이미지 모델은 claude, codex, ollama, off 중에서'],
+    ['이미지 모델 변경: codex:gpt-5', '이미지 모델은 claude, codex, ollama, off 중에서'],
     ['이미지 모델 변경: ollama', 'QUOKY_OLLAMA_VISION_MODEL이 필요해요'],
   ])('refuses %s truthfully and changes nothing', async (text, expected) => {
     const { f, say } = harness();
@@ -217,6 +222,31 @@ describe('모델 변경 (session only)', () => {
     expect(await f.service.imageLocalities({ sessionId: session.id, actorId: ACTOR })).toEqual(['LOCAL']);
     expect(replyText(await say(session, '이미지 모델 변경: off'))).toContain('이 대화에서는 이미지를 분석하지 않아요.');
     expect(overrideOf(f, session.id)).toMatchObject({ image: 'off' });
+  });
+
+  it('image override codex (ADR-0111 amendment 2026-10-08): warns that images go to OpenAI and opens REMOTE for this conversation only', async () => {
+    const { f, say } = harness({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' });
+    const session = await f.openSession();
+    const ctx = { sessionId: session.id, actorId: ACTOR };
+    expect(replyText(await say(session, '이미지 모델 변경: codex'))).toBe(
+      '이 대화의 이미지 모델을 codex로 바꿨어요. 이 대화에서만 적용돼요 (기본값은 운영 화면에서). 이미지가 OpenAI로 전송돼요.',
+    );
+    expect(overrideOf(f, session.id)).toMatchObject({ image: 'codex' });
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL', 'REMOTE']);
+    expect(await f.service.imageLocalities({})).toEqual(['LOCAL']);
+    expect(replyText(await say(session, '모델 상태'))).toContain(
+      '- 이미지: codex · 출처: 이 대화에서 변경 · 준비됨 · 클라우드(이미지가 OpenAI로 전송돼요)',
+    );
+    expect(replyText(await say(session, '/model image ollama'))).toContain('이미지는 이 컴퓨터를 떠나지 않아요.');
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL']);
+    expect(f.executed).toEqual([]);
+  });
+
+  it('image override codex is refused when the Codex CLI is not on this host', async () => {
+    const { f, say } = harness({ QUOKY_CHAT_PROVIDER: 'claude' }, []);
+    const session = await f.openSession();
+    expect(replyText(await say(session, '이미지 모델 변경: codex'))).toContain('codex는 Codex CLI');
+    expect(overrideOf(f, session.id)).toBeUndefined();
   });
 });
 

@@ -106,7 +106,8 @@ describe('session overrides are keyed by (Session, Actor)', () => {
     expect(await f.service.imageLocalities(a)).toEqual(['LOCAL', 'REMOTE']);
     expect(await f.service.imageLocalities(b)).toEqual({
       allowedLocalities: [],
-      switchedOff: { scope: 'SESSION', choices: ['claude'], resetRestores: true },
+      // Codex is on PATH here, so its image option is registered and offered as a way back on too.
+      switchedOff: { scope: 'SESSION', choices: ['claude', 'codex'], resetRestores: true },
     });
     // B's reset clears only B.
     expect((await f.service.resetSession(b, 'all', { surface: 'chat', actor: 'actor-b' })).status).toBe('CLEARED');
@@ -262,6 +263,59 @@ describe('image understanding: eligibility and the Core locality policy follow t
     await expect(f.router.select(Capability.IMAGE_UNDERSTANDING)).rejects.toBeInstanceOf(NoProviderAvailableError);
   });
 
+  it('codex (ADR-0111 amendment 2026-10-08) is treated like claude: REMOTE only while it is the effective image choice', async () => {
+    const f = selectionFixture({
+      env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'codex', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' },
+    });
+    const session = await f.openSession();
+    const ctx = scope(session);
+    expect(await f.service.effectiveImage(ctx)).toMatchObject({ choice: 'codex', source: 'env' });
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL', 'REMOTE']);
+    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, ctx)).id).toBe('codex-vision-cli');
+    // Only the effective image provider is eligible: Claude's vision instance never answers while codex is chosen.
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'codex-vision-cli')).toBe(true);
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'claude-vision-cli')).toBe(false);
+    // The Codex image provider never becomes a chat-tier or pinned candidate.
+    expect((await f.service.preferenceFor(Capability.GENERAL_CHAT, ctx))?.eligible).not.toContain('codex-vision-cli');
+    expect((await f.service.preferenceFor(Capability.CODE_REVIEW, ctx))?.eligible).not.toContain('codex-vision-cli');
+
+    // Switching to the local model closes REMOTE on the very next image turn; codex is no longer eligible.
+    await f.service.setSessionImage(ctx, 'ollama', OWNER_CHAT);
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL']);
+    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, ctx)).id).toBe('ollama-vision-cli');
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, ctx, 'codex-vision-cli')).toBe(false);
+
+    await f.service.setSessionImage(ctx, 'off', OWNER_CHAT);
+    expect(await f.service.imageLocalities(ctx)).toEqual({
+      allowedLocalities: [],
+      switchedOff: { scope: 'SESSION', choices: ['claude', 'codex', 'ollama'], resetRestores: true },
+    });
+    await expect(f.router.select(Capability.IMAGE_UNDERSTANDING, ctx)).rejects.toBeInstanceOf(NoProviderAvailableError);
+
+    // Back to codex in this conversation: REMOTE opens again, for this (Session, Actor) only.
+    await f.service.setSessionImage(ctx, 'codex', OWNER_CHAT);
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL', 'REMOTE']);
+    f.service.setDefaultImage('ollama', OPS);
+    expect(await f.service.imageLocalities({})).toEqual(['LOCAL']);
+    expect(await f.service.imageLocalities(ctx)).toEqual(['LOCAL', 'REMOTE']);
+  });
+
+  it('codex as the operations-UI default opens REMOTE for every conversation without an override; claude chosen there keeps codex ineligible', async () => {
+    const f = selectionFixture({ env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' }, present: ['codex'] });
+    expect(f.service.validateImageToken('codex')).toEqual({ ok: true, choice: 'codex' });
+    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, {})).id).toBe('claude-vision-cli');
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, {}, 'codex-vision-cli')).toBe(false);
+    f.service.setDefaultImage('codex', OPS);
+    expect(await f.service.imageLocalities({})).toEqual(['LOCAL', 'REMOTE']);
+    expect((await f.router.select(Capability.IMAGE_UNDERSTANDING, {})).id).toBe('codex-vision-cli');
+    expect(f.service.isEligible(Capability.IMAGE_UNDERSTANDING, {}, 'claude-vision-cli')).toBe(false);
+  });
+
+  it('codex cannot be chosen for images when its CLI is absent and nothing configures it', () => {
+    const f = selectionFixture({ env: { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' } });
+    expect(f.service.validateImageToken('codex')).toEqual({ ok: false, refusal: 'IMAGE_OPTION_UNAVAILABLE' });
+  });
+
   it('ollama cannot be chosen for images without a configured local vision model', () => {
     const f = selectionFixture();
     expect(f.service.validateImageToken('ollama')).toEqual({ ok: false, refusal: 'IMAGE_OPTION_UNAVAILABLE' });
@@ -303,6 +357,7 @@ describe('dispatch-time eligibility (synchronous, live selection)', () => {
 
   it.each([
     ['claude', { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' }, 'claude-vision-cli'],
+    ['codex', { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'codex' }, 'codex-vision-cli'],
     ['ollama', { QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'ollama', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' }, 'ollama-vision-cli'],
   ] as const)('write fence (%s): an `off` committed to storage but not yet returned to the setter is never dispatched past', async (_label, env, visionId) => {
     const f = selectionFixture({ env });
@@ -441,10 +496,11 @@ describe('options and status', () => {
       ['chat', 'ollama:llama3.1', true, 'LOCAL', false],
       ['chat', 'ollama:granite3.3:8b', true, 'LOCAL', false],
       ['image', 'claude', true, 'ANTHROPIC', true],
+      ['image', 'codex', true, 'OPENAI', false],
       ['image', 'off', undefined, 'NONE', false],
     ]);
     // Listing never instantiated anything on demand and never executed a provider.
-    expect(f.catalog.providers.map((p) => p.id)).toEqual(['claude-cli', 'ollama-cli', 'codex-cli', 'claude-vision-cli']);
+    expect(f.catalog.providers.map((p) => p.id)).toEqual(['claude-cli', 'ollama-cli', 'codex-cli', 'claude-vision-cli', 'codex-vision-cli']);
     expect(f.executed).toEqual([]);
   });
 

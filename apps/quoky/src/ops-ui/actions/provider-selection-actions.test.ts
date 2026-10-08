@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { NotificationSinkOutcome, OwnerNotification } from '@quoky/core';
 import { selectionFixture, TEST_OWNER } from '../../provider-selection/test-support';
-import { OPS_CLOUD_IMAGE_WARNING, OpsProviderSelectionActions, providerDefaultNoticeText } from './provider-selection-actions';
+import {
+  OPS_CLOUD_IMAGE_WARNING,
+  OPS_CODEX_IMAGE_WARNING,
+  OpsProviderSelectionActions,
+  providerDefaultNoticeText,
+} from './provider-selection-actions';
 import type { OpsOwnerResolution } from '../snapshot/build-snapshot';
 
 const ACTOR = 'actor-owner';
@@ -57,6 +62,7 @@ describe('OpsProviderSelectionActions.page', () => {
     expect(page.image).toMatchObject({ effective: 'off', source: '설정 QUOKY_IMAGE_UNDERSTANDING_PROVIDER' });
     expect(page.image.options.map((o) => [o.subject, o.current, o.warning])).toEqual([
       ['image:claude', false, OPS_CLOUD_IMAGE_WARNING],
+      ['image:codex', false, OPS_CODEX_IMAGE_WARNING],
       ['image:ollama', false, undefined],
       ['image:off', true, undefined],
     ]);
@@ -118,7 +124,7 @@ describe('OpsProviderSelectionActions.setDefault', () => {
     // QUOKY_IMAGE_UNDERSTANDING_PROVIDER=off is an explicit default `off`: no locality at all, with the way back on.
     expect(await f.service.imageLocalities({})).toEqual({
       allowedLocalities: [],
-      switchedOff: { scope: 'DEFAULT', choices: ['claude', 'ollama'], resetRestores: false },
+      switchedOff: { scope: 'DEFAULT', choices: ['claude', 'codex', 'ollama'], resetRestores: false },
     });
     expect((await ops.setDefault('image:claude')).code).toBe('DEFAULT_SET');
     expect(await f.service.imageLocalities({})).toEqual(['LOCAL', 'REMOTE']);
@@ -129,6 +135,20 @@ describe('OpsProviderSelectionActions.setDefault', () => {
     expect(reset.message).toContain('이미지 모델 기본값을 설정값(off)으로 되돌렸어요.');
     expect(await f.service.imageLocalities({})).toMatchObject({ allowedLocalities: [] });
     expect(f.store.get().image).toBeUndefined();
+  });
+
+  it('image: choosing codex opens REMOTE at once and says images go to OpenAI; ollama closes it again', async () => {
+    const { ops, f, delivered } = actions();
+    expect((await ops.setDefault('image:codex')).code).toBe('DEFAULT_SET');
+    expect(f.store.get().image).toBe('codex');
+    expect(await f.service.imageLocalities({})).toEqual(['LOCAL', 'REMOTE']);
+    expect((await f.router.select('IMAGE_UNDERSTANDING' as never)).id).toBe('codex-vision-cli');
+    expect(delivered.at(-1)?.text).toBe(
+      '[Quoky 운영 화면] 운영 화면에서 이미지 모델을 codex로 바꿨어요. 이제 첨부 이미지가 OpenAI로 전송돼요.',
+    );
+    expect((await ops.setDefault('image:ollama')).code).toBe('DEFAULT_SET');
+    expect(await f.service.imageLocalities({})).toEqual(['LOCAL']);
+    expect(f.service.isEligible('IMAGE_UNDERSTANDING' as never, {}, 'codex-vision-cli')).toBe(false);
   });
 
   it('chat reset returns to the env selection', async () => {
@@ -143,7 +163,8 @@ describe('OpsProviderSelectionActions.setDefault', () => {
     ['chat:gpt', 'INVALID_OPTION'],
     ['chat:claude:claude-3-opus', 'INVALID_OPTION'],
     ['chat:ollama:mistral', 'OLLAMA_MODEL_NOT_FOUND'],
-    ['image:codex', 'INVALID_OPTION'],
+    ['image:gpt', 'INVALID_OPTION'],
+    ['image:codex:gpt-5', 'INVALID_OPTION'],
     ['other:codex', 'INVALID_OPTION'],
     ['', 'INVALID_OPTION'],
   ])('validates %s again at execution (%s) and changes nothing', async (subject, code) => {
@@ -164,6 +185,7 @@ describe('OpsProviderSelectionActions.setDefault', () => {
   it('a provider that cannot run here is refused', async () => {
     const { ops } = actions({ present: [] });
     expect(await ops.setDefault('chat:codex')).toMatchObject({ code: 'PROVIDER_NOT_ON_HOST', ok: false });
+    expect(await ops.setDefault('image:codex')).toMatchObject({ code: 'IMAGE_OPTION_UNAVAILABLE', ok: false });
   });
 
   it('a failed DM notice does not undo the change and is reported by category', async () => {

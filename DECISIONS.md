@@ -17308,3 +17308,120 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      but compatibility with live Discord JPEG/WebP uploads is not yet proven — the live check covers PNG and JPEG.
   5. **No outbound rewriting.** A Markdown-table-to-bullets conversion was tried and removed (Codex P1 on df66418): it
      altered exact-payload connector-write previews; Discord replies are delivered byte-identical.
+
+### ADR-0111 amendment — Codex as an image-understanding option (2026-10-08)
+
+- **Status:** Accepted — **Product Owner request of 2026-10-08** (the `[LATER]` "Codex image option" of the ADR-0092
+  amendment of 2026-10-07, after the image-provider selector landed). Amends ADR-0111 amendment A1 (selector values), A2
+  and the runtime-switching amendment D3 (which cloud choices open `REMOTE`), A5/D4 (display). A3, A4 and A6 are
+  unchanged. Independent Architecture Review of the implementation is required before merge (new adapter class).
+- **Decision:**
+  1. **Selector.** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `claude` | `codex` | `ollama` | `off` (exact; anything else is
+     still `IMAGE_UNDERSTANDING_PROVIDER_INVALID`). `codex` carries no model of its own: it uses the chat tier's
+     `QUOKY_CODEX_MODEL`, else the CLI default (`QUOKY_IMAGE_UNDERSTANDING_MODEL` stays Claude-only). The runtime choice
+     vocabulary gains the image token `codex` (`이미지 모델 변경: codex`, `/model image codex`, operations UI `/providers`
+     option `image:codex`). No per-choice Codex model.
+  2. **Registration.** The composition root registers `CodexCliVisionProvider` (`codex-vision-cli`) when the `codex` CLI
+     is on `PATH` (filesystem lookup, no spawn), or when `codex` is the configured or persisted image choice (then an
+     absent or logged-out CLI shows as not ready). Construction spawns nothing; readiness is `codex login status` (the
+     chat probe), run only while it is eligible.
+  3. **Locality policy (amends A2 / runtime D3).** `codex` is treated exactly like `claude`: the resolver answers
+     `['LOCAL', 'REMOTE']` only while the EFFECTIVE image choice is a cloud one (`IMAGE_CHOICE_LOCALITY` = `REMOTE`, data
+     in the composition root), else `['LOCAL']`, and an explicit `off` still allows nothing. Only the effective image
+     provider is eligible, so while `claude` is chosen the Codex vision instance never receives an image and vice versa.
+     The dispatch-time re-check, the synchronous `isEligible` check and the write fence of the runtime-switching amendment
+     apply unchanged (tested with `codex`). Core still checks declared locality, never an id.
+  4. **Adapter (`packages/ai-cli`, owner of the CLI shape).** A separate provider instance advertising ONLY
+     `IMAGE_UNDERSTANDING` and declaring `REMOTE`; the chat `CodexCliProvider` still refuses images. It runs `codex exec`
+     with the chat provider's isolation verbatim (shared `buildCodexExecArgs`: `--json --color never
+     --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --sandbox read-only`, the same `-c` overrides,
+     the same `--disable` list including `view_image`, `model_reasoning_effort="low"`, optional `-m`, trailing `-`) and
+     the same fail-closed event-stream acceptance (shared `acceptCodexRun`: allow-listed events and items, exactly one
+     turn, any action item refuses the run). Each image is re-read from the #143 canonical intake file (absolute path,
+     `O_NOFOLLOW`, regular non-empty file ≤ 8 MiB checked on the open descriptor, content signature), and written as a
+     private copy (`O_EXCL | O_NOFOLLOW`, 0600) into a fresh empty temp cwd (`mkdtemp`, 0700) — the only directory the CLI
+     is pointed at — and passed as `--image <copy>` (one pair per image, first in argv, each followed by a flag because
+     `--image` is multi-valued; a comma in the path is refused because the CLI splits on commas). The prompt (an adapter
+     framing line plus the generic rendered prompt) goes on stdin. The cwd is removed in `finally` by
+     `removeCodexCallDirectory`, which never throws (Codex review P2 on 76e0028: an unguarded `rmSync` error carried the
+     path into the TaskRun summary): a failure logs the value-free `CODEX_CWD_CLEANUP_FAILED` (provider label and errno
+     class only), schedules ONE retry after 5 s on an unref'd timer (a failed retry logs `CODEX_CWD_CLEANUP_RETRY_FAILED`
+     and leaves the directory to the OS temp cleanup — the cwd is under the OS temp directory, not the attachment
+     intake's private root, so the intake sweep does not cover it), and the call's own outcome stands. The chat Codex
+     provider uses the same helper. A runner error is reported as the fixed `codex vision CLI could not run`. Failure messages are
+     fixed reasons with bounded codes (timeout, exit code, violation codes), never CLI output (#140 P2 rule); the reply
+     has any image or cwd path scrubbed to `<image>`. The audit holds counts and hashes only (model label, image count,
+     total bytes, SHA-256 per image, prompt / provider input / reply hashes, event counts, token usage) and the argv with
+     every image path replaced by `<image>`. Limits: PNG / JPEG / WebP, 1–3 images, 120 s.
+  5. **Credential withholding.** The ADR-0111 D3 / A3 reply check runs on every image turn in Core, before any other
+     guard, whichever provider answered — unchanged and applicable to `codex`; the caption guard (A4) runs before egress.
+  6. **Display.** `모델 상태` / `모델 목록` and the operations UI say "이미지가 OpenAI로 전송돼요" for `codex`; the
+     `/providers` option carries "이 선택은 첨부 이미지를 이 컴퓨터 밖(OpenAI)으로 보내요."; the owner DM for a default change
+     says "이제 첨부 이미지가 OpenAI로 전송돼요."; the configured-selection field shows `codex (클라우드: …OpenAI…)`.
+- **Live verification (2026-10-08, owner-authorized, codex-cli 0.160.0, synthetic bar chart without personal data).** Two
+  real calls: (1) the raw argv in an empty temp cwd: exit 0, 6.7 s, events `thread.started`, one non-fatal `error` item
+  (code mode disabled), `turn.started`, one `agent_message`, `turn.completed` (8,337 input / 30 output tokens), reply
+  "four bars: red, green, blue, and orange … The orange bar is the tallest."; (2) through `CodexCliVisionProvider`:
+  ready, 5.8 s, a correct Korean description (4 bars, colours, heights ≈ 1.3 / 3.1 / 2.2 / 4 grid units against a true
+  1.32 / 3.08 / 2.2 / 3.96, orange tallest), `actionItemCount` 0, `<image>` in the audit argv, no temp path in it;
+  `~/.codex/sessions` count and `history.jsonl` size unchanged and no `quoky-codex-vision-*` directory left behind.
+- **Consequences:** + the owner can read images with the same vendor as Codex chat, switchable per conversation or as
+  the default. − With `codex` selected, image bytes go to OpenAI under the owner's ChatGPT plan (accepted, as for chat);
+  Codex's built-in agent prompt adds ~8k input tokens per image turn.
+- **Residuals:** the same as `claude` (a secret visible in an image cannot be detected before sending); the image copy
+  path appears in the child's argv for the call's lifetime (a per-call random temp path, never the intake path) — the
+  Claude adapter's "no path in argv" property is not available because the Codex CLI reads images only from files; the
+  CLI is an agent without a "no tools" switch, so the residual containment of the chat amendment (read-only sandbox,
+  disabled tools, empty cwd, fail-closed stream) applies; Codex's own image size limits may refuse an image under 8 MiB
+  (normal error reply).
+- **Strict gates:** selecting `codex` on the owner host (`.env.local` or a live switch) and a live image session with it.
+
+### ADR-0111 amendment — Discord table rendering only for flagged model replies (2026-10-08)
+
+- **Status:** Accepted — **Product Owner request of 2026-10-08**. Replaces Live QA follow-up 5 of the runtime-switching
+  amendment ("No outbound rewriting"): rendering returns, but only behind an explicit opt-in. Adds one optional field to
+  the Core domain type `OutboundMessage`; no port, dependency or `ConversationRuntimeDeps` change (baseline 35).
+  Independent Architecture Review of the implementation is required before merge.
+- **Context:** Discord shows a Markdown table as raw `| a | b |` text. The first conversion (df66418) ran on every
+  outbound text and toggled its "inside code" state on any line starting with three backticks, so it rewrote the
+  payload of an exact-payload CRITICAL connector-write preview (which wraps the payload in a longer fence) — Codex P1;
+  it was removed in 9a39152.
+- **Decision:**
+  1. **Opt-in flag.** `OutboundMessage.format?: 'model-reply'` (`OutboundMessageFormat`). Absent — the default — means the
+     text is delivered exactly as given. Core sets it in exactly one place, `ConversationRuntime.asModelReply`, used where
+     the runtime sends a provider's answer: the conversational fast path, the work turn (direct provider and the routed
+     seam: chat, summaries including connector work summaries, document analysis, project analysis) and the image turn.
+     The guard OUTCOMES decide first (Codex review P3 on 08454fb): a reply withheld by the attachment credential check
+     (ADR-0111 D3 / A3) or replaced by the internal-action claim guard (ADR-0104 D1) is never flagged, even when the
+     provider's text equals the fixed notice; only an unguarded reply whose final composed text equals the provider's
+     (trimmed, non-empty) text is flagged. Every deterministic reply — previews, approval texts, connector-write previews and reminders, diffs,
+     model-command replies, listings, errors — is never flagged (asserted for every deterministic turn of the v3
+     acceptance suite). Two deterministic additions keep the flag of the model reply they wrap: the work-summary source
+     footer (`출처:` / `- <title> <url>` lines) and the approval-expiry notice prefix; neither contains table or fence
+     syntax, so the renderer leaves them byte-identical.
+  2. **Discord rendering (adapter-owned).** `DiscordPlatformAdapter.sendMessage` applies `renderMarkdownTablesForDiscord`
+     only when `format === 'model-reply'`; preview delivery and owner notifications are separate paths and untouched.
+     Other adapters ignore the flag.
+  3. **Whole-reply eligibility — no fence or quote at all** (the simplest provably safe rule, adopted after the Codex
+     re-review P2 on 2be8ccc: tracking fences nested in list items and quotes still let prefixed fence-like lines such as
+     `- ```` or `> ```` inside an ordinary block falsely close it). A reply in which ANY line contains ``` or ~~~ anywhere,
+     or ANY line starts (after optional spaces or tabs) with `>` — including Discord's `>>>` — is delivered unchanged in
+     its entirety. No fence is parsed, so content inside code can never be converted. Within an eligible reply, a list
+     item line, its lazy continuations and any indented line never start a table; a list ends only at a blank line
+     followed by an unindented non-list line.
+  4. **Simple tables only.** At column 0, at the start of the text or after a blank or plain paragraph line: a header row
+     and a delimiter row (`|:-:|`) with the same cell count (1–8), then ≥ 1 data row with exactly that count; every row at
+     column 0, starting and ending with an unescaped `|`; `\|` is a literal pipe. Output: a bold header line
+     (`**h1 · h2**`, omitted when all header cells are empty) and `- h1: v1, h2: v2` per row (empty cells skipped, an
+     all-empty row dropped), keeping the line ending. Anything else — cell-count mismatch, no
+     data row, no delimiter, rows without outer pipes, a pipe inside inline code, wider tables — is left exactly as is.
+- **Tests:** the earlier Codex P1 repro (a connector-write preview whose payload holds backtick, tilde and indented
+  fences and tables) is delivered byte-identical without the flag, and the renderer would leave it unchanged too (the
+  reply contains fence markers); every Codex review repro (nested, tilde, list-item, quote and `>>>` fences; prefixed
+  fence-like lines inside an ordinary block; a 4-space-indented fence) is unchanged; a plain reply with a table is
+  converted; a reply with a fence anywhere, before or after a table, or any quote line is untouched; list continuations;
+  indented tables; malformed tables; CRLF; the runtime flags only provider-own, unguarded replies (including a provider that returns the
+  exact withholding notice with a credential artifact).
+- **Residuals:** any reply with a code fence, a `~~~`/```` ``` ```` run or a quote keeps all its tables raw (cosmetic,
+  fail safe); GFM tables without outer pipes, with ragged rows, indented, inside list items or directly after a list line
+  stay raw; HTML blocks are not parsed.

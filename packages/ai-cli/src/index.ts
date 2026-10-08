@@ -59,13 +59,24 @@ export type { ClaudeCliVisionProviderOptions, ClaudeStreamJsonOutcome } from './
 export {
   CODEX_CHAT_CAPABILITIES,
   CODEX_CHAT_PRIORITY,
+  CODEX_CWD_CLEANUP_RETRY_MS,
   CodexCliProvider,
   DEFAULT_CODEX_TIMEOUT_MS,
   classifyCodexFailure,
+  removeCodexCallDirectory,
   isValidCodexModelName,
   parseCodexJsonEvents,
 } from './codex-cli-provider';
-export type { CodexCliProviderOptions } from './codex-cli-provider';
+export type { CodexCliProviderOptions, CodexCwdCleanup, CodexCwdCleanupCode } from './codex-cli-provider';
+export {
+  CODEX_VISION_CWD_PREFIX,
+  CODEX_VISION_EFFORT,
+  CODEX_VISION_PREAMBLE,
+  CodexCliVisionProvider,
+  DEFAULT_CODEX_VISION_TIMEOUT_MS,
+} from './codex-vision-provider';
+export type { CodexCliVisionProviderOptions } from './codex-vision-provider';
+export { MAX_VISION_IMAGES, MAX_VISION_IMAGE_BYTES } from './vision-image-file';
 export {
   MAX_LISTED_OLLAMA_MODELS,
   OLLAMA_EMBEDDING_NAME_PATTERN,

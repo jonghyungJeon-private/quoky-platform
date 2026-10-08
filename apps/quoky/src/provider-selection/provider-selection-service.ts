@@ -18,11 +18,13 @@ import {
   CHAT_TIER_CAPABILITIES,
   CLAUDE_MODEL_ALIASES,
   CLAUDE_PINNED_CAPABILITIES,
-  IMAGE_CHOICE_LOCALITY,
+  IMAGE_CHOICES,
+  IMAGE_CHOICE_EGRESS,
   chatChoiceFromData,
   chatChoiceIsCloud,
   chatChoiceToData,
   imageChoiceFromData,
+  imageChoiceIsCloud,
   parseChatChoiceToken,
   parseImageChoiceToken,
 } from './selection-choices';
@@ -47,7 +49,7 @@ import type { PersistedProviderSelection, ProviderSelectionStore } from './selec
  *
  * **Policy.** Chat tier: the effective choice's provider first, Claude next (selection-time fallback when the chosen
  * one is not ready). Image understanding: only the effective image provider (none for `off`), and the Core image
- * locality policy allows `REMOTE` only while the effective image choice is `claude`. Code, review, planning, project
+ * locality policy allows `REMOTE` only while the effective image choice is a cloud one (`claude` or `codex`). Code, review, planning, project
  * analysis, tests and policy-sensitive chat are INDEPENDENT of every runtime selection (session override and
  * operations-UI default alike): Claude, plus — exactly as before runtime switching — the configured Ollama chat model as
  * the CAP-009 local code fallback only when the INSTALLATION configuration selects Ollama (`QUOKY_CHAT_PROVIDER` /
@@ -97,7 +99,7 @@ export interface EffectiveImageSelection {
 
 export interface SelectionOption {
   readonly tier: 'chat' | 'image';
-  /** The canonical choice token (`claude:opus`, `codex`, `ollama:granite3.3:8b`; image `claude`, `ollama`, `off`). */
+  /** The canonical choice token (`claude:opus`, `codex`, `ollama:granite3.3:8b`; image `claude`, `codex`, `ollama`, `off`). */
   readonly token: string;
   /** `undefined` when readiness could not be determined. */
   readonly ready: boolean | undefined;
@@ -282,7 +284,8 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   /**
    * ADR-0111 amendment (runtime switching): the Core image locality policy for this request. `REMOTE` is allowed only
-   * while the EFFECTIVE image choice is `claude`; switching to `ollama` or `off` stops cloud egress on the next turn.
+   * while the EFFECTIVE image choice is a cloud one (`claude`, or `codex` since the 2026-10-08 amendment); switching to
+   * `ollama` or `off` stops cloud egress on the next turn.
    * An effective `off` allows no locality at all and carries where it was switched off and how to turn it back on.
    */
   async imageLocalities(
@@ -295,14 +298,16 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         // follow-up): Core answers "image analysis is off here, turn it on with …" instead of "no reader is ready". A
         // derived `off` (nothing configured) keeps the ADR-0111 "not available" notice and never suggests a cloud option.
         if (image.source === 'default') return ['LOCAL'];
-        const choices = (['claude', 'ollama'] as const).filter((choice) => this.deps.catalog.resolveImage(choice) !== undefined);
+        const choices = IMAGE_CHOICES.filter(
+          (choice) => choice !== 'off' && this.deps.catalog.resolveImage(choice) !== undefined,
+        );
         const scope = image.source === 'session' ? 'SESSION' : 'DEFAULT';
         return {
           allowedLocalities: [],
           switchedOff: { scope, choices, resetRestores: scope === 'SESSION' && this.globalImage().choice !== 'off' },
         };
       }
-      return image.choice === 'claude' && image.provider !== null ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
+      return imageChoiceIsCloud(image.choice) && image.provider !== null ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
     } catch {
       return ['LOCAL'];
     }
@@ -607,14 +612,14 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         });
       }
     }
-    for (const choice of ['claude', 'ollama', 'off'] as const) {
+    for (const choice of IMAGE_CHOICES) {
       const provider = catalog.resolveImage(choice);
       if (provider === undefined) continue;
       options.push({
         tier: 'image',
         token: choice,
         ready: provider === null ? undefined : await this.ready(provider),
-        egress: IMAGE_CHOICE_LOCALITY[choice] === 'REMOTE' ? 'ANTHROPIC' : IMAGE_CHOICE_LOCALITY[choice] === 'LOCAL' ? 'LOCAL' : 'NONE',
+        egress: IMAGE_CHOICE_EGRESS[choice],
         current: image.choice === choice,
       });
     }

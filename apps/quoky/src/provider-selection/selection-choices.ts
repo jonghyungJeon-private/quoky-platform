@@ -9,7 +9,8 @@ import { Capability } from '@quoky/core';
  * - **Chat tier** (`GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`): `claude` (optionally one of
  *   the {@link CLAUDE_MODEL_ALIASES}), `codex` (the configured `QUOKY_CODEX_MODEL` or the CLI default; no per-choice
  *   model), or `ollama` (optionally a model from the local `ollama list`).
- * - **Image understanding**: `claude` (cloud), `ollama` (the configured local vision model) or `off`.
+ * - **Image understanding**: `claude` (cloud, Anthropic), `codex` (cloud, OpenAI), `ollama` (the configured local vision
+ *   model) or `off`.
  * - **Never switched** ({@link CLAUDE_PINNED_CAPABILITIES}): code, review, planning, project analysis, tests and
  *   policy-sensitive chat stay on Claude exactly as the ADR-0092 amendment says.
  */
@@ -37,7 +38,7 @@ export type ClaudeModelAlias = (typeof CLAUDE_MODEL_ALIASES)[number];
 export const CHAT_PROVIDER_NAMES = ['claude', 'codex', 'ollama'] as const;
 export type ChatProviderName = (typeof CHAT_PROVIDER_NAMES)[number];
 
-export const IMAGE_CHOICES = ['claude', 'ollama', 'off'] as const;
+export const IMAGE_CHOICES = ['claude', 'codex', 'ollama', 'off'] as const;
 export type ImageChoice = (typeof IMAGE_CHOICES)[number];
 
 /**
@@ -115,9 +116,23 @@ export function chatChoiceToData(choice: ChatChoice): { provider: ChatProviderNa
 
 export const IMAGE_CHOICE_LOCALITY: Readonly<Record<ImageChoice, 'LOCAL' | 'REMOTE' | 'NONE'>> = {
   claude: 'REMOTE',
+  codex: 'REMOTE',
   ollama: 'LOCAL',
   off: 'NONE',
 };
+
+/** Where image bytes go under each choice (the egress note in replies and the operations UI). */
+export const IMAGE_CHOICE_EGRESS: Readonly<Record<ImageChoice, 'LOCAL' | 'ANTHROPIC' | 'OPENAI' | 'NONE'>> = {
+  claude: 'ANTHROPIC',
+  codex: 'OPENAI',
+  ollama: 'LOCAL',
+  off: 'NONE',
+};
+
+/** Whether the image choice sends image bytes off this host (the locality policy allows `REMOTE` only then). */
+export function imageChoiceIsCloud(choice: ImageChoice): boolean {
+  return IMAGE_CHOICE_LOCALITY[choice] === 'REMOTE';
+}
 
 /** Whether the choice sends content off this host (the egress note in replies and the operations UI). */
 export function chatChoiceIsCloud(choice: ChatChoice): boolean {

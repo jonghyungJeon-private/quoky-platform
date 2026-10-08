@@ -1,6 +1,7 @@
-import { ClaudeCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
+import { ClaudeCliVisionProvider, CodexCliVisionProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
 import type { AiExecutionLocality, AiProvider, Logger } from '@quoky/core';
 import type { ImageUnderstandingConfig, ImageUnderstandingOptions } from './config';
+import { imageChoiceIsCloud } from './provider-selection/selection-choices';
 import type { ImageChoice } from './provider-selection/selection-choices';
 
 /**
@@ -17,12 +18,14 @@ import type { ImageChoice } from './provider-selection/selection-choices';
  *   Registration is independent of `QUOKY_OLLAMA_ENABLED` (that flag registers the chat model only).
  * - `claude`: the Claude CLI vision provider (`REMOTE`) on the chat CLI binary (`CLAUDE_CLI_BIN`); the policy then
  *   also allows `REMOTE` — the owner's explicit cloud opt-in.
+ * - `codex`: the Codex CLI vision provider (`REMOTE`, OpenAI) on the chat Codex binary (`CODEX_CLI_BIN`) with the chat
+ *   tier's `QUOKY_CODEX_MODEL`; like `claude`, the policy allows `REMOTE` only while it is the effective selection.
  * - `off`: nothing; the policy stays local-only.
  */
 
 /** The localities Core may send image bytes to for this selection (ADR-0111 amendment A2). */
 export function imageUnderstandingLocalitiesFor(config: ImageUnderstandingConfig): readonly AiExecutionLocality[] {
-  return config.provider === 'claude' ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
+  return imageChoiceIsCloud(config.provider) ? ['LOCAL', 'REMOTE'] : ['LOCAL'];
 }
 
 /** A short, value-free description of the selection for the operations UI and startup logs (never a model name). */
@@ -30,14 +33,14 @@ export function describeImageUnderstandingSelection(config: ImageUnderstandingCo
   readonly selection: ImageUnderstandingConfig['provider'];
   readonly locality: AiExecutionLocality | 'NONE';
 } {
-  if (config.provider === 'claude') return { selection: 'claude', locality: 'REMOTE' };
+  if (config.provider === 'claude' || config.provider === 'codex') return { selection: config.provider, locality: 'REMOTE' };
   if (config.provider === 'ollama') return { selection: 'ollama', locality: 'LOCAL' };
   return { selection: 'off', locality: 'NONE' };
 }
 
 export function createImageUnderstandingProviders(
   config: ImageUnderstandingConfig,
-  options: { ollamaBin: string; claudeBin: string; logger: Logger },
+  options: { ollamaBin: string; claudeBin: string; codexBin?: string; codexModel?: string; logger: Logger },
 ): AiProvider[] {
   switch (config.provider) {
     case 'ollama':
@@ -45,6 +48,14 @@ export function createImageUnderstandingProviders(
     case 'claude':
       options.logger.info('image understanding uses a cloud provider', { selection: 'claude', locality: 'REMOTE' });
       return [new ClaudeCliVisionProvider({ bin: options.claudeBin, model: config.model })];
+    case 'codex':
+      options.logger.info('image understanding uses a cloud provider', { selection: 'codex', locality: 'REMOTE' });
+      return [
+        new CodexCliVisionProvider({
+          bin: options.codexBin ?? 'codex',
+          ...(options.codexModel !== undefined ? { model: options.codexModel } : {}),
+        }),
+      ];
     case 'off':
       if (config.invalid) options.logger.warn('image understanding not registered', { reason: config.invalid });
       return [];
@@ -58,12 +69,18 @@ export function createImageUnderstandingProviders(
 export function visionModelsOf(config: {
   readonly imageUnderstanding: ImageUnderstandingConfig;
   readonly imageUnderstandingOptions?: ImageUnderstandingOptions;
-}): { claudeModel?: string; ollamaModel?: string } {
+}): { claudeModel?: string; ollamaModel?: string; codexSelected?: true } {
   const selected = config.imageUnderstanding;
   const options = config.imageUnderstandingOptions;
   const claudeModel = selected.provider === 'claude' ? selected.model : options?.claudeModel;
   const ollamaModel = selected.provider === 'ollama' ? selected.model : options?.ollamaModel;
-  return { ...(claudeModel !== undefined ? { claudeModel } : {}), ...(ollamaModel !== undefined ? { ollamaModel } : {}) };
+  return {
+    ...(claudeModel !== undefined ? { claudeModel } : {}),
+    ...(ollamaModel !== undefined ? { ollamaModel } : {}),
+    // The Codex image option needs no model of its own (QUOKY_CODEX_MODEL); configured, it is registered even when the
+    // CLI is missing, so the owner sees it "not ready" instead of silently losing the selection.
+    ...(selected.provider === 'codex' ? { codexSelected: true as const } : {}),
+  };
 }
 
 /** The installation-configured image selection and whether it was set explicitly (`env`) or derived (`default`). */
@@ -79,8 +96,8 @@ export function envImageSelectionOf(config: {
 
 /** The composition-time image log lines (the cloud selection and an unusable legacy model), value-free. */
 export function logImageUnderstandingSelection(config: ImageUnderstandingConfig, logger: Pick<Logger, 'info' | 'warn'>): void {
-  if (config.provider === 'claude') {
-    logger.info('image understanding uses a cloud provider', { selection: 'claude', locality: 'REMOTE' });
+  if (config.provider === 'claude' || config.provider === 'codex') {
+    logger.info('image understanding uses a cloud provider', { selection: config.provider, locality: 'REMOTE' });
   } else if (config.provider === 'off' && config.invalid) {
     logger.warn('image understanding not registered', { reason: config.invalid });
   }

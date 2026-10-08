@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,12 +18,14 @@ import {
   CODEX_CHAT_CAPABILITIES,
   CODEX_CHAT_PREAMBLE,
   CODEX_CONFIG_OVERRIDES,
+  CODEX_CWD_CLEANUP_RETRY_MS,
   CODEX_CWD_PREFIX,
   CODEX_DISABLED_FEATURES,
   CODEX_PROBE_TIMEOUT_MS,
   CodexCliProvider,
   classifyCodexFailure,
   parseCodexJsonEvents,
+  removeCodexCallDirectory,
 } from './codex-cli-provider';
 import { ClaudeCliProvider } from './index';
 import { createContainedCliRunner } from './cli-runner';
@@ -536,5 +538,40 @@ describe('CodexCliProvider — routing by priority (no provider-id branching)', 
     });
     const router = new CapabilityRouter(new AiProviderManager([claude, codex], { availabilityTtlMs: 0 }));
     expect((await router.select(Capability.GENERAL_CHAT)).id).toBe('claude-cli');
+  });
+});
+
+describe('CodexCliProvider — temp directory cleanup never escapes (Codex review P2 on 76e0028)', () => {
+  it('an EACCES on removal keeps the answered reply, logs a path-free code and schedules one retry', async () => {
+    const warnings: unknown[] = [];
+    const retries: number[] = [];
+    let removed = '';
+    const codex = new CodexCliProvider('codex', {
+      runner: async () => ok(answered('답이에요.')),
+      cleanup: {
+        logger: { warn: (_message, fields) => { warnings.push(fields); } },
+        remove: (path) => {
+          removed = path;
+          throw Object.assign(new Error(`EACCES: permission denied, rmdir '${path}'`), { code: 'EACCES' });
+        },
+        scheduleRetry: (_retry, delayMs) => { retries.push(delayMs); },
+      },
+    });
+    const result = await codex.execute({ capability: Capability.GENERAL_CHAT, prompt: PROMPT });
+    expect(result.text).toBe('답이에요.');
+    expect(warnings).toEqual([{ code: 'CODEX_CWD_CLEANUP_FAILED', provider: 'codex-chat', errno: 'EACCES' }]);
+    expect(retries).toEqual([CODEX_CWD_CLEANUP_RETRY_MS]);
+    expect(JSON.stringify(warnings)).not.toContain(removed);
+    rmSync(removed, { recursive: true, force: true });
+  });
+
+  it('removeCodexCallDirectory swallows logger and scheduler failures too', () => {
+    expect(() =>
+      removeCodexCallDirectory('/nonexistent/quoky-codex-x', 'codex-chat', {
+        logger: { warn: () => { throw new Error('logger down'); } },
+        remove: () => { throw new Error('nope'); },
+        scheduleRetry: () => { throw new Error('no timers'); },
+      }),
+    ).not.toThrow();
   });
 });

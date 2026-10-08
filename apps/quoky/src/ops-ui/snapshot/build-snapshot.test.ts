@@ -284,6 +284,8 @@ describe('OPS-1 snapshot panels (ADR-0113 D6)', () => {
     expect(field(view, 'providers', '이미지 이해 공급자 (설정)')).toBe('claude (클라우드: 첨부 이미지가 Anthropic으로 전송돼요)');
     const local = await new OpsSnapshotBuilder({ ...fixture(), imageUnderstanding: { selection: 'ollama', locality: 'LOCAL' } }).build();
     expect(field(local, 'providers', '이미지 이해 공급자 (설정)')).toBe('ollama (로컬: 이미지가 이 컴퓨터를 떠나지 않아요)');
+    const codex = await new OpsSnapshotBuilder({ ...fixture(), imageUnderstanding: { selection: 'codex', locality: 'REMOTE' } }).build();
+    expect(field(codex, 'providers', '이미지 이해 공급자 (설정)')).toBe('codex (클라우드: 첨부 이미지가 OpenAI로 전송돼요)');
     const off = await new OpsSnapshotBuilder({ ...fixture(), imageUnderstanding: { selection: 'off', locality: 'NONE' } }).build();
     expect(field(off, 'providers', '이미지 이해 공급자 (설정)')).toBe('off (이미지 분석 사용 안 함)');
     const { imageUnderstanding: _omitted, ...withoutSelection } = fixture();
