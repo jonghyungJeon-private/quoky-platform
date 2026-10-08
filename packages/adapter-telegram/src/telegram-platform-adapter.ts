@@ -206,6 +206,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private polling = false;
   /** Why the Telegram side stopped on its own (identity, token or conflict found while running); Discord runs on. */
   private halted?: TelegramStartupErrorCode;
+  private haltListener?: (code: TelegramStartupErrorCode) => void;
   /** CA P3-4: the owner notices already sent in this poll session (at most one per kind). */
   private readonly noticesSent = new Set<`${string}:${'stale' | 'no-text'}`>();
   /** When the last non-empty batch arrived (or polling started), for the 24 h silence reset. */
@@ -335,10 +336,24 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     return 'verified';
   }
 
-  /** Stop the Telegram side only (never the process): logged and exposed in `status().halted`. */
+  /**
+   * Stop the Telegram side only (never the process): logged, exposed in `status().halted`, and reported ONCE to the
+   * {@link onHalt} listener (the composition root sends one owner operations notice on Discord).
+   */
   private halt(code: TelegramStartupErrorCode): void {
+    if (this.halted !== undefined) return;
     this.halted = code;
     this.logger.error('telegram stopped', { code });
+    try {
+      this.haltListener?.(code);
+    } catch {
+      this.logger.warn('telegram halt listener failed', { code });
+    }
+  }
+
+  /** Adapter-local (not part of `PlatformAdapter`): called once per halt with its code (CA re-review P3-3). */
+  onHalt(listener: (code: TelegramStartupErrorCode) => void): void {
+    this.haltListener = listener;
   }
 
   async stop(): Promise<void> {

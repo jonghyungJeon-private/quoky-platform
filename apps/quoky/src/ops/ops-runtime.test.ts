@@ -96,6 +96,29 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     await ops.stop();
   });
 
+  it('ADR-0114 (CA re-review P3-3): a Telegram halt sends one fixed OPS_NOTICE to the Discord owner DM, no content', async () => {
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    ops.notifyTelegramHalt('TELEGRAM_POLL_CONFLICT');
+    ops.notifyTelegramHalt('TELEGRAM_IDENTITY_UNVERIFIABLE'); // not a halt: nothing
+    ops.notifyTelegramHalt('SOMETHING_ELSE');
+    await settle();
+    expect(sink.delivered).toHaveLength(1);
+    expect(sink.delivered[0]).toMatchObject({
+      kind: 'BRIEF',
+      target: { platform: 'discord', userId: OWNER, channelId: '' },
+      text: OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT,
+    });
+    expect(OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT).toContain('Telegram 연결을 멈췄어요: TELEGRAM_POLL_CONFLICT.');
+    expect(OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT).toContain('같은 봇 토큰을 쓰는 다른 실행');
+    for (const code of ['TELEGRAM_AUTH_REJECTED', 'TELEGRAM_IDENTITY_MISMATCH', 'TELEGRAM_POLL_LOOP_FAILED'] as const) {
+      expect(OPS_NOTICE_TEXT[code]).toContain(`Telegram 연결을 멈췄어요: ${code}.`);
+      expect(OPS_NOTICE_TEXT[code].length).toBeLessThan(1800);
+    }
+    // The ledger keeps the reason, so the OPS_NOTICE daily bound (3 per 24 h) also covers Telegram halts.
+    expect(ledgerContent).toContain('TELEGRAM_POLL_CONFLICT');
+    await ops.stop();
+  });
+
   it('no notice for a normal start, nor outside the launcher', async () => {
     runtime({ launcher: 'launchd', recentStarts: 2 }, { QUOKY_BACKUP_ENABLED: 'false' }).start();
     runtime({ recentStarts: 0 }).start();

@@ -41,6 +41,7 @@ import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
 import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
+import { onTelegramHalt } from './platform/platform-composition';
 
 // ADR-0113 D6: composition-root errors also feed the OPS-1 recent-error ring (codes only, in memory).
 const log = recordOpsUiErrors(new ConsoleLogger('quoky'), 'quoky');
@@ -105,6 +106,10 @@ async function bootstrap(): Promise<void> {
     // ADR-0106 amendment D2: expired memory-archive entries are deleted at start and daily, independent of backups.
     memoryArchivePurge: (now) => memoryCommands.purgeExpiredArchive(now),
   });
+
+  // ADR-0114 (TG-1): a Telegram halt (conflict, rejected token, identity mismatch) sends one OPS_NOTICE to the Discord
+  // owner; Discord itself runs on.
+  onTelegramHalt(platform, (code) => ops.notifyTelegramHalt(code));
 
   logResolvedDatabasePath(config.storage.dbPath, log);
   // ADR-0115 implementation note: a REMOTE provider outside the effective selection (a configured but unselected HTTP

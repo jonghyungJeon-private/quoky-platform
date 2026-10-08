@@ -36,7 +36,18 @@ import type { IsoTimestamp, Logger, NotificationSink, NotificationSinkOutcome } 
  * - It is not a scheduler and decides nothing; a delivery failure is logged (status only) and never retried.
  */
 
-export type OpsNoticeReason = 'CRASH_LOOP' | 'BACKUP_FAILED';
+export type OpsNoticeReason =
+  | 'CRASH_LOOP'
+  | 'BACKUP_FAILED'
+  // ADR-0114 (TG-1, CA re-review P3-3): the Telegram side halted on its own while Discord runs on. The value is the
+  // adapter's halt code; one notice per halt.
+  | 'TELEGRAM_POLL_CONFLICT'
+  | 'TELEGRAM_AUTH_REJECTED'
+  | 'TELEGRAM_IDENTITY_MISMATCH'
+  | 'TELEGRAM_POLL_LOOP_FAILED';
+
+const TELEGRAM_HALTED = (code: string, line: string): string =>
+  `[Quoky 운영 알림] Telegram 연결을 멈췄어요: ${code}. ${line} Discord는 계속 동작합니다. 자세한 내용은 Quoky 로그(quoky.log)에서 확인해 주세요.`;
 
 export const OPS_NOTICE_TEXT: Readonly<Record<OpsNoticeReason, string>> = {
   CRASH_LOOP:
@@ -45,7 +56,33 @@ export const OPS_NOTICE_TEXT: Readonly<Record<OpsNoticeReason, string>> = {
   BACKUP_FAILED:
     '[Quoky 운영 알림] 데이터 백업이 실패했거나 검증되지 않았습니다. Quoky는 계속 실행 중입니다. ' +
     '원인은 Quoky 로그(quoky.log)에서 확인해 주세요.',
+  TELEGRAM_POLL_CONFLICT: TELEGRAM_HALTED(
+    'TELEGRAM_POLL_CONFLICT',
+    '같은 봇 토큰을 쓰는 다른 실행이 있는지(또는 봇에 웹훅이 걸려 있는지) 확인한 뒤 재시작해 주세요.',
+  ),
+  TELEGRAM_AUTH_REJECTED: TELEGRAM_HALTED(
+    'TELEGRAM_AUTH_REJECTED',
+    'Telegram이 봇 토큰을 거부했어요. BotFather에서 토큰을 확인해 .env.local을 고친 뒤 재시작해 주세요.',
+  ),
+  TELEGRAM_IDENTITY_MISMATCH: TELEGRAM_HALTED(
+    'TELEGRAM_IDENTITY_MISMATCH',
+    '연결된 봇이 QUOKY_TELEGRAM_EXPECTED_BOT_ID와 달라요. 토큰과 봇 ID를 확인한 뒤 재시작해 주세요.',
+  ),
+  TELEGRAM_POLL_LOOP_FAILED: TELEGRAM_HALTED('TELEGRAM_POLL_LOOP_FAILED', '예상하지 못한 오류로 Telegram 받기가 멈췄어요. 재시작해 주세요.'),
 };
+
+/** The Telegram halt codes that have an `OPS_NOTICE` (the adapter's `TelegramStartupErrorCode` values). */
+export function telegramHaltNoticeReason(code: string): OpsNoticeReason | undefined {
+  switch (code) {
+    case 'TELEGRAM_POLL_CONFLICT':
+    case 'TELEGRAM_AUTH_REJECTED':
+    case 'TELEGRAM_IDENTITY_MISMATCH':
+    case 'TELEGRAM_POLL_LOOP_FAILED':
+      return code;
+    default:
+      return undefined;
+  }
+}
 
 export const OPS_NOTICE_LIMITS = {
   maxPerWindow: 3,
@@ -181,7 +218,7 @@ export interface OpsNoticeDeps {
   readonly clock?: () => IsoTimestamp;
 }
 
-const KNOWN_REASONS: ReadonlySet<string> = new Set<OpsNoticeReason>(['CRASH_LOOP', 'BACKUP_FAILED']);
+const KNOWN_REASONS: ReadonlySet<string> = new Set<string>(Object.keys(OPS_NOTICE_TEXT));
 
 function parseLedger(content: string | undefined): LedgerEntry[] {
   if (content === undefined) return [];

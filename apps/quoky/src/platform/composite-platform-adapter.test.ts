@@ -13,7 +13,7 @@ import { TelegramBotToken, TelegramPlatformAdapter } from '@quoky/adapter-telegr
 import { platformNotificationSink } from '../features/reminders.providers';
 import { applyInboundGate, verifyStartupIdentity } from '../ops/startup-identity-check';
 import { CompositePlatformAdapter } from './composite-platform-adapter';
-import { composePlatformAdapter, telegramOwnerIdentityLinks } from './platform-composition';
+import { composePlatformAdapter, onTelegramHalt, telegramOwnerIdentityLinks } from './platform-composition';
 import type { TelegramConfig } from '../telegram/telegram-config';
 
 const silent: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -188,6 +188,8 @@ describe('composePlatformAdapter (ADR-0114 D13): Telegram off leaves Discord exa
 
   it('with no Telegram config the bound adapter IS the Discord adapter (no composite, nothing Telegram constructed)', () => {
     expect(composePlatformAdapter(discord, undefined, { logger: () => silent, dbPath: ':memory:' })).toBe(discord);
+    // No Telegram, no halt wiring.
+    expect(onTelegramHalt(discord, () => undefined)).toBe(false);
     expect(telegramOwnerIdentityLinks(undefined)).toEqual([]);
   });
 
@@ -204,6 +206,7 @@ describe('composePlatformAdapter (ADR-0114 D13): Telegram off leaves Discord exa
     expect(bound).toBeInstanceOf(CompositePlatformAdapter);
     expect((bound as CompositePlatformAdapter).platforms).toEqual(['discord', 'telegram']);
     expect(bound.platform).toBe('discord+telegram');
+    expect(onTelegramHalt(bound, () => undefined)).toBe(true);
     expect(telegramOwnerIdentityLinks(telegram)).toEqual([
       { identity: { platform: 'telegram', externalId: '5550001' }, owner: { platform: 'discord', externalId: '111111111111111111' } },
     ]);

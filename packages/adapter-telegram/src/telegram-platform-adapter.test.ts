@@ -420,6 +420,17 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     }
   });
 
+  it('CA re-review P3-3: each halt reaches the onHalt listener exactly once, with its code', async () => {
+    const fake = new FakeTelegram().queue('getUpdates', errorReply(409), errorReply(409), errorReply(409));
+    const h = harness(fake);
+    const halts: string[] = [];
+    h.adapter.onHalt((code) => void halts.push(code));
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    await h.adapter.stop();
+    expect(halts).toEqual([TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT]);
+  });
+
   it('CA P3-5: a token rejected while polling stops the Telegram side and shows it in status', async () => {
     const fake = new FakeTelegram().queue('getUpdates', okReply([]), errorReply(401));
     const h = harness(fake);

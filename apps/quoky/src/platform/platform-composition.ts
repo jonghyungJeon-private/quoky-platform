@@ -1,4 +1,5 @@
 import { TELEGRAM_PLATFORM, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
+import type { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import type { TelegramAdapterOptions } from '@quoky/adapter-telegram';
 import type { Logger, PlatformAdapter } from '@quoky/core';
 import type { PlatformIdentityLink } from '../actor-identity-provisioner';
@@ -39,4 +40,15 @@ export function telegramOwnerIdentityLinks(telegram: TelegramConfig | undefined)
     identity: { platform: TELEGRAM_PLATFORM, externalId: link.telegramId },
     owner: { platform: 'discord', externalId: link.discordOwnerId },
   }));
+}
+
+/**
+ * ADR-0114 (TG-1, CA re-review P3-3): route each Telegram halt (conflict, rejected token, identity mismatch, loop
+ * failure) to `listener` once, so the owner hears about it on Discord. `false` when Telegram is not composed.
+ */
+export function onTelegramHalt(platform: PlatformAdapter, listener: (code: TelegramStartupErrorCode) => void): boolean {
+  const telegram = platform instanceof CompositePlatformAdapter ? platform.adapterFor(TELEGRAM_PLATFORM) : undefined;
+  if (!(telegram instanceof TelegramPlatformAdapter)) return false;
+  telegram.onHalt(listener);
+  return true;
 }
