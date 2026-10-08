@@ -1,7 +1,7 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { conversationRefOf, messageContent, outboundMessage, untrustedText } from '@quoky/core';
-import type { InboundMessage, LogFields, Logger } from '@quoky/core';
+import type { InboundMessage, LogFields, Logger, OwnerNotification } from '@quoky/core';
 import { TelegramBotToken } from './bot-token';
 import { TELEGRAM_MESSAGE_LIMIT } from './delivery';
 import { TelegramPlatformAdapter, TelegramStartupError, TelegramStartupErrorCode } from './telegram-platform-adapter';
@@ -570,6 +570,88 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
     const file = doc?.form?.get('document') as File;
     expect(file.name).toBe('big.diff');
     expect(await file.text()).toBe(diff);
+  });
+});
+
+describe('Telegram owner notification sink (ADR-0101 D4, ADR-0114 D11; CA P1-1)', () => {
+  const target = { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID), direct: true };
+  const notification = (overrides: Partial<OwnerNotification> = {}): OwnerNotification => ({
+    correlationId: 'r-1',
+    target,
+    kind: 'TEXT',
+    text: '알림 #1: 스트레칭',
+    ...overrides,
+  });
+
+  async function started(fake = new FakeTelegram()) {
+    const h = harness(fake);
+    await h.adapter.start();
+    return h;
+  }
+
+  it('sends exactly one plain sendMessage to the owner private chat and reports SENT via dm', async () => {
+    const h = await started();
+    await expect(h.adapter.deliver(notification())).resolves.toEqual({ status: 'SENT', via: 'dm' });
+    expect(h.fake.callsTo('sendMessage').map((call) => call.params)).toEqual([
+      { chat_id: String(OWNER_ID), text: '알림 #1: 스트레칭', link_preview_options: { is_disabled: true } },
+    ]);
+    expect(h.logs.find((line) => line.message === 'owner notification delivery')?.fields).toMatchObject({ status: 'SENT', kind: 'TEXT' });
+    await h.adapter.stop();
+  });
+
+  it('renders neutral content with the Telegram markup', async () => {
+    const h = await started();
+    const content = messageContent('알림: ', untrustedText('<b>회의</b> @everyone'), ' (', conversationRefOf(target, { direct: '이 DM', channel: '채널' }), ')');
+    await h.adapter.deliver(notification({ text: '알림: <b>회의</b> @everyone (이 DM)', content }));
+    expect(h.fake.callsTo('sendMessage')[0]?.params.text).toBe('알림: <b>회의</b> @everyone (이 DM)');
+    await h.adapter.stop();
+  });
+
+  it.each([
+    ['a 429 (no retry here)', errorReply(429, { retry_after: 1 }), { status: 'NOT_SENT', reason: 'RATE_LIMITED', retryable: true }],
+    ['a 401', errorReply(401), { status: 'NOT_SENT', reason: 'MISSING_ACCESS', retryable: false }],
+    ['a 403 (bot blocked)', errorReply(403), { status: 'NOT_SENT', reason: 'MISSING_ACCESS', retryable: false }],
+    ['a 400', errorReply(400), { status: 'NOT_SENT', reason: 'UNKNOWN_TARGET', retryable: false }],
+    ['a 502', errorReply(502), { status: 'UNCERTAIN', reason: 'PLATFORM_ERROR' }],
+    ['a network error', { throws: new TypeError('fetch failed') }, { status: 'UNCERTAIN', reason: 'NETWORK_ERROR' }],
+    ['an unreadable 2xx', { json: { ok: false } }, { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' }],
+  ] as const)('%s is classified at most once: exactly one send', async (_label, reply, outcome) => {
+    const h = await started(new FakeTelegram().queue('sendMessage', reply as never));
+    await expect(h.adapter.deliver(notification())).resolves.toEqual(outcome);
+    expect(h.fake.callsTo('sendMessage')).toHaveLength(1);
+    expect(h.sleeps).toEqual([]);
+    await h.adapter.stop();
+  });
+
+  it('a hung send is UNCERTAIN TIMEOUT', async () => {
+    const h = await started();
+    const { notificationOutcomeOf } = await import('./telegram-platform-adapter');
+    const { TelegramApiError } = await import('./bot-api');
+    expect(notificationOutcomeOf(new TelegramApiError('TIMEOUT', 'sendMessage'))).toEqual({ status: 'UNCERTAIN', reason: 'TIMEOUT' });
+    expect(notificationOutcomeOf(new TelegramApiError('ABORTED', 'sendMessage'))).toEqual({ status: 'UNCERTAIN', reason: 'ABORTED' });
+    await h.adapter.stop();
+  });
+
+  it('refuses before any send: another platform, a non-owner, a non-private target, a too-long text, an unstarted adapter', async () => {
+    const h = await started();
+    expect(await h.adapter.deliver(notification({ target: { ...target, platform: 'discord' } }))).toEqual({
+      status: 'NOT_SENT',
+      reason: 'TARGET_NOT_ADMITTED',
+      retryable: false,
+    });
+    expect(await h.adapter.deliver(notification({ target: { ...target, userId: String(STRANGER_ID), channelId: String(STRANGER_ID) } }))).toEqual({
+      status: 'NOT_SENT',
+      reason: 'NOT_OWNER',
+      retryable: false,
+    });
+    expect(await h.adapter.deliver(notification({ target: { ...target, channelId: '-1001' } }))).toMatchObject({ reason: 'TARGET_NOT_ADMITTED' });
+    expect(await h.adapter.deliver(notification({ text: '가'.repeat(1801) }))).toEqual({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    expect(h.fake.callsTo('sendMessage')).toHaveLength(0);
+    await h.adapter.stop();
+    expect(await h.adapter.deliver(notification())).toEqual({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    const idle = harness();
+    expect(await idle.adapter.deliver(notification())).toEqual({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    expect(idle.fake.calls).toHaveLength(0);
   });
 });
 

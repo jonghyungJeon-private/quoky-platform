@@ -1,4 +1,4 @@
-import { NotImplementedError, now } from '@quoky/core';
+import { NotImplementedError, now, REMINDER_LIMITS } from '@quoky/core';
 import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
@@ -6,8 +6,12 @@ import type {
   InboundMessage,
   InboundMessageHandler,
   Logger,
+  NotificationNotSentReason,
+  NotificationSink,
+  NotificationSinkOutcome,
   OutboundDeliveryReceipt,
   OutboundMessage,
+  OwnerNotification,
   PlatformAdapter,
 } from '@quoky/core';
 import { admitTelegramUpdate, TELEGRAM_DROP_REASONS, updateIdOf } from './admission';
@@ -15,8 +19,8 @@ import type { AdmittedTelegramMessage, TelegramDropReason } from './admission';
 import { TelegramApiError, TelegramBotApi, TelegramFailureCode } from './bot-api';
 import type { FetchLike, TelegramMethod } from './bot-api';
 import type { TelegramBotToken } from './bot-token';
-import { deliverTelegramPreview, deliverTelegramText } from './delivery';
-import { contentDisagreesWithText, renderOutboundForTelegram, TELEGRAM_PLATFORM } from './rendering';
+import { deliverTelegramPreview, deliverTelegramText, TELEGRAM_MESSAGE_LIMIT } from './delivery';
+import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramContent, TELEGRAM_PLATFORM } from './rendering';
 
 /**
  * `PlatformAdapter` for Telegram (ADR-0114). Bot API types stay inside this package; only normalized domain messages
@@ -141,6 +145,32 @@ export function staleNotice(count: number): string {
 }
 export const ATTACHMENT_UNSUPPORTED_NOTICE = 'Telegram 첨부는 아직 지원하지 않아요.';
 
+/** A hung notification send is UNCERTAIN after this (it may still land); the Discord sink's bound. */
+const NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
+
+/** ADR-0101 D4 classification of a failed notification `sendMessage` (CA P1-1). */
+export function notificationOutcomeOf(err: unknown): NotificationSinkOutcome {
+  const code = err instanceof TelegramApiError ? err.code : undefined;
+  switch (code) {
+    case TelegramFailureCode.RATE_LIMITED:
+      return { status: 'NOT_SENT', reason: 'RATE_LIMITED', retryable: true };
+    case TelegramFailureCode.AUTH:
+    case TelegramFailureCode.FORBIDDEN:
+      return { status: 'NOT_SENT', reason: 'MISSING_ACCESS', retryable: false };
+    case TelegramFailureCode.BAD_REQUEST:
+      return { status: 'NOT_SENT', reason: 'UNKNOWN_TARGET', retryable: false };
+    case TelegramFailureCode.TIMEOUT:
+      return { status: 'UNCERTAIN', reason: 'TIMEOUT' };
+    case TelegramFailureCode.ABORTED:
+      return { status: 'UNCERTAIN', reason: 'ABORTED' };
+    case TelegramFailureCode.UNAVAILABLE:
+      return { status: 'UNCERTAIN', reason: (err as TelegramApiError).httpStatus !== undefined ? 'PLATFORM_ERROR' : 'NETWORK_ERROR' };
+    default:
+      // A 2xx that could not be read, an oversized body or anything unclassified: it may have been posted.
+      return { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' };
+  }
+}
+
 /** The signal of a send made while the adapter is not running (no stop to wait for). */
 const NEVER_ABORTED = new AbortController().signal;
 
@@ -148,7 +178,7 @@ function codeOf(error: unknown): string {
   return error instanceof TelegramApiError ? error.code : 'UNEXPECTED';
 }
 
-export class TelegramPlatformAdapter implements PlatformAdapter {
+export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSink {
   readonly platform = TELEGRAM_PLATFORM;
 
   private readonly api: TelegramBotApi;
@@ -713,6 +743,58 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     if (timer) {
       clearInterval(timer);
       this.typingTimers.delete(chatId);
+    }
+  }
+
+  /**
+   * ADR-0101 D4 / ADR-0114 D11 (CA P1-1): the owner-only notification sink for a reminder or brief created in a
+   * Telegram private chat. The target must be a listed owner's own private chat (rechecked here). At most once: exactly
+   * one `sendMessage`, never retried here (not even after a 429), and a text that does not fit ONE message is
+   * `TEXT_TOO_LONG` (no multi-part notification, as on Discord). Never throws for a delivery failure; it classifies it:
+   * a 429 is `NOT_SENT` retryable, an auth/forbidden/bad request is `NOT_SENT` final, and a timeout, network error,
+   * abort or an unusable 2xx is `UNCERTAIN` (the message may have been posted). Logs ids and the outcome only.
+   */
+  async deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome> {
+    const outcome = await this.deliverOnce(notification);
+    const log = outcome.status === 'SENT' ? this.logger.info : this.logger.warn;
+    log.call(this.logger, 'owner notification delivery', {
+      platform: TELEGRAM_PLATFORM,
+      correlationId: notification.correlationId,
+      kind: notification.kind,
+      status: outcome.status,
+      ...(outcome.status === 'SENT' ? { via: outcome.via } : { reason: outcome.reason }),
+      ...(outcome.status === 'NOT_SENT' ? { retryable: outcome.retryable } : {}),
+    });
+    return outcome;
+  }
+
+  private async deliverOnce(notification: OwnerNotification): Promise<NotificationSinkOutcome> {
+    const notSent = (reason: NotificationNotSentReason, retryable: boolean): NotificationSinkOutcome => ({ status: 'NOT_SENT', reason, retryable });
+    const { target } = notification;
+    if (target.platform !== TELEGRAM_PLATFORM) return notSent('TARGET_NOT_ADMITTED', false);
+    if (!this.owners.has(target.userId)) return notSent('NOT_OWNER', false);
+    const chatId = this.ownerChatOf(target);
+    if (chatId === undefined || chatId !== target.userId) return notSent('TARGET_NOT_ADMITTED', false);
+    // Not started, identity not (yet) verified, halted or stopped: nothing was sent; the dispatcher may retry.
+    if (!this.identityVerified || this.halted !== undefined || this.stopped || this.loop === undefined) {
+      return notSent('NOT_CONNECTED', true);
+    }
+    if (contentDisagreesWithText(notification)) {
+      this.logger.warn('owner notification content and text disagree', { platform: TELEGRAM_PLATFORM, kind: notification.kind });
+    }
+    const text = notification.content !== undefined ? renderTelegramContent(notification.content) : notification.text;
+    if (text.trim().length === 0 || [...text].length > REMINDER_LIMITS.maxDeliveredTextChars || text.length > TELEGRAM_MESSAGE_LIMIT) {
+      return notSent('TEXT_TOO_LONG', false);
+    }
+    try {
+      await this.api.call(
+        'sendMessage',
+        { chat_id: chatId, text, link_preview_options: { is_disabled: true } },
+        { timeoutMs: NOTIFICATION_SEND_TIMEOUT_MS },
+      );
+      return { status: 'SENT', via: 'dm' };
+    } catch (err) {
+      return notificationOutcomeOf(err);
     }
   }
 

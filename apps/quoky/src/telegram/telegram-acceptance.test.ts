@@ -10,27 +10,91 @@ import {
   ConversationRuntime,
   NOTIFICATION_SINK,
   PLATFORM_ADAPTER,
+  QuokyCore,
+  REMINDER_REPOSITORY,
+  ReminderDispatchService,
   STORAGE_PROVIDER,
   VECTOR_PROVIDER,
   type AiProvider,
   type ConversationContext,
   type InboundMessage,
+  type OutboundMessage,
   type PlatformAdapter,
+  type ReminderRepository,
   type StorageProvider,
   type VectorProvider,
 } from '@quoky/core';
-import { renderOutboundForTelegram } from '@quoky/adapter-telegram';
+import { renderOutboundForTelegram, TELEGRAM_API_ORIGIN, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
 import { ActorIdentityProvisioner } from '../actor-identity-provisioner';
 import { CompositePlatformAdapter } from '../platform/composite-platform-adapter';
 import { stubProviderSelection } from '../provider-selection/test-support';
 
 /**
- * TG-1 integration acceptance (ADR-0114 D3/D6/D13). OFFLINE and in-process: the REAL `AppModule` is booted through Nest
- * over a REAL SQLite file with Telegram enabled. Only the edges are replaced: no `.env.local`, the token is assembled at
- * runtime, neither platform adapter is started (no getMe, no poll), every `AiProvider` is a counting stub and the
- * global `fetch` refuses, so any network attempt is visible. It pins the composition (one composite behind the single
- * `PLATFORM_ADAPTER`) and the owner identity across platforms: what the owner saves on Discord is there on Telegram.
+ * TG-1 integration acceptance (ADR-0114 D3/D6/D11/D13). OFFLINE and in-process: the REAL `AppModule` is booted through
+ * Nest over a REAL SQLite file with Telegram enabled, and the REAL composite platform is started the way `main.ts` starts
+ * it. Only the edges are replaced: no `.env.local`, the token is assembled at runtime, the Discord child's gateway
+ * methods (start/stop/send) are recorded instead of connecting, every `AiProvider` is a counting stub, and the global
+ * `fetch` is a scripted Bot API server for `api.telegram.org` that refuses every other host (counted), so the real
+ * Telegram adapter runs end to end — getMe, the probe, long polling, sendMessage — against it.
  */
+
+/** A scripted Bot API: Telegram's confirm-by-offset getUpdates semantics, a long poll that waits for pushed updates. */
+class FakeBotApi {
+  readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  private pending: Array<Record<string, unknown>> = [];
+  private waiters: Array<() => void> = [];
+  private seq = 500;
+
+  push(update: Record<string, unknown>): void {
+    this.pending.push(update);
+    for (const wake of this.waiters.splice(0)) wake();
+  }
+
+  sends(): Array<Record<string, unknown>> {
+    return this.calls.filter((call) => call.method === 'sendMessage').map((call) => call.params);
+  }
+
+  async handle(url: string, init: RequestInit): Promise<Response> {
+    const method = url.slice(url.lastIndexOf('/') + 1);
+    const params = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+    this.calls.push({ method, params });
+    const ok = (result: unknown): Response => new Response(JSON.stringify({ ok: true, result }), { status: 200 });
+    if (method === 'getMe') return ok({ id: Number(BOT_ID), is_bot: true, first_name: 'Quoky' });
+    if (method === 'sendMessage') return ok({ message_id: (this.seq += 1) });
+    if (method === 'sendChatAction') return ok(true);
+    if (method !== 'getUpdates') return new Response(JSON.stringify({ ok: false }), { status: 400 });
+    const offset = params.offset as number | undefined;
+    if (offset !== undefined) this.pending = this.pending.filter((update) => (update.update_id as number) >= offset);
+    if (this.pending.length === 0 && params.timeout !== 0) {
+      await new Promise<void>((resolve, reject) => {
+        this.waiters.push(resolve);
+        init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      });
+    }
+    return ok(this.pending.slice(0, (params.limit as number | undefined) ?? 100));
+  }
+}
+
+function telegramUpdate(updateId: number, text: string, from: number = Number(TELEGRAM_OWNER)): Record<string, unknown> {
+  return {
+    update_id: updateId,
+    message: {
+      message_id: updateId,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: from, type: 'private' },
+      from: { id: from, is_bot: false, first_name: 'Owner' },
+      text,
+    },
+  };
+}
+
+async function until(predicate: () => boolean, turns = 2000): Promise<void> {
+  for (let i = 0; i < turns; i += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error('condition not reached');
+}
 
 const DISCORD_OWNER = '111111111111111111';
 const TELEGRAM_OWNER = '5550001';
@@ -45,6 +109,10 @@ let savedEnv: NodeJS.ProcessEnv = {};
 let tempDir = '';
 let networkAttempts = 0;
 let providerCalls = 0;
+const botApi = new FakeBotApi();
+const discordSent: OutboundMessage[] = [];
+let platform: CompositePlatformAdapter;
+let updateSeq = 1000;
 let app: Awaited<ReturnType<typeof NestFactory.createApplicationContext>>;
 let storage: StorageProvider;
 let runtime: ConversationRuntime;
@@ -57,7 +125,9 @@ async function turn(context: ConversationContext, text: string) {
 }
 
 beforeAll(async () => {
-  vi.stubGlobal('fetch', async () => {
+  vi.stubGlobal('fetch', async (input: string | URL, init: RequestInit = {}) => {
+    const url = String(input);
+    if (url.startsWith(`${TELEGRAM_API_ORIGIN}/`)) return botApi.handle(url, init);
     networkAttempts += 1;
     throw new Error('TG-1 acceptance: network is not available in this test');
   });
@@ -96,12 +166,33 @@ beforeAll(async () => {
   };
   for (const provider of app.get<AiProvider[]>(AI_PROVIDERS)) stub(provider);
   stubProviderSelection(app, stub, { status: 'OK', models: [] });
-  // main.ts order: storage, then the identity links, then the platform (never started here).
+  // main.ts order: storage, then the identity links, then the inbound handler, then the platform.
   await app.get(ActorIdentityProvisioner).provision();
   runtime = app.get(ConversationRuntime);
+  platform = app.get<CompositePlatformAdapter>(PLATFORM_ADAPTER);
+  // The Discord child never connects: its gateway methods are recorded (its sink and identity reader are not used here).
+  Object.assign(platform.adapterFor('discord') as PlatformAdapter, {
+    start: async () => undefined,
+    stop: async () => undefined,
+    sendTyping: async () => undefined,
+    sendMessage: async (message: OutboundMessage) => void discordSent.push(message),
+  });
+  const core = app.get(QuokyCore);
+  platform.onMessage((message) => core.handleInboundMessage(message));
+  await platform.start();
+  await until(() => (platform.adapterFor('telegram') as TelegramPlatformAdapter).status().polling);
 }, 60_000);
 
+/** Push an update to the fake Bot API and wait until the adapter has polled past it. */
+async function deliverUpdate(text: string, from?: number): Promise<void> {
+  updateSeq += 1;
+  const id = updateSeq;
+  botApi.push(telegramUpdate(id, text, from));
+  await until(() => botApi.calls.some((call) => call.method === 'getUpdates' && call.params.offset === id + 1));
+}
+
 afterAll(async () => {
+  await platform?.stop().catch(() => undefined);
   await storage?.close().catch(() => undefined);
   await app?.close();
   process.env = savedEnv;
@@ -160,5 +251,40 @@ describe('TG-1 acceptance — the same owner Actor across platforms (ADR-0114 D3
     const todos = await turn(stranger, '할 일 목록');
     expect(renderOutboundForTelegram(memories.reply)).not.toContain('내 배포 창은 화요일이야');
     expect(renderOutboundForTelegram(todos.reply)).not.toContain('보고서 초안 쓰기');
+  });
+});
+
+describe('TG-1 acceptance — reminders and the brief return to Telegram (ADR-0114 D11; CA P1-1)', () => {
+  const dispatch = () => app.get(ReminderDispatchService);
+  const ownerActor = async () => (await app.get(ActorManager).resolveFromContext(telegramChat)).id;
+
+  it('a reminder created in the Telegram chat fires as one sendMessage to the owner chat', async () => {
+    const sendsBefore = botApi.sends().length;
+    await deliverUpdate('1분 뒤에 스트레칭 알려줘');
+    await until(() => botApi.sends().length === sendsBefore + 1);
+    const created = await app.get<ReminderRepository>(REMINDER_REPOSITORY).listActiveByActor(await ownerActor());
+    const reminder = created.find((entry) => entry.origin.platform === 'telegram' && entry.kind === 'TEXT');
+    expect(reminder).toBeDefined();
+    const fireAt = new Date(Date.parse(reminder?.nextFireAt as string) + 30_000).toISOString();
+    await dispatch().dispatchDue(fireAt);
+    const sends = botApi.sends().slice(sendsBefore);
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toMatchObject({ chat_id: TELEGRAM_OWNER });
+    expect(String(sends[1]?.text)).toContain('스트레칭');
+    expect(discordSent.filter((message) => String(message.text).includes('스트레칭'))).toHaveLength(0);
+  });
+
+  it('a daily brief created on Telegram is delivered on Telegram', async () => {
+    const sendsBefore = botApi.sends().length;
+    await deliverUpdate('매일 오후 1시에 오늘 할 일 알려줘');
+    await until(() => botApi.sends().length === sendsBefore + 1);
+    const active = await app.get<ReminderRepository>(REMINDER_REPOSITORY).listActiveByActor(await ownerActor());
+    const brief = active.find((entry) => entry.origin.platform === 'telegram' && entry.kind === 'BRIEF');
+    expect(brief).toBeDefined();
+    await dispatch().dispatchDue(new Date(Date.parse(brief?.nextFireAt as string) + 30_000).toISOString());
+    const sends = botApi.sends().slice(sendsBefore);
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toMatchObject({ chat_id: TELEGRAM_OWNER });
+    expect(networkAttempts).toBe(0);
   });
 });

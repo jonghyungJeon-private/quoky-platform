@@ -145,6 +145,36 @@ describe('CompositePlatformAdapter (ADR-0114 D6): one contract over Discord and 
     expect(discord.notifications).toEqual([notice]);
   });
 
+  it('CA P1-1 (ADR-0114 D11): TEXT and BRIEF go to the target platform; OPS_DECISION_RESULT always to the primary', async () => {
+    const log: string[] = [];
+    const discord = new FakeDiscord('discord', log);
+    const telegramNotes: OwnerNotification[] = [];
+    const telegram = Object.assign(new FakeAdapter('telegram', log), {
+      async deliver(notification: OwnerNotification) {
+        telegramNotes.push(notification);
+        return { status: 'SENT' as const, via: 'dm' as const };
+      },
+    });
+    const adapter = new CompositePlatformAdapter(discord, [telegram], silent);
+    const note = (kind: OwnerNotification['kind'], platform: string) =>
+      ({ correlationId: kind, target: { platform, channelId: '5550001', userId: '5550001' }, kind, text: 'x' }) as OwnerNotification;
+    await adapter.deliver(note('TEXT', 'telegram'));
+    await adapter.deliver(note('BRIEF', 'telegram'));
+    await adapter.deliver(note('OPS_DECISION_RESULT', 'telegram'));
+    await adapter.deliver(note('BRIEF', 'discord')); // the OPS_NOTICE shape: a BRIEF addressed to the primary
+    await adapter.deliver(note('TEXT', 'discord'));
+    expect(telegramNotes.map((n) => n.correlationId)).toEqual(['TEXT', 'BRIEF']);
+    expect(discord.notifications.map((n) => `${n.kind}:${n.target.platform}`)).toEqual([
+      'OPS_DECISION_RESULT:telegram',
+      'BRIEF:discord',
+      'TEXT:discord',
+    ]);
+    await expect(adapter.deliver(note('TEXT', 'slack'))).resolves.toEqual({ status: 'NOT_SENT', reason: 'TARGET_NOT_ADMITTED', retryable: false });
+    // A composed child without a sink is refused the same way, never re-routed to another platform.
+    const bare = new CompositePlatformAdapter(discord, [new FakeAdapter('telegram', log)], silent);
+    await expect(bare.deliver(note('TEXT', 'telegram'))).resolves.toEqual({ status: 'NOT_SENT', reason: 'TARGET_NOT_ADMITTED', retryable: false });
+  });
+
   it('refuses two adapters of the same platform', () => {
     const log: string[] = [];
     expect(() => new CompositePlatformAdapter(new FakeAdapter('discord', log), [new FakeAdapter('discord', log)], silent)).toThrow(

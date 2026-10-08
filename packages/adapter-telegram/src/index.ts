@@ -35,6 +35,7 @@ export {
 export type { TelegramDeliveryReport, TelegramPreviewPlan, TelegramPreviewReport, TelegramPreviewSenders } from './delivery';
 export {
   ATTACHMENT_UNSUPPORTED_NOTICE,
+  notificationOutcomeOf,
   staleNotice,
   TelegramPlatformAdapter,
   TelegramStartupError,

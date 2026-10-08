@@ -24,8 +24,8 @@ import type { ConnectedIdentityFacts } from '../ops/startup-identity-check';
  * - Outbound: `sendMessage`, `sendTyping` and `requestApproval` are routed by `context.platform` to the child of that
  *   platform; a context of no composed platform is refused (nothing is sent), never sent to another platform.
  * - Adapter-local capabilities (not part of `PlatformAdapter`) are forwarded explicitly: the ADR-0102 D5 inbound gate
- *   to every child that takes one; the Discord identity reader and the owner `NotificationSink` to the PRIMARY child
- *   (Discord, ADR-0114 D11: the operations-notice primary). Routing notifications by `target.platform` is TG-3.
+ *   to every child that takes one; the Discord identity reader to the PRIMARY child. Owner notifications are routed
+ *   by kind and `target.platform` (see {@link CompositePlatformAdapter.deliver}; ADR-0114 D11).
  * - Lifecycle: children start in order (primary first); when one fails, the ones already started are stopped and the
  *   error is rethrown unchanged (a typed startup refusal keeps its code). Stop runs in reverse order.
  */
@@ -47,6 +47,11 @@ export class CompositePlatformAdapter implements PlatformAdapter, NotificationSi
   /** The composed platform ids, primary first. */
   get platforms(): readonly string[] {
     return this.children.map((child) => child.platform);
+  }
+
+  /** The composed adapter of `platform` (composition-root and acceptance use; Core never sees it). */
+  adapterFor(platform: string): PlatformAdapter | undefined {
+    return this.childFor(platform);
   }
 
   private childFor(platform: string): PlatformAdapter | undefined {
@@ -115,10 +120,18 @@ export class CompositePlatformAdapter implements PlatformAdapter, NotificationSi
     return this.primary.readConnectedIdentity(channelIds, options);
   }
 
-  /** ADR-0101/ADR-0114 D11: owner notifications go through the primary's owner-only sink, unchanged. */
+  /**
+   * ADR-0114 D11 (CA P1-1): owner notifications are routed.
+   * - `OPS_DECISION_RESULT` (and the `OPS_NOTICE` health notices, which travel as a `BRIEF` addressed to the primary
+   *   platform) always go to the PRIMARY (Discord), whatever the target says.
+   * - `TEXT` reminders and the `BRIEF` go to the child whose platform is `target.platform`: a reminder is delivered
+   *   where it was created. That child's own sink rechecks owner and target.
+   * - A platform that is not composed, or a child without a sink, is `NOT_SENT TARGET_NOT_ADMITTED` (never re-routed).
+   */
   async deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome> {
-    const sink = this.primary as Partial<NotificationSink>;
-    if (typeof sink.deliver !== 'function') return { status: 'NOT_SENT', reason: 'MISSING_ACCESS', retryable: false };
-    return sink.deliver.call(this.primary, notification);
+    const child = notification.kind === 'OPS_DECISION_RESULT' ? this.primary : this.childFor(notification.target.platform);
+    const sink = child as Partial<NotificationSink> | undefined;
+    if (!child || typeof sink?.deliver !== 'function') return { status: 'NOT_SENT', reason: 'TARGET_NOT_ADMITTED', retryable: false };
+    return sink.deliver.call(child, notification);
   }
 }
