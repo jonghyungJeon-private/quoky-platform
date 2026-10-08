@@ -142,6 +142,7 @@ export function createWorkChatTurnHandlers(
 function backstopText(command: WorkChatCommand): string {
   switch (command.kind) {
     case 'todo.list':
+    case 'todo.summary':
       return renderTodoListFailure();
     case 'lookup':
     case 'external-write-unsupported':

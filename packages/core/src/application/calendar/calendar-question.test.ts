@@ -49,6 +49,9 @@ describe('calendar question grammar (ADR-0110 D3)', () => {
     ['Am I free tomorrow?', { kind: 'day', offset: 1 }, 'en'],
     ['what are my plans this weekend?', { kind: 'weekend', which: 'this' }, 'en'],
     ['When is my upcoming appointment?', { kind: 'next' }, 'en'],
+    // DET-2 sweep: the remaining-events noun ("오늘 남은 일정 있어?" was already claimed; the bare form was chat).
+    ['오늘 남은 일정', { kind: 'day', offset: 0 }, 'ko'],
+    ['내일 남은 일정 보여줘', { kind: 'day', offset: 1 }, 'ko'],
   ])('claims %s', (text, span, language) => {
     expect(parseCalendarQuestion(text)).toEqual({ kind: 'events', span, language });
   });

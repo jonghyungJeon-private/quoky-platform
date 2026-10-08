@@ -4,6 +4,7 @@ import { SessionStatus } from '../../domain';
 import type { TurnHandlerContext } from '../../ports/conversation-turn-handler.port';
 import type { Logger, LogFields } from '../../ports/logger.port';
 import { REMINDER_HELP_LINES } from '../reminders/reminder-turn-handler';
+import { ResponseComposer, renderHelpText } from '../response-composer';
 import { WORK_CHAT_TODO_TURN_HELP_LINES } from '../work-chat/work-chat-turn-handler';
 import {
   HELP_INTENT_HELP_LINES,
@@ -117,5 +118,25 @@ describe('HelpIntentTurnHandler.handle', () => {
     const outcome = await createHelpIntentTurnHandler({ helpLines: LINES }).handle(context('How do I set a reminder?'));
     expect(outcome?.reply.text.split('\n')[0]).toContain('Quoky');
     expect(outcome?.reply.text).toContain('"/help"');
+  });
+});
+
+describe('HelpIntentTurnHandler — capability questions (DET-2, live QA session 3 D11)', () => {
+  it('answers "뭐 할 수 있어?" with exactly the "도움말" text built from the same lines (its own line included)', async () => {
+    const handler = createHelpIntentTurnHandler({ helpLines: () => LINES });
+    for (const text of ['뭐 할 수 있어?', '할 수 있는 게 뭐야?', '명령어 알려줘', 'what can you do?']) {
+      const reply = await handler.handle(context(text));
+      expect(reply, text).toEqual({ reply: { context: CONTEXT, text: renderHelpText(LINES), replyToMessageId: 'm-1' } });
+    }
+    expect(renderHelpText(LINES)).toBe(new ResponseComposer().composeHelp(CONTEXT, LINES).text);
+    expect(renderHelpText(LINES)).toContain('Quoky로 할 수 있는 일이에요.');
+    expect(renderHelpText(LINES)).toContain(HELP_INTENT_HELP_LINES[0] as string);
+  });
+
+  it('falls through for a scoped question and keeps topic answers unchanged', async () => {
+    const handler = createHelpIntentTurnHandler({ helpLines: LINES });
+    expect(await handler.handle(context('파이썬으로 뭐 할 수 있어?'))).toBeNull();
+    const topic = await handler.handle(context('완료 처리 어떻게 해?'));
+    expect((topic as { reply: { text: string } }).reply.text.startsWith('Quoky에서는 이렇게 하면 돼요.')).toBe(true);
   });
 });

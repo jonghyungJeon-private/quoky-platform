@@ -1,6 +1,8 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import { renderHelpText } from '../response-composer';
 import {
   composeHelpIntentReply,
+  detectCapabilityQuestion,
   detectHelpIntent,
   HELP_INTENT_TOPICS,
   selectHelpLines,
@@ -50,7 +52,13 @@ export class HelpIntentTurnHandler implements ConversationTurnHandler {
     try {
       const topics = this.deps.topics ?? HELP_INTENT_TOPICS;
       const match = detectHelpIntent(ctx.message.text, topics);
-      if (match === null) return null;
+      if (match === null) {
+        // DET-2 (live QA session 3 D11): "뭐 할 수 있어?" gets exactly the "도움말" text (the quickstart's answer),
+        // built from the same contributed lines the runtime's help reply lists (this handler's own line included).
+        if (detectCapabilityQuestion(ctx.message.text) === null) return null;
+        const all = typeof this.deps.helpLines === 'function' ? this.deps.helpLines() : this.deps.helpLines;
+        return { reply: { context: ctx.message.context, text: renderHelpText(all), replyToMessageId: ctx.message.id } };
+      }
       const source = typeof this.deps.helpLines === 'function' ? this.deps.helpLines() : this.deps.helpLines;
       const lines = selectHelpLines(match, source, { topics, exclude: HELP_INTENT_HELP_LINES });
       if (lines.length === 0) return null;

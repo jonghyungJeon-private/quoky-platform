@@ -547,3 +547,39 @@ describe('exact connector-write requests (ADR-0112 D5, CWR-2)', () => {
     expect(detectWorkChatCommand('할 일 추가: PROJ-1에 댓글: x')?.kind).toBe('todo.add');
   });
 });
+
+describe('whole-list to-do status questions (ADR-0104 D3, DET-2)', () => {
+  it.each([
+    '할 일 몇 개야?', '할 일 몇 개야', '할일 몇개야?', '할 일 몇 건이야?', '할 일 몇 개 남았어?', '남은 할 일 몇 개야?', '오늘 할 일 몇 개야?',
+    '할 일 남았어?', '할 일 아직 남았어?', '할 일 남은 거 있어?', '할 일 남았나', '남은 할 일 있어?', '남은 할 일 뭐야?',
+    '할 일 다 했나?', '할 일 다 했나', '할 일 다 끝났어?', '할 일 다 완료했나?',
+    '할 일 추가됐어?', '할 일 추가했어?', '할 일 등록됐어?', '할 일 잘 추가됐어?', '할 일 추가됐나', '할 일 추가했지?', '투두 몇 개야?',
+    'how many todos do I have?', 'do I have any todos?', 'any todos left?', 'How many tasks are left?',
+  ])('%s → todo.summary (mutation mode: the to-do handler answers it)', (text) => {
+    expect(detectWorkChatCommand(text), text).toEqual({ kind: 'todo.summary' });
+    expect(workChatCommandMode({ kind: 'todo.summary' })).toBe('mutation');
+  });
+
+  it.each([
+    // Statements without a question shape, negations, and other subjects.
+    '할 일 추가했어', '할 일 남았어', '할 일 다 했어', '할 일 추가 안 됐어?', '할 일 몇 개 안 남았지?', '할 일 몇 개 추가해야 할까?',
+    '할 일 관리 잘하는 법', '부재중 전화 몇 개야?', '이슈 몇 개야?', '몇 개야?', '할 일 몇 개인지 내일 9시에 알려줘',
+  ])('%s is not a whole-list status question', (text) => {
+    expect(detectWorkChatCommand(text)?.kind, text).not.toBe('todo.summary');
+  });
+
+  it('keeps the list phrases on the list and adds the bare "내 할 일"', () => {
+    for (const text of ['할 일 있어?', '할 일 목록', '할 일 몇 개인지 알려줘', '내 할 일', '내 할일', '나의 할 일']) {
+      expect(detectWorkChatCommand(text), text).toEqual({ kind: 'todo.list' });
+    }
+  });
+
+  it('"<title> 완료됨" is a completion hint and "<title> 추가됐어?" asks about that exact to-do', () => {
+    expect(detectWorkChatCommand('주간 보고서 쓰기 완료됨')).toEqual({ kind: 'todo.hint', action: 'complete', target: { text: '주간 보고서 쓰기' } });
+    expect(detectWorkChatCommand('주간 보고서 쓰기 끝남')).toEqual({ kind: 'todo.hint', action: 'complete', target: { text: '주간 보고서 쓰기' } });
+    for (const text of ['주간 보고서 쓰기 추가됐어?', '주간 보고서 쓰기 등록됐나', '주간 보고서 쓰기 추가했어?']) {
+      expect(detectWorkChatCommand(text), text).toEqual({ kind: 'todo.status', target: { text: '주간 보고서 쓰기' } });
+    }
+    expect(detectWorkChatCommand('주간 보고서 쓰기 추가했어')?.kind).not.toBe('todo.status');
+  });
+});

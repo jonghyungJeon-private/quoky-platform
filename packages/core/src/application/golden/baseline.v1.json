@@ -6,8 +6,8 @@
     "stray-decision": { "minAccuracy": 1, "minTotal": 38 },
     "conversation-control": { "minAccuracy": 1, "minTotal": 26 },
     "project-registration": { "minAccuracy": 1, "minTotal": 20 },
-    "turn-handler-routing": { "minAccuracy": 1, "minTotal": 338 },
+    "turn-handler-routing": { "minAccuracy": 1, "minTotal": 407 },
     "reminder-todo-precedence": { "minAccuracy": 1, "minTotal": 24 },
-    "action-shaped-fallthrough": { "minAccuracy": 1, "minTotal": 121 }
+    "action-shaped-fallthrough": { "minAccuracy": 1, "minTotal": 155 }
   }
 }

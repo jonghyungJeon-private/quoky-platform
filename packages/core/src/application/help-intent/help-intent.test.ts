@@ -18,7 +18,9 @@ import {
   HELP_INTENT_MAX_LINE_CHARS,
   HELP_INTENT_MAX_LINES,
   HELP_INTENT_TOPICS,
+  CAPABILITY_QUESTION_MAX_CHARS,
   composeHelpIntentReply,
+  detectCapabilityQuestion,
   detectHelpIntent,
   selectHelpLines,
 } from './help-intent';
@@ -248,5 +250,80 @@ describe('composeHelpIntentReply', () => {
     const en = composeHelpIntentReply('en', ['- a']);
     expect(en).toContain('- a');
     expect(en).toContain('"/help"');
+  });
+});
+
+describe('DET-2 topic index additions: calendar, model command, connector writes', () => {
+  it.each([
+    ['캘린더 어떻게 써?', ['calendar']],
+    ['일정 어떻게 잡아?', ['calendar']],
+    ['일정 잡는 법', ['calendar']],
+    ['일정 추가 어떻게 해?', ['calendar']],
+    ['달력 보는 법', ['calendar']],
+    ['모델 변경 어떻게 해?', ['model']],
+    ['모델 바꾸는 법', ['model']],
+    ['모델 어떻게 바꿔?', ['model']],
+    ['이미지 모델 변경 방법', ['model']],
+    ['Slack 게시 어떻게 해?', ['connector-write']],
+    ['Jira 댓글 어떻게 달아?', ['connector-write']],
+    ['슬랙 글 올리는 법', ['connector-write']],
+  ])('%s → %j', (text, ids) => {
+    expect(topicsOf(text)).toEqual(ids);
+  });
+
+  it.each([
+    '모델 만드는 법', '모델 학습 어떻게 해?', '3D 모델 바꾸는 법', '일정 관리 어떻게 해?', '일정 정리하는 법 알려줘', '구글 캘린더 연동 어떻게 해?',
+    '회의 일정 잡는 팁 알려줘', '슬랙 어떻게 써?', '댓글 어떻게 달아?', 'Slack에 글 올리는 방법 알려줘', '일정 공유 어떻게 해?',
+  ])('%s stays chat', (text) => {
+    expect(detectHelpIntent(text)).toBeNull();
+  });
+
+  it('answers only from the lines that carry the topic anchor', () => {
+    const calendarLine = '- 캘린더(읽기 전용): "오늘 일정", "내일 일정 뭐야?", "이번 주 일정", "다음 회의 언제야?"';
+    const modelLine = '- 모델: "모델 상태", "모델 목록", "모델 변경: codex", "이미지 모델 변경: off", "모델 기본값으로" (이 대화에서만)';
+    const slackLine = '- Slack 게시: "#채널에 게시: 내용" 또는 "#채널에 내용이라고 올려줘" → "승인" → "Slack 게시 실행"';
+    const lines = [...CONTRIBUTED, calendarLine, modelLine, slackLine];
+    expect(selectHelpLines(detectHelpIntent('캘린더 어떻게 써?')!, lines)).toEqual([calendarLine]);
+    expect(selectHelpLines(detectHelpIntent('모델 바꾸는 법')!, lines)).toEqual([modelLine]);
+    expect(selectHelpLines(detectHelpIntent('Slack 게시 어떻게 해?')!, lines)).toEqual([slackLine]);
+    // Without the feature's line (not registered / writes off) the topic answers nothing and the turn falls through.
+    expect(selectHelpLines(detectHelpIntent('Slack 게시 어떻게 해?')!, CONTRIBUTED)).toEqual([]);
+  });
+});
+
+describe('detectCapabilityQuestion (DET-2, live QA session 3 D11)', () => {
+  it.each([
+    '뭐 할 수 있어?', '뭘 할 수 있어?', '뭐 할 수 있어', '너 뭐 할 수 있어?', '넌 뭘 할 수 있어?', 'Quoky야 뭐 할 수 있어?', 'Quoky야, 넌 뭘 할 수 있어?',
+    'Quoky는 뭐 할 수 있어?', 'Quoky가 뭘 할 수 있어?', '여기서 뭐 할 수 있어?', '무엇을 할 수 있나요?', '어떤 일을 할 수 있어?', '뭐 도와줄 수 있어?',
+    '뭘 도와줄 수 있어?', '뭐 할 줄 알아?', '할 수 있는 게 뭐야?', '할 수 있는 일이 뭐야?', '할 수 있는 거 알려줘', '할 수 있는 기능 뭐 있어?',
+    '무슨 기능 있어?', '어떤 기능이 있어?', '기능 뭐 있어?', '기능 목록', '명령어 뭐 있어?', '명령어 알려줘', '명령어 목록', '명령어', '사용법',
+  ])('%s → ko', (text) => {
+    expect(detectCapabilityQuestion(text)).toBe('ko');
+  });
+
+  it.each(['what can you do?', 'What can you help me with?', 'what can quoky do?', 'what are your features?', 'show me the commands'])('%s → en', (text) => {
+    expect(detectCapabilityQuestion(text)).toBe('en');
+  });
+
+  it.each([
+    '파이썬으로 뭐 할 수 있어?', '주말에 뭐 할 수 있어?', '내가 뭐 할 수 있어?', '이 함수로 뭐 할 수 있어?', '오늘 뭐 할 수 있어?', 'React로 할 수 있는 게 뭐야?',
+    '뭐 할 수 있어? 그리고 날씨 알려줘', 'what can you do with python?', 'help', 'help me', 'help me write a function', '이 기능 뭐 있어?', '명령어 만드는 법',
+    '할 수 있는 게 없어', '뭐 할 수 없어?', '`뭐 할 수 있어?`', `${'뭐 '.repeat(CAPABILITY_QUESTION_MAX_CHARS)}할 수 있어?`, '',
+  ])('%j stays chat', (text) => {
+    expect(detectCapabilityQuestion(text)).toBeNull();
+  });
+
+  it('matches no golden corpus case pinned to another route', () => {
+    const corpora = [approvalCorpus, controlCorpus, intentCorpus, registrationCorpus, precedenceCorpus, strayCorpus, routingCorpus] as ReadonlyArray<{
+      suite: string;
+      cases: ReadonlyArray<{ id: string; text: string; expected: unknown }>;
+    }>;
+    const matched = corpora.flatMap((corpus) =>
+      corpus.cases
+        .filter((c) => detectCapabilityQuestion(c.text) !== null)
+        .filter((c) => (c.expected as { route?: string } | null)?.route !== 'help-intent')
+        .map((c) => `${corpus.suite}/${c.id}: ${c.text}`),
+    );
+    expect(matched).toEqual([]);
   });
 });

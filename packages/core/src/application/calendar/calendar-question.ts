@@ -59,9 +59,9 @@ const ALWAYS_NOUN_KO = String.raw`(?:일정|스케줄(?!러)|캘린더|달력)`;
 const SPAN_NOUN_KO = String.raw`(?:일정|스케줄(?!러)|캘린더|달력|약속|미팅|회의(?!록|실))`;
 const BARE_TAIL_KO = String.raw`(?:\s*(?:은|는|좀|목록|리스트))?(?:\s*(?:보여\s*줘|보여\s*주세요|보여\s*줄래|알려\s*줘|알려\s*주세요|알려\s*줄래|확인해\s*줘|확인해\s*주세요|뭐야|뭐예요|뭐에요|뭐지|어때|어때요))?\s*[?？.!~]*$`;
 const POSSESSIVE_KO = String.raw`(?:(?:내|제|나의|저의|우리)\s+)?`;
-/** "오늘 일정", "이번 주 일정 보여줘", "내 일정", "캘린더", "10월 7일 일정은?", "금요일 회의 알려줘". */
+/** "오늘 일정", "이번 주 일정 보여줘", "내 일정", "캘린더", "10월 7일 일정은?", "금요일 회의 알려줘", "오늘 남은 일정". */
 const BARE_KO = new RegExp(
-  String.raw`^${POSSESSIVE_KO}(?:${SPAN_KO}\s*(?:의\s*)?${SPAN_NOUN_KO}|${ALWAYS_NOUN_KO}(?:\s+${SPAN_KO})?)${BARE_TAIL_KO}`,
+  String.raw`^${POSSESSIVE_KO}(?:${SPAN_KO}\s*(?:의\s*)?(?:남은\s*)?${SPAN_NOUN_KO}|${ALWAYS_NOUN_KO}(?:\s+${SPAN_KO})?)${BARE_TAIL_KO}`,
   'u',
 );
 const SPAN_EN = String.raw`(?:today|tomorrow|tonight|this\s+week(?:end)?|next\s+week|the\s+week)`;

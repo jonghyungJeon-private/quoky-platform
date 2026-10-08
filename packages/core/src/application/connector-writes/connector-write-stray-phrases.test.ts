@@ -5,6 +5,8 @@ import { renderConnectorWriteBareExecution } from './connector-write-copy';
 import {
   connectorWriteExecutionGate,
   connectorWriteOperationsAskedAbout,
+  connectorWriteOperationsNamedLoosely,
+  isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
 } from './connector-write-flow';
 
@@ -99,4 +101,62 @@ describe('renderConnectorWriteBareExecution', () => {
       '승인된 캘린더 일정 삭제는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 삭제 실행"',
     );
   });
+});
+
+describe('connectorWriteOperationsNamedLoosely (DET-2 sweep)', () => {
+  it.each(PHRASES)('%s: a loose imperative of "%s" names that write and is never executable', (operation, phrase) => {
+    for (const text of [`${phrase}해`, `${phrase}해요`, `${phrase}하자`, `${phrase}시켜줘`, `지금 ${phrase}해`, `${phrase} 부탁해`, `${phrase}해 줄래`]) {
+      expect(connectorWriteOperationsNamedLoosely(text), text).toEqual([operation]);
+      expect(acceptedByConnectorGate(text), text).toBe(false);
+      expect(isBareExecutionRequest(text), text).toBe(false);
+    }
+  });
+
+  it.each([
+    ['ISSUE_COMMENT', ['댓글 달았어?', '댓글 달았나', 'Jira 댓글 남겼어?', '코멘트 달렸어?', '댓글 잘 올라갔지?']],
+    ['ISSUE_TRANSITION', ['상태 변경했어?', '상태 바뀌었어?', 'Jira 상태 변경됐나요?', '상태 변경 됐어?']],
+    ['CHANNEL_POST', ['Slack 게시했어?', 'Slack에 올렸어?', '슬랙에 메시지 보냈어?', '게시했어?', '게시물 올라갔나']],
+    ['CALENDAR_EVENT_CREATE', ['일정 추가됐어?', '일정 추가했어?', '일정 잡혔어?', '캘린더에 일정 들어갔나', '일정 추가 됐어?']],
+    ['CALENDAR_EVENT_UPDATE', ['일정 변경됐어?', '일정 바뀌었어?', '일정 옮겨졌나요?']],
+    ['CALENDAR_EVENT_DELETE', ['일정 삭제됐어?', '일정 취소됐어?', '일정 지워졌나']],
+  ] as const)('%s: "did it happen?" questions name that write and are never executable', (operation, texts) => {
+    for (const text of texts) {
+      expect(connectorWriteOperationsNamedLoosely(text), text).toEqual([operation]);
+      expect(acceptedByConnectorGate(text), text).toBe(false);
+    }
+  });
+
+  it('statements, explanations, other objects and long text are not matched', () => {
+    for (const text of [
+      '댓글 달았어', 'Slack 게시했어', '일정 추가됐어', '상태 변경했어', '댓글 실행해?', '보냈어?', '올렸어?', '했어?', '회의 잡혔어?',
+      '댓글 다는 법 알려줘', '게시 실행이 뭐야?', '파일 실행해', '테스트 실행해', '실행해', '댓글 실행', '댓글 실행해줘',
+      `댓글 달았어? ${'긴 설명 '.repeat(10)}`, '',
+    ]) {
+      expect(connectorWriteOperationsNamedLoosely(text), text).toEqual([]);
+    }
+  });
+
+  it('never overlaps an accepted execution phrase of any gate', () => {
+    for (const gate of CONNECTOR_GATES) {
+      for (const phrase of EXECUTION_PHRASES[gate]) expect(connectorWriteOperationsNamedLoosely(phrase), `${gate}: ${phrase}`).toEqual([]);
+    }
+  });
+});
+
+describe('isBareExecutionQuestionOrNegation (DET-2 sweep)', () => {
+  it.each(['실행해도 돼?', '실행해도 될까', '실행할까?', '지금 실행해도 될까', '실행하지 마', '실행하지 마세요', '실행 안 해도 돼', '실행 가능해?', 'should I run it?', "don't run it"])(
+    '%j matches and no gate accepts it',
+    (text) => {
+      expect(isBareExecutionQuestionOrNegation(text)).toBe(true);
+      expect(isBareExecutionRequest(text)).toBe(false);
+      expect(acceptedByConnectorGate(text)).toBe(false);
+    },
+  );
+
+  it.each(['실행', '실행해줘', '실행했어', '실행 결과 알려줘', '파일 실행해도 돼?', '테스트 실행하지 마', '댓글 실행해도 돼?', '실행해도 돼? 그리고 테스트도', ''])(
+    '%j does not match',
+    (text) => {
+      expect(isBareExecutionQuestionOrNegation(text)).toBe(false);
+    },
+  );
 });

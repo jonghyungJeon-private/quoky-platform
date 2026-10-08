@@ -37,6 +37,7 @@ import {
   TaskStatus,
   VECTOR_PROVIDER,
   WorkChatService,
+  detectCapabilityQuestion,
   generalChatReplyPolicy,
   guardInternalActionClaims,
   renderInternalActionNotDone,
@@ -916,12 +917,19 @@ describe('Personal v3 wave 1 — help intent (ADR-0104 D4, LLM-1 module register
     const contributed = (harness.runtime as unknown as { contributedHelpLines: readonly string[] }).contributedHelpLines;
     const own = harness.handlers.find((handler) => handler.id === 'help-intent')?.helpLines ?? [];
     expect(own.length).toBeGreaterThan(0);
+    // DET-2: a capability question ("뭐 할 수 있어?") is answered with exactly the "도움말" reply (quickstart).
+    const fullHelp = (await harness.turn(harness.freshContext(), '도움말')).text;
+    expect(helpCases.filter((golden) => detectCapabilityQuestion(golden.text) !== null).length).toBeGreaterThanOrEqual(5);
     for (const golden of helpCases) {
       const seen = byId.get(golden.id) as CaseObservation;
       const label = `${golden.id} ${golden.text}`;
       expect(seen.route, label).toBe('help-intent');
       expect(seen.providerCalls + seen.availabilityProbes, label).toBe(0);
       expect(seen.setupProviderTouches, `${label} setup`).toBe(0);
+      if (detectCapabilityQuestion(golden.text) !== null) {
+        expect(seen.text, label).toBe(fullHelp);
+        continue;
+      }
       const lines = seen.text.split('\n');
       const english = lines[0] === EN_HEAD;
       expect(lines[0], label).toBe(english ? EN_HEAD : KO_HEAD);

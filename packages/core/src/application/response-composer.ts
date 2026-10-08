@@ -313,6 +313,18 @@ function boundContributedHelpLines(extraLines: readonly string[]): string[] {
     });
 }
 
+/**
+ * The full help text (ADR-0093 base text + ADR-0096 D6 contributed lines), exactly what `composeHelp` sends. Pure, so the
+ * help-intent handler can answer a capability question ("뭐 할 수 있어?", DET-2) with the same text as "도움말".
+ */
+export function renderHelpText(extraLines: readonly string[] = []): string {
+  const contributed = boundContributedHelpLines(extraLines);
+  const render = (): string => [...HELP_CAPABILITY_LINES, ...contributed, ...HELP_CONTROL_LINES].join('\n');
+  while (contributed.length > 0 && render().length > MAX_MESSAGE_CHARS) contributed.pop();
+  if (contributed.length === 0) return HELP_TEXT;
+  return clampToMessageBudget(render());
+}
+
 /** Which stream a rendered excerpt came from, and which non-empty stream was left out. */
 interface OutputSummary {
   chosenStream: 'stdout' | 'stderr' | 'none';
@@ -771,11 +783,7 @@ export class ResponseComposer {
    * until the reply fits the message budget. With no contributed lines the reply is exactly the fixed base text.
    */
   composeHelp(context: ConversationContext, extraLines: readonly string[] = []): OutboundMessage {
-    const contributed = boundContributedHelpLines(extraLines);
-    const render = (): string => [...HELP_CAPABILITY_LINES, ...contributed, ...HELP_CONTROL_LINES].join('\n');
-    while (contributed.length > 0 && render().length > MAX_MESSAGE_CHARS) contributed.pop();
-    if (contributed.length === 0) return { context, text: HELP_TEXT };
-    return { context, text: clampToMessageBudget(render()) };
+    return { context, text: renderHelpText(extraLines) };
   }
 
   /**
