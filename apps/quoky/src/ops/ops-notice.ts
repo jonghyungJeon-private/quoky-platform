@@ -88,7 +88,16 @@ export const OPS_NOTICE_LIMITS = {
   maxPerWindow: 3,
   windowMs: 24 * 60 * 60 * 1000,
   crashLoopQuietMs: 10 * 60 * 1000,
+  /**
+   * ADR-0114 (CA final check #4): the same Telegram halt reason at most once per 24 hours, so restarts with a broken
+   * token or a lasting conflict cannot use up the daily budget and suppress `BACKUP_FAILED` / `CRASH_LOOP`.
+   */
+  telegramHaltQuietMs: 24 * 60 * 60 * 1000,
 } as const;
+
+function isTelegramHaltReason(reason: string): boolean {
+  return reason.startsWith('TELEGRAM_');
+}
 
 /** ADR-0102 D7: "≥3 restarts in 10 minutes", as the launcher counts them (`QUOKY_LAUNCHER_RECENT_STARTS`). */
 export const CRASH_LOOP_RECENT_STARTS = 3;
@@ -275,6 +284,15 @@ export class OpsNoticeService {
     if (
       reason === 'CRASH_LOOP' &&
       recent.some((e) => e.reason === 'CRASH_LOOP' && nowMs - Date.parse(e.at) < OPS_NOTICE_LIMITS.crashLoopQuietMs)
+    ) {
+      return this.done(reason, 'SUPPRESSED_REPEAT');
+    }
+    if (
+      isTelegramHaltReason(reason) &&
+      entries.some((e) => {
+        const t = Date.parse(e.at);
+        return e.reason === reason && t <= nowMs && nowMs - t < OPS_NOTICE_LIMITS.telegramHaltQuietMs;
+      })
     ) {
       return this.done(reason, 'SUPPRESSED_REPEAT');
     }

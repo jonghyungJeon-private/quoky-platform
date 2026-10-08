@@ -157,6 +157,24 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     await ops.stop();
   });
 
+  it('CA final check #4: the same Telegram halt reason is sent at most once per 24 h; other notices keep their budget', async () => {
+    const ops = runtime({ launcher: 'launchd', recentStarts: 3 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    for (let i = 0; i < 4; i += 1) {
+      ops.notifyTelegramHalt('TELEGRAM_POLL_CONFLICT');
+      await settle();
+      timers.clockMs += 60 * 60_000; // an hour between restarts
+    }
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT]);
+    ops.start(); // the crash-loop notice still has its slot
+    await settle();
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT, OPS_NOTICE_TEXT.CRASH_LOOP]);
+    timers.clockMs += 24 * 60 * 60_000;
+    ops.notifyTelegramHalt('TELEGRAM_POLL_CONFLICT');
+    await settle();
+    expect(sink.delivered).toHaveLength(3);
+    await ops.stop();
+  });
+
   it('no notice for a normal start, nor outside the launcher', async () => {
     runtime({ launcher: 'launchd', recentStarts: 2 }, { QUOKY_BACKUP_ENABLED: 'false' }).start();
     runtime({ recentStarts: 0 }).start();
