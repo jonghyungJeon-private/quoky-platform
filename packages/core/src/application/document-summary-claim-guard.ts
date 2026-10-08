@@ -32,7 +32,7 @@ const KO_NOT_A_SUBJECT = new Set([
 
 /** Korean claims of a mail action or of a created to-do / reminder / calendar entry (past or completed tense). */
 const KO_CLAIMS: readonly RegExp[] = [
-  /(?:답장|회신|메일|이메일|요약)(?:을|를|은|는)?\s*(?:모두\s*|다\s*|전부\s*)?(?:보냈|보내\s?드렸|전송했|발송했)/u,
+  /(?:답장|회신|메일|이메일|요약)(?:을|를|은|는)?\s*(?:[^\s]{1,8}\s+){0,2}?(?:보냈|보내\s?드렸|전송했|발송했)/u,
   /(?:전달|삭제|보관|발송|전송|회신|답장)(?:을|를)?\s*(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
   /(?:삭제|보관|전달|발송|읽음)\s*처리\s*(?:를\s*)?(?:했|해\s?드렸|해\s?두었|완료했|하였)/u,
   /(?:메일|이메일)(?:을|를|은|는|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:지웠|옮겼|휴지통)/u,
@@ -58,6 +58,14 @@ const EN_CLAIM = new RegExp(
     'scheduled|set\\s+up|set|booked|drafted)\\b',
   'i',
 );
+
+/**
+ * Codex final delta: an emphatic `did` (`I did send a reply`, `we did forward it`) with a present-tense verb; `did not`
+ * is a denial, not a claim. The guard stays best-effort (a paraphrase can always evade a lexicon): the fixed footer of
+ * every summary, which states that nothing was sent or changed, is the guarantee.
+ */
+const EN_DID_CLAIM =
+  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\s+up|book|draft)\b/i;
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
 function clauses(text: string): string[] {
@@ -103,7 +111,7 @@ function koreanClaim(clause: string): boolean {
 /** Whether a document-summary reply claims that Quoky performed a mail or Quoky-domain action. */
 export function containsDocumentActionClaim(text: string): boolean {
   if (typeof text !== 'string' || text.length === 0) return false;
-  if (EN_CLAIM.test(text)) return true;
+  if (EN_CLAIM.test(text) || EN_DID_CLAIM.test(text)) return true;
   return clauses(text).some((clause) => koreanClaim(clause));
 }
 

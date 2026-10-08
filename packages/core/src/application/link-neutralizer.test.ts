@@ -189,3 +189,13 @@ describe('final sign-off W-2: CJK sentences are not read as IDN hosts', () => {
     }
   });
 });
+
+describe('Codex final delta: a Korean particle after an IDN TLD', () => {
+  it.each([['shop.한국에서 확인하세요'], ['예시.한국은 안전해요'], ['evil.닷컴으로 접속']])('%s is replaced in both modes', (text) => {
+    for (const mode of ['display', 'body'] as const) {
+      const out = neutralizeLinks(text, mode);
+      expect(out, `${mode} ${text}`).toContain(LINK_PLACEHOLDER);
+      expect(out).not.toMatch(/한국|닷컴/u);
+    }
+  });
+});

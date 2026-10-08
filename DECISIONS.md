@@ -18950,7 +18950,8 @@ Independent Chief Architect review before GML-1 merges.
       keeps `Node.js`. The reply is neutralized in display mode, so a domain the model echoes is caught there.
   - **Not caught.**
     - Defanged forms (`hxxp[:]//evil[.]example`, a host split by spaces), which are not clickable either.
-    - A Hangul particle glued to a Hangul IDN TLD (`예시.한국에서`): the IDN branch keeps its Unicode lookahead.
+    - A Hangul particle glued to a Hangul IDN TLD is caught for the common particles (`shop.한국에서`, `예시.한국은`;
+      Codex final delta); a rarer particle or a word glued to it is not.
     - IDN TLDs outside the list in their Unicode form (Arabic-script, most Indic and brand IDN TLDs). Their punycode
       form is caught.
   - **Linear.** Every repetition is bounded, each label is matched atomically (a lookahead capture and its
@@ -19052,6 +19053,14 @@ Independent Chief Architect review before GML-1 merges.
     untrusted readout under the same guards, so it can steer no action, but the summary may mention it.
   - **Display caps.** The listing caps (14/30/18 characters) cut long senders and subjects; the full text is never
     needed for routing, and a summary reads the whole message.
+  - **The claim guard is best-effort (orchestrator decision after the final Codex delta).** A lexicon cannot catch every
+    paraphrase: each review round found new wordings, and each was added (adverbs before the verb, an emphatic `did`,
+    curly apostrophes, fillers, `처리했` forms, relative clauses). The guarantee is structural: a summary has no tool
+    surface and no write path, and its fixed footer always states that nothing was sent or changed, so a claim that
+    evades the guard is contradicted in the same message. Further wordings are fixed as they are found in live QA.
+  - **Body-mode bare domains with an uncommon TLD and no path** (`example.museum`, `example.travel`) reach the provider
+    (orchestrator decision, the two-mode design the Chief Architect approved). The provider cannot open a link; a
+    domain it echoes is caught by display mode on the reply, and the listing is display mode.
   - **Help-line bound.** With Gmail on, the help reply gains one contributed line. If every optional feature is also on,
     including the Jira and Slack write lines, the contributed lines can exceed the ADR-0096 D6 bound of 14. The
     existing bound then drops the last line. Raising the bound is left to INT-3 and DOC-E, so that the unconfigured

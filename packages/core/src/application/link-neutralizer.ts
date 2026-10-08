@@ -51,6 +51,11 @@ const IDN_TLDS = [
   'рф', 'рус', 'ком', 'орг', 'онлайн', 'сайт', 'бел', 'укр', 'срб', 'мкд', 'қаз', 'мон', 'бг', 'дети', 'москва',
   'ελ', 'ευ', 'ไทย', 'भारत',
 ].join('|');
+/**
+ * Korean particles that may follow an IDN TLD with no space (Codex final delta: `shop.한국에서`, `예시.한국은`). The TLD
+ * stays the match; the particle is only allowed by the lookahead, so it is kept in the text.
+ */
+const KO_PARTICLES = '에서|에게|으로|이나|이랑|은|는|이|가|을|를|로|에|의|도|만|과|와|랑';
 /** Label separators: the ASCII full stop and the ideographic / full-width / half-width full stops (`evil。com`). */
 const DOT = '[.\\u3002\\uFF0E\\uFF61]';
 /** Format characters (zero-width spaces and joiners, bidi controls, soft hyphen) removed before matching. */
@@ -65,7 +70,7 @@ const FORMAT_CHARACTERS = /\p{Cf}/gu;
  * whole host name (253).
  */
 const BARE_DOMAIN = new RegExp(
-  `(?<![\\p{L}\\p{M}\\p{N}-])(?:(?=([\\p{L}\\p{M}\\p{N}-]{1,253}))\\1${DOT}){1,10}([a-z]{2,24}(?![a-z0-9-])|(?:xn--[a-z0-9-]{1,59}|${IDN_TLDS})(?![\\p{L}\\p{M}\\p{N}-]))((?::\\d{1,5})?(?:[/?#][^\\s<>"'\`()[\\]]*)?)`,
+  `(?<![\\p{L}\\p{M}\\p{N}-])(?:(?=([\\p{L}\\p{M}\\p{N}-]{1,253}))\\1${DOT}){1,10}([a-z]{2,24}(?![a-z0-9-])|(?:xn--[a-z0-9-]{1,59}|${IDN_TLDS})(?=(?:${KO_PARTICLES})?(?![\\p{L}\\p{M}\\p{N}-])))((?::\\d{1,5})?(?:[/?#][^\\s<>"'\`()[\\]]*)?)`,
   'giu',
 );
 

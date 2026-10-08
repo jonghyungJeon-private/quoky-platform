@@ -94,3 +94,14 @@ describe('final sign-off W-1: the claim is found in the text the owner is shown'
     },
   );
 });
+
+describe('Codex final delta: an adverb before the verb, and an emphatic did', () => {
+  it.each([['제가 답장을 대신 보냈습니다.'], ['답장을 방금 바로 보냈어요.'], ['I did send a reply.'], ['We did actually forward it.']])(
+    '%j is withheld',
+    (text) => expect(containsDocumentActionClaim(text)).toBe(true),
+  );
+  it.each([['I did not send anything.'], ["I didn't forward the mail."], ['김철수가 답장을 대신 보냈어요.']])(
+    '%j is not a claim',
+    (text) => expect(containsDocumentActionClaim(text)).toBe(false),
+  );
+});
