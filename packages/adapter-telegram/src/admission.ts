@@ -3,8 +3,8 @@
  * `getUpdates` entry that decide admission, and returns either the admitted text message or a value-free drop reason.
  *
  * Admitted: exactly a `message` update, in a `private` chat, from a non-bot user whose numeric `from.id` is listed in
- * `QUOKY_TELEGRAM_OWNER_IDS`, where the chat is that user's own chat (`chat.id === from.id`), carrying `text`, and not
- * older than {@link MAX_UPDATE_AGE_SECONDS}. Everything else is dropped: groups, supergroups, channels, edited
+ * `QUOKY_TELEGRAM_OWNER_IDS`, where the chat is that user's own chat (`chat.id === from.id`), written by the owner (not
+ * forwarded, not sent via an inline bot), carrying `text`, and not older than {@link MAX_UPDATE_AGE_SECONDS}. Everything else is dropped: groups, supergroups, channels, edited
  * messages, channel posts, inline and callback queries, reactions, membership updates and every other update type,
  * other users, bots, and owner messages without text (stickers, photos, files: attachment intake is TG-2, and nothing
  * is downloaded for them). A dropped update gets no reply, no download and no log of its content; the caller counts its
@@ -23,10 +23,27 @@ export type TelegramDropReason =
   | 'not-owner'
   /** An owner message without text (a sticker, photo, file, voice note, location, …). */
   | 'no-text'
+  /**
+   * An owner message whose text the owner did not write: forwarded from anyone (`forward_origin` of any type, or the
+   * legacy `forward_from` / `forward_from_chat` / `forward_sender_name` / `forward_date`) or sent through an inline bot
+   * (`via_bot`). Its text is someone else's, so it is never taken as the owner's own request.
+   */
+  | 'forwarded'
   /** An owner message older than the age bound (sent while Quoky was down for long; never replayed). */
   | 'stale';
 
-export const TELEGRAM_DROP_REASONS: readonly TelegramDropReason[] = ['malformed', 'update-type', 'not-private', 'not-owner', 'no-text', 'stale'];
+export const TELEGRAM_DROP_REASONS: readonly TelegramDropReason[] = [
+  'malformed',
+  'update-type',
+  'not-private',
+  'not-owner',
+  'forwarded',
+  'no-text',
+  'stale',
+];
+
+/** The message fields that mark text the owner did not write (any one of them present drops the message). */
+const NOT_OWN_TEXT_FIELDS = ['forward_origin', 'forward_from', 'forward_from_chat', 'forward_sender_name', 'forward_date', 'via_bot'] as const;
 
 /** An owner's private text message, as admitted. `chatId` equals `userId` (the owner's own private chat). */
 export interface AdmittedTelegramMessage {
@@ -81,6 +98,8 @@ export function admitTelegramUpdate(
   if (userId === undefined || !ownerIds.has(userId)) return drop('not-owner');
   // An owner's private chat with the bot has the owner's own user id as its chat id.
   if (idOf((chat as { id?: unknown }).id) !== userId) return drop('not-private');
+  // Forwarded or inline-bot text is someone else's words, even in the owner's chat: never the owner's request.
+  if (NOT_OWN_TEXT_FIELDS.some((field) => (message as Record<string, unknown>)[field] !== undefined)) return drop('forwarded');
   const { text, message_id: messageId, date } = message as { text?: unknown; message_id?: unknown; date?: unknown };
   if (typeof text !== 'string') return drop('no-text');
   const id = idOf(messageId);

@@ -162,7 +162,7 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     expect(fake.callsTo('sendMessage')).toHaveLength(0);
     expect(fake.callsTo('sendChatAction')).toHaveLength(0);
     expect(fake.calls.map((call) => call.method).filter((method) => method !== 'getMe' && method !== 'getUpdates')).toEqual([]);
-    expect(h.adapter.status().droppedUpdates).toEqual({ malformed: 0, 'update-type': 3, 'not-private': 3, 'not-owner': 1, 'no-text': 0, stale: 1 });
+    expect(h.adapter.status().droppedUpdates).toEqual({ malformed: 0, 'update-type': 3, 'not-private': 3, 'not-owner': 1, forwarded: 0, 'no-text': 0, stale: 1 });
     expect(JSON.stringify(h.logs)).not.toContain('비밀');
     expect(JSON.stringify(h.logs)).not.toContain(String(STRANGER_ID));
   });

@@ -50,6 +50,21 @@ describe('Telegram admission (ADR-0114 D2): owner private chats only, drop by de
     expect(admit(update)).toMatchObject({ kind: 'dropped', reason: 'update-type' });
   });
 
+  it.each([
+    ['forward_origin user', { forward_origin: { type: 'user', date: NOW, sender_user: { id: 1, is_bot: false } } }],
+    ['forward_origin hidden_user', { forward_origin: { type: 'hidden_user', date: NOW, sender_user_name: 'x' } }],
+    ['forward_origin chat', { forward_origin: { type: 'chat', date: NOW, sender_chat: { id: -1, type: 'group' } } }],
+    ['forward_origin channel', { forward_origin: { type: 'channel', date: NOW, chat: { id: -2, type: 'channel' }, message_id: 1 } }],
+    ['legacy forward_from', { forward_from: { id: 1, is_bot: false }, forward_date: NOW }],
+    ['legacy forward_from_chat', { forward_from_chat: { id: -2, type: 'channel' }, forward_date: NOW }],
+    ['legacy forward_sender_name', { forward_sender_name: 'x', forward_date: NOW }],
+    ['legacy forward_date alone', { forward_date: NOW }],
+    ['via_bot (inline bot)', { via_bot: { id: 9, is_bot: true, first_name: 'b' } }],
+  ])("drops the owner's %s message: someone else's text is never the owner's request", (_label, extra) => {
+    const update = textUpdate(9, '승인', { date: NOW }) as { update_id: number; message: Record<string, unknown> };
+    expect(admit({ update_id: 9, message: { ...update.message, ...extra } })).toEqual({ kind: 'dropped', updateId: 9, reason: 'forwarded' });
+  });
+
   it('drops an owner message without text (sticker, photo, file): nothing to download in TG-1', () => {
     const update = textUpdate(5, 'unused', { date: NOW }) as { update_id: number; message: Record<string, unknown> };
     const { text: _text, ...rest } = update.message;
