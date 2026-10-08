@@ -1,6 +1,7 @@
 import type {
   ConversationContext,
   Id,
+  MessageContent,
   NotificationDeliveryOutcome,
   OwnerNotificationKind,
 } from '../domain';
@@ -23,6 +24,11 @@ export interface OwnerNotification {
   kind: OwnerNotificationKind;
   /** Plain, already-composed text (≤ `REMINDER_LIMITS.maxDeliveredTextChars`). */
   text: string;
+  /**
+   * PLT-0: the same notification as platform-neutral content when it carries a platform-rendered span (an untrusted
+   * title, a conversation reference); `text` is its plain rendering and the adapter renders `content` instead.
+   */
+  content?: MessageContent;
 }
 
 /**

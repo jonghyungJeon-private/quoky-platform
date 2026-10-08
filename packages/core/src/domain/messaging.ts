@@ -1,5 +1,6 @@
 import type { Id, IsoTimestamp, Metadata } from './common';
 import type { Artifact } from './artifact';
+import type { MessageContent } from './message-content';
 
 /**
  * The conversation surface a message belongs to, expressed in GENERIC terms.
@@ -162,4 +163,11 @@ export interface OutboundMessage {
   preview?: PreviewArtifact;
   /** Set ONLY by the runtime on a provider-generated answer it delivers unchanged; see {@link OutboundMessageFormat}. */
   format?: OutboundMessageFormat;
+  /**
+   * PLT-0 (platform-neutral rendering): the reply as neutral content, present when it carries a span a platform renders
+   * its own way (untrusted text, a link, a conversation reference, a platform note). `text` is then its plain rendering
+   * (`plainTextOf`) and a platform adapter renders `content` with its own markup instead of sending `text`. Absent: the
+   * reply is Quoky copy alone and `text` is delivered as given. Build both with `outboundMessage` / `withOutboundBody`.
+   */
+  content?: MessageContent;
 }
