@@ -174,6 +174,13 @@ const MEDIA_GROUP_MAX_PARTS = 10;
 /** How many recent owner message keys are remembered so a reaction on the owner's own message is dropped. */
 const OWNER_MESSAGE_MEMORY = 512;
 /**
+ * Codex delta (accepted residual, bounded): turns with attachments are handed over in order, so the poll loop waits for
+ * each intake. Once one poll batch has spent this long, the batch's remaining attachment messages are still handed
+ * over in order, but their files are not fetched (`DOWNLOAD_FAILED`, named in the note), so one batch delays the next
+ * poll by at most about this bound plus one turn's intake.
+ */
+export const BATCH_INTAKE_BUDGET_MS = 60_000;
+/**
  * Codex P2: `stop()` waits this long for the poll loop — and with it an attachment intake in flight, whose Bot API calls
  * the stop has already aborted — to settle. Past the bound nothing more can reach the runtime (the hand-over re-checks
  * the stop) and a temp file still being written is deleted as soon as it lands (the intake is closed).
@@ -272,6 +279,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   #attachmentSweepTimer?: ReturnType<typeof setInterval>;
   private readonly mediaGroupSettleMs: number;
   private readonly stopSettleMs: number;
+  /** When the current poll batch's intake budget runs out (ms, {@link nowMs} clock). */
+  private batchIntakeDeadline = Number.POSITIVE_INFINITY;
   /** TG-2: the album being collected (its parts are not handed over, and the offset stays at its first part). */
   private pendingGroup?: PendingMediaGroup;
   /** Keys of recent owner messages (bounded): a reaction on one of them is the owner's own message, never feedback. */
@@ -758,6 +767,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private async handleBatch(updates: readonly unknown[], signal: AbortSignal): Promise<boolean> {
     /** Owner drops per owner chat (CA re-review P3-1: each owner is told about their own messages only). */
     const ownerDrops = new Map<string, { stale: number; noText: number }>();
+    this.batchIntakeDeadline = this.nowMs() + BATCH_INTAKE_BUDGET_MS;
     for (const update of updates) {
       // Codex delta P2: a stopped run (even one a restart replaced) moves no offset and holds no album.
       if (signal.aborted) return false;
@@ -937,7 +947,9 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       void handler(this.toInbound(message)).catch(failed);
       return true;
     }
-    const intake = await this.attachmentIntake.intake(sources);
+    const withinBudget = this.nowMs() < this.batchIntakeDeadline;
+    if (!withinBudget) this.logger.warn('attachment intake budget of the poll batch spent; files not fetched', { platform: TELEGRAM_PLATFORM, messageId: message.messageId });
+    const intake = await this.attachmentIntake.intake(sources, { fetch: withinBudget });
     const abandoned = (): boolean => this.handOverClosed(signal);
     if (!abandoned()) await this.reportAttachmentIntake(message, intake);
     if (abandoned()) {

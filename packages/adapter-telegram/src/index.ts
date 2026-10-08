@@ -61,6 +61,7 @@ export type { TelegramDeliveryReport, TelegramPreviewPlan, TelegramPreviewReport
 export {
   MEDIA_GROUP_SETTLE_MS,
   STOP_INTAKE_SETTLE_MS,
+  BATCH_INTAKE_BUDGET_MS,
   notificationOutcomeOf,
   STARTUP_CALL_TIMEOUT_MS,
   staleNotice,

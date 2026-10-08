@@ -146,6 +146,8 @@ export interface AttachmentRefusalDiagnostic {
 
 export type AttachmentRefusalDetail =
   | 'COUNT_BOUND'
+  /** The poll batch spent its intake budget: the file was not fetched (the turn is still handed over, in order). */
+  | 'BATCH_BUDGET'
   | 'MEDIA_TYPE'
   | 'DECLARED_TYPE'
   | 'DECLARED_SIZE'
@@ -390,8 +392,12 @@ export class TelegramAttachmentIntake {
     this.uid = options.uid ?? currentUid();
   }
 
-  /** Takes in at most {@link ATTACHMENT_MAX_COUNT} attachments (concurrently), results in message order. Never throws. */
-  async intake(sources: readonly TelegramAttachmentSource[]): Promise<AttachmentIntakeResult> {
+  /**
+   * Takes in at most {@link ATTACHMENT_MAX_COUNT} attachments (concurrently), results in message order. Never throws.
+   * With `fetch: false` (the poll batch spent its intake budget) nothing is fetched: the metadata checks still name a
+   * too-large or unsupported file, and every other file is `DOWNLOAD_FAILED` (`BATCH_BUDGET`).
+   */
+  async intake(sources: readonly TelegramAttachmentSource[], options: { readonly fetch?: boolean } = {}): Promise<AttachmentIntakeResult> {
     const created: string[] = [];
     const outcomes: IntakeOutcome[] = await Promise.all(
       sources.map((source, index): IntakeOutcome | Promise<IntakeOutcome> => {
@@ -406,6 +412,15 @@ export class TelegramAttachmentIntake {
         }
         if (source.kind === 'unsupported-media') {
           return { attachment: { ...base, kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' }, refusal: { detail: 'MEDIA_TYPE' } };
+        }
+        if (options.fetch === false) {
+          const classification = classifyAttachment(source);
+          return classification.kind === 'unsupported'
+            ? {
+                attachment: { ...base, kind: 'unsupported', reason: classification.reason },
+                refusal: { detail: classification.reason === 'TOO_LARGE' ? 'DECLARED_SIZE' : 'DECLARED_TYPE' },
+              }
+            : { attachment: { ...base, kind: 'unsupported', reason: 'DOWNLOAD_FAILED' }, refusal: { detail: 'BATCH_BUDGET' } };
         }
         return this.intakeOne(source, base, created).catch(
           (): IntakeOutcome => ({ attachment: { ...base, kind: 'unsupported', reason: 'DOWNLOAD_FAILED' }, refusal: { detail: 'DOWNLOAD_FAILED', failure: 'UNEXPECTED' } }),

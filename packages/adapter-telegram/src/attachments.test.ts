@@ -921,3 +921,38 @@ describe('Telegram adapter: a stop from inside a handler ends the batch (Codex d
   });
 });
 
+
+describe('Telegram adapter: the per-batch intake budget (Codex delta, accepted residual)', () => {
+  it('once a batch spent 60 s on intake, later attachment messages are still handed over in order, files not fetched', async () => {
+    const { store, offsetStore } = memoryStore(500);
+    let clock = Date.now();
+    const fake = new FakeTelegram()
+      .queue(
+        'getUpdates',
+        okReply([
+          mediaUpdate(500, documentField('a', 'a.txt', 'text/plain', 2)),
+          mediaUpdate(501, { ...documentField('b', 'b.txt', 'text/plain', 2), caption: '두 번째' }),
+          mediaUpdate(502, documentField('c', 'huge.png', 'image/png', IMAGE_ATTACHMENT_MAX_BYTES + 1)),
+        ]),
+      )
+      .queue('getFile', fileReply('documents/file_1.txt', 2))
+      .queue('downloadFile', bytesReply(Buffer.from('ok')));
+    const h = harness(fake, { offsetStore, nowMs: () => clock });
+    h.adapter.onMessage(async (message) => {
+      h.received.push(message);
+      // The first turn's intake "took" 61 s.
+      if (message.id === '5000') clock += 61_000;
+    });
+    await h.adapter.start();
+    await until(() => store.saves.includes(503));
+    expect(h.received.map((message) => message.id)).toEqual(['5000', '5010', '5020']);
+    expect(h.received[0]?.attachments).toEqual([expect.objectContaining({ kind: 'text', text: 'ok' })]);
+    expect(h.received[1]).toMatchObject({ text: '두 번째', attachments: [expect.objectContaining({ kind: 'unsupported', reason: 'DOWNLOAD_FAILED' })] });
+    expect(h.received[2]?.attachments).toEqual([expect.objectContaining({ reason: 'TOO_LARGE' })]);
+    expect(fake.callsTo('getFile').map((call) => call.params.file_id)).toEqual(['a']);
+    expect(h.logs.find((line) => line.message === 'attachment refused' && line.fields?.detail === 'BATCH_BUDGET')).toBeDefined();
+    await until(() => fake.callsTo('sendMessage').length === 2);
+    expect(String(fake.callsTo('sendMessage')[0]?.params.text)).toContain('"b.txt" — 파일을 내려받지 못했어요.');
+    expect(store.saves).toEqual([501, 502, 503]);
+  });
+});
