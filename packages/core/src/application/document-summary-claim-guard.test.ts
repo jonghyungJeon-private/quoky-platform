@@ -24,6 +24,29 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     'We replied to the sender.',
     'I set up a reminder for Friday.',
     '요약했고 답장을 보냈어요.',
+    // Re-review item 3: curly apostrophes, filler words, 처리 forms, and subjects that must not exempt.
+    'I’ve forwarded the email to your team.',
+    'We’ve archived it.',
+    'I went ahead and sent the reply.',
+    "I've just forwarded it to accounting.",
+    'I’d already deleted the thread.',
+    '메일을 삭제 처리했어요.',
+    '보관 처리 완료했습니다.',
+    '전달 처리해 드렸어요.',
+    '읽음 처리했어요.',
+    '김철수 님께 회신했습니다.',
+    '자료를 전달해 드렸어요.',
+    '안내 메일을 발송했어요.',
+    '같이 답장을 보냈어요.',
+    '요청하신 내용이 맞아서 답장을 보냈어요.',
+    '비서가 답장을 보냈어요.',
+    '저희가 메일을 보관했어요.',
+    'Quoky가 메일을 삭제했어요.',
+    '답장을 보냈어요, 김철수가 요청해서요.',
+    '답장을 보냈답니다.',
+    // Known false positives that fail closed (recorded in the live-QA list).
+    '쿠팡에서 배송 안내 메일을 보냈어요.',
+    '김철수 님은 "제가 메일을 보냈어요"라고 썼어요.',
   ])('withholds: %s', (text) => {
     expect(containsDocumentActionClaim(text)).toBe(true);
   });
@@ -32,6 +55,8 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     // Third-person sentences about the sender stay allowed.
     '김철수가 회의 자료를 보냈어요.',
     '김철수 님이 견적서 메일을 보냈어요.',
+    '김철수가 메일을 보냈어요.',
+    '인사팀에서는 팀장님이 메일을 전달했어요.',
     '팀장님이 할 일을 추가했어요.',
     'Kim sent the slides and asked for comments by Friday.',
     'The sender forwarded the invoice from accounting.',

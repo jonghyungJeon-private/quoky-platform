@@ -6,17 +6,35 @@
  * or marked read, or that a to-do, reminder or calendar entry was created, is withheld whole with a fixed notice.
  *
  * Third-person sentences about the item's author stay allowed ("김철수 님이 회의 자료를 보냈어요", "Kim sent the deck"):
- * a Korean clause with a non-first-person subject (`<word>이/가/께서`) is exempt, and an English claim needs an
- * `I` / `we` / `Quoky` subject. Every pattern is linear (bounded repetition only) on the provider's bounded reply.
+ * a Korean claim is exempt only when the nearest real subject before it (`<word>이/가/께서/님이`, not an adverb or a
+ * generic noun) is someone other than Quoky or a stand-in for it; an English claim needs an `I` / `we` / `Quoky`
+ * subject. Known false positives fail closed: a claim with no subject marker about a company
+ * (`쿠팡에서 배송 안내 메일을 보냈어요`) and quoted first-person speech. Every pattern is linear (bounded repetition only) on the provider's bounded reply.
  */
 
-/** First-person or Quoky subjects in Korean: a clause with one of these is never exempt. */
-const KO_FIRST_PERSON = new Set(['제', '저', '내', '나', '저희', '우리', 'quoky', '쿼키']);
+/**
+ * Quoky stand-ins in Korean: a nearest subject that is one of these never exempts a claim (re-review item 3), whether
+ * it is the first person or a word the model may use for itself.
+ */
+const KO_STAND_INS = new Set([
+  '제', '저', '내', '나', '저희', '우리', 'quoky', '쿼키', '비서', '어시스턴트', '봇', '챗봇', 'ai', '에이아이', '시스템',
+]);
+
+/**
+ * Words ending in 이/가 that are adverbs or generic nouns, never the author of an action (`같이`, `많이`, `내용이`,
+ * `요청이`): they are not subjects at all, so they neither exempt a claim nor hide the subject before them.
+ */
+const KO_NOT_A_SUBJECT = new Set([
+  '같', '많', '깊', '높', '길', '넓', '일찍', '빨', '쉽', '굳', '끝', '깨끗', '틈틈', '번번', '곳곳', '일일',
+  '내용', '요청', '문의', '연락', '메일', '이메일', '답장', '회신', '일정', '회의', '자료', '시간', '날짜', '마감', '확인',
+  '필요', '문제', '이유', '결과', '변경', '처리', '진행', '준비', '정리', '요약', '알림', '안내', '공지', '첨부', '파일',
+]);
 
 /** Korean claims of a mail action or of a created to-do / reminder / calendar entry (past or completed tense). */
 const KO_CLAIMS: readonly RegExp[] = [
   /(?:답장|회신|메일|이메일|요약)(?:을|를|은|는)?\s*(?:모두\s*|다\s*|전부\s*)?(?:보냈|보내\s?드렸|전송했|발송했)/u,
   /(?:전달|삭제|보관|발송|전송|회신|답장)(?:을|를)?\s*(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
+  /(?:삭제|보관|전달|발송|읽음)\s*처리\s*(?:를\s*)?(?:했|해\s?드렸|해\s?두었|완료했|하였)/u,
   /(?:메일|이메일)(?:을|를|은|는|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:지웠|옮겼|휴지통)/u,
   /라벨(?:을|를)?\s*(?:붙였|달았|추가했|지정했)/u,
   /(?:안\s?)?읽음\s*(?:으로\s*)?(?:표시|처리)(?:를)?\s*(?:했|해\s?드렸|해\s?두었)/u,
@@ -25,34 +43,54 @@ const KO_CLAIMS: readonly RegExp[] = [
   /(?:일정|이벤트|약속|회의)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록)(?:했|해\s?드렸|해\s?두었|하였)|캘린더에\s*(?:추가|등록)(?:했|해\s?드렸|해\s?두었)/u,
 ];
 
-/** A subject-marked word in a Korean clause: `김철수가`, `팀장님이`, `회사에서는`… (only `이/가/께서` count). */
-const KO_SUBJECT = /(?:^|\s)([^\s]{1,20}?)(?:께서|님이|이|가)\s/gu;
+/** A subject-marked word in a Korean clause: `김철수가`, `팀장님이`, `제가` (only `이/가/께서/님이` count). */
+const KO_SUBJECT = /(?:^|\s)([^\s]{1,20}?)(?:께서|님이|이|가)(?=\s)/gu;
 
-/** English claims with a first-person or Quoky subject. */
-const EN_CLAIM =
-  /\b(?:I|I've|I'd|we|we've|Quoky)\s+(?:(?:have|has|had|just|already|also|now|then|successfully)\s+){0,3}(?:sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|scheduled|set\s+up|set|booked|drafted)\b/i;
+/**
+ * English claims with a first-person or Quoky subject. Contractions take a straight or a curly apostrophe, and up to
+ * four filler words may stand before the verb (`I went ahead and sent`, `I've just forwarded`).
+ */
+const EN_CLAIM = new RegExp(
+  "\\b(?:I(?:['’](?:ve|d))?|we(?:['’]ve)?|Quoky)\\s+" +
+    '(?:(?:have|has|had|just|already|also|now|then|successfully|went|go|gone|ahead|and|quickly|immediately|actually|' +
+    'promptly|simply|kindly)\\s+){0,4}' +
+    '(?:sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|' +
+    'scheduled|set\\s+up|set|booked|drafted)\\b',
+  'i',
+);
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
 function clauses(text: string): string[] {
   return text.split(/[.!?。\n]+|(?:하고|했고|고)\s/u).map((clause) => clause.trim()).filter((clause) => clause.length > 0);
 }
 
-function hasThirdPersonSubject(clause: string): boolean {
-  for (const match of clause.matchAll(KO_SUBJECT)) {
-    const word = (match[1] ?? '').toLowerCase();
-    if (word.length > 0 && !KO_FIRST_PERSON.has(word)) return true;
+/**
+ * Whether the claim at `claimAt` is exempt: the NEAREST real subject BEFORE it names someone other than Quoky
+ * (`김철수가 메일을 보냈어요`). A subject after the claim, an adverb or generic noun, or a Quoky stand-in never exempts.
+ */
+function exemptBySubject(clause: string, claimAt: number): boolean {
+  let nearest: string | undefined;
+  for (const match of clause.slice(0, claimAt).matchAll(KO_SUBJECT)) {
+    // An opening quote or bracket is not part of the subject (`"제가 …"` is still the first person).
+    const word = (match[1] ?? '').replace(/^["'“”‘’「『(\[<]+/u, '').toLowerCase();
+    if (word.length === 0 || KO_NOT_A_SUBJECT.has(word)) continue;
+    nearest = word;
   }
-  return false;
+  return nearest !== undefined && !KO_STAND_INS.has(nearest);
 }
 
-/** Reported speech right after the verb (`설정했다는 안내`, `보냈다고 해요`): the item says so, Quoky does not claim it. */
-const KO_REPORTED = /^\S*?(?:다는|다고|단\s|대요|답니다|다며)/u;
+/**
+ * Reported speech right after the verb (`설정했다는 안내`, `보냈다고 해요`, `보냈대요`): the item says so, Quoky does not
+ * claim it. (`…답니다` is not reported speech and is not exempt.)
+ */
+const KO_REPORTED = /^\S*?(?:다는|다고|단\s|대요|다며)/u;
 
 function koreanClaim(clause: string): boolean {
   for (const pattern of KO_CLAIMS) {
     const match = pattern.exec(clause);
     if (match === null) continue;
     if (KO_REPORTED.test(clause.slice(match.index + match[0].length))) continue;
+    if (exemptBySubject(clause, match.index)) continue;
     return true;
   }
   return false;
@@ -62,7 +100,7 @@ function koreanClaim(clause: string): boolean {
 export function containsDocumentActionClaim(text: string): boolean {
   if (typeof text !== 'string' || text.length === 0) return false;
   if (EN_CLAIM.test(text)) return true;
-  return clauses(text).some((clause) => koreanClaim(clause) && !hasThirdPersonSubject(clause));
+  return clauses(text).some((clause) => koreanClaim(clause));
 }
 
 /** The fixed reply that replaces a summary claiming an action (never shown, never stored). */
