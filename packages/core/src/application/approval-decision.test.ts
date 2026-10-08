@@ -300,6 +300,11 @@ describe('interpretApprovalDecision: explicit deny verbs and bare deny words (Co
     ['거부 안내를 보여줘', 'ambiguous'],
     ['취소 버튼 어디 있어?', 'ambiguous'],
     ['거절 사유 알려줘', 'ambiguous'],
+    // Codex round 6 on 61c96c1: a conjugation glued to Latin letters or digits is not a whole word
+    ['거절해2 로그를 보여줘', 'ambiguous'],
+    ['거부해abc 안내를 다시 보여줘', 'ambiguous'],
+    ['하지마2 버튼 보여줘', 'ambiguous'],
+    ['거절해 2번 로그', 'deny'],
     ['거절해', 'deny'],
     ['거절할게', 'deny'],
     ['이 요청 거절', 'deny'],

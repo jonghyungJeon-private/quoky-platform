@@ -223,14 +223,14 @@ export function interpretApprovalDecision(text: string): ApprovalDecisionResult 
  */
 const KO_DENY_CONJUGATION = String.raw`(?:해\s*(?:주세요|줘요|줘)|해요|해|할게요|할게|할래요|할래|합니다|하겠습니다|했어요|했어|하자|하세요|하고|됐어요|됐어|됐|돼요|돼|됨)`;
 const KO_DENY_VERB = new RegExp(
-  String.raw`(?<![가-힣a-z0-9])(?:거절|거부|취소)\s?${KO_DENY_CONJUGATION}(?![가-힣])`,
+  String.raw`(?<![가-힣A-Za-z0-9_])(?:거절|거부|취소)\s?${KO_DENY_CONJUGATION}(?![가-힣A-Za-z0-9_])`,
   'g',
 );
 const KO_BARE_DENY = /^(?:(?:이|그)\s*요청(?:은|을)?\s*)?(?:거절|거부|취소)(?:요|이요)?[\s.!~]*$/;
 const EN_DENY_VERB = /\b(?:reject(?:ed|s)?|deny|denied|denies|refuse[ds]?|cancel(?:l?ed|s)?)\b/g;
 const NEGATED_APPROVE_VERB =
   /(?:승인|진행|실행)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할|돼|됨))|(?:승인|진행|실행)(?:하|시키)?지\s*(?:마|말|않)|\b(?:don['’]?t|do\s+not|never|won['’]?t)\s+(?:approve|proceed|go\s+ahead)\b|\bnot\s+approve\b/g;
-const GENERIC_DENY_VERB = /(?:하지\s*마|하지마)(?:요|라|세요)?(?![가-힣])|(?<![가-힣])(?:안\s*해|안해)(?:요|라)?(?![가-힣])/;
+const GENERIC_DENY_VERB = /(?:하지\s*마|하지마)(?:요|라|세요)?(?![가-힣A-Za-z0-9_])|(?<![가-힣A-Za-z0-9_])(?:안\s*해|안해)(?:요|라)?(?![가-힣A-Za-z0-9_])/;
 /** A negated deny ("거절하지 마", "거절 안 해", "취소 안 할래"): the "하지 마" / "안 해" negates the refusal itself. */
 const NEGATED_DENY =
   /(?:거절|거부|취소)(?:하|시키)?지\s*(?:마|말|않)|(?:거절|거부|취소)\s*(?:안\s+(?:할|해|하|돼|됨|됩|될)|안(?:해|할|돼|됨|됩|될)|않|못\s*(?:해|하|할))/;
