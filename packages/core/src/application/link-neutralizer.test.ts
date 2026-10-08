@@ -168,3 +168,24 @@ describe('neutralizeLinks (GML-1 re-review item 1)', () => {
     }
   });
 });
+
+describe('final sign-off W-2: CJK sentences are not read as IDN hosts', () => {
+  it.each([
+    ['ご確認ください。ポイント：3つ'],
+    ['ありがとう。みんな！'],
+    ['请带好。手机，钥匙'],
+    ['会议结束。信息如下'],
+  ])('%s is left unchanged in both modes', (text) => {
+    for (const mode of ['display', 'body'] as const) {
+      expect(neutralizeLinks(text, mode)).not.toContain(LINK_PLACEHOLDER);
+    }
+  });
+
+  it('an IDN TLD after an ASCII full stop, and an ASCII TLD after an ideographic one, are still replaced', () => {
+    for (const mode of ['display', 'body'] as const) {
+      expect(neutralizeLinks('예시.한국 에서 확인', mode)).toContain(LINK_PLACEHOLDER);
+      expect(neutralizeLinks('shop.ポイント 확인', mode)).toContain(LINK_PLACEHOLDER);
+      expect(neutralizeLinks('evil。com/login', mode)).toContain(LINK_PLACEHOLDER);
+    }
+  });
+});

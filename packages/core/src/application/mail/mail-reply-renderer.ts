@@ -92,7 +92,10 @@ function clip(text: string, maxChars: number): string {
  */
 function guardedField(value: string, maxChars: number, placeholder: string): MessagePart {
   if (value.trim().length > 0 && containsCredentialMaterial(value)) return placeholder;
-  return untrustedText(clip(neutralizeLinks(value, 'display'), maxChars));
+  const shown = neutralizeLinks(value, 'display');
+  // Final sign-off W-1: the credential check also runs on the normalized text that is actually shown.
+  if (shown.trim().length > 0 && containsCredentialMaterial(shown)) return placeholder;
+  return untrustedText(clip(shown, maxChars));
 }
 
 function senderOf(message: MailMessageSummary, language: MailLanguage): MessagePart {

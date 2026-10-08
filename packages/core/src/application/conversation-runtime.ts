@@ -231,6 +231,7 @@ import {
   type UntrustedDocumentReadout,
 } from './untrusted-document-readout';
 import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import { neutralizeLinks } from './link-neutralizer';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
   type CodeGenerationContextResult,
@@ -7765,7 +7766,11 @@ export class ConversationRuntime {
         : this.guardChatReply(documentSummary ? Capability.GENERAL_CHAT : capability, executed.text, task.description, task.id);
       // Review P2-3: a document summary also gets the mail-action post-guard ("답장을 보냈어요", "I forwarded the email").
       const guard =
-        documentSummary && !withheld && chatGuard?.guarded !== true && containsDocumentActionClaim(executed.text)
+        documentSummary &&
+        !withheld &&
+        chatGuard?.guarded !== true &&
+        // Final sign-off W-1: checked on the text the owner is shown (format characters removed, NFKC), not only the raw one.
+        (containsDocumentActionClaim(executed.text) || containsDocumentActionClaim(neutralizeLinks(executed.text, 'display')))
           ? this.documentActionClaimWithheld(message, task.id)
           : chatGuard;
       // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).
@@ -7903,7 +7908,8 @@ export class ConversationRuntime {
     artifacts: readonly Artifact[],
     taskId: Id,
   ): { text: string; artifacts: Artifact[] } | null {
-    if (!isAttachmentReplyWithheld(text, artifacts)) return null;
+    // Final sign-off W-1: the credential check also runs on the normalized text the owner would be shown.
+    if (!isAttachmentReplyWithheld(text, artifacts) && !isAttachmentReplyWithheld(neutralizeLinks(text, 'display'), [])) return null;
     this.deps.logger.info('document summary reply withheld', { taskId });
     return { text: renderUntrustedDocumentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }

@@ -92,6 +92,10 @@ function replaceBareDomains(text: string, mode: LinkNeutralizationMode): string 
   return text.replace(BARE_DOMAIN, (match: string, _label: string, tld: string, tail: string, offset: number) => {
     const tldLower = tld.toLowerCase();
     const hasPath = tail.length > 0;
+    // Final sign-off W-2: an IDN TLD counts only after an ASCII full stop. Many IDN TLDs are everyday CJK words
+    // (ポイント, みんな, 手机, 信息), so after an ideographic full stop they are ordinary sentences, not hosts.
+    const tldStart = match.length - tail.length - tld.length;
+    if (/[^\x00-\x7f]/.test(tld) && match.charAt(tldStart - 1) !== '.') return match;
     if (mode === 'body') {
       const countryTld = tldLower.length === 2 && !FILE_EXTENSIONS.has(tldLower);
       return hasPath || WEB_TLDS.has(tldLower) || countryTld || tldLower.startsWith('xn--') || /[^a-z]/.test(tldLower)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { containsDocumentActionClaim } from './document-summary-claim-guard';
+import { neutralizeLinks } from './link-neutralizer';
 
 describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
   it.each([
@@ -83,4 +84,13 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     containsDocumentActionClaim(`${'할 일 '.repeat(20_000)}${'가 '.repeat(20_000)}`);
     expect(performance.now() - start).toBeLessThan(500);
   });
+});
+
+describe('final sign-off W-1: the claim is found in the text the owner is shown', () => {
+  it.each([['I se​nt the reply.'], ['Ｉ ｓｅｎｔ the reply.'], ['답장을 보​냈어요.']])(
+    '%j is a claim once normalized for display',
+    (text) => {
+      expect(containsDocumentActionClaim(neutralizeLinks(text, 'display'))).toBe(true);
+    },
+  );
 });
