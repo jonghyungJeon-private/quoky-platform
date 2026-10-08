@@ -5,24 +5,31 @@ import type { LocalDate } from '@quoky/core';
  * Backup file naming, schedule arithmetic and retention (ADR-0102 D6). Pure: every instant is an input.
  *
  * Names (UTC stamp, so they sort chronologically and never depend on the zone):
- *   `quoky-20261006T190000Z-daily.db`          a scheduled copy
- *   `quoky-20261006T190000Z-pre-migration.db`  the copy taken before a startup migration
- *   `.quoky-20261006T190000Z-daily.db.partial` a copy being written / verified (never a restore candidate)
+ *   `quoky-20261006T190000Z-daily.db`               a scheduled copy
+ *   `quoky-20261006T190000Z-pre-migration.db`       the copy taken before a startup migration
+ *   `quoky-20261006T190000Z-manual.db`              an on-demand copy (`quokyctl.sh backup --apply`)
+ *   `quoky-20261006T190000Z-daily.vectors/`         the vector-store snapshot taken with that DB copy (same stem)
+ *   `.quoky-20261006T190000Z-daily.db.partial`      a copy being written / verified (never a restore candidate)
+ *   `.quoky-20261006T190000Z-daily.vectors.partial/` a vector snapshot being written / verified
  * Pruning deletes only names these patterns match: nothing else in the directory is ever touched.
  *
  * Retention: the newest copy of each of the 7 most recent local days that have a daily copy, plus the newest copy of
- * each of the 4 most recent local weeks (Monday start) — "7 daily + 4 weekly" — and the 3 newest pre-migration
- * copies. The days and weeks are read in `QUOKY_TIMEZONE`.
+ * each of the 4 most recent local weeks (Monday start) — "7 daily + 4 weekly" — the 3 newest pre-migration copies and
+ * the 5 newest manual copies. The days and weeks are read in `QUOKY_TIMEZONE`. A vector snapshot lives exactly as long
+ * as the DB copy with its stem.
  */
 
-export type BackupKind = 'daily' | 'pre-migration';
+export type BackupKind = 'daily' | 'pre-migration' | 'manual';
+export const BACKUP_KINDS: readonly BackupKind[] = ['daily', 'pre-migration', 'manual'];
 
-export const BACKUP_RETENTION = { dailyDays: 7, weeklyWeeks: 4, preMigration: 3 } as const;
+export const BACKUP_RETENTION = { dailyDays: 7, weeklyWeeks: 4, preMigration: 3, manual: 5 } as const;
 /** The daily copy runs at 04:00 in `QUOKY_TIMEZONE`. */
 export const DAILY_BACKUP_LOCAL_TIME = { hour: 4, minute: 0 } as const;
 
-const FINAL_NAME = /^quoky-(\d{8}T\d{6}Z)-(daily|pre-migration)\.db$/;
-const PARTIAL_NAME = /^\.quoky-\d{8}T\d{6}Z-(?:daily|pre-migration)\.db\.partial(?:-journal|-wal|-shm)?$/;
+const FINAL_NAME = /^quoky-(\d{8}T\d{6}Z)-(daily|pre-migration|manual)\.db$/;
+const PARTIAL_NAME = /^\.quoky-\d{8}T\d{6}Z-(daily|pre-migration|manual)\.db\.partial(?:-journal|-wal|-shm)?$/;
+const VECTOR_NAME = /^(quoky-\d{8}T\d{6}Z-(?:daily|pre-migration|manual))\.vectors$/;
+const VECTOR_PARTIAL_NAME = /^\.quoky-\d{8}T\d{6}Z-(daily|pre-migration|manual)\.vectors\.partial$/;
 
 export interface BackupFile {
   readonly name: string;
@@ -57,6 +64,29 @@ export function isPartialBackupFileName(name: string): boolean {
   return PARTIAL_NAME.test(name);
 }
 
+/** The kind of a partial DB copy or partial vector snapshot name, or `undefined` for any other name. */
+export function partialBackupKind(name: string): BackupKind | undefined {
+  const match = PARTIAL_NAME.exec(name) ?? VECTOR_PARTIAL_NAME.exec(name);
+  return match === null ? undefined : (match[1] as BackupKind);
+}
+
+/** The vector snapshot directory paired with a DB copy: `quoky-<stamp>-<kind>.db` -> `quoky-<stamp>-<kind>.vectors`. */
+export function vectorSnapshotName(dbFileName: string): string {
+  return dbFileName.replace(/\.db$/, '.vectors');
+}
+
+/** The DB copy a final vector snapshot name belongs to, or `undefined` for any other name. */
+export function vectorSnapshotDbName(name: string): string | undefined {
+  const match = VECTOR_NAME.exec(name);
+  if (match === null) return undefined;
+  const dbName = `${match[1] as string}.db`;
+  return parseBackupFileName(dbName) === undefined ? undefined : dbName;
+}
+
+export function isPartialVectorSnapshotName(name: string): boolean {
+  return VECTOR_PARTIAL_NAME.test(name);
+}
+
 /** The job's own final copies among `names`, newest first. */
 export function listBackupFiles(names: readonly string[]): BackupFile[] {
   return names
@@ -81,10 +111,16 @@ export function selectBackupsToKeep(files: readonly BackupFile[], timeZone: stri
   const days = new Set<string>();
   const weeks = new Set<string>();
   let preMigration = 0;
+  let manual = 0;
   for (const file of newestFirst) {
     if (file.kind === 'pre-migration') {
       if (preMigration < BACKUP_RETENTION.preMigration) keep.add(file.name);
       preMigration += 1;
+      continue;
+    }
+    if (file.kind === 'manual') {
+      if (manual < BACKUP_RETENTION.manual) keep.add(file.name);
+      manual += 1;
       continue;
     }
     // Newest first, so the first copy seen for a day/week is that day's/week's newest.

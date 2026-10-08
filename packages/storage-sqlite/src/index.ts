@@ -1211,5 +1211,11 @@ export class SqliteStorageProvider implements StorageProvider {
 }
 
 // ADR-0102 D6 (SUB-2): online backup primitives for the composition root's backup job.
-export { LATEST_SCHEMA_VERSION, readSqliteUserVersion, writeVerifiedSqliteCopy } from './backup';
-export type { SqliteBackupFailure, SqliteBackupResult, SqliteCopyRequest } from './backup';
+export {
+  LATEST_SCHEMA_VERSION,
+  readSqliteUserVersion,
+  tryAcquireExclusiveLock,
+  verifySqliteBackupFile,
+  writeVerifiedSqliteCopy,
+} from './backup';
+export type { ExclusiveLockResult, SqliteBackupFailure, SqliteBackupResult, SqliteCopyRequest } from './backup';

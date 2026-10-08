@@ -6,13 +6,17 @@
 #   quokyctl.sh restart   --dry-run | --apply   clear the configuration-exit stop and restart the agent
 #   quokyctl.sh status                          read-only: plist, launchd state, configuration exits, paths
 #   quokyctl.sh render                          read-only: print the plist install would write
+#   quokyctl.sh backup   [--dry-run] | --apply  take a verified DB copy + vector snapshot now (kind manual, 5 kept)
+#   quokyctl.sh backup   --verify NAME          read-only: re-verify a retained copy and its vector snapshot
 #
 # Options: --repo DIR (default: this checkout)  --env-file FILE (default: <repo>/.env.local)
 #          --label LABEL (default: com.quoky.personal)  --node FILE (default: the node on PATH)
 #
 # install, uninstall and restart change the owner's login session (launchctl bootstrap/bootout/kickstart in
 # gui/<uid>): they are Strict owner-host actions. --dry-run prints the exact plan and changes nothing; --apply runs
-# the same plan. There is no default mode. Never prints the env file's content.
+# the same plan. There is no default mode for them. backup defaults to --dry-run; --apply writes only into the backup
+# directory and runs while the service keeps running (no restart). Never prints the env file's content; backup never
+# reads it (it uses the configuration the service publishes in <data dir>/ops/backup-config.json).
 
 set -u
 set -o pipefail
@@ -28,7 +32,7 @@ LAUNCHER="$CTL_DIR/quoky-launch.sh"
 SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
-  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2
 }
 
 fail() {
@@ -38,11 +42,12 @@ fail() {
 
 COMMAND=${1:-}
 [ $# -gt 0 ] && shift
-MODE="" REPO="" ENV_FILE="" LABEL="$QUOKY_DEFAULT_LABEL" NODE_BIN=""
+MODE="" REPO="" ENV_FILE="" LABEL="$QUOKY_DEFAULT_LABEL" NODE_BIN="" VERIFY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) MODE=dry-run; shift; continue ;;
     --apply) MODE=apply; shift; continue ;;
+    --verify) VERIFY=${2:-} ;;
     --repo) REPO=${2:-} ;;
     --env-file) ENV_FILE=${2:-} ;;
     --label) LABEL=${2:-} ;;
@@ -59,8 +64,17 @@ case "$COMMAND" in
   status | render)
     [ -z "$MODE" ] || fail "$COMMAND is read-only; it takes no --dry-run/--apply"
     ;;
+  backup)
+    if [ -n "$VERIFY" ]; then
+      [ -z "$MODE" ] || fail "backup --verify is read-only; it takes no --dry-run/--apply"
+    else
+      [ -n "$MODE" ] || MODE=dry-run
+    fi
+    ;;
   *) usage; exit 2 ;;
 esac
+[ -z "$VERIFY" ] || [ "$COMMAND" = backup ] || fail "--verify belongs to the backup command"
+
 
 if ! quoky_is_darwin; then
   fail "the Quoky launchd service supports macOS only (this host: $(quoky_os_name)). Run 'pnpm dev' instead."
@@ -84,6 +98,7 @@ PLIST_PATH="$AGENTS_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/Quoky"
 DATA_DIR="$HOME/Library/Application Support/Quoky"
 CONFIG_EXITS_FILE="$DATA_DIR/launcher/config-exits"
+BACKUP_TOOL="$REPO/apps/quoky/dist/tools/backup-now.js"
 
 # ---------------------------------------------------------------- read-only helpers
 
@@ -327,7 +342,52 @@ cmd_status() {
   echo "logs:    $LOG_DIR/quoky.log"
 }
 
+# The on-demand backup tool, in the service's own environment shape: built from nothing (env -i) with the service's DB
+# and vector paths (the launcher's own helpers). Neither this script nor the tool reads the env file for a backup: the
+# tool takes the backup directory, switch and time zone from the configuration the running service publishes
+# (<data dir>/ops/backup-config.json), or the defaults with a notice.
+run_backup_tool() {
+  /usr/bin/env -i \
+    "HOME=$HOME" \
+    "PATH=$SYSTEM_PATH" \
+    "LANG=en_US.UTF-8" \
+    "QUOKY_DB_PATH=$(quoky_service_db_path "$DATA_DIR")" \
+    "QUOKY_VECTOR_PATH=$(quoky_service_vector_path "$DATA_DIR")" \
+    "QUOKY_LAUNCHER=launchd" \
+    "$NODE_BIN" "$BACKUP_TOOL" "$@"
+}
+
+cmd_backup() {
+  local state="not loaded"
+  resolve_node
+  [ -f "$BACKUP_TOOL" ] || fail "backup refused: the app is not built ($BACKUP_TOOL missing); run 'pnpm build' first"
+  if [ -n "$VERIFY" ]; then
+    # A restore drill must work with no live database (disaster recovery): no source-DB check on this branch.
+    case "$VERIFY" in
+      quoky-*Z-daily.db | quoky-*Z-pre-migration.db | quoky-*Z-manual.db) ;;
+      *) fail "--verify takes a copy name such as quoky-20261007T190000Z-daily.db" ;;
+    esac
+    run_backup_tool --verify "$VERIFY"
+    exit $?
+  fi
+  [ -f "$(quoky_service_db_path "$DATA_DIR")" ] ||
+    fail "backup refused: no service database at $(quoky_service_db_path "$DATA_DIR"); nothing to back up"
+  is_loaded && state="loaded"
+  echo "service: $SERVICE ($state); no restart: the copy only reads the database and the vector store"
+  if [ "$MODE" = apply ]; then
+    echo "apply: take a manual backup (verified DB copy + vector snapshot)"
+    run_backup_tool --apply
+    local rc=$?
+    [ "$rc" -eq 0 ] || fail "backup did not fully verify (exit $rc, see above); the service was not touched"
+    echo "backed up: see backups/backup-status.json (lastManual)"
+  else
+    run_backup_tool --dry-run || fail "backup dry-run failed (see above); nothing was changed"
+    echo "dry-run: nothing was changed (run 'quokyctl.sh backup --apply' to take the copy)"
+  fi
+}
+
 case "$COMMAND" in
+  backup) cmd_backup ;;
   install) cmd_install ;;
   uninstall) cmd_uninstall ;;
   restart) cmd_restart ;;

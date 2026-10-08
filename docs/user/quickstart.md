@@ -399,6 +399,7 @@ ops/launchd/quokyctl.sh install --apply       # Strict: plist 작성 + launchctl
 ops/launchd/quokyctl.sh status                # 읽기 전용: launchd 상태, 연속 설정 오류 횟수, 잠금, 로그 경로
 ops/launchd/quokyctl.sh restart --apply       # Strict: 설정 오류 중지 해제 + launchctl kickstart -k
 ops/launchd/quokyctl.sh uninstall --apply     # Strict: bootout + plist 삭제 (DB와 로그는 남김)
+ops/launchd/quokyctl.sh backup                # 지금 백업할 계획만 출력 (읽기 전용, 아래 "지금 백업하기")
 tail -f ~/Library/Logs/Quoky/quoky.log
 ```
 
@@ -430,12 +431,62 @@ tail -f ~/Library/Logs/Quoky/quoky.log
 - 새 빌드가 기존 DB의 스키마를 올려야 하면(마이그레이션) `storage.init()` **전에** 사본을 하나 더 만들고
   검증합니다(`pre-migration`). 검증에 실패하면 마이그레이션 없이 시작을 거절합니다
   (`BACKUP_PRE_MIGRATION_FAILED`, 종료 코드 78: 3번 연속이면 launcher가 다시 띄우지 않습니다).
+- **벡터 저장소도 함께 백업합니다.** DB 사본을 만들 때마다 의미 검색용 벡터 저장소(`vectors/`,
+  `QUOKY_VECTOR_PATH`)의 스냅샷을 같은 이름의 디렉터리로 옆에 둡니다(`quoky-<UTC 시각>-<종류>.vectors/`, 디렉터리 700,
+  파일 600). 벡터 저장소는 컬렉션마다 JSON 파일 하나이고, Quoky는 이 파일을 항상 다 쓴 임시 파일을 이름만 바꿔
+  교체하므로 파일을 그대로 복사하면 일관된 스냅샷이 됩니다. 스냅샷은 복사한 뒤 다시 읽어 검증합니다(`.snapshot.json`에
+  적힌 파일 목록, 크기, SHA-256, 레코드 수가 모두 일치해야 함 — DB의 `integrity_check`에 해당). 벡터 저장소가 아직
+  없으면(의미 검색을 쓰지 않음) 빈 스냅샷을 만듭니다.
+- 벡터 스냅샷이 실패해도 검증된 DB 사본은 남깁니다(DB가 원본이고 벡터는 다시 만들 수 있는 캐시이기 때문).
+  실패는 `backup-status.json`의 `vectors.outcome: FAILED`와 `quoky.log`의 `backup.vectors.failed`(실패 코드)로
+  남고, 운영 알림은 보내지 않으며 시작을 막지도 않습니다. 그 사본은 아래 "벡터 스냅샷이 없는 사본"처럼 복구합니다.
 - 위치: `~/Library/Application Support/Quoky/backups/` (디렉터리 700, 파일 600).
-  이름: `quoky-<UTC 시각>-daily.db`, `quoky-<UTC 시각>-pre-migration.db`.
-- 보관: 최근 7일의 일일 사본 + 최근 4주의 주간 사본(그 주의 가장 최신 사본) + 최근 pre-migration 사본 3개.
-  정리는 위 이름 형식의 일반 파일만 지웁니다. 같은 디렉터리의 다른 파일은 건드리지 않습니다.
-- 상태: `backups/backup-status.json` (마지막 실행 시각과 결과, 검증 여부, 마지막 검증 사본, 보관 개수, 다음 예정
-  시각; 파일 이름만 담고 경로나 내용은 담지 않습니다).
+  이름: `quoky-<UTC 시각>-daily.db`, `quoky-<UTC 시각>-pre-migration.db`, `quoky-<UTC 시각>-manual.db`(수동),
+  각각의 벡터 스냅샷 `quoky-<UTC 시각>-<종류>.vectors/`.
+- 보관: 최근 7일의 일일 사본 + 최근 4주의 주간 사본(그 주의 가장 최신 사본) + 최근 pre-migration 사본 3개 + 최근
+  수동 사본 5개. 벡터 스냅샷은 같은 이름의 DB 사본과 함께 지워집니다. 정리는 위 이름 형식의 일반 파일(스냅샷
+  디렉터리는 그 안의 스냅샷 파일)만 지웁니다. 같은 디렉터리의 다른 파일은 건드리지 않습니다.
+- 상태: `backups/backup-status.json` (마지막 정기 실행 `lastRun`과 마지막 수동 실행 `lastManual`의 시각·결과·벡터
+  스냅샷 결과와 레코드 수, 마지막 검증 사본, 보관 사본과 벡터 스냅샷 목록, 다음 예정 시각; 파일 이름만 담고 경로나
+  내용은 담지 않습니다). 운영 화면의 백업 패널에도 보입니다. 이 파일은 참고용 상태 기록(best-effort)입니다. 서비스와
+  수동 백업이 같은 순간에 기록하면 한쪽 값이 다음 기록까지 빠질 수 있으니, 실제로 있는 사본은 디렉터리 목록과
+  `--verify`로 확인하세요. 백업 디렉터리가 심볼릭 링크면 백업과 상태 기록을 거절합니다.
+
+**지금 백업하기 (수동)**
+
+정기 백업을 기다리지 않고 지금 사본을 만들 수 있습니다. **서비스를 멈추거나 재시작하지 않습니다.** 짧게 실행되는
+별도 프로세스(`apps/quoky/dist/tools/backup-now.js`)가 DB를 읽기 전용 연결로 `VACUUM INTO` 해서, 같은 검증(사본 →
+검증 → 이름 바꾸기)을 거친 `manual` 사본과 벡터 스냅샷을 만듭니다. DB가 WAL 모드라 복사하는 동안에도 서비스의
+일반 쓰기(commit)는 계속됩니다(사본은 복사를 시작한 순간의 일관된 상태). 다만 복사가 끝날 때까지 WAL
+체크포인트가 늦어질 수 있고(WAL 파일이 잠시 커질 수 있음), 복사 쪽 연결은 잠금을 최대 5초 기다립니다. 서비스의
+DB나 인스턴스 잠금은 건드리지 않고 마이그레이션도 하지 않습니다. 백업은 정기·pre-migration·수동을 통틀어 한 번에
+하나만 실행됩니다(`backups/.backup-lock.db`에 대한 SQLite 배타 잠금. 운영체제가 잡고 있는 잠금이라 프로세스가 죽으면
+자동으로 풀리므로, 남은 잠금을 넘겨받는 규칙이 따로 없습니다). 다른 백업이 실행 중이면 수동 백업은 아무것도 쓰지
+않고 막힘(종료 코드 3)으로 끝나고, 정기 백업은 알림 없이 15분 뒤 다시 시도하며, pre-migration 사본은 1초 간격으로
+최대 10분 기다린 뒤에도 잠겨 있으면 시작을 거절합니다(종료 코드 78, 연속 3번이면 launcher가 다시 띄우지 않음).
+잠금 파일은 소유자 전용(700) `backups/` 안에 SQLite가 만들며, 이 디렉터리가 실제 디렉터리이고 700이며 본인 소유일
+때만 잠급니다.
+
+```sh
+ops/launchd/quokyctl.sh backup             # 기본은 dry-run: 만들 사본 이름, 벡터 레코드 수, 정리될 사본을 출력 (변경 없음)
+ops/launchd/quokyctl.sh backup --apply     # 지금 백업 (backups/ 디렉터리에만 씀)
+ops/launchd/quokyctl.sh backup --verify quoky-<UTC 시각>-<종류>.db   # 읽기 전용: 사본과 벡터 스냅샷 다시 검증
+```
+
+- 서비스와 같은 환경으로 실행합니다(`env -i`, launcher와 같은 방법으로 만든 서비스 DB·벡터 경로). `quokyctl.sh`도
+  백업 도구도 `.env.local`을 **전혀 읽지 않습니다.** 백업 디렉터리, 정기 백업 켜짐 여부, 시간대, DB·벡터 경로는
+  실행 중인 서비스가 시작할 때 기록한 `~/Library/Application Support/Quoky/ops/backup-config.json`(비밀 값 없음,
+  디렉터리 700, 파일 600)에서 읽습니다.
+- 이 파일이 없거나(이 빌드로 서비스를 아직 한 번도 시작하지 않음) 잘못됐거나 다른 DB의 것이면, 기본값(DB 옆
+  `backups/`, 기본 시간대)을 쓰고 그 사실을 `note:` 줄로 알려 줍니다. `.env.local`에 `QUOKY_BACKUP_DIR`이나
+  `QUOKY_TIMEZONE`을 바꿨다면 서비스를 한 번 다시 시작한 뒤 수동 백업을 실행하세요.
+- `QUOKY_BACKUP_ENABLED=false`여도 수동 백업은 실행합니다(그 값은 정기 백업만 끕니다).
+- 종료 코드: 0 성공, 1 DB 사본 실패(아무것도 남기지 않음) 또는 `--verify` 실패, 3 막힘(DB 없음, 설정 오류, 다른
+  백업 실행 중), 4 DB 사본은 검증됐지만 벡터 스냅샷이 실패(DB 사본은 남김). `quokyctl.sh`는 0이 아니면 실패로
+  끝납니다.
+- `--verify`는 지금 서비스 DB가 없어도(재해 복구 연습) 실행됩니다. 심볼릭 링크인 사본, 스냅샷 디렉터리, 백업
+  디렉터리는 따라가지 않고 실패로 처리합니다.
+- 실제 소유자 데이터를 읽어 소유자 디스크에 쓰는 작업이므로 `--apply`는 소유자가 직접 실행합니다.
 
 설정 (`.env.local`, 선택):
 
@@ -456,28 +507,56 @@ QUOKY_BACKUP_DIR=/Volumes/Backup/quoky   # 기본: DB 디렉터리의 backups/. 
 
 **복구 절차 (Strict, 소유자가 직접 승인·실행)**
 
-복구는 자동으로 하지 않습니다. 실제 DB를 바꾸기 전에 반드시 임시 위치에서 연습(drill)합니다.
+복구는 자동으로 하지 않습니다. 실제 DB를 바꾸기 전에 반드시 임시 위치에서 연습(drill)합니다. DB 사본을 복구할 때는
+**같은 이름의 벡터 스냅샷도 함께** 복구합니다. 그래야 의미 검색 색인이 복구한 기억과 정확히 맞습니다.
 
 ```sh
 B="$HOME/Library/Application Support/Quoky/backups"
 D="$HOME/Library/Application Support/Quoky"
+N=quoky-<UTC 시각>-<종류>                                     # 복구할 사본 이름 (.db 없이)
 ls -l "$B"; cat "$B/backup-status.json"                     # 1. 복구할 사본 고르기
-cp "$B/<사본 이름>" /tmp/quoky-restore-drill.db               # 2. 연습: 임시 DB로 복사
+ops/launchd/quokyctl.sh backup --verify "$N.db" || exit 1  # 2. 연습(읽기 전용): DB 사본과 벡터 스냅샷 검증 (실패하면 중단)
+[ -f "$B/$N.db" ] && [ ! -L "$B/$N.db" ] || exit 1         #    사본은 심볼릭 링크가 아닌 일반 파일이어야 함
+cp -P "$B/$N.db" /tmp/quoky-restore-drill.db                #    직접 확인하려면 임시 DB로 복사
 sqlite3 /tmp/quoky-restore-drill.db 'PRAGMA integrity_check; PRAGMA user_version;'
 #    -> "ok"와, backup-status.json의 userVersion과 같은 숫자가 나와야 합니다
 launchctl bootout gui/$(id -u)/com.quoky.personal          # 3. 서비스 중지
-mkdir -p "$D/before-restore"                                # 4. 현재 DB와 WAL 파일을 옆으로 옮김
-mv "$D/quoky.db" "$D/quoky.db-wal" "$D/quoky.db-shm" "$D/before-restore/" 2>/dev/null
-cp "$B/<사본 이름>" "$D/quoky.db" && chmod 600 "$D/quoky.db"    # 5. 사본을 DB 자리에 복사
-ops/launchd/quokyctl.sh install --apply                     # 6. 서비스 다시 시작
+mkdir -p "$D/before-restore"                                # 4. 현재 DB, WAL 파일, 벡터 저장소를 옆으로 옮김
+mv "$D/quoky.db" "$D/quoky.db-wal" "$D/quoky.db-shm" "$D/vectors" "$D/before-restore/" 2>/dev/null
+cp -P "$B/$N.db" "$D/quoky.db" && chmod 600 "$D/quoky.db"   # 5. DB 사본을 DB 자리에 복사
+if [ -d "$B/$N.vectors" ] && [ ! -L "$B/$N.vectors" ]; then # 6. 같은 이름의 벡터 스냅샷(실제 디렉터리)을 벡터 자리에 복사
+  cp -RPp "$B/$N.vectors" "$D/vectors" && rm -f "$D/vectors/.snapshot.json"
+fi
+ops/launchd/quokyctl.sh install --apply                     # 7. 서비스 다시 시작
 rm /tmp/quoky-restore-drill.db
 ```
 
+- 2단계 `--verify`는 DB 사본의 `integrity_check`/`user_version`과 벡터 스냅샷(파일 목록, 크기, SHA-256, 레코드 수)을
+  확인하고, 둘이 짝이 맞는 세트인지, 스냅샷이 없는 사본인지 알려 줍니다. 서비스 DB가 없어도 실행됩니다. 실패하면
+  그 사본을 복구하지 마세요. 검증은 스냅샷 안에 일반 파일만 있는지도 확인하므로, 검증을 통과한 뒤에만 복사합니다.
 - 4단계에서 `quoky.db-wal`/`quoky.db-shm`을 반드시 함께 옮깁니다. 남겨 두면 옛 WAL이 복구한 DB에 적용될 수
-  있습니다.
+  있습니다. `vectors`도 함께 옮깁니다(복구한 DB 이후에 생긴 기억의 벡터가 남지 않게). `before-restore/`가 이미
+  있으면 먼저 다른 이름으로 바꾸거나 지우세요.
+- 5·6단계의 `cp -P`/`cp -RPp`는 심볼릭 링크를 따라가지 않고, `-p`는 권한(디렉터리 700, 파일 600)을 그대로
+  유지합니다. 스냅샷 디렉터리가 심볼릭 링크면 복사하지 않습니다(그 사본은 "벡터 스냅샷이 없는 사본"으로 복구).
+  스냅샷이 "저장소 없음"(빈 스냅샷)이면 `vectors/`에 파일이 없을 뿐 정상입니다.
 - 사본의 `user_version`이 지금 빌드보다 낮으면 다음 시작에서 마이그레이션이 일어납니다(Strict). 이때도 먼저
   pre-migration 사본이 자동으로 만들어집니다.
 - 문제가 없으면 나중에 `before-restore/`를 직접 지우세요. 백업 정리 기능은 이 디렉터리를 건드리지 않습니다.
+
+**벡터 스냅샷이 없는 사본 (이 기능 이전의 사본, 또는 스냅샷이 실패한 사본)**
+
+6단계를 건너뛰고, 4단계에서 옮긴 `vectors`를 **되돌려 놓지 마세요.** 벡터 저장소가 빈 상태로 시작하고, 의미 검색이
+복구된 기억에서 색인을 스스로 다시 만듭니다. 별도 재색인 명령은 없고 필요하지도 않습니다.
+
+- 회상이 틀려지지는 않습니다. 저장된 벡터는 기억 ID와 내용 해시가 복구된 기억과 일치할 때만 쓰입니다.
+- 회상 품질은 잠시 떨어집니다. 아직 다시 임베딩되지 않은 기억은 어휘(lexical) 점수로만 순위가 매겨지고, 대화
+  한 번에 그 대화가 후보로 고려한 기억 중 최대 4개만 로컬 Ollama로 다시 임베딩됩니다. 자주 쓰는 기억부터 금방
+  돌아옵니다. `QUOKY_EMBEDDING_ENABLED=false`(기본)이면 벡터를 처음부터 쓰지 않으므로 영향이 없습니다.
+- 지금의 `vectors/`를 그대로 두는 것도 회상을 틀리게 하지는 않지만, 사본 이후에 생긴(복구로 사라진) 기억의
+  벡터가 남고 `기억 잊기`로도 지울 수 없게 되므로 권장하지 않습니다.
+- 스냅샷을 기본으로 두는 이유: 다시 만들기는 임베딩 모델 호출이 필요하고 느리며(대화당 최대 4개), 스냅샷은
+  JSON 파일 복사라 가볍고 복구 직후부터 회상 품질이 그대로입니다.
 
 ### 운영 화면 (선택, ADR-0113 OPS-1/OPS-2/OPS-2b)
 

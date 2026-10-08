@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import Database from 'better-sqlite3';
@@ -69,6 +70,126 @@ export function readSqliteUserVersion(dbPath: string): number | undefined {
   } finally {
     db.close();
   }
+}
+
+/**
+ * Verify an existing backup copy read-only (the restore drill, `backup-now --verify`): `PRAGMA integrity_check` must be
+ * exactly `ok`. Returns the copy's `user_version`. A symlink or non-regular file is refused (`SOURCE_UNREADABLE`). A `VACUUM INTO` copy is in rollback-journal mode, so a read-only
+ * open creates no `-wal`/`-shm` file next to it. Synchronous (a short-lived tool, never the service). Never throws.
+ */
+export function verifySqliteBackupFile(copyPath: string): SqliteBackupResult {
+  // A copy is a regular file of the backup job; a symlink (or anything else) is refused, never followed.
+  try {
+    if (!lstatSync(copyPath).isFile()) return { ok: false, failure: 'SOURCE_UNREADABLE' };
+  } catch {
+    return { ok: false, failure: 'SOURCE_UNREADABLE' };
+  }
+  let copy: Database.Database | undefined;
+  try {
+    copy = new Database(copyPath, { readonly: true, fileMustExist: true, timeout: DEFAULT_BACKUP_BUSY_TIMEOUT_MS });
+    const rows = copy.pragma('integrity_check') as Array<{ integrity_check?: unknown }>;
+    const ok = Array.isArray(rows) && rows.length === 1 && rows[0]?.integrity_check === 'ok';
+    if (!ok) return { ok: false, failure: 'INTEGRITY_FAILED' };
+    return { ok: true, userVersion: Number(copy.pragma('user_version', { simple: true })) || 0 };
+  } catch {
+    return { ok: false, failure: 'INTEGRITY_FAILED' };
+  } finally {
+    try {
+      copy?.close();
+    } catch {
+      // closing a read-only handle cannot lose data
+    }
+  }
+}
+
+export type ExclusiveLockResult =
+  | { readonly ok: true; readonly release: () => void }
+  /** `BUSY`: another holder (this process or another) has the lock. `UNAVAILABLE`: the lock directory or file is unusable. */
+  | { readonly ok: false; readonly failure: 'BUSY' | 'UNAVAILABLE' };
+
+/** Lock paths this process holds. A second acquire in the same process returns `BUSY` without opening anything. */
+const heldInThisProcess = new Set<string>();
+
+/**
+ * The lock's directory must be a real directory (not a symlink, realpath = parent's realpath + its name), mode 700 and
+ * owned by this user. The lock file's safety is bound to this directory: under the owner-only threat model, a same-user
+ * process that can write inside a 700 directory could already tamper with the backups themselves, so it is out of scope.
+ */
+function isPrivateRealDirectory(dir: string): boolean {
+  try {
+    const stat = lstatSync(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+    if ((stat.mode & 0o777) !== 0o700) return false;
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return false;
+    const resolved = resolve(dir);
+    return realpathSync(dir) === join(realpathSync(dirname(resolved)), basename(resolved));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An OS-held exclusive lock on a dedicated lock database (serializes backup runs across processes): a connection with
+ * `busy_timeout = 0` runs `PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE` and is held until `release()`. SQLite's
+ * lock is an fcntl lock, which the kernel drops when the process dies, so a crashed holder never leaves a stale lock:
+ * there is no pid, age or takeover rule.
+ *
+ * Only SQLite ever opens the lock file: POSIX drops a process's fcntl locks when *any* descriptor of that file is closed
+ * in the process, so this function never opens or closes it itself, and a second acquire while this process already
+ * holds the lock returns `BUSY` at once (a process-wide guard) without touching the file. The directory must be a
+ * private real directory (`isPrivateRealDirectory`); the file is created by SQLite inside it (its mode follows the
+ * umask; the directory is what keeps it private, and it holds no data). These checks are not TOCTOU-free: a same-user
+ * process that can write inside the directory could swap the file between the check and the open, which the owner-only
+ * threat model leaves out of scope. Never throws.
+ */
+export function tryAcquireExclusiveLock(lockPath: string): ExclusiveLockResult {
+  const key = resolve(lockPath);
+  if (heldInThisProcess.has(key)) return { ok: false, failure: 'BUSY' };
+  if (!isPrivateRealDirectory(dirname(key))) return { ok: false, failure: 'UNAVAILABLE' };
+  try {
+    const stat = lstatSync(key);
+    if (!stat.isFile()) return { ok: false, failure: 'UNAVAILABLE' };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, failure: 'UNAVAILABLE' };
+  }
+  let db: Database.Database;
+  try {
+    db = new Database(key, { timeout: 0 });
+  } catch {
+    return { ok: false, failure: 'UNAVAILABLE' };
+  }
+  try {
+    db.pragma('locking_mode = EXCLUSIVE');
+    db.exec('BEGIN EXCLUSIVE');
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // nothing held
+    }
+    const code = (error as { code?: unknown }).code;
+    return { ok: false, failure: typeof code === 'string' && code.startsWith('SQLITE_BUSY') ? 'BUSY' : 'UNAVAILABLE' };
+  }
+  heldInThisProcess.add(key);
+  let released = false;
+  return {
+    ok: true,
+    release: () => {
+      if (released) return;
+      released = true;
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // closing releases the lock anyway
+      }
+      try {
+        db.close();
+      } catch {
+        // the process exit releases it at the latest
+      }
+      heldInThisProcess.delete(key);
+    },
+  };
 }
 
 /**

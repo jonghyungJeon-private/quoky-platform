@@ -170,9 +170,11 @@ const BACKUP: BackupStatus = {
   enabled: false,
   state: 'DISABLED',
   lastRun: null,
+  lastManual: null,
   lastVerified: null,
   retainedCount: 0,
   retained: [],
+  retainedVectors: [],
   nextScheduledAt: null,
 };
 

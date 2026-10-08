@@ -53,8 +53,8 @@ quoky_child_env() {
     "LOGNAME=$6" \
     "QUOKY_ENV_FILE=$3" \
     "QUOKY_RUNTIME_ENV=prod" \
-    "QUOKY_DB_PATH=$4/quoky.db" \
-    "QUOKY_VECTOR_PATH=$4/vectors" \
+    "QUOKY_DB_PATH=$(quoky_service_db_path "$4")" \
+    "QUOKY_VECTOR_PATH=$(quoky_service_vector_path "$4")" \
     "QUOKY_LAUNCHER=launchd" \
     "QUOKY_LAUNCHER_RECENT_STARTS=$5"
 }

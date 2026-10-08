@@ -5,6 +5,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — backup set includes the vector store; on-demand backup (2026-10-08)
+
+Live-QA follow-ups from the 2026-10-07 restore drill.
+
+- Every backup (daily, weekly, pre-migration, and the new manual kind) also snapshots the vector store
+  (`QUOKY_VECTOR_PATH`) next to the DB copy as `quoky-<UTC>-<kind>.vectors/` (dir 700, files 600), with the same
+  naming and retention. The snapshot copies each regular `<collection>.json` (atomically replaced by the provider, so
+  each read is one complete version) and verifies the copy against a `.snapshot.json` manifest (file list, sizes,
+  SHA-256, usable record counts). An absent store is an empty snapshot. A failed snapshot keeps the verified DB copy, is
+  recorded as `vectors.outcome: FAILED` and logged (`backup.vectors.failed`), sends no notice and never refuses a start.
+- `backup-status.json` gains `lastManual`, `retainedVectors`, a `vectors` record per run (outcome, counts) and
+  `lastVerified.vectors`; the service and the manual process each keep the other's fields. The OPS-1 backup panel shows
+  the vector snapshot of the last verified copy and the last manual backup.
+- `ops/launchd/quokyctl.sh backup` (dry-run by default) / `backup --apply` / `backup --verify <copy>.db`: an on-demand,
+  verified `manual` copy + vector snapshot while the service runs (no restart), and a read-only restore drill. A
+  separate short-lived process (`apps/quoky/dist/tools/backup-now.js`) runs `VACUUM INTO` from a read-only connection
+  (WAL: the service's ordinary commits continue; checkpoints may be delayed until the copy ends) with the same partial →
+  verify → rename flow. Neither `quokyctl.sh backup` nor the tool reads `.env.local`: the launchd service publishes its
+  effective, non-secret backup configuration at start (`<data dir>/ops/backup-config.json`, private-file writer), the
+  tool reads it with the private-file checks and falls back to the defaults with a notice when it is missing, invalid
+  or for another database. Every backup run (scheduled, pre-migration, manual) holds `backups/.backup-lock.db`, an
+  OS-held SQLite exclusive lock (`locking_mode=EXCLUSIVE`, `BEGIN EXCLUSIVE`, `busy_timeout=0`) that the kernel releases
+  when the holder dies; only SQLite opens the lock file, a second acquire in the holding process returns at once, and
+  the backup directory must be a real, 700, owner-owned directory. A held lock means `BACKUP_IN_PROGRESS` (manual: exit
+  3; daily: retried at the next poll; pre-migration: polls up to 10 minutes, then exit 78). The 5 newest manual copies
+  are kept.
+  `--verify` works with no live DB.
+- Partial names are claimed exclusively (mode 600 from creation). Only the service prunes its own kinds' partials at any
+  age; every other partial (including another manual run's) is pruned only once it is stale (15 minutes).
+- `backup-status.json` (best-effort, advisory telemetry) is now written through the private-file writer (real 700
+  directory, random `O_CREAT | O_EXCL | O_NOFOLLOW` temp file, fsync, rename); a symlinked backup directory, snapshot
+  root or DB copy is refused. The restore runbook verifies first and copies with `cp -P` / `cp -RPp` after a
+  real-directory check.
+- Restore runbook (quickstart section 7, operator guide): restore the DB copy and its same-named vector snapshot
+  together; for a copy without one, move `vectors/` aside and let semantic recall rebuild lazily (lexical ranking until
+  re-embedded, at most 4 per turn; a vector is used only when its memory id and content hash match).
+- `@quoky/vector-local`: `writeVerifiedVectorSnapshot`, `verifyVectorSnapshot`, `inspectVectorStore` (format helpers
+  shared with the provider); `@quoky/storage-sqlite`: `verifySqliteBackupFile` (read-only re-check of a copy).
+
 ## Unreleased — Discord table rendering for model replies only (ADR-0111 amendment, 2026-10-08)
 
 - Core: `OutboundMessage.format?: 'model-reply'`, set by the runtime only on a provider's own answer (chat, summaries,

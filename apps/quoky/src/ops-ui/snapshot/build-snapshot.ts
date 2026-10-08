@@ -480,6 +480,16 @@ export class OpsSnapshotBuilder {
           label: '검증 (integrity_check, user_version)',
           value: verified ? `예${verified.userVersion !== undefined ? ` (user_version ${verified.userVersion})` : ''}` : '아니요',
         },
+        {
+          label: '벡터 스냅샷 (마지막 검증 사본)',
+          value: verified ? (verified.vectors ? `있음 · ${verified.vectors}` : '없음 (복구하면 의미 검색 색인을 다시 만듦)') : '없음',
+        },
+        {
+          label: '마지막 수동 백업',
+          value: status.lastManual
+            ? `${this.time(status.lastManual.finishedAt)} · ${status.lastManual.outcome}${status.lastManual.failure ? ` (${status.lastManual.failure})` : ''}`
+            : '없음',
+        },
         { label: '보관 사본 수', value: String(status.retainedCount) },
         { label: '다음 예정', value: status.nextScheduledAt ? this.time(status.nextScheduledAt) : '없음' },
       ],

@@ -478,8 +478,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ...(expectedBotId !== undefined ? { expectedBotId } : {}),
     },
     host,
-    storage: { dbPath: resolveDataPath(env.QUOKY_DB_PATH ?? env.CHUNSIK_DB_PATH ?? './data/chunsik.db') },
-    vector: { storePath: resolveDataPath(env.QUOKY_VECTOR_PATH ?? env.CHUNSIK_VECTOR_PATH ?? './data/vectors') },
+    storage: { dbPath: resolveDataPaths(env).dbPath },
+    vector: { storePath: resolveDataPaths(env).vectorPath },
     workspace: { workspaceRoot: env.QUOKY_WORKSPACE_ROOT ?? env.CHUNSIK_WORKSPACE_ROOT ?? process.cwd() },
     ai: {
       claudeBin: env.CLAUDE_CLI_BIN ?? 'claude',
@@ -708,6 +708,17 @@ function parseContextMaxTokens(raw: string | undefined): number {
     throw new QuokyConfigError(QuokyConfigErrorCode.CONTEXT_MAX_TOKENS_INVALID);
   }
   return value;
+}
+
+/**
+ * The database and vector store paths (`QUOKY_DB_PATH`, `QUOKY_VECTOR_PATH`, legacy `CHUNSIK_*` fallbacks). Shared by
+ * `loadConfig` and the on-demand backup tool (`tools/backup-now.ts`), which must resolve exactly what the service uses.
+ */
+export function resolveDataPaths(env: NodeJS.ProcessEnv): { dbPath: string; vectorPath: string } {
+  return {
+    dbPath: resolveDataPath(env.QUOKY_DB_PATH ?? env.CHUNSIK_DB_PATH ?? './data/chunsik.db'),
+    vectorPath: resolveDataPath(env.QUOKY_VECTOR_PATH ?? env.CHUNSIK_VECTOR_PATH ?? './data/vectors'),
+  };
 }
 
 /** Relative data paths resolve against the repository root; empty, absolute and `:memory:` stay unchanged. */

@@ -83,3 +83,12 @@ quoky_env_file_hint() {
     *) echo "unknown env file problem" ;;
   esac
 }
+
+# The service's data paths under --data-dir (ADR-0102 D2). The launcher puts them in the app environment
+# (QUOKY_DB_PATH, QUOKY_VECTOR_PATH; they win over .env.local) and quokyctl.sh backup passes the same values.
+quoky_service_db_path() {
+  printf '%s/quoky.db' "$1"
+}
+quoky_service_vector_path() {
+  printf '%s/vectors' "$1"
+}
