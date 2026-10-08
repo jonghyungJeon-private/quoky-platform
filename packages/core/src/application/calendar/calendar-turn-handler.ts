@@ -90,8 +90,11 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
   readonly stage = 'pre-classify' as const;
   readonly order = CALENDAR_TURN_HANDLER_ORDER;
   readonly helpLines: readonly string[];
-  /** Per session: the calendar list this handler last showed (ids only), insertion order = age. */
-  private readonly recentListings = new Map<Id, CalendarRecentListing>();
+  /**
+   * Per (session, actor): the calendar list this handler last showed that actor (ids only), insertion order = age. A
+   * shared conversation never hands one actor's list to another (the recent-write anchors bind the actor too).
+   */
+  private readonly recentListings = new Map<string, CalendarRecentListing & { readonly sessionId: Id; readonly actorId: Id }>();
 
   constructor(private readonly deps: CalendarTurnHandlerDeps) {
     this.helpLines = deps.writesEnabled === true ? CALENDAR_WRITE_HELP_LINES : CALENDAR_HELP_LINES;
@@ -142,7 +145,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       writesEnabled: this.deps.writesEnabled === true,
     };
     const reply = renderCalendarEvents(window, events, renderOptions);
-    this.rememberListing(ctx.session.id, {
+    this.rememberListing(ctx.session.id, ctx.actor.id, {
       at: ctx.now,
       window: { from: window.from, to: window.to },
       eventIds: calendarListedEventIds(window, events, renderOptions),
@@ -151,9 +154,10 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
   }
 
   /** An empty list replaces an older one too: "the last list shown" had nothing to pick. */
-  private rememberListing(sessionId: Id, listing: CalendarRecentListing): void {
-    this.recentListings.delete(sessionId);
-    this.recentListings.set(sessionId, listing);
+  private rememberListing(sessionId: Id, actorId: Id, listing: CalendarRecentListing): void {
+    const key = listingKey(sessionId, actorId);
+    this.recentListings.delete(key);
+    this.recentListings.set(key, { ...listing, sessionId, actorId });
     while (this.recentListings.size > CALENDAR_RECENT_LISTINGS_MAX) {
       const oldest = this.recentListings.keys().next().value;
       if (oldest === undefined) break;
@@ -164,11 +168,12 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
   /** An undated update / delete carries this session's last list (within the ADR-0093 lifetime) to the flow. */
   private withRecentListing(draft: ConnectorWriteDraft, ctx: TurnHandlerContext): ConnectorWriteDraft {
     if ((draft.kind !== 'calendar-update' && draft.kind !== 'calendar-delete') || draft.ref.inferredDay !== true) return draft;
-    const listing = this.recentListings.get(ctx.session.id);
-    if (!listing) return draft;
+    const key = listingKey(ctx.session.id, ctx.actor.id);
+    const listing = this.recentListings.get(key);
+    if (!listing || listing.sessionId !== ctx.session.id || listing.actorId !== ctx.actor.id) return draft;
     const age = Date.parse(ctx.now) - Date.parse(listing.at);
     if (!Number.isFinite(age) || age < 0 || age >= PENDING_APPROVAL_TTL_MS) {
-      this.recentListings.delete(ctx.session.id);
+      this.recentListings.delete(key);
       return draft;
     }
     const ref = { ...draft.ref, recentListing: { at: listing.at, window: listing.window, eventIds: [...listing.eventIds] } };
@@ -207,6 +212,11 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       // best-effort
     }
   }
+}
+
+/** The cache key of one actor's last list in one conversation. */
+function listingKey(sessionId: Id, actorId: Id): string {
+  return JSON.stringify([sessionId, actorId]);
 }
 
 /** Factory for the composition root (ADR-0096 D7). */

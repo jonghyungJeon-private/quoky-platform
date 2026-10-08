@@ -991,17 +991,16 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
               contextual.basis,
             );
           }
-          if (vagueRef) {
-            let nearby: ConnectorWriteEventSummary[];
-            try {
-              nearby = await this.nearbyCandidates(input.now);
-            } catch {
-              return refused('calendar-read-failed');
-            }
-            if (nearby.length === 0) return refused('no-nearby-events');
-            return this.offerChoice(input, { mode, reference: draft.ref, candidates: nearby, ...(changes ? { changes } : {}) }, 'nearby');
+          // No context: today and tomorrow, filtered by the time of day and title words the owner gave (Codex P2:
+          // "9시 회의 취소해줘" finds tomorrow's 09:00 meeting too), still as a numbered choice.
+          let nearby: ConnectorWriteEventSummary[];
+          try {
+            nearby = await this.nearbyCandidates(input.now, draft.ref);
+          } catch {
+            return refused('calendar-read-failed');
           }
-          // A start time or a quoted title with no day and no context: that day is today, as documented.
+          if (nearby.length === 0) return refused(vagueRef ? 'no-nearby-events' : 'event-not-found');
+          return this.offerChoice(input, { mode, reference: draft.ref, candidates: nearby, ...(changes ? { changes } : {}) }, 'nearby');
         }
         let events: readonly CalendarEvent[];
         try {
@@ -1400,13 +1399,16 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return best;
   }
 
-  /** Today's and tomorrow's events (start order, at most {@link CONNECTOR_WRITE_MAX_CHOICES}) for an undated choice. */
-  private async nearbyCandidates(now: IsoTimestamp): Promise<ConnectorWriteEventSummary[]> {
+  /**
+   * Today's and tomorrow's events matching the reference's time of day and title words (start order, at most
+   * {@link CONNECTOR_WRITE_MAX_CHOICES}) for an undated choice.
+   */
+  private async nearbyCandidates(now: IsoTimestamp, ref: CalendarEventReference): Promise<ConnectorWriteEventSummary[]> {
     const today = localDateOf(Date.parse(now), this.deps.timeZone);
     const window = calendarWindowForDays(today, CONNECTOR_WRITE_NEARBY_DAYS, this.deps.timeZone);
     const events = await this.readWindow({ from: window.from, to: window.to });
     return events
-      .filter((event) => typeof event.id === 'string' && event.id.length > 0)
+      .filter((event) => matchesTimeAndTitle(event, ref, this.deps.timeZone))
       .map((event) => ({ event, startMs: eventStartMs(event, this.deps.timeZone) }))
       .sort((a, b) => a.startMs - b.startMs)
       .slice(0, CONNECTOR_WRITE_MAX_CHOICES)

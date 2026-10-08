@@ -193,24 +193,28 @@ function harness(initial: CalendarEvent[]) {
   });
   const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL, writesEnabled: true });
   const session = (): Session => sessions.get('sess-1') as Session;
-  const ctx = (text: string, now: string): TurnHandlerContext => ({
+  const ctx = (text: string, now: string, actor: Actor): TurnHandlerContext => ({
     message: { id: `m-${++seq}`, context, text, receivedAt: now },
     session: session(),
-    actor: OWNER,
+    actor,
     now,
     applyAnchor: null,
     resolveActiveWorkspace: async () => null,
   });
 
   /** One calendar turn: a read reply's text, or the write draft handed to the flow and the flow's step. */
-  async function turn(text: string, now: string): Promise<{ draft?: ConnectorWriteDraft; step?: ConnectorWriteStep; text: string }> {
-    const outcome = await handler.handle(ctx(text, now));
+  async function turn(
+    text: string,
+    now: string,
+    actor: Actor = OWNER,
+  ): Promise<{ draft?: ConnectorWriteDraft; step?: ConnectorWriteStep; text: string }> {
+    const outcome = await handler.handle(ctx(text, now, actor));
     if (!outcome) throw new Error(`not claimed: ${text}`);
     if (outcome.kind !== 'write-draft') {
       return { text: 'reply' in outcome ? outcome.reply.text : '' };
     }
     const draft = (outcome as TurnHandlerWriteDraft).draft;
-    const step = await flow.prepare({ session: session(), actor: OWNER, now, draft });
+    const step = await flow.prepare({ session: session(), actor, now, draft });
     return { draft, step, text: step.kind === 'writes-off' ? '' : renderConnectorWriteStep(step) };
   }
 
@@ -328,6 +332,33 @@ describe('undated calendar change / delete uses the session\'s recent calendar c
     const move = await h.turn('9시 회의 10시로 옮겨줘', at(1));
     expect(move.step).toMatchObject({ kind: 'choice', mode: 'update', basis: 'listed' });
     expect(ids(move.step)).toEqual([TOMORROW_STANDUP.id]);
+  });
+
+  it('one actor\'s last list is never another actor\'s context in a shared conversation (Codex P2)', async () => {
+    const h = harness([TODAY_WEEKLY, TOMORROW_STANDUP, FRIDAY_REVIEW]);
+    const guest: Actor = { id: 'guest', displayName: 'Guest', identities: [], createdAt: T0 };
+    await h.turn('금요일 일정', at(0), guest);
+    const owner = await h.turn('일정 취소해줘', at(1));
+    expect(owner.draft).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true } });
+    expect(owner.draft?.kind === 'calendar-delete' && owner.draft.ref.recentListing).toBeUndefined();
+    expect(owner.step).toMatchObject({ kind: 'choice', basis: 'nearby' });
+    expect(ids(owner.step)).not.toContain(FRIDAY_REVIEW.id);
+    // The guest's own list is still theirs.
+    const own = await h.turn('일정 취소해줘', at(2), guest);
+    expect(own.step).toMatchObject({ kind: 'choice', basis: 'listed' });
+    expect(ids(own.step)).toEqual([FRIDAY_REVIEW.id]);
+  });
+
+  it('with no context an undated time or title is matched over today AND tomorrow, still as a choice (Codex P2)', async () => {
+    const h = harness([TODAY_WEEKLY, TOMORROW_STANDUP]);
+    const timed = await h.turn('9시 회의 취소해줘', at(0));
+    expect(timed.draft).toMatchObject({ ref: { inferredDay: true, startTime: { hour: 9, minute: 0 } } });
+    expect(timed.step).toMatchObject({ kind: 'choice', basis: 'nearby' });
+    expect(ids(timed.step)).toEqual([TOMORROW_STANDUP.id]);
+    const titled = await h.turn('"스탠드업" 일정 취소해줘', at(1));
+    expect(ids(titled.step)).toEqual([TOMORROW_STANDUP.id]);
+    const none = await h.turn('11시 회의 취소해줘', at(2));
+    expect(none.step).toMatchObject({ kind: 'refused', reason: 'event-not-found' });
   });
 
   it('a named day keeps the existing reference behaviour (no basis, that day only)', async () => {
