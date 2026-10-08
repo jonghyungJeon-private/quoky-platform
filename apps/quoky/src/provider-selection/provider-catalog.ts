@@ -1,6 +1,7 @@
 import {
   ClaudeCliProvider,
   ClaudeCliVisionProvider,
+  CodexCliVisionProvider,
   OllamaCliProvider,
   OllamaCliVisionProvider,
   sameOllamaModel,
@@ -22,8 +23,9 @@ import type { ChatChoice, ChatProviderName, ImageChoice } from './selection-choi
  *   Claude alias other than `QUOKY_CLAUDE_MODEL`, or of an Ollama model other than `OLLAMA_MODEL`, adds one bounded,
  *   chat-tier-only instance to it on first use (construction spawns nothing; an Ollama instance loads no model until a
  *   request runs on it).
- * - Image: the Claude vision provider (cloud) is registered whenever its model is valid, the Ollama vision provider when
- *   `QUOKY_OLLAMA_VISION_MODEL` is a valid local model. Which one may run — and whether image bytes may leave the host
+ * - Image: the Claude vision provider (cloud) is registered whenever its model is valid, the Codex vision provider
+ *   (cloud) when the Codex CLI is present or `codex` is the configured or persisted image choice (ADR-0111 amendment of
+ *   2026-10-08), the Ollama vision provider when `QUOKY_OLLAMA_VISION_MODEL` is a valid local model. Which one may run — and whether image bytes may leave the host
  *   at all — is decided per request by the policy and the Core image locality policy.
  */
 
@@ -34,15 +36,19 @@ export interface ProviderFactories {
   claudeVariant(model: string): AiProvider;
   ollamaVariant(model: string): AiProvider;
   claudeVision(model: string): AiProvider;
+  /** The Codex vision provider on `QUOKY_CODEX_MODEL` (absent = the CLI default). */
+  codexVision(model: string | undefined): AiProvider;
   ollamaVision(model: string): AiProvider;
 }
 
 export interface ProviderCatalogInput {
   readonly ai: QuokyConfig['ai'];
   /** The vision models each image option would use (absent = that option is unavailable on this host). */
-  readonly vision: { readonly claudeModel?: string; readonly ollamaModel?: string };
+  readonly vision: { readonly claudeModel?: string; readonly ollamaModel?: string; readonly codexSelected?: boolean };
   /** The persisted operations-UI default, read before composition (it may name a provider the env does not). */
   readonly persistedChat?: ChatChoice;
+  /** The persisted operations-UI image default (a persisted `codex` registers the Codex vision provider). */
+  readonly persistedImage?: ImageChoice;
   readonly cliPresent: (bin: string) => boolean;
   /** Providers registered between the chat and the image providers (the opt-in embedding provider). */
   readonly extra?: readonly AiProvider[];
@@ -80,6 +86,7 @@ export class ProviderCatalog {
   /** The `OLLAMA_MODEL` chat instance. */
   readonly ollama: AiProvider | undefined;
   readonly claudeVision: AiProvider | undefined;
+  readonly codexVision: AiProvider | undefined;
   readonly ollamaVision: AiProvider | undefined;
   /** Whether an Ollama model other than `OLLAMA_MODEL` may be added (the CLI is present or Ollama is registered). */
   readonly ollamaUsable: boolean;
@@ -99,6 +106,7 @@ export class ProviderCatalog {
       claudeVariant: (model) => new ClaudeCliProvider(ai.claudeBin, { model }),
       ollamaVariant: (model) => new OllamaCliProvider({ bin: ai.ollamaBin, model }),
       claudeVision: (model) => new ClaudeCliVisionProvider({ bin: ai.claudeBin, model }),
+      codexVision: (model) => new CodexCliVisionProvider({ bin: ai.codexBin, ...(model !== undefined ? { model } : {}) }),
       ollamaVision: (model) => new OllamaCliVisionProvider({ bin: ai.ollamaBin, model }),
       ...input.factories,
     };
@@ -111,11 +119,17 @@ export class ProviderCatalog {
     this.ollamaUsable = chat.ollama !== undefined || input.cliPresent(ai.ollamaBin);
     this.claudeVision = input.vision.claudeModel !== undefined ? this.factories.claudeVision(input.vision.claudeModel) : undefined;
     this.ollamaVision = input.vision.ollamaModel !== undefined ? this.factories.ollamaVision(input.vision.ollamaModel) : undefined;
+    // Like the chat Codex provider: registered when it can run here or when a selection names it (an unready Codex then
+    // shows as not ready). Construction spawns nothing.
+    const wantsCodexVision =
+      input.vision.codexSelected === true || input.persistedImage === 'codex' || input.cliPresent(ai.codexBin);
+    this.codexVision = wantsCodexVision ? this.factories.codexVision(ai.codexModel) : undefined;
     this.providers = [
       ...chat.providers,
       ...(input.extra ?? []),
       ...(this.ollamaVision ? [this.ollamaVision] : []),
       ...(this.claudeVision ? [this.claudeVision] : []),
+      ...(this.codexVision ? [this.codexVision] : []),
     ];
   }
 
@@ -172,8 +186,16 @@ export class ProviderCatalog {
 
   /** The registered image provider for `choice`; `null` for `off`, `undefined` when that option is unavailable. */
   resolveImage(choice: ImageChoice): AiProvider | null | undefined {
-    if (choice === 'off') return null;
-    return choice === 'claude' ? this.claudeVision : this.ollamaVision;
+    switch (choice) {
+      case 'off':
+        return null;
+      case 'claude':
+        return this.claudeVision;
+      case 'codex':
+        return this.codexVision;
+      case 'ollama':
+        return this.ollamaVision;
+    }
   }
 
   private onDemandInstance(key: string, create: () => AiProvider): AiProvider | undefined {

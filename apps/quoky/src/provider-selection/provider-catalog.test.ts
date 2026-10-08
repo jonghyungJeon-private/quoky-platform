@@ -1,4 +1,11 @@
-import { ClaudeCliProvider, ClaudeCliVisionProvider, CodexCliProvider, OllamaCliProvider, OllamaCliVisionProvider } from '@quoky/ai-cli';
+import {
+  ClaudeCliProvider,
+  ClaudeCliVisionProvider,
+  CodexCliProvider,
+  CodexCliVisionProvider,
+  OllamaCliProvider,
+  OllamaCliVisionProvider,
+} from '@quoky/ai-cli';
 import { describe, expect, it } from 'vitest';
 import { AiProviderError, Capability } from '@quoky/core';
 import { loadConfig } from '../config';
@@ -24,11 +31,11 @@ const ids = (c: ProviderCatalog) => c.providers.map((p) => p.id);
 describe('ProviderCatalog registration', () => {
   it('Claude always; Codex when its CLI is present; Ollama chat when OLLAMA_MODEL is set and the CLI is present', () => {
     expect(ids(catalog({ QUOKY_CHAT_PROVIDER: 'claude' }))).toEqual(['claude-cli', 'claude-vision-cli']);
-    expect(ids(catalog({ QUOKY_CHAT_PROVIDER: 'claude' }, ['codex']))).toEqual(['claude-cli', 'codex-cli', 'claude-vision-cli']);
+    expect(ids(catalog({ QUOKY_CHAT_PROVIDER: 'claude' }, ['codex']))).toEqual(['claude-cli', 'codex-cli', 'claude-vision-cli', 'codex-vision-cli']);
     // The CLI alone is not enough for the Ollama chat model: OLLAMA_MODEL must be configured.
     expect(ids(catalog({ QUOKY_CHAT_PROVIDER: 'claude' }, ['ollama']))).toEqual(['claude-cli', 'claude-vision-cli']);
     expect(ids(catalog({ QUOKY_CHAT_PROVIDER: 'claude', OLLAMA_MODEL: 'llama3.1' }, ['ollama', 'codex']))).toEqual([
-      'claude-cli', 'ollama-cli', 'codex-cli', 'claude-vision-cli',
+      'claude-cli', 'ollama-cli', 'codex-cli', 'claude-vision-cli', 'codex-vision-cli',
     ]);
   });
 
@@ -53,6 +60,30 @@ describe('ProviderCatalog registration', () => {
     expect((c.codex as unknown as { buildArgs(): string[] }).buildArgs()).toEqual(expect.arrayContaining(['-m', 'gpt-5.1-codex']));
     expect(c.ollamaVision?.executionLocality).toBe('LOCAL');
     expect(c.claudeVision?.executionLocality).toBe('REMOTE');
+  });
+
+  it('the Codex image option: registered when the Codex CLI is present or codex is the configured or persisted image choice', () => {
+    expect(catalog({ QUOKY_CHAT_PROVIDER: 'claude' }).resolveImage('codex')).toBeUndefined();
+    const present = catalog({ QUOKY_CHAT_PROVIDER: 'claude' }, ['codex']);
+    expect(present.codexVision).toBeInstanceOf(CodexCliVisionProvider);
+    expect(present.resolveImage('codex')).toBe(present.codexVision);
+    expect(present.codexVision?.executionLocality).toBe('REMOTE');
+    expect(present.codexVision?.capabilities.map((d) => d.capability)).toEqual([Capability.IMAGE_UNDERSTANDING]);
+    // Configured without the CLI: registered anyway (it shows as not ready instead of the choice silently vanishing).
+    const configured = catalog({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'codex' });
+    expect(ids(configured)).toEqual(['claude-cli', 'claude-vision-cli', 'codex-vision-cli']);
+    const config = loadConfig({ QUOKY_DISCORD_OWNER_IDS: TEST_OWNER, QUOKY_CHAT_PROVIDER: 'claude' } as NodeJS.ProcessEnv);
+    const persisted = new ProviderCatalog({ ai: config.ai, vision: {}, persistedImage: 'codex', cliPresent: () => false, logger: quiet });
+    expect(ids(persisted)).toEqual(['claude-cli', 'codex-vision-cli']);
+    // The chat Codex selection alone does not register the image option when the CLI is absent.
+    expect(catalog({ QUOKY_CHAT_PROVIDER: 'codex' }).codexVision).toBeUndefined();
+  });
+
+  it('the Codex image provider uses the configured Codex binary and QUOKY_CODEX_MODEL (no separate image model)', () => {
+    const c = catalog({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_CODEX_MODEL: 'gpt-5.1-codex', CODEX_CLI_BIN: '/opt/codex' }, ['/opt/codex']);
+    const args = (c.codexVision as unknown as { buildArgs(paths: string[]): string[] }).buildArgs(['/t/image-1.png']);
+    expect(args).toEqual(expect.arrayContaining(['-m', 'gpt-5.1-codex', '--image', '/t/image-1.png']));
+    expect((c.codexVision as unknown as { bin: string }).bin).toBe('/opt/codex');
   });
 
   it('an invalid QUOKY_IMAGE_UNDERSTANDING_MODEL (with another selection) leaves the Claude image option unavailable', () => {

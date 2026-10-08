@@ -321,7 +321,7 @@ export function parseOpsUiFlags(env: NodeJS.ProcessEnv): OpsUiFlags {
 const MAX_MEMORY_ARCHIVE_DAYS = 365;
 
 /** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` values (exact, lowercase). */
-export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'off'] as const;
+export const IMAGE_UNDERSTANDING_PROVIDERS = ['ollama', 'claude', 'codex', 'off'] as const;
 export type ImageUnderstandingProviderSelection = (typeof IMAGE_UNDERSTANDING_PROVIDERS)[number];
 
 /**
@@ -341,14 +341,20 @@ export type ImageUnderstandingConfig =
   /** A local Ollama vision model (`LOCAL`); image bytes never leave this host. */
   | { readonly provider: 'ollama'; readonly model: string }
   /** The Claude CLI (`REMOTE`): the owner's explicit cloud opt-in (ADR-0111 amendment A1). */
-  | { readonly provider: 'claude'; readonly model: string };
+  | { readonly provider: 'claude'; readonly model: string }
+  /**
+   * The Codex CLI (`REMOTE`, OpenAI): the owner's explicit cloud opt-in (ADR-0111 amendment of 2026-10-08). The model is
+   * the chat tier's `QUOKY_CODEX_MODEL` (or the CLI default), never a separate image model.
+   */
+  | { readonly provider: 'codex' };
 
 const OLLAMA_VISION_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
 
 /**
- * ADR-0111 amendment A1 (owner decision 2026-10-07). `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `ollama` | `claude` | `off`
- * (exact; anything else, including an empty value, is the startup error `IMAGE_UNDERSTANDING_PROVIDER_INVALID`).
+ * ADR-0111 amendment A1 (owner decision 2026-10-07; `codex` added 2026-10-08). `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` =
+ * `ollama` | `claude` | `codex` | `off` (exact; anything else, including an empty value, is the startup error
+ * `IMAGE_UNDERSTANDING_PROVIDER_INVALID`).
  * - Unset: `ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, otherwise `off` — exactly the behaviour before the
  *   selector. On this implicit path an unusable vision model keeps its old fail-closed, non-fatal handling.
  * - `ollama`: `QUOKY_OLLAMA_VISION_MODEL` is required and must be a plain local model name; a missing, malformed or
@@ -356,6 +362,7 @@ const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
  * - `claude`: the Claude CLI reads images in the cloud. The model is `QUOKY_IMAGE_UNDERSTANDING_MODEL` when set, else
  *   `QUOKY_CLAUDE_MODEL`, else `sonnet`; a malformed `QUOKY_IMAGE_UNDERSTANDING_MODEL` is
  *   `IMAGE_UNDERSTANDING_MODEL_INVALID`. `QUOKY_IMAGE_UNDERSTANDING_MODEL` is read only for `claude`.
+ * - `codex`: the Codex CLI reads images in the cloud (OpenAI) with the chat tier's `QUOKY_CODEX_MODEL` or the CLI default.
  * - `off`: no image provider; every image turn gets the truthful "unavailable" reply.
  */
 export function parseImageUnderstandingConfig(
@@ -379,6 +386,7 @@ export function parseImageUnderstandingConfig(
   }
   const selection = raw as ImageUnderstandingProviderSelection;
   if (selection === 'off') return { provider: 'off' };
+  if (selection === 'codex') return { provider: 'codex' };
   if (selection === 'ollama') {
     if (visionModel === '') throw new QuokyConfigError(QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING);
     if (!OLLAMA_VISION_MODEL_SHAPE.test(visionModel)) {

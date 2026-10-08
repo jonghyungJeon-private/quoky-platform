@@ -67,6 +67,15 @@ export {
 } from './codex-cli-provider';
 export type { CodexCliProviderOptions } from './codex-cli-provider';
 export {
+  CODEX_VISION_CWD_PREFIX,
+  CODEX_VISION_EFFORT,
+  CODEX_VISION_PREAMBLE,
+  CodexCliVisionProvider,
+  DEFAULT_CODEX_VISION_TIMEOUT_MS,
+} from './codex-vision-provider';
+export type { CodexCliVisionProviderOptions } from './codex-vision-provider';
+export { MAX_VISION_IMAGES, MAX_VISION_IMAGE_BYTES } from './vision-image-file';
+export {
   MAX_LISTED_OLLAMA_MODELS,
   OLLAMA_EMBEDDING_NAME_PATTERN,
   OLLAMA_SHOW_TIMEOUT_MS,

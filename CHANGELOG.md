@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Codex as an image-understanding option (ADR-0111 amendment, 2026-10-08)
+
+- `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=codex`, `이미지 모델 변경: codex` / `/model image codex` and the `/providers` option
+  `image:codex`: the Codex CLI reads attached images (cloud, OpenAI) with the chat tier's `QUOKY_CODEX_MODEL`.
+- New `CodexCliVisionProvider` (`codex-vision-cli`, `REMOTE`, `IMAGE_UNDERSTANDING` only): the Codex chat isolation and
+  fail-closed event-stream check (now shared helpers), each canonical image copied into a fresh empty temp cwd and passed
+  as `--image`, prompt on stdin, fixed failure reasons, counts-and-hashes audit.
+- The image locality policy opens `REMOTE` for `codex` exactly as for `claude` (only while it is the effective image
+  choice); dispatch-time re-check, synchronous eligibility check and write fence unchanged.
+
 ## Unreleased — semantic recall warm model and provider readiness after boot (2026-10-08)
 
 - The Ollama embedding provider runs `ollama run --keepalive 30m` and loads the model in the background (fixed

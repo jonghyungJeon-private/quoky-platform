@@ -14,6 +14,7 @@ import type {
   SelectionRefusal,
   SelectionStatus,
 } from './provider-selection-service';
+import { IMAGE_CHOICE_EGRESS } from './selection-choices';
 import type { ImageChoice, SelectionSource } from './selection-choices';
 
 /**
@@ -26,7 +27,7 @@ import type { ImageChoice, SelectionSource } from './selection-choices';
  * - `모델 목록` / `/model`: a numbered list of the selectable chat-tier models and image options with readiness. The
  *   numbers stay valid for this conversation for {@link MODEL_LISTING_TTL_MS} (like the learning listings).
  * - `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model ollama:granite3.3:8b`: this session's chat tier.
- * - `이미지 모델 변경: ollama` / `/model image off`: this session's image understanding.
+ * - `이미지 모델 변경: ollama` / `이미지 모델 변경: codex` / `/model image off`: this session's image understanding.
  * - `모델 기본값으로` / `/model reset` (and `이미지 모델 기본값으로`): clear this session's override.
  *
  * Writes go through `ProviderSelectionService` → `SessionManager.updateMetadataEntry` (field-scoped, under the shared
@@ -69,8 +70,9 @@ const REFUSAL_COPY: Readonly<Record<SelectionRefusal, string>> = {
   OLLAMA_MODEL_NOT_FOUND: '로컬 Ollama에 그 모델이 없어요. "모델 목록"에서 고르세요.',
   OLLAMA_MODEL_NOT_CHAT: '그 Ollama 모델은 대화용이 아니에요 (예: 임베딩 전용). 바꾸지 않았어요. "모델 목록"에서 고르세요.',
   OLLAMA_UNAVAILABLE: 'Ollama가 응답하지 않아 로컬 모델을 확인하지 못했어요. 바꾸지 않았어요.',
-  IMAGE_CHOICE_INVALID: '이미지 모델은 claude, ollama, off 중에서 고를 수 있어요.',
-  IMAGE_OPTION_UNAVAILABLE: '그 이미지 모델은 이 컴퓨터에 설정되어 있지 않아요 (로컬은 QUOKY_OLLAMA_VISION_MODEL이 필요해요).',
+  IMAGE_CHOICE_INVALID: '이미지 모델은 claude, codex, ollama, off 중에서 고를 수 있어요.',
+  IMAGE_OPTION_UNAVAILABLE:
+    '그 이미지 모델은 이 컴퓨터에 설정되어 있지 않아요 (codex는 Codex CLI, 로컬은 QUOKY_OLLAMA_VISION_MODEL이 필요해요).',
   TOO_MANY_MODELS: '이번 실행에서 고를 수 있는 모델 수를 넘었어요. 이미 쓴 모델을 고르거나 다시 시작한 뒤 고르세요.',
 };
 
@@ -99,8 +101,16 @@ function chatEgress(label: string): string {
 }
 
 function imageEgress(choice: ImageChoice): string {
-  if (choice === 'claude') return '클라우드(이미지가 Anthropic으로 전송돼요)';
-  return choice === 'ollama' ? '로컬(이미지가 이 컴퓨터를 떠나지 않아요)' : '이미지 분석 안 함';
+  switch (IMAGE_CHOICE_EGRESS[choice]) {
+    case 'ANTHROPIC':
+      return '클라우드(이미지가 Anthropic으로 전송돼요)';
+    case 'OPENAI':
+      return '클라우드(이미지가 OpenAI로 전송돼요)';
+    case 'LOCAL':
+      return '로컬(이미지가 이 컴퓨터를 떠나지 않아요)';
+    default:
+      return '이미지 분석 안 함';
+  }
 }
 
 function optionEgress(option: SelectionOption): string {
@@ -148,12 +158,15 @@ function renderChatSet(label: string, status: SelectionStatus): string {
 }
 
 function renderImageSet(choice: ImageChoice): string {
+  const egress = IMAGE_CHOICE_EGRESS[choice];
   const tail =
-    choice === 'claude'
+    egress === 'ANTHROPIC'
       ? '이미지가 Anthropic으로 전송돼요.'
-      : choice === 'ollama'
-        ? '이미지는 이 컴퓨터를 떠나지 않아요.'
-        : '이 대화에서는 이미지를 분석하지 않아요.';
+      : egress === 'OPENAI'
+        ? '이미지가 OpenAI로 전송돼요.'
+        : egress === 'LOCAL'
+          ? '이미지는 이 컴퓨터를 떠나지 않아요.'
+          : '이 대화에서는 이미지를 분석하지 않아요.';
   return `이 대화의 이미지 모델을 ${choice}로 바꿨어요. ${SESSION_ONLY} ${tail}`;
 }
 

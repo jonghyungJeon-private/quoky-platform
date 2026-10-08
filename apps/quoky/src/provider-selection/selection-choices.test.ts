@@ -3,7 +3,11 @@ import { Capability } from '@quoky/core';
 import {
   CHAT_TIER_CAPABILITIES,
   CLAUDE_PINNED_CAPABILITIES,
+  IMAGE_CHOICES,
+  IMAGE_CHOICE_EGRESS,
+  IMAGE_CHOICE_LOCALITY,
   chatChoiceFromData,
+  imageChoiceIsCloud,
   imageChoiceFromData,
   parseChatChoiceToken,
   parseImageChoiceToken,
@@ -31,7 +35,9 @@ describe('selection choices (ADR-0092 amendment, runtime switching)', () => {
     expect(parseChatChoiceToken('ollama:kimi-cloud')).toEqual({ ok: false, reason: 'MODEL_INVALID' });
     expect(parseChatChoiceToken('gemini')).toEqual({ ok: false, reason: 'UNKNOWN_PROVIDER' });
     expect(parseImageChoiceToken(' Off ')).toBe('off');
-    expect(parseImageChoiceToken('codex')).toBeNull();
+    expect(parseImageChoiceToken('Codex')).toBe('codex');
+    expect(parseImageChoiceToken('codex:gpt-5')).toBeNull();
+    expect(parseImageChoiceToken('gemini')).toBeNull();
   });
 
   it('validates stored data strictly', () => {
@@ -42,5 +48,13 @@ describe('selection choices (ADR-0092 amendment, runtime switching)', () => {
     expect(chatChoiceFromData('codex')).toBeNull();
     expect(imageChoiceFromData('claude')).toBe('claude');
     expect(imageChoiceFromData('Claude')).toBeNull();
+    expect(imageChoiceFromData('codex')).toBe('codex');
+  });
+
+  it('image choices: Claude and Codex are cloud (REMOTE, Anthropic / OpenAI), Ollama is local, off sends nothing', () => {
+    expect(IMAGE_CHOICES).toEqual(['claude', 'codex', 'ollama', 'off']);
+    expect(IMAGE_CHOICE_LOCALITY).toEqual({ claude: 'REMOTE', codex: 'REMOTE', ollama: 'LOCAL', off: 'NONE' });
+    expect(IMAGE_CHOICE_EGRESS).toEqual({ claude: 'ANTHROPIC', codex: 'OPENAI', ollama: 'LOCAL', off: 'NONE' });
+    expect(IMAGE_CHOICES.filter(imageChoiceIsCloud)).toEqual(['claude', 'codex']);
   });
 });

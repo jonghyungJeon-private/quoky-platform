@@ -440,6 +440,9 @@ beforeAll(async () => {
     QUOKY_VECTOR_PATH: join(tempDir, 'vectors'),
     QUOKY_WORKSPACE_ROOT: join(tempDir, 'workspaces'),
     QUOKY_OLLAMA_ENABLED: 'false',
+    // Host-independent registration: a Codex CLI installed on the test machine would otherwise register the Codex chat
+    // and image options (ADR-0111 amendment of 2026-10-08) next to the configured ones.
+    CODEX_CLI_BIN: join(tempDir, 'codex-not-installed'),
     QUOKY_REMINDERS_ENABLED: 'true',
     QUOKY_TIMEZONE: SEOUL,
     // ADR-0110 + amendment: a configured calendar with writes on (placeholder client and inline refresh token; the

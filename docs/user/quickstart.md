@@ -84,7 +84,7 @@ claude --version
   |---|---|---|---|
   | 일상 대화, 요약, 문서 분석, 읽기 조회 | `QUOKY_CHAT_PROVIDER` (아래 "대화 모델 고르기") | `claude` / `codex` / `ollama` | `QUOKY_OLLAMA_ENABLED`로 결정 (`true`(기본) → `ollama`, `false` → `claude`) |
   | 코드 수정, 코드 리뷰, 설계, 정책에 민감한 대화 | 없음 (모델만 `QUOKY_CLAUDE_MODEL`) | 항상 Claude | Claude `sonnet` |
-  | 이미지 분석 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (5절 "이미지") | `claude` / `ollama` / `off` (Codex는 아직 없음) | `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off` |
+  | 이미지 분석 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (5절 "이미지") | `claude` / `codex` / `ollama` / `off` | `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off` |
   | 기억 임베딩 | `QUOKY_EMBEDDING_ENABLED` | 로컬 Ollama만 | 꺼짐 |
 
   모델은 `QUOKY_CLAUDE_MODEL`(Claude), `QUOKY_CODEX_MODEL`(Codex), `OLLAMA_MODEL`(Ollama 대화)로 정합니다. 다른 클라우드
@@ -159,11 +159,13 @@ Claude(`QUOKY_CLAUDE_MODEL`)가 맡습니다. 요청 하나하나마다 모델�
 | `codex` | Codex CLI (`QUOKY_CODEX_MODEL` 또는 CLI 기본 모델, 다른 모델은 고를 수 없음) | `codex` CLI가 있을 때(또는 설정·기본값이 codex일 때) | OpenAI (ChatGPT 로그인) |
 | `ollama` / `ollama:<모델>` | 로컬 Ollama (`ollama list`에 있는 로컬 모델만, `cloud` 모델 제외; `ollama show`의 기능에 `completion`이 없는 모델(예: 임베딩 전용 `nomic-embed-text`)도 제외. `ollama show`로 확인하지 못하면 이름에 `embed`가 든 모델만 제외; 고를 때 목록과 대조) | `OLLAMA_MODEL`이 설정되고 `ollama` CLI가 있을 때(다른 모델은 CLI만 있으면) | 이 컴퓨터 안 |
 | 이미지 `claude` | Claude CLI 비전 (`QUOKY_IMAGE_UNDERSTANDING_MODEL` 또는 `QUOKY_CLAUDE_MODEL`) | 항상 | **첨부 이미지가 Anthropic으로 전송** |
+| 이미지 `codex` | Codex CLI 비전 (`QUOKY_CODEX_MODEL` 또는 CLI 기본 모델) | `codex` CLI가 있거나, 설정·운영 화면 기본값이 `codex`일 때 | **첨부 이미지가 OpenAI로 전송** |
 | 이미지 `ollama` | 로컬 비전 모델 (`QUOKY_OLLAMA_VISION_MODEL`) | 그 값이 설정되어 있을 때 | 이 컴퓨터 안 |
 | 이미지 `off` | 없음 | 항상 | 어디로도 보내지 않음. 이미지를 보내면 "이미지 분석이 꺼져 있다"는 안내와 다시 켜는 방법(`이미지 모델 변경: claude`, `모델 기본값으로`)을 답함 |
 
 Ollama 모델은 등록만으로는 메모리에 올라가지 않고, 실제로 답할 때만 실행됩니다. 이미지를 Anthropic으로 보내는 것은
-**지금 적용되는 이미지 선택이 `claude`일 때만**이고, `ollama`나 `off`로 바꾸면 다음 이미지부터 바로 보내지 않습니다.
+**지금 적용되는 이미지 선택이 `claude`일 때만**, OpenAI로 보내는 것은 **`codex`일 때만**이고, `ollama`나 `off`로 바꾸면
+다음 이미지부터 바로 보내지 않습니다.
 
 **채팅 명령** (소유자만, AI를 부르지 않음)
 
@@ -172,7 +174,7 @@ Ollama 모델은 등록만으로는 메모리에 올라가지 않고, 실제로 
 | `모델 상태` 또는 `/model status` | 이 대화에 지금 적용되는 대화·이미지 모델, 출처(이 대화/운영 화면/설정/기본값), 준비 상태, 기본값 |
 | `모델 목록` 또는 `/model` | 고를 수 있는 대화 모델과 이미지 선택을 번호와 준비 상태와 함께 보여 줌 (번호는 그 대화에서 30분 동안 유효) |
 | `모델 변경: codex`, `모델 변경: 2`, `/model claude:opus`, `/model ollama:granite3.3:8b` | **이 대화에서만** 대화 모델을 바꿈 ("이 대화에서만 적용돼요 (기본값은 운영 화면에서).") |
-| `이미지 모델 변경: ollama`, `/model image off` | 이 대화에서만 이미지 모델을 바꿈 |
+| `이미지 모델 변경: ollama`, `이미지 모델 변경: codex`, `/model image off` | 이 대화에서만 이미지 모델을 바꿈 (`claude`/`codex`는 "이미지가 Anthropic/OpenAI로 전송돼요"라고 알려 줌) |
 | `모델 기본값으로` 또는 `/model reset` | 이 대화의 변경(대화·이미지)을 지움. `이미지 모델 기본값으로`는 이미지만 |
 
 `모델 변경해야 할까?`처럼 명령 형식이 아닌 말은 평소 대화로 갑니다. 승인이 대기 중일 때는 승인 흐름이 먼저입니다.
@@ -180,8 +182,8 @@ Ollama 모델은 등록만으로는 메모리에 올라가지 않고, 실제로 
 
 **운영 화면** (아래 "운영 화면"을 켠 경우) — 공급자 패널의 **모델 기본값 바꾸기**에서 대화 모델과 이미지 모델의
 기본값을 고릅니다. 지금 기본값과 출처, 준비 상태, 대화별로 바꾼 대화 수가 보이고, `설정 기본값으로 되돌리기`로
-`.env.local` 값으로 돌아갑니다. 이미지 `claude`에는 "이 선택은 첨부 이미지를 이 컴퓨터 밖(Anthropic)으로 보내요."
-경고가 붙습니다. 바꾸면 바로 적용되고(대화별로 바꾼 대화는 그대로), 소유자 DM으로 "운영 화면에서 대화 모델을
+`.env.local` 값으로 돌아갑니다. 이미지 `claude`에는 "이 선택은 첨부 이미지를 이 컴퓨터 밖(Anthropic)으로 보내요.",
+이미지 `codex`에는 "이 선택은 첨부 이미지를 이 컴퓨터 밖(OpenAI)으로 보내요." 경고가 붙습니다. 바꾸면 바로 적용되고(대화별로 바꾼 대화는 그대로), 소유자 DM으로 "운영 화면에서 대화 모델을
 codex로 바꿨어요" 같은 알림이 한 번 갑니다. 모든 변경은 `provider.selection.changed` 로그(누가, 어디서, 무엇을;
 내용 없음)로 남습니다.
 
@@ -213,6 +215,11 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
     `QUOKY_IMAGE_UNDERSTANDING_MODEL`, 없으면 `QUOKY_CLAUDE_MODEL`, 없으면 `sonnet`. 대화용 Claude와 같은 격리 옵션으로
     실행하고 도구는 모두 끕니다. 이미지는 파일 경로가 아니라 표준 입력의 이미지 블록으로 보냅니다 (`claude`만 해당. `ollama`는 임시 파일 경로를 `ollama run` 인자로 넘깁니다). Claude CLI가 설치되고
     로그인되어 있어야 "준비됨"입니다 (`claude auth status`).
+  - `codex` — Codex CLI가 이미지를 읽습니다 (ADR-0111 개정, 2026-10-08). **첨부 이미지가 OpenAI(클라우드)로 전송됩니다.**
+    모델은 대화용과 같은 `QUOKY_CODEX_MODEL`, 없으면 CLI 기본 모델입니다(이미지 전용 모델 설정 없음). 대화용 Codex와 같은
+    격리 옵션(사용자 설정·규칙·프로젝트 문서·스킬·MCP·웹 검색·셸 도구 끔, 읽기 전용 샌드박스, 기록 남기지 않음)으로
+    실행하고, 이미지는 매번 새로 만든 빈 임시 폴더에 복사해 그 경로만 `--image`로 넘깁니다(질문은 표준 입력). 끝나면 폴더를
+    지웁니다. Codex CLI가 로그인되어 있어야 "준비됨"입니다 (`codex login status`).
   - `off` — 이미지 분석을 쓰지 않습니다.
   - **설정하지 않으면** 예전과 같습니다: `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off`. 이때는 이미지 바이트가
     클라우드로 가지 않습니다.
@@ -282,7 +289,7 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000. 임베딩 모델은 `--keepalive 30m`으로 메모리에 두고, 준비될 때와 시간 초과 뒤에 백그라운드에서 미리 불러옵니다(최대 30초). 실측: 이미 올라와 있으면 0.05-0.12초, 새로 불러오면 0.35-0.9초 |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
 | `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음 |
-| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `off` 정확히 이 세 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic(클라우드)으로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
+| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `codex` / `off` 정확히 이 네 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic, `codex`는 OpenAI(클라우드)로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
 | `QUOKY_IMAGE_UNDERSTANDING_MODEL` | 선택. `claude`일 때만 읽음. 이미지용 Claude 모델 (없으면 `QUOKY_CLAUDE_MODEL`, 그다음 `sonnet`). 형식이 틀리면 시작 실패 |
 | `QUOKY_OLLAMA_VISION_MODEL` | 선택. 기본 없음. 이미지 분석용 로컬 Ollama 비전 모델 이름(5절). `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=ollama`이면 필수이고 없거나 잘못됐거나 `cloud` 모델이면 시작 실패. 선택값을 설정하지 않은 경우(예전 방식)에는 잘못된 값이나 `cloud` 모델이면 이미지 분석만 꺼지고 시작은 계속 |
 | `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET` | 선택. Google Calendar 읽기용 OAuth "Desktop app" 클라이언트 (8절 "캘린더 설정") |

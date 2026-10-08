@@ -19,7 +19,7 @@ import type {
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { defaultCliRunner } from './cli-runner';
-import type { CliRunner } from './cli-runner';
+import type { CliRunner, CliRunResult } from './cli-runner';
 import {
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -176,7 +176,7 @@ export type CodexStreamViolation =
   | 'MALFORMED_ITEM'
   | 'TURN_NOT_COMPLETED_ONCE';
 
-interface ParsedCodexEvents {
+export interface ParsedCodexEvents {
   readonly lastAgentMessage: string | undefined;
   readonly agentMessageCount: number;
   readonly actionItemCount: number;
@@ -323,6 +323,88 @@ function sha256(text: string): string {
 }
 
 /**
+ * The `codex exec` argv shared by the chat and the vision provider (ADR-0092 amendment D5). The prompt is never an argv
+ * element: the final `-` makes the CLI read it from stdin. Every element is a fixed literal, the validated model name,
+ * or (vision only) the path of an image copy inside the call's own empty temp directory, each after its own `--image`
+ * and before the next flag (`--image` takes several values, so it never sits next to the trailing `-`).
+ */
+export function buildCodexExecArgs(options: {
+  readonly effort?: CodexEffortLevel;
+  readonly model?: string;
+  readonly imagePaths?: readonly string[];
+} = {}): string[] {
+  const args = ['exec'];
+  for (const path of options.imagePaths ?? []) args.push('--image', path);
+  args.push(
+    '--json',
+    '--color', 'never',
+    '--skip-git-repo-check',
+    '--ephemeral',
+    '--ignore-user-config',
+    '--ignore-rules',
+    '--sandbox', 'read-only',
+  );
+  for (const override of CODEX_CONFIG_OVERRIDES) args.push('-c', override);
+  if (options.effort !== undefined) args.push('-c', `model_reasoning_effort="${options.effort}"`);
+  for (const feature of CODEX_DISABLED_FEATURES) args.push('--disable', feature);
+  if (options.model !== undefined) args.push('-m', options.model);
+  args.push('-');
+  return args;
+}
+
+/** Ready means the CLI runs and reports a login (`codex login status`). No model call is made. */
+export async function probeCodexLogin(runner: CliRunner, bin: string): Promise<boolean> {
+  try {
+    const result = await runner(bin, ['login', 'status'], {
+      cwd: tmpdir(),
+      input: '',
+      timeoutMs: CODEX_PROBE_TIMEOUT_MS,
+    });
+    if (result.code !== 0 || result.timedOut) return false;
+    // The CLI prints the status on stderr ("Logged in using ChatGPT"); accept either stream.
+    const status = sanitizeTerminalOutput(`${result.stdout}\n${result.stderr}`);
+    return /^\s*logged in\b/im.test(status) && !/not logged in/i.test(status);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The classified outcome of one `codex exec --json` run, shared by the chat and the vision provider (ADR-0015 failure
+ * taxonomy). Every thrown message is a fixed text with `label`, the timeout, the exit code or violation codes — never
+ * CLI output, which could quote the prompt. Returns the parsed events of an accepted run.
+ */
+export function acceptCodexRun(result: CliRunResult, timeoutMs: number, label: string): ParsedCodexEvents {
+  if (result.timedOut) {
+    throw new AiProviderError(AiFailureKind.TIMEOUT, `${label} timed out after ${timeoutMs}ms`);
+  }
+  if (result.code === null) {
+    throw new AiProviderError(AiFailureKind.UNAVAILABLE, `${label} could not run`);
+  }
+  const events = parseCodexJsonEvents(result.stdout);
+  if (events.actionItemCount > 0) {
+    throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, `${label} attempted a tool action; the reply was withheld`);
+  }
+  if (result.code !== 0 || events.failureText !== undefined) {
+    const kind = classifyCodexFailure(`${events.failureText ?? ''}\n${result.stderr}`);
+    const exitCode = Number.isSafeInteger(result.code) ? result.code : 'unknown';
+    throw new AiProviderError(
+      kind,
+      kind === AiFailureKind.UNAVAILABLE ? `${label} is not usable right now (exit ${exitCode})` : `${label} failed (exit ${exitCode})`,
+    );
+  }
+  // Fail closed on anything but a well-formed, supported, single completed turn: telemetry that cannot be read is
+  // never taken as "no action happened". Only the violation codes leave; no stream text is echoed.
+  if (events.violations.length > 0) {
+    throw new AiProviderError(
+      AiFailureKind.EXECUTION_FAILED,
+      `${label} event stream refused (${events.violations.join(',')}); the reply was withheld`,
+    );
+  }
+  return events;
+}
+
+/**
  * Codex CLI chat provider (ADR-0092 amendment, 2026-10-07). Registered only when `QUOKY_CHAT_PROVIDER=codex`, and then
  * it serves only the chat-tier capabilities ({@link CODEX_CHAT_CAPABILITIES}); code, review and policy-sensitive work
  * stays on Claude. Runs `codex exec` non-interactively with the prompt on **stdin**, in a fresh **empty** temp cwd that
@@ -366,40 +448,16 @@ export class CodexCliProvider extends BaseCliAiProvider {
    * element is a fixed literal or the validated model name.
    */
   buildArgs(request?: Pick<AiRequest, 'capability'>): string[] {
-    const args = [
-      'exec',
-      '--json',
-      '--color', 'never',
-      '--skip-git-repo-check',
-      '--ephemeral',
-      '--ignore-user-config',
-      '--ignore-rules',
-      '--sandbox', 'read-only',
-    ];
-    for (const override of CODEX_CONFIG_OVERRIDES) args.push('-c', override);
     const effort = request === undefined ? undefined : DEFAULT_CODEX_EFFORT_BY_CAPABILITY[request.capability];
-    if (effort !== undefined) args.push('-c', `model_reasoning_effort="${effort}"`);
-    for (const feature of CODEX_DISABLED_FEATURES) args.push('--disable', feature);
-    if (this.model !== undefined) args.push('-m', this.model);
-    args.push('-');
-    return args;
+    return buildCodexExecArgs({
+      ...(effort !== undefined ? { effort } : {}),
+      ...(this.model !== undefined ? { model: this.model } : {}),
+    });
   }
 
   /** Ready means the CLI runs and reports a login (`codex login status`). No model call is made. */
   override async isAvailable(): Promise<boolean> {
-    try {
-      const result = await this.runner(this.bin, ['login', 'status'], {
-        cwd: tmpdir(),
-        input: '',
-        timeoutMs: CODEX_PROBE_TIMEOUT_MS,
-      });
-      if (result.code !== 0 || result.timedOut) return false;
-      // The CLI prints the status on stderr ("Logged in using ChatGPT"); accept either stream.
-      const status = sanitizeTerminalOutput(`${result.stdout}\n${result.stderr}`);
-      return /^\s*logged in\b/im.test(status) && !/not logged in/i.test(status);
-    } catch {
-      return false;
-    }
+    return probeCodexLogin(this.runner, this.bin);
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
@@ -430,36 +488,7 @@ export class CodexCliProvider extends BaseCliAiProvider {
     }
 
     // Classified failure taxonomy (ADR-0015). Raw CLI text is never echoed: it could quote the prompt.
-    if (result.timedOut) {
-      throw new AiProviderError(AiFailureKind.TIMEOUT, `codex CLI timed out after ${timeoutMs}ms`);
-    }
-    if (result.code === null) {
-      throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'codex CLI could not run');
-    }
-    const events = parseCodexJsonEvents(result.stdout);
-    if (events.actionItemCount > 0) {
-      throw new AiProviderError(
-        AiFailureKind.EXECUTION_FAILED,
-        'codex CLI attempted a tool action; the reply was withheld',
-      );
-    }
-    if (result.code !== 0 || events.failureText !== undefined) {
-      const kind = classifyCodexFailure(`${events.failureText ?? ''}\n${result.stderr}`);
-      throw new AiProviderError(
-        kind,
-        kind === AiFailureKind.UNAVAILABLE
-          ? `codex CLI is not usable right now (exit ${result.code})`
-          : `codex CLI failed (exit ${result.code})`,
-      );
-    }
-    // Fail closed on anything but a well-formed, supported, single completed turn: telemetry that cannot be read is
-    // never taken as "no action happened". Only the violation codes leave; no stream text is echoed.
-    if (events.violations.length > 0) {
-      throw new AiProviderError(
-        AiFailureKind.EXECUTION_FAILED,
-        `codex CLI event stream refused (${events.violations.join(',')}); the reply was withheld`,
-      );
-    }
+    const events = acceptCodexRun(result, timeoutMs, 'codex CLI');
 
     const message = sanitizeTerminalOutput(events.lastAgentMessage ?? '');
     const text = (request.capability === Capability.GENERAL_CHAT

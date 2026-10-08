@@ -57,7 +57,7 @@ line to use the default.
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | `7` | Whole days 0-365 a forgotten memory stays restorable in the archive (`보관함`, `기억 복원 N`, `기억 완전 삭제 N`) before the daily maintenance (and each start) deletes it for good, independent of backups. `0` = no archive (forget deletes at once). Anything else, including an empty value, fails startup with `MEMORY_ARCHIVE_DAYS_INVALID`. Credential-like text is never archived. Archived text stays on disk (and in backups) until then |
 | `QUOKY_ACTOR_IDENTITY_MAPPINGS` | unset | Non-secret JSON linking the Discord actor to Jira assignee / GitHub login. Without it the work view reports that the account identity is not set |
 | `QUOKY_LEARNING_EXAMPLES_ENABLED` | `false` | v3 (ADR-0107). Curated examples go only into GENERAL_CHAT prompts of providers that declare `LOCAL` execution (Ollama), at most 2. The learning commands work regardless and store text only per item, `LOCAL_ONLY`, 365 days |
-| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | unset | v3 (ADR-0111 amendment, 2026-10-07). `ollama`, `claude` or `off`, exact. Unset = `ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, else `off` (unchanged behaviour). `claude` sends image bytes to Anthropic (owner's explicit cloud opt-in). Any other value fails startup (`IMAGE_UNDERSTANDING_PROVIDER_INVALID`). See 0.7 "Image understanding" |
+| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | unset | v3 (ADR-0111 amendments, 2026-10-07 / 2026-10-08). `ollama`, `claude`, `codex` or `off`, exact. Unset = `ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, else `off` (unchanged behaviour). `claude` sends image bytes to Anthropic and `codex` to OpenAI (owner's explicit cloud opt-in). Any other value fails startup (`IMAGE_UNDERSTANDING_PROVIDER_INVALID`). See 0.7 "Image understanding" |
 | `QUOKY_IMAGE_UNDERSTANDING_MODEL` | unset | Read only for `claude`: the image model, else `QUOKY_CLAUDE_MODEL`, else `sonnet`. Malformed fails startup (`IMAGE_UNDERSTANDING_MODEL_INVALID`) |
 | `QUOKY_OLLAMA_VISION_MODEL` | unset | v3 (ADR-0111). Local Ollama vision model for image attachments; pull it yourself. With the selector unset, an invalid or cloud-served (`*cloud*`) value disables only image understanding (log code `OLLAMA_VISION_MODEL_INVALID` / `OLLAMA_VISION_MODEL_NOT_LOCAL`) and startup continues. With `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=ollama` it is required, and missing, malformed or cloud-served fails startup (`IMAGE_UNDERSTANDING_OLLAMA_MODEL_*`) |
 | `QUOKY_DISCORD_EXPECTED_BOT_ID` | unset | v3 (ADR-0102 D5). Required under the launchd launcher; startup compares bot, guild and channels and exits 78 on a mismatch |
@@ -266,7 +266,7 @@ reminders, forgets memories (with the typed-back code) and rejects or approves p
 sends the result to the owner DM (`OPS_DECISION_RESULT`). Code-change plan and credential-override approvals can only be
 approved in chat. Remote access (tunnels, LAN) is out of v3.
 
-**Image understanding (ADR-0111 and its 2026-10-07 amendments).** The selector is the configured image choice (since the
+**Image understanding (ADR-0111 and its 2026-10-07 / 2026-10-08 amendments).** The selector is the configured image choice (since the
 runtime-switching amendment every configured option is registered and the effective choice decides, see "Runtime model
 switch" below):
 
@@ -275,24 +275,31 @@ switch" below):
 | unset | `ollama` if `QUOKY_OLLAMA_VISION_MODEL` is set, else `off` | as below | as below |
 | `ollama` | `OllamaCliVisionProvider` (`ollama-vision-cli`), model `QUOKY_OLLAMA_VISION_MODEL` | `LOCAL` | daemon up, model installed, `ollama show` lists `vision` |
 | `claude` | `ClaudeCliVisionProvider` (`claude-vision-cli`), model `QUOKY_IMAGE_UNDERSTANDING_MODEL` / `QUOKY_CLAUDE_MODEL` / `sonnet` | `REMOTE` | `claude auth status --json` exits 0 with `loggedIn: true` (CLI present and logged in) |
+| `codex` | `CodexCliVisionProvider` (`codex-vision-cli`), model `QUOKY_CODEX_MODEL` or the CLI default | `REMOTE` | `codex login status` exits 0 with a "Logged in" line (10 s bound, no model call) |
 | `off` | none | - | never; image turns get the fixed "not analysed, not sent anywhere" reply |
 
 Core sends image bytes only to a provider whose declared locality is in the image policy: `LOCAL` only by default,
 `LOCAL` and `REMOTE` only while the EFFECTIVE image choice (session override → operations-UI default → selector) is
-`claude`. The policy is resolved on every image turn from that choice, never from a provider id, so switching to
+`claude` or `codex`. The policy is resolved on every image turn from that choice, never from a provider id, so switching to
 `ollama` or `off` stops cloud egress on the next image turn. The Claude vision provider runs `claude -p` with the same isolation flags as chat
 (`--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence`, neutral cwd) plus
 `--input-format stream-json --output-format stream-json --verbose --tools ""`: the image goes on stdin as a base64
 image content block, no tool is enabled, and the temp-file path and bytes never appear in argv, logs or errors (failure
 messages are fixed reasons and codes, never CLI output). This is specific to the Claude adapter: the local Ollama
-vision adapter passes the temp-file paths as `ollama run` arguments (redacted to `<image>` in its audit). Limits:
+vision adapter passes the temp-file paths as `ollama run` arguments (redacted to `<image>` in its audit). The Codex
+vision provider runs `codex exec` with exactly the Codex chat isolation (`--ignore-user-config --ignore-rules
+--ephemeral --sandbox read-only`, approvals `never`, no project docs, skills, MCP, web search, shell or other agent tools,
+no history) and the same fail-closed event-stream check; it re-reads each canonical intake file (no symlink, size and
+signature on the open descriptor), writes a private copy (0600) into a fresh empty temp cwd (0700), passes only that copy
+as `--image <path>` (each before the next flag), sends the prompt on stdin, and removes the cwd afterwards. Its audit
+replaces each image path by `<image>`; failure messages are fixed reasons and codes. Limits:
 PNG, JPEG or WebP (content signature checked), 8 MiB per image, 3 images per turn, 120 s per call. `task_runs` audit
 metadata carries the model, the image count, total bytes and SHA-256 hashes only. The startup log line
 `image understanding uses a cloud provider` and the operations UI providers panel field "이미지 이해 공급자 (설정)" show
 the selection; readiness is the panel's `IMAGE_UNDERSTANDING` row. Changing the selector on the owner host is a Strict
 `.env.local` edit plus a restart.
 
-Residuals with `claude` selected: a secret visible inside an image (a password or token in a screenshot) cannot be
+Residuals with `claude` or `codex` selected: a secret visible inside an image (a password or token in a screenshot) cannot be
 detected before it is sent, because image content is not inspected. The caption and any attached text files pass the
 credential guard before egress (a credential-shaped caption is withheld from the prompt), and the reply of every image
 turn passes the attachment-turn credential check: a credential-shaped reply is replaced by a fixed notice and is neither
@@ -310,7 +317,8 @@ the chat tier (chat, summaries, document analysis, read-only lookups) and image 
   unreadable file is ignored with a value-free warning (`SELECTION_FILE_*`) and the configuration applies.
 - **Registration.** Claude always; Codex when the `codex` CLI is on `PATH` (or it is configured/persisted); Ollama chat
   when `OLLAMA_MODEL` is set and the `ollama` CLI is present (or it is configured/persisted); Claude vision always (when
-  its model is valid) and Ollama vision when `QUOKY_OLLAMA_VISION_MODEL` is set. A Claude alias (`opus`, `haiku`) or an
+  its model is valid), Codex vision when the `codex` CLI is on `PATH` (or `codex` is the configured/persisted image
+  choice), and Ollama vision when `QUOKY_OLLAMA_VISION_MODEL` is set. A Claude alias (`opus`, `haiku`) or an
   Ollama model other than the configured one adds one chat-tier-only instance on first use (ids `claude-cli:<alias>`,
   `ollama-cli:<model>`, at most 12 per process). Readiness probes run only for eligible providers; nothing loads a model.
 - **Routing.** The router asks the `ProviderSelectionPolicy` (Core port) for the eligible provider keys and their order:
@@ -320,13 +328,14 @@ the chat tier (chat, summaries, document analysis, read-only lookups) and image 
   policy-sensitive chat are independent of every runtime selection: Claude, plus the configured Ollama chat model as the
   CAP-009 local code fallback only when `.env.local` itself selects Ollama (unchanged from before).
 - **Chat command** (owner only, provider-free): `모델 상태`, `모델 목록` (numbers valid 30 min in that conversation),
-  `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model ollama:<model>`, `이미지 모델 변경: claude|ollama|off`,
+  `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model ollama:<model>`, `이미지 모델 변경: claude|codex|ollama|off`,
   `모델 기본값으로` / `/model reset`. The override is keyed by (Session, Actor): a field-scoped write of the session's
   `metadata` (`quoky.providerSelection.byActor[<actorId>]`) under the shared session write lock, so owners sharing a
   channel never read or change each other's; `새 대화` opens a new Session, which has none.
 - **Operations UI**: providers panel → `모델 기본값 바꾸기` (`/providers`): one same-origin form per option with the
   session CSRF token and a one-time nonce whose subject is the option; `설정 기본값으로 되돌리기` resets to the
-  configuration. A change sends one owner DM (`OPS_DECISION_RESULT`). The cloud image option shows the egress warning.
+  configuration. A change sends one owner DM (`OPS_DECISION_RESULT`). The cloud image options show the egress warning
+  (Anthropic for `claude`, OpenAI for `codex`).
 - **Audit.** Every change logs `provider.selection.changed` with `surface` (`chat`/`ops-ui`), `actor`, `scope`
   (`session`/`default`), `tier`, `selection` and the session id for overrides; `task_runs.providerId` still records the
   provider that answered (e.g. `claude-cli:opus`).
@@ -336,8 +345,8 @@ Claude with `QUOKY_OLLAMA_ENABLED=false` since 2026-10-07, an accepted cloud egr
 `QUOKY_OLLAMA_ENABLED=true` + `OLLAMA_MODEL`; and Codex (OpenAI) via `QUOKY_CHAT_PROVIDER=codex` for the chat tier only
 (chat, summaries, document analysis, read-only lookups; see 0.4a). `QUOKY_CHAT_PROVIDER` (`claude` | `codex` | `ollama`)
 is the selector; unset derives from `QUOKY_OLLAMA_ENABLED`. Code, review and policy-sensitive chat always stay on Claude.
-Images are selected separately (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`: `claude` | `ollama` | `off`; no Codex image option
-yet). Other cloud vendors (OpenAI API, Gemini) need a new provider adapter package.
+Images are selected separately (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER`: `claude` | `codex` | `ollama` | `off`; `codex` uses
+the chat tier's `QUOKY_CODEX_MODEL`). Other cloud vendors (OpenAI API, Gemini) need a new provider adapter package.
 
 **Not implemented in v3 (do not configure):** `QUOKY_GITHUB_REPOS` (CODE-8, ADR-0109), `QUOKY_PR_DESCRIPTION_MODEL_ENABLED`
 (ADR-0108 D4), an MLX provider (ADR-0105 D2-D4) and continuation activation (ADR-0103). The GitHub App installation

@@ -17308,3 +17308,64 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      but compatibility with live Discord JPEG/WebP uploads is not yet proven — the live check covers PNG and JPEG.
   5. **No outbound rewriting.** A Markdown-table-to-bullets conversion was tried and removed (Codex P1 on df66418): it
      altered exact-payload connector-write previews; Discord replies are delivered byte-identical.
+
+### ADR-0111 amendment — Codex as an image-understanding option (2026-10-08)
+
+- **Status:** Accepted — **Product Owner request of 2026-10-08** (the `[LATER]` "Codex image option" of the ADR-0092
+  amendment of 2026-10-07, after the image-provider selector landed). Amends ADR-0111 amendment A1 (selector values), A2
+  and the runtime-switching amendment D3 (which cloud choices open `REMOTE`), A5/D4 (display). A3, A4 and A6 are
+  unchanged. Independent Architecture Review of the implementation is required before merge (new adapter class).
+- **Decision:**
+  1. **Selector.** `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `claude` | `codex` | `ollama` | `off` (exact; anything else is
+     still `IMAGE_UNDERSTANDING_PROVIDER_INVALID`). `codex` carries no model of its own: it uses the chat tier's
+     `QUOKY_CODEX_MODEL`, else the CLI default (`QUOKY_IMAGE_UNDERSTANDING_MODEL` stays Claude-only). The runtime choice
+     vocabulary gains the image token `codex` (`이미지 모델 변경: codex`, `/model image codex`, operations UI `/providers`
+     option `image:codex`). No per-choice Codex model.
+  2. **Registration.** The composition root registers `CodexCliVisionProvider` (`codex-vision-cli`) when the `codex` CLI
+     is on `PATH` (filesystem lookup, no spawn), or when `codex` is the configured or persisted image choice (then an
+     absent or logged-out CLI shows as not ready). Construction spawns nothing; readiness is `codex login status` (the
+     chat probe), run only while it is eligible.
+  3. **Locality policy (amends A2 / runtime D3).** `codex` is treated exactly like `claude`: the resolver answers
+     `['LOCAL', 'REMOTE']` only while the EFFECTIVE image choice is a cloud one (`IMAGE_CHOICE_LOCALITY` = `REMOTE`, data
+     in the composition root), else `['LOCAL']`, and an explicit `off` still allows nothing. Only the effective image
+     provider is eligible, so while `claude` is chosen the Codex vision instance never receives an image and vice versa.
+     The dispatch-time re-check, the synchronous `isEligible` check and the write fence of the runtime-switching amendment
+     apply unchanged (tested with `codex`). Core still checks declared locality, never an id.
+  4. **Adapter (`packages/ai-cli`, owner of the CLI shape).** A separate provider instance advertising ONLY
+     `IMAGE_UNDERSTANDING` and declaring `REMOTE`; the chat `CodexCliProvider` still refuses images. It runs `codex exec`
+     with the chat provider's isolation verbatim (shared `buildCodexExecArgs`: `--json --color never
+     --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --sandbox read-only`, the same `-c` overrides,
+     the same `--disable` list including `view_image`, `model_reasoning_effort="low"`, optional `-m`, trailing `-`) and
+     the same fail-closed event-stream acceptance (shared `acceptCodexRun`: allow-listed events and items, exactly one
+     turn, any action item refuses the run). Each image is re-read from the #143 canonical intake file (absolute path,
+     `O_NOFOLLOW`, regular non-empty file ≤ 8 MiB checked on the open descriptor, content signature), and written as a
+     private copy (`O_EXCL | O_NOFOLLOW`, 0600) into a fresh empty temp cwd (`mkdtemp`, 0700) — the only directory the CLI
+     is pointed at — and passed as `--image <copy>` (one pair per image, first in argv, each followed by a flag because
+     `--image` is multi-valued; a comma in the path is refused because the CLI splits on commas). The prompt (an adapter
+     framing line plus the generic rendered prompt) goes on stdin. The cwd is removed in `finally`. Failure messages are
+     fixed reasons with bounded codes (timeout, exit code, violation codes), never CLI output (#140 P2 rule); the reply
+     has any image or cwd path scrubbed to `<image>`. The audit holds counts and hashes only (model label, image count,
+     total bytes, SHA-256 per image, prompt / provider input / reply hashes, event counts, token usage) and the argv with
+     every image path replaced by `<image>`. Limits: PNG / JPEG / WebP, 1–3 images, 120 s.
+  5. **Credential withholding.** The ADR-0111 D3 / A3 reply check runs on every image turn in Core, before any other
+     guard, whichever provider answered — unchanged and applicable to `codex`; the caption guard (A4) runs before egress.
+  6. **Display.** `모델 상태` / `모델 목록` and the operations UI say "이미지가 OpenAI로 전송돼요" for `codex`; the
+     `/providers` option carries "이 선택은 첨부 이미지를 이 컴퓨터 밖(OpenAI)으로 보내요."; the owner DM for a default change
+     says "이제 첨부 이미지가 OpenAI로 전송돼요."; the configured-selection field shows `codex (클라우드: …OpenAI…)`.
+- **Live verification (2026-10-08, owner-authorized, codex-cli 0.160.0, synthetic bar chart without personal data).** Two
+  real calls: (1) the raw argv in an empty temp cwd: exit 0, 6.7 s, events `thread.started`, one non-fatal `error` item
+  (code mode disabled), `turn.started`, one `agent_message`, `turn.completed` (8,337 input / 30 output tokens), reply
+  "four bars: red, green, blue, and orange … The orange bar is the tallest."; (2) through `CodexCliVisionProvider`:
+  ready, 5.8 s, a correct Korean description (4 bars, colours, heights ≈ 1.3 / 3.1 / 2.2 / 4 grid units against a true
+  1.32 / 3.08 / 2.2 / 3.96, orange tallest), `actionItemCount` 0, `<image>` in the audit argv, no temp path in it;
+  `~/.codex/sessions` count and `history.jsonl` size unchanged and no `quoky-codex-vision-*` directory left behind.
+- **Consequences:** + the owner can read images with the same vendor as Codex chat, switchable per conversation or as
+  the default. − With `codex` selected, image bytes go to OpenAI under the owner's ChatGPT plan (accepted, as for chat);
+  Codex's built-in agent prompt adds ~8k input tokens per image turn.
+- **Residuals:** the same as `claude` (a secret visible in an image cannot be detected before sending); the image copy
+  path appears in the child's argv for the call's lifetime (a per-call random temp path, never the intake path) — the
+  Claude adapter's "no path in argv" property is not available because the Codex CLI reads images only from files; the
+  CLI is an agent without a "no tools" switch, so the residual containment of the chat amendment (read-only sandbox,
+  disabled tools, empty cwd, fail-closed stream) applies; Codex's own image size limits may refuse an image under 8 MiB
+  (normal error reply).
+- **Strict gates:** selecting `codex` on the owner host (`.env.local` or a live switch) and a live image session with it.

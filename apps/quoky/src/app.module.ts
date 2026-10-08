@@ -140,7 +140,8 @@ const connectorWrites = createConnectorWriteComposition({ config, timeZone: conf
 // ADR-0092 amendment + ADR-0111 amendment (runtime switching): the persisted operations-UI default (a private JSON file
 // beside the database, no migration) and the registered providers the owner's selection chooses among. Every chat
 // provider that can run on this host is registered (Claude always; Codex when its CLI is present or it is selected;
-// Ollama chat when OLLAMA_MODEL is set and the CLI is present, or it is selected), plus every configured image option.
+// Ollama chat when OLLAMA_MODEL is set and the CLI is present, or it is selected), plus every configured image option
+// (the Codex image option when its CLI is present or it is the configured or persisted image choice).
 // Which one answers is the router's ProviderSelectionPolicy (ProviderSelectionService); construction spawns nothing.
 const providerSelectionStore = new ProviderSelectionStore(
   providerSelectionFileIo(providerSelectionFilePath(config.storage.dbPath)),
@@ -151,6 +152,7 @@ const providerCatalog = new ProviderCatalog({
   ai: config.ai,
   vision: visionModelsOf(config),
   ...(providerSelectionStore.get().chat ? { persistedChat: providerSelectionStore.get().chat } : {}),
+  ...(providerSelectionStore.get().image ? { persistedImage: providerSelectionStore.get().image } : {}),
   cliPresent: (bin) => isCliPresent(bin),
   // ADR-0098 D8: opt-in local embeddings (QUOKY_EMBEDDING_ENABLED, default false). Advertises only EMBEDDING and runs
   // in the runner's default profile like Ollama chat; it never pulls a model.

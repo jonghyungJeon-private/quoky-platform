@@ -96,7 +96,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED]:
     'The launchd service requires QUOKY_DISCORD_EXPECTED_BOT_ID in the host .env.local (the bot\'s user id, 17-20 digits). Set it, then restart the service.',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_PROVIDER_INVALID]:
-    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", or "off" (lowercase). "claude" sends attached images to Anthropic (cloud).',
+    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", or "off" (lowercase). "claude" sends attached images to Anthropic and "codex" to OpenAI (cloud).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_MODEL_INVALID]:
     'QUOKY_IMAGE_UNDERSTANDING_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING]:

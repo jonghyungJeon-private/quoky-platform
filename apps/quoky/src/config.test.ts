@@ -653,13 +653,18 @@ describe('loadConfig — image understanding provider selection (ADR-0111 amendm
     });
   });
 
-  it('accepts exactly ollama, claude and off', () => {
+  it('accepts exactly ollama, claude, codex and off', () => {
     expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'off', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' })).imageUnderstanding)
       .toEqual({ provider: 'off' });
     expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'ollama', QUOKY_OLLAMA_VISION_MODEL: 'gemma3:4b' })).imageUnderstanding)
       .toEqual({ provider: 'ollama', model: 'gemma3:4b' });
     expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'claude' })).imageUnderstanding)
       .toEqual({ provider: 'claude', model: 'sonnet' });
+    // ADR-0111 amendment of 2026-10-08: Codex reads images with the chat tier's QUOKY_CODEX_MODEL; no image model of its own.
+    expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'codex' })).imageUnderstanding).toEqual({ provider: 'codex' });
+    expect(
+      loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'codex', QUOKY_IMAGE_UNDERSTANDING_MODEL: 'opus' })).imageUnderstanding,
+    ).toEqual({ provider: 'codex' });
   });
 
   it('claude uses QUOKY_IMAGE_UNDERSTANDING_MODEL, else QUOKY_CLAUDE_MODEL, else sonnet', () => {
@@ -676,7 +681,7 @@ describe('loadConfig — image understanding provider selection (ADR-0111 amendm
     expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_MODEL: '--bad' })).imageUnderstanding).toEqual({ provider: 'off' });
   });
 
-  it.each(['', ' ', 'Claude', 'CLAUDE', 'ollama ', 'local', 'cloud', 'openai', 'gemini', 'none', 'false', 'true'])(
+  it.each(['', ' ', 'Claude', 'CLAUDE', 'Codex', 'codex ', 'codex:gpt-5', 'ollama ', 'local', 'cloud', 'openai', 'gemini', 'none', 'false', 'true'])(
     'rejects a non-exact selector %j at startup',
     (value) => {
       expect(() => loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: value }))).toThrow(
