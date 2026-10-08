@@ -133,6 +133,28 @@ describe('CompositePlatformAdapter (ADR-0114 D6): one contract over Discord and 
     expect(log).toEqual(['start:discord', 'stop:discord']);
   });
 
+  it('ADR-0102 D5 / ADR-0114 D4: a definitive Telegram answer at startup stops the start with its typed code (exit 78)', async () => {
+    const { describeStartupFailure } = await import('../bootstrap-preflight');
+    const { startupExitCode, QuokyExitCode } = await import('../ops/exit-codes');
+    const token = TelegramBotToken.from([['70', '01', '23', '4'].join(''), ['AAH', 'm'.repeat(32)].join('')].join(':'));
+    if (!token) throw new Error('fixture token is not well-formed');
+    for (const [reply, code] of [
+      [{ json: { ok: true, result: { id: 999_999_999, is_bot: true } } }, 'TELEGRAM_IDENTITY_MISMATCH'],
+      [{ status: 401, json: { ok: false, error_code: 401 } }, 'TELEGRAM_AUTH_REJECTED'],
+    ] as const) {
+      const log: string[] = [];
+      const discord = new FakeDiscord('discord', log);
+      const fake = new FakeTelegram().queue('getMe', reply as never);
+      const telegram = new TelegramPlatformAdapter({ token, expectedBotId: token.botId, ownerIds: ['5550001'] }, silent, { fetch: fake.fetch });
+      const error = await new CompositePlatformAdapter(discord, [telegram], silent).start().catch((err: unknown) => err);
+      expect(error).toMatchObject({ code });
+      expect(log).toEqual(['start:discord', 'stop:discord']);
+      const failure = describeStartupFailure(error);
+      expect(failure.message).toBe(code);
+      expect(startupExitCode(failure)).toBe(QuokyExitCode.CONFIGURATION);
+    }
+  });
+
   it('forwards the ADR-0102 D5 gate and identity reader, and the owner sink, to the primary (Discord) path', async () => {
     const { adapter, discord } = composite();
     const gate = Promise.resolve(true);

@@ -5,7 +5,7 @@ import type { InboundMessage, LogFields, Logger, OwnerNotification } from '@quok
 import { TELEGRAM_METHODS } from './bot-api';
 import { TelegramBotToken } from './bot-token';
 import { TELEGRAM_MESSAGE_LIMIT } from './delivery';
-import { TelegramPlatformAdapter, TelegramStartupError, TelegramStartupErrorCode } from './telegram-platform-adapter';
+import { STARTUP_CALL_TIMEOUT_MS, TelegramPlatformAdapter, TelegramStartupError, TelegramStartupErrorCode } from './telegram-platform-adapter';
 import type { TelegramAdapterOptions } from './telegram-platform-adapter';
 import {
   FAKE_BOT_ID,
@@ -59,6 +59,8 @@ function harness(fake = new FakeTelegram(), options: TelegramAdapterOptions & { 
     recordingLogger(logs),
     {
       fetch: fake.fetch,
+      // The startup identity calls are bounded short in tests (production: STARTUP_CALL_TIMEOUT_MS, 5 s).
+      startupCallTimeoutMs: 50,
       // Backoff waits are recorded and skipped (an aborted signal still resolves at once).
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -107,45 +109,39 @@ describe('Telegram startup identity check (ADR-0114 D5) and the 409 probe', () =
     ['another bot id', { id: 999_999_999, is_bot: true }],
     ['a user account', { id: Number(FAKE_BOT_ID), is_bot: false }],
     ['a malformed answer', 'nope'],
-  ])('getMe returning %s halts the Telegram side before polling (start() itself resolves)', async (_label, me) => {
+  ])('getMe returning %s at startup is TELEGRAM_IDENTITY_MISMATCH (ADR-0102 D5: exit 78), before any poll', async (_label, me) => {
     const h = harness(new FakeTelegram().queue('getMe', okReply(me)));
-    await expect(h.adapter.start()).resolves.toBeUndefined();
-    await until(() => h.adapter.status().halted !== undefined);
-    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false, halted: TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH });
+    const error = await h.adapter.start().catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(TelegramStartupError);
+    expect((error as TelegramStartupError).code).toBe(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
     expect(h.fake.callsTo('getUpdates')).toHaveLength(0);
-    await h.adapter.stop();
+    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false });
   });
 
-  it('a rejected token and a 409 on the probe (a webhook) halt the Telegram side; nothing is polled', async () => {
+  it('a rejected token and a 409 on the startup probe (a webhook) are typed startup errors (ADR-0114 D4)', async () => {
     const auth = harness(new FakeTelegram().queue('getMe', errorReply(401)));
-    await auth.adapter.start();
-    await until(() => auth.adapter.status().halted !== undefined);
-    expect(auth.adapter.status().halted).toBe(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
+    await expect(auth.adapter.start()).rejects.toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED });
     expect(auth.fake.callsTo('getUpdates')).toHaveLength(0);
     const conflict = harness(new FakeTelegram().queue('getUpdates:instant', errorReply(409)));
-    await conflict.adapter.start();
-    await until(() => conflict.adapter.status().halted !== undefined);
-    expect(conflict.adapter.status().halted).toBe(TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT);
+    const error = await conflict.adapter.start().catch((err: unknown) => err);
+    expect(error).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT, message: 'TELEGRAM_POLL_CONFLICT' });
     expect(conflict.fake.callsTo('getUpdates')).toHaveLength(1);
-    await auth.adapter.stop();
-    await conflict.adapter.stop();
+    expect(conflict.adapter.status().identityVerified).toBe(false);
   });
 
-  it('CA re-review P3-5: start() resolves without waiting for getMe (a hanging Telegram never delays Discord)', async () => {
-    const h = harness(new FakeTelegram().queue('getMe', { hang: true }));
-    let resolved = false;
-    const starting = h.adapter.start().then(() => {
-      resolved = true;
-    });
-    await flush(2);
-    expect(resolved).toBe(true);
-    await starting;
+  it('the startup identity calls are bounded: a hanging getMe resolves start() after the bound and is retried in the background', async () => {
+    expect(STARTUP_CALL_TIMEOUT_MS).toBe(5_000);
+    const fake = new FakeTelegram().queue('getMe', { hang: true });
+    const h = harness(fake);
+    const began = Date.now();
+    await h.adapter.start();
+    expect(Date.now() - began).toBeLessThan(2_000);
     expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false });
-    expect(h.fake.callsTo('getMe')).toHaveLength(1);
-    // stop() aborts the pending getMe; nothing is halted and nothing is polled.
+    // The background retry's next getMe answers (the fake's default): polling starts.
+    await until(() => h.adapter.status().polling);
+    expect(fake.callsTo('getMe')).toHaveLength(2);
     await h.adapter.stop();
     expect(h.adapter.status().halted).toBeUndefined();
-    expect(h.fake.callsTo('getUpdates')).toHaveLength(0);
   });
 });
 
@@ -237,7 +233,7 @@ describe('CA final check (Critical): stop() never confirms the offset unless the
   const instantPolls = (fake: FakeTelegram) => fake.callsTo('getUpdates').filter((call) => call.params.timeout === 0 && call.params.offset !== undefined);
 
   it.each([
-    ['getMe hangs (identity never verified)', () => new FakeTelegram().queue('getMe', { hang: true })],
+    ['getMe hangs (identity never verified)', () => new FakeTelegram().queue('getMe', { hang: true }, { hang: true })],
     ['getMe names another bot (mismatch)', () => new FakeTelegram().queue('getMe', okReply({ id: 999_999_999, is_bot: true }))],
     ['a 401 halt while polling', () => new FakeTelegram().queue('getUpdates', okReply([textUpdate(500, 'x')]), errorReply(401))],
   ])('%s, then stop(): zero confirming getUpdates', async (_label, makeFake) => {
@@ -293,10 +289,11 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
     {
       name: 'before verification (getMe hangs)',
       reach: async () => {
-        const fake = new FakeTelegram().queue('getMe', { hang: true });
+        // The startup getMe times out at its bound; the background retry's getMe hangs.
+        const fake = new FakeTelegram().queue('getMe', { hang: true }, { hang: true });
         const h = harness(fake, { offsetStore: store() });
         await h.adapter.start();
-        await until(() => fake.callsTo('getMe').length === 1);
+        await until(() => fake.callsTo('getMe').length === 2);
         return h;
       },
     },
@@ -329,9 +326,9 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
         await h.adapter.start();
         await until(() => getUpdatesOffsets(fake).includes(601));
         await h.adapter.stop();
-        fake.queue('getMe', { hang: true });
+        fake.queue('getMe', { hang: true }, { hang: true });
         await h.adapter.start();
-        await until(() => fake.callsTo('getMe').length === 2);
+        await until(() => fake.callsTo('getMe').length === 3);
         return h;
       },
     },

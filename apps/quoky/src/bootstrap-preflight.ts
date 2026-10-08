@@ -151,22 +151,22 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
 };
 
 /**
- * ADR-0114 D4/D5: the Telegram adapter's codes and their remediation. Only `TELEGRAM_IDENTITY_MISMATCH` can still stop
- * the start (a token that names another bot; `config.ts` refuses it first). Since the TG-1 review, `getMe`, the probe
- * and polling run in the background: a mismatch, a rejected token, a conflict or a loop failure found there halts the
- * Telegram side only (logged, one Discord OPS_NOTICE), and `TELEGRAM_IDENTITY_UNVERIFIABLE` is a retry log code.
+ * ADR-0102 D5 / ADR-0114 D4/D5: the Telegram adapter's codes and their remediation. At startup (bounded ~5 s per call)
+ * a mismatch, a rejected token or a webhook 409 is a typed startup error and exits 78. A transient answer lets the start
+ * continue; the same answers found later (background retry, runtime) halt the Telegram side only, with one Discord
+ * OPS_NOTICE, and `TELEGRAM_IDENTITY_UNVERIFIABLE` is a retry log code.
  */
 const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>> = {
   [TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED]:
     'The Telegram poll loop failed unexpectedly and stopped (Discord kept running). Report the log line, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH]:
-    'QUOKY_TELEGRAM_BOT_TOKEN names, or getMe returned, another bot than QUOKY_TELEGRAM_EXPECTED_BOT_ID. Check that the token belongs to the expected bot, then restart.',
+    'QUOKY_TELEGRAM_BOT_TOKEN names, or getMe returned, another bot than QUOKY_TELEGRAM_EXPECTED_BOT_ID. The process stopped (found later while serving, only Telegram stops). Check that the token belongs to the expected bot, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE]:
     'The Telegram bot identity could not be read yet (network or Bot API unavailable). Not a startup failure: Discord runs, and the identity is retried in the background; Telegram polling starts once getMe matches.',
   [TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED]:
-    'Telegram rejected QUOKY_TELEGRAM_BOT_TOKEN (Telegram stopped; Discord runs on). Get the current token from BotFather (/token or /revoke), update .env.local, then restart.',
+    'Telegram rejected QUOKY_TELEGRAM_BOT_TOKEN. The process stopped (found later while serving, only Telegram stops). Get the current token from BotFather (/token or /revoke), update .env.local, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT]:
-    'HTTP 409: on the first probe in practice a webhook is set on this Telegram bot (remove it with the Bot API deleteWebhook method); while polling, three 409s in five minutes mean another instance polls the same bot. Telegram stopped; Discord runs on. Fix the cause, then restart.',
+    'HTTP 409. At startup it means in practice a webhook is set on this Telegram bot (remove it with the Bot API deleteWebhook method); the process stopped. While serving, three 409s in five minutes mean another instance polls the same bot; only Telegram stops. Fix the cause, then restart.',
 };
 
 /**

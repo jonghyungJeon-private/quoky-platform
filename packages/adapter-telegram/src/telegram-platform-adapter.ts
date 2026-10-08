@@ -27,10 +27,10 @@ import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramCont
  * cross into Core.
  *
  * - **No inbound port** (D4): long polling with `getUpdates` only; no webhook, no listener.
- * - **Identity first** (D5): `start()` refuses a token that names another bot and returns at once. In the background,
- *   `getMe` must match the expected bot id and a non-confirming probe must not get HTTP 409 (in practice a webhook)
- *   before polling starts; a mismatch, a rejected token or a 409 there halts the Telegram side only (`onHalt`), and a
- *   transient failure is retried. Nothing is read, and nothing is sent, before `getMe` matched.
+ * - **Identity first** (D5): `start()` checks the token's bot id, then (bounded ~5 s each) `getMe` and a non-confirming
+ *   probe that must not get HTTP 409 (in practice a webhook). A definitive answer there is a typed startup error; a
+ *   transient one resolves `start()` and is retried in the background, where a later definitive answer halts the
+ *   Telegram side only (`onHalt`). Nothing is read, and nothing is sent, before `getMe` matched.
  * - **Admission** (D2): `admission.ts`. A dropped update is only counted; it gets no reply, no download, no log line.
  * - **Offset** (D4): advanced past an update only after it was handed to the runtime (or dropped), so nothing is
  *   reprocessed and nothing is skipped; `stop()` confirms the last offset so a restart does not see it again.
@@ -69,19 +69,24 @@ export interface TelegramAdapterOptions {
   /** The server-side long-poll wait in seconds (default 25). */
   readonly pollTimeoutSeconds?: number;
   readonly backoff?: { readonly initialMs: number; readonly maxMs: number };
+  /** Bound of each startup identity call (`getMe`, the probe); default {@link STARTUP_CALL_TIMEOUT_MS}. */
+  readonly startupCallTimeoutMs?: number;
 }
 
 export const TelegramStartupErrorCode = {
   /**
-   * The token's bot id (thrown by `start()`) or `getMe` (a background halt) is not `QUOKY_TELEGRAM_EXPECTED_BOT_ID`, or
-   * `getMe` is not a bot.
+   * The token's bot id or `getMe` is not `QUOKY_TELEGRAM_EXPECTED_BOT_ID`, or `getMe` is not a bot: a startup error when
+   * found by `start()`, a Telegram-only halt when found later.
    */
   TELEGRAM_IDENTITY_MISMATCH: 'TELEGRAM_IDENTITY_MISMATCH',
   /** `getMe` could not be completed (network, timeout, malformed answer): a log code; retried, never thrown or halted. */
   TELEGRAM_IDENTITY_UNVERIFIABLE: 'TELEGRAM_IDENTITY_UNVERIFIABLE',
-  /** Telegram rejected the token (HTTP 401/404), at the identity check or while polling: a halt. */
+  /** Telegram rejected the token (HTTP 401/404): a startup error at `start()`, a Telegram-only halt when found later. */
   TELEGRAM_AUTH_REJECTED: 'TELEGRAM_AUTH_REJECTED',
-  /** HTTP 409 on the identity probe (in practice a webhook), or three 409s in five minutes while polling: a halt. */
+  /**
+   * HTTP 409 on the startup probe (in practice a webhook; a startup error), or on a later probe or three 409s in five
+   * minutes while polling (a Telegram-only halt).
+   */
   TELEGRAM_POLL_CONFLICT: 'TELEGRAM_POLL_CONFLICT',
   /** The poll loop failed unexpectedly (a defect): the Telegram side stopped, never the process (halt code only). */
   TELEGRAM_POLL_LOOP_FAILED: 'TELEGRAM_POLL_LOOP_FAILED',
@@ -114,6 +119,8 @@ const POLL_LIMIT = 100;
 /** 100 updates of 4096 characters each fit well inside this. */
 const POLL_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const CALL_TIMEOUT_MS = 10_000;
+/** The startup identity calls are bounded short (CA final check): at most ~2 x 5 s before Discord continues. */
+export const STARTUP_CALL_TIMEOUT_MS = 5_000;
 const SEND_TIMEOUT_MS = 15_000;
 const DOCUMENT_TIMEOUT_MS = 30_000;
 const STOP_CONFIRM_TIMEOUT_MS = 3_000;
@@ -198,6 +205,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private readonly pollTimeoutSeconds: number;
   private readonly backoff: { readonly initialMs: number; readonly maxMs: number };
   private readonly offsetStore?: TelegramOffsetStore;
+  private readonly startupCallTimeoutMs: number;
   /** The offset last written to the store. */
   private savedOffset?: number;
 
@@ -245,6 +253,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.pollTimeoutSeconds = options.pollTimeoutSeconds ?? DEFAULT_POLL_TIMEOUT_SECONDS;
     this.backoff = options.backoff ?? DEFAULT_BACKOFF;
     this.offsetStore = options.offsetStore;
+    this.startupCallTimeoutMs = options.startupCallTimeoutMs ?? STARTUP_CALL_TIMEOUT_MS;
   }
 
   onMessage(handler: InboundMessageHandler): void {
@@ -274,15 +283,18 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   }
 
   /**
-   * Starts the background identity check, conflict probe and polling, and returns at once (CA re-review P3-5): a hanging
-   * Telegram never delays Discord's startup. The only synchronous refusal is a token that names another bot than
-   * `QUOKY_TELEGRAM_EXPECTED_BOT_ID` (no network; `config.ts` already refuses it as `TELEGRAM_TOKEN_BOT_ID_MISMATCH`).
+   * The startup identity check (ADR-0102 D5, ADR-0114 D4/D5), bounded so a hanging Telegram never blocks Discord for
+   * long: `getMe` and the non-confirming conflict probe each get {@link STARTUP_CALL_TIMEOUT_MS} (option
+   * `startupCallTimeoutMs`).
    *
-   * In the background, nothing is read before `getMe` matches (`status().identityVerified`):
-   * - `getMe` returns another bot (`TELEGRAM_IDENTITY_MISMATCH`), the token is rejected (`TELEGRAM_AUTH_REJECTED`), or
-   *   the probe gets HTTP 409 (`TELEGRAM_POLL_CONFLICT`, in practice a webhook): the Telegram side halts
-   *   (`status().halted`, logged, one owner operations notice through `onHalt`); Discord runs on.
-   * - A transient failure (network, timeout, 5xx; CA P2-2) is retried with the poll backoff until it matches.
+   * - A DEFINITIVE answer at startup is a typed startup error, as the ratified ADRs require (exit 78): a token or
+   *   `getMe` naming another bot (`TELEGRAM_IDENTITY_MISMATCH`), a rejected token (`TELEGRAM_AUTH_REJECTED`), or HTTP
+   *   409 on the probe (`TELEGRAM_POLL_CONFLICT`, in practice a webhook). Nothing is read.
+   * - A transient or timed-out answer (CA P2-2) resolves `start()`: the identity is retried in the background with the
+   *   poll backoff, and nothing is read or sent until `getMe` matches (`status().identityVerified`).
+   * - A definitive answer found LATER — by that background retry or at runtime, while the process already serves
+   *   Discord — halts the Telegram side only (`status().halted`, `onHalt` → one owner operations notice). The ADRs say
+   *   nothing about detection after startup; stopping a serving process for it would take Discord down.
    */
   async start(): Promise<void> {
     if (this.loop !== undefined) return;
@@ -297,11 +309,13 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
     }
     if (this.offset === undefined) this.offset = this.loadOffset();
+    // Throws the typed startup error for a definitive answer; resolves 'transient' for an outage or a timeout.
+    const first = await this.checkIdentity(undefined, this.startupCallTimeoutMs);
     const controller = new AbortController();
     this.controller = controller;
     // CA re-review P3-2: an unexpected rejection of the background loop must never become an unhandled rejection that
     // takes the process (and Discord) down; it halts the Telegram side only and is logged without content.
-    this.loop = this.run(controller.signal).catch((err: unknown) => {
+    this.loop = this.run(controller.signal, first === 'verified').catch((err: unknown) => {
       this.polling = false;
       // A rejection while stopping is the shutdown itself, not a defect: no halt, no notice.
       if (this.stopped) return;
@@ -314,10 +328,10 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
    * One identity attempt: `getMe`, then a conflict probe that confirms nothing (no offset). Resolves `'verified'` or
    * `'transient'`; throws a {@link TelegramStartupError} for a definitive refusal.
    */
-  private async checkIdentity(signal?: AbortSignal): Promise<'verified' | 'transient'> {
+  private async checkIdentity(signal?: AbortSignal, timeoutMs: number = CALL_TIMEOUT_MS): Promise<'verified' | 'transient'> {
     let me: unknown;
     try {
-      me = await this.api.call('getMe', {}, { timeoutMs: CALL_TIMEOUT_MS, ...(signal ? { signal } : {}) });
+      me = await this.api.call('getMe', {}, { timeoutMs, ...(signal ? { signal } : {}) });
     } catch (err) {
       if (codeOf(err) === TelegramFailureCode.AUTH) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
       return 'transient';
@@ -328,11 +342,10 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       this.logger.error('telegram startup identity mismatch', { fields: 'bot' });
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
     }
-    this.identityVerified = true;
     // HTTP 409 here reliably means a webhook is set; a second long-poller is caught by the runtime policy instead.
     try {
       await this.api.call('getUpdates', { limit: 1, timeout: 0 }, {
-        timeoutMs: CALL_TIMEOUT_MS,
+        timeoutMs,
         maxResponseBytes: POLL_MAX_RESPONSE_BYTES,
         ...(signal ? { signal } : {}),
       });
@@ -342,6 +355,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       if (code === TelegramFailureCode.AUTH) throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
       // Anything transient: the poll loop backs off and retries.
     }
+    this.identityVerified = true;
     this.logger.info('telegram startup identity verified', { bot: 'match', owners: this.owners.size });
     return 'verified';
   }
@@ -390,16 +404,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     }
   }
 
-  private async run(signal: AbortSignal): Promise<void> {
-    let verified: boolean;
-    try {
-      verified = (await this.checkIdentity(signal)) === 'verified';
-    } catch (err) {
-      if (!(err instanceof TelegramStartupError)) throw err;
-      if (!this.stopped) this.halt(err.code);
-      return;
-    }
-    if (this.stopped) return;
+  private async run(signal: AbortSignal, verified: boolean): Promise<void> {
     if (!verified && !(await this.verifyInBackground(signal))) return;
     this.polling = true;
     try {

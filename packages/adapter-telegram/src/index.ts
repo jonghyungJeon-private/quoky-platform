@@ -37,6 +37,7 @@ export type { TelegramDeliveryReport, TelegramPreviewPlan, TelegramPreviewReport
 export {
   ATTACHMENT_UNSUPPORTED_NOTICE,
   notificationOutcomeOf,
+  STARTUP_CALL_TIMEOUT_MS,
   staleNotice,
   TelegramPlatformAdapter,
   TelegramStartupError,
