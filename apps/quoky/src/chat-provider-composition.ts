@@ -1,6 +1,7 @@
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider } from '@quoky/ai-cli';
 import type { AiProvider, Logger } from '@quoky/core';
 import type { QuokyConfig } from './config';
+import { geminiChat } from './gemini-provider-composition';
 import { openAiChat } from './openai-provider-composition';
 import type { ChatChoice } from './provider-selection/selection-choices';
 
@@ -21,6 +22,7 @@ import type { ChatChoice } from './provider-selection/selection-choices';
  * - **OpenAI API chat** (ADR-0115 D3) is registered only when `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` are both
  *   configured (`ai.openai`). Registration is not eligibility: it answers only while it is the effective chat choice,
  *   so with nothing selected routing is exactly as before. Construction makes no network call.
+ * - **Gemini API chat** (ADR-0115 D4, PRV-2): the same rule with `QUOKY_GEMINI_API_KEY` / `QUOKY_GEMINI_MODEL`.
  *
  * Construction spawns nothing (the CLI presence check is a filesystem lookup); readiness is probed by the provider
  * manager only when a provider is eligible for a selection. Embedding and image providers are composed separately.
@@ -34,12 +36,13 @@ export interface ChatProviderRegistrationOptions {
 }
 
 export interface ChatProviderRegistration {
-  /** In registration order: Claude first, then Ollama, then Codex, then the OpenAI API. */
+  /** In registration order: Claude first, then Ollama, then Codex, then the OpenAI API, then the Gemini API. */
   readonly providers: readonly AiProvider[];
   readonly claude: AiProvider;
   readonly codex?: AiProvider;
   readonly ollama?: AiProvider;
   readonly openai?: AiProvider;
+  readonly gemini?: AiProvider;
 }
 
 export function composeChatProviders(
@@ -70,8 +73,22 @@ export function composeChatProviders(
       })
     : undefined;
   const openai = ai.openai !== undefined ? openAiChat(ai.openai) : undefined;
-  const providers = [claude, ...(ollama ? [ollama] : []), ...(codex ? [codex] : []), ...(openai ? [openai] : [])];
-  return { providers, claude, ...(codex ? { codex } : {}), ...(ollama ? { ollama } : {}), ...(openai ? { openai } : {}) };
+  const gemini = ai.gemini !== undefined ? geminiChat(ai.gemini) : undefined;
+  const providers = [
+    claude,
+    ...(ollama ? [ollama] : []),
+    ...(codex ? [codex] : []),
+    ...(openai ? [openai] : []),
+    ...(gemini ? [gemini] : []),
+  ];
+  return {
+    providers,
+    claude,
+    ...(codex ? { codex } : {}),
+    ...(ollama ? { ollama } : {}),
+    ...(openai ? { openai } : {}),
+    ...(gemini ? { gemini } : {}),
+  };
 }
 
 /** The registered chat providers as a list (see {@link composeChatProviders}). */

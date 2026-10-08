@@ -34,11 +34,11 @@ describe('selection choices (ADR-0092 amendment, runtime switching)', () => {
     expect(parseChatChoiceToken('ollama:Granite3.3:8b')).toEqual({ ok: true, choice: { provider: 'ollama', model: 'Granite3.3:8b' } });
     expect(parseChatChoiceToken('ollama:x;rm')).toEqual({ ok: false, reason: 'MODEL_INVALID' });
     expect(parseChatChoiceToken('ollama:kimi-cloud')).toEqual({ ok: false, reason: 'MODEL_INVALID' });
-    expect(parseChatChoiceToken('gemini')).toEqual({ ok: false, reason: 'UNKNOWN_PROVIDER' });
+    expect(parseChatChoiceToken('bard')).toEqual({ ok: false, reason: 'UNKNOWN_PROVIDER' });
     expect(parseImageChoiceToken(' Off ')).toBe('off');
     expect(parseImageChoiceToken('Codex')).toBe('codex');
     expect(parseImageChoiceToken('codex:gpt-5')).toBeNull();
-    expect(parseImageChoiceToken('gemini')).toBeNull();
+    expect(parseImageChoiceToken('gemini:gemini-3.5-flash')).toBeNull();
   });
 
   it('validates stored data strictly', () => {
@@ -52,11 +52,11 @@ describe('selection choices (ADR-0092 amendment, runtime switching)', () => {
     expect(imageChoiceFromData('codex')).toBe('codex');
   });
 
-  it('image choices: Claude, Codex and the OpenAI API are cloud (REMOTE, Anthropic / OpenAI), Ollama is local, off sends nothing', () => {
-    expect(IMAGE_CHOICES).toEqual(['claude', 'codex', 'ollama', 'openai', 'off']);
-    expect(IMAGE_CHOICE_LOCALITY).toEqual({ claude: 'REMOTE', codex: 'REMOTE', ollama: 'LOCAL', openai: 'REMOTE', off: 'NONE' });
-    expect(IMAGE_CHOICE_EGRESS).toEqual({ claude: 'ANTHROPIC', codex: 'OPENAI', ollama: 'LOCAL', openai: 'OPENAI', off: 'NONE' });
-    expect(IMAGE_CHOICES.filter(imageChoiceIsCloud)).toEqual(['claude', 'codex', 'openai']);
+  it('image choices: Claude, Codex and the OpenAI and Gemini APIs are cloud (REMOTE, Anthropic / OpenAI / Google), Ollama is local, off sends nothing', () => {
+    expect(IMAGE_CHOICES).toEqual(['claude', 'codex', 'ollama', 'openai', 'gemini', 'off']);
+    expect(IMAGE_CHOICE_LOCALITY).toEqual({ claude: 'REMOTE', codex: 'REMOTE', ollama: 'LOCAL', openai: 'REMOTE', gemini: 'REMOTE', off: 'NONE' });
+    expect(IMAGE_CHOICE_EGRESS).toEqual({ claude: 'ANTHROPIC', codex: 'OPENAI', ollama: 'LOCAL', openai: 'OPENAI', gemini: 'GOOGLE', off: 'NONE' });
+    expect(IMAGE_CHOICES.filter(imageChoiceIsCloud)).toEqual(['claude', 'codex', 'openai', 'gemini']);
   });
 
   it('openai chat tokens (ADR-0115 D3): the provider alone or an allow-listed model, compared lowercase', () => {
@@ -69,5 +69,18 @@ describe('selection choices (ADR-0092 amendment, runtime switching)', () => {
     expect(chatChoiceFromData({ provider: 'openai', model: 'gpt-secret' })).toBeNull();
     expect(chatChoiceIsCloud({ provider: 'openai' })).toBe(true);
     expect(imageChoiceFromData('openai')).toBe('openai');
+  });
+
+  it('gemini chat tokens (ADR-0115 D3/D4): the provider alone or an allow-listed model, compared lowercase', () => {
+    expect(parseChatChoiceToken('gemini')).toEqual({ ok: true, choice: { provider: 'gemini' } });
+    expect(parseChatChoiceToken('Gemini:GEMINI-3.5-Flash')).toEqual({ ok: true, choice: { provider: 'gemini', model: 'gemini-3.5-flash' } });
+    for (const bad of ['gemini:gemini-2.0-flash', 'gemini:gpt-4o', 'gemini:', 'gemini:gemini-3.5-flash:x', 'gemini:models/gemini-3.5-flash']) {
+      expect(parseChatChoiceToken(bad)).toEqual({ ok: false, reason: 'GEMINI_MODEL_NOT_ALLOWED' });
+    }
+    expect(chatChoiceFromData({ provider: 'gemini', model: 'gemini-3.8-flash' })).toEqual({ provider: 'gemini', model: 'gemini-3.8-flash' });
+    expect(chatChoiceFromData({ provider: 'gemini', model: 'gemini-secret' })).toBeNull();
+    expect(chatChoiceIsCloud({ provider: 'gemini' })).toBe(true);
+    expect(parseImageChoiceToken('Gemini')).toBe('gemini');
+    expect(imageChoiceFromData('gemini')).toBe('gemini');
   });
 });

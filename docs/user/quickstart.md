@@ -82,13 +82,15 @@ claude --version
 
   | 작업 | 설정 | 고를 수 있는 값 | 미설정일 때 |
   |---|---|---|---|
-  | 일상 대화, 요약, 문서 분석, 읽기 조회 | `QUOKY_CHAT_PROVIDER` (아래 "대화 모델 고르기") | `claude` / `codex` / `ollama` | `QUOKY_OLLAMA_ENABLED`로 결정 (`true`(기본) → `ollama`, `false` → `claude`) |
+  | 일상 대화, 요약, 문서 분석, 읽기 조회 | `QUOKY_CHAT_PROVIDER` (아래 "대화 모델 고르기") | `claude` / `codex` / `ollama` / `openai` / `gemini` | `QUOKY_OLLAMA_ENABLED`로 결정 (`true`(기본) → `ollama`, `false` → `claude`) |
   | 코드 수정, 코드 리뷰, 설계, 정책에 민감한 대화 | 없음 (모델만 `QUOKY_CLAUDE_MODEL`) | 항상 Claude | Claude `sonnet` |
-  | 이미지 분석 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (5절 "이미지") | `claude` / `codex` / `ollama` / `off` | `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off` |
+  | 이미지 분석 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` (5절 "이미지") | `claude` / `codex` / `ollama` / `openai` / `gemini` / `off` | `QUOKY_OLLAMA_VISION_MODEL`이 있으면 `ollama`, 없으면 `off` |
   | 기억 임베딩 | `QUOKY_EMBEDDING_ENABLED` | 로컬 Ollama만 | 꺼짐 |
 
-  모델은 `QUOKY_CLAUDE_MODEL`(Claude), `QUOKY_CODEX_MODEL`(Codex), `OLLAMA_MODEL`(Ollama 대화)로 정합니다. 다른 클라우드
-  (OpenAI API, Gemini 등)는 지금은 쓸 수 없고 새 provider adapter가 필요합니다. 소유자 서비스는 현재
+  모델은 `QUOKY_CLAUDE_MODEL`(Claude), `QUOKY_CODEX_MODEL`(Codex), `OLLAMA_MODEL`(Ollama 대화)로 정합니다. OpenAI API와
+  Gemini API(ADR-0115)는 키와 모델(`QUOKY_OPENAI_API_KEY`·`QUOKY_OPENAI_MODEL`, `QUOKY_GEMINI_API_KEY`·`QUOKY_GEMINI_MODEL`)을
+  둘 다 넣었을 때만 등록되고, 소유자가 고를 때만 대화 계열과 이미지에 쓰입니다 (토큰 단위 과금, 대화 내용이 OpenAI/Google로
+  전송됨). 코드·리뷰·계획·정책에 민감한 대화는 항상 Claude입니다. 소유자 서비스는 현재
   `QUOKY_OLLAMA_ENABLED=false`라 대화를 Claude가 처리합니다 (대화 내용이 Anthropic으로 전송됨).
 
 ### 대화 모델 고르기: Claude, Codex, Ollama (`QUOKY_CHAT_PROVIDER`)
@@ -293,7 +295,8 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000. 임베딩 모델은 `--keepalive 30m`으로 메모리에 두고, 준비될 때와 시간 초과 뒤에 백그라운드에서 미리 불러옵니다(최대 30초). 실측: 이미 올라와 있으면 0.05-0.12초, 새로 불러오면 0.35-0.9초 |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
 | `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음 |
-| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `codex` / `off` 정확히 이 네 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic, `codex`는 OpenAI(클라우드)로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
+| `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `codex` / `openai` / `gemini` / `off` 정확히 이 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic, `codex`·`openai`는 OpenAI, `gemini`는 Google(클라우드)로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
+| `QUOKY_GEMINI_API_KEY`, `QUOKY_GEMINI_MODEL` | 선택. 기본 없음 (ADR-0115 D4). 둘 다 있을 때만 Gemini API provider가 등록됨. 키는 Google AI Studio API 키(`AIza…`)이며 `.env.local`(모드 600)에만 두고 로그에 남지 않음, `x-goog-api-key` 헤더로만 `generativelanguage.googleapis.com`에 보냄. 모델은 허용 목록(`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3.1-pro-preview`)만. 형식이 틀리거나 하나만 있거나 `gemini`를 골랐는데 없으면 시작 실패(`GEMINI_API_KEY_INVALID` / `GEMINI_MODEL_INVALID` / `GEMINI_API_KEY_MISSING` / `GEMINI_MODEL_MISSING`). `QUOKY_CHAT_PROVIDER=gemini`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=gemini`, 운영 화면, `모델 변경: gemini[:<모델>]`으로 고를 때만 쓰임 (대화 내용·첨부 이미지가 Google로 전송, 토큰 단위 과금) |
 | `QUOKY_IMAGE_UNDERSTANDING_MODEL` | 선택. `claude`일 때만 읽음. 이미지용 Claude 모델 (없으면 `QUOKY_CLAUDE_MODEL`, 그다음 `sonnet`). 형식이 틀리면 시작 실패 |
 | `QUOKY_OLLAMA_VISION_MODEL` | 선택. 기본 없음. 이미지 분석용 로컬 Ollama 비전 모델 이름(5절). `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=ollama`이면 필수이고 없거나 잘못됐거나 `cloud` 모델이면 시작 실패. 선택값을 설정하지 않은 경우(예전 방식)에는 잘못된 값이나 `cloud` 모델이면 이미지 분석만 꺼지고 시작은 계속 |
 | `QUOKY_CALENDAR_GOOGLE_CLIENT_ID`, `QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET` | 선택. Google Calendar 읽기용 OAuth "Desktop app" 클라이언트 (8절 "캘린더 설정") |
@@ -957,7 +960,8 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | 운영 화면 로그인에서 "허용되지 않은 출처예요" | 예전 빌드의 알려진 문제(PR #131에서 고침). 최신 빌드로 다시 시작. 주소는 `127.0.0.1` 또는 `localhost`와 설정한 포트만 |
 | 운영 화면이 열리지 않음 | `QUOKY_OPS_UI_ENABLED=true`인지, `quoky.log`의 `ops-ui.unavailable reason=...`(포트 사용 중 등) 확인 |
 | 이미지에 "분석하지 않았어요" | `ollama`: `QUOKY_OLLAMA_VISION_MODEL`이 비었거나 잘못됐거나, 그 모델이 Ollama에 없음. `claude`: Claude CLI가 없거나 로그인되지 않음(`claude auth status`). `codex`: Codex CLI가 없거나 로그인되지 않음(`codex login status`). 운영 화면 "AI 공급자 준비 상태"의 `IMAGE_UNDERSTANDING` 행과 "이미지 이해 공급자 (설정)" 확인 |
-| `IMAGE_UNDERSTANDING_PROVIDER_INVALID` — "QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", or "off" (lowercase). "claude" sends attached images to Anthropic and "codex" to OpenAI (cloud)." | 소문자 네 값만 허용. 빈 값도 불가 |
+| `IMAGE_UNDERSTANDING_PROVIDER_INVALID` — "QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", "openai", "gemini", or "off" (lowercase). "claude" sends attached images to Anthropic, "codex" and "openai" to OpenAI, "gemini" to Google (cloud)." | 소문자 값만 허용. 빈 값도 불가 |
+| `GEMINI_API_KEY_INVALID` / `GEMINI_MODEL_INVALID` / `GEMINI_API_KEY_MISSING` / `GEMINI_MODEL_MISSING` | `QUOKY_GEMINI_API_KEY`(`AIza`로 시작하는 39자) 형식이나 `QUOKY_GEMINI_MODEL` 허용 목록을 확인하고, 둘을 함께 넣으세요. `gemini`를 고르면 둘 다 필요. 값은 출력되지 않음 |
 | `IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING` / `IMAGE_UNDERSTANDING_OLLAMA_MODEL_INVALID` / `IMAGE_UNDERSTANDING_OLLAMA_MODEL_NOT_LOCAL` | `ollama`를 골랐는데 `QUOKY_OLLAMA_VISION_MODEL`이 없거나 형식이 틀리거나 `cloud` 모델 |
 | `IMAGE_UNDERSTANDING_MODEL_INVALID` | `QUOKY_IMAGE_UNDERSTANDING_MODEL` 형식 오류 (`QUOKY_CLAUDE_MODEL`과 같은 규칙) |
 | 로그에 `not starting: 3 consecutive configuration exits` | 설정 오류로 3번 연속 멈춰 서비스가 재시작을 멈춤. `quoky.log`에서 원인을 고친 뒤 `ops/launchd/quokyctl.sh restart --apply` |

@@ -1,5 +1,6 @@
 import { parseModelSelectionCommand } from '@quoky/core';
 import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
+import { GEMINI_MODEL_ALLOW_LIST } from '@quoky/ai-gemini-api';
 import type {
   ConversationTurnHandler,
   Id,
@@ -27,7 +28,7 @@ import type { ImageChoice, SelectionSource } from './selection-choices';
  * - `모델 상태` / `/model status`: the effective chat and image selection, its source and readiness.
  * - `모델 목록` / `/model`: a numbered list of the selectable chat-tier models and image options with readiness. The
  *   numbers stay valid for this conversation for {@link MODEL_LISTING_TTL_MS} (like the learning listings).
- * - `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model openai:gpt-4.1-mini` / `/model ollama:granite3.3:8b`: this session's chat tier.
+ * - `모델 변경: codex` / `모델 변경: 2` / `/model claude:opus` / `/model openai:gpt-4.1-mini` / `/model gemini:gemini-3.5-flash` / `/model ollama:granite3.3:8b`: this session's chat tier.
  * - `이미지 모델 변경: ollama` / `이미지 모델 변경: codex` / `/model image off`: this session's image understanding.
  * - `모델 기본값으로` / `/model reset` (and `이미지 모델 기본값으로`): clear this session's override.
  *
@@ -63,18 +64,19 @@ export const MODEL_SELECTION_COPY = {
 } as const;
 
 const REFUSAL_COPY: Readonly<Record<SelectionRefusal, string>> = {
-  UNKNOWN_PROVIDER: '모르는 모델이에요. claude, codex, ollama, openai 중에서 고르거나 "모델 목록"을 보세요.',
+  UNKNOWN_PROVIDER: '모르는 모델이에요. claude, codex, ollama, openai, gemini 중에서 고르거나 "모델 목록"을 보세요.',
   CLAUDE_MODEL_NOT_ALLOWED: 'Claude 모델은 sonnet, opus, haiku 중에서만 고를 수 있어요 (예: "모델 변경: claude:opus").',
   CODEX_MODEL_NOT_ALLOWED: 'Codex 모델은 설정(QUOKY_CODEX_MODEL)으로만 정해요. "모델 변경: codex"로 고르세요.',
   OPENAI_MODEL_NOT_ALLOWED: `OpenAI 모델은 ${OPENAI_MODEL_ALLOW_LIST.join(', ')} 중에서만 고를 수 있어요 (예: "모델 변경: openai:gpt-4.1-mini").`,
+  GEMINI_MODEL_NOT_ALLOWED: `Gemini 모델은 ${GEMINI_MODEL_ALLOW_LIST.join(', ')} 중에서만 고를 수 있어요 (예: "모델 변경: gemini:gemini-3.5-flash-lite").`,
   MODEL_INVALID: '모델 이름이 올바르지 않아요. "모델 목록"에서 고르세요.',
   PROVIDER_NOT_ON_HOST: '그 모델은 이 컴퓨터에서 쓸 수 없어요 (CLI나 모델 설정이 없어요). "모델 목록"에서 고르세요.',
   OLLAMA_MODEL_NOT_FOUND: '로컬 Ollama에 그 모델이 없어요. "모델 목록"에서 고르세요.',
   OLLAMA_MODEL_NOT_CHAT: '그 Ollama 모델은 대화용이 아니에요 (예: 임베딩 전용). 바꾸지 않았어요. "모델 목록"에서 고르세요.',
   OLLAMA_UNAVAILABLE: 'Ollama가 응답하지 않아 로컬 모델을 확인하지 못했어요. 바꾸지 않았어요.',
-  IMAGE_CHOICE_INVALID: '이미지 모델은 claude, codex, ollama, openai, off 중에서 고를 수 있어요.',
+  IMAGE_CHOICE_INVALID: '이미지 모델은 claude, codex, ollama, openai, gemini, off 중에서 고를 수 있어요.',
   IMAGE_OPTION_UNAVAILABLE:
-    '그 이미지 모델은 이 컴퓨터에 설정되어 있지 않아요 (codex는 Codex CLI, openai는 QUOKY_OPENAI_API_KEY와 QUOKY_OPENAI_MODEL, 로컬은 QUOKY_OLLAMA_VISION_MODEL이 필요해요).',
+    '그 이미지 모델은 이 컴퓨터에 설정되어 있지 않아요 (codex는 Codex CLI, openai는 QUOKY_OPENAI_API_KEY와 QUOKY_OPENAI_MODEL, gemini는 QUOKY_GEMINI_API_KEY와 QUOKY_GEMINI_MODEL, 로컬은 QUOKY_OLLAMA_VISION_MODEL이 필요해요).',
   TOO_MANY_MODELS: '이번 실행에서 고를 수 있는 모델 수를 넘었어요. 이미 쓴 모델을 고르거나 다시 시작한 뒤 고르세요.',
 };
 
@@ -97,14 +99,17 @@ function readiness(ready: boolean | undefined): string {
   return ready === true ? '준비됨' : ready === false ? '준비 안 됨' : '확인 못 함';
 }
 
-/** Whether a chat label's content goes to OpenAI (Codex CLI or the OpenAI API). */
-function isOpenAiLabel(label: string): boolean {
-  return label === 'codex' || label.startsWith('openai:');
+/** The cloud vendor a chat label's content goes to (Codex CLI and the OpenAI API: OpenAI; the Gemini API: Google). */
+function cloudVendorOfLabel(label: string): 'OpenAI' | 'Google' | 'Anthropic' {
+  if (label === 'codex' || label.startsWith('openai:')) return 'OpenAI';
+  if (label.startsWith('gemini:')) return 'Google';
+  return 'Anthropic';
 }
 
 function chatEgress(label: string): string {
   if (label.startsWith('ollama:')) return '로컬(이 컴퓨터를 떠나지 않아요)';
-  return isOpenAiLabel(label) ? '클라우드(OpenAI로 전송)' : '클라우드(Anthropic으로 전송)';
+  const vendor = cloudVendorOfLabel(label);
+  return vendor === 'Anthropic' ? '클라우드(Anthropic으로 전송)' : `클라우드(${vendor}로 전송)`;
 }
 
 function imageEgress(choice: ImageChoice): string {
@@ -113,6 +118,8 @@ function imageEgress(choice: ImageChoice): string {
       return '클라우드(이미지가 Anthropic으로 전송돼요)';
     case 'OPENAI':
       return '클라우드(이미지가 OpenAI로 전송돼요)';
+    case 'GOOGLE':
+      return '클라우드(이미지가 Google로 전송돼요)';
     case 'LOCAL':
       return '로컬(이미지가 이 컴퓨터를 떠나지 않아요)';
     default:
@@ -123,6 +130,7 @@ function imageEgress(choice: ImageChoice): string {
 function optionEgress(option: SelectionOption): string {
   if (option.egress === 'LOCAL') return '로컬';
   if (option.egress === 'NONE') return '사용 안 함';
+  if (option.egress === 'GOOGLE') return '클라우드(Google)';
   return option.egress === 'OPENAI' ? '클라우드(OpenAI)' : '클라우드(Anthropic)';
 }
 
@@ -159,7 +167,7 @@ export function renderModelList(options: readonly SelectionOption[]): string {
 
 function renderChatSet(label: string, status: SelectionStatus): string {
   const parts = [`이 대화의 대화 모델을 ${label}로 바꿨어요. ${SESSION_ONLY}`];
-  parts.push(label.startsWith('ollama:') ? '대화 내용은 이 컴퓨터를 떠나지 않아요.' : `대화 내용이 ${isOpenAiLabel(label) ? 'OpenAI' : 'Anthropic'}로 전송돼요.`);
+  parts.push(label.startsWith('ollama:') ? '대화 내용은 이 컴퓨터를 떠나지 않아요.' : `대화 내용이 ${cloudVendorOfLabel(label)}로 전송돼요.`);
   if (status.chat.fallbackLabel !== undefined) parts.push(`지금은 ${label}가 준비되지 않아 ${status.chat.fallbackLabel}가 대신 답해요.`);
   return parts.join(' ');
 }
@@ -169,8 +177,8 @@ function renderImageSet(choice: ImageChoice): string {
   const tail =
     egress === 'ANTHROPIC'
       ? '이미지가 Anthropic으로 전송돼요.'
-      : egress === 'OPENAI'
-        ? '이미지가 OpenAI로 전송돼요.'
+      : egress === 'OPENAI' || egress === 'GOOGLE'
+        ? `이미지가 ${egress === 'OPENAI' ? 'OpenAI' : 'Google'}로 전송돼요.`
         : egress === 'LOCAL'
           ? '이미지는 이 컴퓨터를 떠나지 않아요.'
           : '이 대화에서는 이미지를 분석하지 않아요.';

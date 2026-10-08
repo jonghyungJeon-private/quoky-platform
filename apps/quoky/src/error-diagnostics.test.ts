@@ -22,6 +22,22 @@ describe('redactSecrets', () => {
     expect(redactSecrets('task sk-1 done')).toBe('task sk-1 done');
   });
 
+  it('redacts a Google API key (AIza…, a Gemini API key) bare, in a URL query, and as QUOKY_GEMINI_API_KEY (ADR-0115 D6)', () => {
+    // Assembled at runtime from pieces: no token-shaped literal in the source.
+    const key = ['AI', 'za', 'Sy', 'B7'.repeat(16), 'x'].join('');
+    expect(key).toHaveLength(39);
+    const out = redactSecrets(`400 API key not valid: ${key}; url=https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    expect(out).not.toContain(key);
+    expect(out.match(/\[REDACTED_TOKEN\]/g)).toHaveLength(2);
+    const assigned = redactSecrets(`env QUOKY_GEMINI_API_KEY=${key} loaded`);
+    expect(assigned).toContain('QUOKY_GEMINI_API_KEY=[REDACTED]');
+    expect(assigned).not.toContain(key);
+    expect(serializeError(new Error(`boom ${key}`)).errorMessage).toBe('boom [REDACTED_TOKEN]');
+    // A longer run is redacted whole; a short "AIza" word is not a key.
+    expect(redactSecrets(`${key}EXTRA`)).toBe('[REDACTED_TOKEN]');
+    expect(redactSecrets('AIzaShort and AIza')).toBe('AIzaShort and AIza');
+  });
+
   it('redacts a Telegram bot token, bare, in a Bot API request path and as QUOKY_TELEGRAM_BOT_TOKEN (ADR-0114 D5)', () => {
     // Assembled at runtime from pieces: no token-shaped literal in the source.
     const secret = ['AAH', 'q'.repeat(16), '_', 'Z'.repeat(15)].join('');

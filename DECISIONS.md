@@ -18150,6 +18150,101 @@ Implementation choices where D1–D8 are silent; no ratified text above changes.
     allow-listed model other than `QUOKY_OPENAI_MODEL` shows unknown readiness (it was never probed); the
     `AiProvider` port comment names the ADR-0115 exception (comment only).
 
+### ADR-0115 implementation note — PRV-2 Gemini API adapter (2026-10-08)
+
+Implementation choices where D1–D8 are silent; no ratified text above changes. The PRV-1 pattern and its review fixes
+apply unchanged unless stated here.
+
+- **API: `generateContent` on the Gemini API** (`POST https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent`;
+  `v1beta` is the version the Gemini API documents for `generateContent` and its preview models). The body is exactly
+  one user turn (`contents[0].parts`: the rendered prompt as `text`; for the image instance the #143 canonical bytes as
+  `inlineData` parts first, then the prompt) and `generationConfig: { candidateCount: 1, maxOutputTokens: 8192 }`.
+  Nothing else is sent: no `tools` (no function declarations, code execution, Google Search grounding or URL context),
+  no `toolConfig`, `systemInstruction`, `cachedContent`, `safetySettings` (the API defaults apply) or file data, and no
+  Files API upload.
+- **Key transport.** The key is sent only in the `x-goog-api-key` header, never as the `?key=` query parameter the
+  Gemini examples use, so it cannot leak through a URL. The HTTP layer refuses any path with a query or fragment.
+- **Response parsing (fail closed).** Exactly one candidate.
+  - **Strict part allow-list (Codex P2).** A part may carry only `text` (a string), `thought` (a boolean) and
+    `thoughtSignature` (a string). `thoughtSignature` is opaque metadata the API attaches on thinking models and is
+    ignored. A `thought: true` part is a thought summary: it is counted (`thoughtPartCount`) and never included in the
+    reply. Any other key on a part — even beside a `text` — refuses the whole response.
+  - `functionCall`, `functionResponse`, `executableCode`, `codeExecutionResult`, `toolCall`, `toolResponse`, or a
+    non-empty `groundingMetadata` / `urlContextMetadata` / `groundingAttributions` refuse the whole response
+    (`TOOL_CALL_REFUSED`).
+  - Any other part key (`inlineData`, `fileData`, `videoMetadata`, unknown) is `MALFORMED_RESPONSE`.
+- **Finish reasons and safety blocks.**
+  - `STOP` is a reply.
+  - `MAX_TOKENS` is the text with the PRV-1 suffix "(답변이 길이 제한으로 잘렸어요.)" appended after hygiene; with no text
+    it is `EMPTY_OUTPUT`.
+  - `promptFeedback.blockReason` (any value), or `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` and
+    the `IMAGE_*` content reasons, are `SAFETY_BLOCKED`.
+  - **Explicit rating blocks (Codex P2).** Any candidate or `promptFeedback` safety rating with `blocked: true` is
+    `SAFETY_BLOCKED`, whatever the finish reason, even with text and `STOP` or `MAX_TOKENS`. A `safetyRatings` value
+    that is not an array of objects is `MALFORMED_RESPONSE`.
+  - `MALFORMED_FUNCTION_CALL`, `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `MISSING_THOUGHT_SIGNATURE` are
+    `TOOL_CALL_REFUSED`.
+  - Anything else (`LANGUAGE`, `OTHER`, unspecified, unknown, absent) is `INCOMPLETE`.
+  - All of them are `EXECUTION_FAILED`, and no partial text of a failed candidate is returned.
+- **Failure mapping.** As PRV-1: 401/403 → `AUTH_REQUIRED`; 429 → `UNAVAILABLE` (`RATE_LIMITED`); network error, 404,
+  408, 409, 5xx, a redirect or a cross-origin response → `UNAVAILABLE`; timeout → `TIMEOUT`; other 4xx → `BAD_REQUEST`
+  (`EXECUTION_FAILED`). The message is `gemini API: <CODE>[ (HTTP nnn)]`; error bodies are never read.
+  - **Deviation:** the Gemini API answers an invalid or revoked key with HTTP 400 (`INVALID_ARGUMENT`), not 401, and
+    the body that would tell the two apart is never read. So `BAD_REQUEST` also clears the shared readiness answer:
+    the next readiness check makes a fresh model-get, which fails for a bad key.
+- **Readiness.** One bounded `GET /v1beta/models/<model>` (10 s, 64 KiB). Ready only for a 200 naming `models/<model>`
+  whose `supportedGenerationMethods`, when listed, include `generateContent`. A timeout is indeterminate. The chat and
+  image instances share one probe, with the PRV-1 TTL, invalidation and generation counter.
+- **Bounds.**
+  - The PRV-1 bounds: 2 MiB response, one timer over headers and body, ≤ 3 images of ≤ 8 MiB, an O_NOFOLLOW read
+    with a signature check.
+  - New: a 20,000,000-byte request-body bound, the total the Gemini image docs give for inline data. A larger request
+    (for example two near-8 MiB images) is refused before sending (`REQUEST_REFUSED`), never moved to the Files API.
+  - At most 64 response parts.
+- **Configuration.** `QUOKY_GEMINI_API_KEY` (shape `AIza` + 35 URL-safe characters, the Google API key shape) and
+  `QUOKY_GEMINI_MODEL` on the allow-list `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`,
+  `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3.1-pro-preview`.
+  - Basis: the stable text-output models on the Gemini API models page on 2026-10-08, plus the one Pro model, still a
+    preview with no shutdown date.
+  - Left out: the shut-down `gemini-2.0-*` and `gemini-3-pro-preview`; the 2.5 family, now served only to projects
+    that used it before; image, TTS, live and embedding models.
+  - The same model serves both instances (no separate image-model variable).
+  - Startup errors: `GEMINI_API_KEY_INVALID`, `GEMINI_MODEL_INVALID`, `GEMINI_API_KEY_MISSING`,
+    `GEMINI_MODEL_MISSING`, with exactly the PRV-1 rules.
+- **Selection.**
+  - Ids: `gemini-api` (chat, priority 100), `gemini-vision-api` (image) and on-demand `gemini-api:<model>`
+    (a chat-tier-only view, in the shared bound of 12).
+  - Labels are `gemini:<model>`; the image token is `gemini`.
+  - Egress is a new `GOOGLE` value in the composition-root vocabulary. The copy says "Google로 전송", and the
+    `/providers` image warning is "이 선택은 첨부 이미지를 이 컴퓨터 밖(Google)으로 보내요."
+  - The startup-probe skip (CA P2-2, option a), the image locality fence, the selection-time fallback and the D4
+    pinned sets apply unchanged; the tests extend each to Gemini and to OpenAI plus Gemini configured together.
+- **LRN-5 (ADR-0116).** There is no Gemini-specific code. Example egress reads only the resolved provider's declared
+  `REMOTE` and the selection source. An app-level test shows the outcomes: examples go to Gemini only when it is
+  explicitly selected (env, `/providers` default, session override) and the remote flag is on; there are none with the
+  flag off, none when Gemini is configured but not selected, and none when Claude answers as the fallback.
+- **Redaction and the credential guard.**
+  - `error-diagnostics` redacts `AIza…` (35 or more trailing characters) and `QUOKY_GEMINI_API_KEY=…`.
+  - The Core credential guard already had the Google API key shape (`\bAIza[0-9A-Za-z_-]{35}`, chat and file
+    content), so **no Core change was made**.
+  - Child CLIs receive only the allow-listed env, so the key never reaches them.
+- **Boundaries.**
+  - `packages/ai-gemini-api` depends on `@quoky/core` only. Its HTTP layer, key holder, shared probe and image reader
+    copy PRV-1's (adapters do not share code across packages).
+  - The composition root injects the same provider-neutral reply hygiene (`openAiReplyHygiene`, reused as
+    `geminiReplyHygiene`).
+  - Core, `AiProvider`, the router, `app.module.ts` and `ConversationRuntimeDeps` (35) are unchanged; there is no
+    migration and no new third-party dependency.
+- **Usage seam.** The audit carries `inputTokens` (`promptTokenCount`), `cachedInputTokens`, `outputTokens`
+  (`candidatesTokenCount`), `reasoningTokens` (`thoughtsTokenCount`) and `totalTokens`, under the PRV-1 names, for PRV-3.
+- **Open questions.**
+  - The allow-list goes stale as Google ships and retires models. Whether to keep the preview Pro model, and when to
+    refresh the list, is the owner's call.
+  - Whether to accept another key format if Google issues one (today anything but `AIza…`/39 is a startup error).
+  - Whether the 20 MB bound should follow the newer 100 MB inline figure in the general file-input guide.
+  - A 400 on execution is `EXECUTION_FAILED`, so the router's own readiness cache is not dropped. The shared probe is,
+    so a revoked key is noticed at the next probe (manager TTL) rather than on the next turn.
+
 ## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)

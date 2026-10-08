@@ -15,6 +15,7 @@ import type { OllamaModelInventory } from '@quoky/ai-cli';
 import { sameOllamaModel } from '@quoky/ai-cli';
 import type { ProviderCatalog } from './provider-catalog';
 import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
+import { GEMINI_MODEL_ALLOW_LIST } from '@quoky/ai-gemini-api';
 import {
   CHAT_TIER_CAPABILITIES,
   CLAUDE_MODEL_ALIASES,
@@ -29,7 +30,7 @@ import {
   parseChatChoiceToken,
   parseImageChoiceToken,
 } from './selection-choices';
-import type { ChatChoice, ImageChoice, SelectionSource } from './selection-choices';
+import type { ChatChoice, ImageChoice, SelectionEgress, SelectionSource } from './selection-choices';
 import type { PersistedProviderSelection, ProviderSelectionStore } from './selection-store';
 
 /**
@@ -50,7 +51,7 @@ import type { PersistedProviderSelection, ProviderSelectionStore } from './selec
  *
  * **Policy.** Chat tier: the effective choice's provider first, Claude next (selection-time fallback when the chosen
  * one is not ready). Image understanding: only the effective image provider (none for `off`), and the Core image
- * locality policy allows `REMOTE` only while the effective image choice is a cloud one (`claude`, `codex` or `openai`). Code, review, planning, project
+ * locality policy allows `REMOTE` only while the effective image choice is a cloud one (`claude`, `codex`, `openai` or `gemini`). Code, review, planning, project
  * analysis, tests and policy-sensitive chat are INDEPENDENT of every runtime selection (session override and
  * operations-UI default alike): Claude, plus — exactly as before runtime switching — the configured Ollama chat model as
  * the CAP-009 local code fallback only when the INSTALLATION configuration selects Ollama (`QUOKY_CHAT_PROVIDER` /
@@ -101,14 +102,14 @@ export interface EffectiveImageSelection {
 export interface SelectionOption {
   readonly tier: 'chat' | 'image';
   /**
-   * The canonical choice token (`claude:opus`, `codex`, `ollama:granite3.3:8b`, `openai:gpt-4.1-mini`; image `claude`,
-   * `codex`, `ollama`, `openai`, `off`).
+   * The canonical choice token (`claude:opus`, `codex`, `ollama:granite3.3:8b`, `openai:gpt-4.1-mini`,
+   * `gemini:<model>`; image `claude`, `codex`, `ollama`, `openai`, `gemini`, `off`).
    */
   readonly token: string;
   /** `undefined` when readiness could not be determined. */
   readonly ready: boolean | undefined;
   /** Where the content goes when this option answers. */
-  readonly egress: 'LOCAL' | 'ANTHROPIC' | 'OPENAI' | 'NONE';
+  readonly egress: SelectionEgress;
   /** This option is the effective choice of the asked scope. */
   readonly current: boolean;
 }
@@ -131,6 +132,7 @@ export type SelectionRefusal =
   | 'CLAUDE_MODEL_NOT_ALLOWED'
   | 'CODEX_MODEL_NOT_ALLOWED'
   | 'OPENAI_MODEL_NOT_ALLOWED'
+  | 'GEMINI_MODEL_NOT_ALLOWED'
   | 'MODEL_INVALID'
   | 'PROVIDER_NOT_ON_HOST'
   | 'OLLAMA_MODEL_NOT_FOUND'
@@ -306,7 +308,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   /**
    * ADR-0111 amendment (runtime switching): the Core image locality policy for this request. `REMOTE` is allowed only
    * while the EFFECTIVE image choice is a cloud one (`claude`, `codex` since the 2026-10-08 amendment, or `openai` since
-   * ADR-0115 D5); switching to
+   * ADR-0115 D5, `gemini` since ADR-0115 D4/D5); switching to
    * `ollama` or `off` stops cloud egress on the next turn.
    * An effective `off` allows no locality at all and carries where it was switched off and how to turn it back on.
    */
@@ -646,6 +648,16 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         options.push({ tier: 'chat', token, ready, egress: 'OPENAI', current: chat.label === token });
       }
     }
+    // The Gemini API (ADR-0115 D4): the same rule — the configured model's one probe, the others unknown.
+    if (catalog.gemini !== undefined && catalog.geminiModel !== undefined) {
+      const geminiReady = await this.ready(catalog.gemini);
+      const models = [catalog.geminiModel, ...GEMINI_MODEL_ALLOW_LIST.filter((model) => model !== catalog.geminiModel)];
+      for (const model of models) {
+        const token = catalog.label({ provider: 'gemini', model });
+        const ready = model === catalog.geminiModel ? geminiReady : undefined;
+        options.push({ tier: 'chat', token, ready, egress: 'GOOGLE', current: chat.label === token });
+      }
+    }
     for (const choice of IMAGE_CHOICES) {
       const provider = catalog.resolveImage(choice);
       if (provider === undefined) continue;
@@ -675,7 +687,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       .filter((selection) => selection.chat !== undefined || selection.image !== undefined).length;
   }
 
-  /** Whether a chat choice sends content off this host (Claude, Codex and the OpenAI API do). */
+  /** Whether a chat choice sends content off this host (Claude, Codex, the OpenAI API and the Gemini API do). */
   isCloud(choice: ChatChoice): boolean {
     return chatChoiceIsCloud(choice);
   }

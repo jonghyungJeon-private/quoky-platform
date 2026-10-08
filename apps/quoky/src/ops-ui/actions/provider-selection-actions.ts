@@ -28,7 +28,7 @@ import type { SelectionSource } from '../../provider-selection/selection-choices
  * - **Audit and notice.** The service writes the content-free `provider.selection.changed` line (surface `ops-ui`); a
  *   successful change sends one `OPS_DECISION_RESULT` DM to the owner ("운영 화면에서 대화 모델을 codex로 바꿨어요"),
  *   never to a channel and never resent. The UI shows only the outcome code and fixed copy.
- * - **Display.** Labels (`claude:opus`, `codex`, `ollama:<model>`, `openai:<model>`, `claude`/`codex`/`ollama`/`openai`/`off`), sources, readiness and the
+ * - **Display.** Labels (`claude:opus`, `codex`, `ollama:<model>`, `openai:<model>`, `gemini:<model>`, `claude`/`codex`/`ollama`/`openai`/`gemini`/`off`), sources, readiness and the
  *   egress note; every string passes the strict credential guard again.
  *
  * Option subjects are `chat:<token>`, `chat:reset`, `image:<choice>` and `image:reset`.
@@ -72,6 +72,7 @@ const REFUSALS: Readonly<Record<SelectionRefusal, OpsActionOutcome>> = {
   CLAUDE_MODEL_NOT_ALLOWED: INVALID,
   CODEX_MODEL_NOT_ALLOWED: INVALID,
   OPENAI_MODEL_NOT_ALLOWED: INVALID,
+  GEMINI_MODEL_NOT_ALLOWED: INVALID,
   MODEL_INVALID: INVALID,
   IMAGE_CHOICE_INVALID: INVALID,
   PROVIDER_NOT_ON_HOST: { code: 'PROVIDER_NOT_ON_HOST', message: '그 모델은 이 컴퓨터에서 쓸 수 없어요. 바꾸지 않았어요.', ok: false },
@@ -101,12 +102,15 @@ const SOURCE_TEXT: Readonly<Record<'chat' | 'image', Readonly<Record<SelectionSo
 export const OPS_CLOUD_IMAGE_WARNING = '이 선택은 첨부 이미지를 이 컴퓨터 밖(Anthropic)으로 보내요.';
 /** The same warning for the Codex image option (ADR-0111 amendment of 2026-10-08: images go to OpenAI). */
 export const OPS_CODEX_IMAGE_WARNING = '이 선택은 첨부 이미지를 이 컴퓨터 밖(OpenAI)으로 보내요.';
+/** The same warning for the Gemini API image option (ADR-0115 D4: images go to Google). */
+export const OPS_GEMINI_IMAGE_WARNING = '이 선택은 첨부 이미지를 이 컴퓨터 밖(Google)으로 보내요.';
 
 /** The egress warning for a cloud image option, by where its bytes go; none for a local or `off` option. */
 function cloudImageWarning(option: Pick<SelectionOption, 'tier' | 'egress'>): string | undefined {
   if (option.tier !== 'image') return undefined;
   if (option.egress === 'ANTHROPIC') return OPS_CLOUD_IMAGE_WARNING;
   if (option.egress === 'OPENAI') return OPS_CODEX_IMAGE_WARNING;
+  if (option.egress === 'GOOGLE') return OPS_GEMINI_IMAGE_WARNING;
   return undefined;
 }
 
@@ -120,6 +124,8 @@ function egressText(option: Pick<SelectionOption, 'egress'>): string {
       return '로컬 (이 컴퓨터를 떠나지 않아요)';
     case 'OPENAI':
       return '클라우드 (OpenAI로 전송)';
+    case 'GOOGLE':
+      return '클라우드 (Google로 전송)';
     case 'ANTHROPIC':
       return '클라우드 (Anthropic으로 전송)';
     default:
@@ -138,7 +144,9 @@ export function providerDefaultNoticeText(tier: 'chat' | 'image', label: string,
       ? ' 이제 첨부 이미지가 Anthropic으로 전송돼요.'
       : tier === 'image' && (label === 'codex' || label === 'openai')
         ? ' 이제 첨부 이미지가 OpenAI로 전송돼요.'
-        : ' 채팅에서 따로 바꾸지 않은 대화에 바로 적용돼요.';
+        : tier === 'image' && label === 'gemini'
+          ? ' 이제 첨부 이미지가 Google로 전송돼요.'
+          : ' 채팅에서 따로 바꾸지 않은 대화에 바로 적용돼요.';
   return `${head}${tail}`;
 }
 

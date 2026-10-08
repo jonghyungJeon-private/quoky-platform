@@ -236,6 +236,66 @@ describe('ADR-0116 learning-example egress through the production composition', 
   });
 });
 
+describe('ADR-0116 egress is data-driven: the Gemini API (REMOTE, PRV-2) gets examples only when explicitly selected AND the flag is on', () => {
+  const items = [exampleItem(1), exampleItem(2), exampleItem(3)];
+  // Assembled at runtime from pieces: no token-shaped literal in the source.
+  const GEMINI = { QUOKY_GEMINI_API_KEY: ['AI', 'za', 'L'.repeat(11), '5w'.repeat(12)].join(''), QUOKY_GEMINI_MODEL: 'gemini-3.5-flash-lite' };
+  const ON = { QUOKY_LEARNING_EXAMPLES_ENABLED: 'true', QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED: 'true' };
+
+  it('selected (QUOKY_CHAT_PROVIDER=gemini) with the flag off: REMOTE, OWNER_SELECTED, and still no example layer', async () => {
+    const h = await harness({ QUOKY_LEARNING_EXAMPLES_ENABLED: 'true', QUOKY_CHAT_PROVIDER: 'gemini', ...GEMINI }, items);
+    const { bundle, resolved, spec, bare } = await h.turn(await h.selection.openSession());
+    expect([resolved.provider.id, resolved.source]).toEqual(['gemini-api', 'OWNER_SELECTED']);
+    expect(executionLocalityOf(resolved.provider)).toBe('REMOTE');
+    expect(bundle.curatedExamples).toHaveLength(2);
+    expect(spec).toEqual(bare);
+    expect(spec.context).not.toContain(CURATED_EXAMPLES_SECTION_TITLE);
+  });
+
+  it('selected explicitly (env, operations-UI default, session override) with the flag on: at most 2 examples', async () => {
+    const viaEnv = await harness({ ...ON, QUOKY_CHAT_PROVIDER: 'gemini', ...GEMINI }, items);
+    const envTurn = await viaEnv.turn(await viaEnv.selection.openSession());
+    expect([envTurn.resolved.provider.id, envTurn.resolved.source]).toEqual(['gemini-api', 'OWNER_SELECTED']);
+    expect(exampleCount(envTurn.spec)).toBe(2);
+
+    const viaOps = await harness({ ...ON, QUOKY_OLLAMA_ENABLED: 'false', ...GEMINI }, items);
+    viaOps.selection.service.setDefaultChat({ provider: 'gemini' }, { surface: 'ops-ui', actor: 'owner' });
+    const opsTurn = await viaOps.turn(await viaOps.selection.openSession());
+    expect(opsTurn.resolved.provider.id).toBe('gemini-api');
+    expect(exampleCount(opsTurn.spec)).toBe(2);
+
+    const viaSession = await harness({ ...ON, QUOKY_OLLAMA_ENABLED: 'false', ...GEMINI }, items);
+    const session = await viaSession.selection.openSession();
+    await viaSession.selection.service.setSessionChat(
+      { sessionId: session.id, actorId: ACTOR },
+      { provider: 'gemini', model: 'gemini-3.8-flash' },
+      { surface: 'chat', actor: ACTOR },
+    );
+    const sessionTurn = await viaSession.turn(session);
+    expect(sessionTurn.resolved.provider.id).toBe('gemini-api:gemini-3.8-flash');
+    expect(exampleCount(sessionTurn.spec)).toBe(2);
+    // A new conversation without the override is on the derived default (Claude, not an owner selection): none.
+    const other = await viaSession.turn(await viaSession.selection.openSession());
+    expect(other.resolved.provider.id).toBe('claude-cli');
+    expect(exampleCount(other.spec)).toBe(0);
+  });
+
+  it('configured but not selected: Gemini is never the resolved provider, so no example can reach it', async () => {
+    const h = await harness({ ...ON, QUOKY_OLLAMA_ENABLED: 'false', ...GEMINI }, items);
+    const { resolved, spec, bare } = await h.turn(await h.selection.openSession());
+    expect([resolved.provider.id, resolved.source]).toEqual(['claude-cli', 'NOT_OWNER_SELECTED']);
+    expect(spec).toEqual(bare);
+  });
+
+  it('selected but not ready: Claude answers as the selection-time fallback and gets none', async () => {
+    const h = await harness({ ...ON, QUOKY_CHAT_PROVIDER: 'gemini', ...GEMINI }, items);
+    h.selection.ready.set('gemini-api', false);
+    const { resolved, spec, bare } = await h.turn(await h.selection.openSession());
+    expect([resolved.provider.id, resolved.source]).toEqual(['claude-cli', 'NOT_OWNER_SELECTED']);
+    expect(spec).toEqual(bare);
+  });
+});
+
 describe('ADR-0116 R4 learning copy disclosure follows the same condition as example egress', () => {
   it.each([
     [false, false, false],

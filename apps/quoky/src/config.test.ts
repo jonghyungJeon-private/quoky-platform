@@ -575,7 +575,7 @@ describe('loadConfig — chat provider selector (ADR-0092 amendment, 2026-10-07)
     });
   });
 
-  it.each(['', ' ', 'Codex', 'CLAUDE', 'OpenAI', 'openai:gpt-4.1', 'gpt', ' codex', 'codex ', 'claude,codex', 'ollama-cli'])(
+  it.each(['', ' ', 'Codex', 'CLAUDE', 'OpenAI', 'openai:gpt-4.1', 'Gemini', 'gemini:gemini-3.5-flash', 'gpt', ' codex', 'codex ', 'claude,codex', 'ollama-cli'])(
     'rejects non-exact value %j with CHAT_PROVIDER_INVALID',
     (value) => {
       expect(() => loadConfig(env({ QUOKY_CHAT_PROVIDER: value }))).toThrow('CHAT_PROVIDER_INVALID');
@@ -681,7 +681,7 @@ describe('loadConfig — image understanding provider selection (ADR-0111 amendm
     expect(loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_MODEL: '--bad' })).imageUnderstanding).toEqual({ provider: 'off' });
   });
 
-  it.each(['', ' ', 'Claude', 'CLAUDE', 'Codex', 'codex ', 'codex:gpt-5', 'ollama ', 'local', 'cloud', 'OpenAI', 'openai ', 'gemini', 'none', 'false', 'true'])(
+  it.each(['', ' ', 'Claude', 'CLAUDE', 'Codex', 'codex ', 'codex:gpt-5', 'ollama ', 'local', 'cloud', 'OpenAI', 'openai ', 'Gemini', 'gemini ', 'gemini:gemini-3.5-flash', 'none', 'false', 'true'])(
     'rejects a non-exact selector %j at startup',
     (value) => {
       expect(() => loadConfig(env({ QUOKY_IMAGE_UNDERSTANDING_PROVIDER: value }))).toThrow(
