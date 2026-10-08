@@ -11341,6 +11341,18 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     expect(h.calls.loggerInfoCalls.some((c) => c.message === 'attachment turn reply withheld')).toBe(true);
   });
 
+  it('Codex review P3: a provider that returns the exact withholding notice plus a credential artifact is never flagged', async () => {
+    const h = chatTurn(renderAttachmentReplyWithheld('ko'), 'pass' + 'word=demo-review-value');
+    const result = await h.runtime.handle(withAttachments('이 로그에서 문제 원인 요약해줘', [logFile]));
+    // Text equality alone would have flagged the deterministic notice; the withholding outcome decides first.
+    expect(result.reply.text).toBe(renderAttachmentReplyWithheld('ko'));
+    expect(result.reply.format).toBeUndefined();
+    expect(h.persistedArtifacts).toEqual([]);
+    // Without the credential artifact the same text is the provider's own unaltered answer and is flagged.
+    const clean = await chatTurn(renderAttachmentReplyWithheld('ko')).runtime.handle(withAttachments('이 로그 요약해줘', [logFile]));
+    expect(clean.reply.format).toBe('model-reply');
+  });
+
   it('re-review P2: a credential in an ARTIFACT (reply text clean) withholds the whole reply; nothing is persisted', async () => {
     const h = chatTurn('요약입니다.', 'pass' + 'word=demo-review-value');
     const result = await h.runtime.handle(withAttachments('이 로그에서 문제 원인 요약해줘', [logFile]));

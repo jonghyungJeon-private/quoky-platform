@@ -16,6 +16,7 @@ import type {
   AiExecutionResult,
   AiRequest,
   Artifact,
+  Logger,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { defaultCliRunner } from './cli-runner';
@@ -166,6 +167,8 @@ export interface CodexCliProviderOptions {
   timeoutMs?: number;
   /** Model passed as `-m`. Unset means the CLI's own default model for the logged-in account. */
   model?: string;
+  /** Where a failed temp-directory cleanup is reported (value-free code); and offline-test seams. */
+  cleanup?: CodexCwdCleanup;
 }
 
 /** Why a stream is not a well-formed, supported, single-turn `codex exec --json` stream. Codes only, never text. */
@@ -322,6 +325,65 @@ function sha256(text: string): string {
   return createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 }
 
+/** Delay before the single retry of a failed per-call directory removal. */
+export const CODEX_CWD_CLEANUP_RETRY_MS = 5_000;
+
+/** Value-free warning codes of the per-call directory cleanup (logged with a bounded errno class, never a path). */
+export type CodexCwdCleanupCode = 'CODEX_CWD_CLEANUP_FAILED' | 'CODEX_CWD_CLEANUP_RETRY_FAILED';
+
+/** Offline-test seams for {@link removeCodexCallDirectory}; production passes none. */
+export interface CodexCwdCleanup {
+  readonly logger?: Pick<Logger, 'warn'>;
+  readonly remove?: (path: string) => void;
+  readonly scheduleRetry?: (retry: () => void, delayMs: number) => void;
+}
+
+function errnoClass(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^E[A-Z0-9]{1,15}$/u.test(code) ? code : 'unknown';
+}
+
+const defaultRemove = (path: string): void => rmSync(path, { recursive: true, force: true, maxRetries: 2 });
+const defaultScheduleRetry = (retry: () => void, delayMs: number): void => {
+  setTimeout(retry, delayMs).unref();
+};
+
+/**
+ * Remove a Codex call's own temp working directory (Codex review P2 on 76e0028). It NEVER throws: a removal error (it
+ * carries the path) must not escape the fixed-error boundary into a TaskRun summary, and an answered call stays
+ * answered. A failure logs the value-free `CODEX_CWD_CLEANUP_FAILED` (provider label and errno class only) and schedules
+ * ONE retry after {@link CODEX_CWD_CLEANUP_RETRY_MS} (an unref'd timer, so it never keeps the process alive); a failed
+ * retry logs `CODEX_CWD_CLEANUP_RETRY_FAILED` and leaves the directory to the OS temp cleanup. The directory is the
+ * call's own `mkdtemp` (0700) under the OS temp directory — not the attachment intake's private root, so the intake
+ * sweep does not cover it.
+ */
+export function removeCodexCallDirectory(path: string, provider: 'codex-chat' | 'codex-vision', cleanup: CodexCwdCleanup = {}): void {
+  const remove = cleanup.remove ?? defaultRemove;
+  const warn = (code: CodexCwdCleanupCode, err: unknown): void => {
+    try {
+      cleanup.logger?.warn('codex temp directory cleanup failed', { code, provider, errno: errnoClass(err) });
+    } catch {
+      // A failing logger never turns cleanup into an error.
+    }
+  };
+  try {
+    remove(path);
+  } catch (err) {
+    warn('CODEX_CWD_CLEANUP_FAILED', err);
+    try {
+      (cleanup.scheduleRetry ?? defaultScheduleRetry)(() => {
+        try {
+          remove(path);
+        } catch (retryErr) {
+          warn('CODEX_CWD_CLEANUP_RETRY_FAILED', retryErr);
+        }
+      }, CODEX_CWD_CLEANUP_RETRY_MS);
+    } catch {
+      // Scheduling failed: the OS temp cleanup is the last resort; nothing escapes.
+    }
+  }
+}
+
 /**
  * The `codex exec` argv shared by the chat and the vision provider (ADR-0092 amendment D5). The prompt is never an argv
  * element: the final `-` makes the CLI read it from stdin. Every element is a fixed literal, the validated model name,
@@ -426,6 +488,7 @@ export class CodexCliProvider extends BaseCliAiProvider {
   private readonly runner: CliRunner;
   private readonly defaultTimeoutMs: number;
   private readonly model: string | undefined;
+  private readonly cleanup: CodexCwdCleanup;
 
   readonly capabilities: readonly AiCapabilityDescriptor[] = CODEX_CHAT_CAPABILITIES.map((capability) => ({
     capability,
@@ -441,6 +504,7 @@ export class CodexCliProvider extends BaseCliAiProvider {
       throw new TypeError('Invalid Codex model name');
     }
     this.model = options.model;
+    this.cleanup = options.cleanup ?? {};
   }
 
   /**
@@ -484,7 +548,7 @@ export class CodexCliProvider extends BaseCliAiProvider {
     try {
       result = await this.runner(this.bin, args, { cwd, input, timeoutMs });
     } finally {
-      rmSync(cwd, { recursive: true, force: true, maxRetries: 2 });
+      removeCodexCallDirectory(cwd, 'codex-chat', this.cleanup);
     }
 
     // Classified failure taxonomy (ADR-0015). Raw CLI text is never echoed: it could quote the prompt.

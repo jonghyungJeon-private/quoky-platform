@@ -106,7 +106,13 @@ export class ProviderCatalog {
       claudeVariant: (model) => new ClaudeCliProvider(ai.claudeBin, { model }),
       ollamaVariant: (model) => new OllamaCliProvider({ bin: ai.ollamaBin, model }),
       claudeVision: (model) => new ClaudeCliVisionProvider({ bin: ai.claudeBin, model }),
-      codexVision: (model) => new CodexCliVisionProvider({ bin: ai.codexBin, ...(model !== undefined ? { model } : {}) }),
+      codexVision: (model) =>
+        new CodexCliVisionProvider({
+          bin: ai.codexBin,
+          ...(model !== undefined ? { model } : {}),
+          // A failed temp-directory cleanup is logged as a value-free code (never a path) and retried once.
+          cleanup: { logger: input.logger },
+        }),
       ollamaVision: (model) => new OllamaCliVisionProvider({ bin: ai.ollamaBin, model }),
       ...input.factories,
     };

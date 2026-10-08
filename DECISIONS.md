@@ -17342,7 +17342,13 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      private copy (`O_EXCL | O_NOFOLLOW`, 0600) into a fresh empty temp cwd (`mkdtemp`, 0700) — the only directory the CLI
      is pointed at — and passed as `--image <copy>` (one pair per image, first in argv, each followed by a flag because
      `--image` is multi-valued; a comma in the path is refused because the CLI splits on commas). The prompt (an adapter
-     framing line plus the generic rendered prompt) goes on stdin. The cwd is removed in `finally`. Failure messages are
+     framing line plus the generic rendered prompt) goes on stdin. The cwd is removed in `finally` by
+     `removeCodexCallDirectory`, which never throws (Codex review P2 on 76e0028: an unguarded `rmSync` error carried the
+     path into the TaskRun summary): a failure logs the value-free `CODEX_CWD_CLEANUP_FAILED` (provider label and errno
+     class only), schedules ONE retry after 5 s on an unref'd timer (a failed retry logs `CODEX_CWD_CLEANUP_RETRY_FAILED`
+     and leaves the directory to the OS temp cleanup — the cwd is under the OS temp directory, not the attachment
+     intake's private root, so the intake sweep does not cover it), and the call's own outcome stands. The chat Codex
+     provider uses the same helper. A runner error is reported as the fixed `codex vision CLI could not run`. Failure messages are
      fixed reasons with bounded codes (timeout, exit code, violation codes), never CLI output (#140 P2 rule); the reply
      has any image or cwd path scrubbed to `<image>`. The audit holds counts and hashes only (model label, image count,
      total bytes, SHA-256 per image, prompt / provider input / reply hashes, event counts, token usage) and the argv with
@@ -17385,9 +17391,10 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
      text is delivered exactly as given. Core sets it in exactly one place, `ConversationRuntime.asModelReply`, used where
      the runtime sends a provider's answer: the conversational fast path, the work turn (direct provider and the routed
      seam: chat, summaries including connector work summaries, document analysis, project analysis) and the image turn.
-     It is set ONLY when the delivered text is the provider's own text: a reply withheld by the attachment credential
-     check (ADR-0111 D3 / A3) or replaced by the internal-action claim guard (ADR-0104 D1) is a fixed notice and stays
-     unflagged. Every deterministic reply — previews, approval texts, connector-write previews and reminders, diffs,
+     The guard OUTCOMES decide first (Codex review P3 on 08454fb): a reply withheld by the attachment credential check
+     (ADR-0111 D3 / A3) or replaced by the internal-action claim guard (ADR-0104 D1) is never flagged, even when the
+     provider's text equals the fixed notice; only an unguarded reply whose final composed text equals the provider's
+     (trimmed, non-empty) text is flagged. Every deterministic reply — previews, approval texts, connector-write previews and reminders, diffs,
      model-command replies, listings, errors — is never flagged (asserted for every deterministic turn of the v3
      acceptance suite). Two deterministic additions keep the flag of the model reply they wrap: the work-summary source
      footer (`출처:` / `- <title> <url>` lines) and the approval-expiry notice prefix; neither contains table or fence
@@ -17395,19 +17402,27 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   2. **Discord rendering (adapter-owned).** `DiscordPlatformAdapter.sendMessage` applies `renderMarkdownTablesForDiscord`
      only when `format === 'model-reply'`; preview delivery and owner notifications are separate paths and untouched.
      Other adapters ignore the flag.
-  3. **Code is never touched.** A CommonMark-style line scan: a fence opens with 3+ backticks or 3+ tildes indented ≤ 3
-     spaces (a backtick fence's info string may not contain a backtick) and closes only on a line of the SAME character
-     with AT LEAST the opening length and nothing but whitespace after it; an unclosed fence runs to the end of the text;
-     a line indented 4+ columns (tab to the next multiple of 4) is indented code and never part of a table.
-  4. **Simple tables only.** A header row and a delimiter row (`|:-:|`) with the same cell count (1–8), then ≥ 1 data row
-     with exactly that count; rows start and end with an unescaped `|`; `\|` is a literal pipe. Output: a bold header line
+  3. **When in doubt, no conversion** (tightened after Codex review P2 on 08454fb, where fences nested in list items, tilde
+     variants and Discord `>>>` quotes still had their tables converted). Protected code: any line whose content — after
+     indentation, `>` quote markers and list markers (`-` `*` `+` `1.` `1)`, any nesting) — starts with 3+ backticks or
+     3+ tildes opens a protected region (indented and backtick-info fences included), closed only by a line whose content
+     after the same prefixes is a fence of the SAME character with AT LEAST the opening length and nothing but
+     whitespace; an unclosed region runs to the end. Quotes: a `>>>` line quotes the rest of the message (nothing after it
+     converts); a `>` line and its lazy continuation never start a table. Lists: a list item, its lazy or indented
+     continuations and indented lines after a blank line inside a list never start a table; the list ends only at a blank
+     line followed by an unindented non-list line, and a fence closed inside a list item keeps that context.
+  4. **Simple tables only.** At column 0, at the start of the text or after a blank or plain paragraph line: a header row
+     and a delimiter row (`|:-:|`) with the same cell count (1–8), then ≥ 1 data row with exactly that count; every row at
+     column 0, starting and ending with an unescaped `|`; `\|` is a literal pipe. Output: a bold header line
      (`**h1 · h2**`, omitted when all header cells are empty) and `- h1: v1, h2: v2` per row (empty cells skipped, an
-     all-empty row dropped), keeping the table's indentation and line ending. Anything else — cell-count mismatch, no
+     all-empty row dropped), keeping the line ending. Anything else — cell-count mismatch, no
      data row, no delimiter, rows without outer pipes, a pipe inside inline code, wider tables — is left exactly as is.
 - **Tests:** the earlier Codex P1 repro (a connector-write preview whose payload holds backtick, tilde and indented
   fences and tables) is delivered byte-identical without the flag, and the renderer would leave it unchanged too (the
   preview's longer fence is tracked); a flagged reply with tables inside and outside fences; fences of different
-  lengths; tilde fences; indented code; malformed tables; CRLF; the runtime flags only provider-own replies.
-- **Residuals:** GFM tables without outer pipes or with ragged rows stay raw; HTML blocks and block quotes are not
-  parsed (a table inside a `>` quote stays raw); a model reply that opens a fence and never closes it keeps everything
-  after it raw (fail safe).
+  lengths; tilde fences; indented code; fences inside list items and quotes; `>>>` and `>` quotes; list continuations;
+  malformed tables; CRLF; the runtime flags only provider-own, unguarded replies (including a provider that returns the
+  exact withholding notice with a credential artifact).
+- **Residuals:** GFM tables without outer pipes, with ragged rows, indented, inside quotes or list items, or directly
+  after a list or quote line stay raw (fail safe); HTML blocks are not parsed; a model reply that opens a fence and never
+  closes it keeps everything after it raw.

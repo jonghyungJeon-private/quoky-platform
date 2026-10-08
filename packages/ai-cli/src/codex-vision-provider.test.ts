@@ -7,6 +7,7 @@ import { AiFailureKind, AiProviderManager, Capability, CapabilityRouter, describ
 import type { AiImageInput, AiRequest } from '@quoky/core';
 import {
   CODEX_CONFIG_OVERRIDES,
+  CODEX_CWD_CLEANUP_RETRY_MS,
   CODEX_DISABLED_FEATURES,
   CodexCliProvider,
 } from './codex-cli-provider';
@@ -291,13 +292,66 @@ describe('CodexCliVisionProvider — execute', () => {
     }
   });
 
-  it('the cwd is removed when the runner throws', async () => {
+  it('Codex review P2: a cleanup failure never escapes — the reply stays a success, a path-free code is logged, one retry runs', async () => {
+    const warnings: Array<{ message: string; fields: unknown }> = [];
+    const retries: Array<{ retry: () => void; delayMs: number }> = [];
+    let attempts = 0;
+    let cwd = '';
+    const cleanup = {
+      logger: { warn: (message: string, fields?: unknown) => { warnings.push({ message, fields }); } },
+      remove: (path: string) => {
+        attempts += 1;
+        cwd = path;
+        if (attempts <= 2) throw Object.assign(new Error(`EACCES: permission denied, rmdir '${path}'`), { code: 'EACCES' });
+        rmSync(path, { recursive: true, force: true });
+      },
+      scheduleRetry: (retry: () => void, delayMs: number) => { retries.push({ retry, delayMs }); },
+    };
+    const { runner } = recordingRunner(() => ok(answered(ANSWER)));
+    const result = await new CodexCliVisionProvider({ runner, cleanup }).execute(imageRequest([{ path: png, mimeType: 'image/png' }]));
+    expect(result.text).toBe(ANSWER);
+    expect(warnings).toEqual([
+      { message: 'codex temp directory cleanup failed', fields: { code: 'CODEX_CWD_CLEANUP_FAILED', provider: 'codex-vision', errno: 'EACCES' } },
+    ]);
+    expect(JSON.stringify(warnings)).not.toContain(CODEX_VISION_CWD_PREFIX);
+    expect(retries.map((r) => r.delayMs)).toEqual([CODEX_CWD_CLEANUP_RETRY_MS]);
+    // The retry fails once more (logged, path-free) …
+    retries[0]!.retry();
+    expect(warnings.at(-1)).toEqual({
+      message: 'codex temp directory cleanup failed',
+      fields: { code: 'CODEX_CWD_CLEANUP_RETRY_FAILED', provider: 'codex-vision', errno: 'EACCES' },
+    });
+    expect(existsSync(cwd)).toBe(true);
+    // … and a later successful removal (here: called by hand) clears it.
+    cleanup.remove(cwd);
+    expect(existsSync(cwd)).toBe(false);
+  });
+
+  it('Codex review P2: a cleanup failure after a CLI failure keeps the fixed reason (no path in the message or summary)', async () => {
+    const cleanup = {
+      remove: (path: string) => { throw Object.assign(new Error(`EPERM: operation not permitted, '${path}'`), { code: 'EPERM' }); },
+      scheduleRetry: () => undefined,
+    };
+    const { runner, calls } = recordingRunner(() => ({ code: 2, stdout: '', stderr: 'boom', timedOut: false }));
+    const error = await new CodexCliVisionProvider({ runner, cleanup })
+      .execute(imageRequest([{ path: png, mimeType: 'image/png' }]))
+      .catch((err: unknown) => err);
+    expect(error).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+    expect((error as Error).message).toBe('codex vision CLI failed (exit 2)');
+    expect(JSON.stringify(describeAiFailure(error))).not.toContain(CODEX_VISION_CWD_PREFIX);
+    rmSync(calls[0]!.opts.cwd, { recursive: true, force: true });
+  });
+
+  it('the cwd is removed when the runner throws, and only a fixed reason leaves', async () => {
     let cwd = '';
     const runner: CliRunner = async (_bin, _args, opts) => {
       cwd = opts.cwd;
       throw new Error('runner exploded');
     };
-    await expect(new CodexCliVisionProvider({ runner }).execute(imageRequest([{ path: png, mimeType: 'image/png' }]))).rejects.toThrow();
+    const error = await new CodexCliVisionProvider({ runner })
+      .execute(imageRequest([{ path: png, mimeType: 'image/png' }]))
+      .catch((err: unknown) => err);
+    expect(error).toMatchObject({ kind: AiFailureKind.UNAVAILABLE, message: 'codex vision CLI could not run' });
     expect(cwd).not.toBe('');
     expect(existsSync(cwd)).toBe(false);
   });

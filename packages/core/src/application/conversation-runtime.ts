@@ -2918,9 +2918,10 @@ export class ConversationRuntime {
     if (!intent.requiresWork) {
       const provider = await this.deps.router.select(intent.capability, { sessionId: session.id, actorId: actor.id });
       const raw = await provider.execute({ capability: intent.capability, prompt: message.text });
-      const result = { ...raw, text: this.guardChatReply(intent.capability, raw.text, message.text) };
+      const guard = this.guardChatReply(intent.capability, raw.text, message.text);
+      const result = { ...raw, text: guard.text };
       const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
-      const reply = this.asModelReply(composed, raw.text, result.text);
+      const reply = this.asModelReply(composed, raw.text, { withheld: false, guarded: guard.guarded });
       await this.deps.memory.recordAssistant(result.text, message.context, session.id);
       return this.responded(session, reply);
     }
@@ -7121,7 +7122,8 @@ export class ConversationRuntime {
           providerId = routed.acceptedProviderId;
           // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
           const withheld = this.withheldAttachmentReply(bundle, message, routed.output.text, routed.output.artifacts, task.id);
-          const replyText = withheld?.text ?? this.guardChatReply(capability, routed.output.text, task.description, task.id);
+          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id);
+          const replyText = withheld?.text ?? guard?.text ?? routed.output.text;
           const artifacts: Artifact[] = withheld ? [] : routed.output.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
           await this.deps.tasks.completeRun(run, {
@@ -7134,7 +7136,7 @@ export class ConversationRuntime {
           const reply = this.asModelReply(
             this.deps.composer.compose(message.context, { text: replyText, artifacts }, artifacts),
             routed.output.text,
-            replyText,
+            { withheld: withheld !== null, guarded: guard?.guarded === true },
           );
           return this.responded(session, reply, workFacts(providerId));
         }
@@ -7182,9 +7184,8 @@ export class ConversationRuntime {
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
       // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
       const withheld = this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
-      const result = withheld
-        ? { ...executed, ...withheld }
-        : { ...executed, text: this.guardChatReply(capability, executed.text, task.description, task.id) };
+      const guard = withheld ? null : this.guardChatReply(capability, executed.text, task.description, task.id);
+      const result = withheld ? { ...executed, ...withheld } : { ...executed, text: guard?.text ?? executed.text };
 
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       // ADR-0107 measurement hook: the run records how many curated examples it carried (a count, never text or ids),
@@ -7205,7 +7206,7 @@ export class ConversationRuntime {
       }
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
       const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
-      const reply = this.asModelReply(composed, executed.text, result.text);
+      const reply = this.asModelReply(composed, executed.text, { withheld: withheld !== null, guarded: guard?.guarded === true });
       return this.responded(session, reply, workFacts(providerId));
     } catch (err) {
       const failure = describeAiFailure(err);
@@ -7222,11 +7223,19 @@ export class ConversationRuntime {
 
   /**
    * ADR-0111 amendment of 2026-10-08: mark a reply as a provider-generated answer (`format: 'model-reply'`, the opt-in
-   * that lets a platform adapter adapt Markdown such as tables) ONLY when the delivered text is the provider's own text.
-   * A withheld or guard-replaced reply is a fixed notice and stays unflagged, like every other deterministic reply.
+   * that lets a platform adapter adapt Markdown such as tables) ONLY for the provider's own, unaltered answer. The guard
+   * OUTCOMES decide first (Codex review P3): a reply the attachment credential check withheld, or that the internal-action
+   * claim guard replaced, is never flagged — even when the provider's text happens to equal the fixed notice. Only then
+   * must the final composed text equal the provider's text (no composer fallback or other change).
    */
-  private asModelReply(reply: OutboundMessage, providerText: string, deliveredText: string): OutboundMessage {
-    return providerText === deliveredText ? { ...reply, format: 'model-reply' } : reply;
+  private asModelReply(
+    reply: OutboundMessage,
+    providerText: string,
+    outcome: { readonly withheld: boolean; readonly guarded: boolean },
+  ): OutboundMessage {
+    if (outcome.withheld || outcome.guarded) return reply;
+    const text = providerText.trim();
+    return text !== '' && reply.text === text ? { ...reply, format: 'model-reply' } : reply;
   }
 
   /**
@@ -7236,22 +7245,27 @@ export class ConversationRuntime {
    * capabilities (analysis over a real readout, summarization, code generation) are returned unchanged. The log line is
    * content-free (domain only).
    */
-  private guardChatReply(capability: Capability, text: string, currentUserMessage: string, taskId?: Id): string {
+  private guardChatReply(
+    capability: Capability,
+    text: string,
+    currentUserMessage: string,
+    taskId?: Id,
+  ): { readonly text: string; readonly guarded: boolean } {
     if (
       capability !== Capability.GENERAL_CHAT &&
       capability !== Capability.POLICY_SENSITIVE_CHAT &&
       capability !== Capability.IMAGE_UNDERSTANDING
     ) {
-      return text;
+      return { text, guarded: false };
     }
     const guarded = guardInternalActionClaims(text, currentUserMessage, generalChatReplyPolicy(currentUserMessage));
-    if (!guarded.guarded) return text;
+    if (!guarded.guarded) return { text, guarded: false };
     this.deps.logger.info('internal action claim replaced', {
       capability,
       domain: guarded.domain,
       ...(taskId ? { taskId } : {}),
     });
-    return guarded.text;
+    return { text: guarded.text, guarded: true };
   }
 
   /**
@@ -7369,9 +7383,8 @@ export class ConversationRuntime {
         task.id,
         { imageTurn: true },
       );
-      const result = withheld
-        ? { ...executed, ...withheld }
-        : { ...executed, text: this.guardChatReply(capability, executed.text, message.text, task.id) };
+      const guard = withheld ? null : this.guardChatReply(capability, executed.text, message.text, task.id);
+      const result = withheld ? { ...executed, ...withheld } : { ...executed, text: guard?.text ?? executed.text };
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
       await this.deps.tasks.completeRun(run, {
         artifactIds,
@@ -7382,7 +7395,7 @@ export class ConversationRuntime {
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
       this.deps.logger.info('image turn answered', { taskId: task.id, imageCount: images.length });
       const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
-      const reply = this.asModelReply(composed, executed.text, result.text);
+      const reply = this.asModelReply(composed, executed.text, { withheld: withheld !== null, guarded: guard?.guarded === true });
       return this.responded(session, reply, workFacts);
     } catch (err) {
       const failure = describeAiFailure(err);

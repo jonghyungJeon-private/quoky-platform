@@ -26,9 +26,10 @@ describe('renderMarkdownTablesForDiscord — simple tables', () => {
     expect(render(lines('|  |  |', '|---|---|', '| a | 1 |'))).toBe('- a, 1');
   });
 
-  it('keeps the table indentation (up to 3 spaces) and CRLF line endings', () => {
-    expect(render(lines('- 항목', '  | a | b |', '  |---|---|', '  | 1 | 2 |'))).toBe(lines('- 항목', '  **a · b**', '  - a: 1, b: 2'));
+  it('keeps CRLF line endings; an indented table (even 1-3 spaces) is left as it is', () => {
     expect(render('x\r\n| a | b |\r\n|---|---|\r\n| 1 | 2 |\r\ny')).toBe('x\r\n**a · b**\r\n- a: 1, b: 2\r\ny');
+    const indented = lines('설명', '', '  | a | b |', '  |---|---|', '  | 1 | 2 |');
+    expect(render(indented)).toBe(indented);
   });
 
   it('two tables in one reply are both converted; text without a pipe is returned as is', () => {
@@ -106,15 +107,15 @@ describe('renderMarkdownTablesForDiscord — code is never touched', () => {
     expect(render(text)).toBe(lines(...RENDERED, '', '```', ...TABLE, '', ...TABLE));
   });
 
-  it('a fence indented by up to 3 spaces counts; a 4-space one is indented code, not a fence', () => {
-    expect(render(lines('   ```', ...TABLE, '   ```', ...TABLE))).toBe(lines('   ```', ...TABLE, '   ```', ...RENDERED));
-    // `    ```` is indented code: it opens nothing, and the 4-space table lines next to it stay code too.
-    const indentedFence = lines('    ```', '    | a | b |', '    |---|---|', '    | 1 | 2 |', '', ...TABLE);
-    expect(render(indentedFence)).toBe(lines('    ```', '    | a | b |', '    |---|---|', '    | 1 | 2 |', '', ...RENDERED));
+  it('an indented fence (any indentation) also protects until its matching close (when in doubt, no conversion)', () => {
+    expect(render(lines('   ```', ...TABLE, '   ```', '', ...TABLE))).toBe(lines('   ```', ...TABLE, '   ```', '', ...RENDERED));
+    const indentedFence = lines('    ```', ...TABLE, '', ...TABLE);
+    expect(render(indentedFence)).toBe(indentedFence);
   });
 
-  it('a backtick "fence" whose info string contains a backtick is inline code, not a fence', () => {
-    expect(render(lines('```js `x`', ...TABLE))).toBe(lines('```js `x`', ...RENDERED));
+  it('a backtick "fence" whose info string contains a backtick still protects (conservative)', () => {
+    const text = lines('```js `x`', ...TABLE);
+    expect(render(text)).toBe(text);
   });
 
   it('indented code (4 spaces or a tab) is never converted, and an indented row ends a table', () => {
@@ -130,5 +131,47 @@ describe('renderMarkdownTablesForDiscord — code is never touched', () => {
     expect(render(payload)).toBe(
       lines('```', '| 월 | 가입자 수 |', '|---|---|', '| 1월 | 80 |', '```', '~~~', '| a | b |', '|---|---|', '| 1 | 2 |', '~~~', '    | x | y |', '    |---|---|', '**월 · 수**', '- 월: 2월, 수: 95'),
     );
+  });
+});
+
+describe('renderMarkdownTablesForDiscord — nested fences, quotes and lists (Codex review P2 on 08454fb)', () => {
+  it.each([
+    ['a backtick fence opened inside a list item', lines('- 예시:', '- ```md', ...TABLE, '  ```')],
+    ['a tilde fence opened inside a list item', lines('1. 예시:', '   ~~~', ...TABLE, '   ~~~')],
+    ['a fence after a nested list marker', lines('- a', '  * ```', ...TABLE, '```')],
+    ['a fence inside a > quote', lines('> ```', ...TABLE, '> ```')],
+    ['a fence inside a nested > > quote and list', lines('> > - ~~~~', ...TABLE, '~~~~')],
+  ])('%s: nothing inside is converted', (_label, text) => {
+    expect(render(text)).toBe(text);
+  });
+
+  it('a list-item fence closes only on a matching fence; a table after the close and a blank line is prose again', () => {
+    const block = lines('- 예시:', '  ````md', '  ```', ...TABLE, '  ```', '  ````');
+    expect(render(lines(block, '', ...TABLE))).toBe(lines(block, '', ...RENDERED));
+    // Directly after the close the list item may continue: no conversion without a blank line.
+    expect(render(lines(block, ...TABLE))).toBe(lines(block, ...TABLE));
+  });
+
+  it('a Discord >>> multi-line quote quotes the rest of the message: nothing after it is converted', () => {
+    const text = lines(...TABLE, '', '>>> 인용이에요', ...TABLE, '', ...TABLE);
+    expect(render(text)).toBe(lines(...RENDERED, '', '>>> 인용이에요', ...TABLE, '', ...TABLE));
+    expect(render(lines('>>>', ...TABLE))).toBe(lines('>>>', ...TABLE));
+  });
+
+  it('a > quote line and its lazy continuation never start a table; after a blank line a table converts', () => {
+    const lazy = lines('> 인용', ...TABLE);
+    expect(render(lazy)).toBe(lazy);
+    const quotedRows = lines('> | a | b |', '> |---|---|', '> | 1 | 2 |');
+    expect(render(quotedRows)).toBe(quotedRows);
+    expect(render(lines('> 인용', '', ...TABLE))).toBe(lines('> 인용', '', ...RENDERED));
+  });
+
+  it('list items and their continuations never start a table; a blank line plus an unindented line ends the list', () => {
+    const lazy = lines('- 항목', ...TABLE);
+    expect(render(lazy)).toBe(lazy);
+    const continued = lines('1. 항목', '', '   계속', '', '   | a | b |', '   |---|---|', '   | 1 | 2 |');
+    expect(render(continued)).toBe(continued);
+    expect(render(lines('- 항목', '', ...TABLE))).toBe(lines('- 항목', '', ...RENDERED));
+    expect(render(lines('- 항목', '', '본문이에요.', ...TABLE))).toBe(lines('- 항목', '', '본문이에요.', ...RENDERED));
   });
 });

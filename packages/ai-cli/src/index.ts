@@ -59,13 +59,15 @@ export type { ClaudeCliVisionProviderOptions, ClaudeStreamJsonOutcome } from './
 export {
   CODEX_CHAT_CAPABILITIES,
   CODEX_CHAT_PRIORITY,
+  CODEX_CWD_CLEANUP_RETRY_MS,
   CodexCliProvider,
   DEFAULT_CODEX_TIMEOUT_MS,
   classifyCodexFailure,
+  removeCodexCallDirectory,
   isValidCodexModelName,
   parseCodexJsonEvents,
 } from './codex-cli-provider';
-export type { CodexCliProviderOptions } from './codex-cli-provider';
+export type { CodexCliProviderOptions, CodexCwdCleanup, CodexCwdCleanupCode } from './codex-cli-provider';
 export {
   CODEX_VISION_CWD_PREFIX,
   CODEX_VISION_EFFORT,

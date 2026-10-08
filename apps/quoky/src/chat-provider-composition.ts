@@ -59,7 +59,10 @@ export function composeChatProviders(
   const wantsCodex = chat.provider === 'codex' || persisted === 'codex' || present(ai.codexBin);
   const ollama = wantsOllama ? new OllamaCliProvider({ bin: ai.ollamaBin, model: ai.ollamaModel }) : undefined;
   const codex = wantsCodex
-    ? new CodexCliProvider(ai.codexBin, ai.codexModel === undefined ? {} : { model: ai.codexModel })
+    ? new CodexCliProvider(ai.codexBin, {
+        ...(ai.codexModel === undefined ? {} : { model: ai.codexModel }),
+        cleanup: { logger },
+      })
     : undefined;
   const providers = [claude, ...(ollama ? [ollama] : []), ...(codex ? [codex] : [])];
   return { providers, claude, ...(codex ? { codex } : {}), ...(ollama ? { ollama } : {}) };

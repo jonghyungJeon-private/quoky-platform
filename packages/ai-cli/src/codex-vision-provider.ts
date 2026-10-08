@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, mkdtempSync, openSync, realpathSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, constants, mkdtempSync, openSync, realpathSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AiFailureKind, AiProviderError, ArtifactKind, newId, now } from '@quoky/core';
@@ -14,8 +14,14 @@ import type {
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { defaultCliRunner } from './cli-runner';
 import type { CliRunner } from './cli-runner';
-import { acceptCodexRun, buildCodexExecArgs, isValidCodexModelName, probeCodexLogin } from './codex-cli-provider';
-import type { CodexEffortLevel } from './codex-cli-provider';
+import {
+  acceptCodexRun,
+  buildCodexExecArgs,
+  isValidCodexModelName,
+  probeCodexLogin,
+  removeCodexCallDirectory,
+} from './codex-cli-provider';
+import type { CodexCwdCleanup, CodexEffortLevel } from './codex-cli-provider';
 import { sanitizeTerminalOutput } from './output-sanitizer';
 import { MAX_VISION_IMAGES, readVisionImageFile, scrubImagePaths } from './vision-image-file';
 
@@ -52,6 +58,8 @@ export interface CodexCliVisionProviderOptions {
   providerId?: string;
   runner?: CliRunner;
   timeoutMs?: number;
+  /** Where a failed temp-directory cleanup is reported (value-free code); and offline-test seams. */
+  cleanup?: CodexCwdCleanup;
 }
 
 function sha256(data: Buffer | string): string {
@@ -91,6 +99,7 @@ export class CodexCliVisionProvider extends BaseCliAiProvider {
   private readonly model: string | undefined;
   private readonly runner: CliRunner;
   private readonly defaultTimeoutMs: number;
+  private readonly cleanup: CodexCwdCleanup;
 
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
     { capability: Capability.IMAGE_UNDERSTANDING, priority: 100 },
@@ -106,6 +115,7 @@ export class CodexCliVisionProvider extends BaseCliAiProvider {
     this.bin = options.bin ?? 'codex';
     this.runner = options.runner ?? defaultCliRunner;
     this.defaultTimeoutMs = options.timeoutMs ?? DEFAULT_CODEX_VISION_TIMEOUT_MS;
+    this.cleanup = options.cleanup ?? {};
   }
 
   /** `codex exec --image <copy>… <isolation flags> -c model_reasoning_effort="low" [--disable …] [-m <model>] -`. */
@@ -164,9 +174,16 @@ export class CodexCliVisionProvider extends BaseCliAiProvider {
         throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'codex vision CLI could not prepare its image copies');
       }
       args = this.buildArgs(copies);
-      result = await this.runner(this.bin, args, { cwd, input, timeoutMs });
+      try {
+        result = await this.runner(this.bin, args, { cwd, input, timeoutMs });
+      } catch (err) {
+        // A runner error may carry the argv (the copy paths): only a fixed reason leaves.
+        if (err instanceof AiProviderError) throw err;
+        throw new AiProviderError(AiFailureKind.UNAVAILABLE, `${LABEL} could not run`);
+      }
     } finally {
-      rmSync(cwd, { recursive: true, force: true, maxRetries: 2 });
+      // Never throws (Codex review P2): a cleanup error carries the path and must not replace the outcome.
+      removeCodexCallDirectory(cwd, 'codex-vision', this.cleanup);
     }
 
     if (result.outputOverflowed === true) {
