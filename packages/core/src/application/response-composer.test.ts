@@ -2066,7 +2066,7 @@ describe('ResponseComposer — connector writes (ADR-0112, CWR-2)', () => {
       5 * 60_000,
       'Slack 게시 실행',
     ).text;
-    expect(text).toContain('Slack 게시 승인을 기다리고 있어요. 아직 아무것도 보내지 않았어요.');
+    expect(text).toContain('Slack 게시 승인을 기다리고 있어요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
     expect(text).toContain('대상: Slack #dev (C0DEV)');
     expect(text).toContain('"승인" 또는 "거절"');
     expect(text).toContain('"Slack 게시 실행"');

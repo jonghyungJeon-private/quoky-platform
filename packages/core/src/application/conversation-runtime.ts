@@ -38,7 +38,7 @@ import {
 } from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
+import { KO_END, KO_START, isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention, koNoun } from './git-request-shape';
 import { parseLearningCommand } from './feedback/learning-commands';
 import { parseMemoryCommand } from './memory-commands/memory-command-grammar';
 import { parseModelSelectionCommand } from './model-selection/model-selection-command';
@@ -46,12 +46,17 @@ import { parseReminderMessage } from './reminders/reminder-grammar';
 import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './execution-command-guard';
 import {
   type ConnectorWriteAnchorView,
+  type ConnectorWriteLatestRequest,
   type ConnectorWriteFlow,
+  type ConnectorWriteRecentSend,
   type ConnectorWriteRelease,
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
+  connectorWriteTargetOf,
   isAnyConnectorWriteExecutionPhrase,
   connectorWriteOperationsOfPhrase,
+  connectorWriteOperationsAskedAbout,
+  isBareExecutionRequest,
   isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
@@ -162,12 +167,14 @@ import type {
   WorkspaceRef,
 } from '../domain';
 import {
+  CONNECTOR_WRITE_OPERATIONS,
   TURN_HANDLER_STAGES,
   executionLocalityOf,
   type AiExecutionLocality,
   type ProviderSelectionContext,
   type AiProvider,
   type AiRequest,
+  type ConnectorWriteOperation,
   type Logger,
   type LogFields,
   type ProjectReadout,
@@ -826,6 +833,11 @@ export interface ConversationRuntimeDeps {
   };
   readonly approvals: {
     decide(approvalId: Id, decision: ApprovalDecision): Promise<ApprovalRequest>;
+    /**
+     * Live QA session 3 (D12): withdraw an APPROVED, unexecuted connector-write grant (`ApprovalManager.revoke`, the same
+     * already-registered instance). Optional so narrow fakes keep compiling; absent → the anchor still closes.
+     */
+    revoke?(approvalId: Id, decision: ApprovalDecision): Promise<ApprovalRequest>;
     /** Reused for the ambiguous-retry prompt on the apply gate (Sprint 2s) — a type-only widening, not
      *  a new method (`ApprovalManager.get` already exists). */
     get(approvalId: Id): Promise<ApprovalRequest | null>;
@@ -1006,6 +1018,24 @@ export interface ConversationRuntimeOptions {
 }
 
 /** A code-change preview's refs, targets and prepared (read, classified, grant-checked) context content. */
+/** This conversation's most recent write of one kind (stray-phrase replies; Codex P2 on 039d5ff). */
+type RecentConnectorWrite =
+  | { readonly kind: 'sent'; readonly operation: ConnectorWriteOperation; readonly sent: ConnectorWriteRecentSend; readonly at: IsoTimestamp }
+  | {
+      readonly kind: 'latest';
+      readonly operation: ConnectorWriteOperation;
+      readonly latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } };
+      /** An older request of the kind may have been sent (UNCERTAIN / in flight, no later SENT). */
+      readonly olderUnconfirmed: boolean;
+      readonly at: IsoTimestamp;
+    }
+  | {
+      readonly kind: 'unconfirmed';
+      readonly operation: ConnectorWriteOperation;
+      readonly status: 'UNCERTAIN' | 'EXECUTING';
+      readonly at: IsoTimestamp;
+    };
+
 interface PreparedCodeGeneration {
   readonly planRef: ExecutionPlanRef;
   readonly workspaceRef: WorkspaceRef;
@@ -1182,18 +1212,40 @@ const PUSH_REQUEST_SHAPES: readonly RegExp[] = [
   // A typed git push command with any options / remote / refspec: "git push", "git push -f origin main"
   /^\s*git\s+push(\s+[\w./:@+=~^-]+)*\s*[.!]*$/i,
 ];
-/** Questions / how-to / notification topics that merely mention push are ordinary chat. */
 /**
  * A how-to / explanation question (live QA W1-L01, W1-L03): "git commit 은 어떻게 하는 거야?", "커밋해 주는 방법",
  * "완료 처리 어떻게 해?", "what is git commit?". It asks how something works and never requests the action, so it is
  * never a commit request, a git-mutation reject or the reply to a pending scope clarification; it reaches the
  * `pre-classify` help-intent handler or ordinary chat. No execution gate consults it (those stay exact allow-lists).
+ * "차이" matches as a whole word with an optional particle ("차이", "차이를", "차이점이"), never inside another word:
+ * "차이나 서버 변경 커밋해줘" is a commit request, not a how-to question (the git-request-shape boundary rule).
  */
-const HOW_TO_QUESTION =
-  /어떻게|방법|하는\s*법|사용법|뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻이|차이|설명해|\bhow\s+(?:do|does|can|should|would|to)\b|\bwhat\s+(?:is|does|are)\b|\bexplain\b/i;
+const HOW_TO_QUESTION = new RegExp(
+  `어떻게|방법|하는\\s*법|사용법|뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻이|${koNoun('차이')}|설명해|` +
+    '\\bhow\\s+(?:do|does|can|should|would|to)\\b|\\bwhat\\s+(?:is|does|are)\\b|\\bexplain\\b',
+  'iu',
+);
 
-const PUSH_CHAT_TOPIC =
-  /[?？]|뭐|무엇|뭔|어떻게|어떤|왜|방법|알려|설명|차이|알림|notification|설정|구현|\bhow\b|\bwhat\b|\bwhy\b|\bexplain\b|\bdifference\b|\bwhen\b/i;
+/**
+ * Questions / how-to / notification topics that merely mention push are ordinary chat (QA-V2-W8). Korean topic words
+ * match whole words only, with the git-request-shape boundary + particle rule (routing exec gaps): "차이", "차이를",
+ * "방법이", "푸시 알림", "설명해줘", "알려줘", "뭐야", "왜" are topics; "차이나", "설명서", "알려진", "왜곡", "뭐든" are not,
+ * so "차이나 서버 변경을 푸시해줘" stays a push request. Only consulted on the non-executing push replies (already pushed /
+ * no push target / unsupported companion) — never by an execution gate.
+ */
+const PUSH_CHAT_TOPIC = new RegExp(
+  [
+    '[?？]',
+    // Interrogatives start their word: "뭐야", "무엇을", "뭔데", "어떻게", "어떤", "왜(요)" — not "뭐든", "왜곡".
+    `${KO_START}(?:뭐(?!든|라도)|무엇|뭔|어떻게|어떤|왜(?:요|죠)?${KO_END})`,
+    // Topic nouns as whole words with an optional particle: "차이를", "해결방법", "알림", "설정은", "구현", "설명이".
+    koNoun('차이|(?:해결|사용|설정)?방법|알림|설정|구현|설명'),
+    // The same words as a request verb: "설명해줘", "설정하는", "구현해", "알려줘", "알려 주세요".
+    `${KO_START}(?:(?:설명|설정|구현)\\s*(?:해|하|할|좀|부탁)|알려\\s*(?:줘|주|줄|달))`,
+    '\\bnotifications?\\b|\\bhow\\b|\\bwhat\\b|\\bwhy\\b|\\bexplain\\b|\\bdifference\\b|\\bwhen\\b',
+  ].join('|'),
+  'iu',
+);
 
 /** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
 const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
@@ -1929,6 +1981,18 @@ export class ConversationRuntime {
     if (isGitTopicOnlyMention(t)) return null;
     if (MERGE_REQUEST_ATTACHED.test(t)) return 'merge';
     return null; // bare "머지" noun → companion-unsupported
+  }
+
+  /**
+   * A merge request with no code chain (live QA session 3, D11): the {@link interpretMergeIntent} request shape, naming a
+   * git merge — "머지"/"merge", or "병합" next to a PR / git word ("PR 머지해줘", "머지해줘", "PR 병합해줘"). A generic
+   * "파일 병합해줘" is not one (chat). Only picks the fixed merge-disabled / no-PR reply; never an approval or a merge.
+   */
+  static interpretNoChainMergeRequest(text: string): 'merge' | null {
+    if (ConversationRuntime.interpretMergeIntent(text) !== 'merge') return null;
+    if (!unnegatedMatch(text, [MERGE_WORD])) return null;
+    const t = text.trim().toLowerCase();
+    return /머지|\bmerge\b/.test(t) || PR_WORD.test(t) || /\bgit\b|깃/.test(t) ? 'merge' : null;
   }
 
   /**
@@ -2743,6 +2807,16 @@ export class ConversationRuntime {
       if (noAnchorPush === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (noAnchorPush === 'push') return this.handleNoPushTargetTurn(message, session);
     }
+    // Live QA session 3 (D11): a merge request with no code chain at all ("PR 머지해줘") gets the documented fixed reply —
+    // the merge-disabled refusal while QUOKY_GIT_MERGE_ENABLED=false (quickstart §6/§8), otherwise "no PR to merge" —
+    // never chat. No approval, no git/hosting call.
+    if (!applyAnchor && ConversationRuntime.interpretNoChainMergeRequest(chainText) === 'merge') {
+      return this.respondComposed(
+        message,
+        session,
+        this.gitMergeEnabled ? this.deps.composer.composeNoMergeTarget(message.context) : this.deps.composer.composeMergeDisabled(message.context),
+      );
+    }
     // Anything else: fall through untouched — an ELIGIBLE/APPROVED/PATCH_READY/WORKSPACE_APPLIED anchor is
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
 
@@ -2756,32 +2830,22 @@ export class ConversationRuntime {
     // ADR-0112 (CWR-2): a connector-write execution phrase with no approved write of that kind runs nothing and says so
     // (with or without the flow) — a chat model must never claim a comment, post or calendar change happened.
     if (isAnyConnectorWriteExecutionPhrase(message.text)) {
-      const flow = this.deps.connectorWriteFlow;
-      if (flow) {
-        const operations = connectorWriteOperationsOfPhrase(message.text);
-        const now = this.clock();
-        // Live QA (cross-session): the actor's approved write of that kind waits in ANOTHER conversation — run nothing
-        // here (execution stays bound to the approving conversation) and say where to send the phrase.
-        for (const operation of operations) {
-          const elsewhere = await flow.approvedElsewhere(session, actor.id, operation, now);
-          if (elsewhere) {
-            return this.respondComposed(message, session, this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere));
-          }
-        }
-        // W5-L02: a write of that kind approved in THIS conversation was SENT recently — say so (with the link) instead
-        // of "nothing approved". Never another conversation's receipt, never an old one.
-        for (const operation of operations) {
-          const sent = await flow.recentSentInSession(session, actor.id, operation, now);
-          if (sent) {
-            return this.respondComposed(
-              message,
-              session,
-              this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent),
-            );
-          }
-        }
-      }
-      return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
+      return this.respondStrayConnectorWritePhrase(message, session, actor, connectorWriteOperationsOfPhrase(message.text));
+    }
+    // Routing exec gaps: the same step phrased as a question or a negation ("댓글 실행해도 돼?", "Slack 게시 실행하지 마")
+    // gets the same non-mutating replies instead of chat. It never executes: the allow-list's question/negation veto
+    // stays, and only the approving conversation's exact phrase runs a write.
+    const askedAbout = connectorWriteOperationsAskedAbout(message.text);
+    if (askedAbout.length > 0) {
+      return this.respondStrayConnectorWritePhrase(message, session, actor, askedAbout);
+    }
+    const bareAfterUnconfirmed = await this.respondBareExecutionAfterUnconfirmedWrite(message, session, actor);
+    if (bareAfterUnconfirmed) return bareAfterUnconfirmed;
+    // Live QA session 3 (D11): a bare "실행" / "go" / "run it" with no code chain and no approved write here runs nothing
+    // and says so deterministically (a chat model once answered that Quoky cannot execute anything). With a chain anchor
+    // the turn routes as before (its own state replies own it).
+    if (!applyAnchor && isBareExecutionRequest(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoApprovedExecution(message.context));
     }
     if (interpretStrayDecisionUtterance(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
@@ -3389,8 +3453,8 @@ export class ConversationRuntime {
         const gate = connectorWriteExecutionGate(anchor.operation);
         if (isAcceptedExecutionPhrase(gate, message.text)) {
           // Not caught here: after the consume save a failure may follow the send, so the `handle` backstop's
-          // "cannot verify" wording is the truthful one.
-          return respond(await flow.execute({ session, actor, view, now: this.clock() }));
+          // "cannot verify" wording is the truthful one. Validation + consume share the revocation's locks (Codex P1).
+          return respond(await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view));
         }
         const decision = interpretStrayDecisionUtterance(message.text);
         // Another write's execution phrase while this one waits approved: it runs nothing, and the reply names the
@@ -3410,14 +3474,42 @@ export class ConversationRuntime {
             message.context,
             anchor.operation,
             documentedExecutionPhrase(gate),
+            anchor.preview ? connectorWriteTargetOf(anchor.preview) : undefined,
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
-        // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here.
+        // Routing exec gaps (INT-2 finding): a bare "실행" / "실행해줘" / "go" / "run it" names no step. It runs nothing
+        // (the exact phrase stays the only executor) and gets a deterministic reply quoting the approved write's phrase,
+        // never chat (a model could answer as if it ran). A question / negation about ANOTHER write's step names the
+        // phrase that would run here too (the stray "nothing approved" reply would be untrue).
+        if (isBareExecutionRequest(message.text)) {
+          const reply = this.deps.composer.composeConnectorWriteBareExecution(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+            anchor.preview ? connectorWriteTargetOf(anchor.preview) : undefined,
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        if (connectorWriteOperationsAskedAbout(message.text).length > 0) {
+          const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here. D12: the approval is
+        // recorded withdrawn (REJECTED) together with the close, under the approval → session locks (#132 rules).
         if ((decision === 'deny' || decision === 'cancel') && anchor.actorId === actor.id) {
-          const reason = decision === 'deny' ? 'denied' : 'cancelled';
-          await flow.close(session, view, reason, this.clock());
-          return respond({ kind: 'closed', reason, family: anchor.family });
+          return this.decisionTurn(
+            session,
+            await this.approvalDecisions.revokeConnectorWrite(
+              this.chatDecision(message, session, actor),
+              view,
+              decision === 'deny' ? 'denied' : 'cancelled',
+            ),
+          );
         }
         return null;
       }
@@ -3425,6 +3517,15 @@ export class ConversationRuntime {
       case 'SENT':
       case 'NOT_SENT':
       case 'UNCERTAIN': {
+        // Codex P1 on 55c5a2f: the owner's 거절/취소 while the approved write is already executing cannot withdraw it; say
+        // so (the executing turn reports the outcome) — never "nothing was sent".
+        if (anchor.status === 'EXECUTING' && anchor.operation && anchor.actorId === actor.id) {
+          const decision = interpretStrayDecisionUtterance(message.text);
+          if (decision === 'deny' || decision === 'cancel') {
+            const reply = this.deps.composer.composeConnectorWriteRevokeTooLate(message.context, anchor.operation);
+            return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+          }
+        }
         if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {
           return null;
         }
@@ -3438,11 +3539,126 @@ export class ConversationRuntime {
         }
         // An old send is not "already executed" any more: the stray-phrase path answers (nothing approved).
         if (isConnectorWriteSendStale(anchor, now)) return null;
+        // Live QA session 3 (D1) / Codex P2: when a later request of the same kind exists in this conversation, the reply
+        // describes THAT request (rejected, expired, not sent, …), never this one as "already sent".
+        const latest = await flow.latestRequestInSession(session, actor.id, anchor.operation);
+        if (latest && latest.taskId !== view.taskId) {
+          return this.respondStrayConnectorWritePhrase(message, session, actor, [anchor.operation]);
+        }
         return respond(await flow.execute({ session, actor, view, now }));
       }
       default:
         return null;
     }
+  }
+
+  /**
+   * A connector-write step phrase (exact, or a question / negation about it) with no approved write of that kind in this
+   * conversation. Runs nothing; the reply is, in order: where the actor's approved write of that kind waits in ANOTHER
+   * conversation (live QA cross-session); else this conversation's most recent write of that kind — SENT within the
+   * lifetime → already sent with its link (W5-L02); dispatched but unconfirmed (UNCERTAIN / still in flight), at any age
+   * until a later write of that kind is SENT → the uncertain warning (it may have been sent; check the target; nothing is
+   * resent — Codex P2 on 039d5ff / a2b8aed); else "nothing approved".
+   */
+  private async respondStrayConnectorWritePhrase(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    operations: readonly ConnectorWriteOperation[],
+  ): Promise<TurnResult> {
+    const flow = this.deps.connectorWriteFlow;
+    if (flow) {
+      const now = this.clock();
+      // Execution stays bound to the approving conversation: say where to send the phrase.
+      for (const operation of operations) {
+        const elsewhere = await flow.approvedElsewhere(session, actor.id, operation, now);
+        if (elsewhere) {
+          return this.respondComposed(message, session, this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere));
+        }
+      }
+      // Never another conversation's receipt, never an old one.
+      for (const operation of operations) {
+        const recent = await this.recentConnectorWriteInSession(flow, session, actor, operation, now);
+        if (recent) return this.respondRecentConnectorWrite(message, session, recent);
+      }
+    }
+    return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
+  }
+
+  /**
+   * Codex P2 on 039d5ff: a bare "실행" / "go" / "run it" with no approved write here, right after a write in this
+   * conversation that was dispatched but never confirmed, gets the uncertain warning (never chat, which could call it
+   * sent or not sent). Null otherwise — the turn routes as before. Runs nothing.
+   */
+  private async respondBareExecutionAfterUnconfirmedWrite(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+  ): Promise<TurnResult | null> {
+    const flow = this.deps.connectorWriteFlow;
+    if (!flow || !isBareExecutionRequest(message.text)) return null;
+    const now = this.clock();
+    let newest: RecentConnectorWrite | null = null;
+    for (const operation of CONNECTOR_WRITE_OPERATIONS) {
+      const recent = await this.recentConnectorWriteInSession(flow, session, actor, operation, now);
+      if (recent && (!newest || recent.at > newest.at)) newest = recent;
+    }
+    const maySent = newest?.kind === 'unconfirmed' || (newest?.kind === 'latest' && newest.olderUnconfirmed);
+    return newest && maySent ? this.respondRecentConnectorWrite(message, session, newest) : null;
+  }
+
+  /** This conversation's most recent write of `operation`: SENT (within the lifetime) or dispatched-but-unconfirmed (any age). */
+  private async recentConnectorWriteInSession(
+    flow: ConnectorWriteFlow,
+    session: Session,
+    actor: Actor,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<RecentConnectorWrite | null> {
+    // Codex P2/P3 on 55c5a2f: describe the single most recent request of that kind, whatever became of it (no dependence
+    // on an older send's lifetime); an older request that may have been sent is still warned about.
+    const latest = await flow.latestRequestInSession(session, actor.id, operation);
+    if (!latest) return null;
+    const state = latest.state;
+    switch (state.kind) {
+      case 'sent': {
+        // W5-L02: "already sent" only within the lifetime; an old send is "nothing approved".
+        const sent = await flow.recentSentInSession(session, actor.id, operation, now);
+        return sent ? { kind: 'sent', operation, sent, at: sent.sentAt } : null;
+      }
+      case 'unconfirmed':
+        return { kind: 'unconfirmed', operation, status: state.status, at: latest.createdAt };
+      case 'closed':
+      case 'not-sent': {
+        const older = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
+        return {
+          kind: 'latest',
+          operation,
+          latest: latest as ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
+          olderUnconfirmed: older !== null,
+          at: latest.createdAt,
+        };
+      }
+      case 'open': {
+        // Not this turn's anchor (that routed above): only an older unresolved write can still be named.
+        const older = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
+        return older ? { kind: 'unconfirmed', operation, status: older.status, at: older.at } : null;
+      }
+    }
+  }
+
+  private respondRecentConnectorWrite(message: InboundMessage, session: Session, recent: RecentConnectorWrite): Promise<TurnResult> {
+    const reply =
+      recent.kind === 'sent'
+        ? this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, recent.operation, recent.sent)
+        : recent.kind === 'latest'
+          ? this.deps.composer.composeConnectorWriteLatestRequest(message.context, recent.latest, recent.olderUnconfirmed)
+          : this.deps.composer.composeConnectorWriteStep(message.context, {
+            kind: 'repeat',
+            operation: recent.operation,
+            status: recent.status,
+          });
+    return this.respondComposed(message, session, reply);
   }
 
   /** "1", "2번", "1번이요", "2번으로" — a choice number, or null. */

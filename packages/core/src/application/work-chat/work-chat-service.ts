@@ -142,7 +142,22 @@ function hintKey(text: string): string {
   return text.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
-/** Exactly one open to-do named by an exact (hint-normalised) title or a listed number; anything else is `null`. */
+/** The shorter key of a partial hint match must have at least this many characters… */
+const HINT_PARTIAL_MIN_CHARS = 3;
+/** …and cover at least this share of the longer one ("QA 스윕 정리" ⊂ "내일 9시에 QA 스윕 정리"; never "회의" ⊂ "주간 회의 준비"). */
+const HINT_PARTIAL_MIN_SHARE = 0.5;
+
+function partialHintMatch(a: string, b: string): boolean {
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  const shortLen = [...short].length;
+  return shortLen >= HINT_PARTIAL_MIN_CHARS && shortLen / [...long].length >= HINT_PARTIAL_MIN_SHARE && long.includes(short);
+}
+
+/**
+ * Exactly one open to-do named by an exact (hint-normalised) title or a listed number; else (live QA session 3, D11)
+ * exactly one whose title contains the named text, or is contained in it, with a substantial overlap
+ * ("QA 스윕 정리 완료" for the to-do "내일 9시에 QA 스윕 정리"). Anything else is `null`. A hint only — it never changes a to-do.
+ */
 function resolveHintTarget(todos: readonly WorkItem[], target: WorkChatTarget): { no: number; item: WorkItem } | null {
   if ('index' in target) {
     const item = todos[target.index - 1];
@@ -150,10 +165,11 @@ function resolveHintTarget(todos: readonly WorkItem[], target: WorkChatTarget): 
   }
   const wanted = hintKey(target.text);
   if (wanted.length === 0) return null;
-  const matches = todos
-    .map((item, index) => ({ no: index + 1, item }))
-    .filter(({ item }) => item.title !== undefined && hintKey(item.title) === wanted);
-  return matches.length === 1 ? (matches[0] as { no: number; item: WorkItem }) : null;
+  const numbered = todos.map((item, index) => ({ no: index + 1, item }));
+  const exact = numbered.filter(({ item }) => item.title !== undefined && hintKey(item.title) === wanted);
+  if (exact.length > 0) return exact.length === 1 ? (exact[0] as { no: number; item: WorkItem }) : null;
+  const partial = numbered.filter(({ item }) => item.title !== undefined && partialHintMatch(hintKey(item.title), wanted));
+  return partial.length === 1 ? (partial[0] as { no: number; item: WorkItem }) : null;
 }
 
 /** A fixed instant: only "is this reminder-shaped at all" matters, never the resolved time. */

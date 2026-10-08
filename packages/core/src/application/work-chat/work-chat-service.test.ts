@@ -672,6 +672,27 @@ describe('natural completion hints (QA-V2-W7-03, hint-only)', () => {
     expect(work.calls.every((call) => call === 'listActiveByActor')).toBe(true);
   });
 
+  it('live QA session 3 (D11): a substantial partial title of exactly one open to-do gets the hint; a small or shared one does not', async () => {
+    const { say, work } = harness();
+    await say('할 일 추가: 내일 9시에 QA 스윕 정리');
+    await say('할 일 추가: 주간 회의 준비');
+    work.calls.length = 0;
+    expect(textOf(await say('QA 스윕 정리 완료'))).toBe(
+      '"내일 9시에 QA 스윕 정리" 할 일을 완료 처리하려면 "완료 처리: 1"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.',
+    );
+    expect(textOf(await say('주간 회의 준비 다 했어'))).toContain('"완료 처리: 2"');
+    for (const text of ['QA 완료', '회의 완료', '스윕 완료', '점심 먹고 QA 스윕 정리하고 회의 준비까지 전부 완료']) {
+      expect(await say(text), text).toEqual({ kind: 'none' });
+    }
+    expect(work.calls.every((call) => call === 'listActiveByActor')).toBe(true);
+    expect(work.ofOwner().every((item) => item.status === WorkItemStatus.ACTIVE)).toBe(true);
+
+    const shared = harness();
+    await shared.say('할 일 추가: QA 스윕 정리 1차');
+    await shared.say('할 일 추가: QA 스윕 정리 2차');
+    expect(await shared.say('QA 스윕 정리 완료')).toEqual({ kind: 'none' });
+  });
+
   it('falls through when two open to-dos share the title, and for a closed to-do', async () => {
     const { say, work } = harness();
     await say('할 일 추가: 보고서 쓰기');

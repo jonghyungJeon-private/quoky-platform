@@ -4374,6 +4374,33 @@ describe('Explicit Git Commit Approval — runtime (Sprint 2x, ADR-0045)', () =>
     expect(calls.gitStatus).toBe(1); // 2w status preview ran, not a commit approval
   });
 
+  it('Codex P3 on 039d5ff: a comparison / concept question with a sentence-final ending cluster is chat, never a commit approval', async () => {
+    for (const text of [
+      'git commit과 git commit --amend의 차이는요?',
+      'git commit 차이좀 알려줘',
+      '커밋이랑 amend 차이점은요?',
+      'commit과 amend 차이요?',
+      'git commit 의미가요?',
+      'squash 커밋 방법좀 알려줘',
+      'git commit 설명은요?',
+    ]) {
+      expect(ConversationRuntime.interpretCommitIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf(inScopeStatus) });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.requestForRisk, text).toBe(0);
+      expect(calls.classify, `${text} → ${r.reply.text}`).toBe(1);
+    }
+    // ("비교" is also the read-only diff-preview word at WORKSPACE_APPLIED: never a commit approval either.)
+    const compare = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf(inScopeStatus) });
+    await new ConversationRuntime(compare.deps).handle(messageOf('커밋 전략 비교좀 해줘'));
+    expect(compare.calls.requestForRisk).toBe(0);
+    // ...while the marker inside another word is still a commit request (approval only — nothing executes).
+    const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf(inScopeStatus) });
+    await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경 커밋해줘'));
+    expect(calls.requestForRisk).toBe(1);
+    expect(calls.lastApplyAnchor?.status).toBe('COMMIT_APPROVAL_PENDING');
+  });
+
   // ── negative / gating (CA 7–9) ──────────────────────────────────────────────────────────────
   it('"좋아"/"오케이"/"확인"/"다음 단계"/"진행해" do not trigger commit approval (CA 7–8)', async () => {
     for (const text of ['좋아', '오케이', '확인', '다음 단계', '진행해']) {
@@ -12062,6 +12089,129 @@ describe('Codex review of f45ab9d + live QA 2026-10-07 (LRN-2 at PR_CREATED) —
       expect(ConversationRuntime.interpretMergeStatusIntent(text) || ConversationRuntime.interpretPrStatusIntent(text), text).toBe(true);
     }
     expect(ConversationRuntime.interpretPrStatusIntent('PR 리뷰 어때? 문제점 설명해줘')).toBe(true);
+  });
+});
+
+describe('routing exec gaps — push topic words match whole Korean words only (git-request-shape boundary rule)', () => {
+  const composer = new ResponseComposer();
+  const CHAIN = {
+    commitHash: HEAD_SHA,
+    pushedCommitHash: HEAD_SHA,
+    pushedRemote: 'origin',
+    pushedBranch: 'feature/x',
+    pullRequestNumber: 42,
+    pullRequestUrl: 'https://github.com/acme/widgets/pull/42',
+    pullRequestHeadBranch: 'feature/x',
+    repositoryIdentity: { provider: 'github', owner: 'acme', repo: 'widgets' },
+    pullRequestRef: { provider: 'github', owner: 'acme', repo: 'widgets', pullRequestNumber: 42, pullRequestUrl: 'https://github.com/acme/widgets/pull/42' },
+    pullRequestCommitHash: HEAD_SHA,
+    mergeCommitHash: 'facefeed1234567890facefeed1234567890face',
+  } as Partial<ApplyPreviewAnchor>;
+  const POST_PUSH = [
+    'PR_APPROVED', 'PR_CREATED', 'MERGE_APPROVED', 'PR_MERGED', 'MAIN_SYNCED', 'BRANCH_CLEANED', 'REMOTE_BRANCH_CLEANUP_APPROVED',
+    'REMOTE_BRANCH_CLEANED',
+  ] as const;
+  /** A topic word only as the start of another word: "차이나", "설명서", "알려진", "왜곡", "방법론", "알림톡". */
+  const EMBEDDED = ['차이나 서버 변경을 푸시해줘', '설명서 업데이트 푸시해줘', '알려진 버그 수정 푸시해줘', '왜곡 보정 변경 푸시해줘', '방법론 문서 푸시해줘', '알림톡 템플릿 푸시해줘'];
+  /** Whole topic words (with or without a particle) and questions stay chat. */
+  const TOPICS = [
+    'git push가 뭐야?', '푸시 알림 설정하는 법 알려줘', 'push notification 구현 방법', 'git push와 pull의 차이', '어떻게 푸시해', '왜 푸시해',
+    '알림 설정 바꾸고 푸시해', '푸시 해도 돼?',
+  ];
+
+  it('the no-anchor push shape: an embedded topic syllable no longer hides the push request; whole topic words still do', () => {
+    for (const text of EMBEDDED) expect(ConversationRuntime.interpretNoAnchorPushRequest(text), text).toBe('push');
+    for (const text of TOPICS) expect(ConversationRuntime.interpretNoAnchorPushRequest(text), text).toBeNull();
+  });
+
+  it.each(POST_PUSH)('at %s, "차이나 서버 변경을 푸시해줘" is the deterministic already-pushed reply — never chat, never a push', async (status) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+    const r = await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경을 푸시해줘'));
+    expect(r.reply.text).toBe(composer.composePushAlreadyPushed(CTX, { commitHash: HEAD_SHA, remote: 'origin', branch: 'feature/x' }).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.gitPush).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(['PR_CREATED', 'MAIN_SYNCED'] as const)('at %s, a whole-word push topic question still reaches chat', async (status) => {
+    for (const text of ['git push와 pull의 차이를 알려줘', '푸시 알림 설정 방법']) {
+      const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf({ ...CHAIN, status }) });
+      await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.classify, `${status} ${text}`).toBe(1);
+      expect(mutationCalls(calls)).toBe(0);
+    }
+  });
+
+  it('with no chain, "차이나 서버 변경을 푸시해줘" is the no-push-target reply (no git call)', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경을 푸시해줘'));
+    expect(r.reply.text).toBe(composer.composeNoPushTarget(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.gitPush).toBe(0);
+  });
+
+  it('audit: the how-to guard reads "차이" as a whole word too ("차이나 … 커밋해줘" is a commit request, "차이를 알려줘" is not)', () => {
+    expect(ConversationRuntime.interpretCommitIntent('차이나 서버 변경 커밋해줘')).toBe('commit');
+    expect(ConversationRuntime.interpretGitPreviewIntent('차이나 서버 변경을 푸시해줘')).toBe('mutating');
+    for (const text of ['git commit과 amend 차이', '커밋과 스태시의 차이를 알려줘', '커밋 차이점이 뭐야']) {
+      expect(ConversationRuntime.interpretCommitIntent(text), text).toBeNull();
+      expect(ConversationRuntime.interpretGitPreviewIntent(text), text).not.toBe('mutating');
+    }
+  });
+});
+
+describe('live QA session 3 (D11) — no-chain merge requests and a bare "실행" get the documented deterministic replies', () => {
+  const composer = new ResponseComposer();
+  const MERGE_REQUESTS = ['PR 머지해줘', '머지해줘', 'PR 병합해줘', 'merge the PR', '이 PR 머지해줘'];
+
+  it.each(MERGE_REQUESTS)('no chain + %j, merge off (default) → the merge-disabled refusal; no approval, no hosting call', async (text) => {
+    expect(ConversationRuntime.interpretNoChainMergeRequest(text)).toBe('merge');
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(r.reply.text).toBe(composer.composeMergeDisabled(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.requestForRisk).toBe(0);
+    expect(calls.hostingMergePR + calls.hostingGetStatus).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it('no chain + "PR 머지해줘", merge on → "no PR to merge"; nothing approved or merged', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps, { gitMergeEnabled: true }).handle(messageOf('PR 머지해줘'));
+    expect(r.reply.text).toBe(composer.composeNoMergeTarget(CTX).text);
+    expect(r.reply.text).toContain('지금 병합할 PR이 없어요');
+    expect(calls.requestForRisk).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(['파일 두 개 병합해줘', '엑셀 시트 병합해줘', '머지 가능해?', '머지하지 마', 'git merge와 rebase 차이는요?', '머지 로그 요약해줘'])(
+    'no chain + %j → not a merge request; ordinary chat',
+    async (text) => {
+      expect(ConversationRuntime.interpretNoChainMergeRequest(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(r.reply.text).not.toBe(composer.composeMergeDisabled(CTX).text);
+      expect(calls.classify).toBe(1);
+      expect(mutationCalls(calls)).toBe(0);
+    },
+  );
+
+  it.each(['실행', '실행해', '실행해줘', '지금 실행', 'go', 'run it'])('no chain + bare %j → "nothing approved to run", provider-free; nothing runs', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(r.reply.text).toBe(composer.composeNoApprovedExecution(CTX).text);
+    expect(r.reply.text).toContain('실행할 승인된 작업이 없어요');
+    expect(calls.classify).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it('with a chain anchor the bare word keeps its state routing (never the no-approved-execution reply)', async () => {
+    for (const status of ['WORKSPACE_APPLIED', 'GIT_PUSHED', 'PR_CREATED'] as const) {
+      const { deps, calls } = makeDeps({ applyAnchor: approvedAnchorOf({ status }) });
+      const r = await new ConversationRuntime(deps).handle(messageOf('실행'));
+      expect(r.reply.text, status).not.toBe(composer.composeNoApprovedExecution(CTX).text);
+      expect(mutationCalls(calls), status).toBe(0);
+    }
   });
 });
 

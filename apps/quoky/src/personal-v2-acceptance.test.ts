@@ -420,6 +420,9 @@ function runtimeReplyLabel(composer: ResponseComposer, context: ConversationCont
   if (text === composer.composeMergeAlreadyApproved(context).text) return 'merge-already-approved';
   // ADR-0099 D5 (merge off by default): the fixed merge-disabled reply to a real merge request at PR_CREATED.
   if (text === composer.composeMergeDisabled(context).text) return 'merge-disabled';
+  // Live QA session 3 (D11): a merge request with merge on but no PR, and a bare "실행" with nothing approved.
+  if (text === composer.composeNoMergeTarget(context).text) return 'merge-no-target';
+  if (text === composer.composeNoApprovedExecution(context).text) return 'no-approved-execution';
   if (text === composer.composeRemoteBranchCleanupAlreadyApproved(context).text) return 'remote-cleanup-already-approved';
   for (const step of ['main-sync', 'local-cleanup', 'validation'] as const) {
     if (text === composer.composeExecutionPhraseHint(context, step).text) return `execution-phrase-hint:${step}`;

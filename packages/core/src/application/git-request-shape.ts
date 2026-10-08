@@ -12,21 +12,27 @@
  *     차이를 설명해줘") keeps the deterministic action handling — it is never a concept question or a topic mention;
  *  2. a status ask ("머지 가능한지 설명해줘", "PR 리뷰 어때?") keeps the live read-only status routes;
  *  3. otherwise a concept / explanation / comparison / how-to marker, or a non-git main verb, makes the turn topic-only.
- * Korean markers match whole words only (a following particle is allowed): "차이를" is a marker, "차이나" is not.
+ * Korean markers match whole words only (a following particle / ending cluster is allowed): "차이를", "차이는요" and
+ * "차이좀" are markers, "차이나" is not.
  *
  * Pure, deterministic and provider-free. They only REMOVE a trigger and never create a positive intent. They are never
  * consulted by an execution gate: the approved-execution allow-list (`EXECUTION_PHRASES`) stays exact.
  */
 
-/** Not preceded by a Hangul syllable (the marker starts a word). */
-const KO_START = '(?<![가-힣])';
+/** Not preceded by a Hangul syllable (the marker starts a word). Shared with the runtime's push topic guard. */
+export const KO_START = '(?<![가-힣])';
 /** Not followed by a Hangul syllable (the marker ends its word, after an optional particle). */
-const KO_END = '(?![가-힣])';
-/** Particles and copulas a Korean marker noun may carry. */
-const KO_PARTICLE =
-  '(?:이|가|을|를|은|는|의|도|만|에|에서|와|과|랑|이랑|로|으로|이란|란|이야|야|예요|이에요|입니다|점|점이|점을|점은|점도)?';
-/** A whole Korean marker noun (with an optional particle): "차이", "차이를", "차이점이" — never "차이나". */
-const koNoun = (words: string): string => `${KO_START}(?:${words})${KO_PARTICLE}${KO_END}`;
+export const KO_END = '(?![가-힣])';
+/**
+ * The ending cluster a Korean marker noun may carry, every part optional: a "점" suffix ("차이점"), a particle or copula
+ * ("를", "는", "이에요"), a polite sentence-final "요" ("차이는요", "차이가요", "차이점이요", "차이요") and a softener "좀"
+ * ("차이좀", "방법좀"). Codex P3 on 039d5ff: a comparison question ending in "차이는요?" or "차이좀 알려줘" is a concept
+ * question. Nothing outside the cluster is allowed, so "차이나", "비교적", "방법론" stay other words.
+ */
+export const KO_PARTICLE =
+  '(?:점)?(?:이|가|을|를|은|는|의|도|만|에|에서|와|과|랑|이랑|로|으로|이란|란|이야|야|예요|이에요|입니다)?(?:요)?(?:좀)?';
+/** A whole Korean marker noun with its ending cluster: "차이", "차이를", "차이점이", "차이는요", "차이좀" — never "차이나". */
+export const koNoun = (words: string): string => `${KO_START}(?:${words})${KO_PARTICLE}${KO_END}`;
 
 /** Clause boundaries (sentence punctuation, commas, connectives, and a Korean "-고" chain), like calendar-question. */
 const CLAUSE_SPLIT = /[.!?。！？]\s+|[.!?。！？]$|[,;]\s*|\s+(?:but|then)\s+|\s*(?:그리고|하지만|근데|그런데)\s+|(?<=[가-힣]고)\s+/iu;
@@ -48,6 +54,8 @@ const GIT_STATUS_ASK =
 const GIT_CONCEPT_MARKERS: readonly RegExp[] = [
   new RegExp(koNoun('차이|비교|장단점|개념|원리|의미|역할|뜻|(?:해결|사용|설정)?방법|해결법|사용법'), 'u'),
   new RegExp(`${KO_START}(?:설명|비교)\\s*(?:을|를)?\\s*(?:좀\\s*)?(?:해|부탁|가능)|${KO_START}가르쳐`, 'u'),
+  // "설명은요?", "설명이요" — the sentence-final ending cluster on "설명" (a bare "설명" noun stays a possible object).
+  new RegExp(`${KO_START}설명(?:은요|는요|이요)${KO_END}`, 'u'),
   /뭐(?:야|예요|에요|지|냐|니|임|가\s*(?:달라|다르))|뭔(?:가요|데|지|가)|무엇(?:이|인)|무슨\s*(?:뜻|의미|차이|역할)/u,
   /[A-Za-z0-9가-힣](?:이)?란\s*(?:[?？]|뭐|무엇|$)/u,
   /어떻게\s*(?:동작|작동|돌아가|되는\s*(?:거|건|지)|하는|하나|하지|하면|해야|해\s*[?？]|해요|쓰|써|사용|해결|처리)/u,

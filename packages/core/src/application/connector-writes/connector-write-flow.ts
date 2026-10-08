@@ -24,7 +24,13 @@ import type { ConnectorWriteReceipt, ConnectorWriteReceiptRepository } from '../
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import { containsCredentialMaterial } from '../credential-guard';
-import { documentedExecutionPhrase, isAcceptedExecutionPhrase, type ExecutionGate } from '../execution-command-guard';
+import {
+  documentedExecutionPhrase,
+  executionCommandRejection,
+  isAcceptedExecutionPhrase,
+  normalizeExecutionPhrase,
+  type ExecutionGate,
+} from '../execution-command-guard';
 import { toZonedDateTime, zonedToUtc } from '../reminders/zoned-time';
 import {
   CONNECTOR_WRITE_ISSUE_KEY,
@@ -254,6 +260,8 @@ export type ConnectorWriteRefusal =
   | 'invalid-choice'
   | 'binding-mismatch'
   | 'grant-expired'
+  /** The grant was withdrawn (거절/취소 after approval) before it could run (Codex P1 on 55c5a2f). */
+  | 'grant-revoked'
   | 'choice-expired';
 
 /** What one flow step produced; the runtime renders it through `ResponseComposer` (reply text lives there). */
@@ -307,7 +315,8 @@ export type ConnectorWriteStep =
 /**
  * Narrow storage (satisfied by the live `StorageProvider`; resolved at call time, ADR-0062). `sessions.list` and
  * `tasks.listByContext` serve only the stray-phrase lookups ({@link ConnectorWriteFlow.approvedElsewhere},
- * {@link ConnectorWriteFlow.recentSentInSession}); nothing is ever executed from them.
+ * {@link ConnectorWriteFlow.recentSentInSession}, {@link ConnectorWriteFlow.recentUnconfirmedInSession},
+ * {@link ConnectorWriteFlow.latestRequestInSession}); nothing is ever executed from them.
  */
 export interface ConnectorWriteFlowStore {
   readonly sessions: {
@@ -388,6 +397,28 @@ export interface ConnectorWriteFlow {
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentSend | null>;
   /**
+   * Codex P2 on 039d5ff / a2b8aed: this conversation's most recent write of `operation` that may have been sent — its
+   * receipt is UNCERTAIN, or still PREPARED (in flight / interrupted) — unless a LATER write of that kind in this
+   * conversation is SENT; null otherwise. It never expires (an unresolved outcome stays unresolved; bounded only by the
+   * session and receipt retention), and a later NOT_SENT does not hide it. No reply may then say nothing was sent.
+   */
+  recentUnconfirmedInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteRecentUnconfirmed | null>;
+  /**
+   * Codex P2/P3 on 55c5a2f: the single most recent write REQUEST of `operation` in THIS conversation by `actorId`, in any
+   * state (newest by creation), with what became of it — open, closed unsent (and why), SENT, NOT_SENT, or dispatched
+   * but unconfirmed. Bounded only by the conversation. Read-only; replies describe exactly this request.
+   */
+  latestRequestInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+  ): Promise<ConnectorWriteLatestRequest | null>;
+  /**
    * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
    */
@@ -395,7 +426,7 @@ export interface ConnectorWriteFlow {
   prepare(input: FlowInput & { readonly draft: ConnectorWriteDraft }): Promise<ConnectorWriteStep>;
   choose(input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number }): Promise<ConnectorWriteStep>;
   recordApproval(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
-  execute(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
+  execute(input: ConnectorWriteExecuteInput): Promise<ConnectorWriteStep>;
   close(
     session: Session,
     view: ConnectorWriteAnchorView,
@@ -433,6 +464,32 @@ export interface ConnectorWriteRecentSend {
   readonly timeZone: string;
 }
 
+/** What became of a conversation's latest write request ({@link ConnectorWriteFlow.latestRequestInSession}). */
+export type ConnectorWriteRequestState =
+  | { readonly kind: 'open' }
+  | { readonly kind: 'closed'; readonly reason: ConnectorWriteCloseReason }
+  | { readonly kind: 'sent' }
+  | { readonly kind: 'not-sent' }
+  | { readonly kind: 'unconfirmed'; readonly status: 'UNCERTAIN' | 'EXECUTING' };
+
+/** A conversation's latest write request of one kind ({@link ConnectorWriteFlow.latestRequestInSession}). */
+export interface ConnectorWriteLatestRequest {
+  readonly taskId: Id;
+  readonly operation: ConnectorWriteOperation;
+  readonly target: ConnectorWriteTargetSummary;
+  readonly createdAt: IsoTimestamp;
+  readonly state: ConnectorWriteRequestState;
+}
+
+/** A dispatched, unconfirmed write approved in this conversation ({@link ConnectorWriteFlow.recentUnconfirmedInSession}). */
+export interface ConnectorWriteRecentUnconfirmed {
+  readonly operation: ConnectorWriteOperation;
+  /** `UNCERTAIN`: the outcome could not be verified; `EXECUTING`: the receipt is still PREPARED (in flight). */
+  readonly status: 'UNCERTAIN' | 'EXECUTING';
+  /** When the receipt last changed. */
+  readonly at: IsoTimestamp;
+}
+
 /** The target part of a preview, for a hint shown outside the conversation that previewed it. */
 export function connectorWriteTargetOf(preview: ConnectorWritePreview): ConnectorWriteTargetSummary {
   switch (preview.operation) {
@@ -454,6 +511,15 @@ export interface FlowInput {
   readonly now: IsoTimestamp;
   /** A caller already holding the session write lock passes its hold (ADR-0113 D7); absent → the flow takes it. */
   readonly held?: SessionLockHold;
+}
+
+/**
+ * `execute`'s input. `claim` runs the validation + consume section; the runtime passes the shared approval → session
+ * locks a revocation also takes (Codex P1 on 55c5a2f). Without it the flow takes the session write lock.
+ */
+export interface ConnectorWriteExecuteInput extends FlowInput {
+  readonly view: ConnectorWriteAnchorView;
+  readonly claim?: <T>(work: (held: SessionLockHold) => Promise<T>) => Promise<T>;
 }
 
 /** The execution gate (EXECUTION_PHRASES) of each operation. */
@@ -507,6 +573,50 @@ export function mentionsConnectorWriteExecutionStep(text: string, operation: Con
   const lowered = text.toLowerCase();
   if (EXPLANATION_REQUEST.test(lowered)) return false;
   return EXECUTION_STEP_MENTIONS[operation].test(lowered.replace(/\s+/gu, ''));
+}
+
+/** A concept question about a step ("댓글 실행이 뭐야?", "what is execute post?") is ordinary chat, never a stray phrase. */
+const CONCEPT_QUESTION = /뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻|의미|\bwhat(?:'s|\s+is|\s+are|\s+does)\b|\bmean(?:s|ing)?\b/u;
+
+/**
+ * The operations whose execution step a short QUESTION or NEGATION names ("댓글 실행해도 돼?", "Slack 게시 실행하지 마",
+ * "일정 삭제 실행할까?", "execute post now?") — the shape {@link isAcceptedExecutionPhrase} vetoes, so it never executes.
+ * Explanation / concept requests ("댓글 실행 방법 알려줘", "게시 실행이 뭐야?") and statements are not matched (chat).
+ * Used only to pick a non-mutating reply when nothing of that kind is approved here (routing exec gaps) — never to
+ * execute, and never consulted by an execution gate.
+ */
+export function connectorWriteOperationsAskedAbout(text: string): ConnectorWriteOperation[] {
+  if (typeof text !== 'string') return [];
+  const rejection = executionCommandRejection(text);
+  if (rejection !== 'question' && rejection !== 'negation') return [];
+  if (CONCEPT_QUESTION.test(text.toLowerCase())) return [];
+  return CONNECTOR_WRITE_OPERATIONS.filter((operation) => mentionsConnectorWriteExecutionStep(text, operation));
+}
+
+/**
+ * Bare execution commands that name no step ("실행", "실행해", "실행해줘", "go", "run it"), after
+ * {@link normalizeExecutionPhrase} and one optional leading "지금/이제/바로/now" or trailing "now/please".
+ */
+const BARE_EXECUTION_REQUESTS: ReadonlySet<string> = new Set(
+  [
+    '실행', '실행해', '실행해줘', '실행하자', '실행시켜', '실행시켜줘', 'go', 'go go', 'run', 'run it', 'execute', 'execute it', 'do it',
+  ].map(normalizeExecutionPhrase),
+);
+const BARE_EXECUTION_PREFIX = /^(?:지금|이제|바로|now)\s+/u;
+const BARE_EXECUTION_SUFFIX = /\s+(?:now|please)$/u;
+
+/**
+ * True when the whole message is a bare execution command that names no step ("실행", "실행해줘", "go", "run it").
+ * While a connector write waits APPROVED it runs nothing and gets the exact-phrase reply (routing exec gaps) — the
+ * write's own phrase stays the only executor. Pure; never consulted by an execution gate.
+ */
+export function isBareExecutionRequest(text: string): boolean {
+  if (typeof text !== 'string') return false;
+  const base = normalizeExecutionPhrase(text);
+  const noPrefix = base.replace(BARE_EXECUTION_PREFIX, '');
+  return [base, noPrefix, base.replace(BARE_EXECUTION_SUFFIX, ''), noPrefix.replace(BARE_EXECUTION_SUFFIX, '')].some(
+    (form) => BARE_EXECUTION_REQUESTS.has(normalizeExecutionPhrase(form)),
+  );
 }
 
 /** The approval reason: operation, normalized target and payload hash — never the payload text. */
@@ -600,23 +710,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     operation: ConnectorWriteOperation,
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentSend | null> {
-    // The anchors this conversation created (the session id and the approval id live in the anchor's JSON; the receipt
-    // is keyed by the approval id), so no receipt column links a receipt to a conversation.
-    const tasks = await this.deps.store.tasks.listByContext(session.context.channelId, session.context.threadId);
-    const nowMs = Date.parse(now);
-    let best: { receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null = null;
-    for (const task of tasks) {
-      if (task.planId) continue;
-      const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
-      if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id || anchor.actorId !== actorId) continue;
-      // Only a consumed grant can have a receipt (the grant is consumed before anything is written).
-      if (anchor.operation !== operation || !anchor.approvalId || !anchor.consumedAt || !anchor.preview) continue;
-      const receipt = await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`);
-      if (!receipt || receipt.status !== 'SENT' || receipt.actorId !== actorId || receipt.operation !== operation) continue;
-      const sentMs = Date.parse(receipt.updatedAt);
-      if (!Number.isFinite(sentMs) || !Number.isFinite(nowMs) || nowMs - sentMs >= PENDING_APPROVAL_TTL_MS) continue;
-      if (!best || receipt.updatedAt > best.receipt.updatedAt) best = { receipt, preview: anchor.preview };
-    }
+    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['SENT'], PENDING_APPROVAL_TTL_MS);
     if (!best) return null;
     const { receipt, preview } = best;
     return {
@@ -626,6 +720,101 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       target: connectorWriteTargetOf(preview),
       timeZone: this.deps.timeZone,
     };
+  }
+
+  async recentUnconfirmedInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteRecentUnconfirmed | null> {
+    // No age bound: only a later SENT write of the same kind supersedes an unresolved one.
+    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['SENT', 'UNCERTAIN', 'PREPARED'], null);
+    if (!best || best.receipt.status === 'SENT') return null;
+    return { operation, status: best.receipt.status === 'UNCERTAIN' ? 'UNCERTAIN' : 'EXECUTING', at: best.receipt.updatedAt };
+  }
+
+  async latestRequestInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+  ): Promise<ConnectorWriteLatestRequest | null> {
+    let best: { taskId: Id; anchor: ConnectorWriteAnchor; order: number } | null = null;
+    const anchors = await this.sessionAnchorsWithTasks(session, actorId);
+    anchors.forEach(({ taskId, anchor }, order) => {
+      if (anchor.operation !== operation || !anchor.preview) return;
+      const newer =
+        !best ||
+        anchor.createdAt > best.anchor.createdAt ||
+        (anchor.createdAt === best.anchor.createdAt &&
+          (anchor.updatedAt > best.anchor.updatedAt || (anchor.updatedAt === best.anchor.updatedAt && order > best.order)));
+      if (newer) best = { taskId, anchor, order };
+    });
+    const found = best as { taskId: Id; anchor: ConnectorWriteAnchor; order: number } | null;
+    if (!found?.anchor.preview) return null;
+    return {
+      taskId: found.taskId,
+      operation,
+      target: connectorWriteTargetOf(found.anchor.preview),
+      createdAt: found.anchor.createdAt,
+      state: await this.requestStateOf(found.anchor),
+    };
+  }
+
+  /** What became of one request: the receipt decides once the grant was consumed (never trust a stale anchor alone). */
+  private async requestStateOf(anchor: ConnectorWriteAnchor): Promise<ConnectorWriteRequestState> {
+    if (!anchor.consumedAt) {
+      if (anchor.status === 'CLOSED') return { kind: 'closed', reason: anchor.closedReason ?? 'cancelled' };
+      return { kind: 'open' };
+    }
+    const receipt = anchor.approvalId ? await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`) : null;
+    const status = receipt?.status ?? (anchor.status === 'CLOSED' ? 'NOT_SENT' : anchor.status);
+    if (status === 'SENT') return { kind: 'sent' };
+    if (status === 'NOT_SENT') return { kind: 'not-sent' };
+    return { kind: 'unconfirmed', status: status === 'UNCERTAIN' ? 'UNCERTAIN' : 'EXECUTING' };
+  }
+
+  /** Every connector-write anchor this conversation created for `actorId` (any status), with its task id. Read-only. */
+  private async sessionAnchorsWithTasks(session: Session, actorId: Id): Promise<Array<{ taskId: Id; anchor: ConnectorWriteAnchor }>> {
+    const tasks = await this.deps.store.tasks.listByContext(session.context.channelId, session.context.threadId);
+    const anchors: Array<{ taskId: Id; anchor: ConnectorWriteAnchor }> = [];
+    for (const task of tasks) {
+      if (task.planId) continue;
+      const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+      if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id || anchor.actorId !== actorId) continue;
+      anchors.push({ taskId: task.id, anchor });
+    }
+    return anchors;
+  }
+
+  /**
+   * The newest receipt in one of `statuses` for a write of `operation` whose approval was anchored in THIS conversation
+   * by `actorId`, changed within `maxAgeMs` of `now` (null: any age). Read-only.
+   */
+  private async newestSessionReceipt(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+    statuses: readonly ConnectorWriteReceipt['status'][],
+    maxAgeMs: number | null,
+  ): Promise<{ receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null> {
+    // The anchors this conversation created (the session id and the approval id live in the anchor's JSON; the receipt
+    // is keyed by the approval id), so no receipt column links a receipt to a conversation.
+    const nowMs = Date.parse(now);
+    let best: { receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null = null;
+    for (const { anchor } of await this.sessionAnchorsWithTasks(session, actorId)) {
+      // Only a consumed grant can have a receipt (the grant is consumed before anything is written).
+      if (anchor.operation !== operation || !anchor.approvalId || !anchor.consumedAt || !anchor.preview) continue;
+      const receipt = await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`);
+      if (!receipt || !statuses.includes(receipt.status) || receipt.actorId !== actorId || receipt.operation !== operation) continue;
+      if (maxAgeMs !== null) {
+        const changedMs = Date.parse(receipt.updatedAt);
+        if (!Number.isFinite(changedMs) || !Number.isFinite(nowMs) || nowMs - changedMs >= maxAgeMs) continue;
+      }
+      if (!best || receipt.updatedAt > best.receipt.updatedAt) best = { receipt, preview: anchor.preview };
+    }
+    return best;
   }
 
   async releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null> {
@@ -824,7 +1013,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
 
   // ── execute: exactly the approved payload, once ────────────────────────────────────────────────────────────────
 
-  async execute(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep> {
+  async execute(input: ConnectorWriteExecuteInput): Promise<ConnectorWriteStep> {
     const { anchor, taskId } = input.view;
     const operation = anchor.operation;
     if (!operation) return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
@@ -835,41 +1024,14 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     // Only the actor who asked (in the session it was asked in) may execute; anyone else is refused and the owner's
     // grant stays as it is (like a non-owner decision on a pending approval, which only re-prompts).
     if (!this.bound(input.view, input)) return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
-    const { payload, payloadSha256, target, connector, approvalId, preview } = anchor;
-    if (!payload || !payloadSha256 || !target || !connector || !approvalId || !preview) {
-      await this.close(input.session, input.view, 'inconsistent', input.now);
-      return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
-    }
-    // The grant lives as long as a pending approval does (ADR-0093), counted from the approval decision.
-    if (isConnectorWriteAnchorLapsed(anchor, input.now)) {
-      await this.close(input.session, input.view, 'expired', input.now);
-      return { kind: 'refused', reason: 'grant-expired', family: anchor.family };
-    }
-    // Re-prove the binding: the approval is this request's CRITICAL approval, APPROVED, with the same reason; the
-    // anchored payload still hashes to the bound hash; the target is still allowed and the text still clean.
-    const approval = await this.deps.approvals.get(approvalId);
-    const expectedReason = connectorWriteApprovalReason(operation, target, payloadSha256);
-    if (
-      !approval ||
-      approval.status !== ApprovalStatus.APPROVED ||
-      approval.riskLevel !== RiskLevel.CRITICAL ||
-      approval.reason !== expectedReason ||
-      payload.operation !== operation ||
-      connectorWritePayloadSha256(operation, target, sendableOf(payload)) !== payloadSha256 ||
-      !this.stillAllowed(payload)
-    ) {
-      await this.close(input.session, input.view, 'inconsistent', input.now);
-      return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
-    }
-    const send = this.sendFor(payload, `cwr:${approvalId}`);
-    if (!send) {
-      await this.close(input.session, input.view, 'inconsistent', input.now);
-      return { kind: 'writes-off' };
-    }
-    // Consume the grant BEFORE anything leaves: a failed save sends nothing; a crash after it leaves EXECUTING,
-    // which a repeated phrase reports and never re-sends.
-    const consumed: ConnectorWriteAnchor = { ...anchor, status: 'EXECUTING', consumedAt: input.now, updatedAt: input.now };
-    await this.saveAnchor(taskId, input.session, consumed, { keepPointer: true });
+    // Codex P1 on 55c5a2f: validation and the consume run in ONE critical section shared with a revocation (the caller's
+    // approval → session locks; the session lock alone without one), on the LIVE anchor and approval — so exactly one of
+    // "execute" and "거절/취소" wins. The send itself runs after the section is released.
+    const claim =
+      input.claim ?? (<T>(work: (held: SessionLockHold) => Promise<T>) => this.sessionLock.run(input.session.id, work, input.held));
+    const claimed = await claim((held) => this.claimGrant(input, operation, held));
+    if ('step' in claimed) return claimed.step;
+    const { consumed, send, approvalId, connector, target, payloadSha256, preview } = claimed;
     await this.reconcileOnce(input.now);
     const executor = new ConnectorWriteExecutor({ receipts: this.deps.receipts, now: () => input.now, newId: this.deps.newId });
     let outcome: ConnectorWriteOutcome;
@@ -924,6 +1086,91 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     }
     this.log('info', 'connector_write.executed', { operation, status: outcome.status });
     return { kind: 'outcome', operation, outcome, preview };
+  }
+
+  /**
+   * Inside the claim section: re-read the anchor and the approval, re-prove the binding and consume the grant (EXECUTING)
+   * — or say truthfully why it cannot run (revoked / expired / already started / inconsistent). Never sends.
+   */
+  private async claimGrant(
+    input: ConnectorWriteExecuteInput,
+    operation: ConnectorWriteOperation,
+    held: SessionLockHold,
+  ): Promise<
+    | { readonly step: ConnectorWriteStep }
+    | {
+        readonly consumed: ConnectorWriteAnchor;
+        readonly send: () => Promise<ConnectorWriteOutcome>;
+        readonly approvalId: Id;
+        readonly connector: string;
+        readonly target: string;
+        readonly payloadSha256: string;
+        readonly preview: ConnectorWritePreview;
+      }
+  > {
+    const { taskId } = input.view;
+    const task = await this.deps.store.tasks.get(taskId);
+    const anchor = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    const family = input.view.anchor.family;
+    if (!anchor || anchor.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.operation !== operation) {
+      return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
+    }
+    const view: ConnectorWriteAnchorView = { ...input.view, anchor };
+    if (anchor.status === 'CLOSED') {
+      const reason: ConnectorWriteRefusal =
+        anchor.closedReason === 'denied' || anchor.closedReason === 'cancelled'
+          ? 'grant-revoked'
+          : anchor.closedReason === 'expired'
+            ? 'grant-expired'
+            : 'binding-mismatch';
+      return { step: { kind: 'refused', reason, family } };
+    }
+    if (anchor.consumedAt || anchor.status !== 'APPROVED') {
+      return { step: anchor.status === 'APPROVED' || anchor.status === 'APPROVAL_PENDING' || anchor.status === 'AWAITING_CHOICE'
+        ? { kind: 'refused', reason: 'binding-mismatch', family }
+        : repeatOf(anchor, operation) };
+    }
+    const { payload, payloadSha256, target, connector, approvalId, preview } = anchor;
+    if (!payload || !payloadSha256 || !target || !connector || !approvalId || !preview) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
+    }
+    // The grant lives as long as a pending approval does (ADR-0093), counted from the approval decision.
+    if (isConnectorWriteAnchorLapsed(anchor, input.now)) {
+      await this.close(input.session, view, 'expired', input.now, held);
+      return { step: { kind: 'refused', reason: 'grant-expired', family } };
+    }
+    // Re-prove the binding: the approval is this request's CRITICAL approval, APPROVED, with the same reason; the
+    // anchored payload still hashes to the bound hash; the target is still allowed and the text still clean.
+    const approval = await this.deps.approvals.get(approvalId);
+    if (approval?.status === ApprovalStatus.REJECTED) {
+      // Withdrawn (D12) without the anchor being closed yet: it never runs.
+      await this.close(input.session, view, 'cancelled', input.now, held);
+      return { step: { kind: 'refused', reason: 'grant-revoked', family } };
+    }
+    const expectedReason = connectorWriteApprovalReason(operation, target, payloadSha256);
+    if (
+      !approval ||
+      approval.status !== ApprovalStatus.APPROVED ||
+      approval.riskLevel !== RiskLevel.CRITICAL ||
+      approval.reason !== expectedReason ||
+      payload.operation !== operation ||
+      connectorWritePayloadSha256(operation, target, sendableOf(payload)) !== payloadSha256 ||
+      !this.stillAllowed(payload)
+    ) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
+    }
+    const send = this.sendFor(payload, `cwr:${approvalId}`);
+    if (!send) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'writes-off' } };
+    }
+    // Consume the grant BEFORE anything leaves: a failed save sends nothing; a crash after it leaves EXECUTING,
+    // which a repeated phrase reports and never re-sends.
+    const consumed: ConnectorWriteAnchor = { ...anchor, status: 'EXECUTING', consumedAt: input.now, updatedAt: input.now };
+    await this.saveAnchor(taskId, input.session, consumed, { keepPointer: true }, held);
+    return { consumed, send, approvalId, connector, target, payloadSha256, preview };
   }
 
   async close(

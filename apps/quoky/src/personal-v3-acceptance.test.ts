@@ -27,6 +27,7 @@ import {
   connectorWriteSent,
   isArchivedMemory,
   renderConnectorWriteApprovedReminder,
+  renderConnectorWriteBareExecution,
   renderConnectorWriteOutcome,
   renderNoApprovedConnectorWrite,
   type AiProvider,
@@ -614,6 +615,17 @@ describe('Personal v3 acceptance — connector-write execution allow-list (ADR-0
     }
     expect(totalWrites()).toBe(0);
   });
+
+  it('routing exec gaps: every write step asked as a question or negation with nothing approved gets the same fixed reply', async () => {
+    for (const [, phrase] of CONNECTOR_WRITE_GATES) {
+      for (const text of [`${phrase}해도 돼?`, `${phrase}할까?`, `${phrase}하지 마`]) {
+        const seen = await det(harness.freshContext(), text);
+        expect(seen.route, text).toBe('runtime');
+        expect(seen.text, text).toBe(renderNoApprovedConnectorWrite());
+      }
+    }
+    expect(totalWrites()).toBe(0);
+  });
 });
 
 describe('Personal v3 acceptance — connector-write approvals end to end, provider-free (ADR-0112 D5/D6, live QA W5)', () => {
@@ -621,7 +633,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     const owner = harness.freshContext();
     const request = 'PROJ-12에 댓글 달아줘: INT-2 배포 **완료**했습니다 @here';
     const preview = await det(owner, request);
-    expect(preview.text).toContain('Jira 댓글 미리보기예요. 아직 아무것도 보내지 않았어요.');
+    expect(preview.text).toContain('Jira 댓글 미리보기예요. 이 요청으로는 아직 아무것도 보내지 않았어요.');
     expect(preview.text).toContain('```\nINT-2 배포 **완료**했습니다 @here\n```');
     expect(preview.text).toContain('"댓글 실행"');
     expect(preview.text).toContain('CRITICAL');
@@ -632,13 +644,15 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect((await det(owner, '승인')).text).toContain('승인을 기록했어요. 아직 실행하지 않았어요.');
     // W5-L01: a question or negation about the step gets the deterministic reminder, never chat and never a send.
     for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
-      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행'));
+      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteApprovedReminder('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
     }
     for (const text of ['Slack 게시 실행', '일정 추가 실행', '승인']) await det(owner, text);
-    // INT-2 finding (not a send, but not deterministic either): a bare "실행" — the remote-cleanup gate's phrase — while a
-    // comment is approved names no write step, so it falls through to chat (W5-L01 covers only phrases naming the step).
-    // The safety property holds: nothing is sent and the grant still waits for its exact phrase.
-    await harness.turn(owner, '실행');
+    // INT-2 finding, fixed (routing exec gaps): a bare "실행" — the remote-cleanup gate's phrase — or "go" / "run it" while
+    // a comment is approved names no write step. It runs nothing and gets the deterministic reply quoting the exact phrase
+    // (it fell through to chat before); the grant still waits for "댓글 실행".
+    for (const text of ['실행', '실행해', '실행해줘', 'go', 'run it']) {
+      expect((await det(owner, text)).text, text).toBe(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행', { kind: 'issue', issueKey: 'PROJ-12' }));
+    }
     expect(totalWrites()).toBe(0);
 
     const sent = await det(owner, '댓글 실행');
@@ -685,11 +699,13 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     ]);
   });
 
-  it('Jira transition: 거절 sends nothing and the phrase afterwards has nothing approved (W5 T4–T5)', async () => {
+  it('Jira transition: 거절 sends nothing and the phrase afterwards names the rejected request (W5 T4–T5)', async () => {
     const owner = harness.freshContext();
     await det(owner, 'PROJ-7 완료로 바꿔줘');
-    expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 아무것도 보내지 않았어요.');
-    expect((await det(owner, '상태 변경 실행')).text).toBe(renderNoApprovedConnectorWrite());
+    expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect((await det(owner, '상태 변경 실행')).text).toBe(
+      '가장 최근 Jira 상태 변경 요청(PROJ-7)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.',
+    );
     expect(harness.writes.transition).toHaveLength(1);
   });
 
@@ -761,6 +777,43 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect(harness.writes.post[posts]).toMatchObject({ channel: SLACK_CHANNEL_ID, text: '운영 UI 승인 테스트입니다' });
   });
 
+  it('live QA session 3 D12: a post-approval 거절 records the approval REJECTED in the real store; nothing can run', async () => {
+    const owner = harness.freshContext();
+    const earlier = new Set((await harness.storage.approvals.list()).map((a) => a.id));
+    await det(owner, 'PROJ-12에 댓글: INT-2 철회 테스트');
+    await det(owner, '승인');
+    const approved = (await harness.storage.approvals.list()).find((a) => !earlier.has(a.id));
+    expect(approved?.status).toBe(ApprovalStatus.APPROVED);
+    expect(approved).toBeDefined();
+    const before = harness.writes.addComment.length;
+    expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(await harness.storage.approvals.get(approved!.id)).toMatchObject({
+      status: ApprovalStatus.REJECTED,
+      decision: false,
+      comment: 'revoked-before-execution',
+    });
+    expect((await det(owner, '댓글 실행')).text).toBe(
+      '가장 최근 Jira 댓글 요청(PROJ-12)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.\n필요하면 새로 요청해 주세요.',
+    );
+    expect(harness.writes.addComment).toHaveLength(before);
+  });
+
+  it('live QA session 3 D1: after a sent post, a newer rejected post makes "Slack 게시 실행" name the rejection, never "already sent"', async () => {
+    const owner = harness.freshContext();
+    await det(owner, `#${SLACK_CHANNEL_NAME}에 게시: INT-2 D1 첫 게시`);
+    await det(owner, '승인');
+    await det(owner, 'Slack 게시 실행');
+    const posts = harness.writes.post.length;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await det(owner, `#${SLACK_CHANNEL_NAME}에 게시: INT-2 D1 거절할 게시`);
+    await det(owner, '거절');
+    const reply = await det(owner, 'Slack 게시 실행');
+    expect(reply.text).toContain(`가장 최근 Slack 게시 요청(#${SLACK_CHANNEL_NAME})은 거절돼서 실행하지 않았어요.`);
+    expect(reply.text).not.toContain('이미 보냈어요');
+    expect(reply.text).not.toContain('이미 실행했어요');
+    expect(harness.writes.post).toHaveLength(posts);
+  });
+
   it('calendar create (W4-L01 phrasing): preview → 승인 → a question is only a reminder → 일정 추가 실행 creates once (W5 K1–K4)', async () => {
     const owner = harness.freshContext();
     const preview = await det(owner, '내일 오후 3시에 회의 잡아줘');
@@ -769,7 +822,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect(preview.text).toContain('"일정 추가 실행"');
     await det(owner, '승인');
     expect((await det(owner, '일정 추가 실행할까?')).text).toBe(
-      renderConnectorWriteApprovedReminder('CALENDAR_EVENT_CREATE', '일정 추가 실행'),
+      renderConnectorWriteApprovedReminder('CALENDAR_EVENT_CREATE', '일정 추가 실행', { kind: 'calendar' }),
     );
     expect(harness.writes.createEvent).toHaveLength(0);
     await det(owner, '일정 추가 실행');
@@ -797,7 +850,9 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     const remove = await det(other, '내일 3시 회의 취소해줘');
     expect(remove.text).toContain('"일정 삭제 실행"');
     await det(other, '거절');
-    expect((await det(other, '일정 삭제 실행')).text).toBe(renderNoApprovedConnectorWrite());
+    expect((await det(other, '일정 삭제 실행')).text).toBe(
+      '가장 최근 캘린더 일정 삭제 요청(기본 캘린더)은 거절돼서 실행하지 않았어요. 그 요청으로는 캘린더를 바꾸지 않았어요.\n필요하면 새로 요청해 주세요.',
+    );
     expect(harness.writes.deleteEvent).toEqual([]);
     expect(harness.primaryReads.length).toBeGreaterThanOrEqual(2);
   });

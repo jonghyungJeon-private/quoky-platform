@@ -83,6 +83,20 @@ describe('Codex review of f45ab9d — word boundaries, clause precedence and sta
     },
   );
 
+  it.each(['rebase와 merge 차이는요?', 'git commit 차이좀 알려줘', 'merge랑 rebase 차이가요?', '차이점은요?', '차이점이요', '차이요?', '머지 방법좀', '비교좀 해줘', '의미가요?', 'squash 머지 설명은요?'])(
+    '%s → a marker with a sentence-final ending cluster (요 / 좀) counts (Codex P3 on 039d5ff)',
+    (text) => {
+      expect(isGitConceptQuestion(text)).toBe(true);
+    },
+  );
+
+  it.each(['차이나 서버 변경을 푸시해줘', '비교적 오래된 원격 브랜치 삭제해줘', '방법론 문서 머지해줘', 'PR 설명 좀 고쳐서 커밋해줘'])(
+    '%s → the ending cluster never reaches into another word or a plain noun object',
+    (text) => {
+      expect(isGitConceptQuestion(text)).toBe(false);
+    },
+  );
+
   it.each(['rebase와 merge 차이', '차이가 뭐야', '차이를 알려줘', '차이점이 있어?', 'merge 방법을 알려줘', 'squash 머지의 의미가 뭐야'])(
     '%s → a whole marker word (with a particle) still counts',
     (text) => {

@@ -36,15 +36,20 @@ import {
   renderConnectorWriteAlreadyExecuted,
   renderConnectorWriteApprovedElsewhere,
   renderConnectorWriteApprovedReminder,
+  renderConnectorWriteBareExecution,
+  renderConnectorWriteLatestRequest,
   renderConnectorWritePending,
+  renderConnectorWriteRevokeTooLate,
   renderConnectorWriteStep,
   renderNoApprovedConnectorWrite,
 } from './connector-writes/connector-write-copy';
 import type {
   ConnectorWriteApprovedElsewhere,
+  ConnectorWriteLatestRequest,
   ConnectorWritePreview,
   ConnectorWriteRecentSend,
   ConnectorWriteStep,
+  ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
 import type { ConnectorWriteOperation } from '../ports';
 import { formatSafeErrorText } from './safe-error';
@@ -1199,8 +1204,19 @@ export class ResponseComposer {
     context: ConversationContext,
     operation: ConnectorWriteOperation,
     executionPhrase: string,
+    target?: ConnectorWriteTargetSummary,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase) };
+    return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase, target) };
+  }
+
+  /** A bare "실행" / "실행해줘" / "go" / "run it" while the write waits approved: nothing ran; quotes the exact phrase. */
+  composeConnectorWriteBareExecution(
+    context: ConversationContext,
+    operation: ConnectorWriteOperation,
+    executionPhrase: string,
+    target?: ConnectorWriteTargetSummary,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteBareExecution(operation, executionPhrase, target) };
   }
 
   /** The execution phrase repeated after a write of that kind approved in this conversation was SENT recently (W5-L02). */
@@ -1218,6 +1234,33 @@ export class ResponseComposer {
    */
   composeConnectorWriteApprovedElsewhere(context: ConversationContext, elsewhere: ConnectorWriteApprovedElsewhere): OutboundMessage {
     return { context, text: renderConnectorWriteApprovedElsewhere(elsewhere) };
+  }
+
+  /** A 거절/취소 after execution of the approved write started (Codex P1 on 55c5a2f): not withdrawn; never "nothing sent". */
+  composeConnectorWriteRevokeTooLate(context: ConversationContext, operation: ConnectorWriteOperation): OutboundMessage {
+    return { context, text: renderConnectorWriteRevokeTooLate(operation) };
+  }
+
+  /** The latest request of that kind ended without a send (closed unsent / NOT_SENT): describes exactly that request. */
+  composeConnectorWriteLatestRequest(
+    context: ConversationContext,
+    latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
+    olderUnconfirmed: boolean,
+  ): OutboundMessage {
+    return { context, text: renderConnectorWriteLatestRequest(latest, olderUnconfirmed) };
+  }
+
+  /**
+   * Live QA session 3 (D11): a bare "실행" / "실행해줘" / "go" / "run it" with nothing approved in this conversation. Fixed
+   * copy, no provider: nothing ran, and execution happens only through each approved step's own phrase.
+   */
+  composeNoApprovedExecution(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '이 대화에는 지금 실행할 승인된 작업이 없어요. 아무것도 실행하지 않았어요.\n' +
+        '실행은 승인한 작업마다 안내된 문구로만 해요 (예: "커밋 실행", "댓글 실행", "Slack 게시 실행").',
+    };
   }
 
   /** A connector-write execution phrase with no approved write to run (QA-018 pattern). */
@@ -2528,6 +2571,19 @@ export class ResponseComposer {
       text:
         '병합은 이 설정에서 꺼져 있어요(QUOKY_GIT_MERGE_ENABLED=false). PR은 GitHub에서 직접 검토하고 병합해 주세요.\n' +
         '병합 승인은 만들지 않았어요. PR 병합, main 동기화, 브랜치 정리는 하지 않았어요.',
+    };
+  }
+
+  /**
+   * A merge request with no code chain while merging is enabled (live QA session 3, D11): there is no PR to merge.
+   * Fixed copy — no approval, no hosting call.
+   */
+  composeNoMergeTarget(context: ConversationContext): OutboundMessage {
+    return {
+      context,
+      text:
+        '지금 병합할 PR이 없어요. 코드 변경을 PR로 만든 뒤 "머지해줘"라고 알려 주세요.\n' +
+        '병합 승인은 만들지 않았고 아무것도 병합하지 않았어요.',
     };
   }
 
