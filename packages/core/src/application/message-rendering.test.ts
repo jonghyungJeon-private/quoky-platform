@@ -4,6 +4,7 @@ import {
   PLAIN_TEXT_MARKUP,
   clipMessage,
   conversationRefOf,
+  firstFit,
   isDirectConversation,
   fitLines,
   joinBody,
@@ -175,5 +176,21 @@ describe('platform-neutral message content (PLT-0)', () => {
       expect(plainTextOf(links(100))).toBe('출처:\n- https://a.test\nused 2');
       expect(plainTextOf(links(20))).toBe('used 2');
     });
+  });
+});
+
+describe('first-fit (BRF-1 review P2)', () => {
+  it('renders the first candidate that fits in the delivering markup, else the last', () => {
+    const body = messageBody(firstFit([messageContent('full ', untrustedText('abcd')), 'short'], 9, 'code-points'));
+    expect(plainTextOf(body)).toBe('full abcd'); // exactly 9 in the plain rendering
+    expect(renderMessageContent(body, WIDE)).toBe('short'); // "full {markup:abcd}" does not fit
+    expect(plainTextOf(messageBody(firstFit(['0123456789', 'also too long'], 5, 'utf16')))).toBe('also too long');
+    expect(() => firstFit([], 5, 'utf16')).toThrow(RangeError);
+  });
+
+  it('carries platform markup when any candidate does, and refuses string coercion', () => {
+    expect(needsPlatformMarkup(messageBody(firstFit(['a', 'b'], 5, 'utf16')))).toBe(false);
+    expect(needsPlatformMarkup(messageBody(firstFit(['a', messageContent(untrustedText('b'))], 5, 'utf16')))).toBe(true);
+    expect(() => `${firstFit(['a'], 5, 'utf16')}`).toThrow(TypeError);
   });
 });

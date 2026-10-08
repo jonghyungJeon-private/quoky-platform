@@ -399,3 +399,88 @@ describe('composeDailyBrief — the message budget keeps every header and notice
     expect(blocks[3]).toMatch(/\n- 외 \d+건$/);
   });
 });
+
+describe('composeDailyBrief — the full brief is kept whenever it fits (BRF-1 review P2, second loop)', () => {
+  const HEAVY = { ...PLAIN_TEXT_MARKUP, untrusted: (text: string) => Array.from(text).map((c) => `\\${c}`).join('') };
+  const RENDERERS = [
+    ['plain', PLAIN_TEXT_MARKUP],
+    ['heavy escaping', HEAVY],
+  ] as const;
+  const MAX = REMINDER_LIMITS.maxDeliveredTextChars;
+  const length = (text: string): number => Array.from(text).length;
+  const hh = (i: number): string => String(9 + i).padStart(2, '0');
+
+  function input(options: { calendarTitle: number; workTitle: number; firstBody: number; calendar?: 'unreadable'; jira?: 'list' }) {
+    return {
+      now: NOW,
+      timeZone: ZONE,
+      reminders: Array.from({ length: 10 }, (_, i) => reminder({ displayNo: i + 1, body: i === 0 ? '가'.repeat(options.firstBody) : '가' })),
+      workItems: Array.from({ length: 10 }, (_, i) => item(`w${i}`, { title: '나'.repeat(options.workTitle), createdAt: `2026-09-0${i + 1}T00:00:00.000Z` })),
+      calendar:
+        options.calendar === 'unreadable'
+          ? null
+          : { events: Array.from({ length: 10 }, (_, i) => event({ id: `e${i}`, title: '다'.repeat(options.calendarTitle), start: `2026-10-02T0${i}:00:00.000Z`, end: `2026-10-02T0${i}:30:00.000Z` })), limit: 50 },
+      assignedWork: options.jira === 'list' ? Array.from({ length: 7 }, (_, i) => ({ id: `P-${i}`, title: '라'.repeat(options.workTitle), dueDate: '2026-10-02' })) : null,
+    };
+  }
+
+  /** The full brief, built independently of the composer: what the brief must be, byte for byte, when it fits. */
+  function expectedFull(options: Parameters<typeof input>[0], untrusted: (text: string) => string): string {
+    const lines = ['오늘의 브리핑 · 10월 2일(금)', ''];
+    if (options.calendar === 'unreadable') lines.push('오늘 일정: 불러오지 못했어요.');
+    else lines.push('오늘 일정 10건', ...Array.from({ length: 10 }, (_, i) => `- ${hh(i)}:00–${hh(i)}:30 ${untrusted('다'.repeat(options.calendarTitle))}`));
+    lines.push('', '오늘 남은 알림 10건', ...Array.from({ length: 10 }, (_, i) => `- 오후 3:00 ${i === 0 ? '가'.repeat(options.firstBody) : '가'} (#${i + 1})`));
+    lines.push('', '진행 중인 작업 10건', ...Array.from({ length: 10 }, () => `- ${untrusted('나'.repeat(options.workTitle))}`));
+    if (options.jira === 'list') {
+      lines.push('', '오늘 마감·업데이트된 담당 이슈 7건', ...Array.from({ length: 5 }, (_, i) => `- ${untrusted(`P-${i}`)} ${untrusted('라'.repeat(options.workTitle))}`), '- 외 2건');
+    } else {
+      lines.push('', '담당 이슈: 불러오지 못했어요.');
+    }
+    return lines.join('\n');
+  }
+
+  it("Codex's repro is the previous brief, byte for byte (1,798 characters, every entry shown)", () => {
+    const options = { calendarTitle: 80, workTitle: 57, firstBody: 1 };
+    const text = composeDailyBrief(input(options));
+    expect(text).toBe(expectedFull(options, (t) => t));
+    expect(length(text)).toBe(1798);
+    expect(text).not.toContain('- 외 ');
+  });
+
+  it.each(RENDERERS)('around the boundary (%s): the full brief when it fits, else every header, ≤ budget, counts add up', (_name, markup) => {
+    const untrusted = (text: string): string => markup.untrusted(text, 'markup');
+    const seen = new Set<string>();
+    for (const variant of [{}, { calendar: 'unreadable' as const }, { jira: 'list' as const }]) {
+      // workTitle steps of 3 move the full length by 30 (plain) or 60 (heavy): 60 consecutive firstBody sizes cover every length.
+      for (let workTitle = 2; workTitle <= 80; workTitle += 3) {
+        for (let firstBody = 1; firstBody <= 60; firstBody += 1) {
+          const options = { calendarTitle: 40, workTitle, firstBody, ...variant };
+          const full = expectedFull(options, untrusted);
+          const text = renderMessageContent(composeDailyBriefBody(input(options)), markup);
+          if (length(full) <= MAX) {
+            if (length(full) === MAX) seen.add('exactly at the budget');
+            expect(text).toBe(full);
+            continue;
+          }
+          if (length(full) === MAX + 1) seen.add('one over the budget');
+          expect(length(text)).toBeLessThanOrEqual(MAX);
+          const blocks = text.split('\n\n');
+          const fullBlocks = full.split('\n\n');
+          expect(blocks).toHaveLength(fullBlocks.length);
+          blocks.forEach((block, index) => {
+            const lines = block.split('\n');
+            // Header line, notice or count header: always the same as in the full brief.
+            expect(lines[0]).toBe(fullBlocks[index]?.split('\n')[0]);
+            const total = /^.+ (\d+)건$/.exec(lines[0] as string)?.[1];
+            if (index === 0 || total === undefined) return;
+            const omitted = Number(/^- 외 (\d+)건$/.exec(lines[lines.length - 1] as string)?.[1] ?? 0);
+            const listed = lines.slice(1).filter((line) => !/^- 외 \d+건$/.test(line)).length;
+            expect(listed + omitted).toBe(Number(total));
+          });
+          expect(text).not.toBe(full);
+        }
+      }
+    }
+    expect([...seen].sort()).toEqual(['exactly at the budget', 'one over the budget']);
+  }, 60_000);
+});

@@ -11,7 +11,7 @@ import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import type { ConnectorItem } from '../../ports/connector-provider.port';
 import { calendarDayEventLines } from '../calendar/calendar-reply-renderer';
 import { containsCredentialMaterial } from '../credential-guard';
-import { clipMessage, messageBody, takeLines, untrustedText } from '../message-rendering';
+import { clipMessage, firstFit, joinBody, messageBody, takeLines, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
 import { localDateOf, toZonedDateTime, type LocalDate } from './zoned-time';
 
@@ -181,8 +181,18 @@ interface BriefSection {
   readonly hidden: number;
 }
 
-/** Room for a section's closing "- 외 N건" line and its line break. */
-const OMITTED_LINE_RESERVE_CHARS = 12;
+function omittedLine(count: number): string {
+  return `- 외 ${count}건`;
+}
+
+/** Room for a section's closing "- 외 N건" line and its line break: the longest it can be (every entry left out). */
+function omittedReserve(section: BriefSection): number {
+  return 1 + codePoints(omittedLine(section.hidden + section.items.length));
+}
+
+function codePoints(text: string): number {
+  return Array.from(text).length;
+}
 
 function listSection(header: string, entries: readonly MessageBody[], max: number): BriefSection {
   return { head: [header], items: entries.slice(0, max), hidden: Math.max(0, entries.length - max) };
@@ -228,24 +238,30 @@ function assignedWorkSection(items: readonly ConnectorItem[] | null, input: Dail
   return listSection(`오늘 마감·업데이트된 담당 이슈 ${today.length}건`, today.map(workLine), DAILY_BRIEF_MAX_WORK_ENTRIES);
 }
 
-function codePoints(text: string): number {
-  return Array.from(text).length;
-}
-
 /** What a section needs even when every one of its items is dropped: its blank separator, head and "외 N건" line. */
 function mandatoryChars(section: BriefSection): number {
   const head = section.head.reduce((sum, line) => sum + 1 + codePoints(line), 0);
   const listed = section.items.length > 0 || section.hidden > 0;
-  return 1 + head + (listed ? OMITTED_LINE_RESERVE_CHARS : 0);
+  return 1 + head + (listed ? omittedReserve(section) : 0);
+}
+
+/** Every section in full: the brief exactly as it reads when nothing has to shrink. */
+function fullBrief(header: string, sections: readonly BriefSection[]): MessageBody {
+  const lines: MessageBody[] = [header];
+  for (const section of sections) {
+    lines.push('', ...section.head, ...section.items);
+    if (section.hidden > 0) lines.push(omittedLine(section.hidden));
+  }
+  return joinBody(lines);
 }
 
 /**
- * The sections inside one delivered message (REMINDER_LIMITS.maxDeliveredTextChars of the platform's rendering).
- * Each section is a `take-lines` node whose head holds everything before it, so earlier sections keep their items
- * first. Every layer reserves the mandatory lines of the sections after it, so a header, an empty-day notice or a
+ * The sections when the full brief does not fit one delivered message: each section is a `take-lines` node whose
+ * head holds everything before it, so earlier sections keep their items first. Every layer reserves the mandatory
+ * lines of the sections after it (and its own longest "외 N건" line), so a header, an empty-day notice or a
  * could-not-read note is never dropped: only list items shrink, each section closing with "- 외 N건".
  */
-function boundedBrief(header: string, sections: readonly BriefSection[]): MessageBody {
+function shrunkBrief(header: string, sections: readonly BriefSection[]): MessageBody {
   const maxChars = REMINDER_LIMITS.maxDeliveredTextChars;
   const later = sections.map((_, index) =>
     sections.slice(index + 1).reduce((sum, section) => sum + mandatoryChars(section), 0),
@@ -257,7 +273,7 @@ function boundedBrief(header: string, sections: readonly BriefSection[]): Messag
       unit: 'code-points',
       maxChars,
       // The line breaks between the head lines, the "외 N건" line, and every later section's mandatory lines.
-      baseChars: head.length - 1 + OMITTED_LINE_RESERVE_CHARS + (later[index] ?? 0),
+      baseChars: head.length - 1 + omittedReserve(section) + (later[index] ?? 0),
       head,
       tail: [],
       lines: section.items.map((content) => ({ content, item: true })),
@@ -266,6 +282,17 @@ function boundedBrief(header: string, sections: readonly BriefSection[]): Messag
   });
   // A last guard only: the layers above already keep the rendering inside the bound.
   return messageBody(clipMessage(body, maxChars, 'code-points'));
+}
+
+/**
+ * The brief inside one delivered message (REMINDER_LIMITS.maxDeliveredTextChars of the platform's rendering): the
+ * full brief, byte for byte, whenever it fits there; the shrunk brief only when it does not. Decided at render time,
+ * on the delivering platform's own rendering (its escaping can make the same brief longer).
+ */
+function boundedBrief(header: string, sections: readonly BriefSection[]): MessageBody {
+  return messageBody(
+    firstFit([fullBrief(header, sections), shrunkBrief(header, sections)], REMINDER_LIMITS.maxDeliveredTextChars, 'code-points'),
+  );
 }
 
 /** Compose the brief text (Korean, no emoji, at most one delivered message). */

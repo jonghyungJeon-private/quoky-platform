@@ -12,7 +12,7 @@
  *   parse mode: Markdown platforms deliver it as is (a fence already neutralizes its contents), any other parse mode
  *   (HTML, plain text) escapes or translates it.
  * - `untrusted`, `link`, `conversation` and `platform-note` are the spans whose presentation is the platform's.
- * - `clip`, `fit-lines` and `take-lines` are length budgets. They are evaluated on the RENDERED text of the platform
+ * - `clip`, `fit-lines`, `take-lines` and `first-fit` are length budgets. They are evaluated on the RENDERED text of the platform
  *   the message is delivered on, so a budget keeps exactly the lines that fit there (an escaped title is longer than
  *   its plain form) and the plain rendering applies the same rule to the plain text.
  */
@@ -128,6 +128,18 @@ export interface TakeLinesNode {
   readonly omitted?: { readonly hidden: number; readonly before: string; readonly after: string };
 }
 
+/**
+ * The first of `candidates` whose rendering is at most `maxChars` (in `unit`), or the last one when none is. A body
+ * keeps its full form whenever that fits on the delivering platform and falls back to a bounded form only otherwise
+ * (the morning brief, ADR-0117 BRF-1).
+ */
+export interface FirstFitNode {
+  readonly kind: 'first-fit';
+  readonly candidates: readonly MessageContent[];
+  readonly maxChars: number;
+  readonly unit: MessageLengthUnit;
+}
+
 export type MessageNode =
   | string
   | UntrustedTextNode
@@ -136,7 +148,8 @@ export type MessageNode =
   | PlatformNoteNode
   | ClipNode
   | FitLinesNode
-  | TakeLinesNode;
+  | TakeLinesNode
+  | FirstFitNode;
 
 /** A message (or a part of one) as platform-neutral nodes. Build it with `messageContent` and friends. */
 export type MessageContent = readonly MessageNode[];

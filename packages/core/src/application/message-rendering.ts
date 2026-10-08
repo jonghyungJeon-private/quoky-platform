@@ -3,6 +3,7 @@ import type {
   ConversationContext,
   ConversationRefNode,
   FitLine,
+  FirstFitNode,
   FitLinesNode,
   LinkNode,
   MessageBody,
@@ -23,7 +24,7 @@ import type { MessageMarkup } from '../ports/message-markup.port';
  * Builders and the evaluator of the platform-neutral message content (PLT-0, `domain/message-content.ts`). Pure.
  *
  * A `PlatformAdapter` renders content with its own `MessageMarkup` (the port in `ports/message-markup.port.ts`); Core uses {@link PLAIN_TEXT_MARKUP} for
- * `OutboundMessage.text`. Layout nodes (`clip`, `fit-lines`, `take-lines`) are evaluated here, against the markup in
+ * `OutboundMessage.text`. Layout nodes (`clip`, `fit-lines`, `take-lines`, `first-fit`) are evaluated here, against the markup in
  * use, so every platform keeps exactly the lines that fit in ITS rendering.
  */
 
@@ -203,6 +204,12 @@ export function takeLines(spec: {
   });
 }
 
+/** The first candidate whose rendering fits `maxChars`, else the last (see `FirstFitNode`). */
+export function firstFit(candidates: readonly MessagePart[], maxChars: number, unit: MessageLengthUnit): FirstFitNode {
+  if (candidates.length === 0) throw new RangeError('first-fit needs at least one candidate');
+  return sealNode({ kind: 'first-fit', candidates: Object.freeze(candidates.map(asContent)), maxChars, unit });
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Evaluation
 // ---------------------------------------------------------------------------------------------------------------------
@@ -274,6 +281,15 @@ function renderTakeLines(node: TakeLinesNode, markup: MessageMarkup): string {
   return [...shownHead, ...lines, ...tails].join('\n');
 }
 
+function renderFirstFit(node: FirstFitNode, markup: MessageMarkup): string {
+  let text = '';
+  for (const candidate of node.candidates) {
+    text = render(candidate, markup);
+    if (measure(text, node.unit) <= node.maxChars) return text;
+  }
+  return text;
+}
+
 function renderNode(node: MessageNode, markup: MessageMarkup): string {
   if (typeof node === 'string') return node;
   switch (node.kind) {
@@ -291,6 +307,8 @@ function renderNode(node: MessageNode, markup: MessageMarkup): string {
       return renderFitLines(node, markup);
     case 'take-lines':
       return renderTakeLines(node, markup);
+    case 'first-fit':
+      return renderFirstFit(node, markup);
   }
 }
 
@@ -319,6 +337,8 @@ function nodeNeedsMarkup(node: MessageNode): boolean {
       return node.lines.some((line) => line.content.some(nodeNeedsMarkup));
     case 'take-lines':
       return [...node.head, ...node.tail, ...node.lines.map((line) => line.content)].some((part) => part.some(nodeNeedsMarkup));
+    case 'first-fit':
+      return node.candidates.some((candidate) => candidate.some(nodeNeedsMarkup));
     default:
       return true;
   }

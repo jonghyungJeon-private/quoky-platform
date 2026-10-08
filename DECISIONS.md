@@ -18010,16 +18010,28 @@ needed.
   - Copy: `오늘 일정 N건`, `오늘 일정이 없어요.`, and for any failure or timeout `오늘 일정: 불러오지 못했어요.` (never an
     empty day). With no calendar configured the section is omitted, as D1 says.
   - The section comes first, after the header; the reminders, to-dos and the optional Jira section follow.
-- **Message budget (Codex review P2).** The brief stays within 1,800 code points of the platform's rendering, and no
-  header, empty-day notice or could-not-read note is ever cut. Before this fix, the whole brief was clipped at its end,
-  so a Jira timeout note after full sections disappeared.
-  - Each section is now a `take-lines` node whose head holds the sections before it, so earlier sections keep their
-    entries first.
-  - Each layer reserves the mandatory lines of every later section (separator, header or notice, and the "외 N건"
-    line). Only list entries shrink, and each section's "- 외 N건" line counts every entry not shown: the ones past the
-    cap and the ones dropped for the budget.
-  - The final clip remains as a last guard only.
-  - When everything fits, the output is byte-identical: the golden fixture and the existing brief tests are unchanged.
+- **Message budget (Codex review P2, two loops).** The brief stays within 1,800 code points of the platform's rendering,
+  and no header, empty-day notice or could-not-read note is ever cut. Before the first fix, the whole brief was clipped
+  at its end, so a Jira timeout note after full sections disappeared.
+  - **Full brief whenever it fits.** A new content node, `first-fit` (`domain/message-content.ts`), is evaluated in
+    `message-rendering.ts` against the delivering platform's markup. It renders the first candidate whose rendering
+    fits `maxChars`, otherwise the last one. It is additive: adapters only supply a `MessageMarkup` and do not walk
+    nodes, so no adapter changes.
+  - The brief is `first-fit[full, shrunk]`. The full brief is the previous layout byte for byte. It is used whenever it
+    fits, including at exactly 1,800 characters. The second loop fixed the first fix's unconditional "외 N건" reserve,
+    which dropped an entry from a brief that fit (Codex's 1,798-character repro).
+  - **Shrunk only when over.** In the shrunk form, each section is a `take-lines` layer whose head holds the sections
+    before it, so earlier sections keep their entries first. Each layer reserves the mandatory lines of every later
+    section: the separator, the header or notice, and that section's longest possible "외 N건" line. Only list entries
+    shrink, and each section's "- 외 N건" line counts every entry not shown. The final clip remains as a guard only.
+  - **Evidence.**
+    - Codex's repro is byte-identical (1,798 characters, every entry shown).
+    - A boundary property test runs with the plain renderer and with an escape-heavy one. It covers every full-brief
+      length, including exactly 1,800 and 1,801, with an unreadable calendar and with a Jira list or timeout. When the
+      full brief fits, the output equals an independently built full brief. Otherwise every header and notice
+      matches, the length is ≤ 1,800, and listed plus omitted entries equal each header's count.
+    - A one-off differential run against the previous composer, not committed, matched it in all 623 fitting cases,
+      on both renderers.
 - **Jira (D2).** D2 is concrete enough (flag, ≤5, key and title, named query), so it is implemented.
   - `QUOKY_BRIEF_JIRA_ENABLED` (exact `true`/`false`, default `false`, `BRIEF_JIRA_ENABLED_INVALID` with a preflight
     hint). Inert unless the read-only Jira connector is registered; the composition root picks it by its source label,
