@@ -26,6 +26,9 @@ importers:
       '@quoky/ai-cli':
         specifier: workspace:*
         version: link:../../packages/ai-cli
+      '@quoky/ai-openai-api':
+        specifier: workspace:*
+        version: link:../../packages/ai-openai-api
       '@quoky/command-local':
         specifier: workspace:*
         version: link:../../packages/command-local
@@ -97,6 +100,12 @@ importers:
         version: 14.16.3
 
   packages/ai-cli:
+    dependencies:
+      '@quoky/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/ai-openai-api:
     dependencies:
       '@quoky/core':
         specifier: workspace:*
