@@ -575,7 +575,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       this.noticesSent.add(`${chatId}:${notice.kind}`);
       void (async () => {
         // ADR-0102 D5: no adapter-side effect before the startup identity gate opens.
-        if (!(await this.inboundGateOpen(signal)) || this.ownerChatOf({ platform: TELEGRAM_PLATFORM, channelId: chatId, userId: chatId }) === undefined) return;
+        if (!(await this.inboundGateOpen(signal)) || !this.connected()) return;
+        if (this.ownerChatOf({ platform: TELEGRAM_PLATFORM, channelId: chatId, userId: chatId }) === undefined) return;
         try {
           await this.postMessage(chatId, notice.text, false);
           this.logger.info('telegram owner notice sent', { kind: notice.kind });
@@ -665,6 +666,12 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       return receipt;
     }
     this.clearTyping(chatId);
+    // Codex delta P2: nothing goes to Telegram before getMe matched, or once the Telegram side halted or stopped (the
+    // Discord adapter likewise skips a send while it is not connected).
+    if (!this.connected()) {
+      this.logger.warn('send skipped: telegram not connected', { platform: TELEGRAM_PLATFORM });
+      return receipt;
+    }
     const record = (id: string): void => {
       if (id !== '') platformMessageIds.push(id);
     };
@@ -763,7 +770,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 
   async sendTyping(context: ConversationContext): Promise<void> {
     const chatId = this.ownerChatOf(context);
-    if (chatId === undefined) return;
+    if (chatId === undefined || !this.connected()) return;
     await this.pumpTyping(chatId);
     if (this.typingTimers.has(chatId)) return;
     let ticks = 0;
@@ -779,7 +786,13 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.typingTimers.set(chatId, timer);
   }
 
+  /** Outbound is allowed only after `getMe` matched and while the Telegram side is neither halted nor stopped. */
+  private connected(): boolean {
+    return this.identityVerified && this.halted === undefined && !this.stopped;
+  }
+
   private async pumpTyping(chatId: string): Promise<void> {
+    if (!this.connected()) return;
     await this.api.call('sendChatAction', { chat_id: chatId, action: 'typing' }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
   }
 
@@ -821,7 +834,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     const chatId = this.ownerChatOf(target);
     if (chatId === undefined || chatId !== target.userId) return notSent('TARGET_NOT_ADMITTED', false);
     // Not started, identity not (yet) verified, halted or stopped: nothing was sent; the dispatcher may retry.
-    if (!this.identityVerified || this.halted !== undefined || this.stopped || this.loop === undefined) {
+    if (!this.connected() || this.loop === undefined) {
       return notSent('NOT_CONNECTED', true);
     }
     if (contentDisagreesWithText(notification)) {

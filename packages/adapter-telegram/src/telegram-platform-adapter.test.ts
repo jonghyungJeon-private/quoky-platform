@@ -1,5 +1,5 @@
 import { inspect } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { conversationRefOf, messageContent, outboundMessage, untrustedText } from '@quoky/core';
 import type { InboundMessage, LogFields, Logger, OwnerNotification } from '@quoky/core';
 import { TelegramBotToken } from './bot-token';
@@ -176,6 +176,57 @@ describe('Telegram startup under a transient outage (CA P2-2): never fails the s
     expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false, halted: code });
     expect(fake.callsTo('getUpdates')).toHaveLength(0);
     expect(h.logs.some((line) => line.level === 'error' && line.fields?.code === code)).toBe(true);
+    await h.adapter.stop();
+  });
+});
+
+describe('Codex delta P2: no outbound Bot API call before the identity is verified, or after a halt', () => {
+  const ctx = { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID), direct: true };
+  const outboundCalls = (fake: FakeTelegram) =>
+    fake.calls.filter((call) => call.method === 'sendMessage' || call.method === 'sendChatAction' || call.method === 'sendDocument');
+
+  it('after a transient getMe failure, sendMessage, sendTyping and deliver make zero calls; after verification they work', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') });
+    const logs: LogLine[] = [];
+    const adapter = new TelegramPlatformAdapter(
+      { token: holder(), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger(logs),
+      // The background retry waits until the test releases it.
+      { fetch: fake.fetch, sleep: async () => gate },
+    );
+    await adapter.start();
+    await until(() => fake.callsTo('getMe').length === 1);
+    await flush();
+    expect(adapter.status().identityVerified).toBe(false);
+
+    await expect(adapter.sendMessage({ context: ctx, text: 'hi' })).resolves.toEqual({ platformMessageIds: [] });
+    await adapter.sendTyping(ctx);
+    await expect(
+      adapter.deliver({ correlationId: 'r', target: ctx, kind: 'TEXT', text: '알림' }),
+    ).resolves.toEqual({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    expect(outboundCalls(fake)).toEqual([]);
+    expect(logs.some((line) => line.message === 'send skipped: telegram not connected')).toBe(true);
+
+    release();
+    await until(() => adapter.status().identityVerified);
+    await expect(adapter.sendMessage({ context: ctx, text: 'hi' })).resolves.toMatchObject({ platformMessageIds: ['1001'] });
+    await expect(adapter.deliver({ correlationId: 'r', target: ctx, kind: 'TEXT', text: '알림' })).resolves.toEqual({ status: 'SENT', via: 'dm' });
+    await adapter.sendTyping(ctx);
+    expect(outboundCalls(fake).map((call) => call.method)).toEqual(['sendMessage', 'sendMessage', 'sendChatAction']);
+    await adapter.stop();
+  });
+
+  it('a halted adapter sends nothing either', async () => {
+    const fake = new FakeTelegram().queue('getUpdates', okReply([]), errorReply(401));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    await h.adapter.sendMessage({ context: ctx, text: 'hi' });
+    await h.adapter.sendTyping(ctx);
+    expect(await h.adapter.deliver({ correlationId: 'r', target: ctx, kind: 'TEXT', text: 'x' })).toMatchObject({ reason: 'NOT_CONNECTED' });
+    expect(outboundCalls(fake)).toEqual([]);
     await h.adapter.stop();
   });
 });
@@ -388,6 +439,7 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
       { fetch: fake.fetch, sleep: untilAborted },
     );
     await adapter.start();
+    await until(() => adapter.status().identityVerified);
     const sending = adapter.sendMessage({ context: { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID) }, text: 'hi' });
     await until(() => fake.callsTo('sendMessage').length === 1);
     await adapter.stop();
@@ -578,9 +630,21 @@ describe('Telegram offset persistence (TG-1 review decision 2): a restart never 
 
 describe('Telegram delivery: owner private chats only, plain text, lossless chunks, typing', () => {
   const ctx = { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID), direct: true };
+  const running: Harness[] = [];
+  afterEach(async () => {
+    while (running.length > 0) await running.pop()?.adapter.stop();
+  });
+  /** A started adapter whose identity is verified (outbound is refused before that; Codex delta P2). */
+  async function connected(fake = new FakeTelegram()): Promise<Harness> {
+    const h = harness(fake);
+    running.push(h);
+    await h.adapter.start();
+    await until(() => h.adapter.status().identityVerified);
+    return h;
+  }
 
   it('sends plain text (no parse mode, no link preview) and reports the message ids', async () => {
-    const h = harness();
+    const h = await connected();
     const content = messageContent('결과: ', untrustedText('<b>x</b> *y* @everyone'), ' — ', conversationRefOf(ctx, { direct: '이 DM', channel: '채널' }));
     const receipt = await h.adapter.sendMessage(outboundMessage(ctx, content));
     const [send] = h.fake.callsTo('sendMessage');
@@ -593,7 +657,7 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
   });
 
   it('a long reply goes as numbered chunks within 4096 that join back to the text', async () => {
-    const h = harness();
+    const h = await connected();
     const text = Array.from({ length: 700 }, (_, i) => `${i}: ${'가나다라마바사'.repeat(2)}`).join('\n');
     const receipt = await h.adapter.sendMessage({ context: ctx, text });
     const sent = h.fake.callsTo('sendMessage').map((call) => String(call.params.text));
@@ -605,11 +669,11 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
 
   it('a 429 on a send is retried once after the short retry_after; nothing else is retried', async () => {
     const fake = new FakeTelegram().queue('sendMessage', errorReply(429, { retry_after: 2 }));
-    const h = harness(fake);
+    const h = await connected(fake);
     await h.adapter.sendMessage({ context: ctx, text: 'hi' });
     expect(fake.callsTo('sendMessage')).toHaveLength(2);
     expect(h.sleeps).toEqual([2000]);
-    const failing = harness(new FakeTelegram().queue('sendMessage', errorReply(502), errorReply(502)));
+    const failing = await connected(new FakeTelegram().queue('sendMessage', errorReply(502), errorReply(502)));
     await failing.adapter.sendMessage({ context: ctx, text: 'hi' });
     // The failed send, then the one partial-failure notice; never a resend of the reply.
     expect(failing.fake.callsTo('sendMessage').map((call) => call.params.text)).toEqual(['hi', '답변 일부를 전송하지 못했어요.']);
@@ -617,7 +681,7 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
   });
 
   it('refuses to send to anything but an owner private chat (a stranger, a group, a thread, another platform)', async () => {
-    const h = harness();
+    const h = await connected();
     for (const context of [
       { ...ctx, channelId: String(STRANGER_ID) },
       { ...ctx, channelId: '-1001' },
@@ -627,11 +691,11 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
       await h.adapter.sendMessage({ context, text: 'x' });
       await h.adapter.sendTyping(context);
     }
-    expect(h.fake.calls).toHaveLength(0);
+    expect(h.fake.calls.filter((call) => call.method === 'sendMessage' || call.method === 'sendChatAction')).toHaveLength(0);
   });
 
   it('typing is sendChatAction and stops at the reply', async () => {
-    const h = harness();
+    const h = await connected();
     await h.adapter.sendTyping(ctx);
     expect(h.fake.callsTo('sendChatAction')[0]?.params).toEqual({ chat_id: String(OWNER_ID), action: 'typing' });
     await h.adapter.sendMessage({ context: ctx, text: 'done' });
@@ -639,7 +703,7 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
   });
 
   it('a code-change preview goes as HTML <pre> parts; every other send has no parse mode', async () => {
-    const h = harness();
+    const h = await connected();
     await h.adapter.sendMessage({
       context: ctx,
       text: 'bounded',
@@ -665,7 +729,7 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
   });
 
   it('an oversized preview goes as one complete .diff document', async () => {
-    const h = harness();
+    const h = await connected();
     const diff = `+${'x'.repeat(5000)}\n`;
     await h.adapter.sendMessage({
       context: ctx,
