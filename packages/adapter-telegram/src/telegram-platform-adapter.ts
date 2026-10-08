@@ -276,6 +276,11 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private inboundGate?: Promise<boolean>;
 
   private controller?: AbortController;
+  /**
+   * Codex P1 (TG-2): aborted by a halt (and a stop). Every non-lifecycle Bot API call — sends, typing, `getFile`, the
+   * file download — carries it, so a halt cuts off work already in flight, not only new calls.
+   */
+  private haltController?: AbortController;
   /** The startup identity check while it runs (tracked so stop() aborts and awaits it). */
   private starting?: Promise<void>;
   private loop?: Promise<void>;
@@ -396,6 +401,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     // and the startup is tracked, so stop() aborts it and waits for it: nothing reaches the Bot API after a stop.
     const controller = new AbortController();
     this.controller = controller;
+    this.haltController = new AbortController();
     // TG-2: the attachment temp directory is swept now and every minute (local files only; no Bot API call).
     if (this.#attachmentSweepTimer === undefined) {
       void this.attachmentIntake.sweep();
@@ -481,6 +487,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private halt(code: TelegramStartupErrorCode): void {
     if (this.halted !== undefined) return;
     this.halted = code;
+    // Codex P1: nothing already in flight keeps talking to Telegram (a download in progress stops reading).
+    this.haltController?.abort();
     this.logger.error('telegram stopped', { code });
     try {
       this.haltListener?.(code);
@@ -516,6 +524,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private failStartup(code: TelegramStartupErrorCode): void {
     if (this.halted !== undefined) return;
     this.halted = code;
+    this.haltController?.abort();
     this.logger.error('telegram startup identity refused', { code });
     const error = new TelegramStartupError(code);
     if (this.fatalListener === undefined) this.pendingFatal = error;
@@ -535,6 +544,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     for (const timer of this.typingTimers.values()) clearInterval(timer);
     this.typingTimers.clear();
     this.controller?.abort();
+    this.haltController?.abort();
     // A startup still in flight is aborted and awaited: it can make no call after this.
     await this.starting?.catch(() => undefined);
     await this.loop?.catch(() => undefined);
@@ -1127,7 +1137,12 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
    */
   private async outbound(method: TelegramMethod, params: Record<string, unknown> | FormData, options: TelegramCallOptions): Promise<unknown> {
     if (!this.connected()) throw new OutboundRefused(method);
-    return this.api.call(method, params, options);
+    const link = linkSignals(options.signal, this.haltController?.signal);
+    try {
+      return await this.api.call(method, params, { ...options, signal: link.signal });
+    } finally {
+      link.dispose();
+    }
   }
 
   /**
@@ -1137,7 +1152,13 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
    */
   private async outboundDownload(filePath: string, maxBytes: number): Promise<Buffer> {
     if (!this.connected()) throw new OutboundRefused('downloadFile');
-    return this.api.download(filePath, { timeoutMs: ATTACHMENT_DOWNLOAD_TIMEOUT_MS, maxResponseBytes: maxBytes, ...this.lifecycleSignal() });
+    // Cancelled by a stop (the lifecycle) AND by a halt (Codex P1): the stream stops being read at once.
+    const link = linkSignals(this.controller?.signal, this.haltController?.signal);
+    try {
+      return await this.api.download(filePath, { timeoutMs: ATTACHMENT_DOWNLOAD_TIMEOUT_MS, maxResponseBytes: maxBytes, signal: link.signal });
+    } finally {
+      link.dispose();
+    }
   }
 
   /** The running lifecycle's abort signal (stop cancels the call), when there is one. */
@@ -1250,4 +1271,21 @@ function mergeAlbum(parts: readonly AdmittedTelegramMessage[]): AdmittedTelegram
   const text = parts.map((part) => part.text).filter((caption) => caption.trim().length > 0).join('\n');
   const attachments = parts.flatMap((part) => part.attachments ?? []);
   return { ...first, text, attachments };
+}
+
+/** One signal aborted when any of `signals` is (or already was); `dispose` drops the listeners. */
+function linkSignals(...signals: ReadonlyArray<AbortSignal | undefined>): { readonly signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const present = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  const abort = (): void => controller.abort();
+  for (const signal of present) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', abort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const signal of present) signal.removeEventListener('abort', abort);
+    },
+  };
 }

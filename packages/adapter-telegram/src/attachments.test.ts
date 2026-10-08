@@ -688,3 +688,61 @@ describe('Telegram adapter albums (TG-2): the parts of one media group are one t
     expect(offsets(fake).every((offset) => offset === undefined || offset <= 130)).toBe(true);
   });
 });
+
+/**
+ * A fake whose download of `slowPath` streams one chunk per pull and only when the test lets it, counting pulls; an abort
+ * of the request errors the body (as `fetch` does). Everything else is the scripted fake.
+ */
+function slowDownloadFetch(fake: FakeTelegram, slowPath: string) {
+  const state = { pulls: 0, release: () => undefined as void };
+  const fetchImpl: typeof fake.fetch = async (input, init) => {
+    const url = String(input);
+    if (!url.endsWith(`/${slowPath}`)) return fake.fetch(input, init);
+    fake.calls.push({ url, method: 'downloadFile', params: { file_path: slowPath }, init });
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        stream = controller;
+      },
+      async pull(controller) {
+        state.pulls += 1;
+        if (state.pulls > 1) await new Promise<void>((resolve) => (state.release = resolve));
+        controller.enqueue(new Uint8Array(16));
+      },
+    });
+    init.signal?.addEventListener('abort', () => stream.error(new DOMException('This operation was aborted', 'AbortError')), { once: true });
+    return new Response(body, { status: 200 });
+  };
+  return { state, fetchImpl };
+}
+
+describe('Telegram adapter halts and stops during intake (Codex P1/P2)', () => {
+  const album = () =>
+    [200, 201].map((id, index) => mediaUpdate(id, { ...photoField({ fileId: `p${index}`, size: PNG.length }), media_group_id: 'h' }));
+
+  it('a halt cuts off a download that is already streaming: no more bytes are read, no turn, no temp file left', async () => {
+    const parts = album();
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply(parts), okReply(parts))
+      .queue('getFile', fileReply('photos/a.jpg'), fileReply('photos/b.jpg'))
+      .queue('downloadFile', bytesReply(PNG));
+    const slow = slowDownloadFetch(fake, 'photos/b.jpg');
+    const h = harness(fake, { fetch: slow.fetchImpl });
+    await h.adapter.start();
+    // The first part is written (canonical temp file), the second is mid-stream.
+    await until(() => slow.state.pulls === 2);
+    await until(() => fake.callsTo('downloadFile').length === 2);
+    for (let i = 0; i < 200 && (await filesUnder(tempRoot)).length === 0; i += 1) await flush(1);
+    expect(await filesUnder(tempRoot)).toHaveLength(1);
+    // A halt (as a 401 or a poll conflict would raise it).
+    (h.adapter as unknown as { halt(code: string): void }).halt('TELEGRAM_AUTH_REJECTED');
+    await until(() => h.adapter.status().polling === false);
+    slow.state.release();
+    await flush(20);
+    expect(slow.state.pulls).toBe(2);
+    expect(h.received).toEqual([]);
+    expect(await filesUnder(tempRoot)).toEqual([]);
+    expect(fake.callsTo('sendMessage')).toEqual([]);
+    expect(h.adapter.status().halted).toBe('TELEGRAM_AUTH_REJECTED');
+  });
+});
