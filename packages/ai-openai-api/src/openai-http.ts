@@ -32,8 +32,10 @@ export const OpenAiFailureCode = {
   MALFORMED_RESPONSE: 'MALFORMED_RESPONSE',
   /** The response contained a tool, function, search or other non-message action item (never requested). */
   TOOL_CALL_REFUSED: 'TOOL_CALL_REFUSED',
-  /** The adapter refused the request before sending anything (capability, workspace or image rules). */
+  /** The adapter refused the request before sending anything (capability, workspace, context-file or image rules). */
   REQUEST_REFUSED: 'REQUEST_REFUSED',
+  /** `status: incomplete` for a reason other than the output bound (a content filter or anything unknown). */
+  INCOMPLETE: 'INCOMPLETE',
 } as const;
 export type OpenAiFailureCode = (typeof OpenAiFailureCode)[keyof typeof OpenAiFailureCode];
 
@@ -49,6 +51,7 @@ const KIND_OF: Readonly<Record<OpenAiFailureCode, AiFailureKind>> = {
   MALFORMED_RESPONSE: AiFailureKind.EXECUTION_FAILED,
   TOOL_CALL_REFUSED: AiFailureKind.EXECUTION_FAILED,
   REQUEST_REFUSED: AiFailureKind.EXECUTION_FAILED,
+  INCOMPLETE: AiFailureKind.EXECUTION_FAILED,
 };
 
 /** A classified OpenAI API failure: a fixed code, its `AiFailureKind`, and at most the HTTP status number. */

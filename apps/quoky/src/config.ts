@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_CLAUDE_MODEL, ollamaModelExecutionLocality } from '@quoky/ai-cli';
-import { isAllowedOpenAiModel, isWellFormedOpenAiApiKey } from '@quoky/ai-openai-api';
+import { OpenAiApiKey, isAllowedOpenAiModel } from '@quoky/ai-openai-api';
 import type { OpenAiModel } from '@quoky/ai-openai-api';
 import { AgentProfileRegistry, RepositoryIdentityResolver, agentProfileId, isAgentProfileId } from '@quoky/core';
 import type { AgentProfile, ContextBuilderConfig, RepositoryIdentity, RepositoryIdentityConfig } from '@quoky/core';
@@ -734,9 +734,12 @@ export function parseChatProviderSelection(env: NodeJS.ProcessEnv): ChatProvider
     : { provider, source: 'QUOKY_CHAT_PROVIDER' };
 }
 
-/** The OpenAI API provider configuration (ADR-0115 D3/D6). `apiKey` is a secret and is never logged or echoed. */
+/**
+ * The OpenAI API provider configuration (ADR-0115 D3/D6). `apiKey` is a secret holder: inspecting or serialising the
+ * configuration shows `[REDACTED]`; only the adapter reveals it, for its request header.
+ */
 export interface OpenAiApiConfig {
-  readonly apiKey: string;
+  readonly apiKey: OpenAiApiKey;
   readonly model: OpenAiModel;
 }
 
@@ -753,11 +756,10 @@ export function parseOpenAiConfig(
   env: NodeJS.ProcessEnv,
   selected: { readonly chat: boolean; readonly image: boolean },
 ): OpenAiApiConfig | undefined {
-  const apiKey = nonBlank(env.QUOKY_OPENAI_API_KEY);
+  const rawKey = nonBlank(env.QUOKY_OPENAI_API_KEY);
   const model = nonBlank(env.QUOKY_OPENAI_MODEL);
-  if (apiKey !== undefined && !isWellFormedOpenAiApiKey(apiKey)) {
-    throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_API_KEY_INVALID);
-  }
+  const apiKey = rawKey === undefined ? undefined : OpenAiApiKey.from(rawKey);
+  if (apiKey === null) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_API_KEY_INVALID);
   if (model !== undefined && !isAllowedOpenAiModel(model)) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_MODEL_INVALID);
   if (apiKey === undefined && model === undefined && !selected.chat && !selected.image) return undefined;
   if (apiKey === undefined) throw new QuokyConfigError(QuokyConfigErrorCode.OPENAI_API_KEY_MISSING);

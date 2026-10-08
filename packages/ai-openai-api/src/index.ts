@@ -21,15 +21,19 @@ export {
   isWellFormedOpenAiApiKey,
 } from './openai-api-config';
 export type { OpenAiModel } from './openai-api-config';
+export { OpenAiApiKey } from './openai-api-key';
 export { OpenAiApiError, OpenAiFailureCode, failureCodeOfStatus } from './openai-http';
 export {
   OPENAI_CHAT_CAPABILITIES,
   OPENAI_CHAT_PRIORITY,
   OPENAI_CHAT_PROVIDER_ID,
+  OPENAI_SHARED_PROBE_TTL_MS,
+  OPENAI_TRUNCATED_SUFFIX,
   OPENAI_VISION_PROVIDER_ID,
+  OpenAiSharedProbe,
   OpenAiApiProvider,
   OpenAiApiVisionProvider,
   buildResponsesRequestBody,
   parseResponsesBody,
 } from './openai-api-provider';
-export type { OpenAiApiProviderOptions, OpenAiInputPart, OpenAiReplyHygiene } from './openai-api-provider';
+export type { OpenAiApiProviderOptions, OpenAiIncompleteReason, OpenAiInputPart, OpenAiReplyHygiene } from './openai-api-provider';

@@ -1,5 +1,5 @@
 import { sanitizeGeneralChatText, sanitizeTerminalOutput, stripInternalMetadataEnvelope } from '@quoky/ai-cli';
-import { OPENAI_CHAT_PROVIDER_ID, OpenAiApiProvider, OpenAiApiVisionProvider } from '@quoky/ai-openai-api';
+import { OPENAI_CHAT_PROVIDER_ID, OpenAiApiProvider, OpenAiApiVisionProvider, OpenAiSharedProbe } from '@quoky/ai-openai-api';
 import { Capability, readGeneralChatReplyPolicy } from '@quoky/core';
 import type { AiProvider, AiRequest } from '@quoky/core';
 import type { OpenAiApiConfig } from './config';
@@ -10,9 +10,21 @@ import type { OpenAiApiConfig } from './config';
  * (ADR-0098 D2 and amendment D2), so an OpenAI reply goes through the same envelope strip, translation and action-claim
  * guards as a Codex or Claude reply.
  *
- * The key is passed only into the adapter constructors here; it never reaches Core, a log line or the selection
- * service (which sees provider instances and opaque ids only).
+ * The key holder is passed only into the adapter constructors here; it never reaches Core, a log line or the selection
+ * service (which sees provider instances and opaque ids only). The chat and image instances on the configured model
+ * share ONE readiness probe (one model-get call answers both).
  */
+
+const sharedProbes = new WeakMap<OpenAiApiConfig, OpenAiSharedProbe>();
+
+function sharedProbeOf(config: OpenAiApiConfig): OpenAiSharedProbe {
+  let probe = sharedProbes.get(config);
+  if (probe === undefined) {
+    probe = new OpenAiSharedProbe();
+    sharedProbes.set(config, probe);
+  }
+  return probe;
+}
 
 /** The same hygiene the Codex CLI chat provider applies: terminal framing always, the chat guards for `GENERAL_CHAT`. */
 export function openAiReplyHygiene(text: string, request: AiRequest): string {
@@ -20,6 +32,16 @@ export function openAiReplyHygiene(text: string, request: AiRequest): string {
   return request.capability === Capability.GENERAL_CHAT
     ? sanitizeGeneralChatText(stripInternalMetadataEnvelope(clean), readGeneralChatReplyPolicy(request.metadata))
     : clean;
+}
+
+/** The chat-tier instance on `QUOKY_OPENAI_MODEL` (`openai-api`). */
+export function openAiChat(config: OpenAiApiConfig): AiProvider {
+  return new OpenAiApiProvider({
+    apiKey: config.apiKey,
+    model: config.model,
+    replyHygiene: openAiReplyHygiene,
+    sharedProbe: sharedProbeOf(config),
+  });
 }
 
 /** A chat-tier instance on an allow-listed model other than `QUOKY_OPENAI_MODEL` (`openai-api:<model>`). */
@@ -34,5 +56,10 @@ export function openAiChatVariant(config: OpenAiApiConfig, model: string): AiPro
 
 /** The image-understanding instance on `QUOKY_OPENAI_MODEL` (`openai-vision-api`). */
 export function openAiVision(config: OpenAiApiConfig): AiProvider {
-  return new OpenAiApiVisionProvider({ apiKey: config.apiKey, model: config.model, replyHygiene: openAiReplyHygiene });
+  return new OpenAiApiVisionProvider({
+    apiKey: config.apiKey,
+    model: config.model,
+    replyHygiene: openAiReplyHygiene,
+    sharedProbe: sharedProbeOf(config),
+  });
 }

@@ -34,6 +34,7 @@ import {
 } from './bootstrap-preflight';
 import { loadConfig, resolveEnvFilePath } from './config';
 import { ReminderTickDriver } from './reminders/reminder-tick-driver';
+import { ProviderSelectionService } from './provider-selection/provider-selection-service';
 import { assertPrivateEnvFile } from './ops/env-file-guard';
 import { startupExitCode } from './ops/exit-codes';
 import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
@@ -106,7 +107,12 @@ async function bootstrap(): Promise<void> {
   });
 
   logResolvedDatabasePath(config.storage.dbPath, log);
-  await reportProviderReadiness(aiProviders, log);
+  // ADR-0115 implementation note: a REMOTE provider outside the effective selection (a configured but unselected HTTP
+  // provider) is not probed at startup; eligibility is the selection policy's answer, as data.
+  const providerSelection = app.get(ProviderSelectionService);
+  await reportProviderReadiness(aiProviders, log, {
+    eligible: (capability, provider) => providerSelection.isEligible(capability, {}, provider.id),
+  });
 
   // ADR-0102 D5: with the identity check on, inbound turns and approval decisions wait until the connected identity
   // is verified, and are never handled for a mismatched one. Off (no QUOKY_DISCORD_EXPECTED_BOT_ID) = no waiting.

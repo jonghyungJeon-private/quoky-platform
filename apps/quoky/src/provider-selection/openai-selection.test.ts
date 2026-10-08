@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Capability, NoProviderAvailableError } from '@quoky/core';
 import type { Actor, InboundMessage, Session, TurnHandlerContext } from '@quoky/core';
 import { OpenAiApiProvider, OpenAiApiVisionProvider } from '@quoky/ai-openai-api';
-import { describeStartupFailure } from '../bootstrap-preflight';
+import { inspect } from 'node:util';
+import { stripInternalMetadataEnvelope } from '@quoky/ai-cli';
+import { describeStartupFailure, reportProviderReadiness } from '../bootstrap-preflight';
 import { composeChatProviders } from '../chat-provider-composition';
 import { QuokyConfigErrorCode, loadConfig } from '../config';
 import { openAiReplyHygiene } from '../openai-provider-composition';
@@ -54,8 +56,24 @@ describe('configuration (ADR-0115 D3/D6): off unless configured; typed startup e
     expect(loadConfig(env({ QUOKY_OPENAI_API_KEY: '', QUOKY_OPENAI_MODEL: '  ' })).ai.openai).toBeUndefined();
   });
 
-  it('both set → the key and the allow-listed model', () => {
-    expect(loadConfig(env(OPENAI_ENV)).ai.openai).toEqual({ apiKey: FAKE_KEY, model: 'gpt-4.1-mini' });
+  it('both set → the key (in a redacting holder) and the allow-listed model', () => {
+    const openai = loadConfig(env(OPENAI_ENV)).ai.openai;
+    expect(openai?.model).toBe('gpt-4.1-mini');
+    expect(openai?.apiKey.reveal()).toBe(FAKE_KEY);
+  });
+
+  it('inspecting or serialising the whole configuration never shows the key (Codex P2)', () => {
+    const config = loadConfig(env({ ...OPENAI_ENV, QUOKY_CHAT_PROVIDER: 'openai', QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'openai' }));
+    const views = [
+      inspect(config, { depth: 10 }),
+      inspect(config, { depth: 10, showHidden: true }),
+      JSON.stringify(config),
+      JSON.stringify({ ...config.ai.openai }),
+      String(config.ai.openai?.apiKey),
+    ];
+    for (const view of views) expect(view).not.toContain(FAKE_KEY);
+    expect(inspect(config, { depth: 10 })).toContain('OpenAiApiKey([REDACTED])');
+    expect(JSON.stringify(config)).toContain('"apiKey":"[REDACTED]"');
   });
 
   it.each([
@@ -285,7 +303,8 @@ describe('owner surfaces: 모델 목록 / 모델 변경 and the /providers page'
     const session = await f.openSession();
     const list = await say('모델 목록', f, session);
     expect(list).toContain('openai:gpt-4.1-mini · 준비됨 · 클라우드(OpenAI)');
-    expect(list).toContain('openai:gpt-4o');
+    // Another allow-listed model was never probed: its readiness is unknown, never borrowed (CA P3-5).
+    expect(list).toMatch(/openai:gpt-4o · 클라우드\(OpenAI\)/u);
     expect(list).toContain('이미지 openai');
     const set = await say('모델 변경: openai:gpt-4o', f, session);
     expect(set).toContain('openai:gpt-4o로 바꿨어요');
@@ -326,11 +345,80 @@ describe('owner surfaces: 모델 목록 / 모델 변경 and the /providers page'
   });
 });
 
+describe('startup readiness (CA P2-2, option a): a configured but unselected HTTP provider makes no call', () => {
+  const realProbes = (extra: Record<string, string>) => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', (async (input: unknown) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify({ id: 'gpt-4.1-mini', object: 'model' }), { status: 200 });
+    }) as typeof fetch);
+    // Only the OpenAI instances keep their real probe (over the fake fetch); the CLI providers are stubbed (no spawn).
+    const f = selectionFixture({ env: { ...OPENAI_ENV, ...extra }, unstubbed: (p) => p.id.startsWith('openai') });
+    const lines: Array<{ message: string; fields?: unknown }> = [];
+    const log = {
+      info: (message: string, fields?: unknown) => lines.push({ message, fields }),
+      warn: (message: string, fields?: unknown) => lines.push({ message, fields }),
+      error: () => undefined,
+      debug: () => undefined,
+    };
+    const run = () =>
+      reportProviderReadiness(f.manager, log as never, {
+        eligible: (capability, provider) => f.service.isEligible(capability, {}, provider.id),
+      });
+    return { calls, run, lines };
+  };
+
+  it('key set and QUOKY_CHAT_PROVIDER=claude: zero fetch calls; the OpenAI instances are reported as not probed', async () => {
+    const { calls, run, lines } = realProbes({ QUOKY_CHAT_PROVIDER: 'claude' });
+    const report = await run();
+    expect(calls).toEqual([]);
+    // Every REMOTE provider outside the effective selection is skipped (the OpenAI instances and, here, the unselected
+    // Claude vision provider); the effective chat provider and Claude are probed.
+    expect(report.notProbed).toEqual(expect.arrayContaining(['openai-api', 'openai-vision-api']));
+    expect(report.notProbed).not.toContain('claude-cli');
+    expect(report.ready).toContain('claude-cli');
+    expect(report.generalChatReady).toBe(true);
+    expect(JSON.stringify(lines)).not.toContain(FAKE_KEY);
+  });
+
+  it('selected for chat and images: both instances are probed with ONE model-get call', async () => {
+    const { calls, run } = realProbes({ QUOKY_CHAT_PROVIDER: 'openai', QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'openai' });
+    const report = await run();
+    expect(calls).toEqual(['https://api.openai.com/v1/models/gpt-4.1-mini']);
+    expect(report.ready).toEqual(expect.arrayContaining(['openai-api', 'openai-vision-api']));
+    expect(report.notProbed.some((id) => id.startsWith('openai'))).toBe(false);
+  });
+
+  it('generalChatReady counts only eligible chat providers', async () => {
+    const { run } = realProbes({ QUOKY_CHAT_PROVIDER: 'claude' });
+    const report = await run();
+    expect(report.generalChatReady).toBe(true);
+    const lonely = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude', ...OPENAI_ENV } });
+    lonely.ready.set('claude-cli', false);
+    lonely.ready.set('openai-api', true);
+    const noChat = await reportProviderReadiness(lonely.manager, { info: () => undefined, warn: () => undefined } as never, {
+      eligible: (capability, provider) => lonely.service.isEligible(capability, {}, provider.id),
+    });
+    // openai-api is ready but not the effective chat choice, so chat is NOT counted as served.
+    expect(noChat.generalChatReady).toBe(false);
+  });
+});
+
 describe('composition reply hygiene', () => {
   it('applies the provider-neutral chat hygiene to GENERAL_CHAT and terminal framing to every capability', () => {
     const envelope = JSON.stringify({ role: 'assistant', provenance: 'x', epistemicStatus: 'y', content: 'unused' });
     expect(openAiReplyHygiene('plain \u001b[1mbold\u001b[0m', { capability: Capability.SUMMARIZATION, prompt: 'p' })).toBe('plain bold');
     expect(openAiReplyHygiene('hello', { capability: Capability.GENERAL_CHAT, prompt: 'p' })).toBe('hello');
-    expect(typeof openAiReplyHygiene(envelope, { capability: Capability.GENERAL_CHAT, prompt: 'p' })).toBe('string');
+    // An echoed internal metadata envelope is reduced to its content — for GENERAL_CHAT only.
+    const internal = JSON.stringify({ provenance: 'ASSISTANT', epistemicStatus: 'ASSISTANT_NON_AUTHORITATIVE', content: '안녕하세요' });
+    expect(stripInternalMetadataEnvelope(internal)).toBe('안녕하세요');
+    expect(openAiReplyHygiene(internal, { capability: Capability.GENERAL_CHAT, prompt: 'p' })).toBe('안녕하세요');
+    expect(openAiReplyHygiene(internal, { capability: Capability.SUMMARIZATION, prompt: 'p' })).toBe(internal);
+    // Literal "\n" escapes (two or more, no real newline) become line breaks — for GENERAL_CHAT only.
+    const escaped = 'one\\ntwo\\nthree';
+    expect(openAiReplyHygiene(escaped, { capability: Capability.GENERAL_CHAT, prompt: 'p' })).toBe('one\ntwo\nthree');
+    expect(openAiReplyHygiene(escaped, { capability: Capability.SUMMARIZATION, prompt: 'p' })).toBe(escaped);
+    // A non-internal envelope is left alone.
+    expect(openAiReplyHygiene(envelope, { capability: Capability.GENERAL_CHAT, prompt: 'p' })).toBe(envelope);
   });
 });

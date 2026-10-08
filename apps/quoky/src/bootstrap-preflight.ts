@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { Capability } from '@quoky/core';
+import { Capability, executionLocalityOf } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
 import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
 import { QuokyConfigErrorCode } from './config';
@@ -188,11 +188,26 @@ export function logResolvedDatabasePath(dbPath: string, log: Logger, cwd: string
 export interface ProviderAvailabilitySource {
   all(): readonly AiProvider[];
   available(): Promise<AiProvider[]>;
+  /** Probe only these (cached), in order; used when an eligibility predicate limits the startup probes. */
+  readyAmong?(providers: readonly AiProvider[]): Promise<AiProvider[]>;
+}
+
+export interface ProviderReadinessOptions {
+  /**
+   * Whether `provider` is eligible for `capability` under the effective selection with no conversation (the
+   * `ProviderSelectionPolicy` answer, as data). With it, a `REMOTE` provider that is eligible for none of its
+   * capabilities is NOT probed at startup (ADR-0115 implementation note: a configured but unselected HTTP provider
+   * makes no network call), and `generalChatReady` counts only eligible `GENERAL_CHAT` providers. Absent = every
+   * provider is probed, as before.
+   */
+  readonly eligible?: (capability: Capability, provider: AiProvider) => boolean;
 }
 
 export interface ProviderReadinessReport {
   ready: readonly string[];
   notReady: readonly string[];
+  /** `REMOTE` providers outside the effective selection, not probed (empty without an eligibility predicate). */
+  notProbed: readonly string[];
   generalChatReady: boolean;
 }
 
@@ -200,29 +215,43 @@ export interface ProviderReadinessReport {
 export async function reportProviderReadiness(
   manager: ProviderAvailabilitySource,
   log: Logger,
+  options: ProviderReadinessOptions = {},
 ): Promise<ProviderReadinessReport> {
-  const ready = await manager.available();
+  const { eligible } = options;
+  const selected = (provider: AiProvider): boolean =>
+    eligible === undefined || provider.capabilities.some((c) => eligible(c.capability, provider));
+  const notProbed = manager.all().filter((provider) => executionLocalityOf(provider) === 'REMOTE' && !selected(provider));
+  const probed = manager.all().filter((provider) => !notProbed.includes(provider));
+  const ready =
+    notProbed.length === 0 || manager.readyAmong === undefined ? await manager.available() : await manager.readyAmong(probed);
+  for (const provider of notProbed) {
+    log.info('provider not probed (not the effective selection)', { provider: provider.id });
+  }
   for (const provider of ready) {
     log.info('provider ready', {
       provider: provider.id,
       capabilities: provider.capabilities.map((c) => c.capability).join(','),
     });
   }
-  const notReady = manager.all().filter((provider) => !ready.includes(provider));
+  const notReady = probed.filter((provider) => !ready.includes(provider));
   for (const provider of notReady) {
     log.info('provider not ready', { provider: provider.id });
   }
 
-  const generalChatReady = ready.some((provider) =>
-    provider.capabilities.some((c) => c.capability === Capability.GENERAL_CHAT));
+  const generalChatReady = ready.some(
+    (provider) =>
+      provider.capabilities.some((c) => c.capability === Capability.GENERAL_CHAT) &&
+      (eligible === undefined || eligible(Capability.GENERAL_CHAT, provider)),
+  );
   if (!generalChatReady) {
     log.warn(
-      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, or Ollama running with the configured model) is ready`,
+      `no ready provider for ${Capability.GENERAL_CHAT}: chat will reply "AI not configured" until the Claude CLI is installed and logged in, or the selected chat provider (QUOKY_CHAT_PROVIDER: Codex CLI logged in, Ollama running with the configured model, or openai with a valid QUOKY_OPENAI_API_KEY and QUOKY_OPENAI_MODEL) is ready`,
     );
   }
   return {
     ready: ready.map((provider) => provider.id),
     notReady: notReady.map((provider) => provider.id),
+    notProbed: notProbed.map((provider) => provider.id),
     generalChatReady,
   };
 }

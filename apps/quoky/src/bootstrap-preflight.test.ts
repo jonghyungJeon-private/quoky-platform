@@ -144,7 +144,7 @@ describe('reportProviderReadiness', () => {
 
     const report = await reportProviderReadiness(new AiProviderManager([claude, ollama, codex]), log);
 
-    expect(report).toEqual({ ready: ['claude-cli'], notReady: ['ollama-cli', 'codex-cli'], generalChatReady: true });
+    expect(report).toEqual({ ready: ['claude-cli'], notReady: ['ollama-cli', 'codex-cli'], notProbed: [], generalChatReady: true });
     expect(log.lines).toContainEqual({
       level: 'info',
       message: 'provider ready',
@@ -173,7 +173,7 @@ describe('reportProviderReadiness', () => {
   it('warns when there are no providers at all', async () => {
     const log = new RecordingLogger();
     const report = await reportProviderReadiness(new AiProviderManager([]), log);
-    expect(report).toEqual({ ready: [], notReady: [], generalChatReady: false });
+    expect(report).toEqual({ ready: [], notReady: [], notProbed: [], generalChatReady: false });
     expect(log.lines.filter((l) => l.level === 'warn')).toHaveLength(1);
   });
 });

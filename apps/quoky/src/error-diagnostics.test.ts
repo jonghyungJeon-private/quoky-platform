@@ -6,6 +6,22 @@ import { redactSecrets, serializeError } from './error-diagnostics';
 // diagnosable LogFields record (name/message/stack/cause + context).
 
 describe('redactSecrets', () => {
+  it('redacts an OpenAI secret key (any prefix variant) and a QUOKY_OPENAI_API_KEY assignment (ADR-0115 D6)', () => {
+    // Assembled at runtime from pieces: no token-shaped literal in the source.
+    const project = ['sk', 'proj', 'A1b2'.repeat(8)].join('-');
+    const plain = ['sk', 'Z9y8'.repeat(6)].join('-');
+    const out = redactSecrets(`401 Incorrect API key provided: ${project}; retry with ${plain}`);
+    expect(out).not.toContain(project);
+    expect(out).not.toContain(plain);
+    expect(out.match(/\[REDACTED_TOKEN\]/g)).toHaveLength(2);
+    const assigned = redactSecrets(`env QUOKY_OPENAI_API_KEY=${plain} loaded`);
+    expect(assigned).toContain('QUOKY_OPENAI_API_KEY=[REDACTED]');
+    expect(assigned).not.toContain(plain);
+    expect(serializeError(new Error(`boom ${project}`)).errorMessage).toBe('boom [REDACTED_TOKEN]');
+    // A short "sk-" word is not a key.
+    expect(redactSecrets('task sk-1 done')).toBe('task sk-1 done');
+  });
+
   it('redacts a PEM private-key block', () => {
     const pem =
       '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1234secretkeymaterial\nabcd/efgh+ij==\n-----END RSA PRIVATE KEY-----';

@@ -70,8 +70,10 @@ export function createImageUnderstandingProviders(
         }),
       ];
     case 'openai':
+      // `loadConfig` refuses `openai` without the key and model (OPENAI_API_KEY_MISSING); reaching this is a wiring bug.
+      if (options.openai === undefined) throw new TypeError('the OpenAI image option needs the OpenAI API configuration');
       options.logger.info('image understanding uses a cloud provider', { selection: 'openai', locality: 'REMOTE' });
-      return options.openai !== undefined ? [openAiVision(options.openai)] : [];
+      return [openAiVision(options.openai)];
     case 'off':
       if (config.invalid) options.logger.warn('image understanding not registered', { reason: config.invalid });
       return [];

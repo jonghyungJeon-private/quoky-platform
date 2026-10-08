@@ -635,13 +635,15 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       }
     }
     // The OpenAI API (ADR-0115): only when configured; the configured model first, then the rest of the allow-list.
-    // One readiness probe (the configured instance's model-get) stands for the key, as Claude's does for its aliases.
+    // The configured model's readiness is its one model-get probe; another allow-listed model was never probed (that
+    // probe would check a different model), so its readiness is shown as unknown rather than borrowed.
     if (catalog.openai !== undefined && catalog.openaiModel !== undefined) {
       const openaiReady = await this.ready(catalog.openai);
       const models = [catalog.openaiModel, ...OPENAI_MODEL_ALLOW_LIST.filter((model) => model !== catalog.openaiModel)];
       for (const model of models) {
         const token = catalog.label({ provider: 'openai', model });
-        options.push({ tier: 'chat', token, ready: openaiReady, egress: 'OPENAI', current: chat.label === token });
+        const ready = model === catalog.openaiModel ? openaiReady : undefined;
+        options.push({ tier: 'chat', token, ready, egress: 'OPENAI', current: chat.label === token });
       }
     }
     for (const choice of IMAGE_CHOICES) {

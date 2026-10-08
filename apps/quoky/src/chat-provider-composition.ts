@@ -1,8 +1,7 @@
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider } from '@quoky/ai-cli';
-import { OpenAiApiProvider } from '@quoky/ai-openai-api';
 import type { AiProvider, Logger } from '@quoky/core';
 import type { QuokyConfig } from './config';
-import { openAiReplyHygiene } from './openai-provider-composition';
+import { openAiChat } from './openai-provider-composition';
 import type { ChatChoice } from './provider-selection/selection-choices';
 
 /**
@@ -70,10 +69,7 @@ export function composeChatProviders(
         cleanup: { logger },
       })
     : undefined;
-  const openai =
-    ai.openai !== undefined
-      ? new OpenAiApiProvider({ apiKey: ai.openai.apiKey, model: ai.openai.model, replyHygiene: openAiReplyHygiene })
-      : undefined;
+  const openai = ai.openai !== undefined ? openAiChat(ai.openai) : undefined;
   const providers = [claude, ...(ollama ? [ollama] : []), ...(codex ? [codex] : []), ...(openai ? [openai] : [])];
   return { providers, claude, ...(codex ? { codex } : {}), ...(ollama ? { ollama } : {}), ...(openai ? { openai } : {}) };
 }

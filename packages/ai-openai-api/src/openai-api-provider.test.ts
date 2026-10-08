@@ -10,8 +10,11 @@ import {
   OPENAI_API_ORIGIN,
   OPENAI_MAX_OUTPUT_TOKENS,
   OPENAI_MODEL_ALLOW_LIST,
+  OPENAI_TRUNCATED_SUFFIX,
   OpenAiApiError,
+  OpenAiApiKey,
   OpenAiApiProvider,
+  OpenAiSharedProbe,
   OpenAiApiVisionProvider,
   OpenAiFailureCode,
   isAllowedOpenAiModel,
@@ -186,6 +189,7 @@ describe('capabilities and locality (ADR-0115 D2, D5)', () => {
       c.execute({ capability: Capability.IMAGE_UNDERSTANDING, prompt: 'p' }),
       c.execute({ ...CHAT_REQUEST, workspace: { root: '/tmp/x' } as unknown as AiRequest['workspace'] }),
       c.execute({ ...CHAT_REQUEST, images: [{ path: imageFile('a.png', PNG), mimeType: 'image/png' }] }),
+      c.execute({ ...CHAT_REQUEST, contextFiles: [{ path: 'memory.md', content: 'remembered' }] as unknown as AiRequest['contextFiles'] }),
       v.execute({ capability: Capability.GENERAL_CHAT, prompt: 'p' }),
       v.execute({ capability: Capability.IMAGE_UNDERSTANDING, prompt: 'p' }),
     ];
@@ -310,11 +314,33 @@ describe('reply handling', () => {
     expect(JSON.stringify(result.audit)).not.toContain(CHAT_REQUEST.prompt);
   });
 
-  it('an incomplete response with text is returned; a refusal part is the reply text', async () => {
-    const incomplete = await chat(fakeFetch(() => reply('partial', { status: 'incomplete' })).fetch).execute(CHAT_REQUEST);
-    expect(incomplete.text).toBe('partial');
-    expect(incomplete.audit).toMatchObject({ responseStatus: 'incomplete' });
-    const refusal = await chat(
+  it('incomplete at the output bound: the text is returned, marked as cut off after hygiene, and audited', async () => {
+    const fake = fakeFetch(() => reply('partial answer', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }));
+    const incomplete = await chat(fake.fetch, { replyHygiene: (text) => text.toUpperCase() }).execute(CHAT_REQUEST);
+    expect(incomplete.text).toBe(`PARTIAL ANSWER${OPENAI_TRUNCATED_SUFFIX}`);
+    expect(OPENAI_TRUNCATED_SUFFIX).toBe('\n\n(답변이 길이 제한으로 잘렸어요.)');
+    expect(incomplete.audit).toMatchObject({ responseStatus: 'incomplete', incompleteReason: 'max_output_tokens' });
+    // Cut off before any text: still empty output, never a bare suffix.
+    const empty = await failureOf(
+      chat(fakeFetch(() => reply('  ', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } })).fetch).execute(CHAT_REQUEST),
+    );
+    expect((empty as OpenAiApiError).code).toBe(OpenAiFailureCode.EMPTY_OUTPUT);
+  });
+
+  it.each([
+    ['content_filter', { reason: 'content_filter' }],
+    ['an unknown reason', { reason: 'something_new' }],
+    ['no details', undefined],
+  ])('incomplete for %s fails closed (INCOMPLETE → EXECUTION_FAILED)', async (_name, details) => {
+    const err = await failureOf(
+      chat(fakeFetch(() => reply('filtered text', { status: 'incomplete', ...(details ? { incomplete_details: details } : {}) })).fetch).execute(CHAT_REQUEST),
+    );
+    expect(err.kind).toBe(AiFailureKind.EXECUTION_FAILED);
+    expect((err as OpenAiApiError).code).toBe(OpenAiFailureCode.INCOMPLETE);
+    expect(traces(err)).not.toContain('filtered text');
+  });
+
+  it('a refusal part is the reply text', async () => {    const refusal = await chat(
       fakeFetch(() =>
         json({ status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: 'I cannot help with that.' }] }] }),
       ).fetch,
@@ -432,7 +458,49 @@ describe('readiness (ADR-0115 D7): one bounded model-get, no generation', () => 
   });
 });
 
+describe('shared readiness (one model-get for the chat and image instances)', () => {
+  it('two instances on one shared probe make one call; a timed-out probe is not cached', async () => {
+    const fake = fakeFetch(() => json({ id: MODEL }));
+    const shared = new OpenAiSharedProbe();
+    const c = new OpenAiApiProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    const v = new OpenAiApiVisionProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    expect(await Promise.all([c.isAvailable(), v.isAvailable()])).toEqual([true, true]);
+    expect(await v.isAvailable()).toBe(true);
+    expect(fake.calls).toHaveLength(1);
+
+    let now = 0;
+    const expiring = new OpenAiSharedProbe(1000, () => now);
+    let calls = 0;
+    const probe = async () => {
+      calls += 1;
+      if (calls === 1) throw new ProviderProbeIndeterminateError('timed out');
+      return false;
+    };
+    await expect(expiring.run(probe)).rejects.toBeInstanceOf(ProviderProbeIndeterminateError);
+    expect(await expiring.run(probe)).toBe(false);
+    expect(await expiring.run(probe)).toBe(false);
+    now = 1000;
+    expect(await expiring.run(probe)).toBe(false);
+    expect(calls).toBe(3);
+  });
+});
+
 describe('key redaction (ADR-0115 D6)', () => {
+  it('the OpenAiApiKey holder never shows the key to JSON, inspect, spread or string conversion', async () => {
+    const holder = OpenAiApiKey.from(FAKE_KEY);
+    if (holder === null) throw new Error('unreachable');
+    expect(OpenAiApiKey.from(`${FAKE_KEY} `)).toBeNull();
+    const wrapped = { ai: { openai: { apiKey: holder, model: MODEL } } };
+    for (const view of [JSON.stringify(wrapped), inspect(wrapped, { depth: 10, showHidden: true }), String(holder), `${holder}`, JSON.stringify({ ...holder })]) {
+      expect(view).not.toContain(FAKE_KEY);
+    }
+    expect(JSON.stringify(wrapped)).toContain('[REDACTED]');
+    // The adapter accepts the holder and sends the real key in the header only.
+    const fake = fakeFetch(() => reply('ok'));
+    await new OpenAiApiProvider({ apiKey: holder, model: MODEL, fetch: fake.fetch }).execute(CHAT_REQUEST);
+    expect((fake.calls[0]!.init.headers as Record<string, string>).authorization).toBe(`Bearer ${FAKE_KEY}`);
+  });
+
   it('the key is never in the result, the audit, the raw facts, or a serialisation of the provider', async () => {
     const fake = fakeFetch(() => reply(`echo ${FAKE_KEY} done`));
     const provider = chat(fake.fetch);
