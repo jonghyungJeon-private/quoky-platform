@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   LATEST_SCHEMA_VERSION,
   readSqliteUserVersion,
@@ -80,6 +81,10 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     ownerId: config.discord.ownerIds[0],
     platform: input.platform,
     ledger: input.ledger ?? fileLedgerStore(ops.noticeLedgerPath),
+    // ADR-0114 (TG-1): the delivered-Telegram-halt record beside the ledger (`ops/telegram-halt-notices.json`).
+    ...(input.ledger === undefined
+      ? { telegramHaltSent: fileLedgerStore(path.join(path.dirname(ops.noticeLedgerPath), 'telegram-halt-notices.json')) }
+      : {}),
     logger,
     ...(input.clock ? { clock: input.clock } : {}),
   });

@@ -89,8 +89,9 @@ export const OPS_NOTICE_LIMITS = {
   windowMs: 24 * 60 * 60 * 1000,
   crashLoopQuietMs: 10 * 60 * 1000,
   /**
-   * ADR-0114 (CA final check #4): the same Telegram halt reason at most once per 24 hours, so restarts with a broken
-   * token or a lasting conflict cannot use up the daily budget and suppress `BACKUP_FAILED` / `CRASH_LOOP`.
+   * ADR-0114 (CA final check #4): the same Telegram halt reason at most once per 24 hours after it was DELIVERED, so
+   * restarts with a broken token or a lasting conflict cannot use up the daily budget and suppress `BACKUP_FAILED` /
+   * `CRASH_LOOP`; an undelivered notice never suppresses the next one.
    */
   telegramHaltQuietMs: 24 * 60 * 60 * 1000,
 } as const;
@@ -223,8 +224,29 @@ export interface OpsNoticeDeps {
   /** The sink's platform name (`discord`). */
   readonly platform: string;
   readonly ledger: OpsNoticeLedgerStore;
+  /**
+   * ADR-0114 (TG-1): when each Telegram halt reason was last DELIVERED (`SENT`), for the 24 h repeat suppression. Kept
+   * apart from the ADR-0102 D7 ledger (which records before sending): an undelivered notice never suppresses the next.
+   * Absent = in memory.
+   */
+  readonly telegramHaltSent?: OpsNoticeLedgerStore;
   readonly logger: Logger;
   readonly clock?: () => IsoTimestamp;
+}
+
+function parseTelegramHaltSent(content: string | undefined): Record<string, string> {
+  if (content === undefined) return {};
+  try {
+    const parsed = JSON.parse(content) as { version?: unknown; sentAt?: unknown };
+    if (parsed.version !== 1 || typeof parsed.sentAt !== 'object' || parsed.sentAt === null) return {};
+    return Object.fromEntries(
+      Object.entries(parsed.sentAt as Record<string, unknown>).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string' && Number.isFinite(Date.parse(entry[1])),
+      ),
+    );
+  } catch {
+    return {};
+  }
 }
 
 const KNOWN_REASONS: ReadonlySet<string> = new Set<string>(Object.keys(OPS_NOTICE_TEXT));
@@ -253,8 +275,12 @@ export class OpsNoticeService {
   /** Notices are serialized so two reasons never race the ledger. */
   private queue: Promise<unknown> = Promise.resolve();
 
+  private readonly telegramHaltSent: OpsNoticeLedgerStore;
+
   constructor(private readonly deps: OpsNoticeDeps) {
     this.clock = deps.clock ?? sharedClock;
+    let memory: string | undefined;
+    this.telegramHaltSent = deps.telegramHaltSent ?? { read: () => memory, write: (content) => void (memory = content) };
   }
 
   /** Send one fixed `OPS_NOTICE`, within the bounds above. Never throws. */
@@ -287,14 +313,17 @@ export class OpsNoticeService {
     ) {
       return this.done(reason, 'SUPPRESSED_REPEAT');
     }
-    if (
-      isTelegramHaltReason(reason) &&
-      entries.some((e) => {
-        const t = Date.parse(e.at);
-        return e.reason === reason && t <= nowMs && nowMs - t < OPS_NOTICE_LIMITS.telegramHaltQuietMs;
-      })
-    ) {
-      return this.done(reason, 'SUPPRESSED_REPEAT');
+    if (isTelegramHaltReason(reason)) {
+      let lastSent: string | undefined;
+      try {
+        lastSent = parseTelegramHaltSent(this.telegramHaltSent.read())[reason];
+      } catch {
+        lastSent = undefined;
+      }
+      const t = lastSent === undefined ? Number.NaN : Date.parse(lastSent);
+      if (Number.isFinite(t) && t <= nowMs && nowMs - t < OPS_NOTICE_LIMITS.telegramHaltQuietMs) {
+        return this.done(reason, 'SUPPRESSED_REPEAT');
+      }
     }
     try {
       this.deps.ledger.write(JSON.stringify({ version: 1, sent: [...recent, { at, reason }] }));
@@ -313,7 +342,18 @@ export class OpsNoticeService {
     } catch {
       outcome = { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' };
     }
+    if (isTelegramHaltReason(reason) && outcome.status === 'SENT') this.recordTelegramHaltSent(reason, at);
     return this.done(reason, outcome.status);
+  }
+
+  /** Only a delivered Telegram halt notice starts its 24 h quiet period (best effort; a write failure is logged). */
+  private recordTelegramHaltSent(reason: OpsNoticeReason, at: IsoTimestamp): void {
+    try {
+      const sentAt = { ...parseTelegramHaltSent(this.telegramHaltSent.read()), [reason]: at };
+      this.telegramHaltSent.write(JSON.stringify({ version: 1, sentAt }));
+    } catch {
+      this.deps.logger.warn('ops.notice.telegram_halt_record_failed', { reason });
+    }
   }
 
   private done(reason: OpsNoticeReason, outcome: OpsNoticeOutcome): OpsNoticeOutcome {

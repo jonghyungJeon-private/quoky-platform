@@ -224,6 +224,29 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     expect(released).toEqual([]);
   });
 
+  it('Codex final delta P2-2: an undelivered Telegram halt notice does not start the 24 h suppression', async () => {
+    let connected = false;
+    sink.deliver = async (n) => {
+      if (!connected) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+      sink.delivered.push(n);
+      return { status: 'SENT', via: 'dm' };
+    };
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    connected = true;
+    timers.clockMs += 60_000;
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_AUTH_REJECTED]);
+    // Delivered now: the same reason is suppressed for 24 h from here.
+    timers.clockMs += 60_000;
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    expect(sink.delivered).toHaveLength(1);
+    await ops.stop();
+  });
+
   it('no notice for a normal start, nor outside the launcher', async () => {
     runtime({ launcher: 'launchd', recentStarts: 2 }, { QUOKY_BACKUP_ENABLED: 'false' }).start();
     runtime({ recentStarts: 0 }).start();
