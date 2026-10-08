@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { composeDailyBrief, messageFields, plainTextOf } from '@quoky/core';
+import type { CalendarEvent, ConnectorItem } from '@quoky/core';
+import { renderTelegramContent, TELEGRAM_MESSAGE_LIMIT } from '@quoky/adapter-telegram';
+// Test-only cross-package source import (precedent: personal-v3-acceptance.test.ts): the adapter's offline Bot API fake.
+import { FakeTelegram } from '../../../../packages/adapter-telegram/src/test-support';
 import type {
   ConversationContext,
   InboundMessage,
@@ -210,5 +215,61 @@ describe('composePlatformAdapter (ADR-0114 D13): Telegram off leaves Discord exa
     expect(telegramOwnerIdentityLinks(telegram)).toEqual([
       { identity: { platform: 'telegram', externalId: '5550001' }, owner: { platform: 'discord', externalId: '111111111111111111' } },
     ]);
+  });
+});
+
+describe('A Telegram BRIEF with calendar and Jira sections through the composite (BRF-1 x TG-1)', () => {
+  const event = (id: string, title: string, hour: number): CalendarEvent => ({
+    id,
+    title,
+    start: `2026-10-02T${String(hour).padStart(2, '0')}:00:00.000Z`,
+    end: `2026-10-02T${String(hour).padStart(2, '0')}:30:00.000Z`,
+    allDay: false,
+    status: 'confirmed',
+    calendarName: 'primary',
+  });
+  const work = (id: string, title: string): ConnectorItem => ({ id, title, dueDate: '2026-10-02' });
+
+  it.each([
+    ['ordinary titles with markup', '<b>설계</b> *리뷰* @everyone <#123> [x](https://e.test)', 3],
+    ['the largest brief (long titles, every section full)', '다'.repeat(200), 12],
+  ])('%s: one sendMessage, at most 4096, content and text agree', async (_label, title, count) => {
+    const body = composeDailyBrief({
+      now: '2026-10-01T23:00:00.000Z',
+      timeZone: 'Asia/Seoul',
+      reminders: [],
+      workItems: [],
+      calendar: { events: Array.from({ length: count }, (_, i) => event(`e${i}`, `${title} ${i}`, i)), limit: 50 },
+      assignedWork: Array.from({ length: Math.min(count, 8) }, (_, i) => work(`P-${i}`, `${title} ${i}`)),
+    });
+    const fields = messageFields(body);
+    if (fields.content !== undefined) expect(plainTextOf(fields.content)).toBe(fields.text);
+
+    const fake = new FakeTelegram();
+    const token = TelegramBotToken.from([['70', '01', '23', '4'].join(''), ['AAH', 'b'.repeat(32)].join('')].join(':'));
+    if (!token) throw new Error('fixture token is not well-formed');
+    const telegram = new TelegramPlatformAdapter({ token, expectedBotId: token.botId, ownerIds: ['5550001'] }, silent, { fetch: fake.fetch });
+    const log: string[] = [];
+    const discord = new FakeDiscord('discord', log);
+    const adapter = new CompositePlatformAdapter(discord, [telegram], silent);
+    await adapter.start();
+    for (let i = 0; i < 200 && !telegram.status().identityVerified; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    const outcome = await adapter.deliver({
+      correlationId: 'brief-1',
+      target: { platform: 'telegram', channelId: '5550001', userId: '5550001', direct: true },
+      kind: 'BRIEF',
+      ...fields,
+    } as OwnerNotification);
+    expect(outcome).toEqual({ status: 'SENT', via: 'dm' });
+    const sends = fake.callsTo('sendMessage');
+    expect(sends).toHaveLength(1);
+    const sent = String(sends[0]?.params.text);
+    expect(sent.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_LIMIT);
+    expect(sent).toBe(fields.content !== undefined ? renderTelegramContent(fields.content) : fields.text);
+    expect(sent).toContain('오늘 일정');
+    expect(sent).toContain('담당 이슈');
+    expect(sends[0]?.params.parse_mode).toBeUndefined();
+    expect(discord.notifications).toEqual([]);
+    await adapter.stop();
   });
 });
