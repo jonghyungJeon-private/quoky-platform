@@ -201,6 +201,14 @@ export class StatelessCredentialOverrideFlow implements CredentialOverrideFlow {
     return anchor.status === 'CONSUMED' ? { state: 'consumed', anchor } : { state: 'invalidated', anchor };
   }
 
+  async peekPending(session: Session): Promise<ApprovalRequest | null> {
+    const found = await this.anchorTask(session);
+    if (!found || this.claims.has(found.task.id)) return null;
+    const assessment = assessCredentialOverrideAnchor(found.anchor, await this.approvalsOf(found.anchor), this.clock());
+    if (assessment.kind !== 'awaiting-decision' || this.sessionDrift(session, found.anchor)) return null;
+    return assessment.approval;
+  }
+
   async findPending(session: Session, held?: SessionLockHold): Promise<CredentialOverrideLookup | null> {
     if (!session.activeTaskId) return null;
     return this.serialized(session.id, session.activeTaskId, () => this.lookup(session), held);

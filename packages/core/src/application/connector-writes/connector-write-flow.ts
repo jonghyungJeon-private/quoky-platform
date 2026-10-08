@@ -390,6 +390,12 @@ export interface ConnectorWriteFlow {
   supports(draft: ConnectorWriteDraft): boolean;
   find(session: Session, held?: SessionLockHold): Promise<ConnectorWriteAnchorView | null>;
   /**
+   * Strictly read-only `find` (ADR-0113 D4): the open anchor and, behind `APPROVAL_PENDING`, its approval while it is
+   * still PENDING (else null). Unlike `find` it never closes an anchor whose approval was decided elsewhere — that
+   * state is legitimate mid-transition (approved, `recordApproval` not yet run). For the operations UI.
+   */
+  peek?(session: Session): Promise<ConnectorWriteAnchorView | null>;
+  /**
    * An execution phrase in a conversation with no approved write of `operation`: this actor's APPROVED, unexecuted,
    * unlapsed write of that kind waiting in ANOTHER active conversation (the newest), or null. Read-only and only a
    * hint — execution stays bound to the conversation the approval was asked in.
@@ -687,6 +693,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return null;
     }
     return { taskId: task.id, anchor, approval };
+  }
+
+  async peek(session: Session): Promise<ConnectorWriteAnchorView | null> {
+    const found = await this.openAnchorOf(session);
+    if (!found) return null;
+    const { task, anchor } = found;
+    const approval =
+      anchor.status === 'APPROVAL_PENDING' && anchor.approvalId ? await this.deps.approvals.get(anchor.approvalId) : null;
+    return { taskId: task.id, anchor, approval: approval?.status === ApprovalStatus.PENDING ? approval : null };
   }
 
   async approvedElsewhere(

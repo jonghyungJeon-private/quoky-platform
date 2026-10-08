@@ -700,6 +700,11 @@ export interface ApplyPreviewFlow {
    *  anchor is not always "pending" anything — it may be `ELIGIBLE` or already `APPROVED`; callers
    *  branch on `.status`. */
   findAnchor(session: Session, held?: SessionLockHold): Promise<ApplyPreviewAnchor | null>;
+  /**
+   * Strictly read-only `findAnchor` (ADR-0113 D4): the anchor in focus, or null — a stale one (project changed) is
+   * reported as none and is NEVER cleared here; reconciliation stays in serialized transitions. For the operations UI.
+   */
+  peekAnchor?(session: Session): Promise<ApplyPreviewAnchor | null>;
   /** Anchor (or re-anchor, on every status transition) the apply-preview fact set. Always creates a
    *  fresh Task and re-points `session.activeTaskId` — same shape as the other two flows. */
   anchor(session: Session, anchor: ApplyPreviewAnchor, held?: SessionLockHold): Promise<void>;
