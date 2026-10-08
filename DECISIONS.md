@@ -17804,7 +17804,10 @@ Implementation choices where D1–D8 are silent; no ratified text above changes.
     (an unselected Codex CLI or Claude vision provider is reported "not probed" instead of probed). Owner-opened views
     (`모델 목록`, `/providers`, the operations providers panel) still probe. `generalChatReady` counts only eligible
     chat providers. The chat and image instances on the configured model share one probe (one model-get answers both;
-    30 s reuse, an indeterminate probe is not cached).
+    30 s reuse, an indeterminate probe is not cached). An execution failure classified `UNAVAILABLE`, `RATE_LIMITED`,
+    `AUTH` or `TIMEOUT` on either instance clears the shared answer and any in-flight probe (a generation counter keeps
+    a probe that started earlier from refilling it), so the router's failure invalidation always leads to a fresh
+    model-get and, when that fails, to the selection-time Claude fallback (Codex P2 on 0f0e82c).
   - *Smaller fixes.* A non-empty `contextFiles` on the chat instance is refused before sending; in `모델 목록` an
     allow-listed model other than `QUOKY_OPENAI_MODEL` shows unknown readiness (it was never probed); the
     `AiProvider` port comment names the ADR-0115 exception (comment only).

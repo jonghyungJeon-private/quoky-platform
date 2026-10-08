@@ -485,6 +485,95 @@ describe('shared readiness (one model-get for the chat and image instances)', ()
   });
 });
 
+describe('shared readiness is invalidated by an execution failure (Codex P2 on 0f0e82c)', () => {
+  /** GET answers `models` in order (then the last one again); POST answers `post`. */
+  function scripted(models: Array<() => Response>, post: () => Response) {
+    let gets = 0;
+    const fake = fakeFetch((call) => {
+      if (call.init.method === 'GET') {
+        gets += 1;
+        return (models[Math.min(gets, models.length) - 1] ?? models[models.length - 1]!)();
+      }
+      return post();
+    });
+    return { fake, gets: () => gets };
+  }
+
+  it.each([
+    ['503', 503],
+    ['429', 429],
+    ['401', 401],
+  ])('chat: GET ok → POST %s → the next readiness check makes a fresh model-get (now failing → not ready)', async (_n, status) => {
+    const { fake, gets } = scripted([() => json({ id: MODEL }), () => json({}, 401)], () => json({ error: { message: 'x' } }, status));
+    const shared = new OpenAiSharedProbe();
+    const c = new OpenAiApiProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    const v = new OpenAiApiVisionProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    expect(await c.isAvailable()).toBe(true);
+    await expect(c.execute(CHAT_REQUEST)).rejects.toBeInstanceOf(OpenAiApiError);
+    expect(await c.isAvailable()).toBe(false);
+    // The sibling instance shares the fresh answer (no third call).
+    expect(await v.isAvailable()).toBe(false);
+    expect(gets()).toBe(2);
+  });
+
+  it('vision: GET ok → POST 429 → the shared answer is dropped for both instances', async () => {
+    const { fake, gets } = scripted([() => json({ id: MODEL }), () => json({}, 503)], () => json({}, 429));
+    const shared = new OpenAiSharedProbe();
+    const c = new OpenAiApiProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    const v = new OpenAiApiVisionProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    expect(await c.isAvailable()).toBe(true);
+    expect(await v.isAvailable()).toBe(true);
+    expect(gets()).toBe(1);
+    const err = await failureOf(
+      v.execute({ capability: Capability.IMAGE_UNDERSTANDING, prompt: 'p', images: [{ path: imageFile('v.png', PNG), mimeType: 'image/png' }] }),
+    );
+    expect((err as OpenAiApiError).code).toBe(OpenAiFailureCode.RATE_LIMITED);
+    expect(await c.isAvailable()).toBe(false);
+    expect(gets()).toBe(2);
+  });
+
+  it('a failure that says nothing about readiness (bad request, malformed) keeps the cached answer', async () => {
+    const { fake, gets } = scripted([() => json({ id: MODEL })], () => json({}, 400));
+    const shared = new OpenAiSharedProbe();
+    const c = new OpenAiApiProvider({ apiKey: FAKE_KEY, model: MODEL, fetch: fake.fetch, sharedProbe: shared });
+    expect(await c.isAvailable()).toBe(true);
+    await expect(c.execute(CHAT_REQUEST)).rejects.toBeInstanceOf(OpenAiApiError);
+    expect(await c.isAvailable()).toBe(true);
+    expect(gets()).toBe(1);
+  });
+
+  it('an in-flight probe that completes after the invalidation answers its caller but never refills the cache', async () => {
+    const shared = new OpenAiSharedProbe();
+    let release: (value: boolean) => void = () => undefined;
+    let calls = 0;
+    const slow = () => {
+      calls += 1;
+      return new Promise<boolean>((resolve) => {
+        release = resolve;
+      });
+    };
+    const stale = shared.run(slow);
+    shared.invalidate();
+    // A caller after the invalidation does not join the stale probe: it starts a fresh one.
+    const fresh = shared.run(slow);
+    expect(calls).toBe(2);
+    const releaseFresh = release;
+    releaseFresh(false);
+    expect(await fresh).toBe(false);
+    // Now the stale probe finishes with "ready": its own caller sees it, the cache keeps the fresh answer.
+    let releaseStale: (value: boolean) => void = () => undefined;
+    const staleProbe = new OpenAiSharedProbe();
+    const before = staleProbe.run(() => new Promise<boolean>((resolve) => { releaseStale = resolve; }));
+    staleProbe.invalidate();
+    releaseStale(true);
+    expect(await before).toBe(true);
+    let after = 0;
+    expect(await staleProbe.run(async () => { after += 1; return false; })).toBe(false);
+    expect(after).toBe(1);
+    void stale;
+  });
+});
+
 describe('key redaction (ADR-0115 D6)', () => {
   it('the OpenAiApiKey holder never shows the key to JSON, inspect, spread or string conversion', async () => {
     const holder = OpenAiApiKey.from(FAKE_KEY);

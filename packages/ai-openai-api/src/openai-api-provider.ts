@@ -100,11 +100,15 @@ export const OPENAI_SHARED_PROBE_TTL_MS = 30_000;
 /**
  * One readiness answer shared by the instances on the same key and model: concurrent callers join the in-flight probe,
  * and a definitive answer is reused for {@link OPENAI_SHARED_PROBE_TTL_MS}. An indeterminate (timed-out) probe is not
- * cached.
+ * cached. {@link invalidate} (called when an execution on either instance fails as unavailable, rate-limited, auth or
+ * timeout) drops the cached answer AND any in-flight probe: a generation counter keeps a probe that started before the
+ * invalidation from repopulating the cache, so the next readiness check always makes a fresh model-get (Codex P2 on
+ * 0f0e82c: the router's failure invalidation must not be answered from this cache).
  */
 export class OpenAiSharedProbe {
   #inflight: Promise<boolean> | undefined;
   #cached: { readonly value: boolean; readonly at: number } | undefined;
+  #generation = 0;
 
   constructor(
     private readonly ttlMs: number = OPENAI_SHARED_PROBE_TTL_MS,
@@ -114,18 +118,35 @@ export class OpenAiSharedProbe {
   run(probe: () => Promise<boolean>): Promise<boolean> {
     if (this.#cached !== undefined && this.clock() - this.#cached.at < this.ttlMs) return Promise.resolve(this.#cached.value);
     if (this.#inflight !== undefined) return this.#inflight;
-    const inflight = probe()
+    const generation = this.#generation;
+    const inflight: Promise<boolean> = probe()
       .then((value) => {
-        this.#cached = { value, at: this.clock() };
+        // A probe that started before an invalidation answers its own caller only; it never refills the cache.
+        if (generation === this.#generation) this.#cached = { value, at: this.clock() };
         return value;
       })
       .finally(() => {
-        this.#inflight = undefined;
+        if (this.#inflight === inflight) this.#inflight = undefined;
       });
     this.#inflight = inflight;
     return inflight;
   }
+
+  /** Forget the cached answer and any in-flight probe; the next {@link run} probes afresh. */
+  invalidate(): void {
+    this.#generation += 1;
+    this.#cached = undefined;
+    this.#inflight = undefined;
+  }
 }
+
+/** The failures after which a cached "ready" must not be reused (the provider may have become unusable). */
+const READINESS_INVALIDATING_CODES: ReadonlySet<OpenAiFailureCode> = new Set<OpenAiFailureCode>([
+  OpenAiFailureCode.UNAVAILABLE,
+  OpenAiFailureCode.RATE_LIMITED,
+  OpenAiFailureCode.AUTH,
+  OpenAiFailureCode.TIMEOUT,
+]);
 
 /** Why a response was `incomplete` (a bounded vocabulary; anything unknown is `other`). */
 export type OpenAiIncompleteReason = 'max_output_tokens' | 'content_filter' | 'other';
@@ -332,16 +353,26 @@ abstract class OpenAiApiProviderBase implements AiProvider {
     title: string,
   ): Promise<AiExecutionResult> {
     const body = JSON.stringify(buildResponsesRequestBody(this.model, parts));
-    const { json, responseBytes } = await callOpenAi(this.fetchImpl, {
-      method: 'POST',
-      path: OPENAI_RESPONSES_PATH,
-      apiKey: this.#apiKey,
-      body,
-      timeoutMs: clampTimeout(request.timeoutMs ?? this.defaultTimeoutMs),
-      maxResponseBytes: MAX_OPENAI_RESPONSE_BYTES,
-      label: this.label,
-    });
-    const parsed = parseResponsesBody(json, this.label);
+    let json: unknown;
+    let responseBytes: number;
+    let parsed: ParsedResponse;
+    try {
+      ({ json, responseBytes } = await callOpenAi(this.fetchImpl, {
+        method: 'POST',
+        path: OPENAI_RESPONSES_PATH,
+        apiKey: this.#apiKey,
+        body,
+        timeoutMs: clampTimeout(request.timeoutMs ?? this.defaultTimeoutMs),
+        maxResponseBytes: MAX_OPENAI_RESPONSE_BYTES,
+        label: this.label,
+      }));
+      parsed = parseResponsesBody(json, this.label);
+    } catch (err) {
+      // The router invalidates its own readiness cache on UNAVAILABLE; the shared probe must not answer the re-probe
+      // from its cache either (chat and image instances alike).
+      if (err instanceof OpenAiApiError && READINESS_INVALIDATING_CODES.has(err.code)) this.#sharedProbe?.invalidate();
+      throw err;
+    }
     // Only a reply cut off by the output bound is usable (marked as partial); a filtered or otherwise incomplete one
     // fails closed.
     if (parsed.incompleteReason !== undefined && parsed.incompleteReason !== 'max_output_tokens') {

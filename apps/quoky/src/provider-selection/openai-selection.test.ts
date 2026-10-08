@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Capability, NoProviderAvailableError } from '@quoky/core';
 import type { Actor, InboundMessage, Session, TurnHandlerContext } from '@quoky/core';
 import { OpenAiApiProvider, OpenAiApiVisionProvider } from '@quoky/ai-openai-api';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { inspect } from 'node:util';
 import { stripInternalMetadataEnvelope } from '@quoky/ai-cli';
 import { describeStartupFailure, reportProviderReadiness } from '../bootstrap-preflight';
@@ -401,6 +404,55 @@ describe('startup readiness (CA P2-2, option a): a configured but unselected HTT
     });
     // openai-api is ready but not the effective chat choice, so chat is NOT counted as served.
     expect(noChat.generalChatReady).toBe(false);
+  });
+});
+
+describe('execution failure → selection-time fallback through the real router (Codex P2 on 0f0e82c)', () => {
+  function scripted(extra: Record<string, string>, post: number) {
+    let gets = 0;
+    const posts: string[] = [];
+    vi.stubGlobal('fetch', (async (input: unknown, init?: RequestInit) => {
+      if (init?.method === 'GET') {
+        gets += 1;
+        // The first model-get succeeds; every later one is refused (the key or quota is gone).
+        return gets === 1
+          ? new Response(JSON.stringify({ id: 'gpt-4.1-mini' }), { status: 200 })
+          : new Response('{}', { status: 401 });
+      }
+      posts.push(String(input));
+      return new Response('{"error":{"message":"busy"}}', { status: post });
+    }) as typeof fetch);
+    const f = selectionFixture({ env: { ...OPENAI_ENV, ...extra }, unstubbed: (p) => p.id.startsWith('openai') });
+    return { f, gets: () => gets, posts };
+  }
+
+  it.each([503, 429])('chat: GET ok → POST %i → the next selection re-probes and falls back to the ready Claude', async (status) => {
+    const { f, gets, posts } = scripted({ QUOKY_CHAT_PROVIDER: 'openai' }, status);
+    const first = await f.router.select(Capability.GENERAL_CHAT);
+    expect(first.id).toBe('openai-api');
+    await expect(first.execute({ capability: Capability.GENERAL_CHAT, prompt: 'hi' })).rejects.toMatchObject({ kind: 'UNAVAILABLE' });
+    expect(posts).toHaveLength(1);
+    const next = await f.router.select(Capability.GENERAL_CHAT);
+    expect(next.id).toBe('claude-cli');
+    expect(gets()).toBe(2);
+  });
+
+  it('vision: GET ok → POST 429 → the next image selection re-probes; with the GET failing nothing is selected', async () => {
+    const { f, gets } = scripted({ QUOKY_CHAT_PROVIDER: 'claude', QUOKY_IMAGE_UNDERSTANDING_PROVIDER: 'openai' }, 429);
+    const dir = mkdtempSync(path.join(tmpdir(), 'quoky-openai-vision-'));
+    try {
+      const image = path.join(dir, 'a.png');
+      writeFileSync(image, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('x')]));
+      const first = await f.router.select(Capability.IMAGE_UNDERSTANDING);
+      expect(first.id).toBe('openai-vision-api');
+      await expect(
+        first.execute({ capability: Capability.IMAGE_UNDERSTANDING, prompt: 'p', images: [{ path: image, mimeType: 'image/png' }] }),
+      ).rejects.toMatchObject({ kind: 'UNAVAILABLE' });
+      await expect(f.router.select(Capability.IMAGE_UNDERSTANDING)).rejects.toBeInstanceOf(NoProviderAvailableError);
+      expect(gets()).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

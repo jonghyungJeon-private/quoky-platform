@@ -26,7 +26,9 @@ third-party dependency (`node:fetch` only).
 - Review fixes: the key is held in a redacting holder (config inspection and serialisation show `[REDACTED]`);
   `incomplete` replies are marked as cut off at the output bound and fail closed otherwise (`INCOMPLETE`); startup
   readiness no longer probes a `REMOTE` provider outside the effective selection (no OpenAI call unless selected; the
-  chat and image instances share one probe); `sk-` keys are redacted from error diagnostics; context files are refused.
+  chat and image instances share one probe, cleared by an unavailable / rate-limit / auth / timeout execution failure so
+  the next selection re-probes and can fall back to Claude); `sk-` keys are redacted from error diagnostics; context
+  files are refused.
 
 ## Unreleased — LRN-5 learning-example egress realignment (2026-10-08)
 
