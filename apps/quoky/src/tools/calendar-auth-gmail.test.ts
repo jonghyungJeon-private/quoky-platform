@@ -62,6 +62,8 @@ describe('consent helper --gmail (ADR-0118 D3)', () => {
     expect(h.fetchCalls).toEqual([GMAIL_OAUTH_TOKEN_URL]);
     expect(h.out.join('\n')).toContain('QUOKY_GMAIL_TOKEN_FILE=/tmp/quoky-test/google-gmail-token.json');
     expect(h.out.join('\n')).toContain('READ-ONLY Gmail access');
+    // Review P3-5: the shared-client revoke warning.
+    expect(h.out.join('\n')).toContain('this also revokes the calendar grant');
     const printed = [...h.out, ...h.err].join('\n');
     for (const secret of [CLIENT_SECRET, REFRESH, CODE]) expect(printed).not.toContain(secret);
   });

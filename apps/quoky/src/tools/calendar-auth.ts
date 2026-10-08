@@ -100,6 +100,8 @@ written to the new file with mode 600 and is never printed. Then set QUOKY_CALEN
 invites anyone). Writes stay off until QUOKY_CALENDAR_WRITE_ENABLED=true.
 --gmail requests read-only Gmail access (gmail.readonly) and nothing else; set QUOKY_GMAIL_TOKEN_FILE to the new file.
 Quoky never sends, deletes or changes mail. Revoke at https://myaccount.google.com/permissions and delete the file.
+Gmail and the calendar share one OAuth client: removing Quoky there also revokes the calendar grant (run the calendar
+consent again afterwards if you keep the calendar).
 `;
 
 const PAGE_RECEIVED = 'Quoky: approval received. Return to the terminal to confirm the token was saved. You can close this tab.';
@@ -235,6 +237,10 @@ export async function runCli(argv: readonly string[], deps: CalendarAuthDeps = d
       (deps.writeGmailTokenFile ?? writeGmailTokenFile)(outPath, gmailGrant.refreshToken, scope);
       deps.stdout(`Saved a gmail.readonly refresh token (mode 600) to ${outPath}`);
       deps.stdout(`Next: set QUOKY_GMAIL_TOKEN_FILE=${outPath} in .env.local and restart Quoky.`);
+      deps.stdout(
+        'To revoke later: remove Quoky at https://myaccount.google.com/permissions (this also revokes the calendar grant, ' +
+          'which uses the same OAuth client) and delete the token file.',
+      );
       return EXIT_OK;
     }
     const granted = await exchangeGoogleAuthorizationCode(
