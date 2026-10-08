@@ -201,6 +201,22 @@ describe('Telegram startup under a transient outage (CA P2-2): never fails the s
     await h.adapter.stop();
   });
 
+  it('Codex delta P2: a refusal held for an unregistered listener does not survive stop and a successful restart', async () => {
+    const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') }, okReply({ id: 1, is_bot: true }));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    await h.adapter.stop();
+    await h.adapter.start();
+    await until(() => h.adapter.status().identityVerified === true);
+    const fatals: string[] = [];
+    h.adapter.onFatal((error) => void fatals.push(error.code));
+    expect(fatals).toEqual([]);
+    expect(h.adapter.status().identityVerified).toBe(true);
+    expect(h.adapter.status().halted).toBeUndefined();
+    await h.adapter.stop();
+  });
+
   it('CA final check rule 1: verified, then a runtime 401 halts Telegram only (onHalt, never onFatal)', async () => {
     const fake = new FakeTelegram().queue('getUpdates', okReply([]), errorReply(401));
     const h = harness(fake);

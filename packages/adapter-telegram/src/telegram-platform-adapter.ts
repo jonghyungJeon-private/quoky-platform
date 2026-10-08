@@ -320,6 +320,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.identityVerified = false;
     this.conflicts = [];
     this.noticesSent.clear();
+    // Codex delta P2: a refusal held for a not-yet-registered fatal listener belongs to the previous run only.
+    this.pendingFatal = undefined;
     // The token names its bot: a token for another bot fails before any network call.
     if (this.config.token.botId !== this.config.expectedBotId) {
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
