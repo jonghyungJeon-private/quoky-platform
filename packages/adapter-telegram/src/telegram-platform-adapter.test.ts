@@ -818,6 +818,10 @@ describe('Telegram owner notification sink (ADR-0101 D4, ADR-0114 D11; CA P1-1)'
     });
     expect(await h.adapter.deliver(notification({ target: { ...target, channelId: '-1001' } }))).toMatchObject({ reason: 'TARGET_NOT_ADMITTED' });
     expect(await h.adapter.deliver(notification({ text: '가'.repeat(1801) }))).toEqual({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    // CA re-review P3-6: an empty or whitespace-only text is EMPTY_TEXT, not TEXT_TOO_LONG.
+    for (const text of ['', '  \n ']) {
+      expect(await h.adapter.deliver(notification({ text }))).toEqual({ status: 'NOT_SENT', reason: 'EMPTY_TEXT', retryable: false });
+    }
     expect(h.fake.callsTo('sendMessage')).toHaveLength(0);
     await h.adapter.stop();
     expect(await h.adapter.deliver(notification())).toEqual({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });

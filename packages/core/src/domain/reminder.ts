@@ -63,7 +63,9 @@ export type NotificationNotSentReason =
   | 'MISSING_ACCESS'
   | 'UNKNOWN_TARGET'
   | 'RATE_LIMITED'
-  | 'NOT_CONNECTED';
+  | 'NOT_CONNECTED'
+  /** Additive (ADR-0114 TG-1): the rendered text was empty or whitespace only; a platform refuses it, nothing is sent. */
+  | 'EMPTY_TEXT';
 
 /** Reasons the request may have been transmitted (ADR-0101 D4). `INTERRUPTED` is a FIRING row found at startup. */
 export type NotificationUncertainReason =

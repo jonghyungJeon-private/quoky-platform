@@ -841,7 +841,9 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       this.logger.warn('owner notification content and text disagree', { platform: TELEGRAM_PLATFORM, kind: notification.kind });
     }
     const text = notification.content !== undefined ? renderTelegramContent(notification.content) : notification.text;
-    if (text.trim().length === 0 || [...text].length > REMINDER_LIMITS.maxDeliveredTextChars || text.length > TELEGRAM_MESSAGE_LIMIT) {
+    // CA re-review P3-6: an empty text is its own refusal, never "too long".
+    if (text.trim().length === 0) return notSent('EMPTY_TEXT', false);
+    if ([...text].length > REMINDER_LIMITS.maxDeliveredTextChars || text.length > TELEGRAM_MESSAGE_LIMIT) {
       return notSent('TEXT_TOO_LONG', false);
     }
     try {
