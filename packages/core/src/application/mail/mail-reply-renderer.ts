@@ -2,6 +2,7 @@ import type { IsoTimestamp, MessageBody } from '../../domain';
 import type { ConnectorQueryErrorReason } from '../../ports/connector-query';
 import type { MailMessageSummary, MailSearchResult } from '../../ports/mail-reader.port';
 import { containsCredentialMaterial } from '../credential-guard';
+import { neutralizeLinks } from '../link-neutralizer';
 import { joinBody, messageBody, takeLines, untrustedText, type MessagePart } from '../message-rendering';
 import { addLocalDays, compareLocalDates, localDateOf, toZonedDateTime } from '../reminders/zoned-time';
 import type { UntrustedDocumentRefusal } from '../untrusted-document-readout';
@@ -84,9 +85,14 @@ function clip(text: string, maxChars: number): string {
 }
 
 /** One guarded untrusted field: clipped, or the placeholder when credential-shaped (checked on the full value). */
+/**
+ * One guarded untrusted field: the placeholder when credential-shaped (checked on the full value), else its links
+ * replaced by the shared neutralizer (re-review item 2: a subject `https://evil.co/x 확인` or a snippet `www.evil.co`
+ * would otherwise be clickable, embedded and crawled), then clipped.
+ */
 function guardedField(value: string, maxChars: number, placeholder: string): MessagePart {
   if (value.trim().length > 0 && containsCredentialMaterial(value)) return placeholder;
-  return untrustedText(clip(value, maxChars));
+  return untrustedText(clip(neutralizeLinks(value, 'display'), maxChars));
 }
 
 function senderOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
@@ -143,7 +149,7 @@ function entryLine(index: number, message: MailMessageSummary, filter: MailListi
 
 /** The quoted owner-typed sender of a `from` listing (still an untrusted span: it is echoed into chat). */
 function senderQuery(from: string): MessagePart {
-  return untrustedText(clip(from, MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS));
+  return untrustedText(clip(neutralizeLinks(from, 'display'), MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS));
 }
 
 function countText(result: MailSearchResult, language: MailLanguage): string {

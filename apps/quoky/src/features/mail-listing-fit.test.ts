@@ -72,3 +72,46 @@ describe('mail listing on the real platform markups (review P2 / P3-2)', () => {
     expect(gets).toEqual(['id10']);
   });
 });
+
+describe('mail listing links (re-review item 2)', () => {
+  it('no URL reaches the Discord markup or the Telegram plain text, from any field or the echoed sender query', async () => {
+    const links = ['https://evil.co/x', '1https://evil.example/login', 'www.evil.co', 'evil.example/login', 'xn--80ak6aa92e.com', '예시.한국'];
+    const reader: MailReader = {
+      source: 'mail',
+      readOnly: true,
+      search: async () => ({
+        messages: links.map((link, index) => ({
+          id: `l${index}`,
+          sender: { name: `보안팀 ${link}`, address: '' },
+          subject: `${link} 확인`,
+          receivedAt: '2026-10-08T00:12:00.000Z',
+          snippet: `지금 ${link} 에서 로그인하세요`,
+          unread: true,
+        })),
+        matched: links.length,
+        matchedIsLowerBound: false,
+      }),
+      getMessage: async () => {
+        throw new Error('not used');
+      },
+    };
+    const handler = createMailTurnHandler({ reader, timeZone: 'Asia/Seoul' });
+    const listing = await handler.handle(ctx('evil.example 메일 찾아줘'));
+    if (listing === null || !('reply' in listing)) throw new Error('expected a listing reply');
+    for (const rendered of [renderOutboundForDiscord(listing.reply), listing.reply.text]) {
+      expect(rendered).not.toMatch(/[a-z][a-z0-9+.-]*:\/\/|www\.|evil\.|xn--|예시\.한국/i);
+      expect(rendered).toContain('링크'); // '[링크]', escaped on Discord
+    }
+    // Ordinary addresses stay readable.
+    const plain: MailReader = {
+      ...reader,
+      search: async () => ({
+        messages: [{ id: 'p', sender: { name: '', address: 'kim@acme.kr' }, subject: 'v1.2.3 배포', receivedAt: '2026-10-08T00:12:00.000Z', snippet: '', unread: false }],
+        matched: 1,
+        matchedIsLowerBound: false,
+      }),
+    };
+    const kept = await createMailTurnHandler({ reader: plain, timeZone: 'Asia/Seoul' }).handle(ctx('김철수 메일 찾아줘'));
+    expect(kept !== null && 'reply' in kept ? kept.reply.text : '').toContain('1. kim@acme.kr · v1.2.3 배포');
+  });
+});
