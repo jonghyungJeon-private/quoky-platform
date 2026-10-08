@@ -116,7 +116,8 @@ describe('CompositePlatformAdapter (ADR-0114 D6): one contract over Discord and 
         calls += 1;
         throw new TypeError('fetch failed');
       },
-      sleep: (_ms, signal) => new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
+      sleep: (_ms, signal) =>
+        new Promise((resolve) => (signal.aborted ? resolve() : signal.addEventListener('abort', () => resolve(), { once: true }))),
     });
     const adapter = new CompositePlatformAdapter(discord, [telegram], silent);
     await expect(adapter.start()).resolves.toBeUndefined();

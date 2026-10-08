@@ -124,6 +124,9 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** The signal of a send made while the adapter is not running (no stop to wait for). */
+const NEVER_ABORTED = new AbortController().signal;
+
 function codeOf(error: unknown): string {
   return error instanceof TelegramApiError ? error.code : 'UNEXPECTED';
 }
@@ -149,6 +152,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
   private polling = false;
   /** Why the Telegram side stopped on its own (identity, token or conflict found while running); Discord runs on. */
   private halted?: TelegramStartupErrorCode;
+  /** The current `getUpdates` batch size (halved after an oversized response, reset after a success). */
+  private pollLimit = POLL_LIMIT;
   /** When the recent HTTP 409s of the poll happened (ms), for the split-brain policy. */
   private conflicts: number[] = [];
   private identityVerified = false;
@@ -340,7 +345,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
           'getUpdates',
           {
             ...(sentOffset !== undefined ? { offset: sentOffset } : {}),
-            limit: POLL_LIMIT,
+            limit: this.pollLimit,
             timeout: this.pollTimeoutSeconds,
             allowed_updates: ['message'],
           },
@@ -358,6 +363,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
           this.halt(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
           break;
         }
+        // CA P3-1: a batch over the body bound is fetched in halves; one update alone over it is skipped (counted).
+        if (codeOf(err) === TelegramFailureCode.RESPONSE_TOO_LARGE && this.shrinkOrSkip()) continue;
         // CA P2-3: repeated 409s mean another instance is polling this bot; stop rather than split the updates.
         if (codeOf(err) === TelegramFailureCode.CONFLICT && this.recordConflict()) {
           this.halt(TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT);
@@ -374,6 +381,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
         continue;
       }
       delay = this.backoff.initialMs;
+      this.pollLimit = POLL_LIMIT;
       if (sentOffset !== undefined) this.confirmedOffset = sentOffset;
       this.lastPollAt = now();
       const before = this.offset;
@@ -382,6 +390,24 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
       // A non-empty batch that moved nothing (entries without a usable update_id) must not spin.
       if (updates.length > 0 && this.offset === before) await this.sleep(this.backoff.maxMs, signal);
     }
+  }
+
+  /**
+   * After a body over the bound: halve the batch size down to 1 (`true`, poll again at once); at 1 with a known offset,
+   * skip that single update (`offset + 1`, counted as `malformed`, `true`). Without a known offset nothing can be
+   * skipped safely (`false`: the normal backoff applies).
+   */
+  private shrinkOrSkip(): boolean {
+    if (this.pollLimit > 1) {
+      this.pollLimit = Math.max(1, Math.floor(this.pollLimit / 2));
+      this.logger.warn('telegram poll response too large; fetching fewer updates', { limit: this.pollLimit });
+      return true;
+    }
+    if (this.offset === undefined) return false;
+    this.offset += 1;
+    this.dropped.malformed += 1;
+    this.logger.warn('telegram update over the size bound skipped', { reason: 'malformed' });
+    return true;
   }
 
   /** Record one HTTP 409; `true` once {@link CONFLICT_HALT_COUNT} fell within {@link CONFLICT_WINDOW_MS}. */
@@ -556,13 +582,18 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     params: () => Record<string, unknown> | FormData,
     timeoutMs: number,
   ): Promise<unknown> {
+    // A stopped adapter sends nothing (a reply or notice that arrives after stop() is dropped).
+    if (this.stopped) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
     try {
       return await this.api.call(method, params(), { timeoutMs });
     } catch (err) {
       const retryAfter = err instanceof TelegramApiError && err.code === TelegramFailureCode.RATE_LIMITED ? err.retryAfterSeconds : undefined;
       if (retryAfter === undefined || retryAfter > MAX_SEND_RETRY_AFTER_SECONDS) throw err;
-      await this.sleep(retryAfter * 1000, new AbortController().signal);
-      return this.api.call(method, params(), { timeoutMs });
+      // CA P3-6: the wait ends at stop(), and nothing is sent after it.
+      const signal = this.controller?.signal ?? NEVER_ABORTED;
+      await this.sleep(retryAfter * 1000, signal);
+      if (signal.aborted || this.stopped) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
+      return this.api.call(method, params(), { timeoutMs, signal });
     }
   }
 

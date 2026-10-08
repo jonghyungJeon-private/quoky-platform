@@ -72,6 +72,14 @@ function harness(fake = new FakeTelegram(), options: TelegramAdapterOptions & { 
   return { adapter, fake, logs, received, sleeps };
 }
 
+/** A sleep that lasts until the adapter stops (resolves at once when already stopped). */
+function untilAborted(_ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
+
 const getUpdatesOffsets = (fake: FakeTelegram): Array<number | undefined> =>
   fake.callsTo('getUpdates').map((call) => call.params.offset as number | undefined);
 
@@ -245,6 +253,59 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     expect(s.adapter.status()).toMatchObject({ polling: true });
     expect(s.adapter.status().halted).toBeUndefined();
     await s.adapter.stop();
+  });
+
+  it('CA P3-1: an oversized poll response halves the batch down to 1, then skips that one update as malformed', async () => {
+    const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(80, '첫')]));
+    const h = harness(fake);
+    // After the first batch every poll is "too large" until the limit reaches 1; then one skip, then a normal batch.
+    let tooLarge = 7; // 100 → 50 → 25 → 12 → 6 → 3 → 1, then the skip
+    const fetchImpl = fake.fetch;
+    const adapter = new TelegramPlatformAdapter(
+      { token: holder(), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger(h.logs),
+      {
+        fetch: async (input, init) => {
+          const params = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          if (String(input).endsWith('/getUpdates') && params.timeout !== 0 && params.offset === 81 && tooLarge > 0) {
+            tooLarge -= 1;
+            fake.calls.push({ url: String(input), method: 'getUpdates', params, init });
+            return new Response('x'.repeat(16), { status: 200, headers: { 'content-length': String(64 * 1024 * 1024) } });
+          }
+          return fetchImpl(input, init);
+        },
+        sleep: async (ms) => {
+          h.sleeps.push(ms);
+          await new Promise((resolve) => setImmediate(resolve));
+        },
+      },
+    );
+    adapter.onMessage(async (message) => void h.received.push(message));
+    await adapter.start();
+    await until(() => fake.callsTo('getUpdates').some((call) => call.params.offset === 82));
+    const limits = fake.callsTo('getUpdates').filter((call) => call.params.offset === 81).map((call) => call.params.limit);
+    expect(limits).toEqual([100, 50, 25, 12, 6, 3, 1]);
+    expect(adapter.status().droppedUpdates.malformed).toBe(1);
+    expect(fake.callsTo('getUpdates').find((call) => call.params.offset === 82)?.params.limit).toBe(1);
+    expect(h.received.map((m) => m.text)).toEqual(['첫']);
+    await adapter.stop();
+  });
+
+  it('CA P3-6: a rate-limit wait on a send ends at stop() and sends nothing after it', async () => {
+    const fake = new FakeTelegram().queue('sendMessage', errorReply(429, { retry_after: 5 }));
+    const logs: LogLine[] = [];
+    const adapter = new TelegramPlatformAdapter(
+      { token: holder(), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger(logs),
+      { fetch: fake.fetch, sleep: untilAborted },
+    );
+    await adapter.start();
+    const sending = adapter.sendMessage({ context: { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID) }, text: 'hi' });
+    await until(() => fake.callsTo('sendMessage').length === 1);
+    await adapter.stop();
+    await sending;
+    // The 429'd send, then nothing: no retry and no notice after stop.
+    expect(fake.callsTo('sendMessage').map((call) => call.params.text)).toEqual(['hi']);
   });
 
   it('CA P3-5: a token rejected while polling stops the Telegram side and shows it in status', async () => {
