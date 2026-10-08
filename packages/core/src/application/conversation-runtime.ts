@@ -46,6 +46,7 @@ import { parseReminderMessage } from './reminders/reminder-grammar';
 import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './execution-command-guard';
 import {
   type ConnectorWriteAnchorView,
+  type ConnectorWriteClosedRequest,
   type ConnectorWriteFlow,
   type ConnectorWriteRecentSend,
   type ConnectorWriteRelease,
@@ -832,6 +833,11 @@ export interface ConversationRuntimeDeps {
   };
   readonly approvals: {
     decide(approvalId: Id, decision: ApprovalDecision): Promise<ApprovalRequest>;
+    /**
+     * Live QA session 3 (D12): withdraw an APPROVED, unexecuted connector-write grant (`ApprovalManager.revoke`, the same
+     * already-registered instance). Optional so narrow fakes keep compiling; absent → the anchor still closes.
+     */
+    revoke?(approvalId: Id, decision: ApprovalDecision): Promise<ApprovalRequest>;
     /** Reused for the ambiguous-retry prompt on the apply gate (Sprint 2s) — a type-only widening, not
      *  a new method (`ApprovalManager.get` already exists). */
     get(approvalId: Id): Promise<ApprovalRequest | null>;
@@ -1015,6 +1021,7 @@ export interface ConversationRuntimeOptions {
 /** This conversation's most recent write of one kind (stray-phrase replies; Codex P2 on 039d5ff). */
 type RecentConnectorWrite =
   | { readonly kind: 'sent'; readonly operation: ConnectorWriteOperation; readonly sent: ConnectorWriteRecentSend; readonly at: IsoTimestamp }
+  | { readonly kind: 'closed'; readonly operation: ConnectorWriteOperation; readonly closed: ConnectorWriteClosedRequest; readonly at: IsoTimestamp }
   | {
       readonly kind: 'unconfirmed';
       readonly operation: ConnectorWriteOperation;
@@ -1970,6 +1977,18 @@ export class ConversationRuntime {
   }
 
   /**
+   * A merge request with no code chain (live QA session 3, D11): the {@link interpretMergeIntent} request shape, naming a
+   * git merge — "머지"/"merge", or "병합" next to a PR / git word ("PR 머지해줘", "머지해줘", "PR 병합해줘"). A generic
+   * "파일 병합해줘" is not one (chat). Only picks the fixed merge-disabled / no-PR reply; never an approval or a merge.
+   */
+  static interpretNoChainMergeRequest(text: string): 'merge' | null {
+    if (ConversationRuntime.interpretMergeIntent(text) !== 'merge') return null;
+    if (!unnegatedMatch(text, [MERGE_WORD])) return null;
+    const t = text.trim().toLowerCase();
+    return /머지|\bmerge\b/.test(t) || PR_WORD.test(t) || /\bgit\b|깃/.test(t) ? 'merge' : null;
+  }
+
+  /**
    * Explicit merge-EXECUTION intent (Sprint 3g, ADR-0057, CA change 1) — only consulted at MERGE_APPROVED /
    * PR_MERGED. A merge word + a request/execution verb → `'execute'`; the MERGE_QUESTION status/check/possibility
    * guard takes precedence (so "머지 상태 확인해줘"/"머지 체크해줘"/"머지 가능해?" never execute); a bare "머지"/"merge"
@@ -2781,6 +2800,16 @@ export class ConversationRuntime {
       if (noAnchorPush === 'push-unsupported') return this.handlePushUnsupportedCompanionTurn(message, session);
       if (noAnchorPush === 'push') return this.handleNoPushTargetTurn(message, session);
     }
+    // Live QA session 3 (D11): a merge request with no code chain at all ("PR 머지해줘") gets the documented fixed reply —
+    // the merge-disabled refusal while QUOKY_GIT_MERGE_ENABLED=false (quickstart §6/§8), otherwise "no PR to merge" —
+    // never chat. No approval, no git/hosting call.
+    if (!applyAnchor && ConversationRuntime.interpretNoChainMergeRequest(chainText) === 'merge') {
+      return this.respondComposed(
+        message,
+        session,
+        this.gitMergeEnabled ? this.deps.composer.composeNoMergeTarget(message.context) : this.deps.composer.composeMergeDisabled(message.context),
+      );
+    }
     // Anything else: fall through untouched — an ELIGIBLE/APPROVED/PATCH_READY/WORKSPACE_APPLIED anchor is
     // an optional follow-up opportunity, never a hard gate ordinary conversation must route around.
 
@@ -2805,6 +2834,12 @@ export class ConversationRuntime {
     }
     const bareAfterUnconfirmed = await this.respondBareExecutionAfterUnconfirmedWrite(message, session, actor);
     if (bareAfterUnconfirmed) return bareAfterUnconfirmed;
+    // Live QA session 3 (D11): a bare "실행" / "go" / "run it" with no code chain and no approved write here runs nothing
+    // and says so deterministically (a chat model once answered that Quoky cannot execute anything). With a chain anchor
+    // the turn routes as before (its own state replies own it).
+    if (!applyAnchor && isBareExecutionRequest(message.text)) {
+      return this.respondComposed(message, session, this.deps.composer.composeNoApprovedExecution(message.context));
+    }
     if (interpretStrayDecisionUtterance(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
     }
@@ -3457,11 +3492,17 @@ export class ConversationRuntime {
           );
           return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
         }
-        // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here.
+        // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here. D12: the approval is
+        // recorded withdrawn (REJECTED) together with the close, under the approval → session locks (#132 rules).
         if ((decision === 'deny' || decision === 'cancel') && anchor.actorId === actor.id) {
-          const reason = decision === 'deny' ? 'denied' : 'cancelled';
-          await flow.close(session, view, reason, this.clock());
-          return respond({ kind: 'closed', reason, family: anchor.family });
+          return this.decisionTurn(
+            session,
+            await this.approvalDecisions.revokeConnectorWrite(
+              this.chatDecision(message, session, actor),
+              view,
+              decision === 'deny' ? 'denied' : 'cancelled',
+            ),
+          );
         }
         return null;
       }
@@ -3482,6 +3523,15 @@ export class ConversationRuntime {
         }
         // An old send is not "already executed" any more: the stray-phrase path answers (nothing approved).
         if (isConnectorWriteSendStale(anchor, now)) return null;
+        // Live QA session 3 (D1): a later request of the same kind in this conversation was closed unsent (e.g. 거절)
+        // after this send — answer about that latest request, never "already sent".
+        if (anchor.status === 'SENT') {
+          const closed = await flow.closedAfterInSession(session, actor.id, anchor.operation, anchor.updatedAt);
+          if (closed) {
+            const reply = this.deps.composer.composeConnectorWriteLatestClosed(message.context, closed);
+            return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+          }
+        }
         return respond(await flow.execute({ session, actor, view, now }));
       }
       default:
@@ -3553,7 +3603,12 @@ export class ConversationRuntime {
   ): Promise<RecentConnectorWrite | null> {
     const sent = await flow.recentSentInSession(session, actor.id, operation, now);
     const unconfirmed = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
-    if (sent && (!unconfirmed || sent.sentAt >= unconfirmed.at)) return { kind: 'sent', operation, sent, at: sent.sentAt };
+    if (sent && (!unconfirmed || sent.sentAt >= unconfirmed.at)) {
+      // Live QA session 3 (D1): a later request of that kind closed unsent — "already sent" would read as if it went out.
+      const closed = await flow.closedAfterInSession(session, actor.id, operation, sent.sentAt);
+      if (closed) return { kind: 'closed', operation, closed, at: closed.at };
+      return { kind: 'sent', operation, sent, at: sent.sentAt };
+    }
     if (unconfirmed) return { kind: 'unconfirmed', operation, status: unconfirmed.status, at: unconfirmed.at };
     return null;
   }
@@ -3562,7 +3617,9 @@ export class ConversationRuntime {
     const reply =
       recent.kind === 'sent'
         ? this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, recent.operation, recent.sent)
-        : this.deps.composer.composeConnectorWriteStep(message.context, {
+        : recent.kind === 'closed'
+          ? this.deps.composer.composeConnectorWriteLatestClosed(message.context, recent.closed)
+          : this.deps.composer.composeConnectorWriteStep(message.context, {
             kind: 'repeat',
             operation: recent.operation,
             status: recent.status,

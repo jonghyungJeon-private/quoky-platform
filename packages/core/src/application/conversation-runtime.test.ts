@@ -12160,6 +12160,61 @@ describe('routing exec gaps — push topic words match whole Korean words only (
   });
 });
 
+describe('live QA session 3 (D11) — no-chain merge requests and a bare "실행" get the documented deterministic replies', () => {
+  const composer = new ResponseComposer();
+  const MERGE_REQUESTS = ['PR 머지해줘', '머지해줘', 'PR 병합해줘', 'merge the PR', '이 PR 머지해줘'];
+
+  it.each(MERGE_REQUESTS)('no chain + %j, merge off (default) → the merge-disabled refusal; no approval, no hosting call', async (text) => {
+    expect(ConversationRuntime.interpretNoChainMergeRequest(text)).toBe('merge');
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(r.reply.text).toBe(composer.composeMergeDisabled(CTX).text);
+    expect(calls.classify).toBe(0);
+    expect(calls.requestForRisk).toBe(0);
+    expect(calls.hostingMergePR + calls.hostingGetStatus).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it('no chain + "PR 머지해줘", merge on → "no PR to merge"; nothing approved or merged', async () => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps, { gitMergeEnabled: true }).handle(messageOf('PR 머지해줘'));
+    expect(r.reply.text).toBe(composer.composeNoMergeTarget(CTX).text);
+    expect(r.reply.text).toContain('지금 병합할 PR이 없어요');
+    expect(calls.requestForRisk).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it.each(['파일 두 개 병합해줘', '엑셀 시트 병합해줘', '머지 가능해?', '머지하지 마', 'git merge와 rebase 차이는요?', '머지 로그 요약해줘'])(
+    'no chain + %j → not a merge request; ordinary chat',
+    async (text) => {
+      expect(ConversationRuntime.interpretNoChainMergeRequest(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: null });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(r.reply.text).not.toBe(composer.composeMergeDisabled(CTX).text);
+      expect(calls.classify).toBe(1);
+      expect(mutationCalls(calls)).toBe(0);
+    },
+  );
+
+  it.each(['실행', '실행해', '실행해줘', '지금 실행', 'go', 'run it'])('no chain + bare %j → "nothing approved to run", provider-free; nothing runs', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: null });
+    const r = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(r.reply.text).toBe(composer.composeNoApprovedExecution(CTX).text);
+    expect(r.reply.text).toContain('실행할 승인된 작업이 없어요');
+    expect(calls.classify).toBe(0);
+    expect(mutationCalls(calls)).toBe(0);
+  });
+
+  it('with a chain anchor the bare word keeps its state routing (never the no-approved-execution reply)', async () => {
+    for (const status of ['WORKSPACE_APPLIED', 'GIT_PUSHED', 'PR_CREATED'] as const) {
+      const { deps, calls } = makeDeps({ applyAnchor: approvedAnchorOf({ status }) });
+      const r = await new ConversationRuntime(deps).handle(messageOf('실행'));
+      expect(r.reply.text, status).not.toBe(composer.composeNoApprovedExecution(CTX).text);
+      expect(mutationCalls(calls), status).toBe(0);
+    }
+  });
+});
+
 describe('Codex re-review of 63ab7a0 — review nouns and verb-first merge forms', () => {
   const composer = new ResponseComposer();
   const CHAIN = {

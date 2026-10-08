@@ -427,6 +427,7 @@ function harness(opts: HarnessOptions = {}) {
     orchestrator: { run: bad('orchestrator.run'), resume: bad('orchestrator.resume') },
     approvals: {
       decide: (id, d) => approvalManager.decide(id, d),
+      revoke: (id, d) => approvalManager.revoke(id, d),
       get: (id) => approvalManager.get(id),
       requestForRisk: bad('runtime approvals.requestForRisk'),
     },
@@ -1688,5 +1689,130 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(UNCERTAIN_COMMENT);
       expect(h.writes.addComment).toHaveLength(1);
     });
+  });
+});
+
+describe('connector writes — live QA session 3 (D1, D12)', () => {
+  const LATEST_POST_DENIED = [
+    '가장 최근 Slack 게시 요청(#dev)은 거절돼서 실행하지 않았어요. 그 요청으로는 아무것도 보내지 않았어요.',
+    '필요하면 새로 요청해 주세요.',
+  ].join('\n');
+
+  it.each([{}, { priorActiveTaskId: 'task-prior' }])(
+    'D1: post X sent, then Y previewed and rejected → "Slack 게시 실행" names Y as rejected, never X as "already sent" (%j)',
+    async (opts) => {
+      const h = harness(opts);
+      await h.send('#dev에 게시: X');
+      await h.send('승인');
+      await h.send('Slack 게시 실행');
+      expect(h.writes.post).toHaveLength(1);
+      advanceMinutes(1);
+      await h.send('#dev에 게시: Y');
+      advanceMinutes(1);
+      expect((await h.send('거절')).reply.text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+      for (const text of ['Slack 게시 실행', 'Slack 게시 실행해도 돼?']) {
+        const reply = await h.send(text);
+        expect(reply.reply.text, text).toBe(LATEST_POST_DENIED);
+        expect(reply.reply.text, text).not.toContain('이미 보냈어요');
+        expect(reply.reply.text, text).not.toContain('이미 실행했어요');
+      }
+      expect(h.writes.post).toHaveLength(1);
+      // A newer send answers "already sent" again (it is the latest request).
+      advanceMinutes(1);
+      await h.send('#dev에 게시: Z');
+      await h.send('승인');
+      await h.send('Slack 게시 실행');
+      expect(h.writes.post).toHaveLength(2);
+      expect((await h.send('Slack 게시 실행')).reply.text).toMatch(/이미 (?:보냈어요|실행했어요)/);
+      expect(h.writes.post).toHaveLength(2);
+    },
+  );
+
+  it('D1: the same after an ops-UI rejection and after an approved-then-cancelled request (the reason is named)', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('#dev에 게시: X');
+    await h.send('승인');
+    await h.send('Slack 게시 실행');
+    advanceMinutes(1);
+    h.runtime.approvalDecisions.setConfirmationReferenceEnabled(true);
+    await h.send('#dev에 게시: Y');
+    const pending = [...h.approvals.values()].find((a) => a.status === ApprovalStatus.PENDING)!;
+    const decided = await h.runtime.approvalDecisions.decideFromOpsUi({
+      approvalId: pending.id, decision: 'reject', actor: OWNER, sessions: async () => [...h.sessions.values()],
+    });
+    expect(decided).toMatchObject({ status: 'DECIDED', outcome: 'REJECTED' });
+    h.runtime.approvalDecisions.setConfirmationReferenceEnabled(false);
+    advanceMinutes(1);
+    expect((await h.send('Slack 게시 실행')).reply.text).toBe(LATEST_POST_DENIED);
+
+    advanceMinutes(1);
+    await h.send('#dev에 게시: W');
+    await h.send('승인');
+    advanceMinutes(1);
+    await h.send('취소');
+    expect((await h.send('Slack 게시 실행')).reply.text).toContain('가장 최근 Slack 게시 요청(#dev)은 취소돼서 실행하지 않았어요.');
+    expect(h.writes.post).toHaveLength(1);
+  });
+
+  it('D1: a rejected request of ANOTHER kind does not hide this kind\'s recent send', async () => {
+    const h = harness({ priorActiveTaskId: 'task-prior' });
+    await h.send('PROJ-12에 댓글: 한 번만');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    advanceMinutes(1);
+    await h.send('#dev에 게시: Y');
+    await h.send('거절');
+    expect((await h.send('댓글 실행')).reply.text).toContain('이미 보냈어요 (10:00, Jira PROJ-12)');
+  });
+
+  it('D12: a post-approval 거절 records the approval REJECTED (withdrawn) with the closed anchor; nothing can run; the ops UI no longer offers it', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 철회 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    expect(approval?.status).toBe(ApprovalStatus.APPROVED);
+    const anchorTaskId = h.sessions.get('sess-1')?.activeTaskId as string;
+    advanceMinutes(1);
+    const denied = await h.send('거절');
+    expect(denied.status).toBe('DENIED');
+    expect(denied.reply.text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(anchorOf(h.tasks.get(anchorTaskId))).toMatchObject({ status: 'CLOSED', closedReason: 'denied' });
+    const revoked = h.approvals.get(approval!.id);
+    expect(revoked).toMatchObject({
+      status: ApprovalStatus.REJECTED,
+      decision: false,
+      decidedBy: OWNER.id,
+      comment: 'revoked-before-execution',
+    });
+    expect((await h.send('댓글 실행')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    expect(h.totalWrites()).toBe(0);
+    const located = await h.runtime.approvalDecisions.locateForOpsUi(approval!.id, OWNER, async () => [...h.sessions.values()]);
+    expect(located).toEqual({ status: 'REFUSED', refusal: 'NOT_FOUND' });
+  });
+
+  it('D12: 취소 withdraws it the same way; another actor\'s 거절 changes neither the anchor nor the approval', async () => {
+    const h = harness();
+    await h.send('#dev에 게시: 취소 테스트');
+    await h.send('승인');
+    const [approval] = [...h.approvals.values()];
+    h.setActor(OTHER);
+    await h.send('거절');
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
+    h.setActor(OWNER);
+    const cancelled = await h.send('취소');
+    expect(cancelled.status).toBe('CANCELLED');
+    expect(h.approvals.get(approval!.id)).toMatchObject({ status: ApprovalStatus.REJECTED, comment: 'revoked-before-execution' });
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('D12: after the write ran, 거절 neither revokes nor changes the recorded approval', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글: 이미 보냄');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    const [approval] = [...h.approvals.values()];
+    await h.send('거절');
+    expect(h.approvals.get(approval!.id)?.status).toBe(ApprovalStatus.APPROVED);
+    expect(h.writes.addComment).toHaveLength(1);
   });
 });

@@ -15,6 +15,7 @@ import type {
 import type { ConnectorWriteOperation } from '../ports/connector-write.port';
 import { now } from '../util/clock';
 import { sha256Canonical } from './canonical-digest';
+import { APPROVAL_REVOKED_COMMENT } from './approval-manager';
 import { PENDING_APPROVAL_TTL_MS, pendingApprovalRemainingMs } from './conversation-commands';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
 import {
@@ -888,6 +889,46 @@ export class ApprovalDecisionService {
     const reason = verdict === 'deny' ? 'denied' : 'cancelled';
     await flow.close(input.session, view, reason, this.clock(), input.held);
     return this.connectorWriteStepReply(input.context, input.session.id, { kind: 'closed', reason, family: anchor.family }, '', history);
+  }
+
+  /**
+   * Live QA session 3 (D12): the owner's "거절"/"취소" after a connector write was APPROVED but before it ran. Under the
+   * approval → session locks: re-read the anchor (still this APPROVED, unconsumed grant), record the approval withdrawn
+   * (APPROVED → REJECTED, `ApprovalManager.revoke`) and close the anchor. If the grant moved on meanwhile (executed,
+   * expired, decided elsewhere) nothing is recorded and the existing "nothing to decide" reply answers. Runs nothing.
+   */
+  revokeConnectorWrite(
+    input: ApprovalDecisionInput,
+    view: ConnectorWriteAnchorView,
+    reason: 'denied' | 'cancelled',
+  ): Promise<ApprovalDecisionReply> {
+    return this.exclusive(view.anchor.approvalId, input.session.id, async (held) => {
+      const flow = this.deps.connectorWriteFlow!;
+      const { anchor } = view;
+      const history = anchor.family === 'calendar' ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : undefined;
+      const live = await flow.find(input.session, held);
+      if (
+        !live ||
+        live.taskId !== view.taskId ||
+        live.anchor.status !== 'APPROVED' ||
+        live.anchor.consumedAt ||
+        live.anchor.approvalId !== anchor.approvalId
+      ) {
+        return this.lostToOpsUi({ ...input, held });
+      }
+      const approvalId = live.anchor.approvalId;
+      if (approvalId && this.deps.approvals.revoke) {
+        const approval = await this.deps.approvals.get(approvalId);
+        if (approval?.status === ApprovalStatus.APPROVED) {
+          await this.deps.approvals.revoke(approvalId, {
+            ...this.decisionOf(approvalId, input, false),
+            comment: APPROVAL_REVOKED_COMMENT,
+          });
+        }
+      }
+      await flow.close(input.session, live, reason, this.clock(), held);
+      return this.connectorWriteStepReply(input.context, input.session.id, { kind: 'closed', reason, family: anchor.family }, '', history);
+    });
   }
 
   /** Compose a connector-write step reply and record it (a calendar step keeps the fixed note in history). */

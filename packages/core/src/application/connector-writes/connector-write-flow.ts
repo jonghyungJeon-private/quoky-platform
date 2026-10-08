@@ -313,8 +313,8 @@ export type ConnectorWriteStep =
 /**
  * Narrow storage (satisfied by the live `StorageProvider`; resolved at call time, ADR-0062). `sessions.list` and
  * `tasks.listByContext` serve only the stray-phrase lookups ({@link ConnectorWriteFlow.approvedElsewhere},
- * {@link ConnectorWriteFlow.recentSentInSession}, {@link ConnectorWriteFlow.recentUnconfirmedInSession}); nothing is ever
- * executed from them.
+ * {@link ConnectorWriteFlow.recentSentInSession}, {@link ConnectorWriteFlow.recentUnconfirmedInSession},
+ * {@link ConnectorWriteFlow.closedAfterInSession}); nothing is ever executed from them.
  */
 export interface ConnectorWriteFlowStore {
   readonly sessions: {
@@ -407,6 +407,17 @@ export interface ConnectorWriteFlow {
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentUnconfirmed | null>;
   /**
+   * Live QA session 3 (D1): the newest write REQUEST of `operation` in THIS conversation by `actorId` that was closed
+   * without ever being dispatched (denied, cancelled, expired, superseded, …) after `after` — the newest; null otherwise.
+   * An older send must not answer "already sent" for it (it would read as if the rejected request went out).
+   */
+  closedAfterInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    after: IsoTimestamp,
+  ): Promise<ConnectorWriteClosedRequest | null>;
+  /**
    * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
    */
@@ -450,6 +461,15 @@ export interface ConnectorWriteRecentSend {
   readonly target: ConnectorWriteTargetSummary;
   /** The flow's display time zone (`QUOKY_TIMEZONE`). */
   readonly timeZone: string;
+}
+
+/** A write request of this conversation closed without being dispatched ({@link ConnectorWriteFlow.closedAfterInSession}). */
+export interface ConnectorWriteClosedRequest {
+  readonly operation: ConnectorWriteOperation;
+  readonly reason: ConnectorWriteCloseReason;
+  readonly target: ConnectorWriteTargetSummary;
+  /** When it was closed. */
+  readonly at: IsoTimestamp;
 }
 
 /** A dispatched, unconfirmed write approved in this conversation ({@link ConnectorWriteFlow.recentUnconfirmedInSession}). */
@@ -696,6 +716,35 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return { operation, status: best.receipt.status === 'UNCERTAIN' ? 'UNCERTAIN' : 'EXECUTING', at: best.receipt.updatedAt };
   }
 
+  async closedAfterInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    after: IsoTimestamp,
+  ): Promise<ConnectorWriteClosedRequest | null> {
+    let best: ConnectorWriteAnchor | null = null;
+    for (const anchor of await this.sessionAnchorsOf(session, actorId)) {
+      if (anchor.operation !== operation || anchor.status !== 'CLOSED' || anchor.consumedAt || !anchor.preview) continue;
+      if (anchor.updatedAt <= after) continue;
+      if (!best || anchor.updatedAt > best.updatedAt) best = anchor;
+    }
+    if (!best?.preview) return null;
+    return { operation, reason: best.closedReason ?? 'cancelled', target: connectorWriteTargetOf(best.preview), at: best.updatedAt };
+  }
+
+  /** Every connector-write anchor this conversation created for `actorId` (any status). Read-only. */
+  private async sessionAnchorsOf(session: Session, actorId: Id): Promise<ConnectorWriteAnchor[]> {
+    const tasks = await this.deps.store.tasks.listByContext(session.context.channelId, session.context.threadId);
+    const anchors: ConnectorWriteAnchor[] = [];
+    for (const task of tasks) {
+      if (task.planId) continue;
+      const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+      if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id || anchor.actorId !== actorId) continue;
+      anchors.push(anchor);
+    }
+    return anchors;
+  }
+
   /**
    * The newest receipt in one of `statuses` for a write of `operation` whose approval was anchored in THIS conversation
    * by `actorId`, changed within `maxAgeMs` of `now` (null: any age). Read-only.
@@ -710,13 +759,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   ): Promise<{ receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null> {
     // The anchors this conversation created (the session id and the approval id live in the anchor's JSON; the receipt
     // is keyed by the approval id), so no receipt column links a receipt to a conversation.
-    const tasks = await this.deps.store.tasks.listByContext(session.context.channelId, session.context.threadId);
     const nowMs = Date.parse(now);
     let best: { receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null = null;
-    for (const task of tasks) {
-      if (task.planId) continue;
-      const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
-      if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id || anchor.actorId !== actorId) continue;
+    for (const anchor of await this.sessionAnchorsOf(session, actorId)) {
       // Only a consumed grant can have a receipt (the grant is consumed before anything is written).
       if (anchor.operation !== operation || !anchor.approvalId || !anchor.consumedAt || !anchor.preview) continue;
       const receipt = await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`);

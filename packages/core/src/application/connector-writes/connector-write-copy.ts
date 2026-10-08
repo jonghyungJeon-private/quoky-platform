@@ -12,6 +12,7 @@ import { escapeDiscordText } from '../work-chat/external-work-readout';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
 import type {
   ConnectorWriteApprovedElsewhere,
+  ConnectorWriteClosedRequest,
   ConnectorWriteCloseReason,
   ConnectorWriteEventSummary,
   ConnectorWritePreview,
@@ -544,6 +545,27 @@ export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, ca
     default:
       return `요청을 끝냈어요. ${done}`;
   }
+}
+
+const CLOSED_REQUEST_KO: Readonly<Record<ConnectorWriteCloseReason, string>> = {
+  denied: '거절돼서',
+  cancelled: '취소돼서',
+  expired: '승인 시간이 지나 만료돼서',
+  superseded: '새 요청으로 바뀌어서',
+  abandoned: '선택이 취소돼서',
+  inconsistent: '확인할 수 없어서',
+};
+
+/**
+ * Live QA session 3 (D1): the execution phrase after this conversation's latest request of that kind was closed without
+ * being sent, while an older one was sent. Speaks about the latest request only; never "already sent".
+ */
+export function renderConnectorWriteLatestClosed(closed: ConnectorWriteClosedRequest): string {
+  const label = connectorWriteLabel(closed.operation);
+  return [
+    `가장 최근 ${label} 요청(${connectorWriteShortTarget(closed.target)})은 ${CLOSED_REQUEST_KO[closed.reason]} 실행하지 않았어요. 그 요청으로는 ${isCalendar(closed.operation) ? '캘린더를 바꾸지' : '아무것도 보내지'} 않았어요.`,
+    '필요하면 새로 요청해 주세요.',
+  ].join('\n');
 }
 
 /** An execution phrase with no approved write to run (the QA-018 pattern: no model may claim a write). */

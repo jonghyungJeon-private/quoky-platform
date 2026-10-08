@@ -5,6 +5,9 @@ import type { ApprovalDecision, ApprovalRequest, ExecutionPlan, ExecutionPlanRef
 import type { StorageProvider } from '../ports';
 import type { ApprovalPolicy } from './approval-policy';
 
+/** The decision comment of an approval the owner withdrew after approving it, before execution (D12). */
+export const APPROVAL_REVOKED_COMMENT = 'revoked-before-execution';
+
 /**
  * CAP-004 Approval (ADR-0025). Owns the `ApprovalRequest` aggregate and is the
  * ONLY capability that mutates it. It REFERENCES an `ExecutionPlan` (read-only,
@@ -54,6 +57,30 @@ export class ApprovalManager {
       decidedBy: decision.decidedBy,
       decidedAt: decision.decidedAt,
       ...(decision.comment ? { comment: decision.comment } : {}),
+      updatedAt: now(),
+    };
+    return this.storage.approvals.save(updated);
+  }
+
+  /**
+   * Live QA session 3 (D12): the owner withdraws an APPROVED grant before anything ran (a post-approval "거절"/"취소" of a
+   * one-time connector write). The request becomes REJECTED with the withdrawal recorded as its decision, so the audit
+   * row matches the closed anchor and nothing can execute against it (the executor re-reads APPROVED before a send). Only
+   * an APPROVED request may be revoked; anything else is refused unchanged.
+   */
+  async revoke(approvalId: Id, decision: ApprovalDecision): Promise<ApprovalRequest> {
+    const existing = await this.storage.approvals.get(approvalId);
+    if (!existing) throw new Error(`approval not found: ${approvalId}`);
+    if (existing.status !== ApprovalStatus.APPROVED || decision.approved) {
+      throw new Error(`approval ${approvalId} cannot be revoked (${existing.status})`);
+    }
+    const updated: ApprovalRequest = {
+      ...existing,
+      status: ApprovalStatus.REJECTED,
+      decision: false,
+      decidedBy: decision.decidedBy,
+      decidedAt: decision.decidedAt,
+      comment: decision.comment ?? APPROVAL_REVOKED_COMMENT,
       updatedAt: now(),
     };
     return this.storage.approvals.save(updated);

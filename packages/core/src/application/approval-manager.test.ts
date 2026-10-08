@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApprovalManager } from './approval-manager';
+import { APPROVAL_REVOKED_COMMENT, ApprovalManager } from './approval-manager';
 import { ApprovalPolicy } from './approval-policy';
 import { RiskPolicy } from './risk-policy';
 import { ApprovalStatus, ExecutionStatus, RiskLevel } from '../domain';
@@ -180,5 +180,36 @@ describe('ApprovalManager.requestForRisk (Sprint 2s, ADR-0040)', () => {
     });
     expect(req.status).toBe(ApprovalStatus.PENDING);
     expect(req.riskLevel).toBe(RiskLevel.CRITICAL);
+  });
+});
+
+describe('ApprovalManager.revoke (live QA session 3, D12)', () => {
+  const decision = (approved: boolean, comment?: string) => ({
+    approvalId: 'x',
+    approved,
+    decidedBy: 'owner',
+    decidedAt: '2026-10-08T00:01:00.000Z',
+    ...(comment ? { comment } : {}),
+  });
+
+  it('withdraws an APPROVED request: REJECTED, decision false, the revocation recorded', async () => {
+    const m = manager();
+    const req = await m.requestForRisk({ executionPlanRef: { id: 'p', goal: 'g' }, riskLevel: RiskLevel.CRITICAL, reason: 'r', requestedBy: 'owner' });
+    await m.decide(req.id, decision(true));
+    const revoked = await m.revoke(req.id, decision(false));
+    expect(revoked).toMatchObject({ status: ApprovalStatus.REJECTED, decision: false, decidedBy: 'owner', comment: APPROVAL_REVOKED_COMMENT });
+    expect(await m.isApproved('p')).toBe(false);
+  });
+
+  it('refuses a PENDING or REJECTED request and an "approve" revocation, leaving it unchanged', async () => {
+    const m = manager();
+    const req = await m.requestForRisk({ executionPlanRef: { id: 'p', goal: 'g' }, riskLevel: RiskLevel.HIGH, reason: 'r', requestedBy: 'owner' });
+    await expect(m.revoke(req.id, decision(false))).rejects.toThrow(/cannot be revoked/);
+    await m.decide(req.id, decision(true));
+    await expect(m.revoke(req.id, decision(true))).rejects.toThrow(/cannot be revoked/);
+    expect((await m.get(req.id))?.status).toBe(ApprovalStatus.APPROVED);
+    await m.revoke(req.id, decision(false));
+    await expect(m.revoke(req.id, decision(false))).rejects.toThrow(/cannot be revoked/);
+    await expect(m.revoke('missing', decision(false))).rejects.toThrow(/not found/);
   });
 });

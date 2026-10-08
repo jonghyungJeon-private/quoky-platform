@@ -775,6 +775,41 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     expect(harness.writes.post[posts]).toMatchObject({ channel: SLACK_CHANNEL_ID, text: '운영 UI 승인 테스트입니다' });
   });
 
+  it('live QA session 3 D12: a post-approval 거절 records the approval REJECTED in the real store; nothing can run', async () => {
+    const owner = harness.freshContext();
+    const earlier = new Set((await harness.storage.approvals.list()).map((a) => a.id));
+    await det(owner, 'PROJ-12에 댓글: INT-2 철회 테스트');
+    await det(owner, '승인');
+    const approved = (await harness.storage.approvals.list()).find((a) => !earlier.has(a.id));
+    expect(approved?.status).toBe(ApprovalStatus.APPROVED);
+    expect(approved).toBeDefined();
+    const before = harness.writes.addComment.length;
+    expect((await det(owner, '거절')).text).toBe('요청을 거절했어요. 이 요청으로는 아무것도 보내지 않았어요.');
+    expect(await harness.storage.approvals.get(approved!.id)).toMatchObject({
+      status: ApprovalStatus.REJECTED,
+      decision: false,
+      comment: 'revoked-before-execution',
+    });
+    expect((await det(owner, '댓글 실행')).text).toBe(renderNoApprovedConnectorWrite());
+    expect(harness.writes.addComment).toHaveLength(before);
+  });
+
+  it('live QA session 3 D1: after a sent post, a newer rejected post makes "Slack 게시 실행" name the rejection, never "already sent"', async () => {
+    const owner = harness.freshContext();
+    await det(owner, `#${SLACK_CHANNEL_NAME}에 게시: INT-2 D1 첫 게시`);
+    await det(owner, '승인');
+    await det(owner, 'Slack 게시 실행');
+    const posts = harness.writes.post.length;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await det(owner, `#${SLACK_CHANNEL_NAME}에 게시: INT-2 D1 거절할 게시`);
+    await det(owner, '거절');
+    const reply = await det(owner, 'Slack 게시 실행');
+    expect(reply.text).toContain(`가장 최근 Slack 게시 요청(#${SLACK_CHANNEL_NAME})은 거절돼서 실행하지 않았어요.`);
+    expect(reply.text).not.toContain('이미 보냈어요');
+    expect(reply.text).not.toContain('이미 실행했어요');
+    expect(harness.writes.post).toHaveLength(posts);
+  });
+
   it('calendar create (W4-L01 phrasing): preview → 승인 → a question is only a reminder → 일정 추가 실행 creates once (W5 K1–K4)', async () => {
     const owner = harness.freshContext();
     const preview = await det(owner, '내일 오후 3시에 회의 잡아줘');
