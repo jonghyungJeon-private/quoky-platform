@@ -64,6 +64,12 @@ is unchanged.
     nearest real subject before it is someone other than Quoky.
   - The grammar refuses relative times, recipients and topics as senders.
   - The reply budget is now the readout's own constant.
+- **Sign-off fixes.**
+  - The file-extension exemption no longer covers delegated TLDs (`.md`, `.sh`, `.rs`, `.py`, `.java`).
+  - A Korean particle glued to a domain no longer hides it.
+  - Any Quoky stand-in subject before a claim blocks its exemption.
+  - Six filler words are allowed in English claims.
+  - More IDN TLDs, combining marks, format-character removal with NFKC, and ideographic full stops are covered.
 - **Validation.** Offline only, with a fake `fetch`; the Gmail API was never called. Not run yet: the Strict gates
   (owner consent, the first read probe and the live session of about 15 phrasings), and the Chief Architect re-review.
 

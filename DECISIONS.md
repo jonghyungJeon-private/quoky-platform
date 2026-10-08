@@ -18768,7 +18768,8 @@ Independent Chief Architect review before GML-1 merges.
   validation only, with a fake `fetch`; the Gmail API was never called. The Strict gates are not run: the owner's
   `gmail.readonly` consent, the first read probe and the live session. Codex review (one P1, one P2) and the Chief
   Architect review (CHANGES REQUIRED: four P2s, P3s) and its re-review (CHANGES REQUIRED on P2-4 links, warnings on
-  the claim guard) are addressed; see "Review fixes" and "Re-review fixes" below.
+  the claim guard) and the sign-off round (CHANGES REQUIRED: three holes plus suggestions) are addressed; see "Review
+  fixes", "Re-review fixes" and "Sign-off fixes" below.
 - **Shape.**
   - No migration. `ConversationRuntimeDeps` is unchanged (35). One new port, `MailReader`
     (`ports/mail-reader.port.ts`), and one new token, `MAIL_READER`.
@@ -18926,22 +18927,32 @@ Independent Chief Architect review before GML-1 merges.
     - Every scheme URL (`https://`, `HTTPS://`, `hxxp://`, any `scheme://`). No word boundary is required, so
       `1https://…`, `_https://…` and `x.https://…` are caught.
     - Every `www.` host.
-    - Bare domains: up to 10 labels of Unicode letters, digits and `-`, so IDN hosts and homographs count. The TLD is
-      alphabetic (2–24 letters), punycode (`xn--…`) or a common IDN TLD (`한국`, `рф`, …). A port, path, query or
-      fragment that follows is replaced with the domain.
+    - Bare domains: up to 10 labels of Unicode letters, combining marks, digits and `-`, so IDN hosts and homographs
+      count, separated by `.` or an ideographic, full-width or half-width full stop (`evil。com`). The TLD is
+      alphabetic (2–24 letters), punycode (`xn--…`) or a listed IDN TLD (`한국`, `ком`, `рф`, `公司`, …). After an ASCII
+      TLD only an ASCII letter, digit or `-` continues it, so a glued Korean particle (`evil.com에서`) does not hide the
+      domain. A port, path, query or fragment that follows is replaced with the domain.
+    - Before matching, format characters (zero-width spaces and joiners, bidi controls, soft hyphen) are removed and
+      NFKC is applied, so `evil\u200b.com`, a decomposed `café.com` and full-width schemes are caught. The returned
+      text is the normalized text.
   - **Bare-domain decision.**
     - **Display mode** (reply, listing fields, title, author; what Telegram would autolink) replaces every bare domain,
       with two exceptions that are never web links:
       - the domain of an e-mail address, so `kim@example.com` stays readable;
-      - a file name whose "TLD" is a common file extension (`README.md`, `main.py`).
+      - a file name whose "TLD" is a file extension that is NOT a delegated TLD (`report.pdf`, `index.ts`, `app.js`;
+        every entry checked against the IANA root zone list).
 
-      Both exceptions apply only when no path follows. The accepted false positive is a word-dot-word that looks like
-      a domain (`Mr.Kim`).
-    - **Body mode** (the readout body, which only the provider reads) replaces a bare domain only when a path, query or
-      fragment follows or its TLD is a common web TLD, so a technical mail keeps `Node.js`. The reply is neutralized in
-      display mode, so a domain the model echoes is caught there.
-  - **Not caught.** Defanged forms (`hxxp[:]//evil[.]example`, a host split by spaces) are not caught, and are not
-    clickable either. A full-width scheme in a listing field is not caught either; the readout applies NFKC first.
+      Both exceptions apply only when no path follows. Extensions that are country or brand TLDs (`.md`, `.sh`, `.rs`,
+      `.py`, `.java`) are links: `README.md` becomes `[링크]`, by design (sign-off item 1). The accepted false
+      positive is a word-dot-word that looks like a domain (`Mr.Kim`).
+    - **Body mode** (the readout body, which only the provider reads) replaces a bare domain when a path, query or
+      fragment follows, or its TLD is a common web TLD, a two-letter country TLD, punycode or IDN. A technical mail
+      keeps `Node.js`. The reply is neutralized in display mode, so a domain the model echoes is caught there.
+  - **Not caught.**
+    - Defanged forms (`hxxp[:]//evil[.]example`, a host split by spaces), which are not clickable either.
+    - A Hangul particle glued to a Hangul IDN TLD (`예시.한국에서`): the IDN branch keeps its Unicode lookahead.
+    - IDN TLDs outside the list in their Unicode form (Arabic-script, most Indic and brand IDN TLDs). Their punycode
+      form is caught.
   - **Linear.** Every repetition is bounded, each label is matched atomically (a lookahead capture and its
     back-reference), and a domain match starts only where a label starts.
   - **Tests.**
@@ -18952,14 +18963,17 @@ Independent Chief Architect review before GML-1 merges.
     - Negative cases: versions, abbreviations, e-mail addresses, file names and sentence ends.
     - Hostile-input timing.
 - **Claim-guard rules (re-review item 3).**
-  - **English:** an `I` / `I’ve` / `I’d` / `we` / `we’ve` / `Quoky` subject (straight or curly apostrophe). Up to four
-    filler words may stand before the action verb (`I went ahead and sent`, `I've just forwarded`).
+  - **English:** an `I` / `I’ve` / `I’d` / `we` / `we’ve` / `Quoky` subject (straight or curly apostrophe). Up to six
+    filler words may stand before the action verb (`I went ahead and sent`, `I have now gone ahead and quickly sent
+    it`).
   - **Korean:** the mail-action and to-do / reminder / calendar patterns, now including the `처리` forms
     (`삭제/보관/전달/발송/읽음 처리했`).
   - **Korean exemption.** A Korean claim is exempt only when the nearest real subject BEFORE it names someone other
     than Quoky:
     - adverbs and generic nouns ending in 이/가 (`같이`, `많이`, `내용이`, `요청이`, …) are not subjects;
-    - Quoky stand-ins (`제가`, `저희가`, `비서가`, `Quoky가`, …) never exempt;
+    - if ANY Quoky stand-in (`제가`, `저희가`, `비서가`, `Quoky가`, `I`, `we`, …) is a subject before the claim in the
+      same clause, the claim is withheld (fail closed, sign-off item 3), so a relative clause
+      (`제가 김철수가 요청한 답장을 보냈어요`) cannot exempt it;
     - an opening quote before the subject is ignored;
     - a subject after the claim does not count.
   - **Reported speech.** Reported speech (`다는`, `다고`, `대요`, `다며`) stays exempt; `…답니다` is not reported speech.
@@ -18994,6 +19008,19 @@ Independent Chief Architect review before GML-1 merges.
        (a topic) get the usage line.
      - **Reply budget.** `DOCUMENT_SUMMARY_REPLY_MAX_CHARS` is defined beside the readout, which no longer imports the
        work-chat handler.
+- **Sign-off fixes (2026-10-09), one commit each.**
+  1. `FILE_EXTENSIONS` holds no delegated TLD (`md`, `sh`, `rs`, `py` and `java` removed). Body mode also replaces
+     two-letter country TLDs. `evil.sh`, `login-verify.md`, `evil.rs` and `paypal.com.py` are bypass tests in both
+     modes.
+  2. The ASCII-TLD lookahead lets a Korean particle follow (`evil.com에서`, `naver.com은`, `evil.co.kr로`,
+     `site.io를`). Still linear; the timing test is kept.
+  3. Any Quoky stand-in subject before a claim blocks the exemption.
+  4. Suggestions:
+     - six filler words in English claims;
+     - the listed IDN TLDs (including `ком`);
+     - combining marks in labels;
+     - format-character removal and NFKC before matching;
+     - ideographic full stops as label separators.
 - **Rule questions (coordinator decisions, 2026-10-09).**
   - **RQ1 (D4 consequence).** With Gmail configured, the six QUAL-7 mailbox phrases (`intent-155/156/172/173/176`,
     `route-186`) become the deterministic unread listing. This is a consequence of D4's listing phrasings, with the
