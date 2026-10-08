@@ -18,6 +18,17 @@ import {
   renderConnectorWriteRepeat,
 } from './connector-write-copy';
 import { CONNECTOR_WRITE_PREVIEW_DESCRIPTION_MAX_LENGTH, CONNECTOR_WRITE_PREVIEW_TEXT_MAX_LENGTH } from './connector-write-flow';
+import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
+import type { MessageMarkup } from '../message-rendering';
+
+/** PLT-0: a probe markup that makes the platform-rendered spans of the neutral copy visible. */
+const PROBE: MessageMarkup = {
+  ...PLAIN_TEXT_MARKUP,
+  untrusted: (text, guard) => `«${guard}:${text}»`,
+  link: (url) => `«link:${url}»`,
+  conversation: (id) => `«conversation:${id}»`,
+};
+const probe = (body: Parameters<typeof plainTextOf>[0]): string => renderMessageContent(body, PROBE);
 import type { ConnectorWritePreview, ConnectorWriteRefusal } from './connector-write-flow';
 
 const CTX = { platform: 'test', channelId: 'c', userId: 'u' };
@@ -106,7 +117,7 @@ describe('connector-write copy (CWR-2)', () => {
       expect(renderConnectorWriteRefusal(reason, false)).toContain('이 요청으로는 아무것도 보내지 않았어요');
       expect(renderConnectorWriteRefusal(reason, true)).toContain('이 요청으로는 캘린더를 바꾸지 않았어요');
     }
-    expect(renderConnectorWriteRefusal('transition-unavailable', false, ['진행 중', '*완료*'])).toContain('진행 중, \\*완료\\*');
+    expect(probe(renderConnectorWriteRefusal('transition-unavailable', false, ['진행 중', '*완료*']))).toContain('«markup:진행 중», «markup:*완료*»');
   });
 
   it('labels all-day spans with an exclusive end date', () => {
@@ -145,9 +156,9 @@ describe('connector-write copy (CWR-2)', () => {
     // W5-L02 (live QA 2026-10-07 wording): when (QUOKY_TIMEZONE) and where, so it can't be mistaken for another post.
     const channel = { kind: 'channel', channelLabel: 'quoky-test', channelId: 'C0TEST' } as const;
     const sentAt = '2026-10-07T01:24:00.000Z';
-    expect(
-      renderConnectorWriteAlreadyExecuted('CHANNEL_POST', { externalRef: 'ref', url: 'https://example.com/x', sentAt, target: channel, timeZone: 'Asia/Seoul' }),
-    ).toBe('이미 보냈어요 (10:24, Slack #quoky-test): <https://example.com/x>\n다시 보내지 않았어요.');
+    const executed = renderConnectorWriteAlreadyExecuted('CHANNEL_POST', { externalRef: 'ref', url: 'https://example.com/x', sentAt, target: channel, timeZone: 'Asia/Seoul' });
+    expect(plainTextOf(executed)).toBe('이미 보냈어요 (10:24, Slack #quoky-test): https://example.com/x\n다시 보내지 않았어요.');
+    expect(probe(executed)).toBe('이미 보냈어요 (10:24, Slack #«markup:quoky-test»): «link:https://example.com/x»\n다시 보내지 않았어요.');
   });
 });
 
@@ -155,10 +166,10 @@ describe('connector-write copy — cross-conversation hints (live QA 2026-10-07)
   const sentAt = '2026-10-07T01:24:00.000Z';
   it('the already-sent reply covers a reference without a link, no link at all, and the calendar', () => {
     const issue = { kind: 'issue', issueKey: 'PROJ-1' } as const;
-    expect(renderConnectorWriteAlreadyExecuted('ISSUE_TRANSITION', { externalRef: 'PROJ-1:21', sentAt, target: issue, timeZone: 'UTC' })).toBe(
-      '이미 보냈어요 (01:24, Jira PROJ-1): 참조 PROJ-1:21\n다시 보내지 않았어요.',
+    expect(probe(renderConnectorWriteAlreadyExecuted('ISSUE_TRANSITION', { externalRef: 'PROJ-1:21', sentAt, target: issue, timeZone: 'UTC' }))).toBe(
+      '이미 보냈어요 (01:24, Jira «markup:PROJ-1»): 참조 «markup:PROJ-1:21»\n다시 보내지 않았어요.',
     );
-    expect(renderConnectorWriteAlreadyExecuted('ISSUE_COMMENT', { sentAt, target: issue, timeZone: 'UTC' })).toBe(
+    expect(plainTextOf(renderConnectorWriteAlreadyExecuted('ISSUE_COMMENT', { sentAt, target: issue, timeZone: 'UTC' }))).toBe(
       '이미 보냈어요 (01:24, Jira PROJ-1).\n다시 보내지 않았어요.',
     );
     expect(renderConnectorWriteAlreadyExecuted('CALENDAR_EVENT_CREATE', { sentAt, target: { kind: 'calendar' }, timeZone: 'Asia/Seoul' })).toBe(
@@ -169,15 +180,16 @@ describe('connector-write copy — cross-conversation hints (live QA 2026-10-07)
   it('the approved-elsewhere reply names a guild channel, a thread, the DM, or a plain "채널" for an unsafe id — never payload', () => {
     const base = { operation: 'CALENDAR_EVENT_DELETE', target: { kind: 'calendar' }, executionPhrase: '일정 삭제 실행', remainingMs: 61_000 } as const;
     const guild = { platform: 'test', spaceId: 's1', channelId: 'c1', userId: 'u' };
-    expect(renderConnectorWriteApprovedElsewhere({ ...base, context: guild })).toBe(
+    // The conversation is a reference span the platform renders (Discord: `<#c1>`).
+    expect(probe(renderConnectorWriteApprovedElsewhere({ ...base, context: guild }))).toBe(
       [
         '실행하지 않았어요. 승인된 캘린더 일정 삭제(기본 캘린더)는 다른 대화에서 기다리고 있어요 (약 2분 남음).',
-        '미리보기를 받은 <#c1>에서 "일정 삭제 실행"이라고 보내 주세요.',
+        '미리보기를 받은 «conversation:c1»에서 "일정 삭제 실행"이라고 보내 주세요.',
       ].join('\n'),
     );
-    expect(renderConnectorWriteApprovedElsewhere({ ...base, context: { ...guild, threadId: 't9' } })).toContain('<#t9>에서');
-    expect(renderConnectorWriteApprovedElsewhere({ ...base, context: { ...guild, channelId: 'c1><@everyone' } })).toContain('미리보기를 받은 채널에서');
-    expect(renderConnectorWriteApprovedElsewhere({ ...base, context: CTX })).toContain('미리보기를 받은 봇과의 DM에서');
+    expect(probe(renderConnectorWriteApprovedElsewhere({ ...base, context: { ...guild, threadId: 't9' } }))).toContain('«conversation:t9»에서');
+    expect(plainTextOf(renderConnectorWriteApprovedElsewhere({ ...base, context: { ...guild, channelId: 'c1><@everyone' } }))).toContain('미리보기를 받은 채널에서');
+    expect(plainTextOf(renderConnectorWriteApprovedElsewhere({ ...base, context: CTX }))).toContain('미리보기를 받은 봇과의 DM에서');
     expect(connectorWriteConversationPlace(CTX)).toEqual({ kind: 'dm' });
   });
 });

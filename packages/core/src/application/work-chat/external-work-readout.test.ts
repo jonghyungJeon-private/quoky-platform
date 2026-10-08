@@ -9,11 +9,20 @@ import {
   EXTERNAL_WORK_TITLE_MAX_CHARS,
   buildExternalWorkReadout,
   countExternalWorkPromptItems,
-  escapeDiscordText,
   fitExternalWorkReadoutToPrompt,
-  renderExternalWorkFooter,
+  renderExternalWorkFooter as renderExternalWorkFooterBody,
   renderExternalWorkReadoutForPrompt,
 } from './external-work-readout';
+import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
+import type { MessageMarkup } from '../message-rendering';
+
+/**
+ * PLT-0: the footer is neutral content. The tests read it through a probe markup that keeps the plain text but makes
+ * untrusted titles and link spans visible (`«markup:…»`, `«link:…»`); the platform adapter renders them its own way.
+ */
+const PROBE: MessageMarkup = { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»`, link: (url) => `«link:${url}»` };
+const renderExternalWorkFooter = (readout: Parameters<typeof renderExternalWorkFooterBody>[0]): string =>
+  renderMessageContent(renderExternalWorkFooterBody(readout), PROBE);
 
 const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -139,7 +148,7 @@ describe('renderExternalWorkReadoutForPrompt', () => {
     for (const item of readout.items) expect(text).toContain(`[${item.ref}]`);
     const footer = renderExternalWorkFooter(readout);
     expect(footer).toContain(`외부 항목 ${readout.items.length}건을 요약에 사용했어요.`);
-    expect(footer.match(/<https:\/\/acme\.atlassian\.net\/browse\/PROJ-\d+>/g)).toHaveLength(readout.items.length);
+    expect(footer.match(/«link:https:\/\/acme\.atlassian\.net\/browse\/PROJ-\d+»/g)).toHaveLength(readout.items.length);
   });
 
   it('never exceeds 3,000 characters and says how many items were left out of a hand-built readout', () => {
@@ -154,7 +163,7 @@ describe('renderExternalWorkReadoutForPrompt', () => {
     const carried = countExternalWorkPromptItems(readout);
     expect(carried).toBeLessThan(10);
     expect(footer).toContain(`외부 항목 ${carried}건을 요약에 사용했어요.`);
-    expect(footer.match(/<https:/g)).toHaveLength(carried);
+    expect(footer.match(/«link:https:/g)).toHaveLength(carried);
   });
 
   it('keeps injected delimiters and newlines inside one data line', () => {
@@ -178,18 +187,18 @@ describe('renderExternalWorkFooter', () => {
   it('lists at most 10 real links plus the disclosure line', () => {
     const readout = build(items(10));
     const footer = renderExternalWorkFooter(readout);
-    expect(footer.match(/<https:\/\/acme\.atlassian\.net\/browse\/PROJ-\d+>/g)?.length).toBeLessThanOrEqual(
+    expect(footer.match(/«link:https:\/\/acme\.atlassian\.net\/browse\/PROJ-\d+»/g)?.length).toBeLessThanOrEqual(
       EXTERNAL_WORK_FOOTER_MAX_LINKS,
     );
     expect(footer).toContain('https://acme.atlassian.net/browse/PROJ-1');
     expect(footer).toContain('외부 항목 10건을 요약에 사용했어요.');
-    expect(footer.length).toBeLessThanOrEqual(EXTERNAL_WORK_FOOTER_MAX_CHARS);
+    expect(renderMessageContent(renderExternalWorkFooterBody(readout), PLAIN_TEXT_MARKUP).length).toBeLessThanOrEqual(EXTERNAL_WORK_FOOTER_MAX_CHARS);
   });
 
   it('omits items without a url from the links and never invents one', () => {
     const footer = renderExternalWorkFooter(build(items(2, (index) => (index === 0 ? { url: undefined } : {}))));
     expect(footer).toContain('PROJ-2');
-    expect(footer).not.toContain('PROJ-1>');
+    expect(footer).not.toContain('PROJ-1»');
     expect(footer).toContain('외부 항목 2건');
   });
 
@@ -200,7 +209,7 @@ describe('renderExternalWorkFooter', () => {
       ),
     );
     const footer = renderExternalWorkFooter(readout);
-    expect(footer.length).toBeLessThanOrEqual(EXTERNAL_WORK_FOOTER_MAX_CHARS);
+    expect(renderMessageContent(renderExternalWorkFooterBody(readout), PLAIN_TEXT_MARKUP).length).toBeLessThanOrEqual(EXTERNAL_WORK_FOOTER_MAX_CHARS);
     expect(footer).toContain('민감정보가 있는 1건은 제외했어요.');
   });
 
@@ -209,13 +218,17 @@ describe('renderExternalWorkFooter', () => {
   });
 });
 
-describe('escapeDiscordText', () => {
-  it('neutralizes mentions, masked links, markdown and one-line whitespace', () => {
-    const escaped = escapeDiscordText('@everyone <@123> [click](https://x.example) *bold* _it_ `code` | > a\nb');
-    expect(escaped).not.toContain('@everyone');
-    expect(escaped).not.toContain('<@');
-    expect(escaped).toContain('\\[click\\]');
-    expect(escaped).toContain('\\*bold\\*');
-    expect(escaped).not.toContain('\n');
+describe('renderExternalWorkFooter — untrusted titles (PLT-0)', () => {
+  it('writes each title as a one-line untrusted span (the adapter neutralizes mentions, masked links and markup)', () => {
+    const readout = {
+      kind: 'external-work' as const,
+      request: { source: 'jira' as const, query: 'my-items' as const },
+      items: [{ ref: 'jira:P-1', title: '@everyone <@1> [c](https://x.test) *b*\n\t_i_', url: 'https://acme.test/P-1' }],
+      truncated: false,
+      omittedSensitive: 0,
+    };
+    expect(renderExternalWorkFooter(readout)).toBe(
+      '출처:\n- «markup:@everyone <@1> [c](https://x.test) *b* _i_» «link:https://acme.test/P-1»\n외부 항목 1건을 요약에 사용했어요.',
+    );
   });
 });

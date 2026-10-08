@@ -3,6 +3,7 @@ import type {
   Id,
   InboundMessage,
   IsoTimestamp,
+  MessageBody,
   OutboundMessage,
   Session,
   WorkspaceRef,
@@ -76,10 +77,10 @@ export interface TurnHandlerSummarizeReply {
   readonly kind: 'summarize';
   /** Untrusted external data; rendered for the prompt as NON_AUTHORITATIVE_BACKGROUND only. */
   readonly readout: ExternalWorkReadout;
-  /** The deterministic list, used whenever summarization does not produce a reply. */
-  readonly fallbackText: string;
-  /** Deterministic source links and the disclosure line, appended to a successful summary. */
-  readonly footer: string;
+  /** The deterministic list, used whenever summarization does not produce a reply (neutral content, PLT-0). */
+  readonly fallbackText: MessageBody;
+  /** Deterministic source links and the disclosure line, appended to a successful summary (neutral content, PLT-0). */
+  readonly footer: MessageBody;
 }
 
 /**

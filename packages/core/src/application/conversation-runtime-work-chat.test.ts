@@ -58,6 +58,7 @@ import {
   WORK_SUMMARY_REPLY_MAX_CHARS,
   createWorkChatTurnHandlers,
 } from './work-chat/work-chat-turn-handler';
+import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } from './message-rendering';
 
 // WORK-T4 (ADR-0100 D2/D8, ADR-0096 D4/D5): the two work-chat handlers registered LOCALLY on a real
 // ConversationRuntime over the real WorkChatService, WorkManager, PromptComposer and PromptRenderer. Only storage,
@@ -570,9 +571,14 @@ describe('ConversationRuntime × work chat — summarized lookups (order 300, AD
     expect(h.calls.classify).toBe(0);
 
     const expectedReadout = buildExternalWorkReadout({ source: 'jira', query: 'my-items', items: JIRA_ITEMS });
-    const footer = renderExternalWorkFooter(expectedReadout);
-    expect(footer).toContain('<https://example.atlassian.net/browse/OPS-1>');
+    const footerBody = renderExternalWorkFooter(expectedReadout);
+    const footer = plainTextOf(footerBody);
+    expect(footer).toContain('https://example.atlassian.net/browse/OPS-1');
     expect(result.reply.text).toBe(`${SUMMARY}\n\n${footer}`);
+    // PLT-0: the reply carries the footer's link spans and untrusted titles as content for the platform adapter.
+    expect(renderMessageContent(outboundBody(result.reply), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»` })).toContain(
+      '«link:https://example.atlassian.net/browse/OPS-1»',
+    );
     expect(result.workFacts).toMatchObject({ capability: Capability.SUMMARIZATION, providerId: 'fake-summarizer' });
   });
 

@@ -1,5 +1,7 @@
+import type { MessageBody } from '../../domain';
 import type { ConnectorItem } from '../../ports';
 import { containsCredentialMaterial } from '../credential-guard';
+import { messageBody, messageContent, messageLink, takeLines, untrustedText } from '../message-rendering';
 import type { WorkChatLookupQuery, WorkChatSource } from './work-chat-command';
 
 /**
@@ -250,20 +252,12 @@ export function renderExternalWorkReadoutForPrompt(readout: ExternalWorkReadout)
   return text.length <= EXTERNAL_WORK_PROMPT_MAX_CHARS ? text : text.slice(0, EXTERNAL_WORK_PROMPT_MAX_CHARS);
 }
 
-/** Mention, link and markdown neutralization for text echoed into a Discord message. */
-export function escapeDiscordText(text: string): string {
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/[\\*_~`|>[\]]/g, '\\$&')
-    .replace(/@/g, '@​')
-    .replace(/</g, '<​');
-}
-
 /**
  * Deterministic footer: the real source links (at most 10, each only when its URL survived sanitization) and the
- * disclosure line saying how many external items were used. Bounded to 1,000 characters.
+ * disclosure line saying how many external items were used. Bounded to 1,000 characters of the delivered text: the
+ * titles are untrusted spans the platform escapes, so the budget is evaluated on its rendering (PLT-0).
  */
-export function renderExternalWorkFooter(readout: ExternalWorkReadout): string {
+export function renderExternalWorkFooter(readout: ExternalWorkReadout): MessageBody {
   // Only items the prompt carried count as used and get a link (a fitted readout always fits entirely).
   const usedItems = readout.items.slice(0, countExternalWorkPromptItems(readout));
   const used = usedItems.length;
@@ -274,14 +268,22 @@ export function renderExternalWorkFooter(readout: ExternalWorkReadout): string {
   if (readout.truncated) disclosure.push('더 많은 항목이 있지만 일부만 보여드려요.');
   const disclosureText = disclosure.join(' ');
 
-  const linkLines: string[] = [];
-  let length = disclosureText.length + 8;
-  for (const item of usedItems) {
-    if (!item.url || linkLines.length >= EXTERNAL_WORK_FOOTER_MAX_LINKS) continue;
-    const line = `- ${escapeDiscordText(Array.from(item.title).slice(0, 50).join(''))} <${item.url}>`;
-    if (length + line.length + 1 > EXTERNAL_WORK_FOOTER_MAX_CHARS) break;
-    linkLines.push(line);
-    length += line.length + 1;
-  }
-  return linkLines.length > 0 ? ['출처:', ...linkLines, disclosureText].join('\n') : disclosureText;
+  const linkLines = usedItems
+    .filter((item): item is ExternalWorkReadoutItem & { readonly url: string } => Boolean(item.url))
+    .slice(0, EXTERNAL_WORK_FOOTER_MAX_LINKS)
+    .map((item) => ({
+      content: messageContent('- ', untrustedText(Array.from(item.title).slice(0, 50).join('').replace(/\s+/g, ' ')), ' ', messageLink(item.url)),
+    }));
+  // "출처:" (3) + 5 = the 8 characters of headroom the footer always reserved next to the disclosure line.
+  return messageBody(
+    takeLines({
+      unit: 'utf16',
+      maxChars: EXTERNAL_WORK_FOOTER_MAX_CHARS,
+      baseChars: 5,
+      head: ['출처:'],
+      tail: [disclosureText],
+      headOnlyWithLines: true,
+      lines: linkLines,
+    }),
+  );
 }

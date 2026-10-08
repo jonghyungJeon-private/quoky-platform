@@ -1,5 +1,6 @@
 import { RiskLevel } from '../domain';
 import type {
+  MessageBody,
   ApprovalRequest,
   Artifact,
   ConversationContext,
@@ -53,6 +54,8 @@ import type {
   ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
 import type { ConnectorWriteOperation } from '../ports';
+import { clipMessage, fitLines, messageBody, messageContent, outboundBody, outboundMessage, platformNote, withOutboundBody } from './message-rendering';
+import type { MessagePart } from './message-rendering';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
 import type { WorkSurface } from './work-surface-query';
@@ -150,7 +153,7 @@ export interface PatchSetPreview {
 
 /** Per-stream tail kept in a reply excerpt (lines), before the char cap applies. */
 const MAX_SUMMARY_LINES = 20;
-/** Char cap on the rendered excerpt, leaving headroom under Discord's 2000-char message limit. */
+/** Char cap on the rendered excerpt, leaving headroom under a 2000-character chat message limit. */
 const MAX_SUMMARY_CHARS = 1200;
 /** Hard cap on the full rendered reply (excerpt + surrounding sentences), same reason. */
 const MAX_MESSAGE_CHARS = 1900;
@@ -285,9 +288,9 @@ const HELP_CONTROL_LINES: readonly string[] = [
   '대화 제어:',
   '- "도움말": 이 안내를 다시 보여줘요.',
   '- "새 대화": 지금 대화를 끝내고 새로 시작해요. 기다리던 승인 요청은 거절로 처리돼요.',
-  '- "/help", "/reset"도 같아요. 다만 Discord에서는 "/"로 시작하면 명령 선택 창이 열리니, Esc로 창을 닫은 뒤 Enter로 보내 주세요.',
 ];
-const HELP_TEXT = [...HELP_CAPABILITY_LINES, ...HELP_CONTROL_LINES].join('\n');
+/** The last control line; the platform adds its own advice on typing a "/"-prefixed phrase (PLT-0 platform note). */
+const HELP_COMMAND_PREFIX_LINE = messageContent('- "/help", "/reset"도 같아요.', platformNote('command-prefix'));
 
 /**
  * ADR-0096 D6: at most this many contributed help lines are shown (the rest are dropped, in registry order). Raised
@@ -317,12 +320,16 @@ function boundContributedHelpLines(extraLines: readonly string[]): string[] {
  * The full help text (ADR-0093 base text + ADR-0096 D6 contributed lines), exactly what `composeHelp` sends. Pure, so the
  * help-intent handler can answer a capability question ("뭐 할 수 있어?", DET-2) with the same text as "도움말".
  */
-export function renderHelpText(extraLines: readonly string[] = []): string {
+export function renderHelpText(extraLines: readonly string[] = []): MessageBody {
   const contributed = boundContributedHelpLines(extraLines);
-  const render = (): string => [...HELP_CAPABILITY_LINES, ...contributed, ...HELP_CONTROL_LINES].join('\n');
-  while (contributed.length > 0 && render().length > MAX_MESSAGE_CHARS) contributed.pop();
-  if (contributed.length === 0) return HELP_TEXT;
-  return clampToMessageBudget(render());
+  // The budget applies to the delivered text, platform note included: contributed lines leave from the end first.
+  const lines = [
+    ...HELP_CAPABILITY_LINES.map((line) => ({ content: line })),
+    ...contributed.map((line) => ({ content: line, droppable: true })),
+    ...HELP_CONTROL_LINES.map((line) => ({ content: line })),
+    { content: HELP_COMMAND_PREFIX_LINE },
+  ];
+  return messageBody(fitLines(lines, MAX_MESSAGE_CHARS));
 }
 
 /** Which stream a rendered excerpt came from, and which non-empty stream was left out. */
@@ -415,6 +422,11 @@ function renderFileList(files: readonly string[], newFiles: readonly string[] = 
 /** Defensive final-length guard (CA review, required change #6) — belt-and-suspenders over the excerpt cap. */
 function clampToMessageBudget(text: string): string {
   return text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS - 1)}…` : text;
+}
+
+/** {@link clampToMessageBudget} for a body that may carry platform-rendered spans: the bound applies to its rendering. */
+function clampBodyToMessageBudget(body: MessagePart): MessageBody {
+  return typeof body === 'string' ? clampToMessageBudget(body) : messageBody(clipMessage(body, MAX_MESSAGE_CHARS, 'utf16'));
 }
 
 /**
@@ -783,7 +795,7 @@ export class ResponseComposer {
    * until the reply fits the message budget. With no contributed lines the reply is exactly the fixed base text.
    */
   composeHelp(context: ConversationContext, extraLines: readonly string[] = []): OutboundMessage {
-    return { context, text: renderHelpText(extraLines) };
+    return outboundMessage(context, renderHelpText(extraLines));
   }
 
   /**
@@ -800,7 +812,7 @@ export class ResponseComposer {
 
   /** Prepend a notice (e.g. an approval-expiry notice) to another reply, keeping the reply's own fields. */
   composeWithNotice(notice: OutboundMessage, reply: OutboundMessage): OutboundMessage {
-    return { ...reply, text: clampToMessageBudget(`${notice.text}\n\n${reply.text}`) };
+    return withOutboundBody(reply, clampBodyToMessageBudget(messageBody(outboundBody(notice), '\n\n', outboundBody(reply))));
   }
 
   /**
@@ -809,7 +821,10 @@ export class ResponseComposer {
    * granted there on metadata alone; chat itself still needs only "승인". The preview text above it is unchanged.
    */
   composeApprovalConfirmationReference(reply: OutboundMessage, reference: string): OutboundMessage {
-    return { ...reply, text: `${reply.text}\n${APPROVAL_REFERENCE_LINE_PREFIX}${reference} ${APPROVAL_REFERENCE_LINE_SUFFIX}` };
+    return withOutboundBody(
+      reply,
+      messageBody(outboundBody(reply), `\n${APPROVAL_REFERENCE_LINE_PREFIX}${reference} ${APPROVAL_REFERENCE_LINE_SUFFIX}`),
+    );
   }
 
   /**
@@ -1185,8 +1200,8 @@ export class ResponseComposer {
     context: ConversationContext,
     step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>,
   ): OutboundMessage {
-    const text = renderConnectorWriteStep(step);
-    return { context, text: step.kind === 'preview' || step.kind === 'choice' ? text : clampToMessageBudget(text) };
+    const body = renderConnectorWriteStep(step);
+    return outboundMessage(context, step.kind === 'preview' || step.kind === 'choice' ? body : clampBodyToMessageBudget(body));
   }
 
   /** Any non-decision message while a connector-write approval is pending (ADR-0093 reminder with the preview). */
@@ -1196,7 +1211,7 @@ export class ResponseComposer {
     remainingMs: number,
     executionPhrase: string,
   ): OutboundMessage {
-    return { context, text: renderConnectorWritePending(preview, remainingMs, executionPhrase) };
+    return outboundMessage(context, renderConnectorWritePending(preview, remainingMs, executionPhrase));
   }
 
   /** A bare "승인" after the connector-write approval was already recorded: nothing runs until the exact phrase. */
@@ -1215,7 +1230,7 @@ export class ResponseComposer {
     executionPhrase: string,
     target?: ConnectorWriteTargetSummary,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteApprovedReminder(operation, executionPhrase, target) };
+    return outboundMessage(context, renderConnectorWriteApprovedReminder(operation, executionPhrase, target));
   }
 
   /** A bare "실행" / "실행해줘" / "go" / "run it" while the write waits approved: nothing ran; quotes the exact phrase. */
@@ -1225,7 +1240,7 @@ export class ResponseComposer {
     executionPhrase: string,
     target?: ConnectorWriteTargetSummary,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteBareExecution(operation, executionPhrase, target) };
+    return outboundMessage(context, renderConnectorWriteBareExecution(operation, executionPhrase, target));
   }
 
   /** The execution phrase repeated after a write of that kind approved in this conversation was SENT recently (W5-L02). */
@@ -1234,7 +1249,7 @@ export class ResponseComposer {
     operation: ConnectorWriteOperation,
     sent: ConnectorWriteRecentSend,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteAlreadyExecuted(operation, sent) };
+    return outboundMessage(context, renderConnectorWriteAlreadyExecuted(operation, sent));
   }
 
   /**
@@ -1242,7 +1257,7 @@ export class ResponseComposer {
    * conversation: nothing runs; names the kind, target and place to send the phrase (never the payload).
    */
   composeConnectorWriteApprovedElsewhere(context: ConversationContext, elsewhere: ConnectorWriteApprovedElsewhere): OutboundMessage {
-    return { context, text: renderConnectorWriteApprovedElsewhere(elsewhere) };
+    return outboundMessage(context, renderConnectorWriteApprovedElsewhere(elsewhere));
   }
 
   /** A 거절/취소 after execution of the approved write started (Codex P1 on 55c5a2f): not withdrawn; never "nothing sent". */
@@ -1256,7 +1271,7 @@ export class ResponseComposer {
     latest: ConnectorWriteLatestRequest & { readonly state: { readonly kind: 'closed' | 'not-sent' } },
     olderUnconfirmed: boolean,
   ): OutboundMessage {
-    return { context, text: renderConnectorWriteLatestRequest(latest, olderUnconfirmed) };
+    return outboundMessage(context, renderConnectorWriteLatestRequest(latest, olderUnconfirmed));
   }
 
   /**
@@ -2908,7 +2923,7 @@ export class ResponseComposer {
   }
 
   // ── Sprint 3j-A (ADR-0060): CRITICAL remote-branch-cleanup APPROVAL gate. Permission only — NEVER deletes a remote
-  //    branch (execution is Sprint 3j-B). No message claims a branch was/​will be deleted or that deletion is safe. ──
+  //    branch (execution is Sprint 3j-B). No message claims a branch was/will be deleted or that deletion is safe. ──
 
   /** Remote-branch-cleanup approval REQUESTED (Sprint 3j-A) — states the permission target ONLY; never claims the
    *  branch exists / its SHA is current / the PR is still merged / deletion is safe (CA change 4). */

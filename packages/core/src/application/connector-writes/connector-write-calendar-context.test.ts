@@ -20,6 +20,7 @@ import { createCalendarTurnHandler } from '../calendar/calendar-turn-handler';
 import { renderConnectorWriteStep } from './connector-write-copy';
 import type { ConnectorWriteDraft } from './connector-write-draft';
 import { StatelessConnectorWriteFlow, type ConnectorWriteStep } from './connector-write-flow';
+import { plainTextOf } from '../message-rendering';
 
 // Live QA session 3, D2: "일정 취소해줘" (no day, no time, no title) right after creating or listing tomorrow's event
 // offered TODAY's real event as the only match. The real calendar handler (grammar + per-session last list) and the
@@ -222,7 +223,7 @@ function harness(initial: CalendarEvent[]) {
     }
     const draft = (outcome as TurnHandlerWriteDraft).draft;
     const step = await flow.prepare({ session: session(), actor, now, draft });
-    return { draft, step, text: step.kind === 'writes-off' ? '' : renderConnectorWriteStep(step) };
+    return { draft, step, text: step.kind === 'writes-off' ? '' : plainTextOf(renderConnectorWriteStep(step)) };
   }
 
   /** "승인" then the execution phrase for the session's pending preview (the runtime's part, minus its copy). */

@@ -17,6 +17,13 @@ import type { WorkSurface } from '../work-surface-query';
 import { detectWorkChatCommand } from './work-chat-command';
 import type { WorkChatCommand } from './work-chat-command';
 import { WorkChatService } from './work-chat-service';
+import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
+import type { MessageBody } from '../../domain';
+import type { MessageMarkup } from '../message-rendering';
+
+/** PLT-0: summarize outcomes carry neutral content; a probe markup makes link spans visible. */
+const PROBE: MessageMarkup = { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»` };
+const plain = (body: MessageBody): string => plainTextOf(body);
 import type { WorkChatOutcome, WorkChatServiceDeps } from './work-chat-service';
 import { EXTERNAL_WORK_PROMPT_MAX_CHARS, renderExternalWorkReadoutForPrompt } from './external-work-readout';
 import { WORK_CHAT_REPLY_MAX_CHARS } from './work-chat-renderer';
@@ -383,9 +390,9 @@ describe('connector lookups', () => {
     if (outcome.kind !== 'summarize') return;
     expect(outcome.readout.request).toEqual({ source: 'jira', query: 'my-items' });
     expect(outcome.readout.items.map((item) => item.ref)).toEqual(['jira:PROJ-1', 'jira:PROJ-2']);
-    expect(outcome.fallbackText).toContain('- [jira:PROJ-1] 배포 점검');
-    expect(outcome.footer).toContain('https://acme.atlassian.net/browse/PROJ-1');
-    expect(outcome.footer).toContain('외부 항목 2건을 요약에 사용했어요.');
+    expect(plain(outcome.fallbackText)).toContain('- [jira:PROJ-1] 배포 점검');
+    expect(plain(outcome.footer)).toContain('https://acme.atlassian.net/browse/PROJ-1');
+    expect(plain(outcome.footer)).toContain('외부 항목 2건을 요약에 사용했어요.');
     expect(jira.queries).toEqual([
       { query: 'personal-work', params: { actorExternalId: 'jira-owner', filter: 'all', limit: 20 } },
     ]);
@@ -557,7 +564,7 @@ describe('connector lookups', () => {
     const everything = JSON.stringify(outcome) + renderExternalWorkReadoutForPrompt(outcome.readout);
     expect(everything).not.toContain(SECRET);
     expect(everything).not.toContain('hunter2');
-    expect(outcome.fallbackText).toContain('민감정보가 있는 2건은 제외했어요');
+    expect(plain(outcome.fallbackText)).toContain('민감정보가 있는 2건은 제외했어요');
   });
 
   it('keeps the readout within 10 items and 3,000 prompt characters, and the list within the reply budget', async () => {
@@ -579,11 +586,11 @@ describe('connector lookups', () => {
     expect(outcome.readout.truncated).toBe(true);
     expect(prompt.length).toBeLessThanOrEqual(EXTERNAL_WORK_PROMPT_MAX_CHARS);
     expect(prompt).not.toMatch(/omitted for length/);
-    expect(outcome.footer).toContain(`외부 항목 ${outcome.readout.items.length}건을 요약에 사용했어요.`);
-    expect(outcome.footer.match(/<https:/g)).toHaveLength(outcome.readout.items.length);
+    expect(plain(outcome.footer)).toContain(`외부 항목 ${outcome.readout.items.length}건을 요약에 사용했어요.`);
+    expect(renderMessageContent(outcome.footer, PROBE).match(/«link:https:/g)).toHaveLength(outcome.readout.items.length);
     // The deterministic fallback list still shows all 10 items.
-    expect(outcome.fallbackText).toContain('(10건, 일부만 표시)');
-    expect(outcome.fallbackText.length).toBeLessThanOrEqual(WORK_CHAT_REPLY_MAX_CHARS);
+    expect(plain(outcome.fallbackText)).toContain('(10건, 일부만 표시)');
+    expect(plain(outcome.fallbackText).length).toBeLessThanOrEqual(WORK_CHAT_REPLY_MAX_CHARS);
   });
 
   it('returns a plain reply (not summarize) when every item was sensitive', async () => {

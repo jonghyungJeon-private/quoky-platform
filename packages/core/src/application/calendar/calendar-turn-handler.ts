@@ -7,7 +7,8 @@ import type {
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { CALENDAR_EVENTS_MAX_LIMIT, type CalendarEvent, type CalendarReader } from '../../ports/calendar-reader.port';
 import { isConnectorQueryError } from '../../ports/connector-query';
-import type { Id } from '../../domain';
+import type { Id, MessageBody } from '../../domain';
+import { outboundMessage } from '../message-rendering';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import type { CalendarRecentListing, ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
@@ -192,12 +193,12 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
 
   private reply(
     ctx: TurnHandlerContext,
-    text: string,
+    text: MessageBody,
     status: 'RESPONDED' | 'FAILED',
     language: CalendarLanguage,
   ): TurnHandlerReply {
     return {
-      reply: { context: ctx.message.context, text, replyToMessageId: ctx.message.id },
+      reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }),
       status,
       history: { assistant: renderCalendarHistoryNote(language) },
     };

@@ -6,7 +6,7 @@ import {
   WorkItemTitleError,
   normalizeWorkItemTitle,
 } from '../../domain';
-import type { Actor, ResourceRef, WorkItem } from '../../domain';
+import type { Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
 import {
   CONNECTOR_QUERY_MAX_LIMIT,
   ConnectorQueryName,
@@ -14,6 +14,7 @@ import {
 } from '../../ports';
 import type { ConnectorProvider, ConnectorQuery, PersonalWorkFilter } from '../../ports';
 import { containsCredentialMaterial } from '../credential-guard';
+import { messageFields } from '../message-rendering';
 import type { WorkManager } from '../work-manager';
 import type { WorkSurface } from '../work-surface-query';
 import {
@@ -61,16 +62,17 @@ import { parseReminderMessage } from '../reminders/reminder-grammar';
 
 /** What the runtime presents for one work-chat command (ADR-0100 D8/D10). */
 export type WorkChatOutcome =
-  | { readonly kind: 'reply'; readonly text: string }
+  /** `text` is the plain rendering; `content` is present when the reply carries platform-rendered spans (PLT-0). */
+  | { readonly kind: 'reply'; readonly text: string; readonly content?: MessageContent }
   /** The command did not apply (e.g. a completion hint that names no single open to-do): the turn falls through. */
   | { readonly kind: 'none' }
   | {
       readonly kind: 'summarize';
       readonly readout: ExternalWorkReadout;
       /** The deterministic list, used whenever summarization does not produce a reply. */
-      readonly fallbackText: string;
+      readonly fallbackText: MessageBody;
       /** Deterministic source links and the disclosure line, appended to a successful summary. */
-      readonly footer: string;
+      readonly footer: MessageBody;
     };
 
 /**
@@ -312,7 +314,7 @@ export class WorkChatService implements WorkDesk {
     return [...(await this.deps.work.listActiveByActor(actor.id))].sort(compareTodos);
   }
 
-  private async addTodo(rawTitle: string, refs: readonly ResourceRef[], actor: Actor): Promise<string> {
+  private async addTodo(rawTitle: string, refs: readonly ResourceRef[], actor: Actor): Promise<MessageBody> {
     if (rawTitle.trim().length === 0) return renderTodoEmptyTitle();
     // A credential-bearing title is refused before anything is stored (ADR-0100 D5; the guard is unchanged, ADR-0097).
     if (containsCredentialMaterial(rawTitle)) return renderTodoCredentialRefused();
@@ -342,7 +344,7 @@ export class WorkChatService implements WorkDesk {
     }
   }
 
-  private async transitionTodo(target: WorkChatTarget, status: WorkItemStatus, actor: Actor): Promise<string> {
+  private async transitionTodo(target: WorkChatTarget, status: WorkItemStatus, actor: Actor): Promise<MessageBody> {
     const todos = await this.activeTodos(actor);
     const action = status === WorkItemStatus.COMPLETED ? 'complete' : 'cancel';
     const resolution = resolveTarget(todos, target);
@@ -352,7 +354,7 @@ export class WorkChatService implements WorkDesk {
     return status === WorkItemStatus.COMPLETED ? renderTodoCompleted(updated) : renderTodoCanceled(updated);
   }
 
-  private async linkTodo(target: WorkChatTarget, refs: readonly ResourceRef[], actor: Actor): Promise<string> {
+  private async linkTodo(target: WorkChatTarget, refs: readonly ResourceRef[], actor: Actor): Promise<MessageBody> {
     if (refs.length === 0) return renderWorkChatUsage('todo-link');
     const todos = await this.activeTodos(actor);
     const resolution = resolveTarget(todos, target);
@@ -375,7 +377,7 @@ export class WorkChatService implements WorkDesk {
 
   // -- combined view ------------------------------------------------------------------------------------------------
 
-  private async listWork(actor: Actor): Promise<string> {
+  private async listWork(actor: Actor): Promise<MessageBody> {
     const todos = await this.activeTodos(actor);
     let surface: WorkSurface | null = null;
     try {
@@ -452,8 +454,8 @@ export class WorkChatService implements WorkDesk {
   }
 }
 
-function reply(text: string): WorkChatOutcome {
-  return { kind: 'reply', text };
+function reply(body: MessageBody): WorkChatOutcome {
+  return { kind: 'reply', ...messageFields(body) };
 }
 
 function failureReason(error: unknown): WorkChatLookupFailure {

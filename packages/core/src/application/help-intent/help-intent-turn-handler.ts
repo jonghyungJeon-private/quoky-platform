@@ -1,4 +1,5 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import { outboundMessage } from '../message-rendering';
 import { renderHelpText } from '../response-composer';
 import {
   composeHelpIntentReply,
@@ -57,7 +58,8 @@ export class HelpIntentTurnHandler implements ConversationTurnHandler {
         // built from the same contributed lines the runtime's help reply lists (this handler's own line included).
         if (detectCapabilityQuestion(ctx.message.text) === null) return null;
         const all = typeof this.deps.helpLines === 'function' ? this.deps.helpLines() : this.deps.helpLines;
-        return { reply: { context: ctx.message.context, text: renderHelpText(all), replyToMessageId: ctx.message.id } };
+        // PLT-0: the help text carries a platform note (neutral content); the adapter renders it.
+        return { reply: outboundMessage(ctx.message.context, renderHelpText(all), { replyToMessageId: ctx.message.id }) };
       }
       const source = typeof this.deps.helpLines === 'function' ? this.deps.helpLines() : this.deps.helpLines;
       const lines = selectHelpLines(match, source, { topics, exclude: HELP_INTENT_HELP_LINES });
