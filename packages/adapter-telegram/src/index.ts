@@ -4,6 +4,7 @@ export {
   failureCodeOfStatus,
   isConfirmedNotSent,
   TELEGRAM_API_ORIGIN,
+  TELEGRAM_METHODS,
   TelegramApiError,
   TelegramBotApi,
   TelegramFailureCode,

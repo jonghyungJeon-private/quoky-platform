@@ -2,6 +2,7 @@ import { inspect } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { conversationRefOf, messageContent, outboundMessage, untrustedText } from '@quoky/core';
 import type { InboundMessage, LogFields, Logger, OwnerNotification } from '@quoky/core';
+import { TELEGRAM_METHODS } from './bot-api';
 import { TelegramBotToken } from './bot-token';
 import { TELEGRAM_MESSAGE_LIMIT } from './delivery';
 import { TelegramPlatformAdapter, TelegramStartupError, TelegramStartupErrorCode } from './telegram-platform-adapter';
@@ -247,6 +248,180 @@ describe('CA final check (Critical): stop() never confirms the offset unless the
     if (fake.callsTo('getUpdates').length > 1) await until(() => h.adapter.status().halted !== undefined);
     await h.adapter.stop();
     expect(instantPolls(fake)).toEqual([]);
+  });
+});
+
+describe('Outbound invariant (CA final check, Codex delta): no Bot API call before verification, after a halt or after a stop', () => {
+  const ctx = { platform: 'telegram', channelId: String(OWNER_ID), userId: String(OWNER_ID), direct: true };
+  const store = () => ({ load: () => 500, save: () => undefined });
+
+  /** Each outbound path and the Bot API method it exercises. A new method must get a row (checked below). */
+  const actions: ReadonlyArray<{ name: string; method: string; run: (adapter: TelegramPlatformAdapter) => Promise<unknown> }> = [
+    { name: 'sendMessage', method: 'sendMessage', run: (a) => a.sendMessage({ context: ctx, text: 'hi' }) },
+    { name: 'deliver', method: 'sendMessage', run: (a) => a.deliver({ correlationId: 'r', target: ctx, kind: 'TEXT', text: '알림' }) },
+    { name: 'sendTyping', method: 'sendChatAction', run: (a) => a.sendTyping(ctx) },
+    {
+      name: 'an oversized preview (document)',
+      method: 'sendDocument',
+      run: (a) =>
+        a.sendMessage({
+          context: ctx,
+          text: 'p',
+          preview: { previewId: 'pv', header: 'h', footer: 'f', files: [], canonicalDiff: `+${'x'.repeat(5000)}\n`, attachmentFilename: 'x.diff' },
+        }),
+    },
+    { name: 'stop (the offset confirm)', method: 'getUpdates', run: (a) => a.stop() },
+  ];
+
+  it('every outbound Bot API method has an action row', () => {
+    const covered = new Set(actions.map((action) => action.method));
+    expect(TELEGRAM_METHODS.filter((method) => method !== 'getMe' && !covered.has(method))).toEqual([]);
+  });
+
+  it.each(actions)('positive control: on a verified, running adapter "$name" does call $method', async ({ method, run }) => {
+    const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(600, 'x')]));
+    const h = harness(fake, { offsetStore: store() });
+    await h.adapter.start();
+    await until(() => h.adapter.status().identityVerified && getUpdatesOffsets(fake).includes(601));
+    const before = fake.calls.length;
+    await run(h.adapter);
+    expect(fake.calls.slice(before).map((call) => call.method)).toContain(method);
+    await h.adapter.stop();
+  });
+
+  const states: ReadonlyArray<{ name: string; reach: () => Promise<{ adapter: TelegramPlatformAdapter; fake: FakeTelegram }> }> = [
+    {
+      name: 'before verification (getMe hangs)',
+      reach: async () => {
+        const fake = new FakeTelegram().queue('getMe', { hang: true });
+        const h = harness(fake, { offsetStore: store() });
+        await h.adapter.start();
+        await until(() => fake.callsTo('getMe').length === 1);
+        return h;
+      },
+    },
+    {
+      name: 'after a halt (401 while polling)',
+      reach: async () => {
+        const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(600, 'x')]), errorReply(401));
+        const h = harness(fake, { offsetStore: store() });
+        await h.adapter.start();
+        await until(() => h.adapter.status().halted !== undefined);
+        return h;
+      },
+    },
+    {
+      name: 'after a stop',
+      reach: async () => {
+        const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(600, 'x')]));
+        const h = harness(fake, { offsetStore: store() });
+        await h.adapter.start();
+        await until(() => getUpdatesOffsets(fake).includes(601));
+        await h.adapter.stop();
+        return h;
+      },
+    },
+    {
+      name: 'after a restart whose new getMe hangs',
+      reach: async () => {
+        const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(600, 'x')]));
+        const h = harness(fake, { offsetStore: store() });
+        await h.adapter.start();
+        await until(() => getUpdatesOffsets(fake).includes(601));
+        await h.adapter.stop();
+        fake.queue('getMe', { hang: true });
+        await h.adapter.start();
+        await until(() => fake.callsTo('getMe').length === 2);
+        return h;
+      },
+    },
+  ];
+
+  const cases = states.flatMap((state) => actions.map((action) => ({ state: state.name, action: action.name, reach: state.reach, run: action.run })));
+  it.each(cases)('$state: "$action" makes no Bot API call', async ({ reach, run }) => {
+    const { adapter, fake } = await reach();
+    const before = fake.calls.length;
+    await run(adapter);
+    await flush();
+    expect(fake.calls.slice(before).map((call) => call.method)).toEqual([]);
+    await adapter.stop();
+  });
+
+  it.each([
+    ['a 401 halt on the poll', 'halt'],
+    ['stop()', 'stop'],
+  ] as const)('a send waiting on a 429 does not retry after %s (Codex delta P2-1)', async (_label, cause) => {
+    let releasePoll: () => void = () => undefined;
+    const pollGate = new Promise<void>((resolve) => (releasePoll = resolve));
+    let releaseWait: () => void = () => undefined;
+    const waitGate = new Promise<void>((resolve) => (releaseWait = resolve));
+    const fake = new FakeTelegram().queue('sendMessage', errorReply(429, { retry_after: 2 }));
+    let polls = 0;
+    const logs: LogLine[] = [];
+    const adapter = new TelegramPlatformAdapter(
+      { token: holder(), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger(logs),
+      {
+        fetch: async (input, init) => {
+          const params = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          if (String(input).endsWith('/getUpdates') && params.timeout !== 0) {
+            polls += 1;
+            await Promise.race([
+              pollGate,
+              new Promise((_resolve, reject) =>
+                init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true }),
+              ),
+            ]);
+            return new Response(JSON.stringify({ ok: false, error_code: 401 }), { status: 401 });
+          }
+          return fake.fetch(input, init);
+        },
+        sleep: async (ms, signal) => {
+          if (ms !== 2000 || signal.aborted) return;
+          await Promise.race([waitGate, new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))]);
+        },
+      },
+    );
+    await adapter.start();
+    await until(() => adapter.status().identityVerified && polls === 1);
+    const sending = adapter.sendMessage({ context: ctx, text: 'hi' });
+    await until(() => fake.callsTo('sendMessage').length === 1);
+    if (cause === 'halt') {
+      releasePoll();
+      await until(() => adapter.status().halted !== undefined);
+      releaseWait();
+    } else {
+      await adapter.stop();
+      releasePoll();
+    }
+    await sending;
+    await flush();
+    expect(fake.callsTo('sendMessage')).toHaveLength(1);
+    await adapter.stop();
+  });
+
+  it('a rejection of the loop while stopping is not a defect: no halt, no loop-failure log', async () => {
+    const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') });
+    const logs: LogLine[] = [];
+    const adapter = new TelegramPlatformAdapter(
+      { token: holder(), expectedBotId: FAKE_BOT_ID, ownerIds: [String(OWNER_ID)] },
+      recordingLogger(logs),
+      {
+        fetch: fake.fetch,
+        // A sleep that rejects when aborted: the background retry's wait rejects at stop().
+        sleep: (_ms, signal) =>
+          new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })),
+      },
+    );
+    const halts: string[] = [];
+    adapter.onHalt((code) => void halts.push(code));
+    await adapter.start();
+    await until(() => fake.callsTo('getMe').length === 1);
+    await flush();
+    await adapter.stop();
+    expect(adapter.status().halted).toBeUndefined();
+    expect(halts).toEqual([]);
+    expect(logs.some((line) => line.message === 'telegram poll loop failed')).toBe(false);
   });
 });
 

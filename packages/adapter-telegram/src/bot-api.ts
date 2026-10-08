@@ -17,7 +17,9 @@ export const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 
 /** The only Bot API methods the adapter calls. */
 export type TelegramMethod = 'getMe' | 'getUpdates' | 'sendMessage' | 'sendChatAction' | 'sendDocument';
-const METHODS: ReadonlySet<string> = new Set<TelegramMethod>(['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'sendDocument']);
+/** Every Bot API method the adapter may call (the fixed list; tests iterate it so a new method cannot skip a guard). */
+export const TELEGRAM_METHODS: readonly TelegramMethod[] = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'sendDocument'];
+const METHODS: ReadonlySet<string> = new Set<string>(TELEGRAM_METHODS);
 
 export const TelegramFailureCode = {
   /** The call did not finish within its bound. */

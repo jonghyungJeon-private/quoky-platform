@@ -288,6 +288,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     if (this.loop !== undefined) return;
     this.stopped = false;
     this.halted = undefined;
+    // CA final check / Codex delta P2-2: a restart verifies the identity afresh; nothing is sent until it matches again.
+    this.identityVerified = false;
     this.conflicts = [];
     this.noticesSent.clear();
     // The token names its bot: a token for another bot fails before any network call.
@@ -301,6 +303,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     // takes the process (and Discord) down; it halts the Telegram side only and is logged without content.
     this.loop = this.run(controller.signal).catch((err: unknown) => {
       this.polling = false;
+      // A rejection while stopping is the shutdown itself, not a defect: no halt, no notice.
+      if (this.stopped) return;
       this.logger.error('telegram poll loop failed', { errorName: err instanceof Error ? err.name : typeof err });
       this.halt(TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED);
     });
@@ -761,8 +765,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     params: () => Record<string, unknown> | FormData,
     timeoutMs: number,
   ): Promise<unknown> {
-    // A stopped adapter sends nothing (a reply or notice that arrives after stop() is dropped).
-    if (this.stopped) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
+    // Every attempt needs a verified, un-halted, running adapter (a reply or notice that arrives later is dropped).
+    if (!this.connected()) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
     try {
       return await this.api.call(method, params(), { timeoutMs });
     } catch (err) {
@@ -771,7 +775,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       // CA P3-6: the wait ends at stop(), and nothing is sent after it.
       const signal = this.controller?.signal ?? NEVER_ABORTED;
       await this.sleep(retryAfter * 1000, signal);
-      if (signal.aborted || this.stopped) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
+      // Codex delta P2-1: re-checked before the retry: a halt (for example a 401 on the poll) during the wait sends nothing.
+      if (signal.aborted || !this.connected()) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
       return this.api.call(method, params(), { timeoutMs, signal });
     }
   }
