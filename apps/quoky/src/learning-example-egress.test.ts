@@ -20,7 +20,7 @@ import {
 } from '@quoky/core';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { loadConfig } from './config';
-import { createProductionContextBuilder, curatedExampleOptionsOf } from './context-builder-provider';
+import { createProductionContextBuilder, curatedExampleOptionsOf, learningRemoteDisclosureOf } from './context-builder-provider';
 import { selectionFixture, TEST_OWNER } from './provider-selection/test-support';
 
 /**
@@ -233,5 +233,20 @@ describe('ADR-0116 learning-example egress through the production composition', 
     expect(exampleCount(local.spec)).toBe(2);
     const offRemote = await harness({ QUOKY_LEARNING_EXAMPLES_ENABLED: 'true', QUOKY_CHAT_PROVIDER: 'ollama' }, items);
     expect((await offRemote.turn(await offRemote.selection.openSession())).spec).toEqual(local.spec);
+  });
+});
+
+describe('ADR-0116 R4 learning copy disclosure follows the same condition as example egress', () => {
+  it.each([
+    [false, false, false],
+    [false, true, false],
+    [true, false, false],
+    [true, true, true],
+  ])('examplesEnabled=%s remote=%s -> disclose=%s', (examplesEnabled, examplesRemoteEnabled, expected) => {
+    const config = { learning: { examplesEnabled, examplesRemoteEnabled } };
+    expect(learningRemoteDisclosureOf(config)).toBe(expected);
+    expect(learningRemoteDisclosureOf(config)).toBe(
+      curatedExampleOptionsOf(config, { list: async () => [] })?.remoteOwnerSelected === true,
+    );
   });
 });

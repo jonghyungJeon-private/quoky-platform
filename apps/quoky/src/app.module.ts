@@ -101,7 +101,7 @@ import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
-import { createProductionContextBuilder, curatedExampleOptionsOf } from './context-builder-provider';
+import { createProductionContextBuilder, curatedExampleOptionsOf, learningRemoteDisclosureOf } from './context-builder-provider';
 import { logImageUnderstandingSelection, visionModelsOf } from './image-understanding-provider';
 import { isCliPresent } from './provider-selection/cli-presence';
 import { ProviderCatalog } from './provider-selection/provider-catalog';
@@ -126,7 +126,7 @@ import { continuationExecutionEntryProvider, continuationExecutionProvider } fro
 import { createAgentProfileRegistryProvider } from './agent-profile-registry-provider';
 import { createProviderDispatchCommit } from './dispatch-commit-provider';
 import { codeWorkProviders } from './features/code-work.providers';
-import { feedbackProviders } from './features/feedback.providers';
+import { createFeedbackProviders } from './features/feedback.providers';
 import { createCalendarProviders } from './features/calendar.providers';
 import { CONNECTOR_WRITE_FLOW, createConnectorWriteComposition } from './features/connector-writes.providers';
 import { createMemoryProviders } from './features/memory.providers';
@@ -789,7 +789,7 @@ const features: Provider[] = [
   ...codeWorkProviders,
   ...workChatProviders,
   ...remindersProviders,
-  ...feedbackProviders,
+  ...createFeedbackProviders({ remoteExamplesDisclosure: learningRemoteDisclosureOf(config) }),
   // ADR-0106 (MEM-1): memory management commands (pre-classify order 50) over the existing writer and vector cache.
   // ADR-0106 amendment: forgotten memories are archived for QUOKY_MEMORY_ARCHIVE_DAYS (default 7; 0 = delete at once).
   ...createMemoryProviders({ archiveDays: config.memory.archiveDays }),

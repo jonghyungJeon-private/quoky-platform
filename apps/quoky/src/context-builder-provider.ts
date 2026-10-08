@@ -71,6 +71,14 @@ export function curatedExampleOptionsOf(
 }
 
 /**
+ * Whether the learning copy must disclose that examples may accompany an owner-selected cloud model (ADR-0116 R4):
+ * the same condition under which {@link curatedExampleOptionsOf} lets examples leave the host.
+ */
+export function learningRemoteDisclosureOf(config: Pick<QuokyConfig, 'learning'>): boolean {
+  return config.learning.examplesEnabled && config.learning.examplesRemoteEnabled;
+}
+
+/**
  * Construct the production ContextBuilder while preserving the storage provider's
  * post-init repository ownership. Nest creates application services before
  * SqliteStorageProvider.init(), so each operation must resolve `memories` lazily.

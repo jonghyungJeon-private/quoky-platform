@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — LRN-5 consent copy (2026-10-08)
+
+ADR-0116 residual R4. No migration, no new DI token or port, no dependency change.
+
+- With `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` (and examples enabled), the "피드백 후보" listing, the
+  "후보 N 예시로 저장" confirmation and the "예시 목록" listing each end with one line: "직접 고른 클라우드 모델을 쓸 때는
+  이 예시가 대화와 함께 전송될 수 있어요." Memo-only confirmations are unchanged (memos are never sent). With the
+  flag off every text is byte-identical.
+
 ## Unreleased — PLT-0 platform-neutral rendering (2026-10-08)
 
 Personal v4 track PLT-0 (ADR-0114 D1; implementation note in DECISIONS.md). No migration, no new DI token, no

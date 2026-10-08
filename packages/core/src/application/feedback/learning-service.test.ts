@@ -7,7 +7,7 @@ import type { FeedbackRatedTurn, Id, IsoTimestamp, LearningItem, LearningItemDat
 import type { FeedbackRatedTurnQuery, LearningInsertResult, LearningItemListQuery, LearningRepository } from '../../ports';
 import { parseLearningCommand } from './learning-commands';
 import {
-  LEARNING_FAILURE_TEXT, LEARNING_LISTING_LIMIT, LEARNING_LISTING_TTL_MS, LearningService, learningItemUsable,
+  LEARNING_FAILURE_TEXT, LEARNING_LISTING_LIMIT, LEARNING_REMOTE_DISCLOSURE, LEARNING_LISTING_TTL_MS, LearningService, learningItemUsable,
   learningTextRefusal,
 } from './learning-service';
 import type { LearningCommandScope, LearningReplyLookup } from './learning-service';
@@ -85,6 +85,7 @@ function setup(over: {
   turns?: Array<FeedbackRatedTurn & { actorId: string }>;
   tasks?: Record<string, string>;
   replies?: LearningReplyLookup;
+  remoteExamplesDisclosure?: boolean;
 } = {}) {
   const turns = over.turns ?? [
     rated({ turnId: 't-neg', negative: 1, createdAt: '2026-10-05T10:00:00.000Z' }),
@@ -109,6 +110,7 @@ function setup(over: {
     tasks: { get: async (id) => (tasks[id] === undefined ? null : { description: tasks[id] as string }) },
     ...(over.replies ? { replies: over.replies } : {}),
     idGenerator: () => `item-${++seq}`,
+    ...(over.remoteExamplesDisclosure === undefined ? {} : { remoteExamplesDisclosure: over.remoteExamplesDisclosure }),
   });
   const run = (text: string, scope: LearningCommandScope = SCOPE, now: IsoTimestamp = NOW) => {
     const command = parseLearningCommand(text);
@@ -398,6 +400,36 @@ describe('LearningService — 예시 목록 / 수정 / 삭제', () => {
     );
     expect(await learning.deleteBySourceMemory('actor-1', 'mem-1')).toBe(1);
     expect(learning.items.map((i) => i.id)).toEqual(['b', 'c']);
+  });
+});
+
+describe('LearningService — ADR-0116 R4 remote-example disclosure', () => {
+  const count = (text: string) => text.split(LEARNING_REMOTE_DISCLOSURE).length - 1;
+  const script = ['피드백 후보', '후보 2 예시로 저장', '예시 목록', '후보 1 메모: 틀렸어', '후보 1 메모: 다시 고침', '예시 1 수정: 답'];
+
+  async function texts(over: { remoteExamplesDisclosure?: boolean }) {
+    const { run } = setup(over);
+    const out: string[] = [];
+    for (const line of script) out.push((await run(line)).text);
+    return out;
+  }
+
+  it('the line is exactly the owner-approved copy', () => {
+    expect(LEARNING_REMOTE_DISCLOSURE).toBe('직접 고른 클라우드 모델을 쓸 때는 이 예시가 대화와 함께 전송될 수 있어요.');
+  });
+
+  it('flag off or absent: every surface is byte-identical to the undisclosed copy', async () => {
+    const absent = await texts({});
+    expect(await texts({ remoteExamplesDisclosure: false })).toEqual(absent);
+    expect(absent.join('\n')).not.toContain('클라우드');
+  });
+
+  it('flag on: exactly one disclosure line on the candidate listing, example save and example list only', async () => {
+    const on = await texts({ remoteExamplesDisclosure: true });
+    const off = await texts({});
+    expect(on.map(count)).toEqual([1, 1, 1, 0, 0, 0]);
+    for (const i of [0, 1, 2]) expect(on[i]).toBe(i === 2 ? `${off[i]}\n${LEARNING_REMOTE_DISCLOSURE}` : off[i]!.replace(/(저장한 내용은[^\n]*)$/, `$1\n${LEARNING_REMOTE_DISCLOSURE}`));
+    for (const i of [3, 4, 5]) expect(on[i]).toBe(off[i]);
   });
 });
 
