@@ -7,6 +7,7 @@ import {
   IMAGE_CHOICE_EGRESS,
   IMAGE_CHOICE_LOCALITY,
   chatChoiceFromData,
+  chatChoiceIsCloud,
   imageChoiceIsCloud,
   imageChoiceFromData,
   parseChatChoiceToken,
@@ -51,10 +52,22 @@ describe('selection choices (ADR-0092 amendment, runtime switching)', () => {
     expect(imageChoiceFromData('codex')).toBe('codex');
   });
 
-  it('image choices: Claude and Codex are cloud (REMOTE, Anthropic / OpenAI), Ollama is local, off sends nothing', () => {
-    expect(IMAGE_CHOICES).toEqual(['claude', 'codex', 'ollama', 'off']);
-    expect(IMAGE_CHOICE_LOCALITY).toEqual({ claude: 'REMOTE', codex: 'REMOTE', ollama: 'LOCAL', off: 'NONE' });
-    expect(IMAGE_CHOICE_EGRESS).toEqual({ claude: 'ANTHROPIC', codex: 'OPENAI', ollama: 'LOCAL', off: 'NONE' });
-    expect(IMAGE_CHOICES.filter(imageChoiceIsCloud)).toEqual(['claude', 'codex']);
+  it('image choices: Claude, Codex and the OpenAI API are cloud (REMOTE, Anthropic / OpenAI), Ollama is local, off sends nothing', () => {
+    expect(IMAGE_CHOICES).toEqual(['claude', 'codex', 'ollama', 'openai', 'off']);
+    expect(IMAGE_CHOICE_LOCALITY).toEqual({ claude: 'REMOTE', codex: 'REMOTE', ollama: 'LOCAL', openai: 'REMOTE', off: 'NONE' });
+    expect(IMAGE_CHOICE_EGRESS).toEqual({ claude: 'ANTHROPIC', codex: 'OPENAI', ollama: 'LOCAL', openai: 'OPENAI', off: 'NONE' });
+    expect(IMAGE_CHOICES.filter(imageChoiceIsCloud)).toEqual(['claude', 'codex', 'openai']);
+  });
+
+  it('openai chat tokens (ADR-0115 D3): the provider alone or an allow-listed model, compared lowercase', () => {
+    expect(parseChatChoiceToken('openai')).toEqual({ ok: true, choice: { provider: 'openai' } });
+    expect(parseChatChoiceToken('OpenAI:GPT-4.1-mini')).toEqual({ ok: true, choice: { provider: 'openai', model: 'gpt-4.1-mini' } });
+    for (const bad of ['openai:gpt-9-preview', 'openai:o3', 'openai:', 'openai:gpt-4.1-mini:x']) {
+      expect(parseChatChoiceToken(bad)).toEqual({ ok: false, reason: 'OPENAI_MODEL_NOT_ALLOWED' });
+    }
+    expect(chatChoiceFromData({ provider: 'openai', model: 'gpt-4o' })).toEqual({ provider: 'openai', model: 'gpt-4o' });
+    expect(chatChoiceFromData({ provider: 'openai', model: 'gpt-secret' })).toBeNull();
+    expect(chatChoiceIsCloud({ provider: 'openai' })).toBe(true);
+    expect(imageChoiceFromData('openai')).toBe('openai');
   });
 });

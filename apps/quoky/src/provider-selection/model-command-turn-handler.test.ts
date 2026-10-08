@@ -189,8 +189,8 @@ describe('모델 변경 (session only)', () => {
     ['/model ollama:mistral', '로컬 Ollama에 그 모델이 없어요.'],
     ['모델 변경: claude opus', '모델 명령은 이렇게 써요'],
     ['/model a b c', '모델 명령은 이렇게 써요'],
-    ['이미지 모델 변경: gpt', '이미지 모델은 claude, codex, ollama, off 중에서'],
-    ['이미지 모델 변경: codex:gpt-5', '이미지 모델은 claude, codex, ollama, off 중에서'],
+    ['이미지 모델 변경: gpt', '이미지 모델은 claude, codex, ollama, openai, off 중에서'],
+    ['이미지 모델 변경: codex:gpt-5', '이미지 모델은 claude, codex, ollama, openai, off 중에서'],
     ['이미지 모델 변경: ollama', 'QUOKY_OLLAMA_VISION_MODEL이 필요해요'],
   ])('refuses %s truthfully and changes nothing', async (text, expected) => {
     const { f, say } = harness();

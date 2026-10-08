@@ -10,6 +10,7 @@ import { AiFailureKind, AiProviderError } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
 import { composeChatProviders } from '../chat-provider-composition';
 import type { QuokyConfig } from '../config';
+import { openAiChatVariant, openAiVision } from '../openai-provider-composition';
 import { CHAT_TIER_CAPABILITIES } from './selection-choices';
 import type { ChatChoice, ChatProviderName, ImageChoice } from './selection-choices';
 
@@ -27,9 +28,13 @@ import type { ChatChoice, ChatProviderName, ImageChoice } from './selection-choi
  *   (cloud) when the Codex CLI is present or `codex` is the configured or persisted image choice (ADR-0111 amendment of
  *   2026-10-08), the Ollama vision provider when `QUOKY_OLLAMA_VISION_MODEL` is a valid local model. Which one may run — and whether image bytes may leave the host
  *   at all — is decided per request by the policy and the Core image locality policy.
+ * - OpenAI API (ADR-0115 D3): the chat instance (`openai-api`) and the image instance (`openai-vision-api`) are
+ *   registered only when `QUOKY_OPENAI_API_KEY` and `QUOKY_OPENAI_MODEL` are configured. A choice of another allow-listed
+ *   OpenAI model adds one bounded chat-tier instance (`openai-api:<model>`), like a Claude alias. Each is eligible only
+ *   while it is the effective chat or image choice; construction makes no network call.
  */
 
-/** At most this many on-demand instances (Claude aliases + extra Ollama models) are ever added. */
+/** At most this many on-demand instances (Claude aliases, extra Ollama models, extra OpenAI models) are ever added. */
 export const MAX_ON_DEMAND_PROVIDERS = 12;
 
 export interface ProviderFactories {
@@ -39,6 +44,10 @@ export interface ProviderFactories {
   /** The Codex vision provider on `QUOKY_CODEX_MODEL` (absent = the CLI default). */
   codexVision(model: string | undefined): AiProvider;
   ollamaVision(model: string): AiProvider;
+  /** A chat-tier OpenAI API instance on an allow-listed model other than `QUOKY_OPENAI_MODEL`. */
+  openaiVariant(model: string): AiProvider;
+  /** The OpenAI API image instance on `QUOKY_OPENAI_MODEL`. */
+  openaiVision(): AiProvider;
 }
 
 export interface ProviderCatalogInput {
@@ -88,11 +97,15 @@ export class ProviderCatalog {
   readonly claudeVision: AiProvider | undefined;
   readonly codexVision: AiProvider | undefined;
   readonly ollamaVision: AiProvider | undefined;
+  /** The `QUOKY_OPENAI_MODEL` chat instance (absent unless the OpenAI API is configured). */
+  readonly openai: AiProvider | undefined;
+  readonly openaiVision: AiProvider | undefined;
   /** Whether an Ollama model other than `OLLAMA_MODEL` may be added (the CLI is present or Ollama is registered). */
   readonly ollamaUsable: boolean;
   readonly claudeModel: string;
   readonly ollamaModel: string;
   readonly codexModel: string | undefined;
+  readonly openaiModel: string | undefined;
   private readonly onDemand = new Map<string, AiProvider>();
   private readonly factories: ProviderFactories;
 
@@ -114,6 +127,9 @@ export class ProviderCatalog {
           cleanup: { logger: input.logger },
         }),
       ollamaVision: (model) => new OllamaCliVisionProvider({ bin: ai.ollamaBin, model }),
+      // Only reached when `ai.openai` is configured (see `canChoose` / the registration below).
+      openaiVariant: (model) => openAiChatVariant(requireOpenAi(ai), model),
+      openaiVision: () => openAiVision(requireOpenAi(ai)),
       ...input.factories,
     };
     this.claude = chat.claude;
@@ -122,6 +138,8 @@ export class ProviderCatalog {
     this.claudeModel = ai.claudeModel;
     this.ollamaModel = ai.ollamaModel;
     this.codexModel = ai.codexModel;
+    this.openai = chat.openai;
+    this.openaiModel = ai.openai?.model;
     this.ollamaUsable = chat.ollama !== undefined || input.cliPresent(ai.ollamaBin);
     this.claudeVision = input.vision.claudeModel !== undefined ? this.factories.claudeVision(input.vision.claudeModel) : undefined;
     this.ollamaVision = input.vision.ollamaModel !== undefined ? this.factories.ollamaVision(input.vision.ollamaModel) : undefined;
@@ -130,19 +148,22 @@ export class ProviderCatalog {
     const wantsCodexVision =
       input.vision.codexSelected === true || input.persistedImage === 'codex' || input.cliPresent(ai.codexBin);
     this.codexVision = wantsCodexVision ? this.factories.codexVision(ai.codexModel) : undefined;
+    this.openaiVision = ai.openai !== undefined ? this.factories.openaiVision() : undefined;
     this.providers = [
       ...chat.providers,
       ...(input.extra ?? []),
       ...(this.ollamaVision ? [this.ollamaVision] : []),
       ...(this.claudeVision ? [this.claudeVision] : []),
       ...(this.codexVision ? [this.codexVision] : []),
+      ...(this.openaiVision ? [this.openaiVision] : []),
     ];
   }
 
-  /** Whether a chat provider can be chosen on this host at all (Claude always; Codex/Ollama when registrable). */
+  /** Whether a chat provider can be chosen on this host at all (Claude always; Codex/Ollama/OpenAI when registrable). */
   canChoose(provider: ChatProviderName): boolean {
     if (provider === 'claude') return true;
     if (provider === 'codex') return this.codex !== undefined;
+    if (provider === 'openai') return this.openai !== undefined;
     return this.ollamaUsable;
   }
 
@@ -160,14 +181,18 @@ export class ProviderCatalog {
     ) {
       return { provider: 'ollama' };
     }
+    if (choice.provider === 'openai' && choice.model !== undefined && choice.model === this.openaiModel) {
+      return { provider: 'openai' };
+    }
     return choice;
   }
 
-  /** The owner-facing label: `claude:sonnet`, `codex`, `ollama:llama3.1`. */
+  /** The owner-facing label: `claude:sonnet`, `codex`, `ollama:llama3.1`, `openai:gpt-4.1-mini`. */
   label(choice: ChatChoice): string {
     const normalized = this.normalize(choice);
     if (normalized.provider === 'codex') return 'codex';
     if (normalized.provider === 'claude') return `claude:${normalized.model ?? this.claudeModel}`;
+    if (normalized.provider === 'openai') return `openai:${normalized.model ?? this.openaiModel ?? 'default'}`;
     return `ollama:${normalized.model ?? this.ollamaModel}`;
   }
 
@@ -178,6 +203,12 @@ export class ProviderCatalog {
   resolveChat(choice: ChatChoice): AiProvider | undefined {
     const normalized = this.normalize(choice);
     if (normalized.provider === 'codex') return this.codex;
+    if (normalized.provider === 'openai') {
+      if (this.openai === undefined) return undefined;
+      return normalized.model === undefined ? this.openai : this.onDemandInstance(`openai:${normalized.model}`, () =>
+        chatTierView(this.factories.openaiVariant(normalized.model as string), `openai-api:${normalized.model}`),
+      );
+    }
     if (normalized.provider === 'claude') {
       return normalized.model === undefined ? this.claude : this.onDemandInstance(`claude:${normalized.model}`, () =>
         chatTierView(this.factories.claudeVariant(normalized.model as string), `claude-cli:${normalized.model}`),
@@ -201,6 +232,8 @@ export class ProviderCatalog {
         return this.codexVision;
       case 'ollama':
         return this.ollamaVision;
+      case 'openai':
+        return this.openaiVision;
     }
   }
 
@@ -213,4 +246,9 @@ export class ProviderCatalog {
     this.providers.push(provider);
     return provider;
   }
+}
+
+function requireOpenAi(ai: QuokyConfig['ai']): NonNullable<QuokyConfig['ai']['openai']> {
+  if (ai.openai === undefined) throw new Error('the OpenAI API is not configured');
+  return ai.openai;
 }

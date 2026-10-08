@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { Capability } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
+import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
 import { QuokyConfigErrorCode } from './config';
 import { redactSecrets } from './error-diagnostics';
 import {
@@ -54,9 +55,17 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.CLAUDE_MODEL_INVALID]:
     'QUOKY_CLAUDE_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.CHAT_PROVIDER_INVALID]:
-    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", or "ollama" (exactly, lowercase).',
+    'QUOKY_CHAT_PROVIDER must be unset, "claude", "codex", "ollama", or "openai" (exactly, lowercase).',
   [QuokyConfigErrorCode.CODEX_MODEL_INVALID]:
     'QUOKY_CODEX_MODEL must be unset (the Codex CLI default model) or a model name (letters, digits, and . _ : / [ ] -; up to 128 characters).',
+  [QuokyConfigErrorCode.OPENAI_API_KEY_INVALID]:
+    'QUOKY_OPENAI_API_KEY must be unset or an OpenAI secret key ("sk-" followed by letters, digits, _ and -; no spaces, quotes or "Bearer").',
+  [QuokyConfigErrorCode.OPENAI_API_KEY_MISSING]:
+    'The OpenAI API provider needs QUOKY_OPENAI_API_KEY (in .env.local, mode 600) when QUOKY_OPENAI_MODEL is set or "openai" is selected in QUOKY_CHAT_PROVIDER / QUOKY_IMAGE_UNDERSTANDING_PROVIDER.',
+  [QuokyConfigErrorCode.OPENAI_MODEL_INVALID]:
+    `QUOKY_OPENAI_MODEL must be unset or one of the allowed OpenAI models (${OPENAI_MODEL_ALLOW_LIST.join(', ')}).`,
+  [QuokyConfigErrorCode.OPENAI_MODEL_MISSING]:
+    'The OpenAI API provider needs QUOKY_OPENAI_MODEL (an allowed model such as "gpt-4.1-mini") when QUOKY_OPENAI_API_KEY is set.',
   [QuokyConfigErrorCode.GIT_REMOTE_ENABLED_INVALID]: 'QUOKY_GIT_REMOTE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_ENABLED_INVALID]: 'QUOKY_GIT_MERGE_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.GIT_MERGE_REQUIRES_REMOTE]:
@@ -104,7 +113,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.DISCORD_EXPECTED_BOT_ID_REQUIRED]:
     'The launchd service requires QUOKY_DISCORD_EXPECTED_BOT_ID in the host .env.local (the bot\'s user id, 17-20 digits). Set it, then restart the service.',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_PROVIDER_INVALID]:
-    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", or "off" (lowercase). "claude" sends attached images to Anthropic and "codex" to OpenAI (cloud).',
+    'QUOKY_IMAGE_UNDERSTANDING_PROVIDER must be unset, "ollama", "claude", "codex", "openai", or "off" (lowercase). "claude" sends attached images to Anthropic, "codex" and "openai" to OpenAI (cloud).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_MODEL_INVALID]:
     'QUOKY_IMAGE_UNDERSTANDING_MODEL must be unset or a Claude model alias/name such as "sonnet" (letters, digits, and . _ : / [ ] -; up to 128 characters).',
   [QuokyConfigErrorCode.IMAGE_UNDERSTANDING_OLLAMA_MODEL_MISSING]:
