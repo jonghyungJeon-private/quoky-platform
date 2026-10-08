@@ -4,7 +4,7 @@ import type { IsoTimestamp } from '../domain';
  * Conversation control phrases (ADR-0093). Pure and deterministic — no provider, no storage, no clock of its
  * own. A control phrase is a WHOLE message: trimmed, then compared exactly (ASCII case-insensitive), so a
  * sentence that merely contains one ("새 대화 기능 만들어줘") is ordinary work, never a control turn. These are
- * plain-text messages, not Discord application (slash) commands.
+ * plain-text messages, not a chat platform's application (slash) commands.
  */
 export type ConversationControlCommand = 'help' | 'reset';
 

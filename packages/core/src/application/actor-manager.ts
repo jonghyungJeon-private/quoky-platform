@@ -21,7 +21,7 @@ export class ActorManager {
 
     const actor: Actor = {
       id: newId(),
-      // TODO(1b): enrich from the platform profile (e.g. Discord display name).
+      // TODO(1b): enrich from the platform profile (e.g. the chat display name).
       displayName: context.userId,
       identities: [{ platform: context.platform, externalId: context.userId }],
       createdAt: now(),

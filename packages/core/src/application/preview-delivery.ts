@@ -1,6 +1,6 @@
 /**
  * Preview delivery model (Sprint 4c-Follow-up-5, F5-A/F5-B). Platform-neutral: this module carries a
- * COMPLETE code-change preview and a PURE, lossless splitter for its canonical diff. It embeds NO Discord
+ * COMPLETE code-change preview and a PURE, lossless splitter for its canonical diff. It embeds NO platform
  * constant and no platform API — the caller (a platform adapter) supplies the per-segment payload budget
  * and owns all presentation (message limits, `[n/m]`, code fences, sequencing, attachments) (CA RC1).
  *

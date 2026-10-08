@@ -2,7 +2,7 @@
  * @quoky/core — the framework-agnostic heart of Quoky.
  *
  * Contains ONLY: domain models, port interfaces, application services, and
- * pure utilities. It has NO runtime dependency on NestJS, Discord, SQLite, or
+ * pure utilities. It has NO runtime dependency on NestJS, a chat platform SDK, SQLite, or
  * any concrete provider. Everything outside depends inward on this package;
  * this package depends on nothing in the workspace.
  */

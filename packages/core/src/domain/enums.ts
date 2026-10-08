@@ -1,6 +1,6 @@
 /**
  * Domain enumerations. These are stable, framework-agnostic value types.
- * Nothing here may reference a concrete provider, Discord, or SQLite.
+ * Nothing here may reference a concrete provider, a chat platform, or SQLite.
  */
 
 /** Lifecycle of a unit of work. See the task model in the architecture docs. */

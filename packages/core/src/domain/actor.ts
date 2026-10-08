@@ -2,7 +2,7 @@ import type { Id, IsoTimestamp, Metadata } from './common';
 
 /** A platform-native identity that maps to a Quoky Actor. */
 export interface ExternalIdentity {
-  /** e.g. "discord". */
+  /** The opaque platform id of the adapter that resolved this identity. */
   platform: string;
   /** Platform-native user id. */
   externalId: string;
@@ -10,7 +10,7 @@ export interface ExternalIdentity {
 
 /**
  * A platform-independent principal (ADR-0009). v1 is THIN: a single local human,
- * resolved from one Discord user. Authorization (PolicyProvider, teams/org,
+ * resolved from one chat-platform user. Authorization (PolicyProvider, teams/org,
  * approval authority) is intentionally NOT modeled yet.
  */
 export interface Actor {
