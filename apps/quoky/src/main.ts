@@ -41,7 +41,7 @@ import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
 import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
-import { onTelegramHalt } from './platform/platform-composition';
+import { haltNoticeBuffer, onTelegramHalt } from './platform/platform-composition';
 
 // ADR-0113 D6: composition-root errors also feed the OPS-1 recent-error ring (codes only, in memory).
 const log = recordOpsUiErrors(new ConsoleLogger('quoky'), 'quoky');
@@ -109,7 +109,10 @@ async function bootstrap(): Promise<void> {
 
   // ADR-0114 (TG-1): a Telegram halt (conflict, rejected token, identity mismatch) sends one OPS_NOTICE to the Discord
   // owner; Discord itself runs on.
-  onTelegramHalt(platform, (code) => ops.notifyTelegramHalt(code));
+  // The notice is held until Discord is verified and the operations runtime started (below), so it is never lost to a
+  // not-yet-connected Discord.
+  const telegramHalts = haltNoticeBuffer((code) => ops.notifyTelegramHalt(code));
+  onTelegramHalt(platform, telegramHalts.listener);
 
   logResolvedDatabasePath(config.storage.dbPath, log);
   // ADR-0115 implementation note: a REMOTE provider outside the effective selection (a configured but unselected HTTP
@@ -184,6 +187,7 @@ async function bootstrap(): Promise<void> {
   // ADR-0102 D6/D7: the daily backup chain, and the crash-loop OPS_NOTICE when the launcher counted >=3 starts in 10
   // minutes (owner DM only, fixed text, at most 3 per day; sent without delaying the start).
   ops.start();
+  telegramHalts.release();
   // Startup recovery (FIRING → DELIVERY_UNCERTAIN, never resent) runs inside start(); the first tick then delivers
   // a missed one-time reminder late once and catches a recurring one up only within 60 minutes.
   await reminderDriver.start();

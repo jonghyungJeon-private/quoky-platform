@@ -52,3 +52,29 @@ export function onTelegramHalt(platform: PlatformAdapter, listener: (code: Teleg
   telegram.onHalt(listener);
   return true;
 }
+
+/**
+ * CA final check #3: a Telegram halt can fire before Discord is READY (the startup identity block has not finished),
+ * when the owner DM would be `NOT_SENT NOT_CONNECTED` after the `OPS_NOTICE` ledger already took a slot, so the notice
+ * would be lost. Halt codes are held until {@link HaltNoticeBuffer.release} (called once Discord is verified and the
+ * operations runtime started), then forwarded in order; after that they pass straight through.
+ */
+export interface HaltNoticeBuffer {
+  readonly listener: (code: TelegramStartupErrorCode) => void;
+  release(): void;
+}
+
+export function haltNoticeBuffer(notify: (code: TelegramStartupErrorCode) => void): HaltNoticeBuffer {
+  let held: TelegramStartupErrorCode[] | undefined = [];
+  return {
+    listener: (code) => {
+      if (held !== undefined) held.push(code);
+      else notify(code);
+    },
+    release: () => {
+      const pending = held ?? [];
+      held = undefined;
+      for (const code of pending) notify(code);
+    },
+  };
+}

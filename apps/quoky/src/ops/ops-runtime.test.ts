@@ -7,6 +7,7 @@ import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import type { BackupJobTimers } from './backup-job';
 import { OPS_NOTICE_TEXT, type OpsNoticeLedgerStore } from './ops-notice';
 import { createOpsRuntime, type OpsRuntimeInput } from './ops-runtime';
+import { haltNoticeBuffer } from '../platform/platform-composition';
 
 const OWNER = '111111111111111111';
 const T0 = Date.parse('2026-10-06T01:00:00.000Z');
@@ -116,6 +117,43 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     }
     // The ledger keeps the reason, so the OPS_NOTICE daily bound (3 per 24 h) also covers Telegram halts.
     expect(ledgerContent).toContain('TELEGRAM_POLL_CONFLICT');
+    await ops.stop();
+  });
+
+  it('CA final check #3: a halt before Discord is READY is held and delivered once after release (no lost notice)', async () => {
+    let ready = false;
+    const attempts: string[] = [];
+    sink.deliver = async (n) => {
+      attempts.push(ready ? 'ready' : 'not-ready');
+      if (!ready) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+      sink.delivered.push(n);
+      return { status: 'SENT', via: 'dm' };
+    };
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    const buffer = haltNoticeBuffer((code) => ops.notifyTelegramHalt(code));
+    buffer.listener('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    // Nothing tried before readiness: no NOT_CONNECTED attempt, no ledger slot taken.
+    expect(attempts).toEqual([]);
+    expect(ledgerContent).toBeUndefined();
+    ready = true;
+    buffer.release();
+    await settle();
+    expect(attempts).toEqual(['ready']);
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_AUTH_REJECTED]);
+    // After release a halt passes straight through.
+    buffer.listener('TELEGRAM_POLL_CONFLICT');
+    await settle();
+    expect(sink.delivered).toHaveLength(2);
+    await ops.stop();
+  });
+
+  it('control: without the buffer, a halt before readiness is NOT_CONNECTED and its ledger slot is spent', async () => {
+    sink.deliver = async () => ({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    expect(ledgerContent).toContain('TELEGRAM_AUTH_REJECTED');
     await ops.stop();
   });
 
