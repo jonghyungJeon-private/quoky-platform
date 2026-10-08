@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_TABLE_COLUMNS, isTableRenderingEligible, renderMarkdownTablesForDiscord as render } from './markdown-tables';
+import {
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
+  isTableRenderingEligible,
+  renderMarkdownTablesForDiscord as render,
+} from './markdown-tables';
 
-// ADR-0111 amendment of 2026-10-08 (whole-reply rule after Codex re-review P2 on 2be8ccc): simple Markdown tables in a
-// FLAGGED model reply become Discord-friendly lines, but only when the reply has no fence marker and no quote at all.
+// ADR-0111 amendment of 2026-10-08, widened by TBL-1: simple Markdown tables in a FLAGGED model reply become
+// Discord-friendly lines. A quote anywhere leaves the whole reply untouched; fences must be bare and balanced, or the
+// whole reply is untouched; in a balanced reply only paragraphs outside every fence are converted.
 
 const lines = (...l: string[]) => l.join('\n');
 const TABLE = ['| 월 | 가입자 수 |', '|---|---:|', '| 1월 | 80 |', '| 2월 | 95 |'];
@@ -35,12 +41,8 @@ describe('renderMarkdownTablesForDiscord — a plain reply with simple tables is
   });
 });
 
-describe('renderMarkdownTablesForDiscord — a fence marker or a quote anywhere leaves the WHOLE reply untouched', () => {
+describe('renderMarkdownTablesForDiscord — a quote anywhere, or fences that are not provably balanced, leave the WHOLE reply untouched', () => {
   it.each([
-    ['a ``` fence before the table', lines('```', 'code', '```', '', ...TABLE)],
-    ['a ``` fence after the table', lines(...TABLE, '', '```ts', 'const x = 1;', '```')],
-    ['a ~~~ fence before the table', lines('~~~', 'x', '~~~', '', ...TABLE)],
-    ['a ~~~ fence after the table', lines(...TABLE, '', '~~~', 'x', '~~~')],
     ['an unclosed fence', lines(...TABLE, '', '```')],
     ['a fence marker in the middle of a line', lines('인라인 ```코드``` 예시', '', ...TABLE)],
     ['a tilde run in the middle of a line', lines('범위 1~~~3', '', ...TABLE)],
@@ -54,6 +56,99 @@ describe('renderMarkdownTablesForDiscord — a fence marker or a quote anywhere 
 
   it('a plain reply is eligible', () => {
     expect(isTableRenderingEligible(lines('요약', ...TABLE, '1 > 0 이에요'))).toBe(true);
+  });
+
+  it.each([
+    ['a backtick fence opened but never closed after another', lines('```', 'a', '```', '', ...TABLE, '', '```ts', 'b')],
+    ['a tilde fence closed by backticks', lines('~~~', 'x', '```', '', ...TABLE)],
+    ['a backtick fence closed by tildes', lines('```', 'x', '~~~', '', ...TABLE)],
+    ['a closer with a different run length', lines('````', 'x', '```', '', ...TABLE)],
+    ['a closer with an info string', lines('```', 'x', '```ts', '', ...TABLE)],
+    ['a second opener inside an open fence', lines('```md', '```ts', 'x', '```', '', ...TABLE)],
+    ['an empty fence', lines('```', '```', '', ...TABLE)],
+    ['a fence holding only blank lines', lines('```', '', '```', '', ...TABLE)],
+    ['a 1-space-indented fence', lines(' ```', 'x', ' ```', '', ...TABLE)],
+    ['a tab-indented fence', lines('\t```', 'x', '\t```', '', ...TABLE)],
+    ['an opener with a backtick in its info string', lines('```a`b', 'x', '```', '', ...TABLE)],
+    ['a tilde opener with a tilde in its info string', lines('~~~ 1~2', 'x', '~~~', '', ...TABLE)],
+    ['a fence marker inside a table row', lines('| a | ``` |', '|---|---|', '| 1 | 2 |', '', '```', 'x', '```')],
+    ['a lone CR in a fenced reply', lines('```', 'x\ry', '```', '', ...TABLE)],
+    ['a Unicode line separator in a fenced reply', lines('```', 'x\u2028y', '```', '', ...TABLE)],
+    ['a quote next to a balanced fence', lines('```', 'x', '```', '', '> 인용', '', ...TABLE)],
+  ])('TBL-1 conservative scan: %s', (_label, text) => {
+    expect(isTableRenderingEligible(text)).toBe(false);
+    expect(render(text)).toBe(text);
+  });
+});
+
+describe('renderMarkdownTablesForDiscord — TBL-1: in a balanced reply only paragraphs outside every fence convert', () => {
+  // These four inputs were "a fence marker anywhere leaves the whole reply untouched" under #145; TBL-1 converts the
+  // table and keeps every fence byte-identical.
+  it.each([
+    ['a ``` fence before the table', ['```', 'code', '```', ''], []],
+    ['a ``` fence after the table', [], ['', '```ts', 'const x = 1;', '```']],
+    ['a ~~~ fence before the table', ['~~~', 'x', '~~~', ''], []],
+    ['a ~~~ fence after the table', [], ['', '~~~', 'x', '~~~']],
+  ])('%s', (_label, before, after) => {
+    const text = lines(...before, ...TABLE, ...after);
+    expect(isTableRenderingEligible(text)).toBe(true);
+    expect(render(text)).toBe(lines(...before, ...RENDERED, ...after));
+  });
+
+  it('a table inside a fence is never converted; the table outside it is', () => {
+    const fence = ['```md', ...TABLE, '```'];
+    expect(render(lines(...fence, '', ...TABLE))).toBe(lines(...fence, '', ...RENDERED));
+    // A fence holding blank lines between table rows stays one fenced region.
+    const spaced = ['~~~', TABLE[0], '', TABLE[1], '', ...TABLE.slice(2), '~~~'] as string[];
+    expect(render(lines(...spaced, '', ...TABLE))).toBe(lines(...spaced, '', ...RENDERED));
+  });
+
+  it('a paragraph that touches a fence (no blank line between) is left as it is', () => {
+    for (const text of [lines(...TABLE, '```', 'x', '```'), lines('```', 'x', '```', ...TABLE), lines('요약:', ...TABLE, '~~~', 'x', '~~~')]) {
+      expect(render(text)).toBe(text);
+    }
+  });
+
+  it('several fences and tables, longer runs, info strings and CRLF', () => {
+    const text = lines('설명이에요.', '', '````python', 'print(1)', '````', '', ...TABLE, '', '~~~~ text', 'a | b', '~~~~', '', '| x | y |', '|---|---|', '| 1 | 2 |');
+    expect(render(text)).toBe(
+      lines('설명이에요.', '', '````python', 'print(1)', '````', '', ...RENDERED, '', '~~~~ text', 'a | b', '~~~~', '', '**x · y**', '- x: 1, y: 2'),
+    );
+    expect(render('```\r\ncode\r\n```\r\n\r\n| a | b |\r\n|---|---|\r\n| 1 | 2 |\r\n')).toBe(
+      '```\r\ncode\r\n```\r\n\r\n**a · b**\r\n- a: 1, b: 2\r\n',
+    );
+    // A closer may carry trailing spaces.
+    expect(render(lines('```', 'x', '```  ', '', ...TABLE))).toBe(lines('```', 'x', '```  ', '', ...RENDERED));
+  });
+
+  it('lists and indentation keep their rules next to a fence', () => {
+    const listed = lines('```', '- a', '```', '', '- 항목', ...TABLE);
+    expect(render(listed)).toBe(listed);
+    expect(render(lines('```', '- a', '```', '', ...TABLE))).toBe(lines('```', '- a', '```', '', ...RENDERED));
+  });
+});
+
+describe('renderMarkdownTablesForDiscord — TBL-1: a long table stays verbatim inside a code block', () => {
+  const longTable = (rows: number) => ['| 번호 | 값 |', '|---|---|', ...Array.from({ length: rows }, (_, i) => `| ${i + 1} | v${i + 1} |`)];
+
+  it(`more than ${MAX_TABLE_ROWS} data rows: the rows are kept, wrapped in a fence; ${MAX_TABLE_ROWS} rows still convert`, () => {
+    const forty = longTable(40);
+    expect(render(lines('요약', '', ...forty, '', '끝'))).toBe(lines('요약', '', '```', ...forty, '```', '', '끝'));
+    const atLimit = render(lines(...longTable(MAX_TABLE_ROWS)));
+    expect(atLimit.split('\n')).toHaveLength(MAX_TABLE_ROWS + 1);
+    expect(atLimit.startsWith('**번호 · 값**\n- 번호: 1, 값: v1')).toBe(true);
+  });
+
+  it('keeps CRLF on the wrapping fence lines and wraps a long table next to a balanced fence', () => {
+    const crlf = longTable(30).join('\r\n');
+    expect(render(`${crlf}\r\n`)).toBe(`\`\`\`\r\n${crlf}\r\n\`\`\`\r\n`);
+    const text = lines('```', 'x', '```', '', ...longTable(26));
+    expect(render(text)).toBe(lines('```', 'x', '```', '', '```', ...longTable(26), '```'));
+  });
+
+  it('the wrapped output is itself left unchanged by a second pass (balanced, the table is fenced)', () => {
+    const once = render(lines(...longTable(30), '', ...TABLE));
+    expect(render(once)).toBe(once);
   });
 });
 

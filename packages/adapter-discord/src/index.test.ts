@@ -419,11 +419,11 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     await adapter.sendMessage({ context: { platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER }, text });
     expect(sent).toEqual([text]);
     // Defense in depth: the preview has no `model-reply` flag, so it is never rendered; and even the renderer leaves it
-    // unchanged, because a reply containing any fence marker is never converted.
+    // unchanged: its nested fences are not bare and balanced (TBL-1), so the whole text is left as it is.
     expect(renderMarkdownTablesForDiscord(text)).toBe(text);
   });
 
-  it('converts simple tables only in a reply flagged model-reply, and only when the reply has no fence or quote', async () => {
+  it('converts simple tables only in a reply flagged model-reply, and only outside balanced fences', async () => {
     const { adapter } = await harness();
     const { sent } = sendableChannel(ALLOWED_CHANNEL);
     const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
@@ -433,10 +433,14 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     // The same text without the flag (any deterministic reply) is sent byte-identical.
     await adapter.sendMessage({ context, text: plain });
     expect(sent.at(-1)).toBe(plain);
-    // A flagged reply with a fence anywhere is sent byte-identical too.
+    // TBL-1: a flagged reply with balanced fences converts only the table outside them (the fence is byte-identical);
+    // an unclosed fence leaves the whole reply byte-identical.
     const fenced = [plain, '', '```ts', 'const x = 1;', '```'].join('\n');
     await adapter.sendMessage({ context, text: fenced, format: 'model-reply' });
-    expect(sent.at(-1)).toBe(fenced);
+    expect(sent.at(-1)).toBe([sent[0], '', '```ts', 'const x = 1;', '```'].join('\n'));
+    const unclosed = [plain, '', '```ts', 'const x = 1;'].join('\n');
+    await adapter.sendMessage({ context, text: unclosed, format: 'model-reply' });
+    expect(sent.at(-1)).toBe(unclosed);
   });
 
   it('returns an empty receipt when the channel is not sendable', async () => {
