@@ -6,7 +6,13 @@ import type { InboundMessage, LogFields, Logger, OwnerNotification } from '@quok
 import { TELEGRAM_METHODS } from './bot-api';
 import { TelegramBotToken } from './bot-token';
 import { TELEGRAM_MESSAGE_LIMIT } from './delivery';
-import { STARTUP_CALL_TIMEOUT_MS, TelegramPlatformAdapter, TelegramStartupError, TelegramStartupErrorCode } from './telegram-platform-adapter';
+import {
+  STARTUP_CALL_TIMEOUT_MS,
+  TelegramPlatformAdapter,
+  TelegramStartupError,
+  TelegramStartupErrorCode,
+  UNSUPPORTED_MESSAGE_NOTICE,
+} from './telegram-platform-adapter';
 import type { TelegramAdapterOptions } from './telegram-platform-adapter';
 import {
   FAKE_BOT_ID,
@@ -18,6 +24,7 @@ import {
   STRANGER_ID,
   errorReply,
   flush,
+  mediaUpdate,
   okReply,
   textUpdate,
   until,
@@ -88,13 +95,13 @@ const getUpdatesOffsets = (fake: FakeTelegram): Array<number | undefined> =>
   fake.callsTo('getUpdates').map((call) => call.params.offset as number | undefined);
 
 describe('Telegram startup identity check (ADR-0114 D5) and the 409 probe', () => {
-  it('verifies getMe, probes without confirming anything, then polls with allowed_updates=[message]', async () => {
+  it('verifies getMe, probes without confirming anything, then polls with allowed_updates=[message, message_reaction]', async () => {
     const h = harness();
     await h.adapter.start();
     await until(() => h.fake.callsTo('getUpdates').length >= 2);
     const [probe, poll] = h.fake.callsTo('getUpdates');
     expect(probe?.params).toEqual({ limit: 1, timeout: 0 });
-    expect(poll?.params).toMatchObject({ limit: 100, timeout: 25, allowed_updates: ['message'] });
+    expect(poll?.params).toMatchObject({ limit: 100, timeout: 25, allowed_updates: ['message', 'message_reaction'] });
     expect(poll?.params.offset).toBeUndefined();
     expect(h.adapter.status()).toMatchObject({ identityVerified: true, polling: true, admittedChatCount: 0 });
     await h.adapter.stop();
@@ -263,7 +270,7 @@ describe('Codex delta P2: no outbound Bot API call before the identity is verifi
 
     release();
     await until(() => adapter.status().identityVerified);
-    await expect(adapter.sendMessage({ context: ctx, text: 'hi' })).resolves.toMatchObject({ platformMessageIds: ['1001'] });
+    await expect(adapter.sendMessage({ context: ctx, text: 'hi' })).resolves.toMatchObject({ platformMessageIds: [`${OWNER_ID}:1001`] });
     await expect(adapter.deliver({ correlationId: 'r', target: ctx, kind: 'TEXT', text: '알림' })).resolves.toEqual({ status: 'SENT', via: 'dm' });
     await adapter.sendTyping(ctx);
     expect(outboundCalls(fake).map((call) => call.method)).toEqual(['sendMessage', 'sendMessage', 'sendChatAction']);
@@ -322,6 +329,21 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
         }),
     },
     { name: 'stop (the offset confirm)', method: 'getUpdates', run: (a) => a.stop() },
+    // TG-2: the attachment intake's two calls, through the adapter's guarded file gateway.
+    { name: 'getFile (attachment intake)', method: 'getFile', run: (a) => a.files.getFile('f').catch(() => undefined) },
+    {
+      name: 'the file download (attachment intake)',
+      method: 'downloadFile',
+      run: (a) => a.files.download('documents/file_1.txt', 1024).catch(() => undefined),
+    },
+    {
+      name: 'the attachment intake note',
+      method: 'sendMessage',
+      run: (a) => (a as unknown as { reportAttachmentIntake(m: unknown, i: unknown): Promise<void> }).reportAttachmentIntake(
+        { chatId: String(OWNER_ID), userId: String(OWNER_ID), messageId: '1' },
+        { attachments: [{ name: 'x.zip', sizeBytes: 1, kind: 'unsupported', reason: 'UNSUPPORTED_TYPE' }], diagnostics: [], release: async () => undefined },
+      ),
+    },
   ];
 
   it('CA final check suggestion: the only direct api.call sites are the lifecycle reads and the one outbound wrapper', () => {
@@ -339,6 +361,17 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
     for (const method of TELEGRAM_METHODS.filter((name) => name !== 'getMe' && name !== 'getUpdates')) {
       expect(source.includes(`this.api.call('${method}'`), method).toBe(false);
     }
+    // TG-2: the file download has exactly one call site, inside its own guarded wrapper (the same guard line).
+    const downloads = [...source.matchAll(/this\.api\.download\(/g)].map((match) => match.index ?? 0);
+    const downloadWrapper = source.indexOf('private async outboundDownload(');
+    const downloadWrapperEnd = source.indexOf('\n  }\n', downloadWrapper);
+    expect(downloads).toHaveLength(1);
+    expect(downloadWrapper).toBeGreaterThan(0);
+    expect(downloads[0]! > downloadWrapper && downloads[0]! < downloadWrapperEnd).toBe(true);
+    expect(source.slice(downloadWrapper, downloadWrapperEnd)).toContain("if (!this.connected()) throw new OutboundRefused('downloadFile');");
+    // The intake reaches the Bot API only through the adapter's gateway: attachments.ts never touches the client.
+    const intakeSource = readFileSync(new URL('./attachments.ts', import.meta.url), 'utf8');
+    expect(intakeSource).not.toMatch(/\.call\(|\.download\(\s*filePath\s*,\s*\{|fetch\(|TelegramBotApi|reveal\(/);
   });
 
   it('every outbound Bot API method has an action row', () => {
@@ -585,6 +618,7 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
       textUpdate(53, '비밀 채널', { chatType: 'channel', chatId: -1002 }),
       edited,
       { update_id: 55, callback_query: { id: 'q', from: { id: OWNER_ID, is_bot: false }, data: '승인' } },
+      // TG-2: a reaction without a named user (anonymous) is never the owner's.
       { update_id: 56, message_reaction: { chat: { id: OWNER_ID, type: 'private' } } },
       // A stranger's message with no text and an old one: still only not-owner, and no notice to anyone.
       textUpdate(57, '비밀 오래된 낯선이', { from: STRANGER_ID, date: Math.floor(Date.now() / 1000) - 3600 }),
@@ -597,18 +631,24 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     expect(fake.callsTo('sendMessage')).toHaveLength(0);
     expect(fake.callsTo('sendChatAction')).toHaveLength(0);
     expect(fake.calls.map((call) => call.method).filter((method) => method !== 'getMe' && method !== 'getUpdates')).toEqual([]);
-    expect(h.adapter.status().droppedUpdates).toEqual({ malformed: 0, 'update-type': 3, 'not-private': 3, 'not-owner': 2, forwarded: 0, 'no-text': 0, stale: 0 });
+    expect(h.adapter.status().droppedUpdates).toEqual({
+      malformed: 0,
+      'update-type': 2,
+      'not-private': 3,
+      'not-owner': 3,
+      forwarded: 0,
+      'no-text': 0,
+      stale: 0,
+      'not-feedback': 0,
+    });
     expect(JSON.stringify(h.logs)).not.toContain('비밀');
     expect(JSON.stringify(h.logs)).not.toContain(String(STRANGER_ID));
   });
 
-  it('CA P3-4: the owner gets one fixed notice per kind per poll session for old and text-less messages; nobody else does', async () => {
+  it('CA P3-4: the owner gets one fixed notice per kind per poll session for old and unreadable messages; nobody else does', async () => {
     const old = Math.floor(Date.now() / 1000) - 3600;
-    const sticker = (id: number, from: number) => {
-      const update = textUpdate(id, 'x', { from }) as { update_id: number; message: Record<string, unknown> };
-      const { text: _text, ...rest } = update.message;
-      return { update_id: id, message: { ...rest, sticker: { file_id: 's' } } };
-    };
+    // TG-2: a sticker is now an unsupported attachment (named in the intake note); a location has nothing to read.
+    const sticker = (id: number, from: number) => mediaUpdate(id, { location: { latitude: 37.5, longitude: 127 } }, { from });
     const fake = new FakeTelegram().queue(
       'getUpdates',
       okReply([textUpdate(90, '어제 1', { date: old }), textUpdate(91, '어제 2', { date: old }), sticker(92, OWNER_ID), sticker(93, STRANGER_ID)]),
@@ -621,7 +661,7 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     const sends = fake.callsTo('sendMessage').map((call) => call.params);
     expect(sends.map((params) => params.chat_id)).toEqual([String(OWNER_ID), String(OWNER_ID)]);
     expect(sends.map((params) => params.text).sort()).toEqual(
-      ['Telegram 첨부는 아직 지원하지 않아요.', '꺼져 있던 동안 받은 메시지 2개는 처리하지 않았어요. 필요하면 다시 보내 주세요.'].sort(),
+      [UNSUPPORTED_MESSAGE_NOTICE, '꺼져 있던 동안 받은 메시지 2개는 처리하지 않았어요. 필요하면 다시 보내 주세요.'].sort(),
     );
     expect(sends.every((params) => params.parse_mode === undefined)).toBe(true);
     expect(h.received).toHaveLength(0);
@@ -975,7 +1015,8 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
       text: '결과: <b>x</b> *y* @everyone — 이 DM',
       link_preview_options: { is_disabled: true },
     });
-    expect(receipt.platformMessageIds).toEqual(['1001']);
+    // TG-2: ids are scoped by the chat (Telegram message ids are unique only inside one chat).
+    expect(receipt.platformMessageIds).toEqual([`${OWNER_ID}:1001`]);
   });
 
   it('a long reply goes as numbered chunks within 4096 that join back to the text', async () => {

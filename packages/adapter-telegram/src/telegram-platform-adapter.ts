@@ -3,6 +3,7 @@ import type {
   ApprovalDecisionHandler,
   ApprovalRequest,
   ConversationContext,
+  InboundAttachment,
   InboundMessage,
   InboundMessageHandler,
   Logger,
@@ -13,13 +14,22 @@ import type {
   OutboundMessage,
   OwnerNotification,
   PlatformAdapter,
+  PlatformFeedbackHandler,
 } from '@quoky/core';
 import { admitTelegramUpdate, TELEGRAM_DROP_REASONS, updateIdOf } from './admission';
-import type { AdmittedTelegramMessage, TelegramDropReason } from './admission';
+import type { AdmittedTelegramMessage, AdmittedTelegramReaction, TelegramDropReason } from './admission';
+import {
+  ATTACHMENT_DOWNLOAD_TIMEOUT_MS,
+  renderAttachmentIntakeNote,
+  summarizeAttachmentIntake,
+  TelegramAttachmentIntake,
+} from './attachments';
+import type { AttachmentIntakeResult, TelegramAttachmentIntakeOptions, TelegramFileGateway } from './attachments';
 import { TelegramApiError, TelegramBotApi, TelegramFailureCode } from './bot-api';
 import type { FetchLike, TelegramCallOptions, TelegramMethod } from './bot-api';
 import type { TelegramBotToken } from './bot-token';
 import { deliverTelegramPreview, deliverTelegramText, TELEGRAM_MESSAGE_LIMIT } from './delivery';
+import { telegramMessageKey } from './reactions';
 import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramContent, TELEGRAM_PLATFORM } from './rendering';
 
 /**
@@ -37,6 +47,11 @@ import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramCont
  * - **Conflicts** (D4): three 409s within five minutes while polling (a second instance) halt the Telegram side.
  * - **Delivery** (D7): plain text, lossless 4096 chunks, typing through `sendChatAction`, sends only to an owner's
  *   private chat, and only while verified and not halted.
+ * - **Attachments** (D8, TG-2): `attachments.ts`. Only for an admitted message, after the identity gate: metadata
+ *   bounds first, then `getFile` and the bounded download through the same guarded outbound path as every send. An
+ *   album (`media_group_id`) is one turn.
+ * - **Feedback** (D9, TG-2): `message_reaction` updates (asked for explicitly in `allowed_updates`); an owner's 👍/👎
+ *   in their own private chat reaches `onFeedback`. Everything else is dropped silently.
  */
 
 export interface TelegramAdapterConfig {
@@ -71,6 +86,10 @@ export interface TelegramAdapterOptions {
   readonly backoff?: { readonly initialMs: number; readonly maxMs: number };
   /** Bound of each startup identity call (`getMe`, the probe); default {@link STARTUP_CALL_TIMEOUT_MS}. */
   readonly startupCallTimeoutMs?: number;
+  /** TG-2 attachment intake options (temp directory, sweep clock). */
+  readonly attachments?: TelegramAttachmentIntakeOptions;
+  /** The wait before an album is re-polled for its later parts (default {@link MEDIA_GROUP_SETTLE_MS}). */
+  readonly mediaGroupSettleMs?: number;
 }
 
 export const TelegramStartupErrorCode = {
@@ -138,6 +157,20 @@ const CONFLICT_HALT_COUNT = 3;
 /** Telegram's update retention: after this long with no update, the held offset is dropped once (CA re-review P2). */
 const OFFSET_SILENCE_RESET_MS = 24 * 60 * 60_000;
 const CONFLICT_WINDOW_MS = 5 * 60_000;
+/** How often the runner-owned attachment temp directory is swept (the Discord adapter's interval). */
+const ATTACHMENT_SWEEP_INTERVAL_MS = 60_000;
+/**
+ * TG-2 albums: Telegram delivers each part of an album (`media_group_id`) as its own message. The parts are held, with
+ * the offset kept at the first one, and the album is re-polled after this wait; once a re-poll brings no new part (or
+ * after {@link MEDIA_GROUP_MAX_ROUNDS} re-polls, or when anything else arrives) the parts are handed over as ONE turn,
+ * and the offset moves past them in the same step.
+ */
+export const MEDIA_GROUP_SETTLE_MS = 800;
+const MEDIA_GROUP_MAX_ROUNDS = 3;
+/** Telegram's own album bound. A larger group is split; the ADR-0111 count bound applies to each turn. */
+const MEDIA_GROUP_MAX_PARTS = 10;
+/** How many recent owner message keys are remembered so a reaction on the owner's own message is dropped. */
+const OWNER_MESSAGE_MEMORY = 512;
 
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -160,7 +193,11 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 export function staleNotice(count: number): string {
   return `꺼져 있던 동안 받은 메시지 ${count}개는 처리하지 않았어요. 필요하면 다시 보내 주세요.`;
 }
-export const ATTACHMENT_UNSUPPORTED_NOTICE = 'Telegram 첨부는 아직 지원하지 않아요.';
+/**
+ * TG-2: the notice for an owner message with nothing to read (a location, contact, poll, …). Photos, files and captions
+ * are taken in now; an unsupported file (a sticker, voice note, video) is named in the attachment note instead.
+ */
+export const UNSUPPORTED_MESSAGE_NOTICE = '이 형식의 Telegram 메시지는 아직 처리하지 않아요. 텍스트, 사진이나 파일로 보내 주세요.';
 
 /** A hung notification send is UNCERTAIN after this (it may still land); the Discord sink's bound. */
 const NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
@@ -220,6 +257,21 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 
   private messageHandler?: InboundMessageHandler;
   private approvalHandler?: ApprovalDecisionHandler;
+  private feedbackHandler?: PlatformFeedbackHandler;
+  /** TG-2: bounded intake for admitted messages' attachments (fetched only through {@link files}). */
+  private readonly attachmentIntake: TelegramAttachmentIntake;
+  /** A true private field: a Node timer is circular, and the adapter must stay JSON-serializable (no token check). */
+  #attachmentSweepTimer?: ReturnType<typeof setInterval>;
+  private readonly mediaGroupSettleMs: number;
+  /** TG-2: the album being collected (its parts are not handed over, and the offset stays at its first part). */
+  private pendingGroup?: PendingMediaGroup;
+  /** Keys of recent owner messages (bounded): a reaction on one of them is the owner's own message, never feedback. */
+  private readonly ownerMessageKeys = new Set<string>();
+  /**
+   * TG-2: the guarded file access the attachment intake uses. Adapter-local (not part of `PlatformAdapter`); both calls
+   * go through the outbound wrappers, so they make no Bot API call before verification, after a halt or after a stop.
+   */
+  readonly files: TelegramFileGateway;
   /** ADR-0102 D5: the composition root's startup identity gate; absent = open. */
   private inboundGate?: Promise<boolean>;
 
@@ -267,10 +319,22 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.backoff = options.backoff ?? DEFAULT_BACKOFF;
     this.offsetStore = options.offsetStore;
     this.startupCallTimeoutMs = options.startupCallTimeoutMs ?? STARTUP_CALL_TIMEOUT_MS;
+    this.mediaGroupSettleMs = options.mediaGroupSettleMs ?? MEDIA_GROUP_SETTLE_MS;
+    this.files = {
+      getFile: async (fileId) =>
+        this.outbound('getFile', { file_id: fileId }, { timeoutMs: ATTACHMENT_DOWNLOAD_TIMEOUT_MS, ...this.lifecycleSignal() }),
+      download: async (filePath, maxBytes) => this.outboundDownload(filePath, maxBytes),
+    };
+    this.attachmentIntake = new TelegramAttachmentIntake(this.files, options.attachments);
   }
 
   onMessage(handler: InboundMessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  /** ADR-0098 D3 / ADR-0114 D9 (TG-2): admitted 👍/👎 reactions of the owner in their own private chat. */
+  onFeedback(handler: PlatformFeedbackHandler): void {
+    this.feedbackHandler = handler;
   }
 
   onApprovalDecision(handler: ApprovalDecisionHandler): void {
@@ -320,6 +384,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.identityVerified = false;
     this.conflicts = [];
     this.noticesSent.clear();
+    this.pendingGroup = undefined;
     // Codex delta P2: a refusal held for a not-yet-registered fatal listener belongs to the previous run only.
     this.pendingFatal = undefined;
     // The token names its bot: a token for another bot fails before any network call.
@@ -331,10 +396,22 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     // and the startup is tracked, so stop() aborts it and waits for it: nothing reaches the Bot API after a stop.
     const controller = new AbortController();
     this.controller = controller;
+    // TG-2: the attachment temp directory is swept now and every minute (local files only; no Bot API call).
+    if (this.#attachmentSweepTimer === undefined) {
+      void this.attachmentIntake.sweep();
+      const sweepTimer = setInterval(() => void this.attachmentIntake.sweep(), ATTACHMENT_SWEEP_INTERVAL_MS);
+      sweepTimer.unref?.();
+      this.#attachmentSweepTimer = sweepTimer;
+    }
     const starting = this.startUp(controller);
     this.starting = starting;
     try {
       await starting;
+    } catch (err) {
+      // A typed startup refusal: this adapter never ran, so its sweep timer goes too (the composite stops only children
+      // that started).
+      this.stopAttachmentSweep();
+      throw err;
     } finally {
       if (this.starting === starting) this.starting = undefined;
     }
@@ -412,6 +489,11 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     }
   }
 
+  private stopAttachmentSweep(): void {
+    if (this.#attachmentSweepTimer) clearInterval(this.#attachmentSweepTimer);
+    this.#attachmentSweepTimer = undefined;
+  }
+
   /** Adapter-local (not part of `PlatformAdapter`): called once per halt with its code (CA re-review P3-3). */
   onHalt(listener: (code: TelegramStartupErrorCode) => void): void {
     this.haltListener = listener;
@@ -458,6 +540,10 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     await this.loop?.catch(() => undefined);
     this.loop = undefined;
     this.controller = undefined;
+    // TG-2: an album still being collected is not handed over; its parts stay unconfirmed and come back on restart.
+    this.pendingGroup = undefined;
+    this.stopAttachmentSweep();
+    await this.attachmentIntake.dispose();
     // Confirm what was handed over, so the next start does not receive it again (best-effort, bounded). Only for a
     // verified, un-halted session (CA final check, Critical): an unverified or halted adapter reads nothing from Telegram,
     // not even on stop; the persisted offset still survives the restart.
@@ -532,7 +618,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
             ...(sentOffset !== undefined ? { offset: sentOffset } : {}),
             limit: this.pollLimit,
             timeout: this.pollTimeoutSeconds,
-            allowed_updates: ['message'],
+            // TG-2: reactions are not in Telegram's default set; they must be asked for (admission does not rely on it).
+            allowed_updates: ['message', 'message_reaction'],
           },
           {
             timeoutMs: this.pollTimeoutSeconds * 1000 + POLL_HTTP_HEADROOM_MS,
@@ -573,8 +660,10 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       const before = this.offset;
       const proceed = await this.handleBatch(updates, signal);
       if (!proceed) break;
+      // TG-2: an album still being collected is re-polled after a short wait (its parts are not confirmed yet).
+      if (this.pendingGroup !== undefined) await this.sleep(this.mediaGroupSettleMs, signal);
       // A non-empty batch that moved nothing (entries without a usable update_id) must not spin.
-      if (updates.length > 0 && this.offset === before) await this.sleep(this.backoff.maxMs, signal);
+      else if (updates.length > 0 && this.offset === before) await this.sleep(this.backoff.maxMs, signal);
     }
   }
 
@@ -622,13 +711,27 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       const updateId = updateIdOf(update);
       // Already handed over or dropped (a repeated entry): never processed twice.
       if (updateId !== undefined && this.offset !== undefined && updateId < this.offset) continue;
+      // TG-2: a part of the album being collected, sent again because it is not confirmed yet.
+      if (updateId !== undefined && this.pendingGroup !== undefined && updateId <= this.pendingGroup.lastUpdateId) continue;
       const admission = admitTelegramUpdate(update, this.owners, Math.floor(this.nowMs() / 1000));
-      if (admission.kind === 'admitted') {
+      // Every admitted owner message (album parts included) is remembered: a reaction on it is never feedback.
+      if (admission.kind === 'admitted') this.rememberOwnerMessage(admission.message.chatId, admission.message.messageId);
+      if (admission.kind === 'admitted' && admission.message.mediaGroupId !== undefined && updateId !== undefined) {
+        if (this.joinPendingGroup(admission.message, updateId)) continue;
+        // Another album, or a full one: the collected one goes first, then this part starts a new one.
+        if (!(await this.flushPendingGroup(signal))) return false;
+        this.pendingGroup = { parts: [admission.message], lastUpdateId: updateId, grew: true, rounds: 0 };
+        continue;
+      }
+      // Anything else after an album part means the album is complete: it is handed over first, in order.
+      if (!(await this.flushPendingGroup(signal))) return false;
+      if (admission.kind === 'admitted' || admission.kind === 'reaction') {
         // ADR-0102 D5: nothing is handed over unless the startup identity gate opened; the offset stays put.
         if (!(await this.inboundGateOpen(signal))) return false;
         // Hand over, then advance and persist in the same synchronous step (no await in between): a restart resumes
         // after this update, so the turn is never handed over twice.
-        this.dispatch(admission.message);
+        if (admission.kind === 'admitted') this.dispatch(admission.message);
+        else this.dispatchFeedback(admission.reaction);
         if (updateId !== undefined) this.offset = updateId + 1;
         this.persistOffset();
         continue;
@@ -642,8 +745,52 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       }
       if (updateId !== undefined) this.offset = updateId + 1;
     }
+    // TG-2: the album is complete once a re-poll brought no new part (or after the bounded re-polls).
+    const group = this.pendingGroup;
+    if (group !== undefined) {
+      if (!group.grew || group.rounds >= MEDIA_GROUP_MAX_ROUNDS) {
+        if (!(await this.flushPendingGroup(signal))) return false;
+      } else {
+        group.grew = false;
+        group.rounds += 1;
+      }
+    }
     this.persistOffset();
     for (const [chatId, drops] of ownerDrops) this.noticeOwnerDrops(chatId, drops, signal);
+    return true;
+  }
+
+  /** Add an album part to the collected album when it is the same album of the same chat and not full. */
+  private joinPendingGroup(message: AdmittedTelegramMessage, updateId: number): boolean {
+    const group = this.pendingGroup;
+    const first = group?.parts[0];
+    if (group === undefined || first === undefined) return false;
+    if (first.chatId !== message.chatId || first.mediaGroupId !== message.mediaGroupId || group.parts.length >= MEDIA_GROUP_MAX_PARTS) {
+      return false;
+    }
+    group.parts.push(message);
+    group.lastUpdateId = updateId;
+    group.grew = true;
+    return true;
+  }
+
+  /**
+   * Hand the collected album over as ONE turn and move the offset past its parts in the same synchronous step. `false`
+   * when the identity gate is closed: nothing is handed over and the offset stays at the album's first part.
+   */
+  private async flushPendingGroup(signal: AbortSignal): Promise<boolean> {
+    const group = this.pendingGroup;
+    if (group === undefined) return true;
+    if (!(await this.inboundGateOpen(signal))) {
+      this.pendingGroup = undefined;
+      return false;
+    }
+    // Stopped while waiting for the gate: nothing is handed over.
+    if (this.pendingGroup !== group) return false;
+    this.pendingGroup = undefined;
+    this.dispatch(mergeAlbum(group.parts));
+    this.offset = group.lastUpdateId + 1;
+    this.persistOffset();
     return true;
   }
 
@@ -657,7 +804,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       notices.push({ kind: 'stale', text: staleNotice(drops.stale) });
     }
     if (drops.noText > 0 && !this.noticesSent.has(`${chatId}:no-text`)) {
-      notices.push({ kind: 'no-text', text: ATTACHMENT_UNSUPPORTED_NOTICE });
+      notices.push({ kind: 'no-text', text: UNSUPPORTED_MESSAGE_NOTICE });
     }
     for (const notice of notices) {
       this.noticesSent.add(`${chatId}:${notice.kind}`);
@@ -699,18 +846,90 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     }
   }
 
-  /** Hand one admitted message to the runtime. The turn runs on; polling does not wait for it. */
+  /**
+   * Hand one admitted message to the runtime. The turn runs on; polling does not wait for it. A message with attachments
+   * first goes through the bounded intake (TG-2): it runs only now, after admission and the identity gate, and its temp
+   * files live only for the turn.
+   */
   private dispatch(message: AdmittedTelegramMessage): void {
     const handler = this.messageHandler;
     if (!handler) return;
     this.admittedChats.add(message.chatId);
-    this.logger.info('message received', { platform: TELEGRAM_PLATFORM, messageId: message.messageId });
-    void handler(this.toInbound(message)).catch((err: unknown) =>
-      this.logger.error('message handling failed', { errorName: err instanceof Error ? err.name : typeof err }),
+    const sources = message.attachments ?? [];
+    this.logger.info('message received', {
+      platform: TELEGRAM_PLATFORM,
+      messageId: message.messageId,
+      ...(sources.length > 0 ? { attachmentCount: sources.length } : {}),
+    });
+    const failed = (err: unknown): void =>
+      this.logger.error('message handling failed', { errorName: err instanceof Error ? err.name : typeof err });
+    if (sources.length === 0) {
+      void handler(this.toInbound(message)).catch(failed);
+      return;
+    }
+    void (async () => {
+      const intake = await this.attachmentIntake.intake(sources);
+      try {
+        await this.reportAttachmentIntake(message, intake);
+        await handler(this.toInbound(message, intake.attachments));
+      } finally {
+        await intake.release();
+      }
+    })().catch(failed);
+  }
+
+  /** Remember an owner message key (bounded, oldest first out). */
+  private rememberOwnerMessage(chatId: string, messageId: string): void {
+    this.ownerMessageKeys.add(telegramMessageKey(chatId, messageId));
+    if (this.ownerMessageKeys.size > OWNER_MESSAGE_MEMORY) {
+      const oldest = this.ownerMessageKeys.values().next().value;
+      if (oldest !== undefined) this.ownerMessageKeys.delete(oldest);
+    }
+  }
+
+  /**
+   * ADR-0111 D2/D3 (TG-2): content-free counts and one line per refused attachment in the log, and, when an attachment
+   * was not taken in, one deterministic note to the owner's chat naming it and why. Never echoes content.
+   */
+  private async reportAttachmentIntake(message: AdmittedTelegramMessage, intake: AttachmentIntakeResult): Promise<void> {
+    this.logger.info('attachment intake', { platform: TELEGRAM_PLATFORM, messageId: message.messageId, ...summarizeAttachmentIntake(intake.attachments) });
+    for (const diagnostic of intake.diagnostics) {
+      this.logger.info('attachment refused', { platform: TELEGRAM_PLATFORM, messageId: message.messageId, ...diagnostic });
+    }
+    const note = renderAttachmentIntakeNote(intake.attachments);
+    if (note === undefined || this.ownerChatOf({ platform: TELEGRAM_PLATFORM, channelId: message.chatId, userId: message.userId }) === undefined) {
+      return;
+    }
+    try {
+      await this.postMessage(message.chatId, note, false);
+    } catch (err) {
+      this.logger.warn('attachment intake note send failed', { platform: TELEGRAM_PLATFORM, code: codeOf(err) });
+    }
+  }
+
+  /**
+   * ADR-0098 D3 (TG-2): one feedback signal per 👍/👎 change. A reaction on a message the owner wrote (remembered key) is
+   * dropped; otherwise Core links the target only to a reply the adapter reported posting. Nothing is ever sent back.
+   */
+  private dispatchFeedback(reaction: AdmittedTelegramReaction): void {
+    const key = telegramMessageKey(reaction.chatId, reaction.messageId);
+    if (this.ownerMessageKeys.has(key)) {
+      this.dropped['not-feedback'] += 1;
+      return;
+    }
+    const handler = this.feedbackHandler;
+    if (!handler) return;
+    const context: ConversationContext = { platform: TELEGRAM_PLATFORM, channelId: reaction.chatId, userId: reaction.userId, direct: true };
+    void (async () => {
+      for (const change of reaction.changes) {
+        await handler({ platform: TELEGRAM_PLATFORM, context, targetPlatformMessageId: key, rating: change.rating, action: change.action, occurredAt: now() });
+      }
+    })().catch((err: unknown) =>
+      this.logger.warn('feedback reaction handling failed', { errorName: err instanceof Error ? err.name : typeof err }),
     );
   }
 
-  private toInbound(message: AdmittedTelegramMessage): InboundMessage {
+  private toInbound(message: AdmittedTelegramMessage, attachments?: readonly InboundAttachment[]): InboundMessage {
     const context: ConversationContext = {
       platform: TELEGRAM_PLATFORM,
       channelId: message.chatId,
@@ -718,7 +937,13 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       // Admission admits only the owner's own private chat with the bot.
       direct: true,
     };
-    return { id: message.messageId, context, text: message.text, receivedAt: now() };
+    return {
+      id: message.messageId,
+      context,
+      text: message.text,
+      ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      receivedAt: now(),
+    };
   }
 
   /** `true` only when no gate is set or it resolved `true`; a rejected gate, or a stop while waiting, counts as closed. */
@@ -760,8 +985,10 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       this.logger.warn('send skipped: telegram not connected', { platform: TELEGRAM_PLATFORM });
       return receipt;
     }
+    // TG-2: ids are scoped by the chat (Telegram message ids are unique only inside one chat), the same key a
+    // reaction on that message carries.
     const record = (id: string): void => {
-      if (id !== '') platformMessageIds.push(id);
+      if (id !== '') platformMessageIds.push(telegramMessageKey(chatId, id));
     };
     const post = async (text: string, html = false): Promise<void> => {
       record(await this.postMessage(chatId, text, html));
@@ -884,6 +1111,22 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     return this.api.call(method, params, options);
   }
 
+  /**
+   * TG-2: THE file download path, guarded exactly like {@link outbound}: refused, with nothing fetched, unless verified,
+   * un-halted and running, and cancelled by `stop()`. The download URL (it carries the token) is built inside the Bot
+   * API client only; a failure is a fixed code.
+   */
+  private async outboundDownload(filePath: string, maxBytes: number): Promise<Buffer> {
+    if (!this.connected()) throw new OutboundRefused('downloadFile');
+    return this.api.download(filePath, { timeoutMs: ATTACHMENT_DOWNLOAD_TIMEOUT_MS, maxResponseBytes: maxBytes, ...this.lifecycleSignal() });
+  }
+
+  /** The running lifecycle's abort signal (stop cancels the call), when there is one. */
+  private lifecycleSignal(): { signal?: AbortSignal } {
+    const signal = this.controller?.signal;
+    return signal ? { signal } : {};
+  }
+
   /** Outbound is allowed only after `getMe` matched and while the Telegram side is neither halted nor stopped. */
   private connected(): boolean {
     return this.identityVerified && this.halted === undefined && !this.stopped;
@@ -968,4 +1211,24 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 function messageIdOf(result: unknown): string {
   const id = (result as { message_id?: unknown } | null)?.message_id;
   return typeof id === 'number' && Number.isSafeInteger(id) ? String(id) : '';
+}
+
+/** TG-2: the album being collected; `grew` is whether the last poll added a part. */
+interface PendingMediaGroup {
+  readonly parts: AdmittedTelegramMessage[];
+  lastUpdateId: number;
+  grew: boolean;
+  rounds: number;
+}
+
+/**
+ * One turn from the parts of an album: the first part's ids, every non-empty caption in order (normally one), and the
+ * attachments of all parts in order (the intake's count bound then applies to the whole album).
+ */
+function mergeAlbum(parts: readonly AdmittedTelegramMessage[]): AdmittedTelegramMessage {
+  const first = parts[0] as AdmittedTelegramMessage;
+  if (parts.length === 1) return first;
+  const text = parts.map((part) => part.text).filter((caption) => caption.trim().length > 0).join('\n');
+  const attachments = parts.flatMap((part) => part.attachments ?? []);
+  return { ...first, text, attachments };
 }

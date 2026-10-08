@@ -1,8 +1,8 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { TELEGRAM_API_ORIGIN, TelegramApiError, TelegramBotApi, TelegramFailureCode, failureCodeOfStatus } from './bot-api';
+import { isSafeTelegramFilePath, TELEGRAM_API_ORIGIN, TelegramApiError, TelegramBotApi, TelegramFailureCode, failureCodeOfStatus } from './bot-api';
 import { isWellFormedTelegramBotToken, redactTelegramToken, TelegramBotToken } from './bot-token';
-import { FAKE_BOT_ID, FAKE_TOKEN, FAKE_TOKEN_SECRET, FakeTelegram, errorReply, okReply } from './test-support';
+import { bytesReply, FAKE_BOT_ID, FAKE_TOKEN, FAKE_TOKEN_SECRET, FakeTelegram, errorReply, okReply } from './test-support';
 
 const token = (): TelegramBotToken => {
   const holder = TelegramBotToken.from(FAKE_TOKEN);
@@ -139,6 +139,80 @@ describe('TelegramBotApi — pinned host, bounded call, value-free failures', ()
     const fake = new FakeTelegram();
     const api = new TelegramBotApi(token(), fake.fetch);
     await expect(api.call('deleteWebhook' as never, {}, { timeoutMs: 1000 })).rejects.toMatchObject({ code: TelegramFailureCode.BAD_REQUEST });
+    expect(fake.calls).toHaveLength(0);
+  });
+});
+
+describe('TelegramBotApi.download (TG-2): the pinned file host, bounded, value-free failures', () => {
+  const download = (api: TelegramBotApi, filePath: string, maxResponseBytes = 1024, extra: { signal?: AbortSignal; timeoutMs?: number } = {}) =>
+    api.download(filePath, { timeoutMs: extra.timeoutMs ?? 1000, maxResponseBytes, ...(extra.signal ? { signal: extra.signal } : {}) });
+
+  it('GETs /file/bot<token>/<file_path> on the pinned origin, refusing redirects, and returns the bytes', async () => {
+    const fake = new FakeTelegram().queue('downloadFile', bytesReply(Buffer.from('hello')));
+    const api = new TelegramBotApi(token(), fake.fetch);
+    await expect(download(api, 'documents/file_1.txt')).resolves.toEqual(Buffer.from('hello'));
+    const [call] = fake.calls;
+    expect(call?.url).toBe(`${TELEGRAM_API_ORIGIN}/file/bot${FAKE_TOKEN}/documents/file_1.txt`);
+    expect(call?.init).toMatchObject({ method: 'GET', redirect: 'error' });
+    expect(call?.init.body).toBeUndefined();
+  });
+
+  it('a declared or streamed body over the bound is RESPONSE_TOO_LARGE', async () => {
+    const fake = new FakeTelegram()
+      .queue('downloadFile', bytesReply(Buffer.alloc(10), { headers: { 'content-length': '5000' } }))
+      .queue('downloadFile', bytesReply(Buffer.alloc(2048)));
+    const api = new TelegramBotApi(token(), fake.fetch);
+    await expect(download(api, 'a/b.txt')).rejects.toMatchObject({ code: TelegramFailureCode.RESPONSE_TOO_LARGE, method: 'downloadFile' });
+    await expect(download(api, 'a/b.txt')).rejects.toMatchObject({ code: TelegramFailureCode.RESPONSE_TOO_LARGE });
+  });
+
+  it('a transport error quoting the token URL leaves only a fixed code; HTTP errors carry the status only', async () => {
+    const fake = new FakeTelegram()
+      .queue('downloadFile', { throws: new TypeError(`fetch failed for ${TELEGRAM_API_ORIGIN}/file/bot${FAKE_TOKEN}/a/b.txt`) })
+      .queue('downloadFile', bytesReply(Buffer.from('nope'), { status: 404 }))
+      .queue('downloadFile', bytesReply(Buffer.from('busy'), { status: 502 }));
+    const api = new TelegramBotApi(token(), fake.fetch);
+    const transport = await download(api, 'a/b.txt').catch((err: unknown) => err);
+    expect(transport).toBeInstanceOf(TelegramApiError);
+    expect((transport as Error).message).toBe('telegram downloadFile: UNAVAILABLE');
+    expect((transport as { cause?: unknown }).cause).toBeUndefined();
+    expect([leakSurfaces(transport), (transport as Error).stack ?? ''].join('\n')).not.toContain(FAKE_TOKEN_SECRET);
+    await expect(download(api, 'a/b.txt')).rejects.toMatchObject({ code: TelegramFailureCode.AUTH, httpStatus: 404, message: 'telegram downloadFile: AUTH (HTTP 404)' });
+    await expect(download(api, 'a/b.txt')).rejects.toMatchObject({ code: TelegramFailureCode.UNAVAILABLE, httpStatus: 502 });
+  });
+
+  it('a response from another origin is refused; the call is bounded and cancelled by the caller signal', async () => {
+    const evil = new TelegramBotApi(token(), async () => {
+      const response = new Response('x', { status: 200 });
+      Object.defineProperty(response, 'url', { value: 'https://evil.example/file/botX/a' });
+      return response;
+    });
+    await expect(download(evil, 'a/b.txt')).rejects.toMatchObject({ code: TelegramFailureCode.UNAVAILABLE });
+    const fake = new FakeTelegram().queue('downloadFile', { hang: true }, { hang: true });
+    const api = new TelegramBotApi(token(), fake.fetch);
+    await expect(download(api, 'a/b.txt', 1024, { timeoutMs: 5 })).rejects.toMatchObject({ code: TelegramFailureCode.TIMEOUT });
+    const controller = new AbortController();
+    const pending = download(api, 'a/b.txt', 1024, { timeoutMs: 60_000, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: TelegramFailureCode.ABORTED });
+  });
+
+  it.each(['', '../x', 'a/../b', 'a//b', '/abs', './a', 'a b', 'a?b', 'a#b', 'a%2e%2e', 'https://evil.example/x', 'x'.repeat(257)])(
+    'refuses the unsafe file_path %j before any request',
+    async (filePath) => {
+      const fake = new FakeTelegram();
+      const api = new TelegramBotApi(token(), fake.fetch);
+      expect(isSafeTelegramFilePath(filePath)).toBe(false);
+      await expect(download(api, filePath)).rejects.toMatchObject({ code: TelegramFailureCode.BAD_REQUEST });
+      expect(fake.calls).toHaveLength(0);
+    },
+  );
+
+  it('accepts Telegram’s own path shapes; call() refuses the download pseudo-method', async () => {
+    for (const filePath of ['photos/file_12.jpg', 'documents/file_3.txt', 'stickers/file-1.webp', 'a']) expect(isSafeTelegramFilePath(filePath)).toBe(true);
+    const fake = new FakeTelegram();
+    const api = new TelegramBotApi(token(), fake.fetch);
+    await expect(api.call('downloadFile', {}, { timeoutMs: 1000 })).rejects.toMatchObject({ code: TelegramFailureCode.BAD_REQUEST });
     expect(fake.calls).toHaveLength(0);
   });
 });

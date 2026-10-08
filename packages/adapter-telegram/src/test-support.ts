@@ -2,6 +2,7 @@
  * Offline test support for the Telegram adapter: a scripted fake `fetch` and runtime-built token fixtures. NEVER calls
  * the real Bot API. Token-shaped values are assembled from pieces at runtime, so no token-shaped literal is in source.
  */
+import { TELEGRAM_API_ORIGIN } from './bot-api';
 import type { FetchLike } from './bot-api';
 
 /** A bot id and a token for it, built from pieces. */
@@ -29,7 +30,19 @@ export type Reply =
   /** Never answers until the request is aborted (a pending long poll). */
   | { readonly hang: true }
   /** Answers with `reply` once `until` resolves, IGNORING any abort (a response already on its way). */
-  | { readonly until: Promise<unknown>; readonly reply: Reply };
+  | { readonly until: Promise<unknown>; readonly reply: Reply }
+  /** A raw (file download) body, with an optional status and headers. */
+  | { readonly bytes: Uint8Array; readonly status?: number; readonly headers?: Record<string, string> };
+
+/** A file download reply (TG-2). */
+export function bytesReply(bytes: Uint8Array, options: { readonly status?: number; readonly headers?: Record<string, string> } = {}): Reply {
+  return { bytes, ...options };
+}
+
+/** A `getFile` answer for `filePath` (TG-2). */
+export function fileReply(filePath: string, fileSize?: number): Reply {
+  return okReply({ file_id: 'f', file_unique_id: 'u', file_path: filePath, ...(fileSize !== undefined ? { file_size: fileSize } : {}) });
+}
 
 export function okReply(result: unknown): Reply {
   return { json: { ok: true, result } };
@@ -40,7 +53,8 @@ export function errorReply(status: number, parameters?: Record<string, unknown>)
 }
 
 /**
- * A scripted fake: per Bot API method, a queue of replies; `fallback` answers when a queue is empty (default: a
+ * A scripted fake: per Bot API method, a queue of replies (a file download, a GET on `/file/bot<token>/<path>`, is the
+ * method `downloadFile` with `params.file_path`, default HTTP 404); `fallback` answers when a queue is empty (default: a
  * hanging long poll for `getUpdates`, `{ ok: true, result: true }` otherwise). A `getUpdates` call with `timeout: 0`
  * (the startup probe, the stop-time confirm) uses the separate queue `getUpdates:instant` and answers `[]` by default.
  */
@@ -62,9 +76,14 @@ export class FakeTelegram {
 
   readonly fetch: FetchLike = async (input, init) => {
     const url = String(input);
-    const method = url.slice(url.lastIndexOf('/') + 1);
+    const download = url.startsWith(`${TELEGRAM_API_ORIGIN}/file/bot`);
+    const method = download ? 'downloadFile' : url.slice(url.lastIndexOf('/') + 1);
     const form = init.body instanceof FormData ? init.body : undefined;
-    const params = form ? {} : (JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>);
+    const params = download
+      ? { file_path: url.split('/').slice(5).join('/') }
+      : form
+        ? {}
+        : (JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>);
     this.calls.push({ url, method, params, ...(form ? { form } : {}), init });
     const key = method === 'getUpdates' && params.timeout === 0 ? 'getUpdates:instant' : method;
     const queued = this.queues.get(key)?.shift();
@@ -74,6 +93,9 @@ export class FakeTelegram {
       reply = reply.reply;
     }
     if ('throws' in reply) throw reply.throws;
+    if ('bytes' in reply) {
+      return new Response(reply.bytes, { status: reply.status ?? 200, headers: reply.headers ?? {} });
+    }
     if ('hang' in reply) {
       return new Promise<Response>((_resolve, reject) => {
         const signal = init.signal;
@@ -101,6 +123,8 @@ function defaultFallback(method: string): Reply {
   if (method === 'getUpdates') return { hang: true };
   if (method === 'getUpdates:instant') return okReply([]);
   if (method === 'getMe') return okReply({ id: Number(FAKE_BOT_ID), is_bot: true, first_name: 'Quoky' });
+  if (method === 'getFile') return fileReply('documents/file_0.txt');
+  if (method === 'downloadFile') return { bytes: new Uint8Array(), status: 404 };
   return okReply(true);
 }
 
@@ -135,4 +159,72 @@ export async function until(predicate: () => boolean, turns = 200): Promise<void
     await new Promise((resolve) => setImmediate(resolve));
   }
   throw new Error('condition not reached');
+}
+
+/** TG-2: an owner message update with `extra` fields instead of `text` (a photo, a document, a caption, …). */
+export function mediaUpdate(
+  updateId: number,
+  extra: Record<string, unknown>,
+  options: { readonly from?: number; readonly chatId?: number; readonly date?: number } = {},
+): Record<string, unknown> {
+  const update = textUpdate(updateId, 'unused', options) as { update_id: number; message: Record<string, unknown> };
+  const { text: _text, ...rest } = update.message;
+  return { update_id: updateId, message: { ...rest, ...extra } };
+}
+
+/** A photo field (sizes smallest first). */
+export function photoField(...sizes: Array<{ readonly fileId: string; readonly size?: number }>): Record<string, unknown> {
+  return {
+    photo: sizes.map((entry, index) => ({
+      file_id: entry.fileId,
+      file_unique_id: `u-${entry.fileId}`,
+      width: 90 * (index + 1),
+      height: 90 * (index + 1),
+      ...(entry.size !== undefined ? { file_size: entry.size } : {}),
+    })),
+  };
+}
+
+/** A document field. */
+export function documentField(fileId: string, fileName?: string, mimeType?: string, size?: number): Record<string, unknown> {
+  return {
+    document: {
+      file_id: fileId,
+      file_unique_id: `u-${fileId}`,
+      ...(fileName !== undefined ? { file_name: fileName } : {}),
+      ...(mimeType !== undefined ? { mime_type: mimeType } : {}),
+      ...(size !== undefined ? { file_size: size } : {}),
+    },
+  };
+}
+
+/** TG-2: a `message_reaction` update (defaults: the owner, in their own private chat, 👍 added on message 1001). */
+export function reactionUpdate(
+  updateId: number,
+  options: {
+    readonly from?: number | null;
+    readonly chatId?: number;
+    readonly chatType?: string;
+    readonly messageId?: number;
+    readonly oldEmoji?: readonly string[];
+    readonly newEmoji?: readonly string[];
+    readonly date?: number;
+    readonly isBot?: boolean;
+    readonly extra?: Record<string, unknown>;
+  } = {},
+): Record<string, unknown> {
+  const from = options.from === undefined ? OWNER_ID : options.from;
+  const emoji = (list: readonly string[]) => list.map((value) => ({ type: 'emoji', emoji: value }));
+  return {
+    update_id: updateId,
+    message_reaction: {
+      chat: { id: options.chatId ?? from ?? OWNER_ID, type: options.chatType ?? 'private' },
+      message_id: options.messageId ?? 1001,
+      ...(from !== null ? { user: { id: from, is_bot: options.isBot ?? false, first_name: 'Owner' } } : {}),
+      date: options.date ?? Math.floor(Date.now() / 1000),
+      old_reaction: emoji(options.oldEmoji ?? []),
+      new_reaction: emoji(options.newEmoji ?? ['\u{1F44D}']),
+      ...(options.extra ?? {}),
+    },
+  };
 }

@@ -15,11 +15,37 @@ import type { TelegramBotToken } from './bot-token';
 
 export const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 
-/** The only Bot API methods the adapter calls. */
-export type TelegramMethod = 'getMe' | 'getUpdates' | 'sendMessage' | 'sendChatAction' | 'sendDocument';
-/** Every Bot API method the adapter may call (the fixed list; tests iterate it so a new method cannot skip a guard). */
-export const TELEGRAM_METHODS: readonly TelegramMethod[] = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'sendDocument'];
-const METHODS: ReadonlySet<string> = new Set<string>(TELEGRAM_METHODS);
+/**
+ * The only Bot API operations the adapter performs. `downloadFile` is not a Bot API method: it is the file download
+ * (TG-2), a GET on `/file/bot<token>/<file_path>` of the same pinned host, made only through {@link TelegramBotApi.download}.
+ */
+export type TelegramMethod = 'getMe' | 'getUpdates' | 'sendMessage' | 'sendChatAction' | 'sendDocument' | 'getFile' | 'downloadFile';
+/** Every Bot API operation the adapter may perform (the fixed list; tests iterate it so a new one cannot skip a guard). */
+export const TELEGRAM_METHODS: readonly TelegramMethod[] = [
+  'getMe',
+  'getUpdates',
+  'sendMessage',
+  'sendChatAction',
+  'sendDocument',
+  'getFile',
+  'downloadFile',
+];
+/** The methods {@link TelegramBotApi.call} posts to (the download has its own entry point). */
+const METHODS: ReadonlySet<string> = new Set<string>(TELEGRAM_METHODS.filter((method) => method !== 'downloadFile'));
+
+/**
+ * A `file_path` from `getFile` as it may be put into the download URL (TG-2): relative, path segments of letters, digits,
+ * `_`, `-` and `.`, no empty, `.` or `..` segment, at most 256 characters. Telegram's own paths look like
+ * `photos/file_12.jpg` or `documents/file_3.txt`; anything else is refused before a request is made.
+ */
+const FILE_PATH = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/u;
+const MAX_FILE_PATH_LENGTH = 256;
+
+export function isSafeTelegramFilePath(filePath: unknown): filePath is string {
+  if (typeof filePath !== 'string' || filePath.length === 0 || filePath.length > MAX_FILE_PATH_LENGTH) return false;
+  if (!FILE_PATH.test(filePath)) return false;
+  return filePath.split('/').every((segment) => segment !== '.' && segment !== '..');
+}
 
 export const TelegramFailureCode = {
   /** The call did not finish within its bound. */
@@ -162,6 +188,61 @@ export class TelegramBotApi {
       }
       if (!isOkEnvelope(envelope)) throw fail(TelegramFailureCode.MALFORMED_RESPONSE, response.status);
       return envelope.result;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /**
+   * TG-2: download one file by the `file_path` that `getFile` returned, from the same pinned host
+   * (`/file/bot<token>/<file_path>`), as at most `maxResponseBytes` bytes. The URL carries the token, so it is built
+   * here, used once and never returned, logged or put into an error: every failure is the fixed
+   * `telegram downloadFile: <CODE>[ (HTTP n)]`. Redirects and another origin are refused, a declared or streamed body
+   * over the bound is `RESPONSE_TOO_LARGE`, and an unsafe `file_path` ({@link isSafeTelegramFilePath}) is refused as
+   * `BAD_REQUEST` before any request.
+   */
+  async download(filePath: string, options: TelegramCallOptions & { readonly maxResponseBytes: number }): Promise<Buffer> {
+    const method: TelegramMethod = 'downloadFile';
+    const fail = (code: TelegramFailureCode, status?: number): TelegramApiError => new TelegramApiError(code, method, status);
+    if (!isSafeTelegramFilePath(filePath)) throw fail(TelegramFailureCode.BAD_REQUEST);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, options.timeoutMs);
+    const onAbort = (): void => controller.abort();
+    if (options.signal?.aborted) controller.abort();
+    else options.signal?.addEventListener('abort', onAbort, { once: true });
+    const failure = (): TelegramFailureCode =>
+      timedOut ? TelegramFailureCode.TIMEOUT : options.signal?.aborted ? TelegramFailureCode.ABORTED : TelegramFailureCode.UNAVAILABLE;
+    try {
+      let response: Response;
+      try {
+        response = await this.#fetch(`${TELEGRAM_API_ORIGIN}/file/bot${this.#token.reveal()}/${filePath}`, {
+          method: 'GET',
+          redirect: 'error',
+          signal: controller.signal,
+        });
+      } catch {
+        // A transport error may quote the request URL (the token is in its path): only a fixed code leaves.
+        throw fail(failure());
+      }
+      if (response.redirected || (response.url !== '' && !sameOrigin(response.url))) {
+        await discard(response);
+        throw fail(TelegramFailureCode.UNAVAILABLE);
+      }
+      if (response.status < 200 || response.status > 299) {
+        await discard(response);
+        throw fail(failureCodeOfStatus(response.status), response.status);
+      }
+      try {
+        return (await readBounded(response, options.maxResponseBytes)) ?? Buffer.alloc(0);
+      } catch (err) {
+        if (err instanceof BodyTooLarge) throw fail(TelegramFailureCode.RESPONSE_TOO_LARGE, response.status);
+        throw fail(failure(), response.status);
+      }
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', onAbort);
