@@ -20,6 +20,14 @@ const MAX_PAGES_LIMIT = 10;
 const TITLE_LIMIT = 120;
 const SUMMARY_LIMIT = 500;
 const SEARCH_PERMALINK_PATTERN = /^https:\/\/[A-Za-z0-9.-]+\.slack\.com\//;
+/** The title of a message with no text (live QA D15: never a raw `ts`). */
+const EMPTY_MESSAGE_TITLE = '(내용 없음)';
+/** The container label when a channel's name cannot be read (never a raw channel or user id). */
+const FALLBACK_CONTAINER = 'Slack';
+/** A Slack conversation / user id where a name should be ("U07H…", "C0…"): never shown as a channel name. */
+const SLACK_ID_SHAPE = /^[CDGUW][A-Z0-9]{6,}$/;
+/** At most this many channel lookups are cached (the oldest is dropped first). */
+const CHANNEL_CACHE_MAX = 500;
 
 export interface SlackConnectorConfig {
   token: string;
@@ -85,6 +93,12 @@ export class SlackConnectorStateError extends ConnectorQueryError {
   }
 }
 
+/** What a `conversations.info` lookup said about a channel; `undefined` name = not readable (label "Slack"). */
+interface SlackChannelFacts {
+  readonly name?: string;
+  readonly direct: boolean;
+}
+
 interface SlackPage {
   ok: true;
   values: unknown[];
@@ -102,6 +116,8 @@ export class SlackConnectorProvider implements ConnectorProvider {
   private readonly maxPages: number;
   private readonly timeoutMs: number;
   private connected = true;
+  /** Channel id → facts from `conversations.info` (needs `channels:read` / `groups:read`; failures cached too). */
+  private readonly channelFacts = new Map<string, SlackChannelFacts>();
 
   constructor(config: SlackConnectorConfig) {
     this.token = requireNonEmpty(config?.token, 'token');
@@ -171,7 +187,14 @@ export class SlackConnectorProvider implements ConnectorProvider {
     };
   }
 
-  /** Named `search` query: GET search.messages. Needs a user token with search:read (a bot token gets INSUFFICIENT_SCOPE). */
+  /**
+   * Named `search` query: GET search.messages. Needs a user token with search:read (a bot token gets INSUFFICIENT_SCOPE).
+   *
+   * Live QA D3: the user token also sees the owner's direct messages, and a lookup answer is posted into a (possibly
+   * shared) Discord channel. Direct messages and group DMs (`D…` ids, `is_im`, `is_mpim`, `mpdm-` names) are dropped;
+   * only public and private channel results are shown. Each result is labelled `#name`: the name from the match, or —
+   * when the match carries only an id — from a cached `conversations.info` lookup, else the neutral "Slack".
+   */
   private async search(input: ConnectorQuery): Promise<ConnectorResult> {
     this.assertConnected();
     const { text, limit } = parseSearchParams(input.params, 'slack connector');
@@ -183,11 +206,48 @@ export class SlackConnectorProvider implements ConnectorProvider {
     const payload = await readSlackPayload(await this.request(url));
     const messages = isRecord(payload.messages) ? payload.messages : undefined;
     if (!messages || !Array.isArray(messages.matches)) throw new SlackConnectorResponseError();
-    const items = messages.matches
-      .slice(0, limit)
-      .map((match) => mapSearchMatch(match, this.token))
+    const matches = messages.matches.slice(0, limit).filter((match) => !isDirectConversation(channelOf(match)));
+    const unnamed = new Set<string>();
+    for (const match of matches) {
+      const channel = channelOf(match);
+      const hasTs = isRecord(match) && typeof match.ts === 'string' && match.ts.trim().length > 0;
+      if (channel && hasTs && channelNameOf(channel, this.token) === undefined) unnamed.add(channel.id);
+    }
+    await Promise.all([...unnamed].map((channelId) => this.lookupChannel(channelId)));
+    const items = matches
+      .filter((match) => this.channelFacts.get(channelOf(match)?.id ?? '')?.direct !== true)
+      .map((match) => {
+        const channel = channelOf(match);
+        const name = channel ? (channelNameOf(channel, this.token) ?? this.channelFacts.get(channel.id)?.name) : undefined;
+        return mapSearchMatch(match, this.token, name !== undefined ? `#${name}` : FALLBACK_CONTAINER);
+      })
       .filter(isConnectorItem);
     return { source: this.source, items };
+  }
+
+  /** `conversations.info` for one channel id, cached; any failure leaves the channel unnamed (never thrown). */
+  private async lookupChannel(channelId: string): Promise<void> {
+    if (this.channelFacts.has(channelId)) return;
+    let facts: SlackChannelFacts = { direct: false };
+    try {
+      const url = new URL('/api/conversations.info', SLACK_API_ORIGIN);
+      url.searchParams.set('channel', channelId);
+      const payload = await readSlackPayload(await this.request(url));
+      const channel = isRecord(payload.channel) ? payload.channel : undefined;
+      if (channel) {
+        const name = typeof channel.name === 'string' ? redactToken(channel.name.trim(), this.token) : '';
+        const direct = isDirectConversation({ ...channel, id: channelId });
+        facts = { direct, ...(name.length > 0 && !SLACK_ID_SHAPE.test(name) && !direct ? { name } : {}) };
+      }
+    } catch {
+      // No channels:read / groups:read, or Slack is unavailable: label it "Slack".
+    }
+    this.channelFacts.set(channelId, facts);
+    while (this.channelFacts.size > CHANNEL_CACHE_MAX) {
+      const oldest = this.channelFacts.keys().next().value;
+      if (oldest === undefined) break;
+      this.channelFacts.delete(oldest);
+    }
   }
 
   async getItem(input: SlackGetItemInput): Promise<ConnectorItem | undefined> {
@@ -284,29 +344,49 @@ function mapMessage(value: unknown, channelId: string, token: string): Connector
   const text = typeof value.text === 'string' ? redactToken(value.text.replace(/\s+/g, ' ').trim(), token) : '';
   const item: ConnectorItem = {
     id: `${channelId}:${ts}`,
-    title: (text || `Slack message ${ts}`).slice(0, TITLE_LIMIT),
+    title: (text || EMPTY_MESSAGE_TITLE).slice(0, TITLE_LIMIT),
     raw: { kind: 'message', channelId, ts },
   };
   if (text.length > 0) item.summary = text.slice(0, SUMMARY_LIMIT);
   return item;
 }
 
-function mapSearchMatch(value: unknown, token: string): ConnectorItem | undefined {
+/** A search match's `channel` object with a usable id, or undefined. */
+function channelOf(match: unknown): (Record<string, unknown> & { id: string }) | undefined {
+  if (!isRecord(match) || !isRecord(match.channel)) return undefined;
+  const id = match.channel.id;
+  if (typeof id !== 'string' || id.trim().length === 0) return undefined;
+  return { ...match.channel, id: id.trim() };
+}
+
+/** A direct message or group DM (never shown in a lookup answer). Public and private channels are not. */
+function isDirectConversation(channel: (Record<string, unknown> & { id: string }) | undefined): boolean {
+  if (!channel) return false;
+  if (channel.id.startsWith('D') || channel.is_im === true || channel.is_mpim === true) return true;
+  return typeof channel.name === 'string' && channel.name.startsWith('mpdm-');
+}
+
+/** The channel's own readable name from the match (undefined when absent or only an id, e.g. a DM's user id). */
+function channelNameOf(channel: Record<string, unknown>, token: string): string | undefined {
+  const name = typeof channel.name === 'string' ? redactToken(channel.name.trim(), token) : '';
+  return name.length > 0 && !SLACK_ID_SHAPE.test(name) ? name : undefined;
+}
+
+function mapSearchMatch(value: unknown, token: string, container: string): ConnectorItem | undefined {
   if (!isRecord(value) || typeof value.ts !== 'string' || value.ts.trim().length === 0) return undefined;
-  const channel = isRecord(value.channel) ? value.channel : undefined;
-  if (typeof channel?.id !== 'string' || channel.id.trim().length === 0) return undefined;
-  const channelId = channel.id.trim();
+  const channel = channelOf(value);
+  if (!channel) return undefined;
+  const channelId = channel.id;
   const ts = value.ts.trim();
   const text = typeof value.text === 'string' ? redactToken(value.text.replace(/\s+/g, ' ').trim(), token) : '';
   const item: ConnectorItem = {
     id: `${channelId}:${ts}`,
-    title: (text || `Slack message ${ts}`).slice(0, TITLE_LIMIT),
+    title: (text || EMPTY_MESSAGE_TITLE).slice(0, TITLE_LIMIT),
     raw: { kind: 'message', channelId, ts },
   };
   if (text.length > 0) item.summary = text.slice(0, SUMMARY_LIMIT);
   if (typeof value.permalink === 'string' && SEARCH_PERMALINK_PATTERN.test(value.permalink)) item.url = value.permalink;
-  const channelName = typeof channel.name === 'string' ? redactToken(channel.name.trim(), token) : '';
-  if (channelName.length > 0) item.container = `#${channelName}`;
+  item.container = container;
   const updatedAt = toConnectorTimestamp(Number(ts) * 1000);
   if (updatedAt) item.updatedAt = updatedAt;
   return item;
