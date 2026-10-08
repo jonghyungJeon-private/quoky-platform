@@ -273,7 +273,8 @@ function calendarFixture(query: CalendarEventQuery): readonly CalendarEvent[] {
       id: 'int-calendar-1',
       title: CALENDAR_FIXTURE_TITLE,
       start: new Date(start).toISOString(),
-      end: new Date(start + Math.min(30 * 60_000, quarter)).toISOString(),
+      // Never zero-length: a "remaining" window a few milliseconds before midnight must still see an unfinished event.
+      end: new Date(start + Math.max(1, Math.min(30 * 60_000, quarter))).toISOString(),
       allDay: false,
       status: 'confirmed',
       calendarName: 'primary',
