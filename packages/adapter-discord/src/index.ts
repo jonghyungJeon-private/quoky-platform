@@ -21,7 +21,7 @@ export {
 } from './delivery';
 export type { DeliveryReport, ChunkSender } from './delivery';
 export { MAX_TABLE_COLUMNS, isTableRenderingEligible, renderMarkdownTablesForDiscord } from './markdown-tables';
-export { renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
+export { DISCORD_MARKUP, renderDiscordContent, renderNotificationForDiscord, renderOutboundForDiscord } from './rendering';
 export {
   classifyDiscordError,
   deliverOwnerNotification,

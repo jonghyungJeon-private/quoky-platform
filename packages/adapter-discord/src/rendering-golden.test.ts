@@ -61,12 +61,13 @@ import type {
   ConversationContext,
   ExternalWorkReadout,
   FeedbackSummary,
+  MessageBody,
   OutboundMessage,
   Reminder,
   WorkItem,
   WorkSurface,
 } from '@quoky/core';
-import { renderOutboundForDiscord } from './rendering';
+import { renderDiscordContent, renderOutboundForDiscord } from './rendering';
 
 /**
  * PLT-0 golden fixtures: the exact Discord text of a broad corpus of deterministic replies — every renderer whose text
@@ -98,9 +99,10 @@ const TITLES = [
 
 const composer = new ResponseComposer();
 
-/** The Discord text of whatever a renderer or composer produced. */
-function discord(value: string | OutboundMessage): string {
-  return typeof value === 'string' ? renderOutboundForDiscord({ text: value }) : renderOutboundForDiscord(value);
+/** The Discord text of whatever a renderer or composer produced (plain copy, neutral content or an outbound message). */
+function discord(value: MessageBody | OutboundMessage): string {
+  if (typeof value === 'string' || Array.isArray(value)) return renderDiscordContent(value as MessageBody);
+  return renderOutboundForDiscord(value as OutboundMessage);
 }
 
 function todo(title: string | undefined, index = 0, refs: ResourceRef[] = []): WorkItem {
@@ -237,7 +239,7 @@ const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'b
 /** Build the whole corpus: case id -> the Discord text. */
 async function corpus(): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  const add = (id: string, value: string | OutboundMessage) => {
+  const add = (id: string, value: MessageBody | OutboundMessage) => {
     if (Object.hasOwn(out, id)) throw new Error(`duplicate golden case ${id}`);
     out[id] = discord(value);
   };
