@@ -27,10 +27,17 @@ export interface ProviderSelectionContext {
  *
  * Readiness (`isAvailable()`) still decides availability: a listed provider that is not ready is skipped, and the next
  * eligible one is selected (selection-time fallback, ADR-0092).
+ *
+ * - `ownerSelectedKey` (ADR-0116 D3): the key of the provider that is the owner's EXPLICIT selection for this
+ *   capability on this request (a session override, the operations-UI default or an explicitly set installation
+ *   selector). Absent when the effective choice is a derived default, and on any doubt (fail closed). It changes no
+ *   ranking: the router only reports whether the provider it resolved carries this key, so a selection-time fallback
+ *   to another eligible provider is never an owner selection.
  */
 export interface ProviderPreference {
   readonly eligible: readonly string[];
   readonly order: 'listed' | 'priority';
+  readonly ownerSelectedKey?: string;
 }
 
 /**

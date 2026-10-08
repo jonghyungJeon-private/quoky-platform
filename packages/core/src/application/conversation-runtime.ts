@@ -178,6 +178,7 @@ import {
   executionLocalityOf,
   type AiExecutionLocality,
   type ProviderSelectionContext,
+  type ResolvedProviderSelection,
   type AiProvider,
   type AiRequest,
   type ConnectorWriteOperation,
@@ -829,6 +830,8 @@ export interface ConversationRuntimeDeps {
    */
   readonly router: {
     select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider>;
+    /** Optional: `select` plus whether the provider is the owner's explicit selection (ADR-0116 D3). */
+    resolve?(capability: Capability, context?: ProviderSelectionContext): Promise<ResolvedProviderSelection>;
     /** Optional synchronous dispatch-time eligibility check (image turns; ADR-0111 amendment, runtime switching). */
     isStillEligible?(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean;
   };
@@ -7661,12 +7664,22 @@ export class ConversationRuntime {
         return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(undefined) };
       }
 
-      const provider = await this.deps.router.select(capability, { sessionId: session.id, actorId: actor.id });
+      const selectionContext = { sessionId: session.id, actorId: actor.id };
+      // ADR-0116 D3: the selector reports, with the provider, whether it is the owner's explicit selection; a selector
+      // without `resolve` reports nothing, which counts as "not an owner selection" (fail closed).
+      const resolved = this.deps.router.resolve
+        ? await this.deps.router.resolve(capability, selectionContext)
+        : { provider: await this.deps.router.select(capability, selectionContext) };
+      const provider = resolved.provider;
       providerId = provider.id;
-      // ADR-0107 D6: the LOCAL_ONLY curated-example layer is composed only now that the provider for this execution
-      // is resolved, and only when it declares LOCAL execution (data, never its id). Otherwise — and on the routed
-      // seam above — the request stays exactly as composed without it; there is no re-execution elsewhere.
-      const composition = { executionLocality: executionLocalityOf(provider) };
+      // ADR-0107 D6 / ADR-0116: the curated-example layer is composed only now that the provider for this execution
+      // is resolved, from its declared locality and the selection source (data, never its id): LOCAL, or REMOTE when
+      // the flag-gated egress class allows an owner-selected provider. Otherwise — and on the routed seam above — the
+      // request stays exactly as composed without it; there is no re-execution elsewhere.
+      const composition = {
+        executionLocality: executionLocalityOf(provider),
+        ...('source' in resolved ? { selectionSource: resolved.source } : {}),
+      };
       const curatedExampleCount = curatedExamplesForPrompt(task, bundle, readout, composition).length;
       const executionRequest =
         curatedExampleCount > 0

@@ -221,6 +221,89 @@ describe('the router applies the selection as data (real CapabilityRouter + Prov
   });
 });
 
+// ADR-0116 D2/D3: the selection source reaches Core as data with the resolved provider (real router + real policy).
+describe('selection source for the learning-example egress (ADR-0116)', () => {
+  const ctx = (session: { readonly id: string }) => ({ sessionId: session.id, actorId: ACTOR });
+
+  it('the derived default is never an owner selection (QUOKY_OLLAMA_ENABLED=false read as claude)', async () => {
+    const f = selectionFixture({ env: { QUOKY_OLLAMA_ENABLED: 'false' } });
+    const session = await f.openSession();
+    expect(await f.service.effectiveChat(ctx(session))).toMatchObject({ label: 'claude:sonnet', source: 'default' });
+    const resolved = await f.router.resolve(Capability.GENERAL_CHAT, ctx(session));
+    expect(resolved.provider.id).toBe('claude-cli');
+    expect(resolved.source).toBe('NOT_OWNER_SELECTED');
+    expect(await f.service.preferenceFor(Capability.GENERAL_CHAT, ctx(session))).not.toHaveProperty('ownerSelectedKey');
+  });
+
+  it('an explicitly set QUOKY_CHAT_PROVIDER, the operations-UI default and a session override are owner selections', async () => {
+    const env = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' } });
+    expect(await env.router.resolve(Capability.GENERAL_CHAT, ctx(await env.openSession()))).toMatchObject({
+      source: 'OWNER_SELECTED',
+    });
+
+    const ops = selectionFixture({ env: { QUOKY_OLLAMA_ENABLED: 'false' } });
+    const opsSession = await ops.openSession();
+    ops.service.setDefaultChat({ provider: 'claude' }, OPS);
+    expect(await ops.service.effectiveChat(ctx(opsSession))).toMatchObject({ source: 'persisted' });
+    const viaOps = await ops.router.resolve(Capability.GENERAL_CHAT, ctx(opsSession));
+    expect([viaOps.provider.id, viaOps.source]).toEqual(['claude-cli', 'OWNER_SELECTED']);
+
+    const session = selectionFixture({ env: { QUOKY_OLLAMA_ENABLED: 'false' } });
+    const own = await session.openSession();
+    await session.service.setSessionChat(scope(own), { provider: 'claude', model: 'opus' }, OWNER_CHAT);
+    const viaSession = await session.router.resolve(Capability.GENERAL_CHAT, ctx(own));
+    expect([viaSession.provider.id, viaSession.source]).toEqual(['claude-cli:opus', 'OWNER_SELECTED']);
+    // Another conversation of the same owner still runs on the derived default.
+    expect(await session.router.resolve(Capability.GENERAL_CHAT, ctx(await session.openSession()))).toMatchObject({
+      source: 'NOT_OWNER_SELECTED',
+    });
+  });
+
+  it('Claude reached only as the selection-time fallback is never an owner selection', async () => {
+    // The explicitly chosen Codex is not ready: Claude answers as the fallback.
+    const codex = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'codex' } });
+    codex.ready.set('codex-cli', false);
+    const viaFallback = await codex.router.resolve(Capability.GENERAL_CHAT, ctx(await codex.openSession()));
+    expect([viaFallback.provider.id, viaFallback.source]).toEqual(['claude-cli', 'NOT_OWNER_SELECTED']);
+
+    // The explicitly chosen `claude:opus` instance is not ready: the default Claude instance is the fallback.
+    const opus = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' } });
+    const own = await opus.openSession();
+    await opus.service.setSessionChat(scope(own), { provider: 'claude', model: 'opus' }, OWNER_CHAT);
+    opus.ready.set('claude-cli:opus', false);
+    const viaOpusFallback = await opus.router.resolve(Capability.GENERAL_CHAT, ctx(own));
+    expect([viaOpusFallback.provider.id, viaOpusFallback.source]).toEqual(['claude-cli', 'NOT_OWNER_SELECTED']);
+
+    // An explicitly chosen local Ollama answers as itself (LOCAL keeps ADR-0107 anyway); unready → Claude, not owner's.
+    const local = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'ollama' } });
+    const viaLocal = await local.router.resolve(Capability.GENERAL_CHAT, ctx(await local.openSession()));
+    expect([viaLocal.provider.executionLocality, viaLocal.source]).toEqual(['LOCAL', 'OWNER_SELECTED']);
+    local.ready.set(viaLocal.provider.id, false);
+    const viaLocalFallback = await local.router.resolve(Capability.GENERAL_CHAT, ctx(await local.openSession()));
+    expect([viaLocalFallback.provider.id, viaLocalFallback.source]).toEqual(['claude-cli', 'NOT_OWNER_SELECTED']);
+  });
+
+  it('pinned capabilities and the fail-safe answer never carry an owner selection', async () => {
+    const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' } });
+    const session = await f.openSession();
+    for (const capability of CLAUDE_PINNED_CAPABILITIES) {
+      expect(await f.router.resolve(capability, ctx(session)), capability).toMatchObject({ source: 'NOT_OWNER_SELECTED' });
+    }
+    const broken = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'claude' } });
+    (broken.service as unknown as { deps: { sessions: () => unknown } }).deps.sessions = () => ({
+      get: async () => {
+        throw new Error('session store unavailable');
+      },
+    });
+    // Fail closed: the safe-default answer names no owner selection, even with an explicit QUOKY_CHAT_PROVIDER.
+    const failSafe = await broken.service.preferenceFor(Capability.GENERAL_CHAT, { sessionId: 's', actorId: ACTOR });
+    expect(failSafe).toEqual({ eligible: ['claude-cli'], order: 'listed' });
+    expect(await broken.router.resolve(Capability.GENERAL_CHAT, { sessionId: 's', actorId: ACTOR })).toMatchObject({
+      source: 'NOT_OWNER_SELECTED',
+    });
+  });
+});
+
 describe('image understanding: eligibility and the Core locality policy follow the effective selection', () => {
   it('REMOTE is allowed only while the effective image choice is claude; switching away stops egress at once', async () => {
     const f = selectionFixture({

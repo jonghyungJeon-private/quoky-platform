@@ -39,10 +39,15 @@ export interface ProductionSemanticRecallOptions {
  * ranked by the local embedding scorer when `semanticRecall` is also composed (`QUOKY_EMBEDDING_ENABLED=true`) and
  * lexically otherwise. Example text is `LOCAL_ONLY`, so the scorer may use only an `EMBEDDING` provider that declares
  * `LOCAL` execution, and caches vectors (no text) in its own collection. Whether an example reaches a prompt is decided
- * later, by the composer, from the resolved chat provider's declared locality.
+ * later, by the composer, from the resolved chat provider's declared locality and — ADR-0116 — its selection source.
  */
 export interface ProductionCuratedExampleOptions {
   learning: Pick<LearningRepository, 'list'>;
+  /**
+   * ADR-0116 D1 (`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`, default false): examples may also reach a `REMOTE` chat
+   * provider that is the owner's explicit selection. Absent or false → `LOCAL` providers only (byte-identical).
+   */
+  remoteOwnerSelected?: boolean;
   logger?: Logger;
 }
 
@@ -91,6 +96,7 @@ export function createProductionContextBuilder(
       ? undefined
       : new CuratedExampleSelector({
           learning: curatedExamples.learning,
+          egressPolicy: { remoteOwnerSelected: curatedExamples.remoteOwnerSelected === true },
           ...(semanticRecall === undefined
             ? {}
             : {

@@ -67,7 +67,10 @@ const itemOf = (
   };
 };
 
-function selectorWith(items: LearningItem[], opts: { scorer?: SemanticRecallScoring; logger?: Logger } = {}) {
+function selectorWith(
+  items: LearningItem[],
+  opts: { scorer?: SemanticRecallScoring; logger?: Logger; remoteOwnerSelected?: boolean } = {},
+) {
   const queries: LearningItemListQuery[] = [];
   const selector = new CuratedExampleSelector({
     learning: {
@@ -78,6 +81,7 @@ function selectorWith(items: LearningItem[], opts: { scorer?: SemanticRecallScor
     },
     ...(opts.scorer ? { semanticScorer: opts.scorer } : {}),
     ...(opts.logger ? { logger: opts.logger } : {}),
+    ...(opts.remoteOwnerSelected === undefined ? {} : { egressPolicy: { remoteOwnerSelected: opts.remoteOwnerSelected } }),
     clock: () => NOW,
   });
   return { selector, queries };
@@ -123,6 +127,27 @@ describe('CuratedExampleSelector (ADR-0107 D5, LRN-2)', () => {
       learningItemId: strong.id,
     });
     expect(selected.map((e) => e.learningItemId)).not.toContain(unrelated.id);
+  });
+
+  // ADR-0116 D1/D4: the flag changes only the entries' use-time egress class, never which items qualify.
+  it('the egress policy sets only the use-time class: off → LOCAL_ONLY; on → LOCAL_OR_OWNER_SELECTED_REMOTE', async () => {
+    const items = [
+      itemOf('회의록 요약 형식 알려줘', '세 줄로 요약하세요'),
+      itemOf('회의록 정리', '표로 정리하세요'),
+      itemOf('회의록 공유', '링크로 공유하세요'),
+      itemOf(`회의록 요약해줘 ${GITHUB_TOKEN}`, '세 줄 요약'),
+      itemOf('회의록 요약해줘', '세 줄 요약', { egress: 'ANYWHERE' as unknown as 'LOCAL_ONLY' }),
+    ];
+    const task = taskOf('회의록 요약 형식');
+    const byDefault = await selectorWith(items).selector.select(task);
+    const off = await selectorWith(items, { remoteOwnerSelected: false }).selector.select(task);
+    const on = await selectorWith(items, { remoteOwnerSelected: true }).selector.select(task);
+    expect(off).toEqual(byDefault);
+    expect(off.map((e) => e.egress)).toEqual(['LOCAL_ONLY', 'LOCAL_ONLY']);
+    expect(on).toHaveLength(CURATED_EXAMPLE_MAX_PER_TURN);
+    expect(on.map((e) => e.egress)).toEqual(['LOCAL_OR_OWNER_SELECTED_REMOTE', 'LOCAL_OR_OWNER_SELECTED_REMOTE']);
+    expect(on.map(({ egress: _egress, ...rest }) => rest)).toEqual(off.map(({ egress: _egress, ...rest }) => rest));
+    expect(JSON.stringify(on)).not.toContain('ghp_');
   });
 
   it('never selects an irrelevant example', async () => {

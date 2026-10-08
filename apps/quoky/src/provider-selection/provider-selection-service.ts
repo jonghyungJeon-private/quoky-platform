@@ -272,7 +272,11 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   private preferenceFrom(capability: Capability, session: SessionSelection): ProviderPreference | null {
     if (CHAT_TIER.has(capability)) {
       const chat = this.chatFromLayers(session);
-      return { eligible: unique([chat.provider.id, this.deps.catalog.claude.id]), order: 'listed' };
+      // ADR-0116 D2/D3: the session override, the operations-UI default and an explicitly set QUOKY_CHAT_PROVIDER are
+      // owner selections; the derived default is not. The Claude fallback entry is never named here, so reaching it
+      // only as the selection-time fallback is not an owner selection either.
+      const owner = chat.source === 'default' ? {} : { ownerSelectedKey: chat.provider.id };
+      return { eligible: unique([chat.provider.id, this.deps.catalog.claude.id]), order: 'listed', ...owner };
     }
     if (capability === Capability.IMAGE_UNDERSTANDING) {
       const image = this.imageFromLayers(session);

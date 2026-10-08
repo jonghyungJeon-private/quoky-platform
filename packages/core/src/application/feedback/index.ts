@@ -14,3 +14,5 @@ export * from './learning-service';
 export * from './learning-turn-handler';
 // ADR-0107 D5/D6 (LRN-2): curated few-shot example selection for GENERAL_CHAT.
 export * from './curated-example-selector';
+// ADR-0116 (LRN-5): the curated-example egress policy (owner-selected REMOTE chat providers, flag-gated).
+export * from './curated-example-egress-policy';

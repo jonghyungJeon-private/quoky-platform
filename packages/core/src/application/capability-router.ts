@@ -5,7 +5,9 @@ import type {
   ProviderPreference,
   ProviderSelectionContext,
   ProviderSelectionPolicy,
+  ProviderSelectionSource,
   ProviderSelector,
+  ResolvedProviderSelection,
 } from '../ports';
 import type { AiProviderManager } from './ai-provider-manager';
 
@@ -29,6 +31,15 @@ export class CapabilityRouter implements ProviderSelector {
   ) {}
 
   async select(capability: Capability, context: ProviderSelectionContext = {}): Promise<AiProvider> {
+    return (await this.resolve(capability, context)).provider;
+  }
+
+  /**
+   * ADR-0116 D3: the selected provider and whether it is the owner's explicit selection, both from ONE policy answer.
+   * `OWNER_SELECTED` only when the policy named an `ownerSelectedKey` and the resolved provider carries exactly that
+   * key; a selection-time fallback, a derived default (no key) or no policy is `NOT_OWNER_SELECTED`.
+   */
+  async resolve(capability: Capability, context: ProviderSelectionContext = {}): Promise<ResolvedProviderSelection> {
     const preference = this.policy ? await this.policy.preferenceFor(capability, context) : null;
     const candidates = preference === null
       ? await this.manager.availableFor(capability)
@@ -40,7 +51,11 @@ export class CapabilityRouter implements ProviderSelector {
     candidates.sort((a, b) => this.rank(a, preference) - this.rank(b, preference)
       || this.priority(b, capability) - this.priority(a, capability));
     // Non-null: length checked above; noUncheckedIndexedAccess-safe via assertion.
-    return this.invalidatingOnUnavailable(candidates[0] as AiProvider);
+    const chosen = candidates[0] as AiProvider;
+    const ownerSelectedKey = preference?.ownerSelectedKey;
+    const source: ProviderSelectionSource =
+      ownerSelectedKey !== undefined && ownerSelectedKey === selectionKeyOf(chosen) ? 'OWNER_SELECTED' : 'NOT_OWNER_SELECTED';
+    return { provider: this.invalidatingOnUnavailable(chosen), source };
   }
 
   /**
