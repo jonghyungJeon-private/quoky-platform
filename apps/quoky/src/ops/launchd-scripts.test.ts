@@ -645,47 +645,28 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, w
     expect(env.get('QUOKY_VECTOR_PATH')).toBe(serviceEnv.get('QUOKY_VECTOR_PATH'));
   });
 
-  it('forwards only the backup keys from the env file, verbatim from plain NAME=value lines; no other line is passed', () => {
+  it('never reads the env file: a multi-line secret with QUOKY_BACKUP_DIR= inside, or padded keys, change nothing', () => {
     const box = backupSandbox();
     writeFileSync(
       box.envFile,
       [
         SECRET_MARKER,
-        '# QUOKY_BACKUP_DIR=/commented/out',
-        'QUOKY_BACKUP_DIR=/Volumes/Old Backup/quoky',
-        'QUOKY_BACKUP_DIR=/Volumes/Backup/quoky',
-        'QUOKY_TIMEZONE=Asia/Seoul',
-        'QUOKY_BACKUP_DIRS=/not/this/key',
-        'ANTHROPIC_API_KEY=secret-token-value-never-printed-2',
+        'PRIVATE_KEY="-----BEGIN KEY-----',
+        'QUOKY_BACKUP_DIR=/inside/a/secret',
+        '-----END KEY-----"',
+        'QUOKY_BACKUP_DIR = /padded  ',
+        '  QUOKY_TIMEZONE=Europe/Berlin',
         '',
       ].join('\n'),
     );
     chmodSync(box.envFile, 0o600);
     expect(runCtl(box, ['backup']).status).toBe(0);
-    const env = toolEnv(box);
-    expect(env.get('QUOKY_BACKUP_DIR')).toBe('/Volumes/Backup/quoky');
-    expect(env.get('QUOKY_TIMEZONE')).toBe('Asia/Seoul');
-    expect(env.has('QUOKY_BACKUP_ENABLED')).toBe(false);
-    expect([...env.keys()].sort()).toEqual([...BACKUP_ENV_NAMES, 'QUOKY_BACKUP_DIR', 'QUOKY_TIMEZONE'].sort());
-    expect([...env.values()].join('\n')).not.toContain('secret-token-value');
-  });
-
-  it.each([
-    ['export QUOKY_BACKUP_DIR=/x'],
-    ['QUOKY_BACKUP_DIR="/x"'],
-    ["QUOKY_TIMEZONE='Asia/Seoul'"],
-    ['QUOKY_BACKUP_ENABLED=true # on'],
-    ['  QUOKY_BACKUP_DIR=/x'],
-    ['QUOKY_BACKUP_DIR =/x'],
-  ])('refuses a backup key the service would read differently: %s', (line) => {
-    const box = backupSandbox();
-    writeFileSync(box.envFile, `${SECRET_MARKER}\n${line}\n`);
-    chmodSync(box.envFile, 0o600);
-    const result = runCtl(box, ['backup']);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("must be one plain line");
-    expect(existsSync(tools(box, 'child-argv.txt'))).toBe(false);
-    expect(`${result.stdout}${result.stderr}`).not.toContain('secret-token-value');
+    expect([...toolEnv(box).keys()].sort()).toEqual([...BACKUP_ENV_NAMES].sort());
+    // Not even its permissions matter to a backup: an unreadable or missing env file is not a refusal.
+    chmodSync(box.envFile, 0o000);
+    expect(runCtl(box, ['backup']).status).toBe(0);
+    rmSync(box.envFile);
+    expect(runCtl(box, ['backup']).status).toBe(0);
   });
 
   it('--apply runs the tool with --apply and reports a partial set (vector snapshot failed) as a failure', () => {
@@ -725,7 +706,6 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, w
 
   it.each([
     ['an unbuilt tool', (box: Sandbox) => rmSync(tools(box, 'backup-now.js')), 'the app is not built'],
-    ['a world-readable env file', (box: Sandbox) => chmodSync(box.envFile, 0o644), 'ENV_FILE_INSECURE'],
     ['no service database', (box: Sandbox) => rmSync(path.join(box.dataDir, 'quoky.db')), 'no service database'],
   ])('refuses with %s before running anything', (_name, breakIt, reason) => {
     const box = backupSandbox();

@@ -565,7 +565,7 @@ describe('BackupJob (ADR-0102 D6)', () => {
       const running = first.runManual();
       await new Promise((r) => setImmediate(r));
       expect(existsSync(seenTarget)).toBe(true);
-      expect(mode(lockPath())).toBe(0o600);
+      expect(existsSync(lockPath())).toBe(true);
 
       // The second run (same second, so the very same partial name) while the first holds the lock.
       const second = await job({ role: 'manual', tryLock: tryAcquireExclusiveLock }).runManual();

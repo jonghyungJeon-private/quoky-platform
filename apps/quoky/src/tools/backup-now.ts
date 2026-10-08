@@ -15,12 +15,14 @@
  * (dir 700, files 600) and status file as the scheduled job (`ops/backup-job.ts`, `role: 'manual'`), kind `manual`
  * (the 5 newest are kept).
  *
- * Configuration comes from the process environment only; the tool never reads `.env.local` (or any env file).
- * `quokyctl.sh backup` passes exactly what the service resolves: `QUOKY_DB_PATH` and `QUOKY_VECTOR_PATH` from the same
- * shell helpers the launcher uses, and `QUOKY_BACKUP_DIR`, `QUOKY_BACKUP_ENABLED`, `QUOKY_TIMEZONE` extracted by a
- * line-anchored `grep '^NAME='` for those names only (simple single-line values). Run directly, unset names take the
- * service's defaults (`resolveDataPaths`, `loadOpsConfig`, `parseReminderConfig`). Every run holds the backup lock
- * (an OS-held SQLite exclusive lock, released by the kernel if the process dies), shared with the service's runs.
+ * Configuration: the tool never reads `.env.local` (or any env file). It uses the effective, non-secret configuration
+ * the running service publishes at start (`<db dir>/ops/backup-config.json`, `ops/backup-config.ts`: backup directory,
+ * enabled, time zone, DB and vector paths), read with the private-file checks. When that file is missing, invalid or
+ * for another database (the service has not started with this build yet), it falls back to the defaults
+ * (`resolveDataPaths`, `<db dir>/backups`, the default time zone) from the process environment and prints a notice.
+ * `quokyctl.sh backup` passes only the service's DB and vector paths (the launcher's own helpers). Every run holds the
+ * backup lock (an OS-held SQLite exclusive lock, released by the kernel if the process dies), shared with the
+ * service's runs.
  *
  * Exit codes: 0 ok; 1 the DB copy failed (nothing kept), or `--verify` failed; 2 usage; 3 blocked (no database,
  * invalid configuration, not a retained copy, another backup run holds the lock); 4 the DB copy verified but its vector
@@ -46,6 +48,7 @@ import {
 import type { VectorSnapshotRequest, VectorSnapshotResult, VectorStoreInspection } from '@quoky/vector-local';
 import { BootstrapPreflightError } from '../bootstrap-preflight';
 import { resolveDataPaths } from '../config';
+import { backupConfigPath, readBackupConfig } from '../ops/backup-config';
 import { BackupJob, type BackupRunRecord } from '../ops/backup-job';
 import {
   BACKUP_RETENTION,
@@ -105,7 +108,8 @@ function parseArgs(argv: readonly string[]): Args | null {
   return null;
 }
 
-function resolveConfig(env: NodeJS.ProcessEnv): Resolved {
+/** The defaults, from the process environment only (what `resolveDataPaths`/`loadOpsConfig` give the service). */
+function resolveDefaults(env: NodeJS.ProcessEnv): Resolved {
   const { dbPath, vectorPath } = resolveDataPaths(env);
   const ops = loadOpsConfig(env, {
     dbPath,
@@ -120,6 +124,34 @@ function resolveConfig(env: NodeJS.ProcessEnv): Resolved {
     timeZone,
     scheduledEnabled: ops.backup.enabled,
   };
+}
+
+/**
+ * The service's published backup configuration (`<db dir>/ops/backup-config.json`) when it is readable, valid and for
+ * this database; otherwise the defaults, with a notice. `.env.local` is never read.
+ */
+function resolveConfig(env: NodeJS.ProcessEnv, notice: (line: string) => void): Resolved {
+  const defaults = resolveDefaults(env);
+  if (defaults.dbPath === '' || defaults.dbPath === ':memory:') return defaults;
+  const file = backupConfigPath(defaults.dbPath);
+  const read = readBackupConfig(file);
+  const reason = !read.ok ? read.reason : path.resolve(read.config.dbPath) !== defaults.dbPath ? 'OTHER_DATABASE' : undefined;
+  if (read.ok && reason === undefined) {
+    const { config } = read;
+    return {
+      dbPath: defaults.dbPath,
+      ...(config.vectorPath !== null ? { vectorPath: config.vectorPath } : {}),
+      dir: config.backupDir,
+      timeZone: config.timeZone,
+      scheduledEnabled: config.enabled,
+    };
+  }
+  notice(
+    `note:  no usable service backup config at ${file} (${reason ?? 'INVALID'}); using the defaults ` +
+      `(backups in ${defaults.dir}, time zone ${defaults.timeZone}). Start the service once with this build so a ` +
+      'QUOKY_BACKUP_DIR or QUOKY_TIMEZONE set in .env.local applies here (this tool never reads .env.local).',
+  );
+  return defaults;
 }
 
 function describeInspection(inspection: VectorStoreInspection): string {
@@ -176,7 +208,7 @@ export async function runCli(argv: readonly string[], deps: BackupNowDeps): Prom
 
   let resolved: Resolved;
   try {
-    resolved = resolveConfig(deps.env);
+    resolved = resolveConfig(deps.env, deps.stdout);
   } catch (error) {
     const code = error instanceof BootstrapPreflightError ? error.code : (error as { code?: unknown }).code;
     const hint = error instanceof BootstrapPreflightError ? `: ${error.hint}` : '';

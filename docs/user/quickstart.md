@@ -462,8 +462,10 @@ tail -f ~/Library/Logs/Quoky/quoky.log
 DB나 인스턴스 잠금은 건드리지 않고 마이그레이션도 하지 않습니다. 백업은 정기·pre-migration·수동을 통틀어 한 번에
 하나만 실행됩니다(`backups/.backup-lock.db`에 대한 SQLite 배타 잠금. 운영체제가 잡고 있는 잠금이라 프로세스가 죽으면
 자동으로 풀리므로, 남은 잠금을 넘겨받는 규칙이 따로 없습니다). 다른 백업이 실행 중이면 수동 백업은 아무것도 쓰지
-않고 막힘(종료 코드 3)으로 끝나고, 정기 백업은 알림 없이 15분 뒤 다시 시도하며, pre-migration 사본은 최대 10분
-기다립니다.
+않고 막힘(종료 코드 3)으로 끝나고, 정기 백업은 알림 없이 15분 뒤 다시 시도하며, pre-migration 사본은 1초 간격으로
+최대 10분 기다린 뒤에도 잠겨 있으면 시작을 거절합니다(종료 코드 78, 연속 3번이면 launcher가 다시 띄우지 않음).
+잠금 파일은 소유자 전용(700) `backups/` 안에 SQLite가 만들며, 이 디렉터리가 실제 디렉터리이고 700이며 본인 소유일
+때만 잠급니다.
 
 ```sh
 ops/launchd/quokyctl.sh backup             # 기본은 dry-run: 만들 사본 이름, 벡터 레코드 수, 정리될 사본을 출력 (변경 없음)
@@ -471,13 +473,13 @@ ops/launchd/quokyctl.sh backup --apply     # 지금 백업 (backups/ 디렉터�
 ops/launchd/quokyctl.sh backup --verify quoky-<UTC 시각>-<종류>.db   # 읽기 전용: 사본과 벡터 스냅샷 다시 검증
 ```
 
-- 서비스와 같은 환경으로 실행합니다(`env -i`, launcher와 같은 방법으로 만든 서비스 DB·벡터 경로). 백업 도구는
-  `.env.local`을 전혀 읽지 않습니다. `quokyctl.sh`가 `.env.local`에서 `QUOKY_BACKUP_DIR`, `QUOKY_BACKUP_ENABLED`,
-  `QUOKY_TIMEZONE` 세 이름만 줄 맨 앞에 고정된 `grep '^이름='`으로 골라 넘깁니다. 다른 줄의 값(토큰 등)은 해석하지도
-  넘기지도 출력하지도 않습니다.
-- 그래서 이 세 값은 **한 줄짜리 단순한 형태** `이름=값`으로 써야 합니다(`export`, 따옴표, `#` 주석, 들여쓰기, `이름 =`
-  금지). 그런 형태가 있으면 서비스(dotenv)와 다르게 읽힐 수 있으므로 백업을 거절합니다. 같은 이름이 여러 줄이면
-  마지막 줄을 씁니다(dotenv와 같음).
+- 서비스와 같은 환경으로 실행합니다(`env -i`, launcher와 같은 방법으로 만든 서비스 DB·벡터 경로). `quokyctl.sh`도
+  백업 도구도 `.env.local`을 **전혀 읽지 않습니다.** 백업 디렉터리, 정기 백업 켜짐 여부, 시간대, DB·벡터 경로는
+  실행 중인 서비스가 시작할 때 기록한 `~/Library/Application Support/Quoky/ops/backup-config.json`(비밀 값 없음,
+  디렉터리 700, 파일 600)에서 읽습니다.
+- 이 파일이 없거나(이 빌드로 서비스를 아직 한 번도 시작하지 않음) 잘못됐거나 다른 DB의 것이면, 기본값(DB 옆
+  `backups/`, 기본 시간대)을 쓰고 그 사실을 `note:` 줄로 알려 줍니다. `.env.local`에 `QUOKY_BACKUP_DIR`이나
+  `QUOKY_TIMEZONE`을 바꿨다면 서비스를 한 번 다시 시작한 뒤 수동 백업을 실행하세요.
 - `QUOKY_BACKUP_ENABLED=false`여도 수동 백업은 실행합니다(그 값은 정기 백업만 끕니다).
 - 종료 코드: 0 성공, 1 DB 사본 실패(아무것도 남기지 않음) 또는 `--verify` 실패, 3 막힘(DB 없음, 설정 오류, 다른
   백업 실행 중), 4 DB 사본은 검증됐지만 벡터 스냅샷이 실패(DB 사본은 남김). `quokyctl.sh`는 0이 아니면 실패로

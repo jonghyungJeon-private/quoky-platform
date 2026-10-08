@@ -5,8 +5,10 @@ import {
   writeVerifiedSqliteCopy,
 } from '@quoky/storage-sqlite';
 import { writeVerifiedVectorSnapshot } from '@quoky/vector-local';
+import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, MemoryArchivePurgeResult, NotificationSink } from '@quoky/core';
 import type { QuokyConfig } from '../config';
+import { backupConfigPath, writeBackupConfig } from './backup-config';
 import { BackupJob, type BackupJobTimers, type BackupStatus } from './backup-job';
 import { MemoryArchivePurgeJob } from './memory-archive-purge';
 import { loadOpsConfig } from './ops-config';
@@ -26,7 +28,8 @@ import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, type OpsNoticeLedg
  * ≥3 starts in the last 10 minutes, and arms the daily backup chain, whose failures send the backup `OPS_NOTICE`.
  * ADR-0106 amendment: `start()` also starts the memory-archive expiry purge (`memory-archive-purge.ts`) — once at start,
  * then daily — independent of whether backups are enabled or succeed; `stop()` stops it with the backup chain.
- * `backupStatus()` is the in-process read for the OPS-1 screen (ADR-0113 D6); the same data is in
+ * `start()` also publishes the effective backup configuration (`<db dir>/ops/backup-config.json`, `backup-config.ts`) for
+ * the on-demand backup. `backupStatus()` is the in-process read for the OPS-1 screen (ADR-0113 D6); the same data is in
  * `<backup dir>/backup-status.json`.
  */
 export interface OpsRuntime {
@@ -104,6 +107,25 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
           ...(input.timers ? { timers: input.timers } : {}),
         });
 
+  // The effective, non-secret backup configuration for `quokyctl.sh backup` (launchd service only), which never reads
+  // `.env.local`.
+  const publishBackupConfig = (): void => {
+    const dbPath = ops.backup.dbPath;
+    if (config.host.launcher !== 'launchd' || dbPath === '' || dbPath === ':memory:') return;
+    try {
+      writeBackupConfig(backupConfigPath(dbPath), {
+        writtenAt: (input.clock ?? sharedClock)(),
+        dbPath,
+        vectorPath: ops.backup.vectorPath ?? null,
+        backupDir: ops.backup.dir,
+        enabled: ops.backup.enabled,
+        timeZone: config.reminders.timeZone,
+      });
+    } catch {
+      logger.warn('backup.config_write_failed');
+    }
+  };
+
   return {
     async ensurePreMigrationBackup() {
       const outcome = await backup.ensurePreMigrationBackup();
@@ -111,6 +133,7 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     },
     start() {
       if (isCrashLoopStart(config.host)) void notices.notify('CRASH_LOOP');
+      publishBackupConfig();
       backup.start();
       archivePurge?.start();
     },

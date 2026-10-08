@@ -3,8 +3,8 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
-import { statSync, symlinkSync, utimesSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, symlinkSync, utimesSync } from 'node:fs';
 import {
   LATEST_SCHEMA_VERSION,
   readSqliteUserVersion,
@@ -153,16 +153,59 @@ describe('SQLite backup primitives (ADR-0102 D6)', () => {
       });
     }
 
-    it('one holder at a time (same process too); release lets the next one in; the file is 600', () => {
+    /** An external contender: a child process that tries once and reports `locked` or `busy`. */
+    function externalTry(lockPath: string): string {
+      const result = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `const r = require(process.argv[1]).tryAcquireExclusiveLock(process.argv[2]);
+           process.stdout.write(r.ok ? 'locked' : r.failure);`,
+          DIST,
+          lockPath,
+        ],
+        { encoding: 'utf8' },
+      );
+      return result.stdout;
+    }
+
+    it('one holder at a time; release lets the next one in', () => {
       const lockPath = join(dir, '.backup-lock.db');
       const first = tryAcquireExclusiveLock(lockPath);
       expect(first.ok).toBe(true);
-      expect(statSync(lockPath).mode & 0o777).toBe(0o600);
       expect(tryAcquireExclusiveLock(lockPath)).toEqual({ ok: false, failure: 'BUSY' });
       if (first.ok) first.release();
       const second = tryAcquireExclusiveLock(lockPath);
       expect(second.ok).toBe(true);
       if (second.ok) second.release();
+    });
+
+    it.skipIf(!existsSync(DIST))('a same-process contender never releases the holder\'s kernel lock (A, then B, then external C)', () => {
+      const lockPath = join(dir, '.backup-lock.db');
+      const a = tryAcquireExclusiveLock(lockPath);
+      expect(a.ok).toBe(true);
+      // B in the same process: BUSY at once from the process-wide guard, without opening (or closing) the file.
+      expect(tryAcquireExclusiveLock(lockPath)).toEqual({ ok: false, failure: 'BUSY' });
+      expect(tryAcquireExclusiveLock(lockPath)).toEqual({ ok: false, failure: 'BUSY' });
+      // C in another process is still blocked: A's fcntl lock survived B.
+      expect(externalTry(lockPath)).toBe('BUSY');
+      if (a.ok) a.release();
+      expect(externalTry(lockPath)).toBe('locked');
+    });
+
+    it('the lock directory must be a private real directory (700, owned by this user, not a symlink)', () => {
+      const open = join(dir, 'open');
+      mkdirSync(open, { mode: 0o755 });
+      chmodSync(open, 0o755);
+      expect(tryAcquireExclusiveLock(join(open, '.backup-lock.db'))).toEqual({ ok: false, failure: 'UNAVAILABLE' });
+      const real = join(dir, 'real');
+      mkdirSync(real, { mode: 0o700 });
+      symlinkSync(real, join(dir, 'linked'));
+      expect(tryAcquireExclusiveLock(join(dir, 'linked', '.backup-lock.db'))).toEqual({ ok: false, failure: 'UNAVAILABLE' });
+      expect(readdirSync(real)).toEqual([]);
+      const ok = tryAcquireExclusiveLock(join(real, '.backup-lock.db'));
+      expect(ok.ok).toBe(true);
+      if (ok.ok) ok.release();
     });
 
     it.skipIf(!existsSync(DIST))('a SIGKILLed holder releases the lock; a live holder is never taken over, however old', async () => {

@@ -22,6 +22,8 @@ import {
 } from '@quoky/storage-sqlite';
 import { LocalVectorProvider } from '@quoky/vector-local';
 import { BACKUP_LOCK_FILE, BACKUP_STATUS_FILE } from '../ops/backup-job';
+import { backupConfigPath, writeBackupConfig } from '../ops/backup-config';
+import { createOpsRuntime } from '../ops/ops-runtime';
 import { backupFileName, vectorSnapshotName } from '../ops/backup-files';
 import {
   EXIT_BLOCKED,
@@ -100,6 +102,95 @@ describe('backup-now: the on-demand backup tool', () => {
     for (const forbidden of ['QUOKY_ENV_FILE', 'dotenv', 'readFileSync', '.env.local\'']) expect(source).not.toContain(forbidden);
   });
 
+  describe('the service\'s published backup config (never .env.local)', () => {
+    const external = (): string => path.join(root, 'external-backups');
+
+    it('the tool uses what the running service published: same paths, directory and zone', async () => {
+      const sink = { deliver: async () => ({ status: 'SENT' as const, via: 'dm' as const }) };
+      const ops = createOpsRuntime({
+        // What the service resolved from its .env.local: a custom backup directory and zone.
+        env: { QUOKY_BACKUP_DIR: external(), QUOKY_BACKUP_ENABLED: 'false' },
+        config: {
+          storage: { dbPath },
+          vector: { storePath: vectorPath },
+          host: { launcher: 'launchd', recentStarts: 0 },
+          reminders: { enabled: true, channelDelivery: false, timeZone: 'Europe/Berlin' },
+          discord: { ownerIds: ['111111111111111111'] },
+        },
+        sink,
+        platform: 'discord',
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+        ledger: { read: () => undefined, write: () => undefined },
+      });
+      ops.start();
+      await ops.stop();
+      const configFile = backupConfigPath(dbPath);
+      expect(statSync(configFile).mode & 0o777).toBe(0o600);
+      expect(statSync(path.dirname(configFile)).mode & 0o777).toBe(0o700);
+
+      // quokyctl passes only the DB and vector paths; everything else comes from the published file.
+      const env = { QUOKY_DB_PATH: dbPath, QUOKY_VECTOR_PATH: vectorPath, QUOKY_LAUNCHER: 'launchd' };
+      expect(await runCli(['--dry-run'], deps({ env }))).toBe(EXIT_OK);
+      expect(out).toContain(`backup dir: ${external()} (mode 700; files 600)`);
+      expect(out).toContain(`vectors:    ${vectorPath}: 1 collection(s), 1 record(s)`);
+      expect(out).toContain('note:  scheduled backups are off (QUOKY_BACKUP_ENABLED); a manual copy still runs');
+      expect(out.some((l) => l.includes('no usable service backup config'))).toBe(false);
+      expect(await runCli(['--apply'], deps({ env }))).toBe(EXIT_OK);
+      expect(readdirSync(external())).toContain(manualName);
+    });
+
+    it('missing, invalid, symlinked or foreign config: the defaults, with a notice', async () => {
+      const env = { QUOKY_DB_PATH: dbPath, QUOKY_VECTOR_PATH: vectorPath, QUOKY_LAUNCHER: 'launchd' };
+      const configFile = backupConfigPath(dbPath);
+      const notice = (reason: string): boolean => out.some((l) => l.startsWith(`note:  no usable service backup config at ${configFile} (${reason})`));
+
+      expect(await runCli(['--dry-run'], deps({ env }))).toBe(EXIT_OK);
+      expect(notice('MISSING')).toBe(true);
+      expect(out).toContain(`backup dir: ${backups} (mode 700; files 600)`);
+
+      const base = { writtenAt: NOW, dbPath, vectorPath, enabled: true, timeZone: 'Asia/Seoul' };
+      writeBackupConfig(configFile, { ...base, backupDir: 'relative/backups' });
+      expect(await runCli(['--dry-run'], deps({ env }))).toBe(EXIT_OK);
+      expect(notice('INVALID')).toBe(true);
+
+      writeBackupConfig(configFile, { ...base, backupDir: ` ${external()} ` });
+      expect(await runCli(['--dry-run'], deps({ env }))).toBe(EXIT_OK);
+      expect(notice('INVALID')).toBe(true);
+
+      writeBackupConfig(configFile, { ...base, dbPath: path.join(root, 'other.db'), backupDir: external() });
+      expect(await runCli(['--dry-run'], deps({ env }))).toBe(EXIT_OK);
+      expect(notice('OTHER_DATABASE')).toBe(true);
+
+      const elsewhere = path.join(root, 'elsewhere.json');
+      writeBackupConfig(path.join(root, 'x', 'c.json'), { ...base, backupDir: external() });
+      rmSync(configFile);
+      symlinkSync(path.join(root, 'x', 'c.json'), configFile);
+      expect(await runCli(['--dry-run'], deps({ env }))).toBe(EXIT_OK);
+      expect(notice('REFUSED')).toBe(true);
+      expect(existsSync(elsewhere)).toBe(false);
+      expect(existsSync(external())).toBe(false);
+    });
+
+    it('an env file with a multi-line secret holding QUOKY_BACKUP_DIR=, or padded values, has no effect', async () => {
+      writeFileSync(
+        envFile,
+        [
+          'PRIVATE_KEY="-----BEGIN KEY-----',
+          `QUOKY_BACKUP_DIR=${external()}`,
+          '-----END KEY-----"',
+          `QUOKY_BACKUP_DIR =  ${external()}  `,
+          `  QUOKY_TIMEZONE=Europe/Berlin`,
+          '',
+        ].join('\n'),
+        { mode: 0o600 },
+      );
+      const env = { QUOKY_ENV_FILE: envFile, QUOKY_DB_PATH: dbPath, QUOKY_VECTOR_PATH: vectorPath, QUOKY_LAUNCHER: 'launchd' };
+      expect(await runCli(['--apply'], deps({ env }))).toBe(EXIT_OK);
+      expect(existsSync(external())).toBe(false);
+      expect(readdirSync(backups)).toContain(manualName);
+    });
+  });
+
   it('--dry-run reports the set it would write and what retention would prune, and writes nothing', async () => {
     mkdirSync(backups);
     const older = Array.from({ length: 5 }, (_, i) => backupFileName('manual', Date.parse(NOW) - (i + 1) * 3_600_000));
@@ -125,7 +216,6 @@ describe('backup-now: the on-demand backup tool', () => {
     expect(await runCli(['--apply'], deps())).toBe(EXIT_OK);
     const vectors = vectorSnapshotName(manualName);
     expect(listed().sort()).toEqual([BACKUP_STATUS_FILE, manualName, vectors].sort());
-    expect(statSync(path.join(backups, BACKUP_LOCK_FILE)).mode & 0o777).toBe(0o600);
     expect(statSync(backups).mode & 0o777).toBe(0o700);
     expect(statSync(path.join(backups, manualName)).mode & 0o777).toBe(0o600);
     expect(statSync(path.join(backups, vectors)).mode & 0o777).toBe(0o700);
@@ -190,7 +280,7 @@ describe('backup-now: the on-demand backup tool', () => {
       await runCli(['--apply'], deps());
       out.length = 0;
       expect(await runCli(['--verify', manualName], deps())).toBe(EXIT_OK);
-      expect(out).toEqual([
+      expect(out.filter((l) => !l.startsWith('note:'))).toEqual([
         `database: ${manualName} ok (integrity_check ok, user_version ${LATEST_SCHEMA_VERSION})`,
         `vectors:  ${vectorSnapshotName(manualName)} ok (1 collection(s), 1 record(s))`,
         'restore:  this copy and its vector snapshot are a matching set; restore both (quickstart section 7)',

@@ -237,10 +237,21 @@ read-only connection. In WAL mode the service's ordinary commits keep going duri
 delayed (the WAL can grow) until it ends, and the copy's connection waits up to 5 s on a lock. Every backup run
 (scheduled, pre-migration, manual) holds `backups/.backup-lock.db`, an OS-held SQLite exclusive lock the kernel releases
 when the holder dies (no pid, age or takeover rule): a manual run that finds it held exits 3, the daily copy retries at
-the next 15-minute poll without a notice, and the pre-migration copy waits up to 10 minutes. The tool never reads
-`.env.local`: `quokyctl.sh` passes the service's DB and vector paths (the launcher's own helpers) and extracts only
-`QUOKY_BACKUP_DIR`, `QUOKY_BACKUP_ENABLED`, `QUOKY_TIMEZONE` with a line-anchored `grep '^NAME='`. Those three must be
-plain single-line `NAME=value` lines (no `export`, quotes, `#` or indent), otherwise the backup is refused.
+the next 15-minute poll without a notice, and the pre-migration copy polls every second for up to 10 minutes (600
+tries) and then refuses the start with exit 78 (`BACKUP_PRE_MIGRATION_FAILED`; launchd stops relaunching after 3
+consecutive configuration exits). A second acquire inside a process that already holds the lock returns
+`BACKUP_IN_PROGRESS` at once without opening the file (closing any descriptor of it would drop the holder's fcntl
+lock); only SQLite opens the lock file. The lock is created inside the backup directory, which must be a real
+directory, mode 700 and owned by the owner (lstat + realpath). These checks are not TOCTOU-free: under the owner-only
+threat model a same-user process that can write inside the 700 backup directory is out of scope (it could already
+tamper with the backups themselves).
+
+Neither `quokyctl.sh backup` nor the tool reads `.env.local`. The running service publishes its effective, non-secret
+backup configuration at start to `<data dir>/ops/backup-config.json` (backup directory, enabled, time zone, DB and
+vector paths; private-file writer: real 700 dir, `O_CREAT | O_EXCL | O_NOFOLLOW` 600 temp, fsync, rename). The tool
+reads it with the private-file checks; when it is missing (the service has not started with this build), invalid,
+refused (symlink) or for another database, the tool uses the defaults (`<db dir>/backups`, the default time zone) and
+prints a `note:` line. After changing `QUOKY_BACKUP_DIR` or `QUOKY_TIMEZONE`, restart the service before a manual backup.
 `--verify` works with no live DB (disaster-recovery drill) and refuses symlinked copies, snapshot directories and backup
 directories. Exit codes: 0 ok, 1 DB copy or verify failed, 3 blocked (incl. another run holding the lock), 4 DB copy kept but its
 snapshot failed. `backup-status.json` is best-effort, advisory telemetry (written through the private-file writer);

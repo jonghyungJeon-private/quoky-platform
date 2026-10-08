@@ -92,25 +92,3 @@ quoky_service_db_path() {
 quoky_service_vector_path() {
   printf '%s/vectors' "$1"
 }
-
-# The .env.local keys `quokyctl.sh backup` forwards to the backup tool. Each must be written as one plain line
-# `NAME=value` (no `export`, quotes, inline comment or leading space): the value is taken verbatim from the last
-# `^NAME=` line by a line-anchored grep for that name only; no other line of the file is parsed.
-QUOKY_BACKUP_ENV_KEYS="QUOKY_BACKUP_DIR QUOKY_BACKUP_ENABLED QUOKY_TIMEZONE"
-
-# Prints the value of $2 from env file $1 (empty when unset). Returns 1 (printing nothing) when the name appears in a
-# form this extraction does not support (indented, `export`, a quote, `#`, a carriage return), so the caller refuses
-# instead of passing something the service's dotenv would read differently.
-quoky_env_simple_value() {
-  local file=$1 name=$2 line value
-  if grep -Eq "^[[:space:]]+(export[[:space:]]+)?$name[[:space:]]*=|^export[[:space:]]+$name[[:space:]]*=|^$name[[:space:]]+=" "$file" 2>/dev/null; then
-    return 1
-  fi
-  line=$(grep -E "^$name=" "$file" 2>/dev/null | tail -n 1)
-  [ -n "$line" ] || return 0
-  value=${line#"$name="}
-  case "$value" in
-    *\"* | *\'* | *'`'* | *'#'* | *$'\r'*) return 1 ;;
-  esac
-  printf '%s' "$value"
-}
