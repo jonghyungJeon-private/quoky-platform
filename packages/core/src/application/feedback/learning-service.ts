@@ -58,6 +58,12 @@ export interface LearningServiceDeps {
   replies?: LearningReplyLookup;
   idGenerator?: () => string;
   logger?: Logger;
+  /**
+   * ADR-0116 R4: true when saved examples may accompany a conversation sent to an owner-selected cloud chat model
+   * (`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED` with examples enabled). Appends one disclosure line to the surfaces
+   * that offer or confirm an example; absent/false leaves every text byte-identical.
+   */
+  remoteExamplesDisclosure?: boolean;
 }
 
 /** Where a listing was shown; numbers are bound per actor and conversation location. */
@@ -166,6 +172,8 @@ class LearningListingBindings {
 // ── Fixed Korean copy ────────────────────────────────────────────────────────────────────────────────────────────
 export const LEARNING_FAILURE_TEXT = '학습 후보를 지금 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
 const STORAGE_NOTE = '저장한 내용은 이 기기에만 보관하고 1년 뒤 자동으로 지워져요. 답변 방식이 자동으로 바뀌지는 않아요.';
+/** ADR-0116 R4: the egress disclosure, shown only when remote examples are on. */
+export const LEARNING_REMOTE_DISCLOSURE = '직접 고른 클라우드 모델을 쓸 때는 이 예시가 대화와 함께 전송될 수 있어요.';
 const CANDIDATES_EMPTY =
   '최근 30일 동안 👍/👎를 남긴 답변이 없어요. 답변에 반응을 남기면 여기에서 학습 후보로 고를 수 있어요.';
 const EXAMPLES_EMPTY =
@@ -224,6 +232,10 @@ export class LearningService {
     }
   }
 
+  private disclosureLines(): string[] {
+    return this.deps.remoteExamplesDisclosure === true ? [LEARNING_REMOTE_DISCLOSURE] : [];
+  }
+
   private async listCandidates(scope: LearningCommandScope, now: IsoTimestamp): Promise<LearningCommandResult> {
     const turns = await this.deps.feedback.listRatedTurns({
       actorId: scope.actorId,
@@ -246,6 +258,7 @@ export class LearningService {
       '',
       '👎 답변: "후보 N 메모: 무엇이 잘못됐는지" · 👍 답변: "후보 N 예시로 저장"',
       STORAGE_NOTE,
+      ...this.disclosureLines(),
     );
     return { ...messageFields(joinBody(lines)), status: 'RESPONDED' };
   }
@@ -332,7 +345,8 @@ export class LearningService {
     const answerLine = idealAnswer !== undefined
       ? '답변도 함께 저장했어요.'
       : '답변 내용은 이 기기에 저장돼 있지 않아요. "예시 목록"에서 번호를 확인한 뒤 "예시 N 수정: 좋은 답변"으로 채워 주세요.';
-    return { text: `${index}번 답변을 예시로 저장했어요. ${answerLine}\n${STORAGE_NOTE}`, status: 'RESPONDED' };
+    const disclosure = this.disclosureLines().map((line) => `\n${line}`).join('');
+    return { text: `${index}번 답변을 예시로 저장했어요. ${answerLine}\n${STORAGE_NOTE}${disclosure}`, status: 'RESPONDED' };
   }
 
   private async listExamples(scope: LearningCommandScope, now: IsoTimestamp): Promise<LearningCommandResult> {
@@ -351,7 +365,7 @@ export class LearningService {
       const answer = item.data.idealAnswer !== undefined ? '답변 있음' : '답변 없음';
       lines.push(messageBody(`${i + 1}. ${date} · 요청 `, learningRequestExcerpt(item.data.requestText), ` · ${answer}`));
     }
-    lines.push('', '"예시 N 수정: 좋은 답변"으로 답변을 채우거나 고치고, "예시 N 삭제"로 지울 수 있어요.');
+    lines.push('', '"예시 N 수정: 좋은 답변"으로 답변을 채우거나 고치고, "예시 N 삭제"로 지울 수 있어요.', ...this.disclosureLines());
     return { ...messageFields(joinBody(lines)), status: 'RESPONDED' };
   }
 

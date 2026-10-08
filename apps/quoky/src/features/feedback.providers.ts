@@ -35,7 +35,13 @@ type LearningCapableStorage = StorageProvider & { readonly learning: LearningRep
 const feedbackLogger = new ConsoleLogger('feedback');
 const learningLogger = new ConsoleLogger('learning');
 
-export const feedbackProviders: Provider[] = [
+export interface FeedbackCompositionOptions {
+  /** ADR-0116 R4: disclose in the learning copy that examples may accompany an owner-selected cloud model. */
+  readonly remoteExamplesDisclosure?: boolean;
+}
+
+export function createFeedbackProviders(options: FeedbackCompositionOptions = {}): Provider[] {
+  return [
   {
     provide: FEEDBACK_REPOSITORY,
     useFactory: (storage: FeedbackCapableStorage): FeedbackRepository => ({
@@ -90,10 +96,12 @@ export const feedbackProviders: Provider[] = [
           learning,
           tasks: { get: (id) => storage.tasks.get(id) },
           logger: learningLogger,
+          ...(options.remoteExamplesDisclosure === true ? { remoteExamplesDisclosure: true } : {}),
         }),
         logger: learningLogger,
       }),
     ],
     inject: [FeedbackRecorder, STORAGE_PROVIDER, FEEDBACK_REPOSITORY, LEARNING_REPOSITORY],
   },
-];
+  ];
+}

@@ -17927,7 +17927,7 @@ its own commit first (D5's precondition for wiring the flag). No migration, no n
   OpenAI or Gemini chat model — receives examples too when the flag is on, as D2 reads. (R3) An explicitly set
   `QUOKY_CHAT_PROVIDER` counts for every conversation on the host (D2). (R4) Learning copy is unchanged (it says the
   examples are stored only on this host, which stays true); a line telling the owner that examples may now accompany
-  an owner-selected cloud model is left for the PLT-0 copy refactor. Strict gates (the `.env.local` flag change on the
+  an owner-selected cloud model is left for the PLT-0 copy refactor. **R4 resolved (2026-10-08):** with the flag on (and examples enabled), the candidate listing, the example-save confirmation and the example list each append one line, "직접 고른 클라우드 모델을 쓸 때는 이 예시가 대화와 함께 전송될 수 있어요."; flag off is byte-identical (`LearningServiceDeps.remoteExamplesDisclosure`, set from `learningRemoteDisclosureOf(config)`; no new token). Strict gates (the `.env.local` flag change on the
   owner host and the live round trip) are not run.
 
 ## ADR-0117 — Morning brief with today's calendar and opt-in pre-meeting reminders: deterministic, no model, DM-only; a Jira section only when opted in. Amends ADR-0101 D7 (a connector-backed brief) and ADR-0101/ADR-0110 (event-relative reminders).
