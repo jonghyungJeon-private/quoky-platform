@@ -227,8 +227,10 @@ fixed; the implementations are not.
     and tag contain no `cloud` (mirrors ADR-0098 D8); Claude and Codex declare `REMOTE`. Every future provider must
     declare it or is treated as `REMOTE`. Data whose egress is `LOCAL_ONLY` (the owner-curated learning examples of
     ADR-0107 D5) is composed into a request only after the provider for that execution is resolved and declares
-    `LOCAL`; otherwise the request is composed without it, and there is no re-execution on another provider
-    (ADR-0092). The Stage 2B routed seam gets no examples in v3. ADR-0110 and ADR-0111 reuse this attribute.
+    `LOCAL`; with `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` it is also composed for a `REMOTE` chat-tier provider
+    that is the owner's explicit selection, never for a derived default or a selection-time fallback (ADR-0116);
+    otherwise the request is composed without it, and there is no re-execution on another provider (ADR-0092). The
+    Stage 2B routed seam gets no examples in v3. ADR-0110 and ADR-0111 reuse this attribute.
 
 ---
 
