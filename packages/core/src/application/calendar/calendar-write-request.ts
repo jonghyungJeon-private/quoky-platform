@@ -27,11 +27,14 @@ import { extractSpan, placeCalendarSpan } from './calendar-question';
  * - The event an update or delete means is a REFERENCE (day + optional start time + optional quoted title); the write
  *   flow lists that day and asks which one when more than one matches — this grammar never picks an event.
  * - Day words reuse the read grammar's `extractSpan` (today when none is named); a week, weekend or "next" span is
- *   too broad for a write and becomes a usage hint.
+ *   too broad for a write and becomes a usage hint. An update / delete that names no day is marked `inferredDay` so the
+ *   flow resolves it against the session's recent calendar context instead of today (live QA D2).
  * - Clock times follow the reminder convention with a day: an explicit 오전/오후 (아침, 낮, 점심, 저녁, 밤) wins; without
  *   one, 1–6 is afternoon, 7–11 morning, 12 noon, and 0 or 13–23 is taken as written. "반" is 30 minutes.
  * - A new event without an end lasts one hour; "3시부터 4시까지", "3시~4시" and "1시간"/"30분" set it. "종일" is an
- *   all-day event. The title is the text after "제목" (or a quoted text), else the meeting noun the owner used.
+ *   all-day event. The title is the text after "제목" (or a quoted text), else the whole noun phrase between the time
+ *   phrase and the booking verb when it holds a meeting noun ("금요일 오후 3시에 QA 스윕 회의 잡아줘" → "QA 스윕 회의",
+ *   live QA D10), else the meeting noun the owner used.
  * - Anything write-shaped that does not parse exactly is a `usage` draft (the reply explains the forms).
  */
 
@@ -183,7 +186,7 @@ function parseCreate(text: string, options: CalendarWriteGrammarOptions): Connec
   const { head, title: fieldTitle, location, description } = fieldsOf(text);
   const date = dayOf(head, options);
   if (date === undefined) return { kind: 'usage', topic: 'calendar-span' };
-  const title = fieldTitle ?? quotedOf(head) ?? MEETING_NOUN.exec(head)?.[1]?.replace(/\s+/gu, ' ');
+  const title = fieldTitle ?? quotedOf(head) ?? titlePhraseOf(head) ?? MEETING_NOUN.exec(head)?.[1]?.replace(/\s+/gu, ' ');
   if (title === undefined) return usage;
   if (
     !bounded(title, CALENDAR_EVENT_TITLE_MAX_LENGTH) ||
@@ -235,6 +238,49 @@ function parseCreate(text: string, options: CalendarWriteGrammarOptions): Connec
   return { kind: 'calendar-create', event };
 }
 
+const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)/u;
+const DAY_WORD_ALL = new RegExp(DAY_WORD, 'gu');
+const CLOCK_ALL = new RegExp(CLOCK, 'gu');
+const RANGE_ALL = new RegExp(RANGE_RE.source, 'gu');
+const DURATION_ALL = new RegExp(DURATION_RE.source, 'gu');
+const ALL_DAY_ALL = new RegExp(ALL_DAY.source, 'giu');
+/** Connecting particles left between the time phrase and the title ("3시에 …", "2시간짜리 …"). */
+const LEADING_LINK = /^[\s,，]*(?:에서|에는|에|부터|까지|동안|짜리|간)?[\s,，]*/u;
+const FILLER = /^(?:좀|하나|한\s*개|새|새로)$/u;
+
+/**
+ * The noun phrase between the last day / time / duration phrase and the booking verb, when it holds a meeting noun:
+ * "금요일 오후 3시에 QA 스윕 회의 잡아줘" → "QA 스윕 회의". A trailing object particle, fillers ("좀", "하나") and a
+ * generic trailing "일정" after a more specific word ("통화 일정" → "통화") are dropped. Undefined when the phrase is
+ * empty or holds no meeting noun (the caller then falls back to the bare meeting noun).
+ */
+function titlePhraseOf(head: string): string | undefined {
+  const verb = BOOKING_VERB.exec(head);
+  const end = verb?.index ?? head.length;
+  let start = 0;
+  for (const pattern of [DAY_WORD_ALL, CLOCK_ALL, RANGE_ALL, DURATION_ALL, ALL_DAY_ALL]) {
+    pattern.lastIndex = 0;
+    for (const match of head.matchAll(pattern)) {
+      const matchEnd = (match.index ?? 0) + match[0].length;
+      if (matchEnd <= end && matchEnd > start) start = matchEnd;
+    }
+  }
+  if (start >= end) return undefined;
+  let phrase = head.slice(start, end).replace(LEADING_LINK, '').replace(/\s*(?:을|를|으로|로)\s*$/u, '').trim();
+  const words = phrase.split(/\s+/u).filter((word) => word.length > 0 && !FILLER.test(word));
+  if (words.length > 1 && words[words.length - 1] === '일정') words.pop();
+  phrase = words.join(' ');
+  if (phrase.length === 0 || !MEETING_NOUN.test(phrase)) return undefined;
+  return phrase;
+}
+
+/** Whether the text names a day at all (`extractSpan` defaults to today when it does not). */
+function namesDay(text: string): boolean {
+  const span = extractSpan(text);
+  if (span.kind !== 'day' || span.offset !== 0) return true;
+  return /오늘|금일|\btoday\b|\btonight\b/iu.test(text);
+}
+
 function referenceOf(part: string, options: CalendarWriteGrammarOptions): CalendarEventReference | undefined {
   const date = dayOf(part, options);
   if (date === undefined || !isValidLocalDate(date)) return undefined;
@@ -248,6 +294,7 @@ function referenceOf(part: string, options: CalendarWriteGrammarOptions): Calend
     window: { from: window.from, to: window.to },
     ...(startTime !== undefined ? { startTime } : {}),
     titleWords: quoted === undefined ? [] : quoted.toLowerCase().split(/\s+/u).filter((w) => w.length > 0),
+    ...(namesDay(part) ? {} : { inferredDay: true as const }),
   };
 }
 

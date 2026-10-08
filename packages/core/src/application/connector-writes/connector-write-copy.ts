@@ -12,6 +12,7 @@ import { escapeDiscordText } from '../work-chat/external-work-readout';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
 import type {
   ConnectorWriteApprovedElsewhere,
+  ConnectorWriteChoiceBasis,
   ConnectorWriteLatestRequest,
   ConnectorWriteCloseReason,
   ConnectorWriteEventSummary,
@@ -475,13 +476,30 @@ export function renderConnectorWriteAlreadySent(operation: ConnectorWriteOperati
   ].join('\n');
 }
 
+/** The first line of a numbered choice: why these events (live QA D2: an undated request says where they came from). */
+function choiceHeader(mode: 'update' | 'delete', count: number, basis: ConnectorWriteChoiceBasis | undefined): string {
+  const which = `어느 일정을 ${mode === 'update' ? '바꿀지' : '삭제할지'} 번호로 답해 주세요 (예: "1번").`;
+  const unchanged = notDoneByThisRequest(true, true);
+  switch (basis) {
+    case 'listed':
+      return `날짜를 말하지 않아서 방금 보여 드린 일정에서 찾았어요 (${count}개). ${which} ${unchanged}`;
+    case 'written':
+      return `날짜를 말하지 않아서 이 대화에서 방금 추가·변경한 일정을 찾았어요. 이 일정이 맞으면 번호로 답해 주세요 (예: "1번"). ${unchanged}`;
+    case 'nearby':
+      return `어느 일정인지 말하지 않아서 오늘·내일 일정을 보여 드려요 (${count}개). ${which} 날짜와 시간을 함께 적어도 돼요 (예: "내일 3시 회의 취소해줘"). ${unchanged}`;
+    default:
+      return `조건에 맞는 일정이 ${count}개예요. ${which} ${unchanged}`;
+  }
+}
+
 export function renderConnectorWriteChoice(
   mode: 'update' | 'delete',
   candidates: readonly ConnectorWriteEventSummary[],
   timeZone: string,
+  basis?: ConnectorWriteChoiceBasis,
 ): string {
   return [
-    `조건에 맞는 일정이 ${candidates.length}개예요. 어느 일정을 ${mode === 'update' ? '바꿀지' : '삭제할지'} 번호로 답해 주세요 (예: "1번"). ${notDoneByThisRequest(true, true)}`,
+    choiceHeader(mode, candidates.length, basis),
     ...candidates.map(
       (event, i) =>
         `${i + 1}. ${summaryTime(event, timeZone)} ${inline(event.title || '(제목 없음)')}${event.location !== undefined ? ` (${inline(event.location)})` : ''}`,
@@ -514,6 +532,8 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'transition-unavailable': '이 이슈는 지금 그 상태로 바꿀 수 없어요.',
   'transition-lookup-failed': '이 이슈에서 바꿀 수 있는 상태를 확인하지 못했어요.',
   'event-not-found': '그 날짜·시간에 맞는 일정을 기본 캘린더에서 찾지 못했어요.',
+  'no-nearby-events':
+    '어느 일정인지 알 수 없어요. 이 대화에서 최근에 다룬 일정이 없고 오늘·내일 기본 캘린더에도 일정이 없어요. 날짜와 시간을 함께 적어 주세요 (예: "금요일 3시 회의 취소해줘").',
   'event-unversioned':
     '이 일정은 미리보기 이후 바뀌었는지 확인할 버전 정보가 없어서 바꾸거나 삭제하지 않아요. 승인할 요청도 만들지 않았어요.',
   'too-many-events': '맞는 일정이 너무 많아요. 시간이나 따옴표로 제목을 더 정확히 적어 주세요.',
@@ -613,7 +633,7 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
     case 'preview':
       return renderConnectorWritePreview(step.preview, step.remainingMs, step.executionPhrase);
     case 'choice':
-      return renderConnectorWriteChoice(step.mode, step.candidates, step.timeZone);
+      return renderConnectorWriteChoice(step.mode, step.candidates, step.timeZone, step.basis);
     case 'already-sent':
       return renderConnectorWriteAlreadySent(step.operation, step.externalRef, step.url);
     case 'approved':

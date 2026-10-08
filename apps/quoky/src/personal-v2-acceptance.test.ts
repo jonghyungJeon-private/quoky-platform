@@ -1540,6 +1540,10 @@ describe('Personal v3 CAL-2 — schedule questions from the configured calendar 
       // INT-2: the v3 live-QA W4-L01 booking phrasings (route-205/206).
       '내일 오후 3시에 회의 잡아줘',
       '금요일 10시에 팀 미팅 넣어줘',
+      // v3 live QA session 3 (route-301..303): an undated delete (D2) and a multi-word booking title (D10).
+      '일정 취소해줘',
+      '일정 삭제해줘',
+      '금요일 오후 3시에 QA 스윕 회의 잡아줘',
     ]);
     for (const golden of calendarCases()) {
       const seen = byId.get(golden.id) as CaseObservation;
