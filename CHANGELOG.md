@@ -5,7 +5,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — backup set includes the vector store; on-demand backup (2026-10-08)
+## Unreleased — live QA session 3 defects: calendar context, Slack DM filtering, recall floor, read-only ops-UI lookups, labels (2026-10-08) — PR #148
+
+- Calendar (D2, D10): a change or delete that names no day first uses this session's recent calendar context (the event
+  just created or changed, or the last list shown, 30 minutes, per session and actor); with none it offers today and
+  tomorrow, filtered by any time or title given. An undated reference always gets a numbered choice. A booking keeps the
+  whole title ("QA 스윕 회의").
+- Slack search (D3, D15): DMs and group DMs are dropped; a result whose conversation type is unknown is left out (fail
+  closed). Results are labelled `#channel-name` (cached `conversations.info`); a text-less hit is titled "(내용 없음)".
+- Recall (D5): a memory counts as an own-memory hit only when a question topic word appears in it, its raw
+  `semanticScore` is at least 0.6 (new structured fields `retrievalMode`, `semanticScore`), or recall was lexical-only.
+  Live QA session 4 found the 0.6 floor ineffective for short Korean texts (D5-R, open).
+- Operations UI (D6, D7, ADR-0113 D4): the connector panel shows the effective write binding and allow-list counts; the
+  approvals list and detail page share one kind label; the snapshot and the confirmation GET use strictly read-only
+  lookups and never mutate approval or anchor state.
+- Labels and copy (D8, D9, D13): one label per capability in the feedback stats; a shared Korean particle helper that
+  handles digits ("#99를"); the "not read" facts give the actual reason, with `INVALID_IMAGE` distinct end to end.
+
+## Unreleased — truthful execution-phrase replies; revoke and execute serialized (2026-10-08) — PR #147
+
+- Bare `실행` / "go" / "run it" while a write is approved quotes the exact phrase for that write and keeps the grant; with
+  nothing approved the reply is "이 대화에는 지금 실행할 승인된 작업이 없어요".
+- A write phrase asked as a question or a negation (`댓글 실행해도 돼?`, `…하지 마`) gets a deterministic reply about the
+  conversation's latest request of that kind in whatever state it is in (sent within 30 minutes, `UNCERTAIN` (never
+  expires), `NOT_SENT`, rejected/cancelled/expired/superseded, or approved in another conversation). After a newer
+  rejection, an older post is no longer reported as "이미 보냈어요" (live QA D1).
+- A `거절`/`취소` after approval marks the approval REJECTED through `ApprovalDecisionService` revoke; execution validation,
+  grant consumption and the EXECUTING transition share the approval → session locks, so exactly one of revoke and execute
+  wins (D12).
+- `PR 머지해줘` with no code chain gets the merge-disabled reply; `<item> 완료` gets the `완료 처리: N` hint when it matches
+  one open to-do (D11). Every "nothing sent" phrase is scoped to its request. Golden routing baseline 300 → 335.
+
+## Unreleased — backup set includes the vector store; on-demand backup (2026-10-08) — PR #146
 
 Live-QA follow-ups from the 2026-10-07 restore drill.
 
@@ -44,7 +75,7 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
 - `@quoky/vector-local`: `writeVerifiedVectorSnapshot`, `verifyVectorSnapshot`, `inspectVectorStore` (format helpers
   shared with the provider); `@quoky/storage-sqlite`: `verifySqliteBackupFile` (read-only re-check of a copy).
 
-## Unreleased — Discord table rendering for model replies only (ADR-0111 amendment, 2026-10-08)
+## Unreleased — Discord table rendering for model replies only (ADR-0111 amendment, 2026-10-08) — PR #145
 
 - Core: `OutboundMessage.format?: 'model-reply'`, set by the runtime only on a provider's own answer (chat, summaries,
   analyses, image readings); withheld or guard-replaced notices and every deterministic reply stay unflagged.
@@ -53,7 +84,7 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
   indented lines and malformed tables are never converted. Unflagged text — previews, approvals, connector-write
   previews, diffs, reminders — is delivered byte-identical.
 
-## Unreleased — Codex as an image-understanding option (ADR-0111 amendment, 2026-10-08)
+## Unreleased — Codex as an image-understanding option (ADR-0111 amendment, 2026-10-08) — PR #145
 
 - `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=codex`, `이미지 모델 변경: codex` / `/model image codex` and the `/providers` option
   `image:codex`: the Codex CLI reads attached images (cloud, OpenAI) with the chat tier's `QUOKY_CODEX_MODEL`.
@@ -63,7 +94,7 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
 - The image locality policy opens `REMOTE` for `codex` exactly as for `claude` (only while it is the effective image
   choice); dispatch-time re-check, synchronous eligibility check and write fence unchanged.
 
-## Unreleased — semantic recall warm model and provider readiness after boot (2026-10-08)
+## Unreleased — semantic recall warm model and provider readiness after boot (2026-10-08) — PR #144
 
 - The Ollama embedding provider runs `ollama run --keepalive 30m` and loads the model in the background (fixed
   `warm-up` text, 30 s bound) on its first ready probe, after Ollama comes back, and after a timed-out call. A call cut
@@ -76,7 +107,7 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
   Selecting one capability probes only providers that advertise it. `timed out waiting for server to start` from the
   Ollama CLI is classified `UNAVAILABLE`.
 
-## Unreleased — runtime model switching live QA follow-ups (2026-10-07)
+## Unreleased — runtime model switching live QA follow-ups (2026-10-07) — PR #143
 
 - `모델 목록` and the `/providers` form list only chat-capable Ollama models (`ollama show` capabilities, cached per
   model and `ID`); an embedding-only model such as `nomic-embed-text` is left out and refused if named
@@ -90,7 +121,7 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
   RIFF chunks) before it is written; metadata and text chunks are dropped, trailing bytes and malformed files are
   refused, and only the canonical bytes reach a vision provider.
 
-## Unreleased — runtime model switching: operations-UI default and `/model` per conversation (ADR-0092/ADR-0111 amendments, 2026-10-07)
+## Unreleased — runtime model switching: operations-UI default and `/model` per conversation (ADR-0092/ADR-0111 amendments, 2026-10-07) — PR #142
 
 - Chat tier (chat, summaries, document analysis, read-only lookups) and image understanding switch without a restart.
   Precedence per tier: session override → operations-UI default (`<db dir>/ops/provider-selection.json`, 0600, no
@@ -110,7 +141,7 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
 - Help: the two feedback lines are one line, so the help budget stays 14 lines. ARCHITECTURE.md §2 principle 1 widened
   (owner-approved).
 
-## Unreleased — selectable chat provider: Claude, Codex or Ollama (ADR-0092 amendment, 2026-10-07)
+## Unreleased — selectable chat provider: Claude, Codex or Ollama (ADR-0092 amendment, 2026-10-07) — PR #141
 
 - `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` picks the chat-tier provider registered next to Claude. Unset
   derives from `QUOKY_OLLAMA_ENABLED` as before; a contradicting pair lets the selector win with the startup warning
@@ -120,6 +151,54 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
   `codex exec --json` in an empty temp cwd; readiness via `codex login status`; optional `QUOKY_CODEX_MODEL`.
 - The ops UI provider panel shows the selector value and its source. Docs: quickstart section 4, operator guide 0.2/0.4a,
   `.env.example`.
+
+## Unreleased — selectable image-understanding provider; Claude only on explicit selection (ADR-0111 amendment, 2026-10-07) — PR #140
+
+- `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `ollama` | `claude` | `off` (exact, else `IMAGE_UNDERSTANDING_PROVIDER_INVALID`;
+  `codex` added in #145). Unset keeps the earlier behaviour (`ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, else
+  `off`). For `claude` the model is `QUOKY_IMAGE_UNDERSTANDING_MODEL`, then `QUOKY_CLAUDE_MODEL`, then `sonnet`.
+- New `ClaudeCliVisionProvider` (`REMOTE`, `IMAGE_UNDERSTANDING` only): chat isolation flags plus `--tools ""`, image as a
+  base64 block over stream-json on stdin, byte-typed, 8 MiB / 3 images / 120 s, readiness `claude auth status --json`;
+  image path and bytes never in argv, logs, errors or the audit.
+- Core allows `REMOTE` image providers only while `claude` is selected (by capability and locality, never provider id).
+  The reply credential check runs on every image turn and captions are credential-checked before egress. Residual: a
+  secret visible inside an image cannot be detected before it is sent.
+
+## Unreleased — live QA session 2 record (2026-10-07) — PR #139
+
+- Docs only: `docs/uat/personal-v3-qa-record.md` session 2 (W6-L01..L11), W6-A2 UI approve PARTIAL PASS, updated
+  pending lists in `CURRENT_STATE.md` and the operator guide.
+
+## Unreleased — text attachments reach the chat prompt; hardened credential guards (2026-10-07) — PR #138
+
+- Text attachments become `ContextBundle.currentAttachments` (current message only, never persisted or logged), rendered
+  as an untrusted-data section, budgeted at 2,000 characters per message (head and tail; image turns too). Live QA
+  W6-L07: the log had never reached the chat prompt.
+- With every attachment refused and an empty message, a fixed reply with no provider call; otherwise the prompt carries
+  a "this file was not read; never guess" fact.
+- The credential guard runs on the exact outgoing text; a credential-like file name becomes `attachment-N.<ext>`; the
+  shared detector also matches a view with format, ignorable and control characters stripped and NFKC applied until
+  stable (zero-width, bidi, CR, NFD-jamo splits). On attachment turns the provider reply and every artifact field are
+  checked first; a match withholds the whole reply.
+
+## Unreleased — git concept questions are never captured by code-chain word checks (2026-10-07) — PR #137
+
+- `git rebase와 merge 차이를 …` reaches chat even with a chain parked at `PR_CREATED` (W6-L06); explicit learning, memory,
+  to-do and reminder commands are never hijacked by chain word checks (W6-L11, `담당자`). Git request detectors and
+  companion replies need a request shape; Korean word boundaries allow particles. `EXECUTION_PHRASES` and every
+  pending-approval intercept are unchanged. Golden routing 232 → 279.
+
+## Unreleased — reactions on replies posted before the last restart are counted (2026-10-07) — PR #136
+
+- An uncached partial target is admitted on owner and location only (no fetch, no content); core records the reaction
+  only when the target id is one of the bot's own sent messages and the reactor is that turn's user (W6-L10).
+
+## Unreleased — execution phrase in another conversation points to the waiting approval (2026-10-07) — PR #135
+
+- An execution phrase with nothing approved in this session names an approved, unexpired write of that kind waiting in
+  another conversation and where to send the phrase; no payload text, no provider call. "Already sent" applies only to a
+  write approved in the same session and sent within 30 minutes, with time and target. The operations-UI decision DM
+  says which conversation to send the phrase in (W6-L01).
 
 ## Quoky Personal v3 — waves 1-6 — 2026-10-07
 

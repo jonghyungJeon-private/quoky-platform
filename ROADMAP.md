@@ -18,7 +18,8 @@ Lightweight, living roadmap: **direction and sequence only.** Rules live in
 - **M0 — Repository operating system** ✅ done (Sprint 0).
 - **M1 — Walking skeleton:** one natural-language flow, end to end (Sprint 1a → 1b).
 - **M2 — Memory & multi-provider:** ✅ done for the ratified scope — provider-neutral routing/Ollama,
-  ContextBuilder ranking and bounded compression, durable memory, and read-only connectors. Codex remains deferred.
+  ContextBuilder ranking and bounded compression, durable memory, and read-only connectors. Codex was deferred here; it
+  now serves the chat tier and images (Personal v3 follow-ups, #141/#145).
 - **M3 — Personal Work OS foundations:** **active** — Resource identity, a read-only Work Surface, and the
   narrow CAP-011 Work Model follow the ratified M3 Architecture Rebaseline (ADR-0074/0075).
 
@@ -60,9 +61,9 @@ does not claim Production Runtime readiness.
 | **PCR-R2** | Production Continuation Receiver — offline provider-backed receiver | IMPLEMENTED LOCALLY / AWAITING REVIEW on base `ccb1864` (R1 = CLOSED + DELIVERED via PR #79). Core `ContinuationProviderRoutingService` (sibling of `RuntimeProviderRoutingService`, reuses Stage2B primitives; not a wrapper/CapabilityRouter/AiProvider caller); Core `PromptComposer.composeContinuation` + separate bounded validation corpus (identifiers only; no conversation reframe; fail-closed bounds); app `ProviderBackedContinuationReceiver` (`supportedCapabilities = [GENERAL_CHAT]`, narrow deps, bounded FAILED preflight, platform-owned `MARKDOWN_REPORT`, provider artifact ids ignored, never terminalizes); routing policy `stage2b-continuation-general-chat-v1` (WORK/CHAT/AUTHORITY_SENSITIVE, `requiredRoutingClasses=[BALANCED]`) + chat policy hardened to CONVERSATIONAL; PRODUCTION config/digest change binding both validation profiles; PRIMARY_ONLY enforced in code; disposition mapping (pre-dispatch→FAILED, dispatched-uncertain→UNRESOLVED, returned→SUCCEEDED/FAILED); `QUOKY_CONTINUATION_RECEIVER_MODE = disabled|general-chat-v1` (default disabled, separate from routing mode, general-chat-v1 startup fail-closed until R3 containment); ADR-0089 cross-referenced; activation DISABLED / NOT LIVE-READY; R3 NOT STARTED; no live provider/network/containment/external trigger |
 | **Personal v1** | First product release ("Quoky Personal v1") | Scope ratified by the Product Owner 2026-10-02; ADR-0091/0092/0093/0094 + ADR-0073 amendment; see "First product release" below; IMPLEMENTED LOCALLY on the integration branch with offline acceptance PASS; Live UAT (criterion 9) NOT EXECUTED |
 | **Personal v2** | Personal v2 (owner reminders, work chat, answer quality, code-work expansion, credential override) | IMPLEMENTED (waves 1-8). ADR-0096..0101 + ADR-0098 amendment Ratified; plan `docs/plans/personal-v2-execution-plan.md`; waves 1-7 MERGED (PRs #105-#111); wave 8 = INT-1 offline acceptance + DOC-B docs (wave-8 PR); owner-attended live QA for waves 1-7 recorded in `docs/uat/personal-v2-qa-record.md`; Live UAT of connectors (real tenants), reminders channel delivery, the reminders release default and merge enablement NOT EXECUTED |
-| **Personal v3** | Personal v3 (always-on runtime, deterministic answers, memory commands, owner-curated learning, calendar, files and images, connector writes, local operations UI) | IMPLEMENTED (waves 1-6). ADR-0102..0113 Ratified 2026-10-06 (+ ADR-0106 and ADR-0110 amendments); plan `docs/plans/personal-v3-plan.md`; waves 1-6 MERGED (PRs #116-#132); INT-2 + DOC-C close wave 6; live QA in `docs/uat/personal-v3-qa-record.md`; SUB-3, CODE-8, CODE-9 DEFERRED (P2); granite live re-test, UI approve/reject, attachments/images and learning live sessions NOT EXECUTED |
+| **Personal v3** | Personal v3 (always-on runtime, deterministic answers, memory commands, owner-curated learning, calendar, files and images, connector writes, local operations UI) | IMPLEMENTED (waves 1-6). ADR-0102..0113 Ratified 2026-10-06 (+ ADR-0106 and ADR-0110 amendments); plan `docs/plans/personal-v3-plan.md`; waves 1-6 MERGED (PRs #116-#132); INT-2 + DOC-C close wave 6; follow-ups MERGED (PRs #133-#148: selectable chat and image providers incl. Codex, runtime switching, vector-store backups, live QA fixes); live QA (sessions 2-4, host reboot) in `docs/uat/personal-v3-qa-record.md`; chat and images on Claude by owner decision 2026-10-07; SUB-3, CODE-8, CODE-9 DEFERRED (P2); mid-send `UNCERTAIN`, Stage 2A re-validation, CODE-8 live and D13 live NOT EXECUTED; D5-R and D16 open |
 | **Personal v4** | Post-v3 plan (Telegram adapter, more chat/image providers, morning brief with calendar, Gmail/Drive read, v3 carry-over) | **PROPOSED** — plan `docs/plans/personal-v4-plan.md`; no ADR ratified, owner decisions 1-25 open |
-| **Future** | Memory improvements · Codex · additional connectors | per ADR sequence |
+| **Future** | Memory improvements · additional connectors | per ADR sequence (Codex chat and images delivered in the v3 follow-ups) |
 
 ## First product release — Quoky Personal v1
 
@@ -93,7 +94,8 @@ execution remain separately approved Strict gates.
 - GitHub push → PR → merge → cleanup chain. (Personal v2: push → PR delivered opt-in with merge off; merge enablement is not live-verified.)
 - New-file and multi-file apply. (Delivered in Personal v2.)
 - M3 connector expansion.
-- Vector retrieval; Codex provider. (Personal v2: opt-in local embedding recall delivered; Codex still deferred.)
+- Vector retrieval; Codex provider. (Personal v2: opt-in local embedding recall delivered. Personal v3 follow-ups: Codex
+  for the chat tier and images, #141/#145.)
 - MLX provider — 2nd-release candidate.
 
 **Personal v2 — status (2026-10-03)**
@@ -118,32 +120,35 @@ The v1-era candidate list for v2 (answer quality A-E) and the v2 tracks that wer
 Jira/Slack/Confluence/GitHub tenants, reminders channel delivery, then the release-default decision for reminders).
 Update 2026-10-06/07: connector lookups on the real Jira, Confluence and GitHub tenants, reminders channel delivery, PR
 status with checks and embedding recall ran live (`docs/uat/personal-v2-qa-record.md`), and the reminders release default
-is now `true` (Personal v3). Slack read lookups (no user token) and merge enablement have still not run.
+is now `true` (Personal v3). Update 2026-10-08: Slack read lookups ran live with a user token (v3 QA record, sessions 3
+B7 and 4 D3/D15; DM results are now dropped, #148). Merge enablement has still not run.
 
-**Personal v3 — status (2026-10-07)**
+**Personal v3 — status (updated 2026-10-08)**
 
-Plan `docs/plans/personal-v3-plan.md`; ADR-0102..0113 Ratified 2026-10-06; waves 1-6 merged (PRs #116-#132); live QA
-record `docs/uat/personal-v3-qa-record.md`. "Live" means recorded there; everything else is offline-tested only.
+Plan `docs/plans/personal-v3-plan.md`; ADR-0102..0113 Ratified 2026-10-06; waves 1-6 merged (PRs #116-#132), follow-ups
+merged (PRs #133-#148); live QA record `docs/uat/personal-v3-qa-record.md` (sessions 2-4, host reboot). "Live" means
+recorded there; everything else is offline-tested only.
 
 | Item | Status |
 |---|---|
-| SUB-1/2 always-on launchd service, single instance, identity check, verified backups, `OPS_NOTICE` (ADR-0102) | DONE; installed and live-verified on the owner's Mac (restart, reminder across restart, pre-migration backups); reboot, scheduled daily backup and restore drill PENDING |
+| SUB-1/2 always-on launchd service, single instance, identity check, verified backups, `OPS_NOTICE` (ADR-0102) | DONE and live-verified on the owner's Mac: restart, reminder across restart, pre-migration backups, the scheduled 04:00 backup, a restore drill on a copy, a real host reboot (2026-10-08) and an on-demand `quokyctl.sh backup --apply` with the vector snapshot (#146) |
 | SUB-3 continuation activation under the Personal trust model (ADR-0103) | DEFERRED (P2, not implemented; continuation stays fail-closed) |
-| DET-1 internal-action claim guard, code-chain status replies, fall-through corpus (ADR-0104) | DONE and live-verified on a sample; residual R5 accepted; to-do/reminder status phrases (D3) and the full edge-case sweep PENDING |
+| DET-1 internal-action claim guard, code-chain status replies, fall-through corpus (ADR-0104) | DONE and live-verified; a 44-phrasing edge-case sweep ran in live QA session 3 (34 as expected; the deviations were fixed in #147/#148 and verified in session 4, except D5, which is open as D5-R); residual R5 accepted; to-do/reminder status phrases (D3) not complete (v4 DET-2) |
 | LLM-1 chat hygiene and help-intent handler | DONE and live-verified |
-| LLM-2 model choice by measurement (ADR-0105 D1) | DONE offline: helpfulness-aware harness picked `granite3.3:8b`, set on the owner's service 2026-10-07; live re-test W6-M5 partial pass (3 of 4 replies local, invented specifics remain), mid-word wrap fixed in PR #133; 20-prompt Korean daily-chat set PENDING |
+| LLM-2 model choice by measurement (ADR-0105 D1) | DONE offline: helpfulness-aware harness picked `granite3.3:8b`, set on the owner's service 2026-10-07; live re-test W6-M5 partial pass; the 20-prompt Korean daily-chat set ran (W6-L05, about 5 of 20 usable). **Chat moved to Claude by owner decision (2026-10-07)**; Ollama stays selectable and serves embeddings |
 | LLM-3 MLX provider (ADR-0105 D2-D4) | NOT DONE (optional; no benchmark run) |
 | MEM-1 memory commands, archive with restore, history purge (ADR-0106 + amendment) | DONE and live-verified |
-| LRN-1 learning store v14, candidates and trend; LRN-3 offline report (ADR-0107) | DONE; only the empty `피드백 후보` state ran live |
-| LRN-2 curated examples for `LOCAL` providers only | DONE offline; `QUOKY_LEARNING_EXAMPLES_ENABLED=false` (off) until measured; live PENDING |
+| LRN-1 learning store v14, candidates and trend; LRN-3 offline report (ADR-0107) | DONE and live-verified (candidates, notes and the 👍-only example rule, live QA session 2 W6-L11) |
+| LRN-2 curated examples for `LOCAL` providers only | DONE; an example was saved and used live (session 2 W6-L11, flag on for that session). Examples reach `LOCAL` providers only, so they do not reach the owner's Claude chat (v4 owner decision 11) |
 | LRN-4 local fine-tuning | DEFERRED (needs ≥300 approved examples and a measured LRN-2 gain) |
 | CODE-6 read-only PR status token; CODE-7 PR title/body bound by hash (ADR-0108) | DONE and live-verified on the sandbox repo; optional model-proposed title/body (D4) not wired |
-| CODE-8 multi-repository allowlist (ADR-0109) | DEFERRED (P2, not implemented) |
+| CODE-8 multi-repository allowlist (ADR-0109) | DEFERRED (P2, not implemented on `main`; being implemented on another branch) |
 | CODE-9 merge enablement | DEFERRED (P2; release default `QUOKY_GIT_MERGE_ENABLED=false`) |
 | CAL-1/2 calendar read; calendar writes (ADR-0110 + amendment) | DONE and live-verified on the owner's company calendar (reads, create, move, delete) |
-| MM-1/2 attachments and local image understanding (ADR-0111) | DONE offline; images need an operator-chosen local vision model in `QUOKY_OLLAMA_VISION_MODEL`; live PENDING |
-| CWR-1/2 Jira comment/transition and Slack post behind exact-payload approvals, v15 receipts (ADR-0112) | DONE and live-verified on allowlisted test targets; mid-send failure (`UNCERTAIN`) PENDING |
-| OPS-1/2/2b local operations UI: monitoring, reminder cancel, memory forget, approve/reject (ADR-0113) | DONE; sign-in live-verified after the Origin fix (PR #131); UI handling and approve/reject live PENDING |
+| MM-1/2 attachments and local image understanding (ADR-0111) | DONE and live-verified: text, oversize and credential-like files, images (session 2), unsupported type, non-allowlisted channel and an injection caption (session 3; the caption case is design question D4). The image provider is selectable (`claude`, `codex`, `ollama`, `off`; #140/#145); the owner's service uses Claude. D13 live not run |
+| CWR-1/2 Jira comment/transition and Slack post behind exact-payload approvals, v15 receipts (ADR-0112) | DONE and live-verified on allowlisted test targets; the W5-L01..L04 re-run passed (session 3) and the execution-phrase fixes (#135, #147) were verified in session 4; mid-send failure (`UNCERTAIN`) PENDING |
+| OPS-1/2/2b local operations UI: monitoring, reminder cancel, memory forget, approve/reject (ADR-0113) | DONE and live-verified: sign-in (after PR #131), panels against chat, approve/reject, the chat/UI race, reminder cancel, memory forget, foreign-Origin refusal and token rotation (session 3); read-only lookups (#148, session 4) |
+| Provider selection: `QUOKY_CHAT_PROVIDER` (Claude, Codex, Ollama), `QUOKY_IMAGE_UNDERSTANDING_PROVIDER`, runtime switching (ADR-0092/0111 amendments, #140-#145) | DONE and live-verified: Codex chat, operations-UI default and per-conversation switching, the Codex image option, table rendering, the warm embedding model (#144). Owner decision 2026-10-07: chat and images on Claude |
 
 Out of v3 by decision: the multi-agent runtime, Team/Hosted tenancy, deploy/release automation, Confluence and
 GitHub-issue writes, and remote access to the operations UI (Tailscale or other tunnels, LAN binding) or a separate

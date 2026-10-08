@@ -5,24 +5,63 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### Runtime model switching — implemented on branch, not merged (2026-10-07)
+### Personal v3 follow-ups — merged through #148, live QA sessions 3 and 4 (2026-10-08)
 
-ADR-0092 and ADR-0111 runtime-switching amendments (owner decision 2026-10-07): the chat tier and image understanding are
-switchable without a restart — the operations UI sets the persisted default (`<db dir>/ops/provider-selection.json`),
-and the owner's chat command (`모델 변경: …`, `/model …`) overrides it for one conversation only. Precedence: session →
-persisted default → env selector → derived default. A new Core port (`ProviderSelectionPolicy`) gives the router the
-owner's preference as data; code, review, planning and policy-sensitive chat stay on Claude; cloud image egress is
-allowed only while the effective image choice is `claude`. No migration; `ConversationRuntimeDeps` stays 35; turn
-handlers 9 → 10. Live verification on the owner host is a Strict step and has not been run.
+**STATUS: MERGED to `main` (PRs #135-#148; #149 adds the PROPOSED v4 plan, `docs/plans/personal-v4-plan.md`).** SQLite
+schema v15 (no migration since v3). `ConversationRuntimeDeps` baseline 35; 10 registered turn handlers. Latest merged
+offline validation (#148): `pnpm build`, `pnpm typecheck`, `pnpm test` passed, 340 files and 10903 tests. Live QA record:
+`docs/uat/personal-v3-qa-record.md` (session 2, owner decisions, host reboot, sessions 3 and 4).
 
-### Chat provider selector — implemented on branch, not merged (2026-10-07)
+**Providers and their selection (ADR-0092 and ADR-0111 amendments, 2026-10-07/08)**
 
-ADR-0092 amendment (owner decision 2026-10-07): `QUOKY_CHAT_PROVIDER` = `claude` | `codex` | `ollama` (unset derives
-from `QUOKY_OLLAMA_ENABLED`). With `codex`, `CodexCliProvider` serves the chat tier (`GENERAL_CHAT`, `SUMMARIZATION`,
-`DOCUMENT_ANALYSIS`, `READONLY_LOOKUP`) and Claude keeps code, review and policy-sensitive chat; chat content then goes
-to OpenAI. Live adapter check: two `codex exec` calls, about 7.5-8 s each. The owner's service is unchanged until the
-owner sets the selector (it runs `QUOKY_OLLAMA_ENABLED=false`, i.e. `claude`). Codex image understanding is not part of
-this change.
+- Chat tier (chat, summaries, document analysis, read-only lookups): `QUOKY_CHAT_PROVIDER` = `claude` | `codex` |
+  `ollama` (#141; unset derives from `QUOKY_OLLAMA_ENABLED`). Codex (`CodexCliProvider`, OpenAI) serves the chat tier
+  only. Code, review, planning, tests and policy-sensitive chat always stay on Claude.
+- Images: `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` = `claude` | `codex` | `ollama` | `off` (#140, Codex added in #145).
+  Unset keeps the earlier behaviour (`ollama` when `QUOKY_OLLAMA_VISION_MODEL` is set, else `off`). Cloud image egress
+  happens only while the effective image choice is `claude` (Anthropic) or `codex` (OpenAI).
+- Runtime switching without a restart (#142, #143): precedence per tier is session override (`모델 변경: …`,
+  `이미지 모델 변경: …`, `/model …`, `모델 기본값으로`) → operations-UI default (`/providers`, persisted in
+  `<db dir>/ops/provider-selection.json`) → env selector → derived default. Core port `ProviderSelectionPolicy` gives the
+  router the choice as data (no provider-id branching). `모델 목록` lists only chat-capable models.
+- **Owner decisions of 2026-10-07:** general chat runs on Claude Sonnet (`QUOKY_CHAT_PROVIDER=claude`) and images run on
+  Claude (`QUOKY_IMAGE_UNDERSTANDING_PROVIDER=claude`) on the owner's service. The chat switch followed live QA session 2
+  (W6-L05: about 5 of 20 `granite3.3:8b` replies usable as is). Providers stay switchable from configuration, the
+  operations UI or per conversation. Ollama still serves embeddings (`nomic-embed-text`) and stays an optional chat or
+  vision choice.
+- Provider readiness (#144): a provider that was not ready at boot is re-probed on demand (30/60/120 s back-off) and
+  becomes usable without a restart; the embedding model is kept warm (`--keepalive 30m`).
+
+**Other changes in #135-#148:** truthful cross-session execution guidance (#135); reactions on pre-restart replies are
+counted (#136); git concept questions are never captured by code-chain word checks (#137); text attachments reach the
+chat prompt as bounded untrusted context with hardened credential guards (#138); safe Discord rendering of simple
+Markdown tables in flagged model replies (#145); every backup includes a vector-store snapshot, plus `quokyctl.sh backup`
+/ `backup --apply` / `backup --verify` (#146); truthful execution-phrase replies and serialized revoke vs execute
+(#147); live QA session 3 defects D2, D3, D5-D10, D13, D15 and read-only operations-UI lookups (#148).
+
+**Backups:** daily (04:00 `QUOKY_TIMEZONE`), weekly, pre-migration and on-demand `manual` copies, each a verified DB copy
+plus a vector snapshot (#146). Restore the DB copy and its same-named snapshot together (quickstart section 7).
+
+**Live status (owner-attended, `docs/uat/personal-v3-qa-record.md`)**
+
+- Live PASS since the v3 closeout: a real host reboot (2026-10-08 08:36 KST; the service started itself at login,
+  identity verified, the 04:00 daily backup verified); `quokyctl.sh backup --apply` after the #146 deploy (DB copy plus
+  vector snapshot, `--verify` matching, service kept running); Codex chat (about 9.5 s); runtime switching from the
+  operations UI and per conversation; the Codex image option and table rendering (#145); the warm embedding model (#144).
+- Live QA session 3 (2026-10-08): operations UI sign-in and panels, UI approve/reject, the chat/UI race, UI reminder
+  cancel and memory forget, foreign-Origin refusal and token rotation across a restart (W6-A2 now PASS); unsupported-type
+  and non-allowlisted-channel attachments; the W5-L01..L04 re-run; a 44-phrasing DET sweep; Slack read lookups with a
+  user token. Defects D1-D15 were found; D1, D11 and D12 were fixed in #147, and D2,
+  D3, D5-D10, D13 and D15 in #148. D4 (design question) and D14 (local vision quality) have no code fix.
+- Live QA session 4 (2026-10-08): every #147/#148 fix verified live except D5 (FAIL live, recorded as D5-R) and D13
+  (not run live: the Discord web client froze on a corrupt image).
+- **Open:** D5-R (the own-memory similarity floor 0.6 does not separate unrelated Korean questions, so the deterministic
+  "기억에 없어요" still never fires; Claude answers truthfully) and D16 (the embedding provider went not-ready for about
+  5 minutes without a log line) are being fixed. D4 (a caption instruction is obeyed by design) waits on an owner
+  decision.
+- **STILL PENDING (not claimed as done):** a mid-send network failure on a write (`UNCERTAIN`, Strict); the Stage 2A
+  provider-path re-validation; a CODE-8 live check (being implemented on another branch); D13 live. Not implemented:
+  SUB-3, CODE-9 merge enablement, LLM-3, the ADR-0104 D3 to-do/reminder status phrases.
 
 ### Personal v3 — implemented (waves 1-6), live verification partial (2026-10-07)
 
@@ -61,9 +100,9 @@ SQLite schema is v15. `ConversationRuntimeDeps` baseline is 35 (CWR-2, ADR-0112)
   receipt without payload text, and never retries `UNCERTAIN`. A repeated phrase after a sent write reports it instead
   of sending again.
 - **Files and images:** owner messages in allowed locations may carry up to 3 attachments; text files (≤256 KiB) become
-  untrusted, credential-guarded context; PNG/JPEG/WebP images (≤8 MiB) go only to a local vision model
-  (`QUOKY_OLLAMA_VISION_MODEL`); with none set the reply says the image was not analysed and not sent anywhere. Claude
-  never receives image bytes.
+  untrusted, credential-guarded context; PNG/JPEG/WebP images (≤8 MiB) went only to a local vision model
+  (`QUOKY_OLLAMA_VISION_MODEL`) at the v3 closeout; with none ready the reply says the image was not analysed and not
+  sent anywhere. Since #140/#145 the image provider is selectable (`claude`, `codex`, `ollama`, `off`; entry above).
 - **Code work:** the PR title is the approved commit's subject and the body is deterministic (commit, branch, changed
   files); the PR approval binds both by hash. Push/fetch get bounded network timeouts (60 s; ls-remote 30 s).
 - **Operations UI (optional, `QUOKY_OPS_UI_ENABLED=false` by default):** `http://127.0.0.1:47613/`, signed in with a
@@ -90,7 +129,8 @@ SQLite schema is v15. `ConversationRuntimeDeps` baseline is 35 (CWR-2, ADR-0112)
 | `QUOKY_OPS_UI_ENABLED` / `QUOKY_OPS_UI_PORT` | `false` / `47613` | Local operations UI; an invalid value disables only the UI |
 
 `QUOKY_REMINDERS_ENABLED` now defaults to `true` (ADR-0102 D9, owner decision 8). `OLLAMA_MODEL` is unchanged in code
-(default `llama3.1`); the owner's service runs `granite3.3:8b` since 2026-10-07 (LLM-2 helpfulness re-run).
+(default `llama3.1`); the owner's service was set to `granite3.3:8b` on 2026-10-07 (LLM-2 helpfulness re-run), and
+the same day the owner moved chat to Claude (`QUOKY_CHAT_PROVIDER=claude`, entry above).
 
 **Delivered by track:** SUB-1/2 launchd runtime, backup and `OPS_NOTICE` (ADR-0102); DET-1 claim guard, state-aware
 code-chain replies, `action-shaped-fallthrough.v1.json` (ADR-0104); LLM-1 hygiene and help-intent handler (ADR-0104
@@ -114,15 +154,13 @@ D4, not wired), and the to-do/reminder status phrases of ADR-0104 D3 (memory sta
   fixed); calendar reads on the company calendar (W4-L01/L02 fixed); Jira comment and transition, Slack post, calendar
   create/move/delete with deny, replay and allowlist refusal (W5); operations UI sign-in after the PR #131 fix.
 - Model: gemma3:4b (the first LLM-2 pick) gave non-answers live and was reverted; the helpfulness re-run picked
-  granite3.3:8b, now on the service. Its first live check was confounded by host load (Claude fallback answered 3 of 4).
+  granite3.3:8b, set on the service 2026-10-07 (chat moved to Claude the same day by owner decision). Its first live check was confounded by host load (Claude fallback answered 3 of 4).
 - **Live QA session 2 (2026-10-07):** UI approve, reboot-start proxy, observed daily backup, restore drill on a copy,
   text/image attachments, reactions and learning examples ran live; PRs #135-#138 fixed the defects found (QA record
-  W6-L01..L11). The Korean daily-chat set ran: about 5 of 20 local replies usable as is (W6-L05), owner decision pending
-  on the chat model; `gemma3:4b` image descriptions were wrong (W6-L09).
-- **STILL PENDING (not claimed as done):** UI reject and the chat/UI race, UI reminder cancel/forget and panel checks; a
-  real host reboot; unsupported-type / non-allowlisted-channel attachments; a mid-send network failure on a write;
-  W5-L01..L04 live re-run; the DET edge-case sweep; Slack read lookups (no user token). The full list is at the end of
-  the QA record.
+  W6-L01..L11). The Korean daily-chat set ran: about 5 of 20 local replies usable as is (W6-L05), after which the
+  owner moved chat to Claude; `gemma3:4b` image descriptions were wrong (W6-L09).
+- The items that were PENDING at the v3 closeout ran in the host reboot and live QA sessions 3 and 4, except those
+  listed under "STILL PENDING" in the follow-ups entry above. The full list is at the end of the QA record.
 - Open quality items: local-model helpfulness and invented specifics (QA-V3-W2-LM, W6-M4), local work summaries
   (QA-V2-PC-03), embedding recall timeouts on a cold model swap (QA-V2-CL-04), accepted residuals R5 (claim guard) and
   R6 (calendar write-intent detection).
@@ -2276,8 +2314,11 @@ Approval proof or post-wait plan supply, and does not reopen ADR-0087/0088.
   provenance, and epistemic rendering are implemented; this slice requires no provider-specific prompt shaping.
 - **Provider routing: COMPLETE for the ratified M2 scope.** Capability/policy/availability-driven routing and stable
   provider selection exist without Core branching on provider ids.
-- **Ollama adapter: COMPLETE; Codex adapter: MISSING.** Ollama implements suggest-only execution and availability;
-  Codex remains an explicitly unavailable `NotImplementedError` stub.
+- **Ollama adapter: COMPLETE; Codex adapter: MISSING (M2-era; superseded).** Ollama implements suggest-only execution
+  and availability; Codex remained an explicitly unavailable `NotImplementedError` stub. *Update (#141, 2026-10-07):
+  `CodexCliProvider` is real for the chat tier only (`GENERAL_CHAT`, `SUMMARIZATION`, `DOCUMENT_ANALYSIS`,
+  `READONLY_LOOKUP`) when `QUOKY_CHAT_PROVIDER=codex` or a runtime selection picks it; `CodexCliVisionProvider` reads
+  images (#145). Codex code suggest-only execution is still not implemented.*
 - **Jira, Slack, and Confluence connector adapters: COMPLETE (wired).**
   `@chunsik/connector-jira`, `@chunsik/connector-slack`, and `@chunsik/connector-confluence` implement the ADR-0072
   read-only `ConnectorProvider` boundary and are registered by the composition root when their required environment
@@ -2288,7 +2329,8 @@ Approval proof or post-wait plan supply, and does not reopen ADR-0087/0088.
 
 ## Deferred
 
-- **Codex** — `CodexCliProvider` not implemented (stub; no deterministic suggest-only mode).
+- **Codex** — code suggest-only execution not implemented. (M2-era entry; Codex chat and images are delivered, see
+  the Personal v3 follow-ups entry at the top.)
 - **Workflow** — multi-step planning/execution beyond a single Task is not built.
 - **Agent Runtime** — no autonomous tool-using / coding agent.
 - **Vector Search** — `VectorProvider` is a local stub; no embeddings/retrieval/semantic search.
@@ -2314,8 +2356,8 @@ Approval proof or post-wait plan supply, and does not reopen ADR-0087/0088.
 
 ## What is NOT implemented yet
 
-- **AI execution:** only `CodexCliProvider` `execute`/`isAvailable` remain stubbed (no
-  deterministic suggest-only mode → treated as unavailable). Claude + Ollama are implemented.
+- **AI execution:** (M2-era entry.) Claude + Ollama are implemented; Codex serves the chat tier and images since
+  #141/#145, but Codex code suggest-only execution is not implemented.
 - **Storage:** all repositories implemented (`approvals` landed in CAP-004 / migration v2).
 - **Platform:** `DiscordPlatformAdapter.requestApproval` (no approval UI yet); resume
   after approval is deferred (no current capability reaches the HIGH/CRITICAL path).
