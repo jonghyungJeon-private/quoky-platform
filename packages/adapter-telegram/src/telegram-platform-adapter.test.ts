@@ -231,6 +231,25 @@ describe('Codex delta P2: no outbound Bot API call before the identity is verifi
   });
 });
 
+describe('CA final check (Critical): stop() never confirms the offset unless the identity was verified and nothing halted', () => {
+  const stored = { load: () => 500, save: () => undefined };
+  const instantPolls = (fake: FakeTelegram) => fake.callsTo('getUpdates').filter((call) => call.params.timeout === 0 && call.params.offset !== undefined);
+
+  it.each([
+    ['getMe hangs (identity never verified)', () => new FakeTelegram().queue('getMe', { hang: true })],
+    ['getMe names another bot (mismatch)', () => new FakeTelegram().queue('getMe', okReply({ id: 999_999_999, is_bot: true }))],
+    ['a 401 halt while polling', () => new FakeTelegram().queue('getUpdates', okReply([textUpdate(500, 'x')]), errorReply(401))],
+  ])('%s, then stop(): zero confirming getUpdates', async (_label, makeFake) => {
+    const fake = makeFake();
+    const h = harness(fake, { offsetStore: stored });
+    await h.adapter.start().catch(() => undefined);
+    await flush(20);
+    if (fake.callsTo('getUpdates').length > 1) await until(() => h.adapter.status().halted !== undefined);
+    await h.adapter.stop();
+    expect(instantPolls(fake)).toEqual([]);
+  });
+});
+
 describe('Telegram long polling: offset, admission drops, backoff', () => {
   it('hands each admitted update over once, advances the offset past it, and confirms it on stop', async () => {
     const fake = new FakeTelegram()

@@ -370,8 +370,10 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     await this.loop?.catch(() => undefined);
     this.loop = undefined;
     this.controller = undefined;
-    // Confirm what was handed over, so the next start does not receive it again (best-effort, bounded).
-    if (this.offset !== undefined && this.offset !== this.confirmedOffset) {
+    // Confirm what was handed over, so the next start does not receive it again (best-effort, bounded). Only for a
+    // verified, un-halted session (CA final check, Critical): an unverified or halted adapter reads nothing from Telegram,
+    // not even on stop; the persisted offset still survives the restart.
+    if (this.identityVerified && this.halted === undefined && this.offset !== undefined && this.offset !== this.confirmedOffset) {
       try {
         await this.api.call('getUpdates', { offset: this.offset, limit: 1, timeout: 0 }, {
           timeoutMs: STOP_CONFIRM_TIMEOUT_MS,
