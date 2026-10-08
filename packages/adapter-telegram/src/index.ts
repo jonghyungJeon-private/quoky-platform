@@ -33,5 +33,11 @@ export {
   wrapPreviewPart,
 } from './delivery';
 export type { TelegramDeliveryReport, TelegramPreviewPlan, TelegramPreviewReport, TelegramPreviewSenders } from './delivery';
-export { TelegramPlatformAdapter, TelegramStartupError, TelegramStartupErrorCode } from './telegram-platform-adapter';
+export {
+  ATTACHMENT_UNSUPPORTED_NOTICE,
+  staleNotice,
+  TelegramPlatformAdapter,
+  TelegramStartupError,
+  TelegramStartupErrorCode,
+} from './telegram-platform-adapter';
 export type { TelegramAdapterConfig, TelegramAdapterOptions, TelegramAdapterStatus, TelegramOffsetStore } from './telegram-platform-adapter';

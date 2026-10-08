@@ -190,7 +190,8 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
       edited,
       { update_id: 55, callback_query: { id: 'q', from: { id: OWNER_ID, is_bot: false }, data: '승인' } },
       { update_id: 56, message_reaction: { chat: { id: OWNER_ID, type: 'private' } } },
-      textUpdate(57, '비밀 오래됨', { date: Math.floor(Date.now() / 1000) - 3600 }),
+      // A stranger's message with no text and an old one: still only not-owner, and no notice to anyone.
+      textUpdate(57, '비밀 오래된 낯선이', { from: STRANGER_ID, date: Math.floor(Date.now() / 1000) - 3600 }),
     ]));
     const h = harness(fake);
     await h.adapter.start();
@@ -200,9 +201,47 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     expect(fake.callsTo('sendMessage')).toHaveLength(0);
     expect(fake.callsTo('sendChatAction')).toHaveLength(0);
     expect(fake.calls.map((call) => call.method).filter((method) => method !== 'getMe' && method !== 'getUpdates')).toEqual([]);
-    expect(h.adapter.status().droppedUpdates).toEqual({ malformed: 0, 'update-type': 3, 'not-private': 3, 'not-owner': 1, forwarded: 0, 'no-text': 0, stale: 1 });
+    expect(h.adapter.status().droppedUpdates).toEqual({ malformed: 0, 'update-type': 3, 'not-private': 3, 'not-owner': 2, forwarded: 0, 'no-text': 0, stale: 0 });
     expect(JSON.stringify(h.logs)).not.toContain('비밀');
     expect(JSON.stringify(h.logs)).not.toContain(String(STRANGER_ID));
+  });
+
+  it('CA P3-4: the owner gets one fixed notice per kind per poll session for old and text-less messages; nobody else does', async () => {
+    const old = Math.floor(Date.now() / 1000) - 3600;
+    const sticker = (id: number, from: number) => {
+      const update = textUpdate(id, 'x', { from }) as { update_id: number; message: Record<string, unknown> };
+      const { text: _text, ...rest } = update.message;
+      return { update_id: id, message: { ...rest, sticker: { file_id: 's' } } };
+    };
+    const fake = new FakeTelegram().queue(
+      'getUpdates',
+      okReply([textUpdate(90, '어제 1', { date: old }), textUpdate(91, '어제 2', { date: old }), sticker(92, OWNER_ID), sticker(93, STRANGER_ID)]),
+      okReply([textUpdate(94, '어제 3', { date: old }), sticker(95, OWNER_ID), textUpdate(96, 'x', { from: STRANGER_ID, date: old })]),
+    );
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => getUpdatesOffsets(fake).includes(97));
+    await flush();
+    const sends = fake.callsTo('sendMessage').map((call) => call.params);
+    expect(sends.map((params) => params.chat_id)).toEqual([String(OWNER_ID), String(OWNER_ID)]);
+    expect(sends.map((params) => params.text).sort()).toEqual(
+      ['Telegram 첨부는 아직 지원하지 않아요.', '꺼져 있던 동안 받은 메시지 2개는 처리하지 않았어요. 필요하면 다시 보내 주세요.'].sort(),
+    );
+    expect(sends.every((params) => params.parse_mode === undefined)).toBe(true);
+    expect(h.received).toHaveLength(0);
+    expect(JSON.stringify(h.logs)).not.toContain('어제');
+    await h.adapter.stop();
+  });
+
+  it('CA P3-4: no notice is sent while the identity gate is closed', async () => {
+    const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(98, 'old', { date: Math.floor(Date.now() / 1000) - 3600 })]));
+    const h = harness(fake);
+    h.adapter.gateInbound(Promise.resolve(false));
+    await h.adapter.start();
+    await until(() => getUpdatesOffsets(fake).includes(99));
+    await flush();
+    expect(fake.callsTo('sendMessage')).toHaveLength(0);
+    await h.adapter.stop();
   });
 
   it('backs off on failures (doubling to the cap, honouring retry_after, max wait on 409) and resets after success', async () => {

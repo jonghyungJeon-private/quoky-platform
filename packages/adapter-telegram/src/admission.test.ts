@@ -24,9 +24,19 @@ describe('Telegram admission (ADR-0114 D2): owner private chats only, drop by de
     ['the owner in a supergroup', textUpdate(1, 'hi', { chatType: 'supergroup', chatId: -1001, date: NOW }), 'not-private'],
     ['the owner in a channel', textUpdate(1, 'hi', { chatType: 'channel', chatId: -1002, date: NOW }), 'not-private'],
     ['a private chat that is not the owner’s own', textUpdate(1, 'hi', { chatId: STRANGER_ID, date: NOW }), 'not-private'],
-    ['an old owner message', textUpdate(1, '승인', { date: NOW - MAX_UPDATE_AGE_SECONDS - 1 }), 'stale'],
   ])('drops %s', (_label, update, reason) => {
     expect(admit(update)).toEqual({ kind: 'dropped', updateId: 1, reason });
+  });
+
+  it("drops an old owner message as stale, naming the owner's own chat (for the one owner notice)", () => {
+    expect(admit(textUpdate(1, '승인', { date: NOW - MAX_UPDATE_AGE_SECONDS - 1 }))).toEqual({
+      kind: 'dropped',
+      updateId: 1,
+      reason: 'stale',
+      ownerChatId: String(OWNER_ID),
+    });
+    // A stranger's old message is not-owner, never stale: nobody but the owner is ever told anything.
+    expect(admit(textUpdate(1, 'x', { from: STRANGER_ID, date: NOW - 9999 }))).toEqual({ kind: 'dropped', updateId: 1, reason: 'not-owner' });
   });
 
   it.each([
@@ -69,7 +79,12 @@ describe('Telegram admission (ADR-0114 D2): owner private chats only, drop by de
     const update = textUpdate(5, 'unused', { date: NOW }) as { update_id: number; message: Record<string, unknown> };
     const { text: _text, ...rest } = update.message;
     for (const extra of [{ sticker: { file_id: 'f' } }, { photo: [{ file_id: 'p', file_size: 10 }] }, { document: { file_id: 'd' } }]) {
-      expect(admit({ update_id: 5, message: { ...rest, ...extra } })).toEqual({ kind: 'dropped', updateId: 5, reason: 'no-text' });
+      expect(admit({ update_id: 5, message: { ...rest, ...extra } })).toEqual({
+        kind: 'dropped',
+        updateId: 5,
+        reason: 'no-text',
+        ownerChatId: String(OWNER_ID),
+      });
     }
   });
 

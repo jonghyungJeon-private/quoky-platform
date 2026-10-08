@@ -135,6 +135,12 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** CA P3-4: the fixed owner notices (no content, no ids). */
+export function staleNotice(count: number): string {
+  return `꺼져 있던 동안 받은 메시지 ${count}개는 처리하지 않았어요. 필요하면 다시 보내 주세요.`;
+}
+export const ATTACHMENT_UNSUPPORTED_NOTICE = 'Telegram 첨부는 아직 지원하지 않아요.';
+
 /** The signal of a send made while the adapter is not running (no stop to wait for). */
 const NEVER_ABORTED = new AbortController().signal;
 
@@ -166,6 +172,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
   private polling = false;
   /** Why the Telegram side stopped on its own (identity, token or conflict found while running); Discord runs on. */
   private halted?: TelegramStartupErrorCode;
+  /** CA P3-4: the owner notices already sent in this poll session (at most one per kind). */
+  private readonly noticesSent = new Set<'stale' | 'no-text'>();
   /** The current `getUpdates` batch size (halved after an oversized response, reset after a success). */
   private pollLimit = POLL_LIMIT;
   /** When the recent HTTP 409s of the poll happened (ms), for the split-brain policy. */
@@ -239,6 +247,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     this.stopped = false;
     this.halted = undefined;
     this.conflicts = [];
+    this.noticesSent.clear();
     // The token names its bot: a token for another bot fails before any network call.
     if (this.config.token.botId !== this.config.expectedBotId) {
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
@@ -446,6 +455,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
 
   /** Admit, hand over or count each update in order; `false` stops polling (the identity gate closed). */
   private async handleBatch(updates: readonly unknown[], signal: AbortSignal): Promise<boolean> {
+    const ownerDrops: { stale: number; noText: number; chatId?: string } = { stale: 0, noText: 0 };
     for (const update of updates) {
       const updateId = updateIdOf(update);
       // Already handed over or dropped (a repeated entry): never processed twice.
@@ -462,10 +472,43 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
         continue;
       }
       this.dropped[admission.reason] += 1;
+      if (admission.ownerChatId !== undefined) {
+        ownerDrops.chatId ??= admission.ownerChatId;
+        if (admission.reason === 'stale') ownerDrops.stale += 1;
+        if (admission.reason === 'no-text') ownerDrops.noText += 1;
+      }
       if (updateId !== undefined) this.offset = updateId + 1;
     }
     this.persistOffset();
+    if (ownerDrops.chatId !== undefined) this.noticeOwnerDrops(ownerDrops.chatId, ownerDrops, signal);
     return true;
+  }
+
+  /**
+   * CA P3-4: one fixed notice per kind per poll session to the OWNER's own private chat when their messages were not
+   * processed (old messages after downtime; messages with no text). Nothing for anyone else; no content echoed.
+   */
+  private noticeOwnerDrops(chatId: string, drops: { readonly stale: number; readonly noText: number }, signal: AbortSignal): void {
+    const notices: Array<{ kind: 'stale' | 'no-text'; text: string }> = [];
+    if (drops.stale > 0 && !this.noticesSent.has('stale')) {
+      notices.push({ kind: 'stale', text: staleNotice(drops.stale) });
+    }
+    if (drops.noText > 0 && !this.noticesSent.has('no-text')) {
+      notices.push({ kind: 'no-text', text: ATTACHMENT_UNSUPPORTED_NOTICE });
+    }
+    for (const notice of notices) {
+      this.noticesSent.add(notice.kind);
+      void (async () => {
+        // ADR-0102 D5: no adapter-side effect before the startup identity gate opens.
+        if (!(await this.inboundGateOpen(signal)) || this.ownerChatOf({ platform: TELEGRAM_PLATFORM, channelId: chatId, userId: chatId }) === undefined) return;
+        try {
+          await this.postMessage(chatId, notice.text, false);
+          this.logger.info('telegram owner notice sent', { kind: notice.kind });
+        } catch (err) {
+          this.logger.warn('telegram owner notice failed', { kind: notice.kind, code: codeOf(err) });
+        }
+      })();
+    }
   }
 
   private loadOffset(): number | undefined {

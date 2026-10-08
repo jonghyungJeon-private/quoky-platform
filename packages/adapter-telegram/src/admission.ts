@@ -58,7 +58,16 @@ export interface AdmittedTelegramMessage {
 
 export type TelegramAdmission =
   | { readonly kind: 'admitted'; readonly message: AdmittedTelegramMessage }
-  | { readonly kind: 'dropped'; readonly updateId?: number; readonly reason: TelegramDropReason };
+  | {
+      readonly kind: 'dropped';
+      readonly updateId?: number;
+      readonly reason: TelegramDropReason;
+      /**
+       * Set only for an OWNER's own private chat dropped as `stale` or `no-text` (CA P3-4): the adapter may tell the
+       * owner, once, that those messages were not processed. Never set for anyone else.
+       */
+      readonly ownerChatId?: string;
+    };
 
 /**
  * Updates older than this are dropped (10 minutes). A restart resumes from Telegram's unconfirmed updates, so a message
@@ -86,6 +95,7 @@ export function admitTelegramUpdate(
   const updateId = updateIdOf(update);
   if (updateId === undefined || typeof update !== 'object' || update === null) return { kind: 'dropped', reason: 'malformed' };
   const drop = (reason: TelegramDropReason): TelegramAdmission => ({ kind: 'dropped', updateId, reason });
+  const ownerDrop = (reason: 'stale' | 'no-text', ownerChatId: string): TelegramAdmission => ({ kind: 'dropped', updateId, reason, ownerChatId });
   // Exactly one payload key besides `update_id`, and it must be `message`.
   const payloadKeys = Object.keys(update).filter((key) => key !== 'update_id');
   if (payloadKeys.length !== 1 || payloadKeys[0] !== 'message') return drop('update-type');
@@ -101,9 +111,9 @@ export function admitTelegramUpdate(
   // Forwarded or inline-bot text is someone else's words, even in the owner's chat: never the owner's request.
   if (NOT_OWN_TEXT_FIELDS.some((field) => (message as Record<string, unknown>)[field] !== undefined)) return drop('forwarded');
   const { text, message_id: messageId, date } = message as { text?: unknown; message_id?: unknown; date?: unknown };
-  if (typeof text !== 'string') return drop('no-text');
+  if (typeof text !== 'string') return ownerDrop('no-text', userId);
   const id = idOf(messageId);
   if (id === undefined || typeof date !== 'number' || !Number.isFinite(date)) return drop('malformed');
-  if (nowSeconds - date > MAX_UPDATE_AGE_SECONDS) return drop('stale');
+  if (nowSeconds - date > MAX_UPDATE_AGE_SECONDS) return ownerDrop('stale', userId);
   return { kind: 'admitted', message: { updateId, chatId: userId, userId, messageId: id, text, date } };
 }
