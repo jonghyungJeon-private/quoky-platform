@@ -5,6 +5,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — GML-1 Gmail read connector (2026-10-08)
+
+Personal v4 track GML-1 (ADR-0118 D1–D8; implementation note in DECISIONS.md). No migration; `ConversationRuntimeDeps`
+stays 35. New: the `MailReader` port, the `MAIL_READER` token, and a type-only widening of the `summarize` readout. No
+third-party dependency (`node:fetch` only). Gmail is off unless `QUOKY_GMAIL_TOKEN_FILE` is set; with it off, every reply
+is unchanged.
+
+- **New `packages/connector-gmail`** (`GmailMailReader`). Scope `gmail.readonly` only, checked at the code exchange and
+  at every refresh. A broader grant is refused.
+  - **Requests.** GET to the pinned `gmail.googleapis.com/gmail/v1/users/me/messages[/{id}]` only, through one guarded
+    request function.
+  - **Bounds.**
+    - Each request has a 10 s timeout and refuses redirects.
+    - Response size caps: 64 KiB for a list or metadata read, 4 MiB for a full message.
+    - A search reads one page of at most 100 ids and metadata for at most 10.
+    - A body is cut at 256 KiB.
+  - **Typed failures.** Auth expired (`UNAUTHORIZED`), needs consent (`INSUFFICIENT_SCOPE`), rate limit, unavailable,
+    forbidden and invalid response.
+  - **Token.** Its own mode-600 token file holds one grant set; a calendar token file is refused.
+  - **Read-only check.** A source scan proves no send, draft, label, modify, trash or delete call exists.
+- **Mail handler** (`pre-classify` order 140, before the calendar). Registered only with Gmail configured.
+  - **Phrasings.** `안 읽은 메일`, `오늘 온 메일`, `<보낸 사람> 메일 찾아줘`, the QUAL-7 mailbox questions
+    (`메일 왔어?`, `메일 확인해줘`) and English forms.
+  - **Listings** are deterministic, with no model call: sender, subject, date and a credential-guarded snippet; at most
+    10 entries, then `…외 N건`.
+  - **DM-only.** In a Discord channel or a Telegram group, the reply says these answers are DM-only and nothing is read.
+  - **Failures** get the could-not-read note, never "no mail". Write requests get a fixed read-only refusal.
+  - **History** keeps a fixed note, never mail text.
+- **Summaries only on request.** `N번 메일 요약해줘` reads that one message. Its body goes out as a bounded untrusted
+  readout under the ADR-0111 D3 rules: NFKC and format-character stripping, a 3,000-character head and tail, and the
+  credential guard.
+  - **Refusals.** A credential-shaped or empty mail is refused before anything leaves the host.
+  - **Runtime.** The readout is re-validated, then summarized by the effective chat-tier provider through the existing
+    SUMMARIZATION path. The prompt is self-contained and carries no tools.
+  - **Reply.** The claim and credential guards run on the reply, and a fixed disclosure footer is added. History
+    records a fixed note instead of the summary.
+  - **Injection.** An injection mail causes no action and no routing change.
+- **Consent helper.** `calendar-auth.js --gmail` requests `gmail.readonly` only on the existing client and writes a new
+  Gmail token file. It cannot be combined with `--with-events`.
+  - `.env.example` documents `QUOKY_GMAIL_TOKEN_FILE`.
+  - The quickstart covers the consent step, the env key and how to revoke.
+- **Validation.** Offline only, with a fake `fetch`; the Gmail API was never called. Not run yet:
+  - the Strict gates: owner consent, the first read probe and the live session of about 15 phrasings;
+  - the Chief Architect review, which is mandatory for GML-1.
+
 ## Unreleased — TG-2 Telegram attachments, reactions and approvals (2026-10-08)
 
 Personal v4 track TG-2 (ADR-0114 D8–D10; implementation note in DECISIONS.md). No migration, no new port, DI token or
