@@ -85,12 +85,17 @@ case "$cmd" in
     logs_real="$(cd "$UNC1_LOGS" && pwd -P)"
     out="$logs_real/$which_case"
     # Remove only this case's own files, and only after confirming each resolves inside the logs dir.
+    # A symlink (dangling or not) is refused before any existence test, so a later redirect can never follow one.
+    for f in "$out.json" "$out.stdout.log" "$out.stderr.log"; do
+      if [ -L "$f" ]; then echo "refusing: $f is a symlink" >&2; exit 2; fi
+    done
     for f in "$out.json" "$out.stdout.log" "$out.stderr.log"; do
       [ -e "$f" ] || continue
       f_real="$(cd "$(dirname "$f")" && pwd -P)/$(basename "$f")"
-      [ -f "$f_real" ] && [ ! -L "$f" ] && [ "$(dirname "$f_real")" = "$logs_real" ] || { echo "refusing to remove a path outside the logs dir" >&2; exit 2; }
+      [ -f "$f_real" ] && [ "$(dirname "$f_real")" = "$logs_real" ] || { echo "refusing to remove a path outside the logs dir" >&2; exit 2; }
       rm -f -- "$f_real"
     done
+    set -o noclobber
     proxy_url="http://$PROXY:3128"
     # case1b: a proxy port nothing listens on, so the connect itself is refused.
     if [ "$which_case" = "case1b" ]; then proxy_url="http://$PROXY:3999"; fi
