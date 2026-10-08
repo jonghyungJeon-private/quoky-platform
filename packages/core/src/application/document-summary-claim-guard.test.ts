@@ -29,6 +29,7 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     'We’ve archived it.',
     'I went ahead and sent the reply.',
     "I've just forwarded it to accounting.",
+    'I have now gone ahead and quickly sent it.',
     'I’d already deleted the thread.',
     '메일을 삭제 처리했어요.',
     '보관 처리 완료했습니다.',

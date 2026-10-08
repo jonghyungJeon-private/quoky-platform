@@ -86,6 +86,29 @@ describe('neutralizeLinks (GML-1 re-review item 1)', () => {
     expect(neutralizeLinks('Mr.Kim')).toBe(LINK_PLACEHOLDER);
   });
 
+  it('sign-off item 4: IDN TLDs, combining marks, format characters and ideographic full stops are caught', () => {
+    for (const text of [
+      'evil.ком',
+      'пример.орг/login',
+      'shop.公司',
+      'café.com',
+      'cafe\u0301.com',
+      'evil\u200b.com',
+      'ev\u00adil.com/x',
+      'evil。com',
+      'evil．com',
+      'ｅｖｉｌ．ｃｏｍ',
+      'ｈｔｔｐｓ://evil.example',
+    ]) {
+      for (const mode of ['display', 'body'] as const) {
+        const out = neutralizeLinks(`확인 ${text} 하세요`, mode);
+        expect(out, `${mode} ${text}`).toBe(`확인 ${LINK_PLACEHOLDER} 하세요`);
+      }
+    }
+    // Japanese and Chinese sentences keep their full stops.
+    expect(neutralizeLinks('会議は明日です。よろしく')).toBe('会議は明日です。よろしく');
+  });
+
   it('does not catch defanged forms (they are not clickable either; documented)', () => {
     expect(neutralizeLinks('hxxp[:]//evil[.]example')).toBe('hxxp[:]//evil[.]example');
   });

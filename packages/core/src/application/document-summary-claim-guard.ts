@@ -48,12 +48,12 @@ const KO_SUBJECT = /(?:^|\s)([^\s]{1,20}?)(?:께서|님이|이|가)(?=\s)/gu;
 
 /**
  * English claims with a first-person or Quoky subject. Contractions take a straight or a curly apostrophe, and up to
- * four filler words may stand before the verb (`I went ahead and sent`, `I've just forwarded`).
+ * six filler words may stand before the verb (`I went ahead and sent`, `I've just forwarded`).
  */
 const EN_CLAIM = new RegExp(
   "\\b(?:I(?:['’](?:ve|d))?|we(?:['’]ve)?|Quoky)\\s+" +
     '(?:(?:have|has|had|just|already|also|now|then|successfully|went|go|gone|ahead|and|quickly|immediately|actually|' +
-    'promptly|simply|kindly)\\s+){0,4}' +
+    'promptly|simply|kindly)\\s+){0,6}' +
     '(?:sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|' +
     'scheduled|set\\s+up|set|booked|drafted)\\b',
   'i',

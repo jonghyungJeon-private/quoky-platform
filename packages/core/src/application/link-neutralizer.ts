@@ -20,8 +20,11 @@
  *   country TLD, punycode or IDN. Plain words such as `Node.js` or `v1.2.3` stay intact in a summary of a technical
  *   mail; the reply is neutralized in `display` mode anyway, so a domain the model echoes is caught there.
  *
- * Not caught (and not clickable either): defanged forms such as `hxxp[:]//evil[.]example`, `evil[.]example`, or a host
- * split by spaces; a full-width scheme in listing fields (the readout applies NFKC first).
+ * Not caught: defanged forms such as `hxxp[:]//evil[.]example`, `evil[.]example`, or a host split by spaces (not
+ * clickable either); a Hangul particle glued to a Hangul IDN TLD (`예시.한국에서`, the IDN branch keeps its Unicode
+ * lookahead); IDN TLDs outside {@link IDN_TLDS} in their Unicode form (Arabic-script, most Indic and brand IDN TLDs;
+ * their punycode form is caught). Caught since the sign-off: full-width schemes and letters (NFKC), zero-width and
+ * other format characters inside a host, combining marks (`café.com`), and ideographic full stops (`evil。com`).
  *
  * Linear: every repetition is bounded, and each domain label is matched atomically (a lookahead capture and its
  * back-reference), so a failed match never re-scans a label.
@@ -34,8 +37,24 @@ export type LinkNeutralizationMode = 'display' | 'body';
 /** A scheme URL or a `www.` host: no word boundary is required, so `1https://…` and `_https://…` are caught. */
 const SCHEME_OR_WWW = /(?:[a-z][a-z0-9+.-]{0,15}:\/\/|www\.)[^\s<>"'`()[\]]*/giu;
 
-/** IDN top-level domains the bare-domain pattern accepts besides alphabetic and punycode ones. */
-const IDN_TLDS = '한국|中国|中國|日本|香港|台灣|рф|рус|онлайн|сайт';
+/**
+ * IDN top-level domains the bare-domain pattern accepts besides alphabetic and punycode ones (sign-off item 4): the
+ * Hangul, Chinese, Japanese, Cyrillic, Greek, Thai and Devanagari ones in common use. Arabic-script, other Indic and
+ * the remaining brand IDN TLDs are not listed (see the not-caught note); their punycode form (`xn--…`) is caught.
+ */
+const IDN_TLDS = [
+  '한국', '닷컴', '닷넷', '삼성',
+  '中国', '中國', '香港', '台灣', '台湾', '澳門', '澳门', '新加坡', '公司', '网络', '網絡', '中文网', '在线', '网址',
+  '网店', '移动', '商城', '商店', '购物', '游戏', '商标', '手机', '集团', '我爱你', '信息', '机构', '政务', '公益', '时尚',
+  '健康', '企业', '广东',
+  '日本', 'コム', 'みんな', 'ストア', 'セール', 'ファッション', 'ポイント', 'クラウド',
+  'рф', 'рус', 'ком', 'орг', 'онлайн', 'сайт', 'бел', 'укр', 'срб', 'мкд', 'қаз', 'мон', 'бг', 'дети', 'москва',
+  'ελ', 'ευ', 'ไทย', 'भारत',
+].join('|');
+/** Label separators: the ASCII full stop and the ideographic / full-width / half-width full stops (`evil。com`). */
+const DOT = '[.\\u3002\\uFF0E\\uFF61]';
+/** Format characters (zero-width spaces and joiners, bidi controls, soft hyphen) removed before matching. */
+const FORMAT_CHARACTERS = /\p{Cf}/gu;
 
 /**
  * A bare domain: up to 10 atomically matched labels, a TLD, then an optional port and path. Group 2 is the TLD, group
@@ -46,7 +65,7 @@ const IDN_TLDS = '한국|中国|中國|日本|香港|台灣|рф|рус|онла
  * whole host name (253).
  */
 const BARE_DOMAIN = new RegExp(
-  `(?<![\\p{L}\\p{N}-])(?:(?=([\\p{L}\\p{N}-]{1,253}))\\1\\.){1,10}([a-z]{2,24}(?![a-z0-9-])|(?:xn--[a-z0-9-]{1,59}|${IDN_TLDS})(?![\\p{L}\\p{N}-]))((?::\\d{1,5})?(?:[/?#][^\\s<>"'\`()[\\]]*)?)`,
+  `(?<![\\p{L}\\p{M}\\p{N}-])(?:(?=([\\p{L}\\p{M}\\p{N}-]{1,253}))\\1${DOT}){1,10}([a-z]{2,24}(?![a-z0-9-])|(?:xn--[a-z0-9-]{1,59}|${IDN_TLDS})(?![\\p{L}\\p{M}\\p{N}-]))((?::\\d{1,5})?(?:[/?#][^\\s<>"'\`()[\\]]*)?)`,
   'giu',
 );
 
@@ -86,12 +105,15 @@ function replaceBareDomains(text: string, mode: LinkNeutralizationMode): string 
 }
 
 /**
- * Every link in `text` replaced by {@link LINK_PLACEHOLDER} (see the module comment for the two modes). Repeated until
- * stable (at most 3 rounds), so a replacement can never join pieces into a new link.
+ * Every link in `text` replaced by {@link LINK_PLACEHOLDER} (see the module comment for the two modes), on the text with
+ * its format characters removed and NFKC applied. Repeated until stable (at most 3 rounds), so a replacement can never
+ * join pieces into a new link.
  */
 export function neutralizeLinks(text: string, mode: LinkNeutralizationMode = 'display'): string {
   if (typeof text !== 'string' || text.length === 0) return '';
-  let current = text;
+  // Sign-off item 4: invisible format characters removed and NFKC applied first, so `evil\u200b.com` and a
+  // decomposed `café.com` are caught (the output is the normalized text).
+  let current = text.replace(FORMAT_CHARACTERS, '').normalize('NFKC');
   for (let round = 0; round < 3; round += 1) {
     const next = replaceBareDomains(current.replace(SCHEME_OR_WWW, LINK_PLACEHOLDER), mode);
     if (next === current) return next;
@@ -102,5 +124,6 @@ export function neutralizeLinks(text: string, mode: LinkNeutralizationMode = 'di
 
 /** Whether `text` still holds a link `neutralizeLinks` would replace in `mode` (the runtime re-check). */
 export function containsLink(text: string, mode: LinkNeutralizationMode = 'display'): boolean {
-  return neutralizeLinks(text, mode) !== text;
+  if (typeof text !== 'string' || text.length === 0) return false;
+  return neutralizeLinks(text, mode) !== text.replace(FORMAT_CHARACTERS, '').normalize('NFKC');
 }
