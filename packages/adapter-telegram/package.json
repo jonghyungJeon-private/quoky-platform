@@ -1,0 +1,22 @@
+{
+  "name": "@quoky/adapter-telegram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TelegramPlatformAdapter (ADR-0114): Bot API long polling over node:fetch, owner-only private chats, no inbound port.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@quoky/core": "workspace:*"
+  }
+}

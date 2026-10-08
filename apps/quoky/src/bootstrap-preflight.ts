@@ -2,6 +2,7 @@ import path from 'node:path';
 import { Capability, executionLocalityOf } from '@quoky/core';
 import type { AiProvider, Logger } from '@quoky/core';
 import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
+import { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import { QuokyConfigErrorCode } from './config';
 import { redactSecrets } from './error-diagnostics';
 import {
@@ -125,7 +126,62 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_OLLAMA_VISION_MODEL must name a local model; a name or tag containing "cloud" is refused (use QUOKY_IMAGE_UNDERSTANDING_PROVIDER=claude for a cloud image reader).',
   [QuokyConfigErrorCode.LAUNCHER_INVALID]:
     'QUOKY_LAUNCHER and QUOKY_LAUNCHER_RECENT_STARTS are written by ops/launchd/quoky-launch.sh only; remove them from .env.local and the shell.',
+  // ADR-0114 D13 (TG-1). Names and shapes only, never a value.
+  [QuokyConfigErrorCode.TELEGRAM_ENABLED_INVALID]: 'QUOKY_TELEGRAM_ENABLED must be unset, "true", or "false".',
+  [QuokyConfigErrorCode.TELEGRAM_BOT_TOKEN_MISSING]:
+    'QUOKY_TELEGRAM_ENABLED=true requires QUOKY_TELEGRAM_BOT_TOKEN (the BotFather token, in .env.local at mode 600).',
+  [QuokyConfigErrorCode.TELEGRAM_BOT_TOKEN_INVALID]:
+    'QUOKY_TELEGRAM_BOT_TOKEN must be the BotFather token exactly ("<bot id>:<secret>"; no spaces, quotes or "bot" prefix).',
+  [QuokyConfigErrorCode.TELEGRAM_EXPECTED_BOT_ID_MISSING]:
+    'QUOKY_TELEGRAM_ENABLED=true requires QUOKY_TELEGRAM_EXPECTED_BOT_ID (the bot\'s numeric user id: the digits before ":" in the token).',
+  [QuokyConfigErrorCode.TELEGRAM_EXPECTED_BOT_ID_INVALID]:
+    'QUOKY_TELEGRAM_EXPECTED_BOT_ID must be the bot\'s numeric user id (digits only, no leading zero).',
+  [QuokyConfigErrorCode.TELEGRAM_TOKEN_BOT_ID_MISMATCH]:
+    'QUOKY_TELEGRAM_BOT_TOKEN belongs to another bot than QUOKY_TELEGRAM_EXPECTED_BOT_ID (the digits before ":" differ). Check both, then restart.',
+  [QuokyConfigErrorCode.TELEGRAM_OWNER_IDS_MISSING]:
+    'QUOKY_TELEGRAM_ENABLED=true requires QUOKY_TELEGRAM_OWNER_IDS (your numeric Telegram user id; comma-separated for several).',
+  [QuokyConfigErrorCode.TELEGRAM_OWNER_IDS_INVALID]:
+    'QUOKY_TELEGRAM_OWNER_IDS must be comma-separated numeric Telegram user ids (at most 16, no empty entries, not the bot\'s own id).',
+  [QuokyConfigErrorCode.TELEGRAM_OWNER_ACTOR_MAP_INVALID]:
+    'QUOKY_TELEGRAM_OWNER_ACTOR_MAP must be comma-separated "<telegram id>=<discord owner id>" entries, one per id listed in QUOKY_TELEGRAM_OWNER_IDS.',
+  [QuokyConfigErrorCode.TELEGRAM_OWNER_ACTOR_MAP_INCOMPLETE]:
+    'QUOKY_TELEGRAM_OWNER_ACTOR_MAP must map every QUOKY_TELEGRAM_OWNER_IDS entry to a Discord owner id ("<telegram id>=<discord owner id>").',
+  [QuokyConfigErrorCode.TELEGRAM_OWNER_ACTOR_MAP_NOT_DISCORD_OWNER]:
+    'Every QUOKY_TELEGRAM_OWNER_ACTOR_MAP target must be an id listed in QUOKY_DISCORD_OWNER_IDS (the Telegram owner is the same owner Actor as on Discord).',
 };
+
+/**
+ * ADR-0102 D5 / ADR-0114 D4/D5: the Telegram adapter's codes and their remediation. At startup (bounded ~5 s per call)
+ * a mismatch, a rejected token or a webhook 409 is a typed startup error and exits 78. A transient answer lets the start
+ * continue; the same answers found later (background retry, runtime) halt the Telegram side only, with one Discord
+ * OPS_NOTICE, and `TELEGRAM_IDENTITY_UNVERIFIABLE` is a retry log code.
+ */
+const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>> = {
+  [TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED]:
+    'The Telegram poll loop failed unexpectedly and stopped (Discord kept running). Report the log line, then restart.',
+  [TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH]:
+    'QUOKY_TELEGRAM_BOT_TOKEN names, or getMe returned, another bot than QUOKY_TELEGRAM_EXPECTED_BOT_ID. The process stopped (found later while serving, only Telegram stops). Check that the token belongs to the expected bot, then restart.',
+  [TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE]:
+    'The Telegram bot identity could not be read yet (network or Bot API unavailable). Not a startup failure: Discord runs, and the identity is retried in the background; Telegram polling starts once getMe matches.',
+  [TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED]:
+    'Telegram rejected QUOKY_TELEGRAM_BOT_TOKEN. The process stopped (found later while serving, only Telegram stops). Get the current token from BotFather (/token or /revoke), update .env.local, then restart.',
+  [TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT]:
+    'HTTP 409. At startup it means in practice a webhook is set on this Telegram bot (remove it with the Bot API deleteWebhook method); the process stopped. While serving, three 409s in five minutes mean another instance polls the same bot; only Telegram stops. Fix the cause, then restart.',
+};
+
+/**
+ * ADR-0114 D3 (CA P3-2): the Telegram owner id is already linked to ANOTHER Actor than the mapped Discord owner's. A
+ * configuration conflict: relaunching cannot help. The unlink procedure is in DECISIONS.md (ADR-0114 implementation
+ * note) and is a Strict, backed-up DB edit.
+ */
+export const TELEGRAM_IDENTITY_CONFLICT = 'ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram';
+const TELEGRAM_IDENTITY_CONFLICT_HINT =
+  'The Telegram owner id in QUOKY_TELEGRAM_OWNER_ACTOR_MAP is already linked to another Quoky owner (Actor) than the Discord owner it maps to. Point the map back at that Discord owner, or unlink the Telegram identity from the other Actor (a Strict, owner-approved database edit after a verified backup; see the ADR-0114 implementation note in DECISIONS.md), then restart.';
+
+function telegramStartupCode(err: unknown, message: string): TelegramStartupErrorCode | undefined {
+  const code = errorCode(err);
+  return Object.values(TelegramStartupErrorCode).find((known) => known === code || known === message);
+}
 
 function configErrorCode(err: unknown, message: string): QuokyConfigErrorCode | undefined {
   const code = errorCode(err);
@@ -152,6 +208,9 @@ export function describeStartupFailure(err: unknown): StartupFailureReport {
 
   const configCode = configErrorCode(err, message);
   if (configCode !== undefined) return { message: configCode, hint: CONFIG_ERROR_HINTS[configCode] };
+  if (message === TELEGRAM_IDENTITY_CONFLICT) return { message, hint: TELEGRAM_IDENTITY_CONFLICT_HINT };
+  const telegramCode = telegramStartupCode(err, message);
+  if (telegramCode !== undefined) return { message: telegramCode, hint: TELEGRAM_STARTUP_HINTS[telegramCode] };
 
   // discord.js surfaces rejected privileged intents as `DisallowedIntents` on login.
   if (code === 'DisallowedIntents' || /disallowed intents|privileged intent/i.test(message)) {

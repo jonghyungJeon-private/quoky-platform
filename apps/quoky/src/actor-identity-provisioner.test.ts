@@ -150,3 +150,79 @@ describe('ActorIdentityProvisioner', () => {
     expect(surface.sources.every((source) => source.status !== 'IDENTITY_MISSING')).toBe(true);
   });
 });
+
+describe('ActorIdentityProvisioner — ADR-0114 D3 platform identity links (Telegram owner → Discord owner Actor)', () => {
+  const TELEGRAM = '5550001';
+  const link = (telegramId: string, discordId: string) => ({
+    identity: { platform: 'telegram', externalId: telegramId },
+    owner: { platform: 'discord', externalId: discordId },
+  });
+  const linked = (repository: FakeActorRepository, links: ReturnType<typeof link>[]) =>
+    new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, [], new RecordingLogger(), links);
+
+  it('adds the Telegram identity to the existing Discord owner Actor, so both resolve to one Actor; idempotent', async () => {
+    const repository = new FakeActorRepository([actor('owner-actor', '111'), actor('other-actor', '222')]);
+    await linked(repository, [link(TELEGRAM, '111')]).provision();
+    const viaTelegram = await repository.findByExternalIdentity('telegram', TELEGRAM);
+    const viaDiscord = await repository.findByExternalIdentity('discord', '111');
+    expect(viaTelegram?.id).toBe('owner-actor');
+    expect(viaDiscord?.id).toBe('owner-actor');
+    expect(repository.values.size).toBe(2);
+    const saves = repository.saveCount;
+    await linked(repository, [link(TELEGRAM, '111')]).provision();
+    expect(repository.saveCount).toBe(saves);
+  });
+
+  it('a fresh install creates the one owner Actor with both identities (never a second Telegram Actor)', async () => {
+    const repository = new FakeActorRepository([]);
+    await linked(repository, [link(TELEGRAM, '111')]).provision();
+    expect(repository.values.size).toBe(1);
+    const [owner] = [...repository.values.values()];
+    expect(owner?.identities).toEqual([
+      { platform: 'discord', externalId: '111' },
+      { platform: 'telegram', externalId: TELEGRAM },
+    ]);
+    expect(owner?.displayName).toBe('111');
+  });
+
+  it('a Telegram identity held by ANOTHER Actor is a startup error, never a silent merge (no write)', async () => {
+    const repository = new FakeActorRepository([
+      actor('owner-actor', '111'),
+      { id: 'stray', displayName: 'stray', identities: [{ platform: 'telegram', externalId: TELEGRAM }], createdAt },
+    ]);
+    await expect(linked(repository, [link(TELEGRAM, '111')]).provision()).rejects.toThrow('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram');
+    expect(repository.saveCount).toBe(0);
+  });
+
+  it('CA P3-2: links and mappings are preflighted together; a later mapping conflict writes nothing (no partial apply)', async () => {
+    const repository = new FakeActorRepository([
+      actor('owner-actor', '111'),
+      actor('other-actor', '222', [{ platform: 'jira', externalId: 'jira-owner' }]),
+    ]);
+    const conflicting = new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, [mapping('111', { jira: 'jira-owner' })], new RecordingLogger(), [link(TELEGRAM, '111')]);
+    await expect(conflicting.provision()).rejects.toThrow('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT');
+    expect(repository.saveCount).toBe(0);
+    expect(await repository.findByExternalIdentity('telegram', TELEGRAM)).toBeNull();
+  });
+
+  it('CA P3-2: on a fresh install a mapping for the linked Discord owner applies on the same start, in one write', async () => {
+    const repository = new FakeActorRepository([]);
+    await new ActorIdentityProvisioner({ actors: repository } as unknown as StorageProvider, [mapping('111', { jira: 'jira-owner' })], new RecordingLogger(), [link(TELEGRAM, '111')]).provision();
+    expect(repository.saveCount).toBe(1);
+    const [owner] = [...repository.values.values()];
+    expect(owner?.identities).toEqual([
+      { platform: 'discord', externalId: '111' },
+      { platform: 'telegram', externalId: TELEGRAM },
+      { platform: 'jira', externalId: 'jira-owner' },
+    ]);
+  });
+
+  it('CA P3-2: the Telegram identity conflict is a configuration failure (exit 78) with an unlink hint', async () => {
+    const { describeStartupFailure } = await import('./bootstrap-preflight');
+    const { startupExitCode, QuokyExitCode } = await import('./ops/exit-codes');
+    const failure = describeStartupFailure(new Error('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram'));
+    expect(failure.message).toBe('ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram');
+    expect(failure.hint).toContain('QUOKY_TELEGRAM_OWNER_ACTOR_MAP');
+    expect(startupExitCode(failure)).toBe(QuokyExitCode.CONFIGURATION);
+  });
+});

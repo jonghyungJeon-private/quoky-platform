@@ -19,7 +19,7 @@ import type {
   VectorProvider,
 } from '@quoky/core';
 
-import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
+import { DEFAULT_IDENTITY_READY_TIMEOUT_MS, DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
 
 import { ConsoleLogger } from './console-logger';
 import { loadLocalEnvironment } from './env-loader';
@@ -41,6 +41,13 @@ import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
 import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
+import {
+  exitForTelegramFatal,
+  haltNoticeBuffer,
+  onTelegramFatal,
+  onTelegramHalt,
+  releaseWhenPlatformReady,
+} from './platform/platform-composition';
 
 // ADR-0113 D6: composition-root errors also feed the OPS-1 recent-error ring (codes only, in memory).
 const log = recordOpsUiErrors(new ConsoleLogger('quoky'), 'quoky');
@@ -105,6 +112,13 @@ async function bootstrap(): Promise<void> {
     // ADR-0106 amendment D2: expired memory-archive entries are deleted at start and daily, independent of backups.
     memoryArchivePurge: (now) => memoryCommands.purgeExpiredArchive(now),
   });
+
+  // ADR-0114 (TG-1): a Telegram halt (conflict, rejected token, identity mismatch) sends one OPS_NOTICE to the Discord
+  // owner; Discord itself runs on.
+  // The notice is held until Discord is READY (and the operations runtime started, below), so it is never lost to a
+  // not-yet-connected Discord. Telegram off: nothing is wired and nothing waits.
+  const telegramHalts = haltNoticeBuffer((code) => ops.notifyTelegramHalt(code));
+  const telegramComposed = onTelegramHalt(platform, telegramHalts.listener);
 
   logResolvedDatabasePath(config.storage.dbPath, log);
   // ADR-0115 implementation note: a REMOTE provider outside the effective selection (a configured but unselected HTTP
@@ -179,6 +193,10 @@ async function bootstrap(): Promise<void> {
   // ADR-0102 D6/D7: the daily backup chain, and the crash-loop OPS_NOTICE when the launcher counted >=3 starts in 10
   // minutes (owner DM only, fixed text, at most 3 per day; sent without delaying the start).
   ops.start();
+  // Released on Discord READY (bounded attempts, read-only), whether or not the startup identity check ran.
+  const haltRelease = telegramComposed
+    ? releaseWhenPlatformReady(platform, telegramHalts, { readyTimeoutMs: DEFAULT_IDENTITY_READY_TIMEOUT_MS, logger: log })
+    : undefined;
   // Startup recovery (FIRING → DELIVERY_UNCERTAIN, never resent) runs inside start(); the first tick then delivers
   // a missed one-time reminder late once and catches a recurring one up only within 60 minutes.
   await reminderDriver.start();
@@ -188,9 +206,10 @@ async function bootstrap(): Promise<void> {
   // ADR-0102 D8: launchd sends SIGTERM and allows ExitTimeOut (90 s) before SIGKILL, above the reminder stop bound
   // (REMINDER_TICK_STOP_TIMEOUT_MS, 65 s). A repeated signal while stopping is ignored.
   let stopping = false;
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (exitCode: number = 0): Promise<void> => {
     if (stopping) return;
     stopping = true;
+    haltRelease?.cancel();
     // First: no reminder claim/complete may run while the platform and storage are closing. stop() waits for the
     // in-flight delivery + outcome write up to its hard bound; if that elapses, the reminder stays FIRING and the
     // next startup turns it into DELIVERY_UNCERTAIN (never resent).
@@ -204,10 +223,16 @@ async function bootstrap(): Promise<void> {
     await queue.stop().catch(() => undefined);
     await storage.close().catch(() => undefined);
     await app.close();
-    process.exit(0);
+    process.exit(exitCode);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
+  // ADR-0102 D5 / ADR-0114 D4: a definitive answer of the Telegram startup identity check that arrives from its
+  // background retry (before the first verification) ends the process like a startup error: graceful shutdown, exit 78.
+  // A refusal that happened before this line is delivered on registration.
+  onTelegramFatal(platform, (error) => {
+    void exitForTelegramFatal(error, { log, describe: describeStartupFailure, exitCode: startupExitCode, shutdown });
+  });
 
   log.info(STARTUP_BANNER);
 }

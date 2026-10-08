@@ -12,6 +12,8 @@ import type { ContinuationReceiverMode } from './continuation/continuation-recei
 import { parseReminderConfig, ReminderConfigErrorCode } from './reminders/reminder-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
 import type { ReminderConfig } from './reminders/reminder-config';
+import { parseTelegramConfig, TelegramConfigErrorCode } from './telegram/telegram-config';
+import type { TelegramConfig } from './telegram/telegram-config';
 
 /**
  * Reads runtime configuration from the environment. QUOKY_* takes precedence over
@@ -36,6 +38,11 @@ export interface QuokyConfig {
      */
     expectedBotId?: string;
   };
+  /**
+   * ADR-0114 (TG-1): the Telegram adapter settings, present only when `QUOKY_TELEGRAM_ENABLED=true` (default off; then
+   * nothing Telegram-related is constructed). See `telegram/telegram-config.ts`. The bot token is a secret holder.
+   */
+  telegram?: TelegramConfig;
   /**
    * ADR-0102 always-on host runtime (SUB-1). Both values are written by `ops/launchd/quoky-launch.sh`, never by
    * the owner's `.env.local`: `launcher` is `'launchd'` under the launcher (`QUOKY_LAUNCHER`), and `recentStarts` is
@@ -267,6 +274,7 @@ export const QuokyConfigErrorCode = {
   LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID: 'LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID',
   MEMORY_ARCHIVE_DAYS_INVALID: 'MEMORY_ARCHIVE_DAYS_INVALID',
   ...ReminderConfigErrorCode,
+  ...TelegramConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
   DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
@@ -519,6 +527,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     chat: chat.provider === 'openai',
     image: imageUnderstanding.provider === 'openai',
   });
+  // ADR-0114 D13: off unless QUOKY_TELEGRAM_ENABLED=true; every owner must map to a Discord owner (D3).
+  const telegram = parseTelegramConfig(env, ownerIds);
 
   return {
     discord: {
@@ -528,6 +538,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       channelIds: parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID),
       ...(expectedBotId !== undefined ? { expectedBotId } : {}),
     },
+    ...(telegram !== undefined ? { telegram } : {}),
     host,
     storage: { dbPath: resolveDataPaths(env).dbPath },
     vector: { storePath: resolveDataPaths(env).vectorPath },

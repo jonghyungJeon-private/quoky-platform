@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   LATEST_SCHEMA_VERSION,
   readSqliteUserVersion,
@@ -12,7 +13,7 @@ import { backupConfigPath, writeBackupConfig } from './backup-config';
 import { BackupJob, type BackupJobTimers, type BackupStatus } from './backup-job';
 import { MemoryArchivePurgeJob } from './memory-archive-purge';
 import { loadOpsConfig } from './ops-config';
-import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, type OpsNoticeLedgerStore } from './ops-notice';
+import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, telegramHaltNoticeReason, type OpsNoticeLedgerStore } from './ops-notice';
 
 /**
  * SUB-2 composition (ADR-0102 D6/D7): the one object `main.ts` drives.
@@ -35,6 +36,11 @@ import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, type OpsNoticeLedg
 export interface OpsRuntime {
   ensurePreMigrationBackup(): Promise<void>;
   start(): void;
+  /**
+   * ADR-0114 (TG-1, CA re-review P3-3): the Telegram side halted (`TelegramStartupErrorCode`). Sends ONE fixed
+   * `OPS_NOTICE` to the Discord owner DM per call (within the OPS_NOTICE bounds); an unknown code sends nothing.
+   */
+  notifyTelegramHalt(code: string): void;
   stop(): Promise<void>;
   backupStatus(): BackupStatus;
 }
@@ -75,6 +81,10 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
     ownerId: config.discord.ownerIds[0],
     platform: input.platform,
     ledger: input.ledger ?? fileLedgerStore(ops.noticeLedgerPath),
+    // ADR-0114 (TG-1): the delivered-Telegram-halt record beside the ledger (`ops/telegram-halt-notices.json`).
+    ...(input.ledger === undefined
+      ? { telegramHaltSent: fileLedgerStore(path.join(path.dirname(ops.noticeLedgerPath), 'telegram-halt-notices.json')) }
+      : {}),
     logger,
     ...(input.clock ? { clock: input.clock } : {}),
   });
@@ -141,5 +151,9 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
       await Promise.all([backup.stop(), archivePurge?.stop()]);
     },
     backupStatus: () => backup.status(),
+    notifyTelegramHalt(code: string) {
+      const reason = telegramHaltNoticeReason(code);
+      if (reason !== undefined) void notices.notify(reason);
+    },
   };
 }

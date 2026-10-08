@@ -22,6 +22,22 @@ describe('redactSecrets', () => {
     expect(redactSecrets('task sk-1 done')).toBe('task sk-1 done');
   });
 
+  it('redacts a Telegram bot token, bare, in a Bot API request path and as QUOKY_TELEGRAM_BOT_TOKEN (ADR-0114 D5)', () => {
+    // Assembled at runtime from pieces: no token-shaped literal in the source.
+    const secret = ['AAH', 'q'.repeat(16), '_', 'Z'.repeat(15)].join('');
+    const token = [['70', '01', '23', '4'].join(''), secret].join(':');
+    const url = `request to https://api.telegram.org/bot${token}/getUpdates failed, reason: ECONNRESET`;
+    const out = redactSecrets(url);
+    expect(out).toBe('request to https://api.telegram.org/bot[REDACTED_TOKEN]/getUpdates failed, reason: ECONNRESET');
+    expect(redactSecrets(`token ${token} rejected`)).toBe('token [REDACTED_TOKEN] rejected');
+    const assigned = redactSecrets(`QUOKY_TELEGRAM_BOT_TOKEN=${token}`);
+    expect(assigned).toBe('QUOKY_TELEGRAM_BOT_TOKEN=[REDACTED]');
+    const fields = serializeError(new TypeError(url), { stage: 'inbound', platform: 'telegram' });
+    expect(JSON.stringify(fields)).not.toContain(secret);
+    // An ordinary time or ratio is not a token.
+    expect(redactSecrets('at 12:30 the ratio was 16:9')).toBe('at 12:30 the ratio was 16:9');
+  });
+
   it('redacts a PEM private-key block', () => {
     const pem =
       '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1234secretkeymaterial\nabcd/efgh+ij==\n-----END RSA PRIVATE KEY-----';

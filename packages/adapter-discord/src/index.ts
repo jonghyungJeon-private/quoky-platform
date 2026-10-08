@@ -7,6 +7,7 @@ import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from '
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
 import { readConnectedIdentity } from './connected-identity';
+import { normalizeInboundText } from './addressing';
 import type { DiscordConnectedIdentity } from './connected-identity';
 import { AttachmentIntake, renderAttachmentIntakeNote, summarizeAttachmentIntake } from './attachments';
 import type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
@@ -36,6 +37,7 @@ export type {
   OwnerNotificationDeps,
 } from './notification';
 export { isAdmittedReaction, toRating } from './reactions';
+export { isAddressingOnly, normalizeInboundText } from './addressing';
 export {
   DEFAULT_IDENTITY_READY_TIMEOUT_MS,
   DiscordIdentityUnavailableError,
@@ -622,7 +624,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     return {
       id: message.id,
       context,
-      text: message.content,
+      // Addressing-only text next to attachments reaches Core as '' (Core knows no mention syntax; see addressing.ts).
+      text: normalizeInboundText(message.content, attachments !== undefined && attachments.length > 0),
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
       receivedAt: now(),
     };

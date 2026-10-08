@@ -1,4 +1,5 @@
-import type { StartupFailureReport } from '../bootstrap-preflight';
+import { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
+import { TELEGRAM_IDENTITY_CONFLICT, type StartupFailureReport } from '../bootstrap-preflight';
 import { QuokyConfigErrorCode } from '../config';
 import { ContinuationReceiverActivationErrorCode } from '../continuation/continuation-receiver-activation';
 import { ProviderRoutingActivationErrorCode } from '../provider-routing/provider-routing-activation';
@@ -30,6 +31,15 @@ const CONFIGURATION_FAILURES: ReadonlySet<string> = new Set<string>([
   BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED,
   InstanceLockErrorCode.INSTANCE_ALREADY_RUNNING,
   StartupIdentityErrorCode.DISCORD_IDENTITY_MISMATCH,
+  // ADR-0102 D5 / ADR-0114 D4/D5: a definitive Telegram answer at startup (another bot, a rejected token, a webhook
+  // 409) is a typed startup error and exits CONFIGURATION. Found later while serving, the same answers halt the
+  // Telegram side only (one OPS_NOTICE) and never reach this path. TELEGRAM_IDENTITY_UNVERIFIABLE (an outage) never
+  // stops the start: it is retried in the background.
+  TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH,
+  TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED,
+  TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT,
+  // ADR-0114 D3 (CA P3-2): the Telegram owner id is linked to another Actor; the owner must fix the map or unlink it.
+  TELEGRAM_IDENTITY_CONFLICT,
   ProviderRoutingActivationErrorCode.INVALID_MODE,
   ContinuationReceiverActivationErrorCode.INVALID_MODE,
   ContinuationReceiverActivationErrorCode.CONTAINMENT_UNAVAILABLE,

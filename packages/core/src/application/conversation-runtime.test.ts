@@ -11693,8 +11693,9 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     }
   });
 
-  it.each(['<@123456789012345678>', '<@!123456789012345678>', '\u200B', '<@1> \uFEFF '])(
-    'a mention-only or invisible-only message with only refused attachments gets the deterministic reply: %j',
+  // TG-1: a mention-only text arrives here as '' (the Discord adapter normalizes addressing; addressing.ts).
+  it.each(['', '\u200B', ' \uFEFF ', '\u200C\n'])(
+    'an empty or invisible-only message with only refused attachments gets the deterministic reply: %j',
     async (text) => {
       const h = chatTurn();
       const result = await h.runtime.handle(withAttachments(text, [refusedFile('config.yml', 'CREDENTIAL_SHAPED')]));

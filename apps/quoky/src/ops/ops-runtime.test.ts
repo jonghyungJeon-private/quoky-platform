@@ -7,6 +7,8 @@ import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import type { BackupJobTimers } from './backup-job';
 import { OPS_NOTICE_TEXT, type OpsNoticeLedgerStore } from './ops-notice';
 import { createOpsRuntime, type OpsRuntimeInput } from './ops-runtime';
+import { haltNoticeBuffer, releaseWhenPlatformReady } from '../platform/platform-composition';
+import type { PlatformAdapter } from '@quoky/core';
 
 const OWNER = '111111111111111111';
 const T0 = Date.parse('2026-10-06T01:00:00.000Z');
@@ -93,6 +95,155 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     await settle();
     expect(sink.delivered).toHaveLength(1);
     expect(sink.delivered[0]).toMatchObject({ kind: 'BRIEF', text: OPS_NOTICE_TEXT.CRASH_LOOP, target: { userId: OWNER } });
+    await ops.stop();
+  });
+
+  it('ADR-0114 (CA re-review P3-3): a Telegram halt sends one fixed OPS_NOTICE to the Discord owner DM, no content', async () => {
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    ops.notifyTelegramHalt('TELEGRAM_POLL_CONFLICT');
+    ops.notifyTelegramHalt('TELEGRAM_IDENTITY_UNVERIFIABLE'); // not a halt: nothing
+    ops.notifyTelegramHalt('SOMETHING_ELSE');
+    await settle();
+    expect(sink.delivered).toHaveLength(1);
+    expect(sink.delivered[0]).toMatchObject({
+      kind: 'BRIEF',
+      target: { platform: 'discord', userId: OWNER, channelId: '' },
+      text: OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT,
+    });
+    expect(OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT).toContain('Telegram 연결을 멈췄어요: TELEGRAM_POLL_CONFLICT.');
+    expect(OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT).toContain('같은 봇 토큰을 쓰는 다른 실행');
+    for (const code of ['TELEGRAM_AUTH_REJECTED', 'TELEGRAM_IDENTITY_MISMATCH', 'TELEGRAM_POLL_LOOP_FAILED'] as const) {
+      expect(OPS_NOTICE_TEXT[code]).toContain(`Telegram 연결을 멈췄어요: ${code}.`);
+      expect(OPS_NOTICE_TEXT[code].length).toBeLessThan(1800);
+    }
+    // The ledger keeps the reason, so the OPS_NOTICE daily bound (3 per 24 h) also covers Telegram halts.
+    expect(ledgerContent).toContain('TELEGRAM_POLL_CONFLICT');
+    await ops.stop();
+  });
+
+  it('CA final check #3: a halt before Discord is READY is held and delivered once after release (no lost notice)', async () => {
+    let ready = false;
+    const attempts: string[] = [];
+    sink.deliver = async (n) => {
+      attempts.push(ready ? 'ready' : 'not-ready');
+      if (!ready) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+      sink.delivered.push(n);
+      return { status: 'SENT', via: 'dm' };
+    };
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    const buffer = haltNoticeBuffer((code) => ops.notifyTelegramHalt(code));
+    buffer.listener('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    // Nothing tried before readiness: no NOT_CONNECTED attempt, no ledger slot taken.
+    expect(attempts).toEqual([]);
+    expect(ledgerContent).toBeUndefined();
+    ready = true;
+    buffer.release();
+    await settle();
+    expect(attempts).toEqual(['ready']);
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_AUTH_REJECTED]);
+    // After release a halt passes straight through.
+    buffer.listener('TELEGRAM_POLL_CONFLICT');
+    await settle();
+    expect(sink.delivered).toHaveLength(2);
+    await ops.stop();
+  });
+
+  it('control: without the buffer, a halt before readiness is NOT_CONNECTED and its ledger slot is spent', async () => {
+    sink.deliver = async () => ({ status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true });
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    expect(ledgerContent).toContain('TELEGRAM_AUTH_REJECTED');
+    await ops.stop();
+  });
+
+  it('CA final check #4: the same Telegram halt reason is sent at most once per 24 h; other notices keep their budget', async () => {
+    const ops = runtime({ launcher: 'launchd', recentStarts: 3 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    for (let i = 0; i < 4; i += 1) {
+      ops.notifyTelegramHalt('TELEGRAM_POLL_CONFLICT');
+      await settle();
+      timers.clockMs += 60 * 60_000; // an hour between restarts
+    }
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT]);
+    ops.start(); // the crash-loop notice still has its slot
+    await settle();
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT, OPS_NOTICE_TEXT.CRASH_LOOP]);
+    timers.clockMs += 24 * 60 * 60_000;
+    ops.notifyTelegramHalt('TELEGRAM_POLL_CONFLICT');
+    await settle();
+    expect(sink.delivered).toHaveLength(3);
+    await ops.stop();
+  });
+
+  it('Codex final delta P2-2: no expected bot id and READY late: held, then exactly one delivery after READY', async () => {
+    let ready = false;
+    const attempts: string[] = [];
+    sink.deliver = async (n) => {
+      attempts.push(ready ? 'ready' : 'not-ready');
+      if (!ready) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+      sink.delivered.push(n);
+      return { status: 'SENT', via: 'dm' };
+    };
+    let readinessChecks = 0;
+    // The Discord side as main.ts sees it: login resolved, READY not yet (no identity check configured).
+    const platform = {
+      platform: 'discord+telegram',
+      async readConnectedIdentity() {
+        readinessChecks += 1;
+        if (!ready) throw new Error('DISCORD_IDENTITY_UNAVAILABLE');
+        return { botUserId: '1', guildIds: [], channels: [], unreachableChannelIds: [] };
+      },
+    } as unknown as PlatformAdapter;
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    const buffer = haltNoticeBuffer((code) => ops.notifyTelegramHalt(code));
+    buffer.listener('TELEGRAM_POLL_CONFLICT');
+    const waiting = releaseWhenPlatformReady(platform, buffer, { readyTimeoutMs: 5, retryDelayMs: 1 });
+    for (let i = 0; i < 50 && readinessChecks < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+    await settle();
+    expect(readinessChecks).toBeGreaterThanOrEqual(3);
+    expect(attempts).toEqual([]);
+    expect(ledgerContent).toBeUndefined();
+    ready = true;
+    await waiting.done;
+    await settle();
+    expect(attempts).toEqual(['ready']);
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT]);
+    await ops.stop();
+  });
+
+  it('cancel() ends the readiness wait at shutdown: nothing is released', async () => {
+    const platform = { platform: 'p', readConnectedIdentity: async () => Promise.reject(new Error('not ready')) } as unknown as PlatformAdapter;
+    const released: string[] = [];
+    const buffer = haltNoticeBuffer((code) => void released.push(code));
+    buffer.listener('TELEGRAM_AUTH_REJECTED');
+    const waiting = releaseWhenPlatformReady(platform, buffer, { readyTimeoutMs: 5, retryDelayMs: 60_000 });
+    await settle();
+    waiting.cancel();
+    await waiting.done;
+    expect(released).toEqual([]);
+  });
+
+  it('Codex final delta P2-2: an undelivered Telegram halt notice does not start the 24 h suppression', async () => {
+    let connected = false;
+    sink.deliver = async (n) => {
+      if (!connected) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+      sink.delivered.push(n);
+      return { status: 'SENT', via: 'dm' };
+    };
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    connected = true;
+    timers.clockMs += 60_000;
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_AUTH_REJECTED]);
+    // Delivered now: the same reason is suppressed for 24 h from here.
+    timers.clockMs += 60_000;
+    ops.notifyTelegramHalt('TELEGRAM_AUTH_REJECTED');
+    await settle();
+    expect(sink.delivered).toHaveLength(1);
     await ops.stop();
   });
 

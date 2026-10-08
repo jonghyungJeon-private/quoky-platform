@@ -25,9 +25,11 @@ const REDACTIONS: ReadonlyArray<readonly [RegExp, string]> = [
   // Authorization headers: `Authorization: Bearer <v>` / `token <v>` / `Basic <v>` (JSON or header form).
   [/\b(authorization\s*[:=]\s*"?)(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1$2 [REDACTED]'],
   // Named secret env/keys carrying a value: GIT_APP_TOKEN=..., QUOKY_GITHUB_APP_PRIVATE_KEY=..., x-access-token:...
-  [/\b(GIT_APP_TOKEN|QUOKY_GITHUB_APP_PRIVATE_KEY|QUOKY_OPENAI_API_KEY|x-access-token)\s*[:=]\s*\S+/gi, '$1=[REDACTED]'],
+  [/\b(GIT_APP_TOKEN|QUOKY_GITHUB_APP_PRIVATE_KEY|QUOKY_OPENAI_API_KEY|QUOKY_TELEGRAM_BOT_TOKEN|x-access-token)\s*[:=]\s*\S+/gi, '$1=[REDACTED]'],
   // OpenAI secret keys (user, project, service-account and admin keys; ADR-0115 D6).
   [/\bsk-[A-Za-z0-9_-]{20,}/g, '[REDACTED_TOKEN]'],
+  // Telegram bot tokens (ADR-0114 D5): `<bot id>:<secret>`, bare or in a Bot API `/bot<token>/` request path.
+  [/(\/bot|\b)[0-9]{5,16}:[A-Za-z0-9_-]{30,}/g, '$1[REDACTED_TOKEN]'],
 ];
 
 /** Replace every recognized secret class in `input` with a stable placeholder. Non-secret text is preserved. */

@@ -133,6 +133,7 @@ import { createMemoryProviders } from './features/memory.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
+import { composePlatformAdapter, telegramOwnerIdentityLinks } from './platform/platform-composition';
 
 const config = loadConfig();
 const coreLogger = new ConsoleLogger('quoky');
@@ -333,10 +334,12 @@ const infrastructure: Provider[] = [
     provide: PLATFORM_ADAPTER,
     // ADR-0091: the owner/channel admission gate is Discord-adapter config; Core never receives these ids.
     // ADR-0101 D8: the reminder channel-delivery opt-in reaches the adapter here (inert while reminders are off).
+    // ADR-0114 D6: with Telegram on, one composite over Discord (primary) and Telegram; off, the Discord adapter itself.
     useFactory: () =>
-      new DiscordPlatformAdapter(
-        withReminderChannelDelivery(config.discord, config.reminders),
-        new ConsoleLogger('discord'),
+      composePlatformAdapter(
+        new DiscordPlatformAdapter(withReminderChannelDelivery(config.discord, config.reminders), new ConsoleLogger('discord')),
+        config.telegram,
+        { logger: (scope) => new ConsoleLogger(scope), dbPath: config.storage.dbPath },
       ),
   },
   {
@@ -366,7 +369,8 @@ const application: Provider[] = [
   toolManagerProvider,
   {
     provide: ActorIdentityProvisioner,
-    useFactory: (storage: StorageProvider) => new ActorIdentityProvisioner(storage, config.actorIdentityMappings),
+    useFactory: (storage: StorageProvider) =>
+      new ActorIdentityProvisioner(storage, config.actorIdentityMappings, new ConsoleLogger('actor-identity'), telegramOwnerIdentityLinks(config.telegram)),
     inject: [STORAGE_PROVIDER],
   },
   { provide: RiskPolicy, useFactory: () => new RiskPolicy() },

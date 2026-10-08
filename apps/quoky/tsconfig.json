@@ -8,6 +8,7 @@
   "references": [
     { "path": "../../packages/core" },
     { "path": "../../packages/adapter-discord" },
+    { "path": "../../packages/adapter-telegram" },
     { "path": "../../packages/storage-sqlite" },
     { "path": "../../packages/queue-local" },
     { "path": "../../packages/vector-local" },

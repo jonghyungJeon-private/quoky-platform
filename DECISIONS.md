@@ -17669,6 +17669,344 @@ A bot is reachable by anyone who finds its handle, so it is a second untrusted i
 Bot creation through BotFather by the owner; the `.env.local` edit; the first live session on one bot and one private
 chat. Independent Chief Architect review before PLT-0 and TG-1 merge.
 
+### ADR-0114 implementation note — TG-1 Telegram text conversations (2026-10-08)
+
+Implementation choices for TG-1 where D2–D7, D11 and D13 are silent. No ratified text above changes.
+
+Status: implemented on branch `claude/v4-w2-tg1-telegram`, not merged; offline validation only (fake `fetch`; the real
+Bot API is never called). The Chief Architect review returned CHANGES REQUIRED, and the review fixes are applied below
+(marked "CA"). The Codex review's one finding equals CA P3-3. The re-review confirmed those fixes and left one P2 and
+seven P3s, applied below (marked "CA re-review"), together with one Codex delta P2. Strict gates not run: bot creation,
+`.env.local`, the first live session.
+
+- **Port surface: unchanged, plus one additive domain value.** There is no new port, DI token or domain field.
+  `PlatformAdapter`, `NotificationSink`, `MessageMarkup` and `ConversationRuntimeDeps` (35) are as PLT-0 left them.
+  - `NotificationNotSentReason` gains `EMPTY_TEXT` (CA re-review P3-6): an empty or whitespace-only notification is
+    refused under that reason instead of `TEXT_TOO_LONG`. Nothing switches on the union; the reminder outcome stores
+    it as data.
+  - The one Core behaviour change is `hasEffectiveText`, which no longer strips mention tokens (see "Addressing").
+- **Package.** `packages/adapter-telegram` depends on `@quoky/core` only. It uses no SDK and adds no third-party
+  dependency; it calls the platform `fetch`. Only the composition root imports it.
+
+#### Admission (D2)
+
+`admission.ts` is pure and runs before anything else reads an update. An update is admitted only when ALL of these
+hold:
+
+- It is exactly a `message` update (`update_id` plus `message`, nothing else).
+- `chat.type` is `private`.
+- `from.is_bot` is exactly `false`.
+- The numeric `from.id` is listed in `QUOKY_TELEGRAM_OWNER_IDS`. A string is never coerced to a number.
+- `chat.id` equals `from.id`, so it is the owner's own chat with the bot.
+- The owner wrote the text (CA P2-1). Any `forward_origin`, the legacy `forward_from` / `forward_from_chat` /
+  `forward_sender_name` / `forward_date`, or `via_bot` drops the message: its text is someone else's.
+- It has `text`.
+- Its `date` is at most 10 minutes old.
+
+Everything else is dropped:
+
+- groups, supergroups and channels;
+- edited messages, channel posts, inline and callback queries, reactions, membership updates and every other update
+  type;
+- other users, bots and malformed entries;
+- forwarded and inline-bot messages;
+- owner messages without text (attachments are TG-2, and nothing is downloaded for them);
+- stale messages.
+
+A drop sends no reply, makes no Bot API call and writes no log line of its own. Only a value-free counter per reason
+moves (`malformed`, `update-type`, `not-private`, `not-owner`, `forwarded`, `no-text`, `stale`; `status()`).
+
+There is one owner-facing exception (CA P3-4). When an OWNER's own messages were dropped as `stale` or `no-text`, that
+owner gets one fixed notice per kind per poll session, in their own private chat only. The count and the once-per-session
+bound are per (owner chat, kind), so with several owners each is told only about their own messages (CA re-review P3-1).
+It is sent only after the identity gate is open and while connected:
+
+- "꺼져 있던 동안 받은 메시지 N개는 처리하지 않았어요. 필요하면 다시 보내 주세요."
+- "Telegram 첨부는 아직 지원하지 않아요."
+
+Nobody else is ever answered, and no content is echoed.
+
+The poll asks for `allowed_updates: ["message"]`, but admission does not rely on it. Every `sendMessage`, typing call
+and notification is rechecked: the target must be a `telegram` context whose chat id is a listed owner id, with no
+thread.
+
+The 10-minute bound exists because Telegram keeps updates for 24 hours. An old `승인` or `기억 확인 <코드>` must not act
+hours later. A message sent during a short restart is still answered.
+
+#### Token handling (D5)
+
+- **Holder.** `QUOKY_TELEGRAM_BOT_TOKEN` is parsed once into a `TelegramBotToken`, like `OpenAiApiKey`. The value lives
+  in a true private field, and `toJSON`, `toString` and `util.inspect` show `[REDACTED]`. So printing the whole
+  configuration, the adapter or its client never shows it.
+- **Where it goes.** Only the Bot API client calls `reveal()`. It puts the token into the request path to the pinned
+  host, `https://api.telegram.org/bot<token>/<method>`, for a method on a fixed list (`getMe`, `getUpdates`,
+  `sendMessage`, `sendChatAction`, `sendDocument`). The token is never in a header, argv, a log field, an error or an
+  audit field.
+- **Errors.** A transport error (which can quote the URL) is never wrapped, chained (`cause`) or logged. The failure is
+  a fixed `TelegramApiError` (`telegram <method>: <CODE>[ (HTTP n)]`). Telegram's `description` is never read; only the
+  numeric `retry_after` of a 429 is.
+- **Network bounds.** Redirects are refused, and so is a response from another origin.
+- **Defence in depth.** `error-diagnostics` redacts the token shape (`<id>:<secret>`, bare or after `/bot`) and
+  `QUOKY_TELEGRAM_BOT_TOKEN=…`. Tests build fake tokens at runtime and check logs, errors, `inspect` and JSON.
+
+#### Startup identity (D5), outages and conflicts (D4)
+
+`start()` runs the startup identity check (ADR-0102 D5, ADR-0114 D4/D5), bounded short so Discord's start is never
+held long. This was realigned with the ratified ADRs at the CA final check; it reverts the re-review's
+halt-instead-of-exit change for answers found at startup.
+
+1. The token's bot-id prefix must be `QUOKY_TELEGRAM_EXPECTED_BOT_ID`. This needs no network, and `config.ts` refuses a
+   mismatch first (`TELEGRAM_TOKEN_BOT_ID_MISMATCH`), as it refuses every other configuration-shape error.
+2. `getMe`, bounded to `STARTUP_CALL_TIMEOUT_MS` (5 s), must return the expected bot id with `is_bot: true`.
+3. A `getUpdates` probe with no offset (so it confirms nothing) and `timeout: 0`, bounded to 5 s, must not return HTTP
+   409.
+4. Only then is the identity verified (`status().identityVerified`) and polling starts.
+
+Outcomes:
+
+- **A definitive answer at startup is a typed startup error, exit 78**, as ADR-0102 D5 ("exits with a distinct
+  configuration code") and ADR-0114 D4 ("a 409 is a typed startup error") require. The answers are another bot, or not
+  a bot (`TELEGRAM_IDENTITY_MISMATCH`), a 401/404 (`TELEGRAM_AUTH_REJECTED`), or a 409 on the probe
+  (`TELEGRAM_POLL_CONFLICT`). The composite stops Discord and passes the code through. Nothing is read.
+- **A transient or timed-out answer resolves `start()`** (CA P2-2): network, a 5 s timeout or a 5xx. The check is then
+  retried in the background with the poll backoff, and nothing is read or sent until `getMe` matches.
+  `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code only. Discord is held at most about 2 × 5 s.
+- **A definitive answer from the background retry, before the first successful verification, also exits 78.** That
+  is still the startup identity check: another bot or a 401/404 from `getMe`, or a webhook 409 from the probe (CA final
+  check, rule question 1).
+  - The adapter fails closed (`status().halted`, nothing read or sent) and hands the typed error to `onFatal`.
+  - `main.ts` wires that (`onTelegramFatal` → `exitForTelegramFatal`) to the same report and exit code as a startup
+    error, after the graceful `shutdown`: reminders, ops UI, ops, the platform (Discord), queue, storage, then exit
+    78.
+  - A refusal found before the wiring is registered is delivered on registration.
+- **Only detection AFTER the first verification halts the Telegram side only.** That is a 401, three 409s or a loop
+  defect while polling. It is logged, shown in `status().halted`, and sent ONCE to the Discord owner as an
+  `OPS_NOTICE` (below).
+  - **Why not exit 78 here.** ADR-0102 D5 and ADR-0114 D4 fix the startup identity check, and the background retry
+    before the first verification belongs to it. They say nothing about a token revoked, or a second instance
+    started, after the identity was verified and the process is serving. Stopping the process then would take a
+    working Discord down for a Telegram fault. The halt keeps Telegram fail-closed (nothing read or sent) and tells
+    the owner.
+- **The Discord/Telegram asymmetry (an implementation choice within ADR-0114 D5).** An unreadable identity is fatal on
+  Discord: ADR-0102 D5 `DISCORD_IDENTITY_UNVERIFIABLE` stops the process. On Telegram it is retried in the
+  background, and nothing is read or sent meanwhile. ADR-0114 D5 asks only that a mismatch "fails closed before
+  polling starts", which holds. Retrying keeps a Telegram outage from taking a verified Discord down (CA P2-2).
+
+The probe reliably catches only a webhook (CA P2-3). Telegram answers 409 to whichever `getUpdates` is not the newest,
+so a second long-poller started later is not detected by it. The runtime policy below handles that.
+
+While polling:
+
+- Three HTTP 409s within five minutes stop polling (`TELEGRAM_POLL_CONFLICT`, logged, `status().halted`). Two instances
+  on one token would otherwise keep taking updates from each other (CA P2-3). A single 409 waits the maximum backoff.
+- A 401/404 stops polling (`TELEGRAM_AUTH_REJECTED`; CA P3-5).
+- An unexpected rejection of the background loop (a defect) never becomes an unhandled rejection that would stop the
+  process. It is caught, logged with the error name only, and halts the Telegram side (`TELEGRAM_POLL_LOOP_FAILED`;
+  CA re-review P3-2).
+- **Every halt reaches `onHalt` once.** `main.ts` wires it (`onTelegramHalt`) to `OpsRuntime.notifyTelegramHalt`, which
+  sends ONE fixed `OPS_NOTICE` through the existing `OpsNoticeService` (CA re-review P3-3). It is a `BRIEF` to the
+  Discord owner DM via `DISCORD_NOTIFICATION_PLATFORM`. The text is "[Quoky 운영 알림] Telegram 연결을 멈췄어요: <코드>.",
+  then a reason line and "Discord는 계속 동작합니다." It carries no content and no token, and the `OPS_NOTICE` ledger
+  bound (3 per 24 h) applies.
+  - **Held until Discord is READY (CA final check #3, Codex final delta P2-2).** A halt can fire before Discord is
+    READY, which would give `NOT_SENT NOT_CONNECTED` after the ledger already took a slot. So `main.ts` holds halt codes
+    (`haltNoticeBuffer`) and releases them through `releaseWhenPlatformReady` after `ops.start()`.
+    - Release waits for the identity check's own readiness signal: `readConnectedIdentity`, read-only, each attempt
+      bounded by `DEFAULT_IDENTITY_READY_TIMEOUT_MS`.
+    - It does not depend on whether `QUOKY_DISCORD_EXPECTED_BOT_ID` made startup wait.
+    - Until READY the codes stay held, with no ledger slot and no suppression, and they go out on the first READY.
+    - The wait is cancelled at shutdown. With Telegram off nothing is wired.
+    - The ledger's record-before-send rule (ADR-0102 D7) is unchanged.
+  - **Repeat suppression (CA final check #4, Codex final delta P2-2).** The same Telegram halt reason is sent at most
+    once per 24 h after it was DELIVERED (`telegramHaltQuietMs`), so restarts with a broken token cannot use up the
+    budget and suppress `BACKUP_FAILED` or `CRASH_LOOP`. The record of delivered halt notices is separate from the D7
+    ledger (`ops/telegram-halt-notices.json`, written only on `SENT`), so an undelivered notice never suppresses the
+    next one.
+- **Outbound needs a verified identity (Codex delta P2).** `sendMessage`, `sendTyping` and its refresh, `deliver` and
+  the owner notices make no Bot API call before `getMe` matched, or once the Telegram side halted or stopped.
+  - `sendMessage` logs "send skipped: telegram not connected" and returns an empty receipt, as the Discord adapter
+    skips a send while not connected.
+  - `sendTyping` does nothing.
+  - `deliver` is `NOT_SENT NOT_CONNECTED` (retryable).
+  - **Every attempt re-checks it (Codex delta P2-1).** The 429 retry checks again after its wait, so a halt or a stop
+    during the wait sends nothing.
+  - **A restart resets it (P2-2).** `start()` resets `identityVerified` together with `halted`.
+  - **`stop()` too (CA final check, Critical).** `stop()` confirms the offset to Telegram only for a verified,
+    un-halted session.
+  - **The startup check is part of the lifecycle (Codex final delta P2-1).** `start()` creates the lifecycle
+    `AbortController` before its first await, and passes its signal to the startup `getMe` and probe. The startup
+    promise is tracked, and `stop()` aborts it and awaits it. An answer that arrives after `stop()` is not acted on: no
+    probe, no verification, no poll.
+  - **The loop's catch.** It does not halt or notify while stopping.
+  - **Invariant test.** A table-driven test runs every method of the fixed Bot API list (`TELEGRAM_METHODS`; a row is
+    required per method, with a positive control). It covers six states: before verification, after a halt, after a
+    stop, stopped during the startup `getMe`, stopped during the startup probe, and after a restart with a hanging
+    `getMe`.
+- The ADR-0102 lock still prevents a second process on one host.
+
+#### Polling and the offset (D4)
+
+- **Bounds.** `getUpdates` uses `limit` 100 and a 25 s server wait. The HTTP bound is 35 s and the body bound 8 MiB.
+- **Backoff.** It starts at 1 s, doubles to 60 s and resets after a success. A 429 waits at least its `retry_after`.
+- **Oversized response (CA P3-1).** A body over the bound halves the batch size, down to 1. At 1, with a known offset,
+  that one update is skipped (`offset + 1`, counted as `malformed`).
+- **Order of operations (decision 2).** An admitted update is handed to the runtime first. The offset is then advanced
+  past it and persisted in the same synchronous step, with no await in between. Drops are persisted at the end of the
+  batch. An entry below the offset is skipped, so a re-sent update is never handled twice.
+- **Offset file.** It lives in `<database directory>/ops/telegram-offset.json`: private directory 700, file 600,
+  replaced atomically like `ops/provider-selection.json`. It holds `{version: 2, botId, offset, savedAt}`, with no
+  content and no token. A file older than 24 h (Telegram's update retention; CA re-review P2), one without `savedAt`
+  (the earlier format), a `savedAt` far in the future, a file for another bot, a corrupt file or an invalid value is
+  ignored, and Telegram's own confirmation then applies. `stop()` also confirms the offset to Telegram.
+- **The silent-day reset (CA re-review P2).** After a long silence Telegram may restart `update_id` from a random value
+  BELOW the held offset, which would swallow every later message. Two guards prevent it:
+  - the 24 h file bound above;
+  - in memory, after 24 h with no update, the held offset is dropped once and the next poll goes without one.
+
+  Nothing older can still be pending by then, so neither guard can replay a turn.
+- **Remaining window.** Handover is at most once. A process killed between handing an update over and the
+  same-step file write can see that update once more after the restart. That window is a few synchronous statements,
+  with no I/O wait in between. A turn still running when the process dies is not replayed: the offset is already
+  past it. This matches Discord, where an in-flight turn is lost too.
+- **Identity gate.** An admitted update waits for the ADR-0102 D5 inbound gate. A closed gate stops polling without
+  advancing the offset.
+- **When the file is written.** It is first written after a poll that moved the offset (an update handed over or
+  dropped). Startup itself never writes it.
+
+#### Composition (D6) and notifications (D11; CA P1-1)
+
+- **Telegram off.** With `QUOKY_TELEGRAM_ENABLED` unset or `false`, `PLATFORM_ADAPTER` is the Discord adapter itself and
+  nothing Telegram-related is constructed. `onTelegramHalt` then wires nothing.
+- **Telegram on.** `PLATFORM_ADAPTER` is one `CompositePlatformAdapter` over Discord (primary) and Telegram.
+  - Every child gets the same inbound handlers.
+  - Replies, typing and approvals route by `context.platform`; an uncomposed platform is refused.
+  - Children start primary first. If one fails, the started ones are stopped and its typed error passes through.
+  - The ADR-0102 D5 gate goes to every child, and the Discord identity reader to the primary.
+- **Notification routing (pulled from TG-3).**
+  - `OPS_DECISION_RESULT` always goes to the primary.
+  - `OPS_NOTICE` is a `BRIEF` addressed to the primary platform, so it lands there too.
+  - `TEXT` and `BRIEF` go to the child whose platform is `target.platform`. A reminder or brief created on Telegram is
+    delivered on Telegram.
+  - An uncomposed platform is `NOT_SENT TARGET_NOT_ADMITTED`.
+- **The Telegram sink.** It is at most once:
+  - Exactly one `sendMessage` to the owner's own private chat, with no retry, not even after a 429.
+  - A text over one message, or over `REMINDER_LIMITS.maxDeliveredTextChars`, is `TEXT_TOO_LONG`. There are no
+    multi-part notifications, as on Discord.
+  - A 429 is `NOT_SENT` retryable. A 401 or 403 is `NOT_SENT MISSING_ACCESS`, and a 400 is `NOT_SENT UNKNOWN_TARGET`.
+  - A timeout, network error, abort, 5xx or an unreadable 2xx is `UNCERTAIN`.
+  - When the adapter is not started, not verified, halted or stopped, the result is `NOT_SENT NOT_CONNECTED` (retryable).
+  - An empty or whitespace-only text is `NOT_SENT EMPTY_TEXT` (CA re-review P3-6).
+  - Turning Telegram off later stops delivery of reminders and briefs created on Telegram. The composite then has no
+    Telegram child, so they are `NOT_SENT TARGET_NOT_ADMITTED` and are never moved to Discord.
+  - A `BRIEF` with the BRF-1 calendar and Jira sections, sent to a Telegram target through the composite, is one plain
+    `sendMessage` of at most 4096 characters. `content` and `text` agree, and the sent text is the Telegram rendering of
+    `content` (test).
+  - A delivery is reported `via: 'dm'`.
+- **`main.ts`.** Wires the halt notice (`onTelegramHalt` through `haltNoticeBuffer` to `OpsRuntime.notifyTelegramHalt`,
+  released after `ops.start()`). It is otherwise unchanged: a Telegram startup error passes through `platform.start()`
+  to the existing exit path.
+
+#### Identity (D3)
+
+- **Mapping rules.** `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` (`<telegram id>=<discord owner id>`) must map every Telegram owner
+  id, exactly once, to an id in `QUOKY_DISCORD_OWNER_IDS`.
+- **Linking at startup.** `ActorIdentityProvisioner` links the Telegram identity to the Discord owner's Actor, before
+  the platform starts. The `(platform, userId)` lookup then resolves a Telegram turn to that Actor.
+- **Preflight (CA P3-2).** Links are planned with the `QUOKY_ACTOR_IDENTITY_MAPPINGS` preflight, and nothing is written
+  until both passed, so a configuration conflict never partially applies.
+- **Startup DB write (decision 4).** When a link is new, `provision()` writes the owner Actor at startup (one
+  `actors` / `actor_identities` save). The live-enable packet names this write.
+- **Deviation note under D3 (decision 1, accepted).** "No new Actor is created" holds for the owner across platforms.
+  The one exception is a fresh install where the Discord owner never messaged the bot. There, the owner Actor is created
+  at startup with both identities, the same shape the first Discord turn's `ActorManager` would have produced
+  (`displayName` = the Discord id), instead of waiting for that turn. A mapping for the same owner applies to it on the
+  same start.
+- **Conflict.** A Telegram identity held by another Actor is the startup error
+  `ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram`, which exits 78 with a hint. It is never a silent merge.
+- **To unlink.** Point the map back at the Actor's Discord owner, or take the Strict path: an owner-approved database
+  edit after a verified backup, with the service stopped. The edit removes the identity from both stores:
+
+  ```sql
+  DELETE FROM actor_identities WHERE platform = 'telegram' AND external_id = '<telegram id>';
+  UPDATE actors SET data = json_set(data, '$.identities', (SELECT json_group_array(json(value)) FROM json_each(actors.data, '$.identities') WHERE json_extract(value, '$.platform') <> 'telegram')) WHERE id = '<actor id>';
+  ```
+
+  Then restart.
+- **Sessions.** They stay per platform conversation (the private chat id).
+
+#### Parse mode and markup (D7)
+
+- **Plain text.** Every message is sent with no `parse_mode`, so Telegram interprets nothing. Every `MessageContent`
+  node is delivered verbatim: string nodes (and untrusted text inside their fences), `untrusted` under every guard, and
+  links. The link preview is disabled on every send. "Escape every string node for the parse mode" is the identity for
+  plain text.
+- **Conversation references.** A Telegram reference is its label. Another platform's conversation is a neutral name
+  ("Discord 대화방", "Discord 개인 대화"), never `<#id>`, `#id` or an id. `platformNote` is empty.
+- **The only HTML.** The code-change preview's diff parts use the adapter's own `<pre>`, around content where `&`, `<`,
+  `>` and `"` are escaped, with the escaped safety trailer last.
+
+#### Budgets and chunking
+
+- **Budgets.** ADR-0114 asks for no adapter-reported budget, so Core keeps its own (1,800/1,900). They fit 4096.
+- **Chunking.** An adapter-owned chunker splits replies. It prefers a newline, then a space, never splits a surrogate
+  pair or a backtick run, and is lossless. Parts are numbered `(i/n)`, each at most 4096 UTF-16 units.
+- **Failures.** A send failure stops delivery and posts the one partial-failure notice (ADR-0016).
+- **Retries.** A 429 asking for at most 10 s is retried once. The wait ends at `stop()` (CA P3-6), and a stopped
+  adapter sends nothing.
+- **Previews.** At most 5 `<pre>` parts; otherwise the caption is sent as plain text and the complete `.diff` as a
+  document.
+- **Typing.** `sendChatAction` is refreshed every 4.5 s for at most about 2 minutes.
+
+#### Addressing (PLT-0 residual; CA P3-3, Codex P2)
+
+`hasEffectiveText` no longer knows any mention syntax. The Discord adapter normalizes an attachment message whose text
+is only addressing tokens (`<@id>`, `<@!id>`, `<@&id>`, `<#id>`, `<#C1|name>`) to `''` (`adapter-discord/src/addressing.ts`).
+
+This is a deliberate change to Discord behaviour on that one path. With a usable attachment, the stored history, the
+prompt input and the image caption now get `''` instead of `<@id>`. The mention is addressing, not content, and Core
+already treated it as no effective text. With only unusable attachments the reply is unchanged.
+
+No other Discord path changes: a mention plus real text, and a mention-only message without attachments, reach Core as
+before. Both are pinned by tests. Telegram needs no addressing normalization in a private chat.
+
+#### Configuration (D13)
+
+The variables:
+
+- `QUOKY_TELEGRAM_ENABLED`: exact `true`/`false`, default `false`; nothing else is read while it is off.
+- `QUOKY_TELEGRAM_BOT_TOKEN`.
+- `QUOKY_TELEGRAM_EXPECTED_BOT_ID`.
+- `QUOKY_TELEGRAM_OWNER_IDS`: at most 16, not the bot's own id.
+- `QUOKY_TELEGRAM_OWNER_ACTOR_MAP`.
+
+With the flag on, every variable is required. There are eleven value-free startup codes:
+
+- `TELEGRAM_ENABLED_INVALID`
+- `TELEGRAM_BOT_TOKEN_MISSING`, `TELEGRAM_BOT_TOKEN_INVALID`
+- `TELEGRAM_EXPECTED_BOT_ID_MISSING`, `TELEGRAM_EXPECTED_BOT_ID_INVALID`
+- `TELEGRAM_TOKEN_BOT_ID_MISMATCH`
+- `TELEGRAM_OWNER_IDS_MISSING`, `TELEGRAM_OWNER_IDS_INVALID`
+- `TELEGRAM_OWNER_ACTOR_MAP_INVALID`, `TELEGRAM_OWNER_ACTOR_MAP_INCOMPLETE`,
+  `TELEGRAM_OWNER_ACTOR_MAP_NOT_DISCORD_OWNER`
+
+Each has a hint and exits 78.
+
+#### Residuals
+
+- **TG-2.** Attachments and images (`getFile` after admission), and 👍/👎 through `message_reaction` (`onFeedback`).
+- **TG-3.**
+  - The operations-UI panel (D12); `status()` is the content-free seam: identity, polling, halted code, last poll,
+    admitted chats, drop counters.
+  - `quokyctl`.
+  - The ops-UI decision path (ops-actions accepts Discord chats only).
+- **TG-3: CommonMark on Telegram (decision 3).** Quoky copy in plain mode shows `**`, backticks and fences as written. A
+  fence-aware translation, or a wider HTML subset, is TG-3.
+- **Future storage ADR (CA P3-7).** The session lookup by conversation (`findActiveByContext(channelId, threadId)`)
+  does not include the platform. Discord and Telegram ids are disjoint in practice (17–20-digit snowflakes vs. at most
+  52-bit integers), but nothing enforces it. A storage ADR should key sessions by `(platform, conversation)`. No code
+  change in TG-1.
+- **Live QA (Strict).** The cross-platform approval case, and live QA itself.
+
 ## ADR-0115 — HTTP API providers for the chat and image tiers only: opt-in OpenAI API then Gemini API adapters, no tool definitions, code, review and policy capabilities stay on the Claude CLI, and a usage ledger with a monthly DM notice. Amends the constitution (ARCHITECTURE.md §5.5) and AGENTS.md; amends ADR-0014, the ADR-0092 amendments and the ADR-0111 amendments.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below).
