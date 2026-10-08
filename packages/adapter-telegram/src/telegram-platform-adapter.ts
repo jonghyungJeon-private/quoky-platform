@@ -17,7 +17,7 @@ import type {
 import { admitTelegramUpdate, TELEGRAM_DROP_REASONS, updateIdOf } from './admission';
 import type { AdmittedTelegramMessage, TelegramDropReason } from './admission';
 import { TelegramApiError, TelegramBotApi, TelegramFailureCode } from './bot-api';
-import type { FetchLike, TelegramMethod } from './bot-api';
+import type { FetchLike, TelegramCallOptions, TelegramMethod } from './bot-api';
 import type { TelegramBotToken } from './bot-token';
 import { deliverTelegramPreview, deliverTelegramText, TELEGRAM_MESSAGE_LIMIT } from './delivery';
 import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramContent, TELEGRAM_PLATFORM } from './rendering';
@@ -191,7 +191,16 @@ export function notificationOutcomeOf(err: unknown): NotificationSinkOutcome {
 /** The signal of a send made while the adapter is not running (no stop to wait for). */
 const NEVER_ABORTED = new AbortController().signal;
 
+/** An outbound call refused before anything was sent (not verified, halted or stopped). */
+class OutboundRefused extends Error {
+  constructor(readonly method: TelegramMethod) {
+    super(`telegram ${method}: NOT_CONNECTED`);
+    this.name = 'OutboundRefused';
+  }
+}
+
 function codeOf(error: unknown): string {
+  if (error instanceof OutboundRefused) return 'NOT_CONNECTED';
   return error instanceof TelegramApiError ? error.code : 'UNEXPECTED';
 }
 
@@ -830,10 +839,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     params: () => Record<string, unknown> | FormData,
     timeoutMs: number,
   ): Promise<unknown> {
-    // Every attempt needs a verified, un-halted, running adapter (a reply or notice that arrives later is dropped).
-    if (!this.connected()) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
     try {
-      return await this.api.call(method, params(), { timeoutMs });
+      return await this.outbound(method, params(), { timeoutMs });
     } catch (err) {
       const retryAfter = err instanceof TelegramApiError && err.code === TelegramFailureCode.RATE_LIMITED ? err.retryAfterSeconds : undefined;
       if (retryAfter === undefined || retryAfter > MAX_SEND_RETRY_AFTER_SECONDS) throw err;
@@ -841,8 +848,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       const signal = this.controller?.signal ?? NEVER_ABORTED;
       await this.sleep(retryAfter * 1000, signal);
       // Codex delta P2-1: re-checked before the retry: a halt (for example a 401 on the poll) during the wait sends nothing.
-      if (signal.aborted || !this.connected()) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
-      return this.api.call(method, params(), { timeoutMs, signal });
+      if (signal.aborted) throw new TelegramApiError(TelegramFailureCode.ABORTED, method);
+      return this.outbound(method, params(), { timeoutMs, signal });
     }
   }
 
@@ -864,6 +871,17 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.typingTimers.set(chatId, timer);
   }
 
+  /**
+   * THE outbound path (CA final check suggestion): every Bot API call that is not part of the lifecycle — `sendMessage`,
+   * `sendDocument`, `sendChatAction`, each retry — goes through here and is refused, with nothing sent, unless the
+   * adapter is verified, un-halted and running. The lifecycle reads (`getMe`, the probe, the poll, the stop confirm)
+   * are the only other `api.call` sites; a source-scan test pins that list.
+   */
+  private async outbound(method: TelegramMethod, params: Record<string, unknown> | FormData, options: TelegramCallOptions): Promise<unknown> {
+    if (!this.connected()) throw new OutboundRefused(method);
+    return this.api.call(method, params, options);
+  }
+
   /** Outbound is allowed only after `getMe` matched and while the Telegram side is neither halted nor stopped. */
   private connected(): boolean {
     return this.identityVerified && this.halted === undefined && !this.stopped;
@@ -871,7 +889,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 
   private async pumpTyping(chatId: string): Promise<void> {
     if (!this.connected()) return;
-    await this.api.call('sendChatAction', { chat_id: chatId, action: 'typing' }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
+    await this.outbound('sendChatAction', { chat_id: chatId, action: 'typing' }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
   }
 
   private clearTyping(chatId: string): void {
@@ -925,13 +943,15 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       return notSent('TEXT_TOO_LONG', false);
     }
     try {
-      await this.api.call(
+      await this.outbound(
         'sendMessage',
         { chat_id: chatId, text, link_preview_options: { is_disabled: true } },
         { timeoutMs: NOTIFICATION_SEND_TIMEOUT_MS },
       );
       return { status: 'SENT', via: 'dm' };
     } catch (err) {
+      // Refused before anything was sent (the adapter stopped or halted meanwhile): confirmed not transmitted.
+      if (err instanceof OutboundRefused) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
       return notificationOutcomeOf(err);
     }
   }

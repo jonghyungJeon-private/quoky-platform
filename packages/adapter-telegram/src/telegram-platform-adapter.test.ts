@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { inspect } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { conversationRefOf, messageContent, outboundMessage, untrustedText } from '@quoky/core';
@@ -306,6 +307,23 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
     },
     { name: 'stop (the offset confirm)', method: 'getUpdates', run: (a) => a.stop() },
   ];
+
+  it('CA final check suggestion: the only direct api.call sites are the lifecycle reads and the one outbound wrapper', () => {
+    const source = readFileSync(new URL('./telegram-platform-adapter.ts', import.meta.url), 'utf8');
+    const sites = [...source.matchAll(/this\.api\.call\(\s*([^,]+),/g)].map((match) => ({ arg: (match[1] ?? '').trim(), at: match.index ?? 0 }));
+    // getMe and the probe (identity check), the stop confirm, the long poll: lifecycle reads; `method`: the wrapper.
+    expect(sites.map((site) => site.arg).sort()).toEqual(["'getMe'", "'getUpdates'", "'getUpdates'", "'getUpdates'", 'method'].sort());
+    const wrapper = source.indexOf('private async outbound(');
+    const wrapperEnd = source.indexOf('\n  }\n', wrapper);
+    const generic = sites.find((site) => site.arg === 'method');
+    expect(wrapper).toBeGreaterThan(0);
+    expect(generic !== undefined && generic.at > wrapper && generic.at < wrapperEnd).toBe(true);
+    expect(source.slice(wrapper, wrapperEnd)).toContain('if (!this.connected()) throw new OutboundRefused(method);');
+    // Every non-lifecycle method of the fixed list therefore has no direct call site.
+    for (const method of TELEGRAM_METHODS.filter((name) => name !== 'getMe' && name !== 'getUpdates')) {
+      expect(source.includes(`this.api.call('${method}'`), method).toBe(false);
+    }
+  });
 
   it('every outbound Bot API method has an action row', () => {
     const covered = new Set(actions.map((action) => action.method));
