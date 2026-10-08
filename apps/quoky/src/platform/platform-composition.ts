@@ -2,6 +2,7 @@ import { TELEGRAM_PLATFORM, TelegramPlatformAdapter } from '@quoky/adapter-teleg
 import type { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import type { TelegramAdapterOptions } from '@quoky/adapter-telegram';
 import type { Logger, PlatformAdapter } from '@quoky/core';
+import { isConnectedIdentityReader } from '../ops/startup-identity-check';
 import type { PlatformIdentityLink } from '../actor-identity-provisioner';
 import type { TelegramConfig } from '../telegram/telegram-config';
 import { telegramOffsetStoreFor } from '../telegram/telegram-offset-store';
@@ -75,6 +76,61 @@ export function haltNoticeBuffer(notify: (code: TelegramStartupErrorCode) => voi
       const pending = held ?? [];
       held = undefined;
       for (const code of pending) notify(code);
+    },
+  };
+}
+
+/**
+ * Codex final delta P2-2: release held halt notices only once the platform (Discord) is READY, independent of the
+ * optional startup identity check (no `QUOKY_DISCORD_EXPECTED_BOT_ID` skips that wait). Readiness is the signal the
+ * identity check uses (`readConnectedIdentity`, read-only, nothing sent), each attempt bounded by `readyTimeoutMs`. When
+ * READY does not come within the bound the codes stay held — no ledger slot, no suppression — and the wait goes on,
+ * releasing them on the first READY. `cancel()` ends the wait at shutdown.
+ */
+export function releaseWhenPlatformReady(
+  platform: PlatformAdapter,
+  buffer: HaltNoticeBuffer,
+  options: {
+    readonly readyTimeoutMs: number;
+    readonly logger?: Logger;
+    /** Pause between attempts that failed at once (a test seam; default the ready bound, at most 5 s). */
+    readonly retryDelayMs?: number;
+  },
+): { readonly done: Promise<void>; cancel(): void } {
+  let cancelled = false;
+  let wake: () => void = () => undefined;
+  const pause = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+      wake = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  const done = (async () => {
+    if (!isConnectedIdentityReader(platform)) {
+      buffer.release();
+      return;
+    }
+    let warned = false;
+    while (!cancelled) {
+      try {
+        await platform.readConnectedIdentity([], { readyTimeoutMs: options.readyTimeoutMs });
+        if (!cancelled) buffer.release();
+        return;
+      } catch {
+        if (!warned) options.logger?.warn('telegram halt notices held until discord is ready');
+        warned = true;
+        if (!cancelled) await pause(options.retryDelayMs ?? Math.min(options.readyTimeoutMs, 5_000));
+      }
+    }
+  })();
+  return {
+    done,
+    cancel: () => {
+      cancelled = true;
+      wake();
     },
   };
 }

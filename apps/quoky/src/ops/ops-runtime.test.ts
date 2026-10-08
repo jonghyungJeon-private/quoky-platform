@@ -7,7 +7,8 @@ import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import type { BackupJobTimers } from './backup-job';
 import { OPS_NOTICE_TEXT, type OpsNoticeLedgerStore } from './ops-notice';
 import { createOpsRuntime, type OpsRuntimeInput } from './ops-runtime';
-import { haltNoticeBuffer } from '../platform/platform-composition';
+import { haltNoticeBuffer, releaseWhenPlatformReady } from '../platform/platform-composition';
+import type { PlatformAdapter } from '@quoky/core';
 
 const OWNER = '111111111111111111';
 const T0 = Date.parse('2026-10-06T01:00:00.000Z');
@@ -173,6 +174,54 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     await settle();
     expect(sink.delivered).toHaveLength(3);
     await ops.stop();
+  });
+
+  it('Codex final delta P2-2: no expected bot id and READY late: held, then exactly one delivery after READY', async () => {
+    let ready = false;
+    const attempts: string[] = [];
+    sink.deliver = async (n) => {
+      attempts.push(ready ? 'ready' : 'not-ready');
+      if (!ready) return { status: 'NOT_SENT', reason: 'NOT_CONNECTED', retryable: true };
+      sink.delivered.push(n);
+      return { status: 'SENT', via: 'dm' };
+    };
+    let readinessChecks = 0;
+    // The Discord side as main.ts sees it: login resolved, READY not yet (no identity check configured).
+    const platform = {
+      platform: 'discord+telegram',
+      async readConnectedIdentity() {
+        readinessChecks += 1;
+        if (!ready) throw new Error('DISCORD_IDENTITY_UNAVAILABLE');
+        return { botUserId: '1', guildIds: [], channels: [], unreachableChannelIds: [] };
+      },
+    } as unknown as PlatformAdapter;
+    const ops = runtime({ recentStarts: 0 }, { QUOKY_BACKUP_ENABLED: 'false' });
+    const buffer = haltNoticeBuffer((code) => ops.notifyTelegramHalt(code));
+    buffer.listener('TELEGRAM_POLL_CONFLICT');
+    const waiting = releaseWhenPlatformReady(platform, buffer, { readyTimeoutMs: 5, retryDelayMs: 1 });
+    for (let i = 0; i < 50 && readinessChecks < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+    await settle();
+    expect(readinessChecks).toBeGreaterThanOrEqual(3);
+    expect(attempts).toEqual([]);
+    expect(ledgerContent).toBeUndefined();
+    ready = true;
+    await waiting.done;
+    await settle();
+    expect(attempts).toEqual(['ready']);
+    expect(sink.delivered.map((n) => n.text)).toEqual([OPS_NOTICE_TEXT.TELEGRAM_POLL_CONFLICT]);
+    await ops.stop();
+  });
+
+  it('cancel() ends the readiness wait at shutdown: nothing is released', async () => {
+    const platform = { platform: 'p', readConnectedIdentity: async () => Promise.reject(new Error('not ready')) } as unknown as PlatformAdapter;
+    const released: string[] = [];
+    const buffer = haltNoticeBuffer((code) => void released.push(code));
+    buffer.listener('TELEGRAM_AUTH_REJECTED');
+    const waiting = releaseWhenPlatformReady(platform, buffer, { readyTimeoutMs: 5, retryDelayMs: 60_000 });
+    await settle();
+    waiting.cancel();
+    await waiting.done;
+    expect(released).toEqual([]);
   });
 
   it('no notice for a normal start, nor outside the launcher', async () => {
