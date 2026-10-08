@@ -33,7 +33,7 @@ import {
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
 import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
-import type { MessageMarkup } from '../message-rendering';
+import type { MessageMarkup } from '../../ports/message-markup.port';
 
 /** A probe markup that makes untrusted and link spans visible (PLT-0: the platform adapter renders them). */
 const PROBE: MessageMarkup = { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»`, link: (url) => `«link:${url}»` };

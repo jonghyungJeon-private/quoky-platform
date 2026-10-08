@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MessageMarkup } from './message-rendering';
+import type { MessageMarkup } from '../ports/message-markup.port';
 import {
   PLAIN_TEXT_MARKUP,
   clipMessage,

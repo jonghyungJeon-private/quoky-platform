@@ -86,6 +86,11 @@ export interface PlatformAdapter {
   /**
    * Send a normalized reply; the adapter renders artifacts natively. May return a delivery receipt with the
    * posted platform message ids (ADR-0098 D3); `void` remains valid for adapters that cannot report them.
+   *
+   * PLT-0 obligation: an adapter whose platform parses any markup (mentions, links, formatting) MUST render
+   * `message.content` with its own `MessageMarkup` whenever it is present, and send that — never `message.text`.
+   * `text` is the plain rendering, with untrusted spans verbatim; it is safe to send only on a platform that parses no
+   * markup at all. Length bounds apply to the rendered text.
    */
   sendMessage(message: OutboundMessage): Promise<void | OutboundDeliveryReceipt>;
   /** Optional UX nicety: show a typing/working indicator. */

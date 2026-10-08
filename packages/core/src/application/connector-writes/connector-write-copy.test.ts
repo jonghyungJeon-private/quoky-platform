@@ -19,7 +19,7 @@ import {
 } from './connector-write-copy';
 import { CONNECTOR_WRITE_PREVIEW_DESCRIPTION_MAX_LENGTH, CONNECTOR_WRITE_PREVIEW_TEXT_MAX_LENGTH } from './connector-write-flow';
 import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
-import type { MessageMarkup } from '../message-rendering';
+import type { MessageMarkup } from '../../ports/message-markup.port';
 
 /** PLT-0: a probe markup that makes the platform-rendered spans of the neutral copy visible. */
 const PROBE: MessageMarkup = {

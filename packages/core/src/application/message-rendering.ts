@@ -17,22 +17,15 @@ import type {
   UntrustedTextGuard,
   UntrustedTextNode,
 } from '../domain';
+import type { MessageMarkup } from '../ports/message-markup.port';
 
 /**
  * Builders and the evaluator of the platform-neutral message content (PLT-0, `domain/message-content.ts`). Pure.
  *
- * A `PlatformAdapter` renders content with its own {@link MessageMarkup}; Core uses {@link PLAIN_TEXT_MARKUP} for
+ * A `PlatformAdapter` renders content with its own `MessageMarkup` (the port in `ports/message-markup.port.ts`); Core uses {@link PLAIN_TEXT_MARKUP} for
  * `OutboundMessage.text`. Layout nodes (`clip`, `fit-lines`, `take-lines`) are evaluated here, against the markup in
  * use, so every platform keeps exactly the lines that fit in ITS rendering.
  */
-
-/** How one platform writes the spans whose presentation is platform-specific. Implemented by each adapter. */
-export interface MessageMarkup {
-  untrusted(text: string, guard: UntrustedTextGuard): string;
-  link(url: string): string;
-  conversation(id: string): string;
-  platformNote(topic: PlatformNoteTopic): string;
-}
 
 /** The plain rendering behind `OutboundMessage.text`: untrusted text verbatim, bare URLs, `#id`, no platform notes. */
 export const PLAIN_TEXT_MARKUP: MessageMarkup = Object.freeze({

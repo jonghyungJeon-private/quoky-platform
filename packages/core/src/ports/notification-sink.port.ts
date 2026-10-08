@@ -40,5 +40,10 @@ export interface OwnerNotification {
 export type NotificationSinkOutcome = NotificationDeliveryOutcome;
 
 export interface NotificationSink {
+  /**
+   * PLT-0 obligation: an adapter whose platform parses any markup MUST render `notification.content` with its own
+   * `MessageMarkup` whenever it is present, and deliver (and length-check) that rendering — never `text`, which is the
+   * plain rendering with untrusted spans verbatim and is safe only on a platform that parses no markup at all.
+   */
   deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome>;
 }

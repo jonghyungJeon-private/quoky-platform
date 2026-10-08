@@ -23,6 +23,8 @@ export * from './connector-query';
 export * from './feedback-repository.port';
 export * from './reminder-repository.port';
 export * from './notification-sink.port';
+// Personal v4 (PLT-0): the markup a platform adapter renders neutral message content with.
+export * from './message-markup.port';
 // Personal v3 (ADR-0107 D2, LRN-1).
 export * from './learning-repository.port';
 // Personal v3 (ADR-0110 D1, CAL-1).

@@ -3,7 +3,7 @@ import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import { CONNECTOR_QUERY_ERROR_REASONS } from '../../ports/connector-query';
 import { containsCredentialMaterial } from '../credential-guard';
 import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
-import type { MessageMarkup } from '../message-rendering';
+import type { MessageMarkup } from '../../ports/message-markup.port';
 import { placeCalendarSpan, type CalendarSpan } from './calendar-question';
 import {
   CALENDAR_REPLY_MAX_CHARS,

@@ -14,7 +14,7 @@ import {
   renderExternalWorkReadoutForPrompt,
 } from './external-work-readout';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
-import type { MessageMarkup } from '../message-rendering';
+import type { MessageMarkup } from '../../ports/message-markup.port';
 
 /**
  * PLT-0: the footer is neutral content. The tests read it through a probe markup that keeps the plain text but makes

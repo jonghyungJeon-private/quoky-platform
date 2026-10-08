@@ -19,7 +19,7 @@ import type { WorkChatCommand } from './work-chat-command';
 import { WorkChatService } from './work-chat-service';
 import { PLAIN_TEXT_MARKUP, plainTextOf, renderMessageContent } from '../message-rendering';
 import type { MessageBody } from '../../domain';
-import type { MessageMarkup } from '../message-rendering';
+import type { MessageMarkup } from '../../ports/message-markup.port';
 
 /** PLT-0: summarize outcomes carry neutral content; a probe markup makes link spans visible. */
 const PROBE: MessageMarkup = { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»` };
