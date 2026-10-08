@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LogFields, Logger, OwnerNotification } from '@quoky/core';
+import { messageContent, messageFields, untrustedText } from '@quoky/core';
 
 /** Offline fake of the discord.js client used only by the adapter-level `deliver` tests below. */
 const fakeClient: {
@@ -451,5 +452,41 @@ describe('DiscordPlatformAdapter.deliver', () => {
     await adapter.start();
     expect(await adapter.deliver(note())).toEqual({ status: 'SENT', via: 'dm' });
     expect(fakeClient.posts).toHaveLength(1);
+  });
+});
+
+describe('deliverOwnerNotification: neutral content (PLT-0 wiring)', () => {
+  const body = messageContent('알림: ', untrustedText('@everyone [x](y)'));
+  const escaped = '알림: @\u200beveryone \\[x\\](y)';
+
+  it('renders the content with the Discord markup for the owner DM', async () => {
+    const h = harness();
+    const out = await deliverOwnerNotification(note(messageFields(body)), h.deps);
+    expect(out).toEqual({ status: 'SENT', via: 'dm' });
+    expect(h.dm.sent).toEqual([{ content: escaped, allowedMentions: { parse: [] } }]);
+  });
+
+  it('renders the content with the Discord markup for an opted-in channel, mentioning only the owner', async () => {
+    const h = harness({ channelDelivery: true });
+    const out = await deliverOwnerNotification(note(messageFields(body)), h.deps);
+    expect(out).toEqual({ status: 'SENT', via: 'channel' });
+    expect((h.channels.get(CHANNEL) as FakeChannel).sent).toEqual([
+      { content: `<@${OWNER}> ${escaped}`, allowedMentions: { parse: [], users: [OWNER] } },
+    ]);
+  });
+
+  it('measures TEXT_TOO_LONG on the rendered length, not the plain text', async () => {
+    const h = harness();
+    // 1,000 plain characters render as 2,000 (every `*` escaped): over the 1,800-character delivery bound.
+    const long = messageFields(messageContent(untrustedText('*'.repeat(1_000))));
+    expect(long.text).toHaveLength(1_000);
+    expect(await deliverOwnerNotification(note(long), h.deps)).toEqual({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    // 900 render as exactly 1,800: delivered.
+    const fits = messageFields(messageContent(untrustedText('_'.repeat(900))));
+    expect(await deliverOwnerNotification(note(fits), h.deps)).toEqual({ status: 'SENT', via: 'dm' });
+    expect(h.dm.sent).toEqual([{ content: '\\_'.repeat(900), allowedMentions: { parse: [] } }]);
+    const channel = harness({ channelDelivery: true });
+    expect(await deliverOwnerNotification(note(long), channel.deps)).toEqual({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    expect((channel.channels.get(CHANNEL) as FakeChannel).sent).toHaveLength(0);
   });
 });

@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboundAttachment, InboundMessage, LogFields, Logger, OutboundDeliveryReceipt, PlatformFeedbackSignal } from '@quoky/core';
-import { renderConnectorWritePreview } from '@quoky/core';
+import { messageContent, messageLink, outboundMessage, renderConnectorWritePreview, untrustedText } from '@quoky/core';
 import { pngImage } from './image-test-support';
 
 /** Offline fake of the discord.js gateway client: records construction options and listeners, never connects. */
@@ -441,6 +441,17 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     const unclosed = [plain, '', '```ts', 'const x = 1;'].join('\n');
     await adapter.sendMessage({ context, text: unclosed, format: 'model-reply' });
     expect(sent.at(-1)).toBe(unclosed);
+  });
+
+  it('PLT-0 wiring: sends the neutral content rendered with the Discord markup, never the plain text', async () => {
+    const { adapter } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    const message = outboundMessage(context, messageContent('검색: ', untrustedText('@everyone [x](y)'), ' ', messageLink('https://e.test/a_b')));
+    expect(message.text).toBe('검색: @everyone [x](y) https://e.test/a_b');
+    await adapter.sendMessage(message);
+    const contents = sent.map((payload) => (typeof payload === 'string' ? payload : (payload as { content: string }).content));
+    expect(contents).toEqual(['검색: @\u200beveryone \\[x\\](y) <https://e.test/a_b>']);
   });
 
   it('returns an empty receipt when the channel is not sendable', async () => {
