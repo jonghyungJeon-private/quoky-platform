@@ -32,9 +32,10 @@ Chief Architect review: CHANGES REQUIRED, then the re-review (one P2 and seven P
 addressed on the branch:
 
 - a stale offset is ignored after 24 h;
-- `start()` never blocks;
-- a halt sends one Discord `OPS_NOTICE`;
-- nothing is sent before identity is verified. Offline validation only (fake
+- the startup identity check is bounded to 5 s per call;
+- definitive startup answers exit 78, as ADR-0102 D5 and ADR-0114 D4 require;
+- outages and later definitive answers halt Telegram only, with one Discord `OPS_NOTICE` held until Discord is ready;
+- nothing is sent or read before identity is verified, after a halt, or after a stop (the CA final check fixes). Offline validation only (fake
 `fetch`). Not run yet:
 
 - the Strict gates: BotFather bot creation, the `.env.local` edit, the first live session;

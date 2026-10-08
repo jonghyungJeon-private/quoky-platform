@@ -14,10 +14,13 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
   `https://api.telegram.org`. There is no webhook and no inbound port.
   - Offset: advanced only after an update is handed over or dropped, and confirmed on stop.
   - Backoff: 1 s doubling to 60 s; a 429 honours `retry_after`.
-  - Identity: `start()` refuses only a token that names another bot (also refused at config time) and returns at once.
-    In the background, `getMe` must equal `QUOKY_TELEGRAM_EXPECTED_BOT_ID` before anything is read or sent. A
-    mismatch, a rejected token or a 409 on the first probe (in practice a webhook) halts the Telegram side only, with
-    one Discord `OPS_NOTICE`. A transient failure is retried; `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code.
+  - Identity at startup (ADR-0102 D5, ADR-0114 D4): the token's bot id, then `getMe` and a webhook 409 probe, each
+    bounded to 5 s.
+    - A definitive answer is a typed startup error and exits 78: `TELEGRAM_IDENTITY_MISMATCH`,
+      `TELEGRAM_AUTH_REJECTED` or `TELEGRAM_POLL_CONFLICT`.
+    - A transient or timed-out answer lets the start continue and is retried in the background.
+    - A definitive answer found later halts the Telegram side only, with one Discord `OPS_NOTICE`.
+    - `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code.
 - **Admission.** Only an owner's (`QUOKY_TELEGRAM_OWNER_IDS`) own private chat with text, at most 10 minutes old.
   Everything else gets no reply, no download and no content log; only a value-free counter per reason is kept. Every
   send and typing call is rechecked against the owner's private chat.
@@ -69,11 +72,20 @@ or domain field; `ConversationRuntimeDeps` stays 35. No new third-party dependen
   - **P3-2.** A poll-loop rejection halts Telegram only.
   - **P3-3.** A halt sends one `OPS_NOTICE` to the Discord owner.
   - **P3-4.** The startup texts are aligned with the implementation.
-  - **P3-5.** `start()` no longer blocks on `getMe`.
+  - **P3-5.** `start()` no longer blocks long on `getMe`: each startup call is bounded to 5 s (see the final-check
+    realignment).
   - **P3-6.** An empty notification is `EMPTY_TEXT`, a new additive `NotificationNotSentReason`.
   - **P3-7.** The quickstart notes that Telegram-created reminders stop when Telegram is off.
   - **Codex delta P2.** Nothing is sent to Telegram before `getMe` matched or after a halt.
   - **BRF-1.** A test covers a calendar/Jira BRIEF delivered on Telegram.
+- **Final-check fixes (CA final check; Codex delta P2s).**
+  - **Critical.** `stop()` confirms the offset only for a verified, un-halted session.
+  - **ADR realignment.** Definitive startup answers exit 78 again; outages and later answers halt Telegram only.
+  - **Notice timing.** Halt notices are held until Discord is ready.
+  - **Notice suppression.** A repeated Telegram halt reason is suppressed for 24 h.
+  - **Restart and retry.** `start()` resets the verified identity, and the 429 retry re-checks halt/stop.
+  - **Shutdown.** The loop's catch is silent while stopping.
+  - **Test.** A table-driven outbound invariant test covers every Bot API method.
 - **Not in TG-1.** Attachments, reactions, the operations-UI panel, CommonMark rendering on Telegram and live QA
   (TG-2/TG-3, Strict).
 

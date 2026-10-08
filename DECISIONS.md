@@ -17751,27 +17751,32 @@ hours later. A message sent during a short restart is still answered.
 
 #### Startup identity (D5), outages and conflicts (D4)
 
-`start()` never blocks on the network (CA re-review P3-5). Its only synchronous refusal is a token whose bot-id prefix
-is not `QUOKY_TELEGRAM_EXPECTED_BOT_ID` (`TELEGRAM_IDENTITY_MISMATCH`, exit 78). That needs no network, and `config.ts`
-refuses it first (`TELEGRAM_TOKEN_BOT_ID_MISMATCH`), as it refuses every other configuration-shape error.
+`start()` runs the startup identity check (ADR-0102 D5, ADR-0114 D4/D5), bounded short so Discord's start is never
+held long. This was realigned with the ratified ADRs at the CA final check; it reverts the re-review's
+halt-instead-of-exit change for answers found at startup.
 
-Everything else runs in the background loop, so a hanging `api.telegram.org` never delays Discord's startup:
-
-1. `getMe` must return the expected bot id with `is_bot: true`.
-2. A `getUpdates` probe with no offset (so it confirms nothing) and `timeout: 0` must not return HTTP 409.
-3. Only then does polling start. Until `getMe` matched, `status().identityVerified` is false.
+1. The token's bot-id prefix must be `QUOKY_TELEGRAM_EXPECTED_BOT_ID`. This needs no network, and `config.ts` refuses a
+   mismatch first (`TELEGRAM_TOKEN_BOT_ID_MISMATCH`), as it refuses every other configuration-shape error.
+2. `getMe`, bounded to `STARTUP_CALL_TIMEOUT_MS` (5 s), must return the expected bot id with `is_bot: true`.
+3. A `getUpdates` probe with no offset (so it confirms nothing) and `timeout: 0`, bounded to 5 s, must not return HTTP
+   409.
+4. Only then is the identity verified (`status().identityVerified`) and polling starts.
 
 Outcomes:
 
-- **A definitive refusal halts the Telegram side only.** That is another bot, or not a bot
-  (`TELEGRAM_IDENTITY_MISMATCH`), a 401/404 (`TELEGRAM_AUTH_REJECTED`), or a 409 on the probe
-  (`TELEGRAM_POLL_CONFLICT`). It is logged, shown in `status().halted`, and sent ONCE to the Discord owner as an
-  `OPS_NOTICE` (CA re-review P3-3, below). Discord runs on.
-- **This replaces exit 78 for these cases (decided with the re-review).** The earlier design exited 78 for a mismatch
-  or a rejected token at start. The coordinator preferred a non-blocking start, so a Discord that works is never
-  stopped by Telegram, and the owner hears about it on Discord.
-- **A transient failure is retried.** Network, timeout or 5xx is retried with the poll backoff (CA P2-2).
-  `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code only.
+- **A definitive answer at startup is a typed startup error, exit 78**, as ADR-0102 D5 ("exits with a distinct
+  configuration code") and ADR-0114 D4 ("a 409 is a typed startup error") require. The answers are another bot, or not
+  a bot (`TELEGRAM_IDENTITY_MISMATCH`), a 401/404 (`TELEGRAM_AUTH_REJECTED`), or a 409 on the probe
+  (`TELEGRAM_POLL_CONFLICT`). The composite stops Discord and passes the code through. Nothing is read.
+- **A transient or timed-out answer resolves `start()`** (CA P2-2): network, a 5 s timeout or a 5xx. The check is then
+  retried in the background with the poll backoff, and nothing is read or sent until `getMe` matches.
+  `TELEGRAM_IDENTITY_UNVERIFIABLE` is a log code only. Discord is held at most about 2 × 5 s.
+- **A definitive answer found later halts the Telegram side only.** That covers the background retry after an outage,
+  and runtime while polling (a 401, three 409s, a loop defect). It is logged, shown in `status().halted`, and sent ONCE
+  to the Discord owner as an `OPS_NOTICE` (below).
+  - **Why not exit 78 here.** The ADRs fix what happens at startup and say nothing about detection after it. By then
+    the process already serves Discord, so stopping it would take a working Discord down for a Telegram fault. The
+    halt keeps Telegram fail-closed (nothing read or sent) and tells the owner.
 
 The probe reliably catches only a webhook (CA P2-3). Telegram answers 409 to whichever `getUpdates` is not the newest,
 so a second long-poller started later is not detected by it. The runtime policy below handles that.
@@ -17789,12 +17794,28 @@ While polling:
   Discord owner DM via `DISCORD_NOTIFICATION_PLATFORM`. The text is "[Quoky 운영 알림] Telegram 연결을 멈췄어요: <코드>.",
   then a reason line and "Discord는 계속 동작합니다." It carries no content and no token, and the `OPS_NOTICE` ledger
   bound (3 per 24 h) applies.
+  - **Held until Discord is ready (CA final check #3).** A halt can fire before Discord is READY, which would give
+    `NOT_SENT NOT_CONNECTED` after the ledger already took a slot. So `main.ts` holds halt codes (`haltNoticeBuffer`)
+    until the startup identity block and `ops.start()` are done, then sends them. The ledger's record-before-send rule
+    (ADR-0102 D7) is unchanged.
+  - **Repeat suppression (CA final check #4).** The same Telegram halt reason is sent at most once per 24 h
+    (`telegramHaltQuietMs`), so restarts with a broken token cannot use up the budget and suppress `BACKUP_FAILED` or
+    `CRASH_LOOP`.
 - **Outbound needs a verified identity (Codex delta P2).** `sendMessage`, `sendTyping` and its refresh, `deliver` and
   the owner notices make no Bot API call before `getMe` matched, or once the Telegram side halted or stopped.
   - `sendMessage` logs "send skipped: telegram not connected" and returns an empty receipt, as the Discord adapter
     skips a send while not connected.
   - `sendTyping` does nothing.
   - `deliver` is `NOT_SENT NOT_CONNECTED` (retryable).
+  - **Every attempt re-checks it (Codex delta P2-1).** The 429 retry checks again after its wait, so a halt or a stop
+    during the wait sends nothing.
+  - **A restart resets it (P2-2).** `start()` resets `identityVerified` together with `halted`.
+  - **`stop()` too (CA final check, Critical).** `stop()` confirms the offset to Telegram only for a verified,
+    un-halted session.
+  - **The loop's catch.** It does not halt or notify while stopping.
+  - **Invariant test.** A table-driven test runs every method of the fixed Bot API list (`TELEGRAM_METHODS`; a row is
+    required per method, with a positive control). It covers four states: before verification, after a halt, after a
+    stop, and after a restart with a hanging `getMe`.
 - The ADR-0102 lock still prevents a second process on one host.
 
 #### Polling and the offset (D4)
@@ -17829,7 +17850,7 @@ While polling:
 #### Composition (D6) and notifications (D11; CA P1-1)
 
 - **Telegram off.** With `QUOKY_TELEGRAM_ENABLED` unset or `false`, `PLATFORM_ADAPTER` is the Discord adapter itself and
-  nothing Telegram-related is constructed.
+  nothing Telegram-related is constructed. `onTelegramHalt` then wires nothing.
 - **Telegram on.** `PLATFORM_ADAPTER` is one `CompositePlatformAdapter` over Discord (primary) and Telegram.
   - Every child gets the same inbound handlers.
   - Replies, typing and approvals route by `context.platform`; an uncomposed platform is refused.
@@ -17855,7 +17876,9 @@ While polling:
     `sendMessage` of at most 4096 characters. `content` and `text` agree, and the sent text is the Telegram rendering of
     `content` (test).
   - A delivery is reported `via: 'dm'`.
-- **`main.ts`.** Unchanged.
+- **`main.ts`.** Wires the halt notice (`onTelegramHalt` through `haltNoticeBuffer` to `OpsRuntime.notifyTelegramHalt`,
+  released after `ops.start()`). It is otherwise unchanged: a Telegram startup error passes through `platform.start()`
+  to the existing exit path.
 
 #### Identity (D3)
 
