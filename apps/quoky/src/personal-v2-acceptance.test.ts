@@ -259,15 +259,21 @@ let contextSeq = 0;
 /** The offline calendar fixture's one event title (it must never reach a provider or the conversation history). */
 const CALENDAR_FIXTURE_TITLE = 'INT calendar fixture standup';
 
-/** One timed event an hour into whatever window is read (deterministic relative to the window, any wall clock). */
+/**
+ * One timed event inside whatever window is read (deterministic relative to the window, any wall clock): an hour in,
+ * or a quarter of the way in when the window is shorter, so a "remaining today" window read late in the evening (it
+ * starts at now and ends at midnight) still contains the whole event.
+ */
 function calendarFixture(query: CalendarEventQuery): readonly CalendarEvent[] {
-  const start = Date.parse(query.from) + 60 * 60_000;
+  const from = Date.parse(query.from);
+  const quarter = Math.floor((Date.parse(query.to) - from) / 4);
+  const start = from + Math.min(60 * 60_000, quarter);
   return [
     {
       id: 'int-calendar-1',
       title: CALENDAR_FIXTURE_TITLE,
       start: new Date(start).toISOString(),
-      end: new Date(start + 30 * 60_000).toISOString(),
+      end: new Date(start + Math.min(30 * 60_000, quarter)).toISOString(),
       allDay: false,
       status: 'confirmed',
       calendarName: 'primary',
