@@ -18,7 +18,7 @@ import { TelegramBotToken, TelegramPlatformAdapter } from '@quoky/adapter-telegr
 import { platformNotificationSink } from '../features/reminders.providers';
 import { applyInboundGate, verifyStartupIdentity } from '../ops/startup-identity-check';
 import { CompositePlatformAdapter } from './composite-platform-adapter';
-import { composePlatformAdapter, onTelegramHalt, telegramOwnerIdentityLinks } from './platform-composition';
+import { composePlatformAdapter, exitForTelegramFatal, onTelegramFatal, onTelegramHalt, telegramOwnerIdentityLinks } from './platform-composition';
 import type { TelegramConfig } from '../telegram/telegram-config';
 
 const silent: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -154,6 +154,50 @@ describe('CompositePlatformAdapter (ADR-0114 D6): one contract over Discord and 
       expect(startupExitCode(failure)).toBe(QuokyExitCode.CONFIGURATION);
     }
   });
+
+  it.each([
+    ['another bot', 'getMe', { json: { ok: true, result: { id: 999_999_999, is_bot: true } } }, 'TELEGRAM_IDENTITY_MISMATCH'],
+    ['a webhook 409', 'getUpdates:instant', { status: 409, json: { ok: false, error_code: 409 } }, 'TELEGRAM_POLL_CONFLICT'],
+  ] as const)(
+    'CA final check rule 1: a transient startup failure, then %s from the background retry, ends the process gracefully with exit 78',
+    async (_label, key, reply, code) => {
+      const { describeStartupFailure } = await import('../bootstrap-preflight');
+      const { startupExitCode } = await import('../ops/exit-codes');
+      const token = TelegramBotToken.from([['70', '01', '23', '4'].join(''), ['AAH', 'f'.repeat(32)].join('')].join(':'));
+      if (!token) throw new Error('fixture token is not well-formed');
+      const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') });
+      fake.queue(key, reply as never);
+      const telegram = new TelegramPlatformAdapter({ token, expectedBotId: token.botId, ownerIds: ['5550001'] }, silent, {
+        fetch: fake.fetch,
+        sleep: async () => undefined,
+      });
+      const log: string[] = [];
+      const discord = new FakeDiscord('discord', log);
+      const adapter = new CompositePlatformAdapter(discord, [telegram], silent);
+      await expect(adapter.start()).resolves.toBeUndefined();
+      const exits: number[] = [];
+      let exited: Promise<number> | undefined;
+      // main.ts wiring: the fatal callback runs the graceful shutdown (here: stop the platform) with the startup exit code.
+      expect(
+        onTelegramFatal(adapter, (error) => {
+          exited = exitForTelegramFatal(error, {
+            log: silent,
+            describe: describeStartupFailure,
+            exitCode: startupExitCode,
+            shutdown: async (exitCode) => {
+              await adapter.stop();
+              exits.push(exitCode);
+            },
+          });
+        }),
+      ).toBe(true);
+      for (let i = 0; i < 200 && exited === undefined; i += 1) await new Promise((resolve) => setImmediate(resolve));
+      await expect(exited).resolves.toBe(78);
+      expect(exits).toEqual([78]);
+      expect(log).toEqual(['start:discord', 'stop:discord']);
+      expect(telegram.status().halted).toBe(code);
+    },
+  );
 
   it('forwards the ADR-0102 D5 gate and identity reader, and the owner sink, to the primary (Discord) path', async () => {
     const { adapter, discord } = composite();

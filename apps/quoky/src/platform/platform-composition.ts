@@ -1,5 +1,5 @@
 import { TELEGRAM_PLATFORM, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
-import type { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
+import type { TelegramStartupError, TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import type { TelegramAdapterOptions } from '@quoky/adapter-telegram';
 import type { Logger, PlatformAdapter } from '@quoky/core';
 import { isConnectedIdentityReader } from '../ops/startup-identity-check';
@@ -133,4 +133,37 @@ export function releaseWhenPlatformReady(
       wake();
     },
   };
+}
+
+/**
+ * ADR-0102 D5 / ADR-0114 D4 (CA final check, rule question 1): route a definitive answer of the background startup
+ * identity check (before the first verification) to `listener` — the composition root's graceful shutdown with the
+ * startup exit code (78). `false` when Telegram is not composed.
+ */
+export function onTelegramFatal(platform: PlatformAdapter, listener: (error: TelegramStartupError) => void): boolean {
+  const telegram = platform instanceof CompositePlatformAdapter ? platform.adapterFor(TELEGRAM_PLATFORM) : undefined;
+  if (!(telegram instanceof TelegramPlatformAdapter)) return false;
+  telegram.onFatal(listener);
+  return true;
+}
+
+/**
+ * The exit for a fatal Telegram startup answer: the same report and exit code as a startup error thrown out of
+ * `bootstrap()` (`describeStartupFailure` → `startupExitCode`, 78 for these codes), after a graceful `shutdown`.
+ */
+export async function exitForTelegramFatal(
+  error: TelegramStartupError,
+  deps: {
+    readonly log: Logger;
+    readonly describe: (err: unknown) => { readonly message: string; readonly hint?: string };
+    readonly exitCode: (report: { readonly message: string; readonly hint?: string }) => number;
+    readonly shutdown: (exitCode: number) => Promise<void>;
+  },
+): Promise<number> {
+  const failure = deps.describe(error);
+  deps.log.error('failed to start', { error: failure.message });
+  if (failure.hint) deps.log.error('how to fix', { hint: failure.hint });
+  const code = deps.exitCode(failure);
+  await deps.shutdown(code);
+  return code;
 }

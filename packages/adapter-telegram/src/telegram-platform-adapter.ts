@@ -223,6 +223,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   /** Why the Telegram side stopped on its own (identity, token or conflict found while running); Discord runs on. */
   private halted?: TelegramStartupErrorCode;
   private haltListener?: (code: TelegramStartupErrorCode) => void;
+  private fatalListener?: (error: TelegramStartupError) => void;
+  private pendingFatal?: TelegramStartupError;
   /** CA P3-4: the owner notices already sent in this poll session (at most one per kind). */
   private readonly noticesSent = new Set<`${string}:${'stale' | 'no-text'}`>();
   /** When the last non-empty batch arrived (or polling started), for the 24 h silence reset. */
@@ -294,9 +296,11 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
    *   409 on the probe (`TELEGRAM_POLL_CONFLICT`, in practice a webhook). Nothing is read.
    * - A transient or timed-out answer (CA P2-2) resolves `start()`: the identity is retried in the background with the
    *   poll backoff, and nothing is read or sent until `getMe` matches (`status().identityVerified`).
-   * - A definitive answer found LATER — by that background retry or at runtime, while the process already serves
-   *   Discord — halts the Telegram side only (`status().halted`, `onHalt` → one owner operations notice). The ADRs say
-   *   nothing about detection after startup; stopping a serving process for it would take Discord down.
+   * - A definitive answer from that background retry is still the startup check (nothing was verified yet): it fails
+   *   closed and goes to `onFatal`, which the composition root turns into a graceful shutdown with exit 78.
+   * - A definitive answer found AFTER the first verification (a 401, three 409s, a loop defect while polling) halts the
+   *   Telegram side only (`status().halted`, `onHalt` → one owner operations notice): the ADRs say nothing about it,
+   *   and stopping a serving process would take Discord down.
    */
   async start(): Promise<void> {
     if (this.loop !== undefined) return;
@@ -399,6 +403,37 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.haltListener = listener;
   }
 
+  /**
+   * Adapter-local: called once when the background retry of the STARTUP identity check (before the first successful
+   * verification) gets a definitive answer — another bot, a rejected token, a webhook 409. That is still the startup
+   * check of ADR-0102 D5 / ADR-0114 D4, so the composition root ends the process gracefully with exit 78. A refusal
+   * found before a listener is registered is delivered on registration.
+   */
+  onFatal(listener: (error: TelegramStartupError) => void): void {
+    this.fatalListener = listener;
+    const pending = this.pendingFatal;
+    this.pendingFatal = undefined;
+    if (pending !== undefined) this.notifyFatal(pending);
+  }
+
+  /** Fail closed (nothing more is read or sent; `status().halted`) and hand the typed error to the fatal listener. */
+  private failStartup(code: TelegramStartupErrorCode): void {
+    if (this.halted !== undefined) return;
+    this.halted = code;
+    this.logger.error('telegram startup identity refused', { code });
+    const error = new TelegramStartupError(code);
+    if (this.fatalListener === undefined) this.pendingFatal = error;
+    else this.notifyFatal(error);
+  }
+
+  private notifyFatal(error: TelegramStartupError): void {
+    try {
+      this.fatalListener?.(error);
+    } catch {
+      this.logger.warn('telegram fatal listener failed', { code: error.code });
+    }
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     for (const timer of this.typingTimers.values()) clearInterval(timer);
@@ -450,7 +485,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
         if ((await this.checkIdentity(signal)) === 'verified') return true;
       } catch (err) {
         if (err instanceof TelegramStartupError) {
-          this.halt(err.code);
+          // Still the STARTUP identity check (nothing was verified yet): ADR-0102 D5 / ADR-0114 D4 — fatal, exit 78.
+          this.failStartup(err.code);
           return false;
         }
       }

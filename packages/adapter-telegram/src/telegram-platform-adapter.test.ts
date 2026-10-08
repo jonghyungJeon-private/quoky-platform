@@ -163,16 +163,54 @@ describe('Telegram startup under a transient outage (CA P2-2): never fails the s
   });
 
   it.each([
-    ['another bot', okReply({ id: 999_999_999, is_bot: true }), TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH],
-    ['a rejected token', errorReply(401), TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED],
-  ])('%s found by the background retry halts the Telegram side only: no poll, status.halted, nothing thrown', async (_label, reply, code) => {
-    const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') }, reply);
+    ['another bot from getMe', 'getMe', okReply({ id: 999_999_999, is_bot: true }), TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH],
+    ['a rejected token from getMe', 'getMe', errorReply(401), TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED],
+    ['a webhook 409 from the probe', 'getUpdates:instant', errorReply(409), TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT],
+  ] as const)(
+    'CA final check rule 1: %s found by the background retry (before any verification) is FATAL: onFatal with the typed error, no poll, no halt notice',
+    async (_label, key, reply, code) => {
+      // The startup getMe fails transiently; the background retry gets the definitive answer.
+      const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') });
+      fake.queue(key, reply as never);
+      const h = harness(fake);
+      const fatals: TelegramStartupError[] = [];
+      const halts: string[] = [];
+      h.adapter.onHalt((halted) => void halts.push(halted));
+      await h.adapter.start();
+      h.adapter.onFatal((error) => void fatals.push(error));
+      await until(() => fatals.length === 1);
+      expect(fatals[0]).toBeInstanceOf(TelegramStartupError);
+      expect(fatals[0]?.code).toBe(code);
+      expect(halts).toEqual([]);
+      expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false, halted: code });
+      expect(fake.callsTo('getUpdates').filter((call) => call.params.timeout !== 0)).toHaveLength(0);
+      await h.adapter.stop();
+    },
+  );
+
+  it('a fatal refusal found before onFatal is registered is delivered on registration (once)', async () => {
+    const fake = new FakeTelegram().queue('getMe', { throws: new TypeError('fetch failed') }, okReply({ id: 1, is_bot: true }));
     const h = harness(fake);
     await h.adapter.start();
     await until(() => h.adapter.status().halted !== undefined);
-    expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false, halted: code });
-    expect(fake.callsTo('getUpdates')).toHaveLength(0);
-    expect(h.logs.some((line) => line.level === 'error' && line.fields?.code === code)).toBe(true);
+    const fatals: string[] = [];
+    h.adapter.onFatal((error) => void fatals.push(error.code));
+    h.adapter.onFatal((error) => void fatals.push(`again:${error.code}`));
+    expect(fatals).toEqual([TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH]);
+    await h.adapter.stop();
+  });
+
+  it('CA final check rule 1: verified, then a runtime 401 halts Telegram only (onHalt, never onFatal)', async () => {
+    const fake = new FakeTelegram().queue('getUpdates', okReply([]), errorReply(401));
+    const h = harness(fake);
+    const fatals: string[] = [];
+    const halts: string[] = [];
+    h.adapter.onFatal((error) => void fatals.push(error.code));
+    h.adapter.onHalt((code) => void halts.push(code));
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    expect(halts).toEqual([TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED]);
+    expect(fatals).toEqual([]);
     await h.adapter.stop();
   });
 });

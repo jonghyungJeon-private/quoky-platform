@@ -41,7 +41,13 @@ import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
 import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
-import { haltNoticeBuffer, onTelegramHalt, releaseWhenPlatformReady } from './platform/platform-composition';
+import {
+  exitForTelegramFatal,
+  haltNoticeBuffer,
+  onTelegramFatal,
+  onTelegramHalt,
+  releaseWhenPlatformReady,
+} from './platform/platform-composition';
 
 // ADR-0113 D6: composition-root errors also feed the OPS-1 recent-error ring (codes only, in memory).
 const log = recordOpsUiErrors(new ConsoleLogger('quoky'), 'quoky');
@@ -200,7 +206,7 @@ async function bootstrap(): Promise<void> {
   // ADR-0102 D8: launchd sends SIGTERM and allows ExitTimeOut (90 s) before SIGKILL, above the reminder stop bound
   // (REMINDER_TICK_STOP_TIMEOUT_MS, 65 s). A repeated signal while stopping is ignored.
   let stopping = false;
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (exitCode: number = 0): Promise<void> => {
     if (stopping) return;
     stopping = true;
     haltRelease?.cancel();
@@ -217,10 +223,16 @@ async function bootstrap(): Promise<void> {
     await queue.stop().catch(() => undefined);
     await storage.close().catch(() => undefined);
     await app.close();
-    process.exit(0);
+    process.exit(exitCode);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
+  // ADR-0102 D5 / ADR-0114 D4: a definitive answer of the Telegram startup identity check that arrives from its
+  // background retry (before the first verification) ends the process like a startup error: graceful shutdown, exit 78.
+  // A refusal that happened before this line is delivered on registration.
+  onTelegramFatal(platform, (error) => {
+    void exitForTelegramFatal(error, { log, describe: describeStartupFailure, exitCode: startupExitCode, shutdown });
+  });
 
   log.info(STARTUP_BANNER);
 }
