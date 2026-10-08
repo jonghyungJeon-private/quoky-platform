@@ -54,7 +54,21 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
     expect(parseMailQuestion(text)).toEqual({ kind: 'list', from, today, unread, language: /[가-힣]/.test(text) ? 'ko' : 'en' });
   });
 
-  it.each(['이 메일 찾아줘', '내 메일 찾아줘', '어제 메일 찾아줘', '모든 메일 찾아줘', '중요한 메일 찾아줘'])(
+  it.each([
+    '이 메일 찾아줘',
+    '내 메일 찾아줘',
+    '어제 메일 찾아줘',
+    '모든 메일 찾아줘',
+    '중요한 메일 찾아줘',
+    // Re-review item 4: a relative time, a recipient (wrong direction) or a topic is not a sender.
+    '3일 전 메일 찾아줘',
+    '김철수에게 보낸 메일 찾아줘',
+    '팀장님한테 보낸 메일 찾아줘',
+    '김철수에게 보낸 메일 보여줘',
+    '회의 관련 메일 찾아줘',
+    '계약 관련된 메일 검색해줘',
+    '예산에 관한 메일 찾아줘',
+  ])(
     'a pronoun or time word is not a sender: %s → usage',
     (text) => {
       expect(parseMailQuestion(text)?.kind).toBe('usage');
@@ -115,6 +129,10 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
     '네 메일 보여줘',
     'find emails from me please',
     'find emails from me',
+    // Re-review item 4: a relative time with a particle falls through like the other time words.
+    '3일 전에 온 메일 찾아줘',
+    '2주 전에 받은 메일 찾아줘',
+    '6개월 전부터 온 메일 찾아줘',
     '메일 쓰는 법 알려줘',
     '메일 초안 써줘',
     '이 메일 확인해줘',

@@ -85,6 +85,12 @@ const FROM_KO = new RegExp(
 const EXPLICIT_SENDER_LINK = /(?:(?:이|가) ?보낸|(?:에게서|한테서|으로부터|로부터|에서) ?(?:온|받은)|님)$/u;
 /** A particle after a time word or pronoun (`지난 주에`, `작년에`, `어제부터`): the head is a time, never a sender. */
 const TIME_PARTICLE = /(?:에서|에|부터|까지)$/u;
+/** A relative time (`3일 전`, `2주 전`, `6개월 전`): a time, never a sender. */
+const RELATIVE_TIME = /^\d{1,3} ?(?:일|주|달|개월|년) ?전$/u;
+/** `김철수에게 보낸 메일`: mail the owner SENT, the wrong direction for a sender search (usage line). */
+const RECIPIENT_HEAD = new RegExp(`(?:에게|한테|께)\\s?보낸(?: ${UNREAD_WORD})?$`, 'u');
+/** `회의 관련 메일`, `계약에 관한 메일`: a topic, not a sender (usage line). */
+const TOPIC_HEAD = /(?:관련된?|에 관한|에 대한)$/u;
 /** Second-person words: `네 메일 보여줘` is not a sender search. */
 const SECOND_PERSON = new Set(['네', '너', '니', '너의', '당신']);
 /** Linking words after a sender: `가 보낸`, `한테서 온`, `에서 온`, `의`, `님`. Stripped from the end, repeatedly. */
@@ -179,6 +185,8 @@ function indexTarget(raw: string | undefined): MailSummaryTarget | null {
  */
 function parseSenderHead(head: string, show: boolean): { from: string; today: boolean; unread: boolean } | 'usage' | null {
   if (/[:：]/u.test(head)) return null;
+  // Re-review item 4: a recipient or a topic is not a sender.
+  if (RECIPIENT_HEAD.test(head.trim()) || TOPIC_HEAD.test(head.trim())) return 'usage';
   if (show && !EXPLICIT_SENDER_LINK.test(head.trim().replace(new RegExp(` ${UNREAD_WORD}$`, 'u'), ''))) return null;
   let rest = head.trim();
   let today = false;
@@ -199,7 +207,10 @@ function parseSenderHead(head: string, show: boolean): { from: string; today: bo
   const from = rest.replace(/^["'“”‘’`]+|["'“”‘’`]+$/gu, '').trim();
   if (SECOND_PERSON.has(from)) return null;
   const stem = from.replace(TIME_PARTICLE, '').trim();
-  if (stem !== from && (NOT_A_SENDER.has(stem) || /^(?:지난|이번|다음|올|작|재작) ?(?:주|달|해|년)$/u.test(stem))) return null;
+  const isTime = (word: string) =>
+    NOT_A_SENDER.has(word) || RELATIVE_TIME.test(word) || /^(?:지난|이번|다음|올|작|재작) ?(?:주|달|해|년)$/u.test(word);
+  if (stem !== from && isTime(stem)) return null;
+  if (RELATIVE_TIME.test(from)) return 'usage';
   if (from.length === 0 || NOT_A_SENDER.has(from) || Array.from(from).length > MAIL_SENDER_QUERY_MAX_LENGTH) return 'usage';
   return { from, today, unread };
 }
