@@ -31,6 +31,10 @@ function harness(
     readRemoteUrl?: (rootPath: string, remote: string, env: NodeJS.ProcessEnv) => string | readonly string[];
     /** ADR-0109: the repository allowlist (default: acme/widgets only). */
     allowlist?: readonly RepositoryIdentity[];
+    /** ADR-0109 review P2: the visible insteadOf/pushInsteadOf values (default none; real git when realRemoteRead). */
+    readUrlRewrites?: (rootPath: string, env: NodeJS.ProcessEnv) => readonly string[];
+    /** Ambient-credential mode (no token source at all). */
+    ambient?: boolean;
     /** Use the provider's real default remote read (local `git remote get-url`, no network). */
     realRemoteRead?: boolean;
     inner?: Partial<GitProvider>;
@@ -123,14 +127,19 @@ function harness(
       },
       ...over.inner,
     }) satisfies GitProvider;
+  const trackingUpdates: string[] = [];
   const provider = new GitHubAppGitProvider({
     makeLocalGit,
-    tokenSource: over.tokenSource ?? (async () => 'ghs_SENTINEL'),
+    ...(over.ambient ? {} : { tokenSource: over.tokenSource ?? (async () => 'ghs_SENTINEL') }),
     allowlist: new RepositoryAllowlist(over.allowlist ?? [ACME_WIDGETS]),
+    ...(over.readUrlRewrites ? { readUrlRewrites: over.readUrlRewrites } : over.realRemoteRead ? {} : { readUrlRewrites: () => [] }),
+    updateTrackingRef: (_root, remote, branch) => {
+      trackingUpdates.push(`${remote}/${branch}`);
+    },
     ...(over.realRemoteRead ? {} : { readRemoteUrl: over.readRemoteUrl ?? (() => 'https://github.com/acme/widgets.git') }),
     spawn,
   });
-  return { provider, invoked, spawns, commitOptions, branchCalls };
+  return { provider, invoked, spawns, commitOptions, branchCalls, trackingUpdates };
 }
 
 describe('GitHubAppGitProvider (Sprint 4b, ADR-0061 + review RC1/RC3/RC4)', () => {
@@ -578,6 +587,227 @@ describe('GitHubAppGitProvider — multi-repository allowlist (ADR-0109 D2/D3)',
           expect(spawns).toEqual([]);
         },
       );
+    });
+  });
+});
+
+describe('GitHubAppGitProvider — execution bound to the validated target (ADR-0109 review P1/P2)', () => {
+  const CANONICAL = 'https://github.com/acme/widgets.git';
+
+  it('the push argv names the validated canonical URL, never the remote name; the tracking ref is updated locally', async () => {
+    const { provider, spawns, trackingUpdates } = harness({ readRemoteUrl: () => 'https://github.com/acme/widgets' });
+    const res = await provider.pushApprovedCommit('/repo', 'origin', 'feature/a', 'abc1234');
+    expect(res).toMatchObject({ remote: 'origin', branch: 'feature/a', upstreamRef: 'origin/feature/a' });
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]!.args).toEqual(['--no-pager', 'push', CANONICAL, 'HEAD:refs/heads/feature/a']);
+    expect(spawns[0]!.args).not.toContain('origin');
+    expect(trackingUpdates).toEqual(['origin/feature/a']);
+  });
+
+  it('ls-remote and the main-sync fetch also run against the canonical URL', async () => {
+    const { provider, spawns } = harness();
+    await provider.getRemoteRefCommit('/repo', 'origin', 'main');
+    await provider.syncMainFastForward('/repo', 'origin', 'main', SHA40, SHA40B);
+    expect(spawns.map((s) => s.args)).toEqual([
+      ['--no-pager', 'ls-remote', '--exit-code', CANONICAL, 'refs/heads/main'],
+      ['--no-pager', 'fetch', '--no-tags', CANONICAL, 'main'],
+    ]);
+  });
+
+  it('pause gate: origin changed to an outside host while the token is minted → blocked before any spawn', async () => {
+    let url = 'https://github.com/acme/widgets.git';
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let minted = 0;
+    const { provider, spawns, invoked } = harness({
+      readRemoteUrl: () => url,
+      tokenSource: async () => {
+        minted += 1;
+        await gate;
+        return 'minted-test-value';
+      },
+    });
+    const pushing = provider.pushApprovedCommit('/repo', 'origin', 'feature/a', 'abc1234');
+    await Promise.resolve();
+    url = 'https://evil.example.com/acme/widgets.git';
+    release();
+    await expect(pushing).rejects.toBeInstanceOf(GitPushBlockedError);
+    expect(minted).toBe(1);
+    expect(spawns).toEqual([]);
+    expect(invoked).toEqual(['pushApprovedCommit']); // reached the bound runner, which refused before the spawn
+  });
+
+  it('pause gate: origin changed to another (even allowlisted) repository during the mint → blocked', async () => {
+    let url = 'https://github.com/acme/widgets.git';
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { provider, spawns } = harness({
+      allowlist: [ACME_WIDGETS, { provider: 'github', owner: 'acme', repo: 'gadgets' }],
+      readRemoteUrl: () => url,
+      tokenSource: async () => {
+        await gate;
+        return 'minted-test-value';
+      },
+    });
+    const pushing = provider.pushApprovedCommit('/repo', 'origin', 'feature/a', 'abc1234');
+    await Promise.resolve();
+    url = 'https://github.com/acme/gadgets.git';
+    release();
+    await expect(pushing).rejects.toThrow(/changed after it was validated/);
+    expect(spawns).toEqual([]);
+  });
+
+  it('a url rewrite rule matching the canonical URL refuses before any mint', async () => {
+    let minted = 0;
+    const { provider, spawns } = harness({
+      readUrlRewrites: () => ['https://github.com/acme/'],
+      tokenSource: async () => {
+        minted += 1;
+        return 'minted-test-value';
+      },
+    });
+    await expect(provider.pushApprovedCommit('/repo', 'origin', 'feature/a', 'abc1234')).rejects.toThrow(/url rewrite/);
+    expect(minted).toBe(0);
+    expect(spawns).toEqual([]);
+  });
+
+  it('an unexpected network argv (the remote positional is not the validated remote) is refused', async () => {
+    // a fake inner provider that runs a push to a DIFFERENT positional than the validated remote
+    let spawned = 0;
+    const sneaky = new GitHubAppGitProvider({
+      makeLocalGit: (runner) =>
+        ({
+          kind: 'local-git',
+          pushApprovedCommit: async (rootPath: string) => {
+            runner?.(['--no-pager', 'push', 'https://evil.example.com/x.git', 'HEAD:refs/heads/a'], { cwd: rootPath, timeoutMs: 1 });
+            return { remote: 'origin', branch: 'a', upstreamRef: 'origin/a', commitHash: 'abc1234' };
+          },
+        }) as unknown as GitProvider,
+      tokenSource: async () => 'minted-test-value',
+      allowlist: new RepositoryAllowlist([ACME_WIDGETS]),
+      readRemoteUrl: () => 'https://github.com/acme/widgets.git',
+      readUrlRewrites: () => [],
+      spawn: () => {
+        spawned += 1;
+        return { code: 0, stdout: '', stderr: '', timedOut: false, failed: false };
+      },
+    });
+    await expect(sneaky.pushApprovedCommit('/repo', 'origin', 'a', 'abc1234')).rejects.toBeInstanceOf(GitPushBlockedError);
+    expect(spawned).toBe(0);
+  });
+
+  describe('ambient-credential mode (dev PAT / no App): same binding, no token', () => {
+    it('pushes to the canonical URL with no askpass/token, keeps credential helpers, drops inherited GIT_CONFIG_*', async () => {
+      process.env.GIT_CONFIG_PARAMETERS = "'url.https://github.com/acme/unlisted.insteadof'='https://github.com/acme/widgets'";
+      process.env.GIT_CONFIG_COUNT = '1';
+      process.env.GIT_CONFIG_KEY_0 = 'remote.origin.pushurl';
+      process.env.GIT_CONFIG_VALUE_0 = 'https://github.com/acme/unlisted.git';
+      try {
+        const seen: NodeJS.ProcessEnv[] = [];
+        const { provider, spawns } = harness({
+          ambient: true,
+          readRemoteUrl: (_root, _remote, env) => {
+            seen.push(env);
+            return 'https://github.com/acme/widgets.git';
+          },
+        });
+        await provider.pushApprovedCommit('/repo', 'origin', 'feature/a', 'abc1234');
+        const child = spawns[0]!;
+        expect(child.args[2]).toBe(CANONICAL);
+        expect(child.env.GIT_APP_TOKEN).toBeUndefined();
+        expect(child.env.GIT_ASKPASS).toBeUndefined();
+        for (const env of [child.env, seen[0]!]) {
+          expect(env.GIT_CONFIG_PARAMETERS).toBeUndefined();
+          expect(env.GIT_CONFIG_COUNT).toBeUndefined(); // no helper reset: the developer's own credential stays
+          expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+        }
+      } finally {
+        for (const k of ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) delete process.env[k];
+      }
+    });
+
+    it('repro 1: a branch tracking another remote that names an unlisted repository is refused (no spawn)', async () => {
+      const byRemote: Record<string, string> = {
+        origin: 'https://github.com/acme/widgets.git',
+        other: 'https://github.com/other/unlisted.git',
+      };
+      const { provider, spawns } = harness({ ambient: true, readRemoteUrl: (_r, remote) => byRemote[remote] ?? '' });
+      await expect(provider.pushApprovedCommit('/repo', 'other', 'feature', 'abc1234')).rejects.toBeInstanceOf(GitPushBlockedError);
+      expect(spawns).toEqual([]);
+    });
+
+    it('repro 2 (real git): an inherited GIT_CONFIG_PARAMETERS rewrite cannot redirect the push to an unlisted repository', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'quoky-ambient-'));
+      process.env.GIT_CONFIG_PARAMETERS = "'url.https://github.com/acme/unlisted.insteadof'='https://github.com/acme/widgets'";
+      try {
+        execFileSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
+        execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/widgets.git'], { cwd: dir, stdio: 'ignore' });
+        const { provider, spawns } = harness({ ambient: true, realRemoteRead: true });
+        await provider.pushApprovedCommit(dir, 'origin', 'feature/a', 'abc1234');
+        expect(spawns).toHaveLength(1);
+        expect(spawns[0]!.args[2]).toBe(CANONICAL);
+        expect(spawns[0]!.env.GIT_CONFIG_PARAMETERS).toBeUndefined();
+      } finally {
+        delete process.env.GIT_CONFIG_PARAMETERS;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('real local git config (no network)', () => {
+    const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+
+    it('pause gate (real git): `git remote set-url origin` to an outside host during the mint → blocked, no spawn', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'quoky-pause-'));
+      try {
+        git(dir, 'init', '-q');
+        git(dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const { provider, spawns } = harness({
+          realRemoteRead: true,
+          tokenSource: async () => {
+            await gate;
+            return 'minted-test-value';
+          },
+        });
+        const pushing = provider.pushApprovedCommit(dir, 'origin', 'feature/a', 'abc1234');
+        await new Promise((r) => setTimeout(r, 0));
+        git(dir, 'remote', 'set-url', 'origin', 'https://evil.example.com/acme/widgets.git');
+        release();
+        await expect(pushing).rejects.toBeInstanceOf(GitPushBlockedError);
+        expect(spawns).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a repository insteadOf rule matching only the canonical (.git) URL is refused before any mint', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'quoky-rewrite-'));
+      try {
+        git(dir, 'init', '-q');
+        git(dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets');
+        git(dir, 'config', 'url.https://evil.example.com/x.git.insteadOf', 'https://github.com/acme/widgets.git');
+        let minted = 0;
+        const { provider, spawns } = harness({
+          realRemoteRead: true,
+          tokenSource: async () => {
+            minted += 1;
+            return 'minted-test-value';
+          },
+        });
+        await expect(provider.pushApprovedCommit(dir, 'origin', 'feature/a', 'abc1234')).rejects.toThrow(/url rewrite/);
+        expect(minted).toBe(0);
+        expect(spawns).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 });

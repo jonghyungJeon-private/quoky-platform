@@ -261,8 +261,18 @@ if (hostingAuthMode === 'github-app' && repositoryAllowlist.size > 0 && config.g
     new GitHubRepositoryHostingProvider({ auth: { kind: 'pat', token: devPatToken } }),
   );
   connectorProviders.push(new GitHubConnectorProvider({ auth: { kind: 'pat', token: devPatToken } }));
-  // Dev PAT is a REST-only convenience (ADR-0061 §11.3): local git push uses the developer's own git credential,
-  // so GIT_PROVIDER stays the plain LocalGitProvider.
+  // Dev PAT is a REST-only convenience (ADR-0061 §11.3): local git push uses the developer's own git credential.
+}
+// ADR-0109 review P1: whenever an allowlist is configured, every remote git op — in EVERY auth mode — is bound to the
+// allowlisted repository its remote resolves to. Outside App mode the same decorator runs in ambient-credential mode
+// (no token, the developer's own credential helpers), still dropping inherited env-injected git config, checking the
+// actual push remote (upstream included) after insteadOf/pushInsteadOf expansion, and pushing to the validated
+// canonical URL, never to the remote name. With no allowlist the plain LocalGitProvider stays, exactly as before.
+if (!(gitProvider instanceof GitHubAppGitProvider) && repositoryAllowlist.size > 0) {
+  gitProvider = new GitHubAppGitProvider({
+    makeLocalGit: (runner) => new LocalGitProvider(runner),
+    allowlist: repositoryAllowlist,
+  });
 }
 // ADR-0094: Personal-edition git safety, OUTERMOST so a refusal (remote off, commit on main/master) happens
 // before any git process or the GitHub App decorator could mint a token. Wraps both composed branches above.

@@ -821,10 +821,13 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 
 - **여러 저장소 (v3, ADR-0109).** 등록한 프로젝트마다 그 폴더의 `origin` fetch/push 주소로 저장소를 정합니다. 주소는
   `https://github.com/<owner>/<repo>(.git)` 형태여야 하고 그 저장소가 `QUOKY_GITHUB_REPOS`(또는 예전 OWNER/REPO 한 쌍)에
-  있어야 합니다. 목록에 없거나, SSH(`git@github.com:…`)·다른 호스트이거나, fetch와 push 주소가 서로 다른 저장소를 가리키면
-  push·PR·상태 확인·머지·브랜치 정리 단계마다 "…push·PR·상태 확인·merge·브랜치 정리는 하지 않았고 GitHub 토큰도 발급하지
-  않았어요"로 거절됩니다. 두 프로젝트가 같은 저장소를 가리키는 것은 괜찮습니다. 확인: 그 폴더에서
-  `git remote get-url --all origin`과 `git remote get-url --push --all origin`.
+  있어야 합니다. 기능 브랜치가 다른 remote를 추적하면 그 remote도 같은 저장소여야 합니다. 목록에 없거나, SSH(`git@github.com:…`)·
+  다른 호스트이거나, fetch와 push 주소가 서로 다른 저장소를 가리키면 push·PR·상태 확인·머지·브랜치 정리 단계마다
+  "…push·PR·상태 확인·merge·브랜치 정리는 하지 않았고 토큰도 발급하지 않았어요"와 운영자 안내 한 줄로 거절됩니다. push는
+  확인한 저장소 주소(`https://github.com/<owner>/<repo>.git`)로만 실행되고, 승인 뒤 원격 저장소가 바뀌면(다른 허용 저장소라도)
+  "승인 이후 이 프로젝트의 원격 저장소가 바뀌었어요 (TARGET_CHANGED)…"로 거절되니 다시 승인받으세요. 두 프로젝트가 같은
+  저장소를 가리키는 것은 괜찮습니다. 확인: 그 폴더에서 `git remote get-url --all origin`과
+  `git remote get-url --push --all origin`.
 - 이미 push했거나 PR을 만든 뒤 `푸시 실행`/`PR 생성 실행`을 다시 보내면 새로 만들지 않고 "이미 …했어요"라고 답합니다.
   `강제 푸시해줘`는 지원하지 않고, `배포해줘`는 "머지/배포/릴리즈는 이후 단계예요"로 거절됩니다.
 - `main`/`master`로의 push(기능 브랜치가 `origin/main`을 추적하는 경우 포함)와 `main`/`master`에서의 커밋은 항상 거절됩니다.
@@ -872,7 +875,8 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 | 알림이 DM이 아니라 안 보임 | 알림은 기본으로 소유자 DM으로만 전달. 봇과 DM 창을 한 번 열어 두세요. 채널 전달은 운영자가 `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`로 별도 설정 |
 | `내 할 일 보여줘`에 계정 정보(identity)가 설정되어 있지 않다는 안내 | Jira/GitHub 식별자 매핑(`QUOKY_ACTOR_IDENTITY_MAPPINGS`)과 커넥터 자격 증명이 없음. 로컬 할 일은 그대로 동작. 운영자 가이드 참고 |
 | `PR 상태 알려줘`가 "현재 PR 상태를 확인하지 못했어요" | GitHub App에 Checks: Read 권한이 없을 수 있음 (운영자 가이드). PR 생성/push에는 영향 없음 |
-| push/PR이 "이 프로젝트의 origin 저장소가 허용된 GitHub 저장소 목록(QUOKY_GITHUB_REPOS)에 없어요…"로 거절됨 | 그 폴더의 `origin` 저장소를 `QUOKY_GITHUB_REPOS`에 추가하고 재시작. 운영자는 GitHub App 설치의 저장소 목록에도 같은 저장소를 추가 (운영자 가이드). "fetch URL과 push URL이 서로 다른 저장소"라면 `remote.origin.pushurl`/`pushInsteadOf` 설정을 지우고, "HTTPS github.com 저장소로 확인할 수 없어요"라면 `git remote set-url origin https://github.com/<owner>/<repo>.git` |
+| push/PR이 "이 프로젝트의 원격 저장소는 허용 목록에 없어요…"로 거절됨 | 그 폴더의 `origin` 저장소를 `QUOKY_GITHUB_REPOS`에 추가하고 재시작. 운영자는 GitHub App 설치의 저장소 목록에도 같은 저장소를 추가 (운영자 가이드). "fetch 주소와 push 주소가 서로 다른 저장소"라면 `remote.origin.pushurl`/`pushInsteadOf` 설정을 지우고, "주소를 확인할 수 없거나 지원하지 않는 형식"이라면 `git remote set-url origin https://github.com/<owner>/<repo>.git` (그리고 그 주소에 걸리는 `insteadOf` 규칙 제거) |
+| push가 "…원격 저장소가 바뀌었어요 (TARGET_CHANGED)"로 거절됨 | 승인 뒤 `origin`(또는 추적 remote)이 다른 저장소로 바뀜. 주소를 되돌리거나 `푸시해줘`부터 다시 승인 |
 | push가 "Repository not found"로 실패 | 이전 버전의 알려진 문제(시스템 git credential helper가 앱 토큰을 가림)는 고쳐졌습니다. 그래도 나면 원격이 HTTPS `github.com`인지, GitHub App이 해당 저장소에 설치됐는지 확인 (운영자 가이드) |
 | 큰 미리보기가 안 보임 | 봇에 **Attach Files** 권한이 없을 수 있음 (2절 4번) |
 | `pnpm install`에서 `better-sqlite3` 빌드 실패 | 네이티브 빌드 도구 설치 (1절) |

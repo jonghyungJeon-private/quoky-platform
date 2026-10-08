@@ -11,7 +11,9 @@ ADR-0109: `QUOKY_GITHUB_REPOS` (≤10 `owner/repo`, validated at startup; the le
 one; both forms is a startup error). Each registered project's repository is derived from its workspace `origin` fetch
 and push URLs (HTTPS github.com only, sanitized git env) on every remote step and must be allowlisted; otherwise push,
 PR, status, merge, main sync and cleanup are refused before any token mint. Every App token stays down-scoped to the one
-resolved repository. No migration, no port, no deps change (`ConversationRuntimeDeps` 35). Offline validation only; the
+resolved repository. Remote git commands run against the validated canonical URL in every auth mode, and a push or PR
+approved for one repository refuses with `TARGET_CHANGED` when the project now resolves to another. No migration, no
+port, no deps change (`ConversationRuntimeDeps` 35). Offline validation only; the
 strict gates (switching the App installation to "Only select repositories", a sandbox Live UAT on a second allowlisted
 repository) have not been run.
 

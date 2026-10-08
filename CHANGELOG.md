@@ -35,6 +35,14 @@ ADR-0109 (Ratified 2026-10-06, all recommended defaults). No migration, no new p
   the per-step CRITICAL approvals apply per repository as before.
 - Docs: quickstart env table, project registration and push/PR notes, troubleshooting row; operator guide 0.3
   ("Only select repositories" = exactly the allowlist, D4); `.env.example`.
+- Review fixes (Codex CHANGES_REQUIRED): the actual push remote (upstream included) is checked with `origin` before
+  approval and at execution, in every auth mode (dev PAT and no-auth git now run through the same remote-bound
+  decorator in ambient-credential mode, dropping inherited `GIT_CONFIG_*` / `GIT_CONFIG_PARAMETERS`); every remote git
+  command runs against the validated canonical URL after a synchronous re-check right before the spawn, and an
+  `insteadOf`/`pushInsteadOf` rule matching that URL is refused; an explicit `QUOKY_GITHUB_APP_INSTALLATION_ID` is
+  verified (repository installation id and account owner, App-JWT lookups) before any mint; Core's refusal copy is
+  provider-neutral with an app-supplied operator hint; the push approval binds the resolved repository
+  (`pushRepositoryIdentity`) and every later step refuses with `TARGET_CHANGED` when it resolves to another repository.
 
 ## Unreleased — live QA session 3 defects: calendar context, Slack DM filtering, recall floor, read-only ops-UI lookups, labels (2026-10-08) — PR #148
 

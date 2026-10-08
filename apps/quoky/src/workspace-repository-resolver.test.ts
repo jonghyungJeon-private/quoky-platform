@@ -59,7 +59,7 @@ describe('WorkspaceRepositoryIdentityResolver (ADR-0109 D2, real local git)', ()
 
   it('an origin on github.com but not on the allowlist → not-allowlisted', async () => {
     const r = repo((git) => git('remote', 'add', 'origin', 'https://github.com/acme/other.git'));
-    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toEqual({ status: 'refused', reason: 'not-allowlisted' });
+    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toMatchObject({ status: 'refused', reason: 'not-allowlisted' });
   });
 
   it('fetch URL ≠ push URL (a pushurl to another repository, even an allowlisted one) → ambiguous', async () => {
@@ -67,7 +67,7 @@ describe('WorkspaceRepositoryIdentityResolver (ADR-0109 D2, real local git)', ()
       git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
       git('config', 'remote.origin.pushurl', 'https://github.com/acme/gadgets.git');
     });
-    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toEqual({ status: 'refused', reason: 'ambiguous' });
+    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toMatchObject({ status: 'refused', reason: 'ambiguous' });
   });
 
   it('a pushurl to the same repository is fine', async () => {
@@ -83,12 +83,12 @@ describe('WorkspaceRepositoryIdentityResolver (ADR-0109 D2, real local git)', ()
       git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
       git('config', 'remote.origin.pushurl', 'git@github.com:acme/widgets.git');
     });
-    await expect(resolverFor(sshPush.env).resolve(sshPush.dir)).resolves.toEqual({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolverFor(sshPush.env).resolve(sshPush.dir)).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
     const rewrite = repo((git) => {
       git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
       git('config', 'url.git@github.com:.insteadOf', 'https://github.com/');
     });
-    await expect(resolverFor(rewrite.env).resolve(rewrite.dir)).resolves.toEqual({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolverFor(rewrite.env).resolve(rewrite.dir)).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
   });
 
   it('a pushInsteadOf rewrite to another repository is refused as ambiguous', async () => {
@@ -96,13 +96,13 @@ describe('WorkspaceRepositoryIdentityResolver (ADR-0109 D2, real local git)', ()
       git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
       git('config', 'url.https://github.com/acme/gadgets.pushInsteadOf', 'https://github.com/acme/widgets');
     });
-    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toEqual({ status: 'refused', reason: 'ambiguous' });
+    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toMatchObject({ status: 'refused', reason: 'ambiguous' });
   });
 
   it('an inherited GIT_CONFIG_PARAMETERS rewrite is dropped: an SSH origin stays refused', async () => {
     const r = repo((git) => git('remote', 'add', 'origin', 'git@github.com:acme/widgets.git'));
     const env = { ...r.env, GIT_CONFIG_PARAMETERS: "'url.https://github.com/.insteadof'='git@github.com:'" };
-    await expect(resolverFor(env).resolve(r.dir)).resolves.toEqual({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolverFor(env).resolve(r.dir)).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
   });
 
   it.each([
@@ -111,15 +111,15 @@ describe('WorkspaceRepositoryIdentityResolver (ADR-0109 D2, real local git)', ()
     ['an embedded credential', 'https://user:pw@github.com/acme/widgets.git'],
   ])('%s → unsupported-remote', async (_label, url) => {
     const r = repo((git) => git('remote', 'add', 'origin', url));
-    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toEqual({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolverFor(r.env).resolve(r.dir)).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
   });
 
   it('no origin, or not a git repository at all → unsupported-remote (never throws)', async () => {
     const noOrigin = repo(() => undefined);
-    await expect(resolverFor(noOrigin.env).resolve(noOrigin.dir)).resolves.toEqual({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolverFor(noOrigin.env).resolve(noOrigin.dir)).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
     const plain = mkdtempSync(join(tmpdir(), 'quoky-ws-plain-'));
     dirs.push(plain);
-    await expect(resolverFor(isolated(plain)).resolve(plain)).resolves.toEqual({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolverFor(isolated(plain)).resolve(plain)).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
   });
 
   it('reads origin (fetch + push direction) under the sanitized env (credential helpers reset)', async () => {
@@ -136,5 +136,28 @@ describe('WorkspaceRepositoryIdentityResolver (ADR-0109 D2, real local git)', ()
     });
     await expect(resolver.resolve('/any')).resolves.toEqual({ status: 'resolved', identity: WIDGETS });
     expect(calls).toEqual([{ remote: 'origin', direction: 'push', helper: 'credential.helper' }]);
+  });
+
+  it('the actual push remote (an upstream on another remote) must name the same allowlisted repository as origin', async () => {
+    const r = repo((git) => {
+      git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+      git('remote', 'add', 'other', 'https://github.com/other/unlisted.git');
+      git('remote', 'add', 'mirror', 'https://github.com/acme/widgets');
+      git('remote', 'add', 'gadgets', 'https://github.com/acme/gadgets.git');
+    });
+    const resolver = resolverFor(r.env);
+    await expect(resolver.resolve(r.dir, 'other')).resolves.toMatchObject({ status: 'refused', reason: 'ambiguous' });
+    await expect(resolver.resolve(r.dir, 'gadgets')).resolves.toMatchObject({ status: 'refused', reason: 'ambiguous' });
+    await expect(resolver.resolve(r.dir, 'mirror')).resolves.toEqual({ status: 'resolved', identity: WIDGETS });
+    await expect(resolver.resolve(r.dir, '--upload-pack=x')).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
+    await expect(resolver.resolve(r.dir, 'missing')).resolves.toMatchObject({ status: 'refused', reason: 'unsupported-remote' });
+  });
+
+  it('a refusal carries the fixed operator hint (the GitHub/env specifics live in the composition root)', async () => {
+    const r = repo((git) => git('remote', 'add', 'origin', 'https://github.com/acme/other.git'));
+    const result = await resolverFor(r.env).resolve(r.dir);
+    expect(result).toMatchObject({ status: 'refused', reason: 'not-allowlisted' });
+    expect(result.status === 'refused' ? result.hint : '').toContain('QUOKY_GITHUB_REPOS');
+    expect(JSON.stringify(result)).not.toContain('acme/other');
   });
 });

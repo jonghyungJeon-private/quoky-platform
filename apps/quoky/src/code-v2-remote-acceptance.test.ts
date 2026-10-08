@@ -50,7 +50,7 @@ import { GitHubRepositoryHostingProvider, createPullRequestStatusTokenSource } f
 import { codeWorkProviders } from './features/code-work.providers';
 import { createGitHubAppTokenSources } from './github-app-token-sources';
 import type { GitHubAppTokenMinter } from './github-app-token-sources';
-import { RepositoryAllowlist } from './repository-allowlist';
+import { REPOSITORY_REFUSAL_HINTS, RepositoryAllowlist } from './repository-allowlist';
 import { WorkspaceRepositoryIdentityResolver } from './workspace-repository-resolver';
 import { CODE_WORK_TURN_HANDLERS } from './features/feature-tokens';
 import { PersonalGitGuard } from './personal-git-guard';
@@ -170,7 +170,7 @@ interface HarnessOptions {
   /** Register the composition root's code-work handlers (default true). */
   withBranchHandler?: boolean;
   /** ADR-0109 D2: the composition root's per-workspace repository resolver (absent = the static identity). */
-  resolveIdentity?: (rootPath: string) => Promise<WorkspaceRepositoryResolution>;
+  resolveIdentity?: (rootPath: string, remote?: string) => Promise<WorkspaceRepositoryResolution>;
   /** Replace the fake hosting manager (still wrapped in the REAL PersonalHostingGuard). */
   hostingManager?: RepositoryHostingSurface;
 }
@@ -565,7 +565,7 @@ describe('CODE-8 offline acceptance — multi-repository allowlist (ADR-0109, no
       },
     });
     return {
-      resolveIdentity: (rootPath: string) => resolver.resolve(rootPath),
+      resolveIdentity: (rootPath: string, remote?: string) => resolver.resolve(rootPath, remote),
       setOrigin: (url: string) => { originUrl = url; },
       reads,
     };
@@ -625,8 +625,9 @@ describe('CODE-8 offline acceptance — multi-repository allowlist (ADR-0109, no
 
     const pushAsk = await h.send('푸시해줘');
     expect(pushAsk.status).toBe('FAILED');
-    expect(pushAsk.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
-    expect(pushAsk.reply.text).toContain('GitHub 토큰도 발급하지 않았어요');
+    expect(pushAsk.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted', REPOSITORY_REFUSAL_HINTS['not-allowlisted']).text);
+    expect(pushAsk.reply.text).toContain('토큰도 발급하지 않았어요');
+    expect(pushAsk.reply.text).toContain('QUOKY_GITHUB_REPOS'); // the composition root's operator hint
     expect(h.anchor()?.status).toBe('GIT_COMMITTED');
     expect(h.criticals()).toHaveLength(0);
     expect(h.gitCalls).not.toContain('push');
@@ -650,16 +651,33 @@ describe('CODE-8 offline acceptance — multi-repository allowlist (ADR-0109, no
 
     origin.setOrigin('https://github.com/someone/unlisted.git');
     const refused = await h.send('PR 생성 실행');
-    expect(refused.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted').text);
+    expect(refused.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted', REPOSITORY_REFUSAL_HINTS['not-allowlisted']).text);
     expect(h.anchor()?.status).toBe('PR_APPROVED');
     expect(real.mints).toEqual([]);
     expect(real.fetches).toEqual([]);
 
     // an SSH origin or a fetch/push pair naming two repositories is refused the same way, still with no mint
     origin.setOrigin(`git@github.com:${IDENTITY.owner}/${IDENTITY.repo}.git`);
-    expect((await h.send('PR 생성 실행')).reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'unsupported-remote').text);
+    expect((await h.send('PR 생성 실행')).reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'unsupported-remote', REPOSITORY_REFUSAL_HINTS['unsupported-remote']).text);
     expect(real.mints).toEqual([]);
     expect(real.fetches).toEqual([]);
+  }, 60_000);
+
+  it('a push approved for repository A cannot be retargeted to allowlisted repository B: TARGET_CHANGED, no push', async () => {
+    const fx = makeFixture();
+    const origin = resolverWithOrigin([IDENTITY, OTHER], `https://github.com/${IDENTITY.owner}/${IDENTITY.repo}.git`);
+    const h = harness(fx, { remoteEnabled: true, resolveIdentity: origin.resolveIdentity });
+    await commitOnNewBranch(fx, h);
+    await h.send('푸시해줘');
+    expect(h.anchor()?.pushRepositoryIdentity).toEqual(IDENTITY);
+    expect(h.criticals()[0]!.reason).toContain(`repository: ${IDENTITY.owner}/${IDENTITY.repo}`);
+    await h.send('승인');
+    origin.setOrigin(`https://github.com/${OTHER.owner}/${OTHER.repo}.git`);
+    const refused = await h.send('푸시 실행');
+    expect(refused.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+    expect(h.anchor()?.status).toBe('PUSH_APPROVED');
+    expect(h.gitCalls).not.toContain('push');
+    expect(remoteHead(fx, BRANCH)).toBe('');
   }, 60_000);
 
   it('legacy single repository without a resolver: byte-identical push approval reply (static identity path)', async () => {

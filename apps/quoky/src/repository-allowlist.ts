@@ -1,5 +1,5 @@
 import { isSafeRepoName, isSafeRepoOwner } from '@quoky/core';
-import type { RepositoryIdentity, WorkspaceRepositoryResolution } from '@quoky/core';
+import type { RepositoryIdentity, WorkspaceRepositoryRefusal, WorkspaceRepositoryResolution } from '@quoky/core';
 
 /**
  * Multi-repository allowlist for code work (ADR-0109 D1/D2) — composition-root only.
@@ -126,6 +126,33 @@ export function resolveRepositoryFromRemoteUrls(
   const entry = allowlist.find(identities[0]!);
   if (!entry) return { status: 'refused', reason: 'not-allowlisted' };
   return { status: 'resolved', identity: entry };
+}
+
+/**
+ * The fixed operator hint the composition root attaches to a refusal (ADR-0109): Core's copy stays provider-neutral,
+ * the GitHub/env specifics live here. Never contains a configured value or a real URL.
+ */
+export const REPOSITORY_REFUSAL_HINTS: Readonly<Record<WorkspaceRepositoryRefusal, string>> = Object.freeze({
+  'not-allowlisted':
+    '운영자: 이 저장소(owner/repo)를 QUOKY_GITHUB_REPOS에 추가하고 GitHub App 설치의 저장소 목록에도 넣은 뒤 재시작해 주세요.',
+  ambiguous: '운영자: remote의 pushurl / pushInsteadOf 설정이 다른 GitHub 저장소를 가리키지 않게 정리해 주세요.',
+  'unsupported-remote':
+    '운영자: remote 주소를 https://github.com/<owner>/<repo>.git 형식으로 설정하고 insteadOf 재작성을 제거해 주세요.',
+});
+
+/** {@link resolveRepositoryFromRemoteUrls} with the operator hint attached to a refusal. */
+export function withRefusalHint(resolution: WorkspaceRepositoryResolution): WorkspaceRepositoryResolution {
+  return resolution.status === 'refused' ? { ...resolution, hint: REPOSITORY_REFUSAL_HINTS[resolution.reason] } : resolution;
+}
+
+/** Canonical HTTPS URL of an identity — the ONLY URL an allowlisted remote git operation is executed against. */
+export function canonicalGithubUrl(identity: RepositoryIdentity): string {
+  return `${GITHUB_HTTPS_PREFIX}${identity.owner}/${identity.repo}.git`;
+}
+
+/** A remote NAME that is safe to pass to `git remote get-url` (never an option, a path or a URL). */
+export function isSafeRemoteName(remote: string): boolean {
+  return typeof remote === 'string' && /^[A-Za-z0-9._][A-Za-z0-9._-]{0,99}$/.test(remote) && remote !== '.' && remote !== '..';
 }
 
 function hasControlChar(s: string): boolean {

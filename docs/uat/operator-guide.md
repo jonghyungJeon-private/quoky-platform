@@ -91,8 +91,9 @@ against a new tenant as a read-only probe, one request per connector, under its 
 Variables: `QUOKY_GITHUB_REPOS` (the repository allowlist, comma-separated `owner/repo`, at most 10) **or** the legacy
 pair `QUOKY_GITHUB_OWNER` + `QUOKY_GITHUB_REPO` (an allowlist of one; never both), `QUOKY_GITHUB_APP_ID`, and the
 private key via `QUOKY_GITHUB_APP_PRIVATE_KEY_PATH` (preferred, a PEM outside Git) or `QUOKY_GITHUB_APP_PRIVATE_KEY`;
-optional `QUOKY_GITHUB_APP_INSTALLATION_ID` (used for every allowlisted repository; unset = looked up per repository).
-Never commit the key.
+optional `QUOKY_GITHUB_APP_INSTALLATION_ID` (a pin: for each repository Quoky still looks up the repository's
+installation and the installation's account with the App JWT, and refuses before any token mint unless the
+repository's installation **is** this id and its account is the repository owner). Never commit the key.
 
 **Installation access (ADR-0109 D4, owner decision 12).** In the App installation settings choose
 **"Only select repositories"** and select **exactly** the repositories in the allowlist — no more (a throwaway sandbox
@@ -102,14 +103,26 @@ entry, change the installation's repository selection in the same step, then res
 
 **Which repository a project uses (ADR-0109 D2).** Nothing is configured per project. On every remote step (push,
 PR approval and creation, PR status, merge, main sync, local and remote branch cleanup) Quoky reads the registered
-project's `origin` fetch and push URLs (credential-free `git remote get-url --all origin` and `--push --all origin`,
-under the same sanitized git environment as the App-token push) and derives `owner/repo`. The step runs only when every
-URL is a plain `https://github.com/<owner>/<repo>[.git]` and all name the **same** allowlisted repository. Otherwise it
-is refused before any git remote call, hosting call or token mint, with a fixed reply that says nothing ran and no
-token was issued: not allowlisted; fetch and push naming two repositories (for example a `pushurl` or `pushInsteadOf`
-to another repository); or a remote that is SSH, another host, embeds credentials, is unreadable or is rewritten
-(`insteadOf`) to such a URL. Two projects on the same repository are fine. A PR approved for one repository cannot be
-created, merged or cleaned up after the project's origin changed to another one (the anchored identity must match).
+project's `origin` fetch and push URLs — and, for a push, also the URLs of the remote the push will actually use (an
+upstream on another remote) — with credential-free `git remote get-url --all` / `--push --all` reads after git's own
+`insteadOf`/`pushInsteadOf` expansion, under an environment that drops inherited `GIT_CONFIG_PARAMETERS` /
+`GIT_CONFIG_*`, and derives `owner/repo`. The step runs only when every URL is a plain
+`https://github.com/<owner>/<repo>[.git]` and all name the **same** allowlisted repository. Otherwise it is refused
+before any git remote call, hosting call or token mint, with a fixed provider-neutral reply that says nothing ran and
+no token was issued, plus one operator hint line: not allowlisted; fetch and push naming two repositories (for example
+a `pushurl` or `pushInsteadOf` to another repository); or a remote that is SSH, another host, embeds credentials, is
+unreadable or is rewritten (`insteadOf`) to such a URL. Two projects on the same repository are fine.
+
+**Execution is bound to the validated repository, in every auth mode.** The push approval records the resolved
+repository (anchor and approval reason); the PR approval records its own. Each execution re-resolves and refuses with
+`TARGET_CHANGED` when the repository differs from the approved one, even if both are allowlisted. Every remote git
+command (`push`, `ls-remote`, the main-sync `fetch`) is run against the validated canonical URL
+`https://github.com/<owner>/<repo>.git`, never the remote name, after a synchronous re-check right before the git
+process starts (a remote changed while the App token is minted is refused) and only when no
+`insteadOf`/`pushInsteadOf` rule matches that URL. The local tracking ref `refs/remotes/<remote>/<branch>` is then
+moved locally when it exists. In App mode the git child also resets every credential helper and authenticates with the
+one-shot askpass token; in dev PAT mode (and with no hosting auth) the developer's own credential helpers are used, but
+the inherited env-injected git config is dropped and the same target binding applies.
 
 Required App permissions:
 

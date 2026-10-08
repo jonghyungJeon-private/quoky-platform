@@ -199,6 +199,7 @@ export function anchorAfterRejection(anchor: ApplyPreviewAnchor): ApplyPreviewAn
         pushBranch: undefined,
         pushUpstreamRef: undefined,
         pushMode: undefined,
+        pushRepositoryIdentity: undefined,
       };
     case 'PR_APPROVAL_PENDING':
       return {
@@ -295,6 +296,10 @@ function grantBindingShape(binding: ApprovalGrantBinding): unknown {
         branch: a.pushBranch ?? null,
         upstream: a.pushUpstreamRef ?? null,
         mode: a.pushMode ?? null,
+        // ADR-0109: present only when the push approval bound a repository, so older digests are unchanged.
+        ...(a.pushRepositoryIdentity
+          ? { repository: `${a.pushRepositoryIdentity.provider}:${a.pushRepositoryIdentity.owner}/${a.pushRepositoryIdentity.repo}` }
+          : {}),
       };
     case 'PR':
       return {
@@ -1217,6 +1222,7 @@ export class ApprovalDecisionService {
         pushBranch: undefined,
         pushUpstreamRef: undefined,
         pushMode: undefined,
+        pushRepositoryIdentity: undefined,
       }, input.held);
       const reply =
         verdict === 'deny'

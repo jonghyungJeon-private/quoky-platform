@@ -17479,7 +17479,7 @@ Implements D1–D5 as ratified; no ADR text is changed. No migration, no new por
   `https://github.com/<owner>/<repo>[.git][/]` URLs that round-trip through the URL parser (no userinfo, port, query,
   fragment, percent-encoding or dot segments). All URLs must name one repository (`ambiguous` otherwise) that is
   allowlisted (`not-allowlisted`); anything else is `unsupported-remote`. Core receives it as the optional
-  `repositoryHosting.resolveIdentity(rootPath)` member of the existing dep and the `WorkspaceRepositoryResolution`
+  `repositoryHosting.resolveIdentity(rootPath, remote?)` member of the existing dep and the `WorkspaceRepositoryResolution`
   domain type (a fixed reason enum, never a URL). With the member present, the runtime resolves the identity on every
   remote step: push approval and execution (a new gate before the approval and before the push), PR approval, PR
   creation, PR status, merge approval (new gate) and execution, main sync, local branch cleanup, remote cleanup approval
@@ -17489,8 +17489,8 @@ Implements D1–D5 as ratified; no ADR text is changed. No migration, no new por
   static identity path is unchanged.
 - **D3 (tokens).** `apps/quoky/src/github-app-token-sources.ts` builds the write, status and connector-read sources;
   every repository token goes through `tokenForRepository` for exactly the identity the call names, after an allowlist
-  check that throws before any installation lookup or mint. The installation id is the explicit
-  `QUOKY_GITHUB_APP_INSTALLATION_ID` for every repository, else resolved and cached per repository. The hosting
+  check that throws before any installation lookup or mint. The installation id is resolved and cached per
+  repository (an explicit `QUOKY_GITHUB_APP_INSTALLATION_ID` is a verified pin, review fix 3 below). The hosting
   adapter's `tokenSource`/`statusTokenSource` now take the call's identity (adapter-local config, not a port). The
   App-auth git decorator derives the identity from the operation's remote URLs (a non-`origin` remote must name
   `origin`'s repository), requires it to be allowlisted and mints for it only.
@@ -17505,5 +17505,30 @@ Implements D1–D5 as ratified; no ADR text is changed. No migration, no new por
   path, already refused SSH. Likewise, with the legacy pair a project whose `origin` is not that repository is now
   refused up front (it used to fail later at GitHub); for a project whose `origin` is the configured repository the
   replies, approvals and minted token are unchanged. (3) Repository names are compared case-insensitively and the allowlist spelling is bound,
-  so a GitHub rename between approval and execution is not followed. (4) The push approval does not bind the repository
-  identity on its anchor (no new anchor field); push execution re-resolves and re-checks the allowlist instead.
+  so a GitHub rename between approval and execution is not followed.
+- **Review fixes (Codex CHANGES_REQUIRED on 1e026fd).**
+  1. *Actual push target, every auth mode (P1).* `resolveIdentity(rootPath, remote?)`: the push approval and execution
+     pass the remote the push will use (an upstream's remote), whose fetch and push URLs must name the same allowlisted
+     repository as `origin`. With an allowlist configured the remote-bound git decorator now wraps git in every auth
+     mode; outside App mode it runs in ambient-credential mode (no token, the developer's credential helpers kept) but
+     still drops inherited `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_*` for both the reads and the git child.
+  2. *Execution bound to the validated target (P1).* Every remote git command (`push`, `ls-remote`, main-sync `fetch`)
+     runs against the validated canonical `https://github.com/<owner>/<repo>.git`: the bound runner replaces the remote
+     positional (any other network argv is refused) after re-running the whole resolution synchronously right before
+     the spawn, so a remote changed during the token await is refused (`GitPushBlockedError` / `GitMainSyncBlockedError`,
+     nothing attempted). Because git also rewrites an explicit URL, any `insteadOf` / `pushInsteadOf` rule matching the
+     canonical URL is refused. After a successful push an existing `refs/remotes/<remote>/<branch>` is moved locally
+     (CAS, no network). Pause-gate tests cover a fake and a real `git remote set-url` during the mint.
+  3. *Explicit installation id (P2).* `QUOKY_GITHUB_APP_INSTALLATION_ID` is now a pin: per repository the App-JWT lookups
+     `GET /repos/{owner}/{repo}/installation` and `GET /app/installations/{id}` (new
+     `GitHubAppAuth.getInstallationAccountLogin`) must return that id and an account equal to the repository owner,
+     else nothing is minted (no bootstrap token either).
+  4. *Provider-neutral Core copy (P3).* `composeRepositoryNotAllowed` names no provider or env var; the composition root
+     attaches a fixed operator hint (`WorkspaceRepositoryResolution.hint`, bounded to one 200-character line), which
+     carries the `QUOKY_GITHUB_REPOS` / GitHub App specifics.
+  5. *Approval binding (`TARGET_CHANGED`).* The push approval records the resolved repository on the anchor
+     (`pushRepositoryIdentity`, additive JSON, no migration) and in its reason (and in the approval-reference digest only
+     when present, so older digests are unchanged); the PR approval keeps its `repositoryIdentity`. Push execution, PR
+     approval (against the push binding), PR creation, status, merge, main sync and cleanup refuse with the fixed
+     `composeRepositoryTargetChanged` reply when the freshly resolved repository differs — even when both are
+     allowlisted — and push execution also when the approval bound none (an approval made before the resolver).

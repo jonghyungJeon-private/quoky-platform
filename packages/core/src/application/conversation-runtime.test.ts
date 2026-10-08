@@ -145,11 +145,13 @@ const messageOf = (text: string): InboundMessage => ({ id: 'm1', context: CTX, t
 /** ADR-0109 D2 fakes for the per-workspace repository resolver (records every root it is asked about). */
 const resolverReturning = (result: WorkspaceRepositoryResolution) => {
   const roots: string[] = [];
-  const resolve = async (rootPath: string): Promise<WorkspaceRepositoryResolution> => {
+  const remotes: Array<string | undefined> = [];
+  const resolve = async (rootPath: string, remote?: string): Promise<WorkspaceRepositoryResolution> => {
     roots.push(rootPath);
+    remotes.push(remote);
     return result;
   };
-  return { resolve, roots };
+  return { resolve, roots, remotes };
 };
 const ALLOWLISTED: WorkspaceRepositoryResolution = {
   status: 'resolved',
@@ -5960,17 +5962,59 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
       expect(calls.gitPush).toBe(0);
     });
 
-    it('an allowlisted origin: approval and push proceed exactly as without the resolver', async () => {
-      const ask = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+    const WIDGETS_ID: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'widgets' };
+    const GADGETS_ID: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'gadgets' };
+
+    it('push approval checks the ACTUAL push remote and binds the resolved repository on the anchor and in the reason', async () => {
+      const resolver = resolverReturning(ALLOWLISTED);
+      const ask = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolver.resolve });
       const legacyAsk = execDeps({ applyAnchor: committed() });
       const withResolver = await new ConversationRuntime(ask.deps).handle(messageOf('푸시해줘'));
       const legacy = await new ConversationRuntime(legacyAsk.deps).handle(messageOf('푸시해줘'));
       expect(withResolver.status).toBe('AWAITING_APPROVAL');
+      expect(resolver.remotes).toEqual([REMOTE]); // the upstream's remote, not just origin
+      expect(ask.calls.lastApplyAnchor?.pushRepositoryIdentity).toEqual(WIDGETS_ID);
+      expect(ask.calls.lastRequestForRiskInput?.reason).toContain('repository: acme/widgets');
+      // without the resolver nothing is bound and the reason has no repository line (legacy unchanged)
+      expect(legacyAsk.calls.lastApplyAnchor?.pushRepositoryIdentity).toBeUndefined();
+      expect(legacyAsk.calls.lastRequestForRiskInput?.reason).not.toContain('repository:');
       expect(withResolver.reply.text).toBe(legacy.reply.text);
-      const exec = execDeps({ hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+    });
+
+    it('push execution with the bound repository unchanged → pushes; the push remote is re-checked', async () => {
+      const resolver = resolverReturning(ALLOWLISTED);
+      const exec = execDeps({ applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }), hostingResolveIdentity: resolver.resolve });
       await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
       expect(exec.calls.gitPush).toBe(1);
       expect(exec.calls.lastApplyAnchor?.status).toBe('GIT_PUSHED');
+      expect(resolver.remotes).toEqual([REMOTE]);
+    });
+
+    it('push execution: approved for A, now resolving to B (both allowlisted) → TARGET_CHANGED, no push', async () => {
+      const exec = execDeps({
+        applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }),
+        hostingResolveIdentity: resolverReturning({ status: 'resolved', identity: GADGETS_ID }).resolve,
+      });
+      const r = await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(r.reply.text).toContain('TARGET_CHANGED');
+      expect(exec.calls.gitPush).toBe(0);
+      expect(exec.calls.applyAnchorSet).toBe(0);
+    });
+
+    it('push execution of an approval that bound no repository (approved before the resolver) → TARGET_CHANGED', async () => {
+      const exec = execDeps({ hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      const r = await new ConversationRuntime(exec.deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(exec.calls.gitPush).toBe(0);
+    });
+
+    it('a refusal hint from the composition root is appended to the provider-neutral copy', async () => {
+      const resolver = resolverReturning({ status: 'refused', reason: 'not-allowlisted', hint: '운영자: 설정을 확인해 주세요.' });
+      const { deps } = execDeps({ applyAnchor: committed(), hostingResolveIdentity: resolver.resolve });
+      const r = await new ConversationRuntime(deps).handle(messageOf('푸시해줘'));
+      expect(r.reply.text).toBe(composer.composeRepositoryNotAllowed(CTX, 'not-allowlisted', '운영자: 설정을 확인해 주세요.').text);
+      expect(r.reply.text.endsWith('\n운영자: 설정을 확인해 주세요.')).toBe(true);
     });
   });
 });
@@ -8163,7 +8207,7 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
       });
       const r = await new ConversationRuntime(drifted.deps).handle(messageOf('PR 생성 실행'));
       expect(drifted.calls.hostingCreatePR).toBe(0);
-      expect(r.reply.text).toBe(composer.composePrCreationUnavailable(CTX).text);
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
     });
 
     it('merge / remote-cleanup approvals refuse when origin now resolves to a different (allowlisted) repository', async () => {
@@ -8171,19 +8215,37 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
       const merge = makeDeps({ applyAnchor: PR_CREATED_ANCHOR(), hostingResolveIdentity: resolve });
       const m = await new ConversationRuntime(merge.deps, MERGE_ON).handle(messageOf('머지 승인해줘'));
       expect(merge.calls.requestForRisk).toBe(0);
-      expect(m.reply.text).toBe(composer.composeMergeApprovalUnavailable(CTX).text);
+      expect(m.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
       const cleanup = makeDeps({ applyAnchor: BRANCH_CLEANED_ANCHOR(), hostingResolveIdentity: resolve });
       const c = await new ConversationRuntime(cleanup.deps, MERGE_ON).handle(messageOf('원격 브랜치 삭제해줘'));
       expect(cleanup.calls.requestForRisk).toBe(0);
-      expect(c.reply.text).toBe(composer.composeRemoteBranchCleanupApprovalUnavailable(CTX).text);
+      expect(c.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
     });
 
-    it('the refusal reply names no URL, no token and nothing configured, and says nothing ran', () => {
+    it('the refusal copy is provider-neutral: no URL, no provider name, no env var, and says nothing ran', () => {
       for (const reason of ['not-allowlisted', 'ambiguous', 'unsupported-remote'] as const) {
         const text = composer.composeRepositoryNotAllowed(CTX, reason).text;
-        expect(text).toContain('하지 않았고 GitHub 토큰도 발급하지 않았어요');
-        expect(text).not.toMatch(/https?:|github\.com\/|ghs_|ghp_/);
+        expect(text).toContain('하지 않았고 토큰도 발급하지 않았어요');
+        expect(text).not.toMatch(/https?:|github|QUOKY_|origin/i);
       }
+      expect(composer.composeRepositoryTargetChanged(CTX).text).not.toMatch(/github|QUOKY_/i);
+      // a hint is bounded to one line of at most 200 characters
+      const long = composer.composeRepositoryNotAllowed(CTX, 'ambiguous', `a\u0000b\n${'x'.repeat(500)}`).text;
+      expect(long.split('\n')).toHaveLength(2);
+      expect(long.split('\n')[1]!.length).toBeLessThanOrEqual(200);
+      expect(long).not.toContain('\u0000');
+    });
+
+    it('PR approval: the push bound repository A but origin now resolves to B → TARGET_CHANGED; the pushed remote is checked', async () => {
+      const resolver = resolverReturning({ status: 'resolved', identity: OTHER });
+      const { deps, calls } = makeDeps({
+        applyAnchor: prReadyAnchor({ pushRepositoryIdentity: PR_IDENTITY }),
+        hostingResolveIdentity: resolver.resolve,
+      });
+      const r = await new ConversationRuntime(deps).handle(messageOf('PR 만들어줘'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(calls.requestForRisk).toBe(0);
+      expect(resolver.remotes).toEqual([REMOTE]);
     });
   });
 });
