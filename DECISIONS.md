@@ -18766,7 +18766,8 @@ Independent Chief Architect review before GML-1 merges.
 
 - **Status:** Implementation note for D1–D8, Gmail only (track GML-1). DRV-1 (Drive) is not part of it. Offline
   validation only, with a fake `fetch`; the Gmail API was never called. The Strict gates are not run: the owner's
-  `gmail.readonly` consent, the first read probe and the live session. Independent Chief Architect review is pending.
+  `gmail.readonly` consent, the first read probe and the live session. Codex review (one P1, one P2) and the Chief
+  Architect review (CHANGES REQUIRED: four P2s, P3s) are addressed; see "Review fixes" below.
 - **Shape.**
   - No migration. `ConversationRuntimeDeps` is unchanged (35). One new port, `MailReader`
     (`ports/mail-reader.port.ts`), and one new token, `MAIL_READER`.
@@ -18848,12 +18849,18 @@ Independent Chief Architect review before GML-1 merges.
     - the sender's display name falls back to the address;
     - every mail field is an `untrusted` span with the `markup` guard;
     - a credential-shaped field becomes `(보낸 사람 숨김)`, `(제목 숨김)` or `(미리보기 숨김)`;
-    - at most 10 entries within 1,900 code points, then `…외 N건`, or `N건 이상` at the count bound.
+    - at most 10 entries within 1,900 code points, then `…외 N건`, or `N건 이상` at the count bound;
+    - display caps of 14 (sender), 30 (subject) and 18 (snippet) characters, sized so that all 10 entries always fit even
+      when every untrusted character renders as two. No platform budget ever drops a listed entry, so each number names
+      an entry the owner saw (review P2).
   - **Failures.** An empty inbox gets a truthful empty answer. Every failure gets the "could not read" note, ending with
-    `메일을 확인하지 못했어요` and status `FAILED`, and never "no mail". `UNAUTHORIZED` and `INSUFFICIENT_SCOPE` name the
-    consent helper.
-  - **History.** SHORT_TERM history keeps a fixed note instead of any mail reply. The listed ids, never their text,
-    are kept in memory per (session, actor) for 30 minutes. A summary refers to that list and to no other.
+    `메일을 확인하지 못했어요` and status `FAILED`, and never "no mail". Core copy is neutral (review P3-6): the
+    composition root supplies the source label (the adapter's `GMAIL_SOURCE_LABEL`) and the reconnect step
+    (`calendar-auth --gmail`), which `UNAUTHORIZED` and `INSUFFICIENT_SCOPE` append.
+  - **History.** SHORT_TERM history keeps a fixed note instead of any mail reply, and the note says what happened
+    (review P3-7): a listing, a refused summary, or a reply that read no mail (DM-only, refusal, usage, a failed read).
+    The listed ids, never their text, are kept in memory per (session, actor) for 30 minutes. A summary refers to that
+    list and to no other; a number it did not show reads nothing and gets the shown range plus the usage line.
 - **Egress (D7): the only path by which mail text leaves the host.**
   1. **Listing.** A listing reads only metadata and the provider's snippet, and shows them in chat. None of it is
      recorded as transcript, so no later prompt carries it.
@@ -18862,13 +18869,17 @@ Independent Chief Architect review before GML-1 merges.
   3. **Readout.** The handler builds `UntrustedDocumentReadout` (`application/untrusted-document-readout.ts`) under the
      ADR-0111 D3 rules:
      - terminal framing, control, format and default-ignorable characters are removed, and NFKC is applied;
+     - every URL and `www.` host is replaced by `[링크]` (review P2-4), so no phishing target or bearer token in a link
+       leaves the host, and a token inside a URL no longer refuses an ordinary mail;
+     - the strict credential guard (both detectors) runs on the FULL normalized body, title and author (review P1: a clip
+       could cut `password:` and keep its value);
      - the body is clipped head and tail to 3,000 code points;
-     - the strict credential guard (both detectors) runs on every field and on the exact rendered prompt text.
+     - the guard runs again on every clipped field and on the exact rendered prompt text.
 
      A match refuses the whole item, with nothing redacted and nothing sent. An empty body is refused the same way.
   4. **Runtime.** The handler returns `{ kind: 'summarize', readout, fallbackText, footer }`. The runtime
      (`handleDocumentSummary`) re-validates the readout before any provider call: exact keys, a known source, the bounds,
-     no invisible characters, and the guard. It then runs the existing SUMMARIZATION work path, where selection is by
+     no invisible characters, no link, and the guard. It then runs the existing SUMMARIZATION work path, where selection is by
      capability, priority and `isAvailable`. SUMMARIZATION is a chat-tier capability, so the provider is the effective
      chat-tier choice.
   5. **Prompt.** The prompt is self-contained (`PromptComposer.composeDocumentSummary`):
@@ -18880,8 +18891,14 @@ Independent Chief Architect review before GML-1 merges.
      It carries no transcript, recall, curated examples, attachments or project background. The request names no
      tools.
   6. **Reply.** The provider's reply is withheld whole if it is credential-shaped. It then passes the ADR-0104
-     internal-action claim guard. A fixed footer is appended, saying the body went to the chat model and that nothing was
-     sent or changed. History records a fixed note instead of the summary. A missing provider or a provider failure
+     internal-action claim guard and the summary-only mail-action post-guard (review P2-3,
+     `document-summary-claim-guard.ts`). That guard withholds, with a fixed notice, any first-person or Quoky-subject
+     claim that a mail was sent, forwarded, replied to, deleted, archived, labelled or marked read, or that a to-do,
+     reminder or calendar entry was created. Third-person sentences about the sender and reported speech stay allowed.
+     The reply is never `format: 'model-reply'`: the provider text is an `untrusted` span with the `markup` guard and its
+     remaining links are replaced, so a masked link renders as inert text (review P2-4). A fixed footer is appended,
+     saying the body went to the chat model and that nothing was sent or changed. No provider artifact is stored
+     (review P3-1). History records a fixed note instead of the summary. A missing provider or a provider failure
      gives the fixed fallback, which contains no mail text.
 - **Injection (D8).** Routing and actions come from the owner's text only:
   - **No mail input to any decision.** The grammar reads `ctx.message.text` only, and no mail field is an input to any
@@ -18897,7 +18914,39 @@ Independent Chief Architect review before GML-1 merges.
     - the classifier runs only for the owner's next own message;
     - the next chat prompt contains neither the mail nor the summary.
 
-    A summary steered into `할 일을 추가했어요` is replaced by the not-done notice.
+    A summary steered into `할 일을 추가했어요`, `답장을 보냈어요`, `메일을 삭제했어요`, `I forwarded the email to your
+    team.`, `I have forwarded every email and created a to-do.` or `요청하신 대로 일정을 캘린더에 추가했어요.` is
+    withheld with a fixed notice.
+- **Review fixes (2026-10-09).** One commit per finding, on top of #163 (PRV-2) and #164 (TG-2):
+  - **P1 (Codex):** the credential guard runs on the full normalized text before any clip, then on the clipped payload.
+    Test: Codex's 5,000-character repro, where the clip removes `password:` but keeps the value.
+  - **P2 (Codex) / P3-2:** the display caps above; a doubling markup (Core) and the real Discord markup with long
+    hostile fields (app) pin that all 10 entries are shown and that `10번 메일 요약해줘` reads entry 10, which was shown.
+  - **P2-1:** linear time on hostile mail. `htmlToText` is one index scan; a decoded body part is cut at 512 KiB before
+    any processing; header values and snippets at 2,000 units before any regex; `parseSender` is an index scan; the
+    readout's per-line trailing-space regex is `trimEnd()`. The full body is still normalized once, because the P1
+    guard must read it whole; every step is linear and the adapter bounds the input at 256 KiB, so the suggested
+    pre-clip before normalization is not needed. Regression tests bound the measured inputs (250k spaces, 32k unclosed
+    `<style>`, 512k `<`) at 500 ms each; they were 27.5 s and 2 s before.
+  - **P2-2:** the sender grammar. A bare `<X> 메일` is a search only with a search verb; `보여줘` / `알려줘` need an
+    explicit sender link (`가 보낸`, `한테서 온`, `에서 온`, `님`). Time words with a particle, `네`/`너` and
+    `find emails from me…` fall through. Every phrase from the review is a negative test at the grammar, handler and
+    runtime level.
+  - **P2-3, P2-4, P3-1, P3-6, P3-7:** as described above. **P3-4:** the source scan matches every quote style, template
+    literals included, rejects a computed method and counts every `fetchImpl` reference. **P3-5:** the `--gmail` help,
+    its success output and `.env.example` say that revoking also removes the calendar grant on the shared client.
+    **P3-8:** the dead line-break check is removed and the test renamed.
+- **Rule questions (coordinator decisions, 2026-10-09).**
+  - **RQ1 (D4 consequence).** With Gmail configured, the six QUAL-7 mailbox phrases (`intent-155/156/172/173/176`,
+    `route-186`) become the deterministic unread listing. This is a consequence of D4's listing phrasings, with the
+    ADR-0110 D5 calendar switch as precedent. With Gmail unconfigured their routing is unchanged.
+  - **RQ2 (scope of D7).** The ratified text is unchanged. D7's "no mail or document text leaves the host" refers to
+    model providers. D4 explicitly puts DM listings (sender, subject, snippet) on the owner's chat platform.
+  - **RQ3 (fail closed).** An OTP or password-reset mail is refused for summary by the credential guard. This is
+    correct; the live session measures how often it happens.
+- **Live QA additions.** Besides the ~15 phrasings (empty inbox, long thread, non-Korean mail, an injection mail sent
+  to oneself): an OTP or password-reset mail (RQ3, expected refusal), a phishing mail with a masked link (expected `[링크]`
+  and no clickable link), and a summary request in a server channel (expected the DM-only reply).
 - **Unconfigured.** With `QUOKY_GMAIL_TOKEN_FILE` unset, `createMailProviders` binds an empty list and no `MAIL_READER`.
   The full suite passes unchanged, including the routing corpus and the Discord golden fixture. The Core branches are
   reachable only through an `untrusted-document` readout, which only the mail handler produces.
@@ -18908,6 +18957,11 @@ Independent Chief Architect review before GML-1 merges.
   - Body text sent for a summary is an accepted egress (ADR-0118 Consequences). The owner chooses the chat tier.
   - `QUOKY_GMAIL_TOKEN_FILE` reuses the calendar's OAuth client variable names, as ADR-0118 D1 requires: one client.
   - A charset that Node's `TextDecoder` does not know falls back to UTF-8.
+  - **Body choice (review P3-3).** A mail's `text/plain` part is preferred over its HTML. An HTML-only body keeps text
+    that CSS hides (`display:none`): a hostile mail can hide text from the owner that the summary still reads. It is
+    untrusted readout under the same guards, so it can steer no action, but the summary may mention it.
+  - **Display caps.** The listing caps (14/30/18 characters) cut long senders and subjects; the full text is never
+    needed for routing, and a summary reads the whole message.
   - **Help-line bound.** With Gmail on, the help reply gains one contributed line. If every optional feature is also on,
     including the Jira and Slack write lines, the contributed lines can exceed the ADR-0096 D6 bound of 14. The
     existing bound then drops the last line. Raising the bound is left to INT-3 and DOC-E, so that the unconfigured

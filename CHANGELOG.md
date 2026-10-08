@@ -46,9 +46,17 @@ is unchanged.
   Gmail token file. It cannot be combined with `--with-events`.
   - `.env.example` documents `QUOKY_GMAIL_TOKEN_FILE`.
   - The quickstart covers the consent step, the env key and how to revoke.
-- **Validation.** Offline only, with a fake `fetch`; the Gmail API was never called. Not run yet:
-  - the Strict gates: owner consent, the first read probe and the live session of about 15 phrasings;
-  - the Chief Architect review, which is mandatory for GML-1.
+- **Review fixes (Codex P1/P2, Chief Architect P2-1..P2-4 and P3s).**
+  - The credential guard reads the full text before any clip.
+  - Listing caps guarantee every listed number was displayed.
+  - Hostile mail is processed in linear time (HTML scan, 512 KiB cap).
+  - The grammar no longer claims writing, explaining or time-word requests.
+  - A summary-only guard withholds mail-action claims.
+  - Links become `[링크]` before egress, and summary replies render as inert untrusted text.
+  - No summary artifacts are stored; history notes are accurate; Core copy is source-neutral; the source scan is
+    stricter; the shared-client revoke warning is added.
+- **Validation.** Offline only, with a fake `fetch`; the Gmail API was never called. Not run yet: the Strict gates
+  (owner consent, the first read probe and the live session of about 15 phrasings), and the Chief Architect re-review.
 
 ## Unreleased — TG-2 Telegram attachments, reactions and approvals (2026-10-08)
 

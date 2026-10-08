@@ -23,10 +23,12 @@ and the Discord golden fixture.
   provider. The prompt is self-contained and has no tools. Nothing of the mail or the summary is kept as transcript.
 - **Unchanged.** No migration; `ConversationRuntimeDeps` stays 35. The only port change is a type-only widening of the
   `summarize` readout.
+- **Reviews.** Codex (one P1, one P2) and the Chief Architect (CHANGES REQUIRED: four P2s, P3s) are addressed on the
+  branch, one commit per finding (see the ADR-0118 implementation note).
 - **Validation.** Offline only, with a fake `fetch`. Not run yet:
   - the Strict gates: owner consent with `calendar-auth --gmail`, the first read probe and about 15 live phrasings
-    (empty inbox, long thread, non-Korean mail, an injection test mail);
-  - the Chief Architect review, which is mandatory for GML-1.
+    (empty inbox, long thread, non-Korean mail, an injection test mail, an OTP mail, a phishing mail);
+  - the Chief Architect re-review.
 
 ### TG-2 Telegram attachments, reactions and approvals — implemented on branch, not merged (2026-10-08)
 
