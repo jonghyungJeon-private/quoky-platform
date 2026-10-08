@@ -781,7 +781,9 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     expect(externalActionRequestOf(intent)).toBeUndefined();
   });
 
-  // QA-V2-005 review round 1: the personal-data patterns must stay linear on long lists of time slots.
+  // QA-V2-005 review round 1: the personal-data patterns must stay linear on long lists of time slots. A super-linear
+  // (backtracking) pattern is slow on every run; a loaded machine only slows some runs, so the bound is checked on the
+  // fastest of several runs (after a warm-up) instead of on a single wall-clock sample.
   it.each([
     '월요일 오전 9시 화요일 오후 2시 수요일 오후 3시 목요일 오전 10시 금요일 오후 4시 일요일 오후 1시 중에 언제가 좋을까',
     '오후 3시 '.repeat(10) + 'ㅋ',
@@ -792,9 +794,14 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     ' '.repeat(900) + '내일' + ' '.repeat(900) + 'ㅋ',
     'my '.repeat(600) + 'balance',
   ])('classifies a long slot list in milliseconds (%#)', (text) => {
-    const started = performance.now();
-    expect(detectPolicySensitiveChat(text)).toBeUndefined();
-    expect(performance.now() - started).toBeLessThan(250);
+    expect(detectPolicySensitiveChat(text)).toBeUndefined(); // warm-up (and the functional assertion)
+    let fastest = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 5; run += 1) {
+      const started = performance.now();
+      detectPolicySensitiveChat(text);
+      fastest = Math.min(fastest, performance.now() - started);
+    }
+    expect(fastest).toBeLessThan(250);
   });
 
   it.each([
