@@ -5,6 +5,7 @@ import { containsCredentialFileContent, containsCredentialMaterial } from './cre
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from './message-rendering';
 import { PromptComposer } from './prompt-composer';
 import {
+  DOCUMENT_SUMMARY_REPLY_MAX_CHARS,
   UNTRUSTED_DOCUMENT_BODY_MAX_CHARS,
   buildUntrustedDocumentReadout,
   documentSummaryReplyBody,
@@ -133,6 +134,17 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
     const reply = documentSummaryReplyBody('[확인](https://evil.example/login) 하라는 메일이에요. https://evil.example', '(footer)');
     expect(renderMessageContent(reply, PLAIN_TEXT_MARKUP)).toBe('[확인]([링크]) 하라는 메일이에요. [링크]\n\n(footer)');
     expect(JSON.stringify(reply)).toContain('"kind":"untrusted","text":"[확인]([링크]) 하라는 메일이에요. [링크]","guard":"markup"');
+  });
+
+  it('re-review item 4: the reply budget is its own constant, equal to the work-summary bound, with no import of the work-chat handler', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./untrusted-document-readout.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/from '\.\/work-chat\//);
+    const { WORK_SUMMARY_REPLY_MAX_CHARS } = await import('./work-chat/work-chat-turn-handler');
+    expect(DOCUMENT_SUMMARY_REPLY_MAX_CHARS).toBe(WORK_SUMMARY_REPLY_MAX_CHARS);
+    const long = renderMessageContent(documentSummaryReplyBody('가'.repeat(5_000), '(footer)'), PLAIN_TEXT_MARKUP);
+    expect(Array.from(long).length).toBeLessThanOrEqual(DOCUMENT_SUMMARY_REPLY_MAX_CHARS);
+    expect(long.endsWith('(footer)')).toBe(true);
   });
 
   it('re-validation rejects any readout not shaped exactly as built (extra keys, bounds, invisible characters, secrets)', () => {

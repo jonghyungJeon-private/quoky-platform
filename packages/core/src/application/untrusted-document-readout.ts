@@ -4,7 +4,6 @@ import { clipMessage, messageBody, untrustedText } from './message-rendering';
 import type { MessageBody } from '../domain';
 import { LINK_PLACEHOLDER, containsLink, neutralizeLinks } from './link-neutralizer';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
-import { WORK_SUMMARY_REPLY_MAX_CHARS } from './work-chat/work-chat-turn-handler';
 
 /**
  * The bounded, untrusted readout of ONE personal item (a mail message for GML-1; a Drive document for DRV-1) that the
@@ -35,6 +34,11 @@ export type UntrustedDocumentSource = (typeof UNTRUSTED_DOCUMENT_SOURCES)[number
 export const UNTRUSTED_DOCUMENT_BODY_MAX_CHARS = 3_000;
 export const UNTRUSTED_DOCUMENT_TITLE_MAX_CHARS = 200;
 export const UNTRUSTED_DOCUMENT_AUTHOR_MAX_CHARS = 100;
+/**
+ * The document-summary reply budget (summary plus footer), in code points of the delivered text — the same one-message
+ * bound as a work summary, defined here so the readout does not depend on the work-chat handler (re-review item 4).
+ */
+export const DOCUMENT_SUMMARY_REPLY_MAX_CHARS = 1900;
 
 export interface UntrustedDocumentReadout {
   readonly kind: typeof UNTRUSTED_DOCUMENT_READOUT_KIND;
@@ -238,7 +242,7 @@ export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSour
 export function documentSummaryReplyBody(summaryText: string, footer: MessageBody): MessageBody {
   const text = neutralizeLinks(summaryText, 'display').trim();
   return messageBody(
-    clipMessage(untrustedText(text, 'markup'), WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
+    clipMessage(untrustedText(text, 'markup'), DOCUMENT_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
   );
 }
 
