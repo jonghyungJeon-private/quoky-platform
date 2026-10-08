@@ -45,15 +45,16 @@ describe('interpretApprovalDecision', () => {
     ['do not approve', 'deny'],
     ["don't go ahead", 'deny'],
     ['never approve this', 'deny'],
-    ['승인 안 할래', 'ambiguous'],
-    ['승인 안해', 'ambiguous'],
-    ['진행 안해', 'ambiguous'],
-    ['승인 안할래', 'ambiguous'],
-    ['진행 못해', 'ambiguous'],
+    // Codex round 3 (rule a): "승인 안 / 진행 안 / won't approve" are explicit deny verbs (deny is non-mutating)
+    ['승인 안 할래', 'deny'],
+    ['승인 안해', 'deny'],
+    ['진행 안해', 'deny'],
+    ['승인 안할래', 'deny'],
+    ['진행 못해', 'deny'],
     ["can't approve", 'ambiguous'],
     ['cannot approve', 'ambiguous'],
-    ["won't approve", 'ambiguous'],
-    ["I won't go ahead", 'ambiguous'],
+    ["won't approve", 'deny'],
+    ["I won't go ahead", 'deny'],
     // positives that must keep approving
     ['승인해 주세요', 'approve'],
     ['안녕, 승인', 'approve'],
@@ -139,8 +140,8 @@ describe('interpretApprovalDecision', () => {
     ['승인 노', 'ambiguous'],
     ['승인 절대 안됨', 'ambiguous'],
     ['진행 하면 안됨', 'ambiguous'],
-    ['승인 안됨', 'ambiguous'],
-    ['승인 안돼요', 'ambiguous'],
+    ['승인 안됨', 'deny'],
+    ['승인 안돼요', 'deny'],
     // conditional / extended approvals cannot be honored: re-prompt instead of approving the whole request
     ['ok but only change src/a.ts', 'ambiguous'],
     ['승인. 단 package.json은 제외', 'ambiguous'],
@@ -256,26 +257,40 @@ describe('isPendingCancelUtterance (live QA session 4, N2)', () => {
   );
 });
 
-describe('interpretApprovalDecision: a deny word decides only as the whole message (Codex P2 on b571e4d)', () => {
+describe('interpretApprovalDecision: explicit deny verbs and bare deny words (Codex round 3 on cad729e)', () => {
   it.each([
+    // (a) an explicit deny verb and no approve verb
+    ['아니요, 이 요청은 거절합니다', 'deny'],
+    ['그 요청 거절해 주세요', 'deny'],
+    ['아니요 승인 안 해', 'deny'],
+    ['거절', 'deny'],
+    ['거절할게요', 'deny'],
+    ['이 요청 거절해 주세요', 'deny'],
+    ['reject it', 'deny'],
+    ['진행하지 마', 'deny'],
+    ['취소해', 'cancel'],
+    ['아니 취소해', 'cancel'],
+    // (b) a bare deny word, with punctuation / a polite ending, or followed only by a stop word
     ['아니', 'deny'],
     ['아니요', 'deny'],
     ['아니에요.', 'deny'],
-    ['거절할게요', 'deny'],
-    ['이 요청 거절해 주세요', 'deny'],
     ['no', 'deny'],
+    ['nope', 'deny'],
     ['No, thanks', 'deny'],
-    ['reject it', 'deny'],
     ['아니 됐어', 'deny'],
-    ['아니 취소해', 'cancel'],
+    // (c) 아니 / no with other content and no deny verb
+    ['아니 이건 내 친구 얘기야', 'ambiguous'],
+    ['아니 그건 별로야', 'ambiguous'],
+    ['no, I meant the other channel', 'ambiguous'],
+    ['거절 사유를 알려줘', 'ambiguous'],
+    // (d) both an approve and a deny verb
+    ['아니 승인해', 'ambiguous'],
+    ['승인하되 커밋은 하지 마', 'ambiguous'],
+    ['거절 말고 승인', 'ambiguous'],
+    // negated deny verbs are not deny verbs
+    ['거절 안 해', 'ambiguous'],
+    ['거절하지 마', 'ambiguous'],
   ] as const)('"%s" → %s', (text, expected) => {
     expect(interpretApprovalDecision(text)).toBe(expected);
   });
-
-  it.each(['아니 이건 내 친구 얘기야', '아니 그건 별로야', 'no, I meant the other channel', '거절 사유를 알려줘'])(
-    '"%s" carries other content → ambiguous (the approval stays pending)',
-    (text) => {
-      expect(interpretApprovalDecision(text)).toBe('ambiguous');
-    },
-  );
 });

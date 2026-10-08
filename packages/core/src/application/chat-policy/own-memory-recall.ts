@@ -231,8 +231,8 @@ const RELATION_EVIDENCE: Readonly<Record<OwnMemoryRelation, RegExp>> = Object.fr
 
 /**
  * The particles and copula endings that may follow a Korean noun ("과일은", "샤인머스캣이야", "회사에서", "고양이랑").
- * At most ONE is peeled off a word, and only from this list, so a noun's own last syllable is never taken for a
- * particle ("차고" never becomes "차", "포도" stays "포도" unless it really carries one).
+ * At most ONE is peeled off a word, only from this list and only when its form agrees with the syllable before it, so
+ * a noun's own last syllable is never taken for a particle ("차고" never becomes "차", "고양이과" stays whole).
  */
 const KO_NOUN_ENDINGS: readonly string[] = [
   '이었어요', '이에요', '입니다', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '에서는', '에게는',
@@ -241,10 +241,43 @@ const KO_NOUN_ENDINGS: readonly string[] = [
   '로', '와', '과', '랑', '야', '요',
 ].slice().sort((a, b) => b.length - a.length);
 
-/** `word` without one trailing particle / ending from {@link KO_NOUN_ENDINGS} (at least one syllable remains). */
+/** Endings that attach only after a final consonant (batchim) / only after a vowel; the rest attach after either. */
+const KO_AFTER_CONSONANT = new Set([
+  '이었어요', '이에요', '이었어', '이었지', '이었다', '이라고', '이라서', '이랑은', '이야', '이랑', '으로', '이고', '이지',
+  '이다', '이나', '이면', '은', '이', '을', '과',
+]);
+const KO_AFTER_VOWEL = new Set(['예요', '였어', '였지', '였다', '라고', '는', '가', '를', '와', '랑', '야']);
+
+/** Whether a Hangul syllable ends in a final consonant (batchim). */
+function hasFinalConsonant(syllable: string): boolean {
+  const code = syllable.charCodeAt(0) - 0xac00;
+  return code >= 0 && code < 11_172 && code % 28 !== 0;
+}
+
+/**
+ * Whether `ending` may follow `stem` as a particle: its form must agree with the stem's last syllable ("고양이는",
+ * "고양이와", but never "고양이과" — there "과" is part of another noun, 고양이과 "the cat family").
+ */
+function endingFits(stem: string, ending: string): boolean {
+  if (!KO_NOUN_ENDINGS.includes(ending)) return false;
+  const last = stem.slice(-1);
+  if (KO_AFTER_CONSONANT.has(ending)) return hasFinalConsonant(last);
+  // 로 also follows a ㄹ batchim ("서울로").
+  if (ending === '로') return !hasFinalConsonant(last) || (last.charCodeAt(0) - 0xac00) % 28 === 8;
+  if (KO_AFTER_VOWEL.has(ending)) return !hasFinalConsonant(last);
+  return true;
+}
+
+/**
+ * `word` without one trailing particle / ending from {@link KO_NOUN_ENDINGS} that agrees with the syllable before it
+ * (at least one syllable remains).
+ */
 function peelOneEnding(word: string): string {
   for (const ending of KO_NOUN_ENDINGS) {
-    if (word.length > ending.length && word.endsWith(ending)) return word.slice(0, word.length - ending.length);
+    if (word.length > ending.length && word.endsWith(ending)) {
+      const stem = word.slice(0, word.length - ending.length);
+      if (endingFits(stem, ending)) return stem;
+    }
   }
   return word;
 }
@@ -293,27 +326,38 @@ function meaningfulTopics(question: OwnMemoryRecallQuestion): string[] {
 }
 
 /**
+ * The only derivational suffixes that keep a Korean noun's meaning ("생일날", "친구들", "선생님", "철수씨", "3시쯤").
+ * A closed list on purpose: open-ended containment made "사과문" answer "사과" and "부산물" answer "부산".
+ */
+const KO_DERIVATIONAL_SUFFIXES: readonly string[] = ['날', '들', '님', '씨', '쯤'];
+
+/**
  * Whether one question topic word and one content word name the same thing.
  * - A one-syllable topic ("차") matches only that syllable, alone or with exactly one particle ("차가", "차를", "차는");
  *   never a longer noun that starts with it ("차고", "차가운") or contains it ("자동차").
- * - A topic of two or more syllables matches when, after peeling at most one particle from either side, one contains
- *   the other and the shorter is still at least two syllables ("생일날" ⊃ "생일", "고양이랑" ⊃ "고양이", "회사에서" →
- *   "회사", "과일중에" ⊃ "과일").
- * - English words compare by equality of their plural / possessive base, or containment ("fruits" ⊃ "fruit").
+ * - A topic of two or more syllables matches when, after peeling at most one listed particle or ending from either
+ *   side, both are equal ("회사에서" → "회사", "고양이랑" ↔ "고양이"), or the longer one is the shorter one plus one
+ *   {@link KO_DERIVATIONAL_SUFFIXES} entry ("생일날" = "생일" + "날"). Nothing else: "사과문", "부산물", "회사원" and
+ *   "고양이과" are different nouns.
+ * - English words compare by their plural / possessive base ("fruits" = "fruit").
  */
 function topicWordMatches(stem: string, word: string): boolean {
-  if (LATIN_WORD.test(stem)) {
-    if (!LATIN_WORD.test(word)) return word.includes(stem);
-    return word.includes(stem) || latinBase(word) === latinBase(stem);
-  }
+  if (LATIN_WORD.test(stem)) return LATIN_WORD.test(word) && latinBase(word) === latinBase(stem);
   if (stem.length < 2) {
     if (word === stem) return true;
-    return word.startsWith(stem) && KO_NOUN_ENDINGS.includes(word.slice(stem.length));
+    return word.startsWith(stem) && endingFits(stem, word.slice(stem.length));
   }
   for (const topic of koreanForms(stem)) {
     for (const form of koreanForms(word)) {
+      if (topic === form) return true;
       const [shorter, longer] = topic.length <= form.length ? [topic, form] : [form, topic];
-      if (shorter.length >= 2 && longer.includes(shorter)) return true;
+      if (
+        shorter.length >= 2 &&
+        longer.startsWith(shorter) &&
+        KO_DERIVATIONAL_SUFFIXES.includes(longer.slice(shorter.length))
+      ) {
+        return true;
+      }
     }
   }
   return false;

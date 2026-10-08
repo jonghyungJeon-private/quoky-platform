@@ -294,8 +294,10 @@ describe('hasOwnMemoryRecallHit topic-word overlap (live QA D5, session 4)', () 
     ['내 생일이 언제였지?', '생일날은 3월 5일'],
     ['내가 말한 고양이 기억나?', '고양이랑 같이 살아'],
     ['내가 말한 회사 기억나?', '회사에서 일해'],
-    ['내가 말한 회사 기억나?', '나는 회사원이야'],
-  ])('%s ↔ %s → hit (containment after one particle)', (text, memory) => {
+    ['내 고양이 이름이 뭐였지?', '고양이와 강아지를 키워'],
+    ['내 고양이 이름이 뭐였지?', '고양이랑 같이 살아'],
+    ['내 친구 이름이 뭐였지?', '친구들이랑 등산 가'],
+  ])('%s ↔ %s → hit (equal after one particle, or + 날/들/님/씨/쯤)', (text, memory) => {
     expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(true);
   });
 
@@ -305,6 +307,13 @@ describe('hasOwnMemoryRecallHit topic-word overlap (live QA D5, session 4)', () 
     ['내가 좋아하는 차 종류 기억나?', '차고 정리했어'],
     ['내가 좋아하는 차 종류 기억나?', '자동차는 회색'],
     ['내가 좋아하는 차 종류 기억나?', '차가운 물이 좋아'],
+    // Codex P2 on cad729e: no open-ended containment — a longer noun is a different noun
+    ['내가 좋아하는 과일 사과 기억나?', '사과문을 썼어'],
+    ['내가 말한 부산 기억나?', '부산물 처리했어'],
+    ['내가 말한 회사 기억나?', '나는 회사원이야'],
+    ['내가 말한 고양이 기억나?', '고양이과 동물이 좋아'],
+    ['내 고양이 이름이 뭐였지?', '고양이과 동물이 좋아'],
+    ['내가 좋아하는 차 종류 기억나?', '둘은 차이가 커'],
   ])('%s ↔ %s → no hit (never a longer noun)', (text, memory) => {
     expect(hasOwnMemoryRecallHit(ask(text), durable(memory))).toBe(false);
   });
