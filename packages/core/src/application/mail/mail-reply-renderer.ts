@@ -44,10 +44,36 @@ export interface MailListingFilter {
   readonly from?: string;
 }
 
+/**
+ * Review P3-6: the source-specific words of the copy, supplied by the composition root from the adapter (the calendar
+ * keeps its own copy the same way): Core names no mail provider, scope or consent tool.
+ */
+export interface MailSourceCopy {
+  /** The mail source's display name per language (for example a provider name); at most 20 characters are shown. */
+  readonly label: { readonly ko: string; readonly en: string };
+  /** The owner's reconnect step, appended to the auth-expired and needs-consent notes. */
+  readonly reconnectHint?: { readonly ko: string; readonly en: string };
+}
+
+/** The neutral copy used when the composition root supplies none. */
+export const DEFAULT_MAIL_SOURCE_COPY: MailSourceCopy = Object.freeze({ label: Object.freeze({ ko: '메일', en: 'Mail' }) });
+
 export interface MailRenderOptions {
   readonly timeZone: string;
   readonly now: IsoTimestamp;
   readonly language: MailLanguage;
+  /** Defaults to {@link DEFAULT_MAIL_SOURCE_COPY}. */
+  readonly copy?: MailSourceCopy;
+}
+
+function labelOf(copy: MailSourceCopy | undefined, language: MailLanguage): string {
+  const label = (copy ?? DEFAULT_MAIL_SOURCE_COPY).label[language].replace(/\s+/g, ' ').trim();
+  return clip(label.length > 0 ? label : DEFAULT_MAIL_SOURCE_COPY.label[language], 20);
+}
+
+function hintOf(copy: MailSourceCopy | undefined, language: MailLanguage): string {
+  const hint = copy?.reconnectHint?.[language]?.trim();
+  return hint ? ` ${hint}` : '';
 }
 
 const MONTH_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
@@ -154,16 +180,22 @@ function emptyAnswer(filter: MailListingFilter, language: MailLanguage): Message
 }
 
 /** The footer of every listing: read-only, the zone, and how a summary works (only that mail's body leaves the host). */
-export function mailListingFooter(timeZone: string, language: MailLanguage, hasEntries: boolean): MessageBody {
+export function mailListingFooter(
+  timeZone: string,
+  language: MailLanguage,
+  hasEntries: boolean,
+  copy?: MailSourceCopy,
+): MessageBody {
   const zone = untrustedText(timeZone.replace(/\s+/g, ' '));
+  const label = labelOf(copy, language);
   if (language === 'en') {
     return hasEntries
-      ? messageBody('(Gmail, read-only · times in ', zone, ' · "summarize email 1" sends only that email\'s body to the chat model)')
-      : messageBody('(Gmail, read-only · times in ', zone, ')');
+      ? messageBody(`(${label}, read-only · times in `, zone, ' · "summarize email 1" sends only that email\'s body to the chat model)')
+      : messageBody(`(${label}, read-only · times in `, zone, ')');
   }
   return hasEntries
-    ? messageBody('(Gmail 읽기 전용 · ', zone, ' 기준 · "1번 메일 요약해줘"라고 하면 그 메일 본문만 대화 모델에 보내 요약해요)')
-    : messageBody('(Gmail 읽기 전용 · ', zone, ' 기준)');
+    ? messageBody(`(${label} 읽기 전용 · `, zone, ' 기준 · "1번 메일 요약해줘"라고 하면 그 메일 본문만 대화 모델에 보내 요약해요)')
+    : messageBody(`(${label} 읽기 전용 · `, zone, ' 기준)');
 }
 
 /** The two line breaks around the list body, plus room always reserved for the closing "…외 N건" line. */
@@ -178,7 +210,7 @@ export function renderMailListing(filter: MailListingFilter, result: MailSearchR
   const { language } = options;
   const shown = result.messages.slice(0, MAIL_REPLY_MAX_ENTRIES);
   if (shown.length === 0 && result.matched === 0) {
-    return joinBody([emptyAnswer(filter, language), mailListingFooter(options.timeZone, language, false)]);
+    return joinBody([emptyAnswer(filter, language), mailListingFooter(options.timeZone, language, false, options.copy)]);
   }
   const hidden = Math.max(0, result.matched - shown.length);
   const lowerBound = result.matchedIsLowerBound;
@@ -188,7 +220,7 @@ export function renderMailListing(filter: MailListingFilter, result: MailSearchR
       maxChars: MAIL_REPLY_MAX_CHARS,
       baseChars: MAIL_LIST_RESERVE_CHARS,
       head: [header(filter, result, options)],
-      tail: [mailListingFooter(options.timeZone, language, shown.length > 0)],
+      tail: [mailListingFooter(options.timeZone, language, shown.length > 0, options.copy)],
       lines: shown.map((message, index) => ({ content: entryLine(index + 1, message, filter, options), item: true })),
       omitted:
         language === 'en'
@@ -199,44 +231,46 @@ export function renderMailListing(filter: MailListingFilter, result: MailSearchR
 }
 
 /** The truthful note for a failed read: it always says the mail was NOT checked (never "no mail"). */
-export function renderMailReadFailure(failure: MailReadFailure, language: MailLanguage): string {
+export function renderMailReadFailure(failure: MailReadFailure, language: MailLanguage, copy?: MailSourceCopy): string {
   const en = language === 'en';
+  const label = labelOf(copy, language);
+  const hint = hintOf(copy, language);
   switch (failure) {
     case 'UNAUTHORIZED':
       return en
-        ? "I couldn't check your mail: the Gmail connection expired or was revoked. Reconnect with the consent helper (calendar-auth --gmail)."
-        : 'Gmail 연결이 만료됐거나 취소돼서 메일을 확인하지 못했어요. 동의 도구(calendar-auth --gmail)로 다시 연결해 주세요.';
+        ? `I couldn't check your mail: the ${label} connection expired or was revoked.${hint}`
+        : `${label} 연결이 만료됐거나 취소돼서 메일을 확인하지 못했어요.${hint}`;
     case 'INSUFFICIENT_SCOPE':
       return en
-        ? "I couldn't check your mail: read access to Gmail (gmail.readonly) has not been granted yet. Grant it with the consent helper (calendar-auth --gmail)."
-        : 'Gmail 읽기 권한(gmail.readonly)에 아직 동의하지 않아서 메일을 확인하지 못했어요. 동의 도구(calendar-auth --gmail)로 권한을 허용해 주세요.';
+        ? `I couldn't check your mail: read access to ${label} has not been granted yet.${hint}`
+        : `${label} 읽기 권한에 아직 동의하지 않아서 메일을 확인하지 못했어요.${hint}`;
     case 'FORBIDDEN':
       return en
-        ? "I couldn't check your mail: Gmail refused the access (the grant is broader than gmail.readonly, or the Workspace administrator blocks it)."
-        : 'Gmail이 접근을 거부해서 메일을 확인하지 못했어요. 권한이 gmail.readonly보다 넓거나 Workspace 관리자가 막았을 수 있어요.';
+        ? `I couldn't check your mail: ${label} refused the access (the grant is broader than read-only, or an administrator blocks it).`
+        : `${label} 접근이 거부돼서 메일을 확인하지 못했어요. 권한이 읽기 전용보다 넓거나 관리자가 막았을 수 있어요.`;
     case 'NOT_FOUND':
       return en
         ? "I couldn't read that email: it no longer exists (deleted or moved). Ask for the list again."
         : '그 메일을 읽지 못했어요. 삭제됐거나 옮겨졌을 수 있어요. 목록을 다시 보여 달라고 해 주세요.';
     case 'RATE_LIMITED':
       return en
-        ? "I couldn't check your mail: Gmail is rate-limiting requests right now. Please try again shortly."
-        : 'Gmail 요청 한도에 걸려서 메일을 확인하지 못했어요. 잠시 후 다시 물어봐 주세요.';
+        ? `I couldn't check your mail: ${label} is rate-limiting requests right now. Please try again shortly.`
+        : `${label} 요청 한도에 걸려서 메일을 확인하지 못했어요. 잠시 후 다시 물어봐 주세요.`;
     case 'UNSUPPORTED_QUERY':
       return en ? "I can't look up mail with that condition." : '그 조건으로는 메일을 찾을 수 없어요.';
     case 'INVALID_RESPONSE':
       return en
-        ? "I couldn't check your mail: Gmail's response could not be read."
-        : 'Gmail 응답을 해석하지 못해서 메일을 확인하지 못했어요.';
+        ? `I couldn't check your mail: the ${label} response could not be read.`
+        : `${label} 응답을 해석하지 못해서 메일을 확인하지 못했어요.`;
     case 'TIMEOUT':
       return en
-        ? "I couldn't check your mail: Gmail didn't answer in time. Please try again shortly."
-        : 'Gmail이 제한 시간 안에 응답하지 않아서 메일을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+        ? `I couldn't check your mail: ${label} didn't answer in time. Please try again shortly.`
+        : `${label} 응답이 제한 시간 안에 오지 않아서 메일을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.`;
     case 'UNAVAILABLE':
     default:
       return en
-        ? "I couldn't check your mail: Gmail can't be reached right now. Please try again shortly."
-        : '지금은 Gmail에 연결할 수 없어서 메일을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+        ? `I couldn't check your mail: ${label} can't be reached right now. Please try again shortly.`
+        : `지금은 ${label}에 연결할 수 없어서 메일을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.`;
   }
 }
 
@@ -317,6 +351,6 @@ export function renderMailSummaryFooter(language: MailLanguage): string {
  */
 export function renderMailHistoryNote(language: MailLanguage): string {
   return language === 'en'
-    ? '[Quoky answered a mail question from Gmail; mail details are not kept in the conversation history.]'
+    ? '[Quoky answered a mail question; mail details are not kept in the conversation history.]'
     : '[메일 조회 응답 — 메일 내용은 대화 기록에 남기지 않아요.]';
 }

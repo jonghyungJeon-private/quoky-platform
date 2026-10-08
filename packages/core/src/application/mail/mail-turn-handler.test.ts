@@ -106,7 +106,7 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
         '안 읽은 메일: 1건',
         '1. 김철수 · 회의 자료 m1 · 오늘 09:12',
         '   내일 회의 자료를 첨부합니다',
-        '(Gmail 읽기 전용 · Asia/Seoul 기준 · "1번 메일 요약해줘"라고 하면 그 메일 본문만 대화 모델에 보내 요약해요)',
+        '(메일 읽기 전용 · Asia/Seoul 기준 · "1번 메일 요약해줘"라고 하면 그 메일 본문만 대화 모델에 보내 요약해요)',
       ].join('\n'),
     );
     // PLT-0: every mail field is an untrusted span the platform neutralizes.
@@ -154,10 +154,10 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
   it('an empty inbox is a truthful empty answer (read succeeded), not a failure', async () => {
     const { reader } = fakeReader({ search: async () => ({ messages: [], matched: 0, matchedIsLowerBound: false }) });
     const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
-    expect(textOf(await handler.handle(ctx('안 읽은 메일')))).toBe('안 읽은 메일이 없어요.\n(Gmail 읽기 전용 · Asia/Seoul 기준)');
-    expect(textOf(await handler.handle(ctx('오늘 온 메일')))).toBe('오늘 받은 메일이 없어요.\n(Gmail 읽기 전용 · Asia/Seoul 기준)');
+    expect(textOf(await handler.handle(ctx('안 읽은 메일')))).toBe('안 읽은 메일이 없어요.\n(메일 읽기 전용 · Asia/Seoul 기준)');
+    expect(textOf(await handler.handle(ctx('오늘 온 메일')))).toBe('오늘 받은 메일이 없어요.\n(메일 읽기 전용 · Asia/Seoul 기준)');
     expect(textOf(await handler.handle(ctx('Acme 메일 찾아줘')))).toBe(
-      '"Acme"에게서 온 메일을 찾지 못했어요.\n(Gmail 읽기 전용 · Asia/Seoul 기준)',
+      '"Acme"에게서 온 메일을 찾지 못했어요.\n(메일 읽기 전용 · Asia/Seoul 기준)',
     );
   });
 
@@ -216,12 +216,12 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
 
   describe('failures are the "could not read" note, never "no mail"', () => {
     it.each([
-      ['UNAUTHORIZED', 'Gmail 연결이 만료됐거나 취소돼서'],
-      ['INSUFFICIENT_SCOPE', 'gmail.readonly'],
-      ['FORBIDDEN', 'Gmail이 접근을 거부해서'],
-      ['RATE_LIMITED', 'Gmail 요청 한도에 걸려서'],
-      ['UNAVAILABLE', '지금은 Gmail에 연결할 수 없어서'],
-      ['INVALID_RESPONSE', 'Gmail 응답을 해석하지 못해서'],
+      ['UNAUTHORIZED', '메일 연결이 만료됐거나 취소돼서'],
+      ['INSUFFICIENT_SCOPE', '메일 읽기 권한에 아직 동의하지 않아서'],
+      ['FORBIDDEN', '메일 접근이 거부돼서'],
+      ['RATE_LIMITED', '메일 요청 한도에 걸려서'],
+      ['UNAVAILABLE', '지금은 메일에 연결할 수 없어서'],
+      ['INVALID_RESPONSE', '메일 응답을 해석하지 못해서'],
     ] as const)('%s', async (reason, fragment) => {
       const { reader } = fakeReader({
         search: async () => {
@@ -237,16 +237,19 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
       expect(log.warn).toHaveBeenCalledWith('mail.turn_handler.read_failed', { kind: 'list', reason });
     });
 
-    it('auth expired and needs-consent name the consent helper', () => {
-      expect(renderMailReadFailure('UNAUTHORIZED', 'ko')).toContain('calendar-auth --gmail');
-      expect(renderMailReadFailure('INSUFFICIENT_SCOPE', 'ko')).toContain('calendar-auth --gmail');
-      expect(renderMailReadFailure('INSUFFICIENT_SCOPE', 'en')).toContain('has not been granted');
+    it('auth expired and needs-consent carry the composition root\'s label and reconnect step (review P3-6)', () => {
+      const copy = { label: { ko: 'Acme', en: 'Acme' }, reconnectHint: { ko: '다시 연결하세요.', en: 'Reconnect.' } };
+      expect(renderMailReadFailure('UNAUTHORIZED', 'ko', copy)).toBe('Acme 연결이 만료됐거나 취소돼서 메일을 확인하지 못했어요. 다시 연결하세요.');
+      expect(renderMailReadFailure('INSUFFICIENT_SCOPE', 'ko', copy)).toBe('Acme 읽기 권한에 아직 동의하지 않아서 메일을 확인하지 못했어요. 다시 연결하세요.');
+      expect(renderMailReadFailure('INSUFFICIENT_SCOPE', 'en', copy)).toBe("I couldn't check your mail: read access to Acme has not been granted yet. Reconnect.");
+      // Without copy the note is neutral and names no provider, scope or tool.
+      expect(renderMailReadFailure('UNAUTHORIZED', 'ko')).toBe('메일 연결이 만료됐거나 취소돼서 메일을 확인하지 못했어요.');
     });
 
     it('a read that does not finish in time is the timeout note; a non-connector throw is UNAVAILABLE', async () => {
       const slow = fakeReader({ search: () => new Promise(() => undefined) });
       const timedOut = await createMailTurnHandler({ reader: slow.reader, timeZone: SEOUL, timeoutMs: 5 }).handle(ctx('안 읽은 메일'));
-      expect(textOf(timedOut)).toContain('제한 시간 안에 응답하지 않아서');
+      expect(textOf(timedOut)).toContain('제한 시간 안에 오지 않아서');
       const broken = fakeReader({
         search: async () => {
           throw new Error('socket hang up with secret details');
@@ -423,6 +426,6 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
       renderMailListing({ unread: true, today: false }, { messages: [summary('a')], matched: 12, matchedIsLowerBound: false }, { timeZone: SEOUL, now: NOW, language: 'ko' }),
       PLAIN_TEXT_MARKUP,
     );
-    expect(text).toContain('\n…외 11건\n(Gmail 읽기 전용');
+    expect(text).toContain('\n…외 11건\n(메일 읽기 전용');
   });
 });

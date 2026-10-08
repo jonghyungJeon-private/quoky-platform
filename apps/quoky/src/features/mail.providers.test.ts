@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GMAIL_READONLY_SCOPE, GmailMailReader } from '@quoky/connector-gmail';
 import {
   CONVERSATION_TURN_HANDLERS,
+  ConnectorQueryError,
   MAIL_READER,
   type ConversationTurnHandler,
   type Logger,
@@ -156,6 +157,36 @@ describe('mail feature composition (ADR-0096 D7)', () => {
         resolveActiveWorkspace: async () => null,
       } as unknown as Parameters<ConversationTurnHandler['handle']>[0]);
       expect(outcome && 'reply' in outcome ? outcome.reply.text : '').toBe('안 읽은 메일이 없어요.\n(Gmail 읽기 전용 · Asia/Seoul 기준)');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('review P3-6: the app supplies the Gmail label and the consent step to Core\'s neutral copy', async () => {
+    const reader: MailReader = {
+      source: 'mail',
+      readOnly: true,
+      search: async () => {
+        throw new ConnectorQueryError('UNAUTHORIZED');
+      },
+      getMessage: async () => {
+        throw new Error('not used');
+      },
+    };
+    const { app } = await compose(createMailProviders({ gmail: undefined, timeZone: 'Asia/Seoul', reader, logger: silentLogger() }));
+    try {
+      const [handler] = app.get<readonly ConversationTurnHandler[]>(MAIL_TURN_HANDLERS);
+      const outcome = await (handler as ConversationTurnHandler).handle({
+        message: { id: 'm', context: { platform: 'telegram', channelId: 'c', userId: 'u', direct: true }, text: '안 읽은 메일', receivedAt: NOW },
+        session: { id: 's' },
+        actor: { id: 'a' },
+        now: NOW,
+        applyAnchor: null,
+        resolveActiveWorkspace: async () => null,
+      } as unknown as Parameters<ConversationTurnHandler['handle']>[0]);
+      expect(outcome && 'reply' in outcome ? outcome.reply.text : '').toBe(
+        'Gmail 연결이 만료됐거나 취소돼서 메일을 확인하지 못했어요. 동의 도구(calendar-auth --gmail)로 다시 연결해 주세요.',
+      );
     } finally {
       await app.close();
     }

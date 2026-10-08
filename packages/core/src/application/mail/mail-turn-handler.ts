@@ -34,6 +34,7 @@ import {
   renderMailWriteRefused,
   type MailListingFilter,
   type MailReadFailure,
+  type MailSourceCopy,
 } from './mail-reply-renderer';
 
 export const MAIL_TURN_HANDLER_ID = 'mail';
@@ -63,6 +64,8 @@ export interface MailTurnHandlerDeps {
   readonly logger?: Logger;
   /** Injectable for tests; production uses MAIL_READ_TIMEOUT_MS. */
   readonly timeoutMs?: number;
+  /** The source label and reconnect step the composition root supplies (review P3-6); neutral copy when absent. */
+  readonly copy?: MailSourceCopy;
 }
 
 class MailReadTimeout extends Error {
@@ -82,7 +85,7 @@ interface RecentListing {
 
 /**
  * The owner's mail, read-only (ADR-0118 D2–D8, GML-1), as an ADR-0096 `pre-classify` turn handler, order 140.
- * Registered by the composition root ONLY when a `MailReader` is configured; with no Gmail every reply is unchanged.
+ * Registered by the composition root ONLY when a `MailReader` is configured; without one every reply is unchanged.
  *
  * - **Routing from the owner's text only (D8).** The anchored grammar reads `ctx.message.text`; no mail content is ever
  *   an input to a decision. A mail can neither claim a turn nor change which handler runs next.
@@ -149,7 +152,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'list', reason: failure });
-      return this.reply(ctx, renderMailReadFailure(failure, language), 'FAILED', language);
+      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language);
     }
     const messages = result.messages.slice(0, MAIL_LISTING_MAX_ENTRIES);
     this.log('info', 'mail.turn_handler.listed', { shown: messages.length, matched: result.matched });
@@ -158,6 +161,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
       timeZone: this.deps.timeZone,
       now: ctx.now,
       language,
+      ...(this.deps.copy !== undefined ? { copy: this.deps.copy } : {}),
     });
     return this.reply(ctx, body, 'RESPONDED', language);
   }
@@ -186,7 +190,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'summarize', reason: failure });
-      return this.reply(ctx, renderMailReadFailure(failure, language), 'FAILED', language);
+      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language);
     }
     const built = buildUntrustedDocumentReadout({
       source: 'mail',

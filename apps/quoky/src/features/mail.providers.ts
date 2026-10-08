@@ -1,11 +1,12 @@
 import type { Provider } from '@nestjs/common';
-import { GmailMailReader, GmailTokenFileError, readGmailTokenFile } from '@quoky/connector-gmail';
+import { GMAIL_SOURCE_LABEL, GmailMailReader, GmailTokenFileError, readGmailTokenFile } from '@quoky/connector-gmail';
 import {
   MAIL_READER,
   createMailTurnHandler,
   type ConversationTurnHandler,
   type Logger,
   type MailReader,
+  type MailSourceCopy,
 } from '@quoky/core';
 import type { QuokyConfig } from '../config';
 import { ConsoleLogger } from '../console-logger';
@@ -21,6 +22,18 @@ import { ConsoleLogger } from '../console-logger';
  * No provider, router or runtime dependency is touched (the deps baseline stays 35). A summary is a handler
  * `summarize` outcome the runtime serves through its existing SUMMARIZATION path; no tool and no write path exist.
  */
+
+/**
+ * Review P3-6: the source-specific copy Core does not hold — the adapter's label and the app's consent step (the
+ * helper lives in this app). Appended to the auth-expired and needs-consent notes.
+ */
+export const GMAIL_MAIL_COPY: MailSourceCopy = Object.freeze({
+  label: Object.freeze({ ko: GMAIL_SOURCE_LABEL, en: GMAIL_SOURCE_LABEL }),
+  reconnectHint: Object.freeze({
+    ko: '동의 도구(calendar-auth --gmail)로 다시 연결해 주세요.',
+    en: 'Reconnect with the consent helper (calendar-auth --gmail).',
+  }),
+});
 
 /** App-local token for this feature's handler list (the wave-1 `feature-tokens.ts` is not edited after wave 1). */
 export const MAIL_TURN_HANDLERS = Symbol('MailTurnHandlers');
@@ -91,7 +104,7 @@ export function createMailProviders(options: MailCompositionOptions): Provider[]
     {
       provide: MAIL_TURN_HANDLERS,
       useFactory: (mailReader: MailReader): readonly ConversationTurnHandler[] => [
-        createMailTurnHandler({ reader: mailReader, timeZone, logger }),
+        createMailTurnHandler({ reader: mailReader, timeZone, logger, copy: GMAIL_MAIL_COPY }),
       ],
       inject: [MAIL_READER],
     },

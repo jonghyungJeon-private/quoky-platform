@@ -41,6 +41,8 @@ import { refreshGmailAccessToken, type GmailAccessToken } from './oauth';
  * only). Pinned: the client never builds a URL from configuration or response data.
  */
 export const GMAIL_API_ORIGIN = 'https://gmail.googleapis.com';
+/** The source's display name for Core's neutral mail copy (review P3-6). */
+export const GMAIL_SOURCE_LABEL = 'Gmail';
 /** The only API path family the client may call: `messages.list` and `messages.get`. */
 export const GMAIL_MESSAGES_PATH = '/gmail/v1/users/me/messages';
 const READ_PATH = /^\/gmail\/v1\/users\/me\/messages(?:\/[A-Za-z0-9_-]{1,128})?$/;
