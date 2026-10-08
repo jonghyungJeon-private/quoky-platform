@@ -90,6 +90,8 @@ export interface TelegramAdapterOptions {
   readonly attachments?: TelegramAttachmentIntakeOptions;
   /** The wait before an album is re-polled for its later parts (default {@link MEDIA_GROUP_SETTLE_MS}). */
   readonly mediaGroupSettleMs?: number;
+  /** How long `stop()` waits for an attachment intake in flight to settle (default {@link STOP_INTAKE_SETTLE_MS}). */
+  readonly stopSettleMs?: number;
 }
 
 export const TelegramStartupErrorCode = {
@@ -171,6 +173,12 @@ const MEDIA_GROUP_MAX_ROUNDS = 3;
 const MEDIA_GROUP_MAX_PARTS = 10;
 /** How many recent owner message keys are remembered so a reaction on the owner's own message is dropped. */
 const OWNER_MESSAGE_MEMORY = 512;
+/**
+ * Codex P2: `stop()` waits this long for the poll loop — and with it an attachment intake in flight, whose Bot API calls
+ * the stop has already aborted — to settle. Past the bound nothing more can reach the runtime (the hand-over re-checks
+ * the stop) and a temp file still being written is deleted as soon as it lands (the intake is closed).
+ */
+export const STOP_INTAKE_SETTLE_MS = 5_000;
 
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -263,6 +271,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   /** A true private field: a Node timer is circular, and the adapter must stay JSON-serializable (no token check). */
   #attachmentSweepTimer?: ReturnType<typeof setInterval>;
   private readonly mediaGroupSettleMs: number;
+  private readonly stopSettleMs: number;
   /** TG-2: the album being collected (its parts are not handed over, and the offset stays at its first part). */
   private pendingGroup?: PendingMediaGroup;
   /** Keys of recent owner messages (bounded): a reaction on one of them is the owner's own message, never feedback. */
@@ -325,6 +334,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.offsetStore = options.offsetStore;
     this.startupCallTimeoutMs = options.startupCallTimeoutMs ?? STARTUP_CALL_TIMEOUT_MS;
     this.mediaGroupSettleMs = options.mediaGroupSettleMs ?? MEDIA_GROUP_SETTLE_MS;
+    this.stopSettleMs = options.stopSettleMs ?? STOP_INTAKE_SETTLE_MS;
     this.files = {
       getFile: async (fileId) =>
         this.outbound('getFile', { file_id: fileId }, { timeoutMs: ATTACHMENT_DOWNLOAD_TIMEOUT_MS, ...this.lifecycleSignal() }),
@@ -402,6 +412,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     const controller = new AbortController();
     this.controller = controller;
     this.haltController = new AbortController();
+    this.attachmentIntake.reopen();
     // TG-2: the attachment temp directory is swept now and every minute (local files only; no Bot API call).
     if (this.#attachmentSweepTimer === undefined) {
       void this.attachmentIntake.sweep();
@@ -547,7 +558,20 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     this.haltController?.abort();
     // A startup still in flight is aborted and awaited: it can make no call after this.
     await this.starting?.catch(() => undefined);
-    await this.loop?.catch(() => undefined);
+    // Codex P2: the poll loop holds any attachment intake in flight (its calls were aborted above); wait for it to settle,
+    // bounded. Past the bound no handler call can follow (the hand-over re-checks `stopped`), and the intake is closed
+    // below, so a temp file still being written is removed as soon as it lands.
+    const loop = this.loop?.catch(() => undefined);
+    if (loop !== undefined) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), this.stopSettleMs);
+        timer.unref?.();
+      });
+      const settled = await Promise.race([loop.then(() => 'settled' as const), bound]);
+      clearTimeout(timer);
+      if (settled === 'timeout') this.logger.warn('telegram stop: attachment intake did not settle in time', { boundMs: this.stopSettleMs });
+    }
     this.loop = undefined;
     this.controller = undefined;
     // TG-2: an album still being collected is not handed over; its parts stay unconfirmed and come back on restart.

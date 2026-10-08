@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboundAttachment, InboundMessage, LogFields, Logger } from '@quoky/core';
 import {
   ATTACHMENT_MAX_COUNT,
@@ -509,6 +509,9 @@ describe('Telegram adapter attachments (TG-2): admission before any file call, t
     await h.adapter.start();
     await until(() => fake.callsTo('downloadFile').length === 1);
     await h.adapter.stop();
+    // Codex P2: once stop() resolved, no handler call and no temp file; nothing follows later either.
+    expect(h.received).toEqual([]);
+    expect(await filesUnder(tempRoot)).toEqual([]);
     await flush(10);
     expect(h.received).toEqual([]);
     expect(fake.callsTo('sendMessage')).toEqual([]);
@@ -744,5 +747,79 @@ describe('Telegram adapter halts and stops during intake (Codex P1/P2)', () => {
     expect(await filesUnder(tempRoot)).toEqual([]);
     expect(fake.callsTo('sendMessage')).toEqual([]);
     expect(h.adapter.status().halted).toBe('TELEGRAM_AUTH_REJECTED');
+  });
+
+  /** Holds the next canonical image write until `release()` (a slow disk), then lets it complete. */
+  function holdNextImageWrite() {
+    const gate = { release: () => undefined as void, started: false };
+    const real = fs.writeFile.bind(fs);
+    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
+      if (!String(args[0]).includes('intake-')) return real(...args);
+      gate.started = true;
+      await new Promise<void>((resolve) => (gate.release = resolve));
+      return real(...args);
+    });
+    return { gate, spy };
+  }
+
+  it('stop during the canonical image write waits for it, then leaves no handler call and no temp file', async () => {
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply([mediaUpdate(210, photoField({ fileId: 'p', size: PNG.length }))]))
+      .queue('getFile', fileReply('photos/a.jpg'))
+      .queue('downloadFile', bytesReply(PNG));
+    const { gate, spy } = holdNextImageWrite();
+    try {
+      const h = harness(fake);
+      await h.adapter.start();
+      await until(() => gate.started);
+      const stopping = h.adapter.stop();
+      // The write lands while stop() is still waiting (within its bound).
+      setTimeout(() => gate.release(), 20);
+      await stopping;
+      expect(h.received).toEqual([]);
+      expect(await filesUnder(tempRoot)).toEqual([]);
+      await flush(20);
+      expect(h.received).toEqual([]);
+      expect(await filesUnder(tempRoot)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a write stuck past the stop bound: stop() returns, no handler is ever called, and the file is deleted as it lands', async () => {
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply([mediaUpdate(220, photoField({ fileId: 'p', size: PNG.length }))]))
+      .queue('getFile', fileReply('photos/a.jpg'))
+      .queue('downloadFile', bytesReply(PNG));
+    const { gate, spy } = holdNextImageWrite();
+    try {
+      const h = harness(fake, { stopSettleMs: 20 });
+      await h.adapter.start();
+      await until(() => gate.started);
+      await h.adapter.stop();
+      expect(h.received).toEqual([]);
+      expect(h.logs.some((line) => line.message === 'telegram stop: attachment intake did not settle in time')).toBe(true);
+      gate.release();
+      for (let i = 0; i < 200 && (await filesUnder(tempRoot)).length > 0; i += 1) await flush(1);
+      await flush(20);
+      expect(h.received).toEqual([]);
+      expect(await filesUnder(tempRoot)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a restart after a stop takes attachments in again (the intake reopens)', async () => {
+    const fake = new FakeTelegram()
+      .queue('getUpdates', okReply([]), okReply([mediaUpdate(230, photoField({ fileId: 'p', size: PNG.length }))]))
+      .queue('getFile', fileReply('photos/a.jpg'))
+      .queue('downloadFile', bytesReply(PNG));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => fake.callsTo('getUpdates').length >= 2);
+    await h.adapter.stop();
+    await h.adapter.start();
+    await until(() => h.received.length === 1);
+    expect(h.received[0]?.attachments).toEqual([expect.objectContaining({ kind: 'image' })]);
   });
 });

@@ -60,6 +60,7 @@ export {
 export type { TelegramDeliveryReport, TelegramPreviewPlan, TelegramPreviewReport, TelegramPreviewSenders } from './delivery';
 export {
   MEDIA_GROUP_SETTLE_MS,
+  STOP_INTAKE_SETTLE_MS,
   notificationOutcomeOf,
   STARTUP_CALL_TIMEOUT_MS,
   staleNotice,

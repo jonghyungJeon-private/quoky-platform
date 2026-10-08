@@ -375,6 +375,11 @@ export class TelegramAttachmentIntake {
   private readonly liveFiles = new Set<string>();
   private processDir?: string;
   private processDirPending?: Promise<string | undefined>;
+  /**
+   * Set by {@link dispose} (adapter stop), cleared by {@link reopen} (start). While closed nothing new is written, and a
+   * write already in flight is deleted as soon as it lands (Codex P2: no temp file survives a stop).
+   */
+  private closed = false;
 
   constructor(
     private readonly gateway: TelegramFileGateway,
@@ -509,12 +514,17 @@ export class TelegramAttachmentIntake {
 
   /** Random intake name in this process's private subdirectory, 0600, exclusive create. `undefined` on any failure. */
   private async writeTempFile(bytes: Buffer, extension: string): Promise<string | undefined> {
+    if (this.closed) return undefined;
     const dir = await this.ensureProcessDir();
-    if (!dir) return undefined;
+    if (!dir || this.closed) return undefined;
     const file = path.join(dir, `intake-${randomUUID()}${extension}`);
     this.liveFiles.add(file);
     try {
       await fs.writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
+      if (this.closed) {
+        await this.removeFile(file);
+        return undefined;
+      }
       return file;
     } catch {
       await this.removeFile(file);
@@ -654,8 +664,14 @@ export class TelegramAttachmentIntake {
     }
   }
 
-  /** Deletes every temp file this instance still holds (adapter stop). Never throws. */
+  /** Allows writes again after {@link dispose} (adapter restart). */
+  reopen(): void {
+    this.closed = false;
+  }
+
+  /** Deletes every temp file this instance still holds and refuses new ones until {@link reopen} (adapter stop). */
   async dispose(): Promise<void> {
+    this.closed = true;
     await Promise.all([...this.liveFiles].map((file) => this.removeFile(file)));
     const dir = this.processDir;
     this.processDir = undefined;
