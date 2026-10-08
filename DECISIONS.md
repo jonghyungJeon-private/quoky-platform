@@ -18045,8 +18045,25 @@ session, and with it the live confirmation of the reaction spike below.
   1. The update metadata: type, then `file_size`. A refusal here makes no Bot API call.
   2. `getFile`. Its `file_size` is checked again before any byte is fetched, and a missing `file_path` is refused.
   3. The download, bounded while streaming (`RESPONSE_TOO_LARGE` → `TOO_LARGE`).
-- **Only after admission and the identity gate.** Intake starts in `dispatch`, which runs only for an admitted message
+- **Only after admission and the identity gate.** Intake starts in `handOver`, which runs only for an admitted message
   after the ADR-0102 D5 inbound gate opened. A dropped message, or one waiting on a closed gate, fetches nothing.
+- **The offset moves only after the hand-over (Codex P1, D4).** The poll loop awaits the intake and the intake note,
+  calls the handler, and only then advances and persists the offset, in the same synchronous step (TG-1's rule). The
+  same holds for an album, after the whole group is handed over.
+  - A stop or halt during the intake releases its files, hands nothing over, and stops polling with the offset (in
+    memory and on disk) unmoved. The restart delivers the update or the album again, within the 10-minute bound.
+  - An admission refusal advances at once: nothing would ever be handed over. A bounds rejection is still a turn (it
+    names the refused file) and is handed over before the offset moves.
+  - Consequence: turns with attachments are taken in one after the other, in order. Each intake is bounded by the
+    per-call timeouts (20 s for `getFile` and for the download, all attachments of a turn concurrently).
+- **A halt cuts off work in flight (Codex P1).** A halt-scoped `AbortController`, made per start and aborted by a halt,
+  the background startup refusal and `stop()`, is linked into every `outbound()` call and the download. A halt
+  therefore stops sends, typing, `getFile` and a stream already being read. The cut-off intake hands no turn over and
+  releases its temp files.
+- **`stop()` waits for the intake (Codex P2).** `stop()` aborts the intake's calls, then waits for the poll loop (which
+  holds the intake) to settle, bounded by `STOP_INTAKE_SETTLE_MS` (5 s). It then closes the intake: nothing new is
+  written, and a write still in flight is deleted the moment it lands. The hand-over re-checks the stop, so no handler
+  call follows a stop even past the bound. `start()` reopens the intake.
 - **Albums.** Telegram sends each album part as its own message with one `media_group_id`. Handled one by one, an album
   of 10 photos would be 10 image turns, and the caption would reach only the first. So the parts are taken in as ONE
   turn, and the count bound applies to the album:
@@ -18159,7 +18176,8 @@ holds the approval.
   Telegram copy decisions (CommonMark on Telegram).
 - **Accepted.** The vendored `image-canonical.ts` is a second copy by design; the parity test is the drift guard. An
   album's later parts that arrive after its turn was handed over (more than about 2.4 s later) become their own turn.
-  An attachment turn whose process dies during the download is not replayed, like any in-flight turn (D4).
+  A process that dies between the intake note and the hand-over sends the note again after the restart (the turn itself
+  is handed over once).
 
 ## ADR-0115 — HTTP API providers for the chat and image tiers only: opt-in OpenAI API then Gemini API adapters, no tool definitions, code, review and policy capabilities stay on the Claude CLI, and a usage ledger with a monthly DM notice. Amends the constitution (ARCHITECTURE.md §5.5) and AGENTS.md; amends ADR-0014, the ADR-0092 amendments and the ADR-0111 amendments.
 

@@ -37,6 +37,9 @@ domain field; `ConversationRuntimeDeps` stays 35. No new dependency. Discord is 
   chat. Reaction targets use the same key.
 - **Approvals.** Nothing new: the existing text phrases. A real-`AppModule` acceptance test covers preview → `승인` →
   `댓글 실행` on Telegram, and the cross-platform refusal from Discord.
+- **Codex review fixes.** The offset is saved only after an attachment turn (or a whole album) was handed over, so a
+  stop or crash during the intake leaves it to be delivered again. A halt aborts Bot API work already in flight,
+  downloads included. `stop()` waits (bounded) for an intake in flight and leaves no handler call or temp file behind.
 - **Parity.** `adapter-telegram/src/image-canonical.ts` (and its test builders) are byte-identical copies of the Discord
   ones. A composition-root test pins the copy and runs one 18-case fixture set through both intakes.
 
