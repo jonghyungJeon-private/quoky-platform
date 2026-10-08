@@ -116,6 +116,12 @@ export interface DiscordAdapterOptions {
 /** How often the runner-owned attachment temp directory is swept (ADR-0111 D2: files older than 10 minutes). */
 const ATTACHMENT_SWEEP_INTERVAL_MS = 60_000;
 
+/**
+ * Defence in depth (PLT-0 review P2-5): no reply ever pings. Untrusted text is already neutralized by the markup, and
+ * nothing Quoky sends in a reply relies on a mention; owner notifications set their own (owner-only) list.
+ */
+const NO_MENTIONS = Object.freeze({ parse: [] as never[] });
+
 /** Discord typing indicator lasts ~10s; refresh under that while we work. */
 const TYPING_REFRESH_MS = 8_000;
 /** Safety cap so a typing loop can never leak (≈ covers the 120s CLI timeout). */
@@ -245,18 +251,19 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     if (message.preview) {
       const report = await deliverPreview(message.preview, {
         sendText: async (chunk) => {
-          platformMessageIds.push((await channel.send(chunk)).id);
+          platformMessageIds.push((await channel.send({ content: chunk, allowedMentions: NO_MENTIONS })).id);
         },
         sendAttachment: async (canonicalDiff, filename, caption) => {
           const sent = await channel.send({
             content: caption,
             files: [{ attachment: Buffer.from(canonicalDiff, 'utf8'), name: filename }],
+            allowedMentions: NO_MENTIONS,
           });
           platformMessageIds.push(sent.id);
         },
         notify: async (notice) => {
           try {
-            platformMessageIds.push((await channel.send(notice)).id);
+            platformMessageIds.push((await channel.send({ content: notice, allowedMentions: NO_MENTIONS })).id);
           } catch (err) {
             this.logger.warn('preview notice send failed', {
               channelId: target,
@@ -288,12 +295,12 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     const report = await deliverWithNotice(
       text,
       async (chunk) => {
-        platformMessageIds.push((await channel.send(chunk)).id);
+        platformMessageIds.push((await channel.send({ content: chunk, allowedMentions: NO_MENTIONS })).id);
       },
       async (notice) => {
         // Single best-effort notice; if it also fails, log only (ADR-0016).
         try {
-          platformMessageIds.push((await channel.send(notice)).id);
+          platformMessageIds.push((await channel.send({ content: notice, allowedMentions: NO_MENTIONS })).id);
         } catch (err) {
           this.logger.warn('partial-failure notice send failed', {
             channelId: target,
@@ -583,7 +590,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
     try {
       const channel = await this.fetchChannel(message.channelId);
       if (!channel?.isSendable()) return;
-      await channel.send({ content: note, allowedMentions: { parse: [] } });
+      await channel.send({ content: note, allowedMentions: NO_MENTIONS });
     } catch (err) {
       this.logger.warn('attachment intake note send failed', {
         channelId: message.channelId,
