@@ -152,6 +152,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
 
 /** ADR-0114 D4/D5: the Telegram adapter's typed startup refusals and their remediation. */
 const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>> = {
+  [TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED]:
+    'The Telegram poll loop failed unexpectedly and stopped (Discord kept running). Report the log line, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH]:
     'The Telegram bot (getMe) is not QUOKY_TELEGRAM_EXPECTED_BOT_ID. Check that QUOKY_TELEGRAM_BOT_TOKEN belongs to the expected bot, then restart.',
   [TelegramStartupErrorCode.TELEGRAM_IDENTITY_UNVERIFIABLE]:

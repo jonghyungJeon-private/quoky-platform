@@ -373,6 +373,30 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     expect(fake.callsTo('sendMessage').map((call) => call.params.text)).toEqual(['hi']);
   });
 
+  it('CA re-review P3-2: an unexpected poll-loop failure halts the Telegram side, logged without content; no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const fake = new FakeTelegram().queue('getUpdates', okReply([textUpdate(120, '비밀 내용')]));
+      const h = harness(fake);
+      // A handler that throws synchronously (a defect): it escapes the dispatch and rejects the loop.
+      h.adapter.onMessage((() => {
+        throw new Error('비밀 내용 defect');
+      }) as never);
+      await h.adapter.start();
+      await until(() => h.adapter.status().halted !== undefined);
+      await flush();
+      expect(h.adapter.status()).toMatchObject({ polling: false, halted: TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED });
+      expect(h.logs.find((line) => line.message === 'telegram poll loop failed')?.fields).toEqual({ errorName: 'Error' });
+      expect(JSON.stringify(h.logs)).not.toContain('비밀');
+      await h.adapter.stop();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('CA P3-5: a token rejected while polling stops the Telegram side and shows it in status', async () => {
     const fake = new FakeTelegram().queue('getUpdates', okReply([]), errorReply(401));
     const h = harness(fake);

@@ -77,6 +77,8 @@ export const TelegramStartupErrorCode = {
   TELEGRAM_AUTH_REJECTED: 'TELEGRAM_AUTH_REJECTED',
   /** HTTP 409 on the startup probe: another poller or a webhook holds this bot. */
   TELEGRAM_POLL_CONFLICT: 'TELEGRAM_POLL_CONFLICT',
+  /** The poll loop failed unexpectedly (a defect): the Telegram side stopped, never the process (halt code only). */
+  TELEGRAM_POLL_LOOP_FAILED: 'TELEGRAM_POLL_LOOP_FAILED',
 } as const;
 export type TelegramStartupErrorCode = (typeof TelegramStartupErrorCode)[keyof typeof TelegramStartupErrorCode];
 
@@ -290,7 +292,13 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     const first = await this.checkIdentity();
     const controller = new AbortController();
     this.controller = controller;
-    this.loop = this.run(controller.signal, first === 'verified');
+    // CA re-review P3-2: an unexpected rejection of the background loop must never become an unhandled rejection that
+    // takes the process (and Discord) down; it halts the Telegram side only and is logged without content.
+    this.loop = this.run(controller.signal, first === 'verified').catch((err: unknown) => {
+      this.polling = false;
+      this.logger.error('telegram poll loop failed', { errorName: err instanceof Error ? err.name : typeof err });
+      this.halt(TelegramStartupErrorCode.TELEGRAM_POLL_LOOP_FAILED);
+    });
   }
 
   /**
