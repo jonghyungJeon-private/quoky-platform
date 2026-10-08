@@ -99,12 +99,20 @@ function isCredentialShaped(text: string): boolean {
 }
 
 /**
- * Build the readout, or refuse it. The credential guard runs on every field and on the exact rendered prompt text; a
- * match anywhere refuses the whole item (ADR-0111 D3: withheld, never redacted).
+ * Build the readout, or refuse it. The credential guard runs on every full normalized field BEFORE clipping, then on
+ * every clipped field and the exact rendered prompt text; a match anywhere refuses the whole item (ADR-0111 D3:
+ * withheld, never redacted).
  */
 export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReadoutInput): UntrustedDocumentBuildResult {
   const body = prepareBody(typeof input.body === 'string' ? input.body : '');
   if (body.length === 0) return { ok: false, refusal: 'EMPTY' };
+  // Review P1: the guard runs on the FULL normalized fields before any clip — a clip could cut a credential's key
+  // (`password:`) while keeping its value — and again below on the exact clipped payload.
+  const fullTitle = normalizeUntrustedText(typeof input.title === 'string' ? input.title : '');
+  const fullAuthor = normalizeUntrustedText(typeof input.author === 'string' ? input.author : '');
+  if ([body, fullTitle, fullAuthor].some((field) => field.length > 0 && isCredentialShaped(field))) {
+    return { ok: false, refusal: 'CREDENTIAL_SHAPED' };
+  }
   const clipped = clipHeadAndTail(body, UNTRUSTED_DOCUMENT_BODY_MAX_CHARS);
   const dateMs = Date.parse(input.date);
   const readout: UntrustedDocumentReadout = {

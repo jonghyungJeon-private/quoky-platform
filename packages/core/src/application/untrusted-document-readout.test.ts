@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, IntentType, RiskLevel, TaskStatus, type Task } from '../domain';
+import { clipHeadAndTail } from './attachment-context';
+import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
 import { PromptComposer } from './prompt-composer';
 import {
   UNTRUSTED_DOCUMENT_BODY_MAX_CHARS,
@@ -76,6 +78,27 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
       refusal: 'CREDENTIAL_SHAPED',
     });
     expect(build(' \n\t ')).toEqual({ ok: false, refusal: 'EMPTY' });
+  });
+
+  it('review P1: a clip that cuts the key but keeps the value is still refused (the guard runs on the full text first)', () => {
+    const value = 'hunter2-correct-horse-battery';
+    const filler = (length: number) => 'lorem ipsum dolor sit amet '.repeat(400).slice(0, length);
+    // Place `password: ` so it ends exactly where the kept tail starts (found by search, not by a hard-coded index).
+    let body = '';
+    for (let at = 3_100; at < 3_400 && body === ''; at += 1) {
+      const candidate = `${filler(at)} password: ${value} ${filler(5_000)}`.slice(0, 5_000);
+      const clipped = clipHeadAndTail(candidate, UNTRUSTED_DOCUMENT_BODY_MAX_CHARS).text;
+      if (!clipped.includes('password') && clipped.includes(value)) body = candidate;
+    }
+    expect(Array.from(body).length).toBe(5_000);
+    const clipped = clipHeadAndTail(body, UNTRUSTED_DOCUMENT_BODY_MAX_CHARS).text;
+    // The clipped text alone passes both detectors — exactly Codex's repro …
+    expect(containsCredentialMaterial(clipped) || containsCredentialFileContent(clipped)).toBe(false);
+    // … and the full text does not, so the item is refused.
+    expect(containsCredentialMaterial(body)).toBe(true);
+    expect(build(body)).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
+    // A title whose secret sits past the 200-character display bound is refused too.
+    expect(build('평범한 본문', { title: `${'제목 '.repeat(120)} token=${SECRET}` })).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
   });
 
   it('re-validation rejects any readout not shaped exactly as built (extra keys, bounds, invisible characters, secrets)', () => {
