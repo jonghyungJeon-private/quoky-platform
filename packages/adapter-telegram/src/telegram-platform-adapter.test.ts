@@ -220,6 +220,43 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     ]);
   });
 
+  it('CA P2-3: three 409s within five minutes stop polling (TELEGRAM_POLL_CONFLICT in status); spread-out 409s do not', async () => {
+    let clock = 1_800_000_000_000;
+    const fake = new FakeTelegram().queue('getUpdates', errorReply(409), errorReply(409), errorReply(409));
+    const h = harness(fake, { nowMs: () => clock });
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    expect(h.adapter.status()).toMatchObject({ polling: false, halted: TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT });
+    expect(fake.callsTo('getUpdates')).toHaveLength(4); // the probe, then three polls
+    expect(h.logs.filter((line) => line.level === 'error' && line.fields?.code === 'TELEGRAM_POLL_CONFLICT').length).toBeGreaterThanOrEqual(1);
+    await h.adapter.stop();
+
+    const spread = new FakeTelegram().queue('getUpdates', errorReply(409), errorReply(409), errorReply(409), okReply([]));
+    const s = harness(spread, {
+      nowMs: () => clock,
+      sleep: async (ms) => {
+        clock += 3 * 60_000; // each backoff wait lets three minutes pass
+        s.sleeps.push(ms);
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+    });
+    await s.adapter.start();
+    await until(() => spread.callsTo('getUpdates').length >= 6);
+    expect(s.adapter.status()).toMatchObject({ polling: true });
+    expect(s.adapter.status().halted).toBeUndefined();
+    await s.adapter.stop();
+  });
+
+  it('CA P3-5: a token rejected while polling stops the Telegram side and shows it in status', async () => {
+    const fake = new FakeTelegram().queue('getUpdates', okReply([]), errorReply(401));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.adapter.status().halted !== undefined);
+    expect(h.adapter.status()).toMatchObject({ polling: false, halted: TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED });
+    expect(h.sleeps).toEqual([]);
+    await h.adapter.stop();
+  });
+
   it('a closed identity gate hands nothing over and leaves the offset unadvanced', async () => {
     const fake = new FakeTelegram().queue('getUpdates', okReply([]), okReply([textUpdate(60, '안녕')]));
     const h = harness(fake);

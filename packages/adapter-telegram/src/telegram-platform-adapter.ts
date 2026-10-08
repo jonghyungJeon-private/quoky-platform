@@ -100,6 +100,12 @@ const MAX_SEND_RETRY_AFTER_SECONDS = 10;
 /** Telegram's typing indicator lasts about 5 s; refresh under that while a turn runs, for at most ~2 minutes. */
 const TYPING_REFRESH_MS = 4_500;
 const TYPING_MAX_TICKS = 27;
+/**
+ * CA P2-3: Telegram answers 409 to whichever `getUpdates` is NOT the newest, so two instances on one token keep taking
+ * updates from each other. Three 409s within five minutes stop this instance's polling (`TELEGRAM_POLL_CONFLICT`).
+ */
+const CONFLICT_HALT_COUNT = 3;
+const CONFLICT_WINDOW_MS = 5 * 60_000;
 
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -143,6 +149,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
   private polling = false;
   /** Why the Telegram side stopped on its own (identity, token or conflict found while running); Discord runs on. */
   private halted?: TelegramStartupErrorCode;
+  /** When the recent HTTP 409s of the poll happened (ms), for the split-brain policy. */
+  private conflicts: number[] = [];
   private identityVerified = false;
   /** The next `getUpdates` offset: one past the last update handed to the runtime or dropped. */
   private offset?: number;
@@ -210,6 +218,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
     if (this.loop !== undefined) return;
     this.stopped = false;
     this.halted = undefined;
+    this.conflicts = [];
     // The token names its bot: a token for another bot fails before any network call.
     if (this.config.token.botId !== this.config.expectedBotId) {
       throw new TelegramStartupError(TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH);
@@ -344,6 +353,16 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
         if (!Array.isArray(updates)) throw new TelegramApiError(TelegramFailureCode.MALFORMED_RESPONSE, 'getUpdates');
       } catch (err) {
         if (this.stopped) break;
+        // CA P3-5: a token rejected while running stops the Telegram side (a retry cannot help).
+        if (codeOf(err) === TelegramFailureCode.AUTH) {
+          this.halt(TelegramStartupErrorCode.TELEGRAM_AUTH_REJECTED);
+          break;
+        }
+        // CA P2-3: repeated 409s mean another instance is polling this bot; stop rather than split the updates.
+        if (codeOf(err) === TelegramFailureCode.CONFLICT && this.recordConflict()) {
+          this.halt(TelegramStartupErrorCode.TELEGRAM_POLL_CONFLICT);
+          break;
+        }
         const wait = this.nextDelay(err, delay);
         delay = Math.min(this.backoff.maxMs, Math.max(delay * 2, this.backoff.initialMs));
         if (codeOf(err) === TelegramFailureCode.CONFLICT) {
@@ -363,6 +382,13 @@ export class TelegramPlatformAdapter implements PlatformAdapter {
       // A non-empty batch that moved nothing (entries without a usable update_id) must not spin.
       if (updates.length > 0 && this.offset === before) await this.sleep(this.backoff.maxMs, signal);
     }
+  }
+
+  /** Record one HTTP 409; `true` once {@link CONFLICT_HALT_COUNT} fell within {@link CONFLICT_WINDOW_MS}. */
+  private recordConflict(): boolean {
+    const at = this.nowMs();
+    this.conflicts = [...this.conflicts.filter((time) => at - time < CONFLICT_WINDOW_MS), at];
+    return this.conflicts.length >= CONFLICT_HALT_COUNT;
   }
 
   private nextDelay(err: unknown, delay: number): number {
