@@ -434,6 +434,11 @@ describe('Outbound invariant (CA final check, Codex delta): no Bot API call befo
     expect(fake.calls.slice(callsAtStop)).toEqual([]);
     expect(h.adapter.status()).toMatchObject({ identityVerified: false, polling: false });
     expect(h.adapter.status().halted).toBeUndefined();
+    // CA final check warning: a start after a stop during startup must poll again (no stale loop or startup promise).
+    await h.adapter.start();
+    await until(() => h.adapter.status().polling);
+    expect(h.adapter.status().identityVerified).toBe(true);
+    await h.adapter.stop();
   });
 
   it.each([
