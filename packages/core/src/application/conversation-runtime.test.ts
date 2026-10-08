@@ -4374,6 +4374,33 @@ describe('Explicit Git Commit Approval — runtime (Sprint 2x, ADR-0045)', () =>
     expect(calls.gitStatus).toBe(1); // 2w status preview ran, not a commit approval
   });
 
+  it('Codex P3 on 039d5ff: a comparison / concept question with a sentence-final ending cluster is chat, never a commit approval', async () => {
+    for (const text of [
+      'git commit과 git commit --amend의 차이는요?',
+      'git commit 차이좀 알려줘',
+      '커밋이랑 amend 차이점은요?',
+      'commit과 amend 차이요?',
+      'git commit 의미가요?',
+      'squash 커밋 방법좀 알려줘',
+      'git commit 설명은요?',
+    ]) {
+      expect(ConversationRuntime.interpretCommitIntent(text), text).toBeNull();
+      const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf(inScopeStatus) });
+      const r = await new ConversationRuntime(deps).handle(messageOf(text));
+      expect(calls.requestForRisk, text).toBe(0);
+      expect(calls.classify, `${text} → ${r.reply.text}`).toBe(1);
+    }
+    // ("비교" is also the read-only diff-preview word at WORKSPACE_APPLIED: never a commit approval either.)
+    const compare = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf(inScopeStatus) });
+    await new ConversationRuntime(compare.deps).handle(messageOf('커밋 전략 비교좀 해줘'));
+    expect(compare.calls.requestForRisk).toBe(0);
+    // ...while the marker inside another word is still a commit request (approval only — nothing executes).
+    const { deps, calls } = makeDeps({ applyAnchor: commitAnchor(), gitStatus: gitStatusOf(inScopeStatus) });
+    await new ConversationRuntime(deps).handle(messageOf('차이나 서버 변경 커밋해줘'));
+    expect(calls.requestForRisk).toBe(1);
+    expect(calls.lastApplyAnchor?.status).toBe('COMMIT_APPROVAL_PENDING');
+  });
+
   // ── negative / gating (CA 7–9) ──────────────────────────────────────────────────────────────
   it('"좋아"/"오케이"/"확인"/"다음 단계"/"진행해" do not trigger commit approval (CA 7–8)', async () => {
     for (const text of ['좋아', '오케이', '확인', '다음 단계', '진행해']) {

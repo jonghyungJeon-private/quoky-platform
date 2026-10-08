@@ -313,7 +313,8 @@ export type ConnectorWriteStep =
 /**
  * Narrow storage (satisfied by the live `StorageProvider`; resolved at call time, ADR-0062). `sessions.list` and
  * `tasks.listByContext` serve only the stray-phrase lookups ({@link ConnectorWriteFlow.approvedElsewhere},
- * {@link ConnectorWriteFlow.recentSentInSession}); nothing is ever executed from them.
+ * {@link ConnectorWriteFlow.recentSentInSession}, {@link ConnectorWriteFlow.recentUnconfirmedInSession}); nothing is ever
+ * executed from them.
  */
 export interface ConnectorWriteFlowStore {
   readonly sessions: {
@@ -394,6 +395,17 @@ export interface ConnectorWriteFlow {
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentSend | null>;
   /**
+   * Codex P2 on 039d5ff: a write of `operation` approved in THIS conversation that was dispatched but never confirmed —
+   * its receipt is UNCERTAIN, or still PREPARED (in flight / interrupted) — within the same lifetime as
+   * {@link recentSentInSession}; the newest, or null. It may have been sent, so no reply may say nothing was sent.
+   */
+  recentUnconfirmedInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteRecentUnconfirmed | null>;
+  /**
    * Lazy expiry of an APPROVED grant or an AWAITING_CHOICE choice past the ADR-0093 lifetime: closes it `expired`
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
    */
@@ -437,6 +449,15 @@ export interface ConnectorWriteRecentSend {
   readonly target: ConnectorWriteTargetSummary;
   /** The flow's display time zone (`QUOKY_TIMEZONE`). */
   readonly timeZone: string;
+}
+
+/** A dispatched, unconfirmed write approved in this conversation ({@link ConnectorWriteFlow.recentUnconfirmedInSession}). */
+export interface ConnectorWriteRecentUnconfirmed {
+  readonly operation: ConnectorWriteOperation;
+  /** `UNCERTAIN`: the outcome could not be verified; `EXECUTING`: the receipt is still PREPARED (in flight). */
+  readonly status: 'UNCERTAIN' | 'EXECUTING';
+  /** When the receipt last changed. */
+  readonly at: IsoTimestamp;
 }
 
 /** The target part of a preview, for a hint shown outside the conversation that previewed it. */
@@ -650,6 +671,40 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     operation: ConnectorWriteOperation,
     now: IsoTimestamp,
   ): Promise<ConnectorWriteRecentSend | null> {
+    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['SENT']);
+    if (!best) return null;
+    const { receipt, preview } = best;
+    return {
+      ...(receipt.data.externalRef ? { externalRef: receipt.data.externalRef } : {}),
+      ...(receipt.data.url ? { url: receipt.data.url } : {}),
+      sentAt: receipt.updatedAt,
+      target: connectorWriteTargetOf(preview),
+      timeZone: this.deps.timeZone,
+    };
+  }
+
+  async recentUnconfirmedInSession(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<ConnectorWriteRecentUnconfirmed | null> {
+    const best = await this.newestSessionReceipt(session, actorId, operation, now, ['UNCERTAIN', 'PREPARED']);
+    if (!best) return null;
+    return { operation, status: best.receipt.status === 'UNCERTAIN' ? 'UNCERTAIN' : 'EXECUTING', at: best.receipt.updatedAt };
+  }
+
+  /**
+   * The newest receipt in one of `statuses` for a write of `operation` whose approval was anchored in THIS conversation
+   * by `actorId`, changed within the ADR-0093 lifetime (`PENDING_APPROVAL_TTL_MS`, from the receipt). Read-only.
+   */
+  private async newestSessionReceipt(
+    session: Session,
+    actorId: Id,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+    statuses: readonly ConnectorWriteReceipt['status'][],
+  ): Promise<{ receipt: ConnectorWriteReceipt; preview: ConnectorWritePreview } | null> {
     // The anchors this conversation created (the session id and the approval id live in the anchor's JSON; the receipt
     // is keyed by the approval id), so no receipt column links a receipt to a conversation.
     const tasks = await this.deps.store.tasks.listByContext(session.context.channelId, session.context.threadId);
@@ -662,20 +717,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       // Only a consumed grant can have a receipt (the grant is consumed before anything is written).
       if (anchor.operation !== operation || !anchor.approvalId || !anchor.consumedAt || !anchor.preview) continue;
       const receipt = await this.deps.receipts.findByIdempotencyKey(`cwr:${anchor.approvalId}`);
-      if (!receipt || receipt.status !== 'SENT' || receipt.actorId !== actorId || receipt.operation !== operation) continue;
-      const sentMs = Date.parse(receipt.updatedAt);
-      if (!Number.isFinite(sentMs) || !Number.isFinite(nowMs) || nowMs - sentMs >= PENDING_APPROVAL_TTL_MS) continue;
+      if (!receipt || !statuses.includes(receipt.status) || receipt.actorId !== actorId || receipt.operation !== operation) continue;
+      const changedMs = Date.parse(receipt.updatedAt);
+      if (!Number.isFinite(changedMs) || !Number.isFinite(nowMs) || nowMs - changedMs >= PENDING_APPROVAL_TTL_MS) continue;
       if (!best || receipt.updatedAt > best.receipt.updatedAt) best = { receipt, preview: anchor.preview };
     }
-    if (!best) return null;
-    const { receipt, preview } = best;
-    return {
-      ...(receipt.data.externalRef ? { externalRef: receipt.data.externalRef } : {}),
-      ...(receipt.data.url ? { url: receipt.data.url } : {}),
-      sentAt: receipt.updatedAt,
-      target: connectorWriteTargetOf(preview),
-      timeZone: this.deps.timeZone,
-    };
+    return best;
   }
 
   async releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null> {

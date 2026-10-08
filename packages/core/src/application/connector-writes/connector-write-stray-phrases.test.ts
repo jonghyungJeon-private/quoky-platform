@@ -88,15 +88,15 @@ describe('connectorWriteOperationsAskedAbout', () => {
 });
 
 describe('renderConnectorWriteBareExecution', () => {
-  it('says nothing ran and quotes the exact phrase of the approved write', () => {
+  it('says the approved write did not run and quotes its exact phrase (only about that write, never "nothing was sent")', () => {
     expect(renderConnectorWriteBareExecution('CHANNEL_POST', 'Slack 게시 실행')).toBe(
-      '아직 아무것도 보내지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"',
+      '승인된 Slack 게시는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"',
     );
     expect(renderConnectorWriteBareExecution('ISSUE_COMMENT', '댓글 실행')).toBe(
-      '아직 아무것도 보내지 않았어요. 실행할 작업을 정확히 말해 주세요: "댓글 실행"',
+      '승인된 Jira 댓글은 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "댓글 실행"',
     );
     expect(renderConnectorWriteBareExecution('CALENDAR_EVENT_DELETE', '일정 삭제 실행')).toBe(
-      '아직 캘린더를 바꾸지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 삭제 실행"',
+      '승인된 캘린더 일정 삭제는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 삭제 실행"',
     );
   });
 });

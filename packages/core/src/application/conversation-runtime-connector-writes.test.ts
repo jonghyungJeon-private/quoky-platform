@@ -44,6 +44,7 @@ import {
   renderConnectorWriteAlreadyApproved,
   renderConnectorWriteApprovedReminder,
   renderConnectorWriteBareExecution,
+  renderConnectorWriteRepeat,
   renderNoApprovedConnectorWrite,
 } from './connector-writes/connector-write-copy';
 import {
@@ -1394,7 +1395,7 @@ describe('connector writes — an execution phrase in another conversation (live
 });
 
 describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', () => {
-  const POST_BARE = '아직 아무것도 보내지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"';
+  const POST_BARE = '승인된 Slack 게시는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "Slack 게시 실행"';
   const BARE_FORMS = ['실행', '실행해', '실행해줘', '실행 해 주세요', '지금 실행', 'go', 'Go!', 'run it', 'run it now', 'execute'];
   const PHRASES = ['댓글 실행', '상태 변경 실행', 'Slack 게시 실행', '일정 추가 실행', '일정 변경 실행', '일정 삭제 실행'] as const;
   const askedForms = (phrase: string) => [`${phrase}해도 돼?`, `${phrase}할까?`, `${phrase}하지 마`, `${phrase} 안 해도 돼`];
@@ -1419,7 +1420,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     expect(h.writes.post).toHaveLength(1);
   });
 
-  it('gap 1: each approved write quotes its own phrase; a calendar grant says the calendar is unchanged', async () => {
+  it('gap 1: each approved write quotes its own phrase (calendar too, with the history note)', async () => {
     const comment = harness();
     await comment.send('PROJ-12에 댓글: 한 번만');
     await comment.send('승인');
@@ -1430,7 +1431,7 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     await calendar.send('내일 오후 3시에 회의 잡아줘 제목 주간 회의');
     await calendar.send('승인');
     const reply = await calendar.send('실행');
-    expect(reply.reply.text).toBe('아직 캘린더를 바꾸지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 추가 실행"');
+    expect(reply.reply.text).toBe('승인된 캘린더 일정 추가는 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "일정 추가 실행"');
     expect(calendar.recorded.at(-1)).toBe(CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE);
     expect(calendar.totalWrites()).toBe(0);
   });
@@ -1529,5 +1530,104 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
       expect(h.classify.count, text).toBe(before + 1);
     }
     expect(h.totalWrites()).toBe(0);
+  });
+
+  describe('Codex P2 on 039d5ff: an unconfirmed write is never answered with "nothing was sent"', () => {
+    const UNCERTAIN_COMMENT = renderConnectorWriteRepeat('ISSUE_COMMENT', 'UNCERTAIN');
+
+    async function uncertainComment(opts: HarnessOptions = {}) {
+      const h = harness({ ...opts, commentOutcome: async () => connectorWriteUncertain('TRANSPORT') });
+      await h.send('PROJ-12에 댓글: 한 번만');
+      await h.send('승인');
+      expect((await h.send('댓글 실행')).reply.text).toContain('결과를 확인하지 못했어요');
+      expect(h.writes.addComment).toHaveLength(1);
+      return h;
+    }
+
+    it('the repro: after an UNCERTAIN comment, "댓글 실행해도 돼?" / "댓글 실행하지 마" get the uncertain warning, never a resend', async () => {
+      const h = await uncertainComment();
+      const classifyBefore = h.classify.count;
+      for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마']) {
+        const reply = await h.send(text);
+        expect(reply.reply.text, text).toBe(UNCERTAIN_COMMENT);
+        expect(reply.reply.text, text).not.toContain('아무것도 보내거나 바꾸지 않았어요');
+      }
+      expect(UNCERTAIN_COMMENT).toContain('반영됐을 수도 있어요');
+      expect(UNCERTAIN_COMMENT).toContain('다시 실행하지 않아요');
+      expect(h.classify.count).toBe(classifyBefore);
+      expect(h.writes.addComment).toHaveLength(1);
+    });
+
+    it('the same warning once the pointer is restored (the stray path), for the exact phrase too', async () => {
+      const h = await uncertainComment({ priorActiveTaskId: 'task-prior' });
+      expect(h.sessions.get('sess-1')?.activeTaskId).toBe('task-prior');
+      for (const text of ['댓글 실행해도 돼?', '댓글 실행하지 마', '댓글 실행']) {
+        expect((await h.send(text)).reply.text, text).toBe(UNCERTAIN_COMMENT);
+      }
+      expect(h.writes.addComment).toHaveLength(1);
+    });
+
+    it('a bare "실행" / "go" / "run it" after an UNCERTAIN write gets the uncertain warning, provider-free', async () => {
+      for (const prior of [{}, { priorActiveTaskId: 'task-prior' }]) {
+        const h = await uncertainComment(prior);
+        const classifyBefore = h.classify.count;
+        for (const text of ['실행', '실행해줘', 'go', 'run it']) {
+          expect((await h.send(text)).reply.text, text).toBe(UNCERTAIN_COMMENT);
+        }
+        expect(h.classify.count).toBe(classifyBefore);
+        expect(h.writes.addComment).toHaveLength(1);
+      }
+    });
+
+    it('a receipt still PREPARED (dispatched, outcome unknown) is treated the same way', async () => {
+      const h = await uncertainComment({ priorActiveTaskId: 'task-prior' });
+      for (const [id, row] of h.receipts.rows) h.receipts.rows.set(id, { ...row, status: 'PREPARED' });
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteRepeat('ISSUE_COMMENT', 'EXECUTING'));
+      expect((await h.send('실행')).reply.text).toBe(renderConnectorWriteRepeat('ISSUE_COMMENT', 'EXECUTING'));
+      expect(h.writes.addComment).toHaveLength(1);
+    });
+
+    it('precedence: approved elsewhere first; then the most recent write here; a definite NOT_SENT stays "nothing approved"', async () => {
+      const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
+      const h = await uncertainComment();
+      await h.sendIn(DM, 'PROJ-12에 댓글: 디엠');
+      await h.sendIn(DM, '승인');
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toContain('다른 대화에서 기다리고 있어요');
+
+      // A later SENT comment in the same conversation is the most recent write: already sent (with its link).
+      let outcome = connectorWriteUncertain('TRANSPORT') as ConnectorWriteOutcome;
+      const swap = harness({
+        priorActiveTaskId: 'task-prior',
+        commentOutcome: async () => outcome,
+      });
+      await swap.send('PROJ-12에 댓글: 첫 번째');
+      await swap.send('승인');
+      await swap.send('댓글 실행');
+      advanceMinutes(1);
+      outcome = connectorWriteSent('10001', COMMENT_URL);
+      await swap.send('PROJ-12에 댓글: 두 번째');
+      await swap.send('승인');
+      await swap.send('댓글 실행');
+      expect((await swap.send('댓글 실행해도 돼?')).reply.text).toContain('이미 보냈어요');
+      expect(swap.writes.addComment).toHaveLength(2);
+
+      const notSent = harness({ priorActiveTaskId: 'task-prior', commentOutcome: async () => connectorWriteNotSent('FORBIDDEN') });
+      await notSent.send('PROJ-12에 댓글: x');
+      await notSent.send('승인');
+      await notSent.send('댓글 실행');
+      expect((await notSent.send('댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+      expect(notSent.writes.addComment).toHaveLength(1);
+    });
+
+    it('the unconfirmed warning lapses with the same lifetime as "already sent"; another conversation never sees it', async () => {
+      const h = await uncertainComment({ priorActiveTaskId: 'task-prior' });
+      advanceMinutes(29);
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderConnectorWriteRepeat('ISSUE_COMMENT', 'UNCERTAIN'));
+      advanceMinutes(1);
+      expect((await h.send('댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+      const other = await uncertainComment();
+      const DM: ConversationContext = { platform: 'test', channelId: '900000000000000003', userId: 'owner-user' };
+      expect((await other.sendIn(DM, '댓글 실행해도 돼?')).reply.text).toBe(renderNoApprovedConnectorWrite());
+    });
   });
 });

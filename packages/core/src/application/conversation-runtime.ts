@@ -47,6 +47,7 @@ import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from './executio
 import {
   type ConnectorWriteAnchorView,
   type ConnectorWriteFlow,
+  type ConnectorWriteRecentSend,
   type ConnectorWriteRelease,
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
@@ -164,6 +165,7 @@ import type {
   WorkspaceRef,
 } from '../domain';
 import {
+  CONNECTOR_WRITE_OPERATIONS,
   TURN_HANDLER_STAGES,
   executionLocalityOf,
   type AiExecutionLocality,
@@ -1009,6 +1011,16 @@ export interface ConversationRuntimeOptions {
 }
 
 /** A code-change preview's refs, targets and prepared (read, classified, grant-checked) context content. */
+/** This conversation's most recent write of one kind (stray-phrase replies; Codex P2 on 039d5ff). */
+type RecentConnectorWrite =
+  | { readonly kind: 'sent'; readonly operation: ConnectorWriteOperation; readonly sent: ConnectorWriteRecentSend; readonly at: IsoTimestamp }
+  | {
+      readonly kind: 'unconfirmed';
+      readonly operation: ConnectorWriteOperation;
+      readonly status: 'UNCERTAIN' | 'EXECUTING';
+      readonly at: IsoTimestamp;
+    };
+
 interface PreparedCodeGeneration {
   readonly planRef: ExecutionPlanRef;
   readonly workspaceRef: WorkspaceRef;
@@ -2790,6 +2802,8 @@ export class ConversationRuntime {
     if (askedAbout.length > 0) {
       return this.respondStrayConnectorWritePhrase(message, session, actor, askedAbout);
     }
+    const bareAfterUnconfirmed = await this.respondBareExecutionAfterUnconfirmedWrite(message, session, actor);
+    if (bareAfterUnconfirmed) return bareAfterUnconfirmed;
     if (interpretStrayDecisionUtterance(message.text)) {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
     }
@@ -3475,7 +3489,9 @@ export class ConversationRuntime {
   /**
    * A connector-write step phrase (exact, or a question / negation about it) with no approved write of that kind in this
    * conversation. Runs nothing; the reply is, in order: where the actor's approved write of that kind waits in ANOTHER
-   * conversation (live QA cross-session), this conversation's recent send of that kind (W5-L02), or "nothing approved".
+   * conversation (live QA cross-session); else this conversation's most recent write of that kind within the lifetime —
+   * SENT → already sent with its link (W5-L02), dispatched but unconfirmed (UNCERTAIN / still in flight) → the uncertain
+   * warning (it may have been sent; check the target; nothing is resent — Codex P2 on 039d5ff); else "nothing approved".
    */
   private async respondStrayConnectorWritePhrase(
     message: InboundMessage,
@@ -3495,17 +3511,59 @@ export class ConversationRuntime {
       }
       // Never another conversation's receipt, never an old one.
       for (const operation of operations) {
-        const sent = await flow.recentSentInSession(session, actor.id, operation, now);
-        if (sent) {
-          return this.respondComposed(
-            message,
-            session,
-            this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, operation, sent),
-          );
-        }
+        const recent = await this.recentConnectorWriteInSession(flow, session, actor, operation, now);
+        if (recent) return this.respondRecentConnectorWrite(message, session, recent);
       }
     }
     return this.respondComposed(message, session, this.deps.composer.composeNoApprovedConnectorWrite(message.context));
+  }
+
+  /**
+   * Codex P2 on 039d5ff: a bare "실행" / "go" / "run it" with no approved write here, right after a write in this
+   * conversation that was dispatched but never confirmed, gets the uncertain warning (never chat, which could call it
+   * sent or not sent). Null otherwise — the turn routes as before. Runs nothing.
+   */
+  private async respondBareExecutionAfterUnconfirmedWrite(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+  ): Promise<TurnResult | null> {
+    const flow = this.deps.connectorWriteFlow;
+    if (!flow || !isBareExecutionRequest(message.text)) return null;
+    const now = this.clock();
+    let newest: RecentConnectorWrite | null = null;
+    for (const operation of CONNECTOR_WRITE_OPERATIONS) {
+      const recent = await this.recentConnectorWriteInSession(flow, session, actor, operation, now);
+      if (recent && (!newest || recent.at > newest.at)) newest = recent;
+    }
+    return newest?.kind === 'unconfirmed' ? this.respondRecentConnectorWrite(message, session, newest) : null;
+  }
+
+  /** This conversation's most recent write of `operation` within the lifetime: SENT or dispatched-but-unconfirmed. */
+  private async recentConnectorWriteInSession(
+    flow: ConnectorWriteFlow,
+    session: Session,
+    actor: Actor,
+    operation: ConnectorWriteOperation,
+    now: IsoTimestamp,
+  ): Promise<RecentConnectorWrite | null> {
+    const sent = await flow.recentSentInSession(session, actor.id, operation, now);
+    const unconfirmed = await flow.recentUnconfirmedInSession(session, actor.id, operation, now);
+    if (sent && (!unconfirmed || sent.sentAt >= unconfirmed.at)) return { kind: 'sent', operation, sent, at: sent.sentAt };
+    if (unconfirmed) return { kind: 'unconfirmed', operation, status: unconfirmed.status, at: unconfirmed.at };
+    return null;
+  }
+
+  private respondRecentConnectorWrite(message: InboundMessage, session: Session, recent: RecentConnectorWrite): Promise<TurnResult> {
+    const reply =
+      recent.kind === 'sent'
+        ? this.deps.composer.composeConnectorWriteAlreadyExecuted(message.context, recent.operation, recent.sent)
+        : this.deps.composer.composeConnectorWriteStep(message.context, {
+            kind: 'repeat',
+            operation: recent.operation,
+            status: recent.status,
+          });
+    return this.respondComposed(message, session, reply);
   }
 
   /** "1", "2번", "1번이요", "2번으로" — a choice number, or null. */

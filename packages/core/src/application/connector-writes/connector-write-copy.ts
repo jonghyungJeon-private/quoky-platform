@@ -223,12 +223,12 @@ export function renderConnectorWriteApprovedReminder(operation: ConnectorWriteOp
 }
 
 /**
- * A bare execution command ("실행", "실행해줘", "go", "run it") while the write is approved: it names no step, so nothing
- * ran; the reply quotes the exact phrase of the write approved in this conversation (routing exec gaps).
+ * A bare execution command ("실행", "실행해줘", "go", "run it") while the write is approved: it names no step, so the
+ * approved write did not run; the reply quotes its exact phrase (routing exec gaps). It speaks only about the approved
+ * write, so it stays true even after an earlier unconfirmed write in the same conversation (Codex P2 on 039d5ff).
  */
 export function renderConnectorWriteBareExecution(operation: ConnectorWriteOperation, executionPhrase: string): string {
-  const notYet = isCalendar(operation) ? '아직 캘린더를 바꾸지 않았어요.' : '아직 아무것도 보내지 않았어요.';
-  return `${notYet} 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`;
+  return `승인된 ${withTopicParticle(connectorWriteLabel(operation))} 아직 실행하지 않았어요. 실행할 작업을 정확히 말해 주세요: "${executionPhrase}"`;
 }
 
 /**
