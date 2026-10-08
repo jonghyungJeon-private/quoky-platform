@@ -14917,6 +14917,11 @@ those details so the settled decisions and the code agree.
    `AiProviderManager` for all providers. It never branches on provider id. An execution failure classified
    `UNAVAILABLE` (including an Ollama daemon connection failure) drops that provider's cached probe so the
    next turn re-probes.
+   *Fix (2026-10-08):* a ready answer is still reused for ~30 s; a "not ready" answer is re-probed after a backed-off
+   interval (30 s, doubling, capped at 120 s), and that re-probe waits at most 0.5 s before routing answers with the
+   cached "not ready" while the probe finishes in the background. `availableFor(capability)` probes only providers
+   advertising that capability. The first ready answer after "not ready" logs `provider became ready` once. A
+   provider that was not ready at boot (Ollama started after the service) becomes usable without a restart.
 5. **Decision timing (clarifies ADR-0093).** Expiry is re-checked with the injected clock immediately before
    every positive decision (plan, apply, commit, push, PR, merge, remote cleanup). An approval that expires
    mid-turn is recorded as an expiry denial (`decidedBy: 'system'`) and is never approved. `CLOSED` is
@@ -15321,6 +15326,12 @@ embed. Binding constraints: ARCHITECTURE.md §5.1/§12 (no provider-id branching
    `VectorProvider` (JSON file per collection, atomic writes, cosine top-K, ≤20,000 records, rebuildable cache).
    `SemanticRecallScorer` re-ranks only already-eligible durable candidates (never widens eligibility, never
    embeds credential-matching content; ≤4 new embeddings and 3 s per turn); any failure falls back to lexical.
+   **Warm model (fix, 2026-10-08).** Runs are `ollama run --keepalive 30m <model>` (an argv flag, so the environment
+   contract above is unchanged). The provider loads the model in the background with a fixed `warm-up` text (never
+   user content) on its first ready probe, on every not-ready -> ready change, and after a timed-out call (single
+   flight, ≥60 s apart), bounded at 30 s. The per-turn 3 s budget and the per-call timeout are unchanged: a call cut
+   off by the budget cancels its own load in the daemon, so a model that queues behind another model's load would
+   otherwise never become warm (measured: warm 45-120 ms, cold 0.35-0.9 s, cold behind a cold 8B chat load 13.9 s).
 
 ### Consequences
 

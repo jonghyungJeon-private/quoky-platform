@@ -222,8 +222,10 @@ ollama pull granite3.3:8b       # 그리고 .env.local에 OLLAMA_MODEL=granite3.
     보내기 전에 비밀값 검사를 거치고, 답에 비밀값처럼 보이는 내용이 있으면 답 전체를 보여 주지 않고 저장하지도 않습니다.
 
 - **Ollama 서버가 실행 중**이어야 하고, `OLLAMA_MODEL`로 지정한 모델이 로컬에 있어야 "준비됨"으로 봅니다.
-  준비 여부는 요청 시점에 확인하며(`ollama list`, 결과는 최대 약 30초 캐시), 나중에 서버를 켜거나 모델을 받아도
-  재시작 없이 반영됩니다.
+  준비 여부는 요청 시점에 확인하며(`ollama list`, "준비됨" 결과는 약 30초 캐시), 나중에 서버를 켜거나 모델을 받아도
+  재시작 없이 반영됩니다. "준비 안 됨"이면 30초, 60초, 120초(최대) 간격으로 다시 확인하고, 이 확인은 한 턴을 최대
+  0.5초만 기다리게 합니다(Ollama가 꺼져 있을 때 `ollama` CLI는 앱을 띄우려고 약 5초를 기다리기 때문). 다시 준비되면
+  로그에 `provider became ready`가 한 번 남습니다.
 - 모델 이름은 태그까지 정확히 맞아야 합니다. 예를 들어 `ollama list`에 `llama3.1:8b`만 있는데
   `OLLAMA_MODEL=llama3.1`(태그 없음)이면 준비되지 않은 것으로 보므로 `OLLAMA_MODEL=llama3.1:8b`처럼 그대로 적으세요.
 - 팁 — 아래는 **Ollama 서버 쪽 환경 변수**입니다 (Quoky의 `.env.local`이 아니라 `ollama serve`를 실행하는
@@ -276,7 +278,7 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_TIMEZONE` | 선택. 기본 `Asia/Seoul`. IANA 시간대, 잘못된 값은 시작 실패 |
 | `QUOKY_EMBEDDING_ENABLED` | 선택. 기본 `false`. `true`면 기억 회상을 **로컬** Ollama 임베딩으로 재정렬 (실패하면 기존 방식). 모델은 자동으로 받지 않음: 먼저 `ollama pull nomic-embed-text` |
 | `QUOKY_EMBEDDING_MODEL` | 선택. 기본 `nomic-embed-text`. 이름 또는 태그에 `cloud`가 들어가면 거부 |
-| `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000 |
+| `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000. 임베딩 모델은 `--keepalive 30m`으로 메모리에 두고, 준비될 때와 시간 초과 뒤에 백그라운드에서 미리 불러옵니다(최대 30초). 실측: 이미 올라와 있으면 0.05-0.12초, 새로 불러오면 0.35-0.9초 |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
 | `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음 |
 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `off` 정확히 이 세 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic(클라우드)으로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
@@ -357,6 +359,9 @@ pnpm dev
 - 설정 문제로 멈추면 종료 코드 78로 끝나고, **연속 3번**이면 launcher가 더 이상 다시 띄우지 않습니다. 고친 뒤
   `restart --apply`로 다시 시작합니다. 그 밖의 비정상 종료(충돌, `kill -9`)는 launchd가 10초 간격으로 다시 띄웁니다.
 - 중지(`SIGTERM`)는 최대 90초를 기다립니다. 알림 전송 마무리 한도(65초)보다 깁니다.
+- **Ollama 앱도 로그인할 때 시작되게** 두세요 (시스템 설정 -> 일반 -> 로그인 항목에 Ollama). Quoky가 Ollama보다
+  먼저 뜨면 시작 로그에 Ollama provider가 `provider not ready`로 남지만, Ollama가 뜬 뒤 최대 약 2분 안에 재시작 없이
+  준비됨으로 바뀝니다(`provider became ready`).
 - 로그는 `~/Library/Logs/Quoky/quoky.log`입니다. 시작할 때 10 MiB를 넘으면 `quoky.log.1`로 돌리고 5개까지
   보관합니다. `launchd.log`는 launcher가 로그 파일을 열기 전 출력용 예비 로그입니다. 비밀 값은 로그에 쓰지 않습니다.
 
