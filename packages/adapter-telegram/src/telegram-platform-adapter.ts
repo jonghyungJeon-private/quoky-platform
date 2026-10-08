@@ -120,6 +120,8 @@ const TYPING_MAX_TICKS = 27;
  * updates from each other. Three 409s within five minutes stop this instance's polling (`TELEGRAM_POLL_CONFLICT`).
  */
 const CONFLICT_HALT_COUNT = 3;
+/** Telegram's update retention: after this long with no update, the held offset is dropped once (CA re-review P2). */
+const OFFSET_SILENCE_RESET_MS = 24 * 60 * 60_000;
 const CONFLICT_WINDOW_MS = 5 * 60_000;
 
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -204,6 +206,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
   private halted?: TelegramStartupErrorCode;
   /** CA P3-4: the owner notices already sent in this poll session (at most one per kind). */
   private readonly noticesSent = new Set<'stale' | 'no-text'>();
+  /** When the last non-empty batch arrived (or polling started), for the 24 h silence reset. */
+  private lastUpdateAtMs = 0;
   /** The current `getUpdates` batch size (halved after an oversized response, reset after a success). */
   private pollLimit = POLL_LIMIT;
   /** When the recent HTTP 409s of the poll happened (ms), for the split-brain policy. */
@@ -391,9 +395,17 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
 
   private async poll(signal: AbortSignal): Promise<void> {
     let delay = this.backoff.initialMs;
+    this.lastUpdateAtMs = this.nowMs();
     this.logger.info('telegram polling started');
     while (!this.stopped) {
       let updates: unknown;
+      // CA re-review P2: after 24 h without any update, Telegram may have restarted update_id from a LOWER value that
+      // the held offset would swallow; nothing older can still be pending, so poll once without an offset.
+      if (this.offset !== undefined && this.nowMs() - this.lastUpdateAtMs > OFFSET_SILENCE_RESET_MS) {
+        this.offset = undefined;
+        this.lastUpdateAtMs = this.nowMs();
+        this.logger.info('telegram offset reset after a silent day', { reason: 'no-updates-24h' });
+      }
       const sentOffset = this.offset;
       try {
         updates = await this.api.call(
@@ -439,6 +451,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       this.pollLimit = POLL_LIMIT;
       if (sentOffset !== undefined) this.confirmedOffset = sentOffset;
       this.lastPollAt = now();
+      if (updates.length > 0) this.lastUpdateAtMs = this.nowMs();
       const before = this.offset;
       const proceed = await this.handleBatch(updates, signal);
       if (!proceed) break;

@@ -283,7 +283,8 @@ describe('TG-1 acceptance — end to end through the started composite (CA P2-4)
     expect(String(sends[0]?.text)).toContain('회의록 정리');
     // The handed-over offset is persisted beside the database (private ops file; bot id and offset only).
     const stored = JSON.parse(readFileSync(join(tempDir, 'ops', 'telegram-offset.json'), 'utf8')) as Record<string, unknown>;
-    expect(stored).toEqual({ version: 1, botId: BOT_ID, offset: updateSeq + 1 });
+    expect(stored).toMatchObject({ version: 2, botId: BOT_ID, offset: updateSeq + 1 });
+    expect(typeof stored.savedAt).toBe('string');
   });
 
   it('a reply for a Discord conversation goes to the Discord child and never reaches the Telegram fetch', async () => {

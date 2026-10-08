@@ -456,6 +456,29 @@ describe('Telegram offset persistence (TG-1 review decision 2): a restart never 
     await second.adapter.stop();
   });
 
+  it('CA re-review P2: after 24 h with no update the held offset is dropped once, so a restarted lower update_id is heard', async () => {
+    const start = Date.parse('2026-10-08T00:00:00.000Z');
+    const day = 25 * 60 * 60_000;
+    const fake = new FakeTelegram().queue(
+      'getUpdates',
+      okReply([]),
+      // Telegram restarted its ids below the held offset (100) after the silent day.
+      okReply([textUpdate(5, '다시 시작', { date: Math.floor((start + day) / 1000) })]),
+    );
+    // A clock that jumps 25 h once the first long poll (after the probe) has been made: deterministic, no race.
+    const h = harness(fake, {
+      nowMs: () => start + (fake.callsTo('getUpdates').length >= 2 ? day : 0),
+      offsetStore: { load: () => 100, save: () => undefined },
+    });
+    await h.adapter.start();
+    await until(() => h.received.length === 1);
+    const polls = getUpdatesOffsets(fake).slice(1);
+    expect(polls.slice(0, 2)).toEqual([100, undefined]);
+    expect(h.received[0]?.text).toBe('다시 시작');
+    expect(getUpdatesOffsets(fake).at(-1)).toBe(6);
+    await h.adapter.stop();
+  });
+
   it('an unreadable or invalid stored offset is ignored (logged), never a crash', async () => {
     const server = new TelegramServer();
     server.pending = [textUpdate(5, 'x')];
