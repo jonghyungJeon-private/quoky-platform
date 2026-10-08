@@ -496,8 +496,8 @@ interface Calls {
   lastGitDiffRoot?: string;
   lastGitCommitInput?: { rootPath: string; files: string[]; message: string; approvalRef: ApprovalRef };
   lastGitInfoRoot?: string;
-  lastGitPushInput?: { rootPath: string; remote: string; branch: string; commitHash: string; approvalRef: ApprovalRef };
-  lastGitSyncMainInput?: { rootPath: string; remote: string; branch: string; expectedRemoteCommit: string };
+  lastGitPushInput?: { rootPath: string; remote: string; branch: string; commitHash: string; approvalRef: ApprovalRef; repository?: RepositoryIdentity };
+  lastGitSyncMainInput?: { rootPath: string; remote: string; branch: string; expectedRemoteCommit: string; repository?: RepositoryIdentity };
   commandExecGet: number;
   loggerWarn: number;
   /** F3-B (Sprint 4c-Follow-up-3): captured `logger.warn` message + fields, for secret-free branch-log assertions. */
@@ -671,11 +671,11 @@ interface Opts {
   /** `git.pushApprovedCommit` result (Sprint 3a) — defaults to a valid `gitPushResultOf` echoing the input;
    *  pass 'throw' to simulate a push failure, 'throw-blocked' → GitPushBlockedError (App-auth pre-mutation;
    *  ADR-0061, Sprint 4b), or a literal GitPushResult to force an integrity mismatch. */
-  gitPush?: GitPushResult | 'throw' | 'throw-blocked' | 'throw-timeout' | 'throw-secret-stderr';
+  gitPush?: GitPushResult | 'throw' | 'throw-blocked' | 'throw-target-changed' | 'throw-timeout' | 'throw-secret-stderr';
   /** `git.syncMain` result (Sprint 3h) — defaults to a valid `gitMainSyncResultOf` echoing the input;
    *  'throw-blocked' → GitMainSyncBlockedError, 'throw-unverified' → GitMainSyncUnverifiedError, 'throw-generic'
    *  → a plain Error, or a literal GitMainSyncResult (e.g. ref-only / already-up-to-date). */
-  gitSyncMain?: GitMainSyncResult | 'throw-blocked' | 'throw-unverified' | 'throw-generic';
+  gitSyncMain?: GitMainSyncResult | 'throw-blocked' | 'throw-target-changed' | 'throw-unverified' | 'throw-generic';
   /** `git.deleteMergedLocalBranch` result (Sprint 3i) — defaults to a valid deleted result; 'throw-blocked' →
    *  BranchCleanupBlockedError, 'throw-unverified' → BranchCleanupUnverifiedError, 'throw-generic' → a plain Error,
    *  or a literal GitBranchCleanupResult (e.g. alreadyAbsent). */
@@ -1090,6 +1090,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.gitPush++;
         calls.lastGitPushInput = input;
         if (opts.gitPush === 'throw-blocked') throw new GitPushBlockedError('push blocked pre-mutation (App-auth)');
+        if (opts.gitPush === 'throw-target-changed') throw new GitPushBlockedError('retargeted', { reason: 'TARGET_CHANGED' });
         if (opts.gitPush === 'throw') throw new Error('git push boom');
         if (opts.gitPush === 'throw-timeout') throw new Error('git push timed out after 60000ms');
         if (opts.gitPush === 'throw-secret-stderr') {
@@ -1101,6 +1102,7 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
         calls.gitSyncMain++;
         calls.lastGitSyncMainInput = input;
         if (opts.gitSyncMain === 'throw-blocked') throw new GitMainSyncBlockedError('sync blocked');
+        if (opts.gitSyncMain === 'throw-target-changed') throw new GitMainSyncBlockedError('retargeted', { reason: 'TARGET_CHANGED' });
         if (opts.gitSyncMain === 'throw-unverified') throw new GitMainSyncUnverifiedError('sync unverified');
         if (opts.gitSyncMain === 'throw-generic') throw new Error('sync boom');
         return opts.gitSyncMain ?? gitMainSyncResultOf(input);
@@ -5990,6 +5992,23 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
       expect(resolver.remotes).toEqual([REMOTE]);
     });
 
+    it('the APPROVED identity is passed to the git provider; a provider-level TARGET_CHANGED gets the fixed reply', async () => {
+      const ok = execDeps({ applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      await new ConversationRuntime(ok.deps).handle(messageOf('푸시 실행'));
+      expect(ok.calls.lastGitPushInput).toMatchObject({ repository: WIDGETS_ID });
+      const legacy = execDeps();
+      await new ConversationRuntime(legacy.deps).handle(messageOf('푸시 실행'));
+      expect(legacy.calls.lastGitPushInput && 'repository' in legacy.calls.lastGitPushInput).toBe(false);
+      const changed = execDeps({
+        applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }),
+        hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve,
+        gitPush: 'throw-target-changed',
+      });
+      const r = await new ConversationRuntime(changed.deps).handle(messageOf('푸시 실행'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      expect(changed.calls.applyAnchorSet).toBe(0);
+    });
+
     it('push execution: approved for A, now resolving to B (both allowlisted) → TARGET_CHANGED, no push', async () => {
       const exec = execDeps({
         applyAnchor: pushApprovedAnchor({ pushRepositoryIdentity: WIDGETS_ID }),
@@ -8220,6 +8239,22 @@ describe('Explicit PR Creation Approval — runtime (Sprint 3b, ADR-0049)', () =
       const c = await new ConversationRuntime(cleanup.deps, MERGE_ON).handle(messageOf('원격 브랜치 삭제해줘'));
       expect(cleanup.calls.requestForRisk).toBe(0);
       expect(c.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+    });
+
+    it('main sync passes the anchored repository to git; a provider-level TARGET_CHANGED gets the fixed reply', async () => {
+      const ok = makeDeps({ applyAnchor: PR_MERGED_ANCHOR(), hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve });
+      await new ConversationRuntime(ok.deps, MERGE_ON).handle(messageOf('main 동기화해줘'));
+      expect(ok.calls.lastGitSyncMainInput?.repository).toEqual(PR_IDENTITY);
+      const changed = makeDeps({
+        applyAnchor: PR_MERGED_ANCHOR(),
+        hostingResolveIdentity: resolverReturning(ALLOWLISTED).resolve,
+        gitSyncMain: 'throw-target-changed',
+      });
+      const r = await new ConversationRuntime(changed.deps, MERGE_ON).handle(messageOf('main 동기화해줘'));
+      expect(r.reply.text).toBe(composer.composeRepositoryTargetChanged(CTX).text);
+      const legacy = makeDeps({ applyAnchor: PR_MERGED_ANCHOR() });
+      await new ConversationRuntime(legacy.deps).handle(messageOf('main 동기화해줘'));
+      expect(legacy.calls.lastGitSyncMainInput?.repository).toBeUndefined();
     });
 
     it('the refusal copy is provider-neutral: no URL, no provider name, no env var, and says nothing ran', () => {

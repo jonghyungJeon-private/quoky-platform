@@ -53,13 +53,13 @@ export interface GitHubAppGitProviderDeps {
    */
   makeLocalGit: (runner?: GitRunner) => GitProvider;
   /**
-   * Mint (or return a cached) short-lived installation token for exactly `identity` — the one repository the
-   * operation's remote URLs resolved to (ADR-0109 D3). Adapter-local; never stored here.
+   * The git credential for exactly `identity` — the APPROVED repository (ADR-0109 D3): an App installation token
+   * minted down-scoped to it, or (dev PAT mode) the configured PAT. Delivered only through the one-shot askpass.
+   * Adapter-local; never stored here.
    *
-   * ABSENT = the ambient-credential mode (dev PAT REST auth, or no hosting auth): no token and no askpass, and the
-   * developer's own credential helpers are kept, but everything else is identical — the inherited env-injected git
-   * config is dropped, the target is resolved and allowlist-checked, and the operation runs against the validated
-   * canonical URL (ADR-0109 review P1).
+   * ABSENT = no hosting credential is configured: the git child gets no credential at all (global/system config,
+   * and so every credential helper, is isolated), so an authenticated remote refuses the operation. Everything else —
+   * approved-identity binding, isolated config, workspace check — is identical.
    */
   tokenSource?: (identity: RepositoryIdentity) => Promise<string>;
   /**
@@ -84,12 +84,12 @@ export interface GitHubAppGitProviderDeps {
   /** Spawn git with an explicit child env. Injectable for tests; the default mirrors git-local's `defaultGitRunner`. */
   spawn?: CredentialedSpawn;
   /**
-   * The values of every `url.<base>.insteadOf` / `url.<base>.pushInsteadOf` rule visible under `env` (ADR-0109 review
-   * P2): git applies them to an explicit URL argument too, so a rule matching the validated canonical URL refuses the
-   * operation. Injectable for tests; the default is a credential-free local `git config --get-regexp`. Throws when
-   * unreadable.
+   * Every `remote.*` and `url.*` config entry visible under the isolated env (repository, worktree and included files;
+   * no global/system) — ADR-0109 review round 3: a `remote.<canonical URL>.*` section or an `insteadOf` /
+   * `pushInsteadOf` rule matching the canonical URL refuses the operation. Injectable for tests; the default is a
+   * credential-free local `git config --null --get-regexp`. Throws when unreadable.
    */
-  readUrlRewrites?: (rootPath: string, env: NodeJS.ProcessEnv) => readonly string[];
+  readRemoteConfig?: (rootPath: string, env: NodeJS.ProcessEnv) => ReadonlyArray<{ key: string; value: string }>;
   /**
    * After a successful push to the canonical URL, move the local remote-tracking ref `refs/remotes/<remote>/<branch>`
    * to the pushed commit when it already exists (what a push by remote name would have done). Local only, best effort,
@@ -120,14 +120,14 @@ export class GitHubAppGitProvider implements GitProvider {
   private readonly localGit: GitProvider;
   private readonly readRemoteUrl: NonNullable<GitHubAppGitProviderDeps['readRemoteUrl']>;
   private readonly spawn: CredentialedSpawn;
-  private readonly readUrlRewrites: NonNullable<GitHubAppGitProviderDeps['readUrlRewrites']>;
+  private readonly readRemoteConfig: NonNullable<GitHubAppGitProviderDeps['readRemoteConfig']>;
   private readonly updateTrackingRef: NonNullable<GitHubAppGitProviderDeps['updateTrackingRef']>;
 
   constructor(private readonly deps: GitHubAppGitProviderDeps) {
     this.localGit = deps.makeLocalGit();
     this.readRemoteUrl = deps.readRemoteUrl ?? defaultReadRemoteUrl;
     this.spawn = deps.spawn ?? defaultCredentialedSpawn;
-    this.readUrlRewrites = deps.readUrlRewrites ?? defaultReadUrlRewrites;
+    this.readRemoteConfig = deps.readRemoteConfig ?? defaultReadRemoteConfig;
     this.updateTrackingRef = deps.updateTrackingRef ?? defaultUpdateTrackingRef;
   }
 
@@ -188,30 +188,45 @@ export class GitHubAppGitProvider implements GitProvider {
     return this.localGit.deleteMergedLocalBranch(rootPath, branch, expectedBranchCommit);
   }
 
-  // ── Remote-touching operations — HTTPS preflight + App token via one-shot GIT_ASKPASS ────────────────────
-  pushApprovedCommit(rootPath: string, remote: string, branch: string, commitHash: string): Promise<GitPushResult> {
-    // Pre-mutation credential/preflight failure → GitPushBlockedError ("not pushed"); the runtime maps it to the
-    // Blocked "not attempted" reply. An inner push throw (at/after the attempt) propagates → Unverified upstream.
+  // ── Remote-touching operations — bound to the APPROVED repository, isolated git config, one-shot GIT_ASKPASS ──
+  pushApprovedCommit(
+    rootPath: string,
+    remote: string,
+    branch: string,
+    commitHash: string,
+    approvedRepository?: RepositoryIdentity,
+  ): Promise<GitPushResult> {
+    // Pre-mutation failure → GitPushBlockedError ("not pushed"; TARGET_CHANGED carried as a typed reason); the runtime
+    // maps it to the Blocked "not attempted" reply. An inner push throw (at/after the attempt) propagates → Unverified.
     return this.withRemoteCredential(
       rootPath,
       remote,
       'push',
-      (err) => new GitPushBlockedError(preMutationMessage('git push', err)),
+      approvedRepository,
+      (err) => new GitPushBlockedError(preMutationMessage('git push', err), targetChangedOption(err)),
       (git) => git.pushApprovedCommit(rootPath, remote, branch, commitHash),
     );
   }
 
-  getRemoteRefCommit(rootPath: string, remote: string, branch: string): Promise<{ commitHash: string }> {
+  getRemoteRefCommit(
+    rootPath: string,
+    remote: string,
+    branch: string,
+    approvedRepository?: RepositoryIdentity,
+  ): Promise<{ commitHash: string }> {
     // getRemoteRefCommit's contract is to throw on failure; the GitManager maps a read throw to a pre-mutation
-    // Blocked. A pre-mutation credential/preflight failure therefore stays a (sanitized) throw — consistent taxonomy.
+    // Blocked (keeping a TARGET_CHANGED reason). A pre-mutation failure therefore stays a (sanitized) throw.
     return this.withRemoteCredential(
       rootPath,
       remote,
       'fetch',
+      approvedRepository,
       (err) =>
-        err instanceof Error
-          ? err
-          : new Error('git ls-remote: could not obtain App credentials or the remote is not HTTPS github.com'),
+        err instanceof TargetChangedError
+          ? new GitMainSyncBlockedError(preMutationMessage('git ls-remote', err), { reason: 'TARGET_CHANGED' })
+          : err instanceof Error
+            ? err
+            : new Error('git ls-remote: could not obtain credentials or the remote is not the approved repository'),
       (git) => git.getRemoteRefCommit(rootPath, remote, branch),
     );
   }
@@ -222,63 +237,70 @@ export class GitHubAppGitProvider implements GitProvider {
     branch: string,
     expectedRemoteCommit: string,
     expectedPreviousCommit: string,
+    approvedRepository?: RepositoryIdentity,
   ): Promise<GitMainSyncResult> {
-    // Pre-mutation credential/preflight failure → GitMainSyncBlockedError ("not synchronized"). An inner typed
+    // Pre-mutation failure → GitMainSyncBlockedError ("not synchronized"). An inner typed
     // GitMainSync{Blocked,Unverified}Error propagates unchanged (Blocked/Unverified preserved).
     return this.withRemoteCredential(
       rootPath,
       remote,
       'fetch',
-      (err) => new GitMainSyncBlockedError(`${preMutationMessage('git main sync', err)}; not synchronized`),
+      approvedRepository,
+      (err) =>
+        new GitMainSyncBlockedError(`${preMutationMessage('git main sync', err)}; not synchronized`, targetChangedOption(err)),
       (git) => git.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit),
     );
   }
 
   /**
-   * PRE-MUTATION: resolve the operation's target → (App mode) token mint → one-shot `GIT_ASKPASS` → a runner BOUND to
-   * the validated target. Any failure here is mapped by `mapPreMutationError` to the operation's typed Blocked error
-   * (the remote git op was never attempted).
+   * PRE-MUTATION: the approved repository → workspace check → (with a credential) token → one-shot `GIT_ASKPASS` → a
+   * runner BOUND to the approved repository. Any failure here is mapped by `mapPreMutationError` to the operation's
+   * typed Blocked error (the remote git op was never attempted).
    *
-   * Target resolution (ADR-0109 D2 + review P1/P2): every URL of the operation's remote (fetch, plus push URLs for a
-   * push, after git's `insteadOf`/`pushInsteadOf` expansion) must be HTTPS github.com, and — together with `origin`'s
-   * URLs when the remote is another one — name ONE allowlisted repository; no URL-rewrite rule may match that
-   * repository's canonical URL. The token (App mode) is minted for exactly that repository.
+   * - **Approved identity only (ADR-0109 review round 3, P1).** The caller passes the repository its approval bound;
+   *   without one the operation is refused. It must be allowlisted; the canonical URL
+   *   `https://github.com/<owner>/<repo>.git` is built from it alone — never from a fresh lookup.
+   * - **Isolated git config (P1).** Every read and every git child runs with `GIT_CONFIG_NOSYSTEM=1`,
+   *   `GIT_CONFIG_GLOBAL=/dev/null`, inherited `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_*` dropped and `credential.helper`
+   *   reset; the credential (App token or dev PAT) comes only from the one-shot askpass.
+   * - **Workspace check.** The operation's remote (fetch, plus push URLs for a push) — together with `origin` for
+   *   another remote — must resolve to exactly the approved repository (`TARGET_CHANGED` otherwise), and no repository-
+   *   visible config may redirect the canonical URL: no `remote.<canonical URL>.*` section (git treats a URL argument
+   *   that names a configured remote as that remote) and no `insteadOf` / `pushInsteadOf` rule matching it. This check
+   *   runs once here and again synchronously right before the network spawn.
    *
-   * Binding: the bound runner never lets git resolve the remote by name. The single remote positional of the network
-   * subcommand (`push` / `fetch` / `ls-remote`) is replaced by the validated canonical URL, and the whole resolution is
-   * re-run synchronously right before that spawn (so a config change during the token await is caught); a difference
-   * throws the op's Blocked error before any network process starts. Local subcommands run unchanged.
+   * Residual (owner-only threat model, like the backup decision): the final check and the spawn are separate steps; a
+   * same-user process that edits `.git/config` (or an included file) in between is out of scope.
    *
-   * MUTATION BOUNDARY: the inner `op` runs git through that runner; its throw (including typed Blocked/Unverified)
-   * propagates unchanged. The temp helper is removed in a `finally`.
+   * MUTATION BOUNDARY: the inner `op` runs git through the bound runner; its throw (including typed
+   * Blocked/Unverified) propagates unchanged. The temp helper is removed in a `finally`.
    */
   private async withRemoteCredential<T>(
     rootPath: string,
     remote: string,
     direction: RemoteDirection,
+    approvedRepository: RepositoryIdentity | undefined,
     mapPreMutationError: (err: unknown) => Error,
     op: (git: GitProvider) => Promise<T>,
   ): Promise<T> {
     let dir: string | undefined;
     let runner: GitRunner;
     try {
-      // Preflight and execution share ONE git-config env: inherited env-injected config (`GIT_CONFIG_PARAMETERS`,
-      // `GIT_CONFIG_COUNT/KEY/VALUE`) is always dropped. In App mode every credential helper (system/global/repo, e.g.
-      // macOS `osxkeychain`) is also reset: an ambient helper is consulted BEFORE GIT_ASKPASS, so it would shadow the
-      // App token with another identity's credential, and on success git would `approve` (persist) the App token into
-      // that helper. In ambient mode the developer's own helpers are the credential, so they stay.
-      const appMode = this.deps.tokenSource !== undefined;
-      const gitConfigEnv = appMode ? sanitizedGitConfigEnv(process.env) : withoutInheritedGitConfigEnv(process.env);
-      const target = this.resolveTarget(rootPath, remote, gitConfigEnv, direction); // refused → throws
+      if (!approvedRepository) throw new Error('no approved repository was given for this remote operation; not attempted');
+      const approved = this.deps.allowlist.find(approvedRepository);
+      if (!approved) throw new Error(repositoryRefusalMessage('not-allowlisted'));
+      const url = canonicalGithubUrl(approved);
+      const gitConfigEnv = isolatedGitConfigEnv(process.env);
+      this.assertWorkspaceTarget(rootPath, remote, gitConfigEnv, direction, approved, url); // refused → throws
       let childEnv: NodeJS.ProcessEnv = { ...gitConfigEnv, GIT_TERMINAL_PROMPT: '0' };
       if (this.deps.tokenSource) {
-        const token = await this.deps.tokenSource(target.identity); // mint failure → throws
+        const token = await this.deps.tokenSource(approved); // mint failure → throws
         dir = mkdtempSync(join(tmpdir(), 'quoky-askpass-'));
         const askpassPath = join(dir, 'askpass.sh');
         writeFileSync(askpassPath, ASKPASS_SCRIPT, { mode: 0o700 });
         childEnv = { ...childEnv, GIT_ASKPASS: askpassPath, GIT_APP_TOKEN: token };
       }
-      runner = this.boundRunner(rootPath, remote, direction, gitConfigEnv, childEnv, target, mapPreMutationError);
+      runner = this.boundRunner(rootPath, remote, direction, gitConfigEnv, childEnv, approved, url, mapPreMutationError);
     } catch (err) {
       safeRemove(dir);
       throw mapPreMutationError(err); // PRE-MUTATION → op-specific typed Blocked
@@ -290,33 +312,54 @@ export class GitHubAppGitProvider implements GitProvider {
     }
   }
 
-  /** Resolve and validate the operation's target (see {@link withRemoteCredential}). Synchronous; throws when refused. */
-  private resolveTarget(
+  /**
+   * The workspace check (see {@link withRemoteCredential}). Synchronous; throws `TargetChangedError` when the workspace
+   * resolves to anything but the approved repository, and a plain Error when config would redirect the canonical URL.
+   */
+  private assertWorkspaceTarget(
     rootPath: string,
     remote: string,
     env: NodeJS.ProcessEnv,
     direction: RemoteDirection,
-  ): { identity: RepositoryIdentity; url: string } {
+    approved: RepositoryIdentity,
+    url: string,
+  ): void {
     if (!isSafeRemoteName(remote)) throw new Error('the remote name is not a plain remote name; not attempted');
-    const urls = [...toUrlList(this.readRemoteUrl(rootPath, remote, env, direction))]; // unreadable → throws
-    if (urls.length === 0) throw new Error('git remote url could not be read');
-    if (remote !== 'origin') urls.push(...toUrlList(this.readRemoteUrl(rootPath, 'origin', env, direction)));
-    for (const url of urls) assertHttpsGithubRemote(url); // ssh / non-github / embedded-credential → throws
-    // ADR-0109 D2: the URLs must name ONE allowlisted repository (a non-origin remote: origin's repository too).
-    const resolution = resolveRepositoryFromRemoteUrls(urls, this.deps.allowlist);
-    if (resolution.status !== 'resolved') throw new Error(repositoryRefusalMessage(resolution.reason));
-    const url = canonicalGithubUrl(resolution.identity);
-    // git rewrites an explicit URL argument too: no insteadOf / pushInsteadOf rule may match the canonical URL.
-    const rewrites = this.readUrlRewrites(rootPath, env);
-    if (rewrites.some((prefix) => prefix.trim().length === 0 || url.toLowerCase().startsWith(prefix.trim().toLowerCase()))) {
-      throw new Error('a git url rewrite (insteadOf/pushInsteadOf) matches the repository url; not attempted');
+    let resolved: RepositoryIdentity;
+    try {
+      const urls = [...toUrlList(this.readRemoteUrl(rootPath, remote, env, direction))]; // unreadable → throws
+      if (urls.length === 0) throw new Error('git remote url could not be read');
+      if (remote !== 'origin') urls.push(...toUrlList(this.readRemoteUrl(rootPath, 'origin', env, direction)));
+      for (const u of urls) assertHttpsGithubRemote(u); // ssh / non-github / embedded-credential → throws
+      const resolution = resolveRepositoryFromRemoteUrls(urls, this.deps.allowlist);
+      if (resolution.status !== 'resolved') throw new Error(repositoryRefusalMessage(resolution.reason));
+      resolved = resolution.identity;
+    } catch (err) {
+      throw new TargetChangedError(err instanceof Error ? err.message : 'the remote could not be resolved');
     }
-    return { identity: resolution.identity, url };
+    if (canonicalGithubUrl(resolved) !== url) {
+      throw new TargetChangedError('the workspace no longer resolves to the approved repository; not attempted');
+    }
+    // git treats a URL argument that names a configured remote as that remote, and rewrites an explicit URL with
+    // insteadOf/pushInsteadOf: no repository-visible config may touch the canonical URL.
+    const lowerUrl = url.toLowerCase();
+    for (const { key, value } of this.readRemoteConfig(rootPath, env)) {
+      const k = key.toLowerCase();
+      if (k.startsWith(`remote.${lowerUrl}.`)) {
+        throw new Error('a git remote is configured under the repository url; not attempted');
+      }
+      if (/^url\..*\.(insteadof|pushinsteadof)$/.test(k)) {
+        const prefix = value.trim().toLowerCase();
+        if (prefix.length === 0 || lowerUrl.startsWith(prefix)) {
+          throw new Error('a git url rewrite (insteadOf/pushInsteadOf) matches the repository url; not attempted');
+        }
+      }
+    }
   }
 
   /**
-   * A runner bound to the validated target: network subcommands run against the canonical URL (never the remote
-   * name), after a synchronous re-resolution that must yield the same repository; local subcommands pass through.
+   * A runner bound to the approved repository: network subcommands run against its canonical URL (never the remote
+   * name) after the synchronous final workspace check; local subcommands pass through. Same isolated env throughout.
    */
   private boundRunner(
     rootPath: string,
@@ -324,7 +367,8 @@ export class GitHubAppGitProvider implements GitProvider {
     direction: RemoteDirection,
     gitConfigEnv: NodeJS.ProcessEnv,
     childEnv: NodeJS.ProcessEnv,
-    target: { identity: RepositoryIdentity; url: string },
+    approved: RepositoryIdentity,
+    url: string,
     mapPreMutationError: (err: unknown) => Error,
   ): GitRunner {
     const spawn = this.spawn;
@@ -335,18 +379,14 @@ export class GitHubAppGitProvider implements GitProvider {
       if (at < 0 || args[at] !== remote) {
         throw mapPreMutationError(new Error('unexpected remote argument for a bound git operation; not attempted'));
       }
-      // Re-check right before the spawn (synchronous: nothing can interleave between this check and the spawn).
-      let again: { identity: RepositoryIdentity; url: string };
+      // Final check, synchronous and immediately before the spawn (see the residual on withRemoteCredential).
       try {
-        again = this.resolveTarget(rootPath, remote, gitConfigEnv, direction);
+        this.assertWorkspaceTarget(rootPath, remote, gitConfigEnv, direction, approved, url);
       } catch (err) {
         throw mapPreMutationError(err);
       }
-      if (again.url !== target.url) {
-        throw mapPreMutationError(new Error('the remote changed after it was validated; not attempted'));
-      }
       const bound = [...args];
-      bound[at] = target.url;
+      bound[at] = url;
       const result = spawn(bound, opts, childEnv);
       if (subcommand === 'push' && result.code === 0) {
         const branch = pushedBranchOf(args[at + 1]);
@@ -361,6 +401,18 @@ export class GitHubAppGitProvider implements GitProvider {
       return result;
     };
   }
+}
+
+/** The workspace no longer resolves to the approved repository (ADR-0109 `TARGET_CHANGED`). Carried as a typed reason. */
+class TargetChangedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TargetChangedError';
+  }
+}
+
+function targetChangedOption(err: unknown): { reason: 'TARGET_CHANGED' } | undefined {
+  return err instanceof TargetChangedError ? { reason: 'TARGET_CHANGED' } : undefined;
 }
 
 /** The git subcommands that reach a remote; only these are bound to the validated URL. */
@@ -423,19 +475,26 @@ function repositoryRefusalMessage(reason: 'not-allowlisted' | 'ambiguous' | 'uns
 }
 
 /**
- * The ONE sanitized git-config environment every credential-free remote read and every credentialed child runs with
- * (ADR-0061): inherited env-injected config is dropped and every credential helper is reset (an empty value clears
- * the helper list). Exported so the workspace repository resolver (ADR-0109 D2) reads `origin` exactly as the push
- * would see it.
+ * The ONE isolated git-config environment every remote read and every git child of a remote operation runs with
+ * (ADR-0061 + ADR-0109 review round 3): no system config (`GIT_CONFIG_NOSYSTEM=1`), an empty global config
+ * (`GIT_CONFIG_GLOBAL=/dev/null`, which also replaces the XDG file), inherited env-injected config
+ * (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT/KEY/VALUE`) dropped, and every credential helper reset (an empty value
+ * clears the helper list). Only repository-local (and worktree / included) config remains, which the workspace check
+ * inspects. Exported so the workspace repository resolver (ADR-0109 D2) reads remotes exactly as the push sees them.
  */
-export function sanitizedGitConfigEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function isolatedGitConfigEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...withoutInheritedGitConfigEnv(env),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_COUNT: '1',
     GIT_CONFIG_KEY_0: 'credential.helper',
     GIT_CONFIG_VALUE_0: '',
   };
 }
+
+/** @deprecated alias of {@link isolatedGitConfigEnv} (the resolver and older callers). */
+export const sanitizedGitConfigEnv = isolatedGitConfigEnv;
 
 /** Sanitized pre-mutation message. The pre-mutation errors (remote preflight / AppAuthError) never carry a token. */
 function preMutationMessage(op: string, err: unknown): string {
@@ -454,6 +513,8 @@ function withoutInheritedGitConfigEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   const out: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
     if (key === 'GIT_CONFIG_PARAMETERS' || key === 'GIT_CONFIG_COUNT' || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) continue;
+    // ADR-0109 review round 3: nor may an inherited config file or repository redirect the reads/the child.
+    if (key === 'GIT_CONFIG' || key === 'GIT_CONFIG_SYSTEM' || key === 'GIT_DIR' || key === 'GIT_WORK_TREE' || key === 'GIT_COMMON_DIR') continue;
     out[key] = value;
   }
   return out;
@@ -509,25 +570,24 @@ function defaultCredentialedSpawn(
 }
 
 /**
- * Default URL-rewrite read: the values of every `url.<base>.insteadOf` / `pushInsteadOf` rule visible under `env`
- * (credential-free local `git config --get-regexp`, no network). Exit 1 = no rule. Anything else throws.
+ * Default config read: every `remote.*` / `url.*` entry visible under `env` (credential-free local
+ * `git config --null --get-regexp`, includes followed, no network). Exit 1 = no entry. Anything else throws.
  */
-export function defaultReadUrlRewrites(rootPath: string, env: NodeJS.ProcessEnv): readonly string[] {
-  const res = spawnSync('git', ['config', '--get-regexp', '^url\\..*\\.(insteadof|pushinsteadof)$'], {
+export function defaultReadRemoteConfig(rootPath: string, env: NodeJS.ProcessEnv): ReadonlyArray<{ key: string; value: string }> {
+  const res = spawnSync('git', ['config', '--null', '--get-regexp', '^(remote|url)\\.'], {
     cwd: rootPath,
     timeout: REMOTE_URL_READ_TIMEOUT_MS,
     encoding: 'utf8',
     env,
   });
   if (res.status === 1 && !res.error) return [];
-  if (res.status !== 0 || typeof res.stdout !== 'string') throw new Error('git url rewrite rules could not be read');
+  if (res.status !== 0 || typeof res.stdout !== 'string') throw new Error('git remote config could not be read');
   return res.stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const space = line.indexOf(' ');
-      return space < 0 ? '' : line.slice(space + 1);
+    .split('\0')
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const nl = entry.indexOf('\n');
+      return nl < 0 ? { key: entry, value: '' } : { key: entry.slice(0, nl), value: entry.slice(nl + 1) };
     });
 }
 

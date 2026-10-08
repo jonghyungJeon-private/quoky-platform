@@ -113,16 +113,29 @@ no token was issued, plus one operator hint line: not allowlisted; fetch and pus
 a `pushurl` or `pushInsteadOf` to another repository); or a remote that is SSH, another host, embeds credentials, is
 unreadable or is rewritten (`insteadOf`) to such a URL. Two projects on the same repository are fine.
 
-**Execution is bound to the validated repository, in every auth mode.** The push approval records the resolved
-repository (anchor and approval reason); the PR approval records its own. Each execution re-resolves and refuses with
-`TARGET_CHANGED` when the repository differs from the approved one, even if both are allowlisted. Every remote git
-command (`push`, `ls-remote`, the main-sync `fetch`) is run against the validated canonical URL
-`https://github.com/<owner>/<repo>.git`, never the remote name, after a synchronous re-check right before the git
-process starts (a remote changed while the App token is minted is refused) and only when no
-`insteadOf`/`pushInsteadOf` rule matches that URL. The local tracking ref `refs/remotes/<remote>/<branch>` is then
-moved locally when it exists. In App mode the git child also resets every credential helper and authenticates with the
-one-shot askpass token; in dev PAT mode (and with no hosting auth) the developer's own credential helpers are used, but
-the inherited env-injected git config is dropped and the same target binding applies.
+**Execution is bound to the approved repository, in every auth mode.** The push approval records the resolved
+repository (anchor and approval reason); the PR approval records its own. The runtime passes that **approved**
+repository to the git layer, which builds the canonical URL `https://github.com/<owner>/<repo>.git` from it alone
+(never from a fresh lookup) and runs every remote git command (`push`, `ls-remote`, the main-sync `fetch`) against that
+URL, never the remote name. Before the token and again synchronously right before the git process starts, it
+re-resolves the workspace and refuses with `TARGET_CHANGED` when the workspace no longer resolves to the approved
+repository (even another allowlisted one), and refuses when repository config would redirect the URL: a
+`remote.<that URL>.*` section (git treats a URL argument that names a configured remote as that remote) or an
+`insteadOf`/`pushInsteadOf` rule matching it. The local tracking ref `refs/remotes/<remote>/<branch>` is then moved
+locally when it exists.
+
+**Isolated git config for every remote git command.** The reads and the git child run with `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null` (no system, global or XDG config), inherited `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_*` /
+`GIT_CONFIG` / `GIT_DIR` dropped, and `credential.helper` reset; only the repository's own (and worktree / included)
+config remains, and that is what the check above inspects. **Credentials therefore come only from Quoky's one-shot
+askpass:** the App installation token in App mode, and **the configured `QUOKY_GITHUB_TOKEN` (dev PAT) in PAT mode** —
+your keychain or other credential helper is no longer consulted. With neither App nor PAT configured, git gets no
+credential and an authenticated push fails ("could not complete"); configure the App (production) or the dev PAT.
+
+**Residual (owner-only threat model).** The final check and the git process start are separate steps. A process
+running as the owner that edits `.git/config` (or a file it includes) in that gap is out of scope — the same trust
+boundary as `.env.local` and the backup/operations decisions (a same-user process already has the owner's
+authority). Earlier wording that this check left no time-of-check/time-of-use gap was wrong.
 
 Required App permissions:
 

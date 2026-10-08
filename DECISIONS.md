@@ -17510,8 +17510,8 @@ Implements D1–D5 as ratified; no ADR text is changed. No migration, no new por
   1. *Actual push target, every auth mode (P1).* `resolveIdentity(rootPath, remote?)`: the push approval and execution
      pass the remote the push will use (an upstream's remote), whose fetch and push URLs must name the same allowlisted
      repository as `origin`. With an allowlist configured the remote-bound git decorator now wraps git in every auth
-     mode; outside App mode it runs in ambient-credential mode (no token, the developer's credential helpers kept) but
-     still drops inherited `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_*` for both the reads and the git child.
+     mode; outside App mode it runs without the App token (round 3 below: the dev PAT through the same askpass) and
+     drops inherited `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_*` for both the reads and the git child.
   2. *Execution bound to the validated target (P1).* Every remote git command (`push`, `ls-remote`, main-sync `fetch`)
      runs against the validated canonical `https://github.com/<owner>/<repo>.git`: the bound runner replaces the remote
      positional (any other network argv is refused) after re-running the whole resolution synchronously right before
@@ -17532,3 +17532,31 @@ Implements D1–D5 as ratified; no ADR text is changed. No migration, no new por
      approval (against the push binding), PR creation, status, merge, main sync and cleanup refuse with the fixed
      `composeRepositoryTargetChanged` reply when the freshly resolved repository differs — even when both are
      allowlisted — and push execution also when the approval bound none (an approval made before the resolver).
+- **Review fixes, round 3 (Codex re-review of eec7c33: P2/P3 closed, two P1 remained).**
+  1. *The approved identity reaches git (P1).* `GitProvider.pushApprovedCommit`, `getRemoteRefCommit` and
+     `syncMainFastForward` take an optional trailing `approvedRepository` (an additive port parameter, recorded here;
+     providers without the notion ignore it), and `GitManager.pushApprovedCommit` / `syncMain` and the runtime's `git`
+     dep carry an optional `repository`. With the per-workspace resolver the runtime passes the approval's
+     `pushRepositoryIdentity` (push) or the anchored `repositoryIdentity` (main sync); `PersonalGitGuard` forwards it.
+     The remote-bound decorator refuses a remote operation without it, builds the canonical URL from it only (it must be
+     allowlisted), mints for it only, and in the pre-mutation and final synchronous pre-spawn checks re-resolves the
+     workspace and refuses with `GitPushBlockedError` / `GitMainSyncBlockedError` carrying the typed reason
+     `TARGET_CHANGED` (the runtime replies `composeRepositoryTargetChanged`; `GitManager.syncMain` keeps the reason
+     through its ls-remote mapping). The Codex repro (approval for acme/widgets, retarget to acme/gadgets after the
+     lookup) is a pause-gate test: nothing is spawned.
+  2. *Config cannot redirect the canonical URL (P1).* Every read and git child of a remote operation runs with isolated
+     config: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, inherited `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_*`,
+     `GIT_CONFIG`, `GIT_CONFIG_SYSTEM`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` dropped, `credential.helper` reset,
+     askpass for the credential. Repository-visible config is read with `git config --null --get-regexp '^(remote|url)\.'`
+     under that env (all scopes left — local, worktree and included files; `--local` alone would skip includes), and the
+     check refuses any `remote.<canonical URL>.*` section and any `insteadOf` / `pushInsteadOf` rule matching the URL.
+     Tests: the Codex `-c remote.<url>.url=<unlisted>` repro (inherited `GIT_CONFIG_PARAMETERS`) and the same mapping in a
+     global file resolve to the canonical URL under the child env (real `git ls-remote --get-url`); the mapping in the
+     local config, before or during the mint, is refused before any spawn.
+  3. *Dev PAT credential.* With global/system config isolated the owner's credential helper is gone, so dev PAT mode
+     supplies the configured `QUOKY_GITHUB_TOKEN` through the same one-shot askpass as App mode (tested with a real push
+     to a local bare repository). With neither App nor PAT configured git gets no credential.
+  4. *Correction: TOCTOU residual.* The earlier wording that the synchronous pre-spawn re-check left nothing able to
+     interleave was wrong. The final check and the spawn are separate steps; a same-user process editing `.git/config`
+     (or an included file) between them is out of scope under the owner-only threat model, as for the operations-UI
+     token file and the backup decisions (a same-user process already has the owner's authority).

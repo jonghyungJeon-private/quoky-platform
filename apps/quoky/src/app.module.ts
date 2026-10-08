@@ -261,17 +261,19 @@ if (hostingAuthMode === 'github-app' && repositoryAllowlist.size > 0 && config.g
     new GitHubRepositoryHostingProvider({ auth: { kind: 'pat', token: devPatToken } }),
   );
   connectorProviders.push(new GitHubConnectorProvider({ auth: { kind: 'pat', token: devPatToken } }));
-  // Dev PAT is a REST-only convenience (ADR-0061 §11.3): local git push uses the developer's own git credential.
+  // Dev PAT (ADR-0061 §11.3): REST here; git push gets the same PAT through the askpass decorator below (ADR-0109).
 }
-// ADR-0109 review P1: whenever an allowlist is configured, every remote git op — in EVERY auth mode — is bound to the
-// allowlisted repository its remote resolves to. Outside App mode the same decorator runs in ambient-credential mode
-// (no token, the developer's own credential helpers), still dropping inherited env-injected git config, checking the
-// actual push remote (upstream included) after insteadOf/pushInsteadOf expansion, and pushing to the validated
-// canonical URL, never to the remote name. With no allowlist the plain LocalGitProvider stays, exactly as before.
+// ADR-0109 review (rounds 2-3): whenever an allowlist is configured, every remote git op — in EVERY auth mode — runs
+// through the same decorator: bound to the APPROVED repository passed by the runtime, against its canonical URL, with
+// isolated git config (no system/global config, no inherited GIT_CONFIG_*, credential helpers reset). Because the
+// owner's credential helpers are isolated away, dev PAT mode supplies its credential like App mode does: the configured
+// PAT through the one-shot askpass. With no hosting credential the git child gets none. With no allowlist the plain
+// LocalGitProvider stays, exactly as before.
 if (!(gitProvider instanceof GitHubAppGitProvider) && repositoryAllowlist.size > 0) {
   gitProvider = new GitHubAppGitProvider({
     makeLocalGit: (runner) => new LocalGitProvider(runner),
     allowlist: repositoryAllowlist,
+    ...(hostingAuthMode === 'pat' ? { tokenSource: async () => devPatToken } : {}),
   });
 }
 // ADR-0094: Personal-edition git safety, OUTERMOST so a refusal (remote off, commit on main/master) happens

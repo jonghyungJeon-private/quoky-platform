@@ -1,4 +1,4 @@
-import type { GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryInfo } from '../domain';
+import type { GitBranchCleanupResult, GitBranchResult, GitCommitResult, GitDiff, GitMainSyncResult, GitPushResult, GitStatus, RepositoryIdentity, RepositoryInfo } from '../domain';
 
 /**
  * PORT: read-only git **repository** inspection (CAP-002, ADR-0023).
@@ -75,15 +75,30 @@ export interface GitProvider {
    * push`, no arbitrary refspec, no user-provided remote/branch. Validates remote/branch with conservative
    * git ref rules BEFORE any git call (unsafe target never reaches argv). Approval gating is done by
    * `GitManager.pushApprovedCommit`; this port takes no ApprovalRef.
+   *
+   * `approvedRepository` (ADR-0109, optional): the repository identity the push approval bound. A provider that
+   * resolves remotes to repositories must push to exactly that repository and refuse (Blocked, `TARGET_CHANGED`)
+   * when the workspace now resolves elsewhere; a provider without that notion ignores it.
    */
-  pushApprovedCommit(rootPath: string, remote: string, branch: string, commitHash: string): Promise<GitPushResult>;
+  pushApprovedCommit(
+    rootPath: string,
+    remote: string,
+    branch: string,
+    commitHash: string,
+    approvedRepository?: RepositoryIdentity,
+  ): Promise<GitPushResult>;
 
   /**
    * READ-ONLY (CAP-002, ADR-0058 — Sprint 3h): observe the remote branch tip WITHOUT updating any local ref or the
    * working tree (`git ls-remote`-style). Single bounded argv call, timeout, masked stderr, NO remote URL exposed.
    * Throws on failure (the Manager maps it to a pre-mutation *Blocked*). Validates remote/branch defensively first.
    */
-  getRemoteRefCommit(rootPath: string, remote: string, branch: string): Promise<{ commitHash: string }>;
+  getRemoteRefCommit(
+    rootPath: string,
+    remote: string,
+    branch: string,
+    approvedRepository?: RepositoryIdentity,
+  ): Promise<{ commitHash: string }>;
 
   /**
    * READ-ONLY (CAP-002, ADR-0058 — Sprint 3h): the LOCAL branch tip (`git rev-parse refs/heads/<branch>`), or `null`
@@ -109,6 +124,7 @@ export interface GitProvider {
     branch: string,
     expectedRemoteCommit: string,
     expectedPreviousCommit: string,
+    approvedRepository?: RepositoryIdentity,
   ): Promise<GitMainSyncResult>;
 
   /** READ-ONLY (CAP-002, ADR-0059 — Sprint 3i): is `ancestor` an ancestor of `descendant`? (`git merge-base

@@ -914,11 +914,26 @@ export interface ConversationRuntimeDeps {
     /** Reused for the approved git push (Sprint 3a, ADR-0048) — the same already-registered GitManager. The
      *  ONLY remote mutation; Ref-gated (APPROVED), pushes exactly the approved commit to the approved
      *  upstream (`git push <remote> HEAD:<branch>`), never force/tags/all/-u, never a PR/deploy. */
-    pushApprovedCommit(input: { rootPath: string; remote: string; branch: string; commitHash: string; approvalRef: ApprovalRef }): Promise<GitPushResult>;
+    pushApprovedCommit(input: {
+      rootPath: string;
+      remote: string;
+      branch: string;
+      commitHash: string;
+      approvalRef: ApprovalRef;
+      /** ADR-0109: the repository the push approval bound (passed only with the per-workspace resolver). */
+      repository?: RepositoryIdentity;
+    }): Promise<GitPushResult>;
     /** Post-merge LOCAL main synchronization (Sprint 3h, ADR-0058) — the same already-registered GitManager.
      *  Fast-forward-only; NO ApprovalRef (local, non-destructive, gated by PR_MERGED + explicit command +
      *  preflight). The runtime calls this ONLY — never the provider primitives, never shells to git. */
-    syncMain(input: { rootPath: string; remote: string; branch: string; expectedRemoteCommit: string }): Promise<GitMainSyncResult>;
+    syncMain(input: {
+      rootPath: string;
+      remote: string;
+      branch: string;
+      expectedRemoteCommit: string;
+      /** ADR-0109: the anchored repository (passed only with the per-workspace resolver). */
+      repository?: RepositoryIdentity;
+    }): Promise<GitMainSyncResult>;
     /** Post-merge LOCAL branch cleanup (Sprint 3i, ADR-0059) — the same already-registered GitManager. Safe CAS
      *  delete of the anchored merged feature branch; NO ApprovalRef (local, recoverable, gated by MAIN_SYNCED +
      *  explicit command + preflight). The runtime calls this ONLY — never the provider, never shells to git. */
@@ -5663,6 +5678,11 @@ export class ConversationRuntime {
         branch: anchor.pushBranch,
         commitHash: anchor.pushCommitHash,
         approvalRef: gitApprovalRef,
+        // ADR-0109 review P1: the APPROVED identity (never the fresh lookup) travels to the git provider, which
+        // pushes to that repository only and refuses TARGET_CHANGED if the workspace now resolves elsewhere.
+        ...(pushExecutionGate.identity && anchor.pushRepositoryIdentity
+          ? { repository: { ...anchor.pushRepositoryIdentity } }
+          : {}),
       });
     } catch (err) {
       // (ADR-0061, Sprint 4b) A GitPushBlockedError is an App-auth PRE-mutation failure (token mint / one-shot
@@ -5671,6 +5691,10 @@ export class ConversationRuntime {
       // reply (never claims "not pushed"). Both keep PUSH_APPROVED and never set GIT_PUSHED (CA #2/#11).
       if (err instanceof GitPushBlockedError) {
         this.logPushExecutionFailed(session, anchor, 'git push blocked pre-mutation (App-auth credential/remote preflight)', err);
+        // ADR-0109: the provider's final pre-spawn check found the workspace resolving to another repository.
+        if (err.reason === 'TARGET_CHANGED') {
+          return this.failComposed(message, session, this.deps.composer.composeRepositoryTargetChanged(message.context));
+        }
         return this.failComposed(message, session, this.deps.composer.composePushExecutionUnavailable(message.context));
       }
       this.logPushExecutionFailed(session, anchor, 'git push failed', err);
@@ -6458,12 +6482,17 @@ export class ConversationRuntime {
         remote: MAIN_SYNC_REMOTE,
         branch: PR_BASE_BRANCH_POLICY,
         expectedRemoteCommit: anchor.mergeCommitHash,
+        // ADR-0109 review P1: the anchored (approved) repository goes to the git provider's ls-remote and fetch.
+        ...(this.deps.repositoryHosting?.resolveIdentity ? { repository: { ...identity } } : {}),
       });
     } catch (err) {
       // Phase-aware: only a KNOWN pre-ref-update BlockedError may say "not synced"; an UnverifiedError AND any
       // unknown throw are UNVERIFIED (the local ref may have moved). Keep PR_MERGED on every failure path.
       if (err instanceof GitMainSyncBlockedError) {
         this.logPrApprovalFailed(session, anchor, 'main sync blocked before ref update');
+        if (err.reason === 'TARGET_CHANGED') {
+          return this.failComposed(message, session, this.deps.composer.composeRepositoryTargetChanged(message.context));
+        }
         return this.failComposed(message, session, this.deps.composer.composeMainSyncBlocked(message.context));
       }
       void (err instanceof GitMainSyncUnverifiedError);

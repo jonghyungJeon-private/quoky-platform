@@ -8,6 +8,7 @@ import type {
   GitProvider,
   GitPushResult,
   GitStatus,
+  RepositoryIdentity,
   RepositoryInfo,
 } from '@quoky/core';
 
@@ -126,15 +127,26 @@ export class PersonalGitGuard implements GitProvider {
     remote: string,
     branch: string,
     commitHash: string,
+    approvedRepository?: RepositoryIdentity,
   ): Promise<GitPushResult> {
     if (!this.options.remoteEnabled) throw new GitPushBlockedError('git remote operations are disabled');
     if (isProtectedBranch(branch)) throw new GitPushBlockedError('git push to a protected branch is not allowed');
-    return this.inner.pushApprovedCommit(rootPath, remote, branch, commitHash);
+    // ADR-0109: the approved repository is forwarded unchanged (only when given, so the inner call is otherwise identical).
+    return approvedRepository
+      ? this.inner.pushApprovedCommit(rootPath, remote, branch, commitHash, approvedRepository)
+      : this.inner.pushApprovedCommit(rootPath, remote, branch, commitHash);
   }
 
-  async getRemoteRefCommit(rootPath: string, remote: string, branch: string): Promise<{ commitHash: string }> {
+  async getRemoteRefCommit(
+    rootPath: string,
+    remote: string,
+    branch: string,
+    approvedRepository?: RepositoryIdentity,
+  ): Promise<{ commitHash: string }> {
     if (!this.options.remoteEnabled) throw new GitMainSyncBlockedError('git remote operations are disabled');
-    return this.inner.getRemoteRefCommit(rootPath, remote, branch);
+    return approvedRepository
+      ? this.inner.getRemoteRefCommit(rootPath, remote, branch, approvedRepository)
+      : this.inner.getRemoteRefCommit(rootPath, remote, branch);
   }
 
   async syncMainFastForward(
@@ -143,10 +155,13 @@ export class PersonalGitGuard implements GitProvider {
     branch: string,
     expectedRemoteCommit: string,
     expectedPreviousCommit: string,
+    approvedRepository?: RepositoryIdentity,
   ): Promise<GitMainSyncResult> {
     if (!this.options.remoteEnabled) throw new GitMainSyncBlockedError('git remote operations are disabled');
     if (this.options.mergeEnabled !== true) throw new GitMainSyncBlockedError('git merge chain operations are disabled');
-    return this.inner.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit);
+    return approvedRepository
+      ? this.inner.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit, approvedRepository)
+      : this.inner.syncMainFastForward(rootPath, remote, branch, expectedRemoteCommit, expectedPreviousCommit);
   }
 
   async deleteMergedLocalBranch(

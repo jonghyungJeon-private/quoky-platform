@@ -247,6 +247,24 @@ describe('GitManager.syncMain (CAP-002, ADR-0058 — post-merge local main fast-
     const bad = syncProvider({ async syncMainFastForward() { return syncResult({ syncedCommitHash: 'feedfeedfeedfeedfeedfeedfeedfeedfeedfeed' }); } });
     await expect(runSync(bad)).rejects.toBeInstanceOf(GitMainSyncUnverifiedError);
   });
+  it('ADR-0109: the approved repository reaches ls-remote and the fast-forward; TARGET_CHANGED survives the ls-remote mapping', async () => {
+    const repository = { provider: 'github' as const, owner: 'acme', repo: 'widgets' };
+    const remoteRef = vi.fn(async () => ({ commitHash: EXPECTED }));
+    const ff = vi.fn(async () => syncResult());
+    await runSync(syncProvider({ getRemoteRefCommit: remoteRef, syncMainFastForward: ff }), { repository });
+    expect(remoteRef).toHaveBeenCalledWith('/repo', 'origin', 'main', repository);
+    expect(ff).toHaveBeenCalledWith('/repo', 'origin', 'main', EXPECTED, PREV, repository);
+    const changed = runSync(
+      syncProvider({
+        async getRemoteRefCommit() {
+          throw new GitMainSyncBlockedError('retargeted', { reason: 'TARGET_CHANGED' });
+        },
+        syncMainFastForward: ff,
+      }),
+      { repository },
+    );
+    await expect(changed).rejects.toMatchObject({ reason: 'TARGET_CHANGED' });
+  });
 });
 
 describe('GitManager.deleteMergedLocalBranch (CAP-002, ADR-0059 — post-merge local branch cleanup)', () => {
@@ -491,5 +509,23 @@ describe('classifyGitFailure (W2-L02) — secret-free reason classes', () => {
   });
   it('non-Error input is other', () => {
     expect(classifyGitFailure(undefined)).toBe('other');
+  });
+});
+
+describe('GitManager.pushApprovedCommit — approved repository (ADR-0109)', () => {
+  it('forwards the approved repository to the provider only when given (otherwise the 4-argument call is unchanged)', async () => {
+    const push = vi.fn(async (_r: string, remote: string, branch: string, commitHash: string) => ({
+      remote,
+      branch,
+      upstreamRef: `${remote}/${branch}`,
+      commitHash,
+    }));
+    const manager = new GitManager(fakeProvider({ pushApprovedCommit: push } as Partial<GitProvider>));
+    const base = { rootPath: '/repo', remote: 'origin', branch: 'feature/a', commitHash: 'abc1234', approvalRef: approvedRef };
+    await manager.pushApprovedCommit(base);
+    expect(push).toHaveBeenLastCalledWith('/repo', 'origin', 'feature/a', 'abc1234');
+    const repository = { provider: 'github' as const, owner: 'acme', repo: 'widgets' };
+    await manager.pushApprovedCommit({ ...base, repository });
+    expect(push).toHaveBeenLastCalledWith('/repo', 'origin', 'feature/a', 'abc1234', repository);
   });
 });

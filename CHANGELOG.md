@@ -43,6 +43,13 @@ ADR-0109 (Ratified 2026-10-06, all recommended defaults). No migration, no new p
   verified (repository installation id and account owner, App-JWT lookups) before any mint; Core's refusal copy is
   provider-neutral with an app-supplied operator hint; the push approval binds the resolved repository
   (`pushRepositoryIdentity`) and every later step refuses with `TARGET_CHANGED` when it resolves to another repository.
+- Review round 3: the approved repository is passed explicitly into the git provider's push, ls-remote and fetch
+  (optional `approvedRepository` port parameter); the git layer builds the canonical URL from it alone and refuses with a
+  typed `TARGET_CHANGED` when the workspace re-resolves elsewhere at the final pre-spawn check. Every remote git command
+  runs with isolated config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, no inherited config, helpers reset)
+  and refuses a repository `remote.<canonical URL>.*` section or matching `insteadOf`/`pushInsteadOf`. Dev PAT mode now
+  supplies the PAT through the one-shot askpass (the owner's credential helper is isolated away). Documented residual:
+  a same-user `.git/config` edit between the final check and the spawn is out of scope (owner-only threat model).
 
 ## Unreleased — live QA session 3 defects: calendar context, Slack DM filtering, recall floor, read-only ops-UI lookups, labels (2026-10-08) — PR #148
 

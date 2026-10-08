@@ -272,3 +272,35 @@ describe('PersonalGitGuard — protected push target (ADR-0099 D5)', () => {
     expect(invoked).toEqual(['pushApprovedCommit']);
   });
 });
+
+describe('PersonalGitGuard — approved repository forwarding (ADR-0109)', () => {
+  it('forwards the approved repository to the inner push / ls-remote / main sync unchanged, and nothing when absent', async () => {
+    const calls: unknown[][] = [];
+    const inner = {
+      pushApprovedCommit: vi.fn(async (...args: unknown[]) => {
+        calls.push(['push', ...args]);
+        return { remote: 'origin', branch: 'feature/a', upstreamRef: 'origin/feature/a', commitHash: SHA };
+      }),
+      getRemoteRefCommit: vi.fn(async (...args: unknown[]) => {
+        calls.push(['ls-remote', ...args]);
+        return { commitHash: SHA };
+      }),
+      syncMainFastForward: vi.fn(async (...args: unknown[]) => {
+        calls.push(['sync', ...args]);
+        return { branch: 'main', syncMode: 'ref-only', workingTreeUpdated: false, syncedCommitHash: SHA, previousMainCommit: SHA, alreadyUpToDate: true };
+      }),
+    } as unknown as GitProvider;
+    const guard = new PersonalGitGuard(inner, { remoteEnabled: true, mergeEnabled: true });
+    const repo = { provider: 'github' as const, owner: 'acme', repo: 'widgets' };
+    await guard.pushApprovedCommit('/r', 'origin', 'feature/a', SHA, repo);
+    await guard.getRemoteRefCommit('/r', 'origin', 'main', repo);
+    await guard.syncMainFastForward('/r', 'origin', 'main', SHA, SHA, repo);
+    await guard.pushApprovedCommit('/r', 'origin', 'feature/a', SHA);
+    expect(calls).toEqual([
+      ['push', '/r', 'origin', 'feature/a', SHA, repo],
+      ['ls-remote', '/r', 'origin', 'main', repo],
+      ['sync', '/r', 'origin', 'main', SHA, SHA, repo],
+      ['push', '/r', 'origin', 'feature/a', SHA],
+    ]);
+  });
+});
