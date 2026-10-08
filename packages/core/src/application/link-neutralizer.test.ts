@@ -54,6 +54,18 @@ describe('neutralizeLinks (GML-1 re-review item 1)', () => {
     }
   });
 
+  it('sign-off item 2: a Korean particle glued to the domain does not hide it, in either mode', () => {
+    for (const [text, expected] of [
+      ['evil.com에서 확인', `${LINK_PLACEHOLDER}에서 확인`],
+      ['naver.com은 안전해요', `${LINK_PLACEHOLDER}은 안전해요`],
+      ['evil.co.kr로 접속', `${LINK_PLACEHOLDER}로 접속`],
+      ['site.io를 여세요', `${LINK_PLACEHOLDER}를 여세요`],
+    ] as const) {
+      expect(neutralizeLinks(text), text).toBe(expected);
+      expect(neutralizeLinks(text, 'body'), text).toBe(expected);
+    }
+  });
+
   it('keeps ordinary text: versions, abbreviations, e-mail addresses, file names and sentence ends', () => {
     for (const text of [
       'v1.2.3 이후 버전',

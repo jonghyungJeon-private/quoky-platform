@@ -38,12 +38,15 @@ const SCHEME_OR_WWW = /(?:[a-z][a-z0-9+.-]{0,15}:\/\/|www\.)[^\s<>"'`()[\]]*/giu
 const IDN_TLDS = '한국|中国|中國|日本|香港|台灣|рф|рус|онлайн|сайт';
 
 /**
- * A bare domain: up to 10 atomically matched labels, a TLD, then an optional port and path. Group 2 is the TLD,
- * group 3 the port + path part. A match starts only where a label starts (not after a letter, digit or `-`), so a long
- * letter run is scanned once, not once per position; a label may be as long as a whole host name (253).
+ * A bare domain: up to 10 atomically matched labels, a TLD, then an optional port and path. Group 2 is the TLD, group
+ * 3 the port + path part. After an ASCII TLD only an ASCII letter, digit or `-` continues it, so a Korean particle
+ * glued to the domain (`evil.com에서`, `naver.com은`) does not hide it (sign-off item 2); only the IDN and punycode
+ * branch treats any following letter as part of the TLD. A match starts only where a label starts (not after a
+ * letter, digit or `-`), so a long letter run is scanned once, not once per position; a label may be as long as a
+ * whole host name (253).
  */
 const BARE_DOMAIN = new RegExp(
-  `(?<![\\p{L}\\p{N}-])(?:(?=([\\p{L}\\p{N}-]{1,253}))\\1\\.){1,10}([a-z]{2,24}|xn--[a-z0-9-]{1,59}|${IDN_TLDS})(?![\\p{L}\\p{N}-])((?::\\d{1,5})?(?:[/?#][^\\s<>"'\`()[\\]]*)?)`,
+  `(?<![\\p{L}\\p{N}-])(?:(?=([\\p{L}\\p{N}-]{1,253}))\\1\\.){1,10}([a-z]{2,24}(?![a-z0-9-])|(?:xn--[a-z0-9-]{1,59}|${IDN_TLDS})(?![\\p{L}\\p{N}-]))((?::\\d{1,5})?(?:[/?#][^\\s<>"'\`()[\\]]*)?)`,
   'giu',
 );
 
