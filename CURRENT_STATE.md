@@ -5,6 +5,17 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### LRN-5 learning-example egress — implemented on branch, not merged (2026-10-08)
+
+ADR-0116: with `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` (default `false`) and `QUOKY_LEARNING_EXAMPLES_ENABLED=true`,
+curated examples (≤2 per GENERAL_CHAT turn) also reach a `REMOTE` chat provider that is the owner's explicit selection
+(session `모델 변경`, operations-UI default, explicitly set `QUOKY_CHAT_PROVIDER`), never the derived default or the
+selection-time Claude fallback. The router reports the selection source with the resolved provider; the rule reads only
+locality and source. No migration, no port, no deps change (`ConversationRuntimeDeps` 35). Offline validation only; on
+the owner's service (`QUOKY_OLLAMA_ENABLED=false`, selector unset) `QUOKY_CHAT_PROVIDER=claude` or a `/providers`
+default is needed for examples to reach Claude. Strict gates (flag change, live round trip) not run; Chief Architect
+review pending.
+
 ### CODE-8 multi-repository allowlist — implemented on branch, not merged (2026-10-08)
 
 ADR-0109: `QUOKY_GITHUB_REPOS` (≤10 `owner/repo`, validated at startup; the legacy owner/repo pair is an allowlist of

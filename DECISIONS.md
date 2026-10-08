@@ -17810,6 +17810,70 @@ never injected; no provider id appears in the policy source.
 The `.env.local` flag change on the owner host; the live round trip (👍 → `예시로 저장`, then the same question in a new
 session). Independent Chief Architect review before LRN-5 merges.
 
+### ADR-0116 implementation note — LRN-5 (2026-10-08)
+
+Implements D1–D5 as ratified; no ADR text is changed. ARCHITECTURE.md §5 rule 14 received the D5 sentence verbatim in
+its own commit first (D5's precondition for wiring the flag). No migration, no new port or DI token, no deps change
+(`ConversationRuntimeDeps` stays 35); no stored value changes.
+
+- **How the selection source reaches Core (D3).** The composition root's policy already knows the source of the
+  effective chat choice (`session` → `persisted` → `env` → `default`, `ProviderSelectionService.chatFromLayers`). For
+  the chat tier, `preferenceFor` now adds one optional, opaque field to its existing answer:
+  `ProviderPreference.ownerSelectedKey` = the key of the effective choice's provider when its source is `session`,
+  `persisted` or `env` (`QUOKY_CHAT_PROVIDER` set), and absent for `default` (including `QUOKY_OLLAMA_ENABLED=false`
+  read as `claude`), for pinned capabilities and for the fail-safe answer. `CapabilityRouter` gains
+  `resolve(capability, context)`, which returns `{ provider, source }` from the **same** policy answer it ranks with:
+  `OWNER_SELECTED` only when the provider it actually resolved carries exactly that key, otherwise
+  `NOT_OWNER_SELECTED`. `select` is now `resolve(...).provider` (same result, one policy read). `ProviderSelector`
+  gains `resolve` as an optional member, so every existing selector and fake compiles unchanged and a selector without
+  it reports no source.
+- **Why this shape.** (a) The fallback case is decided by the router, not the policy: the Claude fallback entry is
+  listed in `eligible` but is never `ownerSelectedKey`, so "Claude reached only as the fallback" is
+  `NOT_OWNER_SELECTED` even when the owner's unready choice was another Claude model (`claude:opus` → `claude-cli`).
+  (b) Taking provider and source from one answer avoids a second policy read that a concurrent selection change could
+  make disagree with the provider. (c) The comparison is opaque key against opaque key, as `eligible.includes` already
+  is; the router's source scan pins it as the only key comparison and still forbids any literal.
+- **The flag (D1).** `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED` (exact `true`/`false`, default `false`, typed error
+  `LEARNING_EXAMPLES_REMOTE_ENABLED_INVALID`) reaches Core as data, not as a runtime dependency: the composition root
+  passes it to `CuratedExampleSelector` as a `CuratedExampleEgressPolicy` (`apps/quoky/src/context-builder-provider.ts`),
+  and the selector stamps each selected entry with a **use-time** egress class: `LOCAL_ONLY` (off, exactly as before) or
+  `LOCAL_OR_OWNER_SELECTED_REMOTE` (on). The stored `learning_items.egress` stays `LOCAL_ONLY` (the SQLite repository
+  still refuses anything else); the class exists only on the in-memory bundle entry and is never rendered. The flag has
+  no effect without `QUOKY_LEARNING_EXAMPLES_ENABLED=true`, because the selector is not composed then.
+- **The rule (D2/D3), one function.** `isCuratedExampleEgressAllowed(egress, { executionLocality, selectionSource })`
+  in `packages/core/src/application/feedback/curated-example-egress-policy.ts`: `LOCAL` admits both classes (ADR-0107
+  unchanged); anything else (including an undeclared locality) admits only `LOCAL_OR_OWNER_SELECTED_REMOTE` with
+  `OWNER_SELECTED`; unknown values never pass. `curatedExamplesForPrompt` calls it per example after the provider is
+  resolved; the former locality-only early return was removed so the policy is the single gate. The runtime's work path
+  calls `router.resolve` when present and passes `selectionSource` next to `executionLocality`; every other compose
+  site (the routed Stage 2B seam, the fast path, code generation) passes no source and therefore gets no example.
+- **Unchanged bounds (D4).** GENERAL_CHAT only; at most 2 examples within the 2,400-character budget; the strict
+  credential guard at use (a match drops the example, never redacts it) on top of the guard at capture; per-item
+  consent, the 365-day retention and the ADR-0106 forget cascade (a deleted or memory-cascaded item is not listed, so it
+  is never selected); the Stage 2B routed seam gets none.
+- **Evidence (offline).** Policy table test and a no-provider-name source scan
+  (`curated-example-egress-policy.test.ts`); router `resolve` source tests and the updated router source scan
+  (`capability-router-policy.test.ts`); selector class stamping (`curated-example-selector.test.ts`); composer tests
+  (flag off byte-identical for every source; flag on + `OWNER_SELECTED` = 2 of 3 examples with the same layer as
+  `LOCAL`; `NOT_OWNER_SELECTED` or no source = byte-identical; guard, capability gate and budget on `REMOTE`); runtime
+  tests (the source travels from `resolve` to the composer; a selector without `resolve` fails closed; run metadata
+  records the count only); the real selection service and router (`provider-selection-service.test.ts`: env,
+  operations-UI default and session override are `OWNER_SELECTED`; derived default, Codex-unready and
+  `claude:opus`-unready fallbacks, pinned capabilities and the fail-safe answer are not); and the production
+  composition over a real `:memory:` SQLite learning store (`apps/quoky/src/learning-example-egress.test.ts`: flag off
+  byte-identical, explicit Claude ≤2, derived default and fallback none, `예시 N 삭제` and the memory-forget cascade
+  remove an example from the next turn, credential-bearing items never composed, local Ollama unchanged). A mutation
+  that ignores the source in the policy fails 11 of these tests.
+- **Residuals.** (R1) The source is fixed when the provider is resolved; a selection change between resolution and
+  `execute` does not re-check it. This matches the chat tier today (no dispatch-time re-check outside images) and the
+  turn runs on the same resolved provider, so examples follow the provider that answers. (R2) The rule is per
+  locality and source, not per vendor: an explicitly selected Codex — and, after PRV-1/PRV-2, an explicitly selected
+  OpenAI or Gemini chat model — receives examples too when the flag is on, as D2 reads. (R3) An explicitly set
+  `QUOKY_CHAT_PROVIDER` counts for every conversation on the host (D2). (R4) Learning copy is unchanged (it says the
+  examples are stored only on this host, which stays true); a line telling the owner that examples may now accompany
+  an owner-selected cloud model is left for the PLT-0 copy refactor. Strict gates (the `.env.local` flag change on the
+  owner host and the live round trip) are not run.
+
 ## ADR-0117 — Morning brief with today's calendar and opt-in pre-meeting reminders: deterministic, no model, DM-only; a Jira section only when opted in. Amends ADR-0101 D7 (a connector-backed brief) and ADR-0101/ADR-0110 (event-relative reminders).
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
