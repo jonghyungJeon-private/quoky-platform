@@ -10729,6 +10729,19 @@ describe('ADR-0104 DET-1 — internal-action claim guard on chat replies', () =>
     expect(JSON.stringify(logged)).not.toContain('맞습니다');
   });
 
+  it.each([
+    ['fast path (no Task)', false, false],
+    ['work turn, direct provider', true, false],
+    ['work turn, routed provider seam', true, true],
+  ] as const)('%s: only the provider\'s own reply is flagged model-reply; a guard-replaced notice is not', async (_label, requiresWork, routed) => {
+    const table = '| 월 | 가입 |\n|---|---|\n| 1월 | 80 |';
+    const answered = await chatRuntime(table, Capability.GENERAL_CHAT, requiresWork, routed).runtime.handle(messageOf('표로 정리해줘'));
+    expect(answered.reply).toMatchObject({ text: table, format: 'model-reply' });
+    const guarded = await chatRuntime(CLAIM, Capability.GENERAL_CHAT, requiresWork, routed).runtime.handle(messageOf('브랜치 상태 알려줄래'));
+    expect(guarded.reply.text).toBe(notice);
+    expect(guarded.reply.format).toBeUndefined();
+  });
+
   it('a claim-free chat reply passes through unchanged and logs nothing', async () => {
     const h = chatRuntime('커밋하려면 "커밋해줘"라고 보내 주세요.', Capability.GENERAL_CHAT, true);
     const result = await h.runtime.handle(messageOf('커밋 어떻게 해?'));
@@ -11278,6 +11291,7 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     const h = chatTurn();
     const result = await h.runtime.handle(withAttachments('', [refusedFile('big.log', 'TOO_LARGE')]));
     expect(result.reply.text).toBe(renderAttachmentsNotRead('ko'));
+    expect(result.reply.format).toBeUndefined();
     expect(h.requests).toHaveLength(0);
   });
 
@@ -11319,6 +11333,8 @@ describe('ADR-0111 D3 (MM-1) — text attachments reach the chat prompt; an all-
     const h = chatTurn(leaked);
     const result = await h.runtime.handle(withAttachments('이 로그에서 문제 원인 요약해줘', [logFile]));
     expect(result.reply.text).toBe(renderAttachmentReplyWithheld('ko'));
+    // The fixed notice is deterministic: never flagged as a model reply.
+    expect(result.reply.format).toBeUndefined();
     expect(h.persistedArtifacts).toEqual([]);
     expect(h.recorded.at(-1)).toBe(renderAttachmentReplyWithheld('ko'));
     expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves, h.persistedArtifacts])).not.toContain('demo-review-value');
@@ -11466,6 +11482,8 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
 
     expect(result.status).toBe('RESPONDED');
     expect(result.reply.text).toContain('주간 매출 막대 그래프예요.');
+    // The provider's own reading is a model reply (the platform may adapt its Markdown tables).
+    expect(result.reply.format).toBe('model-reply');
     expect(h.selected).toEqual([Capability.IMAGE_UNDERSTANDING, Capability.IMAGE_UNDERSTANDING]); // selection + dispatch re-check
     expect(h.calls.classify).toBe(0);
     expect(h.requests).toHaveLength(1);
@@ -11628,6 +11646,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     const h = imageTurn({ locality: 'REMOTE', imageLocalities: ['LOCAL'] });
     const result = await h.runtime.handle(imageMessage('이거 뭐야?'));
     expect(result.reply.text).toBe(renderImageUnderstandingUnavailable('ko'));
+    expect(result.reply.format).toBeUndefined();
     expect(h.execute).not.toHaveBeenCalled();
   });
 
@@ -11689,6 +11708,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     });
     const result = await h.runtime.handle(imageMessage('이 스크린샷에 뭐라고 써 있어?'));
     expect(result.reply.text).toBe(renderAttachmentReplyWithheld('ko'));
+    expect(result.reply.format).toBeUndefined();
     expect(h.recorded.at(-1)).toBe(renderAttachmentReplyWithheld('ko'));
     expect(JSON.stringify([h.recorded, h.taskSaves, h.runSaves, h.completed])).not.toContain('demo-review-value');
     expect(h.calls.loggerInfoCalls.some((c) => c.message === 'attachment turn reply withheld')).toBe(true);

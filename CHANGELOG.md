@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Discord table rendering for model replies only (ADR-0111 amendment, 2026-10-08)
+
+- Core: `OutboundMessage.format?: 'model-reply'`, set by the runtime only on a provider's own answer (chat, summaries,
+  analyses, image readings); withheld or guard-replaced notices and every deterministic reply stay unflagged.
+- Discord: a flagged reply's simple Markdown tables become a bold header line plus `- col: value, …` lines; fenced code
+  (backticks or tildes, any length, matching close), indented code and malformed tables are untouched. Unflagged text —
+  previews, approvals, connector-write previews, diffs, reminders — is delivered byte-identical.
+
 ## Unreleased — Codex as an image-understanding option (ADR-0111 amendment, 2026-10-08)
 
 - `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=codex`, `이미지 모델 변경: codex` / `/model image codex` and the `/providers` option

@@ -46,7 +46,7 @@ vi.mock('discord.js', async (importOriginal) => {
 });
 
 import { Events, GatewayIntentBits, Partials } from 'discord.js';
-import { DiscordPlatformAdapter } from './index';
+import { DiscordPlatformAdapter, renderMarkdownTablesForDiscord } from './index';
 import type { DiscordAdapterOptions, DiscordConfig } from './index';
 
 const OWNER = '111111111111111111';
@@ -390,6 +390,24 @@ describe('DiscordPlatformAdapter — delivery receipt (ADR-0098 D3)', () => {
     expect(text).toContain(payload);
     await adapter.sendMessage({ context: { platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER }, text });
     expect(sent).toEqual([text]);
+    // Defense in depth: the preview has no `model-reply` flag, so it is never rendered; and even the renderer leaves it
+    // unchanged, because the preview wraps the payload in a fence longer than any fence inside it (the removed renderer
+    // toggled on every ``` line and so treated the payload's tables as prose).
+    expect(renderMarkdownTablesForDiscord(text)).toBe(text);
+  });
+
+  it('converts simple tables only in a reply flagged model-reply, never inside its code blocks', async () => {
+    const { adapter } = await harness();
+    const { sent } = sendableChannel(ALLOWED_CHANNEL);
+    const context = { platform: 'discord' as const, channelId: ALLOWED_CHANNEL, userId: OWNER };
+    const text = ['요약이에요.', '| 월 | 가입자 수 |', '|---|---|', '| 1월 | 80 |', '', '````md', '```', '| a | b |', '|---|---|', '| 1 | 2 |', '```', '````', '    | x | y |', '    |---|---|', '    | 3 | 4 |'].join('\n');
+    await adapter.sendMessage({ context, text, format: 'model-reply' });
+    expect(sent).toEqual([
+      ['요약이에요.', '**월 · 가입자 수**', '- 월: 1월, 가입자 수: 80', '', '````md', '```', '| a | b |', '|---|---|', '| 1 | 2 |', '```', '````', '    | x | y |', '    |---|---|', '    | 3 | 4 |'].join('\n'),
+    ]);
+    // The same text without the flag (any deterministic reply) is sent byte-identical.
+    await adapter.sendMessage({ context, text });
+    expect(sent.at(-1)).toBe(text);
   });
 
   it('returns an empty receipt when the channel is not sendable', async () => {

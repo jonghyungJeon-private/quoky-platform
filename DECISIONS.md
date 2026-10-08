@@ -17369,3 +17369,45 @@ then 35 at CWR-2 (ADR-0112); OPS-2b added none (ADR-0113 D8).
   disabled tools, empty cwd, fail-closed stream) applies; Codex's own image size limits may refuse an image under 8 MiB
   (normal error reply).
 - **Strict gates:** selecting `codex` on the owner host (`.env.local` or a live switch) and a live image session with it.
+
+### ADR-0111 amendment — Discord table rendering only for flagged model replies (2026-10-08)
+
+- **Status:** Accepted — **Product Owner request of 2026-10-08**. Replaces Live QA follow-up 5 of the runtime-switching
+  amendment ("No outbound rewriting"): rendering returns, but only behind an explicit opt-in. Adds one optional field to
+  the Core domain type `OutboundMessage`; no port, dependency or `ConversationRuntimeDeps` change (baseline 35).
+  Independent Architecture Review of the implementation is required before merge.
+- **Context:** Discord shows a Markdown table as raw `| a | b |` text. The first conversion (df66418) ran on every
+  outbound text and toggled its "inside code" state on any line starting with three backticks, so it rewrote the
+  payload of an exact-payload CRITICAL connector-write preview (which wraps the payload in a longer fence) — Codex P1;
+  it was removed in 9a39152.
+- **Decision:**
+  1. **Opt-in flag.** `OutboundMessage.format?: 'model-reply'` (`OutboundMessageFormat`). Absent — the default — means the
+     text is delivered exactly as given. Core sets it in exactly one place, `ConversationRuntime.asModelReply`, used where
+     the runtime sends a provider's answer: the conversational fast path, the work turn (direct provider and the routed
+     seam: chat, summaries including connector work summaries, document analysis, project analysis) and the image turn.
+     It is set ONLY when the delivered text is the provider's own text: a reply withheld by the attachment credential
+     check (ADR-0111 D3 / A3) or replaced by the internal-action claim guard (ADR-0104 D1) is a fixed notice and stays
+     unflagged. Every deterministic reply — previews, approval texts, connector-write previews and reminders, diffs,
+     model-command replies, listings, errors — is never flagged (asserted for every deterministic turn of the v3
+     acceptance suite). Two deterministic additions keep the flag of the model reply they wrap: the work-summary source
+     footer (`출처:` / `- <title> <url>` lines) and the approval-expiry notice prefix; neither contains table or fence
+     syntax, so the renderer leaves them byte-identical.
+  2. **Discord rendering (adapter-owned).** `DiscordPlatformAdapter.sendMessage` applies `renderMarkdownTablesForDiscord`
+     only when `format === 'model-reply'`; preview delivery and owner notifications are separate paths and untouched.
+     Other adapters ignore the flag.
+  3. **Code is never touched.** A CommonMark-style line scan: a fence opens with 3+ backticks or 3+ tildes indented ≤ 3
+     spaces (a backtick fence's info string may not contain a backtick) and closes only on a line of the SAME character
+     with AT LEAST the opening length and nothing but whitespace after it; an unclosed fence runs to the end of the text;
+     a line indented 4+ columns (tab to the next multiple of 4) is indented code and never part of a table.
+  4. **Simple tables only.** A header row and a delimiter row (`|:-:|`) with the same cell count (1–8), then ≥ 1 data row
+     with exactly that count; rows start and end with an unescaped `|`; `\|` is a literal pipe. Output: a bold header line
+     (`**h1 · h2**`, omitted when all header cells are empty) and `- h1: v1, h2: v2` per row (empty cells skipped, an
+     all-empty row dropped), keeping the table's indentation and line ending. Anything else — cell-count mismatch, no
+     data row, no delimiter, rows without outer pipes, a pipe inside inline code, wider tables — is left exactly as is.
+- **Tests:** the earlier Codex P1 repro (a connector-write preview whose payload holds backtick, tilde and indented
+  fences and tables) is delivered byte-identical without the flag, and the renderer would leave it unchanged too (the
+  preview's longer fence is tracked); a flagged reply with tables inside and outside fences; fences of different
+  lengths; tilde fences; indented code; malformed tables; CRLF; the runtime flags only provider-own replies.
+- **Residuals:** GFM tables without outer pipes or with ragged rows stay raw; HTML blocks and block quotes are not
+  parsed (a table inside a `>` quote stays raw); a model reply that opens a fence and never closes it keeps everything
+  after it raw (fail safe).

@@ -2919,7 +2919,8 @@ export class ConversationRuntime {
       const provider = await this.deps.router.select(intent.capability, { sessionId: session.id, actorId: actor.id });
       const raw = await provider.execute({ capability: intent.capability, prompt: message.text });
       const result = { ...raw, text: this.guardChatReply(intent.capability, raw.text, message.text) };
-      const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      const reply = this.asModelReply(composed, raw.text, result.text);
       await this.deps.memory.recordAssistant(result.text, message.context, session.id);
       return this.responded(session, reply);
     }
@@ -7130,7 +7131,11 @@ export class ConversationRuntime {
           });
           await this.deps.memory.recordAssistant(replyText, message.context, task.sessionId ?? session.id);
           await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
-          const reply = this.deps.composer.compose(message.context, { text: replyText, artifacts }, artifacts);
+          const reply = this.asModelReply(
+            this.deps.composer.compose(message.context, { text: replyText, artifacts }, artifacts),
+            routed.output.text,
+            replyText,
+          );
           return this.responded(session, reply, workFacts(providerId));
         }
 
@@ -7199,7 +7204,8 @@ export class ConversationRuntime {
         });
       }
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
-      const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      const reply = this.asModelReply(composed, executed.text, result.text);
       return this.responded(session, reply, workFacts(providerId));
     } catch (err) {
       const failure = describeAiFailure(err);
@@ -7212,6 +7218,15 @@ export class ConversationRuntime {
       const reply = this.deps.composer.composeError(message.context, failure.userMessage);
       return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(providerId) };
     }
+  }
+
+  /**
+   * ADR-0111 amendment of 2026-10-08: mark a reply as a provider-generated answer (`format: 'model-reply'`, the opt-in
+   * that lets a platform adapter adapt Markdown such as tables) ONLY when the delivered text is the provider's own text.
+   * A withheld or guard-replaced reply is a fixed notice and stays unflagged, like every other deterministic reply.
+   */
+  private asModelReply(reply: OutboundMessage, providerText: string, deliveredText: string): OutboundMessage {
+    return providerText === deliveredText ? { ...reply, format: 'model-reply' } : reply;
   }
 
   /**
@@ -7366,7 +7381,8 @@ export class ConversationRuntime {
       await this.deps.memory.recordAssistant(result.text, message.context, task.sessionId ?? session.id);
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
       this.deps.logger.info('image turn answered', { taskId: task.id, imageCount: images.length });
-      const reply = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      const composed = this.deps.composer.compose(message.context, result, result.artifacts ?? []);
+      const reply = this.asModelReply(composed, executed.text, result.text);
       return this.responded(session, reply, workFacts);
     } catch (err) {
       const failure = describeAiFailure(err);

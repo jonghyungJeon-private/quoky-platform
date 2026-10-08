@@ -133,6 +133,8 @@ interface TurnObservation {
   readonly providerCalls: number;
   readonly availabilityProbes: number;
   readonly text: string;
+  /** `model-reply` only on a provider's own answer (ADR-0111 amendment of 2026-10-08); absent on deterministic text. */
+  readonly format: string | undefined;
 }
 
 interface WriteLog {
@@ -402,6 +404,7 @@ async function boot(): Promise<Harness> {
         providerCalls: providerCalls - providerBefore,
         availabilityProbes: availabilityProbes - probesBefore,
         text: result.reply.text,
+        format: result.reply.format,
       };
     },
   };
@@ -414,6 +417,8 @@ async function det(context: ConversationContext, text: string): Promise<TurnObse
   deterministicTurns.push({ text, route: seen.route });
   expect(seen.providerCalls + seen.availabilityProbes, `provider touched by "${text}" (${seen.route})`).toBe(0);
   expect(seen.text, text).not.toBe(STUB_REPLY);
+  // Deterministic text (previews, approvals, connector-write previews, reminders, listings) is never adapted for display.
+  expect(seen.format, `model-reply flag on deterministic "${text}"`).toBeUndefined();
   return seen;
 }
 
@@ -926,6 +931,7 @@ describe('Personal v3 acceptance — runtime model switch from chat (ADR-0092 / 
     const chat = await harness.turn(owner, 'INT-2 오늘 기분 어때?');
     expect(chat.route).toBe('classifier');
     expect(chat.providerCalls).toBe(1);
+    expect(chat.format).toBe('model-reply');
     expect(lastProviderId()).toBe('claude-cli:opus');
 
     // Another conversation of the same owner is unaffected.

@@ -2,6 +2,7 @@ import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'disco
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from 'discord.js';
 import { NotImplementedError, now } from '@quoky/core';
 import { deliverPreview, deliverWithNotice, FILE_ATTACHMENT_CHUNK_THRESHOLD } from './delivery';
+import { renderMarkdownTablesForDiscord } from './markdown-tables';
 import { DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS, deliverOwnerNotification } from './notification';
 import type { NotificationChannel, NotificationSendOptions } from './notification';
 import { isAdmittedReaction, toRating } from './reactions';
@@ -19,6 +20,7 @@ export {
   PARTIAL_FAILURE_NOTICE,
 } from './delivery';
 export type { DeliveryReport, ChunkSender } from './delivery';
+export { MAX_TABLE_COLUMNS, renderMarkdownTablesForDiscord } from './markdown-tables';
 export {
   classifyDiscordError,
   deliverOwnerNotification,
@@ -278,8 +280,12 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       return receipt;
     }
 
+    // Discord renders no Markdown tables. Only a provider-generated reply the runtime flagged `model-reply` is adapted
+    // (simple tables outside code become lines); every other message — deterministic replies, previews, approval and
+    // connector-write texts, diffs, reminders — is sent byte-identical (Codex P1 on df66418).
+    const text = message.format === 'model-reply' ? renderMarkdownTablesForDiscord(message.text) : message.text;
     const report = await deliverWithNotice(
-      message.text,
+      text,
       async (chunk) => {
         platformMessageIds.push((await channel.send(chunk)).id);
       },
