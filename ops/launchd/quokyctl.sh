@@ -362,8 +362,8 @@ cmd_backup() {
   if ! reason=$(quoky_check_private_env_file "$ENV_FILE"); then
     fail "backup refused: $reason: $(quoky_env_file_hint "$reason")"
   fi
-  [ -f "$DATA_DIR/quoky.db" ] || fail "backup refused: no service database at $DATA_DIR/quoky.db; nothing to back up"
   if [ -n "$VERIFY" ]; then
+    # A restore drill must work with no live database (disaster recovery): no source-DB check on this branch.
     case "$VERIFY" in
       quoky-*Z-daily.db | quoky-*Z-pre-migration.db | quoky-*Z-manual.db) ;;
       *) fail "--verify takes a copy name such as quoky-20261007T190000Z-daily.db" ;;
@@ -371,6 +371,7 @@ cmd_backup() {
     run_backup_tool --verify "$VERIFY"
     exit $?
   fi
+  [ -f "$DATA_DIR/quoky.db" ] || fail "backup refused: no service database at $DATA_DIR/quoky.db; nothing to back up"
   is_loaded && state="loaded"
   echo "service: $SERVICE ($state); no restart: the copy only reads the database and the vector store"
   if [ "$MODE" = apply ]; then

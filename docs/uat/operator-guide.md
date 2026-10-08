@@ -233,8 +233,14 @@ authoritative: a failed snapshot is recorded as `vectors.outcome: FAILED` in `ba
 | `quokyctl.sh backup --verify <copy>.db` | Read-only restore drill: `integrity_check`/`user_version` of the copy and its snapshot, or the rebuild guidance when it has none |
 
 The on-demand copy is a separate short-lived process (`apps/quoky/dist/tools/backup-now.js`): `VACUUM INTO` from a
-read-only connection, which in WAL mode neither blocks nor is blocked by the service's writer. It reads only the backup
-names from `.env.local`. Exit codes: 0 ok, 1 DB copy failed, 3 blocked, 4 DB copy kept but its snapshot failed.
+read-only connection. In WAL mode the service's ordinary commits keep going during the copy, but checkpoints may be
+delayed (the WAL can grow) until it ends, and the copy's connection waits up to 5 s on a lock. Manual runs are
+serialized by `backups/.manual-backup.lock` (O_EXCL, pid; a lock whose pid is gone, or older than 15 minutes, is taken
+over). The tool scans `.env.local` line by line and parses only the backup names; other lines are skipped unparsed.
+`--verify` works with no live DB (disaster-recovery drill) and refuses symlinked copies, snapshot directories and backup
+directories. Exit codes: 0 ok, 1 DB copy or verify failed, 3 blocked (incl. another manual run), 4 DB copy kept but its
+snapshot failed. `backup-status.json` is best-effort, advisory telemetry (written through the private-file writer);
+concurrent merges of the service and the manual process can lose a field until the next write.
 
 Restore = DB copy and the same-named snapshot together (quickstart section 7). A copy without a snapshot (older
 backups, or a failed one): restore the DB alone and leave `vectors/` moved aside; semantic recall rebuilds lazily (at

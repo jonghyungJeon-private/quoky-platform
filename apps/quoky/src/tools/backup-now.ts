@@ -7,8 +7,9 @@
  *
  * It runs while the service keeps running, without a restart, signal or IPC: the DB copy is `VACUUM INTO` from a
  * read-only connection on a worker thread, which in WAL mode reads one consistent snapshot while the service's writer
- * keeps committing (a WAL reader never blocks the writer and is never blocked by it; the writer's checkpoint simply
- * cannot pass the reader's snapshot until the copy ends). The copy never writes to the live database, takes no
+ * keeps committing: ordinary WAL commits continue while the copy reads, but a checkpoint cannot pass the reader's
+ * snapshot, so checkpoints may be delayed (and the WAL may grow) until the copy ends; the copy's connection itself
+ * waits up to 5 s on a lock (busy timeout). The copy never writes to the live database, takes no
  * instance lock and never runs a migration. The vector store is only read (each collection file is replaced by an
  * atomic rename, so every read sees one complete version). Same partial → verify → rename flow, names, permissions
  * (dir 700, files 600) and status file as the scheduled job (`ops/backup-job.ts`, `role: 'manual'`), kind `manual`
@@ -17,14 +18,15 @@
  * Configuration is resolved like the service's: the process environment wins (`quokyctl.sh` passes the launcher's
  * `QUOKY_DB_PATH`, `QUOKY_VECTOR_PATH` and `QUOKY_ENV_FILE`), then only these names are taken from the env file:
  * `QUOKY_BACKUP_ENABLED`, `QUOKY_BACKUP_DIR`, `QUOKY_TIMEZONE`, `QUOKY_DB_PATH`, `QUOKY_VECTOR_PATH` (and the legacy
- * `CHUNSIK_*` paths). No other value of the env file enters this process, and nothing of it is printed.
+ * `CHUNSIK_*` paths). The file is scanned line by line (`readAllowListedEnv`): every other line is skipped without
+ * parsing or retaining its value, and nothing of the file is printed. Manual runs are serialized by a lock file.
  *
- * Exit codes: 0 ok; 1 the DB copy failed (nothing kept); 2 usage; 3 blocked (no database, invalid configuration, not
- * a retained copy); 4 the DB copy verified but its vector snapshot did not (the DB copy is kept).
+ * Exit codes: 0 ok; 1 the DB copy failed (nothing kept), or `--verify` failed; 2 usage; 3 blocked (no database,
+ * invalid configuration, not a retained copy, another manual backup running); 4 the DB copy verified but its vector
+ * snapshot did not (the DB copy is kept).
  */
 import { existsSync, readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
-import { parse as parseDotEnv } from 'dotenv';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, LogFields, Logger } from '@quoky/core';
 import {
@@ -101,14 +103,75 @@ function readEnvFileDefault(file: string): string | undefined {
   }
 }
 
+/** Parses one allow-listed raw value (from just after `=` to the end of its line, or past its closing quote). */
+export function parseEnvValue(raw: string): string {
+  const value = raw.trim();
+  const quote = value.charAt(0);
+  if (quote === '"' || quote === "'" || quote === '`') {
+    const end = value.indexOf(quote, 1);
+    if (end > 0) {
+      const inner = value.slice(1, end);
+      return quote === '"' ? inner.replace(/\\n/g, '\n').replace(/\\r/g, '\r') : inner;
+    }
+  }
+  const comment = value.search(/\s#/);
+  return (comment >= 0 ? value.slice(0, comment) : value).trim();
+}
+
+const ENV_KEY = /[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*=/y;
+
+/**
+ * The allow-listed names of an env file, scanned line by line. Only the key at the start of a line is matched; for any
+ * other key the line is skipped by index (and a quoted multi-line value is skipped to its closing quote) without
+ * slicing, parsing or retaining its value. `parseValue` is called for allow-listed keys only.
+ */
+export function readAllowListedEnv(
+  content: string,
+  allowed: ReadonlySet<string>,
+  parseValue: (raw: string) => string = parseEnvValue,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  let position = 0;
+  while (position < content.length) {
+    let lineEnd = content.indexOf('\n', position);
+    if (lineEnd < 0) lineEnd = content.length;
+    ENV_KEY.lastIndex = position;
+    const match = ENV_KEY.exec(content);
+    if (match === null || ENV_KEY.lastIndex > lineEnd) {
+      position = lineEnd + 1;
+      continue;
+    }
+    const key = match[1] as string;
+    let valueStart = ENV_KEY.lastIndex;
+    while (valueStart < lineEnd && (content.charAt(valueStart) === ' ' || content.charAt(valueStart) === '\t')) valueStart += 1;
+    const quote = content.charAt(valueStart);
+    let valueEnd = lineEnd;
+    if (quote === '"' || quote === "'" || quote === '`') {
+      // A quoted value may span lines: it ends at the closing quote, then at the end of that line.
+      const close = content.indexOf(quote, valueStart + 1);
+      if (close >= 0) {
+        const closeLineEnd = content.indexOf('\n', close);
+        valueEnd = closeLineEnd < 0 ? content.length : closeLineEnd;
+      }
+    }
+    // Like dotenv (which the service uses), a later assignment of the same name wins.
+    if (allowed.has(key)) result[key] = parseValue(content.slice(valueStart, valueEnd));
+    position = valueEnd + 1;
+  }
+  return result;
+}
+
+const BACKUP_ENV_NAME_SET: ReadonlySet<string> = new Set(BACKUP_ENV_NAMES);
+
 /** The process environment plus the allowed names from the env file (the process environment wins). */
 export function resolveBackupEnv(
   processEnv: NodeJS.ProcessEnv,
   readEnvFile: (file: string) => string | undefined = readEnvFileDefault,
+  parseValue: (raw: string) => string = parseEnvValue,
 ): NodeJS.ProcessEnv {
   const envFile = processEnv.QUOKY_ENV_FILE?.trim() ? (processEnv.QUOKY_ENV_FILE as string) : DEFAULT_ENV_FILE;
   const content = readEnvFile(envFile);
-  const fromFile = content === undefined ? {} : parseDotEnv(content);
+  const fromFile = content === undefined ? {} : readAllowListedEnv(content, BACKUP_ENV_NAME_SET, parseValue);
   const env: NodeJS.ProcessEnv = { ...processEnv };
   for (const name of BACKUP_ENV_NAMES) {
     const value = fromFile[name];
@@ -276,6 +339,10 @@ export async function runCli(argv: readonly string[], deps: BackupNowDeps): Prom
     ...(deps.clock ? { clock: deps.clock } : {}),
   });
   const record = await job.runManual();
+  if (record.failure === 'BACKUP_IN_PROGRESS') {
+    deps.stderr('BLOCKED: another manual backup is running (its lock is held); nothing was written');
+    return EXIT_BLOCKED;
+  }
   if (record.outcome !== 'VERIFIED') {
     deps.stderr(`FAILED: the manual copy did not verify (${record.failure ?? 'unknown'}); nothing was kept`);
     return EXIT_FAILED;
@@ -291,15 +358,27 @@ export async function runCli(argv: readonly string[], deps: BackupNowDeps): Prom
   return EXIT_OK;
 }
 
+function isSymlink(file: string): boolean {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 async function verify(name: string, resolved: Resolved, deps: BackupNowDeps): Promise<number> {
   if (parseBackupFileName(name) === undefined) {
     deps.stderr('BLOCKED: --verify takes a copy name such as quoky-20261007T190000Z-daily.db (see backup-status.json)');
     return EXIT_BLOCKED;
   }
   const copyPath = path.join(resolved.dir, name);
-  if (!existsSync(copyPath)) {
+  if (!existsSync(copyPath) && !isSymlink(copyPath)) {
     deps.stderr(`BLOCKED: ${name} is not in ${resolved.dir}`);
     return EXIT_BLOCKED;
+  }
+  if (isSymlink(resolved.dir) || isSymlink(copyPath) || !lstatSync(copyPath).isFile()) {
+    deps.stderr(`FAILED: ${name} (or the backup directory) is a symlink or not a regular file; do not restore it`);
+    return EXIT_FAILED;
   }
   const db = verifySqliteBackupFile(copyPath);
   if (!db.ok) {
@@ -309,7 +388,7 @@ async function verify(name: string, resolved: Resolved, deps: BackupNowDeps): Pr
   deps.stdout(`database: ${name} ok (integrity_check ok, user_version ${db.userVersion})`);
   const snapshotName = vectorSnapshotName(name);
   const snapshotPath = path.join(resolved.dir, snapshotName);
-  if (!existsSync(snapshotPath)) {
+  if (!existsSync(snapshotPath) && !isSymlink(snapshotPath)) {
     deps.stdout(`vectors:  ${MISSING_VECTOR_SNAPSHOT_GUIDANCE[0]}`);
     for (const line of MISSING_VECTOR_SNAPSHOT_GUIDANCE.slice(1)) deps.stdout(`          ${line}`);
     return EXIT_OK;

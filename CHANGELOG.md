@@ -21,10 +21,16 @@ Live-QA follow-ups from the 2026-10-07 restore drill.
 - `ops/launchd/quokyctl.sh backup` (dry-run by default) / `backup --apply` / `backup --verify <copy>.db`: an on-demand,
   verified `manual` copy + vector snapshot while the service runs (no restart), and a read-only restore drill. A
   separate short-lived process (`apps/quoky/dist/tools/backup-now.js`) runs `VACUUM INTO` from a read-only connection
-  (WAL: never blocks the service's writer) with the same partial → verify → rename flow; it reads only the backup names
-  from `.env.local`. The 5 newest manual copies are kept.
-- Partial names are claimed exclusively (mode 600 from creation), and a partial of another process's kind is pruned only
-  once it is stale (15 minutes), so the service and the manual process never remove each other's copy in progress.
+  (WAL: the service's ordinary commits continue; checkpoints may be delayed until the copy ends) with the same partial →
+  verify → rename flow. It scans `.env.local` line by line and parses only the backup names (other lines are skipped
+  unparsed). Manual runs are serialized by an `O_EXCL` lock file holding the pid, with stale-lock recovery. The 5 newest
+  manual copies are kept. `--verify` works with no live DB.
+- Partial names are claimed exclusively (mode 600 from creation). Only the service prunes its own kinds' partials at any
+  age; every other partial (including another manual run's) is pruned only once it is stale (15 minutes).
+- `backup-status.json` (best-effort, advisory telemetry) is now written through the private-file writer (real 700
+  directory, random `O_CREAT | O_EXCL | O_NOFOLLOW` temp file, fsync, rename); a symlinked backup directory, snapshot
+  root or DB copy is refused. The restore runbook verifies first and copies with `cp -P` / `cp -RPp` after a
+  real-directory check.
 - Restore runbook (quickstart section 7, operator guide): restore the DB copy and its same-named vector snapshot
   together; for a copy without one, move `vectors/` aside and let semantic recall rebuild lazily (lexical ranking until
   re-embedded, at most 4 per turn; a vector is used only when its memory id and content hash match).

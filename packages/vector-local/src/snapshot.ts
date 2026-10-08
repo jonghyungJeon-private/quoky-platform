@@ -13,7 +13,7 @@ import { COLLECTION_FILE_PATTERN, decodeEntry, parseCollectionEntries } from './
  * copied. Collections are independent caches keyed by memory id and content hash (a stale or extra vector is never
  * served), so they need no cross-file atomicity.
  *
- * A snapshot is a directory: the copied `<collection>.json` files (mode 600) and `.snapshot.json`, a manifest with
+ * A snapshot is a directory (a real one: a symlinked snapshot root is refused, never followed): the copied `<collection>.json` files (mode 600) and `.snapshot.json`, a manifest with
  * each file's byte size, SHA-256 and record count. Verification (the analogue of `integrity_check`) re-reads the
  * copy: the directory holds exactly the manifest's files, each file's size and SHA-256 match, and each parses in the
  * store format with the recorded number of usable records (every vector decodes to finite floats). A source file that
@@ -166,6 +166,8 @@ export async function inspectVectorStore(sourceDir: string): Promise<VectorStore
 async function removeSnapshotDir(dir: string): Promise<void> {
   let names: string[] = [];
   try {
+    const stat = await fs.lstat(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return;
     names = await fs.readdir(dir);
   } catch {
     return;
@@ -205,6 +207,8 @@ export async function writeVerifiedVectorSnapshot(request: VectorSnapshotRequest
   }
   try {
     try {
+      const created = await fs.lstat(targetDir);
+      if (created.isSymbolicLink() || !created.isDirectory()) throw new SnapshotStop('COPY_FAILED');
       await fs.chmod(targetDir, 0o700);
     } catch {
       throw new SnapshotStop('COPY_FAILED');
@@ -272,6 +276,9 @@ function parseManifest(raw: string): Manifest | null {
  */
 export async function verifyVectorSnapshot(dir: string): Promise<VectorSnapshotResult> {
   try {
+    // The snapshot root itself must be a real directory: a symlink is refused, never followed.
+    const root = await fs.lstat(dir);
+    if (root.isSymbolicLink() || !root.isDirectory()) return { ok: false, failure: 'VERIFY_FAILED' };
     const manifest = parseManifest(await fs.readFile(join(dir, VECTOR_SNAPSHOT_MANIFEST), 'utf8'));
     if (manifest === null) return { ok: false, failure: 'VERIFY_FAILED' };
     const entries = await fs.readdir(dir, { withFileTypes: true });

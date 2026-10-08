@@ -658,6 +658,12 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, w
       expect(result.stderr).toContain('--verify takes a copy name');
     }
     expect(runCtl(box, ['backup', '--verify', name, '--apply']).stderr).toContain('backup --verify is read-only');
+    // A disaster-recovery drill needs no live database.
+    rmSync(path.join(box.dataDir, 'quoky.db'));
+    rmSync(tools(box, 'child-argv.txt'));
+    expect(runCtl(box, ['backup', '--verify', name]).status).toBe(0);
+    expect(toolArgv(box)).toBe(`${tools(box, 'backup-now.js')} --verify ${name}`);
+    expect(runCtl(box, ['backup', '--apply']).stderr).toContain('no service database');
     expect(runCtl(box, ['status', '--verify', name]).stderr).toContain('--verify belongs to the backup command');
   });
 

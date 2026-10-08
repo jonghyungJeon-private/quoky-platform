@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import Database from 'better-sqlite3';
@@ -73,11 +73,16 @@ export function readSqliteUserVersion(dbPath: string): number | undefined {
 
 /**
  * Verify an existing backup copy read-only (the restore drill, `backup-now --verify`): `PRAGMA integrity_check` must be
- * exactly `ok`. Returns the copy's `user_version`. A `VACUUM INTO` copy is in rollback-journal mode, so a read-only
+ * exactly `ok`. Returns the copy's `user_version`. A symlink or non-regular file is refused (`SOURCE_UNREADABLE`). A `VACUUM INTO` copy is in rollback-journal mode, so a read-only
  * open creates no `-wal`/`-shm` file next to it. Synchronous (a short-lived tool, never the service). Never throws.
  */
 export function verifySqliteBackupFile(copyPath: string): SqliteBackupResult {
-  if (!existsSync(copyPath)) return { ok: false, failure: 'SOURCE_UNREADABLE' };
+  // A copy is a regular file of the backup job; a symlink (or anything else) is refused, never followed.
+  try {
+    if (!lstatSync(copyPath).isFile()) return { ok: false, failure: 'SOURCE_UNREADABLE' };
+  } catch {
+    return { ok: false, failure: 'SOURCE_UNREADABLE' };
+  }
   let copy: Database.Database | undefined;
   try {
     copy = new Database(copyPath, { readonly: true, fileMustExist: true, timeout: DEFAULT_BACKUP_BUSY_TIMEOUT_MS });

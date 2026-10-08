@@ -8,6 +8,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LATEST_SCHEMA_VERSION, SqliteStorageProvider, verifySqliteBackupFile } from '@quoky/storage-sqlite';
 import { LocalVectorProvider } from '@quoky/vector-local';
-import { BACKUP_STATUS_FILE } from '../ops/backup-job';
+import { BACKUP_STATUS_FILE, MANUAL_LOCK_FILE } from '../ops/backup-job';
 import { backupFileName, vectorSnapshotName } from '../ops/backup-files';
 import {
   EXIT_BLOCKED,
@@ -24,6 +25,8 @@ import {
   EXIT_USAGE,
   EXIT_VECTORS_FAILED,
   MISSING_VECTOR_SNAPSHOT_GUIDANCE,
+  parseEnvValue,
+  readAllowListedEnv,
   resolveBackupEnv,
   runCli,
   type BackupNowDeps,
@@ -81,6 +84,47 @@ describe('backup-now: the on-demand backup tool', () => {
     expect(env.QUOKY_BACKUP_DIR).toBe(backups);
     expect(env.DISCORD_BOT_TOKEN).toBeUndefined();
     expect(JSON.stringify(env)).not.toContain('secret-token-value');
+  });
+
+  it('scans the env file line by line: only allow-listed values are ever parsed (instrumented parser)', () => {
+    const content = [
+      '# comment with QUOKY_BACKUP_DIR=/not/this',
+      SECRET_LINE,
+      'export QUOKY_TIMEZONE="Asia/Seoul"',
+      'PRIVATE_KEY="-----BEGIN KEY-----',
+      'QUOKY_BACKUP_DIR=/inside/a/secret/value',
+      'secret-key-body-line',
+      '-----END KEY-----"',
+      `  QUOKY_BACKUP_DIR = '${backups}'   `,
+      'QUOKY_BACKUP_ENABLED=true # inline comment',
+      'ANTHROPIC_API_KEY=another-secret-value',
+      'QUOKY_DB_PATH=/first',
+      'QUOKY_DB_PATH=/second',
+      '',
+    ].join('\n');
+    const parsed: string[] = [];
+    const spy = (raw: string): string => {
+      parsed.push(raw);
+      return parseEnvValue(raw);
+    };
+    const names = new Set(['QUOKY_TIMEZONE', 'QUOKY_BACKUP_DIR', 'QUOKY_BACKUP_ENABLED', 'QUOKY_DB_PATH']);
+    expect(readAllowListedEnv(content, names, spy)).toEqual({
+      QUOKY_TIMEZONE: 'Asia/Seoul',
+      QUOKY_BACKUP_DIR: backups,
+      QUOKY_BACKUP_ENABLED: 'true',
+      QUOKY_DB_PATH: '/second',
+    });
+    expect(parsed).toHaveLength(5);
+    for (const raw of parsed) {
+      expect(raw).not.toMatch(/secret|BEGIN|another|inside/);
+    }
+    // Through resolveBackupEnv as well: the instrumented parser never sees a non-allow-listed value.
+    const seen: string[] = [];
+    resolveBackupEnv({ QUOKY_ENV_FILE: envFile }, () => content, (raw) => {
+      seen.push(raw);
+      return parseEnvValue(raw);
+    });
+    expect(seen.join('\n')).not.toMatch(/secret|BEGIN|another/);
   });
 
   it('--dry-run reports the set it would write and what retention would prune, and writes nothing', async () => {
@@ -153,6 +197,14 @@ describe('backup-now: the on-demand backup tool', () => {
     expect(printed()).not.toContain('secret-token-value');
   });
 
+  it('a second manual backup while one holds the lock is blocked and writes nothing', async () => {
+    mkdirSync(backups, { mode: 0o700 });
+    writeFileSync(path.join(backups, MANUAL_LOCK_FILE), JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+    expect(await runCli(['--apply'], deps({ clock: () => new Date().toISOString() }))).toBe(EXIT_BLOCKED);
+    expect(err).toContain('BLOCKED: another manual backup is running (its lock is held); nothing was written');
+    expect(readdirSync(backups)).toEqual([MANUAL_LOCK_FILE]);
+  });
+
   describe('--verify: the restore drill', () => {
     it('confirms a matching set (DB copy + vector snapshot)', async () => {
       await runCli(['--apply'], deps());
@@ -175,6 +227,32 @@ describe('backup-now: the on-demand backup tool', () => {
       expect(text).toContain('move the current vectors/ directory aside');
       expect(text).toContain('at most 4 per');
       expect(text).toContain('ranked lexically');
+    });
+
+    it('works with no live database (disaster-recovery drill)', async () => {
+      await runCli(['--apply'], deps());
+      rmSync(dbPath);
+      out.length = 0;
+      expect(await runCli(['--verify', manualName], deps())).toBe(EXIT_OK);
+      expect(out.at(-1)).toContain('matching set');
+    });
+
+    it('refuses a symlinked copy and a symlinked snapshot root (never followed)', async () => {
+      await runCli(['--apply'], deps());
+      const elsewhere = path.join(root, 'elsewhere');
+      mkdirSync(elsewhere);
+      // A symlinked snapshot root pointing at a valid snapshot is still refused.
+      const snapshot = path.join(backups, vectorSnapshotName(manualName));
+      const { renameSync } = await import('node:fs');
+      renameSync(snapshot, path.join(elsewhere, 'snap'));
+      symlinkSync(path.join(elsewhere, 'snap'), snapshot);
+      expect(await runCli(['--verify', manualName], deps())).toBe(EXIT_FAILED);
+      expect(err.at(-1)).toContain('did not verify (VERIFY_FAILED)');
+
+      renameSync(path.join(backups, manualName), path.join(elsewhere, 'copy.db'));
+      symlinkSync(path.join(elsewhere, 'copy.db'), path.join(backups, manualName));
+      expect(await runCli(['--verify', manualName], deps())).toBe(EXIT_FAILED);
+      expect(err.at(-1)).toContain('is a symlink or not a regular file');
     });
 
     it('fails a tampered snapshot or copy, and blocks a name that is not a retained copy', async () => {

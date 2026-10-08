@@ -145,6 +145,16 @@ describe('vector store snapshot (backup set, ADR-0102 D6 follow-up)', () => {
     expect(readdirSync(other.backups)).toEqual([]);
   });
 
+  it('refuses a symlinked snapshot root even when it points at a valid snapshot', async () => {
+    const { store, backups } = fresh();
+    await seed(store);
+    const real = join(backups, 'real');
+    expect((await writeVerifiedVectorSnapshot({ sourceDir: store, targetDir: real })).ok).toBe(true);
+    symlinkSync(real, join(backups, 'linked'));
+    expect(await verifyVectorSnapshot(join(backups, 'linked'))).toEqual({ ok: false, failure: 'VERIFY_FAILED' });
+    expect((await verifyVectorSnapshot(real)).ok).toBe(true);
+  });
+
   it('names a snapshot directory may hold: collection files and the manifest only', () => {
     expect(isVectorSnapshotEntryName('durable-memory-v1.json')).toBe(true);
     expect(isVectorSnapshotEntryName(VECTOR_SNAPSHOT_MANIFEST)).toBe(true);

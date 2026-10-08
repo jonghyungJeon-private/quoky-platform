@@ -1,16 +1,20 @@
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
+  fsyncSync,
+  linkSync,
   lstatSync,
-  mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmdirSync,
   unlinkSync,
-  writeFileSync,
+  writeSync,
 } from 'node:fs';
 import path from 'node:path';
 import { now as sharedClock } from '@quoky/core';
@@ -38,6 +42,7 @@ import {
   vectorSnapshotDbName,
   vectorSnapshotName,
 } from './backup-files';
+import { ensurePrivateDirectory, readPrivateFile, verifyRealDirectory, writePrivateFileAtomic } from './ops-notice';
 
 /**
  * Scheduled SQLite backup (ADR-0102 D6, SUB-2): a composition-root lifecycle job with the same shape as the
@@ -54,8 +59,10 @@ import {
  *   refuses the start (ADR-0102 D3: a migration on the host DB requires a fresh verified backup first).
  * - **Manual copy** (`role: 'manual'`, `runManual()`): the on-demand `quokyctl.sh backup --apply`, run by a separate
  *   short-lived process (`tools/backup-now.ts`) while the service keeps running. `VACUUM INTO` reads one consistent
- *   snapshot through a read-only connection; in WAL mode that reader never blocks the service's writer (and the
- *   writer never blocks it), so no restart, signal or IPC is needed.
+ *   snapshot through a read-only connection; in WAL mode the service's ordinary commits keep going while it reads
+ *   (a checkpoint cannot pass the reader's snapshot, so checkpoints may be delayed and the WAL may grow until the copy
+ *   ends; the copy's own connection waits up to 5 s on a lock), so no restart, signal or IPC is needed. Manual runs are
+ *   serialized across processes by an exclusive lock file (`MANUAL_LOCK_FILE`, stale-lock recovery).
  * - **Never during a migration**: migrations run only inside `storage.init()` (synchronously), the daily chain is
  *   armed only after it returns, and the ADR-0102 D4 lock rules out a second service process.
  * - **Copy + verify**: claim a temporary `.partial` name exclusively (mode 600), `VACUUM INTO` it, verify read-only
@@ -69,11 +76,15 @@ import {
  *   first and the snapshot second, so a final snapshot always has its DB copy.
  * - **Directory** mode 700, **files** 600. **Retention** 7 daily + 4 weekly + 3 pre-migration + 5 manual
  *   (`backup-files.ts`); a vector snapshot is pruned with its DB copy. Pruning deletes only the job's own names, only
- *   regular files (and, inside a snapshot directory, only snapshot entries), only after a verified copy. A partial of
- *   another process's kind is removed only once it is older than `PARTIAL_STALE_MS`.
+ *   regular files (and, inside a snapshot directory, only snapshot entries), only after a verified copy. The service
+ *   removes partials of its own kinds at any age (the instance lock rules out a second service); every other partial
+ *   — including any manual one, seen from a manual run — only once it is older than `PARTIAL_STALE_MS`. A symlinked
+ *   backup directory is refused (never written, listed or pruned).
  * - **Status**: `status()` and `backup-status.json` (600) in the backup directory for tools and the OPS-1 screen
  *   (ADR-0113 D6: last backup time, verified yes/no, retained count, next run; file names only). The service owns the
- *   scheduled fields and the manual process owns `lastManual`; each merges the other's fields from the file.
+ *   scheduled fields and the manual process owns `lastManual`; each merges the other's fields from the file. The file
+ *   is best-effort, advisory telemetry (written through the private-file writer); concurrent merges can lose a field
+ *   until the next write, and the copies on disk are the truth.
  * - A failed or unverifiable scheduled copy is logged (code only) and reported once through `onFailure`.
  */
 
@@ -89,7 +100,31 @@ export const BACKUP_STATUS_FILE = 'backup-status.json';
 export const BACKUP_STATUS_SCHEMA = 'quoky.backup-status/1';
 
 /** Why a run did not produce a verified copy (the adapter's classification, or a file-system step here). */
-export type BackupRunFailure = SqliteBackupFailure | 'DIRECTORY_UNAVAILABLE' | 'TARGET_EXISTS' | 'FINALIZE_FAILED';
+export type BackupRunFailure =
+  | SqliteBackupFailure
+  | 'DIRECTORY_UNAVAILABLE'
+  | 'TARGET_EXISTS'
+  | 'FINALIZE_FAILED'
+  /** Another manual backup holds the manual lock (`MANUAL_LOCK_FILE`). */
+  | 'BACKUP_IN_PROGRESS';
+
+/** Serializes manual runs across processes: created `O_CREAT | O_EXCL | O_NOFOLLOW` (600) holding `{ pid, startedAt }`. */
+export const MANUAL_LOCK_FILE = '.manual-backup.lock';
+/** A manual lock this old is stale even when its pid looks alive (pid reuse): a run takes at most 2 x BACKUP_TIMEOUT_MS. */
+export const MANUAL_LOCK_STALE_MS = PARTIAL_STALE_MS;
+/** A lock whose content cannot be read (a crash between create and write) is stale after this. */
+const MANUAL_LOCK_UNREADABLE_STALE_MS = 60 * 1000;
+/** `O_NOFOLLOW` where the platform has it (POSIX); 0 elsewhere (`O_EXCL` still refuses an existing path). */
+const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 /** Why a run's vector snapshot did not verify. */
 export type VectorBackupFailure = VectorSnapshotFailure | 'TIMEOUT' | 'FINALIZE_FAILED' | 'WORKER_FAILED';
@@ -201,7 +236,9 @@ const PRE_MIGRATION_HINT =
   'then restart.';
 
 const SERVICE_KINDS: ReadonlySet<BackupKind> = new Set<BackupKind>(['daily', 'pre-migration']);
-const MANUAL_KINDS: ReadonlySet<BackupKind> = new Set<BackupKind>(['manual']);
+// Manual runs own no kind for pruning: another manual run's partial (in a second process, if the lock was taken over)
+// is removed only once it is stale. A run always removes its own partials itself when it fails.
+const MANUAL_KINDS: ReadonlySet<BackupKind> = new Set<BackupKind>();
 const JOB_STATES: ReadonlySet<string> = new Set<BackupJobState>(['IDLE', 'DISABLED', 'RUNNING', 'STOPPED']);
 
 function iso(ms: number): IsoTimestamp {
@@ -359,11 +396,115 @@ export class BackupJob {
     return 'VERIFIED';
   }
 
-  /** The on-demand copy (`role: 'manual'` only): one verified DB copy + vector snapshot, pruned and recorded. */
+  /**
+   * The on-demand copy (`role: 'manual'` only): one verified DB copy + vector snapshot, pruned and recorded. Manual
+   * runs are serialized across processes by `MANUAL_LOCK_FILE`; a second run while one is live returns
+   * `BACKUP_IN_PROGRESS` and touches nothing (not even the status file).
+   */
   async runManual(): Promise<BackupRunRecord> {
     if (this.role !== 'manual') throw new Error('runManual needs role "manual"');
-    this.refreshLastVerified();
-    return this.run('manual');
+    const startedAt = this.clock();
+    try {
+      this.ensureDirectory();
+    } catch {
+      return this.record({ kind: 'manual', startedAt, outcome: 'FAILED', failure: 'DIRECTORY_UNAVAILABLE' });
+    }
+    const release = this.acquireManualLock();
+    if (release === null) {
+      this.deps.logger.warn('backup.manual.in_progress');
+      return { kind: 'manual', startedAt, finishedAt: this.clock(), outcome: 'FAILED', failure: 'BACKUP_IN_PROGRESS' };
+    }
+    try {
+      this.refreshLastVerified();
+      return await this.run('manual');
+    } finally {
+      release();
+    }
+  }
+
+  /** Take the manual lock (one stale-lock takeover allowed); `null` while another live run holds it. */
+  private acquireManualLock(): (() => void) | null {
+    const lockPath = path.join(this.deps.dir, MANUAL_LOCK_FILE);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let fd: number;
+      try {
+        fd = openSync(lockPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW, 0o600);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0 || !this.takeOverStaleLock(lockPath)) return null;
+        continue;
+      }
+      let ino: number;
+      try {
+        writeSync(fd, `${JSON.stringify({ pid: process.pid, startedAt: this.clock() })}\n`);
+        fsyncSync(fd);
+        ino = fstatSync(fd).ino;
+      } finally {
+        closeSync(fd);
+      }
+      return () => {
+        try {
+          // Remove only our own lock (a takeover after a very long run may have replaced it).
+          if (lstatSync(lockPath).ino === ino) unlinkSync(lockPath);
+        } catch {
+          // already gone
+        }
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Remove a stale manual lock: its pid is gone, or it is older than `MANUAL_LOCK_STALE_MS` (pid reuse), or its content
+   * is unreadable and it is older than a minute. The lock is renamed aside first and checked to be the same file, so a
+   * lock that another process re-created in between is put back, never deleted. A non-regular lock is never touched.
+   */
+  private takeOverStaleLock(lockPath: string): boolean {
+    let stat;
+    try {
+      stat = lstatSync(lockPath);
+    } catch {
+      return true; // released meanwhile: retry
+    }
+    if (!stat.isFile()) return false;
+    const ageMs = Date.parse(this.clock()) - stat.mtimeMs;
+    let pid: number | undefined;
+    try {
+      const fd = openSync(lockPath, fsConstants.O_RDONLY | O_NOFOLLOW);
+      try {
+        const value = JSON.parse(readFileSync(fd, 'utf8')) as { pid?: unknown };
+        if (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0) pid = value.pid;
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      // unreadable: judged by age only
+    }
+    const stale =
+      pid === undefined ? ageMs > MANUAL_LOCK_UNREADABLE_STALE_MS : !isProcessAlive(pid) || ageMs > MANUAL_LOCK_STALE_MS;
+    if (!stale) return false;
+    const aside = `${lockPath}.stale-${randomBytes(8).toString('hex')}`;
+    try {
+      renameSync(lockPath, aside);
+    } catch {
+      return false;
+    }
+    try {
+      if (lstatSync(aside).ino !== stat.ino) {
+        // Another process took over and re-created the lock between our check and the rename: give it back.
+        try {
+          linkSync(aside, lockPath);
+        } catch {
+          // a third lock exists: leave it
+        }
+        unlinkSync(aside);
+        return false;
+      }
+      unlinkSync(aside);
+    } catch {
+      return false;
+    }
+    this.deps.logger.warn('backup.manual.stale_lock_recovered');
+    return true;
   }
 
   /**
@@ -597,9 +738,19 @@ export class BackupJob {
     return record;
   }
 
+  /** Create (700) or verify the backup directory: a real directory, never a symlink to one (refused). */
   private ensureDirectory(): void {
-    mkdirSync(this.deps.dir, { recursive: true, mode: 0o700 });
-    chmodSync(this.deps.dir, 0o700);
+    ensurePrivateDirectory(this.deps.dir);
+  }
+
+  /** The backup directory exists and is a real directory (a symlinked one is never listed or pruned). */
+  private isRealBackupDirectory(): boolean {
+    try {
+      verifyRealDirectory(this.deps.dir);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private removePartial(partialPath: string): void {
@@ -645,6 +796,7 @@ export class BackupJob {
   }
 
   private listNames(): string[] {
+    if (!this.isRealBackupDirectory()) return [];
     try {
       return readdirSync(this.deps.dir);
     } catch {
@@ -700,12 +852,14 @@ export class BackupJob {
 
   /** The other process's fields from `backup-status.json`; `null` when absent or not this schema. */
   private readStatusFile(): DiskStatus | null {
-    let raw: string;
+    let raw: string | undefined;
     try {
-      raw = readFileSync(path.join(this.deps.dir, BACKUP_STATUS_FILE), 'utf8');
+      // Private-file read: a symlinked directory or status file is refused, never followed.
+      raw = readPrivateFile(path.join(this.deps.dir, BACKUP_STATUS_FILE));
     } catch {
       return null;
     }
+    if (raw === undefined) return null;
     try {
       const value = JSON.parse(raw) as Record<string, unknown>;
       if (typeof value !== 'object' || value === null || value.schema !== BACKUP_STATUS_SCHEMA) return null;
@@ -771,15 +925,15 @@ export class BackupJob {
     }
   }
 
+  /**
+   * Best-effort, advisory telemetry: the status is merged from this job and the file, then replaced atomically through
+   * the private-file writer (real 700 directory, random `O_CREAT | O_EXCL | O_NOFOLLOW` 600 temp file, fsync, rename).
+   * Two processes merging at the same instant can lose one field until the next write; the copies on disk are the truth.
+   */
   private writeStatus(): void {
     if (!this.deps.enabled && this.role === 'service') return;
-    const target = path.join(this.deps.dir, BACKUP_STATUS_FILE);
-    const tmp = `${target}.tmp-${process.pid}`;
     try {
-      this.ensureDirectory();
-      writeFileSync(tmp, `${JSON.stringify(this.status(), null, 2)}\n`, { mode: 0o600 });
-      chmodSync(tmp, 0o600);
-      renameSync(tmp, target);
+      writePrivateFileAtomic(path.join(this.deps.dir, BACKUP_STATUS_FILE), `${JSON.stringify(this.status(), null, 2)}\n`);
     } catch {
       this.deps.logger.warn('backup.status_write_failed');
     }

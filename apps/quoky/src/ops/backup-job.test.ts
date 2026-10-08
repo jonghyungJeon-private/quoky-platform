@@ -10,6 +10,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -31,6 +32,7 @@ import {
   BACKUP_STATUS_FILE,
   BackupErrorCode,
   BackupJob,
+  MANUAL_LOCK_FILE,
   type BackupJobDeps,
   type BackupJobTimers,
   type BackupRunRecord,
@@ -544,6 +546,121 @@ describe('BackupJob (ADR-0102 D6)', () => {
       expect(names).toContain(daily);
       expect(names).toContain(backupFileName('manual', T0));
       expect(older.filter((n) => names.includes(n))).toEqual(older.slice(0, 4));
+    });
+  });
+
+  describe('manual lock (overlapping manual runs)', () => {
+    const lockPath = (): string => path.join(dir, MANUAL_LOCK_FILE);
+
+    it('two overlapping manual runs: the second refuses BACKUP_IN_PROGRESS and never touches the first one\'s partial', async () => {
+      let open: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => (open = resolve));
+      let seenTarget = '';
+      const slowCopy = async (request: SqliteCopyRequest): Promise<SqliteBackupResult> => {
+        seenTarget = request.targetPath;
+        await gate;
+        return writeVerifiedSqliteCopy({ ...request, timeoutMs: 30_000 });
+      };
+      const first = job({ role: 'manual', copy: slowCopy });
+      const running = first.runManual();
+      await new Promise((r) => setImmediate(r));
+      expect(existsSync(lockPath())).toBe(true);
+      expect(JSON.parse(readFileSync(lockPath(), 'utf8'))).toMatchObject({ pid: process.pid });
+      expect(mode(lockPath())).toBe(0o600);
+      expect(existsSync(seenTarget)).toBe(true);
+
+      // A second run (same clock second, so the very same partial name) while the first is live.
+      const second = await job({ role: 'manual' }).runManual();
+      expect(second).toMatchObject({ outcome: 'FAILED', failure: 'BACKUP_IN_PROGRESS' });
+      expect(existsSync(seenTarget)).toBe(true);
+      expect(existsSync(path.join(dir, BACKUP_STATUS_FILE))).toBe(false);
+
+      open();
+      expect(await running).toMatchObject({ outcome: 'VERIFIED', file: backupFileName('manual', T0) });
+      expect(existsSync(lockPath())).toBe(false);
+      // Now a manual run proceeds again.
+      timers.clockMs = T0 + 60_000;
+      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
+    });
+
+    it('recovers a stale lock: its pid is gone, or it is older than the bound even with a live pid', async () => {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const deadPid = spawnSync(process.execPath, ['-e', '0']).pid as number;
+      writeFileSync(lockPath(), JSON.stringify({ pid: deadPid, startedAt: new Date(T0).toISOString() }), { mode: 0o600 });
+      utimesSync(lockPath(), new Date(T0), new Date(T0));
+      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
+      expect(existsSync(lockPath())).toBe(false);
+      expect(logger.messages()).toContain('backup.manual.stale_lock_recovered');
+
+      timers.clockMs = T0 + 60_000;
+      writeFileSync(lockPath(), JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+      utimesSync(lockPath(), new Date(T0 - 3_600_000), new Date(T0 - 3_600_000));
+      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
+      expect(readdirSync(dir).filter((n) => n.includes('.lock'))).toEqual([]);
+    });
+
+    it('a fresh lock of a live pid blocks; a symlinked lock is never followed or removed', async () => {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(lockPath(), JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+      utimesSync(lockPath(), new Date(T0), new Date(T0));
+      expect(await job({ role: 'manual' }).runManual()).toMatchObject({ failure: 'BACKUP_IN_PROGRESS' });
+      expect(readdirSync(dir)).toEqual([MANUAL_LOCK_FILE]);
+
+      rmSync(lockPath());
+      const outside = path.join(root, 'outside-lock');
+      writeFileSync(outside, 'not yours');
+      utimesSync(outside, new Date(T0 - 3_600_000), new Date(T0 - 3_600_000));
+      symlinkSync(outside, lockPath());
+      expect(await job({ role: 'manual' }).runManual()).toMatchObject({ failure: 'BACKUP_IN_PROGRESS' });
+      expect(readFileSync(outside, 'utf8')).toBe('not yours');
+    });
+
+    it('a manual run leaves another run\'s fresh manual partial alone and removes only stale ones', async () => {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const fresh = partialFileName(backupFileName('manual', T0 - 60_000));
+      const freshVectors = partialFileName(vectorSnapshotName(backupFileName('manual', T0 - 60_000)));
+      const stale = partialFileName(backupFileName('manual', T0 - 7_200_000));
+      writeFileSync(path.join(dir, fresh), 'live');
+      mkdirSync(path.join(dir, freshVectors));
+      writeFileSync(path.join(dir, stale), '');
+      utimesSync(path.join(dir, fresh), new Date(T0), new Date(T0));
+      utimesSync(path.join(dir, freshVectors), new Date(T0), new Date(T0));
+      utimesSync(path.join(dir, stale), new Date(T0 - 7_200_000), new Date(T0 - 7_200_000));
+      expect((await job({ role: 'manual' }).runManual()).outcome).toBe('VERIFIED');
+      const names = readdirSync(dir);
+      expect(names).toContain(fresh);
+      expect(names).toContain(freshVectors);
+      expect(names).not.toContain(stale);
+    });
+  });
+
+  describe('private status file and backup directory', () => {
+    it('refuses a symlinked backup directory: nothing is written through it', async () => {
+      const realDir = path.join(root, 'real-backups');
+      mkdirSync(realDir, { mode: 0o700 });
+      symlinkSync(realDir, dir);
+      const manual = await job({ role: 'manual' }).runManual();
+      expect(manual).toMatchObject({ outcome: 'FAILED', failure: 'DIRECTORY_UNAVAILABLE' });
+      const service = job({ latestSchemaVersion: LATEST_SCHEMA_VERSION + 1 });
+      await expect(service.ensurePreMigrationBackup()).rejects.toMatchObject({ code: BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED });
+      expect(readdirSync(realDir)).toEqual([]);
+      expect(service.status().retained).toEqual([]);
+    });
+
+    it('replaces a symlinked status file instead of writing through it, with a random temp name and no leftovers', async () => {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const outside = path.join(root, 'outside-status.json');
+      writeFileSync(outside, 'untouched');
+      symlinkSync(outside, path.join(dir, BACKUP_STATUS_FILE));
+      const backup = job();
+      backup.start();
+      await fireUntilRun(backup);
+      expect(readFileSync(outside, 'utf8')).toBe('untouched');
+      const { lstatSync } = await import('node:fs');
+      expect(lstatSync(path.join(dir, BACKUP_STATUS_FILE)).isFile()).toBe(true);
+      expect(mode(path.join(dir, BACKUP_STATUS_FILE))).toBe(0o600);
+      expect(readdirSync(dir).filter((n) => n.includes('.tmp'))).toEqual([]);
+      await backup.stop();
     });
   });
 });

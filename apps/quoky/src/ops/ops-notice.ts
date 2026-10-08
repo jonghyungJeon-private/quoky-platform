@@ -94,7 +94,7 @@ const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
  * its parent's realpath plus its own name (so the directory itself resolves nowhere else; a symlinked ancestor such as
  * macOS `/var` → `/private/var` is ordinary and allowed). Returns the `lstat` result.
  */
-function verifyRealDirectory(dir: string): Stats {
+export function verifyRealDirectory(dir: string): Stats {
   const stat: Stats = lstatSync(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new PrivateFileRefusedError('PRIVATE_DIR_NOT_A_DIRECTORY');
   const expected = path.join(realpathSync(path.dirname(path.resolve(dir))), path.basename(path.resolve(dir)));
@@ -103,7 +103,7 @@ function verifyRealDirectory(dir: string): Stats {
 }
 
 /** Create (700) or verify the private directory for a write: a real directory, never a symlink to one. */
-function ensurePrivateDirectory(dir: string): void {
+export function ensurePrivateDirectory(dir: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   verifyRealDirectory(dir);
   chmodSync(dir, 0o700);
