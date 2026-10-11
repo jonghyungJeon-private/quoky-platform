@@ -416,6 +416,11 @@
     {"id": "route-411", "text": "주간 회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: by title", "mustPass": true},
     {"id": "route-412", "text": "remind me 10 minutes before my next meeting", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: English", "mustPass": true},
     {"id": "route-413", "text": "회의 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder without an offset: the fixed clarification", "mustPass": true},
-    {"id": "route-414", "text": "회의 10분 전에 자료 준비 알려줘", "expected": {"route": "classifier"}, "source": "ADR-0117 D5 (BRF-2) negative: a body after 전에 is not a pre-meeting reminder (route unchanged)", "mustPass": true}
+    {"id": "route-414", "text": "회의 10분 전에 자료 준비 알려줘", "expected": {"route": "classifier"}, "source": "ADR-0117 D5 (BRF-2) negative: a body after 전에 is not a pre-meeting reminder (route unchanged)", "mustPass": true},
+    {"id": "route-415", "text": "매일 오전 9시에 회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "BRF-2 Codex P2-3: a recurrence with a bound clock stays the ADR-0101 daily reminder (not event-relative)", "mustPass": true},
+    {"id": "route-416", "text": "평일 9시에 회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "BRF-2 Codex P2-3: a weekday recurrence stays the ADR-0101 weekly reminder", "mustPass": true},
+    {"id": "route-417", "text": "내일 오전 9시에 회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "BRF-2 Codex P2-3: a bound clock time stays the ADR-0101 one-time reminder", "mustPass": true},
+    {"id": "route-418", "text": "30분 뒤에 회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "BRF-2 Codex P2-3: a relative time stays the ADR-0101 one-time reminder", "mustPass": true},
+    {"id": "route-419", "text": "remind me 10 minutes before my daily standup meeting", "expected": {"route": "reminders", "providerCalls": 0}, "source": "BRF-2 Codex P2-3: an English recurrence word keeps the ADR-0101 outcome (clarify)", "mustPass": true}
   ]
 }

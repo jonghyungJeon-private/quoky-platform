@@ -102,6 +102,11 @@ export interface ReminderGrammarOptions {
   now: IsoTimestamp;
   /** The owner's IANA zone (`QUOKY_TIMEZONE`); defaults to `Asia/Seoul`. */
   timeZone?: string;
+  /**
+   * ADR-0117 D5 (BRF-2): recognize event-relative requests (default `true`). `false` is the ADR-0101 grammar alone; the
+   * regression test compares both on every pre-existing phrase.
+   */
+  eventRelative?: boolean;
 }
 
 /**
@@ -1414,6 +1419,24 @@ function finishCreate(
   };
 }
 
+/** A recurrence word before the meeting noun: the request is a recurring reminder, never one event. */
+const KO_EVENT_TARGET_RECURRENCE = /매\s?일|매\s?주|평일|주말|마다|매\s?달|매월|매년|매해|격주|매\s?시간|매\s?분/u;
+const EN_EVENT_TARGET_RECURRENCE = /\b(?:every|each|daily|weekly|weekdays?|weekends?|nightly|hourly)\b/i;
+
+/**
+ * Whether an event-relative parse (ADR-0117 D5) may stand, or the message belongs to the ADR-0101 grammar unchanged
+ * (Codex P2-3). The target (the text before the meeting noun) must be a meeting reference: a recurrence word
+ * (`매일`, `평일`, `매주`, `every day`, …) or a time expression bound to the request (`오전 9시에`, `30분 뒤에`,
+ * `내일 오전에`, which the ADR-0101 scanner finds) makes it a clock-time or recurring reminder, so
+ * `매일 오전 9시에 회의 10분 전에 알려줘` keeps its old outcome. A start time that only names the meeting (`3시 회의`)
+ * is not bound and stays a meeting reference.
+ */
+function acceptsEventRelative(message: string, targetText: string): boolean {
+  if (KO_EVENT_TARGET_RECURRENCE.test(targetText) || EN_EVENT_TARGET_RECURRENCE.test(targetText)) return false;
+  if (findKoExpressions(targetText).length > 0) return false;
+  return message.length > 0;
+}
+
 /** Parse one owner message. Never throws for any input string. */
 export function parseReminderMessage(text: string, options: ReminderGrammarOptions): ReminderCommand {
   const nowMs = Date.parse(options.now);
@@ -1427,12 +1450,16 @@ export function parseReminderMessage(text: string, options: ReminderGrammarOptio
   const listOrCancel = matchListOrCancel(message);
   if (listOrCancel !== null) return listOrCancel;
 
-  // ADR-0117 D5: "회의 10분 전에 알려줘" names a calendar event, not a clock time; it is matched before the time grammar.
-  const event = parseEventReminder(message);
-  if (event.kind === 'create') {
-    return { kind: 'CREATE_EVENT_RELATIVE', offsetMinutes: event.offsetMinutes, target: event.target };
+  // ADR-0117 D5: "회의 10분 전에 알려줘" names a calendar event, not a clock time; it is matched before the time grammar,
+  // and only when the ADR-0101 guards leave it to the event-relative form (`acceptsEventRelative`).
+  if (options.eventRelative !== false) {
+    const event = parseEventReminder(message);
+    if (event.kind !== 'none' && acceptsEventRelative(message, event.targetText)) {
+      return event.kind === 'create'
+        ? { kind: 'CREATE_EVENT_RELATIVE', offsetMinutes: event.offsetMinutes, target: event.target }
+        : clarify(event.reason);
+    }
   }
-  if (event.kind === 'clarify') return clarify(event.reason);
 
   const ctx: ResolveContext = { nowMs, timeZone };
   return KO_VERB_PRESENT.test(message) ? parseKorean(message, ctx) : parseEnglish(message, ctx);

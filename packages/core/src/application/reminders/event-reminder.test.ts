@@ -208,7 +208,7 @@ describe('event-relative grammar (ADR-0117 D5)', () => {
   ];
   for (const [text, offsetMinutes, target] of cases) {
     it(`"${text}" → CREATE_EVENT_RELATIVE`, () => {
-      expect(parseEventReminder(text)).toEqual({ kind: 'create', offsetMinutes, target });
+      expect(parseEventReminder(text)).toMatchObject({ kind: 'create', offsetMinutes, target });
       expect(parseReminderMessage(text, { now: NOW, timeZone: ZONE })).toEqual({
         kind: 'CREATE_EVENT_RELATIVE',
         offsetMinutes,
@@ -241,6 +241,49 @@ describe('event-relative grammar (ADR-0117 D5)', () => {
     for (const text of others) expect(parseEventReminder(text).kind).toBe('none');
     expect(parseReminderMessage('30분 뒤에 스트레칭 알려줘', { now: NOW, timeZone: ZONE }).kind).toBe('CREATE');
     expect(parseReminderMessage('할 일 추가: 회의 10분 전에 알려줘', { now: NOW, timeZone: ZONE }).kind).toBe('NOT_REMINDER');
+  });
+});
+
+describe('recurrence and a bound clock time stay with the ADR-0101 grammar (Codex P2-3)', () => {
+  const legacy = (text: string) => parseReminderMessage(text, { now: NOW, timeZone: ZONE, eventRelative: false });
+  const current = (text: string) => parseReminderMessage(text, { now: NOW, timeZone: ZONE });
+
+  it('`매일 오전 9시에 회의 10분 전에 알려줘` is still the daily 09:00 reminder it always was', () => {
+    expect(current('매일 오전 9시에 회의 10분 전에 알려줘')).toEqual({
+      kind: 'CREATE',
+      body: '회의 10분 전에',
+      bodyKind: 'TEXT',
+      schedule: { type: 'DAILY', time: { hour: 9, minute: 0 } },
+      firstFireAt: '2026-10-10T00:00:00.000Z',
+      timeZone: ZONE,
+    });
+  });
+
+  it('recurrence and clock-time variants keep their pre-BRF-2 outcome', () => {
+    const variants = [
+      '평일 9시에 회의 10분 전에 알려줘',
+      '매주 월요일 오전 10시에 회의 15분 전에 알려줘',
+      '내일 오전 9시에 회의 10분 전에 알려줘',
+      '오후 3시 30분에 회의 10분 전에 알려줘',
+      '30분 뒤에 회의 10분 전에 알려줘',
+      '매일 회의 10분 전에 알려줘',
+      '매일 회의 전에 알려줘',
+      '주말마다 회의 10분 전에 알려줘',
+      'remind me 10 minutes before my daily standup meeting',
+      'remind me 10 minutes before every meeting',
+    ];
+    for (const text of variants) {
+      expect(current(text), text).toEqual(legacy(text));
+      expect(current(text).kind, text).not.toBe('CREATE_EVENT_RELATIVE');
+    }
+    expect(current('평일 9시에 회의 10분 전에 알려줘')).toMatchObject({ kind: 'CREATE', schedule: { type: 'WEEKLY' } });
+    expect(current('30분 뒤에 회의 10분 전에 알려줘')).toMatchObject({ kind: 'CREATE', schedule: { type: 'ONCE' } });
+  });
+
+  it('a start time that only names the meeting is still event-relative', () => {
+    for (const text of ['3시 회의 15분 전에 알려줘', '내일 9시 반 회의 10분 전에 알려 줘', '15:00 회의 10분 전에 알려줘']) {
+      expect(current(text).kind, text).toBe('CREATE_EVENT_RELATIVE');
+    }
   });
 });
 

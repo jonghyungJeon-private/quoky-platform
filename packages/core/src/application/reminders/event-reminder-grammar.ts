@@ -41,10 +41,23 @@ export interface EventReminderTarget {
   readonly title?: string;
 }
 
+/**
+ * `targetText` is the raw text before the meeting noun (`매일 오전 9시에` in `매일 오전 9시에 회의 10분 전에 알려줘`): the
+ * ADR-0101 grammar's guards read it before an event-relative command is accepted (`reminder-grammar.ts`).
+ */
 export type EventReminderParse =
   | { readonly kind: 'none' }
-  | { readonly kind: 'create'; readonly offsetMinutes: number; readonly target: EventReminderTarget }
-  | { readonly kind: 'clarify'; readonly reason: 'EVENT_OFFSET_OUT_OF_RANGE' | 'EVENT_OFFSET_MISSING' };
+  | {
+      readonly kind: 'create';
+      readonly offsetMinutes: number;
+      readonly target: EventReminderTarget;
+      readonly targetText: string;
+    }
+  | {
+      readonly kind: 'clarify';
+      readonly reason: 'EVENT_OFFSET_OUT_OF_RANGE' | 'EVENT_OFFSET_MISSING';
+      readonly targetText: string;
+    };
 
 /** A title the owner names is at most this long (a longer "title" is a sentence, not a name). */
 export const EVENT_REMINDER_TITLE_MAX_CHARS = 60;
@@ -90,16 +103,16 @@ function enHours(value: string): number {
   return Number(lower);
 }
 
-function offsetResult(minutes: number, target: EventReminderTarget | null): EventReminderParse {
+function offsetResult(minutes: number, target: EventReminderTarget | null, targetText: string): EventReminderParse {
   if (target === null) return NONE;
   if (
     !Number.isInteger(minutes) ||
     minutes < REMINDER_LIMITS.minEventOffsetMinutes ||
     minutes > REMINDER_LIMITS.maxEventOffsetMinutes
   ) {
-    return { kind: 'clarify', reason: 'EVENT_OFFSET_OUT_OF_RANGE' };
+    return { kind: 'clarify', reason: 'EVENT_OFFSET_OUT_OF_RANGE', targetText };
   }
-  return { kind: 'create', offsetMinutes: minutes, target };
+  return { kind: 'create', offsetMinutes: minutes, target, targetText };
 }
 
 const KO_DAY: Readonly<Record<string, number>> = { 오늘: 0, 내일: 1, 낼: 1, 모레: 2 };
@@ -208,17 +221,19 @@ export function parseEventReminder(text: string): EventReminderParse {
         : halfHour !== undefined
           ? 30
           : koHours(hours ?? '0') * 60 + (half !== undefined ? 30 : Number(hourMinutes ?? '0'));
-    return offsetResult(total, koTarget(target));
+    return offsetResult(total, koTarget(target), target);
   }
   const koMissing = KO_NO_OFFSET.exec(message);
-  if (koMissing !== null && koTarget(koMissing[1] ?? '') !== null) return { kind: 'clarify', reason: 'EVENT_OFFSET_MISSING' };
+  if (koMissing !== null && koTarget(koMissing[1] ?? '') !== null) {
+    return { kind: 'clarify', reason: 'EVENT_OFFSET_MISSING', targetText: koMissing[1] ?? '' };
+  }
 
   const en = EN_PATTERN.exec(message);
   if (en !== null) {
     const [, minutes, hours, half, target = '', dayWord] = en;
     const total = minutes !== undefined ? Number(minutes) : half !== undefined ? 30 : enHours(hours ?? '0') * 60;
-    return offsetResult(total, enTarget(target, dayWord));
+    return offsetResult(total, enTarget(target, dayWord), target);
   }
-  if (EN_NO_OFFSET.test(message)) return { kind: 'clarify', reason: 'EVENT_OFFSET_MISSING' };
+  if (EN_NO_OFFSET.test(message)) return { kind: 'clarify', reason: 'EVENT_OFFSET_MISSING', targetText: message };
   return NONE;
 }
