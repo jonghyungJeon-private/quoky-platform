@@ -370,7 +370,7 @@ describe('creation through the conversation service', () => {
       kind: 'TEXT',
       body: '주간 회의',
       schedule: { type: 'ONCE', at: '2026-10-09T01:50:00.000Z' },
-      event: { eventId: 'ev-weekly', offsetMinutes: 10 },
+      event: { eventId: 'ev-weekly', offsetMinutes: 10, calendarName: 'primary' },
       origin: ORIGIN,
     });
     expect(h.calendar.queries).toEqual([{ from: NOW, to: '2026-10-23T01:00:00.000Z', limit: 50 }]);
@@ -488,8 +488,11 @@ describe('fire-time re-check (ADR-0117 D6)', () => {
     expect(h.sink.delivered[0]).toMatchObject({ target: ORIGIN, kind: 'TEXT' });
     expect(renderMessageContent(h.sink.delivered[0]!.content ?? [], BRACKETING_MARKUP)).toContain('⟦주간 회의 (3층)⟧');
     expect((await h.repository.getByDisplayNo(ACTOR, 1))?.status).toBe(ReminderStatus.COMPLETED);
-    // The re-check read around the expected start (11:00 KST ± 12 h) only.
-    expect(h.calendar.queries).toEqual([{ from: '2026-10-08T14:00:00.000Z', to: '2026-10-09T14:00:00.000Z', limit: 50 }]);
+    // The re-check reads around the expected start (11:00 KST ± 12 h) and the wide window, always both.
+    expect(h.calendar.queries).toEqual([
+      { from: '2026-10-08T14:00:00.000Z', to: '2026-10-09T14:00:00.000Z', limit: 50 },
+      { from: '2026-10-08T01:50:00.000Z', to: '2026-11-08T01:50:00.000Z', limit: 50 },
+    ]);
     expect((await h.dispatch.dispatchDue(at(DUE, 30))).claimed).toBe(0);
     expect(h.sink.delivered).toHaveLength(1);
   });
@@ -542,6 +545,42 @@ describe('fire-time re-check (ADR-0117 D6)', () => {
     expect(h.calendar.queries[1]).toEqual({ from: '2026-10-08T01:50:00.000Z', to: '2026-11-08T01:50:00.000Z', limit: 50 });
     expect((await h.dispatch.dispatchDue(at(DUE, 30))).claimed).toBe(0);
     expect((await h.say('알림 1 취소', at(DUE, 31)))?.text).toBe('알림 #1은 이미 취소됐어요.');
+  });
+
+  it('two calendars with the same event id: the reminder follows the event on its own calendar (Codex P2-1)', async () => {
+    const h = await created([WEEKLY]);
+    // The same id on another calendar, unmoved; the reminder's own event (on `primary`) moved to 14:00.
+    const otherCalendarCopy = { ...WEEKLY, calendarName: 'team', title: '팀 주간 회의' };
+    h.calendar.events = [otherCalendarCopy, { ...WEEKLY, start: '2026-10-09T05:00:00.000Z', end: '2026-10-09T06:00:00.000Z' }];
+    const summary = await h.dispatch.dispatchDue(DUE);
+    expect(summary).toMatchObject({ delivered: 0, eventRescheduled: 1 });
+    expect(h.sink.delivered).toHaveLength(0);
+    expect(await h.repository.getByDisplayNo(ACTOR, 1)).toMatchObject({
+      status: ReminderStatus.SCHEDULED,
+      nextFireAt: '2026-10-09T04:50:00.000Z',
+    });
+    await h.dispatch.dispatchDue('2026-10-09T04:50:00.000Z');
+    expect(h.sink.delivered.map(plain)).toEqual(['알림 #1: 주간 회의 일정이 오후 2:00에 시작해요. (10분 전 알림)']);
+  });
+
+  it('two calendars sharing the id AND the name: ambiguous, delivered with the could-not-re-check note, never a guess', async () => {
+    const h = await created([WEEKLY]);
+    h.calendar.events = [WEEKLY, { ...WEEKLY, title: '다른 회의', start: '2026-10-09T05:00:00.000Z', end: '2026-10-09T06:00:00.000Z' }];
+    const summary = await h.dispatch.dispatchDue(DUE);
+    expect(summary).toMatchObject({ delivered: 1, eventUnverified: 1, eventRescheduled: 0 });
+    expect(h.sink.delivered.map(plain)).toEqual([
+      '알림 #1: 주간 회의 일정이 오전 11:00에 시작해요. (10분 전 알림) (캘린더를 다시 확인하지 못해 처음 확인한 시각 기준으로 알려드려요)',
+    ]);
+    expect(h.logger.lines.some((line) => line.includes('"reason":"duplicate"'))).toBe(true);
+  });
+
+  it('a reference stored without a calendar name matches the id alone; a duplicate is ambiguous', async () => {
+    const h = await created([WEEKLY]);
+    const [row] = [...h.repository.rows.values()];
+    h.repository.rows.set(row!.id, { ...row!, event: { eventId: 'ev-weekly', offsetMinutes: 10 } });
+    h.calendar.events = [WEEKLY, { ...WEEKLY, calendarName: 'team', start: '2026-10-09T05:00:00.000Z', end: '2026-10-09T06:00:00.000Z' }];
+    await h.dispatch.dispatchDue(DUE);
+    expect(plain(h.sink.delivered[0]!)).toContain('캘린더를 다시 확인하지 못해');
   });
 
   it('an event that became all-day is canceled with its own note', async () => {

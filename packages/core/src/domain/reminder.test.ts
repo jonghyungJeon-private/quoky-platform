@@ -66,6 +66,7 @@ describe('Reminder limits (ADR-0101)', () => {
       minEventOffsetMinutes: 1,
       maxEventOffsetMinutes: 120,
       maxEventIdChars: 1_024,
+      maxEventCalendarNameChars: 100,
     });
   });
 });

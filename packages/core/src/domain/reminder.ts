@@ -100,6 +100,12 @@ export interface ReminderEventRef {
   readonly eventId: string;
   /** Minutes before the event's start, `minEventOffsetMinutes`..`maxEventOffsetMinutes`. */
   readonly offsetMinutes: number;
+  /**
+   * The calendar the event was read from (`CalendarEvent.calendarName`, the only calendar identity the reader port
+   * exposes), at most `maxEventCalendarNameChars`. The re-check matches the id AND this name, so the same id on another
+   * calendar is never taken for it. Absent on a reference stored without it: the id alone, and a duplicate is ambiguous.
+   */
+  readonly calendarName?: string;
 }
 
 export interface ReminderLastOutcome {
@@ -139,6 +145,7 @@ export const REMINDER_LIMITS = {
   maxEventOffsetMinutes: 120,
   /** ADR-0117 D5: the stored event reference is bounded. */
   maxEventIdChars: 1_024,
+  maxEventCalendarNameChars: 100,
 } as const;
 
 /**
@@ -326,7 +333,12 @@ export function isValidReminderEventRef(event: ReminderEventRef): boolean {
     !/[\u0000-\u001f\u007f-\u009f]/.test(id) &&
     Number.isInteger(event.offsetMinutes) &&
     event.offsetMinutes >= REMINDER_LIMITS.minEventOffsetMinutes &&
-    event.offsetMinutes <= REMINDER_LIMITS.maxEventOffsetMinutes
+    event.offsetMinutes <= REMINDER_LIMITS.maxEventOffsetMinutes &&
+    (event.calendarName === undefined ||
+      (typeof event.calendarName === 'string' &&
+        event.calendarName.length <= REMINDER_LIMITS.maxEventCalendarNameChars &&
+        // eslint-disable-next-line no-control-regex
+        !/[\u0000-\u001f\u007f-\u009f]/.test(event.calendarName)))
   );
 }
 
@@ -355,7 +367,15 @@ export function createReminderDraft(input: NewReminderInput): ReminderDraft {
     occurrenceAt: input.firstFireAt,
     nextFireAt: input.firstFireAt,
     attempt: 0,
-    ...(input.event !== undefined ? { event: { eventId: input.event.eventId, offsetMinutes: input.event.offsetMinutes } } : {}),
+    ...(input.event !== undefined
+      ? {
+          event: {
+            eventId: input.event.eventId,
+            offsetMinutes: input.event.offsetMinutes,
+            ...(input.event.calendarName !== undefined ? { calendarName: input.event.calendarName } : {}),
+          },
+        }
+      : {}),
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
   };

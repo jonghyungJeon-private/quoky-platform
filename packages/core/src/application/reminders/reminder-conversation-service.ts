@@ -200,7 +200,8 @@ export class ReminderConversationService {
         origin: input.context,
         firstFireAt: resolution.fireAt,
         createdAt: input.now,
-        event: { eventId: resolution.event.id, offsetMinutes },
+        // The calendar identity is stored with the id, so the re-check never takes another calendar's event for it.
+        event: { eventId: resolution.event.id, offsetMinutes, calendarName: resolution.event.calendarName },
       });
     } catch (error) {
       // An event id outside the stored bound cannot be referenced: refused as unreadable, never truncated.

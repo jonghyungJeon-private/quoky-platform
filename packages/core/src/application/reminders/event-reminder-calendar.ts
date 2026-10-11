@@ -16,10 +16,12 @@ import { addLocalDays, localDateOf, toZonedDateTime, zonedToUtc } from './zoned-
  *   local start (a bare `3시` is 03:00 or 15:00). An exact title wins over a partial one; several different titles, or
  *   several events at the earliest matching start, are ambiguous and the owner is asked to name one. A request that
  *   only matches all-day events is refused: an all-day event has no start to be early for.
- * - **Re-check (D6).** The event is looked up by its stored id: first around its expected start (±12 h), then across
- *   `[now − 1 day, now + 30 days)`. Found: the dispatcher compares its start. Not found in a complete read: `gone` (the
- *   adapter never returns a cancelled event, so deleted and cancelled read the same). A failure, a timeout or a full
- *   page that does not contain it: `unreadable`.
+ * - **Re-check (D6).** The event is looked up by its stored id AND calendar name (the calendar identity the port
+ *   exposes; reviewed: the same id on another calendar must never be taken for it) in two reads, around its expected
+ *   start (±12 h) and across `[now − 1 day, now + 30 days)`. Exactly one distinct match: the dispatcher compares its
+ *   start. Two different matches (calendars that share a name, or a reference stored without one): `unreadable`, never
+ *   a guess. None in a complete read: `gone` (the adapter never returns a cancelled event, so deleted and cancelled
+ *   read the same). A failure, a timeout or a full page that does not contain it: `unreadable`.
  */
 
 /** The whole creation read must finish within the schedule handler's bound (an interactive turn). */
@@ -51,7 +53,11 @@ export type EventReminderResolution =
 export type EventReminderRecheck =
   | { readonly kind: 'found'; readonly event: CalendarEvent }
   | { readonly kind: 'gone' }
-  | { readonly kind: 'unreadable' };
+  /**
+   * The event could not be re-checked. `duplicate`: two different events carry the stored id (and calendar name, when
+   * stored), so neither is chosen.
+   */
+  | { readonly kind: 'unreadable'; readonly reason?: 'duplicate' };
 
 /** The comparison key of a title: NFKC, lower case, without spaces or punctuation. */
 export function eventTitleKey(title: string): string {
@@ -245,24 +251,29 @@ export class EventReminderCalendar {
     const nowMs = Date.parse(now);
     try {
       const verdict = await withTimeout(async (): Promise<EventReminderRecheck> => {
+        // Both reads always run: a copy of the id on another calendar may sit in either window, and only the union
+        // shows whether the reference names exactly one event.
         const narrow = await this.deps.reader.listEvents({
           from: new Date(expectedMs - RECHECK_NARROW_MS).toISOString(),
           to: new Date(expectedMs + RECHECK_NARROW_MS).toISOString(),
           limit: CALENDAR_EVENTS_MAX_LIMIT,
         });
-        const near = findById(narrow, ref.eventId);
-        if (near !== undefined) return { kind: 'found', event: near };
         const wide = await this.deps.reader.listEvents({
           from: new Date(nowMs - RECHECK_WIDE_BEFORE_MS).toISOString(),
           to: new Date(nowMs + RECHECK_WIDE_AFTER_MS).toISOString(),
           limit: CALENDAR_EVENTS_MAX_LIMIT,
         });
-        const far = findById(wide, ref.eventId);
-        if (far !== undefined) return { kind: 'found', event: far };
+        const matches = distinctMatches([...asEvents(narrow), ...asEvents(wide)], ref);
+        if (matches.length > 1) return { kind: 'unreadable', reason: 'duplicate' };
+        const only = matches[0];
+        if (only !== undefined) return { kind: 'found', event: only };
         // A full page that does not contain the event proves nothing: the event may be past the page.
         return Array.isArray(wide) && wide.length < CALENDAR_EVENTS_MAX_LIMIT ? { kind: 'gone' } : { kind: 'unreadable' };
       }, this.deps.recheckTimeoutMs ?? EVENT_REMINDER_RECHECK_TIMEOUT_MS);
-      this.log('info', 'reminder.event.recheck', { verdict: verdict.kind });
+      this.log('info', 'reminder.event.recheck', {
+        verdict: verdict.kind,
+        ...(verdict.kind === 'unreadable' && verdict.reason !== undefined ? { reason: verdict.reason } : {}),
+      });
       return verdict;
     } catch (error) {
       this.log('warn', 'reminder.event.recheck_failed', { reason: failureClass(error) });
@@ -279,6 +290,24 @@ export class EventReminderCalendar {
   }
 }
 
-function findById(events: readonly CalendarEvent[] | unknown, id: string): CalendarEvent | undefined {
-  return Array.isArray(events) ? (events as readonly CalendarEvent[]).find((event) => event.id === id) : undefined;
+function asEvents(events: readonly CalendarEvent[] | unknown): readonly CalendarEvent[] {
+  return Array.isArray(events) ? (events as readonly CalendarEvent[]) : [];
+}
+
+/**
+ * The events the reference names (its id, and its calendar name when stored), one per distinct event: the same event
+ * returned by both reads counts once.
+ */
+function distinctMatches(events: readonly CalendarEvent[], ref: ReminderEventRef): CalendarEvent[] {
+  const seen = new Set<string>();
+  const out: CalendarEvent[] = [];
+  for (const event of events) {
+    if (event.id !== ref.eventId) continue;
+    if (ref.calendarName !== undefined && event.calendarName !== ref.calendarName) continue;
+    const key = JSON.stringify([event.calendarName, event.start, event.end, event.allDay]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(event);
+  }
+  return out;
 }
