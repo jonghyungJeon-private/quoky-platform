@@ -8,6 +8,7 @@
 #   quokyctl.sh render                          read-only: print the plist install would write
 #   quokyctl.sh backup   [--dry-run] | --apply  take a verified DB copy + vector snapshot now (kind manual, 5 kept)
 #   quokyctl.sh backup   --verify NAME          read-only: re-verify a retained copy and its vector snapshot
+#   quokyctl.sh telegram                        read-only: Telegram files (poll offset, halt notices) and the runbook
 #
 # Options: --repo DIR (default: this checkout)  --env-file FILE (default: <repo>/.env.local)
 #          --label LABEL (default: com.quoky.personal)  --node FILE (default: the node on PATH)
@@ -32,7 +33,7 @@ LAUNCHER="$CTL_DIR/quoky-launch.sh"
 SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
-  sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2
 }
 
 fail() {
@@ -61,7 +62,7 @@ case "$COMMAND" in
   install | uninstall | restart)
     [ -n "$MODE" ] || { usage; fail "$COMMAND needs --dry-run (show the plan) or --apply (run it)"; }
     ;;
-  status | render)
+  status | render | telegram)
     [ -z "$MODE" ] || fail "$COMMAND is read-only; it takes no --dry-run/--apply"
     ;;
   backup)
@@ -342,6 +343,50 @@ cmd_status() {
   echo "logs:    $LOG_DIR/quoky.log"
 }
 
+# ADR-0114 (TG-3): the Telegram side as the files beside the service database show it, read-only. Nothing here reads
+# the env file, calls Telegram or prints a token, a chat or user id or a bot id: only times and halt codes, each
+# matched against a fixed pattern before it is printed. The live state (connected, polling, drop counters) is the
+# operations UI's Telegram panel.
+telegram_time() {
+  sed -n "s/.*\"$1\":\"\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]*Z\)\".*/\1/p" "$2" 2>/dev/null | head -n 1
+}
+
+cmd_telegram() {
+  local ops_dir offset_file halts_file saved codes
+  ops_dir="$(dirname "$(quoky_service_db_path "$DATA_DIR")")/ops"
+  offset_file="$ops_dir/telegram-offset.json"
+  halts_file="$ops_dir/telegram-halt-notices.json"
+  echo "telegram: read-only; the env file is not read and Telegram is not called"
+  if [ -f "$offset_file" ]; then
+    saved=$(telegram_time savedAt "$offset_file")
+    echo "poll offset saved: ${saved:-unknown} ($offset_file)"
+  else
+    echo "poll offset saved: none (Telegram off, or no update handed over yet)"
+  fi
+  if [ -f "$halts_file" ]; then
+    codes=$(grep -o '"TELEGRAM_[A-Z_]*":"[0-9][0-9][0-9][0-9]-[0-9T:.-]*Z"' "$halts_file" 2>/dev/null | tr -d '"' | sed 's/:/ at /')
+    if [ -n "$codes" ]; then
+      echo "halt notices delivered (to the Discord owner DM):"
+      echo "$codes" | sed 's/^/  /'
+    else
+      echo "halt notices delivered: none"
+    fi
+  else
+    echo "halt notices delivered: none"
+  fi
+  echo "live status: the operations UI's Telegram panel (QUOKY_OPS_UI_ENABLED=true); log: $LOG_DIR/quoky.log"
+  cat <<'RUNBOOK'
+halt codes (the Telegram side stops, Discord keeps running; fix, then 'restart --apply'):
+  TELEGRAM_POLL_CONFLICT      another poller or a webhook on this bot: stop the other Quoky (or deleteWebhook)
+  TELEGRAM_AUTH_REJECTED      the token was revoked or replaced: put the current BotFather token in the env file
+  TELEGRAM_IDENTITY_MISMATCH  the token belongs to another bot: fix QUOKY_TELEGRAM_BOT_TOKEN / _EXPECTED_BOT_ID
+  TELEGRAM_POLL_LOOP_FAILED   an internal failure: send the log codes; a restart resumes polling
+rotate or revoke the token: BotFather /revoke, then the new token in QUOKY_TELEGRAM_BOT_TOKEN (same bot id), restart
+turn Telegram off: QUOKY_TELEGRAM_ENABLED=false, restart (reminders created on Telegram are then not delivered)
+unlink the Telegram identity: DECISIONS.md, ADR-0114 TG-1 note, "Identity (D3)" -> "To unlink" (Strict DB edit)
+RUNBOOK
+}
+
 # The on-demand backup tool, in the service's own environment shape: built from nothing (env -i) with the service's DB
 # and vector paths (the launcher's own helpers). Neither this script nor the tool reads the env file for a backup: the
 # tool takes the backup directory, switch and time zone from the configuration the running service publishes
@@ -392,5 +437,6 @@ case "$COMMAND" in
   uninstall) cmd_uninstall ;;
   restart) cmd_restart ;;
   status) cmd_status ;;
+  telegram) cmd_telegram ;;
   render) cmd_render ;;
 esac
