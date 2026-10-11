@@ -49,12 +49,16 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
       '_draft_.ts',
       'https://x/**y**',
       'www.e.test/_a_/b',
+      '[file](https://e.test/_draft_/x)',
+      '[file](https://e.test/**x**/y)',
+      '<https://e.test/_a_/b>',
       'C:\\dir\\_x_\\*y*.ts',
       '파일 `src/_x_/y.ts` 수정',
     ]) {
       expect(t(same).replace(/`/g, '')).toBe(same.replace(/`/g, ''));
     }
     expect(t('`**code**`')).toBe('**code**');
+    expect(t('[**굵게**](https://e.test/_a_/b)')).toBe('[**굵게**](https://e.test/_a_/b)');
     expect(t('**굵게** `a.ts` _draft_.ts')).toBe('굵게 a.ts _draft_.ts');
   });
 

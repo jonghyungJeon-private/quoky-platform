@@ -18328,6 +18328,12 @@ level:
   chunks join back to exactly the translated text, each within 4096 including the `(i/n)` prefix.
 - **Behaviour change.** The TG-1 tests that pinned literal `**`, backticks and fences in Quoky copy now pin the
   translation. Every "untrusted span verbatim" assertion is unchanged.
+- **Review fix (Codex P2-1, P2-2): translation is token-aware and conservative.** Underscore emphasis (`_`, `__`) is
+  no longer translated, so `_draft_.ts`, `__init__.py` and `snake_case` survive. Only `*…*` and `**…**` are stripped.
+  Never altered: link destinations `](…)`, autolinks `<…>`, and any whitespace-delimited token that is URL-shaped
+  (scheme, `www.`, `://`), path-shaped (`/`, `\`, `.ext`) or an identifier with an internal `_`. Code spans keep their
+  content. The earlier "Emphasis" rule above is narrowed accordingly. Length, lossless chunking, opaque spans and the
+  disagree-with-Core fallback are unchanged.
 
 #### `quokyctl` and the operator docs
 

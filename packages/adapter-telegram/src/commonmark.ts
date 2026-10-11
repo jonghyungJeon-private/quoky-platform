@@ -387,6 +387,34 @@ function tokenShaped(token: string): boolean {
 function markGuarded(units: readonly Unit[], code: readonly boolean[]): boolean[] {
   const guarded = units.map(() => false);
   const plain = (k: number): boolean => units[k]?.atom === false && !code[k];
+  for (let k = 0; k + 1 < units.length; k += 1) {
+    if (plain(k) && units[k]?.text === ']' && plain(k + 1) && units[k + 1]?.text === '(') {
+      let depth = 0;
+      let end = units.length - 1;
+      for (let m = k + 1; m < units.length; m += 1) {
+        if (units[m]?.atom || code[m]) continue;
+        if (units[m]?.text === '(') depth += 1;
+        else if (units[m]?.text === ')') {
+          depth -= 1;
+          if (depth === 0) {
+            end = m;
+            break;
+          }
+        }
+      }
+      for (let m = k + 1; m <= end; m += 1) guarded[m] = true;
+    }
+    if (plain(k) && units[k]?.text === '<') {
+      for (let m = k + 1; m < units.length; m += 1) {
+        const unit = units[m] as Unit;
+        if (unit.atom || WHITESPACE.test(unit.text) || unit.text === '<') break;
+        if (unit.text === '>') {
+          if (m > k + 1) for (let n = k; n <= m; n += 1) guarded[n] = true;
+          break;
+        }
+      }
+    }
+  }
   let start = 0;
   for (let k = 0; k <= units.length; k += 1) {
     const unit = units[k];
