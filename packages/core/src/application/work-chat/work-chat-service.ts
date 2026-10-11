@@ -181,7 +181,7 @@ const REMINDER_SHAPE_PROBE_NOW = '2026-01-01T00:00:00.000Z';
 function looksReminderShaped(title: string): boolean {
   try {
     const parsed = parseReminderMessage(title, { now: REMINDER_SHAPE_PROBE_NOW });
-    if (parsed.kind === 'CREATE') return true;
+    if (parsed.kind === 'CREATE' || parsed.kind === 'CREATE_EVENT_RELATIVE') return true;
     return parsed.kind === 'CLARIFY' && parsed.reason !== 'EMPTY_BODY' && parsed.reason !== 'MISSING_TIME';
   } catch {
     return false;

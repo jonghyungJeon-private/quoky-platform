@@ -63,11 +63,14 @@ describe('Reminder limits (ADR-0101)', () => {
       lateLabelAfterMs: 120_000,
       maxDeliveriesPerTick: 10,
       maxDeliveredTextChars: 1_800,
+      minEventOffsetMinutes: 1,
+      maxEventOffsetMinutes: 120,
+      maxEventIdChars: 1_024,
     });
   });
 });
 
-describe('Reminder transition table (closed, ADR-0101 D4)', () => {
+describe('Reminder transition table (closed, ADR-0101 D4, amended by ADR-0117 D6)', () => {
   const allowed: Record<ReminderStatus, ReminderStatus[]> = {
     [ReminderStatus.SCHEDULED]: [ReminderStatus.FIRING, ReminderStatus.CANCELED, ReminderStatus.SCHEDULED],
     [ReminderStatus.FIRING]: [
@@ -75,6 +78,8 @@ describe('Reminder transition table (closed, ADR-0101 D4)', () => {
       ReminderStatus.SCHEDULED,
       ReminderStatus.FAILED,
       ReminderStatus.DELIVERY_UNCERTAIN,
+      // ADR-0117 D6: the fire-time re-check found the event-relative reminder's event gone.
+      ReminderStatus.CANCELED,
     ],
     [ReminderStatus.COMPLETED]: [],
     [ReminderStatus.CANCELED]: [],

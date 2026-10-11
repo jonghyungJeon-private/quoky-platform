@@ -7,6 +7,7 @@ import {
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
   STORAGE_PROVIDER,
+  EventReminderCalendar,
   ReminderConversationService,
   ReminderDispatchService,
   ReminderReplyComposer,
@@ -46,7 +47,9 @@ import { REMINDER_TURN_HANDLERS } from './feature-tokens';
  * The dispatch service's whole surface is repository + sink + composer + a read-only WorkItem lister + logger, and
  * — for the brief only (ADR-0117, BRF-1) — the read-only `CALENDAR_READER` when the calendar is configured and the
  * read-only Jira connector only with `QUOKY_BRIEF_JIRA_ENABLED=true` (`reminders/brief-sources.ts`). Both are
- * optional injections of existing bindings; no new token. No provider or tool reaches reminders.
+ * optional injections of existing bindings; no new token. No provider or tool reaches reminders. The same optional
+ * `CALENDAR_READER` resolves a pre-meeting reminder's event in the conversation service and re-checks it in the
+ * dispatch service (ADR-0117 D5/D6, BRF-2).
  */
 
 /**
@@ -142,15 +145,27 @@ export function createRemindersProviders(
     { provide: ReminderReplyComposer, useFactory: () => new ReminderReplyComposer() },
     {
       provide: ReminderConversationService,
-      useFactory: (config: ReminderConfig, repository: ReminderRepository, composer: ReminderReplyComposer) =>
+      useFactory: (
+        config: ReminderConfig,
+        repository: ReminderRepository,
+        composer: ReminderReplyComposer,
+        calendar: CalendarReader | undefined,
+      ) =>
         new ReminderConversationService({
           repository,
           composer,
           timeZone: config.timeZone,
           enabled: config.enabled,
           logger,
+          // ADR-0117 D5 (BRF-2): the read-only calendar resolves the event a pre-meeting reminder names.
+          ...(calendar ? { calendar } : {}),
         }),
-      inject: [REMINDER_FEATURE_CONFIG, REMINDER_REPOSITORY, ReminderReplyComposer],
+      inject: [
+        REMINDER_FEATURE_CONFIG,
+        REMINDER_REPOSITORY,
+        ReminderReplyComposer,
+        { token: CALENDAR_READER, optional: true },
+      ],
     },
     {
       provide: ReminderDispatchService,
@@ -177,6 +192,8 @@ export function createRemindersProviders(
           sink,
           composer,
           ...(briefSources !== undefined ? { briefSources } : {}),
+          // ADR-0117 D6 (BRF-2): the fire-time re-check of a pre-meeting reminder's event (read-only).
+          ...(calendar ? { eventCalendar: new EventReminderCalendar({ reader: calendar, logger }) } : {}),
           // Read-only, call-time WorkItem identities for the local daily brief (QA-001).
           workItems: {
             listByActor: (actorId) => {

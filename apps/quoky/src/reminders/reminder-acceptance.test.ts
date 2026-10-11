@@ -788,3 +788,120 @@ describe('reminders offline acceptance — morning brief sources (ADR-0117, BRF-
     expect(chat.providerCalls()).toBe(0);
   });
 });
+
+describe('reminders offline acceptance — pre-meeting reminders (ADR-0117 D5/D6, BRF-2)', () => {
+  /** A mutable fake calendar: events overlapping the window, ordered by start, limited; or a failure. */
+  class MovableCalendar implements CalendarReader {
+    readonly source = 'calendar';
+    readonly readOnly = true as const;
+    readonly queries: CalendarEventQuery[] = [];
+    events: CalendarEvent[] = [];
+    failing = false;
+    async listEvents(query: CalendarEventQuery): Promise<readonly CalendarEvent[]> {
+      this.queries.push(query);
+      if (this.failing) throw new Error('calendar down');
+      return this.events
+        .filter((e) => Date.parse(e.start) < Date.parse(query.to) && Date.parse(e.end) > Date.parse(query.from))
+        .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+        .slice(0, query.limit ?? 50);
+    }
+  }
+  // T0 is 12:00 KST; the meeting starts at 14:00 KST.
+  const review: CalendarEvent = {
+    id: 'cal-review-1', title: '분기 리뷰', start: '2026-10-02T05:00:00.000Z', end: '2026-10-02T06:00:00.000Z',
+    allDay: false, status: 'confirmed', calendarName: 'primary',
+  };
+
+  async function setup(dbPath = tempDbPath(), clock = new TestClock(), calendar = new MovableCalendar(), platform = new FakePlatform()) {
+    const c = await compose(dbPath, clock, new RecordingLogger(), {}, platform, [{ provide: CALENDAR_READER, useValue: calendar }]);
+    await c.driver.start();
+    return { c, chat: conversationRuntime(c.handlers, clock), clock, calendar, dbPath };
+  }
+
+  it('create → moved later (no stale send) → delivered once at the new time over SQLite, with zero provider calls', async () => {
+    const calendar = new MovableCalendar();
+    calendar.events = [review];
+    const { c, chat, clock } = await setup(undefined, undefined, calendar);
+    const created = await chat.say('분기 리뷰 회의 10분 전에 알려줘');
+    expect(created.status).toBe('RESPONDED');
+    expect(created.reply.text).toContain('10월 2일(금) 오후 1:50에 알려드릴게요: 분기 리뷰 (오후 2:00 시작, 10분 전)');
+    const stored = await c.storage.reminders.getByDisplayNo(ACTOR_ID, 1);
+    expect(stored).toMatchObject({ event: { eventId: 'cal-review-1', offsetMinutes: 10 }, nextFireAt: '2026-10-02T04:50:00.000Z' });
+
+    calendar.events = [{ ...review, start: '2026-10-02T06:00:00.000Z', end: '2026-10-02T07:00:00.000Z' }]; // 15:00
+    clock.advance(1 * HOUR + 50 * MINUTE); // 13:50
+    await tick(c);
+    expect(c.platform.deliveries).toHaveLength(0);
+    expect((await c.storage.reminders.getByDisplayNo(ACTOR_ID, 1))?.nextFireAt).toBe('2026-10-02T05:50:00.000Z');
+
+    clock.advance(1 * HOUR); // 14:50
+    await tick(c);
+    clock.advance(1 * HOUR);
+    await tick(c);
+    expect(c.platform.deliveries.map((d) => d.text)).toEqual(['알림 #1: 분기 리뷰 일정이 오후 3:00에 시작해요. (10분 전 알림)']);
+    expect(c.platform.deliveries[0]?.target).toEqual(dmContext);
+    expect((await c.storage.reminders.getByDisplayNo(ACTOR_ID, 1))?.status).toBe(ReminderStatus.COMPLETED);
+    expect(chat.providerCalls()).toBe(0);
+    expect(chat.tasksCreated()).toBe(0);
+  });
+
+  it('a deleted event cancels the reminder with one note; `알림 목록` then shows nothing', async () => {
+    const calendar = new MovableCalendar();
+    calendar.events = [review];
+    const { c, chat, clock } = await setup(undefined, undefined, calendar);
+    await chat.say('다음 회의 30분 전에 알려줘');
+    expect((await chat.say('알림 목록')).reply.text).toContain('[회의 30분 전] 분기 리뷰');
+    calendar.events = [];
+    clock.advance(1 * HOUR + 30 * MINUTE);
+    await tick(c);
+    expect(c.platform.deliveries.map((d) => d.text)).toEqual([
+      '알림 #1 취소: 분기 리뷰 일정을 캘린더에서 찾을 수 없어(삭제·취소됐거나 30일 넘게 옮겨졌어요) 회의 전 알림을 취소했어요.',
+    ]);
+    expect((await c.storage.reminders.getByDisplayNo(ACTOR_ID, 1))?.status).toBe(ReminderStatus.CANCELED);
+    expect((await chat.say('알림 목록')).reply.text).toContain('예정된 알림이 없어요');
+  });
+
+  it('an unreadable calendar at fire time delivers once with the note', async () => {
+    const calendar = new MovableCalendar();
+    calendar.events = [review];
+    const { c, chat, clock } = await setup(undefined, undefined, calendar);
+    await chat.say('회의 10분 전에 알려줘');
+    calendar.failing = true;
+    clock.advance(1 * HOUR + 50 * MINUTE);
+    await tick(c);
+    clock.advance(1 * HOUR);
+    await tick(c);
+    expect(c.platform.deliveries.map((d) => d.text)).toEqual([
+      '알림 #1: 분기 리뷰 일정이 오후 2:00에 시작해요. (10분 전 알림) (캘린더를 다시 확인하지 못해 처음 확인한 시각 기준으로 알려드려요)',
+    ]);
+  });
+
+  it('at most once across a restart: a FIRING pre-meeting reminder is DELIVERY_UNCERTAIN and never re-sent', async () => {
+    const calendar = new MovableCalendar();
+    calendar.events = [review];
+    const first = await setup(undefined, undefined, calendar);
+    await first.chat.say('회의 10분 전에 알려줘');
+    first.clock.advance(1 * HOUR + 50 * MINUTE);
+    expect(await first.c.storage.reminders.claimDue(first.clock.now(), 10, 'crashed-attempt')).toHaveLength(1);
+    await first.c.close();
+
+    first.clock.advance(2 * MINUTE);
+    const platform = new FakePlatform();
+    const second = await setup(first.dbPath, first.clock, calendar, platform);
+    await tick(second.c);
+    second.clock.advance(1 * HOUR);
+    await tick(second.c);
+    expect(platform.deliveries).toHaveLength(0);
+    expect((await second.c.storage.reminders.getByDisplayNo(ACTOR_ID, 1))?.status).toBe(ReminderStatus.DELIVERY_UNCERTAIN);
+  });
+
+  it('without a calendar binding the phrase still routes to reminders and gets the fixed "not connected" reply', async () => {
+    const clock = new TestClock();
+    const c = await compose(tempDbPath(), clock, new RecordingLogger());
+    const chat = conversationRuntime(c.handlers, clock);
+    const reply = await chat.say('회의 10분 전에 알려줘');
+    expect(reply.reply.text).toContain('캘린더가 연결되어 있지 않아');
+    expect(chat.providerCalls()).toBe(0);
+    expect(await c.storage.reminders.listActiveByActor(ACTOR_ID)).toEqual([]);
+  });
+});

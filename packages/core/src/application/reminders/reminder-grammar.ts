@@ -9,6 +9,7 @@ import {
 } from '../../domain';
 import { isNegated } from '../intent-negation';
 import { nextOccurrenceAfter } from './reminder-schedule';
+import { parseEventReminder, type EventReminderTarget } from './event-reminder-grammar';
 import {
   REMINDER_DEFAULT_TIME_ZONE,
   addLocalDays,
@@ -71,7 +72,11 @@ export type ReminderClarifyReason =
   | 'EMPTY_BODY'
   | 'BODY_TOO_LONG'
   | 'INVALID_REMINDER_NUMBER'
-  | 'BULK_CANCEL_UNSUPPORTED';
+  | 'BULK_CANCEL_UNSUPPORTED'
+  /** ADR-0117 D5: an event-relative offset outside 1-120 minutes. */
+  | 'EVENT_OFFSET_OUT_OF_RANGE'
+  /** ADR-0117 D5: `회의 전에 알려줘` without how many minutes before. */
+  | 'EVENT_OFFSET_MISSING';
 
 export type ReminderCommand =
   | { readonly kind: 'NOT_REMINDER' }
@@ -83,6 +88,11 @@ export type ReminderCommand =
       readonly firstFireAt: IsoTimestamp;
       readonly timeZone: string;
     }
+  /**
+   * ADR-0117 D5 (BRF-2): a reminder `offsetMinutes` before ONE calendar event the owner named; the event is resolved
+   * through `CalendarReader` by the conversation service (`event-reminder-grammar.ts`).
+   */
+  | { readonly kind: 'CREATE_EVENT_RELATIVE'; readonly offsetMinutes: number; readonly target: EventReminderTarget }
   | { readonly kind: 'LIST' }
   | { readonly kind: 'CANCEL'; readonly displayNo: number }
   | { readonly kind: 'CLARIFY'; readonly reason: ReminderClarifyReason };
@@ -1416,6 +1426,13 @@ export function parseReminderMessage(text: string, options: ReminderGrammarOptio
   const message = trimmed.replace(/\s+/g, ' ');
   const listOrCancel = matchListOrCancel(message);
   if (listOrCancel !== null) return listOrCancel;
+
+  // ADR-0117 D5: "회의 10분 전에 알려줘" names a calendar event, not a clock time; it is matched before the time grammar.
+  const event = parseEventReminder(message);
+  if (event.kind === 'create') {
+    return { kind: 'CREATE_EVENT_RELATIVE', offsetMinutes: event.offsetMinutes, target: event.target };
+  }
+  if (event.kind === 'clarify') return clarify(event.reason);
 
   const ctx: ResolveContext = { nowMs, timeZone };
   return KO_VERB_PRESENT.test(message) ? parseKorean(message, ctx) : parseEnglish(message, ctx);

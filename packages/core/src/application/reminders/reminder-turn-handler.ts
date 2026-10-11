@@ -21,6 +21,12 @@ import type { ReminderReplyComposer } from './reminder-reply-composer';
  */
 
 export const REMINDER_TURN_HANDLER_ID = 'reminders';
+
+/**
+ * ADR-0117 D5 (BRF-2): what SHORT_TERM history keeps instead of a reminder reply that echoes calendar event titles
+ * (any reply carrying an untrusted span), as the calendar handler does, so event text never reaches a later prompt.
+ */
+export const REMINDER_EVENT_HISTORY_NOTE = '[알림 응답 — 캘린더 일정 내용은 대화 기록에 남기지 않아요.]';
 export const REMINDER_TURN_HANDLER_ORDER = 200;
 
 /** Help lines while reminders are on (ADR-0096 D6; each well under the composer's 120-char bound). */
@@ -62,7 +68,8 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
         messageId: ctx.message.id,
         now: ctx.now,
       });
-      return reply ? { reply } : null;
+      if (!reply) return null;
+      return reply.content !== undefined ? { reply, history: { assistant: REMINDER_EVENT_HISTORY_NOTE } } : { reply };
     } catch (error) {
       // The service catches its own failures; this is the handler-contract backstop. It cannot know whether the
       // text was a reminder phrase, and falling through could let chat promise a reminder, so it answers with the

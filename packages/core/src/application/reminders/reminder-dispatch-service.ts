@@ -1,12 +1,15 @@
 import {
   REMINDER_LIMITS,
   isRecurringSchedule,
+  planEventCanceledCompletion,
+  planEventRescheduleCompletion,
   planFiringCompletion,
   type Id,
   type IsoTimestamp,
   type MessageBody,
   type NotificationDeliveryOutcome,
   type Reminder,
+  type ReminderEventRef,
   type ReminderFiringResult,
   type WorkItem,
 } from '../../domain';
@@ -17,6 +20,7 @@ import { newId } from '../../util/id';
 import { messageFields } from '../message-rendering';
 import { decideMissedOccurrence, nextOccurrenceAfter } from './reminder-schedule';
 import type { DailyBriefSources } from './daily-brief-sources';
+import type { EventReminderCalendar, EventReminderRecheck } from './event-reminder-calendar';
 import type { ReminderReplyComposer } from './reminder-reply-composer';
 
 /**
@@ -48,6 +52,11 @@ export interface ReminderDispatchDeps {
    * source, and the brief is the local-only brief, byte for byte.
    */
   readonly briefSources?: Pick<DailyBriefSources, 'read'>;
+  /**
+   * ADR-0117 D6 (BRF-2): the read-only re-check of an event-relative reminder's event at fire time. Absent (no calendar
+   * configured): such a reminder is delivered as scheduled with the "could not re-check" note.
+   */
+  readonly eventCalendar?: Pick<EventReminderCalendar, 'recheck'>;
   /** Firing-attempt id source; defaults to the shared `newId`. */
   readonly idGenerator?: () => Id;
 }
@@ -80,6 +89,12 @@ export interface ReminderDispatchSummary {
   readonly staleCompletions: number;
   /** Reminders whose processing failed unexpectedly (left FIRING; startup recovery marks them uncertain). */
   readonly errors: number;
+  /** ADR-0117 D6: event-relative reminders whose event moved later; rescheduled, nothing sent. */
+  readonly eventRescheduled: number;
+  /** ADR-0117 D6: event-relative reminders canceled because the event is gone or became all-day (the note is sent). */
+  readonly eventCanceled: number;
+  /** ADR-0117 D6: event-relative reminders delivered without a re-check (the calendar could not be read). */
+  readonly eventUnverified: number;
 }
 
 export interface ReminderRecoverySummary {
@@ -104,6 +119,9 @@ function emptySummary(): MutableDispatchSummary {
     skippedMissed: 0,
     staleCompletions: 0,
     errors: 0,
+    eventRescheduled: 0,
+    eventCanceled: 0,
+    eventUnverified: 0,
   };
 }
 
@@ -217,18 +235,120 @@ export class ReminderDispatchService {
       return;
     }
 
+    if (reminder.event !== undefined && reminder.kind === 'TEXT' && reminder.schedule.type === 'ONCE') {
+      await this.dispatchEventReminder(reminder, reminder.event, attemptId, now, decision, summary);
+      return;
+    }
+
     const text = await this.composeText(reminder, decision.occurrenceAt, decision.late, now);
     const outcome = await this.deliverOnce(reminder, decision.occurrenceAt, text);
+    this.count(outcome, reminder, decision.late, summary);
     const completion = planFiringCompletion(reminder, outcome, {
       at: now,
       ...(isRecurringSchedule(reminder.schedule) ? { deliveredOccurrenceAt: decision.occurrenceAt } : {}),
       ...this.nextOccurrenceContext(reminder, laterOf(now, decision.occurrenceAt)),
     });
+    await this.complete(reminder, attemptId, completion, summary);
+  }
 
+  /**
+   * ADR-0117 D6: the fire-time re-check of an event-relative reminder. The event is re-read by its id:
+   *
+   * - unchanged → delivered (late label as for any ONCE reminder), with the event's current title;
+   * - moved later → rescheduled to the new start minus the offset, nothing sent (never at the stale time);
+   * - moved earlier (its new due time has passed) → delivered now, saying the event moved;
+   * - gone (deleted or cancelled), or now all-day → canceled, with one note to the owner;
+   * - unreadable (failure, timeout, an incomplete read, or no calendar configured) → delivered as scheduled with the
+   *   "could not re-check" note.
+   *
+   * Every send is the single `deliverOnce` of this claim: at most once, as ADR-0101 D6 (an interrupted re-check leaves
+   * the row FIRING, which startup recovery records DELIVERY_UNCERTAIN, never resent).
+   */
+  private async dispatchEventReminder(
+    reminder: Reminder,
+    ref: ReminderEventRef,
+    attemptId: Id,
+    now: IsoTimestamp,
+    decision: { occurrenceAt: IsoTimestamp; late: boolean },
+    summary: MutableDispatchSummary,
+  ): Promise<void> {
+    const occurrenceMs = Date.parse(decision.occurrenceAt);
+    const offsetMs = ref.offsetMinutes * 60_000;
+    const expectedStart = new Date(occurrenceMs + offsetMs).toISOString();
+    const check: EventReminderRecheck =
+      this.deps.eventCalendar === undefined
+        ? { kind: 'unreadable' }
+        : await this.deps.eventCalendar.recheck(ref, expectedStart, now);
+
+    if (check.kind === 'gone' || (check.kind === 'found' && check.event.allDay)) {
+      const text = this.deps.composer.eventCanceledDelivery({
+        displayNo: reminder.displayNo,
+        title: check.kind === 'found' ? check.event.title : reminder.body,
+        reason: check.kind === 'gone' ? 'gone' : 'all-day',
+      });
+      const outcome = await this.deliverOnce(reminder, decision.occurrenceAt, text);
+      this.count(outcome, reminder, false, summary);
+      const completion = planEventCanceledCompletion(reminder, outcome, { at: now });
+      if (completion.status !== 'SCHEDULED') summary.eventCanceled += 1;
+      await this.complete(reminder, attemptId, completion, summary);
+      return;
+    }
+
+    let title = reminder.body;
+    let startAt = expectedStart;
+    let note: 'none' | 'unverified' | 'moved-earlier' = 'unverified';
+    let late = decision.late;
+    if (check.kind === 'found') {
+      const startMs = Date.parse(check.event.start);
+      if (!Number.isFinite(startMs)) {
+        summary.eventUnverified += 1;
+      } else {
+        const dueMs = startMs - offsetMs;
+        title = check.event.title;
+        startAt = new Date(startMs).toISOString();
+        if (dueMs === occurrenceMs) {
+          note = 'none';
+        } else if (dueMs > Date.parse(now)) {
+          // Moved later: the reminder moves with it and nothing is sent at the stale time.
+          const completion = planEventRescheduleCompletion(reminder, { at: now, occurrenceAt: new Date(dueMs).toISOString() });
+          summary.eventRescheduled += 1;
+          await this.complete(reminder, attemptId, completion, summary);
+          return;
+        } else {
+          note = 'moved-earlier';
+          late = false;
+        }
+      }
+    } else {
+      summary.eventUnverified += 1;
+    }
+
+    const text = this.deps.composer.eventDelivery({
+      displayNo: reminder.displayNo,
+      title,
+      startAt,
+      offsetMinutes: ref.offsetMinutes,
+      note,
+      occurrenceAt: decision.occurrenceAt,
+      late,
+      timeZone: reminder.timeZone,
+      deliveredAt: now,
+    });
+    const outcome = await this.deliverOnce(reminder, decision.occurrenceAt, text);
+    this.count(outcome, reminder, late, summary);
+    await this.complete(reminder, attemptId, planFiringCompletion(reminder, outcome, { at: now }), summary);
+  }
+
+  private count(
+    outcome: NotificationDeliveryOutcome,
+    reminder: Reminder,
+    late: boolean,
+    summary: MutableDispatchSummary,
+  ): void {
     switch (outcome.status) {
       case 'SENT':
         summary.delivered += 1;
-        if (decision.late) summary.deliveredLate += 1;
+        if (late) summary.deliveredLate += 1;
         if (outcome.via === 'dm') summary.viaDm += 1;
         else summary.viaChannel += 1;
         break;
@@ -240,7 +360,6 @@ export class ReminderDispatchService {
         summary.uncertain += 1;
         break;
     }
-    await this.complete(reminder, attemptId, completion, summary);
   }
 
   /** `deliver` exactly once. A throw is `UNCERTAIN` (the request may have been issued), never a retry. */

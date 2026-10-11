@@ -17,3 +17,6 @@ export * from './reminder-dispatch-service';
 export * from './reminder-turn-handler';
 // BRF-1 (ADR-0117 D1/D2): the brief's bounded, read-only calendar and opt-in assigned-work reads.
 export * from './daily-brief-sources';
+// BRF-2 (ADR-0117 D5/D6): event-relative (pre-meeting) reminders — the grammar and the calendar resolution / re-check.
+export * from './event-reminder-grammar';
+export * from './event-reminder-calendar';
