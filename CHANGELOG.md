@@ -5,6 +5,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — BRF-2 pre-meeting reminders (2026-10-12)
+
+Personal v4 track BRF-2 (ADR-0117 D5/D6; implementation note in DECISIONS.md). No migration (the event reference lives in
+the reminder's JSON data), no new port, DI token or dependency; `ConversationRuntimeDeps` stays 35.
+
+- **Phrasings (opt-in per command).** `회의 10분 전에 알려줘`, `다음 회의 30분 전에 알려줘`, `3시 회의 15분 전에 알려줘`,
+  `<제목> 회의 10분 전에 알려줘`, `내일 회의 1시간 전에 알려줘`, `금요일 주간 회의 20분 전에 알려줘`,
+  `remind me 10 minutes before my next meeting`. The offset is 1–120 minutes. `회의 전에 알려줘` asks how many minutes.
+- **Resolution.** One read through the existing `CalendarReader`: the named day, or the next 14 days.
+  - **Ambiguous.** The candidates are listed and nothing is created.
+  - **Refused, with nothing created.** No match, all-day only, too soon, and an unreadable calendar; each is said
+    honestly.
+  - **Stored.** The event id and offset, with the guarded title as the body.
+- **Fire-time re-check.** The event is re-read by id when the reminder is due:
+  - moved later: rescheduled, nothing sent at the stale time;
+  - moved earlier: delivered now with the new start;
+  - deleted, cancelled or now all-day: canceled with one note;
+  - unreadable: delivered with a "could not re-check" note.
+
+  At most once (ADR-0101 D6). The reminder transition table gains FIRING → CANCELED, used only by this re-check.
+- **Listing and cancel.** `알림 목록` shows `[회의 10분 전] <제목>`; `알림 N 취소` works unchanged. The brief lists these
+  reminders too. Titles are untrusted spans, credential-guarded. Replies that echo a title keep a fixed history note.
+- **Delivery.** Deterministic text, no model call, to the origin platform through the existing owner sink.
+- **Routing.** The golden corpus gains route-408..414. Existing cases are unchanged.
+- **Validation.** Offline only (fake calendar reader and clock, SQLite acceptance). Not run: the Strict gate, one
+  pre-meeting reminder on a test event on the owner's service.
+
 ## Unreleased — GML-1 Gmail read connector (2026-10-08)
 
 Personal v4 track GML-1 (ADR-0118 D1–D8; implementation note in DECISIONS.md). No migration; `ConversationRuntimeDeps`

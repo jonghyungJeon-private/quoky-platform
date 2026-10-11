@@ -18701,6 +18701,120 @@ needed.
   - (R5) The window uses the zone stored on the brief reminder at creation (`QUOKY_TIMEZONE` then), as the rest of the
     brief does.
 
+### ADR-0117 implementation note — BRF-2 event-relative (pre-meeting) reminders (2026-10-12)
+
+- **Status:** Implementation note for D5–D6 (track BRF-2). Offline validation only; the Strict gate (one pre-meeting
+  reminder on a test event on the owner's service) is not run.
+- **Shape.**
+  - No migration: the event reference is an optional `event: { eventId, offsetMinutes }` field on `Reminder`, kept in the
+    existing JSON `data` column (v13). No new port, DI token or dependency; `ConversationRuntimeDeps` is unchanged (35).
+  - Core modules (`application/reminders/`):
+    - `event-reminder-grammar.ts`: the pure phrase grammar;
+    - `event-reminder-calendar.ts`: the pure resolution, plus `EventReminderCalendar`, the two bounded reads.
+  - `ReminderConversationService` and `ReminderDispatchService` each gain one optional dependency: the calendar reader
+    and the re-check, respectively. The composition root passes the existing optional `CALENDAR_READER` injection to
+    both (`features/reminders.providers.ts`). Without a calendar the phrase still routes to reminders and gets a fixed
+    "캘린더가 연결되어 있지 않아" reply.
+- **Grammar (D5).** `parseReminderMessage` returns a new `CREATE_EVENT_RELATIVE { offsetMinutes, target }` before the time
+  grammar, after the anchored to-do prefixes and list/cancel. Every handler that defers to the reminder grammar (calendar
+  150, mail 140, the runtime's explicit-command check) therefore leaves these phrases to reminders.
+  - **Korean.** The whole message is `[target] 회의|미팅|일정|약속 [시작] <offset> 전(에) <verb>`, where the verb is a
+    closed imperative (`알려줘`, `리마인드 해줘`, `알림 줘`, …).
+  - **Offset.** `N분`, `N시간 [M분|반]`, `한/두 시간`, `반 시간`, bounded 1–120 minutes.
+  - **Target.** Any of `오늘/내일/모레`, a weekday, a start time (`3시`, `오후 3시 반`, `15:00`) and title words; with none,
+    the next event.
+  - **English.** `remind me <N minutes|an hour|half an hour> before [my|the] [next] [<time>] [<title>] meeting|call|event|
+    appointment [today|tomorrow]`.
+  - **Clarifications.** An offset outside 1–120 is `CLARIFY(EVENT_OFFSET_OUT_OF_RANGE)`; `회의 전에 알려줘` with no
+    offset is `CLARIFY(EVENT_OFFSET_MISSING)`.
+  - **Not matched (unchanged routing).** A body after `전에` (`회의 10분 전에 자료 준비 알려줘`), a negation, a question,
+    `다음 주` and dates. The previous mis-parse of `remind me 15 minutes before the 3pm meeting` (a reminder at 15:00
+    with body "15 minutes before the meeting") is replaced by the event-relative form.
+- **Resolution (D5).**
+  - **One read.** The named day in `QUOKY_TIMEZONE` (from now when it is today), or `[now, now + 14 days)`; limit 50,
+    within the schedule handler's 30 s bound.
+  - **Candidates.** Timed events that have not started. A bare `3시` matches 03:00 or 15:00. Titles match ignoring case,
+    spaces and punctuation.
+  - **Picking one.** An exact title (or the title plus `회의`/`미팅`/`meeting`) wins over partial matches, and the
+    earliest occurrence is taken.
+  - **Ambiguous.** Several different titles, or several events at the earliest start (the same title at the same start on
+    two calendars counts once). The reply lists up to 5 candidates (date, time, title) and asks the owner to repeat the
+    request with a title or time. Nothing is stored, so there is no pending pick state.
+  - **Refusals (nothing created).** No match says so (and that the read was partial when the page was full). An all-day
+    event is refused: it has no start to be early for. "Too soon" is a due time less than 1 minute away. An unreadable
+    calendar says it could not read, never "no meeting".
+  - **Stored.** A ONCE `TEXT` reminder at `start − offset`, with body = the title, single-line, at most 100 characters.
+    An empty title is stored as `(제목 없음)`; a credential-shaped title as `(제목 숨김)` and never stored itself.
+- **Fire-time re-check (D6)** (`ReminderDispatchService.dispatchEventReminder`, after the claim). The event is re-read
+  by id: first ±12 h around the expected start (`occurrenceAt + offset`), then `[now − 1 day, now + 30 days)`, all within
+  15 s.
+  - **Unchanged.** Delivered once with the current title (late label after downtime, as any ONCE reminder).
+  - **Moved later.** FIRING → SCHEDULED at the new start minus the offset (also `schedule.at`), attempt 0, nothing sent.
+    It is re-checked again at the new time, so each move is followed once and never fires at the stale time.
+  - **Moved earlier** (the new due time has passed). Delivered now, saying the event moved (and that it has started,
+    when it has).
+  - **Gone.** Not in a complete read: deleted, cancelled (the adapter drops cancelled events) or moved more than 30 days.
+    One note is delivered, then FIRING → CANCELED with the note's outcome in `lastOutcome`.
+  - **Became all-day.** The same, with its own note.
+  - **Unreadable.** A failure, a timeout, a full page that does not contain the event, or no calendar configured.
+    Delivered as scheduled with "(캘린더를 다시 확인하지 못해 처음 확인한 시각 기준으로 알려드려요)".
+  - **Transition table.** ADR-0117 D6 ("cancels it") amends the ADR-0101 D4 table by one edge, FIRING → CANCELED. Only
+    `planEventCanceledCompletion` plans it; an owner still cannot cancel a FIRING reminder.
+  - **At most once (ADR-0101 D6 unchanged).**
+    - Every send is the claim's single `deliverOnce`.
+    - Only a confirmed retryable `NOT_SENT` retries, and the retry re-checks the event again. `UNCERTAIN` is terminal.
+    - A FIRING row at startup becomes `DELIVERY_UNCERTAIN` and is never re-sent or re-read.
+  - **Summary.** The dispatch summary gains `eventRescheduled`, `eventCanceled` and `eventUnverified` (counts only).
+- **Listing, cancel, brief, delivery (D5/D6, D11).**
+  - **`알림 목록`.** `#N 10월 9일(금) 오후 2:50 [회의 10분 전] <제목>`.
+  - **`알림 N 취소`.** Unchanged, through the same typed entry. The reply says `회의 10분 전 알림` and never echoes the
+    title (the reply is plain text shared with the operations UI).
+  - **Brief.** The brief's reminder line shows the title as an untrusted span.
+  - **Untrusted titles.** Every echoed title is an `untrusted` span with the `markup` guard, clipped to 60 characters and
+    credential-guarded again at render time.
+  - **History.** A reminder reply that carries a span keeps a fixed SHORT_TERM note
+    (`[알림 응답 — 캘린더 일정 내용은 대화 기록에 남기지 않아요.]`), so event text never reaches a later prompt, as with
+    the calendar handler.
+  - **Delivery.** Deterministic copy, no model, to the reminder's origin through the existing owner sink (ADR-0114 D11;
+    the DM by default per ADR-0101 D8).
+- **Time zone and DST.** All windows and labels use the zone stored on the reminder (`QUOKY_TIMEZONE` at creation). Due
+  times are instants (`start − offset`), so DST never shifts them. A test across America/New_York's 2026-11-01 change
+  pins a 09:00 EST meeting to a 08:30 EST reminder.
+- **Evidence (offline).**
+  - `event-reminder.test.ts` (51 tests): each phrasing; offsets and clarifications; unchanged routing for the
+    near-misses; resolution by next, day, weekday, time and title; ambiguity; none; all-day; too soon; duplicates;
+    DST; the domain reference bounds and the two new completion plans; creation replies (including an untrusted title,
+    a hidden credential title, no calendar, a failed or hung read); the list and cancel; the history note.
+  - The same file covers fire time: unchanged, moved later, moved twice, moved earlier, deleted, now all-day,
+    unreadable (failure, hang, full page), no calendar at fire time, `UNCERTAIN` and retry, late delivery, recovery of
+    a FIRING row, and the brief line. An import scan keeps the new modules free of provider, tool, write, runtime and
+    platform imports.
+  - `reminder-acceptance.test.ts` (5 new). The production composition over SQLite with a real `ConversationRuntime`:
+    - create, moved later (no stale send), then delivered once at the new time, with zero provider calls and zero tasks;
+    - deleted, then canceled with the note;
+    - unreadable, then delivered with the note;
+    - at most once across a restart;
+    - no calendar binding.
+  - The golden `turn-handler-routing` corpus gains route-408..414: five phrasings and the no-offset clarification route
+    to `reminders` with zero provider calls, and the body-after-`전에` near-miss keeps its classifier route. Baseline
+    `minTotal` is 414; every existing case is unchanged. The CAL-2 acceptance read count now includes the five creation
+    reads.
+- **Residuals.**
+  - (R1) A move is seen only at the old due time. An event moved earlier by more than the offset is announced late (at
+    the old due time, with the "moved" note). There is no polling before the due time: that would be a scheduler
+    (ADR-0101 D1).
+  - (R2) An event moved more than 30 days out, or to before yesterday, reads as gone and is canceled with the note
+    (whose copy says so).
+  - (R3) On a calendar with more than 50 events in the ±12 h window and in the 30-day window, the re-check cannot prove
+    deletion; it delivers with the "could not re-check" note.
+  - (R4) The list shows the title stored at creation; delivery uses the re-read title.
+  - (R5) The help reply is unchanged (no new help line, to keep the ADR-0096 D6 help output byte-identical); the
+    phrasings are in the quickstart. DOC-E and INT-3 may add a line.
+  - (R6) Not supported: a body after `전에`, `다음 주` / dates as targets, a numbered pick after an ambiguous reply, and
+    recurring "before every meeting" (decision 22 rules that out).
+  - (R7) A FIRING pre-meeting reminder interrupted by a stop is `DELIVERY_UNCERTAIN` (ADR-0101 D6), as for any reminder.
+    The re-check's 15 s bound adds to the R1 stop bound of BRF-1.
+
 ## ADR-0118 — Google read connectors, Gmail then Drive: `gmail.readonly` and `drive.readonly` on the existing Internal OAuth client, fixed-format DM-only listings, no send, draft or delete, and text to the chat-tier provider only on an explicit summary request. Amends ADR-0100 and ADR-0096 D5; relates ADR-0110 and ADR-0111.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)
