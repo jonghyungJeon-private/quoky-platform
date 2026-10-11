@@ -44,6 +44,11 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     ['find the doc called Q3 plan in google drive', 'Q3 plan'],
     ['search my drive for onboarding checklist', 'onboarding checklist'],
     ['look for "release notes" on my drive', 'release notes'],
+    // Review P3-2: the location, the owner and "newest first" are not part of the name.
+    ['드라이브에 있는 예산 문서 찾아줘', '예산'],
+    ['드라이브에서 내 이력서 찾아줘', '이력서'],
+    ['드라이브에서 최근 회의록 찾아줘', '회의록'],
+    ['find my resume in my drive', 'resume'],
   ])('name search: %s', (text, name) => {
     expect(parseDriveQuestion(text)).toEqual({ kind: 'search', name, language: /[가-힣]/.test(text) ? 'ko' : 'en' });
   });
@@ -64,6 +69,16 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     'search drive for everything',
     '11번 문서 요약해줘',
     '0번 문서 요약해줘',
+    // Review P2-2: a time filter or a who-made-it phrase anywhere in the head is not a name.
+    '드라이브에서 오늘 수정한 문서 찾아줘',
+    '드라이브에서 어제 만든 회의록 찾아줘',
+    '드라이브에서 지난주 회의록 찾아줘',
+    '드라이브에서 3일 전 자료 찾아줘',
+    '드라이브에서 내가 작성한 문서 찾아줘',
+    '김철수가 공유한 문서 드라이브에서 찾아줘',
+    'find report from last week in my drive',
+    'find notes created yesterday in my drive',
+    "find yesterday's notes in my drive",
   ])('usage line: %s', (text) => {
     expect(parseDriveQuestion(text)?.kind).toBe('usage');
   });
@@ -84,6 +99,7 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     ['Summarize doc #1', { kind: 'index', index: 1 }, true],
     ['summarize drive file 2', { kind: 'index', index: 2 }, true],
     ['summarize this drive document', { kind: 'this' }, true],
+    ['summarize this drive file', { kind: 'this' }, true],
     ['summarize this document', { kind: 'this' }, false],
   ])('summary request: %s', (text, target, explicit) => {
     expect(parseDriveQuestion(text)).toMatchObject({ kind: 'summarize', target, explicit });
@@ -145,6 +161,14 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     '최근 문서 정리하는 법',
     '3번 요약해줘',
     'summarize file 3',
+    // Review P2-3 / P3-1: a disk, a car or a bare "file" in English is not the cloud drive.
+    'remove the usb stick from the drive',
+    'move the car into drive',
+    'find the bug in the drive',
+    'find files in D drive',
+    'copy the photos to my external drive',
+    'summarize the file',
+    'summarize this file',
   ])('not a Drive command (falls through): %s', (text) => {
     expect(parseDriveQuestion(text)).toBeNull();
   });

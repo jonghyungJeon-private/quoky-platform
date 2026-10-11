@@ -2,11 +2,11 @@ import { closeSync, constants, fchmodSync, fstatSync, openSync, readSync, writeS
 import { DRIVE_READONLY_SCOPE } from './oauth';
 
 /**
- * The local Drive refresh-token file (ADR-0118 D3, the ADR-0110 D2 pattern, as for GDrive): a small JSON file written
+ * The local Drive refresh-token file (ADR-0118 D3, the ADR-0110 D2 pattern, as for Gmail): a small JSON file written
  * once by the owner's consent helper with mode 600 and read at startup. One grant set per file: it records
- * `drive.readonly` and nothing else, and it is never the calendar or GDrive token file. The reader refuses a symlink, a non-regular file, a file
- * another user owns, a file group or others can read or write, an oversized file and any other recorded scope. Errors
- * carry a fixed code only, never the path or the content.
+ * `drive.readonly` and nothing else, and it is never the calendar or Gmail token file. The reader refuses a symlink, a
+ * non-regular file, a file another user owns, a file group or others can read or write, an oversized file and any other
+ * recorded scope. Errors carry a fixed code only, never the path or the content.
  *
  * File shape: `{ "version": 1, "scope": "https://www.googleapis.com/auth/drive.readonly", "refresh_token": "<token>" }`.
  */

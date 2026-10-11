@@ -12,7 +12,7 @@ import { DRIVE_LISTING_MAX_ENTRIES, DRIVE_NAME_QUERY_MAX_LENGTH } from '../../po
  *
  * Name searches always name the drive, so a Confluence or code question about a "문서" or a "파일" is never claimed:
  * `드라이브에서 <이름> 찾아줘`, `드라이브에서 <이름> 문서 검색해줘`, `<이름> 문서 드라이브에서 찾아줘`,
- * `드라이브 <이름> 검색`, and `보여줘` only with a document noun (`드라이브에서 회의록 문서 보여줘`). (EN):
+ * `구글 드라이브 <이름> 검색`, and `보여줘` only with a document noun (`드라이브에서 회의록 문서 보여줘`). (EN):
  * `find <name> in my drive`, `search drive for <name>`.
  *
  * Summaries: `N번 문서 요약해줘`, `문서 N번 요약`, `드라이브 N번 요약해줘`, `두 번째 문서 요약해줘`, `이 문서 요약해줘`,
@@ -103,6 +103,11 @@ const NOT_A_NAME = new Set([
 const SECOND_PERSON = new Set(['네', '너', '니', '너의', '당신']);
 /** `최근`, `최근에 수정한`: the recent listing even inside a search form (`드라이브에서 최근 문서 찾아줘`). */
 const RECENT_NAME = new RegExp(`^${RECENT_WORD}$`, 'u');
+/** A name that starts with a time word or a relative time (`오늘 수정한`, `어제 만든 회의록`, `지난주 회의록`, `3일 전 자료`). */
+const TIME_LEAD =
+  /^(?:오늘|어제|그제|그저께|내일|요즘|올해|작년|재작년|(?:지난|이번|다음) ?(?:주|달|해)|\d{1,3} ?(?:일|주|달|개월|년) ?전)(?:에|부터|까지|의)?(?: |$)/u;
+/** A "who made or changed it" participle (`내가 작성한`, `김철수가 공유한`, `받은`): not a name. */
+const PARTICIPLE = /(?:^|\s)\S*(?:만든|수정한|수정된|작성한|올린|받은|공유한|공유된|편집한|쓴|업로드한|변경한|바뀐)(?:\s|$)/u;
 
 const SUMMARY_TAIL = '(?:요약(?:해 ?줘|해 ?주세요|해 ?줄래|해 ?봐|해|좀|부탁해요|부탁해)?)';
 /** The summary noun: `문서`, or the drive word with an optional document noun. Never a bare `파일` and never `메일`. */
@@ -155,7 +160,14 @@ function isDriveWrite(normalized: string): boolean {
 }
 
 const EN_DOC = '(?:files?|docs?|documents?|spreadsheets?|sheets?)';
-const EN_DRIVE = '(?:(?:my |the )?(?:google )?drive)';
+/**
+ * The cloud drive in English: `my drive` or `google drive` (review P2-3: `the drive` is as often a disk or a car).
+ * Only `search drive for …` and `summarize drive file N` also take the bare word.
+ */
+const EN_DRIVE = '(?:my (?:google )?drive|google drive)';
+const EN_DRIVE_LOOSE = '(?:(?:my |google |my google )?drive)';
+/** A local, removable or network disk in English is never the cloud drive (review P2-3). */
+const EN_LOCAL_DISK = /\b(?:usb|external|hard|ssd|hdd|flash|thumb|network|disk|[a-z]:?)\s?drives?\b/i;
 const RECENT_EN: readonly RegExp[] = [
   new RegExp(
     `^(?:(?:show|list|get|check)(?: me)? )?(?:my )?(?:recent|latest|recently (?:modified|edited|changed)) (?:(?:google )?drive )?${EN_DOC}(?: (?:in|on|from) ${EN_DRIVE})?(?: please)?$`,
@@ -165,9 +177,13 @@ const RECENT_EN: readonly RegExp[] = [
 ];
 const SEARCH_EN: readonly RegExp[] = [
   new RegExp(`^(?:find|search for|look for|look up)(?: (?:the|a|my))?(?: ${EN_DOC}(?: (?:named|called))?)? (?<name>.+?) (?:in|on) ${EN_DRIVE}(?: please)?$`, 'i'),
-  new RegExp(`^search ${EN_DRIVE} for(?: (?:the|a))?(?: ${EN_DOC}(?: (?:named|called))?)? (?<name>.+?)(?: please)?$`, 'i'),
+  new RegExp(`^search ${EN_DRIVE_LOOSE} for(?: (?:the|a))?(?: ${EN_DOC}(?: (?:named|called))?)? (?<name>.+?)(?: please)?$`, 'i'),
 ];
-const SUMMARY_THIS_EN = new RegExp(`^summari[sz]e (?:this|that|the) (?<drive>(?:google )?drive )?(?:document|doc|file)(?: please)?$`, 'i');
+/** Review P3-1: a bare `file` is a code proposal's as often as a Drive file, so `this file` needs the drive word. */
+const SUMMARY_THIS_EN = new RegExp(
+  `^summari[sz]e (?:this|that|the) (?:(?<drive>(?:google )?drive) (?:document|doc|file)|document|doc)(?: please)?$`,
+  'i',
+);
 const SUMMARY_INDEX_EN = new RegExp(
   `^summari[sz]e (?:(?:google )?drive (?:file|doc|document)|doc|document) (?:#|no\\.? ?|number )?(?<n>\\d{1,2})(?: please)?$`,
   'i',
@@ -180,6 +196,9 @@ const WRITE_EN: readonly RegExp[] = [
 const EN_NOT_A_NAME = /^(?:me|myself|my|it|this|that|everything|anything|all|today|yesterday|this week|last week|this month|last month)$/i;
 const EN_RECENT_NAME = /^(?:(?:my )?(?:recent|latest|new) (?:files?|docs?|documents?))$/i;
 const EN_TOPIC_OR_TIME = /^(?:about|related to|regarding|on the topic of|from (?:today|yesterday|last|this)|modified|created|shared)\b/i;
+/** Review P2-2: a time filter anywhere in the name (`report from last week`, `notes created yesterday`). */
+const EN_TIME_FILTER =
+  /\b(?:from|since|modified|created|edited|shared|uploaded|made|written)\b[\s\S]{0,60}?\b(?:today|yesterday|last|this|ago)\b|\b(?:today|yesterday)'?s?\b/i;
 const EN_EXPLAIN = /\b(?:how|why|what|way|ways)\b/i;
 
 /** Normalize like the other deterministic grammars: NFKC, no format characters, one space, no trailing punctuation. */
@@ -220,6 +239,13 @@ function parseNameHead(head: string): string | 'recent' | 'usage' | null {
   }
   if (SECOND_PERSON.has(rest)) return null;
   if (RECENT_NAME.test(rest)) return 'recent';
+  // Review P3-2: `드라이브에 있는 예산`, `드라이브에서 내 이력서`: the location and the owner are not part of the name. A
+  // leading `최근` only says "newest first", which every listing already is (`최근 회의록` searches `회의록`).
+  const trimmed = rest.replace(/^(?:있는|내|제|나의|저의|최근(?:에)?) /u, '').trim();
+  if (trimmed !== rest && trimmed.length > 0 && !RECENT_NAME.test(trimmed)) rest = trimmed;
+  // Review P2-2: a time filter or a "who made / changed it" phrase is not a name (`오늘 수정한`, `어제 만든 회의록`,
+  // `지난주 회의록`, `내가 작성한`): Drive search is by name only, so these get the usage line.
+  if (TIME_LEAD.test(rest) || PARTICIPLE.test(rest)) return 'usage';
   const stem = rest.replace(TIME_PARTICLE, '').trim();
   const isTime = (word: string) =>
     NOT_A_NAME.has(word) || RELATIVE_TIME.test(word) || /^(?:지난|이번|다음|올|작|재작) ?(?:주|달|해|년)$/u.test(word);
@@ -230,11 +256,13 @@ function parseNameHead(head: string): string | 'recent' | 'usage' | null {
 
 /** The English name: `'recent'`, `'usage'` (a time or a topic), `null` (a how-to or the owner), or the name. */
 function parseEnglishName(raw: string): string | 'recent' | 'usage' | null {
-  const name = stripQuotes(raw);
+  let name = stripQuotes(raw);
   if (/[:：]/u.test(name) || EN_EXPLAIN.test(name)) return null;
-  if (/^(?:me|myself|my)\b/i.test(name)) return null;
+  if (/^(?:me|myself)\b/i.test(name)) return null;
   if (EN_RECENT_NAME.test(name)) return 'recent';
-  if (EN_NOT_A_NAME.test(name) || EN_TOPIC_OR_TIME.test(name)) return 'usage';
+  // `find my resume in my drive`, `find recent budget in my drive`: the owner and "newest first" are not the name.
+  name = name.replace(/^(?:my|the|recent|latest) (?=\S)/i, '').trim();
+  if (EN_NOT_A_NAME.test(name) || EN_TOPIC_OR_TIME.test(name) || EN_TIME_FILTER.test(name)) return 'usage';
   if (name.length === 0 || Array.from(name).length > DRIVE_NAME_QUERY_MAX_LENGTH) return 'usage';
   return name;
 }
@@ -254,7 +282,7 @@ export function parseDriveQuestion(text: string): DriveQuestion | null {
   if (typeof text !== 'string' || text.length > 300) return null;
   const normalized = normalizeDriveText(text);
   if (normalized.length === 0) return null;
-  if (LOCAL_DISK.test(normalized)) return null;
+  if (LOCAL_DISK.test(normalized) || EN_LOCAL_DISK.test(normalized)) return null;
   const language = languageOf(normalized);
 
   if (isDriveWrite(normalized) || WRITE_EN.some((re) => re.test(normalized))) {

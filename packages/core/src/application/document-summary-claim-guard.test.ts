@@ -156,3 +156,13 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     expect(renderDocumentActionClaimWithheld('ko')).toContain('메일을 읽기만 했고');
   });
 });
+
+describe('DRV-1 review P3-6: the document-action patterns also apply to mail summaries (fail-safe, not source-scoped)', () => {
+  it.each(['첨부 문서를 공유했어요.', 'We shared the attachment with the team.', 'I edited the draft.'])('withheld for mail too: %s', (text) => {
+    expect(containsDocumentActionClaim(text)).toBe(true);
+  });
+  it.each(['김철수 님이 첨부 문서를 공유했어요.', 'Kim shared the attachment with the team.', '진행 상황을 공유했어요.'])(
+    'a third-person or object-less mail summary is still allowed: %s',
+    (text) => expect(containsDocumentActionClaim(text)).toBe(false),
+  );
+});

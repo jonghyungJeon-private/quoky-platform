@@ -19495,6 +19495,18 @@ Independent Chief Architect review before GML-1 merges.
   continuation bytes or NUL, 2 MB names of spaces, `<` or `a.`, 256 KiB of commas or domain-shaped labels).
 - **Unconfigured.** With `QUOKY_DRIVE_TOKEN_FILE` unset, `createDriveProviders` binds an empty list and no
   `DRIVE_READER`. The routing corpus, the golden fixtures and every other test pass unchanged.
+- **Pre-review fixes (independent code review, 2026-10-12), one commit each.**
+  - **P2-1:** the shared config resolver took `QUOKY_GMAIL_TOKEN_FILE` as a default, so a Gmail-only setup read (and
+    refused) the Gmail token file as Drive's. Each grant now resolves from its own variable only
+    (`resolveGoogleReadGrant`), and a test pins that Gmail-only leaves Drive off.
+  - **P2-2:** a time filter or a "who made it" phrase anywhere in the name slot (`오늘 수정한`, `어제 만든 회의록`,
+    `지난주 회의록`, `내가 작성한`, `report from last week`, `yesterday's notes`) gets the usage line, not a literal search.
+    A leading `있는`, `내` or `최근` is dropped (`드라이브에서 최근 회의록 찾아줘` searches `회의록`, newest first).
+  - **P2-3 / P3-1:** English needs `my drive` or `google drive` (`the drive` is a disk or a car); an English local disk
+    (`usb`, `external`, `D drive`, …) is never Drive; `summarize this file` needs the drive word.
+  - **P3-4 / P3-5:** doc-comment fixes; every unread error body (401, 404, 429) is cancelled.
+  - **P3-6:** the new document-action claim patterns are not source-scoped, so they also withhold a first-person mail
+    summary (`첨부 문서를 공유했어요`). This fails safe; mail regression tests pin both the withheld and the allowed cases.
 - **Residuals.**
   - **Shared files.** Listings include files shared with the owner (the default corpus), so a stranger can place a hostile
     name or text in them. That is the threat model above; the owner's own Shared Drives are not searched.
@@ -19510,6 +19522,7 @@ Independent Chief Architect review before GML-1 merges.
   - **Help-line bound.** With Gmail and Drive both on, two lines are contributed. The ADR-0096 D6 bound of 14 may then
     drop the last line when every other optional feature is on (the GML-1 residual; left to INT-3 and DOC-E).
   - The list ↔ id mapping is in memory and is lost on restart.
+  - The OAuth token response is read with `response.json()` (unbounded, pinned to the OAuth host), as in GML-1.
 - **Live QA (Strict, owner).** Enable the Google Drive API in `quoky-personal-510806`; run `calendar-auth --drive`; set
   `QUOKY_DRIVE_TOKEN_FILE`; one read probe (`최근 문서` in the DM). Then about 15 phrasings:
   - recent and name search (KO and EN), an empty search, a summary of a Doc, a Sheet and a text file;

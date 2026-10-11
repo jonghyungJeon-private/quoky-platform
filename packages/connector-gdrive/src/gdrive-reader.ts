@@ -383,12 +383,11 @@ async function driveErrorReason(response: Response): Promise<ConnectorQueryError
     await discardBody(response);
     return 'UNSUPPORTED_QUERY';
   }
-  if (status === 401) return 'UNAUTHORIZED';
-  if (status === 404) {
+  // Review P3-5: every body this function does not read is cancelled, so no socket is held until GC.
+  if (status === 401 || status === 404 || status === 429) {
     await discardBody(response);
-    return 'NOT_FOUND';
+    return status === 401 ? 'UNAUTHORIZED' : status === 404 ? 'NOT_FOUND' : 'RATE_LIMITED';
   }
-  if (status === 429) return 'RATE_LIMITED';
   if (status !== 403) {
     await discardBody(response);
     return 'UNAVAILABLE';
