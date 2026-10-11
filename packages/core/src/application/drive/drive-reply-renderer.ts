@@ -99,7 +99,21 @@ function nameOf(file: DriveFileSummary, language: DriveLanguage): MessagePart {
   if (containsCredentialMaterial(file.name)) return placeholder;
   const shown = neutralizeLinks(file.name, 'display');
   if (shown.trim().length > 0 && containsCredentialMaterial(shown)) return placeholder;
-  return untrustedText(clip(shown, DRIVE_NAME_DISPLAY_MAX_CHARS));
+  return clippedGuard(shown, DRIVE_NAME_DISPLAY_MAX_CHARS, placeholder);
+}
+
+/**
+ * Clip, then guard the clipped text again (CA review P2-1): a cut can create a link (`evil.com1 x` -> `evil.com`) or a
+ * credential shape (`AKIA...z` -> `AKIA...`) that neither whole-value check saw.
+ */
+function clippedGuard(shown: string, maxChars: number, placeholder: string): MessagePart {
+  const cut = clip(shown, maxChars);
+  // `shown` is NFKC-normalized (no `…` in it), so a trailing `…` is the clip marker; it is kept out of the re-check
+  // because NFKC would turn it into `...`.
+  const marker = cut.endsWith('…') ? '…' : '';
+  const body = neutralizeLinks(marker === '' ? cut : cut.slice(0, -1), 'display');
+  if (body.trim().length > 0 && containsCredentialMaterial(body)) return placeholder;
+  return untrustedText(`${body}${marker}`);
 }
 
 function entryLine(index: number, file: DriveFileSummary, options: DriveRenderOptions): MessageBody {
@@ -112,7 +126,7 @@ function entryLine(index: number, file: DriveFileSummary, options: DriveRenderOp
 
 /** The quoted owner-typed name of a search (still an untrusted span: it is echoed into chat). */
 function nameQuery(name: string): MessagePart {
-  return untrustedText(clip(neutralizeLinks(name, 'display'), DRIVE_NAME_QUERY_DISPLAY_MAX_CHARS));
+  return clippedGuard(neutralizeLinks(name, 'display'), DRIVE_NAME_QUERY_DISPLAY_MAX_CHARS, '(…)');
 }
 
 function countText(result: DriveListResult, language: DriveLanguage): string {
@@ -281,8 +295,8 @@ export function renderDriveSummaryOutOfRange(index: number, count: number, langu
 export function renderDriveSummaryNotText(kind: DriveFileKind, language: DriveLanguage): string {
   const label = driveKindLabel(kind, language);
   return language === 'en'
-    ? `That file is a ${label}, which has no text export, so I did not read or summarize it. Documents, spreadsheets and text files can be summarized.`
-    : `그 파일은 ${label} 형식이라 텍스트로 읽을 수 없어서 읽거나 요약하지 않았어요. 문서·스프레드시트·텍스트 파일만 요약할 수 있어요.`;
+    ? `That file is a ${label}, which has no text export, so I did not read or summarize it. Google Docs and Sheets can be summarized.`
+    : `그 파일은 ${label} 형식이라 텍스트로 읽을 수 없어서 읽거나 요약하지 않았어요. 구글 문서·스프레드시트만 요약할 수 있어요.`;
 }
 
 /** Nothing was sent: the file is credential-shaped (withheld, never redacted) or has no text. */

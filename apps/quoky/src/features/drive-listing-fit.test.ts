@@ -83,4 +83,20 @@ describe('Drive listing on the real platform markups', () => {
     const kept = await plain.handle(ctx('최근 문서'));
     expect(kept !== null && 'reply' in kept ? kept.reply.text : '').toContain('1. 2026 예산 v1.2.3 report.pdf · 프레젠테이션');
   });
+
+  it('a clip boundary cannot create a link or a credential shape in a listed name (CA review P2-1)', async () => {
+    const pad = '가'.repeat(31);
+    const files = [
+      file(1, `${pad}evil.com1 trailing`),
+      file(2, `${'가'.repeat(19)}AKIAABCDEFGHIJKLMNOPz trailing`),
+    ];
+    const handler = createDriveTurnHandler({ reader: reader(files), timeZone: 'Asia/Seoul' });
+    const listing = await handler.handle(ctx('드라이브에서 회의록 찾아줘'));
+    if (listing === null || !('reply' in listing)) throw new Error('expected a listing reply');
+    for (const rendered of [renderOutboundForDiscord(listing.reply), listing.reply.text]) {
+      expect(rendered).not.toMatch(/evil\.com|AKIA/);
+    }
+    expect(listing.reply.text).toContain('링크');
+    expect(listing.reply.text).toContain('(이름 숨김)');
+  });
 });

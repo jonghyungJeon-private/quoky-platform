@@ -95,7 +95,21 @@ function guardedField(value: string, maxChars: number, placeholder: string): Mes
   const shown = neutralizeLinks(value, 'display');
   // Final sign-off W-1: the credential check also runs on the normalized text that is actually shown.
   if (shown.trim().length > 0 && containsCredentialMaterial(shown)) return placeholder;
-  return untrustedText(clip(shown, maxChars));
+  return clippedGuard(shown, maxChars, placeholder);
+}
+
+/**
+ * Clip, then guard the clipped text again (CA review P2-1): a cut can create a link (`evil.com1 x` -> `evil.com`) or a
+ * credential shape (`AKIA...z` -> `AKIA...`) that neither whole-value check saw.
+ */
+function clippedGuard(shown: string, maxChars: number, placeholder: string): MessagePart {
+  const cut = clip(shown, maxChars);
+  // `shown` is NFKC-normalized (no `…` in it), so a trailing `…` is the clip marker; it is kept out of the re-check
+  // because NFKC would turn it into `...`.
+  const marker = cut.endsWith('…') ? '…' : '';
+  const body = neutralizeLinks(marker === '' ? cut : cut.slice(0, -1), 'display');
+  if (body.trim().length > 0 && containsCredentialMaterial(body)) return placeholder;
+  return untrustedText(`${body}${marker}`);
 }
 
 function senderOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
@@ -152,7 +166,7 @@ function entryLine(index: number, message: MailMessageSummary, filter: MailListi
 
 /** The quoted owner-typed sender of a `from` listing (still an untrusted span: it is echoed into chat). */
 function senderQuery(from: string): MessagePart {
-  return untrustedText(clip(neutralizeLinks(from, 'display'), MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS));
+  return clippedGuard(neutralizeLinks(from, 'display'), MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS, '(…)');
 }
 
 function countText(result: MailSearchResult, language: MailLanguage): string {

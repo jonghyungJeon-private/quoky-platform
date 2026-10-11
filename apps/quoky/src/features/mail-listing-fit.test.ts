@@ -114,4 +114,26 @@ describe('mail listing links (re-review item 2)', () => {
     const kept = await createMailTurnHandler({ reader: plain, timeZone: 'Asia/Seoul' }).handle(ctx('김철수 메일 찾아줘'));
     expect(kept !== null && 'reply' in kept ? kept.reply.text : '').toContain('1. kim@acme.kr · v1.2.3 배포');
   });
+
+  it('a clip boundary cannot create a link or a credential shape in a listed field (CA review P2-1)', async () => {
+    const mk = (id: string, subject: string) => ({ id, sender: { name: '김철수', address: '' }, subject, receivedAt: '2026-10-08T00:12:00.000Z', snippet: '', unread: true });
+    const reader: MailReader = {
+      source: 'mail',
+      readOnly: true,
+      search: async () => ({
+        messages: [mk('a', `${'가'.repeat(21)}evil.com1 trailing`), mk('b', `${'가'.repeat(9)}AKIAABCDEFGHIJKLMNOPz trailing`)],
+        matched: 2,
+        matchedIsLowerBound: false,
+      }),
+      getMessage: async () => {
+        throw new Error('not used');
+      },
+    };
+    const listing = await createMailTurnHandler({ reader, timeZone: 'Asia/Seoul' }).handle(ctx('김철수 메일 찾아줘'));
+    if (listing === null || !('reply' in listing)) throw new Error('expected a listing reply');
+    for (const rendered of [renderOutboundForDiscord(listing.reply), listing.reply.text]) {
+      expect(rendered).not.toMatch(/evil\.com|AKIA/);
+    }
+    expect(listing.reply.text).toContain('(제목 숨김)');
+  });
 });

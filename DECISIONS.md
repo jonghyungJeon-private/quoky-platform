@@ -19534,6 +19534,13 @@ Independent Chief Architect review before GML-1 merges.
   - a summary in a server channel (expected the DM-only reply);
   - `드라이브 코스 찾아줘` and `D 드라이브에서 파일 찾아줘` (expected: not a Drive reply);
   - a write request (expected the read-only refusal).
+- **CA review fixes (Chief Architect review, 2026-10-12), one commit each.**
+  - **P2-1 (clip boundary):** the link neutralizer and the credential check ran before the clip, so a cut could create a
+    link (`…xxxxxxevil.com1 trailing` cut to `…evil.com`) or a credential shape (`note AKIA…Pz` cut to `AKIA…P`). After
+    the clip the text is neutralized again and checked again (the `…` clip marker is kept out of the re-check, because
+    NFKC would turn it into `...`); a match shows the placeholder. Applied to Drive names and the echoed name query and
+    to mail sender, subject, snippet and the echoed sender query. Tests: `drive-listing-fit.test.ts`,
+    `mail-listing-fit.test.ts`.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 
