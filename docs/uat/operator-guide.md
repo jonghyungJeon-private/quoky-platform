@@ -453,6 +453,77 @@ the chat tier's `QUOKY_CODEX_MODEL`). Other cloud vendors (OpenAI API, Gemini) n
 0.3); per owner decision 12 of the ADR-0102..0112 ratification record the App installation must be switched to "Only
 select repositories" with exactly the allowlisted repositories before CODE-8 merges (a Strict owner action).
 
+### 0.8 Telegram (ADR-0114, Personal v4 TG-1..TG-3)
+
+Off by default (`QUOKY_TELEGRAM_ENABLED=false`). Setup, the variables and the behaviour are in `docs/user/quickstart.md`
+("Telegram에서도 대화하기"). Creating the bot in BotFather, the `.env.local` edit and the first live session are Strict
+owner actions. Values are never printed; list variable names only.
+
+**Status.**
+- `ops/launchd/quokyctl.sh telegram` is read-only. It does not read `.env.local` or call Telegram. It prints:
+  - when the poll offset was last saved (`<data dir>/ops/telegram-offset.json`);
+  - each halt notice already delivered to the Discord owner DM (`ops/telegram-halt-notices.json`), as a code and a time;
+  - the halt codes below, and how to rotate the token and unlink the identity.
+
+  It never prints the bot id, the offset, a chat or user id, or the token.
+- The live state is the operations UI's **Telegram** panel (with `QUOKY_OPS_UI_ENABLED=true`). It shows:
+  - connected, identity verified (`getMe`), halted with its code, polling, and the last poll time;
+  - the number of admitted private chats;
+  - how many updates were dropped, per reason: `malformed`, `update-type`, `not-private`, `not-owner`, `forwarded`,
+    `no-text`, `stale`, `not-feedback`. The counts start at zero when the process starts.
+
+  It shows no message content, no ids and no token. With Telegram off it shows only "설정 안 됨 (not configured)".
+- The log carries codes only: `telegram polling started`, `send skipped: telegram not connected`, and the halt code.
+
+**Halt codes.** After the identity was verified, a fault stops only the Telegram side, and Discord keeps running. The
+owner gets one `OPS_NOTICE` in the Discord DM ("[Quoky 운영 알림] Telegram 연결을 멈췄어요: <code>"); the same code at most
+once per 24 h after it was delivered. Fix the cause, then restart (`quokyctl.sh restart --apply`, Strict).
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `TELEGRAM_POLL_CONFLICT` | Another poller uses the same bot token, or a webhook is set on the bot (HTTP 409). | Stop the other Quoky instance or `pnpm dev` that uses this token. A webhook set by another tool must be removed (`deleteWebhook`) by the owner. |
+| `TELEGRAM_AUTH_REJECTED` | Telegram refuses the token (HTTP 401/404): it was revoked or replaced. | Put the bot's current token in `QUOKY_TELEGRAM_BOT_TOKEN` (below). |
+| `TELEGRAM_IDENTITY_MISMATCH` | `getMe` answers with another bot, or with something that is not a bot. | Make `QUOKY_TELEGRAM_BOT_TOKEN` and `QUOKY_TELEGRAM_EXPECTED_BOT_ID` name the same bot. |
+| `TELEGRAM_POLL_LOOP_FAILED` | The poll loop failed unexpectedly (a defect). | Keep the log codes for a fix. A restart resumes polling from the saved offset. |
+
+At startup the first three codes, and a background re-check before the first verification, stop the whole process
+with exit code 78 instead (ADR-0102 D5). The launcher stops relaunching after three configuration exits in a row, and
+`restart --apply` clears that.
+
+**Rotate or revoke the token.**
+1. In BotFather, `/revoke` the bot's token. The old token stops working at once: a running Quoky halts with
+   `TELEGRAM_AUTH_REJECTED`, and Discord keeps running.
+2. Put the new token in `QUOKY_TELEGRAM_BOT_TOKEN` in `.env.local` (mode 600; a Strict edit). The bot id, the number
+   before `:`, stays the same, so `QUOKY_TELEGRAM_EXPECTED_BOT_ID` does not change.
+3. Restart. Startup refuses a token whose bot-id prefix differs (`TELEGRAM_TOKEN_BOT_ID_MISMATCH`, exit 78).
+
+To stop using Telegram, set `QUOKY_TELEGRAM_ENABLED=false` and restart. Reminders and briefs that were created on
+Telegram are then `NOT_SENT TARGET_NOT_ADMITTED` and are never moved to Discord.
+
+**Unlink the Telegram identity.** Point `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` back at the right Discord owner. Otherwise use
+the Strict database edit in `DECISIONS.md`, ADR-0114 TG-1 implementation note, "Identity (D3)", "To unlink":
+1. Stop the service.
+2. Take a verified backup.
+3. Run the two statements there, with the owner's approval.
+4. Restart.
+
+**Where notices go (ADR-0114 D11).**
+- A reminder or brief goes back to the platform where it was created.
+- `OPS_NOTICE` always goes to the Discord owner DM.
+- `OPS_DECISION_RESULT` always goes to the Discord owner DM, even when the approval was decided in the operations UI
+  and was created in Telegram. It goes to the Discord owner that `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` maps that Telegram
+  owner to.
+
+**Reply formatting.** Telegram replies are plain text, with no parse mode. Quoky's own Markdown and a model's Markdown
+are translated:
+- `**`, `*`, `_` and backticks are removed;
+- heading markers are removed;
+- bullets become `•`;
+- code-fence lines are removed, and the code is kept exactly.
+
+Text from outside Quoky (connector readouts, calendar titles, the owner's own words, write payloads) is shown exactly
+as it is. Only code-change previews use the `<pre>` HTML subset.
+
 ---
 
 ## 1. UAT purpose and scope

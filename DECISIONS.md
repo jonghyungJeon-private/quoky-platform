@@ -18201,6 +18201,162 @@ holds the approval.
   A process that dies between the intake note and the hand-over sends the note again after the restart (the turn itself
   is handed over once).
 
+### ADR-0114 implementation note — TG-3 Telegram notifications and operations (2026-10-12)
+
+Implementation choices for TG-3 where D7, D11 and D12 are silent. No ratified text above changes.
+
+Status: implemented on branch `claude/v4-w4-tg3-ops`, not merged. Offline validation only (a fake `fetch`; the real Bot
+API is never called). Strict gates not run: the first live session, which also covers the panel and the plain-text
+rendering on a real client.
+
+- **Port surface: unchanged.** There is no new port, DI token, domain field or migration, and `ConversationRuntimeDeps`
+  stays 35. Core is not touched.
+  - `app.module.ts` and `main.ts` have no hunk. `main.ts` already passes the whole `QuokyConfig` to `startOpsUi`, so the
+    ops UI reads `config.telegram` from it.
+  - Discord is not touched; its golden fixture (`discord-rendering.v1.json`) is unchanged and green.
+
+#### Already in TG-1, verified (D11)
+
+The composite `deliver` was built in TG-1 and is not redone. TG-3 adds tests where a route was proved only at the unit
+level:
+
+- A reminder created on Telegram is delivered on Telegram. Covered by the TG-1 acceptance test.
+- A brief created on Telegram is delivered on Telegram. Covered by the TG-1 acceptance test.
+- `OPS_NOTICE` goes to Discord. New acceptance test: the real `OpsNoticeService` sends the Telegram halt notice through
+  the container's composite sink. It lands on the Discord child, and the Telegram fetch sees no `sendMessage`.
+- `OPS_DECISION_RESULT` goes to Discord. This route was broken, and is fixed below.
+
+#### The ops-UI decision result for an approval created on Telegram (D11, amends ADR-0113 D7)
+
+- **The defect.** `OpsUiActions` addressed the result to the conversation that held the approval:
+  `{ platform: chat.platform, userId: chat.userId }`. The composite routes every `OPS_DECISION_RESULT` to the primary
+  (Discord), as D11 says. The Discord sink then rechecks the target and refuses a `telegram` one
+  (`TARGET_NOT_ADMITTED`). So a decision made in the ops UI on a Telegram approval was recorded, but the owner was never
+  told. This is the TG-1 residual "ops-actions accepts Discord chats only".
+- **The fix.** It lives in the composition root; Core has no platform branch. `OpsActionsDeps.approvals.resultTarget`
+  is new and optional, and the wiring sets it to `opsDecisionResultTarget(config)`:
+  - A Discord conversation keeps its own owner. Its result is byte-identical to before (a test compares both rules).
+  - A Telegram conversation goes to the Discord owner that `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` maps that Telegram id to.
+    Without a mapping it goes to the only configured Discord owner.
+  - Otherwise there is no admissible owner DM. Nothing is sent, and the UI says the DM was not sent.
+- **The Core decision path is unchanged.** `ApprovalDecisionService.locateForOpsUi` and `decideFromOpsUi` compare
+  Actor ids only, and the Telegram identity resolves to the same owner Actor (D3). A Telegram-held approval is
+  therefore found and decided like a Discord one.
+- **The confirmation page.** It names the place by platform with no id: `Telegram 개인 대화`, or `Telegram 대화방` for
+  a non-direct conversation. Discord keeps `DM` / `채널` byte for byte. There is no "open in chat" link for Telegram,
+  because `chatLinkOf` builds Discord URLs only.
+- **Tests.** `ops-ui/actions/telegram-decision-result.test.ts` runs through the real composite and the real Discord
+  `deliverOwnerNotification`:
+  - the fixed route;
+  - a negative control that reproduces the defect with the pre-TG-3 rule;
+  - the unchanged Discord route;
+  - the no-owner case;
+  - the confirmation page.
+
+  The Telegram acceptance test runs the same route through the real `AppModule` sink, with the target taken from the
+  real `loadConfig`.
+
+#### The operations-UI Telegram panel (D12, ADR-0113 D5/D8)
+
+- **Where it is.** One more panel, `telegram`, is appended after `memory`. The other nine panels are unchanged.
+- **The fields.** It reads `TelegramAdapterStatus` structurally (`OpsTelegramStatus`):
+  - **연결됨** is true when the identity is verified, polling is on and the side is not halted;
+  - **봇 신원 확인 (getMe)**;
+  - **중지됨**: the halt code and a fixed explanation;
+  - **폴링 중**;
+  - **마지막 폴링**: the owner's time zone;
+  - **허용된 개인 대화 수**.
+- **The table.** Dropped updates per reason, with a fixed Korean description and the count. The reasons are
+  `malformed`, `update-type`, `not-private`, `not-owner`, `forwarded`, `no-text`, `stale` and `not-feedback`. The
+  counts start at zero when the process starts.
+- **Display rule.** No content, no chat, user or bot id, and no token. The status type cannot carry them. The snapshot
+  still checks each value against a fixed pattern before it shows it:
+  - a halt code must match `TELEGRAM_*`;
+  - a reason must be a short lowercase slug;
+  - a count must be a safe non-negative integer.
+
+  Anything else is shown as `unknown` or left out. The whole view model then goes through the ADR-0097 strict guard,
+  as every panel does. A test feeds a hostile status, with the token in the halt code and in a reason, and ids in extra
+  fields, and checks the view model and the rendered page.
+- **Telegram off.** `telegramStatusOf(PLATFORM_ADAPTER)` is undefined: the bound adapter is the Discord adapter itself,
+  as in TG-1, so nothing Telegram-related is constructed. The panel then has exactly one field, "설정 안 됨 (not
+  configured)", and the other panels are byte-identical. `snapshot/__golden__/dashboard-before-telegram-panel.html`
+  was rendered from the standard fixture before this change. The test removes the one `panel-telegram` section from
+  today's page and compares the rest byte for byte.
+- **Unchanged.** The loopback listener, the token, Host/Origin/CSRF, the CSP, the escaping helper and the poll bound.
+  `http/*` gets no new type: the panel uses the generic field and table view model.
+
+#### CommonMark on Telegram (D7; TG-1 residual decision 3)
+
+- **Plain mode, not `parse_mode: HTML`.**
+  - D7 fixes plain text by default and allows HTML only for code and diff previews (`<pre>` / `<code>`). A `<b>` / `<i>`
+    whitelist would need an amendment.
+  - Plain mode is also the safer choice. Telegram interprets nothing, so a translation bug can only remove or replace
+    characters of Quoky's own copy. It can never produce bold text, a link or a mention. With HTML every node would have
+    to be escaped correctly forever, and one miss in an untrusted span would become markup.
+  - So the translation produces plain text, and the only HTML stays the adapter's own `<pre>` around escaped diff parts.
+- **What is translated.** Quoky-authored string nodes of `MessageContent`, a plain `text` body (Quoky copy alone,
+  PLT-0), a `format: 'model-reply'` answer, a notification body, and a code-change preview's header, warning and footer.
+- **What never is.** `untrusted` spans, links and conversation references are opaque atoms:
+  - no marker inside them is read, removed or paired;
+  - none of their lines is a heading, a list item or a fence;
+  - they pass through byte for byte.
+
+  The canonical diff of a preview is not touched either.
+- **How spans stay opaque.** `commonmark.ts` evaluates the content tree as Core's `message-rendering.ts` does,
+  including every budget node (`clip`, `fit-lines`, `take-lines`, `first-fit`), but keeps each piece tagged as copy or
+  span.
+  - Its concatenation must equal Core's `renderMessageContent(body, TELEGRAM_MARKUP)`. If it ever differs (a Core change
+    this copy does not know), nothing is translated and Core's rendering is sent as it is (fail safe).
+  - 600 seeded random content trees and a real morning brief (calendar and Jira titles as spans) pin the parity.
+- **The rules** (a minimal CommonMark subset):
+  - **Fenced code** (``` or ~~~, at least 3, with the CommonMark closing rule): the fence lines are removed and the
+    content is kept exactly. No indentation is added, so code and diffs can still be copied. An unclosed fence runs to
+    the end. This is the brief's "fence lines removed" option, chosen over indenting.
+  - **ATX headings**: the markers, and an optional closing run, are removed.
+  - **Bullets** `-`, `*`, `+` become `•`. Indentation is kept; ordered lists are kept.
+  - **Thematic breaks** are kept.
+  - **Emphasis** (`*`, `_`, `**`, `__`, `***`): the delimiters are removed when they pair under the CommonMark flanking
+    rules and the rule of 3. A span counts as a letter, so `**${label} ` + span + `** (n건)` (`work-chat-renderer.ts`)
+    pairs across it.
+  - **Code spans** lose their backtick runs, and their content is kept literally.
+  - **Not translated**: link syntax, block quotes, backslash escapes, tables and indented code.
+- **Length.** The translation never makes a text longer (`•` is one UTF-16 unit, like `-`). A Core budget, the
+  4096-character bound and `REMINDER_LIMITS` that held before it still hold. Core's budgets are measured on the
+  untranslated Telegram rendering, so they are, if anything, conservative.
+- **Chunking.** The lossless chunker now splits the translated text. A 400-section model reply is chunked, and its
+  chunks join back to exactly the translated text, each within 4096 including the `(i/n)` prefix.
+- **Behaviour change.** The TG-1 tests that pinned literal `**`, backticks and fences in Quoky copy now pin the
+  translation. Every "untrusted span verbatim" assertion is unchanged.
+
+#### `quokyctl` and the operator docs
+
+- **`quokyctl.sh telegram`** is a new read-only subcommand. `status` is unchanged byte for byte. It takes no
+  `--dry-run` / `--apply`, does not read the env file, calls neither Telegram nor `launchctl`, and prints:
+  - when the poll offset was saved (`ops/telegram-offset.json`);
+  - each halt notice already delivered (`ops/telegram-halt-notices.json`);
+  - the four halt codes and what to do for each;
+  - how to rotate or revoke the token, and how to turn Telegram off;
+  - a pointer to the unlink SQL ("Identity (D3)" → "To unlink" in the TG-1 note above).
+
+  Only `sed`/`grep`-matched times and `TELEGRAM_*` codes are printed. Tests check that a bot id, an offset, the token or
+  a hostile key never appears.
+- **Docs.** `docs/uat/operator-guide.md` gets a new section 0.8: status, the halt-code table, rotate or revoke, turning
+  Telegram off, unlinking, notice routing and reply formatting. The quickstart's Telegram section now covers the
+  panel, `quokyctl.sh telegram`, the halt codes, rotation, unlinking, where a decision result goes, and the Markdown
+  translation. The "not yet (TG-3)" line is removed.
+
+#### Residuals
+
+- **Live (Strict).** The panel and the plain-text rendering on a real Telegram client, in the first live session.
+- **Translation scope.** Link syntax `[text](url)`, backslash escapes, block quotes and indented code blocks are shown
+  as written. Quoky copy that embeds an outside value without an `untrusted` span (PLT-0 marks connector, calendar and
+  write payloads; some `response-composer.ts` paths still interpolate, for example file paths) may lose a `*` or `_`
+  pair from that value. In plain mode this is only a fidelity issue, never markup. Moving those values into spans is a
+  Core follow-up.
+- **The panel's counters** are per process. They are not persisted and they reset at a restart.
+- **Carried from TG-1.** The future storage ADR that keys sessions by `(platform, conversation)`.
+
 ## ADR-0115 — HTTP API providers for the chat and image tiers only: opt-in OpenAI API then Gemini API adapters, no tool definitions, code, review and policy capabilities stay on the Claude CLI, and a usage ledger with a monthly DM notice. Amends the constitution (ARCHITECTURE.md §5.5) and AGENTS.md; amends ADR-0014, the ADR-0092 amendments and the ADR-0111 amendments.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below).
