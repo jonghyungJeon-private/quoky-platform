@@ -140,4 +140,40 @@ describe('BRF-2 regression: pre-existing reminder phrases keep their outcome', (
       expect(parseReminderMessage(text, { ...OPTIONS, eventRelative: false }).kind, text).not.toBe('CREATE_EVENT_RELATIVE');
     }
   });
+
+  // Every recurrence word of the legacy grammar (daily, weekly, sub-daily, monthly, yearly, Korean equivalents) before the
+  // meeting noun hands the message back to the ADR-0101 grammar unchanged.
+  const RECURRENCE_PHRASES = [
+    'remind me 10 minutes before my monthly meeting',
+    'remind me 10 minutes before my yearly meeting',
+    'remind me 10 minutes before my annually meeting',
+    'remind me 10 minutes before my hourly meeting',
+    'remind me 10 minutes before my daily meeting',
+    'remind me 10 minutes before my weekly meeting',
+    'remind me 10 minutes before my every month meeting',
+    'remind me 10 minutes before my every year meeting',
+    'remind me 10 minutes before my every other week meeting',
+    ...['매달', '매월', '매년', '매해', '격주', '매주', '매일', '평일', '주말', '매시간', '매분'].map(
+      (word) => `${word} 회의 10분 전에 알려줘`,
+    ),
+  ];
+
+  it('a recurrence word before the meeting noun keeps the legacy outcome (monthly, yearly, annually, 매달, 매월, 매년, ...)', () => {
+    for (const text of RECURRENCE_PHRASES) {
+      const legacy = parseReminderMessage(text, { ...OPTIONS, eventRelative: false });
+      expect(parseReminderMessage(text, OPTIONS), text).toEqual(legacy);
+      expect(legacy.kind, text).not.toBe('CREATE_EVENT_RELATIVE');
+    }
+    for (const text of [
+      'remind me 10 minutes before my monthly meeting',
+      'remind me 10 minutes before my yearly meeting',
+      'remind me 10 minutes before my annually meeting',
+    ]) {
+      expect(parseReminderMessage(text, OPTIONS), text).toEqual({ kind: 'CLARIFY', reason: 'UNSUPPORTED_RECURRENCE' });
+    }
+    // The legacy grammar does not claim a bare `매달 회의 …`; the pinned outcome is NOT_REMINDER, not an event reminder.
+    for (const text of ['매달 회의 10분 전에 알려줘', '매월 회의 10분 전에 알려줘', '매년 회의 10분 전에 알려줘']) {
+      expect(parseReminderMessage(text, OPTIONS), text).toEqual({ kind: 'NOT_REMINDER' });
+    }
+  });
 });

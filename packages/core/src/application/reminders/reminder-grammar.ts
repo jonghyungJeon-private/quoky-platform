@@ -1432,7 +1432,16 @@ const EN_EVENT_TARGET_RECURRENCE = /\b(?:every|each|daily|weekly|weekdays?|weeke
  * is not bound and stays a meeting reference.
  */
 function acceptsEventRelative(message: string, targetText: string): boolean {
-  if (KO_EVENT_TARGET_RECURRENCE.test(targetText) || EN_EVENT_TARGET_RECURRENCE.test(targetText)) return false;
+  if (
+    KO_EVENT_TARGET_RECURRENCE.test(targetText) ||
+    EN_EVENT_TARGET_RECURRENCE.test(targetText) ||
+    // The legacy grammar's own recurrence vocabulary, shared so the guard cannot drift from it.
+    KO_SUBDAILY.test(targetText) ||
+    KO_LONG_RECURRENCE.test(targetText) ||
+    EN_UNSUPPORTED.test(targetText)
+  ) {
+    return false;
+  }
   if (findKoExpressions(targetText).length > 0) return false;
   return passesReminderRequestGuards(message, targetText.trim());
 }
