@@ -28,7 +28,14 @@ the reminder's JSON data), no new port, DI token or dependency; `ConversationRun
 - **Listing and cancel.** `알림 목록` shows `[회의 10분 전] <제목>`; `알림 N 취소` works unchanged. The brief lists these
   reminders too. Titles are untrusted spans, credential-guarded. Replies that echo a title keep a fixed history note.
 - **Delivery.** Deterministic text, no model call, to the origin platform through the existing owner sink.
-- **Routing.** The golden corpus gains route-408..414. Existing cases are unchanged.
+- **Routing.** The golden corpus gains route-408..419. Existing cases are unchanged.
+- **Codex review fixes (four P2s).**
+  - The re-check matches the event id and its calendar name; a duplicate id is ambiguous and delivered with the note.
+  - `HH:MM` is 24-hour and exact.
+  - Recurrence words and bound clock times keep the ADR-0101 reminder (`매일 오전 9시에 회의 10분 전에 알려줘` is a
+    daily 09:00 reminder again).
+  - The ADR-0101 negation, addressee and question guards gate every event-relative parse.
+  - A sweep pins the outcome of every pre-existing golden and fixture phrase.
 - **Validation.** Offline only (fake calendar reader and clock, SQLite acceptance). Not run: the Strict gate, one
   pre-meeting reminder on a test event on the owner's service.
 

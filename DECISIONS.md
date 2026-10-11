@@ -18744,7 +18744,8 @@ needed.
     event is refused: it has no start to be early for. "Too soon" is a due time less than 1 minute away. An unreadable
     calendar says it could not read, never "no meeting".
   - **Stored.** A ONCE `TEXT` reminder at `start − offset`, with body = the title, single-line, at most 100 characters.
-    An empty title is stored as `(제목 없음)`; a credential-shaped title as `(제목 숨김)` and never stored itself.
+    An empty title is stored as `(제목 없음)`; a credential-shaped title as `(제목 숨김)` and never stored itself. The
+    reference is `{ eventId, offsetMinutes, calendarName }` (see "Review fixes").
 - **Fire-time re-check (D6)** (`ReminderDispatchService.dispatchEventReminder`, after the claim). The event is re-read
   by id: first ±12 h around the expected start (`occurrenceAt + offset`), then `[now − 1 day, now + 30 days)`, all within
   15 s.
@@ -18781,7 +18782,7 @@ needed.
   times are instants (`start − offset`), so DST never shifts them. A test across America/New_York's 2026-11-01 change
   pins a 09:00 EST meeting to a 08:30 EST reminder.
 - **Evidence (offline).**
-  - `event-reminder.test.ts` (51 tests): each phrasing; offsets and clarifications; unchanged routing for the
+  - `event-reminder.test.ts` (62 tests after the review fixes): each phrasing; offsets and clarifications; unchanged routing for the
     near-misses; resolution by next, day, weekday, time and title; ambiguity; none; all-day; too soon; duplicates;
     DST; the domain reference bounds and the two new completion plans; creation replies (including an untrusted title,
     a hidden credential title, no calendar, a failed or hung read); the list and cancel; the history note.
@@ -18799,6 +18800,36 @@ needed.
     to `reminders` with zero provider calls, and the body-after-`전에` near-miss keeps its classifier route. Baseline
     `minTotal` is 414; every existing case is unchanged. The CAL-2 acceptance read count now includes the five creation
     reads.
+- **Review fixes (Codex, four P2s, all reproduced; 2026-10-12).** One commit per finding:
+  1. **Calendar identity.** The re-check matched by id alone across the merged calendars. A copy of the id on another
+     calendar could be taken for the event, so a moved reminder fired at its old time and completed.
+     - The reference now stores `calendarName`, the only calendar identity the `CalendarReader` port exposes (bounded
+       to 100 characters), and the re-check matches the id and the name.
+     - Both reads always run and their matches are de-duplicated. Two different matches (calendars that share a name,
+       or a reference stored without one) are ambiguous: the reminder is delivered with the "could not re-check" note
+       and no copy is chosen.
+     - The port gains no calendar-id field: a residual, see R8.
+  2. **`HH:MM` is 24-hour.** A colon time (`03:00`, `15:00`, English `9:30` without am/pm) matches that hour exactly.
+     A bare `3시` stays either half of the day, and `오전/오후 3시` follows its meridiem.
+  3. **Recurrence and bound clock times stay ADR-0101.** An event-relative parse stands only when its target is a
+     meeting reference.
+     - A recurrence word (`매일`, `평일`, `매주`, `주말`, `마다`, `every`, `daily`, `weekly`, …), or a time expression
+       bound to the request (`오전 9시에`, `30분 뒤에`, found by the ADR-0101 scanner), hands the message to the
+       ADR-0101 grammar unchanged.
+     - `매일 오전 9시에 회의 10분 전에 알려줘` is again the daily 09:00 reminder.
+     - `3시 회의` (unbound) stays event-relative.
+     - Golden route-415..419 (baseline `minTotal` 419).
+  4. **Negation and question guards.** Before an event-relative parse stands, the whole message passes the ADR-0101
+     guards: the shared `isNegated` markers, no negated verb, no other addressee, and no wh-word, embedded or predicate
+     question in the target. English adds the past-tense and wh-after-verb guards. `알림 없이 회의 10분 전에 알려줘` is
+     again `NOT_REMINDER`.
+  - **Regression sweep** (`event-reminder-regression.test.ts`).
+    - **Coverage.** The text of every golden case, plus every string literal of the existing tests in the modules
+      that share or defer to the reminder grammar: over 3,000 phrases, over 300 of them reminder-shaped.
+    - **Assertion.** Each phrase parses exactly as the ADR-0101 grammar alone (`eventRelative: false`); only the
+      listed BRF-2 phrases may differ.
+    - **Mutation check.** With the guards of fixes 3–4 disabled, the sweep fails on the recurrence and clock-time
+      cases.
 - **Residuals.**
   - (R1) A move is seen only at the old due time. An event moved earlier by more than the offset is announced late (at
     the old due time, with the "moved" note). There is no polling before the due time: that would be a scheduler
@@ -18814,6 +18845,11 @@ needed.
     recurring "before every meeting" (decision 22 rules that out).
   - (R7) A FIRING pre-meeting reminder interrupted by a stop is `DELIVERY_UNCERTAIN` (ADR-0101 D6), as for any reminder.
     The re-check's 15 s bound adds to the R1 stop bound of BRF-1.
+  - (R8) The port exposes a calendar's display name, not its id. Two configured calendars with the same name and a
+    shared event id cannot be told apart; such a reminder is delivered with the "could not re-check" note, never
+    guessed. An additive `calendarId` on `CalendarEvent` would remove this and is left to a port amendment.
+  - (R9) An English title containing `daily` / `weekly` (`daily standup meeting`) is read as a recurrence and keeps the
+    ADR-0101 outcome (a clarification). The Korean `데일리 스크럼 회의` is unaffected.
 
 ## ADR-0118 — Google read connectors, Gmail then Drive: `gmail.readonly` and `drive.readonly` on the existing Internal OAuth client, fixed-format DM-only listings, no send, draft or delete, and text to the chat-tier provider only on an explicit summary request. Amends ADR-0100 and ADR-0096 D5; relates ADR-0110 and ADR-0111.
 

@@ -22,7 +22,10 @@ reminder before one calendar event, resolved through the existing `CALENDAR_READ
 - **Listing.** `알림 목록` shows `[회의 10분 전] <제목>` as an untrusted span; `알림 N 취소` is unchanged.
 - **Unchanged.** No migration (the event id lives in the reminder's JSON data), no new port or token, no model call.
   `ConversationRuntimeDeps` stays 35. One new transition edge, FIRING → CANCELED, is used only by the re-check.
-- **Validation.** Offline only; the golden routing corpus gains route-408..414. The Strict gate is not run: one
+- **Review.** Codex found four P2s, all fixed one commit each: calendar identity on the re-check, `HH:MM` as a 24-hour
+  time, recurrence / bound clock times kept on the ADR-0101 grammar, and the negation and question guards. A sweep
+  pins every pre-existing reminder phrase to its old outcome.
+- **Validation.** Offline only; the golden routing corpus gains route-408..419. The Strict gate is not run: one
   pre-meeting reminder on a test event on the owner's service.
 
 ### GML-1 Gmail read connector — implemented on branch, not merged (2026-10-08)
