@@ -7771,7 +7771,7 @@ export class ConversationRuntime {
         chatGuard?.guarded !== true &&
         // Final sign-off W-1: checked on the text the owner is shown (format characters removed, NFKC), not only the raw one.
         (containsDocumentActionClaim(executed.text) || containsDocumentActionClaim(neutralizeLinks(executed.text, 'display')))
-          ? this.documentActionClaimWithheld(message, task.id)
+          ? this.documentActionClaimWithheld(message, task.id, readout.source)
           : chatGuard;
       // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).
       const result = withheld
@@ -7892,9 +7892,13 @@ export class ConversationRuntime {
   }
 
   /** Review P2-3: the fixed notice replacing a summary that claims a mail or Quoky action (content-free log). */
-  private documentActionClaimWithheld(message: InboundMessage, taskId: Id): { readonly text: string; readonly guarded: boolean } {
+  private documentActionClaimWithheld(
+    message: InboundMessage,
+    taskId: Id,
+    source: UntrustedDocumentReadout['source'],
+  ): { readonly text: string; readonly guarded: boolean } {
     this.deps.logger.info('document summary action claim replaced', { taskId });
-    return { text: renderDocumentActionClaimWithheld(noticeLanguage(undefined, message.text)), guarded: true };
+    return { text: renderDocumentActionClaimWithheld(noticeLanguage(undefined, message.text), source), guarded: true };
   }
 
   /**

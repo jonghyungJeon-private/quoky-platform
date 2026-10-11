@@ -32,6 +32,8 @@ export * from './calendar-reader.port';
 export * from './calendar-window';
 // Personal v4 (ADR-0118 D2, GML-1).
 export * from './mail-reader.port';
+// Personal v4 (ADR-0118 D2, DRV-1).
+export * from './drive-reader.port';
 // Personal v3 (ADR-0112 D2/D3, ADR-0110 amendment; CWR-1).
 export * from './connector-write.port';
 export * from './connector-write-receipt.port';

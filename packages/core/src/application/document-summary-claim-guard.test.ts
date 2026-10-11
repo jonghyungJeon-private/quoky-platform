@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { containsDocumentActionClaim } from './document-summary-claim-guard';
+import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
 import { neutralizeLinks } from './link-neutralizer';
 
 describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
@@ -104,4 +104,55 @@ describe('Codex final delta: an adverb before the verb, and an emphatic did', ()
     '%j is not a claim',
     (text) => expect(containsDocumentActionClaim(text)).toBe(false),
   );
+});
+
+describe('DRV-1: document actions (a Drive summary steered into an edit, share or permission claim)', () => {
+  it.each([
+    '문서를 공유했어요.',
+    '파일을 삭제해 드렸어요.',
+    '권한을 변경했어요.',
+    '이 문서를 팀 전체에 공유해 드렸어요.',
+    '스프레드시트를 수정했습니다.',
+    '시트를 휴지통으로 옮겼어요.',
+    '폴더를 다른 곳으로 옮겼어요.',
+    '문서 이름을 바꿨어요.',
+    '제가 문서를 편집해 두었어요.',
+    'Quoky가 링크를 공유했어요.',
+    'I shared the document with your team.',
+    "I've renamed the file.",
+    'We edited the spreadsheet and created a to-do.',
+    'I went ahead and uploaded a copy.',
+    'I did share the doc.',
+  ])('withholds: %s', (text) => {
+    expect(containsDocumentActionClaim(text)).toBe(true);
+  });
+
+  it.each([
+    // Third-person, reported speech and ordinary meeting-notes prose stay allowed.
+    '김철수 님이 회의 결과를 팀에 공유했어요.',
+    '팀장님이 문서를 수정했어요.',
+    '진행 상황을 공유했어요.',
+    '버그를 수정했다는 내용이에요.',
+    '문서를 공유해 달라는 요청이에요.',
+    '이 문서는 3월에 마지막으로 수정되었어요.',
+    'Kim shared the roadmap with the team.',
+    'The document asks you to share it by Friday.',
+    'I did not share anything.',
+  ])('allows: %s', (text) => {
+    expect(containsDocumentActionClaim(text)).toBe(false);
+  });
+
+  it('is linear on a long hostile reply with the document nouns', () => {
+    const start = performance.now();
+    containsDocumentActionClaim(`${'문서를 '.repeat(20_000)}${'가 '.repeat(20_000)}`);
+    containsDocumentActionClaim(`${'파일 '.repeat(30_000)}공유`);
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
+  it('the Drive notice names document actions; the mail notice is unchanged', () => {
+    expect(renderDocumentActionClaimWithheld('ko', 'drive')).toContain('문서를 읽기만 했고');
+    expect(renderDocumentActionClaimWithheld('en', 'drive')).toContain('Quoky only read the document');
+    expect(renderDocumentActionClaimWithheld('ko')).toBe(renderDocumentActionClaimWithheld('ko', 'mail'));
+    expect(renderDocumentActionClaimWithheld('ko')).toContain('메일을 읽기만 했고');
+  });
 });

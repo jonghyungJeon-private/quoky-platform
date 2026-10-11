@@ -5,6 +5,9 @@
  * first person or with Quoky as the subject, that a mail was sent, forwarded, replied to, deleted, archived, labelled
  * or marked read, or that a to-do, reminder or calendar entry was created, is withheld whole with a fixed notice.
  *
+ * DRV-1 adds the document actions (edited, shared, moved, renamed, uploaded, deleted, a permission changed) with the
+ * file as the object, so a Drive summary steered into "문서를 공유했어요" or "I shared the doc" is withheld the same way.
+ *
  * Third-person sentences about the item's author stay allowed ("김철수 님이 회의 자료를 보냈어요", "Kim sent the deck"):
  * a Korean claim is exempt only when the nearest real subject before it (`<word>이/가/께서/님이`, not an adverb or a
  * generic noun) is someone other than Quoky or a stand-in for it; an English claim needs an `I` / `we` / `Quoky`
@@ -28,6 +31,8 @@ const KO_NOT_A_SUBJECT = new Set([
   '같', '많', '깊', '높', '길', '넓', '일찍', '빨', '쉽', '굳', '끝', '깨끗', '틈틈', '번번', '곳곳', '일일',
   '내용', '요청', '문의', '연락', '메일', '이메일', '답장', '회신', '일정', '회의', '자료', '시간', '날짜', '마감', '확인',
   '필요', '문제', '이유', '결과', '변경', '처리', '진행', '준비', '정리', '요약', '알림', '안내', '공지', '첨부', '파일',
+  // DRV-1: document nouns.
+  '문서', '시트', '폴더', '드라이브', '링크', '권한', '제목', '이름',
 ]);
 
 /** Korean claims of a mail action or of a created to-do / reminder / calendar entry (past or completed tense). */
@@ -41,6 +46,11 @@ const KO_CLAIMS: readonly RegExp[] = [
   /할\s?일(?:을|를|로|에|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록|생성)(?:했|해\s?드렸|해\s?두었|하였)|할\s?일(?:을|를)?\s*만들었/u,
   /(?:알림|리마인더)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:설정|등록|추가)(?:했|해\s?드렸|해\s?두었|하였)|(?:알림|리마인더)(?:을|를)?\s*맞춰/u,
   /(?:일정|이벤트|약속|회의)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록)(?:했|해\s?드렸|해\s?두었|하였)|캘린더에\s*(?:추가|등록)(?:했|해\s?드렸|해\s?두었)/u,
+  // DRV-1: a document action with the file, folder, link or permission as its object (`문서를 공유했어요`, `파일을 삭제해
+  // 드렸어요`, `권한을 변경했어요`). Narrow on purpose: `진행 상황을 공유했어요` in a meeting-notes summary is not a claim.
+  /(?:문서|파일|시트|스프레드시트|폴더|드라이브|링크|권한|공유\s?설정)(?:을|를|은|는|도|들을)?\s*(?:\S+\s+){0,2}?(?:공유|편집|수정|삭제|이동|복사|업로드|변경|부여|휴지통으로\s?이동)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
+  /(?:문서|파일|시트|스프레드시트|폴더)(?:을|를|은|는|도|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:\S+\s+){0,2}?(?:지웠|옮겼|고쳤|바꿨|올렸)/u,
+  /(?:이름|제목|권한)(?:을|를)?\s*(?:\S+\s+){0,2}?(?:바꿨|변경했|바꿔\s?드렸|변경해\s?드렸)/u,
 ];
 
 /** A subject-marked word in a Korean clause: `김철수가`, `팀장님이`, `제가` (only `이/가/께서/님이` count). */
@@ -55,7 +65,7 @@ const EN_CLAIM = new RegExp(
     '(?:(?:have|has|had|just|already|also|now|then|successfully|went|go|gone|ahead|and|quickly|immediately|actually|' +
     'promptly|simply|kindly)\\s+){0,6}' +
     '(?:sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|' +
-    'scheduled|set\\s+up|set|booked|drafted)\\b',
+    'scheduled|set\\s+up|set|booked|drafted|shared|unshared|edited|modified|renamed|uploaded|copied)\\b',
   'i',
 );
 
@@ -65,7 +75,7 @@ const EN_CLAIM = new RegExp(
  * every summary, which states that nothing was sent or changed, is the guarantee.
  */
 const EN_DID_CLAIM =
-  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\s+up|book|draft)\b/i;
+  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\s+up|book|draft|share|unshare|edit|modify|rename|upload|copy)\b/i;
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
 function clauses(text: string): string[] {
@@ -115,8 +125,18 @@ export function containsDocumentActionClaim(text: string): boolean {
   return clauses(text).some((clause) => koreanClaim(clause));
 }
 
-/** The fixed reply that replaces a summary claiming an action (never shown, never stored). */
-export function renderDocumentActionClaimWithheld(language: 'ko' | 'en'): string {
+/**
+ * The fixed reply that replaces a summary claiming an action (never shown, never stored). It names what the item's
+ * source could have done (DRV-1: a document is edited, shared or moved, not sent); neutral nouns only.
+ */
+export function renderDocumentActionClaimWithheld(language: 'ko' | 'en', source: 'mail' | 'drive' = 'mail'): string {
+  if (source === 'drive') {
+    return language === 'en'
+      ? 'The summary claimed an action that was never taken, so it was not shown. Quoky only read the document: nothing ' +
+          'was edited, shared, moved, renamed or deleted, no permission changed, and no to-do or reminder was created.'
+      : '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 문서를 읽기만 했고, 수정·공유·이동·이름 변경·' +
+          '삭제·권한 변경을 하지 않았으며 할 일이나 알림도 만들지 않았어요.';
+  }
   return language === 'en'
     ? 'The summary claimed an action that was never taken, so it was not shown. Quoky only read the email: nothing was ' +
         'sent, replied to, forwarded, deleted, archived, labelled or scheduled, and no to-do or reminder was created.'

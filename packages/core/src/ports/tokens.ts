@@ -46,6 +46,9 @@ export const CALENDAR_READER = Symbol('CalendarReader');
 // Personal v4 (ADR-0118 D2, GML-1): the read-only mail reader. Bound only when Gmail is fully configured; absent means
 // no mail handler is registered and every reply is unchanged.
 export const MAIL_READER = Symbol('MailReader');
+// Personal v4 (ADR-0118 D2, DRV-1): the read-only Drive reader. Bound only when Drive is fully configured; absent means
+// no Drive handler is registered and every reply is unchanged.
+export const DRIVE_READER = Symbol('DriveReader');
 // Personal v3 (ADR-0112 D2/D3, ADR-0110 amendment; CWR-1): narrow connector write ports and the v15 write receipts.
 // Bound only when connector writes are enabled and allowlisted (CWR-2 composition); absent means writes stay refused.
 export const ISSUE_COMMENT_WRITER = Symbol('IssueCommentWriter');

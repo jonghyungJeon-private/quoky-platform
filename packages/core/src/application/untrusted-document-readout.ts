@@ -23,8 +23,8 @@ import { normalizePromptContextContent } from './prompt-content-normalizer';
  */
 
 export const UNTRUSTED_DOCUMENT_READOUT_KIND = 'untrusted-document';
-/** The sources a readout may come from. DRV-1 adds `drive`. */
-export const UNTRUSTED_DOCUMENT_SOURCES = ['mail'] as const;
+/** The sources a readout may come from: a mail message (GML-1) or a Drive file's text export (DRV-1). */
+export const UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive'] as const;
 export type UntrustedDocumentSource = (typeof UNTRUSTED_DOCUMENT_SOURCES)[number];
 
 /**
@@ -43,9 +43,9 @@ export const DOCUMENT_SUMMARY_REPLY_MAX_CHARS = 1900;
 export interface UntrustedDocumentReadout {
   readonly kind: typeof UNTRUSTED_DOCUMENT_READOUT_KIND;
   readonly source: UntrustedDocumentSource;
-  /** The item's title (a mail subject), one line, '' when it has none. */
+  /** The item's title (a mail subject or a file name), one line, '' when it has none. */
   readonly title: string;
-  /** Who wrote it (a mail sender's display name or address), one line, '' when unknown. */
+  /** Who wrote it (a mail sender's display name or address, a file owner's name), one line, '' when unknown. */
   readonly author: string;
   /** When it was received or last modified (ISO-8601 UTC). */
   readonly date: string;
@@ -189,7 +189,7 @@ export function isSummarizableDocumentReadout(value: unknown): value is Untruste
 }
 
 /** What the source is called in the prompt header. */
-const SOURCE_LABEL: Readonly<Record<UntrustedDocumentSource, string>> = { mail: 'EMAIL MESSAGE' };
+const SOURCE_LABEL: Readonly<Record<UntrustedDocumentSource, string>> = { mail: 'EMAIL MESSAGE', drive: 'DRIVE DOCUMENT' };
 
 /**
  * The prompt text of a readout: a fixed header, then the fields JSON-quoted (so no field can imitate a section
@@ -224,6 +224,7 @@ export const UNTRUSTED_DOCUMENT_REQUEST_WITHHELD_NOTICE =
 /** What each source's item is called in the history note (review P3-7). */
 const SOURCE_NOUN: Readonly<Record<UntrustedDocumentSource, { readonly ko: string; readonly en: string }>> = {
   mail: { ko: '메일', en: 'email' },
+  drive: { ko: '문서', en: 'document' },
 };
 
 export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSource, language: 'ko' | 'en'): string {

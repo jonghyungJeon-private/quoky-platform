@@ -185,3 +185,5 @@ export * from './link-neutralizer';
 export * from './untrusted-document-readout';
 export * from './document-summary-claim-guard';
 export * from './mail';
+// ADR-0118 Drive read (DRV-1): the Drive sub-barrel (the readout, neutralizer and claim guard are shared with mail).
+export * from './drive';
