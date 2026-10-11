@@ -1,0 +1,247 @@
+import { describe, expect, it } from 'vitest';
+import {
+  clipMessage,
+  composeDailyBrief,
+  conversationRefOf,
+  firstFit,
+  fitLines,
+  messageContent,
+  messageLink,
+  platformNote,
+  renderMessageContent,
+  takeLines,
+  untrustedText,
+} from '@quoky/core';
+import type { CalendarEvent, ConnectorItem, MessageContent, MessagePart } from '@quoky/core';
+import { telegramSegments, translateCommonMark, translateTelegramBody } from './commonmark';
+import { chunkTelegramText, deliverTelegramText, TELEGRAM_CHUNK_LIMIT, TELEGRAM_MESSAGE_LIMIT } from './delivery';
+import { renderOutboundForTelegram, renderTelegramContent, TELEGRAM_MARKUP, translatePreviewCopy } from './rendering';
+
+/** Quoky copy (a string body) as Telegram plain text. */
+const t = (text: string): string => renderTelegramContent(text);
+
+describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
+  it('emphasis and strong emphasis lose their delimiters when they pair', () => {
+    expect(t('**굵게** 그리고 *기울임* 그리고 __밑줄 굵게__ 그리고 _밑줄_')).toBe('굵게 그리고 기울임 그리고 밑줄 굵게 그리고 밑줄');
+    expect(t('***둘 다***')).toBe('둘 다');
+    expect(t('**내 할 일** (3건)')).toBe('내 할 일 (3건)');
+    expect(t('- **Title:** 배포')).toBe('• Title: 배포');
+  });
+
+  it('what is not emphasis stays: snake_case, arithmetic, a lone marker, an unclosed run', () => {
+    expect(t('snake_case_name 과 file_name.ts')).toBe('snake_case_name 과 file_name.ts');
+    expect(t('2 * 3 * 4 = 24')).toBe('2 * 3 * 4 = 24');
+    expect(t('별표 하나 * 만')).toBe('별표 하나 * 만');
+    expect(t('**닫히지 않음')).toBe('**닫히지 않음');
+    expect(t('a**b')).toBe('a**b');
+  });
+
+  it('code spans lose their backticks and keep their content literally (no emphasis inside)', () => {
+    expect(t('`승인` 이라고 보내세요')).toBe('승인 이라고 보내세요');
+    expect(t('`**not bold**` 와 `a_b_c`')).toBe('**not bold** 와 a_b_c');
+    expect(t('`` a`b ``')).toBe('a`b');
+    expect(t('짝 없는 ` 백틱')).toBe('짝 없는 ` 백틱');
+  });
+
+  it('headings become plain lines; bullets become •; ordered lists, quotes and breaks stay', () => {
+    expect(t('# 제목\n## 부제 ##\n###### 작은 제목\n####### 일곱 개')).toBe('제목\n부제\n작은 제목\n####### 일곱 개');
+    expect(t('#해시태그는 제목이 아님')).toBe('#해시태그는 제목이 아님');
+    expect(t('- 하나\n* 둘\n+ 셋\n  - 안쪽')).toBe('• 하나\n• 둘\n• 셋\n  • 안쪽');
+    expect(t('1. 첫째\n2. 둘째')).toBe('1. 첫째\n2. 둘째');
+    expect(t('> 인용')).toBe('> 인용');
+    expect(t('위\n---\n***\n아래')).toBe('위\n---\n***\n아래');
+  });
+
+  it('a fenced block loses its fence lines and keeps its content exactly (CommonMark closing rule)', () => {
+    expect(t('설명:\n```diff\n- old **x**\n+ new # y\n```\n끝 **굵게**')).toBe('설명:\n- old **x**\n+ new # y\n끝 굵게');
+    // A longer fence: a shorter run inside does not close it; a longer closer does.
+    expect(t('````\n```\n`code`\n`````\n뒤')).toBe('```\n`code`\n뒤');
+    expect(t('~~~\n**x**\n~~~')).toBe('**x**');
+    // Unclosed: the content runs to the end, untranslated.
+    expect(t('앞\n```\n**계속**')).toBe('앞\n**계속**');
+    // A backtick info string with a backtick is not a fence (it is an inline code span).
+    expect(t('```x```')).toBe('x');
+  });
+
+  it('a model reply is translated; its table is kept as written', () => {
+    const reply = '## 요약\n\n**결론**: `pnpm test` 통과\n\n- 항목 _하나_\n\n| a | b |\n|---|---|\n| 1 | 2 |';
+    expect(renderOutboundForTelegram({ text: reply, format: 'model-reply' } as never)).toBe(
+      '요약\n\n결론: pnpm test 통과\n\n• 항목 하나\n\n| a | b |\n|---|---|\n| 1 | 2 |',
+    );
+  });
+
+  it('a preview keeps its diff and file name; only the header, warning and footer copy are translated', () => {
+    const preview = {
+      previewId: 'p',
+      header: '**변경 미리보기** `a.ts`',
+      warning: '⚠️ **범위 밖** 경로',
+      footer: '적용하려면 `적용`',
+      files: [],
+      canonicalDiff: '+**x** `y`\n',
+      attachmentFilename: 'a.diff',
+    };
+    expect(translatePreviewCopy(preview)).toEqual({
+      ...preview,
+      header: '변경 미리보기 a.ts',
+      warning: '⚠️ 범위 밖 경로',
+      footer: '적용하려면 적용',
+    });
+  });
+});
+
+describe('TG-3 translator safety: an untrusted span is never reinterpreted', () => {
+  const HOSTILE = '**x** <b>b</b> `c` _i_ # h';
+
+  it('an untrusted span keeps **x**, <b>, backticks, underscores and # as they are, under every guard', () => {
+    for (const guard of ['markup', 'mentions', 'handles'] as const) {
+      expect(renderTelegramContent(messageContent('제목: ', untrustedText(HOSTILE, guard)))).toBe(`제목: ${HOSTILE}`);
+    }
+  });
+
+  it('Quoky markers around a span pair across it; the markers inside the span stay', () => {
+    expect(renderTelegramContent(messageContent('**', untrustedText('**x**'), '**'))).toBe('**x**');
+    expect(renderTelegramContent(messageContent('**Jira ', untrustedText('<b>b</b> *y*'), '** (2건)'))).toBe('Jira <b>b</b> *y* (2건)');
+    expect(renderTelegramContent(messageContent('`', untrustedText('**x**'), '`'))).toBe('**x**');
+  });
+
+  it('a span never opens a fence, starts a heading or a list, or closes a marker', () => {
+    const content = messageContent('앞\n', untrustedText('```\n# h\n- i\n**'), '\n**뒤** 와 *a*');
+    expect(renderTelegramContent(content)).toBe('앞\n```\n# h\n- i\n**\n뒤 와 a');
+    // A span at the start of a line is not a bullet, a heading or a fence either.
+    expect(renderTelegramContent(messageContent('목록\n', untrustedText('- x'), '\n', untrustedText('# y'), '\n', untrustedText('```')))).toBe(
+      '목록\n- x\n# y\n```',
+    );
+  });
+
+  it('a span inside a fenced block of Quoky copy is kept with the block (and the block closes after it)', () => {
+    const content = messageContent('```\n', untrustedText('**payload**'), '\n```\n**끝**');
+    expect(renderTelegramContent(content)).toBe('**payload**\n끝');
+  });
+
+  it('links and conversation references are spans too: an underscore or a star in a URL stays', () => {
+    const content = messageContent('**링크**: ', messageLink('https://e.test/a_b_c*d*'), ' · ', conversationRefOf({ platform: 'telegram', channelId: '1', userId: '1', direct: true }, { direct: '**이 DM**', channel: '채널' }));
+    expect(renderTelegramContent(content)).toBe('링크: https://e.test/a_b_c*d* · **이 DM**');
+  });
+
+  it('fail safe: when the segment evaluator disagrees with Core, nothing is translated', () => {
+    expect(translateTelegramBody('**x**', TELEGRAM_MARKUP, 'not the same')).toBe('not the same');
+  });
+});
+
+/** A deterministic pseudo-random generator (mulberry32). */
+function prng(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let x = Math.imul(a ^ (a >>> 15), 1 | a);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const PIECES = ['**', '*', '_', '`', '```', '\n', '# ', '- ', ' ', '가나', 'abc', '😀', '<b>', '~~~', '…', '\n```\n', 'x_y', '  '];
+
+function randomText(next: () => number): string {
+  let text = '';
+  const count = 1 + Math.floor(next() * 8);
+  for (let i = 0; i < count; i += 1) text += PIECES[Math.floor(next() * PIECES.length)] as string;
+  return text;
+}
+
+function randomContent(next: () => number, depth: number): MessageContent {
+  const parts: MessagePart[] = [];
+  const count = 1 + Math.floor(next() * 5);
+  for (let i = 0; i < count; i += 1) {
+    const pick = Math.floor(next() * (depth > 2 ? 4 : 9));
+    const sub = (): MessageContent => randomContent(next, depth + 1);
+    const max = 1 + Math.floor(next() * 40);
+    const unit = next() < 0.5 ? ('utf16' as const) : ('code-points' as const);
+    if (pick === 0) parts.push(randomText(next));
+    else if (pick === 1) parts.push(untrustedText(randomText(next)));
+    else if (pick === 2) parts.push(messageLink(`https://e.test/${randomText(next).replace(/\s/g, '')}`));
+    else if (pick === 3) parts.push(platformNote('command-prefix'));
+    else if (pick === 4) parts.push(clipMessage(sub(), max, unit, { trim: next() < 0.5, ...(next() < 0.5 ? { after: sub() } : {}) }));
+    else if (pick === 5) parts.push(fitLines([{ content: sub() }, { content: sub(), droppable: true }, { content: sub(), droppable: true }], max, next() < 0.5 ? '(생략)' : undefined));
+    else if (pick === 6)
+      parts.push(
+        takeLines({
+          unit,
+          maxChars: max + 10,
+          baseChars: Math.floor(next() * 5),
+          head: [sub()],
+          tail: next() < 0.5 ? [sub()] : [],
+          lines: [{ content: sub(), item: true }, { content: sub() }, { content: sub(), item: true }],
+          headOnlyWithLines: next() < 0.5,
+          dropTrailingHeadings: next() < 0.5,
+          ...(next() < 0.5 ? { omitted: { hidden: Math.floor(next() * 3), before: '외 ', after: '건' } } : {}),
+        }),
+      );
+    else if (pick === 7) parts.push(firstFit([sub(), sub()], max, unit));
+    else parts.push(conversationRefOf({ platform: next() < 0.5 ? 'telegram' : 'discord', channelId: '9', userId: '1', direct: next() < 0.5 }, { direct: '이 DM', channel: '이 채널' }));
+  }
+  return messageContent(...parts);
+}
+
+describe("TG-3 translator plumbing: the segment evaluator is Core's, and translation never lengthens", () => {
+  it('600 random content trees: the segments concatenate to exactly the Core rendering; the translation is never longer', () => {
+    const next = prng(20261012);
+    for (let i = 0; i < 600; i += 1) {
+      const content = randomContent(next, 0);
+      const rendered = renderMessageContent(content, TELEGRAM_MARKUP);
+      const segments = telegramSegments(content, TELEGRAM_MARKUP);
+      expect(segments.map((segment) => segment.text).join(''), `tree ${i}`).toBe(rendered);
+      const translated = translateCommonMark(segments);
+      expect(translated.length, `tree ${i}`).toBeLessThanOrEqual(rendered.length);
+      // Every untrusted span's text survives somewhere in the output exactly (it is never edited).
+      for (const segment of segments) if (segment.span) expect(translated, `tree ${i}`).toContain(segment.text);
+    }
+  });
+
+  it('a real Core renderer (the morning brief with calendar and Jira sections) keeps parity and its untrusted titles', () => {
+    const title = '**버그** `fix` _now_ <b>x</b>';
+    const calendarEvent: CalendarEvent = {
+      id: 'e1',
+      title,
+      start: '2026-10-02T01:00:00.000Z',
+      end: '2026-10-02T01:30:00.000Z',
+      allDay: false,
+      status: 'confirmed',
+      calendarName: 'primary',
+    };
+    const body = composeDailyBrief({
+      now: '2026-10-01T23:00:00.000Z',
+      timeZone: 'Asia/Seoul',
+      reminders: [],
+      workItems: [],
+      calendar: { events: [calendarEvent], limit: 50 },
+      assignedWork: [{ id: 'P-1', title, dueDate: '2026-10-02' } as ConnectorItem],
+    });
+    const rendered = renderMessageContent(body, TELEGRAM_MARKUP);
+    expect(telegramSegments(body, TELEGRAM_MARKUP).map((segment) => segment.text).join('')).toBe(rendered);
+    const telegram = renderTelegramContent(body);
+    // Both titles (calendar and Jira) are untrusted spans: delivered exactly, markers and all.
+    expect(telegram.split(title).length - 1).toBe(2);
+    expect(telegram.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_LIMIT);
+  });
+});
+
+describe('TG-3 chunking after translation stays lossless (ADR-0114 D7)', () => {
+  const reply = Array.from({ length: 400 }, (_, i) => `## 절 ${i}\n**굵게 ${i}** 그리고 \`코드 ${i}\`\n- 항목 ${i}\n\`\`\`\n코드 줄 ${i} **그대로**\n\`\`\``).join('\n');
+
+  it('the translated text is split into ≤4096 chunks that join back to exactly the translated text', async () => {
+    const translated = renderOutboundForTelegram({ text: reply, format: 'model-reply' } as never);
+    expect(translated.length).toBeLessThan(reply.length);
+    expect(translated).toContain('코드 줄 7 **그대로**');
+    expect(translated).not.toContain('```');
+    const chunks = chunkTelegramText(translated);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join('')).toBe(translated);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(TELEGRAM_CHUNK_LIMIT);
+
+    const sent: string[] = [];
+    const report = await deliverTelegramText(translated, async (chunk) => void sent.push(chunk), async () => undefined, () => 'X');
+    expect(report).toMatchObject({ ok: true, totalChunks: chunks.length });
+    for (const message of sent) expect(message.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_LIMIT);
+    expect(sent.map((message, index) => message.slice(`(${index + 1}/${sent.length}) `.length)).join('')).toBe(translated);
+  });
+});

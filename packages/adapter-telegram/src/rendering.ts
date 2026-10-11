@@ -1,5 +1,6 @@
 import { plainTextOf, renderMessageContent } from '@quoky/core';
-import type { ConversationRefNode, MessageBody, MessageMarkup, OutboundMessage } from '@quoky/core';
+import type { ConversationRefNode, MessageBody, MessageMarkup, OutboundMessage, PreviewArtifact } from '@quoky/core';
+import { translateCommonMark, translateTelegramBody } from './commonmark';
 
 /**
  * The single place where a domain message becomes Telegram text (ADR-0114 D7; the PLT-0 `MessageMarkup` port).
@@ -7,8 +8,12 @@ import type { ConversationRefNode, MessageBody, MessageMarkup, OutboundMessage }
  * Parse mode: NONE (plain text) for every message. Telegram then interprets no markup at all, so every node — Quoky's
  * CommonMark string nodes (and the untrusted text they may carry inside a fence), untrusted spans under every guard,
  * links and conversation references — is delivered verbatim and cannot format, link-mask or inject anything. That is
- * what "escape every string node for the parse mode" means for plain text: the identity. The CommonMark markers of
- * Quoky copy (`**`, backticks, fences) are shown as written.
+ * what "escape every string node for the parse mode" means for plain text: the identity.
+ *
+ * TG-3: Quoky's own copy and a model reply are CommonMark, so before sending, their markers are translated to plain text
+ * (`commonmark.ts`: emphasis and code-span markers removed, fence lines removed with the content kept, headings as plain
+ * lines, bullets as `•`). Untrusted spans, links and conversation references are opaque to the translation and are
+ * delivered exactly as rendered.
  *
  * The one exception is the code-change preview's diff parts (`delivery.ts`): a fixed HTML subset, `<pre>` only, written
  * by the adapter around content passed through {@link escapeTelegramHtml}. No other HTML is ever produced.
@@ -39,14 +44,35 @@ export const TELEGRAM_MARKUP: MessageMarkup = Object.freeze({
   platformNote: () => '',
 });
 
-/** The Telegram text of a neutral body. */
+/** The Telegram text of a neutral body: rendered with the Telegram markup, then its CommonMark translated (TG-3). */
 export function renderTelegramContent(body: MessageBody): string {
-  return renderMessageContent(body, TELEGRAM_MARKUP);
+  return translateTelegramBody(body, TELEGRAM_MARKUP, renderMessageContent(body, TELEGRAM_MARKUP));
 }
 
-/** The Telegram text of an outbound message: its neutral `content` rendered with the Telegram markup (else its `text`). */
+/**
+ * The Telegram text of an outbound message or notification: its neutral `content` rendered with the Telegram markup,
+ * else its `text` (Quoky copy alone, or a `model-reply` answer), translated either way (TG-3).
+ */
 export function renderOutboundForTelegram(message: Pick<OutboundMessage, 'text' | 'content'>): string {
-  return message.content !== undefined ? renderTelegramContent(message.content) : message.text;
+  return renderTelegramContent(message.content !== undefined ? message.content : message.text);
+}
+
+/** TG-3: Quoky copy given as a plain string (a preview header, warning or footer) as Telegram plain text. */
+export function translateTelegramCopy(text: string): string {
+  return translateCommonMark([{ text, span: false }]);
+}
+
+/**
+ * TG-3: a code-change preview with its Quoky copy (header, warning, footer) translated. The canonical diff, the
+ * attachment name and every other field are kept exactly (the diff goes in `<pre>` parts or the `.diff` document).
+ */
+export function translatePreviewCopy(preview: PreviewArtifact): PreviewArtifact {
+  return {
+    ...preview,
+    header: translateTelegramCopy(preview.header),
+    footer: translateTelegramCopy(preview.footer),
+    ...(preview.warning !== undefined ? { warning: translateTelegramCopy(preview.warning) } : {}),
+  };
 }
 
 /** Whether a message's `content` and `text` disagree (the PLT-0 review P3-1 check, as on Discord). */

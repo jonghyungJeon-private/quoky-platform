@@ -1019,6 +1019,19 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
     expect(receipt.platformMessageIds).toEqual([`${OWNER_ID}:1001`]);
   });
 
+  it('TG-3: Quoky copy and a model reply arrive with their CommonMark translated; untrusted spans stay literal', async () => {
+    const h = await connected();
+    const content = messageContent('**결과**: ', untrustedText('**x** <b>y</b> `z`'), '\n- `승인` 이라고 보내세요');
+    await h.adapter.sendMessage(outboundMessage(ctx, content));
+    await h.adapter.sendMessage({ context: ctx, text: '## 요약\n**좋아요**', format: 'model-reply' });
+    await h.adapter.sendMessage({ context: ctx, text: '알림을 **취소**했어요.' });
+    expect(h.fake.callsTo('sendMessage').map((call) => call.params)).toEqual([
+      { chat_id: String(OWNER_ID), text: '결과: **x** <b>y</b> `z`\n• 승인 이라고 보내세요', link_preview_options: { is_disabled: true } },
+      { chat_id: String(OWNER_ID), text: '요약\n좋아요', link_preview_options: { is_disabled: true } },
+      { chat_id: String(OWNER_ID), text: '알림을 취소했어요.', link_preview_options: { is_disabled: true } },
+    ]);
+  });
+
   it('a long reply goes as numbered chunks within 4096 that join back to the text', async () => {
     const h = await connected();
     const text = Array.from({ length: 700 }, (_, i) => `${i}: ${'가나다라마바사'.repeat(2)}`).join('\n');
@@ -1084,7 +1097,8 @@ describe('Telegram delivery: owner private chats only, plain text, lossless chun
       { chat_id: String(OWNER_ID), text: '미리보기 <h>', link_preview_options: { is_disabled: true } },
       {
         chat_id: String(OWNER_ID),
-        text: '<pre>+a &lt;b&gt; &amp; c\n</pre>\n적용은 `적용`',
+        // TG-3: the footer is Quoky copy, so its code-span marker is translated; the diff part is the adapter's own <pre>.
+        text: '<pre>+a &lt;b&gt; &amp; c\n</pre>\n적용은 적용',
         link_preview_options: { is_disabled: true },
         parse_mode: 'HTML',
       },
@@ -1131,6 +1145,16 @@ describe('Telegram owner notification sink (ADR-0101 D4, ADR-0114 D11; CA P1-1)'
       { chat_id: String(OWNER_ID), text: '알림 #1: 스트레칭', link_preview_options: { is_disabled: true } },
     ]);
     expect(h.logs.find((line) => line.message === 'owner notification delivery')?.fields).toMatchObject({ status: 'SENT', kind: 'TEXT' });
+    await h.adapter.stop();
+  });
+
+  it('TG-3: a notification body is translated the same way (no parse mode; the span stays literal)', async () => {
+    const h = await started();
+    const content = messageContent('**오늘의 브리핑**\n- ', untrustedText('**회의** _a_'));
+    await expect(h.adapter.deliver(notification({ kind: 'BRIEF', text: '', content }))).resolves.toEqual({ status: 'SENT', via: 'dm' });
+    expect(h.fake.callsTo('sendMessage').map((call) => call.params)).toEqual([
+      { chat_id: String(OWNER_ID), text: '오늘의 브리핑\n• **회의** _a_', link_preview_options: { is_disabled: true } },
+    ]);
     await h.adapter.stop();
   });
 
