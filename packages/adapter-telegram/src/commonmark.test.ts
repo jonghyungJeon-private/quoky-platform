@@ -9,6 +9,7 @@ import {
   messageLink,
   platformNote,
   renderMessageContent,
+  ResponseComposer,
   takeLines,
   untrustedText,
 } from '@quoky/core';
@@ -22,7 +23,10 @@ const t = (text: string): string => renderTelegramContent(text);
 
 describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
   it('emphasis and strong emphasis lose their delimiters when they pair', () => {
-    expect(t('**굵게** 그리고 *기울임* 그리고 __밑줄 굵게__ 그리고 _밑줄_')).toBe('굵게 그리고 기울임 그리고 밑줄 굵게 그리고 밑줄');
+    expect(t('**굵게** 그리고 *기울임*')).toBe('굵게 그리고 기울임');
+    expect(t('**굵게**')).toBe('굵게');
+    // Underscore emphasis is not translated at all (file names and dunder identifiers are too common).
+    expect(t('__밑줄 굵게__ 그리고 _밑줄_')).toBe('__밑줄 굵게__ 그리고 _밑줄_');
     expect(t('***둘 다***')).toBe('둘 다');
     expect(t('**내 할 일** (3건)')).toBe('내 할 일 (3건)');
     expect(t('- **Title:** 배포')).toBe('• Title: 배포');
@@ -34,6 +38,33 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
     expect(t('별표 하나 * 만')).toBe('별표 하나 * 만');
     expect(t('**닫히지 않음')).toBe('**닫히지 않음');
     expect(t('a**b')).toBe('a**b');
+  });
+
+  it('paths, identifiers, URLs, link destinations and code are never altered (Codex P2-1, P2-2)', () => {
+    for (const same of [
+      '__init__.py',
+      'snake_case',
+      'a_b_c.txt',
+      'src/_x_/y.ts',
+      '_draft_.ts',
+      'https://x/**y**',
+      'www.e.test/_a_/b',
+      'C:\\dir\\_x_\\*y*.ts',
+      '파일 `src/_x_/y.ts` 수정',
+    ]) {
+      expect(t(same).replace(/`/g, '')).toBe(same.replace(/`/g, ''));
+    }
+    expect(t('`**code**`')).toBe('**code**');
+    expect(t('**굵게** `a.ts` _draft_.ts')).toBe('굵게 a.ts _draft_.ts');
+  });
+
+  it("composeWorkspaceApplied keeps an underscore path exactly (Codex P2-1 repro)", () => {
+    const reply = new ResponseComposer().composeWorkspaceApplied({ platform: 'telegram', channelId: 'c', userId: 'u' }, ['_draft_.ts']);
+    expect(reply.text).toContain('_draft_.ts');
+    expect(renderOutboundForTelegram(reply)).toContain('_draft_.ts');
+    expect(translatePreviewCopy({ previewId: 'p', header: 'h', warning: '⚠️ `_draft_.ts` __init__.py', footer: 'f', files: [], canonicalDiff: '', attachmentFilename: 'a.diff' }).warning).toBe(
+      '⚠️ _draft_.ts __init__.py',
+    );
   });
 
   it('code spans lose their backticks and keep their content literally (no emphasis inside)', () => {
@@ -66,7 +97,7 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
   it('a model reply is translated; its table is kept as written', () => {
     const reply = '## 요약\n\n**결론**: `pnpm test` 통과\n\n- 항목 _하나_\n\n| a | b |\n|---|---|\n| 1 | 2 |';
     expect(renderOutboundForTelegram({ text: reply, format: 'model-reply' } as never)).toBe(
-      '요약\n\n결론: pnpm test 통과\n\n• 항목 하나\n\n| a | b |\n|---|---|\n| 1 | 2 |',
+      '요약\n\n결론: pnpm test 통과\n\n• 항목 _하나_\n\n| a | b |\n|---|---|\n| 1 | 2 |',
     );
   });
 
@@ -194,6 +225,12 @@ describe("TG-3 translator plumbing: the segment evaluator is Core's, and transla
       expect(translated.length, `tree ${i}`).toBeLessThanOrEqual(rendered.length);
       // Every untrusted span's text survives somewhere in the output exactly (it is never edited).
       for (const segment of segments) if (segment.span) expect(translated, `tree ${i}`).toContain(segment.text);
+      // No URL-shaped or path-shaped token of the copy is ever changed.
+      for (const token of rendered.split(/\s+/)) {
+        if (/:\/\/|^www\.|[/\\]|\.[A-Za-z0-9]+$|^[A-Za-z0-9.-]*_[A-Za-z0-9_.-]*$/.test(token) && !/[`*]/.test(token.replace(/^[`*]+|[`*]+$/g, ''))) {
+          expect(translated, `tree ${i} token ${token}`).toContain(token.replace(/^[`*]+|[`*]+$/g, ''));
+        }
+      }
     }
   });
 

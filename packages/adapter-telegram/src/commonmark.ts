@@ -25,9 +25,11 @@ import type { MessageBody, MessageContent, MessageLengthUnit, MessageMarkup, Mes
  * - ATX headings (`#` to `######`): the markers (and an optional closing `#` run) are removed; the heading is a plain line.
  * - Bullet list items (`-`, `*`, `+`): the marker becomes `•`, indentation kept. Ordered lists are kept as written.
  * - A thematic break (`---`, `***`, `___`) is kept as written.
- * - Emphasis and strong emphasis (`*`, `_`, `**`, `__`, `***`): the delimiters are removed when they pair under the
- *   CommonMark flanking rules (so `snake_case`, `2 * 3` and a lone `*` stay). An atom counts as a letter, so the
- *   `**${label} ` + untrusted + `** (n건)` shape of Quoky copy pairs across it.
+ * - Emphasis and strong emphasis: only `*…*` / `**…**` delimiters are removed, when they pair under the CommonMark
+ *   flanking rules (so `2 * 3` and a lone `*` stay). An atom counts as a letter, so the `**${label} ` + untrusted +
+ *   `** (n건)` shape of Quoky copy pairs across it. Underscore emphasis is NOT translated (`_draft_.ts`, `__init__.py`,
+ *   `snake_case`). Nothing is touched inside a link destination `](…)`, an autolink `<…>`, or a whitespace-delimited
+ *   token shaped like a URL, a path (`/`, `\`, `.ext`) or an identifier with an internal `_`.
  * - Code spans: the backtick runs are removed and the content is kept literally (no emphasis inside).
  * Not translated (shown as written): links `[text](url)`, block quotes, backslash escapes, tables, indented code.
  *
@@ -244,7 +246,7 @@ function neighbour(units: readonly Unit[], index: number): string | undefined {
 }
 
 interface DelimiterRun {
-  readonly char: '*' | '_';
+  readonly char: '*';
   /** Index of the run's first unit. */
   readonly start: number;
   /** Units still unmatched at each end (the run's inner ends are consumed first). */
@@ -303,18 +305,26 @@ function markCodeSpans(units: readonly Unit[], removed: boolean[], code: boolean
 }
 
 /** Emphasis: the CommonMark delimiter-run algorithm over `*` and `_`, outside code spans, never inside an atom. */
-function markEmphasis(units: readonly Unit[], removed: boolean[], code: readonly boolean[]): void {
+function markEmphasis(
+  units: readonly Unit[],
+  removed: boolean[],
+  code: readonly boolean[],
+  guarded: readonly boolean[],
+): void {
   const runs: DelimiterRun[] = [];
   let i = 0;
   while (i < units.length) {
     const unit = units[i] as Unit;
-    if (unit.atom || code[i] || removed[i] || (unit.text !== '*' && unit.text !== '_')) {
+    // Underscore emphasis is never translated (file names, dunder identifiers); guarded tokens are never touched.
+    if (unit.atom || code[i] || removed[i] || guarded[i] || unit.text !== '*') {
       i += 1;
       continue;
     }
-    const char = unit.text as '*' | '_';
+    const char = '*' as const;
     let end = i;
-    while (end < units.length && !units[end]?.atom && !code[end] && !removed[end] && units[end]?.text === char) end += 1;
+    while (end < units.length && !units[end]?.atom && !code[end] && !removed[end] && !guarded[end] && units[end]?.text === char) {
+      end += 1;
+    }
     const before = neighbour(units, i - 1);
     const after = neighbour(units, end);
     const left = !isWhitespace(after) && (!isPunctuation(after) || isWhitespace(before) || isPunctuation(before));
@@ -358,6 +368,37 @@ function markEmphasis(units: readonly Unit[], removed: boolean[], code: readonly
   }
 }
 
+const URL_SHAPED = /:\/\/|^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.|mailto:)/i;
+const PATH_SHAPED = /[/\\]|\.[A-Za-z0-9]{1,10}(?![A-Za-z0-9])/;
+const IDENTIFIER_SHAPED = /^[A-Za-z0-9_.-]+$/;
+
+/** Whether a whitespace-delimited token (as copy text) looks like a URL, a path or an identifier. */
+function tokenShaped(token: string): boolean {
+  if (token.length === 0) return false;
+  if (URL_SHAPED.test(token) || PATH_SHAPED.test(token)) return true;
+  const bare = token.replace(/^\*+|\*+$/g, '');
+  return bare.includes('_') && IDENTIFIER_SHAPED.test(bare);
+}
+
+/**
+ * Units that inline translation must never alter: link destinations `](...)`, autolinks `<...>`, and every
+ * whitespace-delimited token shaped like a URL, a path or an identifier. Code spans are handled by their own rule.
+ */
+function markGuarded(units: readonly Unit[], code: readonly boolean[]): boolean[] {
+  const guarded = units.map(() => false);
+  const plain = (k: number): boolean => units[k]?.atom === false && !code[k];
+  let start = 0;
+  for (let k = 0; k <= units.length; k += 1) {
+    const unit = units[k];
+    if (k < units.length && !(unit && !unit.atom && !code[k] && WHITESPACE.test(unit.text))) continue;
+    let text = '';
+    for (let m = start; m < k; m += 1) if (plain(m)) text += (units[m] as Unit).text;
+    if (tokenShaped(text)) for (let m = start; m < k; m += 1) guarded[m] = true;
+    start = k + 1;
+  }
+  return guarded;
+}
+
 /** Inline translation of one line: code spans, then emphasis. Atoms are emitted unchanged. */
 function translateInline(line: readonly TelegramSegment[]): string {
   const units: Unit[] = [];
@@ -368,7 +409,7 @@ function translateInline(line: readonly TelegramSegment[]): string {
   const removed = units.map(() => false);
   const code = units.map(() => false);
   markCodeSpans(units, removed, code);
-  markEmphasis(units, removed, code);
+  markEmphasis(units, removed, code, markGuarded(units, code));
   let out = '';
   units.forEach((unit, index) => {
     if (!removed[index]) out += unit.text;
