@@ -298,7 +298,7 @@ function asEvents(events: readonly CalendarEvent[] | unknown): readonly Calendar
 
 /**
  * The events the reference names (its id, and its calendar name when stored), one per distinct event: the same event
- * returned by both reads counts once.
+ * (title included) returned by both reads counts once; events differing in title stay distinct, hence ambiguous.
  */
 function distinctMatches(events: readonly CalendarEvent[], ref: ReminderEventRef): CalendarEvent[] {
   const seen = new Set<string>();
@@ -306,7 +306,7 @@ function distinctMatches(events: readonly CalendarEvent[], ref: ReminderEventRef
   for (const event of events) {
     if (event.id !== ref.eventId) continue;
     if (ref.calendarName !== undefined && event.calendarName !== ref.calendarName) continue;
-    const key = JSON.stringify([event.calendarName, event.start, event.end, event.allDay]);
+    const key = JSON.stringify([event.calendarName, event.title, event.start, event.end, event.allDay]);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(event);

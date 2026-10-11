@@ -680,6 +680,15 @@ describe('fire-time re-check (ADR-0117 D6)', () => {
     expect(h.logger.lines.some((line) => line.includes('"reason":"duplicate"'))).toBe(true);
   });
 
+  it('same id, calendar, start and end but different titles: ambiguous, never the wrong title (Codex P2)', async () => {
+    const h = await created([WEEKLY]);
+    h.calendar.events = [WEEKLY, { ...WEEKLY, title: '다른 회의' }];
+    const summary = await h.dispatch.dispatchDue(DUE);
+    expect(summary).toMatchObject({ delivered: 1, eventUnverified: 1, eventRescheduled: 0 });
+    expect(plain(h.sink.delivered[0]!)).toContain('캘린더를 다시 확인하지 못해');
+    expect(plain(h.sink.delivered[0]!)).not.toContain('다른 회의');
+  });
+
   it('a reference stored without a calendar name matches the id alone; a duplicate is ambiguous', async () => {
     const h = await created([WEEKLY]);
     const [row] = [...h.repository.rows.values()];
