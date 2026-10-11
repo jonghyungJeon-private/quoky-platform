@@ -79,6 +79,8 @@ describe('Drive configuration (ADR-0118, DRV-1): off unless configured', () => {
     expect(loadConfig({ ...OWNER } as NodeJS.ProcessEnv).drive).toBeUndefined();
     expect(loadConfig({ ...OWNER, ...CLIENT } as NodeJS.ProcessEnv).drive).toBeUndefined();
     expect(loadConfig({ ...OWNER, QUOKY_DRIVE_TOKEN_FILE: '/tmp/x.json' } as NodeJS.ProcessEnv).drive).toBeUndefined();
+    // Review P2-1: a Gmail-only configuration never configures Drive (no Drive token file is read).
+    expect(loadConfig({ ...OWNER, ...CLIENT, QUOKY_GMAIL_TOKEN_FILE: '/abs/gmail.json' } as NodeJS.ProcessEnv).drive).toBeUndefined();
   });
 
   it('reuses the calendar OAuth client with its own token file and QUOKY_TIMEZONE; Gmail and Drive are independent', () => {

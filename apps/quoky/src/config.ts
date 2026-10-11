@@ -542,8 +542,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
 
   const reminders = parseReminderConfig(env);
   const calendar = resolveCalendar(env, reminders.timeZone);
-  const gmail = resolveGmail(env, reminders.timeZone);
-  const drive = resolveGmail(env, reminders.timeZone, env.QUOKY_DRIVE_TOKEN_FILE);
+  const gmail = resolveGoogleReadGrant(env, reminders.timeZone, env.QUOKY_GMAIL_TOKEN_FILE);
+  const drive = resolveGoogleReadGrant(env, reminders.timeZone, env.QUOKY_DRIVE_TOKEN_FILE);
   const claudeModel = parseClaudeModel(env.QUOKY_CLAUDE_MODEL);
   const chat = parseChatProviderSelection(env);
   const imageUnderstanding = parseImageUnderstandingConfig(env, claudeModel);
@@ -1174,14 +1174,17 @@ function resolveCalendar(env: NodeJS.ProcessEnv, timeZone: string): QuokyConfig[
   };
 }
 
-/** See `QuokyConfig.gmail` (and `drive`, DRV-1). No inline-token form: each grant lives only in its own token file. */
-function resolveGmail(
+/**
+ * See `QuokyConfig.gmail` and `drive` (DRV-1): one Google read grant from its OWN token-file variable (never another
+ * grant's). No inline-token form: each grant lives only in its own mode-600 token file.
+ */
+function resolveGoogleReadGrant(
   env: NodeJS.ProcessEnv,
   timeZone: string,
-  tokenFileVar = env.QUOKY_GMAIL_TOKEN_FILE,
+  tokenFileValue: string | undefined,
 ): QuokyConfig['gmail'] {
   const client = resolveGoogleCalendarOAuthClient(env);
-  const tokenFile = nonBlank(tokenFileVar);
+  const tokenFile = nonBlank(tokenFileValue);
   return client && tokenFile ? { google: { ...client, tokenFile: resolveDataPath(tokenFile) }, timeZone } : undefined;
 }
 
