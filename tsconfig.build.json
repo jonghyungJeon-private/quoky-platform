@@ -22,6 +22,7 @@
     { "path": "packages/connector-github" },
     { "path": "packages/connector-calendar-google" },
     { "path": "packages/connector-gmail" },
+    { "path": "packages/connector-gdrive" },
     { "path": "packages/tool-mcp" },
     { "path": "apps/quoky" }
   ]
