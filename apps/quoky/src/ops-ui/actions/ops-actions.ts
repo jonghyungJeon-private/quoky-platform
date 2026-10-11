@@ -90,8 +90,20 @@ export interface OpsActionsDeps {
     readonly sessions: () => Promise<readonly Session[]>;
     /** The owner notification sink (ADR-0101; `OPS_DECISION_RESULT` per the ADR-0113 D7 amendment). */
     readonly notify: (notification: OwnerNotification) => Promise<NotificationSinkOutcome>;
+    /**
+     * TG-3 (ADR-0114 D11): the owner DM that receives the `OPS_DECISION_RESULT` for an approval held by `chat` — the
+     * primary platform's (Discord) owner, also when the approval was created on Telegram. Undefined = no admissible
+     * owner DM (nothing is sent). Absent = the originating conversation's own platform and user (the pre-TG-3 rule).
+     */
+    readonly resultTarget?: (chat: ConversationContext) => OpsDecisionResultTarget | undefined;
   };
   readonly logger: Logger;
+}
+
+/** Where an `OPS_DECISION_RESULT` goes: an owner DM (no channel, ADR-0113 D7). */
+export interface OpsDecisionResultTarget {
+  readonly platform: string;
+  readonly userId: string;
 }
 
 /** Most memories one handling page lists (chat pages the rest with `기억 목록 N`). */
@@ -203,6 +215,16 @@ export function chatLinkOf(chat: ConversationContext): string | undefined {
   return `https://discord.com/channels/${chat.spaceId ?? '@me'}/${target}`;
 }
 
+/**
+ * Where the chat preview was shown. Discord keeps its pre-TG-3 words (`DM` / `채널`); another platform is named, so an
+ * approval created on Telegram reads "Telegram 개인 대화" (no id).
+ */
+export function chatPlaceOf(chat: ConversationContext): string {
+  if (chat.platform === 'discord') return chat.spaceId === undefined ? 'DM' : '채널';
+  const name = /^[a-z][a-z0-9-]{0,31}$/.test(chat.platform) ? `${chat.platform.charAt(0).toUpperCase()}${chat.platform.slice(1)}` : '다른 플랫폼';
+  return chat.spaceId === undefined ? `${name} 개인 대화` : `${name} 대화방`;
+}
+
 function guardOutcome(outcome: OpsActionOutcome): OpsActionOutcome {
   return { code: guardText(outcome.code), message: guardText(outcome.message), ok: outcome.ok };
 }
@@ -312,7 +334,7 @@ export class OpsUiActions implements OpsActions {
           createdAt: guardText(formatOpsTime(view.createdAt, this.deps.timeZone)),
           expiresAt: guardText(Number.isFinite(expiresMs) ? formatOpsTime(new Date(expiresMs).toISOString(), this.deps.timeZone) : 'unknown'),
           approvable: view.approvable,
-          chatPlace: view.chat.spaceId === undefined ? 'DM' : '채널',
+          chatPlace: chatPlaceOf(view.chat),
           ...(chatLink === undefined ? {} : { chatLink }),
         };
       },
@@ -335,7 +357,7 @@ export class OpsUiActions implements OpsActions {
           ...(decision === 'approve' ? { reference } : {}),
           sessions: approvals.sessions,
         });
-        return this.decisionOutcome(approvalId, decided, approvals.notify);
+        return this.decisionOutcome(approvalId, decided, approvals);
       },
       (refused) => refused,
     );
@@ -346,7 +368,7 @@ export class OpsUiActions implements OpsActions {
   private async decisionOutcome(
     approvalId: string,
     decided: ApprovalSurfaceDecision,
-    notify: (notification: OwnerNotification) => Promise<NotificationSinkOutcome>,
+    approvals: NonNullable<OpsActionsDeps['approvals']>,
   ): Promise<OpsActionOutcome> {
     if (decided.status === 'REFUSED') return APPROVAL_REFUSALS[decided.refusal];
     if (decided.outcome === 'UNAVAILABLE') {
@@ -357,11 +379,16 @@ export class OpsUiActions implements OpsActions {
       };
     }
     let delivery: NotificationSinkOutcome['status'] | 'FAILED';
+    const target = approvals.resultTarget
+      ? approvals.resultTarget(decided.chat)
+      : { platform: decided.chat.platform, userId: decided.chat.userId };
     try {
-      const sent = await notify({
+      if (target === undefined) throw new Error('NO_OWNER_DM');
+      const sent = await approvals.notify({
         correlationId: `ops-decision-result-${approvalId.slice(0, 8)}-${Date.parse(this.deps.clock())}`,
-        // Owner DM only (ADR-0113 D7): no guild, so no channel routing is possible.
-        target: { platform: decided.chat.platform, channelId: '', userId: decided.chat.userId },
+        // Owner DM only (ADR-0113 D7): no guild, so no channel routing is possible. ADR-0114 D11: the primary (Discord)
+        // owner DM, whichever platform held the approval.
+        target: { platform: target.platform, channelId: '', userId: target.userId },
         kind: 'OPS_DECISION_RESULT',
         ...messageFields(
           opsDecisionResultText(

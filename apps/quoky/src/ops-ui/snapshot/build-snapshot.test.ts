@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ApprovalStatus,
@@ -18,7 +20,7 @@ import {
   operationKind,
   reminderLabel,
 } from './build-snapshot';
-import type { OpsProviderView, OpsSnapshotSources } from './build-snapshot';
+import type { OpsProviderView, OpsSnapshotSources, OpsTelegramStatus } from './build-snapshot';
 import { OpsErrorRing, errorRecordingLogger } from './error-ring';
 import { OPS_HIDDEN, guardText } from './guard';
 
@@ -215,7 +217,7 @@ describe('OPS-1 snapshot display rule (ADR-0113 D5)', () => {
     expect(json).toContain(OPS_HIDDEN);
   });
 
-  it('shows the nine Phase 1 panels in order', async () => {
+  it('shows the nine Phase 1 panels in order, then the TG-3 Telegram panel', async () => {
     const view = await new OpsSnapshotBuilder(fixture()).build();
     expect(view.panels.map((p) => p.id)).toEqual([
       'runtime',
@@ -227,6 +229,7 @@ describe('OPS-1 snapshot display rule (ADR-0113 D5)', () => {
       'feedback',
       'backup',
       'memory',
+      'telegram',
     ]);
     expect(view.panels.every((p) => p.state === 'OK')).toBe(true);
   });
@@ -586,5 +589,136 @@ describe('OPS-1 bounded poll (ADR-0113 D6)', () => {
     expect(builds).toBe(1);
     now = 10_000;
     expect((await source()).generatedAt).toBe('2');
+  });
+});
+
+/**
+ * TG-3 golden (ADR-0114 D12): the dashboard of the standard fixture, rendered before the Telegram panel existed. With
+ * Telegram off the page is that golden plus exactly one `panel-telegram` section ("설정 안 됨"); every other byte is
+ * unchanged. Regenerate only on purpose: `QUOKY_UPDATE_OPS_GOLDEN=1`.
+ */
+const DASHBOARD_GOLDEN = path.join(__dirname, '__golden__', 'dashboard-before-telegram-panel.html');
+const TELEGRAM_SECTION = /<section class="panel" id="panel-telegram">\n[\s\S]*?\n<\/section>\n/;
+
+describe('TG-3 golden: the existing dashboard is byte-identical with Telegram off', () => {
+  it('the page without the Telegram section equals the pre-TG-3 golden', async () => {
+    const handling = { reminderCancel: true, memoryForget: true, approvals: true, providerSelection: true };
+    const view = await new OpsSnapshotBuilder(fixture({ handling })).build();
+    const page = renderDashboard(view, 'csrf-golden', 30, true);
+    const withoutTelegram = page.replace(TELEGRAM_SECTION, '');
+    if (process.env.QUOKY_UPDATE_OPS_GOLDEN === '1') {
+      if (!existsSync(path.dirname(DASHBOARD_GOLDEN))) mkdirSync(path.dirname(DASHBOARD_GOLDEN), { recursive: true });
+      writeFileSync(DASHBOARD_GOLDEN, withoutTelegram);
+    }
+    expect(withoutTelegram).toBe(readFileSync(DASHBOARD_GOLDEN, 'utf8'));
+  });
+});
+
+describe('TG-3 Telegram panel (ADR-0114 D12, ADR-0113 D5)', () => {
+  const TOKEN = ['70', '01', '23', '4'].join('') + ':' + ['AAH', 'acc', '_', 'p'.repeat(15), '-', 'r'.repeat(14)].join('');
+  const status = {
+    identityVerified: true,
+    polling: true,
+    lastPollAt: '2026-10-06T04:59:30.000Z',
+    admittedChatCount: 1,
+    droppedUpdates: {
+      malformed: 0,
+      'update-type': 2,
+      'not-private': 1,
+      'not-owner': 4,
+      forwarded: 3,
+      'no-text': 0,
+      stale: 1,
+      'not-feedback': 5,
+    },
+  };
+
+  it('Telegram off: the panel says "not configured" and nothing else', async () => {
+    const view = await new OpsSnapshotBuilder(fixture()).build();
+    expect(panelOf(view, 'telegram')).toEqual({
+      id: 'telegram',
+      title: 'Telegram',
+      state: 'OK',
+      fields: [{ label: '상태', value: '설정 안 됨 (not configured)' }],
+      notes: [],
+    });
+    // A source that answers "nothing composed" is the same as no source.
+    const composedNone = await new OpsSnapshotBuilder(fixture({ telegram: () => undefined })).build();
+    expect(panelOf(composedNone, 'telegram')).toEqual(panelOf(view, 'telegram'));
+  });
+
+  it('Telegram on: connected, identity, halt, polling, last poll, admitted chats and every drop counter', async () => {
+    const view = await new OpsSnapshotBuilder(fixture({ telegram: () => status })).build();
+    expect(field(view, 'telegram', '연결됨')).toBe('예');
+    expect(field(view, 'telegram', '봇 신원 확인 (getMe)')).toBe('통과');
+    expect(field(view, 'telegram', '중지됨')).toBe('아니요');
+    expect(field(view, 'telegram', '폴링 중')).toBe('예');
+    expect(field(view, 'telegram', '마지막 폴링')).toBe('2026-10-06 13:59:30');
+    expect(field(view, 'telegram', '허용된 개인 대화 수')).toBe('1');
+    const table = panelOf(view, 'telegram').table;
+    expect(table?.columns).toEqual(['버린 이유', '설명', '건수']);
+    expect(table?.rows.map((row) => [row[0], row[2]])).toEqual([
+      ['malformed', '0'],
+      ['update-type', '2'],
+      ['not-private', '1'],
+      ['not-owner', '4'],
+      ['forwarded', '3'],
+      ['no-text', '0'],
+      ['stale', '1'],
+      ['not-feedback', '5'],
+    ]);
+    // Every other panel is exactly what Telegram-off shows.
+    const off = await new OpsSnapshotBuilder(fixture()).build();
+    expect(view.panels.filter((p) => p.id !== 'telegram')).toEqual(off.panels.filter((p) => p.id !== 'telegram'));
+  });
+
+  it('a halt shows its code and what it means; connected is then "no"', async () => {
+    const view = await new OpsSnapshotBuilder(
+      fixture({ telegram: () => ({ ...status, polling: false, halted: 'TELEGRAM_POLL_CONFLICT' }) }),
+    ).build();
+    expect(field(view, 'telegram', '연결됨')).toBe('아니요');
+    expect(field(view, 'telegram', '중지됨')).toBe('예 · TELEGRAM_POLL_CONFLICT (다른 곳에서 같은 토큰으로 폴링하거나 웹훅이 설정돼 있어요)');
+    expect(panelOf(view, 'telegram').notes.some((note) => note.includes('Discord는 계속 동작'))).toBe(true);
+    const { lastPollAt: _never, ...unpolled } = status;
+    const before = await new OpsSnapshotBuilder(fixture({ telegram: () => ({ ...unpolled, identityVerified: false, polling: false }) })).build();
+    expect(field(before, 'telegram', '연결됨')).toBe('아니요');
+    expect(field(before, 'telegram', '봇 신원 확인 (getMe)')).toBe('아직 아님');
+    expect(field(before, 'telegram', '마지막 폴링')).toBe('없음');
+  });
+
+  it('shows no content, id or token, even from a status that tried to carry them', async () => {
+    const hostile = {
+      ...status,
+      halted: `TELEGRAM_X ${TOKEN}`,
+      lastPollAt: 'MESSAGE_BODY_MARKER',
+      admittedChatCount: Number.NaN,
+      droppedUpdates: { ...status.droppedUpdates, [`5550001 ${TOKEN}`]: 1, 'MESSAGE BODY MARKER': 2 },
+      chatIds: ['5550001'],
+      lastText: 'MESSAGE_BODY_MARKER',
+      token: TOKEN,
+    } as unknown as OpsTelegramStatus;
+    const view = await new OpsSnapshotBuilder(fixture({ telegram: () => hostile })).build();
+    const page = renderDashboard(view, 'csrf-token');
+    const json = JSON.stringify(panelOf(view, 'telegram'));
+    for (const forbidden of [TOKEN, TOKEN.split(':')[1] as string, '5550001', 'MESSAGE_BODY_MARKER', 'MESSAGE BODY MARKER']) {
+      expect(json, forbidden).not.toContain(forbidden);
+      expect(page, forbidden).not.toContain(forbidden);
+    }
+    expect(field(view, 'telegram', '중지됨')).toBe('예 · unknown');
+    expect(field(view, 'telegram', '허용된 개인 대화 수')).toBe(OPS_UNKNOWN);
+    expect(field(view, 'telegram', '마지막 폴링')).toBe(OPS_UNKNOWN);
+  });
+
+  it('a failing status source makes only the Telegram panel unavailable', async () => {
+    const view = await new OpsSnapshotBuilder(
+      fixture({
+        telegram: () => {
+          throw new Error(`boom ${TOKEN}`);
+        },
+      }),
+    ).build();
+    expect(panelOf(view, 'telegram')).toMatchObject({ state: 'UNAVAILABLE', errorCode: 'SOURCE_FAILED' });
+    expect(JSON.stringify(view)).not.toContain(TOKEN);
+    expect(panelOf(view, 'runtime').state).toBe('OK');
   });
 });

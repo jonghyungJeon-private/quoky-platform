@@ -118,6 +118,20 @@ export interface OpsRuntimeFacts {
   readonly restartCount?: () => number | undefined;
 }
 
+/**
+ * TG-3 (ADR-0114 D12): the Telegram adapter's content-free status, seen structurally (`TelegramAdapterStatus`): booleans,
+ * a halt code, a time, a count and value-free drop counters per reason. No id, no content, no token can be expressed.
+ */
+export interface OpsTelegramStatus {
+  readonly identityVerified: boolean;
+  readonly polling: boolean;
+  /** The halt code when the Telegram side stopped itself (`TELEGRAM_POLL_CONFLICT`, ...). */
+  readonly halted?: string;
+  readonly lastPollAt?: string;
+  readonly admittedChatCount: number;
+  readonly droppedUpdates: Readonly<Record<string, number>>;
+}
+
 export interface OpsSnapshotSources {
   readonly clock: () => string;
   readonly timeZone: string;
@@ -163,6 +177,11 @@ export interface OpsSnapshotSources {
     /** Runtime model switch: the `/providers` defaults page is wired. */
     readonly providerSelection?: boolean;
   };
+  /**
+   * TG-3 (ADR-0114 D12): the Telegram status, read per build. Absent (Telegram off, nothing composed) → the panel says
+   * "설정 안 됨" and nothing else; every other panel is unchanged.
+   */
+  readonly telegram?: () => OpsTelegramStatus | undefined;
 }
 
 type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes' | 'links'>;
@@ -232,6 +251,7 @@ export class OpsSnapshotBuilder {
       panel('feedback', '피드백 통계 (최근 30일)', async () => this.feedback(await ownerPromise)),
       panel('backup', '백업 상태', async () => this.backup()),
       panel('memory', '기억 보관함', async () => this.memory(await ownerPromise)),
+      panel('telegram', 'Telegram', async () => this.telegram()),
     ]);
     return guardViewModel({ generatedAt: this.time(now), panels });
   }
@@ -544,6 +564,45 @@ export class OpsSnapshotBuilder {
     };
   }
 
+  /**
+   * TG-3 (ADR-0114 D12, ADR-0113 D5): the Telegram side at a glance. Booleans, the halt code, the last poll time, the
+   * number of admitted private chats and the drop counters per reason: never a message, a chat or user id, a bot id or
+   * the token (the status cannot carry them). Off → one "not configured" field.
+   */
+  private telegram(): PanelBody {
+    const status = this.sources.telegram?.();
+    if (status === undefined) {
+      return {
+        fields: [{ label: '상태', value: '설정 안 됨 (not configured)' }],
+        notes: [],
+      };
+    }
+    const halted = status.halted === undefined ? undefined : TELEGRAM_HALT_CODE.test(status.halted) ? status.halted : OPS_UNKNOWN;
+    const connected = status.identityVerified && status.polling && halted === undefined;
+    const rows = Object.entries(status.droppedUpdates)
+      .filter(([reason]) => TELEGRAM_DROP_REASON.test(reason))
+      .map(([reason, count]) => [reason, TELEGRAM_DROP_TEXT[reason] ?? reason, telegramCount(count)]);
+    return {
+      fields: [
+        { label: '연결됨', value: connected ? '예' : '아니요' },
+        { label: '봇 신원 확인 (getMe)', value: status.identityVerified ? '통과' : '아직 아님' },
+        {
+          label: '중지됨',
+          value: halted === undefined ? '아니요' : `예 · ${halted}${TELEGRAM_HALT_TEXT[halted] ? ` (${TELEGRAM_HALT_TEXT[halted]})` : ''}`,
+        },
+        { label: '폴링 중', value: status.polling ? '예' : '아니요' },
+        { label: '마지막 폴링', value: status.lastPollAt === undefined ? '없음' : this.time(status.lastPollAt) },
+        { label: '허용된 개인 대화 수', value: telegramCount(status.admittedChatCount) },
+      ],
+      table: { columns: ['버린 이유', '설명', '건수'], rows, emptyText: '버린 업데이트 기록이 없어요.' },
+      notes: [
+        '버린 업데이트에는 답하지 않고 내용도 기록하지 않아요. 건수는 이 프로세스가 시작된 뒤부터 세요.',
+        '메시지 내용, 대화·사용자 ID, 봇 토큰은 표시하지 않아요.',
+        ...(halted === undefined ? [] : ['중지되면 Telegram만 멈추고 Discord는 계속 동작해요. 조치는 운영 문서의 Telegram 절을 보세요.']),
+      ],
+    };
+  }
+
   private async memory(owner: OpsOwnerResolution): Promise<PanelBody> {
     if (owner.status !== 'RESOLVED') return { fields: [], notes: [ownerNote(owner)] };
     const links = this.sources.handling?.memoryForget === true ? [{ label: '기억 잊기 (확인 코드 필요)', href: '/memories' }] : [];
@@ -556,6 +615,34 @@ export class OpsSnapshotBuilder {
       links,
     };
   }
+}
+
+/** A halt or reason code as the adapter defines them; anything else is shown as `unknown` (never echoed). */
+const TELEGRAM_HALT_CODE = /^TELEGRAM_[A-Z0-9_]{1,48}$/;
+const TELEGRAM_DROP_REASON = /^[a-z][a-z-]{0,31}$/;
+
+/** TG-3: what each halt code means and what the owner does about it (fixed copy; `quokyctl` docs carry the details). */
+const TELEGRAM_HALT_TEXT: Readonly<Record<string, string>> = {
+  TELEGRAM_POLL_CONFLICT: '다른 곳에서 같은 토큰으로 폴링하거나 웹훅이 설정돼 있어요',
+  TELEGRAM_AUTH_REJECTED: 'Telegram이 토큰을 거부했어요 (폐기 또는 교체됨)',
+  TELEGRAM_IDENTITY_MISMATCH: '토큰의 봇이 기대한 봇 ID와 달라요',
+  TELEGRAM_POLL_LOOP_FAILED: '폴링 루프가 예기치 않게 멈췄어요',
+};
+
+/** TG-3: the drop counters' reasons in the operator's words (the key stays visible for the docs). */
+const TELEGRAM_DROP_TEXT: Readonly<Record<string, string>> = {
+  malformed: '형식 오류',
+  'update-type': '처리하지 않는 업데이트 종류',
+  'not-private': '개인 대화가 아님 (그룹·채널)',
+  'not-owner': '소유자가 아님',
+  forwarded: '전달되었거나 인라인 봇 메시지',
+  'no-text': '읽을 내용이 없는 메시지',
+  stale: '10분보다 오래됨',
+  'not-feedback': '피드백이 아닌 반응',
+};
+
+function telegramCount(value: unknown): string {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : OPS_UNKNOWN;
 }
 
 /** `YYYY-MM-DD HH:mm:ss` in the owner's zone, or `unknown`. */

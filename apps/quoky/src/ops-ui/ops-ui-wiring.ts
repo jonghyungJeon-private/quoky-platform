@@ -20,6 +20,7 @@ import {
 import type {
   ApprovalDecisionService,
   ConnectorProvider,
+  ConversationContext,
   DurableMemoryQuery,
   Id,
   Logger,
@@ -30,14 +31,17 @@ import type {
   StorageProvider,
 } from '@quoky/core';
 import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
+import { TELEGRAM_PLATFORM, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
 import { readSqliteUserVersion } from '@quoky/storage-sqlite';
 
 import { ConsoleLogger } from '../console-logger';
 import { describeImageUnderstandingSelection } from '../image-understanding-provider';
 import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
+import { CompositePlatformAdapter } from '../platform/composite-platform-adapter';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
 import { OpsUiActions } from './actions/ops-actions';
+import type { OpsDecisionResultTarget } from './actions/ops-actions';
 import { APPROVAL_KIND_LABEL } from './approval-kind-label';
 import { OpsProviderSelectionActions } from './actions/provider-selection-actions';
 import { ProviderSelectionService } from '../provider-selection/provider-selection-service';
@@ -46,7 +50,7 @@ import { OPS_UI_BIND_HOST, OpsUiServer } from './http/server';
 import type { OpsActions, OpsUiEventLog } from './http/view-model';
 import { loadOpsUiConfig, resolveOpsUiConfig } from './ops-ui-config';
 import { OpsSnapshotBuilder, cachedViewSource } from './snapshot/build-snapshot';
-import type { OpsOwnerResolution, OpsSnapshotSources } from './snapshot/build-snapshot';
+import type { OpsOwnerResolution, OpsSnapshotSources, OpsTelegramStatus } from './snapshot/build-snapshot';
 import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
 
 /**
@@ -108,6 +112,8 @@ export interface OpsUiWiringInput {
     readonly ai?: { readonly chat: Pick<QuokyConfig['ai']['chat'], 'provider' | 'source'> };
     /** The connector-write allow-lists (counts only) for the connectors panel's 쓰기 column; absent in offline tests. */
     readonly connectorWrites?: Pick<QuokyConfig['connectorWrites'], 'jiraProjects' | 'slack'>;
+    /** TG-3: the Telegram owner → Discord owner map (ADR-0114 D3), for the decision-result owner DM; absent = off. */
+    readonly telegram?: Pick<NonNullable<QuokyConfig['telegram']>, 'ownerActorMap'>;
   };
   readonly ops: Pick<OpsRuntime, 'backupStatus'>;
   /** ADR-0102 D4: whether `main.ts` took the single-instance lock (a file-backed database). */
@@ -176,6 +182,15 @@ async function platformConnected(platform: PlatformAdapter | undefined): Promise
   } catch {
     return false;
   }
+}
+
+/**
+ * TG-3 (ADR-0114 D12): the composed Telegram adapter's content-free `status()`, or undefined when Telegram is off (the
+ * bound platform is then the Discord adapter itself and nothing Telegram-related exists).
+ */
+export function telegramStatusOf(platform: PlatformAdapter | undefined): OpsTelegramStatus | undefined {
+  const telegram = platform instanceof CompositePlatformAdapter ? platform.adapterFor(TELEGRAM_PLATFORM) : undefined;
+  return telegram instanceof TelegramPlatformAdapter ? telegram.status() : undefined;
 }
 
 /**
@@ -295,6 +310,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       approvals: approvalHandling(app) !== undefined,
       providerSelection: selection !== undefined,
     },
+    telegram: () => telegramStatusOf(platform),
   };
 }
 
@@ -330,6 +346,24 @@ async function openSessionsWithFocus(storage: StorageProvider): Promise<readonly
   return sessions.filter((session) => session.status === SessionStatus.ACTIVE && session.activeTaskId !== undefined);
 }
 
+/**
+ * TG-3 (ADR-0114 D11, amending ADR-0113 D7): an `OPS_DECISION_RESULT` goes to the primary platform's owner DM. A Discord
+ * conversation keeps its own owner (unchanged); a Telegram one goes to the Discord owner its Telegram id is mapped to
+ * (`QUOKY_TELEGRAM_OWNER_ACTOR_MAP`), or to the only configured Discord owner. Anything else has no admissible DM.
+ */
+export function opsDecisionResultTarget(
+  config: Pick<OpsUiWiringInput['config'], 'discord' | 'telegram'>,
+): (chat: ConversationContext) => OpsDecisionResultTarget | undefined {
+  return (chat) => {
+    if (chat.platform === DISCORD_NOTIFICATION_PLATFORM) return { platform: chat.platform, userId: chat.userId };
+    const mapped = config.telegram?.ownerActorMap.find((link) => link.telegramId === chat.userId)?.discordOwnerId;
+    const owner = chat.platform === TELEGRAM_PLATFORM ? mapped : undefined;
+    const fallback = config.discord.ownerIds.length === 1 ? config.discord.ownerIds[0] : undefined;
+    const userId = owner ?? fallback;
+    return userId === undefined ? undefined : { platform: DISCORD_NOTIFICATION_PLATFORM, userId };
+  };
+}
+
 /** OPS-2 handling over the chat services in the container (ADR-0113 D7); undefined when neither service is bound. */
 export function opsUiActions(input: OpsUiWiringInput, logger: Logger): OpsUiActions | undefined {
   const { app, config } = input;
@@ -350,6 +384,7 @@ export function opsUiActions(input: OpsUiWiringInput, logger: Logger): OpsUiActi
           actor: (actorId: Id) => storage.actors.get(actorId),
           sessions: () => openSessionsWithFocus(storage),
           notify: (notification: Parameters<NotificationSink['deliver']>[0]) => handling.sink.deliver(notification),
+          resultTarget: opsDecisionResultTarget(config),
         };
   if (reminders === undefined && memory === undefined && approvals === undefined) return undefined;
   return new OpsUiActions({

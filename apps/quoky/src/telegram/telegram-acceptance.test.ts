@@ -18,7 +18,10 @@ import {
   type AiProvider,
   type ConversationContext,
   type InboundMessage,
+  type NotificationSink,
+  type NotificationSinkOutcome,
   type OutboundMessage,
+  type OwnerNotification,
   type PlatformAdapter,
   type ReminderRepository,
   type StorageProvider,
@@ -28,6 +31,10 @@ import { renderOutboundForTelegram, TELEGRAM_API_ORIGIN, TelegramPlatformAdapter
 import { ActorIdentityProvisioner } from '../actor-identity-provisioner';
 import { CompositePlatformAdapter } from '../platform/composite-platform-adapter';
 import { stubProviderSelection } from '../provider-selection/test-support';
+import { loadConfig } from '../config';
+import { OpsNoticeService } from '../ops/ops-notice';
+import { OpsUiActions } from '../ops-ui/actions/ops-actions';
+import { opsDecisionResultTarget } from '../ops-ui/ops-ui-wiring';
 
 /**
  * TG-1 integration acceptance (ADR-0114 D3/D6/D11/D13). OFFLINE and in-process: the REAL `AppModule` is booted through
@@ -328,6 +335,77 @@ describe('TG-1 acceptance — reminders and the brief return to Telegram (ADR-01
     const sends = botApi.sends().slice(sendsBefore);
     expect(sends).toHaveLength(2);
     expect(sends[1]).toMatchObject({ chat_id: TELEGRAM_OWNER });
+    expect(networkAttempts).toBe(0);
+  });
+});
+
+describe('TG-3 acceptance — OPS_* notices and the ops-UI decision result go to Discord (ADR-0114 D11)', () => {
+  const discordNotes: OwnerNotification[] = [];
+  const silent = { info: () => undefined, warn: () => undefined, error: () => undefined };
+  const recordDiscordSink = (): void => {
+    // The Discord child's owner DM is recorded instead of reaching the gateway (the rest of the composite is real).
+    Object.assign(platform.adapterFor('discord') as PlatformAdapter, {
+      deliver: async (notification: OwnerNotification): Promise<NotificationSinkOutcome> => {
+        discordNotes.push(notification);
+        return { status: 'SENT', via: 'dm' };
+      },
+    });
+  };
+
+  it('an OPS_NOTICE (the Telegram halt notice) from the real notice service and container sink lands on Discord', async () => {
+    recordDiscordSink();
+    const sendsBefore = botApi.sends().length;
+    let ledger: string | undefined;
+    const notices = new OpsNoticeService({
+      sink: app.get<NotificationSink>(NOTIFICATION_SINK),
+      ownerId: DISCORD_OWNER,
+      platform: 'discord',
+      ledger: { read: () => ledger, write: (content) => void (ledger = content) },
+      logger: silent,
+    });
+    expect(await notices.notify('TELEGRAM_POLL_CONFLICT')).toBe('SENT');
+    expect(discordNotes.at(-1)).toMatchObject({ kind: 'BRIEF', target: { platform: 'discord', userId: DISCORD_OWNER } });
+    expect(String(discordNotes.at(-1)?.text)).toContain('Telegram 연결을 멈췄어요: TELEGRAM_POLL_CONFLICT');
+    expect(botApi.sends()).toHaveLength(sendsBefore);
+  });
+
+  it('an ops-UI decision on an approval held by the Telegram chat reports to the Discord owner DM, never to Telegram', async () => {
+    recordDiscordSink();
+    const sendsBefore = botApi.sends().length;
+    const notesBefore = discordNotes.length;
+    const sink = app.get<NotificationSink>(NOTIFICATION_SINK);
+    const ownerActor = (await app.get(ActorManager).resolveFromContext(telegramChat)).id;
+    const actions = new OpsUiActions({
+      owner: async () => ({ status: 'RESOLVED', actorId: ownerActor }),
+      clock: () => new Date().toISOString(),
+      timeZone: 'Asia/Seoul',
+      approvals: {
+        // The shared decision service's answer for a Telegram-held approval (its Core path has no platform branch).
+        decisions: {
+          locateForOpsUi: async () => ({ status: 'REFUSED', refusal: 'NOT_FOUND' }),
+          decideFromOpsUi: async () => ({
+            status: 'DECIDED',
+            outcome: 'REJECTED',
+            kind: 'CONNECTOR_WRITE',
+            reply: { context: telegramChat, text: '요청을 거절했어요.' },
+            chat: telegramChat,
+          }),
+        },
+        actor: (id) => storage.actors.get(id),
+        sessions: async () => [],
+        notify: (notification) => sink.deliver(notification),
+        // The production rule, from the real configuration (QUOKY_TELEGRAM_OWNER_ACTOR_MAP).
+        resultTarget: opsDecisionResultTarget(loadConfig(process.env)),
+      },
+      logger: silent,
+    });
+    const outcome = await actions.decideApproval('a'.repeat(32), 'reject', '');
+    expect(outcome).toMatchObject({ code: 'REJECTED', ok: true });
+    expect(outcome.message).toContain('DM으로 결과를 보냈어요.');
+    const sent = discordNotes.slice(notesBefore);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ kind: 'OPS_DECISION_RESULT', target: { platform: 'discord', channelId: '', userId: DISCORD_OWNER } });
+    expect(botApi.sends()).toHaveLength(sendsBefore);
     expect(networkAttempts).toBe(0);
   });
 });
