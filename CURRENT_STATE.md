@@ -5,6 +5,27 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### DRV-1 Google Drive read connector — implemented on branch, not merged (2026-10-12)
+
+ADR-0118 D1–D8 for Drive, on top of GML-1 (#165). New pieces:
+
+- `packages/connector-gdrive`: `drive.readonly` only; pinned GET endpoints; text export of Docs (`text/plain`) and Sheets
+  (`text/csv`) and plain text files only, cut at 256 KiB; and a source scan that proves the client cannot write or share;
+- the Core `DriveReader` port and `DRIVE_READER` token;
+- a `pre-classify` order-145 Drive handler, after mail and before the calendar.
+
+Drive is off unless `QUOKY_DRIVE_TOKEN_FILE` is set. With it off, every reply is unchanged, including the routing corpus
+and the golden fixtures.
+
+- **Listings.** `최근 문서` and `드라이브에서 <이름> 찾아줘` are answered with no model, at most 10 entries plus `…외 N건`, in
+  DMs only.
+- **Summaries.** `N번 문서 요약해줘` sends that one file's guarded, head-and-tail-clipped text to the effective chat-tier
+  provider through the GML-1 readout path. Nothing of the file or the summary is kept as transcript.
+- **Unchanged.** No migration; `ConversationRuntimeDeps` stays 35; no port widening.
+- **Validation.** Offline only, with a fake `fetch`. Not run yet:
+  - the Strict gates: owner consent with `calendar-auth --drive`, the first read probe and about 15 live phrasings;
+  - the Chief Architect review (mandatory: a new egress).
+
 ### TG-3 Telegram notifications and operations — implemented on branch, not merged (2026-10-12)
 
 ADR-0114 D7, D11 and D12 on top of TG-1 (#161) and TG-2 (#164), on `claude/v4-w4-tg3-ops`:
