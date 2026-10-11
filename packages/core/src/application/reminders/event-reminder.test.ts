@@ -202,7 +202,9 @@ describe('event-relative grammar (ADR-0117 D5)', () => {
     ['remind me 10 minutes before my next meeting', 10, {}],
     ['Remind me 15 minutes before the 3pm meeting', 15, { time: { hour: 3, minute: 0, meridiem: 'pm' } }],
     ['remind me 10 minutes before the design review meeting', 10, { title: 'design review' }],
-    ['please remind me an hour before my 9:30 call tomorrow', 60, { dayOffset: 1, time: { hour: 9, minute: 30 } }],
+    ['please remind me an hour before my 9:30 call tomorrow', 60, { dayOffset: 1, time: { hour: 9, minute: 30, clock24: true } }],
+    ['내일 03:00 회의 10분 전에 알려줘', 10, { dayOffset: 1, time: { hour: 3, minute: 0, clock24: true } }],
+    ['15:00 회의 10분 전에 알려줘', 10, { time: { hour: 15, minute: 0, clock24: true } }],
   ];
   for (const [text, offsetMinutes, target] of cases) {
     it(`"${text}" → CREATE_EVENT_RELATIVE`, () => {
@@ -271,6 +273,29 @@ describe('event resolution (pure)', () => {
       kind: 'found',
       event: { id: 'ev-code' },
     });
+  });
+
+  it('HH:MM is 24-hour and exact; a bare 3시 is either half; 오후 3시 is 15:00 (Codex P2-2)', () => {
+    const tomorrow3am = event('ev-3am', '새벽 배포', '2026-10-09T18:00:00.000Z'); // 10-10 03:00 KST
+    const tomorrow3pm = event('ev-3pm', '오후 회의', '2026-10-10T06:00:00.000Z'); // 10-10 15:00 KST
+    const both = [tomorrow3am, tomorrow3pm];
+    const pick = (text: string) => {
+      const parsed = parseEventReminder(text);
+      if (parsed.kind !== 'create') throw new Error(text);
+      return resolveEventReminderTarget(both, parsed.target, opts);
+    };
+    expect(pick('내일 03:00 회의 10분 전에 알려줘')).toMatchObject({ kind: 'found', event: { id: 'ev-3am' } });
+    expect(pick('내일 15:00 회의 10분 전에 알려줘')).toMatchObject({ kind: 'found', event: { id: 'ev-3pm' } });
+    expect(pick('내일 오후 3시 회의 10분 전에 알려줘')).toMatchObject({ kind: 'found', event: { id: 'ev-3pm' } });
+    expect(pick('내일 오전 3시 회의 10분 전에 알려줘')).toMatchObject({ kind: 'found', event: { id: 'ev-3am' } });
+    // A bare 3시 is either half of the day: both match, at different starts, so the earliest is taken.
+    expect(pick('내일 3시 회의 10분 전에 알려줘')).toMatchObject({ kind: 'found', event: { id: 'ev-3am' } });
+    // Only a 15:00 event: `03:00` finds nothing, while `3시` still finds it.
+    expect(resolveEventReminderTarget([tomorrow3pm], { dayOffset: 1, time: { hour: 3, minute: 0, clock24: true } }, opts)).toEqual({
+      kind: 'none',
+      partial: false,
+    });
+    expect(resolveEventReminderTarget([tomorrow3pm], { dayOffset: 1, time: { hour: 3, minute: 0 } }, opts)).toMatchObject({ kind: 'found' });
   });
 
   it('by day and time: tomorrow 9시 is the 09:00 event', () => {

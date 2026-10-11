@@ -73,6 +73,8 @@ function startMsOf(event: CalendarEvent): number {
 function matchesTime(event: CalendarEvent, time: NonNullable<EventReminderTarget['time']>, timeZone: string): boolean {
   const local = toZonedDateTime(startMsOf(event), timeZone);
   if (local.minute !== time.minute) return false;
+  // `HH:MM` is a 24-hour clock (Codex P2-2): exact, never the other half of the day.
+  if (time.clock24 === true) return local.hour === time.hour;
   if (time.meridiem === 'am') return local.hour === time.hour % 12;
   if (time.meridiem === 'pm') return local.hour === (time.hour % 12) + 12;
   if (time.hour >= 1 && time.hour <= 12) return local.hour === time.hour % 12 || local.hour === (time.hour % 12) + 12;

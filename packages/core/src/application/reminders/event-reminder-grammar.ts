@@ -27,8 +27,16 @@ export interface EventReminderTarget {
   readonly dayOffset?: number;
   /** A weekday (0 = Sunday … 6 = Saturday): its nearest occurrence within the lookahead (`금요일 회의`). */
   readonly weekday?: number;
-  /** A start time of day. `meridiem` absent with `hour` 1-12 matches either half of the day. */
-  readonly time?: { readonly hour: number; readonly minute: number; readonly meridiem?: EventReminderMeridiem };
+  /**
+   * A start time of day. `clock24`: written `HH:MM` (`03:00`, `15:00`, `9:30`), a 24-hour time matched exactly. Otherwise
+   * `meridiem` absent with `hour` 1-12 (`3시`) matches either half of the day.
+   */
+  readonly time?: {
+    readonly hour: number;
+    readonly minute: number;
+    readonly meridiem?: EventReminderMeridiem;
+    readonly clock24?: true;
+  };
   /** Words of the title (matched case- and space-insensitively against the event title). */
   readonly title?: string;
 }
@@ -140,7 +148,8 @@ function koTarget(raw: string): EventReminderTarget | null {
       const hour = Number(clock[5]);
       const minute = Number(clock[6]);
       if (hour > 23 || minute > 59) return null;
-      time = { hour, minute };
+      // `HH:MM` is a 24-hour clock, matched exactly: `03:00` is 03:00, never 15:00.
+      time = { hour, minute, clock24: true };
     }
     rest = rest.replace(clock[0], ' ');
   }
@@ -176,7 +185,8 @@ function enTarget(raw: string, dayWord: string | undefined): EventReminderTarget
     // A bare number with neither minutes nor am/pm is not a clock ("my 2 meetings").
     if (clock[2] === undefined && meridiem === undefined) return null;
     if (hour > 23 || minute > 59 || (meridiem !== undefined && (hour < 1 || hour > 12))) return null;
-    time = { hour, minute, ...(meridiem !== undefined ? { meridiem } : {}) };
+    // `9:30` / `15:00` without am/pm is a 24-hour clock, matched exactly.
+    time = { hour, minute, ...(meridiem !== undefined ? { meridiem } : clock[2] !== undefined ? { clock24: true as const } : {}) };
     rest = rest.replace(clock[0], ' ');
   }
   const dayOffset = dayWord === undefined ? undefined : dayWord.toLowerCase() === 'today' ? 0 : 1;
