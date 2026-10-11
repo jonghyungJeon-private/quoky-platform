@@ -1434,7 +1434,33 @@ const EN_EVENT_TARGET_RECURRENCE = /\b(?:every|each|daily|weekly|weekdays?|weeke
 function acceptsEventRelative(message: string, targetText: string): boolean {
   if (KO_EVENT_TARGET_RECURRENCE.test(targetText) || EN_EVENT_TARGET_RECURRENCE.test(targetText)) return false;
   if (findKoExpressions(targetText).length > 0) return false;
-  return message.length > 0;
+  return passesReminderRequestGuards(message, targetText.trim());
+}
+
+/**
+ * The ADR-0101 negation, addressee and question guards, on the WHOLE message (Codex P2-4): the event-relative grammar
+ * accepts any words before the meeting noun, so `알림 없이 회의 10분 전에 알려줘`, `김대리한테 회의 10분 전에 알려줘` or
+ * `뭐 회의 10분 전에 알려줘` must be refused exactly as the ADR-0101 grammar refuses them. Any negation marker of the
+ * shared `isNegated` (`없이`, `말고`, `…지 마`, `don't`, `never`, `without`, …), a negated verb, another addressee, or a
+ * question in the target hands the message to the ADR-0101 grammar.
+ */
+function passesReminderRequestGuards(message: string, target: string): boolean {
+  if (isNegated(message, 0, message.length)) return false;
+  if (KO_VERB_PRESENT.test(message)) {
+    const verbs = [...message.matchAll(KO_VERB)];
+    const last = verbs[verbs.length - 1];
+    if (last === undefined) return false;
+    if (verbs.some((verb) => isKoVerbNegated(message, verb.index ?? 0, verb[0].length))) return false;
+    if (hasKoOtherAddressee(message)) return false;
+    const beforeVerb = message.slice(0, last.index ?? 0);
+    return !(isKoDirectQuestion(target, beforeVerb) || isKoEmbeddedQuestion(target) || isKoPredicateQuestion(target));
+  }
+  const verbs = [...message.matchAll(EN_VERB)];
+  const first = verbs[0];
+  if (first === undefined) return false;
+  if (verbs.some((verb) => isEnVerbNegated(message, verb.index ?? 0, verb[0].length))) return false;
+  if (EN_PAST.test(message)) return false;
+  return !EN_WH_AFTER_VERB.test(message.slice((first.index ?? 0) + first[0].length));
 }
 
 /** Parse one owner message. Never throws for any input string. */

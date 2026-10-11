@@ -287,6 +287,44 @@ describe('recurrence and a bound clock time stay with the ADR-0101 grammar (Code
   });
 });
 
+describe('negation, addressee and question guards apply to the whole message (Codex P2-4)', () => {
+  const legacy = (text: string) => parseReminderMessage(text, { now: NOW, timeZone: ZONE, eventRelative: false });
+  const current = (text: string) => parseReminderMessage(text, { now: NOW, timeZone: ZONE });
+
+  it('`알림 없이 회의 10분 전에 알려줘` stays NOT_REMINDER, and so does every form the ADR-0101 grammar refuses', () => {
+    const refused = [
+      '알림 없이 회의 10분 전에 알려줘',
+      '알림 말고 회의 10분 전에 알려줘',
+      '회의 10분 전에 알려주지 마',
+      '회의 10분 전에 안 알려줘',
+      '회의 10분 전에 알려줄 필요 없어',
+      '다음 회의 10분 전에는 알려주지 말고 30분 전에 알려줘',
+      '김대리한테 회의 10분 전에 알려줘',
+      '팀원들에게 다음 회의 30분 전에 알려줘',
+      '뭐 회의 10분 전에 알려줘',
+      '언제 회의 10분 전에 알려줘',
+      '어떤 회의 10분 전에 알려줘',
+      "don't remind me 10 minutes before my next meeting",
+      'never remind me 10 minutes before my next meeting',
+      'you forgot to remind me 10 minutes before my next meeting',
+      'no need to remind me 10 minutes before my next meeting',
+      'remind me 10 minutes before my next meeting without fail',
+    ];
+    for (const text of refused) {
+      expect(current(text), text).toEqual(legacy(text));
+      expect(current(text).kind, text).not.toBe('CREATE_EVENT_RELATIVE');
+    }
+    expect(current('알림 없이 회의 10분 전에 알려줘')).toEqual({ kind: 'NOT_REMINDER' });
+    expect(current('김대리한테 회의 10분 전에 알려줘')).toEqual({ kind: 'NOT_REMINDER' });
+  });
+
+  it('the owner as addressee and plain titles still pass', () => {
+    for (const text of ['나한테 회의 10분 전에 알려줘', '저에게 다음 회의 30분 전에 알려줘', '고객 미팅 10분 전에 알려줘']) {
+      expect(current(text).kind, text).toBe('CREATE_EVENT_RELATIVE');
+    }
+  });
+});
+
 describe('event resolution (pure)', () => {
   const day = [WEEKLY, DESIGN, CODE, WEEKLY_TOMORROW, WORKSHOP];
   const opts = { now: NOW, timeZone: ZONE, offsetMinutes: 10 };
