@@ -409,6 +409,13 @@
     {"id": "route-404", "text": "파일 실행해도 돼?", "expected": {"route": "classifier"}, "source": "DET-2 offline sweep (2026-10-08) negative: a question that names another object stays chat", "mustPass": true},
     {"id": "route-405", "text": "BE-881에 댓글 달아도 될까?", "expected": {"route": "classifier"}, "source": "v3 live QA session 3 B6 sweep #30: a permission question is not a write request (no preview)", "mustPass": true},
     {"id": "route-406", "text": "#quoky-test에 게시하지 마", "expected": {"route": "classifier"}, "source": "v3 live QA session 3 B6 sweep #31: a negated post is not a write request (no preview)", "mustPass": true},
-    {"id": "route-407", "text": "승인", "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "v3 live QA session 3 B6 sweep #43: a stray approve with nothing pending", "mustPass": true}
+    {"id": "route-407", "text": "승인", "expected": {"route": "runtime", "reply": "no-pending-decision", "providerCalls": 0}, "source": "v3 live QA session 3 B6 sweep #43: a stray approve with nothing pending", "mustPass": true},
+    {"id": "route-408", "text": "회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: the next meeting", "mustPass": true},
+    {"id": "route-409", "text": "다음 회의 30분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: \"다음 회의\"", "mustPass": true},
+    {"id": "route-410", "text": "3시 회의 15분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: by start time (stays out of the calendar handler)", "mustPass": true},
+    {"id": "route-411", "text": "주간 회의 10분 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: by title", "mustPass": true},
+    {"id": "route-412", "text": "remind me 10 minutes before my next meeting", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder: English", "mustPass": true},
+    {"id": "route-413", "text": "회의 전에 알려줘", "expected": {"route": "reminders", "providerCalls": 0}, "source": "ADR-0117 D5 (BRF-2) pre-meeting reminder without an offset: the fixed clarification", "mustPass": true},
+    {"id": "route-414", "text": "회의 10분 전에 자료 준비 알려줘", "expected": {"route": "classifier"}, "source": "ADR-0117 D5 (BRF-2) negative: a body after 전에 is not a pre-meeting reminder (route unchanged)", "mustPass": true}
   ]
 }
