@@ -5,14 +5,19 @@ import {
   type ConversationContext,
   type Id,
   type IsoTimestamp,
+  type MessageBody,
   type OutboundMessage,
 } from '../../domain';
+import type { CalendarReader } from '../../ports/calendar-reader.port';
+import { outboundMessage } from '../message-rendering';
+import { EventReminderCalendar, resolveEventReminderTarget } from './event-reminder-calendar';
+import type { EventReminderTarget } from './event-reminder-grammar';
 import type { Logger } from '../../ports/logger.port';
 import type { ReminderRepository } from '../../ports/reminder-repository.port';
 import { newId } from '../../util/id';
 import { containsCredentialMaterial } from '../credential-guard';
 import { parseReminderMessage, type ReminderClarifyReason, type ReminderCommand } from './reminder-grammar';
-import type { ReminderReplyComposer } from './reminder-reply-composer';
+import { eventReminderStoredTitle, type ReminderReplyComposer } from './reminder-reply-composer';
 
 /**
  * Owner reminder conversation (ADR-0101 D5): create, list and cancel through the deterministic grammar. Pure Core
@@ -31,6 +36,13 @@ export interface ReminderConversationDeps {
   readonly logger: Logger;
   /** Reminder id source; defaults to the shared `newId`. */
   readonly idGenerator?: () => Id;
+  /**
+   * ADR-0117 D5 (BRF-2): the configured read-only calendar, to resolve the event an event-relative reminder names.
+   * Absent: no calendar is configured and such a request gets the fixed "not connected" reply.
+   */
+  readonly calendar?: Pick<CalendarReader, 'listEvents'>;
+  /** Injectable for tests; production uses the schedule handler's read bound. */
+  readonly calendarTimeoutMs?: number;
 }
 
 export interface ReminderTurnInput {
@@ -66,9 +78,18 @@ export interface ReminderCancelResult {
 
 export class ReminderConversationService {
   private readonly newReminderId: () => Id;
+  private readonly eventCalendar: EventReminderCalendar | undefined;
 
   constructor(private readonly deps: ReminderConversationDeps) {
     this.newReminderId = deps.idGenerator ?? newId;
+    this.eventCalendar =
+      deps.calendar === undefined
+        ? undefined
+        : new EventReminderCalendar({
+            reader: deps.calendar,
+            logger: deps.logger,
+            ...(deps.calendarTimeoutMs !== undefined ? { createTimeoutMs: deps.calendarTimeoutMs } : {}),
+          });
   }
 
   /** The reply for a reminder phrase, or `null` for any other message. Never throws. */
@@ -95,7 +116,7 @@ export class ReminderConversationService {
     }
   }
 
-  private async execute(command: Exclude<ReminderCommand, { kind: 'NOT_REMINDER' }>, input: ReminderTurnInput): Promise<string> {
+  private async execute(command: Exclude<ReminderCommand, { kind: 'NOT_REMINDER' }>, input: ReminderTurnInput): Promise<MessageBody> {
     const { composer, repository } = this.deps;
     switch (command.kind) {
       case 'CLARIFY':
@@ -129,7 +150,68 @@ export class ReminderConversationService {
           ? composer.created(created.reminder, input.now)
           : composer.limitReached(created.activeCount);
       }
+      case 'CREATE_EVENT_RELATIVE':
+        return this.createEventRelative(command.offsetMinutes, command.target, input);
     }
+  }
+
+  /**
+   * ADR-0117 D5: one reminder before ONE calendar event, resolved now through the read-only calendar. Nothing is
+   * created when the event is ambiguous, missing, all-day or too soon, or when the calendar cannot be read.
+   */
+  private async createEventRelative(
+    offsetMinutes: number,
+    target: EventReminderTarget,
+    input: ReminderTurnInput,
+  ): Promise<MessageBody> {
+    const { composer, repository } = this.deps;
+    if (this.eventCalendar === undefined) return composer.eventCalendarUnavailable();
+    const read = await this.eventCalendar.readForCreation(target, input.now, this.deps.timeZone);
+    if (read === null) return composer.eventCalendarReadFailed();
+    const resolution = resolveEventReminderTarget(read.events, target, {
+      now: input.now,
+      timeZone: this.deps.timeZone,
+      offsetMinutes,
+      partial: read.partial,
+    });
+    this.deps.logger.info('reminder.event.resolved', { outcome: resolution.kind, events: read.events.length });
+    switch (resolution.kind) {
+      case 'none':
+        return composer.eventNotFound(target, resolution.partial);
+      case 'all-day':
+        return composer.eventAllDay(resolution.event);
+      case 'ambiguous':
+        return composer.eventAmbiguous(resolution.candidates, input.now, this.deps.timeZone);
+      case 'too-soon':
+        return composer.eventTooSoon(resolution.event, offsetMinutes, input.now, this.deps.timeZone);
+      case 'found':
+        break;
+    }
+    let draft;
+    try {
+      draft = createReminderDraft({
+        id: this.newReminderId(),
+        actorId: input.actorId,
+        kind: 'TEXT',
+        // The event's title, single-line, bounded and credential-guarded (a credential-shaped title is never stored).
+        body: eventReminderStoredTitle(resolution.event.title),
+        schedule: { type: 'ONCE', at: resolution.fireAt },
+        timeZone: this.deps.timeZone,
+        origin: input.context,
+        firstFireAt: resolution.fireAt,
+        createdAt: input.now,
+        // The calendar identity is stored with the id, so the re-check never takes another calendar's event for it.
+        event: { eventId: resolution.event.id, offsetMinutes, calendarName: resolution.event.calendarName },
+      });
+    } catch (error) {
+      // An event id outside the stored bound cannot be referenced: refused as unreadable, never truncated.
+      if (error instanceof InvalidReminderError) return composer.eventCalendarReadFailed();
+      throw error;
+    }
+    const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
+    return created.status === 'CREATED'
+      ? composer.eventCreated(created.reminder, new Date(resolution.startMs).toISOString(), input.now)
+      : composer.limitReached(created.activeCount);
   }
 
   /**
@@ -173,7 +255,7 @@ export class ReminderConversationService {
     }
   }
 
-  private reply(input: ReminderTurnInput, text: string): OutboundMessage {
-    return { context: input.context, text, replyToMessageId: input.messageId };
+  private reply(input: ReminderTurnInput, body: MessageBody): OutboundMessage {
+    return outboundMessage(input.context, body, { replyToMessageId: input.messageId });
   }
 }

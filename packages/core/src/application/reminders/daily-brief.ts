@@ -76,6 +76,14 @@ export function formatShortDateTime(instant: IsoTimestamp, timeZone: string): st
   return `${z.month}/${z.day} ${String(z.hour).padStart(2, '0')}:${String(z.minute).padStart(2, '0')}`;
 }
 
+/** `10분`, `1시간`, `1시간 30분` (the composer's `eventOffsetLabel`; the composer imports this module). */
+function briefOffsetLabel(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest}분`;
+  return rest === 0 ? `${hours}시간` : `${hours}시간 ${rest}분`;
+}
+
 function truncate(text: string, max: number): string {
   const chars = Array.from(text);
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
@@ -217,6 +225,11 @@ function remindersSection(input: DailyBriefInput): BriefSection {
   if (pending.length === 0) return noticeSection('오늘 남은 알림이 없어요.');
   const lines = pending.map((reminder): MessageBody => {
     const at = toZonedDateTime(reminder.nextFireAt ?? input.now, input.timeZone);
+    if (reminder.event !== undefined) {
+      // ADR-0117 D5 (BRF-2): the body is an event title — an untrusted span, credential-guarded.
+      const title = reminder.body.trim().length === 0 ? '(제목 없음)' : containsCredentialMaterial(reminder.body) ? '(제목 숨김)' : untrustedText(truncate(reminder.body, 60));
+      return messageBody(`- ${formatKoreanClock(at.hour, at.minute)} `, title, ` (회의 ${briefOffsetLabel(reminder.event.offsetMinutes)} 전, #${reminder.displayNo})`);
+    }
     return `- ${formatKoreanClock(at.hour, at.minute)} ${truncate(reminder.body, 60)} (#${reminder.displayNo})`;
   });
   return listSection(`오늘 남은 알림 ${pending.length}건`, lines, DAILY_BRIEF_MAX_ENTRIES);

@@ -9,6 +9,11 @@ import {
   type MessageBody,
 } from '../../domain';
 import { withObjectParticle, withTopicParticle } from '../korean-particle';
+import { containsCredentialMaterial } from '../credential-guard';
+import { joinBody, messageBody, untrustedText, type MessagePart } from '../message-rendering';
+import type { CalendarEvent } from '../../ports/calendar-reader.port';
+import { EVENT_REMINDER_LOOKAHEAD_DAYS } from './event-reminder-calendar';
+import type { EventReminderTarget } from './event-reminder-grammar';
 import { composeDailyBrief, formatKoreanClock, type DailyBriefCalendar } from './daily-brief';
 import type { ConnectorItem } from '../../ports/connector-provider.port';
 import type { ReminderClarifyReason } from './reminder-grammar';
@@ -47,7 +52,87 @@ const CLARIFY_COPY: Readonly<Record<ReminderClarifyReason, string>> = {
   BODY_TOO_LONG: `알림 내용은 ${REMINDER_LIMITS.maxBodyChars}자 이하로 적어 주세요.`,
   INVALID_REMINDER_NUMBER: '알림 번호를 확인해 주세요. 번호는 "알림 목록"에서 볼 수 있어요. 예: "알림 4 취소"',
   BULK_CANCEL_UNSUPPORTED: '알림은 한 번에 하나씩만 취소할 수 있어요. 예: "알림 4 취소"',
+  EVENT_OFFSET_OUT_OF_RANGE: `회의 전 알림은 ${REMINDER_LIMITS.minEventOffsetMinutes}분에서 ${REMINDER_LIMITS.maxEventOffsetMinutes / 60}시간 전 사이로만 만들 수 있어요. 예: "회의 10분 전에 알려줘"`,
+  EVENT_OFFSET_MISSING: '회의 몇 분 전에 알려드릴지 알려 주세요. 예: "회의 10분 전에 알려줘", "다음 회의 30분 전에 알려줘"',
 };
+
+/** ADR-0117 D5: an event title echoed in reminder copy is an untrusted span, clipped, credential-guarded. */
+export const EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS = 60;
+/** The title stored as an event-relative reminder's body: bounded and already credential-guarded. */
+const EVENT_REMINDER_TITLE_STORED_MAX_CHARS = 100;
+const EVENT_TITLE_HIDDEN = '(제목 숨김)';
+const EVENT_TITLE_NONE = '(제목 없음)';
+
+/**
+ * The body stored for an event-relative reminder (ADR-0117 D5): the event's title, single-line and bounded, or a fixed
+ * placeholder when it is empty or credential-shaped (a credential-shaped title is never stored).
+ */
+export function eventReminderStoredTitle(title: string): string {
+  // eslint-disable-next-line no-control-regex
+  const line = title.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (line.length === 0) return EVENT_TITLE_NONE;
+  if (containsCredentialMaterial(title)) return EVENT_TITLE_HIDDEN;
+  return preview(line, EVENT_REMINDER_TITLE_STORED_MAX_CHARS);
+}
+
+/** An event title in copy: an untrusted `markup` span, or Quoky's own placeholder. */
+function eventTitlePart(title: string): MessagePart {
+  const stored = eventReminderStoredTitle(title);
+  if (stored === EVENT_TITLE_NONE || stored === EVENT_TITLE_HIDDEN) return stored;
+  return untrustedText(preview(stored, EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS));
+}
+
+/** `10분`, `1시간`, `1시간 30분`. */
+export function eventOffsetLabel(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest}분`;
+  return rest === 0 ? `${hours}시간` : `${hours}시간 ${rest}분`;
+}
+
+/** `회의 10분 전`: the list / brief label of an event-relative reminder. */
+function eventRepeatLabel(minutes: number): string {
+  return `회의 ${eventOffsetLabel(minutes)} 전`;
+}
+
+/** A start time: the clock alone on `reference`'s local day, else `10월 9일 오후 3:00`. */
+function startLabel(start: IsoTimestamp, reference: IsoTimestamp, timeZone: string): string {
+  const at = toZonedDateTime(start, timeZone);
+  const ref = toZonedDateTime(reference, timeZone);
+  const clock = formatKoreanClock(at.hour, at.minute);
+  if (at.year === ref.year && at.month === ref.month && at.day === ref.day) return clock;
+  return `${at.month}월 ${at.day}일 ${clock}`;
+}
+
+/** How the fire-time re-check went, for the delivered text (ADR-0117 D6). */
+export type EventReminderDeliveryNote =
+  /** The event is where it was. */
+  | 'none'
+  /** The calendar could not be re-read: delivered as scheduled, with a note. */
+  | 'unverified'
+  /** The event moved earlier than this reminder's due time: delivered now, with the new start. */
+  | 'moved-earlier';
+
+export interface EventReminderDeliveryInput {
+  readonly displayNo: number;
+  /** The event's title now (re-read), or the stored title when the event could not be re-read. */
+  readonly title: string;
+  /** The event's start now (re-read), or the start the reminder was scheduled for. */
+  readonly startAt: IsoTimestamp;
+  readonly offsetMinutes: number;
+  readonly note: EventReminderDeliveryNote;
+  readonly occurrenceAt: IsoTimestamp;
+  readonly late: boolean;
+  readonly timeZone: string;
+  readonly deliveredAt: IsoTimestamp;
+}
+
+export interface EventReminderCanceledInput {
+  readonly displayNo: number;
+  readonly title: string;
+  /** `gone`: not in the calendar any more; `all-day`: the event became an all-day event. */
+  readonly reason: 'gone' | 'all-day';
+}
 
 function clampDelivered(text: string): string {
   const chars = Array.from(text);
@@ -158,35 +243,133 @@ export class ReminderReplyComposer {
     return CLARIFY_COPY[reason];
   }
 
+  /**
+   * ADR-0117 D5: "10월 9일(금) 오후 2:50에 알려드릴게요: 디자인 리뷰 (오후 3:00 시작, 10분 전). …(#5 · 취소: '알림 5 취소')".
+   * The title is the one stored on the reminder (an untrusted span).
+   */
+  eventCreated(reminder: Reminder, eventStart: IsoTimestamp, now: IsoTimestamp): MessageBody {
+    const fireAt = reminder.nextFireAt ?? reminder.occurrenceAt ?? now;
+    const offset = reminder.event?.offsetMinutes ?? 0;
+    return messageBody(
+      `${formatAbsolute(fireAt, reminder.timeZone, now)}에 알려드릴게요: `,
+      eventTitlePart(reminder.body),
+      ` (${startLabel(eventStart, fireAt, reminder.timeZone)} 시작, ${eventOffsetLabel(offset)} 전). `,
+      '일정이 옮겨지면 알림도 따라 옮기고, 일정이 삭제되면 알림을 취소해요. ',
+      `(#${reminder.displayNo} · 취소: '알림 ${reminder.displayNo} 취소')`,
+    );
+  }
+
+  /** No calendar is configured: an event-relative reminder cannot be made. */
+  eventCalendarUnavailable(): string {
+    return '캘린더가 연결되어 있지 않아 회의 기준 알림을 만들 수 없어요. 시각을 직접 말씀해 주세요. 예: "오후 2시 50분에 회의 준비 알려줘"';
+  }
+
+  /** The calendar read failed or timed out: nothing was created (never "no meeting"). */
+  eventCalendarReadFailed(): string {
+    return '캘린더를 읽지 못해 회의 전 알림을 만들지 않았어요. 잠시 후 다시 시도해 주세요.';
+  }
+
+  /** Nothing matched in the window that was read. */
+  eventNotFound(target: EventReminderTarget, partial: boolean): string {
+    const where = target.dayOffset !== undefined ? '그날 일정에서' : `앞으로 ${EVENT_REMINDER_LOOKAHEAD_DAYS}일 일정에서`;
+    const named = target.title !== undefined || target.time !== undefined || target.weekday !== undefined;
+    const what = named ? `말씀하신 일정을 ${where} 찾지 못해` : `${where} 아직 시작하지 않은 시간 지정 일정을 찾지 못해`;
+    const more = partial ? ' 일정이 많아 앞쪽 일부만 확인했어요.' : '';
+    return `${what} 알림을 만들지 않았어요.${more} "이번 주 일정"으로 일정을 확인해 보세요.`;
+  }
+
+  /** Only an all-day event matched: it has no start time to be early for. */
+  eventAllDay(event: CalendarEvent): MessageBody {
+    return messageBody(
+      '종일 일정(',
+      eventTitlePart(event.title),
+      ')에는 몇 분 전 알림을 만들 수 없어요. 시각을 정해 말씀해 주세요. 예: "내일 오전 9시에 회의 준비 알려줘"',
+    );
+  }
+
+  /** The event starts too soon for the offset. */
+  eventTooSoon(event: CalendarEvent, offsetMinutes: number, now: IsoTimestamp, timeZone: string): MessageBody {
+    return messageBody(
+      eventTitlePart(event.title),
+      ` 일정이 ${startLabel(event.start, now, timeZone)}에 시작해서 ${eventOffsetLabel(offsetMinutes)} 전 알림 시각이 이미 지났거나 1분도 남지 않았어요. `,
+      '더 짧게 말씀해 주세요. 예: "회의 5분 전에 알려줘"',
+    );
+  }
+
+  /** Several events match: the owner names one by its title or time; nothing was created. */
+  eventAmbiguous(candidates: readonly CalendarEvent[], now: IsoTimestamp, timeZone: string): MessageBody {
+    const lines: MessagePart[] = [
+      '어느 일정인지 하나로 정할 수 없어 알림을 만들지 않았어요. 제목이나 시각을 붙여 다시 말씀해 주세요.',
+      ...candidates.map((event) => messageBody(`- ${formatAbsolute(event.start, timeZone, now)} `, eventTitlePart(event.title))),
+      '예: "오후 3시 주간 회의 10분 전에 알려줘"',
+    ];
+    return joinBody(lines);
+  }
+
+  /** ADR-0117 D6: the delivered pre-meeting reminder (deterministic; the title is an untrusted span). */
+  eventDelivery(input: EventReminderDeliveryInput): MessageBody {
+    const start = startLabel(input.startAt, input.deliveredAt, input.timeZone);
+    const offset = eventOffsetLabel(input.offsetMinutes);
+    const main =
+      input.note === 'moved-earlier'
+        ? ` 일정이 ${start} 시작으로 앞당겨졌어요.${Date.parse(input.startAt) <= Date.parse(input.deliveredAt) ? ' 이미 시작했어요.' : ''} (${offset} 전 알림)`
+        : ` 일정이 ${start}에 시작해요. (${offset} 전 알림)`;
+    const unverified = input.note === 'unverified' ? ' (캘린더를 다시 확인하지 못해 처음 확인한 시각 기준으로 알려드려요)' : '';
+    const late = input.late
+      ? ` ${lateNote({ displayNo: input.displayNo, body: '', occurrenceAt: input.occurrenceAt, late: true, timeZone: input.timeZone, deliveredAt: input.deliveredAt })}`
+      : '';
+    return messageBody(`알림 #${input.displayNo}: `, eventTitlePart(input.title), `${main}${unverified}${late}`);
+  }
+
+  /** ADR-0117 D6: the note that tells the owner a pre-meeting reminder was canceled by the re-check. */
+  eventCanceledDelivery(input: EventReminderCanceledInput): MessageBody {
+    const why =
+      input.reason === 'all-day'
+        ? ' 일정이 종일 일정으로 바뀌어 회의 전 알림을 취소했어요.'
+        : ' 일정을 캘린더에서 찾을 수 없어(삭제·취소됐거나 30일 넘게 옮겨졌어요) 회의 전 알림을 취소했어요.';
+    return messageBody(`알림 #${input.displayNo} 취소: `, eventTitlePart(input.title), why);
+  }
+
   /** `알림 목록`: number, local time, repeat label and body; bounded to one message. */
-  list(reminders: readonly Reminder[], now: IsoTimestamp): string {
+  list(reminders: readonly Reminder[], now: IsoTimestamp): MessageBody {
     if (reminders.length === 0) {
       return '예정된 알림이 없어요. 예: "내일 오전 9시에 회의 준비 알려줘"';
     }
     const header = `예정된 알림 ${reminders.length}건`;
-    const lines: string[] = [];
+    const lines: MessagePart[] = [];
     let used = Array.from(header).length;
     for (const reminder of reminders) {
       const next = reminder.nextFireAt ?? reminder.occurrenceAt;
       const when = next === undefined ? '' : formatAbsolute(next, reminder.timeZone, now);
-      const body = reminder.kind === 'BRIEF' ? '오늘의 브리핑(DM)' : preview(reminder.body, LIST_BODY_PREVIEW_CHARS);
+      const event = reminder.event;
+      const bodyText =
+        reminder.kind === 'BRIEF'
+          ? '오늘의 브리핑(DM)'
+          : preview(event !== undefined ? eventReminderStoredTitle(reminder.body) : reminder.body, event !== undefined ? EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS : LIST_BODY_PREVIEW_CHARS);
       const state = reminder.status === ReminderStatus.FIRING ? ' · 전달 중' : '';
       const last =
         reminder.lastOutcome !== undefined && reminder.schedule.type !== 'ONCE'
           ? ` · 지난 알림: ${lastOutcomeLabel(reminder.lastOutcome)}`
           : '';
-      const line = `#${reminder.displayNo} ${when} [${reminderRepeatLabel(reminder.schedule)}] ${body}${state}${last}`;
-      const length = Array.from(line).length + 1;
-      if (used + length > LIST_REPLY_MAX_CHARS - 40) break;
-      lines.push(line);
+      const label = event !== undefined ? eventRepeatLabel(event.offsetMinutes) : reminderRepeatLabel(reminder.schedule);
+      const prefix = `#${reminder.displayNo} ${when} [${label}] `;
+      // The budget counts the plain text; an event title (an untrusted span) is bounded at 60 characters, and the
+      // 40-character reserve covers its escaping on a markup platform.
+      const length = Array.from(`${prefix}${bodyText}${state}${last}`).length + 1;
+      if (used + length > LIST_REPLY_MAX_CHARS - 40 - (event !== undefined ? EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS : 0)) break;
+      lines.push(event !== undefined ? messageBody(prefix, eventTitlePart(reminder.body), `${state}${last}`) : `${prefix}${bodyText}${state}${last}`);
       used += length;
     }
     const omitted = reminders.length - lines.length;
     const tail = omitted > 0 ? [`외 ${omitted}건은 생략했어요.`] : [];
-    return [header, ...lines, ...tail].join('\n');
+    return joinBody([header, ...lines, ...tail]);
   }
 
   canceled(reminder: Reminder): string {
+    // An event-relative reminder's body is an event title (untrusted): this plain-text reply never echoes it.
+    if (reminder.event !== undefined) {
+      return `알림 #${reminder.displayNo} 취소했어요: ${eventRepeatLabel(reminder.event.offsetMinutes)} 알림`;
+    }
     const subject = reminder.kind === 'BRIEF' ? '오늘의 브리핑' : `'${preview(reminder.body, LIST_BODY_PREVIEW_CHARS)}'`;
     return `알림 #${reminder.displayNo} 취소했어요: ${subject}`;
   }

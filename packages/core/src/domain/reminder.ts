@@ -90,6 +90,24 @@ export type ReminderFiringResult =
   | NotificationDeliveryOutcome
   | { readonly status: 'SKIPPED_MISSED'; readonly skippedOccurrenceAt: IsoTimestamp };
 
+/**
+ * An event-relative reminder's bounded reference to one calendar event (ADR-0117 D5, BRF-2). The provider's opaque
+ * event id and the owner's offset are all that is stored; the event's start is `occurrenceAt + offsetMinutes` and is
+ * re-read through `CalendarReader` when the reminder fires (D6). Lives in the reminder's JSON `data`: no migration.
+ */
+export interface ReminderEventRef {
+  /** The provider's opaque event id (`CalendarEvent.id`), 1..`maxEventIdChars` characters, no control characters. */
+  readonly eventId: string;
+  /** Minutes before the event's start, `minEventOffsetMinutes`..`maxEventOffsetMinutes`. */
+  readonly offsetMinutes: number;
+  /**
+   * The calendar the event was read from (`CalendarEvent.calendarName`, the only calendar identity the reader port
+   * exposes), at most `maxEventCalendarNameChars`. The re-check matches the id AND this name, so the same id on another
+   * calendar is never taken for it. Absent on a reference stored without it: the id alone, and a duplicate is ambiguous.
+   */
+  readonly calendarName?: string;
+}
+
 export interface ReminderLastOutcome {
   readonly outcome: ReminderOccurrenceOutcome;
   /** The scheduled time of the occurrence this outcome belongs to. */
@@ -122,6 +140,12 @@ export const REMINDER_LIMITS = {
   maxDeliveriesPerTick: 10,
   /** Delivered text length (one chat message). */
   maxDeliveredTextChars: 1_800,
+  /** ADR-0117 D5: the offset of an event-relative reminder, in minutes (1-120). */
+  minEventOffsetMinutes: 1,
+  maxEventOffsetMinutes: 120,
+  /** ADR-0117 D5: the stored event reference is bounded. */
+  maxEventIdChars: 1_024,
+  maxEventCalendarNameChars: 100,
 } as const;
 
 /**
@@ -149,6 +173,11 @@ export interface Reminder {
   readonly firingAttemptId?: Id;
   readonly firingStartedAt?: IsoTimestamp;
   readonly lastOutcome?: ReminderLastOutcome;
+  /**
+   * ADR-0117 D5 (BRF-2): present only on an event-relative reminder (a ONCE `TEXT` reminder whose body is the event's
+   * guarded title at creation). The dispatcher re-checks the event before it delivers (D6).
+   */
+  readonly event?: ReminderEventRef;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }
@@ -165,7 +194,11 @@ export interface ReminderFiringCompletion {
     | ReminderStatus.SCHEDULED
     | ReminderStatus.COMPLETED
     | ReminderStatus.FAILED
-    | ReminderStatus.DELIVERY_UNCERTAIN;
+    | ReminderStatus.DELIVERY_UNCERTAIN
+    /** ADR-0117 D6: an event-relative reminder whose event was deleted, cancelled or became all-day. */
+    | ReminderStatus.CANCELED;
+  /** ADR-0117 D6: the moved event's new ONCE schedule (an event-relative reschedule only). */
+  readonly schedule?: ReminderSchedule;
   readonly occurrenceAt?: IsoTimestamp;
   readonly nextFireAt?: IsoTimestamp;
   readonly attempt: number;
@@ -183,13 +216,19 @@ export class InvalidReminderTransitionError extends Error {
 }
 
 export class InvalidReminderError extends Error {
-  constructor(readonly code: 'BODY_EMPTY' | 'BODY_TOO_LONG' | 'SCHEDULE_INVALID' | 'FIRE_TIME_INVALID') {
+  constructor(
+    readonly code: 'BODY_EMPTY' | 'BODY_TOO_LONG' | 'SCHEDULE_INVALID' | 'FIRE_TIME_INVALID' | 'EVENT_REF_INVALID',
+  ) {
     super(code);
     this.name = 'InvalidReminderError';
   }
 }
 
-/** The closed transition table of ADR-0101 D4. */
+/**
+ * The closed transition table of ADR-0101 D4, amended by ADR-0117 D6: FIRING → CANCELED is the fire-time re-check of
+ * an event-relative reminder whose event is gone (planned only by {@link planEventCanceledCompletion}; the owner still
+ * cannot cancel a FIRING reminder).
+ */
 const TRANSITIONS: Readonly<Record<ReminderStatus, readonly ReminderStatus[]>> = {
   [ReminderStatus.SCHEDULED]: [ReminderStatus.FIRING, ReminderStatus.CANCELED, ReminderStatus.SCHEDULED],
   [ReminderStatus.FIRING]: [
@@ -197,6 +236,7 @@ const TRANSITIONS: Readonly<Record<ReminderStatus, readonly ReminderStatus[]>> =
     ReminderStatus.SCHEDULED,
     ReminderStatus.FAILED,
     ReminderStatus.DELIVERY_UNCERTAIN,
+    ReminderStatus.CANCELED,
   ],
   [ReminderStatus.COMPLETED]: [],
   [ReminderStatus.CANCELED]: [],
@@ -278,6 +318,28 @@ export interface NewReminderInput {
   /** The first occurrence (computed by the grammar / schedule). */
   firstFireAt: IsoTimestamp;
   createdAt: IsoTimestamp;
+  /** ADR-0117 D5: an event-relative reminder (ONCE `TEXT` only). */
+  event?: ReminderEventRef;
+}
+
+/** A well-formed event reference: a bounded id without control characters and an offset of 1-120 whole minutes. */
+export function isValidReminderEventRef(event: ReminderEventRef): boolean {
+  const id = event.eventId;
+  return (
+    typeof id === 'string' &&
+    id.length > 0 &&
+    id.length <= REMINDER_LIMITS.maxEventIdChars &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f-\u009f]/.test(id) &&
+    Number.isInteger(event.offsetMinutes) &&
+    event.offsetMinutes >= REMINDER_LIMITS.minEventOffsetMinutes &&
+    event.offsetMinutes <= REMINDER_LIMITS.maxEventOffsetMinutes &&
+    (event.calendarName === undefined ||
+      (typeof event.calendarName === 'string' &&
+        event.calendarName.length <= REMINDER_LIMITS.maxEventCalendarNameChars &&
+        // eslint-disable-next-line no-control-regex
+        !/[\u0000-\u001f\u007f-\u009f]/.test(event.calendarName)))
+  );
 }
 
 /** A new SCHEDULED reminder draft. Validates the body bounds and the schedule; never reads a clock. */
@@ -287,6 +349,12 @@ export function createReminderDraft(input: NewReminderInput): ReminderDraft {
   if (length > REMINDER_LIMITS.maxBodyChars) throw new InvalidReminderError('BODY_TOO_LONG');
   if (!isValidReminderSchedule(input.schedule)) throw new InvalidReminderError('SCHEDULE_INVALID');
   if (!isIsoInstant(input.firstFireAt)) throw new InvalidReminderError('FIRE_TIME_INVALID');
+  if (
+    input.event !== undefined &&
+    (!isValidReminderEventRef(input.event) || input.schedule.type !== 'ONCE' || input.kind !== 'TEXT')
+  ) {
+    throw new InvalidReminderError('EVENT_REF_INVALID');
+  }
   return {
     id: input.id,
     actorId: input.actorId,
@@ -299,6 +367,15 @@ export function createReminderDraft(input: NewReminderInput): ReminderDraft {
     occurrenceAt: input.firstFireAt,
     nextFireAt: input.firstFireAt,
     attempt: 0,
+    ...(input.event !== undefined
+      ? {
+          event: {
+            eventId: input.event.eventId,
+            offsetMinutes: input.event.offsetMinutes,
+            ...(input.event.calendarName !== undefined ? { calendarName: input.event.calendarName } : {}),
+          },
+        }
+      : {}),
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
   };
@@ -489,6 +566,9 @@ export function applyFiringCompletion(
   const lastOutcome = completion.lastOutcome ?? reminder.lastOutcome;
   return {
     ...base,
+    ...(completion.status === ReminderStatus.SCHEDULED && completion.schedule !== undefined
+      ? { schedule: completion.schedule }
+      : {}),
     status: completion.status,
     attempt: completion.attempt,
     updatedAt: completion.updatedAt,
@@ -500,4 +580,56 @@ export function applyFiringCompletion(
       : {}),
     ...(lastOutcome !== undefined ? { lastOutcome } : {}),
   };
+}
+
+function assertEventFiring(reminder: Reminder, to: ReminderStatus | string): void {
+  if (reminder.status !== ReminderStatus.FIRING || reminder.event === undefined || reminder.schedule.type !== 'ONCE') {
+    throw new InvalidReminderTransitionError(reminder.status, to, 'an event-relative ONCE reminder must be FIRING');
+  }
+}
+
+/**
+ * ADR-0117 D6, a moved event: FIRING → SCHEDULED at the new due time (the event's new start minus the offset), with no
+ * delivery and no outcome. The new time must be strictly after `at` (an event moved earlier is delivered instead) and
+ * after the claimed occurrence, so a reschedule always moves the reminder forward ("once per move").
+ */
+export function planEventRescheduleCompletion(
+  reminder: Reminder,
+  input: { at: IsoTimestamp; occurrenceAt: IsoTimestamp },
+): ReminderFiringCompletion {
+  assertEventFiring(reminder, ReminderStatus.SCHEDULED);
+  const nextMs = Date.parse(input.occurrenceAt);
+  const claimed = reminder.occurrenceAt ?? reminder.nextFireAt;
+  if (
+    !Number.isFinite(nextMs) ||
+    nextMs <= Date.parse(input.at) ||
+    (claimed !== undefined && nextMs <= Date.parse(claimed))
+  ) {
+    throw new InvalidReminderTransitionError(reminder.status, ReminderStatus.SCHEDULED, 'a reschedule moves the reminder forward');
+  }
+  const occurrenceAt = new Date(nextMs).toISOString();
+  return {
+    status: ReminderStatus.SCHEDULED,
+    schedule: { type: 'ONCE', at: occurrenceAt },
+    occurrenceAt,
+    nextFireAt: occurrenceAt,
+    attempt: 0,
+    updatedAt: input.at,
+  };
+}
+
+/**
+ * ADR-0117 D6, the event is gone (deleted, cancelled, or now all-day): the cancel note was delivered once and the
+ * reminder ends CANCELED with the note's outcome. A confirmed `NOT_SENT{retryable: true}` with retries left is retried
+ * like any delivery (the retry re-checks the event again); `UNCERTAIN` is never retried (at most once).
+ */
+export function planEventCanceledCompletion(
+  reminder: Reminder,
+  outcome: NotificationDeliveryOutcome,
+  context: { at: IsoTimestamp },
+): ReminderFiringCompletion {
+  assertEventFiring(reminder, ReminderStatus.CANCELED);
+  const planned = planFiringCompletion(reminder, outcome, { at: context.at });
+  if (planned.status === ReminderStatus.SCHEDULED) return planned;
+  return { ...planned, status: ReminderStatus.CANCELED };
 }

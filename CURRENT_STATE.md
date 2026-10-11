@@ -5,6 +5,29 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### BRF-2 pre-meeting reminders — implemented on branch, not merged (2026-10-12)
+
+ADR-0117 D5/D6. `회의 10분 전에 알려줘` (also `다음 회의 …`, `3시 회의 …`, `<제목> 회의 …`, English) creates one
+reminder before one calendar event, resolved through the existing `CALENDAR_READER`.
+
+- **Creation.** An ambiguous match lists the candidates and creates nothing. No match, all-day only, too soon and an
+  unreadable calendar are answered honestly.
+- **Fire time.** The event is re-read by id:
+  - moved later: the reminder moves, and nothing is sent at the stale time;
+  - moved earlier: delivered now;
+  - deleted, cancelled or now all-day: canceled with one note;
+  - unreadable: delivered with a "could not re-check" note.
+
+  At most once, per ADR-0101 D6.
+- **Listing.** `알림 목록` shows `[회의 10분 전] <제목>` as an untrusted span; `알림 N 취소` is unchanged.
+- **Unchanged.** No migration (the event id lives in the reminder's JSON data), no new port or token, no model call.
+  `ConversationRuntimeDeps` stays 35. One new transition edge, FIRING → CANCELED, is used only by the re-check.
+- **Review.** Codex found four P2s, all fixed one commit each: calendar identity on the re-check, `HH:MM` as a 24-hour
+  time, recurrence / bound clock times kept on the ADR-0101 grammar, and the negation and question guards. A sweep
+  pins every pre-existing reminder phrase to its old outcome.
+- **Validation.** Offline only; the golden routing corpus gains route-408..419. The Strict gate is not run: one
+  pre-meeting reminder on a test event on the owner's service.
+
 ### GML-1 Gmail read connector — implemented on branch, not merged (2026-10-08)
 
 ADR-0118 D1–D8, Gmail only (DRV-1 is next). New pieces:

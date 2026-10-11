@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  parseReminderMessage,
   AI_PROVIDERS,
   CALENDAR_READER,
   CODE_CHAIN_STATUS_DOMAINS,
@@ -1573,7 +1574,13 @@ describe('Personal v3 CAL-2 — schedule questions from the configured calendar 
     }
     // Write refusals make no read; each answered question made exactly one, inside the port's 31-day bound.
     const answered = calendarCases().filter((golden) => !writes.has(golden.text)).length;
-    expect(harness.calendarReads).toHaveLength(answered);
+    // BRF-2 (ADR-0117 D5): each pre-meeting reminder creation in the corpus reads the same calendar once (from now,
+    // the next 14 days) through the reminder handler; no other reminder phrase reads it.
+    const preMeeting = routing.cases.filter(
+      (golden) => parseReminderMessage(golden.text, { now: '2026-01-01T00:00:00.000Z' }).kind === 'CREATE_EVENT_RELATIVE',
+    ).length;
+    expect(preMeeting).toBe(5);
+    expect(harness.calendarReads).toHaveLength(answered + preMeeting);
     for (const read of harness.calendarReads) {
       const span = Date.parse(read.to) - Date.parse(read.from);
       expect(span).toBeGreaterThan(0);

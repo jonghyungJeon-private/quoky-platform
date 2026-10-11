@@ -56,7 +56,7 @@ class RecordingLogger implements Logger {
 
 const emptyDispatch: ReminderDispatchSummary = {
   claimed: 0, delivered: 0, deliveredLate: 0, viaDm: 0, viaChannel: 0, retried: 0, failed: 0, uncertain: 0,
-  skippedMissed: 0, staleCompletions: 0, errors: 0,
+  skippedMissed: 0, staleCompletions: 0, errors: 0, eventRescheduled: 0, eventCanceled: 0, eventUnverified: 0,
 };
 const emptyRecovery: ReminderRecoverySummary = { recovered: 0, staleCompletions: 0, errors: 0 };
 
