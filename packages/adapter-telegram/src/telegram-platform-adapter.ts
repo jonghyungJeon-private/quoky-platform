@@ -1331,14 +1331,27 @@ interface PendingMediaGroup {
 
 /**
  * One turn from the parts of an album: the first part's ids, every non-empty caption in order (normally one), and the
- * attachments of all parts in order (the intake's count bound then applies to the whole album).
+ * attachments of all parts in order (the intake's count bound then applies to the whole album). Each part's quoted
+ * ranges move with its caption: shifted by the caption's offset in the joined text (separators included).
  */
-function mergeAlbum(parts: readonly AdmittedTelegramMessage[]): AdmittedTelegramMessage {
+export function mergeAlbum(parts: readonly AdmittedTelegramMessage[]): AdmittedTelegramMessage {
   const first = parts[0] as AdmittedTelegramMessage;
   if (parts.length === 1) return first;
-  const text = parts.map((part) => part.text).filter((caption) => caption.trim().length > 0).join('\n');
+  const separator = '\n';
+  let text = '';
+  const quotedRanges: Array<{ start: number; end: number }> = [];
+  let joined = false;
+  for (const part of parts) {
+    if (part.text.trim().length === 0) continue;
+    if (joined) text += separator;
+    const offset = text.length;
+    for (const range of part.quotedRanges ?? []) quotedRanges.push({ start: range.start + offset, end: range.end + offset });
+    text += part.text;
+    joined = true;
+  }
   const attachments = parts.flatMap((part) => part.attachments ?? []);
-  return { ...first, text, attachments };
+  const { quotedRanges: _first, ...rest } = first;
+  return { ...rest, text, attachments, ...(quotedRanges.length > 0 ? { quotedRanges } : {}) };
 }
 
 /** One signal aborted when any of `signals` is (or already was); `dispose` drops the listeners. */
