@@ -171,8 +171,8 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
   it('the Drive notice names document actions; the mail notice is unchanged', () => {
     expect(renderDocumentActionClaimWithheld('ko', 'drive')).toContain('문서를 읽기만 했고');
     expect(renderDocumentActionClaimWithheld('en', 'drive')).toContain('Quoky only read the document');
-    expect(renderDocumentActionClaimWithheld('ko')).toBe(renderDocumentActionClaimWithheld('ko', 'mail'));
-    expect(renderDocumentActionClaimWithheld('ko')).toContain('메일을 읽기만 했고');
+    expect(renderDocumentActionClaimWithheld('ko', 'mail')).toContain('메일을 읽기만 했고');
+    expect(renderDocumentActionClaimWithheld('en', 'mail')).toContain('Quoky only read the email');
   });
 });
 

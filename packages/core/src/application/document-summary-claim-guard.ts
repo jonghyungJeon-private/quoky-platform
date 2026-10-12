@@ -15,6 +15,8 @@
  * (`쿠팡에서 배송 안내 메일을 보냈어요`) and quoted first-person speech. Every pattern is linear (bounded repetition only) on the provider's bounded reply.
  */
 
+import type { UntrustedDocumentSource } from './untrusted-document-readout';
+
 /**
  * Quoky stand-ins in Korean: a nearest subject that is one of these never exempts a claim (re-review item 3), whether
  * it is the first person or a word the model may use for itself.
@@ -135,21 +137,30 @@ export function containsDocumentActionClaim(text: string): boolean {
   return clauses(text).some((clause) => koreanClaim(clause));
 }
 
+/** The fixed notice per source (CA review P3-5): a new source fails typecheck until it has its own notice. */
+const WITHHELD_NOTICE: Readonly<Record<UntrustedDocumentSource, { readonly ko: string; readonly en: string }>> = {
+  mail: {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the email: nothing was ' +
+      'sent, replied to, forwarded, deleted, archived, labelled or scheduled, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 메일을 읽기만 했고, 보내기·답장·전달·삭제·보관·' +
+      '라벨 변경·일정 추가를 하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
+  drive: {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the document: nothing ' +
+      'was edited, shared, moved, renamed or deleted, no permission changed, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 문서를 읽기만 했고, 수정·공유·이동·이름 변경·' +
+      '삭제·권한 변경을 하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
+};
+
 /**
  * The fixed reply that replaces a summary claiming an action (never shown, never stored). It names what the item's
  * source could have done (DRV-1: a document is edited, shared or moved, not sent); neutral nouns only.
  */
-export function renderDocumentActionClaimWithheld(language: 'ko' | 'en', source: 'mail' | 'drive' = 'mail'): string {
-  if (source === 'drive') {
-    return language === 'en'
-      ? 'The summary claimed an action that was never taken, so it was not shown. Quoky only read the document: nothing ' +
-          'was edited, shared, moved, renamed or deleted, no permission changed, and no to-do or reminder was created.'
-      : '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 문서를 읽기만 했고, 수정·공유·이동·이름 변경·' +
-          '삭제·권한 변경을 하지 않았으며 할 일이나 알림도 만들지 않았어요.';
-  }
-  return language === 'en'
-    ? 'The summary claimed an action that was never taken, so it was not shown. Quoky only read the email: nothing was ' +
-        'sent, replied to, forwarded, deleted, archived, labelled or scheduled, and no to-do or reminder was created.'
-    : '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 메일을 읽기만 했고, 보내기·답장·전달·삭제·보관·' +
-        '라벨 변경·일정 추가를 하지 않았으며 할 일이나 알림도 만들지 않았어요.';
+export function renderDocumentActionClaimWithheld(language: 'ko' | 'en', source: UntrustedDocumentSource): string {
+  return WITHHELD_NOTICE[source][language];
 }

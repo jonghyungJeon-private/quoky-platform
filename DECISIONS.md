@@ -19571,6 +19571,9 @@ Independent Chief Architect review before GML-1 merges.
   - **P3-4 (Gmail-only delta):** the "only read" developer rule of the summary prompt is now per source
     (`DOCUMENT_ONLY_READ_RULE`); the mail wording is the pre-DRV-1 sentence, the drive wording names the drive and
     sharing. Pinned by a prompt-composer test.
+  - **P3-5 (withheld-notice typing):** `renderDocumentActionClaimWithheld(language, source)` takes an
+    `UntrustedDocumentSource` with no default and reads a `Record<UntrustedDocumentSource, …>`, so a new source fails
+    typecheck until it has its own notice.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 
