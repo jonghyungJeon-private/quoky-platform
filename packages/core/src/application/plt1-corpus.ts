@@ -4,7 +4,7 @@ import { ResponseComposer } from './response-composer';
 import type { CodeChangePreview, CodeDiffPreview, PatchSetPreview } from './response-composer';
 
 /**
- * Test fixtures for PLT-1, shared by the Core span tests, the Discord rendering golden and the Telegram rendering test
+ * Test fixtures for PLT-1, shared by the Core span tests, the chat-platform rendering goldens and the Telegram rendering test
  * (one corpus, three renderings). Nothing in the runtime uses this module.
  */
 
@@ -140,7 +140,7 @@ export function plt1Replies(composer: ResponseComposer, v: Plt1Variant): Array<[
 
 /**
  * Replies whose rendering can outgrow the 1,900-character budget through escaping alone: snake_case paths (every `_` is
- * escaped on Discord) in a long untracked list, a long diff and two 169-character paths in a patch preview. The plain
+ * escaped by a markup platform) in a long untracked list, a long diff and two 169-character paths in a patch preview. The plain
  * text of each fits the budget; PLT-1 review P2-1 requires the fixed tail (validation line and disclaimers, the footer)
  * to survive on every platform and the cut to land in the path list or the diff.
  */
