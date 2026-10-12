@@ -17,6 +17,7 @@ import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, NotificationSink, NotificationSinkOutcome } from '@quoky/core';
+import type { UsageNoticeDelivery } from './provider-usage-notice';
 
 /**
  * `OPS_NOTICE` (ADR-0102 D7, amending ADR-0101 D1 narrowly): the one non-reminder owner notice.
@@ -294,17 +295,18 @@ export class OpsNoticeService {
   /**
    * ADR-0115 D8 (PRV-3): one owner DM with caller-built, content-free text (the provider usage totals), through the same
    * owner-only sink path as {@link notify} (no guild, `BRIEF`). It does NOT use the 3-per-day crash/backup ledger: the
-   * usage notices keep their own once-per-month record, written by the caller only after `SENT`. Never throws.
+   * usage notices keep their own per-month attempt record and act on the full sink outcome (only a retryable
+   * `NOT_SENT` and `NO_OWNER` are tried again, at most 3 attempts per month). Never throws.
    */
-  deliverOwnerText(kind: string, text: string): Promise<NotificationSinkOutcome['status'] | 'NO_OWNER'> {
+  deliverOwnerText(kind: string, text: string): Promise<UsageNoticeDelivery> {
     const run = this.queue.then(() => this.deliverText(kind, text));
     this.queue = run.catch(() => undefined);
-    return run.catch(() => 'UNCERTAIN' as const);
+    return run.catch((): UsageNoticeDelivery => ({ status: 'UNCERTAIN', reason: 'UNCLASSIFIED' }));
   }
 
-  private async deliverText(kind: string, text: string): Promise<NotificationSinkOutcome['status'] | 'NO_OWNER'> {
+  private async deliverText(kind: string, text: string): Promise<UsageNoticeDelivery> {
     const { ownerId } = this.deps;
-    if (ownerId === undefined || ownerId === '') return 'NO_OWNER';
+    if (ownerId === undefined || ownerId === '') return { status: 'NO_OWNER' };
     let outcome: NotificationSinkOutcome;
     try {
       outcome = await this.deps.sink.deliver({
@@ -316,7 +318,7 @@ export class OpsNoticeService {
     } catch {
       outcome = { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' };
     }
-    return outcome.status;
+    return outcome;
   }
 
   private async send(reason: OpsNoticeReason): Promise<OpsNoticeOutcome> {

@@ -1,50 +1,91 @@
 import { now as sharedClock } from '@quoky/core';
-import type { IsoTimestamp, Logger } from '@quoky/core';
+import type { IsoTimestamp, Logger, NotificationSinkOutcome } from '@quoky/core';
 import type { BackupJobTimers } from './backup-job';
 import { formatTokens, previousMonthKey } from './provider-usage';
 import type { MonthKey, MonthlyUsage, ProviderUsageLedger } from './provider-usage';
 import type { OpsNoticeLedgerStore } from './ops-notice';
 
 /**
- * ADR-0115 D8 (PRV-3): the two owner notices of the usage ledger, each at most once per calendar month (`QUOKY_TIMEZONE`).
+ * ADR-0115 D8 (PRV-3): the two owner notices of the usage ledger, each settled at most once per calendar month
+ * (`QUOKY_TIMEZONE`).
  *
  * - `MONTHLY`: once, the PREVIOUS month's totals per selection label. Nothing is sent when that month has no usage.
  * - `THRESHOLD`: once in a month, when the month's total tokens (all labels together) first reach
  *   `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (units: TOTAL TOKENS per calendar month). Unset = never.
  *
  * Both go through the owner-only OPS notice path (`deliver`, the primary platform's DM) and carry token totals and run
- * counts only. "Already sent" is recorded in a private JSON file beside the ops notice ledger and only after the
- * delivery outcome is `SENT` (an undelivered notice never suppresses the next attempt). The job reads usage and sends
- * a notice; it has no handle on provider selection and never switches, disables or re-ranks a provider.
+ * counts only. Delivery follows the sink contract (ADR-0101 D4): `SENT` and `UNCERTAIN` (it may have been delivered)
+ * settle the month and are never resent; a non-retryable `NOT_SENT` settles it as given up; only a retryable `NOT_SENT`
+ * and `NO_OWNER` are tried again at the next evaluation. Each kind has at most {@link USAGE_NOTICE_MAX_ATTEMPTS}
+ * attempts per month, counted in a private JSON file beside the ops notice ledger **before** the send (a crash mid-send
+ * still counts), so the bound holds across restarts. If that attempt record cannot be written, nothing is sent (fail
+ * closed, like the ADR-0102 D7 ledger). The job reads usage and sends a notice; it has no handle on provider selection
+ * and never switches, disables or re-orders a provider.
  */
 
 export type UsageNoticeKind = 'PROVIDER_USAGE_MONTHLY' | 'PROVIDER_USAGE_THRESHOLD';
-export type UsageNoticeOutcome = 'SENT' | 'FAILED' | 'UNCERTAIN' | 'NO_OWNER' | 'NOT_SENT';
+
+/** The sink's outcome, or `NO_OWNER` when no owner is configured (nothing was handed to the sink). */
+export type UsageNoticeDelivery = NotificationSinkOutcome | { readonly status: 'NO_OWNER' };
 
 /** Delivers one fixed-shape owner notice; resolves with the delivery outcome (never rejects). */
-export type UsageNoticeDeliver = (kind: UsageNoticeKind, text: string) => Promise<UsageNoticeOutcome | string>;
+export type UsageNoticeDeliver = (kind: UsageNoticeKind, text: string) => Promise<UsageNoticeDelivery>;
+
+/** Delivery attempts per kind per calendar month (retryable `NOT_SENT` and `NO_OWNER` only reach the second and third). */
+export const USAGE_NOTICE_MAX_ATTEMPTS = 3;
+
+export interface UsageNoticeAttempts {
+  readonly month: MonthKey;
+  readonly count: number;
+}
 
 export interface UsageNoticeState {
-  /** The month whose totals the monthly DM already reported (`YYYY-MM`). */
+  /** The month whose monthly DM is settled (`YYYY-MM`): SENT, UNCERTAIN, or given up. */
   readonly monthlyReportedFor?: MonthKey;
-  /** The month in which the threshold DM was already sent. */
+  /** Monthly DM attempts made for one month (recorded before each send). */
+  readonly monthlyAttempts?: UsageNoticeAttempts;
+  /** The month whose threshold DM is settled: SENT, UNCERTAIN, or given up. */
   readonly thresholdSentIn?: MonthKey;
+  /** Threshold DM attempts made in one month (recorded before each send). */
+  readonly thresholdAttempts?: UsageNoticeAttempts;
 }
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function attemptsOf(value: unknown): UsageNoticeAttempts | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { month, count } = value as Record<string, unknown>;
+  return typeof month === 'string' && MONTH.test(month) && typeof count === 'number' && Number.isSafeInteger(count) && count > 0
+    ? { month, count }
+    : undefined;
+}
 
 export function parseUsageNoticeState(content: string | undefined): UsageNoticeState {
   if (content === undefined) return {};
   try {
     const parsed = JSON.parse(content) as Record<string, unknown>;
     if (parsed.version !== 1) return {};
+    const monthlyAttempts = attemptsOf(parsed.monthlyAttempts);
+    const thresholdAttempts = attemptsOf(parsed.thresholdAttempts);
     return {
       ...(typeof parsed.monthlyReportedFor === 'string' && MONTH.test(parsed.monthlyReportedFor) ? { monthlyReportedFor: parsed.monthlyReportedFor } : {}),
+      ...(monthlyAttempts ? { monthlyAttempts } : {}),
       ...(typeof parsed.thresholdSentIn === 'string' && MONTH.test(parsed.thresholdSentIn) ? { thresholdSentIn: parsed.thresholdSentIn } : {}),
+      ...(thresholdAttempts ? { thresholdAttempts } : {}),
     };
   } catch {
     return {};
   }
+}
+
+const STATE_KEYS: Readonly<Record<UsageNoticeKind, { readonly settled: 'monthlyReportedFor' | 'thresholdSentIn'; readonly attempts: 'monthlyAttempts' | 'thresholdAttempts' }>> = {
+  PROVIDER_USAGE_MONTHLY: { settled: 'monthlyReportedFor', attempts: 'monthlyAttempts' },
+  PROVIDER_USAGE_THRESHOLD: { settled: 'thresholdSentIn', attempts: 'thresholdAttempts' },
+};
+
+/** Only these outcomes may be tried again (ADR-0101 D4: only `NOT_SENT{retryable: true}` is retried; no owner = nothing sent). */
+function isRetryable(outcome: UsageNoticeDelivery): boolean {
+  return outcome.status === 'NO_OWNER' || (outcome.status === 'NOT_SENT' && outcome.retryable);
 }
 
 function labelLines(usage: MonthlyUsage): string {
@@ -153,6 +194,24 @@ export class ProviderUsageNoticeJob {
     }
   }
 
+  /**
+   * Record an attempt before sending it. Fail closed: when the record cannot be persisted, the in-memory copy is
+   * restored and nothing is sent, so the per-month attempt bound holds across restarts.
+   */
+  private recordAttempt(state: UsageNoticeState): boolean {
+    const previous = this.memory;
+    const content = JSON.stringify({ version: 1, ...state });
+    this.memory = content;
+    try {
+      this.deps.state?.write(content);
+      return true;
+    } catch {
+      this.memory = previous;
+      this.deps.logger.warn('provider_usage.notice.state_write_failed');
+      return false;
+    }
+  }
+
   /** One evaluation (single-flight, never rejects). Public for tests. */
   checkOnce(): Promise<void> {
     if (this.inFlight !== null) return this.inFlight;
@@ -169,35 +228,55 @@ export class ProviderUsageNoticeJob {
 
   private async evaluate(): Promise<void> {
     const month = this.deps.ledger.monthOf(this.clock());
-    const state = this.readState();
 
     const previous = previousMonthKey(month);
-    if (state.monthlyReportedFor !== previous) {
+    if (this.readState().monthlyReportedFor !== previous) {
       const usage = await this.deps.ledger.monthly(previous);
       // Nothing is sent (and nothing is recorded) for a month without usage.
-      if (usage.runs > 0 && (await this.send('PROVIDER_USAGE_MONTHLY', monthlyUsageNoticeText(usage)))) {
-        this.writeState({ ...this.readState(), monthlyReportedFor: previous });
-      }
+      if (usage.runs > 0) await this.attempt('PROVIDER_USAGE_MONTHLY', previous, monthlyUsageNoticeText(usage));
     }
 
     const threshold = this.deps.monthlyThreshold;
     if (threshold !== undefined && this.readState().thresholdSentIn !== month) {
       const usage = await this.deps.ledger.monthly(month);
-      if (usage.totalTokens >= threshold && (await this.send('PROVIDER_USAGE_THRESHOLD', thresholdUsageNoticeText(usage, threshold)))) {
-        this.writeState({ ...this.readState(), thresholdSentIn: month });
-      }
+      if (usage.totalTokens >= threshold) await this.attempt('PROVIDER_USAGE_THRESHOLD', month, thresholdUsageNoticeText(usage, threshold));
     }
   }
 
-  /** True only when the delivery outcome is `SENT`. */
-  private async send(kind: UsageNoticeKind, text: string): Promise<boolean> {
-    let outcome: string;
+  /**
+   * One bounded delivery attempt of `kind` for `month`: the attempt is counted first, then sent; SENT, UNCERTAIN and a
+   * non-retryable NOT_SENT settle the month, and so does a retryable outcome on the last allowed attempt (given up).
+   */
+  private async attempt(kind: UsageNoticeKind, month: MonthKey, text: string): Promise<void> {
+    const keys = STATE_KEYS[kind];
+    const state = this.readState();
+    if (state[keys.settled] === month) return;
+    const made = state[keys.attempts]?.month === month ? (state[keys.attempts]?.count ?? 0) : 0;
+    if (made >= USAGE_NOTICE_MAX_ATTEMPTS) {
+      // Attempts were used up without a settling write (a crash after the last attempt): give up for the month.
+      this.writeState({ ...state, [keys.settled]: month });
+      this.deps.logger.warn('provider_usage.notice', { kind, outcome: 'GAVE_UP', attempt: made });
+      return;
+    }
+    const attempt = made + 1;
+    if (!this.recordAttempt({ ...state, [keys.attempts]: { month, count: attempt } })) return;
+
+    let outcome: UsageNoticeDelivery;
     try {
       outcome = await this.deps.deliver(kind, text);
     } catch {
-      outcome = 'UNCERTAIN';
+      outcome = { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' };
     }
-    this.deps.logger.info('provider_usage.notice', { kind, outcome });
-    return outcome === 'SENT';
+    const retry = isRetryable(outcome) && attempt < USAGE_NOTICE_MAX_ATTEMPTS;
+    const fields = {
+      kind,
+      outcome: outcome.status,
+      attempt,
+      ...(outcome.status === 'NOT_SENT' || outcome.status === 'UNCERTAIN' ? { reason: outcome.reason } : {}),
+      ...(!retry && (outcome.status === 'NOT_SENT' || outcome.status === 'NO_OWNER') ? { gaveUp: true } : {}),
+    };
+    if (outcome.status === 'SENT') this.deps.logger.info('provider_usage.notice', fields);
+    else this.deps.logger.warn('provider_usage.notice', fields);
+    if (!retry) this.writeState({ ...this.readState(), [keys.settled]: month });
   }
 }

@@ -14,7 +14,7 @@ import {
   parseUsageNoticeState,
   thresholdUsageNoticeText,
 } from './provider-usage-notice';
-import type { UsageNoticeKind } from './provider-usage-notice';
+import type { UsageNoticeDelivery, UsageNoticeKind } from './provider-usage-notice';
 import type { OpsNoticeLedgerStore } from './ops-notice';
 
 const dirs: string[] = [];
@@ -121,16 +121,21 @@ interface Harness {
   readonly s: SqliteStorageProvider;
   readonly sent: Array<{ kind: UsageNoticeKind; text: string }>;
   readonly state: ReturnType<typeof memoryState>;
-  readonly outcome: { value: string };
+  readonly outcome: { value: UsageNoticeDelivery };
   readonly clock: { iso: string };
   job(threshold?: number): ProviderUsageNoticeJob;
 }
+
+const SENT: UsageNoticeDelivery = { status: 'SENT', via: 'dm' };
+const RATE_LIMITED: UsageNoticeDelivery = { status: 'NOT_SENT', reason: 'RATE_LIMITED', retryable: true };
+const TOO_LONG: UsageNoticeDelivery = { status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false };
+const TIMEOUT: UsageNoticeDelivery = { status: 'UNCERTAIN', reason: 'TIMEOUT' };
 
 async function harness(start = '2026-10-12T03:00:00.000Z'): Promise<Harness> {
   const s = await store();
   const sent: Harness['sent'] = [];
   const state = memoryState();
-  const outcome = { value: 'SENT' };
+  const outcome: { value: UsageNoticeDelivery } = { value: SENT };
   const clock = { iso: start };
   return {
     s,
@@ -174,7 +179,7 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     expect(text).not.toContain('4,242');
     await job.checkOnce();
     expect(h.sent).toHaveLength(1);
-    expect(JSON.parse(h.state.content as string)).toEqual({ version: 1, monthlyReportedFor: '2026-09' });
+    expect(JSON.parse(h.state.content as string)).toEqual({ version: 1, monthlyReportedFor: '2026-09', monthlyAttempts: { month: '2026-09', count: 1 } });
     await h.s.close();
   });
 
@@ -202,21 +207,98 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     await h.s.close();
   });
 
-  it('counts a notice as sent only on SENT: any other outcome is retried and a later SENT records it', async () => {
+  it('never resends after UNCERTAIN (it may have been delivered), in the same process or after a restart', async () => {
     const h = await harness();
     await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
-    for (const outcome of ['FAILED', 'UNCERTAIN', 'NO_OWNER', 'SUPPRESSED']) {
-      h.outcome.value = outcome;
-      await h.job().checkOnce();
-      expect(h.state.content, outcome).toBeUndefined();
-    }
+    h.outcome.value = TIMEOUT;
+    const job = h.job();
+    await job.checkOnce();
+    await job.checkOnce();
+    h.outcome.value = SENT;
+    await h.job().checkOnce();
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(1);
+    expect(JSON.parse(h.state.content as string)).toEqual({ version: 1, monthlyReportedFor: '2026-09', monthlyAttempts: { month: '2026-09', count: 1 } });
+    await h.s.close();
+  });
+
+  it('retries a retryable NOT_SENT at most 3 times in a month, across restarts, then gives up for that month', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    h.outcome.value = RATE_LIMITED;
+    for (let i = 0; i < 6; i += 1) await h.job().checkOnce(); // a new job each time = a restart between evaluations
+    expect(h.sent).toHaveLength(3);
+    expect(JSON.parse(h.state.content as string)).toMatchObject({ monthlyReportedFor: '2026-09', monthlyAttempts: { month: '2026-09', count: 3 } });
+    h.outcome.value = SENT;
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(3);
+    // The next month starts a fresh budget.
+    await addRun(h.s, '2026-10-15T00:00:00.000Z', { label: 'codex', inputTokens: 1, outputTokens: 1 });
+    h.clock.iso = '2026-11-02T03:00:00.000Z';
+    await h.job().checkOnce();
     expect(h.sent).toHaveLength(4);
-    h.outcome.value = 'SENT';
+    expect(h.sent[3]?.text).toContain('2026-10');
+    await h.s.close();
+  });
+
+  it('a retryable NOT_SENT or NO_OWNER followed by SENT within the budget is delivered once', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    h.outcome.value = { status: 'NO_OWNER' };
     await h.job().checkOnce();
-    expect(h.sent).toHaveLength(5);
-    expect(h.state.content).toBeDefined();
+    h.outcome.value = RATE_LIMITED;
     await h.job().checkOnce();
-    expect(h.sent).toHaveLength(5);
+    h.outcome.value = SENT;
+    await h.job().checkOnce();
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(3);
+    expect(JSON.parse(h.state.content as string)).toMatchObject({ monthlyReportedFor: '2026-09', monthlyAttempts: { count: 3 } });
+    await h.s.close();
+  });
+
+  it('never retries a non-retryable NOT_SENT (TEXT_TOO_LONG): given up for the month, also after a restart', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    h.outcome.value = TOO_LONG;
+    const job = h.job();
+    await job.checkOnce();
+    await job.checkOnce();
+    h.outcome.value = SENT;
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(1);
+    expect(JSON.parse(h.state.content as string)).toMatchObject({ monthlyReportedFor: '2026-09' });
+    await h.s.close();
+  });
+
+  it('counts the attempt before sending: attempts used up by a crash mid-send are not exceeded after a restart', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    // Three attempts were recorded and the process died before any outcome was written.
+    h.state.content = JSON.stringify({ version: 1, monthlyAttempts: { month: '2026-09', count: 3 } });
+    await h.job().checkOnce();
+    await h.job().checkOnce();
+    expect(h.sent).toEqual([]);
+    expect(JSON.parse(h.state.content)).toMatchObject({ monthlyReportedFor: '2026-09' });
+    await h.s.close();
+  });
+
+  it('sends nothing when the attempt record cannot be written (fail closed: the bound must hold across restarts)', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    const broken: OpsNoticeLedgerStore = { read: () => undefined, write: () => { throw new Error('ENOSPC'); } };
+    const job = new ProviderUsageNoticeJob({
+      ledger: new ProviderUsageLedger(h.s.taskRuns, KST),
+      deliver: async (kind, text) => {
+        h.sent.push({ kind, text });
+        return SENT;
+      },
+      state: broken,
+      logger: new RecordingLogger(),
+      clock: () => h.clock.iso,
+    });
+    await job.checkOnce();
+    await job.checkOnce();
+    expect(h.sent).toEqual([]);
     await h.s.close();
   });
 });
@@ -263,18 +345,32 @@ describe('PRV-3 threshold DM (ADR-0115 D8)', () => {
     await h.s.close();
   });
 
-  it('is suppressed only on SENT: an undelivered threshold notice is retried', async () => {
+  it('retries only a retryable outcome, within its own 3-attempt budget, and never after UNCERTAIN', async () => {
     const h = await harness();
     await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
-    h.outcome.value = 'FAILED';
+    h.outcome.value = RATE_LIMITED;
     await h.job(1000).checkOnce();
     await h.job(1000).checkOnce();
     expect(h.sent).toHaveLength(2);
-    h.outcome.value = 'SENT';
+    h.outcome.value = SENT;
     await h.job(1000).checkOnce();
     await h.job(1000).checkOnce();
     expect(h.sent).toHaveLength(3);
+    expect(JSON.parse(h.state.content as string)).toMatchObject({ thresholdSentIn: '2026-10', thresholdAttempts: { month: '2026-10', count: 3 } });
+
+    const u = await harness();
+    await addRun(u.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    u.outcome.value = TIMEOUT;
+    for (let i = 0; i < 4; i += 1) await u.job(1000).checkOnce();
+    expect(u.sent).toHaveLength(1);
+    const v = await harness();
+    await addRun(v.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    v.outcome.value = TOO_LONG;
+    for (let i = 0; i < 4; i += 1) await v.job(1000).checkOnce();
+    expect(v.sent).toHaveLength(1);
     await h.s.close();
+    await u.s.close();
+    await v.s.close();
   });
 });
 
@@ -303,6 +399,9 @@ describe('PRV-3 notice text and state file', () => {
     expect(parseUsageNoticeState('not json')).toEqual({});
     expect(parseUsageNoticeState('{"version":2,"monthlyReportedFor":"2026-09"}')).toEqual({});
     expect(parseUsageNoticeState('{"version":1,"monthlyReportedFor":"bogus","thresholdSentIn":"2026-10"}')).toEqual({ thresholdSentIn: '2026-10' });
+    expect(parseUsageNoticeState('{"version":1,"monthlyAttempts":{"month":"2026-09","count":2},"thresholdAttempts":{"month":"2026-10","count":-1}}')).toEqual({
+      monthlyAttempts: { month: '2026-09', count: 2 },
+    });
   });
 });
 
@@ -323,7 +422,7 @@ describe('PRV-3: the ledger has no write path to provider selection (ADR-0115 D8
     });
     const job = new ProviderUsageNoticeJob({
       ledger: new ProviderUsageLedger(guarded, KST),
-      deliver: async () => 'SENT',
+      deliver: async () => SENT,
       monthlyThreshold: 1,
       logger: new RecordingLogger(),
       clock: () => '2026-10-12T00:00:00.000Z',

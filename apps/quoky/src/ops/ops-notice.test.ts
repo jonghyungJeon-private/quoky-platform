@@ -218,10 +218,10 @@ describe('OPS_NOTICE (ADR-0102 D7)', () => {
 });
 
 describe('PRV-3 owner text delivery (ADR-0115 D8)', () => {
-  it('goes to the owner DM only (no guild, DM-only kind) and returns the delivery status', async () => {
+  it('goes to the owner DM only (no guild, DM-only kind) and returns the full delivery outcome', async () => {
     const sink = new RecordingSink();
     const { notices } = service({ sink });
-    expect(await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'totals only')).toBe('SENT');
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'totals only')).toEqual({ status: 'SENT', via: 'dm' });
     const sent = sink.delivered[0] as OwnerNotification;
     expect(sent.text).toBe('totals only');
     expect(sent.kind).toBe('BRIEF');
@@ -229,13 +229,16 @@ describe('PRV-3 owner text delivery (ADR-0115 D8)', () => {
     expect(sent.target.spaceId).toBeUndefined();
   });
 
-  it('reports a non-SENT outcome as is, NO_OWNER without an owner, and never uses the 3-per-day ledger', async () => {
+  it('reports a non-SENT outcome as is (reason and retryable kept), NO_OWNER without an owner, and never uses the 3-per-day ledger', async () => {
     const ledger = memoryLedger();
-    const { notices } = service({ sink: new RecordingSink({ status: 'FAILED', reason: 'UNCLASSIFIED' } as NotificationSinkOutcome), ledger });
-    expect(await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toBe('FAILED');
+    const notSent: NotificationSinkOutcome = { status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false };
+    const { notices } = service({ sink: new RecordingSink(notSent), ledger });
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual(notSent);
+    const uncertain: NotificationSinkOutcome = { status: 'UNCERTAIN', reason: 'TIMEOUT' };
+    expect(await service({ sink: new RecordingSink(uncertain) }).notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual(uncertain);
     expect(ledger.writes).toBe(0);
     const none = service({ ownerId: undefined });
-    expect(await none.notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toBe('NO_OWNER');
+    expect(await none.notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual({ status: 'NO_OWNER' });
   });
 
   it('does not consume the crash/backup daily budget', async () => {
