@@ -351,6 +351,12 @@ describe('unqualified and keyword-scoped Jira listings (live UAT)', () => {
     },
   );
 
+  it('measures the quoted keyword in code points, not UTF-16 units', () => {
+    const emoji = '🚗'.repeat(16);
+    expect(detectWorkChatCommand(`'${emoji}' 관련 jira 이슈 보여줘`)).toEqual({ ...mine, text: emoji });
+    expect(detectWorkChatCommand(`'${'🚗'.repeat(31)}' 관련 jira 이슈 보여줘`)).toBeNull();
+  });
+
   it('does not claim a long, repeated or labelled quoted passage', () => {
     const long = `'${'가나다라 '.repeat(10).trim()}'`;
     expect(detectWorkChatCommand(`${long} 관련 jira 이슈 보여줘`)).toBeNull();

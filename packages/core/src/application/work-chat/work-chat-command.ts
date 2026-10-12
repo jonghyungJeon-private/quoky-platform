@@ -426,11 +426,11 @@ const ISSUE_KEY_OR_URL = /\b[A-Za-z][A-Za-z0-9_]{0,63}-[1-9]\d{0,8}\b|https?:\/\
 const CONTENT_SHAPED = /[\r\n]|[:：`]/;
 /**
  * Quote marks are allowed only as one short quoted keyword (`'위클리카'`, `“위클리카”`, `「위클리카」`): exactly one pair, at
- * most 30 characters inside, no inner quote. Longer or repeated quoted text is pasted content.
+ * most 30 characters (code points) inside, no inner quote. Longer or repeated quoted text is pasted content.
  */
 const QUOTE_CLASS = '"\'“”‘’「」『』';
-const ANY_QUOTE = new RegExp(`[${QUOTE_CLASS}]`);
-const ONE_SHORT_QUOTED = new RegExp(`^[^${QUOTE_CLASS}]*[${QUOTE_CLASS}][^${QUOTE_CLASS}]{1,30}[${QUOTE_CLASS}][^${QUOTE_CLASS}]*$`);
+const ANY_QUOTE = new RegExp(`[${QUOTE_CLASS}]`, 'u');
+const ONE_SHORT_QUOTED = new RegExp(`^[^${QUOTE_CLASS}]*[${QUOTE_CLASS}][^${QUOTE_CLASS}]{1,30}[${QUOTE_CLASS}][^${QUOTE_CLASS}]*$`, 'u');
 function namesIssueOrIsContent(text: string): boolean {
   if (ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text)) return true;
   return ANY_QUOTE.test(text) && !ONE_SHORT_QUOTED.test(text);
