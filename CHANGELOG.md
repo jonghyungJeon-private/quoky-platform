@@ -8,19 +8,25 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — PRV-3 provider usage ledger and monthly DM (2026-10-12)
 
 Personal v4 track PRV-3 (ADR-0115 D8; implementation note in DECISIONS.md), on top of PRV-1 and PRV-2. **No migration:
-usage lives in `TaskRun.metadata`** (schema stays v15). New and additive: `AiExecutionResult.usage` (type only) and the
-read-only `TaskRunRepository.listWithUsageFinishedBetween`; no new dependency; `ConversationRuntimeDeps` stays 35.
+usage is the typed `TaskRun.usage` value object (ADR-0010), kept in the run's JSON `data`** (schema stays v15). New and
+additive: `AiExecutionResult.usage` (type only), `TaskRun.usage?` and the read-only streaming
+`TaskRunRepository.forEachUsageFinishedBetween`; no new dependency; `ConversationRuntimeDeps` stays 35. ARCHITECTURE.md
+§4 marks `Usage` `[NOW]`.
 
-- **Usage record.** The runtime stores `metadata.usage` (`label`, `reported`, input, cached input, output, reasoning, total
-  tokens) for a provider that returns a usage object: OpenAI and Gemini (response counts), Codex (its `turn.completed`
-  counts), and the label alone ("unknown") for the Claude CLI, Ollama and the vision CLIs. Nothing is estimated; a
-  provider with no usage leaves the run metadata byte-identical.
+- **Usage record.** The runtime stores `TaskRun.usage` (`label`, `reported`, input, cached input, output, reasoning,
+  total tokens) for a provider that returns a usage object: OpenAI and Gemini (response counts), Codex (its
+  `turn.completed` counts), and the label alone ("unknown") for the Claude CLI, Ollama and the vision CLIs. Nothing is
+  estimated; `metadata` stays provider-owned. Every CLI run now records at least `{label, reported: false}`, so runs
+  carry a usage record from the first turn on.
 - **Ops UI.** A `provider-usage` panel with the current and previous month per label (`QUOKY_TIMEZONE`), counts only and
-  escaped; omitted when there is no usage, so the page is byte-identical (the existing golden passes unchanged).
+  escaped. A count no run reported shows as "미보고", never 0. The panel is omitted only while neither month has a usage
+  record, which in practice means until the first answered turn.
 - **Notices.** One DM per calendar month with the previous month's totals per label, and, with the optional
-  `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (total tokens per month; malformed = startup error
-  `PROVIDER_USAGE_THRESHOLD_INVALID`), one DM when a month first reaches it. Owner DM only, totals only, recorded in
-  `ops/provider-usage-notices.json` and only on `SENT`. Quoky never switches, disables or re-ranks a provider from usage.
+  `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (known total tokens per month; malformed = startup error
+  `PROVIDER_USAGE_THRESHOLD_INVALID`), one DM when a month first reaches it. Owner DM only, totals only, always one
+  delivered message (top labels, then "외 K개"). `SENT` and `UNCERTAIN` settle the month; only a retryable `NOT_SENT`
+  and `NO_OWNER` are retried, at most 3 attempts per kind per month, counted before each send in
+  `ops/provider-usage-notices.json`. Quoky never switches, disables or re-ranks a provider from usage.
 
 ## Unreleased — DRV-1 Google Drive read connector (2026-10-12)
 

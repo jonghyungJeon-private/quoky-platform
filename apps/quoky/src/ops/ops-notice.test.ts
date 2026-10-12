@@ -241,6 +241,14 @@ describe('PRV-3 owner text delivery (ADR-0115 D8)', () => {
     expect(await none.notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual({ status: 'NO_OWNER' });
   });
 
+  it('refuses a text above the delivered-text limit before the sink (TEXT_TOO_LONG, not retryable)', async () => {
+    const sink = new RecordingSink();
+    const { notices } = service({ sink });
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_THRESHOLD', '가'.repeat(1_801))).toEqual({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    expect(sink.delivered).toEqual([]);
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_THRESHOLD', '가'.repeat(1_800))).toEqual({ status: 'SENT', via: 'dm' });
+  });
+
   it('does not consume the crash/backup daily budget', async () => {
     const sink = new RecordingSink();
     const { notices } = service({ sink });

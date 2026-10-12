@@ -648,7 +648,7 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
   ): Promise<void> {
     // Only the usage JSON and the timestamp are extracted, one row at a time (`iterate`), with no ORDER BY (a sort would
     // hold every row): memory is O(1) per row. It is still a full scan of task_runs (no index; one would need migration
-    // v16 and an ADR-0115 D8 amendment), roughly 1 ms per 1,000 runs.
+    // v16 and an ADR-0115 D8 amendment), about 1 to 2 ms of CPU per 1,000 runs.
     const rows = this.db
       .prepare(
         `SELECT json_extract(data, '$.usage') AS usage, json_extract(data, '$.finishedAt') AS finishedAt FROM task_runs
