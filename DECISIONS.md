@@ -19998,3 +19998,143 @@ panel inside the existing loopback-only UI. **Re-entry:** the Team/Hosted editio
   - The neutral CommonMark subset of Quoky copy is for a non-Markdown adapter (Telegram's plain mode) to translate.
   - The 1,900/1,800-character message budgets stay in Core for now. TG-1 decides whether an adapter reports its own
     budget.
+
+## ADR-0119 — Storage hardening, migration v16: active-session lookup keyed by (platform, conversation), and a partial expression index for the usage ledger. Amends the `SessionRepository` port and ADR-0115 D8.
+
+- **Status:** Ratified by the Product Owner on 2026-10-12 (recommended default of v5 decision 4; see the v5
+  ratification record below)
+- **Date:** 2026-10-12
+- **Amends:** the `SessionRepository.findActiveByContext` signature (`packages/core/src/ports/storage-provider.port.ts`)
+  and ADR-0115 D8 (the usage query; its PRV-3 residual "an index needs migration v16 and an amendment to D8 first").
+  **Relates:** ADR-0114 (TG-1 residual, CA P3-7), ADR-0096 D10 (migration rules), ADR-0102 (backup and restore),
+  ADR-0001 (the thin `Session`). Plan track STO-1.
+
+### Context
+
+- The active-session lookup is `findActiveByContext(channelId, threadId)`. It does not include the platform. Discord
+  snowflakes (17–20 digits) and Telegram private-chat ids (at most 52-bit integers) are disjoint in practice, but
+  nothing enforces it (ADR-0114 TG-1 residual).
+- Every session already stores its `context.platform` (`ConversationContext.platform`, opaque data) in the JSON `data`
+  column; only the indexed columns `channel_id` and `thread_id` lack it.
+- `forEachUsageFinishedBetween` scans all of `task_runs` (no index on the JSON filter), about 38 ms per 20,000 runs
+  locally, on each hourly usage evaluation and each ops-UI page load (ADR-0115 PRV-3 residual).
+
+### Decision
+
+1. **One migration, v16, additive and idempotent (ADR-0096 D10).** Inside the existing per-migration transaction:
+   - `sessions` gains a nullable `platform TEXT` column, added only when `pragma table_info(sessions)` does not list it.
+   - Backfill: `UPDATE sessions SET platform = json_extract(data, '$.context.platform') WHERE platform IS NULL`. A row
+     whose JSON has no platform keeps `NULL`: it is never matched by the new lookup, so that conversation simply starts
+     a new session. The count of such rows is logged (a number, no ids). Nothing is guessed.
+   - `CREATE INDEX IF NOT EXISTS idx_sessions_platform_context ON sessions(platform, channel_id, thread_id, status)`.
+   - `CREATE INDEX IF NOT EXISTS idx_task_runs_usage_finished ON task_runs(json_extract(data, '$.finishedAt')) WHERE
+     json_extract(data, '$.usage') IS NOT NULL`: a partial expression index on exactly the expressions the usage query
+     already uses, so the query reads a range instead of the table. The query keeps no `ORDER BY` and its output is
+     unchanged.
+   - `user_version` 15 → 16. Numbers stay fixed after the merge; a later task takes v17.
+2. **Port change.** `findActiveByContext(platform: string, channelId: string, threadId?: string)`. The only Core
+   caller is `SessionManager`, which passes `context.platform`. `platform` stays opaque data: Core never branches on
+   it. The SQLite `save` writes the column from `session.context.platform` on every insert and update. No other port,
+   token or `ConversationRuntimeDeps` key changes (35).
+3. **Strict apply on the service DB.** The owner confirms the apply. Steps: `quokyctl.sh backup --apply`, then
+   `backup --verify` on that copy; migrate a scratch copy of the verified backup and compare session and run counts and
+   the usage-panel totals; then the deploy restart, at which the service migrates at startup.
+4. **Rollback and forward.** Migrations are forward-only. A v15 build refuses a v16 database
+   (`SCHEMA_VERSION_AHEAD`), so a rollback is: stop the service, restore the verified pre-v16 backup (ADR-0102), and
+   start the v15 build. Data written after the backup (sessions, runs, reminders created in that window) is lost; the
+   window is one deploy restart, and the owner is told before the apply. Rolling forward again re-runs v16 on the
+   restored v15 database, which is the same idempotent path. No down migration is written.
+
+### Consequences
+
+- **+** The session invariant is enforced, not incidental; a third platform needs no storage change. The usage query is
+  bounded by its date range.
+- **−** One Strict apply on the owner's live database, and a Core port signature change (every fake repository in the
+  tests follows).
+
+### Acceptance criteria
+
+A v15 fixture database with Discord and Telegram sessions migrates to v16 and every active session is found again; a
+Discord and a Telegram conversation with equal channel ids get separate sessions; re-running the migration changes
+nothing; the usage-panel totals are byte-identical before and after; `EXPLAIN QUERY PLAN` uses both indexes; a v15 build
+opening the v16 database fails with `SCHEMA_VERSION_AHEAD` and touches nothing.
+
+### Strict gates
+
+The backup, verify and scratch-copy check, and the v16 apply on the service DB; the deploy restart.
+
+## ADR-0117 amendment — An opt-in unread-mail section in the morning brief (BRF-3): the count and at most 3 sender/subject lines, never the body, DM-only, off by default (2026-10-12)
+
+- **Status:** Ratified by the Product Owner on 2026-10-12 (recommended default of v5 decision 6; see the v5
+  ratification record below)
+- **Amends:** ADR-0117 D1–D4 (a third connector-backed section). **Relates:** ADR-0118 D4/D5 (the mail listing format
+  and DM-only rule), ADR-0101 D7, ADR-0114 D11. Plan track BRF-3.
+- **Context:** Gmail is live and read-only (v4 QA record G1-G8), and the brief fires daily at 08:00 (B1). The owner has
+  to ask `안 읽은 메일` separately.
+- **Decision:**
+  1. **Opt-in.** `QUOKY_BRIEF_MAIL_ENABLED`, exact `true`/`false`, default `false`, parsed in
+     `apps/quoky/src/reminders/reminder-config.ts` as `QUOKY_BRIEF_JIRA_ENABLED` is. With the flag off, or with no
+     `MAIL_READER` bound (Gmail unconfigured), the section is omitted and the brief is byte-identical.
+  2. **Content.** A `안 읽은 메일` section: the unread count from the same search `안 읽은 메일` makes, then at most 3
+     newest entries as `sender · subject`, with the GML-1 listing caps, the guarded clip and display-mode link
+     neutralizing, each value an `untrusted` span. Never a body or a snippet, never a message id. The lines are not
+     numbered and create no list ↔ id mapping, so `N번 메일` keeps referring to the last explicit listing.
+  3. **Unreadable.** A failed or timed-out read shows "불러오지 못했어요", as the calendar section does (ADR-0117 D1);
+     never "no mail". Zero unread shows "안 읽은 메일이 없어요".
+  4. **Bounded.** No body fetch; the read runs within the brief's existing read timeout and the GML-1 request bounds.
+  5. **No model, DM-only.** No provider is called; the brief stays DM-only on the platform where it was created
+     (ADR-0117 D3/D4, ADR-0114 D11). No new egress: sender and subject go to the owner's DM exactly as `안 읽은 메일` sends
+     them today.
+  6. **Fit.** The brief stays one delivered message (`firstFit`): the mail lines are dropped before the count, and the
+     count before any calendar line.
+- **Acceptance criteria:** flag off is byte-identical; fixture days with 0, 2 and 40 unread mails and an unreadable
+  mailbox render correctly; an injection subject changes no routing and adds no link; no provider call.
+- **Strict gates:** the `.env.local` flag edit on the service; the first live brief with the section.
+
+## ADR-0118 amendment — Gmail thread summaries and reply-to-pick; Drive shared drives; every sheet of a spreadsheet through the Sheets API under the existing `drive.readonly` scope (2026-10-12)
+
+- **Status:** Ratified by the Product Owner on 2026-10-12 (v5 decisions 7, 8 and 9; see the v5 ratification record
+  below)
+- **Amends:** ADR-0118 D2 (the read ports and pinned endpoints), D4 (listing references) and the DRV-1 "first sheet
+  only" residual. D3 ("readonly scopes only … no other scope is ever requested") is **unchanged**. **Relates:**
+  ADR-0098 D3 (delivery receipts), ADR-0111 (the text bound), ADR-0114. Plan tracks GML-2, DRV-2, DRV-2b.
+- **Decision:**
+  1. **(a) GML-2, thread summaries.** `이 스레드 요약해줘` and `N번 메일 스레드 요약해줘` summarize the thread of a listed
+     mail. `MailReader` gains an additive thread read over the pinned `GET /gmail/v1/users/me/threads/{id}`
+     (`gmail.readonly` covers it): at most 20 messages and 256 KiB of text before the head-and-tail clip, each message
+     credential-guarded and framed as untrusted readout, no tools, the claim guard and the fixed footer, DM-only, and
+     only on this explicit request (D7 unchanged). The read-only source scan covers the new call.
+  2. **(a) GML-2, reply-to-pick.** A platform reply to an earlier listing binds `N번` (or `이 메일` for a one-entry
+     listing) to that listing instead of the last one. **This is an additive domain and port-type change:** the `InboundMessage`
+     type that the `PlatformAdapter` port delivers gains an optional opaque `replyTo?: { messageId: string }`, filled
+     by both platform adapters (Discord's message reference, Telegram's `reply_to_message`). No port method changes,
+     and an adapter that leaves the field unset degrades to today's behaviour. Core matches it only against the delivery-receipt ids (ADR-0098 D3) it recorded for its own
+     listing replies, never parses it, and never branches on the platform. A reply to anything else is ignored for
+     picking. Label listings are not built (decision 7: the owner does not use Gmail labels).
+  3. **(b) DRV-2, shared drives.** Search and recent files include the owner's shared drives
+     (`corpora=allDrives`, `includeItemsFromAllDrives=true`, `supportsAllDrives=true`; export with
+     `supportsAllDrives=true`), still `drive.readonly`, at most 10 entries, DM-only, the same guards. No owned-only
+     filter (decision 9).
+  4. **(c) DRV-2b, every sheet.** A spreadsheet summary reads every grid sheet through the Google Sheets API v4:
+     `GET spreadsheets/{id}` with a `fields` mask limited to sheet titles, indexes and types, then
+     `GET spreadsheets/{id}/values:batchGet` with formatted values by rows.
+     - **Scope finding.** Both methods accept `https://www.googleapis.com/auth/drive.readonly` (Google Sheets API
+       reference, "Authorization scopes" of `spreadsheets.get` and `spreadsheets.values.batchGet`, checked
+       2026-10-12). **No new scope and no new consent are needed;** `spreadsheets.readonly` is not requested.
+     - **New pinned host.** `https://sheets.googleapis.com`, GET only, the two paths above, no redirects. The source
+       scan forbids every write method (`batchUpdate`, `values:update`, `values:append`, `values:clear`,
+       `values:batchUpdate`, `values:batchClear`). It lives in `connector-gdrive` (same token, same concern).
+     - **Bounds.** At most 20 sheets; the whole text is cut at 256 KiB (the ADR-0111 text bound) across sheets, with the
+       clip boundary re-guarded as in DRV-1; each sheet starts with its title as an `untrusted` span; chart and object
+       sheets are skipped.
+     - **Fallback.** If the Sheets API answers that it is disabled or not reachable, the summary uses the existing
+       first-sheet CSV export with one note that only the first sheet was read. A consent or scope error keeps the
+       existing consent reply.
+- **Consequences:** **+** the three recorded Gmail/Drive gaps the owner asked for are closed. **−** more hostile text
+  per summary (threads, shared drives, more cells), one more pinned host.
+- **Acceptance criteria:** fixture adapters answer the new phrasings deterministically; an injection thread, a hostile
+  shared-drive name and a hostile sheet title produce no action; listings stay DM-only; a reply to a non-listing message
+  picks nothing; flags and configuration unchanged leave every reply byte-identical; the source scans prove no write
+  path to any of the three hosts.
+- **Strict gates:** enabling the Google Sheets API in the Google Cloud project `quoky-personal-510806` (owner-confirmed);
+  the live sessions (a long thread, a reply pick after a restart, a shared-drive document, a multi-sheet spreadsheet).
