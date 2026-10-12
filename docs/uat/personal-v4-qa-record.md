@@ -57,6 +57,16 @@ by mistake; it was revoked with BotFather `/revoke` and replaced before use. Ide
 | C3 | Main sync, local branch cleanup, remote branch deletion | PASS after one fix to the reply: the first local branch cleanup was refused because the branch was checked out (the reply now names that reason, #172); after switching to `main` it passed. Main was untouched and only `main` remains |
 | C4 | The flag after the run | Set back to `false` |
 
+### Provider usage notice (PRV-3)
+
+| ID | Step | Result |
+|---|---|---|
+| U1 | A temporary `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` of 1 token, then one Codex turn (10,468 tokens reported) | PASS — the threshold DM arrived once in the owner DM |
+| U2 | A second restart | PASS — nothing sent (`thresholdSentIn: 2026-10`) |
+| U3 | Clean-up | The threshold setting was removed and the conversation model restored to Claude |
+
+The monthly DM uses the same delivery path and state machine; it first fires on 11/1 and stays Pending.
+
 ### Settings now on
 
 `QUOKY_BRIEF_JIRA_ENABLED=true` and `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` (the second only matters once a remote
@@ -65,6 +75,10 @@ chat provider is the owner's explicit selection and `QUOKY_LEARNING_EXAMPLES_ENA
 ## Earlier live checks (2026-10-08)
 
 - UNC-1 network-fault test, live (#155). See the ADR-0112 note in `DECISIONS.md`.
+- CODE-8 GitHub App narrowing (Strict, owner-approved): the installation was switched to "Only select repositories" =
+  `jonghyungJeon-private/quoky-uat-sandbox` through the browser; the owner completed GitHub's sudo confirmation.
+  GitHub lookups through Quoky still worked afterwards, and the CODE-9 run of 2026-10-12 (C1-C3) used the narrowed
+  installation.
 - DET-2 and TBL-1 live checks.
 
 ## Pending (not run; not claimed)
@@ -73,9 +87,10 @@ chat provider is the owner's explicit selection and `QUOKY_LEARNING_EXAMPLES_ENA
 |---|---|
 | PRV-1 OpenAI API provider, live | No API key has been issued to the service. Offline only |
 | PRV-2 Gemini API provider, live | No API key. Offline only |
-| PRV-3 monthly usage DM | First fires in November. The usage ledger and the ops panel were not live-checked with a real DM |
+| PRV-3 monthly usage DM | First fires on 11/1. The threshold DM on the same path passed live (U1, U2) |
 | BRF-1 Jira section of the brief | The setting is now on; the first check is the next morning's brief |
 | LRN-5 remote examples, live round trip | No remote provider is selected (none is configured), so no example has left the host |
+| CODE-8 second allowlisted repository | Not run; the App installation covers only the sandbox repository |
 | TG-3 Telegram ops panel, visual check | Not looked at in a browser |
 
 ## Fixes from this session
