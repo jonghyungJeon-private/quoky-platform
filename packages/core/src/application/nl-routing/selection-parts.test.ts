@@ -225,6 +225,9 @@ describe('honest chat (ADR-0120 D9)', () => {
     expect(fact).toContain('Calendar events (command: "오늘 일정")');
     expect(fact).toContain('Sources not listed are not connected.');
     expect(renderConfiguredSourcesFact([NL_WAVE1_ENTRIES['help.topic']])).toBeUndefined();
+    // D5: the help lines go along, so a write request is answered with the exact anchored command (suggestion only).
+    const withCommands = renderConfiguredSourcesFact(configured, ['- 할 일: "할 일 추가: 내용", "완료 처리: 번호"'])!;
+    expect(withCommands).toContain('Quoky\'s own commands (the User sends them exactly; a chat reply cannot run them or do the action): 할 일: "할 일 추가: 내용", "완료 처리: 번호".');
   });
 
   it.each([

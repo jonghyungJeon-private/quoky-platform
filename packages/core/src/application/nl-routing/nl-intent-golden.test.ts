@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_CATALOG_ENTRY_IDS, isNlCatalogEntryId, type NlArgs, type NlCatalogEntry } from './catalog';
 import { prepareSelectionInput } from './selection-input';
+import { buildSelectionPrompt } from './selection-prompt';
 import { validateSelection } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
@@ -68,6 +69,12 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
       }
     }
     expect(problems).toEqual([]);
+  });
+
+  it('the selection prompt quotes no corpus phrase verbatim (the evaluation measures generalization, not recall)', () => {
+    const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
+    const leaked = corpus.cases.filter((golden) => golden.text.trim().length >= 8 && prompt.includes(golden.text.trim())).map((golden) => golden.id);
+    expect(leaked).toEqual([]);
   });
 
   it('keeps every negative and positive within the selection input bound (no case is skipped as too long)', () => {

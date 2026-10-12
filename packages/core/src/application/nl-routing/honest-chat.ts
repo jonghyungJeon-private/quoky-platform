@@ -8,18 +8,38 @@ import type { NlCatalogEntry } from './catalog';
  * mode, so with the flag `off` every prompt and reply is unchanged. Deterministic and provider-neutral.
  */
 
-const FACT_MAX_CHARS = 900;
+const SOURCES_MAX_CHARS = 900;
+const COMMANDS_MAX_CHARS = 1600;
 
-/** The authoritative fact listing the configured read sources and their commands (English, like every Core fact). */
-export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[]): string | undefined {
+/**
+ * The authoritative fact listing the configured read sources and their commands (English, like every Core fact), plus
+ * Quoky's own command lines (the help lines) so a write or action request is answered with the exact command to send —
+ * suggestion-only (ADR-0120 D5): the reply prefills nothing and creates no approval.
+ */
+export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], helpLines: readonly string[] = []): string | undefined {
   const sources = entries.filter((entry) => entry.sourceNames !== undefined);
-  if (sources.length === 0) return undefined;
-  const listed = sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; ');
-  const fact =
-    `Quoky is connected to these sources right now and reads them only through their commands: ${listed}. ` +
-    'Sources not listed are not connected. A chat reply never reads a source itself: when the User asks about one of ' +
-    'the listed sources, point to its command instead of saying Quoky cannot access it.';
-  return fact.length > FACT_MAX_CHARS ? `${fact.slice(0, FACT_MAX_CHARS - 1)}…` : fact;
+  if (sources.length === 0 && helpLines.length === 0) return undefined;
+  const listed = bounded(sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; '), SOURCES_MAX_CHARS);
+  const parts: string[] = [];
+  if (sources.length > 0) {
+    parts.push(
+      `Quoky is connected to these sources right now and reads them only through their commands: ${listed}. ` +
+        'Sources not listed are not connected. A chat reply never reads a source itself: when the User asks about one ' +
+        'of the listed sources, point to its command instead of saying Quoky cannot access it.',
+    );
+  }
+  if (helpLines.length > 0) {
+    const commands = bounded(helpLines.map((line) => line.replace(/^[-\s]+/u, '').trim()).filter(Boolean).join(' | '), COMMANDS_MAX_CHARS);
+    parts.push(
+      `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
+        'When the User asks to create, change, send or remember something, reply with the exact command to send.',
+    );
+  }
+  return parts.join(' ');
+}
+
+function bounded(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 const KO_INCAPABLE =

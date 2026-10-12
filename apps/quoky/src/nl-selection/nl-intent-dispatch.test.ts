@@ -373,6 +373,8 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(failures).toEqual([]);
     expect(routes.selection + routes.grammar + routes.negatives).toBe(CORPUS.cases.length);
     expect(routes.selection).toBeGreaterThan(100);
+    // Every wave-1 entry was served through its handler's handleSelected at least once.
+    expect(new Set(selected.map((served) => served.command.entryId))).toEqual(new Set(core.NL_CATALOG_ENTRY_IDS));
   }, 600_000);
 
   async function seedPreference(value: string): Promise<void> {

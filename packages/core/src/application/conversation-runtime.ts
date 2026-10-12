@@ -7775,7 +7775,7 @@ export class ConversationRuntime {
 
       // ADR-0120 D9: after a `none` selection the chat prompt carries one more authoritative Core fact (the configured
       // sources and their commands); without it the call is exactly as before.
-      const sourcesFact = nlFacts === undefined ? undefined : renderConfiguredSourcesFact(nlFacts.entries);
+      const sourcesFact = nlFacts === undefined ? undefined : renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines);
       const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
       const promptSpec =
         nlComposition === undefined
