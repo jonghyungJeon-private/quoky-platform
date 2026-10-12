@@ -19723,6 +19723,20 @@ Independent Chief Architect review before GML-1 merges.
     sources, under 100 ms each. A claim word longer than 20 characters between the noun and the verb is no longer matched
     (best-effort lexicon; the footer is the guarantee).
 
+### ADR-0118 implementation note — live-QA follow-up: Markdown marker stripping in document-summary replies (2026-10-12)
+
+- **What.** Gmail/Drive summary replies are an untrusted `markup` span (GML-1 P2-4), so the model's `**bold**` showed
+  literally. `stripMarkdownEmphasis` now removes paired `**x**`/`__x__`, leading `#` headings and `-`/`*` bullets
+  (→ `•`), then `neutralizeLinks` runs again as the last step, so no link can come out of the pipeline.
+- **Never create markup (Codex delta rounds 1–4).** A pair is removed only when its content and the characters right
+  outside it contain no markup character (`| ~ \` * _ > # + [ ] ( ) < ! \\ @`); a line whose stripped form starts with
+  line-start markup the raw line did not have is kept verbatim; the prefix guard is depth-independent and the first
+  line's indentation is no longer trimmed. A seeded fuzz pins that `||`, `~~`, ``` `` ```, `<@`, `](`, `__` never increase.
+- **Accepted residual (orchestrator decision after the fifth review round).** `neutralizeLinks` applies NFKC and drops
+  format characters, so a provider's `１． item` or `1\u200b. item` renders as `1. item` (a Discord ordered list). This is
+  the provider's own characters normalized — equivalent to the provider writing `1. item`, which renders the same way
+  today — and is cosmetic only: Codex confirmed no new link, mention or spoiler can arise. Not fixed.
+
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (C-2, recommended default). Amends ADR-0109's "no port, token
