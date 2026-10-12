@@ -126,7 +126,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect(calls.length).toBe(2);
   });
 
-  it('exportText: a Google Doc is exported as text/plain, a Sheet as text/csv, a text file downloaded; others never read', async () => {
+  it('exportText: a Google Doc is exported as text/plain, a Sheet as text/csv; an uploaded text file, a presentation and a PDF are never read', async () => {
     const routes: Record<string, () => Response> = {
       '/drive/v3/files/d1': () => json({ ...meta('d1'), owners: [{ displayName: '김철수', emailAddress: 'kim@example.com' }] }),
       '/drive/v3/files/d1/export': () => text('﻿회의 결론: 금요일 출시'),
@@ -137,7 +137,6 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
       '/drive/v3/files/b1': () => json(meta('b1', 'application/pdf')),
     };
     const { reader, calls } = harness((url) => {
-      if (url.pathname === '/drive/v3/files/t1' && url.searchParams.get('alt') === 'media') return text('# notes\n- one');
       const route = routes[url.pathname];
       return route ? route() : json({}, 404);
     });
@@ -155,13 +154,13 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect(new URL(calls[2]?.url as string).searchParams.get('mimeType')).toBe('text/plain');
     expect((await reader.exportText('s1')).text).toBe('항목,금액\n서버,100');
     expect(calls.some((call) => call.url.endsWith('/s1/export?mimeType=text%2Fcsv'))).toBe(true);
-    expect((await reader.exportText('t1')).text).toBe('# notes\n- one');
-    expect(calls.some((call) => call.url.endsWith('/t1?alt=media'))).toBe(true);
     const before = calls.length;
+    // An uploaded text file is never downloaded (ADR-0118 D2): metadata only, then refused.
+    expect((await failure(reader.exportText('t1'))).reason).toBe('UNSUPPORTED_QUERY');
     expect((await failure(reader.exportText('p1'))).reason).toBe('UNSUPPORTED_QUERY');
     expect((await failure(reader.exportText('b1'))).reason).toBe('UNSUPPORTED_QUERY');
-    // Only the two metadata reads: no export and no download of a presentation or a PDF.
-    expect(calls.slice(before).map((call) => new URL(call.url).pathname)).toEqual(['/drive/v3/files/p1', '/drive/v3/files/b1']);
+    // Only the metadata reads: no export and no download of a presentation or a PDF.
+    expect(calls.slice(before).map((call) => new URL(call.url).pathname)).toEqual(['/drive/v3/files/t1', '/drive/v3/files/p1', '/drive/v3/files/b1']);
   });
 
   it('the exported text is cut at 256 KiB while it streams (never a split code point) and marked truncated', async () => {
@@ -248,7 +247,6 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     const allowed = [
       '/drive/v3/files?q=x&pageSize=10&orderBy=modifiedTime+desc&fields=files(id)&spaces=drive',
       '/drive/v3/files/abc?fields=id,name',
-      '/drive/v3/files/abc?alt=media',
       '/drive/v3/files/abc/export?mimeType=text%2Fplain',
       '/drive/v3/files/abc/export?mimeType=text%2Fcsv',
     ];
@@ -270,6 +268,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
       ['/drive/v3/files/abc/export?mimeType=application%2Fpdf', 'GET'],
       ['/drive/v3/files/abc/export', 'GET'],
       ['/drive/v3/files/abc?alt=json', 'GET'],
+      ['/drive/v3/files/abc?alt=media', 'GET'],
       ['/drive/v3/files/abc?alt=media&fields=id', 'GET'],
       ['/drive/v3/files?q=x&pageToken=t', 'GET'],
       ['/drive/v3/files?q=x&q=y', 'GET'],

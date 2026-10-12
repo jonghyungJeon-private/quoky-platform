@@ -84,12 +84,13 @@ describe('connector-gdrive read-only source scan (ADR-0118 D3/D6)', () => {
     expect(code(sources.map((source) => source.text).join('\n'))).not.toMatch(/\bfetch\(/);
   });
 
-  it('exports text only: the export types are text/plain and text/csv, and a download is alt=media of a text file', () => {
+  it('exports text only: the export types are text/plain and text/csv, and a media download (alt=media) is forbidden (CA review P2-2)', () => {
     const reader = code(sources.find((source) => source.name === 'gdrive-reader.ts')?.text ?? '');
     const exportTypes = [...reader.matchAll(/\]: '([a-z]+\/[a-z.+-]+)'/g)].map((match) => match[1]);
     expect(exportTypes).toEqual(['text/plain', 'text/csv']);
-    expect([...reader.matchAll(/'alt', '(\w+)'/g)].map((match) => match[1])).toEqual(['media']);
-    expect(reader).toMatch(/if \(!isDriveTextExportable\(summary\.kind\)\)/);
+    expect(reader).not.toMatch(/alt\s*=\s*media|['"]alt['"]|\balt\b\s*:/);
+    expect(reader).not.toMatch(/searchParams\.set\('alt'/);
+    expect(reader).toMatch(/!isDriveTextExportable\(summary\.kind\) \|\| exportType === undefined/);
   });
 
   it('the scan patterns catch every quote style and aliasing (not vacuous)', () => {

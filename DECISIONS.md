@@ -19398,20 +19398,21 @@ Independent Chief Architect review before GML-1 merges.
   - `exportText(id)` returns one file plus its owner's display name and its text, at most 256 KiB, and `textTruncated`.
 
   `kind` is neutral (`document`, `spreadsheet`, `presentation`, `text`, `pdf`, `folder`, `other`); Core never sees a
-  vendor MIME type. Only `document`, `spreadsheet` and `text` are exportable (`isDriveTextExportable`). Failures are the
+  vendor MIME type. Only `document` and `spreadsheet` are exportable (`isDriveTextExportable`); an uploaded text file is
+  listed as `text` but never read (CA review P2-2). Failures are the
   ADR-0100 reasons, as for Gmail; a non-exportable kind is `UNSUPPORTED_QUERY`. Raw names are cut to 2,000 units before
   any regex (`boundDriveLine`).
 - **Adapter (D3, D6): read-only by construction.**
   - **One request site**, `get()`, which calls `assertGDriveReadRequest` first. Allowed: `GET` to
     `https://www.googleapis.com` only, and exactly one of
     - `/drive/v3/files` with `q`, `pageSize`, `orderBy`, `fields`, `spaces`;
-    - `/drive/v3/files/{id}` with `fields`, or `alt=media` alone;
+    - `/drive/v3/files/{id}` with `fields` only (no `alt`, since CA review P2-2);
     - `/drive/v3/files/{id}/export` with `mimeType` exactly `text/plain` or `text/csv`.
 
     A duplicated key, `pageToken`, `supportsAllDrives`, `/permissions`, `/copy`, `/revisions`, `/upload`, another
     export type or `alt=json` is refused. The only other request is the OAuth token POST.
-  - **Text only.** Docs export as `text/plain`, Sheets as `text/csv` (the first sheet), and `text/plain`, `text/markdown`
-    or `text/csv` files download with `alt=media`. The kind is re-checked from the vendor type at export time. A body
+  - **Text only.** Docs export as `text/plain`, Sheets as `text/csv` (the first sheet). No file is downloaded
+    (`alt=media` was removed per the CA review, P2-2). The kind is re-checked from the vendor type at export time. A body
     that is not `text/*` is refused. The text is cut at 256 KiB while it streams (the rest is cancelled, never read),
     a split code point is dropped and the bytes are decoded once. No PDF, image, Office or presentation is read.
   - **Bounds.** 10 s per call, redirects refused, minimal `fields` masks (the listing asks for no owner, link, size or
@@ -19426,7 +19427,7 @@ Independent Chief Architect review before GML-1 merges.
   - **Source scan** (`read-only-source-scan.test.ts`, the GML-1 review P3-4 form): any quote style, template literals
     included; a computed `method`; every `fetchImpl` reference (exactly the nine expected); the GET site preceded by its
     assertion; no `fetch(`; the Drive write, sharing and upload paths and parameters above; the export types exactly
-    `text/plain` and `text/csv`; `alt` exactly `media`; the only scope `drive.readonly`; the only hosts
+    `text/plain` and `text/csv`; `alt=media` forbidden; the only scope `drive.readonly`; the only hosts
     `www.googleapis.com`, `oauth2.googleapis.com` and `accounts.google.com`.
 - **Consent.** `calendar-auth.js --drive`: same Internal "Desktop app" client, `drive.readonly` only,
   `include_granted_scopes=false`, a NEW mode-600 file, nothing printed but the URL and the path. One grant set per run:
@@ -19469,7 +19470,7 @@ Independent Chief Architect review before GML-1 merges.
     names, are kept in memory per (session, actor) for 30 minutes.
 - **Egress (D7): the only path by which Drive text leaves the host** is the GML-1 path, reused, not duplicated.
   1. A listing reads metadata only (name, kind, modified time) and shows it in the DM; none of it becomes transcript.
-  2. Only an explicit summary request for a listed `document`, `spreadsheet` or `text` file calls `exportText`. Any other
+  2. Only an explicit summary request for a listed `document` or `spreadsheet` calls `exportText`. Any other
      kind is answered "cannot be read as text" with no read.
   3. `buildUntrustedDocumentReadout({ source: 'drive', title: name, author: owner, … })`: ADR-0111 D3 normalization,
      `neutralizeLinks` (body mode for the text, display mode for title and author), the strict credential guard on the
@@ -19525,7 +19526,7 @@ Independent Chief Architect review before GML-1 merges.
   - The OAuth token response is read with `response.json()` (unbounded, pinned to the OAuth host), as in GML-1.
 - **Live QA (Strict, owner).** Enable the Google Drive API in `quoky-personal-510806`; run `calendar-auth --drive`; set
   `QUOKY_DRIVE_TOKEN_FILE`; one read probe (`최근 문서` in the DM). Then about 15 phrasings:
-  - recent and name search (KO and EN), an empty search, a summary of a Doc, a Sheet and a text file;
+  - recent and name search (KO and EN), an empty search, a summary of a Doc and a Sheet (an uploaded text file: expected "cannot be read as text");
   - a presentation or PDF (expected: "cannot be read as text");
   - a long document (truncated head and tail), and a non-Korean document;
   - an injection document the owner shares with themselves;
@@ -19534,6 +19535,10 @@ Independent Chief Architect review before GML-1 merges.
   - a summary in a server channel (expected the DM-only reply);
   - `드라이브 코스 찾아줘` and `D 드라이브에서 파일 찾아줘` (expected: not a Drive reply);
   - a write request (expected the read-only refusal).
+- **ADR-0118 D2 conformance.** D2 ratifies only a bounded text export of Google Docs and Sheets. The pre-review adapter
+  also downloaded uploaded `text/*` files with `alt=media`, an egress path never ratified; the CA review removed it.
+  **Owner-decision candidate:** whether a future D2 amendment may add uploaded text files. It would need a binary sniff
+  (a `text/*` label alone does not prove the bytes are text).
 - **CA review fixes (Chief Architect review, 2026-10-12), one commit each.**
   - **P2-1 (clip boundary):** the link neutralizer and the credential check ran before the clip, so a cut could create a
     link (`…xxxxxxevil.com1 trailing` cut to `…evil.com`) or a credential shape (`note AKIA…Pz` cut to `AKIA…P`). After
@@ -19541,6 +19546,11 @@ Independent Chief Architect review before GML-1 merges.
     NFKC would turn it into `...`); a match shows the placeholder. Applied to Drive names and the echoed name query and
     to mail sender, subject, snippet and the echoed sender query. Tests: `drive-listing-fit.test.ts`,
     `mail-listing-fit.test.ts`.
+  - **P2-2 (`alt=media` removed):** the adapter no longer downloads uploaded text files, and the request guard no longer
+    accepts `alt` at all (`alt=media` and `alt=json` are refused; the source scan forbids `alt`). An uploaded text file is
+    still listed with the kind `텍스트`; a summary of one gets the existing "cannot be read as text" reply
+    (`UNSUPPORTED_QUERY` from the adapter, or the handler's kind check, before any read). `DRIVE_TEXT_EXPORTABLE_KINDS`
+    is now `document` and `spreadsheet`.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

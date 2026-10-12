@@ -43,9 +43,9 @@ describe('DriveReader port (ADR-0118 D2, DRV-1)', () => {
     for (const id of ['', '../x', 'a b', 'x'.repeat(129), 7, 'a/export']) expect(isValidDriveFileId(id)).toBe(false);
   });
 
-  it('only documents, spreadsheets and text files have a text export', () => {
-    expect(['document', 'spreadsheet', 'text'].every(isDriveTextExportable)).toBe(true);
-    expect(['presentation', 'pdf', 'folder', 'other', 'image', undefined].some(isDriveTextExportable)).toBe(false);
+  it('only documents and spreadsheets have a text export; an uploaded text file does not (ADR-0118 D2)', () => {
+    expect(['document', 'spreadsheet'].every(isDriveTextExportable)).toBe(true);
+    expect(['text', 'presentation', 'pdf', 'folder', 'other', 'image', undefined].some(isDriveTextExportable)).toBe(false);
   });
 
   it('declares no write method: the port is search, recent and export only', () => {

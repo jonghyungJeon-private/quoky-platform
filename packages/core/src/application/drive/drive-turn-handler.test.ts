@@ -16,6 +16,7 @@ import {
   DRIVE_REPLY_MAX_CHARS,
   renderDriveDmOnly,
   renderDriveHistoryNote,
+  renderDriveSummaryNotText,
   renderDriveReadFailure,
   renderDriveSummaryFooter,
   renderDriveWriteRefused,
@@ -279,6 +280,15 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
       await handler.handle(ctx('최근 문서'));
       return { handler, ...fake };
     }
+
+    it('an uploaded text file is listed as 텍스트 but its summary gets the cannot-be-read reply and is never exported (CA review P2-2)', async () => {
+      const { handler, exports } = await listed([file('t1', { kind: 'text', name: 'notes.md' })]);
+      const outcome = await handler.handle(ctx('1번 문서 요약해줘'));
+      expect(outcome !== null && 'reply' in outcome).toBe(true);
+      expect(textOf(outcome)).toBe(renderDriveSummaryNotText('text', 'ko'));
+      expect(textOf(outcome)).toContain('텍스트로 읽을 수 없어서');
+      expect(exports).toEqual([]);
+    });
 
     it('a listing never reads content; "N번 문서 요약해줘" exports that one file and returns the bounded readout', async () => {
       const { handler, exports } = await listed([file('d1'), file('d2'), file('d3')]);

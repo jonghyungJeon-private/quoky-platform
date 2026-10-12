@@ -42,8 +42,8 @@ export const DRIVE_FILE_ID_MAX_LENGTH = 128;
  */
 export const DRIVE_FILE_KINDS = ['document', 'spreadsheet', 'presentation', 'text', 'pdf', 'folder', 'other'] as const;
 export type DriveFileKind = (typeof DRIVE_FILE_KINDS)[number];
-/** The kinds whose text an adapter may export for a summary: a document, a spreadsheet and a plain text file. */
-export const DRIVE_TEXT_EXPORTABLE_KINDS: readonly DriveFileKind[] = Object.freeze(['document', 'spreadsheet', 'text']);
+/** The kinds whose text an adapter may export for a summary: a Google Doc and a Google Sheet only (ADR-0118 D2; an uploaded text file is listed as `text` but never read). */
+export const DRIVE_TEXT_EXPORTABLE_KINDS: readonly DriveFileKind[] = Object.freeze(['document', 'spreadsheet']);
 
 export function isDriveTextExportable(kind: unknown): boolean {
   return typeof kind === 'string' && (DRIVE_TEXT_EXPORTABLE_KINDS as readonly string[]).includes(kind);

@@ -41,7 +41,7 @@ const GET_PATH = /^\/drive\/v3\/files\/[A-Za-z0-9_-]{1,128}$/;
 const EXPORT_PATH = /^\/drive\/v3\/files\/[A-Za-z0-9_-]{1,128}\/export$/;
 /** The only query parameters each read may carry. */
 const LIST_PARAMS: ReadonlySet<string> = new Set(['q', 'pageSize', 'orderBy', 'fields', 'spaces']);
-const GET_PARAMS: ReadonlySet<string> = new Set(['fields', 'alt']);
+const GET_PARAMS: ReadonlySet<string> = new Set(['fields']);
 const EXPORT_PARAMS: ReadonlySet<string> = new Set(['mimeType']);
 
 /** The vendor types this adapter maps; Core only ever sees a {@link DriveFileKind}. */
@@ -49,7 +49,7 @@ const GOOGLE_DOCUMENT = 'application/vnd.google-apps.document';
 const GOOGLE_SPREADSHEET = 'application/vnd.google-apps.spreadsheet';
 const GOOGLE_PRESENTATION = 'application/vnd.google-apps.presentation';
 const GOOGLE_FOLDER = 'application/vnd.google-apps.folder';
-/** Plain text files: the only files ever downloaded (`alt=media`), and only as bounded text. */
+/** Uploaded plain text files: LISTED as kind `text`, never downloaded (ADR-0118 D2: only a Google Doc or Sheet text export). */
 const PLAIN_TEXT_TYPES: ReadonlySet<string> = new Set(['text/plain', 'text/markdown', 'text/csv']);
 /** The text export of each exportable Google type; nothing else is ever exported. */
 export const GDRIVE_EXPORT_TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -85,7 +85,7 @@ export interface GoogleDriveReaderConfig {
  * pinned Drive API origin; then exactly one of
  *
  * - `files` (list) with `q`, `pageSize`, `orderBy`, `fields`, `spaces`;
- * - `files/{id}` (get) with `fields`, or `alt=media` alone (a plain text file's bounded download);
+ * - `files/{id}` (get) with `fields` only (never `alt`: no file is ever downloaded);
  * - `files/{id}/export` with `mimeType` exactly `text/plain` or `text/csv`.
  *
  * There is no code path that sends anything else; this is the runtime half of the read-only guarantee (the source scan
@@ -104,8 +104,6 @@ export function assertGDriveReadRequest(url: URL, method: string): void {
   }
   if (GET_PATH.test(url.pathname)) {
     only(GET_PARAMS);
-    const alt = url.searchParams.get('alt');
-    if (alt !== null && (alt !== 'media' || keys.length !== 1)) throw new GDriveEndpointNotAllowedError();
     return;
   }
   if (EXPORT_PATH.test(url.pathname)) {
@@ -149,8 +147,8 @@ export function driveKindOf(mimeType: unknown): DriveFileKind {
  * `files.list` / `files.get` / `files.export` endpoints only, through one guarded request function; the grant must be
  * exactly `drive.readonly`; a timeout on every call, redirects refused, every JSON response size-bounded, the exported
  * text cut at {@link DRIVE_TEXT_MAX_BYTES} while it streams, result counts bounded (one page of at most 10 files, one
- * ids-only page of at most 100 for the count). Only Google Docs (as `text/plain`), Google Sheets (as `text/csv`) and
- * plain text files are ever read; no other file content, no binary download. No upload, create, edit, copy, move,
+ * ids-only page of at most 100 for the count). Only Google Docs (as `text/plain`), Google Sheets (as `text/csv`) are ever
+ * read (an uploaded text file is listed, never downloaded); no other file content, no binary download. No upload, create, edit, copy, move,
  * rename, trash, delete, share or permission call exists. The access token lives in memory only; the refresh token,
  * client secret and access token are never logged and never appear in an error.
  */
@@ -190,14 +188,13 @@ export class GoogleDriveReader implements DriveReader {
     meta.searchParams.set('fields', GDRIVE_GET_FIELDS);
     const payload = await this.readJson(meta, GDRIVE_GET_MAX_BYTES);
     const summary = mapFile(payload, id);
-    // The kind is re-checked here, from the vendor type: only a document, a spreadsheet or a plain text file is read.
-    if (!isDriveTextExportable(summary.kind)) {
+    // The kind is re-checked here, from the vendor type: only a Google Doc or Sheet has a text export (D2).
+    const exportType = GDRIVE_EXPORT_TYPES[String(payload.mimeType)];
+    if (!isDriveTextExportable(summary.kind) || exportType === undefined) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gdrive: the file has no text export');
     }
-    const exportType = GDRIVE_EXPORT_TYPES[String(payload.mimeType)];
-    const url = exportType !== undefined ? this.filesUrl(id, '/export') : this.filesUrl(id);
-    if (exportType !== undefined) url.searchParams.set('mimeType', exportType);
-    else url.searchParams.set('alt', 'media');
+    const url = this.filesUrl(id, '/export');
+    url.searchParams.set('mimeType', exportType);
     const body = await this.readText(url);
     const owners = Array.isArray(payload.owners) ? payload.owners : [];
     const owner = isRecord(owners[0]) ? owners[0].displayName : undefined;
