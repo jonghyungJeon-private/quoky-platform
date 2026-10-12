@@ -265,7 +265,8 @@ import {
   validatePatchableDiff,
   verifyAppliedChangeSet,
 } from './code-work/code-change-set';
-import { withRunUsage } from './provider-usage-record';
+import { runUsageRecord } from './provider-usage-record';
+import type { RunUsageRecord } from '../domain';
 import type { CodeChangeTargetCollection } from './code-work/code-change-set';
 import {
   type PushMode,
@@ -790,7 +791,7 @@ export interface ConversationRuntimeDeps {
     startRun(task: Task, capability: Capability): Promise<TaskRun>;
     completeRun(
       run: TaskRun,
-      opts: { artifactIds: Id[]; providerId?: string; metadata?: Metadata },
+      opts: { artifactIds: Id[]; providerId?: string; metadata?: Metadata; usage?: RunUsageRecord },
     ): Promise<unknown>;
     failRun(
       run: TaskRun,
@@ -7784,12 +7785,13 @@ export class ConversationRuntime {
       // so the 👎 rate of turns with and without examples can be compared.
       const runMetadata =
         curatedExampleCount > 0 ? { ...(result.audit ?? {}), curatedExampleCount } : result.audit;
-      // ADR-0115 D8 (PRV-3): the run's usage (reported counts, or the label alone = "unknown"; never estimated) in the existing metadata JSON.
-      const usageMetadata = withRunUsage(runMetadata, executed.usage);
+      // ADR-0115 D8 (PRV-3): the run's `Usage` (reported counts, or the label alone = "unknown"; never estimated) on TaskRun.usage.
+      const usage = runUsageRecord(executed.usage);
       await this.deps.tasks.completeRun(run, {
         artifactIds,
         ...(providerId ? { providerId } : {}),
-        ...(usageMetadata ? { metadata: usageMetadata } : {}),
+        ...(runMetadata ? { metadata: runMetadata } : {}),
+        ...(usage ? { usage } : {}),
       });
       // ADR-0118 D7/D8: a document summary is never kept as transcript (a fixed note instead), so neither the item's
       // text nor anything an injected item steered the model to write reaches a later prompt.
@@ -8016,10 +8018,13 @@ export class ConversationRuntime {
       const guard = withheld ? null : this.guardChatReply(capability, executed.text, message.text, task.id);
       const result = withheld ? { ...executed, ...withheld } : { ...executed, text: guard?.text ?? executed.text };
       const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, result.artifacts ?? []);
+      // ADR-0115 D8 (PRV-3): the image-understanding run records its `Usage` the same way.
+      const usage = runUsageRecord(executed.usage);
       await this.deps.tasks.completeRun(run, {
         artifactIds,
         providerId,
-        metadata: withRunUsage({ ...(result.audit ?? {}), imageCount: images.length }, executed.usage) ?? {},
+        metadata: { ...(result.audit ?? {}), imageCount: images.length },
+        ...(usage ? { usage } : {}),
       });
       await this.deps.memory.recordAssistant(result.text, message.context, task.sessionId ?? session.id);
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);

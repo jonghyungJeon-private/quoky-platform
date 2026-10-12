@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Capability, TaskRunStatus, withRunUsage } from '@quoky/core';
+import { Capability, TaskRunStatus, runUsageRecord } from '@quoky/core';
 import type { AiUsage, LogFields, Logger, TaskRun } from '@quoky/core';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { ProviderUsageLedger, monthKeyOf, monthStartIso, previousMonthKey } from './provider-usage';
@@ -40,7 +40,7 @@ async function store(): Promise<SqliteStorageProvider> {
 let counter = 0;
 async function addRun(s: SqliteStorageProvider, finishedAt: string, usage: AiUsage | undefined, extra: Record<string, unknown> = {}): Promise<void> {
   counter += 1;
-  const metadata = withRunUsage({ model: 'm', ...extra }, usage);
+  const record = runUsageRecord(usage);
   const run: TaskRun = {
     id: `run-${counter}`,
     taskId: `task-${counter}`,
@@ -50,14 +50,15 @@ async function addRun(s: SqliteStorageProvider, finishedAt: string, usage: AiUsa
     artifactIds: [],
     startedAt: finishedAt,
     finishedAt,
-    ...(metadata ? { metadata } : {}),
+    metadata: { model: 'm', ...extra },
+    ...(record ? { usage: record } : {}),
   } as TaskRun;
   await s.taskRuns.save(run);
 }
 
 const KST = 'Asia/Seoul';
 
-describe('PRV-3 usage ledger (ADR-0115 D8): monthly totals read from TaskRun.metadata', () => {
+describe('PRV-3 usage ledger (ADR-0115 D8): monthly totals read from TaskRun.usage', () => {
   it('computes month keys and boundaries in QUOKY_TIMEZONE', () => {
     // 2026-09-30T15:30Z is already October 1st in Seoul, still September 30th in UTC.
     expect(monthKeyOf('2026-09-30T15:30:00.000Z', KST)).toBe('2026-10');

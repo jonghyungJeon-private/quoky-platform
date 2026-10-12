@@ -111,7 +111,7 @@ async function bootstrap(): Promise<void> {
     logger: recordOpsUiErrors(new ConsoleLogger('ops'), 'ops'),
     // ADR-0106 amendment D2: expired memory-archive entries are deleted at start and daily, independent of backups.
     memoryArchivePurge: (now) => memoryCommands.purgeExpiredArchive(now),
-    // ADR-0115 D8 (PRV-3): the monthly provider usage DM and the optional threshold DM read run metadata; nothing is written.
+    // ADR-0115 D8 (PRV-3): the monthly provider usage DM and the optional threshold DM read TaskRun.usage; nothing is written.
     providerUsageSource: { listWithUsageFinishedBetween: (from, to) => storage.taskRuns.listWithUsageFinishedBetween(from, to) },
   });
 

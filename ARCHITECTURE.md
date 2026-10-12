@@ -87,7 +87,7 @@ fixed; the implementations are not.
 | `ContinuationBinding` | Immutable WorkHandoff ↔ Task provenance/correlation (ADR-0084); not execution state, runtime authority, TaskRun, receipt or workflow | `[NOW]` |
 | `ExecutionReceipt` | Immutable CAP-013 command execution provenance (ADR-0078) | `[NOW]` |
 | `TriggerSource` | Bounded provenance and read-only decisions (ADR-0081/0082/0083), no scheduler | `[NOW]` (execution `[LATER]`) |
-| `TaskRun` | One execution attempt of a Task (+ `Usage`/cost) | `[NOW]` (Usage `[RESERVE]`) |
+| `TaskRun` | One execution attempt of a Task (+ `Usage`/cost) | `[NOW]` (Usage `[NOW]`) |
 | `Intent` | Classified meaning of a message → a `Capability` | `[NOW]` |
 | `Plan` / `PlanStep` | **Intra-task** decomposition | `[NOW]` |
 | `Workflow` | **Inter-task** orchestration (≠ Plan) | `[LATER]` (field not reserved — YAGNI per ADR-0013; JSON storage makes late-add free) |

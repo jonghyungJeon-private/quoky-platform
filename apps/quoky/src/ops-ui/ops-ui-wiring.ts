@@ -312,7 +312,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       providerSelection: selection !== undefined,
     },
     telegram: () => telegramStatusOf(platform),
-    // ADR-0115 D8 (PRV-3): current and previous calendar month, read from run metadata (read-only; no panel without usage).
+    // ADR-0115 D8 (PRV-3): current and previous calendar month, read from TaskRun.usage (read-only; no panel without usage).
     providerUsage: async () => {
       const ledger = new ProviderUsageLedger(storage.taskRuns, config.reminders.timeZone);
       const current = ledger.monthOf((input.nowMs ?? Date.now)());

@@ -368,7 +368,7 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
       ledger,
       providerUsageSource: {
         listWithUsageFinishedBetween: async (from, to) =>
-          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, metadata: { usage: r.usage } }) as never),
+          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, usage: r.usage }) as never),
       },
       providerUsageState: { read: () => stateContent, write: (c) => { stateContent = c; } },
     });
@@ -400,7 +400,7 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
       ledger,
       providerUsageSource: {
         listWithUsageFinishedBetween: async (from, to) =>
-          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, metadata: { usage: r.usage } }) as never),
+          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, usage: r.usage }) as never),
       },
       providerUsageState: { read: () => stateContent, write: (c) => { stateContent = c; } },
     });

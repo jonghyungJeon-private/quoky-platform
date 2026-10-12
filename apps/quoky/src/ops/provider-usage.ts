@@ -3,7 +3,7 @@ import type { IsoTimestamp, TaskRunRepository } from '@quoky/core';
 
 /**
  * ADR-0115 D8 (PRV-3): the provider usage ledger, READ side. There is no ledger table and no migration: each finished
- * run already carries its normalised usage in `TaskRun.metadata.usage` (core `runUsageRecord`), and the monthly totals
+ * run already carries its normalised `Usage` value object in `TaskRun.usage` (core `runUsageRecord`), and the monthly totals
  * are computed here by reading those runs back through the additive read-only `listWithUsageFinishedBetween` query.
  *
  * Boundaries are calendar months in `QUOKY_TIMEZONE`. Totals are counts only (tokens and runs per selection label);
@@ -76,7 +76,7 @@ export class ProviderUsageLedger {
     );
     const byLabel = new Map<string, { -readonly [K in keyof LabelUsage]: LabelUsage[K] }>();
     for (const run of runs) {
-      const usage = readRunUsage(run.metadata);
+      const usage = readRunUsage(run.usage);
       if (usage === undefined) continue;
       let row = byLabel.get(usage.label);
       if (row === undefined) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RUN_USAGE_KEY, readRunUsage, runUsageRecord, withRunUsage } from './provider-usage-record';
+import { readRunUsage, runUsageRecord } from './provider-usage-record';
 
 describe('provider usage record (ADR-0115 D8)', () => {
   it('normalises reported counts and keeps the provider total', () => {
@@ -24,22 +24,17 @@ describe('provider usage record (ADR-0115 D8)', () => {
     expect(runUsageRecord(undefined)).toBeUndefined();
   });
 
-  it('leaves metadata exactly as it was when the provider reported no usage object', () => {
-    const metadata = { model: 'm' };
-    expect(withRunUsage(metadata, undefined)).toBe(metadata);
-    expect(withRunUsage(undefined, undefined)).toBeUndefined();
-  });
-
-  it('adds the record under metadata.usage and reads it back', () => {
-    const stored = withRunUsage({ model: 'm' }, { label: 'gemini:g', inputTokens: 1, outputTokens: 2 });
-    expect(stored).toEqual({ model: 'm', [RUN_USAGE_KEY]: { label: 'gemini:g', reported: true, inputTokens: 1, outputTokens: 2, totalTokens: 3 } });
-    expect(readRunUsage(stored)).toEqual({ label: 'gemini:g', reported: true, inputTokens: 1, outputTokens: 2, totalTokens: 3 });
+  it('reads a stored TaskRun.usage back, dropping a malformed count', () => {
+    const stored = runUsageRecord({ label: 'gemini:g', inputTokens: 1, outputTokens: 2 });
+    expect(stored).toEqual({ label: 'gemini:g', reported: true, inputTokens: 1, outputTokens: 2, totalTokens: 3 });
+    expect(readRunUsage(JSON.parse(JSON.stringify(stored)))).toEqual(stored);
+    expect(readRunUsage({ label: 'codex', reported: true, inputTokens: -3, outputTokens: 4 })).toEqual({ label: 'codex', reported: true, outputTokens: 4 });
   });
 
   it('reads malformed stored usage as absent', () => {
     expect(readRunUsage(undefined)).toBeUndefined();
-    expect(readRunUsage({ usage: 'x' })).toBeUndefined();
-    expect(readRunUsage({ usage: [] })).toBeUndefined();
-    expect(readRunUsage({ usage: { label: 5 } })).toBeUndefined();
+    expect(readRunUsage('x')).toBeUndefined();
+    expect(readRunUsage([])).toBeUndefined();
+    expect(readRunUsage({ label: 5 })).toBeUndefined();
   });
 });
