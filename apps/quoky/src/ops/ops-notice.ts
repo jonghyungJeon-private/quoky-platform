@@ -17,7 +17,6 @@ import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { REMINDER_LIMITS, now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, NotificationSink, NotificationSinkOutcome } from '@quoky/core';
-import type { UsageNoticeDelivery, UsageNoticeKind } from './provider-usage-notice';
 
 /**
  * `OPS_NOTICE` (ADR-0102 D7, amending ADR-0101 D1 narrowly): the one non-reminder owner notice.
@@ -36,6 +35,12 @@ import type { UsageNoticeDelivery, UsageNoticeKind } from './provider-usage-noti
  * - One `CRASH_LOOP` per 10 minutes at most: the starts of one restart burst produce one notice.
  * - It is not a scheduler and decides nothing; a delivery failure is logged (status only) and never retried.
  */
+
+/** ADR-0115 D8 (PRV-3): the two owner usage notices (`provider-usage-notice.ts`), sent by `deliverOwnerText`. */
+export type UsageNoticeKind = 'PROVIDER_USAGE_MONTHLY' | 'PROVIDER_USAGE_THRESHOLD';
+
+/** The sink's outcome, or `NO_OWNER` when no owner is configured (nothing was handed to the sink). */
+export type UsageNoticeDelivery = NotificationSinkOutcome | { readonly status: 'NO_OWNER' };
 
 export type OpsNoticeReason =
   | 'CRASH_LOOP'

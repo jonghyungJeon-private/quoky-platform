@@ -1,9 +1,9 @@
 import { REMINDER_LIMITS, firstFit, messageContent, now as sharedClock, plainTextOf } from '@quoky/core';
-import type { IsoTimestamp, Logger, NotificationSinkOutcome } from '@quoky/core';
+import type { IsoTimestamp, Logger } from '@quoky/core';
 import type { BackupJobTimers } from './backup-job';
 import { formatTokenField, formatTokens, previousMonthKey } from './provider-usage';
 import type { LabelUsage, MonthKey, MonthlyUsage, ProviderUsageLedger } from './provider-usage';
-import type { OpsNoticeLedgerStore } from './ops-notice';
+import type { OpsNoticeLedgerStore, UsageNoticeDelivery, UsageNoticeKind } from './ops-notice';
 
 /**
  * ADR-0115 D8 (PRV-3): the two owner notices of the usage ledger, each settled at most once per calendar month
@@ -27,10 +27,8 @@ import type { OpsNoticeLedgerStore } from './ops-notice';
  * has no handle on provider selection and never switches, disables or re-orders a provider.
  */
 
-export type UsageNoticeKind = 'PROVIDER_USAGE_MONTHLY' | 'PROVIDER_USAGE_THRESHOLD';
-
-/** The sink's outcome, or `NO_OWNER` when no owner is configured (nothing was handed to the sink). */
-export type UsageNoticeDelivery = NotificationSinkOutcome | { readonly status: 'NO_OWNER' };
+// The two delivery types live in `ops-notice.ts` (the delivering side), so the two modules import in one direction only.
+export type { UsageNoticeDelivery, UsageNoticeKind } from './ops-notice';
 
 /** Delivers one fixed-shape owner notice; resolves with the delivery outcome (never rejects). */
 export type UsageNoticeDeliver = (kind: UsageNoticeKind, text: string) => Promise<UsageNoticeDelivery>;
