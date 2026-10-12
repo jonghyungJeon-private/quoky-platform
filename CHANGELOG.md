@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 HARD-1 bounded OAuth token reads (2026-10-12)
+
+- **The three Google connectors read the OAuth token response bounded.** The token endpoint's reply (code exchange and
+  refresh; error bodies too) in `connector-gmail`, `connector-gdrive` and `connector-calendar-google` is read through a
+  16 KiB stream reader instead of an unbounded `response.json()`. A larger declared length is refused without reading and
+  a larger stream is cancelled at the cap; either is the adapter's existing typed `INVALID_RESPONSE` error, carrying no
+  body content or token. Normal responses are unchanged. Each adapter keeps its own copy of the reader.
+
 ## Unreleased — v4 residual polish (2026-10-12)
 
 No migration, no new DI token; `ConversationRuntimeDeps` stays 35.
