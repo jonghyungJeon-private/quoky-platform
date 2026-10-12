@@ -26,6 +26,9 @@ import type {
   StorageProvider,
   TaskRun,
 } from '@quoky/core';
+import { loadConfig } from './config';
+import { OpsUiActions } from './ops-ui/actions/ops-actions';
+import { opsDecisionResultTarget } from './ops-ui/ops-ui-wiring';
 import type { CompositePlatformAdapter } from './platform/composite-platform-adapter';
 
 /**
@@ -212,6 +215,8 @@ interface World {
   /** The composite when Telegram is enabled; otherwise the Discord adapter. */
   readonly platform: CompositePlatformAdapter;
   readonly dir: string;
+  /** The environment the world was booted with (a snapshot: later worlds replace `process.env`). */
+  readonly env: NodeJS.ProcessEnv;
   turn(context: ConversationContext, text: string): Promise<{ text: string; sessionId: string; reply: OutboundMessage }>;
   /** Fetches whose URL starts with `prefix`. */
   fetchesTo(prefix: string): FetchRecord[];
@@ -312,6 +317,8 @@ async function startWorld(options: WorldOptions): Promise<World> {
     ...options.env,
   });
 
+  const bootEnv: NodeJS.ProcessEnv = { ...process.env };
+
   // `app.module.ts` reads the environment once, at import: a fresh module registry per world gives each world its own
   // configuration (and its own `@quoky/core` tokens, so everything below is taken from this world's imports).
   vi.resetModules();
@@ -379,6 +386,7 @@ async function startWorld(options: WorldOptions): Promise<World> {
     discordNotes,
     platform,
     dir,
+    env: bootEnv,
     async turn(context, text) {
       seq += 1;
       const message: InboundMessage = { id: `int3-${seq}`, context, text, receivedAt: new Date().toISOString() };
@@ -523,6 +531,45 @@ describe('INT-3 — Telegram and Discord identity (ADR-0114 D3/D11)', () => {
     expect(String(note?.text)).toContain('Telegram 연결을 멈췄어요: TELEGRAM_POLL_CONFLICT');
     expect(full.botApi.sends()).toHaveLength(sendsBefore);
   });
+  it('an ops-UI decision on an approval held by the Telegram chat is delivered to the MAPPED Discord owner, never to Telegram', async () => {
+    // Two Discord owners: with the TG-3 mapping (QUOKY_TELEGRAM_OWNER_ACTOR_MAP) removed there is no admissible target
+    // (the single-owner fallback does not apply), so this case fails if the mapping is dropped.
+    const config = loadConfig({ ...full.env, QUOKY_DISCORD_OWNER_IDS: `222222222222222222,${DISCORD_OWNER}` } as NodeJS.ProcessEnv);
+    const sink = full.app.get<NotificationSink>(full.core.NOTIFICATION_SINK);
+    const sendsBefore = full.botApi.sends().length;
+    const notesBefore = full.discordNotes.length;
+    const ownerActor = await ownerActorId(full, telegramChat);
+    const actions = new OpsUiActions({
+      owner: async () => ({ status: 'RESOLVED', actorId: ownerActor }),
+      clock: () => new Date().toISOString(),
+      timeZone: 'Asia/Seoul',
+      approvals: {
+        // The shared decision service's answer for an approval that originated in the Telegram chat.
+        decisions: {
+          locateForOpsUi: async () => ({ status: 'REFUSED', refusal: 'NOT_FOUND' }),
+          decideFromOpsUi: async () => ({
+            status: 'DECIDED',
+            outcome: 'REJECTED',
+            kind: 'CONNECTOR_WRITE',
+            reply: { context: telegramChat, text: '요청을 거절했어요.' },
+            chat: telegramChat,
+          }),
+        },
+        actor: (id: string) => full.storage.actors.get(id),
+        sessions: async () => [],
+        notify: (notification: OwnerNotification) => sink.deliver(notification),
+        resultTarget: opsDecisionResultTarget(config),
+      },
+      logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    } as never);
+    const outcome = await actions.decideApproval('a'.repeat(32), 'reject', '');
+    expect(outcome).toMatchObject({ code: 'REJECTED', ok: true });
+    const sent = full.discordNotes.slice(notesBefore);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ kind: 'OPS_DECISION_RESULT', target: { platform: 'discord', userId: DISCORD_OWNER } });
+    expect(full.botApi.sends()).toHaveLength(sendsBefore);
+  });
+
 });
 
 describe('INT-3 — mail and Drive are DM-only, summary only on request, inert on injection (ADR-0118)', () => {
