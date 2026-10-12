@@ -770,7 +770,8 @@ describe('INT-3 — learning examples egress (ADR-0116)', () => {
         sourceTurnId: `int3-turn-${n}`,
         egress: 'LOCAL_ONLY',
         createdAt: `2026-10-0${n}T00:00:00.000Z`,
-        expiresAt: '2027-10-01T00:00:00.000Z',
+        // Relative to the real clock, never a calendar date: the suite must not start failing on a date.
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60_000).toISOString(),
         data: { requestText: `${QUESTION} ${n}`, idealAnswer: `핵심 결정과 담당자를 세 줄로 정리해요 (예시 ${n})`, sourceRating: 'POSITIVE' },
       } as unknown as LearningItem;
     });
