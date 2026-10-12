@@ -235,7 +235,7 @@ export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSour
 }
 
 /** Pair `marker` tokens on one line in a single linear pass and drop the paired ones (CommonMark flanking, simplified). */
-/** Characters that take part in Discord / Telegram / CommonMark markup, mentions or escapes. */
+/** Characters that take part in chat-platform or CommonMark markup, mentions or escapes. */
 const STRIP_UNSAFE = /[|~`*_>#+[\]()<!\\@]/u;
 const isUnsafe = (ch: string | undefined): boolean => ch !== undefined && STRIP_UNSAFE.test(ch);
 
