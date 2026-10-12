@@ -9,10 +9,12 @@ import type {
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { isConnectorQueryError } from '../../ports/connector-query';
 import {
+  DRIVE_LISTING_KINDS,
   DRIVE_LISTING_MAX_ENTRIES,
   isDriveTextExportable,
   type DriveDocument,
   type DriveFileKind,
+  type DriveListingKind,
   type DriveListResult,
   type DriveReader,
 } from '../../ports/drive-reader.port';
@@ -169,7 +171,10 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       return this.reply(ctx, renderDriveDmOnly(language), 'RESPONDED', language, 'not-read');
     }
     const name = nlStringArg(selected.args, 'name');
-    return this.list(ctx, name === undefined ? { kind: 'recent' } : { kind: 'search', name }, language);
+    const kind = nlStringArg(selected.args, 'kind');
+    const fileKind = kind !== undefined && (DRIVE_LISTING_KINDS as readonly string[]).includes(kind) ? (kind as DriveListingKind) : undefined;
+    const narrowed = fileKind !== undefined ? { fileKind } : {};
+    return this.list(ctx, name === undefined ? { kind: 'recent', ...narrowed } : { kind: 'search', name, ...narrowed }, language);
   }
 
   private async list(ctx: TurnHandlerContext, filter: DriveListingFilter, language: DriveLanguage): Promise<TurnHandlerReply> {
@@ -177,8 +182,8 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     try {
       result = await this.withTimeout(
         filter.kind === 'recent'
-          ? this.deps.reader.recentFiles(DRIVE_LISTING_MAX_ENTRIES)
-          : this.deps.reader.searchByName(filter.name, DRIVE_LISTING_MAX_ENTRIES),
+          ? this.deps.reader.recentFiles(DRIVE_LISTING_MAX_ENTRIES, ...(filter.fileKind !== undefined ? [filter.fileKind] : []))
+          : this.deps.reader.searchByName(filter.name, DRIVE_LISTING_MAX_ENTRIES, filter.fileKind),
       );
     } catch (error) {
       const failure = failureOf(error);

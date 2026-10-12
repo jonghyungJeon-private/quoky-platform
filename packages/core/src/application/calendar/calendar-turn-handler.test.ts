@@ -11,6 +11,7 @@ import {
 } from './calendar-turn-handler';
 import { renderCalendarHistoryNote } from './calendar-reply-renderer';
 import { parseCalendarQuestion } from './calendar-question';
+import { resolveNlRange } from '../nl-routing/symbolic-time';
 
 /** Tuesday 2026-10-06 10:00 in Asia/Seoul. */
 const NOW = '2026-10-06T01:00:00.000Z';
@@ -230,5 +231,55 @@ describe('CalendarTurnHandler — "남은 일정" keeps only events that have no
     const past = await handler.handle(at15('어제 남은 일정'));
     expect(calls).toHaveLength(1);
     expect((past as { reply: { text: string } }).reply.text).toContain('남은 일정이 없어요');
+  });
+});
+
+describe('CalendarTurnHandler.handleSelected — title keyword (ADR-0120 follow-up)', () => {
+  const SCRUM: CalendarEvent = { ...MEETING, id: 'e-2', title: 'Daily SCRUM', start: '2026-10-06T00:00:00.000Z', end: '2026-10-06T00:30:00.000Z' };
+  const REVIEW: CalendarEvent = { ...MEETING, id: 'e-3', title: '디자인 리뷰', start: '2026-10-06T05:00:00.000Z', end: '2026-10-06T06:00:00.000Z' };
+  const selected = (args: Record<string, string | boolean>, range: 'today' | 'this-week' = 'today') => ({
+    entryId: 'calendar.events' as const,
+    args,
+    range: resolveNlRange(range, NOW, SEOUL),
+    language: 'ko' as const,
+  });
+
+  it('filters the fetched events locally on the title, case-insensitively, and reads the whole range from the reader', async () => {
+    const { reader, calls } = fakeReader(async () => [SCRUM, REVIEW, MEETING]);
+    const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
+    const outcome = await handler.handleSelected?.(selected({ keyword: 'scrum' }), ctx('그 중에 scrum만'));
+    const text = (outcome as { reply: { text: string } }).reply.text;
+    expect(calls).toHaveLength(1);
+    expect(text).toContain('Daily SCRUM');
+    expect(text).not.toContain('디자인 리뷰');
+    expect(text).not.toContain('팀 회의');
+    expect(text).toContain('일정 1개');
+  });
+
+  it('says honestly that nothing matched, naming the keyword', async () => {
+    const { reader } = fakeReader(async () => [REVIEW, MEETING]);
+    const outcome = await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected({ keyword: '스크럼' }), ctx('오늘 스크럼 있어?'));
+    const text = (outcome as { reply: { text: string } }).reply.text;
+    expect(text).toContain('"스크럼"');
+    expect(text).toContain('일정이 없어요');
+    expect(text).not.toContain('리뷰');
+  });
+
+  it('keeps the unfiltered answer when no keyword is given', async () => {
+    const { reader } = fakeReader(async () => [SCRUM, REVIEW]);
+    const outcome = await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected({}), ctx('오늘 일정'));
+    const text = (outcome as { reply: { text: string } }).reply.text;
+    expect(text).toContain('Daily SCRUM');
+    expect(text).toContain('디자인 리뷰');
+  });
+
+  it('a keyword on the next event answers the next matching event or says none upcoming', async () => {
+    const future: CalendarEvent = { ...SCRUM, start: '2026-10-07T00:00:00.000Z', end: '2026-10-07T00:30:00.000Z' };
+    const { reader } = fakeReader(async () => [REVIEW, future]);
+    const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
+    const hit = await handler.handleSelected?.({ ...selected({ keyword: 'scrum' }), range: resolveNlRange('upcoming', NOW, SEOUL) }, ctx('다음 스크럼 언제야?'));
+    expect((hit as { reply: { text: string } }).reply.text).toContain('Daily SCRUM');
+    const miss = await handler.handleSelected?.({ ...selected({ keyword: '면접' }), range: resolveNlRange('upcoming', NOW, SEOUL) }, ctx('다음 면접 언제야?'));
+    expect((miss as { reply: { text: string } }).reply.text).toContain('"면접"');
   });
 });

@@ -42,6 +42,10 @@ export const DRIVE_FILE_ID_MAX_LENGTH = 128;
  */
 export const DRIVE_FILE_KINDS = ['document', 'spreadsheet', 'presentation', 'text', 'pdf', 'folder', 'other'] as const;
 export type DriveFileKind = (typeof DRIVE_FILE_KINDS)[number];
+/** The kinds a listing can be narrowed to (ADR-0120 follow-up): a closed, vendor-free set; the adapter maps each to its own type. */
+export const DRIVE_LISTING_KINDS = ['spreadsheet', 'document', 'presentation', 'pdf', 'folder'] as const;
+export type DriveListingKind = (typeof DRIVE_LISTING_KINDS)[number];
+
 /** The kinds whose text an adapter may export for a summary: a Google Doc and a Google Sheet only (ADR-0118 D2; an uploaded text file is listed as `text` but never read). */
 export const DRIVE_TEXT_EXPORTABLE_KINDS: readonly DriveFileKind[] = Object.freeze(['document', 'spreadsheet']);
 
@@ -83,9 +87,9 @@ export interface DriveReader {
   readonly source: string;
   readonly readOnly: true;
   /** Files (not folders, not trashed) whose name contains `name` (1..100 characters), newest modified first. */
-  searchByName(name: string, limit?: number): Promise<DriveListResult>;
-  /** The most recently modified files (not folders, not trashed), newest first. */
-  recentFiles(limit?: number): Promise<DriveListResult>;
+  searchByName(name: string, limit?: number, kind?: DriveListingKind): Promise<DriveListResult>;
+  /** The most recently modified files (not folders, not trashed), newest first. With `kind`: only that kind (`folder` lists folders). */
+  recentFiles(limit?: number, kind?: DriveListingKind): Promise<DriveListResult>;
   /** The bounded text export of one file a listing returned. `UNSUPPORTED_QUERY` when its kind has no text export. */
   exportText(id: string): Promise<DriveDocument>;
 }

@@ -27,7 +27,7 @@ export const PERSONAL_WORK_WINDOW_FIELDS = ['created', 'updated', 'due'] as cons
 export type PersonalWorkWindowField = (typeof PERSONAL_WORK_WINDOW_FIELDS)[number];
 export const PERSONAL_WORK_ROLES = ['assignee', 'reporter', 'either'] as const;
 export type PersonalWorkRole = (typeof PERSONAL_WORK_ROLES)[number];
-export const PERSONAL_WORK_STATUSES = ['open', 'all'] as const;
+export const PERSONAL_WORK_STATUSES = ['open', 'all', 'in-progress'] as const;
 export type PersonalWorkStatus = (typeof PERSONAL_WORK_STATUSES)[number];
 
 /**

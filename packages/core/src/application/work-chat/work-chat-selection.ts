@@ -19,7 +19,7 @@ export const WORK_CHAT_SOURCE_ENTRY: Readonly<Record<WorkChatSource, NlCatalogEn
 };
 
 const ROLES: readonly string[] = ['assignee', 'reporter', 'either'];
-const STATUSES: readonly string[] = ['open', 'all'];
+const STATUSES: readonly string[] = ['open', 'all', 'in-progress'];
 const WINDOWS: readonly string[] = ['created', 'updated', 'due'];
 
 /** The typed command for a selection, or `null` when the entry is not a work-chat read. */

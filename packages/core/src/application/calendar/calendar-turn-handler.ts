@@ -13,7 +13,7 @@ import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import type { CalendarRecentListing, ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage, type CalendarWindow } from './calendar-question';
-import { nlFlagArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
 import type { NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { parseCalendarWriteRequest } from './calendar-write-request';
@@ -142,11 +142,11 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
    */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     if (selected.entryId !== 'calendar.events' || selected.range === undefined) return null;
-    return this.answer(ctx, calendarWindowOfRange(selected.range, ctx.now, this.deps.timeZone), nlFlagArg(selected.args, 'remaining'), selected.language);
+    return this.answer(ctx, calendarWindowOfRange(selected.range, ctx.now, this.deps.timeZone), nlFlagArg(selected.args, 'remaining'), selected.language, nlStringArg(selected.args, 'keyword'));
   }
 
   /** Read `window` once and answer with the deterministic list (shared by the grammar and selection). */
-  private async answer(ctx: TurnHandlerContext, window: CalendarWindow, remainingOnly: boolean, language: CalendarLanguage): Promise<TurnHandlerReply> {
+  private async answer(ctx: TurnHandlerContext, window: CalendarWindow, remainingOnly: boolean, language: CalendarLanguage, keyword?: string): Promise<TurnHandlerReply> {
     // "남은 일정" (Codex P2 on 5594c16): read from now, and drop any timed event that already ended, in case a reader
     // returns the whole day anyway; a span that is already over reads nothing.
     const remaining = remainingOnly;
@@ -159,6 +159,12 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
           ? []
           : await this.readWithTimeout({ from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT });
       if (remaining) events = events.filter((event) => !hasFinished(event, nowMs));
+      // ADR-0120 follow-up: a grounded title keyword narrows the fetched events here, on the title only, case-insensitively.
+      // Titles never reach the model (ADR-0110 D4); the filter runs after the read and the remaining filter.
+      if (keyword !== undefined) {
+        const needle = keyword.normalize('NFC').toLowerCase();
+        events = events.filter((event) => event.title.normalize('NFC').toLowerCase().includes(needle));
+      }
     } catch (error) {
       const failure: CalendarReadFailure =
         error instanceof CalendarReadTimeout ? 'TIMEOUT' : isConnectorQueryError(error) ? error.reason : 'UNAVAILABLE';
@@ -173,6 +179,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       limit: CALENDAR_EVENTS_MAX_LIMIT,
       writesEnabled: this.deps.writesEnabled === true,
       ...(remaining ? { remaining: true } : {}),
+      ...(keyword !== undefined ? { keyword } : {}),
     };
     const reply = renderCalendarEvents(window, events, renderOptions);
     this.rememberListing(ctx.session.id, ctx.actor.id, {

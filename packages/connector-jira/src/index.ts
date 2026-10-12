@@ -210,7 +210,9 @@ function personalWorkJql(params: ParsedPersonalWorkParams, nowMs: number): strin
   const literal = jqlString(identity);
   // ADR-0120 D13: without window/role/status this is byte-identical to the ADR-0100 query.
   const who = role === 'reporter' ? `reporter = ${literal}` : role === 'either' ? `(assignee = ${literal} OR reporter = ${literal})` : `assignee = ${literal}`;
-  const open = status === 'all' ? '' : ' AND resolution = Unresolved AND statusCategory != Done';
+  // `in-progress` is the Jira status category "In Progress" (a closed literal, never owner text); it excludes done work itself.
+  const open =
+    status === 'all' ? '' : status === 'in-progress' ? ' AND statusCategory = "In Progress"' : ' AND resolution = Unresolved AND statusCategory != Done';
   const base = `${who}${open}`;
   if (window !== undefined) {
     if (filter !== 'all') throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: a window needs the all filter');

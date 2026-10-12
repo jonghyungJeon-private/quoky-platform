@@ -9,7 +9,7 @@ import {
   type NlCatalogEntry,
   type NlCatalogEntryId,
 } from './catalog';
-import { isGroundedIn } from './selection-input';
+import { isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
 import { isNlRangeSymbol, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 
@@ -108,6 +108,11 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   for (const spec of entry.args) {
     const value = args[spec.name];
     if (typeof value !== 'string') continue;
+    if (spec.kind === 'enum' && spec.valueGrounding?.[value] !== undefined) {
+      const text = normalizeForMatch(ctx.groundingText);
+      const stated = (spec.valueGrounding[value] ?? []).some((word) => text.includes(normalizeForMatch(word)));
+      if (!stated && ctx.previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+    }
     if (spec.kind === 'keyword') {
       const previous = ctx.previousArgs?.[spec.name];
       const fromPrevious = typeof previous === 'string' && previous === value;

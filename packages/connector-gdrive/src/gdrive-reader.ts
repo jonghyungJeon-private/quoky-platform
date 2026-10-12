@@ -13,6 +13,7 @@ import {
   type ConnectorQueryErrorReason,
   type DriveDocument,
   type DriveFileKind,
+  type DriveListingKind,
   type DriveFileSummary,
   type DriveListResult,
   type DriveReader,
@@ -115,13 +116,24 @@ export function assertGDriveReadRequest(url: URL, method: string): void {
   throw new GDriveEndpointNotAllowedError();
 }
 
+const GDRIVE_LISTING_MIME: Readonly<Record<DriveListingKind, string>> = Object.freeze({
+  spreadsheet: GOOGLE_SPREADSHEET,
+  document: GOOGLE_DOCUMENT,
+  presentation: GOOGLE_PRESENTATION,
+  pdf: 'application/pdf',
+  folder: GOOGLE_FOLDER,
+});
+
 /**
  * The Drive search string for a listing. The adapter owns the vendor query language and its escaping (the ADR-0100 D7
  * precedent): the owner's name text has every quote, backslash and control character removed, so it can only ever be a
  * `name contains` literal. Trashed files and folders are never listed.
  */
-export function buildGDriveQuery(name?: string): string {
-  const terms = ['trashed = false', `mimeType != '${GOOGLE_FOLDER}'`];
+export function buildGDriveQuery(name?: string, kind?: DriveListingKind): string {
+  // `kind` is a closed neutral value mapped to a fixed vendor type here; no owner text reaches the type clause.
+  const wanted = kind === undefined ? undefined : GDRIVE_LISTING_MIME[kind];
+  if (kind !== undefined && wanted === undefined) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gdrive: unsupported file kind');
+  const terms = ['trashed = false', wanted === undefined ? `mimeType != '${GOOGLE_FOLDER}'` : `mimeType = '${wanted}'`];
   if (name !== undefined) {
     // eslint-disable-next-line no-control-regex
     const literal = name.replace(/['"\\\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -174,12 +186,12 @@ export class GoogleDriveReader implements DriveReader {
     this.nowMs = config.nowMs ?? Date.now;
   }
 
-  async searchByName(name: string, limit?: number): Promise<DriveListResult> {
-    return this.list(buildGDriveQuery(parseDriveNameQuery(name, 'gdrive')), resolveDriveListingLimit(limit, 'gdrive'));
+  async searchByName(name: string, limit?: number, kind?: DriveListingKind): Promise<DriveListResult> {
+    return this.list(buildGDriveQuery(parseDriveNameQuery(name, 'gdrive'), kind), resolveDriveListingLimit(limit, 'gdrive'));
   }
 
-  async recentFiles(limit?: number): Promise<DriveListResult> {
-    return this.list(buildGDriveQuery(), resolveDriveListingLimit(limit, 'gdrive'));
+  async recentFiles(limit?: number, kind?: DriveListingKind): Promise<DriveListResult> {
+    return this.list(buildGDriveQuery(undefined, kind), resolveDriveListingLimit(limit, 'gdrive'));
   }
 
   async exportText(id: string): Promise<DriveDocument> {
