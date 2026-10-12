@@ -606,6 +606,15 @@ describe('INT-3 — mail and Drive are DM-only, summary only on request, inert o
     expect(full.fetchesTo(GMAIL).some((record) => record.url.includes('format=full'))).toBe(false);
   });
 
+  it('the real composition persists the displayed listing ids on the session (numbers survive a restart)', async () => {
+    await full.turn(discordDm, '안 읽은 메일');
+    const session = await full.storage.sessions.findActiveByContext(discordDm.channelId);
+    const persisted = JSON.stringify(session?.metadata?.['quoky.lastListing'] ?? null);
+    expect(persisted).toContain('"mail"');
+    // Ids only: no subject or sender text is persisted.
+    expect(persisted).not.toContain('분기 보고서');
+  });
+
   it('a summary happens only on an explicit request: one body read and one summarization call', async () => {
     await full.turn(discordDm, '안 읽은 메일');
     const providerBefore = full.providerLog.length;

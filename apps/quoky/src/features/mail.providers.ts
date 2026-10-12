@@ -104,10 +104,11 @@ export function createMailProviders(options: MailCompositionOptions): Provider[]
     { provide: MAIL_READER, useValue: reader },
     {
       provide: MAIL_TURN_HANDLERS,
-      useFactory: (mailReader: MailReader, sessions: SessionManager): readonly ConversationTurnHandler[] => [
-        createMailTurnHandler({ reader: mailReader, timeZone, logger, copy: GMAIL_MAIL_COPY, sessions }),
+      // The session manager is optional: without it a listing's numbers live only in memory (no persistence).
+      useFactory: (mailReader: MailReader, sessions?: SessionManager): readonly ConversationTurnHandler[] => [
+        createMailTurnHandler({ reader: mailReader, timeZone, logger, copy: GMAIL_MAIL_COPY, ...(sessions !== undefined ? { sessions } : {}) }),
       ],
-      inject: [MAIL_READER, SessionManager],
+      inject: [MAIL_READER, { token: SessionManager, optional: true }],
     },
   ];
 }

@@ -102,10 +102,11 @@ export function createDriveProviders(options: DriveCompositionOptions): Provider
     { provide: DRIVE_READER, useValue: reader },
     {
       provide: DRIVE_TURN_HANDLERS,
-      useFactory: (driveReader: DriveReader, sessions: SessionManager): readonly ConversationTurnHandler[] => [
-        createDriveTurnHandler({ reader: driveReader, timeZone, logger, copy: GDRIVE_DRIVE_COPY, sessions }),
+      // The session manager is optional: without it a listing's numbers live only in memory (no persistence).
+      useFactory: (driveReader: DriveReader, sessions?: SessionManager): readonly ConversationTurnHandler[] => [
+        createDriveTurnHandler({ reader: driveReader, timeZone, logger, copy: GDRIVE_DRIVE_COPY, ...(sessions !== undefined ? { sessions } : {}) }),
       ],
-      inject: [DRIVE_READER, SessionManager],
+      inject: [DRIVE_READER, { token: SessionManager, optional: true }],
     },
   ];
 }
