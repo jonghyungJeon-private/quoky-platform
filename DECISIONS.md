@@ -19499,6 +19499,7 @@ Independent Chief Architect review before GML-1 merges.
     including the Jira and Slack write lines, the contributed lines can exceed the ADR-0096 D6 bound of 14. The
     existing bound then drops the last line. Raising the bound is left to INT-3 and DOC-E, so that the unconfigured
     help stays byte-identical.
+  - **Resolved (v4 residual polish).** See the DRV-1 note: mail and Drive share one merged help line when both are on.
 
 ### ADR-0118 implementation note — DRV-1 Google Drive read connector (2026-10-12)
 
@@ -19646,6 +19647,14 @@ Independent Chief Architect review before GML-1 merges.
     the file as their object, so `진행 상황을 공유했어요` in meeting notes is allowed.
   - **Help-line bound.** With Gmail and Drive both on, two lines are contributed. The ADR-0096 D6 bound of 14 may then
     drop the last line when every other optional feature is on (the GML-1 residual; left to INT-3 and DOC-E).
+  - **Resolved (v4 residual polish).** The bound stays 14 x 120 (raising it needs a Product Owner amendment, as in the
+    2026-10-07 amendment). With Gmail and Drive both registered, `withMergedMailDriveHelp` (the turn-handler aggregator)
+    shows ONE compact line, `- 메일·드라이브(읽기 전용, DM에서만): "안 읽은 메일", "최근 문서", "1번 메일 요약해줘",
+    "1번 문서 요약해줘"`, carried by the mail handler (the Drive handler then contributes none; the handlers themselves
+    are unchanged). With only one of them, or neither, the help is byte-identical. Every quoted phrase still routes. With
+    every optional feature on that was still 15 lines, so the Jira and Slack write lines are one combined line when
+    both writers are on (all commands and execution phrases quoted, both help-intent anchors kept). INT-3 pins: with
+    every optional feature on, every contributed line is present and the reply fits the 2000-character budget.
   - The list ↔ id mapping is in memory and is lost on restart.
   - **Resolved (v4 residual polish).** See the GML-1 note: the Drive list is persisted the same way, under the `drive` slot, with no migration, in
     (ids only; kind re-checked by the adapter at export time).
