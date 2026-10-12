@@ -141,6 +141,8 @@ const DEFAULT_LOCAL_FALLBACK_BY_CAPABILITY: Readonly<Record<Capability, boolean>
   [Capability.POLICY_SENSITIVE_CHAT]: false,
   // ADR-0111 D4/D5: image turns never enter the routed seam; images reach only an IMAGE_UNDERSTANDING provider.
   [Capability.IMAGE_UNDERSTANDING]: false,
+  // ADR-0120 D2: a routing step, never a routed work turn.
+  [Capability.INTENT_SELECTION]: false,
 });
 
 /**

@@ -77,6 +77,12 @@ export enum Capability {
    * 'LOCAL'` ever receives image bytes (owner decision 9); with none ready the turn gets a deterministic reply.
    */
   IMAGE_UNDERSTANDING = 'IMAGE_UNDERSTANDING',
+  /**
+   * Natural-language capability selection (ADR-0120 D2): one bounded, schema-only routing call that picks a read entry
+   * of the closed capability catalog for a message bound for chat. Creates no Task, TaskRun or approval; the provider's
+   * answer is data that Core validates deterministically. Only a provider that passed the ADR-0120 D12 gate advertises it.
+   */
+  INTENT_SELECTION = 'INTENT_SELECTION',
 }
 
 /** What the user is (probably) trying to do, before it becomes a Capability. */

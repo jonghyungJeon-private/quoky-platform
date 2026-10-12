@@ -668,9 +668,9 @@ describe('ConversationRuntime — summarize outcome guards (ADR-0096 D4)', () =>
       artifacts: true, composer: true, workSurface: true, intentResolver: true, orchestrator: true, approvals: true,
       approvalFlow: true, scopeClarificationFlow: true, applyPreviewFlow: true, codeGeneration: true, patch: true,
       codeProposals: true, workspaceWrite: true, git: true, repositoryHosting: true, turnHandlers: true,
-      credentialOverrideFlow: true, logger: true,
+      credentialOverrideFlow: true, nlSelection: true, logger: true,
     };
-    expect(Object.keys(keys)).toHaveLength(35);
+    expect(Object.keys(keys)).toHaveLength(36);
     expect(Object.keys(keys).some((key) => /work(?:Chat|Desk|Summary)/i.test(key))).toBe(false);
   });
 });

@@ -1167,6 +1167,10 @@ function makeDeps(opts: Opts = {}): { deps: ConversationRuntimeDeps; calls: Call
     // scenario keeps the fixed "writes are off" replies; the flow is driven end-to-end, with the real flow, in
     // conversation-runtime-connector-writes.test.ts.
     connectorWriteFlow: undefined,
+    // ADR-0120 D14 (baseline 36): the natural-language selection dep slot is present but unwired here, so every existing
+    // scenario is byte-identical; selection is driven end-to-end, with the real service, in
+    // conversation-runtime-nl-selection.test.ts.
+    nlSelection: undefined,
     logger: {
       ...silentLogger,
       warn: (message: string, fields?: LogFields) => {
@@ -1263,9 +1267,10 @@ describe('ConversationRuntime', () => {
     expect(result.reply.text).toContain('github: Actor 외부 identity를 설정해 주세요.');
   });
 
-  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 35 (ADR-0096, ADR-0097, ADR-0112)', () => {
+  it('keeps the accepted ConversationRuntimeDeps count at the dispatch boundary baseline of 36 (ADR-0096, ADR-0097, ADR-0112, ADR-0120)', () => {
     const { deps } = makeDeps();
-    expect(Object.keys(deps)).toHaveLength(35);
+    expect(Object.keys(deps)).toHaveLength(36);
+    expect(Object.keys(deps)).toContain('nlSelection');
     expect(Object.keys(deps)).toContain('connectorWriteFlow');
     expect(Object.keys(deps)).toContain('turnHandlers');
     expect(Object.keys(deps)).toContain('credentialOverrideFlow');

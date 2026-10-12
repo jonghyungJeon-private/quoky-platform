@@ -65,6 +65,7 @@ const CAPABILITY_LABEL_KO: Readonly<Record<string, string>> = {
   [Capability.PROJECT_ANALYSIS]: '프로젝트 분석',
   [Capability.EMBEDDING]: '임베딩',
   [Capability.IMAGE_UNDERSTANDING]: '이미지 이해',
+  [Capability.INTENT_SELECTION]: '요청 분류',
 };
 
 /**

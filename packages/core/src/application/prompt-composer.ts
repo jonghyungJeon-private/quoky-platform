@@ -194,6 +194,11 @@ export interface PromptCompositionOptions {
   executionLocality?: AiExecutionLocality;
   /** ADR-0116 D3: whether that provider is the owner's explicit selection (`ProviderSelector.resolve`); absent → not. */
   selectionSource?: ProviderSelectionSource;
+  /**
+   * ADR-0120 D9: more `CORE_RUNTIME` / `AUTHORITATIVE_CURRENT_FACT` entries for a chat turn (the configured sources
+   * after a `none` selection), placed after the reply-language fact. Absent → the prompt is byte-identical.
+   */
+  additionalCurrentFacts?: readonly string[];
 }
 
 /** ADR-0107 D5: heading of the curated-example layer (only present for a `LOCAL` provider with examples). */
@@ -343,6 +348,9 @@ export class PromptComposer {
               replyLanguageFact(task.description),
             ),
           ]
+        : []),
+      ...(isGeneralChat
+        ? (options?.additionalCurrentFacts ?? []).map((fact) => PromptComposer.label('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', fact))
         : []),
     ];
     // ADR-0063 Stage 1: render once, then reuse this exact body at both

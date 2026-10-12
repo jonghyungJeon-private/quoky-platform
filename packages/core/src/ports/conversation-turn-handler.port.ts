@@ -16,6 +16,8 @@ import type { ExternalWorkReadout } from '../application/work-chat/external-work
 import type { UntrustedDocumentReadout } from '../application/untrusted-document-readout';
 // Type-only, like the readout above: the parsed connector-write request (ADR-0112 D5), plain data.
 import type { ConnectorWriteDraft } from '../application/connector-writes/connector-write-draft';
+// Type-only, like the readouts above: the closed natural-language catalog and a validated selection (ADR-0120), plain data.
+import type { NlCatalogEntry, NlSelectedCommand } from '../application/nl-routing/catalog';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -131,5 +133,16 @@ export interface ConversationTurnHandler {
   readonly order: number;
   /** Lines contributed to the help reply (ADR-0096 D6), in registry order; bounded by the composer. */
   readonly helpLines?: readonly string[];
+  /**
+   * The natural-language catalog entries this handler owns and can serve right now (ADR-0120 D1): only entries of a
+   * registered and configured source. Read on every selection turn (it may be a getter). Absent: no entry.
+   */
+  readonly catalog?: readonly NlCatalogEntry[];
   handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null>;
+  /**
+   * Serve one validated natural-language selection of an entry in `catalog` (ADR-0120 interfaces): map it to the
+   * handler's existing typed command and return the same reply variants `handle` may return, under the same rules (no
+   * provider, no Task, no approval; the handler enforces its own DM-only rule). `null` lets the turn continue to chat.
+   */
+  handleSelected?(command: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null>;
 }
