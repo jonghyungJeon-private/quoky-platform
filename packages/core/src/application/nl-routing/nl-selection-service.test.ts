@@ -425,6 +425,22 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
     expect(h.actor().metadata?.[INTERPRETATION_PREFERENCES_METADATA_KEY]).toMatchObject({ 'jira.created-scope': { value: 'assignee', at: at(3000) } });
   });
 
+  it.each(['오늘 등록된 지라 이슈 보고 싶어', '오늘 등록된 지라 이슈 보고해줘'])(
+    'the bare word 보고 (see / report to) does not ground the reporter role: %s',
+    async (text) => {
+      const h = harness({ script: [out('jira.issues', { window: 'created', range: 'today', role: 'reporter' })] });
+      expect(await h.decide(text)).toMatchObject({ kind: 'ask' });
+    },
+  );
+
+  it.each(['내가 보고한 이슈 중 오늘 등록된 거', '보고자가 나인 오늘 등록된 이슈', 'issues where I am the reporter, created today'])(
+    'a reporter word grounds the reporter role: %s',
+    async (text) => {
+      const h = harness({ script: [out('jira.issues', { window: 'created', range: 'today', role: 'reporter' })] });
+      expect(await h.decide(text)).toMatchObject({ kind: 'execute', command: { args: { role: 'reporter' } } });
+    },
+  );
+
   it('a role the selector guessed (not in the owner\'s words) neither answers nor overwrites the preference', async () => {
     const h = harness({
       script: [created, out('jira.issues', { window: 'created', range: 'today', role: 'assignee' })],

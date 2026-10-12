@@ -25,7 +25,7 @@ export const JIRA_CREATED_SCOPE: NlAmbiguityKey = Object.freeze({
   arg: 'role',
   values: Object.freeze([
     { value: 'assignee', label: { ko: '내가 담당자인 이슈', en: 'Issues assigned to me' }, aliases: ['담당', '할당', '배정', 'assignee', 'assigned', 'assigned to me'], grounding: ['담당', '할당', '배정', 'assign'] },
-    { value: 'reporter', label: { ko: '내가 보고자(등록자)인 이슈', en: 'Issues I reported' }, aliases: ['보고', '보고자', '등록자', '내가 만든', '내가 등록한', 'reporter', 'reported'], grounding: ['보고', '등록자', '내가 만든', '내가 등록한', '내가 올린', '내가 작성한', 'report', 'i created', 'i made', 'i filed'] },
+    { value: 'reporter', label: { ko: '내가 보고자(등록자)인 이슈', en: 'Issues I reported' }, aliases: ['보고', '보고자', '등록자', '내가 만든', '내가 등록한', 'reporter', 'reported'], grounding: ['보고자', '보고한', '내가 보고', '등록자', '내가 만든', '내가 등록한', '내가 올린', '내가 작성한', 'reporter', 'i created', 'i made', 'i filed'] },
     { value: 'either', label: { ko: '둘 다 (담당 또는 보고)', en: 'Both (assigned or reported)' }, aliases: ['둘 다', '둘다', '모두', '전부', '다', 'both', 'either', 'all'], grounding: ['둘 다', '둘다', '담당이든', '보고든', '담당이나 보고', 'both', 'either'] },
   ]),
   question: {
