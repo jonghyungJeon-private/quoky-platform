@@ -82,6 +82,8 @@ const CHAT_TIER = new Set(CHAT_TIER_CAPABILITIES);
 export function chatTierView(inner: AiProvider, id: string): AiProvider {
   return {
     id,
+    // A model variant (`claude-cli:opus`) belongs to the family of its base provider (`claude-cli`).
+    family: inner.family ?? id.split(':')[0] ?? id,
     capabilities: inner.capabilities.filter((descriptor) => CHAT_TIER.has(descriptor.capability)),
     ...(inner.executionLocality !== undefined ? { executionLocality: inner.executionLocality } : {}),
     isAvailable: () => inner.isAvailable(),

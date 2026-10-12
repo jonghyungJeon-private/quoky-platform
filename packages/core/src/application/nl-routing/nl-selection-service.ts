@@ -65,9 +65,9 @@ export interface NlSelectionTurn {
   readonly entries: readonly NlCatalogEntry[];
   readonly route: NlSelectionRoute;
   /**
-   * ADR-0120 D6/D8 (no new egress): the id of the provider the router resolves for this turn's chat capability and
+   * ADR-0120 D6/D8 (no new egress): the id (or, when it has one, the family — `AiProvider.family`) of the provider the router resolves for this turn's chat capability and
    * session — the provider the message would reach anyway. Selection runs only when the router resolves
-   * `INTENT_SELECTION` to that same provider id; otherwise (a local or another remote chat provider, or unknown) it is
+   * `INTENT_SELECTION` to that same provider id or family; otherwise (a local or another remote chat provider, or unknown) it is
    * skipped with no call. Compared as opaque data, never as a name.
    */
   readonly chatProviderId?: string;
@@ -441,7 +441,7 @@ export class NlSelectionService {
     } catch {
       return { kind: 'unavailable', cause: 'no-provider', latencyMs: Math.max(0, clock() - started) };
     }
-    if (provider.id !== turn.chatProviderId) return { kind: 'egress-refused', reason: 'chat-provider-differs' };
+    if ((provider.family ?? provider.id) !== turn.chatProviderId) return { kind: 'egress-refused', reason: 'chat-provider-differs' };
     const cacheKey = JSON.stringify([
       turn.actor.id,
       normalizeForMatch(prepared.text),

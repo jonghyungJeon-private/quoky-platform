@@ -3090,7 +3090,8 @@ export class ConversationRuntime {
       const provider = this.deps.router.resolve
         ? (await this.deps.router.resolve(intent.capability, context)).provider
         : await this.deps.router.select(intent.capability, context);
-      return provider.id;
+      // The provider family, so a model variant (`claude-cli:opus`) still counts as its base provider for egress.
+      return provider.family ?? provider.id;
     } catch {
       return undefined;
     }

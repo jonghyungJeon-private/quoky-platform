@@ -171,6 +171,26 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
     expect(withPrevious.calls).toHaveLength(0);
   });
 
+  it('D6/D8: a model variant of the selector\'s own provider family runs selection; any other family still skips', async () => {
+    const h: Harness = harness({
+      script: [out('jira.issues')],
+      select: async () => ({
+        id: 'scripted-selector',
+        family: 'scripted-family',
+        capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }],
+        isAvailable: async () => true,
+        execute: async (request) => {
+          h.calls.push(request);
+          return { text: h.script.shift() as string, artifacts: [] };
+        },
+      }),
+    });
+    expect(await h.decide('내 지라 이슈', { chatProviderId: 'scripted-selector' })).toEqual({ kind: 'skip', reason: 'chat-provider-differs' });
+    expect(await h.decide('내 지라 이슈', { chatProviderId: 'ollama-cli' })).toEqual({ kind: 'skip', reason: 'chat-provider-differs' });
+    expect(await h.decide('내 지라 이슈', { chatProviderId: 'scripted-family' })).toMatchObject({ kind: 'execute' });
+    expect(h.calls).toHaveLength(1);
+  });
+
   it('D6/D8: no new egress — a chat turn served by another provider (local or remote) or an unknown one makes no call', async () => {
     const h = harness({ script: [out('jira.issues'), out('jira.issues')] });
     expect(await h.decide('내 지라 이슈', { chatProviderId: 'local-chat-model' })).toEqual({ kind: 'skip', reason: 'chat-provider-differs' });
