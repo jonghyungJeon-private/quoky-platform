@@ -19554,6 +19554,10 @@ Independent Chief Architect review before GML-1 merges.
     먹을 간식 / 들을 노래 찾아줘` (an adnominal first word: `을` after a stem, a lone `ㄹ` syllable, or a verb-like `ㄹ`
     syllable; nouns such as `서울 맛집` and `겨울 계획` still search), and `find … on my drive` (English search needs
     `in my drive` / `in google drive`; `on` is no longer accepted). The `들을 노래` residual is removed.
+  - **P3-1 (Drive claim wordings):** the claim guard now also withholds `문서를 업데이트했어요`, `문서 공유를 완료했어요`,
+    `편집 권한을 드렸어요|줬어요`, `내용을 수정해 두었어요`, `팀원들에게 공유했어요` and, in English, `updated`, `changed`,
+    `granted`, `gave`, `revised`, `fixed`, `did update|change|grant|give` and `I made the document public`. A
+    third-person subject still exempts (`김철수가 문서를 업데이트했어요`). Still best-effort; the footer is the guarantee.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

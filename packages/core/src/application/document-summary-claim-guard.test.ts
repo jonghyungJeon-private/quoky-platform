@@ -123,6 +123,17 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     'We edited the spreadsheet and created a to-do.',
     'I went ahead and uploaded a copy.',
     'I did share the doc.',
+    // CA review P3-1
+    '문서 공유를 완료했어요.',
+    '편집 권한을 드렸어요.',
+    '팀원들에게 공유했어요.',
+    '요청대로 내용을 수정해 두었어요.',
+    '문서를 업데이트했어요.',
+    "I've updated the document as requested.",
+    'I changed the permissions.',
+    'I gave Kim edit access.',
+    'I made the document public.',
+    'I did change the sharing settings.',
   ])('withholds: %s', (text) => {
     expect(containsDocumentActionClaim(text)).toBe(true);
   });
@@ -136,6 +147,9 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     '문서를 공유해 달라는 요청이에요.',
     '이 문서는 3월에 마지막으로 수정되었어요.',
     'Kim shared the roadmap with the team.',
+    '김철수가 문서를 업데이트했어요.',
+    '김철수가 내용을 수정해 두었어요.',
+    'Kim updated the document and gave Lee edit access.',
     'The document asks you to share it by Friday.',
     'I did not share anything.',
   ])('allows: %s', (text) => {
