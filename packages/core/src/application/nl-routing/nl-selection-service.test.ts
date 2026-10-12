@@ -481,7 +481,7 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
     },
   );
 
-  it.each(['내가 보고한 이슈 중 오늘 등록된 거', '보고자가 나인 오늘 등록된 이슈', 'issues where I am the reporter, created today'])(
+  it.each(['내가 보고한 이슈 중 오늘 등록된 거', '보고자가 나인 오늘 등록된 이슈', 'issues where I am the reporter, created today', 'issues I reported, created today'])(
     'a reporter word grounds the reporter role: %s',
     async (text) => {
       const h = harness({ script: [out('jira.issues', { window: 'created', range: 'today', role: 'reporter' })] });
