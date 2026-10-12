@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v4 live QA follow-ups (2026-10-12)
+
+- **Document summaries (Gmail, Drive).** The reply is still an untrusted `markup` span, but Core now strips paired `**x**`
+  and `__x__`, leading `#` headings and turns `- ` / `* ` list markers into `• ` before it is shown, so Discord no
+  longer prints literal `**`. A lone `*` (`2 * 3`) stays, the text is never longer, and links are neutralized again
+  after the strip so removing characters can never create one (`evil**.**com`).
+- **Code-work next steps.** The merge and remote-branch-cleanup approval replies now say how to execute (`머지 실행`,
+  `원격 브랜치 삭제 실행해줘`); `머지 실행` is now the documented merge phrase (`머지해줘` is still accepted). The operator
+  guide lists the execute phrases the copy asks for (`커밋 실행`, `푸시 실행`, `PR 생성 실행`, `머지 실행`), not the
+  request phrases. Tests run each post-approval hint through the execution grammar.
+- **Local branch cleanup refusal.** `BranchCleanupBlockedError` carries a reason code and the reply gives one fixed
+  sentence for it (checked-out tells the owner to switch to another branch such as `main` and ask again). No git output;
+  the nothing-deleted wording is unchanged.
+
 ## Unreleased — PRV-3 provider usage ledger and monthly DM (2026-10-12)
 
 Personal v4 track PRV-3 (ADR-0115 D8; implementation note in DECISIONS.md), on top of PRV-1 and PRV-2. **No migration:
