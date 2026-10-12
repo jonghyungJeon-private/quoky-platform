@@ -68,6 +68,28 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
   });
 });
 
+describe('nl-intent evaluation under the runtime bound', () => {
+  it('calls with the 4 s bound and counts a slower answer as a timeout (a miss, never wrong)', async () => {
+    const seen: number[] = [];
+    const provider = {
+      id: 'slow',
+      capabilities: [],
+      isAvailable: async () => true,
+      execute: async (request: AiRequest) => {
+        seen.push(request.timeoutMs ?? -1);
+        return new Promise<{ text: string }>(() => undefined); // never answers
+      },
+    } as unknown as AiProvider;
+    const corpus: NlEvalCorpus = { version: 1, cases: [CASES[2]!, CASES[3]!] };
+    const plan = { ...buildPlan(corpus, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 2 }), callTimeoutMs: 20 };
+    const records = await runEvaluation({ corpus, plan, provider, now: () => NOW });
+    expect(seen).toEqual([20, 20]);
+    expect(records.map((record) => record.outcome)).toEqual(['timeout', 'timeout']);
+    expect(summarize(records)).toMatchObject({ timeouts: 2, hits: 0, wrongCaptures: 0, gatePassed: false });
+    expect(buildPlan(CORPUS, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 }).callTimeoutMs).toBe(4000);
+  });
+});
+
 describe('nl-intent evaluation CLI (Strict digest gate)', () => {
   function deps(created: string[]): CliDeps & { out: string[]; err: string[] } {
     const out: string[] = [];

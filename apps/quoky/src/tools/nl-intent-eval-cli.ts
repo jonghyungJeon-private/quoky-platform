@@ -122,7 +122,7 @@ export function formatSummary(summary: NlEvalSummary): string[] {
   const pct = (rate: number) => `${(rate * 100).toFixed(1)}%`;
   return [
     `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}` +
-      `  clarifications: ${summary.clarifications}  errors: ${summary.errors}`,
+      `  clarifications: ${summary.clarifications}  timeouts (> 4 s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
     ...Object.entries(summary.perEntry)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),

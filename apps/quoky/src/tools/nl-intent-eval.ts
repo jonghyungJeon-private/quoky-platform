@@ -17,6 +17,7 @@ import {
   Capability,
   NL_CATALOG_ENTRY_IDS,
   NL_SELECTION_PROMPT_VERSION,
+  NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
   isNlCatalogEntryId,
@@ -29,10 +30,11 @@ import {
 } from '@quoky/core';
 
 export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0 } as const;
-/** The runtime's selection bound (ADR-0120 D3); the evaluation reports how many calls exceed it. */
-export const NL_EVAL_RUNTIME_TIMEOUT_MS = 4_000;
-/** A call in the evaluation may take longer (so latency is measured, not cut); still bounded. */
-export const NL_EVAL_CALL_TIMEOUT_MS = 30_000;
+/**
+ * The runtime's selection bound (ADR-0120 D3, `NL_SELECTION_TIMEOUT_MS`). The evaluation calls with the same bound: a
+ * call that does not answer within it is a `timeout` — not a hit and not wrong, exactly what the runtime would do.
+ */
+export const NL_EVAL_RUNTIME_TIMEOUT_MS = NL_SELECTION_TIMEOUT_MS;
 
 export interface NlEvalCase {
   readonly id: string;
@@ -75,6 +77,8 @@ export interface NlEvalPlan {
   readonly model: string;
   readonly runs: number;
   readonly concurrency: number;
+  /** The per-call bound (the runtime's 4 s). */
+  readonly callTimeoutMs: number;
   readonly caseIds: readonly string[];
 }
 
@@ -104,6 +108,7 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
     model: options.model,
     runs: options.runs,
     concurrency: options.concurrency,
+    callTimeoutMs: NL_EVAL_RUNTIME_TIMEOUT_MS,
     caseIds,
   };
 }
@@ -112,7 +117,7 @@ export function computePlanDigest(plan: NlEvalPlan): string {
   return createHash('sha256').update(JSON.stringify(plan)).digest('hex');
 }
 
-export type NlEvalOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wrong-capture' | 'error' | 'skipped';
+export type NlEvalOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wrong-capture' | 'timeout' | 'error' | 'skipped';
 
 export interface NlEvalRecord {
   readonly run: number;
@@ -165,6 +170,8 @@ export interface NlEvalSummary {
   readonly wrongCaptures: number;
   readonly negatives: number;
   readonly clarifications: number;
+  /** Calls that did not answer within the runtime's 4 s bound (each one a miss on a positive). */
+  readonly timeouts: number;
   readonly errors: number;
   readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly overRuntimeBound: number };
   readonly gatePassed: boolean;
@@ -193,6 +200,7 @@ export function summarize(records: readonly NlEvalRecord[]): NlEvalSummary {
     wrongCaptures,
     negatives: records.length - positives.length,
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
+    timeouts: records.filter((record) => record.outcome === 'timeout').length,
     errors: records.filter((record) => record.outcome === 'error').length,
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, overRuntimeBound: latencies.filter((ms) => ms > NL_EVAL_RUNTIME_TIMEOUT_MS).length },
     gatePassed:
@@ -200,6 +208,22 @@ export function summarize(records: readonly NlEvalRecord[]): NlEvalSummary {
       Object.values(perEntry).every((slot) => slot.rate >= NL_EVAL_GATE.perEntry) &&
       wrongCaptures <= NL_EVAL_GATE.wrongCaptures,
   };
+}
+
+class EvalCallTimeout extends Error {}
+
+/** The runtime's bound around one call (the provider also gets `timeoutMs`; this guards a provider that ignores it). */
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new EvalCallTimeout('timeout')), timeoutMs);
+  });
+  task.catch(() => undefined);
+  try {
+    return await Promise.race([task, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Run the plan against one provider (Strict: the caller checked the approved digest). */
@@ -236,7 +260,10 @@ export async function runEvaluation(input: {
         const started = clock();
         let record: NlEvalRecord;
         try {
-          const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: NL_EVAL_CALL_TIMEOUT_MS });
+          const result = await withTimeout(
+            input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs }),
+            input.plan.callTimeoutMs,
+          );
           const scored = scoreOutput(golden, result.text, input.now());
           record = {
             run,
@@ -245,7 +272,15 @@ export async function runEvaluation(input: {
             ...(scored.outcome === 'hit' || scored.outcome === 'none' ? {} : { raw: result.text.slice(0, 2048) }),
           };
         } catch (error) {
-          record = { run, id: golden.id, expected, outcome: 'error', latencyMs: clock() - started, error: error instanceof Error ? error.name : 'unknown' };
+          const timedOut = error instanceof EvalCallTimeout || (error as { kind?: unknown } | null)?.kind === 'TIMEOUT';
+          record = {
+            run,
+            id: golden.id,
+            expected,
+            outcome: timedOut ? 'timeout' : 'error',
+            latencyMs: clock() - started,
+            ...(timedOut ? {} : { error: error instanceof Error ? error.name : 'unknown' }),
+          };
         }
         records.push(record);
         input.onRecord?.(record);
