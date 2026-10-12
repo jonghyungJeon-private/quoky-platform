@@ -20601,3 +20601,81 @@ Decisions:
    Not authorized: NL-initiated writes, external writes outside the existing approval flows, turning on the merge
    flag, and Phase C.
 6. The ratified copy and the final test report are sent to the owner in Discord `#new_chatting`.
+
+### ADR-0120 implementation note — NL-1 natural-language capability selection, Phase A (2026-10-12)
+
+- **Status:** Implementation note for D1–D14 as ratified (Phase A `active` in NL-1, ratification record decision 4).
+  Offline validation plus the Strict model-in-the-loop evaluation authorized for 2026-10-12 (decision 5). Not run here:
+  the `.env.local` flag edit, the live UAT on Telegram and Discord, and the Chief Architect review before merge.
+- **Shape.**
+  - No migration, no new port, no new DI token in Core. `Capability.INTENT_SELECTION` (D2) and two optional members on
+    `ConversationTurnHandler`: `catalog?` and `handleSelected?(command, ctx)`. `ConversationRuntimeDeps` gains
+    `nlSelection?` (35 → 36, D14); the baseline tests assert 36 (37 with the uncounted `runtimeProviderRouting`).
+  - `packages/core/src/application/nl-routing/`: the catalog types, the closed wave-1 entries (`wave1-entries.ts`),
+    symbolic time, input preparation, the strict output parser, the validator, the provider-neutral prompt, the session
+    and actor state, honest chat, and `NlSelectionService`. Core names no AI provider, model or platform (pinned by a
+    test on the prompt text).
+  - The runtime has one new dispatch point, `(C2)` in `handleInner`: after `IntentClassifier.classify` and the
+    execution branch, only for `GENERAL_CHAT` (`IntentType.CHAT`) or `POLICY_SENSITIVE_CHAT` with reason
+    `personal-data`, and never while an approval is pending. Every earlier route (control, approvals, anchors, the
+    `pre-classify` grammars, B0b) is untouched, so Class A and Class B keep their precedence.
+- **The call (D2, D3).** Through the `CapabilityRouter` with no session context; the app pins `INTENT_SELECTION` to
+  Claude (`CLAUDE_PINNED_CAPABILITIES`). The Claude CLI runs it with `QUOKY_NL_INTENT_MODEL` (default `haiku`),
+  `--effort low`, `--tools ""` and the chat isolation flags. One call, a 4 s bound, no retry. **Pre-egress guard
+  (D3 amendment):** before the call the prepared text and every string arg of the previous selection pass
+  `containsCredentialMaterial`; a match skips selection with no call and the turn continues unchanged. Text over 600
+  characters skips too. Fenced blocks, `>` quoted lines and attachments become placeholders; the grounding text is the
+  owner's words only. The cache is in memory, per actor, 10 minutes, 256 entries.
+- **Validation (D4).** Closed ids, the turn's offered entries, READ only, arg types (enums, flags, `limit` 1–10,
+  keywords 1–100 characters without control characters), symbolic ranges resolved by Core in `QUOKY_TIMEZONE` (at most
+  31 days), keyword grounding in the owner's non-quoted text or the previous args, and the credential guard on every
+  string. Three deterministic normalizations, none of which changes the entry: a Jira period without a date field is
+  dropped (a period word next to "할당된" means "now") and a date field without a period gets its natural window; a
+  Jira `upcoming` becomes `next-7-days`; full English weekday names become the closed three-letter symbols; a trailing
+  generic noun (`문서`, `자료`, `관련`, …) is dropped from a search keyword when words remain.
+- **Clarification, follow-ups, preference (D7).** `Session.metadata['quoky.nlPending']` (5 minutes; `1`, `2번`,
+  `첫 번째` or an entry/value alias resolves it, anything else ends it), `Session.metadata['quoky.lastSelection']`
+  (30 minutes, entry id and canonical args only) and `Actor.metadata['quoky.interpretationPreferences']` (30 days, 16
+  keys, re-read then one key replaced). The first key is `jira.created-scope` (assignee | reporter | either), open
+  when the window is `created` and no role was stated. Every executed read whose entry describes its args answers with
+  a basis line first (`기준: 내가 담당·보고자 / 오늘 생성`), noting a newly saved or changed preference.
+- **Entries and `handleSelected` (D1, D13).** Work chat serves `jira.issues` (the D13 window/role/status, keyword,
+  count, limit), `github.items`, `slack.search`, `confluence.search` and `todo.list`; calendar, mail (DM-only), Drive
+  (DM-only), reminders (`reminder.list` and the new model-free, DM-only `brief.today` over the scheduled brief's
+  composition) and help-intent (`help.topic`, plus `mail`/`drive` selection-only topics) serve the rest. A count
+  question answers with a count line and the deterministic list. The Jira adapter renders `created`/`updated`/
+  `duedate` between two quoted dates, `reporter` and `(assignee OR reporter)`, and drops the open-status clause for
+  `all`; without the new params the JQL is byte-identical. GitHub refuses the new params.
+- **Honest chat (D9, D5).** After `none` (or an unavailable selector) in `active`, the chat prompt gets one
+  `AUTHORITATIVE_CURRENT_FACT` naming the configured sources and their commands plus Quoky's own command lines (the
+  help lines), so a write request is answered with the exact anchored command to send — suggestion only, nothing
+  prefilled, no approval. The reply passes a false-incapability guard ("Jira에 접근할 수 없어요" about a configured source is replaced by the command offer). On
+  the personal-data route this is the QUAL-7 narrowing: the deflection now applies only to sources the fact does not
+  list.
+- **Flag (D11).** `QUOKY_NL_INTENT_MODE` (`off` | `shadow` | `active`, exact, default `off`) and `QUOKY_NL_INTENT_MODEL`
+  are parsed in `apps/quoky/src/nl-selection/nl-selection-config.ts` and folded into `QuokyConfig.nlSelection` (and
+  `ai.intentSelectionModel`). `shadow` runs the selection beside the chat turn and logs `entryId`, `grammarId` (the
+  route), `agree`, the outcome and the latency only.
+- **Corpus and tests (D12).** `golden/nl-intent.v1.json`: 501 cases, 25–49 per entry and 130 negatives, the owner's two
+  phrases and "그 중에 위클리카만" verbatim; agent-drafted, approval delegated for this run. Every expectation is
+  checked to be a canonical selection the validator accepts unchanged, and the prompt is checked to quote no corpus
+  phrase. The offline AppModule test sends every case through `ConversationRuntime.handle()` with a stub selector that
+  returns the golden answer: positives end in their entry (selection, or a Class B grammar first with no selector
+  call), negatives never reach `handleSelected`, and selection always runs after `classify`. Three cases are pinned as
+  Phase A earlier routes (a Class B or Class A answer with a neighbouring capability), for NL-2.
+- **Evaluation (D12).** `pnpm eval:nl -- --mode plan|run …` (also `pnpm --filter @quoky/app nl-eval`). The plan digest
+  binds the corpus SHA-256, the prompt version and the SHA-256 of the prompt text, the model and the case list; `run`
+  refuses a mismatched digest before constructing a provider. Exact `{entry, args}` after validation; a clarification
+  is neither a hit nor wrong. Strict evaluation on 2026-10-12 (`haiku`, prompt `nl-select.v9`, 501 cases, 3 runs,
+  concurrency 6, plan digest `2eda67d4…`): 98.9%, 98.9% and 99.7% exact hits; 0 wrong captures in each run; lowest
+  entry 91.2% (mail); latency p50 2.9 s, p95 3.5–3.7 s, max 6.2 s, 7–18 of 501 calls over the 4 s runtime bound. Gate
+  passed in all three runs. Earlier tuning runs (v1–v8, same day) are kept in `data/eval/` (local, not
+  committed).
+- **Deviations.**
+  - The evaluation is its own CLI (`apps/quoky/src/tools/nl-intent-eval-cli.ts`), not a mode of
+    `answer-quality-eval-cli.ts`; the Strict digest rule is the same.
+  - Malformed selector output is treated as an unavailable selector (honest chat), not a D7 clarification: there is no
+    candidate to ask about.
+  - The flag is parsed in the NL feature configuration and also exposed on `QuokyConfig` (as the reminder settings are).
+  - Known Phase A limit (unchanged behaviour): a Class B grammar still reads quoted lines, so a pasted `> 내 jira 이슈
+    보여줘` is answered by the work grammar before selection; selection itself never sees quoted content.
