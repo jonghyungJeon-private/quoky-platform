@@ -19516,8 +19516,6 @@ Independent Chief Architect review before GML-1 merges.
     Google export over Google's own size limit (`exportSizeLimitExceeded`) reads as "response could not be read".
   - **File names with a ccTLD-like extension** (`notes.md`, `run.sh`, `main.py`) show as `[링크]` in a listing, by the
     GML-1 sign-off decision (Telegram would autolink them). The kind column still shows what the file is.
-  - **`드라이브` also means a car trip.** `드라이브에서 들을 노래 찾아줘` (a particle) is read as a Drive name search; the
-    live session measures how often that happens.
   - **The claim guard stays best-effort** (the GML-1 decision). The footer is the guarantee. Document-action verbs need
     the file as their object, so `진행 상황을 공유했어요` in meeting notes is allowed.
   - **Help-line bound.** With Gmail and Drive both on, two lines are contributed. The ADR-0096 D6 bound of 14 may then
@@ -19551,6 +19549,11 @@ Independent Chief Architect review before GML-1 merges.
     still listed with the kind `텍스트`; a summary of one gets the existing "cannot be read as text" reply
     (`UNSUPPORTED_QUERY` from the adapter, or the handler's kind check, before any read). `DRIVE_TEXT_EXPORTABLE_KINDS`
     is now `document` and `spreadsheet`.
+  - **P2-3 (grammar over-claims):** these now fall through to chat: `구글 드라이브 요금제|대안|가격… 찾아줘` (a product
+    word first in the brand form: `요금제 가격 요금 대안 용량 플랜 설치 다운로드 앱 사용법`), `드라이브에서 볼 영화 /
+    먹을 간식 / 들을 노래 찾아줘` (an adnominal first word: `을` after a stem, a lone `ㄹ` syllable, or a verb-like `ㄹ`
+    syllable; nouns such as `서울 맛집` and `겨울 계획` still search), and `find … on my drive` (English search needs
+    `in my drive` / `in google drive`; `on` is no longer accepted). The `들을 노래` residual is removed.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

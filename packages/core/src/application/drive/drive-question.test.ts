@@ -43,7 +43,7 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     ['find budget in my drive', 'budget'],
     ['find the doc called Q3 plan in google drive', 'Q3 plan'],
     ['search my drive for onboarding checklist', 'onboarding checklist'],
-    ['look for "release notes" on my drive', 'release notes'],
+    ['look for "release notes" in google drive', 'release notes'],
     // Review P3-2: the location, the owner and "newest first" are not part of the name.
     ['드라이브에 있는 예산 문서 찾아줘', '예산'],
     ['드라이브에서 내 이력서 찾아줘', '이력서'],
@@ -169,8 +169,24 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     'copy the photos to my external drive',
     'summarize the file',
     'summarize this file',
+    // CA review P2-3: a product question, an adnominal head and `on my drive` are chat, not a Drive search.
+    '구글 드라이브 요금제 찾아줘',
+    '구글 드라이브 대안 찾아줘',
+    '구글 드라이브 가격 검색해줘',
+    '드라이브에서 볼 영화 찾아줘',
+    '드라이브에서 먹을 간식 찾아줘',
+    '드라이브에서 들을 노래 찾아줘',
+    'find a coffee shop on my drive',
+    'find songs to play on my drive',
   ])('not a Drive command (falls through): %s', (text) => {
     expect(parseDriveQuestion(text)).toBeNull();
+  });
+
+  it('still searches names that merely end in ㄹ or contain a product word later (CA review P2-3)', () => {
+    expect(parseDriveQuestion('드라이브에서 서울 맛집 찾아줘')).toEqual({ kind: 'search', name: '서울 맛집', language: 'ko' });
+    expect(parseDriveQuestion('드라이브에서 겨울 계획 찾아줘')).toEqual({ kind: 'search', name: '겨울 계획', language: 'ko' });
+    expect(parseDriveQuestion('구글 드라이브 회의록 앱 찾아줘')).toEqual({ kind: 'search', name: '회의록 앱', language: 'ko' });
+    expect(parseDriveQuestion('find budget in my drive')).toEqual({ kind: 'search', name: 'budget', language: 'en' });
   });
 
   it('steals no mail or calendar phrasing (pre-classify order must not depend on which connector is configured)', () => {

@@ -176,7 +176,7 @@ const RECENT_EN: readonly RegExp[] = [
   new RegExp(`^what(?:'s| is) (?:new|recent) (?:in|on) ${EN_DRIVE}$`, 'i'),
 ];
 const SEARCH_EN: readonly RegExp[] = [
-  new RegExp(`^(?:find|search for|look for|look up)(?: (?:the|a|my))?(?: ${EN_DOC}(?: (?:named|called))?)? (?<name>.+?) (?:in|on) ${EN_DRIVE}(?: please)?$`, 'i'),
+  new RegExp(`^(?:find|search for|look for|look up)(?: (?:the|a|my))?(?: ${EN_DOC}(?: (?:named|called))?)? (?<name>.+?) in ${EN_DRIVE}(?: please)?$`, 'i'),
   new RegExp(`^search ${EN_DRIVE_LOOSE} for(?: (?:the|a))?(?: ${EN_DOC}(?: (?:named|called))?)? (?<name>.+?)(?: please)?$`, 'i'),
 ];
 /** Review P3-1: a bare `file` is a code proposal's as often as a Drive file, so `this file` needs the drive word. */
@@ -223,12 +223,38 @@ function indexTarget(raw: string | undefined): DriveSummaryTarget | null {
 
 const stripQuotes = (value: string) => value.replace(/^["'“”‘’`「『]+|["'“”‘’`」』]+$/gu, '').trim();
 
+/** Whether the syllable ends in the consonant `ㄹ` (jongseong index 8). */
+const endsInRieul = (syllable: string): boolean => {
+  const code = syllable.charCodeAt(0) - 0xac00;
+  return code >= 0 && code < 11172 && code % 28 === 8;
+};
+/**
+ * A first word (followed by a space) that is an adnominal verb form: `을` after a stem (`먹을`, `들을`), a lone
+ * `ㄹ` syllable (`볼`, `갈`), or a longer word ending in a verb-like `ㄹ` syllable (`만들`, `해볼`). A noun that ends in
+ * `ㄹ` (`서울`, `겨울`) is not matched.
+ */
+function hasAdnominalHead(head: string): boolean {
+  const word = /^(\S+) /u.exec(head)?.[1];
+  if (word === undefined || !/^[가-힣]+$/u.test(word)) return false;
+  if (word === '마을') return false;
+  const chars = Array.from(word);
+  const last = chars[chars.length - 1] as string;
+  if (chars.length >= 2 && last === '을') return true;
+  if (chars.length === 1) return endsInRieul(last);
+  return /[할볼갈쓸놀걸팔풀]/u.test(last) || (last === '들' && word.endsWith('만들'));
+}
+const PRODUCT_HEAD = /^(?:요금제|가격|요금|대안|용량|플랜|설치|다운로드|앱|사용법)(?: |$)/u;
+
 /**
  * The name of a Korean search head; `'recent'` for the recent listing; `'usage'` when no usable name is left; `null`
  * when the head is not a search at all (an anchored command, a how-to, a second-person word), which then falls through.
  */
-function parseNameHead(head: string): string | 'recent' | 'usage' | null {
+function parseNameHead(head: string, brand = false): string | 'recent' | 'usage' | null {
   let rest = head.trim();
+  // CA review P2-3: an adnominal first word (`볼 영화`, `먹을 간식`, `들을 노래`) is a request for something to watch,
+  // eat or hear, never a file name; and `구글 드라이브 요금제 찾아줘` asks about the product, not the owner's files.
+  if (hasAdnominalHead(rest)) return null;
+  if (brand && PRODUCT_HEAD.test(rest)) return null;
   if (/[:：]/u.test(rest)) return null;
   if (EXPLAIN_NAME.test(rest)) return null;
   if (TOPIC_NAME.test(rest)) return 'usage';
@@ -315,7 +341,7 @@ export function parseDriveQuestion(text: string): DriveQuestion | null {
     if (first.groups?.show !== undefined && first.groups?.noun === undefined) return null;
     // A bare `드라이브` needs a particle or a document noun: `드라이브 코스 찾아줘` is a car trip.
     if (first.groups?.brand === undefined && first.groups?.particle === undefined && first.groups?.noun === undefined) return null;
-    return fromName(parseNameHead(first.groups?.head ?? ''), language);
+    return fromName(parseNameHead(first.groups?.head ?? '', first.groups?.brand !== undefined), language);
   }
   const last = SEARCH_DRIVE_LAST.exec(normalized);
   if (last) return fromName(parseNameHead(last.groups?.head ?? ''), language);

@@ -452,7 +452,12 @@ describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
 
   it('writing, explaining, car-trip and coding requests fall through to normal chat with no Drive read', async () => {
     const h = harness();
-    const phrases = ['드라이브 사용법 알려줘', '드라이브 코스 찾아줘', '회의록 문서 찾아줘', '테스트 파일 만들어줘', '이 문서 요약해줘', 'how do I find files in my drive'];
+    const phrases = ['드라이브 사용법 알려줘', '드라이브 코스 찾아줘', '회의록 문서 찾아줘', '테스트 파일 만들어줘', '이 문서 요약해줘', 'how do I find files in my drive',
+      // CA review P2-3
+      '구글 드라이브 요금제 찾아줘', '구글 드라이브 대안 찾아줘', '구글 드라이브 가격 검색해줘',
+      '드라이브에서 볼 영화 찾아줘', '드라이브에서 먹을 간식 찾아줘', '드라이브에서 들을 노래 찾아줘',
+      'find a coffee shop on my drive', 'find songs to play on my drive',
+    ];
     for (const text of phrases) expect((await h.send(text)).reply?.text, text).toBe('천만에요!');
     expect(h.calls.classify).toBe(phrases.length);
     expect(h.driveCalls).toEqual({ list: 0, exported: [] });
