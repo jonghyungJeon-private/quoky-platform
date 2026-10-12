@@ -45,9 +45,9 @@ const KO_CLAIMS: readonly RegExp[] = [
   /(?:메일|이메일)(?:을|를|은|는|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:지웠|옮겼|휴지통)/u,
   /라벨(?:을|를)?\s*(?:붙였|달았|추가했|지정했)/u,
   /(?:안\s?)?읽음\s*(?:으로\s*)?(?:표시|처리)(?:를)?\s*(?:했|해\s?드렸|해\s?두었)/u,
-  /할\s?일(?:을|를|로|에|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록|생성)(?:했|해\s?드렸|해\s?두었|하였)|할\s?일(?:을|를)?\s*만들었/u,
-  /(?:알림|리마인더)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:설정|등록|추가)(?:했|해\s?드렸|해\s?두었|하였)|(?:알림|리마인더)(?:을|를)?\s*맞춰/u,
-  /(?:일정|이벤트|약속|회의)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록)(?:했|해\s?드렸|해\s?두었|하였)|캘린더에\s*(?:추가|등록)(?:했|해\s?드렸|해\s?두었)/u,
+  /할\s?일(?:을|를|로|에|도)?\s*(?:\S{1,20}\s+){0,3}?(?:추가|등록|생성)(?:했|해\s?드렸|해\s?두었|하였)|할\s?일(?:을|를)?\s*만들었/u,
+  /(?:알림|리마인더)(?:을|를|도)?\s*(?:\S{1,20}\s+){0,3}?(?:설정|등록|추가)(?:했|해\s?드렸|해\s?두었|하였)|(?:알림|리마인더)(?:을|를)?\s*맞춰/u,
+  /(?:일정|이벤트|약속|회의)(?:을|를|도)?\s*(?:\S{1,20}\s+){0,3}?(?:추가|등록)(?:했|해\s?드렸|해\s?두었|하였)|캘린더에\s*(?:추가|등록)(?:했|해\s?드렸|해\s?두었)/u,
 ];
 
 /**
@@ -57,14 +57,14 @@ const KO_CLAIMS: readonly RegExp[] = [
 const KO_DRIVE_CLAIMS: readonly RegExp[] = [
   // DRV-1: a document action with the file, folder, link or permission as its object (`문서를 공유했어요`, `파일을 삭제해
   // 드렸어요`, `권한을 변경했어요`). Narrow on purpose: `진행 상황을 공유했어요` in a meeting-notes summary is not a claim.
-  /(?:문서|파일|시트|스프레드시트|폴더|드라이브|링크|권한|공유\s?설정)(?:을|를|은|는|도|들을)?\s*(?:\S+\s+){0,2}?(?:공유|편집|수정|삭제|이동|복사|업로드|변경|부여|휴지통으로\s?이동)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
-  /(?:문서|파일|시트|스프레드시트|폴더)(?:을|를|은|는|도|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:\S+\s+){0,2}?(?:지웠|옮겼|고쳤|바꿨|올렸)/u,
-  /(?:이름|제목|권한)(?:을|를)?\s*(?:\S+\s+){0,2}?(?:바꿨|변경했|바꿔\s?드렸|변경해\s?드렸)/u,
+  /(?:문서|파일|시트|스프레드시트|폴더|드라이브|링크|권한|공유\s?설정)(?:을|를|은|는|도|들을)?\s*(?:\S{1,20}\s+){0,2}?(?:공유|편집|수정|삭제|이동|복사|업로드|변경|부여|휴지통으로\s?이동)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
+  /(?:문서|파일|시트|스프레드시트|폴더)(?:을|를|은|는|도|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:\S{1,20}\s+){0,2}?(?:지웠|옮겼|고쳤|바꿨|올렸)/u,
+  /(?:이름|제목|권한)(?:을|를)?\s*(?:\S{1,20}\s+){0,2}?(?:바꿨|변경했|바꿔\s?드렸|변경해\s?드렸)/u,
   /업데이트(?:를)?\s*(?:했|해\s?드렸|해\s?두었)/u,
   /공유를\s*완료했/u,
-  /권한(?:을|를)?\s*(?:\S+\s+){0,2}?(?:드렸|줬|주었)/u,
-  /내용(?:을|를)?\s*(?:\S+\s+){0,2}?(?:수정|편집|변경)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
-  /(?:에게|한테|께)\s*(?:\S+\s+){0,2}?공유\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
+  /권한(?:을|를)?\s*(?:\S{1,20}\s+){0,2}?(?:드렸|줬|주었)/u,
+  /내용(?:을|를)?\s*(?:\S{1,20}\s+){0,2}?(?:수정|편집|변경)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
+  /(?:에게|한테|께)\s*(?:\S{1,20}\s+){0,2}?공유\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
 ];
 
 /** A subject-marked word in a Korean clause: `김철수가`, `팀장님이`, `제가` (only `이/가/께서/님이` count). */
@@ -110,7 +110,7 @@ const EN_DID_DRIVE_CLAIM = enDidClaim(`${EN_DID_MAIL_VERBS}|share|unshare|edit|m
 
 /** Drive only: `I made the document public` (a visibility or access change). */
 const EN_MADE_CLAIM =
-  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?made\s+(?:[a-z]+\s+){0,3}?(?:public|private|editable|viewable|shareable)\b/i;
+  /\b(?:I|we|Quoky)\s+(?:[a-z]{1,20}\s+){0,3}?made\s+(?:[a-z]{1,20}\s+){0,3}?(?:public|private|editable|viewable|shareable)\b/i;
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
 function clauses(text: string, source: UntrustedDocumentSource): string[] {
@@ -142,7 +142,7 @@ function exemptBySubject(clause: string, claimAt: number, source: UntrustedDocum
  * Reported speech right after the verb (`설정했다는 안내`, `보냈다고 해요`, `보냈대요`): the item says so, Quoky does not
  * claim it. (`…답니다` is not reported speech and is not exempt.)
  */
-const KO_REPORTED = /^\S*?(?:다는|다고|단\s|대요|다며)/u;
+const KO_REPORTED = /^\S{0,20}?(?:다는|다고|단\s|대요|다며)/u;
 
 function koreanClaim(clause: string, source: UntrustedDocumentSource): boolean {
   for (const pattern of source === 'drive' ? [...KO_CLAIMS, ...KO_DRIVE_CLAIMS] : KO_CLAIMS) {

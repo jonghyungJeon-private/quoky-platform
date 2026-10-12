@@ -248,3 +248,31 @@ describe('CA review P2-A: mail parity with the origin/main guard', () => {
   });
 });
 
+describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', () => {
+  const cpuMs = (fn: () => void): number => {
+    const before = process.cpuUsage();
+    fn();
+    const used = process.cpuUsage(before);
+    return (used.user + used.system) / 1000;
+  };
+  const N = 32_000;
+  const repeat = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const hostile: Record<string, string> = {
+    '문서': repeat('문서'),
+    '공유': repeat('공유'),
+    '권한': repeat('권한'),
+    'I have': repeat('I have '),
+    '문서를 ': repeat('문서를 '),
+    'spaces': `문서${' '.repeat(N)}`,
+    'long words': `I ${'a'.repeat(N)}`,
+    'we did': repeat('we did '),
+    'mixed': repeat('문서를 공유 권한을 I have did made 내용을 에게 업데이트 할 일 알림 '),
+    'no separators': repeat('문서공유권한내용업데이트에게알림할일'),
+  };
+  it.each(Object.keys(hostile))('%s: 32,000 characters, both sources, under 100 ms CPU each', (name) => {
+    const text = hostile[name] as string;
+    for (const source of ['mail', 'drive'] as const) {
+      expect(cpuMs(() => containsDocumentActionClaim(text, source)), `${name} ${source}`).toBeLessThan(100);
+    }
+  });
+});

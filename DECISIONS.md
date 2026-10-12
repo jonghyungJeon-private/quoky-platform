@@ -19601,6 +19601,13 @@ Independent Chief Architect review before GML-1 merges.
     `origin/main` (a fixture of 38 phrases captured from the old guard pins it, including `The sender writes: 'We shared
     the document with the team.'`). This supersedes the P3-6 "also applies to mail" residual and the CA re-review 1
     sentence that the split stays shared.
+  - **Codex P2-B (linear time):** the spans between a noun and its verb were `\S+` / `[a-z]+` (unbounded), so a long
+    run of `문서` with no spaces rescanned its remainder from every start (about 0.9 s at 16,000 characters, 4 s at
+    32,000). Every claim pattern now uses bounded words (`\S{1,20}`, `[a-z]{1,20}`, `\S{0,20}?` for the reported-speech
+    check); all other repetition was already bounded or whitespace-only. A CPU-time test (`process.cpuUsage`) runs 32,000
+    characters of `문서`, `공유`, `권한`, `I have`, `we did`, long words, long space runs and mixed hostile text, on both
+    sources, under 100 ms each. A claim word longer than 20 characters between the noun and the verb is no longer matched
+    (best-effort lexicon; the footer is the guarantee).
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 
