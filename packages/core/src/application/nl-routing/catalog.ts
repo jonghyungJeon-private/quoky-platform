@@ -71,6 +71,11 @@ export interface NlAmbiguityValue {
   readonly label: NlText;
   /** Words that pick this value in a reply to the question ("담당", "보고"); compared after normalization. */
   readonly aliases: readonly string[];
+  /**
+   * Words that show the owner stated this value in a request (ADR-0120 D7): a value the selector returns counts only
+   * when one of them appears in the owner's own words. Stricter than `aliases` (no one-syllable words).
+   */
+  readonly grounding?: readonly string[];
 }
 
 /**

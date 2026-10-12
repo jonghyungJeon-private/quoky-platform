@@ -373,6 +373,35 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
     expect(h.actor().metadata?.[INTERPRETATION_PREFERENCES_METADATA_KEY]).toMatchObject({ 'jira.created-scope': { value: 'assignee', at: at(3000) } });
   });
 
+  it('a role the selector guessed (not in the owner\'s words) neither answers nor overwrites the preference', async () => {
+    const h = harness({
+      script: [created, out('jira.issues', { window: 'created', range: 'today', role: 'assignee' })],
+    });
+    await h.decide('오늘 등록된 지라 이슈');
+    await h.decide('3', { now: at(1000) });
+    const stored = h.actor().metadata?.[INTERPRETATION_PREFERENCES_METADATA_KEY];
+    // A new conversation: no lastSelection; the selector adds role "assignee" the owner never said.
+    const fresh = await h.service.decide({
+      text: '오늘 등록된 jira 다시',
+      attachmentCount: 0,
+      session: { ...h.session, metadata: {} },
+      actor: h.actor(),
+      now: at(60_000),
+      entries: ALL,
+      route: 'chat',
+      chatProviderId: 'scripted-selector',
+    });
+    expect(fresh).toMatchObject({ kind: 'execute', command: { args: { window: 'created', range: 'today', role: 'either' } }, basis: '기준: 내가 담당·보고자 / 오늘 생성' });
+    expect(h.actor().metadata?.[INTERPRETATION_PREFERENCES_METADATA_KEY]).toEqual(stored);
+    expect(h.logs.some((log) => log.event === 'nl_selection.ungrounded_interpretation')).toBe(true);
+  });
+
+  it('a guessed role with no stored preference asks the question instead of answering with the guess', async () => {
+    const h = harness({ script: [out('jira.issues', { window: 'created', range: 'today', role: 'reporter' })] });
+    expect(await h.decide('오늘 등록된 지라 이슈 다시')).toMatchObject({ kind: 'ask' });
+    expect(h.actor().metadata).toBeUndefined();
+  });
+
   it('keeps other Actor metadata untouched when it writes the preference (re-read, one key replaced)', async () => {
     const h = harness({ script: [created] });
     const actor = h.actor();

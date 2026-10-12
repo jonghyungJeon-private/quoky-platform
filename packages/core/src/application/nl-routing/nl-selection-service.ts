@@ -207,7 +207,7 @@ export class NlSelectionService {
     if (output.entryId === null) return { kind: 'none' };
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
-    if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language);
+    if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess.
     const options: NlValidatedSelection[] = [];
     for (const candidate of [{ entryId: output.entryId, args: output.args }, ...output.alternatives]) {
@@ -237,12 +237,33 @@ export class NlSelectionService {
     turn: NlSelectionTurn,
     last: LastSelection | undefined,
     language: 'ko' | 'en',
+    groundingText: string,
     note?: 'saved' | 'changed',
   ): Promise<NlSelectionDecision> {
     const { entry } = selection;
     let args = selection.args;
     let basisNote = note;
-    const open = selection.openAmbiguity;
+    let open = selection.openAmbiguity;
+    // D7: an interpretation value counts only when the owner said it (a label or alias in their own words) or it carries
+    // over from the previous selection. A value the selector guessed is dropped: the stored preference (or the question)
+    // decides this answer, and the guess never overwrites the preference.
+    let explicit: NlAmbiguityKey | undefined;
+    if (note === undefined) {
+      for (const key of entry.ambiguity ?? []) {
+        const value = args[key.arg];
+        if (!key.openWhen(args) || typeof value !== 'string') continue;
+        if (isAmbiguityValueGrounded(key, value, groundingText)) {
+          explicit = key;
+          continue;
+        }
+        const carried = last !== undefined && last.entryId === entry.id && last.args[key.arg] === value;
+        if (carried) continue;
+        const { [key.arg]: _guessed, ...rest } = args;
+        args = rest;
+        open = key;
+        this.log('info', 'nl_selection.ungrounded_interpretation', { key: key.key });
+      }
+    }
     if (open !== undefined) {
       const values = open.values.map((value) => value.value);
       const preferred = readInterpretationPreference(turn.actor, open.key, values, turn.now);
@@ -260,9 +281,9 @@ export class NlSelectionService {
         return { kind: 'ask', text: renderPreferenceQuestion(open, language) };
       }
       args = { ...args, [open.arg]: preferred };
-    } else if (note === undefined) {
+    } else if (note === undefined && explicit !== undefined) {
       // D7 override: an explicit, grounded value that corrects the previous answer overwrites the stored preference.
-      const corrected = (entry.ambiguity ?? []).find(
+      const corrected = [explicit].find(
         (key) =>
           last !== undefined &&
           last.entryId === entry.id &&
@@ -298,7 +319,7 @@ export class NlSelectionService {
       const option = pending.options[index] as StoredSelection;
       const validated = validateSelection(option, this.validationContext(turn, '', option.args));
       if (!validated.ok) return undefined;
-      return this.complete(validated.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language);
+      return this.complete(validated.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, '');
     }
     const entry = offered.get(pending.selection.entryId);
     const key = entry?.ambiguity?.find((candidate) => candidate.key === pending.key);
@@ -314,7 +335,7 @@ export class NlSelectionService {
     const args = { ...pending.selection.args, [key.arg]: value };
     const validated = validateSelection({ entryId: entry.id, args }, this.validationContext(turn, '', args));
     if (!validated.ok) return undefined;
-    return this.complete(validated.value, turn, undefined, language, 'saved');
+    return this.complete(validated.value, turn, undefined, language, '', 'saved');
   }
 
   // ── shadow ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -460,6 +481,14 @@ export class NlSelectionService {
       // best-effort
     }
   }
+}
+
+/** Whether the owner's own words name `value` of `key` (one of its grounding words, case- and spacing-insensitive). */
+function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingText: string): boolean {
+  const known = key.values.find((candidate) => candidate.value === value);
+  if (known === undefined || groundingText.length === 0) return false;
+  const text = normalizeForMatch(groundingText);
+  return (known.grounding ?? []).some((word) => text.includes(normalizeForMatch(word)));
 }
 
 /** Validation, then up to three retries with the failing optional argument removed (a clarification option). */
