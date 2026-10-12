@@ -18,7 +18,7 @@ const LABELS = { direct: '이 DM', channel: '승인을 요청한 채널' };
 /** Discord, Markdown, HTML and Telegram entity syntax at once. */
 const HOSTILE = '@everyone <@123> <#456> [x](https://e.test) *b* _i_ `c` <b>bold</b> <a href="tg://user?id=1">u</a> &amp; /start #tag';
 
-describe('Telegram markup (ADR-0114 D7): plain text, no parse mode, every node verbatim', () => {
+describe('Telegram markup (ADR-0114 D7): plain text, no parse mode, every span verbatim', () => {
   it.each<UntrustedTextGuard>(['markup', 'mentions', 'handles'])('untrusted text under the %s guard is delivered verbatim', (guard) => {
     expect(TELEGRAM_MARKUP.untrusted(HOSTILE, guard)).toBe(HOSTILE);
   });
@@ -41,10 +41,10 @@ describe('Telegram markup (ADR-0114 D7): plain text, no parse mode, every node v
     );
   });
 
-  it('string nodes, every span and every budget node render verbatim (budgets measured on the Telegram text)', () => {
+  it('TG-3: Quoky string nodes are translated, every span and every fenced line stays verbatim (budgets on the Telegram text)', () => {
     const fence = '````\n' + HOSTILE + '\n````';
     const content = messageContent(
-      `**제목** \`code\` ${fence}\n`,
+      `**제목** \`code\`\n${fence}\n`,
       untrustedText(HOSTILE),
       ' ',
       messageLink('https://e.test'),
@@ -59,13 +59,13 @@ describe('Telegram markup (ADR-0114 D7): plain text, no parse mode, every node v
       takeLines({ unit: 'utf16', maxChars: 100, baseChars: 0, head: ['목록'], tail: [], lines: [{ content: untrustedText('*x*'), item: true }] }),
     );
     expect(renderTelegramContent(content)).toBe(
-      `**제목** \`code\` ${fence}\n${HOSTILE} https://e.test Discord 대화방\n${'가'.repeat(9)}…\n<b>a</b>\nb\n목록\n*x*`,
+      `제목 code\n${HOSTILE}\n${HOSTILE} https://e.test Discord 대화방\n${'가'.repeat(9)}…\n<b>a</b>\nb\n목록\n*x*`,
     );
     // The Telegram rendering IS the plain rendering except for conversation references (plain text shows `#id`).
     expect(plainTextOf(content)).toContain('#900');
   });
 
-  it('an outbound message renders from its content, else its text; a model reply is never adapted', () => {
+  it('an outbound message renders from its content, else its text; a model reply table is kept as written', () => {
     const ctx = { platform: 'telegram', channelId: '1', userId: '1', direct: true };
     const message = outboundMessage(ctx, messageContent('in ', conversationRefOf(ctx, LABELS)));
     expect(renderOutboundForTelegram(message)).toBe('in 이 DM');

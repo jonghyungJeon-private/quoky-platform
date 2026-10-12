@@ -30,7 +30,7 @@ import type { FetchLike, TelegramCallOptions, TelegramMethod } from './bot-api';
 import type { TelegramBotToken } from './bot-token';
 import { deliverTelegramPreview, deliverTelegramText, TELEGRAM_MESSAGE_LIMIT } from './delivery';
 import { telegramMessageKey } from './reactions';
-import { contentDisagreesWithText, renderOutboundForTelegram, renderTelegramContent, TELEGRAM_PLATFORM } from './rendering';
+import { contentDisagreesWithText, renderOutboundForTelegram, TELEGRAM_PLATFORM, translatePreviewCopy } from './rendering';
 
 /**
  * `PlatformAdapter` for Telegram (ADR-0114). Bot API types stay inside this package; only normalized domain messages
@@ -1097,7 +1097,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     };
 
     if (message.preview) {
-      const report = await deliverTelegramPreview(message.preview, {
+      const report = await deliverTelegramPreview(translatePreviewCopy(message.preview), {
         sendPlain: (text) => post(text),
         sendHtml: (html) => post(html, true),
         sendDocument: async (diff, filename) => {
@@ -1287,7 +1287,7 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
     if (contentDisagreesWithText(notification)) {
       this.logger.warn('owner notification content and text disagree', { platform: TELEGRAM_PLATFORM, kind: notification.kind });
     }
-    const text = notification.content !== undefined ? renderTelegramContent(notification.content) : notification.text;
+    const text = renderOutboundForTelegram(notification);
     // CA re-review P3-6: an empty text is its own refusal, never "too long".
     if (text.trim().length === 0) return notSent('EMPTY_TEXT', false);
     if ([...text].length > REMINDER_LIMITS.maxDeliveredTextChars || text.length > TELEGRAM_MESSAGE_LIMIT) {

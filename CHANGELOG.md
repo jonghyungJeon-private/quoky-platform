@@ -5,6 +5,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — TG-3 Telegram notifications and operations (2026-10-12)
+
+Personal v4 track TG-3 (ADR-0114 D7, D11 and D12; implementation note in DECISIONS.md). No migration, port, DI token or
+domain field. `ConversationRuntimeDeps` stays 35, there is no new dependency, and Core is not touched. Discord is
+unchanged; its golden fixture is green.
+
+- **Fixed: the ops-UI decision result for an approval created on Telegram (D11).** It was addressed to the Telegram
+  chat. The composite routes `OPS_DECISION_RESULT` to Discord, and the Discord sink refused it there, so the owner was
+  never told. It now goes to the Discord owner DM that `QUOKY_TELEGRAM_OWNER_ACTOR_MAP` maps the Telegram owner to
+  (`opsDecisionResultTarget`). Discord-held approvals are byte-identical. The confirmation page shows
+  "Telegram 개인 대화" for a Telegram approval.
+- **Added: an operations-UI Telegram panel (D12).** It shows:
+  - connected, identity verified, halted (with its code and meaning), polling, and the last poll time;
+  - the number of admitted private chats;
+  - the dropped updates per reason, `not-feedback` and `forwarded` included.
+
+  It shows no content, ids or token, and each value is checked against a fixed pattern. With Telegram off it says
+  "설정 안 됨 (not configured)". The rest of the dashboard is byte-identical to a golden rendered before the change.
+- **Changed: CommonMark on Telegram, in plain mode (D7).** There is still no `parse_mode`. Quoky's own copy, model
+  replies, notification bodies and the preview header and footer are translated:
+  - emphasis and code-span markers are removed;
+  - fence lines are removed and the code is kept exactly;
+  - headings become plain lines;
+  - bullets become `•`.
+
+  Untrusted spans, links and conversation references are opaque: they pass through byte for byte. The translation never
+  lengthens a text, and the lossless 4096 chunker splits the translated text. If the adapter's segment evaluator ever
+  disagrees with Core's rendering, nothing is translated.
+- **Added: `ops/launchd/quokyctl.sh telegram`.** It is read-only and does not read the env file or call Telegram. It
+  prints the saved-offset time, the delivered halt notices, the halt codes with their fixes, token rotation and the
+  unlink pointer. `status` is unchanged.
+- **Docs.** `docs/uat/operator-guide.md` has a new section 0.8 on Telegram. The quickstart's Telegram section covers the
+  panel, `quokyctl`, the halt codes, rotation, unlinking and formatting.
+- **Tests.** New:
+  - `packages/adapter-telegram/src/commonmark.test.ts`: the rules, span safety, 600 random trees for parity, a real
+    brief, and chunking after translation;
+  - `apps/quoky/src/ops-ui/actions/telegram-decision-result.test.ts`;
+  - the Telegram panel tests and the golden in `build-snapshot.test.ts`;
+  - the panel wiring tests, over the served page;
+  - the `quokyctl.sh telegram` tests;
+  - two D11 acceptance tests: `OPS_NOTICE`, and the decision result through the real `AppModule` sink.
+
 ## Unreleased — BRF-2 pre-meeting reminders (2026-10-12)
 
 Personal v4 track BRF-2 (ADR-0117 D5/D6; implementation note in DECISIONS.md). No migration (the event reference lives in

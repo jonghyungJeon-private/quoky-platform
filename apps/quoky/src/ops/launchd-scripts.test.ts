@@ -587,6 +587,47 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh uninstall/restart --
   });
 });
 
+describe.skipIf(process.platform !== 'darwin')('quokyctl.sh telegram (TG-3, ADR-0114): read-only status and runbook', () => {
+  const TOKEN = ['70', '01', '23', '4'].join('') + ':' + ['AAH', 'acc', '_', 'p'.repeat(15), '-', 'r'.repeat(14)].join('');
+
+  it('with no Telegram files it says so, prints the halt codes and the runbook, and reads no env file', () => {
+    const box = sandbox({ loaded: true });
+    writeFileSync(box.envFile, `QUOKY_TELEGRAM_BOT_TOKEN=${TOKEN}\n`, { mode: 0o600 });
+    const result = runCtl(box, ['telegram']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('poll offset saved: none');
+    expect(result.stdout).toContain('halt notices delivered: none');
+    for (const code of ['TELEGRAM_POLL_CONFLICT', 'TELEGRAM_AUTH_REJECTED', 'TELEGRAM_IDENTITY_MISMATCH', 'TELEGRAM_POLL_LOOP_FAILED']) {
+      expect(result.stdout).toContain(code);
+    }
+    expect(result.stdout).toContain('BotFather /revoke');
+    expect(result.stdout).toContain('"To unlink"');
+    expect(result.stdout + result.stderr).not.toContain(TOKEN.split(':')[1] as string);
+    expect(runCtl(box, ['telegram', '--apply']).status).not.toBe(0);
+    // Nothing reached launchctl: the command never touches the service.
+    expect(existsSync(box.launchctlLog) ? readFileSync(box.launchctlLog, 'utf8').trim() : '').toBe('');
+  });
+
+  it('shows the saved-offset time and the delivered halt notices, never the bot id, offset, token or a hostile value', () => {
+    const box = sandbox();
+    const ops = path.join(box.dataDir, 'ops');
+    mkdirSync(ops, { recursive: true });
+    writeFileSync(
+      path.join(ops, 'telegram-offset.json'),
+      JSON.stringify({ version: 2, botId: '7001234', offset: 987654321, savedAt: '2026-10-12T01:02:03.000Z' }),
+    );
+    writeFileSync(
+      path.join(ops, 'telegram-halt-notices.json'),
+      JSON.stringify({ version: 1, sentAt: { TELEGRAM_POLL_CONFLICT: '2026-10-11T09:00:00.000Z', [`x ${TOKEN}`]: '2026-10-11T09:00:00.000Z' } }),
+    );
+    const result = runCtl(box, ['telegram']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('poll offset saved: 2026-10-12T01:02:03.000Z');
+    expect(result.stdout).toContain('  TELEGRAM_POLL_CONFLICT at 2026-10-11T09:00:00.000Z');
+    for (const hidden of ['7001234', '987654321', TOKEN.split(':')[1] as string]) expect(result.stdout, hidden).not.toContain(hidden);
+  });
+});
+
 describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, while the service runs)', () => {
   const BACKUP_ENV_NAMES = ['HOME', 'PATH', 'LANG', 'QUOKY_DB_PATH', 'QUOKY_VECTOR_PATH', 'QUOKY_LAUNCHER'];
 

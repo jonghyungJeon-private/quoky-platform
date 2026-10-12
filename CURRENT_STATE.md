@@ -5,6 +5,33 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### TG-3 Telegram notifications and operations — implemented on branch, not merged (2026-10-12)
+
+ADR-0114 D7, D11 and D12 on top of TG-1 (#161) and TG-2 (#164), on `claude/v4-w4-tg3-ops`:
+
+- **D11 routes, verified end to end.**
+  - Reminders and briefs created on Telegram are delivered on Telegram (TG-1).
+  - `OPS_NOTICE` goes to Discord (new acceptance test).
+  - The ops-UI `OPS_DECISION_RESULT` for a Telegram-held approval now reaches the mapped Discord owner DM. Before, the
+    Discord sink refused it (`TARGET_NOT_ADMITTED`).
+- **Ops-UI Telegram panel.**
+  - It shows connected, identity verified, halted with its code, polling, and the last poll.
+  - It shows the admitted-chat count and the drop counters per reason.
+  - It shows no content, ids or token. With Telegram off it says "not configured", and the other panels are
+    byte-identical (golden).
+- **CommonMark in plain mode.** Quoky copy and model replies lose their `**`, backticks, `#` and fence lines, and `-`
+  becomes `•`. Untrusted spans stay byte for byte, and chunking stays lossless. Plain mode was kept over HTML, as D7
+  says, because it cannot turn anything into markup.
+- **Operations.** `quokyctl.sh telegram` is read-only. The operator guide has a new section 0.8, and the quickstart's
+  Telegram section is updated.
+
+No migration, port, token or Core change (`ConversationRuntimeDeps` 35), and no Discord change. Offline validation
+only: `pnpm build`, `pnpm typecheck` and `pnpm test` pass (389 files, 12,645 tests), and so does `git diff --check`. Not
+run yet:
+
+- the Strict first live session: the panel, and the rendering on a real client;
+- the Chief Architect review.
+
 ### BRF-2 pre-meeting reminders — implemented on branch, not merged (2026-10-12)
 
 ADR-0117 D5/D6. `회의 10분 전에 알려줘` (also `다음 회의 …`, `3시 회의 …`, `<제목> 회의 …`, English) creates one
@@ -70,8 +97,8 @@ ADR-0114 D8–D10 on top of TG-1 (#161):
 
 No migration, port or token change (`ConversationRuntimeDeps` 35), and no Discord change: the canonical image module is a
 byte-identical copy, pinned by a parity test over one shared fixture set. Offline validation only. Not run yet: the
-Strict first live session (including the reaction check), the Chief Architect review, and TG-3 (the ops panel,
-`quokyctl`, CommonMark on Telegram).
+Strict first live session (including the reaction check) and the Chief Architect review. TG-3 is now on its own branch
+(above).
 
 ### TG-1 Telegram text conversations — merged (#161) (2026-10-08)
 

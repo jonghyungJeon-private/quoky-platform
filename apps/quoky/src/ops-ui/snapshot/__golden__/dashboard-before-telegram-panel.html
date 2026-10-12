@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Quoky 운영 화면</title>
+<link rel="stylesheet" href="/ops.css">
+<script src="/ops.js" defer></script>
+</head>
+<body data-page="dashboard" data-refresh-seconds="30">
+<header class="top">
+<div>
+<h1>Quoky 운영 화면</h1>
+<div class="meta">갱신 시각 2026-10-06 14:00:00</div>
+</div>
+<div class="refresh">
+<input type="checkbox" id="auto-refresh" checked>
+<label for="auto-refresh">30초마다 자동 갱신</label>
+</div>
+<form method="post" action="/session/end">
+<input type="hidden" name="csrf" value="csrf-golden">
+<button type="submit">로그아웃</button>
+</form>
+</header>
+<main>
+<section class="panel" id="panel-runtime">
+<h2><span>런타임 / 상태</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>빌드 버전</dt><dd>0.1.0</dd>
+<dt>프로세스 시작</dt><dd>2026-10-06 12:00:00</dd>
+<dt>가동 시간</dt><dd>2시간 1분 5초</dd>
+<dt>DB user_version</dt><dd>14</dd>
+<dt>단일 인스턴스 잠금</dt><dd>보유</dd>
+<dt>플랫폼 연결</dt><dd>연결됨</dd>
+<dt>시작 신원 확인</dt><dd>통과</dd>
+<dt>알림 틱 상태</dt><dd>RUNNING</dd>
+<dt>알림 틱 마지막 실행</dt><dd>unknown</dd>
+<dt>실행 방식</dt><dd>launchd 서비스</dd>
+<dt>최근 10분 시작 횟수</dt><dd>1</dd>
+<dt>설치 manifest 해시</dt><dd>unknown</dd>
+<dt>재시작 횟수</dt><dd>unknown</dd>
+</dl>
+</section>
+<section class="panel" id="panel-providers">
+<h2><span>AI 공급자 준비 상태 (기능별)</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>이미지 이해 공급자 (설정)</dt><dd>claude (클라우드: 첨부 이미지가 Anthropic으로 전송돼요)</dd>
+</dl>
+<div class="table-wrap"><table>
+<thead><tr><th>기능</th><th>상태</th><th>준비/등록</th></tr></thead>
+<tbody>
+<tr><td>GENERAL_CHAT</td><td>일부 불가 (degraded)</td><td>1/2</td></tr>
+<tr><td>SUMMARIZATION</td><td>불가 (unavailable)</td><td>0/1</td></tr>
+<tr><td>DOCUMENT_ANALYSIS</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>CODE_IMPLEMENTATION</td><td>준비됨 (ready)</td><td>1/1</td></tr>
+<tr><td>CODE_REVIEW</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>ARCHITECTURE_PLANNING</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>TEST_EXECUTION</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>READONLY_LOOKUP</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>PROJECT_ANALYSIS</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>EMBEDDING</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>POLICY_SENSITIVE_CHAT</td><td>공급자 없음</td><td>0/0</td></tr>
+<tr><td>IMAGE_UNDERSTANDING</td><td>공급자 없음</td><td>0/0</td></tr>
+</tbody></table></div>
+<ul class="notes"><li>공급자 이름은 표시하지 않아요 (ARCHITECTURE.md §5.3/§12, 소유자 결정 14 대기).</li><li>예외: 이미지 이해는 소유자가 설정한 선택값(QUOKY_IMAGE_UNDERSTANDING_PROVIDER)을 보여 줘요 (ADR-0111 개정 A5). 준비 상태는 위 표의 IMAGE_UNDERSTANDING 행이에요.</li><li>예외: 대화는 소유자가 설정한 선택값(QUOKY_CHAT_PROVIDER)과 그 출처를 보여 줘요 (ADR-0092 개정).</li></ul>
+<p class="links"><a class="action" href="/providers">모델 기본값 바꾸기</a></p>
+</section>
+<section class="panel" id="panel-reminders">
+<h2><span>알림 대기열</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>알림 기능</dt><dd>켜짐</dd>
+<dt>채널 전달 옵트인</dt><dd>꺼짐 (DM만)</dd>
+</dl>
+<div class="table-wrap"><table>
+<thead><tr><th>번호</th><th>다음 시각</th><th>반복</th><th>상태</th><th>대상</th><th>지난 결과</th><th>내용 (알림 목록과 같음)</th><th>처리</th></tr></thead>
+<tbody>
+<tr><td>#1</td><td>2026-10-07 09:00:00</td><td>1회</td><td>SCHEDULED</td><td>DM</td><td>-</td><td>회의 준비</td><td><a class="action" href="/actions/reminders/cancel?no=1">취소…</a></td></tr>
+<tr><td>#2</td><td>2026-10-07 09:00:00</td><td>1회</td><td>SCHEDULED</td><td>DM</td><td>-</td><td>[hidden]</td><td><a class="action" href="/actions/reminders/cancel?no=2">취소…</a></td></tr>
+<tr><td>#3</td><td>2026-10-07 09:00:00</td><td>매일</td><td>FIRING (전달 중)</td><td>DM</td><td>SENT (dm) · 2026-10-05 09:00:02</td><td>가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…</td><td></td></tr>
+<tr><td>#4</td><td>2026-10-07 09:00:00</td><td>1회</td><td>SCHEDULED</td><td>DM</td><td>-</td><td>[hidden]</td><td><a class="action" href="/actions/reminders/cancel?no=4">취소…</a></td></tr>
+<tr><td>#5</td><td>2026-10-07 09:00:00</td><td>1회</td><td>SCHEDULED</td><td>DM</td><td>-</td><td>오늘의 브리핑(DM)</td><td><a class="action" href="/actions/reminders/cancel?no=5">취소…</a></td></tr>
+</tbody></table></div>
+<ul class="notes"><li>예정(SCHEDULED)과 전달 중(FIRING)인 알림만 보여요. 끝난 알림 기록은 Phase 1에서 보이지 않아요.</li></ul>
+</section>
+<section class="panel" id="panel-approvals">
+<h2><span>대기 중인 승인 (메타데이터만)</span><span class="state state-ok">OK</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>위험도</th><th>작업 종류</th><th>생성</th><th>만료</th><th>상태</th><th>처리</th></tr></thead>
+<tbody>
+<tr><td>appr-aaa</td><td>HIGH</td><td>미지정</td><td>2026-10-06 13:45:00</td><td>2026-10-06 14:15:00</td><td>PENDING</td><td><a class="action" href="/approvals/decide?id=appr-aaaaaaaa-1111">처리…</a></td></tr>
+<tr><td>appr-ddd</td><td>HIGH</td><td>profile-application</td><td>2026-10-06 13:45:00</td><td>2026-10-06 14:15:00</td><td>PENDING</td><td><a class="action" href="/approvals/decide?id=appr-dddddddd-4444">처리…</a></td></tr>
+<tr><td>appr-bbb</td><td>HIGH</td><td>미지정</td><td>2026-10-06 13:00:00</td><td>2026-10-06 13:30:00</td><td>PENDING (만료됨, 다음 대화에서 기록)</td><td><a class="action" href="/approvals/decide?id=appr-bbbbbbbb-2222">처리…</a></td></tr>
+</tbody></table></div>
+<ul class="notes"><li>내용(미리보기, diff, 대상, 설명)은 표시하지 않아요. 거절은 여기서도 되고, 승인은 채팅 미리보기의 &quot;운영 화면 확인 코드&quot;가 있어야 해요.</li><li>승인은 기록만 해요. 실제 실행(커밋, 푸시, PR, 머지, 게시 등)은 채팅의 실행 문구로만 해요.</li></ul>
+</section>
+<section class="panel" id="panel-connectors">
+<h2><span>커넥터 상태</span><span class="state state-ok">OK</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>커넥터</th><th>설정됨</th><th>읽기</th><th>쓰기</th><th>마지막 확인</th><th>확인 시각</th></tr></thead>
+<tbody>
+<tr><td>jira</td><td>예</td><td>예</td><td>아니요</td><td>사용 가능</td><td>2026-10-06 14:00:00</td></tr>
+<tr><td>slack</td><td>아니요</td><td>아니요</td><td>아니요</td><td>-</td><td>-</td></tr>
+<tr><td>confluence</td><td>아니요</td><td>아니요</td><td>아니요</td><td>-</td><td>-</td></tr>
+<tr><td>github</td><td>아니요</td><td>아니요</td><td>아니요</td><td>-</td><td>-</td></tr>
+</tbody></table></div>
+<ul class="notes"><li>주소, 토큰, 계정 ID, 검색어는 표시하지 않아요.</li></ul>
+</section>
+<section class="panel" id="panel-errors">
+<h2><span>최근 오류</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>보관 중</dt><dd>2건 (최대 100건, 메모리에만)</dd>
+</dl>
+<div class="table-wrap"><table>
+<thead><tr><th>시각</th><th>구성 요소</th><th>분류</th><th>코드</th><th>상관 ID</th></tr></thead>
+<tbody>
+<tr><td>2026-10-06 13:59:00</td><td>quoky</td><td>error</td><td>[hidden]</td><td>-</td></tr>
+<tr><td>2026-10-06 13:59:00</td><td>quoky</td><td>inbound</td><td>TypeError</td><td>1234567890123456789</td></tr>
+</tbody></table></div>
+<ul class="notes"><li>메시지 내용, 스택, 프롬프트와 답변은 보관하지 않아요.</li></ul>
+</section>
+<section class="panel" id="panel-feedback">
+<h2><span>피드백 통계 (최근 30일)</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>기록된 대화</dt><dd>12</dd>
+<dt>👍</dt><dd>5</dd>
+<dt>👎</dt><dd>2</dd>
+<dt>참고 신호</dt><dd>3</dd>
+</dl>
+<div class="table-wrap"><table>
+<thead><tr><th>기능</th><th>대화</th><th>👍</th><th>👎</th><th>참고 신호</th></tr></thead>
+<tbody>
+<tr><td>일반 대화</td><td>12</td><td>5</td><td>2</td><td>3</td></tr>
+</tbody></table></div>
+<ul class="notes"><li>👎 비율 추이 · 일반 대화: 17% (👎 2/12) · 이전 40% (👎 4/10) · 개선</li><li>대화 내용은 표시하지 않아요.</li></ul>
+</section>
+<section class="panel" id="panel-backup">
+<h2><span>백업 상태</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>정기 백업</dt><dd>켜짐</dd>
+<dt>작업 상태</dt><dd>IDLE</dd>
+<dt>마지막 실행</dt><dd>2026-10-06 04:00:03 · daily · VERIFIED</dd>
+<dt>마지막 검증 사본</dt><dd>2026-10-06 04:00:03 · quoky-20261006T040000-daily.db</dd>
+<dt>검증 (integrity_check, user_version)</dt><dd>예 (user_version 14)</dd>
+<dt>벡터 스냅샷 (마지막 검증 사본)</dt><dd>있음 · quoky-20261006T040000-daily.vectors</dd>
+<dt>마지막 수동 백업</dt><dd>없음</dd>
+<dt>보관 사본 수</dt><dd>2</dd>
+<dt>다음 예정</dt><dd>2026-10-07 04:00:00</dd>
+</dl>
+<div class="table-wrap"><table>
+<thead><tr><th>보관 사본 (파일 이름)</th></tr></thead>
+<tbody>
+<tr><td>quoky-20261006T040000-daily.db</td></tr>
+<tr><td>quoky-20261005T040000-daily.db</td></tr>
+</tbody></table></div>
+</section>
+<section class="panel" id="panel-memory">
+<h2><span>기억 보관함</span><span class="state state-ok">OK</span></h2>
+<dl>
+<dt>보관함 기억 수</dt><dd>3</dd>
+</dl>
+<ul class="notes"><li>기억 내용은 표시하지 않아요.</li></ul>
+<p class="links"><a class="action" href="/memories">기억 잊기 (확인 코드 필요)</a></p>
+</section>
+</main>
+</body>
+</html>

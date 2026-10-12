@@ -43,7 +43,11 @@ export {
   renderTelegramContent,
   TELEGRAM_MARKUP,
   TELEGRAM_PLATFORM,
+  translatePreviewCopy,
+  translateTelegramCopy,
 } from './rendering';
+export { telegramSegments, translateCommonMark, translateTelegramBody } from './commonmark';
+export type { TelegramSegment } from './commonmark';
 export {
   chunkTelegramText,
   deliverTelegramPreview,

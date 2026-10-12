@@ -30,7 +30,17 @@ import { ProviderSelectionService } from '../provider-selection/provider-selecti
 import { selectionFixture } from '../provider-selection/test-support';
 import { cookieFrom, send } from './test-support/http-client';
 import { OpsErrorRing } from './snapshot/error-ring';
-import { opsSnapshotSources, opsUiErrorRing, recordOpsUiErrors, startOpsUi } from './ops-ui-wiring';
+import { TELEGRAM_DROP_REASONS, TelegramBotToken } from '@quoky/adapter-telegram';
+import { composePlatformAdapter } from '../platform/platform-composition';
+import { OpsSnapshotBuilder } from './snapshot/build-snapshot';
+import {
+  opsDecisionResultTarget,
+  opsSnapshotSources,
+  opsUiErrorRing,
+  recordOpsUiErrors,
+  startOpsUi,
+  telegramStatusOf,
+} from './ops-ui-wiring';
 import type { OpsUiContainer, OpsUiHandle, OpsUiWiringInput } from './ops-ui-wiring';
 
 const GITHUB_TOKEN = 'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
@@ -511,5 +521,83 @@ describe('OPS-1 wiring (ADR-0113 D1/D8)', () => {
     const refused = await send({ port, path: '/actions/reminders/cancel?no=1', cookie });
     expect(refused.body).toContain('ACTIONS_DISABLED');
     expect(refused.body).not.toContain('name="nonce"');
+  });
+});
+
+describe('TG-3 Telegram panel wiring (ADR-0114 D12)', () => {
+  const silentLogger: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+  const SECRET = ['AAH', 'acc', '_', 'p'.repeat(15), '-', 'r'.repeat(14)].join('');
+  const BOT_ID = ['70', '01', '23', '4'].join('');
+
+  function composedWithTelegram() {
+    const token = TelegramBotToken.from(`${BOT_ID}:${SECRET}`);
+    if (!token) throw new Error('fixture token is not well-formed');
+    const discord = {
+      platform: 'discord',
+      readConnectedIdentity: async () => ({ botUserId: 'BOT_ID_MARKER', guildIds: [], channels: [], unreachableChannelIds: [] }),
+    } as never;
+    return composePlatformAdapter(
+      discord,
+      { token, expectedBotId: BOT_ID, ownerIds: ['5550001'], ownerActorMap: [{ telegramId: '5550001', discordOwnerId: 'owner-discord-id' }] },
+      { logger: () => silentLogger, dbPath: ':memory:' },
+    );
+  }
+
+  it('Telegram off: no status (the bound platform is Discord itself), and the panel says "not configured"', async () => {
+    const sources = opsSnapshotSources(input(fakes().container, {}), new OpsErrorRing());
+    expect(sources.telegram?.()).toBeUndefined();
+    expect(telegramStatusOf(undefined)).toBeUndefined();
+    const view = await new OpsSnapshotBuilder(sources).build();
+    expect(view.panels.find((p) => p.id === 'telegram')?.fields).toEqual([{ label: '상태', value: '설정 안 됨 (not configured)' }]);
+  });
+
+  it("Telegram on: the composed adapter's content-free status, every drop reason counted, never the token", async () => {
+    const platform = composedWithTelegram();
+    const status = telegramStatusOf(platform);
+    expect(status).toMatchObject({ identityVerified: false, polling: false, admittedChatCount: 0 });
+    expect(Object.keys(status?.droppedUpdates ?? {})).toEqual([...TELEGRAM_DROP_REASONS]);
+    expect(Object.keys(status?.droppedUpdates ?? {})).toEqual(expect.arrayContaining(['forwarded', 'not-feedback']));
+
+    const f = fakes({ extra: [] });
+    const container: OpsUiContainer = {
+      get<T>(token: unknown): T {
+        return (token === PLATFORM_ADAPTER ? platform : f.container.get(token)) as T;
+      },
+    };
+    const handle = await startOpsUi(input(container, { QUOKY_OPS_UI_ENABLED: 'true' }, { portOverride: 0 }));
+    handles.push(handle);
+    const port = handle.port ?? 0;
+    const uiToken = readFileSync(path.join(dir, 'data', 'ops-ui.token'), 'utf8').trim();
+    const cookie = cookieFrom(await send({ port, method: 'POST', path: '/session', origin: `http://127.0.0.1:${port}`, form: { token: uiToken } }));
+    const page = (await send({ port, path: '/', cookie })).body;
+    expect(page).toContain('id="panel-telegram"');
+    expect(page).toContain('봇 신원 확인 (getMe)');
+    expect(page).toContain('not-feedback');
+    for (const hidden of [SECRET, `${BOT_ID}:`, BOT_ID, '5550001', uiToken]) expect(page, hidden).not.toContain(hidden);
+  });
+});
+
+describe('TG-3 decision-result owner DM (ADR-0114 D11)', () => {
+  const map = { telegram: { ownerActorMap: [{ telegramId: '5550001', discordOwnerId: '111111111111111111' }] } };
+
+  it('a Discord conversation keeps its own owner; a Telegram one goes to the mapped Discord owner', () => {
+    const target = opsDecisionResultTarget({ discord: { ownerIds: ['111111111111111111', '222222222222222222'] }, ...map });
+    expect(target({ platform: 'discord', channelId: 'dm', userId: '222222222222222222' })).toEqual({
+      platform: 'discord',
+      userId: '222222222222222222',
+    });
+    expect(target({ platform: 'telegram', channelId: '5550001', userId: '5550001', direct: true })).toEqual({
+      platform: 'discord',
+      userId: '111111111111111111',
+    });
+  });
+
+  it('an unmapped conversation falls back to the only Discord owner, and to nobody when there are several', () => {
+    const chat = { platform: 'telegram', channelId: '5550002', userId: '5550002', direct: true };
+    expect(opsDecisionResultTarget({ discord: { ownerIds: ['111111111111111111'] } })(chat)).toEqual({
+      platform: 'discord',
+      userId: '111111111111111111',
+    });
+    expect(opsDecisionResultTarget({ discord: { ownerIds: ['1', '2'] }, ...map })(chat)).toBeUndefined();
   });
 });
