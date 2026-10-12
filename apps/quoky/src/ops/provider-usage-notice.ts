@@ -16,11 +16,15 @@ import type { OpsNoticeLedgerStore } from './ops-notice';
  * Both go through the owner-only OPS notice path (`deliver`, the primary platform's DM) and carry token totals and run
  * counts only. Delivery follows the sink contract (ADR-0101 D4): `SENT` and `UNCERTAIN` (it may have been delivered)
  * settle the month and are never resent; a non-retryable `NOT_SENT` settles it as given up; only a retryable `NOT_SENT`
- * and `NO_OWNER` are tried again at the next evaluation. Each kind has at most {@link USAGE_NOTICE_MAX_ATTEMPTS}
- * attempts per month, counted in a private JSON file beside the ops notice ledger **before** the send (a crash mid-send
- * still counts), so the bound holds across restarts. If that attempt record cannot be written, nothing is sent (fail
- * closed, like the ADR-0102 D7 ledger). The job reads usage and sends a notice; it has no handle on provider selection
- * and never switches, disables or re-orders a provider.
+ * and `NO_OWNER` are tried again at the next evaluation, and only when that outcome was explicitly recorded.
+ *
+ * Each attempt is recorded **in flight** in a private JSON file beside the ops notice ledger before the send, and the
+ * outcome write clears it. As with an ADR-0101 reminder that a restart finds mid-delivery, an attempt still in flight
+ * on load (sent, maybe sent, or never handed over, with no recorded outcome) is taken as `UNCERTAIN`: that kind is
+ * done for the month and never resent (at most once over at least once). If the in-flight record cannot be written,
+ * nothing is sent (fail closed, like the ADR-0102 D7 ledger). Each kind also has at most
+ * {@link USAGE_NOTICE_MAX_ATTEMPTS} attempts per month, as a second bound. The job reads usage and sends a notice; it
+ * has no handle on provider selection and never switches, disables or re-orders a provider.
  */
 
 export type UsageNoticeKind = 'PROVIDER_USAGE_MONTHLY' | 'PROVIDER_USAGE_THRESHOLD';
@@ -34,9 +38,17 @@ export type UsageNoticeDeliver = (kind: UsageNoticeKind, text: string) => Promis
 /** Delivery attempts per kind per calendar month (retryable `NOT_SENT` and `NO_OWNER` only reach the second and third). */
 export const USAGE_NOTICE_MAX_ATTEMPTS = 3;
 
+/** The recorded outcome of the last finished attempt (absent while one is in flight). */
+export type UsageNoticeRecordedOutcome = 'SENT' | 'UNCERTAIN' | 'NOT_SENT' | 'NO_OWNER';
+
 export interface UsageNoticeAttempts {
   readonly month: MonthKey;
   readonly count: number;
+  /** Set before the send, cleared by the outcome write; still set on load = taken as `UNCERTAIN`. */
+  readonly inFlight?: true;
+  readonly outcome?: UsageNoticeRecordedOutcome;
+  /** For `NOT_SENT` only: the sink's `retryable` flag. */
+  readonly retryable?: boolean;
 }
 
 export interface UsageNoticeState {
@@ -52,12 +64,27 @@ export interface UsageNoticeState {
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+const RECORDED: ReadonlySet<string> = new Set<UsageNoticeRecordedOutcome>(['SENT', 'UNCERTAIN', 'NOT_SENT', 'NO_OWNER']);
+
 function attemptsOf(value: unknown): UsageNoticeAttempts | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { month, count } = value as Record<string, unknown>;
-  return typeof month === 'string' && MONTH.test(month) && typeof count === 'number' && Number.isSafeInteger(count) && count > 0
-    ? { month, count }
-    : undefined;
+  const { month, count, inFlight, outcome, retryable } = value as Record<string, unknown>;
+  if (typeof month !== 'string' || !MONTH.test(month) || typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) {
+    return undefined;
+  }
+  return {
+    month,
+    count,
+    ...(inFlight === true ? { inFlight: true as const } : {}),
+    ...(typeof outcome === 'string' && RECORDED.has(outcome) ? { outcome: outcome as UsageNoticeRecordedOutcome } : {}),
+    ...(typeof retryable === 'boolean' ? { retryable } : {}),
+  };
+}
+
+/** Whether the recorded attempts allow another one: only after an explicitly recorded retryable outcome. */
+function mayRetry(attempts: UsageNoticeAttempts): boolean {
+  if (attempts.inFlight === true) return false;
+  return attempts.outcome === 'NO_OWNER' || (attempts.outcome === 'NOT_SENT' && attempts.retryable === true);
 }
 
 export function parseUsageNoticeState(content: string | undefined): UsageNoticeState {
@@ -267,15 +294,17 @@ export class ProviderUsageNoticeJob {
     const keys = STATE_KEYS[kind];
     const state = this.readState();
     if (state[keys.settled] === month) return;
-    const made = state[keys.attempts]?.month === month ? (state[keys.attempts]?.count ?? 0) : 0;
-    if (made >= USAGE_NOTICE_MAX_ATTEMPTS) {
-      // Attempts were used up without a settling write (a crash after the last attempt): give up for the month.
-      this.writeState({ ...state, [keys.settled]: month });
-      this.deps.logger.warn('provider_usage.notice', { kind, outcome: 'GAVE_UP', attempt: made });
+    const previous = state[keys.attempts]?.month === month ? state[keys.attempts] : undefined;
+    if (previous !== undefined && (!mayRetry(previous) || previous.count >= USAGE_NOTICE_MAX_ATTEMPTS)) {
+      // An attempt left in flight by a restart is UNCERTAIN (ADR-0101: never resent); a used-up budget is given up.
+      const interrupted = previous.inFlight === true;
+      const closed: UsageNoticeAttempts = interrupted ? { month, count: previous.count, outcome: 'UNCERTAIN' } : previous;
+      this.writeState({ ...state, [keys.settled]: month, [keys.attempts]: closed });
+      this.deps.logger.warn('provider_usage.notice', { kind, outcome: interrupted ? 'UNCERTAIN_INTERRUPTED' : 'GAVE_UP', attempt: previous.count });
       return;
     }
-    const attempt = made + 1;
-    if (!this.recordAttempt({ ...state, [keys.attempts]: { month, count: attempt } })) return;
+    const attempt = (previous?.count ?? 0) + 1;
+    if (!this.recordAttempt({ ...state, [keys.attempts]: { month, count: attempt, inFlight: true } })) return;
 
     let outcome: UsageNoticeDelivery;
     try {
@@ -293,6 +322,14 @@ export class ProviderUsageNoticeJob {
     };
     if (outcome.status === 'SENT') this.deps.logger.info('provider_usage.notice', fields);
     else this.deps.logger.warn('provider_usage.notice', fields);
-    if (!retry) this.writeState({ ...this.readState(), [keys.settled]: month });
+    // One write records the outcome (clearing in-flight) and, unless a retry is allowed, settles the month. If it fails,
+    // memory still holds it for this process and the file keeps the in-flight record, which a restart reads as UNCERTAIN.
+    const recorded: UsageNoticeAttempts = {
+      month,
+      count: attempt,
+      outcome: outcome.status,
+      ...(outcome.status === 'NOT_SENT' ? { retryable: outcome.retryable } : {}),
+    };
+    this.writeState({ ...this.readState(), [keys.attempts]: recorded, ...(retry ? {} : { [keys.settled]: month }) });
   }
 }

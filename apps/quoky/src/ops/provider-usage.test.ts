@@ -231,7 +231,11 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     expect(text).not.toContain('4,242');
     await job.checkOnce();
     expect(h.sent).toHaveLength(1);
-    expect(JSON.parse(h.state.content as string)).toEqual({ version: 1, monthlyReportedFor: '2026-09', monthlyAttempts: { month: '2026-09', count: 1 } });
+    expect(JSON.parse(h.state.content as string)).toEqual({
+      version: 1,
+      monthlyReportedFor: '2026-09',
+      monthlyAttempts: { month: '2026-09', count: 1, outcome: 'SENT' },
+    });
     await h.s.close();
   });
 
@@ -270,7 +274,11 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     await h.job().checkOnce();
     await h.job().checkOnce();
     expect(h.sent).toHaveLength(1);
-    expect(JSON.parse(h.state.content as string)).toEqual({ version: 1, monthlyReportedFor: '2026-09', monthlyAttempts: { month: '2026-09', count: 1 } });
+    expect(JSON.parse(h.state.content as string)).toEqual({
+      version: 1,
+      monthlyReportedFor: '2026-09',
+      monthlyAttempts: { month: '2026-09', count: 1, outcome: 'UNCERTAIN' },
+    });
     await h.s.close();
   });
 
@@ -322,16 +330,99 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     await h.s.close();
   });
 
-  it('counts the attempt before sending: attempts used up by a crash mid-send are not exceeded after a restart', async () => {
+  it('takes an attempt left in flight by a crash between the record and the send as UNCERTAIN: done, never sent', async () => {
     const h = await harness();
     await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
-    // Three attempts were recorded and the process died before any outcome was written.
-    h.state.content = JSON.stringify({ version: 1, monthlyAttempts: { month: '2026-09', count: 3 } });
-    await h.job().checkOnce();
-    await h.job().checkOnce();
+    await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    // The in-flight records were written and the process died before the send (it never happened): fail closed.
+    h.state.content = JSON.stringify({
+      version: 1,
+      monthlyAttempts: { month: '2026-09', count: 1, inFlight: true },
+      thresholdAttempts: { month: '2026-10', count: 1, inFlight: true },
+    });
+    await h.job(1000).checkOnce();
+    await h.job(1000).checkOnce();
     expect(h.sent).toEqual([]);
-    expect(JSON.parse(h.state.content)).toMatchObject({ monthlyReportedFor: '2026-09' });
+    expect(JSON.parse(h.state.content)).toEqual({
+      version: 1,
+      monthlyReportedFor: '2026-09',
+      monthlyAttempts: { month: '2026-09', count: 1, outcome: 'UNCERTAIN' },
+      thresholdSentIn: '2026-10',
+      thresholdAttempts: { month: '2026-10', count: 1, outcome: 'UNCERTAIN' },
+    });
     await h.s.close();
+  });
+
+  it.each([
+    ['SENT', 'PROVIDER_USAGE_MONTHLY', SENT],
+    ['SENT', 'PROVIDER_USAGE_THRESHOLD', SENT],
+    ['UNCERTAIN', 'PROVIDER_USAGE_MONTHLY', TIMEOUT],
+    ['UNCERTAIN', 'PROVIDER_USAGE_THRESHOLD', TIMEOUT],
+  ] as const)('a failed settling write after %s (%s): a restart does not send again', async (_name, kind, result) => {
+    const h = await harness();
+    // Only the kind under test is due: last month's usage for the monthly DM, this month's over the threshold for the other.
+    if (kind === 'PROVIDER_USAGE_MONTHLY') await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    else await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    let disk: string | undefined;
+    let failSettling = true;
+    // The in-flight record reaches the disk; the outcome write fails while `failSettling` is set.
+    const store: OpsNoticeLedgerStore = {
+      read: () => disk,
+      write: (content) => {
+        if (failSettling && !content.includes('"inFlight":true')) throw new Error('ENOSPC');
+        disk = content;
+      },
+    };
+    const sent: UsageNoticeKind[] = [];
+    const job = () =>
+      new ProviderUsageNoticeJob({
+        ledger: new ProviderUsageLedger(h.s.taskRuns, KST),
+        deliver: async (k) => {
+          sent.push(k);
+          return result;
+        },
+        state: store,
+        ...(kind === 'PROVIDER_USAGE_THRESHOLD' ? { monthlyThreshold: 1000 } : {}),
+        logger: new RecordingLogger(),
+        clock: () => h.clock.iso,
+      });
+    const first = job();
+    await first.checkOnce();
+    await first.checkOnce(); // same process: memory holds the settlement
+    expect(sent).toEqual([kind]);
+    const key = kind === 'PROVIDER_USAGE_MONTHLY' ? 'monthlyAttempts' : 'thresholdAttempts';
+    expect(JSON.parse(disk as string)[key]).toMatchObject({ count: 1, inFlight: true }); // the outcome never reached the disk
+    failSettling = false;
+    await job().checkOnce(); // a restart reads the in-flight record as UNCERTAIN
+    await job().checkOnce();
+    expect(sent).toEqual([kind]);
+    expect(JSON.parse(disk as string)[key]).toEqual({ month: kind === 'PROVIDER_USAGE_MONTHLY' ? '2026-09' : '2026-10', count: 1, outcome: 'UNCERTAIN' });
+    await h.s.close();
+  });
+
+  it('a recorded retryable NOT_SENT is retried after a restart, up to the cap', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    h.state.content = JSON.stringify({ version: 1, monthlyAttempts: { month: '2026-09', count: 2, outcome: 'NOT_SENT', retryable: true } });
+    h.outcome.value = RATE_LIMITED;
+    await h.job().checkOnce();
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(1); // the third and last attempt
+    expect(JSON.parse(h.state.content)).toEqual({
+      version: 1,
+      monthlyReportedFor: '2026-09',
+      monthlyAttempts: { month: '2026-09', count: 3, outcome: 'NOT_SENT', retryable: true },
+    });
+    // A record with no explicit retryable outcome (or a non-retryable one) is never retried.
+    const g = await harness();
+    await addRun(g.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    g.state.content = JSON.stringify({ version: 1, monthlyAttempts: { month: '2026-09', count: 1, outcome: 'NOT_SENT', retryable: false } });
+    await g.job().checkOnce();
+    g.state.content = JSON.stringify({ version: 1, monthlyAttempts: { month: '2026-09', count: 1 } });
+    await g.job().checkOnce();
+    expect(g.sent).toEqual([]);
+    await h.s.close();
+    await g.s.close();
   });
 
   it('a failed state write never causes a second send in the process, though the file still holds the stale record', async () => {
@@ -358,7 +449,7 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
       clock: () => h.clock.iso,
     });
     await job.checkOnce();
-    expect(JSON.parse(disk as string)).toEqual({ version: 1, monthlyAttempts: { month: '2026-09', count: 1 } }); // stale: not settled
+    expect(JSON.parse(disk as string)).toEqual({ version: 1, monthlyAttempts: { month: '2026-09', count: 1, inFlight: true } }); // stale: not settled
     await job.checkOnce();
     await job.checkOnce();
     expect(h.sent).toHaveLength(1);
