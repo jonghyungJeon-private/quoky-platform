@@ -20138,3 +20138,40 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   path to any of the three hosts.
 - **Strict gates:** enabling the Google Sheets API in the Google Cloud project `quoky-personal-510806` (owner-confirmed);
   the live sessions (a long thread, a reply pick after a restart, a shared-drive document, a multi-sheet spreadsheet).
+
+## Personal v5 ratification record — ADR-0119 and the ADR-0117/ADR-0118 amendments (2026-10-12)
+
+- **Ratified by:** the Product Owner, in the orchestrator chat on 2026-10-12 ("응 확정할게 진행하자"), after a Korean
+  briefing of `docs/plans/personal-v5-plan.md` (draft). GOV-6 appended ADR-0119, the ADR-0117 amendment (BRF-3) and the
+  ADR-0118 amendment (GML-2, DRV-2, DRV-2b) above as Ratified.
+- **Owner decisions** (plan §7; every question takes its recommended default unless stated otherwise):
+  1. Standing approval renewed for v5 waves on the v4 terms, with every automatic step named: Push → PR → Merge →
+     deploy to the always-on service → smoke check, after offline validation, independent review and Codex PASS.
+     Every Strict target is still confirmed on its own.
+  2. v5 is a depth-and-hardening release: no new platform, AI vendor or connector.
+  3. The OpenAI and Gemini API keys and Notion stay deferred until the owner asks: "OpenAI / Gemini API Key는 필요시에
+     내가 재요청할게. Notion 도 마찬가지야." Their live checks stay Pending.
+  4. STO-1: one migration v16 for the session platform key and the usage index (ADR-0119), P2.
+  5. HARD-1: bounded OAuth token reads in the three Google connectors.
+  6. BRF-3: the opt-in unread-mail section in the brief, off by default (ADR-0117 amendment).
+  7. GML-2: thread summaries and reply-to-pick **yes; label listings no** (the owner does not use Gmail labels).
+  8. DRV-2b: **yes** ("모든 시트 필요"): every sheet through the Sheets API. GOV-6 found that `spreadsheets.get` and
+     `spreadsheets.values.batchGet` accept `drive.readonly`, so ADR-0118 D3 is unchanged and no new consent is needed;
+     enabling the Sheets API in `quoky-personal-510806` is Strict.
+  9. DRV-2: shared drives yes; no owned-only filter.
+  10. CAL-2: **yes** ("다른 Google 캘린더가 있다"). The orchestrator lists the owner's calendars, the owner picks which
+      ones; they are read-only in `오늘 일정` and the brief, and writes stay on the primary calendar (ADR-0110
+      amendment). An additive `calendarId` port field, if needed, needs its own ADR-0110 amendment.
+  11. `QUOKY_GIT_MERGE_ENABLED=false` kept on the service; CODE-10 dropped.
+  12. COST-1 price table dropped for now.
+  13. Telegram inline approval buttons kept parked (ADR-0114 D10).
+  14. SUB-3 continuation and the Stage 2A re-validation kept parked (ADR-0103 note of 2026-10-08).
+  15. PLT-1: the remaining interpolated Core values move into `untrusted` spans (implementation note only).
+  16. Residuals R3, R4, R8, R9, R12, R14, R16, R18 and R19 accepted; R20 (v2/v3 R1-R8) kept as documented.
+  17. Drive does not read uploaded text files (no ADR-0118 D2 amendment).
+  18. No "memory improvements" track until the owner names a concrete problem.
+  19. The CODE-8 run on a second allowlisted repository stays Pending, parked with CODE-10.
+- **Parked items** (LLM-3, LRN-4, ADR-0108 D4, the mobile or remote operations UI, Notion) stay parked under their
+  2026-10-08 notes; the orchestrator recommends keeping them parked.
+- **Ratification authorizes no Strict action by itself.** The v16 apply, each `.env.local` edit, enabling the Sheets
+  API, and the live sessions each still need the owner's confirmation for that target.

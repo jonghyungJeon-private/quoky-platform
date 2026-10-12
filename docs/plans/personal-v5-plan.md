@@ -1,7 +1,10 @@
 # Quoky Personal v5 — Plan (post-v4)
 
-- **Status:** **Draft — awaiting owner decisions.** Nothing in this plan is ratified. The answers to section 7 decide
-  which tracks run. No ADR named here exists yet: GOV-6 drafts them after the owner answers.
+- **Status:** **RATIFIED (2026-10-12).** After a Korean briefing of the draft, the Product Owner answered in the
+  orchestrator chat on 2026-10-12 ("응 확정할게 진행하자"): every question in section 7 takes its recommended default,
+  except decisions 7, 8 and 10, whose answers are in section 7. GOV-6 recorded the answers in the v5 ratification
+  record in `DECISIONS.md` and appended ADR-0119 and the ADR-0117 and ADR-0118 amendments as Ratified. Ratification
+  authorizes no Strict action by itself: each Strict target in section 5 still needs its own owner confirmation.
 - **Date:** 2026-10-12
 - **Base:** `main` at `a965590` (PR #173 merged, v4 closed). SQLite schema v15. `ConversationRuntimeDeps` baseline 35.
   Golden ratchet `turn-handler-routing` minTotal 419 and `action-shaped-fallthrough` 155 (`baseline.v1.json`).
@@ -64,8 +67,8 @@ P3 is parked or recommended for dropping.
 |---|---|
 | P0 | LIVE-2 v4 pending live checks, DOC-F docs and pipeline alignment |
 | P1 | HARD-1 bounded OAuth token reads, BRF-3 mail section in the brief (if decision 6 is yes) |
-| P2 | GML-2 Gmail threads and reply picks, DRV-2 shared drives, STO-1 storage hardening (migration v16), PLT-1 untrusted spans for the remaining Core values, CAL-2 more calendars (configuration) |
-| P3 (parked or drop) | DRV-2b all sheets (new scope), CODE-10 merge on a second repository, COST-1 price table, Telegram inline approvals (ADR-0114 D10), SUB-3 and Stage 2A, LLM-3, LRN-4, ADR-0108 D4, a mobile/remote ops UI, Notion, "memory improvements" (unscoped), a new observability track |
+| P2 | GML-2 Gmail threads and reply picks, DRV-2 shared drives and DRV-2b all sheets, STO-1 storage hardening (migration v16), PLT-1 untrusted spans for the remaining Core values, CAL-2 more calendars (read-only, going ahead: decision 10) |
+| P3 (parked or drop) | CODE-10 merge on a second repository, COST-1 price table, Telegram inline approvals (ADR-0114 D10), SUB-3 and Stage 2A, LLM-3, LRN-4, ADR-0108 D4, a mobile/remote ops UI, Notion, "memory improvements" (unscoped), a new observability track |
 | Out | Same as v4 "Out", plus PRV-1/PRV-2 live until the owner re-requests the keys |
 
 ## 2. Carry-over and residuals
@@ -87,7 +90,7 @@ means a re-entry condition.
 | R2 | Usage ledger query is a full scan of `task_runs` (about 38 ms per 20,000 runs locally) on each hourly evaluation and ops-UI load | ADR-0115 PRV-3 residual | **Fix only inside STO-1** (same v16); on its own, accept: the cost is negligible at personal scale |
 | R3 | The claim guard is best-effort lexical; the fixed footer is the guarantee | ADR-0118 GML-1 and DRV-1 residuals | **Accept.** Add wordings as live QA finds them |
 | R4 | Drive listings include files shared with the owner (a stranger can place a hostile name) | ADR-0118 DRV-1 residual | **Accept** (inside the ADR-0118 threat model). An owned-only filter is optional (decision 9) |
-| R5 | Drive exports only the first sheet of a spreadsheet | ADR-0118 DRV-1 residual | **Park** (DRV-2b): a full read needs a new scope (decision 8) |
+| R5 | Drive exports only the first sheet of a spreadsheet | ADR-0118 DRV-1 residual | **Fix (P2):** DRV-2b, through the Sheets API under the existing `drive.readonly` scope (decision 8) |
 | R6 | Markdown in Core values without an `untrusted` span (some `response-composer.ts` paths interpolate file paths) may lose a `*`/`_` pair on Telegram; fidelity only, never markup | ADR-0114 TG-3 "translation scope" | **Fix (P2):** PLT-1 |
 | R7 | The OAuth token response is read with `response.json()`, unbounded (pinned to `oauth2.googleapis.com`) | ADR-0118 GML-1 and DRV-1 residuals; the same call is in `connector-calendar-google/src/oauth.ts` | **Fix (P1):** HARD-1 |
 | R8 | `NO_OWNER` uses a notice attempt like a retryable `NOT_SENT`; three ownerless hours give up that month's DM | ADR-0115 PRV-3 residual ("owner decision, kept as is") | **Accept** (already an owner decision) |
@@ -173,28 +176,35 @@ The owner works in Google Workspace (v4 plan CON; calendar and mail live). Each 
   - A platform reply to a listing message picks that entry (closes R13). Core has no inbound reply reference today
     (`replyToMessageId` exists only on outbound messages), so both adapters map the platform's reply into a new
     additive, opaque inbound field. Core never reads platform message ids as anything but data.
-  - `<라벨> 메일` lists a label read-only, only if the owner uses labels (decision 7). `gmail.readonly` already covers
-    all three; no new scope.
+  - `gmail.readonly` already covers both; no new scope. Label listings are not built: the owner does not use Gmail
+    labels (decision 7).
 - **DRV-2, Drive shared drives (P2).** Search and recent files include the owner's shared drives
   (`includeItemsFromAllDrives`, `supportsAllDrives`), still `drive.readonly`, still the ADR-0118 listing and export
-  rules. Optional `내 문서` filter for owned files only (decision 9).
-- **DRV-2b, all sheets (P3).** The Drive export returns only the first sheet as CSV. A full read needs either the
-  `spreadsheets.readonly` scope (forbidden by ADR-0118 D3, "no other scope is ever requested") or parsing a zipped
-  HTML export. Recommended: drop unless the owner works in multi-sheet spreadsheets (decision 8).
-- **CAL-2, more calendars (P2, configuration).** Reading several calendars already works through
-  `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` (the owner's host uses `primary`). Adding calendars is a Strict `.env.local` edit,
-  no code. If two configured calendars can share an event id, an additive `calendarId` on `CalendarEvent` closes BRF-2
-  R8. Writes stay on the primary calendar (ADR-0110 amendment); widening them is not recommended.
-- **ADR.** One ADR-0118 amendment for GML-2 (the `MailReader` thread read, and the inbound reply field on the domain
-  message, which both platform adapters fill) and DRV-2 (the corpus widening). CAL-2's port field, if needed, is an ADR-0110 amendment.
+  rules. No `내 문서` owned-only filter (decision 9).
+- **DRV-2b, all sheets (P2, decision 8: "모든 시트 필요").** The Drive export returns only the first sheet as CSV. The
+  Sheets API reads every sheet: `spreadsheets.get` (sheet titles) and `spreadsheets.values.batchGet` (values). **Both
+  methods accept `https://www.googleapis.com/auth/drive.readonly`** (Google Sheets API reference, "Authorization
+  scopes", checked 2026-10-12), so ADR-0118 D3 holds: no new scope and no new consent. What changes is a new pinned
+  host, `sheets.googleapis.com`, and the Google Sheets API must be enabled in the project `quoky-personal-510806`
+  (Strict, owner-confirmed). Bounds and fallback are in the ADR-0118 amendment of 2026-10-12.
+- **CAL-2, more calendars (P2, going ahead: decision 10, "다른 Google 캘린더가 있다").** Reading several calendars
+  already works through `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` (the owner's host uses `primary`). The orchestrator lists
+  the owner's calendars read-only, the owner picks which ones, and the ids go into `.env.local` (Strict). The extra
+  calendars are read-only and appear in `오늘 일정` and the brief; writes stay on the primary calendar (ADR-0110
+  amendment). If two configured calendars can share an event id, an additive `calendarId` on `CalendarEvent` closes
+  BRF-2 R8; that port field needs its own ADR-0110 amendment first and is not part of GOV-6.
+- **ADR.** The ADR-0118 amendment of 2026-10-12 (Ratified) covers GML-2 (the `MailReader` thread read, and the
+  inbound reply field on the domain message, which both platform adapters fill), DRV-2 (the corpus widening) and DRV-2b
+  (the Sheets API read). CAL-2 needs no ADR unless the port field is wanted.
 - **Risks.** Threads multiply hostile text per summary: the same untrusted framing, no tools, a tighter byte bound.
-  Shared drives widen who can place a hostile name in a listing: the R4 threat model, now larger.
-- **Estimate.** GML-2 M. DRV-2 S. CAL-2 S (S-M with the port field).
+  Shared drives widen who can place a hostile name in a listing: the R4 threat model, now larger. All sheets means more
+  hostile cells per summary: the same 256 KiB bound across sheets, sheet titles as untrusted spans.
+- **Estimate.** GML-2 M. DRV-2 S. DRV-2b M. CAL-2 S (S-M with the port field).
 - **Dependencies.** The v4 polish PR merged (it owns the mail and Drive handlers). The amendment ratified.
 - **AC.** Fixture adapters answer the new phrasings deterministically; an injection thread produces no action; listings
   stay DM-only; the routing corpus gains cases and nothing else moves.
 - **Live QA.** About 10 phrasings per item on the owner's DM, including a long thread, a reply pick after a restart,
-  and a shared-drive document.
+  a shared-drive document, a multi-sheet spreadsheet, and `오늘 일정` with the added calendars.
 
 ### STO — Storage hardening, one migration (P2, Strict apply)
 
@@ -272,8 +282,8 @@ assume section 7 is answered. A "no" drops the task without blocking the rest. M
 | 2 | BRF-3 | BRF | `core/application/reminders/daily-brief.ts`, `daily-brief-sources.ts` (+tests), `app/reminders/brief-sources.ts`, `reminder-config.ts`, `.env.example` | sonnet | ADR-0117 amendment |
 | 2 | GML-2 | CON | `core/application/mail/*`, `core/ports` mail port (additive), `core/domain/messaging.ts` (inbound reply field), `adapter-discord` and `adapter-telegram` inbound mapping, `connector-gmail/src/gmail-mail-reader.ts`, `app/features/mail.providers.ts`, golden corpora | opus | polish PR, ADR-0118 amendment |
 | 2 | STO-1 | STO | `storage-sqlite/src/migrations.ts`, `storage-sqlite/src/index.ts` (session and run queries), `core/ports/storage-provider.port.ts`, `core/application/session-manager.ts` (+tests) | opus | ADR-0119 |
-| 3 | DRV-2 | CON | `core/application/drive/*`, `connector-gdrive/src/gdrive-reader.ts`, `app/features/drive.providers.ts` | sonnet | GML-2 (shared amendment), polish PR |
-| 3 | CAL-2 | CON | No code (`.env.local`, Strict); `core/domain` calendar event and `connector-calendar-google` only if the port field is approved | sonnet | decision 10 |
+| 3 | DRV-2 + DRV-2b | CON | `core/application/drive/*`, `connector-gdrive/src/gdrive-reader.ts`, a new `connector-gdrive/src/sheets-reader.ts` (+ source scan), `app/features/drive.providers.ts` | opus (new host) | GML-2, polish PR, Sheets API enabled (Strict) |
+| 3 | CAL-2 | CON | No code: the owner picks calendars, then the `.env.local` edit (Strict). `core/domain` calendar event and `connector-calendar-google` only if an ADR-0110 amendment adds `calendarId` | haiku (listing), sonnet | decision 10 (yes) |
 | 3 | INT-4 | INT | `app/personal-v5-acceptance.test.ts`, golden additions, `baseline.v1.json` | sonnet | merged tracks |
 | 3 | DOC-G | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation notes), `ROADMAP.md`, quickstart, operator guide | sonnet | merged tracks |
 
@@ -310,11 +320,11 @@ in its ADR first.
   also names deploying to the always-on service and a smoke check. v5 should state both explicitly: the recommended
   default renews the v4 terms **and** names the deploy and smoke steps. Every Strict item below is still confirmed per
   target.
-- **ADR gate.** A track's first code merge waits for its ADR or amendment to be ratified. GOV-6 drafts ADR-0119 and the
-  ADR-0117/ADR-0118 amendments after the owner answers. HARD-1, PLT-1 and the docs tasks need implementation notes
+- **ADR gate.** A track's first code merge waits for its ADR or amendment to be ratified. GOV-6 appended ADR-0119 and the
+  ADR-0117/ADR-0118 amendments, Ratified on 2026-10-12 with the owner's answers. HARD-1, PLT-1 and the docs tasks need implementation notes
   only. A stalled ADR stalls only its own track.
 - **Chief Architect review (independent, mandatory before merge):** STO-1 (a Core storage port and a migration), GML-2
-  (a port widening and a larger injection surface), DRV-2 (a corpus widening), BRF-3 (hostile text in a scheduled DM),
+  (a port widening and a larger injection surface), DRV-2 and DRV-2b (a corpus widening and a new pinned host), BRF-3 (hostile text in a scheduled DM),
   PLT-1 (untrusted rendering on both platforms). HARD-1 needs Codex only.
 - **Codex review.** Sparse: required PASS per PR in the ship pipeline, plus a delta review after fixes. Codex is a
   reviewer, never the implementer of the same change.
@@ -331,8 +341,8 @@ in its ADR first.
   INT-4 adds `pnpm build`. Docs-only tasks run `git diff --check` and confirm unique `## ADR-` numbers.
 - **Fix loops.** At most two per finding inside the approved scope; then narrow, defer or stop and report.
 - **Strict, per target:** the service-DB migration v16 apply; each `.env.local` edit (BRF-3 flag, CAL-2 calendar ids,
-  any merge-flag change); runtime restarts outside the ship pipeline; any new OAuth scope (none is recommended); the
-  owner-attended LIVE-2 session.
+  any merge-flag change); enabling the Google Sheets API in `quoky-personal-510806` (DRV-2b); runtime restarts outside
+  the ship pipeline; any new OAuth scope (none is needed); the owner-attended LIVE-2 session.
 - **Honesty.** No document claims a live result before the session that produced it. Pending stays Pending.
 
 ## 6. Risks
@@ -343,30 +353,34 @@ in its ADR first.
 | More hostile text reaches the owner (threads, shared drives, mail subjects in the brief) | Same untrusted framing, guarded clips, link neutralizing and DM-only rules as v4; no tool surface; CA review on each |
 | PLT-1 changes Discord output | Byte-identical golden fixture (793 cases) plus new cases; full `pnpm test` |
 | v5 collides with the in-flight v4 polish PR | It owns the mail, Drive, help and Telegram formatting files in W0; PLT-1, GML-2 and DRV-2 start after it merges |
-| Low-value work crowds out the owner's attention | P2 items run only on a "yes" in section 7; COST-1, CODE-10, DRV-2b and the unscoped items are recommended for dropping |
+| Low-value work crowds out the owner's attention | P2 items run only on a "yes" in section 7; COST-1, CODE-10 and the unscoped items are dropped (decisions 11, 12, 18) |
 | Stale docs mislead later agents (the per-track `CURRENT_STATE.md` sections still say "not run yet") | DOC-F records the C-rows; DOC-G closes v5; the honesty rule |
 | The standing approval is read wider than granted | Decision 1 names every automatic step, including deploy and smoke; Strict items stay per target |
 
-## 7. Owner decisions (open)
+## 7. Owner decisions (answered 2026-10-12)
 
-| # | Question | Recommended default | Reason |
-|---|---|---|---|
-| 1 | Renew the standing approval for v5 waves: automatic Push/PR/Merge, deploy to the service and a smoke check after offline validation, independent review and Codex PASS; Strict items still confirmed per target? | **Renew on the v4 terms, with deploy and smoke named explicitly** | It worked across v4 (#152-#173). The recorded v4 decision names Push/PR/Merge only, while the ship skill also deploys |
-| 2 | Is v5 a depth-and-hardening release with no new platform, vendor or connector? | **Yes** | The owner's daily surfaces are all live; the remaining gaps are depth and recorded residuals |
-| 3 | Keep the OpenAI/Gemini keys and Notion deferred until you ask again, with their live checks Pending? | **Yes** (your chat statement of 2026-10-12) | Nothing in v5 depends on them |
-| 4 | STO-1: fix the session platform key and add the usage index in one migration v16, applied on the service DB after a verified backup? | **Yes, as P2, in one migration**; if no, accept both as permanent residuals | Each migration costs a Strict apply, so bundling both is cheaper. Neither causes a visible problem today |
-| 5 | HARD-1: bound the OAuth token reads in all three Google connectors? | **Yes** | Small, no behaviour change, closes a security-hygiene residual |
-| 6 | BRF-3: add an opt-in unread-mail section (count plus up to 3 sender/subject lines, no body) to the morning brief? | **Yes, off by default**; you turn it on | Mail is live and used; the brief already runs daily |
-| 7 | GML-2: thread summaries and reply-to-pick? Label listings too? | **Threads and reply picks yes; labels only if you use Gmail labels** | Reply picks close a recorded residual; labels are unused by any recorded QA |
-| 8 | DRV-2b: read every sheet of a spreadsheet (needs the new `spreadsheets.readonly` scope or a zip-export parser)? | **No**, unless you work in multi-sheet spreadsheets | A new scope means an ADR-0118 D3 amendment and a new consent for an edge case |
-| 9 | DRV-2: include your shared drives in Drive search? Add an owned-only `내 문서` filter? | **Shared drives yes; the filter optional (no)** | No new scope; accepting shared-with-me names is already the ADR-0118 threat model |
-| 10 | CAL-2: add more calendars to `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` (read only; writes stay on primary)? | **Only if you have other calendars you want in `오늘 일정` and the brief** | It is configuration, not code; the port field is needed only for shared event ids |
-| 11 | Keep `QUOKY_GIT_MERGE_ENABLED=false` on the service, and drop CODE-10? | **Yes to both** | Merge passed once on the sandbox; a second repository is not in daily use |
-| 12 | COST-1 price table on the usage ledger? | **Drop for now** | No metered provider is configured |
-| 13 | Telegram inline approval buttons? | **Keep parked** (ADR-0114 D10) | Text phrases passed live; buttons add a second decision surface |
-| 14 | SUB-3 continuation and the Stage 2A re-validation? | **Keep parked** | No concrete background-job need appeared in v4 |
-| 15 | PLT-1: move the remaining interpolated Core values into untrusted spans? | **Yes, P2** | Fidelity on Telegram, and it finishes what PLT-0 started; Discord stays byte-identical |
-| 16 | Accept residuals R3, R4, R8, R9, R12, R14, R16, R18, R19 and keep R20 as documented? | **Accept all** | Each is by design or has no user-visible effect; R8 is already your decision |
-| 17 | Let Drive read uploaded text files (an ADR-0118 D2 amendment with a binary sniff)? | **No** | Docs and Sheets cover the recorded use; a new egress path for little gain |
-| 18 | "Memory improvements" (ROADMAP "Future"): plan it now? | **No track** until you name a concrete problem | No QA record shows a memory defect |
-| 19 | CODE-8 on a second allowlisted repository (C6): keep it Pending until a second real repository is registered? | **Yes, park with CODE-10** | The narrowed installation is confirmed on the sandbox; a second repository is not in daily use |
+The Product Owner answered in the orchestrator chat on 2026-10-12 ("응 확정할게 진행하자"). Every question takes its
+recommended default, except where the last column says otherwise. The answers are recorded in the v5 ratification
+record in `DECISIONS.md`.
+
+| # | Question | Recommended default | Reason | Owner answer (2026-10-12) |
+|---|---|---|---|---|
+| 1 | Renew the standing approval for v5 waves: automatic Push/PR/Merge, deploy to the service and a smoke check after offline validation, independent review and Codex PASS; Strict items still confirmed per target? | **Renew on the v4 terms, with deploy and smoke named explicitly** | It worked across v4 (#152-#173). The recorded v4 decision names Push/PR/Merge only, while the ship skill also deploys | **Renewed** on the v4 terms, with deploy to the service and the smoke check named explicitly |
+| 2 | Is v5 a depth-and-hardening release with no new platform, vendor or connector? | **Yes** | The owner's daily surfaces are all live; the remaining gaps are depth and recorded residuals | **Yes** (recommended default) |
+| 3 | Keep the OpenAI/Gemini keys and Notion deferred until you ask again, with their live checks Pending? | **Yes** (your chat statement of 2026-10-12) | Nothing in v5 depends on them | **Yes**: "OpenAI / Gemini API Key는 필요시에 내가 재요청할게. Notion 도 마찬가지야." |
+| 4 | STO-1: fix the session platform key and add the usage index in one migration v16, applied on the service DB after a verified backup? | **Yes, as P2, in one migration**; if no, accept both as permanent residuals | Each migration costs a Strict apply, so bundling both is cheaper. Neither causes a visible problem today | **Yes**, P2, one migration v16 (ADR-0119) |
+| 5 | HARD-1: bound the OAuth token reads in all three Google connectors? | **Yes** | Small, no behaviour change, closes a security-hygiene residual | **Yes** (recommended default) |
+| 6 | BRF-3: add an opt-in unread-mail section (count plus up to 3 sender/subject lines, no body) to the morning brief? | **Yes, off by default**; you turn it on | Mail is live and used; the brief already runs daily | **Yes, off by default** (ADR-0117 amendment of 2026-10-12) |
+| 7 | GML-2: thread summaries and reply-to-pick? Label listings too? | **Threads and reply picks yes; labels only if you use Gmail labels** | Reply picks close a recorded residual; labels are unused by any recorded QA | **Threads and reply picks yes; labels no** (the owner does not use Gmail labels) |
+| 8 | DRV-2b: read every sheet of a spreadsheet (the draft assumed this needs the new `spreadsheets.readonly` scope or a zip-export parser; GOV-6 found that the Sheets API accepts `drive.readonly`)? | **No**, unless you work in multi-sheet spreadsheets | The draft expected an ADR-0118 D3 amendment and a new consent for an edge case | **Yes**: "모든 시트 필요". Through the Sheets API under `drive.readonly`: no new scope or consent (ADR-0118 amendment) |
+| 9 | DRV-2: include your shared drives in Drive search? Add an owned-only `내 문서` filter? | **Shared drives yes; the filter optional (no)** | No new scope; accepting shared-with-me names is already the ADR-0118 threat model | **Shared drives yes; no owned-only filter** (recommended default) |
+| 10 | CAL-2: add more calendars to `QUOKY_CALENDAR_GOOGLE_CALENDAR_IDS` (read only; writes stay on primary)? | **Only if you have other calendars you want in `오늘 일정` and the brief** | It is configuration, not code; the port field is needed only for shared event ids | **Yes**: "다른 Google 캘린더가 있다". Read-only in `오늘 일정` and the brief; writes stay on primary; the owner picks the calendars from the orchestrator's list |
+| 11 | Keep `QUOKY_GIT_MERGE_ENABLED=false` on the service, and drop CODE-10? | **Yes to both** | Merge passed once on the sandbox; a second repository is not in daily use | **Yes to both** (recommended default) |
+| 12 | COST-1 price table on the usage ledger? | **Drop for now** | No metered provider is configured | **Dropped for now** (recommended default) |
+| 13 | Telegram inline approval buttons? | **Keep parked** (ADR-0114 D10) | Text phrases passed live; buttons add a second decision surface | **Kept parked** (recommended default) |
+| 14 | SUB-3 continuation and the Stage 2A re-validation? | **Keep parked** | No concrete background-job need appeared in v4 | **Kept parked** (recommended default) |
+| 15 | PLT-1: move the remaining interpolated Core values into untrusted spans? | **Yes, P2** | Fidelity on Telegram, and it finishes what PLT-0 started; Discord stays byte-identical | **Yes, P2** (recommended default) |
+| 16 | Accept residuals R3, R4, R8, R9, R12, R14, R16, R18, R19 and keep R20 as documented? | **Accept all** | Each is by design or has no user-visible effect; R8 is already your decision | **Accepted** (recommended default) |
+| 17 | Let Drive read uploaded text files (an ADR-0118 D2 amendment with a binary sniff)? | **No** | Docs and Sheets cover the recorded use; a new egress path for little gain | **No** (recommended default) |
+| 18 | "Memory improvements" (ROADMAP "Future"): plan it now? | **No track** until you name a concrete problem | No QA record shows a memory defect | **No track** (recommended default) |
+| 19 | CODE-8 on a second allowlisted repository (C6): keep it Pending until a second real repository is registered? | **Yes, park with CODE-10** | The narrowed installation is confirmed on the sandbox; a second repository is not in daily use | **Yes, parked with CODE-10** (recommended default) |
