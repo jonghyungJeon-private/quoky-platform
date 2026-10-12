@@ -25,10 +25,12 @@ import {
   connectorWriteSent,
   connectorWriteUncertain,
   feedbackRequestExcerpt,
-  gitBranchReplies,
+  PLT1_VARIANTS,
   memoryBody,
   memoryPreview,
   placeCalendarSpan,
+  plt1OverflowReplies,
+  plt1Replies,
   renderCalendarEvents,
   renderConnectorWriteDuplicateRisk,
   renderConnectorWriteOpsApprovedNotice,
@@ -59,11 +61,6 @@ import {
 import type {
   CalendarEvent,
   CalendarSpan,
-  CodeChangePreview,
-  CodeDiffPreview,
-  GitStatus,
-  PatchSetPreview,
-  PullRequestStatusPreview,
   ConnectorWriteEventSummary,
   ConnectorWritePreview,
   ConnectorWriteRefusal,
@@ -364,138 +361,6 @@ async function extraCases(add: (id: string, value: never) => void): Promise<void
 }
 
 /** Build the whole corpus: case id -> the Discord text. */
-// --- PLT-1: replies that name an outside value (path, branch, repository, commit message, URL) --------------------------
-
-/**
- * PLT-1 corpus: every Core reply that names an outside value (a path, branch, repository, commit message or URL) in
- * Quoky copy, built once with ordinary values and once with hostile ones (`_x_`, `*y*`, mentions, links, backticks).
- * Rendering one platform's markup over these shows the untrusted spans at work.
- */
-interface Plt1Variant {
-  readonly id: string;
-  readonly paths: readonly [string, string, string];
-  readonly branch: string;
-  readonly owner: string;
-  readonly repo: string;
-  readonly message: string;
-  readonly url: string;
-}
-
-const PLT1_VARIANTS: readonly Plt1Variant[] = [
-  {
-    id: 'plain',
-    paths: ['src/app.ts', 'src/util.ts', 'docs/readme.md'],
-    branch: 'feature/login',
-    owner: 'quoky',
-    repo: 'platform',
-    message: 'fix: login redirect',
-    url: 'https://github.com/quoky/platform/pull/7',
-  },
-  {
-    id: 'nasty',
-    paths: ['_draft_.ts', 'src/_x_/*y*.ts', 'docs/@everyone <@123> [a](https://x.example).md'],
-    branch: 'feat/_wip_*star*',
-    owner: 'my_org',
-    repo: '*repo*_x',
-    message: 'fix: *bold* _it_ @everyone `c`',
-    url: 'https://github.com/my_org/*repo*_x/pull/7',
-  },
-];
-
-const PLT1_CONTEXT: ConversationContext = { platform: 'discord', channelId: 'dm-1', userId: 'owner-1' };
-
-function plt1Replies(composer: ResponseComposer, v: Plt1Variant): Array<[string, OutboundMessage | MessageBody]> {
-  const ctx = PLT1_CONTEXT;
-  const [p1, p2, p3] = v.paths;
-  const all = [...v.paths];
-  const diff = (kind: 'add' | 'update' | 'delete', path: string): CodeDiffPreview['changes'][number] => ({
-    path,
-    kind,
-    unified: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-a\n+b\n`,
-    binary: false,
-  });
-  const diffPreview: CodeDiffPreview = {
-    changes: [diff('update', p1), diff('add', p2), diff('delete', p3), { path: `${p1}.bin`, kind: 'update', unified: '', binary: true }, { path: `${p2}.big`, kind: 'update', unified: '', binary: false }],
-    outOfScopeWarnings: all,
-  };
-  const patch: PatchSetPreview = { operations: [diff('update', p1), diff('add', p2), diff('delete', p3)] };
-  const codePreview: CodeChangePreview = {
-    changes: [{ path: p1, kind: 'update', excerpt: 'new content' }, { path: p2, kind: 'delete' }],
-    outOfScopeWarnings: all,
-  };
-  const status: GitStatus = { clean: false, branch: v.branch, staged: [p1], unstaged: [p2], untracked: [p3] };
-  const pr = { owner: v.owner, repo: v.repo, headBranch: v.branch, baseBranch: 'main', commitHash: 'abcdef0123456789', prNumber: 7, prUrl: v.url };
-  const statusPreview: PullRequestStatusPreview = {
-    ref: { provider: 'github', owner: v.owner, repo: v.repo, pullRequestNumber: 7, pullRequestUrl: v.url },
-    state: 'open',
-    headBranch: v.branch,
-    baseBranch: 'main',
-    headCommitHash: 'abcdef0123456789',
-    mergeability: 'MERGEABLE',
-    checks: { state: 'failure', totalCount: 3, successCount: 2, failureCount: 1, pendingCount: 0 },
-    observedAt: '2026-10-06T01:00:00.000Z',
-  };
-  const validation = { command: 'pnpm test', status: 'passed' };
-  const manyFiles = Array.from({ length: 34 }, (_, i) => `${p1}.${i}`);
-  const branchResult = { branch: v.branch, headSha: 'abcdef0123456789abcdef', created: true };
-  const id = (name: string): string => `plt1.${v.id}.${name}`;
-  return [
-    [id('code-change.approval'), composer.composeCodeChangeApprovalRequired(ctx, [p1, p2, p3, `${p1}.x`], [p3, `${p1}.y`])],
-    [id('code-change.approval.single'), composer.composeCodeChangeApprovalRequired(ctx, [p1])],
-    [id('codegen.preview'), composer.composeCodeGenerationPreview(ctx, codePreview)],
-    [id('codegen.no-valid-change'), composer.composeCodeGenerationPreviewNoValidChange(ctx, [...all, ...manyFiles.slice(0, 4)])],
-    [id('codegen.credential-refused'), composer.composeCodeGenerationPreviewCredentialRefused(ctx, p1)],
-    [id('credential.prompt'), composer.composeCredentialOverridePrompt(ctx, p1, 12)],
-    [id('credential.hard-refused'), composer.composeCredentialOverrideHardRefused(ctx, p1)],
-    [id('credential.reprompt'), composer.composeCredentialOverrideReprompt(ctx, p1, 60_000)],
-    [id('credential.denied'), composer.composeCredentialOverrideDenied(ctx, p1)],
-    [id('credential.content-changed'), composer.composeCredentialOverrideContentChanged(ctx, p1)],
-    [id('credential.sent-notice'), composer.composeCredentialOverrideSentNotice(ctx, [p1, p2])],
-    [id('credential.sent-no-proposal'), composer.composeCredentialOverrideSentNoProposal(ctx, [p1, p2])],
-    [id('credential.generation-failed.not-sent'), composer.composeCredentialOverrideGenerationFailed(ctx, [p1, p2], 'not-sent')],
-    [id('credential.generation-failed.uncertain'), composer.composeCredentialOverrideGenerationFailed(ctx, [p1, p2], 'uncertain')],
-    [id('credential.sent-then-cancelled'), composer.composeCredentialOverrideSentThenCancelled(ctx, [p1, p2])],
-    [id('preview.discarded'), composer.composeCodePreviewDiscarded(ctx, [p1, p2])],
-    [id('diff.preview'), composer.composeCodeDiffPreview(ctx, diffPreview)],
-    [id('diff.preview.override'), composer.composeCodeDiffPreview(ctx, diffPreview, { credentialOverrideSentPaths: [p1, p2] })],
-    [id('diff.preview.single'), composer.composeCodeDiffPreview(ctx, { changes: [diff('update', p1)], outOfScopeWarnings: [] })],
-    [id('apply.approval'), composer.composeApplyApprovalRequested(ctx, all)],
-    [id('patch.preview'), composer.composePatchSetPreview(ctx, patch)],
-    [id('workspace.applied'), composer.composeWorkspaceApplied(ctx, all, [p2])],
-    [id('workspace.rolled-back'), composer.composeWorkspaceApplyRolledBack(ctx, all)],
-    [id('workspace.partially-applied'), composer.composeWorkspaceApplyPartiallyApplied(ctx, [...all, ...manyFiles])],
-    [id('git.status'), composer.composeGitStatusPreview(ctx, { status, validation })],
-    [id('git.status.many'), composer.composeGitStatusPreview(ctx, { status: { ...status, untracked: manyFiles }, validation: 'none' })],
-    [id('git.diff'), composer.composeGitDiffPreview(ctx, { status, diff: { unified: `diff --git a/${p1} b/${p1}\n--- a/${p1}\n+++ b/${p1}\n@@ -1 +1 @@\n-a\n+b\n`, truncated: false } as never, validation })],
-    [id('commit.approval'), composer.composeCommitApprovalRequested(ctx, { candidateFiles: all, commitMessage: v.message, validation, newFiles: [p2] })],
-    [id('commit.out-of-scope'), composer.composeCommitOutOfScopeChanges(ctx, all)],
-    [id('commit.executed'), composer.composeCommitExecuted(ctx, { commitHash: 'abcdef0123456789', files: all, newFiles: [p3] })],
-    [id('push.approval'), composer.composePushApprovalRequested(ctx, { commitHash: 'abcdef0123456789', remote: 'origin', branch: v.branch, upstream: `origin/${v.branch}`, ahead: 2 })],
-    [id('push.approval.new-branch'), composer.composePushApprovalRequested(ctx, { commitHash: 'abcdef0123456789', remote: 'origin', branch: v.branch, upstream: '', ahead: 0, newRemoteBranch: true })],
-    [id('push.executed'), composer.composePushExecuted(ctx, { commitHash: 'abcdef0123456789', remote: 'origin', branch: v.branch })],
-    [id('push.executed.new-branch'), composer.composePushExecuted(ctx, { commitHash: 'abcdef0123456789', remote: 'origin', branch: v.branch, newRemoteBranch: true })],
-    [id('push.already-pushed'), composer.composePushAlreadyPushed(ctx, { commitHash: 'abcdef0123456789', remote: 'origin', branch: v.branch })],
-    [id('pr.approval'), composer.composePrApprovalRequested(ctx, { pushedCommitHash: 'abcdef0123456789', headBranch: v.branch, baseBranch: 'main', title: v.message, body: `body ${p1}` })],
-    [id('pr.created'), composer.composePrCreated(ctx, pr)],
-    [id('pr.reused'), composer.composePrCreatedReusedExisting(ctx, pr)],
-    [id('pr.already-created'), composer.composePrAlreadyCreated(ctx, { prNumber: 7, prUrl: v.url })],
-    [id('pr.status'), composer.composePrStatusPreview(ctx, statusPreview)],
-    [id('merge.approval'), composer.composeMergeApprovalRequested(ctx, pr)],
-    [id('merge.succeeded'), composer.composeMergeExecutionSucceeded(ctx, { ...pr, mergedHeadSha: 'abcdef0123456789', mergeCommitHash: '0123456789abcdef' })],
-    [id('merge.already-merged'), composer.composeMergeExecutionAlreadyMerged(ctx, pr)],
-    [id('cleanup.local.deleted'), composer.composeBranchCleanupSucceeded(ctx, { cleanedBranch: v.branch, cleanedLocalBranch: true, alreadyAbsent: false })],
-    [id('cleanup.local.absent'), composer.composeBranchCleanupSucceeded(ctx, { cleanedBranch: v.branch, cleanedLocalBranch: false, alreadyAbsent: true })],
-    [id('cleanup.remote.requested'), composer.composeRemoteBranchCleanupRequested(ctx, { ...pr, branch: v.branch, expectedHeadCommit: 'abcdef0123456789' })],
-    [id('cleanup.remote.deleted'), composer.composeRemoteBranchCleanupSucceeded(ctx, { branch: v.branch, cleanedRemoteBranch: true, alreadyAbsent: false })],
-    [id('cleanup.remote.absent'), composer.composeRemoteBranchCleanupSucceeded(ctx, { branch: v.branch, cleanedRemoteBranch: false, alreadyAbsent: true })],
-    [id('cleanup.remote.already-cleaned'), composer.composeRemoteBranchAlreadyCleaned(ctx, { branch: v.branch })],
-    [id('branch.created'), gitBranchReplies.created(v.branch, branchResult)],
-    [id('branch.switched'), gitBranchReplies.switched(v.branch, { ...branchResult, created: false })],
-    [id('branch.refused.exists'), gitBranchReplies.refused('branch-exists', v.branch)],
-    [id('branch.refused.missing'), gitBranchReplies.refused('branch-missing', v.branch)],
-  ];
-}
-
 async function corpus(): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   const add = (id: string, value: MessageBody | OutboundMessage) => {
@@ -712,6 +577,7 @@ async function corpus(): Promise<Record<string, string>> {
   await extraCases(add as never);
   // PLT-1: the converted code-work replies, with ordinary and hostile values (added after the PLT-0 corpus; see DECISIONS).
   for (const variant of PLT1_VARIANTS) for (const [id, reply] of plt1Replies(composer, variant)) add(id, reply);
+  for (const [id, reply] of plt1OverflowReplies(composer)) add(id, reply);
   return out;
 }
 
@@ -726,5 +592,38 @@ describe('Discord rendering goldens (PLT-0)', () => {
     const expected = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, string>;
     expect(Object.keys(actual).sort()).toEqual(Object.keys(expected).sort());
     for (const [id, text] of Object.entries(expected)) expect(actual[id], id).toBe(text);
+  });
+});
+
+describe('PLT-1 review fixes on Discord', () => {
+  it('P2-1: the fixed tail of a bounded reply survives the 1,900-character clip; the cut lands in the paths or the diff', () => {
+    for (const [id, reply] of plt1OverflowReplies(composer)) {
+      const text = renderOutboundForDiscord(reply);
+      const lastLine = (value: string): string => value.trimEnd().split('\n').pop() as string;
+      expect(text.length, id).toBeLessThanOrEqual(1900);
+      expect(lastLine(text), id).toBe(lastLine(reply.text));
+    }
+    // The repro: 30 snake_case untracked paths make the escaped text longer than the plain text.
+    const gitDiff = (plt1OverflowReplies(composer).find(([id]) => id === 'plt1.overflow.git.diff') as [string, OutboundMessage])[1];
+    const discordText = renderOutboundForDiscord(gitDiff);
+    expect(gitDiff.text.length).toBeLessThan(1900);
+    expect(discordText).toContain('명령 실행도 하지 않았어요.');
+    expect(discordText).toContain('최근 검증 기록');
+    expect(discordText).toContain('…\n최근 검증 기록');
+  });
+
+  it('P2-2: the structured preview artifact names outside paths as inline code (literal on Discord, which sends it as given)', () => {
+    const hostile = ['[확인](https://evil.example)', '*secret*/_x_.ts', 'a`b.ts'];
+    const reply = composer.composeCodeDiffPreview(
+      DM,
+      {
+        changes: [{ path: 'src/a.ts', kind: 'update', unified: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n', binary: false }],
+        outOfScopeWarnings: hostile,
+      },
+      { credentialOverrideSentPaths: hostile },
+    );
+    const preview = reply.preview as NonNullable<OutboundMessage['preview']>;
+    expect(preview.warning).toBe('참고: `[확인](https://evil.example)`, `*secret*/_x_.ts`, `ab.ts`에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.');
+    expect(preview.header.startsWith('확인한 파일 내용을 이번 한 번만 AI에게 보냈어요: `[확인](https://evil.example)`, `*secret*/_x_.ts`, `ab.ts`\n\n')).toBe(true);
   });
 });
