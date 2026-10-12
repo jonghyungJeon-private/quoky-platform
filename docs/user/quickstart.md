@@ -299,7 +299,9 @@ QUOKY_DISCORD_CHANNEL_IDS=<채널 ID>             # 선택. 비우면 소유자 
 | `QUOKY_EMBEDDING_MODEL` | 선택. 기본 `nomic-embed-text`. 이름 또는 태그에 `cloud`가 들어가면 거부 |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | 선택. 기본 `3000`, 범위 100-30000. 임베딩 모델은 `--keepalive 30m`으로 메모리에 두고, 준비될 때와 시간 초과 뒤에 백그라운드에서 미리 불러옵니다(최대 30초). 실측: 이미 올라와 있으면 0.05-0.12초, 새로 불러오면 0.35-0.9초 |
 | `QUOKY_MEMORY_ARCHIVE_DAYS` | 선택. 기본 `7`. 잊은 기억을 보관함에 두는 일수(0-365의 정수). 지나면 매일 정리 작업이 완전히 지움. `0`이면 보관하지 않고 바로 완전히 지움. 빈 값이나 범위 밖 값은 시작 실패(`MEMORY_ARCHIVE_DAYS_INVALID`) |
-| `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음 |
+| `QUOKY_LEARNING_EXAMPLES_ENABLED` | 선택. 기본 `false`. `true`면 소유자가 저장한 예시(최대 2개)를 **로컬 실행 provider**(Ollama)의 일반 대화 프롬프트에만 넣음. Claude에는 넣지 않음. 클라우드 모델에는 아래 `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`까지 켜고 소유자가 그 모델을 직접 골랐을 때만  |
+| `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED` | 선택. 기본 `false` (정확히 `true`/`false`, ADR-0116). `QUOKY_LEARNING_EXAMPLES_ENABLED=true`와 함께 `true`면 예시(최대 2개)가 **소유자가 직접 고른 클라우드 대화 모델**(OpenAI/Gemini API: `모델 변경`, 운영 화면 기본값, 명시한 `QUOKY_CHAT_PROVIDER`)의 일반 대화 프롬프트에도 들어감. 고르지 않은 기본값이나, 고른 모델이 안 될 때의 Claude 대체에는 들어가지 않음. 꺼져 있으면 프롬프트는 예시 기능이 없을 때와 완전히 같음. 학습 안내에 "직접 고른 클라우드 모델을 쓸 때는 이 예시가 대화와 함께 전송될 수 있어요."가 붙음 |
+| `QUOKY_BRIEF_JIRA_ENABLED` | 선택. 기본 `false` (정확히 `true`/`false`, ADR-0117 D2). `true`이고 Jira 읽기가 연결돼 있고 내 Jira 계정이 연결된 경우에만, 일일 브리핑에 "오늘 마감·업데이트된 담당 이슈"(최대 5건, 키와 제목만)가 붙음 |
 | `QUOKY_IMAGE_UNDERSTANDING_PROVIDER` | 선택. `ollama` / `claude` / `codex` / `openai` / `gemini` / `off` 정확히 이 값만 (5절 "이미지"). 미설정이면 `QUOKY_OLLAMA_VISION_MODEL`이 있을 때 `ollama`, 없으면 `off`. **`claude`는 첨부 이미지를 Anthropic, `codex`·`openai`는 OpenAI, `gemini`는 Google(클라우드)로 보냄.** 다른 값은 시작 실패(`IMAGE_UNDERSTANDING_PROVIDER_INVALID`) |
 | `QUOKY_GEMINI_API_KEY`, `QUOKY_GEMINI_MODEL` | 선택. 기본 없음 (ADR-0115 D4). 둘 다 있을 때만 Gemini API provider가 등록됨. 키는 Google AI Studio API 키(`AIza…`)이며 `.env.local`(모드 600)에만 두고 로그에 남지 않음, `x-goog-api-key` 헤더로만 `generativelanguage.googleapis.com`에 보냄. 모델은 허용 목록(`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3.1-pro-preview`)만. 형식이 틀리거나 하나만 있거나 `gemini`를 골랐는데 없으면 시작 실패(`GEMINI_API_KEY_INVALID` / `GEMINI_MODEL_INVALID` / `GEMINI_API_KEY_MISSING` / `GEMINI_MODEL_MISSING`). `QUOKY_CHAT_PROVIDER=gemini`, `QUOKY_IMAGE_UNDERSTANDING_PROVIDER=gemini`, 운영 화면, `모델 변경: gemini[:<모델>]`으로 고를 때만 쓰임 (대화 내용·첨부 이미지가 Google로 전송, 토큰 단위 과금) |
 | `QUOKY_IMAGE_UNDERSTANDING_MODEL` | 선택. `claude`일 때만 읽음. 이미지용 Claude 모델 (없으면 `QUOKY_CLAUDE_MODEL`, 그다음 `sonnet`). 형식이 틀리면 시작 실패 |
@@ -714,7 +716,7 @@ Discord와 같은 소유자로 Telegram 개인 대화에서도 Quoky와 이야�
   내려받지 않습니다.
 - **👍/👎 반응(TG-2).** Quoky의 답장에 👍 또는 👎 반응을 남기면 Discord에서처럼 품질 피드백으로 기록됩니다(답장은
   없습니다). Telegram 문서상 봇은 반응 업데이트를 따로 요청해야 해서 Quoky가 요청합니다. 개인 대화에서 실제로
-  전달되는지는 첫 실사용 점검에서 확인합니다. 전달되지 않아도 다른 기능에는 영향이 없습니다.
+  전달되는 것을 2026-10-12 실사용 점검에서 확인했습니다(👍가 `REACTION POSITIVE` 피드백으로 기록됨).
 - **승인**은 두 플랫폼 모두 `승인`/`거절`, 그리고 미리보기가 알려 준 `… 실행` 문구로 합니다(버튼 없음). 승인은 그것을
   만든 대화에 묶여 있어서, Telegram에서 승인한 작업을 Discord에서 실행할 수는 없습니다.
 - **운영 화면에서 승인한 결과(TG-3).** Telegram에서 만든 승인 요청을 운영 화면에서 승인하거나 거절하면, 결과 알림은
@@ -860,6 +862,7 @@ Discord와 같은 소유자로 Telegram 개인 대화에서도 Quoky와 이야�
 |---|---|---|---|
 | 알림 만들기 | `1분 뒤에 스트레칭 알려줘`, `내일 오전 9시에 회의 준비 알려줘`, `매일 오전 8시에 오늘 할 일 알려줘` | `QUOKY_REMINDERS_ENABLED` 켜짐 (기본) | "오후 10:08에 '스트레칭' 알려드릴게요 (#1 · 취소: '알림 1 취소')". 기본으로 소유자 DM으로 전달. 최소 1분 뒤부터, 본문 200자, 활성 알림 50개까지 |
 | 알림 목록/취소 | `알림 목록`, `알림 1 취소` | 위와 같음 | 예정된 알림 보기, 하나씩 취소 |
+| 일일 브리핑 | `매일 오전 8시에 오늘 할 일 알려줘` | 알림 켜짐 | 모델 없이 로컬 데이터(오늘 남은 알림과 할 일)로 만든 메시지를 만든 곳(Discord DM 또는 Telegram 개인 대화)으로 보냄. **캘린더가 연결돼 있으면** `오늘 일정 N건`과 `- 09:30–10:00 제목`(제목과 시각만, 장소·참석자 없음)이 붙고, 못 읽으면 "오늘 일정: 불러오지 못했어요."라고 쓰며 빈 날처럼 보이지 않음. `QUOKY_BRIEF_JIRA_ENABLED=true`면 담당 이슈 섹션도 붙음 (환경 변수 표) |
 | 정보 질문은 알림 아님 | `내일 9시에 뭐 있어? 알려줘` | - | 알림이 만들어지지 않고 대화로 감 (일정은 볼 수 없다고 답함) |
 | 할 일 추가 | `할 일 추가: 보고서 초안 쓰기` | - | 로컬 할 일 목록에 추가. 내용에 시간 표현이 있어도 할 일이며(`할 일 추가: 내일 9시에 회의 알려줘`), 알림은 설정하지 않았다고 알려 줌 |
 | 할 일 보기 | `내 할 일 보여줘`, `할 일 목록` | - | 번호가 붙은 목록. Jira/GitHub 식별자가 설정돼 있으면 그 항목도 함께 (아니면 계정 정보(identity)가 설정되어 있지 않다는 안내) |
@@ -947,6 +950,7 @@ Gmail을 읽기 전용으로 연결하면 **DM에서** 메일 목록과, 요청�
   `evil.example/login` 같은 도메인 포함)는 목록·요약 모두에서 `[링크]`로 바꿔 보여 주고 대화 모델에도 보내지 않습니다. 메일 안의 지시문은 따르지 않으며, 메일 때문에
   작업·할 일·알림이 생기지 않고, 요약이 "답장을 보냈어요"처럼 하지 않은 일을 말하면 그 요약은 보여 주지 않습니다.
 - 채널(서버 채널, Telegram 그룹)에서 물으면 "메일 목록과 요약은 DM에서만 답해요"라고만 답하고 메일을 읽지 않습니다.
+- 요약에 모델이 넣은 Markdown 기호(`**굵게**`, `#` 제목)는 지우고 목록 기호는 `•`로 바꿔 보여 줍니다(#172).
 - 목록 번호는 30분 동안, 같은 대화에서만 유효합니다. Quoky를 재시작하면 목록을 다시 보여 달라고 하세요.
 
 **Gmail 설정 (Strict, 소유자가 직접):** 캘린더와 **같은** OAuth "Desktop app" 클라이언트를 씁니다
@@ -996,6 +1000,7 @@ Google Drive를 읽기 전용으로 연결하면 **DM에서** 최근 파일 목�
   주지 않습니다. 메일과 마찬가지로 대화 기록에는 파일 이름·내용·요약을 남기지 않습니다.
 - 채널(서버 채널, Telegram 그룹)에서 물으면 DM에서만 답한다고 안내하고 파일을 읽지 않습니다. 목록 번호는 30분 동안, 같은
   대화에서만 유효합니다.
+- 요약에 모델이 넣은 Markdown 기호(`**굵게**`, `#` 제목)는 지우고 목록 기호는 `•`로 바꿔 보여 줍니다(#172).
 
 **Drive 설정 (Strict, 소유자가 직접):** 캘린더·Gmail과 **같은** OAuth "Desktop app" 클라이언트를 씁니다.
 
@@ -1132,5 +1137,8 @@ git 프로세스나 자격 증명을 쓰지 않습니다. 켜려면 운영자 �
 - Personal v3 Live QA 기록: [`docs/uat/personal-v3-qa-record.md`](../uat/personal-v3-qa-record.md). 운영 화면의 처리/승인,
   첨부·이미지, 학습 예시, 한국어 일상 대화 20문항 세트, 실제 재부팅은 세션 2-4에서 실행했습니다. 아직 실행하지 않은
   항목(쓰기 도중 네트워크 실패 등)은 기록 끝의 PENDING 목록에 있습니다.
+- Personal v4 Live QA 기록: [`docs/uat/personal-v4-qa-record.md`](../uat/personal-v4-qa-record.md) (2026-10-12). Telegram,
+  Gmail·Drive 읽기, 아침 브리핑, 회의 전 알림, 샌드박스 머지는 실제로 확인했습니다. OpenAI·Gemini API(키 없음), 월간 사용량
+  DM(11월), 브리핑의 Jira 섹션, 클라우드 모델로 가는 학습 예시, 운영 화면 Telegram 패널은 아직 실행하지 않았습니다(PENDING).
 - 운영자 설정 (환경 변수, GitHub App 권한, 커넥터, Ollama/Claude 격리): [`docs/uat/operator-guide.md`](../uat/operator-guide.md)
 - 첫 릴리스 attended Live UAT 절차: [`docs/uat/first-release-uat-packet.md`](../uat/first-release-uat-packet.md)

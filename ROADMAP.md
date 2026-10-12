@@ -63,7 +63,7 @@ does not claim Production Runtime readiness.
 | **Personal v1** | First product release ("Quoky Personal v1") | Scope ratified by the Product Owner 2026-10-02; ADR-0091/0092/0093/0094 + ADR-0073 amendment; see "First product release" below; IMPLEMENTED LOCALLY on the integration branch with offline acceptance PASS; Live UAT (criterion 9) NOT EXECUTED |
 | **Personal v2** | Personal v2 (owner reminders, work chat, answer quality, code-work expansion, credential override) | IMPLEMENTED (waves 1-8). ADR-0096..0101 + ADR-0098 amendment Ratified; plan `docs/plans/personal-v2-execution-plan.md`; waves 1-7 MERGED (PRs #105-#111); wave 8 = INT-1 offline acceptance + DOC-B docs (wave-8 PR); owner-attended live QA for waves 1-7 recorded in `docs/uat/personal-v2-qa-record.md`; Live UAT of connectors (real tenants), reminders channel delivery, the reminders release default and merge enablement NOT EXECUTED |
 | **Personal v3** | Personal v3 (always-on runtime, deterministic answers, memory commands, owner-curated learning, calendar, files and images, connector writes, local operations UI) | IMPLEMENTED (waves 1-6). ADR-0102..0113 Ratified 2026-10-06 (+ ADR-0106 and ADR-0110 amendments); plan `docs/plans/personal-v3-plan.md`; waves 1-6 MERGED (PRs #116-#132); INT-2 + DOC-C close wave 6; follow-ups MERGED (PRs #133-#148: selectable chat and image providers incl. Codex, runtime switching, vector-store backups, live QA fixes); live QA (sessions 2-4, host reboot) in `docs/uat/personal-v3-qa-record.md`; chat and images on Claude by owner decision 2026-10-07; SUB-3, CODE-8, CODE-9 DEFERRED (P2); mid-send `UNCERTAIN`, Stage 2A re-validation, CODE-8 live and D13 live NOT EXECUTED; D5-R and D16 open |
-| **Personal v4** | Post-v3 plan (Telegram adapter, more chat/image providers, morning brief with calendar, Gmail/Drive read, v3 carry-over) | **RATIFIED (2026-10-08)** — plan `docs/plans/personal-v4-plan.md`; owner decisions 1-25 answered with the recommended defaults (Notion undecided: an unscheduled P3 candidate, revisited on request); ADR-0114 (Telegram), ADR-0115 (chat/image-tier HTTP API providers, constitution §5.5 amended), ADR-0116 (learning-example egress), ADR-0117 (brief calendar, pre-meeting reminders), ADR-0118 (Gmail/Drive read) Ratified, plus the ADR-0109 amendment (`approvedRepository`) and closure notes on ADR-0103/0105/0107/0108/0111/0113; SUB-3 and Stage 2A re-validation parked; network-failure test to run in a scratch Docker (OrbStack) runtime, never on the service; implementation tracks start in wave 1 (CODE-8 in progress on its own branch) |
+| **Personal v4** | Post-v3 plan (Telegram adapter, more chat/image providers, morning brief with calendar, Gmail/Drive read, v3 carry-over) | **IMPLEMENTED (all tracks merged, PRs #152-#172; INT-3 and DOC-E close it); live QA session 1 on 2026-10-12 in `docs/uat/personal-v4-qa-record.md`; open items in "Personal v4 — status" below.** Ratified 2026-10-08 — plan `docs/plans/personal-v4-plan.md`; owner decisions 1-25 answered with the recommended defaults (Notion undecided: an unscheduled P3 candidate, revisited on request); ADR-0114 (Telegram), ADR-0115 (chat/image-tier HTTP API providers, constitution §5.5 amended), ADR-0116 (learning-example egress), ADR-0117 (brief calendar, pre-meeting reminders), ADR-0118 (Gmail/Drive read) Ratified, plus the ADR-0109 amendment (`approvedRepository`) and closure notes on ADR-0103/0105/0107/0108/0111/0113; SUB-3 and Stage 2A re-validation parked; network-failure test to run in a scratch Docker (OrbStack) runtime, never on the service |
 | **Future** | Memory improvements · additional connectors (Notion undecided, on request) | per ADR sequence (Codex chat and images delivered in the v3 follow-ups) |
 
 ## First product release — Quoky Personal v1
@@ -154,6 +154,26 @@ recorded there; everything else is offline-tested only.
 Out of v3 by decision: the multi-agent runtime, Team/Hosted tenancy, deploy/release automation, Confluence and
 GitHub-issue writes, and remote access to the operations UI (Tailscale or other tunnels, LAN binding) or a separate
 mobile/desktop client (Team/Hosted, ADR-0113 D11).
+
+**Personal v4 — status (updated 2026-10-12)**
+
+Plan `docs/plans/personal-v4-plan.md`; ADR-0114..0118 Ratified 2026-10-08; every track merged (#152-#172). "Live" means
+recorded in `docs/uat/personal-v4-qa-record.md`; everything else is offline-tested only. Offline integration acceptance:
+`apps/quoky/src/personal-v4-acceptance.test.ts` (INT-3).
+
+| Item | Status |
+|---|---|
+| PLT-0 platform-neutral rendering; DET-2 to-do/reminder status phrases; TBL-1 tables (ADR-0111 amendment) | DONE; DET-2 and TBL-1 live-checked 2026-10-08 |
+| TG-1/2/3 Telegram (ADR-0114): text, attachments, reactions, approvals, notices, ops panel | DONE and live-verified for text, an image with a caption, reactions (`message_reaction` is delivered in private chats), the shared owner Actor and a Telegram-delivered reminder. **Pending:** the ops-panel visual check |
+| PRV-1 OpenAI API, PRV-2 Gemini API (ADR-0115; chat tier and images only) | DONE offline; **Pending live:** no API key on the service. Configured but unselected providers make no call (INT-3) |
+| PRV-3 usage ledger and monthly DM (ADR-0115 D8) | DONE offline; records per run. **Pending live:** the monthly DM first fires in November |
+| LRN-5 learning-example egress (ADR-0116) | DONE offline; `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` is set, but no remote provider is selected. **Pending live:** the round trip |
+| BRF-1 brief with the calendar, BRF-2 pre-meeting reminders (ADR-0117) | DONE and live-verified (daily brief 10/9-10/12; a moved event rescheduled its reminder and fired once). **Pending:** the Jira section (`QUOKY_BRIEF_JIRA_ENABLED=true`, first seen at the next brief) |
+| GML-1 Gmail, DRV-1 Drive read (ADR-0118) | DONE and live-verified (read-only, DM-only); defects found live were fixed in #171 and #172 |
+| UNC-1 network-fault test | DONE live (2026-10-08, #155) |
+| CODE-8 multi-repository allowlist (ADR-0109 amendment) | DONE (#152) |
+| CODE-9 merge enablement | DONE once on the sandbox repository (PR #3, merge `5c11cad`); the release default `QUOKY_GIT_MERGE_ENABLED=false` is restored |
+| SUB-3 continuation, Stage 2A re-validation, Notion | Parked / undecided (unchanged) |
 
 **Post-v3 extensions (taken up only after all Personal v3 development completes)**
 
