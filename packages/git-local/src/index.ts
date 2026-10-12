@@ -580,15 +580,15 @@ export class LocalGitProvider implements GitProvider {
    * BranchCleanupUnverifiedError.
    */
   async deleteMergedLocalBranch(rootPath: string, branch: string, expectedBranchCommit: string): Promise<GitBranchCleanupResult> {
-    if (!isSafePushBranch(branch)) throw new BranchCleanupBlockedError('git branch cleanup rejects an unsafe branch');
-    if (branch === 'main') throw new BranchCleanupBlockedError('git branch cleanup never deletes main');
+    if (!isSafePushBranch(branch)) throw new BranchCleanupBlockedError('git branch cleanup rejects an unsafe branch', 'UNSAFE_NAME');
+    if (branch === 'main') throw new BranchCleanupBlockedError('git branch cleanup never deletes main', 'TARGET_IS_MAIN');
     if (!SYNC_SHA_SHAPED.test(expectedBranchCommit)) throw new BranchCleanupBlockedError('git branch cleanup rejects an invalid commit');
 
     // ── PRE-ref-delete phase → BranchCleanupBlockedError (nothing deleted). CAS precheck: the branch still points
     //    at expectedBranchCommit. Absent or moved → Blocked. ──────────────────────────────────────────────────
     const current = this.exec(rootPath, ['--no-pager', 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
     if (current.code !== 0 || current.stdout.trim() !== expectedBranchCommit) {
-      throw new BranchCleanupBlockedError('git branch cleanup: target branch moved or is absent; not deleted');
+      throw new BranchCleanupBlockedError('git branch cleanup: target branch moved or is absent; not deleted', 'BRANCH_MOVED');
     }
 
     // ── REF-DELETE phase (+ read-back) → BranchCleanupUnverifiedError on any failure (the ref MAY be gone). CAS

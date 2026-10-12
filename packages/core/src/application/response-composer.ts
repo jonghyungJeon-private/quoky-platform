@@ -1,4 +1,5 @@
 import { RiskLevel } from '../domain';
+import type { BranchCleanupBlockReason } from './git-manager';
 import type {
   MessageBody,
   ApprovalRequest,
@@ -194,6 +195,18 @@ const MERGEABILITY_KO: Readonly<Record<PullRequestMergeability, string>> = {
   UNKNOWN: '아직 확인되지 않음',
 };
 /** The deterministic push-execution phrase the recorded push approval points at (matches the runtime grammar). */
+/** Fixed, git-output-free sentences for why a local branch cleanup was blocked (one per guard). */
+const BRANCH_CLEANUP_BLOCK_REASON_TEXT: Readonly<Record<BranchCleanupBlockReason, string>> = {
+  CHECKED_OUT: '현재 체크아웃된 브랜치라 삭제하지 않았어요. 다른 브랜치(예: main)로 바꾼 뒤 다시 요청해 주세요.',
+  NOT_MERGED: '아직 main에 병합되지 않은 브랜치라 안전을 위해 삭제하지 않았어요.',
+  TARGET_IS_MAIN: 'main 브랜치는 삭제하지 않아요.',
+  UNSAFE_NAME: '브랜치 이름이 안전한 형식이 아니라 삭제하지 않았어요.',
+  MAIN_MOVED: '로컬 main이 동기화한 시점과 달라져서 안전을 위해 삭제하지 않았어요. main 동기화부터 다시 해 주세요.',
+  BRANCH_MOVED: '브랜치가 확인한 시점과 달라졌거나 이미 없어서 삭제하지 않았어요.',
+  UNMERGED_PATHS: '작업 폴더에 해결되지 않은 병합 충돌이 있어 삭제하지 않았어요.',
+};
+const BRANCH_CLEANUP_BLOCK_GENERIC_TEXT =
+  '대상이 main이거나, 아직 병합되지 않았거나, 현재 체크아웃 중이거나, 이름이 안전하지 않거나, 로컬 main이 동기화 시점과 달라서 안전을 위해 진행하지 않았어요. git branch로 확인해 주세요.';
 const PUSH_EXECUTION_PHRASE = '푸시 실행';
 /** The deterministic PR-creation execution phrase the recorded PR approval points at (matches the runtime grammar). */
 const PR_CREATION_EXECUTION_PHRASE = 'PR 생성 실행';
@@ -2911,10 +2924,11 @@ export class ResponseComposer {
 
   /** A KNOWN pre-delete block (target is main / unsafe name / not merged / checked out / main moved / context
    *  incomplete). Definitively NOT deleted. Never claims deleted. (Sprint 3i) */
-  composeBranchCleanupBlocked(context: ConversationContext): OutboundMessage {
+  composeBranchCleanupBlocked(context: ConversationContext, reason?: BranchCleanupBlockReason): OutboundMessage {
+    const lead = reason ? BRANCH_CLEANUP_BLOCK_REASON_TEXT[reason] : BRANCH_CLEANUP_BLOCK_GENERIC_TEXT;
     return {
       context,
-      text: '브랜치를 삭제하지 않았어요. 대상이 main이거나, 아직 병합되지 않았거나, 현재 체크아웃 중이거나, 이름이 안전하지 않거나, 로컬 main이 동기화 시점과 달라서 안전을 위해 진행하지 않았어요. git branch로 확인해 주세요. (원격 브랜치·배포·릴리즈도 하지 않았어요)',
+      text: `브랜치를 삭제하지 않았어요. ${lead} (원격 브랜치·배포·릴리즈도 하지 않았어요)`,
     };
   }
 

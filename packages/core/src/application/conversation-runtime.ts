@@ -6669,7 +6669,14 @@ export class ConversationRuntime {
       anchor.repositoryIdentity.repo !== identity.repo
     ) {
       this.logPrApprovalFailed(session, anchor, 'branch cleanup context incomplete');
-      return this.failComposed(message, session, this.deps.composer.composeBranchCleanupBlocked(message.context));
+      return this.failComposed(
+        message,
+        session,
+        this.deps.composer.composeBranchCleanupBlocked(
+          message.context,
+          target === PR_BASE_BRANCH_POLICY ? 'TARGET_IS_MAIN' : target && !isSafePushBranch(target) ? 'UNSAFE_NAME' : undefined,
+        ),
+      );
     }
     let result: GitBranchCleanupResult;
     try {
@@ -6683,7 +6690,7 @@ export class ConversationRuntime {
       // unknown throw are UNVERIFIED. Keep MAIN_SYNCED on every failure path.
       if (err instanceof BranchCleanupBlockedError) {
         this.logPrApprovalFailed(session, anchor, 'branch cleanup blocked before delete');
-        return this.failComposed(message, session, this.deps.composer.composeBranchCleanupBlocked(message.context));
+        return this.failComposed(message, session, this.deps.composer.composeBranchCleanupBlocked(message.context, err.reason));
       }
       void (err instanceof BranchCleanupUnverifiedError);
       this.logPrApprovalFailed(session, anchor, 'branch cleanup unverified (delete ambiguity)');
