@@ -55,6 +55,11 @@ describe('Gmail OAuth token response is read bounded (HARD-1)', () => {
     expect(exchanged.refreshToken).toBe('r1');
   });
 
+  it('a UTF-8 BOM before the token JSON is ignored, as Response.json() did', async () => {
+    const body = '\uFEFF' + (await ok().text());
+    await expect(refreshGmailAccessToken(CLIENT, 'r', { fetchImpl: via(new Response(body, { status: 200 })), ...REFRESH_ARGS })).resolves.toMatchObject({ token: SECRET_TOKEN });
+  });
+
   it('an oversized declared content-length is refused with INVALID_RESPONSE before reading, and the stream is cancelled', async () => {
     const { response, state } = counting();
     const declared = new Response(response.body, { status: 200, headers: { 'content-length': String(CAP * 64) } });

@@ -240,7 +240,7 @@ async function readBoundedTokenJson(response: Response): Promise<unknown> {
     throw new GmailRequestError('token');
   }
   try {
-    return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown;
+    return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks, total))) as unknown;
   } catch {
     throw new GmailResponseError('token');
   }
