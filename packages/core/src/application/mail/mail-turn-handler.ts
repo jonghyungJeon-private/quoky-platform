@@ -144,7 +144,17 @@ export class MailTurnHandler implements ConversationTurnHandler {
       return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language, 'not-read');
     }
     if (question.kind === 'list') {
-      return this.list(ctx, { unread: question.unread, today: question.today, ...(question.from !== undefined ? { from: question.from } : {}) }, language);
+      const listed = await this.list(ctx, { unread: question.unread, today: question.today, ...(question.from !== undefined ? { from: question.from } : {}) }, language);
+      // ADR-0120 follow-up: the structural `mail.list` equivalent of what this grammar just listed.
+      return listed.status === 'FAILED'
+        ? listed
+        : {
+            ...listed,
+            nlSelection: {
+              entryId: 'mail.list',
+              args: { ...(question.unread ? { unread: true } : {}), ...(question.today ? { today: true } : {}), ...(question.from !== undefined ? { from: question.from } : {}) },
+            },
+          };
     }
     return this.summarize(ctx, question.target, language);
   }

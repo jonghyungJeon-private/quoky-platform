@@ -96,6 +96,17 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     expect(handler.helpLines).toEqual(MAIL_HELP_LINES);
   });
 
+  it('names the catalog equivalent of the listing it answered, and none for a failure or a summary request (ADR-0120 follow-up 2)', async () => {
+    const handler = createMailTurnHandler({ reader: fakeReader().reader, timeZone: SEOUL });
+    const selection = async (text: string) => ((await handler.handle(ctx(text))) as { nlSelection?: unknown } | null)?.nlSelection;
+    expect(await selection('안 읽은 메일')).toEqual({ entryId: 'mail.list', args: { unread: true } });
+    expect(await selection('오늘 온 메일')).toEqual({ entryId: 'mail.list', args: { today: true } });
+    expect(await selection('김철수 메일 찾아줘')).toEqual({ entryId: 'mail.list', args: { from: '김철수' } });
+    expect(await selection('메일 보내줘')).toBeUndefined();
+    const failing = createMailTurnHandler({ reader: fakeReader({ search: async () => { throw new Error('down'); } }).reader, timeZone: SEOUL });
+    expect(((await failing.handle(ctx('안 읽은 메일'))) as { nlSelection?: unknown } | null)?.nlSelection).toBeUndefined();
+  });
+
   it('answers 안 읽은 메일 deterministically: sender, subject, date and snippet, with a fixed history note', async () => {
     const { reader, searches } = fakeReader();
     const outcome = await createMailTurnHandler({ reader, timeZone: SEOUL }).handle(ctx('안 읽은 메일'));

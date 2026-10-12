@@ -131,6 +131,16 @@ export interface NlSelectedCommand {
   readonly language: 'ko' | 'en';
 }
 
+/**
+ * The structural catalog equivalent of a listing a handler answered through its own deterministic grammar (ADR-0120
+ * follow-up): an entry id and canonical args (defaults omitted), content-free like `lastSelection`. The runtime stores it
+ * as `lastSelection` so a later "그 중에 …" refines the listing the owner actually saw.
+ */
+export interface NlGrammarSelection {
+  readonly entryId: NlCatalogEntryId;
+  readonly args: NlArgs;
+}
+
 /** Typed readers for canonical args (handlers never cast). */
 export function nlStringArg(args: NlArgs, name: string): string | undefined {
   const value = args[name];

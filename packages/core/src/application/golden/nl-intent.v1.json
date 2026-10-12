@@ -5163,6 +5163,113 @@
       "text": "그 중에 몇 개야",
       "expect": "none",
       "note": "count follow-up with no previous selection: NL clarification question"
+    },
+    {
+      "id": "calendar-53",
+      "text": "이번 주 정기회의 일정 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week",
+          "keyword": "정기회의"
+        }
+      },
+      "note": "follow-up 2: the calendar grammar used to answer the whole week and ignore the qualifier"
+    },
+    {
+      "id": "calendar-54",
+      "text": "내일 스크럼 몇 시야",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow",
+          "keyword": "스크럼"
+        }
+      },
+      "note": "follow-up 2: qualifier the calendar grammar cannot express"
+    },
+    {
+      "id": "calendar-55",
+      "text": "오늘 위클리카 관련 일정",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "keyword": "위클리카"
+        }
+      },
+      "note": "follow-up 2: keyword qualifier"
+    },
+    {
+      "id": "calendar-56",
+      "text": "모레 면접 일정 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "day-after-tomorrow",
+          "keyword": "면접"
+        }
+      },
+      "note": "follow-up 2"
+    },
+    {
+      "id": "jira-063",
+      "text": "어제 업데이트된 위클리카 관련 jira 이슈",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "updated",
+          "range": "yesterday",
+          "keyword": "위클리카"
+        }
+      },
+      "note": "follow-up 2: the Jira keyword grammar used to take the window words as part of the keyword"
+    },
+    {
+      "id": "jira-064",
+      "text": "이번 주 마감인 스크럼 이슈 알려줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "due",
+          "range": "this-week",
+          "keyword": "스크럼"
+        }
+      },
+      "note": "follow-up 2: due-this-week phrase with a keyword"
+    },
+    {
+      "id": "jira-065",
+      "text": "내 지라 이슈 어제 업데이트된 거 보여줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "updated",
+          "range": "yesterday"
+        }
+      },
+      "note": "follow-up 2: the own-items phrase used to ignore the window"
+    },
+    {
+      "id": "github-035",
+      "text": "내 깃허브 PR 중 로그인 관련 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "keyword": "로그인"
+        }
+      },
+      "note": "follow-up 2: the own-items phrase used to ignore the keyword"
+    },
+    {
+      "id": "calendar-057",
+      "text": "이번 주 회의 중에 오후 거만",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      },
+      "note": "follow-up 2, partial: no time-of-day filter exists, so the whole week is listed and the basis line says so (never a keyword or a wrong filter)"
     }
   ]
 }

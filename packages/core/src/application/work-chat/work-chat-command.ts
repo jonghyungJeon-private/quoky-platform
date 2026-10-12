@@ -3,6 +3,8 @@ import type { Intent } from '../../domain';
 import { CONNECTOR_SEARCH_TEXT_MAX_LENGTH } from '../../ports';
 import type { PersonalWorkRole, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import { unnegatedMatch } from '../intent-negation';
+import { leavesUnexpressedContent } from '../nl-routing/grammar-residual';
+import { jiraKeywordCarriesQualifier } from '../nl-routing/wave1-entries';
 import type { ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 
 /**
@@ -474,6 +476,8 @@ function searchCommand(sourceToken: string, rawText: string, whole: string): Wor
   // Jira has no text search (named queries only): a keyword narrows the owner's own items instead. A message that
   // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
   if (source === 'jira' && !namesIssueOrIsContent(whole)) {
+    // ADR-0120 follow-up 2: a role, status, date field or period inside the "keyword" is for selection's typed args.
+    if (jiraKeywordCarriesQualifier(text)) return null;
     const keyword = cleanSearchText(stripItemNoun(text));
     return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
   }
@@ -666,10 +670,32 @@ function detectJiraListing(text: string): WorkChatCommand | null {
   if (keyword !== undefined) {
     const cleaned = cleanSearchText(keyword);
     if (cleaned.length === 0 || EMPTY_KEYWORD.test(cleaned)) return null;
+    if (jiraKeywordCarriesQualifier(cleaned)) return null;
     if (Array.from(cleaned).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
     return { kind: 'lookup', source: 'jira', query: 'my-items', text: cleaned };
   }
   return null;
+}
+
+/**
+ * Everything the unanchored lookup phrases can express (ADR-0120 follow-up 2): a source, the owner marker, an item noun, a
+ * request verb, the due-this-week and review-request phrases. A content word left over ("내가 만든", "어제 업데이트된",
+ * "스크럼") is a role, a window or a keyword these phrases cannot carry, so they decline and selection decides.
+ */
+const LOOKUP_EXPRESSED: readonly RegExp[] = [
+  ...SOURCE_PATTERNS.map(([, pattern]) => pattern),
+  /(?<![\w./-])(?:jira|지라|git\s?hub|깃\s?허브|깃헙|slack|슬랙|confluence|컨플루언스|컨플루엔스)(?![\w/-])/i,
+  /리뷰\s*(?:를\s*)?요청\s*(?:된|받은|받아|이\s*들어온|온)?/,
+  DUE_THIS_WEEK,
+  REVIEW_REQUEST,
+  ITEM_NOUN,
+  OWN_MARKER,
+  REQUEST_VERB,
+  /이번\s*주|금주|마감(?:인|되는)?|리뷰|요청|\bthis\s+week\b|\bdue\b|\breview\b|\brequests?\b/i,
+];
+
+function expressesWholeLookup(text: string): boolean {
+  return !leavesUnexpressedContent(text, LOOKUP_EXPRESSED);
 }
 
 function detectLookup(text: string): WorkChatCommand | null {
@@ -684,18 +710,19 @@ function detectLookup(text: string): WorkChatCommand | null {
   const wholeDue = DUE_WHOLE_MESSAGE.test(text);
   if (
     unnegatedMatch(text, [DUE_THIS_WEEK, DUE_WHOLE_MESSAGE]) &&
-    (wholeDue || (hasRequestVerb && isNear(text, DUE_THIS_WEEK, REQUEST_VERB)))
+    (wholeDue || (hasRequestVerb && isNear(text, DUE_THIS_WEEK, REQUEST_VERB))) &&
+    expressesWholeLookup(text)
   ) {
     const source = sources.length === 1 ? (sources[0] as WorkChatSource) : sources.length === 0 ? 'jira' : undefined;
     if (source) return { kind: 'lookup', source, query: 'due-this-week' };
   }
 
-  if (unnegatedMatch(text, [REVIEW_REQUEST]) && hasRequestVerb && isNear(text, REVIEW_REQUEST, REQUEST_VERB)) {
+  if (unnegatedMatch(text, [REVIEW_REQUEST]) && hasRequestVerb && isNear(text, REVIEW_REQUEST, REQUEST_VERB) && expressesWholeLookup(text)) {
     const source = sources.length === 1 ? (sources[0] as WorkChatSource) : sources.length === 0 ? 'github' : undefined;
     if (source) return { kind: 'lookup', source, query: 'review-requests' };
   }
 
-  if (sources.length > 0 && hasRequestVerb && OWN_MARKER.test(text) && ITEM_NOUN.test(text)) {
+  if (sources.length > 0 && hasRequestVerb && OWN_MARKER.test(text) && ITEM_NOUN.test(text) && expressesWholeLookup(text)) {
     if (sources.length === 1) return { kind: 'lookup', source: sources[0] as WorkChatSource, query: 'my-items' };
     // "내 Jira랑 GitHub 이슈" is exactly what the combined my-work view shows.
     if (sources.every((source) => source === 'jira' || source === 'github')) return { kind: 'todo.list' };

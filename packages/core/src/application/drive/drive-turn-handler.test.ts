@@ -125,6 +125,15 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
     expect(JSON.stringify(outcome?.reply.content)).toContain('"kind":"untrusted"');
   });
 
+  it('names the catalog equivalent of the listing it answered, and none for a failure (ADR-0120 follow-up 2)', async () => {
+    const handler = createDriveTurnHandler({ reader: fakeReader().reader, timeZone: SEOUL });
+    const selection = async (text: string) => ((await handler.handle(ctx(text))) as { nlSelection?: unknown } | null)?.nlSelection;
+    expect(await selection('최근 문서')).toEqual({ entryId: 'drive.files', args: {} });
+    expect(await selection('드라이브에서 회의록 문서 찾아줘')).toEqual({ entryId: 'drive.files', args: { name: '회의록' } });
+    const failing = createDriveTurnHandler({ reader: fakeReader({ list: async () => { throw new Error('down'); } }).reader, timeZone: SEOUL });
+    expect(((await failing.handle(ctx('최근 문서'))) as { nlSelection?: unknown } | null)?.nlSelection).toBeUndefined();
+  });
+
   it('a name search passes the owner text only and echoes it as an untrusted span', async () => {
     const { reader, calls } = fakeReader();
     const outcome = await createDriveTurnHandler({ reader, timeZone: SEOUL }).handle(ctx('드라이브에서 회의록 문서 찾아줘'));

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { workChatCommandForSelection } from './work-chat-selection';
+import { nlSelectionForWorkChatCommand, workChatCommandForSelection } from './work-chat-selection';
+import { detectWorkChatCommand } from './work-chat-command';
 
 describe('workChatCommandForSelection — Jira status (ADR-0120 follow-up)', () => {
   it('carries in-progress to the personal-work options, with the role and a keyword', () => {
@@ -13,5 +14,46 @@ describe('workChatCommandForSelection — Jira status (ADR-0120 follow-up)', () 
 
   it('keeps the default open status out of the options', () => {
     expect(workChatCommandForSelection({ entryId: 'jira.issues', args: {}, language: 'ko' })).not.toHaveProperty('personalWork');
+  });
+});
+
+describe('nlSelectionForWorkChatCommand — the reverse mapping of a grammar listing (ADR-0120 follow-up 2)', () => {
+  const selectionOf = (text: string) => {
+    const command = detectWorkChatCommand(text);
+    return command === null ? null : nlSelectionForWorkChatCommand(command);
+  };
+
+  it('maps every listing the grammar answers to its catalog entry with canonical args', () => {
+    expect(selectionOf('내 지라 이슈 보여줘')).toEqual({ entryId: 'jira.issues', args: {} });
+    expect(selectionOf('위클리카 관련 jira 이슈 보여줘')).toEqual({ entryId: 'jira.issues', args: { keyword: '위클리카' } });
+    expect(selectionOf('이번 주 마감인 jira 이슈 알려줘')).toEqual({ entryId: 'jira.issues', args: { window: 'due', range: 'this-week' } });
+    expect(selectionOf('내 GitHub 리뷰 요청 보여줘')).toEqual({ entryId: 'github.items', args: { query: 'review-requests' } });
+    expect(selectionOf('내 깃허브 PR 목록 알려줘')).toEqual({ entryId: 'github.items', args: {} });
+    expect(selectionOf('슬랙에서 배포 검색해줘')).toEqual({ entryId: 'slack.search', args: { keyword: '배포' } });
+    expect(selectionOf('내 할 일 보여줘')).toEqual({ entryId: 'todo.list', args: {} });
+  });
+
+  it('has no equivalent for a to-do write, a hint or a usage line', () => {
+    expect(selectionOf('할 일 추가: 보고서')).toBeNull();
+    expect(selectionOf('Slack 검색')).toBeNull();
+  });
+
+  it('declines (null) a listing that carries a role, a window, a status or a keyword the phrase cannot express', () => {
+    for (const text of [
+      '내가 만든 jira 이슈 보여줘',
+      '내 지라 이슈 어제 업데이트된 거 보여줘',
+      '내 jira 이슈 진행중인 거 보여줘',
+      '어제 업데이트된 위클리카 관련 jira 이슈',
+      '내 깃허브 PR 중 버그 관련 보여줘',
+      '이번 주 마감인 스크럼 이슈 알려줘',
+    ]) {
+      expect(detectWorkChatCommand(text), text).toBeNull();
+    }
+  });
+
+  it('keeps hits that have no leftover qualifier', () => {
+    for (const text of ['내 Jira 이슈 보여줘', 'jira 이슈 보여줘', '이번 주 마감인 jira 이슈 알려줘', '내 GitHub 리뷰 요청 보여줘', 'show my work on Jira']) {
+      expect(detectWorkChatCommand(text), text).not.toBeNull();
+    }
   });
 });

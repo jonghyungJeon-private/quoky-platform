@@ -511,6 +511,92 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(requests.slice(start.requests).filter((request) => request.capability !== SELECTION)).toHaveLength(0);
   });
 
+  /** The `Previous selection:` line of the last selector call since `from` (the prompt's own examples carry others). */
+  const lastPrevious = (from: number): string | undefined =>
+    requests
+      .slice(from)
+      .filter((request) => request.capability === SELECTION)
+      .at(-1)
+      ?.prompt.split('\n')
+      .filter((line) => line.startsWith('Previous selection:'))
+      .at(-1);
+
+  it('follow-up 2, defect 1: a Class B listing becomes the lastSelection, so "그 중에 스크럼만" after the calendar grammar refines the calendar (live sequence)', async () => {
+    const ctx = context();
+    // 1. The Jira grammar answers (no selector).
+    let start = marks();
+    await send('내 지라 이슈 보여줘', ctx);
+    expect(order.slice(start.order)).not.toContain('select');
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'jira.issues', args: {} });
+    // 2. "그 중에 진행중인거만" runs through NL: the previous selection is the grammar's Jira listing.
+    selectorAnswer = answer('jira.issues', { status: 'in-progress' });
+    start = marks();
+    const second = await send('그 중에 진행중인 것만 보여줘', ctx);
+    expect(order.slice(start.order), second.reply.text).toContain('select');
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"jira.issues","args":{}}');
+    // 3. The calendar grammar answers this week: lastSelection is now the calendar, no longer Jira.
+    start = marks();
+    await send('이번 주 일정 알려줘', ctx);
+    expect(order.slice(start.order)).not.toContain('select');
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'calendar.events', args: { range: 'this-week' } });
+    // 4. "그 중에 스크럼만" refines this week's calendar, not the stale Jira selection.
+    selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '스크럼' });
+    start = marks();
+    const refined = await send('그 중에 스크럼 일정만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"calendar.events","args":{"range":"this-week"}}');
+    expect(selected.slice(start.selected).map((served) => served.command.entryId)).toEqual(['calendar.events']);
+    expect(refined.reply.text).toContain('스크럼');
+    expect(refined.reply.text).not.toContain('Jira');
+  });
+
+  it('follow-up 2, defect 1: a chat turn clears lastSelection, so "그 중에 스크럼만" then gets the clarification question', async () => {
+    const ctx = context();
+    await send('이번 주 일정 알려줘', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
+    selectorAnswer = none;
+    expect((await send('요즘 날씨가 너무 덥다', ctx)).reply.text).toBe(CHAT_REPLY);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+    selectorAnswer = JSON.stringify({ entryId: 'calendar.events', args: { keyword: '스크럼' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'jira.issues', args: { keyword: '스크럼' } }] });
+    const start = marks();
+    const asked = await send('그 중에 스크럼만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: none');
+    expect(asked.reply.text).toContain('어떤 걸 찾으세요?');
+  });
+
+  it('follow-up 2, defect 1: help clears lastSelection and a different grammar listing replaces it', async () => {
+    const ctx = context();
+    for (const text of ['도움말', '이번 주 일정 알려줘']) {
+      await send('내 지라 이슈 보여줘', ctx);
+      expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
+      await send(text, ctx);
+      const kept = (await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY];
+      if (text === '도움말') expect(kept).toBeUndefined();
+      else expect(kept).toMatchObject({ entryId: 'calendar.events' });
+    }
+  });
+
+  it('follow-up 2, defect 1: a grammar-handled Jira listing followed by "그 중에 위클리카만" refines Jira', async () => {
+    const ctx = context();
+    await send('내 지라 이슈 보여줘', ctx);
+    selectorAnswer = answer('jira.issues', { keyword: '위클리카' });
+    const start = marks();
+    const refined = await send('그 중에 위클리카만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"jira.issues","args":{}}');
+    expect(refined.reply.text).toContain('위클리카');
+    expect(refined.reply.text).not.toContain('로그인 오류');
+  });
+
+  it('follow-up 2, defect 2: "이번 주 정기회의 일정 있어?" is no longer answered whole by the calendar grammar; selection binds the keyword', async () => {
+    selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '정기회의' });
+    const start = marks();
+    // Not a corpus phrasing, so the selection cache (shared by the corpus sweep above) cannot answer it.
+    const result = await send('이번 주 정기회의 일정이 있나요?');
+    expect(claims.slice(start.claims).filter((claim) => claim.handlerId === 'calendar')).toEqual([]);
+    expect(order.slice(start.order)).toContain('select');
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', keyword: '정기회의' }]);
+    expect(result.reply.text).toContain('정기회의');
+  });
+
   it('D6/D8 no new egress: selection runs only when the chat turn resolves to the selector\'s own provider', async () => {
     const deps = (runtime as unknown as { deps: { router: Record<string, unknown> } }).deps;
     const original = deps.router;

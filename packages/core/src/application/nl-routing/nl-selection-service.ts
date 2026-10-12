@@ -4,7 +4,7 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
-import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlSelectedCommand, NlText } from './catalog';
+import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlGrammarSelection, NlSelectedCommand, NlText } from './catalog';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { buildSelectionPrompt } from './selection-prompt';
@@ -17,6 +17,7 @@ import {
   readInterpretationPreference,
   readLastSelection,
   readPendingQuestion,
+  sanitizeStoredSelection,
   withInterpretationPreference,
   type LastSelection,
   type PendingQuestion,
@@ -177,6 +178,38 @@ export class NlSelectionService {
       this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
     return question;
+  }
+
+  /**
+   * ADR-0120 follow-up: a handler answered a listing through its own deterministic grammar; keep its structural
+   * equivalent as `lastSelection` (same record, same 30-minute TTL as a selection) so "그 중에 …" refines what the owner
+   * saw. Only in `active`; a selection that is not a closed entry with bounded args is ignored. Never throws.
+   */
+  async recordGrammarSelection(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, now: IsoTimestamp): Promise<boolean> {
+    if (this.mode !== 'active') return false;
+    const stored = sanitizeStoredSelection(selection);
+    if (stored === undefined) return false;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(actorId, stored, now));
+      return true;
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+      return false;
+    }
+  }
+
+  /**
+   * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (chat, help, an approval, a write
+   * preview) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older, unrelated
+   * listing. Only in `active`; never throws.
+   */
+  async clearLastSelection(session: Pick<Session, 'id'>): Promise<void> {
+    if (this.mode !== 'active') return;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, () => undefined);
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
   }
 
   // ── active ────────────────────────────────────────────────────────────────────────────────────────────────────

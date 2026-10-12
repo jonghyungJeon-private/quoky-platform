@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 NL-1 live re-test follow-up 2 (ADR-0120, 2026-10-12)
+
+- **"그 중에 …" binds to the listing you just saw.** A listing answered by a deterministic grammar (calendar, Jira, GitHub,
+  Slack, Confluence, to-dos, mail, Drive) is remembered as the previous selection; a turn with no such equivalent (chat,
+  help, an approval, a write preview) forgets it.
+- **Listing grammars no longer swallow qualifiers.** "이번 주 정기회의 일정 있어?" and "내일 스크럼 몇 시야" are no
+  longer answered with the whole period; the calendar and work-lookup grammars decline when a word they cannot express
+  is left, and natural-language selection applies the keyword.
+
 ## Unreleased — v5 NL-1 live UAT follow-up (ADR-0120, 2026-10-12)
 
 - **Jira "진행중인 이슈만"** works: `status: in-progress` renders `statusCategory = "In Progress"` and is also a refinement
