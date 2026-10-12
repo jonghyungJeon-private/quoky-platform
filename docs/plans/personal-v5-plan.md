@@ -5,6 +5,11 @@
   except decisions 7, 8 and 10, whose answers are in section 7. GOV-6 recorded the answers in the v5 ratification
   record in `DECISIONS.md` and appended ADR-0119 and the ADR-0117 and ADR-0118 amendments as Ratified. Ratification
   authorizes no Strict action by itself: each Strict target in section 5 still needs its own owner confirmation.
+- **Natural-language routing (GOV-7, 2026-10-12).** After the live Telegram QA misses and the routing audit
+  (`docs/plans/nl-intent-audit-2026-10-12.md`), the owner answered four more questions (section 7, decisions 20-23;
+  design input `docs/plans/nl-intent-design-2026-10-12.md`). GOV-7 appended ADR-0120 (natural-language capability
+  selection); the owner ratified it the same day. NL-1 joins wave 2, GML-2 moves to wave 3, and NL-2
+  waits for the NL-1 shadow data (section 4).
 - **Date:** 2026-10-12
 - **Base:** `main` at `a965590` (PR #173 merged, v4 closed). SQLite schema v15. `ConversationRuntimeDeps` baseline 35.
   Golden ratchet `turn-handler-routing` minTotal 419 and `action-shaped-fallthrough` 155 (`baseline.v1.json`).
@@ -53,6 +58,8 @@ For the owner, v5 is done when:
 - The v4 security-hygiene residuals with a cheap fix are fixed (bounded OAuth token reads).
 - The brief and mail answer one more daily question each, if the owner wants them (BRF-3, GML-2).
 - The two storage residuals are fixed in one migration, or accepted for good (STO-1).
+- Natural phrasings of the read questions reach the right capability without new phrase lists (NL-1 in shadow, NL-2
+  active once the shadow data and the ADR-0120 gate allow it).
 - Every other v4 residual has a recorded disposition: fixed, accepted or parked.
 
 **Left out on purpose:** new platforms or AI vendors, Notion, the multi-agent runtime, Team/Hosted tenancy, remote
@@ -66,8 +73,8 @@ P3 is parked or recommended for dropping.
 | Tier | Items |
 |---|---|
 | P0 | LIVE-2 v4 pending live checks, DOC-F docs and pipeline alignment |
-| P1 | HARD-1 bounded OAuth token reads, BRF-3 mail section in the brief (if decision 6 is yes) |
-| P2 | GML-2 Gmail threads and reply picks, DRV-2 shared drives and DRV-2b all sheets, STO-1 storage hardening (migration v16), PLT-1 untrusted spans for the remaining Core values, CAL-2 more calendars (read-only, going ahead: decision 10) |
+| P1 | HARD-1 bounded OAuth token reads, BRF-3 mail section in the brief (if decision 6 is yes), GOV-7 ADR-0120 and NL-1 natural-language capability selection (decision 23) |
+| P2 | GML-2 Gmail threads and reply picks, DRV-2 shared drives and DRV-2b all sheets, STO-1 storage hardening (migration v16), PLT-1 untrusted spans for the remaining Core values, CAL-2 more calendars (read-only, going ahead: decision 10), NL-2 active mode (gated on the NL-1 shadow data) |
 | P3 (parked or drop) | CODE-10 merge on a second repository, COST-1 price table, Telegram inline approvals (ADR-0114 D10), SUB-3 and Stage 2A, LLM-3, LRN-4, ADR-0108 D4, a mobile/remote ops UI, Notion, "memory improvements" (unscoped), a new observability track |
 | Out | Same as v4 "Out", plus PRV-1/PRV-2 live until the owner re-requests the keys |
 
@@ -165,6 +172,34 @@ says otherwise; AI HTTP APIs serve only the chat and image tiers (ADR-0115).
 - **AC.** Flag off: the brief is byte-identical. A fixture day with 0, 2 and 40 unread mails and an unreadable mailbox
   renders correctly. An injection subject changes nothing. No provider call.
 - **Live QA.** The next morning's brief after the flag is set (Strict `.env.local` edit).
+
+### NL — Natural-language capability selection (P1, decision 23)
+
+- **Goal.** The owner's natural phrasings reach the right read capability without new phrase lists. The audit routed
+  176 of 372 capability phrases (47%); 193 of the 196 misses fell to chat.
+- **Scope.**
+  - **GOV-7** (docs only): ADR-0120 with every amended clause listed; ratified by the owner on 2026-10-12 (ratification
+    record in DECISIONS.md).
+  - **NL-1:** the closed catalog contributed by the handlers (ADR-0120 D1); the `INTENT_SELECTION` selector on the
+    Claude CLI, Haiku-class by default (D2, D3); validation, grounding and symbolic time (D4); clarification,
+    `lastSelection` and the interpretation preference in `Actor.metadata` (D7); `QUOKY_NL_INTENT_MODE` with `off`,
+    `shadow` and Phase A `active` (selection acts only on messages bound for chat; ratification record decision 4) and
+    content-free shadow logs (D11); the Jira `personal-work` window, role and status query (D13); an
+    on-demand `brief.today` that reuses the brief composition, with no model and DM-only; honest chat (D9); the
+    `nl-intent.v1.json` corpus and the offline suite (D12). Reads only (D5). The deps baseline becomes 36 (D14).
+  - **NL-2** (gated on the NL-1 shadow data): Phase C (selection before the Class B grammars, which become the
+    provider-down fallback), grammar-hit shadowing, the
+    wave-2 gaps (mail ranges and subject keyword, Drive modified-since, calendar title keyword, Jira free-text search,
+    GitHub filters), and retiring the Class B grammars under ADR-0120 D10.
+- **ADR.** ADR-0120, ratified 2026-10-12.
+- **Risks.** A valid but wrong selection (reads only, the basis line, the negative corpus); latency of a CLI spawn (p95
+  target +3 s, measured in shadow); the owner's text egress (Phase A sends only messages already bound for chat).
+- **Estimate.** GOV-7 S. NL-1 L. NL-2 M-L.
+- **Dependencies.** ADR-0120 ratified. NL-1 merges after BRF-3 (shared reminders and `.env.example` files). NL-2 after
+  the shadow data, the ADR-0120 D12 evaluation gate and the owner's yes.
+- **AC.** ADR-0120 "Acceptance criteria": flag `off` is byte-identical; the offline suite and the evaluation gate pass;
+  the owner's two phrases and "그 중에 위클리카만" answer correctly with the basis line.
+- **Live QA.** About 40 phrasings per catalog entry on Telegram and Discord, including a provider-down case (NL-2).
 
 ### CON — Connector depth (P2)
 
@@ -280,38 +315,47 @@ assume section 7 is answered. A "no" drops the task without blocking the rest. M
 | 1 | HARD-1 | HARD | `connector-gmail/src/oauth.ts`, `connector-gdrive/src/oauth.ts`, `connector-calendar-google/src/oauth.ts` (+tests) | sonnet | — |
 | 1 | PLT-1 | PLT | `core/application/response-composer.ts`, `core/application/message-rendering.ts`, `adapter-discord` golden fixture additions | sonnet (opus review) | polish PR merged |
 | 2 | BRF-3 | BRF | `core/application/reminders/daily-brief.ts`, `daily-brief-sources.ts` (+tests), `app/reminders/brief-sources.ts`, `reminder-config.ts`, `.env.example` | sonnet | ADR-0117 amendment |
-| 2 | GML-2 | CON | `core/application/mail/*`, `core/ports` mail port (additive), `core/domain/messaging.ts` (inbound reply field), `adapter-discord` and `adapter-telegram` inbound mapping, `connector-gmail/src/gmail-mail-reader.ts`, `app/features/mail.providers.ts`, golden corpora | opus | polish PR, ADR-0118 amendment |
 | 2 | STO-1 | STO | `storage-sqlite/src/migrations.ts`, `storage-sqlite/src/index.ts` (session and run queries), `core/ports/storage-provider.port.ts`, `core/application/session-manager.ts` (+tests) | opus | ADR-0119 |
-| 3 | DRV-2 + DRV-2b | CON | `core/application/drive/*`, `connector-gdrive/src/gdrive-reader.ts`, a new `connector-gdrive/src/sheets-reader.ts` (+ source scan), `app/features/drive.providers.ts` | opus (new host) | GML-2, polish PR, Sheets API enabled (Strict) |
+| 2 | GOV-7 | NL | `DECISIONS.md` (ADR-0120 and its ratification record, 2026-10-12), `ROADMAP.md`, this plan | opus | owner answers 20-23 |
+| 2 | NL-1 | NL | a new `core/application/nl-routing/*`, `core/ports/conversation-turn-handler.port.ts` (two optional members), `core/domain/enums.ts` (`INTENT_SELECTION`), `core/application/conversation-runtime.ts` (one dispatch point, one deps key), the catalog and `handleSelected` of `work-chat/*`, `calendar/*`, `mail/*`, `drive/*`, `help-intent/*` and `reminders/reminder-turn-handler.ts`, `core/ports/connector-query.ts` and `connector-jira` (D13), `intent-classifier.ts` and `chat-policy/*` and `prompt-composer.ts` (honest chat), `packages/ai-cli` (advertising the capability), `app/features/nl-intent.providers.ts` (new), `.env.example`, `golden/nl-intent.v1.json` (+tests) | opus (design, review), sonnet (handlers, tests) | ADR-0120 ratified; after BRF-3 (shared `reminders/*` and `.env.example`) |
+| 3 | GML-2 | CON | `core/application/mail/*`, `core/ports` mail port (additive), `core/domain/messaging.ts` (inbound reply field), `adapter-discord` and `adapter-telegram` inbound mapping, `connector-gmail/src/gmail-mail-reader.ts`, `app/features/mail.providers.ts`, golden corpora | opus | polish PR, ADR-0118 amendment, NL-1 merged (it owns `mail/*` in W2) |
+| 3 | DRV-2 + DRV-2b | CON | `core/application/drive/*`, `connector-gdrive/src/gdrive-reader.ts`, a new `connector-gdrive/src/sheets-reader.ts` (+ source scan), `app/features/drive.providers.ts` | opus (new host) | GML-2 merged first (same wave, sequential), polish PR, Sheets API enabled (Strict) |
 | 3 | CAL-2 | CON | No code: the owner picks calendars, then the `.env.local` edit (Strict). `core/domain` calendar event and `connector-calendar-google` only if an ADR-0110 amendment adds `calendarId` | haiku (listing), sonnet | decision 10 (yes) |
 | 3 | INT-4 | INT | `app/personal-v5-acceptance.test.ts`, golden additions, `baseline.v1.json` | sonnet | merged tracks |
 | 3 | DOC-G | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation notes), `ROADMAP.md`, quickstart, operator guide | sonnet | merged tracks |
+| 4 | NL-2 | NL | `core/application/nl-routing/*`, `conversation-runtime.ts` (Phase C order), the Class B grammars being retired, `mail/*`, `drive/*`, `calendar/*`, `work-chat/*` and their read ports and adapters for the wave-2 gaps, golden corpora (+ its own acceptance and docs) | opus | NL-1 shadow data, the ADR-0120 D12 evaluation gate, the owner's yes (and for Phase C the D8 egress yes) |
 
-Inside a wave, tasks run in parallel in separate worktrees. P2 tasks may be dropped without blocking INT-4.
+Inside a wave, tasks run in parallel in separate worktrees, except where the Deps column orders two tasks of the same
+wave. P2 tasks may be dropped without blocking INT-4. INT-4 and DOC-G close waves 1-3; NL-2 carries its own acceptance
+and docs.
 
 ### Lanes
 
 **Migration lane** (ADR-0096 D10: additive, idempotent, numbers fixed). **v16 belongs to STO-1 only.** No other v5
-task needs a migration (BRF-3, GML-2 and DRV-2 add no stored state; CAL-2's field lives in the event, not the DB). A
+task needs a migration (BRF-3, GML-2 and DRV-2 add no stored state; CAL-2's field lives in the event, not the DB; NL-1
+keeps its state in the existing `Session.metadata` and `Actor.metadata` JSON, ADR-0120 D7). A
 task that finds it needs one takes v17 after STO-1 merges. Applying any migration on the service DB is Strict.
 
 **Hot-file lane** (one editor per wave):
 
-| File | W1 | W2 | W3 |
-|---|---|---|---|
-| `response-composer.ts` (3,107 lines) | PLT-1 | — | — |
-| `conversation-runtime.ts` (8,154 lines) | — | — (no task expected; a handler absorbs each change) | — |
-| `core/application/mail/*` | — | GML-2 | — |
-| `core/application/drive/*` | — | — | DRV-2 |
-| `turn-handlers.providers.ts` | — | GML-2 (only if a new handler) | DRV-2 (rebased) |
-| `.env.example` | — | BRF-3 | CAL-2 (comment only) |
-| `storage-provider.port.ts`, `storage-sqlite/src/*` | — | STO-1 | — |
-| `core/domain/messaging.ts`, platform adapters' inbound mapping | — | GML-2 | — |
-| `core/application/reminders/*` | — | BRF-3 | — |
-| `DECISIONS.md` | GOV-6 | — | DOC-G |
+| File | W1 | W2 | W3 | W4 |
+|---|---|---|---|---|
+| `response-composer.ts` (3,107 lines) | PLT-1 | — | — | — |
+| `conversation-runtime.ts` (8,154 lines) | — | NL-1 (one selection dispatch point, one deps key) | — | NL-2 (Phase C order) |
+| `core/ports/conversation-turn-handler.port.ts` (handler port) | — | NL-1 (`catalog?`, `handleSelected?`) | — | — |
+| `core/application/work-chat/*`, `ports/connector-query.ts`, `connector-jira` | — | NL-1 (catalog, `handleSelected`, Jira D13 query) | — | NL-2 |
+| `intent-classifier.ts`, `chat-policy/*`, `prompt-composer.ts` | — | NL-1 (honest chat, QUAL-7 narrowing) | — | NL-2 |
+| `core/application/mail/*` | — | NL-1 (catalog, `handleSelected` only) | GML-2 | NL-2 |
+| `core/application/drive/*` | — | NL-1 (catalog, `handleSelected` only) | DRV-2 (after GML-2) | NL-2 |
+| `turn-handlers.providers.ts` | — | NL-1 (only if a new handler) | GML-2 (only if a new handler), then DRV-2 (rebased) | — |
+| `.env.example` | — | BRF-3, then NL-1 (rebased) | CAL-2 (comment only) | — |
+| `storage-provider.port.ts`, `storage-sqlite/src/*` | — | STO-1 | — | — |
+| `core/domain/messaging.ts`, platform adapters' inbound mapping | — | — | GML-2 | — |
+| `core/application/reminders/*` | — | BRF-3 (`daily-brief*`), then NL-1 (`reminder-turn-handler.ts` only) | — | — |
+| `DECISIONS.md` | GOV-6 | GOV-7 | DOC-G | NL-2 (implementation note) |
 
-**Deps baseline.** 35. No v5 task is expected to add a `ConversationRuntimeDeps` key; a task that needs one says so
-in its ADR first.
+**Deps baseline.** 35 until NL-1 merges; NL-1 adds the one key `nlSelection?` (ADR-0120 D14: 35 → 36). No other v5 task
+is expected to add one; a task that needs one says so in its ADR first.
 
 ## 5. Governance and validation
 
@@ -322,10 +366,12 @@ in its ADR first.
   target.
 - **ADR gate.** A track's first code merge waits for its ADR or amendment to be ratified. GOV-6 appended ADR-0119 and the
   ADR-0117/ADR-0118 amendments, Ratified on 2026-10-12 with the owner's answers. HARD-1, PLT-1 and the docs tasks need implementation notes
-  only. A stalled ADR stalls only its own track.
+  only. GOV-7 appended ADR-0120, which the owner ratified on 2026-10-12 (ratification record in `DECISIONS.md`); NL-2 waits
+  for its own gates (ADR-0120 D6, D10, D12). A stalled ADR stalls only its own track.
 - **Chief Architect review (independent, mandatory before merge):** STO-1 (a Core storage port and a migration), GML-2
   (a port widening and a larger injection surface), DRV-2 and DRV-2b (a corpus widening and a new pinned host), BRF-3 (hostile text in a scheduled DM),
-  PLT-1 (untrusted rendering on both platforms). HARD-1 needs Codex only.
+  PLT-1 (untrusted rendering on both platforms), NL-1 and NL-2 (a new capability, a new dispatch point, two port
+  members and a deps key). HARD-1 needs Codex only.
 - **Codex review.** Sparse: required PASS per PR in the ship pipeline, plus a delta review after fixes. Codex is a
   reviewer, never the implementer of the same change.
 - **Model tiering.** **haiku** for mechanical work (worktree setup and cleanup, rebases of doc conflicts, validation
@@ -342,7 +388,9 @@ in its ADR first.
 - **Fix loops.** At most two per finding inside the approved scope; then narrow, defer or stop and report.
 - **Strict, per target:** the service-DB migration v16 apply; each `.env.local` edit (BRF-3 flag, CAL-2 calendar ids,
   any merge-flag change); enabling the Google Sheets API in `quoky-personal-510806` (DRV-2b); runtime restarts outside
-  the ship pipeline; any new OAuth scope (none is needed); the owner-attended LIVE-2 session.
+  the ship pipeline; any new OAuth scope (none is needed); the owner-attended LIVE-2 session; each ADR-0120
+  model-in-the-loop evaluation run (an approved plan digest per run); the `QUOKY_NL_INTENT_MODE` edits (`shadow`, then
+  `active`); the NL live UAT; grammar-hit shadowing or Phase C (a new egress, the owner's yes first).
 - **Honesty.** No document claims a live result before the session that produced it. Pending stays Pending.
 
 ## 6. Risks
@@ -356,12 +404,19 @@ in its ADR first.
 | Low-value work crowds out the owner's attention | P2 items run only on a "yes" in section 7; COST-1, CODE-10 and the unscoped items are dropped (decisions 11, 12, 18) |
 | Stale docs mislead later agents (the per-track `CURRENT_STATE.md` sections still say "not run yet") | DOC-F records the C-rows; DOC-G closes v5; the honesty rule |
 | The standing approval is read wider than granted | Decision 1 names every automatic step, including deploy and smoke; Strict items stay per target |
+| NL selection picks a valid but wrong capability, or captures a negative | Reads only in wave 1 (decision 21); the basis line on every answer; owner-approved negatives with a 0-wrong-capture gate; shadow before active (ADR-0120 D5, D11, D12) |
+| NL selection adds latency or fails when the Claude CLI is slow or down | One call, 4 s timeout, no retry; p95 measured in shadow before NL-2; the frozen Class B grammars and honest chat are the fallback (ADR-0120 D3, D6) |
+| Regex widening creeps back in under deadline pressure | The Class B grammars are frozen at ratification; a miss becomes a corpus case, never a regex (ADR-0120 D10; owner, 2026-10-12: "하드코딩이면 안된다는 말임") |
+| A stored interpretation preference answers with the wrong basis for 30 days | The basis line shows it on every answer, the owner overrides it in plain words, and it expires after 30 days (ADR-0120 D7, decision 22) |
+| More owner text leaves the host | Phase A sends only messages already bound for Claude chat; grammar-hit shadowing and Phase C need the owner's separate yes (ADR-0120 D8) |
 
 ## 7. Owner decisions (answered 2026-10-12)
 
 The Product Owner answered in the orchestrator chat on 2026-10-12 ("응 확정할게 진행하자"). Every question takes its
 recommended default, except where the last column says otherwise. The answers are recorded in the v5 ratification
-record in `DECISIONS.md`.
+record in `DECISIONS.md`. Decisions 20-23 were asked later the same day, after the natural-language routing audit, and
+answered in the orchestrator chat on 2026-10-12; they are the owner answers 1-4 quoted in ADR-0120, ratified on
+2026-10-12 (its ratification record follows the ADR in `DECISIONS.md`).
 
 | # | Question | Recommended default | Reason | Owner answer (2026-10-12) |
 |---|---|---|---|---|
@@ -384,3 +439,7 @@ record in `DECISIONS.md`.
 | 17 | Let Drive read uploaded text files (an ADR-0118 D2 amendment with a binary sniff)? | **No** | Docs and Sheets cover the recorded use; a new egress path for little gain | **No** (recommended default) |
 | 18 | "Memory improvements" (ROADMAP "Future"): plan it now? | **No track** until you name a concrete problem | No QA record shows a memory defect | **No track** (recommended default) |
 | 19 | CODE-8 on a second allowlisted repository (C6): keep it Pending until a second real repository is registered? | **Yes, park with CODE-10** | The narrowed installation is confirmed on the sandbox; a second repository is not in daily use | **Yes, parked with CODE-10** (recommended default) |
+| 20 | NL selection: which provider and model, and on which messages? | — (open question of the design input) | Phase A (fall-through messages only) adds no new egress class; the model choice decides latency | **Claude CLI, fall-through messages only, Haiku if it passes the gate** (2026-10-12): "우선은 Claude CLI, 놓친 문장만으로 진행하되, 모델은 빠른 모델이니 하이쿠만으로도 대체가 되면 하이쿠만으로도 진행해도 좋아. 이번에 하이쿠 5.5가 발표되면서 하이쿠 성능도 좋아졌으니 …". Sonnet only if Haiku fails the ADR-0120 D12 gate; the model id is adapter configuration (ADR-0120 D2) |
+| 21 | NL selection: may it start writes? | — (open question of the design input) | Writes are irreversible; the read results show whether selection is trustworthy | **Reads first, writes after seeing the read results** (2026-10-12): "1차는 조회, 쓰기는 조회 결과 보고 진행". NL-initiated writes need a later ADR-0120 amendment (D5) |
+| 22 | An ambiguous phrase such as "오늘 등록된 jira 이슈" (created by whom?) | **One clarifying question, never chat** (a default of the design input); the 30-day TTL, basis line and override were the orchestrator's proposal on the answer | A guess is a wrong answer; chat deflects | **Ask once and remember the answer** (2026-10-12): "사용자한테 한번 물어보고, 그 물어본 답이 캐시로 되어 특정 시간에는 계속 캐시 연결 → 주제로 넘어가면 좋을거 같은데". Per actor and ambiguity key, 30-day TTL, a basis line on every answer, overridable at any time, stored in `Actor.metadata` with no migration (ADR-0120 D7) |
+| 23 | When does NL selection start? | — (open question of the design input) | ADR-0120 must be ratified before any NL code | **Next wave** (2026-10-12): "다음 웨이브로 바로". GOV-7 and NL-1 join wave 2 with BRF-3 and STO-1; GML-2 moves to wave 3; NL-2 follows the shadow data (section 4) |
