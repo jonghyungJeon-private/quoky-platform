@@ -20725,7 +20725,7 @@ Chief Architect final: PASS. Codex final: one P2, the English reporter grounding
 
 Residual for NL-2 (optional hardening): `family` is free-form on the port, so equal families are not yet checked for equal execution locality. In today's wiring each vendor has a fixed id prefix, so no local and remote mix is possible. NL-2 should also require `executionLocalityOf(chat) === executionLocalityOf(selector)`.
 
-#### Live UAT follow-up addendum (2026-10-12, inside the ratified NL-1 scope)
+#### Live UAT follow-up addendum (2026-10-12; scope covered by ADR-0120 amendment A1 below)
 
 Telegram and Discord live UAT found gaps in how the ratified D1/D13 entries read an owner's words. No new entry, no new
 risk class, no new egress; every addition is an optional arg of an existing READ entry.
@@ -20755,3 +20755,32 @@ risk class, no new egress; every addition is an optional arg of an existing READ
   p50 3.0 s, p95 3.8 s. Gate passed. All new in-progress, calendar keyword, Drive kind, brief, bare-source and count cases
   hit; the clarifications are the intended bare-Slack/Confluence and no-previous count questions. Two earlier runs the same
   day (v13: 96.7% but reminder 89.7% on timeouts; v14: 96.0%, three Drive `kind` expectation changes) are in `data/eval/`.
+
+### ADR-0120 amendment A1 — three read filters move from NL-2 into NL-1 (2026-10-12)
+
+- **Status:** Accepted on the recommended default.
+  - At 21:38 KST the orchestrator asked the owner in Discord `#new_chatting`: "승인" or "보류"; with no answer in 20 minutes, the recommended option (승인) is applied.
+  - No answer came by 21:58. Under the quoky-ship rule that an unanswered decision proceeds on the stated recommendation, the amendment is applied.
+  - The owner can withdraw it at any time ("보류"). Withdrawing removes the three filters, with no data impact.
+- **Why:** the live UAT run the owner requested ("최대한 다양한 질문으로 엣지 케이스까지") found three natural requests that NL-1 could not serve: "진행중인 이슈만", "그 중에 스크럼만" and "드라이브에 스프레드시트 최근 거". Before this amendment they fell through to chat.
+- **Amends:**
+  - **D1 (catalog widening):** the entries below gain new args, together with corpus cases (the corpus grows from 501 to 570).
+  - **D13:** the Jira `status` enum becomes `open | in-progress | all`. `in-progress` renders the fixed clause `statusCategory = indeterminate`.
+  - **ADR-0118 D2 (the DriveReader signature):** gains one optional, closed, neutral `DriveListingKind` (`spreadsheet | document | presentation | pdf | folder`). The adapter maps each kind to fixed MIME clauses, using an own-property lookup only. Listing folders is allowed only when `kind: folder` is grounded. The default query is byte-identical.
+  - **V1/V2:** "calendar title keyword" moves from `[LATER]` to NL-1.
+- **New args and their rules:**
+
+  | Entry | New arg | Rule |
+  |---|---|---|
+  | `jira.issues` | `status: in-progress` | Grounded on 진행/진행중/진행 중/in progress/working on, or carried over from `lastSelection` |
+  | `calendar.events` | `keyword` | Grounded; filters event titles locally, after the read |
+  | `drive.files` | `kind` | Grounded on explicit type words, with word boundaries for English; bare `문서`/`doc` do not ground |
+
+- **Unchanged:**
+  - Event titles, mail subjects and file names never reach the model (ADR-0110 D4, ADR-0118 D7/D8).
+  - A filtered result over a full or truncated page says that it is partial.
+  - Reads only; there is no new host and no new scope.
+- **Reviews:**
+  - Chief Architect: code sound; the scope question is resolved by this amendment; the P3s are fixed.
+  - Codex: the P2s are fixed (word-boundary grounding, partial-page honesty, own-property kind lookup).
+  - Eval (prompt v16, 570 cases, Haiku, 4 s bound): 97.4% overall, 0 wrong, lowest entry 94.6%.
