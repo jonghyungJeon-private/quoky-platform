@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { ConnectorQueryError, type ConnectorQueryErrorReason } from '@quoky/core';
-import { GmailHttpError, GmailRequestError, GmailResponseError, GmailScopeError } from './errors';
+import { GmailHttpError, GmailRequestError, GmailResponseError, GmailResponseTooLargeError, GmailScopeError } from './errors';
 
 /**
  * Google OAuth 2.0 for the Gmail adapter (ADR-0118 D3): the refresh-token grant used at runtime and the
@@ -199,16 +199,51 @@ async function postTokenRequest(
   if (!response.ok) {
     throw new GmailHttpError(tokenErrorReason(response.status, await readOAuthErrorCode(response)), 'token', response.status);
   }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new GmailResponseError('token');
-  }
+  const payload = await readBoundedTokenJson(response);
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     throw new GmailResponseError('token');
   }
   return payload as Record<string, unknown>;
+}
+
+/** A token endpoint body is a few hundred bytes; anything past this cap is refused (HARD-1). */
+const TOKEN_RESPONSE_MAX_BYTES = 16 * 1024;
+
+/**
+ * Read the token endpoint body as JSON, at most `TOKEN_RESPONSE_MAX_BYTES`: a larger declared length is refused without
+ * reading, a larger stream is cancelled at the cap. Any failure is a sanitized typed error carrying no body content.
+ */
+async function readBoundedTokenJson(response: Response): Promise<unknown> {
+  const declared = Number(response.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > TOKEN_RESPONSE_MAX_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new GmailResponseTooLargeError('token');
+  }
+  const body = response.body;
+  if (body === null) throw new GmailResponseError('token');
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > TOKEN_RESPONSE_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new GmailResponseTooLargeError('token');
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof GmailResponseTooLargeError) throw error;
+    throw new GmailRequestError('token');
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown;
+  } catch {
+    throw new GmailResponseError('token');
+  }
 }
 
 /**
@@ -227,7 +262,7 @@ function tokenErrorReason(status: number, code: string | undefined): ConnectorQu
 /** The OAuth `error` code only (a short token from a fixed vocabulary); everything else in the body is dropped. */
 async function readOAuthErrorCode(response: Response): Promise<string | undefined> {
   try {
-    const body: unknown = await response.json();
+    const body: unknown = await readBoundedTokenJson(response);
     if (typeof body !== 'object' || body === null) return undefined;
     const code = (body as Record<string, unknown>).error;
     return typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? code : undefined;

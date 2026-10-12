@@ -19510,6 +19510,7 @@ Independent Chief Architect review before GML-1 merges.
     existing bound then drops the last line. Raising the bound is left to INT-3 and DOC-E, so that the unconfigured
     help stays byte-identical.
   - **Resolved (v4 residual polish).** See the DRV-1 note: mail and Drive share one merged help line when both are on.
+  - The OAuth token response was read with `response.json()` (unbounded). **Fixed by HARD-1:** a 16 KiB bounded read, an oversize body is `INVALID_RESPONSE` (`GmailResponseTooLargeError`).
 
 ### ADR-0118 implementation note — DRV-1 Google Drive read connector (2026-10-12)
 
@@ -19668,7 +19669,7 @@ Independent Chief Architect review before GML-1 merges.
   - The list ↔ id mapping is in memory and is lost on restart.
   - **Resolved (v4 residual polish).** See the GML-1 note: the Drive list is persisted the same way, under the `drive` slot, with no migration, in
     (ids only; kind re-checked by the adapter at export time).
-  - The OAuth token response is read with `response.json()` (unbounded, pinned to the OAuth host), as in GML-1.
+  - The OAuth token response is read with `response.json()` (unbounded, pinned to the OAuth host), as in GML-1. **Fixed by HARD-1:** a 16 KiB bounded read, an oversize body is `INVALID_RESPONSE` (`GDriveResponseTooLargeError`); the same fix covers the calendar connector's token call (`GoogleCalendarResponseError`).
 - **Live QA (Strict, owner).** Enable the Google Drive API in `quoky-personal-510806`; run `calendar-auth --drive`; set
   `QUOKY_DRIVE_TOKEN_FILE`; one read probe (`최근 문서` in the DM). Then about 15 phrasings:
   - recent and name search (KO and EN), an empty search, a summary of a Doc and a Sheet (an uploaded text file: expected "cannot be read as text");
