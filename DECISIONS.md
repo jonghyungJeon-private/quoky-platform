@@ -18601,6 +18601,59 @@ apply unchanged unless stated here.
   - A 400 on execution is `EXECUTION_FAILED`, so the router's own readiness cache is not dropped. The shared probe is,
     so a revoked key is noticed at the next probe (manager TTL) rather than on the next turn.
 
+### ADR-0115 implementation note — PRV-3 usage ledger and monthly DM (2026-10-12)
+
+Implementation choices where D8 is silent; no ratified text above changes. **No migration: usage lives in
+`TaskRun.metadata`.** D8's "migration v16 if a column is needed" branch is not taken: nothing is added to the schema,
+the schema version stays 15, and no owner-side migration step is required.
+
+- **Where usage is stored.** `TaskRun.metadata.usage` (the existing JSON, already passed to `completeRun`):
+  `{ label, reported, inputTokens?, cachedInputTokens?, outputTokens?, reasoningTokens?, totalTokens? }`. Counts only; no
+  prompt, reply, key or provider text. Core's `runUsageRecord`/`withRunUsage`/`readRunUsage`
+  (`provider-usage-record.ts`) normalise and read it; non-negative safe integers only, a malformed count is dropped.
+  `totalTokens` is the provider's own total, else `input + output` when both were reported (arithmetic, not an estimate).
+- **Core port change (additive, type-only).**
+  - `AiExecutionResult.usage?: AiUsage` with `AiUsage = { label; inputTokens?; cachedInputTokens?; outputTokens?;
+    reasoningTokens?; totalTokens? }`. The provider supplies its own selection label (`openai:<model>`, `gemini:<model>`,
+    `claude:<model>`, `codex`, `ollama:<model>`); core only records and groups by it and never branches on it or on a
+    provider id.
+  - `TaskRunRepository.listWithUsageFinishedBetween(from, to)`: a read-only query over the existing JSON
+    (`json_extract(data, '$.metadata.usage')`, `$.finishedAt`). It is the only repository addition.
+  - The conversation runtime records usage at the two sites that already complete a provider run (chat tier and image
+    understanding). A provider that returns no `usage` leaves the run metadata byte-identical to before.
+- **What is reported, never estimated.** OpenAI and Gemini report the counts of the response (PRV-1/PRV-2 names). The
+  Codex CLI reports the counts its `turn.completed` event carries, else none. The Claude CLI (plain `-p` text), Ollama
+  and the vision CLIs expose no counts, so they report the label alone: the run counts as an "unknown" (`reported:
+  false`) run for that label and adds nothing to any token sum. Claude's `stream-json` result carries usage; reading it is
+  a later change.
+- **Monthly totals (read side).** `apps/quoky/src/ops/provider-usage.ts` (`ProviderUsageLedger`): calendar months in
+  `QUOKY_TIMEZONE`, boundaries from local midnight of day 1, per label: runs, unknown runs, input, cached, output,
+  reasoning and total tokens. Computed on demand from the query above; no stored aggregate.
+- **Ops UI.** A `provider-usage` panel (current and previous month; label, runs, input, output, total, unknown runs),
+  escaped like every panel and counts only. With no usage in either month the panel is omitted, so the dashboard page is
+  byte-identical to the one before (the TG-3 golden still passes unchanged).
+- **Notices (`provider-usage-notice.ts`, `ProviderUsageNoticeJob`).** Evaluated at start and hourly (unref'd timer, so a
+  sleeping Mac catches up). Each kind is at most once per calendar month:
+  - *Monthly:* the previous month's totals per label, only if that month has usage. State: `monthlyReportedFor`.
+  - *Threshold:* `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD`, **total tokens per calendar month across all labels**, a positive
+    whole number; unset or empty means no threshold notice. Sent once in a month, when the month's total first reaches it.
+    State: `thresholdSentIn`. A malformed value is the startup error `PROVIDER_USAGE_THRESHOLD_INVALID` (exit 78).
+  - *Delivery:* `OpsNoticeService.deliverOwnerText`, the same owner-only sink path as `OPS_NOTICE` (DM target, no guild,
+    `BRIEF`; the primary platform's DM as today). It does not use the 3-per-day crash/backup ledger.
+  - *Persistence:* a private JSON file `<db dir>/ops/provider-usage-notices.json` (mode 600, 700 directory, atomic
+    replace, as the ops notice ledger). A notice counts as sent **only on `SENT`**, as in TG-1's halt-notice suppression:
+    any other outcome is retried at the next evaluation. A failing state file never causes a second notice in the same
+    process (the in-memory copy holds the latest).
+- **No automatic action.** The job holds a read-only usage source and a deliver function; it imports no selection,
+  registration or routing module. A test proves a Proxy-guarded source is touched only through the one query and that
+  its modules reference no selection or ranking write path.
+- **Sample DM.** `[Quoky 사용량 알림] 2026-09 공급자별 사용량이에요. 합계 1,650 토큰 (3회).` then one line per label
+  (`- openai:gpt-5: 2회, 입력 1,000 · 출력 650 · 합계 1,650 토큰`, with `, 토큰 미보고 N회` when some runs reported no
+  counts) and a closing line that only token counts are shown and no provider is switched automatically.
+- **Residuals.** Runs through the provider-routing gateway (Ollama routing) and code-work runs record no usage (no
+  count is exposed; they do not appear in the ledger). The ledger is counts, not money: no price table. Claude and Codex
+  runs on a subscription are counted but cost nothing per token.
+
 ## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)

@@ -5,6 +5,21 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### PRV-3 provider usage ledger and monthly DM — implemented on branch, not merged (2026-10-12)
+
+ADR-0115 D8, on top of PRV-1 and PRV-2. **No migration: usage lives in `TaskRun.metadata.usage`** (schema stays v15).
+
+- **Recorded.** Each provider run that reports a usage object stores its label and the reported token counts. OpenAI,
+  Gemini and Codex report counts; the Claude CLI and Ollama report the label only ("unknown"). Nothing is estimated.
+- **Read.** The additive read-only `TaskRunRepository.listWithUsageFinishedBetween` feeds monthly totals per label in
+  `QUOKY_TIMEZONE`, shown in a `provider-usage` ops-UI panel (omitted when there is no usage).
+- **Notices.** One owner DM per month with the previous month's totals, and one when the optional
+  `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (total tokens per calendar month) is first reached. State is
+  `ops/provider-usage-notices.json`, written only after `SENT`. No provider is ever switched, disabled or re-ranked.
+- **Unchanged.** `ConversationRuntimeDeps` stays 35; the Core change is one optional type field and one read query.
+- **Validation.** Offline only. Not run yet: the Chief Architect review (mandatory: a Core port change and a notice) and
+  a live check of one real DM.
+
 ### DRV-1 Google Drive read connector — implemented on branch, not merged (2026-10-12)
 
 ADR-0118 D1–D8 for Drive, on top of GML-1 (#165). New pieces:

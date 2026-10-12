@@ -13,6 +13,8 @@ import { backupConfigPath, writeBackupConfig } from './backup-config';
 import { BackupJob, type BackupJobTimers, type BackupStatus } from './backup-job';
 import { MemoryArchivePurgeJob } from './memory-archive-purge';
 import { loadOpsConfig } from './ops-config';
+import { ProviderUsageLedger, type ProviderUsageSource } from './provider-usage';
+import { ProviderUsageNoticeJob } from './provider-usage-notice';
 import { OpsNoticeService, fileLedgerStore, isCrashLoopStart, telegramHaltNoticeReason, type OpsNoticeLedgerStore } from './ops-notice';
 
 /**
@@ -53,6 +55,13 @@ export interface OpsRuntimeInput {
     readonly vector?: QuokyConfig['vector'];
   };
   readonly sink: NotificationSink;
+  /**
+   * ADR-0115 D8 (PRV-3): the read-only run source for the provider usage notices (`storage.taskRuns`). Absent = no usage
+   * notice job.
+   */
+  readonly providerUsageSource?: ProviderUsageSource;
+  /** Test seam: the "already sent" store of the usage notices (production: `ops/provider-usage-notices.json`). */
+  readonly providerUsageState?: OpsNoticeLedgerStore;
   /** The sink's platform name (`DISCORD_NOTIFICATION_PLATFORM`). */
   readonly platform: string;
   readonly logger: Logger;
@@ -117,6 +126,19 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
           ...(input.timers ? { timers: input.timers } : {}),
         });
 
+  const usageNotices =
+    input.providerUsageSource === undefined
+      ? undefined
+      : new ProviderUsageNoticeJob({
+          ledger: new ProviderUsageLedger(input.providerUsageSource, config.reminders.timeZone),
+          deliver: (kind, text) => notices.deliverOwnerText(kind, text),
+          state: input.providerUsageState ?? fileLedgerStore(ops.providerUsage.noticeStatePath),
+          ...(ops.providerUsage.monthlyThreshold !== undefined ? { monthlyThreshold: ops.providerUsage.monthlyThreshold } : {}),
+          logger,
+          ...(input.clock ? { clock: input.clock } : {}),
+          ...(input.timers ? { timers: input.timers } : {}),
+        });
+
   // The effective, non-secret backup configuration for `quokyctl.sh backup` (launchd service only), which never reads
   // `.env.local`.
   const publishBackupConfig = (): void => {
@@ -146,9 +168,10 @@ export function createOpsRuntime(input: OpsRuntimeInput): OpsRuntime {
       publishBackupConfig();
       backup.start();
       archivePurge?.start();
+      usageNotices?.start();
     },
     async stop() {
-      await Promise.all([backup.stop(), archivePurge?.stop()]);
+      await Promise.all([backup.stop(), archivePurge?.stop(), usageNotices?.stop()]);
     },
     backupStatus: () => backup.status(),
     notifyTelegramHalt(code: string) {

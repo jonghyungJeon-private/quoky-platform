@@ -212,6 +212,8 @@ export class CodexCliVisionProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code },
+      // ADR-0115 D8: the label only (the vision call reads no usage event): "unknown".
+      usage: { label: 'codex' },
       // Counts and hashes only: no prompt, reply, path, image byte or CLI text.
       audit: {
         model: this.model ?? 'cli-default',

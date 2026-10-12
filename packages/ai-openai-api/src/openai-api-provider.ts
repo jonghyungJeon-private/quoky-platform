@@ -390,6 +390,8 @@ abstract class OpenAiApiProviderBase implements AiProvider {
       text,
       artifacts: [artifact],
       raw: { responseStatus: parsed.status },
+      // ADR-0115 D8: the counts the response reported (none estimated), under the selection label.
+      usage: { label: `openai:${this.model}`, ...parsed.usage },
       // Counts and hashes only: no prompt, reply, image byte, key or response text.
       audit: {
         model: this.model,

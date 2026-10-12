@@ -503,6 +503,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
+      // ADR-0115 D8: the plain-text print mode exposes no token counts, so only the label is reported ("unknown").
+      usage: { label: `claude:${this.model}` },
     };
   }
 }
@@ -696,6 +698,8 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
+      // ADR-0115 D8: `ollama run` prints no token counts; only the label is reported ("unknown").
+      usage: { label: `ollama:${model}` },
       audit: {
         model,
         sanitizedCommand: ['ollama', 'run', OLLAMA_NO_WORD_WRAP, model],
@@ -930,6 +934,8 @@ export class OllamaCliVisionProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code },
+      // ADR-0115 D8: the label only (`ollama run` prints no counts): "unknown".
+      usage: { label: `ollama:${model}` },
       audit: {
         model,
         sanitizedCommand: ['ollama', 'run', OLLAMA_NO_WORD_WRAP, model, ...paths.map(() => '<image>')],

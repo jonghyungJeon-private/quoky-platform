@@ -291,6 +291,34 @@ export class OpsNoticeService {
     return run.catch(() => 'SUPPRESSED_LEDGER_UNAVAILABLE' as const);
   }
 
+  /**
+   * ADR-0115 D8 (PRV-3): one owner DM with caller-built, content-free text (the provider usage totals), through the same
+   * owner-only sink path as {@link notify} (no guild, `BRIEF`). It does NOT use the 3-per-day crash/backup ledger: the
+   * usage notices keep their own once-per-month record, written by the caller only after `SENT`. Never throws.
+   */
+  deliverOwnerText(kind: string, text: string): Promise<NotificationSinkOutcome['status'] | 'NO_OWNER'> {
+    const run = this.queue.then(() => this.deliverText(kind, text));
+    this.queue = run.catch(() => undefined);
+    return run.catch(() => 'UNCERTAIN' as const);
+  }
+
+  private async deliverText(kind: string, text: string): Promise<NotificationSinkOutcome['status'] | 'NO_OWNER'> {
+    const { ownerId } = this.deps;
+    if (ownerId === undefined || ownerId === '') return 'NO_OWNER';
+    let outcome: NotificationSinkOutcome;
+    try {
+      outcome = await this.deps.sink.deliver({
+        correlationId: `ops-notice-${kind.toLowerCase()}-${Date.parse(this.clock())}`,
+        target: { platform: this.deps.platform, channelId: '', userId: ownerId },
+        kind: 'BRIEF',
+        text,
+      });
+    } catch {
+      outcome = { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' };
+    }
+    return outcome.status;
+  }
+
   private async send(reason: OpsNoticeReason): Promise<OpsNoticeOutcome> {
     const at = this.clock();
     const nowMs = Date.parse(at);

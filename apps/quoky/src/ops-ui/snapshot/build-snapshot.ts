@@ -132,6 +132,22 @@ export interface OpsTelegramStatus {
   readonly droppedUpdates: Readonly<Record<string, number>>;
 }
 
+/**
+ * ADR-0115 D8 (PRV-3): the provider usage panel's data, seen structurally: the current and the previous calendar month
+ * (`QUOKY_TIMEZONE`) per selection label. Token and run counts only; no content.
+ */
+export interface OpsProviderUsageMonth {
+  readonly month: string;
+  readonly labels: readonly {
+    readonly label: string;
+    readonly runs: number;
+    readonly unknownRuns: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly totalTokens: number;
+  }[];
+}
+
 export interface OpsSnapshotSources {
   readonly clock: () => string;
   readonly timeZone: string;
@@ -182,6 +198,11 @@ export interface OpsSnapshotSources {
    * "설정 안 됨" and nothing else; every other panel is unchanged.
    */
   readonly telegram?: () => OpsTelegramStatus | undefined;
+  /**
+   * ADR-0115 D8 (PRV-3): monthly provider usage (current, previous). Absent, or no run with usage in either month → no
+   * panel at all, so the page is byte-identical to the one without the ledger.
+   */
+  readonly providerUsage?: () => Promise<readonly OpsProviderUsageMonth[]>;
 }
 
 type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes' | 'links'>;
@@ -253,7 +274,8 @@ export class OpsSnapshotBuilder {
       panel('memory', '기억 보관함', async () => this.memory(await ownerPromise)),
       panel('telegram', 'Telegram', async () => this.telegram()),
     ]);
-    return guardViewModel({ generatedAt: this.time(now), panels });
+    const usagePanel = await this.providerUsagePanel();
+    return guardViewModel({ generatedAt: this.time(now), panels: usagePanel === undefined ? panels : [...panels, usagePanel] });
   }
 
   private time(iso: string | undefined): string {
@@ -603,6 +625,49 @@ export class OpsSnapshotBuilder {
     };
   }
 
+  /**
+   * ADR-0115 D8 (PRV-3): monthly token totals per selection label, current and previous month. Counts only (never a
+   * prompt, reply, key or provider text); a provider that reported no count shows as "미보고" runs, never an estimate.
+   * Returns undefined (no panel) without a source or without any usage.
+   */
+  private async providerUsagePanel(): Promise<OpsPanelView | undefined> {
+    const source = this.sources.providerUsage;
+    if (source === undefined) return undefined;
+    let months: readonly OpsProviderUsageMonth[];
+    try {
+      months = await source();
+    } catch (err) {
+      return { id: 'provider-usage', title: 'AI 공급자 사용량 (월별)', state: 'UNAVAILABLE', errorCode: errorCodeOf(err), fields: [], notes: [] };
+    }
+    const rows = months.flatMap((m) =>
+      m.labels.slice(0, OPS_MAX_TABLE_ROWS).map((l) => [
+        m.month,
+        l.label,
+        usageCount(l.runs),
+        usageCount(l.inputTokens),
+        usageCount(l.outputTokens),
+        usageCount(l.totalTokens),
+        usageCount(l.unknownRuns),
+      ]),
+    );
+    if (rows.length === 0) return undefined;
+    return {
+      id: 'provider-usage',
+      title: 'AI 공급자 사용량 (월별)',
+      state: 'OK',
+      fields: [],
+      table: {
+        columns: ['월', '공급자', '실행', '입력 토큰', '출력 토큰', '합계 토큰', '미보고 실행'],
+        rows,
+        emptyText: '기록된 사용량이 없어요.',
+      },
+      notes: [
+        '토큰 수와 실행 횟수만 표시해요. 월은 QUOKY_TIMEZONE 기준 달력 월이에요.',
+        '공급자가 토큰 수를 알려주지 않은 실행은 "미보고 실행"으로만 세고 추정하지 않아요. 공급자를 자동으로 바꾸거나 끄지 않아요.',
+      ],
+    };
+  }
+
   private async memory(owner: OpsOwnerResolution): Promise<PanelBody> {
     if (owner.status !== 'RESOLVED') return { fields: [], notes: [ownerNote(owner)] };
     const links = this.sources.handling?.memoryForget === true ? [{ label: '기억 잊기 (확인 코드 필요)', href: '/memories' }] : [];
@@ -615,6 +680,10 @@ export class OpsSnapshotBuilder {
       links,
     };
   }
+}
+
+function usageCount(value: unknown): string {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : OPS_UNKNOWN;
 }
 
 /** A halt or reason code as the adapter defines them; anything else is shown as `unknown` (never echoed). */

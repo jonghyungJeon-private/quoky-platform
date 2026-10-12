@@ -11490,6 +11490,40 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     expect(JSON.stringify(turn.runSaves)).not.toContain(EXAMPLE_ANSWER);
   });
 
+  it('PRV-3: a provider-reported usage lands in the run metadata (counts only); no usage leaves it untouched', async () => {
+    const turn = exampleTurn({ locality: 'LOCAL' });
+    const inner = await turn.deps.router.select(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' });
+    const reporting: AiProvider = {
+      ...inner,
+      async execute(request: AiRequest) {
+        return { ...(await inner.execute(request)), usage: { label: 'openai:gpt-5', inputTokens: 100, outputTokens: 20, totalTokens: 125 } };
+      },
+    };
+    const deps = { ...turn.deps, router: { async select() { return reporting; } } };
+    await new ConversationRuntime(deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(succeededRunMetadata(turn.runSaves)).toEqual([
+      {
+        providerAuditFact: 'kept',
+        curatedExampleCount: 1,
+        usage: { label: 'openai:gpt-5', reported: true, inputTokens: 100, outputTokens: 20, totalTokens: 125 },
+      },
+    ]);
+    expect(JSON.stringify(turn.runSaves)).not.toContain(EXAMPLE_ANSWER);
+
+    const unknown = exampleTurn({ locality: 'LOCAL' });
+    const inner2 = await unknown.deps.router.select(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' });
+    const labelOnly: AiProvider = {
+      ...inner2,
+      async execute(request: AiRequest) {
+        return { ...(await inner2.execute(request)), usage: { label: 'claude:sonnet' } };
+      },
+    };
+    await new ConversationRuntime({ ...unknown.deps, router: { async select() { return labelOnly; } } }).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(succeededRunMetadata(unknown.runSaves)).toEqual([
+      { providerAuditFact: 'kept', curatedExampleCount: 1, usage: { label: 'claude:sonnet', reported: false } },
+    ]);
+  });
+
   it.each(['REMOTE', 'absent'] as const)(
     'a %s provider never receives an example, and its request is byte-identical to one built without examples',
     async (locality) => {

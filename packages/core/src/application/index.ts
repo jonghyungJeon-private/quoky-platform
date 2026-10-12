@@ -187,3 +187,5 @@ export * from './document-summary-claim-guard';
 export * from './mail';
 // ADR-0118 Drive read (DRV-1): the Drive sub-barrel (the readout, neutralizer and claim guard are shared with mail).
 export * from './drive';
+// ADR-0115 D8 (PRV-3): the normalised per-run usage record kept in TaskRun.metadata.
+export * from './provider-usage-record';

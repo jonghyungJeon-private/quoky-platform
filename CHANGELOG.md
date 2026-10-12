@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — PRV-3 provider usage ledger and monthly DM (2026-10-12)
+
+Personal v4 track PRV-3 (ADR-0115 D8; implementation note in DECISIONS.md), on top of PRV-1 and PRV-2. **No migration:
+usage lives in `TaskRun.metadata`** (schema stays v15). New and additive: `AiExecutionResult.usage` (type only) and the
+read-only `TaskRunRepository.listWithUsageFinishedBetween`; no new dependency; `ConversationRuntimeDeps` stays 35.
+
+- **Usage record.** The runtime stores `metadata.usage` (`label`, `reported`, input, cached input, output, reasoning, total
+  tokens) for a provider that returns a usage object: OpenAI and Gemini (response counts), Codex (its `turn.completed`
+  counts), and the label alone ("unknown") for the Claude CLI, Ollama and the vision CLIs. Nothing is estimated; a
+  provider with no usage leaves the run metadata byte-identical.
+- **Ops UI.** A `provider-usage` panel with the current and previous month per label (`QUOKY_TIMEZONE`), counts only and
+  escaped; omitted when there is no usage, so the page is byte-identical (the existing golden passes unchanged).
+- **Notices.** One DM per calendar month with the previous month's totals per label, and, with the optional
+  `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (total tokens per month; malformed = startup error
+  `PROVIDER_USAGE_THRESHOLD_INVALID`), one DM when a month first reaches it. Owner DM only, totals only, recorded in
+  `ops/provider-usage-notices.json` and only on `SENT`. Quoky never switches, disables or re-ranks a provider from usage.
+
 ## Unreleased — DRV-1 Google Drive read connector (2026-10-12)
 
 Personal v4 track DRV-1 (ADR-0118 D1–D8; implementation note in DECISIONS.md), on top of GML-1. No migration;

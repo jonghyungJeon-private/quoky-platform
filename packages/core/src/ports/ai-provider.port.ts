@@ -64,6 +64,20 @@ export interface AiRequest {
   images?: readonly AiImageInput[];
 }
 
+/**
+ * ADR-0115 D8 (PRV-3, optional, additive, type-only): the usage a provider REPORTED for one call. A count is present
+ * only when the provider's own output exposed it — never estimated. `label` is the owner-facing selection label
+ * (`openai:gpt-5`, `claude:sonnet`, `codex`); core only records and groups by it and never branches on it.
+ */
+export interface AiUsage {
+  readonly label: string;
+  readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningTokens?: number;
+  readonly totalTokens?: number;
+}
+
 export interface AiExecutionResult {
   /** Primary text output, already provider-agnostic. */
   text: string;
@@ -71,6 +85,8 @@ export interface AiExecutionResult {
   artifacts?: Artifact[];
   /** Sanitized, provider-owned audit facts for TaskRun persistence. */
   audit?: Metadata;
+  /** ADR-0115 D8: the reported usage (label plus whichever counts the provider exposed); absent = nothing reported. */
+  usage?: AiUsage;
   /** Raw CLI output for debugging; never surfaced to the user by default. */
   raw?: Metadata;
 }

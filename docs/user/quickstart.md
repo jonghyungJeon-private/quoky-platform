@@ -93,6 +93,11 @@ claude --version
   전송됨). 코드·리뷰·계획·정책에 민감한 대화는 항상 Claude입니다. 소유자 서비스는 현재
   `QUOKY_OLLAMA_ENABLED=false`라 대화를 Claude가 처리합니다 (대화 내용이 Anthropic으로 전송됨).
 
+  사용량(ADR-0115 D8): 공급자가 알려준 토큰 수(OpenAI·Gemini API, Codex는 알려줄 때만)는 실행 기록에 남고, 운영 화면에
+  이번 달·지난달 공급자별 합계가 보입니다 (알려주지 않는 Claude CLI·Ollama는 "미보고", 추정하지 않음). 매달 한 번 지난달
+  합계를 DM으로 보내며, `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD`(달력 월 기준 전체 토큰 합계, 선택)를 넣으면 그 달 합계가
+  처음 넘을 때 한 번 더 알립니다. 공급자를 자동으로 바꾸지는 않습니다.
+
 ### 대화 모델 고르기: Claude, Codex, Ollama (`QUOKY_CHAT_PROVIDER`)
 
 일상 대화를 어느 모델이 맡을지 `.env.local`의 `QUOKY_CHAT_PROVIDER` 하나로 고릅니다 (ADR-0092 수정안, 2026-10-07).

@@ -265,6 +265,7 @@ import {
   validatePatchableDiff,
   verifyAppliedChangeSet,
 } from './code-work/code-change-set';
+import { withRunUsage } from './provider-usage-record';
 import type { CodeChangeTargetCollection } from './code-work/code-change-set';
 import {
   type PushMode,
@@ -7783,10 +7784,12 @@ export class ConversationRuntime {
       // so the 👎 rate of turns with and without examples can be compared.
       const runMetadata =
         curatedExampleCount > 0 ? { ...(result.audit ?? {}), curatedExampleCount } : result.audit;
+      // ADR-0115 D8 (PRV-3): the run's usage (reported counts, or the label alone = "unknown"; never estimated) in the existing metadata JSON.
+      const usageMetadata = withRunUsage(runMetadata, executed.usage);
       await this.deps.tasks.completeRun(run, {
         artifactIds,
         ...(providerId ? { providerId } : {}),
-        ...(runMetadata ? { metadata: runMetadata } : {}),
+        ...(usageMetadata ? { metadata: usageMetadata } : {}),
       });
       // ADR-0118 D7/D8: a document summary is never kept as transcript (a fixed note instead), so neither the item's
       // text nor anything an injected item steered the model to write reaches a later prompt.
@@ -8016,7 +8019,7 @@ export class ConversationRuntime {
       await this.deps.tasks.completeRun(run, {
         artifactIds,
         providerId,
-        metadata: { ...(result.audit ?? {}), imageCount: images.length },
+        metadata: withRunUsage({ ...(result.audit ?? {}), imageCount: images.length }, executed.usage) ?? {},
       });
       await this.deps.memory.recordAssistant(result.text, message.context, task.sessionId ?? session.id);
       await this.deps.tasks.transition(task, TaskStatus.COMPLETED);

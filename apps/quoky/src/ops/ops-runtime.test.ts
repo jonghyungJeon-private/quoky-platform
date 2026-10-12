@@ -345,4 +345,73 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     expect(ops.backupStatus().retainedVectors).toHaveLength(1);
     await ops.stop();
   });
+
+  it('PRV-3: start sends the previous month usage DM once and the threshold DM once, through the owner DM only', async () => {
+    const runs = [
+      { finishedAt: '2026-09-10T00:00:00.000Z', usage: { label: 'openai:gpt-5', reported: true, inputTokens: 900, outputTokens: 300, totalTokens: 1200 } },
+      { finishedAt: '2026-10-02T00:00:00.000Z', usage: { label: 'gemini:g', reported: true, inputTokens: 600, outputTokens: 600, totalTokens: 1200 } },
+    ];
+    let stateContent: string | undefined;
+    const ops = createOpsRuntime({
+      env: { QUOKY_BACKUP_ENABLED: 'false', QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: '1000' },
+      config: {
+        storage: { dbPath: path.join(root, 'quoky.db') },
+        host: { recentStarts: 0 },
+        reminders: { enabled: true, channelDelivery: true, timeZone: 'Asia/Seoul' },
+        discord: { ownerIds: [OWNER] },
+      },
+      sink,
+      platform: 'discord',
+      logger: new QuietLogger(),
+      clock: timers.now,
+      timers,
+      ledger,
+      providerUsageSource: {
+        listWithUsageFinishedBetween: async (from, to) =>
+          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, metadata: { usage: r.usage } }) as never),
+      },
+      providerUsageState: { read: () => stateContent, write: (c) => { stateContent = c; } },
+    });
+    ops.start();
+    await settle();
+    expect(sink.delivered).toHaveLength(2);
+    expect(sink.delivered.map((n) => n.kind)).toEqual(['BRIEF', 'BRIEF']);
+    expect(sink.delivered.every((n) => n.target.userId === OWNER && n.target.channelId === '' && n.target.spaceId === undefined)).toBe(true);
+    expect(sink.delivered[0]?.text).toContain('2026-09');
+    expect(sink.delivered[0]?.text).toContain('openai:gpt-5');
+    expect(sink.delivered[1]?.text).toContain('2026-10');
+    expect(sink.delivered[1]?.text).toContain('1,000 토큰');
+    expect(ledgerContent).toBeUndefined(); // the crash/backup daily ledger is untouched
+    await ops.stop();
+    // A restart (same state record) sends nothing more.
+    const again = createOpsRuntime({
+      env: { QUOKY_BACKUP_ENABLED: 'false', QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: '1000' },
+      config: {
+        storage: { dbPath: path.join(root, 'quoky.db') },
+        host: { recentStarts: 0 },
+        reminders: { enabled: true, channelDelivery: true, timeZone: 'Asia/Seoul' },
+        discord: { ownerIds: [OWNER] },
+      },
+      sink,
+      platform: 'discord',
+      logger: new QuietLogger(),
+      clock: timers.now,
+      timers,
+      ledger,
+      providerUsageSource: {
+        listWithUsageFinishedBetween: async (from, to) =>
+          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, metadata: { usage: r.usage } }) as never),
+      },
+      providerUsageState: { read: () => stateContent, write: (c) => { stateContent = c; } },
+    });
+    again.start();
+    await settle();
+    expect(sink.delivered).toHaveLength(2);
+    await again.stop();
+  });
+
+  it('PRV-3: a malformed threshold is a startup error from createOpsRuntime', () => {
+    expect(() => runtime({ recentStarts: 0 }, { QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: 'lots' })).toThrow();
+  });
 });
+

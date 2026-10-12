@@ -615,3 +615,24 @@ describe('key redaction (ADR-0115 D6)', () => {
     }
   });
 });
+
+describe('PRV-3 usage report (ADR-0115 D8)', () => {
+  it('reports the selection label and the counts the response carried, nothing estimated', async () => {
+    const fake = fakeFetch(() => reply('hello'));
+    const result = await chat(fake.fetch).execute(CHAT_REQUEST);
+    expect(result.usage).toEqual({
+      label: `openai:${MODEL}`,
+      inputTokens: 120,
+      cachedInputTokens: 20,
+      outputTokens: 30,
+      reasoningTokens: 10,
+      totalTokens: 150,
+    });
+  });
+
+  it('reports the label alone when the response carried no usage ("unknown")', async () => {
+    const fake = fakeFetch(() => reply('hello', { usage: undefined }));
+    const result = await chat(fake.fetch).execute(CHAT_REQUEST);
+    expect(result.usage).toEqual({ label: `openai:${MODEL}` });
+  });
+});

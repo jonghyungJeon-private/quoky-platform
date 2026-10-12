@@ -50,6 +50,11 @@ const exec = (r: CliRunResult) =>
   });
 
 describe('ClaudeCliProvider', () => {
+  it('PRV-3: reports its selection label only — the print mode exposes no token counts ("unknown")', async () => {
+    const res = await exec({ code: 0, stdout: 'hello', stderr: '', timedOut: false });
+    expect(res.usage).toEqual({ label: 'claude:sonnet' });
+  });
+
   it('success → runs `claude -p` with prompt on stdin (neutral cwd) and returns a MARKDOWN_REPORT artifact', async () => {
     const calls: Array<{ bin: string; args: string[]; opts: CliRunOptions }> = [];
     const runner: CliRunner = async (bin, args, opts) => {

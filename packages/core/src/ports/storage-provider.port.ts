@@ -106,6 +106,11 @@ export interface TaskRunRepository extends Repository<TaskRun> {
    * it claims no immunity against arbitrary direct SQL. */
   delete(id: Id): Promise<void>;
   listByTask(taskId: Id): Promise<TaskRun[]>;
+  /**
+   * ADR-0115 D8 (PRV-3), additive and read-only: the runs that carry a `metadata.usage` record and finished in
+   * `[fromInclusive, toExclusive)` (ISO instants). No schema change: the filter reads the existing JSON.
+   */
+  listWithUsageFinishedBetween(fromInclusive: IsoTimestamp, toExclusive: IsoTimestamp): Promise<TaskRun[]>;
 }
 
 /** R3-A terminal merge request. terminalStatus is restricted to the two terminal outcomes. */

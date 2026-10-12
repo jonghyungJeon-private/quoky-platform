@@ -27,17 +27,26 @@ export interface OpsConfig {
   };
   /** Absolute path of the persisted `OPS_NOTICE` ledger (the 3-per-day bound survives restarts). */
   readonly noticeLedgerPath: string;
+  /**
+   * ADR-0115 D8 (PRV-3): the provider usage notices. `monthlyThreshold` is `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD`, in
+   * TOTAL TOKENS per calendar month (`QUOKY_TIMEZONE`) across all providers; absent = no threshold notice.
+   * `noticeStatePath` is the private "already sent" JSON beside the notice ledger (no database change).
+   */
+  readonly providerUsage: { readonly monthlyThreshold?: number; readonly noticeStatePath: string };
 }
 
 export const OpsConfigErrorCode = {
   BACKUP_ENABLED_INVALID: 'BACKUP_ENABLED_INVALID',
   BACKUP_DIR_INVALID: 'BACKUP_DIR_INVALID',
+  PROVIDER_USAGE_THRESHOLD_INVALID: 'PROVIDER_USAGE_THRESHOLD_INVALID',
 } as const;
 export type OpsConfigErrorCode = (typeof OpsConfigErrorCode)[keyof typeof OpsConfigErrorCode];
 
 const HINTS: Readonly<Record<OpsConfigErrorCode, string>> = {
   BACKUP_ENABLED_INVALID: 'QUOKY_BACKUP_ENABLED must be exactly "true" or "false" (or unset for the default).',
   BACKUP_DIR_INVALID: 'QUOKY_BACKUP_DIR must be an absolute directory path (or unset for <database directory>/backups).',
+  PROVIDER_USAGE_THRESHOLD_INVALID:
+    'QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD must be a positive whole number of total tokens per month (or unset for no threshold notice).',
 };
 
 function opsConfigError(code: OpsConfigErrorCode): BootstrapPreflightError {
@@ -74,8 +83,20 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv, base: OpsConfigBase, cwd: 
   const vectorPath =
     base.vectorPath === undefined || base.vectorPath === '' ? undefined : path.resolve(cwd, base.vectorPath);
 
+  const rawThreshold = env.QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD;
+  let monthlyThreshold: number | undefined;
+  if (rawThreshold !== undefined && rawThreshold !== '') {
+    const parsed = /^[1-9][0-9]{0,15}$/.test(rawThreshold) ? Number(rawThreshold) : Number.NaN;
+    if (!Number.isSafeInteger(parsed)) throw opsConfigError(OpsConfigErrorCode.PROVIDER_USAGE_THRESHOLD_INVALID);
+    monthlyThreshold = parsed;
+  }
+
   return {
     backup: { enabled: enabled && fileBacked, dbPath, dir, ...(vectorPath !== undefined ? { vectorPath } : {}) },
     noticeLedgerPath: path.join(dataDir, 'ops', 'notice-ledger.json'),
+    providerUsage: {
+      ...(monthlyThreshold !== undefined ? { monthlyThreshold } : {}),
+      noticeStatePath: path.join(dataDir, 'ops', 'provider-usage-notices.json'),
+    },
   };
 }

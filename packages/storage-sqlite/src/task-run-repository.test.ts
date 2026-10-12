@@ -61,6 +61,21 @@ describe('SqliteTaskRunRepository optional metadata compatibility', () => {
     await store.close();
   });
 
+  it('PRV-3: listWithUsageFinishedBetween reads metadata.usage in [from, to) with no schema change', async () => {
+    const store = await freshStore();
+    const usage = { label: 'codex', reported: true, totalTokens: 5 };
+    const at = (id: string, finishedAt: string, metadata?: TaskRun['metadata']): TaskRun => ({ ...runOf(id, metadata), taskId: `task-${id}`, finishedAt });
+    await store.taskRuns.save(at('before', '2026-09-30T14:59:59.999Z', { usage }));
+    await store.taskRuns.save(at('first', '2026-09-30T15:00:00.000Z', { usage }));
+    await store.taskRuns.save(at('last', '2026-10-31T14:59:59.999Z', { usage }));
+    await store.taskRuns.save(at('end', '2026-10-31T15:00:00.000Z', { usage }));
+    await store.taskRuns.save(at('none', '2026-10-05T00:00:00.000Z', { model: 'm' }));
+    await store.taskRuns.save(at('bare', '2026-10-05T00:00:00.000Z'));
+    const runs = await store.taskRuns.listWithUsageFinishedBetween('2026-09-30T15:00:00.000Z', '2026-10-31T15:00:00.000Z');
+    expect(runs.map((r) => r.id)).toEqual(['first', 'last']);
+    await store.close();
+  });
+
   it('reads legacy TaskRun JSON with no metadata', async () => {
     const store = await freshStore();
     await store.taskRuns.save(runOf('legacy-run'));

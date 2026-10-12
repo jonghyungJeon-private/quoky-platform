@@ -46,6 +46,7 @@ import type {
   ExecutionReceiptOutcome,
   ExecutionReceiptRepository,
   Id,
+  IsoTimestamp,
   MemoryRecord,
   MemoryRepository,
   MemoryScope,
@@ -637,6 +638,17 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
     const rows = this.db
       .prepare(`SELECT data FROM task_runs WHERE task_id = ? ORDER BY json_extract(data, '$.attempt')`)
       .all(taskId) as Row[];
+    return rows.map((r) => this.decode(r.data));
+  }
+
+  async listWithUsageFinishedBetween(fromInclusive: IsoTimestamp, toExclusive: IsoTimestamp): Promise<TaskRun[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT data FROM task_runs WHERE json_extract(data, '$.metadata.usage') IS NOT NULL
+           AND json_extract(data, '$.finishedAt') >= ? AND json_extract(data, '$.finishedAt') < ?
+         ORDER BY json_extract(data, '$.finishedAt')`,
+      )
+      .all(fromInclusive, toExclusive) as Row[];
     return rows.map((r) => this.decode(r.data));
   }
 }

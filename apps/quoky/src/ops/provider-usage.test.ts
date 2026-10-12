@@ -1,0 +1,344 @@
+import { readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { Capability, TaskRunStatus, withRunUsage } from '@quoky/core';
+import type { AiUsage, LogFields, Logger, TaskRun } from '@quoky/core';
+import { SqliteStorageProvider } from '@quoky/storage-sqlite';
+import { ProviderUsageLedger, monthKeyOf, monthStartIso, previousMonthKey } from './provider-usage';
+import type { ProviderUsageSource } from './provider-usage';
+import {
+  ProviderUsageNoticeJob,
+  monthlyUsageNoticeText,
+  parseUsageNoticeState,
+  thresholdUsageNoticeText,
+} from './provider-usage-notice';
+import type { UsageNoticeKind } from './provider-usage-notice';
+import type { OpsNoticeLedgerStore } from './ops-notice';
+
+const dirs: string[] = [];
+afterEach(() => {
+  while (dirs.length > 0) rmSync(dirs.pop() as string, { recursive: true, force: true });
+});
+
+class RecordingLogger implements Logger {
+  readonly lines: Array<{ level: string; message: string; fields?: LogFields }> = [];
+  info(message: string, fields?: LogFields): void { this.lines.push({ level: 'info', message, fields }); }
+  warn(message: string, fields?: LogFields): void { this.lines.push({ level: 'warn', message, fields }); }
+  error(message: string, fields?: LogFields): void { this.lines.push({ level: 'error', message, fields }); }
+}
+
+async function store(): Promise<SqliteStorageProvider> {
+  const dir = mkdtempSync(path.join(tmpdir(), 'quoky-usage-'));
+  dirs.push(dir);
+  const s = new SqliteStorageProvider({ dbPath: path.join(dir, 'q.db') });
+  await s.init();
+  return s;
+}
+
+let counter = 0;
+async function addRun(s: SqliteStorageProvider, finishedAt: string, usage: AiUsage | undefined, extra: Record<string, unknown> = {}): Promise<void> {
+  counter += 1;
+  const metadata = withRunUsage({ model: 'm', ...extra }, usage);
+  const run: TaskRun = {
+    id: `run-${counter}`,
+    taskId: `task-${counter}`,
+    attempt: 1,
+    status: TaskRunStatus.SUCCEEDED,
+    capability: Capability.GENERAL_CHAT,
+    artifactIds: [],
+    startedAt: finishedAt,
+    finishedAt,
+    ...(metadata ? { metadata } : {}),
+  } as TaskRun;
+  await s.taskRuns.save(run);
+}
+
+const KST = 'Asia/Seoul';
+
+describe('PRV-3 usage ledger (ADR-0115 D8): monthly totals read from TaskRun.metadata', () => {
+  it('computes month keys and boundaries in QUOKY_TIMEZONE', () => {
+    // 2026-09-30T15:30Z is already October 1st in Seoul, still September 30th in UTC.
+    expect(monthKeyOf('2026-09-30T15:30:00.000Z', KST)).toBe('2026-10');
+    expect(monthKeyOf('2026-09-30T15:30:00.000Z', 'UTC')).toBe('2026-09');
+    expect(monthStartIso('2026-10', KST)).toBe('2026-09-30T15:00:00.000Z');
+    expect(monthStartIso('2026-10', 'UTC')).toBe('2026-10-01T00:00:00.000Z');
+    expect(previousMonthKey('2026-01')).toBe('2025-12');
+    expect(previousMonthKey('2026-10')).toBe('2026-09');
+  });
+
+  it('sums per selection label across a month boundary, by the configured timezone', async () => {
+    const s = await store();
+    // Last instant of September in Seoul, and the first of October.
+    await addRun(s, '2026-09-30T14:59:59.999Z', { label: 'openai:gpt-5', inputTokens: 100, outputTokens: 50 });
+    await addRun(s, '2026-09-30T15:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 10, outputTokens: 5, totalTokens: 20 });
+    await addRun(s, '2026-10-10T00:00:00.000Z', { label: 'gemini:g', inputTokens: 7, outputTokens: 3, cachedInputTokens: 2, reasoningTokens: 1 });
+    const seoul = new ProviderUsageLedger(s.taskRuns, KST);
+    const sept = await seoul.monthly('2026-09');
+    expect(sept).toMatchObject({ month: '2026-09', runs: 1, totalTokens: 150 });
+    expect(sept.labels).toEqual([
+      { label: 'openai:gpt-5', runs: 1, unknownRuns: 0, inputTokens: 100, cachedInputTokens: 0, outputTokens: 50, reasoningTokens: 0, totalTokens: 150 },
+    ]);
+    const oct = await seoul.monthly('2026-10');
+    expect(oct.totalTokens).toBe(30);
+    expect(oct.labels.map((l) => [l.label, l.totalTokens])).toEqual([
+      ['openai:gpt-5', 20],
+      ['gemini:g', 10],
+    ]);
+    // The same instants fall into different months in UTC.
+    const utc = new ProviderUsageLedger(s.taskRuns, 'UTC');
+    expect((await utc.monthly('2026-09')).runs).toBe(2);
+    await s.close();
+  });
+
+  it('counts a provider that reported no count as an unknown run and adds nothing to the totals', async () => {
+    const s = await store();
+    await addRun(s, '2026-09-10T00:00:00.000Z', { label: 'claude:sonnet' });
+    await addRun(s, '2026-09-11T00:00:00.000Z', { label: 'claude:sonnet' });
+    await addRun(s, '2026-09-12T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    const sept = await new ProviderUsageLedger(s.taskRuns, KST).monthly('2026-09');
+    expect(sept.labels.find((l) => l.label === 'claude:sonnet')).toMatchObject({ runs: 2, unknownRuns: 2, totalTokens: 0 });
+    expect(sept.totalTokens).toBe(10);
+    await s.close();
+  });
+
+  it('ignores runs without a usage record (their metadata is untouched) and an empty month is empty', async () => {
+    const s = await store();
+    await addRun(s, '2026-09-10T00:00:00.000Z', undefined, { promptSha256: 'x' });
+    const sept = await new ProviderUsageLedger(s.taskRuns, KST).monthly('2026-09');
+    expect(sept).toEqual({ month: '2026-09', labels: [], totalTokens: 0, runs: 0 });
+    await s.close();
+  });
+});
+
+function memoryState(): OpsNoticeLedgerStore & { content: string | undefined } {
+  const st = { content: undefined as string | undefined, read: () => st.content, write: (c: string) => void (st.content = c) };
+  return st;
+}
+
+interface Harness {
+  readonly s: SqliteStorageProvider;
+  readonly sent: Array<{ kind: UsageNoticeKind; text: string }>;
+  readonly state: ReturnType<typeof memoryState>;
+  readonly outcome: { value: string };
+  readonly clock: { iso: string };
+  job(threshold?: number): ProviderUsageNoticeJob;
+}
+
+async function harness(start = '2026-10-12T03:00:00.000Z'): Promise<Harness> {
+  const s = await store();
+  const sent: Harness['sent'] = [];
+  const state = memoryState();
+  const outcome = { value: 'SENT' };
+  const clock = { iso: start };
+  return {
+    s,
+    sent,
+    state,
+    outcome,
+    clock,
+    job: (threshold) =>
+      new ProviderUsageNoticeJob({
+        ledger: new ProviderUsageLedger(s.taskRuns, KST),
+        deliver: async (kind, text) => {
+          sent.push({ kind, text });
+          return outcome.value;
+        },
+        state,
+        ...(threshold !== undefined ? { monthlyThreshold: threshold } : {}),
+        logger: new RecordingLogger(),
+        clock: () => clock.iso,
+      }),
+  };
+}
+
+describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
+  it('sends the PREVIOUS month once, per label, and never the current or an older month', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-08-15T00:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 999, outputTokens: 1 });
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 1000, outputTokens: 500 });
+    await addRun(h.s, '2026-09-16T00:00:00.000Z', { label: 'claude:sonnet' });
+    await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'gemini:g', inputTokens: 4242, outputTokens: 1 });
+    const job = h.job();
+    await job.checkOnce();
+    expect(h.sent).toHaveLength(1);
+    const { kind, text } = h.sent[0] as Harness['sent'][number];
+    expect(kind).toBe('PROVIDER_USAGE_MONTHLY');
+    expect(text).toContain('2026-09');
+    expect(text).toContain('openai:gpt-5: 1회, 입력 1,000 · 출력 500 · 합계 1,500 토큰');
+    expect(text).toContain('claude:sonnet: 1회');
+    expect(text).toContain('토큰 미보고 1회');
+    expect(text).not.toContain('gemini:g');
+    expect(text).not.toContain('999');
+    expect(text).not.toContain('4,242');
+    await job.checkOnce();
+    expect(h.sent).toHaveLength(1);
+    expect(JSON.parse(h.state.content as string)).toEqual({ version: 1, monthlyReportedFor: '2026-09' });
+    await h.s.close();
+  });
+
+  it('is once per month across restarts (a new job reads the persisted record), and reports the next month later', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    await addRun(h.s, '2026-10-15T00:00:00.000Z', { label: 'codex', inputTokens: 7, outputTokens: 3 });
+    await h.job().checkOnce();
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(1);
+    h.clock.iso = '2026-11-02T03:00:00.000Z';
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]?.text).toContain('2026-10');
+    expect(h.sent[1]?.text).toContain('합계 10 토큰');
+    await h.s.close();
+  });
+
+  it('sends nothing, and records nothing, when the previous month has no usage', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    await h.job().checkOnce();
+    expect(h.sent).toEqual([]);
+    expect(h.state.content).toBeUndefined();
+    await h.s.close();
+  });
+
+  it('counts a notice as sent only on SENT: any other outcome is retried and a later SENT records it', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    for (const outcome of ['FAILED', 'UNCERTAIN', 'NO_OWNER', 'SUPPRESSED']) {
+      h.outcome.value = outcome;
+      await h.job().checkOnce();
+      expect(h.state.content, outcome).toBeUndefined();
+    }
+    expect(h.sent).toHaveLength(4);
+    h.outcome.value = 'SENT';
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(5);
+    expect(h.state.content).toBeDefined();
+    await h.job().checkOnce();
+    expect(h.sent).toHaveLength(5);
+    await h.s.close();
+  });
+});
+
+describe('PRV-3 threshold DM (ADR-0115 D8)', () => {
+  it('fires once, when the month total tokens (all labels) first reach the threshold, and never when unset', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 400, outputTokens: 100 });
+    const job = h.job(1000);
+    await job.checkOnce();
+    expect(h.sent).toEqual([]); // 500 < 1000
+    await addRun(h.s, '2026-10-05T00:00:00.000Z', { label: 'gemini:g', inputTokens: 400, outputTokens: 100 });
+    await job.checkOnce();
+    expect(h.sent).toHaveLength(1); // exactly 1000: reached
+    expect(h.sent[0]?.kind).toBe('PROVIDER_USAGE_THRESHOLD');
+    expect(h.sent[0]?.text).toContain('1,000 토큰');
+    expect(h.sent[0]?.text).toContain('openai:gpt-5');
+    expect(h.sent[0]?.text).toContain('gemini:g');
+    await addRun(h.s, '2026-10-06T00:00:00.000Z', { label: 'gemini:g', inputTokens: 9000, outputTokens: 1 });
+    await job.checkOnce();
+    await h.job(1000).checkOnce();
+    expect(h.sent.filter((n) => n.kind === 'PROVIDER_USAGE_THRESHOLD')).toHaveLength(1);
+
+    const unset = await harness();
+    await addRun(unset.s, '2026-10-02T00:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 9_000_000, outputTokens: 1 });
+    await unset.job().checkOnce();
+    expect(unset.sent).toEqual([]);
+    await h.s.close();
+    await unset.s.close();
+  });
+
+  it('may fire again in a later month, and a new month starts from zero', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    await h.job(1000).checkOnce();
+    expect(h.sent.map((n) => n.kind)).toEqual(['PROVIDER_USAGE_THRESHOLD']);
+    h.clock.iso = '2026-11-03T03:00:00.000Z';
+    await h.job(1000).checkOnce();
+    // November has no usage yet: only the monthly DM for October is due.
+    expect(h.sent.map((n) => n.kind)).toEqual(['PROVIDER_USAGE_THRESHOLD', 'PROVIDER_USAGE_MONTHLY']);
+    await addRun(h.s, '2026-11-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    await h.job(1000).checkOnce();
+    expect(h.sent.map((n) => n.kind)).toEqual(['PROVIDER_USAGE_THRESHOLD', 'PROVIDER_USAGE_MONTHLY', 'PROVIDER_USAGE_THRESHOLD']);
+    await h.s.close();
+  });
+
+  it('is suppressed only on SENT: an undelivered threshold notice is retried', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-10-02T00:00:00.000Z', { label: 'codex', inputTokens: 600, outputTokens: 600 });
+    h.outcome.value = 'FAILED';
+    await h.job(1000).checkOnce();
+    await h.job(1000).checkOnce();
+    expect(h.sent).toHaveLength(2);
+    h.outcome.value = 'SENT';
+    await h.job(1000).checkOnce();
+    await h.job(1000).checkOnce();
+    expect(h.sent).toHaveLength(3);
+    await h.s.close();
+  });
+});
+
+describe('PRV-3 notice text and state file', () => {
+  const usage = {
+    month: '2026-09',
+    runs: 3,
+    totalTokens: 1650,
+    labels: [
+      { label: 'openai:gpt-5', runs: 2, unknownRuns: 0, inputTokens: 1000, cachedInputTokens: 0, outputTokens: 650, reasoningTokens: 0, totalTokens: 1650 },
+      { label: 'claude:sonnet', runs: 1, unknownRuns: 1, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0 },
+    ],
+  };
+
+  it('carries totals only', () => {
+    expect(monthlyUsageNoticeText(usage)).toBe(
+      '[Quoky 사용량 알림] 2026-09 공급자별 사용량이에요. 합계 1,650 토큰 (3회).\n' +
+        '- openai:gpt-5: 2회, 입력 1,000 · 출력 650 · 합계 1,650 토큰\n' +
+        '- claude:sonnet: 1회, 입력 0 · 출력 0 · 합계 0 토큰, 토큰 미보고 1회\n' +
+        '토큰 수만 보여드려요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.',
+    );
+    expect(thresholdUsageNoticeText(usage, 1000)).toContain('설정한 월 기준(1,000 토큰)에 도달했어요');
+  });
+
+  it('parses a corrupt or foreign state file as empty', () => {
+    expect(parseUsageNoticeState('not json')).toEqual({});
+    expect(parseUsageNoticeState('{"version":2,"monthlyReportedFor":"2026-09"}')).toEqual({});
+    expect(parseUsageNoticeState('{"version":1,"monthlyReportedFor":"bogus","thresholdSentIn":"2026-10"}')).toEqual({ thresholdSentIn: '2026-10' });
+  });
+});
+
+describe('PRV-3: the ledger has no write path to provider selection (ADR-0115 D8)', () => {
+  it('runs end to end touching nothing but the one read-only query', async () => {
+    const touched: string[] = [];
+    const real: ProviderUsageSource = {
+      listWithUsageFinishedBetween: async () => {
+        touched.push('listWithUsageFinishedBetween');
+        return [];
+      },
+    };
+    const guarded = new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop !== 'listWithUsageFinishedBetween') throw new Error(`unexpected access: ${String(prop)}`);
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const job = new ProviderUsageNoticeJob({
+      ledger: new ProviderUsageLedger(guarded, KST),
+      deliver: async () => 'SENT',
+      monthlyThreshold: 1,
+      logger: new RecordingLogger(),
+      clock: () => '2026-10-12T00:00:00.000Z',
+    });
+    await job.checkOnce();
+    expect(new Set(touched)).toEqual(new Set(['listWithUsageFinishedBetween']));
+  });
+
+  it('its modules import no provider selection, registration, routing or provider package', () => {
+    for (const file of ['provider-usage.ts', 'provider-usage-notice.ts']) {
+      const source = readFileSync(path.join(__dirname, file), 'utf8');
+      const imports = source.split('\n').filter((line) => /^\s*import\b|^\s*}\s*from\b/.test(line)).join('\n');
+      expect(imports, file).not.toMatch(/provider-selection|provider-routing|AiProviderManager|ProviderSelect|@quoky\/ai-/);
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      expect(code, file).not.toMatch(/setDefault|setChat|setImage|registerProvider|\.register\(|rank|setSelection|switchProvider|disableProvider/i);
+    }
+  });
+});

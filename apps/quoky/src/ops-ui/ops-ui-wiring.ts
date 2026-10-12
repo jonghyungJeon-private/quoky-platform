@@ -50,6 +50,7 @@ import { OPS_UI_BIND_HOST, OpsUiServer } from './http/server';
 import type { OpsActions, OpsUiEventLog } from './http/view-model';
 import { loadOpsUiConfig, resolveOpsUiConfig } from './ops-ui-config';
 import { OpsSnapshotBuilder, cachedViewSource } from './snapshot/build-snapshot';
+import { ProviderUsageLedger, previousMonthKey } from '../ops/provider-usage';
 import type { OpsOwnerResolution, OpsSnapshotSources, OpsTelegramStatus } from './snapshot/build-snapshot';
 import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
 
@@ -311,6 +312,12 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       providerSelection: selection !== undefined,
     },
     telegram: () => telegramStatusOf(platform),
+    // ADR-0115 D8 (PRV-3): current and previous calendar month, read from run metadata (read-only; no panel without usage).
+    providerUsage: async () => {
+      const ledger = new ProviderUsageLedger(storage.taskRuns, config.reminders.timeZone);
+      const current = ledger.monthOf((input.nowMs ?? Date.now)());
+      return [await ledger.monthly(current), await ledger.monthly(previousMonthKey(current))];
+    },
   };
 }
 
