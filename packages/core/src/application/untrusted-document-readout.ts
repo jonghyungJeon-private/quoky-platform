@@ -235,6 +235,10 @@ export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSour
 }
 
 /** Pair `marker` tokens on one line in a single linear pass and drop the paired ones (CommonMark flanking, simplified). */
+/** Characters that take part in Discord / Telegram / CommonMark markup, mentions or escapes. */
+const STRIP_UNSAFE = /[|~`*_>#+[\]()<!\\@]/u;
+const isUnsafe = (ch: string | undefined): boolean => ch !== undefined && STRIP_UNSAFE.test(ch);
+
 function stripPairedMarker(line: string, marker: '**' | '__'): string {
   const isSpace = (ch: string | undefined): boolean => ch === undefined || /\s/u.test(ch);
   const isWord = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
@@ -249,7 +253,13 @@ function stripPairedMarker(line: string, marker: '**' | '__'): string {
     if (open === -1) {
       if (!isSpace(after) && after !== marker[0] && !(underscore && isWord(before))) open = at;
     } else if (!isSpace(before) && !(underscore && isWord(after))) {
-      drop.add(open).add(at);
+      // Codex delta P2 (round 3): a pair is removed only when neither its content nor the characters right outside it
+      // hold a markup character — removing `**` between two non-markup characters can never join markup
+      // (`|**|x|**|` → `||x||` spoiler, `<**@**id>`, `~**~**`). Any other pair stays literal; stripping is cosmetic.
+      const inner = line.slice(open + 2, at);
+      const outsideBefore = open > 0 ? line[open - 1] : undefined;
+      const outsideAfter = line[at + 2];
+      if (!STRIP_UNSAFE.test(inner) && !isUnsafe(outsideBefore) && !isUnsafe(outsideAfter)) drop.add(open).add(at);
       open = -1;
     }
   }

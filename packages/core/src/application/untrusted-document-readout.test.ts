@@ -266,12 +266,12 @@ describe('DRV-1: the same readout for a Drive document (one shared path, no dupl
   });
 });
 
-describe('Codex delta P2: a line prefix exposed by stripping is neutralized too', () => {
+describe('Codex delta P2: a line prefix is never exposed by stripping (a pair around markup stays literal)', () => {
   it.each([
-    ['**#** Heading', 'Heading'],
+    ['**#** Heading', '**#** Heading'],
     ['**-** Item', '• Item'],
-    ['**##** Deep', 'Deep'],
-    ['****#**** x', 'x'],
+    ['**##** Deep', '**##** Deep'],
+    ['****#**** x', '****#**** x'],
     ['__-__ y', '• y'],
   ])('%j → %j', (input, expected) => {
     expect(stripMarkdownEmphasis(input)).toBe(expected);
@@ -298,5 +298,39 @@ describe('Codex delta P2 round 2: stripping never creates any line-start markup'
     expect(stripMarkdownEmphasis('> **인용** 문장')).toBe('> 인용 문장');
     expect(stripMarkdownEmphasis('1. **첫째** 항목')).toBe('1. 첫째 항목');
     expect(stripMarkdownEmphasis('**요약:** 내용')).toBe('요약: 내용');
+  });
+});
+
+describe('Codex delta P2 round 3: stripping never joins inline markup', () => {
+  it.each([
+    ['prefix |**|secret|**|'],
+    ['<**@**123>'],
+    ['~**~**strike~~'],
+    ['`**`**code`'],
+    ['[**x**](https://e.test)'],
+    ['@**everyone**'],
+    ['**[링크]**'],
+  ])('%j keeps its markers', (input) => {
+    expect(stripMarkdownEmphasis(input)).toBe(input);
+  });
+
+  it('ordinary emphasis between plain characters is still stripped', () => {
+    expect(stripMarkdownEmphasis('결론: **중요한 내용**입니다')).toBe('결론: 중요한 내용입니다');
+    expect(stripMarkdownEmphasis('**요약:** 계약서 검토 요청')).toBe('요약: 계약서 검토 요청');
+  });
+
+  it('a seeded fuzz never produces a new markup pair that the raw line did not contain', () => {
+    const alphabet = ['*', '*', '|', '~', '`', '<', '>', '@', '#', '-', 'a', ' ', '1', '.', '_', '[', ']', '(', ')'];
+    let seed = 7;
+    const rand = (n: number): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const pairs = ['||', '~~', '``', '<@', '](', '__'];
+    for (let i = 0; i < 3000; i += 1) {
+      const raw = Array.from({ length: 4 + rand(14) }, () => alphabet[rand(alphabet.length)]).join('');
+      const out = stripMarkdownEmphasis(raw);
+      for (const pair of pairs) {
+        const count = (s: string): number => s.split(pair).length - 1;
+        expect(count(out), `${JSON.stringify(raw)} → ${JSON.stringify(out)} (${pair})`).toBeLessThanOrEqual(count(raw));
+      }
+    }
   });
 });
