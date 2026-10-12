@@ -18360,6 +18360,16 @@ level:
   write payloads; some `response-composer.ts` paths still interpolate, for example file paths) may lose a `*` or `_`
   pair from that value. In plain mode this is only a fidelity issue, never markup. Moving those values into spans is a
   Core follow-up.
+- **Resolved (v4 residual polish): links and block quotes.** `[text](url)` becomes `text (url)` when the destination is a
+  plain `http(s)` URL (no whitespace, no `<>`, balanced parentheses, no untrusted span in the text or destination), so
+  Telegram autolinks the URL and the real destination is visible; `[u](u)` collapses to `u`. Other schemes, titles,
+  images, reference links, and links with a backtick in the destination stay as written. A leading `> ` (nested
+  `> > `, a lone `>`) becomes `│ ` (U+2502): same length, no closing mark, one bar per line for a multi-line quote
+  (`“…”` would need a closing mark and breaks on multi-line quotes). Only Quoky copy and model-reply text is
+  translated: untrusted spans stay byte-identical, URL/path tokens are preserved, the evaluator mismatch still
+  falls back to Core's text. The "never longer" guarantee is UNCHANGED: a link rewrite is one unit shorter (the `[`
+  goes, `](` becomes ` (`) and `│ ` replaces `> `, so the chunking guarantee needed no change; the chunking test now
+  also carries links and quotes. Backslash escapes, tables and indented code are still shown as written.
 - **The panel's counters** are per process. They are not persisted and they reset at a restart.
 - **Carried from TG-1.** The future storage ADR that keys sessions by `(platform, conversation)`.
 

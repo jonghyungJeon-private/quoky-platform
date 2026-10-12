@@ -15,6 +15,9 @@ No migration, no new DI token; `ConversationRuntimeDeps` stays 35.
 - **Help keeps every capability line with everything on.** With Gmail and Drive both configured, their two help lines are
   one compact line; with Jira and Slack writes both on, their two lines are one. The ADR-0096 D6 bound stays 14 x 120;
   the unconfigured help is byte-identical. An INT-3 test pins that every contributed line is present within the budget.
+- **Telegram plain text shows links and quotes (TG-3 residual).** In Quoky copy and model replies, `[text](url)` becomes
+  `text (url)` for http(s) URLs only (Telegram autolinks the URL) and a leading `> ` becomes `│ `. Untrusted spans stay
+  byte-identical; the output is still never longer than the input and chunking stays lossless.
 
 ## Unreleased — Personal v4 closure: INT-3 acceptance and DOC-E (2026-10-12)
 
