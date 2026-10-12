@@ -22,6 +22,7 @@ describe('SUB-2 ops configuration (ADR-0102 D6)', () => {
     expect(config).toEqual({
       backup: { enabled: true, dbPath: HOST_DB, dir: '/Users/owner/Library/Application Support/Quoky/backups' },
       noticeLedgerPath: '/Users/owner/Library/Application Support/Quoky/ops/notice-ledger.json',
+      providerUsage: { noticeStatePath: '/Users/owner/Library/Application Support/Quoky/ops/provider-usage-notices.json' },
     });
   });
 
@@ -65,4 +66,18 @@ describe('SUB-2 ops configuration (ADR-0102 D6)', () => {
   it('a failed pre-migration backup is a configuration exit too (the launcher stops after 3)', () => {
     expect(startupExitCode({ message: BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED })).toBe(QuokyExitCode.CONFIGURATION);
   });
+
+  it('PRV-3: QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD is total tokens per month; unset or empty means no threshold notice', () => {
+    expect(loadOpsConfig({}, { dbPath: HOST_DB }).providerUsage.monthlyThreshold).toBeUndefined();
+    expect(loadOpsConfig({ QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: '' }, { dbPath: HOST_DB }).providerUsage.monthlyThreshold).toBeUndefined();
+    expect(loadOpsConfig({ QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: '5000000' }, { dbPath: HOST_DB }).providerUsage.monthlyThreshold).toBe(5_000_000);
+  });
+
+  it.each(['0', '-5', '1.5', '1e6', '5M', ' 10', '0100', 'abc', '9'.repeat(17)])(
+    'PRV-3: a malformed threshold %j is a value-free startup error (exit 78)',
+    (value) => {
+      const failure = failureOf(() => loadOpsConfig({ QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: value }, { dbPath: HOST_DB }));
+      expect(failure).toEqual({ message: OpsConfigErrorCode.PROVIDER_USAGE_THRESHOLD_INVALID, exit: QuokyExitCode.CONFIGURATION });
+    },
+  );
 });

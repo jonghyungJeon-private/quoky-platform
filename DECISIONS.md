@@ -18601,6 +18601,120 @@ apply unchanged unless stated here.
   - A 400 on execution is `EXECUTION_FAILED`, so the router's own readiness cache is not dropped. The shared probe is,
     so a revoked key is noticed at the next probe (manager TTL) rather than on the next turn.
 
+### ADR-0115 implementation note — PRV-3 usage ledger and monthly DM (2026-10-12)
+
+Implementation choices where D8 is silent; no ratified text above changes. **No migration: usage is the typed
+`TaskRun.usage` value object, kept in the run's JSON `data`** (see "Review fixes" below: it first lived in
+`TaskRun.metadata.usage`). D8's "migration v16 if a column is needed" branch is not taken: nothing is added to the schema,
+the schema version stays 15, and no owner-side migration step is required.
+
+- **Where usage is stored.** `TaskRun.usage?: RunUsageRecord` (ADR-0010's `Usage` value object; in the existing JSON
+  `data`, passed to `completeRun` as `usage`):
+  `{ label, reported, inputTokens?, cachedInputTokens?, outputTokens?, reasoningTokens?, totalTokens? }`. Counts only; no
+  prompt, reply, key or provider text. Core's `runUsageRecord`/`readRunUsage`
+  (`provider-usage-record.ts`) normalise and read it; non-negative safe integers only, a malformed count is dropped.
+  `totalTokens` is the provider's own total, else `input + output` when both were reported (arithmetic, not an estimate).
+- **Core port change (additive, type-only).**
+  - `AiExecutionResult.usage?: AiUsage` with `AiUsage = { label; inputTokens?; cachedInputTokens?; outputTokens?;
+    reasoningTokens?; totalTokens? }`. The provider supplies its own selection label (`openai:<model>`, `gemini:<model>`,
+    `claude:<model>`, `codex`, `ollama:<model>`); core only records and groups by it and never branches on it or on a
+    provider id.
+  - `TaskRunRepository.forEachUsageFinishedBetween(from, to, visit)`: a read-only streaming query over the existing
+    JSON (`json_extract(data, '$.usage')`, `$.finishedAt`). It is the only repository addition.
+  - The conversation runtime records usage at the two sites that already complete a provider run (chat tier and image
+    understanding). A provider that returns no `usage` leaves the run without a `usage` field; `metadata` is unchanged.
+- **What is reported, never estimated.** OpenAI and Gemini report the counts of the response (PRV-1/PRV-2 names). The
+  Codex CLI reports the counts its `turn.completed` event carries, else none. The Claude CLI (plain `-p` text), Ollama
+  and the vision CLIs expose no counts, so they report the label alone: the run counts as an "unknown" (`reported:
+  false`) run for that label and adds nothing to any token sum. Claude's `stream-json` result carries usage; reading it is
+  a later change.
+- **Monthly totals (read side).** `apps/quoky/src/ops/provider-usage.ts` (`ProviderUsageLedger`): calendar months in
+  `QUOKY_TIMEZONE`, boundaries from local midnight of day 1, per label: runs, unknown runs, input, cached, output,
+  reasoning and total tokens, each as the reported sum plus how many runs reported it. Computed on demand by one
+  streaming fold over the query above; no stored aggregate.
+- **Ops UI.** A `provider-usage` panel (current and previous month; label, runs, input, output, total, unknown runs),
+  escaped like every panel and counts only. The panel is omitted only while neither month has a usage record (the TG-3
+  golden still passes for that case). Every CLI run records at least `{label, reported: false}`, so in practice the panel
+  appears after the first answered turn.
+- **Notices (`provider-usage-notice.ts`, `ProviderUsageNoticeJob`).** Evaluated at start and hourly (unref'd timer, so a
+  sleeping Mac catches up). Each kind is at most once per calendar month:
+  - *Monthly:* the previous month's totals per label, only if that month has usage. State: `monthlyReportedFor`.
+  - *Threshold:* `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD`, **total tokens per calendar month across all labels**, a positive
+    whole number; unset or empty means no threshold notice. Sent once in a month, when the month's total first reaches it.
+    State: `thresholdSentIn`. A malformed value is the startup error `PROVIDER_USAGE_THRESHOLD_INVALID` (exit 78).
+  - *Delivery:* `OpsNoticeService.deliverOwnerText`, the same owner-only sink path as `OPS_NOTICE` (DM target, no guild,
+    `BRIEF`; the primary platform's DM as today). It does not use the 3-per-day crash/backup ledger.
+  - *Persistence:* a private JSON file `<db dir>/ops/provider-usage-notices.json` (mode 600, 700 directory, atomic
+    replace, as the ops notice ledger). Settling and retry rules are in "Review fixes" below (the first version settled
+    only on `SENT` and retried everything else, without a bound).
+- **No automatic action.** The job holds a read-only usage source and a deliver function; it imports no selection,
+  registration or routing module. A test proves a Proxy-guarded source is touched only through the one query and that
+  its modules reference no selection or ranking write path.
+- **Sample DM.** `[Quoky 사용량 알림] 2026-09 공급자별 사용량이에요. 3회 실행, 합계 1,650 토큰 (2/3회 보고).` then one
+  line per label (`- openai:gpt-5: 2회, 입력 1,000 · 출력 650 · 합계 1,650 토큰`; a count nobody reported reads `미보고`,
+  a partly reported one `1,000 (2/3회 보고)`) and a closing line that only reported counts are added and no provider is
+  switched automatically.
+- **Residuals.** Runs through the provider-routing gateway (Ollama routing) and code-work runs record no usage (no
+  count is exposed; they do not appear in the ledger). The ledger is counts, not money: no price table. Claude and Codex
+  runs on a subscription are counted but cost nothing per token.
+
+#### Review fixes (Chief Architect CHANGES REQUIRED P1; Codex P2s; 2026-10-12)
+
+- **Notice authority.** ADR-0115 D8 itself is the authority that adds these two owner notices
+  (`PROVIDER_USAGE_MONTHLY`, `PROVIDER_USAGE_THRESHOLD`). ADR-0103 D4 had left every other non-reminder notification
+  deferred; D8 is the later ratified decision that names these two. They are not new sink kinds: like `OPS_NOTICE`
+  they are module identities sent through the unchanged `NotificationSink` as `BRIEF` to the owner DM (no guild).
+- **Why the ADR-0102 D7 ledger is bypassed.** D7's "at most 3 per day" ledger bounds `OPS_NOTICE` (crash loop, backup,
+  Telegram halt) only, so it neither covers nor should be consumed by these notices. Their bound is the per-kind attempt
+  cap below: at most 3 delivery attempts per kind per calendar month, i.e. at most 6 usage DM attempts a month.
+- **P1, bounded delivery (sink contract, ADR-0101 D4: "when in doubt `UNCERTAIN`; only `NOT_SENT{retryable: true}` is
+  ever retried").** `OpsNoticeService.deliverOwnerText(kind: UsageNoticeKind, text)` returns the full
+  `NotificationSinkOutcome` (or `{status: 'NO_OWNER'}`). `SENT` and `UNCERTAIN` settle the month (an `UNCERTAIN` is
+  never resent, so a Discord timeout no longer means a DM every hour). A non-retryable `NOT_SENT` (`TEXT_TOO_LONG`, …)
+  settles it as given up. Only a retryable `NOT_SENT` and `NO_OWNER` are tried again, at the next hourly evaluation.
+  Each kind has at most 3 attempts per month, persisted as `monthlyAttempts` / `thresholdAttempts` and written
+  **before** the send; if that record cannot be written, nothing is sent (fail closed, as D7). A retryable outcome on
+  the third attempt settles the month as given up.
+- **In-flight rule (Codex delta P1; aligned with the ADR-0101 reminder rule).** The pre-send record is
+  `{month, count, inFlight: true}`; the outcome write replaces it with `{month, count, outcome, retryable?}` (`outcome`
+  is `SENT`, `UNCERTAIN`, `NOT_SENT` with the sink's `retryable` flag, or `NO_OWNER`) and, unless a retry is allowed,
+  settles the month in the same write. An attempt still `inFlight` on load (sent, maybe sent, or never handed over, with
+  no recorded outcome) is taken as `UNCERTAIN`: that kind is done for the month and never resent, as ADR-0101 treats a
+  reminder a restart finds mid-delivery. A retry follows only an explicitly recorded retryable `NOT_SENT` or
+  `NO_OWNER`; a record without such an outcome is never retried. The 3-attempt cap stays as the second bound. This
+  closes the case where a failed outcome write after `SENT` or `UNCERTAIN` led a restart to send the notice again. `deliverOwnerText` refuses a text above `REMINDER_LIMITS.maxDeliveredTextChars` with
+  `NOT_SENT{TEXT_TOO_LONG, retryable: false}` before the sink.
+- **P2-a, state after a failed write.** Once this process has written the state, it reads its in-memory copy only; the
+  file is read only before the first write. A stale file after a failed write (ENOSPC) can no longer cause a second
+  send in the process. An unreadable file skips the evaluation (logged), never reads as empty.
+- **P2-b, unknown is not zero.** Each count is the reported sum plus how many runs reported it. A count no run reported
+  renders as "미보고" in the panel and both DMs, never 0; a partly reported one shows the runs it covers
+  (`1,000 (2/3회 보고)`). A run is unknown (`unknownRuns`) when its total cannot be known (no provider total, and not
+  both input and output). The threshold compares the known total. The owner surfaces are Korean only, so there is no
+  English rendering.
+- **P2-c, bounded query.** `listWithUsageFinishedBetween` (every matching run, `.all()`) is replaced by
+  `forEachUsageFinishedBetween(from, to, visit)`: it selects only `json_extract(data, '$.usage')` and `$.finishedAt`,
+  iterates with `.iterate()` with no `ORDER BY` (a sort would hold every row), and the ledger folds each record
+  (`UsageFold`), so memory is O(labels), not O(runs).
+- **P2-d, storage location.** The record moved from `TaskRun.metadata.usage` to the typed `TaskRun.usage?:
+  RunUsageRecord` (ADR-0010's `Usage` value object; `metadata` stays "provider-owned, Core does not interpret"). It is
+  still in the JSON `data` column, so there is no migration; the query reads `$.usage`. Both `completeRun` sites (chat
+  tier and image understanding) pass `usage`. ARCHITECTURE.md §4 `Usage` is `[NOW]` (label change only). A
+  `metadata.usage` written by the first version on an unmerged branch is not read.
+- **P2-e, one delivered message.** Both DMs are the first fitting candidate (`firstFit`, as the daily brief) of the full
+  label list and ever shorter lists of the top labels by total tokens with a closing `- 외 K개`; the last candidate (no
+  label line) always fits.
+- **Residuals.**
+  - At most once over at least once: a crash (or a failed outcome write) between the in-flight record and the outcome
+    write settles that kind for the month as `UNCERTAIN`, including when the crash came before the send, so that
+    month's DM may never be delivered. Accepted fail-closed behaviour, the same as the reminders (ADR-0101).
+  - A run that fails after the provider call (a later guard, persistence or transition error) records no usage, so
+    tokens the provider billed for it are not counted.
+  - The query is still a full scan of `task_runs` (the JSON filter has no index): about 1 to 2 ms of CPU per 1,000 runs
+    (measured locally: 20,000 runs in about 38 ms), on each hourly evaluation and each ops-UI page load. An index needs migration v16 and an amendment to D8 first.
+  - Owner decision, kept as is: `NO_OWNER` uses an attempt like a retryable `NOT_SENT`, so without an owner for three
+    evaluations (about three hours) that kind is given up for the month.
+
 ## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)

@@ -457,6 +457,8 @@ abstract class GeminiApiProviderBase implements AiProvider {
       text,
       artifacts: [artifact],
       raw: { finishReason: parsed.finishReason },
+      // ADR-0115 D8: the counts the response reported (none estimated), under the selection label.
+      usage: { label: `gemini:${this.model}`, ...parsed.usage },
       // Counts and hashes only: no prompt, reply, image byte, key or response text.
       audit: {
         model: this.model,

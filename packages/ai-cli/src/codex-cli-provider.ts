@@ -578,6 +578,8 @@ export class CodexCliProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code },
+      // ADR-0115 D8: only the counts the `turn.completed` event exposed; none when it carried no usage.
+      usage: { label: 'codex', ...events.usage },
       // Counts and hashes only: no prompt, reply, path or CLI text.
       audit: {
         model: this.model ?? 'cli-default',

@@ -59,4 +59,29 @@ export interface TaskRun {
   error?: string;
   /** Optional provider-owned audit facts. Core stores but does not interpret them. */
   metadata?: Metadata;
+  /**
+   * The `Usage` value object (ADR-0010; ADR-0115 D8, PRV-3): the token counts the provider reported for this run, kept
+   * in the run's JSON `data` (no column, no migration). Absent when the provider supplied no usage object.
+   */
+  usage?: RunUsageRecord;
+}
+
+/**
+ * The normalised per-run usage record (ADR-0115 D8). Counts only: no prompt, reply, key or provider text.
+ *
+ * - `label` groups the run (`openai:gpt-5`, `claude:sonnet`, `codex`); it is what the provider reported. Core never
+ *   branches on it.
+ * - `reported: false` means the provider exposed no count at all ("unknown"). Counts are never estimated; a count the
+ *   provider did not report is absent, never 0.
+ * - `totalTokens` is the provider's own total, else `inputTokens + outputTokens` when both were reported (arithmetic on
+ *   reported counts, not an estimate); otherwise absent.
+ */
+export interface RunUsageRecord {
+  readonly label: string;
+  readonly reported: boolean;
+  readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningTokens?: number;
+  readonly totalTokens?: number;
 }

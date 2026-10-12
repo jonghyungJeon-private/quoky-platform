@@ -46,6 +46,7 @@ import type {
   ExecutionReceiptOutcome,
   ExecutionReceiptRepository,
   Id,
+  IsoTimestamp,
   MemoryRecord,
   MemoryRepository,
   MemoryScope,
@@ -638,6 +639,33 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
       .prepare(`SELECT data FROM task_runs WHERE task_id = ? ORDER BY json_extract(data, '$.attempt')`)
       .all(taskId) as Row[];
     return rows.map((r) => this.decode(r.data));
+  }
+
+  async forEachUsageFinishedBetween(
+    fromInclusive: IsoTimestamp,
+    toExclusive: IsoTimestamp,
+    visit: (usage: unknown, finishedAt: IsoTimestamp) => void,
+  ): Promise<void> {
+    // Only the usage JSON and the timestamp are extracted, one row at a time (`iterate`), with no ORDER BY (a sort would
+    // hold every row): memory is O(1) per row. It is still a full scan of task_runs (no index; one would need migration
+    // v16 and an ADR-0115 D8 amendment), about 1 to 2 ms of CPU per 1,000 runs.
+    const rows = this.db
+      .prepare(
+        `SELECT json_extract(data, '$.usage') AS usage, json_extract(data, '$.finishedAt') AS finishedAt FROM task_runs
+          WHERE json_extract(data, '$.usage') IS NOT NULL
+            AND json_extract(data, '$.finishedAt') >= ? AND json_extract(data, '$.finishedAt') < ?`,
+      )
+      .iterate(fromInclusive, toExclusive) as IterableIterator<{ usage: unknown; finishedAt: unknown }>;
+    for (const row of rows) {
+      if (typeof row.usage !== 'string' || typeof row.finishedAt !== 'string') continue;
+      let usage: unknown;
+      try {
+        usage = JSON.parse(row.usage);
+      } catch {
+        continue;
+      }
+      visit(usage, row.finishedAt);
+    }
   }
 }
 

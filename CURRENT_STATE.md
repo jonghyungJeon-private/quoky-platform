@@ -5,6 +5,27 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### PRV-3 provider usage ledger and monthly DM — implemented on branch, not merged (2026-10-12)
+
+ADR-0115 D8, on top of PRV-1 and PRV-2. **No migration: usage is the typed `TaskRun.usage` value object (ADR-0010) in
+the run's JSON `data`** (schema stays v15; ARCHITECTURE.md §4 `Usage` is now `[NOW]`).
+
+- **Recorded.** Each provider run that reports a usage object stores its label and the reported token counts. OpenAI,
+  Gemini and Codex report counts; the Claude CLI and Ollama report the label only ("unknown"). Nothing is estimated.
+  Every CLI run records at least `{label, reported: false}`, so the ops panel appears after the first answered turn.
+- **Read.** The additive read-only streaming `TaskRunRepository.forEachUsageFinishedBetween` (usage JSON and timestamp
+  only, folded per label) feeds monthly totals per label in `QUOKY_TIMEZONE`, shown in a `provider-usage` ops-UI panel.
+  A count no run reported shows as "미보고", never 0.
+- **Notices.** One owner DM per month with the previous month's totals, and one when the optional
+  `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (known total tokens per calendar month) is first reached. `SENT` and
+  `UNCERTAIN` settle the month; only a retryable `NOT_SENT` and `NO_OWNER` are retried, at most 3 attempts per kind per
+  month (`ops/provider-usage-notices.json`, recorded in flight before each send; an attempt a restart finds in flight
+  is `UNCERTAIN` and never resent). Each DM fits one delivered message. No provider
+  is ever switched, disabled or re-ranked.
+- **Unchanged.** `ConversationRuntimeDeps` stays 35; the Core change is optional type fields and one read query.
+- **Validation.** Offline only. Chief Architect re-review: APPROVE WITH NITS (nits applied); the Codex delta P1
+  (resend after a failed outcome write) is fixed with the in-flight rule. Not run yet: a live check of one real DM.
+
 ### DRV-1 Google Drive read connector — implemented on branch, not merged (2026-10-12)
 
 ADR-0118 D1–D8 for Drive, on top of GML-1 (#165). New pieces:

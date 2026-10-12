@@ -61,6 +61,75 @@ describe('SqliteTaskRunRepository optional metadata compatibility', () => {
     await store.close();
   });
 
+  it('PRV-3: forEachUsageFinishedBetween visits TaskRun.usage in [from, to) with no schema change', async () => {
+    const store = await freshStore();
+    const usage = { label: 'codex', reported: true, totalTokens: 5 };
+    const visit = async (from: string, to: string) => {
+      const seen: Array<[unknown, string]> = [];
+      await store.taskRuns.forEachUsageFinishedBetween(from, to, (u, finishedAt) => seen.push([u, finishedAt]));
+      return seen;
+    };
+    const at = (id: string, finishedAt: string, extra: Partial<TaskRun> = {}): TaskRun => ({ ...runOf(id), taskId: `task-${id}`, finishedAt, ...extra });
+    await store.taskRuns.save(at('before', '2026-09-30T14:59:59.999Z', { usage }));
+    await store.taskRuns.save(at('first', '2026-09-30T15:00:00.000Z', { usage }));
+    await store.taskRuns.save(at('last', '2026-10-31T14:59:59.999Z', { usage }));
+    await store.taskRuns.save(at('end', '2026-10-31T15:00:00.000Z', { usage }));
+    await store.taskRuns.save(at('none', '2026-10-05T00:00:00.000Z', { metadata: { model: 'm' } }));
+    // A provider-owned `metadata.usage` is not the Usage value object and is never read as one.
+    await store.taskRuns.save(at('metadata-only', '2026-10-05T00:00:00.000Z', { metadata: { usage } }));
+    await store.taskRuns.save(at('bare', '2026-10-05T00:00:00.000Z'));
+    const seen = await visit('2026-09-30T15:00:00.000Z', '2026-10-31T15:00:00.000Z');
+    // Only the usage value and the timestamp reach the visitor, never the whole run.
+    expect(seen.sort((a, b) => a[1].localeCompare(b[1]))).toEqual([
+      [usage, '2026-09-30T15:00:00.000Z'],
+      [usage, '2026-10-31T14:59:59.999Z'],
+    ]);
+    expect((await store.taskRuns.get('first'))?.usage).toEqual(usage);
+    await store.close();
+  });
+
+  it('PRV-3: a visitor that throws releases the iterator, so the same connection still saves and reads', async () => {
+    const store = await freshStore();
+    const usage = { label: 'codex', reported: true, totalTokens: 5 };
+    for (const id of ['x1', 'x2', 'x3']) {
+      await store.taskRuns.save({ ...runOf(id), taskId: `task-${id}`, finishedAt: '2026-10-05T00:00:00.000Z', usage });
+    }
+    let visits = 0;
+    await expect(
+      store.taskRuns.forEachUsageFinishedBetween('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', () => {
+        visits += 1;
+        throw new Error('visitor failed');
+      }),
+    ).rejects.toThrow('visitor failed');
+    expect(visits).toBe(1);
+    // An iterator left open would make this connection busy: the write and the read below would throw.
+    await store.taskRuns.save({ ...runOf('after'), taskId: 'task-after', finishedAt: '2026-10-06T00:00:00.000Z', usage });
+    expect((await store.taskRuns.get('after'))?.usage).toEqual(usage);
+    let count = 0;
+    await store.taskRuns.forEachUsageFinishedBetween('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', () => {
+      count += 1;
+    });
+    expect(count).toBe(4);
+    await store.close();
+  });
+
+  it('PRV-3: forEachUsageFinishedBetween streams many runs one at a time and the visitor sees each once', async () => {
+    const store = await freshStore();
+    const n = 2_000;
+    for (let i = 0; i < n; i += 1) {
+      const finishedAt = new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString();
+      await store.taskRuns.save({ ...runOf(`bulk-${i}`), taskId: `task-bulk-${i}`, finishedAt, usage: { label: i % 2 === 0 ? 'a' : 'b', reported: true, totalTokens: 1 } });
+    }
+    let count = 0;
+    let sum = 0;
+    await store.taskRuns.forEachUsageFinishedBetween('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', (u) => {
+      count += 1;
+      sum += (u as { totalTokens: number }).totalTokens;
+    });
+    expect([count, sum]).toEqual([n, n]);
+    await store.close();
+  });
+
   it('reads legacy TaskRun JSON with no metadata', async () => {
     const store = await freshStore();
     await store.taskRuns.save(runOf('legacy-run'));

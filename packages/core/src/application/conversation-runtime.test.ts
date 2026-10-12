@@ -11490,6 +11490,38 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     expect(JSON.stringify(turn.runSaves)).not.toContain(EXAMPLE_ANSWER);
   });
 
+  it('PRV-3: a provider-reported usage lands on TaskRun.usage (counts only), metadata stays provider-owned; no usage, no record', async () => {
+    const turn = exampleTurn({ locality: 'LOCAL' });
+    const inner = await turn.deps.router.select(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' });
+    const reporting: AiProvider = {
+      ...inner,
+      async execute(request: AiRequest) {
+        return { ...(await inner.execute(request)), usage: { label: 'openai:gpt-5', inputTokens: 100, outputTokens: 20, totalTokens: 125 } };
+      },
+    };
+    const deps = { ...turn.deps, router: { async select() { return reporting; } } };
+    await new ConversationRuntime(deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    const succeeded = turn.runSaves.filter((run) => run.status === TaskRunStatus.SUCCEEDED);
+    expect(succeeded.map((run) => run.usage)).toEqual([{ label: 'openai:gpt-5', reported: true, inputTokens: 100, outputTokens: 20, totalTokens: 125 }]);
+    expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept', curatedExampleCount: 1 }]);
+    expect(JSON.stringify(turn.runSaves)).not.toContain(EXAMPLE_ANSWER);
+
+    const unknown = exampleTurn({ locality: 'LOCAL' });
+    const inner2 = await unknown.deps.router.select(Capability.GENERAL_CHAT, { sessionId: 's', actorId: 'a' });
+    const labelOnly: AiProvider = {
+      ...inner2,
+      async execute(request: AiRequest) {
+        return { ...(await inner2.execute(request)), usage: { label: 'claude:sonnet' } };
+      },
+    };
+    await new ConversationRuntime({ ...unknown.deps, router: { async select() { return labelOnly; } } }).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(unknown.runSaves.filter((run) => run.status === TaskRunStatus.SUCCEEDED).map((run) => run.usage)).toEqual([{ label: 'claude:sonnet', reported: false }]);
+
+    const none = exampleTurn({ locality: 'LOCAL' });
+    await new ConversationRuntime(none.deps).handle(messageOf('회의록 요약 형식 알려줘'));
+    expect(none.runSaves.filter((run) => run.status === TaskRunStatus.SUCCEEDED).every((run) => !('usage' in run))).toBe(true);
+  });
+
   it.each(['REMOTE', 'absent'] as const)(
     'a %s provider never receives an example, and its request is byte-identical to one built without examples',
     async (locality) => {
@@ -11905,7 +11937,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     const selected: Capability[] = [];
     const requests: AiRequest[] = [];
     const recorded: string[] = [];
-    const completed: Array<{ providerId?: string; metadata?: unknown }> = [];
+    const completed: Array<{ providerId?: string; metadata?: unknown; usage?: unknown }> = [];
     const failed: string[] = [];
     const execute = vi.fn(o.execute ?? (async () => ({ text: '주간 매출 막대 그래프예요.', artifacts: [] })));
     const provider: AiProvider = {
@@ -11930,7 +11962,7 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
         transition: (...a) => taskManager.transition(...a),
         startRun: (...a) => taskManager.startRun(...a),
         async completeRun(run, opts) {
-          completed.push({ ...(opts.providerId ? { providerId: opts.providerId } : {}), metadata: opts.metadata });
+          completed.push({ ...(opts.providerId ? { providerId: opts.providerId } : {}), metadata: opts.metadata, ...(opts.usage ? { usage: opts.usage } : {}) });
           return taskManager.completeRun(run, opts);
         },
         async failRun(run, summary, opts) {
@@ -11988,6 +12020,19 @@ describe('ADR-0111 MM-2 — image turns route only to a LOCAL IMAGE_UNDERSTANDIN
     expect(h.completed).toEqual([{ providerId: 'vision-under-test', metadata: { imageCount: 1 } }]);
     expect(h.taskSaves.at(-1)?.status).toBe(TaskStatus.COMPLETED);
     // The image reference is never recorded in memory, Task/TaskRun records or logs.
+    expect(persistedAndLogged(h)).not.toContain(IMAGE_REF);
+  });
+
+  it('PRV-3: an image-understanding run records the provider-reported usage on TaskRun.usage', async () => {
+    const h = imageTurn({
+      locality: 'LOCAL',
+      execute: async () => ({ text: '주간 매출 막대 그래프예요.', artifacts: [], usage: { label: 'gemini:g', inputTokens: 1290, outputTokens: 40 } }),
+    });
+    const result = await h.runtime.handle(imageMessage('이 그래프 설명해줘'));
+    expect(result.status).toBe('RESPONDED');
+    const usage = { label: 'gemini:g', reported: true, inputTokens: 1290, outputTokens: 40, totalTokens: 1330 };
+    expect(h.completed).toEqual([{ providerId: 'vision-under-test', metadata: { imageCount: 1 }, usage }]);
+    expect(h.runSaves.filter((run) => run.status === TaskRunStatus.SUCCEEDED).map((run) => run.usage)).toEqual([usage]);
     expect(persistedAndLogged(h)).not.toContain(IMAGE_REF);
   });
 

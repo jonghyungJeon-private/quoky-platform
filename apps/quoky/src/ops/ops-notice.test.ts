@@ -216,3 +216,43 @@ describe('OPS_NOTICE (ADR-0102 D7)', () => {
     });
   });
 });
+
+describe('PRV-3 owner text delivery (ADR-0115 D8)', () => {
+  it('goes to the owner DM only (no guild, DM-only kind) and returns the full delivery outcome', async () => {
+    const sink = new RecordingSink();
+    const { notices } = service({ sink });
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'totals only')).toEqual({ status: 'SENT', via: 'dm' });
+    const sent = sink.delivered[0] as OwnerNotification;
+    expect(sent.text).toBe('totals only');
+    expect(sent.kind).toBe('BRIEF');
+    expect(sent.target).toEqual({ platform: 'discord', channelId: '', userId: OWNER });
+    expect(sent.target.spaceId).toBeUndefined();
+  });
+
+  it('reports a non-SENT outcome as is (reason and retryable kept), NO_OWNER without an owner, and never uses the 3-per-day ledger', async () => {
+    const ledger = memoryLedger();
+    const notSent: NotificationSinkOutcome = { status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false };
+    const { notices } = service({ sink: new RecordingSink(notSent), ledger });
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual(notSent);
+    const uncertain: NotificationSinkOutcome = { status: 'UNCERTAIN', reason: 'TIMEOUT' };
+    expect(await service({ sink: new RecordingSink(uncertain) }).notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual(uncertain);
+    expect(ledger.writes).toBe(0);
+    const none = service({ ownerId: undefined });
+    expect(await none.notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x')).toEqual({ status: 'NO_OWNER' });
+  });
+
+  it('refuses a text above the delivered-text limit before the sink (TEXT_TOO_LONG, not retryable)', async () => {
+    const sink = new RecordingSink();
+    const { notices } = service({ sink });
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_THRESHOLD', '가'.repeat(1_801))).toEqual({ status: 'NOT_SENT', reason: 'TEXT_TOO_LONG', retryable: false });
+    expect(sink.delivered).toEqual([]);
+    expect(await notices.deliverOwnerText('PROVIDER_USAGE_THRESHOLD', '가'.repeat(1_800))).toEqual({ status: 'SENT', via: 'dm' });
+  });
+
+  it('does not consume the crash/backup daily budget', async () => {
+    const sink = new RecordingSink();
+    const { notices } = service({ sink });
+    for (let i = 0; i < 5; i += 1) await notices.deliverOwnerText('PROVIDER_USAGE_MONTHLY', 'x');
+    expect(await notices.notify('BACKUP_FAILED')).toBe('SENT');
+  });
+});

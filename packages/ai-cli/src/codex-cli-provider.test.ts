@@ -582,3 +582,27 @@ describe('CodexCliProvider — temp directory cleanup never escapes (Codex revie
     ).not.toThrow();
   });
 });
+
+describe('PRV-3 usage report (ADR-0115 D8)', () => {
+  it('reports the counts the turn.completed event exposed, under the codex label', async () => {
+    const result = await new CodexCliProvider('codex', { runner: async () => ok(answered('답변')) }).execute({
+      capability: Capability.GENERAL_CHAT,
+      prompt: PROMPT,
+    });
+    expect(result.usage).toEqual({ label: 'codex', inputTokens: 1200, cachedInputTokens: 300, outputTokens: 80 });
+  });
+
+  it('reports the label alone when the event carried no usage ("unknown")', async () => {
+    const stdout = jsonl(
+      { type: 'thread.started', thread_id: 'thread-1' },
+      { type: 'turn.started' },
+      { type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: '답변' } },
+      { type: 'turn.completed' },
+    );
+    const result = await new CodexCliProvider('codex', { runner: async () => ok(stdout) }).execute({
+      capability: Capability.GENERAL_CHAT,
+      prompt: PROMPT,
+    });
+    expect(result.usage).toEqual({ label: 'codex' });
+  });
+});

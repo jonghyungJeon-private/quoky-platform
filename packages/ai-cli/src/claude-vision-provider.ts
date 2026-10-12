@@ -265,6 +265,8 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code },
+      // ADR-0115 D8: the label only (counts are not read from the stream-json result): "unknown".
+      usage: { label: `claude:${this.model}` },
       audit: {
         model: this.model,
         executionLocality: this.executionLocality,

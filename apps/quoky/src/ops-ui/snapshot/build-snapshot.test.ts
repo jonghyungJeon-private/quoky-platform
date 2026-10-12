@@ -722,3 +722,73 @@ describe('TG-3 Telegram panel (ADR-0114 D12, ADR-0113 D5)', () => {
     expect(panelOf(view, 'runtime').state).toBe('OK');
   });
 });
+
+describe('PRV-3 provider usage panel (ADR-0115 D8, ADR-0113 D5)', () => {
+  const c = (sum: number, reportedRuns: number) => ({ sum, reportedRuns });
+  const months = [
+    {
+      month: '2026-10',
+      labels: [
+        { label: 'openai:gpt-5', runs: 3, unknownRuns: 0, inputTokens: c(1200, 3), outputTokens: c(300, 3), totalTokens: c(1500, 3) },
+        { label: 'claude:sonnet', runs: 2, unknownRuns: 2, inputTokens: c(0, 0), outputTokens: c(0, 0), totalTokens: c(0, 0) },
+        { label: 'codex', runs: 3, unknownRuns: 2, inputTokens: c(900, 2), outputTokens: c(40, 1), totalTokens: c(500, 1) },
+      ],
+    },
+    { month: '2026-09', labels: [{ label: 'gemini:g', runs: 1, unknownRuns: 0, inputTokens: c(10, 1), outputTokens: c(5, 1), totalTokens: c(15, 1) }] },
+  ];
+
+  it('shows the counts per month and label, appended after every other panel', async () => {
+    const view = await new OpsSnapshotBuilder(fixture({ providerUsage: async () => months })).build();
+    expect(view.panels.at(-1)?.id).toBe('provider-usage');
+    const panel = panelOf(view, 'provider-usage');
+    expect(panel.state).toBe('OK');
+    expect(panel.table?.columns).toEqual(['월', '공급자', '실행', '입력 토큰', '출력 토큰', '합계 토큰', '합계 미보고 실행']);
+    expect(panel.table?.rows).toEqual([
+      ['2026-10', 'openai:gpt-5', '3', '1200', '300', '1500', '0'],
+      // Nobody reported a count: "미보고", never 0.
+      ['2026-10', 'claude:sonnet', '2', '미보고', '미보고', '미보고', '2'],
+      // Partly reported: the sum and how many runs it covers.
+      ['2026-10', 'codex', '3', '900 (2/3회 보고)', '40 (1/3회 보고)', '500 (1/3회 보고)', '2'],
+      ['2026-09', 'gemini:g', '1', '10', '5', '15', '0'],
+    ]);
+  });
+
+  it('escapes every cell in the rendered page and carries counts only', async () => {
+    const hostile = [{ month: '2026-10', labels: [{ label: '<script>alert(1)</script>', runs: 1, unknownRuns: 0, inputTokens: c(1, 1), outputTokens: c(1, 1), totalTokens: c(2, 1) }] }];
+    const view = await new OpsSnapshotBuilder(fixture({ providerUsage: async () => hostile })).build();
+    const page = renderDashboard(view, 'csrf-token');
+    expect(page).not.toContain('<script>alert(1)</script>');
+    expect(page).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    const json = JSON.stringify(panelOf(view, 'provider-usage'));
+    for (const secret of [...SECRETS, ...BODIES]) expect(json, secret).not.toContain(secret);
+  });
+
+  it('shows a malformed count as unknown, never the raw value', async () => {
+    const bad = [{ month: '2026-10', labels: [{ label: 'x', runs: 1, unknownRuns: 0, inputTokens: c(-1, 1), outputTokens: c(Number.NaN, 1), totalTokens: c(1, 2) }] }];
+    const view = await new OpsSnapshotBuilder(fixture({ providerUsage: async () => bad })).build();
+    expect(panelOf(view, 'provider-usage').table?.rows[0]).toEqual(['2026-10', 'x', '1', OPS_UNKNOWN, OPS_UNKNOWN, OPS_UNKNOWN, '0']);
+  });
+
+  it('a failing source makes only its own panel unavailable, with a code', async () => {
+    const view = await new OpsSnapshotBuilder(fixture({ providerUsage: async () => { throw new Error('SECRET BODY'); } })).build();
+    const panel = panelOf(view, 'provider-usage');
+    expect(panel.state).toBe('UNAVAILABLE');
+    expect(panel.errorCode).toBe('SOURCE_FAILED');
+    expect(JSON.stringify(panel)).not.toContain('SECRET BODY');
+    expect(panelOf(view, 'runtime').state).toBe('OK');
+  });
+
+  it('no usage: no panel at all, and the page is byte-identical to the one without the ledger (also the TG-3 golden)', async () => {
+    const handling = { reminderCancel: true, memoryForget: true, approvals: true, providerSelection: true };
+    const without = renderDashboard(await new OpsSnapshotBuilder(fixture({ handling })).build(), 'csrf-golden', 30, true);
+    for (const providerUsage of [
+      async () => [] as typeof months,
+      async () => [{ month: '2026-10', labels: [] }, { month: '2026-09', labels: [] }],
+    ]) {
+      const view = await new OpsSnapshotBuilder(fixture({ handling, providerUsage })).build();
+      expect(view.panels.some((p) => p.id === 'provider-usage')).toBe(false);
+      expect(renderDashboard(view, 'csrf-golden', 30, true)).toBe(without);
+    }
+    expect(without.replace(TELEGRAM_SECTION, '')).toBe(readFileSync(DASHBOARD_GOLDEN, 'utf8'));
+  });
+});

@@ -2,7 +2,7 @@ import { InvalidTaskTransitionError } from '../errors';
 import { newId } from '../util/id';
 import { now } from '../util/clock';
 import { Capability, RiskLevel, TaskRunStatus, TaskStatus } from '../domain';
-import type { ConversationContext, Id, Intent, Metadata, Task, TaskRun } from '../domain';
+import type { ConversationContext, Id, Intent, Metadata, RunUsageRecord, Task, TaskRun } from '../domain';
 import type {
   ContinuationContainmentAudit,
   ContinuationContainmentEvidenceSink,
@@ -92,7 +92,7 @@ export class TaskManager implements ContinuationContainmentEvidenceSink {
 
   async completeRun(
     run: TaskRun,
-    result: { artifactIds: Id[]; providerId?: string; metadata?: Metadata },
+    result: { artifactIds: Id[]; providerId?: string; metadata?: Metadata; usage?: RunUsageRecord },
   ): Promise<TaskRun> {
     const finishedAt = now();
     const updated: TaskRun = {
@@ -103,6 +103,7 @@ export class TaskManager implements ContinuationContainmentEvidenceSink {
       durationMs: TaskManager.elapsed(run.startedAt, finishedAt),
       ...(result.providerId ? { providerId: result.providerId } : {}),
       ...(result.metadata ? { metadata: result.metadata } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
     };
     return this.storage.taskRuns.save(updated);
   }
