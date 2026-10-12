@@ -19583,6 +19583,10 @@ Independent Chief Architect review before GML-1 merges.
     document-action patterns stay shared (P3-6). The P3-2 `(?<!다)고` clause split also stays shared: it only lets
     reported speech through for mail too, which is the documented intent.
   - **CA re-review 2 (stale docs):** the changelog, current state and quickstart now say Google Docs and Sheets only.
+  - **CA re-review 3a (adnominal narrowing):** a multi-syllable `…을` counts only after a stem with a final consonant
+    (`먹을`, `읽을`, `찾을`), so `가을` and `노을` are names and the `마을` special case is gone; the one-syllable `ㄹ`
+    nouns `일 글 설 말 물 술 별 달 길 불 칼 쌀` and `역할` are names; `-ㄹ만한` (`볼만한`, `갈만한`, `먹을만한`) is adnominal;
+    `대체` and `대체재` join the product words. `역할 분담표`, `가을 운동회`, `설 연휴 계획`, `일 정리`, `글 모음` search.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

@@ -223,27 +223,34 @@ function indexTarget(raw: string | undefined): DriveSummaryTarget | null {
 
 const stripQuotes = (value: string) => value.replace(/^["'“”‘’`「『]+|["'“”‘’`」』]+$/gu, '').trim();
 
-/** Whether the syllable ends in the consonant `ㄹ` (jongseong index 8). */
-const endsInRieul = (syllable: string): boolean => {
+/** The jongseong index of a Hangul syllable (0 = none, 8 = `ㄹ`), -1 for anything else. */
+const jongseong = (syllable: string): number => {
   const code = syllable.charCodeAt(0) - 0xac00;
-  return code >= 0 && code < 11172 && code % 28 === 8;
+  return code >= 0 && code < 11172 ? code % 28 : -1;
 };
+/** Common one-syllable `ㄹ` nouns (and `역할`) that are file names, never an adnominal verb form. */
+const RIEUL_NOUNS = new Set(['일', '글', '설', '말', '물', '술', '별', '달', '길', '불', '칼', '쌀', '역할']);
 /**
- * A first word (followed by a space) that is an adnominal verb form: `을` after a stem (`먹을`, `들을`), a lone
- * `ㄹ` syllable (`볼`, `갈`), or a longer word ending in a verb-like `ㄹ` syllable (`만들`, `해볼`). A noun that ends in
- * `ㄹ` (`서울`, `겨울`) is not matched.
+ * A first word (followed by a space) that is an adnominal verb form: `…을` after a stem with a final consonant
+ * (`먹을`, `읽을`, `찾을`; `가을` and `노을` are names), a lone `ㄹ` syllable (`볼`, `갈`), a longer word ending in a
+ * verb-like `ㄹ` syllable (`만들`, `해볼`), or `-ㄹ만한` (`볼만한`, `먹을만한`). A noun that ends in `ㄹ` (`서울`, `겨울`)
+ * is not matched.
  */
 function hasAdnominalHead(head: string): boolean {
   const word = /^(\S+) /u.exec(head)?.[1];
   if (word === undefined || !/^[가-힣]+$/u.test(word)) return false;
-  if (word === '마을') return false;
+  if (RIEUL_NOUNS.has(word)) return false;
   const chars = Array.from(word);
   const last = chars[chars.length - 1] as string;
-  if (chars.length >= 2 && last === '을') return true;
-  if (chars.length === 1) return endsInRieul(last);
+  if (chars.length >= 3 && last === '한' && chars[chars.length - 2] === '만') {
+    const stem = chars[chars.length - 3] as string;
+    return jongseong(stem) === 8 || (stem === '을' && chars.length >= 4);
+  }
+  if (chars.length >= 2 && last === '을') return jongseong(chars[chars.length - 2] as string) > 0;
+  if (chars.length === 1) return jongseong(last) === 8;
   return /[할볼갈쓸놀걸팔풀]/u.test(last) || (last === '들' && word.endsWith('만들'));
 }
-const PRODUCT_HEAD = /^(?:요금제|가격|요금|대안|용량|플랜|설치|다운로드|앱|사용법)(?: |$)/u;
+const PRODUCT_HEAD = /^(?:요금제|가격|요금|대안|용량|플랜|설치|다운로드|앱|사용법|대체재|대체)(?: |$)/u;
 
 /**
  * The name of a Korean search head; `'recent'` for the recent listing; `'usage'` when no usable name is left; `null`

@@ -178,11 +178,18 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     '드라이브에서 들을 노래 찾아줘',
     'find a coffee shop on my drive',
     'find songs to play on my drive',
+    '드라이브에서 볼만한 영화 찾아줘',
+    '드라이브에서 갈만한 곳 찾아줘',
+    '구글 드라이브 대체 서비스 찾아줘',
+    '구글 드라이브 대체재 찾아줘',
   ])('not a Drive command (falls through): %s', (text) => {
     expect(parseDriveQuestion(text)).toBeNull();
   });
 
   it('still searches names that merely end in ㄹ or contain a product word later (CA review P2-3)', () => {
+    for (const name of ['역할 분담표', '가을 운동회', '설 연휴 계획', '일 정리', '글 모음', '노을 사진', '물 관리']) {
+      expect(parseDriveQuestion(`드라이브에서 ${name} 찾아줘`), name).toEqual({ kind: 'search', name, language: 'ko' });
+    }
     expect(parseDriveQuestion('드라이브에서 서울 맛집 찾아줘')).toEqual({ kind: 'search', name: '서울 맛집', language: 'ko' });
     expect(parseDriveQuestion('드라이브에서 겨울 계획 찾아줘')).toEqual({ kind: 'search', name: '겨울 계획', language: 'ko' });
     expect(parseDriveQuestion('구글 드라이브 회의록 앱 찾아줘')).toEqual({ kind: 'search', name: '회의록 앱', language: 'ko' });
