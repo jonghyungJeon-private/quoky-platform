@@ -498,6 +498,24 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(order.slice(start.order).filter((step) => step === 'select')).toHaveLength(1);
   });
 
+  it('D7: an open question ends with the next owner turn even when another route answers it', async () => {
+    const ctx = context();
+    selectorAnswer = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+    expect((await send('이슈 쪽 상황 좀 볼래', ctx)).reply.text).toContain('어떤 걸 찾으세요?');
+    const session = await sessions.openForContext(ctx, ownerActor.id);
+    expect(session.metadata?.[core.NL_PENDING_METADATA_KEY]).toBeDefined();
+    // A Class A command answers this turn; the question is gone afterwards.
+    await send('할 일 추가: 질문 정리', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.NL_PENDING_METADATA_KEY]).toBeUndefined();
+    // "1" is no longer an answer: it is routed as a new message (the selector is asked, answers none, chat replies).
+    selectorAnswer = none;
+    const start = marks();
+    const reply = await send('1', ctx);
+    expect(selected.length).toBe(start.selected);
+    expect(order.slice(start.order)).toContain('select');
+    expect(reply.reply.text).toBe(CHAT_REPLY);
+  });
+
   it('Class A precedence: anchored commands and writes never reach the selector', async () => {
     selectorAnswer = answer('todo.list');
     for (const text of ['할 일 추가: 보고서 제출', '기억해: 나는 커피를 좋아해', '30분 뒤에 스트레칭 알려줘', '모델 변경: claude', '알림 목록']) {

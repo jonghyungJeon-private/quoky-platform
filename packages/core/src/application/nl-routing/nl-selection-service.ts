@@ -71,6 +71,11 @@ export interface NlSelectionTurn {
    * skipped with no call. Compared as opaque data, never as a name.
    */
   readonly chatProviderId?: string;
+  /**
+   * The open question as taken at the start of the turn (`takePending`), `null` when there was none. Absent: read from
+   * `session.metadata` (direct callers).
+   */
+  readonly pending?: PendingQuestion | null;
 }
 
 export type NlSelectionSkipReason =
@@ -157,14 +162,31 @@ export class NlSelectionService {
     }
   }
 
+  /**
+   * D7: take the open question at the start of an owner turn and clear it, whatever route the turn then takes, so a
+   * question never survives a turn that did not answer it. The returned question is handed to `decide` when the turn
+   * reaches selection. `null` when there is none (no write then). Only in `active` mode; never throws.
+   */
+  async takePending(session: Pick<Session, 'id' | 'metadata'>, actorId: string, now: IsoTimestamp): Promise<PendingQuestion | null> {
+    if (this.mode !== 'active') return null;
+    if (session.metadata?.[NL_PENDING_METADATA_KEY] === undefined) return null;
+    const question = readPendingQuestion(session, actorId, now) ?? null;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, NL_PENDING_METADATA_KEY, () => undefined);
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
+    return question;
+  }
+
   // ── active ────────────────────────────────────────────────────────────────────────────────────────────────────
 
   private async decideActive(turn: NlSelectionTurn): Promise<NlSelectionDecision> {
     const language = languageOf(turn.text);
-    const pending = readPendingQuestion(turn.session, turn.actor.id, turn.now);
+    const pending = turn.pending !== undefined ? turn.pending ?? undefined : readPendingQuestion(turn.session, turn.actor.id, turn.now);
     if (pending !== undefined) {
       // Any reply ends the question: an answer resolves it, anything else is a new request.
-      await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
+      if (turn.pending === undefined) await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
       // A bare "1" has no language of its own: the answer keeps the question's.
       const answered = await this.answerPending(pending, turn, /\p{L}/u.test(turn.text) ? language : pending.language);
       if (answered !== undefined) return answered;

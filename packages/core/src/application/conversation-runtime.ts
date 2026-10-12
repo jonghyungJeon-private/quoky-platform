@@ -93,6 +93,7 @@ import {
 import type { NlCatalogEntry } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionService } from './nl-routing/nl-selection-service';
+import type { PendingQuestion } from './nl-routing/selection-state';
 import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
@@ -1050,7 +1051,7 @@ export interface ConversationRuntimeDeps {
    * or mode `off`, keeps every turn byte-identical. The runtime only dispatches and presents: the catalog call,
    * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
    */
-  readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'>;
+  readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> & Partial<Pick<NlSelectionService, 'takePending'>>;
   readonly logger: Logger;
 }
 
@@ -2250,6 +2251,9 @@ export class ConversationRuntime {
     // ADR-0113 D7: the activity touch runs under the shared session write lock, field-scoped on the live row, so this
     // turn's snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched copy.
     session = (await this.deps.sessions.touch(session)) ?? session;
+    // ADR-0120 D7: an open selection question ends with this owner turn whatever route answers it; selection below gets
+    // the question only when the turn reaches it (`active` only; nothing is written when there is none).
+    const nlPending = this.deps.nlSelection?.takePending ? await this.deps.nlSelection.takePending(session, actor.id, this.clock()) : undefined;
 
     // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
     // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the
@@ -3042,7 +3046,7 @@ export class ConversationRuntime {
       const route = ConversationRuntime.nlSelectionRoute(intent);
       if (route !== undefined) {
         try {
-          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent);
+          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent, nlPending);
           if (selected.kind === 'responded') return selected.result;
           nlFacts = selected.facts;
         } catch (err) {
@@ -3121,6 +3125,7 @@ export class ConversationRuntime {
     userMemoryId: Id,
     route: 'chat' | 'personal-data',
     intent: Intent,
+    nlPending?: PendingQuestion | null,
   ): Promise<{ readonly kind: 'responded'; readonly result: TurnResult } | { readonly kind: 'continue'; readonly facts?: NlChatFacts }> {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
     const catalog = this.nlCatalog();
@@ -3128,6 +3133,7 @@ export class ConversationRuntime {
     const chatProviderId = await this.nlChatProviderId(intent, session, actor);
     const decision = await nl.decide({
       ...(chatProviderId !== undefined ? { chatProviderId } : {}),
+      ...(nlPending !== undefined ? { pending: nlPending } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),

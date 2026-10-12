@@ -296,6 +296,22 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(h.calls).toHaveLength(2);
   });
 
+  it('takePending clears the open question at the start of any turn and hands it to decide (active only)', async () => {
+    const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+    const h = harness({ script: [ask] });
+    await h.decide('내 이슈');
+    const snapshot = h.session;
+    const taken = await h.service.takePending(snapshot, 'owner', at(1000));
+    expect(taken).toMatchObject({ kind: 'entry' });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+    // The answer turn gets the taken question even though its session snapshot predates the clear.
+    expect(
+      await h.service.decide({ text: '2', attachmentCount: 0, session: snapshot, actor: h.actor(), now: at(1000), entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', pending: taken }),
+    ).toMatchObject({ kind: 'execute', command: { entryId: 'github.items' } });
+    expect(await h.service.takePending(h.session, 'owner', at(2000))).toBeNull();
+    expect(await harness({ mode: 'shadow' }).service.takePending(snapshot, 'owner', at(1000))).toBeNull();
+  });
+
   it('a pending question expires after 5 minutes, and an unrelated reply ends it (routed normally)', async () => {
     const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
     const h = harness({ script: [ask, NONE] });
