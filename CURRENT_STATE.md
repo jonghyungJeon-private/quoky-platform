@@ -16,7 +16,7 @@ were written on their branches, so where one says "not run yet" or "Pending", th
 
 - **Telegram** (private chat with the owner): text, an image with a caption, a 👍 reaction recorded as feedback, the same
   owner Actor as Discord (a Discord to-do is visible), a reminder delivered on Telegram. `message_reaction` is delivered
-  in private bot chats. `OPS_*` notices stay on Discord.
+  in private bot chats.
 - **Gmail and Drive, read-only, DM-only:** unread and today's mail, a mail summary, recent documents, a Sheet summary,
   the read-only refusal, the DM-only refusal in a channel. Two live defects were fixed (#171 HTTP 204 as an empty list,
   #172 literal Markdown markers in summaries).
@@ -25,6 +25,11 @@ were written on their branches, so where one says "not run yet" or "Pending", th
 - **`QUOKY_BRIEF_JIRA_ENABLED=true`** and **`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true`** are set.
 - **CODE-9 merge UAT** passed once on the sandbox repository (PR #3, merge `5c11cad`); the merge flag is back to `false`.
 - Earlier (2026-10-08): the UNC-1 network-fault test (#155); DET-2 and TBL-1 live checks.
+
+**Covered by offline acceptance tests (INT-3), not live-verified:** `OPS_*` notices and the ops-UI decision result for a
+Telegram-held approval go to the mapped Discord owner and never to Telegram; a Gmail/Drive listing is DM-only on both
+platforms and an injection mail or document causes no action; configured-but-unselected OpenAI/Gemini make no call; code,
+review and policy capabilities stay on Claude; `TaskRun.usage` records reported counts; the learning-example egress rule.
 
 **Configured but off, or not exercised live (Pending):**
 
