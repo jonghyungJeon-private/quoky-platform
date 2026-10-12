@@ -178,17 +178,20 @@ says otherwise; AI HTTP APIs serve only the chat and image tiers (ADR-0115).
 - **Goal.** The owner's natural phrasings reach the right read capability without new phrase lists. The audit routed
   176 of 372 capability phrases (47%); 193 of the 196 misses fell to chat.
 - **Scope.**
-  - **GOV-7** (docs only): ADR-0120, Proposed, with every amended clause listed; the owner ratifies it.
+  - **GOV-7** (docs only): ADR-0120 with every amended clause listed; ratified by the owner on 2026-10-12 (ratification
+    record in DECISIONS.md).
   - **NL-1:** the closed catalog contributed by the handlers (ADR-0120 D1); the `INTENT_SELECTION` selector on the
     Claude CLI, Haiku-class by default (D2, D3); validation, grounding and symbolic time (D4); clarification,
-    `lastSelection` and the interpretation preference in `Actor.metadata` (D7); `QUOKY_NL_INTENT_MODE` with `off` and
-    `shadow` and content-free shadow logs (D11); the Jira `personal-work` window, role and status query (D13); an
+    `lastSelection` and the interpretation preference in `Actor.metadata` (D7); `QUOKY_NL_INTENT_MODE` with `off`,
+    `shadow` and Phase A `active` (selection acts only on messages bound for chat; ratification record decision 4) and
+    content-free shadow logs (D11); the Jira `personal-work` window, role and status query (D13); an
     on-demand `brief.today` that reuses the brief composition, with no model and DM-only; honest chat (D9); the
     `nl-intent.v1.json` corpus and the offline suite (D12). Reads only (D5). The deps baseline becomes 36 (D14).
-  - **NL-2** (gated on the NL-1 shadow data): `active` mode, the Class B grammars as the provider-down fallback, the
+  - **NL-2** (gated on the NL-1 shadow data): Phase C (selection before the Class B grammars, which become the
+    provider-down fallback), grammar-hit shadowing, the
     wave-2 gaps (mail ranges and subject keyword, Drive modified-since, calendar title keyword, Jira free-text search,
     GitHub filters), and retiring the Class B grammars under ADR-0120 D10.
-- **ADR.** ADR-0120 (Proposed). NL-1's first code merge waits for its ratification.
+- **ADR.** ADR-0120, ratified 2026-10-12.
 - **Risks.** A valid but wrong selection (reads only, the basis line, the negative corpus); latency of a CLI spawn (p95
   target +3 s, measured in shadow); the owner's text egress (Phase A sends only messages already bound for chat).
 - **Estimate.** GOV-7 S. NL-1 L. NL-2 M-L.
