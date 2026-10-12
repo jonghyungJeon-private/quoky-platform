@@ -424,6 +424,14 @@ describe('connector lookups', () => {
     expect(textOf(outcome)).toContain('내 항목 중 "위클리카" 포함 결과가 없어요');
   });
 
+  it('discloses a partial check when a full page has no keyword match', async () => {
+    const full = Array.from({ length: 20 }, (_v, index) => ({ id: `PROJ-${index + 1}`, title: `항목 ${index + 1}` }));
+    const { say } = harness([new FakeConnector('jira', { items: full })]);
+    const outcome = await say('위클리카 관련 jira 이슈 보여줘');
+    expect(outcome.kind).toBe('reply');
+    expect(textOf(outcome)).toContain('내 항목 최근 20건 중 "위클리카" 포함 항목이 없어요 (전체를 확인하진 못했어요)');
+  });
+
   it('routes the unqualified listing to the same my-items query as the owner form', async () => {
     const jira = new FakeConnector('jira', { items: jiraItems });
     const { say } = harness([jira]);

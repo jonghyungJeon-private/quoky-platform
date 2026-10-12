@@ -420,20 +420,29 @@ function cleanSearchText(raw: string): string {
   return raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().replace(QUOTE_EDGES, '').trim();
 }
 
+/** An issue key or a link: a single-issue request, never a keyword filter. */
+const ISSUE_KEY_OR_URL = /\b[A-Za-z][A-Za-z0-9_]{0,63}-[1-9]\d{0,8}\b|https?:\/\/\S+/i;
+/** A `<label>:` prefix, quoted text or several lines: pasted content, not a command. */
+const CONTENT_SHAPED = /[\r\n]|[:：]|["“”「」『』`]/;
+function namesIssueOrIsContent(text: string): boolean {
+  return ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text);
+}
+
 /** `위클리카 이슈` -> `위클리카`: the trailing item noun (and a `관련` before it) is not part of the keyword. */
 const TRAILING_ITEM_NOUN = /\s*(?:(?:관련(?:된|한)?|관한)\s*)?(?:이슈|티켓|\bissues?\b|\btickets?\b)(?:들)?\s*$/i;
 function stripItemNoun(text: string): string {
   return text.replace(TRAILING_ITEM_NOUN, '').trim();
 }
 
-function searchCommand(sourceToken: string, rawText: string): WorkChatCommand | null {
+function searchCommand(sourceToken: string, rawText: string, whole: string): WorkChatCommand | null {
   const source = sourceOf(sourceToken);
   if (!source) return null;
   const text = cleanSearchText(rawText);
   if (text.length === 0) return { kind: 'usage', topic: 'search' };
   if (Array.from(text).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
-  // Jira has no text search (named queries only): a keyword narrows the owner's own items instead.
-  if (source === 'jira') {
+  // Jira has no text search (named queries only): a keyword narrows the owner's own items instead. A message that
+  // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
+  if (source === 'jira' && !namesIssueOrIsContent(whole)) {
     const keyword = stripItemNoun(text);
     return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
   }
@@ -442,13 +451,13 @@ function searchCommand(sourceToken: string, rawText: string): WorkChatCommand | 
 
 function detectSearch(text: string): WorkChatCommand | null {
   const sourceFirst = unnegatedExec(text, SEARCH_KO_SOURCE_FIRST);
-  if (sourceFirst) return searchCommand(sourceFirst[1] as string, sourceFirst[2] as string);
+  if (sourceFirst) return searchCommand(sourceFirst[1] as string, sourceFirst[2] as string, text);
   const textFirst = unnegatedExec(text, SEARCH_KO_TEXT_FIRST);
-  if (textFirst) return searchCommand(textFirst[2] as string, textFirst[1] as string);
+  if (textFirst) return searchCommand(textFirst[2] as string, textFirst[1] as string, text);
   const enSourceFirst = unnegatedExec(text, SEARCH_EN_SOURCE_FIRST);
-  if (enSourceFirst) return searchCommand(enSourceFirst[1] as string, enSourceFirst[2] as string);
+  if (enSourceFirst) return searchCommand(enSourceFirst[1] as string, enSourceFirst[2] as string, text);
   const enTextFirst = unnegatedExec(text, SEARCH_EN_TEXT_FIRST);
-  if (enTextFirst) return searchCommand(enTextFirst[2] as string, enTextFirst[1] as string);
+  if (enTextFirst) return searchCommand(enTextFirst[2] as string, enTextFirst[1] as string, text);
   return null;
 }
 
@@ -618,6 +627,7 @@ const JIRA_KEYWORD_KO = new RegExp(
 const EMPTY_KEYWORD = /^(?:내|나의|제|저의|그|이|저)$/;
 
 function detectJiraListing(text: string): WorkChatCommand | null {
+  if (namesIssueOrIsContent(text)) return null;
   if (JIRA_LIST_KO.test(text) || JIRA_LIST_EN.test(text)) {
     return { kind: 'lookup', source: 'jira', query: 'my-items' };
   }

@@ -342,6 +342,24 @@ describe('unqualified and keyword-scoped Jira listings (live UAT)', () => {
     expect(detectWorkChatCommand(`${'가'.repeat(101)} 관련 jira 이슈 보여줘`)).toEqual({ kind: 'usage', topic: 'search-too-long' });
   });
 
+  it('keeps a message that names an issue key or link out of the keyword filter', () => {
+    expect(detectWorkChatCommand('jira에서 PROJ-1 이슈 찾아줘')).toEqual({ kind: 'lookup', source: 'jira', query: 'search', text: 'PROJ-1 이슈' });
+    expect(detectWorkChatCommand('jira에서 https://acme.atlassian.net/browse/PROJ-1 이슈 찾아줘')).not.toEqual(
+      expect.objectContaining({ query: 'my-items' }),
+    );
+    expect(detectWorkChatCommand('PROJ-1 관련 jira 이슈 보여줘')).toBeNull();
+  });
+
+  it.each([
+    '회의 메모: 위클리카 관련 jira 이슈 보여줘',
+    '메모：jira 이슈 보여줘',
+    '"위클리카 관련 jira 이슈 보여줘"',
+    '위클리카 관련\njira 이슈 보여줘',
+    '회의 메모: jira에서 위클리카 이슈 찾아줘',
+  ])('does not claim labelled, quoted or multi-line content: %j', (text) => {
+    expect(detectWorkChatCommand(text)).not.toEqual(expect.objectContaining({ query: 'my-items' }));
+  });
+
   it('keeps writes, single-issue lookups, other sources and pasted content out of the listing', () => {
     expect(detectWorkChatCommand('jira 이슈 만들어줘')).toEqual({ kind: 'external-write-unsupported', source: 'jira' });
     expect(detectWorkChatCommand('jira 이슈에 댓글 달아줘')).toEqual({ kind: 'external-write-unsupported', source: 'jira' });

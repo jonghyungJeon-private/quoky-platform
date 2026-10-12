@@ -267,10 +267,10 @@ describe('PromptComposer (ADR-0063 precedence contract)', () => {
     expect(transcript).toContain('[Turn 1] Assistant:');
   });
 
-  it('tells GENERAL_CHAT that connector lookups go through commands, never "cannot connect"', () => {
+  it('tells GENERAL_CHAT that connector lookups go through commands, without claiming connection state', () => {
     const spec = composer.compose(mkTask(Capability.GENERAL_CHAT), emptyBundle());
     const text = JSON.stringify(spec);
-    expect(text).toContain('do not say Quoky cannot connect to them');
+    expect(text).toContain('instead of claiming whether a connection exists');
     expect(text).toContain('내 jira 이슈 보여줘');
   });
 
