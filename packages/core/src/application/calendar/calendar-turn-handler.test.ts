@@ -83,12 +83,45 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
       },
       status: 'RESPONDED',
       history: { assistant: renderCalendarHistoryNote('ko') },
+      // ADR-0120 follow-up: the structural catalog equivalent, content-free.
+      nlSelection: { entryId: 'calendar.events', args: { range: 'tomorrow' } },
     });
     expect(JSON.stringify(outcome?.history)).not.toContain('팀 회의');
     // Never a `summarize` outcome: no provider (LOCAL or REMOTE) ever sees calendar text (ADR-0110 D4).
     expect((outcome as { kind?: string }).kind).toBeUndefined();
     // Logs carry no message or event text.
     expect(JSON.stringify([...log.info.mock.calls, ...log.warn.mock.calls])).not.toMatch(/팀 회의|내일 일정/);
+  });
+
+  it('names the catalog equivalent of every span it answers (ADR-0120 follow-up)', async () => {
+    const { reader } = fakeReader(async () => [MEETING]);
+    const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
+    const selection = async (text: string) => (await handler.handle(ctx(text)) as { nlSelection?: unknown } | null)?.nlSelection;
+    expect(await selection('오늘 일정')).toEqual({ entryId: 'calendar.events', args: {} });
+    expect(await selection('이번 주 일정')).toEqual({ entryId: 'calendar.events', args: { range: 'this-week' } });
+    expect(await selection('다음 주말 일정')).toEqual({ entryId: 'calendar.events', args: { range: 'next-weekend' } });
+    expect(await selection('다음 회의 언제야?')).toEqual({ entryId: 'calendar.events', args: { range: 'upcoming' } });
+    expect(await selection('오늘 남은 일정')).toEqual({ entryId: 'calendar.events', args: { remaining: true } });
+    expect(await selection('금요일 일정')).toEqual({ entryId: 'calendar.events', args: { range: '2026-10-09' } });
+  });
+
+  it('declines a schedule question with an inexpressible qualifier only when the runtime says selection would run (ADR-0120 amendment A2)', async () => {
+    const { reader, calls } = fakeReader(async () => [MEETING]);
+    const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
+    const yielding = (text: string): TurnHandlerContext => ({ ...ctx(text), grammarYield: true });
+    // The grammar answers this on main (the whole week, ignoring "정기회의"); flag off it still does, byte for byte.
+    expect(await handler.handle(yielding('이번 주 정기회의 일정 있어?'))).toBeNull();
+    expect(await handler.handle(ctx('이번 주 정기회의 일정 있어?'))).toMatchObject({ status: 'RESPONDED', nlSelection: { entryId: 'calendar.events', args: { range: 'this-week' } } });
+    // The grammar never claimed these: the same with or without the yield.
+    for (const text of ['내일 스크럼 몇 시야', '오늘 위클리카 관련 일정', '이번 주 회의 중에 오후 거만', '이번 달 일정 보여줘', '스크럼 일정']) {
+      expect(await handler.handle(yielding(text)), text).toBeNull();
+      expect(await handler.handle(ctx(text)), `${text} (off)`).toBeNull();
+    }
+    expect(calls.length).toBe(1);
+    // No leftover qualifier: the grammar answers exactly as before even when it may yield.
+    for (const text of ['이번 주 일정 있어?', '내일 오후 일정 알려줘', '내일 9시에 뭐 있어?', '나 내일 바빠?']) {
+      expect(await handler.handle(yielding(text)), text).toEqual(await handler.handle(ctx(text)));
+    }
   });
 
   it('answers this week, the next meeting and an English question', async () => {

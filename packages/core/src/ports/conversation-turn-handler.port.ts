@@ -17,7 +17,7 @@ import type { UntrustedDocumentReadout } from '../application/untrusted-document
 // Type-only, like the readout above: the parsed connector-write request (ADR-0112 D5), plain data.
 import type { ConnectorWriteDraft } from '../application/connector-writes/connector-write-draft';
 // Type-only, like the readouts above: the closed natural-language catalog and a validated selection (ADR-0120), plain data.
-import type { NlCatalogEntry, NlSelectedCommand } from '../application/nl-routing/catalog';
+import type { NlCatalogEntry, NlGrammarSelection, NlSelectedCommand } from '../application/nl-routing/catalog';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -53,6 +53,12 @@ export interface TurnHandlerContext {
   /** The runtime's shared clock reading for this turn. */
   readonly now: IsoTimestamp;
   readonly applyAnchor: TurnHandlerAnchorSnapshot | null;
+  /**
+   * ADR-0120 amendment A2: true only when `QUOKY_NL_GRAMMAR_YIELD=on`, selection is `active` and would run for this turn
+   * (same provider family, no pending approval). A Class B listing grammar may then decline a message with a qualifier it
+   * cannot express. Absent or false: every grammar behaves exactly as before.
+   */
+  readonly grammarYield?: boolean;
   /** The active project's workspace, opened lazily on request; `null` when there is none or it cannot open. */
   resolveActiveWorkspace(): Promise<WorkspaceRef | null>;
 }
@@ -69,6 +75,12 @@ export interface TurnHandlerReply {
    * are recorded verbatim. Ignored at `control`, which records nothing.
    */
   readonly history?: { readonly user?: string; readonly assistant?: string };
+  /**
+   * ADR-0120 follow-up: set by a handler that owns a catalog entry when this deterministic grammar reply is a listing the
+   * entry also expresses (the reverse of `handleSelected`). The runtime records it as the structural `lastSelection`, so
+   * "그 중에 …" refines this listing. Absent: the reply has no catalog equivalent and the runtime clears `lastSelection`.
+   */
+  readonly nlSelection?: NlGrammarSelection;
 }
 
 /**
@@ -90,6 +102,8 @@ export interface TurnHandlerSummarizeReply {
   readonly fallbackText: MessageBody;
   /** Deterministic source links and the disclosure line, appended to a successful summary (neutral content, PLT-0). */
   readonly footer: MessageBody;
+  /** As on `TurnHandlerReply`: the catalog equivalent of this deterministic lookup (ADR-0120 follow-up). */
+  readonly nlSelection?: NlGrammarSelection;
 }
 
 /**

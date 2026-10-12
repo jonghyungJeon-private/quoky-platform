@@ -13,8 +13,8 @@ import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import type { CalendarRecentListing, ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage, type CalendarWindow } from './calendar-question';
-import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
-import type { NlResolvedRange } from '../nl-routing/symbolic-time';
+import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
+import { isoDateOf, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { parseCalendarWriteRequest } from './calendar-write-request';
 import {
@@ -109,7 +109,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     let question: ReturnType<typeof parseCalendarQuestion>;
     try {
       if (parseReminderMessage(text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      question = parseCalendarQuestion(text);
+      question = parseCalendarQuestion(text, { yieldToSelection: ctx.grammarYield === true });
     } catch {
       return null;
     }
@@ -130,7 +130,9 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
 
     const window = placeCalendarSpan(question.span, ctx.now, this.deps.timeZone);
     if (window === undefined) return this.reply(ctx, renderCalendarInvalidDate(language), 'RESPONDED', language);
-    return this.answer(ctx, window, question.remaining === true, language);
+    const answered = await this.answer(ctx, window, question.remaining === true, language);
+    // ADR-0120 follow-up: the structural `calendar.events` equivalent of what this grammar just listed.
+    return answered.status === 'FAILED' ? answered : { ...answered, nlSelection: calendarGrammarSelection(window, question.remaining === true) };
   }
 
   /** ADR-0120 D1: `calendar.events`, offered whenever this handler is registered (a reader is configured, D5). */
@@ -271,6 +273,34 @@ function hasFinished(event: CalendarEvent, nowMs: number): boolean {
   if (event.allDay) return false;
   const endMs = Date.parse(event.end);
   return Number.isFinite(endMs) && endMs <= nowMs;
+}
+
+/**
+ * The reverse of {@link calendarWindowOfRange} (ADR-0120 follow-up): the canonical `calendar.events` args of a window the
+ * calendar grammar answered — a closed range symbol, or the single local date for a span with no symbol. Defaults omitted.
+ */
+export function calendarGrammarSelection(window: CalendarWindow, remaining: boolean): NlGrammarSelection {
+  const span = window.span;
+  let range: string | undefined;
+  switch (span.kind) {
+    case 'day':
+      range = span.offset === 0 ? undefined : span.offset === 1 ? 'tomorrow' : span.offset === 2 ? 'day-after-tomorrow' : span.offset === -1 ? 'yesterday' : isoDateOf(window.startDate);
+      break;
+    case 'week':
+      range = span.which === 'next' ? 'next-week' : 'this-week';
+      break;
+    case 'weekend':
+      range = span.which === 'next' ? 'next-weekend' : 'this-weekend';
+      break;
+    case 'next':
+      range = 'upcoming';
+      break;
+    case 'weekday':
+    case 'date':
+      range = isoDateOf(window.startDate);
+      break;
+  }
+  return { entryId: 'calendar.events', args: { ...(range !== undefined ? { range } : {}), ...(remaining ? { remaining: true } : {}) } };
 }
 
 /**

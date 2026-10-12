@@ -175,8 +175,14 @@ describe('WorkChatTurnHandler — lookup mode (order 300)', () => {
   it('claims the list, lookups, searches and the write refusal but never an anchored to-do form', async () => {
     const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: 'OK' }));
     const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const selections: Record<string, unknown> = {
+      '내 할 일 보여줘': { entryId: 'todo.list', args: {} },
+      '내 Jira 이슈 보여줘': { entryId: 'jira.issues', args: {} },
+      'Slack에서 배포 검색': { entryId: 'slack.search', args: { keyword: '배포' } },
+    };
     for (const text of ['내 할 일 보여줘', '내 Jira 이슈 보여줘', 'Slack에서 배포 검색', 'Jira에 이슈 만들어줘']) {
-      expect(await handler.handle(ctxOf(text)), text).toEqual({ reply: { context: CTX, text: 'OK' } });
+      // ADR-0120 follow-up: a listing also names its catalog equivalent; the write refusal names none.
+      expect(await handler.handle(ctxOf(text)), text).toEqual({ reply: { context: CTX, text: 'OK' }, ...(selections[text] !== undefined ? { nlSelection: selections[text] } : {}) });
     }
     expect(commands.map((command) => command.kind)).toEqual(['todo.list', 'lookup', 'lookup', 'external-write-unsupported']);
     expect(await handler.handle(ctxOf('할 일 추가: 보고서'))).toBeNull();
@@ -188,13 +194,13 @@ describe('WorkChatTurnHandler — lookup mode (order 300)', () => {
     const { desk } = fakeDesk(() => outcome);
     const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
     const out = await handler.handle(ctxOf('내 Jira 이슈 보여줘'));
-    expect(out).toEqual({ kind: 'summarize', readout: READOUT, fallbackText: 'LIST', footer: outcome.kind === 'summarize' ? outcome.footer : '' });
+    expect(out).toEqual({ kind: 'summarize', readout: READOUT, fallbackText: 'LIST', footer: outcome.kind === 'summarize' ? outcome.footer : '', nlSelection: { entryId: 'jira.issues', args: {} } });
   });
 
   it('with QUOKY_WORK_SUMMARY_ENABLED=false returns the deterministic list even if the desk asks to summarize', async () => {
     const { desk } = fakeDesk(summarizeOutcome);
     const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: false, logger });
-    expect(await handler.handle(ctxOf('내 Jira 이슈 보여줘'))).toEqual({ reply: { context: CTX, text: 'LIST' } });
+    expect(await handler.handle(ctxOf('내 Jira 이슈 보여줘'))).toEqual({ reply: { context: CTX, text: 'LIST' }, nlSelection: { entryId: 'jira.issues', args: {} } });
   });
 
   it('maps a desk failure to the read-only lookup or list failure copy', async () => {

@@ -38,6 +38,39 @@ export const JIRA_CREATED_SCOPE: NlAmbiguityKey = Object.freeze({
 /** Words that show the owner asked for in-progress issues (ADR-0120 follow-up): a status value is grounded like a role. */
 export const JIRA_IN_PROGRESS_WORDS: readonly string[] = ['진행', 'in progress', 'in-progress', 'working on'];
 
+/** Words of the date field a Jira period applies to (`window`): created, updated, due (ADR-0120 D13). */
+export const JIRA_WINDOW_WORDS: readonly string[] = ['등록', '생성', '올라온', '업데이트', '수정', '변경', '마감', '기한', 'created', 'updated', 'due'];
+/** Words of a status the owner can state besides in-progress: finished or all. */
+export const JIRA_STATUS_WORDS: readonly string[] = ['완료', '종료', '닫힌', 'closed', 'resolved', 'done', 'finished', 'open'];
+/** Period words (relative days, weeks, months): a keyword carrying one is a period, not a topic. */
+export const NL_PERIOD_WORDS: readonly string[] = ['오늘', '어제', '내일', '모레', '이번', '지난', '다음', '금주', '최근', '요즘', 'today', 'yesterday', 'tomorrow', 'week', 'month', 'recent'];
+
+/**
+ * Whether a keyword the owner typed also carries something the Jira entry expresses with a typed arg (a role, a status, a
+ * date field or a period). A grammar that would take such text as a plain keyword declines, so selection binds the typed
+ * args instead (ADR-0120 follow-up 2). Derived from the entry's own argument vocabularies; no topic words.
+ */
+export function jiraKeywordCarriesQualifier(keyword: string): boolean {
+  const text = keyword.normalize('NFC').toLowerCase();
+  const words = [
+    ...JIRA_IN_PROGRESS_WORDS,
+    ...JIRA_STATUS_WORDS,
+    ...JIRA_WINDOW_WORDS,
+    ...NL_PERIOD_WORDS,
+    ...JIRA_CREATED_SCOPE.values.flatMap((value) => value.grounding ?? []),
+    '내가',
+    '제가',
+    '담당',
+    '할당',
+    '배정',
+  ];
+  // Latin words match as whole words ("weekly" is a topic, "week" a period); Korean words match inside the token (particles).
+  return words.some((word) => {
+    const lower = word.toLowerCase();
+    return /^[a-z\s-]+$/u.test(lower) ? new RegExp(`(?<![a-z])${lower.replace(/[-\s]+/gu, '[-\\s]+')}(?![a-z])`, 'u').test(text) : text.includes(lower);
+  });
+}
+
 const JIRA_ROLE_LABEL: Readonly<Record<string, { ko: string; en: string }>> = {
   assignee: { ko: '내가 담당', en: 'assigned to me' },
   reporter: { ko: '내가 보고자', en: 'reported by me' },

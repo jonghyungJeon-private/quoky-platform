@@ -35,6 +35,7 @@ import type {
   StorageProvider,
   TurnHandlerOutcome,
 } from '../ports';
+import { detectWorkChatCommand } from './work-chat/work-chat-command';
 import { ApprovalManager } from './approval-manager';
 import type { ApprovalPolicy } from './approval-policy';
 import { ContextBuilder } from './context-builder';
@@ -742,5 +743,16 @@ describe('ConversationRuntime — connector summaries are self-contained (ADR-01
     await h.send('내 Jira 이슈 보여줘');
     expect(h.prompts[0]).toContain('내 Jira 이슈 보여줘');
     expect(h.warnings.map((w) => w.msg)).not.toContain('work summary request text withheld from prompt');
+  });
+});
+
+describe('code-change anchor shield (ADR-0120 amendment A2)', () => {
+  it('reads the un-gated work-chat detection: a lookup the grammar would yield to selection keeps its shield', () => {
+    const text = '내 깃허브 PR 중에 머지 관련 보여줘';
+    expect(detectWorkChatCommand(text, { yieldToSelection: true })).toBeNull();
+    expect(ConversationRuntime.isWorkChatLookupCommand(text)).toBe(true);
+    const review = '내 지라 이슈 리뷰 완료된 거 보여줘';
+    expect(detectWorkChatCommand(review, { yieldToSelection: true })).toBeNull();
+    expect(ConversationRuntime.isWorkChatLookupCommand(review)).toBe(true);
   });
 });

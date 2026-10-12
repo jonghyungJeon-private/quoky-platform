@@ -90,6 +90,11 @@ function selectionOf(value: unknown): StoredSelection | undefined {
   return args === undefined ? undefined : { entryId: record.entryId, args };
 }
 
+/** A handler-supplied structural selection kept only when it is a closed entry with bounded plain args (else `undefined`). */
+export function sanitizeStoredSelection(selection: { readonly entryId: unknown; readonly args: unknown }): StoredSelection | undefined {
+  return selectionOf(selection);
+}
+
 /** The previous selection of this actor in this session, within 30 minutes. */
 export function readLastSelection(session: Pick<Session, 'metadata'>, actorId: Id, now: IsoTimestamp): LastSelection | undefined {
   const record = recordOf(session.metadata?.[LAST_SELECTION_METADATA_KEY]);

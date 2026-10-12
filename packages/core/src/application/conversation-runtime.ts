@@ -93,7 +93,7 @@ import {
 import type { NlCatalogEntry } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionService } from './nl-routing/nl-selection-service';
-import type { PendingQuestion } from './nl-routing/selection-state';
+import { LAST_SELECTION_METADATA_KEY, type PendingQuestion } from './nl-routing/selection-state';
 import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
@@ -1051,7 +1051,8 @@ export interface ConversationRuntimeDeps {
    * or mode `off`, keeps every turn byte-identical. The runtime only dispatches and presents: the catalog call,
    * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
    */
-  readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> & Partial<Pick<NlSelectionService, 'takePending'>>;
+  readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> &
+    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled'>>;
   readonly logger: Logger;
 }
 
@@ -2224,8 +2225,12 @@ export class ConversationRuntime {
    */
   async handle(message: InboundMessage): Promise<TurnResult> {
     try {
-      return await this.handleInner(message);
+      const result = await this.handleInner(message);
+      await this.settleNlLastSelection(message);
+      return result;
     } catch (err) {
+      // An error turn ends the follow-up window too: whatever was recorded this turn no longer describes a shown listing.
+      await this.settleNlLastSelection(message, true).catch(() => undefined);
       const safe = toSafeError(err);
       this.deps.logger.error('inbound handling failed', {
         errorName: err instanceof Error ? err.name : typeof err,
@@ -2254,6 +2259,10 @@ export class ConversationRuntime {
     // ADR-0120 D7: an open selection question ends with this owner turn whatever route answers it; selection below gets
     // the question only when the turn reaches it (`active` only; nothing is written when there is none).
     const nlPending = this.deps.nlSelection?.takePending ? await this.deps.nlSelection.takePending(session, actor.id, this.clock()) : undefined;
+    // ADR-0120 follow-up: `lastSelection` must describe the listing of the LAST turn only; see `settleNlLastSelection`.
+    if (this.deps.nlSelection?.mode === 'active' && session.metadata?.[LAST_SELECTION_METADATA_KEY] !== undefined) {
+      this.nlTurns.set(message, { sessionId: session.id, keep: false });
+    }
 
     // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
     // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the
@@ -2295,6 +2304,15 @@ export class ConversationRuntime {
         await this.deps.credentialOverrideFlow?.clear(session); // a pointer left on a consumed set: release it
       }
       session = { ...session, activeTaskId: undefined };
+    }
+    // ADR-0120 amendment A2: a Class B listing grammar may decline only when selection would run for this turn.
+    if (
+      this.deps.nlSelection?.yieldsToSelection !== undefined &&
+      this.deps.nlSelection.grammarYieldEnabled?.() === true &&
+      !lookup.pending &&
+      (await this.deps.nlSelection.yieldsToSelection(await this.nlChatProviderId({ capability: Capability.GENERAL_CHAT } as Intent, session, actor)))
+    ) {
+      this.nlYield.add(message);
     }
     if (control) {
       return this.handleControlTurn(message, session, actor, control, expiryNotice ? null : lookup.pending, expiryNotice);
@@ -3065,6 +3083,31 @@ export class ConversationRuntime {
     }
   }
 
+  /** Turns (by message object) for which the Class B listing grammars may yield to selection (amendment A2). */
+  private readonly nlYield = new WeakSet<InboundMessage>();
+
+  /** Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. */
+  private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean }>();
+
+  /**
+   * ADR-0120 follow-up: after a turn, a `lastSelection` that this turn did not itself write or record (a selection, or a
+   * handler's grammar listing) is cleared — a turn answered by chat, help, an approval, a write preview or a clarification
+   * question has no catalog equivalent, so a later "그 중에 …" must not bind to an older, unrelated listing.
+   */
+  private async settleNlLastSelection(message: InboundMessage, failed = false): Promise<void> {
+    const turn = this.nlTurns.get(message);
+    if (turn === undefined || (turn.keep && !failed)) return;
+    this.nlTurns.delete(message);
+    await this.deps.nlSelection?.clearLastSelection?.({ id: turn.sessionId });
+  }
+
+  /** Mark that this turn wrote `lastSelection` (the selection service did), so the settle step keeps it. */
+  private keepNlLastSelection(message: InboundMessage, session: Session): void {
+    const turn = this.nlTurns.get(message);
+    if (turn !== undefined) turn.keep = true;
+    else this.nlTurns.set(message, { sessionId: session.id, keep: true });
+  }
+
   /** ADR-0120 D6: the Phase A routes selection may run on, or `undefined`. */
   private static nlSelectionRoute(intent: Intent): 'chat' | 'personal-data' | undefined {
     if (intent.capability === Capability.GENERAL_CHAT && intent.type === IntentType.CHAT) return 'chat';
@@ -3158,8 +3201,16 @@ export class ConversationRuntime {
         const owner = catalog.get(decision.command.entryId);
         const serve = owner?.handler.handleSelected;
         if (owner === undefined || serve === undefined) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        // The service already wrote this selection as `lastSelection`; it stays only when the handler shows the listing.
+        this.nlTurns.set(message, { sessionId: session.id, keep: false });
         const outcome = await serve.call(owner.handler, decision.command, this.turnHandlerContext(message, session, actor, applyAnchor));
         if (outcome === null) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        // A failed read shows no listing: a later "그 중에 …" must not refine it.
+        if (outcome.kind !== 'summarize' && outcome.kind !== 'write-draft' && outcome.status === 'FAILED') {
+          this.nlTurns.set(message, { sessionId: session.id, keep: false });
+        } else {
+          this.keepNlLastSelection(message, session);
+        }
         this.deps.logger.info('nl selection dispatched', { handlerId: owner.handler.id, entryId: decision.command.entryId, sessionId: session.id });
         const result = await this.respondTurnHandler(message, session, actor, userMemoryId, outcome);
         if (decision.basis === undefined) return { kind: 'responded', result };
@@ -3396,6 +3447,7 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor | null,
   ): TurnHandlerContext {
+    const sourceMessage = message;
     const applyAnchor: TurnHandlerAnchorSnapshot | null = anchor
       ? frozenPlainSnapshot({
           status: anchor.status,
@@ -3415,6 +3467,7 @@ export class ConversationRuntime {
       actor: frozenPlainSnapshot(actor),
       now: this.clock(),
       applyAnchor,
+      ...(this.nlYield.has(sourceMessage) ? { grammarYield: true } : {}),
       resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
     });
   }
@@ -3442,13 +3495,26 @@ export class ConversationRuntime {
    * A `post-anchor` / `pre-classify` handler outcome (ADR-0096 D3): a deterministic reply is recorded like every
    * composed reply; a `summarize` outcome runs the existing SUMMARIZATION work path (ADR-0096 D4, ADR-0100 D8).
    */
-  private respondTurnHandler(
+  private async respondTurnHandler(
     message: InboundMessage,
     session: Session,
     actor: Actor,
     userMemoryId: Id,
     handled: TurnHandlerOutcome,
   ): Promise<TurnResult> {
+    // ADR-0120 follow-up: a handler that answers a listing through its deterministic grammar names the catalog
+    // equivalent; it becomes `lastSelection` exactly as a selection's would (a failed reply shows no listing).
+    if (
+      handled.kind !== 'write-draft' &&
+      handled.nlSelection !== undefined &&
+      (handled.kind === 'summarize' || handled.status !== 'FAILED') &&
+      this.deps.nlSelection?.mode === 'active' &&
+      this.deps.nlSelection.recordGrammarSelection !== undefined
+    ) {
+      if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock())) {
+        this.keepNlLastSelection(message, session);
+      }
+    }
     if (handled.kind === 'summarize') return this.handleTurnHandlerSummary(message, session, actor, userMemoryId, handled);
     if (handled.kind === 'write-draft') return this.handleConnectorWriteDraft(message, session, actor, handled);
     return this.recordTurnHandlerReply(message, session, userMemoryId, handled);

@@ -151,8 +151,13 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       this.log('info', 'drive.turn_handler.dm_only', { kind: question.kind });
       return this.reply(ctx, renderDriveDmOnly(language), 'RESPONDED', language, 'not-read');
     }
-    if (question.kind === 'recent') return this.list(ctx, { kind: 'recent' }, language);
-    if (question.kind === 'search') return this.list(ctx, { kind: 'search', name: question.name }, language);
+    if (question.kind === 'recent' || question.kind === 'search') {
+      const listed = await this.list(ctx, question.kind === 'recent' ? { kind: 'recent' } : { kind: 'search', name: question.name }, language);
+      // ADR-0120 follow-up: the structural `drive.files` equivalent of what this grammar just listed.
+      return listed.status === 'FAILED'
+        ? listed
+        : { ...listed, nlSelection: { entryId: 'drive.files', args: question.kind === 'search' ? { name: question.name } : {} } };
+    }
     return this.summarize(ctx, question.target, language);
   }
 

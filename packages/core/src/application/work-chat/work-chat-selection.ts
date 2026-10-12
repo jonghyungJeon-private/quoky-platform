@@ -1,4 +1,4 @@
-import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntryId, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntryId, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { addLocalDays } from '../reminders/zoned-time';
 import { isoDateOf } from '../nl-routing/symbolic-time';
 import type { PersonalWorkRole, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
@@ -64,6 +64,45 @@ export function workChatCommandForSelection(selected: NlSelectedCommand): WorkCh
       };
     case 'todo.list':
       return nlFlagArg(args, 'count') ? { kind: 'todo.summary' } : { kind: 'todo.list' };
+    default:
+      return null;
+  }
+}
+
+/**
+ * The reverse of {@link workChatCommandForSelection} (ADR-0120 follow-up): the canonical catalog selection of a listing
+ * the work-chat grammar answered, or `null` when the command is not a catalog read (to-do writes, hints, usage lines,
+ * connector writes). Pure; content-free apart from a keyword the owner typed, like every stored selection.
+ */
+export function nlSelectionForWorkChatCommand(command: WorkChatCommand): NlGrammarSelection | null {
+  switch (command.kind) {
+    case 'todo.list':
+    case 'todo.summary':
+      return { entryId: 'todo.list', args: {} };
+    case 'lookup': {
+      const keyword: Record<string, string> = command.text !== undefined ? { keyword: command.text } : {};
+      switch (command.source) {
+        case 'jira':
+          // "이번 주 마감" is the due window of this week (the same normalization the selector's `due` gets).
+          return command.query === 'due-this-week'
+            ? { entryId: 'jira.issues', args: { window: 'due', range: 'this-week' } }
+            : command.query === 'my-items'
+              ? { entryId: 'jira.issues', args: { ...keyword } }
+              : null;
+        case 'github':
+          return command.query === 'review-requests'
+            ? { entryId: 'github.items', args: { query: 'review-requests', ...keyword } }
+            : command.query === 'my-items'
+              ? { entryId: 'github.items', args: { ...keyword } }
+              : null;
+        case 'slack':
+        case 'confluence':
+          return command.query === 'search' && command.text !== undefined
+            ? { entryId: command.source === 'slack' ? 'slack.search' : 'confluence.search', args: { keyword: command.text } }
+            : null;
+      }
+      return null;
+    }
     default:
       return null;
   }

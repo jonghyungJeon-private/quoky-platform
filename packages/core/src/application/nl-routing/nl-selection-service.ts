@@ -4,7 +4,7 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
-import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlSelectedCommand, NlText } from './catalog';
+import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlGrammarSelection, NlSelectedCommand, NlText } from './catalog';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { buildSelectionPrompt } from './selection-prompt';
@@ -17,6 +17,7 @@ import {
   readInterpretationPreference,
   readLastSelection,
   readPendingQuestion,
+  sanitizeStoredSelection,
   withInterpretationPreference,
   type LastSelection,
   type PendingQuestion,
@@ -103,6 +104,8 @@ export type NlSelectionDecision =
 export interface NlSelectionServiceDeps {
   readonly mode: NlIntentMode;
   readonly router: { select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider> };
+  /** ADR-0120 amendment A2 (`QUOKY_NL_GRAMMAR_YIELD=on`): Class B listing grammars may yield to selection. Default off. */
+  readonly grammarYield?: boolean;
   /** Field-scoped `Session.metadata` writes (`lastSelection`, the pending question). */
   readonly sessions: Pick<SessionManager, 'updateMetadataEntry'>;
   /** The Actor repository (`StorageProvider.actors`), for the D7 preferences: re-read, replace one key, save. */
@@ -177,6 +180,58 @@ export class NlSelectionService {
       this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
     return question;
+  }
+
+  /** Cheap pre-check (no router call): the flag is on and the mode is `active`. */
+  grammarYieldEnabled(): boolean {
+    return this.mode === 'active' && this.deps.grammarYield === true;
+  }
+
+  /**
+   * ADR-0120 amendment A2: whether a Class B listing grammar may decline a message it cannot express in full — only with
+   * the yield flag on, in `active`, and when selection would run for this turn (the selector is the provider this turn's
+   * chat would reach, D6/D8). Never throws.
+   */
+  async yieldsToSelection(chatProviderId: string | undefined): Promise<boolean> {
+    if (this.mode !== 'active' || this.deps.grammarYield !== true || chatProviderId === undefined) return false;
+    try {
+      const provider = await this.deps.router.select(Capability.INTENT_SELECTION);
+      return (provider.family ?? provider.id) === chatProviderId;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * ADR-0120 follow-up: a handler answered a listing through its own deterministic grammar; keep its structural
+   * equivalent as `lastSelection` (same record, same 30-minute TTL as a selection) so "그 중에 …" refines what the owner
+   * saw. Only in `active`; a selection that is not a closed entry with bounded args is ignored. Never throws.
+   */
+  async recordGrammarSelection(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, now: IsoTimestamp): Promise<boolean> {
+    if (this.mode !== 'active') return false;
+    const stored = sanitizeStoredSelection(selection);
+    if (stored === undefined) return false;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(actorId, stored, now));
+      return true;
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+      return false;
+    }
+  }
+
+  /**
+   * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (chat, help, an approval, a write
+   * preview) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older, unrelated
+   * listing. Only in `active`; never throws.
+   */
+  async clearLastSelection(session: Pick<Session, 'id'>): Promise<void> {
+    if (this.mode !== 'active') return;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, () => undefined);
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
   }
 
   // ── active ────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import type { IsoTimestamp } from '../../domain';
 import { calendarWindowForDays } from '../../ports/calendar-window';
 import { detectReplyLanguage } from '../chat-policy/chat-response-policy';
 import { detectExternalActionRequest, isPersonalScheduleQuestion } from '../intent-classifier';
+import { leavesUnexpressedContent } from '../nl-routing/grammar-residual';
 import {
   addLocalDays,
   compareLocalDates,
@@ -79,6 +80,24 @@ const BARE_EN = new RegExp(
   String.raw`^(?:(?:please\s+)?(?:show|list|check)\s+(?:me\s+)?)?(?:my\s+)?(?:${SPAN_EN}(?:'s|’s)?\s+)?(?:calendar|schedule|agenda)(?:\s+(?:for\s+)?${SPAN_EN})?(?:\s+please)?\s*[?.!]*$`,
   'iu',
 );
+
+/**
+ * Everything the calendar grammar can express (ADR-0120 follow-up 2): its spans, its calendar nouns, availability and
+ * "remaining" wording, and the English forms of the same. A content word left after removing these is a qualifier the
+ * grammar cannot carry (see `grammar-residual.ts`), so the grammar declines instead of ignoring it.
+ */
+const SPAN_EN_WORDS = String.raw`(?:day\s+after\s+tomorrow|tomorrow|tmrw|yesterday|today|tonight|this\s+(?:morning|afternoon|evening|week(?:end)?)|(?:next|the)\s+week(?:end)?|(?:next\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)|(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?|weekend)`;
+const EN_CALENDAR_NOUN = String.raw`(?:calendar|schedule|agenda|plate|diary|meetings?|appointments?|events?|calls?|class(?:es)?|flights?|plans?|reservations?|bookings?|deadlines?)`;
+export const CALENDAR_EXPRESSED: readonly RegExp[] = [
+  new RegExp(SPAN_KO, 'u'),
+  new RegExp(String.raw`(?<![가-힣])다음\s*(?=${SPAN_NOUN_KO})`, 'u'),
+  new RegExp(SPAN_NOUN_KO, 'u'),
+  new RegExp(String.raw`남은|남았[가-힣]*|남아[가-힣]*|잡힌|잡혀[가-힣]*|하루|종일|바(?:쁘|쁜|빠)[가-힣]*|한가[가-힣]*|비어[가-힣]*|비었[가-힣]*|비는|시간|이벤트|예약|가능[가-힣]*|괜찮[가-힣]*`, 'u'),
+  // A clock time ("9시에", "3pm"): the day's list shows every time, so the grammar answers it whole (it is not a filter).
+  new RegExp(String.raw`(?:오전|오후|아침|저녁|밤|낮)?\s*\d{1,2}\s*(?:시(?:\s*\d{1,2}\s*분|\s*반)?|:\d{2})\s*(?:에|쯤|경)?|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b`, 'iu'),
+  new RegExp(SPAN_EN_WORDS, 'iu'),
+  new RegExp(String.raw`\b(?:next|upcoming)\s+${EN_CALENDAR_NOUN}\b|\b${EN_CALENDAR_NOUN}\b|\b(?:free|busy|available|planned|scheduled|doing|going\s+on|coming\s+up|up\s+to|left|remaining|rest\s+of\s+(?:the|my)\s+day)\b`, 'iu'),
+];
 
 /** How-to / setup questions about the calendar feature itself (the help-intent handler answers those). */
 const HOW_TO =
@@ -161,13 +180,16 @@ export function isCalendarWriteRequest(text: string): boolean {
  * Parse one owner message. Returns `null` for anything that is not a calendar question or calendar write request (the
  * message falls through unchanged). Never throws for any input string.
  */
-export function parseCalendarQuestion(text: string): CalendarQuestion | null {
+export function parseCalendarQuestion(text: string, options: { readonly yieldToSelection?: boolean } = {}): CalendarQuestion | null {
   const message = normalize(text);
   if (message.length === 0 || Array.from(message).length > CALENDAR_QUESTION_MAX_CHARS) return null;
   if (HOW_TO.test(message)) return null;
   const language = languageOf(message);
   if (isCalendarWriteRequest(message)) return { kind: 'write-refused', language };
   if (!(BARE_KO.test(message) || BARE_EN.test(message) || isPersonalScheduleQuestion(message))) return null;
+  // ADR-0120 amendment A2 (only when the caller says selection would run): a schedule question carrying a qualifier this grammar cannot express (a title word, a period or a
+  // time of day it has no span for) is not answered with the whole span; it falls through to natural-language selection.
+  if (options.yieldToSelection === true && leavesUnexpressedContent(message, CALENDAR_EXPRESSED)) return null;
   const span = extractSpan(message);
   return REMAINING.test(message) && span.kind !== 'next'
     ? { kind: 'events', span, language, remaining: true }

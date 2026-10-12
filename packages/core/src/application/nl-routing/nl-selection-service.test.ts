@@ -128,6 +128,48 @@ function harness(options: {
   } as Harness;
 }
 
+describe('NlSelectionService — grammar listings and lastSelection (ADR-0120 follow-up 2)', () => {
+  it('records a handler-supplied selection like a selection would (structure only, 30 minutes) and clears it', async () => {
+    const h = harness();
+    expect(await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'calendar.events', args: { range: 'this-week' } }, T0)).toBe(true);
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'this-week' }, at: T0 });
+    await h.service.clearLastSelection({ id: 'sess-1' });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('refines the recorded listing: the selector sees it as the previous selection, and it expires after 30 minutes', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'this-week', keyword: '스크럼' }), NONE] });
+    await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'calendar.events', args: { range: 'this-week' } }, T0);
+    expect(await h.decide('그 중에 스크럼만', { now: at(60_000) })).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼' } } });
+    expect(h.calls[0]?.prompt).toContain('Previous selection: {"entryId":"calendar.events","args":{"range":"this-week"}}');
+    await h.decide('그 중에 리뷰만', { now: at(40 * 60_000) });
+    expect(h.calls[1]?.prompt.split('\n').filter((line) => line.startsWith('Previous selection:')).at(-1)).toBe('Previous selection: none');
+  });
+
+  it('amendment A2: grammars may yield only with the flag on, in active, and when the chat turn would reach the selector provider', async () => {
+    const withFlag = (mode: NlIntentMode, grammarYield: boolean) => {
+      const h = harness({ mode });
+      return new NlSelectionService({ ...(h.service as unknown as { deps: ConstructorParameters<typeof NlSelectionService>[0] }).deps, mode, grammarYield });
+    };
+    expect(await withFlag('active', true).yieldsToSelection('scripted-selector')).toBe(true);
+    expect(await withFlag('active', false).yieldsToSelection('scripted-selector')).toBe(false);
+    expect(await withFlag('shadow', true).yieldsToSelection('scripted-selector')).toBe(false);
+    expect(await withFlag('off', true).yieldsToSelection('scripted-selector')).toBe(false);
+    expect(await withFlag('active', true).yieldsToSelection('another-provider')).toBe(false);
+    expect(await withFlag('active', true).yieldsToSelection(undefined)).toBe(false);
+  });
+
+  it('ignores a selection that is not a closed entry with bounded plain args, and writes nothing outside active', async () => {
+    const h = harness();
+    expect(await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'jira.write' as never, args: {} }, T0)).toBe(false);
+    expect(await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'jira.issues', args: { keyword: 'x'.repeat(300) } }, T0)).toBe(false);
+    const shadow = harness({ mode: 'shadow' });
+    expect(await shadow.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'jira.issues', args: {} }, T0)).toBe(false);
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+    expect(shadow.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+  });
+});
+
 describe('NlSelectionService — modes and the D3 call contract', () => {
   it('off: never calls the selector; no catalog: skips', async () => {
     const h = harness({ mode: 'off', script: [NONE] });

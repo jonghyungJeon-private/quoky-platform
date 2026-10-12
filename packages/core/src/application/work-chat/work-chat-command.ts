@@ -3,6 +3,8 @@ import type { Intent } from '../../domain';
 import { CONNECTOR_SEARCH_TEXT_MAX_LENGTH } from '../../ports';
 import type { PersonalWorkRole, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import { unnegatedMatch } from '../intent-negation';
+import { leavesUnexpressedContent } from '../nl-routing/grammar-residual';
+import { jiraKeywordCarriesQualifier } from '../nl-routing/wave1-entries';
 import type { ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 
 /**
@@ -465,7 +467,7 @@ function stripItemNoun(text: string): string {
   return text.replace(TRAILING_ITEM_NOUN, '').trim();
 }
 
-function searchCommand(sourceToken: string, rawText: string, whole: string): WorkChatCommand | null {
+function searchCommand(sourceToken: string, rawText: string, whole: string, yieldToSelection: boolean): WorkChatCommand | null {
   const source = sourceOf(sourceToken);
   if (!source) return null;
   const text = cleanSearchText(rawText);
@@ -474,21 +476,23 @@ function searchCommand(sourceToken: string, rawText: string, whole: string): Wor
   // Jira has no text search (named queries only): a keyword narrows the owner's own items instead. A message that
   // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
   if (source === 'jira' && !namesIssueOrIsContent(whole)) {
+    // ADR-0120 follow-up 2: a role, status, date field or period inside the "keyword" is for selection's typed args.
+    if (yieldToSelection && jiraKeywordCarriesQualifier(text)) return null;
     const keyword = cleanSearchText(stripItemNoun(text));
     return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
   }
   return { kind: 'lookup', source, query: 'search', text };
 }
 
-function detectSearch(text: string): WorkChatCommand | null {
+function detectSearch(text: string, yieldToSelection: boolean): WorkChatCommand | null {
   const sourceFirst = unnegatedExec(text, SEARCH_KO_SOURCE_FIRST);
-  if (sourceFirst) return searchCommand(sourceFirst[1] as string, sourceFirst[2] as string, text);
+  if (sourceFirst) return searchCommand(sourceFirst[1] as string, sourceFirst[2] as string, text, yieldToSelection);
   const textFirst = unnegatedExec(text, SEARCH_KO_TEXT_FIRST);
-  if (textFirst) return searchCommand(textFirst[2] as string, textFirst[1] as string, text);
+  if (textFirst) return searchCommand(textFirst[2] as string, textFirst[1] as string, text, yieldToSelection);
   const enSourceFirst = unnegatedExec(text, SEARCH_EN_SOURCE_FIRST);
-  if (enSourceFirst) return searchCommand(enSourceFirst[1] as string, enSourceFirst[2] as string, text);
+  if (enSourceFirst) return searchCommand(enSourceFirst[1] as string, enSourceFirst[2] as string, text, yieldToSelection);
   const enTextFirst = unnegatedExec(text, SEARCH_EN_TEXT_FIRST);
-  if (enTextFirst) return searchCommand(enTextFirst[2] as string, enTextFirst[1] as string, text);
+  if (enTextFirst) return searchCommand(enTextFirst[2] as string, enTextFirst[1] as string, text, yieldToSelection);
   return null;
 }
 
@@ -657,7 +661,7 @@ const JIRA_KEYWORD_KO = new RegExp(
 /** A keyword that is only a follow-up particle or filler is not a keyword. */
 const EMPTY_KEYWORD = /^(?:내|나의|제|저의|그|이|저)$/;
 
-function detectJiraListing(text: string): WorkChatCommand | null {
+function detectJiraListing(text: string, yieldToSelection: boolean): WorkChatCommand | null {
   if (namesIssueOrIsContent(text)) return null;
   if (JIRA_LIST_KO.test(text) || JIRA_LIST_EN.test(text)) {
     return { kind: 'lookup', source: 'jira', query: 'my-items' };
@@ -666,16 +670,38 @@ function detectJiraListing(text: string): WorkChatCommand | null {
   if (keyword !== undefined) {
     const cleaned = cleanSearchText(keyword);
     if (cleaned.length === 0 || EMPTY_KEYWORD.test(cleaned)) return null;
+    if (yieldToSelection && jiraKeywordCarriesQualifier(cleaned)) return null;
     if (Array.from(cleaned).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
     return { kind: 'lookup', source: 'jira', query: 'my-items', text: cleaned };
   }
   return null;
 }
 
-function detectLookup(text: string): WorkChatCommand | null {
+/**
+ * Everything the unanchored lookup phrases can express (ADR-0120 follow-up 2): a source, the owner marker, an item noun, a
+ * request verb, the due-this-week and review-request phrases. A content word left over ("내가 만든", "어제 업데이트된",
+ * "스크럼") is a role, a window or a keyword these phrases cannot carry, so they decline and selection decides.
+ */
+const LOOKUP_EXPRESSED: readonly RegExp[] = [
+  ...SOURCE_PATTERNS.map(([, pattern]) => pattern),
+  /(?<![\w./-])(?:jira|지라|git\s?hub|깃\s?허브|깃헙|slack|슬랙|confluence|컨플루언스|컨플루엔스)(?![\w/-])/i,
+  /리뷰\s*(?:를\s*)?요청\s*(?:된|받은|받아|이\s*들어온|온)?/,
+  // DUE_THIS_WEEK is not listed: its `\D{0,12}` gap would swallow a keyword between the period and 마감; the pieces below express it.
+  REVIEW_REQUEST,
+  ITEM_NOUN,
+  OWN_MARKER,
+  REQUEST_VERB,
+  /이번\s*주|금주|마감(?:인|되는)?|리뷰|요청|\bthis\s+week\b|\bdue\b|\breview\b|\brequests?\b/i,
+];
+
+function expressesWholeLookup(text: string, yieldToSelection: boolean): boolean {
+  return !yieldToSelection || !leavesUnexpressedContent(text, LOOKUP_EXPRESSED);
+}
+
+function detectLookup(text: string, yieldToSelection: boolean): WorkChatCommand | null {
   if (isDevOrExplainMessage(text)) return null;
   if (!isNegatedMessage(text)) {
-    const jiraListing = detectJiraListing(text);
+    const jiraListing = detectJiraListing(text, yieldToSelection);
     if (jiraListing) return jiraListing;
   }
   const sources = detectSources(text);
@@ -684,18 +710,19 @@ function detectLookup(text: string): WorkChatCommand | null {
   const wholeDue = DUE_WHOLE_MESSAGE.test(text);
   if (
     unnegatedMatch(text, [DUE_THIS_WEEK, DUE_WHOLE_MESSAGE]) &&
-    (wholeDue || (hasRequestVerb && isNear(text, DUE_THIS_WEEK, REQUEST_VERB)))
+    (wholeDue || (hasRequestVerb && isNear(text, DUE_THIS_WEEK, REQUEST_VERB))) &&
+    expressesWholeLookup(text, yieldToSelection)
   ) {
     const source = sources.length === 1 ? (sources[0] as WorkChatSource) : sources.length === 0 ? 'jira' : undefined;
     if (source) return { kind: 'lookup', source, query: 'due-this-week' };
   }
 
-  if (unnegatedMatch(text, [REVIEW_REQUEST]) && hasRequestVerb && isNear(text, REVIEW_REQUEST, REQUEST_VERB)) {
+  if (unnegatedMatch(text, [REVIEW_REQUEST]) && hasRequestVerb && isNear(text, REVIEW_REQUEST, REQUEST_VERB) && expressesWholeLookup(text, yieldToSelection)) {
     const source = sources.length === 1 ? (sources[0] as WorkChatSource) : sources.length === 0 ? 'github' : undefined;
     if (source) return { kind: 'lookup', source, query: 'review-requests' };
   }
 
-  if (sources.length > 0 && hasRequestVerb && OWN_MARKER.test(text) && ITEM_NOUN.test(text)) {
+  if (sources.length > 0 && hasRequestVerb && OWN_MARKER.test(text) && ITEM_NOUN.test(text) && expressesWholeLookup(text, yieldToSelection)) {
     if (sources.length === 1) return { kind: 'lookup', source: sources[0] as WorkChatSource, query: 'my-items' };
     // "내 Jira랑 GitHub 이슈" is exactly what the combined my-work view shows.
     if (sources.every((source) => source === 'jira' || source === 'github')) return { kind: 'todo.list' };
@@ -703,13 +730,13 @@ function detectLookup(text: string): WorkChatCommand | null {
   return null;
 }
 
-function detectUnanchored(text: string): WorkChatCommand | null {
+function detectUnanchored(text: string, yieldToSelection: boolean): WorkChatCommand | null {
   if (text.length > MAX_UNANCHORED_LENGTH || isReminderShaped(text)) return null;
   return (
     detectNumbered(text) ??
-    detectSearch(text) ??
+    detectSearch(text, yieldToSelection) ??
     detectExternalWrite(text) ??
-    detectLookup(text) ??
+    detectLookup(text, yieldToSelection) ??
     (isTodoList(text) ? { kind: 'todo.list' } : null) ??
     (isTodoSummaryQuestion(text) ? { kind: 'todo.summary' } : null) ??
     detectBareAddUsage(text) ??
@@ -837,11 +864,16 @@ function detectBareAddUsage(text: string): WorkChatCommand | null {
  * Detect a work-chat command in one User message, or `null`. Anchored to-do prefixes are tried first and win over every
  * other reading, including reminder phrasing (ADR-0100 D1).
  */
-export function detectWorkChatCommand(text: string): WorkChatCommand | null {
+/**
+ * `yieldToSelection` (ADR-0120 amendment A2, default off): the unanchored lookup phrases decline a message that leaves a
+ * content word they cannot express, so natural-language selection can bind it. The caller passes it only when selection
+ * would run for this turn; every other caller (the code-change shield, tests of the frozen grammar) gets the old behavior.
+ */
+export function detectWorkChatCommand(text: string, options: { readonly yieldToSelection?: boolean } = {}): WorkChatCommand | null {
   if (typeof text !== 'string') return null;
   const normalized = normalizeInput(text);
   if (normalized.length === 0) return null;
-  return detectAnchored(normalized) ?? detectConnectorWriteRequest(normalized) ?? detectUnanchored(normalized);
+  return detectAnchored(normalized) ?? detectConnectorWriteRequest(normalized) ?? detectUnanchored(normalized, options.yieldToSelection === true);
 }
 
 // -- exact connector-write requests (ADR-0112 D5, CWR-2) ---------------------------------------------------------------

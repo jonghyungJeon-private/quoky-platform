@@ -10,7 +10,7 @@ import { containsCredentialMaterial } from '../credential-guard';
 import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
 import type { NlCatalogEntry, NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
-import { WORK_CHAT_SOURCE_ENTRY, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
+import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
   EXTERNAL_WORK_FIELD_MAX_CHARS,
@@ -124,9 +124,14 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
-    const command = detectWorkChatCommand(ctx.message.text);
+    const command = detectWorkChatCommand(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
     if (!command || workChatCommandMode(command) !== this.deps.mode) return null;
-    return (await this.run(command, ctx)).outcome;
+    const { outcome } = await this.run(command, ctx);
+    // ADR-0120 follow-up: a listing this grammar answered is also its catalog selection (a failure shows no listing).
+    if (outcome === null || outcome.kind === 'write-draft') return outcome;
+    if (outcome.kind !== 'summarize' && outcome.status === 'FAILED') return outcome;
+    const nlSelection = nlSelectionForWorkChatCommand(command);
+    return nlSelection === null ? outcome : { ...outcome, nlSelection };
   }
 
   /** One command through the desk; `listed` is a deterministic lookup list's item count (for a count answer). */

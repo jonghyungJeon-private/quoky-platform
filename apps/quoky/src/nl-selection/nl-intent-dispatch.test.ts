@@ -80,6 +80,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   let sessions: import('@quoky/core').SessionManager;
   let ownerActor: Actor;
   let selectorAnswer: string | (() => never) = none;
+  let failSelected = false;
   const requests: AiRequest[] = [];
   const order: string[] = [];
   const selected: Array<{ handlerId: string; command: NlSelectedCommand }> = [];
@@ -212,7 +213,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
           selected.push({ handlerId: handler.id, command });
           const outcome = await serve(command, ctx);
           selectedOutcomes.push(outcome === null ? 'null' : (outcome as { kind?: string }).kind ?? 'reply');
-          return outcome;
+          return failSelected && outcome !== null ? ({ ...outcome, status: 'FAILED' } as typeof outcome) : outcome;
         };
       }
     }
@@ -262,6 +263,20 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   async function send(text: string, ctx: ConversationContext = context()): Promise<TurnResult> {
     seq += 1;
     return runtime.handle({ id: `nl1-${seq}`, context: ctx, text, receivedAt: new Date().toISOString() });
+  }
+
+  /** Amendment A2: flip the grammar-yield flag (and optionally the mode) on the live service for one scenario. */
+  async function withGrammarYield<T>(yieldOn: boolean, mode: 'off' | 'shadow' | 'active', run: () => Promise<T>): Promise<T> {
+    const service = (runtime as unknown as { deps: { nlSelection: { mode: string; deps: { grammarYield?: boolean } } } }).deps.nlSelection;
+    const saved = { mode: service.mode, flag: service.deps.grammarYield };
+    service.mode = mode;
+    service.deps.grammarYield = yieldOn;
+    try {
+      return await run();
+    } finally {
+      service.mode = saved.mode;
+      service.deps.grammarYield = saved.flag;
+    }
   }
 
   function marks() {
@@ -320,7 +335,11 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     return undefined;
   }
 
-  it('dispatches every golden case: positives end in their entry (selection or Class B), negatives never in a handleSelected', async () => {
+  it.each([false, true])('dispatches every golden case with QUOKY_NL_GRAMMAR_YIELD=%s: positives end in their entry (selection or Class B), negatives never in a handleSelected', async (yieldOn) => {
+    await withGrammarYield(yieldOn, 'active', () => dispatchCorpus());
+  }, 600_000);
+
+  async function dispatchCorpus(): Promise<void> {
     const failures: string[] = [];
     const routes = { selection: 0, grammar: 0, negatives: 0 };
     for (const golden of CORPUS.cases) {
@@ -378,7 +397,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(routes.selection).toBeGreaterThan(100);
     // Every wave-1 entry was served through its handler's handleSelected at least once.
     expect(new Set(selected.map((served) => served.command.entryId))).toEqual(new Set(core.NL_CATALOG_ENTRY_IDS));
-  }, 600_000);
+  }
 
   async function seedPreference(value: string): Promise<void> {
     const actor = (await storage.actors.get(ownerActor.id)) as Actor;
@@ -509,6 +528,173 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(selected.length).toBe(start.selected + 1);
     expect(result.reply.text).toContain('Jira 이슈 2개예요.');
     expect(requests.slice(start.requests).filter((request) => request.capability !== SELECTION)).toHaveLength(0);
+  });
+
+  /** The `Previous selection:` line of the last selector call since `from` (the prompt's own examples carry others). */
+  const lastPrevious = (from: number): string | undefined =>
+    requests
+      .slice(from)
+      .filter((request) => request.capability === SELECTION)
+      .at(-1)
+      ?.prompt.split('\n')
+      .filter((line) => line.startsWith('Previous selection:'))
+      .at(-1);
+
+  it('follow-up 2, defect 1: a Class B listing becomes the lastSelection, so "그 중에 스크럼만" after the calendar grammar refines the calendar (live sequence)', async () => {
+    const ctx = context();
+    // 1. The Jira grammar answers (no selector).
+    let start = marks();
+    await send('내 지라 이슈 보여줘', ctx);
+    expect(order.slice(start.order)).not.toContain('select');
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'jira.issues', args: {} });
+    // 2. "그 중에 진행중인거만" runs through NL: the previous selection is the grammar's Jira listing.
+    selectorAnswer = answer('jira.issues', { status: 'in-progress' });
+    start = marks();
+    const second = await send('그 중에 진행중인 것만 보여줘', ctx);
+    expect(order.slice(start.order), second.reply.text).toContain('select');
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"jira.issues","args":{}}');
+    // 3. The calendar grammar answers this week: lastSelection is now the calendar, no longer Jira.
+    start = marks();
+    await send('이번 주 일정 알려줘', ctx);
+    expect(order.slice(start.order)).not.toContain('select');
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'calendar.events', args: { range: 'this-week' } });
+    // 4. "그 중에 스크럼만" refines this week's calendar, not the stale Jira selection.
+    selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '스크럼' });
+    start = marks();
+    const refined = await send('그 중에 스크럼 일정만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"calendar.events","args":{"range":"this-week"}}');
+    expect(selected.slice(start.selected).map((served) => served.command.entryId)).toEqual(['calendar.events']);
+    expect(refined.reply.text).toContain('스크럼');
+    expect(refined.reply.text).not.toContain('Jira');
+  });
+
+  it('follow-up 2, defect 1: a chat turn clears lastSelection, so "그 중에 스크럼만" then gets the clarification question', async () => {
+    const ctx = context();
+    await send('이번 주 일정 알려줘', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
+    selectorAnswer = none;
+    expect((await send('요즘 날씨가 너무 덥다', ctx)).reply.text).toBe(CHAT_REPLY);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+    selectorAnswer = JSON.stringify({ entryId: 'calendar.events', args: { keyword: '스크럼' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'jira.issues', args: { keyword: '스크럼' } }] });
+    const start = marks();
+    const asked = await send('그 중에 스크럼만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: none');
+    expect(asked.reply.text).toContain('어떤 걸 찾으세요?');
+  });
+
+  it('follow-up 2, defect 1: help clears lastSelection and a different grammar listing replaces it', async () => {
+    const ctx = context();
+    for (const text of ['도움말', '이번 주 일정 알려줘']) {
+      await send('내 지라 이슈 보여줘', ctx);
+      expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
+      await send(text, ctx);
+      const kept = (await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY];
+      if (text === '도움말') expect(kept).toBeUndefined();
+      else expect(kept).toMatchObject({ entryId: 'calendar.events' });
+    }
+  });
+
+  it('follow-up 2, defect 1: a grammar-handled Jira listing followed by "그 중에 위클리카만" refines Jira', async () => {
+    const ctx = context();
+    await send('내 지라 이슈 보여줘', ctx);
+    selectorAnswer = answer('jira.issues', { keyword: '위클리카' });
+    const start = marks();
+    const refined = await send('그 중에 위클리카만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"jira.issues","args":{}}');
+    expect(refined.reply.text).toContain('위클리카');
+    expect(refined.reply.text).not.toContain('로그인 오류');
+  });
+
+  it('amendment A2, flag off (default): the grammars answer exactly as before — the qualifier is still swallowed, no selector call', async () => {
+    await withGrammarYield(false, 'active', async () => {
+      for (const text of ['이번 주 정기회의 일정 있어?', '내 지라 이슈 어제 업데이트된 거 보여줘']) {
+        const start = marks();
+        await send(text);
+        expect(order.slice(start.order), text).not.toContain('select');
+        expect(claims.slice(start.claims).length, text).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  it('amendment A2, flag on and mode active: "이번 주 정기회의 일정 있어?" is declined by the calendar grammar and selection binds the keyword', async () => {
+    await withGrammarYield(true, 'active', async () => {
+      selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '정기회의' });
+      const start = marks();
+      // Not a corpus phrasing, so the selection cache (shared by the corpus sweep) cannot answer it.
+      const result = await send('이번 주 정기회의 일정이 있나요?');
+      expect(claims.slice(start.claims).filter((claim) => claim.handlerId === 'calendar')).toEqual([]);
+      expect(order.slice(start.order)).toContain('select');
+      expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', keyword: '정기회의' }]);
+      expect(result.reply.text).toContain('정기회의');
+    });
+  });
+
+  it('amendment A2, flag on but mode off or shadow: no decline, the grammar answers as before', async () => {
+    for (const mode of ['off', 'shadow'] as const) {
+      await withGrammarYield(true, mode, async () => {
+        const start = marks();
+        await send('이번 주 정기회의 일정이 있나요?');
+        expect(claims.slice(start.claims).filter((claim) => claim.handlerId === 'calendar').length, mode).toBe(1);
+      });
+    }
+  });
+
+  it('amendment A2: with the flag on, polite forms are still answered by the grammar, even with the selector down', async () => {
+    await withGrammarYield(true, 'active', async () => {
+      selectorAnswer = () => {
+        throw new Error('selector down');
+      };
+      for (const text of ['내일 일정 알려주실래요?', '이번 주 일정 보여주시겠어요']) {
+        const start = marks();
+        await send(text);
+        expect(order.slice(start.order), text).not.toContain('select');
+        expect(claims.slice(start.claims).filter((claim) => claim.handlerId === 'calendar').length, text).toBe(1);
+      }
+      selectorAnswer = none;
+    });
+  });
+
+  it('amendment A2: with the selector down, a declined qualifier message gets honest chat, not a wrong-span answer', async () => {
+    await withGrammarYield(true, 'active', async () => {
+      selectorAnswer = () => {
+        throw new Error('selector down');
+      };
+      const start = marks();
+      const result = await send('이번 주 정기회의 일정이 있나요? 알려주세요');
+      expect(claims.slice(start.claims).filter((claim) => claim.handlerId === 'calendar')).toEqual([]);
+      expect(result.reply.text).toBe(CHAT_REPLY);
+      selectorAnswer = none;
+    });
+  });
+
+  it('follow-up 2: a selected read that FAILS does not keep lastSelection', async () => {
+    const ctx = context();
+    await send('내 지라 이슈 보여줘', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
+    selectorAnswer = answer('jira.issues', { keyword: '실패확인용' });
+    failSelected = true;
+    try {
+      const failed = await send('그 중에 실패확인용만 보여줘', ctx);
+      expect(failed.status).toBe('FAILED');
+    } finally {
+      failSelected = false;
+    }
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('follow-up 2: a turn that throws ends the follow-up window', async () => {
+    const ctx = context();
+    await send('내 지라 이슈 보여줘', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
+    const memory = (runtime as unknown as { deps: { memory: { recordShortTerm: () => Promise<never> } } }).deps.memory;
+    const spy = vi.spyOn(memory, 'recordShortTerm').mockRejectedValueOnce(new Error('boom'));
+    try {
+      const result = await send('요즘 날씨가 너무 덥네 정말', ctx);
+      expect(result.status).toBe('FAILED');
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
   });
 
   it('D6/D8 no new egress: selection runs only when the chat turn resolves to the selector\'s own provider', async () => {
