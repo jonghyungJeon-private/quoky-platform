@@ -156,3 +156,17 @@ describe('ReminderTurnHandler over the real conversation service', () => {
     expect(repository.calls).toBe(0);
   });
 });
+
+describe('ReminderTurnHandler selection entries (ADR-0120)', () => {
+  const brief = { compose: async () => '오늘의 브리핑 · 테스트' };
+  const conversation = { handleTurn: async () => null, listReply: async () => ({ context: context('x').message.context, text: '예정된 알림이 없어요.' }) };
+  const make = (enabled: boolean) =>
+    new ReminderTurnHandler({ conversation, composer: new ReminderReplyComposer(), enabled, logger: new RecordingLogger(), brief });
+
+  it('offers reminder.list and brief.today only while reminders are on', async () => {
+    expect(make(true).catalog.map((entry) => entry.id)).toEqual(['reminder.list', 'brief.today']);
+    expect(make(false).catalog).toEqual([]);
+    const selected = { entryId: 'brief.today' as const, args: {}, language: 'ko' as const };
+    expect(await make(false).handleSelected(selected, context('오늘 브리핑'))).toBeNull();
+  });
+});

@@ -82,7 +82,8 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
   get catalog(): readonly NlCatalogEntry[] {
     return [
       ...(this.deps.enabled && this.deps.conversation.listReply !== undefined ? [nlWave1Entry('reminder.list')] : []),
-      ...(this.deps.brief !== undefined ? [nlWave1Entry('brief.today')] : []),
+      // The brief rides on the reminder store: with reminders off it is not offered (and never answered).
+      ...(this.deps.enabled && this.deps.brief !== undefined ? [nlWave1Entry('brief.today')] : []),
     ];
   }
 
@@ -92,7 +93,7 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     if (selected.entryId === 'reminder.list') {
       return this.deps.conversation.listReply === undefined ? null : { reply: await this.deps.conversation.listReply(base) };
     }
-    if (selected.entryId !== 'brief.today' || this.deps.brief === undefined) return null;
+    if (selected.entryId !== 'brief.today' || this.deps.brief === undefined || !this.deps.enabled) return null;
     if (!isDirectConversation(ctx.message.context)) {
       return { reply: outboundMessage(ctx.message.context, renderBriefDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
     }
