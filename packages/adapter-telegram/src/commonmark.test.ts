@@ -58,6 +58,10 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
       expect(t(same).replace(/`/g, '')).toBe(same.replace(/`/g, ''));
     }
     expect(t('`**code**`')).toBe('**code**');
+    // Codex delta P2: backticks inside a link destination or autolink are part of it and stay byte-identical.
+    for (const exact of ['[file](https://e.test/`draft`/x)', '<https://e.test/`a`/b>', 'https://e.test/`a`/b 확인']) {
+      expect(t(exact)).toBe(exact);
+    }
     expect(t('[**굵게**](https://e.test/_a_/b)')).toBe('[**굵게**](https://e.test/_a_/b)');
     expect(t('**굵게** `a.ts` _draft_.ts')).toBe('굵게 a.ts _draft_.ts');
   });

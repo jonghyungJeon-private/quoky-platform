@@ -437,7 +437,13 @@ function translateInline(line: readonly TelegramSegment[]): string {
   const removed = units.map(() => false);
   const code = units.map(() => false);
   markCodeSpans(units, removed, code);
-  markEmphasis(units, removed, code, markGuarded(units, code));
+  const guarded = markGuarded(units, code);
+  // Codex delta P2: a code span's backticks inside a guarded token (a link destination, an autolink, a URL or path
+  // `https://e.test/`draft`/x`) are kept — the guard wins over code-span stripping, so the destination is byte-identical.
+  guarded.forEach((isGuarded, index) => {
+    if (isGuarded) removed[index] = false;
+  });
+  markEmphasis(units, removed, code, guarded);
   let out = '';
   units.forEach((unit, index) => {
     if (!removed[index]) out += unit.text;
