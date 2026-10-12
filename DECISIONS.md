@@ -20177,7 +20177,6 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   2026-10-08 notes; the orchestrator recommends keeping them parked.
 - **Ratification authorizes no Strict action by itself.** The v16 apply, each `.env.local` edit, enabling the Sheets
   API, and the live sessions each still need the owner's confirmation for that target.
-=======
 ## Personal v5 PLT-1 implementation note — untrusted spans for the remaining Core values (2026-10-12)
 
 - **Status:** Implementation note under the Personal v5 plan, track PLT-1 (wave 1). PLT-0 already decided the span type;
@@ -20206,9 +20205,11 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
     `composeRemoteBranchCleanupSucceeded`, `composeRemoteBranchAlreadyCleaned`;
   - `gitBranchReplies.created`, `.switched`, `.refused` (`branch-exists`, `branch-missing`) in `git-branch-command.ts`
     (they now return a `MessageBody`).
-- **Which guard.** `markup` for paths, branch names, repository (`owner/repo`, one span), remote/branch, commit messages;
-  it escapes formatting and mentions on Discord, so a path such as `docs/@everyone <@123>.md` can no longer ping or
-  mask a link. A PR URL is an untrusted span under the `mentions` guard, not a `link` span: Discord keeps the URL as it
+- **Which guard.** Paths, branch names, repositories (`owner/repo`, one span) and remote/branch use a new guard, `path`
+  (an additive member of `UntrustedTextGuard`; Telegram ignores guards, so it is verbatim there). On Discord it escapes
+  the Markdown characters, `@everyone`/`@here` and every `<`, but keeps a plain `@`, so `packages/@org/x.ts` copied back
+  from the chat still resolves (review P3-d). A commit message is free text and uses `markup`. A path such as
+  `docs/@everyone <@123>.md` can no longer ping or mask a link. A PR URL is an untrusted span under the `mentions` guard, not a `link` span: Discord keeps the URL as it
   was (an autolink and embed still work, underscores unescaped) and neutralizes only what could notify someone; Telegram
   shows it verbatim. The diff blocks' labels, the file lists and the out-of-scope warning share `renderFileList` and
   `renderOutOfScopeWarning`.
@@ -20217,10 +20218,12 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
     the branch in `gitBranchReplies.created`): the span already protects it on both platforms, and a Discord escape inside
     a code span would show its backslashes.
   - A value inside a fenced block (diff text, an excerpt, the PR title and body): verbatim on both platforms.
-  - The structured `OutboundMessage.preview` artifact (`header`, `warning`, `footer`) stays plain strings by contract;
-    the adapter translates them (Telegram `translatePreviewCopy`). Residual: a path named in that header or warning (the
-    one-time-send notice, the out-of-scope warning) can still lose a `*` on Telegram. Moving the artifact to
-    `MessageBody` is a port change, left to a later track.
+  - The structured `OutboundMessage.preview` artifact (`header`, `warning`, `footer`) stays plain strings by contract
+    (Discord sends them as given, Telegram translates them with `translatePreviewCopy`). Review P2-2: the outside paths in
+    its header (the one-time-send notice) and warning (the out-of-scope list, the AI's raw proposed paths) are written
+    as inline code through `sanitizeTypedPath` (backticks and control characters stripped, 80 characters), which is
+    literal on both platforms, so `[확인](https://evil.example)` cannot mask a link and `*secret*` keeps its markers.
+    Moving the artifact to `MessageBody` would be a port change, left to a later track.
   - Owner-typed text echoed as the owner's own words (a reminder body in `reminder-reply-composer.ts` and the brief): not
     an outside value, and Discord has echoed it as typed since v1. Not changed.
   - Fixed copy that names a setting (`QUOKY_GIT_REMOTE_ENABLED`), the validation command (`pnpm test`, a closed set) and
@@ -20228,7 +20231,7 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   - The `ApprovalRequest` summaries built in `conversation-runtime.ts`: stored records shown by the operations UI, not
     chat copy.
 - **Discord output.** The 793 PLT-0 golden cases are byte-identical. A reply with ordinary values (`src/app.ts`,
-  `feature/login`) renders as before, so does every other Discord text. The 106 new `plt1.*` cases (53 replies, an ordinary
+  `feature/login`) renders as before, so does every other Discord text. The 110 `plt1.*` cases (53 replies, an ordinary
   and a hostile variant) were captured from the pre-PLT-1 code and from the new code
   (`QUOKY_UPDATE_RENDER_GOLDEN=1`, never by hand). All 53 ordinary cases are identical to before. 52 of the 53 hostile
   cases changed, for one reason: the old copy wrote the value unescaped, so on Discord a path, branch, repository or
@@ -20241,18 +20244,26 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   out-of-scope and executed, push approval (2), executed (2) and already pushed, PR approval, created and reused, PR status,
   merge approval, succeeded and already merged, local cleanup (2), remote cleanup requested, deleted, absent and
   already cleaned, and the four branch replies. The one unchanged hostile case is `pr.already-created`: its only outside
-  value is the URL. The 106 cases are in their own commit.
-- **Budgets.** A reply with spans is clamped on its rendering (`clipMessage`), as PLT-0 does elsewhere. The diff-block
-  fitting decisions measure the plain length, which keeps every ordinary reply's layout exactly as before; a hostile path
-  whose escaping pushes a reply over 1,900 characters on Discord is cut at the budget by the final clamp (the same
-  backstop as before), and the lossless preview delivery still carries the whole diff.
+  value is the URL. Review P2-1 added four overflow cases (`plt1.overflow.*`: 30 snake_case untracked paths with a 200-line
+  diff, a long status list, and two 169-character paths in a patch and a diff preview); the `path` guard changed 15 of the
+  hostile cases only by no longer inserting a zero-width space after the `@` of `<@123>`/`@org`. The corpus is one module
+  (`application/plt1-corpus.ts`) shared by the Core, Discord and Telegram tests. The 110 cases are in their own commit.
+- **Budgets (review P2-1).** The diff-block fitting decisions measure the plain length, which keeps every ordinary
+  reply's layout exactly as before, but the clip runs on the platform's rendering, and Discord's escaping can make an
+  ordinary snake_case path list longer than its plain text. So the bounded replies (`composeGitDiffPreview`,
+  `composeGitStatusPreview`, and the diff and patch previews through `assembleBoundedBody`) keep their fixed tail (the
+  validation line and read-only disclaimers, or the footer and out-of-scope warning) out of the clipped head
+  (`clampKeepingTail`: `clipMessage(head, 1900, 'utf16', { after: tail })`). The tail is measured as rendered, a body that
+  fits is byte-identical to before, and an overflow cuts the path list or the diff with `…`, never the mandatory wording.
+  Residual: if the cut lands inside the last diff fence, the tail follows an unclosed fence on Discord (still visible).
 - **Telegram.** Paths, branches and the rest now pass through verbatim, e.g. `src/_x_/*y*.ts` and a bare `*y*`, which the
   TG-3 translation used to turn into `y`. `packages/adapter-telegram/src/plt1-replies.test.ts` renders the whole corpus
   and checks every hostile value that a reply names reaches Telegram exactly as given.
 - **Guard rail.** `packages/core/src/outside-values-in-copy.test.ts` scans the non-test Core reply modules (those that
   import `message-rendering`, plus `git-branch-command.ts`) for a template literal whose `${}` names an outside value
-  (`path`, `files`, `branch`, `owner`, `repo`, `remote`, `commitMessage`, `prUrl`, `title`, ...) and is neither a `copy`
-  template, nor handed to `outside(`/`untrustedText(`, nor wrapped in an inline code span. Limits: it is line-based
+  (`path`, `files`, `branch`, `owner`, `repo`, `remote`, `commitMessage`, `prUrl`, `title`, ...) and is not built
+  by `outside(`, `outsideList(`, `repositoryPart(`, `urlPart(`, `renderFileList(` or `untrustedText(` (also inside a `copy`
+  template, which accepts plain strings) and is not wrapped in an inline code span. Limits: it is line-based
   (single-line templates only) and name-based (a value under another name, such as `from`, is not caught), so
   `response-composer-spans.test.ts` also pins every converted reply (no hostile value in a plain string node outside a
   fence or code span; `text` equals the plain rendering of `content`). `conversation-runtime.ts` is exempt with its

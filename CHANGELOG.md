@@ -40,8 +40,10 @@ No migration, no new DI token, no port change; `ConversationRuntimeDeps` stays 3
   markers); Discord escapes them like every other outside value, so a path or commit message with `@everyone`,
   `<@id>`, `[x](url)` or Markdown can no longer ping, mask a link or format the reply (an intended fix: the old copy did
   not escape them). The plain text of every reply, ordinary Discord output and the 793 PLT-0 golden cases are unchanged;
-  106 new golden cases pin the converted replies, 52 of them (hostile values) with the new escaped output. Values inside
-  inline code spans and fenced blocks stay as they were.
+  110 new golden cases pin the converted replies, 52 of them (hostile values) with the new escaped output. Paths use a `path` guard (a plain `@` is kept so a copied path still resolves). Values inside
+  inline code spans and fenced blocks stay as they were. The bounded git and patch previews keep their fixed tail (validation
+  line, disclaimers, footer) when Discord escaping lengthens the text, and the preview artifact names outside paths as inline
+  code.
 - **A source scan guards the rule.** `outside-values-in-copy.test.ts` flags a new plain template literal in a Core reply
   module that names a path, branch, repository, commit message or URL; a Telegram test renders the whole corpus.
 
