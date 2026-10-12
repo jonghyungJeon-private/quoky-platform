@@ -33,10 +33,10 @@ means recorded in `docs/uat/personal-v4-qa-record.md`; everything else is offlin
 재요청할게. Notion 도 마찬가지야." The keys and Notion stay deferred until the owner asks for them again. PRV-1/PRV-2 live and the LRN-5 round trip therefore stay Pending, and
 Notion stays the unscheduled P3 candidate of v4 decision 20.
 
-**In progress elsewhere (v4 polish PR, branch `claude/v4-residual-polish`):** three small residuals: listing numbers that survive a
+**Merged before v5 work began (v4 polish PR #174, 2026-10-12):** three small residuals: listing numbers that survive a
 restart (the in-memory list ↔ id mapping of GML-1 and DRV-1), the help-line bound (ADR-0096 D6 bound of 14 with Gmail
-and Drive on), and Telegram links and block quotes (TG-3 "translation scope"). v5 does not own those files until that PR
-merges (section 4, hot-file lane).
+and Drive on), and Telegram links and block quotes (TG-3 "translation scope"). The hot-file lane (section 4) is
+therefore open to v5.
 
 ### 1.2 What v5 is for
 
@@ -92,11 +92,11 @@ means a re-entry condition.
 | R4 | Drive listings include files shared with the owner (a stranger can place a hostile name) | ADR-0118 DRV-1 residual | **Accept** (inside the ADR-0118 threat model). An owned-only filter is optional (decision 9) |
 | R5 | Drive exports only the first sheet of a spreadsheet | ADR-0118 DRV-1 residual | **Fix (P2):** DRV-2b, through the Sheets API under the existing `drive.readonly` scope (decision 8) |
 | R6 | Markdown in Core values without an `untrusted` span (some `response-composer.ts` paths interpolate file paths) may lose a `*`/`_` pair on Telegram; fidelity only, never markup | ADR-0114 TG-3 "translation scope" | **Fix (P2):** PLT-1 |
-| R7 | The OAuth token response is read with `response.json()`, unbounded (pinned to `oauth2.googleapis.com`) | ADR-0118 GML-1 and DRV-1 residuals; the same call is in `connector-calendar-google/src/oauth.ts` | **Fix (P1):** HARD-1 |
+| R7 | The OAuth token response is read with `response.json()`, unbounded (pinned to `oauth2.googleapis.com`) | ADR-0118 GML-1 and DRV-1 residuals; the same call is in `connector-calendar-google/src/oauth.ts` | **Fixed (P1):** HARD-1, merged in #175 (2026-10-12) |
 | R8 | `NO_OWNER` uses a notice attempt like a retryable `NOT_SENT`; three ownerless hours give up that month's DM | ADR-0115 PRV-3 residual ("owner decision, kept as is") | **Accept** (already an owner decision) |
 | R9 | The ops-UI token rotates at every start, so every restart or deploy needs a new sign-in | ADR-0113 D3 (by design); live-verified (v3 QA record A9) | **Accept.** It is the security property, not a defect |
 | R10 | Discord web login was tab-scoped in the owner's QA browser tooling | Orchestrator report; no repository record | **Tooling note only.** DOC-F adds one line to the QA-record conventions; no product work |
-| R11 | Listing numbers lost on restart; help-line bound; Telegram links and quotes | GML-1/DRV-1/TG-3 residuals | **In progress (v4 polish PR)** |
+| R11 | Listing numbers lost on restart; help-line bound; Telegram links and quotes | GML-1/DRV-1/TG-3 residuals | **Fixed:** v4 polish PR, merged in #174 (2026-10-12) |
 | R12 | Gateway-routed and code-work runs record no usage; a run that fails after the provider call records none; counts, not money | ADR-0115 PRV-3 residuals | **Accept.** The owner's chat runs on subscription CLIs (COST-1 parked) |
 | R13 | `이 메일` means the single entry of the last list; replying to a listed message is not supported | ADR-0118 GML-1 residual | **Fix (P2):** GML-2 |
 | R14 | HTML-only mail keeps CSS-hidden text in a summary | ADR-0118 GML-1 residual (review P3-3) | **Accept** (untrusted readout, no tool surface) |
