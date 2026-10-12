@@ -3,7 +3,7 @@ import { AiProviderError } from '../../errors';
 import { AiFailureKind, Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { NlSelectionService, choiceIndex, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
+import { NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   INTERPRETATION_PREFERENCE_TTL_MS,
@@ -258,6 +258,42 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
       expect(h.calls).toHaveLength(1);
       expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
     }
+  });
+
+  it('resolves clarification answers strictly (numbers, ordinals, exact names; negation; no prefix match; cancel)', () => {
+    const options = [['Jira 이슈 조회', 'jira', '지라', '이슈'], ['GitHub 이슈·PR 조회', 'github', '깃허브']];
+    expect(resolveChoice('첫 번째 말고 두 번째', options)).toEqual({ kind: 'pick', index: 1 });
+    expect(resolveChoice('2번', options)).toEqual({ kind: 'pick', index: 1 });
+    expect(resolveChoice('두번째', options)).toEqual({ kind: 'pick', index: 1 });
+    expect(resolveChoice('아니 1', options)).toEqual({ kind: 'pick', index: 0 });
+    expect(resolveChoice('지라', options)).toEqual({ kind: 'pick', index: 0 });
+    expect(resolveChoice('지라로 해줘', options)).toEqual({ kind: 'pick', index: 0 });
+    expect(resolveChoice('GitHub 이슈·PR 조회', options)).toEqual({ kind: 'pick', index: 1 });
+    expect(resolveChoice('1번 말고', options)).toEqual({ kind: 'pick', index: 1 });
+    expect(resolveChoice('not 1', options)).toEqual({ kind: 'pick', index: 1 });
+    expect(resolveChoice('둘 다 아니야', options)).toEqual({ kind: 'cancel' });
+    expect(resolveChoice('취소', options)).toEqual({ kind: 'cancel' });
+    expect(resolveChoice('1이랑 2', options)).toEqual({ kind: 'unclear' });
+    expect(resolveChoice('3번', options)).toEqual({ kind: 'unclear' });
+    // Never a prefix match inside a longer sentence: these are new requests.
+    expect(resolveChoice('지라 이슈 다시 보여줘', options)).toEqual({ kind: 'none' });
+    expect(resolveChoice('1분 뒤에 알려줘', options)).toEqual({ kind: 'none' });
+    expect(resolveChoice('다음 주 일정', [['담당'], ['보고'], ['둘 다', '다']])).toEqual({ kind: 'none' });
+    expect(resolveChoice('담당만', [['담당'], ['보고'], ['둘 다', '다']])).toEqual({ kind: 'pick', index: 0 });
+    expect(resolveChoice('둘 다요', [['담당'], ['보고'], ['둘 다', '다']])).toEqual({ kind: 'pick', index: 2 });
+  });
+
+  it('a negated answer, a cancel and an unclear answer are handled end to end without a second call', async () => {
+    const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+    const h = harness({ script: [ask, ask] });
+    await h.decide('내 이슈');
+    expect(await h.decide('첫 번째 말고 두 번째', { now: at(1000) })).toMatchObject({ kind: 'execute', command: { entryId: 'github.items' } });
+    await h.decide('내 이슈 다시', { now: at(2000) });
+    expect(await h.decide('1이랑 2', { now: at(3000) })).toMatchObject({ kind: 'ask', text: expect.stringContaining('어떤 걸 찾으세요?') });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ kind: 'entry' });
+    expect(await h.decide('둘 다 아니야', { now: at(4000) })).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+    expect(h.calls).toHaveLength(2);
   });
 
   it('a pending question expires after 5 minutes, and an unrelated reply ends it (routed normally)', async () => {

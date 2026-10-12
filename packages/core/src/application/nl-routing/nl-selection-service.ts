@@ -307,6 +307,10 @@ export class NlSelectionService {
   }
 
   /** A reply to the open numbered question: `1`, `2.`, `지라`, `담당` … or `undefined` when it is not an answer. */
+  /**
+   * A reply to the open numbered question (D7), resolved strictly (`resolveChoice`): a pick completes it, a cancel closes
+   * it with a fixed note, an unclear answer asks the same question again, anything else is `undefined` (routed normally).
+   */
   private async answerPending(pending: PendingQuestion, turn: NlSelectionTurn, language: 'ko' | 'en'): Promise<NlSelectionDecision | undefined> {
     const offered = offeredMap(turn.entries);
     if (pending.kind === 'entry') {
@@ -314,12 +318,19 @@ export class NlSelectionService {
         const entry = offered.get(option.entryId);
         return entry === undefined ? [] : [entry.label.ko, entry.label.en, ...entry.aliases];
       });
-      const index = choiceIndex(turn.text, labels);
-      if (index === undefined) return undefined;
-      const option = pending.options[index] as StoredSelection;
-      const validated = validateSelection(option, this.validationContext(turn, '', option.args));
-      if (!validated.ok) return undefined;
-      return this.complete(validated.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, '');
+      const resolved = resolveChoice(turn.text, labels);
+      if (resolved.kind === 'none') return undefined;
+      if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
+      const validated = pending.options.map((option) => validateSelection(option, this.validationContext(turn, '', option.args)));
+      if (resolved.kind === 'unclear') {
+        const options = validated.flatMap((result) => (result.ok ? [result.value] : []));
+        if (options.length === 0) return undefined;
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
+        return { kind: 'ask', text: renderEntryQuestion(options, language) };
+      }
+      const picked = validated[resolved.index];
+      if (picked === undefined || !picked.ok) return undefined;
+      return this.complete(picked.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, '');
     }
     const entry = offered.get(pending.selection.entryId);
     const key = entry?.ambiguity?.find((candidate) => candidate.key === pending.key);
@@ -328,9 +339,14 @@ export class NlSelectionService {
       const known = key.values.find((candidate) => candidate.value === value);
       return known === undefined ? [] : [known.label.ko, known.label.en, ...known.aliases];
     });
-    const index = choiceIndex(turn.text, labels);
-    if (index === undefined) return undefined;
-    const value = pending.values[index] as string;
+    const resolved = resolveChoice(turn.text, labels);
+    if (resolved.kind === 'none') return undefined;
+    if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
+    if (resolved.kind === 'unclear') {
+      await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
+      return { kind: 'ask', text: renderPreferenceQuestion(key, language) };
+    }
+    const value = pending.values[resolved.index] as string;
     await this.savePreference(turn, key.key, value);
     const args = { ...pending.selection.args, [key.arg]: value };
     const validated = validateSelection({ entryId: entry.id, args }, this.validationContext(turn, '', args));
@@ -528,33 +544,88 @@ export function languageOf(text: string): 'ko' | 'en' {
   return /[ㄱ-ㆎ가-힣]/u.test(text) ? 'ko' : 'en';
 }
 
-const ORDINALS_KO = ['첫', '두', '세', '네'];
+/** How a reply resolves an open numbered question (ADR-0120 D7). */
+export type ChoiceResolution =
+  | { readonly kind: 'pick'; readonly index: number }
+  /** "둘 다 아니야", "취소": the question is closed and nothing runs. */
+  | { readonly kind: 'cancel' }
+  /** An answer that names options but not exactly one ("1이랑 2", "첫 번째 말고" of three): asked again. */
+  | { readonly kind: 'unclear' }
+  /** Not an answer (a new request, a longer sentence): the question ends and the message is routed normally. */
+  | { readonly kind: 'none' };
+
+const ORDINAL_PATTERNS: ReadonlyArray<readonly [RegExp, number]> = [
+  [/(?:첫|1)\s*번\s*째|첫\s*째|\bfirst\b/gu, 0],
+  [/(?:두|2)\s*번\s*째|둘\s*째|\bsecond\b/gu, 1],
+  [/(?:세|3)\s*번\s*째|셋\s*째|\bthird\b/gu, 2],
+  [/(?:네|4)\s*번\s*째|넷\s*째|\bfourth\b/gu, 3],
+];
+const NUMBER = /(?<![0-9])([1-9])(?:\s*번)?(?![0-9])/gu;
+/** A negation or correction right after a mention ("1번 말고", "첫 번째 아니고") or right before it ("not 1"). */
+const NEGATED_AFTER = /^\s*(?:은|는|이|가)?\s*(?:말고|아니고|아니라|빼고|제외하고|싫고|아니야|아냐)/u;
+const NEGATED_BEFORE = /(?:\bnot|\bexcept|instead\s+of)\s*$/u;
+const CANCEL =
+  /^(?:(?:둘|셋|넷)\s*다|모두|전부|다|none|neither|both)\s*(?:아니(?:야|요|에요)?|아냐|싫어|별로|no|not)|^(?:취소|그만|됐어(?:요)?|아니(?:야|요)?|아뇨|no|nope|cancel|never\s*mind)$/u;
+const LEADING_CORRECTION = /^(?:아니(?:요|야)?|아뇨|no|nope)[,\s]+/u;
+/** Words an answer may carry besides the mention itself ("2번이요", "지라로 해줘", "담당만"). */
+const FILLER =
+  /(?:번|째|이요|에요|예요|요|으로|로|만|걸로|그걸로|거|것|할게|해\s*줘|해\s*주세요|해줘|선택|그럼|음|이랑|랑|하고|\band\b|\bor\b|please|the|one|option|it|,|\.)/gu;
 
 /**
- * The option a reply picks: a bare number (`1`, `2번`, `1.`), a Korean ordinal (`첫 번째`), or a label/alias that
- * matches exactly one option. Deterministic; `undefined` when the reply is not an answer.
+ * Resolve a reply to an open question strictly: a number or ordinal alone, or an exact option label/alias, plus at
+ * most fillers and particles. A negated mention ("첫 번째 말고 두 번째", "not 1") picks the option that is not negated;
+ * "아니 1" is a correction that picks 1; "둘 다 아니야" cancels. Nothing is prefix-matched inside a longer sentence: any
+ * other word left over makes the reply not an answer.
  */
-export function choiceIndex(reply: string, labels: readonly (readonly string[])[]): number | undefined {
-  const text = normalizeForMatch(reply).replace(/[.!?。！？~]+$/u, '').trim();
-  if (text.length === 0 || text.length > 40) return undefined;
-  const number = /^(\d)\s*(?:번|번째|번이요|번요)?(?:\s*(?:요|이요|으로|로|할게|할게요|이야|입니다))?$/u.exec(text);
-  if (number) {
-    const index = Number(number[1]) - 1;
-    return index >= 0 && index < labels.length ? index : undefined;
+export function resolveChoice(reply: string, labels: readonly (readonly string[])[]): ChoiceResolution {
+  let text = normalizeForMatch(reply).replace(/[!?。！？~…]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (text.length === 0 || text.length > 40) return { kind: 'none' };
+  if (CANCEL.test(text)) return { kind: 'cancel' };
+  text = text.replace(LEADING_CORRECTION, '');
+  const mentions: Array<{ index: number; negated: boolean }> = [];
+  let working = text;
+  const consume = (pattern: RegExp, indexOf: (match: RegExpExecArray) => number): void => {
+    for (const match of [...working.matchAll(pattern)]) {
+      const at = match.index ?? 0;
+      const end = at + match[0].length;
+      const after = NEGATED_AFTER.exec(working.slice(end));
+      const negated = after !== null || NEGATED_BEFORE.test(working.slice(0, at));
+      mentions.push({ index: indexOf(match as RegExpExecArray), negated });
+      const blankEnd = after !== null ? end + after[0].length : end;
+      working = `${working.slice(0, at)}${' '.repeat(blankEnd - at)}${working.slice(blankEnd)}`;
+    }
+  };
+  // Labels and aliases first, longest first, so "GitHub 이슈·PR 조회" is not read as the alias "이슈".
+  const aliases = labels
+    .flatMap((words, index) => words.map((word) => ({ word: normalizeForMatch(word), index })))
+    .filter((alias) => alias.word.length > 0)
+    .sort((a, b) => b.word.length - a.word.length);
+  for (const alias of aliases) {
+    consume(new RegExp(alias.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gu'), () => alias.index);
   }
-  const ordinal = ORDINALS_KO.findIndex((word) => new RegExp(`^${word}\\s*번째`, 'u').test(text));
-  if (ordinal >= 0) return ordinal < labels.length ? ordinal : undefined;
-  const matches = labels
-    .map((aliases, index) => ({ index, hit: aliases.some((alias) => matchesAlias(text, normalizeForMatch(alias))) }))
-    .filter((candidate) => candidate.hit);
-  return matches.length === 1 ? (matches[0] as { index: number }).index : undefined;
+  for (const [pattern, index] of ORDINAL_PATTERNS) consume(new RegExp(pattern.source, 'gu'), () => index);
+  consume(new RegExp(NUMBER.source, 'gu'), (match) => Number(match[1]) - 1);
+  if (mentions.length === 0) return { kind: 'none' };
+  working = working.replace(/\b(?:not|except|instead\s+of)\b/gu, ' ');
+  if (working.replace(FILLER, ' ').trim().length > 0) return { kind: 'none' };
+  if (mentions.some((mention) => mention.index < 0 || mention.index >= labels.length)) return { kind: 'unclear' };
+  const chosen = new Set(mentions.filter((mention) => !mention.negated).map((mention) => mention.index));
+  const refused = new Set(mentions.filter((mention) => mention.negated).map((mention) => mention.index));
+  if (chosen.size === 1) {
+    const [index] = [...chosen] as [number];
+    return refused.has(index) ? { kind: 'unclear' } : { kind: 'pick', index };
+  }
+  if (chosen.size === 0) {
+    const remaining = labels.map((_words, index) => index).filter((index) => !refused.has(index));
+    return remaining.length === 1 ? { kind: 'pick', index: remaining[0] as number } : remaining.length === 0 ? { kind: 'cancel' } : { kind: 'unclear' };
+  }
+  return { kind: 'unclear' };
 }
 
-function matchesAlias(text: string, alias: string): boolean {
-  if (alias.length === 0) return false;
-  if (text === alias) return true;
-  // "지라로", "담당만", "둘 다요": the alias followed by a short particle or ending only.
-  return text.startsWith(alias) && /^(?:\s*(?:로|으로|요|만|이요|이에요|예요|할게요?|해줘|해 줘|기준|으로 해줘|로 해줘|)\s*)$/u.test(text.slice(alias.length));
+/** The option a reply picks, or `undefined` (kept for callers that only need a pick). */
+export function choiceIndex(reply: string, labels: readonly (readonly string[])[]): number | undefined {
+  const resolved = resolveChoice(reply, labels);
+  return resolved.kind === 'pick' ? resolved.index : undefined;
 }
 
 function pick(text: NlText, language: 'ko' | 'en'): string {
@@ -586,6 +657,10 @@ function renderEntryQuestion(options: readonly NlValidatedSelection[], language:
 function renderPreferenceQuestion(key: NlAmbiguityKey, language: 'ko' | 'en'): string {
   const lines = key.values.map((value, index) => `${index + 1}. ${pick(value.label, language)}`);
   return [pick(key.question, language), ...lines, language === 'en' ? 'Reply with the number.' : '번호로 답해 주세요.'].join('\n');
+}
+
+function renderCancelled(language: 'ko' | 'en'): string {
+  return language === 'en' ? 'OK, I cancelled that choice. Ask again whenever you like.' : '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.';
 }
 
 function renderUsageQuestion(entry: NlCatalogEntry, language: 'ko' | 'en'): string {
