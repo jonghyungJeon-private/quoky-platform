@@ -590,6 +590,17 @@ describe('INT-3 — mail and Drive are DM-only, summary only on request, inert o
     const todosBefore = (await full.turn(discordDm, '할 일 목록')).text;
     const repository = full.app.get<{ listActiveByActor(actorId: string): Promise<Reminder[]> }>(full.core.REMINDER_REPOSITORY);
     const remindersBefore = (await repository.listActiveByActor(actorId)).length;
+    // Everything an action could leave behind: approvals (any status, which a connector-write preview also creates),
+    // patches, workspace changes, command executions and code proposals.
+    const sideEffects = async (): Promise<number[]> => [
+      (await full.storage.approvals.list()).length,
+      (await full.storage.patches.list()).length,
+      (await full.storage.workspaceChanges.list()).length,
+      (await full.storage.commandExecutions.list()).length,
+      (await full.storage.codeGenerations.list()).length,
+      (await full.storage.codeProposals.list()).length,
+    ];
+    const sideEffectsBefore = await sideEffects();
 
     await full.turn(discordDm, '안 읽은 메일');
     await full.turn(discordDm, '2번 메일 요약해줘');
@@ -600,6 +611,7 @@ describe('INT-3 — mail and Drive are DM-only, summary only on request, inert o
     expect((await full.turn(discordDm, '할 일 목록')).text).toBe(todosBefore);
     expect(todosBefore).not.toContain('송금');
     expect((await repository.listActiveByActor(actorId)).length).toBe(remindersBefore);
+    expect(await sideEffects()).toEqual(sideEffectsBefore);
     // Every Google call is a token refresh (POST) or a read (GET); nothing was sent, shared or written.
     for (const record of [...full.fetchesTo(GMAIL), ...full.fetchesTo(DRIVE)]) expect(record.method).toBe('GET');
     for (const record of full.fetches.filter((entry) => entry.method !== 'GET')) expect(record.url).toBe('https://oauth2.googleapis.com/token');
