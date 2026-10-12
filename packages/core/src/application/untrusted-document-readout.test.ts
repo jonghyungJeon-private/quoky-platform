@@ -285,3 +285,18 @@ describe('Codex delta P2: a line prefix exposed by stripping is neutralized too'
     }
   });
 });
+
+describe('Codex delta P2 round 2: stripping never creates any line-start markup', () => {
+  it.each([['**>** Quote'], ['**```** Code'], ['**1.** Item'], ['**+** plus'], ['**|** pipe'], ['**~~~** fence'], ['**-#** sub']])(
+    '%j keeps its literal markers',
+    (input) => {
+      expect(stripMarkdownEmphasis(input)).toBe(input);
+    },
+  );
+
+  it('provider lines that already start with markup are unchanged in kind, and plain emphasis is still stripped', () => {
+    expect(stripMarkdownEmphasis('> **인용** 문장')).toBe('> 인용 문장');
+    expect(stripMarkdownEmphasis('1. **첫째** 항목')).toBe('1. 첫째 항목');
+    expect(stripMarkdownEmphasis('**요약:** 내용')).toBe('요약: 내용');
+  });
+});

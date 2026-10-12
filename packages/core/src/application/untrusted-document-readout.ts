@@ -270,6 +270,15 @@ function stripPairedMarker(line: string, marker: '**' | '__'): string {
  * the input. It can JOIN text into a link, so a caller must neutralize links AFTER it (see
  * {@link documentSummaryReplyBody}).
  */
+/**
+ * The line-start markup a line begins with (block quote, fence, heading, ordered or unordered list item, table pipe,
+ * spoiler or subtext marker), or `''` for none. Bounded patterns only.
+ */
+function lineMarkupPrefix(line: string): string {
+  const match = /^[ \t]{0,8}(?:>{1,3}|`{3,}|~{3,}|#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|\||\|\||-#[ \t])/u.exec(line);
+  return match ? match[0].trim() : '';
+}
+
 export function stripMarkdownEmphasis(text: string): string {
   return text
     .split('\n')
@@ -287,7 +296,12 @@ export function stripMarkdownEmphasis(text: string): string {
         line = next;
       }
       // A prefix still exposed after the last round (pathological nesting) is neutralized rather than rendered.
-      return line.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1').replace(/^([ \t]*)[-*][ \t]+/u, '$1• ');
+      line = line.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1').replace(/^([ \t]*)[-*][ \t]+/u, '$1• ');
+      // Codex delta P2 (round 2): fail safe for every other line-start markup. If stripping left the line starting with
+      // markup the provider's own line did not start with (`**>** q` → `> q`, `**```** c` → ```` ``` c ````,
+      // `**1.** i` → `1. i`), the stripped form is discarded and the line is shown as the provider wrote it (literal
+      // `**`): stripping is cosmetic and must never create markup.
+      return lineMarkupPrefix(line) !== lineMarkupPrefix(raw) && lineMarkupPrefix(line) !== '' ? raw : line;
     })
     .join('\n');
 }
