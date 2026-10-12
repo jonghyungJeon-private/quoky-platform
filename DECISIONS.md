@@ -20679,3 +20679,34 @@ Decisions:
   - The flag is parsed in the NL feature configuration and also exposed on `QuokyConfig` (as the reminder settings are).
   - Known Phase A limit (unchanged behaviour): a Class B grammar still reads quoted lines, so a pasted `> 내 jira 이슈
     보여줘` is answered by the work grammar before selection; selection itself never sees quoted content.
+
+#### Review fixes (Chief Architect CHANGES REQUIRED and Codex, 2026-10-12)
+
+- **No new egress (D6/D8).** Selection runs only when the provider the router resolves for this turn's chat capability
+  (with the session context) has the same id as the provider it resolves for `INTENT_SELECTION`; the ids are compared
+  as opaque data before the cache and before any call. A local or another remote chat provider skips selection
+  (`chat-provider-differs`), and so does an unknown one, e.g. the routed Stage 2A seam (`chat-provider-unknown`). The
+  personal-data route stays allowed because it resolves to the same provider. Consequence: with a non-Claude chat
+  choice, selection does not run at all.
+- **Quotes (D8).** `InboundMessage.quotedRanges` (optional, neutral `[start, end)` of `text`) carries text the platform
+  marked as quoted; the Telegram adapter maps `blockquote` and `expandable_blockquote` entities to it. A `>>>` line
+  quotes the rest of the message (Discord). Placeholders are short (`[quoted]`, `[code]`, `[files: N]`) and the
+  600-character bound applies again after them.
+- **Honest-chat guard (D9).** Only read/access/connect/view verbs count; a reply containing one of Quoky's own commands
+  is never replaced, so a correct write suggestion survives.
+- **Interpretation values (D7).** A role counts only when one of its grounding words is in the owner's own text or it
+  carries over from the previous selection; a guessed value is dropped (the stored preference answers or the question
+  is asked) and never overwrites the preference.
+- **Clarification answers (D7).** `resolveChoice`: a number or ordinal alone or an exact option label/alias plus
+  fillers; a negated mention picks the other option; "둘 다 아니야" cancels; several options re-ask; any other word is
+  a new request. The open question is taken and cleared at the start of every owner turn (`takePending`).
+- **Jira window (D13).** `created`/`updated` bounds are minutes relative to now (from the Core-resolved instants), so
+  the Jira profile time zone cannot shift them; `due` keeps the owner's local dates.
+- **`brief.today`** is offered only while reminders are on.
+- **Evaluation.** Each call has the runtime's 4 s bound; a slower call is a `timeout` (a miss, never wrong). An
+  adversarial dispatch sweep (write ids, pasted and ungrounded keywords, unrequested roles, wrong reads on every pasted
+  or injection negative) is part of the offline suite.
+  Re-run under the 4 s bound (prompt `nl-select.v12`, 3 runs, concurrency 4, digest `cc92a90e…`): 99.2%, 98.4% and
+  98.1% exact hits, 0 wrong captures in each run, lowest entry 93.8% (GitHub, run 2); 5, 5 and 9 of 501 calls hit the
+  4 s bound (counted as misses); latency p50 2.9 s, p95 3.57–3.64 s. Gate passed in all three runs; D3's 4 s bound is
+  kept (p95 is under it; raising it to 6 s would recover the ~1–2% timeouts but is not needed for the gate).

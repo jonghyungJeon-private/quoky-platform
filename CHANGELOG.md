@@ -26,6 +26,13 @@ No migration, no new port or DI token. `ConversationRuntimeDeps` 35 → 36 (`nlS
 - **Honest chat.** When nothing matches, the chat prompt names the configured sources and their commands and Quoky's
   own command lines, so a write request ("할 일 추가해줘 …") is answered with the exact command to send (nothing is
   prefilled or run), and a reply claiming Quoky cannot access a configured source is replaced by the command offer.
+- **Review fixes (CA and Codex).** Selection runs only when this turn's chat would reach the same provider (a local or
+  another remote chat choice makes no call); Telegram blockquotes and Discord `>>>` quotes are removed; the prepared
+  input is bounded after its placeholders; a guessed role never answers or overwrites the preference; clarification
+  answers are resolved strictly ("첫 번째 말고 두 번째", "둘 다 아니야"); an open question ends with the next turn; the
+  honest-chat guard keeps write suggestions; Jira created/updated windows ignore the Jira profile time zone;
+  `brief.today` needs reminders on. Re-evaluated under the runtime's 4 s bound (prompt `nl-select.v12`, 3 runs): 99.2%,
+  98.4%, 98.1%; 0 wrong captures; 5–9 of 501 calls over 4 s (misses); p95 3.6 s; gate passed in each run.
 - **Safety.** Writes are never selected; selection runs only after the classifier, never with a pending approval, never
   on a credential-shaped message (no call is made), and quoted, fenced or attached content is removed before the call.
   `shadow` mode logs only entry ids, the route, the agree flag and latency.
