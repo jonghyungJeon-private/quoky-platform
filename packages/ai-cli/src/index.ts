@@ -344,6 +344,12 @@ const CLAUDE_EFFORT_LEVELS: readonly ClaudeEffortLevel[] = ['low', 'medium', 'hi
 export const DEFAULT_CLAUDE_MODEL = 'sonnet';
 
 /**
+ * ADR-0120 D2: the model of an `INTENT_SELECTION` call — a Haiku-class model by default (owner answer 1, 2026-10-12),
+ * escalated only if Haiku fails the D12 gate. Adapter configuration (`QUOKY_NL_INTENT_MODEL`), never a Core value.
+ */
+export const DEFAULT_CLAUDE_INTENT_SELECTION_MODEL = 'haiku';
+
+/**
  * Adapter-owned capability -> reasoning effort policy (decision D2). Core never sees
  * this: it only advertises a capability, and the adapter decides how hard to think.
  * Capabilities not listed here (e.g. TEST_EXECUTION) pass no `--effort` flag (CLI default; ADR-0092).
@@ -358,6 +364,8 @@ export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capabi
   [Capability.CODE_REVIEW]: 'medium',
   [Capability.ARCHITECTURE_PLANNING]: 'high',
   [Capability.CODE_IMPLEMENTATION]: 'high',
+  // ADR-0120 D2: one schema-only routing call, as fast as the model allows.
+  [Capability.INTENT_SELECTION]: 'low',
 };
 
 export interface ClaudeCliProviderOptions extends CliProviderOptions {
@@ -365,6 +373,8 @@ export interface ClaudeCliProviderOptions extends CliProviderOptions {
   model?: string;
   /** Per-capability overrides merged over {@link DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY}. */
   effortByCapability?: Partial<Record<Capability, ClaudeEffortLevel>>;
+  /** ADR-0120 D2: the `--model` of an `INTENT_SELECTION` request. Default {@link DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}. */
+  intentSelectionModel?: string;
 }
 
 /**
@@ -381,6 +391,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   private readonly runner: CliRunner;
   private readonly defaultTimeoutMs: number;
   private readonly model: string;
+  private readonly intentSelectionModel: string;
   private readonly effortByCapability: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>>;
 
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
@@ -396,6 +407,9 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     { capability: Capability.SUMMARIZATION, priority: 50 },
     { capability: Capability.READONLY_LOOKUP, priority: 50 },
     { capability: Capability.TEST_EXECUTION, priority: 50 },
+    // ADR-0120 D2: only the Claude CLI advertises natural-language selection (Codex, Ollama and the HTTP API providers do
+    // not); the call runs with the chat isolation below, no tools, and the configured selection model.
+    { capability: Capability.INTENT_SELECTION, priority: 50 },
   ];
 
   constructor(bin = 'claude', options: ClaudeCliProviderOptions = {}) {
@@ -404,6 +418,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     this.runner = options.runner ?? defaultCliRunner;
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
     this.model = validatedClaudeModel(options.model ?? DEFAULT_CLAUDE_MODEL);
+    this.intentSelectionModel = validatedClaudeModel(options.intentSelectionModel ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL);
     // An explicit `undefined` override means "use the default", never an invalid level.
     const overrides = Object.fromEntries(
       Object.entries(options.effortByCapability ?? {}).filter(([, level]) => level !== undefined),
@@ -424,8 +439,9 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
    * describe the owner's own connectors ("Google Calendar 커넥터를 승인해 주세요") as if Quoky could use them.
    */
   buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace'>): string[] {
+    const model = request?.capability === Capability.INTENT_SELECTION ? this.intentSelectionModel : this.model;
     const args = [
-      '-p', '--model', this.model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
+      '-p', '--model', model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
     ];
     if (request === undefined) return args;
     const effort = this.effortByCapability[request.capability];
@@ -504,7 +520,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
       // ADR-0115 D8: the plain-text print mode exposes no token counts, so only the label is reported ("unknown").
-      usage: { label: `claude:${this.model}` },
+      usage: { label: `claude:${request.capability === Capability.INTENT_SELECTION ? this.intentSelectionModel : this.model}` },
     };
   }
 }

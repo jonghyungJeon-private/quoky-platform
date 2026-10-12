@@ -74,6 +74,35 @@ describe('ClaudeCliProvider', () => {
     expect(res.artifacts?.[0]?.kind).toBe(ArtifactKind.MARKDOWN_REPORT);
   });
 
+  it('ADR-0120 D2: serves INTENT_SELECTION with the selection model (haiku by default), low effort, no tools, the chat isolation', async () => {
+    const calls: Array<{ args: string[]; opts: CliRunOptions }> = [];
+    const runner: CliRunner = async (_bin, args, opts) => {
+      calls.push({ args, opts });
+      return { code: 0, stdout: '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}\n', stderr: '', timedOut: false };
+    };
+    const claude = new ClaudeCliProvider('claude', { runner });
+    expect(claude.capabilities).toContainEqual({ capability: Capability.INTENT_SELECTION, priority: 50 });
+    const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'route this', timeoutMs: 4000 });
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
+    expect(calls[0]?.opts.timeoutMs).toBe(4000);
+    // Not a chat capability: the JSON passes through without the chat hygiene rewriting it.
+    expect(res.text).toBe('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}');
+    expect(res.usage).toEqual({ label: 'claude:haiku' });
+    // The configured model applies to selection only; chat keeps its own.
+    const configured = new ClaudeCliProvider('claude', { runner, model: 'opus', intentSelectionModel: 'claude-haiku-4-5' });
+    await configured.execute({ capability: Capability.INTENT_SELECTION, prompt: 'x' });
+    await configured.execute({ capability: Capability.GENERAL_CHAT, prompt: 'x' });
+    expect(calls[1]?.args.slice(0, 3)).toEqual(['-p', '--model', 'claude-haiku-4-5']);
+    expect(calls[2]?.args.slice(0, 3)).toEqual(['-p', '--model', 'opus']);
+    expect(() => new ClaudeCliProvider('claude', { intentSelectionModel: '--dangerously' })).toThrow();
+  });
+
+  it('ADR-0120 D2: no other CLI provider advertises INTENT_SELECTION', () => {
+    for (const provider of [new CodexCliProvider(), new OllamaCliProvider(), new OllamaCliEmbeddingProvider()]) {
+      expect(provider.capabilities.map((c) => c.capability)).not.toContain(Capability.INTENT_SELECTION);
+    }
+  });
+
   it('timeout → AiProviderError(TIMEOUT)', async () => {
     await expect(exec({ code: null, stdout: '', stderr: '', timedOut: true })).rejects.toMatchObject({
       kind: AiFailureKind.TIMEOUT,
