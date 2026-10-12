@@ -20268,3 +20268,305 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   `response-composer-spans.test.ts` also pins every converted reply (no hostile value in a plain string node outside a
   fence or code span; `text` equals the plain rendering of `content`). `conversation-runtime.ts` is exempt with its
   reason in the test.
+
+## ADR-0120 — Natural-language capability selection: a closed capability catalog contributed by the turn handlers, one bounded `INTENT_SELECTION` call through the existing `CapabilityRouter` on messages bound for chat, deterministic validation and execution, reads only in wave 1, shadow before active. Amends ADR-0032 (M3 amendment, deps 35→36), ADR-0096 D1/D3/D4/D5, ADR-0098 D1/D7, the ADR-0098 amendment D1 (QUAL-7), ADR-0100 D1/D2/D7, ADR-0101 D2 (narrowly), ADR-0104 D1/D2/D4, ADR-0110 D3, ADR-0117 D3/D4 and ADR-0118 D4/D8.
+
+- **Status:** **Proposed (awaiting owner ratification).** This record grants no implementation, activation or
+  execution authority. No NL-1 code merges before the Product Owner ratifies it; ratification is the owner's alone and
+  will be recorded in a ratification record appended below this entry. Ratification would authorize no Strict action
+  by itself.
+- **Date:** 2026-10-12
+- **Amends:** the clauses listed in "Amended clauses" below. Their ADR text is not edited (this file is append-only).
+  **Reaffirms unchanged:** ADR-0063, ADR-0091, ADR-0092 amendment D3, ADR-0107 D6, ADR-0110 D4, the ADR-0110
+  amendment D4, ADR-0111 D3, ADR-0112 D5, ADR-0115 D2 and ADR-0118 D7. **Relates:** ADR-0090 (Proposed, not
+  ratified; its L0/L1/L2 layering is adopted for Personal only, see D6 and the alternatives), ADR-0009 (Actor),
+  ADR-0001 (thin Session), ADR-0106, ADR-0114 (one owner Actor on both platforms). Inputs:
+  `docs/plans/nl-intent-audit-2026-10-12.md` (audit) and `docs/plans/nl-intent-design-2026-10-12.md` (design, constraints and owner answers).
+  Plan tracks GOV-7, NL-1, NL-2 (`docs/plans/personal-v5-plan.md`).
+
+### Context
+
+- **The defect.** In live Telegram QA on 2026-10-12 the owner sent "오늘 jira 이슈 등록된거 브리핑해줘" and "오늘 나한테
+  할당된 jira 이슈가 있을텐데 ?". Both fell through to general chat, which deflected to "use a command".
+- **The owner's requirement (2026-10-12):** "이런식의 자연어 테스트로 정상적인 결과가 도출되어야 한다"; "특정 단어로만
+  호출되는건 원치 않아. (하드코딩이면 안된다는 말임)"; "비단 jira 말고도 다른 케이스들도 다 마찬가지니까 전체 검수도 한번
+  필요하겠다".
+- **The audit** (`docs/plans/nl-intent-audit-2026-10-12.md`, the production `AppModule` and the real
+  `ConversationRuntime.handle()`, 417 phrases): 221 of 417 routed correctly (53%). Of the 372 phrases that should
+  reach a capability, 176 did (47%), and 193 of the 196 misses fell to general chat. All 45 negatives stayed in chat:
+  the grammars are precise, their recall is low. Examples: Jira 9/26, daily brief 2/15 (the scheduled form only), mail
+  summary 3/15, drive summary 3/15, follow-ups 14/48. The failure patterns are structural (closed verb lists, a source
+  word in a fixed slot, time words only inside fixed spans, exact "N번 + noun" follow-ups, English only as fixed
+  imperatives, typos), so each regex fix covers one phrase family, which is the pattern ADR-0104 already recorded.
+- **Why chat deflects.** `CHAT_CAPABILITY_HONESTY_RULE` (ADR-0098 D1) tells the chat model not to act and to point to
+  `도움말`, and the chat prompt carries no fact about which sources are configured.
+- **Constitution.** There is no conflict with `ARCHITECTURE.md`: §1 ("the system decides *what capability* is
+  needed"), §2.1 and §7.3 (Intent → Capability → Provider), §3 and §11.5 (model cognition isolated), §5.1, §5.2 and §12
+  (data-driven selection, no provider-id branch), §5.5 (HTTP API providers serve the chat and image tiers only), §5.14
+  (declared locality), §8.1 and §8.3 (no agent loop, no tool use), §10 (writes need approval) and §11.7 (this record
+  before the code). The conflict is with the settled ADR clauses listed below, so this ADR comes first, and widening the
+  Class B grammars stops (the Jira listing patterns merged on 2026-10-12, `JIRA_LIST_KO` in
+  `work-chat-command.ts`, are the last such change).
+
+### Decision
+
+1. **D1 — Closed capability catalog, contributed by the owning handlers.** A Core module
+   (`packages/core/src/application/nl-routing/`) assembles a closed catalog from a new optional `catalog` member of
+   each `ConversationTurnHandler`, the way help lines are contributed (ADR-0096 D6). An entry has an `id`, a `risk`
+   (`READ`, `LOCAL_WRITE` or `EXTERNAL_WRITE`), a DM-only flag, a typed argument schema checked by hand-written
+   validators (no new dependency), and bounded KO/EN description lines. Only entries of registered and configured
+   sources are offered to the model. Wave-1 entries, all `READ`: `jira.issues`, `github.items`, `slack.search`,
+   `confluence.search`, `calendar.events`, `mail.list`, `drive.files`, `todo.list`, `reminder.list`, `brief.today`,
+   `help.topic`. Adding, removing or widening an entry needs an amendment of this ADR plus corpus cases (the
+   ADR-0096 D5 rule, applied to the catalog).
+2. **D2 — `Capability.INTENT_SELECTION` and provider eligibility.** No new port and no new token: a new `Capability`
+   value served through the existing `CapabilityRouter` (`capabilities`, `priority`, `isAvailable`,
+   `executionLocality`). Core builds a provider-neutral prompt spec; the adapter renders it, including the model and
+   the effort. Owner answer 1 (2026-10-12): "우선은 Claude CLI, 놓친 문장만으로 진행하되, 모델은 빠른 모델이니 하이쿠만으로도
+   대체가 되면 하이쿠만으로도 진행해도 좋아. 이번에 하이쿠 5.5가 발표되면서 하이쿠 성능도 좋아졌으니 …". Therefore:
+   - only the Claude CLI provider advertises `INTENT_SELECTION`; Codex (ADR-0092 amendment D3), Ollama and every HTTP
+     API provider (ADR-0115 D2, ARCHITECTURE.md §5.5) do not;
+   - the selection model is a Haiku-class model by default and escalates to a Sonnet-class model only if Haiku fails
+     the D12 gate; the model id is adapter configuration, never a Core value or branch;
+   - the owner's session-scoped chat-tier preference (the ADR-0092 amendment, the ARCHITECTURE.md §12 exception) does
+     not apply to this capability;
+   - the run uses the same Claude CLI isolation as chat (no tools, no MCP configuration, no setting sources, no session
+     persistence). A selection call creates no Task, TaskRun or ApprovalRequest; it is a routing step, like the
+     classifier.
+3. **D3 — Selector I/O contract: one call, a timeout, no retry.**
+   - **Input:** the owner's text with quoted lines, fenced blocks and attachments replaced by placeholders (text over 600
+     characters skips selection), the catalog of D1, and the previous selection as structure only (entry id and args).
+   - **Output:** one JSON object of at most 2 KB with unknown keys rejected:
+     `{ entryId | none, args, ambiguity: CLEAR | NEEDS_CLARIFICATION, alternatives (at most 2) }`. A confidence number,
+     if returned, is logged only and never decides anything.
+   - **Bounds:** at most one selection call per message, a 4 s timeout, no retry. Target added latency p95 ≤ +3 s,
+     measured in shadow (a `claude -p` spawn may exceed it; D12 reports it).
+   - **Cache:** in memory only, per actor, 10 minutes, 256 entries, keyed by the normalized text plus a digest of the
+     last selection. Never persisted.
+4. **D4 — Deterministic validation (ADR-0090 L2), grounding and symbolic time.** In order: (1) schema check and closed
+   ids; (2) the entry is configured and enabled, and the handler enforces its DM-only rule; (3) bounds: limit 1-10, a
+   date span of at most 31 days; (4) time is symbolic (`today`, `this-week`, `YYYY-MM-DD..YYYY-MM-DD`) and resolved by
+   Core's clock and `QUOKY_TIMEZONE`; the model never computes a timestamp; (5) grounding: a keyword arg must appear
+   verbatim in the owner's non-quoted text or in the previous selection's args; (6) the credential guard runs on every
+   string arg. A failure leads to D7 clarification, never to a guess and never to chat.
+5. **D5 — Reads only in wave 1; writes are suggestion-only; approvals unchanged.** Owner answer 2 (2026-10-12): "1차는
+   조회, 쓰기는 조회 결과 보고 진행". The wave-1 catalog has no `LOCAL_WRITE` or `EXTERNAL_WRITE` entry. A write request
+   that reaches selection gets `none`; the reply may name the exact anchored command from the help lines, prefills
+   nothing and creates no approval. Writes stay on their anchored grammars with the owner's text as the payload
+   verbatim (ADR-0112 D5, the ADR-0110 amendment D4). NL-initiated writes need a later amendment of this ADR, after the
+   owner has seen the wave-1 read results. Selection never runs on a message with a pending approval, an anchor or a
+   control phrase.
+6. **D6 — Dispatch point and Class A/B precedence by phase.** Selection is one new dispatch point in `handleInner`,
+   owned by an `NlSelectionService`; it is not a handler stage and not an `IntentClassifier` hook.
+   - **Class A** (anchored, kept, never preceded by selection): control phrases, approvals and anchors, `할 일 추가:` and
+     the other ADR-0100 D1 anchored to-do heads, `기억해:` and the memory and learning commands, write commands,
+     `N번 메일 요약`-style item summaries, `모델 변경:`, reminder create and cancel, code work, project registration, and the
+     ADR-0098 amendment D1 (a) unsupported-external-action, (b) injection and (c) other-language routes.
+   - **Class B** (frozen deterministic grammars, kept as fallback, later retired by D10): `detectLookup` and
+     `detectJiraListing`, `calendar-question`, the `mail-question` and `drive-question` list forms, the `help-intent`
+     matcher, the QUAL-7 personal-data clauses and `IntentClassifier.isPersonalWorkSurface`.
+   - **Phase A (NL-1, NL-2 active):** selection runs only on a turn that every earlier route left for chat: after the
+     pre-classify stage, the internal-action status question (ADR-0104 D3) and `IntentClassifier.classify`, and only
+     when the classified capability is `GENERAL_CHAT`, or `POLICY_SENSITIVE_CHAT` for the personal-data reason alone.
+     A turn the classifier sends to code change, project analysis, registration or tests is unchanged. These messages
+     already go to Claude chat, so Phase A adds no new class of egress, and the ADR-0096 routing corpus is unchanged.
+   - **Phase C (NL-2, after shadow data):** selection runs before the Class B grammars, and they become the fallback when
+     the provider is down. It needs the D12 gate, the shadow data of D11 and the owner's separate yes on D8.
+7. **D7 — Clarification, `lastSelection`, and the interpretation preference.**
+   - **Clarification.** `NEEDS_CLARIFICATION`, two candidates, or a failed validation asks one numbered question built
+     from the catalog text, never chat. The pending choice is kept in `Session.metadata` for 5 minutes; a reply such as
+     `1` or `지라` resolves it deterministically.
+   - **Follow-ups.** A content-free `quoky.lastSelection` = `{ entryId, args, at }` in `Session.metadata` with a
+     30-minute TTL, the `last-listing.ts` pattern, no migration. "그 중에 위클리카만" refines it with `keyword=위클리카`. Item
+     titles, subjects and event text are never stored there or sent to the model.
+   - **Interpretation preference** (owner answer 3, 2026-10-12, on "오늘 등록된 jira 이슈": "사용자한테 한번 물어보고, 그
+     물어본 답이 캐시로 되어 특정 시간에는 계속 캐시 연결 → 주제로 넘어가면 좋을거 같은데"). Each catalog entry may declare
+     closed ambiguity keys with closed values (for example `jira.created-scope` ∈ assignee, reporter,
+     assignee-or-reporter). When an answer depends on an open key:
+     - **ask once**: the first time, the D7 numbered question asks for the interpretation, and the owner's pick both
+       answers the turn and becomes the preference;
+     - **keep it per actor and per ambiguity key**, with a **30-day TTL** from the last time it was set;
+     - while it is valid, reuse it without asking and go straight to the answer;
+     - **show the basis line in every answer** that applied a preference or a default interpretation, as its first line
+       (for example `기준: 내가 담당·보고자 / 오늘 생성`);
+     - **let the owner override at any time**: an explicit, grounded value in the owner's text (for example "아니
+       담당만") always wins for that answer, and when it corrects the previous answer (a refinement of `lastSelection`)
+       it overwrites the stored preference and the basis line says it changed. An expired or malformed preference
+       counts as absent, so the owner is asked again.
+   - **Wave-1 storage: `Actor.metadata`, no migration.** Durable per-actor metadata already exists:
+     `Actor.metadata?: Metadata` (`packages/core/src/domain/actor.ts`) is serialized with the whole `Actor` into the
+     `actors.data` JSON column by `SqliteActorRepository.save` (`packages/storage-sqlite/src/index.ts`), on the
+     `actors(id, data)` table created by migration 1 (`packages/storage-sqlite/src/migrations.ts`); nothing reads or
+     writes it today. The preferences live under one key, `quoky.interpretationPreferences` =
+     `{ [ambiguityKey]: { value, at } }`, at most 16 keys, values from the closed sets only, no text. The
+     `NlSelectionService` owns them and writes through the existing `ActorRepository` (`StorageProvider.actors`): it
+     re-reads the Actor, replaces only that key, and saves. The runtime's `actors` dep stays
+     `resolveFromContext` only. Because ADR-0114 maps the Telegram owner to the same Actor, one answer serves both
+     platforms, and `새 대화` (which closes the Session) does not erase it. Session metadata was the alternative: it is
+     per conversation (Discord and Telegram would each ask), is lost on reset, and would contradict "per actor".
+     **Trade-off recorded:** `JsonRepository.save` replaces the whole document with no compare-and-set, so a concurrent
+     writer of the same Actor could lose an update. Today the other writers are `ActorManager` (only when it creates
+     the Actor on first contact) and the startup `ActorIdentityProvisioner` (`apps/quoky/src/actor-identity-provisioner.ts`),
+     which spreads the stored Actor, so `metadata` is kept, and runs before the platform starts. This is the accepted
+     v2/v3 storage residual (v5 plan R20, R1), and any later writer of `Actor` must re-read and merge the same way. Preferences are routing data, not Quoky Memory: they are not recalled into prompts and are not
+     part of the ADR-0106 memory list.
+8. **D8 — Egress and privacy.** The selection request carries only the owner's text after the D3 stripping, the
+   configured catalog text and the previous selection's structure. It never carries an item title, a mail subject or
+   body, an event title, a document, an attachment, recalled memory or conversation history (ADR-0110 D4, ADR-0118 D7
+   and ADR-0111 D3 unchanged). In Phase A only messages already bound for Claude chat are sent. Sending a message that a
+   Class B grammar answers on the host today, whether for Phase C or for grammar-hit shadowing, is a new egress and
+   needs the owner's separate yes. Pasted or quoted content is data (ADR-0063): it is stripped before the call, cannot
+   ground a keyword and can never select a write. Selection runs only on messages that passed the owner gate (ADR-0091,
+   ADR-0114).
+9. **D9 — Honest chat and a guard extension.** When the model returns `none`, chat receives one authoritative Core fact
+   that lists the configured sources and the command for each (from the help lines). The ADR-0104 guard gains a
+   false-incapability family: a reply claiming Quoky "cannot connect to" or "cannot access" a configured source is
+   replaced by a deterministic offer of the matching command. The QUAL-7 personal-data deflection is narrowed to
+   unconfigured sources.
+10. **D10 — Grammar freeze and retirement.** The Class B grammars of D6 are frozen from the ratification of this ADR: no
+    new phrase, verb or pattern. A miss becomes a corpus case (D12), never a new regex. A Class B grammar retires after
+    2 weeks of `active` mode in which selection also saw that grammar's turns (Phase C, or grammar-hit shadowing once
+    the owner allows it under D8) with at least 98% agreement, and with the owner's confirmation; until then it is the
+    provider-down fallback. Class A grammars are not frozen by this ADR.
+11. **D11 — Flag and content-free shadow logs.** `QUOKY_NL_INTENT_MODE` = `off` | `shadow` | `active`, exact values,
+    default `off`, parsed in the NL feature configuration of `apps/quoky` (not `config.ts`). With `off`, behaviour is
+    byte-identical to today. `shadow` runs the selection on the D6 Phase A turns, compares it with the route actually
+    taken, and does not act on it. `active` acts on it (NL-2). Each log line is content-free: entry id or `none`,
+    grammar id, the agree flag, the ambiguity outcome and the latency; never the text or an arg value.
+12. **D12 — Corpus, gates and a Strict evaluation.**
+    - **Corpus** `packages/core/src/application/golden/nl-intent.v1.json`: per entry at least 25 natural phrasings
+      → `{ entryId, args }` and at least 80 negatives in all (chit-chat, how-to, mentions, pasted injections, writes that
+      must not run, unconfigured sources). It contains the owner's two phrases and "그 중에 위클리카만" verbatim and is
+      seeded from the audit corpus. The agent drafts and the owner approves each batch; nothing is added automatically
+      (ADR-0098 D7).
+    - **Offline deterministic suite:** a scripted stub model; validation, grounding, symbolic time, clarification
+      state, the preference (ask once, TTL, override), `handleSelected` for every entry, Class A precedence, the
+      provider-down fallback, and the deps baseline at 36.
+    - **Model-in-the-loop evaluation:** a new mode of `apps/quoky/src/tools/answer-quality-eval-cli.ts`, bound to an
+      approved plan digest; each run is Strict. It scores exact `{ entry, args }` matches, so no LLM judges. The gate:
+      at least 95% overall, at least 90% per entry, and 0 wrong captures on the negatives (a clarification counts as
+      not a hit and not wrong), over 3 stable runs, with p50/p95 latency reported.
+    - **Live UAT** on Telegram and Discord: about 40 phrasings per entry, including a provider-down case.
+13. **D13 — Jira personal-work window, role and status (an additive ADR-0100 D7 amendment).** The `personal-work`
+    named query gains optional `window` (`created` | `updated` | `due` × a symbolic range resolved by Core), `role`
+    (`assignee` | `reporter` | `either`) and `status` (`open` | `all`). The adapter renders and escapes the JQL. Without
+    the new fields the query is exactly today's (assignee, unresolved, not done). Both owner phrases of 2026-10-12 need
+    it; `either` versus `assignee` for "등록된" is the first D7 ambiguity key.
+14. **D14 — Deps 35 → 36 (ADR-0032 M3 ratchet).** `ConversationRuntimeDeps` gains one optional key, `nlSelection?`.
+    Responsibility moves out as the M3 amendment requires: the catalog, the call through the `CapabilityRouter`,
+    validation, clarification state, `lastSelection` and the preferences belong to `NlSelectionService`; the runtime
+    only dispatches and presents. Absent, behaviour is byte-identical. The baseline test asserts 36.
+
+**Interfaces recorded before code (ARCHITECTURE.md §11.7).** `ConversationTurnHandler` gains two optional members,
+`catalog?` (the D1 entries) and `handleSelected?(command, ctx)`. `handleSelected` maps a validated selection to the
+handler's existing typed commands (`WorkChatCommand` through `desk.handle`, `CalendarQuestion`, `MailQuestion`,
+`DriveQuestion`, the reminder LIST, the brief and help) and returns the same reply variants `handle` may return.
+Handlers stay provider-free and approvals are unchanged. `Capability` gains `INTENT_SELECTION`. Both are additive, so
+no existing Core contract changes incompatibly (ARCHITECTURE.md §13).
+
+### Amended clauses
+
+Each clause is cited as it stands in this file at `origin/main` `c204cae` (line numbers are a convenience and may drift).
+
+| ADR, decision (line) | Settled text, short | Amendment |
+|---|---|---|
+| ADR-0032 M3 amendment (:5872), baseline 35 since ADR-0112 (:16564) | `ConversationRuntimeDeps` must not grow beyond the accepted baseline | The accepted baseline becomes 36 for `nlSelection?` (D14), with the responsibility moved to `NlSelectionService` |
+| ADR-0096 D1 (:14973) | The `ConversationTurnHandler` port shape | Two optional members, `catalog?` and `handleSelected?(command, ctx)` (D1, interfaces) |
+| ADR-0096 D3 (:14992) | "Exactly three dispatch points in `handleInner`" | Three handler dispatch points plus one selection dispatch point, after the classifier for chat-bound turns (D6 Phase A) |
+| ADR-0096 D4 (:15002) | "Handlers never reach an AI provider"; `summarize` is the only provider-reaching outcome | Handlers still never reach a provider. A second provider-reaching path exists: the runtime's selection call through `nlSelection` (D2, D3), which creates no Task, TaskRun or approval |
+| ADR-0096 D5 (:15007) | Fixed precedence; changed only by amendment plus a corpus update | The precedence gains the D6 selection stage; Phase C is defined here and switched only under D6/D10 with corpus cases; catalog changes follow the same amendment-plus-corpus rule (D1) |
+| ADR-0098 D1 (:15270) | Capability honesty: a chat reply performs no action and points to `도움말` | Unchanged, plus one Core fact listing the configured sources and their commands after a `none` selection (D9) |
+| ADR-0098 D7 (:15310) | Owner-curated corpora; harness with no LLM judge; each `run` Strict | Adds `nl-intent.v1.json` (agent-drafted, owner-approved per batch) and a selection-eval mode scored by exact match; still no LLM judge, each run Strict (D12) |
+| ADR-0098 amendment D1 (:15813) and its QUAL-7 extension (record at :15874) | `POLICY_SENSITIVE_CHAT` assigned deterministically; personal-data questions deflect | Personal-data clauses apply only to unconfigured sources; (a) external action, (b) injection and (c) language are unchanged Class A (D6, D9) |
+| ADR-0100 D1 (:15510) | A deterministic work grammar | The anchored to-do heads stay Class A. The lookup and listing forms are frozen Class B (D10), and a validated selection may produce the same typed `lookup` command through `handleSelected` |
+| ADR-0100 D2 (:15531) | Entry through two pre-classify handlers, no classifier hook | Still no classifier hook; work lookups gain a second entry, the D6 selection point via `handleSelected` |
+| ADR-0100 D7 (:15552) | Named queries `personal-work` (`filter`) and `search` | `personal-work` gains optional `window`, `role` and `status`; the defaults reproduce today's query (D13) |
+| ADR-0101 D2 (:15645) | "Deterministic grammar, no LLM" for reminders | Narrowly: `reminder.list` may be reached by selection and maps to the existing LIST. CREATE, CANCEL and all time parsing stay grammar-only with no LLM |
+| ADR-0104 D1 (:16103) and D2 (:16108) | The claim guard's scope and its closed lexicon | A false-incapability family about configured sources, replaced by a deterministic command offer; lexicon changes keep the corpus rule (D9) |
+| ADR-0104 D4 (:16117) | Help-intent handler at order 400 | Frozen Class B (D10); `help.topic` serves the same help lines through selection |
+| ADR-0110 D3 (:16471) | A pure schedule-question grammar at order 150 | Frozen Class B (D10); `calendar.events` with an explicit symbolic range (at most 31 days) maps to the existing `CalendarQuestion` |
+| ADR-0117 D3 (:18871) | "No model": the brief is composed deterministically | The body stays model-free and no brief content reaches the selector; only the choice of an on-demand `brief.today` is new |
+| ADR-0117 D4 (:18873) | The brief is delivered only to the owner's DM, on its creating platform | An on-demand `brief.today` is answered only in the owner's DM on the asking platform; in a channel the reply says it is DM-only and nothing is read |
+| ADR-0118 D4 (:19166) | Fixed-format listings for the listed phrasings; no model for a listing | `mail.list` and `drive.files` reach the same listings; format, caps and "no model for a listing" unchanged |
+| ADR-0118 D8 (:19179) | Handler decisions from the owner's text only | Routing decisions, by grammar or by selection, are taken only from the owner's own non-quoted text and the content-free previous selection; mail and document content never changes routing |
+
+**Reaffirmed without amendment:** ADR-0110 D4 (:16477) and the ADR-0110 amendment D4 (:16984) (calendar text never
+reaches a `REMOTE` provider, and writes need an exact-payload approval); ADR-0118 D7 (:19174) (no mail or Drive text
+leaves the host without a summary request); ADR-0112 D5 (:16591) (the write payload is the owner's text verbatim);
+ADR-0111 D3 (:16528) and ADR-0063 (readouts and attachments are untrusted data); ADR-0091 (owner-only inbound);
+ADR-0115 D2 (:18408) and ADR-0092 amendment D3 (:14531) (HTTP API and Codex providers do not serve this capability);
+ADR-0107 D6 (:16306) (locality is declared data; no `LOCAL_ONLY` data enters a selection request).
+
+### Alternatives considered
+
+- **More regex (rejected).** The audit shows 47% recall with precise grammars; each fix covers one phrase family
+  (ADR-0104 context), and the owner rejected it in so many words ("하드코딩이면 안된다는 말임").
+- **Model-first now (deferred to NL-2).** Running selection before every Class B grammar from day one would send every
+  grammar-hit message off the host (a new egress, D8), add the selection latency to messages answered in milliseconds
+  today, and have no shadow data behind it. It is the Phase C target, gated by D6, D10 and D12.
+- **One combined "route or answer" call (rejected).** The answer would be generated before the D4 validation could
+  refuse the route, the answering model would see the catalog and could claim an action, and the chat-tier provider the
+  owner selects (possibly Codex) would also decide routing. ADR-0090 keeps the L1 decision schema-only and the L2 policy
+  deterministic; this ADR keeps that split.
+- **A local model (deferred).** Chat runs on Claude by owner decision (2026-10-07), LLM-3 is closed, and Korean
+  recall of a local model is unmeasured. Because selection is capability data, a local provider can advertise
+  `INTENT_SELECTION` later once it passes the D12 gate, with no Core change. Owner answer 1 chose the Claude CLI.
+- **A new port (ADR-0090's `IntentDecisionEngine`) instead of a Capability (rejected for now).** ADR-0090 proposed a
+  narrow port for a non-generative engine; it was never ratified. A Capability reuses provider availability, priority,
+  locality, the CLI isolation and the readiness probes with no new token. A port can still be added by amendment if a
+  non-generative classifier appears.
+
+### Consequences
+
+- **+** Natural phrasings reach the read capabilities without new phrase lists; the owner's two phrases are answerable
+  once D13 lands. Misses become corpus cases, not code.
+- **+** Phase A adds no new egress class, and with the flag `off` every reply is byte-identical.
+- **+** One interpretation question per ambiguity key and actor, with the basis line visible on every answer and
+  correctable in plain language.
+- **−** Messages bound for chat pay up to one bounded model call (p95 target +3 s, 4 s timeout).
+- **−** A third moving part in routing (grammar, classifier, selection) until Class B retires; shadow logs and the
+  corpus are the evidence for each step.
+- **−** `prompt-composer.ts` edits for D9 invalidate the Stage 2A bindings until the next approved run (ADR-0098 D2
+  note).
+- **−** One more optional runtime dep (36) and two optional port members.
+
+### Residual risks
+
+- **R1 — a valid but wrong selection.** Validation catches malformed output, not a plausible wrong entry. Mitigations:
+  reads only, the basis line, the negative corpus and the 0-wrong-capture gate.
+- **R2 — latency.** A cold `claude -p` spawn may exceed +3 s at p95; NL-2 does not activate until shadow numbers meet the
+  target or the owner accepts them.
+- **R3 — preference write race.** The `Actor` document has no compare-and-set (D7 trade-off, v5 plan R20).
+- **R4 — strict grounding.** A paraphrased keyword that is not verbatim in the text leads to a clarification, not a
+  hit; the corpus measures how often.
+- **R5 — provider unavailable.** Selection degrades to Class B and honest chat; until Class B retires there is always a
+  deterministic fallback, and after retirement a provider outage means clarification or chat for those phrasings.
+- **R6 — corpus fit.** Owner-approved phrasings may not match live use; the live UAT and the shadow logs measure the
+  gap.
+
+### Acceptance criteria
+
+With `QUOKY_NL_INTENT_MODE=off` every existing golden corpus and reply is byte-identical. The offline suite passes with
+a stub model, including Class A precedence and the provider-down fallback. The D12 evaluation gate passes on the
+approved plan. The owner's two phrases and "그 중에 위클리카만" answer correctly, with the basis line. No selection request
+contains item, mail, event or attachment text. The deps baseline test asserts 36.
+
+### Strict gates
+
+Each model-in-the-loop evaluation run (an approved plan digest per run); the `.env.local` flag edits on the service
+(`shadow`, then `active`); the attended live UAT on both platforms; any Phase C or grammar-hit shadowing (a new egress,
+owner yes first). Independent Chief Architect review before NL-1 merges.
+
+### Owner decisions requested
+
+1. Ratify ADR-0120 as written. **Recommended:** ratify; NL-1 code waits for it.
+2. The Class A / Class B split (D6) and the freeze (D10). **Recommended:** approve.
+3. The D7 wave-1 storage in `Actor.metadata` with a 30-day TTL. **Recommended:** approve.
+4. Grammar-hit shadowing and Phase C (D8): **not requested now**; asked again with the NL-1 shadow data.
+
+### V1 / V2
+
+`[NOW]` (NL-1) catalog, selector, validation, clarification, preference, shadow mode, D13, `brief.today`, honest chat,
+corpus and offline suite. `[LATER]` (NL-2, gated on shadow data) active mode, Class B as fallback, the wave-2 gaps (mail
+ranges and subject keyword, Drive modified-since, calendar title keyword, Jira free-text search, GitHub filters) and
+grammar retirement. NL-initiated writes need their own amendment.
